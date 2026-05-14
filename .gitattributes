@@ -1,0 +1,29 @@
+# Tell Git to treat these as binary so it doesn't try to do line-ending
+# conversion or text diffs on them. Critical for game assets — Windows
+# Git would otherwise corrupt PNGs by rewriting LF<->CRLF.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.svg binary
+*.mp3 binary
+*.wav binary
+*.ogg binary
+*.m4a binary
+*.mp4 binary
+*.webm binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.psd binary
+
+# HTML and JS are text — let Git normalize line endings as needed
+*.html text
+*.css text
+*.js text
+*.json text
+*.md text

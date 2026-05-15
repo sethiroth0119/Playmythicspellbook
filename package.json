@@ -1,0 +1,14 @@
+{
+  "name": "playmythicspellbook",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Mythic Spellbook — Cloudflare Workers static deploy of ./public",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "login": "wrangler login",
+    "whoami": "wrangler whoami"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

@@ -30445,20 +30445,24 @@ function render() {
     if (App._lastRenderScreen !== App.screen) {
       App._lastRenderScreen = App.screen;
       if (typeof _flushCloudSyncNow === 'function') _flushCloudSyncNow();
-      // 📖 RPG page guide — fire after the new screen paints. Self-gated
-      // (trigger type / showOnce / global off), body-anchored, never blocks.
-      try {
-        // 🔇 Kill the OUTGOING guide first — its typing/advance timers AND
-        // its voice/audio clip live on JS objects (not the DOM), so just
-        // removing the overlay would let the previous page's audio keep
-        // playing on the new page. _clearGuideTimers() stops audio + timers.
+    }
+    // 📖 RPG page guide — keyed to the COMPOSITE route (screen + title sub-hub
+    // / vendor tab) so guides also fire when you enter Battle Hall, the Packs
+    // tab, etc. — not just on a full App.screen change. Self-gated downstream.
+    try {
+      const _gr = (typeof _currentGuideRoute === 'function') ? _currentGuideRoute() : App.screen;
+      if (App._lastGuideRoute !== _gr) {
+        App._lastGuideRoute = _gr;
+        // 🔇 Kill the OUTGOING guide first — its typing/advance timers AND its
+        // voice/audio clip live on JS objects (not the DOM), so just removing
+        // the overlay would let the previous page's audio keep playing.
         if (typeof _clearGuideTimers === 'function') _clearGuideTimers();
         const _gv = document.getElementById('rpgg-overlay'); if (_gv) _gv.remove();
         const _gf = document.getElementById('rpgg-replay-fab'); if (_gf) _gf.remove();
         if (typeof RPGGuide !== 'undefined') RPGGuide.activeId = null;
         setTimeout(() => { try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {} }, 120);
-      } catch (e) {}
-    }
+      }
+    } catch (e) {}
   } catch (e) { /* never let a save failure block render */ }
 
   // ===== Audio routing FIRST =====
@@ -48738,6 +48742,20 @@ const RPG_GUIDE_PAGES = [
   { route: 'deck',         label: 'Deck Builder' },
   { route: 'collection',   label: 'Inventory / Codex' },
   { route: 'coliseum',     label: 'Coliseum' },
+  { route: 'camp',         label: 'Survivor Camp' },
+  { route: 'lab',          label: 'The Lab' },
+  // Title sub-hubs (one App.screen, switched via the hub portals).
+  { route: 'title:battle',   label: 'Battle Hall (hub)' },
+  { route: 'title:forge',    label: 'Forge Sanctum (hub)' },
+  { route: 'title:exchange', label: 'Ruin Exchange (hub)' },
+  { route: 'title:codex',    label: 'Codex (hub)' },
+  { route: 'title:field',    label: 'Field / Survival (hub)' },
+  { route: 'title:arcanum',  label: 'Arcanum (hub)' },
+  // Vendor Market tabs (one App.screen, switched via the tab bar).
+  { route: 'vendorMarket:packs',      label: 'Open Packs (Vendor — Card Packs)' },
+  { route: 'vendorMarket:sovereigns', label: 'Aza Coin Store (Vendor)' },
+  { route: 'vendorMarket:starter',    label: 'Starter Decks (Vendor)' },
+  { route: 'vendorMarket:tomb',       label: 'Tombstones (Vendor)' },
   { route: 'forge',        label: 'The Forge (admin)' },
 ];
 const RPG_GUIDE_DEFAULT_CHAR = 'assets/Characters/Merchant.png';
@@ -48811,13 +48829,27 @@ function _guideCondMet(cond) {
   return true;
 }
 
+// Resolve the guide route for the CURRENT view. Title sub-hubs (Battle Hall,
+// Forge Sanctum, etc.) and the Vendor Market tabs share one App.screen, so we
+// build a composite "screen:subkey" route — admins can target the specific
+// sub-page, and a guide authored for the plain screen still matches via the
+// fallback in maybeShowPageGuide.
+function _currentGuideRoute() {
+  const s = App.screen;
+  if (s === 'title')        return 'title:' + (App.titleHub || 'main');
+  if (s === 'vendorMarket') return 'vendorMarket:' + (App.vendorMarketTab || 'packs');
+  return s;
+}
 // Called on every screen change (from render()). Decides whether to auto-play.
 function maybeShowPageGuide() {
   try {
     if (RPGGuide.activeId) return;                       // one at a time
     if (guidesGloballyOff()) return;
-    const route = App.screen;
-    const g = getActivePageGuide(route);
+    const composite = _currentGuideRoute();
+    const candidates = [composite];
+    if (composite.indexOf(':') >= 0) candidates.push(composite.split(':')[0]);
+    let g = null;
+    for (const r of candidates) { g = getActivePageGuide(r); if (g) break; }
     if (!g) return;
     if (g.triggerType === 'button') return;              // manual replay only
     let done = false;

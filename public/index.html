@@ -48916,7 +48916,12 @@ function _ensureGuideCss() {
        UP to a consistent full-height presence. max-width keeps a wide scene
        image on its own side instead of sprawling over the dialog; contain +
        object-position:bottom keeps figures standing on the floor. */
-    .rpgg-char{position:absolute;top:0;height:100vh;width:auto;max-width:48vw;object-fit:contain;object-position:bottom center;filter:drop-shadow(0 14px 38px rgba(0,0,0,.9));opacity:0;transition:transform .55s cubic-bezier(.2,1,.3,1),opacity .45s ease;pointer-events:none;}
+    .rpgg-char{position:absolute;top:0;height:100vh;width:auto;max-width:48vw;object-fit:contain;object-position:bottom center;
+      /* Best smooth upscale the browser can do (Canva-style) when a small /
+         low-res guide image is blown up to full height — fall back through
+         the keyword chain on older engines, and never inherit pixelated. */
+      image-rendering:auto;image-rendering:smooth;image-rendering:high-quality;
+      filter:drop-shadow(0 14px 38px rgba(0,0,0,.9));opacity:0;transition:transform .55s cubic-bezier(.2,1,.3,1),opacity .45s ease;pointer-events:none;}
     /* All three tiers render the SAME full-body engaging size so no guide
        is ever small — capped at the viewport so it's never cropped either,
        regardless of each guide's authored Character Size setting. */

@@ -16961,6 +16961,10 @@ const PASSIVES = {
   // { maxUses, reviveTurns }`). Useful for boss units, undead, lich-style
   // characters. Configurable per card in the Forge.
   raiseFromDead:{ id: 'raiseFromDead', name: 'Raise From Dead', desc: 'On death: leave a glowing tombstone for 2 turns. If the tile stays clear, the unit rises at 60% HP. (1-3 charges per unit.)' },
+  // 🜂 FORCED ASCENSION — auto Kalon-transforms at a set turn timing.
+  forcedAscension:{ id: 'forcedAscension', name: 'Forced Ascension', desc: '🜂 Automatically Kalon-transforms at the configured timing (start of its own turn by default) — no charge spent. Configure in the Forge.' },
+  // 🜁 REBIRTH SHIFT — on death, returns next turn as a different unit.
+  rebirthShift:{ id: 'rebirthShift', name: 'Rebirth Shift', desc: '🜁 When this unit dies, at the start of its owner\'s next turn it returns as a unit from its admin-defined Rebirth Pool (summoning sick, no inherited buffs unless allowed).' },
   thorns:       { id: 'thorns',       name: 'Thorns',       desc: 'Reflect 25% damage taken' },
   lifesteal:    { id: 'lifesteal',    name: 'Lifesteal',    desc: 'Heal 30% of damage dealt' },
   swift:        { id: 'swift',        name: 'Swift',        desc: '+1 movement range' },
@@ -27799,6 +27803,27 @@ function _kalonFlags(unit) {
   };
 }
 
+// 🜂 Forced-Kalon config for a unit (card.forcedKalon or forcedAscension
+// passive). timing: 'startOwn' (its turn start) | 'startOpp' (opponent's
+// turn start ≈ end of its turn). Returns null when not configured.
+function _forcedKalonCfg(unit) {
+  if (!unit) return null;
+  const id = unit.originalCardId || unit.cardId || unit.heroId || unit.id;
+  let src = null;
+  try {
+    if (typeof UNIT_CARDS !== 'undefined') src = UNIT_CARDS.find(c => c.id === id);
+    if (!src && typeof STARTER_HEROES !== 'undefined') src = STARTER_HEROES.find(h => h.id === id);
+    if (!src && typeof lookupCustomCard === 'function') src = lookupCustomCard(id);
+    if (!src && Forge && Array.isArray(Forge.customCards)) src = Forge.customCards.find(c => c.id === id);
+    if (!src && typeof Catalog !== 'undefined' && Array.isArray(Catalog.cards)) src = Catalog.cards.find(c => c.id === id);
+  } catch (e) {}
+  const fk = src && src.forcedKalon;
+  const list = Array.isArray(unit.passives) ? unit.passives : (unit.passive ? [unit.passive] : []);
+  const hasPsv = list.indexOf('forcedAscension') >= 0;
+  if (!(fk && fk.enabled) && !hasPsv) return null;
+  return { timing: (fk && fk.timing) || 'startOwn' };
+}
+
 const executeKalonTransform = (state, unit, opts) => {
   opts = opts || {};
   // 🎁 FREE transforms (e.g. from a transformAlly on-play effect) bypass the
@@ -29169,6 +29194,27 @@ const startTurn = (state, who) => {
   // raiseFromDead glowing tombstones. Runs at the start of EVERY turn so
   // both sides' tombstones expire on a steady cadence.
   try { if (typeof tickTombstones === 'function') tickTombstones(s); } catch (e) {}
+  // 🜂 FORCED KALON TRANSFORM — units whose card.forcedKalon (or the
+  // Forced Ascension passive) targets this timing auto-transform now. A
+  // unit timed 'startOwn' fires on its own side's turn start; 'startOpp'
+  // fires when the opponent's turn starts (≈ end of its own turn). Forced
+  // + free so it spends no Kalon charge and respects canForcedKalon flags.
+  try {
+    const fkList = (s.units || []).filter(u => u && u.alive && !u.kalonUsed && !u._forcedKalonDone);
+    for (const u of fkList) {
+      const cfg = (typeof _forcedKalonCfg === 'function') ? _forcedKalonCfg(u) : null;
+      if (!cfg) continue;
+      const fires = (cfg.timing === 'startOpp') ? (u.owner !== who) : (u.owner === who);
+      if (!fires) continue;
+      if (typeof getKalonForm === 'function' && !getKalonForm(u)) continue;
+      const before = s.units;
+      s = executeKalonTransform(s, u, { forced: true, free: true });
+      if (s.units !== before) {
+        s.units = s.units.map(x => x.id === u.id ? { ...x, _forcedKalonDone: true } : x);
+        log.push({ msg: `🜂 ${u.name} is forced to ascend!`, color: u.owner === 'player' ? 'green' : 'red' });
+      }
+    }
+  } catch (e) { /* forced-kalon never breaks the turn */ }
   // "Energy Surge" daily modifier: gain +2 max energy per turn instead of +1.
   const energyStep = (s.mods && s.mods.surge) ? 2 : 1;
   const isFirstTurnNoGain = s.turnNumber === 1 && who === 'player';
@@ -33472,6 +33518,17 @@ function renderCardEditor() {
           <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;margin-top:0.3rem"><input type="checkbox" id="ed-kalon-forcedonly" ${card.forcedTransformOnly ? 'checked' : ''}> <span>Forced-transform ONLY (never manually — implies the first box off)</span></label>
           <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;margin-top:0.3rem"><input type="checkbox" id="ed-kalon-ignorerestrict" ${card.ignoreTransformRestrictions ? 'checked' : ''}> <span>This unit's own transform ignores all restrictions</span></label>
         </div>
+        <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.6rem;margin-top:0.3rem">
+          <label style="color:#d4af37;font-weight:700">🜂 Forced Kalon Transform</label>
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;margin-top:0.4rem"><input type="checkbox" id="ed-fk-on" ${(card.forcedKalon && card.forcedKalon.enabled) ? 'checked' : ''}> <span>Auto-transform this unit (no Kalon charge spent; once per match)</span></label>
+          <div class="editor-field" style="margin-top:0.4rem"><label>Timing</label>
+            <select id="ed-fk-timing">
+              <option value="startOwn" ${(!card.forcedKalon || (card.forcedKalon.timing || 'startOwn') === 'startOwn') ? 'selected' : ''}>Start of its OWN turn (beginning)</option>
+              <option value="startOpp" ${(card.forcedKalon && card.forcedKalon.timing === 'startOpp') ? 'selected' : ''}>Start of the OPPONENT's turn (≈ end of its turn)</option>
+            </select>
+          </div>
+          <div class="small-text" style="margin-top:0.25rem;opacity:0.7">Needs a Kalon form set above. Respects "Can be transformed by forced effects". Campaign/field/card effects can also force-transform via the engine.</div>
+        </div>
       </div>
     </div>
   ` : '';
@@ -34829,6 +34886,13 @@ function captureEditorIntoCard(card) {
     card.canForcedKalonTransform  = cf === false ? false : true;
     card.forcedTransformOnly      = !!fo;
     card.ignoreTransformRestrictions = !!ig;
+  }
+  // 🜂 Forced Kalon config.
+  if (document.getElementById('ed-fk-on')) {
+    const on = document.getElementById('ed-fk-on').checked;
+    const tEl = document.getElementById('ed-fk-timing');
+    if (on) card.forcedKalon = { enabled: true, timing: (tEl && tEl.value) || 'startOwn' };
+    else delete card.forcedKalon;
   }
 
   // Spell

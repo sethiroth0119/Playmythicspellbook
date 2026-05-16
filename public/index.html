@@ -16973,6 +16973,9 @@ const PASSIVES = {
   forcedAscension:{ id: 'forcedAscension', name: 'Forced Ascension', desc: '🜂 Automatically Kalon-transforms at the configured timing (start of its own turn by default) — no charge spent. Configure in the Forge.' },
   // 🜁 REBIRTH SHIFT — on death, returns next turn as a different unit.
   rebirthShift:{ id: 'rebirthShift', name: 'Rebirth Shift', desc: '🜁 When this unit dies, at the start of its owner\'s next turn it returns as a unit from its admin-defined Rebirth Pool (summoning sick, no inherited buffs unless allowed).' },
+  // 🔥 PHOENIX REBIRTH AURA — triggered aura: nearby allies that die have a
+  // chance to be revived in flame.
+  phoenixRebirth:{ id: 'phoenixRebirth', name: 'Phoenix Rebirth Aura', desc: '🔥 When an allied unit dies within this unit\'s aura, a % chance (default 30%) to revive it at a % HP (default 25%). Configure range / chance / limits in the Forge.' },
   thorns:       { id: 'thorns',       name: 'Thorns',       desc: 'Reflect 25% damage taken' },
   lifesteal:    { id: 'lifesteal',    name: 'Lifesteal',    desc: 'Heal 30% of damage dealt' },
   swift:        { id: 'swift',        name: 'Swift',        desc: '+1 movement range' },
@@ -26213,6 +26216,67 @@ function _nearestEmptyTile(state, ox, oy) {
   return null;
 }
 
+// 🔥 PHOENIX REBIRTH AURA — config for an aura unit (needs the phoenixRebirth
+// passive AND card.phoenixAura). Defaults mirror the spec (30% / 25% HP / 1).
+function _phoenixCfg(unit) {
+  if (!unit) return null;
+  const list = Array.isArray(unit.passives) ? unit.passives : (unit.passive ? [unit.passive] : []);
+  if (list.indexOf('phoenixRebirth') < 0) return null;
+  const id = unit.originalCardId || unit.cardId || unit.id;
+  let src = null;
+  try {
+    if (typeof UNIT_CARDS !== 'undefined') src = UNIT_CARDS.find(c => c.id === id);
+    if (!src && typeof STARTER_HEROES !== 'undefined') src = STARTER_HEROES.find(h => h.id === id);
+    if (!src && typeof lookupCustomCard === 'function') src = lookupCustomCard(id);
+    if (!src && typeof Forge !== 'undefined' && Array.isArray(Forge.customCards)) src = Forge.customCards.find(c => c.id === id);
+    if (!src && typeof Catalog !== 'undefined' && Array.isArray(Catalog.cards)) src = Catalog.cards.find(c => c.id === id);
+  } catch (e) {}
+  const p = (src && src.phoenixAura) || {};
+  const rg = (p.range === 'row' || p.range === 'board') ? p.range : Math.max(1, parseInt(p.range, 10) || 1);
+  return {
+    chance: Math.max(1, Math.min(100, parseInt(p.chance, 10) || 30)),
+    healPct: Math.max(1, Math.min(100, parseInt(p.healPct, 10) || 25)),
+    range: rg,
+    maxPerTurn: Math.max(0, parseInt(p.maxPerTurn, 10) || 3),
+    maxPerMatch: Math.max(0, parseInt(p.maxPerMatch, 10) || 0),
+    allowHeroes: !!p.allowHeroes, allowKalons: !!p.allowKalons,
+    allowTokens: !!p.allowTokens, allowEvolved: !!p.allowEvolved,
+    factionOnly: !!p.factionOnly, flyingOnly: !!p.flyingOnly, legendaryOnly: !!p.legendaryOnly,
+    inheritEquip: !!p.inheritEquip,
+    allowHand: !!p.allowHand, allowChain: !!p.allowChain,
+    burningRes: !!p.burningRes, ashenReturn: !!p.ashenReturn,
+    phoenixBond: !!p.phoenixBond, soulFlame: !!p.soulFlame,
+    popupText: p.popupText || '',
+  };
+}
+function _phoenixCovers(phx, dead, cfg) {
+  if (!phx || !phx.pos || !dead || !dead.pos) return false;
+  if (cfg.range === 'row') { if (phx.pos.y !== dead.pos.y) return false; }
+  else if (cfg.range !== 'board') {
+    if (Math.max(Math.abs(phx.pos.x - dead.pos.x), Math.abs(phx.pos.y - dead.pos.y)) > cfg.range) return false;
+  }
+  if (dead.isHero && !cfg.allowHeroes) return false;
+  if (dead.isToken && !cfg.allowTokens) return false;
+  if (dead.kalonUsed && !cfg.allowKalons) return false;
+  if (dead._reborn && !cfg.allowEvolved) return false;
+  if (cfg.flyingOnly && !dead.flying) return false;
+  if (cfg.factionOnly) {
+    const fa = Array.isArray(phx.factions) ? phx.factions : [];
+    const fb = Array.isArray(dead.factions) ? dead.factions : [];
+    if (!fa.some(f => fb.indexOf(f) >= 0)) return false;
+  }
+  if (cfg.legendaryOnly) {
+    let rar = '';
+    try {
+      const c = (typeof lookupCustomCard === 'function' && lookupCustomCard(dead.cardId))
+        || (typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS.find(x => x.id === dead.cardId)) || null;
+      rar = String((c && c.rarity) || '').toLowerCase();
+    } catch (e) {}
+    if (rar !== 'legendary' && rar !== 'mythic') return false;
+  }
+  return true;
+}
+
 function processTombstoneDrops(state) {
   if (!state || !Array.isArray(state.units)) return state;
   if (!Array.isArray(state.tombstones)) state.tombstones = [];
@@ -26220,6 +26284,68 @@ function processTombstoneDrops(state) {
     if (!u || u.alive) continue;
     if (u._tombstoned) continue;          // already dropped
     if (!u.pos) continue;
+    // 🔥 ASHEN RETURN — a Phoenix-revived unit detonates on its (re)death.
+    if (u._ashenReturn && !u._ashenDone) {
+      u._ashenDone = true;
+      const dmg = Math.max(5, Math.round((u.maxHp || 20) * 0.2));
+      for (const e of state.units) {
+        if (e && e.alive && e.owner !== u.owner && e.pos
+            && Math.max(Math.abs(e.pos.x - u.pos.x), Math.abs(e.pos.y - u.pos.y)) <= 1) {
+          e.currentHp = Math.max(0, (e.currentHp || 0) - dmg);
+          if (e.currentHp <= 0) e.alive = false;
+        }
+      }
+      state.log = [...(state.log || []), { msg: `🔥 ${u.name} bursts into ash — ${dmg} dmg to nearby foes!`, color: u.owner === 'player' ? 'green' : 'red' }];
+    }
+    // 🔥 PHOENIX REBIRTH AURA — an allied Phoenix may revive this ally NOW
+    // (immediately on death). Same square if free, else nearest empty, else
+    // hand (if allowed). Respects per-turn / per-match limits + filters.
+    if (!u._phoenixNoChain) {
+      let phx = null, pcfg = null;
+      for (const p of state.units) {
+        if (!p || !p.alive || p.id === u.id || p.owner !== u.owner) continue;
+        const pl = Array.isArray(p.passives) ? p.passives : (p.passive ? [p.passive] : []);
+        if (pl.indexOf('phoenixRebirth') < 0) continue;
+        const c = _phoenixCfg(p);
+        if (c && _phoenixCovers(p, u, c)) { phx = p; pcfg = c; break; }
+      }
+      if (phx && pcfg) {
+        state._phoenixTurnRevives = state._phoenixTurnRevives || 0;
+        phx._phoenixMatch = phx._phoenixMatch || 0;
+        const turnOk  = pcfg.maxPerTurn  === 0 || state._phoenixTurnRevives < pcfg.maxPerTurn;
+        const matchOk = pcfg.maxPerMatch === 0 || phx._phoenixMatch < pcfg.maxPerMatch;
+        if (turnOk && matchOk && (Math.random() * 100 < pcfg.chance)) {
+          const sameFree = !state.units.some(x => x.alive && x.pos && x.pos.x === u.pos.x && x.pos.y === u.pos.y)
+            && !(typeof tileBlockedByTombstone === 'function' && tileBlockedByTombstone(state, u.pos.x, u.pos.y));
+          const pos = sameFree ? { x: u.pos.x, y: u.pos.y } : _nearestEmptyTile(state, u.pos.x, u.pos.y);
+          let onBoard = false, didRevive = false;
+          if (pos) {
+            u.alive = true; u._tombstoned = false; u.pos = pos;
+            u.currentHp = Math.max(1, Math.floor((u.maxHp || 1) * (pcfg.healPct / 100)));
+            u.hasMoved = true; u.hasAttacked = true;
+            u.statusEffects = [{ type: 'reborn', turns: 2 }];
+            if (pcfg.burningRes) u.statusEffects.push({ type: 'burningRes', turns: 3 });
+            if (pcfg.soulFlame)  u.statusEffects.push({ type: 'soulFlame', turns: 3 });
+            if (!pcfg.inheritEquip) u.heldItem = null;
+            if (pcfg.ashenReturn) { u._ashenReturn = true; u._ashenDone = false; }
+            if (!pcfg.allowChain) u._phoenixNoChain = true;
+            onBoard = true; didRevive = true;
+          } else if (pcfg.allowHand) {
+            const side = state[u.owner];
+            let card = null;
+            try { card = (typeof lookupCustomCard === 'function' && lookupCustomCard(u.cardId)) || (typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS.find(c => c.id === u.cardId)) || null; } catch (e) {}
+            if (side && Array.isArray(side.hand) && card) { side.hand.push({ ...card }); didRevive = true; }
+          }
+          if (didRevive) {
+            state._phoenixTurnRevives++; phx._phoenixMatch++;
+            if (pcfg.phoenixBond) { phx.statusEffects = [...(phx.statusEffects || []), { type: 'empowered', turns: 99 }]; }
+            try { if (onBoard && typeof playRebornVfx === 'function') playRebornVfx(u); } catch (e) {}
+            state.log = [...(state.log || []), { msg: pcfg.popupText || `🔥 ${phx.name}'s Phoenix Rebirth Aura returns ${u.name} (${u.currentHp || 0} HP)!`, color: u.owner === 'player' ? 'green' : 'red' }];
+            if (onBoard) continue;   // back on the board — no tombstone/rebirth
+          }
+        }
+      }
+    }
     // Mark BEFORE we add — so two sweeps in the same tick don't double-drop.
     u._tombstoned = true;
     // 🜁 REBIRTH SHIFT — leave a "rebirth" marker; on the next turn-start
@@ -29321,6 +29447,7 @@ const startTurn = (state, who) => {
   // raiseFromDead glowing tombstones. Runs at the start of EVERY turn so
   // both sides' tombstones expire on a steady cadence.
   try { if (typeof tickTombstones === 'function') tickTombstones(s); } catch (e) {}
+  s._phoenixTurnRevives = 0;   // 🔥 reset Phoenix Rebirth per-turn limit
   // 🜂 FORCED KALON TRANSFORM — units whose card.forcedKalon (or the
   // Forced Ascension passive) targets this timing auto-transform now. A
   // unit timed 'startOwn' fires on its own side's turn start; 'startOpp'
@@ -33771,6 +33898,44 @@ function renderCardEditor() {
       </div>
       <div class="editor-field full" style="margin-top:0.4rem"><label>Rebirth popup text (optional)</label><input id="ed-rb-popup" type="text" value="${escapeHtml((card.rebirthShift && card.rebirthShift.popupText) || '')}" placeholder="The vessel cracks — something new claws free!"></div>
     </div>` : '';
+  const _pa = (card.phoenixAura) || {};
+  const phoenixBlock = (type === 'unit') ? `
+    <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem">
+      <label style="color:#ff8a3a;font-weight:700">🔥 Phoenix Rebirth Aura</label>
+      <div class="small-text" style="margin:0.2rem 0 0.5rem;opacity:0.78">Also pick the <strong>Phoenix Rebirth Aura</strong> passive above. When an allied unit dies within this unit's aura, it has a chance to be revived in flame (same square → nearest empty → hand).</div>
+      <div class="editor-grid">
+        <div class="editor-field"><label>Revive chance %</label><input id="ed-px-chance" type="number" min="1" max="100" value="${_pa.chance != null ? _pa.chance : 30}"></div>
+        <div class="editor-field"><label>Revive HP %</label><input id="ed-px-heal" type="number" min="1" max="100" value="${_pa.healPct != null ? _pa.healPct : 25}"></div>
+        <div class="editor-field"><label>Aura range</label><select id="ed-px-range">
+          <option value="1" ${(String(_pa.range || 1) === '1') ? 'selected' : ''}>Adjacent (1 tile)</option>
+          <option value="2" ${(String(_pa.range) === '2') ? 'selected' : ''}>2 tiles</option>
+          <option value="row" ${_pa.range === 'row' ? 'selected' : ''}>Entire row</option>
+          <option value="board" ${_pa.range === 'board' ? 'selected' : ''}>Entire board</option>
+        </select></div>
+        <div class="editor-field"><label>Max revives / turn (0 = ∞)</label><input id="ed-px-mpt" type="number" min="0" max="20" value="${_pa.maxPerTurn != null ? _pa.maxPerTurn : 3}"></div>
+        <div class="editor-field"><label>Max revives / match (0 = ∞)</label><input id="ed-px-mpm" type="number" min="0" max="50" value="${_pa.maxPerMatch || 0}"></div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.8rem 1rem;margin-top:0.4rem">
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-heroes" ${_pa.allowHeroes ? 'checked' : ''}> Can revive heroes</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-kalons" ${_pa.allowKalons ? 'checked' : ''}> Can revive Kalons</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-tokens" ${_pa.allowTokens ? 'checked' : ''}> Can revive tokens</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-evolved" ${_pa.allowEvolved ? 'checked' : ''}> Can revive reborn/evolved</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-faction" ${_pa.factionOnly ? 'checked' : ''}> Faction-only (shares a faction)</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-flying" ${_pa.flyingOnly ? 'checked' : ''}> Flying-only</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-legend" ${_pa.legendaryOnly ? 'checked' : ''}> Legendary-only</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-iequip" ${_pa.inheritEquip ? 'checked' : ''}> Inherit held item</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-hand" ${_pa.allowHand ? 'checked' : ''}> Revive into hand if no square</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-chain" ${_pa.allowChain ? 'checked' : ''}> Allow revive chain reactions</label>
+      </div>
+      <div class="small-text" style="margin:0.5rem 0 0.2rem;opacity:0.85;color:#ffb37a">Advanced:</div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.8rem 1rem">
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-burn" ${_pa.burningRes ? 'checked' : ''}> 🔥 Burning Resurrection (+ATK/MAG)</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-soul" ${_pa.soulFlame ? 'checked' : ''}> 🕯️ Soul Flame (+DEF/RES)</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-ashen" ${_pa.ashenReturn ? 'checked' : ''}> 💥 Ashen Return (explodes on next death)</label>
+        <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-px-bond" ${_pa.phoenixBond ? 'checked' : ''}> 🪶 Phoenix Bond (Phoenix grows per revive)</label>
+      </div>
+      <div class="editor-field full" style="margin-top:0.4rem"><label>Revive popup text (optional)</label><input id="ed-px-popup" type="text" value="${escapeHtml(_pa.popupText || '')}" placeholder="From ash and ruin, the flame chooses who rises again."></div>
+    </div>` : '';
   const heroSubclassBlock = (type === 'hero') ? `
     <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
@@ -34022,6 +34187,7 @@ function renderCardEditor() {
         ${onPlayBlock}
         ${kalonBlock}
         ${rebirthBlock}
+        ${phoenixBlock}
         ${heroSubclassBlock}
       </div>
       <div class="editor-actions">
@@ -35058,6 +35224,25 @@ function captureEditorIntoCard(card) {
         popupText: (_rv('ed-rb-popup') || '').trim(),
       };
     }
+  }
+  // 🔥 Phoenix Rebirth Aura config.
+  if (document.getElementById('ed-px-chance')) {
+    const _pv = (id) => { const e = document.getElementById(id); return e ? e.value : ''; };
+    const _pc = (id) => { const e = document.getElementById(id); return e ? !!e.checked : false; };
+    card.phoenixAura = {
+      chance: Math.max(1, Math.min(100, parseInt(_pv('ed-px-chance'), 10) || 30)),
+      healPct: Math.max(1, Math.min(100, parseInt(_pv('ed-px-heal'), 10) || 25)),
+      range: (() => { const r = _pv('ed-px-range'); return (r === 'row' || r === 'board') ? r : (Math.max(1, parseInt(r, 10) || 1)); })(),
+      maxPerTurn: Math.max(0, parseInt(_pv('ed-px-mpt'), 10) || 0),
+      maxPerMatch: Math.max(0, parseInt(_pv('ed-px-mpm'), 10) || 0),
+      allowHeroes: _pc('ed-px-heroes'), allowKalons: _pc('ed-px-kalons'),
+      allowTokens: _pc('ed-px-tokens'), allowEvolved: _pc('ed-px-evolved'),
+      factionOnly: _pc('ed-px-faction'), flyingOnly: _pc('ed-px-flying'), legendaryOnly: _pc('ed-px-legend'),
+      inheritEquip: _pc('ed-px-iequip'), allowHand: _pc('ed-px-hand'), allowChain: _pc('ed-px-chain'),
+      burningRes: _pc('ed-px-burn'), soulFlame: _pc('ed-px-soul'),
+      ashenReturn: _pc('ed-px-ashen'), phoenixBond: _pc('ed-px-bond'),
+      popupText: (_pv('ed-px-popup') || '').trim(),
+    };
   }
 
   // Spell

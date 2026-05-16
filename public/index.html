@@ -30467,7 +30467,13 @@ function renderDeckSelect() {
   // Collect every saved deck across every hero, then add fallback "generated" cards for heroes
   // who don't have any saved decks. Index them by tile-key so the modal can
   // re-resolve full details (hero, deckCards, etc.) from just the tile's key.
-  const allDecks = getAllDecks();
+  // When custom-only pool is ON (production default) and custom heroes exist,
+  // also drop any saved deck tied to a built-in emoji STARTER hero so players
+  // never see the mockup decks (e.g. "Sir Cedric's Deck"). findHeroById still
+  // resolves starter ids elsewhere so legacy/AI/icon lookups never break.
+  const _starterIds = new Set(STARTER_HEROES.map(h => h.id));
+  const _hideStarters = !!Forge.useCustomOnlyPool && _customHeroEntries().length > 0;
+  const allDecks = getAllDecks().filter(d => !(_hideStarters && _starterIds.has(d.heroId)));
   const heroesWithDecks = new Set(allDecks.map(d => d.heroId));
   const allHeroes = getAllHeroes();
   const deckOptions = [

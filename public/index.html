@@ -33296,19 +33296,14 @@ function renderCardEditor() {
       <div class="small-text" style="margin-top:0.3rem">Tribal types — used for badges and future synergies. Multiple is fine (e.g. Goblinoid + Warrior).</div>
     </div>
     <div class="editor-field full">
-      <label>🧬 Trait Pool (pick up to 4 — players randomly roll ONE of these on pack-open)</label>
-      <div class="faction-picker" id="ed-traitpool">
-        ${TRAITS.map(t => {
-          const checked = (card.traitPool || []).includes(t.id);
-          const col = TRAIT_RARITY_COLOR[t.rarity] || '#9aa0a6';
-          return `
-            <label class="faction-chip ${checked ? 'on' : ''}" title="${escapeHtml(t.rarity.toUpperCase() + ' — ' + t.desc)}" style="${checked ? `border-color:${col};color:${col}` : ''}">
-              <input type="checkbox" data-traitpool="${t.id}" ${checked ? 'checked' : ''}>
-              <span>${t.icon} ${escapeHtml(t.name)} <span class="small-text" style="opacity:0.7">${t.rarity}</span></span>
-            </label>`;
-        }).join('')}
+      <label>🧬 Trait Pool ${(card.traitPool || []).length ? `<span class="small-text" style="color:#7be0a0">(${(card.traitPool || []).length}/4 set)</span>` : '<span class="small-text ink-dim">(none — rolls from full global pool)</span>'}</label>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:5px 0">
+        ${(card.traitPool && card.traitPool.length)
+          ? card.traitPool.map(id => { const t = (typeof getTrait === 'function') ? getTrait(id) : null; if (!t) return ''; const c = TRAIT_RARITY_COLOR[t.rarity] || '#9aa0a6'; return `<span style="border:1px solid ${c};color:${c};border-radius:5px;padding:3px 8px;font-size:0.82rem">${t.icon} ${escapeHtml(t.name)}</span>`; }).join('')
+          : '<span class="small-text ink-dim">No curated pool — players roll ONE trait from the full rarity-weighted list.</span>'}
       </div>
-      <div class="small-text" style="margin-top:0.3rem">Leave ALL unchecked = unit rolls from the full global trait pool (rarity-weighted). Pick 1–4 to lock this unit to a curated set. Each player rolls their own, so the same unit feels different per player and rare traits are valuable.</div>
+      <button type="button" class="btn-secondary btn-mini" id="btn-traitpool-open">🧬 Configure Trait Pool…</button>
+      <div class="small-text" style="margin-top:0.3rem">Pick up to <strong>4</strong> traits to lock this unit's roll pool. Each player rolls ONE on pack-open — same unit, different versions per player; rare/legendary traits are valuable.</div>
     </div>
     <div class="editor-field full">
       <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
@@ -33737,8 +33732,64 @@ function renderCardEditor() {
         <button class="btn-secondary" id="btn-cancel-card">Cancel</button>
         <button class="btn-primary" id="btn-save-card">${isNew ? 'Forge It' : 'Save Changes'}</button>
       </div>
+      ${App._traitPoolModal ? renderTraitPoolModal(card) : ''}
     </div>
   `;
+}
+
+// 🧬 Trait-pool picker MODAL — shows every trait with full details, rarity,
+// and faction synergy; click to add/remove (max 4). Mutates card.traitPool
+// on the live draft directly so it always persists (the old inline chips had
+// no visual feedback + relied on hidden checkboxes).
+function renderTraitPoolModal(card) {
+  const sel = Array.isArray(card.traitPool) ? card.traitPool : [];
+  const order = { common: 0, uncommon: 1, rare: 2, legendary: 3 };
+  const groups = { common: [], uncommon: [], rare: [], legendary: [] };
+  TRAITS.forEach(t => { (groups[t.rarity] = groups[t.rarity] || []).push(t); });
+  const row = (t) => {
+    const on = sel.indexOf(t.id) >= 0;
+    const c = TRAIT_RARITY_COLOR[t.rarity] || '#9aa0a6';
+    return `
+      <button type="button" data-trait-toggle="${t.id}" style="display:flex;align-items:flex-start;gap:10px;width:100%;text-align:left;padding:10px 12px;margin:0 0 8px;border-radius:8px;cursor:pointer;
+        background:${on ? 'rgba(212,175,55,0.14)' : 'rgba(20,12,40,0.6)'};border:2px solid ${on ? c : 'rgba(184,136,255,0.22)'}">
+        <span style="font-size:1.5rem;line-height:1;flex:0 0 auto">${t.icon}</span>
+        <span style="flex:1 1 auto;min-width:0">
+          <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong style="color:#f6d97a;font-family:'Cinzel',serif">${escapeHtml(t.name)}</strong>
+            <span style="font-size:0.72rem;font-weight:700;color:${c};border:1px solid ${c};border-radius:4px;padding:1px 6px">${t.rarity.toUpperCase()}</span>
+            ${on ? '<span style="font-size:0.74rem;color:#7be0a0">✓ in pool</span>' : ''}
+          </span>
+          <span class="small-text ink-dim" style="display:block;margin-top:3px;line-height:1.4">${escapeHtml(t.desc || '')}</span>
+        </span>
+      </button>`;
+  };
+  const section = (rk, label) => (groups[rk] && groups[rk].length)
+    ? `<div style="margin:0 0 4px;color:${TRAIT_RARITY_COLOR[rk]};font-weight:700;font-family:'Cinzel',serif;font-size:0.95rem">${label}</div>${groups[rk].map(row).join('')}`
+    : '';
+  return `
+    <div class="modal-backdrop" id="traitpool-backdrop" style="z-index:1400">
+      <div class="ds-modal" style="max-width:620px;width:94vw;max-height:86vh;display:flex;flex-direction:column;padding:0">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px 20px;border-bottom:1px solid rgba(184,136,255,0.3)">
+          <div>
+            <div style="font-family:'Cinzel',serif;font-size:1.2rem;color:#f6d97a">🧬 Trait Pool</div>
+            <div class="small-text ink-dim">Players randomly roll <strong>ONE</strong> of these on pack-open. Pick up to 4 — leave empty to use the full global pool.</div>
+          </div>
+          <div style="text-align:right;flex:0 0 auto">
+            <div style="font-weight:700;color:${sel.length >= 4 ? '#e0a23a' : '#7be0a0'}">${sel.length}/4 selected</div>
+          </div>
+        </div>
+        <div style="overflow:auto;padding:16px 20px;flex:1 1 auto">
+          ${section('common','Common')}
+          ${section('uncommon','Uncommon')}
+          ${section('rare','Rare')}
+          ${section('legendary','Legendary')}
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;padding:14px 20px;border-top:1px solid rgba(184,136,255,0.3)">
+          <button type="button" class="btn-secondary btn-mini" id="btn-traitpool-clear">Clear all</button>
+          <button type="button" class="btn-primary" id="btn-traitpool-done">Done ✓</button>
+        </div>
+      </div>
+    </div>`;
 }
 
 function bindCardEditor() {
@@ -33774,7 +33825,39 @@ function bindCardEditor() {
     _edRoot.addEventListener('change', _sync, true);
   }
 
+  // 🧬 Trait-pool modal — open / toggle / clear / done. Mutates the live
+  // draft's traitPool directly so it always persists (re-render shows it).
+  const _tpOpen = document.getElementById('btn-traitpool-open');
+  if (_tpOpen) _tpOpen.onclick = () => {
+    const t = targetCard(); if (t) { try { captureEditorIntoCard(t); } catch (e) {} }
+    App._traitPoolModal = true; render();
+  };
+  if (App._traitPoolModal) {
+    const _closeTp = () => { App._traitPoolModal = false; render(); };
+    const _bd = document.getElementById('traitpool-backdrop');
+    if (_bd) _bd.addEventListener('click', (e) => { if (e.target === _bd) _closeTp(); });
+    const _done = document.getElementById('btn-traitpool-done');
+    if (_done) _done.onclick = _closeTp;
+    const _clr = document.getElementById('btn-traitpool-clear');
+    if (_clr) _clr.onclick = () => { const t = targetCard(); if (t) t.traitPool = []; render(); };
+    document.querySelectorAll('[data-trait-toggle]').forEach(btn => {
+      btn.onclick = () => {
+        const t = targetCard(); if (!t) return;
+        const id = btn.dataset.traitToggle;
+        t.traitPool = Array.isArray(t.traitPool) ? t.traitPool : [];
+        const i = t.traitPool.indexOf(id);
+        if (i >= 0) { t.traitPool.splice(i, 1); }
+        else {
+          if (t.traitPool.length >= 4) { showToast('Trait pool is full — max 4. Remove one first.', 2600); return; }
+          t.traitPool.push(id);
+        }
+        render();   // modal stays open (App._traitPoolModal still true)
+      };
+    });
+  }
+
   document.getElementById('btn-cancel-card').onclick = () => {
+    App._traitPoolModal = false;
     App.editingCardId = null; App._newCardDraft = null; App._learnNewMovePick = null; App._movePickerOpen = null; render();
   };
 
@@ -34493,6 +34576,7 @@ function bindCardEditor() {
   });
 
   document.getElementById('btn-save-card').onclick = () => {
+    App._traitPoolModal = false;
     // Capture subclass state into the card before the global save sweep runs.
     try { captureSubclassesFromDOM(); } catch (e) { console.warn('Subclass capture failed', e); }
     saveCardFromInputs(true);

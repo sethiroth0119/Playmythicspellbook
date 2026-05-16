@@ -33513,7 +33513,7 @@ function _newGuideDraft() {
     blockInteraction: false, imageOnly: false, sortOrder: 0,
     skipLabel: 'Skip', replayLabel: '📖 Replay guide', finishLabel: 'Finish ✓',
     dontShowLabel: "Don't show this again", typingSpeed: 26,
-    bubbles: [{ id: 'b' + Date.now(), order: 0, text: '', expressionImageUrl: '',
+    bubbles: [{ id: 'b' + Date.now(), order: 0, text: '', expressionImageUrl: '', audioUrl: '',
       typingSpeed: 0, delayBeforeShow: 0, autoAdvance: false, autoAdvanceDelay: 1800, nextButtonLabel: '',
       condition: { type: 'none', key: '', op: 'set', value: '' }, choices: [] }],
   };
@@ -33521,7 +33521,7 @@ function _newGuideDraft() {
 // A blank dialogue bubble (used by _newGuideDraft + the "Add Bubble" button).
 function _blankGuideBubble(order) {
   return { id: 'b' + Date.now() + Math.floor(Math.random() * 1e4), order: order || 0, text: '',
-    expressionImageUrl: '', typingSpeed: 0, delayBeforeShow: 0, autoAdvance: false,
+    expressionImageUrl: '', audioUrl: '', typingSpeed: 0, delayBeforeShow: 0, autoAdvance: false,
     autoAdvanceDelay: 1800, nextButtonLabel: '',
     condition: { type: 'none', key: '', op: 'set', value: '' }, choices: [] };
 }
@@ -33607,6 +33607,7 @@ function _captureGuideDraft() {
   d.blockInteraction = C('g-block'); d.imageOnly = C('g-imgonly');
   (d.bubbles || []).forEach((b, i) => {
     b.text = V('gb-text-' + i); b.expressionImageUrl = V('gb-exp-' + i);
+    b.audioUrl = V('gb-audio-' + i);
     b.typingSpeed = parseInt(V('gb-speed-' + i), 10) || 0;
     b.delayBeforeShow = parseInt(V('gb-delay-' + i), 10) || 0;
     b.autoAdvance = C('gb-auto-' + i);
@@ -33649,6 +33650,14 @@ function renderGuideEditor() {
         </div>
       </div>
       <div class="editor-field full"><label>Dialogue text</label><textarea id="gb-text-${i}" class="editor-textarea" rows="3" placeholder="What the character says…">${escapeHtml(b.text || '')}</textarea></div>
+      <div class="editor-field full"><label>🔊 Voice / audio for this line (plays when the bubble appears — upload or URL)</label>
+        <div style="display:flex;gap:0.3rem;align-items:center">
+          <input id="gb-audio-${i}" type="text" value="${escapeHtml(b.audioUrl||'')}" placeholder="assets/Audio/…  (mp3 / wav / ogg) — or Upload" style="flex:1 1 auto;min-width:140px">
+          <button type="button" class="btn-mini" id="gb-audioup-${i}" style="flex:0 0 auto">📁 Upload</button>
+          ${b.audioUrl ? `<button type="button" class="btn-mini" id="gb-audioclear-${i}" style="flex:0 0 auto;color:#ff8080">✖</button>` : ''}
+          <input type="file" id="gb-audiofile-${i}" accept="audio/*" style="display:none">
+        </div>
+      </div>
       <div style="display:flex;flex-wrap:wrap;gap:0.6rem;margin-top:0.5rem">
         ${fld('Expression image URL (optional)', `<input id="gb-exp-${i}" type="text" value="${escapeHtml(b.expressionImageUrl||'')}" placeholder="assets/Characters/…">`)}
         ${fld('Typing speed (ms/char, 0=guide default)', `<input id="gb-speed-${i}" type="number" min="0" max="120" value="${b.typingSpeed||0}" style="width:90px">`)}
@@ -33762,6 +33771,35 @@ function bindGuideEditor() {
       } catch (e) { showToast('⨯ Could not load that image.', 3500); }
     };
   }
+  // 🔊 Per-bubble voice/audio upload → data URL into the gb-audio-<i> field.
+  (App._guideDraft.bubbles || []).forEach((_b, i) => {
+    const up = document.getElementById('gb-audioup-' + i);
+    const fileEl = document.getElementById('gb-audiofile-' + i);
+    if (up && fileEl) {
+      up.onclick = () => fileEl.click();
+      fileEl.onchange = () => {
+        const f = fileEl.files && fileEl.files[0];
+        if (!f) return;
+        if (f.size > 1.5 * 1024 * 1024 && !confirm('That clip is ' + (f.size / 1024 / 1024).toFixed(1) + ' MB. Big audio bloats the published catalog every player downloads — keep voice lines short, or paste a hosted URL instead. Continue?')) { fileEl.value = ''; return; }
+        const rd = new FileReader();
+        rd.onload = () => {
+          const inp = document.getElementById('gb-audio-' + i);
+          if (inp) inp.value = rd.result;
+          _captureGuideDraft();
+          showToast('🔊 Voice line set for Bubble ' + (i + 1) + ' — Preview to hear it.', 2800);
+          render();
+        };
+        rd.onerror = () => showToast('⨯ Could not load that audio file.', 3500);
+        rd.readAsDataURL(f);
+      };
+    }
+    const clr = document.getElementById('gb-audioclear-' + i);
+    if (clr) clr.onclick = () => {
+      _captureGuideDraft();
+      const b = App._guideDraft.bubbles[i]; if (b) b.audioUrl = '';
+      render();
+    };
+  });
   const add = document.getElementById('btn-bubble-add');
   if (add) add.onclick = () => { _captureGuideDraft(); App._guideDraft.bubbles.push(_blankGuideBubble(App._guideDraft.bubbles.length)); render(); };
   // ➕/🗑 Per-bubble choice add/remove (mirrors the bubble add/del pattern).
@@ -48780,10 +48818,15 @@ function _ensureGuideCss() {
   document.head.appendChild(st);
 }
 
+function _stopGuideAudio() {
+  try { if (RPGGuide._audio) { RPGGuide._audio.pause(); RPGGuide._audio.currentTime = 0; RPGGuide._audio.src = ''; } } catch (e) {}
+  RPGGuide._audio = null;
+}
 function _clearGuideTimers() {
   try { clearInterval(RPGGuide._typeTimer); } catch (e) {}
   try { clearTimeout(RPGGuide._advTimer); } catch (e) {}
   RPGGuide._typeTimer = null; RPGGuide._advTimer = null;
+  _stopGuideAudio();
 }
 
 function _closeGuide(markDone) {
@@ -48921,6 +48964,16 @@ function playPageGuide(guide, opts) {
     const full = String(b.text || '');
     const speed = Math.max(8, Math.min(120, b.typingSpeed || guide.typingSpeed || 26));
     const start = () => {
+      // 🔊 Play this line's voice/audio (synced with the text reveal). Any
+      // prior clip was already stopped by _clearGuideTimers() above.
+      if (b.audioUrl) {
+        try {
+          const a = new Audio(b.audioUrl);
+          RPGGuide._audio = a;
+          const p2 = a.play();
+          if (p2 && typeof p2.catch === 'function') p2.catch(() => {});
+        } catch (e) {}
+      }
       let p = 0;
       textEl.innerHTML = '<span class="rpgg-caret">▌</span>';
       RPGGuide._typeTimer = setInterval(() => {

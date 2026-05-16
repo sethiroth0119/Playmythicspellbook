@@ -19339,6 +19339,12 @@ const Forge = {
   // (the rest can be listed in the Vendor Market). Up to 3 per hero. Each:
   // { id, name, heroId, cards:[key,...], img, inVendor, price, currency }
   starterDecks: [],
+  // 🗺️ Roguelite campaigns — admin-authored branching adventures. Each:
+  // { id,name,description,coverImg,difficulty,intro, startingHeroId,
+  //   startingHP, currencyName, startingCurrency, startingMedPoints,
+  //   startingDeckMode, startingDeckId, isPublished, nodes:[...],
+  //   finalReward:{cardKeys,currency}, createdAt, updatedAt }
+  campaigns: [],
   // 📖 RPG page guides — admin-authored character explainers per screen.
   pageGuides: [],
   // 🪦 ADMIN-SET DEFAULT TOMBSTONE — base image rendered on dying units' tiles.
@@ -20535,6 +20541,7 @@ async function cloudSyncProfile() {
       userDecks:      Array.isArray(Profile.decks) ? Profile.decks : [],
       aiDecks:        Array.isArray(Forge.aiDecks) ? Forge.aiDecks : [],
       starterDecks:   Array.isArray(Forge.starterDecks) ? Forge.starterDecks : [],
+      campaigns:      Array.isArray(Forge.campaigns) ? Forge.campaigns : [],
     };
     const row = {
       user_id:       Profile.cloud.userId,
@@ -20738,6 +20745,7 @@ async function cloudFetchProfile() {
       if (Array.isArray(f.userDecks)) Profile.decks = f.userDecks;
       if (Array.isArray(f.aiDecks))   Forge.aiDecks = f.aiDecks;
       if (Array.isArray(f.starterDecks)) Forge.starterDecks = f.starterDecks;
+      if (Array.isArray(f.campaigns)) Forge.campaigns = f.campaigns;
       if (Array.isArray(f.pageGuides)) Forge.pageGuides = f.pageGuides;
       // 🌐 WEBSITE PURCHASE REDEMPTION — when a player buys a pack from the
       // marketing site, that flow writes a receipt into forge.webPurchases and
@@ -20976,6 +20984,9 @@ const Catalog = {
   // 🦸 Published starter decks (rides in the catalog so every player can pick
   // their free one + buy the rest in the Vendor Market).
   starterDecks: [],
+  // 🗺️ Published roguelite campaigns (rides in the catalog so every player
+  // can play the admin's adventures).
+  campaigns: [],
   // 📖 Published RPG page guides (rides in the catalog so every player gets them).
   pageGuides: [],
   // 🪦 Admin-published default tombstone image — every player sees this one
@@ -21000,6 +21011,7 @@ function _applyCatalogSnapshot(c) {
   if (Array.isArray(c.heroes))  Catalog.heroes  = c.heroes;
   if (Array.isArray(c.aiDecks)) Catalog.aiDecks = c.aiDecks;
   if (Array.isArray(c.starterDecks)) Catalog.starterDecks = c.starterDecks;
+  if (Array.isArray(c.campaigns)) Catalog.campaigns = c.campaigns;
   Catalog.publishedAt    = c.publishedAt    || Catalog.publishedAt   || 0;
   Catalog.publishedBy    = c.publishedBy    || Catalog.publishedBy   || null;
   Catalog.lastFetchedAt  = c.lastFetchedAt  || Catalog.lastFetchedAt || 0;
@@ -21062,12 +21074,14 @@ async function cloudFetchCatalog() {
     // don't show up as bogus "moves" anywhere.
     Catalog.aiDecks = Array.isArray(rawMoves.__ai_decks__) ? rawMoves.__ai_decks__ : [];
     Catalog.starterDecks = Array.isArray(rawMoves.__starter_decks__) ? rawMoves.__starter_decks__ : [];
+    Catalog.campaigns = Array.isArray(rawMoves.__campaigns__) ? rawMoves.__campaigns__ : [];
     Catalog.pageGuides = Array.isArray(rawMoves.__page_guides__) ? rawMoves.__page_guides__ : [];
     Catalog.tombstoneArt = rawMoves.__tombstone_art__ || null;
     Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
     const cleanMoves = { ...rawMoves };
     delete cleanMoves.__ai_decks__;
     delete cleanMoves.__starter_decks__;
+    delete cleanMoves.__campaigns__;
     delete cleanMoves.__page_guides__;
     delete cleanMoves.__tombstone_art__;
     delete cleanMoves.__tombstone_cosmetics__;
@@ -21107,6 +21121,7 @@ async function cloudPublishCatalog() {
       ...(Forge.customMoves || {}),
       __ai_decks__: Array.isArray(Forge.aiDecks) ? Forge.aiDecks : [],
       __starter_decks__: Array.isArray(Forge.starterDecks) ? Forge.starterDecks : [],
+      __campaigns__: Array.isArray(Forge.campaigns) ? Forge.campaigns : [],
       __page_guides__: Array.isArray(Forge.pageGuides) ? Forge.pageGuides : [],
       __tombstone_art__: Forge.tombstoneArt || null,
       __tombstone_cosmetics__: Array.isArray(Forge.tombstoneCosmetics) ? Forge.tombstoneCosmetics : [],
@@ -23749,6 +23764,7 @@ async function loadForgeContentFromIdb() {
     ['forge_pageGuides',       'pageGuides'],
     ['forge_aiDecks',          'aiDecks'],
     ['forge_starterDecks',     'starterDecks'],
+    ['forge_campaigns',        'campaigns'],
   ];
   let changed = false;
   for (const [idbKey, fk] of map) {
@@ -23804,6 +23820,7 @@ function loadForge() {
     try { const pg = localStorage.getItem('hg_pageGuides'); if (pg) { const x = JSON.parse(pg); if (Array.isArray(x)) Forge.pageGuides = x; } } catch (err) {}
     try { const ad = localStorage.getItem('hg_aiDecks'); if (ad) { const x = JSON.parse(ad); if (Array.isArray(x)) Forge.aiDecks = x; } } catch (err) {}
     try { const sd = localStorage.getItem('hg_starterDecks'); if (sd) { const x = JSON.parse(sd); if (Array.isArray(x)) Forge.starterDecks = x; } } catch (err) {}
+    try { const cmp = localStorage.getItem('hg_campaigns'); if (cmp) { const x = JSON.parse(cmp); if (Array.isArray(x)) Forge.campaigns = x; } } catch (err) {}
     try { const po = localStorage.getItem('hg_priceOverrides'); if (po) { const x = JSON.parse(po); if (x && typeof x === 'object') Forge.priceOverrides = x; } } catch (err) {}
     try { const cp = localStorage.getItem('hg_useCustomOnlyPool'); if (cp != null) Forge.useCustomOnlyPool = JSON.parse(cp) === true; } catch (err) {}
     // 🚨 PRODUCTION OVERRIDE — force custom-only pool ON regardless of saved
@@ -23920,6 +23937,8 @@ function loadForge() {
       if (p.starterPicked === true) Profile.starterPicked = true;
       if (typeof p.starterDeckId === 'string') Profile.starterDeckId = p.starterDeckId;
       if (Array.isArray(p.ownedStarterDecks)) Profile.ownedStarterDecks = p.ownedStarterDecks;
+      // 🗺️ Roguelite campaign — resume an in-progress run on reload.
+      if (p.rlcRun && typeof p.rlcRun === 'object') Profile.rlcRun = p.rlcRun;
       if (p.essence && typeof p.essence === 'object') {
         // Defensive: only accept numeric values keyed by string element ids.
         Profile.essence = {};
@@ -24033,6 +24052,7 @@ function saveForge() {
       // locally like every other Forge field so they survive reloads.
       idbSet('forge_aiDecks',         Forge.aiDecks         || []);
       idbSet('forge_starterDecks',    Forge.starterDecks    || []);
+      idbSet('forge_campaigns',       Forge.campaigns       || []);
     }
   } catch (e) { /* swallow — IDB issues fall back to memory-only */ }
   const chunks = [
@@ -24050,6 +24070,7 @@ function saveForge() {
     { key: 'hg_pageGuides',       value: Forge.pageGuides      || [], name: 'pageGuides' },
     { key: 'hg_aiDecks',          value: Forge.aiDecks         || [], name: 'aiDecks' },
     { key: 'hg_starterDecks',     value: Forge.starterDecks    || [], name: 'starterDecks' },
+    { key: 'hg_campaigns',        value: Forge.campaigns       || [], name: 'campaigns' },
     { key: 'hg_priceOverrides',   value: Forge.priceOverrides  || {}, name: 'priceOverrides' },
     { key: 'hg_useCustomOnlyPool', value: !!Forge.useCustomOnlyPool, name: 'useCustomOnlyPool' },
   ];
@@ -27413,6 +27434,14 @@ const initGame = (heroData, opponentHero, customCards, playerGoesFirst, chosenDe
   const playerProf = getHeroProfile(heroData.id);
   // Center the heroes on the wider 10-column board so the opening doesn't feel lopsided.
   const playerHero = buildHero(heroData, 'player', { x: Math.floor(BOARD_W / 2) - 1, y: BOARD_H - 1 }, playerProf.level, playerProf.xp);
+  // 🗺️ Roguelite: carry persistent HP into the fight. Only fires when this is
+  // an RLC battle (guarded) so normal/campaign battles are untouched.
+  if (App.battlePrep && App.battlePrep.rlc) {
+    const rMax = Math.max(1, parseInt(App.battlePrep.rlcMaxHP, 10) || playerHero.maxHp);
+    const rCur = Math.max(1, Math.min(rMax, parseInt(App.battlePrep.rlcHeroHP, 10) || rMax));
+    playerHero.maxHp = rMax;
+    playerHero.currentHp = rCur;
+  }
   const aiHero = buildHero(opponentHero, 'ai', { x: Math.floor(BOARD_W / 2), y: 0 });
   const pd = buildStarterDeck(customCards, heroData && heroData.id, chosenDeckId);
   const ad = buildAIDeck();
@@ -29595,6 +29624,17 @@ function render() {
     }
     return renderDataPanel();
   }
+  if (App.screen === 'rlcList')    return renderRlcList();
+  if (App.screen === 'rlcMap')     return renderRlcMap();
+  if (App.screen === 'rlcReward')  return renderRlcReward();
+  if (App.screen === 'rlcMedical') return renderRlcMedical();
+  if (App.screen === 'rlcShop')    return renderRlcShop();
+  if (App.screen === 'rlcEvent')   return renderRlcEvent();
+  if (App.screen === 'rlcResult')  return renderRlcResult();
+  if (App.screen === 'rlcAdmin') {
+    if ((typeof isAdmin !== 'function') || !isAdmin()) { showToast('👑 Admin only.', 2200); App.screen = 'title'; return renderTitle(); }
+    return renderRlcAdmin();
+  }
   if (App.screen === 'campaign')   return renderCampaignMap();
   if (App.screen === 'campaignChapter') return renderCampaignChapter();
   if (App.screen === 'daily')      return renderDailyChallenge();
@@ -29891,6 +29931,10 @@ function renderTitle() {
       { id: 'btn-campaign', icon: '<img src="assets/artwork/gameicons/campign.png" alt="Campaign" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Campaign',         sub: 'Story mode, chapter by chapter', accent: '#9b8bff',
         badge: campTotal.done > 0 ? `${campTotal.done}/${campTotal.total} cleared` : null,
         onclick: () => { App.screen = 'campaign'; render(); } },
+      { id: 'btn-rlc', icon: '<span style="font-size:3rem;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">🗺️</span>', name: 'Roguelite', sub: 'Branching runs · build a deck from rewards', accent: '#b86bff',
+        badge: (Profile.rlcRun && !Profile.rlcRun.isComplete && !Profile.rlcRun.isFailed) ? '▶ Run in progress' : ((getPlayableCampaigns().length) ? `${getPlayableCampaigns().length} available` : null),
+        alertBadge: !!(Profile.rlcRun && !Profile.rlcRun.isComplete && !Profile.rlcRun.isFailed),
+        onclick: () => { App.screen = 'rlcList'; render(); } },
       { id: 'btn-daily',    icon: '<img src="assets/artwork/gameicons/daily%20Challenge.png" alt="Daily Challenge" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Daily Challenge',  sub: dailyDone ? '✓ Today done' : (getTodayChallenge().name || 'New each day'), accent: '#ffb070',
         badge: dailyDone ? '✓ Cleared today' : 'Resets at midnight',
         alertBadge: !dailyDone,
@@ -31851,6 +31895,16 @@ function renderPricingAdmin() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">🗺️ Roguelite Campaigns (Admin)</div>
+        <div class="settings-section-desc">
+          Build branching roguelite adventures — maps, battles, card-reward drafting, medical camps, black markets, persistent hero HP, story events. Card rewards &amp; black-market buys land <strong>permanently in the player's collection</strong> (usable in the Deck Editor). Campaigns ride along inside <strong>📚 Publish</strong>.
+        </div>
+        <div class="cloud-actions" style="margin-top:0.6rem">
+          <button class="btn-primary btn-mini" id="btn-open-rlc-admin">🗺️ Open Campaign Builder (${(Forge.campaigns || []).length})</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🎁 Send Gift (Admin)</div>
         <div class="settings-section-desc">
           Grant a card straight to a specific player's account. They get a <strong>"You got a gift"</strong> pop-up the next time they sign in and click <strong>Claim</strong> to add it to their collection. ⚠️ Run <code>gifts-system-setup.sql</code> in your Supabase SQL editor once before using this.
@@ -32071,6 +32125,10 @@ function renderPricingAdmin() {
       render();
     };
   });
+
+  // 🗺️ Open the Roguelite Campaign builder.
+  const bRlcAdm = document.getElementById('btn-open-rlc-admin');
+  if (bRlcAdm) bRlcAdm.onclick = () => { App.rlcEdit = null; App.screen = 'rlcAdmin'; render(); };
 
   // 🦸 Starter Deck CRUD — admin authors the decks new players pick from.
   const bSdNew = document.getElementById('btn-starter-deck-new');
@@ -41537,12 +41595,17 @@ function bindGameOverEvents() {
   // appropriate screen so the player can pick the next node / see today's status.
   const wasCampaign = !!(App.campaignVictory) || !!(App.battlePrep && App.battlePrep.campaignNode);
   const wasDaily    = !!(App.dailyVictory)    || !!(App.battlePrep && App.battlePrep.dailyChallenge);
+  const wasRlc      = !!App._rlcPendingAfterBattle;
   const goPlayAgain = () => {
     App.ui._gameOverHidden = false;
     if (App.ui) App.ui.rankedResult = null; // consume the ranked summary on exit
     // 📡 Leave the multiplayer realtime channel when exiting the battle.
     if (typeof leaveMatchChannel === 'function') { try { leaveMatchChannel(); } catch (e) {} }
     App.state = null;
+    if (wasRlc) {
+      if (typeof rlcAfterBattle === 'function') { rlcAfterBattle(); return; }
+      App.screen = 'rlcMap'; render(); return;
+    }
     if (wasDaily) {
       App.dailyVictory = null;
       App.screen = 'daily';
@@ -41561,8 +41624,11 @@ function bindGameOverEvents() {
     App.ui._gameOverHidden = false;
     App.campaignVictory = null;
     App.dailyVictory = null;
-    App.screen = 'title';
     App.state = null;
+    // 🗺️ Roguelite: still resolve the run (HP carry / fail) before leaving so
+    // progress isn't silently lost — rlcAfterBattle routes appropriately.
+    if (wasRlc && typeof rlcAfterBattle === 'function') { rlcAfterBattle(); return; }
+    App.screen = 'title';
     render();
   };
   if (playBtn) playBtn.onclick = goPlayAgain;
@@ -41682,6 +41748,17 @@ function recordBattleProgress() {
   }
   // Clear the campaign queue so a subsequent non-campaign battle isn't tagged accidentally
   App.activeCampaignNode = null;
+
+  // 🗺️ Roguelite: capture this battle's outcome + the hero's remaining HP so
+  // the game-over return path (goPlayAgain) can advance/fail the run.
+  if (App.battlePrep && App.battlePrep.rlc) {
+    let endHP = 1;
+    try {
+      const ph = s.units.filter(u => u.owner === 'player').find(u => u.isHero);
+      if (ph) endHP = Math.max(1, parseInt(ph.currentHp, 10) || 1);
+    } catch (e) {}
+    App._rlcPendingAfterBattle = { campaignId: App.battlePrep.rlc.campaignId, nodeId: App.battlePrep.rlc.nodeId, won: !!won, endHP };
+  }
 
   const playerUnits = s.units.filter(u => u.owner === 'player');
 
@@ -46674,6 +46751,12 @@ const RPG_GUIDE_PAGES = [
   { route: 'market',       label: 'Player Market' },
   { route: 'title',        label: 'Main Hub (Title)' },
   { route: 'starterPick',  label: 'Starter Deck Pick (new players)' },
+  { route: 'rlcMap',       label: 'Roguelite — Campaign Map' },
+  { route: 'rlcReward',    label: 'Roguelite — Card Reward' },
+  { route: 'rlcMedical',   label: 'Roguelite — Medical Camp' },
+  { route: 'rlcShop',      label: 'Roguelite — Black Market' },
+  { route: 'rlcEvent',     label: 'Roguelite — Story Event' },
+  { route: 'rlcResult',    label: 'Roguelite — Run Result' },
   { route: 'deck',         label: 'Deck Builder' },
   { route: 'collection',   label: 'Collection / Codex' },
   { route: 'coliseum',     label: 'Coliseum' },
@@ -48206,6 +48289,787 @@ function renderDailyChallenge() {
     App.screen = 'deckSelect';
     render();
   };
+}
+
+// ============================================================================
+// 🗺️ ROGUELITE CAMPAIGN  (admin-authored, branching, persistent-HP runs)
+// ----------------------------------------------------------------------------
+// Self-contained module. Reuses the battle engine (via App.battlePrep +
+// enemyDeckOverride), the RPG guide system (route-based dialogue), and the
+// bulletproof Forge persistence. Surgical hooks elsewhere: initGame HP clamp,
+// battle-result capture, game-over return path, render() dispatch, Battle hub
+// entry, guide routes.
+// ============================================================================
+const RLC_NODE_TYPES = {
+  battle:    { name: 'Battle',      icon: '⚔️', color: '#c0563b', glow: 'rgba(255,90,60,0.55)' },
+  elite:     { name: 'Elite',       icon: '🔥', color: '#d4742a', glow: 'rgba(255,150,40,0.6)'  },
+  boss:      { name: 'Boss',        icon: '👹', color: '#a23bd4', glow: 'rgba(170,60,255,0.65)' },
+  finalBoss: { name: 'Final Boss',  icon: '💀', color: '#e23b6b', glow: 'rgba(255,60,110,0.7)'  },
+  medical:   { name: 'Medical Camp',icon: '⛑️', color: '#3bbf7a', glow: 'rgba(70,220,150,0.55)' },
+  market:    { name: 'Black Market',icon: '🛒', color: '#8a6bff', glow: 'rgba(150,110,255,0.6)' },
+  treasure:  { name: 'Treasure',    icon: '💰', color: '#d4af37', glow: 'rgba(255,210,80,0.6)'  },
+  event:     { name: 'Story Event', icon: '📜', color: '#5b9bd4', glow: 'rgba(90,160,230,0.55)' },
+  rest:      { name: 'Rest Point',  icon: '🔥', color: '#c8923c', glow: 'rgba(220,150,70,0.5)'  },
+};
+function getAllCampaigns() {
+  const cat = (typeof Catalog !== 'undefined' && Array.isArray(Catalog.campaigns)) ? Catalog.campaigns : [];
+  const loc = (typeof Forge   !== 'undefined' && Array.isArray(Forge.campaigns))   ? Forge.campaigns   : [];
+  const byId = {};
+  cat.forEach(c => { if (c && c.id) byId[c.id] = c; });
+  loc.forEach(c => { if (c && c.id) byId[c.id] = c; });
+  return Object.values(byId);
+}
+function getPlayableCampaigns() {
+  const admin = (typeof isAdmin === 'function') && isAdmin();
+  return getAllCampaigns().filter(c => c && Array.isArray(c.nodes) && c.nodes.length > 0 && (admin || c.isPublished));
+}
+function _rlcCampaign(id) { return getAllCampaigns().find(c => c && c.id === id) || null; }
+function _rlcNode(camp, nodeId) { return camp && Array.isArray(camp.nodes) ? camp.nodes.find(n => n && n.id === nodeId) || null : null; }
+function _rlcCur(run) {
+  const c = _rlcCampaign(run && run.campaignId);
+  return (c && c.currencyName) ? c.currencyName : 'Gold';
+}
+// Resolve any admin deck reference (starter deck / AI deck / saved deck id) to
+// exactly DECK_SIZE deck-builder keys so the battle engine can consume it.
+function _rlcDeckKeys(deckId) {
+  let keys = [];
+  try {
+    const sd = (typeof getAllStarterDecks === 'function' ? getAllStarterDecks() : []).find(d => d.id === deckId);
+    if (sd && Array.isArray(sd.cards)) keys = sd.cards.slice(0);
+    if (!keys.length) {
+      const ai = (Forge.aiDecks || []).concat((typeof Catalog !== 'undefined' && Catalog.aiDecks) || []).find(d => d.id === deckId);
+      if (ai && Array.isArray(ai.cards)) keys = ai.cards.map(id => (typeof _aiCardIdToKey === 'function' ? _aiCardIdToKey(id) : null)).filter(Boolean);
+    }
+    if (!keys.length && typeof getDeckById === 'function') {
+      const pd = getDeckById(deckId);
+      if (pd && Array.isArray(pd.cards)) keys = pd.cards.slice(0);
+    }
+  } catch (e) {}
+  if (!keys.length && typeof getAdminAIDeckKeys === 'function') keys = getAdminAIDeckKeys();
+  keys = keys.filter(Boolean);
+  if (!keys.length) return [];
+  if (keys.length > DECK_SIZE) keys = keys.slice(0, DECK_SIZE);
+  if (keys.length < DECK_SIZE) { const b = keys.slice(0); let i = 0; while (keys.length < DECK_SIZE) { keys.push(b[i % b.length]); i++; } }
+  return keys;
+}
+function _rlcStartNodes(camp) {
+  const incoming = new Set();
+  (camp.nodes || []).forEach(n => (n.connections || []).forEach(id => incoming.add(id)));
+  const starts = (camp.nodes || []).filter(n => !incoming.has(n.id));
+  return starts.length ? starts : (camp.nodes || []).slice(0, 1);
+}
+function _rlcAvailableNodeIds(camp, run) {
+  const done = new Set(run.completed || []);
+  if (!done.size) return _rlcStartNodes(camp).map(n => n.id);
+  const avail = new Set();
+  (camp.nodes || []).forEach(n => {
+    if (done.has(n.id)) return;
+    (n.connections || []).forEach(cid => { if (done.has(cid)) {} });
+  });
+  // Forward edges: connections of completed nodes that aren't completed yet.
+  (run.completed || []).forEach(cidDone => {
+    const dn = _rlcNode(camp, cidDone);
+    (dn && dn.connections || []).forEach(nid => { if (!done.has(nid)) avail.add(nid); });
+  });
+  return Array.from(avail);
+}
+// ---- Run lifecycle ----
+function rlcStartRun(campaignId) {
+  const camp = _rlcCampaign(campaignId);
+  if (!camp || !Array.isArray(camp.nodes) || !camp.nodes.length) { showToast('That campaign has no map yet.', 2600); return; }
+  const heroId = camp.startingHeroId
+    || (typeof App !== 'undefined' && App.selectedHero)
+    || ((typeof getAllHeroes === 'function' && getAllHeroes()[0]) ? getAllHeroes()[0].id : null);
+  // Build the starting deck.
+  let deck = [];
+  if (camp.startingDeckMode === 'fixed' && camp.startingDeckId) deck = _rlcDeckKeys(camp.startingDeckId);
+  if (!deck.length && heroId && typeof getSavedDeckForHero === 'function') {
+    const sv = getSavedDeckForHero(heroId);
+    if (sv && sv.length) deck = sv.slice(0);
+  }
+  if (!deck.length) deck = _rlcDeckKeys(camp.startingDeckId || '');
+  const maxHP = Math.max(1, parseInt(camp.startingHP, 10) || 100);
+  Profile.rlcRun = {
+    campaignId, heroId,
+    currentNodeId: null,
+    completed: [],
+    heroHP: maxHP, maxHP,
+    currency: Math.max(0, parseInt(camp.startingCurrency, 10) || 0),
+    medPoints: Math.max(0, parseInt(camp.startingMedPoints, 10) || 0),
+    deck: deck.slice(0),
+    purchases: [],
+    choices: {},
+    isComplete: false, isFailed: false,
+    startedAt: Date.now(),
+  };
+  try { saveProfile(); } catch (e) {}
+  App._rlcIntroFor = camp.id;   // show intro modal once on the map
+  App.screen = 'rlcMap';
+  render();
+}
+function rlcAbandonRun() {
+  if (!confirm('Abandon the current run? All run progress (deck, currency, HP) is lost. Cards already added to your collection are kept.')) return;
+  Profile.rlcRun = null;
+  try { saveProfile(); } catch (e) {}
+  App.screen = 'rlcList';
+  render();
+}
+// Permanently grant a card to the player's collection (usable in the Deck
+// Editor) AND drop a copy into the current run deck.
+function _rlcGrantCard(key) {
+  let card = null;
+  try { card = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null; } catch (e) {}
+  if (!card) return false;
+  if (!Profile.cardCollection) Profile.cardCollection = {};
+  Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1;
+  if (Profile.rlcRun && Array.isArray(Profile.rlcRun.deck)) Profile.rlcRun.deck.push(key);
+  return true;
+}
+function _rlcCompleteNode(nodeId) {
+  const run = Profile.rlcRun; if (!run) return;
+  if (!Array.isArray(run.completed)) run.completed = [];
+  if (run.completed.indexOf(nodeId) < 0) run.completed.push(nodeId);
+  run.currentNodeId = nodeId;
+  const camp = _rlcCampaign(run.campaignId);
+  const node = _rlcNode(camp, nodeId);
+  try { saveProfile(); } catch (e) {}
+  if (node && (node.type === 'finalBoss')) {
+    run.isComplete = true;
+    // Final completion rewards.
+    const fr = camp.finalReward || {};
+    (fr.cardKeys || []).forEach(k => _rlcGrantCard(k));
+    if (fr.currency) run.currency += parseInt(fr.currency, 10) || 0;
+    try { saveProfile(); } catch (e) {}
+    App.screen = 'rlcResult'; render(); return;
+  }
+  App.screen = 'rlcMap'; render();
+}
+function rlcEnterNode(nodeId) {
+  const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
+  const camp = _rlcCampaign(run.campaignId);
+  const node = _rlcNode(camp, nodeId);
+  if (!node) return;
+  if (_rlcAvailableNodeIds(camp, run).indexOf(nodeId) < 0 && (run.completed || []).length) {
+    showToast('That node is locked — clear a connected node first.', 2400); return;
+  }
+  run.currentNodeId = nodeId; try { saveProfile(); } catch (e) {}
+  if (['battle','elite','boss','finalBoss'].indexOf(node.type) >= 0) { rlcStartBattle(node); return; }
+  if (node.type === 'medical') { App._rlcNodeId = nodeId; App.screen = 'rlcMedical'; return render(); }
+  if (node.type === 'market')  { App._rlcNodeId = nodeId; App.screen = 'rlcShop';    return render(); }
+  if (node.type === 'event')   { App._rlcNodeId = nodeId; App.screen = 'rlcEvent';   return render(); }
+  if (node.type === 'treasure' || node.type === 'rest') {
+    // Instant nodes — apply reward / small heal, then back to map.
+    const r = node.reward || {};
+    if (r.currency) run.currency += parseInt(r.currency, 10) || 0;
+    if (r.medPoints) run.medPoints += parseInt(r.medPoints, 10) || 0;
+    if (node.type === 'rest') run.heroHP = Math.min(run.maxHP, run.heroHP + Math.ceil(run.maxHP * 0.3));
+    if (Array.isArray(r.cardKeys) && r.cardKeys.length && (r.choiceCount || 0) > 0) {
+      App._rlcNodeId = nodeId; App.screen = 'rlcReward'; return render();
+    }
+    showToast(node.type === 'rest' ? '🔥 Rested — recovered some HP.' : '💰 Treasure claimed!', 2200);
+    _rlcCompleteNode(nodeId); return;
+  }
+  // Unknown type — just complete.
+  _rlcCompleteNode(nodeId);
+}
+function rlcStartBattle(node) {
+  const run = Profile.rlcRun; if (!run) return;
+  const camp = _rlcCampaign(run.campaignId);
+  const heroData = (typeof findHeroById === 'function') ? findHeroById(run.heroId) : null;
+  let foe = (node.enemyHeroId && typeof findHeroById === 'function') ? findHeroById(node.enemyHeroId) : null;
+  if (!foe && typeof getAllHeroes === 'function') {
+    const others = getAllHeroes().filter(h => h.id !== run.heroId);
+    foe = others.length ? others[0] : heroData;
+  }
+  if (!heroData || !foe) { showToast('This battle node is missing its hero setup.', 3000); return; }
+  // Sync the run deck into a stable Profile deck so the engine can use it.
+  let pdeck = (run.deck || []).slice(0);
+  if (pdeck.length > DECK_SIZE) pdeck = pdeck.slice(0, DECK_SIZE);
+  if (pdeck.length && pdeck.length < DECK_SIZE) { const b = pdeck.slice(0); let i = 0; while (pdeck.length < DECK_SIZE) { pdeck.push(b[i % b.length]); i++; } }
+  if (!pdeck.length) pdeck = _rlcDeckKeys(camp && camp.startingDeckId || '');
+  Profile.decks = (Array.isArray(Profile.decks) ? Profile.decks : []).filter(d => d.id !== 'rlc_run_deck');
+  Profile.decks.push({ id: 'rlc_run_deck', name: (camp && camp.name || 'Campaign') + ' Run', heroId: run.heroId, cards: pdeck, createdAt: Date.now() });
+  const enemyKeys = _rlcDeckKeys(node.enemyDeckId);
+  App.battlePrep = {
+    hero: heroData, opponent: foe, customCards: Forge.customCards,
+    deckId: 'rlc_run_deck', deckName: (camp && camp.name) || 'Campaign',
+    campaignNode: null, scriptedWeather: null,
+    enemyLevel: node.enemyLevel ? (parseInt(node.enemyLevel, 10) || null) : null,
+    enemyDeckOverride: enemyKeys.length === DECK_SIZE ? enemyKeys : null,
+    encounterModifiers: null,
+    rlc: { campaignId: run.campaignId, nodeId: node.id },
+    rlcHeroHP: run.heroHP, rlcMaxHP: run.maxHP,
+    coinCall: null, coinResult: null, playerWonFlip: null, playerGoesFirst: null,
+    rankedMode: false, openCupRun: null, openCupAPPerWin: 0,
+  };
+  App.battlePrepFlags = null;
+  App.screen = 'vsScreen';
+  render();
+}
+// Called from the game-over return path once an RLC battle finished.
+function rlcAfterBattle() {
+  const res = App._rlcPendingAfterBattle; App._rlcPendingAfterBattle = null;
+  const run = Profile.rlcRun;
+  if (!res || !run) { App.screen = run ? 'rlcMap' : 'rlcList'; return render(); }
+  if (!res.won) {
+    run.isFailed = true; run._failNodeId = res.nodeId;
+    try { saveProfile(); } catch (e) {}
+    App.screen = 'rlcResult'; return render();
+  }
+  run.heroHP = Math.max(1, Math.min(run.maxHP, parseInt(res.endHP, 10) || run.heroHP));
+  try { saveProfile(); } catch (e) {}
+  const camp = _rlcCampaign(run.campaignId);
+  const node = _rlcNode(camp, res.nodeId);
+  const r = (node && node.reward) || {};
+  if (Array.isArray(r.cardKeys) && r.cardKeys.length && (r.choiceCount || 0) > 0) {
+    App._rlcNodeId = res.nodeId; App.screen = 'rlcReward'; return render();
+  }
+  if (r.currency) run.currency += parseInt(r.currency, 10) || 0;
+  if (r.medPoints) run.medPoints += parseInt(r.medPoints, 10) || 0;
+  _rlcCompleteNode(res.nodeId);
+}
+// ---- HUD ----
+function _rlcHUD(run, camp) {
+  const hero = (typeof findHeroById === 'function') ? findHeroById(run.heroId) : null;
+  const pct = Math.max(0, Math.min(100, Math.round((run.heroHP / Math.max(1, run.maxHP)) * 100)));
+  const total = (camp.nodes || []).length;
+  const done = (run.completed || []).length;
+  return `
+    <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:center;padding:12px 16px;margin-bottom:14px;background:linear-gradient(90deg,rgba(40,20,70,0.7),rgba(20,10,35,0.7));border:1px solid rgba(184,136,255,0.35);border-radius:12px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:42px;height:42px;border-radius:50%;overflow:hidden;border:2px solid #d4af37;display:flex;align-items:center;justify-content:center;background:#1a1030">${hero && typeof renderIcon === 'function' ? renderIcon('h_' + hero.id, hero.icon, 'md') : '🦸'}</div>
+        <div><div style="color:#f6d97a;font-weight:700;font-family:'Cinzel',serif">${escapeHtml(hero ? hero.name : 'Hero')}</div>
+        <div style="width:150px;height:12px;background:#2a1840;border-radius:6px;overflow:hidden;border:1px solid rgba(255,255,255,0.15)"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#e23b6b,#ff7a55)"></div></div>
+        <div class="small-text" style="color:#ffb3c1">${run.heroHP} / ${run.maxHP} HP</div></div>
+      </div>
+      <div style="color:#d4af37;font-weight:700">💰 ${run.currency} <span class="small-text ink-dim">${escapeHtml(_rlcCur(run))}</span></div>
+      <div style="color:#7fdca0;font-weight:700">⛑️ ${run.medPoints} <span class="small-text ink-dim">Med Pts</span></div>
+      <div style="color:#b8a0ff;font-weight:700">🃏 ${(run.deck || []).length} <span class="small-text ink-dim">cards</span></div>
+      <div style="color:#cdb6ff;font-weight:700">📍 ${done}/${total} <span class="small-text ink-dim">nodes</span></div>
+      <button class="btn-mini" id="rlc-abandon" style="color:#ff8080">✖ Abandon Run</button>
+    </div>`;
+}
+// ---- Screens ----
+// ---- Admin Builder ----
+function _rlcBlankNode() {
+  return { id: 'n' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36),
+    type: 'battle', name: 'New Node', desc: '', row: 0, col: 0, connections: [],
+    enemyHeroId: '', enemyDeckId: '', enemyLevel: '',
+    reward: { cardKeys: [], choiceCount: 3, allowSkip: false, currency: 0, medPoints: 0 },
+    heal: { options: [ { name: 'Patch up', healPercent: 25, costMedPoints: 1, costCurrency: 0 }, { name: 'Field surgery', healPercent: 50, costMedPoints: 2, costCurrency: 0 }, { name: 'Full recovery', healPercent: 100, costMedPoints: 4, costCurrency: 0 } ] },
+    shop: { name: 'Black Market', items: [] },
+    event: { text: '', choices: [] } };
+}
+function _rlcBlankCampaign() {
+  return { id: 'camp' + Date.now().toString(36), name: 'New Campaign', description: '', intro: '',
+    coverImg: '', difficulty: 'Normal', startingHeroId: '', startingHP: 100,
+    currencyName: 'Gold', startingCurrency: 50, startingMedPoints: 2,
+    startingDeckMode: 'player', startingDeckId: '', isPublished: false,
+    nodes: [], finalReward: { cardKeys: [], currency: 0 }, createdAt: Date.now(), updatedAt: Date.now() };
+}
+function _rlcDeckOptions() {
+  const out = [{ id: '', label: '— (none) —' }];
+  try { (typeof getAllStarterDecks === 'function' ? getAllStarterDecks() : []).forEach(d => out.push({ id: d.id, label: '🦸 ' + (d.name || d.id) })); } catch (e) {}
+  try { (Forge.aiDecks || []).forEach(d => out.push({ id: d.id, label: '🤖 ' + (d.name || d.id) })); } catch (e) {}
+  try { (Array.isArray(Profile.decks) ? Profile.decks : []).forEach(d => { if (d.id !== 'rlc_run_deck') out.push({ id: d.id, label: '🃏 ' + (d.name || d.id) }); }); } catch (e) {}
+  return out;
+}
+function _rlcCardByQuery(q) {
+  q = (q || '').trim().toLowerCase(); if (!q) return null;
+  let pool = [];
+  try { pool = (typeof getAllDeckableCards === 'function') ? getAllDeckableCards() : []; } catch (e) { pool = []; }
+  const hit = pool.find(p => p && p.card && ((p.card.name || '').toLowerCase() === q || String(p.card.id).toLowerCase() === q))
+           || pool.find(p => p && p.card && (p.card.name || '').toLowerCase().indexOf(q) >= 0);
+  return hit ? hit.key : null;
+}
+function renderRlcAdmin() {
+  const list = Array.isArray(Forge.campaigns) ? Forge.campaigns : (Forge.campaigns = []);
+  const ed = App.rlcEdit ? list.find(c => c.id === App.rlcEdit) : null;
+  const heroOpts = (typeof getAllHeroes === 'function' ? getAllHeroes() : []).map(h => ({ id: h.id, name: h.name }));
+  const deckOpts = _rlcDeckOptions();
+  if (!ed) {
+    root.innerHTML = `
+      <div class="campaign-page pricing-admin-page">
+        <button class="hub-back-btn" id="rlc-adm-back">← Forge</button>
+        <h1 class="section-title">🗺️ Roguelite Campaigns (Admin)</h1>
+        <div class="section-subtitle">Build branching adventures. They ride along inside <strong>📚 Publish</strong> like AI decks. Card rewards & black-market buys land permanently in the player's collection (usable in the Deck Editor).</div>
+        <div class="settings-section">
+          ${list.length === 0 ? '<div class="ink-dim small-text" style="padding:0.6rem 0">No campaigns yet.</div>' : list.map((c, i) => `
+            <div style="display:flex;align-items:center;gap:0.6rem;padding:0.55rem 0.8rem;background:rgba(20,12,40,0.5);border:1px solid rgba(184,136,255,0.25);border-radius:6px;margin-bottom:0.4rem;flex-wrap:wrap">
+              <div style="flex:1 1 200px;min-width:160px">
+                <div style="font-family:'Cinzel',serif;color:#ffd166;font-weight:700">${escapeHtml(c.name || 'Untitled')} ${c.isPublished ? '<span class="small-text" style="color:#7fdca0">● PUBLISHED</span>' : '<span class="small-text" style="color:#e0a23a">○ DRAFT</span>'}</div>
+                <div class="small-text ink-dim">${(c.nodes || []).length} nodes · ${escapeHtml(c.difficulty || 'Normal')}</div>
+              </div>
+              <button class="btn-primary btn-mini" data-rlc-edit="${i}">✏️ Edit</button>
+              <button class="btn-secondary btn-mini" data-rlc-pub="${i}">${c.isPublished ? 'Unpublish' : 'Publish-ready'}</button>
+              <button class="btn-secondary btn-mini" data-rlc-dup="${i}">⧉ Duplicate</button>
+              <button class="btn-mini" data-rlc-del="${i}" style="color:#ff8080">🗑</button>
+            </div>`).join('')}
+          <div class="cloud-actions" style="margin-top:0.6rem"><button class="btn-primary btn-mini" id="rlc-adm-new">➕ New Campaign</button></div>
+          <div class="small-text ink-dim" style="margin-top:0.5rem">💡 Mark a campaign Publish-ready, then click <strong>📚 Publish Cards/Heroes/Items/Packs</strong> in Pricing Admin to push it to all players.</div>
+        </div>
+      </div>`;
+    document.getElementById('rlc-adm-back').onclick = () => { App.screen = 'pricingAdmin'; render(); };
+    document.getElementById('rlc-adm-new').onclick = () => { const c = _rlcBlankCampaign(); list.push(c); saveForge(); App.rlcEdit = c.id; render(); };
+    document.querySelectorAll('[data-rlc-edit]').forEach(b => b.onclick = () => { App.rlcEdit = list[parseInt(b.dataset.rlcEdit, 10)].id; render(); });
+    document.querySelectorAll('[data-rlc-pub]').forEach(b => b.onclick = () => { const c = list[parseInt(b.dataset.rlcPub, 10)]; c.isPublished = !c.isPublished; saveForge(); render(); });
+    document.querySelectorAll('[data-rlc-dup]').forEach(b => b.onclick = () => { const c = JSON.parse(JSON.stringify(list[parseInt(b.dataset.rlcDup, 10)])); c.id = 'camp' + Date.now().toString(36); c.name = (c.name || 'Campaign') + ' (copy)'; c.isPublished = false; list.push(c); saveForge(); render(); });
+    document.querySelectorAll('[data-rlc-del]').forEach(b => b.onclick = () => { if (!confirm('Delete this campaign?')) return; list.splice(parseInt(b.dataset.rlcDel, 10), 1); saveForge(); render(); });
+    return;
+  }
+  // ---- Campaign editor ----
+  const fld = (label, path, val, type) => `<label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">${label}</span><br><input data-rlc-path="${path}" type="${type || 'text'}" value="${escapeHtml(String(val == null ? '' : val))}" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"></label>`;
+  const heroSel = (path, val) => `<label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">Hero</span><br><select data-rlc-path="${path}" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">— pick —</option>${heroOpts.map(h => `<option value="${escapeHtml(h.id)}" ${val === h.id ? 'selected' : ''}>${escapeHtml(h.name)}</option>`).join('')}</select></label>`;
+  const deckSel = (path, val) => `<label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">Deck</span><br><select data-rlc-path="${path}" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">${deckOpts.map(o => `<option value="${escapeHtml(o.id)}" ${val === o.id ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}</select></label>`;
+  const nodeCard = (n, idx) => {
+    const isBattle = ['battle','elite','boss','finalBoss'].indexOf(n.type) >= 0;
+    const conns = (n.connections || []);
+    return `
+      <div style="border:1px solid rgba(184,136,255,0.35);border-radius:8px;padding:12px;margin-bottom:12px;background:rgba(18,10,32,0.6)">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <strong style="color:#ffd166">Node ${idx + 1}: ${escapeHtml(n.name || '')}</strong>
+          <span class="small-text ink-dim">(${escapeHtml(n.id)})</span>
+          <button class="btn-mini" data-rlc-ndup="${idx}" style="margin-left:auto">⧉</button>
+          <button class="btn-mini" data-rlc-ndel="${idx}" style="color:#ff8080">🗑</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <label style="display:block"><span class="small-text ink-dim">Type</span><br><select data-rlc-path="nodes.${idx}.type" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">${Object.keys(RLC_NODE_TYPES).map(t => `<option value="${t}" ${n.type === t ? 'selected' : ''}>${RLC_NODE_TYPES[t].icon} ${RLC_NODE_TYPES[t].name}</option>`).join('')}</select></label>
+          ${fld('Node name', 'nodes.' + idx + '.name', n.name)}
+          ${fld('Row (higher = later; 0 = start, bottom)', 'nodes.' + idx + '.row', n.row, 'number')}
+          ${fld('Column (left→right)', 'nodes.' + idx + '.col', n.col, 'number')}
+        </div>
+        ${fld('Description', 'nodes.' + idx + '.desc', n.desc)}
+        <div class="small-text ink-dim" style="margin:6px 0 4px">Connects to (player can go here after clearing this node):</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+          ${ (ed.nodes || []).filter(x => x.id !== n.id).map(x => `<label class="small-text" style="display:flex;align-items:center;gap:3px;border:1px solid rgba(184,136,255,0.3);border-radius:4px;padding:2px 6px"><input type="checkbox" data-rlc-conn="${idx}" value="${escapeHtml(x.id)}" ${conns.indexOf(x.id) >= 0 ? 'checked' : ''}> ${escapeHtml(x.name || x.id)}</label>`).join('') || '<span class="ink-dim small-text">(add more nodes to link)</span>'}
+        </div>
+        ${isBattle ? `
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            ${heroSel('nodes.' + idx + '.enemyHeroId', n.enemyHeroId)}
+            ${deckSel('nodes.' + idx + '.enemyDeckId', n.enemyDeckId)}
+            ${fld('Enemy level (opt)', 'nodes.' + idx + '.enemyLevel', n.enemyLevel, 'number')}
+          </div>
+          <div class="small-text ink-dim" style="margin:4px 0">Win reward:</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+            ${fld('Choices shown', 'nodes.' + idx + '.reward.choiceCount', (n.reward || {}).choiceCount, 'number')}
+            ${fld(_rlcCur(ed) + ' reward', 'nodes.' + idx + '.reward.currency', (n.reward || {}).currency, 'number')}
+            ${fld('Med pts reward', 'nodes.' + idx + '.reward.medPoints', (n.reward || {}).medPoints, 'number')}
+            <label style="display:block"><span class="small-text ink-dim">Allow skip</span><br><input type="checkbox" data-rlc-path="nodes.${idx}.reward.allowSkip" ${(n.reward || {}).allowSkip ? 'checked' : ''}></label>
+          </div>
+          <div class="small-text ink-dim" style="margin:6px 0 2px">Reward card pool (players pick 1):</div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">${((n.reward || {}).cardKeys || []).map((k, ki) => `<span class="small-text" style="background:rgba(212,175,55,0.15);border:1px solid rgba(212,175,55,0.4);border-radius:4px;padding:2px 6px">${escapeHtml(k)} <button class="btn-mini" data-rlc-rmcard="${idx}:${ki}" style="color:#ff8080;padding:0 3px">×</button></span>`).join('') || '<span class="ink-dim small-text">none</span>'}</div>
+          <div style="display:flex;gap:6px;margin-bottom:6px"><input type="text" data-rlc-addcard-q="${idx}" placeholder="card name or id…" style="flex:1;padding:0.35rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><button class="btn-secondary btn-mini" data-rlc-addcard="${idx}">＋ Add card</button></div>
+        ` : ''}
+        ${n.type === 'market' ? `
+          ${fld('Shop name', 'nodes.' + idx + '.shop.name', (n.shop || {}).name)}
+          <div class="small-text ink-dim" style="margin:4px 0 2px">Items (card · price · stock; blank stock = unlimited):</div>
+          ${((n.shop || {}).items || []).map((it, ii) => `<div style="display:flex;gap:6px;margin-bottom:5px;align-items:center"><span class="small-text" style="flex:1">${escapeHtml(it.cardKey || '')}</span><input type="number" data-rlc-path="nodes.${idx}.shop.items.${ii}.price" value="${escapeHtml(String(it.price || 0))}" style="width:80px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px" placeholder="price"><input type="number" data-rlc-path="nodes.${idx}.shop.items.${ii}.stock" value="${escapeHtml(String(it.stock == null ? '' : it.stock))}" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px" placeholder="stock"><button class="btn-mini" data-rlc-rmitem="${idx}:${ii}" style="color:#ff8080">×</button></div>`).join('')}
+          <div style="display:flex;gap:6px"><input type="text" data-rlc-addshop-q="${idx}" placeholder="card name or id…" style="flex:1;padding:0.35rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><button class="btn-secondary btn-mini" data-rlc-addshop="${idx}">＋ Add item</button></div>
+        ` : ''}
+        ${n.type === 'medical' ? `
+          <div class="small-text ink-dim" style="margin:4px 0">Heal options:</div>
+          ${((n.heal || {}).options || []).map((o, oi) => `<div style="display:flex;gap:6px;margin-bottom:5px;align-items:center;flex-wrap:wrap"><input type="text" data-rlc-path="nodes.${idx}.heal.options.${oi}.name" value="${escapeHtml(o.name || '')}" style="flex:1;min-width:120px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.heal.options.${oi}.healPercent" value="${escapeHtml(String(o.healPercent || 0))}" title="heal %" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.heal.options.${oi}.costMedPoints" value="${escapeHtml(String(o.costMedPoints || 0))}" title="med pts cost" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.heal.options.${oi}.costCurrency" value="${escapeHtml(String(o.costCurrency || 0))}" title="currency cost" style="width:80px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"></div>`).join('')}
+        ` : ''}
+        ${n.type === 'event' ? `
+          <label style="display:block;margin-top:6px"><span class="small-text ink-dim">Event text</span><br><textarea data-rlc-path="nodes.${idx}.event.text" rows="3" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">${escapeHtml((n.event || {}).text || '')}</textarea></label>
+          <div class="small-text ink-dim" style="margin:4px 0">Choices (label · ${_rlcCur(ed)} · medPts · heal%):</div>
+          ${((n.event || {}).choices || []).map((ch, ci) => `<div style="display:flex;gap:6px;margin-bottom:5px;flex-wrap:wrap"><input type="text" data-rlc-path="nodes.${idx}.event.choices.${ci}.label" value="${escapeHtml(ch.label || '')}" placeholder="label" style="flex:1;min-width:120px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.event.choices.${ci}.currency" value="${escapeHtml(String(ch.currency||0))}" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.event.choices.${ci}.medPoints" value="${escapeHtml(String(ch.medPoints||0))}" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.event.choices.${ci}.healPercent" value="${escapeHtml(String(ch.healPercent||0))}" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><button class="btn-mini" data-rlc-rmchoice="${idx}:${ci}" style="color:#ff8080">×</button></div>`).join('')}
+          <button class="btn-secondary btn-mini" data-rlc-addchoice="${idx}">＋ Add choice</button>
+        ` : ''}
+        ${(n.type === 'treasure' || n.type === 'rest') ? `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            ${fld(_rlcCur(ed) + ' reward', 'nodes.' + idx + '.reward.currency', (n.reward || {}).currency, 'number')}
+            ${fld('Med pts reward', 'nodes.' + idx + '.reward.medPoints', (n.reward || {}).medPoints, 'number')}
+          </div>` : ''}
+      </div>`;
+  };
+  root.innerHTML = `
+    <div class="campaign-page pricing-admin-page rlc-editor">
+      <button class="hub-back-btn" id="rlc-ed-back">← Campaigns</button>
+      <h1 class="section-title">✏️ ${escapeHtml(ed.name || 'Campaign')}</h1>
+      <div class="settings-section">
+        <div class="settings-section-title">Campaign Settings</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          ${fld('Name', 'name', ed.name)}
+          ${fld('Difficulty', 'difficulty', ed.difficulty)}
+        </div>
+        ${fld('Short description', 'description', ed.description)}
+        <label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">Intro text (shown once when the run starts)</span><br><textarea data-rlc-path="intro" rows="3" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">${escapeHtml(ed.intro || '')}</textarea></label>
+        <div style="display:flex;align-items:center;gap:10px;margin:6px 0">
+          <div style="width:60px;height:60px;border-radius:8px;overflow:hidden;background:#1a1030;display:flex;align-items:center;justify-content:center">${ed.coverImg ? `<img src="${ed.coverImg}" style="width:100%;height:100%;object-fit:cover">` : '🗺️'}</div>
+          <input type="file" accept="image/*" id="rlc-cover-file" style="display:none">
+          <button class="btn-secondary btn-mini" id="rlc-cover-btn">📷 Cover image</button>
+          <label class="small-text" style="margin-left:auto;display:flex;align-items:center;gap:4px"><input type="checkbox" data-rlc-path="isPublished" ${ed.isPublished ? 'checked' : ''}> Publish-ready</label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          ${heroSel('startingHeroId', ed.startingHeroId)}
+          ${fld('Starting HP', 'startingHP', ed.startingHP, 'number')}
+          ${fld('Currency name', 'currencyName', ed.currencyName)}
+          ${fld('Starting currency', 'startingCurrency', ed.startingCurrency, 'number')}
+          ${fld('Starting med points', 'startingMedPoints', ed.startingMedPoints, 'number')}
+          <label style="display:block"><span class="small-text ink-dim">Deck mode</span><br><select data-rlc-path="startingDeckMode" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="player" ${ed.startingDeckMode === 'player' ? 'selected' : ''}>Player's own deck</option><option value="fixed" ${ed.startingDeckMode === 'fixed' ? 'selected' : ''}>Fixed deck</option></select></label>
+          ${deckSel('startingDeckId', ed.startingDeckId)}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          ${fld('Final-reward ' + _rlcCur(ed), 'finalReward.currency', (ed.finalReward || {}).currency, 'number')}
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">Map Nodes (${(ed.nodes || []).length})</div>
+        <div class="small-text ink-dim" style="margin-bottom:8px">Row 0 = start (bottom). Players move upward through connected nodes. A <strong>Final Boss</strong> node ends the campaign on victory.</div>
+        ${(ed.nodes || []).map(nodeCard).join('')}
+        <button class="btn-primary btn-mini" id="rlc-add-node">➕ Add Node</button>
+      </div>
+      <div class="pricing-admin-actions">
+        <button class="btn-primary" id="rlc-ed-save">💾 Save Campaign</button>
+      </div>
+    </div>`;
+  // ---- editor bindings ----
+  const reRender = () => { ed.updatedAt = Date.now(); saveForge(); render(); };
+  const setPath = (path, val) => {
+    const parts = path.split('.'); let o = ed;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const k = parts[i];
+      if (o[k] == null) o[k] = /^\d+$/.test(parts[i + 1]) ? [] : {};
+      o = o[k];
+    }
+    o[parts[parts.length - 1]] = val;
+  };
+  document.getElementById('rlc-ed-back').onclick = () => { saveForge(); App.rlcEdit = null; render(); };
+  document.getElementById('rlc-ed-save').onclick = () => { ed.updatedAt = Date.now(); saveForge(); showToast('💾 Campaign saved. Mark Publish-ready + 📚 Publish to go live.', 3600); };
+  document.getElementById('rlc-add-node').onclick = () => { ed.nodes = ed.nodes || []; ed.nodes.push(_rlcBlankNode()); reRender(); };
+  const coverBtn = document.getElementById('rlc-cover-btn');
+  if (coverBtn) coverBtn.onclick = () => document.getElementById('rlc-cover-file').click();
+  const coverFile = document.getElementById('rlc-cover-file');
+  if (coverFile) coverFile.onchange = async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try { ed.coverImg = await resizeImage(f, 640); reRender(); } catch (err) { showToast('⚠ Could not load image.', 2600); }
+  };
+  // Live capture for every data-rlc-path input/select/textarea.
+  root.querySelectorAll('[data-rlc-path]').forEach(elx => {
+    const handler = () => {
+      const path = elx.getAttribute('data-rlc-path');
+      let v = (elx.type === 'checkbox') ? elx.checked : elx.value;
+      if (elx.type === 'number') v = parseFloat(v) || 0;
+      setPath(path, v);
+      ed.updatedAt = Date.now();
+      try { saveForge(); } catch (e) {}
+    };
+    elx.addEventListener('change', handler);
+    if (elx.tagName === 'TEXTAREA' || (elx.type === 'text' || elx.type === 'number')) elx.addEventListener('input', handler);
+  });
+  // Connection checkboxes.
+  root.querySelectorAll('[data-rlc-conn]').forEach(cb => cb.addEventListener('change', () => {
+    const ni = parseInt(cb.dataset.rlcConn, 10); const node = ed.nodes[ni]; if (!node) return;
+    node.connections = node.connections || [];
+    if (cb.checked) { if (node.connections.indexOf(cb.value) < 0) node.connections.push(cb.value); }
+    else node.connections = node.connections.filter(x => x !== cb.value);
+    saveForge();
+  }));
+  document.querySelectorAll('[data-rlc-ndup]').forEach(b => b.onclick = () => { const i = parseInt(b.dataset.rlcNdup, 10); const c = JSON.parse(JSON.stringify(ed.nodes[i])); c.id = 'n' + Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36); c.connections = []; ed.nodes.splice(i + 1, 0, c); reRender(); });
+  document.querySelectorAll('[data-rlc-ndel]').forEach(b => b.onclick = () => { if (!confirm('Delete this node?')) return; const i = parseInt(b.dataset.rlcNdel, 10); const id = ed.nodes[i].id; ed.nodes.splice(i, 1); ed.nodes.forEach(n => n.connections = (n.connections || []).filter(x => x !== id)); reRender(); });
+  const addCardTo = (arr, q) => { const key = _rlcCardByQuery(q); if (!key) { showToast('No card matched "' + q + '".', 2400); return false; } arr.push(key); return true; };
+  document.querySelectorAll('[data-rlc-addcard]').forEach(b => b.onclick = () => { const i = parseInt(b.dataset.rlcAddcard, 10); const q = (document.querySelector('[data-rlc-addcard-q="' + i + '"]') || {}).value || ''; ed.nodes[i].reward = ed.nodes[i].reward || { cardKeys: [] }; ed.nodes[i].reward.cardKeys = ed.nodes[i].reward.cardKeys || []; if (addCardTo(ed.nodes[i].reward.cardKeys, q)) reRender(); });
+  document.querySelectorAll('[data-rlc-rmcard]').forEach(b => b.onclick = () => { const [i, ki] = b.dataset.rlcRmcard.split(':').map(Number); ed.nodes[i].reward.cardKeys.splice(ki, 1); reRender(); });
+  document.querySelectorAll('[data-rlc-addshop]').forEach(b => b.onclick = () => { const i = parseInt(b.dataset.rlcAddshop, 10); const q = (document.querySelector('[data-rlc-addshop-q="' + i + '"]') || {}).value || ''; const key = _rlcCardByQuery(q); if (!key) { showToast('No card matched.', 2200); return; } ed.nodes[i].shop = ed.nodes[i].shop || { items: [] }; ed.nodes[i].shop.items = ed.nodes[i].shop.items || []; ed.nodes[i].shop.items.push({ cardKey: key, price: 50, stock: 1 }); reRender(); });
+  document.querySelectorAll('[data-rlc-rmitem]').forEach(b => b.onclick = () => { const [i, ii] = b.dataset.rlcRmitem.split(':').map(Number); ed.nodes[i].shop.items.splice(ii, 1); reRender(); });
+  document.querySelectorAll('[data-rlc-addchoice]').forEach(b => b.onclick = () => { const i = parseInt(b.dataset.rlcAddchoice, 10); ed.nodes[i].event = ed.nodes[i].event || { choices: [] }; ed.nodes[i].event.choices = ed.nodes[i].event.choices || []; ed.nodes[i].event.choices.push({ label: 'Option', currency: 0, medPoints: 0, healPercent: 0 }); reRender(); });
+  document.querySelectorAll('[data-rlc-rmchoice]').forEach(b => b.onclick = () => { const [i, ci] = b.dataset.rlcRmchoice.split(':').map(Number); ed.nodes[i].event.choices.splice(ci, 1); reRender(); });
+}
+
+function renderRlcList() {
+  const camps = getPlayableCampaigns();
+  const run = Profile.rlcRun;
+  const runCamp = run ? _rlcCampaign(run.campaignId) : null;
+  const card = (c) => {
+    const nodes = (c.nodes || []).length;
+    return `
+      <div style="width:280px;background:rgba(18,10,32,0.8);border:1px solid rgba(212,175,55,0.4);border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
+        ${c.coverImg ? `<img src="${c.coverImg}" alt="" style="width:100%;height:150px;object-fit:cover">` : `<div style="height:150px;display:flex;align-items:center;justify-content:center;font-size:3rem;background:radial-gradient(ellipse at center,rgba(170,60,255,0.25),transparent 70%)">🗺️</div>`}
+        <div style="padding:14px;display:flex;flex-direction:column;gap:8px;flex:1">
+          <div style="font-family:'Cinzel',serif;font-size:1.15rem;font-weight:700;color:#f6d97a">${escapeHtml(c.name || 'Untitled Campaign')}</div>
+          <div class="small-text ink-dim" style="flex:1">${escapeHtml(c.description || '')}</div>
+          <div class="small-text" style="color:#b8a0ff">${escapeHtml(c.difficulty || 'Normal')} · ${nodes} nodes${c.isPublished ? '' : ' · <span style=\"color:#e0a23a\">DRAFT</span>'}</div>
+          <button class="btn-primary" data-rlc-start="${escapeHtml(String(c.id))}" style="margin-top:auto">▶ Start Run</button>
+        </div>
+      </div>`;
+  };
+  root.innerHTML = `
+    <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(40,15,70,0.5),transparent)">
+      <button class="btn-secondary btn-mini" id="rlc-back-title">← Menu</button>
+      <h1 class="section-title" style="color:#f6d97a">🗺️ Roguelite Campaigns</h1>
+      <div class="section-subtitle">Branching runs. Persistent HP. Build your deck from battle rewards. Heal only at medical camps. Die and the run ends.</div>
+      ${run && runCamp && !run.isComplete && !run.isFailed ? `
+        <div style="max-width:560px;margin:0 auto 18px;padding:14px 18px;background:rgba(60,30,90,0.6);border:1px solid rgba(184,136,255,0.5);border-radius:12px;text-align:center">
+          <div style="color:#f6d97a;font-weight:700;font-family:'Cinzel',serif">Run in progress — ${escapeHtml(runCamp.name || 'Campaign')}</div>
+          <div class="small-text ink-dim" style="margin:6px 0 10px">${(run.completed||[]).length} nodes cleared · ${run.heroHP}/${run.maxHP} HP</div>
+          <button class="btn-primary" id="rlc-continue">▶ Continue Run</button>
+          <button class="btn-mini" id="rlc-abandon2" style="color:#ff8080;margin-left:8px">✖ Abandon</button>
+        </div>` : ''}
+      <div style="display:flex;flex-wrap:wrap;gap:20px;justify-content:center;margin-top:20px">
+        ${camps.length ? camps.map(card).join('') : '<div class="ink-dim">No campaigns published yet. Admins: build one in Pricing Admin → Roguelite Campaigns.</div>'}
+      </div>
+    </div>`;
+  document.getElementById('rlc-back-title').onclick = () => { App.screen = 'title'; render(); };
+  const cont = document.getElementById('rlc-continue');
+  if (cont) cont.onclick = () => { App.screen = 'rlcMap'; render(); };
+  const ab2 = document.getElementById('rlc-abandon2');
+  if (ab2) ab2.onclick = rlcAbandonRun;
+  document.querySelectorAll('[data-rlc-start]').forEach(b => {
+    b.onclick = () => {
+      const id = b.dataset.rlcStart;
+      if (run && !run.isComplete && !run.isFailed && !confirm('Starting a new run will abandon your current run. Continue?')) return;
+      rlcStartRun(id);
+    };
+  });
+}
+function renderRlcMap() {
+  const run = Profile.rlcRun;
+  if (!run) { App.screen = 'rlcList'; return render(); }
+  const camp = _rlcCampaign(run.campaignId);
+  if (!camp) { Profile.rlcRun = null; App.screen = 'rlcList'; return render(); }
+  if (run.isComplete || run.isFailed) { App.screen = 'rlcResult'; return render(); }
+  try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
+  const avail = new Set(_rlcAvailableNodeIds(camp, run));
+  const done = new Set(run.completed || []);
+  // Group nodes by row; render rows top (highest row = final) → bottom (start).
+  const rows = {};
+  (camp.nodes || []).forEach(n => { const r = parseInt(n.row, 10) || 0; (rows[r] = rows[r] || []).push(n); });
+  const rowKeys = Object.keys(rows).map(Number).sort((a, b) => b - a);
+  const nodeName = (id) => { const nn = _rlcNode(camp, id); return nn ? (nn.name || (RLC_NODE_TYPES[nn.type] || {}).name || 'Node') : '?'; };
+  const tile = (n) => {
+    const t = RLC_NODE_TYPES[n.type] || RLC_NODE_TYPES.battle;
+    const isDone = done.has(n.id);
+    const isAvail = avail.has(n.id) || (!done.size && _rlcStartNodes(camp).some(s => s.id === n.id));
+    const state = isDone ? 'done' : (isAvail ? 'avail' : 'lock');
+    const opacity = state === 'lock' ? 0.4 : 1;
+    const ring = state === 'avail' ? `box-shadow:0 0 18px ${t.glow};border-color:${t.color}` : (state === 'done' ? 'border-color:#5fae7a' : 'border-color:rgba(255,255,255,0.12)');
+    const conns = (n.connections || []).map(nodeName).filter(Boolean);
+    return `
+      <div ${state === 'avail' ? `data-rlc-node="${escapeHtml(String(n.id))}" role="button" tabindex="0"` : ''}
+           style="width:150px;padding:12px;background:rgba(18,10,32,0.85);border:2px solid;border-radius:12px;${ring};opacity:${opacity};cursor:${state === 'avail' ? 'pointer' : 'default'};text-align:center">
+        <div style="font-size:1.9rem">${isDone ? '✅' : t.icon}</div>
+        <div style="font-family:'Cinzel',serif;color:${state === 'lock' ? '#888' : '#f6d97a'};font-weight:700;font-size:0.95rem">${escapeHtml(n.name || t.name)}</div>
+        <div class="small-text" style="color:${t.color}">${escapeHtml(t.name)}</div>
+        ${conns.length ? `<div class="small-text ink-dim" style="margin-top:6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:5px">↑ ${conns.map(escapeHtml).join(' · ')}</div>` : ''}
+      </div>`;
+  };
+  root.innerHTML = `
+    <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(45,15,75,0.55),transparent)">
+      <button class="btn-secondary btn-mini" id="rlc-map-back">← Campaigns</button>
+      <h1 class="section-title" style="color:#f6d97a;margin-bottom:4px">${escapeHtml(camp.name || 'Campaign')}</h1>
+      ${_rlcHUD(run, camp)}
+      <div style="display:flex;flex-direction:column;gap:26px;align-items:center;padding:10px 0 40px">
+        ${rowKeys.map(rk => `<div style="display:flex;gap:22px;flex-wrap:wrap;justify-content:center">${rows[rk].map(tile).join('')}</div>`).join('<div style="color:#6a4b9a;font-size:1.4rem">▲</div>')}
+      </div>
+      ${App._rlcIntroFor === camp.id && camp.intro ? `
+        <div class="modal-backdrop" id="rlc-intro-bd" style="z-index:1300">
+          <div class="ds-modal" style="max-width:520px;padding:26px;text-align:center">
+            <div style="font-size:2.2rem;margin-bottom:8px">🗺️</div>
+            <div style="font-family:'Cinzel',serif;font-size:1.3rem;color:#f6d97a;margin-bottom:10px">${escapeHtml(camp.name || 'Campaign')}</div>
+            <div style="color:#d8c7f0;line-height:1.55;margin-bottom:18px;white-space:pre-wrap">${escapeHtml(camp.intro)}</div>
+            <button class="btn-primary" id="rlc-intro-go">Begin the journey →</button>
+          </div>
+        </div>` : ''}
+    </div>`;
+  document.getElementById('rlc-map-back').onclick = () => { App.screen = 'rlcList'; render(); };
+  const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  const introGo = document.getElementById('rlc-intro-go');
+  if (introGo) introGo.onclick = () => { App._rlcIntroFor = null; render(); };
+  document.querySelectorAll('[data-rlc-node]').forEach(el => {
+    const go = () => rlcEnterNode(el.dataset.rlcNode);
+    el.onclick = go;
+    el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } };
+  });
+}
+function renderRlcReward() {
+  const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
+  const camp = _rlcCampaign(run.campaignId);
+  const node = _rlcNode(camp, App._rlcNodeId);
+  const r = (node && node.reward) || {};
+  try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
+  // Sample choiceCount distinct cards from the pool.
+  let pool = (r.cardKeys || []).slice(0);
+  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  const n = Math.max(1, Math.min(parseInt(r.choiceCount, 10) || 3, pool.length || 3));
+  const offer = pool.slice(0, n);
+  const cardTile = (key) => {
+    let c = null; try { c = resolveDeckCard(key); } catch (e) {}
+    const nm = c ? (c.name || key) : key;
+    const art = (c && typeof getCardArt === 'function' && getCardArt(c.id)) ? `<img src="${getCardArt(c.id)}" style="width:100%;height:120px;object-fit:cover;border-radius:8px 8px 0 0">` : `<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:2.4rem;background:radial-gradient(ellipse,rgba(170,60,255,0.2),transparent)">${c ? (c.icon || '🃏') : '🃏'}</div>`;
+    return `<div style="width:170px;background:rgba(18,10,32,0.85);border:1px solid rgba(212,175,55,0.4);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+        ${art}
+        <div style="padding:10px;display:flex;flex-direction:column;gap:6px;flex:1">
+          <div style="color:#f6d97a;font-weight:700;font-size:0.92rem">${escapeHtml(nm)}</div>
+          <div class="small-text ink-dim">${c ? escapeHtml(String(c.type || 'card')) : ''} ${c && c.rarity ? '· ' + escapeHtml(c.rarity) : ''}</div>
+          <button class="btn-primary btn-mini" data-rlc-take="${escapeHtml(String(key))}" style="margin-top:auto">✓ Take</button>
+        </div>
+      </div>`;
+  };
+  root.innerHTML = `
+    <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(40,15,70,0.55),transparent)">
+      <h1 class="section-title" style="color:#f6d97a">🎁 Choose Your Reward</h1>
+      <div class="section-subtitle">Pick one card — it is added to your collection (usable in the Deck Editor) and this run's deck.${r.currency ? ` You also gained 💰 ${r.currency}.` : ''}${r.medPoints ? ` ⛑️ +${r.medPoints} med pts.` : ''}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;justify-content:center;margin-top:24px">${offer.map(cardTile).join('')}</div>
+      <div style="text-align:center;margin-top:24px">${r.allowSkip ? `<button class="btn-secondary" id="rlc-skip">Skip reward</button>` : ''}</div>
+    </div>`;
+  const finish = () => {
+    if (r.currency) run.currency += parseInt(r.currency, 10) || 0;
+    if (r.medPoints) run.medPoints += parseInt(r.medPoints, 10) || 0;
+    const nid = App._rlcNodeId; App._rlcNodeId = null;
+    _rlcCompleteNode(nid);
+  };
+  document.querySelectorAll('[data-rlc-take]').forEach(b => {
+    b.onclick = () => { _rlcGrantCard(b.dataset.rlcTake); showToast('🃏 Card added to your collection!', 2400); finish(); };
+  });
+  const sk = document.getElementById('rlc-skip'); if (sk) sk.onclick = finish;
+}
+function renderRlcMedical() {
+  const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
+  const camp = _rlcCampaign(run.campaignId);
+  const node = _rlcNode(camp, App._rlcNodeId);
+  try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
+  const opts = (node && node.heal && Array.isArray(node.heal.options)) ? node.heal.options : [
+    { name: 'Patch up (25%)', healPercent: 25, costMedPoints: 1 },
+    { name: 'Field surgery (50%)', healPercent: 50, costMedPoints: 2 },
+    { name: 'Full recovery', healPercent: 100, costMedPoints: 4 },
+  ];
+  const optBtn = (o, i) => {
+    const cMed = parseInt(o.costMedPoints, 10) || 0;
+    const cCur = parseInt(o.costCurrency, 10) || 0;
+    const afford = run.medPoints >= cMed && run.currency >= cCur;
+    return `<button class="btn-primary ${afford ? '' : 'btn-disabled'}" data-rlc-heal="${i}" ${afford ? '' : 'disabled'} style="display:block;width:100%;margin:0 0 10px;text-align:left">
+      ${escapeHtml(o.name || ('Heal ' + (o.healPercent || 0) + '%'))} — heals ${o.healPercent || 0}% ${cMed ? `· ⛑️ ${cMed}` : ''} ${cCur ? `· 💰 ${cCur}` : ''}${afford ? '' : ' (cannot afford)'}
+    </button>`;
+  };
+  root.innerHTML = `
+    <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(15,55,40,0.5),transparent)">
+      <h1 class="section-title" style="color:#7fdca0">⛑️ ${escapeHtml((node && node.name) || 'Medical Camp')}</h1>
+      <div class="section-subtitle">${escapeHtml((node && node.desc) || 'Spend medical points or currency to heal before pressing on.')}</div>
+      ${_rlcHUD(run, camp)}
+      <div style="max-width:480px;margin:18px auto 0">${opts.map(optBtn).join('')}
+        <button class="btn-secondary" id="rlc-leave-med" style="width:100%;margin-top:8px">Leave camp →</button>
+      </div>
+    </div>`;
+  const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  document.querySelectorAll('[data-rlc-heal]').forEach(b => {
+    b.onclick = () => {
+      const o = opts[parseInt(b.dataset.rlcHeal, 10)]; if (!o) return;
+      const cMed = parseInt(o.costMedPoints, 10) || 0, cCur = parseInt(o.costCurrency, 10) || 0;
+      if (run.medPoints < cMed || run.currency < cCur) { showToast('Not enough to afford that.', 2200); return; }
+      run.medPoints -= cMed; run.currency -= cCur;
+      run.heroHP = Math.min(run.maxHP, run.heroHP + Math.ceil(run.maxHP * ((parseInt(o.healPercent, 10) || 0) / 100)));
+      try { saveProfile(); } catch (e) {}
+      showToast('⛑️ Healed!', 1800); render();
+    };
+  });
+  document.getElementById('rlc-leave-med').onclick = () => { const nid = App._rlcNodeId; App._rlcNodeId = null; _rlcCompleteNode(nid); };
+}
+function renderRlcShop() {
+  const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
+  const camp = _rlcCampaign(run.campaignId);
+  const node = _rlcNode(camp, App._rlcNodeId);
+  const shop = (node && node.shop) || { name: 'Black Market', items: [] };
+  try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
+  const bought = run.purchases || [];
+  const itemTile = (it, i) => {
+    let c = null; try { c = resolveDeckCard(it.cardKey); } catch (e) {}
+    const nm = c ? (c.name || it.cardKey) : it.cardKey;
+    const price = parseInt(it.price, 10) || 0;
+    const boughtCount = bought.filter(x => x === (it.cardKey + '#' + i)).length;
+    const stock = (it.stock == null || it.stock === '') ? Infinity : (parseInt(it.stock, 10) || 0);
+    const sold = boughtCount >= stock;
+    const afford = run.currency >= price && !sold;
+    return `<div style="width:180px;background:rgba(18,10,32,0.85);border:1px solid rgba(150,110,255,0.4);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+        <div style="height:110px;display:flex;align-items:center;justify-content:center;font-size:2.3rem;background:radial-gradient(ellipse,rgba(150,110,255,0.22),transparent)">${c ? (c.icon || '🃏') : '🃏'}</div>
+        <div style="padding:10px;display:flex;flex-direction:column;gap:6px;flex:1">
+          <div style="color:#f6d97a;font-weight:700;font-size:0.9rem">${escapeHtml(nm)}</div>
+          <div class="small-text ink-dim">${c && c.rarity ? escapeHtml(c.rarity) : 'campaign-exclusive'}${stock !== Infinity ? ` · stock ${Math.max(0, stock - boughtCount)}` : ''}</div>
+          <button class="btn-primary btn-mini ${afford ? '' : 'btn-disabled'}" data-rlc-buy="${i}" ${afford ? '' : 'disabled'} style="margin-top:auto">${sold ? 'Sold out' : 'Buy — 💰 ' + price}</button>
+        </div>
+      </div>`;
+  };
+  root.innerHTML = `
+    <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(35,15,65,0.6),transparent)">
+      <h1 class="section-title" style="color:#b8a0ff">🛒 ${escapeHtml(shop.name || 'Black Market')}</h1>
+      <div class="section-subtitle">Exclusive cards — never found in packs. Bought cards go straight into your collection &amp; run deck.</div>
+      ${_rlcHUD(run, camp)}
+      <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center;margin-top:18px">
+        ${(shop.items || []).length ? (shop.items || []).map(itemTile).join('') : '<div class="ink-dim">The shelves are bare.</div>'}
+      </div>
+      <div style="text-align:center;margin-top:22px"><button class="btn-secondary" id="rlc-leave-shop">Leave the market →</button></div>
+    </div>`;
+  const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  document.querySelectorAll('[data-rlc-buy]').forEach(b => {
+    b.onclick = () => {
+      const i = parseInt(b.dataset.rlcBuy, 10);
+      const it = (shop.items || [])[i]; if (!it) return;
+      const price = parseInt(it.price, 10) || 0;
+      if (run.currency < price) { showToast('Not enough ' + _rlcCur(run) + '.', 2200); return; }
+      run.currency -= price;
+      _rlcGrantCard(it.cardKey);
+      if (!Array.isArray(run.purchases)) run.purchases = [];
+      run.purchases.push(it.cardKey + '#' + i);
+      try { saveProfile(); } catch (e) {}
+      showToast('🛒 Purchased — added to your collection!', 2400); render();
+    };
+  });
+  document.getElementById('rlc-leave-shop').onclick = () => { const nid = App._rlcNodeId; App._rlcNodeId = null; _rlcCompleteNode(nid); };
+}
+function renderRlcEvent() {
+  const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
+  const camp = _rlcCampaign(run.campaignId);
+  const node = _rlcNode(camp, App._rlcNodeId);
+  const ev = (node && node.event) || { text: (node && node.desc) || 'You pause at a crossroads...', choices: [] };
+  try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
+  const choices = (ev.choices && ev.choices.length) ? ev.choices : [{ label: 'Continue', }];
+  root.innerHTML = `
+    <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(20,40,70,0.5),transparent)">
+      <h1 class="section-title" style="color:#7fb8e6">📜 ${escapeHtml((node && node.name) || 'Story Event')}</h1>
+      ${_rlcHUD(run, camp)}
+      <div style="max-width:560px;margin:14px auto 0;padding:20px;background:rgba(18,10,32,0.8);border:1px solid rgba(90,160,230,0.35);border-radius:12px">
+        <div style="color:#d8e6f5;line-height:1.6;white-space:pre-wrap;margin-bottom:18px">${escapeHtml(ev.text || '')}</div>
+        ${choices.map((ch, i) => `<button class="btn-primary" data-rlc-choice="${i}" style="display:block;width:100%;margin:0 0 10px;text-align:left">${escapeHtml(ch.label || ('Option ' + (i + 1)))}</button>`).join('')}
+      </div>
+    </div>`;
+  const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  document.querySelectorAll('[data-rlc-choice]').forEach(b => {
+    b.onclick = () => {
+      const ch = choices[parseInt(b.dataset.rlcChoice, 10)] || {};
+      if (ch.currency) run.currency += parseInt(ch.currency, 10) || 0;
+      if (ch.medPoints) run.medPoints += parseInt(ch.medPoints, 10) || 0;
+      if (ch.healPercent) run.heroHP = Math.min(run.maxHP, run.heroHP + Math.ceil(run.maxHP * ((parseInt(ch.healPercent, 10) || 0) / 100)));
+      if (ch.damagePercent) run.heroHP = Math.max(0, run.heroHP - Math.ceil(run.maxHP * ((parseInt(ch.damagePercent, 10) || 0) / 100)));
+      if (ch.cardKey) _rlcGrantCard(ch.cardKey);
+      if (!run.choices) run.choices = {};
+      run.choices[App._rlcNodeId] = b.dataset.rlcChoice;
+      try { saveProfile(); } catch (e) {}
+      if (run.heroHP <= 0) { run.isFailed = true; run._failNodeId = App._rlcNodeId; try { saveProfile(); } catch (e) {} App.screen = 'rlcResult'; return render(); }
+      const nid = App._rlcNodeId; App._rlcNodeId = null; _rlcCompleteNode(nid);
+    };
+  });
+}
+function renderRlcResult() {
+  const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
+  const camp = _rlcCampaign(run.campaignId);
+  const won = !!run.isComplete;
+  const failNode = run._failNodeId ? _rlcNode(camp, run._failNodeId) : null;
+  root.innerHTML = `
+    <div class="campaign-page" style="background:radial-gradient(ellipse at top,${won ? 'rgba(60,40,15,0.6)' : 'rgba(60,15,25,0.6)'},transparent);text-align:center">
+      <div style="font-size:3.4rem;margin-top:30px">${won ? '🏆' : '💀'}</div>
+      <h1 class="section-title" style="color:${won ? '#f6d97a' : '#ff6b8a'}">${won ? 'Campaign Complete!' : 'Run Ended'}</h1>
+      <div class="section-subtitle">${won ? escapeHtml((camp && camp.name) || 'The campaign') + ' has been conquered.' : 'Your hero fell' + (failNode ? ' at ' + escapeHtml(failNode.name || 'a battle') : '') + '.'}</div>
+      <div style="max-width:460px;margin:20px auto;padding:18px;background:rgba(18,10,32,0.8);border:1px solid rgba(212,175,55,0.4);border-radius:12px;text-align:left">
+        <div style="color:#cdb6ff">Nodes cleared: <strong>${(run.completed || []).length}</strong></div>
+        <div style="color:#cdb6ff">Final ${escapeHtml(_rlcCur(run))}: <strong>${run.currency}</strong></div>
+        <div style="color:#cdb6ff">Run deck size: <strong>${(run.deck || []).length}</strong></div>
+        <div class="small-text ink-dim" style="margin-top:8px">All cards you collected this run are permanently in your collection — open the Deck Editor to use them.</div>
+      </div>
+      <button class="btn-primary" id="rlc-result-again">▶ Play Again</button>
+      <button class="btn-secondary" id="rlc-result-menu" style="margin-left:8px">← Menu</button>
+    </div>`;
+  document.getElementById('rlc-result-again').onclick = () => { Profile.rlcRun = null; try { saveProfile(); } catch (e) {} App.screen = 'rlcList'; render(); };
+  document.getElementById('rlc-result-menu').onclick = () => { Profile.rlcRun = null; try { saveProfile(); } catch (e) {} App.screen = 'title'; render(); };
 }
 
 function renderCampaignMap() {

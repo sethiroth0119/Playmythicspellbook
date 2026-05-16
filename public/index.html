@@ -50551,6 +50551,64 @@ function renderCollectionCardModal(active) {
       })()
     : '';
 
+  // ---- 🧬 Trait & Nature (per-unit, the player's OWN rolled version) ----
+  // Units carry a rolled Trait + Nature on Profile.units[id]. Older owned
+  // units were obtained before the trait system, so roll one lazily now
+  // (persisted) — that's why "traits weren't showing on my cards".
+  const traitNatureHtml = (() => {
+    if (kind !== 'unit' && kind !== 'hero') return '';
+    let traitId = null, natureId = null;
+    if (kind === 'unit') {
+      Profile.units = Profile.units || {};
+      if (ownedCount > 0) {
+        try { traitId = (typeof ensureUnitTrait === 'function') ? ensureUnitTrait(c.id, c, false) : null; } catch (e) {}
+        const p = Profile.units[c.id] = Profile.units[c.id] || { level: 1, xp: 0, kills: 0, fielded: 0 };
+        if (!p.nature && typeof rollNature === 'function') { p.nature = rollNature(); try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {} }
+        natureId = p.nature;
+      } else {
+        const p = Profile.units[c.id];
+        traitId = p && p.trait; natureId = p && p.nature;
+      }
+    } else {
+      const hp = (Profile.heroes && Profile.heroes[c.id]) || null;
+      natureId = hp && hp.nature;
+    }
+    if (!traitId && !natureId) {
+      return (kind === 'unit' && ownedCount <= 0)
+        ? `<div class="ccm-section"><div class="ccm-section-title">🧬 Trait & Nature</div><div class="ink-dim small-text">Own this unit (pack / reward / battle) to roll its Trait & Nature — every player's roll is different.</div></div>`
+        : '';
+    }
+    const tr = traitId && typeof getTrait === 'function' ? getTrait(traitId) : null;
+    const n  = natureId && typeof getNature === 'function' ? getNature(natureId) : null;
+    const traitCard = tr ? (() => {
+      const col = (typeof TRAIT_RARITY_COLOR !== 'undefined' && TRAIT_RARITY_COLOR[tr.rarity]) || '#9aa0a6';
+      return `<div style="border:1px solid ${col}55;border-left:4px solid ${col};border-radius:8px;padding:9px 12px;margin-bottom:8px;background:linear-gradient(90deg,${col}1f,rgba(20,12,40,0.4))">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:1.3rem;line-height:1">${tr.icon}</span>
+          <strong style="color:#f6d97a;font-family:'Cinzel',serif">${escapeHtml(tr.name)}</strong>
+          <span style="font-size:0.66rem;font-weight:700;color:${col};border:1px solid ${col};border-radius:4px;padding:1px 6px">${tr.rarity.toUpperCase()}</span>
+          <span class="ink-dim small-text" style="margin-left:auto">TRAIT</span>
+        </div>
+        <div class="small-text" style="color:#d8c7f0;margin-top:5px;line-height:1.45">${escapeHtml(tr.desc || '')}</div>
+      </div>`;
+    })() : '';
+    const natureCard = n ? (() => {
+      const neutral = !n.plus || !n.minus || n.plus === n.minus;
+      const tag = neutral ? '<span class="ink-dim small-text">neutral</span>'
+        : `<span style="color:#7be0a0;font-weight:700">+${n.plus.toUpperCase()}</span> <span style="color:#ff8a8a;font-weight:700">−${n.minus.toUpperCase()}</span>`;
+      return `<div style="border:1px solid rgba(126,224,123,0.35);border-left:4px solid #7be0a0;border-radius:8px;padding:9px 12px;background:linear-gradient(90deg,rgba(126,224,123,0.12),rgba(20,12,40,0.4))">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:1.2rem;line-height:1">🌱</span>
+          <strong style="color:#9be0c4">${escapeHtml(n.name)}</strong>
+          ${tag}
+          <span class="ink-dim small-text" style="margin-left:auto">NATURE</span>
+        </div>
+        <div class="small-text" style="color:#bfae87;margin-top:5px">${escapeHtml(n.desc || '')}</div>
+      </div>`;
+    })() : '';
+    return `<div class="ccm-section"><div class="ccm-section-title">🧬 Trait & Nature</div>${traitCard}${natureCard}</div>`;
+  })();
+
   // ---- Elements + factions rows ----
   const elemRow = elems.length
     ? `<div class="ccm-tag-row">${elems.map(e => ELEMENT_DATA[e]
@@ -50607,6 +50665,7 @@ function renderCollectionCardModal(active) {
         ${elemRow}
         ${factionRow}
         ${statsHtml}
+        ${traitNatureHtml}
         ${passiveHtml}
         ${learnsetHtml}
         <div class="ccm-footer">

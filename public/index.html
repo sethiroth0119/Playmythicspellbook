@@ -32562,8 +32562,10 @@ function renderPricingAdmin() {
               <label class="small-text" style="display:flex;align-items:center;gap:0.3rem;white-space:nowrap">
                 <input type="checkbox" data-act="sd-vendor" data-idx="${i}" ${d.inVendor ? 'checked' : ''}> List in Vendor
               </label>
-              <input type="number" min="0" data-act="sd-price" data-idx="${i}" value="${Number(d.price) || 0}" title="Price" style="width:84px;padding:0.35rem">
-              <select data-act="sd-cur" data-idx="${i}" style="padding:0.35rem">
+              <label class="small-text ink-dim" style="display:flex;align-items:center;gap:0.3rem;white-space:nowrap">Price
+                <input type="number" min="0" data-act="sd-price" data-idx="${i}" value="${Number(d.price) || 0}" title="Price" style="width:84px;padding:0.35rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.45);border-radius:5px">
+              </label>
+              <select data-act="sd-cur" data-idx="${i}" style="padding:0.35rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.45);border-radius:5px">
                 <option value="gems" ${cur === 'gems' ? 'selected' : ''}>Cinders</option>
                 <option value="sovereigns" ${cur === 'sovereigns' ? 'selected' : ''}>Aza coin</option>
               </select>

@@ -25702,6 +25702,44 @@ const buildAIDeck = () => {
   return shuffle(deck);
 };
 
+// 🤖 Admin AI decks → battle-ready card KEYS (kind:id).
+// AI decks (Pricing Admin → AI Decks) are saved as PLAIN card ids, but the
+// VS-screen preview and buildDeckFromKeys both speak `kind:id` keys. We pick
+// ONE admin deck — Catalog first (so every player faces the SAME decks the
+// admin published), then the admin's local Forge decks — and pad/truncate to
+// DECK_SIZE so the enemyDeckOverride path engages, which makes the VS preview
+// show the EXACT deck the AI then plays (preview == battle).
+function _allAdminAIDecks() {
+  const cat = (Catalog.aiDecks || []).filter(d => d && Array.isArray(d.cards) && d.cards.length > 0);
+  const loc = (Forge.aiDecks   || []).filter(d => d && Array.isArray(d.cards) && d.cards.length > 0);
+  return [...cat, ...loc];
+}
+function _aiCardIdToKey(id) {
+  if (id == null) return null;
+  if (typeof id === 'string' && id.indexOf(':') > -1) return id; // already a kind:id key
+  if (UNIT_CARDS.find(c => c.id === id))     return 'unit:' + id;
+  if (SPELL_CARDS.find(c => c.id === id))    return 'spell:' + id;
+  if (TRAP_CARDS.find(c => c.id === id))     return 'trap:' + id;
+  if (LOCATION_CARDS.find(c => c.id === id)) return 'location:' + id;
+  if (WEATHER_CARDS.find(c => c.id === id))  return 'weather:' + id;
+  if (typeof lookupCustomCard === 'function' && lookupCustomCard(id)) return 'custom:' + id; // survivor/custom cards
+  return null;
+}
+function getAdminAIDeckKeys() {
+  const decks = _allAdminAIDecks();
+  if (!decks.length) return [];
+  const picked = decks[Math.floor(Math.random() * decks.length)];
+  let keys = (picked.cards || []).map(_aiCardIdToKey).filter(Boolean);
+  if (!keys.length) return [];
+  if (keys.length > DECK_SIZE) keys = keys.slice(0, DECK_SIZE);
+  if (keys.length < DECK_SIZE) {
+    const base = keys.slice(0);
+    let i = 0;
+    while (keys.length < DECK_SIZE) { keys.push(base[i % base.length]); i++; }
+  }
+  return keys;
+}
+
 const xpForLevel = (lvl) => Math.floor(50 + 30 * lvl + 5 * lvl * lvl);
 const xpFromKill = (target) => target.isHero ? 200 : 25 + (target.level || 1) * 18;
 const distance = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
@@ -30592,6 +30630,15 @@ function renderDeckSelect() {
       encounterModifiers = Array.isArray(encChallenge.modifierIds) ? encChallenge.modifierIds.slice(0) : null;
       App._encounterChallenge = null;
     }
+    // 🤖 Normal AI battle (no campaign / shared-deck / encounter override):
+    // lock in the admin-authored AI deck NOW so the VS-screen "THEIR TEAM"
+    // preview shows the real units AND the battle plays that exact deck
+    // (preview == battle). If the admin hasn't created/published any AI deck
+    // yet, leave it null — buildAIDeck()'s custom-pool fallback handles it.
+    if (!enemyDeckOverride) {
+      const aiKeys = (typeof getAdminAIDeckKeys === 'function') ? getAdminAIDeckKeys() : [];
+      if (aiKeys && aiKeys.length === DECK_SIZE) enemyDeckOverride = aiKeys;
+    }
     // Resolve deck name for history tracking — pull from the player's saved decks.
     let deckName = null;
     if (deckId && typeof getDeckById === 'function') {
@@ -30714,6 +30761,14 @@ function getVsPlayerDeckKeys(bp) {
 function getVsOpponentDeckKeys(bp) {
   if (bp && Array.isArray(bp.enemyDeckOverride) && bp.enemyDeckOverride.length > 0) {
     return bp.enemyDeckOverride;
+  }
+  // No locked-in override → preview the admin-authored AI deck (the same
+  // source buildAIDeck plays). getGeneratedDeckForHero only knows the hidden
+  // emoji STARTER heroes and returns [] for custom heroes, so it would show
+  // "0 units" for every custom opponent — use the real AI deck instead.
+  if (typeof getAdminAIDeckKeys === 'function') {
+    const aiKeys = getAdminAIDeckKeys();
+    if (aiKeys && aiKeys.length > 0) return aiKeys;
   }
   if (bp && bp.opponent && typeof getGeneratedDeckForHero === 'function') {
     return getGeneratedDeckForHero(bp.opponent.id) || [];

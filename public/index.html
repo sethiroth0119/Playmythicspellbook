@@ -24172,6 +24172,36 @@ function _flushCloudSyncNow() {
   } catch (e) { /* never block unload */ }
 }
 
+// 🛟 FORCE A SAVE RIGHT NOW. Used the instant a player earns a card (campaign
+// reward, gift, black-market buy, starter deck) or an admin saves AI/starter
+// decks / a campaign — so the data reaches that player's OWN cloud row
+// immediately instead of waiting on the 4s debounce. The cloud row is keyed to
+// the signed-in user's id (RLS), so this only ever touches THAT player's
+// progression; it can never leak into or overwrite another player's account.
+function _persistProgressNow() {
+  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  try {
+    if (Profile && Profile.cloud && Profile.cloud.signedIn && Profile.cloud.autoSync !== false) {
+      Profile.cloud.pendingChanges = true;
+      if (_cloudSyncTimer) { clearTimeout(_cloudSyncTimer); _cloudSyncTimer = null; }
+      if (typeof _runCloudSyncWithRetry === 'function') _runCloudSyncWithRetry();
+    }
+  } catch (e) {}
+}
+// Same, but for admin Forge content (AI decks / starter decks / campaigns):
+// write localStorage + IndexedDB AND push to the cloud forge column NOW so the
+// admin's work is never stuck in the debounce window.
+function _persistForgeNow() {
+  try { if (typeof saveForge === 'function') saveForge(); } catch (e) {}
+  try {
+    if (Profile && Profile.cloud && Profile.cloud.signedIn && Profile.cloud.autoSync !== false) {
+      Profile.cloud.pendingChanges = true;
+      if (_cloudSyncTimer) { clearTimeout(_cloudSyncTimer); _cloudSyncTimer = null; }
+      if (typeof _runCloudSyncWithRetry === 'function') _runCloudSyncWithRetry();
+    }
+  } catch (e) {}
+}
+
 // 💗 30-SECOND HEARTBEAT — walks the dirty flag and force-flushes if anything
 // is pending. Catches any save the debounce missed (e.g. a saveProfile() that
 // happened during a re-render that swallowed the setTimeout context). Cheap;
@@ -30683,7 +30713,7 @@ function grantStarterDeckToPlayer(deck, opts) {
   if (!Array.isArray(Profile.ownedStarterDecks)) Profile.ownedStarterDecks = [];
   if (deck.id && Profile.ownedStarterDecks.indexOf(deck.id) < 0) Profile.ownedStarterDecks.push(deck.id);
   if (opts.markPicked) { Profile.starterPicked = true; Profile.starterDeckId = deck.id || null; }
-  try { saveProfile(); } catch (e) {}
+  _persistProgressNow();
   return true;
 }
 function pickStarterDeck(deckId) {
@@ -32120,7 +32150,7 @@ function renderPricingAdmin() {
       if (!deck) return;
       if (!confirm('Delete AI deck "' + (deck.name || 'Untitled') + '"? This cannot be undone.')) return;
       Forge.aiDecks.splice(idx, 1);
-      saveForge();
+      _persistForgeNow();
       showToast('🗑 AI deck deleted.', 2000);
       render();
     };
@@ -32165,7 +32195,7 @@ function renderPricingAdmin() {
       if (!deck) return;
       if (!confirm('Delete starter deck "' + (deck.name || 'Untitled') + '"? This cannot be undone.')) return;
       Forge.starterDecks.splice(idx, 1);
-      saveForge();
+      _persistForgeNow();
       showToast('🗑 Starter deck deleted.', 2000);
       render();
     };
@@ -46645,7 +46675,7 @@ async function claimGift(g) {
     const qty = Math.max(1, parseInt(g.qty, 10) || 1);
     if (!Profile.cardCollection) Profile.cardCollection = {};
     Profile.cardCollection[g.card_id] = (Profile.cardCollection[g.card_id] || 0) + qty;
-    try { saveProfile(); } catch (e) {}
+    _persistProgressNow();
     GiftsCache.pending = GiftsCache.pending.filter(x => x.id !== g.id);
     return { ok: true };
   } catch (e) { return { error: (e && e.message) || 'Network error.' }; }
@@ -48432,14 +48462,14 @@ function _rlcCompleteNode(nodeId) {
   run.currentNodeId = nodeId;
   const camp = _rlcCampaign(run.campaignId);
   const node = _rlcNode(camp, nodeId);
-  try { saveProfile(); } catch (e) {}
+  _persistProgressNow();
   if (node && (node.type === 'finalBoss')) {
     run.isComplete = true;
     // Final completion rewards.
     const fr = camp.finalReward || {};
     (fr.cardKeys || []).forEach(k => _rlcGrantCard(k));
     if (fr.currency) run.currency += parseInt(fr.currency, 10) || 0;
-    try { saveProfile(); } catch (e) {}
+    _persistProgressNow();
     App.screen = 'rlcResult'; render(); return;
   }
   App.screen = 'rlcMap'; render();
@@ -48513,11 +48543,11 @@ function rlcAfterBattle() {
   if (!res || !run) { App.screen = run ? 'rlcMap' : 'rlcList'; return render(); }
   if (!res.won) {
     run.isFailed = true; run._failNodeId = res.nodeId;
-    try { saveProfile(); } catch (e) {}
+    _persistProgressNow();
     App.screen = 'rlcResult'; return render();
   }
   run.heroHP = Math.max(1, Math.min(run.maxHP, parseInt(res.endHP, 10) || run.heroHP));
-  try { saveProfile(); } catch (e) {}
+  _persistProgressNow();
   const camp = _rlcCampaign(run.campaignId);
   const node = _rlcNode(camp, res.nodeId);
   const r = (node && node.reward) || {};
@@ -48610,11 +48640,11 @@ function renderRlcAdmin() {
         </div>
       </div>`;
     document.getElementById('rlc-adm-back').onclick = () => { App.screen = 'pricingAdmin'; render(); };
-    document.getElementById('rlc-adm-new').onclick = () => { const c = _rlcBlankCampaign(); list.push(c); saveForge(); App.rlcEdit = c.id; render(); };
+    document.getElementById('rlc-adm-new').onclick = () => { const c = _rlcBlankCampaign(); list.push(c); _persistForgeNow(); App.rlcEdit = c.id; render(); };
     document.querySelectorAll('[data-rlc-edit]').forEach(b => b.onclick = () => { App.rlcEdit = list[parseInt(b.dataset.rlcEdit, 10)].id; render(); });
-    document.querySelectorAll('[data-rlc-pub]').forEach(b => b.onclick = () => { const c = list[parseInt(b.dataset.rlcPub, 10)]; c.isPublished = !c.isPublished; saveForge(); render(); });
-    document.querySelectorAll('[data-rlc-dup]').forEach(b => b.onclick = () => { const c = JSON.parse(JSON.stringify(list[parseInt(b.dataset.rlcDup, 10)])); c.id = 'camp' + Date.now().toString(36); c.name = (c.name || 'Campaign') + ' (copy)'; c.isPublished = false; list.push(c); saveForge(); render(); });
-    document.querySelectorAll('[data-rlc-del]').forEach(b => b.onclick = () => { if (!confirm('Delete this campaign?')) return; list.splice(parseInt(b.dataset.rlcDel, 10), 1); saveForge(); render(); });
+    document.querySelectorAll('[data-rlc-pub]').forEach(b => b.onclick = () => { const c = list[parseInt(b.dataset.rlcPub, 10)]; c.isPublished = !c.isPublished; _persistForgeNow(); render(); });
+    document.querySelectorAll('[data-rlc-dup]').forEach(b => b.onclick = () => { const c = JSON.parse(JSON.stringify(list[parseInt(b.dataset.rlcDup, 10)])); c.id = 'camp' + Date.now().toString(36); c.name = (c.name || 'Campaign') + ' (copy)'; c.isPublished = false; list.push(c); _persistForgeNow(); render(); });
+    document.querySelectorAll('[data-rlc-del]').forEach(b => b.onclick = () => { if (!confirm('Delete this campaign?')) return; list.splice(parseInt(b.dataset.rlcDel, 10), 1); _persistForgeNow(); render(); });
     return;
   }
   // ---- Campaign editor ----
@@ -48735,8 +48765,8 @@ function renderRlcAdmin() {
     }
     o[parts[parts.length - 1]] = val;
   };
-  document.getElementById('rlc-ed-back').onclick = () => { saveForge(); App.rlcEdit = null; render(); };
-  document.getElementById('rlc-ed-save').onclick = () => { ed.updatedAt = Date.now(); saveForge(); showToast('💾 Campaign saved. Mark Publish-ready + 📚 Publish to go live.', 3600); };
+  document.getElementById('rlc-ed-back').onclick = () => { ed.updatedAt = Date.now(); _persistForgeNow(); App.rlcEdit = null; render(); };
+  document.getElementById('rlc-ed-save').onclick = () => { ed.updatedAt = Date.now(); _persistForgeNow(); showToast('💾 Campaign saved + synced. Mark Publish-ready + 📚 Publish to go live.', 3600); };
   document.getElementById('rlc-add-node').onclick = () => { ed.nodes = ed.nodes || []; ed.nodes.push(_rlcBlankNode()); reRender(); };
   const coverBtn = document.getElementById('rlc-cover-btn');
   if (coverBtn) coverBtn.onclick = () => document.getElementById('rlc-cover-file').click();
@@ -48959,7 +48989,7 @@ function renderRlcMedical() {
       if (run.medPoints < cMed || run.currency < cCur) { showToast('Not enough to afford that.', 2200); return; }
       run.medPoints -= cMed; run.currency -= cCur;
       run.heroHP = Math.min(run.maxHP, run.heroHP + Math.ceil(run.maxHP * ((parseInt(o.healPercent, 10) || 0) / 100)));
-      try { saveProfile(); } catch (e) {}
+      _persistProgressNow();
       showToast('⛑️ Healed!', 1800); render();
     };
   });
@@ -49010,7 +49040,7 @@ function renderRlcShop() {
       _rlcGrantCard(it.cardKey);
       if (!Array.isArray(run.purchases)) run.purchases = [];
       run.purchases.push(it.cardKey + '#' + i);
-      try { saveProfile(); } catch (e) {}
+      _persistProgressNow();
       showToast('🛒 Purchased — added to your collection!', 2400); render();
     };
   });
@@ -49043,8 +49073,8 @@ function renderRlcEvent() {
       if (ch.cardKey) _rlcGrantCard(ch.cardKey);
       if (!run.choices) run.choices = {};
       run.choices[App._rlcNodeId] = b.dataset.rlcChoice;
-      try { saveProfile(); } catch (e) {}
-      if (run.heroHP <= 0) { run.isFailed = true; run._failNodeId = App._rlcNodeId; try { saveProfile(); } catch (e) {} App.screen = 'rlcResult'; return render(); }
+      _persistProgressNow();
+      if (run.heroHP <= 0) { run.isFailed = true; run._failNodeId = App._rlcNodeId; _persistProgressNow(); App.screen = 'rlcResult'; return render(); }
       const nid = App._rlcNodeId; App._rlcNodeId = null; _rlcCompleteNode(nid);
     };
   });
@@ -50480,7 +50510,7 @@ function renderDeckBuilder() {
       };
       if (idx != null && Forge.aiDecks[idx]) Forge.aiDecks[idx] = rec;
       else Forge.aiDecks.push(rec);
-      try { saveForge(); } catch (e) {}
+      _persistForgeNow();
       App.aiDeckEdit = null;
       App.deckEdit = undefined; App.editingDeckId = null; App.deckBuilderHeroId = null; App.deckEditName = undefined;
       App.screen = 'pricingAdmin';
@@ -50517,7 +50547,7 @@ function renderDeckBuilder() {
       };
       if (idx != null && Forge.starterDecks[idx]) Forge.starterDecks[idx] = rec;
       else Forge.starterDecks.push(rec);
-      try { saveForge(); } catch (e) {}
+      _persistForgeNow();
       App.starterDeckEdit = null;
       App.deckEdit = undefined; App.editingDeckId = null; App.deckBuilderHeroId = null; App.deckEditName = undefined;
       App.screen = 'pricingAdmin';

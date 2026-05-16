@@ -38721,10 +38721,12 @@ function renderBattle() {
       ${App.replayViewing ? '' : renderTutorialPanel()}
       ${App.replayViewing ? '' : renderEmoteBar()}
       ${App.replayViewing ? '' : renderEmoteBubbles()}
+      ${renderBattlePiles(s)}
     </div>
   `;
 
   if (!App.replayViewing) bindBattleEvents();
+  bindBattlePiles();
   if (s.gameOver && !App.replayViewing) bindGameOverEvents();
   if (!App.replayViewing) bindMoveLearnModal();
   if (!App.replayViewing) bindSubclassPickModal();
@@ -38757,6 +38759,70 @@ function fitCardNames() {
   });
 }
 
+// ===== 🂠 Deck + ⚰️ Graveyard piles (both sides) =====
+// Fixed overlay flanking the board: opponent's deck/graveyard top-right,
+// the player's bottom-right (next to the emote/chat fab). Deck piles show
+// the remaining count; graveyard piles are clickable to view their cards.
+// Purely additive — reads App.state, never mutates battle logic.
+function renderBattlePiles(s) {
+  if (!s || !s.player || !s.ai || s.gameOver) return '';
+  if (App.battlePrep && App.battlePrep.multiplayer) { /* still fine — counts only */ }
+  const len = (a) => Array.isArray(a) ? a.length : 0;
+  const pile = (owner, kind, label, count, clickable) => {
+    const col = owner === 'player' ? '#6cb6f2' : '#ff8a7a';
+    return `<div ${clickable ? `data-bp-grave="${owner}" role="button" tabindex="0"` : ''} title="${escapeHtml(label)}: ${count} card${count === 1 ? '' : 's'}${clickable ? ' — click to view' : ''}"
+        style="width:60px;height:80px;border-radius:8px;border:1px solid ${col}66;background:linear-gradient(160deg,rgba(22,13,42,0.96),rgba(10,6,22,0.96));box-shadow:0 4px 14px rgba(0,0,0,0.6);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:${clickable ? 'pointer' : 'default'};position:relative;-webkit-user-select:none;user-select:none">
+        <div style="position:absolute;inset:4px;border:1px dashed ${col}55;border-radius:6px;pointer-events:none"></div>
+        <div style="font-size:1.25rem;line-height:1">${kind === 'deck' ? '🂠' : '⚰️'}</div>
+        <div style="font-size:0.58rem;letter-spacing:0.04em;color:${col};font-family:'Cinzel',serif;text-transform:uppercase;text-align:center;line-height:1.05">${escapeHtml(label)}</div>
+        <div style="font-weight:800;color:#f6d97a;font-size:0.95rem;line-height:1">${count}</div>
+      </div>`;
+  };
+  const grp = (pos, inner) => `<div style="position:fixed;${pos};z-index:60;display:flex;flex-direction:column;gap:8px;pointer-events:auto">${inner}</div>`;
+  // Opponent (AI) — top-right: deck on top, graveyard below it (toward centre).
+  const oppGrp = grp('right:14px;top:90px',
+    pile('ai', 'deck', 'Foe Deck', len(s.ai.deck), false) +
+    pile('ai', 'grave', 'Foe Grave', len(s.ai.graveyard), true));
+  // Player — bottom-right next to the 💬 fab: graveyard above, deck below.
+  const meGrp = grp('right:14px;bottom:212px',
+    pile('player', 'grave', 'Graveyard', len(s.player.graveyard), true) +
+    pile('player', 'deck', 'Your Deck', len(s.player.deck), false));
+  let modal = '';
+  if (App._pileView === 'player' || App._pileView === 'ai') {
+    const owner = App._pileView;
+    const cards = (s[owner] && Array.isArray(s[owner].graveyard)) ? s[owner].graveyard : [];
+    const ic = (c) => (c && c.type === 'unit') ? '🃏' : (c && c.type === 'spell') ? '✨' : (c && c.type === 'trap') ? '🪤' : (c && c.type === 'weather') ? '🌩️' : '📜';
+    const rows = cards.length
+      ? cards.map(c => `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:rgba(255,255,255,0.04);border:1px solid rgba(184,136,255,0.2);border-radius:5px">
+          <span style="font-size:1rem">${ic(c)}</span>
+          <span style="flex:1;color:#f0e6ff;font-size:0.85rem">${escapeHtml((c && c.name) || 'Card')}</span>
+          <span class="small-text ink-dim">${escapeHtml(String((c && c.type) || ''))}</span>
+        </div>`).join('')
+      : '<div class="ink-dim" style="text-align:center;padding:18px">Empty — no cards here yet.</div>';
+    modal = `<div class="modal-backdrop" id="bp-modal-bd" style="z-index:1400">
+        <div class="ds-modal" style="max-width:420px;max-height:74vh;display:flex;flex-direction:column;padding:18px">
+          <div style="display:flex;align-items:center;margin-bottom:10px;gap:8px">
+            <div style="font-family:'Cinzel',serif;font-size:1.1rem;color:#f6d97a;flex:1">⚰️ ${owner === 'player' ? 'Your' : "Opponent's"} Graveyard <span class="small-text ink-dim">(${cards.length})</span></div>
+            <button class="btn-mini" id="bp-modal-x">✖ Close</button>
+          </div>
+          <div style="overflow:auto;display:flex;flex-direction:column;gap:5px">${rows}</div>
+        </div>
+      </div>`;
+  }
+  return oppGrp + meGrp + modal;
+}
+function bindBattlePiles() {
+  document.querySelectorAll('[data-bp-grave]').forEach(el => {
+    const open = () => { App._pileView = el.getAttribute('data-bp-grave'); render(); };
+    el.onclick = open;
+    el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
+  });
+  const close = () => { App._pileView = null; render(); };
+  const x = document.getElementById('bp-modal-x');
+  if (x) x.onclick = close;
+  const bd = document.getElementById('bp-modal-bd');
+  if (bd) bd.onclick = (e) => { if (e.target === bd) close(); };
+}
 // ===== In-battle tutorial panel =====
 function renderTutorialPanel() {
   if (!App.tutorial || !App.tutorial.active) return '';

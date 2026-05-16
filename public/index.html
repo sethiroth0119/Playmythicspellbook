@@ -27778,6 +27778,27 @@ function getFollowSourceId(unit) {
   return fl && fl.sourceUnitId ? fl.sourceUnitId : null;
 }
 
+// 🔒 Resolve a unit's source card to read its Kalon-restriction flags.
+// Defaults: a unit CAN normal-transform unless the card says otherwise.
+function _kalonFlags(unit) {
+  const id = unit && (unit.originalCardId || unit.cardId || unit.heroId || unit.id);
+  let src = null;
+  try {
+    if (typeof UNIT_CARDS !== 'undefined') src = UNIT_CARDS.find(c => c.id === id);
+    if (!src && typeof STARTER_HEROES !== 'undefined') src = STARTER_HEROES.find(h => h.id === id);
+    if (!src && typeof lookupCustomCard === 'function') src = lookupCustomCard(id);
+    if (!src && Forge && Array.isArray(Forge.customCards)) src = Forge.customCards.find(c => c.id === id);
+    if (!src && typeof Catalog !== 'undefined' && Array.isArray(Catalog.cards)) src = Catalog.cards.find(c => c.id === id);
+  } catch (e) {}
+  src = src || {};
+  return {
+    forcedOnly: !!src.forcedTransformOnly,
+    canNormal:  src.canNormalKalonTransform !== false && !src.forcedTransformOnly,
+    canForced:  src.canForcedKalonTransform !== false,
+    ignore:     !!src.ignoreTransformRestrictions,
+  };
+}
+
 const executeKalonTransform = (state, unit, opts) => {
   opts = opts || {};
   // 🎁 FREE transforms (e.g. from a transformAlly on-play effect) bypass the
@@ -27788,6 +27809,23 @@ const executeKalonTransform = (state, unit, opts) => {
   const isFree = !!opts.free;
   const kalon = getKalonForm(unit);
   if (!kalon) return state;
+  // 🔒 Cannot-Normal-Kalon-Transform gate. Forced/effect transforms
+  // (opts.forced, opts.free card-effect, opts.ignoreRestrictions) bypass the
+  // normal-block; a card flagged forcedTransformOnly / canNormalKalon=false
+  // can ONLY be transformed by a forced effect (and only if it permits it).
+  {
+    const _kf = _kalonFlags(unit);
+    const _forced = !!(opts.forced || opts.free || opts.ignoreRestrictions);
+    if (!_forced) {
+      if (!_kf.canNormal) {
+        if (unit.owner === 'player' && typeof showToast === 'function') showToast('This unit cannot Kalon Transform normally.');
+        return state;
+      }
+    } else if (!_kf.canForced && !_kf.ignore && !opts.ignoreRestrictions) {
+      if (unit.owner === 'player' && typeof showToast === 'function') showToast(`${unit.name} resists the transformation.`);
+      return state;
+    }
+  }
   if (!isFree && state[unit.owner].kalonsRemaining <= 0) return state;
   // 🚫 Suppress-Awakening lock — set by the opposing spell. Blocks every Kalon
   // transformation attempt from this side until the counter ticks down to 0
@@ -33427,6 +33465,13 @@ function renderCardEditor() {
         </div>
         <div class="editor-field full"><label>Kalon Passive</label><select id="ed-kalon-passive">${kalonPassiveOpts}</select></div>
         <div class="editor-field full"><label>Kalon Second Passive (optional)</label><select id="ed-kalon-passive2">${kalonPassive2Opts}</select><div class="small-text" style="margin-top:0.25rem;opacity:0.7">Kalon ALWAYS keeps the base form's passive(s) on transform — these two are added on top.</div></div>
+        <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.6rem;margin-top:0.3rem">
+          <label style="color:#d4af37;font-weight:700">🔒 Kalon Transform Restrictions</label>
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;margin-top:0.4rem"><input type="checkbox" id="ed-kalon-cannormal" ${card.canNormalKalonTransform === false ? '' : 'checked'}> <span>Can be transformed by the normal Kalon action (uncheck = player CANNOT manually transform this unit)</span></label>
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;margin-top:0.3rem"><input type="checkbox" id="ed-kalon-canforced" ${card.canForcedKalonTransform === false ? '' : 'checked'}> <span>Can be transformed by forced effects (passives / events / field / card effects)</span></label>
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;margin-top:0.3rem"><input type="checkbox" id="ed-kalon-forcedonly" ${card.forcedTransformOnly ? 'checked' : ''}> <span>Forced-transform ONLY (never manually — implies the first box off)</span></label>
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;margin-top:0.3rem"><input type="checkbox" id="ed-kalon-ignorerestrict" ${card.ignoreTransformRestrictions ? 'checked' : ''}> <span>This unit's own transform ignores all restrictions</span></label>
+        </div>
       </div>
     </div>
   ` : '';
@@ -34774,6 +34819,16 @@ function captureEditorIntoCard(card) {
     } else {
       card.kalonForm = null;
     }
+  }
+  // 🔒 Kalon transform-restriction flags (independent of kalonForm presence).
+  if (document.getElementById('ed-kalon-cannormal')) {
+    const _ck = (id) => { const e = document.getElementById(id); return e ? !!e.checked : null; };
+    const cn = _ck('ed-kalon-cannormal'), cf = _ck('ed-kalon-canforced');
+    const fo = _ck('ed-kalon-forcedonly'), ig = _ck('ed-kalon-ignorerestrict');
+    card.canNormalKalonTransform  = (cn === false && !fo) ? false : (fo ? false : true);
+    card.canForcedKalonTransform  = cf === false ? false : true;
+    card.forcedTransformOnly      = !!fo;
+    card.ignoreTransformRestrictions = !!ig;
   }
 
   // Spell

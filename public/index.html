@@ -16907,6 +16907,48 @@ const STATUS_EFFECTS = {
   // passive: this is the buff PILE that the matching passive grants on each
   // kill. Implemented as a flat status with atkMod scaled by a `stack` field.
   moxie:      { id: 'moxie',      name: 'Killer Instinct', icon: '⚔️',  stackable: true, desc: 'Each stack grants +2 ATK. Stacks build on KO; capped at 5 stacks (+10 ATK).' },
+
+  // ===== 🆕 EXPANDED CATALOG — all declarative (reuse engine-interpreted
+  // fields only: dmgMin/dmgMax+when, skipTurn, skipChance, spdMod, atkMod,
+  // magMod, defMod, resMod, statMult, dodgeChance, escalating). Auto-listed
+  // in the "All Status Effects" modal + the move-editor status picker. =====
+
+  // 💥 PUSH / KNOCKDOWN — the status form of a shove: the target is knocked
+  // off balance and loses their next turn. (Literal tile-displacement still
+  // lives on moves via the `knockback` property — e.g. Air Slash.)
+  knockdown:  { id: 'knockdown',  name: 'Knocked Down', icon: '💥',  skipTurn: true, desc: 'Shoved off balance and knocked prone — skips their next turn.' },
+  // 🌀 OFF-BALANCE — milder push aftermath: sluggish footing.
+  offBalance: { id: 'offBalance', name: 'Off-Balance',  icon: '🌀',  spdMod: -2, defMod: -2, desc: 'Stumbling from the impact — -2 movement/range and -2 DEF.' },
+  // ❄️ FROSTBITE — chilling DoT that also slows.
+  frostbite:  { id: 'frostbite',  name: 'Frostbite',    icon: '❄️',  dmgMin: 1, dmgMax: 3, when: 'turnStart', spdMod: -1, desc: 'Freezing rot — 1-3 dmg/turn and -1 movement.' },
+  // 🔥 SCORCHED — searing DoT that softens armor.
+  scorched:   { id: 'scorched',   name: 'Scorched',     icon: '🔥',  dmgMin: 2, dmgMax: 2, when: 'turnStart', defMod: -3, desc: 'Charred plating — 2 dmg/turn and -3 DEF.' },
+  // 🩹 HEMORRHAGE — escalating bleed that ramps each turn.
+  hemorrhage: { id: 'hemorrhage', name: 'Hemorrhage',   icon: '🩹',  dmgMin: 2, dmgMax: 2, when: 'turnStart', escalating: true, desc: 'A worsening wound — 2 dmg/turn × turns active (2, 4, 6…). Cleanse to stop it.' },
+  // ⚡ ELECTRIFIED — arc damage with a chance to drop the action.
+  electrified:{ id: 'electrified',name: 'Electrified',  icon: '⚡',  dmgMin: 1, dmgMax: 3, when: 'turnStart', skipChance: 0.3, desc: 'Crackling current — 1-3 dmg/turn and 30% chance to fumble each action.' },
+  // 🛡️ VULNERABLE — defenses cracked wide open (mirror of Shielded).
+  vulnerable: { id: 'vulnerable', name: 'Vulnerable',   icon: '🪓',  defMod: -5, resMod: -5, desc: '-5 DEF & RES — armor and wards shattered.' },
+  // 💪 EMPOWERED — sustained offensive buff (mirror of Vulnerable).
+  empowered:  { id: 'empowered',  name: 'Empowered',    icon: '✊',  atkMod: 4, magMod: 4, desc: '+4 ATK and +4 MAG while empowered.' },
+  // 💨 SWIFT — strong mobility buff (stronger than Haste).
+  swift:      { id: 'swift',      name: 'Swift',        icon: '🪶',  spdMod: 2, desc: '+2 movement / attack range.' },
+  // 🦴 PETRIFIED — turned to stone: cannot act, but extremely tanky.
+  petrified:  { id: 'petrified',  name: 'Petrified',    icon: '🗿',  skipTurn: true, defMod: 8, resMod: 8, desc: 'Encased in stone — cannot act, but +8 DEF & RES.' },
+  // 🤡 DISARMED — weapon stripped: heavy attack penalty.
+  disarmed:   { id: 'disarmed',   name: 'Disarmed',     icon: '🗡️', atkMod: -7, desc: '-7 ATK — weapon knocked away.' },
+  // 🌫️ BLINDED — flailing: high chance to fumble actions.
+  blinded:    { id: 'blinded',    name: 'Blinded',      icon: '🌫️', skipChance: 0.4, atkMod: -2, desc: 'Cannot see — 40% chance to fumble each action and -2 ATK.' },
+  // 🔮 HEXED — magic crippled.
+  hexed:      { id: 'hexed',      name: 'Hexed',        icon: '🔮',  magMod: -6, resMod: -3, desc: '-6 MAG and -3 RES — arcane channels fouled.' },
+  // 😤 BERSERK — all-out aggression (heavier rage variant).
+  berserk:    { id: 'berserk',    name: 'Berserk',      icon: '😤',  forceAttackNearest: true, atkMod: 6, defMod: -5, desc: 'Blind fury — must attack the nearest enemy; +6 ATK, -5 DEF.' },
+  // 🌿 ENTANGLED — held fast: cannot act while the vines hold.
+  entangled:  { id: 'entangled',  name: 'Entangled',    icon: '🌿',  skipTurn: true, desc: 'Bound by roots/webbing — cannot act until it breaks.' },
+  // ☁️ DAZED — concussed: may stumble an action and slower.
+  dazed:      { id: 'dazed',      name: 'Dazed',        icon: '😵', skipChance: 0.3, spdMod: -1, desc: 'Head ringing — 30% chance to fumble each action and -1 movement.' },
+  // 🍀 LUCKY — fortune's favor: solid dodge chance.
+  lucky:      { id: 'lucky',      name: 'Lucky',        icon: '🍀',  dodgeChance: 0.3, desc: 'Fortune shields the unit — 30% chance to dodge any incoming attack.' },
 };
 
 const PASSIVES = {

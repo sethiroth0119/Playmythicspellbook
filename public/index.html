@@ -48871,8 +48871,10 @@ function _ensureGuideCss() {
     .rpgg-overlay.block{pointer-events:auto;}
     .rpgg-scrim{position:absolute;inset:0;background:rgba(6,3,14,var(--rpgg-op,0.55));backdrop-filter:blur(3px);opacity:0;transition:opacity .35s ease;}
     .rpgg-overlay.show .rpgg-scrim{opacity:1;}
-    .rpgg-char{position:absolute;bottom:0;max-height:104vh;width:auto;object-fit:contain;filter:drop-shadow(0 14px 38px rgba(0,0,0,.9));opacity:0;transition:transform .55s cubic-bezier(.2,1,.3,1),opacity .45s ease;pointer-events:none;}
-    .rpgg-char.sz-sm{max-height:82vh;} .rpgg-char.sz-md{max-height:102vh;} .rpgg-char.sz-lg{max-height:124vh;}
+    .rpgg-char{position:absolute;bottom:0;max-height:100vh;width:auto;object-fit:contain;filter:drop-shadow(0 14px 38px rgba(0,0,0,.9));opacity:0;transition:transform .55s cubic-bezier(.2,1,.3,1),opacity .45s ease;pointer-events:none;}
+    /* Capped at the viewport so the FULL character is always visible and
+       engaging — never enlarged/cropped beyond this regardless of size. */
+    .rpgg-char.sz-sm{max-height:80vh;} .rpgg-char.sz-md{max-height:98vh;} .rpgg-char.sz-lg{max-height:100vh;}
     .rpgg-char.from-right{right:0.5vw;transform:translateX(120%);}
     .rpgg-char.from-left{left:0.5vw;transform:translateX(-120%);}
     .rpgg-overlay.show .rpgg-char.from-right{transform:translateX(0);opacity:1;}

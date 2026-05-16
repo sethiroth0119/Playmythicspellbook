@@ -28735,6 +28735,23 @@ const executeMove = (state, attacker, target, move) => {
     }
   } catch (e) { /* shield reaction never breaks the attack resolution */ }
 
+  // 🜂 FORCED KALON — 'afterDamage' timing: the struck unit, if it survived,
+  // force-ascends right after taking the hit.
+  try {
+    const _dt = s.units.find(x => x.id === target.id);
+    if (_dt && _dt.alive && !_dt._forcedKalonDone && !_dt.kalonUsed && typeof _forcedKalonCfg === 'function') {
+      const _fc = _forcedKalonCfg(_dt);
+      if (_fc && _fc.timing === 'afterDamage' && typeof getKalonForm === 'function' && getKalonForm(_dt)) {
+        const _before = s.units;
+        s = executeKalonTransform(s, _dt, { forced: true, free: true });
+        if (s.units !== _before) {
+          s.units = s.units.map(x => x.id === _dt.id ? { ...x, _forcedKalonDone: true } : x);
+          s.log = [...s.log, { msg: `🜂 ${_dt.name} ascends from the wound!`, color: _dt.owner === 'player' ? 'green' : 'red' }];
+        }
+      }
+    }
+  } catch (e) { /* forced-kalon never breaks the attack */ }
+
   // ===== Knockback: push the target N tiles in the direction away from the attacker =====
   // Stops short if it hits a wall, another unit, or the board edge. Skips if target died or
   // if move.knockback isn't set. Flying targets are still pushed.
@@ -29458,7 +29475,11 @@ const startTurn = (state, who) => {
     for (const u of fkList) {
       const cfg = (typeof _forcedKalonCfg === 'function') ? _forcedKalonCfg(u) : null;
       if (!cfg) continue;
-      const fires = (cfg.timing === 'startOpp') ? (u.owner !== who) : (u.owner === who);
+      // endOwn = end of the unit's own turn = the opponent's turn START
+      // (alternating turns). endOpp = end of opponent's turn = own turn START.
+      const fires = (cfg.timing === 'startOpp' || cfg.timing === 'endOwn') ? (u.owner !== who)
+                  : (cfg.timing === 'afterDamage') ? false
+                  : (u.owner === who); // startOwn / endOpp
       if (!fires) continue;
       if (typeof getKalonForm === 'function' && !getKalonForm(u)) continue;
       const before = s.units;
@@ -33779,6 +33800,9 @@ function renderCardEditor() {
             <select id="ed-fk-timing">
               <option value="startOwn" ${(!card.forcedKalon || (card.forcedKalon.timing || 'startOwn') === 'startOwn') ? 'selected' : ''}>Start of its OWN turn (beginning)</option>
               <option value="startOpp" ${(card.forcedKalon && card.forcedKalon.timing === 'startOpp') ? 'selected' : ''}>Start of the OPPONENT's turn (≈ end of its turn)</option>
+              <option value="endOwn" ${(card.forcedKalon && card.forcedKalon.timing === 'endOwn') ? 'selected' : ''}>End of its OWN turn</option>
+              <option value="endOpp" ${(card.forcedKalon && card.forcedKalon.timing === 'endOpp') ? 'selected' : ''}>End of the OPPONENT's turn (≈ start of its turn)</option>
+              <option value="afterDamage" ${(card.forcedKalon && card.forcedKalon.timing === 'afterDamage') ? 'selected' : ''}>After taking damage (and surviving)</option>
             </select>
           </div>
           <div class="small-text" style="margin-top:0.25rem;opacity:0.7">Needs a Kalon form set above. Respects "Can be transformed by forced effects". Campaign/field/card effects can also force-transform via the engine.</div>

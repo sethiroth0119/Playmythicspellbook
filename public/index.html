@@ -48912,13 +48912,17 @@ function _ensureGuideCss() {
     .rpgg-overlay.block{pointer-events:auto;}
     .rpgg-scrim{position:absolute;inset:0;background:rgba(6,3,14,var(--rpgg-op,0.55));backdrop-filter:blur(3px);opacity:0;transition:opacity .35s ease;}
     .rpgg-overlay.show .rpgg-scrim{opacity:1;}
-    .rpgg-char{position:absolute;bottom:0;max-height:100vh;width:auto;object-fit:contain;filter:drop-shadow(0 14px 38px rgba(0,0,0,.9));opacity:0;transition:transform .55s cubic-bezier(.2,1,.3,1),opacity .45s ease;pointer-events:none;}
+    /* height (not max-height) so even small / low-res or wide images scale
+       UP to a consistent full-height presence. max-width keeps a wide scene
+       image on its own side instead of sprawling over the dialog; contain +
+       object-position:bottom keeps figures standing on the floor. */
+    .rpgg-char{position:absolute;top:0;height:100vh;width:auto;max-width:48vw;object-fit:contain;object-position:bottom center;filter:drop-shadow(0 14px 38px rgba(0,0,0,.9));opacity:0;transition:transform .55s cubic-bezier(.2,1,.3,1),opacity .45s ease;pointer-events:none;}
     /* All three tiers render the SAME full-body engaging size so no guide
        is ever small — capped at the viewport so it's never cropped either,
        regardless of each guide's authored Character Size setting. */
-    .rpgg-char.sz-sm{max-height:100vh;} .rpgg-char.sz-md{max-height:100vh;} .rpgg-char.sz-lg{max-height:100vh;}
-    .rpgg-char.from-right{right:0.5vw;transform:translateX(120%);}
-    .rpgg-char.from-left{left:0.5vw;transform:translateX(-120%);}
+    .rpgg-char.sz-sm{height:100vh;} .rpgg-char.sz-md{height:100vh;} .rpgg-char.sz-lg{height:100vh;}
+    .rpgg-char.from-right{right:0;object-position:bottom right;transform:translateX(120%);}
+    .rpgg-char.from-left{left:0;object-position:bottom left;transform:translateX(-120%);}
     .rpgg-overlay.show .rpgg-char.from-right{transform:translateX(0);opacity:1;}
     .rpgg-overlay.show .rpgg-char.from-left{transform:translateX(0);opacity:1;}
     .rpgg-bubble{position:relative;pointer-events:auto;margin:0 auto 4.5vh;width:min(760px,92vw);
@@ -48955,7 +48959,7 @@ function _ensureGuideCss() {
       border:1px solid rgba(212,175,55,.55);border-radius:999px;padding:.5rem .9rem;
       box-shadow:0 6px 18px rgba(0,0,0,.55),0 0 16px rgba(184,136,255,.3);opacity:.85;}
     .rpgg-replay-fab:hover{opacity:1;filter:brightness(1.15);}
-    @media (max-width:640px){.rpgg-text{font-size:1rem;}.rpgg-bubble{margin-bottom:2.5vh;padding:1rem;}.rpgg-char{max-height:88vh!important;right:0!important;left:auto!important;}}
+    @media (max-width:640px){.rpgg-text{font-size:1rem;}.rpgg-bubble{margin-bottom:2.5vh;padding:1rem;}.rpgg-char{height:88vh!important;max-width:62vw!important;right:0!important;left:auto!important;object-position:bottom right!important;}}
   `;
   document.head.appendChild(st);
 }

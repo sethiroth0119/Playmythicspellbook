@@ -29665,8 +29665,9 @@ function render() {
     if ((typeof isAdmin !== 'function') || !isAdmin()) { showToast('👑 Admin only.', 2200); App.screen = 'title'; return renderTitle(); }
     return renderRlcAdmin();
   }
-  if (App.screen === 'campaign')   return renderCampaignMap();
-  if (App.screen === 'campaignChapter') return renderCampaignChapter();
+  // 🚧 Old chapter Campaign is hidden from everyone (incl. admin) for now.
+  // Any saved-state / deep-link landing here bounces to the title hub.
+  if (App.screen === 'campaign' || App.screen === 'campaignChapter') { App.screen = 'title'; return renderTitle(); }
   if (App.screen === 'daily')      return renderDailyChallenge();
   if (App.screen === 'achievements') return renderAchievements();
   if (App.screen === 'replays')      return renderReplaysList();
@@ -29958,10 +29959,10 @@ function renderTitle() {
           return null;
         })(),
         onclick: () => { App.screen = 'coliseum'; App.coliseumTab = App.coliseumTab || 'ranked'; render(); } },
-      { id: 'btn-campaign', icon: '<img src="assets/artwork/gameicons/campign.png" alt="Campaign" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Campaign',         sub: 'Story mode, chapter by chapter', accent: '#9b8bff',
-        badge: campTotal.done > 0 ? `${campTotal.done}/${campTotal.total} cleared` : null,
-        onclick: () => { App.screen = 'campaign'; render(); } },
-      { id: 'btn-rlc', icon: '<span style="font-size:3rem;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">🗺️</span>', name: 'Roguelite', sub: 'Branching runs · build a deck from rewards', accent: '#b86bff',
+      // 🚧 Old chapter "Campaign" hidden from EVERYONE (incl. admin) for now —
+      // it will be removed/replaced by the Roguelite system. Portal + screens
+      // are gated below; the renderCampaign* code is left intact for later.
+      { id: 'btn-rlc', icon: '<img src="assets/artwork/gameicons/roguelite.png" alt="Roguelite" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Roguelite', sub: 'Branching runs · build a deck from rewards', accent: '#b86bff',
         badge: (Profile.rlcRun && !Profile.rlcRun.isComplete && !Profile.rlcRun.isFailed) ? '▶ Run in progress' : ((getPlayableCampaigns().length) ? `${getPlayableCampaigns().length} available` : null),
         alertBadge: !!(Profile.rlcRun && !Profile.rlcRun.isComplete && !Profile.rlcRun.isFailed),
         onclick: () => { App.screen = 'rlcList'; render(); } },
@@ -48688,13 +48689,15 @@ function renderRlcAdmin() {
           </div>
           <div class="small-text ink-dim" style="margin:6px 0 2px">Reward card pool (players pick 1):</div>
           <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">${((n.reward || {}).cardKeys || []).map((k, ki) => `<span class="small-text" style="background:rgba(212,175,55,0.15);border:1px solid rgba(212,175,55,0.4);border-radius:4px;padding:2px 6px">${escapeHtml(k)} <button class="btn-mini" data-rlc-rmcard="${idx}:${ki}" style="color:#ff8080;padding:0 3px">×</button></span>`).join('') || '<span class="ink-dim small-text">none</span>'}</div>
-          <div style="display:flex;gap:6px;margin-bottom:6px"><input type="text" data-rlc-addcard-q="${idx}" placeholder="card name or id…" style="flex:1;padding:0.35rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><button class="btn-secondary btn-mini" data-rlc-addcard="${idx}">＋ Add card</button></div>
+          <input type="text" data-rlc-search="reward:${idx}" placeholder="🔍 Search a card by name or id…" autocomplete="off" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.45);border-radius:5px;margin-bottom:4px">
+          <div class="rlc-srch-res" id="rlc-srch-reward-${idx}" style="display:flex;flex-direction:column;gap:3px;max-height:220px;overflow:auto"></div>
         ` : ''}
         ${n.type === 'market' ? `
           ${fld('Shop name', 'nodes.' + idx + '.shop.name', (n.shop || {}).name)}
           <div class="small-text ink-dim" style="margin:4px 0 2px">Items (card · price · stock; blank stock = unlimited):</div>
           ${((n.shop || {}).items || []).map((it, ii) => `<div style="display:flex;gap:6px;margin-bottom:5px;align-items:center"><span class="small-text" style="flex:1">${escapeHtml(it.cardKey || '')}</span><input type="number" data-rlc-path="nodes.${idx}.shop.items.${ii}.price" value="${escapeHtml(String(it.price || 0))}" style="width:80px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px" placeholder="price"><input type="number" data-rlc-path="nodes.${idx}.shop.items.${ii}.stock" value="${escapeHtml(String(it.stock == null ? '' : it.stock))}" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px" placeholder="stock"><button class="btn-mini" data-rlc-rmitem="${idx}:${ii}" style="color:#ff8080">×</button></div>`).join('')}
-          <div style="display:flex;gap:6px"><input type="text" data-rlc-addshop-q="${idx}" placeholder="card name or id…" style="flex:1;padding:0.35rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><button class="btn-secondary btn-mini" data-rlc-addshop="${idx}">＋ Add item</button></div>
+          <input type="text" data-rlc-search="shop:${idx}" placeholder="🔍 Search a card to stock…" autocomplete="off" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.45);border-radius:5px;margin-bottom:4px">
+          <div class="rlc-srch-res" id="rlc-srch-shop-${idx}" style="display:flex;flex-direction:column;gap:3px;max-height:220px;overflow:auto"></div>
         ` : ''}
         ${n.type === 'medical' ? `
           <div class="small-text ink-dim" style="margin:4px 0">Heal options:</div>
@@ -48798,11 +48801,59 @@ function renderRlcAdmin() {
   }));
   document.querySelectorAll('[data-rlc-ndup]').forEach(b => b.onclick = () => { const i = parseInt(b.dataset.rlcNdup, 10); const c = JSON.parse(JSON.stringify(ed.nodes[i])); c.id = 'n' + Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36); c.connections = []; ed.nodes.splice(i + 1, 0, c); reRender(); });
   document.querySelectorAll('[data-rlc-ndel]').forEach(b => b.onclick = () => { if (!confirm('Delete this node?')) return; const i = parseInt(b.dataset.rlcNdel, 10); const id = ed.nodes[i].id; ed.nodes.splice(i, 1); ed.nodes.forEach(n => n.connections = (n.connections || []).filter(x => x !== id)); reRender(); });
-  const addCardTo = (arr, q) => { const key = _rlcCardByQuery(q); if (!key) { showToast('No card matched "' + q + '".', 2400); return false; } arr.push(key); return true; };
-  document.querySelectorAll('[data-rlc-addcard]').forEach(b => b.onclick = () => { const i = parseInt(b.dataset.rlcAddcard, 10); const q = (document.querySelector('[data-rlc-addcard-q="' + i + '"]') || {}).value || ''; ed.nodes[i].reward = ed.nodes[i].reward || { cardKeys: [] }; ed.nodes[i].reward.cardKeys = ed.nodes[i].reward.cardKeys || []; if (addCardTo(ed.nodes[i].reward.cardKeys, q)) reRender(); });
   document.querySelectorAll('[data-rlc-rmcard]').forEach(b => b.onclick = () => { const [i, ki] = b.dataset.rlcRmcard.split(':').map(Number); ed.nodes[i].reward.cardKeys.splice(ki, 1); reRender(); });
-  document.querySelectorAll('[data-rlc-addshop]').forEach(b => b.onclick = () => { const i = parseInt(b.dataset.rlcAddshop, 10); const q = (document.querySelector('[data-rlc-addshop-q="' + i + '"]') || {}).value || ''; const key = _rlcCardByQuery(q); if (!key) { showToast('No card matched.', 2200); return; } ed.nodes[i].shop = ed.nodes[i].shop || { items: [] }; ed.nodes[i].shop.items = ed.nodes[i].shop.items || []; ed.nodes[i].shop.items.push({ cardKey: key, price: 50, stock: 1 }); reRender(); });
   document.querySelectorAll('[data-rlc-rmitem]').forEach(b => b.onclick = () => { const [i, ii] = b.dataset.rlcRmitem.split(':').map(Number); ed.nodes[i].shop.items.splice(ii, 1); reRender(); });
+  // 🔍 Live card-search for reward pools + black-market stock. Typing filters
+  // the merged deckable-card pool and injects clickable results directly
+  // (no full re-render = no focus loss); picking a card commits + re-renders.
+  let _rlcPool = [];
+  try { _rlcPool = (typeof getAllDeckableCards === 'function') ? getAllDeckableCards() : []; } catch (e) { _rlcPool = []; }
+  const _rlcSearchHits = (q) => {
+    q = (q || '').trim().toLowerCase();
+    const scored = [];
+    for (const p of _rlcPool) {
+      if (!p || !p.card) continue;
+      const nm = String(p.card.name || '').toLowerCase();
+      const idv = String(p.card.id || '').toLowerCase();
+      if (!q || nm.indexOf(q) >= 0 || idv.indexOf(q) >= 0) {
+        scored.push(p);
+        if (scored.length >= 30) break;
+      }
+    }
+    return scored;
+  };
+  const _rlcResRow = (p) => `<button type="button" class="rlc-pick-row" data-key="${escapeHtml(String(p.key))}" style="display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;padding:5px 8px;background:rgba(212,175,55,0.07);border:1px solid rgba(212,175,55,0.3);border-radius:4px;color:#f0e6ff;cursor:pointer">
+      <span>${escapeHtml(p.card.name || String(p.card.id))}</span>
+      <span class="small-text ink-dim">${escapeHtml(String(p.card.type || ''))}${p.card.rarity ? ' · ' + escapeHtml(p.card.rarity) : ''}</span>
+    </button>`;
+  document.querySelectorAll('[data-rlc-search]').forEach(inp => {
+    const spec = inp.getAttribute('data-rlc-search');         // 'reward:<i>' | 'shop:<i>'
+    const [kind, idxStr] = spec.split(':'); const i = parseInt(idxStr, 10);
+    const box = document.getElementById('rlc-srch-' + kind + '-' + i);
+    if (!box) return;
+    const paint = () => {
+      const hits = _rlcSearchHits(inp.value);
+      box.innerHTML = hits.length
+        ? hits.map(_rlcResRow).join('')
+        : '<div class="small-text ink-dim" style="padding:4px">No matching cards.</div>';
+      box.querySelectorAll('.rlc-pick-row').forEach(rb => rb.onclick = () => {
+        const key = rb.getAttribute('data-key');
+        const node = ed.nodes[i]; if (!node) return;
+        if (kind === 'reward') {
+          node.reward = node.reward || { cardKeys: [] };
+          node.reward.cardKeys = node.reward.cardKeys || [];
+          node.reward.cardKeys.push(key);
+        } else {
+          node.shop = node.shop || { items: [] };
+          node.shop.items = node.shop.items || [];
+          node.shop.items.push({ cardKey: key, price: 50, stock: 1 });
+        }
+        reRender();
+      });
+    };
+    inp.addEventListener('input', paint);
+    inp.addEventListener('focus', paint);
+  });
   document.querySelectorAll('[data-rlc-addchoice]').forEach(b => b.onclick = () => { const i = parseInt(b.dataset.rlcAddchoice, 10); ed.nodes[i].event = ed.nodes[i].event || { choices: [] }; ed.nodes[i].event.choices = ed.nodes[i].event.choices || []; ed.nodes[i].event.choices.push({ label: 'Option', currency: 0, medPoints: 0, healPercent: 0 }); reRender(); });
   document.querySelectorAll('[data-rlc-rmchoice]').forEach(b => b.onclick = () => { const [i, ci] = b.dataset.rlcRmchoice.split(':').map(Number); ed.nodes[i].event.choices.splice(ci, 1); reRender(); });
 }

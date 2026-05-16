@@ -30348,6 +30348,59 @@ function renderTutorialWelcome() {
 //           and the three action buttons: ⚔ Battle (AI), ✎ Edit Deck,
 //           🌐 Find Match (signed-in players only).
 // ============================================================================
+// 🗂️ Deck-chooser modal — appears when a hero has MORE THAN ONE saved deck.
+// Lists every deck under that hero so the player picks which one to take
+// into battle; selecting a deck hands off to the normal inspect modal
+// (renderDeckSelectModal) via App.deckSelectModalKey. Heroes with 0 or 1
+// deck skip this entirely (go straight to the inspect modal).
+function renderDeckChooserModal() {
+  const hid = App.deckChooserHeroId;
+  if (!hid) return '';
+  const h = (typeof findHeroById === 'function') ? findHeroById(hid) : null;
+  if (!h) return '';
+  const decks = (typeof getDecksForHero === 'function') ? getDecksForHero(hid) : [];
+  if (!decks.length) return '';
+  const rows = decks.map(d => {
+    const cnt = (d.cards || []).length;
+    const ready = cnt === DECK_SIZE;
+    return `
+      <button data-chooser-deck="${escapeHtml(d.id)}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:14px 16px;margin:0 0 10px;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.35);border-radius:10px;color:#f3e7c8;font-size:1rem;cursor:pointer;text-align:left">
+        <span style="font-weight:600">${escapeHtml(d.name || 'Untitled Deck')}</span>
+        <span style="font-size:0.85rem;color:${ready ? '#7fdca0' : '#e0a23a'}">${cnt}/${DECK_SIZE} cards</span>
+      </button>`;
+  }).join('');
+  return `
+    <div class="modal-backdrop ds-modal-backdrop" id="dchooser-backdrop" style="z-index:1250">
+      <div class="ds-modal" style="max-width:480px;padding:24px">
+        <button class="modal-close" id="dchooser-close" aria-label="Close">×</button>
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
+          <div style="width:56px;height:56px;flex:0 0 56px">${renderIcon('h_' + h.id, h.icon, 'lg')}</div>
+          <div>
+            <div style="font-size:1.25rem;font-weight:700;color:#f6d97a">${escapeHtml(h.name)}</div>
+            <div style="font-size:0.85rem;color:#bfae87">You have ${decks.length} decks for this hero — pick one to take into battle.</div>
+          </div>
+        </div>
+        <div>${rows}</div>
+      </div>
+    </div>`;
+}
+function bindDeckChooserModal() {
+  if (!App.deckChooserHeroId) return;
+  const close = () => { App.deckChooserHeroId = null; render(); };
+  const back = document.getElementById('dchooser-backdrop');
+  if (back) back.addEventListener('click', (e) => { if (e.target === back) close(); });
+  const x = document.getElementById('dchooser-close');
+  if (x) x.onclick = close;
+  document.querySelectorAll('[data-chooser-deck]').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.chooserDeck;
+      App.deckChooserHeroId = null;
+      App.deckSelectModalKey = 'deck:' + id; // hand off to the existing inspect modal
+      render();
+    };
+  });
+}
+
 function renderDeckSelectModal(deckOptions) {
   if (!App.deckSelectModalKey) return '';
   const opts = (deckOptions || []).find(o => o.key === App.deckSelectModalKey);
@@ -30532,29 +30585,77 @@ function renderDeckSelect() {
       deckCards: getGeneratedDeckForHero(h.id), isSaved: false,
     })),
   ];
-  const heroCards = deckOptions.map(opts => makeDeckCard(opts)).join('');
+  // 🦸 ONE TILE PER HERO (not per deck). Group every saved deck under its
+  // hero; heroes with no saved deck fall back to a generated deck. Clicking
+  // a hero with >1 deck opens the deck-chooser modal; with exactly 1 it
+  // goes straight to the inspect modal; with none it uses the generated deck.
+  const decksByHero = new Map();
+  const heroOrder = [];
+  allDecks.forEach(d => {
+    if (!decksByHero.has(d.heroId)) { decksByHero.set(d.heroId, []); heroOrder.push(d.heroId); }
+    decksByHero.get(d.heroId).push(d);
+  });
+  allHeroes.forEach(h => {
+    if (!decksByHero.has(h.id)) { decksByHero.set(h.id, []); heroOrder.push(h.id); }
+  });
+  const heroCards = heroOrder.map(hid => {
+    const h = findHeroById(hid);
+    if (!h) return '';
+    const decks = decksByHero.get(hid) || [];
+    const prof = getHeroProfile(h.id);
+    const sel = (App.selectedHero === h.id) ? 'selected' : '';
+    const deckLabel = decks.length === 0 ? 'Generated Deck'
+                    : decks.length === 1 ? escapeHtml(decks[0].name || 'Deck')
+                    : decks.length + ' decks';
+    const countLabel = decks.length === 0
+      ? ((getGeneratedDeckForHero(h.id) || []).length + ' cards (gen)')
+      : decks.length === 1
+        ? ((decks[0].cards || []).length + ' cards')
+        : 'Tap to choose';
+    return `
+      <div class="hero-card ds-hero-card ds-compact ${sel}" data-hero-tile="${escapeHtml(h.id)}" role="button" tabindex="0" title="Click to choose this hero">
+        ${decks.length > 1 ? `<span class="lvl-tag" style="left:8px;right:auto;background:rgba(212,175,55,0.85);color:#1a1206">${decks.length} decks</span>` : ''}
+        <div class="lvl-tag">Lv ${prof.level}</div>
+        <div class="hero-icon">${renderIcon('h_' + h.id, h.icon, 'lg')}</div>
+        <div class="hero-name">${escapeHtml(h.name)} ${elementBadge(getElementsOf(h), 'sm')}</div>
+        <div class="ds-compact-deck-line">
+          <span class="ds-compact-deck-name">${deckLabel}</span>
+          <span class="ds-compact-deck-count">${countLabel}</span>
+        </div>
+      </div>`;
+  }).join('');
 
   root.innerHTML = `
     <div class="hero-select">
       <h2 class="section-title">Choose Your Deck</h2>
-      <div class="section-subtitle">Click any deck to inspect its hero and roster — pick which one to take into battle.</div>
+      <div class="section-subtitle">Pick a hero to take into battle. Heroes with more than one deck let you choose which deck to play.</div>
       ${customNote}
       <div class="hero-grid">${heroCards}</div>
       <div class="start-row">
         <button class="btn-secondary" id="btn-back">← Back</button>
       </div>
       ${renderDeckSelectModal(deckOptions)}
+      ${renderDeckChooserModal()}
     </div>
   `;
-  document.getElementById('btn-back').onclick = () => { App.screen = 'title'; render(); };
+  document.getElementById('btn-back').onclick = () => { App.deckChooserHeroId = null; App.screen = 'title'; render(); };
 
-  // 🎴 Compact-tile click → open the full preview modal.
-  document.querySelectorAll('.ds-hero-card[data-deck-tile]').forEach(tile => {
-    const open = () => { App.deckSelectModalKey = tile.dataset.deckTile; render(); };
+  // 🎴 Hero-tile click → 0 decks: generated · 1 deck: straight to inspect ·
+  // 2+ decks: deck-chooser modal.
+  document.querySelectorAll('.ds-hero-card[data-hero-tile]').forEach(tile => {
+    const open = () => {
+      const hid = tile.dataset.heroTile;
+      const decks = decksByHero.get(hid) || [];
+      if (decks.length > 1)      { App.deckChooserHeroId = hid; }
+      else if (decks.length === 1) { App.deckSelectModalKey = 'deck:' + decks[0].id; }
+      else                         { App.deckSelectModalKey = 'hero:' + hid; }
+      render();
+    };
     tile.onclick = open;
     tile.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
   });
   bindDeckSelectModal(deckOptions);
+  bindDeckChooserModal();
   // Edit buttons — go to the deck builder for that specific deck (or the hero's deck list)
   document.querySelectorAll('[data-edit-deck-id]').forEach(el => {
     el.onclick = (e) => {

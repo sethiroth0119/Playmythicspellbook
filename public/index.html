@@ -23729,6 +23729,7 @@ async function loadForgeContentFromIdb() {
     ['forge_structureDecks',   'structureDecks'],
     ['forge_customItems',      'customItems'],
     ['forge_pageGuides',       'pageGuides'],
+    ['forge_aiDecks',          'aiDecks'],
   ];
   let changed = false;
   for (const [idbKey, fk] of map) {
@@ -23782,6 +23783,7 @@ function loadForge() {
     // 🎒 + 💰 + 🌐 — admin storage chunks
     try { const ci = localStorage.getItem('hg_customItems'); if (ci) { const x = JSON.parse(ci); if (Array.isArray(x)) Forge.customItems = x; } } catch (err) {}
     try { const pg = localStorage.getItem('hg_pageGuides'); if (pg) { const x = JSON.parse(pg); if (Array.isArray(x)) Forge.pageGuides = x; } } catch (err) {}
+    try { const ad = localStorage.getItem('hg_aiDecks'); if (ad) { const x = JSON.parse(ad); if (Array.isArray(x)) Forge.aiDecks = x; } } catch (err) {}
     try { const po = localStorage.getItem('hg_priceOverrides'); if (po) { const x = JSON.parse(po); if (x && typeof x === 'object') Forge.priceOverrides = x; } } catch (err) {}
     try { const cp = localStorage.getItem('hg_useCustomOnlyPool'); if (cp != null) Forge.useCustomOnlyPool = JSON.parse(cp) === true; } catch (err) {}
     // 🚨 PRODUCTION OVERRIDE — force custom-only pool ON regardless of saved
@@ -24002,6 +24004,10 @@ function saveForge() {
       idbSet('forge_structureDecks',  Forge.structureDecks  || []);
       idbSet('forge_customItems',     Forge.customItems     || []);
       idbSet('forge_pageGuides',      Forge.pageGuides      || []);
+      // 🤖 AI decks were previously CLOUD-ONLY — a reload before the 4s
+      // debounced cloud sync (or while signed out) wiped them. Persist them
+      // locally like every other Forge field so they survive reloads.
+      idbSet('forge_aiDecks',         Forge.aiDecks         || []);
     }
   } catch (e) { /* swallow — IDB issues fall back to memory-only */ }
   const chunks = [
@@ -24017,6 +24023,7 @@ function saveForge() {
     // localStorage size budget is easy to reason about.
     { key: 'hg_customItems',      value: Forge.customItems     || [], name: 'customItems' },
     { key: 'hg_pageGuides',       value: Forge.pageGuides      || [], name: 'pageGuides' },
+    { key: 'hg_aiDecks',          value: Forge.aiDecks         || [], name: 'aiDecks' },
     { key: 'hg_priceOverrides',   value: Forge.priceOverrides  || {}, name: 'priceOverrides' },
     { key: 'hg_useCustomOnlyPool', value: !!Forge.useCustomOnlyPool, name: 'useCustomOnlyPool' },
   ];
@@ -50436,6 +50443,24 @@ loadForge();
     if (typeof _loadCatalogFromIdb === 'function') {
       await _loadCatalogFromIdb();
     }
+    // 🛟 ONE-TIME recovery for AI decks lost to the old cloud-only
+    // persistence bug. If they were ever Published, the catalog still
+    // carries them (Catalog.aiDecks) — pull them back into the editable
+    // Forge list. Gated by a flag so it runs at most once per device and
+    // never undoes a future intentional delete (the new local persistence
+    // above keeps them safe from here on).
+    try {
+      if (!localStorage.getItem('hg_aiDecksRecoveryV1')) {
+        if ((!Array.isArray(Forge.aiDecks) || Forge.aiDecks.length === 0)
+            && Array.isArray(Catalog.aiDecks) && Catalog.aiDecks.length > 0) {
+          Forge.aiDecks = JSON.parse(JSON.stringify(Catalog.aiDecks));
+          if (typeof saveForge === 'function') saveForge();
+          if (typeof render === 'function') { try { render(); } catch (e2) {} }
+          try { console.info('[AI] Recovered ' + Forge.aiDecks.length + ' AI deck(s) from the published catalog.'); } catch (e2) {}
+        }
+        try { localStorage.setItem('hg_aiDecksRecoveryV1', '1'); } catch (e2) {}
+      }
+    } catch (e) { /* recovery is best-effort */ }
   } catch (e) { console.warn('IDB heavy-load failed', e); }
 })();
 loadLab();

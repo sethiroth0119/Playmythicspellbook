@@ -26356,6 +26356,7 @@ function processTombstoneDrops(state) {
     }
     // Mark BEFORE we add — so two sweeps in the same tick don't double-drop.
     u._tombstoned = true;
+    state._fkDeathSeen = true;   // 🜂 a real death — pulse 'afterDeath' forced-Kalon
     // 🜁 REBIRTH SHIFT — leave a "rebirth" marker; on the next turn-start
     // tick the unit returns as a different unit from its pool.
     const rb = (typeof _rebirthCfg === 'function') ? _rebirthCfg(u) : null;
@@ -29485,9 +29486,17 @@ const startTurn = (state, who) => {
       if (!cfg) continue;
       // endOwn = end of the unit's own turn = the opponent's turn START
       // (alternating turns). endOpp = end of opponent's turn = own turn START.
-      const fires = (cfg.timing === 'startOpp' || cfg.timing === 'endOwn') ? (u.owner !== who)
-                  : (cfg.timing === 'afterDamage') ? false
-                  : (u.owner === who); // startOwn / endOpp
+      // afterDamage/onEnter fire elsewhere. afterDeath fires the turn after a
+      // death. afterRound fires after the unit has survived a full round.
+      let fires;
+      if (cfg.timing === 'afterDamage' || cfg.timing === 'onEnter') fires = false;
+      else if (cfg.timing === 'startOpp' || cfg.timing === 'endOwn')  fires = (u.owner !== who);
+      else if (cfg.timing === 'afterDeath') fires = !!s._fkDeathSeen;
+      else if (cfg.timing === 'afterRound') {
+        if (u.owner === who) { u._fkRounds = (u._fkRounds || 0) + 1; fires = u._fkRounds >= 2; }
+        else fires = false;
+      }
+      else fires = (u.owner === who); // startOwn / endOpp
       if (!fires) continue;
       if (typeof getKalonForm === 'function' && !getKalonForm(u)) continue;
       const before = s.units;
@@ -29497,6 +29506,7 @@ const startTurn = (state, who) => {
         log.push({ msg: `🜂 ${u.name} is forced to ascend!`, color: u.owner === 'player' ? 'green' : 'red' });
       }
     }
+    s._fkDeathSeen = false;   // consume the after-death pulse
   } catch (e) { /* forced-kalon never breaks the turn */ }
   // "Energy Surge" daily modifier: gain +2 max energy per turn instead of +1.
   const energyStep = (s.mods && s.mods.surge) ? 2 : 1;
@@ -33811,6 +33821,9 @@ function renderCardEditor() {
               <option value="endOwn" ${(card.forcedKalon && card.forcedKalon.timing === 'endOwn') ? 'selected' : ''}>End of its OWN turn</option>
               <option value="endOpp" ${(card.forcedKalon && card.forcedKalon.timing === 'endOpp') ? 'selected' : ''}>End of the OPPONENT's turn (≈ start of its turn)</option>
               <option value="afterDamage" ${(card.forcedKalon && card.forcedKalon.timing === 'afterDamage') ? 'selected' : ''}>After taking damage (and surviving)</option>
+              <option value="onEnter" ${(card.forcedKalon && card.forcedKalon.timing === 'onEnter') ? 'selected' : ''}>The instant it enters the battlefield</option>
+              <option value="afterRound" ${(card.forcedKalon && card.forcedKalon.timing === 'afterRound') ? 'selected' : ''}>After surviving one full round</option>
+              <option value="afterDeath" ${(card.forcedKalon && card.forcedKalon.timing === 'afterDeath') ? 'selected' : ''}>After any unit dies (next turn)</option>
             </select>
           </div>
           <div class="small-text" style="margin-top:0.25rem;opacity:0.7">Needs a Kalon form set above. Respects "Can be transformed by forced effects". Campaign/field/card effects can also force-transform via the engine.</div>
@@ -41528,6 +41541,18 @@ function placeUnit(card, pos) {
   if (card && card.onPlay && card.onPlay.type) {
     next = applyOnPlayEffect(next, unit, card);
   }
+  // 🜂 FORCED KALON — 'onEnter' timing: ascend the instant it's summoned.
+  try {
+    const _fc = (typeof _forcedKalonCfg === 'function') ? _forcedKalonCfg(unit) : null;
+    if (_fc && _fc.timing === 'onEnter' && typeof getKalonForm === 'function' && getKalonForm(unit)) {
+      const _b = next.units;
+      next = executeKalonTransform(next, unit, { forced: true, free: true });
+      if (next.units !== _b) {
+        next.units = next.units.map(x => x.id === unit.id ? { ...x, _forcedKalonDone: true } : x);
+        next.log = [...next.log, { msg: `🜂 ${unit.name} ascends as it enters the battlefield!`, color: 'green' }];
+      }
+    }
+  } catch (e) {}
   App.state = next;
   recordCardPlayed(card);
   App.ui.selectedCardId = null;
@@ -42202,6 +42227,18 @@ function doAIStep() {
           if (best && best.onPlay && best.onPlay.type) {
             next = applyOnPlayEffect(next, newUnit, best);
           }
+          // 🜂 FORCED KALON — 'onEnter' timing for AI-summoned units too.
+          try {
+            const _fc = (typeof _forcedKalonCfg === 'function') ? _forcedKalonCfg(newUnit) : null;
+            if (_fc && _fc.timing === 'onEnter' && typeof getKalonForm === 'function' && getKalonForm(newUnit)) {
+              const _b = next.units;
+              next = executeKalonTransform(next, newUnit, { forced: true, free: true });
+              if (next.units !== _b) {
+                next.units = next.units.map(x => x.id === newUnit.id ? { ...x, _forcedKalonDone: true } : x);
+                next.log = [...next.log, { msg: `🜂 ${newUnit.name} ascends as it enters the battlefield!`, color: 'red' }];
+              }
+            }
+          } catch (e) {}
           App.state = next;
           setAIActor(newUnit.id, `🃏 Enemy plays ${best.name}`);
           renderBattle();

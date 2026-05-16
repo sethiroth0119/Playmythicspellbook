@@ -24007,6 +24007,9 @@ function loadForge() {
       if (Array.isArray(p.ownedStarterDecks)) Profile.ownedStarterDecks = p.ownedStarterDecks;
       // 🗺️ Roguelite campaign — resume an in-progress run on reload.
       if (p.rlcRun && typeof p.rlcRun === 'object') Profile.rlcRun = p.rlcRun;
+      // 🔀 Dialogue flags — choice-driven flags persist so conditional
+      // bubbles stay consistent across reloads.
+      if (p.dialogueFlags && typeof p.dialogueFlags === 'object') Profile.dialogueFlags = p.dialogueFlags;
       if (p.essence && typeof p.essence === 'object') {
         // Defensive: only accept numeric values keyed by string element ids.
         Profile.essence = {};
@@ -32811,8 +32814,19 @@ function _newGuideDraft() {
     skipLabel: 'Skip', replayLabel: '📖 Replay guide', finishLabel: 'Finish ✓',
     dontShowLabel: "Don't show this again", typingSpeed: 26,
     bubbles: [{ id: 'b' + Date.now(), order: 0, text: '', expressionImageUrl: '',
-      typingSpeed: 0, delayBeforeShow: 0, autoAdvance: false, autoAdvanceDelay: 1800, nextButtonLabel: '' }],
+      typingSpeed: 0, delayBeforeShow: 0, autoAdvance: false, autoAdvanceDelay: 1800, nextButtonLabel: '',
+      condition: { type: 'none', key: '', op: 'set', value: '' }, choices: [] }],
   };
+}
+// A blank dialogue bubble (used by _newGuideDraft + the "Add Bubble" button).
+function _blankGuideBubble(order) {
+  return { id: 'b' + Date.now() + Math.floor(Math.random() * 1e4), order: order || 0, text: '',
+    expressionImageUrl: '', typingSpeed: 0, delayBeforeShow: 0, autoAdvance: false,
+    autoAdvanceDelay: 1800, nextButtonLabel: '',
+    condition: { type: 'none', key: '', op: 'set', value: '' }, choices: [] };
+}
+function _blankGuideChoice() {
+  return { label: 'Choice', setFlag: '', gotoBubble: '', currency: 0, medPoints: 0, healPct: 0, end: false };
 }
 function renderForgeGuides() {
   const list = (Forge.pageGuides || []).slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
@@ -32899,6 +32913,22 @@ function _captureGuideDraft() {
     b.autoAdvanceDelay = parseInt(V('gb-autodelay-' + i), 10) || 1800;
     b.nextButtonLabel = V('gb-next-' + i);
     b.order = i;
+    // 🔀 Conditional display — bubble is skipped at runtime if this fails.
+    const ct = V('gb-condtype-' + i) || 'none';
+    if (ct === 'none') b.condition = { type: 'none', key: '', op: 'set', value: '' };
+    else b.condition = { type: ct, key: V('gb-condkey-' + i) || '', op: V('gb-condop-' + i) || (ct === 'flag' ? 'set' : '>='), value: V('gb-condval-' + i) || '' };
+    // 🗳️ Choice buttons — branch / set flags / run effects.
+    if (Array.isArray(b.choices)) {
+      b.choices.forEach((ch, j) => {
+        ch.label      = V('gbc-' + i + '-' + j + '-label') || 'Choice';
+        ch.setFlag    = V('gbc-' + i + '-' + j + '-flag') || '';
+        ch.gotoBubble = V('gbc-' + i + '-' + j + '-goto') || '';
+        ch.currency   = parseInt(V('gbc-' + i + '-' + j + '-cur'), 10) || 0;
+        ch.medPoints  = parseInt(V('gbc-' + i + '-' + j + '-med'), 10) || 0;
+        ch.healPct    = parseInt(V('gbc-' + i + '-' + j + '-heal'), 10) || 0;
+        ch.end        = C('gbc-' + i + '-' + j + '-end');
+      });
+    }
   });
 }
 function renderGuideEditor() {
@@ -32925,6 +32955,37 @@ function renderGuideEditor() {
         ${fld('Delay before show (ms)', `<input id="gb-delay-${i}" type="number" min="0" value="${b.delayBeforeShow||0}" style="width:90px">`)}
         ${fld('Next button label (optional)', `<input id="gb-next-${i}" type="text" value="${escapeHtml(b.nextButtonLabel||'')}" placeholder="Next ▸">`)}
         ${fld('Auto-advance', `<label class="small-text"><input id="gb-auto-${i}" type="checkbox" ${b.autoAdvance?'checked':''}> auto · delay <input id="gb-autodelay-${i}" type="number" min="400" value="${b.autoAdvanceDelay||1800}" style="width:80px"> ms</label>`)}
+      </div>
+      <div style="border-top:1px dashed rgba(184,136,255,0.25);margin-top:0.6rem;padding-top:0.5rem">
+        <div class="small-text" style="color:#cdb6ff;margin-bottom:0.3rem">🔀 Show only if (condition)</div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.6rem">
+          ${fld('Type', `<select id="gb-condtype-${i}">${opt('none',(b.condition&&b.condition.type)||'none','Always show')}${opt('flag',(b.condition&&b.condition.type)||'none','Choice flag')}${opt('progress',(b.condition&&b.condition.type)||'none','Run progress')}</select>`)}
+          ${fld('Key (flag name, or: nodesCleared/currency/medPoints/heroHpPct)', `<input id="gb-condkey-${i}" type="text" value="${escapeHtml((b.condition&&b.condition.key)||'')}" placeholder="e.g. tookGold">`)}
+          ${fld('Op', `<select id="gb-condop-${i}">${opt('set',(b.condition&&b.condition.op)||'set','flag is set')}${opt('notset',(b.condition&&b.condition.op)||'set','flag NOT set')}${opt('eq',(b.condition&&b.condition.op)||'set','equals value')}${opt('>=',(b.condition&&b.condition.op)||'set','≥ value')}${opt('<=',(b.condition&&b.condition.op)||'set','≤ value')}${opt('==',(b.condition&&b.condition.op)||'set','== value')}</select>`)}
+          ${fld('Value', `<input id="gb-condval-${i}" type="text" value="${escapeHtml(String((b.condition&&b.condition.value)!=null?(b.condition.value):''))}" placeholder="for equals / ≥ / ≤" style="width:120px">`)}
+        </div>
+      </div>
+      <div style="border-top:1px dashed rgba(184,136,255,0.25);margin-top:0.6rem;padding-top:0.5rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.3rem">
+          <span class="small-text" style="color:#cdb6ff">🗳️ Choice buttons (leave empty for a normal Next button)</span>
+          <button class="btn-mini" data-bcadd="${i}">➕ Add choice</button>
+        </div>
+        ${(b.choices||[]).map((ch, j) => `
+          <div style="border:1px solid rgba(212,175,55,0.3);border-radius:6px;padding:0.45rem;margin-bottom:0.4rem;background:rgba(30,18,52,0.5)">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.3rem">
+              <strong class="small-text" style="color:#ffd166">Choice ${j + 1}</strong>
+              <button class="btn-mini" data-bcdel="${i}:${j}" style="color:#ff8080">🗑</button>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:0.5rem">
+              ${fld('Button label', `<input id="gbc-${i}-${j}-label" type="text" value="${escapeHtml(ch.label||'')}" placeholder="Take the gold">`)}
+              ${fld('Set flag (name or name=value)', `<input id="gbc-${i}-${j}-flag" type="text" value="${escapeHtml(ch.setFlag||'')}" placeholder="tookGold=1">`)}
+              ${fld('Go to bubble # (blank = next)', `<input id="gbc-${i}-${j}-goto" type="text" value="${escapeHtml(String(ch.gotoBubble||''))}" placeholder="e.g. 5" style="width:90px">`)}
+              ${fld('+ Currency', `<input id="gbc-${i}-${j}-cur" type="number" value="${ch.currency||0}" style="width:80px">`)}
+              ${fld('+ Med pts', `<input id="gbc-${i}-${j}-med" type="number" value="${ch.medPoints||0}" style="width:80px">`)}
+              ${fld('+ Heal %', `<input id="gbc-${i}-${j}-heal" type="number" value="${ch.healPct||0}" style="width:80px">`)}
+              ${fld('Ends dialogue', `<label class="small-text"><input id="gbc-${i}-${j}-end" type="checkbox" ${ch.end?'checked':''}> end on pick</label>`)}
+            </div>
+          </div>`).join('')}
       </div>
     </div>`).join('');
   return `
@@ -33002,7 +33063,27 @@ function bindGuideEditor() {
     };
   }
   const add = document.getElementById('btn-bubble-add');
-  if (add) add.onclick = () => { _captureGuideDraft(); App._guideDraft.bubbles.push({ id: 'b' + Date.now(), order: App._guideDraft.bubbles.length, text: '', expressionImageUrl: '', typingSpeed: 0, delayBeforeShow: 0, autoAdvance: false, autoAdvanceDelay: 1800, nextButtonLabel: '' }); render(); };
+  if (add) add.onclick = () => { _captureGuideDraft(); App._guideDraft.bubbles.push(_blankGuideBubble(App._guideDraft.bubbles.length)); render(); };
+  // ➕/🗑 Per-bubble choice add/remove (mirrors the bubble add/del pattern).
+  document.querySelectorAll('[data-bcadd]').forEach(el => {
+    el.onclick = () => {
+      _captureGuideDraft();
+      const bi = parseInt(el.dataset.bcadd, 10);
+      const b = App._guideDraft.bubbles[bi]; if (!b) return;
+      b.choices = Array.isArray(b.choices) ? b.choices : [];
+      b.choices.push(_blankGuideChoice());
+      render();
+    };
+  });
+  document.querySelectorAll('[data-bcdel]').forEach(el => {
+    el.onclick = () => {
+      _captureGuideDraft();
+      const [bi, ci] = el.dataset.bcdel.split(':').map(Number);
+      const b = App._guideDraft.bubbles[bi];
+      if (b && Array.isArray(b.choices)) b.choices.splice(ci, 1);
+      render();
+    };
+  });
   document.querySelectorAll('[data-bact]').forEach(el => {
     el.onclick = () => {
       _captureGuideDraft();
@@ -47068,6 +47149,49 @@ function getActivePageGuide(route) {
   return list[0] || null;
 }
 
+// ===== 🔀 Conditional-dialogue runtime support =====
+// Dialogue flags persist on Profile (so a choice can gate a later bubble even
+// after a reload) and conditions can also read live roguelite-run progress.
+function _guideFlags() { return (Profile.dialogueFlags = Profile.dialogueFlags || {}); }
+function _guideSetFlag(spec) {
+  // "name" → name=1 ; "name=value" → name=value
+  if (!spec) return;
+  const s = String(spec).trim(); if (!s) return;
+  const eq = s.indexOf('=');
+  const name = (eq >= 0 ? s.slice(0, eq) : s).trim();
+  const val  = eq >= 0 ? s.slice(eq + 1).trim() : '1';
+  if (!name) return;
+  _guideFlags()[name] = val;
+  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+}
+// Evaluate a bubble's `condition`. Missing / type 'none' ⇒ always show.
+function _guideCondMet(cond) {
+  if (!cond || !cond.type || cond.type === 'none') return true;
+  try {
+    if (cond.type === 'flag') {
+      const v = _guideFlags()[cond.key];
+      if (cond.op === 'notset') return !v && v !== 0;
+      if (cond.op === 'eq')     return String(v) === String(cond.value);
+      return !!v || v === 0 || (typeof v === 'string' && v.length > 0); // 'set'
+    }
+    if (cond.type === 'progress') {
+      const run = Profile.rlcRun || null;
+      let lhs = 0;
+      if (run) {
+        if (cond.key === 'nodesCleared') lhs = (run.completed || []).length;
+        else if (cond.key === 'currency') lhs = run.currency || 0;
+        else if (cond.key === 'medPoints') lhs = run.medPoints || 0;
+        else if (cond.key === 'heroHpPct') lhs = Math.round(((run.heroHP || 0) / Math.max(1, run.maxHP || 1)) * 100);
+      }
+      const rhs = parseFloat(cond.value) || 0;
+      if (cond.op === '<=') return lhs <= rhs;
+      if (cond.op === '==') return lhs === rhs;
+      return lhs >= rhs; // '>=' default
+    }
+  } catch (e) {}
+  return true;
+}
+
 // Called on every screen change (from render()). Decides whether to auto-play.
 function maybeShowPageGuide() {
   try {
@@ -47208,6 +47332,7 @@ function playPageGuide(guide, opts) {
             '<button class="rpgg-btn primary" id="rpgg-next">' + escapeHtml((bubbles[0] && bubbles[0].nextButtonLabel) || 'Next ▸') + '</button>' +
           '</div>' +
         '</div>' +
+        '<div class="rpgg-choices" id="rpgg-choices" style="display:none;flex-wrap:wrap;gap:8px;margin-top:10px"></div>' +
       '</div>');
   document.body.appendChild(ov);
   // Force reflow → trigger CSS entrance transitions.
@@ -47231,7 +47356,22 @@ function playPageGuide(guide, opts) {
   const nextBtn = ov.querySelector('#rpgg-next');
   const skipBtn = ov.querySelector('#rpgg-skip');
   const offBox  = ov.querySelector('#rpgg-off');
+  const choicesEl = ov.querySelector('#rpgg-choices');
   let idx = 0;
+  let _reveal = null;   // current bubble's control-reveal fn (set in typeBubble)
+  // 🔀 Visibility-aware navigation — bubbles whose `condition` isn't met are
+  // skipped (evaluated live, so a choice's flag can reveal/hide later lines).
+  const _visible = (k) => k >= 0 && k < bubbles.length && _guideCondMet(bubbles[k] && bubbles[k].condition);
+  const _firstVisible = () => { for (let k = 0; k < bubbles.length; k++) if (_visible(k)) return k; return -1; };
+  const _nextVisible = (from) => { for (let k = from + 1; k < bubbles.length; k++) if (_visible(k)) return k; return -1; };
+  // Resolve a choice's "go to bubble #" (1-based). If that bubble is hidden by
+  // its own condition, fall through to the next visible one at/after it.
+  const _resolveGoto = (n) => {
+    let k = (parseInt(n, 10) || 0) - 1;
+    if (k < 0 || k >= bubbles.length) return -1;
+    if (_visible(k)) return k;
+    return _nextVisible(k - 1);
+  };
 
   const typeBubble = (i) => {
     _clearGuideTimers();
@@ -47240,7 +47380,29 @@ function playPageGuide(guide, opts) {
     if (b.expressionImageUrl && charEl) charEl.src = b.expressionImageUrl;
     else if (charEl) charEl.src = baseImg;
     dotsEl.forEach((d, di) => d.classList.toggle('on', di === i));
-    nextBtn.textContent = b.nextButtonLabel || (i >= bubbles.length - 1 ? (guide.finishLabel || 'Finish ✓') : 'Next ▸');
+    const hasChoices = Array.isArray(b.choices) && b.choices.length > 0;
+    const isLast = _nextVisible(i) < 0;
+    nextBtn.textContent = b.nextButtonLabel || (isLast ? (guide.finishLabel || 'Finish ✓') : 'Next ▸');
+    // During typing: hide choices; keep Next for normal bubbles (click =
+    // skip typing). revealControls() swaps in the right control when done.
+    if (choicesEl) { choicesEl.style.display = 'none'; choicesEl.innerHTML = ''; }
+    nextBtn.style.display = hasChoices ? 'none' : '';
+    const revealControls = () => {
+      if (hasChoices && choicesEl) {
+        choicesEl.innerHTML = b.choices.map((c, ci) =>
+          '<button class="rpgg-btn primary" data-rpgg-choice="' + ci + '" style="flex:1 1 auto;min-width:140px">' + escapeHtml(c.label || ('Choice ' + (ci + 1))) + '</button>'
+        ).join('');
+        choicesEl.style.display = 'flex';
+        nextBtn.style.display = 'none';
+        choicesEl.querySelectorAll('[data-rpgg-choice]').forEach(btn => {
+          btn.onclick = () => chooseOption(b.choices[parseInt(btn.dataset.rpggChoice, 10)] || {});
+        });
+      } else {
+        if (choicesEl) choicesEl.style.display = 'none';
+        nextBtn.style.display = '';
+      }
+    };
+    _reveal = revealControls;
     const full = String(b.text || '');
     const speed = Math.max(8, Math.min(120, b.typingSpeed || guide.typingSpeed || 26));
     const start = () => {
@@ -47253,7 +47415,8 @@ function playPageGuide(guide, opts) {
         try { if (p % 3 === 0 && typeof playSfx === 'function') playSfx('uiTick'); } catch (e) {}
         if (p >= full.length) {
           clearInterval(RPGGuide._typeTimer); RPGGuide._typeTimer = null;
-          if (b.autoAdvance) {
+          revealControls();
+          if (!hasChoices && b.autoAdvance) {
             RPGGuide._advTimer = setTimeout(() => advance(), Math.max(400, b.autoAdvanceDelay || 1800));
           }
         }
@@ -47270,17 +47433,55 @@ function playPageGuide(guide, opts) {
       _clearGuideTimers();
       const b = bubbles[idx] || {};
       textEl.innerHTML = escapeHtml(String(b.text || '')).replace(/\n/g, '<br>');
-      if (b.autoAdvance) RPGGuide._advTimer = setTimeout(() => advance(), Math.max(400, b.autoAdvanceDelay || 1800));
+      if (_reveal) _reveal();
+      const hc = Array.isArray(b.choices) && b.choices.length > 0;
+      if (!hc && b.autoAdvance) RPGGuide._advTimer = setTimeout(() => advance(), Math.max(400, b.autoAdvanceDelay || 1800));
       return;
     }
-    if (idx >= bubbles.length - 1) {
+    // Choice bubbles are resolved only via their buttons.
+    const cur = bubbles[idx] || {};
+    if (Array.isArray(cur.choices) && cur.choices.length > 0) { if (_reveal) _reveal(); return; }
+    const nx = _nextVisible(idx);
+    if (nx < 0) {
       try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
       _closeGuide(!opts.preview);   // finishing marks done (unless admin preview)
       return;
     }
-    idx++;
+    idx = nx;
     try { if (typeof playSfx === 'function') playSfx('uiTick'); } catch (e) {}
     typeBubble(idx);
+  };
+
+  // 🗳️ A choice was clicked: set flag, apply run effects, then branch.
+  const chooseOption = (ch) => {
+    if (!ch) return;
+    try { if (ch.setFlag) _guideSetFlag(ch.setFlag); } catch (e) {}
+    try {
+      App._lastGuideChoice = { guideId: guide.id, label: ch.label || '' };
+      if (Profile.rlcRun) {
+        Profile.rlcRun.dialogueChoices = Profile.rlcRun.dialogueChoices || {};
+        Profile.rlcRun.dialogueChoices[guide.id] = ch.label || '';
+      }
+    } catch (e) {}
+    try {
+      if (!opts.preview && Profile.rlcRun) {
+        const r = Profile.rlcRun;
+        if (ch.currency)  r.currency  = (r.currency  || 0) + (parseInt(ch.currency, 10) || 0);
+        if (ch.medPoints) r.medPoints = (r.medPoints || 0) + (parseInt(ch.medPoints, 10) || 0);
+        if (ch.healPct && r.maxHP) r.heroHP = Math.min(r.maxHP, (r.heroHP || 0) + Math.ceil(r.maxHP * ((parseInt(ch.healPct, 10) || 0) / 100)));
+        if ((ch.currency || ch.medPoints || ch.healPct) && typeof _persistProgressNow === 'function') _persistProgressNow();
+      }
+    } catch (e) {}
+    try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
+    if (ch.end) { _closeGuide(!opts.preview); return; }
+    if (ch.gotoBubble) {
+      const t = _resolveGoto(ch.gotoBubble);
+      if (t >= 0) { idx = t; typeBubble(idx); return; }
+      _closeGuide(!opts.preview); return;
+    }
+    const nx = _nextVisible(idx);
+    if (nx < 0) { _closeGuide(!opts.preview); return; }
+    idx = nx; typeBubble(idx);
   };
 
   nextBtn.onclick = advance;
@@ -47291,7 +47492,10 @@ function playPageGuide(guide, opts) {
   if (offBox) offBox.onchange = () => {
     try { offBox.checked ? localStorage.setItem(_guideOffKey(guide.id), '1') : localStorage.removeItem(_guideOffKey(guide.id)); } catch (e) {}
   };
-  typeBubble(0);
+  const _first = _firstVisible();
+  if (_first < 0) { _closeGuide(!opts.preview); return; } // every bubble gated out
+  idx = _first;
+  typeBubble(idx);
 }
 
 // Local cache for the Friends panel — populated on demand by Cloud.fetchFriends/Requests.

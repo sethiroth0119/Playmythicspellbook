@@ -23888,6 +23888,15 @@ async function loadForgeContentFromIdb() {
       if (differs) changed = true;
     } catch (e) { /* skip this chunk */ }
   }
+  // 🪦 Tombstone default art (string) + cosmetics catalog (array) are NOT
+  // id-keyed lists — restore them directly. IDB is canonical (it holds the
+  // full base64 the localStorage fast-path strips out).
+  try {
+    const ta = await idbGet('forge_tombstoneArt');
+    if (typeof ta === 'string' && ta && !String(Forge.tombstoneArt || '').length) { Forge.tombstoneArt = ta; changed = true; }
+    const tc = await idbGet('forge_tombstoneCosmetics');
+    if (Array.isArray(tc) && tc.length && (!Array.isArray(Forge.tombstoneCosmetics) || !Forge.tombstoneCosmetics.length)) { Forge.tombstoneCosmetics = tc; changed = true; }
+  } catch (e) { /* skip */ }
   if (changed) {
     // Re-home the recovered content back into the localStorage fast-path
     // (best-effort; if it still won't fit that's fine — IDB stays canonical).
@@ -23930,6 +23939,8 @@ function loadForge() {
     try { const ad = localStorage.getItem('hg_aiDecks'); if (ad) { const x = JSON.parse(ad); if (Array.isArray(x)) Forge.aiDecks = x; } } catch (err) {}
     try { const sd = localStorage.getItem('hg_starterDecks'); if (sd) { const x = JSON.parse(sd); if (Array.isArray(x)) Forge.starterDecks = x; } } catch (err) {}
     try { const cmp = localStorage.getItem('hg_campaigns'); if (cmp) { const x = JSON.parse(cmp); if (Array.isArray(x)) Forge.campaigns = x; } } catch (err) {}
+    try { const ta = localStorage.getItem('hg_tombstoneArt'); if (ta != null) { const x = JSON.parse(ta); if (typeof x === 'string' && x) Forge.tombstoneArt = x; } } catch (err) {}
+    try { const tc = localStorage.getItem('hg_tombstoneCosmetics'); if (tc) { const x = JSON.parse(tc); if (Array.isArray(x)) Forge.tombstoneCosmetics = x; } } catch (err) {}
     try { const po = localStorage.getItem('hg_priceOverrides'); if (po) { const x = JSON.parse(po); if (x && typeof x === 'object') Forge.priceOverrides = x; } } catch (err) {}
     try { const cp = localStorage.getItem('hg_useCustomOnlyPool'); if (cp != null) Forge.useCustomOnlyPool = JSON.parse(cp) === true; } catch (err) {}
     // 🚨 PRODUCTION OVERRIDE — force custom-only pool ON regardless of saved
@@ -24184,6 +24195,11 @@ function saveForge() {
       idbSet('forge_aiDecks',         Forge.aiDecks         || []);
       idbSet('forge_starterDecks',    Forge.starterDecks    || []);
       idbSet('forge_campaigns',       Forge.campaigns       || []);
+      // 🪦 Tombstone default art + cosmetic catalog. Previously these ONLY
+      // survived a full catalog Publish (piggybacked on moves) — so an admin
+      // upload + reload lost the image. Persist them like everything else.
+      idbSet('forge_tombstoneArt',       Forge.tombstoneArt       || null);
+      idbSet('forge_tombstoneCosmetics', Forge.tombstoneCosmetics || []);
     }
   } catch (e) { /* swallow — IDB issues fall back to memory-only */ }
   const chunks = [
@@ -24222,6 +24238,10 @@ function saveForge() {
     { key: 'hg_campaigns',        value: _stripDataUrls(Forge.campaigns || []), name: 'campaigns' },
     { key: 'hg_priceOverrides',   value: Forge.priceOverrides  || {}, name: 'priceOverrides' },
     { key: 'hg_useCustomOnlyPool', value: !!Forge.useCustomOnlyPool, name: 'useCustomOnlyPool' },
+    // 🪦 Tombstone art is base64-heavy — strip it for the localStorage
+    // fast-path (full copy is the IDB mirror above, restored at boot).
+    { key: 'hg_tombstoneArt',       value: _stripDataUrls(Forge.tombstoneArt || null), name: 'tombstoneArt' },
+    { key: 'hg_tombstoneCosmetics', value: _stripDataUrls(Forge.tombstoneCosmetics || []), name: 'tombstoneCosmetics' },
   ];
   const failures = [];
   for (const c of chunks) {

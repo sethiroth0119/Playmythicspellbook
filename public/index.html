@@ -26140,6 +26140,71 @@ function getTombstoneImage(owner) {
   return null;
 }
 
+// 🜁 REBIRTH SHIFT helpers ----------------------------------------------------
+function _rebirthResolveCard(idOrName) {
+  if (!idOrName) return null;
+  const key = String(idOrName).trim();
+  const lc = key.toLowerCase();
+  let c = null;
+  try {
+    if (typeof UNIT_CARDS !== 'undefined') c = UNIT_CARDS.find(x => x.id === key);
+    if (!c && typeof lookupCustomCard === 'function') c = lookupCustomCard(key);
+    if (!c && typeof Forge !== 'undefined' && Array.isArray(Forge.customCards)) c = Forge.customCards.find(x => x.id === key);
+    if (!c && typeof Catalog !== 'undefined' && Array.isArray(Catalog.cards)) c = Catalog.cards.find(x => x.id === key);
+    if (!c) {
+      // Fall back to a case-insensitive NAME match across every pool so
+      // admins can type readable names in the Rebirth Pool, not just ids.
+      const byName = (arr) => Array.isArray(arr) ? arr.find(x => x && (x.name || '').toLowerCase() === lc) : null;
+      c = byName(typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : null)
+       || byName(typeof Forge !== 'undefined' ? Forge.customCards : null)
+       || byName(typeof Catalog !== 'undefined' ? Catalog.cards : null);
+    }
+  } catch (e) {}
+  return c || null;
+}
+// Config for a unit's Rebirth Shift (needs the rebirthShift passive AND a
+// card.rebirthShift block; pool/exact define what it returns as).
+function _rebirthCfg(unit) {
+  if (!unit) return null;
+  const list = Array.isArray(unit.passives) ? unit.passives : (unit.passive ? [unit.passive] : []);
+  if (list.indexOf('rebirthShift') < 0) return null;
+  const id = unit.originalCardId || unit.cardId || unit.id;
+  let src = null;
+  try {
+    if (typeof UNIT_CARDS !== 'undefined') src = UNIT_CARDS.find(c => c.id === id);
+    if (!src && typeof lookupCustomCard === 'function') src = lookupCustomCard(id);
+    if (!src && typeof Forge !== 'undefined' && Array.isArray(Forge.customCards)) src = Forge.customCards.find(c => c.id === id);
+    if (!src && typeof Catalog !== 'undefined' && Array.isArray(Catalog.cards)) src = Catalog.cards.find(c => c.id === id);
+  } catch (e) {}
+  const r = (src && src.rebirthShift) || {};
+  const pool = Array.isArray(r.pool) ? r.pool.filter(Boolean) : [];
+  if (!r.exact && pool.length === 0) return null;   // nothing to become
+  return {
+    exact: r.exact || '',
+    pool,
+    maxCount: Math.max(1, parseInt(r.maxCount, 10) || 1),
+    repeat: !!r.repeat,
+    inheritStats: !!r.inheritStats,
+    inheritEquip: !!r.inheritEquip,
+    fallback: r.fallback === 'hand' ? 'hand' : 'graveyard',
+    popupText: r.popupText || '',
+  };
+}
+function _nearestEmptyTile(state, ox, oy) {
+  const maxR = Math.max(typeof BOARD_W !== 'undefined' ? BOARD_W : 10, typeof BOARD_H !== 'undefined' ? BOARD_H : 8);
+  for (let rad = 0; rad <= maxR; rad++) {
+    for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;
+      const nx = ox + dx, ny = oy + dy;
+      if (!inBounds(nx, ny)) continue;
+      if (state.units.some(u => u.alive && u.pos && u.pos.x === nx && u.pos.y === ny)) continue;
+      if (typeof tileBlockedByTombstone === 'function' && tileBlockedByTombstone(state, nx, ny)) continue;
+      return { x: nx, y: ny };
+    }
+  }
+  return null;
+}
+
 function processTombstoneDrops(state) {
   if (!state || !Array.isArray(state.units)) return state;
   if (!Array.isArray(state.tombstones)) state.tombstones = [];
@@ -26149,6 +26214,22 @@ function processTombstoneDrops(state) {
     if (!u.pos) continue;
     // Mark BEFORE we add — so two sweeps in the same tick don't double-drop.
     u._tombstoned = true;
+    // 🜁 REBIRTH SHIFT — leave a "rebirth" marker; on the next turn-start
+    // tick the unit returns as a different unit from its pool.
+    const rb = (typeof _rebirthCfg === 'function') ? _rebirthCfg(u) : null;
+    if (rb) {
+      const used = u._rebirthUsed || 0;
+      const cap = rb.repeat ? rb.maxCount : 1;
+      if (used < cap) {
+        state.tombstones.push({
+          x: u.pos.x, y: u.pos.y, owner: u.owner, name: u.name,
+          image: getTombstoneImage(u.owner), glowing: true,
+          turnsLeft: 1, rebirth: true, reviveUnitId: u.id, rebirthCfg: rb,
+        });
+        u._rebirthUsed = used + 1;
+        continue;
+      }
+    }
     // raiseFromDead — check remaining charges (default 1 use).
     const rfd = unitHasRaiseFromDead(u);
     if (rfd) {
@@ -26203,6 +26284,43 @@ function tickTombstones(state) {
   for (const t of state.tombstones) {
     t.turnsLeft = (t.turnsLeft || 0) - 1;
     if (t.turnsLeft > 0) { survivors.push(t); continue; }
+    // 🜁 Expired REBIRTH marker — bring the unit back as a different one.
+    if (t.rebirth && t.reviveUnitId) {
+      const orig = state.units.find(x => x.id === t.reviveUnitId);
+      const rb = t.rebirthCfg || {};
+      const repId = (rb.exact && rb.exact.length) ? rb.exact
+        : ((rb.pool && rb.pool.length) ? rb.pool[Math.floor(Math.random() * rb.pool.length)] : '');
+      const card = repId ? _rebirthResolveCard(repId) : null;
+      if (orig && card) {
+        const owner = orig.owner;
+        const sameFree = !state.units.some(u => u.alive && u.pos && u.pos.x === t.x && u.pos.y === t.y)
+          && !(typeof tileBlockedByTombstone === 'function' && tileBlockedByTombstone(state, t.x, t.y));
+        const pos = sameFree ? { x: t.x, y: t.y } : _nearestEmptyTile(state, t.x, t.y);
+        if (pos) {
+          let nu = null;
+          try {
+            const lvl = rb.inheritStats ? (orig.level || 1) : 1;
+            nu = buildUnit(card, owner, pos, orig.heroPassive, lvl, rb.inheritStats ? (orig.xp || 0) : 0);
+          } catch (e) { nu = null; }
+          if (nu) {
+            if (rb.inheritEquip && orig.heldItem) nu.heldItem = orig.heldItem;
+            nu.hasMoved = true; nu.hasAttacked = true;   // enters summoning-sick
+            nu.statusEffects = [];                         // no inherited buffs/debuffs
+            nu._reborn = true;
+            state.units.push(nu);
+            state.log = [...(state.log || []), { msg: rb.popupText || `🜁 ${orig.name} is reborn as ${nu.name}!`, color: owner === 'player' ? 'green' : 'red' }];
+          }
+        } else {
+          const side = state[orig.owner];
+          if (side) {
+            if (rb.fallback === 'hand' && Array.isArray(side.hand)) side.hand.push({ ...card });
+            else if (Array.isArray(side.graveyard)) side.graveyard.push({ ...card });
+            state.log = [...(state.log || []), { msg: `🜁 ${orig.name}'s reborn form had no room — sent to ${rb.fallback}.`, color: orig.owner === 'player' ? 'green' : 'red' }];
+          }
+        }
+      }
+      continue; // consumed
+    }
     // Expired — handle revive or just drop the marker.
     if (t.glowing && t.reviveUnitId) {
       const u = state.units.find(x => x.id === t.reviveUnitId);
@@ -33627,6 +33745,23 @@ function renderCardEditor() {
       </div>
     `;
   };
+  const rebirthBlock = (type === 'unit') ? `
+    <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem">
+      <label style="color:#9be0c4;font-weight:700">🜁 Rebirth Shift</label>
+      <div class="small-text" style="margin:0.2rem 0 0.5rem;opacity:0.78">Also pick the <strong>Rebirth Shift</strong> passive above for it to fire. When this unit dies, at the start of its owner's next turn it returns as a unit from this pool (summoning-sick, no inherited buffs unless allowed). Use card IDs or exact names, comma-separated.</div>
+      <div class="editor-field full"><label>Rebirth Pool (comma-separated card IDs / names)</label><input id="ed-rb-pool" type="text" value="${escapeHtml((card.rebirthShift && Array.isArray(card.rebirthShift.pool) ? card.rebirthShift.pool.join(', ') : ''))}" placeholder="goblin, orc, My Custom Unit"></div>
+      <div class="editor-grid">
+        <div class="editor-field"><label>Exact replacement (overrides pool — ID/name)</label><input id="ed-rb-exact" type="text" value="${escapeHtml((card.rebirthShift && card.rebirthShift.exact) || '')}"></div>
+        <div class="editor-field"><label>Max rebirths</label><input id="ed-rb-max" type="number" min="1" max="9" value="${(card.rebirthShift && card.rebirthShift.maxCount) || 1}"></div>
+        <div class="editor-field"><label>If no square is free →</label><select id="ed-rb-fallback"><option value="graveyard" ${(!card.rebirthShift || card.rebirthShift.fallback !== 'hand') ? 'selected' : ''}>Graveyard</option><option value="hand" ${(card.rebirthShift && card.rebirthShift.fallback === 'hand') ? 'selected' : ''}>Hand</option></select></div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:1rem;margin-top:0.4rem">
+        <label class="small-text" style="display:flex;gap:0.4rem;cursor:pointer"><input type="checkbox" id="ed-rb-repeat" ${(card.rebirthShift && card.rebirthShift.repeat) ? 'checked' : ''}> Allow repeated rebirths</label>
+        <label class="small-text" style="display:flex;gap:0.4rem;cursor:pointer"><input type="checkbox" id="ed-rb-istats" ${(card.rebirthShift && card.rebirthShift.inheritStats) ? 'checked' : ''}> Inherit level/XP</label>
+        <label class="small-text" style="display:flex;gap:0.4rem;cursor:pointer"><input type="checkbox" id="ed-rb-iequip" ${(card.rebirthShift && card.rebirthShift.inheritEquip) ? 'checked' : ''}> Inherit held item</label>
+      </div>
+      <div class="editor-field full" style="margin-top:0.4rem"><label>Rebirth popup text (optional)</label><input id="ed-rb-popup" type="text" value="${escapeHtml((card.rebirthShift && card.rebirthShift.popupText) || '')}" placeholder="The vessel cracks — something new claws free!"></div>
+    </div>` : '';
   const heroSubclassBlock = (type === 'hero') ? `
     <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
@@ -33877,6 +34012,7 @@ function renderCardEditor() {
         ${locationBlock}
         ${onPlayBlock}
         ${kalonBlock}
+        ${rebirthBlock}
         ${heroSubclassBlock}
       </div>
       <div class="editor-actions">
@@ -34893,6 +35029,26 @@ function captureEditorIntoCard(card) {
     const tEl = document.getElementById('ed-fk-timing');
     if (on) card.forcedKalon = { enabled: true, timing: (tEl && tEl.value) || 'startOwn' };
     else delete card.forcedKalon;
+  }
+  // 🜁 Rebirth Shift config.
+  if (document.getElementById('ed-rb-pool')) {
+    const _rv = (id) => { const e = document.getElementById(id); return e ? e.value : ''; };
+    const _rc = (id) => { const e = document.getElementById(id); return e ? !!e.checked : false; };
+    const pool = (_rv('ed-rb-pool') || '').split(',').map(s => s.trim()).filter(Boolean);
+    const exact = (_rv('ed-rb-exact') || '').trim();
+    if (pool.length === 0 && !exact) {
+      delete card.rebirthShift;
+    } else {
+      card.rebirthShift = {
+        pool, exact,
+        maxCount: Math.max(1, Math.min(9, parseInt(_rv('ed-rb-max'), 10) || 1)),
+        fallback: (_rv('ed-rb-fallback') === 'hand') ? 'hand' : 'graveyard',
+        repeat: _rc('ed-rb-repeat'),
+        inheritStats: _rc('ed-rb-istats'),
+        inheritEquip: _rc('ed-rb-iequip'),
+        popupText: (_rv('ed-rb-popup') || '').trim(),
+      };
+    }
   }
 
   // Spell

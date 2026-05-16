@@ -26295,6 +26295,7 @@ function processTombstoneDrops(state) {
           if (e.currentHp <= 0) e.alive = false;
         }
       }
+      try { if (typeof playFxBurst === 'function') playFxBurst(u, { c1: '#cfcfcf', c2: '#caa06a', glyph: '💥' }); } catch (e) {}
       state.log = [...(state.log || []), { msg: `🔥 ${u.name} bursts into ash — ${dmg} dmg to nearby foes!`, color: u.owner === 'player' ? 'green' : 'red' }];
     }
     // 🔥 PHOENIX REBIRTH AURA — an allied Phoenix may revive this ally NOW
@@ -26339,7 +26340,14 @@ function processTombstoneDrops(state) {
           if (didRevive) {
             state._phoenixTurnRevives++; phx._phoenixMatch++;
             if (pcfg.phoenixBond) { phx.statusEffects = [...(phx.statusEffects || []), { type: 'empowered', turns: 99 }]; }
-            try { if (onBoard && typeof playRebornVfx === 'function') playRebornVfx(u); } catch (e) {}
+            try {
+              if (onBoard && typeof playRebornVfx === 'function') playRebornVfx(u);
+              if (onBoard && typeof playFxBurst === 'function') {
+                if (pcfg.burningRes) setTimeout(() => playFxBurst(u, { c1: '#ff7a1f', c2: '#ffd166', glyph: '🔥' }), 220);
+                if (pcfg.soulFlame)  setTimeout(() => playFxBurst(u, { c1: '#6ca8ff', c2: '#b58cff', glyph: '🕯️' }), 320);
+                if (pcfg.phoenixBond) setTimeout(() => playFxBurst(phx, { c1: '#ffd166', c2: '#ff9a3a', glyph: '🪶' }), 420);
+              }
+            } catch (e) {}
             state.log = [...(state.log || []), { msg: pcfg.popupText || `🔥 ${phx.name}'s Phoenix Rebirth Aura returns ${u.name} (${u.currentHp || 0} HP)!`, color: u.owner === 'player' ? 'green' : 'red' }];
             if (onBoard) continue;   // back on the board — no tombstone/rebirth
           }
@@ -40835,6 +40843,51 @@ function playRebornVfx(unit) {
     try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
     setTimeout(() => { const n = document.getElementById('reborn-fx'); if (n) n.remove(); }, 2100);
   } catch (e) { /* VFX must never break the engine */ }
+}
+
+// 🎆 Generic mini-burst VFX — a small, tile-anchored, self-contained
+// flare used by the Phoenix advanced mechanics (Burning Resurrection,
+// Soul Flame, Phoenix Bond, Ashen Return). Two-colour radial core + ring
+// + orbiting motes + optional glyph. Read-only overlay; auto-removes.
+function playFxBurst(target, opts) {
+  try {
+    opts = opts || {};
+    if (!document.getElementById('fxburst-style')) {
+      const st = document.createElement('style');
+      st.id = 'fxburst-style';
+      st.textContent = `
+        .fxb-wrap{position:fixed;inset:0;pointer-events:none;z-index:1490;overflow:hidden}
+        .fxb-core{position:absolute;width:120px;height:120px;margin:-60px 0 0 -60px;border-radius:50%;animation:fxb-core 1.3s ease-out forwards;filter:blur(1px)}
+        .fxb-ring{position:absolute;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;border:3px solid #fff;animation:fxb-ring 1.2s ease-out forwards}
+        .fxb-m{position:absolute;width:7px;height:7px;border-radius:50%;animation:fxb-m 1.4s ease-out forwards}
+        .fxb-g{position:absolute;transform:translate(-50%,-50%);font-size:1.8rem;animation:fxb-g 1.4s ease-out forwards;filter:drop-shadow(0 0 8px rgba(0,0,0,.7))}
+        @keyframes fxb-core{0%{transform:scale(.2);opacity:0}25%{opacity:.95}100%{transform:scale(1.5);opacity:0}}
+        @keyframes fxb-ring{0%{transform:scale(.3);opacity:0}30%{opacity:1}100%{transform:scale(6);opacity:0}}
+        @keyframes fxb-m{0%{transform:translate(0,0) scale(1);opacity:0}15%{opacity:1}100%{opacity:0}}
+        @keyframes fxb-g{0%{opacity:0;transform:translate(-50%,-50%) scale(.5)}25%{opacity:1;transform:translate(-50%,-50%) scale(1.1)}80%{opacity:1}100%{opacity:0;transform:translate(-50%,-90%) scale(1)}}`;
+      document.head.appendChild(st);
+    }
+    let cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+    try {
+      if (target && target.id) { const el = document.querySelector(`[data-unit="${target.id}"]`); if (el) { const r = el.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height / 2; } }
+      else if (target && typeof target.x === 'number') { cx = target.x; cy = target.y; }
+    } catch (e) {}
+    const c1 = opts.c1 || '#ffd166', c2 = opts.c2 || '#ff7a1f';
+    const w = document.createElement('div');
+    w.className = 'fxb-wrap';
+    let motes = '';
+    for (let i = 0; i < 10; i++) {
+      const a = (Math.PI * 2 * i) / 10, d = 40 + Math.random() * 50;
+      motes += `<div class="fxb-m" style="left:${cx}px;top:${cy}px;background:${c1};box-shadow:0 0 8px ${c2};--tx:${(Math.cos(a)*d).toFixed(0)}px;transform:translate(${(Math.cos(a)*d).toFixed(0)}px,${(Math.sin(a)*d).toFixed(0)}px)"></div>`;
+    }
+    w.innerHTML =
+      `<div class="fxb-core" style="left:${cx}px;top:${cy}px;background:radial-gradient(circle,${c1},${c2} 50%,transparent 72%)"></div>` +
+      `<div class="fxb-ring" style="left:${cx}px;top:${cy}px;border-color:${c1};box-shadow:0 0 22px ${c2}"></div>` +
+      motes +
+      (opts.glyph ? `<div class="fxb-g" style="left:${cx}px;top:${cy}px;color:${c1}">${opts.glyph}</div>` : '');
+    document.body.appendChild(w);
+    setTimeout(() => { if (w && w.parentNode) w.parentNode.removeChild(w); }, 1500);
+  } catch (e) { /* VFX never breaks the engine */ }
 }
 
 function playKalonTransformVfx(unit, opts) {

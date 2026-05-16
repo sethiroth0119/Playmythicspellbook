@@ -1,0 +1,15 @@
+# Cloudflare Workers Assets ignore — files here are NOT uploaded.
+# Cloudflare hard-caps any single asset at 25 MiB; ONE oversized file
+# aborts the ENTIRE `wrangler deploy`, which is why production was
+# frozen on a stale build for so long. Keep big/non-runtime files out
+# of the upload (they still stay on disk locally).
+
+# Full data-export dumps — never needed by the deployed game.
+assets/Exports/
+
+# Marketing-site flood video that keeps getting dropped into the game's
+# Backgrounds folder. 36 MB, unused by the game, and over the 25 MiB cap.
+assets/background/Backgrounds/websitefloodvideo.mp4
+
+# Safety net: raw editor zips / source bundles sometimes land in assets.
+*.zip

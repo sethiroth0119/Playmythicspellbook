@@ -24129,6 +24129,25 @@ function loadForge() {
 // Save Forge state piece-by-piece. If one chunk fails (most often `sprites` because of base64
 // frames), the others still land — so cards / moves / events aren't lost when storage is full.
 // Reports a precise toast naming the chunk that failed.
+// Deep-clone a value while replacing big base64 data: URLs with '' so the
+// localStorage fast-path stays small. The FULL image-bearing copy lives in
+// IndexedDB (idbSet in saveForge) and is merged back, id-by-id, at boot by
+// loadForgeContentFromIdb — identical strategy to customEvents. Without this,
+// campaign cover / map background / currency icon / per-node images overflow
+// the ~5MB localStorage quota and cascade-fail EVERY later chunk (cards,
+// moves, items…), so nothing the user adds gets saved.
+function _stripDataUrls(val) {
+  if (typeof val === 'string') {
+    return (val.length > 256 && val.slice(0, 5) === 'data:') ? '' : val;
+  }
+  if (Array.isArray(val)) return val.map(_stripDataUrls);
+  if (val && typeof val === 'object') {
+    const o = {};
+    for (const k in val) if (Object.prototype.hasOwnProperty.call(val, k)) o[k] = _stripDataUrls(val[k]);
+    return o;
+  }
+  return val;
+}
 function saveForge() {
   // 🃏 Trigger debounced cloud sync — any Forge save bubbles up the small
   // custom data (cards / moves / items / packs / etc.) to user_profiles.forge
@@ -24170,7 +24189,10 @@ function saveForge() {
   const chunks = [
     // ⚠️ Heavy chunks REMOVED from localStorage — they go to IndexedDB above.
     // Keeping the rest (small JSON < 1MB total) in localStorage is fine.
-    { key: STORAGE_KEYS.cards,   value: Forge.customCards,  name: 'cards' },
+    // Cards can carry inline base64 art — strip it from the localStorage
+    // fast-path (full copy is in IndexedDB, merged back at boot by
+    // loadForgeContentFromIdb) so a big card library can't blow the quota.
+    { key: STORAGE_KEYS.cards,   value: _stripDataUrls(Forge.customCards || []),  name: 'cards' },
     { key: STORAGE_KEYS.moves,   value: Forge.customMoves,  name: 'moves' },
     // 🗄️ Events carry big base64 (event image / board upload / sprite
     // frames). Keep the localStorage fast-path SLIM (strip base64) so its
@@ -24192,7 +24214,12 @@ function saveForge() {
     { key: 'hg_pageGuides',       value: Forge.pageGuides      || [], name: 'pageGuides' },
     { key: 'hg_aiDecks',          value: Forge.aiDecks         || [], name: 'aiDecks' },
     { key: 'hg_starterDecks',     value: Forge.starterDecks    || [], name: 'starterDecks' },
-    { key: 'hg_campaigns',        value: Forge.campaigns       || [], name: 'campaigns' },
+    // 🗄️ Campaigns carry big base64 (cover · map bg · currency icon ·
+    // per-node images · dialogue art). Strip them from the localStorage
+    // fast-path — the FULL copy is in IndexedDB (idbSet('forge_campaigns')
+    // above) and merged back at boot. This is what stops the quota cascade
+    // that was silently killing ALL Forge saves (cards/info/images).
+    { key: 'hg_campaigns',        value: _stripDataUrls(Forge.campaigns || []), name: 'campaigns' },
     { key: 'hg_priceOverrides',   value: Forge.priceOverrides  || {}, name: 'priceOverrides' },
     { key: 'hg_useCustomOnlyPool', value: !!Forge.useCustomOnlyPool, name: 'useCustomOnlyPool' },
   ];

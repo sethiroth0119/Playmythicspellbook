@@ -12195,15 +12195,25 @@
     padding: 0.75rem 1rem;
     margin-bottom: 0.8rem;
   }
+  /* Prevent grid items from blowing past their track (min-width:auto is the
+     default) — that overflow is what made the back buttons overlap. */
+  .deck-builder-hero-banner > * { min-width: 0; }
+  .dbhb-actions { display: flex; flex-direction: column; gap: 0.3rem; align-items: stretch; }
+  .dbhb-actions .btn-secondary { white-space: nowrap; }
   @media (max-width: 980px) {
     .deck-builder-hero-banner { grid-template-columns: 80px 1fr 1fr; }
-    .deck-builder-hero-banner > div:last-child { grid-column: 1 / -1; flex-direction: row; justify-content: flex-end; }
+    .deck-builder-hero-banner > .dbhb-actions {
+      grid-column: 1 / -1;
+      flex-direction: row;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
   }
   @media (max-width: 720px) {
     .deck-builder-hero-banner { grid-template-columns: 64px 1fr; }
     .deck-builder-hero-banner .dbhb-name-field,
     .deck-builder-hero-banner .dbhb-item-field,
-    .deck-builder-hero-banner > button { grid-column: 1 / -1; }
+    .deck-builder-hero-banner > .dbhb-actions { grid-column: 1 / -1; }
   }
   .dbhb-portrait {
     width: 80px; height: 80px;
@@ -52290,7 +52300,7 @@ function renderDeckBuilder() {
     <div class="forge-page">
       <div class="forge-header">
         <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/deckIcons.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Deck Builder</h2>
-        <div style="display:flex;gap:0.6rem;align-items:center">
+        <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;justify-content:flex-end">
           <span class="result-stat-pill ${isValid ? '' : 'loss'}" style="font-size:0.95rem;padding:0.3rem 0.8rem">${deckSize} / ${DECK_SIZE} cards</span>
           <button class="btn-mini" id="btn-deck-clear">🗑 Clear</button>
           <button class="btn-primary ${!isDirty ? 'btn-disabled' : ''}" id="btn-deck-save" ${!isDirty ? 'disabled' : ''}>${isValid ? '💾 Save Deck' : `💾 Save Draft (${deckSize}/${DECK_SIZE})`}</button>
@@ -52325,7 +52335,7 @@ function renderDeckBuilder() {
           <label>Hero Item</label>
           ${renderItemPicker('h_' + heroId)}
         </div>
-        <div style="display:flex;flex-direction:column;gap:0.3rem">
+        <div class="dbhb-actions">
           <button class="btn-secondary btn-mini" id="btn-back-to-decks">← My Decks</button>
           <button class="btn-secondary btn-mini" id="btn-switch-hero">⇄ Switch Hero</button>
         </div>

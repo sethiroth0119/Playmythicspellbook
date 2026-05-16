@@ -380,7 +380,7 @@
      all to the same fixed top-left position gives players one consistent place
      to look for the way out, no matter which screen they're on. The tutorial
      overlay's inline back arrow is excluded since it's part of a step controller. */
-  button[id^="btn-back"]:not(#btn-tutorial-back) {
+  button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks) {
     position: fixed;
     top: 18px; left: 18px;
     z-index: 60;
@@ -402,17 +402,17 @@
     min-width: 140px;
     text-align: center;
   }
-  button[id^="btn-back"]:not(#btn-tutorial-back):hover {
+  button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks):hover {
     background: linear-gradient(180deg, rgba(80,110,180,0.96), rgba(25,40,80,0.96)) !important;
     border-color: #b6cdf0 !important;
     color: #ffffff !important;
     box-shadow: 0 0 24px rgba(140, 170, 230, 0.55), 0 6px 18px rgba(0,0,0,0.6) !important;
     transform: translateY(-1px);
   }
-  button[id^="btn-back"]:not(#btn-tutorial-back):active { transform: translateY(0); }
+  button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks):active { transform: translateY(0); }
   /* Mobile — match the hub-back-btn shrink so phones don't get a giant pill. */
   @media (max-width: 640px) {
-    button[id^="btn-back"]:not(#btn-tutorial-back) {
+    button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks) {
       top: 10px; left: 10px;
       padding: 0.4rem 0.85rem !important;
       font-size: 0.8rem !important;

@@ -23838,13 +23838,29 @@ async function loadForgeContentFromIdb() {
   for (const [idbKey, fk] of map) {
     try {
       const cur = Forge[fk];
-      const haveLocal = Array.isArray(cur) && cur.length > 0;
-      if (haveLocal) continue;                       // localStorage already provided it
       const v = await idbGet(idbKey);
-      if (Array.isArray(v) && v.length > 0) {
-        Forge[fk] = v;
-        changed = true;
+      if (!Array.isArray(v) || v.length === 0) continue;     // nothing canonical in IDB
+      if (!Array.isArray(cur) || cur.length === 0) {          // localStorage gave nothing → adopt IDB
+        Forge[fk] = v; changed = true; continue;
       }
+      // Both present → MERGE by id, with the IndexedDB copy winning on
+      // conflicts. saveForge() writes IDB FIRST (before the localStorage
+      // chunk loop), so IDB is always the most-complete copy — it holds the
+      // big base64 images/sprite frames that overflow localStorage's ~5MB
+      // quota. The old "skip if localStorage had anything" logic let a
+      // STALE localStorage list (whose oversized write had failed) shadow
+      // the real IDB data forever — which is exactly why custom events +
+      // their pictures "weren't being saved". Union keeps local-only and
+      // IDB-only entries; IDB wins same-id so the image-bearing version
+      // is restored.
+      const byId = {};
+      cur.forEach(e => { if (e && e.id != null) byId[e.id] = e; });
+      v.forEach(e => { if (e && e.id != null) byId[e.id] = e; });
+      const merged = Object.values(byId);
+      let differs = merged.length !== cur.length;
+      if (!differs) { try { differs = JSON.stringify(merged) !== JSON.stringify(cur); } catch (e) { differs = true; } }
+      Forge[fk] = merged;
+      if (differs) changed = true;
     } catch (e) { /* skip this chunk */ }
   }
   if (changed) {
@@ -24131,7 +24147,17 @@ function saveForge() {
     // Keeping the rest (small JSON < 1MB total) in localStorage is fine.
     { key: STORAGE_KEYS.cards,   value: Forge.customCards,  name: 'cards' },
     { key: STORAGE_KEYS.moves,   value: Forge.customMoves,  name: 'moves' },
-    { key: STORAGE_KEYS.events,  value: Forge.customEvents, name: 'events' },
+    // 🗄️ Events carry big base64 (event image / board upload / sprite
+    // frames). Keep the localStorage fast-path SLIM (strip base64) so its
+    // write never blows the ~5MB quota; the FULL records (with images) live
+    // in IndexedDB (idbSet('forge_customEvents') above) and are merged back
+    // over this slim copy by loadForgeContentFromIdb at boot.
+    { key: STORAGE_KEYS.events,  value: (Forge.customEvents || []).map(e => {
+        if (!e || typeof e !== 'object') return e;
+        const c = { ...e };
+        delete c.image; delete c.boardDataUrl; delete c.spriteFrames;
+        return c;
+      }), name: 'events' },
     { key: STORAGE_KEYS.encounters, value: Forge.customEncounters, name: 'encounters' },
     { key: STORAGE_KEYS.customPacks,    value: Forge.customPacks,    name: 'customPacks' },
     { key: STORAGE_KEYS.structureDecks, value: Forge.structureDecks, name: 'structureDecks' },

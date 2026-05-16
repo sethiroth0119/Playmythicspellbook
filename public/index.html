@@ -26656,6 +26656,9 @@ const getMoveRange = (unit, weather) => {
 };
 
 const getValidMoves = (unit, units, weather, board) => {
+  // 🧱 Wall Units are stationary structures — zero move tiles ever. This one
+  // line blocks Move Piece, drag-to-move, and the AI from relocating it.
+  if (unit && unit.isWall) return [];
   if ((unit.statusEffects || []).some(e => STATUS_EFFECTS[e.type] && STATUS_EFFECTS[e.type].skipTurn)) return [];
   const speed = getMoveRange(unit, weather);
   // Fall back to App.state.board if the caller didn't pass one (keeps legacy call sites working)
@@ -27845,6 +27848,13 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
     heldItem: item ? item.id : null, itemUsed: false, battleKills: 0,
     kalonForm: cardData.kalonForm || null,
     flying: !!cardData.flying,
+    // 🧱 Wall Unit — stationary structure flags carried from the card.
+    isWall: !!cardData.isWall,
+    wall: cardData.isWall ? Object.assign({
+      canAttack: true, canBlockRanged: true, canBePushed: false,
+      canBeTeleported: false, canBeSacrificed: false, canBeEvolved: false,
+      canKalon: false, canBeBuffed: true,
+    }, cardData.wall || {}) : null,
     factions: getFactionsOf(cardData),
     bond: prof ? (prof.bond || 0) : 0,
     nature: natureId,
@@ -28103,6 +28113,11 @@ const executeKalonTransform = (state, unit, opts) => {
   {
     const _kf = _kalonFlags(unit);
     const _forced = !!(opts.forced || opts.free || opts.ignoreRestrictions);
+    // 🧱 A Wall Unit only transforms if its wall config allows it.
+    if (unit.isWall && !(unit.wall && unit.wall.canKalon) && !opts.ignoreRestrictions) {
+      if (unit.owner === 'player' && typeof showToast === 'function') showToast('This Wall Unit cannot Kalon Transform.');
+      return state;
+    }
     if (!_forced) {
       if (!_kf.canNormal) {
         if (unit.owner === 'player' && typeof showToast === 'function') showToast('This unit cannot Kalon Transform normally.');
@@ -28764,7 +28779,8 @@ const executeMove = (state, attacker, target, move) => {
   // ===== Knockback: push the target N tiles in the direction away from the attacker =====
   // Stops short if it hits a wall, another unit, or the board edge. Skips if target died or
   // if move.knockback isn't set. Flying targets are still pushed.
-  if (updatedTarget.alive && move.knockback && move.knockback > 0) {
+  if (updatedTarget.alive && move.knockback && move.knockback > 0
+      && !(updatedTarget.isWall && !(updatedTarget.wall && updatedTarget.wall.canBePushed))) {
     const ax = attacker.pos.x, ay = attacker.pos.y;
     const tx = updatedTarget.pos.x, ty = updatedTarget.pos.y;
     const dx = Math.sign(tx - ax), dy = Math.sign(ty - ay);
@@ -33738,6 +33754,27 @@ function renderCardEditor() {
       </label>
       <div class="small-text" style="margin-top:0.3rem">Magic and ranged attacks (range ≥ 2) can still hit a flying unit. Ground traps are skipped.</div>
     </div>
+    ${type === 'unit' ? (() => { const w = card.wall || {}; const wOn = !!card.isWall; const wc = (k, d) => (w[k] != null ? w[k] : d); return `
+    <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem">
+      <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+        <input type="checkbox" id="ed-wall-on" ${wOn ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+        <span>🧱 Wall Unit / Cannot Move</span>
+      </label>
+      <div class="small-text" style="margin-top:0.3rem">A stationary structure: occupies a tile, blocks movement paths, can be attacked &amp; destroyed, keeps HP/DEF/passives/abilities/factions/elements — but it can never move, be dragged, or take a Move command.</div>
+      <div id="wall-sub" style="${wOn ? '' : 'display:none'};margin-top:0.5rem;padding:0.7rem;background:rgba(120,120,140,0.08);border:1px solid rgba(160,160,180,0.25);border-radius:6px">
+        <div class="small-text" style="color:#cdd2e0;font-weight:700;margin-bottom:0.4rem">Wall behaviour</div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.7rem 1.1rem">
+          <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-wall-attack" ${wc('canAttack', true) ? 'checked' : ''}> Can attack</label>
+          <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-wall-ranged" ${wc('canBlockRanged', true) ? 'checked' : ''}> Blocks ranged attacks</label>
+          <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-wall-push" ${wc('canBePushed', false) ? 'checked' : ''}> Can be pushed</label>
+          <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-wall-tele" ${wc('canBeTeleported', false) ? 'checked' : ''}> Can be teleported</label>
+          <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-wall-sac" ${wc('canBeSacrificed', false) ? 'checked' : ''}> Can be sacrificed</label>
+          <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-wall-evolve" ${wc('canBeEvolved', false) ? 'checked' : ''}> Can be evolved</label>
+          <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-wall-kalon" ${wc('canKalon', false) ? 'checked' : ''}> Can Kalon Transform</label>
+          <label class="small-text" style="display:flex;gap:0.35rem;cursor:pointer"><input type="checkbox" id="ed-wall-buff" ${wc('canBeBuffed', true) ? 'checked' : ''}> Can be affected by buffs</label>
+        </div>
+      </div>
+    </div>` })() : ''}
     ${type === 'hero' ? '' : `<div class="editor-field"><label>Hero summon range (default ${DEFAULT_UNIT_PLACE_RANGE})</label><input id="ed-place-range" type="number" min="1" max="6" value="${typeof card.range === 'number' ? card.range : DEFAULT_UNIT_PLACE_RANGE}"></div>`}
     <div class="editor-field full">
       <label>Learnset (level → move)</label>
@@ -34417,6 +34454,8 @@ function bindCardEditor() {
   // re-render (image upload, type swap, etc.) doesn't snap the box back to
   // unchecked. When unchecking we STASH the form so a re-check restores the
   // user's entered name / stats / passive instead of dumping default values.
+  const wallChk = document.getElementById('ed-wall-on');
+  if (wallChk) wallChk.onchange = () => { const sub = document.getElementById('wall-sub'); if (sub) sub.style.display = wallChk.checked ? '' : 'none'; };
   const kalonChk = document.getElementById('ed-kalon-on');
   if (kalonChk) {
     kalonChk.onchange = () => {
@@ -35132,6 +35171,26 @@ function captureEditorIntoCard(card) {
     card.learnset = readEditorLearnset();
   }
   if (document.getElementById('ed-flying')) card.flying = !!document.getElementById('ed-flying').checked;
+  // 🧱 Wall Unit config.
+  if (document.getElementById('ed-wall-on')) {
+    if (document.getElementById('ed-wall-on').checked) {
+      const _wc = (id, d) => { const e = document.getElementById(id); return e ? !!e.checked : d; };
+      card.isWall = true;
+      card.canMove = false;
+      card.wall = {
+        canAttack:       _wc('ed-wall-attack', true),
+        canBlockRanged:  _wc('ed-wall-ranged', true),
+        canBePushed:     _wc('ed-wall-push', false),
+        canBeTeleported: _wc('ed-wall-tele', false),
+        canBeSacrificed: _wc('ed-wall-sac', false),
+        canBeEvolved:    _wc('ed-wall-evolve', false),
+        canKalon:        _wc('ed-wall-kalon', false),
+        canBeBuffed:     _wc('ed-wall-buff', true),
+      };
+    } else {
+      delete card.isWall; delete card.canMove; delete card.wall;
+    }
+  }
   if (document.getElementById('ed-factions')) {
     const picked = [...document.querySelectorAll('#ed-factions input[data-faction]:checked')].map(el => el.dataset.faction);
     card.factions = picked;
@@ -39056,6 +39115,7 @@ function renderUnitModal() {
         ${(() => {
           const kw = [];
           if (u.flying) kw.push({ name: '🪶 Flying', desc: 'Immune to ground/melee attacks. Magic and ranged attacks can still hit.' });
+          if (u.isWall) kw.push({ name: '🧱 Wall — Cannot Move', desc: 'Stationary structure: never moves, can\'t be dragged or take a Move command. Still occupies & blocks its tile and can be attacked/destroyed.' + (u.wall && u.wall.canAttack === false ? ' Cannot attack.' : '') });
           if (kw.length === 0) return '';
           return `
             <div class="modal-section">
@@ -40533,6 +40593,11 @@ function onTileClick(x, y) {
                           (move.target === 'ally' && occupant.owner === 'player') ||
                           (move.target === 'enemy' && occupant.owner !== 'player');
       if (!validTarget) { showToast('Invalid target'); return; }
+      // 🧱 A Wall Unit with attacking disabled can't initiate attacks.
+      if (move.kind === 'attack' && sel.isWall && sel.wall && sel.wall.canAttack === false) {
+        showToast('🧱 This Wall Unit cannot attack.');
+        return;
+      }
       // 🪶 Cannot target a unit that's mid-vanish (Fly/Dig/Realm) — it's off the board.
       if (move.kind === 'attack' && typeof isVanished === 'function' && isVanished(occupant)) {
         showToast(`${occupant.name} is not on the battlefield!`);
@@ -40576,6 +40641,7 @@ function onTileClick(x, y) {
   }
   // Movement only happens when the player explicitly entered Move mode via the modal
   if (App.ui.actionMode !== 'move') return;
+  if (sel.isWall) { if (typeof showToast === 'function') showToast('🧱 This unit is a Wall and cannot move.'); return; }
   if (sel.hasMoved) return;
   const valid = getValidMoves(sel, s.units, s.weather);
   if (!valid.some(p => p.x === x && p.y === y)) return;
@@ -42546,6 +42612,8 @@ function doAIStep() {
     // ===== Best attack from a hypothetical position (defaults to current) =====
     const tryAttackFromPos = (atPos) => {
       const probe = { ...unit, pos: atPos };
+      // 🧱 A Wall Unit with attacking disabled never attacks (AI side).
+      if (probe.isWall && probe.wall && probe.wall.canAttack === false) return null;
       const moves = getAvailableMoves(probe).filter(m => m.kind === 'attack');
       const isDispelled = (probe.statusEffects || []).some(e => e.type === 'dispel');
       const playerUnits = App.state.units.filter(u => u.owner === 'player' && u.alive && !isVanished(u));
@@ -51479,6 +51547,7 @@ function renderCollectionCardModal(active) {
             <div class="ccm-subline">
               <span class="rarity-badge" style="color:${r.color};border-color:${r.color}">${r.name}</span>
               <span class="ccm-kind">${kind.toUpperCase()}</span>
+              ${c.isWall ? `<span class="ccm-kind" style="border-color:#9aa6c0;color:#bcc6dc" title="Stationary structure — cannot move${c.wall && c.wall.canAttack === false ? '; cannot attack' : ''}">🧱 WALL · CANNOT MOVE</span>` : ''}
               ${ownedBadge}
             </div>
           </div>

@@ -28245,6 +28245,15 @@ const executeMove = (state, attacker, target, move) => {
     log.push({ msg: `☀️ ${attacker.name}'s ${move.name} fires instantly under the sun!`, color: 'amber' });
   }
 
+  // 🛡️ Elemental Shield — the move grants the user a reactive shield.
+  if (move.grantShield && move.grantShield.id) {
+    const gs = move.grantShield;
+    const sh = { id: gs.id, vs: gs.vs || 'any', chance: gs.chance || 100, turns: Math.max(1, gs.duration || 3) };
+    s.units = s.units.map(u => u.id === attacker.id ? { ...u, reactShield: sh } : u);
+    const _gse = STATUS_EFFECTS[gs.id] || {};
+    log.push({ msg: `🛡️ ${attacker.name} raises an elemental shield — attackers will be ${_gse.name || gs.id}!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+  }
+
   // 🪶 Untargetable: a unit mid-vanish (Fly/Dig/Realm) cannot be hit.
   if (target && typeof isVanished === 'function' && isVanished(target) && !(attacker && attacker.id === target.id)) {
     s.units = s.units.map(u => u.id === attacker.id ? markAttackerActed(u) : u);
@@ -28362,7 +28371,12 @@ const executeMove = (state, attacker, target, move) => {
     if (move && move.kind === 'attack' && !result.missed) {
       const _shId = target && target.heldItem;
       const _sh = _shId ? (((typeof getItemById === 'function') && getItemById(_shId)) || HELD_ITEMS[_shId]) : null;
-      const _rx = _sh && _sh.reactStatus;
+      const _itemRx = _sh && _sh.reactStatus;
+      // A move-granted Elemental Shield (target.reactShield) takes precedence
+      // over a held-item shield.
+      const _moveRx = (target && target.reactShield && target.reactShield.id) ? target.reactShield : null;
+      const _rx = _moveRx || _itemRx;
+      const _shName = _moveRx ? '🛡️ Elemental Shield' : (_sh ? `${_sh.icon || '🛡️'} ${_sh.name}` : '🛡️ Shield');
       if (_rx && _rx.id) {
         const _mt = (move.type === 'magic') ? 'magic' : 'physical';
         const _match = !_rx.vs || _rx.vs === 'any' || _rx.vs === _mt;
@@ -28372,7 +28386,7 @@ const executeMove = (state, attacker, target, move) => {
           if (_atk && _atk.alive && !(typeof isImmuneToStatus === 'function' && isImmuneToStatus(_atk, _rx.id))) {
             s.units = s.units.map(u => u.id === attacker.id ? applyStatusEffect(u, _rx.id, _rx.duration || 1, target.id) : u);
             const _se = STATUS_EFFECTS[_rx.id] || {};
-            log.push({ msg: `${_sh.icon || '🛡️'} ${target.name}'s ${_sh.name} retaliates — ${attacker.name} is ${_se.name || _rx.id}!`, color: attacker.owner === 'player' ? 'red' : 'green' });
+            log.push({ msg: `${_shName} — ${target.name} retaliates: ${attacker.name} is ${_se.name || _rx.id}!`, color: attacker.owner === 'player' ? 'red' : 'green' });
           }
         }
       }
@@ -29347,6 +29361,14 @@ const startTurn = (state, who) => {
     log.push({ msg: `🃏 Card Frenzy grants +1 card!`, color: who === 'player' ? 'green' : 'red' });
   }
   s.units.forEach(u => { if (!u.alive && u.isHero) s.gameOver = u.owner === 'player' ? 'ai' : 'player'; });
+
+  // ===== 🛡️ Tick down move-granted Elemental Shields (per owner's turn) =====
+  s.units = s.units.map(u => {
+    if (u.owner !== who || !u.reactShield) return u;
+    const t = (u.reactShield.turns || 1) - 1;
+    if (t <= 0) { const nu = { ...u }; delete nu.reactShield; return nu; }
+    return { ...u, reactShield: { ...u.reactShield, turns: t } };
+  });
 
   // ===== Auto-fire any charged moves =====
   // Units that finished a charge-up last turn release the move automatically now.
@@ -35019,6 +35041,41 @@ function renderMoveEditor() {
             <span>⚡ Priority — free action (doesn't end the unit's turn)</span>
           </label>
         </div>
+
+        <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.8rem;margin-top:0.4rem">
+          <label style="font-weight:700;color:#ffd166">🪶 Vanish — Fly / Dig / Realm</label>
+          <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">2-turn strike: turn 1 the user vanishes OFF the board (untargetable; its tile stays blocked), turn 2 it returns and deals this move's damage to the target.</div>
+        </div>
+        <div class="editor-field full">
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+            <input type="checkbox" id="mv-vanish" ${move.vanish ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+            <span>Make this a vanish-and-return move</span>
+          </label>
+        </div>
+        <div class="editor-field"><label>Vanish style</label>
+          <select id="mv-vanish-kind">
+            <option value="fly"   ${(move.vanishKind||'fly') === 'fly'   ? 'selected' : ''}>🪶 Fly (soar — air)</option>
+            <option value="dig"   ${move.vanishKind === 'dig'   ? 'selected' : ''}>⛏️ Dig (burrow — underground)</option>
+            <option value="realm" ${move.vanishKind === 'realm' ? 'selected' : ''}>🌌 Realm (phase — the rift)</option>
+          </select>
+        </div>
+
+        <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.8rem;margin-top:0.4rem">
+          <label style="font-weight:700;color:#ffd166">🛡️ Elemental Shield (reactive buff)</label>
+          <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">On use, the user gains a shield for N turns. While it lasts, any time the user is HIT, the attacker suffers the chosen status (e.g. a Lightning shield → physical hit Stuns the attacker). Pick "— None —" to disable.</div>
+        </div>
+        <div class="editor-field"><label>Shield status on attacker</label>
+          <select id="mv-shield-status">${STATUS_PICKER.map(s => `<option value="${s}" ${(move.grantShield && move.grantShield.id === s) ? 'selected' : ''}>${statusLabel(s)}</option>`).join('')}</select>
+        </div>
+        <div class="editor-field"><label>Shield reacts to</label>
+          <select id="mv-shield-vs">
+            <option value="any"      ${(!move.grantShield || (move.grantShield.vs||'any') === 'any')      ? 'selected' : ''}>Any attack</option>
+            <option value="physical" ${(move.grantShield && move.grantShield.vs === 'physical') ? 'selected' : ''}>Physical only</option>
+            <option value="magic"    ${(move.grantShield && move.grantShield.vs === 'magic')    ? 'selected' : ''}>Magic only</option>
+          </select>
+        </div>
+        <div class="editor-field"><label>Shield duration (turns)</label><input id="mv-shield-dur" type="number" min="1" max="9" value="${(move.grantShield && move.grantShield.duration) || 3}"></div>
+        <div class="editor-field"><label>Trigger chance %</label><input id="mv-shield-chance" type="number" min="1" max="100" value="${(move.grantShield && move.grantShield.chance) || 100}"></div>
       </div>
       <div class="editor-actions">
         <button class="btn-secondary" id="btn-cancel-move">Cancel</button>
@@ -35123,6 +35180,26 @@ function bindMoveEditor() {
     if (laneDepth > 0)   move.laneDepth   = laneDepth;
     if (splashPct !== null && (aoeRadius > 0 || laneDepth > 0)) move.splashDamagePct = splashPct;
     if (priority) move.priority = true;
+
+    // 🪶 Vanish (Fly/Dig/Realm) — a 2-turn charged vanish-and-return strike.
+    const _vanish = !!(document.getElementById('mv-vanish') && document.getElementById('mv-vanish').checked);
+    if (_vanish) {
+      move.vanish = true;
+      move.chargeTurns = 1;
+      move.vanishKind = (document.getElementById('mv-vanish-kind') || {}).value || 'fly';
+      if (move.vanishKind === 'fly' || move.vanishKind === 'realm') move.air = true;
+    }
+    // 🛡️ Elemental Shield — reactive self-buff: while active, when the user is
+    // hit (matching vs), the attacker suffers `status`.
+    const _shStatus = (document.getElementById('mv-shield-status') || {}).value || '';
+    if (_shStatus) {
+      move.grantShield = {
+        id: _shStatus,
+        vs: (document.getElementById('mv-shield-vs') || {}).value || 'any',
+        duration: Math.max(1, Math.min(9, parseInt((document.getElementById('mv-shield-dur') || {}).value, 10) || 3)),
+        chance: Math.max(1, Math.min(100, parseInt((document.getElementById('mv-shield-chance') || {}).value, 10) || 100)),
+      };
+    }
 
     // ===== Bonus damage modifiers — only saved if a target is picked =====
     // Each pair is (faction/element id, multiplier). Multiplier <= 1 is silently

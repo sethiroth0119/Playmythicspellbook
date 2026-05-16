@@ -27948,6 +27948,11 @@ const initGame = (heroData, opponentHero, customCards, playerGoesFirst, chosenDe
     playerHero.currentHp = rCur;
   }
   const aiHero = buildHero(opponentHero, 'ai', { x: Math.floor(BOARD_W / 2), y: 0 });
+  // 🗺️ Roguelite: optional per-node enemy HP override (guarded to RLC battles).
+  if (App.battlePrep && App.battlePrep.rlc && App.battlePrep.rlcEnemyMaxHp) {
+    const _em = Math.max(1, parseInt(App.battlePrep.rlcEnemyMaxHp, 10) || aiHero.maxHp);
+    aiHero.maxHp = _em; aiHero.currentHp = _em;
+  }
   const pd = buildStarterDeck(customCards, heroData && heroData.id, chosenDeckId);
   const ad = buildAIDeck();
   // Day/Night cycle: starts at day, flips every DAY_NIGHT_PERIOD player turns
@@ -50065,6 +50070,9 @@ function rlcStartBattle(node) {
     foe = others.length ? others[0] : heroData;
   }
   if (!heroData || !foe) { showToast('This battle node is missing its hero setup.', 3000); return; }
+  // 🗡️ Enemy encounter depth — custom name, HP override, per-battle rules.
+  const _enemyCfg = node.enemy || {};
+  if (_enemyCfg.name) foe = { ...foe, name: String(_enemyCfg.name) };
   // Sync the run deck into a stable Profile deck so the engine can use it.
   let pdeck = (run.deck || []).slice(0);
   if (pdeck.length > DECK_SIZE) pdeck = pdeck.slice(0, DECK_SIZE);
@@ -50079,9 +50087,10 @@ function rlcStartBattle(node) {
     campaignNode: null, scriptedWeather: null,
     enemyLevel: node.enemyLevel ? (parseInt(node.enemyLevel, 10) || null) : null,
     enemyDeckOverride: enemyKeys.length === DECK_SIZE ? enemyKeys : null,
-    encounterModifiers: null,
+    encounterModifiers: (Array.isArray(_enemyCfg.modifierIds) && _enemyCfg.modifierIds.length) ? _enemyCfg.modifierIds.slice(0) : null,
     rlc: { campaignId: run.campaignId, nodeId: node.id },
     rlcHeroHP: run.heroHP, rlcMaxHP: run.maxHP,
+    rlcEnemyMaxHp: (parseInt(_enemyCfg.hpOverride, 10) > 0) ? parseInt(_enemyCfg.hpOverride, 10) : null,
     coinCall: null, coinResult: null, playerWonFlip: null, playerGoesFirst: null,
     rankedMode: false, openCupRun: null, openCupAPPerWin: 0,
   };
@@ -50158,6 +50167,7 @@ function _rlcBlankNode() {
   return { id: 'n' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36),
     type: 'battle', name: 'New Node', desc: '', row: 0, col: 0, connections: [],
     enemyHeroId: '', enemyDeckId: '', enemyLevel: '',
+    enemy: { name: '', hpOverride: '', modifierIds: [] },
     reward: { cardKeys: [], choiceCount: 3, allowSkip: false, currency: 0, medPoints: 0 },
     heal: { options: [ { name: 'Patch up', healPercent: 25, costMedPoints: 1, costCurrency: 0 }, { name: 'Field surgery', healPercent: 50, costMedPoints: 2, costCurrency: 0 }, { name: 'Full recovery', healPercent: 100, costMedPoints: 4, costCurrency: 0 } ] },
     shop: { name: 'Black Market', items: [] },
@@ -50255,6 +50265,12 @@ function renderRlcAdmin() {
             ${deckSel('nodes.' + idx + '.enemyDeckId', n.enemyDeckId)}
             ${fld('Enemy level (opt)', 'nodes.' + idx + '.enemyLevel', n.enemyLevel, 'number')}
           </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            ${fld('Custom enemy name (opt — overrides hero name)', 'nodes.' + idx + '.enemy.name', (n.enemy || {}).name)}
+            ${fld('Enemy HP override (opt — blank/0 = default)', 'nodes.' + idx + '.enemy.hpOverride', (n.enemy || {}).hpOverride, 'number')}
+          </div>
+          <div class="small-text ink-dim" style="margin:6px 0 2px">⚔️ Special battle rules (stack any — both sides feel them):</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">${DAILY_CHALLENGES.map(m => `<label class="small-text" title="${escapeHtml(m.desc)}" style="display:flex;align-items:center;gap:3px;border:1px solid rgba(184,136,255,0.3);border-radius:4px;padding:2px 6px"><input type="checkbox" data-rlc-encmod="${idx}" value="${m.id}" ${(((n.enemy || {}).modifierIds) || []).indexOf(m.id) >= 0 ? 'checked' : ''}> ${m.icon} ${escapeHtml(m.name)}</label>`).join('')}</div>
           <div class="small-text ink-dim" style="margin:4px 0">Win reward:</div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
             ${fld('Choices shown', 'nodes.' + idx + '.reward.choiceCount', (n.reward || {}).choiceCount, 'number')}
@@ -50426,6 +50442,13 @@ function renderRlcAdmin() {
     saveForge();
   }));
   document.querySelectorAll('[data-rlc-rmdraft]').forEach(b => b.onclick = () => { const ki = parseInt(b.dataset.rlcRmdraft, 10); ed.draftPool = Array.isArray(ed.draftPool) ? ed.draftPool : []; ed.draftPool.splice(ki, 1); reRender(); });
+  root.querySelectorAll('[data-rlc-encmod]').forEach(cb => cb.addEventListener('change', () => {
+    const ni = parseInt(cb.dataset.rlcEncmod, 10); const node = ed.nodes[ni]; if (!node) return;
+    node.enemy = node.enemy || {}; node.enemy.modifierIds = Array.isArray(node.enemy.modifierIds) ? node.enemy.modifierIds : [];
+    if (cb.checked) { if (node.enemy.modifierIds.indexOf(cb.value) < 0) node.enemy.modifierIds.push(cb.value); }
+    else node.enemy.modifierIds = node.enemy.modifierIds.filter(x => x !== cb.value);
+    saveForge();
+  }));
   root.querySelectorAll('[data-rlc-facrestrict]').forEach(cb => cb.addEventListener('change', () => {
     const ni = parseInt(cb.dataset.rlcFacrestrict, 10); const node = ed.nodes[ni]; if (!node) return;
     node.reward = node.reward || {}; node.reward.restrictFactions = Array.isArray(node.reward.restrictFactions) ? node.reward.restrictFactions : [];

@@ -20298,6 +20298,10 @@ const Profile = {
   equippedTombstone: null,
   // 🛒 IDs of tombstone cosmetics the player has unlocked (via shop purchase).
   ownedTombstones: [],
+  // 🗺️ Campaign ids the player has cleared (final boss beaten). Drives
+  // campaign chaining — a campaign with requiresCampaignId stays locked
+  // until its prerequisite id is in here.
+  rlcCompleted: [],
   records: { wins: 0, losses: 0, battles: 0 },
   // ===== The Ruin Exchange — dual currency =====
   // Profile.gems is the LEGACY data field that now powers 🔥 CINDERS, the earned currency.
@@ -24162,6 +24166,9 @@ function loadForge() {
       if (typeof p.equippedTombstone === 'string' || p.equippedTombstone === null) Profile.equippedTombstone = p.equippedTombstone;
       // 🗺️ Roguelite campaign — resume an in-progress run on reload.
       if (p.rlcRun && typeof p.rlcRun === 'object') Profile.rlcRun = p.rlcRun;
+      // 🗺️ Cleared-campaign list — without this in the whitelist it would
+      // reset every reload and re-lock chained campaigns the player earned.
+      if (Array.isArray(p.rlcCompleted)) Profile.rlcCompleted = p.rlcCompleted.filter(x => typeof x === 'string');
       // 🔀 Dialogue flags — choice-driven flags persist so conditional
       // bubbles stay consistent across reloads.
       if (p.dialogueFlags && typeof p.dialogueFlags === 'object') Profile.dialogueFlags = p.dialogueFlags;
@@ -50513,6 +50520,11 @@ function _rlcCompleteNode(nodeId) {
   _persistProgressNow();
   if (node && (node.type === 'finalBoss')) {
     run.isComplete = true;
+    // 🗺️ Record the clear so any campaign chained off this one unlocks.
+    if (!Array.isArray(Profile.rlcCompleted)) Profile.rlcCompleted = [];
+    if (run.campaignId && Profile.rlcCompleted.indexOf(run.campaignId) < 0) {
+      Profile.rlcCompleted.push(run.campaignId);
+    }
     // Final completion rewards.
     const fr = camp.finalReward || {};
     (fr.cardKeys || []).forEach(k => _rlcGrantCard(k));
@@ -50670,6 +50682,7 @@ function _rlcBlankCampaign() {
     currencyName: 'Gold', startingCurrency: 50, startingMedPoints: 2,
     startingDeckMode: 'player', startingDeckId: '',
     startingDeckChoices: [], draftPool: [], draftPicks: 15, draftChoices: 3,
+    requiresCampaignId: '',
     isPublished: false,
     nodes: [], finalReward: { cardKeys: [], currency: 0 }, createdAt: Date.now(), updatedAt: Date.now() };
 }
@@ -50883,6 +50896,7 @@ function renderRlcAdmin() {
           ${fld('Final-reward ' + _rlcCur(ed), 'finalReward.currency', (ed.finalReward || {}).currency, 'number')}
           ${relicSel('🏺 Starting relic (player begins the run with this)', 'startRelic', ed.startRelic)}
         </div>
+        <label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">🔒 Requires this campaign cleared first (chains acts / unlocks the next section)</span><br><select data-rlc-path="requiresCampaignId" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">— None (always available) —</option>${(Array.isArray(Forge.campaigns) ? Forge.campaigns : []).filter(c => c && c.id !== ed.id).map(c => `<option value="${escapeHtml(String(c.id))}" ${ed.requiresCampaignId === c.id ? 'selected' : ''}>${escapeHtml(c.name || c.id)}</option>`).join('')}</select></label>
       </div>
       <div class="settings-section">
         <div class="settings-section-title">Map Nodes (${(ed.nodes || []).length})</div>
@@ -51057,16 +51071,24 @@ function renderRlcList() {
   const camps = getPlayableCampaigns();
   const run = Profile.rlcRun;
   const runCamp = run ? _rlcCampaign(run.campaignId) : null;
+  const _isAdmin = (typeof isAdmin === 'function') && isAdmin();
+  const _done = Array.isArray(Profile.rlcCompleted) ? Profile.rlcCompleted : [];
   const card = (c) => {
     const nodes = (c.nodes || []).length;
+    const reqId = c.requiresCampaignId || '';
+    const reqCamp = reqId ? getAllCampaigns().find(x => x && x.id === reqId) : null;
+    const locked = !_isAdmin && reqId && _done.indexOf(reqId) < 0;
+    const cleared = _done.indexOf(c.id) >= 0;
     return `
-      <div style="width:280px;background:rgba(18,10,32,0.8);border:1px solid rgba(212,175,55,0.4);border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
-        ${c.coverImg ? `<img src="${c.coverImg}" alt="" style="width:100%;height:150px;object-fit:cover">` : `<div style="height:150px;display:flex;align-items:center;justify-content:center;font-size:3rem;background:radial-gradient(ellipse at center,rgba(170,60,255,0.25),transparent 70%)">🗺️</div>`}
+      <div style="width:280px;background:rgba(18,10,32,0.8);border:1px solid ${locked ? 'rgba(120,90,160,0.35)' : 'rgba(212,175,55,0.4)'};border-radius:12px;overflow:hidden;display:flex;flex-direction:column;${locked ? 'opacity:0.7' : ''}">
+        ${c.coverImg ? `<img src="${c.coverImg}" alt="" style="width:100%;height:150px;object-fit:cover;${locked ? 'filter:grayscale(0.7) brightness(0.6)' : ''}">` : `<div style="height:150px;display:flex;align-items:center;justify-content:center;font-size:3rem;background:radial-gradient(ellipse at center,rgba(170,60,255,0.25),transparent 70%)">${locked ? '🔒' : '🗺️'}</div>`}
         <div style="padding:14px;display:flex;flex-direction:column;gap:8px;flex:1">
-          <div style="font-family:'Cinzel',serif;font-size:1.15rem;font-weight:700;color:#f6d97a">${escapeHtml(c.name || 'Untitled Campaign')}</div>
+          <div style="font-family:'Cinzel',serif;font-size:1.15rem;font-weight:700;color:#f6d97a">${escapeHtml(c.name || 'Untitled Campaign')} ${cleared ? '<span class="small-text" style="color:#7fdca0">✓ Cleared</span>' : ''}</div>
           <div class="small-text ink-dim" style="flex:1">${escapeHtml(c.description || '')}</div>
           <div class="small-text" style="color:#b8a0ff">${escapeHtml(c.difficulty || 'Normal')} · ${nodes} nodes${c.isPublished ? '' : ' · <span style=\"color:#e0a23a\">DRAFT</span>'}</div>
-          <button class="btn-primary" data-rlc-start="${escapeHtml(String(c.id))}" style="margin-top:auto">▶ Start Run</button>
+          ${locked
+            ? `<div class="small-text" style="color:#caa6ff;margin-top:auto">🔒 Clear <strong>${escapeHtml((reqCamp && reqCamp.name) || 'the previous campaign')}</strong> to unlock</div><button class="btn-secondary" disabled style="margin-top:6px">🔒 Locked</button>`
+            : `<button class="btn-primary" data-rlc-start="${escapeHtml(String(c.id))}" style="margin-top:auto">▶ Start Run</button>`}
         </div>
       </div>`;
   };
@@ -51541,6 +51563,11 @@ function renderRlcResult() {
   const camp = _rlcCampaign(run.campaignId);
   const won = !!run.isComplete;
   const failNode = run._failNodeId ? _rlcNode(camp, run._failNodeId) : null;
+  // 🗺️ Campaign chaining — published campaigns that were gated behind this one.
+  const _nextCamps = (won && camp)
+    ? getAllCampaigns().filter(x => x && x.isPublished && x.requiresCampaignId === camp.id
+        && Array.isArray(x.nodes) && x.nodes.length > 0)
+    : [];
   root.innerHTML = `
     <div class="campaign-page" style="background:radial-gradient(ellipse at top,${won ? 'rgba(60,40,15,0.6)' : 'rgba(60,15,25,0.6)'},transparent);text-align:center">
       <div style="font-size:3.4rem;margin-top:30px">${won ? '🏆' : '💀'}</div>
@@ -51552,9 +51579,19 @@ function renderRlcResult() {
         <div style="color:#cdb6ff">Run deck size: <strong>${(run.deck || []).length}</strong></div>
         <div class="small-text ink-dim" style="margin-top:8px">All cards you collected this run are permanently in your collection — open the Deck Editor to use them.</div>
       </div>
+      ${_nextCamps.length ? `
+        <div style="max-width:460px;margin:0 auto 20px;padding:16px;background:rgba(30,50,30,0.6);border:1px solid rgba(127,220,160,0.45);border-radius:12px">
+          <div style="color:#9be8b8;font-family:'Cinzel',serif;font-weight:700;margin-bottom:8px">🔓 Next chapter unlocked!</div>
+          ${_nextCamps.map(nc => `<button class="btn-primary" data-rlc-next="${escapeHtml(String(nc.id))}" style="display:block;width:100%;margin:0 0 8px">▶ ${escapeHtml(nc.name || 'Next Campaign')}</button>`).join('')}
+        </div>` : ''}
       <button class="btn-primary" id="rlc-result-again">▶ Play Again</button>
       <button class="btn-secondary" id="rlc-result-menu" style="margin-left:8px">← Menu</button>
     </div>`;
+  document.querySelectorAll('[data-rlc-next]').forEach(b => b.onclick = () => {
+    const nid = b.dataset.rlcNext;
+    Profile.rlcRun = null; try { saveProfile(); } catch (e) {}
+    rlcStartRun(nid);
+  });
   document.getElementById('rlc-result-again').onclick = () => { Profile.rlcRun = null; try { saveProfile(); } catch (e) {} App.screen = 'rlcList'; render(); };
   document.getElementById('rlc-result-menu').onclick = () => { Profile.rlcRun = null; try { saveProfile(); } catch (e) {} App.screen = 'title'; render(); };
 }

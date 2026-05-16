@@ -17524,6 +17524,17 @@ const MOVES = {
     chargeTurns: 1,
     desc: 'Tether a strand of darkness, then loose it at range.',
   },
+  // ===== 🪶 FLY / ⛏️ DIG / 🌌 REALM — vanish-and-return strikes =====
+  // Two-turn moves: the user vanishes off the board for a turn (untargetable,
+  // but its tile stays blocked — nothing can move through where it was), then
+  // returns and strikes. Built on the charge-move engine; `vanish:true` adds
+  // the semi-invulnerable / hidden behavior. Physical + magic of each.
+  flyStrike:   { id: 'flyStrike',   name: 'Sky Dive',     kind: 'attack', type: 'physical', power: 78, range: 3, cost: 2, element: 'wind',  air: true, chargeTurns: 1, vanish: true, vanishKind: 'fly',   icon: '🪶', desc: 'Soar out of reach for a turn — untargetable while aloft — then dive-bomb the target.' },
+  flyStorm:    { id: 'flyStorm',    name: 'Storm Wing',   kind: 'attack', type: 'magic',    power: 80, range: 3, cost: 2, element: 'storm', air: true, chargeTurns: 1, vanish: true, vanishKind: 'fly',   icon: '🌪️', desc: 'Ride the gale skyward (untargetable), then call down a thunderous dive.' },
+  digStrike:   { id: 'digStrike',   name: 'Burrow Fang',  kind: 'attack', type: 'physical', power: 80, range: 2, cost: 2, element: 'earth', chargeTurns: 1, vanish: true, vanishKind: 'dig',   icon: '⛏️', desc: 'Burrow underground for a turn — untargetable — then erupt beneath the target.' },
+  digQuake:    { id: 'digQuake',    name: 'Geomancy',     kind: 'attack', type: 'magic',    power: 82, range: 2, cost: 2, element: 'earth', chargeTurns: 1, vanish: true, vanishKind: 'dig',   icon: '🌋', desc: 'Sink into the stone (untargetable), then rupture the earth under the target.' },
+  realmStrike: { id: 'realmStrike', name: 'Rift Step',    kind: 'attack', type: 'physical', power: 84, range: 3, cost: 3, element: 'void',  air: true, chargeTurns: 1, vanish: true, vanishKind: 'realm', icon: '🌌', desc: 'Phase into the rift between realms (untargetable), then tear back into reality on the target.' },
+  realmWarp:   { id: 'realmWarp',   name: 'Void Lance',   kind: 'attack', type: 'magic',    power: 86, range: 3, cost: 3, element: 'arcane', air: true, chargeTurns: 1, vanish: true, vanishKind: 'realm', icon: '🔮', desc: 'Slip into the void (untargetable), then lance back through with arcane force.' },
 
   // ===== Recovery moves =====
   recover: {
@@ -26249,6 +26260,15 @@ const isEffectivelyFlying = (unit) => {
   if (hasPassive(unit, 'flockFlight') && countAlliesByFaction(unit, 'bird') > 0) return true;
   return false;
 };
+// 🪶⛏️🌌 A unit mid-vanish (charging a Fly/Dig/Realm move) is OFF the board:
+// untargetable / immune to being hit, though its tile stays blocked because
+// it is still alive at its pos (getOccupant). Returns next turn via the
+// existing charged-release path, dealing the move's damage.
+const isVanished = (unit) => {
+  if (!unit || !unit.charging || !unit.charging.moveId) return false;
+  const mv = lookupMove(unit.charging.moveId);
+  return !!(mv && mv.vanish);
+};
 const canMoveHitTarget = (move, target) => {
   if (!isEffectivelyFlying(target)) return true;
   if (move.air === true) return true;
@@ -28199,12 +28219,25 @@ const executeMove = (state, attacker, target, move) => {
     const skipCharge = move.sunCharge && s.weather && s.weather.weatherType === 'sun' && s.weather.turnsLeft > 0;
     if (!skipCharge) {
       s.units = s.units.map(u => u.id === attacker.id ? { ...u, charging: { moveId: move.id, targetId: target ? target.id : null }, hasMoved: true, hasAttacked: true } : u);
-      log.push({ msg: `🔆 ${attacker.name} begins charging ${move.name}…`, color: 'amber' });
+      if (move.vanish) {
+        const vk = move.vanishKind === 'dig' ? `${attacker.name} burrows underground ⛏️ — out of reach!`
+                 : move.vanishKind === 'realm' ? `${attacker.name} phases into the rift 🌌 — out of reach!`
+                 : `${attacker.name} soars out of reach 🪶 — untargetable!`;
+        log.push({ msg: vk, color: 'amber' });
+      } else {
+        log.push({ msg: `🔆 ${attacker.name} begins charging ${move.name}…`, color: 'amber' });
+      }
       s.log = log; return s;
     }
     log.push({ msg: `☀️ ${attacker.name}'s ${move.name} fires instantly under the sun!`, color: 'amber' });
   }
 
+  // 🪶 Untargetable: a unit mid-vanish (Fly/Dig/Realm) cannot be hit.
+  if (target && typeof isVanished === 'function' && isVanished(target) && !(attacker && attacker.id === target.id)) {
+    s.units = s.units.map(u => u.id === attacker.id ? markAttackerActed(u) : u);
+    log.push({ msg: `${attacker.name}'s ${move.name} hits nothing — ${target.name} is not on the battlefield!`, color: 'amber' });
+    s.log = log; return s;
+  }
   // Attack — flying check first
   if (target && isEffectivelyFlying(target) && !canMoveHitTarget(move, target)) {
     s.units = s.units.map(u => u.id === attacker.id ? markAttackerActed(u) : u);
@@ -38601,7 +38634,7 @@ function renderBoard() {
         if (move.kind === 'attack') {
           const attackRange = getEffectiveAttackRange(sel, move);
           for (const u of s.units) {
-            if (u.alive && u.owner !== 'player' && distance(sel.pos, u.pos) <= attackRange) {
+            if (u.alive && u.owner !== 'player' && !isVanished(u) && distance(sel.pos, u.pos) <= attackRange) {
               // When Raged, only the nearest reachable enemy is a valid attack tile
               if (rageTarget && u.id !== rageTarget.id) continue;
               validAttacks.push(u.pos);
@@ -38610,7 +38643,7 @@ function renderBoard() {
         } else if (move.target === 'ally') {
           for (const u of s.units) if (u.alive && u.owner === 'player' && distance(sel.pos, u.pos) <= move.range) validAttacks.push(u.pos);
         } else if (move.target === 'enemy') {
-          for (const u of s.units) if (u.alive && u.owner !== 'player' && distance(sel.pos, u.pos) <= move.range) {
+          for (const u of s.units) if (u.alive && u.owner !== 'player' && !isVanished(u) && distance(sel.pos, u.pos) <= move.range) {
             if (rageTarget && u.id !== rageTarget.id) continue;
             validAttacks.push(u.pos);
           }
@@ -38699,6 +38732,19 @@ function renderBoard() {
             ${statusIcons ? `<div class="unit-status">${statusIcons}</div>` : ''}
           </div>
         `;
+        // 🪶 Mid-vanish (Fly/Dig/Realm): hide the unit behind a faint rift/
+        // dust shimmer. The tile stays blocked (it's still in s.units at this
+        // pos) and clicks are rejected by the attack gate with a toast.
+        if (typeof isVanished === 'function' && isVanished(occupant)) {
+          const _vm = lookupMove(occupant.charging && occupant.charging.moveId);
+          const _vk = _vm && _vm.vanishKind;
+          const _vi = _vk === 'dig' ? '⛏️' : _vk === 'realm' ? '🌌' : '🪶';
+          cellInner = `
+            <div class="unit ${occupant.owner}${isSel ? ' selected' : ''}" data-unit="${occupant.id}" data-y="${y}" title="${escapeHtml(occupant.name)} — vanished, returns next turn" style="opacity:0.3;filter:grayscale(0.55)">
+              <div class="unit-icon" style="display:flex;align-items:center;justify-content:center;font-size:1.7rem;animation:ds-portrait-glow 1.6s ease-in-out infinite">${_vi}</div>
+              <div class="unit-info"><span class="unit-name">${escapeHtml(occupant.name)}</span><span class="unit-meta">returning…</span></div>
+            </div>`;
+        }
       } else if (trail && trail.from && trail.from.x === x && trail.from.y === y) {
         // Movement trail arrow on the AI's old tile pointing toward the new tile
         const dx = trail.to.x - trail.from.x;
@@ -39620,6 +39666,11 @@ function onTileClick(x, y) {
                           (move.target === 'ally' && occupant.owner === 'player') ||
                           (move.target === 'enemy' && occupant.owner !== 'player');
       if (!validTarget) { showToast('Invalid target'); return; }
+      // 🪶 Cannot target a unit that's mid-vanish (Fly/Dig/Realm) — it's off the board.
+      if (move.kind === 'attack' && typeof isVanished === 'function' && isVanished(occupant)) {
+        showToast(`${occupant.name} is not on the battlefield!`);
+        return;
+      }
       // Taunt: if any enemy taunter is in range of this move, the player must attack the taunter
       if (move.kind === 'attack' && occupant.owner !== 'player' && !hasPassive(occupant, 'taunt')) {
         const taunters = s.units.filter(u => u.alive && u.owner !== 'player' && hasPassive(u, 'taunt') && distance(sel.pos, u.pos) <= effRange);
@@ -41294,7 +41345,7 @@ function doAIStep() {
     for (const card of spellable) {
       const range = getCardRange(card);
       if (card.effect.type === 'damage') {
-        let targets = s.units.filter(u => u.owner === 'player' && u.alive);
+        let targets = s.units.filter(u => u.owner === 'player' && u.alive && !isVanished(u));
         if (aiHero) targets = targets.filter(u => distance(u.pos, aiHero.pos) <= range);
         for (const t of targets) {
           let sc = card.effect.amount;
@@ -41505,7 +41556,7 @@ function doAIStep() {
       const probe = { ...unit, pos: atPos };
       const moves = getAvailableMoves(probe).filter(m => m.kind === 'attack');
       const isDispelled = (probe.statusEffects || []).some(e => e.type === 'dispel');
-      const playerUnits = App.state.units.filter(u => u.owner === 'player' && u.alive);
+      const playerUnits = App.state.units.filter(u => u.owner === 'player' && u.alive && !isVanished(u));
       const candidates = [];
       for (const move of moves) {
         if (move.cost > App.state.ai.energy || !move.power) continue;

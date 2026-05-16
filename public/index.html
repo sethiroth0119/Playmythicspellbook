@@ -19533,6 +19533,9 @@ const Forge = {
   campaigns: [],
   // 📖 RPG page guides — admin-authored character explainers per screen.
   pageGuides: [],
+  // 🖤 Admin-tunable Black Market buy prices per rarity. Empty = use the
+  // CINDER_SELL_VALUES defaults. Rides the catalog so all players get them.
+  blackMarketPrices: {},
   // 🪦 ADMIN-SET DEFAULT TOMBSTONE — base image rendered on dying units' tiles.
   // Players who haven't bought a custom tombstone use this one. URL string
   // (Cloudflare-served path or data URL).
@@ -21179,6 +21182,8 @@ const Catalog = {
   campaigns: [],
   // 📖 Published RPG page guides (rides in the catalog so every player gets them).
   pageGuides: [],
+  // 🖤 Published Black Market buy prices per rarity (admin-tuned).
+  blackMarketPrices: {},
   // 🪦 Admin-published default tombstone image — every player sees this one
   // on dying units' tiles unless they've equipped a custom cosmetic.
   tombstoneArt: null,
@@ -21268,6 +21273,7 @@ async function cloudFetchCatalog() {
     Catalog.pageGuides = Array.isArray(rawMoves.__page_guides__) ? rawMoves.__page_guides__ : [];
     Catalog.tombstoneArt = rawMoves.__tombstone_art__ || null;
     Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
+    Catalog.blackMarketPrices = (rawMoves.__black_market_prices__ && typeof rawMoves.__black_market_prices__ === 'object') ? rawMoves.__black_market_prices__ : {};
     const cleanMoves = { ...rawMoves };
     delete cleanMoves.__ai_decks__;
     delete cleanMoves.__starter_decks__;
@@ -21275,6 +21281,7 @@ async function cloudFetchCatalog() {
     delete cleanMoves.__page_guides__;
     delete cleanMoves.__tombstone_art__;
     delete cleanMoves.__tombstone_cosmetics__;
+    delete cleanMoves.__black_market_prices__;
     Catalog.moves  = cleanMoves;
     Catalog.items  = Array.isArray(data.items)  ? data.items  : [];
     Catalog.packs  = Array.isArray(data.packs)  ? data.packs  : [];
@@ -21315,6 +21322,7 @@ async function cloudPublishCatalog() {
       __page_guides__: Array.isArray(Forge.pageGuides) ? Forge.pageGuides : [],
       __tombstone_art__: Forge.tombstoneArt || null,
       __tombstone_cosmetics__: Array.isArray(Forge.tombstoneCosmetics) ? Forge.tombstoneCosmetics : [],
+      __black_market_prices__: (Forge.blackMarketPrices && typeof Forge.blackMarketPrices === 'object') ? Forge.blackMarketPrices : {},
     };
     const row = {
       id:         'singleton',
@@ -23178,7 +23186,15 @@ const CINDER_SELL_VALUES = {
   mythic:    300,
 };
 function getCinderSellValue(rarityId) {
-  return CINDER_SELL_VALUES[rarityId] || 5;
+  // Admin override (local Forge) wins so an admin sees their edit before
+  // publishing; then the published catalog value; then the built-in default.
+  const fo = (typeof Forge !== 'undefined' && Forge.blackMarketPrices) || {};
+  const co = (typeof Catalog !== 'undefined' && Catalog.blackMarketPrices) || {};
+  let v = (fo[rarityId] != null && fo[rarityId] !== '') ? fo[rarityId]
+        : (co[rarityId] != null && co[rarityId] !== '') ? co[rarityId]
+        : CINDER_SELL_VALUES[rarityId];
+  v = parseInt(v, 10);
+  return (isFinite(v) && v >= 0) ? v : (CINDER_SELL_VALUES[rarityId] || 5);
 }
 
 // ===== PACK SHOP =====
@@ -23998,6 +24014,8 @@ async function loadForgeContentFromIdb() {
     if (typeof ta === 'string' && ta && !String(Forge.tombstoneArt || '').length) { Forge.tombstoneArt = ta; changed = true; }
     const tc = await idbGet('forge_tombstoneCosmetics');
     if (Array.isArray(tc) && tc.length && (!Array.isArray(Forge.tombstoneCosmetics) || !Forge.tombstoneCosmetics.length)) { Forge.tombstoneCosmetics = tc; changed = true; }
+    const bmp = await idbGet('forge_blackMarketPrices');
+    if (bmp && typeof bmp === 'object' && Object.keys(bmp).length && (!Forge.blackMarketPrices || !Object.keys(Forge.blackMarketPrices).length)) { Forge.blackMarketPrices = bmp; changed = true; }
   } catch (e) { /* skip */ }
   if (changed) {
     // Re-home the recovered content back into the localStorage fast-path
@@ -24044,6 +24062,7 @@ function loadForge() {
     try { const ta = localStorage.getItem('hg_tombstoneArt'); if (ta != null) { const x = JSON.parse(ta); if (typeof x === 'string' && x) Forge.tombstoneArt = x; } } catch (err) {}
     try { const tc = localStorage.getItem('hg_tombstoneCosmetics'); if (tc) { const x = JSON.parse(tc); if (Array.isArray(x)) Forge.tombstoneCosmetics = x; } } catch (err) {}
     try { const po = localStorage.getItem('hg_priceOverrides'); if (po) { const x = JSON.parse(po); if (x && typeof x === 'object') Forge.priceOverrides = x; } } catch (err) {}
+    try { const bmp = localStorage.getItem('hg_blackMarketPrices'); if (bmp) { const x = JSON.parse(bmp); if (x && typeof x === 'object') Forge.blackMarketPrices = x; } } catch (err) {}
     try { const cp = localStorage.getItem('hg_useCustomOnlyPool'); if (cp != null) Forge.useCustomOnlyPool = JSON.parse(cp) === true; } catch (err) {}
     // 🚨 PRODUCTION OVERRIDE — force custom-only pool ON regardless of saved
     // state. The admin explicitly wants ONLY their forged/cataloged cards in
@@ -24310,6 +24329,7 @@ function saveForge() {
       // upload + reload lost the image. Persist them like everything else.
       idbSet('forge_tombstoneArt',       Forge.tombstoneArt       || null);
       idbSet('forge_tombstoneCosmetics', Forge.tombstoneCosmetics || []);
+      idbSet('forge_blackMarketPrices',  Forge.blackMarketPrices  || {});
     }
   } catch (e) { /* swallow — IDB issues fall back to memory-only */ }
   const chunks = [
@@ -24352,6 +24372,7 @@ function saveForge() {
     // that was silently killing ALL Forge saves (cards/info/images).
     { key: 'hg_campaigns',        value: _stripDataUrls(Forge.campaigns || []), name: 'campaigns' },
     { key: 'hg_priceOverrides',   value: Forge.priceOverrides  || {}, name: 'priceOverrides' },
+    { key: 'hg_blackMarketPrices', value: Forge.blackMarketPrices || {}, name: 'blackMarketPrices' },
     { key: 'hg_useCustomOnlyPool', value: !!Forge.useCustomOnlyPool, name: 'useCustomOnlyPool' },
     // 🪦 Tombstone art is base64-heavy — strip it for the localStorage
     // fast-path (full copy is the IDB mirror above, restored at boot).
@@ -32656,6 +32677,24 @@ function renderPricingAdmin() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">🖤 Black Market Prices (Admin)</div>
+        <div class="settings-section-desc">What the Black Market pays players per <strong>duplicate</strong> card, by rarity. Blank = use the built-in default (shown as the placeholder). These ride the published catalog — after saving, click <strong>📚 Publish</strong> so every player gets the new rates. Players obtain duplicates by opening packs / clearing content; the 2nd+ copy of any card is sellable here.</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin-top:0.6rem">
+          ${['common','uncommon','rare','epic','legendary','mythic'].map(rid => {
+            const def = CINDER_SELL_VALUES[rid];
+            const cur = (Forge.blackMarketPrices && Forge.blackMarketPrices[rid] != null && Forge.blackMarketPrices[rid] !== '') ? Forge.blackMarketPrices[rid] : '';
+            const nm = (typeof RARITY_DATA !== 'undefined' && RARITY_DATA[rid] && RARITY_DATA[rid].name) || rid;
+            const col = (typeof RARITY_DATA !== 'undefined' && RARITY_DATA[rid] && RARITY_DATA[rid].color) || '#cdb6ff';
+            return `<label class="small-text" style="display:flex;flex-direction:column;gap:3px;color:${col};font-weight:700">${escapeHtml(nm)} <input type="number" min="0" id="bmp-${rid}" value="${escapeHtml(String(cur))}" placeholder="${def}" style="padding:0.4rem;background:rgba(15,8,30,0.65);border:1px solid rgba(184,136,255,0.3);border-radius:4px;color:#e8e0ff;font-weight:400"></label>`;
+          }).join('')}
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-top:0.7rem;flex-wrap:wrap">
+          <button class="btn-primary btn-mini" id="btn-bmp-save">💾 Save Black Market prices</button>
+          <button class="btn-secondary btn-mini" id="btn-bmp-reset">↺ Reset to defaults</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🪦 Tombstones (Admin)</div>
         <div class="settings-section-desc">
           Set the <strong>default tombstone image</strong> every player sees when a unit dies. Players who unlock a cosmetic from the shop override this with their own.
@@ -32965,6 +33004,28 @@ function renderPricingAdmin() {
     Forge.tombstoneArt = null;
     saveForge();
     showToast('🪦 Default tombstone cleared — using emoji fallback.', 2400);
+    render();
+  };
+  // 🖤 Black Market price overrides.
+  const bBmpSave = document.getElementById('btn-bmp-save');
+  if (bBmpSave) bBmpSave.onclick = () => {
+    const next = {};
+    ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'].forEach(rid => {
+      const el = document.getElementById('bmp-' + rid);
+      const raw = el ? String(el.value).trim() : '';
+      if (raw !== '') { const n = parseInt(raw, 10); if (isFinite(n) && n >= 0) next[rid] = n; }
+    });
+    Forge.blackMarketPrices = next;
+    if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge();
+    showToast('🖤 Black Market prices saved. Click 📚 Publish to push them to all players.', 3600);
+    render();
+  };
+  const bBmpReset = document.getElementById('btn-bmp-reset');
+  if (bBmpReset) bBmpReset.onclick = () => {
+    if (!confirm('Reset every Black Market price back to the built-in defaults?')) return;
+    Forge.blackMarketPrices = {};
+    if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge();
+    showToast('🖤 Black Market prices reset to defaults.', 2600);
     render();
   };
   // 🛒 Buyable tombstone cosmetics CRUD.
@@ -46880,13 +46941,13 @@ function renderBlackMarket() {
           { title: 'Sell duplicate cards',
             desc: 'Only the SECOND+ copy of any card is sellable — the Black Market protects one copy of every card you have in a saved deck. Heroes can never be sold.' },
           { title: 'Rarity dictates the payout',
-            desc: 'Common <strong>5 <span class="cinder-icon"></span></strong> · Uncommon <strong>10 <span class="cinder-icon"></span></strong> · Rare <strong>25 <span class="cinder-icon"></span></strong> · Epic <strong>60 <span class="cinder-icon"></span></strong> · Legendary <strong>150 <span class="cinder-icon"></span></strong> · Mythic <strong>300 <span class="cinder-icon"></span></strong>.' },
+            desc: `Common <strong>${getCinderSellValue('common')} <span class="cinder-icon"></span></strong> · Uncommon <strong>${getCinderSellValue('uncommon')} <span class="cinder-icon"></span></strong> · Rare <strong>${getCinderSellValue('rare')} <span class="cinder-icon"></span></strong> · Epic <strong>${getCinderSellValue('epic')} <span class="cinder-icon"></span></strong> · Legendary <strong>${getCinderSellValue('legendary')} <span class="cinder-icon"></span></strong> · Mythic <strong>${getCinderSellValue('mythic')} <span class="cinder-icon"></span></strong>. <span class="ink-dim">(Rates can shift — the Market sets the price.)</span>` },
           { title: 'Sell one or smuggle the whole stash',
             desc: 'The <strong>Sell 1</strong> button moves a single copy; <strong>Sell all (N)</strong> dumps every extra in one click. The <strong>⚡ Sell All Duplicates</strong> button at the top liquidates your entire backlog at once.' },
           { title: 'Cinders fund everything else',
             desc: 'Black Market payouts go straight into your <span class="cinder-icon"></span> Cinder pool — usable in the Vendor Market, the Player Market, the Tutor Shop, and (above the threshold) cashed out in the Cashout Vault.' },
         ],
-        foot: '💡 <strong>Tip:</strong> Open packs first to build inventory. Mythic Packs can drop legendaries and mythics worth 150-300 <span class="cinder-icon"></span> each — turning a single epic-or-better duplicate into half a pack\'s worth of Cinders.',
+        foot: `💡 <strong>Tip:</strong> Open packs to build inventory — every pack stacks duplicates. Legendaries and mythics fetch <strong>${getCinderSellValue('legendary')}-${getCinderSellValue('mythic')} <span class="cinder-icon"></span></strong> each, turning a single epic-or-better duplicate into a pile of Cinders.`,
       })}
 
       <div class="vendor-summary">

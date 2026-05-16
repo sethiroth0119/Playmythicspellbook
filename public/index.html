@@ -5335,7 +5335,7 @@
   .unit.hero::before { height: 4px; box-shadow: 0 0 6px var(--gold); }
 
   /* ===== 👁️ COLLECTION CARD-DETAIL MODAL ===== */
-  /* Read-only popup the Collection screen shows when a player clicks any
+  /* Read-only popup the Inventory screen shows when a player clicks any
      card row. Reuses the shared .modal-backdrop + .modal-close styling. */
   .ccm-modal {
     position: relative;
@@ -9700,7 +9700,7 @@
     margin-top: 1.2rem;
   }
 
-  /* ===== Crafting / Essence (Collection screen) ===== */
+  /* ===== Crafting / Essence (Inventory screen) ===== */
   .essence-header {
     background: linear-gradient(180deg, rgba(26,21,48,0.65), rgba(13,10,28,0.85));
     border: 1px solid rgba(212,175,55,0.4);
@@ -9792,7 +9792,7 @@
     font-family: 'Cinzel', serif;
     letter-spacing: 0.04em;
   }
-  /* ✨ Collection ownership styling. Owned cards POP with brightness + a soft
+  /* ✨ Inventory ownership styling. Owned cards POP with brightness + a soft
      gold halo so players instantly see what they have. Unowned cards are
      desaturated + dimmed so they read as "available to acquire" instead of
      "lost in the noise." Hover restores full saturation on unowned cards
@@ -18374,7 +18374,7 @@ function getLevelIcon(size) {
 // ============ Card-type icon ============
 // Replaces the old card-type EMOJI (🪖 unit / ⚔️ hero / ✨ spell / 🪤 trap
 // / 🧱 wall / 🌋 location) with the custom crest art everywhere a card
-// type is shown (deck pills, card meta, forge/collection type chips,
+// type is shown (deck pills, card meta, forge/inventory type chips,
 // editor type picker). `weather` has no custom art so it keeps its emoji.
 // One cached image per type, reused at every call site.
 const TYPE_ICON_FILES = {
@@ -18495,7 +18495,7 @@ function ensureStarterHeroesOwned() {
   // 🦸 STARTER-DECK LOCKDOWN: only ADMINS get the built-in mockup heroes
   // auto-seeded. Every other player owns NOTHING until they claim a starter
   // deck (then only that deck's cards). This both enforces the card lockdown
-  // and keeps the new-player gate's "empty collection" detection accurate.
+  // and keeps the new-player gate's "empty inventory" detection accurate.
   if (typeof isAdmin === 'function' && !isAdmin()) return;
   if (!Profile.cardCollection) Profile.cardCollection = {};
   if (typeof STARTER_HEROES === 'undefined' || !Array.isArray(STARTER_HEROES)) return;
@@ -19505,7 +19505,7 @@ const Forge = {
   // These flow through the same pool functions HELD_ITEMS uses, plus appear
   // as droppable picks in the Pack Creator's items section.
   customItems: [],
-  // 🌐 When true, packs / collection / deck builder draw ONLY from Forge.custom*
+  // 🌐 When true, packs / inventory / deck builder draw ONLY from Forge.custom*
   // (no built-in UNIT_CARDS / STARTER_HEROES / etc.). Admin toggle in Pricing Admin.
   // 🚨 PRODUCTION DEFAULT: TRUE. Built-in mockup cards (Goblin Scout, Orc Warrior,
   // Cedric, Lyra, etc.) are placeholder content; the live game ships with the
@@ -19513,7 +19513,7 @@ const Forge = {
   // they want to dev-test against the built-in pool.
   useCustomOnlyPool: true,
   // User-built structure decks (a.k.a. preconstructed decks). When a player buys
-  // one, every listed card is granted directly to their collection — no randomness.
+  // one, every listed card is granted directly to their inventory — no randomness.
   // { id, name, icon, desc, accent, cost, sovCost?, cards: [cardId, ...] }
   structureDecks: [],
   // 🤖 ADMIN-CURATED AI DECKS — when the admin defines any of these, the AI
@@ -21072,7 +21072,7 @@ async function cloudSyncSprites() {
 //   3) Returns success
 // When the GAME next pulls cloudFetchProfile(), we see those receipts and
 // actually open the pack here — using the same openPack() the in-game shop
-// uses — so the player receives the cards in their collection.
+// uses — so the player receives the cards in their inventory.
 function redeemWebPurchases(receipts) {
   if (!Array.isArray(receipts) || receipts.length === 0) return;
   const remaining = [];     // keep applied receipts marked so server keeps a record
@@ -21101,7 +21101,7 @@ function redeemWebPurchases(receipts) {
         catch (e) { openPack(packDef); }
         openedAny = true;
         if (typeof showToast === 'function') {
-          showToast(`🌐 ${packDef.name} from the website added to your collection!`, 3500);
+          showToast(`🌐 ${packDef.name} from the website added to your inventory!`, 3500);
         }
       }
     } catch (e) {
@@ -23465,7 +23465,7 @@ function openPack(packDef) {
     if (!pick) continue;
     drawn.push({ card: pick.card, kind: pick.kind, rarity: getRarity(pick.card) });
   }
-  // Grant the cards to the player's collection.
+  // Grant the cards to the player's inventory.
   if (!Profile.cardCollection) Profile.cardCollection = {};
   if (!Profile.itemInventory) Profile.itemInventory = {};
   for (const d of drawn) {
@@ -23515,7 +23515,7 @@ const STORAGE_KEYS = {
 
 // ============ CAMP (DAYCARE) ============
 // Park unused heroes / units. Each parked slot accrues passive XP based on real time elapsed
-// since it was parked (or since the last collection). Collecting applies the XP to the Profile
+// since it was parked (or since the last inventory). Collecting applies the XP to the Profile
 // entry (with full level-up + random stat gain rolls).
 const Camp = {
   slots: [], // Array<{ id, kind, refId, parkedAt, collectedXp }>
@@ -29677,7 +29677,7 @@ function applyEventRewardsToState(state, enc) {
     if (!Profile.cardCollection) Profile.cardCollection = {};
     Profile.cardCollection[enc.cardDrop.id] = (Profile.cardCollection[enc.cardDrop.id] || 0) + 1;
     saveProfile();
-    log.push({ msg: `🎉 RARE DROP — ${enc.cardDrop.name} added to your collection!`, color: 'amber' });
+    log.push({ msg: `🎉 RARE DROP — ${enc.cardDrop.name} added to your inventory!`, color: 'amber' });
   }
 
   return { ...state, units, player, ai, log };
@@ -30488,7 +30488,7 @@ function render() {
   }
 
   // 🦸 New-player starter-deck gate. A signed-in / offline non-admin player
-  // with NO progress (empty collection, no decks, no battles) must claim one
+  // with NO progress (empty inventory, no decks, no battles) must claim one
   // of the admin-authored starter decks before they can do anything else.
   // This is also the card-lockdown: until they pick, they own zero cards, and
   // the pick grants ONLY that deck's cards. Existing players (any progress)
@@ -30803,7 +30803,7 @@ function renderTitle() {
         badge: pendingPayout > 0 ? `$${pendingPayout.toFixed(2)} pending` : (marketListings > 0 ? `${marketListings} listings` : null),
         alertBadge: pendingPayout > 0,
         onclick: () => { App.titleHub = 'exchange'; render(); } },
-      { id: 'p-codex',    icon: '<img src="assets/artwork/gameicons/Codex%20book.png" alt="The Codex" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'The Codex',      sub: 'Collection, bestiary, trophies',     accent: '#8be0c4',
+      { id: 'p-codex',    icon: '<img src="assets/artwork/gameicons/Codex%20book.png" alt="The Codex" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'The Codex',      sub: 'Inventory, bestiary, trophies',     accent: '#8be0c4',
         badge: achEarned > 0 ? `${achEarned}/${achTotal} trophies` : `${achTotal} to earn`,
         onclick: () => { App.titleHub = 'codex'; render(); } },
       { id: 'p-field',    icon: '<img src="assets/artwork/gameicons/camp%20icon.png" alt="The Camp" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'The Camp',       sub: 'Roster, replays, leaders',           accent: '#c5b885',
@@ -30936,7 +30936,7 @@ function renderTitle() {
             onclick: () => { showToast(`🔒 Player Market unlocks when you have ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}+ (you have ${heroesAtMarketLv}).`, 3500); } },
     ],
     codex: [
-      { id: 'btn-collection',   icon: '<img src="assets/artwork/gameicons/Storage%20box.png" alt="Collection" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Collection',   sub: 'Every card you own',          accent: '#8be0c4',
+      { id: 'btn-collection',   icon: '<img src="assets/artwork/gameicons/Storage%20box.png" alt="Inventory" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Inventory',   sub: 'Every card you own',          accent: '#8be0c4',
         onclick: () => { App.screen = 'collection'; App.collectionTab = 'unit'; render(); } },
       { id: 'btn-bestiary',     icon: '<img src="assets/artwork/gameicons/Card%20Data.png" alt="World Data" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'World Data',   sub: 'Catalog of all units',        accent: '#a0c8e0',
         onclick: () => { App.screen = 'bestiary'; render(); } },
@@ -31560,7 +31560,7 @@ function bindDeckSelectModal(deckOptions) {
   document.addEventListener('keydown', App._dsModalEsc);
 }
 
-// 🦸 Grant a starter deck's cards (+ its hero) into the player's collection
+// 🦸 Grant a starter deck's cards (+ its hero) into the player's inventory
 // and create a ready-to-play deck entry. Shared by the free first pick and
 // Vendor-Market purchases. opts.markPicked closes the new-player gate.
 function grantStarterDeckToPlayer(deck, opts) {
@@ -32667,7 +32667,7 @@ function renderPricingAdmin() {
       <div class="settings-section">
         <div class="settings-section-title">🌐 Card Pool Source</div>
         <div class="settings-section-desc">
-          When ON, all packs / collection / Forge browsers draw <strong>only from your custom Forge content</strong>.
+          When ON, all packs / inventory / Forge browsers draw <strong>only from your custom Forge content</strong>.
           The built-in mockup cards (Goblin Scout, Orc Warrior, Cedric, Lyra, etc.) are hidden everywhere.
           Use this once you've imported your full card export.
         </div>
@@ -32847,7 +32847,7 @@ function renderPricingAdmin() {
       <div class="settings-section">
         <div class="settings-section-title">🗺️ Roguelite Campaigns (Admin)</div>
         <div class="settings-section-desc">
-          Build branching roguelite adventures — maps, battles, card-reward drafting, medical camps, black markets, persistent hero HP, story events. Card rewards &amp; black-market buys land <strong>permanently in the player's collection</strong> (usable in the Deck Editor). Campaigns ride along inside <strong>📚 Publish</strong>.
+          Build branching roguelite adventures — maps, battles, card-reward drafting, medical camps, black markets, persistent hero HP, story events. Card rewards &amp; black-market buys land <strong>permanently in the player's inventory</strong> (usable in the Deck Editor). Campaigns ride along inside <strong>📚 Publish</strong>.
         </div>
         <div class="cloud-actions" style="margin-top:0.6rem">
           <button class="btn-primary btn-mini" id="btn-open-rlc-admin">🗺️ Open Campaign Builder (${(Forge.campaigns || []).length})</button>
@@ -32857,7 +32857,7 @@ function renderPricingAdmin() {
       <div class="settings-section">
         <div class="settings-section-title">🎁 Send Gift (Admin)</div>
         <div class="settings-section-desc">
-          Grant a card straight to a specific player's account. They get a <strong>"You got a gift"</strong> pop-up the next time they sign in and click <strong>Claim</strong> to add it to their collection. ⚠️ Run <code>gifts-system-setup.sql</code> in your Supabase SQL editor once before using this.
+          Grant a card straight to a specific player's account. They get a <strong>"You got a gift"</strong> pop-up the next time they sign in and click <strong>Claim</strong> to add it to their inventory. ⚠️ Run <code>gifts-system-setup.sql</code> in your Supabase SQL editor once before using this.
         </div>
         <div style="display:flex;flex-direction:column;gap:0.55rem;margin-top:0.7rem">
           <div style="display:flex;gap:0.5rem">
@@ -34598,7 +34598,7 @@ function renderCardEditor() {
           <div class="image-slot-label">🎨 Card Art</div>
           ${cardArtPreview}
           <div class="image-controls">
-            <div class="small-text" style="margin-bottom:0.4rem">The illustration shown in the card's upper window when displayed in hand / collection.</div>
+            <div class="small-text" style="margin-bottom:0.4rem">The illustration shown in the card's upper window when displayed in hand / inventory.</div>
             <div class="image-buttons">
               <button class="btn-mini" id="btn-upload-cardart">📁 Upload</button>
               <input type="file" id="cardart-file-input" accept="image/*" style="display:none">
@@ -35852,7 +35852,7 @@ function saveCardFromInputs(commit) {
 
   if (isNew) {
     Forge.customCards.push(card);
-    // If the new card is a HERO, also grant it to the player's collection so the
+    // If the new card is a HERO, also grant it to the player's inventory so the
     // Deck Builder and Bestiary can see it as owned right away. (Other card types
     // already flow through Profile.cardCollection only when rolled from packs.)
     if (card.type === 'hero') {
@@ -37903,7 +37903,7 @@ function bindPackEditor() {
 
 // ============================================================================
 // 🃏 FORGE: Structure Decks tab — preconstructed decks with a FIXED card list.
-// Buying one drops every listed card into the player's collection (no randomness).
+// Buying one drops every listed card into the player's inventory (no randomness).
 // ============================================================================
 function makeNewStructDeckDraft() {
   return {
@@ -39177,7 +39177,7 @@ function renderEventModal() {
            <span class="event-modal-drop-icon">${enc.cardDrop.icon || '🃏'}</span>
            <span class="event-modal-drop-name">${escapeHtml(enc.cardDrop.name)}</span>
          </div>
-         <div class="event-modal-drop-sub">Added to your Card Collection</div>
+         <div class="event-modal-drop-sub">Added to your Card Inventory</div>
        </div>`
     : '';
   const itemDropHtml = enc.itemDrop
@@ -43382,7 +43382,7 @@ function renderGameOverOverlay() {
             <div class="game-over-essence-row">
               <div class="ge-label"><span class="cinder-icon"></span> Essence Earned</div>
               <div class="ge-pills">${pills}</div>
-              <div class="small-text ink-dim">Spend in the Collection to craft new cards.</div>
+              <div class="small-text ink-dim">Spend in the Inventory to craft new cards.</div>
             </div>
           `;
         })()}
@@ -43791,7 +43791,7 @@ function recordBattleProgress() {
   // ===== Essence drops — award per-element essence based on what the AI played =====
   // The amount of each element the enemy played in this match is converted into
   // crafting essence. Won battles drop more. Player can spend essence to craft cards
-  // from the Collection screen.
+  // from the Inventory screen.
   let essenceDrops = {};
   try {
     essenceDrops = awardBattleEssence(s, won);
@@ -44099,7 +44099,7 @@ function renderMarket() {
           { title: 'Sell — list your own',
             desc: 'In the <strong>Sell</strong> tab, list your duplicate Forge cards or extra held items. Pick a price; if it sells, the Cinders land in your pool instantly.' },
           { title: 'My Listings — track active offers',
-            desc: 'See everything you have on the market in one place. Cancel unsold listings any time to pull cards back into your collection.' },
+            desc: 'See everything you have on the market in one place. Cancel unsold listings any time to pull cards back into your inventory.' },
           { title: 'Stock — market history & trends',
             desc: 'The Stock tab tracks volume sold per card type, average price, recent sales, and which cards lead the market. Use it to find arbitrage and price your own listings competitively.' },
         ],
@@ -45934,8 +45934,8 @@ function renderVendorMarket() {
             desc: 'Seven pack types, each with its own rarity weight bag. Every pack opens 8 cards with a guaranteed slot of rare-or-better. Filter packs are themed (Spell, Trap, Battlefield, Champion, etc).' },
           { title: '<span class="aza-icon"></span> Aza coin Store tab',
             desc: 'Top up your premium currency with real money. Higher-tier bundles include a percentage bonus over base rate. <strong>Mock checkout — no real charges in this build.</strong>' },
-          { title: 'New cards land in your Collection',
-            desc: 'Every drawn card is added to your collection and becomes available in the Deck Builder + Black Market. Duplicates stack — extras can be smuggled at the Black Market for Cinders.' },
+          { title: 'New cards land in your Inventory',
+            desc: 'Every drawn card is added to your inventory and becomes available in the Deck Builder + Black Market. Duplicates stack — extras can be smuggled at the Black Market for Cinders.' },
         ],
         foot: '💡 <strong>Tip:</strong> Each pack opened also grants <strong>+30 Account XP</strong> — packs feed into the Account Level ladder that gates the Tutor Shop.',
       })}
@@ -46077,7 +46077,7 @@ function _buildStarterDeckShopBody(gems, sovBal) {
       </div>`;
   }).join('');
   return `
-    <div class="small-text ink-dim" style="margin-bottom:0.8rem">Ready-to-play decks — buying one adds every card (and its hero) straight to your collection and saves it as a deck.</div>
+    <div class="small-text ink-dim" style="margin-bottom:0.8rem">Ready-to-play decks — buying one adds every card (and its hero) straight to your inventory and saves it as a deck.</div>
     <div style="display:flex;flex-wrap:wrap;gap:18px;justify-content:flex-start">${cards}</div>`;
 }
 function _bindStarterDeckShopHandlers() {
@@ -46097,7 +46097,7 @@ function _bindStarterDeckShopHandlers() {
       else                      Profile.gems      = Math.max(0, (Profile.gems || 0) - price);
       grantStarterDeckToPlayer(deck, {});   // no markPicked — free pick already used
       try { saveProfile(); } catch (e) {}
-      showToast(`🦸 "${deck.name || 'Starter deck'}" purchased — ${(deck.cards||[]).length} cards added to your collection!`, 4200);
+      showToast(`🦸 "${deck.name || 'Starter deck'}" purchased — ${(deck.cards||[]).length} cards added to your inventory!`, 4200);
       render();
     };
   });
@@ -46267,7 +46267,7 @@ function _bindPackShopHandlers() {
       render();
     };
   });
-  // Structure deck purchase — no flip reveal, just dump cards into the collection.
+  // Structure deck purchase — no flip reveal, just dump cards into the inventory.
   document.querySelectorAll('[data-buy-sdeck]').forEach(el => {
     el.onclick = () => {
       if (el.disabled) return;
@@ -46292,9 +46292,9 @@ function _bindPackShopHandlers() {
         Profile.cardCollection[cardId] = (Profile.cardCollection[cardId] || 0) + 1;
       });
       saveProfile();
-      // Award XP since this is meaningful collection growth.
+      // Award XP since this is meaningful inventory growth.
       addAccountXp(Math.min(60, 20 + cardCount * 2), `Structure Deck: ${d.name}`);
-      showToast(`✓ ${cardCount} cards added to your collection!`, 2400);
+      showToast(`✓ ${cardCount} cards added to your inventory!`, 2400);
       render();
     };
   });
@@ -46380,8 +46380,8 @@ function _bindSovereignsStoreHandlers() {
 
 function renderShop() {
   const gems = Profile.gems || 0;
-  // Owned-pack stats — show "X cards in collection" per pack so the player can see
-  // how their collection grows.
+  // Owned-pack stats — show "X cards in inventory" per pack so the player can see
+  // how their inventory grows.
   const totalOwned = Object.values(Profile.cardCollection || {}).reduce((a, n) => a + n, 0);
 
   const sovBal = Profile.sovereigns || 0;
@@ -46865,21 +46865,21 @@ function renderCashoutVault() {
 }
 
 // ============================================================================
-// 🕯️ BLACK MARKET — sell duplicate cards from your collection for 🔥 Cinders.
+// 🕯️ BLACK MARKET — sell duplicate cards from your inventory for 🔥 Cinders.
 // Lets the player turn unwanted copies into spendable currency. Sells are
 // rarity-priced via CINDER_SELL_VALUES. Cards in active decks are protected.
 // Renamed from "Vendor" — the Black Market trades in cards-for-Cinders only,
 // while the Vendor Market (Pack Shop + Sovereigns Store) is the buy-side hub.
 // ============================================================================
 function renderBlackMarket() {
-  const collection = Profile.cardCollection || {};
+  const inventory = Profile.cardCollection || {};
   const decksInUse = new Set();
   (Profile.decks || []).forEach(d => (d.cards || []).forEach(c => decksInUse.add(c)));
 
   // Build sellable list. Only show cards the player actually has copies of.
   // Reserve 1 copy that's locked into any deck so we don't strip a built deck.
-  const rows = Object.keys(collection).map(cardId => {
-    const count = collection[cardId] || 0;
+  const rows = Object.keys(inventory).map(cardId => {
+    const count = inventory[cardId] || 0;
     if (count <= 0) return null;
     // Find the card definition — search all sources.
     let card = null;
@@ -46929,7 +46929,7 @@ function renderBlackMarket() {
       <div class="campaign-header">
         <div>
           <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem"><img src="assets/artwork/Blackmarket%20icon.png" alt="" style="height:2.3em;width:2.3em;object-fit:contain;vertical-align:middle;display:inline-block;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.75))"> The Black Market</h2>
-          <div class="small-text ink-dim">Smuggle your spare cards under the table for <span class="cinder-icon"></span> Cinders. Higher rarities pay more. One copy of any deck-bound card stays in your collection.</div>
+          <div class="small-text ink-dim">Smuggle your spare cards under the table for <span class="cinder-icon"></span> Cinders. Higher rarities pay more. One copy of any deck-bound card stays in your inventory.</div>
         </div>
         <div class="vendor-balance-pill">
           <span class="vendor-balance-num">${Profile.gems || 0}</span> <span class="cinder-icon cinder-icon-lg"></span>
@@ -47017,7 +47017,7 @@ function renderBlackMarket() {
       const ok = confirm(
         `🕯️ Smuggle ALL ${totalSellable} duplicate copies?\n\n` +
         `Payout: <span class="cinder-icon"></span> ${totalValue} Cinders\n` +
-        `One copy of every deck-bound card stays in your collection.`
+        `One copy of every deck-bound card stays in your inventory.`
       );
       if (!ok) return;
       let earned = 0, soldCount = 0;
@@ -47514,7 +47514,7 @@ function renderSettings() {
           if (!cc.signedIn) {
             const cfgMissing = !Cloud.ready;
             return `
-              <div class="settings-section-desc">Sign in to back up your collection, ranks, and decks across devices. Multiplayer launches use this same account.</div>
+              <div class="settings-section-desc">Sign in to back up your inventory, ranks, and decks across devices. Multiplayer launches use this same account.</div>
               ${cfgMissing ? `<div class="auth-warn" style="margin-bottom:0.7rem">⚠ Cloud not configured yet — set SUPABASE_ANON_KEY in the HTML source.</div>` : ''}
               <div class="cloud-actions">
                 <button class="btn-primary" id="btn-cloud-signin">☁ Sign In</button>
@@ -48580,7 +48580,7 @@ const EMOTE_COOLDOWN_MS = 3000;  // matches MTGA's spam-protection
 const EMOTE_DISPLAY_MS  = 3200;  // must align with .emote-bubble animation
 
 // ============================================================================
-// 🎁 GIFTS — admin grants a card to a player; they claim it into collection.
+// 🎁 GIFTS — admin grants a card to a player; they claim it into inventory.
 // Backed by the public.gifts table (see gifts-system-setup.sql). The admin
 // send UI lives in Pricing Admin; the claim pop-up shows on sign-in.
 // ============================================================================
@@ -48603,7 +48603,7 @@ async function refreshGiftsCache() {
 }
 
 // Claim one gift: atomically flip pending→claimed (guarded so two tabs can't
-// both grant), then add the card to the local collection + sync.
+// both grant), then add the card to the local inventory + sync.
 async function claimGift(g) {
   if (!Cloud.client || !g || !Profile.cloud || !Profile.cloud.userId) return { error: 'Not signed in.' };
   try {
@@ -48676,7 +48676,7 @@ function maybeShowGiftPopup() {
         <div class="event-modal" style="max-width:520px;text-align:center">
           <div style="font-size:2.6rem;line-height:1">🎁</div>
           <h2 class="section-title" style="margin:0.2rem 0 0.1rem">You Got a Gift!</h2>
-          <div class="small-text ink-dim" style="margin-bottom:0.9rem">Claim ${gifts.length>1?'these '+gifts.length+' gifts':'your gift'} to add ${gifts.length>1?'them':'it'} to your collection.</div>
+          <div class="small-text ink-dim" style="margin-bottom:0.9rem">Claim ${gifts.length>1?'these '+gifts.length+' gifts':'your gift'} to add ${gifts.length>1?'them':'it'} to your inventory.</div>
           <div style="text-align:left;max-height:50vh;overflow:auto">${rows}</div>
           <div style="margin-top:1rem;display:flex;gap:0.6rem;justify-content:center">
             ${gifts.length>1?'<button class="btn-primary" id="gift-claim-all">🎁 Claim All</button>':''}
@@ -48688,7 +48688,7 @@ function maybeShowGiftPopup() {
           b.disabled = true; b.textContent = '…';
           const g = GiftsCache.pending.find(x => String(x.id) === b.dataset.gift);
           const r = await claimGift(g);
-          if (r.ok) { showToast(`🎁 "${(g.card_name||g.card_id)}" added to your collection!`, 3000); renderInner(); }
+          if (r.ok) { showToast(`🎁 "${(g.card_name||g.card_id)}" added to your inventory!`, 3000); renderInner(); }
           else { b.disabled = false; b.textContent = '🎁 Claim'; showToast('⨯ ' + (r.error || 'Claim failed'), 4000); }
         };
       });
@@ -48696,7 +48696,7 @@ function maybeShowGiftPopup() {
       if (allBtn) allBtn.onclick = async () => {
         allBtn.disabled = true; allBtn.textContent = '…claiming';
         for (const g of GiftsCache.pending.slice()) { await claimGift(g); }
-        showToast('🎁 All gifts added to your collection!', 3000);
+        showToast('🎁 All gifts added to your inventory!', 3000);
         renderInner();
       };
       const closeBtn = ov.querySelector('#gift-close');
@@ -48736,7 +48736,7 @@ const RPG_GUIDE_PAGES = [
   { route: 'rlcMystery',   label: 'Roguelite — Mystery Node' },
   { route: 'rlcResult',    label: 'Roguelite — Run Result' },
   { route: 'deck',         label: 'Deck Builder' },
-  { route: 'collection',   label: 'Collection / Codex' },
+  { route: 'collection',   label: 'Inventory / Codex' },
   { route: 'coliseum',     label: 'Coliseum' },
   { route: 'forge',        label: 'The Forge (admin)' },
 ];
@@ -49846,7 +49846,7 @@ function renderAuthGate() {
         <div class="auth-gate-eyebrow">MYTHIC SPELLBOOK</div>
         <h1 class="auth-gate-title">Welcome Survivor</h1>
         <p class="auth-gate-tagline">
-          Sign in to save your collection, climb the Coliseum,<br>
+          Sign in to save your inventory, climb the Coliseum,<br>
           and stand ready for multiplayer when the gates open.
         </p>
 
@@ -49863,7 +49863,7 @@ function renderAuthGate() {
         </div>
 
         <p class="auth-gate-foot">
-          A free account gives you cross-device save, cloud-backed collection,
+          A free account gives you cross-device save, cloud-backed inventory,
           multiplayer access, and the full shared card pool.
         </p>
       </div>
@@ -49872,7 +49872,7 @@ function renderAuthGate() {
 
   // ----- Bindings -----
   // 🚫 OFFLINE MODE REMOVED — every player signs in. The "Continue Offline"
-  // path is gone so all collections are cloud-backed, all matches use the
+  // path is gone so all inventories are cloud-backed, all matches use the
   // shared catalog, and the admin's AI decks reach every player. Players who
   // truly can't auth land back here repeatedly until they create an account
   // or sign in (the dispatcher in render() always routes unauthed users here).
@@ -49925,7 +49925,7 @@ function renderAuthModal() {
         ? 'Save your progress to the cloud + unlock multiplayer when it ships.'
         : s.mode === 'reset'
           ? "Enter your email — we'll send a password reset link."
-          : 'Sync your collection, ranks, and decks across devices.'}</p>
+          : 'Sync your inventory, ranks, and decks across devices.'}</p>
 
       ${cfgWarn}
       ${s.error ? `<div class="auth-error">⨯ ${escapeHtml(s.error)}</div>` : ''}
@@ -50607,13 +50607,13 @@ function rlcStartRun(campaignId) {
   render();
 }
 function rlcAbandonRun() {
-  if (!confirm('Abandon the current run? All run progress (deck, currency, HP) is lost. Cards already added to your collection are kept.')) return;
+  if (!confirm('Abandon the current run? All run progress (deck, currency, HP) is lost. Cards already added to your inventory are kept.')) return;
   Profile.rlcRun = null;
   try { saveProfile(); } catch (e) {}
   App.screen = 'rlcList';
   render();
 }
-// Permanently grant a card to the player's collection (usable in the Deck
+// Permanently grant a card to the player's inventory (usable in the Deck
 // Editor) AND drop a copy into the current run deck.
 function _rlcGrantCard(key) {
   let card = null;
@@ -50846,7 +50846,7 @@ function renderRlcAdmin() {
       <div class="campaign-page pricing-admin-page">
         <button class="hub-back-btn" id="rlc-adm-back">← Forge</button>
         <h1 class="section-title">🗺️ Roguelite Campaigns (Admin)</h1>
-        <div class="section-subtitle">Build branching adventures. They ride along inside <strong>📚 Publish</strong> like AI decks. Card rewards & black-market buys land permanently in the player's collection (usable in the Deck Editor).</div>
+        <div class="section-subtitle">Build branching adventures. They ride along inside <strong>📚 Publish</strong> like AI decks. Card rewards & black-market buys land permanently in the player's inventory (usable in the Deck Editor).</div>
         <div class="settings-section">
           ${list.length === 0 ? '<div class="ink-dim small-text" style="padding:0.6rem 0">No campaigns yet.</div>' : list.map((c, i) => `
             <div style="display:flex;align-items:center;gap:0.6rem;padding:0.55rem 0.8rem;background:rgba(20,12,40,0.5);border:1px solid rgba(184,136,255,0.25);border-radius:6px;margin-bottom:0.4rem;flex-wrap:wrap">
@@ -51453,7 +51453,7 @@ function renderRlcReward() {
   root.innerHTML = `
     <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(40,15,70,0.55),transparent)">
       <h1 class="section-title" style="color:#f6d97a">🎁 Choose Your Reward</h1>
-      <div class="section-subtitle">Pick one card — it is added to your collection (usable in the Deck Editor) and this run's deck.${r.currency ? ` You also gained 💰 ${r.currency}.` : ''}${r.medPoints ? ` ⛑️ +${r.medPoints} med pts.` : ''}</div>
+      <div class="section-subtitle">Pick one card — it is added to your inventory (usable in the Deck Editor) and this run's deck.${r.currency ? ` You also gained 💰 ${r.currency}.` : ''}${r.medPoints ? ` ⛑️ +${r.medPoints} med pts.` : ''}</div>
       <div style="display:flex;flex-wrap:wrap;gap:18px;justify-content:center;margin-top:24px">${offer.map(cardTile).join('')}</div>
       <div style="text-align:center;margin-top:24px">${r.allowSkip ? `<button class="btn-secondary" id="rlc-skip">Skip reward</button>` : ''}</div>
     </div>`;
@@ -51464,7 +51464,7 @@ function renderRlcReward() {
     _rlcCompleteNode(nid);
   };
   document.querySelectorAll('[data-rlc-take]').forEach(b => {
-    b.onclick = () => { _rlcGrantCard(b.dataset.rlcTake); showToast('🃏 Card added to your collection!', 2400); finish(); };
+    b.onclick = () => { _rlcGrantCard(b.dataset.rlcTake); showToast('🃏 Card added to your inventory!', 2400); finish(); };
   });
   const sk = document.getElementById('rlc-skip'); if (sk) sk.onclick = finish;
 }
@@ -51632,7 +51632,7 @@ function renderRlcShop() {
     <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(35,15,65,0.6),transparent)">
       <h1 class="section-title" style="color:#b8a0ff">🛒 ${escapeHtml(shop.name || 'Black Market')}</h1>
       ${(node && node.iconImg) ? `<div style="text-align:center;margin:6px 0"><img src="${node.iconImg}" alt="" style="max-width:200px;max-height:200px;border-radius:12px;border:2px solid rgba(150,110,255,0.5);object-fit:cover"></div>` : ''}
-      <div class="section-subtitle">Exclusive cards — never found in packs. Bought cards go straight into your collection &amp; run deck.</div>
+      <div class="section-subtitle">Exclusive cards — never found in packs. Bought cards go straight into your inventory &amp; run deck.</div>
       ${_rlcHUD(run, camp)}
       <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center;margin-top:18px">
         ${(shop.items || []).length ? (shop.items || []).map(itemTile).join('') : '<div class="ink-dim">The shelves are bare.</div>'}
@@ -51650,7 +51650,7 @@ function renderRlcShop() {
       if (run.currency < price) { showToast('Not enough ' + _rlcCur(run) + '.', 2200); return; }
       run.currency -= price;
       if (isRelic) { _rlcGrantRelic(run, it.relicId); }
-      else { _rlcGrantCard(it.cardKey); showToast('🛒 Purchased — added to your collection!', 2400); }
+      else { _rlcGrantCard(it.cardKey); showToast('🛒 Purchased — added to your inventory!', 2400); }
       if (!Array.isArray(run.purchases)) run.purchases = [];
       run.purchases.push(isRelic ? ('relic#' + it.relicId) : (it.cardKey + '#' + i));
       _persistProgressNow();
@@ -51839,7 +51839,7 @@ function renderRlcResult() {
         <div style="color:#cdb6ff">Nodes cleared: <strong>${(run.completed || []).length}</strong></div>
         <div style="color:#cdb6ff">Final ${escapeHtml(_rlcCur(run))}: <strong>${run.currency}</strong></div>
         <div style="color:#cdb6ff">Run deck size: <strong>${(run.deck || []).length}</strong></div>
-        <div class="small-text ink-dim" style="margin-top:8px">All cards you collected this run are permanently in your collection — open the Deck Editor to use them.</div>
+        <div class="small-text ink-dim" style="margin-top:8px">All cards you collected this run are permanently in your inventory — open the Deck Editor to use them.</div>
       </div>
       ${_nextCamps.length ? `
         <div style="max-width:460px;margin:0 auto 20px;padding:16px;background:rgba(30,50,30,0.6);border:1px solid rgba(127,220,160,0.45);border-radius:12px">
@@ -52243,7 +52243,7 @@ function renderDataPanel() {
 function renderCollection() {
   const tab = App.collectionTab || 'unit';
   // 📚 PRODUCTION COLLECTION
-  // When Forge.useCustomOnlyPool is ON (production default), the Collection
+  // When Forge.useCustomOnlyPool is ON (production default), the Inventory
   // shows ONLY the admin's published catalog + local Forge customs — no
   // built-in mockup cards (Goblin Scout, Orc Warrior, Cedric, Lyra, etc.).
   // When OFF (dev mode), built-ins merge in for development testing.
@@ -52357,7 +52357,7 @@ function renderCollection() {
   root.innerHTML = `
     <div class="forge-page">
       <div class="forge-header">
-        <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/Storage%20box.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Collection</h2>
+        <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/Storage%20box.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Inventory</h2>
         <button class="btn-secondary" id="btn-back-collection">← Back to Menu</button>
       </div>
       <div class="essence-header">
@@ -52434,7 +52434,7 @@ function renderCollection() {
       showToast(`Copied "${src.name}" — editing your version`);
     };
   });
-  // Craft — spend essence of the card's element to add one copy to the collection.
+  // Craft — spend essence of the card's element to add one copy to the inventory.
   document.querySelectorAll('[data-act="craft"]').forEach(el => {
     el.onclick = () => {
       if (el.disabled) return;
@@ -52444,7 +52444,7 @@ function renderCollection() {
       const ed   = ELEMENT_DATA[eid];
       const cost = getCraftCost(c);
       const eName = (ed && ed.name) || (eid === 'arcane' ? 'Arcane' : eid);
-      if (!confirm(`Craft "${c.name}"?\nCost: ${cost} ${eName} essence (you have ${getEssenceAmount(eid)}).\n\nThe card will be added to your collection.`)) return;
+      if (!confirm(`Craft "${c.name}"?\nCost: ${cost} ${eName} essence (you have ${getEssenceAmount(eid)}).\n\nThe card will be added to your inventory.`)) return;
       if (craftCard(c)) {
         showToast(`🔨 Crafted ${c.name}!`);
         render();
@@ -52479,7 +52479,7 @@ function renderCollection() {
 // ============================================================================
 // 👁️ COLLECTION CARD-DETAIL MODAL (read-only)
 // ----------------------------------------------------------------------------
-// Renders a full-detail popup for any card the player clicks in the Collection
+// Renders a full-detail popup for any card the player clicks in the Inventory
 // screen — owned OR unowned. Shows name, rarity, elements, factions, full
 // stats, learnset (for units/heroes), passive, description. No "Play" button —
 // this is pure browsing. Players can plan crafting goals, study what their
@@ -52688,7 +52688,7 @@ function bindCollectionCardModal() {
 // ============ DECK BUILDER SCREEN ============
 function getAllDeckableCards() {
   // Returns [{ key, kind, card, isCustom }] for every card that can go in a deck.
-  // Hero cards are NOT shown in the deck-builder collection — the hero is chosen
+  // Hero cards are NOT shown in the deck-builder inventory — the hero is chosen
   // at the gate before editing starts, and there can be only one hero per deck.
   //
   // 📚 PRODUCTION POOL:
@@ -52967,7 +52967,7 @@ function renderDeckBuilder() {
     ${App._dbfShowFactions === false ? '' : `<div class="dbf-chips factions">${factionChipsHtml}</div>`}
   `;
 
-  // Collection list — clickable to add
+  // Inventory list — clickable to add
   const kindColors = { unit: '#5eb37a', spell: '#a070d9', trap: '#e85d3c', location: '#5da7b8', weather: '#6cb6f2', custom: '#d4af37' };
   const alreadyHasHero = deckHasHero(App.deckEdit);
   // Empty-state hint differentiates between "filter narrowed too far" and
@@ -53118,7 +53118,7 @@ function renderDeckBuilder() {
       <div class="deck-layout">
         <div>
           <div class="forge-section-header" style="display:flex;justify-content:space-between;align-items:center">
-            <h3>Collection</h3>
+            <h3>Inventory</h3>
             <div style="display:flex;gap:0.2rem;flex-wrap:wrap">${filterButtons}</div>
           </div>
           ${filterRowHtml}
@@ -53200,7 +53200,7 @@ function renderDeckBuilder() {
     el.onclick = () => { App.deckBuilderFilter = el.dataset.deckFilter; render(); };
   });
 
-  // Search input — re-renders the collection on every keystroke, restoring focus + caret
+  // Search input — re-renders the inventory on every keystroke, restoring focus + caret
   // position afterward so typing stays smooth despite the full-screen re-render.
   const searchEl = document.getElementById('dbf-search');
   if (searchEl) {
@@ -54757,7 +54757,7 @@ setTimeout(() => {
 }, 1200);
 
 // Seed every starter hero into Profile.cardCollection if missing. Backward compat
-// for saves created before heroes were part of the collection system.
+// for saves created before heroes were part of the inventory system.
 try { ensureStarterHeroesOwned(); } catch (e) {}
 // Reconcile any frames that should be unlocked from already-earned achievements (e.g.
 // loaded a save with the achievement earned BEFORE frames existed), then paint the body

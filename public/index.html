@@ -23309,6 +23309,11 @@ function openPack(packDef) {
       Profile.itemInventory[d.item.id] = (Profile.itemInventory[d.item.id] || 0) + 1;
     } else if (d.card) {
       Profile.cardCollection[d.card.id] = (Profile.cardCollection[d.card.id] || 0) + 1;
+      // 🧬 Roll this unit's trait now so the pulled card is "yours" — every
+      // player rolls their own, so two players' same unit can differ.
+      if ((d.card.type === 'unit' || d.kind === 'unit') && typeof ensureUnitTrait === 'function') {
+        try { ensureUnitTrait(d.card.id, d.card, false); } catch (e) {}
+      }
     }
   }
   saveProfile();
@@ -25540,6 +25545,92 @@ function applyNature(baseStats, natureId) {
   if (typeof out[n.minus] === 'number') out[n.minus] = Math.max(0, Math.round(out[n.minus] * 0.9));
   return out;
 }
+// ===== 🧬 TRAITS (Pokémon/DnD-style per-unit ability) =====
+// Per-UNIT (shared by all your copies of that unit; different across the
+// roster and across players because each player rolls their own on obtain).
+// Rolled on pack-open / first field; admin can restrict a card's pool to up
+// to 4 traits via card.traitPool. Effects are declarative + applied right
+// after Nature in buildUnit (non-destructive, same proven pipeline).
+//   mods:        { add:{stat:+n}, mult:{stat:x} }  flat then ×, HP allowed
+//   factionSynergy: { factions:[...], add:{...}, mult:{...} }  if unit shares
+//                    any listed faction, the bonus also applies (DnD-style).
+const TRAIT_RARITY_WEIGHT = { common: 100, uncommon: 42, rare: 14, legendary: 4 };
+const TRAIT_RARITY_COLOR  = { common: '#9aa0a6', uncommon: '#5eb37a', rare: '#5a9bd4', legendary: '#d4af37' };
+const TRAITS = [
+  // ---- Common ----
+  { id: 'sturdy',   name: 'Sturdy',     icon: '🪨', rarity: 'common',    desc: '+4 DEF.',                         mods: { add: { def: 4 } } },
+  { id: 'keen',     name: 'Keen',       icon: '🗡️', rarity: 'common',    desc: '+4 ATK.',                         mods: { add: { atk: 4 } } },
+  { id: 'arcane',   name: 'Arcane',     icon: '🔮', rarity: 'common',    desc: '+4 MAG.',                         mods: { add: { mag: 4 } } },
+  { id: 'warded',   name: 'Warded',     icon: '🛡️', rarity: 'common',    desc: '+4 RES.',                         mods: { add: { res: 4 } } },
+  { id: 'hardy',    name: 'Hardy',      icon: '❤️', rarity: 'common',    desc: '+10 HP.',                         mods: { add: { hp: 10 } } },
+  { id: 'balanced', name: 'Balanced',   icon: '⚖️', rarity: 'common',    desc: '+2 ATK & +2 DEF.',                mods: { add: { atk: 2, def: 2 } } },
+  // ---- Uncommon ----
+  { id: 'brutal',   name: 'Brutal',     icon: '💢', rarity: 'uncommon',  desc: '+7 ATK, -3 DEF.',                 mods: { add: { atk: 7, def: -3 } } },
+  { id: 'ironhide', name: 'Ironhide',   icon: '⛓️', rarity: 'uncommon',  desc: '+8 DEF, -3 ATK.',                 mods: { add: { def: 8, atk: -3 } } },
+  { id: 'mystic',   name: 'Mystic',     icon: '✨', rarity: 'uncommon',  desc: '+8 MAG, -3 DEF.',                 mods: { add: { mag: 8, def: -3 } } },
+  { id: 'vigorous', name: 'Vigorous',   icon: '🫀', rarity: 'uncommon',  desc: '+24 HP.',                         mods: { add: { hp: 24 } } },
+  { id: 'tactician',name: 'Tactician',  icon: '🧠', rarity: 'uncommon',  desc: '+4 ATK & +4 MAG.',                mods: { add: { atk: 4, mag: 4 } } },
+  { id: 'stalwart', name: 'Stalwart',   icon: '🏰', rarity: 'uncommon',  desc: '+5 DEF & +5 RES.',                mods: { add: { def: 5, res: 5 } } },
+  // ---- Rare ----
+  { id: 'berserker',name: 'Berserker',  icon: '🪓', rarity: 'rare',      desc: '+12 ATK, -5 DEF.',                mods: { add: { atk: 12, def: -5 } } },
+  { id: 'juggernaut',name:'Juggernaut', icon: '🛡️', rarity: 'rare',      desc: '+10 DEF, +10 RES, +20 HP.',       mods: { add: { def: 10, res: 10, hp: 20 } } },
+  { id: 'archmage', name: 'Archmage',   icon: '📜', rarity: 'rare',      desc: '+14 MAG, +6 RES.',                mods: { add: { mag: 14, res: 6 } } },
+  { id: 'warbander',name: 'Warbander',  icon: '⚔️', rarity: 'rare',      desc: '+3 all combat; +6 ATK & +4 DEF if Warrior/Goblinoid.', mods: { add: { atk: 3, def: 3, mag: 3, res: 3 } }, factionSynergy: { factions: ['warrior','goblinoid'], add: { atk: 6, def: 4 } } },
+  { id: 'packhunter',name:'Pack Hunter',icon: '🐺', rarity: 'rare',      desc: '+5 ATK; +6 ATK & +12 HP if Beast/Bird.',               mods: { add: { atk: 5 } }, factionSynergy: { factions: ['beast','bird'], add: { atk: 6, hp: 12 } } },
+  { id: 'necrobound',name:'Necrobound', icon: '💀', rarity: 'rare',      desc: '+5 MAG; +7 MAG & +5 RES if Undead/Demon.',             mods: { add: { mag: 5 } }, factionSynergy: { factions: ['undead','demon'], add: { mag: 7, res: 5 } } },
+  { id: 'feywild',  name: 'Feywild',    icon: '🧚', rarity: 'rare',      desc: '+4 MAG & +4 RES; +6 each if Fairy/Elemental/Plant.',   mods: { add: { mag: 4, res: 4 } }, factionSynergy: { factions: ['fairy','elemental','plant'], add: { mag: 6, res: 6 } } },
+  // ---- Legendary ----
+  { id: 'ancient',  name: 'Ancient',    icon: '🗿', rarity: 'legendary', desc: '+6 ATK/DEF/MAG/RES & +30 HP.',    mods: { add: { atk: 6, def: 6, mag: 6, res: 6, hp: 30 } } },
+  { id: 'apex',     name: 'Apex Predator', icon: '👑', rarity: 'legendary', desc: '+15 ATK, +40 HP.',             mods: { add: { atk: 15, hp: 40 } } },
+  { id: 'dragonblood', name:'Dragonblood', icon: '🐉', rarity: 'legendary', desc: '+6 ATK & +6 MAG; +10 each if Dragonkin/Reptile.',  mods: { add: { atk: 6, mag: 6 } }, factionSynergy: { factions: ['dragonkin','reptile'], add: { atk: 10, mag: 10 } } },
+  { id: 'sanguine', name: 'Sanguine',   icon: '🩸', rarity: 'legendary', desc: '+8 ATK & +24 HP; +8 MAG if Vampire/Undead.',           mods: { add: { atk: 8, hp: 24 } }, factionSynergy: { factions: ['vampire','undead'], add: { mag: 8 } } },
+];
+const TRAIT_BY_ID = Object.fromEntries(TRAITS.map(t => [t.id, t]));
+const getTrait = (id) => TRAIT_BY_ID[id] || null;
+function rollTrait(card) {
+  let pool = TRAITS;
+  if (card && Array.isArray(card.traitPool) && card.traitPool.length > 0) {
+    const allowed = TRAITS.filter(t => card.traitPool.indexOf(t.id) >= 0);
+    if (allowed.length) pool = allowed;
+  }
+  const weighted = pool.map(t => ({ id: t.id, w: TRAIT_RARITY_WEIGHT[t.rarity] || 1 }));
+  const total = weighted.reduce((a, e) => a + e.w, 0);
+  let r = Math.random() * total;
+  for (const e of weighted) { if (r < e.w) return e.id; r -= e.w; }
+  return weighted.length ? weighted[weighted.length - 1].id : null;
+}
+// Apply a trait's bonuses to a base-stats object (mult first, then add).
+// `factions` is the unit's faction id list, for factionSynergy.
+function applyTrait(baseStats, traitId, factions) {
+  const t = getTrait(traitId);
+  if (!t) return { ...baseStats };
+  const out = { ...baseStats };
+  const apply = (spec) => {
+    if (!spec) return;
+    if (spec.mult) for (const k in spec.mult) if (typeof out[k] === 'number') out[k] = out[k] * spec.mult[k];
+    if (spec.add)  for (const k in spec.add)  if (typeof out[k] === 'number') out[k] = out[k] + spec.add[k];
+  };
+  apply(t.mods);
+  if (t.factionSynergy && Array.isArray(factions) && Array.isArray(t.factionSynergy.factions)
+      && t.factionSynergy.factions.some(f => factions.indexOf(f) >= 0)) {
+    apply(t.factionSynergy);
+  }
+  for (const k in out) if (typeof out[k] === 'number') out[k] = Math.max(k === 'spd' ? 1 : 0, Math.round(out[k]));
+  return out;
+}
+// Roll + persist a unit's trait the first time it's obtained/fielded. Mirrors
+// the Nature lazy-roll. store = Profile.units (player) or Profile.aiUnits (AI).
+function ensureUnitTrait(cardId, card, isAi) {
+  const store = isAi ? (Profile.aiUnits = Profile.aiUnits || {}) : (Profile.units = Profile.units || {});
+  const p = store[cardId] || { level: 1, xp: 0, kills: 0, fielded: 0 };
+  if (!p.trait) {
+    p.trait = rollTrait(card);
+    store[cardId] = p;
+    try { saveProfile(); } catch (e) {}
+  }
+  return p.trait;
+}
+
 const BOND_TIERS = [
   { min: 0,   max: 19,  name: 'Stranger',  color: '#9aa0a6' },
   { min: 20,  max: 39,  name: 'Familiar',  color: '#5eb37a' },
@@ -27388,7 +27479,13 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
     natureId = rollNature();
   }
   const naturedBase = applyNature(cardData.stats, natureId);
-  const scaled = applyLevelScaling(naturedBase, naturedBase.hp || cardData.stats.hp, level, statGains);
+  // 🧬 Trait — per-unit, rolled+persisted on first obtain (like Nature).
+  let traitId = null;
+  try {
+    traitId = prof ? ensureUnitTrait(cardData.id, cardData, owner !== 'player') : rollTrait(cardData);
+  } catch (e) { traitId = null; }
+  const traitedBase = applyTrait(naturedBase, traitId, getFactionsOf(cardData));
+  const scaled = applyLevelScaling(traitedBase, traitedBase.hp || cardData.stats.hp, level, statGains);
   const ev = applyEvBoosts(scaled.stats, scaled.maxHp, evs);
   const withItem = applyHeldItem(ev.stats, ev.maxHp, item);
   const elements = getElementsOf(cardData);
@@ -27426,6 +27523,7 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
     factions: getFactionsOf(cardData),
     bond: prof ? (prof.bond || 0) : 0,
     nature: natureId,
+    trait: traitId,
   };
 };
 
@@ -33049,6 +33147,21 @@ function renderCardEditor() {
       <div class="small-text" style="margin-top:0.3rem">Tribal types — used for badges and future synergies. Multiple is fine (e.g. Goblinoid + Warrior).</div>
     </div>
     <div class="editor-field full">
+      <label>🧬 Trait Pool (pick up to 4 — players randomly roll ONE of these on pack-open)</label>
+      <div class="faction-picker" id="ed-traitpool">
+        ${TRAITS.map(t => {
+          const checked = (card.traitPool || []).includes(t.id);
+          const col = TRAIT_RARITY_COLOR[t.rarity] || '#9aa0a6';
+          return `
+            <label class="faction-chip ${checked ? 'on' : ''}" title="${escapeHtml(t.rarity.toUpperCase() + ' — ' + t.desc)}" style="${checked ? `border-color:${col};color:${col}` : ''}">
+              <input type="checkbox" data-traitpool="${t.id}" ${checked ? 'checked' : ''}>
+              <span>${t.icon} ${escapeHtml(t.name)} <span class="small-text" style="opacity:0.7">${t.rarity}</span></span>
+            </label>`;
+        }).join('')}
+      </div>
+      <div class="small-text" style="margin-top:0.3rem">Leave ALL unchecked = unit rolls from the full global trait pool (rarity-weighted). Pick 1–4 to lock this unit to a curated set. Each player rolls their own, so the same unit feels different per player and rare traits are valuable.</div>
+    </div>
+    <div class="editor-field full">
       <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
         <input type="checkbox" id="ed-flying" ${card.flying ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
         <span>🪶 Flying — immune to ground/melee attacks</span>
@@ -34282,6 +34395,11 @@ function captureEditorIntoCard(card) {
   if (document.getElementById('ed-factions')) {
     const picked = [...document.querySelectorAll('#ed-factions input[data-faction]:checked')].map(el => el.dataset.faction);
     card.factions = picked;
+  }
+  if (document.getElementById('ed-traitpool')) {
+    // Cap the curated trait pool at 4 (extra checks beyond 4 are ignored).
+    const tp = [...document.querySelectorAll('#ed-traitpool input[data-traitpool]:checked')].map(el => el.dataset.traitpool).slice(0, 4);
+    card.traitPool = tp;
   }
   if (document.getElementById('ed-place-range')) {
     const r = num('ed-place-range', 1, 6, DEFAULT_UNIT_PLACE_RANGE);
@@ -38070,6 +38188,7 @@ function renderUnitModal() {
               ${allPassives.map(p => { const pf = p.faction ? getFaction(p.faction) : null; const style = pf ? `style="color:${pf.color};border-color:${pf.color}"` : ''; return `<span class="passive-pill" ${style} title="${escapeHtml(p.desc)}">${pf ? getFactionIcon(p.faction, '1.7em') + ' ' : ''}${escapeHtml(p.name)}</span>`; }).join('')}
               ${isPlayer && u.bond != null ? (() => { const t = getBondTier(u.bond); return `<span class="bond-pill" style="border-color:${t.color};color:${t.color}" title="Friendship ${u.bond}/${BOND_MAX} — +${Math.floor((u.bond||0)/10)}% crit chance">💗 ${t.name} ${u.bond}</span>`; })() : ''}
               ${u.nature ? (() => { const n = getNature(u.nature); if (!n) return ''; const isNeutral = !n.plus || !n.minus || n.plus === n.minus; const label = isNeutral ? n.name : `${n.name} (+${n.plus.toUpperCase()} -${n.minus.toUpperCase()})`; return `<span class="nature-pill${isNeutral ? ' neutral' : ''}" title="${escapeHtml(n.desc)}">🌱 ${escapeHtml(label)}</span>`; })() : ''}
+              ${u.trait ? (() => { const tr = (typeof getTrait === 'function') ? getTrait(u.trait) : null; if (!tr) return ''; const col = (TRAIT_RARITY_COLOR[tr.rarity] || '#9aa0a6'); return `<span class="nature-pill" style="border-color:${col};color:${col}" title="${escapeHtml(tr.rarity.toUpperCase() + ' — ' + tr.desc)}">${tr.icon} ${escapeHtml(tr.name)}</span>`; })() : ''}
             </div>
             <div class="modal-xp">
               <div class="modal-xp-bar"><div class="modal-xp-fill" style="width:${xpPct}%"></div></div>

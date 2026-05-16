@@ -30448,6 +30448,11 @@ function render() {
       // 📖 RPG page guide — fire after the new screen paints. Self-gated
       // (trigger type / showOnce / global off), body-anchored, never blocks.
       try {
+        // 🔇 Kill the OUTGOING guide first — its typing/advance timers AND
+        // its voice/audio clip live on JS objects (not the DOM), so just
+        // removing the overlay would let the previous page's audio keep
+        // playing on the new page. _clearGuideTimers() stops audio + timers.
+        if (typeof _clearGuideTimers === 'function') _clearGuideTimers();
         const _gv = document.getElementById('rpgg-overlay'); if (_gv) _gv.remove();
         const _gf = document.getElementById('rpgg-replay-fab'); if (_gf) _gf.remove();
         if (typeof RPGGuide !== 'undefined') RPGGuide.activeId = null;

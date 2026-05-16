@@ -49892,6 +49892,12 @@ function _rlcCur(run) {
   const c = _rlcCampaign(run && run.campaignId);
   return (c && c.currencyName) ? c.currencyName : 'Gold';
 }
+// Currency icon: admin-uploaded image if set, else the 💰 emoji.
+function _rlcCurIcon(camp) {
+  return (camp && camp.currencyIcon)
+    ? `<img src="${camp.currencyIcon}" alt="" style="width:1.05em;height:1.05em;object-fit:cover;border-radius:3px;vertical-align:-0.15em">`
+    : '💰';
+}
 // Resolve any admin deck reference (starter deck / AI deck / saved deck id) to
 // exactly DECK_SIZE deck-builder keys so the battle engine can consume it.
 function _rlcDeckKeys(deckId) {
@@ -50148,7 +50154,7 @@ function _rlcHUD(run, camp) {
         <div style="width:150px;height:12px;background:#2a1840;border-radius:6px;overflow:hidden;border:1px solid rgba(255,255,255,0.15)"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#e23b6b,#ff7a55)"></div></div>
         <div class="small-text" style="color:#ffb3c1">${run.heroHP} / ${run.maxHP} HP</div></div>
       </div>
-      <div style="color:#d4af37;font-weight:700">💰 ${run.currency} <span class="small-text ink-dim">${escapeHtml(_rlcCur(run))}</span></div>
+      <div style="color:#d4af37;font-weight:700">${_rlcCurIcon(camp)} ${run.currency} <span class="small-text ink-dim">${escapeHtml(_rlcCur(run))}</span></div>
       <div style="color:#7fdca0;font-weight:700">⛑️ ${run.medPoints} <span class="small-text ink-dim">Med Pts</span></div>
       <div style="color:#b8a0ff;font-weight:700">🃏 ${(run.deck || []).length} <span class="small-text ink-dim">cards</span></div>
       <div style="color:#cdb6ff;font-weight:700">📍 ${done}/${total} <span class="small-text ink-dim">nodes</span></div>
@@ -50237,6 +50243,15 @@ function renderRlcAdmin() {
   const heroSel = (path, val) => `<label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">Hero</span><br><select data-rlc-path="${path}" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">— pick —</option>${heroOpts.map(h => `<option value="${escapeHtml(h.id)}" ${val === h.id ? 'selected' : ''}>${escapeHtml(h.name)}</option>`).join('')}</select></label>`;
   const deckSel = (path, val) => `<label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">Deck</span><br><select data-rlc-path="${path}" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">${deckOpts.map(o => `<option value="${escapeHtml(o.id)}" ${val === o.id ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}</select></label>`;
   const relicSel = (label, path, val) => `<label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">${label}</span><br><select data-rlc-path="${path}" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">— none —</option>${RLC_RELICS.map(r => `<option value="${r.id}" ${val === r.id ? 'selected' : ''}>${r.icon} ${escapeHtml(r.name)} — ${escapeHtml(r.desc)}</option>`).join('')}</select></label>`;
+  const imgUp = (label, path, val, size) => `<div style="margin:0 0 8px">
+      <div class="small-text ink-dim" style="margin-bottom:3px">${label}</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:54px;height:54px;border-radius:8px;overflow:hidden;background:#1a1030;display:flex;align-items:center;justify-content:center;border:1px solid rgba(184,136,255,0.35)">${val ? `<img src="${val}" style="width:100%;height:100%;object-fit:cover">` : '<span style="opacity:0.5">🖼️</span>'}</div>
+        <input type="file" accept="image/*" data-rlc-imgfile="${path}" style="display:none">
+        <button type="button" class="btn-secondary btn-mini" data-rlc-imgupload="${path}" data-rlc-imgsize="${size || 256}">📷 Upload</button>
+        ${val ? `<button type="button" class="btn-mini" data-rlc-imgclear="${path}" style="color:#ff8080">✖ Clear</button>` : ''}
+      </div>
+    </div>`;
   const nodeCard = (n, idx) => {
     const isBattle = ['battle','elite','boss','finalBoss'].indexOf(n.type) >= 0;
     const conns = (n.connections || []);
@@ -50255,6 +50270,7 @@ function renderRlcAdmin() {
           ${fld('Column (left→right)', 'nodes.' + idx + '.col', n.col, 'number')}
         </div>
         ${fld('Description', 'nodes.' + idx + '.desc', n.desc)}
+        ${imgUp('🖼️ Node image (map icon · enemy portrait · shopkeeper / medic / boss / treasure)', 'nodes.' + idx + '.iconImg', n.iconImg, 256)}
         <div class="small-text ink-dim" style="margin:6px 0 4px">Connects to (player can go here after clearing this node):</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
           ${ (ed.nodes || []).filter(x => x.id !== n.id).map(x => `<label class="small-text" style="display:flex;align-items:center;gap:3px;border:1px solid rgba(184,136,255,0.3);border-radius:4px;padding:2px 6px"><input type="checkbox" data-rlc-conn="${idx}" value="${escapeHtml(x.id)}" ${conns.indexOf(x.id) >= 0 ? 'checked' : ''}> ${escapeHtml(x.name || x.id)}</label>`).join('') || '<span class="ink-dim small-text">(add more nodes to link)</span>'}
@@ -50363,6 +50379,10 @@ function renderRlcAdmin() {
           <button class="btn-secondary btn-mini" id="rlc-cover-btn">📷 Cover image</button>
           <label class="small-text" style="margin-left:auto;display:flex;align-items:center;gap:4px"><input type="checkbox" data-rlc-path="isPublished" ${ed.isPublished ? 'checked' : ''}> Publish-ready</label>
         </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          ${imgUp('🗺️ Campaign map background', 'mapBg', ed.mapBg, 1024)}
+          ${imgUp('💰 Currency icon (replaces 💰 in the run HUD)', 'currencyIcon', ed.currencyIcon, 96)}
+        </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
           ${heroSel('startingHeroId', ed.startingHeroId)}
           ${fld('Starting HP', 'startingHP', ed.startingHP, 'number')}
@@ -50410,6 +50430,20 @@ function renderRlcAdmin() {
     const f = e.target.files && e.target.files[0]; if (!f) return;
     try { ed.coverImg = await resizeImage(f, 640); reRender(); } catch (err) { showToast('⚠ Could not load image.', 2600); }
   };
+  // Generic per-asset image uploads (map bg, currency icon, per-node image).
+  document.querySelectorAll('[data-rlc-imgupload]').forEach(btn => btn.onclick = () => {
+    const p = btn.getAttribute('data-rlc-imgupload');
+    const fin = document.querySelector('[data-rlc-imgfile="' + p + '"]');
+    if (fin) fin.click();
+  });
+  document.querySelectorAll('[data-rlc-imgfile]').forEach(fin => fin.onchange = async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const p = fin.getAttribute('data-rlc-imgfile');
+    const btn = document.querySelector('[data-rlc-imgupload="' + p + '"]');
+    const sz = btn ? (parseInt(btn.getAttribute('data-rlc-imgsize'), 10) || 256) : 256;
+    try { setPath(p, await resizeImage(f, sz)); reRender(); } catch (err) { showToast('⚠ Could not load image.', 2600); }
+  });
+  document.querySelectorAll('[data-rlc-imgclear]').forEach(b => b.onclick = () => { setPath(b.getAttribute('data-rlc-imgclear'), ''); reRender(); });
   // Live capture for every data-rlc-path input/select/textarea.
   root.querySelectorAll('[data-rlc-path]').forEach(elx => {
     const handler = () => {
@@ -50625,7 +50659,7 @@ function renderRlcMap() {
     const op = st === 'lock' ? 0.45 : 1;
     return `<div ${st === 'avail' ? `data-rlc-node="${escapeHtml(String(n.id))}" role="button" tabindex="0"` : ''}
         style="position:absolute;left:${ps.left}px;top:${ps.top}px;width:${NW}px;height:${NH}px;box-sizing:border-box;padding:8px;background:rgba(16,9,28,0.94);border:2px solid;border-radius:12px;${ring};opacity:${op};cursor:${st === 'avail' ? 'pointer' : 'default'};z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
-        <div style="font-size:1.5rem;line-height:1">${st === 'done' ? '✅' : t.icon}</div>
+        <div style="font-size:1.5rem;line-height:1;position:relative">${n.iconImg ? `<img src="${n.iconImg}" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:6px${st === 'lock' ? ';filter:grayscale(0.8) brightness(0.55)' : ''}">${st === 'done' ? '<span style="position:absolute;right:-7px;bottom:-5px;font-size:0.95rem">✅</span>' : ''}` : (st === 'done' ? '✅' : t.icon)}</div>
         <div style="font-family:'Cinzel',serif;color:${st === 'lock' ? '#888' : '#f6d97a'};font-weight:700;font-size:0.84rem;line-height:1.05;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(n.name || t.name)}</div>
         <div class="small-text" style="color:${t.color};font-size:0.68rem">${escapeHtml(t.name)}</div>
       </div>`;
@@ -50635,7 +50669,7 @@ function renderRlcMap() {
       ${nodeDivs}
     </div>`;
   root.innerHTML = `
-    <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(45,15,75,0.55),transparent)">
+    <div class="campaign-page" style="${camp.mapBg ? `background:linear-gradient(rgba(10,5,20,0.82),rgba(10,5,20,0.88)),url('${camp.mapBg}') center/cover fixed` : 'background:radial-gradient(ellipse at top,rgba(45,15,75,0.55),transparent)'}">
       <button class="btn-secondary btn-mini" id="rlc-map-back">← Campaigns</button>
       <h1 class="section-title" style="color:#f6d97a;margin-bottom:4px">${escapeHtml(camp.name || 'Campaign')}</h1>
       ${_rlcHUD(run, camp)}
@@ -50844,6 +50878,7 @@ function renderRlcMedical() {
   root.innerHTML = `
     <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(15,55,40,0.5),transparent)">
       <h1 class="section-title" style="color:#7fdca0">⛑️ ${escapeHtml((node && node.name) || 'Medical Camp')}</h1>
+      ${(node && node.iconImg) ? `<div style="text-align:center;margin:6px 0"><img src="${node.iconImg}" alt="" style="max-width:200px;max-height:200px;border-radius:12px;border:2px solid rgba(127,220,160,0.5);object-fit:cover"></div>` : ''}
       <div class="section-subtitle">${escapeHtml((node && node.desc) || 'Spend medical points or currency to heal before pressing on.')}</div>
       ${_rlcHUD(run, camp)}
       <div style="max-width:480px;margin:18px auto 0">${opts.map(optBtn).join('')}
@@ -50898,6 +50933,7 @@ function renderRlcShop() {
   root.innerHTML = `
     <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(35,15,65,0.6),transparent)">
       <h1 class="section-title" style="color:#b8a0ff">🛒 ${escapeHtml(shop.name || 'Black Market')}</h1>
+      ${(node && node.iconImg) ? `<div style="text-align:center;margin:6px 0"><img src="${node.iconImg}" alt="" style="max-width:200px;max-height:200px;border-radius:12px;border:2px solid rgba(150,110,255,0.5);object-fit:cover"></div>` : ''}
       <div class="section-subtitle">Exclusive cards — never found in packs. Bought cards go straight into your collection &amp; run deck.</div>
       ${_rlcHUD(run, camp)}
       <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center;margin-top:18px">
@@ -50954,6 +50990,7 @@ function renderRlcForge() {
   root.innerHTML = `
     <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(60,40,15,0.55),transparent)">
       <h1 class="section-title" style="color:#c89b3c">🔨 ${escapeHtml((node && node.name) || 'Card Forge')}</h1>
+      ${(node && node.iconImg) ? `<div style="text-align:center;margin:6px 0"><img src="${node.iconImg}" alt="" style="max-width:200px;max-height:200px;border-radius:12px;border:2px solid rgba(200,155,60,0.5);object-fit:cover"></div>` : ''}
       <div class="section-subtitle">${escapeHtml((node && node.desc) || 'Strengthen your run deck — duplicate a key card, or burn away dead weight & curses. Affects THIS run only.')}</div>
       ${_rlcHUD(run, camp)}
       <div style="max-width:560px;margin:14px auto 0">
@@ -50990,6 +51027,7 @@ function renderRlcEvent() {
   root.innerHTML = `
     <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(20,40,70,0.5),transparent)">
       <h1 class="section-title" style="color:#7fb8e6">📜 ${escapeHtml((node && node.name) || 'Story Event')}</h1>
+      ${(node && node.iconImg) ? `<div style="text-align:center;margin:6px 0"><img src="${node.iconImg}" alt="" style="max-width:200px;max-height:200px;border-radius:12px;border:2px solid rgba(90,160,230,0.5);object-fit:cover"></div>` : ''}
       ${_rlcHUD(run, camp)}
       <div style="max-width:560px;margin:14px auto 0;padding:20px;background:rgba(18,10,32,0.8);border:1px solid rgba(90,160,230,0.35);border-radius:12px">
         <div style="color:#d8e6f5;line-height:1.6;white-space:pre-wrap;margin-bottom:18px">${escapeHtml(ev.text || '')}</div>

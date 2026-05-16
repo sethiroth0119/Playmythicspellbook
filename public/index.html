@@ -29962,7 +29962,7 @@ function renderTitle() {
       // 🚧 Old chapter "Campaign" hidden from EVERYONE (incl. admin) for now —
       // it will be removed/replaced by the Roguelite system. Portal + screens
       // are gated below; the renderCampaign* code is left intact for later.
-      { id: 'btn-rlc', icon: '<img src="assets/artwork/gameicons/roguelite.png" alt="Roguelite" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Roguelite', sub: 'Branching runs · build a deck from rewards', accent: '#b86bff',
+      { id: 'btn-rlc', icon: '<img src="assets/artwork/gameicons/roguelitestory.png" alt="Roguelite" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Roguelite', sub: 'Branching runs · build a deck from rewards', accent: '#b86bff',
         badge: (Profile.rlcRun && !Profile.rlcRun.isComplete && !Profile.rlcRun.isFailed) ? '▶ Run in progress' : ((getPlayableCampaigns().length) ? `${getPlayableCampaigns().length} available` : null),
         alertBadge: !!(Profile.rlcRun && !Profile.rlcRun.isComplete && !Profile.rlcRun.isFailed),
         onclick: () => { App.screen = 'rlcList'; render(); } },
@@ -48913,35 +48913,59 @@ function renderRlcMap() {
   try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
   const avail = new Set(_rlcAvailableNodeIds(camp, run));
   const done = new Set(run.completed || []);
-  // Group nodes by row; render rows top (highest row = final) → bottom (start).
-  const rows = {};
-  (camp.nodes || []).forEach(n => { const r = parseInt(n.row, 10) || 0; (rows[r] = rows[r] || []).push(n); });
-  const rowKeys = Object.keys(rows).map(Number).sort((a, b) => b - a);
-  const nodeName = (id) => { const nn = _rlcNode(camp, id); return nn ? (nn.name || (RLC_NODE_TYPES[nn.type] || {}).name || 'Node') : '?'; };
-  const tile = (n) => {
+  // 🗺️ Real positioned map: nodes placed by (col,row), row 0 at the bottom,
+  // with SVG path-lines drawn between connected nodes (Slay-the-Spire style).
+  const N = (camp.nodes || []).map(n => ({ node: n, r: parseInt(n.row, 10) || 0, c: parseInt(n.col, 10) || 0 }));
+  const byId = {}; N.forEach(o => { byId[o.node.id] = o; });
+  const maxRow = N.reduce((a, o) => Math.max(a, o.r), 0);
+  const maxCol = N.reduce((a, o) => Math.max(a, o.c), 0);
+  const NW = 152, NH = 92, STEPX = 210, STEPY = 168, PADX = 30, PADY = 26;
+  const mapW = (maxCol + 1) * STEPX + PADX * 2 - (STEPX - NW);
+  const mapH = (maxRow + 1) * STEPY + PADY * 2 - (STEPY - NH);
+  const posOf = (o) => { const left = PADX + o.c * STEPX; const top = PADY + (maxRow - o.r) * STEPY; return { left, top, cx: left + NW / 2, cy: top + NH / 2 }; };
+  const stateOf = (o) => done.has(o.node.id) ? 'done'
+      : ((avail.has(o.node.id) || (!done.size && _rlcStartNodes(camp).some(s => s.id === o.node.id))) ? 'avail' : 'lock');
+  // Lines first (z-index below the nodes).
+  let lines = '';
+  N.forEach(o => {
+    const ps = posOf(o);
+    (o.node.connections || []).forEach(cid => {
+      const m = byId[cid]; if (!m) return;
+      const pm = posOf(m);
+      const srcDone = done.has(o.node.id), tgtDone = done.has(m.node.id);
+      let col = 'rgba(150,110,200,0.28)', w = 3, dash = '5 8';
+      if (srcDone && tgtDone) { col = 'rgba(212,175,55,0.85)'; w = 4; dash = ''; }
+      else if (srcDone)       { col = 'rgba(184,136,255,0.92)'; w = 4; dash = ''; }
+      lines += `<line x1="${ps.cx}" y1="${ps.cy}" x2="${pm.cx}" y2="${pm.cy}" stroke="${col}" stroke-width="${w}" ${dash ? `stroke-dasharray="${dash}"` : ''} stroke-linecap="round"/>`;
+    });
+  });
+  const nodeDivs = N.map(o => {
+    const n = o.node;
     const t = RLC_NODE_TYPES[n.type] || RLC_NODE_TYPES.battle;
-    const isDone = done.has(n.id);
-    const isAvail = avail.has(n.id) || (!done.size && _rlcStartNodes(camp).some(s => s.id === n.id));
-    const state = isDone ? 'done' : (isAvail ? 'avail' : 'lock');
-    const opacity = state === 'lock' ? 0.4 : 1;
-    const ring = state === 'avail' ? `box-shadow:0 0 18px ${t.glow};border-color:${t.color}` : (state === 'done' ? 'border-color:#5fae7a' : 'border-color:rgba(255,255,255,0.12)');
-    const conns = (n.connections || []).map(nodeName).filter(Boolean);
-    return `
-      <div ${state === 'avail' ? `data-rlc-node="${escapeHtml(String(n.id))}" role="button" tabindex="0"` : ''}
-           style="width:150px;padding:12px;background:rgba(18,10,32,0.85);border:2px solid;border-radius:12px;${ring};opacity:${opacity};cursor:${state === 'avail' ? 'pointer' : 'default'};text-align:center">
-        <div style="font-size:1.9rem">${isDone ? '✅' : t.icon}</div>
-        <div style="font-family:'Cinzel',serif;color:${state === 'lock' ? '#888' : '#f6d97a'};font-weight:700;font-size:0.95rem">${escapeHtml(n.name || t.name)}</div>
-        <div class="small-text" style="color:${t.color}">${escapeHtml(t.name)}</div>
-        ${conns.length ? `<div class="small-text ink-dim" style="margin-top:6px;border-top:1px solid rgba(255,255,255,0.08);padding-top:5px">↑ ${conns.map(escapeHtml).join(' · ')}</div>` : ''}
+    const st = stateOf(o);
+    const ps = posOf(o);
+    const ring = st === 'avail' ? `box-shadow:0 0 22px ${t.glow};border-color:${t.color}`
+        : (st === 'done' ? 'border-color:#5fae7a' : 'border-color:rgba(255,255,255,0.12)');
+    const op = st === 'lock' ? 0.45 : 1;
+    return `<div ${st === 'avail' ? `data-rlc-node="${escapeHtml(String(n.id))}" role="button" tabindex="0"` : ''}
+        style="position:absolute;left:${ps.left}px;top:${ps.top}px;width:${NW}px;height:${NH}px;box-sizing:border-box;padding:8px;background:rgba(16,9,28,0.94);border:2px solid;border-radius:12px;${ring};opacity:${op};cursor:${st === 'avail' ? 'pointer' : 'default'};z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
+        <div style="font-size:1.5rem;line-height:1">${st === 'done' ? '✅' : t.icon}</div>
+        <div style="font-family:'Cinzel',serif;color:${st === 'lock' ? '#888' : '#f6d97a'};font-weight:700;font-size:0.84rem;line-height:1.05;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(n.name || t.name)}</div>
+        <div class="small-text" style="color:${t.color};font-size:0.68rem">${escapeHtml(t.name)}</div>
       </div>`;
-  };
+  }).join('');
+  const mapHtml = `<div style="position:relative;width:${mapW}px;height:${mapH}px;margin:0 auto">
+      <svg width="${mapW}" height="${mapH}" style="position:absolute;left:0;top:0;pointer-events:none;z-index:1;overflow:visible">${lines}</svg>
+      ${nodeDivs}
+    </div>`;
   root.innerHTML = `
     <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(45,15,75,0.55),transparent)">
       <button class="btn-secondary btn-mini" id="rlc-map-back">← Campaigns</button>
       <h1 class="section-title" style="color:#f6d97a;margin-bottom:4px">${escapeHtml(camp.name || 'Campaign')}</h1>
       ${_rlcHUD(run, camp)}
-      <div style="display:flex;flex-direction:column;gap:26px;align-items:center;padding:10px 0 40px">
-        ${rowKeys.map(rk => `<div style="display:flex;gap:22px;flex-wrap:wrap;justify-content:center">${rows[rk].map(tile).join('')}</div>`).join('<div style="color:#6a4b9a;font-size:1.4rem">▲</div>')}
+      <div class="small-text ink-dim" style="text-align:center;margin:2px 0 8px">Start at the bottom · follow the glowing paths upward · ✅ = cleared</div>
+      <div style="overflow:auto;max-height:66vh;padding:14px 6px 44px">
+        ${mapHtml}
       </div>
       ${App._rlcIntroFor === camp.id && camp.intro ? `
         <div class="modal-backdrop" id="rlc-intro-bd" style="z-index:1300">

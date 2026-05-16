@@ -2669,52 +2669,53 @@
 
   /* ===== 🂠 Battle deck / ⚰️ graveyard / 🌌 Kalon rail (right edge) ===== */
   .bp-wrap {
-    position: fixed; right: 10px; top: 76px; bottom: 92px; width: 170px;
+    position: fixed; right: 12px; top: 70px; bottom: 188px; width: 200px;
     z-index: 60; display: flex; flex-direction: column;
     justify-content: space-between; align-items: center;
     pointer-events: none;
   }
-  .bp-col { display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: auto; }
-  .bp-idblock { text-align: center; max-width: 170px; }
+  .bp-col { display: flex; flex-direction: column; gap: 14px; align-items: center; pointer-events: auto; }
+  .bp-item { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .bp-lbl {
+    font-size: 0.66rem; letter-spacing: 0.09em; text-transform: uppercase;
+    color: #cdb6ff; font-family: 'Cinzel', serif; font-weight: 700;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.8); line-height: 1;
+  }
+  .bp-idblock { text-align: center; max-width: 200px; }
   .bp-id-name {
-    color: #f6d97a; font-weight: 800; font-size: 0.82rem;
+    color: #f6d97a; font-weight: 800; font-size: 0.92rem;
     font-family: 'Cinzel', serif; line-height: 1.15;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px;
     text-shadow: 0 1px 3px rgba(0,0,0,0.8);
   }
   .bp-id-rank {
-    font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em;
+    font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em;
     font-family: 'Cinzel', serif; text-shadow: 0 1px 2px rgba(0,0,0,0.8);
   }
-  .bp-deck { position: relative; width: 86px; height: 120px; }
+  .bp-deck { position: relative; width: 132px; height: 184px; }
   .bp-deck img {
-    width: 100%; height: 100%; object-fit: cover; border-radius: 8px;
+    width: 100%; height: 100%; object-fit: cover; border-radius: 10px;
     border: 1px solid rgba(212,175,55,0.5);
     box-shadow: 0 4px 14px rgba(0,0,0,0.65),
-                3px 3px 0 -1px rgba(22,14,34,0.95),
-                6px 6px 0 -2px rgba(15,9,24,0.9),
-                9px 9px 0 -3px rgba(10,6,18,0.85);
+                4px 4px 0 -1px rgba(22,14,34,0.95),
+                8px 8px 0 -2px rgba(15,9,24,0.9),
+                12px 12px 0 -3px rgba(10,6,18,0.85);
   }
   .bp-deck-count {
-    position: absolute; bottom: 6px; right: 6px;
-    background: rgba(8,5,16,0.88); color: #f6d97a; font-weight: 800;
-    font-size: 0.82rem; padding: 1px 7px; border-radius: 6px;
-    border: 1px solid rgba(212,175,55,0.55); font-family: 'Cinzel', serif;
-  }
-  .bp-deck-label, .bp-grave .bp-deck-label {
-    position: absolute; top: -14px; left: 0; right: 0; text-align: center;
-    font-size: 0.55rem; letter-spacing: 0.07em; text-transform: uppercase;
-    color: #cdb6ff; font-family: 'Cinzel', serif;
+    position: absolute; bottom: 8px; right: 8px;
+    background: rgba(8,5,16,0.9); color: #f6d97a; font-weight: 800;
+    font-size: 1.05rem; padding: 2px 10px; border-radius: 7px;
+    border: 1px solid rgba(212,175,55,0.6); font-family: 'Cinzel', serif;
   }
   .bp-grave {
-    position: relative; width: 70px; height: 60px; border-radius: 8px;
+    position: relative; width: 108px; height: 90px; border-radius: 10px;
     border: 1px dashed rgba(184,136,255,0.5); background: rgba(18,11,34,0.85);
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; margin-top: 14px;
+    gap: 3px; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s;
   }
   .bp-grave:hover { border-color: rgba(212,175,55,0.7); box-shadow: 0 0 14px rgba(212,175,55,0.3); }
-  .bp-grave-ic { font-size: 1.35rem; line-height: 1; }
-  .bp-grave-count { color: #f6d97a; font-weight: 800; font-size: 0.85rem; font-family: 'Cinzel', serif; }
+  .bp-grave-ic { font-size: 1.9rem; line-height: 1; }
+  .bp-grave-count { color: #f6d97a; font-weight: 800; font-size: 1.05rem; font-family: 'Cinzel', serif; }
   .bp-kalon {
     display: flex; align-items: center; gap: 7px; font-size: 0.92rem;
     color: #d6c4ff; background: rgba(18,11,34,0.88);
@@ -2724,12 +2725,18 @@
     box-shadow: 0 0 12px rgba(150,110,255,0.25), 0 3px 10px rgba(0,0,0,0.55);
   }
   .bp-kalon span { font-size: 0.86rem; }
+  @media (max-width: 1500px) {
+    .bp-wrap { width: 168px; }
+    .bp-deck { width: 116px; height: 162px; }
+    .bp-grave { width: 96px; height: 80px; }
+    .bp-id-name { max-width: 168px; }
+  }
   @media (max-width: 1300px) {
-    .bp-wrap { width: 134px; right: 5px; }
-    .bp-deck { width: 64px; height: 90px; }
-    .bp-grave { width: 58px; height: 52px; }
-    .bp-id-name { font-size: 0.7rem; max-width: 134px; }
-    .bp-kalon { font-size: 0.72rem; padding: 5px 11px; }
+    .bp-wrap { width: 140px; right: 6px; bottom: 176px; }
+    .bp-deck { width: 100px; height: 140px; }
+    .bp-grave { width: 84px; height: 70px; }
+    .bp-id-name { font-size: 0.78rem; max-width: 140px; }
+    .bp-kalon { font-size: 0.72rem; padding: 6px 11px; }
     .bp-kalon span { font-size: 0.68rem; }
   }
   @media (max-width: 1100px) {
@@ -38887,16 +38894,20 @@ function renderBattlePiles(s) {
 
   const idBlock = (nm, rk, col) => `<div class="bp-idblock"><div class="bp-id-name">${nm}</div><div class="bp-id-rank" style="color:${col}">${rk}</div></div>`;
   const deckPile = (label, count) => `
-    <div class="bp-deck" title="${escapeHtml(label)}: ${count} card${count === 1 ? '' : 's'} left">
-      <span class="bp-deck-label">${escapeHtml(label)}</span>
-      <img src="${CARDBACK}" alt="" draggable="false">
-      <span class="bp-deck-count">${count}</span>
+    <div class="bp-item">
+      <span class="bp-lbl">${escapeHtml(label)}</span>
+      <div class="bp-deck" title="${escapeHtml(label)}: ${count} card${count === 1 ? '' : 's'} left">
+        <img src="${CARDBACK}" alt="" draggable="false">
+        <span class="bp-deck-count">${count}</span>
+      </div>
     </div>`;
   const gravePile = (owner, label, n) => `
-    <div class="bp-grave" data-bp-grave="${owner}" role="button" tabindex="0" title="${escapeHtml(label)}: ${n} fallen — click to view">
-      <div class="bp-grave-ic">⚰️</div>
-      <span class="bp-deck-label">${escapeHtml(label)}</span>
-      <span class="bp-grave-count">${n}</span>
+    <div class="bp-item">
+      <span class="bp-lbl">${escapeHtml(label)}</span>
+      <div class="bp-grave" data-bp-grave="${owner}" role="button" tabindex="0" title="${escapeHtml(label)}: ${n} fallen — click to view">
+        <div class="bp-grave-ic">⚰️</div>
+        <span class="bp-grave-count">${n}</span>
+      </div>
     </div>`;
   const kalon = (n) => `<div class="bp-kalon" title="Kalon Source charges remaining">🌌 <span>Kalon Source ×${Math.max(0, n | 0)}</span></div>`;
 

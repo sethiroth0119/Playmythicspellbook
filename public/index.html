@@ -20206,6 +20206,7 @@ function syncMusicForScreen() {
 const SFX = {
   coinFlip:       { src: 'assets/Audio/coin%20flip.wav',        volume: 1.0 },
   buttonClick:    { src: 'assets/Audio/button%20click.wav',     volume: 0.9 },
+  buttonHover:    { src: 'assets/Audio/button%20highlight%20sound.mp3', volume: 0.55 },
   mainMenuButton: { src: 'assets/Audio/main%20menu%20button.wav', volume: 0.9 },
   // ===== Battle SFX =====
   endTurn:        { src: 'assets/Audio/end%20turn.wav',         volume: 0.9 },
@@ -20263,12 +20264,52 @@ function installButtonSfxListener() {
     playSfx(sfxId);
   }, { capture: true });
 }
+// ---- Global button-HIGHLIGHT (hover/focus) SFX ----
+// Plays SFX.buttonHover the moment the pointer enters — or keyboard focus
+// lands on — any clickable (button / .hub-portal). Same guards as the click
+// handler (disabled / locked / data-no-sfx). De-duped so it fires once per
+// element-entry and rate-limited so sweeping across a toolbar of buttons
+// doesn't machine-gun the cue.
+let _buttonHoverSfxInstalled = false;
+function installButtonHoverSfxListener() {
+  if (_buttonHoverSfxInstalled || typeof document === 'undefined') return;
+  _buttonHoverSfxInstalled = true;
+  const CLICKABLE_SELECTOR = 'button, .hub-portal';
+  let _lastHoverEl = null;
+  let _lastHoverAt = 0;
+  const fire = (btn) => {
+    if (!btn || btn === _lastHoverEl) return;             // still inside same control
+    if (btn.tagName === 'BUTTON' && btn.disabled) return;
+    if (btn.classList && btn.classList.contains('portal-locked')) return;
+    if (btn.dataset && btn.dataset.noSfx === '1') return;
+    const now = Date.now();
+    if (now - _lastHoverAt < 55) { _lastHoverEl = btn; return; } // rapid sweep — skip cue
+    _lastHoverEl = btn;
+    _lastHoverAt = now;
+    try { playSfx('buttonHover'); } catch (e) {}
+  };
+  document.addEventListener('mouseover', (ev) => {
+    const t = ev.target;
+    if (!t || typeof t.closest !== 'function') return;
+    const btn = t.closest(CLICKABLE_SELECTOR);
+    if (!btn) { _lastHoverEl = null; return; }             // left all controls → re-arm
+    fire(btn);
+  });
+  // Keyboard / programmatic focus also counts as "highlighted".
+  document.addEventListener('focusin', (ev) => {
+    const t = ev.target;
+    if (!t || typeof t.closest !== 'function') return;
+    const btn = t.closest(CLICKABLE_SELECTOR);
+    if (btn) fire(btn);
+  });
+}
 // Install immediately if DOM is already parsed, else on DOMContentLoaded.
 if (typeof document !== 'undefined') {
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', installButtonSfxListener, { once: true });
+    document.addEventListener('DOMContentLoaded', () => { installButtonSfxListener(); installButtonHoverSfxListener(); }, { once: true });
   } else {
     installButtonSfxListener();
+    installButtonHoverSfxListener();
   }
 }
 function playSfx(id) {

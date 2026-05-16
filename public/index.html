@@ -2606,6 +2606,28 @@
     border-color: var(--azure);
     box-shadow: 0 0 14px rgba(74,143,212,0.3), 0 0 0 1px rgba(0,0,0,0.5) inset;
   }
+  /* ⏱ 120s turn clock — sits inside the player turn-display pill */
+  .turn-timer {
+    display: inline-block;
+    margin-left: 0.55rem;
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(8,5,16,0.55);
+    border: 1px solid rgba(146,197,247,0.5);
+    color: #cfe6ff;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.06em;
+  }
+  .turn-timer.low {
+    color: #ffd0c4;
+    border-color: var(--ember);
+    background: rgba(232,93,60,0.22);
+    animation: turn-timer-pulse 1s ease-in-out infinite;
+  }
+  @keyframes turn-timer-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(232,93,60,0.0); }
+    50%      { box-shadow: 0 0 10px 2px rgba(232,93,60,0.55); }
+  }
   .turn-display.ai {
     color: #ffa088;
     background: rgba(232,93,60,0.18);
@@ -38612,6 +38634,11 @@ function renderBattle() {
   if (!App._eventSpriteTicker) {
     App._eventSpriteTicker = setInterval(_eventSpriteTickerStep, 80);
   }
+  // ⏱ 120s turn clock — one global 1s ticker; arms on each player turn,
+  // auto-ends the turn at 0. Self-guards on screen/state so it's cheap.
+  if (!App._turnTimer) {
+    App._turnTimer = setInterval(_turnTimerStep, 1000);
+  }
   // 🛡 Safety: pull any out-of-bounds units back into the 8×7 grid. Handles
   // saved games from older board sizes (10×8) where AI units could legitimately
   // sit at coords that no longer exist. Without this they'd be invisible —
@@ -38733,6 +38760,7 @@ function renderBattle() {
             <button class="btn-secondary btn-mini" id="btn-quit">← Quit</button>
             <div class="turn-display ${s.turn === 'player' ? 'player' : 'ai'}">
               ${s.turn === 'player' ? `Your Turn ${s.turnNumber}` : 'Enemy Turn'}
+              ${s.turn === 'player' && !s.gameOver ? `<span id="turn-timer" class="turn-timer">2:00</span>` : ''}
             </div>
           </div>
           ${dayNightBanner}
@@ -42285,6 +42313,46 @@ function onEndTurn() {
   }
   renderBattle();
   scheduleAIStep(700); // no-op in multiplayer per scheduleAIStep guard
+}
+
+// ⏱ Per-turn 120-second clock. Runs once a second from a global interval
+// started in renderBattle. Arms a fresh 120s window each time it becomes the
+// local player's turn, paints the countdown into #turn-timer (no full
+// re-render), and auto-ends the turn once at 0. Inert off the battle screen,
+// during the AI/opponent turn, on game-over, and while viewing a replay.
+const TURN_TIME_LIMIT_MS = 120000;
+function _turnTimerStep() {
+  try {
+    if (App.screen !== 'battle' || !App.state || App.state.gameOver || App.replayViewing) {
+      App._turnTimerKey = null;
+      return;
+    }
+    const s = App.state;
+    const el = (typeof document !== 'undefined') ? document.getElementById('turn-timer') : null;
+    const isPlayerTurn = s.turn === 'player' && !App.ui.aiBusy;
+    if (!isPlayerTurn) {
+      App._turnTimerKey = null;
+      if (el) el.textContent = '';
+      return;
+    }
+    const key = 'p' + (s.turnNumber || 0);
+    if (App._turnTimerKey !== key) {
+      App._turnTimerKey = key;
+      App._turnTimerEnd = Date.now() + TURN_TIME_LIMIT_MS;
+      App._turnTimerFired = false;
+    }
+    const remain = Math.max(0, Math.ceil((App._turnTimerEnd - Date.now()) / 1000));
+    if (el) {
+      const mm = Math.floor(remain / 60), ss = remain % 60;
+      el.textContent = mm + ':' + (ss < 10 ? '0' : '') + ss;
+      el.classList.toggle('low', remain <= 15);
+    }
+    if (remain <= 0 && !App._turnTimerFired) {
+      App._turnTimerFired = true;
+      try { if (typeof showToast === 'function') showToast('⏱ Time! Your turn ended automatically.', 2400); } catch (e) {}
+      try { onEndTurn(); } catch (e) {}
+    }
+  } catch (e) { /* never let the clock break the battle */ }
 }
 
 // ============ STEP-BASED AI CONTROLLER ============

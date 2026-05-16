@@ -10893,7 +10893,7 @@
     .tutorial-panel { right: 0.5rem; left: 0.5rem; width: auto; bottom: 0.5rem; }
   }
 
-  /* ===== 🏆 Coliseum (Ranked / Tournament UI) ===== */
+  /* ===== 🏆 Colosseum (Ranked / Tournament UI) ===== */
   .coliseum-page { max-width: 1280px; margin: 0 auto; padding: 1.5rem 1.5rem; }
   .coliseum-title { color: var(--gold-bright); font-family: 'Cinzel', serif; letter-spacing: 0.05em; }
   .coliseum-rank-card {
@@ -30819,10 +30819,10 @@ function renderTitle() {
     battle: [
       { id: 'btn-start',    icon: '<img src="assets/artwork/gameicons/Battle%20icon.png" alt="Quick Battle" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Quick Battle',    sub: 'Pick a deck. Jump in.',          accent: '#ff7755',
         onclick: () => { App.screen = 'deckSelect'; App.selectedHero = App.selectedHero || (STARTER_HEROES[0] && STARTER_HEROES[0].id); render(); } },
-      // 🏆 Coliseum — the full competitive system: Ranked, Open Cup, Faction
+      // 🏆 Colosseum — the full competitive system: Ranked, Open Cup, Faction
       // War, Season Pass. Always visible; first-time entry triggers the faction
       // picker if the player hasn't chosen one yet.
-      { id: 'btn-coliseum', icon: '<img src="assets/artwork/gameicons/thropy.png" alt="Coliseum" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Coliseum',        sub: (() => {
+      { id: 'btn-coliseum', icon: '<img src="assets/artwork/gameicons/thropy.png" alt="Colosseum" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Colosseum',        sub: (() => {
             const c = Profile.competitive || {};
             const tier = (typeof getCurrentTier === 'function') ? getCurrentTier() : null;
             return tier ? `${tier.name} · ${c.rr || 0} RR · ${c.ap || 0} AP` : 'Ranked play & tournaments';
@@ -31156,13 +31156,13 @@ function renderTitle() {
           return `<button class="hub-cur-pill hub-cur-pill-cloud" id="hub-cloud-pill" title="Sign in to back up your progress and play multiplayer">☁ Sign In</button>`;
         })()}
         ${(() => {
-          // 🏆 Rank pill — shows current rank + RR. Click jumps straight to Coliseum.
+          // 🏆 Rank pill — shows current rank + RR. Click jumps straight to Colosseum.
           // Hidden until the player has either played a ranked match or has any RR.
           const comp = Profile.competitive || {};
           const tier = (typeof getCurrentTier === 'function') ? getCurrentTier() : null;
           if (!tier || ((comp.rr || 0) === 0 && (comp.apLifetime || 0) === 0)) return '';
           const emblem = (typeof getTierEmblem === 'function') ? getTierEmblem(tier) : '🏆';
-          return `<button class="hub-cur-pill hub-cur-pill-rank" style="--rank-accent: ${tier.accent}" id="hub-rank-pill" title="${escapeHtml(tier.name)} · ${comp.rr || 0} RR · ${comp.ap || 0} AP — click to open Coliseum">${emblem} ${escapeHtml(tier.name)} <span style="opacity:0.6">·</span> ${comp.rr || 0} RR</button>`;
+          return `<button class="hub-cur-pill hub-cur-pill-rank" style="--rank-accent: ${tier.accent}" id="hub-rank-pill" title="${escapeHtml(tier.name)} · ${comp.rr || 0} RR · ${comp.ap || 0} AP — click to open Colosseum">${emblem} ${escapeHtml(tier.name)} <span style="opacity:0.6">·</span> ${comp.rr || 0} RR</button>`;
         })()}
         ${(() => {
           // 🔊 Quick mute pill — toggles Profile.settings.musicEnabled and live-controls
@@ -31287,7 +31287,7 @@ function renderTitle() {
       }
     };
   };
-  // 🏆 Rank pill — jumps to the Coliseum hub when present.
+  // 🏆 Rank pill — jumps to the Colosseum hub when present.
   const rankPill = document.getElementById('hub-rank-pill');
   if (rankPill) rankPill.onclick = () => { App.screen = 'coliseum'; App.coliseumTab = 'ranked'; render(); };
   // Quick music toggle in the currency rail.
@@ -31867,7 +31867,7 @@ function renderDeckSelect() {
       scriptedWeather, enemyLevel, enemyDeckOverride,
       encounterModifiers,
       coinCall: null, coinResult: null, playerWonFlip: null, playerGoesFirst: null,
-      // 🏆 Coliseum-set ranked flags. Cleared on screen exit so casual battles
+      // 🏆 Colosseum-set ranked flags. Cleared on screen exit so casual battles
       // (Quick Battle from Battle Hall) stay un-ranked by default.
       rankedMode:      !!(App.battlePrepFlags && App.battlePrepFlags.rankedMode),
       openCupRun:      (App.battlePrepFlags && App.battlePrepFlags.openCupRun) || null,
@@ -32132,7 +32132,7 @@ function renderVsScreen() {
 
   // ===== Player stats for the holographic combat panel =====
   // Pulled from Profile so they reflect the latest cloud-synced values:
-  // tournament rank (Coliseum/competitive), kill count (lifetime),
+  // tournament rank (Colosseum/competitive), kill count (lifetime),
   // legendary units (Mythic rarity units in the deck preview).
   const _heroEntry = (Profile.heroes && Profile.heroes[me.id]) || {};
   const myKills    = _heroEntry.kills || 0;
@@ -43528,7 +43528,7 @@ function recordBattleProgress() {
 
   // ============ 🏆 RANKED PROGRESSION ============
   // Only fires when the player opted into Ranked mode for this match via the
-  // Coliseum hub. Casual / campaign / daily battles don't move RR/AP — keeps
+  // Colosseum hub. Casual / campaign / daily battles don't move RR/AP — keeps
   // grind-vs-skill cleanly separated per the design doc.
   if (App.battlePrep && App.battlePrep.rankedMode && typeof resolveRankedBattleResult === 'function') {
     const enemyHero = (s.units || []).find(u => u && u.isHero && u.owner === 'ai');
@@ -48263,7 +48263,7 @@ function renderColiseum() {
   root.innerHTML = `
     <div class="campaign-page coliseum-page">
       <button class="hub-back-btn" id="hub-back">← Main Hub</button>
-      <h1 class="section-title coliseum-title">🏆 The Coliseum</h1>
+      <h1 class="section-title coliseum-title">🏆 The Colosseum</h1>
       <div class="section-subtitle">Competitive play, tournaments, and seasonal warfare.</div>
       ${rankWidget}
       <div class="coliseum-tabs">${tabsHTML}</div>
@@ -48741,7 +48741,7 @@ const RPG_GUIDE_PAGES = [
   { route: 'rlcResult',    label: 'Roguelite — Run Result' },
   { route: 'deck',         label: 'Deck Builder' },
   { route: 'collection',   label: 'Inventory / Codex' },
-  { route: 'coliseum',     label: 'Coliseum' },
+  { route: 'coliseum',     label: 'Colosseum' },
   { route: 'camp',         label: 'Survivor Camp' },
   { route: 'lab',          label: 'The Lab' },
   // Title sub-hubs (one App.screen, switched via the hub portals).
@@ -49878,7 +49878,7 @@ function renderAuthGate() {
         <div class="auth-gate-eyebrow">MYTHIC SPELLBOOK</div>
         <h1 class="auth-gate-title">Welcome Survivor</h1>
         <p class="auth-gate-tagline">
-          Sign in to save your inventory, climb the Coliseum,<br>
+          Sign in to save your inventory, climb the Colosseum,<br>
           and stand ready for multiplayer when the gates open.
         </p>
 
@@ -50089,7 +50089,7 @@ function renderAuthModal() {
   };
 }
 
-// ============ Coliseum Help Modal ============
+// ============ Colosseum Help Modal ============
 // One-shot info panel explaining RR / AP / streaks / tiers / season resets.
 // Triggered by the ⓘ icon next to the RR number on the rank card.
 function renderColiseumHelpModal() {

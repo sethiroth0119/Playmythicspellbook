@@ -24292,15 +24292,20 @@ function saveForge() {
         delete c.image; delete c.boardDataUrl; delete c.spriteFrames;
         return c;
       }), name: 'events' },
-    { key: STORAGE_KEYS.encounters, value: Forge.customEncounters, name: 'encounters' },
-    { key: STORAGE_KEYS.customPacks,    value: Forge.customPacks,    name: 'customPacks' },
-    { key: STORAGE_KEYS.structureDecks, value: Forge.structureDecks, name: 'structureDecks' },
+    // Every list below is mirrored to IndexedDB and merged back id-by-id at
+    // boot by loadForgeContentFromIdb, so stripping big base64 data: URLs
+    // from the localStorage fast-path is lossless — and it's the only thing
+    // that stops one image-heavy list (starter-deck covers, item art, etc.)
+    // from blowing the ~5MB quota and cascade-failing EVERY later chunk.
+    { key: STORAGE_KEYS.encounters, value: _stripDataUrls(Forge.customEncounters || []), name: 'encounters' },
+    { key: STORAGE_KEYS.customPacks,    value: _stripDataUrls(Forge.customPacks    || []), name: 'customPacks' },
+    { key: STORAGE_KEYS.structureDecks, value: _stripDataUrls(Forge.structureDecks || []), name: 'structureDecks' },
     // 🎒 + 💰 + 🌐 — new admin storage chunks. Keep these together so the
     // localStorage size budget is easy to reason about.
-    { key: 'hg_customItems',      value: Forge.customItems     || [], name: 'customItems' },
-    { key: 'hg_pageGuides',       value: Forge.pageGuides      || [], name: 'pageGuides' },
-    { key: 'hg_aiDecks',          value: Forge.aiDecks         || [], name: 'aiDecks' },
-    { key: 'hg_starterDecks',     value: Forge.starterDecks    || [], name: 'starterDecks' },
+    { key: 'hg_customItems',      value: _stripDataUrls(Forge.customItems  || []), name: 'customItems' },
+    { key: 'hg_pageGuides',       value: _stripDataUrls(Forge.pageGuides   || []), name: 'pageGuides' },
+    { key: 'hg_aiDecks',          value: _stripDataUrls(Forge.aiDecks      || []), name: 'aiDecks' },
+    { key: 'hg_starterDecks',     value: _stripDataUrls(Forge.starterDecks || []), name: 'starterDecks' },
     // 🗄️ Campaigns carry big base64 (cover · map bg · currency icon ·
     // per-node images · dialogue art). Strip them from the localStorage
     // fast-path — the FULL copy is in IndexedDB (idbSet('forge_campaigns')

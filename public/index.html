@@ -2644,6 +2644,72 @@
      The page itself never scrolls — the rail scrolls inside its column, and the bottom
      strip is reserved via padding-bottom on the grid. */
   .battle-screen.mtga-layout { padding-bottom: 0 !important; }
+
+  /* ===== 🂠 Battle deck / ⚰️ graveyard / 🌌 Kalon rail (right edge) ===== */
+  .bp-wrap {
+    position: fixed; right: 10px; top: 76px; bottom: 92px; width: 116px;
+    z-index: 60; display: flex; flex-direction: column;
+    justify-content: space-between; align-items: center;
+    pointer-events: none;
+  }
+  .bp-col { display: flex; flex-direction: column; gap: 7px; align-items: center; pointer-events: auto; }
+  .bp-idblock { text-align: center; max-width: 116px; }
+  .bp-id-name {
+    color: #f6d97a; font-weight: 800; font-size: 0.78rem;
+    font-family: 'Cinzel', serif; line-height: 1.15;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 116px;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+  }
+  .bp-id-rank {
+    font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em;
+    font-family: 'Cinzel', serif; text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  }
+  .bp-deck { position: relative; width: 86px; height: 120px; }
+  .bp-deck img {
+    width: 100%; height: 100%; object-fit: cover; border-radius: 8px;
+    border: 1px solid rgba(212,175,55,0.5);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.65),
+                3px 3px 0 -1px rgba(22,14,34,0.95),
+                6px 6px 0 -2px rgba(15,9,24,0.9),
+                9px 9px 0 -3px rgba(10,6,18,0.85);
+  }
+  .bp-deck-count {
+    position: absolute; bottom: 6px; right: 6px;
+    background: rgba(8,5,16,0.88); color: #f6d97a; font-weight: 800;
+    font-size: 0.82rem; padding: 1px 7px; border-radius: 6px;
+    border: 1px solid rgba(212,175,55,0.55); font-family: 'Cinzel', serif;
+  }
+  .bp-deck-label, .bp-grave .bp-deck-label {
+    position: absolute; top: -14px; left: 0; right: 0; text-align: center;
+    font-size: 0.55rem; letter-spacing: 0.07em; text-transform: uppercase;
+    color: #cdb6ff; font-family: 'Cinzel', serif;
+  }
+  .bp-grave {
+    position: relative; width: 70px; height: 60px; border-radius: 8px;
+    border: 1px dashed rgba(184,136,255,0.5); background: rgba(18,11,34,0.85);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; margin-top: 14px;
+  }
+  .bp-grave:hover { border-color: rgba(212,175,55,0.7); box-shadow: 0 0 14px rgba(212,175,55,0.3); }
+  .bp-grave-ic { font-size: 1.35rem; line-height: 1; }
+  .bp-grave-count { color: #f6d97a; font-weight: 800; font-size: 0.85rem; font-family: 'Cinzel', serif; }
+  .bp-kalon {
+    display: flex; align-items: center; gap: 4px; font-size: 0.62rem;
+    color: #c9b6ff; background: rgba(18,11,34,0.82);
+    border: 1px solid rgba(150,110,255,0.45); border-radius: 999px;
+    padding: 3px 9px; font-family: 'Cinzel', serif; white-space: nowrap;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  @media (max-width: 1300px) {
+    .bp-wrap { width: 86px; right: 5px; }
+    .bp-deck { width: 64px; height: 90px; }
+    .bp-grave { width: 58px; height: 52px; }
+    .bp-id-name { font-size: 0.68rem; max-width: 86px; }
+    .bp-kalon { font-size: 0.54rem; padding: 2px 6px; }
+  }
+  @media (max-width: 1100px) {
+    .bp-wrap { display: none; }   /* phones: rail would crowd the board */
+  }
   .battle-grid {
     display: grid;
     /* Left rail widened from 360px → 400px so the big hero cards (Lyra,
@@ -38759,57 +38825,80 @@ function fitCardNames() {
   });
 }
 
-// ===== 🂠 Deck + ⚰️ Graveyard piles (both sides) =====
-// Fixed overlay flanking the board: opponent's deck/graveyard top-right,
-// the player's bottom-right (next to the emote/chat fab). Deck piles show
-// the remaining count; graveyard piles are clickable to view their cards.
-// Purely additive — reads App.state, never mutates battle logic.
+// ===== 🂠 Deck (card-back) + ⚰️ Graveyard + 🌌 Kalon Source (both sides) =====
+// Fixed right-edge rail: opponent block up top, player block at the bottom.
+// Each block = name + rank, the real default card-back rendered as a deck
+// stack (count overlaid), a graveyard of FALLEN UNITS (clickable), and the
+// Kalon Source charge count. Purely additive — reads App.state only.
 function renderBattlePiles(s) {
   if (!s || !s.player || !s.ai || s.gameOver) return '';
-  if (App.battlePrep && App.battlePrep.multiplayer) { /* still fine — counts only */ }
+  const CARDBACK = 'assets/artwork/cardback.png?v=2';
   const len = (a) => Array.isArray(a) ? a.length : 0;
-  const pile = (owner, kind, label, count, clickable) => {
-    const col = owner === 'player' ? '#6cb6f2' : '#ff8a7a';
-    return `<div ${clickable ? `data-bp-grave="${owner}" role="button" tabindex="0"` : ''} title="${escapeHtml(label)}: ${count} card${count === 1 ? '' : 's'}${clickable ? ' — click to view' : ''}"
-        style="width:60px;height:80px;border-radius:8px;border:1px solid ${col}66;background:linear-gradient(160deg,rgba(22,13,42,0.96),rgba(10,6,22,0.96));box-shadow:0 4px 14px rgba(0,0,0,0.6);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:${clickable ? 'pointer' : 'default'};position:relative;-webkit-user-select:none;user-select:none">
-        <div style="position:absolute;inset:4px;border:1px dashed ${col}55;border-radius:6px;pointer-events:none"></div>
-        <div style="font-size:1.25rem;line-height:1">${kind === 'deck' ? '🂠' : '⚰️'}</div>
-        <div style="font-size:0.58rem;letter-spacing:0.04em;color:${col};font-family:'Cinzel',serif;text-transform:uppercase;text-align:center;line-height:1.05">${escapeHtml(label)}</div>
-        <div style="font-weight:800;color:#f6d97a;font-size:0.95rem;line-height:1">${count}</div>
-      </div>`;
-  };
-  const grp = (pos, inner) => `<div style="position:fixed;${pos};z-index:60;display:flex;flex-direction:column;gap:8px;pointer-events:auto">${inner}</div>`;
-  // Opponent (AI) — top-right: deck on top, graveyard below it (toward centre).
-  const oppGrp = grp('right:14px;top:90px',
-    pile('ai', 'deck', 'Foe Deck', len(s.ai.deck), false) +
-    pile('ai', 'grave', 'Foe Grave', len(s.ai.graveyard), true));
-  // Player — bottom-right next to the 💬 fab: graveyard above, deck below.
-  const meGrp = grp('right:14px;bottom:212px',
-    pile('player', 'grave', 'Graveyard', len(s.player.graveyard), true) +
-    pile('player', 'deck', 'Your Deck', len(s.player.deck), false));
+  // Killed units only — dead, non-hero units still sitting in s.units. (The
+  // `graveyard` array is spent CARDS, not kills — that's why live units used
+  // to show up there.) A revived unit flips back to alive and drops off.
+  const deadOf = (owner) => (Array.isArray(s.units) ? s.units : [])
+    .filter(u => u && !u.isHero && u.owner === owner && (!u.alive || (typeof u.currentHp === 'number' && u.currentHp <= 0)));
+
+  const tier = (typeof getCurrentTier === 'function') ? getCurrentTier() : null;
+  const myName = escapeHtml(String((Profile.account && Profile.account.displayName) || 'You').slice(0, 22));
+  const myRank = escapeHtml(String((tier && tier.name) || (Profile.competitive && Profile.competitive.rankName) || 'Unranked'));
+  const myRankCol = (tier && tier.accent) || '#b8a0ff';
+  let foeName = (App.battlePrep && App.battlePrep.opponentName) || '';
+  if (!foeName) { const fh = (s.units || []).find(u => u && u.isHero && u.owner === 'ai'); foeName = (fh && fh.name) || 'Opponent'; }
+  foeName = escapeHtml(String(foeName).slice(0, 22));
+  const foeRank = escapeHtml(String((App.battlePrep && App.battlePrep.opponentRank) || ((App.battlePrep && App.battlePrep.multiplayer) ? 'Ranked' : 'CPU')));
+
+  const idBlock = (nm, rk, col) => `<div class="bp-idblock"><div class="bp-id-name">${nm}</div><div class="bp-id-rank" style="color:${col}">${rk}</div></div>`;
+  const deckPile = (label, count) => `
+    <div class="bp-deck" title="${escapeHtml(label)}: ${count} card${count === 1 ? '' : 's'} left">
+      <span class="bp-deck-label">${escapeHtml(label)}</span>
+      <img src="${CARDBACK}" alt="" draggable="false">
+      <span class="bp-deck-count">${count}</span>
+    </div>`;
+  const gravePile = (owner, label, n) => `
+    <div class="bp-grave" data-bp-grave="${owner}" role="button" tabindex="0" title="${escapeHtml(label)}: ${n} fallen — click to view">
+      <div class="bp-grave-ic">⚰️</div>
+      <span class="bp-deck-label">${escapeHtml(label)}</span>
+      <span class="bp-grave-count">${n}</span>
+    </div>`;
+  const kalon = (n) => `<div class="bp-kalon" title="Kalon Source charges remaining">🌌 <span>Kalon Source ×${Math.max(0, n | 0)}</span></div>`;
+
+  const oppGrp = `<div class="bp-col">
+      ${idBlock(foeName, foeRank, '#ff9a8a')}
+      ${deckPile('Foe Deck', len(s.ai.deck))}
+      ${gravePile('ai', 'Foe Grave', deadOf('ai').length)}
+      ${kalon(s.ai.kalonsRemaining)}
+    </div>`;
+  const meGrp = `<div class="bp-col">
+      ${kalon(s.player.kalonsRemaining)}
+      ${gravePile('player', 'Graveyard', deadOf('player').length)}
+      ${deckPile('Your Deck', len(s.player.deck))}
+      ${idBlock(myName, myRank, myRankCol)}
+    </div>`;
+
   let modal = '';
   if (App._pileView === 'player' || App._pileView === 'ai') {
     const owner = App._pileView;
-    const cards = (s[owner] && Array.isArray(s[owner].graveyard)) ? s[owner].graveyard : [];
-    const ic = (c) => (c && c.type === 'unit') ? '🃏' : (c && c.type === 'spell') ? '✨' : (c && c.type === 'trap') ? '🪤' : (c && c.type === 'weather') ? '🌩️' : '📜';
-    const rows = cards.length
-      ? cards.map(c => `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:rgba(255,255,255,0.04);border:1px solid rgba(184,136,255,0.2);border-radius:5px">
-          <span style="font-size:1rem">${ic(c)}</span>
-          <span style="flex:1;color:#f0e6ff;font-size:0.85rem">${escapeHtml((c && c.name) || 'Card')}</span>
-          <span class="small-text ink-dim">${escapeHtml(String((c && c.type) || ''))}</span>
+    const dead = deadOf(owner);
+    const rows = dead.length
+      ? dead.map(u => `<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;background:rgba(255,255,255,0.04);border:1px solid rgba(184,136,255,0.2);border-radius:5px">
+          <span style="font-size:1.05rem">💀</span>
+          <span style="flex:1;color:#f0e6ff;font-size:0.88rem">${escapeHtml(u.name || 'Unit')}${u.level ? ` <span class="small-text ink-dim">Lv ${u.level}</span>` : ''}</span>
+          <span class="small-text ink-dim">fallen</span>
         </div>`).join('')
-      : '<div class="ink-dim" style="text-align:center;padding:18px">Empty — no cards here yet.</div>';
+      : '<div class="ink-dim" style="text-align:center;padding:18px">No fallen units yet — nothing has been killed.</div>';
     modal = `<div class="modal-backdrop" id="bp-modal-bd" style="z-index:1400">
         <div class="ds-modal" style="max-width:420px;max-height:74vh;display:flex;flex-direction:column;padding:18px">
           <div style="display:flex;align-items:center;margin-bottom:10px;gap:8px">
-            <div style="font-family:'Cinzel',serif;font-size:1.1rem;color:#f6d97a;flex:1">⚰️ ${owner === 'player' ? 'Your' : "Opponent's"} Graveyard <span class="small-text ink-dim">(${cards.length})</span></div>
+            <div style="font-family:'Cinzel',serif;font-size:1.1rem;color:#f6d97a;flex:1">⚰️ ${owner === 'player' ? 'Your' : "Opponent's"} Graveyard <span class="small-text ink-dim">(${dead.length} fallen)</span></div>
             <button class="btn-mini" id="bp-modal-x">✖ Close</button>
           </div>
           <div style="overflow:auto;display:flex;flex-direction:column;gap:5px">${rows}</div>
         </div>
       </div>`;
   }
-  return oppGrp + meGrp + modal;
+  return `<div class="bp-wrap">${oppGrp}${meGrp}</div>${modal}`;
 }
 function bindBattlePiles() {
   document.querySelectorAll('[data-bp-grave]').forEach(el => {

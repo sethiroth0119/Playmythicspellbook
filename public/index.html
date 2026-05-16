@@ -24057,6 +24057,11 @@ function loadForge() {
       if (p.starterPicked === true) Profile.starterPicked = true;
       if (typeof p.starterDeckId === 'string') Profile.starterDeckId = p.starterDeckId;
       if (Array.isArray(p.ownedStarterDecks)) Profile.ownedStarterDecks = p.ownedStarterDecks;
+      // 🪦 Tombstone cosmetics — purchased ids + the equipped image. Without
+      // these in the whitelist, every reload reset them to defaults (bought
+      // tombstones + equip selection silently lost).
+      if (Array.isArray(p.ownedTombstones)) Profile.ownedTombstones = p.ownedTombstones.filter(x => typeof x === 'string');
+      if (typeof p.equippedTombstone === 'string' || p.equippedTombstone === null) Profile.equippedTombstone = p.equippedTombstone;
       // 🗺️ Roguelite campaign — resume an in-progress run on reload.
       if (p.rlcRun && typeof p.rlcRun === 'object') Profile.rlcRun = p.rlcRun;
       // 🔀 Dialogue flags — choice-driven flags persist so conditional
@@ -26206,6 +26211,18 @@ function getTombstoneImage(owner) {
   if (Catalog.tombstoneArt) return Catalog.tombstoneArt;
   // 3. Built-in fallback — a simple stylized cross/marker drawn in CSS via class.
   return null;
+}
+// Merge admin-local + published tombstone cosmetics (by id; local wins so an
+// admin sees edits before publishing). Used by the Vendor Market shop tab
+// and the Settings equip picker.
+function getAllTombstoneCosmetics() {
+  const byId = {};
+  (Array.isArray(Catalog.tombstoneCosmetics) ? Catalog.tombstoneCosmetics : []).forEach(t => { if (t && t.id) byId[t.id] = t; });
+  (Array.isArray(Forge.tombstoneCosmetics)   ? Forge.tombstoneCosmetics   : []).forEach(t => { if (t && t.id) byId[t.id] = t; });
+  return Object.values(byId).filter(t => t && t.img);
+}
+function _tombstoneCosmeticById(id) {
+  return getAllTombstoneCosmetics().find(t => t.id === id) || null;
 }
 
 // 🜁 REBIRTH SHIFT helpers ----------------------------------------------------
@@ -32564,6 +32581,34 @@ function renderPricingAdmin() {
         <div class="small-text ink-dim" style="margin-top:0.5rem">
           PNG / JPG / SVG / WebP. Uploaded files are resized to 256×256 and stored as data URLs inline. Bigger files = bigger catalog payload, so keep the upload under 500 KB if you can.
         </div>
+
+        <!-- 🛒 Buyable tombstone cosmetics — players purchase these in the
+             Vendor Market and equip them from Settings → Tombstone Cosmetic. -->
+        <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px dashed rgba(184,136,255,0.25)">
+          <div class="settings-section-title" style="font-size:1rem">🛒 Buyable Tombstone Cosmetics</div>
+          <div class="settings-section-desc">Each one shows up in the <strong>Vendor Market → 🪦 Tombstones</strong> tab. Players who buy it can equip it from <strong>Settings → 🪦 Tombstone Cosmetic</strong>; their dying units then use it instead of the default.</div>
+          <div style="display:flex;flex-direction:column;gap:0.4rem;margin-top:0.6rem">
+            ${(Forge.tombstoneCosmetics || []).length === 0 ? `<div class="small-text ink-dim" style="padding:0.5rem 0">No cosmetics yet — add one below.</div>` : (Forge.tombstoneCosmetics || []).map((tc, i) => `
+              <div style="display:flex;align-items:center;gap:0.7rem;padding:0.5rem 0.7rem;background:rgba(15,8,30,0.5);border:1px solid rgba(184,136,255,0.25);border-radius:6px">
+                <img src="${tc.img}" alt="" style="width:42px;height:42px;object-fit:contain;image-rendering:pixelated">
+                <div style="flex:1 1 auto;min-width:0">
+                  <div class="small-text" style="color:#ffd166;font-family:'Cinzel',serif;font-weight:700">${escapeHtml(tc.name || 'Tombstone')}</div>
+                  <div class="small-text ink-dim">${Math.max(0, Number(tc.price) || 0)} ${tc.currency === 'sovereigns' ? 'Aza coin' : 'Cinders'}</div>
+                </div>
+                <button class="btn-mini" data-tomb-cos-del="${i}" style="color:#ff8080">🗑</button>
+              </div>`).join('')}
+          </div>
+          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-top:0.7rem">
+            <input id="tomb-cos-name" type="text" placeholder="Cosmetic name" style="flex:1 1 160px;min-width:140px;padding:0.4rem 0.6rem;background:rgba(15,8,30,0.65);border:1px solid rgba(184,136,255,0.3);border-radius:4px;color:#e8e0ff;font-family:'Crimson Text',serif">
+            <input id="tomb-cos-price" type="number" min="0" value="200" title="Price" style="width:90px;padding:0.4rem 0.6rem;background:rgba(15,8,30,0.65);border:1px solid rgba(184,136,255,0.3);border-radius:4px;color:#e8e0ff">
+            <select id="tomb-cos-cur" style="padding:0.4rem;background:rgba(15,8,30,0.65);border:1px solid rgba(184,136,255,0.3);border-radius:4px;color:#e8e0ff">
+              <option value="gems">Cinders</option>
+              <option value="sovereigns">Aza coin</option>
+            </select>
+            <input type="file" id="tomb-cos-file" accept="image/*" style="display:none">
+            <button class="btn-primary btn-mini" id="btn-tomb-cos-add">📤 Upload + Add</button>
+          </div>
+        </div>
       </div>
 
       <div class="settings-section">
@@ -32811,6 +32856,42 @@ function renderPricingAdmin() {
     showToast('🪦 Default tombstone cleared — using emoji fallback.', 2400);
     render();
   };
+  // 🛒 Buyable tombstone cosmetics CRUD.
+  const bCosAdd = document.getElementById('btn-tomb-cos-add');
+  const bCosFile = document.getElementById('tomb-cos-file');
+  if (bCosAdd && bCosFile) {
+    bCosAdd.onclick = () => bCosFile.click();
+    bCosFile.onchange = async () => {
+      const file = bCosFile.files && bCosFile.files[0];
+      if (!file) return;
+      const nm = (document.getElementById('tomb-cos-name') || {}).value || '';
+      const pr = Math.max(0, parseInt((document.getElementById('tomb-cos-price') || {}).value, 10) || 0);
+      const cur = ((document.getElementById('tomb-cos-cur') || {}).value === 'sovereigns') ? 'sovereigns' : 'gems';
+      if (!nm.trim()) { showToast('Give the cosmetic a name first.', 2400); bCosFile.value = ''; return; }
+      bCosAdd.disabled = true; bCosAdd.textContent = '…uploading';
+      try {
+        const dataUrl = await resizeImage(file, 256);
+        Forge.tombstoneCosmetics = Array.isArray(Forge.tombstoneCosmetics) ? Forge.tombstoneCosmetics : [];
+        Forge.tombstoneCosmetics.push({ id: 'tc' + Date.now().toString(36), name: nm.trim().slice(0, 40), img: dataUrl, price: pr, currency: cur });
+        if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge();
+        showToast('🪦 Cosmetic added! Click 📚 Publish to ship it to players.', 3200);
+        render();
+      } catch (e) {
+        showToast('⨯ Upload failed: ' + ((e && e.message) || 'unknown'), 4000);
+      } finally {
+        bCosAdd.disabled = false; bCosAdd.textContent = '📤 Upload + Add';
+        bCosFile.value = '';
+      }
+    };
+  }
+  document.querySelectorAll('[data-tomb-cos-del]').forEach(b => b.onclick = () => {
+    const i = parseInt(b.dataset.tombCosDel, 10);
+    if (!Array.isArray(Forge.tombstoneCosmetics) || !Forge.tombstoneCosmetics[i]) return;
+    if (!confirm('Remove "' + (Forge.tombstoneCosmetics[i].name || 'this cosmetic') + '"? Players who already bought it keep it.')) return;
+    Forge.tombstoneCosmetics.splice(i, 1);
+    if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge();
+    render();
+  });
 
   // 🤖 AI Deck CRUD — admin-only authoring of decks the AI plays.
   // Uses a simple JSON-textarea editor (prompt) for speed; a richer card-picker
@@ -45457,6 +45538,7 @@ function settleWagerMatch(matchId, winner) {
 function renderVendorMarket() {
   const tab = (App.vendorMarketTab === 'sovereigns') ? 'sovereigns'
             : (App.vendorMarketTab === 'starter')    ? 'starter'
+            : (App.vendorMarketTab === 'tomb')       ? 'tomb'
             : 'packs';
   const gems = Profile.gems || 0;
   const sovBal = Profile.sovereigns || 0;
@@ -45465,6 +45547,7 @@ function renderVendorMarket() {
   const packsBody   = _buildPackShopBody(gems, sovBal);
   const sovBody     = _buildSovereignsStoreBody(sovBal);
   const starterBody = _buildStarterDeckShopBody(gems, sovBal);
+  const tombBody    = _buildTombstoneShopBody(gems, sovBal);
 
   root.innerHTML = `
     <div class="campaign-page vendor-market-page">
@@ -45516,10 +45599,14 @@ function renderVendorMarket() {
           🦸 Starter Decks
           <span class="vm-tab-sub">Ready-to-play bundles</span>
         </button>
+        <button class="vm-tab ${tab === 'tomb' ? 'vm-tab-active' : ''}" data-vm-tab="tomb">
+          🪦 Tombstones
+          <span class="vm-tab-sub">Cosmetic grave markers</span>
+        </button>
       </div>
 
       <div class="vm-tab-body">
-        ${tab === 'packs' ? packsBody : tab === 'sovereigns' ? sovBody : starterBody}
+        ${tab === 'packs' ? packsBody : tab === 'sovereigns' ? sovBody : tab === 'starter' ? starterBody : tombBody}
       </div>
 
       ${App._packReveal ? renderPackRevealModal() : ''}
@@ -45543,7 +45630,61 @@ function renderVendorMarket() {
   // ----- Tab-specific bindings -----
   if (tab === 'packs')           _bindPackShopHandlers();
   else if (tab === 'sovereigns') _bindSovereignsStoreHandlers();
-  else                           _bindStarterDeckShopHandlers();
+  else if (tab === 'starter')    _bindStarterDeckShopHandlers();
+  else                           _bindTombstoneShopHandlers();
+}
+// ----- 🪦 Tombstone cosmetics shop — admin-listed grave markers. Buying one
+// adds its id to Profile.ownedTombstones; the player equips it from
+// Settings → 🪦 Tombstone Cosmetic. Dying units then use that image.
+function _buildTombstoneShopBody(gems, sovBal) {
+  const all = (typeof getAllTombstoneCosmetics === 'function') ? getAllTombstoneCosmetics() : [];
+  const owned = Array.isArray(Profile.ownedTombstones) ? Profile.ownedTombstones : [];
+  if (all.length === 0) {
+    return `<div class="ink-dim" style="padding:1.4rem;text-align:center">No tombstone cosmetics are listed yet. Check back later!</div>`;
+  }
+  const cards = all.map(tc => {
+    const isOwned = tc.id && owned.indexOf(tc.id) >= 0;
+    const cur = tc.currency === 'sovereigns' ? 'sovereigns' : 'gems';
+    const price = Math.max(0, Number(tc.price) || 0);
+    const curIcon = cur === 'sovereigns' ? '<span class="aza-icon"></span>' : '<span class="cinder-icon"></span>';
+    const bal = cur === 'sovereigns' ? sovBal : gems;
+    const canAfford = bal >= price;
+    const btn = isOwned
+      ? `<button class="btn-secondary" disabled style="margin-top:auto">✓ Owned — equip in Settings</button>`
+      : `<button class="btn-primary ${canAfford ? '' : 'btn-disabled'}" data-buy-tomb="${escapeHtml(String(tc.id))}" ${canAfford ? '' : 'disabled'} style="margin-top:auto">${canAfford ? `Buy — ${price} ${curIcon}` : `Need ${price} ${curIcon}`}</button>`;
+    return `
+      <div style="width:200px;background:rgba(20,12,40,0.7);border:1px solid rgba(212,175,55,0.4);border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
+        <div style="height:150px;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,rgba(150,110,255,0.18),transparent 70%)"><img src="${tc.img}" alt="" style="max-width:78%;max-height:78%;object-fit:contain;image-rendering:pixelated;filter:drop-shadow(0 6px 14px rgba(0,0,0,0.7))"></div>
+        <div style="padding:14px;display:flex;flex-direction:column;gap:8px;flex:1">
+          <div style="font-family:'Cinzel',serif;font-size:1.05rem;font-weight:700;color:#f6d97a">${escapeHtml(tc.name || 'Tombstone')}</div>
+          ${btn}
+        </div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="small-text ink-dim" style="margin-bottom:0.8rem">Cosmetic grave markers — buying one unlocks it for your account. Equip it under <strong>Settings → 🪦 Tombstone Cosmetic</strong>; your dying units will use it in battle.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:18px;justify-content:flex-start">${cards}</div>`;
+}
+function _bindTombstoneShopHandlers() {
+  document.querySelectorAll('[data-buy-tomb]').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.buyTomb;
+      const tc = (typeof _tombstoneCosmeticById === 'function') ? _tombstoneCosmeticById(id) : null;
+      if (!tc) { showToast('That cosmetic is no longer available.', 2400); return; }
+      Profile.ownedTombstones = Array.isArray(Profile.ownedTombstones) ? Profile.ownedTombstones : [];
+      if (Profile.ownedTombstones.indexOf(id) >= 0) { showToast('You already own that.', 2000); return; }
+      const cur = tc.currency === 'sovereigns' ? 'sovereigns' : 'gems';
+      const price = Math.max(0, Number(tc.price) || 0);
+      const bal = cur === 'sovereigns' ? (Profile.sovereigns || 0) : (Profile.gems || 0);
+      if (bal < price) { showToast('Not enough ' + (cur === 'sovereigns' ? 'Aza coin' : 'Cinders') + '.', 2400); return; }
+      if (cur === 'sovereigns') Profile.sovereigns = Math.max(0, (Profile.sovereigns || 0) - price);
+      else Profile.gems = Math.max(0, (Profile.gems || 0) - price);
+      Profile.ownedTombstones.push(id);
+      try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); else saveProfile(); } catch (e) {}
+      showToast('🪦 ' + (tc.name || 'Tombstone') + ' unlocked! Equip it in Settings → 🪦 Tombstone Cosmetic.', 3600);
+      render();
+    };
+  });
 }
 
 // ----- 🦸 Starter Deck shop body — admin-listed starter decks as buyable
@@ -46950,6 +47091,33 @@ function renderSettings() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">🪦 Tombstone Cosmetic</div>
+        <div class="settings-section-desc">Choose the grave marker your dying units leave behind. Unlock more in the <strong>Vendor Market → 🪦 Tombstones</strong> tab. Enemy units always use the default.</div>
+        ${(() => {
+          const owned = Array.isArray(Profile.ownedTombstones) ? Profile.ownedTombstones : [];
+          const all = (typeof getAllTombstoneCosmetics === 'function') ? getAllTombstoneCosmetics() : [];
+          const ownedCos = all.filter(t => owned.indexOf(t.id) >= 0);
+          const equipped = Profile.equippedTombstone || null;
+          const defImg = Forge.tombstoneArt || Catalog.tombstoneArt || null;
+          const tile = (key, name, img, isActive) => `
+            <button class="frame-pick ${isActive ? 'active' : ''} unlocked" data-tomb-equip="${escapeHtml(String(key))}">
+              <div class="frame-pick-preview" style="display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,rgba(150,110,255,0.16),transparent 70%)">
+                ${img ? `<img src="${img}" alt="" style="max-width:70%;max-height:70%;object-fit:contain;image-rendering:pixelated">` : '<div class="frame-pick-preview-inner">🪦</div>'}
+              </div>
+              <div class="frame-pick-name">${escapeHtml(name)}</div>
+              ${isActive ? `<div class="frame-pick-active-tag">✓ Active</div>` : ''}
+            </button>`;
+          const defActive = !equipped;
+          let html = tile('__default__', defImg ? 'Default' : 'Default 🪦', defImg, defActive);
+          html += ownedCos.map(t => tile(t.id, t.name || 'Tombstone', t.img, equipped === t.img)).join('');
+          if (ownedCos.length === 0) {
+            html += `<div class="ink-dim small-text" style="align-self:center;padding:0 0.6rem">No cosmetics owned yet — visit the Vendor Market.</div>`;
+          }
+          return `<div class="frame-pick-grid">${html}</div>`;
+        })()}
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🎨 Color-blind palette</div>
         <div class="settings-section-desc">Swap element badge / dot colors to a high-contrast Okabe-Ito-inspired set. Designed for deuteranopia / protanopia (red-green colorblindness).</div>
         <label class="settings-toggle">
@@ -47154,6 +47322,24 @@ function renderSettings() {
       applyActiveFrameClass();
       const def = getFrameDef(fid);
       if (def) showToast(`Frame: ${def.name}`);
+      render();
+    };
+  });
+
+  document.querySelectorAll('[data-tomb-equip]').forEach(el => {
+    el.onclick = () => {
+      const key = el.dataset.tombEquip;
+      if (key === '__default__') {
+        Profile.equippedTombstone = null;
+        showToast('🪦 Using the default tombstone.', 2000);
+      } else {
+        const tc = (typeof _tombstoneCosmeticById === 'function') ? _tombstoneCosmeticById(key) : null;
+        const owned = Array.isArray(Profile.ownedTombstones) ? Profile.ownedTombstones : [];
+        if (!tc || owned.indexOf(key) < 0) { showToast('You don\'t own that tombstone.', 2400); return; }
+        Profile.equippedTombstone = tc.img;
+        showToast('🪦 Equipped: ' + (tc.name || 'Tombstone'), 2200);
+      }
+      try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); else saveProfile(); } catch (e) {}
       render();
     };
   });

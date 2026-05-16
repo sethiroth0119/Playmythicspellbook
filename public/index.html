@@ -17275,6 +17275,16 @@ const HELD_ITEMS = {
   iceWard:       { id: 'iceWard',       name: 'Ice Ward',      icon: '❄️',  desc: 'Immune to Freeze and Slow',               immune: ['frozen', 'slow'] },
   toxinAmulet:   { id: 'toxinAmulet',   name: 'Toxin Amulet',  icon: '☠️',  desc: 'Immune to Poison',                        immune: ['poison'] },
   ironHeart:     { id: 'ironHeart',     name: 'Iron Heart',    icon: '🩸',  desc: 'Immune to Bleed',                         immune: ['bleed'] },
+  // ===== ⚡🔥❄️ ELEMENTAL REACTIVE SHIELDS =====
+  // When the WEARER is hit, the ATTACKER suffers a status.
+  // reactStatus: { id, duration, chance, vs:'physical'|'magic'|'any' }.
+  stormShield:   { id: 'stormShield',   name: 'Storm Shield',  icon: '⚡',  desc: '+4 DEF. When hit by a PHYSICAL attack, the attacker is Stunned (65%).',           stats: { def: 4 }, reactStatus: { id: 'stun',      duration: 1, chance: 65, vs: 'physical' } },
+  emberAegis:    { id: 'emberAegis',    name: 'Ember Aegis',   icon: '🔥',  desc: '+4 DEF. When hit by a PHYSICAL attack, the attacker is Burned.',                   stats: { def: 4 }, reactStatus: { id: 'burn',      duration: 3, chance: 100, vs: 'physical' } },
+  frostAegis:    { id: 'frostAegis',    name: 'Frost Aegis',   icon: '❄️',  desc: '+4 DEF. When hit by a PHYSICAL attack, the attacker gets Frostbite.',              stats: { def: 4 }, reactStatus: { id: 'frostbite', duration: 3, chance: 100, vs: 'physical' } },
+  thornVest:     { id: 'thornVest',     name: 'Thorn Vest',    icon: '🌿',  desc: '+3 DEF/+3 RES. When hit by ANY attack, the attacker is Poisoned.',                 stats: { def: 3, res: 3 }, reactStatus: { id: 'poison', duration: 3, chance: 100, vs: 'any' } },
+  voidMantle:    { id: 'voidMantle',    name: 'Void Mantle',   icon: '🌌',  desc: '+5 RES. When hit by a MAGIC attack, the attacker is Hexed.',                       stats: { res: 5 }, reactStatus: { id: 'hexed',     duration: 3, chance: 100, vs: 'magic' } },
+  stoneCarapace: { id: 'stoneCarapace', name: 'Stone Carapace',icon: '🗿',  desc: '+6 DEF. When hit by a PHYSICAL attack, the attacker is Slowed.',                   stats: { def: 6 }, reactStatus: { id: 'slow',      duration: 2, chance: 100, vs: 'physical' } },
+  mirrorVeil:    { id: 'mirrorVeil',    name: 'Mirror Veil',   icon: '🪞',  desc: '+4 RES. When hit by a MAGIC attack, the attacker is Weakened.',                    stats: { res: 4 }, reactStatus: { id: 'weak',      duration: 3, chance: 80, vs: 'magic' } },
 };
 
 // ============ MOVES ============
@@ -28340,6 +28350,31 @@ const executeMove = (state, attacker, target, move) => {
   }
 
   s.units = s.units.map(u => u.id === target.id ? updatedTarget : (u.id === attacker.id ? markAttackerActed(u) : u));
+
+  // ===== 🛡️⚡ Elemental reactive shields =====
+  // If the DEFENDER holds a shield whose reactStatus matches this attack's
+  // damage type, the ATTACKER suffers that status (e.g. Storm Shield →
+  // physical hit Stuns the attacker). Only on a landed attack.
+  try {
+    if (move && move.kind === 'attack' && !result.missed) {
+      const _shId = target && target.heldItem;
+      const _sh = _shId ? (((typeof getItemById === 'function') && getItemById(_shId)) || HELD_ITEMS[_shId]) : null;
+      const _rx = _sh && _sh.reactStatus;
+      if (_rx && _rx.id) {
+        const _mt = (move.type === 'magic') ? 'magic' : 'physical';
+        const _match = !_rx.vs || _rx.vs === 'any' || _rx.vs === _mt;
+        const _chance = (typeof _rx.chance === 'number') ? _rx.chance : 100;
+        if (_match && Math.random() * 100 < _chance) {
+          const _atk = s.units.find(u => u.id === attacker.id);
+          if (_atk && _atk.alive && !(typeof isImmuneToStatus === 'function' && isImmuneToStatus(_atk, _rx.id))) {
+            s.units = s.units.map(u => u.id === attacker.id ? applyStatusEffect(u, _rx.id, _rx.duration || 1, target.id) : u);
+            const _se = STATUS_EFFECTS[_rx.id] || {};
+            log.push({ msg: `${_sh.icon || '🛡️'} ${target.name}'s ${_sh.name} retaliates — ${attacker.name} is ${_se.name || _rx.id}!`, color: attacker.owner === 'player' ? 'red' : 'green' });
+          }
+        }
+      }
+    }
+  } catch (e) { /* shield reaction never breaks the attack resolution */ }
 
   // ===== Knockback: push the target N tiles in the direction away from the attacker =====
   // Stops short if it hits a wall, another unit, or the board edge. Skips if target died or

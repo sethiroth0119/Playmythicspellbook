@@ -18306,6 +18306,11 @@ function getEssenceAmount(elementId) {
 // are auto-seeded so brand-new and legacy save files keep working. Custom Forge
 // heroes get added automatically when forged. Pack drops increment the count.
 function ensureStarterHeroesOwned() {
+  // 🦸 STARTER-DECK LOCKDOWN: only ADMINS get the built-in mockup heroes
+  // auto-seeded. Every other player owns NOTHING until they claim a starter
+  // deck (then only that deck's cards). This both enforces the card lockdown
+  // and keeps the new-player gate's "empty collection" detection accurate.
+  if (typeof isAdmin === 'function' && !isAdmin()) return;
   if (!Profile.cardCollection) Profile.cardCollection = {};
   if (typeof STARTER_HEROES === 'undefined' || !Array.isArray(STARTER_HEROES)) return;
   let mutated = false;
@@ -19330,6 +19335,10 @@ const Forge = {
   // Lets the admin tune what the AI plays without code edits.
   // { id, name, heroId, cards: [cardId, ...] }
   aiDecks: [],
+  // 🦸 Starter decks — admin-authored decks new players pick ONE of for free
+  // (the rest can be listed in the Vendor Market). Up to 3 per hero. Each:
+  // { id, name, heroId, cards:[key,...], img, inVendor, price, currency }
+  starterDecks: [],
   // 📖 RPG page guides — admin-authored character explainers per screen.
   pageGuides: [],
   // 🪦 ADMIN-SET DEFAULT TOMBSTONE — base image rendered on dying units' tiles.
@@ -20525,6 +20534,7 @@ async function cloudSyncProfile() {
       // unchanged and stash the list here instead.
       userDecks:      Array.isArray(Profile.decks) ? Profile.decks : [],
       aiDecks:        Array.isArray(Forge.aiDecks) ? Forge.aiDecks : [],
+      starterDecks:   Array.isArray(Forge.starterDecks) ? Forge.starterDecks : [],
     };
     const row = {
       user_id:       Profile.cloud.userId,
@@ -20727,6 +20737,7 @@ async function cloudFetchProfile() {
       // legacy deckByHero map and changing its shape broke uploads.
       if (Array.isArray(f.userDecks)) Profile.decks = f.userDecks;
       if (Array.isArray(f.aiDecks))   Forge.aiDecks = f.aiDecks;
+      if (Array.isArray(f.starterDecks)) Forge.starterDecks = f.starterDecks;
       if (Array.isArray(f.pageGuides)) Forge.pageGuides = f.pageGuides;
       // 🌐 WEBSITE PURCHASE REDEMPTION — when a player buys a pack from the
       // marketing site, that flow writes a receipt into forge.webPurchases and
@@ -20962,6 +20973,9 @@ const Catalog = {
   // Stash piggybacks on the catalog's `packs` JSONB array — see publish /
   // fetch code. Each entry: { id, name, heroId, cards: [cardId, ...] }.
   aiDecks: [],
+  // 🦸 Published starter decks (rides in the catalog so every player can pick
+  // their free one + buy the rest in the Vendor Market).
+  starterDecks: [],
   // 📖 Published RPG page guides (rides in the catalog so every player gets them).
   pageGuides: [],
   // 🪦 Admin-published default tombstone image — every player sees this one
@@ -20985,6 +20999,7 @@ function _applyCatalogSnapshot(c) {
   if (Array.isArray(c.packs))   Catalog.packs   = c.packs;
   if (Array.isArray(c.heroes))  Catalog.heroes  = c.heroes;
   if (Array.isArray(c.aiDecks)) Catalog.aiDecks = c.aiDecks;
+  if (Array.isArray(c.starterDecks)) Catalog.starterDecks = c.starterDecks;
   Catalog.publishedAt    = c.publishedAt    || Catalog.publishedAt   || 0;
   Catalog.publishedBy    = c.publishedBy    || Catalog.publishedBy   || null;
   Catalog.lastFetchedAt  = c.lastFetchedAt  || Catalog.lastFetchedAt || 0;
@@ -21046,11 +21061,13 @@ async function cloudFetchCatalog() {
     // sentinel keys. Strip them from the moves dict before storing so they
     // don't show up as bogus "moves" anywhere.
     Catalog.aiDecks = Array.isArray(rawMoves.__ai_decks__) ? rawMoves.__ai_decks__ : [];
+    Catalog.starterDecks = Array.isArray(rawMoves.__starter_decks__) ? rawMoves.__starter_decks__ : [];
     Catalog.pageGuides = Array.isArray(rawMoves.__page_guides__) ? rawMoves.__page_guides__ : [];
     Catalog.tombstoneArt = rawMoves.__tombstone_art__ || null;
     Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
     const cleanMoves = { ...rawMoves };
     delete cleanMoves.__ai_decks__;
+    delete cleanMoves.__starter_decks__;
     delete cleanMoves.__page_guides__;
     delete cleanMoves.__tombstone_art__;
     delete cleanMoves.__tombstone_cosmetics__;
@@ -21089,6 +21106,7 @@ async function cloudPublishCatalog() {
     const movesWithAi = {
       ...(Forge.customMoves || {}),
       __ai_decks__: Array.isArray(Forge.aiDecks) ? Forge.aiDecks : [],
+      __starter_decks__: Array.isArray(Forge.starterDecks) ? Forge.starterDecks : [],
       __page_guides__: Array.isArray(Forge.pageGuides) ? Forge.pageGuides : [],
       __tombstone_art__: Forge.tombstoneArt || null,
       __tombstone_cosmetics__: Array.isArray(Forge.tombstoneCosmetics) ? Forge.tombstoneCosmetics : [],
@@ -23730,6 +23748,7 @@ async function loadForgeContentFromIdb() {
     ['forge_customItems',      'customItems'],
     ['forge_pageGuides',       'pageGuides'],
     ['forge_aiDecks',          'aiDecks'],
+    ['forge_starterDecks',     'starterDecks'],
   ];
   let changed = false;
   for (const [idbKey, fk] of map) {
@@ -23784,6 +23803,7 @@ function loadForge() {
     try { const ci = localStorage.getItem('hg_customItems'); if (ci) { const x = JSON.parse(ci); if (Array.isArray(x)) Forge.customItems = x; } } catch (err) {}
     try { const pg = localStorage.getItem('hg_pageGuides'); if (pg) { const x = JSON.parse(pg); if (Array.isArray(x)) Forge.pageGuides = x; } } catch (err) {}
     try { const ad = localStorage.getItem('hg_aiDecks'); if (ad) { const x = JSON.parse(ad); if (Array.isArray(x)) Forge.aiDecks = x; } } catch (err) {}
+    try { const sd = localStorage.getItem('hg_starterDecks'); if (sd) { const x = JSON.parse(sd); if (Array.isArray(x)) Forge.starterDecks = x; } } catch (err) {}
     try { const po = localStorage.getItem('hg_priceOverrides'); if (po) { const x = JSON.parse(po); if (x && typeof x === 'object') Forge.priceOverrides = x; } } catch (err) {}
     try { const cp = localStorage.getItem('hg_useCustomOnlyPool'); if (cp != null) Forge.useCustomOnlyPool = JSON.parse(cp) === true; } catch (err) {}
     // 🚨 PRODUCTION OVERRIDE — force custom-only pool ON regardless of saved
@@ -23896,6 +23916,10 @@ function loadForge() {
         });
       }
       if (p.cardCollection && typeof p.cardCollection === 'object') Profile.cardCollection = p.cardCollection;
+      // 🦸 Starter-deck state — restore so the new-player gate never re-fires.
+      if (p.starterPicked === true) Profile.starterPicked = true;
+      if (typeof p.starterDeckId === 'string') Profile.starterDeckId = p.starterDeckId;
+      if (Array.isArray(p.ownedStarterDecks)) Profile.ownedStarterDecks = p.ownedStarterDecks;
       if (p.essence && typeof p.essence === 'object') {
         // Defensive: only accept numeric values keyed by string element ids.
         Profile.essence = {};
@@ -24008,6 +24032,7 @@ function saveForge() {
       // debounced cloud sync (or while signed out) wiped them. Persist them
       // locally like every other Forge field so they survive reloads.
       idbSet('forge_aiDecks',         Forge.aiDecks         || []);
+      idbSet('forge_starterDecks',    Forge.starterDecks    || []);
     }
   } catch (e) { /* swallow — IDB issues fall back to memory-only */ }
   const chunks = [
@@ -24024,6 +24049,7 @@ function saveForge() {
     { key: 'hg_customItems',      value: Forge.customItems     || [], name: 'customItems' },
     { key: 'hg_pageGuides',       value: Forge.pageGuides      || [], name: 'pageGuides' },
     { key: 'hg_aiDecks',          value: Forge.aiDecks         || [], name: 'aiDecks' },
+    { key: 'hg_starterDecks',     value: Forge.starterDecks    || [], name: 'starterDecks' },
     { key: 'hg_priceOverrides',   value: Forge.priceOverrides  || {}, name: 'priceOverrides' },
     { key: 'hg_useCustomOnlyPool', value: !!Forge.useCustomOnlyPool, name: 'useCustomOnlyPool' },
   ];
@@ -25745,6 +25771,47 @@ function getAdminAIDeckKeys() {
     while (keys.length < DECK_SIZE) { keys.push(base[i % base.length]); i++; }
   }
   return keys;
+}
+
+// 🦸 STARTER DECKS — merge published (Catalog) + local (Forge), Forge wins by
+// id so the admin sees edits immediately without republishing. Each record:
+// { id, name, heroId, cards:[key,...], img, inVendor, price, currency }.
+function getAllStarterDecks() {
+  const cat = (typeof Catalog !== 'undefined' && Array.isArray(Catalog.starterDecks)) ? Catalog.starterDecks : [];
+  const loc = (typeof Forge   !== 'undefined' && Array.isArray(Forge.starterDecks))   ? Forge.starterDecks   : [];
+  const byId = {};
+  cat.forEach(d => { if (d && d.id) byId[d.id] = d; });
+  loc.forEach(d => { if (d && d.id) byId[d.id] = d; });
+  return Object.values(byId).filter(d => d && Array.isArray(d.cards) && d.cards.length > 0);
+}
+function getStarterDecksForHero(heroId) {
+  return getAllStarterDecks().filter(d => d.heroId === heroId);
+}
+// True once this player has claimed their one free starter deck. Stored on
+// Profile (top-level) so the new-player gate never re-triggers after a pick.
+function hasPickedStarter() {
+  if (Profile && Profile.starterPicked === true) return true;
+  // Also treat anyone with real progress as "not new" so existing players are
+  // NEVER forced into the picker (decisions: new players only).
+  try {
+    const owned = Object.values(Profile.cardCollection || {}).some(n => n > 0);
+    const hasDecks = (typeof getAllDecks === 'function') && getAllDecks().length > 0;
+    const r = Profile.records || {};
+    const played = (r.battles || 0) > 0 || (r.wins || 0) > 0 || (r.losses || 0) > 0;
+    if (owned || hasDecks || played) return true;
+  } catch (e) {}
+  return false;
+}
+// New, non-admin player who must pick a starter deck before they can play —
+// only when the admin has actually authored at least one starter deck.
+function needsStarterPick() {
+  try {
+    if (typeof isAdmin === 'function' && isAdmin()) return false;
+    const cc = Profile.cloud || {};
+    if (!cc.signedIn && !cc.offlineMode) return false;     // still at auth gate
+    if (hasPickedStarter()) return false;
+    return getAllStarterDecks().length > 0;
+  } catch (e) { return false; }
 }
 
 const xpForLevel = (lvl) => Math.floor(50 + 30 * lvl + 5 * lvl * lvl);
@@ -29494,6 +29561,19 @@ function render() {
     }
   }
 
+  // 🦸 New-player starter-deck gate. A signed-in / offline non-admin player
+  // with NO progress (empty collection, no decks, no battles) must claim one
+  // of the admin-authored starter decks before they can do anything else.
+  // This is also the card-lockdown: until they pick, they own zero cards, and
+  // the pick grants ONLY that deck's cards. Existing players (any progress)
+  // and admins are never gated. No starter decks authored ⇒ no gate.
+  if (App.screen !== 'starterPick' && App.screen !== 'authGate'
+      && App.screen !== 'battle' && App.screen !== 'coinFlip' && App.screen !== 'vsScreen'
+      && typeof needsStarterPick === 'function' && needsStarterPick()) {
+    App.screen = 'starterPick';
+  }
+  if (App.screen === 'starterPick') return renderStarterPick();
+
   if (App.screen === 'title')      return renderTitle();
   if (App.screen === 'forge')      return renderForge();
   if (App.screen === 'pricingAdmin') return renderPricingAdmin();
@@ -30532,6 +30612,82 @@ function bindDeckSelectModal(deckOptions) {
   if (App._dsModalEsc) document.removeEventListener('keydown', App._dsModalEsc);
   App._dsModalEsc = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', App._dsModalEsc);
+}
+
+// 🦸 Grant a starter deck's cards (+ its hero) into the player's collection
+// and create a ready-to-play deck entry. Shared by the free first pick and
+// Vendor-Market purchases. opts.markPicked closes the new-player gate.
+function grantStarterDeckToPlayer(deck, opts) {
+  if (!deck || !Array.isArray(deck.cards)) return false;
+  opts = opts || {};
+  if (!Profile.cardCollection) Profile.cardCollection = {};
+  if (deck.heroId) Profile.cardCollection[deck.heroId] = Math.max(1, Profile.cardCollection[deck.heroId] || 0);
+  const deckKeys = [];
+  deck.cards.forEach(key => {
+    let card = null;
+    try { card = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null; } catch (e) {}
+    if (!card) return;
+    Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1;
+    deckKeys.push(key);
+  });
+  try {
+    if (typeof findOrCreateLooseDeck === 'function') {
+      const d = findOrCreateLooseDeck(deck.heroId || '', deckKeys, deck.name || 'Starter Deck');
+      if (typeof saveDeckEntry === 'function') saveDeckEntry({ ...d, name: deck.name || 'Starter Deck', cards: deckKeys.slice(0) });
+    }
+  } catch (e) {}
+  if (!Array.isArray(Profile.ownedStarterDecks)) Profile.ownedStarterDecks = [];
+  if (deck.id && Profile.ownedStarterDecks.indexOf(deck.id) < 0) Profile.ownedStarterDecks.push(deck.id);
+  if (opts.markPicked) { Profile.starterPicked = true; Profile.starterDeckId = deck.id || null; }
+  try { saveProfile(); } catch (e) {}
+  return true;
+}
+function pickStarterDeck(deckId) {
+  const deck = getAllStarterDecks().find(d => d.id === deckId);
+  if (!deck) { showToast('That starter deck is no longer available.', 2600); return; }
+  grantStarterDeckToPlayer(deck, { markPicked: true });
+  App.screen = 'title';
+  if (typeof render === 'function') render();
+  showToast(`🦸 "${deck.name || 'Starter deck'}" is yours! ${(deck.cards||[]).length} cards added — head to Battle Hall.`, 4600);
+}
+
+// 🦸 New-player one-time screen: pick a single free starter deck. Reached via
+// the gate in render(). A page-guide attached to route 'starterPick' (the
+// Merchant, etc.) auto-plays here.
+function renderStarterPick() {
+  try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
+  const decks = (typeof getAllStarterDecks === 'function') ? getAllStarterDecks() : [];
+  const cardFor = (d) => {
+    const h = (typeof findHeroById === 'function' && d.heroId) ? findHeroById(d.heroId) : null;
+    const heroName = h ? h.name : (d.heroId || 'Hero');
+    const art = d.img
+      ? `<img src="${d.img}" alt="" style="width:100%;height:150px;object-fit:cover;border-radius:12px 12px 0 0">`
+      : `<div style="height:150px;display:flex;align-items:center;justify-content:center;border-radius:12px 12px 0 0;background:radial-gradient(ellipse at center,rgba(212,175,55,0.2),transparent 70%)">${h && typeof renderIcon === 'function' ? renderIcon('h_' + h.id, h.icon, 'xl') : '<span style=\"font-size:3rem\">🦸</span>'}</div>`;
+    return `
+      <div style="width:260px;background:rgba(20,12,40,0.7);border:1px solid rgba(212,175,55,0.4);border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
+        ${art}
+        <div style="padding:14px;display:flex;flex-direction:column;gap:8px;flex:1">
+          <div style="font-family:'Cinzel',serif;font-size:1.15rem;font-weight:700;color:#f6d97a">${escapeHtml(d.name || 'Starter Deck')}</div>
+          <div class="small-text ink-dim">${escapeHtml(heroName)} · ${(d.cards||[]).length} cards</div>
+          <button class="btn-primary" data-pick-starter="${escapeHtml(String(d.id))}" style="margin-top:auto">✓ Choose This Deck</button>
+        </div>
+      </div>`;
+  };
+  root.innerHTML = `
+    <div class="hero-select" style="text-align:center">
+      <h2 class="section-title">Choose Your Starter Deck</h2>
+      <div class="section-subtitle">Welcome! Pick <strong>one</strong> deck to begin — these are your only cards to start with. Earn or buy more later in the Vendor Market.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:20px;justify-content:center;margin-top:26px">
+        ${decks.length ? decks.map(cardFor).join('') : '<div class="ink-dim">No starter decks available yet — check back soon.</div>'}
+      </div>
+    </div>`;
+  document.querySelectorAll('[data-pick-starter]').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.pickStarter;
+      if (!confirm('Choose this starter deck? This free pick is permanent — the rest can be bought later in the Vendor Market.')) return;
+      pickStarterDeck(id);
+    };
+  });
 }
 
 function renderDeckSelect() {
@@ -31650,6 +31806,51 @@ function renderPricingAdmin() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">🦸 Starter Decks (Admin)</div>
+        <div class="settings-section-desc">
+          Build the decks <strong>new players choose ONE of for free</strong> when they first join (up to <strong>3 per hero</strong>). Click <strong>➕ New Starter Deck</strong> to open the visual Deck Builder — pick the hero + cards like any deck. Then add a <strong>cover photo</strong> and optionally <strong>list it in the Vendor Market</strong> so players can buy the others with Cinders or Aza coin. New players get <em>only</em> the cards from the deck they pick. These ride along in <strong>📚 Publish</strong>.
+        </div>
+        <div id="starter-decks-list" style="margin-top:0.7rem">
+          ${(Forge.starterDecks || []).length === 0 ? `
+            <div class="ink-dim small-text" style="padding:0.6rem 0">No starter decks yet — new players won't be gated until you create at least one.</div>
+          ` : (Forge.starterDecks || []).map((d, i) => {
+              const h = (typeof findHeroById === 'function' && d.heroId) ? findHeroById(d.heroId) : null;
+              const heroName = h ? h.name : (d.heroId ? d.heroId : 'no hero yet');
+              const perHero = (Forge.starterDecks || []).filter(x => x.heroId === d.heroId).length;
+              const cur = d.currency === 'sovereigns' ? 'sovereigns' : 'gems';
+              return `
+            <div class="ai-deck-row" data-sd-idx="${i}" style="display:flex;align-items:center;gap:0.6rem;padding:0.55rem 0.8rem;background:rgba(20,12,40,0.5);border:1px solid rgba(255,180,90,0.28);border-radius:6px;margin-bottom:0.4rem;flex-wrap:wrap">
+              <div style="width:46px;height:46px;flex:0 0 46px;border-radius:6px;overflow:hidden;background:rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center">
+                ${d.img ? `<img id="sd-img-prev-${i}" src="${d.img}" style="width:100%;height:100%;object-fit:cover">` : `<span id="sd-img-prev-${i}" style="font-size:1.4rem;opacity:0.5">🖼️</span>`}
+              </div>
+              <div style="flex:1 1 180px;min-width:140px">
+                <div style="font-family:'Cinzel',serif;color:#ffd166;font-weight:700">${escapeHtml(d.name || 'Untitled Starter Deck')}</div>
+                <div class="small-text ink-dim">${(d.cards || []).length} cards · hero: <strong>${escapeHtml(heroName)}</strong> · ${perHero}/3 for this hero</div>
+              </div>
+              <input type="file" accept="image/*" id="sd-img-file-${i}" style="display:none">
+              <button class="btn-secondary btn-mini" data-act="sd-img" data-idx="${i}">📷 Photo</button>
+              <label class="small-text" style="display:flex;align-items:center;gap:0.3rem;white-space:nowrap">
+                <input type="checkbox" data-act="sd-vendor" data-idx="${i}" ${d.inVendor ? 'checked' : ''}> List in Vendor
+              </label>
+              <input type="number" min="0" data-act="sd-price" data-idx="${i}" value="${Number(d.price) || 0}" title="Price" style="width:84px;padding:0.35rem">
+              <select data-act="sd-cur" data-idx="${i}" style="padding:0.35rem">
+                <option value="gems" ${cur === 'gems' ? 'selected' : ''}>Cinders</option>
+                <option value="sovereigns" ${cur === 'sovereigns' ? 'selected' : ''}>Aza coin</option>
+              </select>
+              <button class="btn-primary btn-mini" data-act="starter-deck-edit" data-idx="${i}">✏️ Edit</button>
+              <button class="btn-mini" data-act="starter-deck-del" data-idx="${i}" style="color:#ff8080">🗑</button>
+            </div>`;
+          }).join('')}
+        </div>
+        <div class="cloud-actions" style="margin-top:0.6rem">
+          <button class="btn-primary btn-mini" id="btn-starter-deck-new">➕ New Starter Deck (Deck Builder)</button>
+        </div>
+        <div class="small-text ink-dim" style="margin-top:0.5rem">
+          💡 Price/currency only matter when <strong>List in Vendor</strong> is on. The free first pick is always free; the Vendor Market sells the rest. Changes here save instantly — <strong>📚 Publish</strong> to push to all players.
+        </div>
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🎁 Send Gift (Admin)</div>
         <div class="settings-section-desc">
           Grant a card straight to a specific player's account. They get a <strong>"You got a gift"</strong> pop-up the next time they sign in and click <strong>Claim</strong> to add it to their collection. ⚠️ Run <code>gifts-system-setup.sql</code> in your Supabase SQL editor once before using this.
@@ -31868,6 +32069,98 @@ function renderPricingAdmin() {
       saveForge();
       showToast('🗑 AI deck deleted.', 2000);
       render();
+    };
+  });
+
+  // 🦸 Starter Deck CRUD — admin authors the decks new players pick from.
+  const bSdNew = document.getElementById('btn-starter-deck-new');
+  if (bSdNew) bSdNew.onclick = () => {
+    App.starterDeckEdit = { idx: null };
+    App.screen = 'deck';
+    App.deckBuilderHeroId = null;     // → hero-pick screen first
+    App.editingDeckId = null;
+    App.deckEdit = undefined;
+    App.deckEditName = 'New Starter Deck';
+    App.deckBuilderFilter = 'all';
+    render();
+  };
+  document.querySelectorAll('[data-act="starter-deck-edit"]').forEach(el => {
+    el.onclick = () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      const deck = (Forge.starterDecks || [])[idx];
+      if (!deck) return;
+      // Starter decks store deck-builder KEYS (kind:id) directly — load as-is.
+      App.starterDeckEdit = { idx };
+      App.deckBuilderHeroId = (deck.heroId && typeof findHeroById === 'function' && findHeroById(deck.heroId)) ? deck.heroId : null;
+      App.editingDeckId = 'NEW';        // use our prefilled deckEdit, not a player deck
+      App.deckEdit = Array.isArray(deck.cards) ? deck.cards.slice(0) : [];
+      App.deckEditName = deck.name || 'Starter Deck';
+      App.deckBuilderFilter = 'all';
+      App.screen = 'deck';
+      render();
+    };
+  });
+  document.querySelectorAll('[data-act="starter-deck-del"]').forEach(el => {
+    el.onclick = () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      const deck = (Forge.starterDecks || [])[idx];
+      if (!deck) return;
+      if (!confirm('Delete starter deck "' + (deck.name || 'Untitled') + '"? This cannot be undone.')) return;
+      Forge.starterDecks.splice(idx, 1);
+      saveForge();
+      showToast('🗑 Starter deck deleted.', 2000);
+      render();
+    };
+  });
+  // Photo upload (resized to 512px, stored inline as a data URL on the record).
+  document.querySelectorAll('[data-act="sd-img"]').forEach(el => {
+    el.onclick = () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      const file = document.getElementById('sd-img-file-' + idx);
+      if (file) file.click();
+    };
+  });
+  (Forge.starterDecks || []).forEach((_, idx) => {
+    const file = document.getElementById('sd-img-file-' + idx);
+    if (!file) return;
+    file.onchange = async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      try {
+        const dataUrl = await resizeImage(f, 512);
+        if (Forge.starterDecks[idx]) {
+          Forge.starterDecks[idx].img = dataUrl;
+          saveForge();
+          showToast('📷 Cover photo saved.', 1800);
+          render();
+        }
+      } catch (err) { showToast('⚠ Could not load that image.', 2600); }
+    };
+  });
+  // Vendor toggle / price / currency — mutate the record + save instantly.
+  document.querySelectorAll('[data-act="sd-vendor"]').forEach(el => {
+    el.onchange = () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      if (!Forge.starterDecks[idx]) return;
+      Forge.starterDecks[idx].inVendor = !!el.checked;
+      saveForge();
+      showToast(el.checked ? '🛒 Listed in Vendor Market.' : 'Removed from Vendor Market.', 1800);
+    };
+  });
+  document.querySelectorAll('[data-act="sd-price"]').forEach(el => {
+    el.onchange = () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      if (!Forge.starterDecks[idx]) return;
+      Forge.starterDecks[idx].price = Math.max(0, parseInt(el.value, 10) || 0);
+      saveForge();
+    };
+  });
+  document.querySelectorAll('[data-act="sd-cur"]').forEach(el => {
+    el.onchange = () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      if (!Forge.starterDecks[idx]) return;
+      Forge.starterDecks[idx].currency = (el.value === 'sovereigns') ? 'sovereigns' : 'gems';
+      saveForge();
     };
   });
 
@@ -43651,13 +43944,16 @@ function settleWagerMatch(matchId, winner) {
 // Tab state lives on App.vendorMarketTab ('packs' | 'sovereigns'); defaults to 'packs'.
 // ============================================================================
 function renderVendorMarket() {
-  const tab = (App.vendorMarketTab === 'sovereigns') ? 'sovereigns' : 'packs';
+  const tab = (App.vendorMarketTab === 'sovereigns') ? 'sovereigns'
+            : (App.vendorMarketTab === 'starter')    ? 'starter'
+            : 'packs';
   const gems = Profile.gems || 0;
   const sovBal = Profile.sovereigns || 0;
 
   // ----- Tab body builders -----
-  const packsBody = _buildPackShopBody(gems, sovBal);
-  const sovBody   = _buildSovereignsStoreBody(sovBal);
+  const packsBody   = _buildPackShopBody(gems, sovBal);
+  const sovBody     = _buildSovereignsStoreBody(sovBal);
+  const starterBody = _buildStarterDeckShopBody(gems, sovBal);
 
   root.innerHTML = `
     <div class="campaign-page vendor-market-page">
@@ -43705,10 +44001,14 @@ function renderVendorMarket() {
           <span class="aza-icon"></span> Aza coin Store
           <span class="vm-tab-sub">Real Money</span>
         </button>
+        <button class="vm-tab ${tab === 'starter' ? 'vm-tab-active' : ''}" data-vm-tab="starter">
+          🦸 Starter Decks
+          <span class="vm-tab-sub">Ready-to-play bundles</span>
+        </button>
       </div>
 
       <div class="vm-tab-body">
-        ${tab === 'packs' ? packsBody : sovBody}
+        ${tab === 'packs' ? packsBody : tab === 'sovereigns' ? sovBody : starterBody}
       </div>
 
       ${App._packReveal ? renderPackRevealModal() : ''}
@@ -43730,8 +44030,71 @@ function renderVendorMarket() {
   bindHowToPanels();
 
   // ----- Tab-specific bindings -----
-  if (tab === 'packs') _bindPackShopHandlers();
-  else                 _bindSovereignsStoreHandlers();
+  if (tab === 'packs')           _bindPackShopHandlers();
+  else if (tab === 'sovereigns') _bindSovereignsStoreHandlers();
+  else                           _bindStarterDeckShopHandlers();
+}
+
+// ----- 🦸 Starter Deck shop body — admin-listed starter decks as buyable
+// bundles. The free first pick already happened on the starterPick screen;
+// this sells the OTHER starter decks for the admin-set price + currency.
+function _buildStarterDeckShopBody(gems, sovBal) {
+  const all = (typeof getAllStarterDecks === 'function') ? getAllStarterDecks() : [];
+  const listed = all.filter(d => d && d.inVendor);
+  const owned = Array.isArray(Profile.ownedStarterDecks) ? Profile.ownedStarterDecks : [];
+  if (listed.length === 0) {
+    return `<div class="ink-dim" style="padding:1.4rem;text-align:center">No starter decks are listed for sale right now. Check back later!</div>`;
+  }
+  const cards = listed.map(d => {
+    const h = (typeof findHeroById === 'function' && d.heroId) ? findHeroById(d.heroId) : null;
+    const heroName = h ? h.name : (d.heroId || 'Hero');
+    const isOwned = d.id && owned.indexOf(d.id) >= 0;
+    const cur = d.currency === 'sovereigns' ? 'sovereigns' : 'gems';
+    const price = Math.max(0, Number(d.price) || 0);
+    const curIcon = cur === 'sovereigns' ? '<span class="aza-icon"></span>' : '<span class="cinder-icon"></span>';
+    const bal = cur === 'sovereigns' ? sovBal : gems;
+    const canAfford = bal >= price;
+    const art = d.img
+      ? `<img src="${d.img}" alt="" style="width:100%;height:150px;object-fit:cover;border-radius:10px 10px 0 0">`
+      : `<div style="height:150px;display:flex;align-items:center;justify-content:center;border-radius:10px 10px 0 0;background:radial-gradient(ellipse at center,rgba(212,175,55,0.18),transparent 70%)">${h && typeof renderIcon === 'function' ? renderIcon('h_' + h.id, h.icon, 'xl') : '<span style=\"font-size:3rem\">🦸</span>'}</div>`;
+    const btn = isOwned
+      ? `<button class="btn-secondary" disabled style="margin-top:auto">✓ Owned</button>`
+      : `<button class="btn-primary ${canAfford ? '' : 'btn-disabled'}" data-buy-starter="${escapeHtml(String(d.id))}" ${canAfford ? '' : 'disabled'} style="margin-top:auto">${canAfford ? `Buy — ${price} ${curIcon}` : `Need ${price} ${curIcon}`}</button>`;
+    return `
+      <div style="width:260px;background:rgba(20,12,40,0.7);border:1px solid rgba(212,175,55,0.4);border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
+        ${art}
+        <div style="padding:14px;display:flex;flex-direction:column;gap:8px;flex:1">
+          <div style="font-family:'Cinzel',serif;font-size:1.1rem;font-weight:700;color:#f6d97a">${escapeHtml(d.name || 'Starter Deck')}</div>
+          <div class="small-text ink-dim">${escapeHtml(heroName)} · ${(d.cards||[]).length} cards</div>
+          ${btn}
+        </div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="small-text ink-dim" style="margin-bottom:0.8rem">Ready-to-play decks — buying one adds every card (and its hero) straight to your collection and saves it as a deck.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:18px;justify-content:flex-start">${cards}</div>`;
+}
+function _bindStarterDeckShopHandlers() {
+  document.querySelectorAll('[data-buy-starter]').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.buyStarter;
+      const deck = (typeof getAllStarterDecks === 'function' ? getAllStarterDecks() : []).find(d => d.id === id);
+      if (!deck) { showToast('That deck is no longer available.', 2600); return; }
+      const owned = Array.isArray(Profile.ownedStarterDecks) ? Profile.ownedStarterDecks : [];
+      if (owned.indexOf(id) >= 0) { showToast('You already own that deck.', 2400); return; }
+      const cur = deck.currency === 'sovereigns' ? 'sovereigns' : 'gems';
+      const price = Math.max(0, Number(deck.price) || 0);
+      const bal = cur === 'sovereigns' ? (Profile.sovereigns || 0) : (Profile.gems || 0);
+      if (bal < price) { showToast('Not enough ' + (cur === 'sovereigns' ? 'Aza coin' : 'Cinders') + '.', 2600); return; }
+      if (!confirm(`Buy "${deck.name || 'Starter deck'}" for ${price} ${cur === 'sovereigns' ? 'Aza coin' : 'Cinders'}?`)) return;
+      if (cur === 'sovereigns') Profile.sovereigns = Math.max(0, (Profile.sovereigns || 0) - price);
+      else                      Profile.gems      = Math.max(0, (Profile.gems || 0) - price);
+      grantStarterDeckToPlayer(deck, {});   // no markPicked — free pick already used
+      try { saveProfile(); } catch (e) {}
+      showToast(`🦸 "${deck.name || 'Starter deck'}" purchased — ${(deck.cards||[]).length} cards added to your collection!`, 4200);
+      render();
+    };
+  });
 }
 
 // ----- Pack Shop body (extracted from renderShop) -----
@@ -46310,6 +46673,7 @@ const RPG_GUIDE_PAGES = [
   { route: 'tutor',        label: 'Tutor Shop' },
   { route: 'market',       label: 'Player Market' },
   { route: 'title',        label: 'Main Hub (Title)' },
+  { route: 'starterPick',  label: 'Starter Deck Pick (new players)' },
   { route: 'deck',         label: 'Deck Builder' },
   { route: 'collection',   label: 'Collection / Codex' },
   { route: 'coliseum',     label: 'Coliseum' },
@@ -49014,6 +49378,12 @@ function renderDeckBuilder() {
         <button class="btn-secondary btn-mini" id="btn-ai-deck-cancel">✖ Cancel</button>
       </div>` : ''}
 
+      ${App.starterDeckEdit ? `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:0.8rem;margin:0.4rem 0 0.6rem;padding:0.6rem 1rem;background:linear-gradient(90deg,rgba(255,180,90,0.18),rgba(200,130,60,0.12));border:1px solid rgba(255,180,90,0.5);border-radius:8px">
+        <div style="font-family:'Cinzel',serif;color:#ffd166;font-weight:700">🦸 BUILDING A STARTER DECK — new players pick ONE of these for free. Saves to <strong>Starter Decks (Admin)</strong>. Pick the hero + cards, then 💾 Save. Add the cover photo & Vendor price back on the Pricing Admin page.</div>
+        <button class="btn-secondary btn-mini" id="btn-starter-deck-cancel">✖ Cancel</button>
+      </div>` : ''}
+
       <div class="deck-builder-hero-banner">
         <div class="dbhb-portrait">${renderIcon('h_' + hero.id, hero.icon, 'lg')}</div>
         <div class="dbhb-info">
@@ -49069,8 +49439,22 @@ function renderDeckBuilder() {
     if (isDirty && !confirm('Discard this AI deck and go back?')) return;
     exitAiDeck();
   };
+  // 🦸 Exit starter-deck mode cleanly back to the Pricing Admin panel.
+  const exitStarterDeck = () => {
+    App.starterDeckEdit = null;
+    App.deckEdit = undefined; App.editingDeckId = null;
+    App.deckBuilderHeroId = null; App.deckEditName = undefined;
+    App.screen = 'pricingAdmin';
+    render();
+  };
+  const sdCancelBtn = document.getElementById('btn-starter-deck-cancel');
+  if (sdCancelBtn) sdCancelBtn.onclick = () => {
+    if (isDirty && !confirm('Discard this starter deck and go back?')) return;
+    exitStarterDeck();
+  };
   document.getElementById('btn-back-deck').onclick = () => {
     if (App.aiDeckEdit) { if (isDirty && !confirm('Discard this AI deck and go back?')) return; exitAiDeck(); return; }
+    if (App.starterDeckEdit) { if (isDirty && !confirm('Discard this starter deck and go back?')) return; exitStarterDeck(); return; }
     App.screen = 'title'; render();
   };
   const switchBtn = document.getElementById('btn-switch-hero');
@@ -49079,7 +49463,7 @@ function renderDeckBuilder() {
     App.deckBuilderHeroId = null;
     // In AI mode keep the in-progress card list + AI flag so re-picking a
     // hero doesn't throw away the deck you've built.
-    if (!App.aiDeckEdit) {
+    if (!App.aiDeckEdit && !App.starterDeckEdit) {
       App.editingDeckId = null;
       App.deckEdit = undefined;
       App.deckEditName = undefined;
@@ -49089,6 +49473,7 @@ function renderDeckBuilder() {
   const backDecksBtn = document.getElementById('btn-back-to-decks');
   if (backDecksBtn) backDecksBtn.onclick = () => {
     if (App.aiDeckEdit) { if (isDirty && !confirm('Discard this AI deck and go back?')) return; exitAiDeck(); return; }
+    if (App.starterDeckEdit) { if (isDirty && !confirm('Discard this starter deck and go back?')) return; exitStarterDeck(); return; }
     if (isDirty && !confirm('You have unsaved changes. Leave anyway?')) return;
     App.editingDeckId = null;
     App.deckEdit = undefined;
@@ -49236,6 +49621,43 @@ function renderDeckBuilder() {
       App.deckEdit = undefined; App.editingDeckId = null; App.deckBuilderHeroId = null; App.deckEditName = undefined;
       App.screen = 'pricingAdmin';
       showToast(`🤖 AI deck saved — "${finalName}" (${ids.length} cards). Publish the catalog to push it live.`, 3600);
+      render();
+      return;
+    }
+    // 🦸 STARTER-DECK MODE — save to Forge.starterDecks (NOT the player's
+    // decks). Stores deck-builder KEYS (kind:id) directly so grant-on-pick can
+    // resolveDeckCard() each one. Up to 3 decks per hero. img/inVendor/price/
+    // currency are preserved across edits (set on the Pricing Admin page).
+    if (App.starterDeckEdit) {
+      Forge.starterDecks = Array.isArray(Forge.starterDecks) ? Forge.starterDecks : [];
+      const idx = App.starterDeckEdit.idx;
+      const prev = (idx != null && Forge.starterDecks[idx]) ? Forge.starterDecks[idx] : null;
+      // 3-per-hero cap — only blocks brand-new decks for an already-full hero.
+      if (!prev) {
+        const countForHero = Forge.starterDecks.filter(d => d && d.heroId === (heroId || '')).length;
+        if (countForHero >= 3) {
+          showToast('⚠ This hero already has 3 starter decks (the max). Delete one first.', 4200);
+          return;
+        }
+      }
+      const keys = App.deckEdit.slice(0);
+      const rec = {
+        id: (prev && prev.id) || ('starterdeck_' + Date.now()),
+        name: finalName,
+        heroId: heroId || '',
+        cards: keys,
+        img:      prev ? (prev.img || null) : null,
+        inVendor: prev ? !!prev.inVendor : false,
+        price:    prev ? (Number(prev.price) || 0) : 0,
+        currency: prev ? (prev.currency === 'sovereigns' ? 'sovereigns' : 'gems') : 'gems',
+      };
+      if (idx != null && Forge.starterDecks[idx]) Forge.starterDecks[idx] = rec;
+      else Forge.starterDecks.push(rec);
+      try { saveForge(); } catch (e) {}
+      App.starterDeckEdit = null;
+      App.deckEdit = undefined; App.editingDeckId = null; App.deckBuilderHeroId = null; App.deckEditName = undefined;
+      App.screen = 'pricingAdmin';
+      showToast(`🦸 Starter deck saved — "${finalName}" (${keys.length} cards). Add a photo / Vendor price on this page, then 📚 Publish.`, 4200);
       render();
       return;
     }
@@ -49514,6 +49936,7 @@ function renderDeckBuilderHeroPick() {
   `;
   document.getElementById('btn-back-deck').onclick = () => {
     if (App.aiDeckEdit) { App.aiDeckEdit = null; App.screen = 'pricingAdmin'; App.deckEdit = undefined; App.editingDeckId = null; App.deckBuilderHeroId = null; render(); return; }
+    if (App.starterDeckEdit) { App.starterDeckEdit = null; App.screen = 'pricingAdmin'; App.deckEdit = undefined; App.editingDeckId = null; App.deckBuilderHeroId = null; render(); return; }
     App.screen = 'title'; render();
   };
   const pickHero = (heroId) => {

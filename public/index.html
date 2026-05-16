@@ -30504,6 +30504,7 @@ function render() {
   if (App.screen === 'rlcShop')    return renderRlcShop();
   if (App.screen === 'rlcForge')   return renderRlcForge();
   if (App.screen === 'rlcEvent')   return renderRlcEvent();
+  if (App.screen === 'rlcMystery') return renderRlcMystery();
   if (App.screen === 'rlcResult')  return renderRlcResult();
   if (App.screen === 'rlcAdmin') {
     if ((typeof isAdmin !== 'function') || !isAdmin()) { showToast('👑 Admin only.', 2200); App.screen = 'title'; return renderTitle(); }
@@ -48628,6 +48629,7 @@ const RPG_GUIDE_PAGES = [
   { route: 'rlcShop',      label: 'Roguelite — Black Market' },
   { route: 'rlcForge',     label: 'Roguelite — Card Forge' },
   { route: 'rlcEvent',     label: 'Roguelite — Story Event' },
+  { route: 'rlcMystery',   label: 'Roguelite — Mystery Node' },
   { route: 'rlcResult',    label: 'Roguelite — Run Result' },
   { route: 'deck',         label: 'Deck Builder' },
   { route: 'collection',   label: 'Collection / Codex' },
@@ -50304,6 +50306,8 @@ const RLC_NODE_TYPES = {
   market:    { name: 'Black Market',icon: '🛒', color: '#8a6bff', glow: 'rgba(150,110,255,0.6)' },
   treasure:  { name: 'Treasure',    icon: '💰', color: '#d4af37', glow: 'rgba(255,210,80,0.6)'  },
   event:     { name: 'Story Event', icon: '📜', color: '#5b9bd4', glow: 'rgba(90,160,230,0.55)' },
+  randomEvent:{ name: 'Random Event', icon: '🎲', color: '#5bd4c0', glow: 'rgba(90,230,200,0.55)' },
+  mystery:   { name: 'Mystery',     icon: '❓', color: '#b06bff', glow: 'rgba(176,107,255,0.6)' },
   rest:      { name: 'Rest Point',  icon: '🔥', color: '#c8923c', glow: 'rgba(220,150,70,0.5)'  },
   upgrade:   { name: 'Card Forge',  icon: '🔨', color: '#c89b3c', glow: 'rgba(220,170,80,0.55)' },
 };
@@ -50546,7 +50550,17 @@ function rlcEnterNode(nodeId) {
   if (['battle','elite','boss','finalBoss'].indexOf(node.type) >= 0) { rlcStartBattle(node); return; }
   if (node.type === 'medical') { App._rlcNodeId = nodeId; App.screen = 'rlcMedical'; return render(); }
   if (node.type === 'market')  { App._rlcNodeId = nodeId; App.screen = 'rlcShop';    return render(); }
-  if (node.type === 'event')   { App._rlcNodeId = nodeId; App.screen = 'rlcEvent';   return render(); }
+  if (node.type === 'event')   { App._rlcNodeId = nodeId; App._rlcRandomEv = null; App.screen = 'rlcEvent'; return render(); }
+  if (node.type === 'randomEvent') {
+    // Pick a fresh random event from the pool for THIS visit.
+    const pool = (node.randomEvent && Array.isArray(node.randomEvent.pool)) ? node.randomEvent.pool : [];
+    App._rlcRandomEv = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+    App._rlcNodeId = nodeId; App.screen = 'rlcEvent'; return render();
+  }
+  if (node.type === 'mystery') {
+    App._rlcNodeId = nodeId; App._rlcMysteryPick = null; App._rlcMysteryApplied = false;
+    App.screen = 'rlcMystery'; return render();
+  }
   if (node.type === 'upgrade') { App._rlcNodeId = nodeId; App.screen = 'rlcForge';   return render(); }
   if (node.type === 'treasure' || node.type === 'rest') {
     // Instant nodes — apply reward / small heal, then back to map.
@@ -50674,7 +50688,9 @@ function _rlcBlankNode() {
     reward: { cardKeys: [], choiceCount: 3, allowSkip: false, currency: 0, medPoints: 0 },
     heal: { options: [ { name: 'Patch up', healPercent: 25, costMedPoints: 1, costCurrency: 0 }, { name: 'Field surgery', healPercent: 50, costMedPoints: 2, costCurrency: 0 }, { name: 'Full recovery', healPercent: 100, costMedPoints: 4, costCurrency: 0 } ] },
     shop: { name: 'Black Market', items: [] },
-    event: { text: '', choices: [] } };
+    event: { text: '', choices: [] },
+    mystery: { outcomes: [] },
+    randomEvent: { pool: [] } };
 }
 function _rlcBlankCampaign() {
   return { id: 'camp' + Date.now().toString(36), name: 'New Campaign', description: '', intro: '',
@@ -50824,6 +50840,38 @@ function renderRlcAdmin() {
           <div class="small-text ink-dim" style="margin:4px 0">Choices (label · ${_rlcCur(ed)} · medPts · heal%):</div>
           ${((n.event || {}).choices || []).map((ch, ci) => `<div style="display:flex;gap:6px;margin-bottom:5px;flex-wrap:wrap"><input type="text" data-rlc-path="nodes.${idx}.event.choices.${ci}.label" value="${escapeHtml(ch.label || '')}" placeholder="label" style="flex:1;min-width:120px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.event.choices.${ci}.currency" value="${escapeHtml(String(ch.currency||0))}" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.event.choices.${ci}.medPoints" value="${escapeHtml(String(ch.medPoints||0))}" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.event.choices.${ci}.healPercent" value="${escapeHtml(String(ch.healPercent||0))}" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><button class="btn-mini" data-rlc-rmchoice="${idx}:${ci}" style="color:#ff8080">×</button></div>`).join('')}
           <button class="btn-secondary btn-mini" data-rlc-addchoice="${idx}">＋ Add choice</button>
+        ` : ''}
+        ${n.type === 'mystery' ? `
+          <div class="small-text ink-dim" style="margin:6px 0 2px">❓ Outcomes — one is rolled by <strong>weight</strong> on each visit. label · weight · ${escapeHtml(_rlcCur(ed))}± · medPts± · heal% · dmg% · relic:</div>
+          ${(((n.mystery || {}).outcomes) || []).map((o, oi) => `<div style="display:flex;gap:5px;margin-bottom:5px;flex-wrap:wrap;align-items:center">
+            <input type="text" data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.label" value="${escapeHtml(o.label || '')}" placeholder="outcome label" style="flex:1;min-width:130px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+            <input type="number" data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.weight" value="${escapeHtml(String(o.weight == null ? 1 : o.weight))}" title="weight" style="width:56px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+            <input type="number" data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.currency" value="${escapeHtml(String(o.currency || 0))}" title="currency ±" style="width:62px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+            <input type="number" data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.medPoints" value="${escapeHtml(String(o.medPoints || 0))}" title="med pts ±" style="width:56px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+            <input type="number" data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.healPercent" value="${escapeHtml(String(o.healPercent || 0))}" title="heal %" style="width:56px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+            <input type="number" data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.damagePercent" value="${escapeHtml(String(o.damagePercent || 0))}" title="damage %" style="width:56px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+            <select data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.relicId" style="width:130px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">🏺 no relic</option>${RLC_RELICS.map(r => `<option value="${r.id}" ${o.relicId === r.id ? 'selected' : ''}>${r.icon} ${escapeHtml(r.name)}</option>`).join('')}</select>
+            <button class="btn-mini" data-rlc-rmoutcome="${idx}:${oi}" style="color:#ff8080">×</button>
+          </div>`).join('') || '<span class="ink-dim small-text">No outcomes — add at least one.</span>'}
+          <button class="btn-secondary btn-mini" data-rlc-addoutcome="${idx}">＋ Add outcome</button>
+        ` : ''}
+        ${n.type === 'randomEvent' ? `
+          <div class="small-text ink-dim" style="margin:6px 0 2px">🎲 Event pool — ONE random entry is shown each visit. Each entry: text + choices (label · ${escapeHtml(_rlcCur(ed))} · medPts · heal% · dmg%):</div>
+          ${(((n.randomEvent || {}).pool) || []).map((pe, pi) => `<div style="border:1px solid rgba(90,212,192,0.3);border-radius:6px;padding:8px;margin-bottom:8px;background:rgba(15,30,28,0.4)">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><strong class="small-text" style="color:#7fe8d0;flex:1">Event ${pi + 1}</strong><button class="btn-mini" data-rlc-rmpoolev="${idx}:${pi}" style="color:#ff8080">🗑</button></div>
+            <textarea data-rlc-path="nodes.${idx}.randomEvent.pool.${pi}.text" rows="2" placeholder="event text" style="width:100%;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">${escapeHtml(pe.text || '')}</textarea>
+            <div class="small-text ink-dim" style="margin:4px 0">Choices:</div>
+            ${((pe.choices) || []).map((ch, ci) => `<div style="display:flex;gap:5px;margin-bottom:4px;flex-wrap:wrap">
+              <input type="text" data-rlc-path="nodes.${idx}.randomEvent.pool.${pi}.choices.${ci}.label" value="${escapeHtml(ch.label || '')}" placeholder="label" style="flex:1;min-width:110px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+              <input type="number" data-rlc-path="nodes.${idx}.randomEvent.pool.${pi}.choices.${ci}.currency" value="${escapeHtml(String(ch.currency || 0))}" title="currency ±" style="width:60px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+              <input type="number" data-rlc-path="nodes.${idx}.randomEvent.pool.${pi}.choices.${ci}.medPoints" value="${escapeHtml(String(ch.medPoints || 0))}" title="med pts ±" style="width:54px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+              <input type="number" data-rlc-path="nodes.${idx}.randomEvent.pool.${pi}.choices.${ci}.healPercent" value="${escapeHtml(String(ch.healPercent || 0))}" title="heal %" style="width:54px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+              <input type="number" data-rlc-path="nodes.${idx}.randomEvent.pool.${pi}.choices.${ci}.damagePercent" value="${escapeHtml(String(ch.damagePercent || 0))}" title="damage %" style="width:54px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
+              <button class="btn-mini" data-rlc-rmpoolchoice="${idx}:${pi}:${ci}" style="color:#ff8080">×</button>
+            </div>`).join('')}
+            <button class="btn-secondary btn-mini" data-rlc-addpoolchoice="${idx}:${pi}">＋ choice</button>
+          </div>`).join('') || '<span class="ink-dim small-text">Pool is empty — add at least one event.</span>'}
+          <button class="btn-secondary btn-mini" data-rlc-addpoolev="${idx}">＋ Add event to pool</button>
         ` : ''}
         ${(n.type === 'treasure' || n.type === 'rest') ? `
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -51065,6 +51113,30 @@ function renderRlcAdmin() {
     reRender();
   });
   document.querySelectorAll('[data-rlc-rmchoice]').forEach(b => b.onclick = () => { const [i, ci] = b.dataset.rlcRmchoice.split(':').map(Number); ed.nodes[i].event.choices.splice(ci, 1); reRender(); });
+  // ❓ Mystery outcomes
+  document.querySelectorAll('[data-rlc-addoutcome]').forEach(b => b.onclick = () => {
+    const i = parseInt(b.dataset.rlcAddoutcome, 10); const nd = ed.nodes[i]; if (!nd) return;
+    nd.mystery = nd.mystery || { outcomes: [] }; nd.mystery.outcomes = nd.mystery.outcomes || [];
+    nd.mystery.outcomes.push({ label: 'Outcome', weight: 1, currency: 0, medPoints: 0, healPercent: 0, damagePercent: 0, relicId: '' });
+    reRender();
+  });
+  document.querySelectorAll('[data-rlc-rmoutcome]').forEach(b => b.onclick = () => { const [i, oi] = b.dataset.rlcRmoutcome.split(':').map(Number); ed.nodes[i].mystery.outcomes.splice(oi, 1); reRender(); });
+  // 🎲 Random-event pool
+  document.querySelectorAll('[data-rlc-addpoolev]').forEach(b => b.onclick = () => {
+    const i = parseInt(b.dataset.rlcAddpoolev, 10); const nd = ed.nodes[i]; if (!nd) return;
+    nd.randomEvent = nd.randomEvent || { pool: [] }; nd.randomEvent.pool = nd.randomEvent.pool || [];
+    nd.randomEvent.pool.push({ text: '', choices: [] });
+    reRender();
+  });
+  document.querySelectorAll('[data-rlc-rmpoolev]').forEach(b => b.onclick = () => { const [i, pi] = b.dataset.rlcRmpoolev.split(':').map(Number); ed.nodes[i].randomEvent.pool.splice(pi, 1); reRender(); });
+  document.querySelectorAll('[data-rlc-addpoolchoice]').forEach(b => b.onclick = () => {
+    const [i, pi] = b.dataset.rlcAddpoolchoice.split(':').map(Number);
+    const pe = ed.nodes[i] && ed.nodes[i].randomEvent && ed.nodes[i].randomEvent.pool && ed.nodes[i].randomEvent.pool[pi];
+    if (!pe) return; pe.choices = pe.choices || [];
+    pe.choices.push({ label: 'Option', currency: 0, medPoints: 0, healPercent: 0, damagePercent: 0 });
+    reRender();
+  });
+  document.querySelectorAll('[data-rlc-rmpoolchoice]').forEach(b => b.onclick = () => { const [i, pi, ci] = b.dataset.rlcRmpoolchoice.split(':').map(Number); ed.nodes[i].randomEvent.pool[pi].choices.splice(ci, 1); reRender(); });
 }
 
 function renderRlcList() {
@@ -51528,7 +51600,10 @@ function renderRlcEvent() {
   const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
   const camp = _rlcCampaign(run.campaignId);
   const node = _rlcNode(camp, App._rlcNodeId);
-  const ev = (node && node.event) || { text: (node && node.desc) || 'You pause at a crossroads...', choices: [] };
+  // randomEvent nodes feed a per-visit pool entry stashed in App._rlcRandomEv.
+  const ev = (node && node.type === 'randomEvent')
+    ? (App._rlcRandomEv || { text: (node && node.desc) || 'Nothing of note happens here...', choices: [] })
+    : ((node && node.event) || { text: (node && node.desc) || 'You pause at a crossroads...', choices: [] });
   try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
   const choices = (ev.choices && ev.choices.length) ? ev.choices : [{ label: 'Continue', }];
   root.innerHTML = `
@@ -51557,6 +51632,74 @@ function renderRlcEvent() {
       const nid = App._rlcNodeId; App._rlcNodeId = null; _rlcCompleteNode(nid);
     };
   });
+}
+// ❓ Mystery node — rolls ONE weighted outcome, applies it, reveals it.
+function renderRlcMystery() {
+  const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
+  const camp = _rlcCampaign(run.campaignId);
+  const node = _rlcNode(camp, App._rlcNodeId);
+  try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
+  const outcomes = (node && node.mystery && Array.isArray(node.mystery.outcomes)) ? node.mystery.outcomes : [];
+  // Roll once per visit (cached so a re-render doesn't re-roll).
+  if (!App._rlcMysteryPick) {
+    if (!outcomes.length) {
+      App._rlcMysteryPick = { label: 'Nothing happens', _empty: true };
+    } else {
+      let total = 0; outcomes.forEach(o => { total += Math.max(0, Number(o && o.weight) || 1); });
+      let r = Math.random() * (total || outcomes.length);
+      let pick = outcomes[outcomes.length - 1];
+      for (const o of outcomes) { const w = Math.max(0, Number(o && o.weight) || 1); if (r < w) { pick = o; break; } r -= w; }
+      App._rlcMysteryPick = pick || outcomes[0];
+    }
+  }
+  const o = App._rlcMysteryPick || {};
+  // Apply effects ONCE.
+  if (!App._rlcMysteryApplied) {
+    App._rlcMysteryApplied = true;
+    const dc = parseInt(o.currency, 10) || 0;
+    const dm = parseInt(o.medPoints, 10) || 0;
+    if (dc) run.currency = Math.max(0, (run.currency || 0) + dc);
+    if (dm) run.medPoints = Math.max(0, (run.medPoints || 0) + dm);
+    const hp = parseInt(o.healPercent, 10) || 0;
+    const dp = parseInt(o.damagePercent, 10) || 0;
+    if (hp) run.heroHP = Math.min(run.maxHP, run.heroHP + _rlcHealPct(run, hp));
+    if (dp) run.heroHP = Math.max(0, run.heroHP - Math.ceil(run.maxHP * (dp / 100)));
+    if (o.cardKey) { try { _rlcGrantCard(o.cardKey); } catch (e) {} }
+    if (o.relicId) { try { _rlcGrantRelic(run, o.relicId); } catch (e) {} }
+    _persistProgressNow();
+    if (run.heroHP <= 0) {
+      run.isFailed = true; run._failNodeId = App._rlcNodeId;
+      _persistProgressNow();
+      App._rlcMysteryPick = null; App._rlcMysteryApplied = false;
+      App.screen = 'rlcResult'; return render();
+    }
+  }
+  const bits = [];
+  const dc = parseInt(o.currency, 10) || 0, dm = parseInt(o.medPoints, 10) || 0;
+  const hp = parseInt(o.healPercent, 10) || 0, dp = parseInt(o.damagePercent, 10) || 0;
+  if (dc) bits.push(`${dc > 0 ? '+' : ''}${dc} ${escapeHtml(_rlcCur(run))}`);
+  if (dm) bits.push(`${dm > 0 ? '+' : ''}${dm} ⛑️ med pts`);
+  if (hp) bits.push(`+${hp}% HP healed`);
+  if (dp) bits.push(`−${dp}% Max HP damage`);
+  if (o.cardKey) { let c = null; try { c = resolveDeckCard(o.cardKey); } catch (e) {} bits.push(`🃏 ${escapeHtml((c && c.name) || 'a card')} added`); }
+  if (o.relicId) { const rl = (typeof getRlcRelic === 'function') ? getRlcRelic(o.relicId) : null; bits.push(`🏺 ${escapeHtml((rl && rl.name) || 'a relic')} found`); }
+  root.innerHTML = `
+    <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(50,20,80,0.55),transparent);text-align:center">
+      <h1 class="section-title" style="color:#caa6ff">❓ ${escapeHtml((node && node.name) || 'Mystery')}</h1>
+      ${(node && node.iconImg) ? `<div style="text-align:center;margin:6px 0"><img src="${node.iconImg}" alt="" style="max-width:200px;max-height:200px;border-radius:12px;border:2px solid rgba(176,107,255,0.5);object-fit:cover"></div>` : '<div style="font-size:3rem;margin:10px 0">❓</div>'}
+      ${_rlcHUD(run, camp)}
+      <div style="max-width:520px;margin:14px auto 0;padding:22px;background:rgba(18,10,32,0.85);border:1px solid rgba(176,107,255,0.4);border-radius:12px">
+        <div style="font-family:'Cinzel',serif;font-size:1.25rem;color:#f6d97a;margin-bottom:10px">${escapeHtml(o.label || (o._empty ? 'The mystery fizzles — nothing happens.' : 'Fortune turns…'))}</div>
+        ${bits.length ? `<div style="color:#d8c7f0;line-height:1.7">${bits.map(b => `<div>${b}</div>`).join('')}</div>` : '<div class="ink-dim small-text">No effect.</div>'}
+        <button class="btn-primary" id="rlc-myst-go" style="margin-top:18px">Continue →</button>
+      </div>
+    </div>`;
+  const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  document.getElementById('rlc-myst-go').onclick = () => {
+    const nid = App._rlcNodeId; App._rlcNodeId = null;
+    App._rlcMysteryPick = null; App._rlcMysteryApplied = false;
+    _rlcCompleteNode(nid);
+  };
 }
 function renderRlcResult() {
   const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }

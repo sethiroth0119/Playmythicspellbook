@@ -33966,10 +33966,24 @@ function renderCardEditor() {
   const rebirthBlock = (type === 'unit') ? `
     <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem">
       <label style="color:#9be0c4;font-weight:700">🜁 Rebirth Shift</label>
-      <div class="small-text" style="margin:0.2rem 0 0.5rem;opacity:0.78">Also pick the <strong>Rebirth Shift</strong> passive above for it to fire. When this unit dies, at the start of its owner's next turn it returns as a unit from this pool (summoning-sick, no inherited buffs unless allowed). Use card IDs or exact names, comma-separated.</div>
-      <div class="editor-field full"><label>Rebirth Pool (comma-separated card IDs / names)</label><input id="ed-rb-pool" type="text" value="${escapeHtml((card.rebirthShift && Array.isArray(card.rebirthShift.pool) ? card.rebirthShift.pool.join(', ') : ''))}" placeholder="goblin, orc, My Custom Unit"></div>
+      <div class="small-text" style="margin:0.2rem 0 0.5rem;opacity:0.78">Also pick the <strong>Rebirth Shift</strong> passive above for it to fire. When this unit dies, at the start of its owner's next turn it returns as a unit from this pool (summoning-sick, no inherited buffs unless allowed). <strong>Search and click your created cards</strong> below — the exact card is stored, so a typo can never break it.</div>
+      <div class="editor-field full">
+        <label>Rebirth Pool ${(card.rebirthShift && (card.rebirthShift.pool || []).length) ? `<span class="small-text" style="color:#7be0a0">(${(card.rebirthShift.pool || []).length} picked)</span>` : '<span class="small-text ink-dim">(none)</span>'}</label>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;margin:5px 0">
+          ${((card.rebirthShift && card.rebirthShift.pool) || []).map(tok => { const rc = (typeof _rebirthResolveCard === 'function') ? _rebirthResolveCard(tok) : null; const nm = rc ? (rc.name || tok) : tok; const bad = !rc; return `<span style="border:1px solid ${bad ? '#e08080' : 'rgba(126,224,123,0.5)'};color:${bad ? '#e08080' : '#9be0c4'};border-radius:5px;padding:2px 7px;font-size:0.82rem">${escapeHtml(String(nm))}${bad ? ' ⚠' : ''} <button type="button" class="btn-mini" data-rbpool-rm="${escapeHtml(String(tok))}" style="color:#ff8080;padding:0 3px">×</button></span>`; }).join('') || '<span class="small-text ink-dim">No cards picked — searches return nothing to revive into.</span>'}
+        </div>
+        <input type="text" data-cardpick="rbpool" id="ed-rb-pool-q" placeholder="🔍 Search a created card by name or id…" autocomplete="off" style="width:100%;padding:0.45rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(126,224,123,0.45);border-radius:5px">
+        <div id="ed-rb-pool-res" style="display:flex;flex-direction:column;gap:3px;max-height:200px;overflow:auto;margin-top:4px"></div>
+      </div>
+      <div class="editor-field full">
+        <label>Exact Replacement (overrides the pool)</label>
+        <div style="display:flex;align-items:center;gap:8px;margin:5px 0;flex-wrap:wrap">
+          ${(() => { const ex = card.rebirthShift && card.rebirthShift.exact; if (!ex) return '<span class="small-text ink-dim">None — uses the pool above.</span>'; const rc = (typeof _rebirthResolveCard === 'function') ? _rebirthResolveCard(ex) : null; const nm = rc ? (rc.name || ex) : ex; return `<span style="border:1px solid ${rc ? 'rgba(212,175,55,0.5)' : '#e08080'};color:${rc ? '#f6d97a' : '#e08080'};border-radius:5px;padding:3px 9px">${escapeHtml(String(nm))}${rc ? '' : ' ⚠'} <button type="button" class="btn-mini" data-rbexact-clr="1" style="color:#ff8080;padding:0 3px">×</button></span>`; })()}
+        </div>
+        <input type="text" data-cardpick="rbexact" id="ed-rb-exact-q" placeholder="🔍 Search a created card to set as the exact replacement…" autocomplete="off" style="width:100%;padding:0.45rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(212,175,55,0.45);border-radius:5px">
+        <div id="ed-rb-exact-res" style="display:flex;flex-direction:column;gap:3px;max-height:200px;overflow:auto;margin-top:4px"></div>
+      </div>
       <div class="editor-grid">
-        <div class="editor-field"><label>Exact replacement (overrides pool — ID/name)</label><input id="ed-rb-exact" type="text" value="${escapeHtml((card.rebirthShift && card.rebirthShift.exact) || '')}"></div>
         <div class="editor-field"><label>Max rebirths</label><input id="ed-rb-max" type="number" min="1" max="9" value="${(card.rebirthShift && card.rebirthShift.maxCount) || 1}"></div>
         <div class="editor-field"><label>If no square is free →</label><select id="ed-rb-fallback"><option value="graveyard" ${(!card.rebirthShift || card.rebirthShift.fallback !== 'hand') ? 'selected' : ''}>Graveyard</option><option value="hand" ${(card.rebirthShift && card.rebirthShift.fallback === 'hand') ? 'selected' : ''}>Hand</option></select></div>
       </div>
@@ -34456,6 +34470,54 @@ function bindCardEditor() {
   // user's entered name / stats / passive instead of dumping default values.
   const wallChk = document.getElementById('ed-wall-on');
   if (wallChk) wallChk.onchange = () => { const sub = document.getElementById('wall-sub'); if (sub) sub.style.display = wallChk.checked ? '' : 'none'; };
+
+  // 🜁 Rebirth Shift card-pick search — type a name/id, click a CREATED card.
+  // Stores the real card id so a typo can never break the effect. Typing
+  // injects results directly (no re-render = no focus loss); picking commits
+  // + re-renders to refresh the chips.
+  (function () {
+    let _pool = [];
+    try { _pool = (typeof getAllDeckableCards === 'function') ? getAllDeckableCards().filter(p => p && p.card && (p.kind === 'unit' || (p.card.type || 'unit') === 'unit')) : []; } catch (e) { _pool = []; }
+    const _ensureRb = (t) => { t.rebirthShift = t.rebirthShift || { pool: [], exact: '' }; if (!Array.isArray(t.rebirthShift.pool)) t.rebirthShift.pool = []; return t.rebirthShift; };
+    document.querySelectorAll('[data-cardpick]').forEach(inp => {
+      const which = inp.getAttribute('data-cardpick');           // 'rbpool' | 'rbexact'
+      const box = document.getElementById(which === 'rbpool' ? 'ed-rb-pool-res' : 'ed-rb-exact-res');
+      if (!box) return;
+      const paint = () => {
+        const q = (inp.value || '').trim().toLowerCase();
+        const hits = [];
+        for (const p of _pool) {
+          const nm = String(p.card.name || '').toLowerCase();
+          const idv = String(p.card.id || '').toLowerCase();
+          if (!q || nm.indexOf(q) >= 0 || idv.indexOf(q) >= 0) { hits.push(p); if (hits.length >= 25) break; }
+        }
+        box.innerHTML = hits.length ? hits.map(p =>
+          `<button type="button" class="rbpick-row" data-id="${escapeHtml(String(p.card.id))}" style="display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;padding:5px 8px;background:rgba(126,224,123,0.07);border:1px solid rgba(126,224,123,0.3);border-radius:4px;color:#f0e6ff;cursor:pointer">
+             <span>${escapeHtml(p.card.name || String(p.card.id))}</span>
+             <span class="small-text ink-dim">${escapeHtml(String(p.card.id))}</span>
+           </button>`).join('') : '<div class="small-text ink-dim" style="padding:4px">No matching created cards.</div>';
+        box.querySelectorAll('.rbpick-row').forEach(rb => rb.onclick = () => {
+          const t = targetCard(); if (!t) return;
+          const rs = _ensureRb(t);
+          const id = rb.getAttribute('data-id');
+          if (which === 'rbpool') { if (rs.pool.indexOf(id) < 0) rs.pool.push(id); }
+          else { rs.exact = id; }
+          render();
+        });
+      };
+      inp.addEventListener('input', paint);
+      inp.addEventListener('focus', paint);
+    });
+    document.querySelectorAll('[data-rbpool-rm]').forEach(b => b.onclick = () => {
+      const t = targetCard(); if (!t || !t.rebirthShift || !Array.isArray(t.rebirthShift.pool)) return;
+      const tok = b.getAttribute('data-rbpool-rm');
+      t.rebirthShift.pool = t.rebirthShift.pool.filter(x => String(x) !== String(tok));
+      render();
+    });
+    const _exClr = document.querySelector('[data-rbexact-clr]');
+    if (_exClr) _exClr.onclick = () => { const t = targetCard(); if (t && t.rebirthShift) { t.rebirthShift.exact = ''; render(); } };
+  })();
+
   const kalonChk = document.getElementById('ed-kalon-on');
   if (kalonChk) {
     kalonChk.onchange = () => {
@@ -35309,12 +35371,15 @@ function captureEditorIntoCard(card) {
     if (on) card.forcedKalon = { enabled: true, timing: (tEl && tEl.value) || 'startOwn' };
     else delete card.forcedKalon;
   }
-  // 🜁 Rebirth Shift config.
-  if (document.getElementById('ed-rb-pool')) {
+  // 🜁 Rebirth Shift config. Pool + exact are maintained LIVE on the draft by
+  // the card-pick search (stores real card ids — typo-proof), so we keep them
+  // and only normalize the scalar fields from their inputs here.
+  if (document.getElementById('ed-rb-max')) {
     const _rv = (id) => { const e = document.getElementById(id); return e ? e.value : ''; };
     const _rc = (id) => { const e = document.getElementById(id); return e ? !!e.checked : false; };
-    const pool = (_rv('ed-rb-pool') || '').split(',').map(s => s.trim()).filter(Boolean);
-    const exact = (_rv('ed-rb-exact') || '').trim();
+    const prev = card.rebirthShift || {};
+    const pool = Array.isArray(prev.pool) ? prev.pool.filter(Boolean) : [];
+    const exact = (prev.exact || '').trim ? (prev.exact || '').trim() : (prev.exact || '');
     if (pool.length === 0 && !exact) {
       delete card.rebirthShift;
     } else {

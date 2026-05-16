@@ -16949,6 +16949,14 @@ const STATUS_EFFECTS = {
   dazed:      { id: 'dazed',      name: 'Dazed',        icon: '😵', skipChance: 0.3, spdMod: -1, desc: 'Head ringing — 30% chance to fumble each action and -1 movement.' },
   // 🍀 LUCKY — fortune's favor: solid dodge chance.
   lucky:      { id: 'lucky',      name: 'Lucky',        icon: '🍀',  dodgeChance: 0.3, desc: 'Fortune shields the unit — 30% chance to dodge any incoming attack.' },
+  // 🜁 REBORN — a brief, purely-visual marker placed on a unit that returned
+  // via Rebirth Shift / Phoenix Rebirth. No mechanical effect; drives the
+  // golden "reborn" glow + lets the player see who just came back.
+  reborn:     { id: 'reborn',     name: 'Reborn',       icon: '🜁',  desc: 'Recently returned to the battlefield from death.' },
+  // 🔥 BURNING RESURRECTION — Phoenix advanced option: temporary fire fury.
+  burningRes: { id: 'burningRes', name: 'Burning Resurrection', icon: '🔥', atkMod: 4, magMod: 4, desc: 'Risen in flame — +4 ATK & +4 MAG while it burns.' },
+  // 🛡️ SOUL FLAME — Phoenix advanced option: a protective revive ward.
+  soulFlame:  { id: 'soulFlame',  name: 'Soul Flame',   icon: '🕯️', defMod: 4, resMod: 4, desc: 'Wreathed in soul-fire — +4 DEF & +4 RES while it lasts.' },
 };
 
 const PASSIVES = {
@@ -26305,9 +26313,10 @@ function tickTombstones(state) {
           if (nu) {
             if (rb.inheritEquip && orig.heldItem) nu.heldItem = orig.heldItem;
             nu.hasMoved = true; nu.hasAttacked = true;   // enters summoning-sick
-            nu.statusEffects = [];                         // no inherited buffs/debuffs
+            nu.statusEffects = [{ type: 'reborn', turns: 2 }];   // visual marker, no buffs
             nu._reborn = true;
             state.units.push(nu);
+            try { if (typeof playRebornVfx === 'function') playRebornVfx(nu); } catch (e) {}
             state.log = [...(state.log || []), { msg: rb.popupText || `🜁 ${orig.name} is reborn as ${nu.name}!`, color: owner === 'player' ? 'green' : 'red' }];
           }
         } else {
@@ -40563,6 +40572,62 @@ function playCardSummonVfx(opts) {
 // Any lingering .kalon-local-fx or .kalon-locked from older sessions
 // is cleared on entry as a defensive sweep.
 // ============================================================================
+// 🔥 REBORN / PHOENIX VFX — self-contained fiery resurrection cinematic.
+// Injects its own <style> once, appends ONE fixed pointer-events:none
+// overlay anchored on the unit's tile (read-only — never mutates the board),
+// auto-removes after ~2s. Golden-red glow + rising embers/feathers + ash
+// ring + heatwave + a "REBORN" title + a phoenix-scream sound hook.
+function playRebornVfx(unit) {
+  try {
+    if (!document.getElementById('reborn-style')) {
+      const st = document.createElement('style');
+      st.id = 'reborn-style';
+      st.textContent = `
+        #reborn-fx{position:fixed;inset:0;pointer-events:none;z-index:1500;overflow:hidden}
+        #reborn-fx .rbx-core{position:absolute;width:200px;height:200px;margin:-100px 0 0 -100px;border-radius:50%;
+          background:radial-gradient(circle,rgba(255,210,90,0.85),rgba(255,90,30,0.5) 45%,transparent 72%);
+          animation:rbx-core 1.8s ease-out forwards;filter:blur(2px)}
+        #reborn-fx .rbx-ring{position:absolute;width:60px;height:60px;margin:-30px 0 0 -30px;border-radius:50%;
+          border:3px solid rgba(255,170,60,0.9);box-shadow:0 0 24px rgba(255,140,40,0.8);animation:rbx-ring 1.6s ease-out forwards}
+        #reborn-fx .rbx-heat{position:absolute;width:260px;height:260px;margin:-130px 0 0 -130px;border-radius:50%;
+          backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:rbx-heat 1.4s ease-out forwards}
+        #reborn-fx .rbx-p{position:absolute;width:8px;height:8px;border-radius:50%;
+          background:radial-gradient(circle,#ffe08a,#ff6a1f);box-shadow:0 0 8px #ff8a2a;animation:rbx-rise 1.9s ease-out forwards}
+        #reborn-fx .rbx-title{position:absolute;left:50%;top:18%;transform:translateX(-50%);
+          font-family:'Cinzel',serif;font-weight:800;font-size:2rem;letter-spacing:3px;
+          color:#ffd166;text-shadow:0 0 18px rgba(255,120,40,0.9),0 2px 6px #000;animation:rbx-title 2s ease-out forwards}
+        @keyframes rbx-core{0%{transform:scale(0.2);opacity:0}25%{opacity:1}100%{transform:scale(1.6);opacity:0}}
+        @keyframes rbx-ring{0%{transform:scale(0.3);opacity:0}30%{opacity:1}100%{transform:scale(7);opacity:0}}
+        @keyframes rbx-heat{0%{transform:scale(0.4);opacity:0.7}100%{transform:scale(2.4);opacity:0}}
+        @keyframes rbx-rise{0%{transform:translateY(0) scale(1);opacity:0}15%{opacity:1}100%{transform:translateY(-180px) scale(0.3);opacity:0}}
+        @keyframes rbx-title{0%{opacity:0;transform:translateX(-50%) scale(0.7)}25%{opacity:1;transform:translateX(-50%) scale(1)}80%{opacity:1}100%{opacity:0}}`;
+      document.head.appendChild(st);
+    }
+    const old = document.getElementById('reborn-fx'); if (old) old.remove();
+    let cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+    try {
+      const el = unit && unit.id ? document.querySelector(`[data-unit="${unit.id}"]`) : null;
+      if (el) { const r = el.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height / 2; }
+    } catch (e) {}
+    const fx = document.createElement('div');
+    fx.id = 'reborn-fx';
+    let parts = '';
+    for (let i = 0; i < 16; i++) {
+      const a = (Math.PI * 2 * i) / 16, dist = 10 + Math.random() * 26;
+      parts += `<div class="rbx-p" style="left:${cx + Math.cos(a) * dist}px;top:${cy + Math.sin(a) * dist}px;animation-delay:${(Math.random() * 0.4).toFixed(2)}s"></div>`;
+    }
+    fx.innerHTML =
+      `<div class="rbx-heat" style="left:${cx}px;top:${cy}px"></div>` +
+      `<div class="rbx-core" style="left:${cx}px;top:${cy}px"></div>` +
+      `<div class="rbx-ring" style="left:${cx}px;top:${cy}px"></div>` +
+      parts +
+      `<div class="rbx-title">🔥 REBORN</div>`;
+    document.body.appendChild(fx);
+    try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
+    setTimeout(() => { const n = document.getElementById('reborn-fx'); if (n) n.remove(); }, 2100);
+  } catch (e) { /* VFX must never break the engine */ }
+}
+
 function playKalonTransformVfx(unit, opts) {
   // ✦ The original in-place implementation never reliably rendered (a subtle
   //   failure deep in the 365-line legacy body, swallowed by the call-site

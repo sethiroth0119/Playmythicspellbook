@@ -22036,12 +22036,38 @@ function normalizeHeroEntry(h) {
     custom: true,
   };
 }
+// Custom heroes from BOTH the local Forge and the published Catalog so
+// every player (not just the admin) sees the custom roster.
+function _customHeroEntries() {
+  let pool = [];
+  try { pool = (typeof getAllCustomCards === 'function') ? getAllCustomCards() : (Forge.customCards || []); }
+  catch (e) { pool = Forge.customCards || []; }
+  const seen = new Set(); const out = [];
+  pool.forEach(c => {
+    if (c && c.type === 'hero' && c.id != null && !seen.has(c.id)) {
+      seen.add(c.id); out.push(normalizeHeroEntry(c));
+    }
+  });
+  return out;
+}
+// LIST-facing roster (deck-builder hero pick, "Choose Your Deck"). When
+// custom-only mode is on AND at least one custom hero exists, the built-in
+// STARTER_HEROES (the emoji "mockup" heroes) are hidden from players
+// entirely — only custom heroes/decks are shown. If no custom heroes exist
+// yet, starters stay so the game is still playable.
 function getAllHeroes() {
-  const customHeroes = (Forge.customCards || []).filter(c => c.type === 'hero').map(normalizeHeroEntry);
+  const customHeroes = _customHeroEntries();
+  if (!!Forge.useCustomOnlyPool && customHeroes.length > 0) return customHeroes;
   return [...STARTER_HEROES, ...customHeroes];
 }
+// Resolve a hero by id from the FULL set (starters always included) so
+// legacy decks, names/icons, AI references, etc. never break even while
+// starters are hidden from the pickers.
 function findHeroById(id) {
-  return getAllHeroes().find(h => h.id === id) || null;
+  if (id == null) return null;
+  const s = STARTER_HEROES.find(h => h.id === id);
+  if (s) return s;
+  return _customHeroEntries().find(h => h.id === id) || null;
 }
 
 // Returns the saved deck (array of card keys) for a hero if valid, else null.

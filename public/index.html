@@ -30308,6 +30308,8 @@ function render() {
   }
   if (App.screen === 'rlcList')    return renderRlcList();
   if (App.screen === 'rlcMap')     return renderRlcMap();
+  if (App.screen === 'rlcDeckPick') return renderRlcDeckPick();
+  if (App.screen === 'rlcDraft')   return renderRlcDraft();
   if (App.screen === 'rlcReward')  return renderRlcReward();
   if (App.screen === 'rlcMedical') return renderRlcMedical();
   if (App.screen === 'rlcShop')    return renderRlcShop();
@@ -48120,6 +48122,8 @@ const RPG_GUIDE_PAGES = [
   { route: 'title',        label: 'Main Hub (Title)' },
   { route: 'starterPick',  label: 'Starter Deck Pick (new players)' },
   { route: 'rlcMap',       label: 'Roguelite — Campaign Map' },
+  { route: 'rlcDeckPick',  label: 'Roguelite — Pick Starter Deck' },
+  { route: 'rlcDraft',     label: 'Roguelite — Draft Starter Cards' },
   { route: 'rlcReward',    label: 'Roguelite — Card Reward' },
   { route: 'rlcMedical',   label: 'Roguelite — Medical Camp' },
   { route: 'rlcShop',      label: 'Roguelite — Black Market' },
@@ -49960,7 +49964,17 @@ function rlcStartRun(campaignId) {
                     : (camp.startRelic ? [camp.startRelic] : []);
   startRelics.forEach(rid => { try { _rlcGrantRelic(Profile.rlcRun, rid, { silent: true }); } catch (e) {} });
   try { saveProfile(); } catch (e) {}
-  App._rlcIntroFor = camp.id;   // show intro modal once on the map
+  App._rlcIntroFor = camp.id;   // intro modal still shows once when the map loads
+  // 🃏 Pre-run deck modes: defer the map until the player picks / drafts a deck.
+  if (camp.startingDeckMode === 'pick' && Array.isArray(camp.startingDeckChoices) && camp.startingDeckChoices.length) {
+    Profile.rlcRun.deck = [];
+    App.screen = 'rlcDeckPick'; render(); return;
+  }
+  if (camp.startingDeckMode === 'draft' && Array.isArray(camp.draftPool) && camp.draftPool.length) {
+    Profile.rlcRun.deck = [];
+    App._rlcDraftOffer = null;
+    App.screen = 'rlcDraft'; render(); return;
+  }
   App.screen = 'rlcMap';
   render();
 }
@@ -50151,7 +50165,9 @@ function _rlcBlankCampaign() {
   return { id: 'camp' + Date.now().toString(36), name: 'New Campaign', description: '', intro: '',
     coverImg: '', difficulty: 'Normal', startingHeroId: '', startingHP: 100,
     currencyName: 'Gold', startingCurrency: 50, startingMedPoints: 2,
-    startingDeckMode: 'player', startingDeckId: '', isPublished: false,
+    startingDeckMode: 'player', startingDeckId: '',
+    startingDeckChoices: [], draftPool: [], draftPicks: 15, draftChoices: 3,
+    isPublished: false,
     nodes: [], finalReward: { cardKeys: [], currency: 0 }, createdAt: Date.now(), updatedAt: Date.now() };
 }
 function _rlcDeckOptions() {
@@ -50248,6 +50264,12 @@ function renderRlcAdmin() {
           <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">${((n.reward || {}).cardKeys || []).map((k, ki) => `<span class="small-text" style="background:rgba(212,175,55,0.15);border:1px solid rgba(212,175,55,0.4);border-radius:4px;padding:2px 6px">${escapeHtml(k)} <button class="btn-mini" data-rlc-rmcard="${idx}:${ki}" style="color:#ff8080;padding:0 3px">×</button></span>`).join('') || '<span class="ink-dim small-text">none</span>'}</div>
           <input type="text" data-rlc-search="reward:${idx}" placeholder="🔍 Search a card by name or id…" autocomplete="off" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.45);border-radius:5px;margin-bottom:4px">
           <div class="rlc-srch-res" id="rlc-srch-reward-${idx}" style="display:flex;flex-direction:column;gap:3px;max-height:220px;overflow:auto"></div>
+          <label class="small-text" style="display:flex;align-items:center;gap:5px;margin:8px 0 2px"><input type="checkbox" data-rlc-path="nodes.${idx}.reward.rarityWeighted" ${(n.reward || {}).rarityWeighted ? 'checked' : ''}> 🎲 Weight offered cards by rarity (save to reveal/refresh weights)</label>
+          ${(n.reward || {}).rarityWeighted ? `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">${RARITIES.map(rr => `<label style="display:block"><span class="small-text ink-dim">${escapeHtml(rr.name)}</span><br><input data-rlc-path="nodes.${idx}.reward.rarityWeights.${rr.id}" type="number" step="0.1" min="0" value="${escapeHtml(String(((n.reward || {}).rarityWeights || {})[rr.id] != null ? (n.reward || {}).rarityWeights[rr.id] : DEFAULT_PACK_RARITY_WEIGHTS[rr.id]))}" style="width:100%;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"></label>`).join('')}</div>` : ''}
+          <div class="small-text ink-dim" style="margin:6px 0 2px">⚔️ Faction restriction (offered cards must match ≥1; none = unrestricted):</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;max-height:110px;overflow:auto">${FACTIONS.map(f => `<label class="small-text" style="display:flex;align-items:center;gap:3px;border:1px solid rgba(184,136,255,0.3);border-radius:4px;padding:2px 6px"><input type="checkbox" data-rlc-facrestrict="${idx}" value="${f.id}" ${(((n.reward || {}).restrictFactions) || []).indexOf(f.id) >= 0 ? 'checked' : ''}> ${f.icon} ${escapeHtml(f.name)}</label>`).join('')}</div>
+          <div class="small-text ink-dim" style="margin:6px 0 2px">🌪️ Element restriction (offered cards must match ≥1; none = unrestricted):</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;max-height:110px;overflow:auto">${ELEMENTS.map(e => `<label class="small-text" style="display:flex;align-items:center;gap:3px;border:1px solid rgba(184,136,255,0.3);border-radius:4px;padding:2px 6px"><input type="checkbox" data-rlc-elemrestrict="${idx}" value="${escapeHtml(e)}" ${(((n.reward || {}).restrictElements) || []).indexOf(e) >= 0 ? 'checked' : ''}> ${escapeHtml(e)}</label>`).join('')}</div>
           <div style="margin-top:6px">${relicSel('🏺 Relic reward (granted automatically on clearing this node)', 'nodes.' + idx + '.reward.relicId', (n.reward || {}).relicId)}</div>
         ` : ''}
         ${n.type === 'market' ? `
@@ -50285,6 +50307,26 @@ function renderRlcAdmin() {
           </div>` : ''}
       </div>`;
   };
+  // Config UI for the 'pick' / 'draft' starting-deck modes.
+  let deckModeCfg = '';
+  if (ed.startingDeckMode === 'pick') {
+    const deckChoiceOpts = _rlcDeckOptions().filter(o => o.id);
+    const sel = Array.isArray(ed.startingDeckChoices) ? ed.startingDeckChoices : [];
+    deckModeCfg = `
+      <div class="small-text ink-dim" style="margin:0 0 4px">📚 Decks the player may choose from at run start (tick all that apply):</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">${deckChoiceOpts.length ? deckChoiceOpts.map(o => `<label class="small-text" style="display:flex;align-items:center;gap:3px;border:1px solid rgba(184,136,255,0.3);border-radius:4px;padding:2px 6px"><input type="checkbox" data-rlc-deckchoice="${escapeHtml(String(o.id))}" ${sel.indexOf(o.id) >= 0 ? 'checked' : ''}> ${escapeHtml(o.label)}</label>`).join('') : '<span class="ink-dim small-text">No starter / AI decks available yet.</span>'}</div>`;
+  } else if (ed.startingDeckMode === 'draft') {
+    const dpool = Array.isArray(ed.draftPool) ? ed.draftPool : [];
+    deckModeCfg = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        ${fld('Cards to draft (deck auto-fills by repeating up to 40)', 'draftPicks', ed.draftPicks, 'number')}
+        ${fld('Choices shown per draft pick (2–6)', 'draftChoices', ed.draftChoices, 'number')}
+      </div>
+      <div class="small-text ink-dim" style="margin:6px 0 2px">🃏 Draft card pool (player drafts their starting deck from these):</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">${dpool.map((k, ki) => `<span class="small-text" style="background:rgba(212,175,55,0.15);border:1px solid rgba(212,175,55,0.4);border-radius:4px;padding:2px 6px">${escapeHtml(String(k))} <button class="btn-mini" data-rlc-rmdraft="${ki}" style="color:#ff8080;padding:0 3px">×</button></span>`).join('') || '<span class="ink-dim small-text">none</span>'}</div>
+      <input type="text" data-rlc-search="draftpool:0" placeholder="🔍 Search a card to add to the draft pool…" autocomplete="off" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.45);border-radius:5px;margin-bottom:4px">
+      <div class="rlc-srch-res" id="rlc-srch-draftpool-0" style="display:flex;flex-direction:column;gap:3px;max-height:220px;overflow:auto"></div>`;
+  }
   root.innerHTML = `
     <div class="campaign-page pricing-admin-page rlc-editor">
       <button class="hub-back-btn" id="rlc-ed-back">← Campaigns</button>
@@ -50309,9 +50351,11 @@ function renderRlcAdmin() {
           ${fld('Currency name', 'currencyName', ed.currencyName)}
           ${fld('Starting currency', 'startingCurrency', ed.startingCurrency, 'number')}
           ${fld('Starting med points', 'startingMedPoints', ed.startingMedPoints, 'number')}
-          <label style="display:block"><span class="small-text ink-dim">Deck mode</span><br><select data-rlc-path="startingDeckMode" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="player" ${ed.startingDeckMode === 'player' ? 'selected' : ''}>Player's own deck</option><option value="fixed" ${ed.startingDeckMode === 'fixed' ? 'selected' : ''}>Fixed deck</option></select></label>
+          <label style="display:block"><span class="small-text ink-dim">Deck mode</span><br><select data-rlc-path="startingDeckMode" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="player" ${ed.startingDeckMode === 'player' ? 'selected' : ''}>Player&#39;s own deck</option><option value="fixed" ${ed.startingDeckMode === 'fixed' ? 'selected' : ''}>Fixed deck</option><option value="pick" ${ed.startingDeckMode === 'pick' ? 'selected' : ''}>Pick from starter decks</option><option value="draft" ${ed.startingDeckMode === 'draft' ? 'selected' : ''}>Draft starter cards</option></select></label>
           ${deckSel('startingDeckId', ed.startingDeckId)}
         </div>
+        <div class="small-text ink-dim" style="margin:-2px 0 8px">💡 Save (or switch tabs) to refresh the deck-mode options below after changing the mode.</div>
+        ${(ed.startingDeckMode === 'pick' || ed.startingDeckMode === 'draft') ? `<div style="border:1px solid rgba(184,136,255,0.3);border-radius:6px;padding:8px;margin:0 0 10px;background:rgba(20,12,40,0.4)">${deckModeCfg}</div>` : ''}
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           ${fld('Final-reward ' + _rlcCur(ed), 'finalReward.currency', (ed.finalReward || {}).currency, 'number')}
           ${relicSel('🏺 Starting relic (player begins the run with this)', 'startRelic', ed.startRelic)}
@@ -50372,6 +50416,28 @@ function renderRlcAdmin() {
   document.querySelectorAll('[data-rlc-ndup]').forEach(b => b.onclick = () => { const i = parseInt(b.dataset.rlcNdup, 10); const c = JSON.parse(JSON.stringify(ed.nodes[i])); c.id = 'n' + Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36); c.connections = []; ed.nodes.splice(i + 1, 0, c); reRender(); });
   document.querySelectorAll('[data-rlc-ndel]').forEach(b => b.onclick = () => { if (!confirm('Delete this node?')) return; const i = parseInt(b.dataset.rlcNdel, 10); const id = ed.nodes[i].id; ed.nodes.splice(i, 1); ed.nodes.forEach(n => n.connections = (n.connections || []).filter(x => x !== id)); reRender(); });
   document.querySelectorAll('[data-rlc-rmcard]').forEach(b => b.onclick = () => { const [i, ki] = b.dataset.rlcRmcard.split(':').map(Number); ed.nodes[i].reward.cardKeys.splice(ki, 1); reRender(); });
+  document.querySelectorAll('[data-rlc-deckchoice]').forEach(cb => cb.addEventListener('change', () => {
+    ed.startingDeckChoices = Array.isArray(ed.startingDeckChoices) ? ed.startingDeckChoices : [];
+    const id = cb.getAttribute('data-rlc-deckchoice');
+    if (cb.checked) { if (ed.startingDeckChoices.indexOf(id) < 0) ed.startingDeckChoices.push(id); }
+    else ed.startingDeckChoices = ed.startingDeckChoices.filter(x => x !== id);
+    saveForge();
+  }));
+  document.querySelectorAll('[data-rlc-rmdraft]').forEach(b => b.onclick = () => { const ki = parseInt(b.dataset.rlcRmdraft, 10); ed.draftPool = Array.isArray(ed.draftPool) ? ed.draftPool : []; ed.draftPool.splice(ki, 1); reRender(); });
+  root.querySelectorAll('[data-rlc-facrestrict]').forEach(cb => cb.addEventListener('change', () => {
+    const ni = parseInt(cb.dataset.rlcFacrestrict, 10); const node = ed.nodes[ni]; if (!node) return;
+    node.reward = node.reward || {}; node.reward.restrictFactions = Array.isArray(node.reward.restrictFactions) ? node.reward.restrictFactions : [];
+    if (cb.checked) { if (node.reward.restrictFactions.indexOf(cb.value) < 0) node.reward.restrictFactions.push(cb.value); }
+    else node.reward.restrictFactions = node.reward.restrictFactions.filter(x => x !== cb.value);
+    saveForge();
+  }));
+  root.querySelectorAll('[data-rlc-elemrestrict]').forEach(cb => cb.addEventListener('change', () => {
+    const ni = parseInt(cb.dataset.rlcElemrestrict, 10); const node = ed.nodes[ni]; if (!node) return;
+    node.reward = node.reward || {}; node.reward.restrictElements = Array.isArray(node.reward.restrictElements) ? node.reward.restrictElements : [];
+    if (cb.checked) { if (node.reward.restrictElements.indexOf(cb.value) < 0) node.reward.restrictElements.push(cb.value); }
+    else node.reward.restrictElements = node.reward.restrictElements.filter(x => x !== cb.value);
+    saveForge();
+  }));
   document.querySelectorAll('[data-rlc-rmitem]').forEach(b => b.onclick = () => { const [i, ii] = b.dataset.rlcRmitem.split(':').map(Number); ed.nodes[i].shop.items.splice(ii, 1); reRender(); });
   // 🔍 Live card-search for reward pools + black-market stock. Typing filters
   // the merged deckable-card pool and injects clickable results directly
@@ -50408,6 +50474,11 @@ function renderRlcAdmin() {
         : '<div class="small-text ink-dim" style="padding:4px">No matching cards.</div>';
       box.querySelectorAll('.rlc-pick-row').forEach(rb => rb.onclick = () => {
         const key = rb.getAttribute('data-key');
+        if (kind === 'draftpool') {
+          ed.draftPool = Array.isArray(ed.draftPool) ? ed.draftPool : [];
+          ed.draftPool.push(key);
+          reRender(); return;
+        }
         const node = ed.nodes[i]; if (!node) return;
         if (kind === 'reward') {
           node.reward = node.reward || { cardKeys: [] };
@@ -50573,12 +50644,42 @@ function renderRlcReward() {
   const node = _rlcNode(camp, App._rlcNodeId);
   const r = (node && node.reward) || {};
   try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
-  // Sample choiceCount distinct cards from the pool.
-  let pool = (r.cardKeys || []).slice(0);
-  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  // Filter the reward pool by optional faction / element restrictions, then
+  // sample choiceCount cards — rarity-weighted if the node opts in.
+  const _rf = Array.isArray(r.restrictFactions) ? r.restrictFactions : [];
+  const _re = Array.isArray(r.restrictElements) ? r.restrictElements : [];
+  const _allKeys = (r.cardKeys || []).slice(0);
+  let pool = _allKeys.filter(k => {
+    if (!_rf.length && !_re.length) return true;
+    let c = null; try { c = resolveDeckCard(k); } catch (e) {}
+    if (!c) return false;
+    if (_rf.length) { const fs = (typeof getFactionsOf === 'function') ? getFactionsOf(c) : (c.factions || []); if (!fs.some(f => _rf.indexOf(f) >= 0)) return false; }
+    if (_re.length) { const es = (typeof getElementsOf === 'function') ? getElementsOf(c) : (c.elements || []); if (!es.some(e => _re.indexOf(e) >= 0)) return false; }
+    return true;
+  });
+  if (!pool.length) pool = _allKeys;   // never present an empty reward screen
   const _choiceBonus = _rlcRelicSum(run, 'rewardChoice');
   const n = Math.max(1, Math.min((parseInt(r.choiceCount, 10) || 3) + _choiceBonus, pool.length || (3 + _choiceBonus)));
-  const offer = pool.slice(0, n);
+  let offer = [];
+  if (r.rarityWeighted) {
+    const weights = Object.assign({}, DEFAULT_PACK_RARITY_WEIGHTS, r.rarityWeights || {});
+    const byRar = {};
+    pool.forEach(k => { let c = null; try { c = resolveDeckCard(k); } catch (e) {} const rid = (c && c.rarity) || 'common'; (byRar[rid] = byRar[rid] || []).push(k); });
+    const used = new Set();
+    let guard = 0;
+    while (offer.length < n && guard++ < 300) {
+      const rid = rollRarityFromWeights(weights);
+      let bucket = (rid && byRar[rid]) ? byRar[rid].filter(k => !used.has(k)) : [];
+      if (!bucket.length) bucket = pool.filter(k => !used.has(k));
+      if (!bucket.length) break;
+      const pick = bucket[Math.floor(Math.random() * bucket.length)];
+      used.add(pick); offer.push(pick);
+    }
+  } else {
+    const sh = pool.slice(0);
+    for (let i = sh.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [sh[i], sh[j]] = [sh[j], sh[i]]; }
+    offer = sh.slice(0, n);
+  }
   const cardTile = (key) => {
     let c = null; try { c = resolveDeckCard(key); } catch (e) {}
     const nm = c ? (c.name || key) : key;
@@ -50609,6 +50710,93 @@ function renderRlcReward() {
     b.onclick = () => { _rlcGrantCard(b.dataset.rlcTake); showToast('🃏 Card added to your collection!', 2400); finish(); };
   });
   const sk = document.getElementById('rlc-skip'); if (sk) sk.onclick = finish;
+}
+// 🃏 Starting-deck mode: PICK — player chooses one of the admin-allowed decks.
+function renderRlcDeckPick() {
+  const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
+  const camp = _rlcCampaign(run.campaignId);
+  const allow = (camp && Array.isArray(camp.startingDeckChoices)) ? camp.startingDeckChoices : [];
+  const opts = _rlcDeckOptions().filter(o => o.id && allow.indexOf(o.id) >= 0);
+  if (!opts.length) { run.deck = _rlcDeckKeys((camp && camp.startingDeckId) || ''); try { saveProfile(); } catch (e) {} App.screen = 'rlcMap'; return render(); }
+  try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
+  const tile = (o) => {
+    const keys = _rlcDeckKeys(o.id);
+    const counts = {}; keys.forEach(k => counts[k] = (counts[k] || 0) + 1);
+    const uniq = Object.keys(counts).length;
+    return `<div style="width:230px;background:rgba(18,10,32,0.85);border:1px solid rgba(212,175,55,0.4);border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
+        <div style="height:90px;display:flex;align-items:center;justify-content:center;font-size:2.6rem;background:radial-gradient(ellipse,rgba(170,60,255,0.22),transparent)">🃏</div>
+        <div style="padding:12px;display:flex;flex-direction:column;gap:8px;flex:1">
+          <div style="color:#f6d97a;font-weight:700">${escapeHtml(o.label)}</div>
+          <div class="small-text ink-dim" style="flex:1">${keys.length} cards · ${uniq} unique</div>
+          <button class="btn-primary" data-rlc-pickdeck="${escapeHtml(String(o.id))}" style="margin-top:auto">▶ Choose this deck</button>
+        </div>
+      </div>`;
+  };
+  root.innerHTML = `
+    <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(40,15,70,0.55),transparent)">
+      <h1 class="section-title" style="color:#f6d97a">🃏 Choose Your Starting Deck</h1>
+      <div class="section-subtitle">Pick the deck you'll begin <strong>${escapeHtml((camp && camp.name) || 'this run')}</strong> with. You can still earn, draft &amp; forge cards along the way.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;justify-content:center;margin-top:24px">${opts.map(tile).join('')}</div>
+      <div style="text-align:center;margin-top:24px"><button class="btn-secondary" id="rlc-pick-abandon">✖ Abandon run</button></div>
+    </div>`;
+  document.querySelectorAll('[data-rlc-pickdeck]').forEach(b => b.onclick = () => {
+    run.deck = _rlcDeckKeys(b.dataset.rlcPickdeck).slice(0);
+    try { saveProfile(); } catch (e) {}
+    showToast('🃏 Deck chosen — your run begins!', 2200);
+    App.screen = 'rlcMap'; render();
+  });
+  const ab = document.getElementById('rlc-pick-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+}
+// 🃏 Starting-deck mode: DRAFT — player builds the starting deck pick-by-pick.
+function renderRlcDraft() {
+  const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
+  const camp = _rlcCampaign(run.campaignId);
+  const pool = (camp && Array.isArray(camp.draftPool)) ? camp.draftPool.slice(0) : [];
+  if (!pool.length) { run.deck = _rlcDeckKeys((camp && camp.startingDeckId) || ''); try { saveProfile(); } catch (e) {} App.screen = 'rlcMap'; return render(); }
+  const need = Math.max(1, parseInt(camp.draftPicks, 10) || 15);
+  const per  = Math.max(2, Math.min(parseInt(camp.draftChoices, 10) || 3, 6));
+  run.deck = Array.isArray(run.deck) ? run.deck : [];
+  if (run.deck.length >= need) { try { saveProfile(); } catch (e) {} App.screen = 'rlcMap'; return render(); }
+  try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
+  if (!Array.isArray(App._rlcDraftOffer) || !App._rlcDraftOffer.length) {
+    const sh = pool.slice(0);
+    for (let i = sh.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [sh[i], sh[j]] = [sh[j], sh[i]]; }
+    App._rlcDraftOffer = sh.slice(0, Math.min(per, sh.length));
+  }
+  const offer = App._rlcDraftOffer;
+  const cardTile = (key) => {
+    let c = null; try { c = resolveDeckCard(key); } catch (e) {}
+    const nm = c ? (c.name || key) : key;
+    const art = (c && typeof getCardArt === 'function' && getCardArt(c.id)) ? `<img src="${getCardArt(c.id)}" style="width:100%;height:120px;object-fit:cover;border-radius:8px 8px 0 0">` : `<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:2.4rem;background:radial-gradient(ellipse,rgba(170,60,255,0.2),transparent)">${c ? (c.icon || '🃏') : '🃏'}</div>`;
+    return `<div style="width:170px;background:rgba(18,10,32,0.85);border:1px solid rgba(212,175,55,0.4);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+        ${art}
+        <div style="padding:10px;display:flex;flex-direction:column;gap:6px;flex:1">
+          <div style="color:#f6d97a;font-weight:700;font-size:0.92rem">${escapeHtml(nm)}</div>
+          <div class="small-text ink-dim">${c ? escapeHtml(String(c.type || 'card')) : ''} ${c && c.rarity ? '· ' + escapeHtml(c.rarity) : ''}</div>
+          <button class="btn-primary btn-mini" data-rlc-draftpick="${escapeHtml(String(key))}" style="margin-top:auto">✓ Draft</button>
+        </div>
+      </div>`;
+  };
+  root.innerHTML = `
+    <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(40,15,70,0.55),transparent)">
+      <h1 class="section-title" style="color:#f6d97a">🃏 Draft Your Starting Deck</h1>
+      <div class="section-subtitle">Pick <strong>${need}</strong> cards — your deck repeats them up to 40. Drafted <strong>${run.deck.length}/${need}</strong>.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:18px;justify-content:center;margin-top:24px">${offer.map(cardTile).join('')}</div>
+      <div style="text-align:center;margin-top:24px;display:flex;gap:10px;justify-content:center">
+        ${run.deck.length >= 1 ? `<button class="btn-secondary" id="rlc-draft-done">✔ Finish early (${run.deck.length} cards)</button>` : ''}
+        <button class="btn-secondary" id="rlc-draft-abandon">✖ Abandon run</button>
+      </div>
+    </div>`;
+  document.querySelectorAll('[data-rlc-draftpick]').forEach(b => b.onclick = () => {
+    run.deck.push(b.dataset.rlcDraftpick);
+    App._rlcDraftOffer = null;
+    try { saveProfile(); } catch (e) {}
+    if (run.deck.length >= need) { showToast('🃏 Draft complete — your run begins!', 2200); App.screen = 'rlcMap'; }
+    render();
+  });
+  const dn = document.getElementById('rlc-draft-done');
+  if (dn) dn.onclick = () => { App._rlcDraftOffer = null; try { saveProfile(); } catch (e) {} showToast('🃏 Draft locked in — your run begins!', 2200); App.screen = 'rlcMap'; render(); };
+  const ab = document.getElementById('rlc-draft-abandon'); if (ab) ab.onclick = rlcAbandonRun;
 }
 function renderRlcMedical() {
   const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }

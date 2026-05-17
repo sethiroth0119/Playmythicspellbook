@@ -20921,6 +20921,16 @@ function _applyAuthState(session) {
     Profile.cloud.email       = session.user.email || null;
     Profile.cloud.displayName = (session.user.user_metadata && session.user.user_metadata.display_name) || null;
     Profile.cloud.signedIn    = true;
+    // 🪪 Carry the signup display name into the in-game account so it shows on
+    // the Profile page and as the battle name. Only fills when the player
+    // hasn't chosen their own name yet — never clobbers an existing one.
+    if (!Profile.account) Profile.account = { level: 1, xp: 0, totalXp: 0, displayName: '', email: '', passwordSet: false, createdAt: null };
+    if (Profile.cloud.displayName && !Profile.account.displayName) {
+      Profile.account.displayName = String(Profile.cloud.displayName).slice(0, 32);
+    }
+    if (Profile.cloud.email && !Profile.account.email) {
+      Profile.account.email = String(Profile.cloud.email).slice(0, 96);
+    }
     saveProfile();
     // On fresh sign-ins, pull the player's saved profile data from the cloud.
     if (typeof cloudFetchProfile === 'function') {
@@ -20935,10 +20945,17 @@ function _applyAuthState(session) {
     // get the admin's published cards / heroes / items. Then pull the public
     // sprite + art assets so they can actually render those cards.
     if (typeof cloudFetchCatalog === 'function') {
-      cloudFetchCatalog().catch(() => {});
+      cloudFetchCatalog().then(() => {
+        // Published starter decks ride in the catalog. Until it arrives,
+        // needsStarterPick() sees zero decks and skips the new-player gate.
+        // Re-render the moment it loads so the gate finally evaluates.
+        try { if (typeof render === 'function') render(); } catch (e) {}
+      }).catch(() => {});
     }
     if (typeof cloudFetchCatalogArt === 'function') {
-      cloudFetchCatalogArt().catch(() => {});
+      cloudFetchCatalogArt().then(() => {
+        try { if (typeof render === 'function') render(); } catch (e) {}
+      }).catch(() => {});
     }
   } else {
     Profile.cloud.userId      = null;
@@ -31667,6 +31684,13 @@ function renderTitle() {
 
 // ===== First-run welcome modal =====
 function renderTutorialWelcome() {
+  // 🛡️ Dedupe — render() can fire many times right after sign-in (auth state,
+  // profile fetch, friends cache, catalog load…). Without this guard a new
+  // overlay stacks on each render; document.getElementById then binds the
+  // click handlers to the OLDEST (buried) copy while the player clicks the
+  // newest (top) one — so the buttons did nothing but play the click SFX.
+  const _existing = document.getElementById('tutorial-welcome');
+  if (_existing) _existing.remove();
   const overlay = document.createElement('div');
   overlay.className = 'overlay tutorial-welcome-overlay';
   overlay.id = 'tutorial-welcome';
@@ -31690,7 +31714,9 @@ function renderTutorialWelcome() {
     </div>
   `;
   document.body.appendChild(overlay);
-  document.getElementById('btn-start-tutorial').onclick = () => {
+  // Bind via the freshly-created overlay (not document.getElementById) so the
+  // handlers always attach to the visible, top-most modal.
+  overlay.querySelector('#btn-start-tutorial').onclick = () => {
     Profile.tutorialComplete = false;
     App.tutorial = { active: true, step: 0 };
     App._tutorialWelcomeDismissed = true;
@@ -31704,7 +31730,7 @@ function renderTutorialWelcome() {
     App.screen = 'deckSelect';
     render();
   };
-  document.getElementById('btn-skip-tutorial').onclick = () => {
+  overlay.querySelector('#btn-skip-tutorial').onclick = () => {
     Profile.tutorialComplete = true;
     App._tutorialWelcomeDismissed = true;
     saveProfile();

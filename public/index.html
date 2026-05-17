@@ -11625,6 +11625,15 @@
 
   /* ===== Campaign / Story Mode ===== */
   .campaign-page { max-width: 1280px; margin: 0 auto; padding: 1.5rem 1.5rem; }
+  /* 🗺️ Roguelite map — the campaign-map background fills the ENTIRE viewport
+     (fixed layer behind the content) instead of just the content band. */
+  .rlc-map-page { position: relative; min-height: 100vh; }
+  .rlc-map-bg {
+    position: fixed; inset: 0; z-index: 0;
+    background-size: cover; background-position: center; background-repeat: no-repeat;
+    pointer-events: none;
+  }
+  .rlc-map-inner { position: relative; z-index: 1; }
   .campaign-header {
     display: grid;
     grid-template-columns: 1fr auto auto;
@@ -51521,7 +51530,9 @@ function renderRlcMap() {
       </div>
     </div>` : '';
   root.innerHTML = `
-    <div class="campaign-page" style="${camp.mapBg ? `background:linear-gradient(rgba(10,5,20,0.82),rgba(10,5,20,0.88)),url('${camp.mapBg}') center/cover fixed` : 'background:radial-gradient(ellipse at top,rgba(45,15,75,0.55),transparent)'}">
+    <div class="campaign-page rlc-map-page" style="background:radial-gradient(ellipse at top,rgba(45,15,75,0.55),transparent)">
+      ${camp.mapBg ? `<div class="rlc-map-bg" aria-hidden="true" style="background-image:linear-gradient(rgba(10,5,20,0.72),rgba(10,5,20,0.82)),url('${camp.mapBg}')"></div>` : ''}
+      <div class="rlc-map-inner">
       <button class="btn-secondary btn-mini" id="rlc-map-back">← Campaigns</button>
       <h1 class="section-title" style="color:#f6d97a;margin-bottom:4px">${escapeHtml(camp.name || 'Campaign')}</h1>
       ${_rlcHUD(run, camp)}
@@ -51538,6 +51549,7 @@ function renderRlcMap() {
             <button class="btn-primary" id="rlc-intro-go">Begin the journey →</button>
           </div>
         </div>` : ''}
+      </div>
       ${_pvModal}
     </div>`;
   document.getElementById('rlc-map-back').onclick = () => { App._rlcNodePreview = null; App.screen = 'rlcList'; render(); };

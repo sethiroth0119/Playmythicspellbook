@@ -24217,9 +24217,33 @@ function _campUnitMeta(refId) {
 function _campUnitProf(refId) {
   if (!Profile.units) Profile.units = {};
   const p = Profile.units[refId] || (Profile.units[refId] = { level: 1, xp: 0, kills: 0, fielded: 0, statGains: emptyGains(), evs: emptyEvs() });
-  if (typeof p.bond   !== 'number') p.bond = 0;
-  if (typeof p.morale !== 'number') p.morale = 80;
+  if (typeof p.bond     !== 'number') p.bond = 0;
+  if (typeof p.morale   !== 'number') p.morale = 80;
+  if (typeof p.trauma   !== 'number') p.trauma = 0;     // horror exposure → lowers survival/study
+  if (typeof p.corruption !== 'number') p.corruption = 0; // anomaly exposure → mutation/turn risk
+  if (typeof p.fatigue  !== 'number') p.fatigue = 0;    // back-to-back deploys → lowers survival
   return p;
+}
+function _campMissing() { if (!Array.isArray(Profile.campMissing)) Profile.campMissing = []; return Profile.campMissing; }
+// 🎲 Dynamic loot-run event. Returns { name, line, surviveMod, lootMul,
+//   trauma, corruption } applied on top of the base resolution.
+const CAMP_RUN_EVENTS = [
+  { w: 16, name: 'Quiet Sector',     line: '📡 Sector was quiet. Textbook sweep.',                         surviveMod: 4,   lootMul: 1.0 },
+  { w: 13, name: 'Ambush',           line: '⚔ Ambushed at the chokepoint — fought clear.',                  surviveMod: -16, lootMul: 1.0 },
+  { w: 9,  name: 'Hidden Vault',     line: '🗝 Cracked a sealed vault — jackpot inside.',                    surviveMod: 0,   lootMul: 2.0 },
+  { w: 8,  name: 'Merchant',         line: '🪙 Met a wandering merchant — favourable trade.',                surviveMod: 6,   lootMul: 1.5 },
+  { w: 7,  name: 'SCP Breach',       line: '☣️ Containment alarm. Something got OUT. They saw too much.',     surviveMod: -22, lootMul: 1.3, trauma: 22 },
+  { w: 6,  name: 'Demon Sighting',   line: '👁 A shape watched from the treeline. It did not blink.',         surviveMod: -10, lootMul: 1.0, trauma: 12 },
+  { w: 5,  name: 'Cosmic Anomaly',   line: '🌌 Walked through a place that should not exist.',                surviveMod: -8,  lootMul: 1.4, corruption: 20 },
+  { w: 6,  name: 'Survivor Rescue',  line: '🆘 Pulled a wounded stranger from the rubble — they followed home.', surviveMod: -4, lootMul: 1.0, rescue: true },
+  { w: 5,  name: 'Weather Disaster', line: '🌪 A storm rolled in hard. Dug in and prayed.',                  surviveMod: -14, lootMul: 0.8 },
+  { w: 5,  name: 'Strange Whispers', line: '🔊 Whispers on the wind all night. No one slept.',               surviveMod: -3,  lootMul: 1.0, trauma: 8 },
+];
+function _campRollEvent() {
+  const total = CAMP_RUN_EVENTS.reduce((a, e) => a + e.w, 0);
+  let r = Math.random() * total;
+  for (const e of CAMP_RUN_EVENTS) { if ((r -= e.w) <= 0) return e; }
+  return CAMP_RUN_EVENTS[0];
 }
 function _campMemorial() { if (!Array.isArray(Profile.memorial)) Profile.memorial = []; return Profile.memorial; }
 // Phase: 'rest' (passive, legacy) | 'running' (timer active) | 'ready' (timer done, awaiting debrief)
@@ -24243,6 +24267,12 @@ function campStartActivity(slotId, activity, tierKey) {
     slot.activity = 'study'; slot.tier = null;
     slot.activityStart = Date.now(); slot.activityDur = CAMP_STUDY_DUR_MS;
     showToast(`📖 Training started — results in ${Math.round(CAMP_STUDY_DUR_MS / 3600000)}h.`, 3600);
+  } else if (activity === 'rescue') {
+    // tierKey carries the missing unit's refId here.
+    slot.activity = 'rescue'; slot.tier = null; slot.rescueTarget = tierKey || null;
+    slot.activityStart = Date.now(); slot.activityDur = CAMP_LOOT_TIERS.raid.durMs;
+    const tn = (_campMissing().find(m => m && m.refId === tierKey) || {}).name || 'the missing';
+    showToast(`🆘 Rescue team deployed for ${tn} — ETA ${Math.round(CAMP_LOOT_TIERS.raid.durMs / 3600000)}h.`, 3600);
   } else { // rest
     slot.activity = 'rest'; slot.tier = null;
     slot.activityStart = null; slot.activityDur = null;
@@ -24261,10 +24291,12 @@ function campRecall(slotId) {
   saveCamp(); saveProfile();
 }
 // Grant a loot reward into the existing economy. Returns a label string.
-function _campGrantLoot(tier) {
+function _campGrantLoot(tier, mul) {
   const out = [];
+  const lm = (typeof mul === 'number' && mul > 0) ? mul : 1;
   const t = CAMP_LOOT_TIERS[tier] || CAMP_LOOT_TIERS.scout;
-  const gem = Math.floor(t.gem[0] + Math.random() * (t.gem[1] - t.gem[0]));
+  const qBonus = (typeof campBonus === 'function') ? campBonus('lootQuality') : 0; // Intel Center
+  const gem = Math.floor((t.gem[0] + Math.random() * (t.gem[1] - t.gem[0])) * lm * (1 + qBonus));
   Profile.gems = (Profile.gems || 0) + gem;
   out.push(`<span class="cinder-icon"></span> ${gem} salvage`);
   const roll = Math.random();
@@ -24354,14 +24386,65 @@ function _resolveCampSlot(slot) {
     return entry;
   }
 
+  const trauma = prof.trauma || 0, corruption = prof.corruption || 0, fatigue = prof.fatigue || 0;
+  const _clearSlot = () => { slot.activity = 'rest'; slot.activityStart = null; slot.activityDur = null; slot.tier = null; slot.rescueTarget = null; slot.parkedAt = Date.now(); };
+
+  // ===== RESCUE MISSION ===== bring a MIA survivor home.
+  if (slot.activity === 'rescue') {
+    const missing = _campMissing();
+    const tIdx = missing.findIndex(m => m && m.refId === slot.rescueTarget);
+    const target = tIdx >= 0 ? missing[tIdx] : null;
+    const odds = 46 + lvl * 1.4 + bond * 0.4 - (target ? (target.danger || 20) : 20) - trauma * 0.3 - fatigue * 0.4 + campBonus('lootSurvive');
+    const rr = Math.random() * 100;
+    prof.fatigue = Math.min(100, fatigue + 14);
+    if (!target) { _clearSlot(); entry.status = 'NO TARGET'; entry.color = '#9fb4d8'; entry.lines.push('🛰 Search grid came up empty — they were already gone.'); return entry; }
+    if (rr > odds + 34) { // rescuer also lost
+      if (Profile.cardCollection && Profile.cardCollection[slot.refId] > 0) { Profile.cardCollection[slot.refId]--; if (Profile.cardCollection[slot.refId] <= 0) delete Profile.cardCollection[slot.refId]; }
+      _campMemorial().push({ name: meta.name || 'Survivor', icon: meta.icon || '❔', cause: 'Rescue Op', ts: Date.now() });
+      entry.status = 'KIA'; entry.color = '#e0556a'; entry.remove = true;
+      entry.lines.push(`☠️ <strong>${escapeHtml(meta.name)} went in after ${escapeHtml(target.name)} — neither came back.</strong>`);
+      return entry;
+    }
+    if (rr > odds) { _clearSlot(); prof.morale = Math.max(0, morale - 14); entry.status = 'RESCUE FAILED'; entry.color = '#d4af37'; entry.lines.push(`🌫 Lost the trail. ${escapeHtml(target.name)} is still out there.`); return entry; }
+    // Success — restore the missing unit as a fresh parked (resting) slot.
+    missing.splice(tIdx, 1);
+    // Defer the roster restore so we don't mutate Camp.slots mid-resolve.
+    entry._restoreRefId = target.refId;
+    const tp = _campUnitProf(target.refId); tp.trauma = Math.min(100, (tp.trauma || 0) + 18); tp.morale = Math.max(0, (tp.morale || 80) - 20);
+    prof.bond = Math.min(100, bond + 8); _clearSlot();
+    entry.status = 'RESCUED'; entry.color = '#5fae7a';
+    entry.lines.push(`🆘 <strong>${escapeHtml(meta.name)} carried ${escapeHtml(target.name)} out of the dark.</strong> They'll never forget it. (+bond)`);
+    return entry;
+  }
+
   // ===== LOOT RUN =====
   const tierKey = slot.tier || 'scout';
   const tier = CAMP_LOOT_TIERS[tierKey] || CAMP_LOOT_TIERS.scout;
-  // Survival score vs danger. Bonded high-level veterans are far safer.
-  // Intelligence Center adds recon survivability.
-  const survive = 50 + lvl * 1.6 + bond * 0.5 + (morale - 50) * 0.3 - tier.danger + campBonus('lootSurvive');
+  const ev = _campRollEvent();
+  entry.lines.push(ev.line);
+  // Survival: veterans + bond + morale + Intel, dragged down by danger and the
+  // unit's psychological state (trauma/fatigue) and the rolled event.
+  const survive = 50 + lvl * 1.6 + bond * 0.5 + (morale - 50) * 0.3
+    - tier.danger + campBonus('lootSurvive') + (ev.surviveMod || 0)
+    - trauma * 0.35 - fatigue * 0.3;
   const roll = Math.random() * 100;
-  entry.lines.push(`📡 ${CAMP_LOOT_FLAVOR[Math.floor(Math.random() * CAMP_LOOT_FLAVOR.length)]}`);
+  prof.fatigue = Math.min(100, fatigue + (tierKey === 'deepRun' ? 16 : tierKey === 'raid' ? 9 : 4));
+  if (ev.trauma) prof.trauma = Math.min(100, trauma + ev.trauma);
+  if (ev.corruption) prof.corruption = Math.min(100, corruption + ev.corruption);
+
+  // Betrayal/desertion — a broken, barely-loyal unit may not come back BY CHOICE.
+  const fracture = (bond < 18) && (trauma > 55 || corruption > 55) && Math.random() < 0.30;
+  if (fracture) {
+    if (Profile.cardCollection && Profile.cardCollection[slot.refId] > 0) { Profile.cardCollection[slot.refId]--; if (Profile.cardCollection[slot.refId] <= 0) delete Profile.cardCollection[slot.refId]; }
+    const corrupt = corruption > trauma;
+    _campMemorial().push({ name: meta.name || 'Survivor', icon: meta.icon || '❔', cause: corrupt ? 'Turned' : 'Deserted', ts: Date.now() });
+    entry.status = corrupt ? 'TURNED' : 'DESERTED'; entry.color = '#b46cff'; entry.remove = true;
+    entry.lines.push(corrupt
+      ? `🕷 <strong>${escapeHtml(meta.name)} stopped responding. Whatever came back wasn't them.</strong> Gone.`
+      : `🚶 <strong>${escapeHtml(meta.name)} walked into the dark and didn't look back.</strong> Loyalty broke.`);
+    return entry;
+  }
+
   if (roll > survive + 38) {
     // PERMADEATH — the parked copy is gone forever.
     if (Profile.cardCollection && Profile.cardCollection[slot.refId] > 0) {
@@ -24375,20 +24458,31 @@ function _resolveCampSlot(slot) {
     return entry;
   }
   if (roll > survive + 14) {
-    // MISSING — kept (could be rescued later), morale gutted.
+    // MIA — genuinely missing. Removed from active roster, can be RESCUED.
+    _campMissing().push({ refId: slot.refId, name: meta.name || 'Survivor', icon: meta.icon || '❔', tier: tierKey, danger: tier.danger, ts: Date.now() });
     prof.morale = Math.max(0, morale - 25);
-    slot.activity = 'rest'; slot.activityStart = null; slot.activityDur = null; slot.tier = null; slot.parkedAt = Date.now();
-    entry.status = 'MIA → RECOVERED'; entry.color = '#d4af37';
-    entry.lines.push('🌫 Lost contact for hours… then they staggered back through the gate. Shaken. (-morale)');
+    entry.status = 'MIA'; entry.color = '#d4af37'; entry.remove = true;
+    entry.lines.push(`🌫 <strong>Contact lost with ${escapeHtml(meta.name)} in the ${escapeHtml(tier.label)}.</strong>`);
+    entry.lines.push('Status: <strong>Missing In Action</strong>. Send a rescue team before it\'s too late.');
     return entry;
   }
-  // SURVIVED — loot. Injured branch on a closer call. The Infirmary
-  // shrinks the wounded window (field medics patch them mid-extraction).
+  // SURVIVED — loot. Infirmary shrinks the wounded window.
   const injuryWindow = 8 * Math.max(0, 1 - campBonus('injuryReduce'));
   const injured = roll > survive - injuryWindow;
-  const loot = _campGrantLoot(tierKey);
+  const loot = _campGrantLoot(tierKey, ev.lootMul);
   prof.xp = (prof.xp || 0) + (tierKey === 'deepRun' ? 70 : tierKey === 'raid' ? 40 : 18);
   prof.bond = Math.min(100, bond + (tierKey === 'deepRun' ? 4 : 2));
+  // Rescue event — bring home a brand-new survivor (rare recruit).
+  if (ev.rescue) {
+    const pool = (typeof getAllCustomCards === 'function' ? getAllCustomCards() : (Forge.customCards || []))
+      .filter(c => c && c.id && (c.type || 'unit') === 'unit');
+    if (pool.length && Math.random() < 0.5) {
+      const c = pool[Math.floor(Math.random() * pool.length)];
+      if (!Profile.cardCollection) Profile.cardCollection = {};
+      Profile.cardCollection[c.id] = (Profile.cardCollection[c.id] || 0) + 1;
+      entry.lines.push(`🤝 New survivor joined the camp: <strong>${escapeHtml(c.name || c.id)}</strong>.`);
+    }
+  }
   if (injured) {
     prof.morale = Math.max(0, morale - 8);
     entry.status = 'INJURED'; entry.color = '#d4af37';
@@ -24399,7 +24493,7 @@ function _resolveCampSlot(slot) {
     entry.lines.push(`✅ Clean extraction.`);
   }
   if (loot) entry.lines.push(`📦 Recovered: ${loot}`);
-  slot.activity = 'rest'; slot.activityStart = null; slot.activityDur = null; slot.tier = null; slot.parkedAt = Date.now();
+  _clearSlot();
   return entry;
 }
 // Resolve every slot whose timer elapsed. Returns the report list (for the
@@ -24409,13 +24503,21 @@ function resolveReadyCampActivities() {
   const reports = [];
   const survivors = [];
   let mutated = false;
-  for (const slot of Camp.slots) {
+  for (const slot of Camp.slots.slice()) {
     const st = campActivityState(slot);
     if (st.phase === 'ready') {
       mutated = true;
       const r = _resolveCampSlot(slot);
       reports.push(r);
       if (!r.remove) survivors.push(slot);
+      // A successful rescue restores the recovered survivor to the roster.
+      if (r._restoreRefId) {
+        if (survivors.length < (typeof campMaxSlots === 'function' ? campMaxSlots() : Camp.maxSlots)) {
+          survivors.push({ id: 'cs_' + Date.now() + '_' + Math.floor(Math.random() * 1e4), kind: 'unit', refId: r._restoreRefId, parkedAt: Date.now(), activity: 'rest' });
+        } else if (Profile.cardCollection) {
+          Profile.cardCollection[r._restoreRefId] = (Profile.cardCollection[r._restoreRefId] || 0) + 1;
+        }
+      }
     } else {
       survivors.push(slot);
     }
@@ -24551,6 +24653,24 @@ function _campCollectTithe() {
     return t;
   }
   return 0;
+}
+// Daily R&R — resting units recover morale (Lounge/Infirmary), shed fatigue
+// & trauma, slowly purge corruption. Runs once per real day on Camp visit.
+function _campRecoveryTick() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (Camp.facilities && Camp.facilities.__rnr && Camp.facilities.__rnr.day === today) return;
+  if (!Camp.facilities) Camp.facilities = {};
+  Camp.facilities.__rnr = { day: today };
+  const mReg = 6 + ((typeof campBonus === 'function') ? campBonus('moraleRegen') : 0);
+  for (const s of Camp.slots) {
+    if (s.activity && s.activity !== 'rest') continue; // only those actually resting
+    const p = _campUnitProf(s.refId);
+    p.morale     = Math.min(100, (p.morale || 80) + mReg);
+    p.fatigue    = Math.max(0, (p.fatigue || 0) - 10);
+    p.trauma     = Math.max(0, (p.trauma || 0) - 5);
+    p.corruption = Math.max(0, (p.corruption || 0) - 1);
+  }
+  try { saveCamp(); saveProfile(); } catch (e) {}
 }
 
 // ============ LAB / FUSION / CORES ============
@@ -46502,6 +46622,7 @@ function renderCamp() {
       const _t = _campCollectTithe();
       if (_t > 0) showToast(`💰 Black Market tithe: +${_t} 🔥`, 2600);
     }
+    if (typeof _campRecoveryTick === 'function') _campRecoveryTick();
   } catch (e) {}
 
   // Only units the player actually OWNS, and only created/custom cards (no
@@ -46534,12 +46655,16 @@ function renderCamp() {
     const spriteId = 'u_' + slot.refId;
     const aSt = campActivityState(slot);
     const bond = prof.bond || 0, morale = prof.morale != null ? prof.morale : 80;
-    const statRow = `<div class="small-text ink-dim">❤ Bond ${bond}/100 · 🙂 Morale ${Math.round(morale)} · ${getLevelIcon('1em')} Lv ${prof.level || 1}</div>`;
+    const _tr = Math.round(prof.trauma || 0), _co = Math.round(prof.corruption || 0), _fa = Math.round(prof.fatigue || 0);
+    const _psy = (lbl, v, warn) => `<span style="color:${v >= (warn || 60) ? '#e0879a' : '#7d8aa0'}">${lbl} ${v}</span>`;
+    const statRow = `<div class="small-text ink-dim">❤ Bond ${bond} · 🙂 ${Math.round(morale)} · ${getLevelIcon('1em')} Lv ${prof.level || 1}</div>
+      <div class="small-text">😱 ${_psy('Trauma', _tr)} · 🕷 ${_psy('Corrupt', _co)} · 💤 ${_psy('Fatigue', _fa, 70)}</div>`;
     let body, actions;
     if (aSt.phase === 'running') {
       const remH = Math.floor(aSt.remainingMs / 3600000);
       const remM = Math.floor((aSt.remainingMs % 3600000) / 60000);
-      const tierL = slot.activity === 'loot' ? ((CAMP_LOOT_TIERS[slot.tier] || {}).label || 'Loot Run') : 'Studying';
+      const tierL = slot.activity === 'loot' ? ((CAMP_LOOT_TIERS[slot.tier] || {}).label || 'Loot Run')
+                  : slot.activity === 'rescue' ? 'Rescue Mission' : 'Studying';
       body = `<div class="small-text" style="color:#ffb454">🟠 ${escapeHtml(tierL)} — extraction in <strong>${remH}h ${remM}m</strong></div>`;
       actions = `<button class="btn-mini btn-danger" data-act="recall" data-slot="${slot.id}" title="Pull them out early (morale hit, no reward)">⤺ Recall</button>`;
     } else {
@@ -46553,6 +46678,7 @@ function renderCamp() {
           <button class="btn-mini" data-loot="deepRun:${slot.id}" title="6h · high danger — permadeath risk">☣️ Deep</button>
           <button class="btn-mini" data-study="${slot.id}" title="12h · learn a move">📖 Study</button>
         </div>
+        ${App._campRescueTarget ? `<button class="btn-mini" data-rescue="${slot.id}" style="margin-top:0.3rem;border-color:#d4af3766;color:#ffd166;width:100%">🆘 Send on Rescue (3h)</button>` : ''}
         <div style="display:flex;gap:0.4rem;margin-top:0.3rem">
           <button class="btn-primary" data-act="collect" data-slot="${slot.id}" ${xp <= 0 ? 'disabled' : ''}>Collect XP</button>
           <button class="btn-mini btn-danger" data-act="eject" data-slot="${slot.id}" title="Remove without applying XP">×</button>
@@ -46668,6 +46794,25 @@ function renderCamp() {
         </div>
       </div>
       ${(() => {
+        const mia = (Array.isArray(Profile.campMissing) ? Profile.campMissing : []);
+        if (!mia.length) return '';
+        const tgt = App._campRescueTarget;
+        const rows = mia.map(m => {
+          const sel = tgt === m.refId;
+          const d = new Date(m.ts || Date.now());
+          return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0.7rem;border-bottom:1px solid rgba(212,175,55,0.18);${sel ? 'background:rgba(212,175,55,0.12)' : ''}">
+            <span style="font-size:1.3rem">${m.icon || '❔'}</span>
+            <div style="flex:1"><strong style="color:#ffd166">${escapeHtml(m.name || 'Survivor')}</strong>
+            <span class="small-text ink-dim"> — MIA in ${escapeHtml((CAMP_LOOT_TIERS[m.tier] || {}).label || m.tier || 'the field')} · ${d.toLocaleDateString()}</span></div>
+            <button class="btn-mini" data-mia="${escapeHtml(m.refId)}" style="border-color:#d4af3766;color:#ffd166">${sel ? '✓ Pick a rescuer ↑' : '🆘 Rescue'}</button></div>`;
+        }).join('');
+        return `<div style="margin-top:1.6rem">
+          <div class="forge-section-header"><h3 style="color:#d4af37">🌫 Missing In Action <span class="small-text ink-dim">(${mia.length})</span></h3></div>
+          <div class="small-text ink-dim" style="margin:-0.3rem 0 0.5rem">They're still out there. Pick one, then dispatch a resting unit to attempt the rescue — failure can cost the rescuer too.</div>
+          <div style="background:rgba(28,22,8,0.5);border:1px solid rgba(212,175,55,0.3);border-radius:8px;max-height:240px;overflow:auto">${rows}</div>
+        </div>`;
+      })()}
+      ${(() => {
         const mem = (Array.isArray(Profile.memorial) ? Profile.memorial : []);
         if (!mem.length) return '';
         const rows = mem.slice().reverse().slice(0, 30).map(m => {
@@ -46729,6 +46874,20 @@ function renderCamp() {
   });
   document.querySelectorAll('[data-build]').forEach(el => {
     el.onclick = () => { if (typeof campStartBuild === 'function' && campStartBuild(el.dataset.build)) render(); };
+  });
+  document.querySelectorAll('[data-mia]').forEach(el => {
+    el.onclick = () => {
+      App._campRescueTarget = (App._campRescueTarget === el.dataset.mia) ? null : el.dataset.mia;
+      showToast(App._campRescueTarget ? '🆘 Now pick a resting unit to send on the rescue.' : 'Rescue selection cleared.', 2600);
+      render();
+    };
+  });
+  document.querySelectorAll('[data-rescue]').forEach(el => {
+    el.onclick = () => {
+      const tgt = App._campRescueTarget;
+      if (!tgt) { showToast('Pick a missing survivor first.'); return; }
+      if (campStartActivity(el.dataset.rescue, 'rescue', tgt)) { App._campRescueTarget = null; render(); }
+    };
   });
   document.getElementById('btn-back-camp').onclick = () => { App.screen = 'title'; render(); };
   document.querySelectorAll('[data-park]').forEach(el => {

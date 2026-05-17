@@ -34135,6 +34135,11 @@ function render() {
     } catch (e) {}
   } catch (e) { /* never let a save failure block render */ }
 
+  // 💬 Persistent chat button (body-mounted bottom-left, idempotent) — lives
+  // on every screen without editing each renderX, and keeps the chat overlay
+  // alive across screen re-renders.
+  try { if (typeof mountChatButton === 'function') mountChatButton(); } catch (e) {}
+
   // ===== Audio routing FIRST =====
   // Must run BEFORE the screen-specific early-returns below — otherwise screens
   // that have their own dispatcher branch (vendorMarket, wagerHall, cashout,
@@ -54294,6 +54299,334 @@ async function refreshFriendsCache() {
 // Count of pending friend requests — shown as a red pill on the Arcanum tile
 // and Friends tab so players notice incoming invites without opening the panel.
 function getPendingFriendRequestCount() { return FriendsCache.incoming.length; }
+
+// ============================================================================
+// 💬 CHAT — world chat + private (1:1) DMs + presence-driven friend online
+// status. Cloud-backed (chat_messages table, run CHAT_SQL once). Realtime via
+// postgres_changes with a poll fallback (so it works even if the realtime
+// publication isn't enabled). A dedicated `chat-presence` channel populates
+// FriendsCache.online. A persistent bottom-LEFT floating button (body-mounted
+// like the toast host so it survives every screen re-render) opens the modal.
+// Baseline safety on the public room: length cap, send cooldown, profanity
+// mask, HTML-escaped render, and a local per-user Block.
+// ============================================================================
+const CHAT_MAX_LEN        = 280;
+const CHAT_SEND_COOLDOWN  = 1500;   // ms between sends (anti-spam)
+const CHAT_FETCH_LIMIT    = 60;     // messages pulled per room
+const CHAT_CACHE_CAP      = 120;    // max kept in memory per room
+const CHAT_BADWORDS = ['fuck','shit','bitch','asshole','cunt','nigger','faggot','retard','whore','slut'];
+const CHAT_SQL = "create table if not exists public.chat_messages (\n  id uuid primary key default gen_random_uuid(),\n  room text not null,\n  sender_id uuid not null references auth.users(id) on delete cascade,\n  recipient_id uuid references auth.users(id) on delete cascade,\n  sender_name text,\n  body text not null,\n  created_at timestamptz default now()\n);\ncreate index if not exists chat_room_time on public.chat_messages (room, created_at desc);\nalter table public.chat_messages enable row level security;\ndrop policy if exists chat_sel on public.chat_messages;\ncreate policy chat_sel on public.chat_messages for select to authenticated using (room = 'world' or sender_id = auth.uid() or recipient_id = auth.uid());\ndrop policy if exists chat_ins on public.chat_messages;\ncreate policy chat_ins on public.chat_messages for insert to authenticated with check (sender_id = auth.uid() and ((room = 'world' and recipient_id is null) or (recipient_id is not null)));\ndrop policy if exists chat_del on public.chat_messages;\ncreate policy chat_del on public.chat_messages for delete to authenticated using (sender_id = auth.uid());\n-- Optional (instant delivery instead of the safety poll):\n-- alter publication supabase_realtime add table public.chat_messages;";
+
+const Chat = {
+  open: false, view: 'world', dmUserId: null, dmName: null,
+  msgs: {},               // room -> [{id,sender_id,sender_name,body,created_at}]
+  unread: 0, tableMissing: false, loading: false,
+  _msgCh: null, _presCh: null, _armed: false,
+  _lastSendAt: 0, _pollT: null, _presCount: 0, _presNames: {},
+  blocked: {},            // local mute: userId -> true
+};
+function _chatErr(e) {
+  const msg = (e && (e.message || e.code || '')) + '';
+  if (/chat_messages|relation|does not exist|schema cache|PGRST205|42P01/i.test(msg)) Chat.tableMissing = true;
+  return null;
+}
+function _chatName() {
+  return (((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor') + '').slice(0, 40);
+}
+function _chatRoomDm(a, b) { return 'dm:' + [a, b].sort().join(':'); }
+function _chatCurRoom() {
+  if (Chat.view === 'dm' && Chat.dmUserId && Profile.cloud && Profile.cloud.userId) {
+    return _chatRoomDm(Profile.cloud.userId, Chat.dmUserId);
+  }
+  return 'world';
+}
+// Clean + lightly sanitize an outgoing message (public-room safety baseline).
+function _chatClean(s) {
+  let t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX_LEN);
+  if (!t) return '';
+  try {
+    for (const w of CHAT_BADWORDS) {
+      const re = new RegExp('\\b' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'ig');
+      t = t.replace(re, m => m[0] + '*'.repeat(Math.max(1, m.length - 1)));
+    }
+  } catch (e) {}
+  return t;
+}
+// Presence channel — populates FriendsCache.online so friends show as online
+// in chat AND on the Friends screen. Armed once on sign-in (idempotent).
+function chatArm() {
+  if (!initCloud() || !Profile.cloud.signedIn || !Cloud.client) return;
+  if (!Chat._presCh) {
+    try {
+      Chat._presCh = Cloud.client.channel('chat-presence', {
+        config: { presence: { key: Profile.cloud.userId || ('anon-' + Math.random().toString(36).slice(2, 8)) } },
+      })
+        .on('presence', { event: 'sync' },  () => _chatPresenceSync())
+        .on('presence', { event: 'join' },  () => _chatPresenceSync())
+        .on('presence', { event: 'leave' }, () => _chatPresenceSync())
+        .subscribe(async (st) => {
+          if (st === 'SUBSCRIBED') {
+            try { await Chat._presCh.track({ user_id: Profile.cloud.userId, name: _chatName(), at: Date.now() }); } catch (e) {}
+          }
+        });
+    } catch (e) { Chat._presCh = null; }
+  }
+  if (!Chat._msgCh) {
+    try {
+      Chat._msgCh = Cloud.client.channel('chat-msgs')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, (p) => _chatOnInsert(p && p.new))
+        .subscribe();
+    } catch (e) { Chat._msgCh = null; }
+  }
+  Chat._armed = true;
+}
+function _chatPresenceSync() {
+  try {
+    if (!Chat._presCh) return;
+    const state = Chat._presCh.presenceState() || {};
+    const ids = new Set(); const names = {};
+    Object.keys(state).forEach(k => {
+      (state[k] || []).forEach(m => { if (m && m.user_id) { ids.add(m.user_id); if (m.name) names[m.user_id] = m.name; } });
+    });
+    FriendsCache.online = ids;
+    Chat._presCount = ids.size;
+    Chat._presNames = names;
+    if (Chat.open) _chatRenderOverlay();
+    if (App.screen === 'friends' && typeof render === 'function') render();
+  } catch (e) {}
+}
+function _chatPush(room, row) {
+  if (!row || !row.id) return;
+  const arr = Chat.msgs[room] || (Chat.msgs[room] = []);
+  if (arr.some(m => m.id === row.id)) return;
+  arr.push(row);
+  if (arr.length > CHAT_CACHE_CAP) arr.splice(0, arr.length - CHAT_CACHE_CAP);
+}
+function _chatOnInsert(row) {
+  if (!row || !row.room) return;
+  const me = Profile.cloud && Profile.cloud.userId;
+  const isWorld = row.room === 'world';
+  const isMine  = row.sender_id === me || row.recipient_id === me;
+  if (!isWorld && !isMine) return;                 // RLS already filters, belt+braces
+  _chatPush(row.room, row);
+  const viewing = Chat.open && _chatCurRoom() === row.room;
+  if (viewing) { _chatRenderOverlay(); }
+  else if (row.sender_id !== me) { Chat.unread++; _chatUpdateFab(); }
+}
+async function chatFetch(room) {
+  if (!initCloud() || !Profile.cloud.signedIn) return;
+  if (Chat.loading) return;
+  Chat.loading = true;
+  try {
+    const { data, error } = await Cloud.client.from('chat_messages')
+      .select('*').eq('room', room).order('created_at', { ascending: false }).limit(CHAT_FETCH_LIMIT);
+    if (error) { _chatErr(error); return; }
+    Chat.tableMissing = false;
+    Chat.msgs[room] = (data || []).slice().reverse();
+  } catch (e) { _chatErr(e); }
+  finally { Chat.loading = false; }
+}
+async function chatSend(body) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('☁ Sign in to chat.', 2200); return; }
+  if (Date.now() - (Chat._lastSendAt || 0) < CHAT_SEND_COOLDOWN) return;
+  const text = _chatClean(body);
+  if (!text) return;
+  const me = Profile.cloud.userId;
+  const isDm = Chat.view === 'dm' && Chat.dmUserId;
+  const room = _chatCurRoom();
+  const rowOut = {
+    room, sender_id: me, sender_name: _chatName(),
+    recipient_id: isDm ? Chat.dmUserId : null, body: text,
+  };
+  Chat._lastSendAt = Date.now();
+  try {
+    const { data, error } = await Cloud.client.from('chat_messages').insert(rowOut).select('*').limit(1);
+    if (error) { _chatErr(error); showToast('⚠ Message failed.', 2200); return; }
+    if (data && data[0]) _chatPush(room, data[0]);   // optimistic local echo (self:no realtime)
+    _chatRenderOverlay();
+  } catch (e) { _chatErr(e); showToast('⚠ Message failed.', 2200); }
+}
+function chatOpen() {
+  Chat.open = true; Chat.unread = 0;
+  chatArm();
+  const room = _chatCurRoom();
+  if (!Chat.msgs[room]) chatFetch(room).then(_chatRenderOverlay);
+  if (typeof refreshFriendsCache === 'function') { refreshFriendsCache().then(() => { if (Chat.open) _chatRenderOverlay(); }); }
+  _chatRenderOverlay();
+  _chatStartPoll();
+}
+function chatClose() {
+  Chat.open = false;
+  _chatStopPoll();
+  const ov = document.getElementById('chat-overlay'); if (ov) ov.remove();
+  _chatUpdateFab();
+}
+function chatOpenDM(userId, name) {
+  Chat.view = 'dm'; Chat.dmUserId = userId; Chat.dmName = name || 'Player';
+  const room = _chatCurRoom();
+  Chat.unread = 0;
+  if (!Chat.msgs[room]) chatFetch(room).then(_chatRenderOverlay); else _chatRenderOverlay();
+}
+function _chatStartPoll() {
+  _chatStopPoll();
+  Chat._pollT = setInterval(() => {
+    if (!Chat.open) { _chatStopPoll(); return; }
+    const room = _chatCurRoom();
+    chatFetch(room).then(() => { if (Chat.open) _chatRenderOverlay(); });
+  }, 6000);   // safety poll; realtime (if published) makes this mostly idle
+}
+function _chatStopPoll() { if (Chat._pollT) { clearInterval(Chat._pollT); Chat._pollT = null; } }
+
+// ---- Persistent bottom-left FAB (body-mounted; survives screen renders) ----
+function mountChatButton() {
+  try {
+    if (typeof document === 'undefined') return;
+    const signedIn = Profile.cloud && Profile.cloud.signedIn;
+    const ex = document.getElementById('chat-fab');
+    if (!signedIn) { if (ex) ex.remove(); return; }
+    if (!Chat._armed) chatArm();
+    if (!ex) {
+      const b = document.createElement('button');
+      b.id = 'chat-fab';
+      b.title = 'Chat — world & friends';
+      b.style.cssText = 'position:fixed;left:14px;bottom:14px;z-index:2147483300;width:52px;height:52px;border-radius:50%;border:1px solid rgba(212,175,55,0.55);background:linear-gradient(135deg,#3a2a6a,#1a1030);color:#ffe6a8;font-size:1.45rem;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center';
+      b.innerHTML = '💬<span id="chat-fab-badge" style="display:none;position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#e0556a;color:#fff;font-size:0.7rem;font-weight:700;line-height:18px;text-align:center"></span>';
+      b.onclick = () => { if (Chat.open) chatClose(); else chatOpen(); };
+      document.body.appendChild(b);
+    }
+    _chatUpdateFab();
+    // Keep the overlay alive across screen re-renders if it was open.
+    if (Chat.open && !document.getElementById('chat-overlay')) _chatRenderOverlay();
+  } catch (e) {}
+}
+function _chatUpdateFab() {
+  const badge = document.getElementById('chat-fab-badge');
+  if (!badge) return;
+  if (Chat.unread > 0 && !Chat.open) { badge.style.display = ''; badge.textContent = Chat.unread > 99 ? '99+' : String(Chat.unread); }
+  else { badge.style.display = 'none'; }
+}
+function _chatMsgRowHtml(m) {
+  const me = Profile.cloud && Profile.cloud.userId;
+  if (Chat.blocked[m.sender_id] && m.sender_id !== me) return '';
+  const mine = m.sender_id === me;
+  const online = FriendsCache.online && FriendsCache.online.has(m.sender_id);
+  const t = (() => { try { const d = new Date(m.created_at); return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } })();
+  return `<div style="margin:0.3rem 0;${mine ? 'text-align:right' : ''}">
+    <div style="font-size:0.66rem;color:#9aa0a6">${online && !mine ? '<span style="color:#5fae7a">●</span> ' : ''}<strong style="color:${mine ? '#7be0a0' : '#cdbfe6'}">${escapeHtml(m.sender_name || 'Player')}</strong> <span class="ink-dim">${t}</span>${(!mine && m.sender_id) ? ` <button data-chat-block="${escapeHtml(m.sender_id)}" title="Block (hide their messages)" style="background:none;border:none;color:#7a7f8c;cursor:pointer;font-size:0.66rem">⊘</button>` : ''}</div>
+    <div style="display:inline-block;max-width:85%;padding:0.35rem 0.6rem;border-radius:8px;background:${mine ? 'rgba(123,224,160,0.14)' : 'rgba(255,255,255,0.06)'};color:#e8e0f4;font-size:0.86rem;word-break:break-word">${escapeHtml(m.body || '')}</div>
+  </div>`;
+}
+function _chatRenderOverlay() {
+  try {
+    const old = document.getElementById('chat-overlay');
+    if (!Chat.open) { if (old) old.remove(); return; }
+    // Preserve a half-typed message / search term across re-renders (the 6s
+    // safety poll rebuilds this overlay; don't wipe what the user is typing).
+    let _keepMsg = null, _keepFind = null;
+    if (old) {
+      const _mi = old.querySelector('#chat-input'); if (_mi) _keepMsg = _mi.value;
+      const _fi = old.querySelector('#chat-find');  if (_fi) _keepFind = _fi.value;
+    }
+    const signedIn = Profile.cloud && Profile.cloud.signedIn;
+    const room = _chatCurRoom();
+    const list = (Chat.msgs[room] || []);
+    let body;
+    if (!signedIn) {
+      body = '<div class="ink-dim" style="padding:1.4rem;text-align:center">Sign in to use chat.</div>';
+    } else if (Chat.tableMissing) {
+      const isAdm = (typeof isAdmin === 'function') && isAdmin();
+      body = isAdm
+        ? `<div style="padding:1rem"><div style="color:#e0879a;margin-bottom:0.4rem">⚠ Chat needs a one-time setup</div><div class="ink-dim small-text" style="margin-bottom:0.5rem">Run this once in your Supabase SQL editor, then Retry.</div><textarea readonly id="chat-sql" style="width:100%;height:120px;background:#0a0d13;color:#cbd5e8;border:1px solid #243042;border-radius:6px;font-family:monospace;font-size:0.66rem;padding:0.5rem">${escapeHtml(CHAT_SQL)}</textarea><div style="margin-top:0.5rem;display:flex;gap:0.5rem"><button class="btn-mini" id="chat-sql-copy">📋 Copy</button><button class="btn-mini" id="chat-sql-retry">↻ Retry</button></div></div>`
+        : '<div class="ink-dim" style="padding:1.4rem;text-align:center">💬 Chat is warming up — check back soon.</div>';
+    } else if (Chat.view === 'friends') {
+      const fr = (FriendsCache.list || []).slice().sort((a, b) => {
+        const ao = FriendsCache.online.has(a.otherId) ? 0 : 1, bo = FriendsCache.online.has(b.otherId) ? 0 : 1;
+        return ao - bo || a.otherName.localeCompare(b.otherName);
+      });
+      const frHtml = fr.length === 0 ? '<div class="ink-dim small-text" style="padding:0.6rem">No friends yet — search to add some.</div>'
+        : fr.map(f => {
+            const on = FriendsCache.online.has(f.otherId);
+            return `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.2rem;border-bottom:1px solid rgba(255,255,255,0.05)">
+              <span style="color:${on ? '#5fae7a' : '#5a5f68'};font-size:0.7rem">●</span>
+              <span style="flex:1;color:#e8e0f4">${escapeHtml(f.otherName)}</span>
+              <button class="btn-mini" data-chat-dm="${escapeHtml(f.otherId)}" data-chat-dmname="${escapeHtml(f.otherName)}">💬 Message</button>
+              <button class="btn-mini" data-chat-unfriend="${escapeHtml(f.otherId)}" title="Remove friend" style="color:#e0879a">✕</button>
+            </div>`;
+          }).join('');
+      const inc = (FriendsCache.incoming || []).map(r => `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.35rem 0.2rem">
+          <span style="flex:1;color:#ffd166">${escapeHtml(r.from_name)} <span class="ink-dim small-text">wants to be friends</span></span>
+          <button class="btn-mini btn-primary" data-chat-acc="${escapeHtml(r.id)}">Accept</button>
+          <button class="btn-mini" data-chat-dec="${escapeHtml(r.id)}">Decline</button>
+        </div>`).join('');
+      const res = (FriendsCache.findResults || []).map(p => `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.2rem">
+          <span style="flex:1;color:#e8e0f4">${escapeHtml(p.name)}${FriendsCache.online.has(p.userId) ? ' <span style="color:#5fae7a">●</span>' : ''}</span>
+          <button class="btn-mini" data-chat-addreq="${escapeHtml(p.userId)}">+ Add</button>
+        </div>`).join('');
+      body = `<div style="padding:0.5rem 0.7rem;overflow-y:auto">
+        <div style="display:flex;gap:0.4rem;margin-bottom:0.5rem">
+          <input id="chat-find" placeholder="Find players by name…" value="${escapeHtml(FriendsCache.findQuery || '')}" style="flex:1;background:#0c0a18;border:1px solid #2a2440;border-radius:6px;color:#e8e0f4;padding:0.35rem 0.5rem;font-size:0.8rem">
+          <button class="btn-mini" id="chat-find-go">Search</button>
+        </div>
+        ${res ? `<div style="margin-bottom:0.6rem">${res}</div>` : ''}
+        ${inc ? `<div style="margin-bottom:0.6rem"><div class="small-text" style="color:#ffd166">Friend requests</div>${inc}</div>` : ''}
+        <div class="small-text" style="color:#9aa0a6;margin-bottom:0.2rem">Friends · <span style="color:#5fae7a">${FriendsCache.list ? FriendsCache.list.filter(f => FriendsCache.online.has(f.otherId)).length : 0} online</span></div>
+        ${frHtml}
+      </div>`;
+    } else {
+      const empty = list.length === 0 ? `<div class="ink-dim small-text" style="padding:1rem;text-align:center">${Chat.view === 'dm' ? 'No messages yet — say hi!' : 'No messages yet. Be the first to say something!'}</div>` : '';
+      body = `<div id="chat-scroll" style="flex:1;overflow-y:auto;padding:0.4rem 0.7rem">${empty}${list.map(_chatMsgRowHtml).join('')}</div>
+        <div style="display:flex;gap:0.4rem;padding:0.5rem;border-top:1px solid rgba(255,255,255,0.08)">
+          <input id="chat-input" maxlength="${CHAT_MAX_LEN}" placeholder="${Chat.view === 'dm' ? 'Message ' + escapeHtml(Chat.dmName || '') + '…' : 'Message the world…'}" style="flex:1;background:#0c0a18;border:1px solid #2a2440;border-radius:8px;color:#e8e0f4;padding:0.45rem 0.6rem;font-size:0.85rem">
+          <button class="btn-primary btn-mini" id="chat-send">Send</button>
+        </div>`;
+    }
+    const tab = (id, label) => `<button class="btn-mini ${Chat.view === id ? 'btn-primary' : ''}" data-chat-tab="${id}">${label}</button>`;
+    const onlineCount = Chat._presCount || (FriendsCache.online ? FriendsCache.online.size : 0);
+    const header = `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.6rem 0.8rem;border-bottom:1px solid rgba(212,175,55,0.25);background:rgba(212,175,55,0.05)">
+        <span style="font-family:'Cinzel',serif;color:#ffcf5a;font-size:1rem">💬 Chat</span>
+        <span class="small-text ink-dim"><span style="color:#5fae7a">●</span> ${onlineCount} online</span>
+        <div style="margin-left:auto;display:flex;gap:0.35rem">
+          ${tab('world', '🌍 World')}
+          ${tab('friends', '👥 Friends')}
+          ${Chat.view === 'dm' ? `<button class="btn-mini btn-primary">✉ ${escapeHtml(Chat.dmName || 'DM')}</button>` : ''}
+          <button class="btn-mini" id="chat-close">✕</button>
+        </div>
+      </div>`;
+    const el = old || document.createElement('div');
+    el.id = 'chat-overlay';
+    if (!old) el.style.cssText = 'position:fixed;left:14px;bottom:76px;z-index:2147483350;width:380px;max-width:calc(100vw - 28px);height:520px;max-height:calc(100vh - 110px);display:flex;flex-direction:column;background:#0e0b16;border:1px solid rgba(212,175,55,0.4);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.75);overflow:hidden';
+    el.innerHTML = header + `<div style="flex:1;display:flex;flex-direction:column;overflow:hidden">${body}</div>`;
+    if (!old) document.body.appendChild(el);
+    // Auto-scroll message views to the newest.
+    const sc = document.getElementById('chat-scroll'); if (sc) sc.scrollTop = sc.scrollHeight;
+    // Restore in-progress text after a poll-driven rebuild.
+    if (_keepMsg != null) { const _mi = document.getElementById('chat-input'); if (_mi) _mi.value = _keepMsg; }
+    if (_keepFind != null) { const _fi = document.getElementById('chat-find'); if (_fi) _fi.value = _keepFind; }
+    // ---- bind ----
+    const close = document.getElementById('chat-close'); if (close) close.onclick = chatClose;
+    el.querySelectorAll('[data-chat-tab]').forEach(b => b.onclick = () => {
+      Chat.view = b.dataset.chatTab; if (Chat.view !== 'dm') { Chat.dmUserId = null; }
+      const r = _chatCurRoom();
+      if (Chat.view === 'world' && !Chat.msgs[r]) chatFetch(r).then(_chatRenderOverlay);
+      else if (Chat.view === 'friends' && typeof refreshFriendsCache === 'function') refreshFriendsCache().then(() => { if (Chat.open) _chatRenderOverlay(); });
+      _chatRenderOverlay();
+    });
+    const send = () => { const i = document.getElementById('chat-input'); if (!i) return; const v = i.value; i.value = ''; chatSend(v); };
+    const sBtn = document.getElementById('chat-send'); if (sBtn) sBtn.onclick = send;
+    const inp = document.getElementById('chat-input'); if (inp) { inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } }; }
+    el.querySelectorAll('[data-chat-block]').forEach(b => b.onclick = () => { Chat.blocked[b.dataset.chatBlock] = true; showToast('User blocked (local).', 1800); _chatRenderOverlay(); });
+    el.querySelectorAll('[data-chat-dm]').forEach(b => b.onclick = () => chatOpenDM(b.dataset.chatDm, b.dataset.chatDmname));
+    el.querySelectorAll('[data-chat-unfriend]').forEach(b => b.onclick = async () => { await removeFriend(b.dataset.chatUnfriend); await refreshFriendsCache(); _chatRenderOverlay(); });
+    el.querySelectorAll('[data-chat-acc]').forEach(b => b.onclick = async () => { await respondToFriendRequest(b.dataset.chatAcc, true); await refreshFriendsCache(); _chatRenderOverlay(); });
+    el.querySelectorAll('[data-chat-dec]').forEach(b => b.onclick = async () => { await respondToFriendRequest(b.dataset.chatDec, false); await refreshFriendsCache(); _chatRenderOverlay(); });
+    el.querySelectorAll('[data-chat-addreq]').forEach(b => b.onclick = async () => { const r = await sendFriendRequest(b.dataset.chatAddreq); showToast(r && r.ok ? '✅ Friend request sent.' : '⚠ ' + ((r && r.error) || 'Failed.'), 2600); });
+    const findGo = () => { const q = (document.getElementById('chat-find') || {}).value || ''; FriendsCache.findQuery = q; searchPlayers(q).then(rs => { FriendsCache.findResults = rs; if (Chat.open) _chatRenderOverlay(); }); };
+    const fg = document.getElementById('chat-find-go'); if (fg) fg.onclick = findGo;
+    const fi = document.getElementById('chat-find'); if (fi) fi.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); findGo(); } };
+    const cc = document.getElementById('chat-sql-copy'); if (cc) cc.onclick = () => { try { navigator.clipboard.writeText(CHAT_SQL); showToast('📋 SQL copied.'); } catch (e) {} };
+    const cr = document.getElementById('chat-sql-retry'); if (cr) cr.onclick = () => { Chat.tableMissing = false; chatFetch(_chatCurRoom()).then(_chatRenderOverlay); };
+  } catch (e) {}
+}
 
 // ============ 💬 EMOTE BROADCAST (MTGA-style) ============
 // Single-direction broadcast over the existing match channel. The opponent's

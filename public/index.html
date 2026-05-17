@@ -11634,6 +11634,23 @@
     pointer-events: none;
   }
   .rlc-map-inner { position: relative; z-index: 1; }
+  /* 🎁 Roguelite reward — face-down cards the player flips to reveal a prize */
+  .rlcrw-card { width: 188px; height: 262px; border: 0; padding: 0; background: transparent;
+    perspective: 1100px; cursor: pointer; outline: none; }
+  .rlcrw-card.chosen-other { opacity: 0.32; filter: grayscale(0.65); pointer-events: none;
+    transition: opacity .45s ease, filter .45s ease; }
+  .rlcrw-inner { position: relative; width: 100%; height: 100%; transform-style: preserve-3d;
+    transition: transform .72s cubic-bezier(.2,.85,.25,1); }
+  .rlcrw-card.flipped .rlcrw-inner { transform: rotateY(180deg); }
+  .rlcrw-card:not(.flipped):not(.chosen-other):hover .rlcrw-inner { transform: translateY(-8px); }
+  .rlcrw-face { position: absolute; inset: 0; border-radius: 12px; overflow: hidden;
+    -webkit-backface-visibility: hidden; backface-visibility: hidden;
+    display: flex; flex-direction: column; box-shadow: 0 10px 26px rgba(0,0,0,0.6); }
+  .rlcrw-cb { border: 1px solid rgba(212,175,55,0.45); }
+  .rlcrw-cb img { width: 100%; height: 100%; object-fit: cover; display: block;
+    image-rendering: auto; image-rendering: high-quality; }
+  .rlcrw-rw { transform: rotateY(180deg); background: rgba(18,10,32,0.96);
+    border: 1px solid rgba(212,175,55,0.6); }
   .campaign-header {
     display: grid;
     grid-template-columns: 1fr auto auto;
@@ -51617,25 +51634,34 @@ function renderRlcReward() {
     for (let i = sh.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [sh[i], sh[j]] = [sh[j], sh[i]]; }
     offer = sh.slice(0, n);
   }
-  const cardTile = (key) => {
+  const CARDBACK = 'assets/artwork/cardback.png?v=2';
+  // Face-down card the player flips to reveal its hidden reward.
+  const flipCard = (key, idx) => {
     let c = null; try { c = resolveDeckCard(key); } catch (e) {}
     const nm = c ? (c.name || key) : key;
-    const art = (c && typeof getCardArt === 'function' && getCardArt(c.id)) ? `<img src="${getCardArt(c.id)}" style="width:100%;height:120px;object-fit:cover;border-radius:8px 8px 0 0">` : `<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:2.4rem;background:radial-gradient(ellipse,rgba(170,60,255,0.2),transparent)">${c ? (c.icon || '🃏') : '🃏'}</div>`;
-    return `<div style="width:170px;background:rgba(18,10,32,0.85);border:1px solid rgba(212,175,55,0.4);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
-        ${art}
-        <div style="padding:10px;display:flex;flex-direction:column;gap:6px;flex:1">
-          <div style="color:#f6d97a;font-weight:700;font-size:0.92rem">${escapeHtml(nm)}</div>
-          <div class="small-text ink-dim">${c ? escapeHtml(String(c.type || 'card')) : ''} ${c && c.rarity ? '· ' + escapeHtml(c.rarity) : ''}</div>
-          <button class="btn-primary btn-mini" data-rlc-take="${escapeHtml(String(key))}" style="margin-top:auto">✓ Take</button>
+    const art = (c && typeof getCardArt === 'function' && getCardArt(c.id))
+      ? `<img src="${getCardArt(c.id)}" style="width:100%;height:150px;object-fit:cover">`
+      : `<div style="height:150px;display:flex;align-items:center;justify-content:center;font-size:3rem;background:radial-gradient(ellipse,rgba(170,60,255,0.22),transparent)">${c ? (c.icon || '🃏') : '🃏'}</div>`;
+    return `<button type="button" class="rlcrw-card" data-rlc-flip="${idx}" data-key="${escapeHtml(String(key))}" aria-label="Reveal hidden reward">
+        <div class="rlcrw-inner">
+          <div class="rlcrw-face rlcrw-cb"><img src="${CARDBACK}" alt="" draggable="false"></div>
+          <div class="rlcrw-face rlcrw-rw">
+            ${art}
+            <div style="padding:10px;display:flex;flex-direction:column;gap:6px;flex:1">
+              <div style="color:#f6d97a;font-weight:700;font-size:0.95rem;line-height:1.15">${escapeHtml(nm)}</div>
+              <div class="small-text ink-dim">${c ? escapeHtml(String(c.type || 'card')) : ''} ${c && c.rarity ? '· ' + escapeHtml(c.rarity) : ''}</div>
+              <div class="small-text" style="color:#7fdca0;margin-top:auto">✓ Claimed</div>
+            </div>
+          </div>
         </div>
-      </div>`;
+      </button>`;
   };
   root.innerHTML = `
     <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(40,15,70,0.55),transparent)">
       <h1 class="section-title" style="color:#f6d97a">🎁 Choose Your Reward</h1>
-      <div class="section-subtitle">Pick one card — it is added to your inventory (usable in the Deck Editor) and this run's deck.${r.currency ? ` You also gained 💰 ${r.currency}.` : ''}${r.medPoints ? ` ⛑️ +${r.medPoints} med pts.` : ''}</div>
-      <div style="display:flex;flex-wrap:wrap;gap:18px;justify-content:center;margin-top:24px">${offer.map(cardTile).join('')}</div>
-      <div style="text-align:center;margin-top:24px">${r.allowSkip ? `<button class="btn-secondary" id="rlc-skip">Skip reward</button>` : ''}</div>
+      <div class="section-subtitle">Pick one face-down card — flip it to reveal your prize. It's added to your inventory (usable in the Deck Editor) and this run's deck.${r.currency ? ` You also gained 💰 ${r.currency}.` : ''}${r.medPoints ? ` ⛑️ +${r.medPoints} med pts.` : ''}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:22px;justify-content:center;margin-top:30px">${offer.map(flipCard).join('')}</div>
+      <div style="text-align:center;margin-top:26px">${r.allowSkip ? `<button class="btn-secondary" id="rlc-skip">Skip reward</button>` : ''}</div>
     </div>`;
   const finish = () => {
     if (r.currency) run.currency += parseInt(r.currency, 10) || 0;
@@ -51643,10 +51669,25 @@ function renderRlcReward() {
     const nid = App._rlcNodeId; App._rlcNodeId = null;
     _rlcCompleteNode(nid);
   };
-  document.querySelectorAll('[data-rlc-take]').forEach(b => {
-    b.onclick = () => { _rlcGrantCard(b.dataset.rlcTake); showToast('🃏 Card added to your inventory!', 2400); finish(); };
+  let _picked = false;
+  document.querySelectorAll('[data-rlc-flip]').forEach(btn => {
+    btn.onclick = () => {
+      if (_picked) return;
+      _picked = true;
+      const key = btn.getAttribute('data-key');
+      btn.classList.add('flipped');
+      document.querySelectorAll('[data-rlc-flip]').forEach(o => { if (o !== btn) o.classList.add('chosen-other'); });
+      const sk2 = document.getElementById('rlc-skip'); if (sk2) sk2.style.display = 'none';
+      // Grant after the flip animation lands so the reveal reads cleanly.
+      setTimeout(() => {
+        try { _rlcGrantCard(key); } catch (e) {}
+        let c = null; try { c = resolveDeckCard(key); } catch (e) {}
+        showToast('🃏 ' + ((c && c.name) || 'Card') + ' added to your inventory!', 2600);
+      }, 360);
+      setTimeout(finish, 1250);
+    };
   });
-  const sk = document.getElementById('rlc-skip'); if (sk) sk.onclick = finish;
+  const sk = document.getElementById('rlc-skip'); if (sk) sk.onclick = () => { if (!_picked) { _picked = true; finish(); } };
 }
 // 🃏 Starting-deck mode: PICK — player chooses one of the admin-allowed decks.
 function renderRlcDeckPick() {

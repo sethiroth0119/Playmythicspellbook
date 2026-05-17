@@ -51480,12 +51480,18 @@ function _rlcStartNodes(camp) {
 function _rlcAvailableNodeIds(camp, run) {
   const done = new Set(run.completed || []);
   if (!done.size) return _rlcStartNodes(camp).map(n => n.id);
+  // 🔒 STRICTLY ONE-DIRECTIONAL — only the CURRENT (latest-reached) node's
+  // forward connections are selectable. Once the player advances, an earlier
+  // branch's untaken sibling can no longer be picked: they can only go
+  // forward, never back "up" to a red node behind them (those grey out).
+  const curId = run.currentNodeId || (run.completed && run.completed[run.completed.length - 1]) || null;
+  const cur = curId ? _rlcNode(camp, curId) : null;
+  if (cur) {
+    return (cur.connections || []).filter(id => !done.has(id) && _rlcNode(camp, id));
+  }
+  // Legacy fallback (run with no recorded current node): forward edges of
+  // completed nodes — kept so old in-progress runs don't soft-lock.
   const avail = new Set();
-  (camp.nodes || []).forEach(n => {
-    if (done.has(n.id)) return;
-    (n.connections || []).forEach(cid => { if (done.has(cid)) {} });
-  });
-  // Forward edges: connections of completed nodes that aren't completed yet.
   (run.completed || []).forEach(cidDone => {
     const dn = _rlcNode(camp, cidDone);
     (dn && dn.connections || []).forEach(nid => { if (!done.has(nid)) avail.add(nid); });

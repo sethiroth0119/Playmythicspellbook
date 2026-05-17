@@ -31608,6 +31608,44 @@ function getSpriteId(obj) {
   if (obj.id && obj.type === 'unit') return 'u_' + obj.id;
   return null;
 }
+// 🎴 Best on-board visual for a unit/hero. Priority: animated sprite frames →
+// the card's uploaded ART image (same picture the hand card shows, resolved
+// from Forge.cardArt which players receive via the catalog) → live custom-card
+// art/icon → emoji ONLY as an absolute last resort. Stops board tokens from
+// falling back to ⚔️/emoji whenever a sprite simply hasn't loaded.
+function unitBoardVisual(occupant) {
+  if (!occupant) return '';
+  const sId = (typeof getSpriteId === 'function') ? getSpriteId(occupant) : null;
+  // 1) Animated sprite frames (richest).
+  try {
+    if (sId && typeof getSpriteFrames === 'function') {
+      const fr = getSpriteFrames(sId, 'idle') || getSpriteFrames(sId, 'attack');
+      if (fr && fr.length) return renderIcon(sId, occupant.icon, 'fill');
+    }
+  } catch (e) {}
+  // Candidate ids (hero id / card id / kalon-origin / generic id).
+  const ids = [];
+  if (occupant.heroId) ids.push(occupant.heroId);
+  if (occupant.originalCardId) ids.push(occupant.originalCardId);
+  if (occupant.cardId) ids.push(occupant.cardId);
+  if (occupant.id) ids.push(occupant.id);
+  // 2) Static card art (admin upload, synced to players via the catalog).
+  let art = null;
+  if (typeof getCardArt === 'function') {
+    for (const id of ids) { art = getCardArt(id); if (art) break; }
+  }
+  // 3) Resolve the live custom card def for its art/icon (covers stale emoji
+  //    snapshots — re-reads the current published card).
+  let def = null;
+  for (const id of ids) {
+    try { def = (typeof lookupCustomCard === 'function' && lookupCustomCard(id)) || null; } catch (e) {}
+    if (def) break;
+  }
+  if (!art && def && (def.art || def.image)) art = def.art || def.image;
+  if (art) return `<img src="${art}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:6px" loading="lazy">`;
+  // 4) Last resort — sprite-or-emoji via the live def's icon if we have one.
+  return renderIcon(sId, (def && def.icon) || occupant.icon, 'fill');
+}
 
 function renderIcon(spriteId, fallbackEmoji, size, animOverride) {
   const sizeMap = { sm: 24, md: 40, lg: 64, xl: 96 };
@@ -41456,7 +41494,7 @@ function renderUnitModal() {
       <div class="unit-modal ${u.owner}${isHero ? ' is-hero' : ''}" role="dialog">
         <button class="modal-close" id="modal-close" aria-label="Close">×</button>
         <div class="modal-header">
-          <div class="modal-portrait">${renderIcon(getSpriteId(u), u.icon, 'fill')}</div>
+          <div class="modal-portrait">${unitBoardVisual(u)}</div>
           <div class="modal-title-block">
             <div class="modal-title">
               ${escapeHtml(u.name)}
@@ -42020,7 +42058,7 @@ function renderBoard() {
         const rarity = (cardForRarity && cardForRarity.rarity) || occupant.rarity || 'common';
         cellInner = `
           <div class="unit ${occupant.owner}${occupant.isHero ? ' hero' : ''}${isSel ? ' selected' : ''}${occupant.flying ? ' flying' : ''}${isAIActor ? ' ai-actor' : ''} rarity-${rarity}" data-unit="${occupant.id}" data-y="${y}" data-rarity="${rarity}">
-            <div class="unit-icon">${renderIcon(sId, occupant.icon, 'fill')}</div>
+            <div class="unit-icon">${unitBoardVisual(occupant)}</div>
             <div class="unit-hp"><div class="unit-hp-fill" style="width:${hpPct}%"></div></div>
             <div class="unit-info">
               <span class="unit-name">${escapeHtml(occupant.name)}</span>
@@ -42215,7 +42253,7 @@ function renderActionPanel() {
   return `
     <div class="action-panel quick">
       <div class="quick-header">
-        <div class="quick-portrait">${renderIcon(getSpriteId(sel), sel.icon, 'md')}</div>
+        <div class="quick-portrait">${unitBoardVisual(sel)}</div>
         <div class="quick-info">
           <div class="quick-name">${escapeHtml(sel.name)} <span class="lvl-tag-inline">${getLevelIcon('1.5em')}${sel.level}</span></div>
           <div class="quick-hp">HP ${sel.currentHp}/${sel.maxHp} · ATK ${sel.stats.atk} · DEF ${sel.stats.def} · MAG ${sel.stats.mag} · SPD ${sel.stats.spd}</div>

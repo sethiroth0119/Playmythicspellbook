@@ -30323,8 +30323,15 @@ function startSpriteTicker() {
   _spriteRafHandle = requestAnimationFrame(tick);
 }
 
-function resizeImage(file, maxSize) {
+// opts (optional, backward-compatible): { smooth, mime, quality }
+//   • smooth  — true → high-quality bilinear downscale (photos/art);
+//               default false keeps the crisp nearest-neighbor used for
+//               pixel-art sprites / icons (unchanged for existing callers).
+//   • mime    — output type ('image/png' default; 'image/jpeg' for big art).
+//   • quality — 0–1 for lossy mime.
+function resizeImage(file, maxSize, opts) {
   const max = maxSize || 128;
+  const o = opts || {};
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (evt) => {
@@ -30335,9 +30342,10 @@ function resizeImage(file, maxSize) {
         canvas.width = Math.max(1, Math.floor(img.width * scale));
         canvas.height = Math.max(1, Math.floor(img.height * scale));
         const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = false;
+        if (o.smooth) { ctx.imageSmoothingEnabled = true; try { ctx.imageSmoothingQuality = 'high'; } catch (e) {} }
+        else ctx.imageSmoothingEnabled = false;
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/png'));
+        resolve(canvas.toDataURL(o.mime || 'image/png', o.quality));
       };
       img.onerror = () => reject(new Error('Could not load image'));
       img.src = evt.target.result;
@@ -33872,13 +33880,17 @@ function bindGuideEditor() {
       const f = _imgFile.files && _imgFile.files[0];
       if (!f) return;
       try {
-        const dataUrl = await resizeImage(f, 512);
+        // Guide characters render at full screen height — keep them crisp:
+        // up to 1400px, high-quality smooth scaling, PNG so cut-out
+        // characters keep their transparency. (Tip: paste a URL instead to
+        // skip resizing entirely and serve the full-res original.)
+        const dataUrl = await resizeImage(f, 1400, { smooth: true });
         const inp = document.getElementById('g-img');
         const prev = document.getElementById('g-img-prev');
         if (inp) inp.value = dataUrl;
         if (prev) { prev.src = dataUrl; prev.style.opacity = 1; }
         _captureGuideDraft();
-        showToast('🖼️ Character image set — Preview to see it slide in.', 2600);
+        showToast('🖼️ Character image set (hi-res) — Preview to see it slide in.', 2800);
       } catch (e) { showToast('⨯ Could not load that image.', 3500); }
     };
   }

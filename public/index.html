@@ -20147,6 +20147,57 @@ function setColosseumMusicVolume(vol) {
 }
 
 // ============================================================================
+// 🏕️ Camp Ambient Music — "Camp music", a calm looped backdrop for the
+// out-of-combat utility hubs: The Lab, Deck Builder, Pack Opening,
+// Inventory, World Data, Book of Knowledge, Achievements, Profile,
+// Friends, Settings, and Daily Challenge. Unlike the roguelite/colosseum
+// themes this does NOT rewind on exit — it resumes where it left off so
+// hopping between these menus is seamless (matches exchange/campaign).
+// Shares the master toggle + volume slider.
+// ============================================================================
+const CAMP_AMBIENT_MUSIC_SRC = 'assets/Audio/Camp%20music.mp3';
+const CAMP_AMBIENT_SCREENS = new Set([
+  'lab', 'deck', 'vendorMarket', 'collection', 'data',
+  'bookOfKnowledge', 'achievements', 'profile', 'friends',
+  'settings', 'daily',
+]);
+function isInCampAmbient() {
+  if (typeof App === 'undefined' || !App) return false;
+  if (App.screen === 'title') return false;
+  return CAMP_AMBIENT_SCREENS.has(App.screen);
+}
+let _campAmbientAudioEl = null;
+function _ensureCampAmbientAudioEl() {
+  if (_campAmbientAudioEl) return _campAmbientAudioEl;
+  _campAmbientAudioEl = new Audio();
+  _campAmbientAudioEl.loop = true;
+  _campAmbientAudioEl.preload = 'auto';
+  _campAmbientAudioEl.src = CAMP_AMBIENT_MUSIC_SRC;
+  return _campAmbientAudioEl;
+}
+function playCampAmbientMusic() {
+  const settings = (typeof getSettings === 'function') ? getSettings() : (Profile.settings || {});
+  if (settings.musicEnabled === false) { stopCampAmbientMusic(); return; }
+  const el = _ensureCampAmbientAudioEl();
+  el.volume = Math.max(0, Math.min(1, settings.musicVolume != null ? settings.musicVolume : 0.5));
+  if (el.paused) {
+    const p = el.play();
+    if (p && typeof p.catch === 'function') { p.catch(() => { _armMenuAudioGesture(); }); }
+  }
+}
+function stopCampAmbientMusic() {
+  // Pause only (no currentTime reset) so it resumes seamlessly when the
+  // player returns to any of the camp-ambient hubs.
+  if (_campAmbientAudioEl) {
+    try { _campAmbientAudioEl.pause(); } catch (e) {}
+  }
+}
+function setCampAmbientMusicVolume(vol) {
+  const v = Math.max(0, Math.min(1, vol || 0));
+  if (_campAmbientAudioEl) _campAmbientAudioEl.volume = v;
+}
+
+// ============================================================================
 // ⚔ Battle Music — Last Stand at the Eurotas, looped across the entire
 // pre-battle → battle sequence:
 //   • VS screen     (team preview + ready timer)
@@ -20298,6 +20349,10 @@ function syncMusicForScreen() {
   // branch that wants it calls playColosseumMusic(). Centralised here so no
   // branch can forget it (stop rewinds → restarts on re-entry).
   if (!isInColosseum()) stopColosseumMusic();
+  // Camp ambient is likewise stopped on every non-camp path below; only the
+  // camp-ambient branch calls playCampAmbientMusic(). Centralised so no
+  // branch can forget it (pause only → resumes on re-entry).
+  if (!isInCampAmbient()) stopCampAmbientMusic();
   if (settings.musicEnabled === false) {
     stopMenuMusic();
     stopExchangeMusic();
@@ -20306,6 +20361,7 @@ function syncMusicForScreen() {
     stopVictoryMusic();
     stopRogueliteMusic();
     stopColosseumMusic();
+    stopCampAmbientMusic();
     return;
   }
   // 🏛️ Colosseum — its own looped theme, restarts each time you come back.
@@ -20351,6 +20407,21 @@ function syncMusicForScreen() {
     stopBattleMusic();
     stopVictoryMusic();
     playRogueliteMusic();
+    return;
+  }
+  // 🏕️ Camp ambient hubs (Lab, Deck Builder, Pack Opening, Inventory,
+  // World Data, Book of Knowledge, Achievements, Profile, Friends,
+  // Settings, Daily Challenge). Checked BEFORE the Ruin Exchange branch so
+  // Pack Opening ('vendorMarket') plays Camp music while the other exchange
+  // screens keep the Black Market theme.
+  if (isInCampAmbient()) {
+    stopMenuMusic();
+    stopExchangeMusic();
+    stopCampaignMusic();
+    stopBattleMusic();
+    stopVictoryMusic();
+    stopRogueliteMusic();
+    playCampAmbientMusic();
     return;
   }
   // 📜 Campaign story screens — Thermopylae Finalis loop.
@@ -48085,6 +48156,7 @@ function renderSettings() {
       setVictoryMusicVolume(st.musicVolume);
       setRogueliteMusicVolume(st.musicVolume);
       setColosseumMusicVolume(st.musicVolume);
+      setCampAmbientMusicVolume(st.musicVolume);
       saveProfile();
     };
   }

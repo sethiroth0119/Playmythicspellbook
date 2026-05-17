@@ -34160,7 +34160,21 @@ function renderCoinFlip() {
     const wonNote = bp.playerWonFlip ? '<span class="gold-text">You won the toss!</span>' : '<span style="color:var(--ember)">Your opponent won the toss.</span>';
     // Pick the landing animation that resolves to the face that won the flip.
     const landClass = bp.coinResult === 'heads' ? 'coin-land-heads' : 'coin-land-tails';
-    if (bp.playerWonFlip) {
+    if (bp.playerWonFlip && bp.multiplayer) {
+      // 📡 Multiplayer: the toss winner ALWAYS goes first. Offering a choice
+      // here would desync — the loser's client hardcodes startBattleWithPrep(
+      // false), so a "opponent goes first" pick made both sides go second and
+      // soft-locked the match. One deterministic outcome = always in sync.
+      content = `
+        <h2 class="section-title">Coin Toss</h2>
+        <div class="section-subtitle">It landed on <strong>${resultUpper}</strong>. ${wonNote}</div>
+        <div class="coin-wrap"><div class="coin ${landClass}">${coinFaces}</div></div>
+        <div class="coin-result-note">You won the toss — <strong>you go first</strong>.</div>
+        <div class="coin-buttons">
+          <button class="btn-primary" id="btn-mp-first">Begin Battle →</button>
+        </div>
+      `;
+    } else if (bp.playerWonFlip) {
       content = `
         <h2 class="section-title">Coin Toss</h2>
         <div class="section-subtitle">It landed on <strong>${resultUpper}</strong>. ${wonNote}</div>
@@ -34225,7 +34239,11 @@ function renderCoinFlip() {
       document.getElementById('btn-tails').onclick = () => onCall('tails');
     }
   } else if (phase === 'reveal') {
-    if (bp.playerWonFlip) {
+    if (bp.playerWonFlip && bp.multiplayer) {
+      // Toss winner in MP — always first; opponent's client hardcodes second.
+      const b = document.getElementById('btn-mp-first');
+      if (b) b.onclick = () => startBattleWithPrep(true);
+    } else if (bp.playerWonFlip) {
       document.getElementById('btn-first-me').onclick = () => startBattleWithPrep(true);
       document.getElementById('btn-first-foe').onclick = () => startBattleWithPrep(false);
     } else {

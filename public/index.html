@@ -54405,7 +54405,7 @@ function _chatPresenceSync() {
     FriendsCache.online = ids;
     Chat._presCount = ids.size;
     Chat._presNames = names;
-    if (Chat.open) _chatRenderOverlay();
+    if (Chat.open) _chatRenderOverlay('presence');
     if (App.screen === 'friends' && typeof render === 'function') render();
   } catch (e) {}
 }
@@ -54435,7 +54435,7 @@ function _chatOnInsert(row) {
       showToast(`🤝 ${(row.sender_name || 'Someone')} — looking to trade: @${ms[0]}${more}`, 5000);
     }
   }
-  if (viewing) { _chatRenderOverlay(); }
+  if (viewing) { _chatRenderOverlay('messages'); }
   else if (row.sender_id !== me) { Chat.unread++; _chatUpdateFab(); }
 }
 async function chatFetch(room) {
@@ -54497,7 +54497,7 @@ function _chatStartPoll() {
   Chat._pollT = setInterval(() => {
     if (!Chat.open) { _chatStopPoll(); return; }
     const room = _chatCurRoom();
-    chatFetch(room).then(() => { if (Chat.open) _chatRenderOverlay(); });
+    chatFetch(room).then(() => { if (Chat.open) _chatRenderOverlay('messages'); });
   }, 6000);   // safety poll; realtime (if published) makes this mostly idle
 }
 function _chatStopPoll() { if (Chat._pollT) { clearInterval(Chat._pollT); Chat._pollT = null; } }
@@ -54536,15 +54536,168 @@ function _chatMsgRowHtml(m) {
   const mine = m.sender_id === me;
   const online = FriendsCache.online && FriendsCache.online.has(m.sender_id);
   const t = (() => { try { const d = new Date(m.created_at); return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } })();
+  const nm = escapeHtml(m.sender_name || 'Player');
+  const nameEl = (!mine && m.sender_id)
+    ? `<button class="chat-name-btn" data-chat-name="${escapeHtml(m.sender_id)}" data-chat-nname="${escapeHtml(m.sender_name || '')}" title="Click for player actions" style="background:none;border:none;padding:0;color:#cdbfe6;font-weight:700;font-size:0.66rem;cursor:pointer;text-decoration:underline dotted">${nm} ▾</button>`
+    : `<strong style="color:${mine ? '#7be0a0' : '#cdbfe6'}">${nm}</strong>`;
   return `<div style="margin:0.3rem 0;${mine ? 'text-align:right' : ''}">
-    <div style="font-size:0.66rem;color:#9aa0a6">${online && !mine ? '<span style="color:#5fae7a">●</span> ' : ''}<strong style="color:${mine ? '#7be0a0' : '#cdbfe6'}">${escapeHtml(m.sender_name || 'Player')}</strong> <span class="ink-dim">${t}</span>${(!mine && m.sender_id) ? ` <button data-chat-block="${escapeHtml(m.sender_id)}" data-chat-blockname="${escapeHtml(m.sender_name || '')}" title="Block (hide their messages)" style="background:none;border:none;color:#7a7f8c;cursor:pointer;font-size:0.66rem">⊘</button>` : ''}</div>
+    <div style="font-size:0.66rem;color:#9aa0a6">${online && !mine ? '<span style="color:#5fae7a">●</span> ' : ''}${nameEl} <span class="ink-dim">${t}</span></div>
     <div style="display:inline-block;max-width:85%;padding:0.35rem 0.6rem;border-radius:8px;background:${mine ? 'rgba(123,224,160,0.14)' : 'rgba(255,255,255,0.06)'};color:#e8e0f4;font-size:0.86rem;word-break:break-word">${_chatRenderBody(m.body)}</div>
   </div>`;
 }
-function _chatRenderOverlay() {
+// Build (cached) the @-mention index from real game data: cards, heroes,
+// held items, resources, relics. Used by the input autocomplete.
+function _chatMentionIndex() {
+  if (Chat._mentIdx && (Date.now() - (Chat._mentIdxAt || 0) < 60000)) return Chat._mentIdx;
+  const out = []; const seen = {};
+  const add = (name, type, icon) => {
+    if (!name) return; const k = type + ':' + String(name).toLowerCase();
+    if (seen[k]) return; seen[k] = 1;
+    out.push({ name: String(name), type, icon: icon || '' });
+  };
+  try {
+    (Forge.customCards || []).forEach(c => {
+      if (!c || !c.name) return;
+      add(c.name, (c.type === 'hero') ? 'hero' : 'card', c.icon || (c.type === 'hero' ? '🦸' : '🃏'));
+    });
+  } catch (e) {}
+  try { (typeof getAllHeroes === 'function' ? getAllHeroes() : []).forEach(h => h && add(h.name, 'hero', h.icon || '🦸')); } catch (e) {}
+  try { Object.keys(HELD_ITEMS || {}).forEach(k => { const it = HELD_ITEMS[k]; if (it) add(it.name, 'item', it.icon || '🎒'); }); } catch (e) {}
+  try { (RESOURCES || []).forEach(r => r && add(r.name, 'resource', r.icon || '🧰')); } catch (e) {}
+  try {
+    const rel = [].concat(Array.isArray(Forge.rlcRelics) ? Forge.rlcRelics : [], Array.isArray(Catalog && Catalog.rlcRelics) ? Catalog.rlcRelics : []);
+    rel.forEach(r => r && add(r.name, 'relic', r.icon || '🏺'));
+  } catch (e) {}
+  Chat._mentIdx = out; Chat._mentIdxAt = Date.now();
+  return out;
+}
+// Show/refresh the @-autocomplete dropdown for the current caret token.
+function _chatMentionUpdate(input) {
+  try {
+    if (!input) return;
+    const v = input.value || '';
+    const caret = input.selectionStart == null ? v.length : input.selectionStart;
+    const before = v.slice(0, caret);
+    const mm = before.match(/@([^\s@#]{0,40})$/);   // trailing @token at caret
+    let menu = document.getElementById('chat-ment-menu');
+    if (!mm) { if (menu) menu.remove(); return; }
+    const q = mm[1].toLowerCase();
+    const idx = _chatMentionIndex();
+    const matches = (q ? idx.filter(e => e.name.toLowerCase().indexOf(q) >= 0) : idx).slice(0, 8);
+    if (!matches.length) { if (menu) menu.remove(); return; }
+    const host = document.getElementById('chat-overlay'); if (!host) return;
+    if (!menu) {
+      menu = document.createElement('div');
+      menu.id = 'chat-ment-menu';
+      menu.style.cssText = 'position:absolute;left:8px;right:8px;bottom:52px;z-index:5;background:#15101f;border:1px solid rgba(212,175,55,0.45);border-radius:8px;box-shadow:0 -8px 24px rgba(0,0,0,0.6);max-height:190px;overflow-y:auto';
+      host.appendChild(menu);
+    }
+    const TYP = { card: '🃏 Card', hero: '🦸 Hero', item: '🎒 Item', resource: '🧰 Resource', relic: '🏺 Relic' };
+    menu.innerHTML = matches.map(e => `<button class="chat-ment-pick" data-mname="${escapeHtml(e.name)}" style="display:flex;width:100%;align-items:center;gap:0.5rem;background:none;border:none;border-bottom:1px solid rgba(255,255,255,0.05);color:#e8e0f4;padding:0.4rem 0.6rem;cursor:pointer;text-align:left;font-size:0.82rem"><span>${e.icon && e.icon.length <= 3 ? e.icon : '•'}</span><span style="flex:1">${escapeHtml(e.name)}</span><span class="ink-dim small-text">${TYP[e.type] || e.type}</span></button>`).join('');
+    menu.querySelectorAll('.chat-ment-pick').forEach(b => b.onmousedown = (ev) => {
+      ev.preventDefault();
+      _chatInsertMention(input, b.dataset.mname);
+    });
+  } catch (e) {}
+}
+function _chatInsertMention(input, name) {
+  try {
+    const v = input.value || '';
+    const caret = input.selectionStart == null ? v.length : input.selectionStart;
+    const before = v.slice(0, caret).replace(/@([^\s@#]{0,40})$/, '@' + name + ' ');
+    const after = v.slice(caret);
+    input.value = (before + after).slice(0, CHAT_MAX_LEN);
+    const pos = before.length;
+    input.focus();
+    try { input.setSelectionRange(pos, pos); } catch (e) {}
+    const menu = document.getElementById('chat-ment-menu'); if (menu) menu.remove();
+  } catch (e) {}
+}
+// Player-name action menu (Add Friend / Message / Trade / Block).
+function _chatNameMenu(uid, name, anchor) {
+  try {
+    const ex = document.getElementById('chat-name-menu'); if (ex) ex.remove();
+    if (!uid) return;
+    const host = document.getElementById('chat-overlay'); if (!host) return;
+    const isFriend = (FriendsCache.list || []).some(f => f.otherId === uid);
+    const blocked = !!Chat.blocked[uid];
+    const m = document.createElement('div');
+    m.id = 'chat-name-menu';
+    const hr = host.getBoundingClientRect();
+    const ar = anchor ? anchor.getBoundingClientRect() : hr;
+    const top = Math.max(8, Math.min(hr.height - 180, ar.top - hr.top + 18));
+    m.style.cssText = `position:absolute;left:14px;top:${top}px;z-index:6;background:#17121f;border:1px solid rgba(212,175,55,0.5);border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,0.65);min-width:170px;overflow:hidden`;
+    const item = (lbl, act) => `<button class="cnm-item" data-cnm="${act}" style="display:block;width:100%;text-align:left;background:none;border:none;border-bottom:1px solid rgba(255,255,255,0.05);color:#e8e0f4;padding:0.5rem 0.7rem;cursor:pointer;font-size:0.84rem">${lbl}</button>`;
+    m.innerHTML = `<div style="padding:0.4rem 0.7rem;color:#ffcf5a;font-weight:700;font-size:0.78rem;border-bottom:1px solid rgba(212,175,55,0.25)">${escapeHtml(name || 'Player')}</div>`
+      + item('💬 Message', 'dm')
+      + (isFriend ? '' : item('➕ Add Friend', 'add'))
+      + item('🤝 Trade', 'trade')
+      + item(blocked ? '✓ Unblock' : '⊘ Block', 'block');
+    host.appendChild(m);
+    m.querySelectorAll('.cnm-item').forEach(b => b.onclick = () => {
+      const a = b.dataset.cnm; m.remove();
+      if (a === 'dm') chatOpenDM(uid, name);
+      else if (a === 'add') sendFriendRequest(uid).then(r => showToast(r && r.ok ? '✅ Friend request sent.' : '⚠ ' + ((r && r.error) || 'Failed.'), 2600));
+      else if (a === 'block') { if (blocked) { delete Chat.blocked[uid]; showToast('User unblocked.', 1600); } else { Chat.blocked[uid] = name || true; showToast('User blocked.', 1800); } _chatRenderOverlay(); }
+      else if (a === 'trade') chatStartTrade(uid, name);
+    });
+    setTimeout(() => {
+      const off = (ev) => { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('mousedown', off, true); } };
+      document.addEventListener('mousedown', off, true);
+    }, 0);
+  } catch (e) {}
+}
+// Enter a trade with another player — level-gated by the existing Player
+// Market unlock (N heroes at Lv 15+). v1 opens a private trade thread + a
+// clear handshake message both sides see; the escrowed item-by-item swap
+// engine is a separate follow-up.
+function chatStartTrade(uid, name) {
+  if (!uid) return;
+  const gated = (typeof isPlayerMarketUnlocked === 'function') ? !isPlayerMarketUnlocked() : false;
+  if (gated) {
+    showToast(`🔒 Trading unlocks at ${MARKET_UNLOCK_HERO_COUNT} heroes Lv ${MARKET_UNLOCK_HERO_LEVEL}+ — train up to trade.`, 4200);
+    return;
+  }
+  chatOpenDM(uid, name);
+  // Post the trade handshake into the DM so the other player is invited in.
+  chatSend(`🤝 ${_chatName()} wants to TRADE. Reply with what you're offering / looking for — use @ to name a card, item, hero, resource or relic.`);
+  showToast(`🤝 Trade opened with ${name || 'player'} — discuss your offer in this DM.`, 3600);
+}
+
+function _chatRenderOverlay(mode) {
   try {
     const old = document.getElementById('chat-overlay');
     if (!Chat.open) { if (old) old.remove(); return; }
+    const inMsgView = (Chat.view === 'world' || Chat.view === 'trade' || Chat.view === 'dm');
+    // ---- Lightweight updates that DON'T rebuild the input (fixes the
+    // "one letter at a time" focus loss from the poll / presence churn) ----
+    if (old && mode === 'presence') {
+      const oc = old.querySelector('#chat-online-count');
+      if (oc) oc.textContent = (Chat._presCount || (FriendsCache.online ? FriendsCache.online.size : 0)) + ' online';
+      if (Chat.view === 'friends') { /* fall through to full so dots refresh */ }
+      else return;
+    }
+    if (old && mode === 'messages' && inMsgView) {
+      const sc = old.querySelector('#chat-scroll');
+      if (sc) {
+        const room = _chatCurRoom();
+        const list = (Chat.msgs[room] || []);
+        sc.innerHTML = (list.length ? '' : `<div class="ink-dim small-text" style="padding:1rem;text-align:center">${Chat.view === 'dm' ? 'No messages yet — say hi!' : 'No messages yet. Be the first to say something!'}</div>`) + list.map(_chatMsgRowHtml).join('');
+        sc.scrollTop = sc.scrollHeight;
+        sc.querySelectorAll('[data-chat-name]').forEach(b => b.onclick = () => _chatNameMenu(b.dataset.chatName, b.dataset.chatNname, b));
+        const oc2 = old.querySelector('#chat-online-count');
+        if (oc2) oc2.textContent = (Chat._presCount || (FriendsCache.online ? FriendsCache.online.size : 0)) + ' online';
+        return;   // input + header untouched → focus & caret preserved
+      }
+    }
+    // ---- Full render (capture focus + caret so even this path is safe) ----
+    let _focusId = null, _selS = 0, _selE = 0;
+    try {
+      const ae = document.activeElement;
+      if (ae && (ae.id === 'chat-input' || ae.id === 'chat-find')) {
+        _focusId = ae.id; _selS = ae.selectionStart; _selE = ae.selectionEnd;
+      }
+    } catch (e) {}
     // Preserve a half-typed message / search term across re-renders (the 6s
     // safety poll rebuilds this overlay; don't wipe what the user is typing).
     let _keepMsg = null, _keepFind = null;
@@ -54626,7 +54779,7 @@ function _chatRenderOverlay() {
     const onlineCount = Chat._presCount || (FriendsCache.online ? FriendsCache.online.size : 0);
     const header = `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.6rem 0.8rem;border-bottom:1px solid rgba(212,175,55,0.25);background:rgba(212,175,55,0.05)">
         <span style="font-family:'Cinzel',serif;color:#ffcf5a;font-size:1rem">💬 Chat</span>
-        <span class="small-text ink-dim"><span style="color:#5fae7a">●</span> ${onlineCount} online</span>
+        <span class="small-text ink-dim"><span style="color:#5fae7a">●</span> <span id="chat-online-count">${onlineCount} online</span></span>
         <div style="margin-left:auto;display:flex;gap:0.35rem">
           ${tab('world', '🌍 World')}
           ${tab('trade', '🤝 Trades')}
@@ -54645,6 +54798,11 @@ function _chatRenderOverlay() {
     // Restore in-progress text after a poll-driven rebuild.
     if (_keepMsg != null) { const _mi = document.getElementById('chat-input'); if (_mi) _mi.value = _keepMsg; }
     if (_keepFind != null) { const _fi = document.getElementById('chat-find'); if (_fi) _fi.value = _keepFind; }
+    // Restore focus + caret so a full rebuild never interrupts typing.
+    if (_focusId) {
+      const fe = document.getElementById(_focusId);
+      if (fe) { try { fe.focus(); fe.setSelectionRange(_selS, _selE); } catch (e) {} }
+    }
     // ---- bind ----
     const close = document.getElementById('chat-close'); if (close) close.onclick = chatClose;
     el.querySelectorAll('[data-chat-tab]').forEach(b => b.onclick = () => {
@@ -54656,7 +54814,16 @@ function _chatRenderOverlay() {
     });
     const send = () => { const i = document.getElementById('chat-input'); if (!i) return; const v = i.value; i.value = ''; chatSend(v); };
     const sBtn = document.getElementById('chat-send'); if (sBtn) sBtn.onclick = send;
-    const inp = document.getElementById('chat-input'); if (inp) { inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } }; }
+    const inp = document.getElementById('chat-input');
+    if (inp) {
+      inp.onkeydown = (e) => {
+        if (e.key === 'Escape') { const mm = document.getElementById('chat-ment-menu'); if (mm) { mm.remove(); e.stopPropagation(); return; } }
+        if (e.key === 'Enter') { e.preventDefault(); const mm = document.getElementById('chat-ment-menu'); if (mm) mm.remove(); send(); }
+      };
+      inp.oninput = () => _chatMentionUpdate(inp);          // @-autocomplete
+      inp.onblur = () => setTimeout(() => { const mm = document.getElementById('chat-ment-menu'); if (mm) mm.remove(); }, 180);
+    }
+    el.querySelectorAll('[data-chat-name]').forEach(b => b.onclick = () => _chatNameMenu(b.dataset.chatName, b.dataset.chatNname, b));
     el.querySelectorAll('[data-chat-block]').forEach(b => b.onclick = () => { Chat.blocked[b.dataset.chatBlock] = b.dataset.chatBlockname || true; showToast('User blocked — Unblock anytime in the Friends tab.', 2600); _chatRenderOverlay(); });
     el.querySelectorAll('[data-chat-unblock]').forEach(b => b.onclick = () => { delete Chat.blocked[b.dataset.chatUnblock]; showToast('User unblocked.', 1800); _chatRenderOverlay(); });
     el.querySelectorAll('[data-chat-dm]').forEach(b => b.onclick = () => chatOpenDM(b.dataset.chatDm, b.dataset.chatDmname));

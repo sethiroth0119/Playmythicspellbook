@@ -18507,6 +18507,90 @@ function getCraftCost(card) {
 function getDisenchantRefund(card) {
   return Math.floor(getCraftCost(card) * 0.25);
 }
+
+// ============================================================================
+// 🧰 SURVIVAL RESOURCES — the economy that powers crafting & the camp base.
+// Earned from camp loot/missions; spent to craft cards/relics/items and to
+// build/upgrade facilities. Admins set per-card costs in the editor.
+// ============================================================================
+const RESOURCES = [
+  { id: 'food',     name: 'Food',     icon: '🥫', color: '#9ad17a' },
+  { id: 'ammo',     name: 'Ammo',     icon: '🧨', color: '#e0a060' },
+  { id: 'water',    name: 'Water',    icon: '💧', color: '#7fd6ff' },
+  { id: 'medicine', name: 'Medicine', icon: '💊', color: '#ff8aa0' },
+  { id: 'supplies', name: 'Supplies', icon: '📦', color: '#d4af37' },
+  { id: 'metal',    name: 'Metal',    icon: '⛓️', color: '#9fb4d8' },
+  { id: 'intel',    name: 'Intel',    icon: '🛰️', color: '#c89bff' },
+];
+const RESOURCE_IDS = RESOURCES.map(r => r.id);
+function _ensureResources() {
+  if (!Profile.resources || typeof Profile.resources !== 'object') Profile.resources = {};
+  for (const id of RESOURCE_IDS) if (typeof Profile.resources[id] !== 'number') Profile.resources[id] = 0;
+  return Profile.resources;
+}
+function getRes(id) { return _ensureResources()[id] || 0; }
+function addRes(id, n) {
+  if (!id || !n) return;
+  const R = _ensureResources();
+  R[id] = Math.max(0, (R[id] || 0) + Math.floor(n));
+}
+function canAffordResources(cost) {
+  if (!cost || typeof cost !== 'object') return true;
+  const R = _ensureResources();
+  return RESOURCE_IDS.every(id => (R[id] || 0) >= (cost[id] || 0));
+}
+function spendResources(cost) {
+  if (!canAffordResources(cost)) return false;
+  const R = _ensureResources();
+  RESOURCE_IDS.forEach(id => { if (cost[id]) R[id] = Math.max(0, (R[id] || 0) - cost[id]); });
+  return true;
+}
+function _meta(id) { return RESOURCES.find(r => r.id === id); }
+// Compact "🥫2 ⛓️3" HTML for a cost object (admins / craft buttons).
+function resourceCostHtml(cost, opts) {
+  opts = opts || {};
+  if (!cost) return '<span class="ink-dim">free</span>';
+  const R = _ensureResources();
+  const parts = RESOURCE_IDS.filter(id => (cost[id] || 0) > 0).map(id => {
+    const short = (R[id] || 0) < (cost[id] || 0);
+    return `<span style="white-space:nowrap;color:${short && opts.flagShort ? '#e0556a' : 'inherit'}" title="${_meta(id).name}">${_meta(id).icon}${cost[id]}</span>`;
+  });
+  return parts.length ? parts.join(' ') : '<span class="ink-dim">free</span>';
+}
+// Default resource bundle by rarity when the admin hasn't set a custom cost.
+const _CRAFT_DEFAULT_BY_RARITY = {
+  common:    { supplies: 2 },
+  uncommon:  { supplies: 3, metal: 1 },
+  rare:      { supplies: 4, metal: 3, intel: 2 },
+  epic:      { supplies: 6, metal: 6, intel: 4, medicine: 2 },
+  legendary: { supplies: 10, metal: 10, intel: 8, medicine: 4 },
+  mythic:    { supplies: 18, metal: 16, intel: 14, medicine: 8 },
+};
+// Admin-set `card.craftCost` (object of resourceId:amount) wins; else a
+// sensible rarity default so every existing card stays craftable.
+function getCardCraftCost(card) {
+  if (card && card.craftCost && typeof card.craftCost === 'object') {
+    const c = {};
+    RESOURCE_IDS.forEach(id => { if (card.craftCost[id] > 0) c[id] = Math.floor(card.craftCost[id]); });
+    if (Object.keys(c).length) return c;
+  }
+  const base = _CRAFT_DEFAULT_BY_RARITY[(card && card.rarity) || 'common'] || _CRAFT_DEFAULT_BY_RARITY.common;
+  return Object.assign({}, base);
+}
+function getCardCraftRefund(card) {
+  const cost = getCardCraftCost(card);
+  const out = {};
+  RESOURCE_IDS.forEach(id => { const v = Math.floor((cost[id] || 0) * 0.4); if (v > 0) out[id] = v; });
+  return out;
+}
+// Compact owned-resources strip for the craft / camp screens.
+function renderResourceWallet() {
+  const R = _ensureResources();
+  return `<div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.22);border-radius:6px;padding:0.5rem 0.8rem;margin-bottom:1rem">
+    <span style="color:#ffd166;font-family:'Cinzel',serif;font-size:0.74rem;letter-spacing:0.1em">🧰 RESOURCES</span>
+    ${RESOURCES.map(r => `<span title="${escapeHtml(r.name)}" style="color:${r.color};font-size:0.86rem">${r.icon} ${R[r.id] || 0}</span>`).join('')}
+  </div>`;
+}
 // Returns the essence-element ID a card belongs to. Falls back to 'arcane' (wildcard
 // neutral pool) when the card has no primary element.
 function getCardEssenceElement(card) {
@@ -18574,28 +18658,24 @@ function getCraftablePool() {
 // True if the player can pay the craft cost in the card's element.
 function canCraft(card) {
   if (!card) return false;
-  const cost = getCraftCost(card);
-  const eid = getCardEssenceElement(card);
-  return getEssenceAmount(eid) >= cost;
+  return canAffordResources(getCardCraftCost(card));
 }
 function craftCard(card) {
   if (!card || !canCraft(card)) return false;
-  const cost = getCraftCost(card);
-  const eid = getCardEssenceElement(card);
-  if (!spendEssence(eid, cost)) return false;
+  if (!spendResources(getCardCraftCost(card))) return false;
   if (!Profile.cardCollection) Profile.cardCollection = {};
   Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1;
   saveProfile();
   return true;
 }
+// Returns the refunded resource object (for toast display).
 function disenchantCard(card) {
-  if (!card) return 0;
-  if (!Profile.cardCollection || !(Profile.cardCollection[card.id] > 0)) return 0;
-  const refund = getDisenchantRefund(card);
-  const eid = getCardEssenceElement(card);
+  if (!card) return null;
+  if (!Profile.cardCollection || !(Profile.cardCollection[card.id] > 0)) return null;
+  const refund = getCardCraftRefund(card);
   Profile.cardCollection[card.id]--;
   if (Profile.cardCollection[card.id] <= 0) delete Profile.cardCollection[card.id];
-  addEssence(eid, refund);
+  RESOURCE_IDS.forEach(id => { if (refund[id]) addRes(id, refund[id]); });
   saveProfile();
   return refund;
 }
@@ -20680,6 +20760,9 @@ const Profile = {
   // Sovereigns are PURCHASED WITH REAL MONEY ONLY from the Sovereigns Store.
   // They can buy from the shop and trade with other players, but cannot be earned in-game.
   sovereigns: 0,
+  // 🧰 Survival resources — earned (camp loot/missions), spent to craft
+  // cards/relics/items and to build the camp base. Admin-editable costs.
+  resources: { food: 0, ammo: 0, water: 0, medicine: 0, supplies: 0, metal: 0, intel: 0 },
   // Cashout ledger — tracks pending/paid Cinder → cash payouts (mock checkout).
   cashout: { pending: 0, lifetime: 0, history: [] },
   // ===== Account / Profile =====
@@ -21126,6 +21209,7 @@ async function cloudSyncProfile() {
       units:         Profile.units || {},
       gems:          Profile.gems || 0,
       sovereigns:    Profile.sovereigns || 0,
+      resources:     Profile.resources || {},
       deck_history:  Profile.deckHistory || {},
       // Original shape — `Profile.deckByHero` is a flat map `{[heroId]: {name, cards}}`.
       // Reverted from the temporary `{ list, byHero, _extra }` blob that caused
@@ -21284,6 +21368,7 @@ async function cloudFetchProfile() {
     if (data.units)        Profile.units        = { ...Profile.units, ...data.units };
     if (typeof data.gems       === 'number') Profile.gems       = data.gems;
     if (typeof data.sovereigns === 'number') Profile.sovereigns = data.sovereigns;
+    if (data.resources && typeof data.resources === 'object') { Profile.resources = data.resources; if (typeof _ensureResources === 'function') _ensureResources(); }
     if (data.deck_history) Profile.deckHistory  = { ...Profile.deckHistory, ...data.deck_history };
     // 🔧 `decks` column is the flat deckByHero map (legacy + current shape).
     // Defensive: if some older cloud row still has the temporary {list, byHero}
@@ -24327,6 +24412,20 @@ function _campGrantLoot(tier, mul) {
   const gem = Math.floor((t.gem[0] + Math.random() * (t.gem[1] - t.gem[0])) * lm * (1 + qBonus));
   Profile.gems = (Profile.gems || 0) + gem;
   out.push(`<span class="cinder-icon"></span> ${gem} salvage`);
+  // 🧰 Survival resources — the loot run hauls back raw materials. More on
+  // riskier tiers; quantities scale with the loot multiplier + Intel Center.
+  if (typeof RESOURCE_IDS !== 'undefined') {
+    const tierMul = (tier === 'deepRun') ? 3 : (tier === 'raid') ? 2 : 1;
+    const drops = 2 + Math.floor(Math.random() * 3) + (tier === 'deepRun' ? 2 : tier === 'raid' ? 1 : 0);
+    const got = {};
+    for (let i = 0; i < drops; i++) {
+      const rid = RESOURCE_IDS[Math.floor(Math.random() * RESOURCE_IDS.length)];
+      const qty = Math.max(1, Math.round((2 + Math.random() * 4) * tierMul * lm * (1 + qBonus)));
+      addRes(rid, qty); got[rid] = (got[rid] || 0) + qty;
+    }
+    const gs = Object.keys(got).map(id => `${_meta(id).icon}${got[id]}`).join(' ');
+    if (gs) out.push(gs);
+  }
   const roll = Math.random();
   // Ultra-rare hero (0.01% on deep, scaled down on safer runs).
   const heroChance = (tier === 'deepRun') ? 0.0001 : (tier === 'raid' ? 0.00004 : 0.00001);
@@ -36005,6 +36104,20 @@ function renderCardEditor() {
       </select>
       <button type="button" class="btn-mini btn-danger" data-em-del="${i}" title="Remove">✕</button>
     </div>`;
+  // 🧰 Admin: per-card crafting cost in survival resources. Blank = use the
+  // rarity default. Heroes aren't craftable so the block is hidden for them.
+  const _cc = (card.craftCost && typeof card.craftCost === 'object') ? card.craftCost : {};
+  const craftCostBlock = (type !== 'hero' && typeof RESOURCES !== 'undefined') ? `
+    <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.8rem;margin-top:0.4rem">
+      <label style="font-weight:700;color:#ffd166">🧰 Crafting Cost (resources)</label>
+      <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">What it costs players to craft this. Leave all blank to auto-use the rarity default (${escapeHtml(JSON.stringify(_CRAFT_DEFAULT_BY_RARITY[card.rarity || 'common'] || {}))}).</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        ${RESOURCES.map(r => `<label style="display:flex;align-items:center;gap:4px;font-size:0.85rem">${r.icon} ${escapeHtml(r.name)}
+          <input type="number" min="0" max="999" value="${_cc[r.id] || ''}" data-craftcost="${r.id}" style="width:62px"></label>`).join('')}
+      </div>
+    </div>
+  ` : '';
+
   const elemModsBlock = (type === 'weather' || type === 'spell' || type === 'trap' || type === 'location') ? `
     <div class="editor-field full" style="border-top:1px dashed rgba(74,143,212,0.3);padding-top:0.8rem;margin-top:0.4rem">
       <label style="font-weight:700;color:#88c8e0">🜂 Element Modifiers</label>
@@ -36150,6 +36263,7 @@ function renderCardEditor() {
         ${wallBlock}
         ${locationBlock}
         ${elemModsBlock}
+        ${craftCostBlock}
         ${onPlayBlock}
         ${kalonBlock}
         ${rebirthBlock}
@@ -37198,6 +37312,15 @@ function captureEditorIntoCard(card) {
 
   // Element Modifiers (weather / spell / trap / location). Runs AFTER the
   // weather block above so its empty-customEffects cleanup can't wipe them.
+  if (document.querySelector('[data-craftcost]')) {
+    const cc = {};
+    document.querySelectorAll('[data-craftcost]').forEach(inp => {
+      const v = parseInt(inp.value, 10);
+      if (!isNaN(v) && v > 0) cc[inp.dataset.craftcost] = Math.min(999, v);
+    });
+    if (Object.keys(cc).length) card.craftCost = cc;
+    else delete card.craftCost;
+  }
   if (document.getElementById('elem-mods-rows')) {
     const mods = (typeof readEditorElemMods === 'function') ? readEditorElemMods() : [];
     if (mods.length) {
@@ -46995,6 +47118,7 @@ function renderCamp() {
         ${(Forge.campAudio && Forge.campAudio.ambient) ? '<button class="btn-mini btn-danger" id="btn-camp-amb-clear">✕ Ambience</button>' : ''}
         <input type="file" accept="audio/*" id="camp-amb-input" style="display:none">
         <button class="btn-mini" id="btn-camp-pub-art" title="Push camp art + audio + sprites to all players">📡 Publish Catalog Art</button>
+        <button class="btn-mini" id="btn-camp-grant-res" title="Grant yourself resources for testing">🧰 +250 Resources</button>
       </div>` : ''}
       ${(() => {
         const rv = (typeof _campRival === 'function') ? _campRival() : { name: 'Rivals', threat: 0 };
@@ -47196,6 +47320,13 @@ function renderCamp() {
     if (Forge.campAudio) delete Forge.campAudio.ambient;
     if (typeof saveForge === 'function') saveForge();
     try { if (typeof playCampAmbientMusic === 'function') playCampAmbientMusic(); } catch (e) {}
+    render();
+  };
+  const _grantRes = document.getElementById('btn-camp-grant-res');
+  if (_grantRes) _grantRes.onclick = () => {
+    RESOURCE_IDS.forEach(id => addRes(id, 250));
+    if (typeof saveProfile === 'function') saveProfile();
+    showToast('🧰 +250 of every resource (admin).', 2600);
     render();
   };
   const _pubArt = document.getElementById('btn-camp-pub-art');
@@ -54767,19 +54898,14 @@ function renderCollection() {
         }
         // Craft / disenchant — heroes excluded (you don't craft heroes).
         const isHeroRow = active.kind === 'hero';
-        const cost   = getCraftCost(c);
-        const refund = getDisenchantRefund(c);
-        const eid    = getCardEssenceElement(c);
-        const ed     = ELEMENT_DATA[eid];
-        const ecolor = (typeof getElementColor === 'function') ? getElementColor(eid) : (ed && ed.color) || '#aaa';
-        const eicon  = ed ? getElemIcon(eid, '1.5em') : '🌟';
-        const have   = getEssenceAmount(eid);
+        const rcost  = getCardCraftCost(c);
+        const rrefund = getCardCraftRefund(c);
         const ownedCount = (Profile.cardCollection && Profile.cardCollection[c.id]) || 0;
-        const canBuy = !isHeroRow && have >= cost;
+        const canBuy = !isHeroRow && canAffordResources(rcost);
         const canDust = !isHeroRow && ownedCount > 0;
         const r = getRarity(c);
-        const craftBtn = isHeroRow ? '' : `<button class="btn-mini craft-btn ${canBuy ? '' : 'disabled'}" data-act="craft" data-card="${c.id}" ${canBuy ? '' : 'disabled'} title="${canBuy ? '' : `Need ${cost - have} more ${(ed && ed.name) || 'arcane'} essence`}">🔨 ${cost} ${eicon}</button>`;
-        const dustBtn  = isHeroRow ? '' : `<button class="btn-mini disenchant-btn ${canDust ? '' : 'disabled'}" data-act="disenchant" data-card="${c.id}" ${canDust ? '' : 'disabled'} title="${canDust ? `Refund ${refund} ${(ed && ed.name) || 'arcane'} essence` : 'You don\'t own a copy'}">♻ ${refund} ${eicon}</button>`;
+        const craftBtn = isHeroRow ? '' : `<button class="btn-mini craft-btn ${canBuy ? '' : 'disabled'}" data-act="craft" data-card="${c.id}" ${canBuy ? '' : 'disabled'} title="${canBuy ? 'Craft with resources' : 'Not enough resources'}">🔨 ${resourceCostHtml(rcost, { flagShort: true })}</button>`;
+        const dustBtn  = isHeroRow ? '' : `<button class="btn-mini disenchant-btn ${canDust ? '' : 'disabled'}" data-act="disenchant" data-card="${c.id}" ${canDust ? '' : 'disabled'} title="${canDust ? 'Scrap for resources' : 'You don\'t own a copy'}">♻ ${resourceCostHtml(rrefund)}</button>`;
         // 🟡 OWNED  → row has `is-owned` class → bright + golden ring + halo
         // ⚫ UNOWNED → row has `is-unowned` class → grey-washed + lower opacity
         const ownClass = ownedCount > 0 ? 'is-owned' : 'is-unowned';
@@ -54809,7 +54935,8 @@ function renderCollection() {
         <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/Storage%20box.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Inventory</h2>
         <button class="btn-secondary" id="btn-back-collection">← Back to Menu</button>
       </div>
-      <div class="essence-header">
+      ${(typeof renderResourceWallet === 'function') ? renderResourceWallet() : ''}
+      <div class="essence-header" style="display:none">
         <div class="essence-header-row">
           <div class="essence-header-label"><span class="cinder-icon"></span> Your Essence</div>
           <div class="essence-pills">${essencePills}</div>
@@ -54889,16 +55016,14 @@ function renderCollection() {
       if (el.disabled) return;
       const c = active.source.find(x => x.id === el.dataset.card);
       if (!c) return;
-      const eid  = getCardEssenceElement(c);
-      const ed   = ELEMENT_DATA[eid];
-      const cost = getCraftCost(c);
-      const eName = (ed && ed.name) || (eid === 'arcane' ? 'Arcane' : eid);
-      if (!confirm(`Craft "${c.name}"?\nCost: ${cost} ${eName} essence (you have ${getEssenceAmount(eid)}).\n\nThe card will be added to your inventory.`)) return;
+      const rc = getCardCraftCost(c);
+      const costStr = RESOURCE_IDS.filter(id => rc[id]).map(id => `${_meta(id).icon} ${rc[id]} ${_meta(id).name}`).join('\n');
+      if (!confirm(`Craft "${c.name}"?\nCost:\n${costStr}\n\nThe card will be added to your inventory.`)) return;
       if (craftCard(c)) {
         showToast(`🔨 Crafted ${c.name}!`);
         render();
       } else {
-        showToast(`⚠ Not enough ${eName} essence`, 2500);
+        showToast(`⚠ Not enough resources to craft ${c.name}`, 2500);
       }
     };
   });
@@ -54908,15 +55033,14 @@ function renderCollection() {
       if (el.disabled) return;
       const c = active.source.find(x => x.id === el.dataset.card);
       if (!c) return;
-      const eid  = getCardEssenceElement(c);
-      const ed   = ELEMENT_DATA[eid];
-      const refund = getDisenchantRefund(c);
+      const rf = getCardCraftRefund(c);
       const owned = (Profile.cardCollection && Profile.cardCollection[c.id]) || 0;
-      const eName = (ed && ed.name) || (eid === 'arcane' ? 'Arcane' : eid);
-      if (!confirm(`Disenchant 1 copy of "${c.name}"?\nRefund: ${refund} ${eName} essence.\nYou own ${owned} — after disenchant you'll have ${owned - 1}.`)) return;
+      const rfStr = RESOURCE_IDS.filter(id => rf[id]).map(id => `${_meta(id).icon} ${rf[id]} ${_meta(id).name}`).join(', ') || 'nothing';
+      if (!confirm(`Scrap 1 copy of "${c.name}"?\nRefund: ${rfStr}.\nYou own ${owned} — after scrapping you'll have ${owned - 1}.`)) return;
       const got = disenchantCard(c);
-      if (got > 0) {
-        showToast(`♻ +${got} ${eName} essence`);
+      if (got) {
+        const gotStr = RESOURCE_IDS.filter(id => got[id]).map(id => `${_meta(id).icon}+${got[id]}`).join(' ') || 'scrapped';
+        showToast(`♻ ${gotStr}`);
         render();
       } else {
         showToast(`⚠ You don't own a copy of ${c.name}`, 2500);

@@ -22125,8 +22125,13 @@ async function cloudFetchCatalogArt() {
   }
   if (changed) { try { saveForge(); } catch (e) {} }
   // 📦 Now that the Storage art (incl. Forge.catalogMedia shards) has merged
-  // in, overlay the heavy media back onto Catalog.* for players.
+  // in, overlay the heavy media back onto Catalog.* for players — then RE-
+  // PERSIST. cloudFetchCatalog() persists an image-stripped catalog to IDB
+  // (the row deep-strips data: URLs); without re-persisting here a transient
+  // art-fetch failure would leave stripped covers/tombstone cached until a
+  // future successful fetch. Re-persisting on success keeps IDB full-res.
   _rehydrateCatalogMedia();
+  try { if (typeof _persistCatalog === 'function') _persistCatalog(); } catch (e) {}
   return { ok: true };
 }
 
@@ -23739,6 +23744,11 @@ async function gymContribute(coreId) {
   if ((Profile.gems || 0) < GYM_CONTRIB_COST) return { ok:false, error:`Need ${GYM_CONTRIB_COST} 🔥.` };
   const me = Profile.cloud.userId;
   const season = (GymWars.meta && GymWars.meta.season) || 1;
+  // 💸 Charge FIRST so a failed/duplicate write can't grant free contribution.
+  // Refund on any DB failure below so the player is never charged for nothing.
+  if (!spendCinders(GYM_CONTRIB_COST)) return { ok:false, error:'Payment failed.' };
+  GymWars._lastContribAt = Date.now();
+  let committed = false;
   try {
     // Read current contribution (so we can increment atomically-enough).
     const { data: cur } = await Cloud.client.from('gym_supporters')
@@ -23748,9 +23758,8 @@ async function gymContribute(coreId) {
       core_id: coreId, user_id: me, supporter_name: gymPlayerName(),
       contribution: next, role: 'supporter', season, updated_at: new Date().toISOString(),
     }, { onConflict: 'core_id,user_id,season' });
-    if (error) { _gymMarkErr(error); return { ok:false, error:error.message }; }
-    if (!spendCinders(GYM_CONTRIB_COST)) return { ok:false, error:'Payment failed.' };
-    GymWars._lastContribAt = Date.now();
+    if (error) { addCinders(GYM_CONTRIB_COST); _gymMarkErr(error); return { ok:false, error:error.message }; }
+    committed = true; // contribution recorded — past here, do NOT refund
     // Supporter activity regenerates the gym's stamina faster (spec).
     const row = gymRow(coreId);
     if (row && row.leader_id) {
@@ -23765,22 +23774,24 @@ async function gymContribute(coreId) {
     GymWars._supporters[coreId] = null;
     await gymFetchAll();
     return { ok:true, total: next };
-  } catch (e) { _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+  } catch (e) { if (!committed) addCinders(GYM_CONTRIB_COST); _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
 }
 async function gymReinforceStamina(coreId) {
   const row = gymRow(coreId);
   if (!row || !gymIsOwn(row)) return { ok:false, error:'Not your gym.' };
   if ((Profile.gems || 0) < GYM_REINFORCE_COST) return { ok:false, error:`Need ${GYM_REINFORCE_COST} 🔥.` };
+  if (!spendCinders(GYM_REINFORCE_COST)) return { ok:false, error:'Payment failed.' };
+  let committed = false;
   try {
     const boosted = Math.min(GYM_STAMINA_MAX, gymStaminaNow(row) + GYM_REINFORCE_AMOUNT);
     const { error } = await Cloud.client.from('gyms').update({
       stamina: boosted, stamina_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq('core_id', coreId).eq('leader_id', Profile.cloud.userId);
-    if (error) { _gymMarkErr(error); return { ok:false, error:error.message }; }
-    if (!spendCinders(GYM_REINFORCE_COST)) return { ok:false, error:'Payment failed.' };
+    if (error) { addCinders(GYM_REINFORCE_COST); _gymMarkErr(error); return { ok:false, error:error.message }; }
+    committed = true;
     await gymFetchAll();
     return { ok:true };
-  } catch (e) { _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+  } catch (e) { if (!committed) addCinders(GYM_REINFORCE_COST); _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
 }
 async function gymUpgradeLevel(coreId) {
   const row = gymRow(coreId);
@@ -23788,15 +23799,17 @@ async function gymUpgradeLevel(coreId) {
   const lvl = row.gym_level || 1;
   const cost = GYM_UPGRADE_BASE * lvl;
   if ((Profile.gems || 0) < cost) return { ok:false, error:`Need ${cost} 🔥 to reach Lv ${lvl + 1}.` };
+  if (!spendCinders(cost)) return { ok:false, error:'Payment failed.' };
+  let committed = false;
   try {
     const { error } = await Cloud.client.from('gyms').update({
       gym_level: lvl + 1, updated_at: new Date().toISOString(),
     }).eq('core_id', coreId).eq('leader_id', Profile.cloud.userId);
-    if (error) { _gymMarkErr(error); return { ok:false, error:error.message }; }
-    if (!spendCinders(cost)) return { ok:false, error:'Payment failed.' };
+    if (error) { addCinders(cost); _gymMarkErr(error); return { ok:false, error:error.message }; }
+    committed = true;
     await gymFetchAll();
     return { ok:true, level: lvl + 1 };
-  } catch (e) { _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+  } catch (e) { if (!committed) addCinders(cost); _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
 }
 async function gymSetMotto(coreId, motto) {
   const row = gymRow(coreId);
@@ -35570,6 +35583,11 @@ function startBattleWithPrep(playerGoesFirst) {
   recordHeroSelected(me.id);
   App.ui = { selectedUnitId: null, selectedMoveId: null, selectedCardId: null, modalUnitId: null, actionMode: null, aiBusy: false, aiActorId: null, aiActionLabel: '', aiMoveTrail: null, cardDetailId: null, battleAnim: null, eventEncounter: null, _gameOverHidden: false };
   App.battleProgressRecorded = false;
+  // 🏛️ Clear any stale gym game-over flag at battle start. It's set in
+  // recordBattleProgress (game-over) only for gym battles and consumed by
+  // gymAfterBattle; resetting here stops a gym battle the player left without
+  // clicking Play Again/Exit from hijacking a later non-gym battle's routing.
+  App._gymPendingAfterBattle = null;
   // Initialize the replay recorder — captures every meaningful state transition for
   // post-game playback. The renderBattle hook below detects log growth as the trigger
   // for adding new snapshots, so we don't have to wrap every engine state mutation.

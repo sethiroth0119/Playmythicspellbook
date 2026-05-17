@@ -50774,25 +50774,58 @@ function rlcStartRun(campaignId) {
   render();
 }
 function rlcAbandonRun() {
-  if (!confirm('Abandon the current run? All run progress (deck, currency, HP) is lost. Cards already added to your inventory are kept.')) return;
-  Profile.rlcRun = null;
+  const run = Profile.rlcRun;
+  const pend = (run && Array.isArray(run.pendingCards)) ? run.pendingCards.length : 0;
+  const cin  = (run && Math.max(0, parseInt(run.currency, 10) || 0)) || 0;
+  if (!confirm(
+    'Abandon this run?\n\n' +
+    '⚠ You only KEEP your rewards if you DIE or COMPLETE the campaign.\n' +
+    'Abandon now and you FORFEIT everything earned this run' +
+    ((pend || cin) ? ` — ${pend} card${pend === 1 ? '' : 's'} and ${cin} Cinders` : '') +
+    '. Nothing is added to your inventory.\n\nAbandon anyway?'
+  )) return;
+  Profile.rlcRun = null;   // pending rewards discarded — never cashed out
   try { saveProfile(); } catch (e) {}
+  App._rlcNodePreview = null;
   App.screen = 'rlcList';
   render();
 }
-// Permanently grant a card to the player's inventory (usable in the Deck
-// Editor) AND drop a copy into the current run deck.
+// 💰 Cash out everything earned this run into the permanent profile. Called
+// ONLY when the run actually ENDS (death or campaign completion) — never on
+// abandon. Idempotent so the result screen can call it safely.
+function _rlcCashOutRewards(run) {
+  if (!run || run._cashedOut) return;
+  run._cashedOut = true;
+  if (!Profile.cardCollection) Profile.cardCollection = {};
+  let granted = 0;
+  (Array.isArray(run.pendingCards) ? run.pendingCards : []).forEach(key => {
+    let card = null; try { card = resolveDeckCard(key); } catch (e) {}
+    if (card) { Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1; granted++; }
+  });
+  const cin = Math.max(0, parseInt(run.currency, 10) || 0);
+  if (cin > 0) Profile.gems = Math.max(0, (Profile.gems || 0) + cin);
+  run._cashedRewards = { cards: granted, cinders: cin };
+  try { (typeof _persistProgressNow === 'function') ? _persistProgressNow() : saveProfile(); } catch (e) {}
+}
+// Award a card from a roguelite run. It goes into the run deck immediately
+// (so you can play it this run) + a PENDING bag — but it is NOT added to the
+// permanent inventory until the run ends (death / completion) via
+// _rlcCashOutRewards. Abandon forfeits the whole bag.
 function _rlcGrantCard(key) {
   let card = null;
   try { card = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null; } catch (e) {}
   if (!card) return false;
-  if (!Profile.cardCollection) Profile.cardCollection = {};
-  Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1;
-  if (Profile.rlcRun && Array.isArray(Profile.rlcRun.deck)) Profile.rlcRun.deck.push(key);
-  // 📜 Run summary — remember every card collected this run.
   if (Profile.rlcRun) {
+    if (!Array.isArray(Profile.rlcRun.pendingCards)) Profile.rlcRun.pendingCards = [];
+    Profile.rlcRun.pendingCards.push(key);
+    if (Array.isArray(Profile.rlcRun.deck)) Profile.rlcRun.deck.push(key);
+    // 📜 Run summary — remember every card collected this run.
     if (!Array.isArray(Profile.rlcRun.cardsCollected)) Profile.rlcRun.cardsCollected = [];
     Profile.rlcRun.cardsCollected.push(card.name || card.id || String(key));
+  } else {
+    // No active run (defensive) — grant directly.
+    if (!Profile.cardCollection) Profile.cardCollection = {};
+    Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1;
   }
   return true;
 }
@@ -51034,19 +51067,15 @@ function _rlcDeckOptions() {
 // every deck they've built (Profile.decks) + every starter deck they own
 // (picked/purchased). Deduped; rlc_run_deck (the transient run copy) excluded.
 function _rlcPlayerDeckOptions() {
+  // ONLY the player's own Deck-Editor decks — exactly the list shown in the
+  // Deck Builder. A picked starter deck is already saved here as a real deck
+  // (grantStarterDeckToPlayer → findOrCreateLooseDeck), so it appears too;
+  // we no longer also list the admin starter-deck templates (duplicates).
   const out = []; const seen = {};
   try {
     (Array.isArray(Profile.decks) ? Profile.decks : []).forEach(d => {
       if (d && d.id && d.id !== 'rlc_run_deck' && !seen[d.id] && Array.isArray(d.cards) && d.cards.length) {
         seen[d.id] = 1; out.push({ id: d.id, label: '🃏 ' + (d.name || d.id) });
-      }
-    });
-  } catch (e) {}
-  try {
-    const owned = Array.isArray(Profile.ownedStarterDecks) ? Profile.ownedStarterDecks : [];
-    (typeof getAllStarterDecks === 'function' ? getAllStarterDecks() : []).forEach(sd => {
-      if (sd && sd.id && owned.indexOf(sd.id) >= 0 && !seen[sd.id]) {
-        seen[sd.id] = 1; out.push({ id: sd.id, label: '🦸 ' + (sd.name || sd.id) });
       }
     });
   } catch (e) {}
@@ -52208,6 +52237,9 @@ function renderRlcMystery() {
 }
 function renderRlcResult() {
   const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
+  // 💰 Reaching this screen means the run ENDED (died or completed) — bank
+  // every pending reward now (idempotent). Abandon never lands here.
+  try { _rlcCashOutRewards(run); } catch (e) {}
   const camp = _rlcCampaign(run.campaignId);
   const won = !!run.isComplete;
   const failNode = run._failNodeId ? _rlcNode(camp, run._failNodeId) : null;
@@ -52242,7 +52274,8 @@ function renderRlcResult() {
         <div style="margin-top:12px"><div style="color:#ffb3c1;font-family:'Cinzel',serif;font-size:0.85rem">⚔ Enemies Defeated</div>${list(enemies, 'No enemies fell this run.')}</div>
         <div style="margin-top:12px"><div style="color:#7fdca0;font-family:'Cinzel',serif;font-size:0.85rem">🃏 Cards Collected</div>${list(cards, 'No new cards this run.')}</div>
         ${relicNames.length ? `<div style="margin-top:12px"><div style="color:#f6d97a;font-family:'Cinzel',serif;font-size:0.85rem">🏺 Relics</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${relicNames.map(r => `<span class="small-text" style="background:rgba(184,136,255,0.12);border:1px solid rgba(184,136,255,0.35);border-radius:4px;padding:2px 7px">${escapeHtml(r)}</span>`).join('')}</div></div>` : ''}
-        <div class="small-text ink-dim" style="margin-top:12px">All cards you collected this run are permanently in your inventory — open the Deck Editor to use them.</div>
+        <div class="small-text" style="margin-top:12px;color:#7fdca0">✓ Banked: <strong>${(run._cashedRewards && run._cashedRewards.cards) || 0}</strong> card${((run._cashedRewards && run._cashedRewards.cards) === 1) ? '' : 's'} added to your inventory${(run._cashedRewards && run._cashedRewards.cinders) ? ` · <strong>${run._cashedRewards.cinders}</strong> Cinders` : ''}.</div>
+        <div class="small-text ink-dim" style="margin-top:4px">Rewards are kept only because you ${won ? 'completed the campaign' : 'died'} — abandoning a run forfeits everything. Open the Deck Editor to use your new cards.</div>
       </div>`;
       })()}
       ${_nextCamps.length ? `

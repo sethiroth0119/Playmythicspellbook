@@ -50767,6 +50767,11 @@ function _rlcGrantCard(key) {
   if (!Profile.cardCollection) Profile.cardCollection = {};
   Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1;
   if (Profile.rlcRun && Array.isArray(Profile.rlcRun.deck)) Profile.rlcRun.deck.push(key);
+  // 📜 Run summary — remember every card collected this run.
+  if (Profile.rlcRun) {
+    if (!Array.isArray(Profile.rlcRun.cardsCollected)) Profile.rlcRun.cardsCollected = [];
+    Profile.rlcRun.cardsCollected.push(card.name || card.id || String(key));
+  }
   return true;
 }
 function _rlcCompleteNode(nodeId) {
@@ -50913,6 +50918,13 @@ function rlcAfterBattle() {
     App.screen = 'rlcResult'; return render();
   }
   run.heroHP = Math.max(1, Math.min(run.maxHP, parseInt(res.endHP, 10) || run.heroHP));
+  // 📜 Run summary — log the foe just defeated.
+  {
+    const _bn = _rlcNode(_rlcCampaign(run.campaignId), res.nodeId);
+    const _en = (_bn && _bn.enemy && _bn.enemy.name) || (_bn && _bn.name) || 'Enemy';
+    if (!Array.isArray(run.enemiesDefeated)) run.enemiesDefeated = [];
+    run.enemiesDefeated.push(_en);
+  }
   // 🏺 Won-battle relics — bonus currency + lifesteal heal.
   const _wc = _rlcRelicSum(run, 'winCurrency');
   if (_wc) run.currency = (run.currency || 0) + _wc;
@@ -52093,12 +52105,30 @@ function renderRlcResult() {
       <div style="font-size:3.4rem;margin-top:30px">${won ? '🏆' : '💀'}</div>
       <h1 class="section-title" style="color:${won ? '#f6d97a' : '#ff6b8a'}">${won ? 'Campaign Complete!' : 'Run Ended'}</h1>
       <div class="section-subtitle">${won ? escapeHtml((camp && camp.name) || 'The campaign') + ' has been conquered.' : 'Your hero fell' + (failNode ? ' at ' + escapeHtml(failNode.name || 'a battle') : '') + '.'}</div>
-      <div style="max-width:460px;margin:20px auto;padding:18px;background:rgba(18,10,32,0.8);border:1px solid rgba(212,175,55,0.4);border-radius:12px;text-align:left">
-        <div style="color:#cdb6ff">Nodes cleared: <strong>${(run.completed || []).length}</strong></div>
-        <div style="color:#cdb6ff">Final ${escapeHtml(_rlcCur(run))}: <strong>${run.currency}</strong></div>
-        <div style="color:#cdb6ff">Run deck size: <strong>${(run.deck || []).length}</strong></div>
-        <div class="small-text ink-dim" style="margin-top:8px">All cards you collected this run are permanently in your inventory — open the Deck Editor to use them.</div>
-      </div>
+      ${(() => {
+        const enemies = Array.isArray(run.enemiesDefeated) ? run.enemiesDefeated : [];
+        const cards = Array.isArray(run.cardsCollected) ? run.cardsCollected : [];
+        const tally = (arr) => { const m = {}; arr.forEach(x => { m[x] = (m[x] || 0) + 1; }); return Object.keys(m).map(k => m[k] > 1 ? `${k} ×${m[k]}` : k); };
+        const list = (arr, empty) => arr.length
+          ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;max-height:120px;overflow:auto">${tally(arr).map(t => `<span class="small-text" style="background:rgba(212,175,55,0.12);border:1px solid rgba(212,175,55,0.35);border-radius:4px;padding:2px 7px">${escapeHtml(t)}</span>`).join('')}</div>`
+          : `<div class="small-text ink-dim" style="margin-top:4px">${empty}</div>`;
+        const relicNames = (run.relics || []).map(rid => { const rl = (typeof getRlcRelic === 'function') ? getRlcRelic(rid) : null; return rl ? (rl.icon + ' ' + rl.name) : rid; });
+        return `
+      <div style="max-width:520px;margin:20px auto;padding:18px;background:rgba(18,10,32,0.8);border:1px solid rgba(212,175,55,0.4);border-radius:12px;text-align:left">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 18px">
+          <div style="color:#cdb6ff">Nodes cleared: <strong>${(run.completed || []).length}</strong></div>
+          <div style="color:#cdb6ff">Enemies defeated: <strong>${enemies.length}</strong></div>
+          <div style="color:#cdb6ff">Final ${escapeHtml(_rlcCur(run))}: <strong>${run.currency}</strong></div>
+          <div style="color:#cdb6ff">Cards collected: <strong>${cards.length}</strong></div>
+          <div style="color:#cdb6ff">Run deck size: <strong>${(run.deck || []).length}</strong></div>
+          <div style="color:#cdb6ff">Relics held: <strong>${relicNames.length}</strong></div>
+        </div>
+        <div style="margin-top:12px"><div style="color:#ffb3c1;font-family:'Cinzel',serif;font-size:0.85rem">⚔ Enemies Defeated</div>${list(enemies, 'No enemies fell this run.')}</div>
+        <div style="margin-top:12px"><div style="color:#7fdca0;font-family:'Cinzel',serif;font-size:0.85rem">🃏 Cards Collected</div>${list(cards, 'No new cards this run.')}</div>
+        ${relicNames.length ? `<div style="margin-top:12px"><div style="color:#f6d97a;font-family:'Cinzel',serif;font-size:0.85rem">🏺 Relics</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${relicNames.map(r => `<span class="small-text" style="background:rgba(184,136,255,0.12);border:1px solid rgba(184,136,255,0.35);border-radius:4px;padding:2px 7px">${escapeHtml(r)}</span>`).join('')}</div></div>` : ''}
+        <div class="small-text ink-dim" style="margin-top:12px">All cards you collected this run are permanently in your inventory — open the Deck Editor to use them.</div>
+      </div>`;
+      })()}
       ${_nextCamps.length ? `
         <div style="max-width:460px;margin:0 auto 20px;padding:16px;background:rgba(30,50,30,0.6);border:1px solid rgba(127,220,160,0.45);border-radius:12px">
           <div style="color:#9be8b8;font-family:'Cinzel',serif;font-weight:700;margin-bottom:8px">🔓 Next chapter unlocked!</div>

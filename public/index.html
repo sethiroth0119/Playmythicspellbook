@@ -22843,10 +22843,43 @@ function isHeroCardKey(key) {
 function deckHasHero(cardKeys) {
   return (cardKeys || []).some(k => isHeroCardKey(k));
 }
+// Canonical owned-card id for a deck key (handles u_/h_/custom: prefixes).
+function _deckKeyCardId(key) {
+  try { const c = resolveDeckCard(key); if (c && c.id) return c.id; } catch (e) {}
+  try { const p = parseCardKey(key); return p && p.id; } catch (e) {}
+  return null;
+}
+// How many copies the player OWNS of the card a key refers to. Admins are
+// unrestricted so they can build/test any deck.
+function deckKeyOwnedCount(key) {
+  if (typeof isAdmin === 'function' && isAdmin()) return Infinity;
+  const id = _deckKeyCardId(key);
+  if (!id) return 0;
+  return (Profile.cardCollection && Profile.cardCollection[id]) || 0;
+}
+// Copies of that same card id already in the working deck (sum across keys
+// that resolve to the same id, so two key forms can't bypass the cap).
+function _deckCopiesOfId(cardKeys, id) {
+  if (!id) return 0;
+  let n = 0;
+  for (const k of cardKeys || []) if (_deckKeyCardId(k) === id) n++;
+  return n;
+}
 function addToDeck(cardKeys, key) {
   if (cardKeys.length >= DECK_SIZE) return cardKeys;
   const counts = deckCardCounts(cardKeys);
   if ((counts[key] || 0) >= MAX_COPIES_PER_CARD) return cardKeys;
+  // 🔒 OWNERSHIP LOCK — players may only deck cards they actually own, up to
+  // the number of copies they own. Unowned cards are view-only.
+  const owned = deckKeyOwnedCount(key);
+  if (owned <= 0) {
+    if (typeof showToast === 'function') showToast("You don't own this card — right-click to view its details.", 2800);
+    return cardKeys;
+  }
+  if (_deckCopiesOfId(cardKeys, _deckKeyCardId(key)) >= owned) {
+    if (typeof showToast === 'function') showToast(`You only own ${owned} ${owned === 1 ? 'copy' : 'copies'} of this card.`, 2800);
+    return cardKeys;
+  }
   // Rule: only one hero card per deck
   if (isHeroCardKey(key) && deckHasHero(cardKeys)) {
     if (typeof showToast === 'function') showToast('Only one hero per deck — remove the current one first.');
@@ -23376,8 +23409,15 @@ function cardSnapshotForListing(card) { return JSON.parse(JSON.stringify(card));
 function itemSnapshotForListing(itemId) { const it = HELD_ITEMS[itemId]; return it ? { ...it } : null; }
 
 function listCardForSale(customCardId, price) {
-  const card = Forge.customCards.find(c => c.id === customCardId);
+  const card = (Forge.customCards || []).find(c => c.id === customCardId)
+    || ((typeof lookupCustomCard === 'function') ? lookupCustomCard(customCardId) : null);
   if (!card) { showToast('Only Forge custom cards can be listed'); return false; }
+  // 🔒 OWNERSHIP LOCK — you can only sell/list a card you actually own.
+  const _isAdm = (typeof isAdmin === 'function') && isAdmin();
+  if (!_isAdm && ((Profile.cardCollection && Profile.cardCollection[card.id]) || 0) <= 0) {
+    showToast("You don't own that card — you can only view its details.", 3000);
+    return false;
+  }
   price = Math.max(MARKET_MIN_PRICE, Math.min(MARKET_MAX_PRICE, parseInt(price, 10) || 0));
   if (!price) { showToast('Set a valid price'); return false; }
   Market.listings.push({
@@ -56266,13 +56306,20 @@ function renderDeckBuilder() {
         const count = deckCounts[key] || 0;
         const elemIcons = getElementsOf(card).map(e => ELEMENT_DATA[e] ? getElemIcon(e, '1.6em') : '').join('');
         const isHeroCard = card.type === 'hero';
+        // 🔒 Ownership — players may only deck cards they own (up to copies
+        // owned). Unowned = view-only (right-click still shows details).
+        const ownedC = deckKeyOwnedCount(key);
+        const isOwned = ownedC > 0; // Infinity for admins
         // One-hero-per-deck: disable other hero cards once one is in the deck
         const heroLocked = isHeroCard && alreadyHasHero && count === 0;
-        const full = count >= MAX_COPIES_PER_CARD || deckSize >= DECK_SIZE || heroLocked;
-        const metaLine = isHeroCard
-          ? `Hero · ${elemIcons || ''}${heroLocked ? ' — only one hero per deck' : ''}`
-          : `Cost ${card.cost || 0} <span class="energy-orb"></span> ${elemIcons ? '· ' + elemIcons : ''}`;
-        const maxCopies = isHeroCard ? 1 : MAX_COPIES_PER_CARD;
+        const ownCap = isFinite(ownedC) ? ownedC : (isHeroCard ? 1 : MAX_COPIES_PER_CARD);
+        const full = !isOwned || count >= ownCap || count >= MAX_COPIES_PER_CARD || deckSize >= DECK_SIZE || heroLocked;
+        const metaLine = !isOwned
+          ? '<span style="color:#9aa0a6">🔒 Not owned — right-click for details</span>'
+          : isHeroCard
+            ? `Hero · ${elemIcons || ''}${heroLocked ? ' — only one hero per deck' : ''}`
+            : `Cost ${card.cost || 0} <span class="energy-orb"></span> ${elemIcons ? '· ' + elemIcons : ''}`;
+        const maxCopies = !isOwned ? 0 : (isHeroCard ? 1 : Math.min(MAX_COPIES_PER_CARD, isFinite(ownedC) ? ownedC : MAX_COPIES_PER_CARD));
         // Resolve the correct sprite key for any card type — getSpriteFrames cross-falls-back
         // between u_/h_ prefixes, and uploaded images live under one of those slots regardless
         // of card type, so we always pass the appropriate prefix and let the renderer find it.
@@ -56285,14 +56332,18 @@ function renderDeckBuilder() {
         const customBadge = isCustom
           ? `<span class="deck-kind-tag" style="background:#d4af3722;color:#d4af37;border-color:#d4af3755;margin-left:0.25rem">✦ CUSTOM</span>`
           : '';
+        // Addable only when owned and not full. Non-addable rows carry no
+        // data-add (so the click handler is a no-op) but DO carry data-ctx-key
+        // so right-click → view details still works everywhere.
+        const canAdd = isOwned && !full;
         return `
-          <button class="deck-collection-row ${full ? 'full' : ''}${heroLocked ? ' hero-locked' : ''}" data-add="${key}" ${full ? 'disabled' : ''}>
+          <button type="button" class="deck-collection-row ${full ? 'full' : ''}${heroLocked ? ' hero-locked' : ''}${!isOwned ? ' not-owned' : ''}" style="${!isOwned ? 'opacity:0.6;filter:grayscale(0.5)' : ''}" ${canAdd ? `data-add="${key}"` : ''} data-ctx-key="${key}" title="${canAdd ? 'Click to add · right-click for details' : 'Right-click for details'}">
             <div class="deck-row-icon">${renderIcon(spriteKey, card.icon, 'md')}</div>
             <div class="deck-row-info">
               <div class="deck-row-name">${escapeHtml(card.name)} ${typeBadge}${customBadge}</div>
               <div class="deck-row-meta">${metaLine}</div>
             </div>
-            <div class="deck-row-count">${count}/${maxCopies}</div>
+            <div class="deck-row-count">${!isOwned ? '🔒' : (count + '/' + maxCopies)}</div>
           </button>
         `;
       }).join('');

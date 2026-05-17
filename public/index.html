@@ -42769,6 +42769,88 @@ function _eventSpriteTickerStep() {
   });
 }
 
+// 🎞️ FLIP board animation. renderBattle() rebuilds the whole board via
+// innerHTML on every state change, so unit nodes are destroyed/recreated and a
+// move "teleports" with a flash. We snapshot each unit's screen rect (keyed by
+// its stable data-unit id) right BEFORE the rebuild, then after the new DOM
+// exists we Invert+Play: a moved unit starts at its OLD on-screen position and
+// slides smoothly to the new tile; a freshly-played unit/hero fades+scales in.
+// Tiles use overflow:hidden, so the moving unit's destination tile is briefly
+// made non-clipping + raised for the slide, then restored. Fully additive —
+// any failure degrades to the old instant behaviour. One implementation covers
+// player moves, card play, AI moves, AND multiplayer (all funnel here).
+let _flipPrevRects = null;
+function _flipCaptureBattle() {
+  try {
+    if (typeof document === 'undefined' || (typeof App === 'undefined') || App.screen !== 'battle') { _flipPrevRects = null; return; }
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { _flipPrevRects = null; return; }
+    const map = {};
+    document.querySelectorAll('[data-unit]').forEach(el => {
+      const id = el.getAttribute('data-unit');
+      if (!id) return;
+      const r = el.getBoundingClientRect();
+      if (r.width || r.height) map[id] = { left: r.left, top: r.top };
+    });
+    _flipPrevRects = map;
+  } catch (e) { _flipPrevRects = null; }
+}
+function _flipPlayBattle() {
+  try {
+    if (typeof document === 'undefined') { _flipPrevRects = null; return; }
+    const prev = _flipPrevRects;
+    _flipPrevRects = null;
+    if (!prev) return;                                  // capture opted out (reduced-motion / not battle)
+    const hadPrev = Object.keys(prev).length > 0;
+    document.querySelectorAll('[data-unit]').forEach(el => {
+      const id = el.getAttribute('data-unit');
+      if (!id) return;
+      const nr = el.getBoundingClientRect();
+      if (!(nr.width || nr.height)) return;
+      const p = prev[id];
+      if (p) {
+        const dx = p.left - nr.left;
+        const dy = p.top - nr.top;
+        if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return;   // unchanged — no slide
+        const clip = el.closest('.tile') || el.parentElement; // the clipping cell
+        const oOv = clip ? clip.style.overflow : '';
+        const oZ  = clip ? clip.style.zIndex : '';
+        if (clip) { clip.style.overflow = 'visible'; clip.style.zIndex = '60'; }
+        const oElZ = el.style.zIndex;
+        el.style.transition = 'none';
+        el.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
+        el.style.zIndex = '61';
+        el.getBoundingClientRect();                          // force reflow
+        requestAnimationFrame(() => {
+          el.style.transition = 'transform 240ms cubic-bezier(.22,.61,.36,1)';
+          el.style.transform = '';
+        });
+        let done = false;
+        const cleanup = () => {
+          if (done) return; done = true;
+          el.style.transition = ''; el.style.transform = ''; el.style.zIndex = oElZ || '';
+          if (clip) { clip.style.overflow = oOv || ''; clip.style.zIndex = oZ || ''; }
+          el.removeEventListener('transitionend', onEnd);
+        };
+        const onEnd = (ev) => { if (ev && ev.propertyName && ev.propertyName !== 'transform') return; cleanup(); };
+        el.addEventListener('transitionend', onEnd);
+        setTimeout(cleanup, 460);
+      } else if (hadPrev) {
+        // Newly placed/spawned unit or hero (played from hand) — gentle pop-in.
+        el.style.transition = 'none';
+        el.style.opacity = '0';
+        el.style.transform = 'scale(0.55)';
+        el.getBoundingClientRect();
+        requestAnimationFrame(() => {
+          el.style.transition = 'opacity 200ms ease, transform 220ms cubic-bezier(.2,1.25,.4,1)';
+          el.style.opacity = '';
+          el.style.transform = '';
+        });
+        setTimeout(() => { el.style.transition = ''; el.style.opacity = ''; el.style.transform = ''; }, 380);
+      }
+    });
+  } catch (e) { try { _flipPrevRects = null; } catch (e2) {} }
+}
+
 function renderBattle() {
   const s = App.state;
   // 🔁 Reconnect guard — after a mid-match refresh we have no authoritative
@@ -42910,6 +42992,7 @@ function renderBattle() {
     return `<div class="daily-active-banner" style="--cmp-accent:${ch.accent}"><span style="font-size:1.2rem">${ch.icon}</span><strong>${escapeHtml(ch.name)}</strong><span class="ink-dim">— ${escapeHtml(ch.desc)}</span></div>`;
   })();
 
+  _flipCaptureBattle();   // 🎞️ snapshot unit positions BEFORE the rebuild
   root.innerHTML = `
     <div class="battle-screen mtga-layout ${App.ui.aiBusy ? 'ai-busy' : ''}">
       <div class="battle-grid">
@@ -42995,6 +43078,7 @@ function renderBattle() {
   // Auto-shrink hand-card name text so long names (Bounty Collator, Bahamut King of
   // Good Dragons, etc.) don't overflow the title-bar strip on the new gold frame.
   fitCardNames();
+  _flipPlayBattle();   // 🎞️ slide moved units / pop-in newly played ones
 }
 
 // Shrinks each .hcfa-name-inner span's font-size until the rendered text width fits

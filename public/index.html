@@ -25211,6 +25211,54 @@ function unlockGemsForBid(listingId) {
   return amt;
 }
 
+// ===== 👑 Aza-coin (sovereign) escrow — mirrors the Cinder lock above so an
+// auction can run in EITHER currency. Generic currency-aware wrappers below
+// dispatch to the right ledger so bid/buy-now/settlement code stays single-path.
+function getLockedSov() {
+  if (!Profile.lockedSov || typeof Profile.lockedSov !== 'object') Profile.lockedSov = {};
+  return Profile.lockedSov;
+}
+function getTotalLockedSov() {
+  const ls = getLockedSov();
+  return Object.keys(ls).reduce((s, k) => s + (ls[k] || 0), 0);
+}
+function getAvailableSov() {
+  return Math.max(0, (Profile.sovereigns || 0) - getTotalLockedSov());
+}
+function _curIsAza(cur) { return cur === 'aza'; }
+function _curIcon(cur) { return _curIsAza(cur) ? '<span class="aza-icon"></span>' : '<span class="cinder-icon"></span>'; }
+function _curName(cur) { return _curIsAza(cur) ? 'Aza' : 'Cinders'; }
+// What the seller chose as the bid track currency (legacy listings = cinders).
+function _auctBidCur(l) { return (l && l.bidCurrency === 'aza') ? 'aza' : 'cinders'; }
+// Normalized buy-now prices per currency (back-compat: legacy buyNowPrice was
+// always Cinders).
+function _auctBuyNow(l) {
+  if (!l) return { cinders: null, aza: null };
+  if (l.buyNow && typeof l.buyNow === 'object') {
+    return { cinders: l.buyNow.cinders || null, aza: l.buyNow.aza || null };
+  }
+  return { cinders: l.buyNowPrice || null, aza: null };
+}
+// Currency-aware escrow: cinders delegates to the existing lockedGems ledger
+// (so any in-flight legacy locks stay consistent); aza uses lockedSov.
+function auctAvail(cur) { return _curIsAza(cur) ? getAvailableSov() : getAvailableGems(); }
+function auctLock(listingId, amount, cur) {
+  if (!listingId || amount <= 0) return false;
+  if (_curIsAza(cur)) {
+    if (getAvailableSov() < amount) return false;
+    const ls = getLockedSov(); ls[listingId] = (ls[listingId] || 0) + amount; return true;
+  }
+  return lockGemsForBid(listingId, amount);
+}
+function auctUnlock(listingId, cur) {
+  if (_curIsAza(cur)) {
+    const ls = getLockedSov(); const amt = ls[listingId] || 0; delete ls[listingId]; return amt;
+  }
+  return unlockGemsForBid(listingId);
+}
+function _auctWalletSpend(cur, amount) { return _curIsAza(cur) ? spendSovereigns(amount) : spendGems(amount); }
+function _auctWalletAdd(cur, amount) { return _curIsAza(cur) ? addSovereigns(amount) : addGems(amount); }
+
 // ===== Auction listing creators (parallel to listCardForSale / listHeldItemForSale) =====
 function listCardForAuction(customCardId, opts) {
   const card = Forge.customCards.find(c => c.id === customCardId);
@@ -25222,10 +25270,13 @@ function listCardForAuction(customCardId, opts) {
     showToast("You don't own that card — you can only view its details.", 3000);
     return false;
   }
+  const bidCurrency = (opts && opts.bidCurrency === 'aza') ? 'aza' : 'cinders';
   const startingBid = Math.max(AUCTION_MIN_STARTING, parseInt(opts && opts.startingBid, 10) || 0);
   const durationMs  = (opts && opts.durationMs) || AUCTION_DURATION_OPTS[2].ms;
-  const buyNowPrice = (opts && opts.buyNowPrice) ? Math.max(startingBid * 2, parseInt(opts.buyNowPrice, 10) || 0) : null;
   if (!startingBid) { showToast('Set a valid starting bid'); return false; }
+  const bnC = (opts && opts.buyNowCinders) ? Math.max(1, parseInt(opts.buyNowCinders, 10) || 0) : null;
+  const bnA = (opts && opts.buyNowAza)     ? Math.max(1, parseInt(opts.buyNowAza, 10)     || 0) : null;
+  const buyNow = { cinders: bnC, aza: bnA };
   const _esc = _escrowCardCopy(card.id);
   Market.listings.push({
     id: 'lst_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
@@ -25233,20 +25284,22 @@ function listCardForAuction(customCardId, opts) {
     kind: 'card', item: cardSnapshotForListing(card),
     cardId: card.id, escrowed: _esc,
     listingType: 'auction',
+    bidCurrency,
     startingBid,
     currentBid: 0,
     currentBidderId: null,
     currentBidderName: null,
     bidHistory: [],
     endsAt: Date.now() + durationMs,
-    buyNowPrice,
+    buyNow,
+    buyNowPrice: bnC,  // legacy alias (Cinder buy-now) for any untouched reader
     // Mirrors `price` for any legacy UI that still reads from it (so the
     // existing browse-card renderer can fall back gracefully until updated).
     price: startingBid,
     listedAt: Date.now(),
   });
   saveMarket();
-  showToast(`Auction started — "${card.name}" from ${startingBid} 🔥`);
+  showToast(`Auction started — "${card.name}" from ${startingBid} ${bidCurrency === 'aza' ? '👑' : '🔥'}`);
   return true;
 }
 function listHeldItemForAuction(itemId, opts) {
@@ -25254,28 +25307,33 @@ function listHeldItemForAuction(itemId, opts) {
   if ((inv[itemId] || 0) <= 0) { showToast(`You don't own that item`); return false; }
   const it = HELD_ITEMS[itemId];
   if (!it) { showToast('Unknown item'); return false; }
+  const bidCurrency = (opts && opts.bidCurrency === 'aza') ? 'aza' : 'cinders';
   const startingBid = Math.max(AUCTION_MIN_STARTING, parseInt(opts && opts.startingBid, 10) || 0);
   const durationMs  = (opts && opts.durationMs) || AUCTION_DURATION_OPTS[2].ms;
-  const buyNowPrice = (opts && opts.buyNowPrice) ? Math.max(startingBid * 2, parseInt(opts.buyNowPrice, 10) || 0) : null;
   if (!startingBid) { showToast('Set a valid starting bid'); return false; }
+  const bnC = (opts && opts.buyNowCinders) ? Math.max(1, parseInt(opts.buyNowCinders, 10) || 0) : null;
+  const bnA = (opts && opts.buyNowAza)     ? Math.max(1, parseInt(opts.buyNowAza, 10)     || 0) : null;
+  const buyNow = { cinders: bnC, aza: bnA };
   inv[itemId] -= 1; saveProfile();
   Market.listings.push({
     id: 'lst_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
     sellerId: 'player', sellerName: 'You',
     kind: 'item', item: itemSnapshotForListing(itemId),
     listingType: 'auction',
+    bidCurrency,
     startingBid,
     currentBid: 0,
     currentBidderId: null,
     currentBidderName: null,
     bidHistory: [],
     endsAt: Date.now() + durationMs,
-    buyNowPrice,
+    buyNow,
+    buyNowPrice: bnC,
     price: startingBid,
     listedAt: Date.now(),
   });
   saveMarket();
-  showToast(`Auction started — "${it.name}" from ${startingBid} 🔥`);
+  showToast(`Auction started — "${it.name}" from ${startingBid} ${bidCurrency === 'aza' ? '👑' : '🔥'}`);
   return true;
 }
 
@@ -25292,21 +25350,22 @@ function placeBidOnListing(listingId, amount, bidderId, bidderName) {
   if (!bidderName) bidderName = bidderId === 'player' ? (Profile.cloud.displayName || 'You') : bidderId;
   const isMe = bidderId === 'player';
   if (isMe && l.sellerId === 'player') return { error: "You can't bid on your own auction" };
+  const cur = _auctBidCur(l);
   const min = minNextBid(l);
   amount = parseInt(amount, 10) || 0;
-  if (amount < min) return { error: `Bid must be at least ${min} 🔥` };
+  if (amount < min) return { error: `Bid must be at least ${min} ${_curName(cur)}` };
   // For the human bidder, escrow the bid amount so they can't double-spend.
   if (isMe) {
     // Refund the human's previous escrow on this auction (if any) BEFORE
     // locking the new amount — otherwise we'd compound locks for re-bids.
     if (l.currentBidderId === 'player') {
-      unlockGemsForBid(l.id);
+      auctUnlock(l.id, cur);
     }
-    if (!lockGemsForBid(l.id, amount)) return { error: `Need ${amount} 🔥 — only ${getAvailableGems()} available (rest is locked in other bids)` };
+    if (!auctLock(l.id, amount, cur)) return { error: `Need ${amount} ${_curName(cur)} — only ${auctAvail(cur)} available (rest is locked in other bids)` };
   } else {
-    // If an NPC outbids the human, return the human's locked gems.
+    // If an NPC outbids the human, return the human's locked currency.
     if (l.currentBidderId === 'player') {
-      unlockGemsForBid(l.id);
+      auctUnlock(l.id, cur);
     }
   }
   // Update auction state.
@@ -25324,20 +25383,28 @@ function placeBidOnListing(listingId, amount, bidderId, bidderName) {
 // ===== Buy Now =====
 // Instant-win an auction at the listed buy-now price. Refunds any standing
 // escrow then settles immediately.
-function buyNowOnAuction(listingId) {
+function buyNowOnAuction(listingId, payCur) {
   const idx = Market.listings.findIndex(l => l.id === listingId);
   if (idx < 0) return { error: 'Listing not found' };
   const l = Market.listings[idx];
-  if (!isAuctionListing(l) || !l.buyNowPrice) return { error: 'No Buy Now on this auction' };
+  if (!isAuctionListing(l)) return { error: 'Not an auction' };
   if (l.sellerId === 'player') return { error: "You can't buy your own auction" };
-  if (getAvailableGems() < l.buyNowPrice) return { error: `Need ${l.buyNowPrice} 🔥 available — only ${getAvailableGems()}` };
-  // If we already had a standing bid on this auction, release that escrow.
-  if (l.currentBidderId === 'player') unlockGemsForBid(l.id);
-  // Force this listing to settle for the human at the buy-now price.
-  l.currentBid = l.buyNowPrice;
+  const bn = _auctBuyNow(l);
+  // Default to whichever buy-now exists if the caller didn't specify.
+  if (payCur !== 'aza' && payCur !== 'cinders') payCur = bn.cinders ? 'cinders' : (bn.aza ? 'aza' : 'cinders');
+  const price = bn[payCur];
+  if (!price) return { error: `No ${_curName(payCur)} Buy Now on this auction` };
+  if (auctAvail(payCur) < price) return { error: `Need ${price} ${_curName(payCur)} available — only ${auctAvail(payCur)}` };
+  // Release any standing bid escrow (held in the BID currency, which may differ
+  // from the buy-now currency the player is paying in).
+  if (l.currentBidderId === 'player') auctUnlock(l.id, _auctBidCur(l));
+  // Force this listing to settle for the human at the chosen buy-now price.
+  l.currentBid = price;
   l.currentBidderId = 'player';
   l.currentBidderName = Profile.cloud.displayName || 'You';
-  l.bidHistory = (l.bidHistory || []).concat([{ bidderId: 'player', bidderName: l.currentBidderName, amount: l.buyNowPrice, at: Date.now(), buyNow: true }]);
+  l._buyNow = true;
+  l._settleCur = payCur;          // sweep pays/charges in THIS currency
+  l.bidHistory = (l.bidHistory || []).concat([{ bidderId: 'player', bidderName: l.currentBidderName, amount: price, at: Date.now(), buyNow: true, cur: payCur }]);
   l.endsAt = Date.now() - 1;  // mark expired so the sweep settles it now
   saveMarket();
   sweepExpiredAuctions();
@@ -25368,12 +25435,18 @@ function sweepExpiredAuctions() {
     const winnerIsPlayer = l.currentBidderId === 'player';
     const sellerIsPlayer = l.sellerId === 'player';
     const winAmount = l.currentBid || 0;
+    const bidCur = _auctBidCur(l);
     if (winnerIsPlayer) {
-      // Convert the player's escrowed lock into a real spend.
-      const locked = unlockGemsForBid(l.id);
-      // Defensive: deduct ONLY what's actually locked (always == winAmount in
-      // the normal path, but if somehow desynced, pay what was locked).
-      Profile.gems = Math.max(0, (Profile.gems || 0) - (locked || winAmount));
+      // Settlement currency: a Buy-Now pays in the chosen buy-now currency
+      // (never escrowed → spend now); a normal win pays in the bid currency
+      // (escrow was locked there → unlock then spend exactly that).
+      const settleCur = l._buyNow ? (l._settleCur || 'cinders') : bidCur;
+      if (l._buyNow) {
+        _auctWalletSpend(settleCur, winAmount);
+      } else {
+        const locked = auctUnlock(l.id, settleCur);
+        _auctWalletSpend(settleCur, (locked || winAmount));
+      }
       if (l.kind === 'card' && l.item) {
         const copy = { ...l.item, id: 'cc_won_' + Date.now() + '_' + Math.floor(Math.random() * 1000) };
         Forge.customCards.push(copy);
@@ -25384,11 +25457,11 @@ function sweepExpiredAuctions() {
         const inv = Profile.itemInventory || (Profile.itemInventory = {});
         inv[l.item.id] = (inv[l.item.id] || 0) + 1;
       }
-      showToast(`🏆 You won "${(l.item && l.item.name) || 'item'}" for ${winAmount} 🔥!`, 3200);
+      showToast(`🏆 You won "${(l.item && l.item.name) || 'item'}" for ${winAmount} ${settleCur === 'aza' ? '👑' : '🔥'}!`, 3200);
     } else if (sellerIsPlayer) {
-      // NPC bidder won an item we listed — pay out Cinders to the seller.
-      Profile.gems = (Profile.gems || 0) + winAmount;
-      showToast(`💰 ${l.currentBidderName} won your auction — +${winAmount} 🔥!`, 3200);
+      // NPC bidder won — pay the seller in the auction's bid currency.
+      _auctWalletAdd(bidCur, winAmount);
+      showToast(`💰 ${l.currentBidderName} won your auction — +${winAmount} ${bidCur === 'aza' ? '👑' : '🔥'}!`, 3200);
     }
     // Log it for the Stock tab.
     logSale({
@@ -25457,7 +25530,7 @@ function npcMaybeBidOnAuctions() {
     const res = placeBidOnListing(l.id, next, seller.id, seller.name);
     if (res.ok) {
       l._lastNpcBidAt = Date.now();
-      showToast(`🔔 ${seller.name} bid ${next} 🔥 on your auction!`, 2400);
+      showToast(`🔔 ${seller.name} bid ${next} ${_auctBidCur(l) === 'aza' ? '👑' : '🔥'} on your auction!`, 2400);
     }
   });
 }
@@ -48497,15 +48570,17 @@ function renderListingCard(listing, opts) {
   const bidderLine = (isAuction && listing.currentBidderId)
     ? `<div class="auction-bidder ink-dim">Top: <strong>${escapeHtml(listing.currentBidderName || '?')}</strong></div>`
     : '';
+  const _bc = isAuction ? _auctBidCur(listing) : 'cinders';
+  const _bn = isAuction ? _auctBuyNow(listing) : { cinders: null, aza: null };
   const priceBlock = isAuction
     ? `
       <div class="auction-badge">🔨 Auction</div>
       <div class="auction-current"><span class="ink-dim small-text">${listing.currentBid > 0 ? 'Top bid' : 'Start'}</span>
-        <div class="tutor-price"><span class="cinder-icon"></span> ${(listing.currentBid > 0 ? listing.currentBid : (listing.startingBid || 0))}</div>
+        <div class="tutor-price">${_curIcon(_bc)} ${(listing.currentBid > 0 ? listing.currentBid : (listing.startingBid || 0))}</div>
       </div>
       ${bidderLine}
       <div class="auction-timer" data-auction-timer="${escapeHtml(listing.id)}">${formatAuctionTimeLeft(listing)} left</div>
-      ${listing.buyNowPrice ? `<div class="auction-buynow ink-dim small-text">Buy Now <span class="cinder-icon"></span> ${listing.buyNowPrice}</div>` : ''}
+      ${(_bn.cinders || _bn.aza) ? `<div class="auction-buynow ink-dim small-text">Buy Now ${_bn.cinders ? `<span class="cinder-icon"></span> ${_bn.cinders}` : ''}${(_bn.cinders && _bn.aza) ? ' · ' : ''}${_bn.aza ? `<span class="aza-icon"></span> ${_bn.aza}` : ''}</div>` : ''}
       ${action || ''}
     `
     : `<div class="tutor-price"><span class="cinder-icon"></span> ${listing.price}</div>${action || ''}`;
@@ -48563,17 +48638,22 @@ function renderMarketBrowse(listings, filter) {
     if (isAuctionListing(l)) {
       const myBid = l.currentBidderId === 'player';
       const min = minNextBid(l);
-      const canBidWith = getAvailableGems() + (myBid ? (Profile.lockedGems[l.id] || 0) : 0);
+      const bc = _auctBidCur(l);
+      const lockedHere = bc === 'aza' ? ((Profile.lockedSov || {})[l.id] || 0) : ((Profile.lockedGems || {})[l.id] || 0);
+      const canBidWith = auctAvail(bc) + (myBid ? lockedHere : 0);
       const canBid = canBidWith >= min;
-      const buyNowOk = l.buyNowPrice && getAvailableGems() >= l.buyNowPrice;
-      const buyNowBtn = l.buyNowPrice
-        ? `<button class="btn-mini ${buyNowOk ? '' : 'btn-disabled'}" data-act="buynow" data-listing="${l.id}" ${buyNowOk ? '' : 'disabled'}>Buy Now ${l.buyNowPrice} 🔥</button>`
-        : '';
+      const bn = _auctBuyNow(l);
+      const buyNowBtn = (cur) => {
+        const amt = bn[cur];
+        if (!amt) return '';
+        const ok = auctAvail(cur) >= amt;
+        return `<button class="btn-mini ${ok ? '' : 'btn-disabled'}" data-act="buynow" data-listing="${l.id}" data-bncur="${cur}" ${ok ? '' : 'disabled'}>Buy Now ${amt} ${cur === 'aza' ? '👑' : '🔥'}</button>`;
+      };
       return renderListingCard(l, {
         action: `
           <div class="auction-actions">
-            <button class="btn-mini ${canBid ? 'btn-primary' : 'btn-disabled'}" data-act="bid" data-listing="${l.id}" ${canBid ? '' : 'disabled'} title="${canBid ? 'Place a bid' : `Need ${min} 🔥 available`}">${myBid ? 'Raise Bid' : 'Bid'} (≥ ${min})</button>
-            ${buyNowBtn}
+            <button class="btn-mini ${canBid ? 'btn-primary' : 'btn-disabled'}" data-act="bid" data-listing="${l.id}" ${canBid ? '' : 'disabled'} title="${canBid ? 'Place a bid' : `Need ${min} ${_curName(bc)} available`}">${myBid ? 'Raise Bid' : 'Bid'} (≥ ${min})</button>
+            ${buyNowBtn('cinders')}${buyNowBtn('aza')}
             <button class="btn-mini btn-link" data-act="history" data-listing="${l.id}">History (${(l.bidHistory || []).length})</button>
           </div>`,
       });
@@ -48612,8 +48692,10 @@ function bindMarketBrowse() {
       if (el.disabled) return;
       const l = Market.listings.find(x => x.id === el.dataset.listing);
       if (!l) return;
-      if (!confirm(`Buy Now "${(l.item && l.item.name) || 'item'}" for ${l.buyNowPrice} 🔥?`)) return;
-      const res = buyNowOnAuction(el.dataset.listing);
+      const cur = el.dataset.bncur === 'aza' ? 'aza' : 'cinders';
+      const bn = _auctBuyNow(l);
+      if (!confirm(`Buy Now "${(l.item && l.item.name) || 'item'}" for ${bn[cur]} ${cur === 'aza' ? 'Aza 👑' : 'Cinders 🔥'}?`)) return;
+      const res = buyNowOnAuction(el.dataset.listing, cur);
       if (res.error) showToast('⚠ ' + res.error, 2400);
       render();
     };
@@ -48655,7 +48737,10 @@ function renderBidModal() {
   if (!l || !isAuctionListing(l)) return '';
   const min = minNextBid(l);
   const myBid = l.currentBidderId === 'player';
-  const avail = getAvailableGems() + (myBid ? (Profile.lockedGems[l.id] || 0) : 0);
+  const bc = _auctBidCur(l);
+  const _lk = bc === 'aza' ? ((Profile.lockedSov || {})[l.id] || 0) : ((Profile.lockedGems || {})[l.id] || 0);
+  const avail = auctAvail(bc) + (myBid ? _lk : 0);
+  const _ci = _curIcon(bc);
   return `
     <div class="bid-modal-overlay" id="bid-modal-overlay">
       <div class="bid-modal">
@@ -48672,15 +48757,15 @@ function renderBidModal() {
             </div>
           </div>
           <div class="bid-modal-stats">
-            <div><span class="ink-dim small-text">${l.currentBid > 0 ? 'Current top bid' : 'Starting bid'}</span><div class="tutor-price"><span class="cinder-icon"></span> ${l.currentBid > 0 ? l.currentBid : (l.startingBid || 0)}</div></div>
-            <div><span class="ink-dim small-text">Minimum next bid</span><div class="tutor-price"><span class="cinder-icon"></span> ${min}</div></div>
-            <div><span class="ink-dim small-text">Available to bid</span><div class="tutor-price"><span class="cinder-icon"></span> ${avail}</div></div>
+            <div><span class="ink-dim small-text">${l.currentBid > 0 ? 'Current top bid' : 'Starting bid'}</span><div class="tutor-price">${_ci} ${l.currentBid > 0 ? l.currentBid : (l.startingBid || 0)}</div></div>
+            <div><span class="ink-dim small-text">Minimum next bid</span><div class="tutor-price">${_ci} ${min}</div></div>
+            <div><span class="ink-dim small-text">Available to bid</span><div class="tutor-price">${_ci} ${avail}</div></div>
           </div>
           <div class="bid-modal-input">
-            <label for="bid-modal-amount">Your bid (locks Cinders until outbid or auction ends)</label>
+            <label for="bid-modal-amount">Your bid (locks ${_curName(bc)} until outbid or auction ends)</label>
             <input type="number" id="bid-modal-amount" min="${min}" max="${avail}" value="${min}" autofocus>
           </div>
-          ${l.buyNowPrice ? `<div class="ink-dim small-text" style="margin-top:0.4rem">💡 Buy Now is available at <span class="cinder-icon"></span> <strong>${l.buyNowPrice}</strong> — ends the auction immediately.</div>` : ''}
+          ${(() => { const _bn = _auctBuyNow(l); return (_bn.cinders || _bn.aza) ? `<div class="ink-dim small-text" style="margin-top:0.4rem">💡 Buy Now: ${_bn.cinders ? `<span class="cinder-icon"></span> <strong>${_bn.cinders}</strong>` : ''}${(_bn.cinders && _bn.aza) ? ' or ' : ''}${_bn.aza ? `<span class="aza-icon"></span> <strong>${_bn.aza}</strong>` : ''} — ends the auction immediately.</div>` : ''; })()}
         </div>
         <div class="bid-modal-footer">
           <button class="btn-secondary btn-mini" id="bid-modal-cancel">Cancel</button>
@@ -48701,9 +48786,11 @@ function bindBidModal() {
   if (c) c.onclick = close;
   if (s) s.onclick = () => {
     const amt = parseInt((document.getElementById('bid-modal-amount') || {}).value, 10) || 0;
+    const _bl = Market.listings.find(x => x.id === App._bidModalListingId);
+    const _bcur = _bl ? _auctBidCur(_bl) : 'cinders';
     const res = placeBidOnListing(App._bidModalListingId, amt, 'player');
     if (res.error) { showToast('⚠ ' + res.error, 2400); return; }
-    showToast(`🔨 Bid placed — ${amt} 🔥 locked.`, 1800);
+    showToast(`🔨 Bid placed — ${amt} ${_bcur === 'aza' ? '👑' : '🔥'} locked.`, 1800);
     App._bidModalListingId = null;
     render();
   };
@@ -48760,14 +48847,7 @@ function renderMarketSell() {
   // ----- Reusable "auction fields" block — shown only in auction mode. The
   // form lives per-row so each card / item can be listed independently.
   const auctionFieldsFor = (rowId, priceSuggest, kind) => `
-    <input type="number" class="market-price-input" min="${AUCTION_MIN_STARTING}" max="${MARKET_MAX_PRICE}"
-      value="${priceSuggest}" data-${kind}-start="${rowId}" title="Starting bid">
-    <select class="market-duration-select" data-${kind}-duration="${rowId}">
-      ${AUCTION_DURATION_OPTS.map((opt, i) => `<option value="${i}" ${i === durationIdx ? 'selected' : ''}>${opt.label}</option>`).join('')}
-    </select>
-    <input type="number" class="market-price-input" min="${AUCTION_MIN_STARTING}" max="${MARKET_MAX_PRICE}"
-      placeholder="Buy Now (optional)" data-${kind}-buynow="${rowId}" title="Optional Buy Now price">
-    <button class="btn-mini btn-primary" data-act="auction-${kind}" data-${kind}="${rowId}">🔨 Auction</button>
+    <button class="btn-mini btn-primary" data-act="auction-open" data-akind="${kind}" data-aid="${escapeHtml(String(rowId))}">🔨 Auction…</button>
   `;
   const fixedFieldsFor = (rowId, priceSuggest, kind) => `
     <input type="number" class="market-price-input" min="${MARKET_MIN_PRICE}" max="${MARKET_MAX_PRICE}" value="${priceSuggest}" data-${kind}-price="${rowId}">
@@ -48816,14 +48896,123 @@ function renderMarketSell() {
     </div>
     <div class="placement-hint" style="margin-bottom:0.8rem">
       ${mode === 'auction'
-        ? '🔨 <strong>Auction mode:</strong> set a starting bid + duration. Bidders compete; the highest bid wins when the timer hits zero. Optional Buy Now price lets eager bidders end it early. NPC traders may shill-bid to keep your listing alive.'
+        ? '🔨 <strong>Auction mode:</strong> click <strong>Auction…</strong> to open the listing setup — pick the bid currency (<span class="cinder-icon"></span> Cinders or <span class="aza-icon"></span> Aza), a starting bid + duration, and an optional Buy Now price in Cinders and/or Aza. NPC traders may shill-bid to keep your listing alive.'
         : '💰 <strong>Fixed price:</strong> the first buyer to click pays your asking price and the deal closes instantly.'}
     </div>
     <div class="forge-section-header"><h3>Forge Custom Cards</h3></div>
     <div class="forge-list">${cardList}</div>
     <div class="forge-section-header" style="margin-top:1rem"><h3>Held Items (Inventory)</h3></div>
     <div class="forge-list">${itemBlock}</div>
+    ${renderAuctionListModal()}
   `;
+}
+
+// ===== 🔨 Auction listing modal — pick currency, starting bid, duration,
+// and optional dual-currency Buy Now. Opened from the Sell tab.
+function renderAuctionListModal() {
+  const m = App.auctionListModal;
+  if (!m) return '';
+  const isCard = m.kind === 'card';
+  let name = m.id, icon = '🃏', suggest = 50;
+  if (isCard) {
+    const c = (Forge.customCards || []).find(x => x && x.id === m.id);
+    if (!c) return '';
+    name = c.name; icon = (typeof renderIcon === 'function' && c.type === 'unit') ? renderIcon('u_' + c.id, c.icon, 'md') : `<span style="font-size:1.8rem">${c.icon || '🃏'}</span>`;
+    suggest = (typeof marketSuggestedPriceForCard === 'function') ? marketSuggestedPriceForCard(c) : 50;
+  } else {
+    const it = HELD_ITEMS[m.id];
+    if (!it) return '';
+    name = it.name; icon = `<span style="font-size:1.8rem">${it.icon || '🎒'}</span>`;
+    suggest = (typeof marketSuggestedPriceForItem === 'function') ? marketSuggestedPriceForItem(it) : 50;
+  }
+  const cur = (m.cur === 'aza') ? 'aza' : 'cinders';
+  const durIdx = (typeof m.durIdx === 'number') ? m.durIdx : ((typeof App.marketSellDurationIdx === 'number') ? App.marketSellDurationIdx : 2);
+  return `
+    <div class="bid-modal-overlay" id="auc-modal-overlay">
+      <div class="bid-modal" style="max-width:440px">
+        <div class="bid-modal-header">
+          <h3>🔨 List for Auction</h3>
+          <button class="bid-modal-close" id="auc-modal-close">✕</button>
+        </div>
+        <div class="bid-modal-body">
+          <div class="bid-modal-card">
+            <div>${icon}</div>
+            <div><div style="font-weight:700">${escapeHtml(name)}</div><div class="ink-dim small-text">${isCard ? 'Forge card' : 'Held item'}</div></div>
+          </div>
+          <div class="bid-modal-input">
+            <label>Bid currency</label>
+            <div style="display:flex;gap:0.5rem;margin-top:0.25rem">
+              <button class="btn-mini ${cur === 'cinders' ? 'btn-primary' : ''}" data-auc-cur="cinders"><span class="cinder-icon"></span> Cinders</button>
+              <button class="btn-mini ${cur === 'aza' ? 'btn-primary' : ''}" data-auc-cur="aza"><span class="aza-icon"></span> Aza coin</button>
+            </div>
+          </div>
+          <div class="bid-modal-input">
+            <label for="auc-start">Starting bid (${_curName(cur)})</label>
+            <input type="number" id="auc-start" min="${AUCTION_MIN_STARTING}" max="${MARKET_MAX_PRICE}" value="${suggest}">
+          </div>
+          <div class="bid-modal-input">
+            <label for="auc-dur">Duration</label>
+            <select id="auc-dur" class="market-duration-select" style="width:100%">
+              ${AUCTION_DURATION_OPTS.map((opt, i) => `<option value="${i}" ${i === durIdx ? 'selected' : ''}>${opt.label}</option>`).join('')}
+            </select>
+          </div>
+          <div class="bid-modal-input">
+            <label for="auc-bn-c"><span class="cinder-icon"></span> Buy Now price — Cinders <span class="ink-dim small-text">(optional)</span></label>
+            <input type="number" id="auc-bn-c" min="1" max="${MARKET_MAX_PRICE}" placeholder="Leave blank for none">
+          </div>
+          <div class="bid-modal-input">
+            <label for="auc-bn-a"><span class="aza-icon"></span> Buy Now price — Aza coin <span class="ink-dim small-text">(optional)</span></label>
+            <input type="number" id="auc-bn-a" min="1" max="${MARKET_MAX_PRICE}" placeholder="Leave blank for none">
+          </div>
+          <div class="ink-dim small-text">Bids are placed in <strong>${_curName(cur)}</strong>. A buyer may end the auction early by paying any Buy Now price you set, in that currency.</div>
+        </div>
+        <div class="bid-modal-footer">
+          <button class="btn-secondary btn-mini" id="auc-modal-cancel">Cancel</button>
+          <button class="btn-primary btn-mini" id="auc-modal-submit">🔨 Start Auction</button>
+        </div>
+      </div>
+    </div>`;
+}
+function bindAuctionListModal() {
+  const m = App.auctionListModal;
+  if (!m) return;
+  const close = () => { App.auctionListModal = null; render(); };
+  const ov = document.getElementById('auc-modal-overlay');
+  if (ov) ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  const x = document.getElementById('auc-modal-close'); if (x) x.onclick = close;
+  const c = document.getElementById('auc-modal-cancel'); if (c) c.onclick = close;
+  document.querySelectorAll('[data-auc-cur]').forEach(b => {
+    b.onclick = () => {
+      // Preserve the typed inputs across the currency re-render.
+      const sEl = document.getElementById('auc-start');
+      const dEl = document.getElementById('auc-dur');
+      m.cur = b.dataset.aucCur === 'aza' ? 'aza' : 'cinders';
+      if (sEl) m._start = sEl.value;
+      if (dEl) m.durIdx = parseInt(dEl.value, 10) || m.durIdx;
+      render();
+    };
+  });
+  // Re-apply a preserved starting bid after a currency toggle re-render.
+  if (m._start != null) { const sEl = document.getElementById('auc-start'); if (sEl) sEl.value = m._start; }
+  const submit = document.getElementById('auc-modal-submit');
+  if (submit) submit.onclick = () => {
+    const start = parseInt((document.getElementById('auc-start') || {}).value, 10) || 0;
+    const durEl = document.getElementById('auc-dur');
+    const durIdx = Math.max(0, Math.min(AUCTION_DURATION_OPTS.length - 1, parseInt(durEl && durEl.value, 10) || 2));
+    const bnC = (document.getElementById('auc-bn-c') || {}).value;
+    const bnA = (document.getElementById('auc-bn-a') || {}).value;
+    const cur = (m.cur === 'aza') ? 'aza' : 'cinders';
+    App.marketSellDurationIdx = durIdx;
+    const opts = {
+      bidCurrency: cur,
+      startingBid: start,
+      durationMs: AUCTION_DURATION_OPTS[durIdx].ms,
+      buyNowCinders: bnC ? bnC : null,
+      buyNowAza: bnA ? bnA : null,
+    };
+    const ok = (m.kind === 'card') ? listCardForAuction(m.id, opts) : listHeldItemForAuction(m.id, opts);
+    if (ok) { App.auctionListModal = null; App.marketTab = 'mine'; render(); }
+  };
 }
 
 function bindMarketSell() {
@@ -48847,39 +49036,15 @@ function bindMarketSell() {
       if (listHeldItemForSale(id, price)) render();
     };
   });
-  // Auction-listing buttons.
-  document.querySelectorAll('[data-act="auction-card"]').forEach(el => {
+  // Auction listing — open the setup modal (currency / starting bid /
+  // duration / dual-currency Buy Now).
+  document.querySelectorAll('[data-act="auction-open"]').forEach(el => {
     el.onclick = () => {
-      const id = el.dataset.card;
-      const startEl = document.querySelector(`[data-card-start="${id}"]`);
-      const durEl   = document.querySelector(`[data-card-duration="${id}"]`);
-      const bnEl    = document.querySelector(`[data-card-buynow="${id}"]`);
-      const durIdx  = Math.max(0, Math.min(AUCTION_DURATION_OPTS.length - 1, parseInt(durEl && durEl.value, 10) || 2));
-      App.marketSellDurationIdx = durIdx;
-      const ok = listCardForAuction(id, {
-        startingBid: startEl ? startEl.value : 0,
-        durationMs:  AUCTION_DURATION_OPTS[durIdx].ms,
-        buyNowPrice: bnEl && bnEl.value ? bnEl.value : null,
-      });
-      if (ok) { App.marketTab = 'mine'; render(); }
+      App.auctionListModal = { kind: el.dataset.akind === 'item' ? 'item' : 'card', id: el.dataset.aid, cur: 'cinders' };
+      render();
     };
   });
-  document.querySelectorAll('[data-act="auction-item"]').forEach(el => {
-    el.onclick = () => {
-      const id = el.dataset.item;
-      const startEl = document.querySelector(`[data-item-start="${id}"]`);
-      const durEl   = document.querySelector(`[data-item-duration="${id}"]`);
-      const bnEl    = document.querySelector(`[data-item-buynow="${id}"]`);
-      const durIdx  = Math.max(0, Math.min(AUCTION_DURATION_OPTS.length - 1, parseInt(durEl && durEl.value, 10) || 2));
-      App.marketSellDurationIdx = durIdx;
-      const ok = listHeldItemForAuction(id, {
-        startingBid: startEl ? startEl.value : 0,
-        durationMs:  AUCTION_DURATION_OPTS[durIdx].ms,
-        buyNowPrice: bnEl && bnEl.value ? bnEl.value : null,
-      });
-      if (ok) { App.marketTab = 'mine'; render(); }
-    };
-  });
+  bindAuctionListModal();
 }
 
 function renderMarketMyListings(myListings) {

@@ -26016,8 +26016,12 @@ function _resolveCampSlot(slot) {
     return entry;
   }
 
-  if (roll > survive + 38) {
-    // PERMADEATH — the parked copy is gone forever.
+  if (roll > survive + 38 && tierKey === 'deepRun') {
+    // PERMADEATH — ONLY the 6h Deep Run risks permanent loss, and the player
+    // is explicitly warned of that before deploying. Scout (1h) / Raid (3h)
+    // are advertised as low/medium danger, so a fatal roll there must NOT
+    // permanently delete the unit — it falls through to MIA (recoverable via
+    // a rescue team) below instead.
     if (Profile.cardCollection && Profile.cardCollection[slot.refId] > 0) {
       Profile.cardCollection[slot.refId] = Math.max(0, (Profile.cardCollection[slot.refId] || 1) - 1);
       if (Profile.cardCollection[slot.refId] <= 0) delete Profile.cardCollection[slot.refId];
@@ -26029,7 +26033,10 @@ function _resolveCampSlot(slot) {
     return entry;
   }
   if (roll > survive + 14) {
-    // MIA — genuinely missing. Removed from active roster, can be RESCUED.
+    // MIA — genuinely missing. The slot is freed but the collection copy is
+    // intentionally NOT decremented: the camp model keeps parked/deployed
+    // units "owned" (usable = owned − parked), so the copy persists and a
+    // successful rescue must NOT re-add it (see the rescue restore below).
     _campMissing().push({ refId: slot.refId, name: meta.name || 'Survivor', icon: meta.icon || '❔', tier: tierKey, danger: tier.danger, ts: Date.now() });
     prof.morale = Math.max(0, morale - 25);
     entry.status = 'MIA'; entry.color = '#d4af37'; entry.remove = true;
@@ -26092,12 +26099,16 @@ function resolveReadyCampActivities() {
       const r = _resolveCampSlot(slot);
       reports.push(r);
       if (!r.remove) survivors.push(slot);
-      // A successful rescue restores the recovered survivor to the roster.
+      // A successful rescue restores the recovered survivor to a camp slot.
+      // The unit's collection copy was never removed when it went MIA (camp
+      // keeps parked/deployed units "owned"), so we must NOT increment
+      // cardCollection here — doing so dupes the unit. If camp is full the
+      // unit is still safe in the collection; it just can't be re-parked now.
       if (r._restoreRefId) {
         if (survivors.length < (typeof campMaxSlots === 'function' ? campMaxSlots() : Camp.maxSlots)) {
           survivors.push({ id: 'cs_' + Date.now() + '_' + Math.floor(Math.random() * 1e4), kind: 'unit', refId: r._restoreRefId, parkedAt: Date.now(), activity: 'rest' });
-        } else if (Profile.cardCollection) {
-          Profile.cardCollection[r._restoreRefId] = (Profile.cardCollection[r._restoreRefId] || 0) + 1;
+        } else if (Array.isArray(r.lines)) {
+          r.lines.push('Camp is full — they\'re safe in your collection; re-park them when a slot frees up.');
         }
       }
     } else {
@@ -35588,6 +35599,11 @@ function startBattleWithPrep(playerGoesFirst) {
   // gymAfterBattle; resetting here stops a gym battle the player left without
   // clicking Play Again/Exit from hijacking a later non-gym battle's routing.
   App._gymPendingAfterBattle = null;
+  // 🗺️ Same defense for the roguelite pending flag — set at game-over only for
+  // rlc battles, consumed by rlcAfterBattle. Without this, leaving a finished
+  // rlc battle without clicking Play Again/Exit lets a stale flag hijack a
+  // later non-rlc battle's routing and mis-apply its result to Profile.rlcRun.
+  App._rlcPendingAfterBattle = null;
   // Initialize the replay recorder — captures every meaningful state transition for
   // post-game playback. The renderBattle hook below detects log growth as the trigger
   // for adding new snapshots, so we don't have to wrap every engine state mutation.
@@ -54804,6 +54820,21 @@ function rlcStartRun(campaignId) {
   App.screen = 'rlcMap';
   render();
 }
+// 🧹 Clear ALL roguelite run artifacts when a run ends (death / completion /
+// abandon / orphaned). Critically also removes the transient `rlc_run_deck`
+// from Profile.decks — otherwise it lingers and pollutes the normal Deck
+// Builder / Choose-Deck lists and is resolvable in normal play.
+function _rlcClearRunArtifacts() {
+  Profile.rlcRun = null;
+  App._rlcPendingAfterBattle = null;
+  App._rlcNodePreview = null;
+  try {
+    if (Array.isArray(Profile.decks)) {
+      Profile.decks = Profile.decks.filter(d => d && d.id !== 'rlc_run_deck');
+    }
+  } catch (e) {}
+  try { saveProfile(); } catch (e) {}
+}
 function rlcAbandonRun() {
   const run = Profile.rlcRun;
   const pend = (run && Array.isArray(run.pendingCards)) ? run.pendingCards.length : 0;
@@ -54815,9 +54846,7 @@ function rlcAbandonRun() {
     ((pend || cin) ? ` — ${pend} card${pend === 1 ? '' : 's'} and ${cin} Cinders` : '') +
     '. Nothing is added to your inventory.\n\nAbandon anyway?'
   )) return;
-  Profile.rlcRun = null;   // pending rewards discarded — never cashed out
-  try { saveProfile(); } catch (e) {}
-  App._rlcNodePreview = null;
+  _rlcClearRunArtifacts();   // pending rewards discarded — never cashed out
   App.screen = 'rlcList';
   render();
 }
@@ -55621,7 +55650,7 @@ function renderRlcMap() {
   const run = Profile.rlcRun;
   if (!run) { App.screen = 'rlcList'; return render(); }
   const camp = _rlcCampaign(run.campaignId);
-  if (!camp) { Profile.rlcRun = null; App.screen = 'rlcList'; return render(); }
+  if (!camp) { _rlcClearRunArtifacts(); App.screen = 'rlcList'; return render(); }
   if (run.isComplete || run.isFailed) { App.screen = 'rlcResult'; return render(); }
   try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
   const avail = new Set(_rlcAvailableNodeIds(camp, run));
@@ -56360,11 +56389,11 @@ function renderRlcResult() {
     </div>`;
   document.querySelectorAll('[data-rlc-next]').forEach(b => b.onclick = () => {
     const nid = b.dataset.rlcNext;
-    Profile.rlcRun = null; try { saveProfile(); } catch (e) {}
+    _rlcClearRunArtifacts();
     rlcStartRun(nid);
   });
-  document.getElementById('rlc-result-again').onclick = () => { Profile.rlcRun = null; try { saveProfile(); } catch (e) {} App.screen = 'rlcList'; render(); };
-  document.getElementById('rlc-result-menu').onclick = () => { Profile.rlcRun = null; try { saveProfile(); } catch (e) {} App.screen = 'title'; render(); };
+  document.getElementById('rlc-result-again').onclick = () => { _rlcClearRunArtifacts(); App.screen = 'rlcList'; render(); };
+  document.getElementById('rlc-result-menu').onclick = () => { _rlcClearRunArtifacts(); App.screen = 'title'; render(); };
 }
 
 function renderCampaignMap() {

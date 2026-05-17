@@ -23542,7 +23542,7 @@ function gymTrialLevel(coreId) {
 
 // ---- One-time Supabase setup (run once in the SQL editor, like the
 // resource-exchange schema). Idempotent: safe to re-run. ----
-const GYM_WARS_SQL = "create table if not exists public.gyms (\n  core_id text primary key,\n  leader_id uuid references auth.users(id) on delete set null,\n  leader_name text,\n  leader_hero_id text,\n  leader_hero_name text,\n  leader_deck jsonb,\n  leader_cosmetic jsonb default '{}'::jsonb,\n  defense_streak integer not null default 0,\n  peak_streak integer not null default 0,\n  stamina integer not null default 100,\n  stamina_at timestamptz default now(),\n  gym_level integer not null default 1,\n  hq jsonb default '{}'::jsonb,\n  season integer not null default 1,\n  claimed_at timestamptz,\n  updated_at timestamptz default now()\n);\ncreate table if not exists public.gym_history (\n  id uuid primary key default gen_random_uuid(),\n  core_id text not null,\n  user_id uuid,\n  leader_name text,\n  hero_id text,\n  hero_name text,\n  claimed_at timestamptz default now(),\n  lost_at timestamptz,\n  reign_seconds bigint default 0,\n  peak_streak integer default 0,\n  season integer default 1\n);\ncreate table if not exists public.gym_supporters (\n  id uuid primary key default gen_random_uuid(),\n  core_id text not null,\n  user_id uuid not null references auth.users(id) on delete cascade,\n  supporter_name text,\n  contribution integer not null default 0,\n  role text default 'supporter',\n  season integer not null default 1,\n  updated_at timestamptz default now(),\n  unique (core_id, user_id, season)\n);\ncreate table if not exists public.gym_meta (\n  id integer primary key default 1,\n  current_season integer not null default 1,\n  season_started_at timestamptz default now()\n);\ninsert into public.gym_meta (id) values (1) on conflict (id) do nothing;\ninsert into public.gyms (core_id) values ('fire'),('void'),('nature'),('celestial'),('blood'),('machine'),('storm'),('chaos') on conflict (core_id) do nothing;\nalter table public.gyms enable row level security;\nalter table public.gym_history enable row level security;\nalter table public.gym_supporters enable row level security;\nalter table public.gym_meta enable row level security;\ndrop policy if exists gym_sel on public.gyms;\ncreate policy gym_sel on public.gyms for select to authenticated using (true);\ndrop policy if exists gym_ins on public.gyms;\ncreate policy gym_ins on public.gyms for insert to authenticated with check (true);\ndrop policy if exists gym_upd on public.gyms;\ncreate policy gym_upd on public.gyms for update to authenticated using (true) with check (true);\ndrop policy if exists gh_sel on public.gym_history;\ncreate policy gh_sel on public.gym_history for select to authenticated using (true);\ndrop policy if exists gh_ins on public.gym_history;\ncreate policy gh_ins on public.gym_history for insert to authenticated with check (true);\ndrop policy if exists gh_upd on public.gym_history;\ncreate policy gh_upd on public.gym_history for update to authenticated using (true) with check (true);\ndrop policy if exists gs_sel on public.gym_supporters;\ncreate policy gs_sel on public.gym_supporters for select to authenticated using (true);\ndrop policy if exists gs_ins on public.gym_supporters;\ncreate policy gs_ins on public.gym_supporters for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists gs_upd on public.gym_supporters;\ncreate policy gs_upd on public.gym_supporters for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists gm_sel on public.gym_meta;\ncreate policy gm_sel on public.gym_meta for select to authenticated using (true);\ndrop policy if exists gm_upd on public.gym_meta;\ncreate policy gm_upd on public.gym_meta for update to authenticated using (true) with check (true);";
+const GYM_WARS_SQL = "create table if not exists public.gyms (\n  core_id text primary key,\n  leader_id uuid references auth.users(id) on delete set null,\n  leader_name text,\n  leader_hero_id text,\n  leader_hero_name text,\n  leader_deck jsonb,\n  leader_cosmetic jsonb default '{}'::jsonb,\n  defense_streak integer not null default 0,\n  peak_streak integer not null default 0,\n  stamina integer not null default 100,\n  stamina_at timestamptz default now(),\n  gym_level integer not null default 1,\n  hq jsonb default '{}'::jsonb,\n  season integer not null default 1,\n  claimed_at timestamptz,\n  updated_at timestamptz default now()\n);\ncreate table if not exists public.gym_history (\n  id uuid primary key default gen_random_uuid(),\n  core_id text not null,\n  user_id uuid,\n  leader_name text,\n  hero_id text,\n  hero_name text,\n  claimed_at timestamptz default now(),\n  lost_at timestamptz,\n  reign_seconds bigint default 0,\n  peak_streak integer default 0,\n  season integer default 1\n);\ncreate table if not exists public.gym_supporters (\n  id uuid primary key default gen_random_uuid(),\n  core_id text not null,\n  user_id uuid not null references auth.users(id) on delete cascade,\n  supporter_name text,\n  contribution integer not null default 0,\n  role text default 'supporter',\n  season integer not null default 1,\n  updated_at timestamptz default now(),\n  unique (core_id, user_id, season)\n);\ncreate table if not exists public.gym_meta (\n  id integer primary key default 1,\n  current_season integer not null default 1,\n  season_started_at timestamptz default now()\n);\ninsert into public.gym_meta (id) values (1) on conflict (id) do nothing;\ninsert into public.gyms (core_id) values ('fire'),('void'),('nature'),('celestial'),('blood'),('machine'),('storm'),('chaos') on conflict (core_id) do nothing;\nalter table public.gyms add column if not exists last_seen timestamptz;\nalter table public.gyms enable row level security;\nalter table public.gym_history enable row level security;\nalter table public.gym_supporters enable row level security;\nalter table public.gym_meta enable row level security;\ndrop policy if exists gym_sel on public.gyms;\ncreate policy gym_sel on public.gyms for select to authenticated using (true);\ndrop policy if exists gym_ins on public.gyms;\ncreate policy gym_ins on public.gyms for insert to authenticated with check (true);\ndrop policy if exists gym_upd on public.gyms;\ncreate policy gym_upd on public.gyms for update to authenticated using (true) with check (true);\ndrop policy if exists gh_sel on public.gym_history;\ncreate policy gh_sel on public.gym_history for select to authenticated using (true);\ndrop policy if exists gh_ins on public.gym_history;\ncreate policy gh_ins on public.gym_history for insert to authenticated with check (true);\ndrop policy if exists gh_upd on public.gym_history;\ncreate policy gh_upd on public.gym_history for update to authenticated using (true) with check (true);\ndrop policy if exists gs_sel on public.gym_supporters;\ncreate policy gs_sel on public.gym_supporters for select to authenticated using (true);\ndrop policy if exists gs_ins on public.gym_supporters;\ncreate policy gs_ins on public.gym_supporters for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists gs_upd on public.gym_supporters;\ncreate policy gs_upd on public.gym_supporters for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists gm_sel on public.gym_meta;\ncreate policy gm_sel on public.gym_meta for select to authenticated using (true);\ndrop policy if exists gm_upd on public.gym_meta;\ncreate policy gm_upd on public.gym_meta for update to authenticated using (true) with check (true);";
 
 const GymWars = {
   gyms: {},                 // core_id -> row (online state)
@@ -24057,7 +24057,7 @@ function gymWorldRumor(plain) {
 function gymMaybeFetchForLore() {
   if (Profile.cloud && Profile.cloud.signedIn && !GymWars.loading && !GymWars.tableMissing
       && (Date.now() - GymWars.lastFetch > 180000)) {
-    gymFetchAll().then(() => { gymSyncHonorStats(); });
+    gymFetchAll().then(() => { gymSyncHonorStats(); gymLiveArm(); });
   }
 }
 // Surface a Core Wars "whisper" when the player enters a PvE world screen
@@ -24074,14 +24074,279 @@ function gymLoreToast() {
   } catch (e) {}
 }
 
+// ============================================================================
+// 🟢 LIVE-DEFENSE OVERRIDE — the "Hybrid" completion. Gyms are async-defended
+// by the leader's AI-piloted snapshot by default; if the leader is ONLINE they
+// get pinged and may opt to defend in REAL TIME. The accepted live duel is
+// handed to the EXISTING matches/MatchBroadcast pipeline (no new battle-sync
+// code). EVERY failure path falls back to the proven async snapshot battle —
+// the live layer can never block or break a challenge.
+// ============================================================================
+const GYM_ONLINE_WINDOW_MS = 180000;  // leader "online" if seen within 3 min
+const GYM_LIVE_INVITE_MS   = 25000;   // leader has 25s to accept
+const GYM_HEARTBEAT_MS     = 60000;   // presence-write throttle
+
+function gymLeaderOnline(row) {
+  if (!row || !row.leader_id || !row.last_seen) return false;
+  const t = Date.parse(row.last_seen);
+  return !isNaN(t) && (Date.now() - t < GYM_ONLINE_WINDOW_MS);
+}
+// Presence heartbeat — only if YOU lead a gym. Throttled; best-effort.
+async function gymHeartbeat(force) {
+  try {
+    if (!initCloud() || !Profile.cloud.signedIn || GymWars.tableMissing) return;
+    const mine = myLedGym();
+    if (!mine) return;
+    if (!force && (Date.now() - (GymWars._hbAt || 0) < GYM_HEARTBEAT_MS)) return;
+    GymWars._hbAt = Date.now();
+    await Cloud.client.from('gyms').update({ last_seen: new Date().toISOString() })
+      .eq('core_id', mine.core_id).eq('leader_id', Profile.cloud.userId);
+  } catch (e) {}
+}
+// Persistent realtime channel for the invite handshake (mirrors the resource-
+// market subscribe pattern). Stays subscribed so a leader can be pinged even
+// off the gym screen.
+function gymLiveSubscribe() {
+  if (GymWars._liveCh || !initCloud() || !Profile.cloud.signedIn || !Cloud.client) return;
+  try {
+    GymWars._liveCh = Cloud.client.channel('gym-live', { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'challenge' }, (m) => _onGymLiveChallenge(m && m.payload))
+      .on('broadcast', { event: 'accept' },    (m) => _onGymLiveAccept(m && m.payload))
+      .on('broadcast', { event: 'decline' },   (m) => _onGymLiveDecline(m && m.payload))
+      .subscribe();
+  } catch (e) { GymWars._liveCh = null; }
+}
+function _gymLiveSend(event, payload) {
+  try {
+    if (!GymWars._liveCh) gymLiveSubscribe();
+    if (GymWars._liveCh) GymWars._liveCh.send({ type: 'broadcast', event: event, payload: payload });
+  } catch (e) {}
+}
+// Arm presence heartbeat + live subscription once when signed in. Idempotent.
+function gymLiveArm() {
+  if (!Profile.cloud || !Profile.cloud.signedIn) return;
+  gymLiveSubscribe();
+  gymHeartbeat();
+  if (!App._gymHbInt) App._gymHbInt = setInterval(() => { try { gymHeartbeat(); } catch (e) {} }, GYM_HEARTBEAT_MS);
+}
+
+// ---- Challenger side ----
+// Called from startWithHero when a CHALLENGE was prepared vs an ONLINE leader.
+// battlePrep already holds a fully-prepared ASYNC snapshot duel as the
+// guaranteed fallback. Ping the leader; accept → live, else → async.
+function gymTryLiveChallenge(coreId) {
+  const row = gymRow(coreId);
+  if (!row || !gymLeaderOnline(row) || row.leader_id === (Profile.cloud && Profile.cloud.userId)) {
+    return _gymProceedAsync();
+  }
+  const reqId = 'glr_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+  App.gymLivePing = {
+    coreId: coreId, reqId: reqId, leaderId: row.leader_id,
+    leaderName: row.leader_name || 'the Gym Leader',
+    until: Date.now() + GYM_LIVE_INVITE_MS, status: 'pinging',
+  };
+  gymLiveSubscribe();
+  _gymLiveSend('challenge', {
+    reqId: reqId, coreId: coreId, leaderId: row.leader_id,
+    challengerId: Profile.cloud.userId, challengerName: gymPlayerName(),
+  });
+  if (App._gymPingTimer) clearTimeout(App._gymPingTimer);
+  App._gymPingTimer = setTimeout(() => {
+    if (App.gymLivePing && App.gymLivePing.reqId === reqId && App.gymLivePing.status === 'pinging') {
+      showToast('🌙 No response — fighting the gym’s AI defender instead.', 3200);
+      _gymProceedAsync();
+    }
+  }, GYM_LIVE_INVITE_MS + 1500);
+  App.screen = 'gymLivePing';
+  render();
+}
+function _gymProceedAsync() {
+  App.gymLivePing = null;
+  if (App._gymPingTimer) { clearTimeout(App._gymPingTimer); App._gymPingTimer = null; }
+  App.screen = 'vsScreen';   // battlePrep already holds the async snapshot duel
+  render();
+}
+function _onGymLiveAccept(p) {
+  if (!p || !App.gymLivePing || p.reqId !== App.gymLivePing.reqId) return;
+  if (App._gymPingTimer) { clearTimeout(App._gymPingTimer); App._gymPingTimer = null; }
+  App.gymLivePing = null;
+  showToast(`🟢 ${p.leaderName || 'The leader'} accepted — live duel!`, 3000);
+  _gymLiveBeginAsChallenger(p);
+}
+function _onGymLiveDecline(p) {
+  if (!p || !App.gymLivePing || p.reqId !== App.gymLivePing.reqId) return;
+  showToast('🛡 The leader declined — facing their AI defender.', 3400);
+  _gymProceedAsync();
+}
+async function _gymLiveBeginAsChallenger(p) {
+  try {
+    const row = gymRow(p.coreId);
+    const bp = App.battlePrep || {};
+    const myHero = bp.hero;
+    let myDeck = null;
+    if (bp.deckId && typeof getDeckById === 'function') { const d = getDeckById(bp.deckId); if (d) myDeck = d.cards; }
+    if (!myDeck && myHero && typeof getGeneratedDeckForHero === 'function') myDeck = getGeneratedDeckForHero(myHero.id) || [];
+    if (!initCloud() || !Profile.cloud.signedIn || !myHero) return _gymProceedAsync();
+    MultiplayerMatch.active = true;
+    if (typeof _wireMatchListener === 'function') _wireMatchListener();
+    if (typeof _subscribeMatchChannel === 'function') _subscribeMatchChannel();
+    App._gymLivePending = { coreId: p.coreId, role: 'challenger' };
+    const ins = await Cloud.client.from('matches').insert({
+      player1_id: Profile.cloud.userId,
+      player2_id: p.leaderId,
+      hero1_id:   myHero.id || null,
+      hero2_id:   (row && row.leader_hero_id) || null,
+      deck1:      { cards: myDeck || [] },
+      deck2:      { cards: (row && row.leader_deck) || [] },
+      status:     'pending',
+    }).select('*').limit(1);
+    if (!ins || ins.error || !(ins.data && ins.data.length)) { App._gymLivePending = null; return _gymProceedAsync(); }
+    if (typeof onMultiplayerMatchFound === 'function') onMultiplayerMatchFound(ins.data[0]);
+  } catch (e) { App._gymLivePending = null; _gymProceedAsync(); }
+}
+
+// ---- Leader (defender) side ----
+function _onGymLiveChallenge(p) {
+  if (!p || !Profile.cloud || p.leaderId !== Profile.cloud.userId) return;
+  const row = gymRow(p.coreId);
+  if (!row || row.leader_id !== Profile.cloud.userId) { _gymLiveSend('decline', { reqId: p.reqId }); return; }
+  if (App.screen === 'battle' || (App.battlePrep && App.battlePrep.multiplayer && App.state && !App.state.gameOver)) {
+    _gymLiveSend('decline', { reqId: p.reqId }); return;   // busy → AI defends
+  }
+  App.gymLiveInvite = {
+    reqId: p.reqId, coreId: p.coreId,
+    challengerId: p.challengerId, challengerName: p.challengerName || 'A challenger',
+    until: Date.now() + GYM_LIVE_INVITE_MS,
+  };
+  if (App._gymInviteTimer) clearTimeout(App._gymInviteTimer);
+  App._gymInviteTimer = setTimeout(() => {
+    if (App.gymLiveInvite && App.gymLiveInvite.reqId === p.reqId) {
+      _gymLiveSend('decline', { reqId: p.reqId });
+      App.gymLiveInvite = null;
+      _gymRenderInviteOverlay();
+    }
+  }, GYM_LIVE_INVITE_MS);
+  try { if (typeof playSfx === 'function') playSfx('turnStart'); } catch (e) {}
+  _gymRenderInviteOverlay();
+}
+function gymLiveAcceptInvite() {
+  const inv = App.gymLiveInvite;
+  if (!inv) return;
+  if (App._gymInviteTimer) { clearTimeout(App._gymInviteTimer); App._gymInviteTimer = null; }
+  App.gymLiveInvite = null; _gymRenderInviteOverlay();
+  const row = gymRow(inv.coreId);
+  const heroId = row && row.leader_hero_id;
+  const hero = (heroId && typeof findHeroById === 'function') ? findHeroById(heroId) : null;
+  if (!hero) { _gymLiveSend('decline', { reqId: inv.reqId }); showToast('⚠ Could not load your gym loadout — AI defended.', 3600); return; }
+  _gymLiveSend('accept', { reqId: inv.reqId, coreId: inv.coreId, leaderId: Profile.cloud.userId, leaderName: gymPlayerName() });
+  MultiplayerMatch.active = true;
+  if (typeof _wireMatchListener === 'function') _wireMatchListener();
+  if (typeof _subscribeMatchChannel === 'function') _subscribeMatchChannel();
+  App._gymLivePending = { coreId: inv.coreId, role: 'defender' };
+  App.battlePrep = {
+    hero: hero, customCards: Forge.customCards,
+    deckId: null, deckName: 'Gym Defense',
+    myDeckCards: (row && row.leader_deck) || [],
+    coinCall: null, coinResult: null, playerWonFlip: null, playerGoesFirst: null,
+  };
+  showToast('🟢 Defending your gym — live!', 2600);
+  _gymLivePollForMatch(0);
+}
+function gymLiveDeclineInvite() {
+  const inv = App.gymLiveInvite;
+  if (!inv) return;
+  if (App._gymInviteTimer) { clearTimeout(App._gymInviteTimer); App._gymInviteTimer = null; }
+  App.gymLiveInvite = null; _gymRenderInviteOverlay();
+  _gymLiveSend('decline', { reqId: inv.reqId });
+  showToast('🛡 Declined — your gym is AI-defended this time.', 3000);
+}
+function _gymLivePollForMatch(tries) {
+  if (!App._gymLivePending || tries > 12) { if (App._gymLivePending) { App._gymLivePending = null; showToast('⚠ Live duel could not start.', 3000); } return; }
+  Cloud.client.from('matches').select('*').eq('status', 'pending')
+    .or(`player1_id.eq.${Profile.cloud.userId},player2_id.eq.${Profile.cloud.userId}`)
+    .order('created_at', { ascending: false }).limit(1)
+    .then((res) => {
+      if (!App._gymLivePending) return;
+      if (res && res.data && res.data.length) {
+        if (typeof onMultiplayerMatchFound === 'function') onMultiplayerMatchFound(res.data[0]);
+      } else { setTimeout(() => _gymLivePollForMatch(tries + 1), 1500); }
+    }, () => { setTimeout(() => _gymLivePollForMatch(tries + 1), 1500); });
+}
+// Body-attached invite overlay (the leader may be on ANY screen).
+function _gymRenderInviteOverlay() {
+  try {
+    const ex = document.getElementById('gym-live-invite');
+    if (ex) ex.remove();
+    if (App._gymInviteTick) { clearInterval(App._gymInviteTick); App._gymInviteTick = null; }
+    const inv = App.gymLiveInvite;
+    if (!inv) return;
+    const core = getGymCore(inv.coreId);
+    const el = document.createElement('div');
+    el.id = 'gym-live-invite';
+    el.style.cssText = 'position:fixed;inset:0;z-index:3000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.7)';
+    el.innerHTML = `<div style="background:#0e0b16;border:1px solid rgba(255,90,90,0.5);border-radius:14px;max-width:420px;width:90%;padding:1.3rem 1.4rem;text-align:center;box-shadow:0 18px 60px rgba(0,0,0,0.8)">
+      <div style="font-size:2rem">⚔️</div>
+      <div style="font-family:'Cinzel',serif;color:#ff8a5a;font-size:1.15rem;margin:0.3rem 0">Live Gym Challenge!</div>
+      <div class="small-text" style="color:#e8d9b0;margin-bottom:0.4rem"><strong>${escapeHtml(inv.challengerName)}</strong> is challenging your <strong>${escapeHtml(core ? core.name : 'gym')}</strong>.</div>
+      <div class="small-text ink-dim" style="margin-bottom:0.9rem">Defend live, or your AI snapshot defends for you. <span id="gym-inv-cd">${Math.ceil((inv.until - Date.now()) / 1000)}</span>s</div>
+      <div style="display:flex;gap:0.6rem;justify-content:center">
+        <button class="btn-secondary btn-mini" id="gym-inv-no">🛡 AI Defends</button>
+        <button class="btn-primary btn-mini" id="gym-inv-yes">🟢 Defend Live</button>
+      </div>
+    </div>`;
+    document.body.appendChild(el);
+    document.getElementById('gym-inv-yes').onclick = gymLiveAcceptInvite;
+    document.getElementById('gym-inv-no').onclick = gymLiveDeclineInvite;
+    App._gymInviteTick = setInterval(() => {
+      const cd = document.getElementById('gym-inv-cd');
+      if (!cd || !App.gymLiveInvite) { if (App._gymInviteTick) { clearInterval(App._gymInviteTick); App._gymInviteTick = null; } return; }
+      cd.textContent = Math.max(0, Math.ceil((App.gymLiveInvite.until - Date.now()) / 1000));
+    }, 500);
+  } catch (e) {}
+}
+function renderGymLivePing() {
+  const ping = App.gymLivePing;
+  if (!ping) { App.screen = 'gymWars'; return render(); }
+  const core = getGymCore(ping.coreId);
+  const secs = Math.max(0, Math.ceil((ping.until - Date.now()) / 1000));
+  root.innerHTML = `
+    <div class="matchmaking-screen">
+      <div class="matchmaking-card">
+        <div class="matchmaking-pulse">
+          <div class="matchmaking-pulse-ring"></div>
+          <div class="matchmaking-pulse-ring delay-1"></div>
+          <div class="matchmaking-pulse-ring delay-2"></div>
+          <div class="matchmaking-pulse-core">⚔️</div>
+        </div>
+        <h1 class="matchmaking-title">Pinging ${escapeHtml(ping.leaderName)}…</h1>
+        <p class="matchmaking-sub">The <strong>${escapeHtml(core ? core.name : 'gym')}</strong> leader is online. Waiting for them to accept a live duel — if not, you'll face their AI defender in <strong>${secs}s</strong>.</p>
+        <button class="btn-secondary" id="gym-ping-skip" style="margin-top:1rem">⏭ Skip — fight the AI defender now</button>
+      </div>
+    </div>`;
+  const sk = document.getElementById('gym-ping-skip');
+  if (sk) sk.onclick = () => { showToast('Facing the AI defender.', 1800); _gymProceedAsync(); };
+  if (App._gymPingUiTick) clearInterval(App._gymPingUiTick);
+  App._gymPingUiTick = setInterval(() => {
+    if (App.screen !== 'gymLivePing' || !App.gymLivePing) { clearInterval(App._gymPingUiTick); App._gymPingUiTick = null; return; }
+    const t = root.querySelector('.matchmaking-sub strong:last-child');
+    if (t) t.textContent = Math.max(0, Math.ceil((App.gymLivePing.until - Date.now()) / 1000)) + 's';
+  }, 500);
+}
+
 // Launch a Core Trial (PvE) or a Gym-Leader Challenge. Routes through the
 // normal deck-select → VS → battle flow; the gym context is consumed in
 // startWithHero and resolved in recordBattleProgress / gymAfterBattle.
-function startGymBattle(coreId, mode) {
+function startGymBattle(coreId, mode, opts) {
   if (!getGymCore(coreId)) return;
   const ctx = { coreId: coreId, mode: mode || 'trial' };
   if (ctx.mode === 'challenge') {
     const row = gymRow(coreId);
+    // 🟢 If the leader is online, attempt a live duel after deck-select (the
+    // async snapshot is still fully prepared as the guaranteed fallback).
+    if (opts && opts.tryLive && row && row.leader_id && gymLeaderOnline(row)
+        && row.leader_id !== (Profile.cloud && Profile.cloud.userId)) {
+      ctx.tryLive = true;
+    }
     if (row && row.leader_id) {
       ctx.leaderLevel = row.gym_level ? (20 + (row.gym_level * 4)) : 35;
       // Low stamina weakens the AI-piloted defender (vulnerability mechanic).
@@ -24120,7 +24385,13 @@ function gymAfterBattle() {
     } else if (p.mode === 'trial' && !p.won) {
       showToast(`Defeated at the ${cn} Trial — train up and try again.`, 3200);
     } else if (p.mode === 'challenge') {
-      if (p.won) {
+      if (p.liveRole === 'defender') {
+        // Live defense: the challenger's client is authoritative for the
+        // ownership write (claim on their win / streak on their loss). The
+        // defending leader only reconciles + sees the result.
+        showToast(p.won ? `🛡 You defended the ${cn} live — gym held!` : `💥 Your ${cn} gym was taken in a live duel.`, 4600);
+        gymFetchAll().then(() => { if (App.screen === 'gymWars') render(); });
+      } else if (p.won) {
         showToast(`🏛️ You conquered the ${cn} gym! Claiming the throne…`, 3200);
         // Snapshot is captured synchronously inside gymClaim before any await,
         // while App.battlePrep is still live in this game-over path.
@@ -24168,6 +24439,7 @@ function renderGymWars() {
   }
   const _myGym = (Profile.cloud && Profile.cloud.signedIn) ? myLedGym() : null;
   gymSyncHonorStats(); // refresh lifetime bests from current live data
+  gymLiveArm();         // presence heartbeat + live-invite subscription
   // Lazy-load supporters for: the gym you lead (HQ) + any open supporters modal.
   const _supNeed = [];
   if (_myGym) _supNeed.push(_myGym.core_id);
@@ -24293,11 +24565,16 @@ function renderGymWars() {
     let leaderLine;
     if (row && row.leader_name) {
       const st = gymStaminaState(row);
+      const _ldrLive = gymLeaderOnline(row);
+      const _presence = mine ? ''
+        : _ldrLive
+        ? '<span title="Leader is online — will be pinged to defend live" style="font-size:0.6rem;font-weight:700;color:#7be0a0;border:1px solid #7be0a0;border-radius:4px;padding:1px 5px">🟢 LIVE</span>'
+        : '<span title="Leader is away — their AI snapshot defends" style="font-size:0.6rem;font-weight:700;color:#9aa0a6;border:1px solid #6a6f78;border-radius:4px;padding:1px 5px">🌙 AWAY</span>';
       leaderLine = `<div style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid rgba(255,255,255,0.08)">
         <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
           <span style="font-size:0.95rem">👑</span>
           <strong style="color:#f6d97a">${escapeHtml(row.leader_name)}</strong>
-          ${mine ? '<span style="font-size:0.6rem;font-weight:700;color:#7be0a0;border:1px solid #7be0a0;border-radius:4px;padding:1px 5px">YOUR GYM</span>' : ''}
+          ${mine ? '<span style="font-size:0.6rem;font-weight:700;color:#7be0a0;border:1px solid #7be0a0;border-radius:4px;padding:1px 5px">YOUR GYM</span>' : _presence}
         </div>
         <div class="small-text ink-dim" style="margin-top:3px">🛡 ${row.defense_streak || 0} defense streak · <span style="color:${st.color}">${st.label} (${st.s}%)</span></div>
       </div>`;
@@ -24522,8 +24799,12 @@ function renderGymWars() {
       const row = gymRow(cid);
       const who = (row && row.leader_name) ? row.leader_name : 'the gym steward';
       const core = getGymCore(cid);
-      if (!confirm(`Challenge ${who} for control of the ${core ? core.name : 'Core'} gym?\n\nWin and the gym becomes yours. Lose and their defense streak grows.`)) return;
-      startGymBattle(cid, 'challenge');
+      const liveLeader = gymLeaderOnline(row) && row.leader_id !== (Profile.cloud && Profile.cloud.userId);
+      const extra = liveLeader
+        ? `\n\n🟢 ${who} is ONLINE — they'll be pinged to defend live; if they don't, you face their AI defender.`
+        : '';
+      if (!confirm(`Challenge ${who} for control of the ${core ? core.name : 'Core'} gym?\n\nWin and the gym becomes yours. Lose and their defense streak grows.${extra}`)) return;
+      startGymBattle(cid, 'challenge', { tryLive: liveLeader });
     };
   });
   const hallBtn = document.getElementById('gym-hall');
@@ -33719,6 +34000,7 @@ function render() {
   if (App.screen === 'replayViewer') return renderReplayViewer();
   if (App.screen === 'leaderboard')  return renderLeaderboard();
   if (App.screen === 'gymWars')      return renderGymWars();
+  if (App.screen === 'gymLivePing')  return renderGymLivePing();
   if (App.screen === 'settings')     return renderSettings();
   if (App.screen === 'profile')      return renderProfile();
   if (App.screen === 'friends')      return renderFriends();
@@ -35126,11 +35408,18 @@ function renderDeckSelect() {
       gymTrialCore:     (_gymBP && _gymBP.mode === 'trial')     ? _gymBP.coreId : null,
       gymChallengeCore: (_gymBP && _gymBP.mode === 'challenge') ? _gymBP.coreId : null,
     };
+    // 🟢 Live-defense: if this was a challenge vs an online leader, ping them
+    // first. battlePrep above is the fully-prepared async fallback duel.
+    const _liveCore = (_gymBP && _gymBP.mode === 'challenge' && _gymBP.tryLive) ? _gymBP.coreId : null;
     App._gymBattlePending = null; // consume — one-shot gym battle context
     App.battlePrepFlags = null; // consume — next battle starts fresh
 
-    App.screen = 'vsScreen';
-    render();
+    if (_liveCore && typeof gymTryLiveChallenge === 'function') {
+      gymTryLiveChallenge(_liveCore);
+    } else {
+      App.screen = 'vsScreen';
+      render();
+    }
   };
   document.querySelectorAll('[data-go-deck-id]').forEach(el => {
     el.onclick = (e) => {
@@ -47314,7 +47603,7 @@ function recordBattleProgress() {
     if (_gmode === 'trial' && won) {
       _newBadge = awardGymBadge(_gc);
     }
-    App._gymPendingAfterBattle = { coreId: _gc, mode: _gmode, won: !!won, newBadge: _newBadge };
+    App._gymPendingAfterBattle = { coreId: _gc, mode: _gmode, won: !!won, newBadge: _newBadge, liveRole: App.battlePrep.gymLiveRole || null };
   }
 
   const playerUnits = s.units.filter(u => u.owner === 'player');
@@ -52631,6 +52920,14 @@ function onMultiplayerMatchFound(match) {
   App.battlePrep.multiplayer    = true;
   App.battlePrep.multiplayerMatchId = MultiplayerMatch.matchId;
   App.battlePrep.rankedMode     = true; // multiplayer always counts as ranked
+  // 🟢 Live gym defense: tag this multiplayer battle so recordBattleProgress /
+  // gymAfterBattle resolve gym ownership. role distinguishes the challenger
+  // (claims on win) from the defending leader (no client-side claim/record).
+  if (App._gymLivePending) {
+    App.battlePrep.gymChallengeCore = App._gymLivePending.coreId;
+    App.battlePrep.gymLiveRole      = App._gymLivePending.role;
+    App._gymLivePending = null;
+  }
   App.screen = 'vsScreen';
   render();
 }

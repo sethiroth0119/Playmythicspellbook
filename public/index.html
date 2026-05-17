@@ -28214,8 +28214,14 @@ const initGame = (heroData, opponentHero, customCards, playerGoesFirst, chosenDe
   // 🗺️ Roguelite: carry persistent HP into the fight. Only fires when this is
   // an RLC battle (guarded) so normal/campaign battles are untouched.
   if (App.battlePrep && App.battlePrep.rlc) {
-    const rMax = Math.max(1, parseInt(App.battlePrep.rlcMaxHP, 10) || playerHero.maxHp);
-    const rCur = Math.max(1, Math.min(rMax, parseInt(App.battlePrep.rlcHeroHP, 10) || rMax));
+    let rMax = Math.max(1, parseInt(App.battlePrep.rlcMaxHP, 10) || playerHero.maxHp);
+    let rCur = Math.max(1, Math.min(rMax, parseInt(App.battlePrep.rlcHeroHP, 10) || rMax));
+    // 🛡 Temp shield from a Medical Camp — one-battle bonus HP, then consumed.
+    const _sh = (Profile.rlcRun && parseInt(Profile.rlcRun._shieldNext, 10)) || 0;
+    if (_sh > 0) {
+      rMax += _sh; rCur += _sh;
+      try { Profile.rlcRun._shieldNext = 0; saveProfile(); } catch (e) {}
+    }
     playerHero.maxHp = rMax;
     playerHero.currentHp = rCur;
   }
@@ -51144,8 +51150,9 @@ function renderRlcAdmin() {
           </div>
         ` : ''}
         ${n.type === 'medical' ? `
-          <div class="small-text ink-dim" style="margin:4px 0">Heal options:</div>
-          ${((n.heal || {}).options || []).map((o, oi) => `<div style="display:flex;gap:6px;margin-bottom:5px;align-items:center;flex-wrap:wrap"><input type="text" data-rlc-path="nodes.${idx}.heal.options.${oi}.name" value="${escapeHtml(o.name || '')}" style="flex:1;min-width:120px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.heal.options.${oi}.healPercent" value="${escapeHtml(String(o.healPercent || 0))}" title="heal %" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.heal.options.${oi}.costMedPoints" value="${escapeHtml(String(o.costMedPoints || 0))}" title="med pts cost" style="width:70px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.heal.options.${oi}.costCurrency" value="${escapeHtml(String(o.costCurrency || 0))}" title="currency cost" style="width:80px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"></div>`).join('')}
+          <div class="small-text ink-dim" style="margin:4px 0">Camp options — name · effect · heal%/shield amt · ⛑️ cost · 💰 cost:</div>
+          ${((n.heal || {}).options || []).map((o, oi) => { const _ef = o.effect || 'heal'; const _ov = (e, l) => `<option value="${e}" ${_ef === e ? 'selected' : ''}>${l}</option>`; return `<div style="display:flex;gap:6px;margin-bottom:5px;align-items:center;flex-wrap:wrap"><input type="text" data-rlc-path="nodes.${idx}.heal.options.${oi}.name" placeholder="label" value="${escapeHtml(o.name || '')}" style="flex:1;min-width:110px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><select data-rlc-path="nodes.${idx}.heal.options.${oi}.effect" style="padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">${_ov('heal','⛑️ Heal %')}${_ov('revive','✨ Full revive')}${_ov('shield','🛡 Temp shield')}${_ov('removeCard','🩸 Remove curse')}${_ov('upgradeCard','✦ Upgrade/dup')}</select><input type="number" data-rlc-path="nodes.${idx}.heal.options.${oi}.healPercent" value="${escapeHtml(String(o.healPercent || 0))}" title="heal % (Heal effect)" style="width:62px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.heal.options.${oi}.amount" value="${escapeHtml(String(o.amount || 0))}" title="shield amount (Shield effect)" style="width:62px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.heal.options.${oi}.costMedPoints" value="${escapeHtml(String(o.costMedPoints || 0))}" title="med pts cost" style="width:58px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><input type="number" data-rlc-path="nodes.${idx}.heal.options.${oi}.costCurrency" value="${escapeHtml(String(o.costCurrency || 0))}" title="currency cost" style="width:64px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><button class="btn-mini" data-rlc-rmheal="${idx}:${oi}" style="color:#ff8080">×</button></div>`; }).join('')}
+          <button class="btn-secondary btn-mini" data-rlc-addheal="${idx}">＋ Add option</button>
         ` : ''}
         ${n.type === 'event' ? `
           <label style="display:block;margin-top:6px"><span class="small-text ink-dim">Event text</span><br><textarea data-rlc-path="nodes.${idx}.event.text" rows="3" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">${escapeHtml((n.event || {}).text || '')}</textarea></label>
@@ -51449,6 +51456,8 @@ function renderRlcAdmin() {
     reRender();
   });
   document.querySelectorAll('[data-rlc-rmpoolchoice]').forEach(b => b.onclick = () => { const [i, pi, ci] = b.dataset.rlcRmpoolchoice.split(':').map(Number); ed.nodes[i].randomEvent.pool[pi].choices.splice(ci, 1); reRender(); });
+  document.querySelectorAll('[data-rlc-addheal]').forEach(b => b.onclick = () => { const i = parseInt(b.dataset.rlcAddheal, 10); const nd = ed.nodes[i]; if (!nd) return; nd.heal = nd.heal || { options: [] }; nd.heal.options = nd.heal.options || []; nd.heal.options.push({ name: 'New option', effect: 'heal', healPercent: 25, amount: 0, costMedPoints: 1, costCurrency: 0 }); reRender(); });
+  document.querySelectorAll('[data-rlc-rmheal]').forEach(b => b.onclick = () => { const [i, oi] = b.dataset.rlcRmheal.split(':').map(Number); if (ed.nodes[i] && ed.nodes[i].heal && ed.nodes[i].heal.options) ed.nodes[i].heal.options.splice(oi, 1); reRender(); });
 }
 
 function renderRlcList() {
@@ -51835,37 +51844,109 @@ function renderRlcMedical() {
     { name: 'Field surgery (50%)', healPercent: 50, costMedPoints: 2 },
     { name: 'Full recovery', healPercent: 100, costMedPoints: 4 },
   ];
+  const _effLabel = (o) => {
+    switch (o.effect) {
+      case 'revive':      return 'Full revive — restore ALL HP';
+      case 'shield':      return `Temp shield — +${parseInt(o.amount, 10) || 25} HP for your next battle`;
+      case 'removeCard':  return 'Remove a curse — delete a card from your run deck';
+      case 'upgradeCard': return 'Upgrade — duplicate a card in your run deck';
+      default:            return `Heals ${o.healPercent || 0}%`;
+    }
+  };
   const optBtn = (o, i) => {
     const cMed = parseInt(o.costMedPoints, 10) || 0;
     const cCur = parseInt(o.costCurrency, 10) || 0;
     const afford = run.medPoints >= cMed && run.currency >= cCur;
     return `<button class="btn-primary ${afford ? '' : 'btn-disabled'}" data-rlc-heal="${i}" ${afford ? '' : 'disabled'} style="display:block;width:100%;margin:0 0 10px;text-align:left">
-      ${escapeHtml(o.name || ('Heal ' + (o.healPercent || 0) + '%'))} — heals ${o.healPercent || 0}% ${cMed ? `· ⛑️ ${cMed}` : ''} ${cCur ? `· 💰 ${cCur}` : ''}${afford ? '' : ' (cannot afford)'}
+      ${escapeHtml(o.name || _effLabel(o))} — ${escapeHtml(_effLabel(o))} ${cMed ? `· ⛑️ ${cMed}` : ''} ${cCur ? `· 💰 ${cCur}` : ''}${afford ? '' : ' (cannot afford)'}
     </button>`;
   };
+  // Card-picker overlay for remove-curse / upgrade.
+  let pickModal = '';
+  const _mp = App._rlcMedPick;
+  if (_mp && (_mp.mode === 'removeCard' || _mp.mode === 'upgradeCard')) {
+    const counts = {}; (run.deck || []).forEach(k => counts[k] = (counts[k] || 0) + 1);
+    const rows = Object.keys(counts).map(k => {
+      let c = null; try { c = resolveDeckCard(k); } catch (e) {}
+      const nm = (c && c.name) || k;
+      return `<button class="btn-secondary" data-rlc-medcard="${escapeHtml(String(k))}" style="display:flex;width:100%;justify-content:space-between;margin:0 0 6px;text-align:left">
+          <span>${escapeHtml(nm)}</span><span class="small-text ink-dim">×${counts[k]}</span></button>`;
+    }).join('') || '<div class="ink-dim" style="text-align:center;padding:14px">Your run deck is empty.</div>';
+    pickModal = `<div class="modal-backdrop" id="rlc-medpick-bd" style="z-index:1340">
+      <div class="ds-modal" style="max-width:440px;max-height:74vh;display:flex;flex-direction:column;padding:18px">
+        <div style="display:flex;align-items:center;margin-bottom:10px;gap:8px">
+          <div style="font-family:'Cinzel',serif;font-size:1.1rem;color:#7fdca0;flex:1">${_mp.mode === 'removeCard' ? '🩸 Remove which curse?' : '✦ Upgrade which card?'}</div>
+          <button class="btn-mini" id="rlc-medpick-x">✖ Cancel</button>
+        </div>
+        <div style="overflow:auto">${rows}</div>
+      </div></div>`;
+  }
   root.innerHTML = `
     <div class="campaign-page" style="background:radial-gradient(ellipse at top,rgba(15,55,40,0.5),transparent)">
       <h1 class="section-title" style="color:#7fdca0">⛑️ ${escapeHtml((node && node.name) || 'Medical Camp')}</h1>
       ${(node && node.iconImg) ? `<div style="text-align:center;margin:6px 0"><img src="${node.iconImg}" alt="" style="max-width:200px;max-height:200px;border-radius:12px;border:2px solid rgba(127,220,160,0.5);object-fit:cover"></div>` : ''}
-      <div class="section-subtitle">${escapeHtml((node && node.desc) || 'Spend medical points or currency to heal before pressing on.')}</div>
+      <div class="section-subtitle">${escapeHtml((node && node.desc) || 'Spend medical points or currency to recover before pressing on.')}</div>
       ${_rlcHUD(run, camp)}
       <div style="max-width:480px;margin:18px auto 0">${opts.map(optBtn).join('')}
         <button class="btn-secondary" id="rlc-leave-med" style="width:100%;margin-top:8px">Leave camp →</button>
       </div>
+      ${pickModal}
     </div>`;
   const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  const _charge = (o) => {
+    const cMed = parseInt(o.costMedPoints, 10) || 0, cCur = parseInt(o.costCurrency, 10) || 0;
+    if (run.medPoints < cMed || run.currency < cCur) { showToast('Not enough to afford that.', 2200); return false; }
+    run.medPoints -= cMed; run.currency -= cCur; return true;
+  };
   document.querySelectorAll('[data-rlc-heal]').forEach(b => {
     b.onclick = () => {
       const o = opts[parseInt(b.dataset.rlcHeal, 10)]; if (!o) return;
-      const cMed = parseInt(o.costMedPoints, 10) || 0, cCur = parseInt(o.costCurrency, 10) || 0;
-      if (run.medPoints < cMed || run.currency < cCur) { showToast('Not enough to afford that.', 2200); return; }
-      run.medPoints -= cMed; run.currency -= cCur;
-      run.heroHP = Math.min(run.maxHP, run.heroHP + _rlcHealPct(run, parseInt(o.healPercent, 10) || 0));
-      _persistProgressNow();
-      showToast('⛑️ Healed!', 1800); render();
+      const eff = o.effect || 'heal';
+      if (eff === 'removeCard' || eff === 'upgradeCard') {
+        // Defer the charge until a card is actually picked.
+        App._rlcMedPick = { mode: eff, optIdx: parseInt(b.dataset.rlcHeal, 10) };
+        render(); return;
+      }
+      if (!_charge(o)) return;
+      if (eff === 'revive') {
+        run.heroHP = run.maxHP;
+        showToast('✨ Fully revived — back to ' + run.maxHP + ' HP!', 2200);
+      } else if (eff === 'shield') {
+        const amt = parseInt(o.amount, 10) || 25;
+        run._shieldNext = (parseInt(run._shieldNext, 10) || 0) + amt;
+        showToast('🛡 Shield primed — +' + amt + ' HP in your next battle.', 2600);
+      } else {
+        run.heroHP = Math.min(run.maxHP, run.heroHP + _rlcHealPct(run, parseInt(o.healPercent, 10) || 0));
+        showToast('⛑️ Patched up!', 1800);
+      }
+      _persistProgressNow(); render();
     };
   });
-  document.getElementById('rlc-leave-med').onclick = () => { const nid = App._rlcNodeId; App._rlcNodeId = null; _rlcCompleteNode(nid); };
+  // Remove-curse / upgrade picker actions.
+  const _closePick = () => { App._rlcMedPick = null; render(); };
+  const px = document.getElementById('rlc-medpick-x'); if (px) px.onclick = _closePick;
+  const pbd = document.getElementById('rlc-medpick-bd'); if (pbd) pbd.onclick = (e) => { if (e.target === pbd) _closePick(); };
+  document.querySelectorAll('[data-rlc-medcard]').forEach(b => {
+    b.onclick = () => {
+      const mp = App._rlcMedPick; if (!mp) return;
+      const o = opts[mp.optIdx]; if (!o) { _closePick(); return; }
+      const key = b.getAttribute('data-rlc-medcard');
+      if (!_charge(o)) { _closePick(); return; }
+      let c = null; try { c = resolveDeckCard(key); } catch (e) {}
+      const nm = (c && c.name) || key;
+      if (mp.mode === 'removeCard') {
+        const idx = (run.deck || []).indexOf(key);
+        if (idx >= 0) run.deck.splice(idx, 1);
+        showToast('🩸 Curse lifted — ' + nm + ' removed from the run deck.', 2600);
+      } else {
+        try { _rlcGrantCard(key); } catch (e) {}
+        showToast('✦ ' + nm + ' duplicated into your run deck.', 2600);
+      }
+      App._rlcMedPick = null;
+      _persistProgressNow(); render();
+    };
+  });
+  document.getElementById('rlc-leave-med').onclick = () => { App._rlcMedPick = null; const nid = App._rlcNodeId; App._rlcNodeId = null; _rlcCompleteNode(nid); };
 }
 function renderRlcShop() {
   const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }

@@ -16997,6 +16997,13 @@ const STATUS_EFFECTS = {
   // Counter stance — next incoming enemy attack is blocked, the attacker takes a counter hit,
   // then the stance falls. Set duration to 1 so it persists for one turn cycle.
   countering: { id: 'countering', name: 'Countering', icon: '↩️',  countersAttack: true, desc: 'Blocks the next enemy attack and counters back' },
+  // 🎯 Ambush Guard — Overwatch-style watch stance set by a move. While held,
+  // the FIRST enemy that moves within the watch radius during the enemy turn
+  // takes a free reaction strike (once per enemy turn; the stance is then
+  // consumed and must be re-cast). Two radii: short (1) and long (3). These
+  // persist without decaying until consumed (special-cased in the turn tick).
+  ambushGuard1: { id: 'ambushGuard1', name: 'Ambush Guard', icon: '🎯', desc: 'Watching (range 1) — reaction-strikes the first enemy that moves adjacent this enemy turn.' },
+  ambushGuard3: { id: 'ambushGuard3', name: 'Ambush Guard', icon: '🎯', desc: 'Watching (range 3) — reaction-strikes the first enemy that moves within 3 tiles this enemy turn.' },
   // Rage — the unit may only use ATTACK moves, and must target the nearest reachable enemy.
   // Ability/heal moves are locked out for the duration. If no enemy is reachable, the unit
   // may still move freely.
@@ -17155,6 +17162,10 @@ const PASSIVES = {
   // right after the Thorns hook so it sees the resolved hit + damage type.
   physicalRetribution: { id: 'physicalRetribution', name: 'Spiked Carapace', desc: '☠️ When hit by a PHYSICAL attack, the attacker is instantly slain. Enemy heroes are immune.' },
   magicalRetribution:  { id: 'magicalRetribution',  name: 'Mana Feedback',   desc: '☠️ When hit by a MAGICAL attack, the attacker is instantly slain. Enemy heroes are immune.' },
+  // 👁 Predator's Eye — built-in Overwatch. Whenever an enemy unit or hero
+  // MOVES within 2 tiles, this unit/hero makes a free reaction strike. Once
+  // per enemy turn (re-arms automatically each enemy turn — no move slot used).
+  predatorsEye: { id: 'predatorsEye', name: "Predator's Eye", desc: "👁 Reaction: when an enemy moves within 2 tiles, strike them for free. Once per enemy turn." },
 
   // ===== ⚔️ COMPETITIVE TOOLKIT — damage/survival engine passives =====
   // Five archetypal engine pieces (mostly damage amplifiers or one-shot
@@ -17868,6 +17879,25 @@ const MOVES = {
     applyStatus: { id: 'countering', chance: 100, duration: 2 },
     stageMods: [{ stat: 'def', delta: 1 }],
     desc: 'A disciplined defensive stance — counter for 2 turns and DEF +1 stage.',
+  },
+
+  // ===== 🎯 Ambush Guard (Overwatch-style watch stance) =====
+  // Self-buff: enter a watch. The FIRST enemy that moves within the watch
+  // radius during the enemy turn takes a free reaction strike (once per enemy
+  // turn; the stance is then consumed — re-cast it next turn). Short = 1 tile,
+  // Long = 3 tiles. Duration is large; it never decays on its own (handled in
+  // the turn-start tick) and is removed the moment it fires.
+  ambushGuardShort: {
+    id: 'ambushGuardShort', name: 'Ambush Guard I', kind: 'ability',
+    range: 0, cost: 1, element: 'neutral', target: 'self',
+    applyStatus: { id: 'ambushGuard1', chance: 100, duration: 99 },
+    desc: '🎯 Ready a close watch — the first enemy to move ADJACENT (1 tile) on the enemy turn eats a free reaction strike. Once per enemy turn; re-cast after it fires.',
+  },
+  ambushGuardLong: {
+    id: 'ambushGuardLong', name: 'Ambush Guard III', kind: 'ability',
+    range: 0, cost: 2, element: 'neutral', target: 'self',
+    applyStatus: { id: 'ambushGuard3', chance: 100, duration: 99 },
+    desc: '🎯 Ready a long watch — the first enemy to move within 3 tiles on the enemy turn eats a free reaction strike. Once per enemy turn; re-cast after it fires.',
   },
 
   // ===== Weather-summoning moves =====
@@ -32931,6 +32961,97 @@ function applyTrapToUnit(s, unit, trap) {
   return s;
 }
 
+// 🎯 OVERWATCH-STYLE REACTION. Called from moveUnit AFTER a unit's position is
+// finalized. Any ENEMY of the mover that is armed this enemy turn and holds an
+// Ambush Guard watch status (range 1 / 3) or the Predator's Eye passive (range
+// 1–2), and whose watch radius covers the mover's new tile, gets ONE free
+// reaction strike. Single-writer loop guard: a reaction's executeMove can't
+// re-enter this (s._inAmbushReaction), and each watcher is consumed for the
+// rest of the enemy turn (_ambushFiredThisEnemyTurn).
+function _ambushReactToMove(state, mover, toPos) {
+  try {
+    if (!state || state._inAmbushReaction) return state;
+    if (!mover || !mover.alive || !toPos) return state;
+    const units = state.units || [];
+    // Watch radius for a given watcher: max of its sources (0 = not watching).
+    const radiusOf = (w) => {
+      let r = 0;
+      const se = w.statusEffects || [];
+      if (se.some(e => e && e.type === 'ambushGuard3')) r = Math.max(r, 3);
+      if (se.some(e => e && e.type === 'ambushGuard1')) r = Math.max(r, 1);
+      if (typeof hasPassive === 'function' && hasPassive(w, 'predatorsEye')) r = Math.max(r, 2);
+      return r;
+    };
+    const disabled = ['stun', 'frozen', 'sleep', 'paralysis', 'knockdown'];
+    let s = state;
+    for (const w of units) {
+      if (!w || !w.alive || !w.pos) continue;
+      if (w.owner === mover.owner) continue;            // only enemies of the mover
+      if (w.id === mover.id) continue;
+      if (w._ambushFiredThisEnemyTurn) continue;        // once per enemy turn
+      const radius = radiusOf(w);
+      if (radius <= 0) continue;
+      const dist = Math.max(Math.abs(w.pos.x - toPos.x), Math.abs(w.pos.y - toPos.y));
+      if (dist > radius) continue;
+      if ((w.statusEffects || []).some(e => e && disabled.indexOf(e.type) >= 0)) continue;
+      // Re-resolve live refs from the working state each iteration (a prior
+      // reaction this loop may have mutated units).
+      const liveW = (s.units || []).find(u => u && u.id === w.id);
+      const liveMover = (s.units || []).find(u => u && u.id === mover.id);
+      if (!liveW || !liveW.alive || !liveMover || !liveMover.alive) {
+        if (!liveMover || !liveMover.alive) break;       // mover died — stop
+        continue;
+      }
+      // Build the reaction attack: the watcher's strongest known attack move,
+      // else a stat-scaled basic strike. Free, range-agnostic, marked so the
+      // engine treats it as a one-off reaction.
+      let rx = null;
+      try {
+        const cand = (liveW.knownMoves || [])
+          .map(id => (typeof lookupMove === 'function') ? lookupMove(id) : null)
+          .filter(m => m && m.kind === 'attack');
+        if (cand.length) {
+          cand.sort((a, b) => (b.power || 0) - (a.power || 0));
+          rx = { ...cand[0] };
+        }
+      } catch (e) {}
+      if (!rx) {
+        const st = liveW.stats || {};
+        rx = {
+          id: '_ambushStrike', name: 'Ambush Strike', kind: 'attack',
+          type: ((st.mag || 0) > (st.atk || 0)) ? 'magic' : 'physical',
+          power: 18, element: ((typeof getElementsOf === 'function' && getElementsOf(liveW)[0]) || 'neutral'),
+          basic: true,
+        };
+      }
+      rx.cost = 0; rx.range = 9; rx._ambush = true;
+      rx.name = '🎯 ' + (rx.name || 'Ambush Strike');
+      // Mark consumed BEFORE resolving so the nested executeMove can't re-arm
+      // or recurse, and a chained KO can't double-fire this watcher.
+      s = { ...s, _inAmbushReaction: true };
+      s.units = s.units.map(u => {
+        if (u.id === liveW.id) {
+          const cleaned = (u.statusEffects || []).filter(e => e && e.type !== 'ambushGuard1' && e.type !== 'ambushGuard3');
+          return { ...u, _ambushFiredThisEnemyTurn: true, statusEffects: cleaned };
+        }
+        return u;
+      });
+      s.log = [...(s.log || []), { msg: `🎯 ${liveW.name} springs an ambush on ${liveMover.name}!`, color: liveW.owner === 'player' ? 'green' : 'red' }];
+      try {
+        if (typeof executeMove === 'function') {
+          const aNow = (s.units || []).find(u => u && u.id === liveW.id);
+          const tNow = (s.units || []).find(u => u && u.id === liveMover.id);
+          if (aNow && aNow.alive && tNow && tNow.alive) s = executeMove(s, aNow, tNow, rx);
+        }
+      } catch (e) { /* a broken reaction must never break the move */ }
+      s = { ...s, _inAmbushReaction: false };
+      const moverNow = (s.units || []).find(u => u && u.id === mover.id);
+      if (!moverNow || !moverNow.alive) break;            // mover KO'd — done
+    }
+    return s;
+  } catch (e) { return state; }
+}
+
 const moveUnit = (state, unit, newPos) => {
   let s = { ...state };
   // Walk the path tile-by-tile and fire any enemy trap on the way (or at the destination).
@@ -32951,6 +33072,8 @@ const moveUnit = (state, unit, newPos) => {
       // Trap fires: place the unit on this tile and stop movement.
       s.units = s.units.map(u => u.id === unit.id ? { ...u, pos: finalPos, hasMoved: true } : u);
       s = applyTrapToUnit(s, unit, trap);
+      // 🎯 Overwatch reaction at the interrupted tile.
+      s = _ambushReactToMove(s, (s.units || []).find(u => u && u.id === unit.id) || unit, finalPos);
       return s;
     }
   }
@@ -32961,6 +33084,10 @@ const moveUnit = (state, unit, newPos) => {
   if (unit.isHero && destTile && destTile.event) {
     s = triggerEvent(s, unit, destTile.event, newPos);
   }
+  // 🎯 Overwatch reaction — any armed enemy watcher covering the new tile
+  // gets one free strike (single-writer, once per enemy turn; safe no-op
+  // when nothing is watching).
+  s = _ambushReactToMove(s, (s.units || []).find(u => u && u.id === unit.id) || unit, newPos);
   return s;
 };
 
@@ -33258,6 +33385,13 @@ const startTurn = (state, who) => {
         nu.currentHp -= d;
         log.push({ msg: `${u.name} -${d} ${eff.name}`, color: 'amber' });
       }
+      // 🎯 Ambush Guard watch — never decays on its own; it persists until it
+      // fires a reaction (then it's removed where the reaction resolves) or
+      // the unit dies. Carry it forward verbatim.
+      if (e.type === 'ambushGuard1' || e.type === 'ambushGuard3') {
+        newEffects.push({ ...e });
+        return;
+      }
       // Sleep: roll a wake check each turn; if woken, drop the effect entirely. Otherwise keep duration.
       if (e.type === 'sleep') {
         const wake = (eff && eff.wakeChance) ? eff.wakeChance : 0.35;
@@ -33305,6 +33439,13 @@ const startTurn = (state, who) => {
     if (nu.currentHp <= 0) nu.alive = false;
     return nu;
   });
+
+  // 🎯 Re-arm Ambush Guard / Predator's Eye for the side that will DEFEND
+  // during this incoming turn (i.e. the units NOT owned by `who`). Each such
+  // unit gets exactly one reaction strike during `who`'s turn. The per-unit
+  // map above skips non-`who` units, so this is a separate light pass.
+  s.units = s.units.map(u => (u && u.owner !== who && u._ambushFiredThisEnemyTurn)
+    ? { ...u, _ambushFiredThisEnemyTurn: false } : u);
 
   // ===== Active Location field effects (YGO-style field spell) =====
   // Replaces the legacy per-tile location loop. The whole-field effect is

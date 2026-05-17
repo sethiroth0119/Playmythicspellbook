@@ -51495,6 +51495,31 @@ function renderRlcMap() {
       <svg width="${mapW}" height="${mapH}" style="position:absolute;left:0;top:0;pointer-events:none;z-index:1;overflow:visible">${lines}</svg>
       ${nodeDivs}
     </div>`;
+  // 🖼️ Node-preview modal — clicking a node shows its art + story blurb
+  // with Engage / Cancel before committing, so players take in the scene.
+  const _pvNode = App._rlcNodePreview ? _rlcNode(camp, App._rlcNodePreview) : null;
+  const _pvT = _pvNode ? (RLC_NODE_TYPES[_pvNode.type] || RLC_NODE_TYPES.battle) : null;
+  const _pvIsBattle = _pvNode && ['battle','elite','boss','finalBoss'].indexOf(_pvNode.type) >= 0;
+  const _pvModal = (_pvNode && _pvT) ? `
+    <div class="modal-backdrop" id="rlc-pv-bd" style="z-index:1320">
+      <div class="ds-modal" style="max-width:560px;padding:0;overflow:hidden;border:2px solid ${_pvT.color}">
+        <div style="position:relative;width:100%;background:#0c0718;display:flex;align-items:center;justify-content:center;min-height:170px">
+          ${_pvNode.iconImg
+            ? `<img src="${_pvNode.iconImg}" alt="" style="width:100%;max-height:340px;object-fit:cover;display:block;image-rendering:auto;image-rendering:high-quality">`
+            : `<div style="font-size:5rem;padding:36px 0;filter:drop-shadow(0 0 22px ${_pvT.glow})">${_pvT.icon}</div>`}
+          <div style="position:absolute;left:0;right:0;bottom:0;height:64px;background:linear-gradient(180deg,transparent,rgba(8,4,16,0.92))"></div>
+        </div>
+        <div style="padding:18px 24px 22px;text-align:center">
+          <div class="small-text" style="color:${_pvT.color};letter-spacing:0.16em;text-transform:uppercase;font-family:'Cinzel',serif">${escapeHtml(_pvT.name)}</div>
+          <div style="font-family:'Cinzel',serif;font-size:1.5rem;color:#f6d97a;margin:4px 0 10px">${escapeHtml(_pvNode.name || _pvT.name)}</div>
+          ${_pvNode.desc ? `<div style="color:#d8c7f0;line-height:1.6;white-space:pre-wrap;margin-bottom:18px">${escapeHtml(_pvNode.desc)}</div>` : '<div class="small-text ink-dim" style="margin-bottom:18px">What waits beyond is unknown…</div>'}
+          <div style="display:flex;gap:12px;justify-content:center">
+            <button class="btn-secondary" id="rlc-pv-cancel">✖ Not yet</button>
+            <button class="btn-primary" id="rlc-pv-go">${_pvIsBattle ? '⚔ Engage' : '▶ Engage'}</button>
+          </div>
+        </div>
+      </div>
+    </div>` : '';
   root.innerHTML = `
     <div class="campaign-page" style="${camp.mapBg ? `background:linear-gradient(rgba(10,5,20,0.82),rgba(10,5,20,0.88)),url('${camp.mapBg}') center/cover fixed` : 'background:radial-gradient(ellipse at top,rgba(45,15,75,0.55),transparent)'}">
       <button class="btn-secondary btn-mini" id="rlc-map-back">← Campaigns</button>
@@ -51513,16 +51538,30 @@ function renderRlcMap() {
             <button class="btn-primary" id="rlc-intro-go">Begin the journey →</button>
           </div>
         </div>` : ''}
+      ${_pvModal}
     </div>`;
-  document.getElementById('rlc-map-back').onclick = () => { App.screen = 'rlcList'; render(); };
+  document.getElementById('rlc-map-back').onclick = () => { App._rlcNodePreview = null; App.screen = 'rlcList'; render(); };
   const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
   const introGo = document.getElementById('rlc-intro-go');
   if (introGo) introGo.onclick = () => { App._rlcIntroFor = null; render(); };
   document.querySelectorAll('[data-rlc-node]').forEach(el => {
-    const go = () => rlcEnterNode(el.dataset.rlcNode);
+    // First click only PREVIEWS the node (art + story + Engage/Cancel).
+    const go = () => { App._rlcNodePreview = el.dataset.rlcNode; render(); };
     el.onclick = go;
     el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } };
   });
+  // Node-preview modal actions.
+  const _pvCancel = () => { App._rlcNodePreview = null; render(); };
+  const pvX = document.getElementById('rlc-pv-cancel');
+  if (pvX) pvX.onclick = _pvCancel;
+  const pvBd = document.getElementById('rlc-pv-bd');
+  if (pvBd) pvBd.onclick = (e) => { if (e.target === pvBd) _pvCancel(); };
+  const pvGo = document.getElementById('rlc-pv-go');
+  if (pvGo) pvGo.onclick = () => {
+    const id = App._rlcNodePreview;
+    App._rlcNodePreview = null;
+    if (id) rlcEnterNode(id);
+  };
 }
 function renderRlcReward() {
   const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }

@@ -1,0 +1,69 @@
+{
+  "game": "Mythic Spellbook",
+  "note": "Machine-readable system map. Running build is source of truth for exact formulas. See game-mechanics.md and elements-factions.json.",
+  "cardTypes": ["unit", "hero", "spell", "trap", "location", "weather", "wall"],
+  "stats": ["hp", "atk", "def", "mag", "res", "spd"],
+  "rarities": ["common", "uncommon", "rare", "epic", "legendary", "mythic"],
+  "constants": {
+    "boardWidth": 8,
+    "boardHeight": 7,
+    "maxLevel": 50,
+    "deckSize": 40,
+    "maxKnownMoves": 4,
+    "xpForLevelFormula": "floor(50 + 30*lvl + 5*lvl*lvl)",
+    "turnTimerMs": 120000,
+    "kalonChargesPerMatch": 3,
+    "wallHp": 50,
+    "statStageStep": 3,
+    "eggMoveMilestoneLevels": [5, 10, 15],
+    "fusionCoreBattlesToHatch": 3,
+    "campXpPerHour": 10,
+    "campXpCap": 240,
+    "campParkCostCinders": 5,
+    "campUnlockHeroLevel": 10,
+    "campMinCollection": 40,
+    "campStudyHours": 12,
+    "tutorUnlockAccountLevel": 5,
+    "playerMarketUnlock": { "heroes": 2, "heroLevel": 15 },
+    "cashoutUnlockHeroLevel": 15,
+    "cashoutCindersPerDollar": 5000,
+    "cashoutMinCinders": 500000,
+    "cashoutMinDollars": 100,
+    "marketReseedHours": 6,
+    "marketMinPrice": 5,
+    "marketMaxPrice": 9999
+  },
+  "currencies": [
+    { "id": "cinders", "field": "Profile.gems", "icon": "🔥", "type": "earned", "cashoutEligible": true },
+    { "id": "sovereigns", "alias": "Aza", "field": "Profile.sovereigns", "icon": "👑", "type": "premium" }
+  ],
+  "resources": ["food", "ammo", "water", "medicine", "supplies", "metal", "intel"],
+  "statusEffects": ["poison","burn","bleed","siphoned","stun","slow","haste","weak","strong","shielded","focused","frozen","sleep","confusion","paralysis","dispel","assisted","spectralHaze","stumble","protected","countering","rage","infected","happy","followLead","blessed","cursed","mirror","toxic","doom","reraise","moxie","knockdown"],
+  "passives": ["none","regeneration","raiseFromDead","forcedAscension","rebirthShift","phoenixRebirth","thorns","lifesteal","swift","tough","magicWard","warlord","archmage","guardian","inspire","venomous","bloodthirst","sunbather","rainmaker","dustcloak","stormborn","weatherweaver","weatherSummoner","energySpring","kalonChannel","taunt","physicalImmortal","magicalImmortal","physicalRetribution","magicalRetribution","sturdy","moxie","divineSmite","adaptability","sneakAttack","warriorOath","arcaneBond","packTactics","packLeader","flockFlight","swarmInstinct","mobTactics","hellbound","deathlyVigil","elementBond","faewish","dragonsBoon","constructed","holyAura","rootsOfLife","coldScales","xenoBond","geomancer","fireWard","waterWard","earthWard","windWard","lightWard","shadowWard","natureWard","stormWard","iceWard","arcaneWard","voidWard","bloodWard","wardVsWarrior","wardVsMage","wardVsRogue","wardVsBeast","wardVsBird","wardVsBug","wardVsDemon","wardVsUndead","wardVsDragon","wardVsConstruct","wardVsCelestial","wardVsGoblinoid","wardVsFairy","solarFlare","radiantAegis","sunforged","monsoonMight","tideHealer","stormChannel","sandShroud","dustForged","mistDancer","ambushSoul","eclipseLord"],
+  "natures": ["adamant","modest","bold","calm","brave","timid","careful","quiet","impish","lax","lonely","naive","naughty","sassy","mild","rash","relaxed","gentle","jolly","hardy","docile","bashful","quirky","serious"],
+  "traits": ["sturdy","keen","arcane","warded","hardy","balanced","brutal","ironhide","mystic","vigorous","tactician","stalwart","berserker","juggernaut","archmage","warbander","packhunter","necrobound","feywild","ancient","apex","dragonblood","sanguine"],
+  "kalonFormsBuiltIn": ["goblinKing","orcChampion","alphaWolf","archlich","infernoLord","broodmother"],
+  "perUnitProfileFields": ["level","xp","kills","statGains","evs","nature","bond","morale","trauma","corruption","fatigue","knownMoves","tutorMoves"],
+  "roguelite": {
+    "nodeTypes": ["battle","elite","boss","finalBoss","medical","market","treasure","event","randomEvent","mystery","rest","upgrade"],
+    "directional": "one-way (current node forward connections only)",
+    "rewardRule": "granted only on death or campaign completion; abandon forfeits all"
+  },
+  "camp": {
+    "deploySlotsBase": 6,
+    "activities": ["rest","loot","study","rescue","raidRival"],
+    "lootTiers": { "scout": "1h low", "raid": "3h medium", "deepRun": "6h high (permadeath)" },
+    "facilities": ["barracks","training","intel","medbay","lab","workshop","market","lounge","powerRelay"],
+    "psychology": ["trauma","corruption","fatigue","bond","morale"],
+    "outcomes": ["success","injured","MIA","KIA","desert","turn","rescued","trained","mutation"],
+    "rival": ["threat","reputation","truce","invasion (repelled/raided/overrun)","factionWar","kinship","grief"]
+  },
+  "multiplayer": {
+    "tables": ["matchmaking_queue","matches","resource_listings"],
+    "pairing": "client-side + poll fallback, deterministic creator, AI fallback timer",
+    "battleSync": "realtime channel; swapBattlePerspective mirrors units/blocks/owner/turn/currentTurn/gameOver; delta + full snapshot"
+  },
+  "forgeEditors": ["cards","moves","items","relics","packs","events","encounters","guides","starterDecks","aiDecks","structureDecks","campFacilityCosts","blackMarketPrices"],
+  "publishing": "single card_catalog row + Supabase Storage (art/sprites/audio); lookups resolve local Forge then published Catalog",
+  "see": { "elementsFactions": "/exports/elements-factions.json", "fullSpec": "/exports/game-mechanics.md" }
+}

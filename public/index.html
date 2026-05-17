@@ -54315,7 +54315,7 @@ const CHAT_SEND_COOLDOWN  = 1500;   // ms between sends (anti-spam)
 const CHAT_FETCH_LIMIT    = 60;     // messages pulled per room
 const CHAT_CACHE_CAP      = 120;    // max kept in memory per room
 const CHAT_BADWORDS = ['fuck','shit','bitch','asshole','cunt','nigger','faggot','retard','whore','slut'];
-const CHAT_SQL = "create table if not exists public.chat_messages (\n  id uuid primary key default gen_random_uuid(),\n  room text not null,\n  sender_id uuid not null references auth.users(id) on delete cascade,\n  recipient_id uuid references auth.users(id) on delete cascade,\n  sender_name text,\n  body text not null,\n  created_at timestamptz default now()\n);\ncreate index if not exists chat_room_time on public.chat_messages (room, created_at desc);\nalter table public.chat_messages enable row level security;\ndrop policy if exists chat_sel on public.chat_messages;\ncreate policy chat_sel on public.chat_messages for select to authenticated using (room = 'world' or sender_id = auth.uid() or recipient_id = auth.uid());\ndrop policy if exists chat_ins on public.chat_messages;\ncreate policy chat_ins on public.chat_messages for insert to authenticated with check (sender_id = auth.uid() and ((room = 'world' and recipient_id is null) or (recipient_id is not null)));\ndrop policy if exists chat_del on public.chat_messages;\ncreate policy chat_del on public.chat_messages for delete to authenticated using (sender_id = auth.uid());\n-- Optional (instant delivery instead of the safety poll):\n-- alter publication supabase_realtime add table public.chat_messages;";
+const CHAT_SQL = "create table if not exists public.chat_messages (\n  id uuid primary key default gen_random_uuid(),\n  room text not null,\n  sender_id uuid not null references auth.users(id) on delete cascade,\n  recipient_id uuid references auth.users(id) on delete cascade,\n  sender_name text,\n  body text not null,\n  created_at timestamptz default now()\n);\ncreate index if not exists chat_room_time on public.chat_messages (room, created_at desc);\nalter table public.chat_messages enable row level security;\ndrop policy if exists chat_sel on public.chat_messages;\ncreate policy chat_sel on public.chat_messages for select to authenticated using (room in ('world','trade') or sender_id = auth.uid() or recipient_id = auth.uid());\ndrop policy if exists chat_ins on public.chat_messages;\ncreate policy chat_ins on public.chat_messages for insert to authenticated with check (sender_id = auth.uid() and ((room in ('world','trade') and recipient_id is null) or (recipient_id is not null)));\ndrop policy if exists chat_del on public.chat_messages;\ncreate policy chat_del on public.chat_messages for delete to authenticated using (sender_id = auth.uid());\n-- Optional (instant delivery instead of the safety poll):\n-- alter publication supabase_realtime add table public.chat_messages;";
 
 const Chat = {
   open: false, view: 'world', dmUserId: null, dmName: null,
@@ -54338,7 +54338,19 @@ function _chatCurRoom() {
   if (Chat.view === 'dm' && Chat.dmUserId && Profile.cloud && Profile.cloud.userId) {
     return _chatRoomDm(Profile.cloud.userId, Chat.dmUserId);
   }
+  if (Chat.view === 'trade') return 'trade';
   return 'world';
+}
+// Extract @mentions (card / item / hero / resource / relic the trader names).
+function _chatMentions(body) {
+  const out = []; const re = /@([^\s@#&;]{2,40})/g; let m;
+  while ((m = re.exec(String(body || '')))) { const v = m[1].trim(); if (v) out.push(v); }
+  return out;
+}
+// Escape, then highlight @mentions so traders' callouts pop.
+function _chatRenderBody(body) {
+  return escapeHtml(String(body || '')).replace(/@([^\s@#&;]{2,40})/g,
+    '<span style="color:#ffcf5a;font-weight:700;background:rgba(255,207,90,0.12);border-radius:3px;padding:0 3px">@$1</span>');
 }
 // Clean + lightly sanitize an outgoing message (public-room safety baseline).
 function _chatClean(s) {
@@ -54405,11 +54417,22 @@ function _chatPush(room, row) {
 function _chatOnInsert(row) {
   if (!row || !row.room) return;
   const me = Profile.cloud && Profile.cloud.userId;
-  const isWorld = row.room === 'world';
+  const isPublic = row.room === 'world' || row.room === 'trade';
   const isMine  = row.sender_id === me || row.recipient_id === me;
-  if (!isWorld && !isMine) return;                 // RLS already filters, belt+braces
+  if (!isPublic && !isMine) return;                // RLS already filters, belt+braces
+  if (Chat.blocked[row.sender_id] && row.sender_id !== me) return; // muted user
   _chatPush(row.room, row);
   const viewing = Chat.open && _chatCurRoom() === row.room;
+  // 🤝 Trade ping — a trade-room message that @-mentions a card/item/hero/
+  // resource/relic pings everyone watching for trades (toast on every
+  // receiver, even if they're not on the Trades tab).
+  if (row.room === 'trade' && row.sender_id !== me) {
+    const ms = _chatMentions(row.body);
+    if (ms.length) {
+      const more = ms.length > 1 ? ` (+${ms.length - 1})` : '';
+      showToast(`🤝 ${(row.sender_name || 'Someone')} — looking to trade: @${ms[0]}${more}`, 5000);
+    }
+  }
   if (viewing) { _chatRenderOverlay(); }
   else if (row.sender_id !== me) { Chat.unread++; _chatUpdateFab(); }
 }
@@ -54512,8 +54535,8 @@ function _chatMsgRowHtml(m) {
   const online = FriendsCache.online && FriendsCache.online.has(m.sender_id);
   const t = (() => { try { const d = new Date(m.created_at); return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } })();
   return `<div style="margin:0.3rem 0;${mine ? 'text-align:right' : ''}">
-    <div style="font-size:0.66rem;color:#9aa0a6">${online && !mine ? '<span style="color:#5fae7a">●</span> ' : ''}<strong style="color:${mine ? '#7be0a0' : '#cdbfe6'}">${escapeHtml(m.sender_name || 'Player')}</strong> <span class="ink-dim">${t}</span>${(!mine && m.sender_id) ? ` <button data-chat-block="${escapeHtml(m.sender_id)}" title="Block (hide their messages)" style="background:none;border:none;color:#7a7f8c;cursor:pointer;font-size:0.66rem">⊘</button>` : ''}</div>
-    <div style="display:inline-block;max-width:85%;padding:0.35rem 0.6rem;border-radius:8px;background:${mine ? 'rgba(123,224,160,0.14)' : 'rgba(255,255,255,0.06)'};color:#e8e0f4;font-size:0.86rem;word-break:break-word">${escapeHtml(m.body || '')}</div>
+    <div style="font-size:0.66rem;color:#9aa0a6">${online && !mine ? '<span style="color:#5fae7a">●</span> ' : ''}<strong style="color:${mine ? '#7be0a0' : '#cdbfe6'}">${escapeHtml(m.sender_name || 'Player')}</strong> <span class="ink-dim">${t}</span>${(!mine && m.sender_id) ? ` <button data-chat-block="${escapeHtml(m.sender_id)}" data-chat-blockname="${escapeHtml(m.sender_name || '')}" title="Block (hide their messages)" style="background:none;border:none;color:#7a7f8c;cursor:pointer;font-size:0.66rem">⊘</button>` : ''}</div>
+    <div style="display:inline-block;max-width:85%;padding:0.35rem 0.6rem;border-radius:8px;background:${mine ? 'rgba(123,224,160,0.14)' : 'rgba(255,255,255,0.06)'};color:#e8e0f4;font-size:0.86rem;word-break:break-word">${_chatRenderBody(m.body)}</div>
   </div>`;
 }
 function _chatRenderOverlay() {
@@ -54571,12 +54594,29 @@ function _chatRenderOverlay() {
         ${inc ? `<div style="margin-bottom:0.6rem"><div class="small-text" style="color:#ffd166">Friend requests</div>${inc}</div>` : ''}
         <div class="small-text" style="color:#9aa0a6;margin-bottom:0.2rem">Friends · <span style="color:#5fae7a">${FriendsCache.list ? FriendsCache.list.filter(f => FriendsCache.online.has(f.otherId)).length : 0} online</span></div>
         ${frHtml}
+        ${(() => {
+          const ids = Object.keys(Chat.blocked || {});
+          if (!ids.length) return '';
+          return `<div style="margin-top:0.8rem;border-top:1px solid rgba(255,255,255,0.06);padding-top:0.5rem">
+            <div class="small-text" style="color:#e0879a;margin-bottom:0.25rem">Blocked <span class="ink-dim">(this session — also clears on reload)</span></div>
+            ${ids.map(id => `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.2rem">
+              <span style="flex:1;color:#c9a">${escapeHtml(typeof Chat.blocked[id] === 'string' ? Chat.blocked[id] : ('player-' + String(id).slice(0, 6)))}</span>
+              <button class="btn-mini" data-chat-unblock="${escapeHtml(id)}">Unblock</button>
+            </div>`).join('')}
+          </div>`;
+        })()}
       </div>`;
     } else {
       const empty = list.length === 0 ? `<div class="ink-dim small-text" style="padding:1rem;text-align:center">${Chat.view === 'dm' ? 'No messages yet — say hi!' : 'No messages yet. Be the first to say something!'}</div>` : '';
-      body = `<div id="chat-scroll" style="flex:1;overflow-y:auto;padding:0.4rem 0.7rem">${empty}${list.map(_chatMsgRowHtml).join('')}</div>
+      const _ph = Chat.view === 'dm' ? 'Message ' + escapeHtml(Chat.dmName || '') + '…'
+        : Chat.view === 'trade' ? 'LFT / offering — use @ to mention a card, item, hero, resource or relic…'
+        : 'Message the world…';
+      const _tradeHint = Chat.view === 'trade'
+        ? `<div class="small-text" style="padding:0.4rem 0.7rem;color:#ffcf5a;background:rgba(255,207,90,0.06);border-bottom:1px solid rgba(255,207,90,0.15)">🤝 Looking for trades? Post here. Type <strong>@</strong> before a card / item / hero / resource / relic name — it highlights and pings everyone watching Trades.</div>`
+        : '';
+      body = `${_tradeHint}<div id="chat-scroll" style="flex:1;overflow-y:auto;padding:0.4rem 0.7rem">${empty}${list.map(_chatMsgRowHtml).join('')}</div>
         <div style="display:flex;gap:0.4rem;padding:0.5rem;border-top:1px solid rgba(255,255,255,0.08)">
-          <input id="chat-input" maxlength="${CHAT_MAX_LEN}" placeholder="${Chat.view === 'dm' ? 'Message ' + escapeHtml(Chat.dmName || '') + '…' : 'Message the world…'}" style="flex:1;background:#0c0a18;border:1px solid #2a2440;border-radius:8px;color:#e8e0f4;padding:0.45rem 0.6rem;font-size:0.85rem">
+          <input id="chat-input" maxlength="${CHAT_MAX_LEN}" placeholder="${_ph}" style="flex:1;background:#0c0a18;border:1px solid #2a2440;border-radius:8px;color:#e8e0f4;padding:0.45rem 0.6rem;font-size:0.85rem">
           <button class="btn-primary btn-mini" id="chat-send">Send</button>
         </div>`;
     }
@@ -54587,6 +54627,7 @@ function _chatRenderOverlay() {
         <span class="small-text ink-dim"><span style="color:#5fae7a">●</span> ${onlineCount} online</span>
         <div style="margin-left:auto;display:flex;gap:0.35rem">
           ${tab('world', '🌍 World')}
+          ${tab('trade', '🤝 Trades')}
           ${tab('friends', '👥 Friends')}
           ${Chat.view === 'dm' ? `<button class="btn-mini btn-primary">✉ ${escapeHtml(Chat.dmName || 'DM')}</button>` : ''}
           <button class="btn-mini" id="chat-close">✕</button>
@@ -54614,7 +54655,8 @@ function _chatRenderOverlay() {
     const send = () => { const i = document.getElementById('chat-input'); if (!i) return; const v = i.value; i.value = ''; chatSend(v); };
     const sBtn = document.getElementById('chat-send'); if (sBtn) sBtn.onclick = send;
     const inp = document.getElementById('chat-input'); if (inp) { inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } }; }
-    el.querySelectorAll('[data-chat-block]').forEach(b => b.onclick = () => { Chat.blocked[b.dataset.chatBlock] = true; showToast('User blocked (local).', 1800); _chatRenderOverlay(); });
+    el.querySelectorAll('[data-chat-block]').forEach(b => b.onclick = () => { Chat.blocked[b.dataset.chatBlock] = b.dataset.chatBlockname || true; showToast('User blocked — Unblock anytime in the Friends tab.', 2600); _chatRenderOverlay(); });
+    el.querySelectorAll('[data-chat-unblock]').forEach(b => b.onclick = () => { delete Chat.blocked[b.dataset.chatUnblock]; showToast('User unblocked.', 1800); _chatRenderOverlay(); });
     el.querySelectorAll('[data-chat-dm]').forEach(b => b.onclick = () => chatOpenDM(b.dataset.chatDm, b.dataset.chatDmname));
     el.querySelectorAll('[data-chat-unfriend]').forEach(b => b.onclick = async () => { await removeFriend(b.dataset.chatUnfriend); await refreshFriendsCache(); _chatRenderOverlay(); });
     el.querySelectorAll('[data-chat-acc]').forEach(b => b.onclick = async () => { await respondToFriendRequest(b.dataset.chatAcc, true); await refreshFriendsCache(); _chatRenderOverlay(); });

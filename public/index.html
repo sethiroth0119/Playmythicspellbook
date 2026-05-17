@@ -20261,7 +20261,7 @@ const CAMP_AMBIENT_MUSIC_SRC = 'assets/Audio/Camp%20music.mp3';
 const CAMP_AMBIENT_SCREENS = new Set([
   'lab', 'deck', 'vendorMarket', 'collection', 'data',
   'bookOfKnowledge', 'achievements', 'profile', 'friends',
-  'settings', 'daily', 'camp', 'replays', 'leaderboard',
+  'settings', 'daily', 'camp', 'replays', 'leaderboard', 'gymWars',
 ]);
 function isInCampAmbient() {
   if (typeof App === 'undefined' || !App) return false;
@@ -20919,6 +20919,16 @@ const Profile = {
     },
     // Settings for ranked play
     rankedOptIn: false,          // Player has acknowledged ranked rules
+  },
+  // 🏛️ GYM CORE WARS — local progression. `badges` maps coreId → { earnedAt }.
+  // Collect all 8 (PvE "Core Trials") to unlock challenging online Gym Leaders.
+  // `history` is a local trophy log of gyms this player has held; the canonical
+  // online state lives in Supabase (GymWars module).
+  gymWars: {
+    badges: {},                  // { fire:{earnedAt}, void:{...}, ... }
+    history: [],                 // [{ coreId, claimedAt, lostAt, peakStreak }]
+    supporterOf: null,           // coreId this player currently supports
+    seasonSeen: 1,               // last season the player acknowledged
   },
   // Per-deck identity history — wins, tournament placements, legacy.
   // Keyed by deck.id. Mirrors the Tournament Codex feature.
@@ -23460,6 +23470,298 @@ async function resMarketCancel(listing) {
   }
   await resMarketFetch();
   return true;
+}
+
+// ============================================================================
+// 🏛️ GYM CORE WARS — persistent online gym / territory system.
+// Phase 1 foundation: 8 Cores, each with a themed Gym-Leader NPC + AI deck
+// (PvE "Core Trial"). Win a Trial → earn that Core Badge. Collect all 8 →
+// unlock challenging the live online Gym Leaders. Online ownership / Hall of
+// Legends / stamina / supporters are Supabase-backed and degrade gracefully
+// offline (one-time GYM_WARS_SQL setup, same pattern as the resource exchange).
+// Async-defended by default — a snapshot of the leader's hero+deck is
+// AI-piloted so gyms are always challengeable; live-defense override is a
+// later phase.
+// ============================================================================
+const GYM_CORES = [
+  { id:'fire',      name:'Fire Core',      element:'fire',       faction:'berserker', color:'#ff7755', icon:'🔥', leader:'Ignar the Emberlord',   arena:'The Cinder Colosseum',     blurb:'Aggression incarnate — burn them down before they set up.' },
+  { id:'void',      name:'Void Core',      element:'void',       faction:'eldritch',  color:'#7a5fae', icon:'⚫', leader:'Naxithe the Hollow',    arena:'The Unmaking',             blurb:'Deny tempo and resources — win from nothing.' },
+  { id:'nature',    name:'Nature Core',    element:'nature',     faction:'plant',     color:'#6ad880', icon:'🌿', leader:'Sylphara Rootmother',   arena:'The Verdant Spiral',       blurb:'Outvalue and outgrow — the long game always wins.' },
+  { id:'celestial', name:'Celestial Core', element:'light',      faction:'celestial', color:'#ffd166', icon:'😇', leader:'Auriel the Radiant',    arena:'The Ascendant Court',      blurb:'Protection and judgment — punish every misstep.' },
+  { id:'blood',     name:'Blood Core',     element:'blood',      faction:'vampire',   color:'#cc2a3a', icon:'🩸', leader:'Countess Vhraal',       arena:'The Crimson Sanctum',      blurb:'Pay life for power — lifesteal turns the tide.' },
+  { id:'machine',   name:'Machine Core',   element:'metal',      faction:'construct', color:'#9fb4c6', icon:'⚙️', leader:'Unit-Zero “Magnus”',    arena:'The Forgeworks',           blurb:'Relentless engines — value compounds every turn.' },
+  { id:'storm',     name:'Storm Core',     element:'storm',      faction:'elemental', color:'#9b8bff', icon:'⚡', leader:'Vael Tempestcaller',    arena:'The Eye of the Maelstrom', blurb:'Burst and chain — explosive multi-target swings.' },
+  { id:'chaos',     name:'Chaos Core',     element:'corruption', faction:'corrupted', color:'#8aa83a', icon:'☣️', leader:'The Unbound One',       arena:'The Fracture',             blurb:'Nothing is fair — embrace the swing and the spiral.' },
+];
+const GYM_CORE_IDS = GYM_CORES.map(c => c.id);
+function getGymCore(id) { return GYM_CORES.find(c => c.id === id) || null; }
+
+// Stamina tuning (client-modelled; the gym row stores base + timestamp and we
+// regen lazily on read, same approach as resource-listing TTLs).
+const GYM_STAMINA_MAX          = 100;
+const GYM_STAMINA_PER_DEFENSE  = 14;   // drained each time the gym is challenged
+const GYM_STAMINA_REGEN_PER_HR = 10;   // base passive regen
+const GYM_STAMINA_LOW          = 30;   // below → defender bonus weakens
+const GYM_STAMINA_CRITICAL     = 10;   // below → gym is "Exposed"
+const GYM_SEASON_LENGTH_DAYS   = 30;
+
+// ---- Local badge helpers ----
+function _ensureGymWars() {
+  if (!Profile.gymWars || typeof Profile.gymWars !== 'object') Profile.gymWars = { badges:{}, history:[], supporterOf:null, seasonSeen:1 };
+  if (!Profile.gymWars.badges || typeof Profile.gymWars.badges !== 'object') Profile.gymWars.badges = {};
+  if (!Array.isArray(Profile.gymWars.history)) Profile.gymWars.history = [];
+  return Profile.gymWars;
+}
+function gymBadges()      { return _ensureGymWars().badges; }
+function hasGymBadge(id)  { return !!gymBadges()[id]; }
+function gymBadgeCount()  { return GYM_CORE_IDS.filter(hasGymBadge).length; }
+function allGymBadges()   { return gymBadgeCount() >= GYM_CORE_IDS.length; }
+function awardGymBadge(coreId) {
+  if (!getGymCore(coreId)) return false;
+  const gw = _ensureGymWars();
+  if (gw.badges[coreId]) return false;       // already earned — Trials replayable, no dup
+  gw.badges[coreId] = { earnedAt: Date.now() };
+  try { saveProfile(); } catch (e) {}
+  return true;
+}
+
+// Difficulty curve for Core Trials — scales with how many badges you hold so
+// the gauntlet ramps up. Clamped to a sane band.
+function gymTrialLevel(coreId) {
+  const base = 16 + gymBadgeCount() * 3;
+  return Math.max(12, Math.min(48, base));
+}
+
+// ---- One-time Supabase setup (run once in the SQL editor, like the
+// resource-exchange schema). Idempotent: safe to re-run. ----
+const GYM_WARS_SQL = "create table if not exists public.gyms (\n  core_id text primary key,\n  leader_id uuid references auth.users(id) on delete set null,\n  leader_name text,\n  leader_hero_id text,\n  leader_hero_name text,\n  leader_deck jsonb,\n  leader_cosmetic jsonb default '{}'::jsonb,\n  defense_streak integer not null default 0,\n  peak_streak integer not null default 0,\n  stamina integer not null default 100,\n  stamina_at timestamptz default now(),\n  gym_level integer not null default 1,\n  hq jsonb default '{}'::jsonb,\n  season integer not null default 1,\n  claimed_at timestamptz,\n  updated_at timestamptz default now()\n);\ncreate table if not exists public.gym_history (\n  id uuid primary key default gen_random_uuid(),\n  core_id text not null,\n  user_id uuid,\n  leader_name text,\n  hero_id text,\n  hero_name text,\n  claimed_at timestamptz default now(),\n  lost_at timestamptz,\n  reign_seconds bigint default 0,\n  peak_streak integer default 0,\n  season integer default 1\n);\ncreate table if not exists public.gym_supporters (\n  id uuid primary key default gen_random_uuid(),\n  core_id text not null,\n  user_id uuid not null references auth.users(id) on delete cascade,\n  supporter_name text,\n  contribution integer not null default 0,\n  role text default 'supporter',\n  season integer not null default 1,\n  updated_at timestamptz default now(),\n  unique (core_id, user_id, season)\n);\ncreate table if not exists public.gym_meta (\n  id integer primary key default 1,\n  current_season integer not null default 1,\n  season_started_at timestamptz default now()\n);\ninsert into public.gym_meta (id) values (1) on conflict (id) do nothing;\ninsert into public.gyms (core_id) values ('fire'),('void'),('nature'),('celestial'),('blood'),('machine'),('storm'),('chaos') on conflict (core_id) do nothing;\nalter table public.gyms enable row level security;\nalter table public.gym_history enable row level security;\nalter table public.gym_supporters enable row level security;\nalter table public.gym_meta enable row level security;\ndrop policy if exists gym_sel on public.gyms;\ncreate policy gym_sel on public.gyms for select to authenticated using (true);\ndrop policy if exists gym_ins on public.gyms;\ncreate policy gym_ins on public.gyms for insert to authenticated with check (true);\ndrop policy if exists gym_upd on public.gyms;\ncreate policy gym_upd on public.gyms for update to authenticated using (true) with check (true);\ndrop policy if exists gh_sel on public.gym_history;\ncreate policy gh_sel on public.gym_history for select to authenticated using (true);\ndrop policy if exists gh_ins on public.gym_history;\ncreate policy gh_ins on public.gym_history for insert to authenticated with check (true);\ndrop policy if exists gh_upd on public.gym_history;\ncreate policy gh_upd on public.gym_history for update to authenticated using (true) with check (true);\ndrop policy if exists gs_sel on public.gym_supporters;\ncreate policy gs_sel on public.gym_supporters for select to authenticated using (true);\ndrop policy if exists gs_ins on public.gym_supporters;\ncreate policy gs_ins on public.gym_supporters for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists gs_upd on public.gym_supporters;\ncreate policy gs_upd on public.gym_supporters for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists gm_sel on public.gym_meta;\ncreate policy gm_sel on public.gym_meta for select to authenticated using (true);\ndrop policy if exists gm_upd on public.gym_meta;\ncreate policy gm_upd on public.gym_meta for update to authenticated using (true) with check (true);";
+
+const GymWars = {
+  gyms: {},                 // core_id -> row (online state)
+  meta: { season: 1 },
+  tableMissing: false,
+  lastFetch: 0,
+  loading: false,
+  _err: null,
+};
+function _gymMarkErr(e) {
+  const msg = (e && (e.message || e.code || '')) + '';
+  if (/gyms|gym_history|gym_supporters|gym_meta|relation|does not exist|schema cache|PGRST205|42P01/i.test(msg)) GymWars.tableMissing = true;
+  GymWars._err = msg;
+  return null;
+}
+async function gymFetchAll() {
+  if (!initCloud() || !Profile.cloud.signedIn) return;
+  if (GymWars.loading) return;
+  GymWars.loading = true;
+  try {
+    const { data, error } = await Cloud.client.from('gyms').select('*');
+    if (error) { _gymMarkErr(error); return; }
+    GymWars.tableMissing = false;
+    const map = {};
+    (data || []).forEach(r => { if (r && r.core_id) map[r.core_id] = r; });
+    GymWars.gyms = map;
+    try {
+      const { data: m } = await Cloud.client.from('gym_meta').select('*').eq('id', 1).maybeSingle();
+      if (m) GymWars.meta = { season: m.current_season || 1, startedAt: m.season_started_at };
+    } catch (e) {}
+    GymWars.lastFetch = Date.now();
+  } catch (e) { _gymMarkErr(e); }
+  finally { GymWars.loading = false; }
+}
+// Lazy stamina: stored base regenerates over time since stamina_at.
+function gymStaminaNow(row) {
+  if (!row) return GYM_STAMINA_MAX;
+  const base = (typeof row.stamina === 'number') ? row.stamina : GYM_STAMINA_MAX;
+  const t = row.stamina_at ? Date.parse(row.stamina_at) : NaN;
+  if (isNaN(t)) return Math.max(0, Math.min(GYM_STAMINA_MAX, base));
+  const hrs = Math.max(0, (Date.now() - t) / 3600000);
+  return Math.max(0, Math.min(GYM_STAMINA_MAX, Math.round(base + hrs * GYM_STAMINA_REGEN_PER_HR)));
+}
+function gymStaminaState(row) {
+  const s = gymStaminaNow(row);
+  if (s <= GYM_STAMINA_CRITICAL) return { s, label:'Exposed',  color:'#ff5a6a' };
+  if (s <= GYM_STAMINA_LOW)      return { s, label:'Weakened', color:'#ffb070' };
+  return { s, label:'Fortified', color:'#7be0a0' };
+}
+function gymRow(coreId) { return GymWars.gyms[coreId] || null; }
+function gymIsOwn(row)  { return !!(row && row.leader_id && Profile.cloud && row.leader_id === Profile.cloud.userId); }
+function myLedGym()     { return Object.values(GymWars.gyms).find(r => gymIsOwn(r)) || null; }
+
+// Launch a Core Trial (PvE) or a Gym-Leader Challenge. Routes through the
+// normal deck-select → VS → battle flow; the gym context is consumed in
+// startWithHero and resolved in recordBattleProgress / gymAfterBattle.
+function startGymBattle(coreId, mode) {
+  if (!getGymCore(coreId)) return;
+  App._gymBattlePending = { coreId: coreId, mode: mode || 'trial' };
+  App.selectedHero = App.selectedHero || (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES[0] && STARTER_HEROES[0].id) || null;
+  App.screen = 'deckSelect';
+  render();
+}
+
+// Post-battle return path for any gym battle — applies the result toast and
+// routes back to the gym hub. (Online ownership transfer is committed here in
+// the online phase; Phase 1 handles the PvE Core Trial badge award.)
+function gymAfterBattle() {
+  const p = App._gymPendingAfterBattle;
+  App._gymPendingAfterBattle = null;
+  App.state = null;
+  App.ui = App.ui || {}; App.ui._gameOverHidden = false;
+  if (p) {
+    const core = getGymCore(p.coreId);
+    const cn = core ? core.name : 'Core';
+    if (p.mode === 'trial' && p.won) {
+      if (p.newBadge) {
+        showToast(`✦ ${cn} Badge earned!  (${gymBadgeCount()}/8)`, 4200);
+        if (allGymBadges()) setTimeout(() => { try { showToast('🏛️ All 8 Cores collected — you can now challenge online Gym Leaders!', 5200); } catch (e) {} }, 1300);
+      } else {
+        showToast(`⚔ ${cn} Trial cleared.`, 2600);
+      }
+    } else if (p.mode === 'trial' && !p.won) {
+      showToast(`Defeated at the ${cn} Trial — train up and try again.`, 3200);
+    } else if (p.mode === 'challenge') {
+      // Wired to the Supabase ownership transfer in the online phase.
+      showToast(p.won ? `🏛️ You bested the ${cn} Gym Leader!` : `Held off at the ${cn} gym — regroup and return.`, 3400);
+    }
+  }
+  App.screen = 'gymWars';
+  render();
+}
+
+function renderGymWars() {
+  // Pull live gym ownership in the background (staleness-guarded). Re-render
+  // when it lands so the cards fill in without blocking the PvE loop.
+  if (Profile.cloud && Profile.cloud.signedIn && !GymWars.loading
+      && (Date.now() - GymWars.lastFetch > 120000)) {
+    gymFetchAll().then(() => { if (App.screen === 'gymWars') render(); });
+  }
+  const _isAdm = (typeof isAdmin === 'function') && isAdmin();
+  const n = gymBadgeCount();
+  const allDone = allGymBadges();
+  const online = Profile.cloud && Profile.cloud.signedIn;
+
+  // ---- Badge progress strip (8 core sigils) ----
+  const sigils = GYM_CORES.map(c => {
+    const got = hasGymBadge(c.id);
+    return `<span title="${escapeHtml(c.name)}${got ? ' — earned' : ' — locked'}" style="display:inline-flex;flex-direction:column;align-items:center;gap:2px;opacity:${got ? 1 : 0.32};filter:${got ? 'none' : 'grayscale(1)'}">
+      <span style="font-size:1.5rem;line-height:1">${c.icon}</span>
+      <span style="font-size:0.58rem;letter-spacing:0.04em;color:${got ? c.color : '#7a7f8c'}">${got ? '✓' : '🔒'}</span>
+    </span>`;
+  }).join('');
+
+  // ---- One-time setup notice (admins run the SQL; players just see PvE) ----
+  let setupHtml = '';
+  if (online && GymWars.tableMissing) {
+    setupHtml = _isAdm
+      ? `<div style="background:rgba(224,85,106,0.08);border:1px solid rgba(224,85,106,0.35);border-radius:8px;padding:1rem 1.2rem;margin:0 auto 1.2rem;max-width:860px">
+          <div style="font-family:'Cinzel',serif;color:#e0879a;font-size:1.05rem;margin-bottom:0.4rem">⚠ Gym Core Wars needs a one-time setup</div>
+          <div class="small-text ink-dim" style="margin-bottom:0.6rem">Run this once in your Supabase SQL editor, then press Retry. PvE Core Trials work without it.</div>
+          <textarea readonly id="gym-sql" style="width:100%;height:150px;background:#0a0d13;color:#cbd5e8;border:1px solid #243042;border-radius:6px;font-family:monospace;font-size:0.68rem;padding:0.6rem">${escapeHtml(GYM_WARS_SQL)}</textarea>
+          <div style="margin-top:0.6rem;display:flex;gap:0.5rem">
+            <button class="btn-mini" id="gym-sql-copy">📋 Copy SQL</button>
+            <button class="btn-mini" id="gym-sql-retry">↻ Retry</button>
+          </div>
+        </div>`
+      : `<div class="small-text ink-dim" style="text-align:center;margin:0 auto 1rem;max-width:620px">🏛️ Online gyms are warming up — Core Trials are open now. Live Gym Leaders appear once the world is set up.</div>`;
+  }
+
+  // ---- The 8 Core gym cards ----
+  const cards = GYM_CORES.map(c => {
+    const got = hasGymBadge(c.id);
+    const row = gymRow(c.id);
+    const mine = gymIsOwn(row);
+    const lvl = gymTrialLevel(c.id);
+    let leaderLine;
+    if (row && row.leader_name) {
+      const st = gymStaminaState(row);
+      leaderLine = `<div style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid rgba(255,255,255,0.08)">
+        <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+          <span style="font-size:0.95rem">👑</span>
+          <strong style="color:#f6d97a">${escapeHtml(row.leader_name)}</strong>
+          ${mine ? '<span style="font-size:0.6rem;font-weight:700;color:#7be0a0;border:1px solid #7be0a0;border-radius:4px;padding:1px 5px">YOUR GYM</span>' : ''}
+        </div>
+        <div class="small-text ink-dim" style="margin-top:3px">🛡 ${row.defense_streak || 0} defense streak · <span style="color:${st.color}">${st.label} (${st.s}%)</span></div>
+      </div>`;
+    } else {
+      leaderLine = `<div class="small-text ink-dim" style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid rgba(255,255,255,0.08)">${online ? '○ Vacant — no online leader yet' : '○ Sign in to see online leaders'}</div>`;
+    }
+    // Challenge gating (the online claim is committed in the next phase; the
+    // button is honest about its state so nothing feels broken).
+    const canChallenge = allDone && online && !GymWars.tableMissing;
+    const challengeAttr = canChallenge ? '' : 'disabled';
+    const challengeTip = !allDone ? `Collect all 8 Core Badges (${n}/8)`
+      : !online ? 'Sign in to challenge online gyms'
+      : GymWars.tableMissing ? 'Online gyms not set up yet'
+      : 'Challenge for control of this gym';
+    return `
+      <div style="position:relative;background:linear-gradient(160deg, ${c.color}1f, rgba(12,10,20,0.86));border:1px solid ${c.color}66;border-left:5px solid ${c.color};border-radius:12px;padding:1rem 1.1rem;display:flex;flex-direction:column;box-shadow:0 6px 22px rgba(0,0,0,0.45)">
+        <div style="display:flex;align-items:center;gap:0.7rem">
+          <span style="font-size:2.1rem;line-height:1;filter:drop-shadow(0 2px 6px ${c.color}aa)">${c.icon}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-family:'Cinzel',serif;font-size:1.12rem;color:${c.color}">${escapeHtml(c.name)}</div>
+            <div class="small-text ink-dim" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(c.arena)}</div>
+          </div>
+          <span style="font-size:0.62rem;font-weight:800;letter-spacing:0.05em;color:${got ? c.color : '#80828c'};border:1px solid ${got ? c.color : '#80828c'};border-radius:5px;padding:2px 7px">${got ? '✓ BADGE' : '🔒 LOCKED'}</span>
+        </div>
+        <div class="small-text" style="color:#cdbfe6;margin-top:0.55rem;line-height:1.45">${escapeHtml(c.blurb)}</div>
+        <div class="small-text ink-dim" style="margin-top:0.35rem">Gym Leader NPC: <strong style="color:#e8d9b0">${escapeHtml(c.leader)}</strong> · Trial Lv ${lvl}</div>
+        ${leaderLine}
+        <div style="display:flex;gap:0.5rem;margin-top:0.8rem">
+          <button class="btn-secondary btn-mini" data-gym-trial="${c.id}" style="flex:1;border-color:${c.color}88">${got ? '⚔ Re-challenge Trial' : '⚔ Core Trial'}</button>
+          <button class="btn-primary btn-mini" data-gym-challenge="${c.id}" ${challengeAttr} title="${escapeHtml(challengeTip)}" style="flex:1">🏛 Challenge Leader</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  const seasonTxt = (GymWars.meta && GymWars.meta.season) ? `Season ${GymWars.meta.season}` : 'Season 1';
+
+  root.innerHTML = `
+    <div class="campaign-page" style="max-width:1180px;margin:0 auto">
+      <div class="campaign-header">
+        <div>
+          <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🏛️ Gym Core Wars</h2>
+          <div class="small-text ink-dim">Conquer 8 Core Trials, then seize and defend the world's gyms. ${escapeHtml(seasonTxt)}.</div>
+        </div>
+        <button class="btn-secondary btn-mini" id="gym-back">← Menu</button>
+      </div>
+
+      <div style="background:rgba(255,207,90,0.06);border:1px solid rgba(255,207,90,0.28);border-radius:10px;padding:0.85rem 1.1rem;margin-bottom:1.1rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+        <div style="display:flex;gap:0.65rem;align-items:flex-end">${sigils}</div>
+        <div style="flex:1;min-width:200px">
+          <div style="font-family:'Cinzel',serif;color:#ffcf5a;font-size:1.05rem">${n} / 8 Core Badges</div>
+          <div class="small-text ink-dim">${allDone ? 'All Cores mastered — the online gauntlet is open. Challenge a Gym Leader to take their gym.' : 'Beat each Core Trial once to earn its badge. Collect all 8 to challenge online Gym Leaders.'}</div>
+        </div>
+      </div>
+
+      ${setupHtml}
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:1rem">
+        ${cards}
+      </div>
+
+      <div class="small-text ink-dim" style="text-align:center;margin-top:1.4rem;max-width:720px;margin-left:auto;margin-right:auto">
+        Core Trials are PvE — beat the Gym Leader NPC's deck. Difficulty scales with the badges you hold. Online gym ownership, Hall of Legends, stamina and supporters come online with the live world.
+      </div>
+    </div>
+  `;
+
+  const back = document.getElementById('gym-back');
+  if (back) back.onclick = () => { App.screen = 'title'; App.titleHub = 'battle'; render(); };
+  const sc = document.getElementById('gym-sql-copy');
+  if (sc) sc.onclick = () => { try { navigator.clipboard.writeText(GYM_WARS_SQL); showToast('📋 SQL copied.'); } catch (e) { const t = document.getElementById('gym-sql'); if (t) t.select(); } };
+  const sr = document.getElementById('gym-sql-retry');
+  if (sr) sr.onclick = () => { GymWars.tableMissing = false; GymWars.lastFetch = 0; gymFetchAll().then(render); };
+  document.querySelectorAll('[data-gym-trial]').forEach(b => {
+    b.onclick = () => startGymBattle(b.dataset.gymTrial, 'trial');
+  });
+  document.querySelectorAll('[data-gym-challenge]').forEach(b => {
+    b.onclick = () => {
+      if (b.disabled) return;
+      // The live ownership challenge is committed in the online phase. Until
+      // then, be honest rather than silently no-op.
+      showToast('🏛️ Online Gym Leader challenges go live in the next update — your 8 Cores are ready.', 4200);
+    };
+  });
 }
 
 function cardSnapshotForListing(card) { return JSON.parse(JSON.stringify(card)); }
@@ -32494,6 +32796,7 @@ function render() {
   if (App.screen === 'replays')      return renderReplaysList();
   if (App.screen === 'replayViewer') return renderReplayViewer();
   if (App.screen === 'leaderboard')  return renderLeaderboard();
+  if (App.screen === 'gymWars')      return renderGymWars();
   if (App.screen === 'settings')     return renderSettings();
   if (App.screen === 'profile')      return renderProfile();
   if (App.screen === 'friends')      return renderFriends();
@@ -32780,6 +33083,20 @@ function renderTitle() {
           return null;
         })(),
         onclick: () => { App.screen = 'coliseum'; App.coliseumTab = App.coliseumTab || 'ranked'; render(); } },
+      // 🏛️ Gym Core Wars — the persistent online gym/territory system. Always
+      // visible. PvE Core Trials collect 8 badges → unlock challenging the
+      // live online Gym Leaders.
+      { id: 'btn-gymwars', icon: '🏛️', name: 'Gym Core Wars', sub: (() => {
+            const n = gymBadgeCount();
+            return n >= 8 ? 'All 8 Cores — challenge online leaders' : `${n}/8 Core Badges · climb the gauntlet`;
+          })(), accent: '#ffcf5a',
+        badge: (() => {
+          const n = gymBadgeCount();
+          if (n >= 8) return '✦ All Cores';
+          return n > 0 ? `${n}/8 badges` : null;
+        })(),
+        alertBadge: gymBadgeCount() >= 8,
+        onclick: () => { App.screen = 'gymWars'; render(); } },
       // 🚧 Old chapter "Campaign" hidden from EVERYONE (incl. admin) for now —
       // it will be removed/replaced by the Roguelite system. Portal + screens
       // are gated below; the renderCampaign* code is left intact for later.
@@ -33776,6 +34093,44 @@ function renderDeckSelect() {
         if (node.enemy && Array.isArray(node.enemy.deck)) enemyDeckOverride = node.enemy.deck;
       }
     }
+    // 🏛️ Gym Core Wars override — a Core Trial (PvE NPC) or a Challenge
+    // against a live Gym Leader's AI-piloted snapshot. Themed foe + deck +
+    // scaled level; tagged so recordBattleProgress can award the badge /
+    // transfer ownership and the game-over screen routes back to the gym hub.
+    let _gymBP = App._gymBattlePending;
+    if (_gymBP && getGymCore(_gymBP.coreId)) {
+      const core = getGymCore(_gymBP.coreId);
+      // Pick a thematically-fitting opponent hero (shares the core element);
+      // fall back to any non-self hero so it always resolves.
+      const heroes = (typeof getAllHeroes === 'function') ? getAllHeroes() : [];
+      const themed = heroes.filter(x => x && x.id !== h.id
+        && (typeof getElementsOf === 'function') && getElementsOf(x).indexOf(core.element) >= 0);
+      const pool = themed.length ? themed : heroes.filter(x => x && x.id !== h.id);
+      foe = pool.length ? pool[Math.floor(Math.random() * pool.length)] : h;
+      enemyLevel = (_gymBP.mode === 'challenge')
+        ? Math.max(20, Math.min(50, (_gymBP.leaderLevel || 35)))
+        : gymTrialLevel(core.id);
+      // Challenge mode uses the live leader's snapshot deck if we have one;
+      // Trial mode (and challenge fallback) uses the admin AI deck or the
+      // custom-pool fallback inside buildAIDeck().
+      if (_gymBP.mode === 'challenge') {
+        const row = (typeof gymRow === 'function') ? gymRow(core.id) : null;
+        const ld = row && row.leader_deck;
+        if (Array.isArray(ld) && ld.length > 0) {
+          const dpool = ld.slice(0);
+          while (dpool.length < DECK_SIZE) dpool.push(dpool[dpool.length % Math.max(1, dpool.length)] || 'unit:goblin');
+          enemyDeckOverride = dpool.slice(0, DECK_SIZE);
+        }
+        if (row && row.leader_hero_id && typeof findHeroById === 'function') {
+          const lh = findHeroById(row.leader_hero_id);
+          if (lh) foe = lh;
+        }
+      }
+      if (!enemyDeckOverride) {
+        const aiKeys = (typeof getAdminAIDeckKeys === 'function') ? getAdminAIDeckKeys() : [];
+        if (aiKeys && aiKeys.length === DECK_SIZE) enemyDeckOverride = aiKeys;
+      }
+    }
     if (!foe) {
       const others = getAllHeroes().filter(x => x.id !== h.id);
       foe = others.length ? others[Math.floor(Math.random() * others.length)] : h;
@@ -33840,7 +34195,12 @@ function renderDeckSelect() {
       rankedMode:      !!(App.battlePrepFlags && App.battlePrepFlags.rankedMode),
       openCupRun:      (App.battlePrepFlags && App.battlePrepFlags.openCupRun) || null,
       openCupAPPerWin: (App.battlePrepFlags && App.battlePrepFlags.openCupAPPerWin) || 0,
+      // 🏛️ Gym Core Wars tag — drives badge award / ownership transfer on win
+      // and routes the game-over screen back to the gym hub.
+      gymTrialCore:     (_gymBP && _gymBP.mode === 'trial')     ? _gymBP.coreId : null,
+      gymChallengeCore: (_gymBP && _gymBP.mode === 'challenge') ? _gymBP.coreId : null,
     };
+    App._gymBattlePending = null; // consume — one-shot gym battle context
     App.battlePrepFlags = null; // consume — next battle starts fresh
 
     App.screen = 'vsScreen';
@@ -45824,12 +46184,17 @@ function bindGameOverEvents() {
   const wasCampaign = !!(App.campaignVictory) || !!(App.battlePrep && App.battlePrep.campaignNode);
   const wasDaily    = !!(App.dailyVictory)    || !!(App.battlePrep && App.battlePrep.dailyChallenge);
   const wasRlc      = !!App._rlcPendingAfterBattle;
+  const wasGym      = !!App._gymPendingAfterBattle;
   const goPlayAgain = () => {
     App.ui._gameOverHidden = false;
     if (App.ui) App.ui.rankedResult = null; // consume the ranked summary on exit
     // 📡 Leave the multiplayer realtime channel when exiting the battle.
     if (typeof leaveMatchChannel === 'function') { try { leaveMatchChannel(); } catch (e) {} }
     App.state = null;
+    if (wasGym) {
+      if (typeof gymAfterBattle === 'function') { gymAfterBattle(); return; }
+      App._gymPendingAfterBattle = null; App.screen = 'gymWars'; render(); return;
+    }
     if (wasRlc) {
       if (typeof rlcAfterBattle === 'function') { rlcAfterBattle(); return; }
       App.screen = 'rlcMap'; render(); return;
@@ -45856,6 +46221,7 @@ function bindGameOverEvents() {
     // 🗺️ Roguelite: still resolve the run (HP carry / fail) before leaving so
     // progress isn't silently lost — rlcAfterBattle routes appropriately.
     if (wasRlc && typeof rlcAfterBattle === 'function') { rlcAfterBattle(); return; }
+    if (wasGym && typeof gymAfterBattle === 'function') { gymAfterBattle(); return; }
     App.screen = 'title';
     render();
   };
@@ -45986,6 +46352,20 @@ function recordBattleProgress() {
       if (ph) endHP = Math.max(1, parseInt(ph.currentHp, 10) || 1);
     } catch (e) {}
     App._rlcPendingAfterBattle = { campaignId: App.battlePrep.rlc.campaignId, nodeId: App.battlePrep.rlc.nodeId, won: !!won, endHP };
+  }
+
+  // 🏛️ Gym Core Wars outcome. A Core Trial win grants that Core Badge (once;
+  // Trials stay replayable). A Challenge win flags an ownership transfer that
+  // the game-over return path commits to Supabase. Either way the game-over
+  // screen routes back to the gym hub so the loop feels self-contained.
+  if (App.battlePrep && (App.battlePrep.gymTrialCore || App.battlePrep.gymChallengeCore)) {
+    const _gc = App.battlePrep.gymTrialCore || App.battlePrep.gymChallengeCore;
+    const _gmode = App.battlePrep.gymChallengeCore ? 'challenge' : 'trial';
+    let _newBadge = false;
+    if (_gmode === 'trial' && won) {
+      _newBadge = awardGymBadge(_gc);
+    }
+    App._gymPendingAfterBattle = { coreId: _gc, mode: _gmode, won: !!won, newBadge: _newBadge };
   }
 
   const playerUnits = s.units.filter(u => u.owner === 'player');

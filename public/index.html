@@ -23693,6 +23693,163 @@ async function gymFetchHistory(coreId) {
   } catch (e) { _gymMarkErr(e); return []; }
 }
 
+// ---- Supporter economy + Gym HQ + seasons ----
+const GYM_CONTRIB_COST     = 80;   // Cinders per supporter contribution
+const GYM_CONTRIB_STAMINA  = 6;    // gym stamina restored per contribution
+const GYM_CONTRIB_COOLDOWN = 4000; // ms anti-spam
+const GYM_REINFORCE_COST   = 120;  // Cinders — leader self stamina top-up
+const GYM_REINFORCE_AMOUNT = 22;
+const GYM_UPGRADE_BASE     = 350;  // Cinders × current level to upgrade gym
+
+GymWars._supporters = {};   // coreId -> [rows]
+GymWars._supLoading = {};
+
+async function gymFetchSupporters(coreId) {
+  if (!initCloud() || !Profile.cloud.signedIn) return [];
+  try {
+    const season = (GymWars.meta && GymWars.meta.season) || 1;
+    const { data, error } = await Cloud.client.from('gym_supporters')
+      .select('*').eq('core_id', coreId).eq('season', season)
+      .order('contribution', { ascending: false }).limit(25);
+    if (error) { _gymMarkErr(error); return []; }
+    return data || [];
+  } catch (e) { _gymMarkErr(e); return []; }
+}
+async function gymJoinSupport(coreId) {
+  if (!initCloud() || !Profile.cloud.signedIn) return { ok:false, error:'Sign in.' };
+  if (!getGymCore(coreId)) return { ok:false, error:'Unknown core.' };
+  const me = Profile.cloud.userId;
+  const season = (GymWars.meta && GymWars.meta.season) || 1;
+  try {
+    const { error } = await Cloud.client.from('gym_supporters').upsert({
+      core_id: coreId, user_id: me, supporter_name: gymPlayerName(),
+      role: 'supporter', season, updated_at: new Date().toISOString(),
+    }, { onConflict: 'core_id,user_id,season' });
+    if (error) { _gymMarkErr(error); return { ok:false, error:error.message }; }
+    const gw = _ensureGymWars(); gw.supporterOf = coreId;
+    try { saveProfile(); } catch (e) {}
+    GymWars._supporters[coreId] = null;
+    return { ok:true };
+  } catch (e) { _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+}
+async function gymContribute(coreId) {
+  if (!initCloud() || !Profile.cloud.signedIn) return { ok:false, error:'Sign in.' };
+  if (!getGymCore(coreId)) return { ok:false, error:'Unknown core.' };
+  if (Date.now() - (GymWars._lastContribAt || 0) < GYM_CONTRIB_COOLDOWN) return { ok:false, error:'Easy — wait a moment.' };
+  if ((Profile.gems || 0) < GYM_CONTRIB_COST) return { ok:false, error:`Need ${GYM_CONTRIB_COST} 🔥.` };
+  const me = Profile.cloud.userId;
+  const season = (GymWars.meta && GymWars.meta.season) || 1;
+  try {
+    // Read current contribution (so we can increment atomically-enough).
+    const { data: cur } = await Cloud.client.from('gym_supporters')
+      .select('contribution').eq('core_id', coreId).eq('user_id', me).eq('season', season).maybeSingle();
+    const next = ((cur && cur.contribution) || 0) + GYM_CONTRIB_COST;
+    const { error } = await Cloud.client.from('gym_supporters').upsert({
+      core_id: coreId, user_id: me, supporter_name: gymPlayerName(),
+      contribution: next, role: 'supporter', season, updated_at: new Date().toISOString(),
+    }, { onConflict: 'core_id,user_id,season' });
+    if (error) { _gymMarkErr(error); return { ok:false, error:error.message }; }
+    if (!spendCinders(GYM_CONTRIB_COST)) return { ok:false, error:'Payment failed.' };
+    GymWars._lastContribAt = Date.now();
+    // Supporter activity regenerates the gym's stamina faster (spec).
+    const row = gymRow(coreId);
+    if (row && row.leader_id) {
+      const boosted = Math.min(GYM_STAMINA_MAX, gymStaminaNow(row) + GYM_CONTRIB_STAMINA);
+      try {
+        await Cloud.client.from('gyms').update({
+          stamina: boosted, stamina_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq('core_id', coreId).eq('leader_id', row.leader_id);
+      } catch (e) {}
+    }
+    const gw = _ensureGymWars(); gw.supporterOf = coreId; try { saveProfile(); } catch (e) {}
+    GymWars._supporters[coreId] = null;
+    await gymFetchAll();
+    return { ok:true, total: next };
+  } catch (e) { _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+}
+async function gymReinforceStamina(coreId) {
+  const row = gymRow(coreId);
+  if (!row || !gymIsOwn(row)) return { ok:false, error:'Not your gym.' };
+  if ((Profile.gems || 0) < GYM_REINFORCE_COST) return { ok:false, error:`Need ${GYM_REINFORCE_COST} 🔥.` };
+  try {
+    const boosted = Math.min(GYM_STAMINA_MAX, gymStaminaNow(row) + GYM_REINFORCE_AMOUNT);
+    const { error } = await Cloud.client.from('gyms').update({
+      stamina: boosted, stamina_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }).eq('core_id', coreId).eq('leader_id', Profile.cloud.userId);
+    if (error) { _gymMarkErr(error); return { ok:false, error:error.message }; }
+    if (!spendCinders(GYM_REINFORCE_COST)) return { ok:false, error:'Payment failed.' };
+    await gymFetchAll();
+    return { ok:true };
+  } catch (e) { _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+}
+async function gymUpgradeLevel(coreId) {
+  const row = gymRow(coreId);
+  if (!row || !gymIsOwn(row)) return { ok:false, error:'Not your gym.' };
+  const lvl = row.gym_level || 1;
+  const cost = GYM_UPGRADE_BASE * lvl;
+  if ((Profile.gems || 0) < cost) return { ok:false, error:`Need ${cost} 🔥 to reach Lv ${lvl + 1}.` };
+  try {
+    const { error } = await Cloud.client.from('gyms').update({
+      gym_level: lvl + 1, updated_at: new Date().toISOString(),
+    }).eq('core_id', coreId).eq('leader_id', Profile.cloud.userId);
+    if (error) { _gymMarkErr(error); return { ok:false, error:error.message }; }
+    if (!spendCinders(cost)) return { ok:false, error:'Payment failed.' };
+    await gymFetchAll();
+    return { ok:true, level: lvl + 1 };
+  } catch (e) { _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+}
+async function gymSetMotto(coreId, motto) {
+  const row = gymRow(coreId);
+  if (!row || !gymIsOwn(row)) return { ok:false, error:'Not your gym.' };
+  const hq = Object.assign({}, row.hq || {}, { motto: String(motto || '').slice(0, 90) });
+  try {
+    const { error } = await Cloud.client.from('gyms').update({
+      hq, updated_at: new Date().toISOString(),
+    }).eq('core_id', coreId).eq('leader_id', Profile.cloud.userId);
+    if (error) { _gymMarkErr(error); return { ok:false, error:error.message }; }
+    await gymFetchAll();
+    return { ok:true };
+  } catch (e) { _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+}
+// Admin-only seasonal reset: archive every open reign, clear all ownership,
+// bump the global season. Cosmetics/titles rotate naturally off the new season.
+async function gymAdvanceSeason() {
+  if (!initCloud() || !Profile.cloud.signedIn) return { ok:false, error:'Sign in.' };
+  if (!((typeof isAdmin === 'function') && isAdmin())) return { ok:false, error:'Admin only.' };
+  try {
+    const nowIso = new Date().toISOString();
+    const cur = (GymWars.meta && GymWars.meta.season) || 1;
+    // Close every still-open reign.
+    for (const r of Object.values(GymWars.gyms)) {
+      if (r && r.leader_id && r.claimed_at) {
+        const reign = Math.max(0, Math.round((Date.now() - Date.parse(r.claimed_at)) / 1000));
+        try {
+          await Cloud.client.from('gym_history')
+            .update({ lost_at: nowIso, reign_seconds: reign, peak_streak: r.peak_streak || r.defense_streak || 0 })
+            .eq('core_id', r.core_id).eq('user_id', r.leader_id).is('lost_at', null);
+        } catch (e) {}
+      }
+    }
+    // Wipe ownership on all 8 gyms.
+    for (const cid of GYM_CORE_IDS) {
+      try {
+        await Cloud.client.from('gyms').update({
+          leader_id: null, leader_name: null, leader_hero_id: null, leader_hero_name: null,
+          leader_deck: null, defense_streak: 0, peak_streak: 0,
+          stamina: GYM_STAMINA_MAX, stamina_at: nowIso, gym_level: 1,
+          claimed_at: null, season: cur + 1, updated_at: nowIso,
+        }).eq('core_id', cid);
+      } catch (e) {}
+    }
+    await Cloud.client.from('gym_meta').update({
+      current_season: cur + 1, season_started_at: nowIso,
+    }).eq('id', 1);
+    GymWars._hall = null;
+    await gymFetchAll();
+    return { ok:true, season: cur + 1 };
+  } catch (e) { _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
+}
+
 // Launch a Core Trial (PvE) or a Gym-Leader Challenge. Routes through the
 // normal deck-select → VS → battle flow; the gym context is consumed in
 // startWithHero and resolved in recordBattleProgress / gymAfterBattle.
@@ -23712,7 +23869,7 @@ function startGymBattle(coreId, mode) {
     }
   }
   App._gymBattlePending = ctx;
-  App.gymHall = false;
+  App.gymHall = false; App.gymSupportersFor = null;
   App.selectedHero = App.selectedHero || (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES[0] && STARTER_HEROES[0].id) || null;
   App.screen = 'deckSelect';
   render();
@@ -23774,6 +23931,21 @@ function renderGymWars() {
       if (App.screen === 'gymWars') render();
     });
   }
+  const _myGym = (Profile.cloud && Profile.cloud.signedIn) ? myLedGym() : null;
+  // Lazy-load supporters for: the gym you lead (HQ) + any open supporters modal.
+  const _supNeed = [];
+  if (_myGym) _supNeed.push(_myGym.core_id);
+  if (App.gymSupportersFor) _supNeed.push(App.gymSupportersFor);
+  _supNeed.forEach(cid => {
+    if (cid && GymWars._supporters[cid] == null && !GymWars._supLoading[cid] && !GymWars.tableMissing
+        && Profile.cloud && Profile.cloud.signedIn) {
+      GymWars._supLoading[cid] = true;
+      gymFetchSupporters(cid).then(rows => {
+        GymWars._supporters[cid] = rows || []; GymWars._supLoading[cid] = false;
+        if (App.screen === 'gymWars') render();
+      });
+    }
+  });
   const _isAdm = (typeof isAdmin === 'function') && isAdmin();
   const n = gymBadgeCount();
   const allDone = allGymBadges();
@@ -23802,6 +23974,78 @@ function renderGymWars() {
           </div>
         </div>`
       : `<div class="small-text ink-dim" style="text-align:center;margin:0 auto 1rem;max-width:620px">🏛️ Online gyms are warming up — Core Trials are open now. Live Gym Leaders appear once the world is set up.</div>`;
+  }
+
+  // ---- Gym HQ panel (only when you currently lead a gym) ----
+  let hqHtml = '';
+  if (_myGym) {
+    const core = getGymCore(_myGym.core_id);
+    const st = gymStaminaState(_myGym);
+    const lvl = _myGym.gym_level || 1;
+    const upCost = GYM_UPGRADE_BASE * lvl;
+    const motto = (_myGym.hq && _myGym.hq.motto) ? _myGym.hq.motto : '';
+    const sup = GymWars._supporters[_myGym.core_id];
+    const supCount = Array.isArray(sup) ? sup.length : null;
+    const topSup = Array.isArray(sup) ? sup.slice(0, 5) : null;
+    const topSupHtml = topSup == null
+      ? '<div class="small-text ink-dim">Loading supporters…</div>'
+      : topSup.length === 0
+      ? '<div class="small-text ink-dim">No supporters yet — rally your community.</div>'
+      : topSup.map((s, i) => `<div style="display:flex;align-items:center;gap:0.5rem;padding:2px 0">
+          <span style="width:1.4em;text-align:right;color:#ffcf5a;font-weight:700">${i + 1}</span>
+          <span style="flex:1;color:#e8d9b0">${escapeHtml(s.supporter_name || 'Supporter')}</span>
+          <span class="small-text ink-dim">${(s.contribution || 0).toLocaleString()} 🔥</span>
+        </div>`).join('');
+    hqHtml = `<div style="background:linear-gradient(160deg, ${core ? core.color : '#ffcf5a'}26, rgba(10,8,16,0.9));border:1px solid ${core ? core.color : '#ffcf5a'}66;border-radius:12px;padding:1rem 1.2rem;margin-bottom:1.1rem">
+      <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+        <span style="font-size:1.8rem">${core ? core.icon : '🏛️'}</span>
+        <div style="flex:1;min-width:160px">
+          <div style="font-family:'Cinzel',serif;color:${core ? core.color : '#ffcf5a'};font-size:1.15rem">Your Gym HQ — ${escapeHtml(core ? core.name : _myGym.core_id)}</div>
+          <div class="small-text ink-dim">Gym Lv ${lvl} · 🛡 ${_myGym.defense_streak || 0} streak (peak ${_myGym.peak_streak || 0}) · <span style="color:${st.color}">${st.label} ${st.s}%</span>${supCount != null ? ` · 👥 ${supCount} supporter${supCount === 1 ? '' : 's'}` : ''}</div>
+        </div>
+      </div>
+      ${motto ? `<div style="margin-top:0.55rem;font-style:italic;color:#cdbfe6">“${escapeHtml(motto)}”</div>` : ''}
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem">
+        <button class="btn-secondary btn-mini" id="hq-reinforce" title="Restore +${GYM_REINFORCE_AMOUNT}% gym stamina">🛡 Reinforce (${GYM_REINFORCE_COST} 🔥)</button>
+        <button class="btn-secondary btn-mini" id="hq-upgrade" title="Raise gym level — tougher AI defender for challengers">⬆ Upgrade → Lv ${lvl + 1} (${upCost} 🔥)</button>
+        <button class="btn-secondary btn-mini" id="hq-motto">✎ Set Motto</button>
+        <button class="btn-secondary btn-mini" id="hq-supporters">👥 Supporters</button>
+      </div>
+      <div style="margin-top:0.7rem;border-top:1px solid rgba(255,255,255,0.08);padding-top:0.55rem">
+        <div class="small-text" style="color:#ffcf5a;margin-bottom:0.3rem">Top Supporters</div>
+        ${topSupHtml}
+      </div>
+    </div>`;
+  }
+
+  // ---- Supporters leaderboard modal ----
+  let supModalHtml = '';
+  if (App.gymSupportersFor) {
+    const cid = App.gymSupportersFor;
+    const core = getGymCore(cid);
+    const rows = GymWars._supporters[cid];
+    let body;
+    if (!online) body = '<div class="small-text ink-dim" style="padding:1.4rem;text-align:center">Sign in to view supporters.</div>';
+    else if (GymWars.tableMissing) body = '<div class="small-text ink-dim" style="padding:1.4rem;text-align:center">Online gyms aren\'t set up yet.</div>';
+    else if (rows == null) body = '<div class="small-text ink-dim" style="padding:1.4rem;text-align:center">Tallying contributions…</div>';
+    else if (rows.length === 0) body = '<div class="small-text ink-dim" style="padding:1.4rem;text-align:center">No supporters yet. Be the first to back this gym.</div>';
+    else body = rows.map((s, i) => `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0.75rem;border-bottom:1px solid rgba(255,255,255,0.06)">
+        <span style="width:1.6em;text-align:right;color:${i < 3 ? '#ffcf5a' : '#9aa0a6'};font-weight:700">${i + 1}</span>
+        <div style="flex:1;min-width:0">
+          <strong style="color:#e8d9b0">${escapeHtml(s.supporter_name || 'Supporter')}</strong>
+          <span class="small-text ink-dim"> · ${escapeHtml(s.role || 'supporter')}</span>
+        </div>
+        <span class="small-text" style="color:#ffcf5a">${(s.contribution || 0).toLocaleString()} 🔥</span>
+      </div>`).join('');
+    supModalHtml = `<div class="modal-backdrop" id="gym-sup-backdrop" style="z-index:1200">
+      <div style="background:#0e0b16;border:1px solid rgba(255,207,90,0.35);border-radius:14px;max-width:520px;width:92%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 18px 60px rgba(0,0,0,0.7)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:0.9rem 1.1rem;border-bottom:1px solid rgba(255,207,90,0.2)">
+          <span style="font-family:'Cinzel',serif;color:#ffcf5a;font-size:1.05rem">👥 ${escapeHtml(core ? core.name : cid)} — Top Supporters</span>
+          <button class="btn-secondary btn-mini" id="gym-sup-close">✕</button>
+        </div>
+        <div style="overflow-y:auto">${body}</div>
+      </div>
+    </div>`;
   }
 
   // ---- The 8 Core gym cards ----
@@ -23836,6 +24080,17 @@ function renderGymWars() {
       : isVacant ? 'Defeat the gym steward to claim this vacant gym'
       : 'Defeat the Gym Leader to seize this gym';
     const challengeLabel = mine ? '🛡 Your Gym' : isVacant ? '🚩 Claim Gym' : '🏛 Challenge Leader';
+    // Supporter actions — only meaningful for a claimed gym you don't lead.
+    const _supportsThis = (Profile.gymWars && Profile.gymWars.supporterOf) === c.id;
+    let supporterRow = '';
+    if (row && row.leader_id && online && !GymWars.tableMissing) {
+      const btns = [`<button class="btn-secondary btn-mini" data-gym-supporters="${c.id}" style="flex:1">👥 Supporters</button>`];
+      if (!mine) {
+        if (_supportsThis) btns.unshift(`<button class="btn-secondary btn-mini" data-gym-contribute="${c.id}" style="flex:1" title="Spend ${GYM_CONTRIB_COST} 🔥 — boosts gym stamina + your contribution rank">💰 Contribute (${GYM_CONTRIB_COST} 🔥)</button>`);
+        else btns.unshift(`<button class="btn-secondary btn-mini" data-gym-support="${c.id}" style="flex:1">🤝 Support</button>`);
+      }
+      supporterRow = `<div style="display:flex;gap:0.5rem;margin-top:0.45rem">${btns.join('')}</div>`;
+    }
     return `
       <div style="position:relative;background:linear-gradient(160deg, ${c.color}1f, rgba(12,10,20,0.86));border:1px solid ${c.color}66;border-left:5px solid ${c.color};border-radius:12px;padding:1rem 1.1rem;display:flex;flex-direction:column;box-shadow:0 6px 22px rgba(0,0,0,0.45)">
         <div style="display:flex;align-items:center;gap:0.7rem">
@@ -23853,6 +24108,7 @@ function renderGymWars() {
           <button class="btn-secondary btn-mini" data-gym-trial="${c.id}" style="flex:1;border-color:${c.color}88">${got ? '⚔ Re-challenge Trial' : '⚔ Core Trial'}</button>
           <button class="btn-primary btn-mini" data-gym-challenge="${c.id}" ${challengeAttr} title="${escapeHtml(challengeTip)}" style="flex:1">${challengeLabel}</button>
         </div>
+        ${supporterRow}
       </div>`;
   }).join('');
 
@@ -23915,6 +24171,7 @@ function renderGymWars() {
           <div class="small-text ink-dim">Conquer 8 Core Trials, then seize and defend the world's gyms. ${escapeHtml(seasonTxt)}.</div>
         </div>
         <div style="display:flex;gap:0.5rem;align-items:center">
+          ${_isAdm && online && !GymWars.tableMissing ? '<button class="btn-secondary btn-mini" id="gym-season" title="Archive all reigns, reset ownership, start a new season">⚙ Advance Season</button>' : ''}
           <button class="btn-secondary btn-mini" id="gym-hall">🏛 Hall of Legends</button>
           <button class="btn-secondary btn-mini" id="gym-back">← Menu</button>
         </div>
@@ -23929,6 +24186,7 @@ function renderGymWars() {
       </div>
 
       ${setupHtml}
+      ${hqHtml}
 
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:1rem">
         ${cards}
@@ -23939,10 +24197,11 @@ function renderGymWars() {
       </div>
     </div>
     ${hallHtml}
+    ${supModalHtml}
   `;
 
   const back = document.getElementById('gym-back');
-  if (back) back.onclick = () => { App.gymHall = false; App.screen = 'title'; App.titleHub = 'battle'; render(); };
+  if (back) back.onclick = () => { App.gymHall = false; App.gymSupportersFor = null; App.screen = 'title'; App.titleHub = 'battle'; render(); };
   const sc = document.getElementById('gym-sql-copy');
   if (sc) sc.onclick = () => { try { navigator.clipboard.writeText(GYM_WARS_SQL); showToast('📋 SQL copied.'); } catch (e) { const t = document.getElementById('gym-sql'); if (t) t.select(); } };
   const sr = document.getElementById('gym-sql-retry');
@@ -23967,6 +24226,79 @@ function renderGymWars() {
   if (hallClose) hallClose.onclick = () => { App.gymHall = false; render(); };
   const hallBack = document.getElementById('gym-hall-backdrop');
   if (hallBack) hallBack.onclick = (e) => { if (e.target === hallBack) { App.gymHall = false; render(); } };
+
+  // ---- Supporter actions ----
+  document.querySelectorAll('[data-gym-support]').forEach(b => {
+    b.onclick = () => {
+      const cid = b.dataset.gymSupport;
+      b.disabled = true;
+      gymJoinSupport(cid).then(r => {
+        showToast(r && r.ok ? `🤝 You're now backing the ${(getGymCore(cid) || {}).name || 'gym'}.` : `⚠ ${r && r.error || 'Could not join.'}`, 3200);
+        if (App.screen === 'gymWars') render();
+      });
+    };
+  });
+  document.querySelectorAll('[data-gym-contribute]').forEach(b => {
+    b.onclick = () => {
+      const cid = b.dataset.gymContribute;
+      b.disabled = true;
+      gymContribute(cid).then(r => {
+        showToast(r && r.ok ? `💰 +${GYM_CONTRIB_COST} contribution · gym stamina boosted!` : `⚠ ${r && r.error || 'Contribution failed.'}`, 3200);
+        if (App.screen === 'gymWars') render();
+      });
+    };
+  });
+  document.querySelectorAll('[data-gym-supporters]').forEach(b => {
+    b.onclick = () => { App.gymSupportersFor = b.dataset.gymSupporters; GymWars._supporters[b.dataset.gymSupporters] = null; render(); };
+  });
+  const supClose = document.getElementById('gym-sup-close');
+  if (supClose) supClose.onclick = () => { App.gymSupportersFor = null; render(); };
+  const supBack = document.getElementById('gym-sup-backdrop');
+  if (supBack) supBack.onclick = (e) => { if (e.target === supBack) { App.gymSupportersFor = null; render(); } };
+
+  // ---- Gym HQ leader actions ----
+  const _myG = (Profile.cloud && Profile.cloud.signedIn) ? myLedGym() : null;
+  const hqRe = document.getElementById('hq-reinforce');
+  if (hqRe && _myG) hqRe.onclick = () => {
+    hqRe.disabled = true;
+    gymReinforceStamina(_myG.core_id).then(r => {
+      showToast(r && r.ok ? `🛡 Gym stamina reinforced (+${GYM_REINFORCE_AMOUNT}%).` : `⚠ ${r && r.error || 'Failed.'}`, 3000);
+      if (App.screen === 'gymWars') render();
+    });
+  };
+  const hqUp = document.getElementById('hq-upgrade');
+  if (hqUp && _myG) hqUp.onclick = () => {
+    const lvl = _myG.gym_level || 1; const cost = GYM_UPGRADE_BASE * lvl;
+    if (!confirm(`Upgrade your gym to Lv ${lvl + 1} for ${cost} 🔥?\n\nA higher gym level makes your AI-piloted defender tougher for challengers.`)) return;
+    hqUp.disabled = true;
+    gymUpgradeLevel(_myG.core_id).then(r => {
+      showToast(r && r.ok ? `⬆ Gym upgraded to Lv ${r.level}!` : `⚠ ${r && r.error || 'Failed.'}`, 3200);
+      if (App.screen === 'gymWars') render();
+    });
+  };
+  const hqMot = document.getElementById('hq-motto');
+  if (hqMot && _myG) hqMot.onclick = () => {
+    const cur = (_myG.hq && _myG.hq.motto) || '';
+    const m = prompt('Set your gym motto (shown on your gym banner, max 90 chars):', cur);
+    if (m == null) return;
+    gymSetMotto(_myG.core_id, m).then(r => {
+      showToast(r && r.ok ? '✎ Motto updated.' : `⚠ ${r && r.error || 'Failed.'}`, 2600);
+      if (App.screen === 'gymWars') render();
+    });
+  };
+  const hqSup = document.getElementById('hq-supporters');
+  if (hqSup && _myG) hqSup.onclick = () => { App.gymSupportersFor = _myG.core_id; GymWars._supporters[_myG.core_id] = null; render(); };
+
+  // ---- Admin: advance season ----
+  const seasonBtn = document.getElementById('gym-season');
+  if (seasonBtn) seasonBtn.onclick = () => {
+    if (!confirm('Advance the season?\n\nThis archives every current reign to the Hall of Legends, clears ALL gym ownership, resets stamina/levels, and starts a new season for everyone. This cannot be undone.')) return;
+    seasonBtn.disabled = true;
+    gymAdvanceSeason().then(r => {
+      showToast(r && r.ok ? `⚙ Season ${r.season} begins — all gyms reset.` : `⚠ ${r && r.error || 'Failed.'}`, 4200);
+      if (App.screen === 'gymWars') render();
+    });
+  };
 }
 
 function cardSnapshotForListing(card) { return JSON.parse(JSON.stringify(card)); }

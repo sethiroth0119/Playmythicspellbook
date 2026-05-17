@@ -21371,6 +21371,50 @@ async function cloudSyncProfile() {
   }
 }
 
+// 🛡️ ANTI-WIPE progress detection. The timestamp/pending heuristic alone
+// can't tell "local has newer real progress" from "local is a brand-new
+// EMPTY profile on a fresh device" — on a fresh-device sign-in the empty
+// local looks 'fresher' (just saved) and used to get pushed over the real
+// cloud save, erasing the account. These functions answer "is there real
+// progress here?" so an empty local can never overwrite a non-empty cloud.
+// Both err on the SAFE side (any doubt → treat as has-progress / protect).
+function _profileLooksEmpty(p) {
+  try {
+    if (!p) return false;
+    const rec = p.records || {};
+    if ((rec.battles || 0) > 0 || (rec.wins || 0) > 0) return false;
+    if (p.account && ((p.account.totalXp || 0) > 0 || (p.account.level || 1) > 1)) return false;
+    if (p.cardCollection && Object.keys(p.cardCollection).length > 0) return false;
+    if (Array.isArray(p.decks) && p.decks.length > 0) return false;
+    if (p.deckByHero && Object.keys(p.deckByHero).length > 0) return false;
+    if (p.units && Object.keys(p.units).length > 0) return false;
+    if (p.starterPicked === true) return false;
+    // Auto-owned starter heroes at Lv1/0xp are NOT progress; only a hero with
+    // real advancement counts.
+    const H = p.heroes || {};
+    for (const k in H) { const h = H[k] || {}; if ((h.level || 1) > 1 || (h.xp || 0) > 0 || (h.battles || 0) > 0 || (h.kills || 0) > 0 || (h.wins || 0) > 0) return false; }
+    return true;
+  } catch (e) { return false; }
+}
+function _cloudRowHasProgress(d) {
+  try {
+    if (!d) return false;
+    const rec = d.records || {};
+    if ((rec.battles || 0) > 0 || (rec.wins || 0) > 0) return true;
+    if (typeof d.gems === 'number' && d.gems > 0) return true;
+    if (typeof d.sovereigns === 'number' && d.sovereigns > 0) return true;
+    if (d.decks && Object.keys(d.decks).length > 0) return true;
+    if (d.deck_history && Object.keys(d.deck_history).length > 0) return true;
+    if (d.units && Object.keys(d.units).length > 0) return true;
+    const H = d.heroes || {};
+    for (const k in H) { const h = H[k] || {}; if ((h.level || 1) > 1 || (h.xp || 0) > 0 || (h.battles || 0) > 0 || (h.kills || 0) > 0 || (h.wins || 0) > 0) return true; }
+    const f = d.forge || {};
+    if (Array.isArray(f.userDecks) && f.userDecks.length > 0) return true;
+    if (Array.isArray(f.customCards) && f.customCards.length > 0) return true;
+    return false;
+  } catch (e) { return true; }
+}
+
 async function cloudFetchProfile() {
   if (!initCloud() || !Profile.cloud.signedIn) return { ok: false, error: 'Not signed in.' };
   try {
@@ -21403,7 +21447,26 @@ async function cloudFetchProfile() {
     // 5-second grace: if local was edited within 5s AFTER cloud's updated_at
     // we still treat local as fresher (covers clock drift + race conditions).
     const localIsFresher = localPending || (localEditedMs > 0 && localEditedMs >= (cloudUpdatedMs - 5000));
-    if (localIsFresher && cloudUpdatedMs > 0) {
+    // 🛡️ ANTI-WIPE gates (the actual fix for the fresh-device account erase):
+    const localEmpty   = _profileLooksEmpty(Profile);
+    const cloudHasProg = _cloudRowHasProgress(data);
+    // If local is a brand-new/empty profile but the cloud has real progress
+    // (classic fresh-device sign-in), NEVER treat local as fresher and NEVER
+    // push it up — always restore the cloud account instead.
+    if (localEmpty && cloudHasProg) {
+      Profile.cloud.lastFetchAt = Date.now();
+      // fall through to the cloud-merge block below (skip local-wins).
+    } else if (!cloudHasProg && !localEmpty && cloudUpdatedMs > 0) {
+      // Cloud row is blank/empty but local DOES have real progress — e.g.
+      // recovering on the original device after a bad fresh-device push.
+      // Keep local and re-upload so the account is restored cloud-side.
+      if (data.settings) Profile.settings = { ...Profile.settings, ...data.settings };
+      Profile.cloud.lastFetchAt = Date.now();
+      saveProfile();
+      try { cloudSyncProfile().catch(() => {}); } catch (e) {}
+      console.info('Cloud row was empty but local has progress — keeping local and re-uploading (account recovery).');
+      return { ok: true, recoveredLocal: true };
+    } else if (localIsFresher && cloudUpdatedMs > 0) {
       // Local wins for all progression fields. We still merge non-progression
       // metadata (display name from auth, settings flags the cloud might
       // have toggled from another device) so cross-device account info stays
@@ -35008,9 +35071,15 @@ function renderTitle() {
   // First-run welcome — only appears if the player has never played a battle AND hasn't
   // already dismissed/completed the tutorial. They can start a guided tutorial battle
   // (Chapter I node 1 vs Sir Cedric Lv 1) or skip and explore freely.
+  // 🛡️ The starter-deck pick MUST happen first — a brand-new player has zero
+  // cards, so launching the tutorial battle before they've claimed a deck
+  // drops them into combat with emoji placeholder cards. Hold the tutorial
+  // welcome until the starter deck is claimed: pick deck → main menu → here.
   const isFreshPlayer = !Profile.tutorialComplete
     && ((Profile.records && Profile.records.battles) || 0) === 0
-    && !App._tutorialWelcomeDismissed;
+    && !App._tutorialWelcomeDismissed
+    && (typeof needsStarterPick !== 'function' || !needsStarterPick())
+    && (typeof hasPickedStarter !== 'function' || hasPickedStarter());
   if (isFreshPlayer && isMain) renderTutorialWelcome();
 }
 

@@ -24273,6 +24273,10 @@ function campStartActivity(slotId, activity, tierKey) {
     slot.activityStart = Date.now(); slot.activityDur = CAMP_LOOT_TIERS.raid.durMs;
     const tn = (_campMissing().find(m => m && m.refId === tierKey) || {}).name || 'the missing';
     showToast(`🆘 Rescue team deployed for ${tn} — ETA ${Math.round(CAMP_LOOT_TIERS.raid.durMs / 3600000)}h.`, 3600);
+  } else if (activity === 'raidRival') {
+    slot.activity = 'raidRival'; slot.tier = null;
+    slot.activityStart = Date.now(); slot.activityDur = CAMP_LOOT_TIERS.deepRun.durMs;
+    showToast(`⚔️ Strike team deployed against ${_campRival().name} — ETA ${Math.round(CAMP_LOOT_TIERS.deepRun.durMs / 3600000)}h. High risk.`, 3800);
   } else { // rest
     slot.activity = 'rest'; slot.tier = null;
     slot.activityStart = null; slot.activityDur = null;
@@ -24388,6 +24392,45 @@ function _resolveCampSlot(slot) {
 
   const trauma = prof.trauma || 0, corruption = prof.corruption || 0, fatigue = prof.fatigue || 0;
   const _clearSlot = () => { slot.activity = 'rest'; slot.activityStart = null; slot.activityDur = null; slot.tier = null; slot.rescueTarget = null; slot.parkedAt = Date.now(); };
+
+  // ===== STRIKE THE RIVAL ===== take the fight to them.
+  if (slot.activity === 'raidRival') {
+    const rival = _campRival();
+    const odds = 44 + lvl * 1.5 + bond * 0.4 + campBonus('lootSurvive')
+      - (rival.threat || 0) * 0.45 - trauma * 0.35 - fatigue * 0.3;
+    const rr = Math.random() * 100;
+    prof.fatigue = Math.min(100, fatigue + 18);
+    if (rr > odds + 36) {
+      if (Profile.cardCollection && Profile.cardCollection[slot.refId] > 0) { Profile.cardCollection[slot.refId]--; if (Profile.cardCollection[slot.refId] <= 0) delete Profile.cardCollection[slot.refId]; }
+      _campMemorial().push({ name: meta.name || 'Survivor', icon: meta.icon || '❔', cause: 'Rival Strike', ts: Date.now() });
+      rival.threat = Math.min(100, (rival.threat || 0) + 10);
+      entry.status = 'KIA'; entry.color = '#e0556a'; entry.remove = true;
+      entry.lines.push(`☠️ <strong>${escapeHtml(meta.name)} walked into ${escapeHtml(rival.name)}'s camp and never walked out.</strong> They're emboldened. (+threat)`);
+      return entry;
+    }
+    if (rr > odds) {
+      prof.morale = Math.max(0, morale - 14); prof.trauma = Math.min(100, trauma + 10);
+      rival.threat = Math.min(100, (rival.threat || 0) + 6);
+      _clearSlot(); entry.status = 'STRIKE FAILED'; entry.color = '#d4af37';
+      entry.lines.push(`⚔️ Hit the wrong tent — ${escapeHtml(rival.name)} drove them off. Came back bloodied. (+threat)`);
+      return entry;
+    }
+    // Success — cut their threat, build your reputation, take spoils.
+    const crit = rr < odds - 28;
+    const cut = crit ? 45 : 26;
+    rival.threat = Math.max(0, (rival.threat || 0) - cut);
+    rival.rep = Math.min(100, (rival.rep || 0) + (crit ? 16 : 9));
+    prof.bond = Math.min(100, bond + 5); prof.morale = Math.min(100, morale + 6);
+    prof.xp = (prof.xp || 0) + 55;
+    const loot = _campGrantLoot('raid', crit ? 1.8 : 1.2);
+    _clearSlot();
+    entry.status = crit ? 'DECISIVE STRIKE' : 'STRIKE'; entry.color = '#5fae7a';
+    entry.lines.push(crit
+      ? `⚔️ <strong>${escapeHtml(meta.name)} burned ${escapeHtml(rival.name)}'s supply cache to the ground.</strong> They'll be licking wounds for a long while. (−${cut} threat, +rep)`
+      : `⚔️ <strong>${escapeHtml(meta.name)} bloodied ${escapeHtml(rival.name)} and pulled out clean.</strong> (−${cut} threat, +rep)`);
+    if (loot) entry.lines.push(`📦 Spoils: ${loot}`);
+    return entry;
+  }
 
   // ===== RESCUE MISSION ===== bring a MIA survivor home.
   if (slot.activity === 'rescue') {
@@ -24685,8 +24728,24 @@ function _campRecoveryTick() {
 }
 function _campRival() {
   if (!Profile.campRival || typeof Profile.campRival !== 'object') Profile.campRival = { name: 'The Scavenger Pack', threat: 10 };
-  if (typeof Profile.campRival.threat !== 'number') Profile.campRival.threat = 10;
-  return Profile.campRival;
+  const r = Profile.campRival;
+  if (typeof r.threat !== 'number') r.threat = 10;
+  if (typeof r.rep !== 'number') r.rep = 0;            // notoriety vs them (0..100): you've bloodied them
+  if (typeof r.truceUntil !== 'number') r.truceUntil = 0;
+  return r;
+}
+function _campTruceActive() { const r = _campRival(); return (r.truceUntil || 0) > Date.now(); }
+function campBrokerTruce() {
+  const r = _campRival();
+  if (_campTruceActive()) { showToast('A truce is already holding.'); return false; }
+  const cost = Math.max(60, Math.min(600, Math.round((r.threat || 0) * 4)));
+  if ((Profile.gems || 0) < cost) { showToast(`Brokering a truce costs ${cost} 🔥 — you have ${Profile.gems || 0}`); return false; }
+  Profile.gems -= cost;
+  r.truceUntil = Date.now() + 3 * 24 * 3600000;   // 3 real days of peace
+  r.threat = Math.max(0, (r.threat || 0) - 25);
+  try { saveProfile(); saveCamp(); } catch (e) {}
+  showToast(`🤝 Truce brokered with ${r.name} (−${cost} 🔥). Raids paused 3 days; threat eased.`, 4200);
+  return true;
 }
 // 🏴‍☠️ Phase-4 daily meta resolve (once per real day on Camp open):
 // rival-faction threat escalation, hidden camp invasions, and bonded
@@ -24699,7 +24758,15 @@ function resolveCampMeta() {
   Camp.facilities.__meta = { day: today };
   const rival = _campRival();
   const deployed = Camp.slots.filter(s => s.activity && s.activity !== 'rest').length;
-  rival.threat = Math.min(100, rival.threat + 6 + deployed * 2);
+  const truced = _campTruceActive();
+  if (truced) {
+    // Peace holds — pressure bleeds off instead of building.
+    rival.threat = Math.max(0, rival.threat - 10);
+  } else {
+    // Escalation, slowed the more you've bloodied them (reputation).
+    const grow = Math.max(2, 6 + deployed * 2 - (rival.rep || 0) * 0.05);
+    rival.threat = Math.min(100, rival.threat + grow);
+  }
 
   // --- Bonded loyalty / grief among the units actually in camp ---
   const resting = Camp.slots.filter(s => !s.activity || s.activity === 'rest');
@@ -24718,8 +24785,32 @@ function resolveCampMeta() {
   }
 
   // --- Hidden camp invasion (rivals raid while teams are out) ---
-  const invChance = Math.min(0.7, rival.threat / 160 + deployed * 0.04);
-  if (Math.random() < invChance) {
+  // No raids while a truce holds; reputation also deters them.
+  const invChance = truced ? 0 : Math.min(0.7, rival.threat / 160 + deployed * 0.04 - (rival.rep || 0) * 0.003);
+  const factionWar = !truced && rival.threat >= 95 && Math.random() < 0.5;
+  if (factionWar) {
+    // ⚔️ FACTION WAR — a full assault led by a named enforcer.
+    const defense = profs.reduce((a, x) => a + (x.p.level || 1) * 1.2 + (x.p.bond || 0) * 0.3, 0)
+      + campBonus('slots') * 12 + 10;
+    const attack = 70 + Math.random() * 50;
+    if (defense >= attack) {
+      const reward = 120 + Math.floor(rival.rep);
+      Profile.gems = (Profile.gems || 0) + reward;
+      rival.threat = Math.max(0, rival.threat - 55);
+      rival.rep = Math.min(100, (rival.rep || 0) + 18);
+      out.push({ icon: '⚔️', name: 'FACTION WAR', status: 'WARLORD DOWN', color: '#5fae7a',
+        lines: [`🚨 <strong>${escapeHtml(rival.name)} threw everything at the camp.</strong> The line held — their warlord didn't.`, `Spoils: ${reward} 🔥. Their threat is shattered; your name carries weight now. (+rep)`] });
+    } else if (profs.length) {
+      const v = profs[Math.floor(Math.random() * profs.length)];
+      if (Profile.cardCollection && Profile.cardCollection[v.s.refId] > 0) { Profile.cardCollection[v.s.refId]--; if (Profile.cardCollection[v.s.refId] <= 0) delete Profile.cardCollection[v.s.refId]; }
+      _campMemorial().push({ name: v.m.name || 'Survivor', icon: v.m.icon || '❔', cause: 'Faction War', ts: Date.now() });
+      Camp.slots = Camp.slots.filter(s => s.id !== v.s.id);
+      const loss = Math.floor((Profile.gems || 0) * 0.5); Profile.gems = (Profile.gems || 0) - loss;
+      rival.threat = Math.max(0, rival.threat - 20);
+      out.push({ icon: '💀', name: 'FACTION WAR', status: 'CAMP SACKED', color: '#e0556a',
+        lines: [`🚨 <strong>The camp was sacked.</strong> ${escapeHtml(v.m.name || 'A survivor')} bought the others time with their life.`, `They took ${loss} 🔥 and melted away. Rebuild — and make them pay.`] });
+    }
+  } else if (Math.random() < invChance) {
     const defense = profs.reduce((a, x) => a + (x.p.level || 1) * 1.2 + (x.p.bond || 0) * 0.3, 0)
       + campBonus('slots') * 12 + 10;
     const attack = 18 + rival.threat * 0.7 + Math.random() * 25;
@@ -24727,6 +24818,7 @@ function resolveCampMeta() {
       const reward = 20 + Math.floor(rival.threat * 0.4);
       Profile.gems = (Profile.gems || 0) + reward;
       rival.threat = Math.max(0, rival.threat - 30);
+      rival.rep = Math.min(100, (rival.rep || 0) + 6);
       out.push({ icon: '🛡️', name: 'CAMP DEFENSE', status: 'REPELLED', color: '#5fae7a',
         lines: [`🚨 <strong>${escapeHtml(rival.name)} hit the perimeter</strong> while teams were out — the camp held the line.`, `Stripped ${reward} 🔥 off the attackers. Rival pressure eased.`] });
     } else if (attack > defense * 1.8 && profs.length) {
@@ -46741,7 +46833,8 @@ function renderCamp() {
       const remH = Math.floor(aSt.remainingMs / 3600000);
       const remM = Math.floor((aSt.remainingMs % 3600000) / 60000);
       const tierL = slot.activity === 'loot' ? ((CAMP_LOOT_TIERS[slot.tier] || {}).label || 'Loot Run')
-                  : slot.activity === 'rescue' ? 'Rescue Mission' : 'Studying';
+                  : slot.activity === 'rescue' ? 'Rescue Mission'
+                  : slot.activity === 'raidRival' ? 'Striking the Rival' : 'Studying';
       body = `<div class="small-text" style="color:#ffb454">🟠 ${escapeHtml(tierL)} — extraction in <strong>${remH}h ${remM}m</strong></div>`;
       actions = `<button class="btn-mini btn-danger" data-act="recall" data-slot="${slot.id}" title="Pull them out early (morale hit, no reward)">⤺ Recall</button>`;
     } else {
@@ -46754,6 +46847,7 @@ function renderCamp() {
           <button class="btn-mini" data-loot="raid:${slot.id}" title="3h · medium danger">🎒 Raid</button>
           <button class="btn-mini" data-loot="deepRun:${slot.id}" title="6h · high danger — permadeath risk">☣️ Deep</button>
           <button class="btn-mini" data-study="${slot.id}" title="12h · learn a move">📖 Study</button>
+          <button class="btn-mini" data-strike="${slot.id}" title="6h · hit the rival faction — high risk, cuts their threat & builds your reputation" style="border-color:#e0556a55;color:#e0879a">⚔️ Strike</button>
         </div>
         ${App._campRescueTarget ? `<button class="btn-mini" data-rescue="${slot.id}" style="margin-top:0.3rem;border-color:#d4af3766;color:#ffd166;width:100%">🆘 Send on Rescue (3h)</button>` : ''}
         <div style="display:flex;gap:0.4rem;margin-top:0.3rem">
@@ -46862,16 +46956,24 @@ function renderCamp() {
         const mia = (Array.isArray(Profile.campMissing) ? Profile.campMissing.length : 0);
         const lost = (Array.isArray(Profile.memorial) ? Profile.memorial.length : 0);
         const deployed = Camp.slots.filter(s => s.activity && s.activity !== 'rest').length;
-        return `<div style="display:flex;flex-wrap:wrap;gap:0.6rem 1.4rem;align-items:center;background:linear-gradient(90deg,#0a0d13,#0e1118);border:1px solid #243042;border-left:4px solid ${band};border-radius:6px;padding:0.7rem 1rem;margin-bottom:1.2rem;font-family:'Cinzel',serif">
+        const rep = Math.round(rv.rep || 0);
+        const truced = (typeof _campTruceActive === 'function') && _campTruceActive();
+        const truceLeft = truced ? Math.ceil(((rv.truceUntil || 0) - Date.now()) / 3600000) : 0;
+        const tcost = Math.max(60, Math.min(600, Math.round(thr * 4)));
+        return `<div style="display:flex;flex-wrap:wrap;gap:0.6rem 1.4rem;align-items:center;background:linear-gradient(90deg,#0a0d13,#0e1118);border:1px solid #243042;border-left:4px solid ${truced ? '#5fae7a' : band};border-radius:6px;padding:0.7rem 1rem;margin-bottom:1.2rem;font-family:'Cinzel',serif">
           <span style="color:#7fd6ff;letter-spacing:0.12em;font-size:0.8rem">▣ CAMP STATUS</span>
           <span style="flex:1;min-width:220px">
             <span style="color:#cbd5e8;font-size:0.82rem">${escapeHtml(rv.name || 'Rival Faction')} threat</span>
-            <span style="display:inline-block;vertical-align:middle;width:140px;height:8px;background:#1a2230;border-radius:4px;margin:0 0.5rem;overflow:hidden"><span style="display:block;height:100%;width:${thr}%;background:${band}"></span></span>
+            <span style="display:inline-block;vertical-align:middle;width:130px;height:8px;background:#1a2230;border-radius:4px;margin:0 0.5rem;overflow:hidden"><span style="display:block;height:100%;width:${thr}%;background:${band}"></span></span>
             <span style="color:${band};font-size:0.82rem">${thr}%</span>
           </span>
-          <span style="color:#9fb4d8;font-size:0.8rem">🟠 ${deployed} deployed</span>
+          <span style="color:#9ad17a;font-size:0.8rem" title="Notoriety — bloodying them slows their escalation">⚔️ Rep ${rep}</span>
+          ${truced
+            ? `<span style="color:#5fae7a;font-size:0.8rem">🤝 Truce — ${truceLeft}h left</span>`
+            : `<button class="btn-mini" data-truce="1" title="Pay ${tcost} 🔥 — pause raids 3 days, ease threat" style="border-color:#5fae7a55;color:#9ad17a">🤝 Broker Truce (${tcost} 🔥)</button>`}
+          <span style="color:#9fb4d8;font-size:0.8rem">🟠 ${deployed}</span>
           <span style="color:#d4af37;font-size:0.8rem">🌫 ${mia} MIA</span>
-          <span style="color:#e0879a;font-size:0.8rem">🕯 ${lost} lost</span>
+          <span style="color:#e0879a;font-size:0.8rem">🕯 ${lost}</span>
         </div>`;
       })()}
       <div style="margin:0 0 1.4rem">
@@ -46984,6 +47086,15 @@ function renderCamp() {
       if (!tgt) { showToast('Pick a missing survivor first.'); return; }
       if (campStartActivity(el.dataset.rescue, 'rescue', tgt)) { App._campRescueTarget = null; render(); }
     };
+  });
+  document.querySelectorAll('[data-strike]').forEach(el => {
+    el.onclick = () => {
+      if (!confirm(`Send this unit to strike ${_campRival().name}? 6h op — it cripples their threat & builds your reputation, but a failed raid can get them killed.`)) return;
+      if (campStartActivity(el.dataset.strike, 'raidRival')) render();
+    };
+  });
+  document.querySelectorAll('[data-truce]').forEach(el => {
+    el.onclick = () => { if (typeof campBrokerTruce === 'function' && campBrokerTruce()) render(); };
   });
   document.getElementById('btn-back-camp').onclick = () => { App.screen = 'title'; render(); };
   document.querySelectorAll('[data-park]').forEach(el => {

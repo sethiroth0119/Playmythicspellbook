@@ -20929,6 +20929,9 @@ const Profile = {
     history: [],                 // [{ coreId, claimedAt, lostAt, peakStreak }]
     supporterOf: null,           // coreId this player currently supports
     seasonSeen: 1,               // last season the player acknowledged
+    activeTitle: null,           // chosen Season Honor id displayed by the player
+    bestPeakStreak: 0,           // lifetime best gym defense streak (for honors)
+    bestSupport: 0,              // lifetime best single-season contribution
   },
   // Per-deck identity history — wins, tournament placements, legacy.
   // Keyed by deck.id. Mirrors the Tournament Codex feature.
@@ -23968,6 +23971,109 @@ function gymResolvePredictions() {
   return changed;
 }
 
+// ============================================================================
+// 🎖 SEASON HONORS — cosmetic titles earned from real gym data (no new tables;
+// derived from local badges/history + live GymWars state + cached supporters).
+// Plus roguelite/camp lore cross-references that surface the live Core Wars in
+// the PvE world. All flavor/cosmetic — zero mechanical impact.
+// ============================================================================
+const GYM_HONORS = [
+  { id:'allcores', name:'Core Conqueror',     icon:'✦',  color:'#ffcf5a', desc:'Collected all 8 Core Badges.',                 test:() => allGymBadges() },
+  { id:'leader',   name:'Reigning Gym Leader', icon:'👑', color:'#f6d97a', desc:'Currently rule a gym.',                        test:() => !!((typeof myLedGym === 'function') && myLedGym()) },
+  { id:'streak10', name:'Unbroken Bastion',   icon:'🛡', color:'#7be0a0', desc:'Defended a gym 10+ times in one reign.',       test:() => _gymBestPeak() >= 10 },
+  { id:'streak5',  name:'Stalwart Defender',  icon:'🛡', color:'#9be0c4', desc:'Defended a gym 5+ times in one reign.',        test:() => _gymBestPeak() >= 5 },
+  { id:'champion', name:'Enshrined Legend',   icon:'🏛', color:'#d4af37', desc:'Held a gym at least once — in the Hall forever.', test:() => (_ensureGymWars().history || []).length > 0 },
+  { id:'patron',   name:'Gym Patron',         icon:'🤝', color:'#8be0ff', desc:'Contributed 500+ to a gym in a season.',       test:() => (_ensureGymWars().bestSupport || 0) >= 500 },
+  { id:'veteran',  name:'Core Wars Veteran',  icon:'⚔',  color:'#cdbfe6', desc:'Competed in the Core Wars this season.',        test:() => gymBadgeCount() > 0 },
+];
+function _gymBestPeak() {
+  const gw = _ensureGymWars();
+  let best = gw.bestPeakStreak || 0;
+  const mine = (typeof myLedGym === 'function') ? myLedGym() : null;
+  if (mine) best = Math.max(best, mine.peak_streak || 0, mine.defense_streak || 0);
+  return best;
+}
+// Keep lifetime bests fresh from live data (called on gym fetch/render).
+function gymSyncHonorStats() {
+  const gw = _ensureGymWars();
+  let changed = false;
+  const mine = (typeof myLedGym === 'function') ? myLedGym() : null;
+  if (mine) {
+    const pk = Math.max(mine.peak_streak || 0, mine.defense_streak || 0);
+    if (pk > (gw.bestPeakStreak || 0)) { gw.bestPeakStreak = pk; changed = true; }
+  }
+  try {
+    const cid = gw.supporterOf;
+    const rows = (cid && GymWars._supporters) ? GymWars._supporters[cid] : null;
+    if (Array.isArray(rows) && Profile.cloud) {
+      const me = rows.find(s => s && s.user_id === Profile.cloud.userId);
+      if (me && (me.contribution || 0) > (gw.bestSupport || 0)) { gw.bestSupport = me.contribution; changed = true; }
+    }
+  } catch (e) {}
+  if (changed) { try { saveProfile(); } catch (e) {} }
+  return changed;
+}
+function gymEarnedHonors() {
+  return GYM_HONORS.filter(h => { try { return !!h.test(); } catch (e) { return false; } });
+}
+function gymActiveTitle() {
+  const gw = _ensureGymWars();
+  if (!gw.activeTitle) return null;
+  const h = GYM_HONORS.find(x => x.id === gw.activeTitle);
+  if (!h) return null;
+  try { if (!h.test()) return null; } catch (e) { return null; }  // lapses if no longer earned
+  return h;
+}
+function gymSetActiveTitle(id) {
+  const gw = _ensureGymWars();
+  gw.activeTitle = (gw.activeTitle === id) ? null : id;
+  try { saveProfile(); } catch (e) {}
+}
+// 🗺️ Flavor line about the live Core Wars for PvE screens (camp/roguelite).
+// plain=true strips markup for a toast; otherwise returns HTML for a banner.
+function gymWorldRumor(plain) {
+  const b = (s) => plain ? s : `<strong>${s}</strong>`;
+  const esc = (s) => plain ? String(s) : escapeHtml(String(s));
+  const gyms = Object.values(GymWars.gyms || {});
+  const held = gyms.filter(g => g && g.leader_id);
+  if (held.length) {
+    held.sort((a, b2) => (b2.defense_streak || 0) - (a.defense_streak || 0));
+    const top = held[0];
+    const core = getGymCore(top.core_id);
+    if ((top.defense_streak || 0) >= 3) {
+      return `📡 Whispers from the wastes: ${b(esc(top.leader_name || 'someone'))} still holds the ${esc(core ? core.name : 'gym')} — ${top.defense_streak} defenses and counting.`;
+    }
+    return `📡 Word is ${b(esc(top.leader_name || 'a challenger'))} seized the ${esc(core ? core.name : 'gym')}. The Core Wars rage on.`;
+  }
+  const hist = Array.isArray(GymWars._feed) ? GymWars._feed : [];
+  const past = hist.find(r => r && r.lost_at && r.leader_name);
+  if (past) {
+    const core = getGymCore(past.core_id);
+    return `📡 Old-timers still speak of ${b(esc(past.leader_name))}, who once ruled the ${esc(core ? core.name : 'gym')}.`;
+  }
+  return `📡 The Core gyms stand unclaimed — the Core Wars await their first legends.`;
+}
+// Cheap, staleness-guarded gym fetch for PvE screens that reference the wars.
+function gymMaybeFetchForLore() {
+  if (Profile.cloud && Profile.cloud.signedIn && !GymWars.loading && !GymWars.tableMissing
+      && (Date.now() - GymWars.lastFetch > 180000)) {
+    gymFetchAll().then(() => { gymSyncHonorStats(); });
+  }
+}
+// Surface a Core Wars "whisper" when the player enters a PvE world screen
+// (camp / roguelite). Cooldown-gated so it never spams; only when there is
+// gym data to talk about. Pure flavor — connects PvE to the live PvP world.
+function gymLoreToast() {
+  try {
+    gymMaybeFetchForLore();
+    if (!(Profile.cloud && Profile.cloud.signedIn) || GymWars.tableMissing) return;
+    if (!GymWars.lastFetch) return;                       // nothing fetched yet
+    if (Date.now() - (App._gymLoreToastAt || 0) < 600000) return; // 10-min cooldown
+    App._gymLoreToastAt = Date.now();
+    if (typeof showToast === 'function') showToast(gymWorldRumor(true), 5200);
+  } catch (e) {}
+}
+
 // Launch a Core Trial (PvE) or a Gym-Leader Challenge. Routes through the
 // normal deck-select → VS → battle flow; the gym context is consumed in
 // startWithHero and resolved in recordBattleProgress / gymAfterBattle.
@@ -24061,6 +24167,7 @@ function renderGymWars() {
     });
   }
   const _myGym = (Profile.cloud && Profile.cloud.signedIn) ? myLedGym() : null;
+  gymSyncHonorStats(); // refresh lifetime bests from current live data
   // Lazy-load supporters for: the gym you lead (HQ) + any open supporters modal.
   const _supNeed = [];
   if (_myGym) _supNeed.push(_myGym.core_id);
@@ -24289,6 +24396,25 @@ function renderGymWars() {
     </div>`;
   }
 
+  // 🎖 Season Honors panel — earned cosmetic titles; click an earned one to wear it.
+  const _earned = gymEarnedHonors();
+  const _earnedIds = new Set(_earned.map(h => h.id));
+  const _activeId = (_ensureGymWars().activeTitle) || null;
+  const honorsHtml = `<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:0.85rem 1.05rem;margin-bottom:1.1rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.55rem">
+        <span style="font-family:'Cinzel',serif;color:#ffcf5a;font-size:1.02rem">🎖 Season Honors</span>
+        <span class="small-text ink-dim">${_earned.length}/${GYM_HONORS.length} earned · click an earned honor to wear it</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.5rem">
+        ${GYM_HONORS.map(h => {
+          const got = _earnedIds.has(h.id);
+          const active = got && _activeId === h.id;
+          return `<button class="btn-mini" ${got ? `data-gym-honor="${h.id}"` : 'disabled'} title="${escapeHtml(h.desc)}" style="border-color:${got ? h.color : '#55585f'};color:${got ? h.color : '#7a7f8c'};opacity:${got ? 1 : 0.5};${active ? `box-shadow:0 0 0 2px ${h.color}88;background:${h.color}22` : ''}">${h.icon} ${escapeHtml(h.name)}${active ? ' ✓' : (got ? '' : ' 🔒')}</button>`;
+        }).join('')}
+      </div>
+    </div>`;
+  const _activeTitleObj = gymActiveTitle();
+
   const seasonTxt = (GymWars.meta && GymWars.meta.season) ? `Season ${GymWars.meta.season}` : 'Season 1';
 
   // ---- Hall of Legends archive (modal) ----
@@ -24344,7 +24470,7 @@ function renderGymWars() {
     <div class="campaign-page" style="max-width:1180px;margin:0 auto">
       <div class="campaign-header">
         <div>
-          <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🏛️ Gym Core Wars</h2>
+          <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🏛️ Gym Core Wars ${_activeTitleObj ? `<span style="font-size:0.6em;font-family:'Cinzel',serif;color:${_activeTitleObj.color};border:1px solid ${_activeTitleObj.color};border-radius:5px;padding:1px 7px;vertical-align:middle">${_activeTitleObj.icon} ${escapeHtml(_activeTitleObj.name)}</span>` : ''}</h2>
           <div class="small-text ink-dim">Conquer 8 Core Trials, then seize and defend the world's gyms. ${escapeHtml(seasonTxt)}.</div>
         </div>
         <div style="display:flex;gap:0.5rem;align-items:center">
@@ -24365,6 +24491,7 @@ function renderGymWars() {
       ${bannerHtml}
       ${setupHtml}
       ${hqHtml}
+      ${honorsHtml}
       ${feedHtml}
 
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:1rem">
@@ -24435,6 +24562,14 @@ function renderGymWars() {
       const r = gymPredict(b.dataset.gymPredict, b.dataset.pred);
       showToast(r && r.ok ? `🔮 Prediction locked: ${b.dataset.pred === 'falls' ? 'the gym falls' : 'the leader holds'}.` : `⚠ ${r && r.error || 'Could not place prediction.'}`, 3200);
       if (App.screen === 'gymWars') render();
+    };
+  });
+  document.querySelectorAll('[data-gym-honor]').forEach(b => {
+    b.onclick = () => {
+      gymSetActiveTitle(b.dataset.gymHonor);
+      const t = gymActiveTitle();
+      showToast(t ? `🎖 Now wearing: ${t.name}` : '🎖 Title removed.', 2400);
+      render();
     };
   });
   const supClose = document.getElementById('gym-sup-close');
@@ -48795,6 +48930,7 @@ function renderCamp() {
     setTimeout(() => render(), 0);
     return;
   }
+  gymLoreToast(); // 📡 occasional Core Wars whisper connecting PvE ↔ live PvP
   // 📡 Resolve any deployments whose real-time timer elapsed (incl. while the
   // player was offline) BEFORE building the screen, then queue the cinematic
   // debrief if anything came back.
@@ -55705,6 +55841,7 @@ function renderRlcMap() {
   const camp = _rlcCampaign(run.campaignId);
   if (!camp) { _rlcClearRunArtifacts(); App.screen = 'rlcList'; return render(); }
   if (run.isComplete || run.isFailed) { App.screen = 'rlcResult'; return render(); }
+  gymLoreToast(); // 📡 occasional Core Wars whisper connecting PvE ↔ live PvP
   try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
   const avail = new Set(_rlcAvailableNodeIds(camp, run));
   const done = new Set(run.completed || []);

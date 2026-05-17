@@ -19630,6 +19630,11 @@ function getItemById(itemId) {
   if (!itemId || itemId === 'none') return null;
   const custom = (Forge.customItems || []).find(x => x && x.id === itemId);
   if (custom) return custom;
+  // Players receive admin items/relics via the published Catalog, not the
+  // local Forge — resolve there too or custom items/relics won't apply.
+  const cat = (typeof Catalog !== 'undefined' && Array.isArray(Catalog.items))
+    ? Catalog.items.find(x => x && x.id === itemId) : null;
+  if (cat) return cat;
   return (typeof HELD_ITEMS === 'object' && HELD_ITEMS) ? (HELD_ITEMS[itemId] || null) : null;
 }
 
@@ -20633,6 +20638,7 @@ const Profile = {
   aiHeroes: {},                 // 'cedric' -> { level, xp, kills, statGains, evs, nature } — AI-side persistence
   aiUnits: {},                  // 'goblin' -> { level, xp, kills, statGains, evs, nature } — AI-side persistence
   equipment: {},                // 'h_cedric' or 'u_goblin' -> 'powerBand'
+  relicEquipment: {},           // 'h_cedric' -> ['relicId','relicId'] (heroes only, 2 slots)
   // 🪦 Player's currently-equipped tombstone cosmetic. Set when the player
   // buys + equips one from the shop. Overrides the admin's default for
   // THIS player's units only — enemy tombstones still use the admin default.
@@ -24543,6 +24549,7 @@ function loadForge() {
       if (p.aiHeroes && typeof p.aiHeroes === 'object') Profile.aiHeroes = p.aiHeroes;
       if (p.aiUnits && typeof p.aiUnits === 'object') Profile.aiUnits = p.aiUnits;
       if (p.equipment) Profile.equipment = p.equipment;
+      if (p.relicEquipment && typeof p.relicEquipment === 'object') Profile.relicEquipment = p.relicEquipment;
       if (p.records) Profile.records = p.records;
       if (typeof p.gems === 'number') Profile.gems = p.gems;
       if (typeof p.sovereigns === 'number') Profile.sovereigns = Math.max(0, p.sovereigns);
@@ -26500,6 +26507,22 @@ const getEquipped = (spriteId) => {
   }
   return HELD_ITEMS[itemId] || null;
 };
+// 🔮 Relics — hero-only gear that stacks ON TOP of the held item. Stored as
+// items flagged slot:'relic' (so they share the entire item pipeline:
+// editor, persistence, publish, catalog, economy). Up to 2 per hero.
+const MAX_HERO_RELICS = 2;
+function getEquippedRelics(spriteId) {
+  if (!Profile.relicEquipment) Profile.relicEquipment = {};
+  const ids = Profile.relicEquipment[spriteId];
+  if (!Array.isArray(ids) || !ids.length) return [];
+  const out = [];
+  for (const id of ids.slice(0, MAX_HERO_RELICS)) {
+    if (!id || id === 'none') continue;
+    const it = (typeof getItemById === 'function') ? getItemById(id) : null;
+    if (it && (it.slot === 'relic')) out.push(it);
+  }
+  return out;
+}
 
 // ===== Generated 40-card decks per hero (themed by element/faction match) =====
 // Used both for the deck-select preview screen and as the starter deck for any hero who
@@ -28718,7 +28741,14 @@ const buildHero = (heroDataRaw, owner, pos, levelOverride, xpOverride) => {
   const naturedBase = applyNature(baseStatsWithHp, natureId);
   const scaled = applyLevelScaling(naturedBase, naturedBase.hp || heroData.hp, level, statGains);
   const ev = applyEvBoosts(scaled.stats, scaled.maxHp, evs);
-  const withItem = applyHeldItem(ev.stats, ev.maxHp, item);
+  let withItem = applyHeldItem(ev.stats, ev.maxHp, item);
+  // 🔮 Relics (heroes only) — up to 2 equipped relics stack on top of the
+  // held item using the SAME effect math (applyHeldItem).
+  if (owner === 'player' && typeof getEquippedRelics === 'function') {
+    for (const _rel of getEquippedRelics('h_' + heroData.id)) {
+      withItem = applyHeldItem(withItem.stats, withItem.maxHp, _rel);
+    }
+  }
   // Effective learnset = base + subclass-granted moves. AI heroes don't have a subclass
   // picked by the player, so they get the base learnset (getHeroSubclassId returns null
   // for them since AI profiles live in Profile.aiHeroes, not Profile.heroes).
@@ -34116,7 +34146,8 @@ function renderForge() {
   const tabs = [
     { id: 'cards',      label: 'Cards',      count: Forge.customCards.length },
     { id: 'moves',      label: 'Moves',      count: Object.keys(Forge.customMoves).length },
-    { id: 'items',      label: '🎒 Items',   count: (Forge.customItems || []).length },
+    { id: 'items',      label: '🎒 Items',   count: (Forge.customItems || []).filter(it => it && it.slot !== 'relic').length },
+    { id: 'relics',     label: '🔮 Relics',  count: (Forge.customItems || []).filter(it => it && it.slot === 'relic').length },
     { id: 'events',     label: 'Events',     count: Forge.customEvents.length },
     { id: 'encounters', label: '🎲 Encounters', count: (Forge.customEncounters || []).length },
     { id: 'packs',      label: '📦 Packs',   count: (Forge.customPacks || []).length },
@@ -34138,6 +34169,7 @@ function renderForge() {
   else if (App.forgeTab === 'cards') body = renderForgeCards();
   else if (App.forgeTab === 'moves') body = renderForgeMoves();
   else if (App.forgeTab === 'items') body = renderForgeItems();
+  else if (App.forgeTab === 'relics') body = renderForgeRelics();
   else if (App.forgeTab === 'events') body = renderForgeEvents();
   else if (App.forgeTab === 'encounters') body = renderForgeEncounters();
   else if (App.forgeTab === 'packs') body = renderForgePacks();
@@ -34189,6 +34221,7 @@ function renderForge() {
   else if (App.forgeTab === 'cards') bindForgeCards();
   else if (App.forgeTab === 'moves') bindForgeMoves();
   else if (App.forgeTab === 'items') bindForgeItems();
+  else if (App.forgeTab === 'relics') bindForgeRelics();
   else if (App.forgeTab === 'events') bindForgeEvents();
   else if (App.forgeTab === 'encounters') bindForgeEncounters();
   else if (App.forgeTab === 'packs') bindForgePacks();
@@ -38006,7 +38039,7 @@ function toEnginePackDef(p) {
 
 // ============ 🎒 ITEMS TAB — admin-authored held items ============
 function renderForgeItems() {
-  const items = Forge.customItems || [];
+  const items = (Forge.customItems || []).filter(it => it && it.slot !== 'relic');
   const list = items.length === 0
     ? `<div class="empty-list-note" style="padding:1.4rem;text-align:center">
         <div style="font-size:3rem;opacity:0.5">🎒</div>
@@ -38288,6 +38321,69 @@ function bindForgeItems() {
   document.querySelectorAll('[data-del-item]').forEach(el => el.onclick = (e) => {
     e.stopPropagation();
     if (!confirm('Delete this item permanently?')) return;
+    Forge.customItems = (Forge.customItems || []).filter(x => x.id !== el.dataset.delItem);
+    saveForge(); render();
+  });
+}
+
+// 🔮 Relics — same data model + editor + economy as items (stored in
+// Forge.customItems flagged slot:'relic'), but they equip to a hero-only
+// relic slot (2 per hero) instead of the held-item slot.
+function renderForgeRelics() {
+  const relics = (Forge.customItems || []).filter(it => it && it.slot === 'relic');
+  const list = relics.length === 0
+    ? `<div class="empty-list-note" style="padding:1.4rem;text-align:center">
+        <div style="font-size:3rem;opacity:0.5">🔮</div>
+        <div style="margin-top:0.5rem">No relics yet — forge one. Relics use the same effects as items but equip to a hero's dedicated relic slots (2 per hero).</div>
+       </div>`
+    : relics.map(it => {
+        const modBits = [];
+        const m = it.statMods || {};
+        for (const k of ['atk','def','mag','res','spd']) if (m[k]) modBits.push(`${k.toUpperCase()} ${m[k] > 0 ? '+' : ''}${m[k]}`);
+        if (it.hpMod) modBits.push(`HP ${it.hpMod > 0 ? '+' : ''}${it.hpMod}`);
+        if (Array.isArray(it.immunities) && it.immunities.length) modBits.push(`immune: ${it.immunities.join(', ')}`);
+        const _iconCell = (typeof renderItemIcon === 'function')
+          ? renderItemIcon(it.id, it.icon || '🔮', 'md')
+          : escapeHtml(it.icon || '🔮');
+        return `
+          <div class="custom-card-row" data-edit-item="${escapeHtml(it.id)}">
+            <span class="custom-card-icon">${_iconCell}</span>
+            <div class="custom-card-body">
+              <div class="custom-card-name">${escapeHtml(it.name || 'Untitled relic')} <span class="ink-dim small-text">(${escapeHtml(it.rarity || 'common')})</span></div>
+              <div class="custom-card-desc">${escapeHtml(it.desc || '')}</div>
+              <div class="custom-card-stats small-text">${escapeHtml(modBits.join(' · ') || 'no modifiers set')}</div>
+            </div>
+            <div class="custom-card-actions">
+              <button class="btn-mini" data-edit-item="${escapeHtml(it.id)}">✎ Edit</button>
+              <button class="btn-mini danger" data-del-item="${escapeHtml(it.id)}">🗑</button>
+            </div>
+          </div>`;
+      }).join('');
+  return `
+    <div class="forge-section">
+      <div class="forge-section-head">
+        <h3>🔮 Custom Relics</h3>
+        <button class="btn-primary" id="btn-new-relic">+ Forge Relic</button>
+      </div>
+      <div class="small-text ink-dim" style="margin:0 0 0.6rem">Relics equip to a hero's <strong>2 relic slots</strong> (heroes only) and stack on top of the held item.</div>
+      <div class="custom-card-list">${list}</div>
+    </div>
+  `;
+}
+
+function bindForgeRelics() {
+  const newBtn = document.getElementById('btn-new-relic');
+  if (newBtn) newBtn.onclick = () => {
+    App._newItemDraft = { id: 'NEW', name: '', icon: '🔮', desc: '', rarity: 'common', hpMod: 0, statMods: {}, immunities: [], slot: 'relic' };
+    App.editingItemId = 'NEW'; render();
+  };
+  document.querySelectorAll('[data-edit-item]').forEach(el => el.onclick = (e) => {
+    e.stopPropagation();
+    App.editingItemId = el.dataset.editItem; render();
+  });
+  document.querySelectorAll('[data-del-item]').forEach(el => el.onclick = (e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this relic permanently?')) return;
     Forge.customItems = (Forge.customItems || []).filter(x => x.id !== el.dataset.delItem);
     saveForge(); render();
   });
@@ -54151,6 +54247,49 @@ function bindItemPickers() {
   });
 }
 
+// 🔮 Relic picker — one <select> per hero relic slot. Lists every published
+// relic (slot:'relic' custom items), same availability model as custom items.
+function renderRelicPicker(equipKey, slotIndex) {
+  ensureProfileUsage();
+  if (!Profile.relicEquipment) Profile.relicEquipment = {};
+  const slots = Array.isArray(Profile.relicEquipment[equipKey]) ? Profile.relicEquipment[equipKey] : [];
+  const current = slots[slotIndex] || 'none';
+  const otherId = slots[slotIndex === 0 ? 1 : 0] || 'none';   // can't equip the same relic twice
+  const relics = (typeof getAllCustomItems === 'function' ? getAllCustomItems() : (Forge.customItems || []))
+    .filter(it => it && it.id && it.slot === 'relic');
+  const opts = [`<option value="none" ${current === 'none' ? 'selected' : ''}>— None —</option>`]
+    .concat(relics.map(it => {
+      const dis = (it.id === otherId && it.id !== current) ? ' disabled' : '';
+      return `<option value="${it.id}" ${it.id === current ? 'selected' : ''}${dis}>${it.icon || '🔮'} ${escapeHtml(it.name || it.id)} · relic</option>`;
+    }));
+  return `<select class="relic-picker" data-relic-key="${equipKey}" data-relic-slot="${slotIndex}">${opts.join('')}</select>`;
+}
+
+function bindRelicPickers() {
+  document.querySelectorAll('select.relic-picker[data-relic-key]').forEach(sel => {
+    sel.onchange = () => {
+      const key = sel.dataset.relicKey;
+      const idx = parseInt(sel.dataset.relicSlot, 10) || 0;
+      const newId = sel.value || 'none';
+      if (!Profile.relicEquipment) Profile.relicEquipment = {};
+      const arr = Array.isArray(Profile.relicEquipment[key]) ? Profile.relicEquipment[key].slice(0, MAX_HERO_RELICS) : [];
+      while (arr.length < MAX_HERO_RELICS) arr.push('none');
+      // Prevent equipping the same relic in both slots.
+      if (newId !== 'none') {
+        const other = idx === 0 ? 1 : 0;
+        if (arr[other] === newId) arr[other] = 'none';
+      }
+      arr[idx] = newId;
+      Profile.relicEquipment[key] = arr;
+      if (typeof recordItemEquipped === 'function' && newId !== 'none') recordItemEquipped(newId);
+      saveProfile();
+      const resolved = (typeof getItemById === 'function') ? getItemById(newId) : null;
+      showToast(newId === 'none' ? 'Relic unequipped' : `Equipped relic ${resolved ? resolved.name : newId}`);
+      render();
+    };
+  });
+}
+
 function renderDeckBuilder() {
   // No hero picked yet? Force the "pick a hero first" intro screen.
   if (!App.deckBuilderHeroId) {
@@ -54461,6 +54600,14 @@ function renderDeckBuilder() {
           <label>Hero Item</label>
           ${renderItemPicker('h_' + heroId)}
         </div>
+        <div class="dbhb-item-field">
+          <label>🔮 Relic Slot 1</label>
+          ${renderRelicPicker('h_' + heroId, 0)}
+        </div>
+        <div class="dbhb-item-field">
+          <label>🔮 Relic Slot 2</label>
+          ${renderRelicPicker('h_' + heroId, 1)}
+        </div>
         <div class="dbhb-actions">
           <button class="btn-secondary btn-mini" id="btn-back-to-decks">← My Decks</button>
           <button class="btn-secondary btn-mini" id="btn-switch-hero">⇄ Switch Hero</button>
@@ -54759,6 +54906,7 @@ function renderDeckBuilder() {
   };
   // Wire up any item pickers rendered on this screen (hero banner + right-click context modal)
   bindItemPickers();
+  bindRelicPickers();
   bindDeckCardContextEvents();
 }
 
@@ -54968,6 +55116,7 @@ function bindDeckCardContextEvents() {
   if (closeBtn) closeBtn.onclick = () => { App.deckCardCtxKey = null; render(); };
   // Re-bind item pickers inside the side panel (they share the .item-picker class)
   bindItemPickers();
+  bindRelicPickers();
 }
 
 // "Pick a hero first" gate — appears when no hero is selected for the Deck Builder.

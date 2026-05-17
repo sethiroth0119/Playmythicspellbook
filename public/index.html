@@ -40874,6 +40874,22 @@ function _eventSpriteTickerStep() {
 
 function renderBattle() {
   const s = App.state;
+  // 🔁 Reconnect guard — after a mid-match refresh we have no authoritative
+  // state until the peer answers the resync. Show a syncing screen instead
+  // of crashing on a null/empty App.state.
+  if (App.battlePrep && App.battlePrep.multiplayer && MatchBroadcast.awaitingResync
+      && (!s || !Array.isArray(s.units) || !s.units.length)) {
+    root.innerHTML = `
+      <div class="matchmaking-screen"><div class="matchmaking-card">
+        <div class="matchmaking-pulse"><div class="matchmaking-pulse-ring"></div><div class="matchmaking-pulse-ring delay-1"></div><div class="matchmaking-pulse-core">🔁</div></div>
+        <h1 class="matchmaking-title">Reconnecting…</h1>
+        <p class="matchmaking-sub">Pulling the live battle state from your opponent. This takes a few seconds.</p>
+        <button class="btn-secondary" id="btn-rc-abort">Abandon match</button>
+      </div></div>`;
+    const ab = document.getElementById('btn-rc-abort');
+    if (ab) ab.onclick = () => { try { leaveMatchChannel(); _clearMatchSession && _clearMatchSession(); } catch (e) {} App.battlePrep = null; App.screen = 'title'; render(); };
+    return;
+  }
   // 🎭 Event-sprite ticker — start once on battle mount; runs every 80ms while
   // the screen is visible, cycling animated event-tile sprite frames. The
   // step function is a no-op when no stacks are present, so it's cheap.
@@ -52128,6 +52144,7 @@ const MatchBroadcast = {
   myTurn:         false,       // true when it's my turn to mutate state
   lastSeenTurn:   0,           // dedup: ignore old snapshots
   outboundQueue:  null,        // micro-debounce so quick consecutive actions coalesce into one packet
+  awaitingResync: false,       // true after a reconnect until the peer's full snapshot lands
   // 🔁 Reconnect support — sessionStorage-persisted so a refresh mid-battle
   // can rejoin the same channel and pull the latest state.
   // 🔌 Disconnect detection — built on Supabase Realtime Presence. We track the
@@ -52258,6 +52275,13 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
     .on('broadcast', { event: 'gameover' }, (payload) => {
       _onRemoteGameOverArrived(payload.payload);
     })
+    // 🔁 Resync request — a (re)joining client asks the peer to push the
+    // authoritative full state so it isn't stuck on a blank board when it's
+    // the requester's own turn (the peer wouldn't otherwise be broadcasting).
+    .on('broadcast', { event: 'resync' }, (payload) => {
+      if (payload && payload.payload && payload.payload.from === MatchBroadcast.myUserId) return;
+      _sendFullSnapshot();
+    })
     // 💬 Emote broadcast — MTGA-style preset emojis sent over the match channel.
     // Pure ephemeral; never persisted. Mute is respected client-side in the handler.
     .on('broadcast', { event: 'emote' }, (payload) => {
@@ -52272,6 +52296,15 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
     .subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
         try { await MatchBroadcast.channel.track({ user_id: Profile.cloud.userId, online_at: new Date().toISOString() }); } catch (e) {}
+        // Ask the peer for the authoritative state. Retried a couple of times
+        // in case the request races the opponent's own subscribe handshake.
+        const _reqResync = () => {
+          if (!MatchBroadcast.channel) return;
+          try { MatchBroadcast.channel.send({ type: 'broadcast', event: 'resync', payload: { from: MatchBroadcast.myUserId } }); } catch (e) {}
+        };
+        _reqResync();
+        setTimeout(_reqResync, 1500);
+        setTimeout(_reqResync, 4000);
       }
     });
   // Start the DC watchdog — fires every 5s, checks opponent presence freshness.
@@ -52292,6 +52325,7 @@ function leaveMatchChannel() {
   MatchBroadcast.lastSentSnapshot = null;
   MatchBroadcast.lastRecvSnapshot = null;
   MatchBroadcast.dcDeclared = false;
+  MatchBroadcast.awaitingResync = false;
   _clearMatchSession();
 }
 
@@ -52319,11 +52353,16 @@ async function attemptMatchReconnect() {
     MultiplayerMatch.opponentId     = amIPlayer1 ? match.player2_id : match.player1_id;
     MultiplayerMatch.opponentHeroId = amIPlayer1 ? match.hero2_id   : match.hero1_id;
     MultiplayerMatch.opponentDeck   = amIPlayer1 ? match.deck2      : match.deck1;
+    // We hold no authoritative state yet — block our own broadcasts and show
+    // a syncing screen until the peer answers our resync request.
+    MatchBroadcast.awaitingResync = true;
     joinMatchChannel(match.id, amIPlayer1, MultiplayerMatch.opponentId);
-    // Drop the user directly into the battle screen — the channel will deliver
-    // the current state from the active player within a few hundred ms.
+    MatchBroadcast.awaitingResync = true; // (re-assert; joinMatchChannel resets MB fields)
+    // Drop the user into the battle screen — the resync handshake (sent from
+    // joinMatchChannel's SUBSCRIBED callback) pulls the authoritative state
+    // from the peer regardless of whose turn it is.
     App.screen = 'battle';
-    showToast('🔁 Reconnected to match — syncing…', 2200);
+    showToast('🔁 Reconnected to match — syncing…', 2600);
     if (typeof render === 'function') render();
     return true;
   } catch (e) { return false; }
@@ -52476,8 +52515,26 @@ function _applyStateDelta(baseline, delta) {
 
 // Push the current local state to the opponent. Debounced by 60ms so a burst
 // of actions (place unit → move → attack → end turn) coalesces into one packet.
+// Push a guaranteed FULL snapshot now (used to answer a resync request).
+// Only fires if we actually hold a live, in-progress battle state — a
+// freshly-reconnected client must not answer with its own empty state.
+function _sendFullSnapshot() {
+  if (!MatchBroadcast.channel) return;
+  if (MatchBroadcast.awaitingResync) return; // we don't have truth yet
+  if (!App.state || !Array.isArray(App.state.units) || !App.state.units.length) return;
+  const snapshot = _serializeBattleStateForBroadcast(App.state);
+  if (!snapshot) return;
+  try {
+    MatchBroadcast.channel.send({
+      type: 'broadcast', event: 'state',
+      payload: { from: MatchBroadcast.myUserId, turn: snapshot.turnNumber || 0, state: snapshot },
+    });
+    MatchBroadcast.lastSentSnapshot = { ...snapshot, _seq: 0 };
+  } catch (e) { /* fire-and-forget */ }
+}
 function broadcastMyState() {
   if (!MatchBroadcast.channel) return;
+  if (MatchBroadcast.awaitingResync) return; // don't clobber peer with stale/empty state pre-sync
   if (MatchBroadcast.outboundQueue) clearTimeout(MatchBroadcast.outboundQueue);
   MatchBroadcast.outboundQueue = setTimeout(() => {
     MatchBroadcast.outboundQueue = null;
@@ -52524,6 +52581,7 @@ function _onRemoteStateArrived(payload) {
   // Remember the raw (pre-swap) state — used as the baseline for incoming
   // deltas. Deltas are computed against the SENDER's perspective.
   MatchBroadcast.lastRecvSnapshot = payload.state;
+  MatchBroadcast.awaitingResync = false; // we now hold authoritative truth
   const swapped = swapBattlePerspective(payload.state);
   App.state = swapped;
   // Whether it's now my turn depends on the swapped currentTurn.
@@ -52554,6 +52612,7 @@ function _onRemoteStateDeltaArrived(payload) {
   }
   const merged = _applyStateDelta(MatchBroadcast.lastRecvSnapshot, payload.delta);
   MatchBroadcast.lastRecvSnapshot = merged;
+  MatchBroadcast.awaitingResync = false;
   MatchBroadcast.lastSeenTurn = payload.turn || MatchBroadcast.lastSeenTurn;
   const swapped = swapBattlePerspective(merged);
   App.state = swapped;

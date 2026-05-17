@@ -27257,8 +27257,19 @@ const getValidMoves = (unit, units, weather, board) => {
 const MAX_KNOWN_MOVES = 4;
 
 function deriveDefaultKnownMoves(learnset, level) {
-  if (!Array.isArray(learnset)) return [];
-  return learnset.filter(l => l.lvl <= level).slice(0, MAX_KNOWN_MOVES).map(l => l.m);
+  // Every unit must enter play with at least one attack. Admin-authored
+  // starter units sometimes have no level-1 learnset entry — in that case
+  // fall back to their EARLIEST move(s), and to a basic Slash if there's
+  // no learnset at all, so a level-1 unit is never left with zero moves.
+  if (!Array.isArray(learnset) || learnset.length === 0) return ['slash'];
+  const sorted = learnset.slice().sort((a, b) => ((a && a.lvl) || 1) - ((b && b.lvl) || 1));
+  let avail = sorted.filter(l => ((l && l.lvl) || 1) <= level);
+  if (avail.length === 0) {
+    const minLvl = (sorted[0] && sorted[0].lvl) || 1;
+    avail = sorted.filter(l => ((l && l.lvl) || 1) === minLvl);
+  }
+  const ids = avail.slice(0, MAX_KNOWN_MOVES).map(l => l && l.m).filter(Boolean);
+  return ids.length ? ids : ['slash'];
 }
 
 const getAvailableMoves = (unit) => {
@@ -27269,6 +27280,21 @@ const getAvailableMoves = (unit) => {
     moves = unit.moves || [];
   } else {
     moves = unit.learnset.filter(l => l.lvl <= unit.level).slice(0, MAX_KNOWN_MOVES).map(l => lookupMove(l.m)).filter(Boolean);
+  }
+  // 🛡️ Never leave a unit with zero moves. A level-1 starter whose admin
+  // learnset has no lvl-1 entry falls back to its earliest move(s); anything
+  // with no usable learnset at all falls back to the free basic Slash.
+  if (!moves || moves.length === 0) {
+    if (Array.isArray(unit.learnset) && unit.learnset.length) {
+      const sorted = unit.learnset.slice().sort((a, b) => ((a && a.lvl) || 1) - ((b && b.lvl) || 1));
+      const minLvl = (sorted[0] && sorted[0].lvl) || 1;
+      moves = sorted.filter(l => ((l && l.lvl) || 1) === minLvl)
+        .slice(0, MAX_KNOWN_MOVES).map(l => lookupMove(l && l.m)).filter(Boolean);
+    }
+    if (!moves || moves.length === 0) {
+      const _basic = lookupMove('slash');
+      moves = _basic ? [_basic] : [];
+    }
   }
   // Raged units can ONLY use attack moves — abilities, buffs, heals are locked out
   if ((unit.statusEffects || []).some(e => e.type === 'rage')) {
@@ -31719,6 +31745,7 @@ function renderTutorialWelcome() {
   overlay.querySelector('#btn-start-tutorial').onclick = () => {
     Profile.tutorialComplete = false;
     App.tutorial = { active: true, step: 0 };
+    App._tutorialUnitPlayed = false;   // freeze the turn clock until first unit
     App._tutorialWelcomeDismissed = true;
     overlay.remove();
     // Launch the scripted tutorial battle — Chapter I Node 1 vs Sir Cedric Lv 1
@@ -31985,7 +32012,7 @@ function renderStarterPick() {
     const h = (typeof findHeroById === 'function' && d.heroId) ? findHeroById(d.heroId) : null;
     const heroName = h ? h.name : (d.heroId || 'Hero');
     const art = d.img
-      ? `<img src="${d.img}" alt="" style="width:100%;height:150px;object-fit:cover;border-radius:12px 12px 0 0">`
+      ? `<img src="${d.img}" alt="" style="width:100%;height:auto;display:block;object-fit:contain;border-radius:12px 12px 0 0;background:#0c0718">`
       : `<div style="height:150px;display:flex;align-items:center;justify-content:center;border-radius:12px 12px 0 0;background:radial-gradient(ellipse at center,rgba(212,175,55,0.2),transparent 70%)">${h && typeof renderIcon === 'function' ? renderIcon('h_' + h.id, h.icon, 'xl') : '<span style=\"font-size:3rem\">🦸</span>'}</div>`;
     return `
       <div style="width:260px;background:rgba(20,12,40,0.7);border:1px solid rgba(212,175,55,0.4);border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
@@ -42559,6 +42586,12 @@ function placeUnit(card, pos) {
   const prof = getUnitProfile(card.id);
   const unit = buildUnit(card, 'player', pos, ph.heroPassive, prof.level, prof.xp);
   unit.hasMoved = true; unit.hasAttacked = true;
+  // ⏱ First unit played during the tutorial → start the (previously frozen)
+  // turn clock with a fresh full window.
+  if (App.tutorial && App.tutorial.active && !App._tutorialUnitPlayed) {
+    App._tutorialUnitPlayed = true;
+    App._turnTimerKey = null;
+  }
   let next = {
     ...s,
     units: [...s.units, unit],
@@ -42907,6 +42940,15 @@ function _turnTimerStep() {
       App._turnTimerKey = key;
       App._turnTimerEnd = Date.now() + TURN_TIME_LIMIT_MS;
       App._turnTimerFired = false;
+    }
+    // ⏸ Tutorial grace — freeze the clock so a brand-new player can read the
+    // walkthrough panel. It only starts ticking once they play their first
+    // unit (placeUnit sets _tutorialUnitPlayed and re-arms a fresh window).
+    if (App.tutorial && App.tutorial.active && !App._tutorialUnitPlayed) {
+      App._turnTimerEnd = Date.now() + TURN_TIME_LIMIT_MS;
+      App._turnTimerFired = false;
+      if (el) { el.textContent = '⏸'; el.classList.remove('low'); }
+      return;
     }
     const remain = Math.max(0, Math.ceil((App._turnTimerEnd - Date.now()) / 1000));
     if (el) {

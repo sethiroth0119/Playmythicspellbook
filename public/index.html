@@ -28403,18 +28403,22 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
   // learned moves persist across battles.
   let knownMoves;
   if (prof) {
-    if (Array.isArray(prof.knownMoves) && prof.knownMoves.length > 0) {
+    // 🔄 Admin learnset edits must reach EVERY player's copy. Unless the
+    // player has explicitly customised this unit's moves (Tutor purchase or
+    // a level-up replace set knownMovesAuto === false), always re-derive
+    // from the CURRENT learnset — so swapping e.g. Slash → Magic Ball Shot
+    // updates the move on all players' units instead of staying cached.
+    if (Array.isArray(prof.knownMoves) && prof.knownMoves.length > 0 && prof.knownMovesAuto === false) {
       knownMoves = prof.knownMoves.slice(0, MAX_KNOWN_MOVES);
     } else {
       knownMoves = deriveDefaultKnownMoves(cardData.learnset, level);
-      if (owner === 'player') {
-        Profile.units[cardData.id] = Profile.units[cardData.id] || prof;
-        Profile.units[cardData.id].knownMoves = knownMoves.slice(0);
-      } else {
-        Profile.aiUnits[cardData.id] = Profile.aiUnits[cardData.id] || prof;
-        Profile.aiUnits[cardData.id].knownMoves = knownMoves.slice(0);
+      const _store = (owner === 'player') ? Profile.units : Profile.aiUnits;
+      _store[cardData.id] = _store[cardData.id] || prof;
+      if (!Array.isArray(prof.knownMoves) || prof.knownMoves.join('|') !== knownMoves.join('|') || prof.knownMovesAuto !== true) {
+        _store[cardData.id].knownMoves = knownMoves.slice(0);
+        _store[cardData.id].knownMovesAuto = true;
+        saveProfile();
       }
-      saveProfile();
     }
   } else {
     knownMoves = deriveDefaultKnownMoves(cardData.learnset, level);
@@ -28482,18 +28486,19 @@ const buildHero = (heroDataRaw, owner, pos, levelOverride, xpOverride) => {
   // Resolve known moves: both player and AI heroes now pull from their respective profiles.
   let knownMoves;
   if (prof) {
-    if (Array.isArray(prof.knownMoves) && prof.knownMoves.length > 0) {
+    // 🔄 Same rule as units — admin learnset edits propagate to every
+    // player's hero unless they've explicitly customised its moves.
+    if (Array.isArray(prof.knownMoves) && prof.knownMoves.length > 0 && prof.knownMovesAuto === false) {
       knownMoves = prof.knownMoves.slice(0, MAX_KNOWN_MOVES);
     } else {
       knownMoves = deriveDefaultKnownMoves(effectiveLearnset, level);
-      if (owner === 'player') {
-        Profile.heroes[heroData.id] = Profile.heroes[heroData.id] || prof;
-        Profile.heroes[heroData.id].knownMoves = knownMoves.slice(0);
-      } else {
-        Profile.aiHeroes[heroData.id] = Profile.aiHeroes[heroData.id] || prof;
-        Profile.aiHeroes[heroData.id].knownMoves = knownMoves.slice(0);
+      const _store = (owner === 'player') ? Profile.heroes : Profile.aiHeroes;
+      _store[heroData.id] = _store[heroData.id] || prof;
+      if (!Array.isArray(prof.knownMoves) || prof.knownMoves.join('|') !== knownMoves.join('|') || prof.knownMovesAuto !== true) {
+        _store[heroData.id].knownMoves = knownMoves.slice(0);
+        _store[heroData.id].knownMovesAuto = true;
+        saveProfile();
       }
-      saveProfile();
     }
   } else {
     knownMoves = deriveDefaultKnownMoves(effectiveLearnset, level);
@@ -39988,9 +39993,11 @@ function resolvePendingLearn(pending, oldMoveId) {
     if (pending.isHero) {
       const ph = Profile.heroes[pending.profileId] = Profile.heroes[pending.profileId] || { level: 1, xp: 0, kills: 0, wins: 0, statGains: emptyGains(), evs: emptyEvs() };
       ph.knownMoves = next.slice(0);
+      ph.knownMovesAuto = false;   // player chose this loadout — respect it
     } else {
       const pu = Profile.units[pending.profileId] = Profile.units[pending.profileId] || { level: 1, xp: 0, kills: 0, fielded: 0, statGains: emptyGains(), evs: emptyEvs() };
       pu.knownMoves = next.slice(0);
+      pu.knownMovesAuto = false;   // player chose this loadout — respect it
     }
     saveProfile();
     // Update runtime unit if still in battle
@@ -44344,8 +44351,12 @@ function getProfileForTutorTarget(target) {
 
 function getKnownMovesForTarget(target) {
   const prof = getProfileForTutorTarget(target);
-  if (Array.isArray(prof.knownMoves) && prof.knownMoves.length > 0) return prof.knownMoves.slice(0, MAX_KNOWN_MOVES);
-  // Default to learnset filter (level 1 cap)
+  // Only trust the cached list if the player explicitly customised it;
+  // otherwise mirror the build path and re-derive from the CURRENT learnset
+  // so admin move swaps show here too.
+  if (Array.isArray(prof.knownMoves) && prof.knownMoves.length > 0 && prof.knownMovesAuto === false) {
+    return prof.knownMoves.slice(0, MAX_KNOWN_MOVES);
+  }
   return deriveDefaultKnownMoves(target.learnset, prof.level || 1);
 }
 
@@ -44367,6 +44378,7 @@ function teachMoveToTarget(target, moveId) {
   if (!Array.isArray(prof.knownMoves)) prof.knownMoves = known.slice(0);
   if (prof.knownMoves.length < MAX_KNOWN_MOVES) {
     prof.knownMoves.push(moveId);
+    prof.knownMovesAuto = false;   // player-customised — stop auto re-derive
     saveProfile();
     showToast(`✨ ${target.name} learned ${move.name}! (-${price} 🔥)`);
     return true;

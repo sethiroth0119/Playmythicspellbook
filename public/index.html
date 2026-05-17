@@ -51815,8 +51815,14 @@ function swapBattlePerspective(state) {
     // Weather / location ownerHint indicate who summoned the effect.
     weather: state.weather ? { ...state.weather, ownerHint: swapOwner(state.weather.ownerHint || 'player') } : null,
     activeLocation: state.activeLocation ? { ...state.activeLocation, ownerHint: swapOwner(state.activeLocation.ownerHint || 'player') } : null,
-    // Whose turn it is — flip.
+    // Whose turn it is — flip BOTH the multiplayer marker AND the engine's
+    // own `turn` field. The battle engine gates every action, the end-turn
+    // guard and the turn timer on `state.turn` — not `currentTurn` — so
+    // without flipping `turn` the receiver's engine still thinks it's the
+    // opponent's turn: nobody can move, turns never hand off, and the
+    // diverging states eventually each declare their own local win.
     currentTurn: swapOwner(state.currentTurn || 'player'),
+    turn: swapOwner(state.turn || 'player'),
   };
   return newState;
 }

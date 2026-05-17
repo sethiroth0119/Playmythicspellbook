@@ -23101,6 +23101,100 @@ function saveMarket() {
   try { localStorage.setItem('hg_market', JSON.stringify({ listings: Market.listings, lastSeedAt: Market.lastSeedAt, salesLog: Market.salesLog })); }
   catch (e) { console.warn('Failed to save Market', e); }
 }
+// ============================================================================
+// 🧰 PLAYER RESOURCE EXCHANGE — real player-to-player trading, cloud-backed.
+// Sellers escrow resources into a `resource_listings` Supabase row; buyers
+// claim with an atomic open→sold flip (no double-sell); sellers sweep their
+// Cinder payouts on next visit. Degrades gracefully if the table is absent.
+// ============================================================================
+const ResMarket = {
+  open: [], mine: [], payouts: [],
+  tableMissing: false, lastFetch: 0, loading: false, _err: null,
+};
+const RES_MARKET_SQL = "create table if not exists public.resource_listings (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  seller_name text,\n  resource text not null,\n  qty integer not null check (qty > 0),\n  price integer not null check (price >= 0),\n  buyer_id uuid references auth.users(id),\n  status text not null default 'open',\n  paid_out boolean not null default false,\n  created_at timestamptz default now()\n);\nalter table public.resource_listings enable row level security;\ndrop policy if exists rl_sel on public.resource_listings;\ncreate policy rl_sel on public.resource_listings for select to authenticated using (status = 'open' or seller_id = auth.uid() or buyer_id = auth.uid());\ndrop policy if exists rl_ins on public.resource_listings;\ncreate policy rl_ins on public.resource_listings for insert to authenticated with check (seller_id = auth.uid());\ndrop policy if exists rl_upd on public.resource_listings;\ncreate policy rl_upd on public.resource_listings for update to authenticated using (status = 'open' or seller_id = auth.uid()) with check (true);\ndrop policy if exists rl_del on public.resource_listings;\ncreate policy rl_del on public.resource_listings for delete to authenticated using (seller_id = auth.uid() and status = 'open');";
+function _resMarkErr(e) {
+  const msg = (e && (e.message || e.code || '')) + '';
+  if (/resource_listings|relation|does not exist|schema cache|PGRST205|42P01/i.test(msg)) { ResMarket.tableMissing = true; }
+  ResMarket._err = msg;
+  return null;
+}
+async function resMarketFetch() {
+  if (!initCloud() || !Profile.cloud.signedIn) { ResMarket._err = 'Sign in to trade.'; return; }
+  if (ResMarket.loading) return;
+  ResMarket.loading = true;
+  try {
+    const me = Profile.cloud.userId;
+    // Sellers collect their Cinder payouts for anything that sold.
+    try {
+      const { data: sold } = await Cloud.client.from('resource_listings')
+        .select('*').eq('seller_id', me).eq('status', 'sold').eq('paid_out', false).limit(50);
+      if (sold && sold.length) {
+        let gained = 0;
+        for (const r of sold) {
+          const upd = await Cloud.client.from('resource_listings').update({ paid_out: true }).eq('id', r.id).eq('paid_out', false).select('id');
+          if (upd && upd.data && upd.data.length) { Profile.gems = (Profile.gems || 0) + (r.price || 0); gained += (r.price || 0); }
+        }
+        if (gained > 0) { try { saveProfile(); } catch (e) {} showToast(`💰 Sold goods on the exchange: +${gained} 🔥`, 4200); }
+      }
+    } catch (e) { _resMarkErr(e); }
+    const { data, error } = await Cloud.client.from('resource_listings')
+      .select('*').eq('status', 'open').order('created_at', { ascending: false }).limit(120);
+    if (error) { _resMarkErr(error); ResMarket.loading = false; return; }
+    ResMarket.tableMissing = false;
+    ResMarket.open = (data || []).filter(l => l.seller_id !== me);
+    ResMarket.mine = (data || []).filter(l => l.seller_id === me);
+    ResMarket.lastFetch = Date.now();
+  } catch (e) { _resMarkErr(e); }
+  ResMarket.loading = false;
+}
+async function resMarketPost(resource, qty, price) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('Sign in to trade.'); return false; }
+  qty = Math.floor(qty); price = Math.floor(price);
+  if (!RESOURCE_IDS.includes(resource) || qty <= 0 || price < 0) { showToast('Invalid listing.'); return false; }
+  if (getRes(resource) < qty) { showToast(`You only have ${getRes(resource)} ${_meta(resource).name}.`); return false; }
+  // Escrow: pull the resources out of the wallet immediately.
+  spendResources({ [resource]: qty });
+  try { saveProfile(); } catch (e) {}
+  const { error } = await Cloud.client.from('resource_listings').insert({
+    seller_id: Profile.cloud.userId,
+    seller_name: (Profile.cloud.displayName || Profile.account.displayName || 'Survivor').slice(0, 40),
+    resource, qty, price, status: 'open',
+  });
+  if (error) { addRes(resource, qty); try { saveProfile(); } catch (e) {} _resMarkErr(error); showToast('⚠ Could not post listing.'); return false; }
+  showToast(`📦 Listed ${qty} ${_meta(resource).icon} for ${price} 🔥`, 3200);
+  await resMarketFetch();
+  return true;
+}
+async function resMarketBuy(listing) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('Sign in to trade.'); return false; }
+  if ((Profile.gems || 0) < (listing.price || 0)) { showToast(`Need ${listing.price} 🔥 — you have ${Profile.gems || 0}`); return false; }
+  // Atomic claim: only succeeds if still open (no double-sell race).
+  const { data, error } = await Cloud.client.from('resource_listings')
+    .update({ status: 'sold', buyer_id: Profile.cloud.userId })
+    .eq('id', listing.id).eq('status', 'open').select('*');
+  if (error) { _resMarkErr(error); showToast('⚠ Purchase failed.'); return false; }
+  if (!data || !data.length) { showToast('Too slow — someone already bought that.', 2600); await resMarketFetch(); return false; }
+  Profile.gems -= (listing.price || 0);
+  addRes(listing.resource, listing.qty || 0);
+  try { saveProfile(); } catch (e) {}
+  showToast(`✅ Bought ${listing.qty} ${_meta(listing.resource).icon} for ${listing.price} 🔥`, 3600);
+  await resMarketFetch();
+  return true;
+}
+async function resMarketCancel(listing) {
+  if (!initCloud() || !Profile.cloud.signedIn) return false;
+  const { data, error } = await Cloud.client.from('resource_listings')
+    .delete().eq('id', listing.id).eq('seller_id', Profile.cloud.userId).eq('status', 'open').select('id');
+  if (error) { _resMarkErr(error); showToast('⚠ Could not cancel.'); return false; }
+  if (data && data.length) {
+    addRes(listing.resource, listing.qty || 0);
+    try { saveProfile(); } catch (e) {}
+    showToast(`↩ Listing pulled — ${listing.qty} ${_meta(listing.resource).icon} returned.`, 3200);
+  }
+  await resMarketFetch();
+  return true;
+}
+
 function cardSnapshotForListing(card) { return JSON.parse(JSON.stringify(card)); }
 function itemSnapshotForListing(itemId) { const it = HELD_ITEMS[itemId]; return it ? { ...it } : null; }
 
@@ -45993,6 +46087,88 @@ function renderTutor() {
 }
 
 // ============ MARKETPLACE SCREEN ============
+function renderResourceMarket() {
+  // Kick a refresh when the data is stale (async → re-render on arrival).
+  if (!ResMarket.loading && (Date.now() - ResMarket.lastFetch > 12000) && Profile.cloud && Profile.cloud.signedIn) {
+    resMarketFetch().then(() => { if (App.screen === 'market' && (App.marketTab === 'resources')) render(); });
+  }
+  const wallet = (typeof renderResourceWallet === 'function') ? renderResourceWallet() : '';
+  if (!Profile.cloud || !Profile.cloud.signedIn) {
+    return `${wallet}<div class="empty-list-note" style="margin:1.2rem auto;max-width:560px">☁ Sign in to trade resources with other survivors.</div>`;
+  }
+  if (ResMarket.tableMissing) {
+    return `${wallet}
+      <div style="background:rgba(224,85,106,0.08);border:1px solid rgba(224,85,106,0.35);border-radius:8px;padding:1rem 1.2rem;max-width:760px;margin:0 auto">
+        <div style="font-family:'Cinzel',serif;color:#e0879a;font-size:1.05rem;margin-bottom:0.4rem">⚠ Resource Exchange needs a one-time setup</div>
+        <div class="small-text ink-dim" style="margin-bottom:0.6rem">Run this once in your Supabase SQL editor, then reload. Everything else keeps working.</div>
+        <textarea readonly id="resmkt-sql" style="width:100%;height:170px;background:#0a0d13;color:#cbd5e8;border:1px solid #243042;border-radius:6px;font-family:monospace;font-size:0.72rem;padding:0.6rem">${escapeHtml(RES_MARKET_SQL)}</textarea>
+        <div style="margin-top:0.6rem;display:flex;gap:0.5rem">
+          <button class="btn-mini" id="resmkt-copy">📋 Copy SQL</button>
+          <button class="btn-mini" id="resmkt-retry">↻ Retry</button>
+        </div>
+      </div>`;
+  }
+  const _row = (l, mine) => `
+    <div style="display:flex;align-items:center;gap:0.7rem;padding:0.55rem 0.8rem;border-bottom:1px solid rgba(212,175,55,0.16)">
+      <span style="font-size:1.3rem">${_meta(l.resource) ? _meta(l.resource).icon : '🧰'}</span>
+      <div style="flex:1">
+        <strong style="color:#f0e6d2">${l.qty} ${escapeHtml(_meta(l.resource) ? _meta(l.resource).name : l.resource)}</strong>
+        <span class="small-text ink-dim"> — ${mine ? 'your listing' : 'from ' + escapeHtml(l.seller_name || 'a survivor')}</span>
+      </div>
+      <span style="color:#ffd166;white-space:nowrap"><span class="cinder-icon"></span> ${l.price}</span>
+      ${mine
+        ? `<button class="btn-mini btn-danger" data-resmkt-cancel="${l.id}">Cancel</button>`
+        : `<button class="btn-mini" data-resmkt-buy="${l.id}" ${(Profile.gems || 0) >= l.price ? '' : 'disabled'}>Buy</button>`}
+    </div>`;
+  const resOpts = RESOURCES.map(r => `<option value="${r.id}">${r.icon} ${escapeHtml(r.name)} (have ${getRes(r.id)})</option>`).join('');
+  return `
+    ${wallet}
+    <div style="display:flex;flex-wrap:wrap;gap:1rem;align-items:flex-end;background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.22);border-radius:8px;padding:0.8rem 1rem;margin-bottom:1rem">
+      <div><div class="small-text ink-dim">Resource</div><select id="resmkt-res">${resOpts}</select></div>
+      <div><div class="small-text ink-dim">Quantity</div><input id="resmkt-qty" type="number" min="1" max="9999" value="10" style="width:80px"></div>
+      <div><div class="small-text ink-dim">Price (🔥 total)</div><input id="resmkt-price" type="number" min="0" max="999999" value="50" style="width:100px"></div>
+      <button class="btn-primary" id="resmkt-post">📦 List for Sale</button>
+      <button class="btn-mini" id="resmkt-refresh" style="margin-left:auto">↻ Refresh</button>
+    </div>
+    ${ResMarket.mine.length ? `<div class="forge-section-header"><h3 style="color:#ffd166">Your Listings (${ResMarket.mine.length})</h3></div>
+      <div style="background:rgba(28,22,8,0.5);border:1px solid rgba(212,175,55,0.25);border-radius:8px;margin-bottom:1rem">${ResMarket.mine.map(l => _row(l, true)).join('')}</div>` : ''}
+    <div class="forge-section-header"><h3 style="color:#7fd6ff">Open Listings (${ResMarket.open.length})</h3></div>
+    <div style="background:rgba(10,13,19,0.6);border:1px solid #243042;border-radius:8px">
+      ${ResMarket.open.length ? ResMarket.open.map(l => _row(l, false)).join('')
+        : `<div class="empty-list-note" style="padding:1.2rem">${ResMarket.loading ? 'Loading the exchange…' : 'No one is selling right now. Be the first — list something above.'}</div>`}
+    </div>`;
+}
+function bindResourceMarket() {
+  const copy = document.getElementById('resmkt-copy');
+  if (copy) copy.onclick = () => { try { navigator.clipboard.writeText(RES_MARKET_SQL); showToast('📋 SQL copied.'); } catch (e) { const t = document.getElementById('resmkt-sql'); if (t) { t.select(); } } };
+  const retry = document.getElementById('resmkt-retry');
+  if (retry) retry.onclick = () => { ResMarket.tableMissing = false; ResMarket.lastFetch = 0; resMarketFetch().then(render); };
+  const refresh = document.getElementById('resmkt-refresh');
+  if (refresh) refresh.onclick = () => { ResMarket.lastFetch = 0; resMarketFetch().then(render); };
+  const post = document.getElementById('resmkt-post');
+  if (post) post.onclick = async () => {
+    const res = (document.getElementById('resmkt-res') || {}).value;
+    const qty = parseInt((document.getElementById('resmkt-qty') || {}).value, 10) || 0;
+    const price = parseInt((document.getElementById('resmkt-price') || {}).value, 10);
+    post.disabled = true;
+    if (await resMarketPost(res, qty, isNaN(price) ? 0 : price)) render(); else post.disabled = false;
+  };
+  document.querySelectorAll('[data-resmkt-buy]').forEach(b => {
+    b.onclick = async () => {
+      const l = ResMarket.open.find(x => x.id === b.dataset.resmktBuy);
+      if (!l) return; b.disabled = true;
+      if (await resMarketBuy(l)) render(); else b.disabled = false;
+    };
+  });
+  document.querySelectorAll('[data-resmkt-cancel]').forEach(b => {
+    b.onclick = async () => {
+      const l = ResMarket.mine.find(x => x.id === b.dataset.resmktCancel);
+      if (!l) return; b.disabled = true;
+      if (await resMarketCancel(l)) render(); else b.disabled = false;
+    };
+  });
+}
+
 function renderMarket() {
   // Entry gate — Player Market requires 2 heroes at Lv 15+. Bounce on direct
   // navigation so manual state edits or stale App.screen don't bypass.
@@ -46013,6 +46189,7 @@ function renderMarket() {
       <button class="forge-tab ${tab === 'browse' ? 'active' : ''}" data-tab="browse">Browse ${otherListings.length > 0 ? `<span class="tab-count">${otherListings.length}</span>` : ''}</button>
       <button class="forge-tab ${tab === 'sell' ? 'active' : ''}" data-tab="sell">Sell</button>
       <button class="forge-tab ${tab === 'mine' ? 'active' : ''}" data-tab="mine">My Listings ${myListings.length > 0 ? `<span class="tab-count">${myListings.length}</span>` : ''}</button>
+      <button class="forge-tab ${tab === 'resources' ? 'active' : ''}" data-tab="resources">🧰 Resources</button>
       <button class="forge-tab ${tab === 'stock' ? 'active' : ''}" data-tab="stock">📈 Stock</button>
     </div>
   `;
@@ -46021,6 +46198,7 @@ function renderMarket() {
   if (tab === 'browse') body = renderMarketBrowse(otherListings, filter);
   else if (tab === 'sell') body = renderMarketSell();
   else if (tab === 'mine') body = renderMarketMyListings(myListings);
+  else if (tab === 'resources') body = renderResourceMarket();
   else if (tab === 'stock') body = renderMarketStock();
 
   root.innerHTML = `
@@ -46065,6 +46243,7 @@ function renderMarket() {
   if (tab === 'browse') bindMarketBrowse();
   else if (tab === 'sell') bindMarketSell();
   else if (tab === 'mine') bindMarketMyListings();
+  else if (tab === 'resources') bindResourceMarket();
   // Stock-chart ticker bar + time-range buttons — bind here since the stock
   // view is just a render() body, no dedicated bind function.
   document.querySelectorAll('[data-fac-btn]').forEach(btn => {

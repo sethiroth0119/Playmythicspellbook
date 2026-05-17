@@ -23588,12 +23588,131 @@ function gymRow(coreId) { return GymWars.gyms[coreId] || null; }
 function gymIsOwn(row)  { return !!(row && row.leader_id && Profile.cloud && row.leader_id === Profile.cloud.userId); }
 function myLedGym()     { return Object.values(GymWars.gyms).find(r => gymIsOwn(r)) || null; }
 
+function gymPlayerName() {
+  return (((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Challenger') + '').slice(0, 40);
+}
+function _gymDur(secs) {
+  secs = Math.max(0, secs | 0);
+  const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+// The player's hero + deck snapshot for an AI-piloted gym defense. Captured
+// synchronously at claim time (battlePrep is still live in the game-over path).
+function _gymMySnapshot() {
+  const bp = App.battlePrep || {};
+  const hero = bp.hero || null;
+  let deck = null;
+  if (bp.deckId && typeof getDeckById === 'function') {
+    const d = getDeckById(bp.deckId);
+    if (d && Array.isArray(d.cards)) deck = d.cards.slice(0);
+  }
+  if (!deck && hero && typeof getGeneratedDeckForHero === 'function') deck = getGeneratedDeckForHero(hero.id) || [];
+  return {
+    heroId:   hero ? hero.id : null,
+    heroName: hero ? (hero.name || 'Champion') : 'Champion',
+    deck:     Array.isArray(deck) ? deck.slice(0, 60) : [],
+  };
+}
+// Challenger won → take the gym. Closes the outgoing leader's Hall record,
+// transfers ownership, resets stamina, opens a fresh reign record.
+async function gymClaim(coreId) {
+  if (!initCloud() || !Profile.cloud.signedIn) return { ok:false, error:'Sign in.' };
+  const core = getGymCore(coreId);
+  if (!core) return { ok:false, error:'Unknown core.' };
+  const me = Profile.cloud.userId;
+  const name = gymPlayerName();
+  const snap = _gymMySnapshot();
+  const season = (GymWars.meta && GymWars.meta.season) || 1;
+  const nowIso = new Date().toISOString();
+  try {
+    const prev = gymRow(coreId);
+    if (prev && prev.leader_id && prev.leader_id !== me && prev.claimed_at) {
+      const reign = Math.max(0, Math.round((Date.now() - Date.parse(prev.claimed_at)) / 1000));
+      try {
+        await Cloud.client.from('gym_history')
+          .update({ lost_at: nowIso, reign_seconds: reign, peak_streak: prev.peak_streak || prev.defense_streak || 0 })
+          .eq('core_id', coreId).eq('user_id', prev.leader_id).is('lost_at', null);
+      } catch (e) {}
+    }
+    const row = {
+      core_id: coreId,
+      leader_id: me, leader_name: name,
+      leader_hero_id: snap.heroId, leader_hero_name: snap.heroName,
+      leader_deck: snap.deck,
+      defense_streak: 0, peak_streak: 0,
+      stamina: GYM_STAMINA_MAX, stamina_at: nowIso,
+      claimed_at: nowIso, season, updated_at: nowIso,
+    };
+    const { error } = await Cloud.client.from('gyms').upsert(row, { onConflict: 'core_id' });
+    if (error) { _gymMarkErr(error); return { ok:false, error: error.message }; }
+    try {
+      await Cloud.client.from('gym_history').insert({
+        core_id: coreId, user_id: me, leader_name: name,
+        hero_id: snap.heroId, hero_name: snap.heroName,
+        claimed_at: nowIso, season,
+      });
+    } catch (e) {}
+    // Mirror into the local trophy log.
+    try {
+      const gw = _ensureGymWars();
+      gw.history.unshift({ coreId, claimedAt: Date.now(), lostAt: null, peakStreak: 0 });
+      if (gw.history.length > 40) gw.history.length = 40;
+      saveProfile();
+    } catch (e) {}
+    await gymFetchAll();
+    return { ok:true };
+  } catch (e) { _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Claim failed.' }; }
+}
+// Challenger lost → the defender holds. Streak++, peak++, stamina drains.
+async function gymRecordDefense(coreId) {
+  if (!initCloud() || !Profile.cloud.signedIn) return;
+  const row = gymRow(coreId);
+  if (!row || !row.leader_id) return;
+  try {
+    const newStreak = (row.defense_streak || 0) + 1;
+    const peak = Math.max(row.peak_streak || 0, newStreak);
+    const drained = Math.max(0, gymStaminaNow(row) - GYM_STAMINA_PER_DEFENSE);
+    await Cloud.client.from('gyms').update({
+      defense_streak: newStreak, peak_streak: peak,
+      stamina: drained, stamina_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('core_id', coreId).eq('leader_id', row.leader_id);
+    await gymFetchAll();
+  } catch (e) { _gymMarkErr(e); }
+}
+async function gymFetchHistory(coreId) {
+  if (!initCloud() || !Profile.cloud.signedIn) return [];
+  try {
+    let q = Cloud.client.from('gym_history').select('*').order('claimed_at', { ascending:false }).limit(80);
+    if (coreId) q = q.eq('core_id', coreId);
+    const { data, error } = await q;
+    if (error) { _gymMarkErr(error); return []; }
+    return data || [];
+  } catch (e) { _gymMarkErr(e); return []; }
+}
+
 // Launch a Core Trial (PvE) or a Gym-Leader Challenge. Routes through the
 // normal deck-select → VS → battle flow; the gym context is consumed in
 // startWithHero and resolved in recordBattleProgress / gymAfterBattle.
 function startGymBattle(coreId, mode) {
   if (!getGymCore(coreId)) return;
-  App._gymBattlePending = { coreId: coreId, mode: mode || 'trial' };
+  const ctx = { coreId: coreId, mode: mode || 'trial' };
+  if (ctx.mode === 'challenge') {
+    const row = gymRow(coreId);
+    if (row && row.leader_id) {
+      ctx.leaderLevel = row.gym_level ? (20 + (row.gym_level * 4)) : 35;
+      // Low stamina weakens the AI-piloted defender (vulnerability mechanic).
+      const st = gymStaminaNow(row);
+      if (st <= GYM_STAMINA_CRITICAL)      ctx.leaderLevel = Math.max(18, ctx.leaderLevel - 12);
+      else if (st <= GYM_STAMINA_LOW)      ctx.leaderLevel = Math.max(20, ctx.leaderLevel - 6);
+    } else {
+      ctx.leaderLevel = gymTrialLevel(coreId) + 4; // vacant gym — beat the NPC steward
+    }
+  }
+  App._gymBattlePending = ctx;
+  App.gymHall = false;
   App.selectedHero = App.selectedHero || (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES[0] && STARTER_HEROES[0].id) || null;
   App.screen = 'deckSelect';
   render();
@@ -23620,8 +23739,19 @@ function gymAfterBattle() {
     } else if (p.mode === 'trial' && !p.won) {
       showToast(`Defeated at the ${cn} Trial — train up and try again.`, 3200);
     } else if (p.mode === 'challenge') {
-      // Wired to the Supabase ownership transfer in the online phase.
-      showToast(p.won ? `🏛️ You bested the ${cn} Gym Leader!` : `Held off at the ${cn} gym — regroup and return.`, 3400);
+      if (p.won) {
+        showToast(`🏛️ You conquered the ${cn} gym! Claiming the throne…`, 3200);
+        // Snapshot is captured synchronously inside gymClaim before any await,
+        // while App.battlePrep is still live in this game-over path.
+        gymClaim(p.coreId).then(r => {
+          if (r && r.ok) showToast(`👑 You are the new Gym Leader of the ${cn}!`, 5200);
+          else showToast(`⚠ Claim didn't go through${r && r.error ? ': ' + r.error : ''}. Try again from the gym.`, 4200);
+          if (App.screen === 'gymWars') render();
+        });
+      } else {
+        showToast(`Held off at the ${cn} gym — the leader's defense streak grows.`, 3600);
+        gymRecordDefense(p.coreId).then(() => { if (App.screen === 'gymWars') render(); });
+      }
     }
   }
   App.screen = 'gymWars';
@@ -23634,6 +23764,15 @@ function renderGymWars() {
   if (Profile.cloud && Profile.cloud.signedIn && !GymWars.loading
       && (Date.now() - GymWars.lastFetch > 120000)) {
     gymFetchAll().then(() => { if (App.screen === 'gymWars') render(); });
+  }
+  // Lazy-load the Hall of Legends when the archive is opened.
+  if (App.gymHall && Profile.cloud && Profile.cloud.signedIn
+      && GymWars._hall == null && !GymWars._hallLoading && !GymWars.tableMissing) {
+    GymWars._hallLoading = true;
+    gymFetchHistory().then(rows => {
+      GymWars._hall = rows || []; GymWars._hallLoading = false;
+      if (App.screen === 'gymWars') render();
+    });
   }
   const _isAdm = (typeof isAdmin === 'function') && isAdmin();
   const n = gymBadgeCount();
@@ -23685,14 +23824,18 @@ function renderGymWars() {
     } else {
       leaderLine = `<div class="small-text ink-dim" style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid rgba(255,255,255,0.08)">${online ? '○ Vacant — no online leader yet' : '○ Sign in to see online leaders'}</div>`;
     }
-    // Challenge gating (the online claim is committed in the next phase; the
-    // button is honest about its state so nothing feels broken).
-    const canChallenge = allDone && online && !GymWars.tableMissing;
+    // Challenge gating — need all 8 badges, signed in, schema present, and
+    // you can't challenge a gym you already hold.
+    const isVacant = !(row && row.leader_id);
+    const canChallenge = allDone && online && !GymWars.tableMissing && !mine;
     const challengeAttr = canChallenge ? '' : 'disabled';
-    const challengeTip = !allDone ? `Collect all 8 Core Badges (${n}/8)`
+    const challengeTip = mine ? 'You already hold this gym — defend it!'
+      : !allDone ? `Collect all 8 Core Badges (${n}/8)`
       : !online ? 'Sign in to challenge online gyms'
       : GymWars.tableMissing ? 'Online gyms not set up yet'
-      : 'Challenge for control of this gym';
+      : isVacant ? 'Defeat the gym steward to claim this vacant gym'
+      : 'Defeat the Gym Leader to seize this gym';
+    const challengeLabel = mine ? '🛡 Your Gym' : isVacant ? '🚩 Claim Gym' : '🏛 Challenge Leader';
     return `
       <div style="position:relative;background:linear-gradient(160deg, ${c.color}1f, rgba(12,10,20,0.86));border:1px solid ${c.color}66;border-left:5px solid ${c.color};border-radius:12px;padding:1rem 1.1rem;display:flex;flex-direction:column;box-shadow:0 6px 22px rgba(0,0,0,0.45)">
         <div style="display:flex;align-items:center;gap:0.7rem">
@@ -23708,12 +23851,61 @@ function renderGymWars() {
         ${leaderLine}
         <div style="display:flex;gap:0.5rem;margin-top:0.8rem">
           <button class="btn-secondary btn-mini" data-gym-trial="${c.id}" style="flex:1;border-color:${c.color}88">${got ? '⚔ Re-challenge Trial' : '⚔ Core Trial'}</button>
-          <button class="btn-primary btn-mini" data-gym-challenge="${c.id}" ${challengeAttr} title="${escapeHtml(challengeTip)}" style="flex:1">🏛 Challenge Leader</button>
+          <button class="btn-primary btn-mini" data-gym-challenge="${c.id}" ${challengeAttr} title="${escapeHtml(challengeTip)}" style="flex:1">${challengeLabel}</button>
         </div>
       </div>`;
   }).join('');
 
   const seasonTxt = (GymWars.meta && GymWars.meta.season) ? `Season ${GymWars.meta.season}` : 'Season 1';
+
+  // ---- Hall of Legends archive (modal) ----
+  let hallHtml = '';
+  if (App.gymHall) {
+    const rows = Array.isArray(GymWars._hall) ? GymWars._hall.slice() : null;
+    let body;
+    if (!online) {
+      body = '<div class="small-text ink-dim" style="padding:1.4rem;text-align:center">Sign in to view the Hall of Legends.</div>';
+    } else if (GymWars.tableMissing) {
+      body = '<div class="small-text ink-dim" style="padding:1.4rem;text-align:center">Online gyms aren\'t set up yet.</div>';
+    } else if (rows == null || GymWars._hallLoading) {
+      body = '<div class="small-text ink-dim" style="padding:1.4rem;text-align:center">Consulting the chronicles…</div>';
+    } else if (rows.length === 0) {
+      body = '<div class="small-text ink-dim" style="padding:1.4rem;text-align:center">No reigns recorded yet. Be the first legend.</div>';
+    } else {
+      rows.sort((a, b) => {
+        const ar = a.lost_at ? 1 : 0, br = b.lost_at ? 1 : 0;
+        if (ar !== br) return ar - br; // currently-reigning first
+        const as = a.lost_at ? (a.reign_seconds || 0) : (Date.now() - Date.parse(a.claimed_at || 0)) / 1000;
+        const bs = b.lost_at ? (b.reign_seconds || 0) : (Date.now() - Date.parse(b.claimed_at || 0)) / 1000;
+        return bs - as;
+      });
+      body = rows.map(r => {
+        const core = getGymCore(r.core_id);
+        const reigning = !r.lost_at;
+        const secs = reigning ? Math.max(0, (Date.now() - Date.parse(r.claimed_at || 0)) / 1000) : (r.reign_seconds || 0);
+        return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.55rem 0.75rem;border-bottom:1px solid rgba(255,255,255,0.06)">
+          <span style="font-size:1.3rem">${core ? core.icon : '🏛️'}</span>
+          <div style="flex:1;min-width:0">
+            <div><strong style="color:#f6d97a">${escapeHtml(r.leader_name || 'Unknown')}</strong> <span class="small-text ink-dim">— ${escapeHtml(core ? core.name : r.core_id)}</span></div>
+            <div class="small-text ink-dim">${escapeHtml(r.hero_name || '—')} · peak 🛡 ${r.peak_streak || 0}${r.season ? (' · S' + r.season) : ''}</div>
+          </div>
+          <div style="text-align:right;white-space:nowrap">
+            ${reigning ? '<span style="color:#7be0a0;font-weight:700;font-size:0.72rem">👑 REIGNING</span>' : '<span class="small-text ink-dim">dethroned</span>'}
+            <div class="small-text" style="color:#e8d9b0">${_gymDur(secs)}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+    hallHtml = `<div class="modal-backdrop" id="gym-hall-backdrop" style="z-index:1200">
+      <div style="background:#0e0b16;border:1px solid rgba(255,207,90,0.35);border-radius:14px;max-width:560px;width:92%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 18px 60px rgba(0,0,0,0.7)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:0.9rem 1.1rem;border-bottom:1px solid rgba(255,207,90,0.2)">
+          <span style="font-family:'Cinzel',serif;color:#ffcf5a;font-size:1.1rem">🏛 Hall of Legends</span>
+          <button class="btn-secondary btn-mini" id="gym-hall-close">✕</button>
+        </div>
+        <div style="overflow-y:auto">${body}</div>
+      </div>
+    </div>`;
+  }
 
   root.innerHTML = `
     <div class="campaign-page" style="max-width:1180px;margin:0 auto">
@@ -23722,7 +23914,10 @@ function renderGymWars() {
           <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🏛️ Gym Core Wars</h2>
           <div class="small-text ink-dim">Conquer 8 Core Trials, then seize and defend the world's gyms. ${escapeHtml(seasonTxt)}.</div>
         </div>
-        <button class="btn-secondary btn-mini" id="gym-back">← Menu</button>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <button class="btn-secondary btn-mini" id="gym-hall">🏛 Hall of Legends</button>
+          <button class="btn-secondary btn-mini" id="gym-back">← Menu</button>
+        </div>
       </div>
 
       <div style="background:rgba(255,207,90,0.06);border:1px solid rgba(255,207,90,0.28);border-radius:10px;padding:0.85rem 1.1rem;margin-bottom:1.1rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
@@ -23740,13 +23935,14 @@ function renderGymWars() {
       </div>
 
       <div class="small-text ink-dim" style="text-align:center;margin-top:1.4rem;max-width:720px;margin-left:auto;margin-right:auto">
-        Core Trials are PvE — beat the Gym Leader NPC's deck. Difficulty scales with the badges you hold. Online gym ownership, Hall of Legends, stamina and supporters come online with the live world.
+        Core Trials are PvE — beat the Gym Leader NPC's deck. Difficulty scales with the badges you hold. Win a Challenge to seize a gym; lose and the leader's defense streak grows. Low gym stamina weakens its defender.
       </div>
     </div>
+    ${hallHtml}
   `;
 
   const back = document.getElementById('gym-back');
-  if (back) back.onclick = () => { App.screen = 'title'; App.titleHub = 'battle'; render(); };
+  if (back) back.onclick = () => { App.gymHall = false; App.screen = 'title'; App.titleHub = 'battle'; render(); };
   const sc = document.getElementById('gym-sql-copy');
   if (sc) sc.onclick = () => { try { navigator.clipboard.writeText(GYM_WARS_SQL); showToast('📋 SQL copied.'); } catch (e) { const t = document.getElementById('gym-sql'); if (t) t.select(); } };
   const sr = document.getElementById('gym-sql-retry');
@@ -23757,11 +23953,20 @@ function renderGymWars() {
   document.querySelectorAll('[data-gym-challenge]').forEach(b => {
     b.onclick = () => {
       if (b.disabled) return;
-      // The live ownership challenge is committed in the online phase. Until
-      // then, be honest rather than silently no-op.
-      showToast('🏛️ Online Gym Leader challenges go live in the next update — your 8 Cores are ready.', 4200);
+      const cid = b.dataset.gymChallenge;
+      const row = gymRow(cid);
+      const who = (row && row.leader_name) ? row.leader_name : 'the gym steward';
+      const core = getGymCore(cid);
+      if (!confirm(`Challenge ${who} for control of the ${core ? core.name : 'Core'} gym?\n\nWin and the gym becomes yours. Lose and their defense streak grows.`)) return;
+      startGymBattle(cid, 'challenge');
     };
   });
+  const hallBtn = document.getElementById('gym-hall');
+  if (hallBtn) hallBtn.onclick = () => { App.gymHall = true; GymWars._hall = null; render(); };
+  const hallClose = document.getElementById('gym-hall-close');
+  if (hallClose) hallClose.onclick = () => { App.gymHall = false; render(); };
+  const hallBack = document.getElementById('gym-hall-backdrop');
+  if (hallBack) hallBack.onclick = (e) => { if (e.target === hallBack) { App.gymHall = false; render(); } };
 }
 
 function cardSnapshotForListing(card) { return JSON.parse(JSON.stringify(card)); }

@@ -20476,6 +20476,7 @@ const SFX = {
   buttonHover:    { src: 'assets/Audio/button%20highlight%20sound.mp3', volume: 0.55 },
   mainMenuButton: { src: 'assets/Audio/main%20menu%20button.wav', volume: 0.9 },
   // ===== Battle SFX =====
+  turnStart:      { src: 'assets/Audio/Start%20turn%20sound.mp3', volume: 0.9 },
   endTurn:        { src: 'assets/Audio/end%20turn.wav',         volume: 0.9 },
   cardPlace:      { src: 'assets/Audio/card%20place.wav',       volume: 0.9 },
   cardDraw:       { src: 'assets/Audio/card%20draw.wav',        volume: 0.85 },
@@ -20594,6 +20595,35 @@ function playSfx(id) {
     // since they're fire-and-forget; the next call will succeed.
     if (p && typeof p.catch === 'function') p.catch(() => {});
   } catch (e) { /* ignore */ }
+}
+
+// ⏱ Looped "clock running out" alarm — plays on a LOOP for the final
+// 10 seconds of the local player's turn (only ever armed on their own
+// turn, never the opponent's, since the turn timer itself is local-only).
+// Respects the SFX master toggle + volume. Stops the moment the turn
+// ends, time expires, or the player leaves the battle.
+let _clockAlarmEl = null;
+function playClockRunningOut() {
+  const settings = (typeof getSettings === 'function') ? getSettings() : (Profile.settings || {});
+  if (settings.sfxEnabled === false) { stopClockRunningOut(); return; }
+  try {
+    if (!_clockAlarmEl) {
+      _clockAlarmEl = new Audio('assets/Audio/clock%20running%20out.mp3');
+      _clockAlarmEl.loop = true;
+      _clockAlarmEl.preload = 'auto';
+    }
+    const baseVol = Math.max(0, Math.min(1, settings.sfxVolume != null ? settings.sfxVolume : 0.8));
+    _clockAlarmEl.volume = Math.max(0, Math.min(1, baseVol * 0.95));
+    if (_clockAlarmEl.paused) {
+      const p = _clockAlarmEl.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    }
+  } catch (e) { /* ignore */ }
+}
+function stopClockRunningOut() {
+  if (_clockAlarmEl) {
+    try { _clockAlarmEl.pause(); _clockAlarmEl.currentTime = 0; } catch (e) {}
+  }
 }
 
 // Saved progression: levels, XP, kills, win/loss records, equipment
@@ -32083,9 +32113,14 @@ function renderDeckSelect() {
   // resolves starter ids elsewhere so legacy/AI/icon lookups never break.
   const _starterIds = new Set(STARTER_HEROES.map(h => h.id));
   const _hideStarters = !!Forge.useCustomOnlyPool && _customHeroEntries().length > 0;
-  const allDecks = getAllDecks().filter(d => !(_hideStarters && _starterIds.has(d.heroId)));
+  // 🦸 OWNERSHIP LOCKDOWN — players may only take heroes they actually own
+  // (cardCollection count ≥ 1). Heroes are obtained ONLY via packs or by
+  // buying a starter/structure deck. Admins bypass so they can test all.
+  const _ownerViewAll = (typeof isAdmin === 'function') && isAdmin();
+  const _heroUnlocked = (hid) => _ownerViewAll || (typeof ownsHero === 'function' && ownsHero(hid));
+  const allDecks = getAllDecks().filter(d => !(_hideStarters && _starterIds.has(d.heroId)) && _heroUnlocked(d.heroId));
   const heroesWithDecks = new Set(allDecks.map(d => d.heroId));
-  const allHeroes = getAllHeroes();
+  const allHeroes = getAllHeroes().filter(h => _heroUnlocked(h.id));
   const deckOptions = [
     ...allDecks.map(d => {
       const h = findHeroById(d.heroId);
@@ -32142,7 +32177,7 @@ function renderDeckSelect() {
       <h2 class="section-title">Choose Your Deck</h2>
       <div class="section-subtitle">Pick a hero to take into battle. Heroes with more than one deck let you choose which deck to play.</div>
       ${customNote}
-      <div class="hero-grid">${heroCards}</div>
+      <div class="hero-grid">${heroCards || '<div class="empty-list-note" style="margin:1.5rem auto;max-width:560px">You don\'t own any heroes yet. Heroes are unlocked from packs or by buying a starter / structure deck — grab one in the Vendor Market.</div>'}</div>
       <div class="start-row">
         <button class="btn-secondary" id="btn-back">← Back</button>
       </div>
@@ -42903,6 +42938,7 @@ function onEndTurn() {
     showToast('🕓 Waiting for opponent…', 1500);
     return;
   }
+  stopClockRunningOut();   // turn is ending — kill the final-10s alarm now
   App.state = endPlayerTurn(App.state);
   App.ui.aiBusy = true;
   App.ui.selectedUnitId = null; App.ui.selectedMoveId = null; App.ui.selectedCardId = null; App.ui.modalUnitId = null; App.ui.actionMode = null;
@@ -42932,6 +42968,7 @@ function _turnTimerStep() {
   try {
     if (App.screen !== 'battle' || !App.state || App.state.gameOver || App.replayViewing) {
       App._turnTimerKey = null;
+      stopClockRunningOut();
       return;
     }
     const s = App.state;
@@ -42939,6 +42976,7 @@ function _turnTimerStep() {
     const isPlayerTurn = s.turn === 'player' && !App.ui.aiBusy;
     if (!isPlayerTurn) {
       App._turnTimerKey = null;
+      stopClockRunningOut();   // never on the opponent's / AI side
       if (el) el.textContent = '';
       return;
     }
@@ -42947,6 +42985,10 @@ function _turnTimerStep() {
       App._turnTimerKey = key;
       App._turnTimerEnd = Date.now() + TURN_TIME_LIMIT_MS;
       App._turnTimerFired = false;
+      // 🔔 The LOCAL player's turn just began (the timer only ever arms on
+      // their own turn) — play the start-turn cue and clear any stale alarm.
+      stopClockRunningOut();
+      try { if (typeof playSfx === 'function') playSfx('turnStart'); } catch (e) {}
     }
     // ⏸ Tutorial grace — freeze the clock so a brand-new player can read the
     // walkthrough panel. It only starts ticking once they play their first
@@ -42954,6 +42996,7 @@ function _turnTimerStep() {
     if (App.tutorial && App.tutorial.active && !App._tutorialUnitPlayed) {
       App._turnTimerEnd = Date.now() + TURN_TIME_LIMIT_MS;
       App._turnTimerFired = false;
+      stopClockRunningOut();
       if (el) { el.textContent = '⏸'; el.classList.remove('low'); }
       return;
     }
@@ -42963,6 +43006,9 @@ function _turnTimerStep() {
       el.textContent = mm + ':' + (ss < 10 ? '0' : '') + ss;
       el.classList.toggle('low', remain <= 15);
     }
+    // 🔁 Final-10s alarm: loop "clock running out" until the turn passes.
+    if (remain <= 10 && remain > 0) playClockRunningOut();
+    else stopClockRunningOut();
     if (remain <= 0 && !App._turnTimerFired) {
       App._turnTimerFired = true;
       try { if (typeof showToast === 'function') showToast('⏱ Time! Your turn ended automatically.', 2400); } catch (e) {}

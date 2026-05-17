@@ -19575,6 +19575,10 @@ const Forge = {
   // 🛒 SHOP-PURCHASABLE TOMBSTONE COSMETICS — list of { id, name, image, cost }
   // entries the admin defines. Players spend Cinders to unlock + equip them.
   tombstoneCosmetics: [],
+  // 🏺 ADMIN-CREATED ROGUELITE RELICS — { id, name, icon, desc, + effect
+  // fields: maxHp, winCurrency, winHealPct, shopDiscount, rewardChoice,
+  // nodeCurrency, healBonusPct, grant:{currency,medPoints}, reviveOnce }.
+  rlcRelics: [],
 };
 // Default rarity weights for new custom packs — tuned to the user-specified rates.
 // These are RELATIVE weights, not absolute %; the openPack engine normalizes them.
@@ -21423,6 +21427,7 @@ const Catalog = {
   // 🛒 Admin-published cosmetic catalog for tombstones. Players buy + equip
   // these via the shop. { id, name, image, cost }.
   tombstoneCosmetics: [],
+  rlcRelics: [],
   publishedAt: 0,
   publishedBy: null,
   lastFetchedAt: 0,
@@ -21506,6 +21511,7 @@ async function cloudFetchCatalog() {
     Catalog.pageGuides = Array.isArray(rawMoves.__page_guides__) ? rawMoves.__page_guides__ : [];
     Catalog.tombstoneArt = rawMoves.__tombstone_art__ || null;
     Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
+    Catalog.rlcRelics = Array.isArray(rawMoves.__rlc_relics__) ? rawMoves.__rlc_relics__ : [];
     Catalog.blackMarketPrices = (rawMoves.__black_market_prices__ && typeof rawMoves.__black_market_prices__ === 'object') ? rawMoves.__black_market_prices__ : {};
     const cleanMoves = { ...rawMoves };
     delete cleanMoves.__ai_decks__;
@@ -21514,6 +21520,7 @@ async function cloudFetchCatalog() {
     delete cleanMoves.__page_guides__;
     delete cleanMoves.__tombstone_art__;
     delete cleanMoves.__tombstone_cosmetics__;
+    delete cleanMoves.__rlc_relics__;
     delete cleanMoves.__black_market_prices__;
     Catalog.moves  = cleanMoves;
     Catalog.items  = Array.isArray(data.items)  ? data.items  : [];
@@ -21555,6 +21562,7 @@ async function cloudPublishCatalog() {
       __page_guides__: Array.isArray(Forge.pageGuides) ? Forge.pageGuides : [],
       __tombstone_art__: Forge.tombstoneArt || null,
       __tombstone_cosmetics__: Array.isArray(Forge.tombstoneCosmetics) ? Forge.tombstoneCosmetics : [],
+      __rlc_relics__: Array.isArray(Forge.rlcRelics) ? Forge.rlcRelics : [],
       __black_market_prices__: (Forge.blackMarketPrices && typeof Forge.blackMarketPrices === 'object') ? Forge.blackMarketPrices : {},
     };
     const row = {
@@ -24247,6 +24255,8 @@ async function loadForgeContentFromIdb() {
     if (typeof ta === 'string' && ta && !String(Forge.tombstoneArt || '').length) { Forge.tombstoneArt = ta; changed = true; }
     const tc = await idbGet('forge_tombstoneCosmetics');
     if (Array.isArray(tc) && tc.length && (!Array.isArray(Forge.tombstoneCosmetics) || !Forge.tombstoneCosmetics.length)) { Forge.tombstoneCosmetics = tc; changed = true; }
+    const rr = await idbGet('forge_rlcRelics');
+    if (Array.isArray(rr) && rr.length && (!Array.isArray(Forge.rlcRelics) || !Forge.rlcRelics.length)) { Forge.rlcRelics = rr; changed = true; }
     const bmp = await idbGet('forge_blackMarketPrices');
     if (bmp && typeof bmp === 'object' && Object.keys(bmp).length && (!Forge.blackMarketPrices || !Object.keys(Forge.blackMarketPrices).length)) { Forge.blackMarketPrices = bmp; changed = true; }
   } catch (e) { /* skip */ }
@@ -24294,6 +24304,7 @@ function loadForge() {
     try { const cmp = localStorage.getItem('hg_campaigns'); if (cmp) { const x = JSON.parse(cmp); if (Array.isArray(x)) Forge.campaigns = x; } } catch (err) {}
     try { const ta = localStorage.getItem('hg_tombstoneArt'); if (ta != null) { const x = JSON.parse(ta); if (typeof x === 'string' && x) Forge.tombstoneArt = x; } } catch (err) {}
     try { const tc = localStorage.getItem('hg_tombstoneCosmetics'); if (tc) { const x = JSON.parse(tc); if (Array.isArray(x)) Forge.tombstoneCosmetics = x; } } catch (err) {}
+    try { const rr = localStorage.getItem('hg_rlcRelics'); if (rr) { const x = JSON.parse(rr); if (Array.isArray(x)) Forge.rlcRelics = x; } } catch (err) {}
     try { const po = localStorage.getItem('hg_priceOverrides'); if (po) { const x = JSON.parse(po); if (x && typeof x === 'object') Forge.priceOverrides = x; } } catch (err) {}
     try { const bmp = localStorage.getItem('hg_blackMarketPrices'); if (bmp) { const x = JSON.parse(bmp); if (x && typeof x === 'object') Forge.blackMarketPrices = x; } } catch (err) {}
     try { const cp = localStorage.getItem('hg_useCustomOnlyPool'); if (cp != null) Forge.useCustomOnlyPool = JSON.parse(cp) === true; } catch (err) {}
@@ -24562,6 +24573,7 @@ function saveForge() {
       // upload + reload lost the image. Persist them like everything else.
       idbSet('forge_tombstoneArt',       Forge.tombstoneArt       || null);
       idbSet('forge_tombstoneCosmetics', Forge.tombstoneCosmetics || []);
+      idbSet('forge_rlcRelics',          Forge.rlcRelics          || []);
       idbSet('forge_blackMarketPrices',  Forge.blackMarketPrices  || {});
     }
   } catch (e) { /* swallow — IDB issues fall back to memory-only */ }
@@ -24611,6 +24623,7 @@ function saveForge() {
     // fast-path (full copy is the IDB mirror above, restored at boot).
     { key: 'hg_tombstoneArt',       value: _stripDataUrls(Forge.tombstoneArt || null), name: 'tombstoneArt' },
     { key: 'hg_tombstoneCosmetics', value: _stripDataUrls(Forge.tombstoneCosmetics || []), name: 'tombstoneCosmetics' },
+    { key: 'hg_rlcRelics',          value: _stripDataUrls(Forge.rlcRelics || []),          name: 'rlcRelics' },
   ];
   const failures = [];
   for (const c of chunks) {
@@ -33018,6 +33031,31 @@ function renderPricingAdmin() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">🏺 Roguelite Relics (Admin)</div>
+        <div class="settings-section-desc">Create the relics that appear in the Roguelite campaign editor (Starting relic · node reward relic · Black-Market relic · Mystery outcome). <strong>Only relics you make here show in those pickers.</strong> Numeric effects stack across every relic the player owns; <em>Grant</em> values apply once the moment it's picked up; <em>Revive once</em> = survive a lost battle at 1 HP (Phoenix-style). 📚 Publish to push to all players.</div>
+        ${(() => {
+          const list = Array.isArray(Forge.rlcRelics) ? Forge.rlcRelics : [];
+          const inCss = 'padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px';
+          const numF = (r, i, k, lbl) => { const v = (k === 'grantCurrency') ? ((r.grant && r.grant.currency) || 0) : (k === 'grantMedPoints') ? ((r.grant && r.grant.medPoints) || 0) : (r[k] || 0); return `<label class="small-text ink-dim" style="display:flex;flex-direction:column;gap:2px">${lbl}<input type="number" data-relic-i="${i}" data-relic-k="${k}" value="${escapeHtml(String(v))}" style="${inCss}"></label>`; };
+          const rows = list.map((r, i) => `<div style="border:1px solid rgba(212,175,55,0.3);border-radius:6px;padding:0.6rem;margin-bottom:0.5rem;background:rgba(15,8,30,0.5)">
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+                <input data-relic-i="${i}" data-relic-k="icon" value="${escapeHtml(r.icon || '🏺')}" title="icon (emoji)" style="width:46px;text-align:center;${inCss}">
+                <input data-relic-i="${i}" data-relic-k="name" value="${escapeHtml(r.name || '')}" placeholder="Relic name" style="flex:1;min-width:150px;${inCss}">
+                <button class="btn-mini" data-relic-del="${i}" style="color:#ff8080">🗑</button>
+              </div>
+              <input data-relic-i="${i}" data-relic-k="desc" value="${escapeHtml(r.desc || '')}" placeholder="Description shown to players" style="width:100%;margin-bottom:6px;${inCss}">
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;align-items:end">
+                ${numF(r, i, 'maxHp', '+Max HP')}${numF(r, i, 'winCurrency', 'Cur / win')}${numF(r, i, 'winHealPct', 'Heal% / win')}${numF(r, i, 'shopDiscount', 'Shop −%')}
+                ${numF(r, i, 'rewardChoice', '+Choices')}${numF(r, i, 'nodeCurrency', 'Cur / node')}${numF(r, i, 'healBonusPct', 'All heal +%')}${numF(r, i, 'grantCurrency', 'Grant cur')}
+                ${numF(r, i, 'grantMedPoints', 'Grant med')}
+                <label class="small-text ink-dim" style="display:flex;align-items:center;gap:5px;align-self:center"><input type="checkbox" data-relic-i="${i}" data-relic-k="reviveOnce" ${r.reviveOnce ? 'checked' : ''}> Revive once</label>
+              </div>
+            </div>`).join('') || '<div class="small-text ink-dim" style="padding:0.5rem 0">No relics yet — add one below. (Until you do, campaign relic pickers stay empty.)</div>';
+          return `<div style="margin-top:0.6rem">${rows}</div><button class="btn-primary btn-mini" id="btn-rlc-relic-add" style="margin-top:0.4rem">➕ Add relic</button>`;
+        })()}
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🤖 AI Decks (Admin)</div>
         <div class="settings-section-desc">
           Define the decks <strong>every player's AI opponent plays</strong>. Click <strong>➕ New AI Deck</strong> to open the full <strong>visual Deck Builder</strong> — pick the hero, then pick the cards exactly like building your own deck. On save it's stored as an AI deck (not a player deck). These ride along inside the published catalog — when you click <strong>📚 Publish Cards/Heroes/Items/Packs</strong> above, your AI decks go up too, and the AI picks one of yours at random. Leave the list empty to let the game auto-build from your custom pool.
@@ -33319,6 +33357,40 @@ function renderPricingAdmin() {
     Forge.tombstoneCosmetics.splice(i, 1);
     if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge();
     render();
+  });
+
+  // 🏺 Roguelite relic CRUD.
+  const _relicPersist = () => { try { (typeof _persistForgeNow === 'function') ? _persistForgeNow() : saveForge(); } catch (e) {} };
+  const bRelicAdd = document.getElementById('btn-rlc-relic-add');
+  if (bRelicAdd) bRelicAdd.onclick = () => {
+    Forge.rlcRelics = Array.isArray(Forge.rlcRelics) ? Forge.rlcRelics : [];
+    Forge.rlcRelics.push({ id: 'rl' + Date.now().toString(36) + Math.floor(Math.random() * 1e3).toString(36),
+      icon: '🏺', name: 'New Relic', desc: '' });
+    _relicPersist(); render();
+  };
+  document.querySelectorAll('[data-relic-del]').forEach(b => b.onclick = () => {
+    const i = parseInt(b.dataset.relicDel, 10);
+    if (!Array.isArray(Forge.rlcRelics) || !Forge.rlcRelics[i]) return;
+    if (!confirm('Delete "' + (Forge.rlcRelics[i].name || 'this relic') + '"? Campaigns referencing it fall back to no relic.')) return;
+    Forge.rlcRelics.splice(i, 1);
+    _relicPersist(); render();
+  });
+  const _NUMK = ['maxHp', 'winCurrency', 'winHealPct', 'shopDiscount', 'rewardChoice', 'nodeCurrency', 'healBonusPct'];
+  document.querySelectorAll('[data-relic-i]').forEach(el => {
+    const apply = () => {
+      const i = parseInt(el.getAttribute('data-relic-i'), 10);
+      const k = el.getAttribute('data-relic-k');
+      const r = Array.isArray(Forge.rlcRelics) ? Forge.rlcRelics[i] : null;
+      if (!r) return;
+      if (k === 'reviveOnce') { r.reviveOnce = !!el.checked; }
+      else if (k === 'grantCurrency') { r.grant = r.grant || {}; r.grant.currency = parseInt(el.value, 10) || 0; }
+      else if (k === 'grantMedPoints') { r.grant = r.grant || {}; r.grant.medPoints = parseInt(el.value, 10) || 0; }
+      else if (_NUMK.indexOf(k) >= 0) { const n = parseInt(el.value, 10) || 0; if (n) r[k] = n; else delete r[k]; }
+      else { r[k] = el.value; }   // icon / name / desc
+      _relicPersist();
+    };
+    if (el.type === 'checkbox') el.addEventListener('change', apply);
+    else el.addEventListener('change', apply);
   });
 
   // 🤖 AI Deck CRUD — admin-only authoring of decks the AI plays.
@@ -50773,7 +50845,22 @@ const RLC_RELICS = [
   { id: 'bloodPact',   name: 'Blood Pact',      icon: '🔥', winCurrency: 30, maxHp: -10,       desc: '+30 currency per battle won, but −10 Max HP.' },
   { id: 'phoenix',     name: 'Phoenix Feather',  icon: '🪶', reviveOnce: true,                  desc: 'Once per run, survive a lost battle at 1 HP instead of dying.' },
 ];
-function getRlcRelic(id) { return RLC_RELICS.find(r => r && r.id === id) || null; }
+// Admin-created relics ONLY (Forge local wins over published Catalog). The
+// built-in RLC_RELICS are NOT shown in any picker — they remain solely as a
+// resolution fallback so campaigns/runs that already saved a built-in id
+// keep working. New campaigns choose from the admin's own relics.
+function getAllRlcRelics() {
+  const byId = {};
+  (Array.isArray(Catalog.rlcRelics) ? Catalog.rlcRelics : []).forEach(r => { if (r && r.id) byId[r.id] = r; });
+  (Array.isArray(Forge.rlcRelics)   ? Forge.rlcRelics   : []).forEach(r => { if (r && r.id) byId[r.id] = r; });
+  return Object.values(byId);
+}
+function getRlcRelic(id) {
+  if (!id) return null;
+  const custom = getAllRlcRelics().find(r => r && r.id === id);
+  if (custom) return custom;
+  return RLC_RELICS.find(r => r && r.id === id) || null;  // hidden legacy fallback
+}
 function _rlcHasRelic(run, id) { return !!(run && Array.isArray(run.relics) && run.relics.indexOf(id) >= 0); }
 function _rlcRelicSum(run, field) {
   if (!run || !Array.isArray(run.relics)) return 0;
@@ -51137,7 +51224,7 @@ function rlcAfterBattle() {
   if (!res || !run) { App.screen = run ? 'rlcMap' : 'rlcList'; return render(); }
   if (!res.won) {
     // 🪶 Phoenix Feather — once per run, survive a lost battle instead of dying.
-    if (_rlcHasRelic(run, 'phoenix') && !run._phoenixUsed) {
+    if (!run._phoenixUsed && Array.isArray(run.relics) && run.relics.some(rid => { const _r = getRlcRelic(rid); return _r && _r.reviveOnce; })) {
       run._phoenixUsed = true;
       run.heroHP = Math.max(1, Math.ceil(run.maxHP * 0.25));
       try { showToast('🪶 Phoenix Feather burns away — you cling to life at ' + run.heroHP + ' HP!', 3600); } catch (e) {}
@@ -51296,7 +51383,15 @@ function renderRlcAdmin() {
   const fld = (label, path, val, type) => `<label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">${label}</span><br><input data-rlc-path="${path}" type="${type || 'text'}" value="${escapeHtml(String(val == null ? '' : val))}" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"></label>`;
   const heroSel = (path, val) => `<label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">Hero</span><br><select data-rlc-path="${path}" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">— pick —</option>${heroOpts.map(h => `<option value="${escapeHtml(h.id)}" ${val === h.id ? 'selected' : ''}>${escapeHtml(h.name)}</option>`).join('')}</select></label>`;
   const deckSel = (path, val) => `<label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">Deck</span><br><select data-rlc-path="${path}" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">${deckOpts.map(o => `<option value="${escapeHtml(o.id)}" ${val === o.id ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}</select></label>`;
-  const relicSel = (label, path, val) => `<label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">${label}</span><br><select data-rlc-path="${path}" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">— none —</option>${RLC_RELICS.map(r => `<option value="${r.id}" ${val === r.id ? 'selected' : ''}>${r.icon} ${escapeHtml(r.name)} — ${escapeHtml(r.desc)}</option>`).join('')}</select></label>`;
+  const relicSel = (label, path, val) => {
+    const _rl = (typeof getAllRlcRelics === 'function') ? getAllRlcRelics() : [];
+    const _opts = _rl.map(r => `<option value="${escapeHtml(String(r.id))}" ${val === r.id ? 'selected' : ''}>${r.icon || '🏺'} ${escapeHtml(r.name || r.id)}${r.desc ? ' — ' + escapeHtml(r.desc) : ''}</option>`).join('');
+    // Preserve a previously-saved id (legacy/built-in) even if it's not in the
+    // admin's relic list, so editing an old campaign doesn't wipe its relic.
+    const _has = val && _rl.some(r => r.id === val);
+    const _legacy = (val && !_has) ? `<option value="${escapeHtml(String(val))}" selected>↺ ${escapeHtml(String(val))} (legacy)</option>` : '';
+    return `<label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">${label}</span><br><select data-rlc-path="${path}" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">— none —</option>${_opts}${_legacy}</select></label>`;
+  };
   const imgUp = (label, path, val, size) => `<div style="margin:0 0 8px">
       <div class="small-text ink-dim" style="margin-bottom:3px">${label}</div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -51377,7 +51472,7 @@ function renderRlcAdmin() {
           <input type="text" data-rlc-search="shop:${idx}" placeholder="🔍 Search a card to stock…" autocomplete="off" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.45);border-radius:5px;margin-bottom:4px">
           <div class="rlc-srch-res" id="rlc-srch-shop-${idx}" style="display:flex;flex-direction:column;gap:3px;max-height:220px;overflow:auto"></div>
           <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
-            <select id="rlc-shop-relicpick-${idx}" style="flex:1;padding:0.35rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(212,175,55,0.4);border-radius:5px">${RLC_RELICS.map(r => `<option value="${r.id}">${r.icon} ${escapeHtml(r.name)}</option>`).join('')}</select>
+            <select id="rlc-shop-relicpick-${idx}" style="flex:1;padding:0.35rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(212,175,55,0.4);border-radius:5px">${getAllRlcRelics().map(r => `<option value="${escapeHtml(String(r.id))}">${r.icon || '🏺'} ${escapeHtml(r.name || r.id)}</option>`).join('') || '<option value="">(no relics created yet)</option>'}</select>
             <button class="btn-secondary btn-mini" data-rlc-addrelic="${idx}">🏺 ＋ Add relic</button>
           </div>
         ` : ''}
@@ -51401,7 +51496,7 @@ function renderRlcAdmin() {
             <input type="number" data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.medPoints" value="${escapeHtml(String(o.medPoints || 0))}" title="med pts ±" style="width:56px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
             <input type="number" data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.healPercent" value="${escapeHtml(String(o.healPercent || 0))}" title="heal %" style="width:56px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
             <input type="number" data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.damagePercent" value="${escapeHtml(String(o.damagePercent || 0))}" title="damage %" style="width:56px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
-            <select data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.relicId" style="width:130px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">🏺 no relic</option>${RLC_RELICS.map(r => `<option value="${r.id}" ${o.relicId === r.id ? 'selected' : ''}>${r.icon} ${escapeHtml(r.name)}</option>`).join('')}</select>
+            <select data-rlc-path="nodes.${idx}.mystery.outcomes.${oi}.relicId" style="width:130px;padding:0.3rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">🏺 no relic</option>${getAllRlcRelics().map(r => `<option value="${escapeHtml(String(r.id))}" ${o.relicId === r.id ? 'selected' : ''}>${r.icon || '🏺'} ${escapeHtml(r.name || r.id)}</option>`).join('')}</select>
             <button class="btn-mini" data-rlc-rmoutcome="${idx}:${oi}" style="color:#ff8080">×</button>
           </div>`).join('') || '<span class="ink-dim small-text">No outcomes — add at least one.</span>'}
           <button class="btn-secondary btn-mini" data-rlc-addoutcome="${idx}">＋ Add outcome</button>

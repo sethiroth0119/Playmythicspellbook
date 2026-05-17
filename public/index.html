@@ -53941,7 +53941,7 @@ function _ensureGuideCss() {
     .rpgg-btn.ghost{background:transparent;color:#b8a0ff;border-color:rgba(184,136,255,.4);}
     .rpgg-off{display:flex;align-items:center;gap:.4rem;color:#9a8fbf;font-size:.78rem;cursor:pointer;user-select:none;}
     .rpgg-off input{accent-color:#ffd166;}
-    .rpgg-replay-fab{position:fixed;right:14px;bottom:14px;z-index:2147483400;cursor:pointer;
+    .rpgg-replay-fab{position:fixed;right:14px;bottom:88px;z-index:2147483340;cursor:pointer;
       font-family:'Cinzel',serif;font-weight:700;font-size:.82rem;color:#ffe9b8;
       background:linear-gradient(180deg,rgba(60,40,110,.92),rgba(28,16,52,.96));
       border:1px solid rgba(212,175,55,.55);border-radius:999px;padding:.5rem .9rem;
@@ -53955,6 +53955,27 @@ function _ensureGuideCss() {
 function _stopGuideAudio() {
   try { if (RPGGuide._audio) { RPGGuide._audio.pause(); RPGGuide._audio.currentTime = 0; RPGGuide._audio.src = ''; } } catch (e) {}
   RPGGuide._audio = null;
+}
+// 🔊 Browser autoplay policy blocks `new Audio().play()` until the user has
+// interacted with the page. A first-visit guide auto-shows BEFORE any gesture,
+// so its voice line is silently blocked for everyone except the admin (who has
+// already clicked around). This installs a one-time capturing listener that,
+// on the very first user interaction, resumes any guide clip that was blocked
+// — so other players hear the dialogue audio too.
+function _rpggInstallAudioUnlock() {
+  if (RPGGuide._unlockInstalled) return;
+  RPGGuide._unlockInstalled = true;
+  const resume = () => {
+    RPGGuide._gestured = true;
+    try {
+      const a = RPGGuide._audio;
+      if (a && a.paused && a.src) { const p = a.play(); if (p && p.catch) p.catch(() => {}); }
+    } catch (e) {}
+  };
+  try {
+    ['pointerdown', 'touchstart', 'keydown'].forEach(ev =>
+      document.addEventListener(ev, resume, { capture: true, passive: true }));
+  } catch (e) {}
 }
 function _clearGuideTimers() {
   try { clearInterval(RPGGuide._typeTimer); } catch (e) {}
@@ -54015,6 +54036,7 @@ function playPageGuide(guide, opts) {
   opts = opts || {};
   if (!guide || !Array.isArray(guide.bubbles) || guide.bubbles.length === 0) return;
   _ensureGuideCss();
+  _rpggInstallAudioUnlock();   // so blocked first-visit audio resumes on any gesture
   _clearGuideTimers();
   const oldFab = document.getElementById('rpgg-replay-fab'); if (oldFab) oldFab.remove();
   const oldOv = document.getElementById('rpgg-overlay'); if (oldOv) oldOv.remove();

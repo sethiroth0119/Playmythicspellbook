@@ -39053,6 +39053,15 @@ function renderItemEditor() {
           <label>Status immunities (the wearer is immune to these)</label>
           <div class="pack-kind-row" style="flex-wrap:wrap">${immBoxes}</div>
         </div>
+        ${(typeof RESOURCES !== 'undefined') ? `
+        <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.8rem;margin-top:0.4rem">
+          <label style="font-weight:700;color:#ffd166">🧰 Crafting Cost (resources)</label>
+          <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">What it costs players to craft this ${(it.slot === 'relic') ? 'relic' : 'item'}. Leave all blank to auto-use the rarity default (${escapeHtml(JSON.stringify(_CRAFT_DEFAULT_BY_RARITY[it.rarity || 'common'] || {}))}).</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            ${RESOURCES.map(r => `<label style="display:flex;align-items:center;gap:4px;font-size:0.85rem">${r.icon} ${escapeHtml(r.name)}
+              <input type="number" min="0" max="999" value="${(it.craftCost && it.craftCost[r.id]) || ''}" data-it-craftcost="${r.id}" style="width:62px"></label>`).join('')}
+          </div>
+        </div>` : ''}
       </div>
       <div class="editor-actions">
         <button class="btn-secondary" id="btn-item-cancel">Cancel</button>
@@ -39083,6 +39092,15 @@ function captureItemEditorInto(item) {
     item.statMods.spd = n('it-spd', -5,  5,  item.statMods.spd || 0);
   }
   item.immunities = Array.from(document.querySelectorAll('[data-it-immune]:checked')).map(el => el.dataset.itImmune);
+  if (document.querySelector('[data-it-craftcost]')) {
+    const cc = {};
+    document.querySelectorAll('[data-it-craftcost]').forEach(inp => {
+      const x = parseInt(inp.value, 10);
+      if (!isNaN(x) && x > 0) cc[inp.dataset.itCraftcost] = Math.min(999, x);
+    });
+    if (Object.keys(cc).length) item.craftCost = cc;
+    else delete item.craftCost;
+  }
   return item;
 }
 

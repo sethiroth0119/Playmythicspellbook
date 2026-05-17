@@ -25847,8 +25847,26 @@ const uid = (() => { let n = 0; return () => `u${Date.now()}_${++n}`; })();
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
-const lookupMove = (id) => MOVES[id] || Forge.customMoves[id] || null;
-const allMovesArray = () => [...Object.values(MOVES), ...Object.values(Forge.customMoves)];
+// Resolve a move id against built-ins, the admin's LOCAL forge moves, AND the
+// published Catalog moves. The Catalog branch is critical: regular players
+// receive admin-authored moves via the catalog (not Forge.customMoves), so
+// without it every custom-move learnset entry resolved to null and units fell
+// back to Slash / "no moves". This also makes move buffs/nerfs propagate —
+// knownMoves store ids, so a republished move's new stats reach every unit.
+const lookupMove = (id) => {
+  if (!id) return null;
+  if (MOVES[id]) return MOVES[id];
+  if (typeof Forge !== 'undefined' && Forge.customMoves && Forge.customMoves[id]) return Forge.customMoves[id];
+  if (typeof Catalog !== 'undefined' && Catalog.moves && Catalog.moves[id]) return Catalog.moves[id];
+  return null;
+};
+const allMovesArray = () => {
+  const byId = {};
+  Object.values(MOVES).forEach(m => { if (m && m.id) byId[m.id] = m; });
+  if (typeof Catalog !== 'undefined' && Catalog.moves) Object.values(Catalog.moves).forEach(m => { if (m && m.id) byId[m.id] = m; });
+  if (typeof Forge !== 'undefined' && Forge.customMoves) Object.values(Forge.customMoves).forEach(m => { if (m && m.id) byId[m.id] = m; });
+  return Object.values(byId);
+};
 
 // ============================================================================
 // 🎯 Move Picker — modern replacement for the native <select> in learnset rows.
@@ -27336,6 +27354,34 @@ function deriveDefaultKnownMoves(learnset, level) {
   return ids.length ? ids : ['slash'];
 }
 
+// Final known-move list for a built unit/hero. Rule (per design):
+//   • The CURRENT admin-authored learnset is the source of truth, so any
+//     buff/nerf or move-swap the admin makes reaches every unit that has
+//     that move — automatically, on the next build.
+//   • Moves the player explicitly bought from the TUTOR are protected:
+//     they're kept on top and never overwritten by a learnset change.
+// Tutor moves are listed first so they're guaranteed to survive the
+// MAX_KNOWN_MOVES cap; remaining slots fill from the live learnset.
+function _mergeKnownWithTutor(learnset, level, tutorMoves) {
+  const tut  = (Array.isArray(tutorMoves) ? tutorMoves : []).filter(id => id && lookupMove(id));
+  const base = (deriveDefaultKnownMoves(learnset, level) || []).filter(id => id && lookupMove(id));
+  const out = [];
+  tut.forEach(id => { if (out.indexOf(id) < 0 && out.length < MAX_KNOWN_MOVES) out.push(id); });
+  base.forEach(id => { if (out.indexOf(id) < 0 && out.length < MAX_KNOWN_MOVES) out.push(id); });
+  return out.length ? out : deriveDefaultKnownMoves(learnset, level);
+}
+// One-time migration: older saves marked a whole unit "customised"
+// (knownMovesAuto === false) without recording WHICH moves were tutor-
+// bought. Seed tutorMoves from any stored move not in the current learnset
+// so prior Tutor purchases aren't wiped by the new merge model.
+function _migrateTutorMoves(prof, learnset) {
+  if (!prof || Array.isArray(prof.tutorMoves)) return;
+  if (prof.knownMovesAuto === false && Array.isArray(prof.knownMoves)) {
+    const lsIds = new Set((learnset || []).map(l => l && l.m).filter(Boolean));
+    prof.tutorMoves = prof.knownMoves.filter(id => id && !lsIds.has(id));
+  }
+}
+
 // ===== Custom element modifiers (admin-authored on weather / spell / trap /
 // location cards). Gathers every active field source into a flat list, then
 // scales damage by element + attack/defense side + physical/magical channel.
@@ -28521,17 +28567,13 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
     // a level-up replace set knownMovesAuto === false), always re-derive
     // from the CURRENT learnset — so swapping e.g. Slash → Magic Ball Shot
     // updates the move on all players' units instead of staying cached.
-    if (Array.isArray(prof.knownMoves) && prof.knownMoves.length > 0 && prof.knownMovesAuto === false) {
-      knownMoves = prof.knownMoves.slice(0, MAX_KNOWN_MOVES);
-    } else {
-      knownMoves = deriveDefaultKnownMoves(cardData.learnset, level);
-      const _store = (owner === 'player') ? Profile.units : Profile.aiUnits;
-      _store[cardData.id] = _store[cardData.id] || prof;
-      if (!Array.isArray(prof.knownMoves) || prof.knownMoves.join('|') !== knownMoves.join('|') || prof.knownMovesAuto !== true) {
-        _store[cardData.id].knownMoves = knownMoves.slice(0);
-        _store[cardData.id].knownMovesAuto = true;
-        saveProfile();
-      }
+    _migrateTutorMoves(prof, cardData.learnset);
+    knownMoves = _mergeKnownWithTutor(cardData.learnset, level, prof.tutorMoves);
+    const _store = (owner === 'player') ? Profile.units : Profile.aiUnits;
+    _store[cardData.id] = _store[cardData.id] || prof;
+    if (!Array.isArray(prof.knownMoves) || prof.knownMoves.join('|') !== knownMoves.join('|')) {
+      _store[cardData.id].knownMoves = knownMoves.slice(0);
+      saveProfile();
     }
   } else {
     knownMoves = deriveDefaultKnownMoves(cardData.learnset, level);
@@ -28601,17 +28643,13 @@ const buildHero = (heroDataRaw, owner, pos, levelOverride, xpOverride) => {
   if (prof) {
     // 🔄 Same rule as units — admin learnset edits propagate to every
     // player's hero unless they've explicitly customised its moves.
-    if (Array.isArray(prof.knownMoves) && prof.knownMoves.length > 0 && prof.knownMovesAuto === false) {
-      knownMoves = prof.knownMoves.slice(0, MAX_KNOWN_MOVES);
-    } else {
-      knownMoves = deriveDefaultKnownMoves(effectiveLearnset, level);
-      const _store = (owner === 'player') ? Profile.heroes : Profile.aiHeroes;
-      _store[heroData.id] = _store[heroData.id] || prof;
-      if (!Array.isArray(prof.knownMoves) || prof.knownMoves.join('|') !== knownMoves.join('|') || prof.knownMovesAuto !== true) {
-        _store[heroData.id].knownMoves = knownMoves.slice(0);
-        _store[heroData.id].knownMovesAuto = true;
-        saveProfile();
-      }
+    _migrateTutorMoves(prof, effectiveLearnset);
+    knownMoves = _mergeKnownWithTutor(effectiveLearnset, level, prof.tutorMoves);
+    const _store = (owner === 'player') ? Profile.heroes : Profile.aiHeroes;
+    _store[heroData.id] = _store[heroData.id] || prof;
+    if (!Array.isArray(prof.knownMoves) || prof.knownMoves.join('|') !== knownMoves.join('|')) {
+      _store[heroData.id].knownMoves = knownMoves.slice(0);
+      saveProfile();
     }
   } else {
     knownMoves = deriveDefaultKnownMoves(effectiveLearnset, level);
@@ -40253,11 +40291,19 @@ function resolvePendingLearn(pending, oldMoveId) {
     if (pending.isHero) {
       const ph = Profile.heroes[pending.profileId] = Profile.heroes[pending.profileId] || { level: 1, xp: 0, kills: 0, wins: 0, statGains: emptyGains(), evs: emptyEvs() };
       ph.knownMoves = next.slice(0);
-      ph.knownMovesAuto = false;   // player chose this loadout — respect it
+      // Only a TUTOR purchase is protected from future learnset changes;
+      // a normal level-up swap still defers to the admin's learnset.
+      if (pending.isTutor) {
+        ph.tutorMoves = Array.isArray(ph.tutorMoves) ? ph.tutorMoves : [];
+        if (ph.tutorMoves.indexOf(pending.moveId) < 0) ph.tutorMoves.push(pending.moveId);
+      }
     } else {
       const pu = Profile.units[pending.profileId] = Profile.units[pending.profileId] || { level: 1, xp: 0, kills: 0, fielded: 0, statGains: emptyGains(), evs: emptyEvs() };
       pu.knownMoves = next.slice(0);
-      pu.knownMovesAuto = false;   // player chose this loadout — respect it
+      if (pending.isTutor) {
+        pu.tutorMoves = Array.isArray(pu.tutorMoves) ? pu.tutorMoves : [];
+        if (pu.tutorMoves.indexOf(pending.moveId) < 0) pu.tutorMoves.push(pending.moveId);
+      }
     }
     saveProfile();
     // Update runtime unit if still in battle
@@ -44639,13 +44685,9 @@ function getProfileForTutorTarget(target) {
 
 function getKnownMovesForTarget(target) {
   const prof = getProfileForTutorTarget(target);
-  // Only trust the cached list if the player explicitly customised it;
-  // otherwise mirror the build path and re-derive from the CURRENT learnset
-  // so admin move swaps show here too.
-  if (Array.isArray(prof.knownMoves) && prof.knownMoves.length > 0 && prof.knownMovesAuto === false) {
-    return prof.knownMoves.slice(0, MAX_KNOWN_MOVES);
-  }
-  return deriveDefaultKnownMoves(target.learnset, prof.level || 1);
+  // Mirror the build path: live learnset + protected Tutor moves.
+  _migrateTutorMoves(prof, target.learnset);
+  return _mergeKnownWithTutor(target.learnset, prof.level || 1, prof.tutorMoves);
 }
 
 function teachMoveToTarget(target, moveId) {
@@ -44666,7 +44708,9 @@ function teachMoveToTarget(target, moveId) {
   if (!Array.isArray(prof.knownMoves)) prof.knownMoves = known.slice(0);
   if (prof.knownMoves.length < MAX_KNOWN_MOVES) {
     prof.knownMoves.push(moveId);
-    prof.knownMovesAuto = false;   // player-customised — stop auto re-derive
+    // Tutor-bought → protected: never overwritten by future learnset edits.
+    prof.tutorMoves = Array.isArray(prof.tutorMoves) ? prof.tutorMoves : [];
+    if (prof.tutorMoves.indexOf(moveId) < 0) prof.tutorMoves.push(moveId);
     saveProfile();
     showToast(`✨ ${target.name} learned ${move.name}! (-${price} 🔥)`);
     return true;
@@ -54820,7 +54864,12 @@ function bindDeckCardContextEvents() {
 
 // "Pick a hero first" gate — appears when no hero is selected for the Deck Builder.
 function renderDeckBuilderHeroPick() {
-  const cards = getAllHeroes().map(h => {
+  // 🦸 Players may only build decks for heroes they OWN (cardCollection ≥ 1).
+  // Admins see every hero so they can author. Mirrors the Choose-Your-Deck gate.
+  const _ownerViewAll = (typeof isAdmin === 'function') && isAdmin();
+  const _heroUnlocked = (hid) => _ownerViewAll || (typeof ownsHero === 'function' && ownsHero(hid));
+  const _ownedHeroes = getAllHeroes().filter(h => _heroUnlocked(h.id));
+  const cards = _ownedHeroes.map(h => {
     const deckList = getDecksForHero(h.id);
     const cnt = deckList.length;
     const prof = getHeroProfile(h.id);
@@ -54861,7 +54910,7 @@ function renderDeckBuilderHeroPick() {
         </div>
         <button class="btn-secondary btn-mini" id="btn-back-deck">← Menu</button>
       </div>
-      <div class="hero-pick-grid">${cards}</div>
+      <div class="hero-pick-grid">${cards || '<div class="empty-list-note" style="margin:1.5rem auto;max-width:560px">You don\'t own any heroes yet. Heroes unlock from packs or by buying a starter / structure deck — then you can build decks for them here.</div>'}</div>
     </div>
   `;
   document.getElementById('btn-back-deck').onclick = () => {

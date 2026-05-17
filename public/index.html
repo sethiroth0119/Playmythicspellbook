@@ -32388,6 +32388,9 @@ function render() {
     if (App._lastRenderScreen !== App.screen) {
       App._lastRenderScreen = App.screen;
       if (typeof _flushCloudSyncNow === 'function') _flushCloudSyncNow();
+      // 🔍 Never leak the read-only card-detail modal across a screen change
+      // (it's opened same-screen, so this only fires on real navigation).
+      App.collectionDetailCard = null;
     }
     // 📖 RPG page guide — keyed to the COMPOSITE route (screen + title sub-hub
     // / vendor tab) so guides also fire when you enter Battle Hall, the Packs
@@ -34079,8 +34082,9 @@ function renderVsScreen() {
         // the team row the "deck cards floating around the hero" feel.
         const dur   = (3.0 + (i * 0.3) % 2.0).toFixed(2);
         const delay = ((i * 0.45) % 3.5).toFixed(2);
+        const _foe = sideClass === 'foe';
         return `
-        <div class="vs-team-slot ${sideClass}" title="${escapeHtml(card.name)}${count > 1 ? ' ×' + count : ''}" style="--float-dur:${dur}s;--float-delay:${delay}s">
+        <div class="vs-team-slot ${sideClass}" title="${escapeHtml(card.name)}${count > 1 ? ' ×' + count : ''} — right-click for details${_foe ? ' (move set hidden)' : ''}" style="--float-dur:${dur}s;--float-delay:${delay}s" data-detail-card="${escapeHtml(card.id)}" data-detail-kind="${escapeHtml(card.type || 'unit')}" data-detail-hide-moves="${_foe ? '1' : '0'}">
           <div class="vs-team-icon">${renderIcon('u_' + card.id, card.icon, 'md')}</div>
           <div class="vs-team-name">${escapeHtml(card.name)}</div>
           ${count > 1 ? `<div class="vs-team-count">×${count}</div>` : ''}
@@ -34206,6 +34210,7 @@ function renderVsScreen() {
         <button class="btn-secondary btn-mini" id="btn-vs-skip">⏭ Skip Timer — Start Now</button>
       </div>
     </div>
+    ${renderCollectionCardModal()}
   `;
 
   // ===== Tick the countdown =====
@@ -34275,6 +34280,10 @@ function renderVsScreen() {
   }
   const skipBtn = document.getElementById('btn-vs-skip');
   if (skipBtn) skipBtn.onclick = () => startBattle();
+  // 🔍 Right-click any unit (yours or the opponent's) for a read-only detail
+  // card. Opponent units pass hideMoves so their move set stays secret.
+  bindCardDetailContextMenus();
+  bindCollectionCardModal();
 }
 
 // ============ COIN FLIP (winner picks first turn) ============
@@ -46596,6 +46605,7 @@ function renderMarket() {
       ${tabsHtml}
       <div class="forge-body">${body}</div>
     </div>
+    ${renderCollectionCardModal()}
   `;
   if (tab !== 'resources' && typeof resMarketUnsubscribe === 'function') resMarketUnsubscribe();
   document.getElementById('btn-back-market').onclick = () => { if (typeof resMarketUnsubscribe === 'function') resMarketUnsubscribe(); App.screen = 'title'; render(); };
@@ -46616,6 +46626,10 @@ function renderMarket() {
   document.querySelectorAll('[data-range-btn]').forEach(btn => {
     btn.onclick = () => { App.stockRange = btn.dataset.rangeBtn; render(); };
   });
+  // 🔍 Right-click any card row (Sell tab, Browse listings, My Listings) for
+  // a read-only detail card — view only, no ownership/action change.
+  bindCardDetailContextMenus();
+  bindCollectionCardModal();
 }
 
 function renderListingCard(listing, opts) {
@@ -46647,7 +46661,7 @@ function renderListingCard(listing, opts) {
     `
     : `<div class="tutor-price"><span class="cinder-icon"></span> ${listing.price}</div>${action || ''}`;
   return `
-    <div class="market-listing ${isAuction ? 'is-auction' : ''}" data-listing-row="${escapeHtml(listing.id)}">
+    <div class="market-listing ${isAuction ? 'is-auction' : ''}" data-listing-row="${escapeHtml(listing.id)}"${!isItem && card && card.id ? ` data-detail-card="${escapeHtml(card.id)}" data-detail-kind="${escapeHtml(card.type || 'unit')}" title="Right-click for details"` : ''}>
       <div class="market-listing-icon">${isItem ? `<span style="font-size:2rem">${card.icon}</span>` : (card.type === 'unit' ? renderIcon('u_' + card.id, card.icon, 'md') : `<span style="font-size:2rem">${card.icon}</span>`)}</div>
       <div class="market-listing-info">
         <div class="market-listing-name">${escapeHtml(card.name)} ${elemIcons}</div>
@@ -46914,7 +46928,7 @@ function renderMarketSell() {
   const cardList = cards.length === 0
     ? `<div class="empty-list-note">No Forge custom cards to sell. Forge some in The Forge first.</div>`
     : cards.map(c => `
-        <div class="market-sell-row" data-card="${c.id}">
+        <div class="market-sell-row" data-card="${c.id}" data-detail-card="${escapeHtml(c.id)}" data-detail-kind="${escapeHtml(c.type || 'unit')}" title="Right-click for details">
           <div class="market-listing-icon">${c.type === 'unit' ? renderIcon('u_' + c.id, c.icon, 'md') : `<span style="font-size:1.6rem">${c.icon}</span>`}</div>
           <div class="market-listing-info">
             <div class="market-listing-name">${escapeHtml(c.name)}</div>
@@ -49784,7 +49798,7 @@ function renderBlackMarket() {
   const tiles = filtered.map(r => {
     const rd = (typeof RARITY_DATA !== 'undefined' && RARITY_DATA[r.rarityId]) || { color: '#cfcfdc', name: r.rarityId };
     return `
-      <div class="vendor-row" style="border-left:4px solid ${rd.color}">
+      <div class="vendor-row" style="border-left:4px solid ${rd.color}" data-detail-card="${escapeHtml(r.cardId)}" data-detail-kind="${escapeHtml(r.card.type || 'unit')}" title="Right-click for details">
         <div class="vendor-row-icon">${r.card.icon || '🃏'}</div>
         <div class="vendor-row-main">
           <div class="vendor-row-name">${escapeHtml(r.card.name)}</div>
@@ -49851,6 +49865,7 @@ function renderBlackMarket() {
         ${tiles || '<div class="ink-dim" style="padding:2rem;text-align:center">No cards available to sell — open packs to build inventory.</div>'}
       </div>
     </div>
+    ${renderCollectionCardModal()}
   `;
 
   document.getElementById('btn-back-vendor').onclick = () => { App.vendorSearch = ''; App.screen = 'title'; render(); };
@@ -49914,6 +49929,9 @@ function renderBlackMarket() {
       render();
     };
   }
+  // 🔍 Right-click any card row for a read-only detail card (view only).
+  bindCardDetailContextMenus();
+  bindCollectionCardModal();
 }
 
 function renderAchievements() {
@@ -55831,6 +55849,10 @@ function renderCollectionCardModal(active) {
   if (!data || !data.card) return '';
   const c = data.card;
   const kind = data.kind || c.type || 'unit';
+  // 🛡 When opened from an OPPONENT preview (e.g. the VS screen "Their Team"),
+  // the player may inspect stats / element / passive — but NOT scout the exact
+  // move set. hideMoves suppresses the Learnset section and shows a note.
+  const hideMoves = !!data.hideMoves;
   const r = (typeof getRarity === 'function') ? getRarity(c) : { name: 'Common', color: '#9aa0a6' };
   const spriteKey = kind === 'hero' ? 'h_' + c.id : 'u_' + c.id;
   const ownedCount = (Profile.cardCollection && Profile.cardCollection[c.id]) || 0;
@@ -55858,7 +55880,9 @@ function renderCollectionCardModal(active) {
     : '';
 
   // ---- Learnset (units / heroes) ----
-  const learnsetHtml = ((kind === 'unit' || kind === 'hero') && Array.isArray(c.learnset) && c.learnset.length)
+  const learnsetHtml = hideMoves
+    ? `<div class="ccm-section"><div class="ccm-section-title">📖 Learnset</div><div class="ink-dim small-text">🛡 Hidden — you can't scout an opponent's move set before the match.</div></div>`
+    : ((kind === 'unit' || kind === 'hero') && Array.isArray(c.learnset) && c.learnset.length)
     ? (() => {
         const rows = c.learnset.slice().sort((a, b) => (a.lvl || 1) - (b.lvl || 1)).map(entry => {
           const m = (typeof lookupMove === 'function') ? lookupMove(entry.m) : (MOVES && MOVES[entry.m]);
@@ -56024,6 +56048,66 @@ function bindCollectionCardModal() {
   if (App._ccmEsc) document.removeEventListener('keydown', App._ccmEsc);
   App._ccmEsc = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', App._ccmEsc);
+}
+
+// ============ GLOBAL READ-ONLY CARD DETAIL (right-click anywhere) ============
+// Reuses the Collection card-detail modal so players can right-click a unit /
+// card ANYWHERE it's shown (VS screen team preview, Player Market, Black
+// Market) to inspect its full stats / element / passive — view only, no
+// ownership or action change. Opponent previews pass hideMoves so the move
+// set stays secret before the match.
+
+// Resolve a card definition by id from every source (Forge customs, the
+// published Catalog/built-ins, deck-key form). Returns null if unknown.
+function _resolveAnyCardById(id) {
+  if (!id) return null;
+  try {
+    const fc = (typeof Forge !== 'undefined') && Forge.customCards;
+    if (fc) {
+      if (Array.isArray(fc)) { const f = fc.find(c => c && c.id === id); if (f) return f; }
+      else if (fc[id]) return fc[id];
+    }
+  } catch (e) {}
+  try {
+    if (typeof resolveDeckCard === 'function') {
+      const r = resolveDeckCard(id) || resolveDeckCard('custom:' + id);
+      if (r) return r;
+    }
+  } catch (e) {}
+  try { if (typeof findCardById === 'function') { const c = findCardById(id); if (c) return c; } } catch (e) {}
+  try { if (typeof findHeroById === 'function') { const h = findHeroById(id); if (h) return h; } } catch (e) {}
+  try { if (typeof CARDS !== 'undefined' && Array.isArray(CARDS)) { const c = CARDS.find(x => x && x.id === id); if (c) return c; } } catch (e) {}
+  return null;
+}
+
+// Open the shared read-only detail modal for a resolved card object.
+function openCardDetailView(card, kind, opts) {
+  if (!card) return;
+  App.collectionDetailCard = {
+    card,
+    kind: kind || card.type || 'unit',
+    hideMoves: !!(opts && opts.hideMoves),
+  };
+  render();
+}
+
+// Delegated right-click binder. Any element carrying data-detail-card="<id>"
+// (optionally data-detail-hide-moves="1") gets a contextmenu handler that
+// opens the read-only modal. Call AFTER root.innerHTML is set, alongside
+// bindCollectionCardModal(), on every screen that shows cards.
+function bindCardDetailContextMenus() {
+  document.querySelectorAll('[data-detail-card]').forEach(el => {
+    el.oncontextmenu = (e) => {
+      const id = el.dataset.detailCard;
+      const card = _resolveAnyCardById(id);
+      if (!card) return;                       // unknown → let native menu through
+      e.preventDefault();
+      e.stopPropagation();
+      openCardDetailView(card, el.dataset.detailKind || null, {
+        hideMoves: el.dataset.detailHideMoves === '1',
+      });
+    };
+  });
 }
 
 // ============ DECK BUILDER SCREEN ============

@@ -23832,10 +23832,25 @@ function isAlreadyParked(kind, refId) {
   return Camp.slots.some(s => s.kind === kind && s.refId === refId);
 }
 
+// Total card copies the player owns across their whole collection.
+function _totalOwnedCards() {
+  const c = Profile.cardCollection || {};
+  let n = 0;
+  for (const k in c) { if (Object.prototype.hasOwnProperty.call(c, k)) n += Math.max(0, parseInt(c[k], 10) || 0); }
+  return n;
+}
+const CAMP_MIN_COLLECTION = 40; // a player must always be able to field a full deck
 function parkInCamp(kind, refId) {
   if (kind !== 'unit') { showToast('Only units can be parked — heroes stay with you'); return false; }
   if (Camp.slots.length >= Camp.maxSlots) { showToast(`Camp is full (${Camp.maxSlots} slots)`); return false; }
   if (isAlreadyParked(kind, refId)) { showToast('Already in camp'); return false; }
+  // 🛡 Never let the player drop below a full 40-card collection. Each parked
+  // unit ties up a copy, so usable = owned − parked must stay ≥ 40.
+  const _usableAfter = _totalOwnedCards() - (Camp.slots.length + 1);
+  if (_usableAfter < CAMP_MIN_COLLECTION) {
+    showToast(`Can't park — you must keep at least ${CAMP_MIN_COLLECTION} cards available. Collect more cards first.`, 3400);
+    return false;
+  }
   if ((Profile.gems || 0) < CAMP_PARK_COST) {
     showToast(`Need ${CAMP_PARK_COST} 🔥 to park — you have ${Profile.gems || 0}`);
     return false;
@@ -45423,11 +45438,20 @@ function renderCamp() {
     setTimeout(() => render(), 0);
     return;
   }
-  // Heroes cannot be parked — only units (base + custom).
-  const available = [
-    ...UNIT_CARDS.map(u => ({ kind: 'unit', id: u.id, name: u.name, icon: u.icon, sub: 'Unit' })),
-    ...Forge.customCards.filter(c => (c.type || 'unit') === 'unit').map(c => ({ kind: 'unit', id: c.id, name: c.name, icon: c.icon, sub: 'Custom' })),
-  ];
+  // Only units the player actually OWNS, and only created/custom cards (no
+  // built-in mockups). Heroes are never parkable.
+  const _coll = Profile.cardCollection || {};
+  const _seen = {};
+  const available = [];
+  Object.keys(_coll).forEach(cid => {
+    if ((_coll[cid] || 0) <= 0 || _seen[cid]) return;
+    let c = null;
+    try { c = (typeof lookupCustomCard === 'function') ? lookupCustomCard(cid) : null; } catch (e) {}
+    if (!c) return;                                 // not an admin-created card → skip built-ins
+    if ((c.type || 'unit') !== 'unit') return;      // units only (excludes heroes/spells/etc.)
+    _seen[cid] = 1;
+    available.push({ kind: 'unit', id: cid, name: c.name || cid, icon: c.icon, sub: 'Unit' });
+  });
 
   const renderSlot = (slot) => {
     if (!slot) {
@@ -45487,6 +45511,7 @@ function renderCamp() {
         Park unused units to gain <strong>${CAMP_XP_PER_HOUR} XP/hour</strong> (capped at ${CAMP_XP_CAP} XP per slot).
         Parking costs <strong><span class="cinder-icon"></span> ${CAMP_PARK_COST}</strong> per unit · heroes stay with you.
         Click <strong>Collect</strong> to apply the XP — level-ups roll new stats and learnable moves.
+        <br><span class="ink-dim">Only units you own are listed. You must always keep at least <strong>${CAMP_MIN_COLLECTION}</strong> cards available — you have <strong>${_totalOwnedCards()}</strong> owned · <strong>${Camp.slots.length}</strong> parked.</span>
       </div>
       <div class="camp-layout">
         <div>

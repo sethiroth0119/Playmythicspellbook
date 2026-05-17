@@ -48930,14 +48930,19 @@ function maybeShowPageGuide() {
     let g = null;
     for (const r of candidates) { g = getActivePageGuide(r); if (g) break; }
     if (!g) return;
-    if (g.triggerType === 'button') return;              // manual replay only
     let done = false;
     try { done = localStorage.getItem(_guideDoneKey(g.id)) === '1'; } catch (e) {}
-    try { if (localStorage.getItem(_guideOffKey(g.id)) === '1') return; } catch (e) {}
-    if ((g.showOnce || g.triggerType === 'firstVisit') && done) { _mountGuideReplayFab(g); return; }
-    if (g.triggerType === 'everyVisit' || g.triggerType === 'load' || g.triggerType === 'firstVisit' || !g.triggerType) {
-      playPageGuide(g);
-    }
+    let optedOff = false;
+    try { optedOff = localStorage.getItem(_guideOffKey(g.id)) === '1'; } catch (e) {}
+    const autoPlay = g.triggerType !== 'button'
+      && !optedOff
+      && !((g.showOnce || g.triggerType === 'firstVisit') && done)
+      && (g.triggerType === 'everyVisit' || g.triggerType === 'load' || g.triggerType === 'firstVisit' || !g.triggerType);
+    if (autoPlay) { playPageGuide(g); return; }
+    // Not auto-playing (button-trigger, already seen, or opted out of the
+    // auto-popup) → ALWAYS leave the replay button so the player can rewatch
+    // the guide from anywhere one exists, even after they've seen it.
+    _mountGuideReplayFab(g);
   } catch (e) { /* never let the guide break navigation */ }
 }
 
@@ -49032,11 +49037,18 @@ function _closeGuide(markDone) {
 function _mountGuideReplayFab(g) {
   try {
     const old = document.getElementById('rpgg-replay-fab'); if (old) old.remove();
-    if (!g || g.replayLabel === '' || g.replayLabel === null) return;
-    if (App.screen !== g.pageRoute) return;
+    if (!g) return;
+    // Composite-route aware: a guide for a title sub-hub (title:battle) or a
+    // Vendor tab (vendorMarket:packs) must still match while App.screen is
+    // just 'title' / 'vendorMarket'. Show whenever the guide's page is the
+    // one currently being viewed.
+    const composite = (typeof _currentGuideRoute === 'function') ? _currentGuideRoute() : App.screen;
+    if (g.pageRoute !== composite && g.pageRoute !== String(composite).split(':')[0]) return;
     const b = document.createElement('div');
     b.id = 'rpgg-replay-fab'; b.className = 'rpgg-replay-fab';
-    b.textContent = g.replayLabel || '📖 Replay guide';
+    // Always label it (blank admin field no longer hides the button — the
+    // replay action must be reachable anywhere a guide exists).
+    b.textContent = (g.replayLabel && String(g.replayLabel).trim()) ? g.replayLabel : '📖 Replay guide';
     b.onclick = () => { b.remove(); playPageGuide(g, { replay: true }); };
     document.body.appendChild(b);
   } catch (e) {}

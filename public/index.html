@@ -51955,7 +51955,7 @@ function renderRlcMap() {
   const byId = {}; N.forEach(o => { byId[o.node.id] = o; });
   const maxRow = N.reduce((a, o) => Math.max(a, o.r), 0);
   const maxCol = N.reduce((a, o) => Math.max(a, o.c), 0);
-  const NW = 152, NH = 92, STEPX = 210, STEPY = 168, PADX = 30, PADY = 26;
+  const NW = 224, NH = 138, STEPX = 320, STEPY = 248, PADX = 48, PADY = 44;
   const mapW = (maxCol + 1) * STEPX + PADX * 2 - (STEPX - NW);
   const mapH = (maxRow + 1) * STEPY + PADY * 2 - (STEPY - NH);
   const posOf = (o) => { const left = PADX + o.c * STEPX; const top = PADY + (maxRow - o.r) * STEPY; return { left, top, cx: left + NW / 2, cy: top + NH / 2 }; };
@@ -51984,10 +51984,10 @@ function renderRlcMap() {
         : (st === 'done' ? 'border-color:#5fae7a' : 'border-color:rgba(255,255,255,0.12)');
     const op = st === 'lock' ? 0.45 : 1;
     return `<div ${st === 'avail' ? `data-rlc-node="${escapeHtml(String(n.id))}" role="button" tabindex="0"` : ''}
-        style="position:absolute;left:${ps.left}px;top:${ps.top}px;width:${NW}px;height:${NH}px;box-sizing:border-box;padding:8px;background:rgba(16,9,28,0.94);border:2px solid;border-radius:12px;${ring};opacity:${op};cursor:${st === 'avail' ? 'pointer' : 'default'};z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
-        <div style="font-size:1.5rem;line-height:1;position:relative">${n.iconImg ? `<img src="${n.iconImg}" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:6px${st === 'lock' ? ';filter:grayscale(0.8) brightness(0.55)' : ''}">${st === 'done' ? '<span style="position:absolute;right:-7px;bottom:-5px;font-size:0.95rem">✅</span>' : ''}` : (st === 'done' ? '✅' : t.icon)}</div>
-        <div style="font-family:'Cinzel',serif;color:${st === 'lock' ? '#888' : '#f6d97a'};font-weight:700;font-size:0.84rem;line-height:1.05;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(n.name || t.name)}</div>
-        <div class="small-text" style="color:${t.color};font-size:0.68rem">${escapeHtml(t.name)}</div>
+        style="position:absolute;left:${ps.left}px;top:${ps.top}px;width:${NW}px;height:${NH}px;box-sizing:border-box;padding:12px;background:rgba(16,9,28,0.94);border:2px solid;border-radius:14px;${ring};opacity:${op};cursor:${st === 'avail' ? 'pointer' : 'default'};z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px">
+        <div style="font-size:2.2rem;line-height:1;position:relative">${n.iconImg ? `<img src="${n.iconImg}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px${st === 'lock' ? ';filter:grayscale(0.8) brightness(0.55)' : ''}">${st === 'done' ? '<span style="position:absolute;right:-8px;bottom:-6px;font-size:1.15rem">✅</span>' : ''}` : (st === 'done' ? '✅' : t.icon)}</div>
+        <div style="font-family:'Cinzel',serif;color:${st === 'lock' ? '#888' : '#f6d97a'};font-weight:700;font-size:1.02rem;line-height:1.1;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(n.name || t.name)}</div>
+        <div class="small-text" style="color:${t.color};font-size:0.8rem">${escapeHtml(t.name)}</div>
       </div>`;
   }).join('');
   const mapHtml = `<div style="position:relative;width:${mapW}px;height:${mapH}px;margin:0 auto">
@@ -52027,7 +52027,7 @@ function renderRlcMap() {
       <h1 class="section-title" style="color:#f6d97a;margin-bottom:4px">${escapeHtml(camp.name || 'Campaign')}</h1>
       ${_rlcHUD(run, camp)}
       <div class="small-text ink-dim" style="text-align:center;margin:2px 0 8px">Start at the bottom · follow the glowing paths upward · ✅ = cleared</div>
-      <div style="overflow:auto;max-height:66vh;padding:14px 6px 44px">
+      <div id="rlc-map-scroll" style="overflow:auto;max-height:calc(100vh - 210px);padding:14px 6px 60px;overscroll-behavior:contain">
         ${mapHtml}
       </div>
       ${App._rlcIntroFor === camp.id && camp.intro ? `
@@ -52064,6 +52064,32 @@ function renderRlcMap() {
     App._rlcNodePreview = null;
     if (id) rlcEnterNode(id);
   };
+  // 🖱️ Mouse-wheel panning of the (now much larger) node map. Native
+  // overflow:auto already scrolls vertically, but this also routes the
+  // wheel to horizontal scroll when the map is wide and there's nothing
+  // left to scroll vertically (or Shift is held), and keeps the wheel
+  // working even while the cursor is over a node.
+  const _mapScroll = document.getElementById('rlc-map-scroll');
+  if (_mapScroll) {
+    _mapScroll.addEventListener('wheel', (ev) => {
+      const dy = ev.deltaY || 0, dx = ev.deltaX || 0;
+      const canV = (_mapScroll.scrollHeight - _mapScroll.clientHeight) > 1;
+      const canH = (_mapScroll.scrollWidth - _mapScroll.clientWidth) > 1;
+      const atTop = _mapScroll.scrollTop <= 0;
+      const atBot = _mapScroll.scrollTop >= (_mapScroll.scrollHeight - _mapScroll.clientHeight - 1);
+      if (ev.shiftKey && canH) {
+        _mapScroll.scrollLeft += (dy || dx);
+        ev.preventDefault();
+      } else if (canV && !((dy < 0 && atTop) || (dy > 0 && atBot))) {
+        _mapScroll.scrollTop += dy;
+        if (canH && dx) _mapScroll.scrollLeft += dx;
+        ev.preventDefault();
+      } else if (canH && dy) {
+        _mapScroll.scrollLeft += dy;
+        ev.preventDefault();
+      }
+    }, { passive: false });
+  }
 }
 function renderRlcReward() {
   const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }

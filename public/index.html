@@ -21807,17 +21807,49 @@ async function cloudPublishCatalog() {
       __black_market_prices__: (Forge.blackMarketPrices && typeof Forge.blackMarketPrices === 'object') ? Forge.blackMarketPrices : {},
       __camp_costs__: (Forge.campCosts && typeof Forge.campCosts === 'object') ? Forge.campCosts : {},
     };
+    // 🪶 Deep-strip heavy inline base64 / data: URLs from EVERYTHING that
+    // rides the single card_catalog row. Big inline blobs (starter-deck
+    // images, tombstone art, page-guide media, RLC node images, un-slimmed
+    // item/pack art) bloat the row until the edge proxy resets the request
+    // ("upstream connect error / connection termination"). Real art is
+    // distributed separately via Storage (Publish Catalog Art) and fetched
+    // by players, so the row only needs metadata. Small inline icons
+    // (< 6 KB) are kept so emoji-substitute SVGs still work.
+    const _BIG = 6 * 1024;
+    const stripBig = (val, seen) => {
+      if (val == null) return val;
+      if (typeof val === 'string') return (val.slice(0, 5) === 'data:' && val.length > _BIG) ? '' : val;
+      if (typeof val !== 'object') return val;
+      seen = seen || new WeakSet();
+      if (seen.has(val)) return Array.isArray(val) ? [] : {};
+      seen.add(val);
+      if (Array.isArray(val)) return val.map(v => stripBig(v, seen));
+      const out = {};
+      for (const k in val) { if (Object.prototype.hasOwnProperty.call(val, k)) out[k] = stripBig(val[k], seen); }
+      return out;
+    };
     const row = {
       id:         'singleton',
-      cards:      slim(Forge.customCards || []),
-      moves:      movesWithAi,
-      items:      Forge.customItems || [],
-      packs:      Forge.customPacks || [],
+      cards:      stripBig(slim(Forge.customCards || [])),
+      moves:      stripBig(movesWithAi),
+      items:      stripBig(Forge.customItems || []),
+      packs:      stripBig(Forge.customPacks || []),
       published_by: Profile.cloud.userId,
       published_at: new Date().toISOString(),
     };
-    const { error } = await Cloud.client.from('card_catalog').upsert(row, { onConflict: 'id' });
-    if (error) return { ok: false, error: error.message };
+    // Retry the upsert — "connection termination" / upstream resets are
+    // usually transient at the proxy and clear on a second attempt.
+    let error = null;
+    for (let a = 0; a < 3; a++) {
+      const res = await Cloud.client.from('card_catalog').upsert(row, { onConflict: 'id' });
+      error = res.error;
+      if (!error) break;
+      if (a < 2) await (typeof _sleep === 'function' ? _sleep(1200 * (a + 1)) : new Promise(r => setTimeout(r, 1200 * (a + 1))));
+    }
+    if (error) {
+      const sizeMB = (JSON.stringify(row).length / 1048576).toFixed(1);
+      return { ok: false, error: `${error.message || error} (catalog ≈ ${sizeMB} MB — if this keeps failing, your content set may be too large for one row; art still syncs via Publish Catalog Art).` };
+    }
     // Refresh the local mirror so the admin sees their publish immediately.
     await cloudFetchCatalog().catch(() => {});
     return { ok: true, count: row.cards.length + row.items.length + row.packs.length };

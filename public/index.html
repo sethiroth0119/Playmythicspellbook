@@ -23850,6 +23850,111 @@ async function gymAdvanceSeason() {
   } catch (e) { _gymMarkErr(e); return { ok:false, error:(e && e.message) || 'Failed.' }; }
 }
 
+// ============================================================================
+// 🔴 SPECTACLE LAYER — Weekend Core Wars window, broadcast/commentary feed,
+// hype meter, and safe in-game (Cinder) predictions. No external streaming;
+// the "live world" feeling is built from real gym data.
+// ============================================================================
+// Weekend Core Wars: Fri 18:00 → Sun 23:59 (client-local). During the window
+// challenges feel like a live event; outside it shows a countdown.
+function gymCoreWarsWindow() {
+  const now = new Date();
+  const day = now.getDay();           // 0 Sun … 6 Sat
+  const h = now.getHours();
+  const live = (day === 6) || (day === 0) || (day === 5 && h >= 18);
+  if (live) {
+    const endsTxt = (day === 5 || day === 6) ? 'Runs through Sunday night' : 'Final hours — ends tonight';
+    return { live: true, label: '🔴 CORE WARS LIVE', sub: endsTxt };
+  }
+  // Time until next Friday 18:00.
+  const next = new Date(now);
+  let add = (5 - day + 7) % 7;
+  if (day === 5 && h < 18) add = 0;
+  next.setDate(now.getDate() + add); next.setHours(18, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 7);
+  const ms = next - now;
+  const d = Math.floor(ms / 86400000), hh = Math.floor((ms % 86400000) / 3600000), mm = Math.floor((ms % 3600000) / 60000);
+  const cd = d > 0 ? `${d}d ${hh}h` : hh > 0 ? `${hh}h ${mm}m` : `${mm}m`;
+  return { live: false, label: '⚔ Core Wars', sub: `Next live window in ${cd}` };
+}
+// Aggregate "world hype" — total live defense streaks + active leaders.
+function gymHype() {
+  const rows = Object.values(GymWars.gyms || {});
+  let streaks = 0, leaders = 0;
+  rows.forEach(r => { if (r && r.leader_id) { leaders++; streaks += (r.defense_streak || 0); } });
+  const raw = Math.min(100, leaders * 6 + streaks * 4);
+  const label = raw >= 80 ? 'The world is ABLAZE' : raw >= 50 ? 'The crowd is roaring' : raw >= 20 ? 'Tension is rising' : 'Calm before the storm';
+  return { level: raw, leaders, streaks, label };
+}
+// Hype commentary line for a reign record (data-driven, no copyrighted text).
+function gymCommentaryLine(r) {
+  const core = getGymCore(r.core_id);
+  const cn = core ? core.name : r.core_id;
+  const who = r.leader_name || 'A challenger';
+  const hero = r.hero_name ? ` with ${r.hero_name}` : '';
+  if (!r.lost_at) {
+    const secs = Math.max(0, (Date.now() - Date.parse(r.claimed_at || 0)) / 1000);
+    if ((r.peak_streak || 0) >= 5) return `🔥 ${who} is on a RAMPAGE at the ${cn} — ${r.peak_streak} straight defenses!`;
+    if (secs < 3600) return `🚨 BREAKING: ${who} just SEIZED the ${cn} gym${hero}!`;
+    return `👑 ${who} reigns over the ${cn} — holding for ${_gymDur(secs)}.`;
+  }
+  return `💥 ${who}'s ${cn} reign ended after ${_gymDur(r.reign_seconds || 0)} (peak 🛡 ${r.peak_streak || 0}).`;
+}
+// Broadcast feed = recent reigns (newest first), light + cached.
+async function gymFetchFeed() {
+  if (!initCloud() || !Profile.cloud.signedIn) return [];
+  try {
+    const { data, error } = await Cloud.client.from('gym_history')
+      .select('*').order('claimed_at', { ascending: false }).limit(14);
+    if (error) { _gymMarkErr(error); return []; }
+    return data || [];
+  } catch (e) { _gymMarkErr(e); return []; }
+}
+// ---- Safe in-game predictions (Cinder reward only — never real money) ----
+const GYM_PREDICT_REWARD = 120;
+function _gymPreds() {
+  const gw = _ensureGymWars();
+  if (!gw.predictions || typeof gw.predictions !== 'object') gw.predictions = {};
+  if (typeof gw.predWins !== 'number') gw.predWins = 0;
+  if (typeof gw.predTotal !== 'number') gw.predTotal = 0;
+  return gw.predictions;
+}
+function gymPrediction(coreId) { return _gymPreds()[coreId] || null; }
+function gymPredict(coreId, outcome) {
+  const row = gymRow(coreId);
+  if (!row || !row.leader_id) return { ok:false, error:'No leader to predict on.' };
+  if (gymIsOwn(row)) return { ok:false, error:"Can't predict on your own gym." };
+  const preds = _gymPreds();
+  if (preds[coreId] && !preds[coreId].resolved) return { ok:false, error:'Prediction already placed.' };
+  preds[coreId] = {
+    season: (GymWars.meta && GymWars.meta.season) || 1,
+    leaderId: row.leader_id, outcome: outcome, ts: Date.now(), resolved: false,
+  };
+  try { saveProfile(); } catch (e) {}
+  return { ok:true };
+}
+// Resolve any prediction older than 20 min against current ownership.
+function gymResolvePredictions() {
+  const preds = _gymPreds();
+  let changed = false, wins = 0;
+  Object.keys(preds).forEach(cid => {
+    const p = preds[cid];
+    if (!p || p.resolved) return;
+    if (Date.now() - (p.ts || 0) < 20 * 60000) return;
+    const row = gymRow(cid);
+    if (!row) return;
+    const fell = (row.leader_id || null) !== (p.leaderId || null);
+    const correct = (p.outcome === 'falls') === fell;
+    p.resolved = true; p.correct = correct;
+    const gw = _ensureGymWars();
+    gw.predTotal = (gw.predTotal || 0) + 1;
+    if (correct) { gw.predWins = (gw.predWins || 0) + 1; wins++; if (typeof addCinders === 'function') addCinders(GYM_PREDICT_REWARD); }
+    changed = true;
+  });
+  if (changed) { try { saveProfile(); } catch (e) {} if (wins > 0 && typeof showToast === 'function') showToast(`🔮 ${wins} prediction${wins === 1 ? '' : 's'} hit — +${wins * GYM_PREDICT_REWARD} 🔥!`, 4200); }
+  return changed;
+}
+
 // Launch a Core Trial (PvE) or a Gym-Leader Challenge. Routes through the
 // normal deck-select → VS → battle flow; the gym context is consumed in
 // startWithHero and resolved in recordBattleProgress / gymAfterBattle.
@@ -23920,7 +24025,18 @@ function renderGymWars() {
   // when it lands so the cards fill in without blocking the PvE loop.
   if (Profile.cloud && Profile.cloud.signedIn && !GymWars.loading
       && (Date.now() - GymWars.lastFetch > 120000)) {
-    gymFetchAll().then(() => { if (App.screen === 'gymWars') render(); });
+    gymFetchAll().then(() => { gymResolvePredictions(); if (App.screen === 'gymWars') render(); });
+  }
+  // Resolve any matured predictions against the data we already have.
+  gymResolvePredictions();
+  // Broadcast feed — recent reigns, lightly cached (refreshes ~3 min).
+  if (Profile.cloud && Profile.cloud.signedIn && !GymWars.tableMissing
+      && !GymWars._feedLoading && (Date.now() - (GymWars._feedAt || 0) > 180000)) {
+    GymWars._feedLoading = true;
+    gymFetchFeed().then(rows => {
+      GymWars._feed = rows || []; GymWars._feedLoading = false; GymWars._feedAt = Date.now();
+      if (App.screen === 'gymWars') render();
+    });
   }
   // Lazy-load the Hall of Legends when the archive is opened.
   if (App.gymHall && Profile.cloud && Profile.cloud.signedIn
@@ -24091,6 +24207,21 @@ function renderGymWars() {
       }
       supporterRow = `<div style="display:flex;gap:0.5rem;margin-top:0.45rem">${btns.join('')}</div>`;
     }
+    // 🔮 Safe in-game prediction (Cinder reward only).
+    let predictionRow = '';
+    if (row && row.leader_id && !mine && online && !GymWars.tableMissing) {
+      const pr = gymPrediction(c.id);
+      if (pr && !pr.resolved) {
+        predictionRow = `<div class="small-text" style="margin-top:0.45rem;color:#c9b8ec">🔮 Your call: <strong>${pr.outcome === 'falls' ? 'Gym FALLS' : 'Leader HOLDS'}</strong> — resolves after the next clashes.</div>`;
+      } else if (pr && pr.resolved) {
+        predictionRow = `<div class="small-text" style="margin-top:0.45rem;color:${pr.correct ? '#7be0a0' : '#ff8a8a'}">🔮 ${pr.correct ? `Called it! +${GYM_PREDICT_REWARD} 🔥` : 'Missed that one.'}</div>`;
+      } else {
+        predictionRow = `<div style="display:flex;gap:0.5rem;margin-top:0.45rem">
+          <button class="btn-secondary btn-mini" data-gym-predict="${c.id}" data-pred="holds" style="flex:1" title="Predict the leader defends successfully">🔮 Leader Holds</button>
+          <button class="btn-secondary btn-mini" data-gym-predict="${c.id}" data-pred="falls" style="flex:1" title="Predict the gym changes hands">🔮 Gym Falls</button>
+        </div>`;
+      }
+    }
     return `
       <div style="position:relative;background:linear-gradient(160deg, ${c.color}1f, rgba(12,10,20,0.86));border:1px solid ${c.color}66;border-left:5px solid ${c.color};border-radius:12px;padding:1rem 1.1rem;display:flex;flex-direction:column;box-shadow:0 6px 22px rgba(0,0,0,0.45)">
         <div style="display:flex;align-items:center;gap:0.7rem">
@@ -24109,8 +24240,41 @@ function renderGymWars() {
           <button class="btn-primary btn-mini" data-gym-challenge="${c.id}" ${challengeAttr} title="${escapeHtml(challengeTip)}" style="flex:1">${challengeLabel}</button>
         </div>
         ${supporterRow}
+        ${predictionRow}
       </div>`;
   }).join('');
+
+  // ---- Spectacle: Core Wars window banner + hype meter + broadcast feed ----
+  const cw = gymCoreWarsWindow();
+  const hype = gymHype();
+  const feed = Array.isArray(GymWars._feed) ? GymWars._feed : null;
+  const predRec = (Profile.gymWars && Profile.gymWars.predTotal)
+    ? ` · 🔮 ${Profile.gymWars.predWins}/${Profile.gymWars.predTotal} predictions`
+    : '';
+  const bannerHtml = `<div style="background:${cw.live ? 'linear-gradient(100deg,rgba(255,60,60,0.22),rgba(255,160,40,0.14))' : 'rgba(255,255,255,0.04)'};border:1px solid ${cw.live ? 'rgba(255,90,90,0.5)' : 'rgba(255,255,255,0.12)'};border-radius:10px;padding:0.75rem 1.05rem;margin-bottom:1rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+      <div style="font-family:'Cinzel',serif;font-size:1.05rem;color:${cw.live ? '#ff8a5a' : '#cdbfe6'};${cw.live ? 'animation:pulse 1.6s ease-in-out infinite' : ''}">${cw.label}</div>
+      <div class="small-text ink-dim" style="flex:1;min-width:160px">${escapeHtml(cw.sub)}${predRec}</div>
+      <div style="min-width:170px">
+        <div class="small-text" style="color:#ffcf5a">Hype — ${escapeHtml(hype.label)}</div>
+        <div style="height:7px;background:rgba(255,255,255,0.1);border-radius:4px;overflow:hidden;margin-top:3px">
+          <div style="height:100%;width:${hype.level}%;background:linear-gradient(90deg,#ffcf5a,#ff5a6a)"></div>
+        </div>
+      </div>
+    </div>`;
+  let feedHtml = '';
+  if (online && !GymWars.tableMissing) {
+    let fb;
+    if (feed == null) fb = '<div class="small-text ink-dim" style="padding:0.6rem 0.9rem">Tuning into the broadcast…</div>';
+    else if (feed.length === 0) fb = '<div class="small-text ink-dim" style="padding:0.6rem 0.9rem">No gym takeovers yet — make history.</div>';
+    else fb = feed.slice(0, 8).map(r => `<div class="small-text" style="padding:0.4rem 0.9rem;border-bottom:1px solid rgba(255,255,255,0.05);color:#dcd0ec">${escapeHtml(gymCommentaryLine(r))}</div>`).join('');
+    feedHtml = `<div style="background:rgba(10,8,16,0.7);border:1px solid rgba(255,207,90,0.2);border-radius:10px;margin-bottom:1.1rem;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:0.5rem;padding:0.55rem 0.9rem;border-bottom:1px solid rgba(255,207,90,0.18);background:rgba(255,207,90,0.05)">
+        <span style="font-family:'Cinzel',serif;color:#ffcf5a">📺 Core Wars Broadcast</span>
+        ${cw.live ? '<span style="font-size:0.62rem;font-weight:800;color:#ff5a6a;border:1px solid #ff5a6a;border-radius:4px;padding:1px 6px">● LIVE</span>' : ''}
+      </div>
+      ${fb}
+    </div>`;
+  }
 
   const seasonTxt = (GymWars.meta && GymWars.meta.season) ? `Season ${GymWars.meta.season}` : 'Season 1';
 
@@ -24185,8 +24349,10 @@ function renderGymWars() {
         </div>
       </div>
 
+      ${bannerHtml}
       ${setupHtml}
       ${hqHtml}
+      ${feedHtml}
 
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:1rem">
         ${cards}
@@ -24250,6 +24416,13 @@ function renderGymWars() {
   });
   document.querySelectorAll('[data-gym-supporters]').forEach(b => {
     b.onclick = () => { App.gymSupportersFor = b.dataset.gymSupporters; GymWars._supporters[b.dataset.gymSupporters] = null; render(); };
+  });
+  document.querySelectorAll('[data-gym-predict]').forEach(b => {
+    b.onclick = () => {
+      const r = gymPredict(b.dataset.gymPredict, b.dataset.pred);
+      showToast(r && r.ok ? `🔮 Prediction locked: ${b.dataset.pred === 'falls' ? 'the gym falls' : 'the leader holds'}.` : `⚠ ${r && r.error || 'Could not place prediction.'}`, 3200);
+      if (App.screen === 'gymWars') render();
+    };
   });
   const supClose = document.getElementById('gym-sup-close');
   if (supClose) supClose.onclick = () => { App.gymSupportersFor = null; render(); };
@@ -33624,15 +33797,19 @@ function renderTitle() {
       // visible. PvE Core Trials collect 8 badges → unlock challenging the
       // live online Gym Leaders.
       { id: 'btn-gymwars', icon: '🏛️', name: 'Gym Core Wars', sub: (() => {
+            const my = (typeof myLedGym === 'function') ? myLedGym() : null;
+            if (my) { const co = getGymCore(my.core_id); return `👑 You rule the ${co ? co.name : 'gym'} · 🛡 ${my.defense_streak || 0}`; }
             const n = gymBadgeCount();
             return n >= 8 ? 'All 8 Cores — challenge online leaders' : `${n}/8 Core Badges · climb the gauntlet`;
           })(), accent: '#ffcf5a',
         badge: (() => {
+          const my = (typeof myLedGym === 'function') ? myLedGym() : null;
+          if (my) return '👑 Gym Leader';
           const n = gymBadgeCount();
           if (n >= 8) return '✦ All Cores';
           return n > 0 ? `${n}/8 badges` : null;
         })(),
-        alertBadge: gymBadgeCount() >= 8,
+        alertBadge: (typeof myLedGym === 'function' && myLedGym()) || gymBadgeCount() >= 8,
         onclick: () => { App.screen = 'gymWars'; render(); } },
       // 🚧 Old chapter "Campaign" hidden from EVERYONE (incl. admin) for now —
       // it will be removed/replaced by the Roguelite system. Portal + screens

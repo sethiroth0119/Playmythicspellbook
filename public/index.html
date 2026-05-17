@@ -13186,9 +13186,11 @@
   .emote-toggle {
     width: 2.7rem; height: 2.7rem;
     border-radius: 50%;
-    background: linear-gradient(180deg, rgba(60, 38, 102, 0.92), rgba(30, 18, 54, 0.92));
-    border: 1px solid rgba(212, 186, 255, 0.55);
-    color: #f0e3ff;
+    /* Teal — deliberately distinct from the purple/gold world-chat bubble so
+       the emote toggle and the chat button are never confused. */
+    background: linear-gradient(180deg, rgba(20, 110, 110, 0.95), rgba(10, 56, 58, 0.95));
+    border: 1px solid rgba(120, 232, 222, 0.6);
+    color: #d8fff8;
     font-size: 1.4rem;
     cursor: pointer;
     box-shadow: 0 4px 14px rgba(0,0,0,0.5);
@@ -54512,7 +54514,7 @@ function mountChatButton() {
       const b = document.createElement('button');
       b.id = 'chat-fab';
       b.title = 'Chat — world & friends';
-      b.style.cssText = 'position:fixed;right:16px;bottom:84px;z-index:2147483300;width:52px;height:52px;border-radius:50%;border:1px solid rgba(212,175,55,0.55);background:linear-gradient(135deg,#3a2a6a,#1a1030);color:#ffe6a8;font-size:1.45rem;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center';
+      b.style.cssText = 'position:fixed;right:16px;bottom:24px;z-index:2147483300;width:52px;height:52px;border-radius:50%;border:1px solid rgba(212,175,55,0.55);background:linear-gradient(135deg,#3a2a6a,#1a1030);color:#ffe6a8;font-size:1.45rem;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center';
       b.innerHTML = '💬<span id="chat-fab-badge" style="display:none;position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#e0556a;color:#fff;font-size:0.7rem;font-weight:700;line-height:18px;text-align:center"></span>';
       b.onclick = () => { if (Chat.open) chatClose(); else chatOpen(); };
       document.body.appendChild(b);
@@ -54635,7 +54637,7 @@ function _chatRenderOverlay() {
       </div>`;
     const el = old || document.createElement('div');
     el.id = 'chat-overlay';
-    if (!old) el.style.cssText = 'position:fixed;right:16px;bottom:146px;z-index:2147483350;width:380px;max-width:calc(100vw - 32px);height:520px;max-height:calc(100vh - 170px);display:flex;flex-direction:column;background:#0e0b16;border:1px solid rgba(212,175,55,0.4);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.75);overflow:hidden';
+    if (!old) el.style.cssText = 'position:fixed;right:16px;bottom:84px;z-index:2147483350;width:380px;max-width:calc(100vw - 32px);height:520px;max-height:calc(100vh - 110px);display:flex;flex-direction:column;background:#0e0b16;border:1px solid rgba(212,175,55,0.4);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.75);overflow:hidden';
     el.innerHTML = header + `<div style="flex:1;display:flex;flex-direction:column;overflow:hidden">${body}</div>`;
     if (!old) document.body.appendChild(el);
     // Auto-scroll message views to the newest.

@@ -26610,6 +26610,40 @@ function getAllStarterDecks() {
 function getStarterDecksForHero(heroId) {
   return getAllStarterDecks().filter(d => d.heroId === heroId);
 }
+// 🦸 Authoritative hero for a starter deck. Priority:
+//   1) the hero CARD actually inside the deck's cards (can't be wrong — it's
+//      the deck the admin literally built),
+//   2) the deck's declared heroId resolved live,
+//   3) the snapshot saved on the deck record,
+//   4) a neutral fallback (never a built-in Cedric/⚔️ default).
+// This is why "Magic Burst" showed a Cedric emoji: display relied on a stale
+// heroId / unresolved custom hero. Reading the hero from the deck contents
+// fixes existing decks with no re-save needed.
+function _starterDeckHero(d) {
+  if (!d) return null;
+  if (Array.isArray(d.cards)) {
+    for (const key of d.cards) {
+      let c = null;
+      try { c = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null; } catch (e) {}
+      if (c && c.type === 'hero') {
+        return {
+          id: c.id,
+          name: c.name || d.heroName || 'Hero',
+          icon: c.icon || d.heroIcon || '🦸',
+          elements: c.elements || (c.element ? [c.element] : (d.heroElements || [])),
+        };
+      }
+    }
+  }
+  if (d.heroId && typeof findHeroById === 'function') {
+    const h = findHeroById(d.heroId);
+    if (h) return { id: h.id, name: h.name, icon: h.icon, elements: h.elements || [] };
+  }
+  if (d.heroName || d.heroIcon) {
+    return { id: d.heroId || null, name: d.heroName || 'Hero', icon: d.heroIcon || '🦸', elements: d.heroElements || [] };
+  }
+  return { id: d.heroId || null, name: d.heroId || 'Hero', icon: '🦸', elements: [] };
+}
 // True once this player has claimed their one free starter deck. Stored on
 // Profile (top-level) so the new-player gate never re-triggers after a pick.
 function hasPickedStarter() {
@@ -32080,7 +32114,11 @@ function grantStarterDeckToPlayer(deck, opts) {
   if (!deck || !Array.isArray(deck.cards)) return false;
   opts = opts || {};
   if (!Profile.cardCollection) Profile.cardCollection = {};
-  if (deck.heroId) Profile.cardCollection[deck.heroId] = Math.max(1, Profile.cardCollection[deck.heroId] || 0);
+  // Grant the deck's AUTHORITATIVE hero (resolved from its own cards) so a
+  // stale/empty heroId can't hand the player the wrong hero.
+  const _sdh = (typeof _starterDeckHero === 'function') ? _starterDeckHero(deck) : null;
+  const _grantHeroId = (_sdh && _sdh.id) || deck.heroId;
+  if (_grantHeroId) Profile.cardCollection[_grantHeroId] = Math.max(1, Profile.cardCollection[_grantHeroId] || 0);
   const deckKeys = [];
   deck.cards.forEach(key => {
     let card = null;
@@ -32117,11 +32155,14 @@ function renderStarterPick() {
   try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
   const decks = (typeof getAllStarterDecks === 'function') ? getAllStarterDecks() : [];
   const cardFor = (d) => {
-    const h = (typeof findHeroById === 'function' && d.heroId) ? findHeroById(d.heroId) : null;
+    const h = (typeof _starterDeckHero === 'function') ? _starterDeckHero(d) : null;
     const heroName = h ? h.name : (d.heroId || 'Hero');
+    const heroVisual = (h && h.id && typeof renderIcon === 'function')
+      ? renderIcon('h_' + h.id, h.icon || '🦸', 'xl')
+      : `<span style="font-size:3rem">${h && h.icon ? h.icon : '🦸'}</span>`;
     const art = d.img
       ? `<img src="${d.img}" alt="" style="width:100%;height:auto;display:block;object-fit:contain;border-radius:12px 12px 0 0;background:#0c0718">`
-      : `<div style="height:150px;display:flex;align-items:center;justify-content:center;border-radius:12px 12px 0 0;background:radial-gradient(ellipse at center,rgba(212,175,55,0.2),transparent 70%)">${h && typeof renderIcon === 'function' ? renderIcon('h_' + h.id, h.icon, 'xl') : '<span style=\"font-size:3rem\">🦸</span>'}</div>`;
+      : `<div style="height:150px;display:flex;align-items:center;justify-content:center;border-radius:12px 12px 0 0;background:radial-gradient(ellipse at center,rgba(212,175,55,0.2),transparent 70%)">${heroVisual}</div>`;
     return `
       <div style="width:260px;background:rgba(20,12,40,0.7);border:1px solid rgba(212,175,55,0.4);border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
         ${art}
@@ -54510,10 +54551,30 @@ function renderDeckBuilder() {
         }
       }
       const keys = App.deckEdit.slice(0);
+      // 🦸 Pin the hero from the deck's OWN cards so heroId can never drift
+      // (this is what caused "Magic Burst" to show a Cedric emoji). Also
+      // snapshot name/icon/elements so new-player screens render correctly
+      // even before the custom-card catalog finishes loading.
+      let _heroCardId = '';
+      for (const k of keys) {
+        let c = null;
+        try { c = (typeof resolveDeckCard === 'function') ? resolveDeckCard(k) : null; } catch (e) {}
+        if (c && c.type === 'hero') { _heroCardId = c.id; break; }
+      }
+      const _resolvedHeroId = _heroCardId || heroId || '';
+      const _hSnap = (typeof findHeroById === 'function' && _resolvedHeroId) ? findHeroById(_resolvedHeroId) : null;
+      if (!_heroCardId) {
+        showToast('⚠ This starter deck has no hero card in it — players will get cards but no hero. Add the hero card to the deck.', 5200);
+      } else if (heroId && _heroCardId !== heroId) {
+        showToast(`ℹ Hero pinned to "${(_hSnap && _hSnap.name) || _heroCardId}" (the hero card in the deck).`, 4200);
+      }
       const rec = {
         id: (prev && prev.id) || ('starterdeck_' + Date.now()),
         name: finalName,
-        heroId: heroId || '',
+        heroId: _resolvedHeroId,
+        heroName: (_hSnap && _hSnap.name) || (prev && prev.heroName) || '',
+        heroIcon: (_hSnap && _hSnap.icon) || (prev && prev.heroIcon) || '',
+        heroElements: (_hSnap && (_hSnap.elements || (_hSnap.element ? [_hSnap.element] : []))) || (prev && prev.heroElements) || [],
         cards: keys,
         img:      prev ? (prev.img || null) : null,
         inVendor: prev ? !!prev.inVendor : false,

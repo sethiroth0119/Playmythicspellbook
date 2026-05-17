@@ -24490,6 +24490,35 @@ function renderGymWars() {
 function cardSnapshotForListing(card) { return JSON.parse(JSON.stringify(card)); }
 function itemSnapshotForListing(itemId) { const it = HELD_ITEMS[itemId]; return it ? { ...it } : null; }
 
+// 🏦 Market escrow for cards. Listing a card must hold one owned copy back
+// (mirrors the held-item path) so it can't be fielded / sold elsewhere /
+// double-listed while up for sale, and a completed sale can't pay the seller
+// while they still own the card. Returns whether a copy was actually escrowed
+// (false for an admin listing with no owned copy) so cancel/no-sale restores
+// EXACTLY what was taken and never dupes.
+function _escrowCardCopy(cardId) {
+  if (!cardId) return false;
+  const have = (Profile.cardCollection && Profile.cardCollection[cardId]) || 0;
+  if (have <= 0) return false;
+  Profile.cardCollection[cardId] = have - 1;
+  if (Profile.cardCollection[cardId] <= 0) delete Profile.cardCollection[cardId];
+  try { saveProfile(); } catch (e) {}
+  return true;
+}
+function _restoreCardCopy(cardId) {
+  if (!cardId) return;
+  if (!Profile.cardCollection) Profile.cardCollection = {};
+  Profile.cardCollection[cardId] = (Profile.cardCollection[cardId] || 0) + 1;
+  try { saveProfile(); } catch (e) {}
+}
+// Restore a card listing's escrowed copy on cancel / no-sale (idempotent vs
+// the `escrowed` flag so it can't over-credit).
+function _refundListingCard(l) {
+  if (l && l.kind === 'card' && l.escrowed && l.cardId) {
+    _restoreCardCopy(l.cardId);
+    l.escrowed = false;
+  }
+}
 function listCardForSale(customCardId, price) {
   const card = (Forge.customCards || []).find(c => c.id === customCardId)
     || ((typeof lookupCustomCard === 'function') ? lookupCustomCard(customCardId) : null);
@@ -24502,10 +24531,12 @@ function listCardForSale(customCardId, price) {
   }
   price = Math.max(MARKET_MIN_PRICE, Math.min(MARKET_MAX_PRICE, parseInt(price, 10) || 0));
   if (!price) { showToast('Set a valid price'); return false; }
+  const _esc = _escrowCardCopy(card.id);
   Market.listings.push({
     id: 'lst_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
     sellerId: 'player', sellerName: 'You',
     kind: 'card', item: cardSnapshotForListing(card),
+    cardId: card.id, escrowed: _esc,
     price, listedAt: Date.now(),
   });
   saveMarket();
@@ -24540,6 +24571,8 @@ function cancelMarketListing(listingId) {
     const inv = Profile.itemInventory || (Profile.itemInventory = {});
     inv[listing.item.id] = (inv[listing.item.id] || 0) + 1;
     saveProfile();
+  } else if (listing.kind === 'card') {
+    _refundListingCard(listing); // return the escrowed copy
   }
   Market.listings.splice(idx, 1);
   saveMarket();
@@ -24557,6 +24590,11 @@ function buyMarketListing(listingId) {
     const copy = { ...listing.item, id: 'cc_bought_' + Date.now() + '_' + Math.floor(Math.random() * 1000) };
     Forge.customCards.push(copy);
     saveForge();
+    // Grant ownership of the bought copy so it's actually usable (deckable /
+    // re-listable). Without this the buyer pays but the ownership lock makes
+    // the card view-only — a charge-no-usable-item bug.
+    if (!Profile.cardCollection) Profile.cardCollection = {};
+    Profile.cardCollection[copy.id] = (Profile.cardCollection[copy.id] || 0) + 1;
     showToast(`Acquired "${copy.name}"`);
   } else if (listing.kind === 'item' && listing.item) {
     const inv = Profile.itemInventory || (Profile.itemInventory = {});
@@ -24726,14 +24764,23 @@ function unlockGemsForBid(listingId) {
 function listCardForAuction(customCardId, opts) {
   const card = Forge.customCards.find(c => c.id === customCardId);
   if (!card) { showToast('Only Forge custom cards can be auctioned'); return false; }
+  // 🔒 OWNERSHIP LOCK — mirror listCardForSale (this path was missing it, so
+  // a player could auction a card they don't own and pocket the payout).
+  const _isAdm = (typeof isAdmin === 'function') && isAdmin();
+  if (!_isAdm && ((Profile.cardCollection && Profile.cardCollection[card.id]) || 0) <= 0) {
+    showToast("You don't own that card — you can only view its details.", 3000);
+    return false;
+  }
   const startingBid = Math.max(AUCTION_MIN_STARTING, parseInt(opts && opts.startingBid, 10) || 0);
   const durationMs  = (opts && opts.durationMs) || AUCTION_DURATION_OPTS[2].ms;
   const buyNowPrice = (opts && opts.buyNowPrice) ? Math.max(startingBid * 2, parseInt(opts.buyNowPrice, 10) || 0) : null;
   if (!startingBid) { showToast('Set a valid starting bid'); return false; }
+  const _esc = _escrowCardCopy(card.id);
   Market.listings.push({
     id: 'lst_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
     sellerId: 'player', sellerName: 'You',
     kind: 'card', item: cardSnapshotForListing(card),
+    cardId: card.id, escrowed: _esc,
     listingType: 'auction',
     startingBid,
     currentBid: 0,
@@ -24852,12 +24899,14 @@ function sweepExpiredAuctions() {
   let didAny = false;
   Market.listings = Market.listings.filter(l => {
     if (!isAuctionListing(l) || !isAuctionExpired(l)) return true;
-    // No bids → return item to seller if it's the player's listing.
+    // No bids → return item/card to seller if it's the player's listing.
     if (!l.currentBidderId || (l.currentBid || 0) <= 0) {
       if (l.sellerId === 'player') {
         if (l.kind === 'item' && l.item) {
           const inv = Profile.itemInventory || (Profile.itemInventory = {});
           inv[l.item.id] = (inv[l.item.id] || 0) + 1;
+        } else if (l.kind === 'card') {
+          _refundListingCard(l); // return the escrowed copy
         }
         showToast(`⌛ Auction for "${(l.item && l.item.name) || 'item'}" ended with no bids — returned to you.`, 3200);
         saveProfile();
@@ -24878,6 +24927,8 @@ function sweepExpiredAuctions() {
         const copy = { ...l.item, id: 'cc_won_' + Date.now() + '_' + Math.floor(Math.random() * 1000) };
         Forge.customCards.push(copy);
         saveForge();
+        if (!Profile.cardCollection) Profile.cardCollection = {};
+        Profile.cardCollection[copy.id] = (Profile.cardCollection[copy.id] || 0) + 1;
       } else if (l.kind === 'item' && l.item) {
         const inv = Profile.itemInventory || (Profile.itemInventory = {});
         inv[l.item.id] = (inv[l.item.id] || 0) + 1;
@@ -24916,11 +24967,13 @@ function cancelAuction(listingId) {
     showToast('Cannot cancel — bidders are already in. Wait for the auction to end.');
     return false;
   }
-  // Item refund path — same as cancelMarketListing.
+  // Item / card refund path — same as cancelMarketListing.
   if (l.kind === 'item' && l.item) {
     const inv = Profile.itemInventory || (Profile.itemInventory = {});
     inv[l.item.id] = (inv[l.item.id] || 0) + 1;
     saveProfile();
+  } else if (l.kind === 'card') {
+    _refundListingCard(l); // return the escrowed copy
   }
   Market.listings.splice(idx, 1);
   saveMarket();

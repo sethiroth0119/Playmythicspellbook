@@ -21213,7 +21213,6 @@ async function cloudSyncProfile() {
       units:         Profile.units || {},
       gems:          Profile.gems || 0,
       sovereigns:    Profile.sovereigns || 0,
-      resources:     Profile.resources || {},
       deck_history:  Profile.deckHistory || {},
       // Original shape — `Profile.deckByHero` is a flat map `{[heroId]: {name, cards}}`.
       // Reverted from the temporary `{ list, byHero, _extra }` blob that caused
@@ -21372,7 +21371,10 @@ async function cloudFetchProfile() {
     if (data.units)        Profile.units        = { ...Profile.units, ...data.units };
     if (typeof data.gems       === 'number') Profile.gems       = data.gems;
     if (typeof data.sovereigns === 'number') Profile.sovereigns = data.sovereigns;
-    if (data.resources && typeof data.resources === 'object') { Profile.resources = data.resources; if (typeof _ensureResources === 'function') _ensureResources(); }
+    // 🧰 Resources are LOCAL-ONLY (persist via localStorage, like equipment) —
+    // intentionally not cloud-synced so no user_profiles schema change is
+    // needed. _ensureResources() keeps the wallet shape valid on load.
+    if (typeof _ensureResources === 'function') _ensureResources();
     if (data.deck_history) Profile.deckHistory  = { ...Profile.deckHistory, ...data.deck_history };
     // 🔧 `decks` column is the flat deckByHero map (legacy + current shape).
     // Defensive: if some older cloud row still has the temporary {list, byHero}

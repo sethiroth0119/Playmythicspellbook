@@ -20102,6 +20102,47 @@ function setRogueliteMusicVolume(vol) {
 }
 
 // ============================================================================
+// 🏛️ Colosseum Music — "colosseum mucis", looped on the Colosseum screen.
+// Like the roguelite track it RESTARTS from the beginning each time the
+// player re-enters the Colosseum (after a battle or coming back from Battle
+// Hall) — stopColosseumMusic() rewinds to 0. Shares the master toggle +
+// volume. (Screen route id is still 'coliseum' internally.)
+// ============================================================================
+const COLOSSEUM_MUSIC_SRC = 'assets/Audio/colosseum%20mucis.mp3';
+function isInColosseum() {
+  if (typeof App === 'undefined' || !App) return false;
+  return App.screen === 'coliseum';
+}
+let _colosseumAudioEl = null;
+function _ensureColosseumAudioEl() {
+  if (_colosseumAudioEl) return _colosseumAudioEl;
+  _colosseumAudioEl = new Audio();
+  _colosseumAudioEl.loop = true;
+  _colosseumAudioEl.preload = 'auto';
+  _colosseumAudioEl.src = COLOSSEUM_MUSIC_SRC;
+  return _colosseumAudioEl;
+}
+function playColosseumMusic() {
+  const settings = (typeof getSettings === 'function') ? getSettings() : (Profile.settings || {});
+  if (settings.musicEnabled === false) { stopColosseumMusic(); return; }
+  const el = _ensureColosseumAudioEl();
+  el.volume = Math.max(0, Math.min(1, settings.musicVolume != null ? settings.musicVolume : 0.5));
+  if (el.paused) {
+    const p = el.play();
+    if (p && typeof p.catch === 'function') { p.catch(() => { _armMenuAudioGesture(); }); }
+  }
+}
+function stopColosseumMusic() {
+  if (_colosseumAudioEl) {
+    try { _colosseumAudioEl.pause(); _colosseumAudioEl.currentTime = 0; } catch (e) {}
+  }
+}
+function setColosseumMusicVolume(vol) {
+  const v = Math.max(0, Math.min(1, vol || 0));
+  if (_colosseumAudioEl) _colosseumAudioEl.volume = v;
+}
+
+// ============================================================================
 // ⚔ Battle Music — Last Stand at the Eurotas, looped across the entire
 // pre-battle → battle sequence:
 //   • VS screen     (team preview + ready timer)
@@ -20249,6 +20290,10 @@ function isVictoryActive() {
 // Adding a new themed-music section later is one line: another `if` branch.
 function syncMusicForScreen() {
   const settings = (typeof getSettings === 'function') ? getSettings() : (Profile.settings || {});
+  // Colosseum theme is stopped on every non-Colosseum path below; the one
+  // branch that wants it calls playColosseumMusic(). Centralised here so no
+  // branch can forget it (stop rewinds → restarts on re-entry).
+  if (!isInColosseum()) stopColosseumMusic();
   if (settings.musicEnabled === false) {
     stopMenuMusic();
     stopExchangeMusic();
@@ -20256,6 +20301,18 @@ function syncMusicForScreen() {
     stopBattleMusic();
     stopVictoryMusic();
     stopRogueliteMusic();
+    stopColosseumMusic();
+    return;
+  }
+  // 🏛️ Colosseum — its own looped theme, restarts each time you come back.
+  if (isInColosseum()) {
+    stopMenuMusic();
+    stopExchangeMusic();
+    stopCampaignMusic();
+    stopBattleMusic();
+    stopVictoryMusic();
+    stopRogueliteMusic();
+    playColosseumMusic();
     return;
   }
   // 🏆 Victory music takes priority over everything else — only fires while the
@@ -47930,6 +47987,7 @@ function renderSettings() {
       setBattleMusicVolume(st.musicVolume);
       setVictoryMusicVolume(st.musicVolume);
       setRogueliteMusicVolume(st.musicVolume);
+      setColosseumMusicVolume(st.musicVolume);
       saveProfile();
     };
   }

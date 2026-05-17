@@ -50536,7 +50536,7 @@ function renderAuthModal() {
           if (App.screen === 'authGate') { App.screen = 'title'; render(); }
         } else {
           App.authModal.info = null;
-          App.authModal.error = 'Account created, but this project still requires email confirmation. In Supabase → Authentication → Providers → Email, turn OFF "Confirm email", then sign in.';
+          App.authModal.error = 'Your account was created! Email confirmation is still switched on for this game — ask the game owner to turn OFF "Confirm email" in Supabase (Authentication → Providers → Email). Once it’s off, signing up takes you straight into the game.';
           renderAuthModal();
         }
       } else {

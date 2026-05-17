@@ -23970,6 +23970,10 @@ const STORAGE_KEYS = {
 const Camp = {
   slots: [], // Array<{ id, kind, refId, parkedAt, collectedXp }>
   maxSlots: 6,
+  // 🏗️ XCOM-style base: per-facility build state keyed by facility id.
+  //   { [facId]: { level, state:'building'|'active', buildStart, buildDur } }
+  // Absent key = not built yet (the plot shows EXCAVATE/BUILD).
+  facilities: {},
 };
 const CAMP_XP_PER_HOUR  = 10;  // passive XP rate per slot
 const CAMP_XP_CAP       = 240; // per slot (24 hours of stockpiled XP)
@@ -24020,11 +24024,12 @@ function loadCamp() {
       const data = JSON.parse(raw);
       if (Array.isArray(data.slots)) Camp.slots = data.slots;
       if (typeof data.maxSlots === 'number') Camp.maxSlots = data.maxSlots;
+      if (data.facilities && typeof data.facilities === 'object') Camp.facilities = data.facilities;
     }
   } catch (e) { console.warn('Failed to load Camp', e); }
 }
 function saveCamp() {
-  try { localStorage.setItem(STORAGE_KEYS.camp, JSON.stringify({ slots: Camp.slots, maxSlots: Camp.maxSlots })); }
+  try { localStorage.setItem(STORAGE_KEYS.camp, JSON.stringify({ slots: Camp.slots, maxSlots: Camp.maxSlots, facilities: Camp.facilities })); }
   catch (e) { console.warn('Failed to save Camp', e); showToast('⚠ Camp save failed'); }
 }
 
@@ -24033,8 +24038,10 @@ function getCampSlotXp(slot) {
   if (!slot) return 0;
   const elapsedMs = Date.now() - (slot.parkedAt || Date.now());
   const elapsedHours = elapsedMs / 3600000;
-  const fromTime = Math.floor(elapsedHours * CAMP_XP_PER_HOUR);
-  return Math.min(CAMP_XP_CAP, fromTime);
+  // Training Center multiplies passive Rest XP.
+  const mul = (typeof campBonus === 'function') ? Math.max(1, campBonus('restXpMul')) : 1;
+  const fromTime = Math.floor(elapsedHours * CAMP_XP_PER_HOUR * mul);
+  return Math.min(Math.round(CAMP_XP_CAP * mul), fromTime);
 }
 
 function isAlreadyParked(kind, refId) {
@@ -24051,7 +24058,7 @@ function _totalOwnedCards() {
 const CAMP_MIN_COLLECTION = 40; // a player must always be able to field a full deck
 function parkInCamp(kind, refId) {
   if (kind !== 'unit') { showToast('Only units can be parked — heroes stay with you'); return false; }
-  if (Camp.slots.length >= Camp.maxSlots) { showToast(`Camp is full (${Camp.maxSlots} slots)`); return false; }
+  if (Camp.slots.length >= campMaxSlots()) { showToast(`Camp is full (${campMaxSlots()} slots) — build the Resistance Ring for more`); return false; }
   if (isAlreadyParked(kind, refId)) { showToast('Already in camp'); return false; }
   // 🛡 Never let the player drop below a full 40-card collection. Each parked
   // unit ties up a copy, so usable = owned − parked must stay ≥ 40.
@@ -24307,7 +24314,7 @@ function _resolveCampSlot(slot) {
 
   if (slot.activity === 'study') {
     // Learning chance: intelligence proxy = level + bond + morale.
-    const chance = Math.min(0.92, 0.18 + lvl * 0.012 + bond * 0.004 + (morale - 50) * 0.002);
+    const chance = Math.min(0.95, 0.18 + lvl * 0.012 + bond * 0.004 + (morale - 50) * 0.002 + campBonus('studyBonus'));
     const r = Math.random();
     if (r < 0.015) { // rare mutation
       prof.xp = (prof.xp || 0) + 60;
@@ -24351,7 +24358,8 @@ function _resolveCampSlot(slot) {
   const tierKey = slot.tier || 'scout';
   const tier = CAMP_LOOT_TIERS[tierKey] || CAMP_LOOT_TIERS.scout;
   // Survival score vs danger. Bonded high-level veterans are far safer.
-  const survive = 50 + lvl * 1.6 + bond * 0.5 + (morale - 50) * 0.3 - tier.danger;
+  // Intelligence Center adds recon survivability.
+  const survive = 50 + lvl * 1.6 + bond * 0.5 + (morale - 50) * 0.3 - tier.danger + campBonus('lootSurvive');
   const roll = Math.random() * 100;
   entry.lines.push(`📡 ${CAMP_LOOT_FLAVOR[Math.floor(Math.random() * CAMP_LOOT_FLAVOR.length)]}`);
   if (roll > survive + 38) {
@@ -24374,8 +24382,10 @@ function _resolveCampSlot(slot) {
     entry.lines.push('🌫 Lost contact for hours… then they staggered back through the gate. Shaken. (-morale)');
     return entry;
   }
-  // SURVIVED — loot. Injured branch on a closer call.
-  const injured = roll > survive - 8;
+  // SURVIVED — loot. Injured branch on a closer call. The Infirmary
+  // shrinks the wounded window (field medics patch them mid-extraction).
+  const injuryWindow = 8 * Math.max(0, 1 - campBonus('injuryReduce'));
+  const injured = roll > survive - injuryWindow;
   const loot = _campGrantLoot(tierKey);
   prof.xp = (prof.xp || 0) + (tierKey === 'deepRun' ? 70 : tierKey === 'raid' ? 40 : 18);
   prof.bond = Math.min(100, bond + (tierKey === 'deepRun' ? 4 : 2));
@@ -24416,6 +24426,131 @@ function resolveReadyCampActivities() {
     try { saveProfile(); } catch (e) {}
   }
   return reports;
+}
+
+// ============================================================================
+// 🏗️ CAMP BASE BUILDING (Phase 2) — XCOM-style facility grid. Each facility
+// upgrades a Phase-1 system (loot survival, study success, rest XP, morale
+// recovery, deploy capacity, salvage income). Build/upgrade cost 🔥 + real
+// time; construction completes offline. Art is a swappable hook
+// (_campFacilityArt) so the admin can drop themed images in later.
+// ============================================================================
+const CAMP_FACILITIES = [
+  { id: 'barracks', name: 'Resistance Ring', emoji: '🛡️', accent: '#7fb0ff',
+    desc: 'Houses more survivors. +1 deploy slot per level.',
+    maxLevel: 4, cost: [60, 140, 280, 520], buildH: [0.5, 1, 2, 4],
+    bonus: lv => ({ slots: lv }) },
+  { id: 'training', name: 'Training Center', emoji: '🎯', accent: '#9ad17a',
+    desc: 'Drills resting units harder. +25% Rest XP per level.',
+    maxLevel: 4, cost: [80, 180, 360, 640], buildH: [1, 2, 4, 8],
+    bonus: lv => ({ restXpMul: 1 + 0.25 * lv }) },
+  { id: 'intel', name: 'Intelligence Center', emoji: '🛰️', accent: '#7fd6ff',
+    desc: 'Recon improves loot-run survival & loot quality.',
+    maxLevel: 4, cost: [100, 220, 440, 800], buildH: [1, 3, 6, 12],
+    bonus: lv => ({ lootSurvive: 6 * lv, lootQuality: 0.05 * lv }) },
+  { id: 'medbay', name: 'Infirmary', emoji: '🩺', accent: '#ff8aa0',
+    desc: 'Field medics cut injury chance and speed morale recovery.',
+    maxLevel: 4, cost: [90, 200, 400, 720], buildH: [1, 2, 4, 8],
+    bonus: lv => ({ injuryReduce: 0.12 * lv, moraleRegen: 4 * lv }) },
+  { id: 'lab', name: 'Research Lab', emoji: '🔬', accent: '#c89bff',
+    desc: 'Tech uplift raises Study success chance.',
+    maxLevel: 4, cost: [110, 240, 480, 860], buildH: [2, 4, 8, 16],
+    bonus: lv => ({ studyBonus: 0.08 * lv }) },
+  { id: 'workshop', name: 'Proving Ground', emoji: '🛠️', accent: '#ffc24a',
+    desc: 'Engineers shorten every build/upgrade by 12% per level.',
+    maxLevel: 4, cost: [70, 160, 320, 600], buildH: [1, 2, 4, 8],
+    bonus: lv => ({ buildSpeed: 0.12 * lv }) },
+  { id: 'market', name: 'Black Market', emoji: '💰', accent: '#e0c060',
+    desc: 'Smuggler contacts pay a salvage tithe each time you visit Camp.',
+    maxLevel: 4, cost: [120, 260, 520, 900], buildH: [2, 4, 8, 16],
+    bonus: lv => ({ tithe: 5 * lv }) },
+  { id: 'lounge', name: 'Morale Lounge', emoji: '☕', accent: '#ffd166',
+    desc: 'A place to breathe. Passive morale regen for every camp unit.',
+    maxLevel: 3, cost: [80, 180, 360], buildH: [1, 3, 6],
+    bonus: lv => ({ moraleRegen: 3 * lv }) },
+  { id: 'powerRelay', name: 'Power Relay', emoji: '⚡', accent: '#8affd6',
+    desc: 'Stabilises the grid. Unlocks higher facility tiers (flavor + future).',
+    maxLevel: 3, cost: [50, 120, 240], buildH: [0.5, 1, 2],
+    bonus: lv => ({ power: 4 * lv }) },
+];
+function _campFac(id) { return CAMP_FACILITIES.find(f => f.id === id) || null; }
+function _campFacState(id) {
+  const st = (Camp.facilities && Camp.facilities[id]) || null;
+  if (!st) return { built: false, level: 0, state: 'empty' };
+  if (st.state === 'building') {
+    const end = (st.buildStart || 0) + (st.buildDur || 0);
+    const rem = end - Date.now();
+    if (rem > 0) return { built: st.level > 0, level: st.level || 0, state: 'building', remainingMs: rem, targetLevel: (st.level || 0) + 1 };
+    // Timer elapsed → promote to active (lazy resolve).
+    st.level = (st.level || 0) + 1;
+    st.state = 'active'; st.buildStart = null; st.buildDur = null;
+    try { saveCamp(); } catch (e) {}
+  }
+  return { built: (st.level || 0) > 0, level: st.level || 0, state: 'active' };
+}
+// Resolve any construction whose timer finished (called on Camp open). Returns
+// the list of facilities that just came online for the debrief.
+function resolveReadyCampBuilds() {
+  const done = [];
+  for (const f of CAMP_FACILITIES) {
+    const st = Camp.facilities && Camp.facilities[f.id];
+    if (st && st.state === 'building' && ((st.buildStart || 0) + (st.buildDur || 0)) <= Date.now()) {
+      st.level = (st.level || 0) + 1; st.state = 'active'; st.buildStart = null; st.buildDur = null;
+      done.push({ icon: f.emoji, name: f.name, status: 'ONLINE', color: f.accent,
+        lines: [`🏗️ Construction complete — <strong>${f.name}</strong> is now Level ${st.level}.`] });
+    }
+  }
+  if (done.length) { try { saveCamp(); } catch (e) {} }
+  return done;
+}
+// Sum a numeric bonus key across all ACTIVE facilities.
+function campBonus(key) {
+  let total = 0;
+  for (const f of CAMP_FACILITIES) {
+    const s = _campFacState(f.id);
+    if (s.level > 0) {
+      const b = f.bonus(s.level) || {};
+      if (typeof b[key] === 'number') total += b[key];
+    }
+  }
+  return total;
+}
+function campMaxSlots() { return 6 + campBonus('slots'); }
+function _campBuildCost(f, targetLevel) { return (f.cost && f.cost[targetLevel - 1]) || 999999; }
+function _campBuildMs(f, targetLevel) {
+  const baseH = (f.buildH && f.buildH[targetLevel - 1]) || 1;
+  const speed = Math.min(0.48, campBonus('buildSpeed')); // workshop, capped
+  return Math.max(60000, Math.round(baseH * 3600000 * (1 - speed)));
+}
+function campStartBuild(facId) {
+  const f = _campFac(facId); if (!f) return false;
+  const s = _campFacState(facId);
+  if (s.state === 'building') { showToast('Already under construction.'); return false; }
+  const target = (s.level || 0) + 1;
+  if (target > f.maxLevel) { showToast('Already at max level.'); return false; }
+  const cost = _campBuildCost(f, target);
+  if ((Profile.gems || 0) < cost) { showToast(`Need ${cost} 🔥 — you have ${Profile.gems || 0}`); return false; }
+  Profile.gems -= cost;
+  if (!Camp.facilities) Camp.facilities = {};
+  const prev = Camp.facilities[facId] || { level: 0 };
+  Camp.facilities[facId] = { level: prev.level || 0, state: 'building', buildStart: Date.now(), buildDur: _campBuildMs(f, target) };
+  try { saveCamp(); } catch (e) {}
+  try { saveProfile(); } catch (e) {}
+  showToast(`${f.emoji} ${target === 1 ? 'Building' : 'Upgrading'} ${f.name} → Lv ${target} (-${cost} 🔥)`, 3200);
+  return true;
+}
+// One-time-per-visit Black Market salvage tithe.
+function _campCollectTithe() {
+  const t = campBonus('tithe');
+  if (t <= 0) return 0;
+  const today = new Date().toISOString().slice(0, 10);
+  if (!Camp.facilities.__tithe || Camp.facilities.__tithe.day !== today) {
+    Camp.facilities.__tithe = { day: today };
+    Profile.gems = (Profile.gems || 0) + t;
+    try { saveCamp(); saveProfile(); } catch (e) {}
+    return t;
+  }
+  return 0;
 }
 
 // ============ LAB / FUSION / CORES ============
@@ -31679,7 +31814,7 @@ function renderTitle() {
   const streak       = (Profile.leaderboard && Profile.leaderboard.winStreakCurrent) || 0;
   const marketListings = Market.listings.length;
   const campParked   = Camp.slots.length;
-  const campMax      = Camp.maxSlots;
+  const campMax      = (typeof campMaxSlots === 'function') ? campMaxSlots() : Camp.maxSlots;
   const campTotal    = (() => {
     const total = (CAMPAIGN.chapters || []).reduce((a, c) => a + c.nodes.length, 0);
     const done  = (CAMPAIGN.chapters || []).reduce((a, c) => a + c.nodes.filter(n => isCampaignNodeCleared(c.id, n.id)).length, 0);
@@ -46358,8 +46493,15 @@ function renderCamp() {
   // player was offline) BEFORE building the screen, then queue the cinematic
   // debrief if anything came back.
   try {
-    const _rep = resolveReadyCampActivities();
-    if (_rep && _rep.length) App._campDebrief = _rep;
+    const _rep = resolveReadyCampActivities() || [];
+    const _bld = (typeof resolveReadyCampBuilds === 'function') ? (resolveReadyCampBuilds() || []) : [];
+    const _all = _bld.concat(_rep);
+    if (_all.length) App._campDebrief = (App._campDebrief || []).concat(_all);
+    // 💰 Black Market tithe — once per real day on Camp visit.
+    if (typeof _campCollectTithe === 'function') {
+      const _t = _campCollectTithe();
+      if (_t > 0) showToast(`💰 Black Market tithe: +${_t} 🔥`, 2600);
+    }
   } catch (e) {}
 
   // Only units the player actually OWNS, and only created/custom cards (no
@@ -46429,8 +46571,58 @@ function renderCamp() {
     `;
   };
 
+  const _maxSlots = campMaxSlots();
   const slotsHtml = [];
-  for (let i = 0; i < Camp.maxSlots; i++) slotsHtml.push(renderSlot(Camp.slots[i] || null));
+  for (let i = 0; i < _maxSlots; i++) slotsHtml.push(renderSlot(Camp.slots[i] || null));
+
+  // 🏗️ XCOM-style base grid. Art is a swap hook — drop an image URL into
+  // Forge.campArt[facId] later and it replaces the placeholder backdrop.
+  const _facArt = (id) => {
+    try { if (Forge.campArt && Forge.campArt[id]) return Forge.campArt[id]; } catch (e) {}
+    return null;
+  };
+  const facilityGridHtml = CAMP_FACILITIES.map(f => {
+    const s = _campFacState(f.id);
+    const art = _facArt(f.id);
+    const bg = art
+      ? `background:linear-gradient(180deg,rgba(6,9,14,0.55),rgba(6,9,14,0.85)),url('${art}') center/cover`
+      : `background:radial-gradient(ellipse at 30% 20%, ${f.accent}26, transparent 60%), linear-gradient(180deg,#0c1118,#070a0f)`;
+    let badge, action = '', dimmed = '';
+    if (s.state === 'building') {
+      const remH = Math.floor(s.remainingMs / 3600000);
+      const remM = Math.floor((s.remainingMs % 3600000) / 60000);
+      badge = `<span style="font-family:'Cinzel',serif;font-size:0.72rem;letter-spacing:0.1em;color:#ffc24a">⚙ BUILDING → Lv ${s.targetLevel} · ${remH}h ${remM}m</span>`;
+      action = `<div style="height:8px;background:repeating-linear-gradient(45deg,#ffc24a22 0 10px,#0000 10px 20px);border-radius:3px;margin-top:6px"></div>`;
+    } else if (s.level > 0) {
+      const b = f.bonus(s.level) || {};
+      const eff = Object.keys(b).map(k => `${k}+${(Math.round((b[k]) * 100) / 100)}`).join(' · ');
+      badge = `<span style="font-family:'Cinzel',serif;font-size:0.74rem;letter-spacing:0.08em;color:${f.accent}">◉ ONLINE · Lv ${s.level}/${f.maxLevel}</span>`;
+      if (s.level < f.maxLevel) {
+        const c = _campBuildCost(f, s.level + 1);
+        const aff = (Profile.gems || 0) >= c;
+        action = `<button class="btn-mini" data-build="${f.id}" ${aff ? '' : 'disabled'} style="margin-top:6px;border-color:${f.accent}66;color:${aff ? f.accent : '#666'}">⬆ Upgrade — ${c} 🔥</button>`;
+      } else {
+        action = `<div class="small-text" style="color:${f.accent};margin-top:6px">★ MAX LEVEL</div>`;
+      }
+      action += `<div class="small-text ink-dim" style="margin-top:2px">${escapeHtml(eff)}</div>`;
+    } else {
+      dimmed = 'opacity:0.62;filter:grayscale(0.4)';
+      const c = _campBuildCost(f, 1);
+      const aff = (Profile.gems || 0) >= c;
+      badge = `<span style="font-family:'Cinzel',serif;font-size:0.72rem;letter-spacing:0.12em;color:#7d8aa0">［ UNDEVELOPED ］</span>`;
+      action = `<button class="btn-mini" data-build="${f.id}" ${aff ? '' : 'disabled'} style="margin-top:6px;border-color:${f.accent}66;color:${aff ? f.accent : '#666'}">🔨 Build — ${c} 🔥</button>`;
+    }
+    return `
+      <div style="position:relative;border:1px solid ${f.accent}44;border-radius:8px;overflow:hidden;${bg};min-height:118px;padding:10px 12px;${dimmed}">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:1.5rem;filter:drop-shadow(0 0 6px ${f.accent}88)">${f.emoji}</span>
+          <strong style="font-family:'Cinzel',serif;color:#e8eef7;font-size:0.98rem;flex:1">${escapeHtml(f.name)}</strong>
+        </div>
+        <div style="margin:4px 0 2px">${badge}</div>
+        <div class="small-text ink-dim" style="line-height:1.4">${escapeHtml(f.desc)}</div>
+        ${action}
+      </div>`;
+  }).join('');
 
   const availableHtml = available.map(e => {
     const parked = isAlreadyParked(e.kind, e.id);
@@ -46460,9 +46652,14 @@ function renderCamp() {
         Click <strong>Collect</strong> to apply the XP — level-ups roll new stats and learnable moves.
         <br><span class="ink-dim">Only units you own are listed. You must always keep at least <strong>${CAMP_MIN_COLLECTION}</strong> cards available — you have <strong>${_totalOwnedCards()}</strong> owned · <strong>${Camp.slots.length}</strong> parked.</span>
       </div>
+      <div style="margin:0 0 1.4rem">
+        <div class="forge-section-header"><h3 style="color:#8fd6ff">🏗️ Base Construction</h3></div>
+        <div class="small-text ink-dim" style="margin:-0.3rem 0 0.7rem">Build & upgrade facilities — each one strengthens your survivors. Construction continues in real time, even offline.</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.7rem">${facilityGridHtml}</div>
+      </div>
       <div class="camp-layout">
         <div>
-          <div class="forge-section-header"><h3>Slots (${Camp.slots.length}/${Camp.maxSlots})</h3></div>
+          <div class="forge-section-header"><h3>Deploy Slots (${Camp.slots.length}/${_maxSlots})</h3></div>
           <div class="camp-slots-grid">${slotsHtml.join('')}</div>
         </div>
         <div>
@@ -46529,6 +46726,9 @@ function renderCamp() {
   });
   document.querySelectorAll('[data-act="recall"]').forEach(el => {
     el.onclick = () => { if (confirm('Recall this unit early? They return safely but morale takes a hit and you get no reward.')) { campRecall(el.dataset.slot); render(); } };
+  });
+  document.querySelectorAll('[data-build]').forEach(el => {
+    el.onclick = () => { if (typeof campStartBuild === 'function' && campStartBuild(el.dataset.build)) render(); };
   });
   document.getElementById('btn-back-camp').onclick = () => { App.screen = 'title'; render(); };
   document.querySelectorAll('[data-park]').forEach(el => {

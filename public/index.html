@@ -19652,6 +19652,10 @@ const Forge = {
   // 🖤 Admin-tunable Black Market buy prices per rarity. Empty = use the
   // CINDER_SELL_VALUES defaults. Rides the catalog so all players get them.
   blackMarketPrices: {},
+  // 🏗️ Admin-set camp facility build/upgrade costs keyed by facility id:
+  //   { [facId]: { gem:[lvl1,…], res:[{metal:2,…},…] } }. Empty = built-in
+  //   defaults. Rides the catalog so every player gets the same costs.
+  campCosts: {},
   // 🪦 ADMIN-SET DEFAULT TOMBSTONE — base image rendered on dying units' tiles.
   // Players who haven't bought a custom tombstone use this one. URL string
   // (Cloudflare-served path or data URL).
@@ -21652,6 +21656,8 @@ const Catalog = {
   pageGuides: [],
   // 🖤 Published Black Market buy prices per rarity (admin-tuned).
   blackMarketPrices: {},
+  // 🏗️ Published camp facility costs (admin-tuned).
+  campCosts: {},
   // 🪦 Admin-published default tombstone image — every player sees this one
   // on dying units' tiles unless they've equipped a custom cosmetic.
   tombstoneArt: null,
@@ -21744,6 +21750,7 @@ async function cloudFetchCatalog() {
     Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
     Catalog.rlcRelics = Array.isArray(rawMoves.__rlc_relics__) ? rawMoves.__rlc_relics__ : [];
     Catalog.blackMarketPrices = (rawMoves.__black_market_prices__ && typeof rawMoves.__black_market_prices__ === 'object') ? rawMoves.__black_market_prices__ : {};
+    Catalog.campCosts = (rawMoves.__camp_costs__ && typeof rawMoves.__camp_costs__ === 'object') ? rawMoves.__camp_costs__ : {};
     const cleanMoves = { ...rawMoves };
     delete cleanMoves.__ai_decks__;
     delete cleanMoves.__starter_decks__;
@@ -21753,6 +21760,7 @@ async function cloudFetchCatalog() {
     delete cleanMoves.__tombstone_cosmetics__;
     delete cleanMoves.__rlc_relics__;
     delete cleanMoves.__black_market_prices__;
+    delete cleanMoves.__camp_costs__;
     Catalog.moves  = cleanMoves;
     Catalog.items  = Array.isArray(data.items)  ? data.items  : [];
     Catalog.packs  = Array.isArray(data.packs)  ? data.packs  : [];
@@ -21795,6 +21803,7 @@ async function cloudPublishCatalog() {
       __tombstone_cosmetics__: Array.isArray(Forge.tombstoneCosmetics) ? Forge.tombstoneCosmetics : [],
       __rlc_relics__: Array.isArray(Forge.rlcRelics) ? Forge.rlcRelics : [],
       __black_market_prices__: (Forge.blackMarketPrices && typeof Forge.blackMarketPrices === 'object') ? Forge.blackMarketPrices : {},
+      __camp_costs__: (Forge.campCosts && typeof Forge.campCosts === 'object') ? Forge.campCosts : {},
     };
     const row = {
       id:         'singleton',
@@ -24795,7 +24804,42 @@ function campBonus(key) {
   return total;
 }
 function campMaxSlots() { return 6 + campBonus('slots'); }
-function _campBuildCost(f, targetLevel) { return (f.cost && f.cost[targetLevel - 1]) || 999999; }
+// Admin override for a facility's costs (Forge wins locally, else Catalog).
+function _campCostOverride(facId) {
+  const fo = (typeof Forge !== 'undefined' && Forge.campCosts && Forge.campCosts[facId]) || null;
+  if (fo) return fo;
+  return (typeof Catalog !== 'undefined' && Catalog.campCosts && Catalog.campCosts[facId]) || null;
+}
+function _campBuildCost(f, targetLevel) {
+  const ov = _campCostOverride(f.id);
+  if (ov && Array.isArray(ov.gem) && ov.gem[targetLevel - 1] != null) return Math.max(0, ov.gem[targetLevel - 1]);
+  return (f.cost && f.cost[targetLevel - 1]) || 999999;
+}
+// Default resource cost for a facility level when the admin hasn't set one:
+// scales with target level; flavoured by facility role.
+const _CAMP_RES_DEFAULT = {
+  barracks:   { metal: 4, supplies: 6 },
+  training:   { supplies: 5, ammo: 4 },
+  intel:      { intel: 6, metal: 3 },
+  medbay:     { medicine: 6, water: 4 },
+  lab:        { intel: 8, metal: 4 },
+  workshop:   { metal: 8, supplies: 4 },
+  market:     { supplies: 6, intel: 3 },
+  lounge:     { food: 6, water: 5 },
+  powerRelay: { metal: 6, intel: 2 },
+};
+function _campResCost(f, targetLevel) {
+  const ov = _campCostOverride(f.id);
+  if (ov && Array.isArray(ov.res) && ov.res[targetLevel - 1] && typeof ov.res[targetLevel - 1] === 'object') {
+    const c = {};
+    (typeof RESOURCE_IDS !== 'undefined' ? RESOURCE_IDS : []).forEach(id => { const v = ov.res[targetLevel - 1][id]; if (v > 0) c[id] = Math.floor(v); });
+    return c;
+  }
+  const base = _CAMP_RES_DEFAULT[f.id] || { supplies: 5 };
+  const out = {};
+  Object.keys(base).forEach(id => { out[id] = Math.round(base[id] * targetLevel * 1.6); });
+  return out;
+}
 function _campBuildMs(f, targetLevel) {
   const baseH = (f.buildH && f.buildH[targetLevel - 1]) || 1;
   const speed = Math.min(0.48, campBonus('buildSpeed')); // workshop, capped
@@ -24808,8 +24852,14 @@ function campStartBuild(facId) {
   const target = (s.level || 0) + 1;
   if (target > f.maxLevel) { showToast('Already at max level.'); return false; }
   const cost = _campBuildCost(f, target);
+  const rcost = _campResCost(f, target);
   if ((Profile.gems || 0) < cost) { showToast(`Need ${cost} 🔥 — you have ${Profile.gems || 0}`); return false; }
+  if (typeof canAffordResources === 'function' && !canAffordResources(rcost)) {
+    showToast(`Not enough resources — needs ${resourceCostHtml(rcost).replace(/<[^>]+>/g, '')}`, 3600);
+    return false;
+  }
   Profile.gems -= cost;
+  if (typeof spendResources === 'function') spendResources(rcost);
   if (!Camp.facilities) Camp.facilities = {};
   const prev = Camp.facilities[facId] || { level: 0 };
   Camp.facilities[facId] = { level: prev.level || 0, state: 'building', buildStart: Date.now(), buildDur: _campBuildMs(f, target) };
@@ -25269,6 +25319,8 @@ async function loadForgeContentFromIdb() {
     if (Array.isArray(rr) && rr.length && (!Array.isArray(Forge.rlcRelics) || !Forge.rlcRelics.length)) { Forge.rlcRelics = rr; changed = true; }
     const bmp = await idbGet('forge_blackMarketPrices');
     if (bmp && typeof bmp === 'object' && Object.keys(bmp).length && (!Forge.blackMarketPrices || !Object.keys(Forge.blackMarketPrices).length)) { Forge.blackMarketPrices = bmp; changed = true; }
+    const cmpc = await idbGet('forge_campCosts');
+    if (cmpc && typeof cmpc === 'object' && Object.keys(cmpc).length && (!Forge.campCosts || !Object.keys(Forge.campCosts).length)) { Forge.campCosts = cmpc; changed = true; }
   } catch (e) { /* skip */ }
   if (changed) {
     // Re-home the recovered content back into the localStorage fast-path
@@ -25321,6 +25373,7 @@ function loadForge() {
     try { const rr = localStorage.getItem('hg_rlcRelics'); if (rr) { const x = JSON.parse(rr); if (Array.isArray(x)) Forge.rlcRelics = x; } } catch (err) {}
     try { const po = localStorage.getItem('hg_priceOverrides'); if (po) { const x = JSON.parse(po); if (x && typeof x === 'object') Forge.priceOverrides = x; } } catch (err) {}
     try { const bmp = localStorage.getItem('hg_blackMarketPrices'); if (bmp) { const x = JSON.parse(bmp); if (x && typeof x === 'object') Forge.blackMarketPrices = x; } } catch (err) {}
+    try { const cmpc = localStorage.getItem('hg_campCosts'); if (cmpc) { const x = JSON.parse(cmpc); if (x && typeof x === 'object') Forge.campCosts = x; } } catch (err) {}
     try { const cp = localStorage.getItem('hg_useCustomOnlyPool'); if (cp != null) Forge.useCustomOnlyPool = JSON.parse(cp) === true; } catch (err) {}
     // 🚨 PRODUCTION OVERRIDE — force custom-only pool ON regardless of saved
     // state. The admin explicitly wants ONLY their forged/cataloged cards in
@@ -25592,6 +25645,7 @@ function saveForge() {
       idbSet('forge_tombstoneCosmetics', Forge.tombstoneCosmetics || []);
       idbSet('forge_rlcRelics',          Forge.rlcRelics          || []);
       idbSet('forge_blackMarketPrices',  Forge.blackMarketPrices  || {});
+      idbSet('forge_campCosts',          Forge.campCosts          || {});
     }
   } catch (e) { /* swallow — IDB issues fall back to memory-only */ }
   const chunks = [
@@ -25635,6 +25689,7 @@ function saveForge() {
     { key: 'hg_campaigns',        value: _stripDataUrls(Forge.campaigns || []), name: 'campaigns' },
     { key: 'hg_priceOverrides',   value: Forge.priceOverrides  || {}, name: 'priceOverrides' },
     { key: 'hg_blackMarketPrices', value: Forge.blackMarketPrices || {}, name: 'blackMarketPrices' },
+    { key: 'hg_campCosts', value: Forge.campCosts || {}, name: 'campCosts' },
     { key: 'hg_useCustomOnlyPool', value: !!Forge.useCustomOnlyPool, name: 'useCustomOnlyPool' },
     // 🪦 Tombstone art is base64-heavy — strip it for the localStorage
     // fast-path (full copy is the IDB mirror above, restored at boot).
@@ -47049,8 +47104,10 @@ function renderCamp() {
       badge = `<span style="font-family:'Cinzel',serif;font-size:0.74rem;letter-spacing:0.08em;color:${f.accent}">◉ ONLINE · Lv ${s.level}/${f.maxLevel}</span>`;
       if (s.level < f.maxLevel) {
         const c = _campBuildCost(f, s.level + 1);
-        const aff = (Profile.gems || 0) >= c;
-        action = `<button class="btn-mini" data-build="${f.id}" ${aff ? '' : 'disabled'} style="margin-top:6px;border-color:${f.accent}66;color:${aff ? f.accent : '#666'}">⬆ Upgrade — ${c} 🔥</button>`;
+        const rc = _campResCost(f, s.level + 1);
+        const aff = (Profile.gems || 0) >= c && ((typeof canAffordResources !== 'function') || canAffordResources(rc));
+        action = `<button class="btn-mini" data-build="${f.id}" ${aff ? '' : 'disabled'} style="margin-top:6px;border-color:${f.accent}66;color:${aff ? f.accent : '#666'}">⬆ Upgrade — ${c} 🔥</button>
+          <div class="small-text" style="margin-top:3px">${(typeof resourceCostHtml === 'function') ? resourceCostHtml(rc, { flagShort: true }) : ''}</div>`;
       } else {
         action = `<div class="small-text" style="color:${f.accent};margin-top:6px">★ MAX LEVEL</div>`;
       }
@@ -47058,15 +47115,18 @@ function renderCamp() {
     } else {
       dimmed = 'opacity:0.62;filter:grayscale(0.4)';
       const c = _campBuildCost(f, 1);
-      const aff = (Profile.gems || 0) >= c;
+      const rc = _campResCost(f, 1);
+      const aff = (Profile.gems || 0) >= c && ((typeof canAffordResources !== 'function') || canAffordResources(rc));
       badge = `<span style="font-family:'Cinzel',serif;font-size:0.72rem;letter-spacing:0.12em;color:#7d8aa0">［ UNDEVELOPED ］</span>`;
-      action = `<button class="btn-mini" data-build="${f.id}" ${aff ? '' : 'disabled'} style="margin-top:6px;border-color:${f.accent}66;color:${aff ? f.accent : '#666'}">🔨 Build — ${c} 🔥</button>`;
+      action = `<button class="btn-mini" data-build="${f.id}" ${aff ? '' : 'disabled'} style="margin-top:6px;border-color:${f.accent}66;color:${aff ? f.accent : '#666'}">🔨 Build — ${c} 🔥</button>
+        <div class="small-text" style="margin-top:3px">${(typeof resourceCostHtml === 'function') ? resourceCostHtml(rc, { flagShort: true }) : ''}</div>`;
     }
     const _isAdm = (typeof isAdmin === 'function') && isAdmin();
     const adminArt = _isAdm ? `
       <div style="position:absolute;top:6px;right:6px;display:flex;gap:4px;z-index:2">
         <button class="btn-mini" data-campart="${f.id}" title="Upload backdrop image" style="padding:2px 6px;font-size:0.72rem;background:rgba(0,0,0,0.55);border-color:#ffffff44">📷</button>
         ${art ? `<button class="btn-mini btn-danger" data-campart-clear="${f.id}" title="Remove image" style="padding:2px 6px;font-size:0.72rem;background:rgba(0,0,0,0.55)">✕</button>` : ''}
+        <button class="btn-mini" data-campcost="${f.id}" title="Edit build/upgrade costs" style="padding:2px 6px;font-size:0.72rem;background:rgba(0,0,0,0.55);border-color:#ffd16655;color:#ffd166">⚙</button>
         <input type="file" accept="image/*" data-campart-input="${f.id}" style="display:none">
       </div>` : '';
     return `
@@ -47222,6 +47282,35 @@ function renderCamp() {
           </div>
         </div>`;
       })()}
+      ${(() => {
+        const fid = App._campCostEdit;
+        if (!fid || !((typeof isAdmin === 'function') && isAdmin())) return '';
+        const f = _campFac(fid); if (!f) return '';
+        const lvl = Math.max(1, Math.min(f.maxLevel, App._campCostEditLvl || ((_campFacState(fid).level || 0) + 1)));
+        const gem = _campBuildCost(f, lvl);
+        const rc = _campResCost(f, lvl);
+        const lvlOpts = Array.from({ length: f.maxLevel }, (_, i) => `<option value="${i + 1}" ${i + 1 === lvl ? 'selected' : ''}>Level ${i + 1}</option>`).join('');
+        return `<div class="modal-backdrop" id="campcost-bd" style="z-index:1360">
+          <div class="ds-modal" style="max-width:460px;padding:0;overflow:hidden;border:2px solid ${f.accent}66;background:linear-gradient(180deg,#0c1118,#070a0f)">
+            <div style="padding:14px 20px;border-bottom:1px solid ${f.accent}44">
+              <div style="font-family:'Cinzel',serif;font-size:1.15rem;color:#ffd166">${f.emoji} ${escapeHtml(f.name)} — Build Costs</div>
+              <div class="small-text ink-dim">Set the cost players pay at each level. Publish the catalog to push to everyone.</div>
+            </div>
+            <div style="padding:16px 20px">
+              <div class="editor-field"><label>Editing</label><select id="cc-lvl">${lvlOpts}</select></div>
+              <div class="editor-field"><label>🔥 Cinders</label><input id="cc-gem" type="number" min="0" max="99999" value="${gem}"></div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">
+                ${RESOURCES.map(r => `<label style="display:flex;align-items:center;gap:4px;font-size:0.85rem">${r.icon} ${escapeHtml(r.name)}
+                  <input type="number" min="0" max="9999" value="${rc[r.id] || 0}" data-cc-res="${r.id}" style="width:60px"></label>`).join('')}
+              </div>
+            </div>
+            <div style="padding:14px 20px;border-top:1px solid ${f.accent}33;display:flex;justify-content:flex-end;gap:8px">
+              <button class="btn-secondary" id="cc-cancel">Cancel</button>
+              <button class="btn-primary" id="cc-save">Save Level ${lvl}</button>
+            </div>
+          </div>
+        </div>`;
+      })()}
       ${renderMoveLearnModal()}
     </div>
   `;
@@ -47321,6 +47410,35 @@ function renderCamp() {
     if (typeof saveForge === 'function') saveForge();
     try { if (typeof playCampAmbientMusic === 'function') playCampAmbientMusic(); } catch (e) {}
     render();
+  };
+  document.querySelectorAll('[data-campcost]').forEach(btn => {
+    btn.onclick = () => { App._campCostEdit = btn.dataset.campcost; App._campCostEditLvl = null; render(); };
+  });
+  const _ccLvl = document.getElementById('cc-lvl');
+  if (_ccLvl) _ccLvl.onchange = () => { App._campCostEditLvl = parseInt(_ccLvl.value, 10) || 1; render(); };
+  const _ccCancel = document.getElementById('cc-cancel');
+  if (_ccCancel) _ccCancel.onclick = () => { App._campCostEdit = null; App._campCostEditLvl = null; render(); };
+  const _ccBd = document.getElementById('campcost-bd');
+  if (_ccBd) _ccBd.onclick = (e) => { if (e.target === _ccBd) { App._campCostEdit = null; App._campCostEditLvl = null; render(); } };
+  const _ccSave = document.getElementById('cc-save');
+  if (_ccSave) _ccSave.onclick = () => {
+    const fid = App._campCostEdit; const f = _campFac(fid); if (!f) return;
+    const lvl = Math.max(1, Math.min(f.maxLevel, parseInt((document.getElementById('cc-lvl') || {}).value, 10) || 1));
+    if (!Forge.campCosts) Forge.campCosts = {};
+    const rec = Forge.campCosts[fid] || { gem: [], res: [] };
+    rec.gem = Array.isArray(rec.gem) ? rec.gem : [];
+    rec.res = Array.isArray(rec.res) ? rec.res : [];
+    while (rec.gem.length < f.maxLevel) rec.gem.push(null);
+    while (rec.res.length < f.maxLevel) rec.res.push(null);
+    const g = parseInt((document.getElementById('cc-gem') || {}).value, 10);
+    rec.gem[lvl - 1] = isNaN(g) ? 0 : Math.max(0, g);
+    const ro = {};
+    document.querySelectorAll('[data-cc-res]').forEach(inp => { const v = parseInt(inp.value, 10); if (!isNaN(v) && v > 0) ro[inp.dataset.ccRes] = v; });
+    rec.res[lvl - 1] = ro;
+    Forge.campCosts[fid] = rec;
+    if (typeof saveForge === 'function') saveForge();
+    showToast(`⚙ ${f.name} Lv ${lvl} cost saved. Publish catalog to share.`, 3600);
+    App._campCostEdit = null; App._campCostEditLvl = null; render();
   };
   const _grantRes = document.getElementById('btn-camp-grant-res');
   if (_grantRes) _grantRes.onclick = () => {

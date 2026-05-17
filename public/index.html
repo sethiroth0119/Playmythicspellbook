@@ -23110,7 +23110,19 @@ function saveMarket() {
 const ResMarket = {
   open: [], mine: [], payouts: [],
   tableMissing: false, lastFetch: 0, loading: false, _err: null,
+  _lastPostAt: 0, _channel: null, _refetchT: null, _rt: false,
 };
+// Phase C tuning (client-enforced; RLS still blocks acting on others' rows).
+const RES_MARKET_TTL_MS        = 72 * 3600000; // listings auto-expire after 72h
+const RES_MARKET_MAX_ACTIVE    = 15;           // max simultaneous listings/seller
+const RES_MARKET_POST_COOLDOWN = 4000;         // ms between posts (anti-spam)
+const RES_MARKET_QTY_MAX       = 9999;
+const RES_MARKET_PRICE_MAX     = 9999999;
+function _resListingAgeMs(l) {
+  const t = l && l.created_at ? Date.parse(l.created_at) : NaN;
+  return isNaN(t) ? 0 : (Date.now() - t);
+}
+function _resListingExpired(l) { return _resListingAgeMs(l) > RES_MARKET_TTL_MS; }
 const RES_MARKET_SQL = "create table if not exists public.resource_listings (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  seller_name text,\n  resource text not null,\n  qty integer not null check (qty > 0),\n  price integer not null check (price >= 0),\n  buyer_id uuid references auth.users(id),\n  status text not null default 'open',\n  paid_out boolean not null default false,\n  created_at timestamptz default now()\n);\n-- Phase B columns (safe to re-run on an existing Phase A table):\nalter table public.resource_listings add column if not exists currency text not null default 'cinders';\nalter table public.resource_listings add column if not exists want_kind text;\nalter table public.resource_listings add column if not exists want_id text;\nalter table public.resource_listings add column if not exists want_name text;\nalter table public.resource_listings enable row level security;\ndrop policy if exists rl_sel on public.resource_listings;\ncreate policy rl_sel on public.resource_listings for select to authenticated using (status = 'open' or seller_id = auth.uid() or buyer_id = auth.uid());\ndrop policy if exists rl_ins on public.resource_listings;\ncreate policy rl_ins on public.resource_listings for insert to authenticated with check (seller_id = auth.uid());\ndrop policy if exists rl_upd on public.resource_listings;\ncreate policy rl_upd on public.resource_listings for update to authenticated using (status = 'open' or seller_id = auth.uid()) with check (true);\ndrop policy if exists rl_del on public.resource_listings;\ncreate policy rl_del on public.resource_listings for delete to authenticated using (seller_id = auth.uid() and status = 'open');";
 // Ownership ledger helpers for barter (card → cardCollection, item/relic →
 // itemInventory). Generic count semantics work for built-in + custom alike.
@@ -23151,6 +23163,29 @@ function _resMarkErr(e) {
   ResMarket._err = msg;
   return null;
 }
+// 📡 Realtime push — instant refresh on any listing change. Degrades to the
+// safety poll if the table isn't in the supabase_realtime publication.
+function resMarketSubscribe() {
+  if (ResMarket._channel || !initCloud() || !Profile.cloud.signedIn || !Cloud.client) return;
+  try {
+    ResMarket._channel = Cloud.client.channel('res-market')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'resource_listings' }, () => {
+        // Debounce a burst of changes into one refetch.
+        if (ResMarket._refetchT) clearTimeout(ResMarket._refetchT);
+        ResMarket._refetchT = setTimeout(() => {
+          resMarketFetch().then(() => {
+            if (App.screen === 'market' && App.marketTab === 'resources' && typeof render === 'function') render();
+          });
+        }, 400);
+      })
+      .subscribe((st) => { if (st === 'SUBSCRIBED') ResMarket._rt = true; });
+  } catch (e) { ResMarket._channel = null; }
+}
+function resMarketUnsubscribe() {
+  if (ResMarket._refetchT) { clearTimeout(ResMarket._refetchT); ResMarket._refetchT = null; }
+  if (ResMarket._channel) { try { ResMarket._channel.unsubscribe(); } catch (e) {} ResMarket._channel = null; }
+  ResMarket._rt = false;
+}
 async function resMarketFetch() {
   if (!initCloud() || !Profile.cloud.signedIn) { ResMarket._err = 'Sign in to trade.'; return; }
   if (ResMarket.loading) return;
@@ -23174,11 +23209,26 @@ async function resMarketFetch() {
       }
     } catch (e) { _resMarkErr(e); }
     const { data, error } = await Cloud.client.from('resource_listings')
-      .select('*').eq('status', 'open').order('created_at', { ascending: false }).limit(120);
+      .select('*').eq('status', 'open').order('created_at', { ascending: false }).limit(150);
     if (error) { _resMarkErr(error); ResMarket.loading = false; return; }
     ResMarket.tableMissing = false;
-    ResMarket.open = (data || []).filter(l => l.seller_id !== me);
-    ResMarket.mine = (data || []).filter(l => l.seller_id === me);
+    const all = data || [];
+    // ⏳ Expiry reclaim — delete MY listings older than the TTL and refund the
+    // escrowed resources (clears the board of stale offers automatically).
+    const mineExpired = all.filter(l => l.seller_id === me && _resListingExpired(l));
+    if (mineExpired.length) {
+      const back = {};
+      for (const l of mineExpired) {
+        const del = await Cloud.client.from('resource_listings')
+          .delete().eq('id', l.id).eq('seller_id', me).eq('status', 'open').select('id');
+        if (del && del.data && del.data.length) { addRes(l.resource, l.qty || 0); back[l.resource] = (back[l.resource] || 0) + (l.qty || 0); }
+      }
+      const bs = Object.keys(back).map(id => `${_meta(id) ? _meta(id).icon : ''}${back[id]}`).join(' ');
+      if (bs) { try { saveProfile(); } catch (e) {} showToast(`⏳ Expired listings reclaimed: ${bs}`, 4200); }
+    }
+    // Buyers never see expired listings (even before the seller's sweep runs).
+    ResMarket.open = all.filter(l => l.seller_id !== me && !_resListingExpired(l));
+    ResMarket.mine = all.filter(l => l.seller_id === me && !_resListingExpired(l));
     ResMarket.lastFetch = Date.now();
   } catch (e) { _resMarkErr(e); }
   ResMarket.loading = false;
@@ -23189,6 +23239,15 @@ async function resMarketPost(resource, qty, pay) {
   pay = pay || { mode: 'cinders', price: 0 };
   qty = Math.floor(qty);
   if (!RESOURCE_IDS.includes(resource) || qty <= 0) { showToast('Invalid listing.'); return false; }
+  if (qty > RES_MARKET_QTY_MAX) { showToast(`Max ${RES_MARKET_QTY_MAX} per listing.`); return false; }
+  // Anti-spam: post cooldown.
+  const since = Date.now() - (ResMarket._lastPostAt || 0);
+  if (since < RES_MARKET_POST_COOLDOWN) { showToast(`Slow down — wait ${Math.ceil((RES_MARKET_POST_COOLDOWN - since) / 1000)}s before listing again.`, 2600); return false; }
+  // Anti-abuse: cap simultaneous active listings per seller.
+  if ((ResMarket.mine || []).length >= RES_MARKET_MAX_ACTIVE) {
+    showToast(`You already have ${RES_MARKET_MAX_ACTIVE} active listings — cancel or sell some first.`, 3600);
+    return false;
+  }
   if (getRes(resource) < qty) { showToast(`You only have ${getRes(resource)} ${_meta(resource).name}.`); return false; }
   const row = {
     seller_id: Profile.cloud.userId,
@@ -23202,6 +23261,7 @@ async function resMarketPost(resource, qty, pay) {
   } else {
     const price = Math.floor(pay.price);
     if (isNaN(price) || price < 0) { showToast('Set a valid price.'); return false; }
+    if (price > RES_MARKET_PRICE_MAX) { showToast(`Max price is ${RES_MARKET_PRICE_MAX}.`); return false; }
     row.currency = (pay.mode === 'aza') ? 'aza' : 'cinders';
     row.price = price;
   }
@@ -23210,6 +23270,7 @@ async function resMarketPost(resource, qty, pay) {
   try { saveProfile(); } catch (e) {}
   const { error } = await Cloud.client.from('resource_listings').insert(row);
   if (error) { addRes(resource, qty); try { saveProfile(); } catch (e) {} _resMarkErr(error); showToast('⚠ Could not post listing.'); return false; }
+  ResMarket._lastPostAt = Date.now();
   const ask = row.currency === 'barter' ? `🔄 ${row.want_name}` : (row.currency === 'aza' ? `${row.price} 👑` : `${row.price} 🔥`);
   showToast(`📦 Listed ${qty} ${_meta(resource).icon} for ${ask}`, 3200);
   await resMarketFetch();
@@ -46148,9 +46209,14 @@ function renderTutor() {
 
 // ============ MARKETPLACE SCREEN ============
 function renderResourceMarket() {
-  // Kick a refresh when the data is stale (async → re-render on arrival).
-  if (!ResMarket.loading && (Date.now() - ResMarket.lastFetch > 12000) && Profile.cloud && Profile.cloud.signedIn) {
-    resMarketFetch().then(() => { if (App.screen === 'market' && (App.marketTab === 'resources')) render(); });
+  // Realtime push handles instant updates; the poll is just a slow backstop
+  // (45s) for when the table isn't in the supabase_realtime publication.
+  if (Profile.cloud && Profile.cloud.signedIn) {
+    resMarketSubscribe();
+    const staleMs = ResMarket._rt ? 120000 : 45000;
+    if (!ResMarket.loading && (Date.now() - ResMarket.lastFetch > staleMs)) {
+      resMarketFetch().then(() => { if (App.screen === 'market' && (App.marketTab === 'resources')) render(); });
+    }
   }
   const wallet = (typeof renderResourceWallet === 'function') ? renderResourceWallet() : '';
   if (!Profile.cloud || !Profile.cloud.signedIn) {
@@ -46166,6 +46232,7 @@ function renderResourceMarket() {
           <button class="btn-mini" id="resmkt-copy">📋 Copy SQL</button>
           <button class="btn-mini" id="resmkt-retry">↻ Retry</button>
         </div>
+        <div class="small-text ink-dim" style="margin-top:0.6rem">Optional — for <strong>instant</strong> updates instead of the safety poll, also run:<br><code style="color:#9ad17a">alter publication supabase_realtime add table public.resource_listings;</code></div>
       </div>`;
   }
   const _row = (l, mine) => `
@@ -46339,7 +46406,8 @@ function renderMarket() {
       <div class="forge-body">${body}</div>
     </div>
   `;
-  document.getElementById('btn-back-market').onclick = () => { App.screen = 'title'; render(); };
+  if (tab !== 'resources' && typeof resMarketUnsubscribe === 'function') resMarketUnsubscribe();
+  document.getElementById('btn-back-market').onclick = () => { if (typeof resMarketUnsubscribe === 'function') resMarketUnsubscribe(); App.screen = 'title'; render(); };
   document.getElementById('btn-market-reseed').onclick = () => { reseedNpcListingsIfStale(true); render(); };
   bindHowToPanels();
   document.querySelectorAll('.forge-tab').forEach(el => {

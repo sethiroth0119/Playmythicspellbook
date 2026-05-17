@@ -21872,7 +21872,28 @@ const PUBLIC_CATALOG_BUCKET = 'public-catalog';
 // each shard fits under the cap, then list them in an index file the reader
 // uses to glue them back together. Shards are named `<base>-<n>.json` and the
 // index is `<base>.index.json`.
-const CATALOG_SHARD_CAP_BYTES = 38 * 1024 * 1024; // 38 MB — well under the 50 MB free-tier limit
+// 4 MB shards. The old 38 MB cap meant a single huge upload that routinely
+// timed out Supabase Storage's metadata DB ("connection to the database
+// timed out" / 500). Small shards upload fast and individually retryable.
+const CATALOG_SHARD_CAP_BYTES = 4 * 1024 * 1024;
+const _sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// Upload one Storage object with retry + exponential backoff. Transient
+// timeouts / 5xx usually succeed on the 2nd or 3rd try.
+async function _storagePutRetry(name, jsonStr, attempts) {
+  attempts = attempts || 3;
+  let lastErr = null;
+  for (let a = 0; a < attempts; a++) {
+    try {
+      const body = new Blob([jsonStr], { type: 'application/json' });
+      const { error } = await Cloud.client.storage.from(PUBLIC_CATALOG_BUCKET)
+        .upload(name, body, { upsert: true, contentType: 'application/json' });
+      if (!error) return null;
+      lastErr = error.message || ('' + error);
+    } catch (e) { lastErr = (e && e.message) || 'upload exception'; }
+    if (a < attempts - 1) await _sleep(800 * Math.pow(2, a)); // 0.8s, 1.6s
+  }
+  return lastErr || 'upload failed';
+}
 function _splitObjectIntoShards(obj, capBytes) {
   // Walk entries in key order and pack into shards until each shard's JSON
   // serialization is close to the cap. Each shard is itself a valid JSON
@@ -21903,37 +21924,40 @@ async function cloudPublishCatalogArt() {
   for (const [forgeKey, filename] of categories) {
     try {
       const blob = Forge[forgeKey] || {};
-      const json = JSON.stringify(blob);
-      const size = json.length;
-      // Small payload — upload as one file (also clears any stale shard index).
-      if (size <= CATALOG_SHARD_CAP_BYTES) {
-        const body = new Blob([json], { type: 'application/json' });
-        const { error } = await Cloud.client.storage.from(PUBLIC_CATALOG_BUCKET).upload(filename, body, { upsert: true, contentType: 'application/json' });
-        results.push({ key: forgeKey, ok: !error, error: error && error.message });
-      } else {
-        // Oversized — split into shards and upload each, plus an index file
-        // so the fetcher knows how many shards to download.
-        const shards = _splitObjectIntoShards(blob, CATALOG_SHARD_CAP_BYTES);
-        const base   = filename.replace(/\.json$/, '');
-        const shardNames = shards.map((_, i) => `${base}-${i}.json`);
-        let shardErr = null;
-        for (let i = 0; i < shards.length; i++) {
-          const sbody = new Blob([JSON.stringify(shards[i])], { type: 'application/json' });
-          const { error } = await Cloud.client.storage.from(PUBLIC_CATALOG_BUCKET).upload(shardNames[i], sbody, { upsert: true, contentType: 'application/json' });
-          if (error) { shardErr = error.message; break; }
-        }
-        if (!shardErr) {
-          // Write the index file that the reader uses to discover the shards.
-          const idxBody = new Blob([JSON.stringify({ shards: shardNames, total: shards.length })], { type: 'application/json' });
-          const { error } = await Cloud.client.storage.from(PUBLIC_CATALOG_BUCKET).upload(`${base}.index.json`, idxBody, { upsert: true, contentType: 'application/json' });
-          if (error) shardErr = error.message;
-        }
-        results.push({ key: forgeKey, ok: !shardErr, error: shardErr, shards: shards.length });
+      const base = filename.replace(/\.json$/, '');
+      // Empty category → just (re)write a 0-shard index so the fetcher merges
+      // nothing. Tiny + fast; never times out.
+      if (!blob || typeof blob !== 'object' || !Object.keys(blob).length) {
+        const e = await _storagePutRetry(`${base}.index.json`, JSON.stringify({ shards: [], total: 0 }), 2);
+        results.push({ key: forgeKey, ok: !e, error: e, shards: 0 });
+        await _sleep(150);
+        continue;
       }
+      // ALWAYS shard (consistent format, no stale single-file/index ambiguity).
+      // 4 MB shards each uploaded with retry+backoff; small throttle between
+      // requests so we don't overwhelm Storage / hit rate limits.
+      const shards = _splitObjectIntoShards(blob, CATALOG_SHARD_CAP_BYTES);
+      const shardNames = shards.map((_, i) => `${base}-${i}.json`);
+      let shardErr = null;
+      for (let i = 0; i < shards.length; i++) {
+        const e = await _storagePutRetry(shardNames[i], JSON.stringify(shards[i]), 3);
+        if (e) { shardErr = `shard ${i + 1}/${shards.length}: ${e}`; break; }
+        await _sleep(200);
+      }
+      if (!shardErr) {
+        const e = await _storagePutRetry(`${base}.index.json`, JSON.stringify({ shards: shardNames, total: shards.length }), 3);
+        if (e) shardErr = `index: ${e}`;
+      }
+      results.push({ key: forgeKey, ok: !shardErr, error: shardErr, shards: shards.length });
+      await _sleep(200);
     } catch (e) { results.push({ key: forgeKey, ok: false, error: (e && e.message) || 'upload exception' }); }
   }
   const fails = results.filter(r => !r.ok);
-  if (fails.length > 0) return { ok: false, error: 'Some catalog uploads failed: ' + fails.map(f => f.key + (f.error ? ` (${f.error})` : '')).join(', ') };
+  const okCount = results.length - fails.length;
+  if (fails.length > 0) {
+    return { ok: false, partial: okCount > 0, count: okCount,
+      error: `${okCount}/${results.length} synced. Failed: ` + fails.map(f => f.key + (f.error ? ` (${f.error})` : '')).join(', ') + '. Tip: tap Publish again — retries usually clear transient timeouts.' };
+  }
   return { ok: true, count: results.length };
 }
 

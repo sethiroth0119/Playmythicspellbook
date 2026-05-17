@@ -51070,7 +51070,7 @@ function renderRlcAdmin() {
           ${fld('Column (left→right)', 'nodes.' + idx + '.col', n.col, 'number')}
         </div>
         ${fld('Description', 'nodes.' + idx + '.desc', n.desc)}
-        ${imgUp('🖼️ Node image (map icon · enemy portrait · shopkeeper / medic / boss / treasure)', 'nodes.' + idx + '.iconImg', n.iconImg, 256)}
+        ${imgUp('🖼️ Node image (map icon · enemy portrait · shopkeeper / medic / boss / treasure)', 'nodes.' + idx + '.iconImg', n.iconImg, 1024)}
         <div class="small-text ink-dim" style="margin:6px 0 4px">Connects to (player can go here after clearing this node):</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
           ${ (ed.nodes || []).filter(x => x.id !== n.id).map(x => `<label class="small-text" style="display:flex;align-items:center;gap:3px;border:1px solid rgba(184,136,255,0.3);border-radius:4px;padding:2px 6px"><input type="checkbox" data-rlc-conn="${idx}" value="${escapeHtml(x.id)}" ${conns.indexOf(x.id) >= 0 ? 'checked' : ''}> ${escapeHtml(x.name || x.id)}</label>`).join('') || '<span class="ink-dim small-text">(add more nodes to link)</span>'}
@@ -51213,7 +51213,7 @@ function renderRlcAdmin() {
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           ${imgUp('🗺️ Campaign map background', 'mapBg', ed.mapBg, 1024)}
-          ${imgUp('💰 Currency icon (replaces 💰 in the run HUD)', 'currencyIcon', ed.currencyIcon, 96)}
+          ${imgUp('💰 Currency icon (replaces 💰 in the run HUD)', 'currencyIcon', ed.currencyIcon, 160)}
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
           ${heroSel('startingHeroId', ed.startingHeroId)}
@@ -51274,7 +51274,7 @@ function renderRlcAdmin() {
     const p = fin.getAttribute('data-rlc-imgfile');
     const btn = document.querySelector('[data-rlc-imgupload="' + p + '"]');
     const sz = btn ? (parseInt(btn.getAttribute('data-rlc-imgsize'), 10) || 256) : 256;
-    try { setPath(p, await resizeImage(f, sz)); reRender(); } catch (err) { showToast('⚠ Could not load image.', 2600); }
+    try { setPath(p, await resizeImage(f, sz, { smooth: true })); reRender(); } catch (err) { showToast('⚠ Could not load image.', 2600); }
   });
   document.querySelectorAll('[data-rlc-imgclear]').forEach(b => b.onclick = () => { setPath(b.getAttribute('data-rlc-imgclear'), ''); reRender(); });
   // Live capture for every data-rlc-path input/select/textarea.

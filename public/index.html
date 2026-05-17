@@ -50841,6 +50841,15 @@ function rlcEnterNode(nodeId) {
   // Unknown type — just complete.
   _rlcCompleteNode(nodeId);
 }
+// 🎚️ Difficulty → mechanical enemy-level bonus (fed through the engine's
+// existing enemyLevel scaling, which raises the foe's HP + atk/def/mag/res).
+// Normal/Easy add nothing (runs play as before); Hard+ actually bite.
+function _rlcDiffBonus(camp) {
+  const d = String((camp && camp.difficulty) || '').toLowerCase();
+  if (/night|brutal|insane|mythic|apoc|hell|nightmare/.test(d)) return 8;
+  if (/hard|veteran|elite/.test(d)) return 4;
+  return 0; // easy / normal / unknown — unchanged
+}
 function rlcStartBattle(node) {
   const run = Profile.rlcRun; if (!run) return;
   const camp = _rlcCampaign(run.campaignId);
@@ -50866,7 +50875,12 @@ function rlcStartBattle(node) {
     hero: heroData, opponent: foe, customCards: Forge.customCards,
     deckId: 'rlc_run_deck', deckName: (camp && camp.name) || 'Campaign',
     campaignNode: null, scriptedWeather: null,
-    enemyLevel: node.enemyLevel ? (parseInt(node.enemyLevel, 10) || null) : null,
+    enemyLevel: (() => {
+      const base = node.enemyLevel ? (parseInt(node.enemyLevel, 10) || 1) : 1;
+      const bonus = _rlcDiffBonus(camp);
+      const eff = Math.max(1, base + bonus);
+      return eff > 1 ? eff : null;   // null = no scaling (normal/easy, base 1)
+    })(),
     enemyDeckOverride: enemyKeys.length === DECK_SIZE ? enemyKeys : null,
     encounterModifiers: (Array.isArray(_enemyCfg.modifierIds) && _enemyCfg.modifierIds.length) ? _enemyCfg.modifierIds.slice(0) : null,
     rlc: { campaignId: run.campaignId, nodeId: node.id },

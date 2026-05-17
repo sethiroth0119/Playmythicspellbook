@@ -42941,6 +42941,14 @@ function resolvePendingLearn(pending, oldMoveId) {
   } else if (newMove) {
     showToast(`${pending.unitName} did not learn ${newMove.name}.`);
   }
+  // 💸 Charge-no-item guard: a Tutor purchase debits Cinders upfront, then
+  // queues this modal when the recipient is at the move cap. If the player
+  // skips (or the move was invalid), nothing was learned — refund the price.
+  const _learned = !!(oldMoveId && newMove);
+  if (!_learned && pending && (pending.gemsPaid || 0) > 0) {
+    addGems(pending.gemsPaid);
+    showToast(`↩ Refunded ${pending.gemsPaid} 🔥 — no move was learned.`, 3400);
+  }
   // Re-render to show next pending learn or hide modal
   if (App.screen === 'battle') renderBattle();
   else render();
@@ -45865,7 +45873,12 @@ function onEndTurn() {
   // 📡 In multiplayer, control passes to the opponent now. Tag currentTurn so
   // they know it's their move when they apply our snapshot.
   if (App.battlePrep && App.battlePrep.multiplayer) {
-    App.state = { ...App.state, currentTurn: 'ai' };
+    // 📡 Bump turnNumber here so it strictly increases across the match. In
+    // multiplayer endAITurn never runs locally (scheduleAIStep is a no-op), so
+    // without this turnNumber stays 1 forever and the snapshot out-of-order
+    // dedup (`payload.turn < lastSeenTurn`) is non-functional — a late/
+    // reordered stale packet would overwrite newer state and desync the board.
+    App.state = { ...App.state, currentTurn: 'ai', turnNumber: (App.state.turnNumber || 1) + 1 };
     MatchBroadcast.myTurn = false;
     broadcastMyState();
   }
@@ -47375,6 +47388,7 @@ function teachMoveToTarget(target, moveId) {
     currentMoves: prof.knownMoves.slice(0),
     level: prof.level || 1,
     isTutor: true,
+    gemsPaid: price, // refunded if the player skips the replace step
   });
   saveProfile();
   showToast(`🔥 -${price} — pick a move to forget below.`);
@@ -50265,6 +50279,13 @@ function _bindPackShopHandlers() {
         if (!spendGems(def.cost)) { showToast('Not enough Cinders'); return; }
       }
       const drawn = openPack(def);
+      // 💸 Charge-no-item guard: an empty draw (broken/empty card pool) must
+      // not cost the player. Refund the exact currency paid and abort.
+      if (!drawn || drawn.length === 0) {
+        if (payMode === 'sovereigns') addSovereigns(sovCost); else addGems(def.cost);
+        showToast('⚠ That pack produced no cards — your payment was refunded.', 4200);
+        return;
+      }
       App._packReveal = {
         packName: def.name,
         packIcon: def.icon || '📦',
@@ -50499,6 +50520,12 @@ function renderShop() {
         if (!spendGems(def.cost)) { showToast('Not enough Cinders'); return; }
       }
       const drawn = openPack(def);
+      // 💸 Charge-no-item guard: refund and abort if the pack drew nothing.
+      if (!drawn || drawn.length === 0) {
+        if (payMode === 'sovereigns') addSovereigns(sovCost); else addGems(def.cost);
+        showToast('⚠ That pack produced no cards — your payment was refunded.', 4200);
+        return;
+      }
       // Stash the drawn cards for the reveal modal; reveals all face-down until clicked.
       App._packReveal = {
         packName: def.name,
@@ -52470,7 +52497,11 @@ async function startMatchmaking(opts) {
   MultiplayerMatch.searchStartedAt = Date.now();
   // AI fallback — fires if the server hasn't paired us in time.
   MultiplayerMatch.aiFallbackTimer = setTimeout(() => {
-    if (!MultiplayerMatch.active) return;
+    // Guard the queued callback: if a real match was found at ~the same
+    // instant the timer elapsed, clearTimeout can't cancel an already-queued
+    // callback. matchId is set the moment a match is found, so this stops the
+    // fallback from dropping us to solo-vs-AI while the opponent soft-locks.
+    if (!MultiplayerMatch.active || MultiplayerMatch.matchId) return;
     showToast('🤖 No opponent found — falling back to AI battle.', 2400);
     cancelMatchmaking().then(() => {
       // Continue with the solo flow — battlePrep is already set up.

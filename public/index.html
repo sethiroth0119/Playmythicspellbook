@@ -20110,7 +20110,15 @@ function setRogueliteMusicVolume(vol) {
 // Cuts out the moment the player wins (Victory Music takes over) or navigates
 // away. Same master toggle + volume slider as the rest of the music system.
 // ============================================================================
-const BATTLE_MUSIC_SRC = 'assets/Audio/Last%20Stand%20at%20the%20Eurotas.mp3';
+// Shuffled battle playlist: a fresh random track is chosen each time the
+// player enters the VS menu, then it shuffles to the next track when one
+// ends (queue reshuffles after all have played).
+const BATTLE_MUSIC_TRACKS = [
+  'assets/Audio/Last%20Stand%20at%20the%20Eurotas.mp3',
+  'assets/Audio/second%20battlemusic.mp3',
+  'assets/Audio/thirdbattle%20music.mp3',
+];
+const BATTLE_MUSIC_SRC = BATTLE_MUSIC_TRACKS[0]; // back-compat alias
 // Screens that should play battle music. The router picks the highest-priority
 // matching track on each render — victory still wins when gameOver === 'player'.
 const BATTLE_MUSIC_SCREENS = new Set([
@@ -20123,12 +20131,40 @@ function isInBattleSequence() {
   return BATTLE_MUSIC_SCREENS.has(App.screen);
 }
 let _battleAudioEl = null;
+let _battleQueue = [];        // shuffled track indices
+let _battleQPos = 0;          // position within _battleQueue
+let _battleFreshArm = true;   // next play() picks a brand-new random track
+function _battleShuffle() {
+  const idx = BATTLE_MUSIC_TRACKS.map((_, i) => i);
+  for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+  // Avoid immediately repeating the track that was just playing.
+  if (_battleQueue.length && idx.length > 1 && idx[0] === _battleQueue[_battleQPos]) { idx.push(idx.shift()); }
+  _battleQueue = idx; _battleQPos = 0;
+}
+function _battleCurrentSrc() {
+  if (!_battleQueue.length) _battleShuffle();
+  return BATTLE_MUSIC_TRACKS[_battleQueue[_battleQPos] || 0];
+}
 function _ensureBattleAudioEl() {
   if (_battleAudioEl) return _battleAudioEl;
   _battleAudioEl = new Audio();
-  _battleAudioEl.loop = true;
+  _battleAudioEl.loop = false;          // shuffle to the next track on end
   _battleAudioEl.preload = 'auto';
-  _battleAudioEl.src = BATTLE_MUSIC_SRC;
+  if (!_battleQueue.length) _battleShuffle();
+  _battleAudioEl.src = _battleCurrentSrc();
+  // When a track finishes, advance the shuffle queue and play the next one —
+  // but only while the player is still in the battle sequence.
+  _battleAudioEl.onended = () => {
+    if (typeof isInBattleSequence === 'function' && !isInBattleSequence()) return;
+    _battleQPos++;
+    if (_battleQPos >= _battleQueue.length) _battleShuffle();
+    try {
+      _battleAudioEl.src = _battleCurrentSrc();
+      _battleAudioEl.currentTime = 0;
+      const p = _battleAudioEl.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (e) {}
+  };
   return _battleAudioEl;
 }
 function playBattleMusic() {
@@ -20136,6 +20172,12 @@ function playBattleMusic() {
   if (settings.musicEnabled === false) { stopBattleMusic(); return; }
   const el = _ensureBattleAudioEl();
   el.volume = Math.max(0, Math.min(1, settings.musicVolume != null ? settings.musicVolume : 0.5));
+  // Entering the battle sequence afresh → pick a new random track.
+  if (_battleFreshArm) {
+    _battleFreshArm = false;
+    _battleShuffle();
+    try { el.src = _battleCurrentSrc(); el.currentTime = 0; } catch (e) {}
+  }
   if (el.paused) {
     const p = el.play();
     if (p && typeof p.catch === 'function') {
@@ -20145,14 +20187,13 @@ function playBattleMusic() {
   }
 }
 function stopBattleMusic() {
-  // Pause AND rewind to 0 so the next match starts the track fresh instead of
-  // resuming from the middle of "Last Stand at the Eurotas" where the previous
-  // battle ended. Without the currentTime reset, every subsequent game picks
-  // up wherever the previous game's loop happened to be paused.
+  // Pause AND rewind so the NEXT match starts a freshly-randomized track from
+  // the beginning instead of resuming mid-song. Re-arms the shuffle pick.
   if (_battleAudioEl) {
     try { _battleAudioEl.pause(); } catch (e) {}
     try { _battleAudioEl.currentTime = 0; } catch (e) {}
   }
+  _battleFreshArm = true;
 }
 function setBattleMusicVolume(vol) {
   const v = Math.max(0, Math.min(1, vol || 0));

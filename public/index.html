@@ -27302,6 +27302,59 @@ function deriveDefaultKnownMoves(learnset, level) {
   return ids.length ? ids : ['slash'];
 }
 
+// ===== Custom element modifiers (admin-authored on weather / spell / trap /
+// location cards). Gathers every active field source into a flat list, then
+// scales damage by element + attack/defense side + physical/magical channel.
+// Legacy single boostElement/penalElement fields are converted on the fly so
+// old cards keep working unchanged.
+function _collectActiveElemMods() {
+  const out = [];
+  const s = (typeof App !== 'undefined' && App) ? App.state : null;
+  if (!s) return out;
+  const w = s.weather;
+  if (w && w.turnsLeft > 0 && w.customEffects) {
+    const ce = w.customEffects;
+    if (Array.isArray(ce.elemMods)) ce.elemMods.forEach(m => { if (m && m.el) out.push(m); });
+    if (ce.boostElement && ce.boostPct) out.push({ el: ce.boostElement, mode: 'strengthen', pct: ce.boostPct, affects: 'attack', dmgType: 'both' });
+    if (ce.penalElement && ce.penalPct) out.push({ el: ce.penalElement, mode: 'weaken', pct: ce.penalPct, affects: 'attack', dmgType: 'both' });
+  }
+  const loc = s.activeLocation;
+  if (loc && loc.fieldEffect && Array.isArray(loc.fieldEffect.elemMods)) {
+    loc.fieldEffect.elemMods.forEach(m => { if (m && m.el) out.push(m); });
+  }
+  if (Array.isArray(s.fieldElemMods)) {
+    s.fieldElemMods.forEach(entry => {
+      if (entry && entry.turnsLeft > 0 && Array.isArray(entry.mods)) {
+        entry.mods.forEach(m => { if (m && m.el) out.push(m); });
+      }
+    });
+  }
+  return out;
+}
+function _applyElemModsToDamage(dmg, moveElem, isMagical, attacker, defender) {
+  const mods = _collectActiveElemMods();
+  if (!mods.length) return Math.max(1, Math.floor(dmg));
+  const defElems = (typeof getElementsOf === 'function' && defender) ? getElementsOf(defender) : [];
+  for (const m of mods) {
+    const pct = Math.max(0, Math.min(100, m.pct || 0));
+    if (!pct) continue;
+    const dt = m.dmgType || 'both';
+    if (dt === 'physical' && isMagical) continue;
+    if (dt === 'magical' && !isMagical) continue;
+    const aff = m.affects || 'attack';
+    // Attack side: scale the matching element's OUTGOING damage.
+    if ((aff === 'attack' || aff === 'both') && moveElem && m.el === moveElem) {
+      dmg *= (m.mode === 'weaken') ? (1 - pct / 100) : (1 + pct / 100);
+    }
+    // Defense side: a unit OF that element is harder/easier to damage.
+    // Strengthen defense → it takes LESS; weaken defense → it takes MORE.
+    if ((aff === 'defense' || aff === 'both') && defElems.indexOf(m.el) >= 0) {
+      dmg *= (m.mode === 'weaken') ? (1 + pct / 100) : (1 - pct / 100);
+    }
+  }
+  return Math.max(1, Math.floor(dmg));
+}
+
 const getAvailableMoves = (unit) => {
   let moves;
   if (Array.isArray(unit.knownMoves) && unit.knownMoves.length > 0) {
@@ -27860,15 +27913,11 @@ const calculateDamage = (move, attacker, defender, weather) => {
     dmg = Math.floor(dmg * 0.75);
   }
 
-  // Custom weather effects: element boost/penalty
-  if (weather && weather.turnsLeft > 0 && weather.customEffects) {
-    const ce = weather.customEffects;
-    if (ce.boostElement && ce.boostElement === moveElem && ce.boostPct) {
-      dmg = Math.floor(dmg * (1 + ce.boostPct / 100));
-    }
-    if (ce.penalElement && ce.penalElement === moveElem && ce.penalPct) {
-      dmg = Math.floor(dmg * (1 - ce.penalPct / 100));
-    }
+  // Custom element modifiers from any active field source (weather, location,
+  // or a transient spell/trap field effect). Handles the new multi-element
+  // strengthen/weaken system AND legacy single boost/penalty fields.
+  if (typeof _applyElemModsToDamage === 'function') {
+    dmg = _applyElemModsToDamage(dmg, moveElem, !!(move && move.type === 'magic'), attacker, defender);
   }
 
   // Day/Night elemental shift: +20% on the dominant element, -20% on the other
@@ -29902,6 +29951,17 @@ function applyTrapToUnit(s, unit, trap) {
 
   const effect = (trap && trap.card && trap.card.effect) || {};
   const duration = typeof effect.duration === 'number' ? effect.duration : 2;
+  // 🜂 A triggered trap's element modifiers become a timed field effect.
+  const _tce = trap && trap.card && trap.card.customEffects;
+  if (_tce && Array.isArray(_tce.elemMods) && _tce.elemMods.length) {
+    s.fieldElemMods = (Array.isArray(s.fieldElemMods) ? s.fieldElemMods.slice() : []);
+    s.fieldElemMods.push({
+      mods: _tce.elemMods.map(m => Object.assign({}, m)),
+      turnsLeft: Math.max(1, trap.card.duration || effect.duration || 3),
+      ownerHint: trap.owner || 'player',
+    });
+    s.log = [...s.log, { msg: `🜂 ${trap.card.name} twists the elemental field!`, color: 'amber' }];
+  }
   let target = s.units.find(u => u.id === unit.id);
   if (!target) return s;
   let didSomething = false;
@@ -30383,6 +30443,19 @@ const startTurn = (state, who) => {
       s.weather = { ...s.weather, turnsLeft: s.weather.turnsLeft - 1 };
       if (s.weather.turnsLeft <= 0) { log.push({ msg: 'Weather clears.', color: 'amber' }); s.weather = null; }
     }
+  }
+
+  // 🜂 Tick down transient spell/trap element-modifier field effects once per
+  // round (player turn-start), then drop any that have expired.
+  if (who === 'player' && Array.isArray(s.fieldElemMods) && s.fieldElemMods.length) {
+    const kept = [];
+    s.fieldElemMods.forEach(e => {
+      if (!e) return;
+      const left = (e.turnsLeft || 0) - 1;
+      if (left > 0) kept.push({ ...e, turnsLeft: left });
+      else log.push({ msg: 'The warped elemental field settles.', color: 'amber' });
+    });
+    s.fieldElemMods = kept;
   }
 
   const heroOfPlayer = s.units.find(u => u.owner === who && u.isHero);
@@ -35017,6 +35090,44 @@ function renderCardEditor() {
     })()}
   ` : '';
 
+  // ===== Element Modifiers (multi) — strengthen/weaken any number of
+  // elements, each with its own %, attack/defense side, and physical/
+  // magical channel. Shared by weather, spell, trap, and location cards.
+  const _emMods = ((card.customEffects || {}).elemMods) || [];
+  const _emElOpts = (sel) => ['', ...ELEMENTS]
+    .map(e => `<option value="${e}" ${(sel || '') === e ? 'selected' : ''}>${e ? (((ELEMENT_DATA[e]||{}).icon || '') + ' ' + ((ELEMENT_DATA[e]||{}).name || e)) : '— pick element —'}</option>`).join('');
+  const _emRow = (m, i) => `
+    <div class="elem-mod-row" data-em-idx="${i}" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:rgba(74,143,212,0.06);border:1px solid rgba(74,143,212,0.25);border-radius:6px;padding:6px 8px;margin-bottom:6px">
+      <select class="em-el" style="flex:1;min-width:130px">${_emElOpts(m.el)}</select>
+      <select class="em-mode" style="min-width:118px">
+        <option value="strengthen" ${m.mode !== 'weaken' ? 'selected' : ''}>⬆ Strengthen</option>
+        <option value="weaken" ${m.mode === 'weaken' ? 'selected' : ''}>⬇ Weaken</option>
+      </select>
+      <input class="em-pct" type="number" min="0" max="100" value="${m.pct || 0}" title="percent" style="width:62px">
+      <span class="small-text ink-dim">%</span>
+      <select class="em-affects" style="min-width:120px" title="Affects">
+        <option value="attack" ${ (m.affects||'attack') === 'attack' ? 'selected' : ''}>Attack (out)</option>
+        <option value="defense" ${ m.affects === 'defense' ? 'selected' : ''}>Defense (in)</option>
+        <option value="both" ${ m.affects === 'both' ? 'selected' : ''}>Both</option>
+      </select>
+      <select class="em-dmg" style="min-width:150px" title="Damage type">
+        <option value="both" ${ (m.dmgType||'both') === 'both' ? 'selected' : ''}>Physical + Magical</option>
+        <option value="physical" ${ m.dmgType === 'physical' ? 'selected' : ''}>Physical (ATK/DEF)</option>
+        <option value="magical" ${ m.dmgType === 'magical' ? 'selected' : ''}>Magical (MAG/RES)</option>
+      </select>
+      <button type="button" class="btn-mini btn-danger" data-em-del="${i}" title="Remove">✕</button>
+    </div>`;
+  const elemModsBlock = (type === 'weather' || type === 'spell' || type === 'trap' || type === 'location') ? `
+    <div class="editor-field full" style="border-top:1px dashed rgba(74,143,212,0.3);padding-top:0.8rem;margin-top:0.4rem">
+      <label style="font-weight:700;color:#88c8e0">🜂 Element Modifiers</label>
+      <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Strengthen or weaken any number of elements while this card's effect is on the field. Each row: pick the element, strengthen/weaken, the %, whether it changes that element's <strong>Attack</strong> (its outgoing damage) or <strong>Defense</strong> (incoming damage to units of that element) or both, and whether it applies to <strong>Physical</strong> (ATK/DEF), <strong>Magical</strong> (MAG/RES) or both.</div>
+    </div>
+    <div class="editor-field full">
+      <div id="elem-mods-rows">${_emMods.map((m, i) => _emRow(m, i)).join('') || '<div class="small-text ink-dim" style="padding:4px 0">No element modifiers yet.</div>'}</div>
+      <button type="button" class="btn-mini" id="btn-add-elem-mod" style="margin-top:4px">＋ Add element modifier</button>
+    </div>
+  ` : '';
+
   // Wall block — HP is locked at 50 per game rules; only the placement range is configurable
   const wallBlock = (type === 'wall') ? `
     <div class="editor-field full">
@@ -35150,6 +35261,7 @@ function renderCardEditor() {
         ${weatherBlock}
         ${wallBlock}
         ${locationBlock}
+        ${elemModsBlock}
         ${onPlayBlock}
         ${kalonBlock}
         ${rebirthBlock}
@@ -36053,6 +36165,38 @@ function bindCardEditor() {
     };
   });
 
+  // ===== Element Modifier rows — add / remove (capture DOM into the draft
+  // first so in-progress edits to other rows survive the re-render). =====
+  const _emEnsureCE = (t) => { t.customEffects = t.customEffects || {}; if (!Array.isArray(t.customEffects.elemMods)) t.customEffects.elemMods = []; return t.customEffects.elemMods; };
+  const addEmBtn = document.getElementById('btn-add-elem-mod');
+  if (addEmBtn) addEmBtn.onclick = () => {
+    const t = targetCard(); if (!t) return;
+    const cur = (typeof readEditorElemMods === 'function') ? readEditorElemMods() : [];
+    if (typeof captureEditorIntoCard === 'function') captureEditorIntoCard(t);
+    const list = _emEnsureCE(t);
+    list.length = 0; cur.forEach(m => list.push(m));
+    list.push({ el: '', mode: 'strengthen', pct: 50, affects: 'attack', dmgType: 'both' });
+    if (!isNew && typeof saveForge === 'function') saveForge();
+    captureAndRender();
+  };
+  document.querySelectorAll('[data-em-del]').forEach(btn => {
+    btn.onclick = () => {
+      const t = targetCard(); if (!t) return;
+      const idx = parseInt(btn.dataset.emDel, 10);
+      const cur = (typeof readEditorElemMods === 'function') ? readEditorElemMods() : [];
+      if (typeof captureEditorIntoCard === 'function') captureEditorIntoCard(t);
+      const list = _emEnsureCE(t);
+      list.length = 0; cur.forEach((m, i) => { if (i !== idx) list.push(m); });
+      if (!list.length && t.customEffects) {
+        delete t.customEffects.elemMods;
+        const c = t.customEffects;
+        if (!c.boostElement && !c.penalElement && !c.auraStat && !c.hpDelta) delete t.customEffects;
+      }
+      if (!isNew && typeof saveForge === 'function') saveForge();
+      captureAndRender();
+    };
+  });
+
   document.getElementById('btn-save-card').onclick = () => {
     App._traitPoolModal = false;
     // Capture subclass state into the card before the global save sweep runs.
@@ -36162,6 +36306,20 @@ function captureEditorIntoCard(card) {
     // Strip empty-effect object so saved JSON stays clean
     const hasAny = ce.boostElement || ce.penalElement || ce.auraStat || ce.hpDelta;
     if (!hasAny) delete card.customEffects;
+  }
+
+  // Element Modifiers (weather / spell / trap / location). Runs AFTER the
+  // weather block above so its empty-customEffects cleanup can't wipe them.
+  if (document.getElementById('elem-mods-rows')) {
+    const mods = (typeof readEditorElemMods === 'function') ? readEditorElemMods() : [];
+    if (mods.length) {
+      const ce = card.customEffects = card.customEffects || {};
+      ce.elemMods = mods;
+    } else if (card.customEffects) {
+      delete card.customEffects.elemMods;
+      const c = card.customEffects;
+      if (!c.boostElement && !c.penalElement && !c.auraStat && !c.hpDelta) delete card.customEffects;
+    }
   }
 
   // Wall card fields
@@ -36314,6 +36472,32 @@ function readEditorLearnset() {
     lvl: parseInt(row.querySelector('.learn-lvl').value, 10) || 1,
     m: row.querySelector('.learn-move').value,
   }));
+}
+
+// Reads the Element Modifier rows out of the editor DOM. Rows with no
+// element picked are dropped so empty rows don't pollute the saved card.
+function readEditorElemMods() {
+  const out = [];
+  document.querySelectorAll('#elem-mods-rows .elem-mod-row').forEach(r => {
+    const elS = r.querySelector('.em-el');
+    const el = elS ? elS.value : '';
+    if (!el) return;
+    const modeS = r.querySelector('.em-mode');
+    const pctI  = r.querySelector('.em-pct');
+    const affS  = r.querySelector('.em-affects');
+    const dmgS  = r.querySelector('.em-dmg');
+    let pct = parseInt(pctI ? pctI.value : '', 10);
+    if (isNaN(pct)) pct = 0;
+    pct = Math.max(0, Math.min(100, pct));
+    out.push({
+      el,
+      mode: (modeS && modeS.value === 'weaken') ? 'weaken' : 'strengthen',
+      pct,
+      affects: (affS && ['attack','defense','both'].indexOf(affS.value) >= 0) ? affS.value : 'attack',
+      dmgType: (dmgS && ['both','physical','magical'].indexOf(dmgS.value) >= 0) ? dmgS.value : 'both',
+    });
+  });
+  return out;
 }
 
 function saveCardFromInputs(commit) {
@@ -42708,6 +42892,13 @@ function placeLocation(card, pos) {
       const preset = getTileEffectPreset(card.tileEffect);
       if (preset && preset.fieldEffect) resolvedFieldEffect = preset.fieldEffect;
     }
+    // 🜂 Admin-authored element modifiers ride along on the location's
+    // field effect so the damage engine picks them up for its whole life.
+    if (card.customEffects && Array.isArray(card.customEffects.elemMods) && card.customEffects.elemMods.length) {
+      resolvedFieldEffect = Object.assign({}, resolvedFieldEffect || {}, {
+        elemMods: card.customEffects.elemMods.map(m => Object.assign({}, m)),
+      });
+    }
     // Build the activeLocation summary. fieldEffect is copied through so the
     // engine doesn't need to re-look-up the card definition each tick.
     const newActive = {
@@ -42852,6 +43043,16 @@ function playSpell(card) {
   const range = getCardRange(card);
   let ns = { ...s };
   const log = [...ns.log];
+  // 🜂 Element modifiers authored on this spell become a timed field effect.
+  if (card.customEffects && Array.isArray(card.customEffects.elemMods) && card.customEffects.elemMods.length) {
+    ns.fieldElemMods = (Array.isArray(ns.fieldElemMods) ? ns.fieldElemMods.slice() : []);
+    ns.fieldElemMods.push({
+      mods: card.customEffects.elemMods.map(m => Object.assign({}, m)),
+      turnsLeft: Math.max(1, card.duration || (card.effect && card.effect.duration) || 3),
+      ownerHint: 'player',
+    });
+    log.push({ msg: `${card.name} warps the elemental field!`, color: 'green' });
+  }
   if (card.effect.type === 'damage') {
     let targets = ns.units.filter(u => u.owner === 'ai' && u.alive);
     if (ph) targets = targets.filter(u => distance(u.pos, ph.pos) <= range);

@@ -24242,7 +24242,7 @@ function gymLiveAcceptInvite() {
   MultiplayerMatch.active = true;
   if (typeof _wireMatchListener === 'function') _wireMatchListener();
   if (typeof _subscribeMatchChannel === 'function') _subscribeMatchChannel();
-  App._gymLivePending = { coreId: inv.coreId, role: 'defender' };
+  App._gymLivePending = { coreId: inv.coreId, role: 'defender', challengerId: inv.challengerId };
   App.battlePrep = {
     hero: hero, customCards: Forge.customCards,
     deckId: null, deckName: 'Gym Defense',
@@ -24262,9 +24262,14 @@ function gymLiveDeclineInvite() {
 }
 function _gymLivePollForMatch(tries) {
   if (!App._gymLivePending || tries > 12) { if (App._gymLivePending) { App._gymLivePending = null; showToast('⚠ Live duel could not start.', 3000); } return; }
-  Cloud.client.from('matches').select('*').eq('status', 'pending')
-    .or(`player1_id.eq.${Profile.cloud.userId},player2_id.eq.${Profile.cloud.userId}`)
-    .order('created_at', { ascending: false }).limit(1)
+  // Discriminate to THIS challenger's freshly-inserted row (challenger=p1,
+  // defending leader=p2). Without this the defender could latch onto an
+  // unrelated stale/concurrent pending match.
+  const _chId = App._gymLivePending.challengerId;
+  let _q = Cloud.client.from('matches').select('*').eq('status', 'pending')
+    .eq('player2_id', Profile.cloud.userId);
+  if (_chId) _q = _q.eq('player1_id', _chId);
+  _q.order('created_at', { ascending: false }).limit(1)
     .then((res) => {
       if (!App._gymLivePending) return;
       if (res && res.data && res.data.length) {

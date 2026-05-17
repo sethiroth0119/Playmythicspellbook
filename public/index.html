@@ -50700,6 +50700,16 @@ function rlcStartRun(campaignId) {
     App._rlcDraftOffer = null;
     App.screen = 'rlcDraft'; render(); return;
   }
+  // 🃏 "Player's own deck" mode — let the player pick which of THEIR decks
+  // (built decks + owned starter decks) to take in, instead of silently
+  // auto-grabbing one. Falls through to the auto deck if they have none.
+  if (camp.startingDeckMode === 'player' || !camp.startingDeckMode) {
+    const pOpts = _rlcPlayerDeckOptions();
+    if (pOpts.length) {
+      Profile.rlcRun.deck = [];
+      App.screen = 'rlcDeckPick'; render(); return;
+    }
+  }
   App.screen = 'rlcMap';
   render();
 }
@@ -50923,6 +50933,28 @@ function _rlcDeckOptions() {
   try { (typeof getAllStarterDecks === 'function' ? getAllStarterDecks() : []).forEach(d => out.push({ id: d.id, label: '🦸 ' + (d.name || d.id) })); } catch (e) {}
   try { (Forge.aiDecks || []).forEach(d => out.push({ id: d.id, label: '🤖 ' + (d.name || d.id) })); } catch (e) {}
   try { (Array.isArray(Profile.decks) ? Profile.decks : []).forEach(d => { if (d.id !== 'rlc_run_deck') out.push({ id: d.id, label: '🃏 ' + (d.name || d.id) }); }); } catch (e) {}
+  return out;
+}
+// 🃏 The decks a player may choose from for a "Player's own deck" run:
+// every deck they've built (Profile.decks) + every starter deck they own
+// (picked/purchased). Deduped; rlc_run_deck (the transient run copy) excluded.
+function _rlcPlayerDeckOptions() {
+  const out = []; const seen = {};
+  try {
+    (Array.isArray(Profile.decks) ? Profile.decks : []).forEach(d => {
+      if (d && d.id && d.id !== 'rlc_run_deck' && !seen[d.id] && Array.isArray(d.cards) && d.cards.length) {
+        seen[d.id] = 1; out.push({ id: d.id, label: '🃏 ' + (d.name || d.id) });
+      }
+    });
+  } catch (e) {}
+  try {
+    const owned = Array.isArray(Profile.ownedStarterDecks) ? Profile.ownedStarterDecks : [];
+    (typeof getAllStarterDecks === 'function' ? getAllStarterDecks() : []).forEach(sd => {
+      if (sd && sd.id && owned.indexOf(sd.id) >= 0 && !seen[sd.id]) {
+        seen[sd.id] = 1; out.push({ id: sd.id, label: '🦸 ' + (sd.name || sd.id) });
+      }
+    });
+  } catch (e) {}
   return out;
 }
 function _rlcCardByQuery(q) {
@@ -51569,9 +51601,20 @@ function renderRlcReward() {
 function renderRlcDeckPick() {
   const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
   const camp = _rlcCampaign(run.campaignId);
-  const allow = (camp && Array.isArray(camp.startingDeckChoices)) ? camp.startingDeckChoices : [];
-  const opts = _rlcDeckOptions().filter(o => o.id && allow.indexOf(o.id) >= 0);
-  if (!opts.length) { run.deck = _rlcDeckKeys((camp && camp.startingDeckId) || ''); try { saveProfile(); } catch (e) {} App.screen = 'rlcMap'; return render(); }
+  const mode = (camp && camp.startingDeckMode) || 'player';
+  let opts;
+  if (mode === 'pick') {
+    const allow = (camp && Array.isArray(camp.startingDeckChoices)) ? camp.startingDeckChoices : [];
+    opts = _rlcDeckOptions().filter(o => o.id && allow.indexOf(o.id) >= 0);
+  } else {
+    // "Player's own deck" — their built decks + owned starter decks.
+    opts = _rlcPlayerDeckOptions();
+  }
+  if (!opts.length) {
+    if (!(Array.isArray(run.deck) && run.deck.length)) run.deck = _rlcDeckKeys((camp && camp.startingDeckId) || '');
+    try { saveProfile(); } catch (e) {}
+    App.screen = 'rlcMap'; return render();
+  }
   try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
   const tile = (o) => {
     const keys = _rlcDeckKeys(o.id);

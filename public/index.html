@@ -24069,7 +24069,9 @@ function resolveParentEntry(entry) {
   if (!entry) return null;
   if (entry.kind === 'hero') return STARTER_HEROES.find(h => h.id === entry.id) || null;
   if (entry.kind === 'unit') return UNIT_CARDS.find(u => u.id === entry.id) || null;
-  if (entry.kind === 'custom') return Forge.customCards.find(c => c.id === entry.id) || null;
+  if (entry.kind === 'custom') return (Forge.customCards || []).find(c => c.id === entry.id)
+      || ((typeof lookupCustomCard === 'function') ? lookupCustomCard(entry.id) : null)
+      || null;
   return null;
 }
 
@@ -54963,12 +54965,23 @@ function renderLab() {
 }
 
 function getFusionParentEntries() {
-  // Heroes are not allowed as fusion parents — only units (base + custom).
-  const units  = UNIT_CARDS.map(u => ({ kind: 'unit', id: u.id, name: u.name, icon: u.icon, sub: 'Unit' }));
-  const customs = Forge.customCards
-    .filter(c => (c.type || 'unit') === 'unit')
-    .map(c => ({ kind: 'custom', id: c.id, name: c.name, icon: c.icon, sub: 'Custom' }));
-  return [...units, ...customs];
+  // Heroes are never fusion parents. Only admin-created units that the
+  // player actually OWNS in their collection — no built-in mockups.
+  const coll = Profile.cardCollection || {};
+  const seen = {};
+  const out = [];
+  const src = (typeof getAllCustomCards === 'function')
+    ? getAllCustomCards()
+    : (Forge.customCards || []);
+  src.forEach(c => {
+    if (!c || !c.id) return;
+    if ((c.type || 'unit') !== 'unit') return;   // units only (no heroes/spells)
+    if ((coll[c.id] || 0) <= 0) return;          // must be owned by the player
+    if (seen[c.id]) return;                      // dedupe Forge/Catalog overlap
+    seen[c.id] = 1;
+    out.push({ kind: 'custom', id: c.id, name: c.name, icon: c.icon, sub: 'Unit' });
+  });
+  return out;
 }
 
 function renderLabFuse() {
@@ -54988,9 +55001,9 @@ function renderLabFuse() {
       </button>
     `;
   };
-  const listForSlot = (slot) => `
-    <div class="lab-list">${all.map(e => renderEntryButton(e, slot)).join('')}</div>
-  `;
+  const listForSlot = (slot) => all.length
+    ? `<div class="lab-list">${all.map(e => renderEntryButton(e, slot)).join('')}</div>`
+    : `<div class="empty-list-note">No units available. Only units you've created and own are listed — collect or craft more to fuse here.</div>`;
   const snapA = A ? snapshotParent(A) : null;
   const snapB = B ? snapshotParent(B) : null;
   let preview = '';

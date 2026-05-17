@@ -11636,17 +11636,23 @@
   .rlc-map-inner { position: relative; z-index: 1; }
   /* 🎁 Roguelite reward — face-down cards the player flips to reveal a prize */
   .rlcrw-card { width: 188px; height: 262px; border: 0; padding: 0; background: transparent;
-    perspective: 1100px; cursor: pointer; outline: none; }
-  .rlcrw-card.chosen-other { opacity: 0.32; filter: grayscale(0.65); pointer-events: none;
+    perspective: 1100px; cursor: pointer; outline: none;
+    transition: transform .16s ease; will-change: transform; }
+  .rlcrw-card.chosen-other { opacity: 0.3; filter: grayscale(0.7); pointer-events: none;
     transition: opacity .45s ease, filter .45s ease; }
+  /* Hover highlight — lift, scale up, gold glow + ring on the card back */
+  .rlcrw-card:not(.flipped):not(.chosen-other):hover { transform: translateY(-12px) scale(1.06); z-index: 3; }
+  .rlcrw-card:not(.flipped):not(.chosen-other):hover .rlcrw-cb {
+    border-color: #ffd166;
+    box-shadow: 0 0 0 2px #ffd166, 0 0 28px rgba(255,209,102,0.7), 0 16px 34px rgba(0,0,0,0.7); }
   .rlcrw-inner { position: relative; width: 100%; height: 100%; transform-style: preserve-3d;
     transition: transform .72s cubic-bezier(.2,.85,.25,1); }
   .rlcrw-card.flipped .rlcrw-inner { transform: rotateY(180deg); }
-  .rlcrw-card:not(.flipped):not(.chosen-other):hover .rlcrw-inner { transform: translateY(-8px); }
   .rlcrw-face { position: absolute; inset: 0; border-radius: 12px; overflow: hidden;
     -webkit-backface-visibility: hidden; backface-visibility: hidden;
     display: flex; flex-direction: column; box-shadow: 0 10px 26px rgba(0,0,0,0.6); }
-  .rlcrw-cb { border: 1px solid rgba(212,175,55,0.45); }
+  .rlcrw-cb { border: 1px solid rgba(212,175,55,0.45);
+    transition: box-shadow .16s ease, border-color .16s ease; }
   .rlcrw-cb img { width: 100%; height: 100%; object-fit: cover; display: block;
     image-rendering: auto; image-rendering: high-quality; }
   .rlcrw-rw { transform: rotateY(180deg); background: rgba(18,10,32,0.96);
@@ -51724,7 +51730,10 @@ function renderRlcReward() {
   });
   if (!pool.length) pool = _allKeys;   // never present an empty reward screen
   const _choiceBonus = _rlcRelicSum(run, 'rewardChoice');
-  const n = Math.max(1, Math.min((parseInt(r.choiceCount, 10) || 3) + _choiceBonus, pool.length || (3 + _choiceBonus)));
+  // Always present at least 3 face-down cards side by side (more if the node
+  // raised choiceCount or a relic adds choices). A small pool is cycled so
+  // there are always n picks to choose from.
+  const n = Math.max(3, (parseInt(r.choiceCount, 10) || 3) + _choiceBonus);
   let offer = [];
   if (r.rarityWeighted) {
     const weights = Object.assign({}, DEFAULT_PACK_RARITY_WEIGHTS, r.rarityWeights || {});
@@ -51745,6 +51754,10 @@ function renderRlcReward() {
     for (let i = sh.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [sh[i], sh[j]] = [sh[j], sh[i]]; }
     offer = sh.slice(0, n);
   }
+  // Pad to exactly n so the player always gets a full side-by-side row of
+  // face-down picks even when the reward pool is tiny.
+  if (pool.length) { let _pi = 0; while (offer.length < n) { offer.push(pool[_pi % pool.length]); _pi++; } }
+  offer = offer.slice(0, n);
   const CARDBACK = 'assets/artwork/cardback.png?v=2';
   // Face-down card the player flips to reveal its hidden reward.
   const flipCard = (key, idx) => {

@@ -21896,27 +21896,112 @@ async function cloudEnterMatchmaking(opts) {
   opts = opts || {};
   if (!initCloud() || !Profile.cloud.signedIn) return { ok: false, error: 'Sign in to play multiplayer.' };
   try {
-    const { error } = await Cloud.client.from('matchmaking_queue').upsert({
+    // Stash my queue payload so the client-side matchmaker can build the
+    // match row itself (works even with no server trigger / realtime).
+    Cloud._mmMode   = opts.mode || 'ranked';
+    Cloud._mmMmr    = opts.hiddenMmr || (Profile.competitive && Profile.competitive.hiddenMmr) || 1000;
+    Cloud._mmHeroId = opts.heroId || null;
+    Cloud._mmDeck   = opts.deck || {};
+    Cloud._mmSince  = new Date(Date.now() - 4000).toISOString();
+    // Clear any stale row FIRST, then a fresh INSERT — an upsert that turns
+    // into an UPDATE would never fire the AFTER-INSERT pairing trigger.
+    try { await Cloud.client.from('matchmaking_queue').delete().eq('user_id', Profile.cloud.userId); } catch (e) {}
+    const { error } = await Cloud.client.from('matchmaking_queue').insert({
       user_id:    Profile.cloud.userId,
-      mode:       opts.mode || 'ranked',
-      mmr:        opts.hiddenMmr || (Profile.competitive && Profile.competitive.hiddenMmr) || 1000,
+      mode:       Cloud._mmMode,
+      mmr:        Cloud._mmMmr,
       faction_id: opts.factionId || null,
-      hero_id:    opts.heroId    || null,
-      deck_json:  opts.deck      || {},
+      hero_id:    Cloud._mmHeroId,
+      deck_json:  Cloud._mmDeck,
       queued_at:  new Date().toISOString(),
-    }, { onConflict: 'user_id' });
+    });
     if (error) return { ok: false, error: error.message };
-    // Listen for a `matches` row where we're one of the participants.
+    // Fast path: realtime (works if the matches table is in the realtime
+    // publication). Guaranteed path: the client poller below pairs players
+    // and reads created matches directly — no trigger/realtime required.
     _subscribeMatchChannel();
+    _startMatchmakingPoll();
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e && e.message) || 'Matchmaking failed.' };
   }
 }
 
+// 🔁 Client-side matchmaker + match poller. Every few seconds:
+//  (a) if a pending match already exists for me, pick it up;
+//  (b) else look for a compatible opponent in the queue and — only as the
+//      deterministically-chosen creator (higher user_id of the pair) — insert
+//      the matches row myself and remove my queue entry.
+// This makes "find each other" work even when the Postgres pairing trigger
+// or the realtime publication isn't set up on the project.
+function _startMatchmakingPoll() {
+  _stopMatchmakingPoll();
+  const myId = Profile.cloud.userId;
+  const since = Cloud._mmSince || new Date(Date.now() - 4000).toISOString();
+  const _deliver = (match) => {
+    try { Cloud.client.from('matchmaking_queue').delete().eq('user_id', myId); } catch (e) {}
+    _stopMatchmakingPoll();
+    Cloud.matchListeners.forEach(fn => { try { fn(match); } catch (e) {} });
+  };
+  const tick = async () => {
+    if (!Cloud.client || !Profile.cloud.signedIn) return;
+    if (typeof MultiplayerMatch !== 'undefined' && MultiplayerMatch && MultiplayerMatch.active === false) {
+      _stopMatchmakingPoll(); return;
+    }
+    try {
+      // (a) Already paired? Take the EARLIEST pending match so both clients
+      // converge on the same row if duplicates ever race in.
+      const mineRes = await Cloud.client.from('matches')
+        .select('*')
+        .eq('status', 'pending')
+        .gte('created_at', since)
+        .or(`player1_id.eq.${myId},player2_id.eq.${myId}`)
+        .order('created_at', { ascending: true })
+        .limit(1);
+      if (mineRes && mineRes.data && mineRes.data.length) { _deliver(mineRes.data[0]); return; }
+      // (b) Hunt the queue for a compatible opponent.
+      const qRes = await Cloud.client.from('matchmaking_queue')
+        .select('*')
+        .neq('user_id', myId)
+        .order('queued_at', { ascending: true })
+        .limit(12);
+      const list = (qRes && qRes.data) || [];
+      const opp = list.find(o => o && o.user_id
+        && (o.mode || 'ranked') === (Cloud._mmMode || 'ranked')
+        && Math.abs((o.mmr || 1000) - (Cloud._mmMmr || 1000)) < 500);
+      // Only the higher user_id of the pair creates → exactly one creator,
+      // no double-insert for the common 2-player case.
+      if (opp && String(myId) > String(opp.user_id)) {
+        // Guard: don't create if that opponent was already paired by someone.
+        const oppM = await Cloud.client.from('matches')
+          .select('id').eq('status', 'pending').gte('created_at', since)
+          .or(`player1_id.eq.${opp.user_id},player2_id.eq.${opp.user_id}`)
+          .limit(1);
+        if (oppM && oppM.data && oppM.data.length) return; // already taken
+        const insRes = await Cloud.client.from('matches').insert({
+          player1_id: opp.user_id,
+          player2_id: myId,
+          hero1_id:   opp.hero_id || null,
+          hero2_id:   Cloud._mmHeroId || null,
+          deck1:      opp.deck_json || {},
+          deck2:      Cloud._mmDeck || {},
+          status:     'pending',
+        }).select('*').limit(1);
+        if (insRes && insRes.data && insRes.data.length) { _deliver(insRes.data[0]); return; }
+      }
+    } catch (e) { /* transient — keep polling */ }
+  };
+  Cloud._mmPoll = setInterval(tick, 2500);
+  tick();
+}
+function _stopMatchmakingPoll() {
+  if (Cloud._mmPoll) { try { clearInterval(Cloud._mmPoll); } catch (e) {} Cloud._mmPoll = null; }
+}
+
 async function cloudLeaveMatchmaking() {
   if (!initCloud() || !Profile.cloud.signedIn) return { ok: false };
   try {
+    _stopMatchmakingPoll();
     await Cloud.client.from('matchmaking_queue').delete().eq('user_id', Profile.cloud.userId);
     _unsubscribeMatchChannel();
     return { ok: true };
@@ -49201,6 +49286,11 @@ function _wireMatchListener() {
 
 function onMultiplayerMatchFound(match) {
   if (!match) return;
+  // Idempotency — realtime + poll can both deliver the same match.
+  if (MultiplayerMatch.matchId && MultiplayerMatch.matchId === match.id) return;
+  // Stop the DB poller + drop our queue row the instant we're matched.
+  if (typeof _stopMatchmakingPoll === 'function') _stopMatchmakingPoll();
+  try { if (Cloud.client && Profile.cloud.userId) Cloud.client.from('matchmaking_queue').delete().eq('user_id', Profile.cloud.userId); } catch (e) {}
   // Cancel timers — match was found before AI fallback.
   if (MultiplayerMatch.aiFallbackTimer) { clearTimeout(MultiplayerMatch.aiFallbackTimer); MultiplayerMatch.aiFallbackTimer = null; }
   if (MultiplayerMatch.pollTimer)       { clearInterval(MultiplayerMatch.pollTimer);     MultiplayerMatch.pollTimer = null; }

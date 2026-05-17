@@ -49036,6 +49036,22 @@ function _closeGuide(markDone) {
   const g = _allGuides().find(x => x.id === RPGGuide.activeId);
   RPGGuide.activeId = null;
   if (g && markDone) { try { localStorage.setItem(_guideDoneKey(g.id), '1'); } catch (e) {} _mountGuideReplayFab(g); }
+  // One-shot continuation hook — used by per-node "before" dialogue so the
+  // node only opens once the speech finishes (or is skipped).
+  const _cb = RPGGuide._onClose; RPGGuide._onClose = null;
+  if (typeof _cb === 'function') { try { _cb(); } catch (e) {} }
+}
+// Play a guide by id, then run `after` when it closes. Falls straight
+// through to `after` if the guide id is missing/invalid.
+function _rlcPlayDialogue(guideId, after) {
+  const done = (typeof after === 'function') ? after : function () {};
+  try {
+    const g = (guideId && typeof _allGuides === 'function')
+      ? _allGuides().find(x => x && x.id === guideId && Array.isArray(x.bubbles) && x.bubbles.length) : null;
+    if (!g) { done(); return; }
+    RPGGuide._onClose = done;
+    playPageGuide(g, { replay: true });   // replay:true → always plays, ignores done flag
+  } catch (e) { try { done(); } catch (e2) {} }
 }
 
 // Small persistent "📖 Replay guide" button so a player who dismissed it can
@@ -50797,6 +50813,10 @@ function _rlcCompleteNode(nodeId) {
     if (_rrid) { try { _rlcGrantRelic(run, _rrid); } catch (e) {} }
   }
   _persistProgressNow();
+  // 💬 Per-node "after" dialogue — plays over the resulting screen on the
+  // node's first clear (e.g. an aftermath speech once a boss is down).
+  const _afterDlg = (_firstClear && node && node.dialogueAfterId) ? node.dialogueAfterId : null;
+  const _runAfter = () => { if (_afterDlg) { try { _rlcPlayDialogue(_afterDlg); } catch (e) {} } };
   if (node && (node.type === 'finalBoss')) {
     run.isComplete = true;
     // 🗺️ Record the clear so any campaign chained off this one unlocks.
@@ -50809,9 +50829,9 @@ function _rlcCompleteNode(nodeId) {
     (fr.cardKeys || []).forEach(k => _rlcGrantCard(k));
     if (fr.currency) run.currency += parseInt(fr.currency, 10) || 0;
     _persistProgressNow();
-    App.screen = 'rlcResult'; render(); return;
+    App.screen = 'rlcResult'; render(); _runAfter(); return;
   }
-  App.screen = 'rlcMap'; render();
+  App.screen = 'rlcMap'; render(); _runAfter();
 }
 function rlcEnterNode(nodeId) {
   const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
@@ -50822,35 +50842,40 @@ function rlcEnterNode(nodeId) {
     showToast('That node is locked — clear a connected node first.', 2400); return;
   }
   run.currentNodeId = nodeId; try { saveProfile(); } catch (e) {}
-  if (['battle','elite','boss','finalBoss'].indexOf(node.type) >= 0) { rlcStartBattle(node); return; }
-  if (node.type === 'medical') { App._rlcNodeId = nodeId; App.screen = 'rlcMedical'; return render(); }
-  if (node.type === 'market')  { App._rlcNodeId = nodeId; App.screen = 'rlcShop';    return render(); }
-  if (node.type === 'event')   { App._rlcNodeId = nodeId; App._rlcRandomEv = null; App.screen = 'rlcEvent'; return render(); }
-  if (node.type === 'randomEvent') {
-    // Pick a fresh random event from the pool for THIS visit.
-    const pool = (node.randomEvent && Array.isArray(node.randomEvent.pool)) ? node.randomEvent.pool : [];
-    App._rlcRandomEv = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
-    App._rlcNodeId = nodeId; App.screen = 'rlcEvent'; return render();
-  }
-  if (node.type === 'mystery') {
-    App._rlcNodeId = nodeId; App._rlcMysteryPick = null; App._rlcMysteryApplied = false;
-    App.screen = 'rlcMystery'; return render();
-  }
-  if (node.type === 'upgrade') { App._rlcNodeId = nodeId; App.screen = 'rlcForge';   return render(); }
-  if (node.type === 'treasure' || node.type === 'rest') {
-    // Instant nodes — apply reward / small heal, then back to map.
-    const r = node.reward || {};
-    if (r.currency) run.currency += parseInt(r.currency, 10) || 0;
-    if (r.medPoints) run.medPoints += parseInt(r.medPoints, 10) || 0;
-    if (node.type === 'rest') run.heroHP = Math.min(run.maxHP, run.heroHP + _rlcHealPct(run, 30));
-    if (Array.isArray(r.cardKeys) && r.cardKeys.length && (r.choiceCount || 0) > 0) {
-      App._rlcNodeId = nodeId; App.screen = 'rlcReward'; return render();
+  const proceed = () => {
+    if (['battle','elite','boss','finalBoss'].indexOf(node.type) >= 0) { rlcStartBattle(node); return; }
+    if (node.type === 'medical') { App._rlcNodeId = nodeId; App.screen = 'rlcMedical'; return render(); }
+    if (node.type === 'market')  { App._rlcNodeId = nodeId; App.screen = 'rlcShop';    return render(); }
+    if (node.type === 'event')   { App._rlcNodeId = nodeId; App._rlcRandomEv = null; App.screen = 'rlcEvent'; return render(); }
+    if (node.type === 'randomEvent') {
+      // Pick a fresh random event from the pool for THIS visit.
+      const pool = (node.randomEvent && Array.isArray(node.randomEvent.pool)) ? node.randomEvent.pool : [];
+      App._rlcRandomEv = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+      App._rlcNodeId = nodeId; App.screen = 'rlcEvent'; return render();
     }
-    showToast(node.type === 'rest' ? '🔥 Rested — recovered some HP.' : '💰 Treasure claimed!', 2200);
-    _rlcCompleteNode(nodeId); return;
-  }
-  // Unknown type — just complete.
-  _rlcCompleteNode(nodeId);
+    if (node.type === 'mystery') {
+      App._rlcNodeId = nodeId; App._rlcMysteryPick = null; App._rlcMysteryApplied = false;
+      App.screen = 'rlcMystery'; return render();
+    }
+    if (node.type === 'upgrade') { App._rlcNodeId = nodeId; App.screen = 'rlcForge';   return render(); }
+    if (node.type === 'treasure' || node.type === 'rest') {
+      // Instant nodes — apply reward / small heal, then back to map.
+      const r = node.reward || {};
+      if (r.currency) run.currency += parseInt(r.currency, 10) || 0;
+      if (r.medPoints) run.medPoints += parseInt(r.medPoints, 10) || 0;
+      if (node.type === 'rest') run.heroHP = Math.min(run.maxHP, run.heroHP + _rlcHealPct(run, 30));
+      if (Array.isArray(r.cardKeys) && r.cardKeys.length && (r.choiceCount || 0) > 0) {
+        App._rlcNodeId = nodeId; App.screen = 'rlcReward'; return render();
+      }
+      showToast(node.type === 'rest' ? '🔥 Rested — recovered some HP.' : '💰 Treasure claimed!', 2200);
+      _rlcCompleteNode(nodeId); return;
+    }
+    // Unknown type — just complete.
+    _rlcCompleteNode(nodeId);
+  };
+  // 💬 Per-node "before" dialogue (e.g. a unique pre-fight boss speech).
+  if (node.dialogueBeforeId) { _rlcPlayDialogue(node.dialogueBeforeId, proceed); return; }
+  proceed();
 }
 // 🎚️ Difficulty → mechanical enemy-level bonus (fed through the engine's
 // existing enemyLevel scaling, which raises the foe's HP + atk/def/mag/res).
@@ -51103,6 +51128,16 @@ function renderRlcAdmin() {
         </div>
         ${fld('Description', 'nodes.' + idx + '.desc', n.desc)}
         ${imgUp('🖼️ Node image (map icon · enemy portrait · shopkeeper / medic / boss / treasure)', 'nodes.' + idx + '.iconImg', n.iconImg, 1024)}
+        ${(() => {
+          const gl = (typeof _allGuides === 'function') ? _allGuides().filter(g => g && g.id && Array.isArray(g.bubbles) && g.bubbles.length) : [];
+          const optsFor = (sel) => '<option value="">— none —</option>' + gl.map(g => `<option value="${escapeHtml(String(g.id))}" ${sel === g.id ? 'selected' : ''}>${escapeHtml((g.title || g.characterName || g.id))}</option>`).join('');
+          const selCss = 'width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px';
+          return `<div class="small-text ink-dim" style="margin:6px 0 4px">💬 Node dialogue (plays a 📖 Guide before entering / after clearing this node):</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <label style="display:block"><span class="small-text ink-dim">Before (e.g. pre-fight speech)</span><br><select data-rlc-path="nodes.${idx}.dialogueBeforeId" style="${selCss}">${optsFor(n.dialogueBeforeId || '')}</select></label>
+            <label style="display:block"><span class="small-text ink-dim">After (first clear only)</span><br><select data-rlc-path="nodes.${idx}.dialogueAfterId" style="${selCss}">${optsFor(n.dialogueAfterId || '')}</select></label>
+          </div>`;
+        })()}
         <div class="small-text ink-dim" style="margin:6px 0 4px">Connects to (player can go here after clearing this node):</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
           ${ (ed.nodes || []).filter(x => x.id !== n.id).map(x => `<label class="small-text" style="display:flex;align-items:center;gap:3px;border:1px solid rgba(184,136,255,0.3);border-radius:4px;padding:2px 6px"><input type="checkbox" data-rlc-conn="${idx}" value="${escapeHtml(x.id)}" ${conns.indexOf(x.id) >= 0 ? 'checked' : ''}> ${escapeHtml(x.name || x.id)}</label>`).join('') || '<span class="ink-dim small-text">(add more nodes to link)</span>'}

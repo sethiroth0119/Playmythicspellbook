@@ -20057,6 +20057,51 @@ function setCampaignMusicVolume(vol) {
 }
 
 // ============================================================================
+// 🩸 Roguelite Campaigns Music — "The Price of Flesh", looped on every
+// roguelite screen. By design it RESTARTS from the beginning each time the
+// player (re)enters the roguelite section (e.g. coming back from Battle
+// Hall) — stopRogueliteMusic() rewinds to 0, so the next play starts fresh.
+// Same master toggle + volume as the rest of the music system.
+// ============================================================================
+const ROGUELITE_MUSIC_SRC = 'assets/Audio/The%20Price%20of%20Flesh.mp3';
+const ROGUELITE_SCREENS = new Set([
+  'rlcList', 'rlcMap', 'rlcDeckPick', 'rlcDraft', 'rlcReward',
+  'rlcMedical', 'rlcShop', 'rlcForge', 'rlcEvent', 'rlcMystery', 'rlcResult',
+]);
+function isInRoguelite() {
+  if (typeof App === 'undefined' || !App) return false;
+  return ROGUELITE_SCREENS.has(App.screen);
+}
+let _rogueliteAudioEl = null;
+function _ensureRogueliteAudioEl() {
+  if (_rogueliteAudioEl) return _rogueliteAudioEl;
+  _rogueliteAudioEl = new Audio();
+  _rogueliteAudioEl.loop = true;
+  _rogueliteAudioEl.preload = 'auto';
+  _rogueliteAudioEl.src = ROGUELITE_MUSIC_SRC;
+  return _rogueliteAudioEl;
+}
+function playRogueliteMusic() {
+  const settings = (typeof getSettings === 'function') ? getSettings() : (Profile.settings || {});
+  if (settings.musicEnabled === false) { stopRogueliteMusic(); return; }
+  const el = _ensureRogueliteAudioEl();
+  el.volume = Math.max(0, Math.min(1, settings.musicVolume != null ? settings.musicVolume : 0.5));
+  if (el.paused) {
+    const p = el.play();
+    if (p && typeof p.catch === 'function') { p.catch(() => { _armMenuAudioGesture(); }); }
+  }
+}
+function stopRogueliteMusic() {
+  if (_rogueliteAudioEl) {
+    try { _rogueliteAudioEl.pause(); _rogueliteAudioEl.currentTime = 0; } catch (e) {}
+  }
+}
+function setRogueliteMusicVolume(vol) {
+  const v = Math.max(0, Math.min(1, vol || 0));
+  if (_rogueliteAudioEl) _rogueliteAudioEl.volume = v;
+}
+
+// ============================================================================
 // ⚔ Battle Music — Last Stand at the Eurotas, looped across the entire
 // pre-battle → battle sequence:
 //   • VS screen     (team preview + ready timer)
@@ -20169,6 +20214,7 @@ function syncMusicForScreen() {
     stopCampaignMusic();
     stopBattleMusic();
     stopVictoryMusic();
+    stopRogueliteMusic();
     return;
   }
   // 🏆 Victory music takes priority over everything else — only fires while the
@@ -20179,6 +20225,7 @@ function syncMusicForScreen() {
     stopExchangeMusic();
     stopCampaignMusic();
     stopBattleMusic();
+    stopRogueliteMusic();
     playVictoryMusic();
     return;
   }
@@ -20190,7 +20237,18 @@ function syncMusicForScreen() {
     stopExchangeMusic();
     stopCampaignMusic();
     stopVictoryMusic();
+    stopRogueliteMusic();
     playBattleMusic();
+    return;
+  }
+  // 🩸 Roguelite Campaigns — "The Price of Flesh" (restarts on re-entry).
+  if (isInRoguelite()) {
+    stopMenuMusic();
+    stopExchangeMusic();
+    stopCampaignMusic();
+    stopBattleMusic();
+    stopVictoryMusic();
+    playRogueliteMusic();
     return;
   }
   // 📜 Campaign story screens — Thermopylae Finalis loop.
@@ -20199,6 +20257,7 @@ function syncMusicForScreen() {
     stopExchangeMusic();
     stopVictoryMusic();
     stopBattleMusic();
+    stopRogueliteMusic();
     playCampaignMusic();
     return;
   }
@@ -20207,6 +20266,7 @@ function syncMusicForScreen() {
     stopVictoryMusic();
     stopCampaignMusic();
     stopBattleMusic();
+    stopRogueliteMusic();
     playExchangeMusic();
     return;
   }
@@ -20216,6 +20276,7 @@ function syncMusicForScreen() {
     stopVictoryMusic();
     stopCampaignMusic();
     stopBattleMusic();
+    stopRogueliteMusic();
     playMenuMusic();
     return;
   }
@@ -20225,6 +20286,7 @@ function syncMusicForScreen() {
   stopCampaignMusic();
   stopBattleMusic();
   stopVictoryMusic();
+  stopRogueliteMusic();
 }
 
 // ============================================================================
@@ -47826,6 +47888,7 @@ function renderSettings() {
       setCampaignMusicVolume(st.musicVolume);
       setBattleMusicVolume(st.musicVolume);
       setVictoryMusicVolume(st.musicVolume);
+      setRogueliteMusicVolume(st.musicVolume);
       saveProfile();
     };
   }

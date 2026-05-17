@@ -36250,29 +36250,29 @@ function bindCardEditor() {
   const addEmBtn = document.getElementById('btn-add-elem-mod');
   if (addEmBtn) addEmBtn.onclick = () => {
     const t = targetCard(); if (!t) return;
-    const cur = (typeof readEditorElemMods === 'function') ? readEditorElemMods() : [];
-    if (typeof captureEditorIntoCard === 'function') captureEditorIntoCard(t);
-    const list = _emEnsureCE(t);
-    list.length = 0; cur.forEach(m => list.push(m));
-    list.push({ el: '', mode: 'strengthen', pct: 50, affects: 'attack', dmgType: 'both' });
+    // Sync the CURRENT DOM (typed fields + existing rows) into the draft
+    // ONCE, then mutate the draft and render() straight from it. We must NOT
+    // use captureAndRender() here — it re-captures the about-to-be-replaced
+    // DOM, which (combined with empty-row skipping) wiped the new row.
+    if (typeof captureEditorIntoCard === 'function') { try { captureEditorIntoCard(t); } catch (e) {} }
+    _emEnsureCE(t).push({ el: '', mode: 'strengthen', pct: 50, affects: 'attack', dmgType: 'both' });
     if (!isNew && typeof saveForge === 'function') saveForge();
-    captureAndRender();
+    render();
   };
   document.querySelectorAll('[data-em-del]').forEach(btn => {
     btn.onclick = () => {
       const t = targetCard(); if (!t) return;
       const idx = parseInt(btn.dataset.emDel, 10);
-      const cur = (typeof readEditorElemMods === 'function') ? readEditorElemMods() : [];
-      if (typeof captureEditorIntoCard === 'function') captureEditorIntoCard(t);
+      if (typeof captureEditorIntoCard === 'function') { try { captureEditorIntoCard(t); } catch (e) {} }
       const list = _emEnsureCE(t);
-      list.length = 0; cur.forEach((m, i) => { if (i !== idx) list.push(m); });
+      if (idx >= 0 && idx < list.length) list.splice(idx, 1);
       if (!list.length && t.customEffects) {
         delete t.customEffects.elemMods;
         const c = t.customEffects;
         if (!c.boostElement && !c.penalElement && !c.auraStat && !c.hpDelta) delete t.customEffects;
       }
       if (!isNew && typeof saveForge === 'function') saveForge();
-      captureAndRender();
+      render();
     };
   });
 
@@ -36560,7 +36560,8 @@ function readEditorElemMods() {
   document.querySelectorAll('#elem-mods-rows .elem-mod-row').forEach(r => {
     const elS = r.querySelector('.em-el');
     const el = elS ? elS.value : '';
-    if (!el) return;
+    // Keep in-progress rows (no element picked yet) so a freshly-added row
+    // survives the capture→re-render cycle. Empty rows are stripped at save.
     const modeS = r.querySelector('.em-mode');
     const pctI  = r.querySelector('.em-pct');
     const affS  = r.querySelector('.em-affects');
@@ -36595,6 +36596,17 @@ function saveCardFromInputs(commit) {
   }
 
   captureEditorIntoCard(card);
+
+  // Drop any element-modifier rows the admin added but never assigned an
+  // element to, so empty placeholders aren't persisted.
+  if (card.customEffects && Array.isArray(card.customEffects.elemMods)) {
+    card.customEffects.elemMods = card.customEffects.elemMods.filter(m => m && m.el);
+    if (!card.customEffects.elemMods.length) {
+      delete card.customEffects.elemMods;
+      const _c = card.customEffects;
+      if (!_c.boostElement && !_c.penalElement && !_c.auraStat && !_c.hpDelta) delete card.customEffects;
+    }
+  }
 
   if (pendingLearnEntry && Array.isArray(card.learnset)) {
     card.learnset = card.learnset.concat([pendingLearnEntry]);

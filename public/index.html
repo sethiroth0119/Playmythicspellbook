@@ -19509,6 +19509,10 @@ const Forge = {
   // or a custom card's chosen type). Stored as MP3 data URLs. Plays on a singleton
   // <audio> element while that weather is active on the board.
   weatherAudio: {},     // { weatherType: dataURL or URL }
+  // 🏕️ Camp base art (XCOM-style facility backdrops) keyed by facility id,
+  // plus a single looping Camp ambience track ({ ambient: dataURL }).
+  campArt: {},          // { facilityId: dataURL or URL }
+  campAudio: {},        // { ambient: dataURL or URL }
   // Pack cover-art image for the Vendor Market shop tile. Keyed by pack id so an
   // admin can give each custom pack a unique landscape/poster image without
   // bloating the pack record itself (large data URLs go to IndexedDB / Storage
@@ -20172,18 +20176,34 @@ function isInCampAmbient() {
   return CAMP_AMBIENT_SCREENS.has(App.screen);
 }
 let _campAmbientAudioEl = null;
+// On the actual Camp screen, an admin-uploaded ambience (synced to players
+// via the catalog into Forge.campAudio.ambient) overrides the default track.
+function _campAmbientSrc() {
+  try {
+    if (typeof App !== 'undefined' && App && App.screen === 'camp'
+        && Forge.campAudio && Forge.campAudio.ambient) return Forge.campAudio.ambient;
+  } catch (e) {}
+  return CAMP_AMBIENT_MUSIC_SRC;
+}
 function _ensureCampAmbientAudioEl() {
   if (_campAmbientAudioEl) return _campAmbientAudioEl;
   _campAmbientAudioEl = new Audio();
   _campAmbientAudioEl.loop = true;
   _campAmbientAudioEl.preload = 'auto';
-  _campAmbientAudioEl.src = CAMP_AMBIENT_MUSIC_SRC;
+  _campAmbientAudioEl.src = _campAmbientSrc();
   return _campAmbientAudioEl;
 }
 function playCampAmbientMusic() {
   const settings = (typeof getSettings === 'function') ? getSettings() : (Profile.settings || {});
   if (settings.musicEnabled === false) { stopCampAmbientMusic(); return; }
   const el = _ensureCampAmbientAudioEl();
+  // Swap the source if the desired track changed (entered Camp with a custom
+  // ambience, admin just uploaded one, etc.).
+  const want = _campAmbientSrc();
+  if (el.src !== want && !(el.src && want && el.src.indexOf(want) >= 0)) {
+    try { el.pause(); } catch (e) {}
+    el.src = want;
+  }
   el.volume = Math.max(0, Math.min(1, settings.musicVolume != null ? settings.musicVolume : 0.5));
   if (el.paused) {
     const p = el.play();
@@ -21370,6 +21390,8 @@ const STORAGE_CATEGORIES = [
   ['cardArt',      'cardArt.json'],
   ['locationArt',  'locationArt.json'],
   ['weatherAudio', 'weatherAudio.json'],
+  ['campArt',      'campArt.json'],
+  ['campAudio',    'campAudio.json'],
   ['packArt',      'packArt.json'],
   ['itemArt',      'itemArt.json'],
 ];
@@ -23950,6 +23972,8 @@ const STORAGE_KEYS = {
   cardArt:    'hg_cardArt',
   locationArt:'hg_locationArt',
   weatherAudio: 'hg_weatherAudio',
+  campArt:    'hg_campArt',
+  campAudio:  'hg_campAudio',
   packArt:    'hg_packArt',
   itemArt:    'hg_itemArt',
   cards:      'hg_customCards',
@@ -25058,7 +25082,7 @@ async function idbDel(key) {
 // game starts immediately with text+stats, and sprites pop in as soon as IDB
 // resolves (sub-second on modern devices). Triggers a render once data lands.
 async function loadHeavyForgeFromIdb() {
-  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'packArt', 'itemArt'];
+  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'itemArt'];
   let changed = false;
   for (const k of keys) {
     const v = await idbGet('forge_' + k);
@@ -25166,6 +25190,8 @@ function loadForge() {
     const ca = localStorage.getItem(STORAGE_KEYS.cardArt);
     const la = localStorage.getItem(STORAGE_KEYS.locationArt);
     const wa = localStorage.getItem(STORAGE_KEYS.weatherAudio);
+    const cpA = localStorage.getItem(STORAGE_KEYS.campArt);
+    const cpAu = localStorage.getItem(STORAGE_KEYS.campAudio);
     const cc = localStorage.getItem(STORAGE_KEYS.cards);
     const cm = localStorage.getItem(STORAGE_KEYS.moves);
     const ce = localStorage.getItem(STORAGE_KEYS.events);
@@ -25177,6 +25203,8 @@ function loadForge() {
     if (ca) { try { const a = JSON.parse(ca); if (a && typeof a === 'object') Forge.cardArt = a; } catch (err) {} }
     if (la) { try { const a = JSON.parse(la); if (a && typeof a === 'object') Forge.locationArt = a; } catch (err) {} }
     if (wa) { try { const a = JSON.parse(wa); if (a && typeof a === 'object') Forge.weatherAudio = a; } catch (err) {} }
+    if (cpA) { try { const a = JSON.parse(cpA); if (a && typeof a === 'object') Forge.campArt = a; } catch (err) {} }
+    if (cpAu){ try { const a = JSON.parse(cpAu); if (a && typeof a === 'object') Forge.campAudio = a; } catch (err) {} }
     if (cc) Forge.customCards = JSON.parse(cc);
     if (cm) Forge.customMoves = JSON.parse(cm);
     if (ce) Forge.customEvents = JSON.parse(ce);
@@ -25434,6 +25462,8 @@ function saveForge() {
       idbSet('forge_cardArt',      Forge.cardArt      || {});
       idbSet('forge_locationArt',  Forge.locationArt  || {});
       idbSet('forge_weatherAudio', Forge.weatherAudio || {});
+      idbSet('forge_campArt',      Forge.campArt      || {});
+      idbSet('forge_campAudio',    Forge.campAudio    || {});
       idbSet('forge_packArt',      Forge.packArt      || {});
       idbSet('forge_itemArt',      Forge.itemArt      || {});
       // 🗄️ ALSO mirror the custom-CONTENT chunks to IndexedDB. These used
@@ -46909,8 +46939,16 @@ function renderCamp() {
       badge = `<span style="font-family:'Cinzel',serif;font-size:0.72rem;letter-spacing:0.12em;color:#7d8aa0">［ UNDEVELOPED ］</span>`;
       action = `<button class="btn-mini" data-build="${f.id}" ${aff ? '' : 'disabled'} style="margin-top:6px;border-color:${f.accent}66;color:${aff ? f.accent : '#666'}">🔨 Build — ${c} 🔥</button>`;
     }
+    const _isAdm = (typeof isAdmin === 'function') && isAdmin();
+    const adminArt = _isAdm ? `
+      <div style="position:absolute;top:6px;right:6px;display:flex;gap:4px;z-index:2">
+        <button class="btn-mini" data-campart="${f.id}" title="Upload backdrop image" style="padding:2px 6px;font-size:0.72rem;background:rgba(0,0,0,0.55);border-color:#ffffff44">📷</button>
+        ${art ? `<button class="btn-mini btn-danger" data-campart-clear="${f.id}" title="Remove image" style="padding:2px 6px;font-size:0.72rem;background:rgba(0,0,0,0.55)">✕</button>` : ''}
+        <input type="file" accept="image/*" data-campart-input="${f.id}" style="display:none">
+      </div>` : '';
     return `
       <div style="position:relative;border:1px solid ${f.accent}44;border-radius:8px;overflow:hidden;${bg};min-height:118px;padding:10px 12px;${dimmed}">
+        ${adminArt}
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:1.5rem;filter:drop-shadow(0 0 6px ${f.accent}88)">${f.emoji}</span>
           <strong style="font-family:'Cinzel',serif;color:#e8eef7;font-size:0.98rem;flex:1">${escapeHtml(f.name)}</strong>
@@ -46949,6 +46987,15 @@ function renderCamp() {
         Click <strong>Collect</strong> to apply the XP — level-ups roll new stats and learnable moves.
         <br><span class="ink-dim">Only units you own are listed. You must always keep at least <strong>${CAMP_MIN_COLLECTION}</strong> cards available — you have <strong>${_totalOwnedCards()}</strong> owned · <strong>${Camp.slots.length}</strong> parked.</span>
       </div>
+      ${((typeof isAdmin === 'function') && isAdmin()) ? `
+      <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;background:rgba(127,214,255,0.06);border:1px solid rgba(127,214,255,0.25);border-radius:6px;padding:0.6rem 0.9rem;margin-bottom:1.2rem">
+        <span style="color:#7fd6ff;font-family:'Cinzel',serif;font-size:0.78rem;letter-spacing:0.1em">🛠 ADMIN — CAMP ART & AUDIO</span>
+        <span class="small-text ink-dim" style="flex:1;min-width:200px">Hover any facility tile and tap 📷 to set its backdrop. Set a looping camp ambience here. Then <strong>Publish Catalog Art</strong> so players get them.</span>
+        <button class="btn-mini" id="btn-camp-amb">🔊 ${(Forge.campAudio && Forge.campAudio.ambient) ? 'Replace' : 'Upload'} Ambience</button>
+        ${(Forge.campAudio && Forge.campAudio.ambient) ? '<button class="btn-mini btn-danger" id="btn-camp-amb-clear">✕ Ambience</button>' : ''}
+        <input type="file" accept="audio/*" id="camp-amb-input" style="display:none">
+        <button class="btn-mini" id="btn-camp-pub-art" title="Push camp art + audio + sprites to all players">📡 Publish Catalog Art</button>
+      </div>` : ''}
       ${(() => {
         const rv = (typeof _campRival === 'function') ? _campRival() : { name: 'Rivals', threat: 0 };
         const thr = Math.round(rv.threat || 0);
@@ -47096,6 +47143,68 @@ function renderCamp() {
   document.querySelectorAll('[data-truce]').forEach(el => {
     el.onclick = () => { if (typeof campBrokerTruce === 'function' && campBrokerTruce()) render(); };
   });
+  // 🖼️ Admin: per-facility backdrop image upload.
+  document.querySelectorAll('[data-campart]').forEach(btn => {
+    btn.onclick = () => {
+      const inp = document.querySelector(`[data-campart-input="${btn.dataset.campart}"]`);
+      if (inp) inp.click();
+    };
+  });
+  document.querySelectorAll('[data-campart-input]').forEach(inp => {
+    inp.onchange = async () => {
+      const id = inp.dataset.campartInput;
+      const file = inp.files && inp.files[0];
+      if (!file) return;
+      try {
+        const dataUrl = await resizeImage(file, 1024, { smooth: true });
+        Forge.campArt = Forge.campArt || {};
+        Forge.campArt[id] = dataUrl;
+        if (typeof saveForge === 'function') saveForge();
+        showToast('🖼️ Facility backdrop set. Publish catalog art so players see it.', 4200);
+        render();
+      } catch (e) { showToast('⚠ Image failed to load'); }
+    };
+  });
+  document.querySelectorAll('[data-campart-clear]').forEach(btn => {
+    btn.onclick = () => {
+      if (!confirm('Remove this facility backdrop?')) return;
+      if (Forge.campArt) delete Forge.campArt[btn.dataset.campartClear];
+      if (typeof saveForge === 'function') saveForge();
+      render();
+    };
+  });
+  const _ambBtn = document.getElementById('btn-camp-amb');
+  if (_ambBtn) _ambBtn.onclick = () => { const i = document.getElementById('camp-amb-input'); if (i) i.click(); };
+  const _ambInp = document.getElementById('camp-amb-input');
+  if (_ambInp) _ambInp.onchange = () => {
+    const file = _ambInp.files && _ambInp.files[0];
+    if (!file) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      Forge.campAudio = Forge.campAudio || {};
+      Forge.campAudio.ambient = rd.result;
+      if (typeof saveForge === 'function') saveForge();
+      showToast('🔊 Camp ambience set. Publish catalog art to share it.', 4200);
+      try { if (typeof playCampAmbientMusic === 'function') playCampAmbientMusic(); } catch (e) {}
+      render();
+    };
+    rd.readAsDataURL(file);
+  };
+  const _ambClr = document.getElementById('btn-camp-amb-clear');
+  if (_ambClr) _ambClr.onclick = () => {
+    if (!confirm('Remove the camp ambience track?')) return;
+    if (Forge.campAudio) delete Forge.campAudio.ambient;
+    if (typeof saveForge === 'function') saveForge();
+    try { if (typeof playCampAmbientMusic === 'function') playCampAmbientMusic(); } catch (e) {}
+    render();
+  };
+  const _pubArt = document.getElementById('btn-camp-pub-art');
+  if (_pubArt) _pubArt.onclick = async () => {
+    if (typeof cloudPublishCatalogArt !== 'function') { showToast('Cloud unavailable.'); return; }
+    showToast('📡 Publishing camp art & audio…', 2000);
+    const r = await cloudPublishCatalogArt();
+    showToast(r && r.ok ? '✅ Camp art & audio published to all players.' : ('⚠ Publish failed: ' + ((r && r.error) || 'unknown')), 4600);
+  };
   document.getElementById('btn-back-camp').onclick = () => { App.screen = 'title'; render(); };
   document.querySelectorAll('[data-park]').forEach(el => {
     el.onclick = () => {

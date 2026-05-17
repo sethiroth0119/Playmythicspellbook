@@ -19660,6 +19660,15 @@ const Forge = {
   // Players who haven't bought a custom tombstone use this one. URL string
   // (Cloudflare-served path or data URL).
   tombstoneArt: null,
+  // 📦 HEAVY CATALOG MEDIA — tombstone art, starter-deck cover images and
+  // page-guide images are inline data: URLs too big for the single catalog
+  // row (edge proxy size cap). This object rides the Storage art pipeline
+  // (STORAGE_CATEGORIES, sharded) so it distributes to players like cardArt.
+  // Shape: { tomb:<string|null>, starterDecks:[...full], pageGuides:[...full] }.
+  // Populated at publish time from the live Forge media; rehydrated onto
+  // Catalog.* after fetch. Arrays are stored as VALUES inside this map so the
+  // shard splitter (which walks Object.entries) keeps each intact.
+  catalogMedia: {},
   // 🛒 SHOP-PURCHASABLE TOMBSTONE COSMETICS — list of { id, name, image, cost }
   // entries the admin defines. Players spend Cinders to unlock + equip them.
   tombstoneCosmetics: [],
@@ -21485,6 +21494,7 @@ const STORAGE_CATEGORIES = [
   ['campAudio',    'campAudio.json'],
   ['packArt',      'packArt.json'],
   ['itemArt',      'itemArt.json'],
+  ['catalogMedia', 'catalogMedia.json'],
 ];
 
 async function _storageUploadJSON(filename, payload) {
@@ -21728,6 +21738,31 @@ function _loadCatalogFromCache() {
 }
 _loadCatalogFromCache();
 
+// 📦 Overlay heavy media (tombstone art, starter-deck cover images, page-guide
+// images) from the Storage-distributed Forge.catalogMedia onto Catalog.*.
+// The single card_catalog row deep-strips inline data: URLs > 6 KB, so the
+// __tombstone_art__ / __starter_decks__ / __page_guides__ sentinels arrive
+// image-stripped; the real media instead travels via the Storage art pipeline
+// inside Forge.catalogMedia. This idempotently restores it after EITHER the
+// catalog row fetch or the catalog-art fetch completes (whichever lands the
+// media). No consumer-code changes needed: players read Catalog.tombstoneArt,
+// getAllStarterDecks() merges Catalog+Forge, page-guide UI reads Catalog.
+function _rehydrateCatalogMedia() {
+  try {
+    const m = Forge && Forge.catalogMedia;
+    if (!m || typeof m !== 'object') return;
+    if (typeof m.tomb === 'string' && m.tomb && !Catalog.tombstoneArt) {
+      Catalog.tombstoneArt = m.tomb;
+    }
+    if (Array.isArray(m.starterDecks) && m.starterDecks.length) {
+      Catalog.starterDecks = m.starterDecks;
+    }
+    if (Array.isArray(m.pageGuides) && m.pageGuides.length) {
+      Catalog.pageGuides = m.pageGuides;
+    }
+  } catch (e) { /* non-fatal cosmetic rehydrate */ }
+}
+
 // ---- Fetch the latest catalog from Supabase (called automatically on sign-in) ----
 async function cloudFetchCatalog() {
   if (!initCloud() || !Profile.cloud.signedIn) return { ok: false, error: 'Not signed in.' };
@@ -21772,6 +21807,7 @@ async function cloudFetchCatalog() {
     Catalog.publishedAt   = data.published_at  ? new Date(data.published_at).getTime() : 0;
     Catalog.publishedBy   = data.published_by  || null;
     Catalog.lastFetchedAt = Date.now();
+    _rehydrateCatalogMedia();
     _persistCatalog();
     return { ok: true, count: Catalog.cards.length + Catalog.items.length + Catalog.packs.length };
   } catch (e) { return { ok: false, error: (e && e.message) || 'Catalog fetch failed.' }; }
@@ -21782,6 +21818,24 @@ async function cloudPublishCatalog() {
   if (!initCloud() || !Profile.cloud.signedIn) return { ok: false, error: 'Not signed in.' };
   if (typeof isAdmin === 'function' && !isAdmin()) return { ok: false, error: 'Admin-only.' };
   try {
+    // 📦 Snapshot the heavy catalog media (tombstone art + starter-deck cover
+    // images + page-guide images) into Forge.catalogMedia BEFORE we build the
+    // row. The row deep-strips inline data: URLs > 6 KB (edge proxy size cap),
+    // so these inline-only assets would never reach players via the row.
+    // catalogMedia rides the Storage art pipeline instead (STORAGE_CATEGORIES,
+    // sharded) — the admin's separate "Publish Catalog Art" run ships it and
+    // _rehydrateCatalogMedia() overlays it back onto Catalog.* for players.
+    // Arrays are kept as VALUES inside this map so the shard splitter (walks
+    // Object.entries) keeps each whole.
+    try {
+      const _clone = (v) => { try { return JSON.parse(JSON.stringify(v)); } catch (e) { return v; } };
+      Forge.catalogMedia = {
+        tomb: Forge.tombstoneArt || null,
+        starterDecks: Array.isArray(Forge.starterDecks) ? _clone(Forge.starterDecks) : [],
+        pageGuides:   Array.isArray(Forge.pageGuides)   ? _clone(Forge.pageGuides)   : [],
+      };
+      if (typeof saveForge === 'function') saveForge();
+    } catch (e) { /* non-fatal: media still attempted via row, just stripped */ }
     // Strip embedded base64 from cards before publishing — those live in
     // Storage so we can fit thousands of cards in the catalog row.
     const slim = (arr) => arr.map(c => {
@@ -22060,6 +22114,9 @@ async function cloudFetchCatalogArt() {
     } catch (e) { /* silent skip */ }
   }
   if (changed) { try { saveForge(); } catch (e) {} }
+  // 📦 Now that the Storage art (incl. Forge.catalogMedia shards) has merged
+  // in, overlay the heavy media back onto Catalog.* for players.
+  _rehydrateCatalogMedia();
   return { ok: true };
 }
 
@@ -24383,6 +24440,7 @@ const STORAGE_KEYS = {
   campAudio:  'hg_campAudio',
   packArt:    'hg_packArt',
   itemArt:    'hg_itemArt',
+  catalogMedia: 'hg_catalogMedia',
   cards:      'hg_customCards',
   moves:      'hg_customMoves',
   events:     'hg_customEvents',
@@ -25544,7 +25602,7 @@ async function idbDel(key) {
 // game starts immediately with text+stats, and sprites pop in as soon as IDB
 // resolves (sub-second on modern devices). Triggers a render once data lands.
 async function loadHeavyForgeFromIdb() {
-  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'itemArt'];
+  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'itemArt', 'catalogMedia'];
   let changed = false;
   for (const k of keys) {
     const v = await idbGet('forge_' + k);
@@ -25652,6 +25710,7 @@ function loadForge() {
     // for users who upgraded mid-session and haven't been migrated yet.
     const sp = localStorage.getItem(STORAGE_KEYS.sprites);
     const ca = localStorage.getItem(STORAGE_KEYS.cardArt);
+    const cmd = localStorage.getItem(STORAGE_KEYS.catalogMedia);
     const la = localStorage.getItem(STORAGE_KEYS.locationArt);
     const wa = localStorage.getItem(STORAGE_KEYS.weatherAudio);
     const cpA = localStorage.getItem(STORAGE_KEYS.campArt);
@@ -25665,6 +25724,7 @@ function loadForge() {
     const pf = localStorage.getItem(STORAGE_KEYS.profile);
     if (sp) { try { const x = JSON.parse(sp); if (x && typeof x === 'object') Forge.sprites = x; } catch (err) {} }
     if (ca) { try { const a = JSON.parse(ca); if (a && typeof a === 'object') Forge.cardArt = a; } catch (err) {} }
+    if (cmd) { try { const a = JSON.parse(cmd); if (a && typeof a === 'object') Forge.catalogMedia = a; } catch (err) {} }
     if (la) { try { const a = JSON.parse(la); if (a && typeof a === 'object') Forge.locationArt = a; } catch (err) {} }
     if (wa) { try { const a = JSON.parse(wa); if (a && typeof a === 'object') Forge.weatherAudio = a; } catch (err) {} }
     if (cpA) { try { const a = JSON.parse(cpA); if (a && typeof a === 'object') Forge.campArt = a; } catch (err) {} }
@@ -25930,6 +25990,7 @@ function saveForge() {
       idbSet('forge_campArt',      Forge.campArt      || {});
       idbSet('forge_campAudio',    Forge.campAudio    || {});
       idbSet('forge_packArt',      Forge.packArt      || {});
+      idbSet('forge_catalogMedia', Forge.catalogMedia || {});
       idbSet('forge_itemArt',      Forge.itemArt      || {});
       // 🗄️ ALSO mirror the custom-CONTENT chunks to IndexedDB. These used
       // to be localStorage-only, but customEvents now carries base64 sprite

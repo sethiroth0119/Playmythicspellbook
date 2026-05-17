@@ -24234,7 +24234,7 @@ const CAMP_RUN_EVENTS = [
   { w: 8,  name: 'Merchant',         line: '🪙 Met a wandering merchant — favourable trade.',                surviveMod: 6,   lootMul: 1.5 },
   { w: 7,  name: 'SCP Breach',       line: '☣️ Containment alarm. Something got OUT. They saw too much.',     surviveMod: -22, lootMul: 1.3, trauma: 22 },
   { w: 6,  name: 'Demon Sighting',   line: '👁 A shape watched from the treeline. It did not blink.',         surviveMod: -10, lootMul: 1.0, trauma: 12 },
-  { w: 5,  name: 'Cosmic Anomaly',   line: '🌌 Walked through a place that should not exist.',                surviveMod: -8,  lootMul: 1.4, corruption: 20 },
+  { w: 5,  name: 'Cosmic Anomaly',   line: '🌌 Walked through a place that should not exist.',                surviveMod: -8,  lootMul: 1.4, corruption: 20, secretHero: true },
   { w: 6,  name: 'Survivor Rescue',  line: '🆘 Pulled a wounded stranger from the rubble — they followed home.', surviveMod: -4, lootMul: 1.0, rescue: true },
   { w: 5,  name: 'Weather Disaster', line: '🌪 A storm rolled in hard. Dug in and prayed.',                  surviveMod: -14, lootMul: 0.8 },
   { w: 5,  name: 'Strange Whispers', line: '🔊 Whispers on the wind all night. No one slept.',               surviveMod: -3,  lootMul: 1.0, trauma: 8 },
@@ -24483,6 +24483,17 @@ function _resolveCampSlot(slot) {
       entry.lines.push(`🤝 New survivor joined the camp: <strong>${escapeHtml(c.name || c.id)}</strong>.`);
     }
   }
+  // 🌌 Secret hero — a stranger steps out of the rift (anomaly only, ultra-rare).
+  if (ev.secretHero && (tierKey === 'deepRun' || tierKey === 'raid') && Math.random() < (tierKey === 'deepRun' ? 0.09 : 0.03)) {
+    const heroes = (typeof _customHeroEntries === 'function') ? _customHeroEntries() : [];
+    if (heroes.length) {
+      const h = heroes[Math.floor(Math.random() * heroes.length)];
+      if (!Profile.cardCollection) Profile.cardCollection = {};
+      Profile.cardCollection[h.id] = (Profile.cardCollection[h.id] || 0) + 1;
+      entry.color = '#c98bff';
+      entry.lines.push(`🌌 <strong>Something walked out of the rift behind them.</strong> A hero — <strong>${escapeHtml(h.name)}</strong> — chose to follow them home.`);
+    }
+  }
   if (injured) {
     prof.morale = Math.max(0, morale - 8);
     entry.status = 'INJURED'; entry.color = '#d4af37';
@@ -24671,6 +24682,71 @@ function _campRecoveryTick() {
     p.corruption = Math.max(0, (p.corruption || 0) - 1);
   }
   try { saveCamp(); saveProfile(); } catch (e) {}
+}
+function _campRival() {
+  if (!Profile.campRival || typeof Profile.campRival !== 'object') Profile.campRival = { name: 'The Scavenger Pack', threat: 10 };
+  if (typeof Profile.campRival.threat !== 'number') Profile.campRival.threat = 10;
+  return Profile.campRival;
+}
+// 🏴‍☠️ Phase-4 daily meta resolve (once per real day on Camp open):
+// rival-faction threat escalation, hidden camp invasions, and bonded
+// loyalty / grief events. Returns cinematic debrief entries.
+function resolveCampMeta() {
+  const out = [];
+  const today = new Date().toISOString().slice(0, 10);
+  if (Camp.facilities && Camp.facilities.__meta && Camp.facilities.__meta.day === today) return out;
+  if (!Camp.facilities) Camp.facilities = {};
+  Camp.facilities.__meta = { day: today };
+  const rival = _campRival();
+  const deployed = Camp.slots.filter(s => s.activity && s.activity !== 'rest').length;
+  rival.threat = Math.min(100, rival.threat + 6 + deployed * 2);
+
+  // --- Bonded loyalty / grief among the units actually in camp ---
+  const resting = Camp.slots.filter(s => !s.activity || s.activity === 'rest');
+  const profs = resting.map(s => ({ s, m: _campUnitMeta(s.refId), p: _campUnitProf(s.refId) }));
+  const bonded = profs.filter(x => (x.p.bond || 0) >= 60);
+  const mem = Array.isArray(Profile.memorial) ? Profile.memorial : [];
+  const recentLoss = mem.length && (Date.now() - (mem[mem.length - 1].ts || 0) < 26 * 3600000);
+  if (recentLoss && bonded.length) {
+    bonded.forEach(x => { x.p.morale = Math.max(0, (x.p.morale || 80) - 10); x.p.trauma = Math.min(100, (x.p.trauma || 0) + 6); });
+    out.push({ icon: '🕯', name: 'The Camp', status: 'GRIEF', color: '#9aa6c0',
+      lines: [`The fire burned low. ${escapeHtml(mem[mem.length - 1].name || 'Someone')}'s bunk stays empty — the others feel it. (-morale, +trauma)`] });
+  } else if (bonded.length >= 2) {
+    bonded.forEach(x => { x.p.morale = Math.min(100, (x.p.morale || 80) + 6); x.p.bond = Math.min(100, (x.p.bond || 0) + 2); });
+    out.push({ icon: '🤝', name: 'The Camp', status: 'KINSHIP', color: '#5fae7a',
+      lines: [`${escapeHtml(bonded[0].m.name || 'Two veterans')} and ${escapeHtml(bonded[1].m.name || 'another')} traded war stories by the fire. Spirits lift. (+bond, +morale)`] });
+  }
+
+  // --- Hidden camp invasion (rivals raid while teams are out) ---
+  const invChance = Math.min(0.7, rival.threat / 160 + deployed * 0.04);
+  if (Math.random() < invChance) {
+    const defense = profs.reduce((a, x) => a + (x.p.level || 1) * 1.2 + (x.p.bond || 0) * 0.3, 0)
+      + campBonus('slots') * 12 + 10;
+    const attack = 18 + rival.threat * 0.7 + Math.random() * 25;
+    if (defense >= attack) {
+      const reward = 20 + Math.floor(rival.threat * 0.4);
+      Profile.gems = (Profile.gems || 0) + reward;
+      rival.threat = Math.max(0, rival.threat - 30);
+      out.push({ icon: '🛡️', name: 'CAMP DEFENSE', status: 'REPELLED', color: '#5fae7a',
+        lines: [`🚨 <strong>${escapeHtml(rival.name)} hit the perimeter</strong> while teams were out — the camp held the line.`, `Stripped ${reward} 🔥 off the attackers. Rival pressure eased.`] });
+    } else if (attack > defense * 1.8 && profs.length) {
+      const v = profs[Math.floor(Math.random() * profs.length)];
+      if (Profile.cardCollection && Profile.cardCollection[v.s.refId] > 0) { Profile.cardCollection[v.s.refId]--; if (Profile.cardCollection[v.s.refId] <= 0) delete Profile.cardCollection[v.s.refId]; }
+      _campMemorial().push({ name: v.m.name || 'Survivor', icon: v.m.icon || '❔', cause: 'Camp Overrun', ts: Date.now() });
+      Camp.slots = Camp.slots.filter(s => s.id !== v.s.id);
+      const loss = Math.floor((Profile.gems || 0) * 0.35); Profile.gems = (Profile.gems || 0) - loss;
+      out.push({ icon: '🩸', name: 'CAMP OVERRUN', status: 'OVERRUN', color: '#e0556a',
+        lines: [`🚨 <strong>The camp was overrun.</strong> ${escapeHtml(v.m.name || 'A survivor')} died holding the gate.`, `Looters took ${loss} 🔥. Build the Resistance Ring before they return.`] });
+    } else {
+      const loss = Math.floor((Profile.gems || 0) * 0.2);
+      Profile.gems = (Profile.gems || 0) - loss;
+      profs.forEach(x => { x.p.trauma = Math.min(100, (x.p.trauma || 0) + 10); x.p.morale = Math.max(0, (x.p.morale || 80) - 8); });
+      out.push({ icon: '🔥', name: 'CAMP RAIDED', status: 'RAIDED', color: '#d4af37',
+        lines: [`🚨 <strong>${escapeHtml(rival.name)}</strong> breached the camp and stripped the stores. Lost ${loss} 🔥. Survivors rattled.`] });
+    }
+  }
+  try { saveCamp(); saveProfile(); } catch (e) {}
+  return out;
 }
 
 // ============ LAB / FUSION / CORES ============
@@ -46615,7 +46691,8 @@ function renderCamp() {
   try {
     const _rep = resolveReadyCampActivities() || [];
     const _bld = (typeof resolveReadyCampBuilds === 'function') ? (resolveReadyCampBuilds() || []) : [];
-    const _all = _bld.concat(_rep);
+    const _meta = (typeof resolveCampMeta === 'function') ? (resolveCampMeta() || []) : [];
+    const _all = _bld.concat(_rep).concat(_meta);
     if (_all.length) App._campDebrief = (App._campDebrief || []).concat(_all);
     // 💰 Black Market tithe — once per real day on Camp visit.
     if (typeof _campCollectTithe === 'function') {
@@ -46778,6 +46855,25 @@ function renderCamp() {
         Click <strong>Collect</strong> to apply the XP — level-ups roll new stats and learnable moves.
         <br><span class="ink-dim">Only units you own are listed. You must always keep at least <strong>${CAMP_MIN_COLLECTION}</strong> cards available — you have <strong>${_totalOwnedCards()}</strong> owned · <strong>${Camp.slots.length}</strong> parked.</span>
       </div>
+      ${(() => {
+        const rv = (typeof _campRival === 'function') ? _campRival() : { name: 'Rivals', threat: 0 };
+        const thr = Math.round(rv.threat || 0);
+        const band = thr >= 70 ? '#e0556a' : thr >= 40 ? '#d4af37' : '#5fae7a';
+        const mia = (Array.isArray(Profile.campMissing) ? Profile.campMissing.length : 0);
+        const lost = (Array.isArray(Profile.memorial) ? Profile.memorial.length : 0);
+        const deployed = Camp.slots.filter(s => s.activity && s.activity !== 'rest').length;
+        return `<div style="display:flex;flex-wrap:wrap;gap:0.6rem 1.4rem;align-items:center;background:linear-gradient(90deg,#0a0d13,#0e1118);border:1px solid #243042;border-left:4px solid ${band};border-radius:6px;padding:0.7rem 1rem;margin-bottom:1.2rem;font-family:'Cinzel',serif">
+          <span style="color:#7fd6ff;letter-spacing:0.12em;font-size:0.8rem">▣ CAMP STATUS</span>
+          <span style="flex:1;min-width:220px">
+            <span style="color:#cbd5e8;font-size:0.82rem">${escapeHtml(rv.name || 'Rival Faction')} threat</span>
+            <span style="display:inline-block;vertical-align:middle;width:140px;height:8px;background:#1a2230;border-radius:4px;margin:0 0.5rem;overflow:hidden"><span style="display:block;height:100%;width:${thr}%;background:${band}"></span></span>
+            <span style="color:${band};font-size:0.82rem">${thr}%</span>
+          </span>
+          <span style="color:#9fb4d8;font-size:0.8rem">🟠 ${deployed} deployed</span>
+          <span style="color:#d4af37;font-size:0.8rem">🌫 ${mia} MIA</span>
+          <span style="color:#e0879a;font-size:0.8rem">🕯 ${lost} lost</span>
+        </div>`;
+      })()}
       <div style="margin:0 0 1.4rem">
         <div class="forge-section-header"><h3 style="color:#8fd6ff">🏗️ Base Construction</h3></div>
         <div class="small-text ink-dim" style="margin:-0.3rem 0 0.7rem">Build & upgrade facilities — each one strengthens your survivors. Construction continues in real time, even offline.</div>

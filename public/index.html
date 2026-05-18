@@ -21904,54 +21904,103 @@ function _rehydrateCatalogMedia() {
   } catch (e) { /* non-fatal cosmetic rehydrate */ }
 }
 
+// Apply a fetched catalog row (from the DB OR the public Storage fallback)
+// onto Catalog.*. Shared so both paths behave identically.
+function _applyCatalogRow(data) {
+  Catalog.cards  = Array.isArray(data.cards)  ? data.cards  : [];
+  const rawMoves = (data.moves && typeof data.moves === 'object') ? data.moves : {};
+  // 🤖 Extract admin-published payloads piggybacked on the moves dict via
+  // sentinel keys. Strip them from the moves dict before storing so they
+  // don't show up as bogus "moves" anywhere.
+  Catalog.aiDecks = Array.isArray(rawMoves.__ai_decks__) ? rawMoves.__ai_decks__ : [];
+  Catalog.starterDecks = Array.isArray(rawMoves.__starter_decks__) ? rawMoves.__starter_decks__ : [];
+  Catalog.campaigns = Array.isArray(rawMoves.__campaigns__) ? rawMoves.__campaigns__ : [];
+  Catalog.pageGuides = Array.isArray(rawMoves.__page_guides__) ? rawMoves.__page_guides__ : [];
+  Catalog.tombstoneArt = rawMoves.__tombstone_art__ || null;
+  Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
+  Catalog.rlcRelics = Array.isArray(rawMoves.__rlc_relics__) ? rawMoves.__rlc_relics__ : [];
+  Catalog.blackMarketPrices = (rawMoves.__black_market_prices__ && typeof rawMoves.__black_market_prices__ === 'object') ? rawMoves.__black_market_prices__ : {};
+  Catalog.campCosts = (rawMoves.__camp_costs__ && typeof rawMoves.__camp_costs__ === 'object') ? rawMoves.__camp_costs__ : {};
+  const cleanMoves = { ...rawMoves };
+  delete cleanMoves.__ai_decks__;
+  delete cleanMoves.__starter_decks__;
+  delete cleanMoves.__campaigns__;
+  delete cleanMoves.__page_guides__;
+  delete cleanMoves.__tombstone_art__;
+  delete cleanMoves.__tombstone_cosmetics__;
+  delete cleanMoves.__rlc_relics__;
+  delete cleanMoves.__black_market_prices__;
+  delete cleanMoves.__camp_costs__;
+  Catalog.moves  = cleanMoves;
+  Catalog.items  = Array.isArray(data.items)  ? data.items  : [];
+  Catalog.packs  = Array.isArray(data.packs)  ? data.packs  : [];
+  Catalog.heroes = Catalog.cards.filter(c => c && c.type === 'hero');
+  Catalog.publishedAt   = data.published_at  ? new Date(data.published_at).getTime() : 0;
+  Catalog.publishedBy   = data.published_by  || null;
+  Catalog.lastFetchedAt = Date.now();
+  _rehydrateCatalogMedia();
+  try { if (typeof _persistCatalog === 'function') _persistCatalog(); } catch (e) {}
+}
+
+// 🛟 RLS-PROOF fallback. The card_catalog DB read needs a working SELECT RLS
+// policy for the `authenticated` role; if that policy isn't in effect, every
+// non-admin player silently gets NOTHING. The public-catalog Storage bucket
+// is anon-downloadable (verified), so cloudPublishCatalog() also mirrors the
+// catalog there as pubcat-<n>.json + pubcat.index.json. This reads it back
+// with the same direct-download + shard-probe resilience used for art.
+async function _cloudFetchCatalogFromStorage() {
+  try {
+    if (!initCloud()) return { ok: false };
+    const dl = async (name) => {
+      try {
+        const { data, error } = await Cloud.client.storage.from(PUBLIC_CATALOG_BUCKET).download(name);
+        if (error || !data) return null;
+        return await data.text();
+      } catch (e) { return null; }
+    };
+    let merged = {};
+    let got = false;
+    let shardNames = null;
+    const idxTxt = await dl('pubcat.index.json');
+    if (idxTxt) { try { const idx = JSON.parse(idxTxt); if (Array.isArray(idx.shards)) shardNames = idx.shards; } catch (e) {} }
+    if (shardNames && shardNames.length) {
+      for (const s of shardNames) { const t = await dl(s); if (t) { try { Object.assign(merged, JSON.parse(t) || {}); got = true; } catch (e) {} } }
+    } else {
+      for (let i = 0; i < 64; i++) { const t = await dl(`pubcat-${i}.json`); if (!t) break; try { Object.assign(merged, JSON.parse(t) || {}); got = true; } catch (e) {} }
+    }
+    if (!got || !merged || (!Array.isArray(merged.cards) && !merged.moves)) return { ok: false };
+    _applyCatalogRow(merged);
+    return { ok: true, count: Catalog.cards.length + Catalog.items.length + Catalog.packs.length };
+  } catch (e) { return { ok: false }; }
+}
+
 // ---- Fetch the latest catalog from Supabase (called automatically on sign-in) ----
 async function cloudFetchCatalog() {
   if (!initCloud() || !Profile.cloud.signedIn) return { ok: false, error: 'Not signed in.' };
+  let dbErr = null;
   try {
     const { data, error } = await Cloud.client
       .from('card_catalog')
       .select('*')
       .eq('id', 'singleton')
       .maybeSingle();
-    if (error) return { ok: false, error: error.message };
-    if (!data) return { ok: true, empty: true }; // admin hasn't published yet
-    Catalog.cards  = Array.isArray(data.cards)  ? data.cards  : [];
-    const rawMoves = (data.moves && typeof data.moves === 'object') ? data.moves : {};
-    // 🤖 Extract admin-published payloads piggybacked on the moves dict via
-    // sentinel keys. Strip them from the moves dict before storing so they
-    // don't show up as bogus "moves" anywhere.
-    Catalog.aiDecks = Array.isArray(rawMoves.__ai_decks__) ? rawMoves.__ai_decks__ : [];
-    Catalog.starterDecks = Array.isArray(rawMoves.__starter_decks__) ? rawMoves.__starter_decks__ : [];
-    Catalog.campaigns = Array.isArray(rawMoves.__campaigns__) ? rawMoves.__campaigns__ : [];
-    Catalog.pageGuides = Array.isArray(rawMoves.__page_guides__) ? rawMoves.__page_guides__ : [];
-    Catalog.tombstoneArt = rawMoves.__tombstone_art__ || null;
-    Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
-    Catalog.rlcRelics = Array.isArray(rawMoves.__rlc_relics__) ? rawMoves.__rlc_relics__ : [];
-    Catalog.blackMarketPrices = (rawMoves.__black_market_prices__ && typeof rawMoves.__black_market_prices__ === 'object') ? rawMoves.__black_market_prices__ : {};
-    Catalog.campCosts = (rawMoves.__camp_costs__ && typeof rawMoves.__camp_costs__ === 'object') ? rawMoves.__camp_costs__ : {};
-    const cleanMoves = { ...rawMoves };
-    delete cleanMoves.__ai_decks__;
-    delete cleanMoves.__starter_decks__;
-    delete cleanMoves.__campaigns__;
-    delete cleanMoves.__page_guides__;
-    delete cleanMoves.__tombstone_art__;
-    delete cleanMoves.__tombstone_cosmetics__;
-    delete cleanMoves.__rlc_relics__;
-    delete cleanMoves.__black_market_prices__;
-    delete cleanMoves.__camp_costs__;
-    Catalog.moves  = cleanMoves;
-    Catalog.items  = Array.isArray(data.items)  ? data.items  : [];
-    Catalog.packs  = Array.isArray(data.packs)  ? data.packs  : [];
-    // Heroes are extracted from the cards array (type === 'hero') so lookup
-    // helpers can find them in O(1) by id without walking the full pool.
-    Catalog.heroes = Catalog.cards.filter(c => c && c.type === 'hero');
-    Catalog.publishedAt   = data.published_at  ? new Date(data.published_at).getTime() : 0;
-    Catalog.publishedBy   = data.published_by  || null;
-    Catalog.lastFetchedAt = Date.now();
-    _rehydrateCatalogMedia();
-    _persistCatalog();
-    return { ok: true, count: Catalog.cards.length + Catalog.items.length + Catalog.packs.length };
-  } catch (e) { return { ok: false, error: (e && e.message) || 'Catalog fetch failed.' }; }
+    if (!error && data) {
+      _applyCatalogRow(data);
+      return { ok: true, source: 'db', count: Catalog.cards.length + Catalog.items.length + Catalog.packs.length };
+    }
+    dbErr = error ? (error.message || ('' + error)) : null;
+  } catch (e) { dbErr = (e && e.message) || 'Catalog fetch failed.'; }
+  // DB read returned no row (RLS blocked / not published) or errored →
+  // fall back to the public Storage mirror so players ALWAYS get content.
+  try {
+    const fb = await _cloudFetchCatalogFromStorage();
+    if (fb && fb.ok) {
+      try { console.info('[catalog] DB read empty/blocked — served ' + fb.count + ' entries from public Storage fallback.'); } catch (e) {}
+      return { ok: true, source: 'storage', count: fb.count };
+    }
+  } catch (e) {}
+  if (dbErr) return { ok: false, error: dbErr };
+  return { ok: true, empty: true };   // genuinely nothing published anywhere
 }
 
 // ---- Admin-only: publish the entire local Forge content as the new catalog ----
@@ -22045,9 +22094,28 @@ async function cloudPublishCatalog() {
       const sizeMB = (JSON.stringify(row).length / 1048576).toFixed(1);
       return { ok: false, error: `${error.message || error} (catalog ≈ ${sizeMB} MB — if this keeps failing, your content set may be too large for one row; art still syncs via Publish Catalog Art).` };
     }
+    // 🛟 RLS-PROOF distribution. ALSO mirror the catalog to the public-catalog
+    // Storage bucket (anon-downloadable, verified). Players fall back to this
+    // when the card_catalog DB read returns nothing — which is exactly what
+    // happens if the SELECT RLS policy for `authenticated` isn't in effect,
+    // the bug that made brand-new accounts see zero content. Best-effort:
+    // a Storage hiccup never fails the (already-succeeded) DB publish.
+    let storageWarn = null;
+    try {
+      const cshards = _splitObjectIntoShards(row, CATALOG_SHARD_CAP_BYTES);
+      const cnames  = cshards.map((_, i) => `pubcat-${i}.json`);
+      let serr = null;
+      for (let i = 0; i < cshards.length; i++) {
+        serr = await _storagePutRetry(cnames[i], JSON.stringify(cshards[i]), 3);
+        if (serr) { serr = `shard ${i + 1}/${cshards.length}: ${serr}`; break; }
+      }
+      if (!serr) serr = await _storagePutRetry('pubcat.index.json',
+        JSON.stringify({ shards: cnames, total: cnames.length, published_at: row.published_at }), 3);
+      if (serr) storageWarn = serr;
+    } catch (e) { storageWarn = (e && e.message) || 'storage mirror exception'; }
     // Refresh the local mirror so the admin sees their publish immediately.
     await cloudFetchCatalog().catch(() => {});
-    return { ok: true, count: row.cards.length + row.items.length + row.packs.length };
+    return { ok: true, count: row.cards.length + row.items.length + row.packs.length, storageWarn };
   } catch (e) { return { ok: false, error: (e && e.message) || 'Publish failed.' }; }
 }
 
@@ -36965,7 +37033,11 @@ function renderPricingAdmin() {
     add(`⏳ <strong>Step 1/3</strong> — Publishing card catalog…`);
     let r1 = { ok: false };
     try { r1 = await cloudPublishCatalog(); } catch (e) { r1 = { ok: false, error: (e && e.message) || 'exception' }; }
-    if (r1.ok) setLast(`✅ <strong>Step 1/3</strong> — Card catalog published (${r1.count || 0} entries).`);
+    if (r1.ok) {
+      setLast(`✅ <strong>Step 1/3</strong> — Card catalog published (${r1.count || 0} entries).`);
+      if (r1.storageWarn) add(`&nbsp;&nbsp;⚠ RLS-proof public mirror had an issue: ${escapeHtml(String(r1.storageWarn))} <span class="ink-dim">(DB publish still OK; re-tap to retry the mirror)</span>`);
+      else add(`&nbsp;&nbsp;🛟 RLS-proof public mirror written — players get content even if DB read is blocked.`);
+    }
     else { setLast(`❌ <strong>Step 1/3</strong> — Catalog publish FAILED: ${escapeHtml(r1.error || 'unknown')}`); }
 
     // ── Step 2: public art/media bucket (sprites, card art, page-guide voice) ──

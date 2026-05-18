@@ -29,9 +29,33 @@ function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
   return (
     <div className="hud-top">
       <div className="brand" title="Your underground camp — Sector-7, depth -72m">
+        <button
+          title="Back to the main menu"
+          onClick={() => {
+            try {
+              if (window.BB_back) window.BB_back();
+              else window.parent.postMessage({ type: "base:back" }, "*");
+            } catch (e) {}
+          }}
+          style={{
+            cursor: "pointer",
+            fontWeight: 800,
+            fontSize: 11,
+            letterSpacing: ".06em",
+            color: "#ffe9b8",
+            background: "linear-gradient(180deg,rgba(60,40,110,0.95),rgba(28,16,52,0.96))",
+            border: "1px solid rgba(212,175,55,0.6)",
+            borderRadius: 999,
+            padding: "5px 11px",
+            marginRight: 4,
+            whiteSpace: "nowrap",
+          }}
+        >
+          ← Menu
+        </button>
         <div className="brand-mark" />
         <div>
-          <div className="brand-name">BUNKER</div>
+          <div className="brand-name">CAMP</div>
           <div className="brand-sub">SECTOR-7 ▾ depth -72m</div>
         </div>
       </div>

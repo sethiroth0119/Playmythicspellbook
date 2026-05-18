@@ -218,12 +218,12 @@ function TopBar({ filter, setFilter }) {
       <div className="brand">
         <div className="brand-mark" />
         <div>
-          <div className="brand-name">BUNKER</div>
+          <div className="brand-name">CAMP</div>
           <div className="brand-sub">Tactical Overlay · v0.4</div>
         </div>
       </div>
       <div className="crumbs">
-        <a href="index.html">◂ Base</a>
+        <a href="index.html">◂ Camp</a>
         <span className="sep">/</span>
         <span className="here">World Map · Ethos Heights</span>
         {window.__BRIDGE && window.__BRIDGE.world && window.__BRIDGE.world.admin && (

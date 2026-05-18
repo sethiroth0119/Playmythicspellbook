@@ -32003,8 +32003,8 @@ function _baseAlerts() {
   } catch (e) { return null; }
 }
 function _baseRoster() {
-  // The REAL roster: the player's used heroes (level/kills tracked in
-  // Profile.heroes) + units currently parked at the camp.
+  // ROSTER = the player's UNITS (parked for activities) + hired NPC workers
+  // and unit-workers stationed at rooms. Heroes are NOT shown here.
   try {
     const ini = (nm) => {
       const w = String(nm || '?').replace(/[^A-Za-z0-9 ]/g, ' ').trim().split(/\s+/).filter(Boolean);
@@ -32025,18 +32025,22 @@ function _baseRoster() {
       return (c && typeof c.icon === 'string' && c.icon) ? c.icon : '';
     };
     const out = [];
-    const H = (typeof Profile !== 'undefined' && Profile.heroes) || {};
-    Object.keys(H).forEach((id) => {
-      const h = H[id] || {};
+    // 👷 Hired NPCs + units stationed as room workers.
+    const wks = (typeof _campWorkers === 'function') ? _campWorkers() : [];
+    wks.forEach((w) => {
+      if (!w) return;
+      const isUnit = w.kind === 'unit' && w.refId;
       let c = null;
-      try { c = (typeof _resolveAnyCard === 'function') ? _resolveAnyCard(id) : null; } catch (e) {}
-      const nm = (c && c.name) || id;
-      const lv = h.level || 1;
+      if (isUnit) { try { c = (typeof _resolveAnyCard === 'function') ? _resolveAnyCard(w.refId) : null; } catch (e) {} }
+      const nm = w.name || (isUnit ? w.refId : 'Worker');
       out.push({
-        id: id, icon: iconOf(id, c),
-        i: ini(nm), n: nm, t: 'Lv ' + lv, state: 'on',
-        tip: 'Hero · Lv ' + lv + (h.kills ? ' · ' + h.kills + ' kills' : '') + (h.wins ? ' · ' + h.wins + ' wins' : '') + ' · click for card',
-        _s: 1000 + lv,
+        id: isUnit ? w.refId : null,
+        icon: isUnit ? iconOf(w.refId, c) : '',
+        i: ini(nm), n: nm,
+        t: w.role || (isUnit ? 'Unit' : 'NPC'),
+        state: 'busy',
+        tip: (isUnit ? 'Unit on duty' : 'Hired NPC') + ' · ' + (w.role || 'worker') + (isUnit ? ' · click for card' : ''),
+        _s: 800,
       });
     });
     const slots = (typeof Camp !== 'undefined' && Array.isArray(Camp.slots)) ? Camp.slots : [];
@@ -32059,7 +32063,7 @@ function _baseRoster() {
     });
     out.sort((a, b) => (b._s || 0) - (a._s || 0));
     out.forEach((o) => { delete o._s; });
-    if (!out.length) return [{ id: null, icon: '', i: '—', n: 'No crew yet', t: '', state: 'on', tip: 'Level a hero or park units at the camp.' }];
+    if (!out.length) return [{ id: null, icon: '', i: '—', n: 'No crew yet', t: '', state: 'on', tip: 'Park a unit (Camp Ops) or hire an NPC (Workers) to staff the camp.' }];
     return out.slice(0, 30);
   } catch (e) { return null; }
 }
@@ -32197,7 +32201,11 @@ function _baseCampRooms() {
           : ((typeof Camp !== 'undefined' && Camp.facilities && Camp.facilities[fid]) || {});
         lv = (st && st.level) | 0;
       } catch (e) {}
-      out[rid] = { level: lv, occ: [] };
+      let facMax = 0, facName = '';
+      try { const f = (typeof _campFac === 'function') ? _campFac(fid) : null; if (f) { facMax = f.maxLevel | 0; facName = f.name || ''; } } catch (e) {}
+      let fx = '';
+      try { const sr = (typeof _campStaffRoom === 'function') ? _campStaffRoom(rid) : null; if (sr) fx = sr.fx || ''; } catch (e) {}
+      out[rid] = { level: lv, occ: [], facMax: facMax, facName: facName, fx: fx };
     });
     const slots = (typeof Camp !== 'undefined' && Array.isArray(Camp.slots)) ? Camp.slots : [];
     slots.forEach((s) => {
@@ -32341,15 +32349,10 @@ function mountBaseBuilder() {
       // (the click is the user gesture, so autoplay is allowed here).
       try { if (typeof playCampAmbientMusic === 'function') playCampAmbientMusic(); } catch (e) {}
     }
-    if (!b) {
-      b = document.createElement('button');
-      b.id = BID; b.textContent = '← Menu';
-      b.title = 'Return to the main menu';
-      b.style.cssText = "position:fixed;left:14px;top:12px;z-index:2147483320;cursor:pointer;font-family:'Cinzel',serif;font-weight:800;font-size:0.85rem;color:#ffe9b8;background:linear-gradient(180deg,rgba(60,40,110,0.95),rgba(28,16,52,0.96));border:1px solid rgba(212,175,55,0.6);border-radius:999px;padding:0.5rem 1rem;box-shadow:0 6px 18px rgba(0,0,0,0.6);opacity:0;transition:opacity .4s ease";
-      b.onclick = () => { _baseLeave(); };
-      document.body.appendChild(b);
-      try { requestAnimationFrame(function () { b.style.opacity = '1'; }); } catch (e) { b.style.opacity = '1'; }
-    }
+    // NOTE: the "← Menu" control lives INSIDE the bunker HUD (hud.jsx brand)
+    // and posts base:back → _baseLeave(). No floating parent button, so it
+    // can never overlay the HUD. (BID kept for safe teardown of any stale one.)
+    if (b) { try { b.remove(); } catch (e) {} b = null; }
     if (!App._baseMsgBound) {
       App._baseMsgHandler = function (e) {
         const d = e && e.data;
@@ -52571,7 +52574,7 @@ function renderCamp() {
         <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/camp%20icon.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Camp</h2>
         <div style="display:flex;gap:0.6rem;align-items:center">
           <span class="result-stat-pill" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.5);color:#ffd166;font-size:0.95rem;padding:0.3rem 0.8rem"><span class="cinder-icon"></span> ${Profile.gems || 0}</span>
-          <button class="btn-secondary" id="btn-back-camp">${App._campReturnsToBunker ? '← Bunker' : '← Back to Menu'}</button>
+          <button class="btn-secondary" id="btn-back-camp">${App._campReturnsToBunker ? '← Camp' : '← Back to Menu'}</button>
         </div>
       </div>
       <div class="placement-hint" style="margin-bottom:1rem">

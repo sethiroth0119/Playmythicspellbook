@@ -24161,7 +24161,52 @@ async function frFetch() {
   } catch (e) { _frErr(e); }
   FoundationReserve.loading = false;
 }
-// Returns { can, max, pct, bottleneck, out } for a product vs current totals.
+// ============================================================================
+// 📈 AI ECONOMY DIRECTOR — world-event coupling + scarcity / inflation control.
+// Fully DERIVED (no extra Supabase table): the active world crisis is a
+// deterministic function of a 6-hour UTC window, so every player worldwide
+// sees the same event at the same time with zero shared infra. Its effects
+// are real, not cosmetic:
+//   • a crisis throttles stock of every product that needs the hit resource
+//     (Fuel Crisis → the fuel-hungry Military Arsenal line genuinely stalls)
+//   • world scarcity drives dynamic pricing; a Foundation Relief Surge floods
+//     stock and drops prices — that is the inflation-control lever
+//   • contributing the crisis resource pays BONUS rep + Cinders, so the
+//     economy self-stabilises through player action (controlled scarcity,
+//     never a total collapse).
+// ============================================================================
+const FR_EVENT_WINDOW_MS = 6 * 3600 * 1000;   // a world crisis lasts ~6h
+const RESERVE_EVENTS = [
+  { id: 'fuelCrisis',   name: 'Fuel Crisis',               icon: '⛽', res: ['fuel'],                     stockMul: 0.35, priceMul: 1.60, line: 'Fuel convoys ambushed on the dead highways. Fuel-hungry print lines are stalling.' },
+  { id: 'bioLock',      name: 'Bio-Containment Lockdown',  icon: '☣️', res: ['corruptedEssence', 'dna'],  stockMul: 0.40, priceMul: 1.55, line: 'An SCP breach sealed the anomalous vaults. Corruption & relic stock is choked.' },
+  { id: 'shardDrought', name: 'Memory Shard Drought',      icon: '🧠', res: ['memoryShards'],             stockMul: 0.45, priceMul: 1.45, line: 'Shard yields collapsed across the wasteland. Genesis & relic runs are starved.' },
+  { id: 'outbreak',     name: 'Outbreak — Medical Demand', icon: '⚕️', res: ['medicine', 'water'],        stockMul: 0.50, priceMul: 1.40, line: 'A plague wave is burning through medicine. Relief crates are being rationed.' },
+  { id: 'reliefSurge',  name: 'Foundation Relief Surge',   icon: '📦', res: [], relief: true,             stockMul: 1.30, priceMul: 0.78, line: 'The Foundation flooded the Reserve with emergency stock. Lines run hot, prices fall.' },
+];
+function _frHash(n) {
+  n = (n | 0) ^ 0x9e3779b9;
+  n = Math.imul(n ^ (n >>> 15), 0x85ebca6b);
+  n = Math.imul(n ^ (n >>> 13), 0xc2b2ae35);
+  return (n ^ (n >>> 16)) >>> 0;
+}
+function frEconomyWindow() { return Math.floor(Date.now() / FR_EVENT_WINDOW_MS); }
+// Active world event for the current window (null = calm market). ~1 in 3
+// windows are calm so a crisis reads as an event, not the baseline.
+function frActiveEvent() {
+  const w = frEconomyWindow();
+  const h = _frHash(w);
+  if (h % 3 === 0) return null;
+  const ev = RESERVE_EVENTS[h % RESERVE_EVENTS.length];
+  const endsAt = (w + 1) * FR_EVENT_WINDOW_MS;
+  return Object.assign({}, ev, { endsAt: endsAt, endsInMs: Math.max(0, endsAt - Date.now()) });
+}
+function _frEventHitsProduct(ev, p) {
+  if (!ev || !p) return false;
+  if (ev.relief) return true;
+  return Object.keys(p.recipe).some(r => ev.res.indexOf(r) >= 0);
+}
+// Returns { can, max, pct, bottleneck, out, event } vs current totals AND the
+// active world event (a crisis throttles, a relief surge boosts).
 function frManufacture(p) {
   const T = FoundationReserve.totals || {};
   let can = Infinity, bottleneck = null, out = null, bestRatio = Infinity;
@@ -24175,8 +24220,37 @@ function frManufacture(p) {
     if (ratio < bestRatio) { bestRatio = ratio; bottleneck = id; }
   });
   if (!isFinite(can)) can = 0;
+  const ev = frActiveEvent();
+  const hit = !!(ev && _frEventHitsProduct(ev, p));
+  if (hit) can = Math.floor(can * ev.stockMul);   // 📈 crisis throttle / relief boost
   can = Math.max(0, Math.min(p.max, can));
-  return { can: can, max: p.max, pct: Math.round((can / p.max) * 100), bottleneck: bottleneck, out: out };
+  return { can: can, max: p.max, pct: Math.round((can / p.max) * 100), bottleneck: bottleneck, out: out, event: hit ? ev : null };
+}
+// World economy health, derived live from how many lines are stalled / low.
+function frEconomyState() {
+  let stalled = 0, critical = 0, worst = null, worstPct = 1e9;
+  RESERVE_PRODUCTS.forEach(p => {
+    const mf = frManufacture(p);
+    if (mf.can <= 0) stalled++;
+    else if (mf.pct < 15) critical++;
+    if (mf.pct < worstPct) { worstPct = mf.pct; worst = p; }
+  });
+  const state = stalled >= 3 ? 'CRISIS' : (stalled >= 1 || critical >= 2) ? 'STRAINED' : 'STABLE';
+  return { state: state, stalled: stalled, critical: critical, worst: worst, ev: frActiveEvent() };
+}
+// Dynamic price multiplier — pure function of world scarcity + active event.
+function frPriceMul(p, mf) {
+  mf = mf || frManufacture(p);
+  let m = mf.pct < 8 ? 1.85 : mf.pct < 20 ? 1.45 : mf.pct < 45 ? 1.18 : mf.pct >= 90 ? 0.85 : 1.0;
+  const ev = frActiveEvent();
+  if (ev && _frEventHitsProduct(ev, p)) m *= ev.priceMul;
+  return Math.max(0.5, Math.min(3, m));
+}
+function frEffectivePrice(p) { return Math.max(1, Math.round((p.price | 0) * frPriceMul(p))); }
+function _frFmtDur(ms) {
+  ms = Math.max(0, ms | 0);
+  const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  return h > 0 ? (h + 'h ' + m + 'm') : (m + 'm');
 }
 async function frDeposit(resId, qty) {
   if (!initCloud() || !Profile.cloud.signedIn) { showToast('☁ Sign in to contribute to the Reserve.', 2600); return false; }
@@ -24189,7 +24263,12 @@ async function frDeposit(resId, qty) {
   // 🔻 THE SINK — pull the resources out of the player's ledger permanently.
   if (!spendResources({ [resId]: qty })) { showToast('Could not deduct resources.'); return false; }
   try { saveProfile(); } catch (e) {}
-  const gained = qty * _frWeight(resId);
+  // 📈 Emergency-contribution bonus — when an active world crisis is starved
+  // of THIS resource, the Director pays extra rep + Cinders so players rush
+  // to break the shortage (self-stabilising economy, never a hard collapse).
+  const _ev = frActiveEvent();
+  const _emergency = !!(_ev && !_ev.relief && (_ev.res || []).indexOf(resId) >= 0);
+  const gained = Math.round(qty * _frWeight(resId) * (_emergency ? 1.6 : 1));
   const me = Profile.cloud.userId;
   try {
     // Single-writer upsert on MY row for this resource (no race).
@@ -24212,7 +24291,7 @@ async function frDeposit(resId, qty) {
   // Reward: Cinders + reputation progress.
   const reward = Math.max(1, Math.round(gained * 0.5));
   try { if (typeof addCinders === 'function') addCinders(reward); } catch (e) {}
-  showToast(`🏛 Reserve received ${qty} ${_meta(resId).icon} — +${reward} 🔥 · +${gained} rep`, 3800);
+  showToast(`🏛 Reserve received ${qty} ${_meta(resId).icon} — +${reward} 🔥 · +${gained} rep${_emergency ? ' · 🚨 EMERGENCY +60%' : ''}`, _emergency ? 4600 : 3800);
   await frFetch();
   return true;
 }
@@ -24236,9 +24315,14 @@ async function frBuyProduct(productId) {
     showToast(`🏛 ${p.name} is out of world stock${mf.bottleneck ? ' — Reserve needs ' + (_meta(mf.bottleneck).name || mf.bottleneck) : ''}. Contribute to the Reserve.`, 4200);
     return false;
   }
-  const price = p.price | 0;
+  // 📈 Dynamic price — world scarcity + any active crisis / relief surge.
+  const base = p.price | 0;
+  const price = frEffectivePrice(p);
+  const ev = frActiveEvent();
+  const evHit = ev && _frEventHitsProduct(ev, p);
+  const priceNote = price > base ? ` (▲ ${Math.round((price / base - 1) * 100)}% — scarcity)` : price < base ? ` (▼ ${Math.round((1 - price / base) * 100)}% — surplus)` : '';
   if ((Profile.gems || 0) < price) { showToast(`Need ${price} 🔥 — you have ${Profile.gems || 0}`, 3000); return false; }
-  if (!confirm(`Buy “${p.name}” for ${price} 🔥?\n\nThis draws ${Object.keys(p.recipe).map(k => (p.recipe[k]) + '×' + (_meta(k).name || k)).join(', ')} out of the world Reserve.`)) return false;
+  if (!confirm(`Buy “${p.name}” for ${price} 🔥${priceNote}?\n\n${evHit ? '⚠ ' + ev.icon + ' ' + ev.name + ' is in effect.\n' : ''}This draws ${Object.keys(p.recipe).map(k => (p.recipe[k]) + '×' + (_meta(k).name || k)).join(', ')} out of the world Reserve.`)) return false;
   if (typeof spendGems === 'function' ? !spendGems(price) : ((Profile.gems || 0) < price)) { showToast('Not enough Cinders'); return false; }
   // Draw the recipe out of the global Reserve (append-only — race-free).
   const me = Profile.cloud.userId;
@@ -24332,8 +24416,24 @@ function openFoundationReserve() {
         '</div>';
     };
 
+    const directorBanner = () => {
+      const es = frEconomyState();
+      const ev = es.ev;
+      const stCol = es.state === 'CRISIS' ? '#e07a6a' : es.state === 'STRAINED' ? '#e0b84a' : '#5fd08a';
+      const head = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<span style="font-weight:800;color:' + stCol + '">📈 ECONOMY: ' + es.state + '</span>' +
+        '<span class="small-text" style="color:#9fb6d6">' + es.stalled + ' stalled · ' + es.critical + ' critical' + (es.worst ? ' · weakest line: ' + esc(es.worst.name) : '') + '</span></div>';
+      const bodyL = ev
+        ? '<div style="margin-top:5px;color:' + (ev.relief ? '#7fe0a0' : '#ffcaa0') + ';font-weight:700">' + ev.icon + ' ' + esc(ev.name) +
+            ' <span class="small-text" style="color:#9fb6d6;font-weight:400">· ends in ' + _frFmtDur(ev.endsInMs) + '</span></div>' +
+          '<div class="small-text" style="color:#cfe0f4;margin-top:2px">' + esc(ev.line) +
+            (ev.relief ? '' : ' <span style="color:#ffd166">Contributing ' + (ev.res || []).map(r => esc(_meta(r).name || r)).join(' / ') + ' pays +60% rep & Cinders.</span>') + '</div>'
+        : '<div class="small-text" style="color:#9fb6d6;margin-top:3px">Markets are calm — no active world crisis. Stock & prices sit at baseline.</div>';
+      return '<div style="margin:8px 0 0;padding:9px 11px;border:1px solid ' + stCol + '55;border-radius:8px;background:' + stCol + '12">' + head + bodyL + '</div>';
+    };
+
     const productionTab = () => {
-      return '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Products only exist when the world has supplied enough. The Reserve auto-calculates how many can currently be manufactured — the bottleneck resource caps the run.</div>' +
+      return '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Products only exist when the world has supplied enough. The AI Economy Director throttles lines during a crisis and prices on scarcity — the bottleneck resource caps the run.</div>' +
         RESERVE_PRODUCTS.map(p => {
           const mf = frManufacture(p);
           const barCol = mf.pct >= 66 ? '#5fd08a' : mf.pct >= 25 ? '#e0b84a' : '#e07a6a';
@@ -24343,12 +24443,17 @@ function openFoundationReserve() {
                 ? '<span style="color:#e07a6a;font-weight:800">Manufacturing stalled</span>'
                 : '<span style="color:#9fe0b0;font-weight:800">' + numF(mf.can) + ' / ' + numF(mf.max) + ' ready</span>');
           const recipe = Object.keys(p.recipe).map(id => (_meta(id).icon || '📦') + (p.recipe[id])).join(' ');
+          const base = p.price | 0, eff = frEffectivePrice(p);
+          const priceStr = eff > base ? '<span style="color:#ff9a6b">' + eff + ' 🔥 ▲</span>' : eff < base ? '<span style="color:#7fe0a0">' + eff + ' 🔥 ▼</span>' : (eff + ' 🔥');
+          const evChip = mf.event
+            ? ' <span class="small-text" style="color:' + (mf.event.relief ? '#7fe0a0' : '#ff9a6b') + ';font-weight:700">' + mf.event.icon + ' ' + esc(mf.event.name) + '</span>'
+            : '';
           return '<div style="padding:9px 11px;border:1px solid rgba(120,170,255,0.18);border-radius:9px;background:rgba(40,70,130,0.10);margin-bottom:7px">' +
             '<div style="display:flex;align-items:center;gap:9px">' +
               '<span style="font-size:1.4rem">' + p.icon + '</span>' +
-              '<div style="flex:1;min-width:0"><div style="color:#dce8ff;font-weight:800">' + esc(p.name) + ' <span class="small-text" style="color:#8fb0e0">· ' + esc(p.cat) + '</span></div>' +
+              '<div style="flex:1;min-width:0"><div style="color:#dce8ff;font-weight:800">' + esc(p.name) + ' <span class="small-text" style="color:#8fb0e0">· ' + esc(p.cat) + '</span>' + evChip + '</div>' +
               '<div class="small-text" style="color:#9fb6d6">' + esc(p.blurb) + '</div></div>' +
-              '<div style="text-align:right">' + status + '<div class="small-text" style="color:#8fb0e0">' + mf.pct + '% capacity</div></div>' +
+              '<div style="text-align:right">' + status + '<div class="small-text" style="color:#8fb0e0">' + mf.pct + '% · ' + priceStr + '</div></div>' +
             '</div>' +
             '<div style="height:7px;border-radius:5px;background:rgba(10,18,36,0.8);margin:7px 0 5px;overflow:hidden"><div style="height:100%;width:' + Math.max(2, mf.pct) + '%;background:' + barCol + '"></div></div>' +
             '<div class="small-text" style="color:#8fb0e0">Per-unit reserve cost: ' + esc(recipe) + (mf.bottleneck ? ' · <span style="color:#e0b84a">bottleneck: ' + esc(_meta(mf.bottleneck).name || mf.bottleneck) + '</span>' : '') + '</div>' +
@@ -24384,7 +24489,8 @@ function openFoundationReserve() {
             '<div class="small-text ink-dim">World-scale manufacturing & stabilization. ' + (online ? '<span style="color:#7fdca0">● live</span>' : '<span style="color:#ff9a6b">○ offline</span>') + '</div></div>' +
             '<button id="fr-x" style="cursor:pointer;border:1px solid rgba(150,190,255,0.4);background:transparent;color:#aec8ff;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
           '</div>' +
-          (online && !FoundationReserve.tableMissing ? '<div style="display:flex;gap:4px;margin-bottom:-1px">' + tBtn('reserve', '🏛 Reserve') + tBtn('deposit', '➕ Contribute') + tBtn('production', '⚙️ Production') + '</div>' : '') +
+          ((online && !FoundationReserve.tableMissing && FoundationReserve.lastFetch) ? directorBanner() : '') +
+          (online && !FoundationReserve.tableMissing ? '<div style="display:flex;gap:4px;margin:8px 0 -1px">' + tBtn('reserve', '🏛 Reserve') + tBtn('deposit', '➕ Contribute') + tBtn('production', '⚙️ Production') + '</div>' : '') +
           '<div id="fr-body" style="flex:1;min-height:240px;max-height:56vh;overflow:auto;border:1px solid rgba(120,170,255,0.22);border-radius:0 0 8px 8px;padding:11px">' + body + '</div>' +
           '<button id="fr-close" style="margin-top:12px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(120,170,255,0.5);background:rgba(60,100,170,0.18);color:#dce8ff;font-weight:800">Close</button>' +
           '<div class="small-text ink-dim" style="margin-top:6px">Products are manufactured by the world itself — not generated for free. Your deposits keep civilization’s supply chains running.</div>' +
@@ -54706,30 +54812,51 @@ function _buildPackShopBody(gems, sovBal) {
   // supply (real scarcity) + a Cinder price.
   const _frSignedIn = !!(typeof Profile !== 'undefined' && Profile.cloud && Profile.cloud.signedIn);
   const reserveHtml = ((typeof RESERVE_PRODUCTS !== 'undefined') ? RESERVE_PRODUCTS : []).map(p => {
-    let mf = { can: 0, max: p.max, pct: 0, bottleneck: null, out: null };
+    let mf = { can: 0, max: p.max, pct: 0, bottleneck: null, out: null, event: null };
     try { if (typeof frManufacture === 'function') mf = frManufacture(p); } catch (e) {}
-    const price = p.price | 0;
+    const base = p.price | 0;
+    let price = base;
+    try { if (typeof frEffectivePrice === 'function') price = frEffectivePrice(p); } catch (e) {}
     const affordable = (Profile.gems || 0) >= price;
     const inStock = mf.can >= 1;
     const recipe = Object.keys(p.recipe).map(id => (_meta(id).icon || '📦') + p.recipe[id]).join(' ');
     const dis = (!_frSignedIn || !inStock || !affordable);
+    const priceTag = price > base ? `<span class="cinder-icon"></span> ${price} <span style="color:#ff9a6b">▲</span>`
+      : price < base ? `<span class="cinder-icon"></span> ${price} <span style="color:#7fe0a0">▼</span>`
+      : `<span class="cinder-icon"></span> ${price}`;
     const btnLabel = !_frSignedIn ? 'Sign in to buy'
       : !inStock ? 'Out of world stock'
       : !affordable ? `Need ${price - (Profile.gems || 0)} more <span class="cinder-icon"></span>`
-      : `<span class="cinder-icon"></span> ${price}`;
+      : priceTag;
+    const evChip = mf.event
+      ? `<div class="shop-pack-custom-badge" style="background:${mf.event.relief ? '#1c5a3a' : '#5a2a1c'};color:${mf.event.relief ? '#7fe0a0' : '#ffb070'};left:auto;right:6px">${mf.event.icon} ${escapeHtml(mf.event.name)}</div>`
+      : '';
     return `
       <div class="shop-pack ${dis ? 'unaffordable' : ''}" style="--pack-accent:#7fb0ff">
         <div class="shop-pack-custom-badge">RESERVE</div>
+        ${evChip}
         <div class="shop-pack-icon">${p.icon || '📦'}</div>
         <div class="shop-pack-name">${escapeHtml(p.name)}</div>
         <div class="shop-pack-desc">${escapeHtml(p.blurb || '')}</div>
         <div class="shop-pack-rarities"><span class="rarity-badge" style="color:${inStock ? '#9fe0b0' : '#e07a6a'};border-color:${inStock ? '#9fe0b0' : '#e07a6a'}">${inStock ? (mf.can.toLocaleString() + ' in world stock') : 'OUT OF STOCK'}</span></div>
         <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Draws ${escapeHtml(recipe)} from the Reserve${(mf.bottleneck && !inStock) ? ' · short on ' + escapeHtml(_meta(mf.bottleneck).name || mf.bottleneck) : ''}</div>
         <div class="shop-pack-buy-row">
-          <button class="btn-primary shop-pack-buy shop-pack-buy-cinder" data-buy-reserve="${p.id}" ${dis ? 'disabled' : ''} title="Manufactured by the world Reserve — buying draws the recipe down from the global pool">${btnLabel}</button>
+          <button class="btn-primary shop-pack-buy shop-pack-buy-cinder" data-buy-reserve="${p.id}" ${dis ? 'disabled' : ''} title="Manufactured by the world Reserve — buying draws the recipe down from the global pool. Price moves with world scarcity + active crises.">${btnLabel}</button>
         </div>
       </div>`;
   }).join('');
+  // 📈 AI Economy Director banner for the storefront.
+  let _frEvBanner = '';
+  try {
+    if (typeof frEconomyState === 'function' && _frSignedIn && typeof FoundationReserve !== 'undefined' && !FoundationReserve.tableMissing && FoundationReserve.lastFetch) {
+      const _es = frEconomyState();
+      const _stCol = _es.state === 'CRISIS' ? '#e07a6a' : _es.state === 'STRAINED' ? '#e0b84a' : '#5fd08a';
+      const _evL = _es.ev
+        ? `${_es.ev.icon} <strong>${escapeHtml(_es.ev.name)}</strong> — ${escapeHtml(_es.ev.line)}${_es.ev.relief ? '' : ' Prices on affected lines are up; contributing the shortage resource pays +60%.'}`
+        : 'Markets are calm — stock & prices at baseline.';
+      _frEvBanner = `<div class="small-text" style="margin:-0.2rem 0 0.6rem;padding:7px 10px;border:1px solid ${_stCol}55;border-radius:8px;background:${_stCol}12;color:#d8e6f6">📈 <strong style="color:${_stCol}">ECONOMY: ${_es.state}</strong> · ${_evL}</div>`;
+    }
+  } catch (e) {}
 
   return `
     <div class="shop-summary">
@@ -54754,7 +54881,8 @@ function _buildPackShopBody(gems, sovBal) {
       <div class="shop-pack-grid">${structHtml}</div>
     ` : ''}
     <h3 class="section-title-mini" style="margin-top:1.6rem;color:#7fb0ff">🏛 Foundation Reserve Stock</h3>
-    <div class="small-text ink-dim" style="margin:-0.2rem 0 0.6rem">Manufactured by the survivor world. Buying one <strong>draws its recipe out of the global Reserve</strong> — stock falls for everyone until more is contributed. Contribute resources in the <strong>Ruin Exchange → Foundation Reserve</strong>.</div>
+    ${_frEvBanner}
+    <div class="small-text ink-dim" style="margin:-0.2rem 0 0.6rem">Manufactured by the survivor world. Buying one <strong>draws its recipe out of the global Reserve</strong> — stock falls for everyone, and prices move with scarcity + active crises. Contribute resources in the <strong>Ruin Exchange → Foundation Reserve</strong>.</div>
     <div class="shop-pack-grid">${reserveHtml}</div>
   `;
 }

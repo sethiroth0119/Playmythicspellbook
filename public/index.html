@@ -21399,6 +21399,12 @@ async function cloudSyncProfile() {
       aiDecks:        Array.isArray(Forge.aiDecks) ? Forge.aiDecks : [],
       starterDecks:   Array.isArray(Forge.starterDecks) ? Forge.starterDecks : [],
       campaigns:      Array.isArray(Forge.campaigns) ? Forge.campaigns : [],
+      // 🧰 Resource ledger (camp salvage / ~149 resources) piggybacks on the
+      // existing `forge` JSONB column — same pattern as userDecks — so it
+      // cloud-syncs with NO schema migration (no missing-column nag) and
+      // still survives cache clears / new devices / cloud restores. It is
+      // tiny (numeric map) so it never strains the forge payload.
+      __salvage__:    (Profile.salvage && typeof Profile.salvage === 'object') ? Profile.salvage : {},
     };
     const row = {
       user_id:       Profile.cloud.userId,
@@ -21417,12 +21423,6 @@ async function cloudSyncProfile() {
       decks:         Profile.deckByHero || {},
       settings:      Profile.settings || {},
       forge:         forgeSmall,
-      // 🧰 Resource ledger (camp salvage / ~149 resources). Cloud-synced so
-      // collected resources survive cache clears, new devices and cloud
-      // restores — they must NEVER vanish on a refresh. Restored with a
-      // per-resource MAX merge on fetch so a stale snapshot can never reduce
-      // a count; the only things that lower it are raid / drain / spend.
-      salvage:       (Profile.salvage && typeof Profile.salvage === 'object') ? Profile.salvage : {},
       updated_at:    new Date().toISOString(),
     };
     let { error } = await Cloud.client.from('user_profiles').upsert(row, { onConflict: 'user_id' });
@@ -21642,9 +21642,14 @@ async function cloudFetchProfile() {
     // (raid / drain / spend) always write local first then upload, so by the
     // time a fetch runs both sides already hold the lower value and MAX is a
     // no-op — the only ways a resource goes down stay raid / drain / spend.
-    if (data.salvage && typeof data.salvage === 'object') {
+    // Salvage piggybacks on the forge JSONB (forge.__salvage__); fall back to
+    // a legacy top-level data.salvage if an old row still has one.
+    const _cloudSalvage = (data.forge && typeof data.forge === 'object' && data.forge.__salvage__ && typeof data.forge.__salvage__ === 'object')
+      ? data.forge.__salvage__
+      : (data.salvage && typeof data.salvage === 'object' ? data.salvage : null);
+    if (_cloudSalvage) {
       if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
-      const _loc = Profile.salvage, _cl = data.salvage;
+      const _loc = Profile.salvage, _cl = _cloudSalvage;
       for (const k in _cl) {
         const cv = _cl[k] | 0, lv = _loc[k] | 0;
         if (cv > lv) _loc[k] = cv;
@@ -22907,13 +22912,12 @@ create table if not exists public.user_profiles (
   decks        jsonb default '{}'::jsonb,
   settings     jsonb default '{}'::jsonb,
   forge        jsonb default '{}'::jsonb,
-  salvage      jsonb default '{}'::jsonb,
   updated_at   timestamptz default now()
 );
 
--- If you ran the v1 schema before these columns were added, run this once to upgrade:
+-- If you ran the v1 schema before this column was added, run this once to upgrade:
 -- alter table public.user_profiles add column if not exists forge jsonb default '{}'::jsonb;
--- alter table public.user_profiles add column if not exists salvage jsonb default '{}'::jsonb;
+-- (Resource salvage piggybacks inside the forge JSONB — no separate column.)
 alter table public.user_profiles enable row level security;
 
 -- Each user can read / insert / update / delete ONLY their own row.
@@ -24275,10 +24279,21 @@ function frRunConvoy() {
     if (!ev) { showToast('No active world event right now.'); return; }
     const cid = _frEventCampaignId(ev.id);
     if (typeof _rlcCampaign === 'function' && _rlcCampaign(cid) && typeof rlcStartRun === 'function') {
+      // ⛽ Deploying a Crisis-Response campaign costs 7 Fuel.
+      const FR_CAMPAIGN_FUEL_COST = 7;
+      if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+      const _fuel = Profile.salvage.fuel | 0;
+      if (_fuel < FR_CAMPAIGN_FUEL_COST) {
+        showToast('Need ' + FR_CAMPAIGN_FUEL_COST + ' ⛽ Fuel to deploy a Crisis-Response campaign — you have ' + _fuel + '. Secure more at camp.', 4200);
+        return;
+      }
       const r = (typeof Profile !== 'undefined') ? Profile.rlcRun : null;
       if (r && !r.isComplete && !r.isFailed && r.campaignId !== cid) {
         if (!confirm('Starting the “' + ev.name + '” crisis-response campaign abandons your current roguelite run. Continue?')) return;
       }
+      if (!confirm('Deploy the “' + ev.name + '” Crisis-Response campaign for ' + FR_CAMPAIGN_FUEL_COST + ' ⛽ Fuel?\n\nYou have ' + _fuel + ' ⛽.')) return;
+      Profile.salvage.fuel = (Profile.salvage.fuel | 0) - FR_CAMPAIGN_FUEL_COST;
+      try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
       try { const h = document.getElementById('fr-modal'); if (h) h.remove(); } catch (e) {}
       rlcStartRun(cid);
       return;
@@ -24610,7 +24625,7 @@ function openFoundationReserve() {
         : '<div class="small-text" style="color:#9fb6d6;margin-top:3px">Markets are calm — no active world crisis. Stock & prices sit at baseline.</div>';
       const cv = (typeof frActiveConvoy === 'function') ? frActiveConvoy() : null;
       const cvBtn = cv
-        ? '<button id="fr-convoy" style="margin-top:8px;width:100%;cursor:pointer;border-radius:8px;padding:0.55rem 0.8rem;border:1px solid #e0a060;background:linear-gradient(180deg,#7a4a1c,#3a2410);color:#ffe8c8;font-weight:800">🗺️ Run Crisis-Response Campaign — recover ' + esc(_meta(cv.res).name || cv.res) + '</button>'
+        ? '<button id="fr-convoy" style="margin-top:8px;width:100%;cursor:pointer;border-radius:8px;padding:0.55rem 0.8rem;border:1px solid #e0a060;background:linear-gradient(180deg,#7a4a1c,#3a2410);color:#ffe8c8;font-weight:800">🗺️ Run Crisis-Response Campaign — recover ' + esc(_meta(cv.res).name || cv.res) + ' (−7 ⛽)</button>'
         : '';
       return '<div style="margin:8px 0 0;padding:9px 11px;border:1px solid ' + stCol + '55;border-radius:8px;background:' + stCol + '12">' + head + bodyL + cvBtn + '</div>';
     };

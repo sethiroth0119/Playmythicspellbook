@@ -21825,6 +21825,24 @@ const Catalog = {
 
 // ---- Local cache so the game has SOMETHING to show offline / on first paint ----
 const CATALOG_CACHE_KEY = 'hg_card_catalog_v1';
+// 🖼️ Image-bearing arrays (campaigns / pageGuides / starterDecks) can arrive
+// from FOUR async paths in any order: the catalog DB row, the public mirror,
+// the catalogMedia Storage bundle (the only FULL-art source), and the
+// persisted IDB snapshot. The row/mirror/snapshot copies are IMAGE-STRIPPED.
+// Whichever lands last would win — so the stripped copy kept clobbering the
+// full one and players saw emoji nodes. Rule: the copy with MORE serialized
+// data (i.e. the one carrying the inline images) always wins, regardless of
+// arrival order. Order-independent and idempotent.
+function _preferRicher(incoming, current) {
+  const inA  = Array.isArray(incoming) ? incoming : null;
+  const curA = Array.isArray(current)  ? current  : null;
+  if (!inA) return curA != null ? curA : incoming;
+  if (!curA || !curA.length) return inA;
+  let il = 0, cl = 0;
+  try { il = JSON.stringify(inA).length; } catch (e) {}
+  try { cl = JSON.stringify(curA).length; } catch (e) {}
+  return cl > il ? curA : inA;   // keep current only if it carries more (images)
+}
 function _applyCatalogSnapshot(c) {
   if (!c || typeof c !== 'object') return;
   // The IDB cache load can race AFTER the network fetch. NEVER let a stale or
@@ -21841,9 +21859,10 @@ function _applyCatalogSnapshot(c) {
   take('packs', c.packs);
   take('heroes', c.heroes);
   take('aiDecks', c.aiDecks);
-  take('starterDecks', c.starterDecks);
-  take('campaigns', c.campaigns);
-  take('pageGuides', c.pageGuides);     // ← was MISSING: persisted but never restored
+  // Image-bearing: never downgrade a full copy to a stripped cached one.
+  Catalog.starterDecks = _preferRicher(c.starterDecks, Catalog.starterDecks);
+  Catalog.campaigns    = _preferRicher(c.campaigns,    Catalog.campaigns);
+  Catalog.pageGuides   = _preferRicher(c.pageGuides,   Catalog.pageGuides);
   Catalog.publishedAt    = c.publishedAt    || Catalog.publishedAt   || 0;
   Catalog.publishedBy    = c.publishedBy    || Catalog.publishedBy   || null;
   Catalog.lastFetchedAt  = c.lastFetchedAt  || Catalog.lastFetchedAt || 0;
@@ -21982,16 +22001,16 @@ function _rehydrateCatalogMedia() {
     if (typeof m.tomb === 'string' && m.tomb && !Catalog.tombstoneArt) {
       Catalog.tombstoneArt = m.tomb;
     }
+    // catalogMedia is the FULL-art source — it should win over the stripped
+    // row/mirror/snapshot copies. _preferRicher makes that order-independent.
     if (Array.isArray(m.starterDecks) && m.starterDecks.length) {
-      Catalog.starterDecks = m.starterDecks;
+      Catalog.starterDecks = _preferRicher(m.starterDecks, Catalog.starterDecks);
     }
     if (Array.isArray(m.pageGuides) && m.pageGuides.length) {
-      Catalog.pageGuides = m.pageGuides;
+      Catalog.pageGuides = _preferRicher(m.pageGuides, Catalog.pageGuides);
     }
-    // Full-art campaigns from Storage replace the row's image-stripped copy
-    // so players see authored node/cover art instead of emoji placeholders.
     if (Array.isArray(m.campaigns) && m.campaigns.length) {
-      Catalog.campaigns = m.campaigns;
+      Catalog.campaigns = _preferRicher(m.campaigns, Catalog.campaigns);
     }
   } catch (e) { /* non-fatal cosmetic rehydrate */ }
 }
@@ -22005,9 +22024,11 @@ function _applyCatalogRow(data) {
   // sentinel keys. Strip them from the moves dict before storing so they
   // don't show up as bogus "moves" anywhere.
   Catalog.aiDecks = Array.isArray(rawMoves.__ai_decks__) ? rawMoves.__ai_decks__ : [];
-  Catalog.starterDecks = Array.isArray(rawMoves.__starter_decks__) ? rawMoves.__starter_decks__ : [];
-  Catalog.campaigns = Array.isArray(rawMoves.__campaigns__) ? rawMoves.__campaigns__ : [];
-  Catalog.pageGuides = Array.isArray(rawMoves.__page_guides__) ? rawMoves.__page_guides__ : [];
+  Catalog.starterDecks = _preferRicher(Array.isArray(rawMoves.__starter_decks__) ? rawMoves.__starter_decks__ : [], Catalog.starterDecks);
+  // Row/mirror copies are image-STRIPPED — never let them clobber a fuller
+  // (image-bearing) copy already applied from the catalogMedia bundle.
+  Catalog.campaigns  = _preferRicher(Array.isArray(rawMoves.__campaigns__)  ? rawMoves.__campaigns__  : [], Catalog.campaigns);
+  Catalog.pageGuides = _preferRicher(Array.isArray(rawMoves.__page_guides__) ? rawMoves.__page_guides__ : [], Catalog.pageGuides);
   Catalog.tombstoneArt = rawMoves.__tombstone_art__ || null;
   Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
   Catalog.rlcRelics = Array.isArray(rawMoves.__rlc_relics__) ? rawMoves.__rlc_relics__ : [];

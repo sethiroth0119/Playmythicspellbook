@@ -24129,6 +24129,7 @@ const FoundationReserve = {
   totals: {},          // resource -> { total, points, contributors }
   mine: {},            // resource -> { qty, points }
   myPoints: 0,
+  barons: {},          // resource -> { userId, name, qty }  (top world supplier)
   tableMissing: false, loading: false, lastFetch: 0, _err: null, _poll: null,
 };
 function _frErr(e) {
@@ -24157,6 +24158,18 @@ async function frFetch() {
     if (mineRes && mineRes.data) mineRes.data.forEach(r => { M[r.resource] = { qty: Number(r.qty) || 0, points: Number(r.points) || 0 }; mp += Number(r.points) || 0; });
     FoundationReserve.mine = M;
     FoundationReserve.myPoints = mp;
+    // 🏛 Reserve Powers — the top world supplier of each resource (the
+    // "guild/camp that dominates Fuel" etc.). Optional + failure-tolerant:
+    // it must never flip tableMissing or break the core fetch.
+    try {
+      const sup = await Cloud.client.from('reserve_contributions')
+        .select('user_id,user_name,resource,qty').order('qty', { ascending: false }).limit(500);
+      if (sup && sup.data) {
+        const B = {};
+        sup.data.forEach(r => { if (!B[r.resource]) B[r.resource] = { userId: r.user_id, name: (r.user_name || 'Survivor'), qty: Number(r.qty) || 0 }; });
+        FoundationReserve.barons = B;
+      }
+    } catch (e) { /* optional enhancement — ignore */ }
     FoundationReserve.lastFetch = Date.now();
   } catch (e) { _frErr(e); }
   FoundationReserve.loading = false;
@@ -24244,6 +24257,14 @@ function frPriceMul(p, mf) {
   let m = mf.pct < 8 ? 1.85 : mf.pct < 20 ? 1.45 : mf.pct < 45 ? 1.18 : mf.pct >= 90 ? 0.85 : 1.0;
   const ev = frActiveEvent();
   if (ev && _frEventHitsProduct(ev, p)) m *= ev.priceMul;
+  // 🏛 Reserve Baron perk — if YOU are the top world supplier of any
+  // resource this product needs, you effectively control that line: a
+  // standing 15% price break (economic power from dominance).
+  try {
+    const B = (typeof FoundationReserve !== 'undefined' && FoundationReserve.barons) || {};
+    const myId = (typeof Profile !== 'undefined' && Profile.cloud && Profile.cloud.userId) || null;
+    if (myId && Object.keys(p.recipe).some(r => B[r] && B[r].userId === myId)) m *= 0.85;
+  } catch (e) {}
   return Math.max(0.5, Math.min(3, m));
 }
 function frEffectivePrice(p) { return Math.max(1, Math.round((p.price | 0) * frPriceMul(p))); }
@@ -24268,7 +24289,12 @@ async function frDeposit(resId, qty) {
   // to break the shortage (self-stabilising economy, never a hard collapse).
   const _ev = frActiveEvent();
   const _emergency = !!(_ev && !_ev.relief && (_ev.res || []).indexOf(resId) >= 0);
-  const gained = Math.round(qty * _frWeight(resId) * (_emergency ? 1.6 : 1));
+  // 🏭 Camp specialization — focusing your camp on one resource pays a
+  // standing +35% on it (the "guild that dominates Fuel" fantasy). Stacks
+  // with the emergency bonus; total multiplier capped so it can't run away.
+  const _specialty = !!(typeof Profile !== 'undefined' && Profile.reserveSpecialty && Profile.reserveSpecialty === resId);
+  const _mul = Math.min(2.4, (_emergency ? 1.6 : 1) * (_specialty ? 1.35 : 1));
+  const gained = Math.round(qty * _frWeight(resId) * _mul);
   const me = Profile.cloud.userId;
   try {
     // Single-writer upsert on MY row for this resource (no race).
@@ -24291,7 +24317,7 @@ async function frDeposit(resId, qty) {
   // Reward: Cinders + reputation progress.
   const reward = Math.max(1, Math.round(gained * 0.5));
   try { if (typeof addCinders === 'function') addCinders(reward); } catch (e) {}
-  showToast(`🏛 Reserve received ${qty} ${_meta(resId).icon} — +${reward} 🔥 · +${gained} rep${_emergency ? ' · 🚨 EMERGENCY +60%' : ''}`, _emergency ? 4600 : 3800);
+  showToast(`🏛 Reserve received ${qty} ${_meta(resId).icon} — +${reward} 🔥 · +${gained} rep${_emergency ? ' · 🚨 EMERGENCY +60%' : ''}${_specialty ? ' · 🏭 SPECIALTY +35%' : ''}`, (_emergency || _specialty) ? 4600 : 3800);
   await frFetch();
   return true;
 }
@@ -24361,6 +24387,48 @@ async function frBuyProduct(productId) {
   try { if (typeof render === 'function') render(); } catch (e) {}
   return true;
 }
+// Set of resources that gate at least one product (the economically
+// meaningful ones the Director tracks). Used to focus convoy interception.
+function _frRecipeResourceSet() {
+  const s = {};
+  RESERVE_PRODUCTS.forEach(p => Object.keys(p.recipe || {}).forEach(r => { s[r] = 1; }));
+  return s;
+}
+// 🏴 BLACK-MARKET CONVOY INTERCEPTION — goods a smuggler runs home are goods
+// that never reached the legal market. When a Black Market haul is banked we
+// draw the strategic portion of it OUT of the global Reserve (reuses the
+// append-only reserve_consumption ledger — NO new table/SQL). Result: legal
+// shortages → the AI Director stalls lines & raises prices → more smuggling
+// demand. Fire-and-forget + fully guarded: it must NEVER block or undo the
+// player's haul, and silently no-ops offline / before setup.
+async function frConvoyIntercept(haulMap) {
+  try {
+    if (!haulMap || typeof haulMap !== 'object') return;
+    if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return;
+    if (typeof FoundationReserve !== 'undefined' && FoundationReserve.tableMissing) return;
+    const recipeRes = _frRecipeResourceSet();
+    const me = Profile.cloud.userId;
+    const rows = [];
+    Object.keys(haulMap).forEach(k => {
+      const q = haulMap[k] | 0;
+      if (q <= 0) return;
+      if (!(typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[k])) return;
+      // Only strategic (product-gating) or contraband resources hit the
+      // legal economy; junk loot doesn't spam the ledger.
+      const strategic = recipeRes[k] || (typeof RLC_CONTRABAND !== 'undefined' && RLC_CONTRABAND[k]);
+      if (!strategic) return;
+      rows.push({ user_id: me, resource: k, qty: q, product: 'bm_intercept' });
+    });
+    if (!rows.length) return;
+    const ins = await Cloud.client.from('reserve_consumption').insert(rows);
+    if (ins && ins.error) { _frErr(ins.error); return; }
+    try {
+      const line = rows.map(r => (_meta(r.resource).icon || '📦') + r.qty).join(' ');
+      showToast('🏴 Black-market convoys intercepted Foundation shipments — legal Reserve bled: ' + line + '. Prices will rise.', 5200);
+    } catch (e) {}
+    try { if (typeof FoundationReserve !== 'undefined') FoundationReserve.lastFetch = 0; } catch (e) {}
+  } catch (e) { /* never let interception affect the player's haul */ }
+}
 function openFoundationReserve() {
   try {
     const ID = 'fr-modal';
@@ -24392,8 +24460,29 @@ function openFoundationReserve() {
               '<div style="color:#aee0ff;font-weight:800;white-space:nowrap">' + numF(T[id].total) + '</div></div>';
           }).join('')
         : '<div class="ink-dim" style="padding:1.6rem;text-align:center">The Reserve is empty. Be the first to supply civilization.</div>';
+      // 🏛 Reserve Powers — who dominates each strategic resource. The top
+      // supplier of a bottleneck resource indirectly controls the products
+      // it gates (economic power) and gets a standing price break on them.
+      const B = FoundationReserve.barons || {};
+      const myId = (Profile.cloud && Profile.cloud.userId) || null;
+      const recipeRes = {}; RESERVE_PRODUCTS.forEach(p => Object.keys(p.recipe).forEach(r => { recipeRes[r] = 1; }));
+      const powerIds = Object.keys(recipeRes).filter(r => B[r] && (B[r].qty | 0) > 0)
+        .sort((a, b) => (B[b].qty || 0) - (B[a].qty || 0));
+      const powers = powerIds.length
+        ? powerIds.map(r => {
+            const m = _meta(r);
+            const worldTot = (T[r] && T[r].total) || 0;
+            const share = worldTot > 0 ? Math.min(100, Math.round((B[r].qty / worldTot) * 100)) : 0;
+            const mine = myId && B[r].userId === myId;
+            return '<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid ' + (mine ? 'rgba(127,224,160,0.45)' : 'rgba(176,140,255,0.22)') + ';border-radius:8px;background:' + (mine ? 'rgba(40,90,60,0.16)' : 'rgba(70,50,110,0.12)') + ';margin-bottom:5px">' +
+              '<span style="font-size:1.15rem">' + (m.icon || '📦') + '</span>' +
+              '<div style="flex:1;min-width:0"><div style="color:#e6dcff;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc((m.name || r)) + ' Baron — ' + esc(B[r].name) + (mine ? ' <span style="color:#7fe0a0">(YOU)</span>' : '') + '</div>' +
+              '<div class="small-text" style="color:#b9a8e0">controls ~' + share + '% of world ' + esc(m.name || r) + (mine ? ' · −15% on products needing it' : '') + '</div></div></div>';
+          }).join('')
+        : '<div class="small-text ink-dim" style="padding:0.5rem 0">No dominant suppliers yet — out-supply a strategic resource to claim its Baron seat.</div>';
       return '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Global resources the survivor world has pooled. Deposited resources are removed from circulation forever — that is what keeps products scarce and valuable.</div>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">' + grid + '</div>';
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">' + grid + '</div>' +
+        '<div style="font-weight:800;color:#caa0e6;margin:12px 0 6px">🏛 Reserve Powers</div>' + powers;
     };
 
     const depositTab = () => {
@@ -24405,10 +24494,25 @@ function openFoundationReserve() {
       const sel = '<select id="fr-res" style="flex:1;min-width:0;padding:0.55rem;border-radius:8px;border:1px solid rgba(120,170,255,0.4);background:rgba(12,20,40,0.7);color:#e6f0ff">' +
         owned.map(id => '<option value="' + esc(id) + '"' + (id === pickRes ? ' selected' : '') + '>' + esc(_meta(id).icon + ' ' + (_meta(id).name || id)) + ' — you have ' + (R[id] | 0) + ' · ' + _frWeight(id) + ' rep/ea</option>').join('') + '</select>';
       const rk = frRankFor(FoundationReserve.myPoints);
+      // 🏭 Camp specialization picker — focus on one strategic (product-
+      // gating) resource for a standing +35% rep/Cinders on it.
+      const _sres = {}; RESERVE_PRODUCTS.forEach(p => Object.keys(p.recipe).forEach(r => { _sres[r] = 1; }));
+      const _sids = Object.keys(_sres).sort((a, b) => String(_meta(a).name).localeCompare(String(_meta(b).name)));
+      const _curSpec = (Profile && Profile.reserveSpecialty) || '';
+      const specBlock = '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(127,224,160,0.3);border-radius:8px;background:rgba(40,90,60,0.10)">' +
+          '<div style="color:#9fe0b0;font-weight:700;font-size:0.86rem;margin-bottom:5px">🏭 Camp Specialization' + (_curSpec ? ' — ' + esc(_meta(_curSpec).icon + ' ' + (_meta(_curSpec).name || _curSpec)) : ' — none') + ' <span class="small-text" style="color:#8fc0a0;font-weight:400">(+35% rep/🔥 on your specialty)</span></div>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+            '<select id="fr-spec" style="flex:1;min-width:0;padding:0.45rem;border-radius:7px;border:1px solid rgba(127,224,160,0.4);background:rgba(10,26,18,0.7);color:#dff4e6">' +
+              '<option value=""' + (!_curSpec ? ' selected' : '') + '>— no specialty —</option>' +
+              _sids.map(id => '<option value="' + esc(id) + '"' + (id === _curSpec ? ' selected' : '') + '>' + esc(_meta(id).icon + ' ' + (_meta(id).name || id)) + '</option>').join('') +
+            '</select>' +
+            '<button id="fr-spec-set" style="cursor:pointer;border-radius:7px;padding:0.45rem 0.8rem;border:1px solid #5fbf88;background:linear-gradient(180deg,#2f7a52,#163d2a);color:#eafff2;font-weight:800">Set</button>' +
+          '</div></div>';
       return '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(255,209,102,0.35);border-radius:8px;background:rgba(255,209,102,0.07);color:#ffd166;font-size:0.86rem">' +
           rk.rank.icon + ' <strong>' + esc(rk.rank.name) + '</strong> · ' + numF(FoundationReserve.myPoints) + ' rep' +
           (rk.next ? ' <span class="small-text" style="color:#cdb87a">— ' + numF(rk.toNext) + ' to ' + esc(rk.next.name) + '</span>' : ' <span class="small-text">— max rank</span>') + '</div>' +
         '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Contribute resources to the world Reserve. They leave your camp permanently and fuel global manufacturing. You earn 🔥 Cinders + Reserve Reputation.</div>' +
+        specBlock +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + sel +
           '<input id="fr-qty" type="number" min="1" value="1" style="width:90px;padding:0.55rem;border-radius:8px;border:1px solid rgba(120,170,255,0.4);background:rgba(12,20,40,0.7);color:#e6f0ff">' +
           '<button id="fr-max" style="cursor:pointer;border-radius:8px;padding:0.55rem 0.7rem;border:1px solid rgba(120,170,255,0.45);background:rgba(60,100,170,0.25);color:#dce8ff;font-weight:700">Max</button>' +
@@ -24502,6 +24606,13 @@ function openFoundationReserve() {
       const sc = document.getElementById('fr-sql-copy'); if (sc) sc.onclick = () => { try { navigator.clipboard.writeText(FOUNDATION_RESERVE_SQL); showToast('📋 SQL copied.'); } catch (e) { const t = document.getElementById('fr-sql'); if (t) t.select(); } };
       const sr = document.getElementById('fr-sql-retry'); if (sr) sr.onclick = () => { FoundationReserve.tableMissing = false; FoundationReserve.lastFetch = 0; frFetch().then(render); };
       const rsel = document.getElementById('fr-res'); if (rsel) rsel.onchange = () => { pickRes = rsel.value; };
+      const spSet = document.getElementById('fr-spec-set');
+      if (spSet) spSet.onclick = () => {
+        const v = (document.getElementById('fr-spec') || {}).value || '';
+        try { Profile.reserveSpecialty = v || null; if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+        showToast(v ? '🏭 Camp specialty set: ' + (_meta(v).name || v) + ' (+35% on it)' : '🏭 Camp specialty cleared.', 3200);
+        render();
+      };
       const mx = document.getElementById('fr-max'); if (mx) mx.onclick = () => { const R = _ensureResources(); const id = (document.getElementById('fr-res') || {}).value || pickRes; const q = document.getElementById('fr-qty'); if (q) q.value = String((R[id] | 0) || 1); };
       const give = document.getElementById('fr-give');
       if (give) give.onclick = () => {
@@ -61027,6 +61138,9 @@ function _rlcCompleteNode(nodeId) {
           showToast(Object.keys(_b).length
             ? '🏠 Home with the goods — secured to camp: ' + _rlcHaulLine(_b)
             : '🏠 You made it back to camp empty-handed.', 5200);
+          // 🏴 What you smuggled never reached the legal market — bleed it
+          // from the global Reserve (fire-and-forget, never blocks the haul).
+          try { if (typeof frConvoyIntercept === 'function' && Object.keys(_b).length) frConvoyIntercept(_b); } catch (e) {}
         } catch (e) {}
         if (!Array.isArray(Profile.rlcCompleted)) Profile.rlcCompleted = [];
         if (Profile.rlcCompleted.indexOf(BM_RUN_ID) < 0) Profile.rlcCompleted.push(BM_RUN_ID);

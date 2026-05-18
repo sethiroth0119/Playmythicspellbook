@@ -31726,6 +31726,19 @@ function _baseRoster() {
       if (!w.length) return '?';
       return (w.length === 1 ? w[0].slice(0, 2) : (w[0][0] + w[w.length - 1][0])).toUpperCase();
     };
+    // Make any card-art reference absolute so it loads from inside the
+    // /base/ iframe (a relative "assets/…" would 404 there).
+    const _abs = (u) => {
+      if (!u) return '';
+      if (/^(https?:|data:|blob:)/i.test(u) || u.charAt(0) === '/') return u;
+      try { return new URL(u, location.href).href; } catch (e) { return u; }
+    };
+    const iconOf = (id, c) => {
+      let a = null;
+      try { a = (typeof getCardArt === 'function') ? getCardArt(id) : null; } catch (e) {}
+      if (a) return _abs(a);
+      return (c && typeof c.icon === 'string' && c.icon) ? c.icon : '';
+    };
     const out = [];
     const H = (typeof Profile !== 'undefined' && Profile.heroes) || {};
     Object.keys(H).forEach((id) => {
@@ -31735,8 +31748,9 @@ function _baseRoster() {
       const nm = (c && c.name) || id;
       const lv = h.level || 1;
       out.push({
+        id: id, icon: iconOf(id, c),
         i: ini(nm), n: nm, t: 'Lv ' + lv, state: 'on',
-        tip: 'Hero · Lv ' + lv + (h.kills ? ' · ' + h.kills + ' kills' : '') + (h.wins ? ' · ' + h.wins + ' wins' : ''),
+        tip: 'Hero · Lv ' + lv + (h.kills ? ' · ' + h.kills + ' kills' : '') + (h.wins ? ' · ' + h.wins + ' wins' : '') + ' · click for card',
         _s: 1000 + lv,
       });
     });
@@ -31750,18 +31764,93 @@ function _baseRoster() {
       try { const a = (typeof campActivityState === 'function') ? campActivityState(s) : null; if (a && a.phase) phase = a.phase; } catch (e) {}
       const running = phase === 'running';
       out.push({
+        id: s.refId, icon: iconOf(s.refId, c),
         i: ini(nm), n: nm,
         t: running ? 'DEPLOY' : 'CAMP',
         state: running ? 'busy' : 'on',
-        tip: 'Parked unit · ' + (running ? 'on deployment' : 'resting / gaining XP'),
+        tip: 'Parked unit · ' + (running ? 'on deployment' : 'resting / gaining XP') + ' · click for card',
         _s: running ? 500 : 400,
       });
     });
     out.sort((a, b) => (b._s || 0) - (a._s || 0));
     out.forEach((o) => { delete o._s; });
-    if (!out.length) return [{ i: '—', n: 'No crew yet', t: '', state: 'on', tip: 'Level a hero or park units at the camp.' }];
+    if (!out.length) return [{ id: null, icon: '', i: '—', n: 'No crew yet', t: '', state: 'on', tip: 'Level a hero or park units at the camp.' }];
     return out.slice(0, 30);
   } catch (e) { return null; }
+}
+// Real roguelite data for the World Map — published campaigns + the
+// player's active run (Catalog.campaigns / Profile.rlcRun).
+function _baseWorldData() {
+  try {
+    const _abs = (u) => {
+      if (!u) return '';
+      if (/^(https?:|data:|blob:)/i.test(u) || u.charAt(0) === '/') return u;
+      try { return new URL(u, location.href).href; } catch (e) { return u; }
+    };
+    const done = (typeof Profile !== 'undefined' && Array.isArray(Profile.rlcCompleted)) ? Profile.rlcCompleted : [];
+    const adminAll = (typeof getAllCampaigns === 'function') ? getAllCampaigns() : [];
+    const camps = (typeof getPlayableCampaigns === 'function') ? getPlayableCampaigns() : [];
+    const list = camps.map((c) => {
+      const reqId = c.requiresCampaignId || '';
+      const reqCamp = reqId ? adminAll.find((x) => x && x.id === reqId) : null;
+      const locked = !!(reqId && done.indexOf(reqId) < 0);
+      return {
+        id: c.id,
+        name: c.name || 'Untitled Campaign',
+        desc: c.description || '',
+        difficulty: c.difficulty || 'Normal',
+        nodes: (c.nodes || []).length,
+        cover: _abs(c.coverImg || ''),
+        cleared: done.indexOf(c.id) >= 0,
+        locked: locked,
+        lockName: locked ? ((reqCamp && reqCamp.name) || 'the previous campaign') : '',
+      };
+    });
+    const r = (typeof Profile !== 'undefined' && Profile.rlcRun) ? Profile.rlcRun : null;
+    let run = null;
+    if (r && !r.isComplete && !r.isFailed) {
+      let rc = null;
+      try { rc = (typeof _rlcCampaign === 'function') ? _rlcCampaign(r.campaignId) : null; } catch (e) {}
+      run = {
+        campaignId: r.campaignId,
+        name: (rc && rc.name) || 'Campaign',
+        nodesCleared: (r.completed || []).length,
+        heroHP: r.heroHP, maxHP: r.maxHP,
+      };
+    }
+    return { campaigns: list, run: run };
+  } catch (e) { return null; }
+}
+// Read-only card view for a clicked roster member. The Camp screen does NOT
+// host the shared collection modal, so (like the Workshop / Forge bunker
+// overlays) this is a SELF-CONTAINED overlay rendered above the iframe —
+// it reuses renderCollectionCardModal() for the rich card markup.
+function _baseOpenCard(id) {
+  try {
+    let card = (typeof _resolveAnyCardById === 'function') ? _resolveAnyCardById(id) : null;
+    if (!card && typeof _resolveAnyCard === 'function') card = _resolveAnyCard(id);
+    if (!card) return;
+    App.collectionDetailCard = { card: card, kind: card.type || 'unit' };
+    let host = document.getElementById('base-card-modal');
+    if (host) host.remove();
+    host = document.createElement('div');
+    host.id = 'base-card-modal';
+    host.style.cssText = 'position:fixed;inset:0;z-index:2147483650';
+    host.innerHTML = (typeof renderCollectionCardModal === 'function') ? renderCollectionCardModal() : '';
+    document.body.appendChild(host);
+    const close = () => {
+      try { App.collectionDetailCard = null; } catch (e) {}
+      const h = document.getElementById('base-card-modal');
+      if (h) h.remove();
+      try { window.removeEventListener('keydown', onKey); } catch (e) {}
+    };
+    const onKey = (ev) => { if (ev.key === 'Escape') close(); };
+    const bd = host.querySelector('#ccm-backdrop');
+    if (bd) bd.addEventListener('click', (ev) => { if (ev.target === bd) close(); });
+    const x = host.querySelector('#ccm-close'); if (x) x.onclick = close;
+    const dn = host.querySelector('#ccm-done'); if (dn) dn.onclick = close;
+    window.addEventListener('keydown', onKey);
+  } catch (e) {}
 }
 function _baseSendData() {
   try {
@@ -31772,6 +31861,7 @@ function _baseSendData() {
       threat: _baseThreat(),
       alerts: _baseAlerts(),
       roster: _baseRoster(),
+      world: _baseWorldData(),
     }, '*');
   } catch (e) {}
 }
@@ -31797,6 +31887,7 @@ function mountBaseBuilder() {
     const onCamp = (typeof App !== 'undefined' && App.screen === 'camp');
     if (!onCamp) {
       if (f) f.remove(); if (b) b.remove(); if (g) g.remove();
+      const cm = document.getElementById('base-card-modal'); if (cm) cm.remove();
       if (App && App._baseMsgBound) { try { window.removeEventListener('message', App._baseMsgHandler); } catch (e) {} App._baseMsgBound = false; }
       return;
     }
@@ -31844,6 +31935,33 @@ function mountBaseBuilder() {
           // at a higher z-index than the iframe, so they appear over it.
           if (d.action === 'workshop' && typeof openCampWorkshop === 'function') openCampWorkshop();
           else if (d.action === 'craft' && typeof openForgeCraftModal === 'function') openForgeCraftModal();
+          else if (d.action === 'card' && d.id) {
+            // A roster member was clicked — open the real read-only card view.
+            if (typeof _baseOpenCard === 'function') _baseOpenCard(d.id);
+          }
+          else if (d.action === 'roguelite') {
+            // Launch the REAL roguelite from the World Map. Fade the iframe
+            // out first (matches the smooth camp transition), then route.
+            try {
+              const ff = document.getElementById('base-builder-frame');
+              const bb = document.getElementById('base-builder-back');
+              if (ff) ff.style.opacity = '0';
+              if (bb) bb.style.opacity = '0';
+            } catch (e4) {}
+            const camp = d.campaign;
+            const rr = (typeof Profile !== 'undefined' && Profile.rlcRun) ? Profile.rlcRun : null;
+            const liveRun = !!(rr && !rr.isComplete && !rr.isFailed);
+            setTimeout(function () {
+              try {
+                if (camp && !liveRun && typeof rlcStartRun === 'function') {
+                  rlcStartRun(camp);                 // straight into the run
+                } else {
+                  App.screen = 'rlcList';            // list handles resume/confirm
+                  if (typeof render === 'function') render();
+                }
+              } catch (e5) {}
+            }, 280);
+          }
         }
       };
       window.addEventListener('message', App._baseMsgHandler);
@@ -60855,7 +60973,7 @@ function renderCollectionCardModal(active) {
     : `<span class="unowned-badge">🔒 not owned</span>`;
 
   return `
-    <div class="modal-backdrop ccm-backdrop" id="ccm-backdrop" style="z-index:1200">
+    <div class="modal-backdrop ccm-backdrop" id="ccm-backdrop" style="z-index:${(typeof document !== 'undefined' && document.getElementById('base-builder-frame')) ? 2147483600 : 1200}">
       <div class="ccm-modal">
         <button class="modal-close" id="ccm-close" aria-label="Close">×</button>
         <div class="ccm-header">

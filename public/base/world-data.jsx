@@ -779,3 +779,71 @@ Object.assign(WorldMap, {
   getDestination: (id) => DESTINATIONS.find((d) => d.id === id),
 });
 Object.assign(window, { DESTINATIONS, WORLD_EVENTS, NODE_TYPES, ROUTE_THEMES });
+
+// ═════════════════════════════════════════════════════════════════════════
+//  REAL ROGUELITE BRIDGE — when the embedding game pushes its published
+//  campaigns (Catalog.campaigns) + active run (Profile.rlcRun) via
+//  window.__BRIDGE.world, the destination markers BECOME those real
+//  campaigns. Clicking one launches the real run in the parent game.
+//  Falls back to the demo destinations when run standalone (no bridge).
+// ═════════════════════════════════════════════════════════════════════════
+const _BB_HOME = DESTINATIONS.find((d) => d.homeBase) || DESTINATIONS[0];
+// Periphery slots (in the fog around the island) — deterministic spread.
+const _BB_SLOTS = [
+  { x: 92, y: 14 }, { x: 96, y: 40 }, { x: 93, y: 66 }, { x: 80, y: 90 },
+  { x: 60, y: 95 }, { x: 36, y: 95 }, { x: 8, y: 86 }, { x: 4, y: 60 },
+  { x: 3, y: 34 }, { x: 8, y: 12 }, { x: 28, y: 6 }, { x: 70, y: 5 },
+];
+function _bbThreat(diff) {
+  const d = String(diff || "").toLowerCase();
+  if (/(night|leth|insan|hell)/.test(d)) return 5;
+  if (/(brutal|very hard|hard\+|expert)/.test(d)) return 4;
+  if (/hard/.test(d)) return 3;
+  if (/(easy|intro|tutorial)/.test(d)) return 1;
+  return 2;
+}
+const _BB_KINDS = [
+  { glyph: "arena",     kind: "dungeon" },
+  { glyph: "ruins",     kind: "ruins" },
+  { glyph: "biohazard", kind: "scp" },
+  { glyph: "bazaar",    kind: "black-market" },
+];
+function _bbApplyWorld() {
+  const w = window.__BRIDGE && window.__BRIDGE.world;
+  const camps = w && Array.isArray(w.campaigns) ? w.campaigns : null;
+  if (!camps || !camps.length) return; // keep demo destinations
+  const runId = w.run && w.run.campaignId;
+  const dests = [_BB_HOME];
+  camps.forEach((c, i) => {
+    const slot = _BB_SLOTS[i % _BB_SLOTS.length];
+    const km = _BB_KINDS[i % _BB_KINDS.length];
+    const threat = _bbThreat(c.difficulty);
+    dests.push({
+      id: "rlc:" + c.id,
+      campaignId: c.id,
+      name: c.name || "Campaign",
+      tag: (c.difficulty || "Normal") + " · roguelite",
+      kind: km.kind,
+      glyph: km.glyph,
+      blurb: c.desc || "A branching roguelite run. Persistent HP — die and the run ends.",
+      x: slot.x, y: slot.y,
+      threat: threat,
+      distance: Math.max(3, Math.min(9, c.nodes || 4)),
+      rewards: ["Cards", "Relics", c.cleared ? "Cleared ✓" : "Currency"],
+      theme: "military",
+      knownThreats: ["Branching battles", "Persistent HP", "Boss fight"],
+      locked: !!c.locked,
+      lockName: c.lockName || "",
+      cleared: !!c.cleared,
+      inProgress: !!(runId && runId === c.id),
+      rlc: true,
+    });
+  });
+  // Mutate the SAME array reference so generateRoute / getDestination /
+  // window.DESTINATIONS / WorldMap.destinations all stay in sync.
+  DESTINATIONS.splice(0, DESTINATIONS.length, ...dests);
+  try { window.dispatchEvent(new CustomEvent("worldmap:changed", { detail: { evt: "bridge" } })); } catch (e) {}
+}
+window.addEventListener("bridgedata", _bbApplyWorld);
+_bbApplyWorld(); // in case data already arrived
+Object.assign(WorldMap, { applyBridgeWorld: _bbApplyWorld });

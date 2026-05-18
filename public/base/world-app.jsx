@@ -304,8 +304,21 @@ function App() {
   const active       = zones.find((z) => z.id === activeId) || null;
   const activeEvent  = activeId ? events[activeId] : null;
 
-  // begin expedition: hide brief, open run overlay
+  // begin expedition: a REAL roguelite campaign hands off to the parent
+  // game (which starts/continues the actual run); demo destinations still
+  // use the in-iframe mock route.
   const beginExpedition = (destId) => {
+    const dest = window.WorldMap.getDestination(destId);
+    if (dest && dest.campaignId) {
+      try {
+        window.parent.postMessage(
+          { type: "base:action", action: "roguelite", campaign: dest.campaignId },
+          "*"
+        );
+      } catch (e) {}
+      setBriefDest(null);
+      return;
+    }
     const r = window.WorldMap.beginExpedition(destId);
     setRun({ ...r });
     setBriefDest(null);

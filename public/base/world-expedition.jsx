@@ -226,7 +226,12 @@ function TravelBrief({ dest, onClose, onBegin }) {
         <footer className="brief-cta">
           <button className="cta" onClick={onClose}>Stand Down</button>
           <button className="cta primary" onClick={() => onBegin(dest.id)}>
-            Begin Expedition <span className="cost">−4 fuel · −2 supplies</span>
+            {dest.campaignId
+              ? (dest.inProgress ? "Continue Run" : "Launch Campaign")
+              : "Begin Expedition"}
+            <span className="cost">
+              {dest.campaignId ? "real roguelite" : "−4 fuel · −2 supplies"}
+            </span>
           </button>
         </footer>
       </aside>

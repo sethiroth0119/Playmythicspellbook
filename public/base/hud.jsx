@@ -92,6 +92,16 @@ function LeftColumn() {
   const ALERTS = (window.__BRIDGE && window.__BRIDGE.alerts) || window.ALERTS;
   const ROSTER = (window.__BRIDGE && window.__BRIDGE.roster) || window.ROSTER;
   const plain = (s) => String(s || "").replace(/<[^>]+>/g, "");
+  const isImg = (s) => /^(https?:|data:|blob:|\/)/i.test(String(s || ""));
+  const openCard = (id) => {
+    if (!id) return;
+    try { window.parent.postMessage({ type: "base:action", action: "card", id }, "*"); } catch (e) {}
+  };
+  const Avatar = ({ p }) =>
+    isImg(p.icon)
+      ? <img src={p.icon} alt={p.n} className="roster-art"
+             style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 4 }} />
+      : <span>{p.icon || p.i}</span>;
   return (
     <aside className="hud-left">
       <div className="left-section alerts" title="Live camp alerts — world events, supply shortages & raider threat">
@@ -121,13 +131,15 @@ function LeftColumn() {
             <div
               className={`roster-row ${p.state}`}
               key={idx}
+              onClick={() => openCard(p.id)}
+              style={p.id ? { cursor: "pointer" } : undefined}
               title={
                 `${p.n}${p.t ? "  ·  " + p.t : ""}` +
                 (p.tip ? `\n${p.tip}` : "") +
                 `\nStatus: ${p.state === "hurt" ? "injured" : p.state === "busy" ? "deployed" : "ready"}`
               }
             >
-              <span className="roster-avatar">{p.i}</span>
+              <span className="roster-avatar">{<Avatar p={p} />}</span>
               <span className="roster-name">{p.n}</span>
               <span className="roster-tag">{p.t}</span>
             </div>

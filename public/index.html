@@ -59381,21 +59381,55 @@ function openBlackMarketHall() {
     const carry = (typeof App !== 'undefined' && App._bmCarry) || {};
     const carryLine = (typeof _rlcHaulLine === 'function') ? _rlcHaulLine(carry) : '';
     const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
+    // 🔥 The hall reacts to the contraband heat you walked in with.
+    let _heat = 0;
+    try { for (const k in carry) { const w = (typeof RLC_CONTRABAND !== 'undefined' && RLC_CONTRABAND[k]) || 0; if (w) _heat += (carry[k] | 0) * w; } } catch (e) {}
+    const _lock = (typeof RLC_HEAT_SCP_LOCK === 'number') ? RLC_HEAT_SCP_LOCK : 12;
+    const atmo = _heat <= 0
+      ? { name: 'CALM', col: '#9bdca0', line: 'Traders haggle lazily. A scavenger band plays cards on a crate. Safe enough — for now.' }
+      : (_heat < _lock
+        ? { name: 'TENSE', col: '#ffc24a', line: 'Hands rest near holsters. A Foundation tag-man clocks your bags from the shadows — don’t linger.' }
+        : { name: 'LOCKDOWN', col: '#ff6b6b', line: 'Armed guards seal the gangways. Whispered deals only. Foundation spies everywhere — your contraband is screaming.' });
+    let _flex = '';
+    try {
+      let bi = null, bv = -1;
+      for (const k in carry) { const v = (carry[k] | 0) * (((typeof RLC_CONTRABAND !== 'undefined' && RLC_CONTRABAND[k]) || 1)); if (v > bv) { bv = v; bi = k; } }
+      if (bi) { const r = (typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[bi]) || {}; _flex = (r.icon || '') + ' ' + (r.name || bi); }
+    } catch (e) {}
+    const _AMBI = (_heat >= _lock)
+      ? ['📻 "Scanners are hot — keep it moving."', '📻 A guard racks a shotgun by the east hatch.', '📻 Someone got dragged out the back. Nobody looked.', '📻 "Foundation’s sniffing. Cash only, no names."']
+      : (_heat > 0
+        ? ['📻 A fixer eyes your bags, then looks away.', '📻 "You holding? I know a buyer."', '📻 Boots echo on the gangway above.', '📻 A trader slides a blade across the crate — just cleaning it.']
+        : ['📻 Someone barters canned peaches for a relic.', '📻 A drunk smuggler swears the Cathedral is real.', '📻 Cards slap on a crate — someone loses big.', '📻 "Fresh stock in from the docks."']);
+    let _ambiTimer = null;
+    let who = [];
+    const paintWho = () => {
+      const el = document.getElementById('bmh-who'); if (!el) return;
+      el.innerHTML = '<div style="font-size:0.74rem;letter-spacing:.08em;color:#caa0e6;margin-bottom:4px">👥 IN THE BAZAAR · ' + (who.length || 1) + '</div>' +
+        (who.length
+          ? who.slice(0, 30).map(p => '<div style="font-size:0.8rem;color:#cfc6e6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">• ' + esc(p.n || 'Survivor') + (p.flex ? ' <span class="ink-dim">— ' + esc(p.flex) + '</span>' : '') + '</div>').join('')
+          : '<div class="small-text ink-dim">Just you and the dust… for now.</div>');
+    };
     let _ch = null;
     const msgs = [];
     const paint = () => {
       const box = document.getElementById('bmh-msgs'); if (!box) return;
       box.innerHTML = msgs.length
-        ? msgs.map(m => '<div style="margin:3px 0;font-size:0.86rem"><span style="color:#b48cff;font-weight:700">' + esc(m.n) + '</span> <span style="color:#cfc6e6">' + esc(m.t) + '</span></div>').join('')
+        ? msgs.map(m => m.sys
+            ? '<div style="margin:3px 0;font-size:0.8rem;color:#8a7fa8;font-style:italic">' + esc(m.t) + '</div>'
+            : '<div style="margin:3px 0;font-size:0.86rem"><span style="color:#b48cff;font-weight:700">' + esc(m.n) + '</span> <span style="color:#cfc6e6">' + esc(m.t) + '</span></div>').join('')
         : '<div class="small-text ink-dim" style="padding:10px 2px">' + (online ? 'No chatter yet — break the silence.' : '📡 Offline — sign in for live trade chat. Notes are local-only here.') + '</div>';
       box.scrollTop = box.scrollHeight;
     };
     const append = (m) => { if (!m || !m.t) return; msgs.push(m); if (msgs.length > 80) msgs.shift(); paint(); };
     if (online) {
       try {
-        _ch = sb.channel('bm-hall', { config: { broadcast: { self: true } } });
+        _ch = sb.channel('bm-hall', { config: { broadcast: { self: true }, presence: { key: nameOf() } } });
         _ch.on('broadcast', { event: 'msg' }, (p) => { if (p && p.payload) append(p.payload); });
-        _ch.subscribe();
+        _ch.on('presence', { event: 'sync' }, () => {
+          try { const st = _ch.presenceState() || {}; who = []; Object.keys(st).forEach(k => (st[k] || []).forEach(pp => who.push(pp))); paintWho(); } catch (e) {}
+        });
+        _ch.subscribe((status) => { if (status === 'SUBSCRIBED') { try { _ch.track({ n: nameOf(), flex: _flex }); } catch (e) {} } });
       } catch (e) { _ch = null; }
     }
     const sendMsg = () => {
@@ -59417,7 +59451,9 @@ function openBlackMarketHall() {
           '<div class="small-text ink-dim">A sunken tanker east of the dead city. No questions. No records. ' + (online ? '<span style="color:#7fdca0">● live</span>' : '<span style="color:#ff9a6b">○ offline</span>') + '</div></div>' +
           '<button id="bmh-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
         '</div>' +
+        '<div style="margin:2px 0 8px;padding:7px 10px;border:1px solid ' + atmo.col + '55;border-radius:8px;background:' + atmo.col + '14;color:' + atmo.col + ';font-size:0.84rem"><strong>' + atmo.name + (_heat > 0 ? ' · 🔥' + _heat + ' heat' : '') + '</strong> — <span style="color:#cfc6e6">' + atmo.line + '</span></div>' +
         (carryLine ? '<div style="margin:4px 0 8px;padding:7px 10px;border:1px solid rgba(255,209,102,0.4);border-radius:8px;background:rgba(255,209,102,0.08);color:#ffd166;font-size:0.85rem">🎒 Carrying to sell / take home: <strong>' + carryLine + '</strong> — <span class="small-text ink-dim">it is NOT safe until you survive the trip back.</span></div>' : '') +
+        '<div id="bmh-who" style="margin:0 0 8px;padding:7px 10px;border:1px solid rgba(176,112,176,0.25);border-radius:8px;background:rgba(176,112,176,0.07);max-height:78px;overflow:auto"></div>' +
         '<div id="bmh-msgs" style="flex:1;min-height:200px;max-height:42vh;overflow:auto;border:1px solid rgba(176,112,176,0.25);border-radius:8px;padding:8px 10px;background:rgba(10,5,18,0.6)"></div>' +
         '<div style="display:flex;gap:8px;margin-top:8px">' +
           '<input id="bmh-in" maxlength="240" placeholder="' + (online ? 'Say something to the floor…' : 'Offline — local note…') + '" style="flex:1;min-width:0;padding:0.55rem 0.7rem;border-radius:8px;border:1px solid rgba(176,112,176,0.4);background:rgba(15,8,26,0.7);color:#e8e0ff">' +
@@ -59430,7 +59466,10 @@ function openBlackMarketHall() {
         '<div class="small-text ink-dim" style="margin-top:6px">Closing this just loiters at the Bazaar — reopen it from the Black Market tile. You only leave by travelling home (or dying on the way).</div>' +
       '</div>';
     document.body.appendChild(ov);
-    const cleanup = () => { try { if (_ch && sb) sb.removeChannel(_ch); } catch (e) {} };
+    const cleanup = () => {
+      try { if (_ambiTimer) { clearInterval(_ambiTimer); _ambiTimer = null; } } catch (e) {}
+      try { if (_ch && sb) sb.removeChannel(_ch); } catch (e) {}
+    };
     const close = () => { cleanup(); const h = document.getElementById(ID); if (h) h.remove(); };
     const x = document.getElementById('bmh-x'); if (x) x.onclick = close;
     const sBtn = document.getElementById('bmh-send'); if (sBtn) sBtn.onclick = sendMsg;
@@ -59439,7 +59478,13 @@ function openBlackMarketHall() {
     if (tBtn) tBtn.onclick = () => { close(); try { App.screen = 'vendor'; if (typeof render === 'function') render(); } catch (e) {} };
     const hBtn = document.getElementById('bmh-home');
     if (hBtn) hBtn.onclick = () => { close(); try { if (typeof _startBlackMarketRun === 'function') _startBlackMarketRun(); } catch (e) {} };
+    paintWho();
     paint();
+    // 📻 Living ambiance — a heat-scaled line on entry, then drifting chatter.
+    try {
+      append({ sys: true, t: atmo.line });
+      _ambiTimer = setInterval(() => { try { append({ sys: true, t: _AMBI[Math.floor(Math.random() * _AMBI.length)] }); } catch (e) {} }, 15000);
+    } catch (e) {}
   } catch (e) {}
 }
 function _startBlackMarketRun() {

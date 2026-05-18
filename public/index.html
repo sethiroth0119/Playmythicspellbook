@@ -27684,6 +27684,34 @@ function _stripDataUrls(val) {
   }
   return val;
 }
+// 🔊 Like _stripDataUrls, but NEVER drops a bubble's `audioUrl`. Page-guide
+// voice lines are small by design (the upload UI warns past 1.5 MB) and
+// MUST survive the localStorage fast-path — otherwise the admin's own
+// voice-over silently vanishes on the next reload (the IDB full copy may
+// not restore before a first-visit guide auto-plays). Heavy character /
+// expression images are still stripped (IDB keeps those).
+function _stripGuidesKeepAudio(guides) {
+  if (!Array.isArray(guides)) return _stripDataUrls(guides);
+  return guides.map(g => {
+    if (!g || typeof g !== 'object') return g;
+    const out = {};
+    for (const k in g) {
+      if (!Object.prototype.hasOwnProperty.call(g, k)) continue;
+      if (k === 'bubbles' && Array.isArray(g.bubbles)) {
+        out.bubbles = g.bubbles.map(b => {
+          if (!b || typeof b !== 'object') return b;
+          const keptAudio = b.audioUrl;
+          const slim = _stripDataUrls(b);
+          slim.audioUrl = keptAudio;     // restore the (possibly data:) clip
+          return slim;
+        });
+      } else {
+        out[k] = _stripDataUrls(g[k]);
+      }
+    }
+    return out;
+  });
+}
 function saveForge() {
   // 🃏 Trigger debounced cloud sync — any Forge save bubbles up the small
   // custom data (cards / moves / items / packs / etc.) to user_profiles.forge
@@ -27763,7 +27791,7 @@ function saveForge() {
     // 🎒 + 💰 + 🌐 — new admin storage chunks. Keep these together so the
     // localStorage size budget is easy to reason about.
     { key: 'hg_customItems',      value: _stripDataUrls(Forge.customItems  || []), name: 'customItems' },
-    { key: 'hg_pageGuides',       value: _stripDataUrls(Forge.pageGuides   || []), name: 'pageGuides' },
+    { key: 'hg_pageGuides',       value: _stripGuidesKeepAudio(Forge.pageGuides || []), name: 'pageGuides' },
     { key: 'hg_aiDecks',          value: _stripDataUrls(Forge.aiDecks      || []), name: 'aiDecks' },
     { key: 'hg_starterDecks',     value: _stripDataUrls(Forge.starterDecks || []), name: 'starterDecks' },
     // 🗄️ Campaigns carry big base64 (cover · map bg · currency icon ·
@@ -35446,6 +35474,7 @@ function renderStarterPick() {
     <div class="hero-select" style="text-align:center">
       <h2 class="section-title">Choose Your Starter Deck</h2>
       <div class="section-subtitle">Welcome! Pick <strong>one</strong> deck to begin — these are your only cards to start with. Earn or buy more later in the Vendor Market.</div>
+      ${(typeof isAdmin === 'function' && isAdmin()) ? `<div style="margin-top:10px"><span class="small-text ink-dim">👑 Admin preview — this is exactly what a brand-new player sees. Your account already owns every card, so the live game skips this screen for you.</span><br><button class="btn-secondary btn-mini" id="sp-admin-back" style="margin-top:8px">← Back (no changes made)</button></div>` : ''}
       <div style="display:flex;flex-wrap:wrap;gap:20px;justify-content:center;margin-top:26px">
         ${decks.length ? decks.map(cardFor).join('') : '<div class="ink-dim">No starter decks available yet — check back soon.</div>'}
       </div>
@@ -35453,10 +35482,18 @@ function renderStarterPick() {
   document.querySelectorAll('[data-pick-starter]').forEach(btn => {
     btn.onclick = () => {
       const id = btn.dataset.pickStarter;
+      // 👑 Admin is only ever previewing here — never mutate the admin account
+      // or mark a starter as picked. Just confirm the deck looks right.
+      if (typeof isAdmin === 'function' && isAdmin()) {
+        showToast('👑 Preview only — a real new player would now own this deck. Your admin account is unchanged.', 4200);
+        return;
+      }
       if (!confirm('Choose this starter deck? This free pick is permanent — the rest can be bought later in the Vendor Market.')) return;
       pickStarterDeck(id);
     };
   });
+  const spBack = document.getElementById('sp-admin-back');
+  if (spBack) spBack.onclick = () => { App.screen = 'title'; App.titleHub = 'forge'; if (typeof render === 'function') render(); };
 }
 
 function renderDeckSelect() {
@@ -36569,6 +36606,7 @@ function renderPricingAdmin() {
           <button class="btn-primary btn-mini" id="btn-publish-catalog">📚 Publish Cards/Heroes/Items/Packs</button>
           <button class="btn-secondary btn-mini" id="btn-publish-catalog-art">🎨 Publish Art/Sprites to Public Bucket</button>
           <button class="btn-secondary btn-mini" id="btn-pull-catalog">🔄 Pull Latest Catalog</button>
+          <button class="btn-secondary btn-mini" id="btn-preview-starterpick" title="Open the new-player Starter Deck picker exactly as a brand-new player sees it (admin accounts skip it because they own every card). Use Back to return — your account is untouched.">👁 Preview New-Player Starter Pick</button>
         </div>
         <div class="small-text ink-dim" style="margin-top:0.5rem">
           📚 Cards: fast (~1s). 🎨 Art: ~30-60s (uploads ~100MB of sprites + card art to the <code>public-catalog</code> Storage bucket — every player downloads this on sign-in).
@@ -36848,9 +36886,24 @@ function renderPricingAdmin() {
   if (bPub) bPub.onclick = async () => {
     bPub.disabled = true; bPub.textContent = '…publishing';
     const r = await cloudPublishCatalog();
-    bPub.disabled = false; bPub.textContent = '📚 Publish Cards/Heroes/Items/Packs';
-    if (r.ok) { showToast(`📚 Published ${r.count} entries to the catalog`, 2400); render(); }
-    else      showToast('⨯ ' + (r.error || 'Publish failed'), 4000);
+    if (r.ok) {
+      // 🔊 Page-guide voice-over (and starter-deck / tombstone media) rides the
+      // Storage art pipeline, NOT the catalog row (the row deep-strips big
+      // data: URLs). Auto-ship it in the SAME click so the admin never again
+      // has to remember the separate "Publish Catalog Art" step for players to
+      // hear the dialogue audio. Best-effort: a failure here doesn't undo the
+      // catalog publish — it just gets its own toast.
+      bPub.textContent = '…shipping voice/art';
+      let artR = { ok: true, count: 0 };
+      try { artR = await cloudPublishCatalogArt(); } catch (e) { artR = { ok: false, error: (e && e.message) || 'art publish exception' }; }
+      bPub.disabled = false; bPub.textContent = '📚 Publish Cards/Heroes/Items/Packs';
+      if (artR.ok) showToast(`📚 Published ${r.count} entries + voice/art to all players`, 3000);
+      else showToast(`📚 Catalog published. ⚠ Voice/art ship failed: ${artR.error || 'unknown'} — tap 🎨 Publish Art again.`, 7000);
+      render();
+    } else {
+      bPub.disabled = false; bPub.textContent = '📚 Publish Cards/Heroes/Items/Packs';
+      showToast('⨯ ' + (r.error || 'Publish failed'), 4000);
+    }
   };
   // 🎨 Publish public catalog art (sprites + cardArt for everyone to render).
   const bPubArt = document.getElementById('btn-publish-catalog-art');
@@ -36877,6 +36930,18 @@ function renderPricingAdmin() {
     bPull.disabled = false; bPull.textContent = '🔄 Pull Latest Catalog';
     if (r1.ok) showToast(`📚 Catalog refreshed (${r1.count || 0} entries)`, 2400);
     else       showToast('⨯ ' + (r1.error || 'Pull failed'), 4000);
+    render();
+  };
+  // 👁 Preview the new-player Starter Deck picker. Admin accounts own every
+  // card so the live game's gate (needsStarterPick → false for admins) skips
+  // this screen — this button lets the admin SEE/verify it without wiping
+  // their account. renderStarterPick() renders whenever App.screen is
+  // 'starterPick' regardless of admin; its admin-only Back button returns here.
+  const bPrevSP = document.getElementById('btn-preview-starterpick');
+  if (bPrevSP) bPrevSP.onclick = () => {
+    const decks = (typeof getAllStarterDecks === 'function') ? getAllStarterDecks() : [];
+    if (!decks.length) { showToast('⚠ No starter decks authored yet — create one in 🃏 Starter Decks first, then preview.', 4200); return; }
+    App.screen = 'starterPick';
     render();
   };
 

@@ -37564,7 +37564,9 @@ function renderForgeCards() {
     : `<span class="dbf-result-count ink-dim">${allCards.length} card${allCards.length === 1 ? '' : 's'}</span>`;
 
   const list = allCards.length === 0
-    ? `<div class="empty-list-note">No custom cards yet. Forge one below to add it to your deck.</div>`
+    ? (!App._forgeIdbLoaded
+        ? `<div class="empty-list-note">⏳ Loading your forged cards from local storage… (this can take a couple seconds — your cards are NOT lost)</div>`
+        : `<div class="empty-list-note">No custom cards yet. Forge one below to add it to your deck.</div>`)
     : filtered.length === 0
       ? `<div class="empty-list-note">No cards match the current filter. <button class="btn-mini" id="forge-clear-search-empty" style="margin-left:0.4rem">Clear filters</button></div>`
       : filtered.map(c => {
@@ -37637,7 +37639,9 @@ function renderForgeGuides() {
   const list = (Forge.pageGuides || []).slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   const pLabel = (r) => (RPG_GUIDE_PAGES.find(p => p.route === r) || {}).label || r;
   const rows = list.length === 0
-    ? `<div class="ink-dim small-text" style="padding:0.8rem 0">No guides yet. Click <strong>➕ New Guide</strong>, or <strong>🧙 Seed Merchant guides</strong> to auto-create one per shop page (inactive until you fill the text + activate).</div>`
+    ? (!App._forgeIdbLoaded
+        ? `<div class="ink-dim small-text" style="padding:0.8rem 0">⏳ Loading your guides from local storage… (a couple seconds — your guides are NOT lost)</div>`
+        : `<div class="ink-dim small-text" style="padding:0.8rem 0">No guides yet. Click <strong>➕ New Guide</strong>, or <strong>🧙 Seed Merchant guides</strong> to auto-create one per shop page (inactive until you fill the text + activate).</div>`)
     : list.map((g, i) => `
       <div class="ai-deck-row" style="display:flex;align-items:center;gap:0.6rem;padding:0.55rem 0.8rem;background:rgba(20,12,40,0.5);border:1px solid rgba(184,136,255,0.25);border-radius:6px;margin-bottom:0.4rem">
         <div style="flex:1 1 auto;min-width:0">
@@ -60986,6 +60990,12 @@ loadForge();
     if (typeof loadForgeContentFromIdb === 'function') {
       await loadForgeContentFromIdb();
     }
+    // ✅ Heavy Forge content (cards / guides / moves / …) has now been
+    // restored from IndexedDB. Until this point the Forge must NOT claim
+    // "No cards/guides yet" — that empty flash looked like the content was
+    // deleted. Flip the flag and repaint so the real lists show.
+    App._forgeIdbLoaded = true;
+    try { if (typeof render === 'function') render(); } catch (e) {}
     // Canonical catalog snapshot now lives in IndexedDB (moved off
     // localStorage to stop it starving the progression profile). Loaded
     // here, post-eval, so the IDB consts are safely initialized.
@@ -61011,6 +61021,12 @@ loadForge();
       }
     } catch (e) { /* recovery is best-effort */ }
   } catch (e) { console.warn('IDB heavy-load failed', e); }
+  finally {
+    // Never leave the Forge stuck on "loading…" — even if IDB failed, the
+    // localStorage fast-path copy (if any) is the best we have, so reveal it.
+    App._forgeIdbLoaded = true;
+    try { if (typeof render === 'function') render(); } catch (e) {}
+  }
 })();
 loadLab();
 loadCamp();

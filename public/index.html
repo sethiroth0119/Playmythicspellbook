@@ -37519,11 +37519,12 @@ function renderTitle() {
         })(),
         onclick: () => { App.screen = 'wagerHall'; App.wagerTab = 'live'; render(); } },
       { id: 'btn-vendor',  icon: '<img src="assets/artwork/Blackmarket%20icon.png" alt="Black Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Black Market',
-        sub: (typeof hasBmPass === 'function' && hasBmPass()) ? 'Bazaar open — smuggle spare cards for <span class="cinder-icon"></span>' : 'Survive the route to reach The Hollow Bazaar',
-        badge: (typeof hasBmPass === 'function' && hasBmPass()) ? '🖤 Open' : '🗺 Run the route',
+        sub: (App._bmInHall) ? 'You\'re at The Hollow Bazaar — chat, trade, then travel home' : 'Survive the route to reach The Hollow Bazaar',
+        badge: (App._bmInHall) ? '🖤 At the Bazaar' : '🗺 Run the route',
         accent: '#b070b0',
         onclick: () => {
-          if (typeof hasBmPass === 'function' && hasBmPass()) { App.screen = 'vendor'; render(); }
+          if (App._bmInHall && typeof openBlackMarketHall === 'function') { openBlackMarketHall(); }
+          else if (typeof _adminBypass === 'function' && _adminBypass()) { App.screen = 'vendor'; render(); }
           else if (typeof _startBlackMarketRun === 'function') { _startBlackMarketRun(); }
           else { App.screen = 'vendor'; render(); }
         } },
@@ -59349,6 +59350,10 @@ function _blackMarketRunCampaign() {
 }
 function hasBmPass() {
   try { if (typeof _adminBypass === 'function' && _adminBypass()) return true; } catch (e) {}
+  // 🖤 "Access" now = you are currently AT the Bazaar this visit (between
+  // reaching it and travelling home). No timed pass — each visit is earned
+  // by running the route, and closed by the return trip / death.
+  try { if (typeof App !== 'undefined' && App._bmInHall) return true; } catch (e) {}
   let exp = (typeof Profile !== 'undefined' && Profile.bmPass) || 0;
   if (!exp) { try { exp = parseInt(localStorage.getItem(BM_PASS_KEY) || '0', 10) || 0; } catch (e) {} }
   return exp > Date.now();
@@ -59359,13 +59364,104 @@ function grantBmPass() {
   try { localStorage.setItem(BM_PASS_KEY, String(exp)); } catch (e) {}
   try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
 }
+// 🖤 THE HOLLOW BAZAAR — the social hall players reach by surviving the
+// route. Live chat via Supabase realtime broadcast (graceful offline).
+// Trade Floor = the real Black Market screen. Travel Home = the RETURN
+// roguelite — the goods aren't safe until you carry them all the way back.
+function openBlackMarketHall() {
+  try {
+    const ID = 'bm-hall-modal';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const sb = (typeof Cloud !== 'undefined' && Cloud.client) ? Cloud.client : null;
+    const online = !!(sb && typeof Profile !== 'undefined' && Profile.cloud && Profile.cloud.signedIn);
+    const nameOf = () => {
+      try { return (Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'; }
+      catch (e) { return 'Survivor'; }
+    };
+    const carry = (typeof App !== 'undefined' && App._bmCarry) || {};
+    const carryLine = (typeof _rlcHaulLine === 'function') ? _rlcHaulLine(carry) : '';
+    const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
+    let _ch = null;
+    const msgs = [];
+    const paint = () => {
+      const box = document.getElementById('bmh-msgs'); if (!box) return;
+      box.innerHTML = msgs.length
+        ? msgs.map(m => '<div style="margin:3px 0;font-size:0.86rem"><span style="color:#b48cff;font-weight:700">' + esc(m.n) + '</span> <span style="color:#cfc6e6">' + esc(m.t) + '</span></div>').join('')
+        : '<div class="small-text ink-dim" style="padding:10px 2px">' + (online ? 'No chatter yet — break the silence.' : '📡 Offline — sign in for live trade chat. Notes are local-only here.') + '</div>';
+      box.scrollTop = box.scrollHeight;
+    };
+    const append = (m) => { if (!m || !m.t) return; msgs.push(m); if (msgs.length > 80) msgs.shift(); paint(); };
+    if (online) {
+      try {
+        _ch = sb.channel('bm-hall', { config: { broadcast: { self: true } } });
+        _ch.on('broadcast', { event: 'msg' }, (p) => { if (p && p.payload) append(p.payload); });
+        _ch.subscribe();
+      } catch (e) { _ch = null; }
+    }
+    const sendMsg = () => {
+      const inp = document.getElementById('bmh-in'); if (!inp) return;
+      const t = String(inp.value || '').trim().slice(0, 240);
+      if (!t) return;
+      inp.value = '';
+      const m = { n: nameOf(), t: t, ts: Date.now() };
+      if (_ch) { try { _ch.send({ type: 'broadcast', event: 'msg', payload: m }); } catch (e) { append(m); } }
+      else { append(m); }
+    };
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483645;display:flex;align-items:center;justify-content:center;background:rgba(3,1,8,0.85);backdrop-filter:blur(3px)';
+    ov.innerHTML =
+      '<div style="width:min(620px,95vw);max-height:90vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(24,12,34,0.99),rgba(10,5,18,0.99));border:2px solid rgba(176,112,176,0.6);border-radius:16px;padding:16px 18px;box-shadow:0 24px 80px rgba(0,0,0,0.9),0 0 30px rgba(176,112,176,0.3)">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">' +
+          '<div><div style="font-family:\'Cinzel\',serif;font-size:1.3rem;font-weight:800;color:#caa0e6">🖤 The Hollow Bazaar</div>' +
+          '<div class="small-text ink-dim">A sunken tanker east of the dead city. No questions. No records. ' + (online ? '<span style="color:#7fdca0">● live</span>' : '<span style="color:#ff9a6b">○ offline</span>') + '</div></div>' +
+          '<button id="bmh-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
+        '</div>' +
+        (carryLine ? '<div style="margin:4px 0 8px;padding:7px 10px;border:1px solid rgba(255,209,102,0.4);border-radius:8px;background:rgba(255,209,102,0.08);color:#ffd166;font-size:0.85rem">🎒 Carrying to sell / take home: <strong>' + carryLine + '</strong> — <span class="small-text ink-dim">it is NOT safe until you survive the trip back.</span></div>' : '') +
+        '<div id="bmh-msgs" style="flex:1;min-height:200px;max-height:42vh;overflow:auto;border:1px solid rgba(176,112,176,0.25);border-radius:8px;padding:8px 10px;background:rgba(10,5,18,0.6)"></div>' +
+        '<div style="display:flex;gap:8px;margin-top:8px">' +
+          '<input id="bmh-in" maxlength="240" placeholder="' + (online ? 'Say something to the floor…' : 'Offline — local note…') + '" style="flex:1;min-width:0;padding:0.55rem 0.7rem;border-radius:8px;border:1px solid rgba(176,112,176,0.4);background:rgba(15,8,26,0.7);color:#e8e0ff">' +
+          '<button id="bmh-send" style="cursor:pointer;border-radius:8px;padding:0.55rem 1rem;border:1px solid #b070b0;background:linear-gradient(180deg,#7a4a8a,#3a1c44);color:#f0e0ff;font-weight:800">Send</button>' +
+        '</div>' +
+        '<div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">' +
+          '<button id="bmh-trade" style="flex:1;min-width:160px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(176,112,176,0.6);background:rgba(176,112,176,0.16);color:#e6c6f0;font-weight:800">🛒 Trade Floor</button>' +
+          '<button id="bmh-home" style="flex:1;min-width:160px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid #ffd166;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800">🏚 Travel Home (run the route back)</button>' +
+        '</div>' +
+        '<div class="small-text ink-dim" style="margin-top:6px">Closing this just loiters at the Bazaar — reopen it from the Black Market tile. You only leave by travelling home (or dying on the way).</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    const cleanup = () => { try { if (_ch && sb) sb.removeChannel(_ch); } catch (e) {} };
+    const close = () => { cleanup(); const h = document.getElementById(ID); if (h) h.remove(); };
+    const x = document.getElementById('bmh-x'); if (x) x.onclick = close;
+    const sBtn = document.getElementById('bmh-send'); if (sBtn) sBtn.onclick = sendMsg;
+    const inp = document.getElementById('bmh-in'); if (inp) inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sendMsg(); } };
+    const tBtn = document.getElementById('bmh-trade');
+    if (tBtn) tBtn.onclick = () => { close(); try { App.screen = 'vendor'; if (typeof render === 'function') render(); } catch (e) {} };
+    const hBtn = document.getElementById('bmh-home');
+    if (hBtn) hBtn.onclick = () => { close(); try { if (typeof _startBlackMarketRun === 'function') _startBlackMarketRun(); } catch (e) {} };
+    paint();
+  } catch (e) {}
+}
 function _startBlackMarketRun() {
   try {
     const r = (typeof Profile !== 'undefined' && Profile.rlcRun) ? Profile.rlcRun : null;
     if (r && !r.isComplete && !r.isFailed && r.campaignId !== BM_RUN_ID) {
       if (!confirm('Starting the Black Market Run abandons your current roguelite run. Continue?')) return;
     }
+    // 🏚 If goods are waiting at the Bazaar, this run is the trip HOME.
+    const returning = (typeof App !== 'undefined' && App._bmCarry != null);
     if (typeof rlcStartRun === 'function') rlcStartRun(BM_RUN_ID);
+    if (Profile.rlcRun) {
+      if (returning) {
+        Profile.rlcRun._bmLeg = 'return';
+        try { Profile.rlcRun.haul = Object.assign({}, App._bmCarry || {}); } catch (e) {}
+        App._bmInHall = false;   // left the Bazaar — on the road now
+        try { showToast('🏚 Heading home from The Hollow Bazaar — survive the route or lose the haul.', 4600); } catch (e) {}
+      } else {
+        Profile.rlcRun._bmLeg = 'out';
+      }
+      try { _persistProgressNow(); } catch (e) {}
+    }
   } catch (e) {}
 }
 function getAllCampaigns() {
@@ -59553,6 +59649,7 @@ function rlcAbandonRun() {
     ((pend || cin) ? ` — ${pend} card${pend === 1 ? '' : 's'} and ${cin} Cinders` : '') +
     '. Nothing is added to your inventory.\n\nAbandon anyway?'
   )) return;
+  try { App._bmCarry = null; App._bmInHall = false; } catch (e) {}   // 🖤 journey abandoned
   _rlcClearRunArtifacts();   // pending rewards discarded — never cashed out
   App.screen = 'rlcList';
   render();
@@ -59701,6 +59798,8 @@ function _rlcBankHaul(run) {
 const RLC_DEATH_SALVAGE_PCT = 0.15;   // 15% of each secured resource, on death
 function _rlcApplyDeathLoss(run) {
   const lost = { haul: {}, salvage: {} };
+  // 🖤 Died en route — the Bazaar goods are gone; the journey is over.
+  try { App._bmCarry = null; App._bmInHall = false; } catch (e) {}
   try {
     // 1) Forfeit every un-banked resource carried in the run.
     const h = (run && run.haul) || {};
@@ -59743,10 +59842,29 @@ function _rlcCompleteNode(nodeId) {
   const _runAfter = () => { if (_afterDlg) { try { _rlcPlayDialogue(_afterDlg); } catch (e) {} } };
   if (node && (node.type === 'finalBoss')) {
     run.isComplete = true;
-    // 🖤 Reached The Hollow Bazaar — grant Black Market access.
+    // 🖤 The Black Market Run is a there-AND-back journey.
     if (run.campaignId === BM_RUN_ID) {
-      try { grantBmPass(); } catch (e) {}
-      try { showToast('🖤 You reached The Hollow Bazaar — Black Market open for ' + Math.round(BM_PASS_MS / 60000) + ' min.', 5600); } catch (e) {}
+      if (run._bmLeg === 'return') {
+        // 🏠 Made it HOME — only NOW is the carried haul truly secured.
+        try {
+          const _b = _rlcBankHaul(run);
+          showToast(Object.keys(_b).length
+            ? '🏠 Home with the goods — secured to camp: ' + _rlcHaulLine(_b)
+            : '🏠 You made it back to camp empty-handed.', 5200);
+        } catch (e) {}
+        if (!Array.isArray(Profile.rlcCompleted)) Profile.rlcCompleted = [];
+        if (Profile.rlcCompleted.indexOf(BM_RUN_ID) < 0) Profile.rlcCompleted.push(BM_RUN_ID);
+        try { App._bmCarry = null; App._bmInHall = false; } catch (e) {}
+        try { _persistProgressNow(); } catch (e) {}
+        App.screen = 'camp'; render(); _runAfter(); return;
+      }
+      // 🖤 Reached the Bazaar (outbound). You're THERE — but the goods are
+      // NOT safe until you carry them all the way home. Open the Hall.
+      try { App._bmCarry = Object.assign({}, run.haul || {}); App._bmInHall = true; } catch (e) {}
+      try { _persistProgressNow(); } catch (e) {}
+      if (typeof openBlackMarketHall === 'function') { openBlackMarketHall(); return; }
+      // Fallback if the hall fn is missing — old behaviour.
+      try { grantBmPass(); showToast('🖤 You reached The Hollow Bazaar.', 4200); } catch (e) {}
     }
     // 🎒 Final extraction — any haul still carried is secured to camp.
     try {

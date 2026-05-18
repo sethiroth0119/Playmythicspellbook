@@ -23963,9 +23963,16 @@ async function resMarketFetch() {
         for (const r of sold) {
           const upd = await Cloud.client.from('resource_listings').update({ paid_out: true }).eq('id', r.id).eq('paid_out', false).select('id');
           if (!(upd && upd.data && upd.data.length)) continue;
-          if (r.currency === 'aza') { Profile.sovereigns = (Profile.sovereigns || 0) + (r.price || 0); summary.push(`+${r.price} 👑`); }
-          else if (r.currency === 'barter') { _resGiveOwned(r.want_kind === 'card' ? 'card' : 'item', r.want_id); summary.push(`+${(r.want_name || r.want_id || 'item')}`); }
-          else { Profile.gems = (Profile.gems || 0) + (r.price || 0); summary.push(`+${r.price} 🔥`); }
+          if (r.currency === 'aza') {
+            const _q = (typeof frApplyTax === 'function') ? frApplyTax(r.price || 0, { market: 'base', resource: r.resource, quantity: r.qty, buyerId: r.buyer_id }) : { net: (r.price || 0), tax: 0 };
+            Profile.sovereigns = (Profile.sovereigns || 0) + _q.net;
+            summary.push(`+${_q.net} 👑${_q.tax ? ` (−${_q.tax} tax)` : ''}`);
+          } else if (r.currency === 'barter') { _resGiveOwned(r.want_kind === 'card' ? 'card' : 'item', r.want_id); summary.push(`+${(r.want_name || r.want_id || 'item')}`); }
+          else {
+            const _q = (typeof frApplyTax === 'function') ? frApplyTax(r.price || 0, { market: 'base', resource: r.resource, quantity: r.qty, buyerId: r.buyer_id }) : { net: (r.price || 0), tax: 0 };
+            Profile.gems = (Profile.gems || 0) + _q.net;
+            summary.push(`+${_q.net} 🔥${_q.tax ? ` (−${_q.tax} tax)` : ''}`);
+          }
         }
         if (summary.length) { try { saveProfile(); } catch (e) {} showToast(`💰 Exchange sales collected: ${summary.join(' · ')}`, 4600); }
       }
@@ -24090,7 +24097,7 @@ async function resMarketCancel(listing) {
 // a security_invoker VIEW that SUMs all rows, so there are no lost updates
 // and no RPC needed. Degrades gracefully offline / before one-time setup.
 // ============================================================================
-const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ngrant select on public.reserve_totals to authenticated;";
+const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ncreate table if not exists public.reserve_tax_log (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  buyer_id uuid,\n  corp_id text,\n  resource text,\n  quantity numeric not null default 0,\n  sale_value numeric not null default 0,\n  tax_rate numeric not null default 0.02,\n  tax_amount numeric not null default 0,\n  market_type text not null default 'base',\n  created_at timestamptz default now()\n);\ncreate index if not exists reserve_tax_log_time on public.reserve_tax_log (created_at desc);\nalter table public.reserve_tax_log enable row level security;\ndrop policy if exists tx_sel on public.reserve_tax_log;\ncreate policy tx_sel on public.reserve_tax_log for select to authenticated using (true);\ndrop policy if exists tx_ins on public.reserve_tax_log;\ncreate policy tx_ins on public.reserve_tax_log for insert to authenticated with check (seller_id = auth.uid());\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ngrant select on public.reserve_totals to authenticated;";
 
 // Contribution point weight per resource (strategic / scarce = worth more).
 const RESERVE_WEIGHTS = {
@@ -24134,6 +24141,8 @@ const FoundationReserve = {
   mine: {},            // resource -> { qty, points }
   myPoints: 0,
   barons: {},          // resource -> { userId, name, qty }  (top world supplier)
+  taxStats: null,      // aggregated reserve_tax_log dashboard stats
+  taxLastFetch: 0,
   tableMissing: false, loading: false, lastFetch: 0, _err: null, _poll: null,
 };
 function _frErr(e) {
@@ -24307,6 +24316,83 @@ function frRunConvoy() {
       });
     }
   } catch (e) {}
+}
+// ============================================================================
+// 💰 FOUNDATION RESERVE TAX SYSTEM — a universal 2% sink on resource/goods
+// sales. The tax is NOT minted back to anyone: the seller receives the net,
+// the taxed Cinders are removed from circulation (the permanent sink), and
+// every taxed sale is logged to reserve_tax_log for the dashboard. Corp-
+// ready: pass { corpId, market:'corp' } when the Corporation feature lands.
+// ============================================================================
+const FR_TAX_RATE = 0.02;   // 2% default Foundation Tax
+// Market types: 'base' | 'black' | 'direct' | 'corp' | 'shipment' | 'vendor'
+function frTaxQuote(gross, opts) {
+  opts = opts || {};
+  const rate = (typeof opts.rate === 'number' && opts.rate >= 0) ? opts.rate : FR_TAX_RATE;
+  const g = Math.max(0, Math.floor(gross || 0));
+  const tax = Math.floor(g * rate);
+  return {
+    gross: g, tax: tax, net: g - tax, rate: rate,
+    label: (opts.market === 'black') ? 'Foundation Seizure Fee' : 'Foundation Tax',
+  };
+}
+// Fire-and-forget audit row — never blocks or fails a sale.
+function frLogTax(q, opts) {
+  try {
+    opts = opts || {};
+    if (!q || !(q.tax > 0)) return;
+    if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return;
+    if (typeof FoundationReserve !== 'undefined' && FoundationReserve.tableMissing) return;
+    const row = {
+      seller_id: Profile.cloud.userId,
+      buyer_id: opts.buyerId || null,
+      corp_id: opts.corpId || null,
+      resource: (opts.resource != null ? String(opts.resource) : ''),
+      quantity: Math.max(0, Math.floor(opts.quantity || 0)),
+      sale_value: q.gross,
+      tax_rate: q.rate,
+      tax_amount: q.tax,
+      market_type: opts.market || 'base',
+    };
+    Promise.resolve(Cloud.client.from('reserve_tax_log').insert(row)).then(r => {
+      if (r && r.error) { try { _frErr(r.error); } catch (e) {} }
+      else { try { if (typeof FoundationReserve !== 'undefined') FoundationReserve.taxLastFetch = 0; } catch (e) {} }
+    }).catch(() => {});
+  } catch (e) {}
+}
+// Quote + log in one call. Returns { gross, tax, net, rate, label }. The
+// caller credits q.net (the tax is the sink — never credited to anyone).
+function frApplyTax(gross, opts) {
+  const q = frTaxQuote(gross, opts);
+  try { frLogTax(q, opts); } catch (e) {}
+  return q;
+}
+async function frTaxFetch() {
+  if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return;
+  try {
+    const res = await Cloud.client.from('reserve_tax_log')
+      .select('resource,quantity,sale_value,tax_amount,market_type,corp_id,created_at')
+      .order('created_at', { ascending: false }).limit(600);
+    if (res.error) { _frErr(res.error); return; }
+    const rows = res.data || [];
+    const now = Date.now(), DAY = 86400000;
+    const st = { total: 0, day: 0, week: 0, month: 0, corp: 0, black: 0,
+      byRes: {}, byMarket: {}, recent: rows.slice(0, 24) };
+    rows.forEach(r => {
+      const tax = Number(r.tax_amount) || 0, t = Date.parse(r.created_at || 0) || 0;
+      st.total += tax;
+      if (now - t < DAY) st.day += tax;
+      if (now - t < DAY * 7) st.week += tax;
+      if (now - t < DAY * 30) st.month += tax;
+      if (r.corp_id) st.corp += tax;
+      if (r.market_type === 'black') st.black += tax;
+      const rk = r.resource || '—'; st.byRes[rk] = (st.byRes[rk] || 0) + tax;
+      const mk = r.market_type || 'base'; st.byMarket[mk] = (st.byMarket[mk] || 0) + tax;
+    });
+    st.topRes = Object.keys(st.byRes).sort((a, b) => st.byRes[b] - st.byRes[a]).slice(0, 6);
+    FoundationReserve.taxStats = st;
+    FoundationReserve.taxLastFetch = Date.now();
+  } catch (e) { _frErr(e); }
 }
 // Returns { can, max, pct, bottleneck, out, event } vs current totals AND the
 // active world event (a crisis throttles, a relief surge boosts).
@@ -24610,6 +24696,36 @@ function openFoundationReserve() {
         '</div>';
     };
 
+    const taxTab = () => {
+      const s = FoundationReserve.taxStats;
+      if (!s) {
+        if (!FoundationReserve._taxFetching) {
+          FoundationReserve._taxFetching = true;
+          try { frTaxFetch().then(() => { FoundationReserve._taxFetching = false; render(); }); } catch (e) { FoundationReserve._taxFetching = false; }
+        }
+        return '<div class="ink-dim" style="padding:1.8rem;text-align:center">Tallying Foundation tax receipts…</div>';
+      }
+      const card = (label, val, col) => '<div style="flex:1;min-width:120px;padding:8px 10px;border:1px solid rgba(120,170,255,0.2);border-radius:8px;background:rgba(40,70,130,0.10)"><div class="small-text" style="color:#8fb0e0">' + label + '</div><div style="color:' + (col || '#aee0ff') + ';font-weight:800;font-size:1.05rem">' + numF(val) + ' 🔥</div></div>';
+      const mkName = { base: 'Base Market', black: 'Black Market', direct: 'Direct Trade', corp: 'Corporation', shipment: 'Shipment', vendor: 'Vendor' };
+      const topRes = (s.topRes || []).length
+        ? (s.topRes || []).map(r => '<div style="display:flex;justify-content:space-between;padding:5px 9px;border:1px solid rgba(120,170,255,0.16);border-radius:7px;background:rgba(40,70,130,0.08);margin-bottom:4px"><span style="color:#dce8ff">' + esc((typeof _meta === 'function' && _meta(r).name) || r) + '</span><span style="color:#ffd166;font-weight:700">' + numF(s.byRes[r]) + ' 🔥</span></div>').join('')
+        : '<div class="small-text ink-dim">No taxed sales yet.</div>';
+      const byMk = Object.keys(s.byMarket || {}).sort((a, b) => s.byMarket[b] - s.byMarket[a])
+        .map(m => '<span style="display:inline-block;margin:0 6px 6px 0;padding:3px 9px;border:1px solid rgba(176,140,255,0.3);border-radius:999px;background:rgba(70,50,110,0.15);color:#cdb8ec;font-size:0.8rem">' + esc(mkName[m] || m) + ': <strong>' + numF(s.byMarket[m]) + ' 🔥</strong></span>').join('') || '<span class="small-text ink-dim">—</span>';
+      const recent = (s.recent || []).length
+        ? (s.recent || []).slice(0, 14).map(r => {
+            const when = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+            return '<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 8px;border-bottom:1px solid rgba(120,170,255,0.1)"><span style="color:#bcd0ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(mkName[r.market_type] || r.market_type || 'base') + ' · ' + esc((typeof _meta === 'function' && _meta(r.resource).name) || r.resource || '—') + ' ×' + (r.quantity | 0) + '</span><span style="color:#ffd166;white-space:nowrap">−' + numF(r.tax_amount) + ' 🔥 <span class="small-text ink-dim">' + esc(when) + '</span></span></div>';
+          }).join('')
+        : '<div class="small-text ink-dim" style="padding:0.5rem 0">No tax log entries yet.</div>';
+      return '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Every resource &amp; goods sale pays a flat <strong>2% Foundation Tax</strong> (Black Market: <strong>Seizure Fee</strong>). It is a permanent Cinder sink — removed from circulation, never paid back. Corporation sales feed in here too once Corporations launch.</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' + card('Total collected', s.total, '#7fe0a0') + card('Today', s.day) + card('7 days', s.week) + card('30 days', s.month) + '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' + card('🖤 Black Market seizures', s.black, '#e0a0ff') + card('🏢 Corporation tax', s.corp, '#9fe0b0') + '</div>' +
+        '<div style="font-weight:800;color:#caa0e6;margin:4px 0 6px">By market</div><div style="margin-bottom:10px">' + byMk + '</div>' +
+        '<div style="font-weight:800;color:#caa0e6;margin:4px 0 6px">Most-taxed resources</div>' + topRes +
+        '<div style="font-weight:800;color:#caa0e6;margin:12px 0 6px">Recent tax log</div><div style="border:1px solid rgba(120,170,255,0.16);border-radius:8px;overflow:hidden">' + recent + '</div>';
+    };
+
     const directorBanner = () => {
       const es = frEconomyState();
       const ev = es.ev;
@@ -24676,7 +24792,7 @@ function openFoundationReserve() {
       } else if (FoundationReserve.loading && !FoundationReserve.lastFetch) {
         body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">Querying the world Reserve…</div>';
       } else {
-        body = tab === 'reserve' ? reserveTab() : tab === 'deposit' ? depositTab() : productionTab();
+        body = tab === 'reserve' ? reserveTab() : tab === 'deposit' ? depositTab() : tab === 'tax' ? taxTab() : productionTab();
       }
       const tBtn = (id, label) => '<button data-fr-tab="' + id + '" style="flex:1;cursor:pointer;border-radius:8px 8px 0 0;padding:0.5rem;border:1px solid rgba(120,170,255,0.35);border-bottom:none;background:' + (tab === id ? 'rgba(60,100,170,0.30)' : 'rgba(40,70,130,0.10)') + ';color:' + (tab === id ? '#eaf3ff' : '#9fb6d6') + ';font-weight:800">' + label + '</button>';
 
@@ -24688,7 +24804,7 @@ function openFoundationReserve() {
             '<button id="fr-x" style="cursor:pointer;border:1px solid rgba(150,190,255,0.4);background:transparent;color:#aec8ff;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
           '</div>' +
           ((online && !FoundationReserve.tableMissing && FoundationReserve.lastFetch) ? directorBanner() : '') +
-          (online && !FoundationReserve.tableMissing ? '<div style="display:flex;gap:4px;margin:8px 0 -1px">' + tBtn('reserve', '🏛 Reserve') + tBtn('deposit', '➕ Contribute') + tBtn('production', '⚙️ Production') + '</div>' : '') +
+          (online && !FoundationReserve.tableMissing ? '<div style="display:flex;gap:4px;margin:8px 0 -1px">' + tBtn('reserve', '🏛 Reserve') + tBtn('deposit', '➕ Contribute') + tBtn('production', '⚙️ Production') + tBtn('tax', '💰 Tax') + '</div>' : '') +
           '<div id="fr-body" style="flex:1;min-height:240px;max-height:56vh;overflow:auto;border:1px solid rgba(120,170,255,0.22);border-radius:0 0 8px 8px;padding:11px">' + body + '</div>' +
           '<button id="fr-close" style="margin-top:12px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(120,170,255,0.5);background:rgba(60,100,170,0.18);color:#dce8ff;font-weight:800">Close</button>' +
           '<div class="small-text ink-dim" style="margin-top:6px">Products are manufactured by the world itself — not generated for free. Your deposits keep civilization’s supply chains running.</div>' +
@@ -55925,16 +56041,19 @@ function renderBlackMarket() {
       const amount = (amtSpec === 'all') ? row.sellable : 1;
       if (amount <= 0 || amount > row.sellable) return;
       const payout = amount * row.value;
+      const q = (typeof frApplyTax === 'function') ? frApplyTax(payout, { market: 'black', resource: cardId, quantity: amount }) : { gross: payout, tax: 0, net: payout, label: 'Foundation Seizure Fee' };
       const ok = confirm(
         `🕯️ Smuggle ${amount}× ${row.card.name}?\n\n` +
-        `Payout: <span class="cinder-icon"></span> ${payout} Cinders\n` +
+        `Sale: ${q.gross} Cinders\n` +
+        `${q.label} (2%): −${q.tax}\n` +
+        `You receive: ${q.net} Cinders\n` +
         `Remaining copies: ${row.count - amount}${row.protectedCount > 0 ? ' (1 still locked in deck)' : ''}`
       );
       if (!ok) return;
       Profile.cardCollection[cardId] = Math.max(0, (Profile.cardCollection[cardId] || 0) - amount);
       if (Profile.cardCollection[cardId] === 0) delete Profile.cardCollection[cardId];
-      addCinders(payout);
-      showToast(`🔥 +${payout} Cinders — ${amount}× ${row.card.name} sold.`);
+      addCinders(q.net);
+      showToast(`🔥 +${q.net} Cinders — ${amount}× ${row.card.name} sold${q.tax ? ` · ${q.label} −${q.tax}` : ''}.`);
       render();
     };
   });
@@ -55957,8 +56076,9 @@ function renderBlackMarket() {
         earned += r.sellable * r.value;
         soldCount += r.sellable;
       });
-      addCinders(earned);
-      showToast(`🔥 +${earned} Cinders from ${soldCount} cards sold.`);
+      const q = (typeof frApplyTax === 'function') ? frApplyTax(earned, { market: 'black', resource: 'cards', quantity: soldCount }) : { gross: earned, tax: 0, net: earned, label: 'Foundation Seizure Fee' };
+      addCinders(q.net);
+      showToast(`🔥 +${q.net} Cinders from ${soldCount} cards sold${q.tax ? ` · ${q.label} −${q.tax}` : ''}.`);
       render();
     };
   }
@@ -60422,11 +60542,12 @@ function openBlackMarketTrade() {
         const amount = (amtSpec === 'all') ? sellable : 1;
         if (amount <= 0 || amount > sellable) return;
         const payout = amount * value;
-        if (!confirm('🕯️ Smuggle ' + amount + '× ' + (card.name || cardId) + '?\n\nPayout: ' + payout + ' Cinders\nRemaining copies: ' + (count - amount) + (prot > 0 ? ' (1 still locked in deck)' : ''))) return;
+        const _q = (typeof frApplyTax === 'function') ? frApplyTax(payout, { market: 'black', resource: cardId, quantity: amount }) : { gross: payout, tax: 0, net: payout, label: 'Foundation Seizure Fee' };
+        if (!confirm('🕯️ Smuggle ' + amount + '× ' + (card.name || cardId) + '?\n\nSale: ' + _q.gross + ' Cinders\n' + _q.label + ' (2%): −' + _q.tax + '\nYou receive: ' + _q.net + ' Cinders\nRemaining copies: ' + (count - amount) + (prot > 0 ? ' (1 still locked in deck)' : ''))) return;
         Profile.cardCollection[cardId] = Math.max(0, (Profile.cardCollection[cardId] || 0) - amount);
         if (Profile.cardCollection[cardId] === 0) delete Profile.cardCollection[cardId];
-        if (typeof addCinders === 'function') addCinders(payout);
-        try { showToast('🔥 +' + payout + ' Cinders — ' + amount + '× ' + (card.name || cardId) + ' sold on the floor.'); } catch (e) {}
+        if (typeof addCinders === 'function') addCinders(_q.net);
+        try { showToast('🔥 +' + _q.net + ' Cinders — ' + amount + '× ' + (card.name || cardId) + ' sold' + (_q.tax ? ' · ' + _q.label + ' −' + _q.tax : '') + '.'); } catch (e) {}
         build();
       } catch (e) {}
     };

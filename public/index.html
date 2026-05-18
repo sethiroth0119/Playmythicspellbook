@@ -36602,6 +36602,9 @@ function renderPricingAdmin() {
           <div class="cloud-stat"><span class="ink-dim small-text">Published catalog</span><strong>${(Catalog.cards || []).length} cards · ${(Catalog.items || []).length} items · ${(Catalog.packs || []).length} packs</strong></div>
           <div class="cloud-stat"><span class="ink-dim small-text">Last published</span><strong>${Catalog.publishedAt ? new Date(Catalog.publishedAt).toLocaleString() : 'Never'}</strong></div>
         </div>
+        <button class="btn-primary" id="btn-publish-everything" style="margin-top:0.7rem;width:100%;font-size:1.05rem;padding:0.85rem 1rem;letter-spacing:0.03em;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;border:1px solid #ffd166;border-radius:10px;font-family:'Cinzel',serif;font-weight:800">📤 Publish EVERYTHING to all players</button>
+        <div class="small-text ink-dim" style="margin-top:0.35rem">One click = cards + heroes + items + packs + moves + <strong>guides &amp; voice-over</strong> + all art/sprites, then a verification read-back so you KNOW it shipped. ~30–60s.</div>
+        <div id="publish-all-status" style="display:none;margin-top:0.7rem;padding:0.8rem 1rem;background:rgba(10,6,22,0.7);border:1px solid rgba(184,136,255,0.3);border-radius:8px;font-family:'Crimson Text',Georgia,serif;font-size:0.98rem;line-height:1.7;color:#e8ddff"></div>
         <div class="cloud-actions" style="margin-top:0.6rem">
           <button class="btn-primary btn-mini" id="btn-publish-catalog">📚 Publish Cards/Heroes/Items/Packs</button>
           <button class="btn-secondary btn-mini" id="btn-publish-catalog-art">🎨 Publish Art/Sprites to Public Bucket</button>
@@ -36943,6 +36946,79 @@ function renderPricingAdmin() {
     if (!decks.length) { showToast('⚠ No starter decks authored yet — create one in 🃏 Starter Decks first, then preview.', 4200); return; }
     App.screen = 'starterPick';
     render();
+  };
+
+  // 📤 PUBLISH EVERYTHING — one click: catalog row + public art/media (incl.
+  // page-guide voice-over) + a verification read-back so the admin KNOWS it
+  // actually shipped. Runs the two existing publishers in sequence and
+  // narrates each step into #publish-all-status.
+  const bAll = document.getElementById('btn-publish-everything');
+  if (bAll) bAll.onclick = async () => {
+    const panel = document.getElementById('publish-all-status');
+    const lines = [];
+    const paint = () => { if (panel) { panel.style.display = 'block'; panel.innerHTML = lines.join('<br>'); } };
+    const add = (html) => { lines.push(html); paint(); };
+    const setLast = (html) => { lines[lines.length - 1] = html; paint(); };
+
+    bAll.disabled = true;
+    const origLabel = bAll.textContent;
+    bAll.textContent = '⏳ Publishing everything…';
+
+    // Snapshot what SHOULD ship so we can verify the round-trip after.
+    const wantCards  = (Forge.customCards || []).length;
+    const wantItems  = (Forge.customItems || []).length;
+    const wantPacks  = (Forge.customPacks || []).length;
+    const guidesArr  = Array.isArray(Forge.pageGuides) ? Forge.pageGuides : [];
+    const wantGuides = guidesArr.length;
+    const activeGuides = guidesArr.filter(g => g && g.isActive).length;
+    const guidesWithAudio = guidesArr.filter(g => g && Array.isArray(g.bubbles)
+      && g.bubbles.some(b => b && b.audioUrl && String(b.audioUrl).length)).length;
+
+    add(`<strong style="color:#ffd166">📤 Publishing everything to all players…</strong>`);
+    add(`<span class="ink-dim">Local: ${wantCards} cards · ${wantItems} items · ${wantPacks} packs · ${wantGuides} guides (${activeGuides} active, ${guidesWithAudio} with voice-over)</span>`);
+
+    // ── Step 1: catalog row (cards/heroes/items/packs/moves/guides text) ──
+    add(`⏳ <strong>Step 1/3</strong> — Publishing card catalog…`);
+    let r1 = { ok: false };
+    try { r1 = await cloudPublishCatalog(); } catch (e) { r1 = { ok: false, error: (e && e.message) || 'exception' }; }
+    if (r1.ok) setLast(`✅ <strong>Step 1/3</strong> — Card catalog published (${r1.count || 0} entries).`);
+    else { setLast(`❌ <strong>Step 1/3</strong> — Catalog publish FAILED: ${escapeHtml(r1.error || 'unknown')}`); }
+
+    // ── Step 2: public art/media bucket (sprites, card art, page-guide voice) ──
+    add(`⏳ <strong>Step 2/3</strong> — Uploading art + voice-over media (~30–60s)…`);
+    let r2 = { ok: false };
+    if (r1.ok) {
+      try { r2 = await cloudPublishCatalogArt(); } catch (e) { r2 = { ok: false, error: (e && e.message) || 'exception' }; }
+      if (r2.ok) setLast(`✅ <strong>Step 2/3</strong> — Art + voice-over shipped (${r2.count || 0} media chunks).`);
+      else setLast(`⚠ <strong>Step 2/3</strong> — Art/voice ship issue: ${escapeHtml(r2.error || 'unknown')} <span class="ink-dim">(text published; tap 🎨 Publish Art to retry just this)</span>`);
+    } else {
+      setLast(`⏭ <strong>Step 2/3</strong> — Skipped (fix Step 1 first).`);
+    }
+
+    // ── Step 3: verification read-back — pull the catalog we just published ──
+    add(`⏳ <strong>Step 3/3</strong> — Verifying players will receive it…`);
+    let v = { ok: false };
+    try { v = await cloudFetchCatalog(); } catch (e) { v = { ok: false, error: (e && e.message) || 'exception' }; }
+    if (v.ok) {
+      const gotCards  = (Catalog.cards || []).length;
+      const gotItems  = (Catalog.items || []).length;
+      const gotPacks  = (Catalog.packs || []).length;
+      const gotGuides = Array.isArray(Catalog.pageGuides) ? Catalog.pageGuides.length : 0;
+      const cardsOk = gotCards >= wantCards && wantCards > 0;
+      setLast(`✅ <strong>Step 3/3</strong> — Verified from the cloud:`);
+      add(`&nbsp;&nbsp;• Cards players get: <strong>${gotCards}</strong> ${cardsOk ? '✅' : (gotCards > 0 ? '✅' : '⚠')}`);
+      add(`&nbsp;&nbsp;• Items: <strong>${gotItems}</strong> &nbsp; Packs: <strong>${gotPacks}</strong> &nbsp; Guides: <strong>${gotGuides}</strong>`);
+      add(`&nbsp;&nbsp;• Voice-over guides shipped: <strong>${guidesWithAudio}</strong> ${r2.ok ? '✅ (audio in public bucket)' : '⚠ (re-run 🎨 Publish Art)'}`);
+    } else {
+      setLast(`⚠ <strong>Step 3/3</strong> — Could not verify (network?). Publish likely still succeeded — use 🔄 Pull Latest Catalog to confirm. ${escapeHtml(v.error || '')}`);
+    }
+
+    const allGood = r1.ok && r2.ok && v.ok;
+    add(`<strong style="color:${allGood ? '#7CFFB2' : '#ffd166'}">${allGood ? '🎉 DONE — every player gets your full content (incl. voice-over) on their next sign-in.' : '⚠ Finished with warnings — read the steps above. Re-tapping this button is safe and usually clears transient errors.'}</strong> <span class="ink-dim">${new Date().toLocaleString()}</span>`);
+
+    bAll.disabled = false;
+    bAll.textContent = origLabel;
+    showToast(allGood ? '🎉 Published everything to all players — verified.' : '⚠ Published with warnings — see the status panel.', allGood ? 3600 : 6000);
   };
 
   // Custom-only pool toggle — flips Forge.useCustomOnlyPool + persists.

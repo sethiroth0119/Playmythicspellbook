@@ -383,16 +383,47 @@ const ArtEmpty = () => (
   </svg>
 );
 
+// ───────────────────────────────────────────────────────────────
+// Real painted backdrops (public/assets/camp/*.png). The base builder
+// runs from /base/index.html, so assets resolve at the site root.
+// If a PNG fails to load we fall back to the SVG diagram so a room is
+// never blank.
+// ───────────────────────────────────────────────────────────────
+const CAMP_ART_BASE = "/assets/camp/";
+function makeArtImage(file, Fallback) {
+  const src = CAMP_ART_BASE + file;
+  return function ArtImage() {
+    const [err, setErr] = React.useState(false);
+    if (err) return <Fallback />;
+    return (
+      <img
+        className="room-bg"
+        src={src}
+        alt=""
+        draggable={false}
+        onError={() => setErr(true)}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          objectPosition: "center",
+          display: "block",
+        }}
+      />
+    );
+  };
+}
+
 const ART_MAP = {
-  command:    ArtCommand,
-  barracks:   ArtBarracks,
-  medical:    ArtMedical,
-  ai:         ArtAI,
-  forge:      ArtForge,
-  training:   ArtTraining,
-  reactor:    ArtReactor,
-  containment:ArtContainment,
-  vault:      ArtVault,
+  command:    makeArtImage("command%20center.png", ArtCommand),
+  barracks:   makeArtImage("camp.png",             ArtBarracks),
+  medical:    makeArtImage("medical%20Bay.png",    ArtMedical),
+  ai:         makeArtImage("ai%20lab.png",         ArtAI),
+  forge:      makeArtImage("card%20forge.png",     ArtForge),
+  training:   makeArtImage("training%20ground.png",ArtTraining),
+  reactor:    makeArtImage("power%20reactor.png",  ArtReactor),
+  containment:makeArtImage("containment.png",      ArtContainment),
+  vault:      makeArtImage("relic%20%20vault.png", ArtVault),
   empty:      ArtEmpty,
 };
 

@@ -31910,6 +31910,7 @@ function _baseNavTo(screen) {
       gymWars:    function () { App.screen = 'gymWars'; },
       bestiary:   function () { App.screen = 'bestiary'; },
       collection: function () { App.screen = 'collection'; App.collectionTab = 'unit'; },
+      campOps:    function () { App.screen = 'campOps'; App._campReturnsToBunker = true; },
     };
     const apply = NAV[screen];
     if (!apply) return;
@@ -36370,6 +36371,7 @@ function render() {
   if (App.screen === 'lab')        return renderLab();
   if (App.screen === 'tutor')      return renderTutor();
   if (App.screen === 'camp')       return renderCamp();
+  if (App.screen === 'campOps')    return renderCamp();   // real camp ops, opened from the bunker
   if (App.screen === 'market')     return renderMarket();
   if (App.screen === 'deck')       return renderDeckBuilder();
   if (App.screen === 'collection') return renderCollection();
@@ -52180,7 +52182,7 @@ function renderCamp() {
         <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/camp%20icon.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Camp</h2>
         <div style="display:flex;gap:0.6rem;align-items:center">
           <span class="result-stat-pill" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.5);color:#ffd166;font-size:0.95rem;padding:0.3rem 0.8rem"><span class="cinder-icon"></span> ${Profile.gems || 0}</span>
-          <button class="btn-secondary" id="btn-back-camp">← Back to Menu</button>
+          <button class="btn-secondary" id="btn-back-camp">${App._campReturnsToBunker ? '← Bunker' : '← Back to Menu'}</button>
         </div>
       </div>
       <div class="placement-hint" style="margin-bottom:1rem">
@@ -52473,7 +52475,11 @@ function renderCamp() {
     const r = await cloudPublishCatalogArt();
     showToast(r && r.ok ? '✅ Camp art & audio published to all players.' : ('⚠ Publish failed: ' + ((r && r.error) || 'unknown')), 4600);
   };
-  document.getElementById('btn-back-camp').onclick = () => { App.screen = 'title'; render(); };
+  document.getElementById('btn-back-camp').onclick = () => {
+    if (App._campReturnsToBunker) { App._campReturnsToBunker = false; App.screen = 'camp'; }
+    else { App.screen = 'title'; }
+    render();
+  };
   document.querySelectorAll('[data-park]').forEach(el => {
     el.onclick = () => {
       const [kind, id] = el.dataset.park.split(':');

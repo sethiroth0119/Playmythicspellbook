@@ -300,7 +300,11 @@ function BottomBar({ activeId, onSelect, speed, setSpeed, paused, setPaused }) {
           <span className="act-lbl">World</span>
           <span className="act-hot">W</span>
         </a>
-        <button className="act" title="Assign crew to rooms (hotkey: A)">
+        <button
+          className="act"
+          title="Open Camp Ops — station units, assign Rest / Study / Raid, build & upgrade facilities (hotkey: A)"
+          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "nav:campOps" }, "*"); } catch (e) {} }}
+        >
           {Ic.recruit}
           <span className="act-lbl">Assign</span>
           <span className="act-hot">A</span>

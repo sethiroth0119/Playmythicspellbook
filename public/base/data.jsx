@@ -30,8 +30,8 @@ const ROOMS = [
     cost: { scrap: 280, power: 6, time: "2d 04h" }
   },
   {
-    id: "BRK-01", slot: 1, code: "B/01", name: "Survivor Barracks", tier: "SURFACE",
-    bridge: "nav:deck", bridgeLabel: "⚔ Open Deck Builder",
+    id: "BRK-01", slot: 1, code: "B/01", name: "Camp", tier: "SURFACE",
+    bridge: "nav:campOps", bridgeLabel: "🏕 Open Camp",
     depth: -14, level: 3, levelMax: 6,
     status: "warn", workers: { on: 3, max: 6 },
     art: "barracks", glow: "var(--bronze)",

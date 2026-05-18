@@ -497,6 +497,30 @@ function Room({ room, active, onClick }) {
             ))}
           </div>
         )}
+        {bb && bb.req && !bb.staffed && (
+          <div
+            title="This room is hard-gated — station a worker (hire a Blacksmith or deploy an Artificer unit) to run it."
+            style={{
+              position: "absolute",
+              top: "8%",
+              left: "50%",
+              transform: "translateX(-50%)",
+              padding: "2px 9px",
+              borderRadius: 999,
+              border: "1px solid rgba(255,194,74,0.7)",
+              background: "rgba(70,45,25,0.78)",
+              color: "#ffc24a",
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: ".06em",
+              whiteSpace: "nowrap",
+              pointerEvents: "none",
+              zIndex: 5,
+            }}
+          >
+            ⚠ NEEDS STAFF
+          </div>
+        )}
       </div>
 
       <div className="room-plate">

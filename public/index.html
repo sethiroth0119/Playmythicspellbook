@@ -18632,14 +18632,27 @@ const _CRAFT_DEFAULT_BY_RARITY = {
 };
 // Admin-set `card.craftCost` (object of resourceId:amount) wins; else a
 // sensible rarity default so every existing card stays craftable.
+// 🔧 An Artificer unit running the Card Forge shaves 20% off craft costs.
+function _campForgeDiscount(cost) {
+  try {
+    if (!cost || typeof cost !== 'object') return cost;
+    if (!(typeof _campForgeArtificer === 'function') || !_campForgeArtificer()) return cost;
+    const out = {};
+    Object.keys(cost).forEach(k => {
+      const v = cost[k] | 0;
+      out[k] = v > 0 ? Math.max(1, Math.floor(v * 0.8)) : v;
+    });
+    return out;
+  } catch (e) { return cost; }
+}
 function getCardCraftCost(card) {
   if (card && card.craftCost && typeof card.craftCost === 'object') {
     const c = {};
     RESOURCE_IDS.forEach(id => { if (card.craftCost[id] > 0) c[id] = Math.floor(card.craftCost[id]); });
-    if (Object.keys(c).length) return c;
+    if (Object.keys(c).length) return _campForgeDiscount(c);
   }
   const base = _CRAFT_DEFAULT_BY_RARITY[(card && card.rarity) || 'common'] || _CRAFT_DEFAULT_BY_RARITY.common;
-  return Object.assign({}, base);
+  return _campForgeDiscount(Object.assign({}, base));
 }
 function getCardCraftRefund(card) {
   const cost = getCardCraftCost(card);
@@ -23428,7 +23441,11 @@ function deckKeyOwnedCount(key) {
   if (typeof isAdmin === 'function' && isAdmin()) return Infinity;
   const id = _deckKeyCardId(key);
   if (!id) return 0;
-  return (Profile.cardCollection && Profile.cardCollection[id]) || 0;
+  const owned = (Profile.cardCollection && Profile.cardCollection[id]) || 0;
+  // 🔧 Units stationed as camp workers tie up that copy — a single-copy
+  // unit on duty can't also be decked.
+  const reserved = (typeof _campStationReserved === 'function') ? _campStationReserved(id) : 0;
+  return Math.max(0, owned - reserved);
 }
 // Copies of that same card id already in the working deck (sum across keys
 // that resolve to the same id, so two key forms can't bypass the cap).
@@ -26533,10 +26550,17 @@ const Camp = {
   //   { [facId]: { level, state:'building'|'active', buildStart, buildDur } }
   // Absent key = not built yet (the plot shows EXCAVATE/BUILD).
   facilities: {},
+  // 👷 Workers: the staffing pool that runs the bunker rooms (SEPARATE from
+  // `slots`, which is the rest/study/raid activity system). Each worker is a
+  // hired generic NPC OR one of the player's units stationed at a room.
+  //   { id, kind:'npc'|'unit', role, name, refId?, station:<bunkerRoomId>, at }
+  workers: [],
 };
 const CAMP_XP_PER_HOUR  = 10;  // passive XP rate per slot
 const CAMP_XP_CAP       = 240; // per slot (24 hours of stockpiled XP)
 const CAMP_PARK_COST    = 5;   // 🔥 cost to park a unit
+const CAMP_NPC_HIRE_COST = 30; // 🔥 cost to hire a generic NPC worker
+const CAMP_MAX_WORKERS   = 9;  // one per bunker room
 // Camp is gated behind hero progression — the player needs to have trained at least
 // one hero to this level before the Camp screen opens. Keeps very new players from
 // stumbling into Camp before they've earned a unit / hero worth parking.
@@ -26584,12 +26608,98 @@ function loadCamp() {
       if (Array.isArray(data.slots)) Camp.slots = data.slots;
       if (typeof data.maxSlots === 'number') Camp.maxSlots = data.maxSlots;
       if (data.facilities && typeof data.facilities === 'object') Camp.facilities = data.facilities;
+      if (Array.isArray(data.workers)) Camp.workers = data.workers;
     }
   } catch (e) { console.warn('Failed to load Camp', e); }
 }
 function saveCamp() {
-  try { localStorage.setItem(STORAGE_KEYS.camp, JSON.stringify({ slots: Camp.slots, maxSlots: Camp.maxSlots, facilities: Camp.facilities })); }
+  try { localStorage.setItem(STORAGE_KEYS.camp, JSON.stringify({ slots: Camp.slots, maxSlots: Camp.maxSlots, facilities: Camp.facilities, workers: Camp.workers })); }
   catch (e) { console.warn('Failed to save Camp', e); showToast('⚠ Camp save failed'); }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// 👷 CAMP WORKERS — the staffing layer that makes productive bunker rooms
+// run. A worker is either a HIRED generic NPC (Cinder, no card) or one of
+// the player's UNITS stationed at a room. A stationed unit ties up that
+// card copy: deckKeyOwnedCount subtracts it, so a single-copy unit on
+// duty can't also be in a deck. Card Forge is HARD-GATED on staffing.
+// ════════════════════════════════════════════════════════════════════════
+function _campWorkers() { if (!Array.isArray(Camp.workers)) Camp.workers = []; return Camp.workers; }
+// Copies of a specific card currently tied up as stationed unit-workers.
+function _campStationReserved(cardId) {
+  if (!cardId) return 0;
+  let n = 0;
+  _campWorkers().forEach(w => { if (w && w.kind === 'unit' && w.refId === cardId) n++; });
+  return n;
+}
+// The worker (if any) staffing a given bunker room id.
+function _campRoomStaffed(roomId) {
+  return _campWorkers().find(w => w && w.station === roomId) || null;
+}
+// Is the Card Forge staffed by an ARTIFICER-faction unit (→ craft discount)?
+function _campForgeArtificer() {
+  const w = _campRoomStaffed('FRG-01');
+  if (!w || w.kind !== 'unit' || !w.refId) return false;
+  try {
+    const c = (typeof _resolveAnyCard === 'function') ? _resolveAnyCard(w.refId) : null;
+    return !!(c && typeof getFactionsOf === 'function' && getFactionsOf(c).indexOf('artificer') >= 0);
+  } catch (e) { return false; }
+}
+// Owned Artificer-faction units the player could station (id, name, have).
+function _campArtificerUnits() {
+  const out = [];
+  try {
+    const coll = Profile.cardCollection || {};
+    Object.keys(coll).forEach(id => {
+      if ((coll[id] | 0) <= 0) return;
+      let c = null;
+      try { c = (typeof lookupCustomCard === 'function') ? lookupCustomCard(id) : null; } catch (e) {}
+      if (!c) { try { c = (typeof _resolveAnyCard === 'function') ? _resolveAnyCard(id) : null; } catch (e2) {} }
+      if (!c || (c.type || 'unit') !== 'unit') return;
+      if (!(typeof getFactionsOf === 'function') || getFactionsOf(c).indexOf('artificer') < 0) return;
+      out.push({ id: id, name: c.name || id, have: coll[id] | 0, reserved: _campStationReserved(id) });
+    });
+  } catch (e) {}
+  return out;
+}
+function hireCampBlacksmith() {
+  const ws = _campWorkers();
+  if (ws.length >= CAMP_MAX_WORKERS) { showToast(`Worker pool full (${CAMP_MAX_WORKERS}).`, 2600); return false; }
+  if (_campRoomStaffed('FRG-01')) { showToast('The Card Forge already has a worker.', 2400); return false; }
+  if ((Profile.gems || 0) < CAMP_NPC_HIRE_COST) { showToast(`Need ${CAMP_NPC_HIRE_COST} 🔥 to hire — you have ${Profile.gems || 0}`, 3000); return false; }
+  Profile.gems = (Profile.gems || 0) - CAMP_NPC_HIRE_COST;
+  ws.push({ id: 'w_' + Date.now() + '_' + Math.floor(Math.random() * 1e4), kind: 'npc', role: 'blacksmith', name: 'Blacksmith', station: 'FRG-01', at: Date.now() });
+  try { saveProfile(); } catch (e) {} saveCamp();
+  showToast(`🔧 Blacksmith hired & stationed at the Card Forge (−${CAMP_NPC_HIRE_COST} 🔥).`, 3400);
+  return true;
+}
+function stationUnitAtForge(refId) {
+  const ws = _campWorkers();
+  if (ws.length >= CAMP_MAX_WORKERS) { showToast(`Worker pool full (${CAMP_MAX_WORKERS}).`, 2600); return false; }
+  if (_campRoomStaffed('FRG-01')) { showToast('The Card Forge already has a worker.', 2400); return false; }
+  const have = (Profile.cardCollection && (Profile.cardCollection[refId] | 0)) || 0;
+  if (have <= _campStationReserved(refId)) { showToast('No free copy of that unit to station.', 2800); return false; }
+  let c = null;
+  try { c = (typeof _resolveAnyCard === 'function') ? _resolveAnyCard(refId) : null; } catch (e) {}
+  if (!c || !(typeof getFactionsOf === 'function') || getFactionsOf(c).indexOf('artificer') < 0) {
+    showToast('Only an Artificer-faction unit can run the Card Forge.', 3000); return false;
+  }
+  if ((Profile.gems || 0) < CAMP_PARK_COST) { showToast(`Need ${CAMP_PARK_COST} 🔥 to deploy — you have ${Profile.gems || 0}`, 3000); return false; }
+  Profile.gems = (Profile.gems || 0) - CAMP_PARK_COST;
+  ws.push({ id: 'w_' + Date.now() + '_' + Math.floor(Math.random() * 1e4), kind: 'unit', role: 'artificer', name: c.name || refId, refId: refId, station: 'FRG-01', at: Date.now() });
+  try { saveProfile(); } catch (e) {} saveCamp();
+  showToast(`🔧 ${c.name || 'Unit'} deployed to the Card Forge (−${CAMP_PARK_COST} 🔥). Its copy is reserved from decks.`, 3800);
+  return true;
+}
+function unstationCampWorker(workerId) {
+  const ws = _campWorkers();
+  const i = ws.findIndex(w => w && w.id === workerId);
+  if (i < 0) return false;
+  const w = ws[i];
+  ws.splice(i, 1);
+  saveCamp();
+  showToast(w.kind === 'npc' ? '🔧 Worker dismissed.' : `🔧 ${w.name || 'Unit'} recalled — its copy is free again.`, 3000);
+  return true;
 }
 
 // Pending XP a slot has accumulated since it was parked / last collected.
@@ -31400,8 +31510,87 @@ function openCampWorkshop() {
 // ⚒ CARD FORGE — invoked from the bunker's Card Forge room. Self-contained
 // overlay (renders ABOVE the base-builder iframe). Crafts real cards paid
 // from the unified salvage economy via the existing craftCard/canCraft.
+// 👷 Camp Workers — self-contained overlay (renders above the bunker iframe
+// like the Forge/Card overlays). MVP scope: staff the Card Forge with a
+// hired Blacksmith NPC or a deployed Artificer-faction unit.
+function openCampWorkersModal() {
+  try {
+    const ID = 'camp-workers-modal';
+    const close = () => { const h = document.getElementById(ID); if (h) h.remove(); };
+    const build = () => {
+      const old = document.getElementById(ID); if (old) old.remove();
+      const staff = (typeof _campRoomStaffed === 'function') ? _campRoomStaffed('FRG-01') : null;
+      const gems = Profile.gems | 0;
+      const units = (typeof _campArtificerUnits === 'function') ? _campArtificerUnits() : [];
+      let body;
+      if (staff) {
+        const isArt = staff.kind === 'unit';
+        body =
+          '<div style="padding:10px 12px;border:1px solid rgba(127,220,160,0.5);border-radius:10px;background:rgba(40,70,45,0.4)">' +
+            '<div style="color:#9be8b8;font-weight:800;font-family:\'Cinzel\',serif">⚒ Card Forge — STAFFED</div>' +
+            '<div class="small-text" style="color:#cfe9d6;margin-top:4px">' + escapeHtml(staff.name || 'Worker') +
+              (isArt ? ' <span style="color:#ffd166">· Artificer (−20% craft cost)</span>' : ' <span class="ink-dim">· hired NPC</span>') + '</div>' +
+            '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
+              '<button id="cwm-craft" style="cursor:pointer;border-radius:8px;padding:0.5rem 0.9rem;border:1px solid #caa23e;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;font-weight:800">⚒ Open Card Forge</button>' +
+              '<button id="cwm-recall" data-id="' + escapeHtml(String(staff.id)) + '" style="cursor:pointer;border-radius:8px;padding:0.5rem 0.9rem;border:1px solid rgba(224,85,106,0.6);background:transparent;color:#e0879a;font-weight:700">✖ ' + (isArt ? 'Recall Unit' : 'Dismiss') + '</button>' +
+            '</div>' +
+          '</div>';
+      } else {
+        const unitRows = units.length
+          ? units.map(u => {
+              const free = (u.have - u.reserved) > 0;
+              return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 7px;border-bottom:1px solid rgba(184,136,255,0.12)">' +
+                '<span style="color:#e8ddff;font-size:0.86rem">🔧 ' + escapeHtml(u.name) + ' <span class="small-text ink-dim">×' + u.have + (u.reserved ? ' · ' + u.reserved + ' on duty' : '') + '</span></span>' +
+                '<button data-deploy="' + escapeHtml(String(u.id)) + '" ' + (free ? '' : 'disabled') + ' style="cursor:' + (free ? 'pointer' : 'not-allowed') + ';border-radius:7px;padding:0.3rem 0.7rem;border:1px solid #8be0c4;background:' + (free ? 'rgba(139,224,196,0.18)' : 'rgba(80,110,100,0.3)') + ';color:#dfffe9;font-weight:800;font-size:0.8rem">Deploy −' + CAMP_PARK_COST + ' 🔥</button>' +
+              '</div>';
+            }).join('')
+          : '<div class="small-text ink-dim" style="padding:6px 2px">You own no Artificer-faction units. Hire a Blacksmith instead, or get an Artificer unit.</div>';
+        body =
+          '<div style="padding:10px 12px;border:1px solid rgba(224,150,80,0.5);border-radius:10px;background:rgba(70,45,25,0.4)">' +
+            '<div style="color:#ffc24a;font-weight:800;font-family:\'Cinzel\',serif">⚒ Card Forge — UNSTAFFED</div>' +
+            '<div class="small-text ink-dim" style="margin-top:4px">Crafting is locked until someone runs the Forge. Hire a Blacksmith, or deploy one of your Artificer units (its copy is reserved from decks while on duty).</div>' +
+            '<button id="cwm-hire" style="margin-top:10px;cursor:pointer;border-radius:8px;padding:0.5rem 0.9rem;border:1px solid #caa23e;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;font-weight:800">🔧 Hire Blacksmith — ' + CAMP_NPC_HIRE_COST + ' 🔥</button>' +
+            '<div style="margin-top:12px;color:#cdb6ff;font-weight:700;font-size:0.85rem;font-family:\'Cinzel\',serif">Or deploy an Artificer unit</div>' +
+            '<div style="margin-top:4px;max-height:200px;overflow:auto">' + unitRows + '</div>' +
+          '</div>';
+      }
+      const ov = document.createElement('div');
+      ov.id = ID;
+      ov.style.cssText = 'position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(4,2,10,0.74);backdrop-filter:blur(2px)';
+      ov.innerHTML =
+        '<div style="max-width:min(460px,94vw);max-height:86vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.99),rgba(12,7,22,0.99));border:2px solid rgba(212,175,55,0.55);border-radius:16px;padding:16px 18px;box-shadow:0 24px 70px rgba(0,0,0,0.85)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">' +
+            '<div style="font-family:\'Cinzel\',serif;font-size:1.15rem;font-weight:800;color:#ffd166">👷 Camp Workers</div>' +
+            '<div style="display:flex;align-items:center;gap:10px">' +
+              '<span class="small-text" style="color:#ffd166"><span class="cinder-icon"></span> ' + gems + '</span>' +
+              '<button id="cwm-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✖</button>' +
+            '</div>' +
+          '</div>' + body +
+        '</div>';
+      document.body.appendChild(ov);
+      ov.onclick = (e) => { if (e.target === ov) close(); };
+      const x = document.getElementById('cwm-x'); if (x) x.onclick = close;
+      const refresh = () => { try { if (typeof _baseSendData === 'function') _baseSendData(); } catch (e) {} build(); };
+      const hire = document.getElementById('cwm-hire');
+      if (hire) hire.onclick = () => { if (typeof hireCampBlacksmith === 'function' && hireCampBlacksmith()) refresh(); };
+      const recall = document.getElementById('cwm-recall');
+      if (recall) recall.onclick = () => { if (typeof unstationCampWorker === 'function' && unstationCampWorker(recall.dataset.id)) refresh(); };
+      document.querySelectorAll('#' + ID + ' [data-deploy]').forEach(b => {
+        b.onclick = () => { if (typeof stationUnitAtForge === 'function' && stationUnitAtForge(b.dataset.deploy)) refresh(); };
+      });
+      const craft = document.getElementById('cwm-craft');
+      if (craft) craft.onclick = () => { close(); if (typeof openForgeCraftModal === 'function') openForgeCraftModal(); };
+    };
+    build();
+  } catch (e) {}
+}
 function openForgeCraftModal() {
   try {
+    // 🔒 HARD GATE — the Card Forge does nothing until it's staffed by a
+    // hired Blacksmith or a deployed Artificer unit. Route to staffing.
+    if (typeof _campRoomStaffed === 'function' && !_campRoomStaffed('FRG-01')) {
+      if (typeof openCampWorkersModal === 'function') return openCampWorkersModal();
+    }
     const ID = 'forge-craft-modal';
     const build = () => {
       const old = document.getElementById(ID); if (old) old.remove();
@@ -31928,6 +32117,29 @@ function _baseCampRooms() {
       let ms = 600;
       try { const sp = (typeof Forge !== 'undefined' && Forge.sprites) ? Forge.sprites['u_' + s.refId] : null; if (sp && sp.frameMs) ms = Math.max(80, Math.min(2000, sp.frameMs)); } catch (e) {}
       out[rid].occ.push({ name: nm, frames: frames.slice(0, 6).map(_abs), ms: ms });
+    });
+    // 👷 Staffing — flag each room + render stationed unit-workers' sprites
+    // in their room box. `req` marks rooms that are HARD-GATED on staffing
+    // (Card Forge for now; more rooms join in later slices).
+    const _STAFF_REQ = { 'FRG-01': 1 };
+    const wks = (typeof _campWorkers === 'function') ? _campWorkers() : [];
+    Object.keys(out).forEach((rid) => {
+      const w = wks.find((x) => x && x.station === rid) || null;
+      out[rid].staffed = !!w;
+      out[rid].staff = w ? (w.name || (w.kind === 'npc' ? 'Worker' : 'Unit')) : '';
+      out[rid].req = !!_STAFF_REQ[rid];
+    });
+    wks.forEach((w) => {
+      if (!w || w.kind !== 'unit' || !w.refId || !w.station) return;
+      const rid = w.station;
+      if (!out[rid]) out[rid] = { level: 0, occ: [], staffed: true, staff: w.name || 'Unit', req: !!_STAFF_REQ[rid] };
+      if (out[rid].occ.length >= 4) return;
+      let frames = null;
+      try { frames = (typeof getSpriteFrames === 'function') ? getSpriteFrames('u_' + w.refId, 'idle') : null; } catch (e) {}
+      if (!frames || !frames.length) return;
+      let ms = 600;
+      try { const sp = (typeof Forge !== 'undefined' && Forge.sprites) ? Forge.sprites['u_' + w.refId] : null; if (sp && sp.frameMs) ms = Math.max(80, Math.min(2000, sp.frameMs)); } catch (e) {}
+      out[rid].occ.push({ name: w.name || w.refId, frames: frames.slice(0, 6).map(_abs), ms: ms });
     });
     return out;
   } catch (e) { return null; }

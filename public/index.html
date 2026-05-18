@@ -18559,20 +18559,38 @@ function getDisenchantRefund(card) {
 // Earned from camp loot/missions; spent to craft cards/relics/items and to
 // build/upgrade facilities. Admins set per-card costs in the editor.
 // ============================================================================
+// Crafting now spends the SAME looted/secured resources the salvage system
+// banks (Profile.salvage) — loot → deposit → craft. The legacy element
+// "essence" economy is retired.
 const RESOURCES = [
-  { id: 'food',     name: 'Food',     icon: '🥫', color: '#9ad17a' },
-  { id: 'ammo',     name: 'Ammo',     icon: '🧨', color: '#e0a060' },
-  { id: 'water',    name: 'Water',    icon: '💧', color: '#7fd6ff' },
-  { id: 'medicine', name: 'Medicine', icon: '💊', color: '#ff8aa0' },
-  { id: 'supplies', name: 'Supplies', icon: '📦', color: '#d4af37' },
-  { id: 'metal',    name: 'Metal',    icon: '⛓️', color: '#9fb4d8' },
-  { id: 'intel',    name: 'Intel',    icon: '🛰️', color: '#c89bff' },
+  { id: 'food',             name: 'Food',             icon: '🥫', color: '#9ad17a' },
+  { id: 'ammo',             name: 'Ammo',             icon: '🔫', color: '#e0a060' },
+  { id: 'water',            name: 'Water',            icon: '💧', color: '#7fd6ff' },
+  { id: 'medicine',         name: 'Medicine',         icon: '💊', color: '#ff8aa0' },
+  { id: 'supplies',         name: 'Supplies',         icon: '📦', color: '#d4af37' },
+  { id: 'metal',            name: 'Metal',            icon: '⛓️', color: '#9fb4d8' },
+  { id: 'fuel',             name: 'Fuel',             icon: '⛽', color: '#ffcf6b' },
+  { id: 'corruptedEssence', name: 'Corrupted Essence', icon: '🟣', color: '#b06bff' },
+  { id: 'memoryShards',     name: 'Memory Shards',    icon: '🧠', color: '#7fb8ff' },
+  { id: 'dna',              name: 'DNA',              icon: '🧬', color: '#86e08a' },
 ];
 const RESOURCE_IDS = RESOURCES.map(r => r.id);
+// Resources ARE the salvage ledger. _ensureResources aliases Profile.salvage
+// and one-time-folds any legacy Profile.resources into it so no progress is
+// lost when the two economies merge.
 function _ensureResources() {
-  if (!Profile.resources || typeof Profile.resources !== 'object') Profile.resources = {};
-  for (const id of RESOURCE_IDS) if (typeof Profile.resources[id] !== 'number') Profile.resources[id] = 0;
-  return Profile.resources;
+  if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+  const S = Profile.salvage;
+  if (Profile.resources && typeof Profile.resources === 'object' && !Profile._resMergedV1) {
+    for (const k in Profile.resources) {
+      const n = Profile.resources[k] | 0;
+      if (n > 0) S[k] = (S[k] || 0) + n;
+    }
+    Profile._resMergedV1 = true;
+    try { Profile.resources = {}; } catch (e) {}
+  }
+  for (const id of RESOURCE_IDS) if (typeof S[id] !== 'number') S[id] = 0;
+  return S;
 }
 function getRes(id) { return _ensureResources()[id] || 0; }
 function addRes(id, n) {
@@ -18607,10 +18625,10 @@ function resourceCostHtml(cost, opts) {
 const _CRAFT_DEFAULT_BY_RARITY = {
   common:    { supplies: 2 },
   uncommon:  { supplies: 3, metal: 1 },
-  rare:      { supplies: 4, metal: 3, intel: 2 },
-  epic:      { supplies: 6, metal: 6, intel: 4, medicine: 2 },
-  legendary: { supplies: 10, metal: 10, intel: 8, medicine: 4 },
-  mythic:    { supplies: 18, metal: 16, intel: 14, medicine: 8 },
+  rare:      { supplies: 4, metal: 3, memoryShards: 2 },
+  epic:      { supplies: 6, metal: 6, memoryShards: 4, dna: 2 },
+  legendary: { supplies: 10, metal: 10, memoryShards: 8, dna: 4, corruptedEssence: 3 },
+  mythic:    { supplies: 18, metal: 16, memoryShards: 14, dna: 8, corruptedEssence: 6 },
 };
 // Admin-set `card.craftCost` (object of resourceId:amount) wins; else a
 // sensible rarity default so every existing card stays craftable.
@@ -30868,12 +30886,11 @@ function _heroCarryingBigBag() {
     return s.units.some(u => u && u.alive && u.owner === 'player' && u.isHero);
   } catch (e) { return true; }
 }
+// A bag you OWN stays equipped — its capacity is yours until you fall (the
+// extraction loss-on-defeat already handles "until I die"). No per-battle
+// hero gating; an owned/bought bag simply works.
 function _fieldBagCap() {
-  try {
-    const owned = _ownedBagCap();
-    if (owned <= FIELD_BAG_CAP) return FIELD_BAG_CAP;
-    return _heroCarryingBigBag() ? owned : FIELD_BAG_CAP;
-  } catch (e) { return FIELD_BAG_CAP; }
+  try { return _ownedBagCap(); } catch (e) { return FIELD_BAG_CAP; }
 }
 // 🎒 BAG UPGRADE TIERS. Capacity-based (no spatial grid in v1). Vendor tiers
 // cost Cinders (Profile.gems) or Aza (Profile.sovereigns); craft tiers cost
@@ -31122,22 +31139,38 @@ function mountCampStatus() {
     const threatLine = (rk.level === 'safe')
       ? `<div class="small-text" style="margin-top:6px;color:#7CFFB2">🛡 Raider threat: <strong>SAFE</strong> — stockpile too small to attract raiders.</div>`
       : `<div class="small-text" style="margin-top:6px;color:${rkCol}">🔥 Raider threat: <strong>${rk.level.toUpperCase()}</strong> — a ${rk.total}-unit hoard draws raiders. Defense: <strong>${ammoHave} 🔫 Ammo</strong>${ammoHave <= 0 ? ' — <span style="color:#ff6b6b">NONE! raids will gut the camp</span>' : ''}. Don\'t over-hoard.</div>`;
-    const bigBag = (typeof _ownedBagCap === 'function' ? _ownedBagCap() : 36) > 36;
-    const heroNote = bigBag ? ' <span class="small-text" style="color:#b88aff">· Hero-carried</span>' : '';
+    const heroNote = '';   // bags are equipped permanently once owned
     if (!el) { el = document.createElement('div'); el.id = ID; document.body.appendChild(el); }
-    el.style.cssText = "position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:2147483270;max-width:min(720px,94vw);max-height:64vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.97),rgba(14,9,26,0.97));border:2px solid " + col + "88;border-radius:12px;padding:9px 14px;box-shadow:0 12px 36px rgba(0,0,0,0.6);font-family:'Crimson Text',Georgia,serif;color:#e8ddff";
+    // Docked to the LEFT empty space (not centered over the camp content),
+    // and collapsible — players can tuck it away. Pref persisted locally.
+    let collapsed = false;
+    try { collapsed = localStorage.getItem('mg_campPanelHidden') === '1'; } catch (e) {}
+    const baseStyle = "position:fixed;left:12px;top:74px;z-index:2147483270;font-family:'Crimson Text',Georgia,serif;color:#e8ddff;";
+    if (collapsed) {
+      el.style.cssText = baseStyle + "background:linear-gradient(180deg,rgba(26,16,46,0.95),rgba(14,9,26,0.95));border:2px solid " + col + "88;border-radius:10px;padding:6px 10px;cursor:pointer;box-shadow:0 8px 22px rgba(0,0,0,0.55)";
+      el.innerHTML = '<span id="camp-panel-toggle" style="font-family:\'Cinzel\',serif;font-weight:800;color:' + col + '">' + head.replace(/^[^A-Z]*/, '').split(' ').slice(0, 3).join(' ') + ' ▸ <span class="small-text" style="color:#cdb6ff">show camp</span></span>';
+      const tg = document.getElementById('camp-panel-toggle');
+      if (tg) tg.onclick = () => { try { localStorage.setItem('mg_campPanelHidden', '0'); } catch (e) {} mountCampStatus(); };
+      return;
+    }
+    el.style.cssText = baseStyle + "width:min(360px,42vw);max-height:78vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.97),rgba(14,9,26,0.97));border:2px solid " + col + "88;border-radius:12px;padding:9px 14px;box-shadow:0 12px 36px rgba(0,0,0,0.6)";
     el.innerHTML =
-      '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:' + col + '">' + head +
-        ' <span class="small-text" style="color:#cdb6ff;font-weight:600">— camp consumes supplies over time; deposit to keep it alive</span></div>' +
+      '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
+        '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:' + col + '">' + head + '</div>' +
+        '<button id="camp-panel-toggle" title="Hide" style="flex:0 0 auto;cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:rgba(20,12,40,0.6);color:#cdb6ff;border-radius:8px;padding:1px 8px;font-weight:800;line-height:1.4">–</button>' +
+      '</div>' +
+      '<div class="small-text" style="color:#cdb6ff;margin-top:2px">camp consumes supplies over time; deposit to keep it alive</div>' +
       '<div style="margin-top:5px">' + chips + '</div>' + (fxLines ? '<div style="margin-top:4px">' + fxLines + '</div>' : '') +
       threatLine +
       '<div style="margin-top:8px;border-top:1px solid rgba(184,136,255,0.25);padding-top:7px">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">' +
           '<div style="font-family:\'Cinzel\',serif;font-weight:700;color:#cdb6ff">📦 Camp Storage <span class="small-text" style="opacity:.7">(secured)</span></div>' +
-          '<button id="camp-bag-upgrade" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:9px;padding:0.4rem 0.85rem;border:1px solid rgba(212,175,55,0.6);background:linear-gradient(180deg,rgba(60,40,110,0.92),rgba(28,16,52,0.96));color:#ffe9b8;font-size:0.85rem">🎒 ' + (tier.name || 'Survivor Bag') + ' (' + (typeof _ownedBagCap === 'function' ? _ownedBagCap() : _fieldBagCap()) + ')' + heroNote + ' — Upgrade</button>' +
+          '<button id="camp-bag-upgrade" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:9px;padding:0.4rem 0.85rem;border:1px solid rgba(212,175,55,0.6);background:linear-gradient(180deg,rgba(60,40,110,0.92),rgba(28,16,52,0.96));color:#ffe9b8;font-size:0.82rem">🎒 ' + (tier.name || 'Survivor Bag') + ' (' + (typeof _ownedBagCap === 'function' ? _ownedBagCap() : _fieldBagCap()) + ')' + heroNote + ' — Upgrade</button>' +
         '</div>' +
         '<div style="margin-top:5px">' + storeChips + '</div>' +
       '</div>';
+    const tg = document.getElementById('camp-panel-toggle');
+    if (tg) tg.onclick = () => { try { localStorage.setItem('mg_campPanelHidden', '1'); } catch (e) {} mountCampStatus(); };
     const ub = document.getElementById('camp-bag-upgrade');
     if (ub) ub.onclick = () => { if (typeof openBagUpgradeModal === 'function') openBagUpgradeModal(); };
   } catch (e) {}
@@ -49068,26 +49101,6 @@ function renderGameOverOverlay() {
             </div>
           </div>
         ` : ''}
-
-        ${(() => {
-          // Essence drops — show what the player earned this battle. Built from the
-          // `App.battleEssenceDrops` stash that recordBattleProgress fills.
-          const drops = App.battleEssenceDrops;
-          if (!drops || Object.keys(drops).length === 0) return '';
-          const pills = Object.keys(drops).map(eid => {
-            const ed = ELEMENT_DATA[eid];
-            const color = (typeof getElementColor === 'function') ? getElementColor(eid) : (ed && ed.color) || '#aaa';
-            const icon  = ed ? getElemIcon(eid, '1.7em') : '🌟';
-            return `<span class="essence-pill" style="border-color:${color};color:${color};background:${color}22">${icon} +${drops[eid]}</span>`;
-          }).join('');
-          return `
-            <div class="game-over-essence-row">
-              <div class="ge-label"><span class="cinder-icon"></span> Essence Earned</div>
-              <div class="ge-pills">${pills}</div>
-              <div class="small-text ink-dim">Spend in the Inventory to craft new cards.</div>
-            </div>
-          `;
-        })()}
 
         ${(() => {
           // 🎒 Field bag status — what's CARRIED (not yet secured), plus the

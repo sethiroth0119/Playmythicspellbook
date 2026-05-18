@@ -31029,6 +31029,68 @@ function _resLine(map) {
 }
 // Body-anchored deposit panel — shows ONLY at Camp when the field bag has
 // loot. "Deposit All" moves it into secured storage with dopamine feedback.
+// 🎒 In-battle Bag button — players can check what they're carrying and
+// whether it's full, so they know how to handle the next body (loot / Send
+// to Camp / Destroy). Battle-only, body-anchored (no battle-template edits).
+function _openBattleBagPanel() {
+  try {
+    const ID = 'battle-bag-panel';
+    const old = document.getElementById(ID); if (old) { old.remove(); return; }
+    const bag = _ensureFieldBag();
+    const used = _bagSlots(bag), cap = _fieldBagCap();
+    const full = used >= cap, near = used >= cap * 0.8;
+    const keys = Object.keys(bag).filter(k => (bag[k] | 0) > 0);
+    const rows = keys.length
+      ? keys.map(k => { const r = _SALVAGE_BY_ID[k] || {};
+          return `<span style="display:inline-block;margin:3px 5px;padding:3px 9px;border:1px solid rgba(212,175,55,0.45);border-radius:10px;color:#ffe9b8;background:rgba(202,162,62,0.14);font-size:0.85rem">${r.icon || ''} ${r.name || k} <strong>${bag[k]}</strong> <span class="small-text" style="opacity:.6">(${(bag[k] | 0) * _resSlot(k)} slot${(bag[k] | 0) * _resSlot(k) === 1 ? '' : 's'})</span></span>`;
+        }).join('')
+      : '<span class="small-text ink-dim">Empty — loot fallen bodies (stand a unit on one → its panel → 🪦 Loot Body).</span>';
+    const tip = full
+      ? '<div class="small-text" style="color:#ff7a6b;margin-top:6px">⚠ BAG FULL — extra loot will be <strong>left behind</strong>. When you loot the next body, pick <strong>📦 Send to Camp (Research)</strong> (banks safely, no carry) or <strong>💣 Destroy</strong> — or win &amp; <strong>Deposit at Camp</strong> to free space.</div>'
+      : near
+        ? '<div class="small-text" style="color:#ffd166;margin-top:6px">Almost full — plan your next pickups; bigger bags carry more (Camp → Upgrade).</div>'
+        : '<div class="small-text ink-dim" style="margin-top:6px">Win and Deposit at Camp to secure this. Fall in battle and most of it is lost (only a small pouch survives).</div>';
+    const col = full ? '#ff7a6b' : near ? '#ffd166' : '#7CFFB2';
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = "position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(4,2,10,0.74);backdrop-filter:blur(2px)";
+    ov.innerHTML =
+      '<div style="max-width:min(440px,94vw);max-height:84vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.99),rgba(12,7,22,0.99));border:2px solid ' + col + ';border-radius:16px;padding:16px 18px;box-shadow:0 24px 70px rgba(0,0,0,0.85)">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px">' +
+          '<div style="font-family:\'Cinzel\',serif;font-size:1.15rem;font-weight:800;color:' + col + '">🎒 Field Bag — ' + used + '/' + cap + ' slots</div>' +
+          '<button id="bbp-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✖</button>' +
+        '</div>' +
+        '<div>' + rows + '</div>' + tip +
+      '</div>';
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.onclick = (e) => { if (e.target === ov) close(); };
+    const xb = document.getElementById('bbp-x'); if (xb) xb.onclick = close;
+  } catch (e) {}
+}
+function mountBattleBagButton() {
+  try {
+    const ID = 'battle-bag-btn';
+    let el = document.getElementById(ID);
+    if (typeof App === 'undefined' || App.screen !== 'battle') {
+      if (el) el.remove();
+      const p = document.getElementById('battle-bag-panel'); if (p) p.remove();
+      return;
+    }
+    const bag = _ensureFieldBag();
+    const used = _bagSlots(bag), cap = _fieldBagCap();
+    const full = used >= cap, near = used >= cap * 0.8;
+    const col = full ? '#ff7a6b' : near ? '#ffd166' : '#7CFFB2';
+    if (!el) {
+      el = document.createElement('button'); el.id = ID;
+      el.onclick = () => { if (typeof _openBattleBagPanel === 'function') _openBattleBagPanel(); };
+      document.body.appendChild(el);
+    }
+    el.title = 'Check your field bag — what you\'re carrying & if it\'s full';
+    el.style.cssText = "position:fixed;left:12px;bottom:12px;z-index:2147483290;cursor:pointer;font-family:'Cinzel',serif;font-weight:800;font-size:0.85rem;color:#1a1206;border:1px solid " + col + ";border-radius:999px;padding:0.5rem 0.95rem;background:linear-gradient(180deg," + col + ",#8a6a1e);box-shadow:0 6px 18px rgba(0,0,0,0.55)";
+    el.innerHTML = '🎒 Bag ' + used + '/' + cap + (full ? ' · FULL' : '');
+  } catch (e) {}
+}
 function mountFieldBagDeposit() {
   try {
     const ID = 'field-bag-deposit';
@@ -35789,6 +35851,7 @@ function render() {
   // 🎒 Camp-only field-bag deposit panel (body-anchored so we never splice
   // the huge camp template). Appears at Camp when the bag has loot.
   try { if (typeof mountFieldBagDeposit === 'function') mountFieldBagDeposit(); } catch (e) {}
+  try { if (typeof mountBattleBagButton === 'function') mountBattleBagButton(); } catch (e) {}
   // 🏕 Camp consumption — drain secured supplies over real time (offline
   // catch-up included), surface shortages, show the status banner at Camp.
   try { if (typeof runCampConsumptionTick === 'function') runCampConsumptionTick(); } catch (e) {}

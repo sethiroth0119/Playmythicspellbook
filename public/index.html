@@ -24236,21 +24236,61 @@ function frActiveConvoy() {
     evName: ev.name, evIcon: ev.icon,
   };
 }
-// Launches the convoy as a real World-Map battle (reuses the proven
-// worldBattleStart → deck select → battle → worldBattleAfter pipeline; costs
-// the standard fuel). On win, worldBattleAfter pays the convoy cache.
+// 🗺️ Each world event has its OWN built-in roguelite campaign (admin-
+// editable in the Campaign Builder, exactly like the Black Market Run).
+// Clearing it delivers the relief payload (a big cache of the starved
+// resource → camp) via the finalBoss branch in _rlcCompleteNode.
+function _frEventCampaignId(eid) { return 'fr_evt_' + eid; }
+function _frEventCampaign(ev) {
+  const res = (ev.res && ev.res[0]) || 'supplies';
+  const rN = (typeof _meta === 'function' && _meta(res).name) || res;
+  const P = 'fe_' + ev.id + '_';
+  return {
+    id: _frEventCampaignId(ev.id),
+    name: 'Crisis Response — ' + ev.name,
+    description: ev.icon + ' ' + ev.line + ' Push through the disaster zone and recover a ' + rN + ' convoy for the Foundation Reserve.',
+    intro: ev.icon + ' ' + String(ev.name).toUpperCase() + '. ' + ev.line + ' The Foundation needs that convoy recovered — move out.',
+    coverImg: '', difficulty: 'Hard',
+    startingHeroId: '', startingHP: 100,
+    currencyName: 'Salvage', startingCurrency: 30, startingMedPoints: 2,
+    startingDeckMode: 'player', startingDeckId: '',
+    isPublished: true, isBuiltIn: true, requiresCampaignId: '',
+    frEvent: ev.id, frRewardRes: res, frRewardQty: 26,
+    nodes: [
+      { id: P + '0', type: 'rest',      name: 'Staging — Mobilize',          row: 0, col: 1, connections: [P + '1', P + '2'], reward: {} },
+      { id: P + '1', type: 'battle',    name: 'Disaster Perimeter',          row: 1, col: 0, connections: [P + '3'], enemyHeroId: '', enemyDeckId: '', enemyLevel: '', enemy: { name: 'Desperate Survivors' }, reward: {} },
+      { id: P + '2', type: 'treasure',  name: 'Abandoned Supply Drop',       row: 1, col: 2, connections: [P + '3'], reward: {} },
+      { id: P + '3', type: 'market',    name: 'Field Quartermaster',         row: 2, col: 1, connections: [P + '4'], shop: { name: 'Quartermaster', items: [] }, reward: {} },
+      { id: P + '4', type: 'elite',     name: 'Convoy Hijackers',            row: 3, col: 1, connections: [P + '5'], enemyHeroId: '', enemyDeckId: '', enemyLevel: '', enemy: { name: 'Hijacker Cell' }, reward: {} },
+      { id: P + '5', type: 'finalBoss', name: 'Recover the ' + rN + ' Convoy', row: 4, col: 1, connections: [], enemyHeroId: '', enemyDeckId: '', enemyLevel: '', enemy: { name: 'Hijack Warlord' }, reward: {} },
+    ],
+  };
+}
+// Launches the active event's roguelite Crisis-Response campaign (reuses
+// rlcStartRun → deck pick → map → battles; clearing it pays the relief
+// cache). Falls back to the legacy single world-battle if unavailable.
 function frRunConvoy() {
   try {
+    const ev = (typeof frActiveEvent === 'function') ? frActiveEvent() : null;
+    if (!ev) { showToast('No active world event right now.'); return; }
+    const cid = _frEventCampaignId(ev.id);
+    if (typeof _rlcCampaign === 'function' && _rlcCampaign(cid) && typeof rlcStartRun === 'function') {
+      const r = (typeof Profile !== 'undefined') ? Profile.rlcRun : null;
+      if (r && !r.isComplete && !r.isFailed && r.campaignId !== cid) {
+        if (!confirm('Starting the “' + ev.name + '” crisis-response campaign abandons your current roguelite run. Continue?')) return;
+      }
+      try { const h = document.getElementById('fr-modal'); if (h) h.remove(); } catch (e) {}
+      rlcStartRun(cid);
+      return;
+    }
+    // Fallback — legacy single world-battle if the campaign is unavailable.
     const cv = frActiveConvoy();
-    if (!cv) { showToast('No active convoy mission right now.'); return; }
-    if (typeof worldBattleStart !== 'function') { showToast('World map unavailable.'); return; }
-    worldBattleStart({
-      zoneId: 'fr_convoy_' + frEconomyWindow(),
-      name: cv.name,
-      threat: 3,
-      yields: [{ r: cv.wb, p: 95 }, { r: cv.wb, p: 70 }],
-      convoy: { res: cv.res, name: cv.name },
-    });
+    if (cv && typeof worldBattleStart === 'function') {
+      worldBattleStart({
+        zoneId: 'fr_convoy_' + frEconomyWindow(), name: cv.name, threat: 3,
+        yields: [{ r: cv.wb, p: 95 }, { r: cv.wb, p: 70 }], convoy: { res: cv.res, name: cv.name },
+      });
+    }
   } catch (e) {}
 }
 // Returns { can, max, pct, bottleneck, out, event } vs current totals AND the
@@ -24570,7 +24610,7 @@ function openFoundationReserve() {
         : '<div class="small-text" style="color:#9fb6d6;margin-top:3px">Markets are calm — no active world crisis. Stock & prices sit at baseline.</div>';
       const cv = (typeof frActiveConvoy === 'function') ? frActiveConvoy() : null;
       const cvBtn = cv
-        ? '<button id="fr-convoy" style="margin-top:8px;width:100%;cursor:pointer;border-radius:8px;padding:0.55rem 0.8rem;border:1px solid #e0a060;background:linear-gradient(180deg,#7a4a1c,#3a2410);color:#ffe8c8;font-weight:800">🚚 Run Convoy Mission — recover ' + esc(_meta(cv.res).name || cv.res) + ' (−4 ⛽, World battle)</button>'
+        ? '<button id="fr-convoy" style="margin-top:8px;width:100%;cursor:pointer;border-radius:8px;padding:0.55rem 0.8rem;border:1px solid #e0a060;background:linear-gradient(180deg,#7a4a1c,#3a2410);color:#ffe8c8;font-weight:800">🗺️ Run Crisis-Response Campaign — recover ' + esc(_meta(cv.res).name || cv.res) + '</button>'
         : '';
       return '<div style="margin:8px 0 0;padding:9px 11px;border:1px solid ' + stCol + '55;border-radius:8px;background:' + stCol + '12">' + head + bodyL + cvBtn + '</div>';
     };
@@ -60830,6 +60870,13 @@ function getAllCampaigns() {
   loc.forEach(c => { if (c && c.id) byId[c.id] = c; });
   // 🖤 Always-available built-in Black Market Run (admin can override the id).
   if (!byId[BM_RUN_ID] && typeof _blackMarketRunCampaign === 'function') byId[BM_RUN_ID] = _blackMarketRunCampaign();
+  // 📈 One built-in Crisis-Response campaign per AI Economy Director event.
+  // Admin edits override these by id (same as the Black Market Run).
+  try {
+    if (typeof RESERVE_EVENTS !== 'undefined' && typeof _frEventCampaign === 'function') {
+      RESERVE_EVENTS.forEach(ev => { const id = _frEventCampaignId(ev.id); if (!byId[id]) byId[id] = _frEventCampaign(ev); });
+    }
+  } catch (e) {}
   return Object.values(byId);
 }
 function getPlayableCampaigns() {
@@ -61227,6 +61274,24 @@ function _rlcCompleteNode(nodeId) {
       // Fallback if the hall fn is missing — old behaviour.
       try { grantBmPass(); showToast('🖤 You reached The Hollow Bazaar.', 4200); } catch (e) {}
     }
+    // 📈 Director Crisis-Response campaign cleared — deliver the relief
+    // payload: a big cache of the STARVED resource straight to camp. The
+    // player now holds the scarce good (deposit it to break the shortage,
+    // or sell into the spiked market). Mirrors the BM haul-bank pattern.
+    if (camp && camp.frEvent) {
+      try {
+        const _r = camp.frRewardRes
+          || (typeof RESERVE_EVENTS !== 'undefined' && (RESERVE_EVENTS.find(e => e.id === camp.frEvent) || {}).res || [])[0]
+          || 'supplies';
+        if (typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[_r]) {
+          const _amt = Math.max(8, parseInt(camp.frRewardQty, 10) || 26);
+          if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+          Profile.salvage[_r] = (Profile.salvage[_r] | 0) + _amt;
+          try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+          try { showToast('🚚 Convoy recovered — ' + ((_SALVAGE_BY_ID[_r] || {}).icon || '') + _amt + ' ' + ((_SALVAGE_BY_ID[_r] || {}).name || _r) + ' secured to camp. Deposit it in the Foundation Reserve to break the shortage.', 6000); } catch (e) {}
+        }
+      } catch (e) {}
+    }
     // 🎒 Final extraction — any haul still carried is secured to camp.
     try {
       const _bnk = _rlcBankHaul(run);
@@ -61561,7 +61626,7 @@ function renderRlcAdmin() {
               <button class="btn-secondary btn-mini" data-rlc-dup="${i}">⧉ Duplicate</button>
               <button class="btn-mini" data-rlc-del="${i}" style="color:#ff8080">🗑</button>
             </div>`).join('')}
-          <div class="cloud-actions" style="margin-top:0.6rem;display:flex;gap:0.5rem;flex-wrap:wrap"><button class="btn-primary btn-mini" id="rlc-adm-new">➕ New Campaign</button><button class="btn-secondary btn-mini" id="rlc-adm-bm" title="Fully customize the route players take to reach the Black Market — nodes, threats, intro, rewards, difficulty. Saving overrides the built-in for everyone.">🖤 Edit Black Market Run</button></div>
+          <div class="cloud-actions" style="margin-top:0.6rem;display:flex;gap:0.5rem;flex-wrap:wrap"><button class="btn-primary btn-mini" id="rlc-adm-new">➕ New Campaign</button><button class="btn-secondary btn-mini" id="rlc-adm-bm" title="Fully customize the route players take to reach the Black Market — nodes, threats, intro, rewards, difficulty. Saving overrides the built-in for everyone.">🖤 Edit Black Market Run</button><button class="btn-secondary btn-mini" id="rlc-adm-frevt" title="Load the AI Economy Director's per-event Crisis-Response campaigns (one per world event) into the editor. Saving overrides the built-in for everyone.">📈 Load Event Campaigns</button></div>
           <div class="small-text ink-dim" style="margin-top:0.5rem">💡 Mark a campaign Publish-ready, then click <strong>📚 Publish Cards/Heroes/Items/Packs</strong> in Pricing Admin to push it to all players.</div>
         </div>
       </div>`;
@@ -61582,6 +61647,29 @@ function renderRlcAdmin() {
           try { showToast('🖤 Black Market Run loaded for editing — customize the route, then Save.', 4200); } catch (e) {}
         }
         App.rlcEdit = BM_RUN_ID; render();
+      };
+    }
+    {
+      // 📈 Seed every Director event campaign into Forge.campaigns so they
+      // become first-class editable rows (getAllCampaigns prefers the Forge
+      // copy over the built-in). Saving overrides for everyone.
+      const _feBtn = document.getElementById('rlc-adm-frevt');
+      if (_feBtn) _feBtn.onclick = () => {
+        let added = 0;
+        try {
+          if (typeof RESERVE_EVENTS !== 'undefined' && typeof _frEventCampaign === 'function') {
+            RESERVE_EVENTS.forEach(ev => {
+              const id = _frEventCampaignId(ev.id);
+              if (list.find(x => x && x.id === id)) return;
+              let c; try { c = JSON.parse(JSON.stringify(_frEventCampaign(ev))); } catch (e) { c = _frEventCampaign(ev); }
+              c.id = id; c.isPublished = true;
+              list.push(c); added++;
+            });
+          }
+        } catch (e) {}
+        if (added) { _persistForgeNow(); try { showToast('📈 ' + added + ' Crisis-Response campaign(s) loaded for editing — customize, then Save.', 4600); } catch (e) {} }
+        else { try { showToast('📈 All event campaigns are already in the list below.', 3200); } catch (e) {} }
+        render();
       };
     }
     document.querySelectorAll('[data-rlc-edit]').forEach(b => b.onclick = () => { App.rlcEdit = list[parseInt(b.dataset.rlcEdit, 10)].id; render(); });

@@ -59338,7 +59338,7 @@ function _blackMarketRunCampaign() {
       { id: 'bm2', type: 'treasure', name: 'Abandoned Gas Station', row: 1, col: 2, connections: ['bm4'], reward: {} },
       { id: 'bm3', type: 'market',   name: 'Smuggler Hideout',     row: 2, col: 0, connections: ['bm5'], shop: { name: 'Smuggler', items: [] }, reward: {} },
       { id: 'bm4', type: 'battle',   name: 'Infected Tunnel',      row: 2, col: 2, connections: ['bm5'], enemyHeroId: '', enemyDeckId: '', enemyLevel: '', enemy: { name: 'The Infected' }, reward: {} },
-      { id: 'bm5', type: 'elite',    name: 'SCP Checkpoint',       row: 3, col: 1, connections: ['bm6'], enemyHeroId: '', enemyDeckId: '', enemyLevel: '', enemy: { name: 'Foundation MTF' }, reward: {} },
+      { id: 'bm5', type: 'elite',    name: 'SCP Checkpoint',       row: 3, col: 1, connections: ['bm6'], scp: true, enemyHeroId: '', enemyDeckId: '', enemyLevel: '', enemy: { name: 'Foundation MTF' }, reward: {} },
       { id: 'bm6', type: 'finalBoss',name: 'The Hollow Bazaar',    row: 4, col: 1, connections: [], enemyHeroId: '', enemyDeckId: '', enemyLevel: '', enemy: { name: 'Bazaar Enforcers' }, reward: {} },
     ],
   };
@@ -59441,8 +59441,18 @@ function _rlcAvailableNodeIds(camp, run) {
   // forward, never back "up" to a red node behind them (those grey out).
   const curId = run.currentNodeId || (run.completed && run.completed[run.completed.length - 1]) || null;
   const cur = curId ? _rlcNode(camp, curId) : null;
+  // 🔥 Heat lockout — when carrying enough contraband, SCP-surveillance
+  // nodes seal. Only filter them out if a non-SCP route still exists
+  // (never hard-soft-lock the run).
+  const _heatGate = (ids) => {
+    try {
+      if (_rlcHeat(run) < RLC_HEAT_SCP_LOCK) return ids;
+      const open = ids.filter(id => !_rlcIsScpNode(_rlcNode(camp, id)));
+      return open.length ? open : ids;
+    } catch (e) { return ids; }
+  };
   if (cur) {
-    return (cur.connections || []).filter(id => !done.has(id) && _rlcNode(camp, id));
+    return _heatGate((cur.connections || []).filter(id => !done.has(id) && _rlcNode(camp, id)));
   }
   // Legacy fallback (run with no recorded current node): forward edges of
   // completed nodes — kept so old in-progress runs don't soft-lock.
@@ -59451,7 +59461,7 @@ function _rlcAvailableNodeIds(camp, run) {
     const dn = _rlcNode(camp, cidDone);
     (dn && dn.connections || []).forEach(nid => { if (!done.has(nid)) avail.add(nid); });
   });
-  return Array.from(avail);
+  return _heatGate(Array.from(avail));
 }
 // ---- Run lifecycle ----
 function rlcStartRun(campaignId) {
@@ -59589,6 +59599,32 @@ function _rlcGrantCard(key) {
 // (Phase 4). This is the bridge between the roguelite and the camp economy.
 // ════════════════════════════════════════════════════════════════════════
 const RLC_HAUL_TIER = { battle: 1, elite: 2, boss: 3, finalBoss: 4, treasure: 2 };
+// 🔥 CONTRABAND HEAT — carrying illegal haul raises raid danger (tougher
+// fights) and, past a threshold, LOCKS SCP-surveillance nodes so you must
+// route around them. Banking at a 🚚 Convoy clears haul → heat resets.
+// Smuggling becomes a routing/risk skill.
+const RLC_CONTRABAND = {
+  contraband: 2, corruptedArtifacts: 2, scpSamples: 3, demonCores: 3,
+  relicFragments: 2, anomalyEssence: 2, soulEnergy: 2, voidResidue: 2,
+  darkMatter: 3, ritualCandles: 1, corruptedBlood: 2, demonFlesh: 2,
+  nightmareFuel: 2, dimensionalShards: 3, corruptedEssence: 1,
+  chaosFragments: 2, phantomDust: 1, containmentFluid: 2,
+};
+const RLC_HEAT_SCP_LOCK = 12;  // heat ≥ this → SCP-surveillance nodes lock
+const RLC_HEAT_LVL_DIV  = 4;   // every N heat → +1 enemy level
+function _rlcHeat(run) {
+  try {
+    const h = (run && run.haul) || {};
+    let heat = 0;
+    for (const k in h) { const w = RLC_CONTRABAND[k]; if (w) heat += (h[k] | 0) * w; }
+    return heat;
+  } catch (e) { return 0; }
+}
+function _rlcIsScpNode(n) {
+  if (!n) return false;
+  if (n.scp === true || n.surveillance === true) return true;
+  return /\b(scp|foundation|checkpoint|surveillance|containment)\b/i.test(String(n.name || ''));
+}
 function _rlcAwardHaul(run, map) {
   if (!run || !map) return null;
   if (!run.haul || typeof run.haul !== 'object') run.haul = {};
@@ -59822,7 +59858,9 @@ function rlcStartBattle(node) {
     enemyLevel: (() => {
       const base = node.enemyLevel ? (parseInt(node.enemyLevel, 10) || 1) : 1;
       const bonus = _rlcDiffBonus(camp);
-      const eff = Math.max(1, base + bonus);
+      // 🔥 Heat — hotter smugglers draw harder patrols.
+      const heatLv = Math.floor(_rlcHeat(run) / RLC_HEAT_LVL_DIV);
+      const eff = Math.max(1, base + bonus + heatLv);
       return eff > 1 ? eff : null;   // null = no scaling (normal/easy, base 1)
     })(),
     enemyDeckOverride: enemyKeys.length === DECK_SIZE ? enemyKeys : null,
@@ -59914,6 +59952,12 @@ function _rlcHUD(run, camp) {
         return ks.length
           ? `<div title="Unsecured run haul — reach a 🚚 Convoy (or the boss) to bank it to camp. Lost if you fall." style="color:#ffd166;font-weight:700">🎒 ${ks.map(k => `${(_SALVAGE_BY_ID[k] || {}).icon || ''}${h[k]}`).join(' ')} <span class="small-text ink-dim">haul · unsecured</span></div>`
           : '';
+      })()}
+      ${(() => {
+        const ht = (typeof _rlcHeat === 'function') ? _rlcHeat(run) : 0;
+        if (ht <= 0) return '';
+        const hot = ht >= RLC_HEAT_SCP_LOCK;
+        return `<div title="Contraband heat: ${ht}. Raises enemy level (+1 per ${RLC_HEAT_LVL_DIV}). ${hot ? 'HIGH — SCP-surveillance routes are sealed; bank at a 🚚 Convoy to cool off.' : 'Bank at a 🚚 Convoy to clear it.'}" style="color:${hot ? '#ff6b6b' : '#ff9a4d'};font-weight:800">🔥 ${ht} <span class="small-text ink-dim">heat${hot ? ' · SCP LOCKED' : ''}</span></div>`;
       })()}
       <button class="btn-mini" id="rlc-abandon" style="color:#ff8080">✖ Abandon Run</button>
       ${(Array.isArray(run.relics) && run.relics.length) ? `

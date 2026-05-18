@@ -59947,12 +59947,29 @@ function renderRlcAdmin() {
               <button class="btn-secondary btn-mini" data-rlc-dup="${i}">⧉ Duplicate</button>
               <button class="btn-mini" data-rlc-del="${i}" style="color:#ff8080">🗑</button>
             </div>`).join('')}
-          <div class="cloud-actions" style="margin-top:0.6rem"><button class="btn-primary btn-mini" id="rlc-adm-new">➕ New Campaign</button></div>
+          <div class="cloud-actions" style="margin-top:0.6rem;display:flex;gap:0.5rem;flex-wrap:wrap"><button class="btn-primary btn-mini" id="rlc-adm-new">➕ New Campaign</button><button class="btn-secondary btn-mini" id="rlc-adm-bm" title="Fully customize the route players take to reach the Black Market — nodes, threats, intro, rewards, difficulty. Saving overrides the built-in for everyone.">🖤 Edit Black Market Run</button></div>
           <div class="small-text ink-dim" style="margin-top:0.5rem">💡 Mark a campaign Publish-ready, then click <strong>📚 Publish Cards/Heroes/Items/Packs</strong> in Pricing Admin to push it to all players.</div>
         </div>
       </div>`;
     document.getElementById('rlc-adm-back').onclick = () => { App.screen = 'pricingAdmin'; render(); };
     document.getElementById('rlc-adm-new').onclick = () => { const c = _rlcBlankCampaign(); list.push(c); _persistForgeNow(); App.rlcEdit = c.id; render(); };
+    {
+      const _bmBtn = document.getElementById('rlc-adm-bm');
+      if (_bmBtn) _bmBtn.onclick = () => {
+        // Edit the REAL Black Market Run. Seed an editable copy into
+        // Forge.campaigns (getAllCampaigns prefers it over the built-in),
+        // then open it in the full editor. Saving overrides for everyone.
+        let c = list.find(x => x && x.id === BM_RUN_ID);
+        if (!c) {
+          try { c = JSON.parse(JSON.stringify(_blackMarketRunCampaign())); }
+          catch (e) { c = _blackMarketRunCampaign(); }
+          c.id = BM_RUN_ID; c.isPublished = true;
+          list.push(c); _persistForgeNow();
+          try { showToast('🖤 Black Market Run loaded for editing — customize the route, then Save.', 4200); } catch (e) {}
+        }
+        App.rlcEdit = BM_RUN_ID; render();
+      };
+    }
     document.querySelectorAll('[data-rlc-edit]').forEach(b => b.onclick = () => { App.rlcEdit = list[parseInt(b.dataset.rlcEdit, 10)].id; render(); });
     document.querySelectorAll('[data-rlc-pub]').forEach(b => b.onclick = () => { const c = list[parseInt(b.dataset.rlcPub, 10)]; c.isPublished = !c.isPublished; _persistForgeNow(); render(); });
     document.querySelectorAll('[data-rlc-dup]').forEach(b => b.onclick = () => { const c = JSON.parse(JSON.stringify(list[parseInt(b.dataset.rlcDup, 10)])); c.id = 'camp' + Date.now().toString(36); c.name = (c.name || 'Campaign') + ' (copy)'; c.isPublished = false; list.push(c); _persistForgeNow(); render(); });

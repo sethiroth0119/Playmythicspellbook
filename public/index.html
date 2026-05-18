@@ -37272,8 +37272,15 @@ function renderTitle() {
           return activeBets > 0;
         })(),
         onclick: () => { App.screen = 'wagerHall'; App.wagerTab = 'live'; render(); } },
-      { id: 'btn-vendor',  icon: '<img src="assets/artwork/Blackmarket%20icon.png" alt="Black Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Black Market', sub: 'Smuggle spare cards for <span class="cinder-icon"></span>',          accent: '#b070b0',
-        onclick: () => { App.screen = 'vendor'; render(); } },
+      { id: 'btn-vendor',  icon: '<img src="assets/artwork/Blackmarket%20icon.png" alt="Black Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Black Market',
+        sub: (typeof hasBmPass === 'function' && hasBmPass()) ? 'Bazaar open — smuggle spare cards for <span class="cinder-icon"></span>' : 'Survive the route to reach The Hollow Bazaar',
+        badge: (typeof hasBmPass === 'function' && hasBmPass()) ? '🖤 Open' : '🗺 Run the route',
+        accent: '#b070b0',
+        onclick: () => {
+          if (typeof hasBmPass === 'function' && hasBmPass()) { App.screen = 'vendor'; render(); }
+          else if (typeof _startBlackMarketRun === 'function') { _startBlackMarketRun(); }
+          else { App.screen = 'vendor'; render(); }
+        } },
       // Cashout Vault — gated behind hero progression. Encourages players to actually
       // play the game before the money-out feature unlocks.
       cashoutUnlocked
@@ -54701,6 +54708,14 @@ function renderCashoutVault() {
 // while the Vendor Market (Pack Shop + Sovereigns Store) is the buy-side hub.
 // ============================================================================
 function renderBlackMarket() {
+  // 🖤 Gate — the Bazaar is only reachable by surviving the route. Without a
+  // valid access pass, bounce the player into the Black Market Run.
+  if (typeof hasBmPass === 'function' && !hasBmPass()) {
+    try { showToast('🖤 The Black Market is across the dead zone — survive the route to reach it.', 3800); } catch (e) {}
+    App.screen = 'title'; App.titleHub = 'exchange';
+    setTimeout(function () { try { if (typeof _startBlackMarketRun === 'function') _startBlackMarketRun(); } catch (e) {} }, 0);
+    return;
+  }
   const inventory = Profile.cardCollection || {};
   const decksInUse = new Set();
   (Profile.decks || []).forEach(d => (d.cards || []).forEach(c => decksInUse.add(c)));
@@ -59054,12 +59069,66 @@ function _rlcHealPct(run, pct) {
   const bonus = 1 + (_rlcRelicSum(run, 'healBonusPct') / 100);
   return Math.ceil((run.maxHP || 1) * ((Math.max(0, pct) / 100)) * bonus);
 }
+// ════════════════════════════════════════════════════════════════════════
+// 🖤 BLACK MARKET ROUTE — the Black Market is no longer an instant menu
+// node. It's earned by surviving a roguelite route from camp to The Hollow
+// Bazaar (reuses the rlc engine: nodes, haul/convoy/death, fuel gating).
+// Clearing the run grants a real-time ACCESS PASS; admins always have it.
+// ════════════════════════════════════════════════════════════════════════
+const BM_RUN_ID  = 'bm_run';
+const BM_PASS_MS = 30 * 60 * 1000;   // 30 real-time minutes of Bazaar access
+const BM_PASS_KEY = 'hg_bmPass';
+function _blackMarketRunCampaign() {
+  return {
+    id: BM_RUN_ID,
+    name: 'Black Market Run',
+    description: 'Fight the route from camp to The Hollow Bazaar — raiders, the infected, an SCP checkpoint. Clear it to earn Black Market access. Die on the way and you lose what you carried.',
+    intro: 'You pack contraband and slip past the wire. The Bazaar sits on the far side of the dead zone. Reach it — or lose everything trying.',
+    coverImg: '', difficulty: 'Hard',
+    startingHeroId: '', startingHP: 100,
+    currencyName: 'Tokens', startingCurrency: 30, startingMedPoints: 2,
+    startingDeckMode: 'player', startingDeckId: '',
+    isPublished: true, isBuiltIn: true, requiresCampaignId: '',
+    nodes: [
+      { id: 'bm0', type: 'rest',     name: 'Camp — Departure',     row: 0, col: 1, connections: ['bm1', 'bm2'], reward: {} },
+      { id: 'bm1', type: 'battle',   name: 'Scavenger Crossroads', row: 1, col: 0, connections: ['bm3'], enemyHeroId: '', enemyDeckId: '', enemyLevel: '', enemy: { name: 'Scavenger Pack' }, reward: {} },
+      { id: 'bm2', type: 'treasure', name: 'Abandoned Gas Station', row: 1, col: 2, connections: ['bm4'], reward: {} },
+      { id: 'bm3', type: 'market',   name: 'Smuggler Hideout',     row: 2, col: 0, connections: ['bm5'], shop: { name: 'Smuggler', items: [] }, reward: {} },
+      { id: 'bm4', type: 'battle',   name: 'Infected Tunnel',      row: 2, col: 2, connections: ['bm5'], enemyHeroId: '', enemyDeckId: '', enemyLevel: '', enemy: { name: 'The Infected' }, reward: {} },
+      { id: 'bm5', type: 'elite',    name: 'SCP Checkpoint',       row: 3, col: 1, connections: ['bm6'], enemyHeroId: '', enemyDeckId: '', enemyLevel: '', enemy: { name: 'Foundation MTF' }, reward: {} },
+      { id: 'bm6', type: 'finalBoss',name: 'The Hollow Bazaar',    row: 4, col: 1, connections: [], enemyHeroId: '', enemyDeckId: '', enemyLevel: '', enemy: { name: 'Bazaar Enforcers' }, reward: {} },
+    ],
+  };
+}
+function hasBmPass() {
+  try { if (typeof _adminBypass === 'function' && _adminBypass()) return true; } catch (e) {}
+  let exp = (typeof Profile !== 'undefined' && Profile.bmPass) || 0;
+  if (!exp) { try { exp = parseInt(localStorage.getItem(BM_PASS_KEY) || '0', 10) || 0; } catch (e) {} }
+  return exp > Date.now();
+}
+function grantBmPass() {
+  const exp = Date.now() + BM_PASS_MS;
+  try { Profile.bmPass = exp; } catch (e) {}
+  try { localStorage.setItem(BM_PASS_KEY, String(exp)); } catch (e) {}
+  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+}
+function _startBlackMarketRun() {
+  try {
+    const r = (typeof Profile !== 'undefined' && Profile.rlcRun) ? Profile.rlcRun : null;
+    if (r && !r.isComplete && !r.isFailed && r.campaignId !== BM_RUN_ID) {
+      if (!confirm('Starting the Black Market Run abandons your current roguelite run. Continue?')) return;
+    }
+    if (typeof rlcStartRun === 'function') rlcStartRun(BM_RUN_ID);
+  } catch (e) {}
+}
 function getAllCampaigns() {
   const cat = (typeof Catalog !== 'undefined' && Array.isArray(Catalog.campaigns)) ? Catalog.campaigns : [];
   const loc = (typeof Forge   !== 'undefined' && Array.isArray(Forge.campaigns))   ? Forge.campaigns   : [];
   const byId = {};
   cat.forEach(c => { if (c && c.id) byId[c.id] = c; });
   loc.forEach(c => { if (c && c.id) byId[c.id] = c; });
+  // 🖤 Always-available built-in Black Market Run (admin can override the id).
+  if (!byId[BM_RUN_ID] && typeof _blackMarketRunCampaign === 'function') byId[BM_RUN_ID] = _blackMarketRunCampaign();
   return Object.values(byId);
 }
 function getPlayableCampaigns() {
@@ -59386,6 +59455,11 @@ function _rlcCompleteNode(nodeId) {
   const _runAfter = () => { if (_afterDlg) { try { _rlcPlayDialogue(_afterDlg); } catch (e) {} } };
   if (node && (node.type === 'finalBoss')) {
     run.isComplete = true;
+    // 🖤 Reached The Hollow Bazaar — grant Black Market access.
+    if (run.campaignId === BM_RUN_ID) {
+      try { grantBmPass(); } catch (e) {}
+      try { showToast('🖤 You reached The Hollow Bazaar — Black Market open for ' + Math.round(BM_PASS_MS / 60000) + ' min.', 5600); } catch (e) {}
+    }
     // 🎒 Final extraction — any haul still carried is secured to camp.
     try {
       const _bnk = _rlcBankHaul(run);

@@ -4803,6 +4803,19 @@
     0%, 100% { opacity: 0.6; transform: scale(1);    }
     50%      { opacity: 1;   transform: scale(1.15); }
   }
+  /* 🪦 Lootable salvage cache — invites a click. */
+  .tombstone-loot { cursor: pointer; pointer-events: auto; animation: ts-loot-bob 1.6s ease-in-out infinite; }
+  .tombstone-loot:hover { filter: brightness(1.25) drop-shadow(0 0 8px rgba(255,210,90,0.9)); }
+  .tombstone-looted { opacity: 0.45; filter: grayscale(0.7); }
+  .tombstone-loot-badge {
+    position: absolute; bottom: -6px; right: -6px;
+    width: 20px; height: 20px; line-height: 20px; text-align: center;
+    font-size: 0.8rem; border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,210,90,0.95), rgba(150,110,20,0.95));
+    box-shadow: 0 0 8px rgba(255,210,90,0.85); z-index: 3;
+  }
+  .tombstone-loot-badge.done { background: radial-gradient(circle, rgba(120,220,150,0.9), rgba(30,90,50,0.9)); box-shadow: none; }
+  @keyframes ts-loot-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
 
   .wall-marker {
     width: 88%; height: 88%;
@@ -20874,6 +20887,10 @@ const Profile = {
   deckByHero: {},               // LEGACY — kept for migration; real source of truth is `decks` below
   decks: [],                    // Array<{ id, name, heroId, cards: [cardKey, ...], createdAt }> — named decks the player builds
   cardCollection: {},           // { cardId: count } — cards dropped from rare event rolls (0.1%) AND crafted from essence
+  // 🪦 SALVAGE LEDGER — resources harvested from fallen units' tombstones.
+  // { ammo, metal, water, food, supplies, medicine, fuel, corruptedEssence,
+  //   memoryShards, dna } — see SALVAGE_RES. Persists across runs.
+  salvage: {},
   essence: {},                   // { elementId: amount } — currency earned per-element from battles, spent to craft cards
   campaignProgress: {},         // { chapterId: { nodeId: 'cleared' } } — story-mode progress
   tutorialComplete: false,      // set to true after the player finishes or skips the first-run tutorial
@@ -30427,7 +30444,8 @@ function processTombstoneDrops(state) {
         continue;
       }
     }
-    // Normal decorative tombstone
+    // Normal tombstone — now a LOOTABLE salvage cache. Persists until the
+    // player loots it or the match ends (tickTombstones skips pruning it).
     state.tombstones.push({
       x: u.pos.x, y: u.pos.y,
       owner: u.owner,
@@ -30435,6 +30453,9 @@ function processTombstoneDrops(state) {
       image: getTombstoneImage(u.owner),
       glowing: false,
       turnsLeft: 2,
+      lootable: true,
+      looted: false,
+      salvage: (typeof _rollUnitSalvage === 'function') ? _rollUnitSalvage(u) : {},
     });
   }
   return state;
@@ -30460,6 +30481,9 @@ function tickTombstones(state) {
   if (!state || !Array.isArray(state.tombstones)) return state;
   const survivors = [];
   for (const t of state.tombstones) {
+    // 🪦 An un-looted salvage cache never times out — the player must be
+    // able to harvest it any turn until the match ends.
+    if (t.lootable && !t.looted) { survivors.push(t); continue; }
     t.turnsLeft = (t.turnsLeft || 0) - 1;
     if (t.turnsLeft > 0) { survivors.push(t); continue; }
     // 🜁 Expired REBIRTH marker — bring the unit back as a different one.
@@ -30525,6 +30549,101 @@ function tickTombstones(state) {
 function tileBlockedByTombstone(state, x, y) {
   if (!state || !Array.isArray(state.tombstones)) return false;
   return state.tombstones.some(t => t.glowing && t.x === x && t.y === y);
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// 🪦 SALVAGE / TOMBSTONE LOOTING (v1 — battle board). Dead units leave a
+// lootable tombstone; clicking it harvests resources onto Profile.salvage.
+// Roadmap (deferred): risk tombstones, extraction-choice menu, camp research,
+// hero rituals, expedition/gym salvage. This v1 is the core loop only.
+// ════════════════════════════════════════════════════════════════════════
+const SALVAGE_RES = [
+  { id: 'ammo',             name: 'Ammo',             icon: '🔫' },
+  { id: 'metal',            name: 'Metal',            icon: '⛓️' },
+  { id: 'water',            name: 'Water',            icon: '💧' },
+  { id: 'food',             name: 'Food',             icon: '🥫' },
+  { id: 'supplies',         name: 'Supplies',         icon: '📦' },
+  { id: 'medicine',         name: 'Medicine',         icon: '💊' },
+  { id: 'fuel',             name: 'Fuel',             icon: '⛽' },
+  { id: 'corruptedEssence', name: 'Corrupted Essence', icon: '🟣' },
+  { id: 'memoryShards',     name: 'Memory Shards',    icon: '🧠' },
+  { id: 'dna',              name: 'DNA',              icon: '🧬' },
+];
+const _SALVAGE_BY_ID = SALVAGE_RES.reduce((m, r) => { m[r.id] = r; return m; }, {});
+function _ensureSalvageLedger() {
+  if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+  return Profile.salvage;
+}
+function addSalvage(map) {
+  if (!map) return;
+  const led = _ensureSalvageLedger();
+  let any = false;
+  for (const k in map) {
+    const n = map[k] | 0;
+    if (!n || !_SALVAGE_BY_ID[k]) continue;
+    led[k] = (led[k] || 0) + n;
+    any = true;
+  }
+  if (any) { try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {} }
+}
+// Roll a fallen unit's salvage. Lean rules: rarity sets the base amount + rare
+// drops; type/faction/element keywords steer WHICH resources; level scales it.
+function _rollUnitSalvage(unit) {
+  try {
+    if (!unit) return {};
+    const out = {};
+    const add = (k, n) => { if (n > 0) out[k] = (out[k] || 0) + n; };
+    const R = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+    const lvl = Math.max(1, parseInt(unit.level, 10) || 1);
+    const rar = String(unit.rarity || (unit.card && unit.card.rarity) || 'common').toLowerCase();
+    const rarMul = rar === 'mythic' ? 3 : rar === 'legendary' ? 2.5 : rar === 'epic' ? 2
+      : rar === 'rare' ? 1.6 : rar === 'uncommon' ? 1.3 : 1;
+    const lvlMul = 1 + (lvl - 1) * 0.18;
+    const k = (s) => String(s || '').toLowerCase();
+    const blob = [k(unit.type), k(unit.faction), (unit.factions || []).map(k).join(' '),
+      (unit.elements || [unit.element]).map(k).join(' '), k(unit.name),
+      (unit.passives || [unit.passive]).map(k).join(' ')].join(' ');
+    const has = (...w) => w.some(t => blob.indexOf(t) >= 0);
+    const isBoss = has('boss','finalboss') || /boss/.test(blob);
+    const mech = has('mech','machine','construct','robot','metal','steel','iron','tank','drone');
+    const corrupt = has('corrupt','shadow','undead','demon','infected','void','curse','dark');
+    // Baseline survival scrap every body yields.
+    add('supplies', Math.round(R(1, 3) * lvlMul));
+    add('ammo',     Math.round(R(1, 3) * lvlMul));
+    if (mech) { add('metal', Math.round(R(2, 5) * rarMul * lvlMul)); add('fuel', Math.round(R(0, 2) * rarMul)); add('ammo', Math.round(R(1, 3) * rarMul)); }
+    else      { add('food',  Math.round(R(1, 3) * lvlMul)); add('medicine', Math.round(R(0, 2) * rarMul)); add('water', Math.round(R(0, 2) * lvlMul)); add('dna', Math.round(R(0, 1) * rarMul)); }
+    if (corrupt) add('corruptedEssence', Math.max(1, Math.round(R(1, 3) * rarMul)));
+    if (rar === 'rare' || rar === 'epic' || rar === 'legendary' || rar === 'mythic') {
+      if (Math.random() < 0.6) add('memoryShards', R(1, 2));
+      if (Math.random() < 0.5) add('dna', R(1, 2));
+    }
+    if (isBoss) { add('memoryShards', R(2, 4)); add('corruptedEssence', R(1, 3)); add('dna', R(1, 3)); add('metal', R(2, 5)); }
+    return out;
+  } catch (e) { return { supplies: 1 }; }
+}
+// Player clicked a salvage tombstone — bank its resources, mark looted,
+// track the run total, toast the breakdown, repaint the board.
+function _lootTombstone(coord) {
+  try {
+    const s = App.state;
+    if (!s || !Array.isArray(s.tombstones) || !coord) return;
+    const parts = String(coord).split(',');
+    const x = parseInt(parts[0], 10), y = parseInt(parts[1], 10);
+    const t = s.tombstones.find(o => o && o.lootable && !o.looted && !o.glowing && o.x === x && o.y === y);
+    if (!t) return;
+    const got = t.salvage && typeof t.salvage === 'object' ? t.salvage : {};
+    addSalvage(got);
+    t.looted = true;
+    // Per-run tally for the end-of-match summary.
+    s._salvageRun = s._salvageRun || { gained: {}, looted: 0 };
+    s._salvageRun.looted++;
+    for (const k in got) { const n = got[k] | 0; if (n) s._salvageRun.gained[k] = (s._salvageRun.gained[k] || 0) + n; }
+    const pills = Object.keys(got).filter(k => (got[k] | 0) > 0)
+      .map(k => `${(_SALVAGE_BY_ID[k] || {}).icon || ''}${got[k]}`).join('  ');
+    try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
+    try { if (typeof showToast === 'function') showToast(`🪦 Looted ${t.name || 'body'}: ${pills || 'nothing of use'}`, 2600); } catch (e) {}
+    try { if (typeof render === 'function') render(); } catch (e) {}
+  } catch (e) {}
 }
 
 const getOccupant = (pos, units) => units.find(u => u.alive && u.pos.x === pos.x && u.pos.y === pos.y);
@@ -45071,12 +45190,20 @@ function renderBoard() {
         ? s.tombstones.find(t => t.x === x && t.y === y)
         : null;
       if (ts) {
-        const cls = `tombstone ${ts.glowing ? 'tombstone-glowing' : ''} tombstone-${ts.owner}`;
+        const _canLoot = ts.lootable && !ts.looted && !ts.glowing;
+        const cls = `tombstone ${ts.glowing ? 'tombstone-glowing' : ''} ${_canLoot ? 'tombstone-loot' : ''} ${ts.looted ? 'tombstone-looted' : ''} tombstone-${ts.owner}`;
         const inner = ts.image
           ? `<img src="${ts.image}" alt="${escapeHtml(ts.name || '')}" />`
           : `<div class="tombstone-fallback">🪦</div>`;
         const reviveHint = ts.glowing ? `<div class="tombstone-timer">${ts.turnsLeft || 0}</div>` : '';
-        cellInner += `<div class="${cls}" title="${escapeHtml(ts.name || 'Tombstone')} — ${ts.glowing ? `Rises in ${ts.turnsLeft || 0} turn${(ts.turnsLeft || 0) === 1 ? '' : 's'}` : 'Decoration'}">${inner}${reviveHint}</div>`;
+        const lootBadge = _canLoot ? '<div class="tombstone-loot-badge">💰</div>'
+          : (ts.looted ? '<div class="tombstone-loot-badge done">✅</div>' : '');
+        const lootAttr = _canLoot ? ` data-loot="${x},${y}" role="button" tabindex="0"` : '';
+        const ttl = ts.glowing
+          ? `${escapeHtml(ts.name || 'Tombstone')} — Rises in ${ts.turnsLeft || 0} turn${(ts.turnsLeft || 0) === 1 ? '' : 's'}`
+          : (_canLoot ? `${escapeHtml(ts.name || 'Body')} — click to LOOT salvage`
+            : (ts.looted ? `${escapeHtml(ts.name || 'Body')} — looted` : escapeHtml(ts.name || 'Tombstone')));
+        cellInner += `<div class="${cls}"${lootAttr} title="${ttl}">${inner}${reviveHint}${lootBadge}</div>`;
       }
       html += `<div class="${tileClasses.join(' ')}" data-x="${x}" data-y="${y}">${cellInner}</div>`;
     }
@@ -45653,6 +45780,12 @@ function bindBattleEvents() {
 
   document.querySelectorAll('.tile').forEach(el => {
     el.onclick = () => onTileClick(parseInt(el.dataset.x, 10), parseInt(el.dataset.y, 10));
+  });
+  // 🪦 Loot a salvage tombstone (sits inside its tile — stop the tile click).
+  document.querySelectorAll('[data-loot]').forEach(el => {
+    const go = (e) => { if (e) e.stopPropagation(); _lootTombstone(el.getAttribute('data-loot')); };
+    el.onclick = go;
+    el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(e); } };
   });
   document.querySelectorAll('.unit').forEach(el => {
     el.onclick = (e) => { e.stopPropagation(); onUnitClick(el.dataset.unit); };
@@ -48267,6 +48400,26 @@ function renderGameOverOverlay() {
               <div class="ge-label"><span class="cinder-icon"></span> Essence Earned</div>
               <div class="ge-pills">${pills}</div>
               <div class="small-text ink-dim">Spend in the Inventory to craft new cards.</div>
+            </div>
+          `;
+        })()}
+
+        ${(() => {
+          // 🪦 Salvage harvested this run + bodies left unlooted.
+          const run = s._salvageRun || { gained: {}, looted: 0 };
+          const missed = Array.isArray(s.tombstones)
+            ? s.tombstones.filter(t => t && t.lootable && !t.looted && !t.glowing).length : 0;
+          const keys = Object.keys(run.gained || {}).filter(k => (run.gained[k] | 0) > 0);
+          if (!run.looted && !missed && !keys.length) return '';
+          const pills = keys.map(k => {
+            const r = _SALVAGE_BY_ID[k] || {};
+            return `<span class="essence-pill" style="border-color:#caa23e;color:#ffe9b8;background:#caa23e22">${r.icon || ''} ${r.name || k} +${run.gained[k]}</span>`;
+          }).join('');
+          return `
+            <div class="game-over-essence-row">
+              <div class="ge-label">🪦 Battlefield Salvage</div>
+              <div class="ge-pills">${pills || '<span class="small-text ink-dim">No bodies looted</span>'}</div>
+              <div class="small-text ink-dim">Tombstones looted: <strong>${run.looted}</strong>${missed ? ` &middot; <span style="color:#ff9a88">missed: ${missed}</span> — harvest bodies during the fight!` : ' &middot; battlefield cleared 🧹'}</div>
             </div>
           `;
         })()}

@@ -30064,6 +30064,27 @@ function needsStarterPick() {
     return getAllStarterDecks().length > 0;
   } catch (e) { return false; }
 }
+// True for a brand-new, signed-in (or offline) non-admin who has NOT picked a
+// starter — INDEPENDENT of whether the starter decks have finished loading
+// from the catalog. The catalog loads async after login, so needsStarterPick()
+// is briefly false and the player would flash the title/tutorial before the
+// picker pops in. This lets render() pin them to the starter screen FIRST and
+// hold there (showing a loading state) until the decks arrive.
+function _mustPickStarter() {
+  try {
+    if (typeof isAdmin === 'function' && isAdmin()) return false;
+    const cc = Profile.cloud || {};
+    if (!cc.signedIn && !cc.offlineMode) return false;
+    return !hasPickedStarter();
+  } catch (e) { return false; }
+}
+// Has the shared catalog been fetched at least once this session? (Set by
+// _applyCatalogRow on a DB or public-mirror fetch.) Used to decide whether
+// "no starter decks" is real or just "decks haven't loaded yet".
+function _catalogResolved() {
+  try { return !!(typeof Catalog !== 'undefined' && Catalog.lastFetchedAt > 0); }
+  catch (e) { return false; }
+}
 
 const xpForLevel = (lvl) => Math.floor(50 + 30 * lvl + 5 * lvl * lvl);
 const xpFromKill = (target) => target.isHero ? 200 : 25 + (target.level || 1) * 18;
@@ -34611,9 +34632,16 @@ function render() {
   // This is also the card-lockdown: until they pick, they own zero cards, and
   // the pick grants ONLY that deck's cards. Existing players (any progress)
   // and admins are never gated. No starter decks authored ⇒ no gate.
+  // A brand-new player's VERY FIRST screen must be the starter-deck picker —
+  // never a flash of the title/tutorial while the catalog loads. Pin them to
+  // starterPick if they must pick AND (decks already loaded OR the catalog
+  // hasn't resolved yet, so decks may still arrive). Only release them to the
+  // game if the catalog HAS resolved and there are genuinely zero starter
+  // decks (admin authored none) — otherwise they'd be trapped.
   if (App.screen !== 'starterPick' && App.screen !== 'authGate'
       && App.screen !== 'battle' && App.screen !== 'coinFlip' && App.screen !== 'vsScreen'
-      && typeof needsStarterPick === 'function' && needsStarterPick()) {
+      && typeof _mustPickStarter === 'function' && _mustPickStarter()
+      && (getAllStarterDecks().length > 0 || !_catalogResolved())) {
     App.screen = 'starterPick';
   }
   if (App.screen === 'starterPick') return renderStarterPick();
@@ -35786,7 +35814,11 @@ function renderStarterPick() {
       <div class="section-subtitle">Welcome! Pick <strong>one</strong> deck to begin — these are your only cards to start with. Earn or buy more later in the Vendor Market.</div>
       ${(typeof isAdmin === 'function' && isAdmin()) ? `<div style="margin-top:10px"><span class="small-text ink-dim">👑 Admin preview — this is exactly what a brand-new player sees. Your account already owns every card, so the live game skips this screen for you.</span><br><button class="btn-secondary btn-mini" id="sp-admin-back" style="margin-top:8px">← Back (no changes made)</button></div>` : ''}
       <div style="display:flex;flex-wrap:wrap;gap:20px;justify-content:center;margin-top:26px">
-        ${decks.length ? decks.map(cardFor).join('') : '<div class="ink-dim">No starter decks available yet — check back soon.</div>'}
+        ${decks.length
+          ? decks.map(cardFor).join('')
+          : (!_catalogResolved()
+              ? '<div class="ink-dim" style="padding:1rem 0">⏳ Loading your starter decks… (a few seconds — please wait, you don\'t need to do anything)</div>'
+              : '<div class="ink-dim">No starter decks available yet — check back soon.</div>')}
       </div>
     </div>`;
   document.querySelectorAll('[data-pick-starter]').forEach(btn => {

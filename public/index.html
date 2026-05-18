@@ -21934,9 +21934,26 @@ function _flattenCatalogMedia(m) {
   (Array.isArray(m.pageGuides) ? m.pageGuides : []).forEach((g, i) => {
     if (g == null) return;
     if (fits(g)) { out['pg:' + i] = g; return; }
+    // Oversized guide (long voice clips — e.g. the first/last roguelite story
+    // narration). DON'T drop the audio; DECOMPOSE each big bubble audioUrl
+    // into its OWN shard-safe key (pga:<guide>:<bubble>), reattached on
+    // unflatten. The text skeleton then always fits.
     try {
       const slim = JSON.parse(JSON.stringify(g));
-      if (Array.isArray(slim.bubbles)) slim.bubbles.forEach(b => { if (b) b.audioUrl = ''; });
+      if (Array.isArray(slim.bubbles)) slim.bubbles.forEach((b, j) => {
+        if (b && typeof b.audioUrl === 'string' && b.audioUrl.length > 1024) {
+          if (fits(b.audioUrl)) out['pga:' + i + ':' + j] = b.audioUrl;
+          b.audioUrl = '';
+        }
+        if (b && typeof b.expressionImageUrl === 'string' && b.expressionImageUrl.length > 1024) {
+          if (fits(b.expressionImageUrl)) out['pgx:' + i + ':' + j] = b.expressionImageUrl;
+          b.expressionImageUrl = '';
+        }
+      });
+      if (typeof slim.characterImageUrl === 'string' && slim.characterImageUrl.length > 1024) {
+        if (fits(slim.characterImageUrl)) out['pgc:' + i] = slim.characterImageUrl;
+        slim.characterImageUrl = '';
+      }
       out['pg:' + i] = fits(slim) ? slim : { id: g.id, pageRoute: g.pageRoute, isActive: g.isActive, bubbles: [] };
     } catch (e) {}
   });
@@ -21985,6 +22002,18 @@ function _unflattenCatalogMedia(obj) {
     } else if (k.slice(0, 4) === 'cpn:') {
       const p = k.split(':'); const ci = parseInt(p[1], 10); const nj = parseInt(p[2], 10); const fld = p.slice(3).join(':');
       if (cp[ci] && Array.isArray(cp[ci].nodes) && cp[ci].nodes[nj] && fld) cp[ci].nodes[nj][fld] = obj[k];
+    } else if (k.slice(0, 4) === 'pga:') {
+      // Decomposed guide bubble AUDIO (big voice clips) → reattach.
+      const p = k.split(':'); const gi = parseInt(p[1], 10); const bj = parseInt(p[2], 10);
+      if (pg[gi] && Array.isArray(pg[gi].bubbles) && pg[gi].bubbles[bj]) pg[gi].bubbles[bj].audioUrl = obj[k];
+    } else if (k.slice(0, 4) === 'pgx:') {
+      // Decomposed bubble expression image → reattach.
+      const p = k.split(':'); const gi = parseInt(p[1], 10); const bj = parseInt(p[2], 10);
+      if (pg[gi] && Array.isArray(pg[gi].bubbles) && pg[gi].bubbles[bj]) pg[gi].bubbles[bj].expressionImageUrl = obj[k];
+    } else if (k.slice(0, 4) === 'pgc:') {
+      // Decomposed guide character image → reattach.
+      const gi = parseInt(k.split(':')[1], 10);
+      if (pg[gi] && typeof pg[gi] === 'object') pg[gi].characterImageUrl = obj[k];
     }
   }
   return {
@@ -54349,32 +54378,43 @@ function _currentGuideRoute() {
 // Called on every screen change (from render()). Decides whether to auto-play.
 function maybeShowPageGuide() {
   try {
-    if (RPGGuide.activeId) return;                       // one at a time
-    if (guidesGloballyOff()) return;
-    // 🔊 Wait for the IndexedDB restore before auto-playing. localStorage
-    // stores guides WITHOUT audio (quota), so a guide shown pre-IDB would be
-    // voice-less. App._forgeIdbLoaded flips true (and re-renders) once the
-    // full audio-bearing copy is merged in — then this runs with sound.
-    if (typeof App !== 'undefined' && !App._forgeIdbLoaded) return;
+    if (RPGGuide.activeId) return;                       // overlay open
+    if (guidesGloballyOff()) {                            // all guides off → no FAB
+      const f = document.getElementById('rpgg-replay-fab'); if (f) f.remove();
+      return;
+    }
     const composite = _currentGuideRoute();
     const candidates = [composite];
     if (composite.indexOf(':') >= 0) candidates.push(composite.split(':')[0]);
     let g = null;
     for (const r of candidates) { g = getActivePageGuide(r); if (g) break; }
-    if (!g) return;
-    let done = false;
-    try { done = localStorage.getItem(_guideDoneKey(g.id)) === '1'; } catch (e) {}
-    let optedOff = false;
-    try { optedOff = localStorage.getItem(_guideOffKey(g.id)) === '1'; } catch (e) {}
-    const autoPlay = g.triggerType !== 'button'
-      && !optedOff
-      && !((g.showOnce || g.triggerType === 'firstVisit') && done)
-      && (g.triggerType === 'everyVisit' || g.triggerType === 'load' || g.triggerType === 'firstVisit' || !g.triggerType);
-    if (autoPlay) { playPageGuide(g); return; }
-    // Not auto-playing (button-trigger, already seen, or opted out of the
-    // auto-popup) → ALWAYS leave the replay button so the player can rewatch
-    // the guide from anywhere one exists, even after they've seen it.
-    _mountGuideReplayFab(g);
+    // 🔊 Auto-play only when there IS a route guide AND the IndexedDB restore
+    // is done (localStorage strips audio, so a pre-IDB auto-play is silent).
+    if (g && (typeof App === 'undefined' || App._forgeIdbLoaded)) {
+      let done = false;
+      try { done = localStorage.getItem(_guideDoneKey(g.id)) === '1'; } catch (e) {}
+      let optedOff = false;
+      try { optedOff = localStorage.getItem(_guideOffKey(g.id)) === '1'; } catch (e) {}
+      const autoPlay = g.triggerType !== 'button'
+        && !optedOff
+        && !((g.showOnce || g.triggerType === 'firstVisit') && done)
+        && (g.triggerType === 'everyVisit' || g.triggerType === 'load' || g.triggerType === 'firstVisit' || !g.triggerType);
+      if (autoPlay) { playPageGuide(g); return; }
+    }
+    // The replay button must ALWAYS be in the SAME place on EVERY screen.
+    // Prefer this page's guide; if the page has none, fall back to the
+    // last-seen guide, else any active guide — so it never vanishes and the
+    // player never has to "go hunt for it somewhere else".
+    let fab = g, forced = false;
+    if (!fab) {
+      const all = (typeof _allGuides === 'function')
+        ? _allGuides().filter(x => x && x.isActive && Array.isArray(x.bubbles) && x.bubbles.length) : [];
+      if (RPGGuide._lastGuideId) fab = all.find(x => x.id === RPGGuide._lastGuideId) || null;
+      if (!fab) fab = all[0] || null;
+      forced = !!fab;
+    }
+    if (fab) _mountGuideReplayFab(fab, forced);
+    else { const f = document.getElementById('rpgg-replay-fab'); if (f) f.remove(); }
   } catch (e) { /* never let the guide break navigation */ }
 }
 
@@ -54503,16 +54543,19 @@ function _rlcPlayDialogue(guideId, after) {
 
 // Small persistent "📖 Replay guide" button so a player who dismissed it can
 // bring the Merchant back. Only when the guide allows it (replayLabel set).
-function _mountGuideReplayFab(g) {
+function _mountGuideReplayFab(g, force) {
   try {
     const old = document.getElementById('rpgg-replay-fab'); if (old) old.remove();
     if (!g) return;
     // Composite-route aware: a guide for a title sub-hub (title:battle) or a
     // Vendor tab (vendorMarket:packs) must still match while App.screen is
     // just 'title' / 'vendorMarket'. Show whenever the guide's page is the
-    // one currently being viewed.
-    const composite = (typeof _currentGuideRoute === 'function') ? _currentGuideRoute() : App.screen;
-    if (g.pageRoute !== composite && g.pageRoute !== String(composite).split(':')[0]) return;
+    // one currently being viewed. `force` = mount anyway (persistent fallback
+    // button so a replay entry point is ALWAYS in the same spot).
+    if (!force) {
+      const composite = (typeof _currentGuideRoute === 'function') ? _currentGuideRoute() : App.screen;
+      if (g.pageRoute !== composite && g.pageRoute !== String(composite).split(':')[0]) return;
+    }
     const b = document.createElement('div');
     b.id = 'rpgg-replay-fab'; b.className = 'rpgg-replay-fab';
     // Always label it (blank admin field no longer hides the button — the
@@ -54533,6 +54576,7 @@ function playPageGuide(guide, opts) {
   const oldFab = document.getElementById('rpgg-replay-fab'); if (oldFab) oldFab.remove();
   const oldOv = document.getElementById('rpgg-overlay'); if (oldOv) oldOv.remove();
   RPGGuide.activeId = guide.id;
+  RPGGuide._lastGuideId = guide.id;   // persistent-FAB fallback target
 
   const bubbles = guide.bubbles.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
   const dir   = guide.slideDirection === 'left' ? 'from-left' : 'from-right';
@@ -56743,10 +56787,23 @@ function _rlcDeckKeys(deckId) {
   return keys;
 }
 function _rlcStartNodes(camp) {
+  const nodes = camp.nodes || [];
   const incoming = new Set();
-  (camp.nodes || []).forEach(n => (n.connections || []).forEach(id => incoming.add(id)));
-  const starts = (camp.nodes || []).filter(n => !incoming.has(n.id));
-  return starts.length ? starts : (camp.nodes || []).slice(0, 1);
+  nodes.forEach(n => (n.connections || []).forEach(id => incoming.add(id)));
+  // A start node has nothing pointing INTO it — BUT a Boss / Final Boss must
+  // NEVER be a start, even when its incoming edges weren't authored. Players
+  // have to fight their way down to it; it stays locked until reached.
+  const isBoss = (n) => n && (n.type === 'finalBoss' || n.type === 'boss');
+  let starts = nodes.filter(n => !incoming.has(n.id) && !isBoss(n));
+  if (starts.length) return starts;
+  // Graph not wired with incoming edges → fall back to the lowest-row
+  // non-boss node(s) ("start at the bottom"), never the boss.
+  const pool = nodes.filter(n => !isBoss(n));
+  const usable = pool.length ? pool : nodes;
+  let minRow = Infinity;
+  usable.forEach(n => { const r = parseInt(n.row, 10) || 0; if (r < minRow) minRow = r; });
+  const bottom = usable.filter(n => (parseInt(n.row, 10) || 0) === minRow);
+  return bottom.length ? bottom : usable.slice(0, 1);
 }
 function _rlcAvailableNodeIds(camp, run) {
   const done = new Set(run.completed || []);

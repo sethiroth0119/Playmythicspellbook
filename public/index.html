@@ -57566,7 +57566,15 @@ const Chat = {
 };
 function _chatErr(e) {
   const msg = (e && (e.message || e.code || '')) + '';
-  if (/chat_messages|relation|does not exist|schema cache|PGRST205|42P01/i.test(msg)) Chat.tableMissing = true;
+  // Missing table / schema-cache miss → needs the one-time setup SQL.
+  // Also: an RLS / permission violation means the policy in the DB is stale
+  // (e.g. created before the 'trade' room existed). The current CHAT_SQL
+  // drops & recreates the policies idempotently, so routing the admin to
+  // re-run it fixes that too — surface the same setup panel.
+  if (/chat_messages|relation|does not exist|schema cache|PGRST205|42P01/i.test(msg)
+      || /row-level security|violates|permission denied|not authoriz|insufficient_privilege|42501|PGRST301|PGRST204|forbidden/i.test(msg)) {
+    Chat.tableMissing = true;
+  }
   return null;
 }
 function _chatName() {
@@ -57701,12 +57709,26 @@ async function chatSend(body) {
     recipient_id: isDm ? Chat.dmUserId : null, body: text,
   };
   Chat._lastSendAt = Date.now();
+  const _fail = (e) => {
+    _chatErr(e);
+    // Don't lose what they typed — drop it back in the box to retry.
+    try { const i = document.getElementById('chat-input'); if (i && !i.value) i.value = String(body == null ? '' : body); } catch (_) {}
+    if (Chat.tableMissing) {
+      const isAdm = (typeof isAdmin === 'function') && isAdmin();
+      showToast(isAdm
+        ? '⚠ Chat needs a one-time DB update — open the setup panel and re-run the SQL.'
+        : '⚠ Chat is being set up — please try again soon.', 3600);
+      try { _chatRenderOverlay(); } catch (_) {}   // surface the setup / Retry panel
+    } else {
+      showToast('⚠ Message failed — check your connection and try again.', 2600);
+    }
+  };
   try {
     const { data, error } = await Cloud.client.from('chat_messages').insert(rowOut).select('*').limit(1);
-    if (error) { _chatErr(error); showToast('⚠ Message failed.', 2200); return; }
+    if (error) { _fail(error); return; }
     if (data && data[0]) _chatPush(room, data[0]);   // optimistic local echo (self:no realtime)
     _chatRenderOverlay();
-  } catch (e) { _chatErr(e); showToast('⚠ Message failed.', 2200); }
+  } catch (e) { _fail(e); }
 }
 function chatOpen() {
   Chat.open = true; Chat.unread = 0;

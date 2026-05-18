@@ -32256,6 +32256,97 @@ function _baseCampRooms() {
     return out;
   } catch (e) { return null; }
 }
+// ════════════════════════════════════════════════════════════════════════
+// ⚔ CAMP / WORLD BATTLES — a district on the World Map is a real AI fight
+// (costs fuel). Win and the zone's resource yields go straight to camp
+// salvage; a chance at a card too. SEPARATE from ranked / quick / roguelite
+// (no AP, no rank, no rlcRun). Mirrors the gym after-battle pattern.
+// ════════════════════════════════════════════════════════════════════════
+const WORLD_BATTLE_FUEL_COST = 4;
+// world-data yield ids → secured SALVAGE_RES ids (only mapped ones grant).
+const _WB_RES_MAP = {
+  food: 'food', water: 'water', ammo: 'ammo', fuel: 'fuel', metal: 'metal',
+  supplies: 'supplies', medicine: 'medicine', dna: 'dna',
+  corrupted: 'corruptedEssence', memshard: 'memoryShards',
+};
+function worldBattleStart(z) {
+  try {
+    if (!z || !z.zoneId) return;
+    if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+    if ((Profile.salvage.fuel | 0) < WORLD_BATTLE_FUEL_COST) {
+      try { showToast(`Need ${WORLD_BATTLE_FUEL_COST} ⛽ Fuel to deploy — secure more at camp.`, 3200); } catch (e) {}
+      try { _baseSendData(); } catch (e) {}
+      return;
+    }
+    Profile.salvage.fuel = (Profile.salvage.fuel | 0) - WORLD_BATTLE_FUEL_COST;
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+    App._worldBattlePending = {
+      zoneId: z.zoneId, name: z.name || 'Encounter',
+      threat: z.threat || 2,
+      yields: Array.isArray(z.yields) ? z.yields.slice(0, 12) : [],
+    };
+    if (!App.selectedHero) {
+      App.selectedHero =
+        (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES[0] && STARTER_HEROES[0].id) ||
+        ((typeof getAllHeroes === 'function' && getAllHeroes()[0]) ? getAllHeroes()[0].id : null);
+    }
+    try {
+      const ff = document.getElementById('base-builder-frame');
+      const bb = document.getElementById('base-builder-bg');
+      if (ff) ff.style.opacity = '0';
+      if (bb) bb.style.opacity = '0';
+    } catch (e) {}
+    setTimeout(function () {
+      try { App.screen = 'deckSelect'; if (typeof render === 'function') render(); } catch (e) {}
+    }, 260);
+  } catch (e) {}
+}
+function worldBattleAfter() {
+  const p = App._worldAfter; App._worldAfter = null;
+  App.state = null; App.ui = App.ui || {}; App.ui._gameOverHidden = false;
+  if (!p) { App.screen = 'camp'; return render(); }
+  if (!p.won) {
+    try { showToast(`Defeated at ${p.name || 'the encounter'} — no spoils. Fuel spent.`, 3600); } catch (e) {}
+    App.screen = 'camp'; return render();
+  }
+  try {
+    if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+    const got = {};
+    const tMul = 1 + Math.max(0, (p.threat || 2) - 2) * 0.35;   // harder zone → more
+    (p.yields || []).forEach(function (y) {
+      if (!y || !y.r) return;
+      const sid = _WB_RES_MAP[y.r];
+      if (!sid) return;
+      if (Math.random() * 100 < (y.p || 0) * 0.7) {
+        const amt = Math.max(1, Math.round((1 + Math.floor(Math.random() * 3)) * tMul));
+        Profile.salvage[sid] = (Profile.salvage[sid] | 0) + amt;
+        got[sid] = (got[sid] || 0) + amt;
+      }
+    });
+    if (!Object.keys(got).length) { Profile.salvage.supplies = (Profile.salvage.supplies | 0) + 2; got.supplies = 2; }
+    // 🃏 ~30% — a card to the collection.
+    let cardName = '';
+    if (Math.random() < 0.30) {
+      let pool = [];
+      try {
+        pool = (typeof getAllCustomCards === 'function') ? (getAllCustomCards() || []).slice() : [];
+        if (!pool.length && typeof getCraftablePool === 'function') pool = getCraftablePool() || [];
+      } catch (e) {}
+      pool = pool.filter(function (c) { return c && c.id && c.type !== 'hero'; });
+      if (pool.length) {
+        const c = pool[Math.floor(Math.random() * pool.length)];
+        if (!Profile.cardCollection || typeof Profile.cardCollection !== 'object') Profile.cardCollection = {};
+        Profile.cardCollection[c.id] = (Profile.cardCollection[c.id] | 0) + 1;
+        cardName = c.name || c.id;
+      }
+    }
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+    const line = Object.keys(got).map(function (k) { return ((_SALVAGE_BY_ID[k] || {}).icon || '') + got[k]; }).join('  ');
+    try { showToast('🏆 ' + (p.name || 'Encounter') + ' cleared! Camp gained: ' + line + (cardName ? '  ·  🃏 ' + cardName : ''), 5200); } catch (e) {}
+    try { _baseSendData(); } catch (e) {}
+  } catch (e) {}
+  App.screen = 'camp'; render();
+}
 function _baseSendData() {
   try {
     const f = document.getElementById('base-builder-frame');
@@ -32371,6 +32462,10 @@ function mountBaseBuilder() {
           else if (d.action === 'workers') {
             // Hire NPC staff / station units to run the camp rooms.
             if (typeof openCampWorkersModal === 'function') openCampWorkersModal();
+          }
+          else if (d.action === 'worldbattle' && d.zone) {
+            // A World-Map district — start a real AI battle for its loot.
+            if (typeof worldBattleStart === 'function') worldBattleStart(d.zone);
           }
           else if (d.action === 'deposit') {
             // Drop the carried field bag into SECURED camp storage (real).
@@ -38222,11 +38317,14 @@ function renderDeckSelect() {
       // and routes the game-over screen back to the gym hub.
       gymTrialCore:     (_gymBP && _gymBP.mode === 'trial')     ? _gymBP.coreId : null,
       gymChallengeCore: (_gymBP && _gymBP.mode === 'challenge') ? _gymBP.coreId : null,
+      // ⚔ Camp/World battle context (loot routed to camp on win).
+      worldBattle:      (App._worldBattlePending && App._worldBattlePending.zoneId) ? App._worldBattlePending : null,
     };
     // 🟢 Live-defense: if this was a challenge vs an online leader, ping them
     // first. battlePrep above is the fully-prepared async fallback duel.
     const _liveCore = (_gymBP && _gymBP.mode === 'challenge' && _gymBP.tryLive) ? _gymBP.coreId : null;
     App._gymBattlePending = null; // consume — one-shot gym battle context
+    App._worldBattlePending = null; // consume — one-shot world battle context
     App.battlePrepFlags = null; // consume — next battle starts fresh
 
     if (_liveCore && typeof gymTryLiveChallenge === 'function') {
@@ -50506,12 +50604,17 @@ function bindGameOverEvents() {
   const wasDaily    = !!(App.dailyVictory)    || !!(App.battlePrep && App.battlePrep.dailyChallenge);
   const wasRlc      = !!App._rlcPendingAfterBattle;
   const wasGym      = !!App._gymPendingAfterBattle;
+  const wasWorld    = !!App._worldAfter;
   const goPlayAgain = () => {
     App.ui._gameOverHidden = false;
     if (App.ui) App.ui.rankedResult = null; // consume the ranked summary on exit
     // 📡 Leave the multiplayer realtime channel when exiting the battle.
     if (typeof leaveMatchChannel === 'function') { try { leaveMatchChannel(); } catch (e) {} }
     App.state = null;
+    if (wasWorld) {
+      if (typeof worldBattleAfter === 'function') { worldBattleAfter(); return; }
+      App._worldAfter = null; App.screen = 'camp'; render(); return;
+    }
     if (wasGym) {
       if (typeof gymAfterBattle === 'function') { gymAfterBattle(); return; }
       App._gymPendingAfterBattle = null; App.screen = 'gymWars'; render(); return;
@@ -50541,6 +50644,7 @@ function bindGameOverEvents() {
     App.state = null;
     // 🗺️ Roguelite: still resolve the run (HP carry / fail) before leaving so
     // progress isn't silently lost — rlcAfterBattle routes appropriately.
+    if (wasWorld && typeof worldBattleAfter === 'function') { worldBattleAfter(); return; }
     if (wasRlc && typeof rlcAfterBattle === 'function') { rlcAfterBattle(); return; }
     if (wasGym && typeof gymAfterBattle === 'function') { gymAfterBattle(); return; }
     App.screen = 'title';
@@ -50694,6 +50798,17 @@ function recordBattleProgress() {
       _newBadge = awardGymBadge(_gc);
     }
     App._gymPendingAfterBattle = { coreId: _gc, mode: _gmode, won: !!won, newBadge: _newBadge, liveRole: App.battlePrep.gymLiveRole || null };
+  }
+
+  // ⚔ Camp/World battle outcome — loot routed to camp on win (no rank/AP).
+  if (App.battlePrep && App.battlePrep.worldBattle) {
+    App._worldAfter = {
+      zoneId: App.battlePrep.worldBattle.zoneId,
+      name:   App.battlePrep.worldBattle.name,
+      threat: App.battlePrep.worldBattle.threat,
+      yields: App.battlePrep.worldBattle.yields,
+      won: !!won,
+    };
   }
 
   const playerUnits = s.units.filter(u => u.owner === 'player');

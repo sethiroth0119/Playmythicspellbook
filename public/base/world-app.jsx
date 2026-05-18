@@ -194,8 +194,12 @@ function ZonePanel({ zone, event, onClose, onScout }) {
 
       <footer className="panel-cta">
         <button className="cta" onClick={onClose}>Stand Down</button>
-        <button className="cta primary" onClick={() => onScout(zone.id)}>
-          Scout <span className="cost">−4 fuel</span>
+        <button
+          className="cta primary"
+          title="Fight the AI here — win to take this district's resources into your camp (plus a chance at cards). Costs fuel."
+          onClick={() => onScout(zone.id)}
+        >
+          ⚔ Fight <span className="cost">−4 fuel</span>
         </button>
       </footer>
     </aside>
@@ -350,27 +354,32 @@ function App() {
     setCoords({ x, y });
   };
 
+  // Scout a district = a REAL camp/world battle vs the AI (costs fuel). Win
+  // and the zone's resource yields land in your camp; cards/relics/items go
+  // to their stores. Separate from ranked / quick / roguelite.
   const scout = (id) => {
-    const enc = window.WorldMap.rollEncounter(id);
-    if (enc) {
-      const z = window.WorldMap.getZone(id);
-      setToast({ id: Date.now(), zone: z.name, title: enc.title, brief: enc.brief });
-      setTimeout(() => setToast(null), 4200);
-    } else {
-      setToast({ id: Date.now(), zone: "—", title: "No encounter rolled", brief: "Quiet streets. Returning to base." });
-      setTimeout(() => setToast(null), 3000);
-    }
+    const z = window.WorldMap.getZone(id);
+    if (!z) return;
+    try {
+      window.parent.postMessage({
+        type: "base:action",
+        action: "worldbattle",
+        zone: {
+          zoneId: z.id,
+          name: z.name || "Encounter",
+          threat: z.threat || 2,
+          yields: Array.isArray(z.yields) ? z.yields : [],
+        },
+      }, "*");
+    } catch (e) {}
+    setBriefDest(null);
   };
 
   const rollAll = () => {
-    // Roll for a random non-empty zone — flavor for the demo.
-    const pool = Object.keys(window.WorldMap._encounters()).filter(
-      (k) => window.WorldMap._encounters()[k].length
-    );
-    if (!pool.length) return;
-    const id = pool[Math.floor(Math.random() * pool.length)];
-    scout(id);
-    setActiveId(id);
+    // Just surface a random district panel — no auto-fight.
+    const zs = window.ZONES || [];
+    if (!zs.length) return;
+    setActiveId(zs[Math.floor(Math.random() * zs.length)].id);
   };
 
   return (

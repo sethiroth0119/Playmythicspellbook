@@ -20833,6 +20833,39 @@ function playSfx(id) {
   } catch (e) { /* ignore */ }
 }
 
+// 💬 Synthesized chat cue — a tiny WebAudio chime so we don't need a sound
+// asset. kind:'in' = two-tone notification for an incoming message;
+// kind:'out' = a soft single tick for your own sent message. Respects the
+// same SFX master toggle + volume as playSfx().
+let _bmChatAC = null;
+function playChatCue(kind) {
+  try {
+    const settings = (typeof getSettings === 'function') ? getSettings() : ((typeof Profile !== 'undefined' && Profile.settings) || {});
+    if (settings.sfxEnabled === false) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!_bmChatAC) _bmChatAC = new AC();
+    const ac = _bmChatAC;
+    if (ac.state === 'suspended') { try { ac.resume(); } catch (e) {} }
+    const baseVol = Math.max(0, Math.min(1, settings.sfxVolume != null ? settings.sfxVolume : 0.8));
+    const now = ac.currentTime;
+    const notes = (kind === 'out') ? [[520, 0]] : [[660, 0], [990, 0.09]];
+    notes.forEach(([freq, t0]) => {
+      const o = ac.createOscillator();
+      const g = ac.createGain();
+      o.type = 'sine';
+      o.frequency.value = freq;
+      const peak = (kind === 'out' ? 0.16 : 0.26) * baseVol;
+      const st = now + t0, en = st + (kind === 'out' ? 0.10 : 0.14);
+      g.gain.setValueAtTime(0.0001, st);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), st + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, en);
+      o.connect(g); g.connect(ac.destination);
+      o.start(st); o.stop(en + 0.02);
+    });
+  } catch (e) { /* ignore */ }
+}
+
 // ⏱ Looped "clock running out" alarm — plays on a LOOP for the final
 // 10 seconds of the local player's turn (only ever armed on their own
 // turn, never the opponent's, since the turn timer itself is local-only).
@@ -59378,6 +59411,13 @@ function openBlackMarketHall() {
       try { return (Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'; }
       catch (e) { return 'Survivor'; }
     };
+    // Stable per-client id — used as the presence key (so two survivors with
+    // the same display name don't collide) and to dedupe our own echoed
+    // broadcasts.
+    let _uid = '';
+    try { _uid = (Profile.cloud && Profile.cloud.userId) ? ('u_' + Profile.cloud.userId) : ''; } catch (e) {}
+    if (!_uid) _uid = 'g_' + Math.random().toString(36).slice(2, 10);
+    const _seen = Object.create(null);
     const carry = (typeof App !== 'undefined' && App._bmCarry) || {};
     const carryLine = (typeof _rlcHaulLine === 'function') ? _rlcHaulLine(carry) : '';
     const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
@@ -59421,15 +59461,33 @@ function openBlackMarketHall() {
         : '<div class="small-text ink-dim" style="padding:10px 2px">' + (online ? 'No chatter yet — break the silence.' : '📡 Offline — sign in for live trade chat. Notes are local-only here.') + '</div>';
       box.scrollTop = box.scrollHeight;
     };
-    const append = (m) => { if (!m || !m.t) return; msgs.push(m); if (msgs.length > 80) msgs.shift(); paint(); };
+    const append = (m) => {
+      if (!m || !m.t) return;
+      if (m.cid) { if (_seen[m.cid]) return; _seen[m.cid] = 1; }   // dedupe echoes
+      msgs.push(m); if (msgs.length > 80) msgs.shift(); paint();
+    };
+    let _subscribed = false;
     if (online) {
       try {
-        _ch = sb.channel('bm-hall', { config: { broadcast: { self: true }, presence: { key: nameOf() } } });
-        _ch.on('broadcast', { event: 'msg' }, (p) => { if (p && p.payload) append(p.payload); });
+        // self:false — we render our own message optimistically on send, so
+        // the chat never depends on a server round-trip echo (that was the
+        // bug: typed messages silently never appeared). Presence keyed by a
+        // stable per-client id so duplicate display names don't collide.
+        _ch = sb.channel('bm-hall', { config: { broadcast: { self: false }, presence: { key: _uid } } });
+        _ch.on('broadcast', { event: 'msg' }, (p) => {
+          const m = p && p.payload;
+          if (!m || !m.t) return;
+          if (m.uid && m.uid === _uid) return;            // ignore our own (defensive)
+          append(m);
+          try { playChatCue('in'); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast('💬 ' + (m.n || 'Survivor') + ': ' + String(m.t).slice(0, 90), 3200); } catch (e) {}
+        });
         _ch.on('presence', { event: 'sync' }, () => {
           try { const st = _ch.presenceState() || {}; who = []; Object.keys(st).forEach(k => (st[k] || []).forEach(pp => who.push(pp))); paintWho(); } catch (e) {}
         });
-        _ch.subscribe((status) => { if (status === 'SUBSCRIBED') { try { _ch.track({ n: nameOf(), flex: _flex }); } catch (e) {} } });
+        _ch.subscribe((status) => {
+          if (status === 'SUBSCRIBED') { _subscribed = true; try { _ch.track({ n: nameOf(), uid: _uid, flex: _flex }); } catch (e) {} }
+        });
       } catch (e) { _ch = null; }
     }
     const sendMsg = () => {
@@ -59437,9 +59495,15 @@ function openBlackMarketHall() {
       const t = String(inp.value || '').trim().slice(0, 240);
       if (!t) return;
       inp.value = '';
-      const m = { n: nameOf(), t: t, ts: Date.now() };
-      if (_ch) { try { _ch.send({ type: 'broadcast', event: 'msg', payload: m }); } catch (e) { append(m); } }
-      else { append(m); }
+      const m = { cid: _uid + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), uid: _uid, n: nameOf(), t: t, ts: Date.now() };
+      append(m);                                   // optimistic — always shows instantly
+      try { playChatCue('out'); } catch (e) {}
+      if (_ch) {
+        try {
+          const r = _ch.send({ type: 'broadcast', event: 'msg', payload: m });
+          if (r && typeof r.catch === 'function') r.catch(() => {});
+        } catch (e) {}
+      }
     };
     const ov = document.createElement('div');
     ov.id = ID;

@@ -26561,6 +26561,18 @@ const CAMP_XP_CAP       = 240; // per slot (24 hours of stockpiled XP)
 const CAMP_PARK_COST    = 5;   // 🔥 cost to park a unit
 const CAMP_NPC_HIRE_COST = 30; // 🔥 cost to hire a generic NPC worker
 const CAMP_MAX_WORKERS   = 9;  // one per bunker room
+// 👷 NPC sprite slots — author art for these in the Sprite Atelier (admin).
+// Hiring an NPC randomly picks one of the slots that HAS frames uploaded.
+const NPC_SPRITE_SUBJECTS = [
+  { id: 'npc_1', name: 'NPC Staff 1', icon: '👷' },
+  { id: 'npc_2', name: 'NPC Staff 2', icon: '👷' },
+  { id: 'npc_3', name: 'NPC Staff 3', icon: '👷' },
+  { id: 'npc_4', name: 'NPC Staff 4', icon: '🧑‍🔧' },
+  { id: 'npc_5', name: 'NPC Staff 5', icon: '🧑‍🔧' },
+  { id: 'npc_6', name: 'NPC Staff 6', icon: '🧑‍🚀' },
+  { id: 'npc_7', name: 'NPC Staff 7', icon: '🧑‍🚀' },
+  { id: 'npc_8', name: 'NPC Staff 8', icon: '🪖' },
+];
 // Camp is gated behind hero progression — the player needs to have trained at least
 // one hero to this level before the Camp screen opens. Keeps very new players from
 // stumbling into Camp before they've earned a unit / hero worth parking.
@@ -26662,15 +26674,37 @@ function _campArtificerUnits() {
   } catch (e) {}
   return out;
 }
+// Random NPC identity — themed survivor names.
+const _NPC_FIRST = ['Vance', 'Mara', 'Doss', 'Kira', 'Bram', 'Wren', 'Sable', 'Cato', 'Nyla', 'Rook', 'Lena', 'Gus', 'Tess', 'Idris', 'Pia', 'Hark', 'Juno', 'Marlo', 'Esi', 'Dane', 'Roan', 'Vesa', 'Cory', 'Bram'];
+const _NPC_LAST  = ['Karras', 'Vex', 'Holt', 'Bryce', 'Marsh', 'Kade', 'Pell', 'Rios', 'Okafor', 'Stein', 'Vasquez', 'Dunn', 'Cole', 'Mire', 'Aldo', 'Frost', 'Quinn', 'Sato', 'Bell', 'Voss', 'Hale', '472', 'Crane', 'Ash'];
+function _npcRandName() {
+  const r = (a) => a[Math.floor(Math.random() * a.length)];
+  return r(_NPC_FIRST) + ' ' + r(_NPC_LAST);
+}
+// NPC sprite slots that ACTUALLY have frames authored in the Sprite Atelier.
+function _npcSpritePool() {
+  const out = [];
+  try {
+    (typeof NPC_SPRITE_SUBJECTS !== 'undefined' ? NPC_SPRITE_SUBJECTS : []).forEach(s => {
+      let f = null;
+      try { f = (typeof getSpriteFrames === 'function') ? getSpriteFrames(s.id, 'idle') : null; } catch (e) {}
+      if (f && f.length) out.push(s.id);
+    });
+  } catch (e) {}
+  return out;
+}
 function hireCampBlacksmith() {
   const ws = _campWorkers();
   if (ws.length >= CAMP_MAX_WORKERS) { showToast(`Worker pool full (${CAMP_MAX_WORKERS}).`, 2600); return false; }
   if (_campRoomStaffed('FRG-01')) { showToast('The Card Forge already has a worker.', 2400); return false; }
   if ((Profile.gems || 0) < CAMP_NPC_HIRE_COST) { showToast(`Need ${CAMP_NPC_HIRE_COST} 🔥 to hire — you have ${Profile.gems || 0}`, 3000); return false; }
   Profile.gems = (Profile.gems || 0) - CAMP_NPC_HIRE_COST;
-  ws.push({ id: 'w_' + Date.now() + '_' + Math.floor(Math.random() * 1e4), kind: 'npc', role: 'blacksmith', name: 'Blacksmith', station: 'FRG-01', at: Date.now() });
+  const nm = _npcRandName();
+  const pool = _npcSpritePool();
+  const sid = pool.length ? pool[Math.floor(Math.random() * pool.length)] : '';
+  ws.push({ id: 'w_' + Date.now() + '_' + Math.floor(Math.random() * 1e4), kind: 'npc', role: 'Blacksmith', name: nm, spriteId: sid, station: 'FRG-01', at: Date.now() });
   try { saveProfile(); } catch (e) {} saveCamp();
-  showToast(`🔧 Blacksmith hired & stationed at the Card Forge (−${CAMP_NPC_HIRE_COST} 🔥).`, 3400);
+  showToast(`🔧 ${nm} hired as Blacksmith & stationed at the Card Forge (−${CAMP_NPC_HIRE_COST} 🔥).`, 3600);
   return true;
 }
 function stationUnitAtForge(refId) {
@@ -32122,24 +32156,31 @@ function _baseCampRooms() {
     // in their room box. `req` marks rooms that are HARD-GATED on staffing
     // (Card Forge for now; more rooms join in later slices).
     const _STAFF_REQ = { 'FRG-01': 1 };
+    const _ini = (nm) => {
+      const w = String(nm || '?').replace(/[^A-Za-z0-9 ]/g, ' ').trim().split(/\s+/).filter(Boolean);
+      if (!w.length) return '👷';
+      return (w.length === 1 ? w[0].slice(0, 2) : (w[0][0] + w[w.length - 1][0])).toUpperCase();
+    };
     const wks = (typeof _campWorkers === 'function') ? _campWorkers() : [];
-    Object.keys(out).forEach((rid) => {
-      const w = wks.find((x) => x && x.station === rid) || null;
-      out[rid].staffed = !!w;
-      out[rid].staff = w ? (w.name || (w.kind === 'npc' ? 'Worker' : 'Unit')) : '';
-      out[rid].req = !!_STAFF_REQ[rid];
-    });
+    Object.keys(out).forEach((rid) => { out[rid].staffed = false; out[rid].staff = ''; out[rid].req = !!_STAFF_REQ[rid]; out[rid].crew = []; });
     wks.forEach((w) => {
-      if (!w || w.kind !== 'unit' || !w.refId || !w.station) return;
+      if (!w || !w.station) return;
       const rid = w.station;
-      if (!out[rid]) out[rid] = { level: 0, occ: [], staffed: true, staff: w.name || 'Unit', req: !!_STAFF_REQ[rid] };
-      if (out[rid].occ.length >= 4) return;
+      if (!out[rid]) out[rid] = { level: 0, occ: [], staffed: false, staff: '', req: !!_STAFF_REQ[rid], crew: [] };
+      out[rid].staffed = true;
+      if (!out[rid].staff) out[rid].staff = w.name || (w.kind === 'npc' ? 'Worker' : 'Unit');
+      // Real crew row for the room Panel.
+      out[rid].crew.push({ i: _ini(w.name), n: w.name || (w.kind === 'npc' ? 'Worker' : 'Unit'), role: w.role || (w.kind === 'npc' ? 'NPC Staff' : 'Unit'), kind: w.kind || 'npc' });
+      // Animated sprite in the room box — units via u_<refId>, NPCs via the
+      // authored npc_ slot they were assigned at hire.
+      const sid = (w.kind === 'unit' && w.refId) ? ('u_' + w.refId) : (w.spriteId || '');
+      if (!sid || out[rid].occ.length >= 4) return;
       let frames = null;
-      try { frames = (typeof getSpriteFrames === 'function') ? getSpriteFrames('u_' + w.refId, 'idle') : null; } catch (e) {}
+      try { frames = (typeof getSpriteFrames === 'function') ? getSpriteFrames(sid, 'idle') : null; } catch (e) {}
       if (!frames || !frames.length) return;
       let ms = 600;
-      try { const sp = (typeof Forge !== 'undefined' && Forge.sprites) ? Forge.sprites['u_' + w.refId] : null; if (sp && sp.frameMs) ms = Math.max(80, Math.min(2000, sp.frameMs)); } catch (e) {}
-      out[rid].occ.push({ name: w.name || w.refId, frames: frames.slice(0, 6).map(_abs), ms: ms });
+      try { const sp = (typeof Forge !== 'undefined' && Forge.sprites) ? Forge.sprites[sid] : null; if (sp && sp.frameMs) ms = Math.max(80, Math.min(2000, sp.frameMs)); } catch (e) {}
+      out[rid].occ.push({ name: w.name || sid, frames: frames.slice(0, 6).map(_abs), ms: ms });
     });
     return out;
   } catch (e) { return null; }
@@ -44978,7 +45019,9 @@ function renderSprites() {
     icon: (c.kalonForm && c.kalonForm.icon) || '🌟',
   }));
 
-  const subjects = [...heroSubjects, ...customHeroSubjects, ...unitSubjects, ...customSubjects, ...kalonSubjects];
+  const npcSubjects = (typeof NPC_SPRITE_SUBJECTS !== 'undefined' ? NPC_SPRITE_SUBJECTS : [])
+    .map(s => ({ id: s.id, name: s.name, sub: 'NPC Sprite', icon: s.icon }));
+  const subjects = [...heroSubjects, ...customHeroSubjects, ...unitSubjects, ...customSubjects, ...kalonSubjects, ...npcSubjects];
   if (App.spriteSubjectId == null && subjects.length > 0) {
     // pre-select nothing — keep editor empty until clicked
   }
@@ -45022,6 +45065,7 @@ function renderSprites() {
           ${renderListSection('Base Units', unitSubjects)}
           ${customSubjects.length ? renderListSection('Your Custom Cards', customSubjects) : ''}
           ${kalonSubjects.length ? renderListSection(`${getKalonIcon('1.1em')} Kalon Forms`, kalonSubjects) : ''}
+          ${npcSubjects.length ? renderListSection('👷 NPC Staff', npcSubjects) : ''}
         </div>
         <div class="creator-editor" id="sprite-editor">${renderSpriteEditor()}</div>
       </div>
@@ -45060,6 +45104,12 @@ function renderSpriteEditor() {
       displayName = `🌟 ${parent.kalonForm.name || (parent.name + ' Kalon')} — Kalon of ${parent.name}`;
       fallbackEmoji = parent.kalonForm.icon || '🌟';
     }
+  } else if (id.startsWith('npc_')) {
+    // 👷 Generic NPC staff sprite slot — hiring picks a random slot that
+    // has frames. Make several so hired workers look varied.
+    const ns = (typeof NPC_SPRITE_SUBJECTS !== 'undefined') ? NPC_SPRITE_SUBJECTS.find(x => x.id === id) : null;
+    displayName = (ns && ns.name) || ('NPC Staff ' + id.slice(4));
+    fallbackEmoji = (ns && ns.icon) || '👷';
   }
 
   const set = Forge.sprites[id] || {};

@@ -4,6 +4,13 @@
 function Panel({ room, onClose }) {
   if (!room) return null;
   const isEmpty = room.art === "empty";
+  // Real stationed workers (units/NPCs) for this room replace the mock crew
+  // when present; otherwise the ambient placeholder crew stays as flavor.
+  const _bbCrew =
+    (window.__BRIDGE && window.__BRIDGE.camprooms && window.__BRIDGE.camprooms[room.id] &&
+     window.__BRIDGE.camprooms[room.id].crew) || null;
+  const realCrew = _bbCrew && _bbCrew.length ? _bbCrew : null;
+  const crew = realCrew || room.crew || [];
 
   return (
     <aside className={`panel ${room ? "open" : ""}`}>
@@ -59,22 +66,36 @@ function Panel({ room, onClose }) {
 
         {!isEmpty && (
           <section className="panel-section">
-            <h4>Assigned crew · {room.crew.filter((c) => !c.empty).length}/{room.workers.max}</h4>
+            <h4>
+              {realCrew ? "Stationed crew" : "Assigned crew"} ·{" "}
+              {crew.filter((c) => !c.empty).length}
+              {realCrew ? "" : `/${room.workers.max}`}
+            </h4>
             <div className="assign-list">
-              {room.crew.map((c, i) => (
+              {crew.length === 0 && (
+                <div className="assign-row empty" title="No one stationed — assign in Camp Ops">
+                  <span className="assign-avatar">·</span>
+                  <span>Unstaffed</span>
+                  <span className="assign-stat"><b>—</b></span>
+                </div>
+              )}
+              {crew.map((c, i) => {
+                const stat = c.st || (realCrew ? (c.kind === "unit" ? "UNIT" : "STAFF") : "");
+                return (
                 <div
                   className={`assign-row ${c.empty ? "empty" : ""}`}
                   key={i}
-                  title={c.empty ? "Empty crew slot — assign someone here" : `${c.n} · ${c.role || "crew"} · efficiency ${c.st}`}
+                  title={c.empty ? "Empty crew slot — assign someone here" : `${c.n} · ${c.role || "crew"}${stat ? " · " + stat : ""}`}
                 >
                   <span className="assign-avatar">{c.i}</span>
                   <span>
                     {c.n}
                     <span style={{ marginLeft: 8, color: "var(--text-3)", fontSize: 10 }}>{c.role}</span>
                   </span>
-                  <span className="assign-stat"><b>{c.st}</b></span>
+                  <span className="assign-stat"><b>{stat}</b></span>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         )}

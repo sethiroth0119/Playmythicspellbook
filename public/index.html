@@ -27684,34 +27684,6 @@ function _stripDataUrls(val) {
   }
   return val;
 }
-// 🔊 Like _stripDataUrls, but NEVER drops a bubble's `audioUrl`. Page-guide
-// voice lines are small by design (the upload UI warns past 1.5 MB) and
-// MUST survive the localStorage fast-path — otherwise the admin's own
-// voice-over silently vanishes on the next reload (the IDB full copy may
-// not restore before a first-visit guide auto-plays). Heavy character /
-// expression images are still stripped (IDB keeps those).
-function _stripGuidesKeepAudio(guides) {
-  if (!Array.isArray(guides)) return _stripDataUrls(guides);
-  return guides.map(g => {
-    if (!g || typeof g !== 'object') return g;
-    const out = {};
-    for (const k in g) {
-      if (!Object.prototype.hasOwnProperty.call(g, k)) continue;
-      if (k === 'bubbles' && Array.isArray(g.bubbles)) {
-        out.bubbles = g.bubbles.map(b => {
-          if (!b || typeof b !== 'object') return b;
-          const keptAudio = b.audioUrl;
-          const slim = _stripDataUrls(b);
-          slim.audioUrl = keptAudio;     // restore the (possibly data:) clip
-          return slim;
-        });
-      } else {
-        out[k] = _stripDataUrls(g[k]);
-      }
-    }
-    return out;
-  });
-}
 function saveForge() {
   // 🃏 Trigger debounced cloud sync — any Forge save bubbles up the small
   // custom data (cards / moves / items / packs / etc.) to user_profiles.forge
@@ -27791,7 +27763,11 @@ function saveForge() {
     // 🎒 + 💰 + 🌐 — new admin storage chunks. Keep these together so the
     // localStorage size budget is easy to reason about.
     { key: 'hg_customItems',      value: _stripDataUrls(Forge.customItems  || []), name: 'customItems' },
-    { key: 'hg_pageGuides',       value: _stripGuidesKeepAudio(Forge.pageGuides || []), name: 'pageGuides' },
+    // Audio data: URLs are STRIPPED here (26 voice guides would blow the
+    // ~5 MB localStorage cap → "Save failed for: pageGuides"). The FULL
+    // audio-bearing copy lives in IndexedDB (idbSet('forge_pageGuides'))
+    // and is merged back at boot; guide auto-play is gated on that load.
+    { key: 'hg_pageGuides',       value: _stripDataUrls(Forge.pageGuides   || []), name: 'pageGuides' },
     { key: 'hg_aiDecks',          value: _stripDataUrls(Forge.aiDecks      || []), name: 'aiDecks' },
     { key: 'hg_starterDecks',     value: _stripDataUrls(Forge.starterDecks || []), name: 'starterDecks' },
     // 🗄️ Campaigns carry big base64 (cover · map bg · currency icon ·
@@ -54045,6 +54021,11 @@ function maybeShowPageGuide() {
   try {
     if (RPGGuide.activeId) return;                       // one at a time
     if (guidesGloballyOff()) return;
+    // 🔊 Wait for the IndexedDB restore before auto-playing. localStorage
+    // stores guides WITHOUT audio (quota), so a guide shown pre-IDB would be
+    // voice-less. App._forgeIdbLoaded flips true (and re-renders) once the
+    // full audio-bearing copy is merged in — then this runs with sound.
+    if (typeof App !== 'undefined' && !App._forgeIdbLoaded) return;
     const composite = _currentGuideRoute();
     const candidates = [composite];
     if (composite.indexOf(':') >= 0) candidates.push(composite.split(':')[0]);

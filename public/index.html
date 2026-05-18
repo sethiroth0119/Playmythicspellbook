@@ -31094,11 +31094,13 @@ function runCampConsumptionTick() {
     let hrs = (now - Profile.campLastTick) / 3600000;
     if (hrs <= 0) return null;
     hrs = Math.min(hrs, CAMP_CATCHUP_MAX_DAYS * 24);
+    // 🏚 Workshop "Repair & Triage" cuts consumption in half while active.
+    const repairMul = (Profile.campRepairUntil && Profile.campRepairUntil > now) ? 0.5 : 1;
     const frac = (Profile.campConsumeFrac && typeof Profile.campConsumeFrac === 'object') ? Profile.campConsumeFrac : {};
     const consumed = {};
     let changed = false;
     for (const k in CAMP_CONSUME_PER_DAY) {
-      const debt = (frac[k] || 0) + (CAMP_CONSUME_PER_DAY[k] / 24) * hrs;
+      const debt = (frac[k] || 0) + (CAMP_CONSUME_PER_DAY[k] / 24) * hrs * repairMul;
       const whole = Math.floor(debt);
       frac[k] = debt - whole;
       if (whole > 0) {
@@ -31189,7 +31191,10 @@ function mountCampStatus() {
       '<div style="margin-top:8px;border-top:1px solid rgba(184,136,255,0.25);padding-top:7px">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">' +
           '<div style="font-family:\'Cinzel\',serif;font-weight:700;color:#cdb6ff">📦 Camp Storage <span class="small-text" style="opacity:.7">(secured)</span></div>' +
-          '<button id="camp-bag-upgrade" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:9px;padding:0.4rem 0.85rem;border:1px solid rgba(212,175,55,0.6);background:linear-gradient(180deg,rgba(60,40,110,0.92),rgba(28,16,52,0.96));color:#ffe9b8;font-size:0.82rem">🎒 ' + (tier.name || 'Survivor Bag') + ' (' + (typeof _ownedBagCap === 'function' ? _ownedBagCap() : _fieldBagCap()) + ')' + heroNote + ' — Upgrade</button>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+            '<button id="camp-workshop-btn" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:9px;padding:0.4rem 0.8rem;border:1px solid rgba(202,162,62,0.7);background:linear-gradient(180deg,#5a4a1e,#2e2410);color:#ffe9b8;font-size:0.82rem">🛠 Workshop</button>' +
+            '<button id="camp-bag-upgrade" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:9px;padding:0.4rem 0.85rem;border:1px solid rgba(212,175,55,0.6);background:linear-gradient(180deg,rgba(60,40,110,0.92),rgba(28,16,52,0.96));color:#ffe9b8;font-size:0.82rem">🎒 ' + (tier.name || 'Survivor Bag') + ' (' + (typeof _ownedBagCap === 'function' ? _ownedBagCap() : _fieldBagCap()) + ')' + heroNote + ' — Upgrade</button>' +
+          '</div>' +
         '</div>' +
         '<div style="margin-top:5px">' + storeChips + '</div>' +
       '</div>';
@@ -31197,6 +31202,130 @@ function mountCampStatus() {
     if (tg) tg.onclick = () => { try { localStorage.setItem('mg_campPanelHidden', '1'); } catch (e) {} mountCampStatus(); };
     const ub = document.getElementById('camp-bag-upgrade');
     if (ub) ub.onclick = () => { if (typeof openBagUpgradeModal === 'function') openBagUpgradeModal(); };
+    const wb = document.getElementById('camp-workshop-btn');
+    if (wb) wb.onclick = () => { if (typeof openCampWorkshop === 'function') openCampWorkshop(); };
+  } catch (e) {}
+}
+// 🛠 CAMP WORKSHOP — the RESOURCE SINKS. Where the looted/deposited economy
+// finally goes: spend secured resources on repeatable camp projects. Every
+// listed resource has a destination, all pure-economy/Profile (zero battle-
+// engine risk) and synergised with the raid + consumption systems. Deeper
+// versions (real move-teaching, card fusion, battle revive charges) are
+// roadmap. Self-contained overlay — never splices the camp template.
+function _resolveAnyCard(id) {
+  try {
+    if (typeof getAllCustomCards === 'function') {
+      const c = (getAllCustomCards() || []).find(x => x && x.id === id);
+      if (c) return c;
+    }
+    if (typeof lookupCustomCard === 'function') { const c = lookupCustomCard(id); if (c) return c; }
+    for (const pool of [typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS, typeof SPELL_CARDS !== 'undefined' && SPELL_CARDS,
+      typeof TRAP_CARDS !== 'undefined' && TRAP_CARDS, typeof LOCATION_CARDS !== 'undefined' && LOCATION_CARDS,
+      typeof WEATHER_CARDS !== 'undefined' && WEATHER_CARDS, typeof HERO_CARDS !== 'undefined' && HERO_CARDS,
+      typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES]) {
+      if (Array.isArray(pool)) { const c = pool.find(x => x && x.id === id); if (c) return c; }
+    }
+  } catch (e) {}
+  return null;
+}
+const _CLONE_DNA_BY_RARITY = { common: 3, uncommon: 5, rare: 8, epic: 14, legendary: 22, mythic: 34 };
+function openCampWorkshop() {
+  try {
+    const ID = 'camp-workshop';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const led = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage = Profile.salvage || {});
+    const have = (k) => led[k] | 0;
+    const costStr = (c) => Object.keys(c).map(k => `${(_SALVAGE_BY_ID[k] || {}).icon || ''}${c[k]} ${(_SALVAGE_BY_ID[k] || {}).name || k}`).join(', ');
+    const can = (c) => Object.keys(c).every(k => have(k) >= c[k]);
+    const def = Profile.campDefense | 0;
+    const defCost = { metal: 12 + def * 6, supplies: 8 + def * 4 };
+    const triageCost = { metal: 8, supplies: 8, medicine: 4 };
+    const memCost = { memoryShards: 8 };
+    const refineCost = { corruptedEssence: 6 };
+    const proj = (id, title, sub, cost, btn, enabled) =>
+      `<div style="border:1px solid rgba(184,136,255,0.25);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:rgba(18,10,36,0.5)">
+        <div style="font-family:'Cinzel',serif;font-weight:800;color:#ffd166">${title}</div>
+        <div class="small-text ink-dim" style="margin:2px 0 5px">${sub}</div>
+        <div class="small-text" style="color:${enabled ? '#bfe9c8' : '#ff9a88'};margin-bottom:5px">Cost: ${costStr(cost)}</div>
+        <button data-ws="${id}" ${enabled ? '' : 'disabled'} style="cursor:${enabled ? 'pointer' : 'not-allowed'};border-radius:8px;padding:0.45rem 0.9rem;border:1px solid #caa23e;background:${enabled ? 'linear-gradient(180deg,#caa23e,#8a6a1e)' : 'rgba(110,90,40,0.4)'};color:#1a1206;font-weight:800">${btn}</button>
+      </div>`;
+    // Owned-card list for Clone.
+    const ownedIds = Object.keys(Profile.cardCollection || {}).filter(k => (Profile.cardCollection[k] | 0) > 0);
+    const cloneRows = ownedIds.map(id => {
+      const c = _resolveAnyCard(id); if (!c) return '';
+      const rar = String(c.rarity || 'common').toLowerCase();
+      const dna = _CLONE_DNA_BY_RARITY[rar] || 6;
+      const ok = have('dna') >= dna && have('supplies') >= 2;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px;border-bottom:1px solid rgba(184,136,255,0.12)">
+        <span style="color:#e8ddff;font-size:0.86rem">${escapeHtml(c.name || id)} <span class="small-text ink-dim">${rar} ·×${Profile.cardCollection[id] | 0}</span></span>
+        <button data-clone="${escapeHtml(id)}" data-dna="${dna}" ${ok ? '' : 'disabled'} style="flex:0 0 auto;cursor:${ok ? 'pointer' : 'not-allowed'};border-radius:7px;padding:0.3rem 0.6rem;border:1px solid #86e08a;background:${ok ? 'linear-gradient(180deg,#3a7a4a,#1f4a2a)' : 'rgba(60,90,60,0.4)'};color:#dfffe6;font-size:0.8rem">🧬 ${dna} DNA</button>
+      </div>`;
+    }).join('') || '<div class="small-text ink-dim" style="padding:6px">No cards owned to clone yet.</div>';
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = "position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(4,2,10,0.8);backdrop-filter:blur(3px)";
+    ov.innerHTML =
+      '<div style="max-width:min(560px,95vw);max-height:90vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.99),rgba(12,7,22,0.99));border:2px solid rgba(212,175,55,0.6);border-radius:16px;padding:18px 20px;box-shadow:0 24px 70px rgba(0,0,0,0.85)">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:4px">' +
+          '<div style="font-family:\'Cinzel\',serif;font-size:1.25rem;font-weight:800;color:#ffd166">🛠 Camp Workshop</div>' +
+          '<button id="ws-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✖ Close</button>' +
+        '</div>' +
+        '<div class="small-text ink-dim" style="margin-bottom:10px">Spend SECURED resources. Repeatable — your camp always needs more.</div>' +
+        proj('defense', '🔧 Reinforce Defenses <span class="small-text" style="color:#cdb6ff">(lvl ' + def + ')</span>',
+          'Raiders steal far less. Each level stacks (cost rises).', defCost, '🔧 Reinforce', can(defCost)) +
+        proj('triage', '🏚 Repair & Triage',
+          'Clears the camp\'s consumption backlog now + halves upkeep for 24h. Spends Medicine to treat the wounded.', triageCost, '🏚 Repair', can(triageCost)) +
+        proj('memory', '🧠 Memory Transfer',
+          'Refine soul-memory into spendable Aza coin (+5 🪙).', memCost, '🧠 Transfer', can(memCost)) +
+        proj('refine', '🟣 Forbidden Refinement',
+          'Smelt Corrupted Essence into Cinders (+120 🔥). The black market never asks questions.', refineCost, '🟣 Refine', can(refineCost)) +
+        '<div style="border:1px solid rgba(134,224,138,0.3);border-radius:10px;padding:10px 12px;background:rgba(14,30,18,0.5)">' +
+          '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:#86e08a">🧬 DNA Lab — Clone a Card</div>' +
+          '<div class="small-text ink-dim" style="margin:2px 0 6px">Grow a +1 copy of any card you own. DNA cost scales with rarity (+2 Supplies).</div>' +
+          '<div style="max-height:200px;overflow:auto;border:1px solid rgba(184,136,255,0.18);border-radius:8px">' + cloneRows + '</div>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.onclick = (e) => { if (e.target === ov) close(); };
+    const xb = document.getElementById('ws-x'); if (xb) xb.onclick = close;
+    const done = (msg) => {
+      try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
+      try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast(msg, 3800); } catch (e) {}
+      close();
+      try { if (typeof render === 'function') render(); } catch (e) {}
+    };
+    ov.querySelectorAll('[data-ws]').forEach(b => b.onclick = () => {
+      const id = b.getAttribute('data-ws');
+      if (id === 'defense') {
+        if (!spendResources(defCost)) return;
+        Profile.campDefense = Math.min(10, (Profile.campDefense | 0) + 1);
+        done(`🔧 Defenses reinforced to level ${Profile.campDefense} — raiders will bleed for it.`);
+      } else if (id === 'triage') {
+        if (!spendResources(triageCost)) return;
+        Profile.campConsumeFrac = {}; Profile.campLastTick = Date.now();
+        Profile.campRepairUntil = Date.now() + 24 * 3600000;
+        done('🏚 Camp repaired & wounded treated — upkeep halved for 24h, backlog cleared.');
+      } else if (id === 'memory') {
+        if (!spendResources(memCost)) return;
+        Profile.sovereigns = (Profile.sovereigns | 0) + 5;
+        done('🧠 Memory transferred — +5 🪙 Aza.');
+      } else if (id === 'refine') {
+        if (!spendResources(refineCost)) return;
+        Profile.gems = (Profile.gems | 0) + 120;
+        done('🟣 Essence refined — +120 🔥 Cinders. (No questions asked.)');
+      }
+    });
+    ov.querySelectorAll('[data-clone]').forEach(b => b.onclick = () => {
+      const cid = b.getAttribute('data-clone');
+      const dna = parseInt(b.getAttribute('data-dna'), 10) || 6;
+      if (!spendResources({ dna: dna, supplies: 2 })) return;
+      if (!Profile.cardCollection) Profile.cardCollection = {};
+      Profile.cardCollection[cid] = (Profile.cardCollection[cid] | 0) + 1;
+      const c = _resolveAnyCard(cid);
+      done(`🧬 Cloned ${c ? (c.name || cid) : cid} — +1 copy grown in the DNA lab.`);
+    });
   } catch (e) {}
 }
 // 🎒 Bag Upgrade shop/craft modal (self-contained overlay — avoids splicing
@@ -31320,7 +31449,10 @@ function _executeRaid(risk) {
   const defendFrac = usedAmmo / strength;            // 0..1 of the raid blunted
   // 🎒 Concealment — Smuggler/SCP bags hide cargo so raiders find less.
   const conceal = (typeof _bagConcealMul === 'function') ? _bagConcealMul() : 1;
-  const stealFrac = (0.30 + (risk.level === 'high' ? 0.12 : risk.level === 'elevated' ? 0.06 : 0)) * (1 - defendFrac) * conceal;
+  // 🔧 Camp Defenses (Workshop) — each level damps the raid.
+  const def = Math.max(0, Profile.campDefense | 0);
+  const defMul = 1 / (1 + def * 0.20);
+  const stealFrac = (0.30 + (risk.level === 'high' ? 0.12 : risk.level === 'elevated' ? 0.06 : 0)) * (1 - defendFrac) * conceal * defMul;
   const stolen = {};
   if (stealFrac > 0.01) {
     for (const k of RAID_TARGETS) {

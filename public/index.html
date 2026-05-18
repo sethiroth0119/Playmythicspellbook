@@ -30499,6 +30499,23 @@ function unitHasRaiseFromDead(unit) {
 // Called on turn start to decrement timers, revive units, prune expired tombstones.
 function tickTombstones(state) {
   if (!state || !Array.isArray(state.tombstones)) return state;
+  // 🪦 ENEMY SCAVENGING — raiders loot too. Any AI unit ending on a still-
+  // unlooted body strips it before you can: it's marked looted (denied to
+  // the player). Runs at turn start so an enemy that camped a body last
+  // turn loses you that salvage. Pure denial (keeps the engine simple).
+  try {
+    if (Array.isArray(state.units)) {
+      for (const t of state.tombstones) {
+        if (!t || !t.lootable || t.looted || t.glowing) continue;
+        const en = state.units.find(u => u && u.alive && u.owner === 'ai'
+          && u.pos && u.pos.x === t.x && u.pos.y === t.y);
+        if (en) {
+          t.looted = true; t.scavenged = true;
+          state.log = [...(state.log || []), { msg: `🪦 ${en.name || 'A raider'} scavenged ${t.name || 'a body'} before you could!`, color: 'red' }];
+        }
+      }
+    }
+  } catch (e) {}
   const survivors = [];
   for (const t of state.tombstones) {
     // 🪦 An un-looted salvage cache never times out — the player must be
@@ -30901,11 +30918,11 @@ const FIELD_BAG_TIERS = [
   { id: 'military', name: 'Military Pack',       cap: 49, kind: 'vendor',
     cinder: 1200, aza: 60, desc: 'Standard-issue load-bearing rig.' },
   { id: 'smuggler', name: 'Smuggler Bag',        cap: 56, kind: 'craft',
-    craft: { metal: 40, supplies: 30, fuel: 10 }, perk: 'Illegal-item concealment (coming soon)',
+    craft: { metal: 40, supplies: 30, fuel: 10 }, perk: 'Concealment — raiders steal ~40% less from your camp',
     desc: 'Hidden compartments — craft only.' },
   { id: 'scp',      name: 'SCP Compression Bag', cap: 72, kind: 'craft',
     craft: { metal: 60, corruptedEssence: 15, memoryShards: 8, dna: 6 },
-    perk: '+1 Speed & illegal concealment (coming soon)',
+    perk: '+1 SPD to your units · raiders steal ~65% less',
     desc: 'Anomalous spatial compression — the deepest bag.' },
 ];
 function _bagTierById(id) { return FIELD_BAG_TIERS.find(t => t.id === id) || FIELD_BAG_TIERS[0]; }
@@ -30914,6 +30931,13 @@ function _bagsOwned() {
   if (o.indexOf('basic') < 0) o.unshift('basic');   // everyone always has the basic bag
   return o;
 }
+// 🎒 BAG PERKS. Smuggler/SCP hide cargo from raiders (concealment); SCP also
+// grants +1 movement to the player's units (anomalous compression).
+function _bagConcealMul() {
+  try { const o = _bagsOwned(); if (o.indexOf('scp') >= 0) return 0.35; if (o.indexOf('smuggler') >= 0) return 0.6; } catch (e) {}
+  return 1;
+}
+function _bagHasScpSpeed() { try { return _bagsOwned().indexOf('scp') >= 0; } catch (e) { return false; } }
 function _recalcBagCap() {
   let cap = FIELD_BAG_CAP;
   _bagsOwned().forEach(id => { const t = _bagTierById(id); if (t && t.cap > cap) cap = t.cap; });
@@ -31294,7 +31318,9 @@ function _executeRaid(risk) {
   const usedAmmo = Math.min(ammo, strength);
   led.ammo = ammo - usedAmmo;
   const defendFrac = usedAmmo / strength;            // 0..1 of the raid blunted
-  const stealFrac = (0.30 + (risk.level === 'high' ? 0.12 : risk.level === 'elevated' ? 0.06 : 0)) * (1 - defendFrac);
+  // 🎒 Concealment — Smuggler/SCP bags hide cargo so raiders find less.
+  const conceal = (typeof _bagConcealMul === 'function') ? _bagConcealMul() : 1;
+  const stealFrac = (0.30 + (risk.level === 'high' ? 0.12 : risk.level === 'elevated' ? 0.06 : 0)) * (1 - defendFrac) * conceal;
   const stolen = {};
   if (stealFrac > 0.01) {
     for (const k of RAID_TARGETS) {
@@ -31345,6 +31371,42 @@ function _campRaidAlert() {
     if (!Object.keys(tot).length) msg = `🛡 Raiders hit the camp ${rs.length > 1 ? '(' + rs.length + 'x) ' : ''}— defenders repelled them${ammo ? ' (spent ' + ammo + ' 🔫 Ammo)' : ''}.`;
     else msg = `🔥 Raiders struck the camp${rs.length > 1 ? ' ' + rs.length + 'x' : ''} — lost ${lost}.${ammo ? ' Defended with ' + ammo + ' 🔫 Ammo.' : ' No Ammo to defend!'} Don't over-hoard — keep Ammo stocked.`;
     try { if (typeof showToast === 'function') showToast(msg, 6000); } catch (e) {}
+  } catch (e) {}
+}
+
+// 🏚 CAMP VISUAL DECAY — the camp itself reflects its supply state. A subtle
+// full-screen overlay on the Camp screen: power-flicker when Fuel is out,
+// a grim desaturated red when Food is out, sickly green when Medicine is
+// out, parched dim when Water is out. Pure CSS, pointer-events:none, mounted
+// from render() — never touches the fragile camp template.
+function _ensureCampDecayCss() {
+  if (document.getElementById('camp-decay-css')) return;
+  const st = document.createElement('style');
+  st.id = 'camp-decay-css';
+  st.textContent =
+    '#camp-decay-fx{position:fixed;inset:0;z-index:2147483250;pointer-events:none;mix-blend-mode:multiply;transition:opacity 1.2s ease;}' +
+    '@keyframes camp-flicker{0%,100%{opacity:.18}45%{opacity:.55}47%{opacity:.12}50%{opacity:.6}70%{opacity:.2}72%{opacity:.5}}' +
+    '#camp-decay-fx.fuelout{animation:camp-flicker 3.2s ease-in-out infinite;}';
+  document.head.appendChild(st);
+}
+function mountCampDecayFx() {
+  try {
+    const ID = 'camp-decay-fx';
+    let el = document.getElementById(ID);
+    if (typeof App === 'undefined' || App.screen !== 'camp') { if (el) el.remove(); return; }
+    const st = (typeof campStatus === 'function') ? campStatus() : { out: [] };
+    const out = st.out || [];
+    if (!out.length) { if (el) el.remove(); return; }
+    _ensureCampDecayCss();
+    if (!el) { el = document.createElement('div'); el.id = ID; document.body.appendChild(el); }
+    // Worst-condition tint (priority: food > medicine > water; fuel adds flicker).
+    let bg = 'radial-gradient(ellipse at center,transparent 35%,rgba(8,4,12,0.55) 100%)';
+    if (out.indexOf('food') >= 0)          bg = 'radial-gradient(ellipse at center,rgba(120,20,20,0.18) 0%,rgba(40,6,6,0.6) 100%)';
+    else if (out.indexOf('medicine') >= 0) bg = 'radial-gradient(ellipse at center,rgba(30,90,40,0.16) 0%,rgba(8,30,12,0.55) 100%)';
+    else if (out.indexOf('water') >= 0)    bg = 'radial-gradient(ellipse at center,rgba(90,70,30,0.15) 0%,rgba(28,20,8,0.5) 100%)';
+    el.style.background = bg;
+    el.style.opacity = '1';
+    el.className = (out.indexOf('fuel') >= 0) ? 'fuelout' : '';
   } catch (e) {}
 }
 
@@ -31487,6 +31549,8 @@ function getEffectiveAttackRange(attacker, move) {
 const getMoveRange = (unit, weather) => {
   let speed = unit.stats.spd || 1;
   if (hasPassive(unit, 'swift')) speed += 1;
+  // 🎒 SCP Compression Bag perk — +1 movement to the player's units.
+  if (unit && unit.owner === 'player' && typeof _bagHasScpSpeed === 'function' && _bagHasScpSpeed()) speed += 1;
   if (hasPassive(unit, 'dustcloak') && weather && weather.weatherType === 'sand') speed += 1;
   if (hasPassive(unit, 'packLeader') && countAlliesByFaction(unit, 'beast') > 0) speed += 1;
   // 🌪️ Tempest Soul — +2 SPD in any active weather
@@ -35430,6 +35494,7 @@ function render() {
   try { if (typeof _campAwayAlert === 'function') _campAwayAlert(); } catch (e) {}
   try { if (typeof _campRaidAlert === 'function') _campRaidAlert(); } catch (e) {}
   try { if (typeof mountCampStatus === 'function') mountCampStatus(); } catch (e) {}
+  try { if (typeof mountCampDecayFx === 'function') mountCampDecayFx(); } catch (e) {}
 
   // ===== Audio routing FIRST =====
   // Must run BEFORE the screen-specific early-returns below — otherwise screens

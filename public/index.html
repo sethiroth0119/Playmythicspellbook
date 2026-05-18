@@ -30797,6 +30797,122 @@ function mountFieldBagDeposit() {
   } catch (e) {}
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// 🏕 CAMP CONSUMPTION — the FOREVER engine. The camp eats Food/Water/Fuel/
+// Medicine/Ammo from SECURED storage (Profile.salvage) over REAL time,
+// offline included. Run out and the camp suffers visible shortages. A
+// deposited stockpile is never "done" — it's always ticking down, so the
+// player must keep running, looting and depositing. That's the retention
+// loop. (v1 = drain + visible status/debuff banner; deeper mechanical
+// penalties + camp visual decay are roadmap.)
+// ════════════════════════════════════════════════════════════════════════
+const CAMP_CONSUME_PER_DAY = { food: 6, water: 6, fuel: 3, medicine: 2, ammo: 4 };
+const CAMP_CATCHUP_MAX_DAYS = 3;   // offline catch-up cap so returns aren't nuked
+const CAMP_LOW_DAYS = 1;           // < this many days of stock = "LOW"
+const _CAMP_SHORTAGE_FX = {
+  food:     'Survivors starving — weak & low morale',
+  water:    'Dehydration spreading through camp',
+  fuel:     'Power failing — lights flickering',
+  medicine: 'Medical tents overwhelmed — wounded stack up',
+  ammo:     'Defenses unmanned — raid risk rising',
+};
+// Apply real-time consumption since the last tick. Time-based (not call-
+// count), so it's safe to call from render() — only persists when whole
+// units are actually consumed. Returns the integer amounts consumed.
+function runCampConsumptionTick() {
+  try {
+    if (typeof Profile === 'undefined' || !Profile) return null;
+    if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+    const now = Date.now();
+    if (!Profile.campLastTick) {           // first ever — set baseline, no drain
+      Profile.campLastTick = now;
+      try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+      return null;
+    }
+    let hrs = (now - Profile.campLastTick) / 3600000;
+    if (hrs <= 0) return null;
+    hrs = Math.min(hrs, CAMP_CATCHUP_MAX_DAYS * 24);
+    const frac = (Profile.campConsumeFrac && typeof Profile.campConsumeFrac === 'object') ? Profile.campConsumeFrac : {};
+    const consumed = {};
+    let changed = false;
+    for (const k in CAMP_CONSUME_PER_DAY) {
+      const debt = (frac[k] || 0) + (CAMP_CONSUME_PER_DAY[k] / 24) * hrs;
+      const whole = Math.floor(debt);
+      frac[k] = debt - whole;
+      if (whole > 0) {
+        const have = Profile.salvage[k] | 0;
+        const take = Math.min(have, whole);
+        if (take > 0) { Profile.salvage[k] = have - take; consumed[k] = take; changed = true; }
+        // If we couldn't cover `whole` (shortage), don't bank negative debt —
+        // a shortage is its own punishment; reset frac so it doesn't snowball.
+        if (whole > have) frac[k] = 0;
+      }
+    }
+    Profile.campConsumeFrac = frac;
+    Profile.campLastTick = now;
+    if (changed) { try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {} }
+    return consumed;
+  } catch (e) { return null; }
+}
+// Camp supply status derived from secured storage vs consumption rate.
+function campStatus() {
+  const led = (Profile && Profile.salvage && typeof Profile.salvage === 'object') ? Profile.salvage : {};
+  const days = {}, out = [], low = [];
+  for (const k in CAMP_CONSUME_PER_DAY) {
+    const d = (led[k] | 0) / CAMP_CONSUME_PER_DAY[k];   // days of stock left
+    days[k] = d;
+    if ((led[k] | 0) <= 0) out.push(k);
+    else if (d < CAMP_LOW_DAYS) low.push(k);
+  }
+  const state = out.length ? 'critical' : (low.length ? 'low' : 'stable');
+  return { state, out, low, days };
+}
+// Body-anchored Camp Status banner (visible debuffs). Shows ONLY at Camp.
+function mountCampStatus() {
+  try {
+    const ID = 'camp-status-banner';
+    let el = document.getElementById(ID);
+    if (typeof App === 'undefined' || App.screen !== 'camp') { if (el) el.remove(); return; }
+    const st = campStatus();
+    const col = st.state === 'critical' ? '#ff7a6b' : st.state === 'low' ? '#ffd166' : '#7CFFB2';
+    const head = st.state === 'critical' ? '☠ CAMP IN CRISIS' : st.state === 'low' ? '⚠ CAMP RUNNING LOW' : '🏕 CAMP STABLE';
+    const chips = Object.keys(CAMP_CONSUME_PER_DAY).map(k => {
+      const r = _SALVAGE_BY_ID[k] || {};
+      const d = st.days[k];
+      const c = (Profile.salvage && (Profile.salvage[k] | 0)) || 0;
+      const stt = c <= 0 ? 'OUT' : (d < CAMP_LOW_DAYS ? 'LOW' : 'OK');
+      const cc = stt === 'OUT' ? '#ff7a6b' : stt === 'LOW' ? '#ffd166' : '#bfe9c8';
+      return `<span style="display:inline-block;margin:2px 4px;padding:2px 8px;border:1px solid ${cc}66;border-radius:10px;color:${cc};background:${cc}14;font-size:0.82rem">${r.icon || ''} ${r.name || k} ${c} <span style="opacity:.7">(${stt})</span></span>`;
+    }).join('');
+    const fxLines = st.out.map(k => `<div class="small-text" style="color:#ff9a88">• ${_CAMP_SHORTAGE_FX[k] || (k + ' depleted')}</div>`).join('');
+    if (!el) { el = document.createElement('div'); el.id = ID; document.body.appendChild(el); }
+    el.style.cssText = "position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:2147483270;max-width:min(680px,94vw);background:linear-gradient(180deg,rgba(26,16,46,0.97),rgba(14,9,26,0.97));border:2px solid " + col + "88;border-radius:12px;padding:9px 14px;box-shadow:0 12px 36px rgba(0,0,0,0.6);font-family:'Crimson Text',Georgia,serif;color:#e8ddff";
+    el.innerHTML =
+      '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:' + col + '">' + head +
+        ' <span class="small-text" style="color:#cdb6ff;font-weight:600">— camp consumes supplies over time; deposit to keep it alive</span></div>' +
+      '<div style="margin-top:5px">' + chips + '</div>' + (fxLines ? '<div style="margin-top:4px">' + fxLines + '</div>' : '');
+  } catch (e) {}
+}
+// One-time "while you were away" alert when a gap pushed the camp into
+// shortage. Fires at most once per session-shortage transition.
+function _campAwayAlert() {
+  try {
+    const st = campStatus();
+    const sig = st.state + '|' + st.out.slice().sort().join(',');
+    const prev = App._campStatusSig;          // undefined on first call/session
+    if (prev === sig) return;                  // unchanged — nothing to say
+    const prevState = prev ? prev.split('|')[0] : null;
+    App._campStatusSig = sig;
+    // Alert on a NEW shortage: first observation this session that's already
+    // out, or a slide from stable/low into outages. Suppress critical→critical
+    // churn so it doesn't spam every render.
+    if (st.out.length && prevState !== 'critical') {
+      const names = st.out.map(k => (_SALVAGE_BY_ID[k] || {}).name || k).join(', ');
+      try { if (typeof showToast === 'function') showToast('⚠ Camp ran out of ' + names + ' — deposit supplies to recover.', 5000); } catch (e) {}
+    }
+  } catch (e) {}
+}
+
 const getOccupant = (pos, units) => units.find(u => u.alive && u.pos.x === pos.x && u.pos.y === pos.y);
 
 const getEmptyAdjacent = (pos, units) => {
@@ -34872,6 +34988,11 @@ function render() {
   // 🎒 Camp-only field-bag deposit panel (body-anchored so we never splice
   // the huge camp template). Appears at Camp when the bag has loot.
   try { if (typeof mountFieldBagDeposit === 'function') mountFieldBagDeposit(); } catch (e) {}
+  // 🏕 Camp consumption — drain secured supplies over real time (offline
+  // catch-up included), surface shortages, show the status banner at Camp.
+  try { if (typeof runCampConsumptionTick === 'function') runCampConsumptionTick(); } catch (e) {}
+  try { if (typeof _campAwayAlert === 'function') _campAwayAlert(); } catch (e) {}
+  try { if (typeof mountCampStatus === 'function') mountCampStatus(); } catch (e) {}
 
   // ===== Audio routing FIRST =====
   // Must run BEFORE the screen-specific early-returns below — otherwise screens

@@ -59475,7 +59475,7 @@ function openBlackMarketHall() {
     const sBtn = document.getElementById('bmh-send'); if (sBtn) sBtn.onclick = sendMsg;
     const inp = document.getElementById('bmh-in'); if (inp) inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sendMsg(); } };
     const tBtn = document.getElementById('bmh-trade');
-    if (tBtn) tBtn.onclick = () => { close(); try { App.screen = 'vendor'; if (typeof render === 'function') render(); } catch (e) {} };
+    if (tBtn) tBtn.onclick = () => { close(); try { if (typeof openBlackMarketTrade === 'function') openBlackMarketTrade(); } catch (e) {} };
     const hBtn = document.getElementById('bmh-home');
     if (hBtn) hBtn.onclick = () => { close(); try { if (typeof _startBlackMarketRun === 'function') _startBlackMarketRun(); } catch (e) {} };
     paintWho();
@@ -59485,6 +59485,167 @@ function openBlackMarketHall() {
       append({ sys: true, t: atmo.line });
       _ambiTimer = setInterval(() => { try { append({ sys: true, t: _AMBI[Math.floor(Math.random() * _AMBI.length)] }); } catch (e) {} }, 15000);
     } catch (e) {}
+  } catch (e) {}
+}
+// ============================================================================
+// 🛒 BLACK MARKET TRADE FLOOR — the Bazaar's OWN selling hall. Reachable only
+// from inside The Hollow Bazaar (openBlackMarketHall → "Trade Floor"). It is a
+// self-contained overlay: it NEVER navigates App.screen, so the player can
+// never accidentally leave the social hub / wrong-market their way home. The
+// only exits are "← Back to the Hall" and ✕ — both reopen the Bazaar. The sole
+// way out of the Bazaar entirely is "Travel Home" (the route back).
+// ============================================================================
+function openBlackMarketTrade() {
+  try {
+    const ID = 'bm-trade-modal';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
+    const backToHall = () => {
+      const h = document.getElementById(ID); if (h) h.remove();
+      try { if (typeof openBlackMarketHall === 'function') openBlackMarketHall(); } catch (e) {}
+    };
+
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483645;display:flex;align-items:center;justify-content:center;background:rgba(3,1,8,0.85);backdrop-filter:blur(3px)';
+    document.body.appendChild(ov);
+
+    let search = '';
+
+    const sellCards = (cardId, amtSpec) => {
+      try {
+        const inv = Profile.cardCollection || {};
+        const count = inv[cardId] || 0;
+        if (count <= 0) return;
+        const decksInUse = new Set();
+        (Profile.decks || []).forEach(d => (d.cards || []).forEach(c => decksInUse.add(c)));
+        let card = null;
+        if (typeof CARDS !== 'undefined' && Array.isArray(CARDS)) card = CARDS.find(c => c.id === cardId);
+        if (!card && typeof Forge !== 'undefined' && Forge.customCards && Forge.customCards[cardId]) card = Forge.customCards[cardId];
+        if (!card) return;
+        const value = getCinderSellValue(card.rarity || 'common');
+        const prot = decksInUse.has(cardId) ? 1 : 0;
+        const sellable = Math.max(0, count - prot);
+        if (sellable <= 0) return;
+        const amount = (amtSpec === 'all') ? sellable : 1;
+        if (amount <= 0 || amount > sellable) return;
+        const payout = amount * value;
+        if (!confirm('🕯️ Smuggle ' + amount + '× ' + (card.name || cardId) + '?\n\nPayout: ' + payout + ' Cinders\nRemaining copies: ' + (count - amount) + (prot > 0 ? ' (1 still locked in deck)' : ''))) return;
+        Profile.cardCollection[cardId] = Math.max(0, (Profile.cardCollection[cardId] || 0) - amount);
+        if (Profile.cardCollection[cardId] === 0) delete Profile.cardCollection[cardId];
+        if (typeof addCinders === 'function') addCinders(payout);
+        try { showToast('🔥 +' + payout + ' Cinders — ' + amount + '× ' + (card.name || cardId) + ' sold on the floor.'); } catch (e) {}
+        build();
+      } catch (e) {}
+    };
+
+    const build = () => {
+      const host = document.getElementById(ID); if (!host) return;
+      const inv = Profile.cardCollection || {};
+      const decksInUse = new Set();
+      (Profile.decks || []).forEach(d => (d.cards || []).forEach(c => decksInUse.add(c)));
+      const rows = Object.keys(inv).map(cardId => {
+        const count = inv[cardId] || 0;
+        if (count <= 0) return null;
+        let card = null;
+        if (typeof CARDS !== 'undefined' && Array.isArray(CARDS)) card = CARDS.find(c => c.id === cardId);
+        if (!card && typeof Forge !== 'undefined' && Forge.customCards && Forge.customCards[cardId]) card = Forge.customCards[cardId];
+        if (!card) return null;
+        const rarityId = (card.rarity || 'common');
+        const value = getCinderSellValue(rarityId);
+        const prot = decksInUse.has(cardId) ? 1 : 0;
+        const sellable = Math.max(0, count - prot);
+        return { cardId, card, count, sellable, value, rarityId, prot };
+      }).filter(Boolean);
+
+      const q = (search || '').toLowerCase().trim();
+      const filtered = (q ? rows.filter(r => (r.card.name || '').toLowerCase().includes(q) || (r.rarityId || '').toLowerCase().includes(q)) : rows)
+        .sort((a, b) => b.value - a.value || String(a.card.name || '').localeCompare(String(b.card.name || '')));
+      const totalSellable = filtered.reduce((s, r) => s + r.sellable, 0);
+      const totalValue = filtered.reduce((s, r) => s + r.sellable * r.value, 0);
+      const bal = (typeof Profile !== 'undefined' && Profile.gems) || 0;
+
+      const tiles = filtered.map(r => {
+        const rd = (typeof RARITY_DATA !== 'undefined' && RARITY_DATA[r.rarityId]) || { color: '#cfcfdc', name: r.rarityId };
+        const noSell = r.sellable <= 0;
+        return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-left:4px solid ' + rd.color + ';border-radius:8px;background:rgba(176,112,176,0.06);margin-bottom:6px">' +
+            '<div style="font-size:1.5rem;width:34px;text-align:center">' + (r.card.icon || '🃏') + '</div>' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="font-weight:700;color:#e8e0ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(r.card.name || r.cardId) + '</div>' +
+              '<div class="small-text ink-dim">' + esc(rd.name || r.rarityId) + ' · ' + r.value + ' 🔥 ea · have ' + r.count + (r.prot ? ' (1 deck-locked)' : '') + '</div>' +
+            '</div>' +
+            '<button data-bmt-sell="' + esc(r.cardId) + '" data-bmt-amt="1" ' + (noSell ? 'disabled' : '') + ' style="cursor:' + (noSell ? 'not-allowed' : 'pointer') + ';opacity:' + (noSell ? '0.4' : '1') + ';border-radius:7px;padding:0.4rem 0.7rem;border:1px solid rgba(176,112,176,0.5);background:rgba(176,112,176,0.14);color:#e6c6f0;font-weight:700">Sell 1</button>' +
+            '<button data-bmt-sell="' + esc(r.cardId) + '" data-bmt-amt="all" ' + (noSell ? 'disabled' : '') + ' style="cursor:' + (noSell ? 'not-allowed' : 'pointer') + ';opacity:' + (noSell ? '0.4' : '1') + ';border-radius:7px;padding:0.4rem 0.7rem;border:1px solid #b070b0;background:linear-gradient(180deg,#7a4a8a,#3a1c44);color:#f0e0ff;font-weight:800">Sell all (' + r.sellable + ')</button>' +
+          '</div>';
+      }).join('');
+
+      host.innerHTML =
+        '<div style="width:min(640px,95vw);max-height:90vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(24,12,34,0.99),rgba(10,5,18,0.99));border:2px solid rgba(176,112,176,0.6);border-radius:16px;padding:16px 18px;box-shadow:0 24px 80px rgba(0,0,0,0.9),0 0 30px rgba(176,112,176,0.3)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">' +
+            '<div><div style="font-family:\'Cinzel\',serif;font-size:1.3rem;font-weight:800;color:#caa0e6">🛒 Bazaar Trade Floor</div>' +
+            '<div class="small-text ink-dim">Smuggle spare card copies for 🔥 Cinders. One copy of every deck-bound card stays safe.</div></div>' +
+            '<button id="bmt-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
+          '</div>' +
+          '<div style="margin:2px 0 8px;padding:7px 10px;border:1px solid rgba(255,209,102,0.4);border-radius:8px;background:rgba(255,209,102,0.08);color:#ffd166;font-size:0.85rem">🔥 Cinders on hand: <strong>' + bal + '</strong>' + (totalSellable > 0 ? ' · floor value of spares: <strong>' + totalValue + '</strong> (' + totalSellable + ' copies)' : '') + '</div>' +
+          '<input id="bmt-search" value="' + esc(search) + '" placeholder="Search cards by name or rarity…" style="margin-bottom:8px;padding:0.5rem 0.7rem;border-radius:8px;border:1px solid rgba(176,112,176,0.4);background:rgba(15,8,26,0.7);color:#e8e0ff">' +
+          '<div id="bmt-list" style="flex:1;min-height:200px;max-height:48vh;overflow:auto;padding-right:4px">' +
+            (tiles || '<div class="ink-dim" style="padding:2rem;text-align:center">No spare cards to smuggle — every copy you own is locked into a deck, or your stash is empty.</div>') +
+          '</div>' +
+          (totalSellable > 0 ? '<button id="bmt-sell-all" style="margin-top:10px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid #ffd166;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800">🕯️ Smuggle ALL spares — +' + totalValue + ' 🔥</button>' : '') +
+          '<button id="bmt-back" style="margin-top:10px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(176,112,176,0.6);background:rgba(176,112,176,0.16);color:#e6c6f0;font-weight:800">← Back to the Hall</button>' +
+          '<div class="small-text ink-dim" style="margin-top:6px">You stay at the Bazaar. The only way home is the Hall’s “Travel Home”.</div>' +
+        '</div>';
+
+      const x = document.getElementById('bmt-x'); if (x) x.onclick = backToHall;
+      const back = document.getElementById('bmt-back'); if (back) back.onclick = backToHall;
+      const si = document.getElementById('bmt-search');
+      if (si) si.oninput = () => {
+        search = si.value;
+        const pos = si.selectionStart;
+        build();
+        const ns = document.getElementById('bmt-search');
+        if (ns) { ns.focus(); try { ns.setSelectionRange(pos, pos); } catch (e) {} }
+      };
+      host.querySelectorAll('[data-bmt-sell]').forEach(b => {
+        b.onclick = () => { if (b.disabled) return; sellCards(b.getAttribute('data-bmt-sell'), b.getAttribute('data-bmt-amt')); };
+      });
+      const sa = document.getElementById('bmt-sell-all');
+      if (sa) sa.onclick = () => {
+        try {
+          const inv2 = Profile.cardCollection || {};
+          const diu = new Set();
+          (Profile.decks || []).forEach(d => (d.cards || []).forEach(c => diu.add(c)));
+          let earned = 0, sold = 0;
+          const plan = [];
+          Object.keys(inv2).forEach(cid => {
+            const cnt = inv2[cid] || 0; if (cnt <= 0) return;
+            let cd = null;
+            if (typeof CARDS !== 'undefined' && Array.isArray(CARDS)) cd = CARDS.find(c => c.id === cid);
+            if (!cd && typeof Forge !== 'undefined' && Forge.customCards && Forge.customCards[cid]) cd = Forge.customCards[cid];
+            if (!cd) return;
+            const sv = Math.max(0, cnt - (diu.has(cid) ? 1 : 0));
+            if (sv <= 0) return;
+            if (q && !((cd.name || '').toLowerCase().includes(q) || (cd.rarity || '').toLowerCase().includes(q))) return;
+            earned += sv * getCinderSellValue(cd.rarity || 'common');
+            sold += sv;
+            plan.push({ cid, sv });
+          });
+          if (sold <= 0) return;
+          if (!confirm('🕯️ Smuggle ALL ' + sold + ' spare copies for ' + earned + ' Cinders?\n\nOne copy of every deck-bound card stays safe.')) {
+            return;
+          }
+          plan.forEach(p => {
+            Profile.cardCollection[p.cid] = Math.max(0, (Profile.cardCollection[p.cid] || 0) - p.sv);
+            if (Profile.cardCollection[p.cid] === 0) delete Profile.cardCollection[p.cid];
+          });
+          if (typeof addCinders === 'function') addCinders(earned);
+          try { showToast('🔥 +' + earned + ' Cinders — ' + sold + ' spare copies smuggled.'); } catch (e) {}
+          build();
+        } catch (e) {}
+      };
+    };
+
+    build();
   } catch (e) {}
 }
 function _startBlackMarketRun() {

@@ -59460,8 +59460,9 @@ function openBlackMarketHall() {
           '<button id="bmh-send" style="cursor:pointer;border-radius:8px;padding:0.55rem 1rem;border:1px solid #b070b0;background:linear-gradient(180deg,#7a4a8a,#3a1c44);color:#f0e0ff;font-weight:800">Send</button>' +
         '</div>' +
         '<div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">' +
-          '<button id="bmh-trade" style="flex:1;min-width:160px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(176,112,176,0.6);background:rgba(176,112,176,0.16);color:#e6c6f0;font-weight:800">🛒 Trade Floor</button>' +
-          '<button id="bmh-home" style="flex:1;min-width:160px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid #ffd166;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800">🏚 Travel Home (run the route back)</button>' +
+          '<button id="bmh-trade" style="flex:1;min-width:150px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(176,112,176,0.6);background:rgba(176,112,176,0.16);color:#e6c6f0;font-weight:800">🛒 Trade Floor</button>' +
+          '<button id="bmh-auction" style="flex:1;min-width:150px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(176,112,176,0.6);background:rgba(176,112,176,0.16);color:#e6c6f0;font-weight:800">🏷 Auction Booths</button>' +
+          '<button id="bmh-home" style="flex:1;min-width:150px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid #ffd166;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800">🏚 Travel Home (run the route back)</button>' +
         '</div>' +
         '<div class="small-text ink-dim" style="margin-top:6px">Closing this just loiters at the Bazaar — reopen it from the Black Market tile. You only leave by travelling home (or dying on the way).</div>' +
       '</div>';
@@ -59476,6 +59477,8 @@ function openBlackMarketHall() {
     const inp = document.getElementById('bmh-in'); if (inp) inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sendMsg(); } };
     const tBtn = document.getElementById('bmh-trade');
     if (tBtn) tBtn.onclick = () => { close(); try { if (typeof openBlackMarketTrade === 'function') openBlackMarketTrade(); } catch (e) {} };
+    const aBtn = document.getElementById('bmh-auction');
+    if (aBtn) aBtn.onclick = () => { close(); try { if (typeof openBlackMarketAuction === 'function') openBlackMarketAuction(); } catch (e) {} };
     const hBtn = document.getElementById('bmh-home');
     if (hBtn) hBtn.onclick = () => { close(); try { if (typeof _startBlackMarketRun === 'function') _startBlackMarketRun(); } catch (e) {} };
     paintWho();
@@ -59646,6 +59649,321 @@ function openBlackMarketTrade() {
     };
 
     build();
+  } catch (e) {}
+}
+
+// ============================================================================
+// 🏷 BLACK MARKET AUCTION BOOTHS — player-to-player escrowed CARD auctions,
+// reachable ONLY from inside The Hollow Bazaar (the deeper social-hall track).
+// Mirrors the proven ResMarket escrow model exactly: the seller escrows card
+// copies into a `bm_card_listings` Supabase row; buyers claim with an atomic
+// open→sold flip (no double-sell race); sellers sweep their 🔥 Cinder payouts
+// on the next visit. RLS-protected, degrades gracefully if the table is
+// absent or the player is offline. Like the Trade Floor, this overlay NEVER
+// navigates App.screen — every exit reopens the Bazaar hall.
+// ============================================================================
+const BM_MKT_TTL_MS        = 72 * 3600000; // auctions auto-expire after 72h
+const BM_MKT_MAX_ACTIVE    = 15;           // max simultaneous booths/seller
+const BM_MKT_POST_COOLDOWN = 4000;         // ms between posts (anti-spam)
+const BM_MKT_QTY_MAX       = 99;
+const BM_MKT_PRICE_MAX     = 9999999;
+const BM_MARKET_SQL = "create table if not exists public.bm_card_listings (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  seller_name text,\n  card_id text not null,\n  card_name text,\n  rarity text,\n  qty integer not null check (qty > 0),\n  price integer not null check (price >= 0),\n  buyer_id uuid references auth.users(id),\n  status text not null default 'open',\n  paid_out boolean not null default false,\n  created_at timestamptz default now()\n);\nalter table public.bm_card_listings enable row level security;\ndrop policy if exists bml_sel on public.bm_card_listings;\ncreate policy bml_sel on public.bm_card_listings for select to authenticated using (status = 'open' or seller_id = auth.uid() or buyer_id = auth.uid());\ndrop policy if exists bml_ins on public.bm_card_listings;\ncreate policy bml_ins on public.bm_card_listings for insert to authenticated with check (seller_id = auth.uid());\ndrop policy if exists bml_upd on public.bm_card_listings;\ncreate policy bml_upd on public.bm_card_listings for update to authenticated using (status = 'open' or seller_id = auth.uid()) with check (true);\ndrop policy if exists bml_del on public.bm_card_listings;\ncreate policy bml_del on public.bm_card_listings for delete to authenticated using (seller_id = auth.uid() and status = 'open');";
+const BmMarket = {
+  open: [], mine: [],
+  tableMissing: false, lastFetch: 0, loading: false, _err: null,
+  _lastPostAt: 0, _channel: null, _refetchT: null, _rt: false,
+};
+function _bmResolveCard(cardId) {
+  let card = null;
+  if (typeof CARDS !== 'undefined' && Array.isArray(CARDS)) card = CARDS.find(c => c.id === cardId);
+  if (!card && typeof Forge !== 'undefined' && Forge.customCards && Forge.customCards[cardId]) card = Forge.customCards[cardId];
+  return card || null;
+}
+function _bmMarkErr(e) {
+  const msg = (e && (e.message || e.code || '')) + '';
+  if (/bm_card_listings|relation|does not exist|schema cache|PGRST205|42P01/i.test(msg)) BmMarket.tableMissing = true;
+  BmMarket._err = msg;
+  return null;
+}
+function _bmListingAgeMs(l) {
+  const t = l && l.created_at ? Date.parse(l.created_at) : NaN;
+  return isNaN(t) ? 0 : (Date.now() - t);
+}
+function _bmListingExpired(l) { return _bmListingAgeMs(l) > BM_MKT_TTL_MS; }
+function bmMarketSubscribe(onChange) {
+  if (BmMarket._channel || !initCloud() || !Profile.cloud.signedIn || !Cloud.client) return;
+  try {
+    BmMarket._channel = Cloud.client.channel('bm-card-market')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bm_card_listings' }, () => {
+        if (BmMarket._refetchT) clearTimeout(BmMarket._refetchT);
+        BmMarket._refetchT = setTimeout(() => {
+          bmMarketFetch().then(() => { try { if (typeof onChange === 'function') onChange(); } catch (e) {} });
+        }, 400);
+      })
+      .subscribe((st) => { if (st === 'SUBSCRIBED') BmMarket._rt = true; });
+  } catch (e) { BmMarket._channel = null; }
+}
+function bmMarketUnsubscribe() {
+  if (BmMarket._refetchT) { clearTimeout(BmMarket._refetchT); BmMarket._refetchT = null; }
+  if (BmMarket._channel) { try { BmMarket._channel.unsubscribe(); } catch (e) {} BmMarket._channel = null; }
+  BmMarket._rt = false;
+}
+async function bmMarketFetch() {
+  if (!initCloud() || !Profile.cloud.signedIn) { BmMarket._err = 'Sign in to use the auction booths.'; return; }
+  if (BmMarket.loading) return;
+  BmMarket.loading = true;
+  try {
+    const me = Profile.cloud.userId;
+    // Sellers sweep Cinder payouts for anything that sold while they were away.
+    try {
+      const { data: sold } = await Cloud.client.from('bm_card_listings')
+        .select('*').eq('seller_id', me).eq('status', 'sold').eq('paid_out', false).limit(50);
+      if (sold && sold.length) {
+        let total = 0;
+        for (const r of sold) {
+          const upd = await Cloud.client.from('bm_card_listings').update({ paid_out: true }).eq('id', r.id).eq('paid_out', false).select('id');
+          if (!(upd && upd.data && upd.data.length)) continue;
+          total += (r.price || 0);
+        }
+        if (total > 0) { if (typeof addCinders === 'function') addCinders(total); try { showToast('💰 Booth sales collected: +' + total + ' 🔥 Cinders', 4600); } catch (e) {} }
+      }
+    } catch (e) { _bmMarkErr(e); }
+    const { data, error } = await Cloud.client.from('bm_card_listings')
+      .select('*').eq('status', 'open').order('created_at', { ascending: false }).limit(150);
+    if (error) { _bmMarkErr(error); BmMarket.loading = false; return; }
+    BmMarket.tableMissing = false;
+    const all = data || [];
+    // Expiry reclaim — pull MY stale booths and return the escrowed copies.
+    const mineExpired = all.filter(l => l.seller_id === me && _bmListingExpired(l));
+    if (mineExpired.length) {
+      let back = 0;
+      for (const l of mineExpired) {
+        const del = await Cloud.client.from('bm_card_listings')
+          .delete().eq('id', l.id).eq('seller_id', me).eq('status', 'open').select('id');
+        if (del && del.data && del.data.length) {
+          if (!Profile.cardCollection) Profile.cardCollection = {};
+          Profile.cardCollection[l.card_id] = (Profile.cardCollection[l.card_id] || 0) + (l.qty || 0);
+          back += (l.qty || 0);
+        }
+      }
+      if (back > 0) { try { saveProfile(); } catch (e) {} try { showToast('⏳ Expired booths reclaimed: ' + back + ' card copies returned.', 4200); } catch (e) {} }
+    }
+    BmMarket.open = all.filter(l => l.seller_id !== me && !_bmListingExpired(l));
+    BmMarket.mine = all.filter(l => l.seller_id === me && !_bmListingExpired(l));
+    BmMarket.lastFetch = Date.now();
+  } catch (e) { _bmMarkErr(e); }
+  BmMarket.loading = false;
+}
+async function bmMarketPost(cardId, qty, price) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('Sign in to use the auction booths.'); return false; }
+  qty = Math.floor(qty); price = Math.floor(price);
+  const card = _bmResolveCard(cardId);
+  if (!card) { showToast('Unknown card.'); return false; }
+  if (!(qty > 0)) { showToast('Set a quantity.'); return false; }
+  if (qty > BM_MKT_QTY_MAX) { showToast('Max ' + BM_MKT_QTY_MAX + ' copies per booth.'); return false; }
+  if (isNaN(price) || price < 0) { showToast('Set a valid price.'); return false; }
+  if (price > BM_MKT_PRICE_MAX) { showToast('Max price is ' + BM_MKT_PRICE_MAX + '.'); return false; }
+  const since = Date.now() - (BmMarket._lastPostAt || 0);
+  if (since < BM_MKT_POST_COOLDOWN) { showToast('Slow down — wait ' + Math.ceil((BM_MKT_POST_COOLDOWN - since) / 1000) + 's before posting again.', 2600); return false; }
+  if ((BmMarket.mine || []).length >= BM_MKT_MAX_ACTIVE) { showToast('You already have ' + BM_MKT_MAX_ACTIVE + ' active booths — sell or cancel some first.', 3600); return false; }
+  // Deck-protection: keep 1 copy of any deck-bound card safe at home.
+  const decksInUse = new Set();
+  (Profile.decks || []).forEach(d => (d.cards || []).forEach(c => decksInUse.add(c)));
+  const have = (Profile.cardCollection && Profile.cardCollection[cardId]) || 0;
+  const sellable = Math.max(0, have - (decksInUse.has(cardId) ? 1 : 0));
+  if (qty > sellable) { showToast('You can only booth ' + sellable + ' spare copies of ' + (card.name || cardId) + (decksInUse.has(cardId) ? ' (1 stays deck-locked).' : '.'), 3800); return false; }
+  const row = {
+    seller_id: Profile.cloud.userId,
+    seller_name: ((Profile.cloud.displayName || (Profile.account && Profile.account.displayName) || 'Survivor') + '').slice(0, 40),
+    card_id: cardId,
+    card_name: ((card.name || cardId) + '').slice(0, 80),
+    rarity: (card.rarity || 'common'),
+    qty: qty, price: price, status: 'open', paid_out: false,
+  };
+  // Escrow: pull the copies out of the stash immediately.
+  if (!Profile.cardCollection) Profile.cardCollection = {};
+  Profile.cardCollection[cardId] = Math.max(0, (Profile.cardCollection[cardId] || 0) - qty);
+  if (Profile.cardCollection[cardId] === 0) delete Profile.cardCollection[cardId];
+  try { saveProfile(); } catch (e) {}
+  const { error } = await Cloud.client.from('bm_card_listings').insert(row);
+  if (error) {
+    Profile.cardCollection[cardId] = (Profile.cardCollection[cardId] || 0) + qty;
+    try { saveProfile(); } catch (e) {}
+    _bmMarkErr(error); showToast('⚠ Could not open booth.'); return false;
+  }
+  BmMarket._lastPostAt = Date.now();
+  try { showToast('🏷 Booth opened — ' + qty + '× ' + (card.name || cardId) + ' for ' + price + ' 🔥', 3200); } catch (e) {}
+  await bmMarketFetch();
+  return true;
+}
+async function bmMarketBuy(listing) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('Sign in to use the auction booths.'); return false; }
+  if (!listing || !listing.id) return false;
+  if ((Profile.gems || 0) < (listing.price || 0)) { showToast('Need ' + (listing.price || 0) + ' 🔥 — you have ' + (Profile.gems || 0), 3000); return false; }
+  // Atomic claim: only succeeds while still open (no double-sell race).
+  const { data, error } = await Cloud.client.from('bm_card_listings')
+    .update({ status: 'sold', buyer_id: Profile.cloud.userId })
+    .eq('id', listing.id).eq('status', 'open').select('*');
+  if (error) { _bmMarkErr(error); showToast('⚠ Purchase failed.'); return false; }
+  if (!data || !data.length) { showToast('Too slow — someone already took that booth.', 2600); await bmMarketFetch(); return false; }
+  Profile.gems = Math.max(0, (Profile.gems || 0) - (listing.price || 0));
+  if (!Profile.cardCollection) Profile.cardCollection = {};
+  Profile.cardCollection[listing.card_id] = (Profile.cardCollection[listing.card_id] || 0) + (listing.qty || 0);
+  try { saveProfile(); } catch (e) {}
+  try { showToast('✅ Bought ' + (listing.qty || 0) + '× ' + (listing.card_name || listing.card_id) + ' — ' + (listing.price || 0) + ' 🔥', 3800); } catch (e) {}
+  await bmMarketFetch();
+  return true;
+}
+async function bmMarketCancel(listing) {
+  if (!initCloud() || !Profile.cloud.signedIn) return false;
+  if (!listing || !listing.id) return false;
+  const { data, error } = await Cloud.client.from('bm_card_listings')
+    .delete().eq('id', listing.id).eq('seller_id', Profile.cloud.userId).eq('status', 'open').select('id');
+  if (error) { _bmMarkErr(error); showToast('⚠ Could not close booth.'); return false; }
+  if (data && data.length) {
+    if (!Profile.cardCollection) Profile.cardCollection = {};
+    Profile.cardCollection[listing.card_id] = (Profile.cardCollection[listing.card_id] || 0) + (listing.qty || 0);
+    try { saveProfile(); } catch (e) {}
+    try { showToast('↩ Booth closed — ' + (listing.qty || 0) + '× ' + (listing.card_name || listing.card_id) + ' returned.', 3200); } catch (e) {}
+  }
+  await bmMarketFetch();
+  return true;
+}
+function openBlackMarketAuction() {
+  try {
+    const ID = 'bm-auction-modal';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
+    const online = !!(typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn);
+    let tab = 'browse';   // 'browse' | 'booth'
+    let pickCard = '';     // selected card id in the "open a booth" form
+
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483645;display:flex;align-items:center;justify-content:center;background:rgba(3,1,8,0.85);backdrop-filter:blur(3px)';
+    document.body.appendChild(ov);
+
+    const cleanup = () => { try { bmMarketUnsubscribe(); } catch (e) {} };
+    const backToHall = () => {
+      cleanup();
+      const h = document.getElementById(ID); if (h) h.remove();
+      try { if (typeof openBlackMarketHall === 'function') openBlackMarketHall(); } catch (e) {}
+    };
+
+    const rarCol = (rid) => ((typeof RARITY_DATA !== 'undefined' && RARITY_DATA[rid] && RARITY_DATA[rid].color) || '#cfcfdc');
+
+    const browseTiles = () => {
+      const ls = (BmMarket.open || []).slice().sort((a, b) => Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0));
+      if (!ls.length) return '<div class="ink-dim" style="padding:1.6rem;text-align:center">No booths open right now. Check back — survivors come and go.</div>';
+      return ls.map(l => {
+        const can = (Profile.gems || 0) >= (l.price || 0);
+        return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-left:4px solid ' + rarCol(l.rarity) + ';border-radius:8px;background:rgba(176,112,176,0.06);margin-bottom:6px">' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="font-weight:700;color:#e8e0ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(l.qty) + '× ' + esc(l.card_name || l.card_id) + '</div>' +
+              '<div class="small-text ink-dim">' + esc(l.rarity || 'common') + ' · booth by ' + esc(l.seller_name || 'Survivor') + '</div>' +
+            '</div>' +
+            '<div style="text-align:right;color:#ffd166;font-weight:800;white-space:nowrap">' + esc(l.price) + ' 🔥</div>' +
+            '<button data-bma-buy="' + esc(l.id) + '" ' + (can ? '' : 'disabled') + ' style="cursor:' + (can ? 'pointer' : 'not-allowed') + ';opacity:' + (can ? '1' : '0.4') + ';border-radius:7px;padding:0.45rem 0.8rem;border:1px solid #b070b0;background:linear-gradient(180deg,#7a4a8a,#3a1c44);color:#f0e0ff;font-weight:800">Buy</button>' +
+          '</div>';
+      }).join('');
+    };
+
+    const mineTiles = () => {
+      const ls = (BmMarket.mine || []).slice();
+      const list = ls.length
+        ? ls.map(l => '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-left:4px solid ' + rarCol(l.rarity) + ';border-radius:8px;background:rgba(176,112,176,0.06);margin-bottom:6px">' +
+              '<div style="flex:1;min-width:0"><div style="font-weight:700;color:#e8e0ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(l.qty) + '× ' + esc(l.card_name || l.card_id) + '</div>' +
+              '<div class="small-text ink-dim">asking ' + esc(l.price) + ' 🔥 · escrowed</div></div>' +
+              '<button data-bma-cancel="' + esc(l.id) + '" style="cursor:pointer;border-radius:7px;padding:0.45rem 0.8rem;border:1px solid rgba(176,112,176,0.5);background:rgba(176,112,176,0.14);color:#e6c6f0;font-weight:700">Close booth</button>' +
+            '</div>').join('')
+        : '<div class="ink-dim small-text" style="padding:0.8rem 0">No open booths. Stake spare copies below.</div>';
+
+      // Sellable spare cards for the "open a booth" picker.
+      const inv = Profile.cardCollection || {};
+      const decksInUse = new Set();
+      (Profile.decks || []).forEach(d => (d.cards || []).forEach(c => decksInUse.add(c)));
+      const opts = Object.keys(inv).map(cid => {
+        const cnt = inv[cid] || 0; if (cnt <= 0) return null;
+        const card = _bmResolveCard(cid); if (!card) return null;
+        const spare = Math.max(0, cnt - (decksInUse.has(cid) ? 1 : 0));
+        if (spare <= 0) return null;
+        return { cid, name: card.name || cid, spare };
+      }).filter(Boolean).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      if (!opts.some(o => o.cid === pickCard)) pickCard = opts.length ? opts[0].cid : '';
+      const sel = opts.length
+        ? '<select id="bma-card" style="flex:1;min-width:0;padding:0.5rem;border-radius:8px;border:1px solid rgba(176,112,176,0.4);background:rgba(15,8,26,0.7);color:#e8e0ff">' +
+            opts.map(o => '<option value="' + esc(o.cid) + '"' + (o.cid === pickCard ? ' selected' : '') + '>' + esc(o.name) + ' (×' + o.spare + ' spare)</option>').join('') + '</select>'
+        : '<div class="ink-dim small-text" style="flex:1">No spare copies to booth — every card you own is locked into a deck.</div>';
+
+      return '<div style="margin-bottom:10px">' + list + '</div>' +
+        '<div style="border-top:1px solid rgba(176,112,176,0.25);padding-top:10px">' +
+          '<div style="font-weight:800;color:#caa0e6;margin-bottom:6px">🏷 Open a new booth</div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + sel +
+            (opts.length ? '<input id="bma-qty" type="number" min="1" max="' + BM_MKT_QTY_MAX + '" value="1" style="width:74px;padding:0.5rem;border-radius:8px;border:1px solid rgba(176,112,176,0.4);background:rgba(15,8,26,0.7);color:#e8e0ff">' +
+            '<input id="bma-price" type="number" min="0" placeholder="🔥 price" style="width:110px;padding:0.5rem;border-radius:8px;border:1px solid rgba(176,112,176,0.4);background:rgba(15,8,26,0.7);color:#e8e0ff">' +
+            '<button id="bma-post" style="cursor:pointer;border-radius:8px;padding:0.5rem 0.9rem;border:1px solid #ffd166;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800">Stake & list</button>' : '') +
+          '</div>' +
+          '<div class="small-text ink-dim" style="margin-top:6px">Copies are escrowed the moment you list. They return automatically if you close the booth or it expires (72h).</div>' +
+        '</div>';
+    };
+
+    const render = () => {
+      const host = document.getElementById(ID); if (!host) return;
+      let body;
+      if (!online) {
+        body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">📡 The auction booths are a live player market. Sign in to your account to trade with other survivors.</div>';
+      } else if (BmMarket.tableMissing) {
+        body = '<div style="padding:0.4rem 0"><div style="color:#ff9a6b;font-weight:700;margin-bottom:6px">The auction-booth table isn’t set up yet.</div>' +
+          '<div class="small-text ink-dim" style="margin-bottom:6px">Admin: paste this once into the Supabase SQL editor, then press Retry.</div>' +
+          '<textarea readonly id="bma-sql" style="width:100%;height:150px;background:#0a0d13;color:#cbd5e8;border:1px solid #243042;border-radius:6px;font-family:monospace;font-size:0.68rem;padding:0.6rem">' + esc(BM_MARKET_SQL) + '</textarea>' +
+          '<div style="display:flex;gap:8px;margin-top:8px"><button id="bma-sql-copy" style="cursor:pointer;border-radius:7px;padding:0.45rem 0.8rem;border:1px solid rgba(176,112,176,0.5);background:rgba(176,112,176,0.14);color:#e6c6f0;font-weight:700">📋 Copy SQL</button>' +
+          '<button id="bma-sql-retry" style="cursor:pointer;border-radius:7px;padding:0.45rem 0.8rem;border:1px solid #ffd166;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800">↻ Retry</button></div></div>';
+      } else if (BmMarket.loading && !BmMarket.lastFetch) {
+        body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">Walking the booth row…</div>';
+      } else {
+        body = tab === 'browse' ? browseTiles() : mineTiles();
+      }
+
+      const tabBtn = (id, label) => '<button data-bma-tab="' + id + '" style="flex:1;cursor:pointer;border-radius:8px 8px 0 0;padding:0.5rem;border:1px solid rgba(176,112,176,0.4);border-bottom:none;background:' + (tab === id ? 'rgba(176,112,176,0.22)' : 'rgba(176,112,176,0.06)') + ';color:' + (tab === id ? '#f0e0ff' : '#b8a0d8') + ';font-weight:800">' + label + '</button>';
+
+      host.innerHTML =
+        '<div style="width:min(640px,95vw);max-height:90vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(24,12,34,0.99),rgba(10,5,18,0.99));border:2px solid rgba(176,112,176,0.6);border-radius:16px;padding:16px 18px;box-shadow:0 24px 80px rgba(0,0,0,0.9),0 0 30px rgba(176,112,176,0.3)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">' +
+            '<div><div style="font-family:\'Cinzel\',serif;font-size:1.3rem;font-weight:800;color:#caa0e6">🏷 Auction Booths</div>' +
+            '<div class="small-text ink-dim">Survivor-to-survivor card deals. Copies are escrowed — no scams, no rug-pulls. ' + (online ? '<span style="color:#7fdca0">● live</span>' : '<span style="color:#ff9a6b">○ offline</span>') + '</div></div>' +
+            '<button id="bma-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
+          '</div>' +
+          '<div style="margin:2px 0 8px;padding:7px 10px;border:1px solid rgba(255,209,102,0.4);border-radius:8px;background:rgba(255,209,102,0.08);color:#ffd166;font-size:0.85rem">🔥 Cinders on hand: <strong>' + ((Profile && Profile.gems) || 0) + '</strong></div>' +
+          (online && !BmMarket.tableMissing ? '<div style="display:flex;gap:4px;margin-bottom:-1px">' + tabBtn('browse', '🛍 Browse Booths') + tabBtn('booth', '🏷 My Booth') + '</div>' : '') +
+          '<div id="bma-body" style="flex:1;min-height:220px;max-height:52vh;overflow:auto;border:1px solid rgba(176,112,176,0.25);border-radius:0 0 8px 8px;padding:10px">' + body + '</div>' +
+          '<button id="bma-back" style="margin-top:12px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(176,112,176,0.6);background:rgba(176,112,176,0.16);color:#e6c6f0;font-weight:800">← Back to the Hall</button>' +
+          '<div class="small-text ink-dim" style="margin-top:6px">You stay at the Bazaar. The only way home is the Hall’s “Travel Home”.</div>' +
+        '</div>';
+
+      const x = document.getElementById('bma-x'); if (x) x.onclick = backToHall;
+      const back = document.getElementById('bma-back'); if (back) back.onclick = backToHall;
+      host.querySelectorAll('[data-bma-tab]').forEach(b => { b.onclick = () => { tab = b.getAttribute('data-bma-tab'); render(); }; });
+      const sc = document.getElementById('bma-sql-copy'); if (sc) sc.onclick = () => { try { navigator.clipboard.writeText(BM_MARKET_SQL); showToast('📋 SQL copied.'); } catch (e) { const t = document.getElementById('bma-sql'); if (t) t.select(); } };
+      const sr = document.getElementById('bma-sql-retry'); if (sr) sr.onclick = () => { BmMarket.tableMissing = false; BmMarket.lastFetch = 0; bmMarketFetch().then(render); };
+      host.querySelectorAll('[data-bma-buy]').forEach(b => { b.onclick = () => { if (b.disabled) return; const l = (BmMarket.open || []).find(x => x.id === b.getAttribute('data-bma-buy')); if (l && confirm('Buy ' + l.qty + '× ' + (l.card_name || l.card_id) + ' for ' + l.price + ' 🔥?')) bmMarketBuy(l).then(render); }; });
+      host.querySelectorAll('[data-bma-cancel]').forEach(b => { b.onclick = () => { const l = (BmMarket.mine || []).find(x => x.id === b.getAttribute('data-bma-cancel')); if (l && confirm('Close this booth and return ' + l.qty + ' copies?')) bmMarketCancel(l).then(render); }; });
+      const cardSel = document.getElementById('bma-card'); if (cardSel) cardSel.onchange = () => { pickCard = cardSel.value; };
+      const post = document.getElementById('bma-post');
+      if (post) post.onclick = () => {
+        const cid = (document.getElementById('bma-card') || {}).value || pickCard;
+        const qty = parseInt((document.getElementById('bma-qty') || {}).value, 10) || 0;
+        const price = parseInt((document.getElementById('bma-price') || {}).value, 10);
+        if (!cid) { showToast('Pick a card.'); return; }
+        if (isNaN(price) || price < 0) { showToast('Set a 🔥 price.'); return; }
+        bmMarketPost(cid, qty, price).then(ok => { if (ok) { tab = 'booth'; render(); } });
+      };
+    };
+
+    render();
+    if (online) {
+      bmMarketSubscribe(render);
+      bmMarketFetch().then(render);
+    }
   } catch (e) {}
 }
 function _startBlackMarketRun() {

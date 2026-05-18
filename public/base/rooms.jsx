@@ -397,9 +397,43 @@ const ART_MAP = {
 };
 
 // ───────────────────────────────────────────────────────────────
+// Live stationed-unit sprite — cycles the real game sprite frames
+// (bridged from window.__BRIDGE.camprooms) inside the room box.
+// ───────────────────────────────────────────────────────────────
+function _BBSprite({ frames, ms }) {
+  const [i, setI] = React.useState(0);
+  React.useEffect(() => {
+    if (!frames || frames.length < 2) return undefined;
+    const id = setInterval(
+      () => setI((n) => (n + 1) % frames.length),
+      Math.max(80, ms || 500)
+    );
+    return () => clearInterval(id);
+  }, [frames, ms]);
+  if (!frames || !frames.length) return null;
+  return (
+    <img
+      src={frames[i] || frames[0]}
+      alt=""
+      draggable={false}
+      style={{
+        width: "100%",
+        height: "100%",
+        objectFit: "contain",
+        imageRendering: "pixelated",
+        filter: "drop-shadow(0 3px 4px rgba(0,0,0,0.6))",
+      }}
+    />
+  );
+}
+
+// ───────────────────────────────────────────────────────────────
 // Room cell wrapper
 // ───────────────────────────────────────────────────────────────
 function Room({ room, active, onClick }) {
+  const bb =
+    (window.__BRIDGE && window.__BRIDGE.camprooms && window.__BRIDGE.camprooms[room.id]) || null;
+  const bbOcc = (bb && Array.isArray(bb.occ)) ? bb.occ : [];
   const ArtComp = ART_MAP[room.art] || ArtEmpty;
   const isEmpty = room.art === "empty";
 
@@ -440,12 +474,39 @@ function Room({ room, active, onClick }) {
             ))}
           </div>
         )}
+        {bbOcc.length > 0 && (
+          <div
+            className="room-occupants"
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: "8%",
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "center",
+              gap: "5%",
+              pointerEvents: "none",
+              zIndex: 4,
+            }}
+          >
+            {bbOcc.slice(0, 4).map((o, idx) => (
+              <div key={idx} title={o.name} style={{ width: "15%", height: "44%" }}>
+                <_BBSprite frames={o.frames} ms={o.ms} />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="room-plate">
         <span className="id">{room.code}</span>
         <span className="nm">{room.name}</span>
-        {!isEmpty && <span className="lvl">LV {room.level}</span>}
+        {!isEmpty && (
+          <span className="lvl" title={bb ? "Live camp facility level" : undefined}>
+            LV {bb ? bb.level : room.level}
+          </span>
+        )}
       </div>
 
       <div className="room-status">

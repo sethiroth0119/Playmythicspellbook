@@ -31870,6 +31870,68 @@ function _baseFieldBag() {
     return { items: items, used: used, cap: cap, has: keys.length > 0, locked: locked };
   } catch (e) { return null; }
 }
+// 🏕 Per-bunker-room live state: the mapped camp FACILITY level (so a room's
+// LV badge tracks real upgrades) + the stationed units whose CURRENT activity
+// belongs to that room, with their sprite frames so the React box can
+// animate them. Activity → room: rest=Camp, scout/strike=Command,
+// raid=Relic Vault, deepRun=Containment, study=Training, rescue=Medical.
+const _BB_FAC_ROOM = {
+  'CMD-01': 'intel', 'BRK-01': 'barracks', 'MED-01': 'medbay',
+  'AIL-01': 'lab',   'TRN-01': 'training', 'RCT-01': 'powerRelay',
+  'VLT-01': 'market', 'FRG-01': 'workshop', 'CNT-01': 'lounge',
+};
+const _BB_ACT_ROOM = {
+  rest: 'BRK-01', scout: 'CMD-01', raidRival: 'CMD-01',
+  raid: 'VLT-01', deepRun: 'CNT-01', study: 'TRN-01', rescue: 'MED-01',
+};
+function _bbSlotActKey(s) {
+  if (!s) return 'rest';
+  const a = s.activity;
+  if (!a || a === 'rest') return 'rest';
+  if (a === 'loot') return s.tier || 'scout';   // scout | raid | deepRun
+  if (a === 'raidRival') return 'raidRival';
+  if (a === 'study') return 'study';
+  if (a === 'rescue') return 'rescue';
+  return 'rest';
+}
+function _baseCampRooms() {
+  try {
+    const _abs = (u) => {
+      if (!u) return '';
+      if (/^(https?:|data:|blob:)/i.test(u) || u.charAt(0) === '/') return u;
+      try { return new URL(u, location.href).href; } catch (e) { return u; }
+    };
+    const out = {};
+    Object.keys(_BB_FAC_ROOM).forEach((rid) => {
+      const fid = _BB_FAC_ROOM[rid];
+      let lv = 0;
+      try {
+        const st = (typeof _campFacState === 'function')
+          ? _campFacState(fid)
+          : ((typeof Camp !== 'undefined' && Camp.facilities && Camp.facilities[fid]) || {});
+        lv = (st && st.level) | 0;
+      } catch (e) {}
+      out[rid] = { level: lv, occ: [] };
+    });
+    const slots = (typeof Camp !== 'undefined' && Array.isArray(Camp.slots)) ? Camp.slots : [];
+    slots.forEach((s) => {
+      if (!s || !s.refId) return;
+      const rid = _BB_ACT_ROOM[_bbSlotActKey(s)];
+      if (!rid) return;
+      if (!out[rid]) out[rid] = { level: 0, occ: [] };
+      if (out[rid].occ.length >= 4) return;             // cap per room (payload)
+      let frames = null;
+      try { frames = (typeof getSpriteFrames === 'function') ? getSpriteFrames('u_' + s.refId, 'idle') : null; } catch (e) {}
+      if (!frames || !frames.length) return;
+      let nm = s.refId;
+      try { const c = (typeof _resolveAnyCard === 'function') ? _resolveAnyCard(s.refId) : null; if (c && c.name) nm = c.name; } catch (e) {}
+      let ms = 600;
+      try { const sp = (typeof Forge !== 'undefined' && Forge.sprites) ? Forge.sprites['u_' + s.refId] : null; if (sp && sp.frameMs) ms = Math.max(80, Math.min(2000, sp.frameMs)); } catch (e) {}
+      out[rid].occ.push({ name: nm, frames: frames.slice(0, 6).map(_abs), ms: ms });
+    });
+    return out;
+  } catch (e) { return null; }
+}
 function _baseSendData() {
   try {
     const f = document.getElementById('base-builder-frame');
@@ -31881,6 +31943,7 @@ function _baseSendData() {
       roster: _baseRoster(),
       world: _baseWorldData(),
       bag: _baseFieldBag(),
+      camprooms: _baseCampRooms(),
     }, '*');
   } catch (e) {}
 }

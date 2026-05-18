@@ -58796,6 +58796,32 @@ function _rlcBankHaul(run) {
   try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
   return moved;
 }
+// 💀 Death stakes (Phase 4): falling in a run forfeits ALL un-banked haul
+// AND a slice of the SECURED camp stockpile. Tunable — this is the single
+// dial that makes Convoy banking matter. Phoenix Feather bypasses (handled
+// in rlcAfterBattle before this runs).
+const RLC_DEATH_SALVAGE_PCT = 0.15;   // 15% of each secured resource, on death
+function _rlcApplyDeathLoss(run) {
+  const lost = { haul: {}, salvage: {} };
+  try {
+    // 1) Forfeit every un-banked resource carried in the run.
+    const h = (run && run.haul) || {};
+    Object.keys(h).forEach(k => { if ((h[k] | 0) > 0) lost.haul[k] = h[k] | 0; });
+    if (run) run.haul = {};
+    // 2) Raid the secured stockpile by the death percentage.
+    const pct = (typeof RLC_DEATH_SALVAGE_PCT === 'number') ? RLC_DEATH_SALVAGE_PCT : 0.15;
+    if (Profile.salvage && typeof Profile.salvage === 'object') {
+      Object.keys(Profile.salvage).forEach(k => {
+        const have = Profile.salvage[k] | 0;
+        const take = Math.round(have * pct);
+        if (take > 0) { Profile.salvage[k] = have - take; lost.salvage[k] = take; }
+      });
+    }
+    if (run) run._deathLoss = lost;
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  } catch (e) {}
+  return lost;
+}
 function _rlcCompleteNode(nodeId) {
   const run = Profile.rlcRun; if (!run) return;
   if (!Array.isArray(run.completed)) run.completed = [];
@@ -58968,6 +58994,9 @@ function rlcAfterBattle() {
       // Treated as surviving the node (not a win — no reward, just press on).
       return _rlcCompleteNode(res.nodeId);
     }
+    // 💀 Death stakes — forfeit all un-banked haul + a slice of secured camp
+    // salvage (Convoy banking is the only way to have avoided this).
+    try { _rlcApplyDeathLoss(run); } catch (e) {}
     run.isFailed = true; run._failNodeId = res.nodeId;
     _persistProgressNow();
     App.screen = 'rlcResult'; return render();
@@ -60323,6 +60352,20 @@ function renderRlcResult() {
         ${relicNames.length ? `<div style="margin-top:12px"><div style="color:#f6d97a;font-family:'Cinzel',serif;font-size:0.85rem">🏺 Relics</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${relicNames.map(r => `<span class="small-text" style="background:rgba(184,136,255,0.12);border:1px solid rgba(184,136,255,0.35);border-radius:4px;padding:2px 7px">${escapeHtml(r)}</span>`).join('')}</div></div>` : ''}
         <div class="small-text" style="margin-top:12px;color:#7fdca0">✓ Banked: <strong>${(run._cashedRewards && run._cashedRewards.cards) || 0}</strong> card${((run._cashedRewards && run._cashedRewards.cards) === 1) ? '' : 's'} added to your inventory${(run._cashedRewards && run._cashedRewards.cinders) ? ` · <strong>${run._cashedRewards.cinders}</strong> Cinders` : ''}.</div>
         <div class="small-text ink-dim" style="margin-top:4px">Rewards are kept only because you ${won ? 'completed the campaign' : 'died'} — abandoning a run forfeits everything. Open the Deck Editor to use your new cards.</div>
+      </div>`;
+      })()}
+      ${(() => {
+        const dl = (!won && run._deathLoss) ? run._deathLoss : null;
+        if (!dl) return '';
+        const hk = Object.keys(dl.haul || {}).filter(k => (dl.haul[k] | 0) > 0);
+        const sk = Object.keys(dl.salvage || {}).filter(k => (dl.salvage[k] | 0) > 0);
+        if (!hk.length && !sk.length) return '';
+        return `
+      <div style="max-width:520px;margin:0 auto 20px;padding:16px;background:rgba(60,15,25,0.55);border:1px solid rgba(255,107,138,0.45);border-radius:12px;text-align:left">
+        <div style="color:#ff8aa0;font-family:'Cinzel',serif;font-weight:700;margin-bottom:8px">💀 Lost on Death</div>
+        ${hk.length ? `<div class="small-text" style="color:#ffb3c1">🎒 Un-banked haul forfeited — <strong>${_rlcHaulLine(dl.haul)}</strong></div>` : ''}
+        ${sk.length ? `<div class="small-text" style="color:#ffb3c1;margin-top:4px">🏚 Camp stockpile raided (${Math.round((typeof RLC_DEATH_SALVAGE_PCT === 'number' ? RLC_DEATH_SALVAGE_PCT : 0.15) * 100)}%) — <strong>${_rlcHaulLine(dl.salvage)}</strong></div>` : ''}
+        <div class="small-text ink-dim" style="margin-top:6px">Reach a 🚚 Convoy node mid-run to bank loot safely — that's the only way to keep it if you fall.</div>
       </div>`;
       })()}
       ${_nextCamps.length ? `

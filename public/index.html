@@ -22490,14 +22490,16 @@ async function cloudFetchCatalogArt() {
 
       // 1) Preferred: the shard index lists every shard file.
       let shardNames = null;
+      let _listed = 0, _got = 0;
       const idxTxt = await _dl(`${base}.index.json`);
       if (idxTxt) {
         try { const idx = JSON.parse(idxTxt); if (Array.isArray(idx.shards)) shardNames = idx.shards; } catch (e) {}
       }
       if (shardNames && shardNames.length) {
+        _listed = shardNames.length;
         for (const sname of shardNames) {
           const t = await _dl(sname);
-          if (t) { try { Object.assign(merged, JSON.parse(t) || {}); gotSomething = true; } catch (e) {} }
+          if (t) { try { Object.assign(merged, JSON.parse(t) || {}); gotSomething = true; _got++; } catch (e) {} }
         }
       } else {
         // 2) Legacy single-file layout.
@@ -22528,7 +22530,21 @@ async function cloudFetchCatalogArt() {
         const _len = (o, k) => (o && Array.isArray(o[k])) ? o[k].length : 0;
         const incScore = _len(inc, 'pageGuides') + _len(inc, 'campaigns');
         const curScore = _len(cur, 'pageGuides') + _len(cur, 'campaigns');
-        if (incScore >= curScore) Forge.catalogMedia = inc;
+        const _adopt = incScore >= curScore;
+        if (_adopt) Forge.catalogMedia = inc;
+        // 🔎 Observable truth — shows EXACTLY where campaign art lands or
+        // fails on the player, instead of guessing.
+        try {
+          const c0 = inc && Array.isArray(inc.campaigns) ? inc.campaigns[0] : null;
+          const nodeImgs = (c0 && Array.isArray(c0.nodes)) ? c0.nodes.filter(n => n && n.iconImg).length : 0;
+          const mk = Object.keys(merged);
+          console.info('[catalogMedia] shards listed=' + _listed + ' fetched=' + _got +
+            ' | mergedKeys=' + mk.length +
+            ' cpn:iconImg=' + mk.filter(k => k.indexOf('cpn:') === 0 && k.indexOf(':iconImg') > 0).length +
+            ' | unflat campaigns=' + _len(inc, 'campaigns') + ' pageGuides=' + _len(inc, 'pageGuides') +
+            ' nodeImgs=' + nodeImgs + ' | adopted=' + _adopt +
+            ' (incScore=' + incScore + ' curScore=' + curScore + ')');
+        } catch (e) {}
       } else {
         // Local-only assets win on id collision so a player's personal uploads
         // aren't stomped by the public catalog merge.
@@ -22545,6 +22561,12 @@ async function cloudFetchCatalogArt() {
   // art-fetch failure would leave stripped covers/tombstone cached until a
   // future successful fetch. Re-persisting on success keeps IDB full-res.
   _rehydrateCatalogMedia();
+  try {
+    const c0 = (Catalog && Array.isArray(Catalog.campaigns)) ? Catalog.campaigns[0] : null;
+    const ni = (c0 && Array.isArray(c0.nodes)) ? c0.nodes.filter(n => n && n.iconImg).length : 0;
+    console.info('[catalogMedia] AFTER rehydrate → Catalog.campaigns=' + ((Catalog && Catalog.campaigns) ? Catalog.campaigns.length : 0) +
+      ' node images on campaign[0]=' + ni);
+  } catch (e) {}
   try { if (typeof _persistCatalog === 'function') _persistCatalog(); } catch (e) {}
   return { ok: true };
 }

@@ -31717,6 +31717,52 @@ function _baseAlerts() {
     return out.slice(0, 7);
   } catch (e) { return null; }
 }
+function _baseRoster() {
+  // The REAL roster: the player's used heroes (level/kills tracked in
+  // Profile.heroes) + units currently parked at the camp.
+  try {
+    const ini = (nm) => {
+      const w = String(nm || '?').replace(/[^A-Za-z0-9 ]/g, ' ').trim().split(/\s+/).filter(Boolean);
+      if (!w.length) return '?';
+      return (w.length === 1 ? w[0].slice(0, 2) : (w[0][0] + w[w.length - 1][0])).toUpperCase();
+    };
+    const out = [];
+    const H = (typeof Profile !== 'undefined' && Profile.heroes) || {};
+    Object.keys(H).forEach((id) => {
+      const h = H[id] || {};
+      let c = null;
+      try { c = (typeof _resolveAnyCard === 'function') ? _resolveAnyCard(id) : null; } catch (e) {}
+      const nm = (c && c.name) || id;
+      const lv = h.level || 1;
+      out.push({
+        i: ini(nm), n: nm, t: 'Lv ' + lv, state: 'on',
+        tip: 'Hero · Lv ' + lv + (h.kills ? ' · ' + h.kills + ' kills' : '') + (h.wins ? ' · ' + h.wins + ' wins' : ''),
+        _s: 1000 + lv,
+      });
+    });
+    const slots = (typeof Camp !== 'undefined' && Array.isArray(Camp.slots)) ? Camp.slots : [];
+    slots.forEach((s) => {
+      if (!s || !s.refId) return;
+      let c = null;
+      try { c = (typeof _resolveAnyCard === 'function') ? _resolveAnyCard(s.refId) : null; } catch (e) {}
+      const nm = (c && c.name) || s.refId;
+      let phase = 'rest';
+      try { const a = (typeof campActivityState === 'function') ? campActivityState(s) : null; if (a && a.phase) phase = a.phase; } catch (e) {}
+      const running = phase === 'running';
+      out.push({
+        i: ini(nm), n: nm,
+        t: running ? 'DEPLOY' : 'CAMP',
+        state: running ? 'busy' : 'on',
+        tip: 'Parked unit · ' + (running ? 'on deployment' : 'resting / gaining XP'),
+        _s: running ? 500 : 400,
+      });
+    });
+    out.sort((a, b) => (b._s || 0) - (a._s || 0));
+    out.forEach((o) => { delete o._s; });
+    if (!out.length) return [{ i: '—', n: 'No crew yet', t: '', state: 'on', tip: 'Level a hero or park units at the camp.' }];
+    return out.slice(0, 30);
+  } catch (e) { return null; }
+}
 function _baseSendData() {
   try {
     const f = document.getElementById('base-builder-frame');
@@ -31725,38 +31771,74 @@ function _baseSendData() {
       resources: _baseBridgeResources(),
       threat: _baseThreat(),
       alerts: _baseAlerts(),
+      roster: _baseRoster(),
     }, '*');
   } catch (e) {}
 }
+// Leave the bunker GENTLY — fade the iframe + back button out, THEN navigate
+// (a hard screen swap mid-frame is the jarring cut the player noticed). The
+// next render() removes the already-invisible iframe, so the exit is smooth.
+function _baseLeave() {
+  try {
+    const f = document.getElementById('base-builder-frame');
+    const b = document.getElementById('base-builder-back');
+    if (f) f.style.opacity = '0';
+    if (b) b.style.opacity = '0';
+  } catch (e) {}
+  setTimeout(function () {
+    try { App.screen = 'title'; App.titleHub = 'field'; if (typeof render === 'function') render(); } catch (e) {}
+  }, 300);
+}
 function mountBaseBuilder() {
   try {
-    const FID = 'base-builder-frame', BID = 'base-builder-back';
+    const FID = 'base-builder-frame', BID = 'base-builder-back', GID = 'base-builder-bg';
     let f = document.getElementById(FID), b = document.getElementById(BID);
+    let g = document.getElementById(GID);
     const onCamp = (typeof App !== 'undefined' && App.screen === 'camp');
     if (!onCamp) {
-      if (f) f.remove(); if (b) b.remove();
+      if (f) f.remove(); if (b) b.remove(); if (g) g.remove();
       if (App && App._baseMsgBound) { try { window.removeEventListener('message', App._baseMsgHandler); } catch (e) {} App._baseMsgBound = false; }
       return;
+    }
+    if (!g) {
+      // Opaque dark backdrop UNDER the iframe so the old camp DOM never
+      // flashes through while the bunker fades in/out (clean dark↔bunker).
+      g = document.createElement('div');
+      g.id = GID;
+      g.style.cssText = 'position:fixed;inset:0;z-index:2147483299;background:#0a0612';
+      document.body.appendChild(g);
     }
     if (!f) {
       f = document.createElement('iframe');
       f.id = FID; f.src = 'base/index.html';
-      f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0a0612';
+      // Start transparent over the dark game backdrop and ease IN once the
+      // bunker's React tree has painted — no black flash / hard cut.
+      f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0a0612;opacity:0;transition:opacity .5s ease';
+      f.onload = function () {
+        try { requestAnimationFrame(function () { f.style.opacity = '1'; }); } catch (e) { f.style.opacity = '1'; }
+        // The bunker IS the camp — keep the camp ambience playing.
+        try { if (typeof playCampAmbientMusic === 'function') playCampAmbientMusic(); } catch (e) {}
+      };
       document.body.appendChild(f);
+      // Belt-and-suspenders: assert camp music the instant we open the bunker
+      // (the click is the user gesture, so autoplay is allowed here).
+      try { if (typeof playCampAmbientMusic === 'function') playCampAmbientMusic(); } catch (e) {}
     }
     if (!b) {
       b = document.createElement('button');
       b.id = BID; b.textContent = '← Menu';
-      b.style.cssText = "position:fixed;left:14px;top:12px;z-index:2147483320;cursor:pointer;font-family:'Cinzel',serif;font-weight:800;font-size:0.85rem;color:#ffe9b8;background:linear-gradient(180deg,rgba(60,40,110,0.95),rgba(28,16,52,0.96));border:1px solid rgba(212,175,55,0.6);border-radius:999px;padding:0.5rem 1rem;box-shadow:0 6px 18px rgba(0,0,0,0.6)";
-      b.onclick = () => { App.screen = 'title'; App.titleHub = 'field'; try { if (typeof render === 'function') render(); } catch (e) {} };
+      b.title = 'Return to the main menu';
+      b.style.cssText = "position:fixed;left:14px;top:12px;z-index:2147483320;cursor:pointer;font-family:'Cinzel',serif;font-weight:800;font-size:0.85rem;color:#ffe9b8;background:linear-gradient(180deg,rgba(60,40,110,0.95),rgba(28,16,52,0.96));border:1px solid rgba(212,175,55,0.6);border-radius:999px;padding:0.5rem 1rem;box-shadow:0 6px 18px rgba(0,0,0,0.6);opacity:0;transition:opacity .4s ease";
+      b.onclick = () => { _baseLeave(); };
       document.body.appendChild(b);
+      try { requestAnimationFrame(function () { b.style.opacity = '1'; }); } catch (e) { b.style.opacity = '1'; }
     }
     if (!App._baseMsgBound) {
       App._baseMsgHandler = function (e) {
         const d = e && e.data;
         if (!d || typeof d !== 'object') return;
         if (d.type === 'base:ready') _baseSendData();
-        else if (d.type === 'base:back') { App.screen = 'title'; App.titleHub = 'field'; try { if (typeof render === 'function') render(); } catch (e2) {} }
+        else if (d.type === 'base:back') { _baseLeave(); }
         else if (d.type === 'base:action') {
           // A bunker room invoked a REAL system. Modals render in the parent
           // at a higher z-index than the iframe, so they appear over it.

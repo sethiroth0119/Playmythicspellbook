@@ -28,7 +28,7 @@ function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
   if (window.__BRIDGE && typeof window.__BRIDGE.threat === "number") threat = window.__BRIDGE.threat;
   return (
     <div className="hud-top">
-      <div className="brand">
+      <div className="brand" title="Your underground camp — Sector-7, depth -72m">
         <div className="brand-mark" />
         <div>
           <div className="brand-name">BUNKER</div>
@@ -38,7 +38,16 @@ function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
 
       <div className="res-bar">
         {((window.__BRIDGE && window.__BRIDGE.resources) || window.RESOURCES).map((r) => (
-          <div className="res" key={r.key}>
+          <div
+            className="res"
+            key={r.key}
+            title={
+              r.tip ||
+              `${r.label}: ${r.val}${r.unit ? " " + r.unit : ""}` +
+                (r.delta ? `  (${r.delta}${r.neg ? " — draining" : ""})` : "") +
+                "\nSecured camp stockpile. Spent on crafting & upkeep."
+            }
+          >
             <span className="res-glyph">{Ic[r.key] || <span style={{ fontSize: 13 }}>{r.glyph || ""}</span>}</span>
             <div className="res-val">
               <span className="res-num">
@@ -52,15 +61,21 @@ function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
       </div>
 
       <div className="hud-clock">
-        <div className="clock-block">
+        <div className="clock-block" title="Day cycle since the camp was founded">
           <span className="clock-lbl">Cycle</span>
           <span className="clock-val day">{day}</span>
         </div>
-        <div className="clock-block">
+        <div className="clock-block" title="Bunker local clock">
           <span className="clock-lbl">Local Time</span>
           <span className="clock-val">{clock}</span>
         </div>
-        <div className="clock-block">
+        <div
+          className="clock-block"
+          title={
+            `Raider threat: ${threat}%\n` +
+            "Chance the camp gets attacked. Driven by supply shortages & time since the last raid — keep Ammo stocked."
+          }
+        >
           <span className="clock-lbl">Threat</span>
           <span className="clock-val threat">{threat}%</span>
           <div className="threat-meter"><i style={{ width: `${threat}%` }} /></div>
@@ -75,12 +90,18 @@ function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
 // ───────────────────────────────────────────────────────────────
 function LeftColumn() {
   const ALERTS = (window.__BRIDGE && window.__BRIDGE.alerts) || window.ALERTS;
+  const ROSTER = (window.__BRIDGE && window.__BRIDGE.roster) || window.ROSTER;
+  const plain = (s) => String(s || "").replace(/<[^>]+>/g, "");
   return (
     <aside className="hud-left">
-      <div className="left-section alerts">
+      <div className="left-section alerts" title="Live camp alerts — world events, supply shortages & raider threat">
         <div className="sec-hd">Alerts <span className="count">{ALERTS.length}</span></div>
         {ALERTS.map((a, i) => (
-          <div className={`alert ${a.sev}`} key={i}>
+          <div
+            className={`alert ${a.sev}`}
+            key={i}
+            title={`[${(a.sev || "info").toUpperCase()}] ${a.time ? a.time + " · " : ""}${plain(a.body)}`}
+          >
             <span className="alert-pulse" />
             <span
               className="alert-body"
@@ -91,16 +112,37 @@ function LeftColumn() {
         ))}
       </div>
 
-      <div className="left-section roster">
-        <div className="sec-hd">Roster <span className="count">{window.ROSTER.length}/31</span></div>
+      <div className="left-section roster" title="Your heroes & owned units stationed at the camp">
+        <div className="sec-hd">
+          Roster <span className="count">{ROSTER.length}</span>
+        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {window.ROSTER.slice(0, 9).map((p) => (
-            <div className={`roster-row ${p.state}`} key={p.i}>
+          {ROSTER.slice(0, 9).map((p, idx) => (
+            <div
+              className={`roster-row ${p.state}`}
+              key={idx}
+              title={
+                `${p.n}${p.t ? "  ·  " + p.t : ""}` +
+                (p.tip ? `\n${p.tip}` : "") +
+                `\nStatus: ${p.state === "hurt" ? "injured" : p.state === "busy" ? "deployed" : "ready"}`
+              }
+            >
               <span className="roster-avatar">{p.i}</span>
               <span className="roster-name">{p.n}</span>
               <span className="roster-tag">{p.t}</span>
             </div>
           ))}
+          {ROSTER.length > 9 && (
+            <div
+              className="roster-row"
+              style={{ opacity: 0.6, fontStyle: "italic" }}
+              title={`${ROSTER.length - 9} more on the roster`}
+            >
+              <span className="roster-avatar">+{ROSTER.length - 9}</span>
+              <span className="roster-name">more…</span>
+              <span className="roster-tag" />
+            </div>
+          )}
         </div>
       </div>
     </aside>
@@ -130,43 +172,52 @@ function BottomBar({ activeId, onSelect, speed, setSpeed, paused, setPaused }) {
               key={i}
               className={`minimap-cell ${c}`}
               onClick={() => onSelect(window.ROOMS[i].id)}
-              title={window.ROOMS[i].name}
+              title={
+                `${window.ROOMS[i].name}` +
+                (window.ROOMS[i].status ? `  ·  ${String(window.ROOMS[i].status).toUpperCase()}` : "") +
+                "\nClick to open this room"
+              }
             />
           ))}
         </div>
-        <div className="minimap-info">
+        <div className="minimap-info" title="Bunker overview map — each cell is a room">
           <b>SECTOR — 7</b>
           <span>9 rooms · 3 tiers · expandable</span>
         </div>
       </div>
 
       <div className="actions">
-        <button className="act primary">
+        <button className="act primary" title="Build a new room in an empty slot (hotkey: B)">
           {Ic.build}
           <span className="act-lbl">Build</span>
           <span className="act-hot">B</span>
         </button>
-        <a className="act" href="World Map.html" style={{ textDecoration: "none" }}>
+        <a
+          className="act"
+          href="World Map.html"
+          style={{ textDecoration: "none" }}
+          title="Open the World Map — expeditions & roguelite runs (hotkey: W)"
+        >
           {Ic.scout}
           <span className="act-lbl">World</span>
           <span className="act-hot">W</span>
         </a>
-        <button className="act">
+        <button className="act" title="Assign crew to rooms (hotkey: A)">
           {Ic.recruit}
           <span className="act-lbl">Assign</span>
           <span className="act-hot">A</span>
         </button>
-        <button className="act">
+        <button className="act" title="Research upgrades & blueprints (hotkey: R)">
           {Ic.research}
           <span className="act-lbl">Research</span>
           <span className="act-hot">R</span>
         </button>
-        <button className="act">
+        <button className="act" title="Send a scout team to reveal the map (hotkey: S)">
           {Ic.scout}
           <span className="act-lbl">Scout</span>
           <span className="act-hot">S</span>
         </button>
-        <button className="act">
+        <button className="act" title="Launch a raid sortie for loot (hotkey: X)">
           {Ic.raid}
           <span className="act-lbl">Sortie</span>
           <span className="act-hot">X</span>
@@ -174,15 +225,20 @@ function BottomBar({ activeId, onSelect, speed, setSpeed, paused, setPaused }) {
       </div>
 
       <div className="tick">
-        <button className="tick-pause" onClick={() => setPaused(!paused)}>
+        <button
+          className="tick-pause"
+          onClick={() => setPaused(!paused)}
+          title={paused ? "Resume time (Space)" : "Pause time (Space)"}
+        >
           {paused ? Ic.play : Ic.pause}
         </button>
-        <div className="tick-speed">
+        <div className="tick-speed" title="Simulation speed (keys 1 / 2 / 4)">
           {[1, 2, 4].map((s) => (
             <button
               key={s}
               className={speed === s ? "on" : ""}
               onClick={() => setSpeed(s)}
+              title={`Run at ×${s} speed`}
             >×{s}</button>
           ))}
         </div>

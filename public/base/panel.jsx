@@ -28,7 +28,7 @@ function Panel({ room, onClose }) {
             </em>
           </div>
         </div>
-        <button className="panel-close" onClick={onClose} aria-label="Close panel">✕</button>
+        <button className="panel-close" onClick={onClose} aria-label="Close panel" title="Close (Esc)">✕</button>
       </header>
 
       <div className="panel-body">
@@ -37,19 +37,19 @@ function Panel({ room, onClose }) {
           <section className="panel-section">
             <h4>Output</h4>
             <div className="kv-grid">
-              <div className="kv">
+              <div className="kv" title={`Primary output of this room: ${room.output.label} ${room.output.value} ${room.output.unit || ""}`}>
                 <span className="k">{room.output.label}</span>
                 <span className={`v ${room.output.tone}`}>{room.output.value} <small>{room.output.unit}</small></span>
               </div>
-              <div className="kv">
+              <div className="kv" title={`Secondary output: ${room.secondary.label} ${room.secondary.value} ${room.secondary.unit || ""}`}>
                 <span className="k">{room.secondary.label}</span>
                 <span className={`v ${room.secondary.tone}`}>{room.secondary.value} <small>{room.secondary.unit}</small></span>
               </div>
-              <div className="kv">
+              <div className="kv" title={`Crew assigned: ${room.workers.on} of ${room.workers.max} slots filled`}>
                 <span className="k">WORKERS</span>
                 <span className="v">{room.workers.on} / {room.workers.max}</span>
               </div>
-              <div className="kv">
+              <div className="kv" title={room.cost.power > 0 ? `Consumes ${Math.abs(room.cost.power)} MW of power` : `Generates ${Math.abs(room.cost.power)} MW of power`}>
                 <span className="k">UPKEEP</span>
                 <span className="v bronze">{room.cost.power > 0 ? "−" : "+"}{Math.abs(room.cost.power)} <small>MW</small></span>
               </div>
@@ -62,7 +62,11 @@ function Panel({ room, onClose }) {
             <h4>Assigned crew · {room.crew.filter((c) => !c.empty).length}/{room.workers.max}</h4>
             <div className="assign-list">
               {room.crew.map((c, i) => (
-                <div className={`assign-row ${c.empty ? "empty" : ""}`} key={i}>
+                <div
+                  className={`assign-row ${c.empty ? "empty" : ""}`}
+                  key={i}
+                  title={c.empty ? "Empty crew slot — assign someone here" : `${c.n} · ${c.role || "crew"} · efficiency ${c.st}`}
+                >
                   <span className="assign-avatar">{c.i}</span>
                   <span>
                     {c.n}
@@ -84,7 +88,11 @@ function Panel({ room, onClose }) {
                 const cur  = i + 1 === room.level;
                 const cls  = done ? "done" : cur ? "cur" : "";
                 return (
-                  <div className={`upg-tier ${cls}`} key={i}>
+                  <div
+                    className={`upg-tier ${cls}`}
+                    key={i}
+                    title={`${u.t} — ${u.d}${done ? "  (built)" : cur ? "  (current level)" : "  (locked — upgrade to unlock)"}`}
+                  >
                     <span className="t">{u.t}</span>
                     <span className="v">{u.d.split(",")[0]}</span>
                     <span className="desc">{u.d}</span>
@@ -110,7 +118,12 @@ function Panel({ room, onClose }) {
                 { id: "SUM", n: "Summoning Hall",  tag: "card → unit" },
                 { id: "WKS", n: "Workshop",        tag: "+ scrap rate" },
               ].map((b) => (
-                <div className="assign-row" key={b.id} style={{ cursor: "pointer" }}>
+                <div
+                  className="assign-row"
+                  key={b.id}
+                  style={{ cursor: "pointer" }}
+                  title={`Build ${b.n} — ${b.tag}`}
+                >
                   <span className="assign-avatar">{b.id}</span>
                   <span>{b.n}</span>
                   <span className="assign-stat"><b>{b.tag}</b></span>
@@ -124,14 +137,15 @@ function Panel({ room, onClose }) {
       <footer className="panel-cta">
         {isEmpty ? (
           <>
-            <button className="cta" onClick={onClose}>Cancel</button>
-            <button className="cta primary">Begin Build <span className="cost">−240 ⛁</span></button>
+            <button className="cta" onClick={onClose} title="Cancel and close this panel">Cancel</button>
+            <button className="cta primary" title="Start construction here (costs 240 scrap)">Begin Build <span className="cost">−240 ⛁</span></button>
           </>
         ) : room.bridge ? (
           <>
-            <button className="cta" onClick={onClose}>Close</button>
+            <button className="cta" onClick={onClose} title="Close (Esc)">Close</button>
             <button
               className="cta primary"
+              title={`Opens the real ${room.name} system`}
               onClick={() => {
                 try { window.parent.postMessage({ type: "base:action", action: room.bridge, room: room.id }, "*"); } catch (e) {}
               }}
@@ -141,8 +155,8 @@ function Panel({ room, onClose }) {
           </>
         ) : (
           <>
-            <button className="cta">Reassign</button>
-            <button className="cta primary">
+            <button className="cta" title="Reassign the crew working in this room">Reassign</button>
+            <button className="cta primary" title={`Upgrade this room to the next tier (costs ${room.cost.scrap} scrap)`}>
               Upgrade <span className="cost">−{room.cost.scrap} ⛁</span>
             </button>
           </>

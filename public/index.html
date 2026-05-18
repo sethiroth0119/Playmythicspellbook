@@ -32705,6 +32705,10 @@ function mountBaseBuilder() {
             // Hire NPC staff / station units to run the camp rooms.
             if (typeof openCampWorkersModal === 'function') openCampWorkersModal();
           }
+          else if (d.action === 'ledger') {
+            // 📒 My Resources — full owned-resource ledger, from the camp.
+            if (typeof openResourceLedger === 'function') openResourceLedger();
+          }
           else if (d.action === 'worldbattle' && d.zone) {
             // A World-Map district — start a real AI battle for its loot.
             if (typeof worldBattleStart === 'function') worldBattleStart(d.zone);
@@ -59612,6 +59616,11 @@ const RLC_CONTRABAND = {
 };
 const RLC_HEAT_SCP_LOCK = 12;  // heat ≥ this → SCP-surveillance nodes lock
 const RLC_HEAT_LVL_DIV  = 4;   // every N heat → +1 enemy level
+// 🧭 Travel drain — every node you advance to burns logistics from secured
+// camp storage (the same ledger crafting/the bar use). Wounded = +medicine.
+// Can't pay → the squad weakens (HP), never a hard stop.
+const RLC_TRAVEL_DRAIN  = { fuel: 1, food: 1 };
+const RLC_STARVE_HP_PCT = 0.08;
 function _rlcHeat(run) {
   try {
     const h = (run && run.haul) || {};
@@ -59768,6 +59777,31 @@ function rlcEnterNode(nodeId) {
   }
   run.currentNodeId = nodeId; try { saveProfile(); } catch (e) {}
   const proceed = () => {
+    // 🧭 Travel drain — advancing the route burns logistics from secured
+    // camp storage. Departure (start) node is free. Wounded squads also
+    // burn medicine. Can't pay → exhaustion damage (never a hard stop).
+    try {
+      const _isStart = (typeof _rlcStartNodes === 'function') && _rlcStartNodes(camp).some(s => s && s.id === nodeId);
+      if (!_isStart) {
+        if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+        const short = [];
+        for (const k in RLC_TRAVEL_DRAIN) {
+          const need = RLC_TRAVEL_DRAIN[k];
+          if ((Profile.salvage[k] | 0) >= need) Profile.salvage[k] -= need;
+          else { Profile.salvage[k] = 0; short.push(k); }
+        }
+        if (run.heroHP < run.maxHP) {
+          if ((Profile.salvage.medicine | 0) >= 1) Profile.salvage.medicine -= 1;
+          else short.push('medicine');
+        }
+        if (short.length) {
+          const dmg = Math.max(1, Math.ceil(run.maxHP * RLC_STARVE_HP_PCT));
+          run.heroHP = Math.max(1, run.heroHP - dmg);
+          try { showToast('⚠ Out of ' + short.map(k => (_SALVAGE_BY_ID[k] || {}).name || k).join(' / ') + ' on the road — the squad weakens (−' + dmg + ' HP).', 3800); } catch (e) {}
+        }
+        try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+      }
+    } catch (e) {}
     if (['battle','elite','boss','finalBoss'].indexOf(node.type) >= 0) { rlcStartBattle(node); return; }
     if (node.type === 'medical') { App._rlcNodeId = nodeId; App.screen = 'rlcMedical'; return render(); }
     if (node.type === 'market')  { App._rlcNodeId = nodeId; App.screen = 'rlcShop';    return render(); }

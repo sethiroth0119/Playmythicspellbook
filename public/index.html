@@ -18601,15 +18601,21 @@ function addRes(id, n) {
 function canAffordResources(cost) {
   if (!cost || typeof cost !== 'object') return true;
   const R = _ensureResources();
-  return RESOURCE_IDS.every(id => (R[id] || 0) >= (cost[id] || 0));
+  // Check every resource the cost actually names (works for all ~149).
+  return Object.keys(cost).every(id => (R[id] || 0) >= (cost[id] || 0));
 }
 function spendResources(cost) {
+  if (!cost || typeof cost !== 'object') return true;
   if (!canAffordResources(cost)) return false;
   const R = _ensureResources();
-  RESOURCE_IDS.forEach(id => { if (cost[id]) R[id] = Math.max(0, (R[id] || 0) - cost[id]); });
+  Object.keys(cost).forEach(id => { if (cost[id]) R[id] = Math.max(0, (R[id] || 0) - cost[id]); });
   return true;
 }
-function _meta(id) { return RESOURCES.find(r => r.id === id); }
+function _meta(id) {
+  return RESOURCES.find(r => r.id === id)
+    || (typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[id])
+    || { id: id, name: id, icon: '📦' };
+}
 // Compact "🥫2 ⛓️3" HTML for a cost object (admins / craft buttons).
 function resourceCostHtml(cost, opts) {
   opts = opts || {};
@@ -18648,7 +18654,9 @@ function _campForgeDiscount(cost) {
 function getCardCraftCost(card) {
   if (card && card.craftCost && typeof card.craftCost === 'object') {
     const c = {};
-    RESOURCE_IDS.forEach(id => { if (card.craftCost[id] > 0) c[id] = Math.floor(card.craftCost[id]); });
+    // Any of the full ~149-resource set can be a craft cost — honor every
+    // id the admin set, not just the legacy 10.
+    Object.keys(card.craftCost).forEach(id => { const v = Math.floor(card.craftCost[id]); if (v > 0) c[id] = v; });
     if (Object.keys(c).length) return _campForgeDiscount(c);
   }
   const base = _CRAFT_DEFAULT_BY_RARITY[(card && card.rarity) || 'common'] || _CRAFT_DEFAULT_BY_RARITY.common;
@@ -31829,6 +31837,50 @@ function openCampWorkersModal() {
     build();
   } catch (e) {}
 }
+// 📒 Resource Ledger — every resource in the game + how much the player
+// holds (secured camp storage). Owned first. So players know what they
+// have to craft / sell / trade / take to the Black Market. Self-contained
+// overlay (renders above the bunker iframe like the other camp modals).
+function openResourceLedger() {
+  try {
+    const ID = 'res-ledger-modal';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const led = (typeof _ensureSalvageLedger === 'function') ? _ensureSalvageLedger()
+              : (typeof _ensureResources === 'function') ? _ensureResources()
+              : (Profile.salvage || {});
+    const all = (typeof SALVAGE_RES !== 'undefined' ? SALVAGE_RES : []).map(r => ({
+      id: r.id, name: r.name || r.id, icon: r.icon || '📦', n: led[r.id] | 0,
+    }));
+    all.sort((a, b) => (b.n - a.n) || a.name.localeCompare(b.name));
+    const ownedTypes = all.filter(r => r.n > 0).length;
+    const totalUnits = all.reduce((s, r) => s + r.n, 0);
+    const rowHtml = (r) => '<label data-rlrow="' + escapeHtml(r.name.toLowerCase())
+      + '" style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:0.85rem;background:' + (r.n > 0 ? 'rgba(127,220,160,0.10)' : 'rgba(184,136,255,0.05)')
+      + ';border:1px solid ' + (r.n > 0 ? 'rgba(127,220,160,0.3)' : 'rgba(184,136,255,0.12)')
+      + ';padding:4px 9px;border-radius:7px;min-width:150px;flex:1 1 170px">'
+      + '<span style="color:' + (r.n > 0 ? '#e8ffe8' : '#9a8fbf') + '">' + r.icon + ' ' + escapeHtml(r.name) + '</span>'
+      + '<strong style="color:' + (r.n > 0 ? '#9be8b8' : '#6a6080') + '">' + r.n + '</strong></label>';
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483640;display:flex;align-items:center;justify-content:center;background:rgba(4,2,10,0.78);backdrop-filter:blur(2px)';
+    ov.innerHTML =
+      '<div style="max-width:min(620px,95vw);max-height:88vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(26,16,46,0.99),rgba(12,7,22,0.99));border:2px solid rgba(127,220,160,0.5);border-radius:16px;padding:16px 18px;box-shadow:0 24px 70px rgba(0,0,0,0.85)">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:4px">' +
+          '<div style="font-family:\'Cinzel\',serif;font-size:1.15rem;font-weight:800;color:#9be8b8">📒 My Resources</div>' +
+          '<button id="rl-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✖ Close</button>' +
+        '</div>' +
+        '<div class="small-text ink-dim" style="margin-bottom:8px">' + ownedTypes + ' / ' + all.length + ' resource types held · ' + totalUnits + ' total units. Use these to craft, sell, trade, or take to the Black Market.</div>' +
+        '<input id="rl-q" placeholder="filter resources…" oninput="(function(v){v=(v||\'\').toLowerCase();var n=document.querySelectorAll(\'#rl-grid [data-rlrow]\');for(var i=0;i&lt;n.length;i++){var k=n[i].getAttribute(\'data-rlrow\')||\'\';n[i].style.display=(!v||k.indexOf(v)>=0)?\'\':\'none\';}})(this.value)" style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:0.5rem 0.7rem;border-radius:8px;border:1px solid rgba(127,220,160,0.3);background:rgba(15,8,30,0.65);color:#e8ffe8">' +
+        '<div id="rl-grid" style="overflow:auto;display:flex;flex-wrap:wrap;gap:6px;padding:3px;align-content:flex-start">' + all.map(rowHtml).join('') + '</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.onclick = (e) => { if (e.target === ov) close(); };
+    const x = document.getElementById('rl-x'); if (x) x.onclick = close;
+    const onKey = (ev) => { if (ev.key === 'Escape') { close(); window.removeEventListener('keydown', onKey); } };
+    window.addEventListener('keydown', onKey);
+  } catch (e) {}
+}
 function openForgeCraftModal() {
   try {
     // 🔒 HARD GATE — the Card Forge does nothing until it's staffed by a
@@ -31872,7 +31924,10 @@ function openForgeCraftModal() {
         '<div style="max-width:min(560px,95vw);max-height:90vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(26,16,46,0.99),rgba(12,7,22,0.99));border:2px solid rgba(212,175,55,0.6);border-radius:16px;padding:16px 18px;box-shadow:0 24px 70px rgba(0,0,0,0.85)">' +
           '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px">' +
             '<div style="font-family:\'Cinzel\',serif;font-size:1.2rem;font-weight:800;color:#ffd166">⚒ Card Forge</div>' +
-            '<button id="fc-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✖ Close</button>' +
+            '<div style="display:flex;gap:8px;align-items:center">' +
+              '<button id="fc-res" title="See every resource you own — for crafting, selling, trading or the Black Market" style="cursor:pointer;border:1px solid rgba(127,220,160,0.5);background:rgba(40,70,45,0.4);color:#bfe9c8;border-radius:8px;padding:0.35rem 0.7rem;font-weight:700">📒 My Resources</button>' +
+              '<button id="fc-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✖ Close</button>' +
+            '</div>' +
           '</div>' +
           '<div class="small-text ink-dim" style="margin-bottom:8px">Forge cards with secured camp resources (Workshop · Camp economy).</div>' +
           '<input id="fc-q" placeholder="Search cards…" value="' + escapeHtml(App._forgeQ || '') + '" style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:0.5rem 0.7rem;border-radius:8px;border:1px solid rgba(184,136,255,0.3);background:rgba(15,8,30,0.65);color:#e8e0ff;font-family:\'Crimson Text\',serif">' +
@@ -31882,6 +31937,7 @@ function openForgeCraftModal() {
       const close = () => ov.remove();
       ov.onclick = (e) => { if (e.target === ov) close(); };
       const xb = document.getElementById('fc-x'); if (xb) xb.onclick = close;
+      const rb = document.getElementById('fc-res'); if (rb) rb.onclick = () => { if (typeof openResourceLedger === 'function') openResourceLedger(); };
       const qi = document.getElementById('fc-q');
       if (qi) qi.oninput = () => { App._forgeQ = qi.value; const v = qi.value; build(); const n = document.getElementById('fc-q'); if (n) { n.focus(); n.value = v; n.setSelectionRange(v.length, v.length); } };
       ov.querySelectorAll('[data-forge]').forEach(btn => btn.onclick = () => {
@@ -41429,9 +41485,10 @@ function renderCardEditor() {
     <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.8rem;margin-top:0.4rem">
       <label style="font-weight:700;color:#ffd166">🧰 Crafting Cost (resources)</label>
       <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">What it costs players to craft this. Leave all blank to auto-use the rarity default (${escapeHtml(JSON.stringify(_CRAFT_DEFAULT_BY_RARITY[card.rarity || 'common'] || {}))}).</div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px">
-        ${RESOURCES.map(r => `<label style="display:flex;align-items:center;gap:4px;font-size:0.85rem">${r.icon} ${escapeHtml(r.name)}
-          <input type="number" min="0" max="999" value="${_cc[r.id] || ''}" data-craftcost="${r.id}" style="width:62px"></label>`).join('')}
+      <input type="text" id="craftcost-filter" placeholder="filter resources…" oninput="(function(v){v=(v||'').toLowerCase();var n=document.querySelectorAll('#craftcost-grid [data-ccrow]');for(var i=0;i&lt;n.length;i++){var k=n[i].getAttribute('data-ccrow')||'';n[i].style.display=(!v||k.indexOf(v)>=0)?'':'none';}})(this.value)" style="width:100%;max-width:320px;margin:0 0 0.5rem;padding:0.35rem 0.55rem;background:#140d22;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:6px">
+      <div id="craftcost-grid" style="display:flex;flex-wrap:wrap;gap:8px;max-height:230px;overflow:auto;padding:3px 4px;border:1px solid rgba(184,136,255,0.18);border-radius:8px">
+        ${((typeof SALVAGE_RES !== 'undefined' && SALVAGE_RES.length) ? SALVAGE_RES : RESOURCES).map(r => `<label data-ccrow="${escapeHtml(String(r.name || r.id).toLowerCase())}" style="display:flex;align-items:center;gap:4px;font-size:0.85rem;background:rgba(184,136,255,0.06);padding:3px 7px;border-radius:6px">${r.icon || '📦'} ${escapeHtml(r.name || r.id)}
+          <input type="number" min="0" max="999" value="${_cc[r.id] || ''}" data-craftcost="${r.id}" style="width:58px"></label>`).join('')}
       </div>
     </div>
   ` : '';

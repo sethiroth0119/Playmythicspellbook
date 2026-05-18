@@ -92,7 +92,10 @@ function LeftColumn() {
   const ALERTS = (window.__BRIDGE && window.__BRIDGE.alerts) || window.ALERTS;
   const ROSTER = (window.__BRIDGE && window.__BRIDGE.roster) || window.ROSTER;
   const BAG = (window.__BRIDGE && window.__BRIDGE.bag) || null;
+  const bagLocked = !!(BAG && BAG.locked);
+  const bagAccent = bagLocked ? "#7ec0ff" : "#ffd166";
   const depositBag = () => {
+    if (bagLocked) return;
     try { window.parent.postMessage({ type: "base:action", action: "deposit" }, "*"); } catch (e) {}
   };
   const plain = (s) => String(s || "").replace(/<[^>]+>/g, "");
@@ -111,16 +114,20 @@ function LeftColumn() {
       {BAG && BAG.has && (
         <div
           className="left-section bag"
-          title="Loot you're carrying is UNSECURED — it's lost if you fall in battle. Deposit it here to add it to the secured camp stockpile (usable for crafting, upkeep & trade)."
+          title={
+            bagLocked
+              ? "You're on an expedition — the bunker can't bank loot mid-run. Reach a 🚚 Convoy node (or extract at the boss) to secure it."
+              : "Loot you're carrying is UNSECURED — it's lost if you fall in battle. Deposit it here to add it to the secured camp stockpile (usable for crafting, upkeep & trade)."
+          }
           style={{
-            border: "1px solid var(--amber, #ffd166)",
-            boxShadow: "0 0 18px rgba(255,209,102,0.22)",
+            border: `1px solid ${bagAccent}`,
+            boxShadow: `0 0 18px ${bagLocked ? "rgba(126,192,255,0.22)" : "rgba(255,209,102,0.22)"}`,
           }}
         >
-          <div className="sec-hd" style={{ color: "var(--amber, #ffd166)" }}>
+          <div className="sec-hd" style={{ color: bagAccent }}>
             Field Bag{" "}
             <span className="count">
-              {BAG.used}/{BAG.cap} · unsecured
+              {BAG.used}/{BAG.cap} · {bagLocked ? "on expedition" : "unsecured"}
             </span>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "4px 0 8px" }}>
@@ -132,8 +139,8 @@ function LeftColumn() {
                   fontSize: 11,
                   padding: "2px 7px",
                   borderRadius: 9,
-                  border: "1px solid rgba(255,209,102,0.45)",
-                  background: "rgba(255,209,102,0.12)",
+                  border: `1px solid ${bagLocked ? "rgba(126,192,255,0.45)" : "rgba(255,209,102,0.45)"}`,
+                  background: bagLocked ? "rgba(126,192,255,0.12)" : "rgba(255,209,102,0.12)",
                   color: "var(--text-1, #ffe9b8)",
                 }}
               >
@@ -141,24 +148,45 @@ function LeftColumn() {
               </span>
             ))}
           </div>
-          <button
-            onClick={depositBag}
-            title="Move all carried loot into secured camp storage"
-            style={{
-              width: "100%",
-              cursor: "pointer",
-              fontWeight: 800,
-              fontSize: 12,
-              letterSpacing: ".02em",
-              padding: "7px 10px",
-              borderRadius: 9,
-              border: "1px solid var(--amber, #ffd166)",
-              background: "linear-gradient(180deg,#caa23e,#8a6a1e)",
-              color: "#1a1206",
-            }}
-          >
-            📥 Deposit All to Camp Storage
-          </button>
+          {bagLocked ? (
+            <div
+              title="Banking is locked while a roguelite run is active. Use a 🚚 Convoy node in the run to extract loot to camp."
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                textAlign: "center",
+                fontWeight: 800,
+                fontSize: 11.5,
+                letterSpacing: ".02em",
+                padding: "7px 10px",
+                borderRadius: 9,
+                border: "1px solid rgba(126,192,255,0.55)",
+                background: "rgba(126,192,255,0.10)",
+                color: "#bcdcff",
+              }}
+            >
+              🔒 On expedition — bank loot at a Convoy
+            </div>
+          ) : (
+            <button
+              onClick={depositBag}
+              title="Move all carried loot into secured camp storage"
+              style={{
+                width: "100%",
+                cursor: "pointer",
+                fontWeight: 800,
+                fontSize: 12,
+                letterSpacing: ".02em",
+                padding: "7px 10px",
+                borderRadius: 9,
+                border: "1px solid var(--amber, #ffd166)",
+                background: "linear-gradient(180deg,#caa23e,#8a6a1e)",
+                color: "#1a1206",
+              }}
+            >
+              📥 Deposit All to Camp Storage
+            </button>
+          )}
         </div>
       )}
 

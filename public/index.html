@@ -31863,7 +31863,11 @@ function _baseFieldBag() {
     });
     const used = (typeof _bagSlots === 'function') ? _bagSlots(bag) : 0;
     const cap = (typeof _fieldBagCap === 'function') ? _fieldBagCap() : 36;
-    return { items: items, used: used, cap: cap, has: keys.length > 0 };
+    // 🔒 On expedition — depositing at the bunker is locked while a roguelite
+    // run is live. Loot must be banked at a 🚚 Convoy node instead.
+    const r = (typeof Profile !== 'undefined' && Profile.rlcRun) ? Profile.rlcRun : null;
+    const locked = !!(r && !r.isComplete && !r.isFailed);
+    return { items: items, used: used, cap: cap, has: keys.length > 0, locked: locked };
   } catch (e) { return null; }
 }
 function _baseSendData() {
@@ -31983,6 +31987,10 @@ function mountBaseBuilder() {
           else if (d.action === 'deposit') {
             // Drop the carried field bag into SECURED camp storage (real).
             try {
+              // 🔒 Defense in depth — never bank at the bunker mid-run, even
+              // if a stale UI sends it. Loot must go through a 🚚 Convoy.
+              const _rr = (typeof Profile !== 'undefined' && Profile.rlcRun) ? Profile.rlcRun : null;
+              if (_rr && !_rr.isComplete && !_rr.isFailed) { _baseSendData(); return; }
               const moved = (typeof _depositFieldBag === 'function') ? _depositFieldBag() : {};
               const line = (typeof _resLine === 'function') ? _resLine(moved) : '';
               try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e2) {}

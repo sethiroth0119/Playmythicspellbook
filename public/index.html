@@ -22046,9 +22046,29 @@ async function cloudFetchCatalog() {
 }
 
 // ---- Admin-only: publish the entire local Forge content as the new catalog ----
-async function cloudPublishCatalog() {
+async function cloudPublishCatalog(opts) {
+  opts = opts || {};
   if (!initCloud() || !Profile.cloud.signedIn) return { ok: false, error: 'Not signed in.' };
   if (typeof isAdmin === 'function' && !isAdmin()) return { ok: false, error: 'Admin-only.' };
+  // 🛡️ ANTI-WIPE GUARD. The catalog is built from THIS device's local Forge.
+  // If you open Pricing Admin on a device whose local Forge is empty (a fresh
+  // browser, cleared storage, or a device you never authored on), publishing
+  // would overwrite the good shared catalog with NOTHING — erasing every
+  // player's cards. Block it unless explicitly overridden.
+  try {
+    const localCards = (Forge.customCards || []).length;
+    const pubCards   = (Catalog.cards   || []).length;
+    if (!opts.force) {
+      if (localCards === 0 && pubCards > 0) {
+        return { ok: false, blocked: true,
+          error: `SAFETY BLOCK: this device's local Forge has 0 cards, but the published catalog has ${pubCards}. Publishing now would ERASE everyone's cards. Publish ONLY from the device where you built them. (Override only if you truly intend an empty catalog.)` };
+      }
+      if (pubCards >= 20 && localCards > 0 && localCards < Math.floor(pubCards * 0.5)) {
+        return { ok: false, blocked: true,
+          error: `SAFETY BLOCK: local Forge has ${localCards} cards but the published catalog has ${pubCards}. That large drop looks like a wipe, not an edit. Override only if this is intentional.` };
+      }
+    }
+  } catch (e) { /* guard must never crash the publish */ }
   try {
     // 📦 Snapshot the heavy catalog media (tombstone art + starter-deck cover
     // images + page-guide images) into Forge.catalogMedia BEFORE we build the
@@ -36997,7 +37017,15 @@ function renderPricingAdmin() {
   const bPub = document.getElementById('btn-publish-catalog');
   if (bPub) bPub.onclick = async () => {
     bPub.disabled = true; bPub.textContent = '…publishing';
-    const r = await cloudPublishCatalog();
+    let r = await cloudPublishCatalog();
+    if (r.blocked) {
+      bPub.disabled = false; bPub.textContent = '📚 Publish Cards/Heroes/Items/Packs';
+      if (!confirm('⚠ ' + r.error + '\n\nClick OK ONLY if you really want to overwrite the shared catalog from this device. Cancel to keep the current published catalog safe.')) {
+        showToast('🛡️ Publish cancelled — shared catalog kept safe.', 4000); return;
+      }
+      bPub.disabled = true; bPub.textContent = '…publishing (override)';
+      r = await cloudPublishCatalog({ force: true });
+    }
     if (r.ok) {
       // 🔊 Page-guide voice-over (and starter-deck / tombstone media) rides the
       // Storage art pipeline, NOT the catalog row (the row deep-strips big
@@ -37090,6 +37118,19 @@ function renderPricingAdmin() {
     add(`⏳ <strong>Step 1/3</strong> — Publishing card catalog…`);
     let r1 = { ok: false };
     try { r1 = await cloudPublishCatalog(); } catch (e) { r1 = { ok: false, error: (e && e.message) || 'exception' }; }
+    if (r1.blocked) {
+      setLast(`🛡️ <strong>Step 1/3</strong> — SAFETY BLOCK (no changes made).`);
+      add(`&nbsp;&nbsp;${escapeHtml(r1.error)}`);
+      if (confirm('⚠ ' + r1.error + '\n\nClick OK ONLY if you really mean to overwrite the shared catalog from THIS device. Cancel to keep everyone\'s cards safe.')) {
+        add(`⏳ <strong>Step 1/3</strong> — Override confirmed, publishing…`);
+        try { r1 = await cloudPublishCatalog({ force: true }); } catch (e) { r1 = { ok: false, error: (e && e.message) || 'exception' }; }
+      } else {
+        add(`<strong style="color:#7CFFB2">🛡️ Cancelled — shared catalog kept safe. Publish from the device that has your cards in local Forge.</strong>`);
+        bAll.disabled = false; bAll.textContent = origLabel;
+        showToast('🛡️ Publish cancelled — shared catalog protected.', 4500);
+        return;
+      }
+    }
     if (r1.ok) {
       setLast(`✅ <strong>Step 1/3</strong> — Card catalog published (${r1.count || 0} entries).`);
       if (r1.storageWarn) add(`&nbsp;&nbsp;⚠ RLS-proof public mirror had an issue: ${escapeHtml(String(r1.storageWarn))} <span class="ink-dim">(DB publish still OK; re-tap to retry the mirror)</span>`);

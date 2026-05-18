@@ -22002,11 +22002,14 @@ function _applyCatalogRow(data) {
 async function _cloudFetchCatalogFromStorage() {
   try {
     if (!initCloud()) return { ok: false };
+    // Public object URL via plain fetch() — the SDK .download() silently
+    // fails for large shards on logged-in players (proven on live backend).
+    const _pb = SUPABASE_URL + '/storage/v1/object/public/' + PUBLIC_CATALOG_BUCKET + '/';
     const dl = async (name) => {
       try {
-        const { data, error } = await Cloud.client.storage.from(PUBLIC_CATALOG_BUCKET).download(name);
-        if (error || !data) return null;
-        return await data.text();
+        const r = await fetch(_pb + name);
+        if (!r.ok) return null;
+        return await r.text();
       } catch (e) { return null; }
     };
     let merged = {};
@@ -22371,11 +22374,18 @@ async function cloudFetchCatalogArt() {
   // probe sequential shards (recovers a publish whose index write failed).
   // A few quiet 400s for never-published categories is an acceptable price
   // for content actually reaching players.
+  // Use the PUBLIC object URL via plain fetch() — NOT the SDK .download().
+  // Proven against the live backend: the small index downloads via the SDK
+  // but the large story-media shards silently fail through .download() for
+  // logged-in players, so catalogMedia was skipped and never set. The
+  // /object/public/ URL returns 200 for everyone (verified) and is
+  // browser-cacheable, so this also speeds up sprites/card-art.
+  const _pubBase = SUPABASE_URL + '/storage/v1/object/public/' + PUBLIC_CATALOG_BUCKET + '/';
   const _dl = async (name) => {
     try {
-      const { data, error } = await Cloud.client.storage.from(PUBLIC_CATALOG_BUCKET).download(name);
-      if (error || !data) return null;
-      return await data.text();
+      const r = await fetch(_pubBase + name);
+      if (!r.ok) return null;
+      return await r.text();
     } catch (e) { return null; }
   };
   let changed = false;
@@ -22415,14 +22425,16 @@ async function cloudFetchCatalogArt() {
       if (!gotSomething) continue;
       if (forgeKey === 'catalogMedia') {
         // Reassemble the flattened pg:/sd: keys back into the nested shape
-        // _rehydrateCatalogMedia() expects. The admin keeps their local copy
-        // (they authored it); players (no local) take the incoming one.
+        // _rehydrateCatalogMedia() expects. Adopt the incoming bundle whenever
+        // it has at least as many page guides as what we already hold. The
+        // old guard treated "has tomb or starter-decks" as "keep local",
+        // which PERMANENTLY blocked guides for any player whose first fetch
+        // landed only the small tomb/starter-deck shard — exactly this bug.
         const inc = _unflattenCatalogMedia(merged);
-        const local = Forge.catalogMedia || {};
-        const haveLocal = (Array.isArray(local.pageGuides) && local.pageGuides.length)
-          || (Array.isArray(local.starterDecks) && local.starterDecks.length)
-          || (typeof local.tomb === 'string' && local.tomb);
-        if (!haveLocal) Forge.catalogMedia = inc;
+        const incPG = (inc && Array.isArray(inc.pageGuides)) ? inc.pageGuides.length : 0;
+        const cur   = Forge.catalogMedia || {};
+        const curPG = (cur && Array.isArray(cur.pageGuides)) ? cur.pageGuides.length : 0;
+        if (incPG >= curPG) Forge.catalogMedia = inc;
       } else {
         // Local-only assets win on id collision so a player's personal uploads
         // aren't stomped by the public catalog merge.

@@ -129,8 +129,8 @@ function WorldEventsRibbon({ events, onFocus }) {
 // ─────────────────────────────────────────────────────────────
 function TravelBrief({ dest, onClose, onBegin }) {
   const events = window.WorldMap.worldEvents.filter((e) => e.affects.includes(dest.id));
-  const preview = useMemo(() => window.WorldMap.generateRoute({ destId: dest.id, seed: 1 }), [dest.id]);
-  const nodeCount = preview.cols;
+  const isRlc = !!dest.campaignId;
+  const nodeCount = dest.distance || 0;
   const threatLabel =
     dest.threat <= 1 ? "Low"  : dest.threat <= 2 ? "Mild" : dest.threat <= 3 ? "Moderate"
   : dest.threat <= 4 ? "High" : "Lethal";
@@ -143,7 +143,9 @@ function TravelBrief({ dest, onClose, onBegin }) {
           <div className="brief-titles">
             <div className="brief-tag">{dest.tag}</div>
             <h2 className="brief-name">{dest.name}</h2>
-            <div className="brief-sub">Expedition briefing · roguelite route</div>
+            <div className="brief-sub">
+              {isRlc ? "Region briefing · launches a real roguelite run" : "Region briefing"}
+            </div>
           </div>
           <button className="brief-close" onClick={onClose} aria-label="Close">✕</button>
         </header>
@@ -159,16 +161,16 @@ function TravelBrief({ dest, onClose, onBegin }) {
             </div>
           </div>
           <div className="bstat">
-            <span className="k">Travel Distance</span>
+            <span className="k">Map Size</span>
             <span className="v">{nodeCount} <small>nodes</small></span>
           </div>
           <div className="bstat">
-            <span className="k">Est. Reward</span>
-            <span className="v bronze">+{preview.estReward}</span>
+            <span className="k">Run Type</span>
+            <span className="v purple">{isRlc ? "ROGUELITE" : "—"}</span>
           </div>
           <div className="bstat">
-            <span className="k">Route Theme</span>
-            <span className="v purple">{dest.theme.toUpperCase()}</span>
+            <span className="k">Bank Loot</span>
+            <span className="v bronze">🚚 Convoy</span>
           </div>
         </div>
 

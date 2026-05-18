@@ -58767,16 +58767,40 @@ function _rlcAwardHaul(run, map) {
   for (const k in map) { const n = map[k] | 0; if (n > 0) { run.haul[k] = (run.haul[k] || 0) + n; got[k] = n; } }
   return got;
 }
-// Small weighted roll: 2–3 resource kinds, amount scaled by node tier.
-function _rlcHaulRoll(tier) {
+// 🌍 Region haul profiles — the world-map destination IS the campaign, so its
+// difficulty band shapes WHAT salvage the run yields and HOW MUCH. Easy
+// regions drop survival staples; brutal regions bleed anomalous mats and
+// pay more. Tunable weight tables (resource → relative chance).
+const RLC_HAUL_PROFILES = {
+  easy:   { food: 3, water: 3, ammo: 2, supplies: 2, metal: 1, medicine: 1 },
+  normal: { ammo: 3, supplies: 3, metal: 2, fuel: 2, medicine: 2, food: 1, water: 1 },
+  hard:   { fuel: 3, metal: 3, medicine: 2, ammo: 2, corruptedEssence: 1, dna: 1 },
+  brutal: { corruptedEssence: 3, memoryShards: 3, dna: 2, fuel: 2, metal: 2, medicine: 1 },
+};
+const RLC_HAUL_DIFF_MULT = { easy: 1, normal: 1, hard: 1.5, brutal: 2 };
+function _rlcDiffBand(camp) {
+  const d = String((camp && camp.difficulty) || '').toLowerCase();
+  if (/night|brutal|insane|mythic|apoc|hell|nightmare|leth/.test(d)) return 'brutal';
+  if (/hard|veteran|elite/.test(d)) return 'hard';
+  if (/easy|intro|tutorial/.test(d)) return 'easy';
+  return 'normal';
+}
+// Weighted roll seeded by the run's region (campaign difficulty): 2–3
+// resource kinds, amount scaled by node tier × region multiplier.
+function _rlcHaulRoll(tier, run) {
   const t = Math.max(1, tier | 0);
-  const pool = (typeof SALVAGE_RES !== 'undefined' ? SALVAGE_RES : []).map(r => r.id);
+  let band = 'normal';
+  try { band = _rlcDiffBand(_rlcCampaign(run && run.campaignId)); } catch (e) {}
+  const prof = RLC_HAUL_PROFILES[band] || RLC_HAUL_PROFILES.normal;
+  const pool = [];
+  Object.keys(prof).forEach(k => { if (_SALVAGE_BY_ID[k]) { for (let i = 0; i < prof[k]; i++) pool.push(k); } });
   if (!pool.length) return {};
+  const mult = RLC_HAUL_DIFF_MULT[band] || 1;
   const out = {};
   const picks = 2 + Math.floor(Math.random() * 2);
   for (let i = 0; i < picks; i++) {
     const id = pool[Math.floor(Math.random() * pool.length)];
-    out[id] = (out[id] || 0) + (1 + Math.floor(Math.random() * 3)) * t;
+    out[id] = (out[id] || 0) + Math.max(1, Math.round((1 + Math.floor(Math.random() * 3)) * t * mult));
   }
   return out;
 }
@@ -58910,7 +58934,7 @@ function rlcEnterNode(nodeId) {
       // 💰 Treasure also yields carried camp salvage (unsecured haul).
       if (node.type === 'treasure') {
         try {
-          const _tg = _rlcAwardHaul(run, _rlcHaulRoll(RLC_HAUL_TIER.treasure || 2));
+          const _tg = _rlcAwardHaul(run, _rlcHaulRoll(RLC_HAUL_TIER.treasure || 2, run));
           if (_tg && Object.keys(_tg).length) { try { showToast('🎒 Haul +' + _rlcHaulLine(_tg) + ' — bank at a 🚚 Convoy', 2800); } catch (e) {} }
         } catch (e) {}
       }
@@ -59018,7 +59042,7 @@ function rlcAfterBattle() {
   try {
     const _hbn = _rlcNode(_rlcCampaign(run.campaignId), res.nodeId);
     const _ht = (_hbn && RLC_HAUL_TIER[_hbn.type]) || 1;
-    const _hg = _rlcAwardHaul(run, _rlcHaulRoll(_ht));
+    const _hg = _rlcAwardHaul(run, _rlcHaulRoll(_ht, run));
     if (_hg && Object.keys(_hg).length) { try { showToast('🎒 Haul +' + _rlcHaulLine(_hg) + ' — unsecured, bank at a 🚚 Convoy', 2800); } catch (e) {} }
   } catch (e) {}
   _persistProgressNow();

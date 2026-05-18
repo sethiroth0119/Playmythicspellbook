@@ -275,7 +275,6 @@ function App() {
   const [coords, setCoords]     = useState(null);
   const [toast, setToast]       = useState(null);
   const [briefDest, setBriefDest] = useState(null);
-  const [run, setRun]           = useState(null);
   const [_, force]              = useState(0); // re-render on WorldMap mutation
   const mapRef = useRef(null);
 
@@ -285,17 +284,16 @@ function App() {
     return () => window.removeEventListener("worldmap:changed", onChange);
   }, []);
 
-  // close on Esc — but only top-most layer
+  // close on Esc — top-most layer first
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== "Escape") return;
-      if (run)          { /* expedition handles its own abort */ }
-      else if (briefDest) setBriefDest(null);
-      else                setActiveId(null);
+      if (briefDest) setBriefDest(null);
+      else           setActiveId(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [run, briefDest]);
+  }, [briefDest]);
 
   const zones        = window.ZONES;
   const destinations = window.DESTINATIONS;
@@ -304,9 +302,10 @@ function App() {
   const active       = zones.find((z) => z.id === activeId) || null;
   const activeEvent  = activeId ? events[activeId] : null;
 
-  // begin expedition: a REAL roguelite campaign hands off to the parent
-  // game (which starts/continues the actual run); demo destinations still
-  // use the in-iframe mock route.
+  // The world map is a PURE REGION SELECTOR. Launching a destination hands
+  // off to the parent game, which starts the REAL roguelite run (node graph,
+  // encounters→battle, haul, convoy, death stakes). There is no in-iframe
+  // mock expedition anymore.
   const beginExpedition = (destId) => {
     const dest = window.WorldMap.getDestination(destId);
     if (dest && dest.campaignId) {
@@ -316,33 +315,8 @@ function App() {
           "*"
         );
       } catch (e) {}
-      setBriefDest(null);
-      return;
     }
-    const r = window.WorldMap.beginExpedition(destId);
-    setRun({ ...r });
     setBriefDest(null);
-  };
-  const advanceNode = (nodeId) => {
-    const r = window.WorldMap.advanceToNode(nodeId);
-    if (r) setRun({ ...r });
-  };
-  const abortRun = () => {
-    window.WorldMap.abandonExpedition();
-    setRun(null);
-  };
-  const resolveNode = (node) => {
-    // STUB — game code can override window.onResolveNode(node, run)
-    if (typeof window.onResolveNode === "function") {
-      try { window.onResolveNode(node, run); } catch (e) { console.error(e); }
-    }
-    setToast({
-      id: Date.now(),
-      zone: node.name,
-      title: `${window.WorldMap.nodeTypes[node.type]?.label || "Encounter"} resolved`,
-      brief: "Stub: hook into onResolveNode(node, run) to handle combat / shop / mystery."
-    });
-    setTimeout(() => setToast(null), 3000);
   };
 
   // marker visibility per filter
@@ -478,20 +452,11 @@ function App() {
         hint={<>Tip · click a <em>diamond</em> marker to plan an expedition. <em>Esc</em> backs out.</>}
       />
 
-      {briefDest && !run && (
+      {briefDest && (
         <TravelBrief
           dest={briefDest}
           onClose={() => setBriefDest(null)}
           onBegin={beginExpedition}
-        />
-      )}
-
-      {run && (
-        <ExpeditionOverlay
-          run={run}
-          onAdvance={advanceNode}
-          onAbort={abortRun}
-          onResolve={resolveNode}
         />
       )}
     </div>

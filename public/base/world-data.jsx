@@ -813,7 +813,9 @@ function _bbApplyWorld() {
   const camps = w && Array.isArray(w.campaigns) ? w.campaigns : null;
   if (!camps || !camps.length) return; // keep demo destinations
   const runId = w.run && w.run.campaignId;
-  const dests = [_BB_HOME];
+  // Pure region selector: ONLY real campaigns are launchable markers (the
+  // decorative home node is dropped — the bunker is the camp now).
+  const dests = [];
   camps.forEach((c, i) => {
     const slot = _BB_SLOTS[i % _BB_SLOTS.length];
     const km = _BB_KINDS[i % _BB_KINDS.length];

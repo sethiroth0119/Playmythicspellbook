@@ -24,6 +24,8 @@ const Ic = {
 // TOP BAR
 // ───────────────────────────────────────────────────────────────
 function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
+  // Live threat from the embedding game (campRaidRisk) when bridged.
+  if (window.__BRIDGE && typeof window.__BRIDGE.threat === "number") threat = window.__BRIDGE.threat;
   return (
     <div className="hud-top">
       <div className="brand">
@@ -72,11 +74,12 @@ function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
 // LEFT COLUMN — alerts + roster
 // ───────────────────────────────────────────────────────────────
 function LeftColumn() {
+  const ALERTS = (window.__BRIDGE && window.__BRIDGE.alerts) || window.ALERTS;
   return (
     <aside className="hud-left">
       <div className="left-section alerts">
-        <div className="sec-hd">Alerts <span className="count">{window.ALERTS.length}</span></div>
-        {window.ALERTS.map((a, i) => (
+        <div className="sec-hd">Alerts <span className="count">{ALERTS.length}</span></div>
+        {ALERTS.map((a, i) => (
           <div className={`alert ${a.sev}`} key={i}>
             <span className="alert-pulse" />
             <span

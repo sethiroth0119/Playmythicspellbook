@@ -31669,24 +31669,63 @@ function _ensureCampDecayCss() {
 // ticking underneath (consumption/raids/etc.), surfaced inside the builder
 // over the bridge in later passes.
 function _baseBridgeResources() {
-  // Map our real secured economy onto the builder's 5-slot top bar (keeps
-  // its existing SVG icons). Tomorrow: full salvage set + camp status.
+  // The FULL secured salvage set with consumption deltas. No SVG-icon keys
+  // (the builder falls back to the resource glyph for non-mapped keys).
   try {
     const led = (typeof _ensureSalvageLedger === 'function') ? _ensureSalvageLedger() : (Profile.salvage || {});
-    const surv = (typeof _stockpileTotal === 'function') ? _stockpileTotal() : 0;
-    return [
-      { key: 'scrap',    label: 'Metal',    val: String(led.metal | 0),            delta: '' },
-      { key: 'power',    label: 'Fuel',     val: String(led.fuel | 0),  unit: '',  delta: '' },
-      { key: 'relic',    label: 'Cor.Ess',  val: String(led.corruptedEssence | 0), delta: '' },
-      { key: 'food',     label: 'Food',     val: String(led.food | 0),             delta: (campStatus && campStatus().out.indexOf('food') >= 0) ? 'LOW' : '', neg: true },
-      { key: 'survivor', label: 'Stock',    val: String(surv),                     delta: '' },
-    ];
+    const cst = (typeof campStatus === 'function') ? campStatus() : { out: [], low: [] };
+    const rate = (typeof CAMP_CONSUME_PER_DAY !== 'undefined') ? CAMP_CONSUME_PER_DAY : {};
+    return (typeof SALVAGE_RES !== 'undefined' ? SALVAGE_RES : []).map(r => {
+      const c = led[r.id] | 0;
+      const cr = rate[r.id] || 0;
+      const out = cst.out.indexOf(r.id) >= 0, low = cst.low.indexOf(r.id) >= 0;
+      return {
+        key: r.id, glyph: r.icon, label: r.name, val: String(c),
+        delta: out ? 'OUT' : (cr ? '-' + cr + '/d' : (low ? 'LOW' : '')),
+        neg: !!(out || low || cr),
+      };
+    });
+  } catch (e) { return null; }
+}
+function _baseThreat() {
+  try {
+    const rk = (typeof campRaidRisk === 'function') ? campRaidRisk() : { level: 'safe' };
+    return rk.level === 'high' ? 90 : rk.level === 'elevated' ? 62 : rk.level === 'low' ? 34 : 6;
+  } catch (e) { return 0; }
+}
+function _baseAlerts() {
+  // Real alerts: world event → camp shortages → raider threat.
+  try {
+    const out = [];
+    const w = (typeof currentWorldEvent === 'function') ? currentWorldEvent() : null;
+    if (w && w.ev) {
+      out.push({ sev: w.sev >= 4 ? 'crit' : (w.sev >= 3 ? 'warn' : 'info'), time: 'EVENT',
+        body: '🌐 <em>' + (w.ev.name || 'World Event') + '</em> — ' + (w.ev.begin || '') });
+    }
+    const cst = (typeof campStatus === 'function') ? campStatus() : { out: [], low: [] };
+    cst.out.forEach(k => out.push({ sev: 'crit', time: 'CAMP',
+      body: '☠ Out of <em>' + ((_SALVAGE_BY_ID[k] || {}).name || k) + '</em> — ' + ((typeof _CAMP_SHORTAGE_FX !== 'undefined' && _CAMP_SHORTAGE_FX[k]) || 'shortage') }));
+    cst.low.forEach(k => out.push({ sev: 'warn', time: 'CAMP',
+      body: '⚠ <em>' + ((_SALVAGE_BY_ID[k] || {}).name || k) + '</em> running low' }));
+    const rk = (typeof campRaidRisk === 'function') ? campRaidRisk() : { level: 'safe' };
+    if (rk.level === 'high' || rk.level === 'elevated') {
+      const ammo = (Profile.salvage && (Profile.salvage.ammo | 0)) || 0;
+      out.push({ sev: rk.level === 'high' ? 'crit' : 'warn', time: 'RAID',
+        body: '🔥 Raider threat <em>' + rk.level.toUpperCase() + '</em> — defense ' + ammo + ' 🔫 Ammo' + (ammo <= 0 ? ' (NONE!)' : '') });
+    }
+    if (!out.length) out.push({ sev: 'info', time: 'CAMP', body: 'All systems nominal. Stockpile secure.' });
+    return out.slice(0, 7);
   } catch (e) { return null; }
 }
 function _baseSendData() {
   try {
     const f = document.getElementById('base-builder-frame');
-    if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'base:data', resources: _baseBridgeResources() }, '*');
+    if (f && f.contentWindow) f.contentWindow.postMessage({
+      type: 'base:data',
+      resources: _baseBridgeResources(),
+      threat: _baseThreat(),
+      alerts: _baseAlerts(),
+    }, '*');
   } catch (e) {}
 }
 function mountBaseBuilder() {

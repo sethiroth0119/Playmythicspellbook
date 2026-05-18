@@ -21888,6 +21888,48 @@ _loadCatalogFromCache();
 // catalog row fetch or the catalog-art fetch completes (whichever lands the
 // media). No consumer-code changes needed: players read Catalog.tombstoneArt,
 // getAllStarterDecks() merges Catalog+Forge, page-guide UI reads Catalog.
+// catalogMedia carries 26 page guides whose voice-over audio is inlined as
+// base64. _splitObjectIntoShards only splits at TOP-LEVEL keys, so the entire
+// `pageGuides` array became ONE shard that blew Supabase Storage's per-object
+// size cap ("object exceeded the maximum allowed size") → no voice-over ever
+// shipped. Flatten the arrays into per-element keys (pg:0, pg:1, sd:0 …) so
+// the sharder spreads them across many ≤4 MB files; unflatten on the way
+// back. A single element that ALONE exceeds the cap has its inline audio
+// dropped (text/images still ship) so one huge clip can't block the rest.
+function _flattenCatalogMedia(m) {
+  const out = { __cmflat__: 1 };
+  if (!m || typeof m !== 'object') return out;
+  const cap = (typeof CATALOG_SHARD_CAP_BYTES === 'number' ? CATALOG_SHARD_CAP_BYTES : 4 * 1024 * 1024);
+  const fits = (v) => { try { return JSON.stringify(v).length <= cap; } catch (e) { return false; } };
+  if (typeof m.tomb === 'string' && m.tomb) out['tomb'] = fits(m.tomb) ? m.tomb : '';
+  (Array.isArray(m.starterDecks) ? m.starterDecks : []).forEach((d, i) => { if (d != null) out['sd:' + i] = d; });
+  (Array.isArray(m.pageGuides) ? m.pageGuides : []).forEach((g, i) => {
+    if (g == null) return;
+    if (fits(g)) { out['pg:' + i] = g; return; }
+    try {
+      const slim = JSON.parse(JSON.stringify(g));
+      if (Array.isArray(slim.bubbles)) slim.bubbles.forEach(b => { if (b) b.audioUrl = ''; });
+      out['pg:' + i] = fits(slim) ? slim : { id: g.id, pageRoute: g.pageRoute, isActive: g.isActive, bubbles: [] };
+    } catch (e) {}
+  });
+  return out;
+}
+function _unflattenCatalogMedia(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const isFlat = obj.__cmflat__ || Object.keys(obj).some(k => /^(pg|sd):\d+$/.test(k));
+  if (!isFlat) return obj;   // legacy non-flattened upload — pass through
+  const sd = [], pg = [];
+  for (const k in obj) {
+    if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+    if (k.slice(0, 3) === 'sd:') sd[parseInt(k.slice(3), 10) || 0] = obj[k];
+    else if (k.slice(0, 3) === 'pg:') pg[parseInt(k.slice(3), 10) || 0] = obj[k];
+  }
+  return {
+    tomb: typeof obj.tomb === 'string' ? obj.tomb : null,
+    starterDecks: sd.filter(x => x != null),
+    pageGuides: pg.filter(x => x != null),
+  };
+}
 function _rehydrateCatalogMedia() {
   try {
     const m = Forge && Forge.catalogMedia;
@@ -22231,7 +22273,10 @@ async function cloudPublishCatalogArt() {
       // ALWAYS shard (consistent format, no stale single-file/index ambiguity).
       // 4 MB shards each uploaded with retry+backoff; small throttle between
       // requests so we don't overwhelm Storage / hit rate limits.
-      const shards = _splitObjectIntoShards(blob, CATALOG_SHARD_CAP_BYTES);
+      // catalogMedia: flatten arrays → per-element keys so no single shard
+      // exceeds Storage's per-object cap (was the voice-over ship failure).
+      const shardSource = (forgeKey === 'catalogMedia') ? _flattenCatalogMedia(blob) : blob;
+      const shards = _splitObjectIntoShards(shardSource, CATALOG_SHARD_CAP_BYTES);
       const shardNames = shards.map((_, i) => `${base}-${i}.json`);
       let shardErr = null;
       for (let i = 0; i < shards.length; i++) {
@@ -22324,9 +22369,21 @@ async function cloudFetchCatalogArt() {
       }
 
       if (!gotSomething) continue;
-      // Local-only assets win on id collision so a player's personal uploads
-      // aren't stomped by the public catalog merge.
-      Forge[forgeKey] = { ...merged, ...(Forge[forgeKey] || {}) };
+      if (forgeKey === 'catalogMedia') {
+        // Reassemble the flattened pg:/sd: keys back into the nested shape
+        // _rehydrateCatalogMedia() expects. The admin keeps their local copy
+        // (they authored it); players (no local) take the incoming one.
+        const inc = _unflattenCatalogMedia(merged);
+        const local = Forge.catalogMedia || {};
+        const haveLocal = (Array.isArray(local.pageGuides) && local.pageGuides.length)
+          || (Array.isArray(local.starterDecks) && local.starterDecks.length)
+          || (typeof local.tomb === 'string' && local.tomb);
+        if (!haveLocal) Forge.catalogMedia = inc;
+      } else {
+        // Local-only assets win on id collision so a player's personal uploads
+        // aren't stomped by the public catalog merge.
+        Forge[forgeKey] = { ...merged, ...(Forge[forgeKey] || {}) };
+      }
       changed = true;
     } catch (e) { /* silent skip */ }
   }

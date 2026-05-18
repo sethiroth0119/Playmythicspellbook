@@ -18657,6 +18657,39 @@ function ensureStarterHeroesOwned() {
   }
   if (mutated) saveProfile();
 }
+// 👑 ADMIN FULL COLLECTION — the admin account (ADMIN_EMAILS, incl.
+// richaegisop@gmail.com) owns 3 of EVERY card: every created card now and
+// every card created/published in the future. Tops up to 3 (never lowers a
+// higher count). Throttled by the total card count so it only rescans when
+// new cards appear (catalog publish / forge create). Idempotent + safe.
+function ensureAdminCardGrant() {
+  try {
+    if (typeof isAdmin !== 'function' || !isAdmin()) return;
+    if (!Profile.cardCollection) Profile.cardCollection = {};
+    const customN  = (typeof getAllCustomCards === 'function' ? (getAllCustomCards() || []).length : 0);
+    const catN     = (typeof Catalog !== 'undefined' && Array.isArray(Catalog.cards)) ? Catalog.cards.length : 0;
+    const sig = customN + ':' + catN;
+    if (App._adminGrantSig === sig) return;            // nothing new since last grant
+    let mutated = false;
+    const grant = (id) => {
+      if (!id) return;
+      if ((Profile.cardCollection[id] || 0) < 3) { Profile.cardCollection[id] = 3; mutated = true; }
+    };
+    try { (getAllCustomCards() || []).forEach(c => c && grant(c.id)); } catch (e) {}
+    try { if (typeof STARTER_HEROES !== 'undefined' && Array.isArray(STARTER_HEROES)) STARTER_HEROES.forEach(h => h && grant(h.id)); } catch (e) {}
+    // Built-in mockup pools too (harmless even when the custom-only pool hides
+    // them — keeps the admin's collection genuinely complete).
+    try {
+      [typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS, typeof SPELL_CARDS !== 'undefined' && SPELL_CARDS,
+       typeof TRAP_CARDS !== 'undefined' && TRAP_CARDS, typeof LOCATION_CARDS !== 'undefined' && LOCATION_CARDS,
+       typeof WEATHER_CARDS !== 'undefined' && WEATHER_CARDS, typeof WALL_CARDS !== 'undefined' && WALL_CARDS,
+       typeof HERO_CARDS !== 'undefined' && HERO_CARDS]
+        .forEach(arr => { if (Array.isArray(arr)) arr.forEach(c => c && grant(c.id)); });
+    } catch (e) {}
+    App._adminGrantSig = sig;
+    if (mutated) { try { saveProfile(); } catch (e) {} }
+  } catch (e) {}
+}
 // Returns true if the player owns this hero (count >= 1 in cardCollection).
 function ownsHero(heroId) {
   if (!heroId) return false;
@@ -34204,6 +34237,9 @@ function render() {
   // on every screen without editing each renderX, and keeps the chat overlay
   // alive across screen re-renders.
   try { if (typeof mountChatButton === 'function') mountChatButton(); } catch (e) {}
+  // 👑 Keep the admin's collection complete — re-grants 3× when new cards
+  // appear (catalog publish / forge create). Self-throttled; no-op otherwise.
+  try { if (typeof ensureAdminCardGrant === 'function') ensureAdminCardGrant(); } catch (e) {}
 
   // ===== Audio routing FIRST =====
   // Must run BEFORE the screen-specific early-returns below — otherwise screens
@@ -60973,6 +61009,7 @@ setTimeout(() => {
 // Seed every starter hero into Profile.cardCollection if missing. Backward compat
 // for saves created before heroes were part of the inventory system.
 try { ensureStarterHeroesOwned(); } catch (e) {}
+try { ensureAdminCardGrant(); } catch (e) {}
 // Reconcile any frames that should be unlocked from already-earned achievements (e.g.
 // loaded a save with the achievement earned BEFORE frames existed), then paint the body
 // class so the chosen cosmetic frame is active from the very first render.

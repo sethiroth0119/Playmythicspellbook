@@ -30718,7 +30718,80 @@ const _RES_VALUE = ['dna','memoryShards','corruptedEssence','fuel','medicine',
 function _resSlot(id) { return _RES_SLOT[id] || 1; }
 function _ensureFieldBag() { if (!Profile.fieldBag || typeof Profile.fieldBag !== 'object') Profile.fieldBag = {}; return Profile.fieldBag; }
 function _bagSlots(bag) { let n = 0; for (const k in (bag || {})) n += (bag[k] | 0) * _resSlot(k); return n; }
-function _fieldBagCap() { try { return (Profile.bagCap | 0) || FIELD_BAG_CAP; } catch (e) { return FIELD_BAG_CAP; } }
+function _fieldBagCap() {
+  try {
+    let cap = FIELD_BAG_CAP;
+    const owned = (Profile.bagsOwned && Array.isArray(Profile.bagsOwned)) ? Profile.bagsOwned : [];
+    owned.forEach(id => { const t = (typeof _bagTierById === 'function') ? _bagTierById(id) : null; if (t && t.cap > cap) cap = t.cap; });
+    if ((Profile.bagCap | 0) > cap) cap = Profile.bagCap | 0;   // forward-compat
+    return cap;
+  } catch (e) { return FIELD_BAG_CAP; }
+}
+// 🎒 BAG UPGRADE TIERS. Capacity-based (no spatial grid in v1). Vendor tiers
+// cost Cinders (Profile.gems) or Aza (Profile.sovereigns); craft tiers cost
+// secured resources (Profile.salvage). Perks (speed/concealment) are noted
+// but deferred — v1 ships the capacity progression + the economy sinks.
+const FIELD_BAG_TIERS = [
+  { id: 'basic',    name: 'Survivor Bag',        cap: 36, kind: 'default' },
+  { id: 'military', name: 'Military Pack',       cap: 49, kind: 'vendor',
+    cinder: 1200, aza: 60, desc: 'Standard-issue load-bearing rig.' },
+  { id: 'smuggler', name: 'Smuggler Bag',        cap: 56, kind: 'craft',
+    craft: { metal: 40, supplies: 30, fuel: 10 }, perk: 'Illegal-item concealment (coming soon)',
+    desc: 'Hidden compartments — craft only.' },
+  { id: 'scp',      name: 'SCP Compression Bag', cap: 72, kind: 'craft',
+    craft: { metal: 60, corruptedEssence: 15, memoryShards: 8, dna: 6 },
+    perk: '+1 Speed & illegal concealment (coming soon)',
+    desc: 'Anomalous spatial compression — the deepest bag.' },
+];
+function _bagTierById(id) { return FIELD_BAG_TIERS.find(t => t.id === id) || FIELD_BAG_TIERS[0]; }
+function _bagsOwned() {
+  const o = (Profile.bagsOwned && Array.isArray(Profile.bagsOwned)) ? Profile.bagsOwned.slice() : [];
+  if (o.indexOf('basic') < 0) o.unshift('basic');   // everyone always has the basic bag
+  return o;
+}
+function _recalcBagCap() {
+  let cap = FIELD_BAG_CAP;
+  _bagsOwned().forEach(id => { const t = _bagTierById(id); if (t && t.cap > cap) cap = t.cap; });
+  Profile.bagCap = cap;
+  // Track the best-owned tier id for UI/perk checks.
+  let best = 'basic', bestCap = FIELD_BAG_CAP;
+  _bagsOwned().forEach(id => { const t = _bagTierById(id); if (t && t.cap >= bestCap) { bestCap = t.cap; best = t.id; } });
+  Profile.bagTier = best;
+  return cap;
+}
+// Acquire a tier. mode: 'cinder' | 'aza' | 'craft'. Returns {ok,error}.
+function acquireBagTier(tierId, mode) {
+  try {
+    const t = _bagTierById(tierId);
+    if (!t || t.kind === 'default') return { ok: false, error: 'Invalid bag.' };
+    if (_bagsOwned().indexOf(tierId) >= 0) return { ok: false, error: 'Already owned.' };
+    if (mode === 'craft') {
+      if (t.kind !== 'craft') return { ok: false, error: 'Not craftable.' };
+      const led = (typeof _ensureSalvageLedger === 'function') ? _ensureSalvageLedger() : (Profile.salvage = Profile.salvage || {});
+      for (const k in (t.craft || {})) {
+        if ((led[k] | 0) < t.craft[k]) {
+          const r = _SALVAGE_BY_ID[k] || {};
+          return { ok: false, error: `Need ${t.craft[k]} ${r.name || k} (have ${led[k] | 0}). Deposit more at camp.` };
+        }
+      }
+      for (const k in (t.craft || {})) led[k] = (led[k] | 0) - t.craft[k];
+    } else if (mode === 'cinder') {
+      if (t.kind !== 'vendor' || !t.cinder) return { ok: false, error: 'Not buyable with Cinders.' };
+      if ((Profile.gems | 0) < t.cinder) return { ok: false, error: `Need ${t.cinder} 🔥 (have ${Profile.gems | 0}).` };
+      Profile.gems = (Profile.gems | 0) - t.cinder;
+    } else if (mode === 'aza') {
+      if (t.kind !== 'vendor' || !t.aza) return { ok: false, error: 'Not buyable with Aza.' };
+      if ((Profile.sovereigns | 0) < t.aza) return { ok: false, error: `Need ${t.aza} Aza (have ${Profile.sovereigns | 0}).` };
+      Profile.sovereigns = (Profile.sovereigns | 0) - t.aza;
+    } else {
+      return { ok: false, error: 'Bad payment mode.' };
+    }
+    Profile.bagsOwned = _bagsOwned(); Profile.bagsOwned.push(tierId);
+    _recalcBagCap();
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+    return { ok: true, cap: Profile.bagCap, name: t.name };
+  } catch (e) { return { ok: false, error: 'Upgrade failed.' }; }
+}
 // Add salvage to the field bag, respecting capacity. Smallest-slot items
 // first so a near-full bag still grabs the precious 1×1 mats. Returns
 // { taken, left } so the looter can tell the player what didn't fit.
@@ -30885,12 +30958,95 @@ function mountCampStatus() {
       return `<span style="display:inline-block;margin:2px 4px;padding:2px 8px;border:1px solid ${cc}66;border-radius:10px;color:${cc};background:${cc}14;font-size:0.82rem">${r.icon || ''} ${r.name || k} ${c} <span style="opacity:.7">(${stt})</span></span>`;
     }).join('');
     const fxLines = st.out.map(k => `<div class="small-text" style="color:#ff9a88">• ${_CAMP_SHORTAGE_FX[k] || (k + ' depleted')}</div>`).join('');
+    // 📦 Full Camp Storage — every secured resource the player has banked, so
+    // they can see exactly what they're collecting (not just the 5 consumed).
+    const led = (Profile && Profile.salvage && typeof Profile.salvage === 'object') ? Profile.salvage : {};
+    const storeChips = SALVAGE_RES.map(r => {
+      const c = led[r.id] | 0;
+      const dim = c <= 0 ? 'opacity:.4;' : '';
+      return `<span style="display:inline-block;margin:2px 4px;padding:2px 8px;border:1px solid rgba(184,136,255,0.3);border-radius:10px;color:#e8ddff;background:rgba(184,136,255,0.08);font-size:0.82rem;${dim}">${r.icon} ${r.name} <strong>${c}</strong></span>`;
+    }).join('');
+    const tier = _bagTierById(Profile.bagTier || 'basic');
     if (!el) { el = document.createElement('div'); el.id = ID; document.body.appendChild(el); }
-    el.style.cssText = "position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:2147483270;max-width:min(680px,94vw);background:linear-gradient(180deg,rgba(26,16,46,0.97),rgba(14,9,26,0.97));border:2px solid " + col + "88;border-radius:12px;padding:9px 14px;box-shadow:0 12px 36px rgba(0,0,0,0.6);font-family:'Crimson Text',Georgia,serif;color:#e8ddff";
+    el.style.cssText = "position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:2147483270;max-width:min(720px,94vw);max-height:64vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.97),rgba(14,9,26,0.97));border:2px solid " + col + "88;border-radius:12px;padding:9px 14px;box-shadow:0 12px 36px rgba(0,0,0,0.6);font-family:'Crimson Text',Georgia,serif;color:#e8ddff";
     el.innerHTML =
       '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:' + col + '">' + head +
         ' <span class="small-text" style="color:#cdb6ff;font-weight:600">— camp consumes supplies over time; deposit to keep it alive</span></div>' +
-      '<div style="margin-top:5px">' + chips + '</div>' + (fxLines ? '<div style="margin-top:4px">' + fxLines + '</div>' : '');
+      '<div style="margin-top:5px">' + chips + '</div>' + (fxLines ? '<div style="margin-top:4px">' + fxLines + '</div>' : '') +
+      '<div style="margin-top:8px;border-top:1px solid rgba(184,136,255,0.25);padding-top:7px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">' +
+          '<div style="font-family:\'Cinzel\',serif;font-weight:700;color:#cdb6ff">📦 Camp Storage <span class="small-text" style="opacity:.7">(secured)</span></div>' +
+          '<button id="camp-bag-upgrade" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:9px;padding:0.4rem 0.85rem;border:1px solid rgba(212,175,55,0.6);background:linear-gradient(180deg,rgba(60,40,110,0.92),rgba(28,16,52,0.96));color:#ffe9b8;font-size:0.85rem">🎒 ' + (tier.name || 'Survivor Bag') + ' (' + _fieldBagCap() + ') — Upgrade</button>' +
+        '</div>' +
+        '<div style="margin-top:5px">' + storeChips + '</div>' +
+      '</div>';
+    const ub = document.getElementById('camp-bag-upgrade');
+    if (ub) ub.onclick = () => { if (typeof openBagUpgradeModal === 'function') openBagUpgradeModal(); };
+  } catch (e) {}
+}
+// 🎒 Bag Upgrade shop/craft modal (self-contained overlay — avoids splicing
+// the huge market/craft templates).
+function openBagUpgradeModal() {
+  try {
+    const ID = 'bag-upgrade-modal';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const owned = _bagsOwned();
+    const led = (Profile && Profile.salvage) ? Profile.salvage : {};
+    const cinders = Profile.gems | 0, aza = Profile.sovereigns | 0;
+    const rows = FIELD_BAG_TIERS.map(t => {
+      const have = owned.indexOf(t.id) >= 0;
+      const isBest = (Profile.bagTier || 'basic') === t.id;
+      let actions = '';
+      if (t.kind === 'default') actions = '<span class="small-text" style="opacity:.7">Starter bag</span>';
+      else if (have) actions = `<span style="color:#7CFFB2;font-weight:700">✓ Owned${isBest ? ' (equipped)' : ''}</span>`;
+      else if (t.kind === 'vendor') {
+        const ca = cinders >= (t.cinder || 1e9), aa = aza >= (t.aza || 1e9);
+        actions =
+          `<button data-bag-buy="${t.id}" data-mode="cinder" ${ca ? '' : 'disabled'} style="margin:2px;cursor:${ca ? 'pointer' : 'not-allowed'};border-radius:8px;padding:0.4rem 0.8rem;border:1px solid #ffb070;background:${ca ? 'linear-gradient(180deg,#c8651a,#8e3f0a)' : 'rgba(120,80,40,0.4)'};color:#ffe9b8;font-weight:700">🔥 ${t.cinder} Cinders</button>` +
+          `<button data-bag-buy="${t.id}" data-mode="aza" ${aa ? '' : 'disabled'} style="margin:2px;cursor:${aa ? 'pointer' : 'not-allowed'};border-radius:8px;padding:0.4rem 0.8rem;border:1px solid #b88aff;background:${aa ? 'linear-gradient(180deg,#6a40b0,#3a206a)' : 'rgba(80,60,120,0.4)'};color:#efe6ff;font-weight:700">🪙 ${t.aza} Aza</button>`;
+      } else if (t.kind === 'craft') {
+        const can = Object.keys(t.craft || {}).every(k => (led[k] | 0) >= t.craft[k]);
+        const costStr = Object.keys(t.craft || {}).map(k => `${(_SALVAGE_BY_ID[k] || {}).icon || ''}${t.craft[k]} ${(_SALVAGE_BY_ID[k] || {}).name || k}`).join(', ');
+        actions = `<div class="small-text" style="margin-bottom:3px;color:${can ? '#bfe9c8' : '#ff9a88'}">Craft cost: ${costStr}</div>` +
+          `<button data-bag-buy="${t.id}" data-mode="craft" ${can ? '' : 'disabled'} style="cursor:${can ? 'pointer' : 'not-allowed'};border-radius:8px;padding:0.4rem 0.9rem;border:1px solid #caa23e;background:${can ? 'linear-gradient(180deg,#caa23e,#8a6a1e)' : 'rgba(110,90,40,0.4)'};color:#1a1206;font-weight:800">🔨 Craft</button>`;
+      }
+      return `<div style="border:1px solid ${isBest ? 'rgba(124,255,178,0.5)' : 'rgba(184,136,255,0.25)'};border-radius:10px;padding:10px 12px;margin-bottom:8px;background:rgba(18,10,36,0.5)">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
+          <div style="font-family:'Cinzel',serif;font-weight:800;color:#ffd166">🎒 ${t.name} <span class="small-text" style="color:#cdb6ff">${t.cap} slots</span></div>
+          ${t.kind === 'craft' ? '<span class="small-text" style="color:#caa23e">CRAFT ONLY</span>' : (t.kind === 'vendor' ? '<span class="small-text" style="color:#ffb070">VENDOR</span>' : '')}
+        </div>
+        <div class="small-text ink-dim" style="margin:3px 0 6px">${t.desc || ''}${t.perk ? ' · <span style="color:#b88aff">Perk: ' + t.perk + '</span>' : ''}</div>
+        <div>${actions}</div>
+      </div>`;
+    }).join('');
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = "position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(4,2,10,0.78);backdrop-filter:blur(3px)";
+    ov.innerHTML =
+      '<div style="max-width:min(560px,94vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.99),rgba(12,7,22,0.99));border:2px solid rgba(212,175,55,0.6);border-radius:16px;padding:18px 20px;box-shadow:0 24px 70px rgba(0,0,0,0.8)">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px">' +
+          '<div style="font-family:\'Cinzel\',serif;font-size:1.25rem;font-weight:800;color:#ffd166">🎒 Bag Upgrades</div>' +
+          '<button id="bag-modal-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✖ Close</button>' +
+        '</div>' +
+        '<div class="small-text ink-dim" style="margin-bottom:10px">Balance: 🔥 ' + cinders + ' Cinders · 🪙 ' + aza + ' Aza. Craft costs come from <strong>secured</strong> camp storage — deposit loot first.</div>' +
+        rows +
+      '</div>';
+    document.body.appendChild(ov);
+    ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+    const x = document.getElementById('bag-modal-x'); if (x) x.onclick = () => ov.remove();
+    ov.querySelectorAll('[data-bag-buy]').forEach(btn => {
+      btn.onclick = () => {
+        const r = acquireBagTier(btn.getAttribute('data-bag-buy'), btn.getAttribute('data-mode'));
+        if (r.ok) {
+          try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast(`🎒 ${r.name} acquired — field bag is now ${r.cap} slots!`, 3800); } catch (e) {}
+          ov.remove();
+          try { if (typeof render === 'function') render(); } catch (e) {}
+        } else {
+          try { if (typeof showToast === 'function') showToast('⨯ ' + (r.error || 'Cannot acquire'), 3400); } catch (e) {}
+        }
+      };
+    });
   } catch (e) {}
 }
 // One-time "while you were away" alert when a gap pushed the camp into

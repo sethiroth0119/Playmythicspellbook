@@ -32368,6 +32368,10 @@ function mountBaseBuilder() {
             // A roster member was clicked — open the real read-only card view.
             if (typeof _baseOpenCard === 'function') _baseOpenCard(d.id);
           }
+          else if (d.action === 'workers') {
+            // Hire NPC staff / station units to run the camp rooms.
+            if (typeof openCampWorkersModal === 'function') openCampWorkersModal();
+          }
           else if (d.action === 'deposit') {
             // Drop the carried field bag into SECURED camp storage (real).
             try {

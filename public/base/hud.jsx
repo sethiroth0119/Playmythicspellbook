@@ -333,20 +333,14 @@ function BottomBar({ activeId, onSelect, speed, setSpeed, paused, setPaused }) {
           <span className="act-lbl">Assign</span>
           <span className="act-hot">A</span>
         </button>
-        <button className="act" title="Research upgrades & blueprints (hotkey: R)">
+        <button
+          className="act"
+          title="Hire NPC staff / station units to run the camp rooms"
+          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "workers" }, "*"); } catch (e) {} }}
+        >
           {Ic.research}
-          <span className="act-lbl">Research</span>
-          <span className="act-hot">R</span>
-        </button>
-        <button className="act" title="Send a scout team to reveal the map (hotkey: S)">
-          {Ic.scout}
-          <span className="act-lbl">Scout</span>
-          <span className="act-hot">S</span>
-        </button>
-        <button className="act" title="Launch a raid sortie for loot (hotkey: X)">
-          {Ic.raid}
-          <span className="act-lbl">Sortie</span>
-          <span className="act-hot">X</span>
+          <span className="act-lbl">Hire</span>
+          <span className="act-hot">H</span>
         </button>
       </div>
 

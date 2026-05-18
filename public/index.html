@@ -31894,6 +31894,32 @@ function _baseLeave() {
     try { App.screen = 'title'; App.titleHub = 'field'; if (typeof render === 'function') render(); } catch (e) {}
   }, 300);
 }
+// A bunker room opened a REAL game screen. ALLOWLISTED targets only — the
+// iframe can never navigate the game to an arbitrary screen. Each entry
+// mirrors the title-hub onclick (incl. the sub-state those screens need).
+// Fades the iframe out first so the handoff matches the smooth camp feel.
+function _baseNavTo(screen) {
+  try {
+    const NAV = {
+      deck:       function () { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; },
+      lab:        function () { App.screen = 'lab'; App.labTab = 'fuse'; App.labParentA = null; App.labParentB = null; },
+      gymWars:    function () { App.screen = 'gymWars'; },
+      bestiary:   function () { App.screen = 'bestiary'; },
+      collection: function () { App.screen = 'collection'; App.collectionTab = 'unit'; },
+    };
+    const apply = NAV[screen];
+    if (!apply) return;
+    try {
+      const ff = document.getElementById('base-builder-frame');
+      const bb = document.getElementById('base-builder-back');
+      if (ff) ff.style.opacity = '0';
+      if (bb) bb.style.opacity = '0';
+    } catch (e2) {}
+    setTimeout(function () {
+      try { apply(); if (typeof render === 'function') render(); } catch (e3) {}
+    }, 280);
+  } catch (e) {}
+}
 function mountBaseBuilder() {
   try {
     const FID = 'base-builder-frame', BID = 'base-builder-back', GID = 'base-builder-bg';
@@ -31987,6 +32013,10 @@ function mountBaseBuilder() {
                 }
               } catch (e5) {}
             }, 280);
+          }
+          else if (typeof d.action === 'string' && d.action.indexOf('nav:') === 0) {
+            // A bunker room opened a real game screen (allowlisted).
+            if (typeof _baseNavTo === 'function') _baseNavTo(d.action.slice(4));
           }
         }
       };

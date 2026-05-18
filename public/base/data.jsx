@@ -6,6 +6,7 @@ const ROOMS = [
   // Row 1 — surface tier
   {
     id: "CMD-01", slot: 0, code: "C/01", name: "Command Center", tier: "SURFACE",
+    bridge: "roguelite", bridgeLabel: "🗺 Open Campaigns",
     depth: -12, level: 4, levelMax: 6,
     status: "ok", workers: { on: 4, max: 4 },
     art: "command", glow: "var(--bronze)",
@@ -30,6 +31,7 @@ const ROOMS = [
   },
   {
     id: "BRK-01", slot: 1, code: "B/01", name: "Survivor Barracks", tier: "SURFACE",
+    bridge: "nav:deck", bridgeLabel: "⚔ Open Deck Builder",
     depth: -14, level: 3, levelMax: 6,
     status: "warn", workers: { on: 3, max: 6 },
     art: "barracks", glow: "var(--bronze)",
@@ -81,6 +83,7 @@ const ROOMS = [
   // Row 2 — mid tier
   {
     id: "AIL-01", slot: 3, code: "A/01", name: "AI Lab", tier: "MID",
+    bridge: "nav:lab", bridgeLabel: "🧪 Open The Lab",
     depth: -38, level: 5, levelMax: 6,
     status: "ok", workers: { on: 3, max: 3 },
     art: "ai", glow: "var(--blue)",
@@ -130,6 +133,7 @@ const ROOMS = [
   },
   {
     id: "TRN-01", slot: 5, code: "T/01", name: "Training Hall", tier: "MID",
+    bridge: "nav:gymWars", bridgeLabel: "🏛 Open Gym Core Wars",
     depth: -40, level: 3, levelMax: 6,
     status: "ok", workers: { on: 4, max: 5 },
     art: "training", glow: "var(--bronze)",
@@ -181,6 +185,7 @@ const ROOMS = [
   },
   {
     id: "CNT-01", slot: 7, code: "X/01", name: "Containment", tier: "DEEP",
+    bridge: "nav:bestiary", bridgeLabel: "📖 Open World Data",
     depth: -72, level: 2, levelMax: 6,
     status: "crit", workers: { on: 1, max: 4 },
     art: "containment", glow: "var(--red)",

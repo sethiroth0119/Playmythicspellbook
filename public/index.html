@@ -21921,18 +21921,28 @@ function _flattenCatalogMedia(m) {
       out['pg:' + i] = fits(slim) ? slim : { id: g.id, pageRoute: g.pageRoute, isActive: g.isActive, bubbles: [] };
     } catch (e) {}
   });
-  // Campaigns — one shard-safe key per campaign (each carries per-node art).
+  // Campaigns — DECOMPOSE images instead of stripping them. A campaign with
+  // 11 node images + cover + map background blows the 4 MB shard cap as one
+  // key, so the old guard dropped every image and players saw emoji nodes.
+  // Now the text-only skeleton (tiny, always fits) ships as cp:<i>, and each
+  // large image travels as its OWN shard-safe key (cpa: campaign-level,
+  // cpn: per-node), reattached on unflatten.
   (Array.isArray(m.campaigns) ? m.campaigns : []).forEach((c, i) => {
     if (c == null) return;
-    if (fits(c)) { out['cp:' + i] = c; return; }
-    // One oversized campaign: keep its structure, drop the heaviest inline
-    // node images so the rest of the campaign (and other campaigns) still ship.
-    try {
-      const slim = JSON.parse(JSON.stringify(c));
-      const strip = (o) => { if (!o || typeof o !== 'object') return; for (const k in o) { const v = o[k]; if (typeof v === 'string' && v.slice(0,5) === 'data:' && v.length > 6144) o[k] = ''; else if (v && typeof v === 'object') strip(v); } };
-      strip(slim);
-      out['cp:' + i] = fits(slim) ? slim : { id: c.id, name: c.name, nodes: [] };
-    } catch (e) {}
+    let sk; try { sk = JSON.parse(JSON.stringify(c)); } catch (e) { return; }
+    const bigStr = (v) => typeof v === 'string' && v.length > 1024;
+    for (const k in sk) {
+      if (!Object.prototype.hasOwnProperty.call(sk, k) || k === 'nodes') continue;
+      if (bigStr(sk[k])) { if (fits(sk[k])) out['cpa:' + i + ':' + k] = sk[k]; sk[k] = ''; }
+    }
+    if (Array.isArray(sk.nodes)) sk.nodes.forEach((nd, j) => {
+      if (!nd || typeof nd !== 'object') return;
+      for (const k in nd) {
+        if (!Object.prototype.hasOwnProperty.call(nd, k)) continue;
+        if (bigStr(nd[k])) { if (fits(nd[k])) out['cpn:' + i + ':' + j + ':' + k] = nd[k]; nd[k] = ''; }
+      }
+    });
+    out['cp:' + i] = sk;
   });
   return out;
 }
@@ -21946,6 +21956,17 @@ function _unflattenCatalogMedia(obj) {
     if (k.slice(0, 3) === 'sd:') sd[parseInt(k.slice(3), 10) || 0] = obj[k];
     else if (k.slice(0, 3) === 'pg:') pg[parseInt(k.slice(3), 10) || 0] = obj[k];
     else if (k.slice(0, 3) === 'cp:') cp[parseInt(k.slice(3), 10) || 0] = obj[k];
+  }
+  // Reattach decomposed campaign images onto their skeletons.
+  for (const k in obj) {
+    if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+    if (k.slice(0, 4) === 'cpa:') {
+      const p = k.split(':'); const ci = parseInt(p[1], 10); const fld = p.slice(2).join(':');
+      if (cp[ci] && typeof cp[ci] === 'object' && fld) cp[ci][fld] = obj[k];
+    } else if (k.slice(0, 4) === 'cpn:') {
+      const p = k.split(':'); const ci = parseInt(p[1], 10); const nj = parseInt(p[2], 10); const fld = p.slice(3).join(':');
+      if (cp[ci] && Array.isArray(cp[ci].nodes) && cp[ci].nodes[nj] && fld) cp[ci].nodes[nj][fld] = obj[k];
+    }
   }
   return {
     tomb: typeof obj.tomb === 'string' ? obj.tomb : null,

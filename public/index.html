@@ -4803,9 +4803,10 @@
     0%, 100% { opacity: 0.6; transform: scale(1);    }
     50%      { opacity: 1;   transform: scale(1.15); }
   }
-  /* 🪦 Lootable salvage cache — invites a click. */
-  .tombstone-loot { cursor: pointer; pointer-events: auto; animation: ts-loot-bob 1.6s ease-in-out infinite; }
-  .tombstone-loot:hover { filter: brightness(1.25) drop-shadow(0 0 8px rgba(255,210,90,0.9)); }
+  /* 🪦 Lootable salvage cache — visual cue only; looting is a UNIT action
+     (stand on the body → Loot from its panel), so this must NOT capture
+     clicks or the unit on the tile becomes unselectable. */
+  .tombstone-loot { pointer-events: none; animation: ts-loot-bob 1.6s ease-in-out infinite; }
   .tombstone-looted { opacity: 0.45; filter: grayscale(0.7); }
   .tombstone-loot-badge {
     position: absolute; bottom: -6px; right: -6px;
@@ -30621,29 +30622,71 @@ function _rollUnitSalvage(unit) {
     return out;
   } catch (e) { return { supplies: 1 }; }
 }
-// Player clicked a salvage tombstone — bank its resources, mark looted,
-// track the run total, toast the breakdown, repaint the board.
-function _lootTombstone(coord) {
+// Looter-rarity RNG boost: a rarer unit harvests more thoroughly. Scales the
+// base haul up and rolls bonus rare materials. Pure RNG, capped sane.
+function _looterRarityBoost(base, looter) {
+  const out = {};
+  for (const k in base) out[k] = base[k] | 0;
+  try {
+    const rar = String((looter && (looter.rarity || (looter.card && looter.card.rarity))) || 'common').toLowerCase();
+    const tier = rar === 'mythic' ? 5 : rar === 'legendary' ? 4 : rar === 'epic' ? 3
+      : rar === 'rare' ? 2 : rar === 'uncommon' ? 1 : 0;
+    if (tier > 0) {
+      const mul = 1 + tier * 0.15;                      // +15% per tier to every stack
+      for (const k in out) out[k] = Math.max(out[k], Math.round(out[k] * mul));
+      // Each tier rolls an independent chance at bonus rare salvage.
+      for (let i = 0; i < tier; i++) {
+        if (Math.random() < 0.30) out.memoryShards = (out.memoryShards || 0) + 1;
+        if (Math.random() < 0.22) out.dna = (out.dna || 0) + 1;
+        if (Math.random() < 0.18) out.corruptedEssence = (out.corruptedEssence || 0) + 1;
+      }
+    }
+  } catch (e) {}
+  return out;
+}
+// 🪦 A unit STANDING ON a body harvests it. Looting forfeits the unit's
+// remaining turn — it can no longer move/attack this turn (per design).
+// Returns true on success.
+function _lootWithUnit(unitId) {
   try {
     const s = App.state;
-    if (!s || !Array.isArray(s.tombstones) || !coord) return;
-    const parts = String(coord).split(',');
-    const x = parseInt(parts[0], 10), y = parseInt(parts[1], 10);
-    const t = s.tombstones.find(o => o && o.lootable && !o.looted && !o.glowing && o.x === x && o.y === y);
-    if (!t) return;
-    const got = t.salvage && typeof t.salvage === 'object' ? t.salvage : {};
+    if (!s || !Array.isArray(s.tombstones) || !Array.isArray(s.units)) return false;
+    const u = s.units.find(x => x && x.id === unitId && x.alive);
+    if (!u || !u.pos) return false;
+    if (u.owner !== 'player' || s.turn !== 'player') return false;
+    if (u.hasMoved && u.hasAttacked) return false;          // turn already spent
+    const t = s.tombstones.find(o => o && o.lootable && !o.looted && !o.glowing
+      && o.x === u.pos.x && o.y === u.pos.y);
+    if (!t) return false;
+    const base = (t.salvage && typeof t.salvage === 'object') ? t.salvage : {};
+    const got = _looterRarityBoost(base, u);
     addSalvage(got);
     t.looted = true;
-    // Per-run tally for the end-of-match summary.
+    // Looting forfeits the rest of the unit's turn.
+    s.units = s.units.map(x => x.id === u.id ? { ...x, hasMoved: true, hasAttacked: true, _looted: true } : x);
     s._salvageRun = s._salvageRun || { gained: {}, looted: 0 };
     s._salvageRun.looted++;
     for (const k in got) { const n = got[k] | 0; if (n) s._salvageRun.gained[k] = (s._salvageRun.gained[k] || 0) + n; }
     const pills = Object.keys(got).filter(k => (got[k] | 0) > 0)
       .map(k => `${(_SALVAGE_BY_ID[k] || {}).icon || ''}${got[k]}`).join('  ');
     try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
-    try { if (typeof showToast === 'function') showToast(`🪦 Looted ${t.name || 'body'}: ${pills || 'nothing of use'}`, 2600); } catch (e) {}
+    try { if (typeof showToast === 'function') showToast(`🪦 ${u.name || 'Unit'} looted ${t.name || 'body'}: ${pills || 'nothing of use'}`, 2800); } catch (e) {}
+    try { App.ui.modalUnitId = null; } catch (e) {}
     try { if (typeof render === 'function') render(); } catch (e) {}
-  } catch (e) {}
+    return true;
+  } catch (e) { return false; }
+}
+// True if this unit can loot right now (player unit, player turn, standing on
+// an un-looted body, and still has an action to forfeit).
+function _unitCanLoot(u) {
+  try {
+    const s = App.state;
+    if (!s || !u || !u.alive || !u.pos) return false;
+    if (u.owner !== 'player' || s.turn !== 'player') return false;
+    if (u.hasMoved && u.hasAttacked) return false;
+    return !!(Array.isArray(s.tombstones) && s.tombstones.some(o =>
+      o && o.lootable && !o.looted && !o.glowing && o.x === u.pos.x && o.y === u.pos.y));
+  } catch (e) { return false; }
 }
 
 const getOccupant = (pos, units) => units.find(u => u.alive && u.pos.x === pos.x && u.pos.y === pos.y);
@@ -44811,6 +44854,7 @@ function renderUnitModal() {
         </div>
 
         <div class="modal-actions">
+          ${(typeof _unitCanLoot === 'function' && _unitCanLoot(u)) ? `<button class="btn-primary modal-btn-loot" id="modal-btn-loot" title="Harvest the body on this tile. Forfeits this unit's move & attack for the turn. Rarer units find more.">🪦 Loot Body</button>` : ''}
           ${canMove ? `<button class="btn-primary modal-btn-move" id="modal-btn-move">↗ Move</button>` : ''}
           ${canMove && getSwapTargets(u, s.units).length > 0 ? (() => {
             const swapped = !!(s.player && s.player.hasSwapped);
@@ -45198,12 +45242,11 @@ function renderBoard() {
         const reviveHint = ts.glowing ? `<div class="tombstone-timer">${ts.turnsLeft || 0}</div>` : '';
         const lootBadge = _canLoot ? '<div class="tombstone-loot-badge">💰</div>'
           : (ts.looted ? '<div class="tombstone-loot-badge done">✅</div>' : '');
-        const lootAttr = _canLoot ? ` data-loot="${x},${y}" role="button" tabindex="0"` : '';
         const ttl = ts.glowing
           ? `${escapeHtml(ts.name || 'Tombstone')} — Rises in ${ts.turnsLeft || 0} turn${(ts.turnsLeft || 0) === 1 ? '' : 's'}`
-          : (_canLoot ? `${escapeHtml(ts.name || 'Body')} — click to LOOT salvage`
+          : (_canLoot ? `${escapeHtml(ts.name || 'Body')} — move a unit here, then Loot from its panel`
             : (ts.looted ? `${escapeHtml(ts.name || 'Body')} — looted` : escapeHtml(ts.name || 'Tombstone')));
-        cellInner += `<div class="${cls}"${lootAttr} title="${ttl}">${inner}${reviveHint}${lootBadge}</div>`;
+        cellInner += `<div class="${cls}" title="${ttl}">${inner}${reviveHint}${lootBadge}</div>`;
       }
       html += `<div class="${tileClasses.join(' ')}" data-x="${x}" data-y="${y}">${cellInner}</div>`;
     }
@@ -45781,12 +45824,6 @@ function bindBattleEvents() {
   document.querySelectorAll('.tile').forEach(el => {
     el.onclick = () => onTileClick(parseInt(el.dataset.x, 10), parseInt(el.dataset.y, 10));
   });
-  // 🪦 Loot a salvage tombstone (sits inside its tile — stop the tile click).
-  document.querySelectorAll('[data-loot]').forEach(el => {
-    const go = (e) => { if (e) e.stopPropagation(); _lootTombstone(el.getAttribute('data-loot')); };
-    el.onclick = go;
-    el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(e); } };
-  });
   document.querySelectorAll('.unit').forEach(el => {
     el.onclick = (e) => { e.stopPropagation(); onUnitClick(el.dataset.unit); };
   });
@@ -45862,6 +45899,13 @@ function bindBattleEvents() {
     if (closeBtn) closeBtn.onclick = (e) => { e.stopPropagation(); closeUnitModal(); };
     const closeBtn2 = document.getElementById('modal-btn-close');
     if (closeBtn2) closeBtn2.onclick = (e) => { e.stopPropagation(); closeUnitModal(); };
+
+    const modalLoot = document.getElementById('modal-btn-loot');
+    if (modalLoot) modalLoot.onclick = (e) => {
+      e.stopPropagation();
+      const id = App.ui.modalUnitId;
+      if (id && typeof _lootWithUnit === 'function') _lootWithUnit(id);
+    };
 
     const modalMove = document.getElementById('modal-btn-move');
     if (modalMove) modalMove.onclick = (e) => {

@@ -30718,13 +30718,33 @@ const _RES_VALUE = ['dna','memoryShards','corruptedEssence','fuel','medicine',
 function _resSlot(id) { return _RES_SLOT[id] || 1; }
 function _ensureFieldBag() { if (!Profile.fieldBag || typeof Profile.fieldBag !== 'object') Profile.fieldBag = {}; return Profile.fieldBag; }
 function _bagSlots(bag) { let n = 0; for (const k in (bag || {})) n += (bag[k] | 0) * _resSlot(k); return n; }
-function _fieldBagCap() {
+// Best owned bag capacity, ignoring the hero-carry rule (used for UI/display).
+function _ownedBagCap() {
   try {
     let cap = FIELD_BAG_CAP;
     const owned = (Profile.bagsOwned && Array.isArray(Profile.bagsOwned)) ? Profile.bagsOwned : [];
     owned.forEach(id => { const t = (typeof _bagTierById === 'function') ? _bagTierById(id) : null; if (t && t.cap > cap) cap = t.cap; });
     if ((Profile.bagCap | 0) > cap) cap = Profile.bagCap | 0;   // forward-compat
     return cap;
+  } catch (e) { return FIELD_BAG_CAP; }
+}
+// 🦸 Only a HERO can haul the big packs. The upgraded capacity applies only
+// while the player has a LIVING hero unit on the battlefield to carry it; if
+// the hero falls (or a run has no hero), the field bag reverts to the basic
+// Survivor Bag (36). Outside battle there's no carrying happening, so the
+// owned cap is reported for display.
+function _heroCarryingBigBag() {
+  try {
+    const s = (typeof App !== 'undefined') ? App.state : null;
+    if (!s || !Array.isArray(s.units)) return true;   // not in battle → n/a
+    return s.units.some(u => u && u.alive && u.owner === 'player' && u.isHero);
+  } catch (e) { return true; }
+}
+function _fieldBagCap() {
+  try {
+    const owned = _ownedBagCap();
+    if (owned <= FIELD_BAG_CAP) return FIELD_BAG_CAP;
+    return _heroCarryingBigBag() ? owned : FIELD_BAG_CAP;
   } catch (e) { return FIELD_BAG_CAP; }
 }
 // 🎒 BAG UPGRADE TIERS. Capacity-based (no spatial grid in v1). Vendor tiers
@@ -30967,16 +30987,26 @@ function mountCampStatus() {
       return `<span style="display:inline-block;margin:2px 4px;padding:2px 8px;border:1px solid rgba(184,136,255,0.3);border-radius:10px;color:#e8ddff;background:rgba(184,136,255,0.08);font-size:0.82rem;${dim}">${r.icon} ${r.name} <strong>${c}</strong></span>`;
     }).join('');
     const tier = _bagTierById(Profile.bagTier || 'basic');
+    // 🔥 Raider threat — scales with how much you're hoarding.
+    const rk = (typeof campRaidRisk === 'function') ? campRaidRisk() : { level: 'safe', total: 0 };
+    const rkCol = rk.level === 'high' ? '#ff6b6b' : rk.level === 'elevated' ? '#ffa05a' : rk.level === 'low' ? '#ffd166' : '#7CFFB2';
+    const ammoHave = (Profile.salvage && (Profile.salvage.ammo | 0)) || 0;
+    const threatLine = (rk.level === 'safe')
+      ? `<div class="small-text" style="margin-top:6px;color:#7CFFB2">🛡 Raider threat: <strong>SAFE</strong> — stockpile too small to attract raiders.</div>`
+      : `<div class="small-text" style="margin-top:6px;color:${rkCol}">🔥 Raider threat: <strong>${rk.level.toUpperCase()}</strong> — a ${rk.total}-unit hoard draws raiders. Defense: <strong>${ammoHave} 🔫 Ammo</strong>${ammoHave <= 0 ? ' — <span style="color:#ff6b6b">NONE! raids will gut the camp</span>' : ''}. Don\'t over-hoard.</div>`;
+    const bigBag = (typeof _ownedBagCap === 'function' ? _ownedBagCap() : 36) > 36;
+    const heroNote = bigBag ? ' <span class="small-text" style="color:#b88aff">· Hero-carried</span>' : '';
     if (!el) { el = document.createElement('div'); el.id = ID; document.body.appendChild(el); }
     el.style.cssText = "position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:2147483270;max-width:min(720px,94vw);max-height:64vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.97),rgba(14,9,26,0.97));border:2px solid " + col + "88;border-radius:12px;padding:9px 14px;box-shadow:0 12px 36px rgba(0,0,0,0.6);font-family:'Crimson Text',Georgia,serif;color:#e8ddff";
     el.innerHTML =
       '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:' + col + '">' + head +
         ' <span class="small-text" style="color:#cdb6ff;font-weight:600">— camp consumes supplies over time; deposit to keep it alive</span></div>' +
       '<div style="margin-top:5px">' + chips + '</div>' + (fxLines ? '<div style="margin-top:4px">' + fxLines + '</div>' : '') +
+      threatLine +
       '<div style="margin-top:8px;border-top:1px solid rgba(184,136,255,0.25);padding-top:7px">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">' +
           '<div style="font-family:\'Cinzel\',serif;font-weight:700;color:#cdb6ff">📦 Camp Storage <span class="small-text" style="opacity:.7">(secured)</span></div>' +
-          '<button id="camp-bag-upgrade" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:9px;padding:0.4rem 0.85rem;border:1px solid rgba(212,175,55,0.6);background:linear-gradient(180deg,rgba(60,40,110,0.92),rgba(28,16,52,0.96));color:#ffe9b8;font-size:0.85rem">🎒 ' + (tier.name || 'Survivor Bag') + ' (' + _fieldBagCap() + ') — Upgrade</button>' +
+          '<button id="camp-bag-upgrade" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:9px;padding:0.4rem 0.85rem;border:1px solid rgba(212,175,55,0.6);background:linear-gradient(180deg,rgba(60,40,110,0.92),rgba(28,16,52,0.96));color:#ffe9b8;font-size:0.85rem">🎒 ' + (tier.name || 'Survivor Bag') + ' (' + (typeof _ownedBagCap === 'function' ? _ownedBagCap() : _fieldBagCap()) + ')' + heroNote + ' — Upgrade</button>' +
         '</div>' +
         '<div style="margin-top:5px">' + storeChips + '</div>' +
       '</div>';
@@ -31066,6 +31096,94 @@ function _campAwayAlert() {
       const names = st.out.map(k => (_SALVAGE_BY_ID[k] || {}).name || k).join(', ');
       try { if (typeof showToast === 'function') showToast('⚠ Camp ran out of ' + names + ' — deposit supplies to recover.', 5000); } catch (e) {}
     }
+  } catch (e) {}
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// 🔥 RAID CONSEQUENCES — success creates danger. The bigger your SECURED
+// stockpile, the more attractive a target your camp becomes. Raiders strike
+// over real time (offline included). AMMO is your defense: it's spent to
+// repel/blunt raids — so a hoard with no ammo gets gutted. Closes the loop:
+// loot → deposit → camp eats it → raiders eye it → you must keep ammo + not
+// over-hoard. (v1 = risk + raid resolution + Ammo defense + alerts; camp
+// defense buildings / NPC guards are roadmap.)
+// ════════════════════════════════════════════════════════════════════════
+const RAID_CHECK_HOURS = 8;            // a raid is rolled per ~8h real time
+const RAID_MAX_OFFLINE_WINDOWS = 3;    // cap raids resolved on a long absence
+const RAID_TARGETS = ['food', 'fuel', 'dna', 'corruptedEssence', 'memoryShards', 'medicine', 'metal', 'supplies'];
+function _stockpileTotal() {
+  const led = (Profile && Profile.salvage && typeof Profile.salvage === 'object') ? Profile.salvage : {};
+  let n = 0; for (const k in led) n += (led[k] | 0); return n;
+}
+// Raid risk scales with how much you're hoarding.
+function campRaidRisk() {
+  const total = _stockpileTotal();
+  let level = 'safe', perWindow = 0, strength = 0;
+  if (total >= 500)      { level = 'high';     perWindow = 0.38; strength = 20; }
+  else if (total >= 200) { level = 'elevated'; perWindow = 0.22; strength = 12; }
+  else if (total >= 60)  { level = 'low';      perWindow = 0.10; strength = 6;  }
+  return { level, perWindow, strength, total };
+}
+// Resolve ONE raid. Ammo is spent as defense — it scales down what's stolen
+// (full ammo vs strength ≈ mostly repelled). Returns the report.
+function _executeRaid(risk) {
+  const led = (typeof _ensureSalvageLedger === 'function') ? _ensureSalvageLedger() : (Profile.salvage = Profile.salvage || {});
+  const strength = Math.max(1, risk.strength || 6);
+  const ammo = led.ammo | 0;
+  const usedAmmo = Math.min(ammo, strength);
+  led.ammo = ammo - usedAmmo;
+  const defendFrac = usedAmmo / strength;            // 0..1 of the raid blunted
+  const stealFrac = (0.30 + (risk.level === 'high' ? 0.12 : risk.level === 'elevated' ? 0.06 : 0)) * (1 - defendFrac);
+  const stolen = {};
+  if (stealFrac > 0.01) {
+    for (const k of RAID_TARGETS) {
+      const have = led[k] | 0;
+      if (have <= 0) continue;
+      const take = Math.min(have, Math.ceil(have * stealFrac));
+      if (take > 0) { led[k] = have - take; stolen[k] = take; }
+    }
+  }
+  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  const anyStolen = Object.keys(stolen).length > 0;
+  return { stolen, usedAmmo, repelled: !anyStolen, strength };
+}
+// Time-based raid roll w/ offline catch-up. Safe to call from render().
+function runCampRaidTick() {
+  try {
+    if (typeof Profile === 'undefined' || !Profile) return;
+    const now = Date.now();
+    if (!Profile.campRaidLastTick) { Profile.campRaidLastTick = now; return; }
+    const risk = campRaidRisk();
+    let windows = Math.floor((now - Profile.campRaidLastTick) / (RAID_CHECK_HOURS * 3600000));
+    if (windows <= 0) return;
+    // Advance the clock by the whole windows consumed (keep the remainder).
+    Profile.campRaidLastTick += windows * RAID_CHECK_HOURS * 3600000;
+    if (risk.perWindow <= 0) { try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {} return; }
+    windows = Math.min(windows, RAID_MAX_OFFLINE_WINDOWS);
+    const reports = [];
+    for (let i = 0; i < windows; i++) {
+      if (Math.random() < risk.perWindow) reports.push(_executeRaid(risk));
+    }
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+    if (reports.length) {
+      App._raidReports = (App._raidReports || []).concat(reports);
+    }
+  } catch (e) {}
+}
+// Surface raid outcomes once (queued by the tick).
+function _campRaidAlert() {
+  try {
+    const rs = App._raidReports;
+    if (!rs || !rs.length) return;
+    App._raidReports = null;
+    // Merge all queued raids into one summary.
+    const tot = {}; let ammo = 0, repelled = 0;
+    rs.forEach(r => { ammo += r.usedAmmo || 0; if (r.repelled) repelled++; for (const k in (r.stolen || {})) tot[k] = (tot[k] || 0) + r.stolen[k]; });
+    const lost = (typeof _resLine === 'function') ? _resLine(tot) : Object.keys(tot).map(k => k + ' ' + tot[k]).join(' ');
+    let msg;
+    if (!Object.keys(tot).length) msg = `🛡 Raiders hit the camp ${rs.length > 1 ? '(' + rs.length + 'x) ' : ''}— defenders repelled them${ammo ? ' (spent ' + ammo + ' 🔫 Ammo)' : ''}.`;
+    else msg = `🔥 Raiders struck the camp${rs.length > 1 ? ' ' + rs.length + 'x' : ''} — lost ${lost}.${ammo ? ' Defended with ' + ammo + ' 🔫 Ammo.' : ' No Ammo to defend!'} Don't over-hoard — keep Ammo stocked.`;
+    try { if (typeof showToast === 'function') showToast(msg, 6000); } catch (e) {}
   } catch (e) {}
 }
 
@@ -35147,7 +35265,9 @@ function render() {
   // 🏕 Camp consumption — drain secured supplies over real time (offline
   // catch-up included), surface shortages, show the status banner at Camp.
   try { if (typeof runCampConsumptionTick === 'function') runCampConsumptionTick(); } catch (e) {}
+  try { if (typeof runCampRaidTick === 'function') runCampRaidTick(); } catch (e) {}
   try { if (typeof _campAwayAlert === 'function') _campAwayAlert(); } catch (e) {}
+  try { if (typeof _campRaidAlert === 'function') _campRaidAlert(); } catch (e) {}
   try { if (typeof mountCampStatus === 'function') mountCampStatus(); } catch (e) {}
 
   // ===== Audio routing FIRST =====

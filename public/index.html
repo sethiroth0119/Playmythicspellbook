@@ -30457,6 +30457,7 @@ function processTombstoneDrops(state) {
       lootable: true,
       looted: false,
       salvage: (typeof _rollUnitSalvage === 'function') ? _rollUnitSalvage(u) : {},
+      risk: (typeof _rollTombstoneRisk === 'function') ? _rollTombstoneRisk(u) : null,
     });
   }
   return state;
@@ -30647,8 +30648,73 @@ function _looterRarityBoost(base, looter) {
 // 🪦 A unit STANDING ON a body harvests it. Looting forfeits the unit's
 // remaining turn — it can no longer move/attack this turn (per design).
 // Returns true on success.
-function _lootWithUnit(unitId) {
+// ⚠ RISK TOMBSTONES — some bodies are dangerous. Risk is rolled at death
+// from the unit's traits; most bodies are safe (null). "Destroy" neutralizes
+// the danger for zero loot; harvesting in any way triggers the consequence.
+const RISK_META = {
+  corrupted: { icon: '☣', name: 'Corrupted', color: '#9b6bff', warn: 'Harvesting risks corruption damage (rich in Corrupted Essence).' },
+  explosive: { icon: '💥', name: 'Rigged',    color: '#ff7a3a', warn: 'The body is rigged — harvesting detonates it (Destroy is safe).' },
+  cursed:    { icon: '🕯', name: 'Cursed',    color: '#c850ff', warn: 'A curse clings to looters — but the spoils are richer.' },
+  guarded:   { icon: '🛡', name: 'Guarded',   color: '#ffb000', warn: 'A guardian lashes out at whoever disturbs it.' },
+};
+function _rollTombstoneRisk(u) {
   try {
+    const k = (s) => String(s || '').toLowerCase();
+    const blob = [k(u.type), k(u.faction), (u.factions || []).map(k).join(' '),
+      (u.elements || [u.element]).map(k).join(' '), k(u.name),
+      (u.passives || [u.passive]).map(k).join(' ')].join(' ');
+    const has = (...w) => w.some(t => blob.indexOf(t) >= 0);
+    const r = Math.random();
+    if (has('boss', 'finalboss', 'elite') || u.isHero) { if (r < 0.7) return 'guarded'; }
+    if (has('corrupt', 'shadow', 'undead', 'infected', 'void')) { if (r < 0.55) return 'corrupted'; if (r < 0.75) return 'cursed'; }
+    if (has('mech', 'machine', 'robot', 'construct', 'metal', 'steel', 'tank', 'drone')) { if (r < 0.5) return 'explosive'; }
+    if (has('demon', 'curse', 'dark', 'witch', 'occult')) { if (r < 0.5) return 'cursed'; }
+    if (r < 0.12) return ['corrupted', 'explosive', 'cursed', 'guarded'][Math.floor(Math.random() * 4)];
+    return null;
+  } catch (e) { return null; }
+}
+// Bias a salvage map toward one resource (the targeted-extraction modes).
+function _biasSalvage(map, key) {
+  const out = {};
+  for (const k in map) out[k] = Math.max(0, Math.round((map[k] | 0) * (k === key ? 1 : 0.45)));
+  out[key] = (out[key] || 0) + 1 + Math.floor(Math.random() * 3);   // guaranteed yield
+  return out;
+}
+// Apply a risk tombstone's consequence to the looter (HP only — clamped to
+// a min of 1 so a harvest never instakills; tense, not rage-quit). Explosive
+// also clips adjacent allies. Returns a short message, or ''.
+function _applyTombstoneRisk(s, looterId, risk) {
+  if (!risk || !RISK_META[risk]) return '';
+  try {
+    const lk = s.units.find(x => x && x.id === looterId);
+    if (!lk) return '';
+    const maxhp = lk.maxHp || lk.maxHP || 20;
+    const pct = risk === 'explosive' ? 0.25 : risk === 'guarded' ? 0.20 : risk === 'corrupted' ? 0.15 : 0.10;
+    const dmg = Math.max(2, Math.round(maxhp * pct));
+    s.units = s.units.map(x => {
+      if (x.id === looterId) {
+        const hp = Math.max(1, (x.currentHp != null ? x.currentHp : maxhp) - dmg);
+        return { ...x, currentHp: hp };
+      }
+      if (risk === 'explosive' && x.alive && x.pos && lk.pos && x.owner === lk.owner && x.id !== looterId
+          && Math.max(Math.abs(x.pos.x - lk.pos.x), Math.abs(x.pos.y - lk.pos.y)) <= 1) {
+        const adj = Math.max(1, Math.round((x.maxHp || 20) * 0.10));
+        const hp = Math.max(1, (x.currentHp != null ? x.currentHp : (x.maxHp || 20)) - adj);
+        return { ...x, currentHp: hp };
+      }
+      return x;
+    });
+    const m = RISK_META[risk];
+    return risk === 'explosive' ? `${m.icon} It was rigged — blast hit ${lk.name} (−${dmg}) & nearby allies!`
+      : risk === 'corrupted' ? `${m.icon} ${lk.name} is infected by corruption (−${dmg} HP).`
+      : risk === 'cursed' ? `${m.icon} A curse bites ${lk.name} (−${dmg} HP).`
+      : `${m.icon} The guardian lashes out at ${lk.name} (−${dmg} HP).`;
+  } catch (e) { return ''; }
+}
+// mode: 'normal' | 'dna' | 'essence' | 'shards' | 'research' | 'destroy'
+function _lootWithUnit(unitId, mode) {
+  try {
+    mode = mode || 'normal';
     const s = App.state;
     if (!s || !Array.isArray(s.tombstones) || !Array.isArray(s.units)) return false;
     const u = s.units.find(x => x && x.id === unitId && x.alive);
@@ -30658,32 +30724,94 @@ function _lootWithUnit(unitId) {
     const t = s.tombstones.find(o => o && o.lootable && !o.looted && !o.glowing
       && o.x === u.pos.x && o.y === u.pos.y);
     if (!t) return false;
-    const base = (t.salvage && typeof t.salvage === 'object') ? t.salvage : {};
-    const got = _looterRarityBoost(base, u);
-    // → into the volatile FIELD BAG (capacity-limited), not camp storage.
-    const { taken, left } = addToFieldBag(got);
+
+    // Forfeit the unit's turn regardless of choice (it's an action).
     t.looted = true;
-    // Looting forfeits the rest of the unit's turn.
     s.units = s.units.map(x => x.id === u.id ? { ...x, hasMoved: true, hasAttacked: true, _looted: true } : x);
     s._salvageRun = s._salvageRun || { gained: {}, looted: 0 };
     s._salvageRun.looted++;
-    for (const k in taken) { const n = taken[k] | 0; if (n) s._salvageRun.gained[k] = (s._salvageRun.gained[k] || 0) + n; }
-    const pills = _resLine(taken);
-    const overflow = _resLine(left);
-    const cap = _fieldBagCap(), usedSlots = _bagSlots(_ensureFieldBag());
-    try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
-    try {
-      if (typeof showToast === 'function') {
-        const msg = `🎒 ${u.name || 'Unit'} looted ${t.name || 'body'}: ${pills || 'nothing of use'}`
-          + (overflow ? ` — ⚠ bag full, left ${overflow}` : '')
-          + ` · bag ${usedSlots}/${cap}`;
-        showToast(msg, overflow ? 3800 : 2800);
-      }
-    } catch (e) {}
+
+    // DESTROY — deny the loot, safely neutralize any risk. No consequence.
+    if (mode === 'destroy') {
+      try { if (typeof playSfx === 'function') playSfx('uiBack'); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast(`💣 ${u.name || 'Unit'} destroyed the ${t.risk ? RISK_META[t.risk].name + ' ' : ''}body — threat neutralized, no salvage.`, 2800); } catch (e) {}
+      try { App.ui.modalUnitId = null; } catch (e) {}
+      try { if (typeof render === 'function') render(); } catch (e) {}
+      return true;
+    }
+
+    let got = _looterRarityBoost((t.salvage && typeof t.salvage === 'object') ? t.salvage : {}, u);
+    if (mode === 'dna')     got = _biasSalvage(got, 'dna');
+    else if (mode === 'essence') got = _biasSalvage(got, 'corruptedEssence');
+    else if (mode === 'shards')  got = _biasSalvage(got, 'memoryShards');
+
+    let destLine, where;
+    if (mode === 'research') {
+      // Straight to SECURED storage — bypasses field-bag carry risk, but at
+      // a reduced yield (you trade richness for safety).
+      const led = (typeof _ensureSalvageLedger === 'function') ? _ensureSalvageLedger() : (Profile.salvage = Profile.salvage || {});
+      const banked = {};
+      for (const k in got) { const n = Math.max(0, Math.round((got[k] | 0) * 0.6)); if (n) { led[k] = (led[k] || 0) + n; banked[k] = n; } }
+      try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+      for (const k in banked) s._salvageRun.gained[k] = (s._salvageRun.gained[k] || 0) + banked[k];
+      destLine = `📦 Sent to Camp research (secured, ×0.6): ${_resLine(banked) || 'nothing'}`;
+      where = 'research';
+    } else {
+      const { taken, left } = addToFieldBag(got);
+      for (const k in taken) { const n = taken[k] | 0; if (n) s._salvageRun.gained[k] = (s._salvageRun.gained[k] || 0) + n; }
+      const cap = _fieldBagCap(), usedSlots = _bagSlots(_ensureFieldBag());
+      destLine = `🎒 ${_resLine(taken) || 'nothing of use'}${_resLine(left) ? ' — ⚠ bag full, left ' + _resLine(left) : ''} · bag ${usedSlots}/${cap}`;
+      where = 'bag';
+    }
+
+    // Risk consequence applies to ANY harvest (not Destroy/Leave).
+    const riskMsg = _applyTombstoneRisk(s, u.id, t.risk);
+    try { if (typeof playSfx === 'function') playSfx(t.risk ? 'uiError' : 'uiConfirm'); } catch (e) {}
+    try { if (typeof showToast === 'function') showToast(`${u.name || 'Unit'} harvested ${t.name || 'body'} → ${destLine}${riskMsg ? ' · ' + riskMsg : ''}`, riskMsg ? 4600 : 2800); } catch (e) {}
     try { App.ui.modalUnitId = null; } catch (e) {}
     try { if (typeof render === 'function') render(); } catch (e) {}
     return true;
   } catch (e) { return false; }
+}
+// Extraction-choice overlay — opened from the unit modal's Loot button.
+function openExtractionMenu(unitId) {
+  try {
+    const s = App.state;
+    if (!s) return;
+    const u = (s.units || []).find(x => x && x.id === unitId && x.alive);
+    if (!u || !u.pos) return;
+    const t = (s.tombstones || []).find(o => o && o.lootable && !o.looted && !o.glowing && o.x === u.pos.x && o.y === u.pos.y);
+    if (!t) return;
+    const ID = 'extract-menu';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const rm = t.risk ? RISK_META[t.risk] : null;
+    const opt = (mode, label, desc, cls) =>
+      `<button data-extract="${mode}" style="display:block;width:100%;text-align:left;margin:4px 0;cursor:pointer;border-radius:9px;padding:0.55rem 0.8rem;border:1px solid ${cls};background:rgba(20,12,40,0.7);color:#e8ddff">
+        <strong style="color:#ffd166">${label}</strong><br><span class="small-text ink-dim">${desc}</span></button>`;
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = "position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(4,2,10,0.78);backdrop-filter:blur(3px)";
+    ov.innerHTML =
+      '<div style="max-width:min(440px,94vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.99),rgba(12,7,22,0.99));border:2px solid ' + (rm ? rm.color : 'rgba(212,175,55,0.6)') + ';border-radius:16px;padding:18px 20px;box-shadow:0 24px 70px rgba(0,0,0,0.8)">' +
+        '<div style="font-family:\'Cinzel\',serif;font-size:1.15rem;font-weight:800;color:#ffd166;margin-bottom:2px">🪦 ' + escapeHtml(t.name || 'Body') + '</div>' +
+        (rm ? '<div class="small-text" style="color:' + rm.color + ';margin-bottom:8px">' + rm.icon + ' ' + rm.name.toUpperCase() + ' — ' + rm.warn + '</div>'
+            : '<div class="small-text ink-dim" style="margin-bottom:8px">Choose how ' + escapeHtml(u.name || 'your unit') + ' harvests it. This forfeits the unit\'s turn.</div>') +
+        opt('normal',  '🎒 Loot Normally',        'Full salvage roll → field bag (carry risk).', 'rgba(212,175,55,0.5)') +
+        opt('dna',     '🧬 Harvest DNA',          'Biased toward DNA.', 'rgba(120,220,150,0.5)') +
+        opt('essence', '🟣 Drain Corrupted Essence','Biased toward Corrupted Essence.', 'rgba(155,107,255,0.5)') +
+        opt('shards',  '🧠 Extract Memory Shards', 'Biased toward Memory Shards.', 'rgba(120,200,255,0.5)') +
+        opt('research','📦 Send to Camp (Research)','Straight to SECURED storage (×0.6) — no carry risk.', 'rgba(124,255,178,0.5)') +
+        opt('destroy', '💣 Destroy Tombstone',     'No loot — safely neutralizes any risk.', 'rgba(255,120,90,0.5)') +
+        '<button id="extract-leave" style="display:block;width:100%;margin-top:6px;cursor:pointer;border-radius:9px;padding:0.5rem;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff">↩ Leave It (keep your turn)</button>' +
+      '</div>';
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.onclick = (e) => { if (e.target === ov) close(); };
+    const lv = document.getElementById('extract-leave'); if (lv) lv.onclick = close;
+    ov.querySelectorAll('[data-extract]').forEach(b => {
+      b.onclick = () => { close(); _lootWithUnit(unitId, b.getAttribute('data-extract')); };
+    });
+  } catch (e) {}
 }
 // True if this unit can loot right now (player unit, player turn, standing on
 // an un-looted body, and still has an action to forfeit).
@@ -45748,11 +45876,15 @@ function renderBoard() {
           ? `<img src="${ts.image}" alt="${escapeHtml(ts.name || '')}" />`
           : `<div class="tombstone-fallback">🪦</div>`;
         const reviveHint = ts.glowing ? `<div class="tombstone-timer">${ts.turnsLeft || 0}</div>` : '';
-        const lootBadge = _canLoot ? '<div class="tombstone-loot-badge">💰</div>'
+        const _rm = (_canLoot && ts.risk && typeof RISK_META !== 'undefined') ? RISK_META[ts.risk] : null;
+        const lootBadge = _canLoot
+          ? (_rm
+              ? `<div class="tombstone-loot-badge" style="background:${_rm.color};box-shadow:0 0 8px ${_rm.color}">${_rm.icon}</div>`
+              : '<div class="tombstone-loot-badge">💰</div>')
           : (ts.looted ? '<div class="tombstone-loot-badge done">✅</div>' : '');
         const ttl = ts.glowing
           ? `${escapeHtml(ts.name || 'Tombstone')} — Rises in ${ts.turnsLeft || 0} turn${(ts.turnsLeft || 0) === 1 ? '' : 's'}`
-          : (_canLoot ? `${escapeHtml(ts.name || 'Body')} — move a unit here, then Loot from its panel`
+          : (_canLoot ? `${escapeHtml(ts.name || 'Body')}${_rm ? ' — ⚠ ' + _rm.name + ' (risk)' : ''} — move a unit here, then Loot from its panel`
             : (ts.looted ? `${escapeHtml(ts.name || 'Body')} — looted` : escapeHtml(ts.name || 'Tombstone')));
         cellInner += `<div class="${cls}" title="${ttl}">${inner}${reviveHint}${lootBadge}</div>`;
       }
@@ -46412,7 +46544,8 @@ function bindBattleEvents() {
     if (modalLoot) modalLoot.onclick = (e) => {
       e.stopPropagation();
       const id = App.ui.modalUnitId;
-      if (id && typeof _lootWithUnit === 'function') _lootWithUnit(id);
+      if (id && typeof openExtractionMenu === 'function') openExtractionMenu(id);
+      else if (id && typeof _lootWithUnit === 'function') _lootWithUnit(id);
     };
 
     const modalMove = document.getElementById('modal-btn-move');

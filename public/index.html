@@ -22204,48 +22204,56 @@ async function cloudFetchCatalogArt() {
   // normal sign-in spewed ~15 red "Bad Request" lines.
   // Fix: LIST the bucket exactly once, then only ever request objects
   // that actually exist. Zero requests for missing files → zero 400s.
-  let existing;
-  try {
-    const { data: listed, error: lerr } = await Cloud.client.storage
-      .from(PUBLIC_CATALOG_BUCKET).list('', { limit: 1000 });
-    if (lerr || !Array.isArray(listed)) return { ok: false };
-    existing = new Set(listed.map(o => o && o.name).filter(Boolean));
-  } catch (e) {
-    return { ok: false };
-  }
-
+  // ⚠ DO NOT gate fetches on Storage .list(). The public-catalog bucket
+  // allows public DOWNLOADS but NOT listing for the anon/authenticated role,
+  // so .list() returns [] for every non-admin player — which made them skip
+  // EVERY category and receive zero published art/sprites/voice-over (the
+  // admin's own .list() works, so it looked fine while testing). We now
+  // download each category's objects DIRECTLY (works on a public bucket for
+  // everyone) with three fallbacks: shard index → legacy single-file →
+  // probe sequential shards (recovers a publish whose index write failed).
+  // A few quiet 400s for never-published categories is an acceptable price
+  // for content actually reaching players.
+  const _dl = async (name) => {
+    try {
+      const { data, error } = await Cloud.client.storage.from(PUBLIC_CATALOG_BUCKET).download(name);
+      if (error || !data) return null;
+      return await data.text();
+    } catch (e) { return null; }
+  };
   let changed = false;
   for (const [forgeKey, filename] of STORAGE_CATEGORIES) {
     try {
       const base = filename.replace(/\.json$/, '');
-      const idxName = `${base}.index.json`;
       let merged = {};
       let gotSomething = false;
 
-      if (existing.has(idxName)) {
-        // Sharded layout — the index exists, so fetch it + its shards.
-        const idxResp = await Cloud.client.storage.from(PUBLIC_CATALOG_BUCKET).download(idxName);
-        if (!idxResp.error && idxResp.data) {
-          const idx = JSON.parse(await idxResp.data.text());
-          const shardNames = Array.isArray(idx.shards) ? idx.shards : [];
-          for (const sname of shardNames) {
-            if (!existing.has(sname)) continue;            // never request a missing shard
-            const { data, error } = await Cloud.client.storage.from(PUBLIC_CATALOG_BUCKET).download(sname);
-            if (error || !data) continue;
-            Object.assign(merged, JSON.parse(await data.text()) || {});
-            gotSomething = true;
+      // 1) Preferred: the shard index lists every shard file.
+      let shardNames = null;
+      const idxTxt = await _dl(`${base}.index.json`);
+      if (idxTxt) {
+        try { const idx = JSON.parse(idxTxt); if (Array.isArray(idx.shards)) shardNames = idx.shards; } catch (e) {}
+      }
+      if (shardNames && shardNames.length) {
+        for (const sname of shardNames) {
+          const t = await _dl(sname);
+          if (t) { try { Object.assign(merged, JSON.parse(t) || {}); gotSomething = true; } catch (e) {} }
+        }
+      } else {
+        // 2) Legacy single-file layout.
+        const single = await _dl(filename);
+        if (single) { try { merged = JSON.parse(single) || {}; gotSomething = true; } catch (e) {} }
+        // 3) Resilience: index missing but shards present (a partial publish
+        //    whose index PUT failed — exactly the catalogMedia case we saw).
+        //    Probe sequential shards; the first gap ends the run.
+        if (!gotSomething) {
+          for (let i = 0; i < 64; i++) {
+            const t = await _dl(`${base}-${i}.json`);
+            if (!t) break;
+            try { Object.assign(merged, JSON.parse(t) || {}); gotSomething = true; } catch (e) {}
           }
         }
-      } else if (existing.has(filename)) {
-        // Single-file layout — fetch it directly.
-        const { data, error } = await Cloud.client.storage.from(PUBLIC_CATALOG_BUCKET).download(filename);
-        if (!error && data) {
-          merged = JSON.parse(await data.text()) || {};
-          gotSomething = true;
-        }
       }
-      // else: this category was never published — skip silently. No
-      // request is made for it at all, so it cannot 400.
 
       if (!gotSomething) continue;
       // Local-only assets win on id collision so a player's personal uploads

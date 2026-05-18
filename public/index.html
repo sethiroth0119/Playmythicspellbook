@@ -21921,22 +21921,37 @@ function _flattenCatalogMedia(m) {
       out['pg:' + i] = fits(slim) ? slim : { id: g.id, pageRoute: g.pageRoute, isActive: g.isActive, bubbles: [] };
     } catch (e) {}
   });
+  // Campaigns — one shard-safe key per campaign (each carries per-node art).
+  (Array.isArray(m.campaigns) ? m.campaigns : []).forEach((c, i) => {
+    if (c == null) return;
+    if (fits(c)) { out['cp:' + i] = c; return; }
+    // One oversized campaign: keep its structure, drop the heaviest inline
+    // node images so the rest of the campaign (and other campaigns) still ship.
+    try {
+      const slim = JSON.parse(JSON.stringify(c));
+      const strip = (o) => { if (!o || typeof o !== 'object') return; for (const k in o) { const v = o[k]; if (typeof v === 'string' && v.slice(0,5) === 'data:' && v.length > 6144) o[k] = ''; else if (v && typeof v === 'object') strip(v); } };
+      strip(slim);
+      out['cp:' + i] = fits(slim) ? slim : { id: c.id, name: c.name, nodes: [] };
+    } catch (e) {}
+  });
   return out;
 }
 function _unflattenCatalogMedia(obj) {
   if (!obj || typeof obj !== 'object') return obj;
-  const isFlat = obj.__cmflat__ || Object.keys(obj).some(k => /^(pg|sd):\d+$/.test(k));
+  const isFlat = obj.__cmflat__ || Object.keys(obj).some(k => /^(pg|sd|cp):\d+$/.test(k));
   if (!isFlat) return obj;   // legacy non-flattened upload — pass through
-  const sd = [], pg = [];
+  const sd = [], pg = [], cp = [];
   for (const k in obj) {
     if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
     if (k.slice(0, 3) === 'sd:') sd[parseInt(k.slice(3), 10) || 0] = obj[k];
     else if (k.slice(0, 3) === 'pg:') pg[parseInt(k.slice(3), 10) || 0] = obj[k];
+    else if (k.slice(0, 3) === 'cp:') cp[parseInt(k.slice(3), 10) || 0] = obj[k];
   }
   return {
     tomb: typeof obj.tomb === 'string' ? obj.tomb : null,
     starterDecks: sd.filter(x => x != null),
     pageGuides: pg.filter(x => x != null),
+    campaigns: cp.filter(x => x != null),
   };
 }
 function _rehydrateCatalogMedia() {
@@ -21951,6 +21966,11 @@ function _rehydrateCatalogMedia() {
     }
     if (Array.isArray(m.pageGuides) && m.pageGuides.length) {
       Catalog.pageGuides = m.pageGuides;
+    }
+    // Full-art campaigns from Storage replace the row's image-stripped copy
+    // so players see authored node/cover art instead of emoji placeholders.
+    if (Array.isArray(m.campaigns) && m.campaigns.length) {
+      Catalog.campaigns = m.campaigns;
     }
   } catch (e) { /* non-fatal cosmetic rehydrate */ }
 }
@@ -22112,6 +22132,10 @@ async function cloudPublishCatalog(opts) {
         tomb: Forge.tombstoneArt || null,
         starterDecks: Array.isArray(Forge.starterDecks) ? _clone(Forge.starterDecks) : [],
         pageGuides:   Array.isArray(Forge.pageGuides)   ? _clone(Forge.pageGuides)   : [],
+        // Campaign node/cover images are big base64 — the catalog row strips
+        // them (>6 KB data: URLs), so players saw emoji node placeholders.
+        // Ship them through the Storage media pipeline like page guides.
+        campaigns:    Array.isArray(Forge.campaigns)    ? _clone(Forge.campaigns)    : [],
       };
       if (typeof saveForge === 'function') saveForge();
     } catch (e) { /* non-fatal: media still attempted via row, just stripped */ }
@@ -22431,10 +22455,11 @@ async function cloudFetchCatalogArt() {
         // which PERMANENTLY blocked guides for any player whose first fetch
         // landed only the small tomb/starter-deck shard — exactly this bug.
         const inc = _unflattenCatalogMedia(merged);
-        const incPG = (inc && Array.isArray(inc.pageGuides)) ? inc.pageGuides.length : 0;
         const cur   = Forge.catalogMedia || {};
-        const curPG = (cur && Array.isArray(cur.pageGuides)) ? cur.pageGuides.length : 0;
-        if (incPG >= curPG) Forge.catalogMedia = inc;
+        const _len = (o, k) => (o && Array.isArray(o[k])) ? o[k].length : 0;
+        const incScore = _len(inc, 'pageGuides') + _len(inc, 'campaigns');
+        const curScore = _len(cur, 'pageGuides') + _len(cur, 'campaigns');
+        if (incScore >= curScore) Forge.catalogMedia = inc;
       } else {
         // Local-only assets win on id collision so a player's personal uploads
         // aren't stomped by the public catalog merge.

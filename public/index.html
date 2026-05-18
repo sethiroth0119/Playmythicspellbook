@@ -24086,7 +24086,7 @@ async function resMarketCancel(listing) {
 // a security_invoker VIEW that SUMs all rows, so there are no lost updates
 // and no RPC needed. Degrades gracefully offline / before one-time setup.
 // ============================================================================
-const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select resource, sum(qty)::numeric as total, sum(points)::numeric as points, count(distinct user_id) as contributors\n  from public.reserve_contributions group by resource;\ngrant select on public.reserve_totals to authenticated;";
+const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ngrant select on public.reserve_totals to authenticated;";
 
 // Contribution point weight per resource (strategic / scarce = worth more).
 const RESERVE_WEIGHTS = {
@@ -24117,12 +24117,12 @@ function frRankFor(pts) {
 // only, so every recipe is always valid). max = circulation cap (scales the
 // % bar). Categories mirror the Vendor Market vocabulary.
 const RESERVE_PRODUCTS = [
-  { id: 'genesis',  cat: 'Booster Pack',  icon: '🃏', name: 'Survivor Genesis Pack',  max: 100000, recipe: { metal: 5, fuel: 2, supplies: 3, memoryShards: 1 }, blurb: 'The backbone print run — broad card pool.' },
-  { id: 'scpcorr',  cat: 'Booster Pack',  icon: '☣️', name: 'SCP Corruption Pack',    max: 60000,  recipe: { corruptedEssence: 4, dna: 2, memoryShards: 1 }, blurb: 'Anomalous stock — corrupted & void-touched cards.' },
-  { id: 'arsenal',  cat: 'Booster Pack',  icon: '🔫', name: 'Military Arsenal Pack',  max: 80000,  recipe: { ammo: 8, fuel: 5, metal: 10 }, blurb: 'Hardware-heavy — the fuel-hungry print line.' },
-  { id: 'relicarc', cat: 'Relic Capsule', icon: '🗝', name: 'Relic Archive Capsule',  max: 30000,  recipe: { memoryShards: 5, corruptedEssence: 1, dna: 2 }, blurb: 'Relics, cursed items, anomaly fragments.' },
-  { id: 'medrelief',cat: 'Supply Crate',  icon: '⚕️', name: 'Medical Relief Crate',   max: 50000,  recipe: { medicine: 12, water: 6, supplies: 4 }, blurb: 'Field medicine for wounded survivors.' },
-  { id: 'expkit',   cat: 'Supply Crate',  icon: '🧭', name: 'Expedition Kit',         max: 70000,  recipe: { food: 6, water: 6, ammo: 4, supplies: 3 }, blurb: 'Everything a scout needs to survive the road.' },
+  { id: 'genesis',  cat: 'Booster Pack',  icon: '🃏', name: 'Survivor Genesis Pack',  max: 100000, price: 120, pack: 'basic',   recipe: { metal: 5, fuel: 2, supplies: 3, memoryShards: 1 }, blurb: 'The backbone print run — broad card pool.' },
+  { id: 'scpcorr',  cat: 'Booster Pack',  icon: '☣️', name: 'SCP Corruption Pack',    max: 60000,  price: 320, pack: 'mythic',  recipe: { corruptedEssence: 4, dna: 2, memoryShards: 1 }, blurb: 'Anomalous stock — corrupted & void-touched cards.' },
+  { id: 'arsenal',  cat: 'Booster Pack',  icon: '🔫', name: 'Military Arsenal Pack',  max: 80000,  price: 240, pack: 'unit',    recipe: { ammo: 8, fuel: 5, metal: 10 }, blurb: 'Hardware-heavy — the fuel-hungry print line.' },
+  { id: 'relicarc', cat: 'Relic Capsule', icon: '🗝', name: 'Relic Archive Capsule',  max: 30000,  price: 280, pack: 'premium', recipe: { memoryShards: 5, corruptedEssence: 1, dna: 2 }, blurb: 'Relics, cursed items, anomaly fragments.' },
+  { id: 'medrelief',cat: 'Supply Crate',  icon: '⚕️', name: 'Medical Relief Crate',   max: 50000,  price: 90,  grant: { medicine: 30, water: 18, supplies: 12 }, recipe: { medicine: 12, water: 6, supplies: 4 }, blurb: 'Field medicine for wounded survivors.' },
+  { id: 'expkit',   cat: 'Supply Crate',  icon: '🧭', name: 'Expedition Kit',         max: 70000,  price: 90,  grant: { food: 20, water: 16, ammo: 14, supplies: 10 }, recipe: { food: 6, water: 6, ammo: 4, supplies: 3 }, blurb: 'Everything a scout needs to survive the road.' },
 ];
 
 const FoundationReserve = {
@@ -24214,6 +24214,67 @@ async function frDeposit(resId, qty) {
   try { if (typeof addCinders === 'function') addCinders(reward); } catch (e) {}
   showToast(`🏛 Reserve received ${qty} ${_meta(resId).icon} — +${reward} 🔥 · +${gained} rep`, 3800);
   await frFetch();
+  return true;
+}
+function frProductById(pid) { return RESERVE_PRODUCTS.find(p => p.id === pid) || null; }
+// 🛒 Buy a manufactured product from the world Reserve. The recipe cost is
+// DRAWN DOWN from the global reserve (append-only consumption ledger → the
+// reserve_totals view nets it out, so everyone sees stock fall). Gated by
+// live world stock (real scarcity) + a Cinder price. Grants a real reward:
+// booster/relic → opens the mapped pack; supply crate → resources into the
+// (bulletproof) salvage ledger. Atomic-ish: stock re-checked, Cinders +
+// consumption committed together, full refund on any failure.
+async function frBuyProduct(productId) {
+  const p = frProductById(productId);
+  if (!p) { showToast('Unknown product.'); return false; }
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('☁ Sign in to buy from the Reserve.', 2600); return false; }
+  if (FoundationReserve.tableMissing) { showToast('⚠ Reserve isn’t set up yet — open the Foundation Reserve panel.', 3200); return false; }
+  // Re-check live stock right before purchase (someone may have bought it).
+  await frFetch();
+  const mf = frManufacture(p);
+  if (mf.can < 1) {
+    showToast(`🏛 ${p.name} is out of world stock${mf.bottleneck ? ' — Reserve needs ' + (_meta(mf.bottleneck).name || mf.bottleneck) : ''}. Contribute to the Reserve.`, 4200);
+    return false;
+  }
+  const price = p.price | 0;
+  if ((Profile.gems || 0) < price) { showToast(`Need ${price} 🔥 — you have ${Profile.gems || 0}`, 3000); return false; }
+  if (!confirm(`Buy “${p.name}” for ${price} 🔥?\n\nThis draws ${Object.keys(p.recipe).map(k => (p.recipe[k]) + '×' + (_meta(k).name || k)).join(', ')} out of the world Reserve.`)) return false;
+  if (typeof spendGems === 'function' ? !spendGems(price) : ((Profile.gems || 0) < price)) { showToast('Not enough Cinders'); return false; }
+  // Draw the recipe out of the global Reserve (append-only — race-free).
+  const me = Profile.cloud.userId;
+  const rows = Object.keys(p.recipe).map(rid => ({ user_id: me, resource: rid, qty: (p.recipe[rid] | 0), product: p.id }));
+  try {
+    const ins = await Cloud.client.from('reserve_consumption').insert(rows);
+    if (ins.error) throw ins.error;
+  } catch (e) {
+    try { if (typeof addGems === 'function') addGems(price); } catch (_) {}   // refund
+    _frErr(e);
+    showToast(FoundationReserve.tableMissing
+      ? '⚠ Reserve needs its one-time setup (re-run the SQL) — purchase refunded.'
+      : '⚠ Purchase failed — Cinders refunded.', 3800);
+    return false;
+  }
+  // Grant the real product.
+  let granted = '';
+  if (p.grant) {
+    try { addSalvage(p.grant); } catch (e) {}
+    granted = Object.keys(p.grant).map(k => (_meta(k).icon || '📦') + p.grant[k]).join(' ');
+    showToast(`📦 ${p.name} opened — ${granted} added to your camp.`, 4200);
+  } else {
+    const def = (typeof PACK_DEFINITIONS !== 'undefined') ? PACK_DEFINITIONS.find(d => d.id === (p.pack || 'basic')) : null;
+    if (def && typeof openPack === 'function') {
+      const drawn = openPack(def) || [];
+      if (drawn.length) {
+        App._packReveal = { packName: p.name, packIcon: p.icon || '📦', cards: drawn, revealed: Array(drawn.length).fill(false) };
+      } else {
+        showToast(`✓ ${p.name} acquired.`, 2600);
+      }
+    } else {
+      showToast(`✓ ${p.name} acquired.`, 2600);
+    }
+  }
+  await frFetch();
+  try { if (typeof render === 'function') render(); } catch (e) {}
   return true;
 }
 function openFoundationReserve() {
@@ -37862,7 +37923,7 @@ function renderTitle() {
       // Foundation Reserve — world-scale manufacturing & resource sink. Players
       // pool resources globally; products only exist when the world supplies
       // enough. Opens a self-contained overlay (no screen nav).
-      { id: 'btn-foundation-reserve', icon: '🏛', name: 'Foundation Reserve', sub: 'Supply the world · drive production', accent: '#7fb0ff',
+      { id: 'btn-foundation-reserve', icon: '<img src="assets/artwork/gameicons/SCP%20Foundation%20logo.png" alt="Foundation Reserve" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Foundation Reserve', sub: 'Supply the world · drive production', accent: '#7fb0ff',
         badge: (() => { try { const p = (typeof FoundationReserve !== 'undefined' && FoundationReserve.myPoints) || 0; return p > 0 ? (frRankFor(p).rank.icon + ' ' + frRankFor(p).rank.name) : '🎒 Contribute'; } catch (e) { return '🎒 Contribute'; } })(),
         onclick: () => { if (typeof openFoundationReserve === 'function') openFoundationReserve(); } },
       // Sports-betting hub — wager Cinders on AI vs AI fixtures + future tournaments.
@@ -54639,6 +54700,37 @@ function _buildPackShopBody(gems, sovBal) {
   const packCardsHtml = allPacks.map(renderPackTile).join('');
   const structHtml    = structDecks.length > 0 ? structDecks.map(renderStructTile).join('') : '';
 
+  // 🏛 Foundation Reserve Stock — products manufactured by the world. Buying
+  // one DRAWS its recipe out of the global Reserve (consumption ledger →
+  // reserve_totals view), so stock falls for everyone. Gated by live world
+  // supply (real scarcity) + a Cinder price.
+  const _frSignedIn = !!(typeof Profile !== 'undefined' && Profile.cloud && Profile.cloud.signedIn);
+  const reserveHtml = ((typeof RESERVE_PRODUCTS !== 'undefined') ? RESERVE_PRODUCTS : []).map(p => {
+    let mf = { can: 0, max: p.max, pct: 0, bottleneck: null, out: null };
+    try { if (typeof frManufacture === 'function') mf = frManufacture(p); } catch (e) {}
+    const price = p.price | 0;
+    const affordable = (Profile.gems || 0) >= price;
+    const inStock = mf.can >= 1;
+    const recipe = Object.keys(p.recipe).map(id => (_meta(id).icon || '📦') + p.recipe[id]).join(' ');
+    const dis = (!_frSignedIn || !inStock || !affordable);
+    const btnLabel = !_frSignedIn ? 'Sign in to buy'
+      : !inStock ? 'Out of world stock'
+      : !affordable ? `Need ${price - (Profile.gems || 0)} more <span class="cinder-icon"></span>`
+      : `<span class="cinder-icon"></span> ${price}`;
+    return `
+      <div class="shop-pack ${dis ? 'unaffordable' : ''}" style="--pack-accent:#7fb0ff">
+        <div class="shop-pack-custom-badge">RESERVE</div>
+        <div class="shop-pack-icon">${p.icon || '📦'}</div>
+        <div class="shop-pack-name">${escapeHtml(p.name)}</div>
+        <div class="shop-pack-desc">${escapeHtml(p.blurb || '')}</div>
+        <div class="shop-pack-rarities"><span class="rarity-badge" style="color:${inStock ? '#9fe0b0' : '#e07a6a'};border-color:${inStock ? '#9fe0b0' : '#e07a6a'}">${inStock ? (mf.can.toLocaleString() + ' in world stock') : 'OUT OF STOCK'}</span></div>
+        <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Draws ${escapeHtml(recipe)} from the Reserve${(mf.bottleneck && !inStock) ? ' · short on ' + escapeHtml(_meta(mf.bottleneck).name || mf.bottleneck) : ''}</div>
+        <div class="shop-pack-buy-row">
+          <button class="btn-primary shop-pack-buy shop-pack-buy-cinder" data-buy-reserve="${p.id}" ${dis ? 'disabled' : ''} title="Manufactured by the world Reserve — buying draws the recipe down from the global pool">${btnLabel}</button>
+        </div>
+      </div>`;
+  }).join('');
+
   return `
     <div class="shop-summary">
       <div class="shop-summary-stat">
@@ -54661,6 +54753,9 @@ function _buildPackShopBody(gems, sovBal) {
       <h3 class="section-title-mini" style="margin-top:1.6rem;color:#88c8e0">🃏 Structure Decks</h3>
       <div class="shop-pack-grid">${structHtml}</div>
     ` : ''}
+    <h3 class="section-title-mini" style="margin-top:1.6rem;color:#7fb0ff">🏛 Foundation Reserve Stock</h3>
+    <div class="small-text ink-dim" style="margin:-0.2rem 0 0.6rem">Manufactured by the survivor world. Buying one <strong>draws its recipe out of the global Reserve</strong> — stock falls for everyone until more is contributed. Contribute resources in the <strong>Ruin Exchange → Foundation Reserve</strong>.</div>
+    <div class="shop-pack-grid">${reserveHtml}</div>
   `;
 }
 
@@ -54703,6 +54798,24 @@ function _bindPackShopHandlers() {
       render();
     };
   });
+  // 🏛 Foundation Reserve Stock — buying draws the recipe out of the global
+  // reserve (frBuyProduct handles stock re-check, Cinder spend, consumption
+  // ledger, real grant + refund-on-fail).
+  document.querySelectorAll('[data-buy-reserve]').forEach(el => {
+    el.onclick = () => { if (el.disabled) return; if (typeof frBuyProduct === 'function') frBuyProduct(el.dataset.buyReserve); };
+  });
+  // Populate live world stock once per visit — the section renders from
+  // FoundationReserve.totals, which may be empty/stale on first paint. The
+  // 15s freshness gate + !loading guard prevents a render loop.
+  try {
+    if (typeof FoundationReserve !== 'undefined' && typeof frFetch === 'function'
+        && Profile.cloud && Profile.cloud.signedIn && !FoundationReserve.tableMissing && !FoundationReserve.loading
+        && (Date.now() - (FoundationReserve.lastFetch || 0) > 15000)) {
+      frFetch().then(() => {
+        if (App.screen === 'vendorMarket' && (App.vendorMarketTab || 'packs') === 'packs' && typeof render === 'function') render();
+      });
+    }
+  } catch (e) {}
   // Structure deck purchase — no flip reveal, just dump cards into the inventory.
   document.querySelectorAll('[data-buy-sdeck]').forEach(el => {
     el.onclick = () => {

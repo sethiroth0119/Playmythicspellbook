@@ -31590,6 +31590,71 @@ function _ensureCampDecayCss() {
     '#camp-decay-fx.fuelout{animation:camp-flicker 3.2s ease-in-out infinite;}';
   document.head.appendChild(st);
 }
+// 🏗 BASE BUILDER EMBED — the camp visual overhaul. The React 2.5D base
+// builder + world map live as their own sub-app at /base/. When the player
+// is on Camp we cover the (fragile) camp screen with a full-screen iframe
+// and bridge REAL data in via postMessage (foundation wire: resources from
+// Profile.salvage → the builder's top bar). The legacy camp logic keeps
+// ticking underneath (consumption/raids/etc.), surfaced inside the builder
+// over the bridge in later passes.
+function _baseBridgeResources() {
+  // Map our real secured economy onto the builder's 5-slot top bar (keeps
+  // its existing SVG icons). Tomorrow: full salvage set + camp status.
+  try {
+    const led = (typeof _ensureSalvageLedger === 'function') ? _ensureSalvageLedger() : (Profile.salvage || {});
+    const surv = (typeof _stockpileTotal === 'function') ? _stockpileTotal() : 0;
+    return [
+      { key: 'scrap',    label: 'Metal',    val: String(led.metal | 0),            delta: '' },
+      { key: 'power',    label: 'Fuel',     val: String(led.fuel | 0),  unit: '',  delta: '' },
+      { key: 'relic',    label: 'Cor.Ess',  val: String(led.corruptedEssence | 0), delta: '' },
+      { key: 'food',     label: 'Food',     val: String(led.food | 0),             delta: (campStatus && campStatus().out.indexOf('food') >= 0) ? 'LOW' : '', neg: true },
+      { key: 'survivor', label: 'Stock',    val: String(surv),                     delta: '' },
+    ];
+  } catch (e) { return null; }
+}
+function _baseSendData() {
+  try {
+    const f = document.getElementById('base-builder-frame');
+    if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'base:data', resources: _baseBridgeResources() }, '*');
+  } catch (e) {}
+}
+function mountBaseBuilder() {
+  try {
+    const FID = 'base-builder-frame', BID = 'base-builder-back';
+    let f = document.getElementById(FID), b = document.getElementById(BID);
+    const onCamp = (typeof App !== 'undefined' && App.screen === 'camp');
+    if (!onCamp) {
+      if (f) f.remove(); if (b) b.remove();
+      if (App && App._baseMsgBound) { try { window.removeEventListener('message', App._baseMsgHandler); } catch (e) {} App._baseMsgBound = false; }
+      return;
+    }
+    if (!f) {
+      f = document.createElement('iframe');
+      f.id = FID; f.src = 'base/index.html';
+      f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0a0612';
+      document.body.appendChild(f);
+    }
+    if (!b) {
+      b = document.createElement('button');
+      b.id = BID; b.textContent = '← Menu';
+      b.style.cssText = "position:fixed;left:14px;top:12px;z-index:2147483320;cursor:pointer;font-family:'Cinzel',serif;font-weight:800;font-size:0.85rem;color:#ffe9b8;background:linear-gradient(180deg,rgba(60,40,110,0.95),rgba(28,16,52,0.96));border:1px solid rgba(212,175,55,0.6);border-radius:999px;padding:0.5rem 1rem;box-shadow:0 6px 18px rgba(0,0,0,0.6)";
+      b.onclick = () => { App.screen = 'title'; App.titleHub = 'field'; try { if (typeof render === 'function') render(); } catch (e) {} };
+      document.body.appendChild(b);
+    }
+    if (!App._baseMsgBound) {
+      App._baseMsgHandler = function (e) {
+        const d = e && e.data;
+        if (!d || typeof d !== 'object') return;
+        if (d.type === 'base:ready') _baseSendData();
+        else if (d.type === 'base:back') { App.screen = 'title'; App.titleHub = 'field'; try { if (typeof render === 'function') render(); } catch (e2) {} }
+      };
+      window.addEventListener('message', App._baseMsgHandler);
+      App._baseMsgBound = true;
+    }
+    // Push fresh data each render tick so the builder stays live.
+    _baseSendData();
+  } catch (e) {}
+}
 function mountCampDecayFx() {
   try {
     const ID = 'camp-decay-fx';
@@ -35865,6 +35930,7 @@ function render() {
   try { if (typeof _campRaidAlert === 'function') _campRaidAlert(); } catch (e) {}
   try { if (typeof mountCampStatus === 'function') mountCampStatus(); } catch (e) {}
   try { if (typeof mountCampDecayFx === 'function') mountCampDecayFx(); } catch (e) {}
+  try { if (typeof mountBaseBuilder === 'function') mountBaseBuilder(); } catch (e) {}
   // 🌐 Dynamic world events — global (clock-deterministic): announce begin/
   // end + show the live event panel.
   try { if (typeof _worldEventAlert === 'function') _worldEventAlert(); } catch (e) {}

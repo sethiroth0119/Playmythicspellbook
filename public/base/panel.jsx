@@ -127,6 +127,18 @@ function Panel({ room, onClose }) {
             <button className="cta" onClick={onClose}>Cancel</button>
             <button className="cta primary">Begin Build <span className="cost">−240 ⛁</span></button>
           </>
+        ) : room.bridge ? (
+          <>
+            <button className="cta" onClick={onClose}>Close</button>
+            <button
+              className="cta primary"
+              onClick={() => {
+                try { window.parent.postMessage({ type: "base:action", action: room.bridge, room: room.id }, "*"); } catch (e) {}
+              }}
+            >
+              {room.bridgeLabel || "Open"}
+            </button>
+          </>
         ) : (
           <>
             <button className="cta">Reassign</button>

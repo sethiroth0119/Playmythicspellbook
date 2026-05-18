@@ -31397,6 +31397,77 @@ function openCampWorkshop() {
     });
   } catch (e) {}
 }
+// ⚒ CARD FORGE — invoked from the bunker's Card Forge room. Self-contained
+// overlay (renders ABOVE the base-builder iframe). Crafts real cards paid
+// from the unified salvage economy via the existing craftCard/canCraft.
+function openForgeCraftModal() {
+  try {
+    const ID = 'forge-craft-modal';
+    const build = () => {
+      const old = document.getElementById(ID); if (old) old.remove();
+      let pool = [];
+      try {
+        pool = (typeof getAllCustomCards === 'function') ? (getAllCustomCards() || []).slice() : [];
+        if (!pool.length && typeof getCraftablePool === 'function') pool = getCraftablePool() || [];
+      } catch (e) {}
+      pool = pool.filter(c => c && c.id && c.type !== 'hero');
+      const q = (App._forgeQ || '').toLowerCase();
+      if (q) pool = pool.filter(c => String(c.name || '').toLowerCase().indexOf(q) >= 0);
+      pool = pool.slice(0, 80);
+      const costHtml = (c) => {
+        try {
+          const cost = getCardCraftCost(c);
+          return Object.keys(cost).filter(k => (cost[k] | 0) > 0)
+            .map(k => `${(_SALVAGE_BY_ID[k] || {}).icon || ''}${cost[k]}`).join(' ') || '<span class="ink-dim">free</span>';
+        } catch (e) { return '?'; }
+      };
+      const rows = pool.length ? pool.map(c => {
+        const ok = (typeof canCraft === 'function') && canCraft(c);
+        const own = (Profile.cardCollection && (Profile.cardCollection[c.id] | 0)) || 0;
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 7px;border-bottom:1px solid rgba(184,136,255,0.12)">
+          <span style="min-width:0;color:#e8ddff;font-size:0.86rem">${escapeHtml(c.name || c.id)} <span class="small-text ink-dim">${escapeHtml(String(c.rarity || 'common'))}${own ? ' ·×' + own : ''}</span></span>
+          <span style="flex:0 0 auto;display:flex;align-items:center;gap:8px">
+            <span class="small-text" style="color:${ok ? '#bfe9c8' : '#ff9a88'};white-space:nowrap">${costHtml(c)}</span>
+            <button data-forge="${escapeHtml(c.id)}" ${ok ? '' : 'disabled'} style="cursor:${ok ? 'pointer' : 'not-allowed'};border-radius:7px;padding:0.3rem 0.7rem;border:1px solid #caa23e;background:${ok ? 'linear-gradient(180deg,#caa23e,#8a6a1e)' : 'rgba(110,90,40,0.4)'};color:#1a1206;font-weight:800;font-size:0.8rem">⚒ Forge</button>
+          </span></div>`;
+      }).join('') : '<div class="small-text ink-dim" style="padding:8px">No craftable cards match.</div>';
+      const ov = document.createElement('div');
+      ov.id = ID;
+      ov.style.cssText = "position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(4,2,10,0.8);backdrop-filter:blur(3px)";
+      ov.innerHTML =
+        '<div style="max-width:min(560px,95vw);max-height:90vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(26,16,46,0.99),rgba(12,7,22,0.99));border:2px solid rgba(212,175,55,0.6);border-radius:16px;padding:16px 18px;box-shadow:0 24px 70px rgba(0,0,0,0.85)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px">' +
+            '<div style="font-family:\'Cinzel\',serif;font-size:1.2rem;font-weight:800;color:#ffd166">⚒ Card Forge</div>' +
+            '<button id="fc-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✖ Close</button>' +
+          '</div>' +
+          '<div class="small-text ink-dim" style="margin-bottom:8px">Forge cards with secured camp resources (Workshop · Camp economy).</div>' +
+          '<input id="fc-q" placeholder="Search cards…" value="' + escapeHtml(App._forgeQ || '') + '" style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:0.5rem 0.7rem;border-radius:8px;border:1px solid rgba(184,136,255,0.3);background:rgba(15,8,30,0.65);color:#e8e0ff;font-family:\'Crimson Text\',serif">' +
+          '<div style="overflow:auto;border:1px solid rgba(184,136,255,0.18);border-radius:8px">' + rows + '</div>' +
+        '</div>';
+      document.body.appendChild(ov);
+      const close = () => ov.remove();
+      ov.onclick = (e) => { if (e.target === ov) close(); };
+      const xb = document.getElementById('fc-x'); if (xb) xb.onclick = close;
+      const qi = document.getElementById('fc-q');
+      if (qi) qi.oninput = () => { App._forgeQ = qi.value; const v = qi.value; build(); const n = document.getElementById('fc-q'); if (n) { n.focus(); n.value = v; n.setSelectionRange(v.length, v.length); } };
+      ov.querySelectorAll('[data-forge]').forEach(btn => btn.onclick = () => {
+        const id = btn.getAttribute('data-forge');
+        let card = null;
+        try { card = (typeof _resolveAnyCard === 'function') ? _resolveAnyCard(id) : null; } catch (e) {}
+        if (!card) return;
+        if (typeof craftCard === 'function' && craftCard(card)) {
+          try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast(`⚒ Forged ${card.name || id} — +1 copy.`, 3000); } catch (e) {}
+          try { if (typeof _baseSendData === 'function') _baseSendData(); } catch (e) {}   // refresh bunker resources
+          build();
+        } else {
+          try { if (typeof showToast === 'function') showToast('⨯ Not enough resources to forge that.', 2600); } catch (e) {}
+        }
+      });
+    };
+    build();
+  } catch (e) {}
+}
 // 🎒 Bag Upgrade shop/craft modal (self-contained overlay — avoids splicing
 // the huge market/craft templates).
 function openBagUpgradeModal() {
@@ -31647,6 +31718,12 @@ function mountBaseBuilder() {
         if (!d || typeof d !== 'object') return;
         if (d.type === 'base:ready') _baseSendData();
         else if (d.type === 'base:back') { App.screen = 'title'; App.titleHub = 'field'; try { if (typeof render === 'function') render(); } catch (e2) {} }
+        else if (d.type === 'base:action') {
+          // A bunker room invoked a REAL system. Modals render in the parent
+          // at a higher z-index than the iframe, so they appear over it.
+          if (d.action === 'workshop' && typeof openCampWorkshop === 'function') openCampWorkshop();
+          else if (d.action === 'craft' && typeof openForgeCraftModal === 'function') openForgeCraftModal();
+        }
       };
       window.addEventListener('message', App._baseMsgHandler);
       App._baseMsgBound = true;

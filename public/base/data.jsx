@@ -55,6 +55,7 @@ const ROOMS = [
   },
   {
     id: "MED-01", slot: 2, code: "M/01", name: "Medical Bay", tier: "SURFACE",
+    bridge: "workshop", bridgeLabel: "🛠 Open Workshop",
     depth: -14, level: 2, levelMax: 6,
     status: "ok", workers: { on: 2, max: 3 },
     art: "medical", glow: "var(--blue)",
@@ -103,6 +104,7 @@ const ROOMS = [
   },
   {
     id: "FRG-01", slot: 4, code: "F/01", name: "Card Forge", tier: "MID",
+    bridge: "craft", bridgeLabel: "⚒ Open Card Forge",
     depth: -40, level: 3, levelMax: 6,
     status: "build", workers: { on: 2, max: 4 },
     art: "forge", glow: "var(--purple)",
@@ -155,6 +157,7 @@ const ROOMS = [
   // Row 3 — deep tier
   {
     id: "RCT-01", slot: 6, code: "R/01", name: "Power Reactor", tier: "DEEP",
+    bridge: "workshop", bridgeLabel: "🛠 Open Workshop",
     depth: -68, level: 4, levelMax: 6,
     status: "warn", workers: { on: 2, max: 3 },
     art: "reactor", glow: "var(--purple)",
@@ -203,6 +206,7 @@ const ROOMS = [
   },
   {
     id: "VLT-01", slot: 8, code: "V/01", name: "Relic Vault", tier: "DEEP",
+    bridge: "workshop", bridgeLabel: "🛠 Open Workshop",
     depth: -72, level: 4, levelMax: 6,
     status: "ok", workers: { on: 2, max: 3 },
     art: "vault", glow: "var(--purple)",

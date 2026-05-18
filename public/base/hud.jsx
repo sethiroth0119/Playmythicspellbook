@@ -91,6 +91,10 @@ function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
 function LeftColumn() {
   const ALERTS = (window.__BRIDGE && window.__BRIDGE.alerts) || window.ALERTS;
   const ROSTER = (window.__BRIDGE && window.__BRIDGE.roster) || window.ROSTER;
+  const BAG = (window.__BRIDGE && window.__BRIDGE.bag) || null;
+  const depositBag = () => {
+    try { window.parent.postMessage({ type: "base:action", action: "deposit" }, "*"); } catch (e) {}
+  };
   const plain = (s) => String(s || "").replace(/<[^>]+>/g, "");
   const isImg = (s) => /^(https?:|data:|blob:|\/)/i.test(String(s || ""));
   const openCard = (id) => {
@@ -104,6 +108,60 @@ function LeftColumn() {
       : <span>{p.icon || p.i}</span>;
   return (
     <aside className="hud-left">
+      {BAG && BAG.has && (
+        <div
+          className="left-section bag"
+          title="Loot you're carrying is UNSECURED — it's lost if you fall in battle. Deposit it here to add it to the secured camp stockpile (usable for crafting, upkeep & trade)."
+          style={{
+            border: "1px solid var(--amber, #ffd166)",
+            boxShadow: "0 0 18px rgba(255,209,102,0.22)",
+          }}
+        >
+          <div className="sec-hd" style={{ color: "var(--amber, #ffd166)" }}>
+            Field Bag{" "}
+            <span className="count">
+              {BAG.used}/{BAG.cap} · unsecured
+            </span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "4px 0 8px" }}>
+            {BAG.items.map((it, i) => (
+              <span
+                key={i}
+                title={`${it.name} ×${it.n}`}
+                style={{
+                  fontSize: 11,
+                  padding: "2px 7px",
+                  borderRadius: 9,
+                  border: "1px solid rgba(255,209,102,0.45)",
+                  background: "rgba(255,209,102,0.12)",
+                  color: "var(--text-1, #ffe9b8)",
+                }}
+              >
+                {it.icon} {it.name} <strong>{it.n}</strong>
+              </span>
+            ))}
+          </div>
+          <button
+            onClick={depositBag}
+            title="Move all carried loot into secured camp storage"
+            style={{
+              width: "100%",
+              cursor: "pointer",
+              fontWeight: 800,
+              fontSize: 12,
+              letterSpacing: ".02em",
+              padding: "7px 10px",
+              borderRadius: 9,
+              border: "1px solid var(--amber, #ffd166)",
+              background: "linear-gradient(180deg,#caa23e,#8a6a1e)",
+              color: "#1a1206",
+            }}
+          >
+            📥 Deposit All to Camp Storage
+          </button>
+        </div>
+      )}
+
       <div className="left-section alerts" title="Live camp alerts — world events, supply shortages & raider threat">
         <div className="sec-hd">Alerts <span className="count">{ALERTS.length}</span></div>
         {ALERTS.map((a, i) => (

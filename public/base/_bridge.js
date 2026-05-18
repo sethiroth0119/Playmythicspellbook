@@ -3,7 +3,7 @@
    The parent game posts REAL data in; the sub-app reads it live and the
    React tree re-renders on the 'bridgedata' window event. */
 (function () {
-  window.__BRIDGE = window.__BRIDGE || { resources: null, threat: null, alerts: null, roster: null, world: null, ready: false };
+  window.__BRIDGE = window.__BRIDGE || { resources: null, threat: null, alerts: null, roster: null, world: null, bag: null, ready: false };
 
   function announce() {
     try { window.parent && window.parent.postMessage({ type: 'base:ready' }, '*'); } catch (e) {}
@@ -18,6 +18,7 @@
       if (Array.isArray(d.alerts)) window.__BRIDGE.alerts = d.alerts;
       if (Array.isArray(d.roster)) window.__BRIDGE.roster = d.roster;
       if (d.world && typeof d.world === 'object') window.__BRIDGE.world = d.world;
+      if (d.bag && typeof d.bag === 'object') window.__BRIDGE.bag = d.bag;
       window.__BRIDGE.ready = true;
       try { window.dispatchEvent(new Event('bridgedata')); } catch (e2) {}
     }

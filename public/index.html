@@ -31852,6 +31852,20 @@ function _baseOpenCard(id) {
     window.addEventListener('keydown', onKey);
   } catch (e) {}
 }
+// Carried (UNSECURED) field-bag loot, for the bunker's Deposit banner.
+function _baseFieldBag() {
+  try {
+    const bag = (typeof _ensureFieldBag === 'function') ? _ensureFieldBag() : (Profile.fieldBag || {});
+    const keys = Object.keys(bag || {}).filter((k) => (bag[k] | 0) > 0);
+    const items = keys.map((k) => {
+      const r = (typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[k]) || {};
+      return { id: k, name: r.name || k, icon: r.icon || '', n: bag[k] | 0 };
+    });
+    const used = (typeof _bagSlots === 'function') ? _bagSlots(bag) : 0;
+    const cap = (typeof _fieldBagCap === 'function') ? _fieldBagCap() : 36;
+    return { items: items, used: used, cap: cap, has: keys.length > 0 };
+  } catch (e) { return null; }
+}
 function _baseSendData() {
   try {
     const f = document.getElementById('base-builder-frame');
@@ -31862,6 +31876,7 @@ function _baseSendData() {
       alerts: _baseAlerts(),
       roster: _baseRoster(),
       world: _baseWorldData(),
+      bag: _baseFieldBag(),
     }, '*');
   } catch (e) {}
 }
@@ -31938,6 +31953,17 @@ function mountBaseBuilder() {
           else if (d.action === 'card' && d.id) {
             // A roster member was clicked — open the real read-only card view.
             if (typeof _baseOpenCard === 'function') _baseOpenCard(d.id);
+          }
+          else if (d.action === 'deposit') {
+            // Drop the carried field bag into SECURED camp storage (real).
+            try {
+              const moved = (typeof _depositFieldBag === 'function') ? _depositFieldBag() : {};
+              const line = (typeof _resLine === 'function') ? _resLine(moved) : '';
+              try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e2) {}
+              try { if (typeof showToast === 'function') showToast('📦 Deposited to Camp Storage: ' + (line || 'nothing'), 4000); } catch (e3) {}
+              _baseSendData();                                  // refresh bunker (resources up, bag empty)
+              if (typeof render === 'function') render();
+            } catch (e4) {}
           }
           else if (d.action === 'roguelite') {
             // Launch the REAL roguelite from the World Map. Fade the iframe

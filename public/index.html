@@ -22149,14 +22149,41 @@ async function cloudPublishCatalog(opts) {
     // Object.entries) keeps each whole.
     try {
       const _clone = (v) => { try { return JSON.parse(JSON.stringify(v)); } catch (e) { return v; } };
+      // 🩹 ROOT-CAUSE FIX. The in-memory Forge.* used here can be the STRIPPED
+      // localStorage fast-path copy (loadHeavyForgeFromIdb refuses to restore
+      // the full IDB copy once localStorage already populated the key), so the
+      // media bundle was built WITHOUT campaign/guide images — players got
+      // emoji nodes. IndexedDB ('forge_*') is the canonical FULL copy. Pull it
+      // and use whichever serialization is larger (the un-stripped, image-
+      // bearing one) so the publish ALWAYS ships the real art.
+      const _fullest = async (idbKey, mem) => {
+        let idb = null;
+        try { if (typeof idbGet === 'function') idb = await idbGet('forge_' + idbKey); } catch (e) {}
+        const memA = Array.isArray(mem) ? mem : [];
+        if (!Array.isArray(idb) || !idb.length) return memA;
+        let il = 0, ml = 0;
+        try { il = JSON.stringify(idb).length; } catch (e) {}
+        try { ml = JSON.stringify(memA).length; } catch (e) {}
+        return il >= ml ? idb : memA;   // larger = has the inline images
+      };
+      const _fullStr = async (idbKey, mem) => {
+        let idb = null;
+        try { if (typeof idbGet === 'function') idb = await idbGet('forge_' + idbKey); } catch (e) {}
+        if (typeof idb === 'string' && idb.length > String(mem || '').length) return idb;
+        return mem || null;
+      };
+      const _camps    = await _fullest('campaigns',   Forge.campaigns);
+      const _guides   = await _fullest('pageGuides',  Forge.pageGuides);
+      const _starters = await _fullest('starterDecks', Forge.starterDecks);
+      const _tomb     = await _fullStr('tombstoneArt', Forge.tombstoneArt);
       Forge.catalogMedia = {
-        tomb: Forge.tombstoneArt || null,
-        starterDecks: Array.isArray(Forge.starterDecks) ? _clone(Forge.starterDecks) : [],
-        pageGuides:   Array.isArray(Forge.pageGuides)   ? _clone(Forge.pageGuides)   : [],
+        tomb: _tomb || null,
+        starterDecks: Array.isArray(_starters) ? _clone(_starters) : [],
+        pageGuides:   Array.isArray(_guides)   ? _clone(_guides)   : [],
         // Campaign node/cover images are big base64 — the catalog row strips
         // them (>6 KB data: URLs), so players saw emoji node placeholders.
         // Ship them through the Storage media pipeline like page guides.
-        campaigns:    Array.isArray(Forge.campaigns)    ? _clone(Forge.campaigns)    : [],
+        campaigns:    Array.isArray(_camps)    ? _clone(_camps)    : [],
       };
       if (typeof saveForge === 'function') saveForge();
     } catch (e) { /* non-fatal: media still attempted via row, just stripped */ }

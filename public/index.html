@@ -32101,7 +32101,8 @@ function _baseWorldData() {
         heroHP: r.heroHP, maxHP: r.maxHP,
       };
     }
-    return { campaigns: list, run: run };
+    const admin = (typeof isAdmin === 'function') && isAdmin();
+    return { campaigns: list, run: run, admin: !!admin };
   } catch (e) { return null; }
 }
 // Read-only card view for a clicked roster member. The Camp screen does NOT
@@ -32287,6 +32288,7 @@ function _baseNavTo(screen) {
       bestiary:   function () { App.screen = 'bestiary'; },
       collection: function () { App.screen = 'collection'; App.collectionTab = 'unit'; },
       campOps:    function () { App.screen = 'campOps'; App._campReturnsToBunker = true; },
+      rlcAdmin:   function () { App.rlcEdit = null; App.screen = 'rlcAdmin'; }, // admin-gated at the router
     };
     const apply = NAV[screen];
     if (!apply) return;

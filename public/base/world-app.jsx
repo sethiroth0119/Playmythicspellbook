@@ -226,6 +226,18 @@ function TopBar({ filter, setFilter }) {
         <a href="index.html">◂ Base</a>
         <span className="sep">/</span>
         <span className="here">World Map · Ethos Heights</span>
+        {window.__BRIDGE && window.__BRIDGE.world && window.__BRIDGE.world.admin && (
+          <button
+            className="chip"
+            title="Create / edit roguelite campaigns — they appear here on the World Map"
+            style={{ marginLeft: 12, borderColor: "var(--bronze-hi)", color: "var(--bronze-hi)" }}
+            onClick={() => {
+              try { window.parent.postMessage({ type: "base:action", action: "nav:rlcAdmin" }, "*"); } catch (e) {}
+            }}
+          >
+            ✎ New / Edit Campaign
+          </button>
+        )}
       </div>
       <div className="filters">
         {FILTERS.map((f) => (

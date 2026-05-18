@@ -30768,8 +30768,10 @@ function _lootWithUnit(unitId, mode) {
 
     // DESTROY — deny the loot, safely neutralize any risk. No consequence.
     if (mode === 'destroy') {
+      const dMsg = `💣 ${u.name || 'Unit'} destroyed the ${t.risk ? RISK_META[t.risk].name + ' ' : ''}body — threat neutralized, no salvage.`;
+      try { s.log = [...(s.log || []), { msg: dMsg, color: 'green' }]; } catch (e) {}
       try { if (typeof playSfx === 'function') playSfx('uiBack'); } catch (e) {}
-      try { if (typeof showToast === 'function') showToast(`💣 ${u.name || 'Unit'} destroyed the ${t.risk ? RISK_META[t.risk].name + ' ' : ''}body — threat neutralized, no salvage.`, 2800); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast(dMsg, 2800); } catch (e) {}
       try { App.ui.modalUnitId = null; } catch (e) {}
       try { if (typeof render === 'function') render(); } catch (e) {}
       return true;
@@ -30803,8 +30805,11 @@ function _lootWithUnit(unitId, mode) {
 
     // Risk consequence applies to ANY harvest (not Destroy/Leave).
     const riskMsg = _applyTombstoneRisk(s, u.id, t.risk);
+    const harvestMsg = `${u.name || 'Unit'} harvested ${t.name || 'body'} → ${destLine}${riskMsg ? ' · ' + riskMsg : ''}`;
+    // 🪦 Battle-log the loot so players keep a running record of the haul.
+    try { s.log = [...(s.log || []), { msg: '🪦 ' + harvestMsg, color: riskMsg ? 'red' : 'green' }]; } catch (e) {}
     try { if (typeof playSfx === 'function') playSfx(t.risk ? 'uiError' : 'uiConfirm'); } catch (e) {}
-    try { if (typeof showToast === 'function') showToast(`${u.name || 'Unit'} harvested ${t.name || 'body'} → ${destLine}${riskMsg ? ' · ' + riskMsg : ''}`, riskMsg ? 4600 : 2800); } catch (e) {}
+    try { if (typeof showToast === 'function') showToast(harvestMsg, riskMsg ? 4600 : 2800); } catch (e) {}
     try { App.ui.modalUnitId = null; } catch (e) {}
     try { if (typeof render === 'function') render(); } catch (e) {}
     return true;

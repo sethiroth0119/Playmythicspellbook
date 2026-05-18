@@ -27047,6 +27047,16 @@ function _campGrantLoot(tier, mul) {
     const gs = Object.keys(got).map(id => `${_meta(id).icon}${got[id]}`).join(' ');
     if (gs) out.push(gs);
   }
+  // 🎲 100% RNG secured-salvage haul → straight into the camp stockpile
+  // (the bunker "CAMP RESOURCES" bar). Random pull from the full ~149 set.
+  try {
+    if (typeof _rollSalvageLoot === 'function') {
+      const _tn = (tier === 'deepRun') ? 7 : (tier === 'raid') ? 5 : 3;
+      const _sg = _rollSalvageLoot(_tn + Math.floor(Math.random() * 3), 5);
+      const _sl = (typeof _salvageLootLine === 'function') ? _salvageLootLine(_sg) : '';
+      if (_sl) out.push(_sl);
+    }
+  } catch (e) {}
   const roll = Math.random();
   // Ultra-rare hero (0.01% on deep, scaled down on safer runs).
   const heroChance = (tier === 'deepRun') ? 0.0001 : (tier === 'raid' ? 0.00004 : 0.00001);
@@ -30780,16 +30790,155 @@ function tileBlockedByTombstone(state, x, y) {
 // hero rituals, expedition/gym salvage. This v1 is the core loop only.
 // ════════════════════════════════════════════════════════════════════════
 const SALVAGE_RES = [
-  { id: 'ammo',             name: 'Ammo',             icon: '🔫' },
-  { id: 'metal',            name: 'Metal',            icon: '⛓️' },
-  { id: 'water',            name: 'Water',            icon: '💧' },
-  { id: 'food',             name: 'Food',             icon: '🥫' },
-  { id: 'supplies',         name: 'Supplies',         icon: '📦' },
-  { id: 'medicine',         name: 'Medicine',         icon: '💊' },
-  { id: 'fuel',             name: 'Fuel',             icon: '⛽' },
-  { id: 'corruptedEssence', name: 'Corrupted Essence', icon: '🟣' },
-  { id: 'memoryShards',     name: 'Memory Shards',    icon: '🧠' },
-  { id: 'dna',              name: 'DNA',              icon: '🧬' },
+  { id: "ammo", name: "Ammo", icon: "🔫" },
+  { id: "metal", name: "Metal", icon: "⛓️" },
+  { id: "water", name: "Water", icon: "💧" },
+  { id: "food", name: "Food", icon: "🥫" },
+  { id: "supplies", name: "Supplies", icon: "📦" },
+  { id: "medicine", name: "Medicine", icon: "💊" },
+  { id: "fuel", name: "Fuel", icon: "⛽" },
+  { id: "corruptedEssence", name: "Corrupted Essence", icon: "🟣" },
+  { id: "memoryShards", name: "Memory Shards", icon: "🧠" },
+  { id: "dna", name: "DNA", icon: "🧬" },
+  { id: "scrapMetal", name: "Scrap Metal", icon: "🔩" },
+  { id: "demonCores", name: "Demon Cores", icon: "😈" },
+  { id: "relicFragments", name: "Relic Fragments", icon: "🏺" },
+  { id: "etherCrystals", name: "Ether Crystals", icon: "💎" },
+  { id: "bioMatter", name: "Bio Matter", icon: "🧫" },
+  { id: "ancientDataDrives", name: "Ancient Data Drives", icon: "🏺" },
+  { id: "foodSupplies", name: "Food Supplies", icon: "🥫" },
+  { id: "medicalSupplies", name: "Medical Supplies", icon: "🥫" },
+  { id: "ammunition", name: "Ammunition", icon: "🔫" },
+  { id: "constructionMaterials", name: "Construction Materials", icon: "🧱" },
+  { id: "powerCells", name: "Power Cells", icon: "🔋" },
+  { id: "researchData", name: "Research Data", icon: "💾" },
+  { id: "contraband", name: "Contraband", icon: "🪙" },
+  { id: "corruptedArtifacts", name: "Corrupted Artifacts", icon: "☣️" },
+  { id: "heroShards", name: "Hero Shards", icon: "📦" },
+  { id: "anomalyEssence", name: "Anomaly Essence", icon: "🧬" },
+  { id: "soulEnergy", name: "Soul Energy", icon: "✨" },
+  { id: "mutationStrands", name: "Mutation Strands", icon: "🧬" },
+  { id: "quantumDust", name: "Quantum Dust", icon: "🌀" },
+  { id: "divineSigils", name: "Divine Sigils", icon: "🏺" },
+  { id: "chaosFragments", name: "Chaos Fragments", icon: "😈" },
+  { id: "memoryEchoes", name: "Memory Echoes", icon: "📦" },
+  { id: "wood", name: "Wood", icon: "🪵" },
+  { id: "stone", name: "Stone", icon: "🧱" },
+  { id: "cloth", name: "Cloth", icon: "🧵" },
+  { id: "leather", name: "Leather", icon: "🧵" },
+  { id: "ironOre", name: "Iron Ore", icon: "🧱" },
+  { id: "copperWiring", name: "Copper Wiring", icon: "⚙️" },
+  { id: "steelPlating", name: "Steel Plating", icon: "🧱" },
+  { id: "mechanicalParts", name: "Mechanical Parts", icon: "⚙️" },
+  { id: "circuitBoards", name: "Circuit Boards", icon: "💾" },
+  { id: "reactorComponents", name: "Reactor Components", icon: "🔋" },
+  { id: "waterSupplies", name: "Water Supplies", icon: "🥫" },
+  { id: "seeds", name: "Seeds", icon: "🧫" },
+  { id: "fertilizer", name: "Fertilizer", icon: "📦" },
+  { id: "chemicals", name: "Chemicals", icon: "📦" },
+  { id: "glassShards", name: "Glass Shards", icon: "🧴" },
+  { id: "plasticComponents", name: "Plastic Components", icon: "🧴" },
+  { id: "boneFragments", name: "Bone Fragments", icon: "🧫" },
+  { id: "monsterHide", name: "Monster Hide", icon: "🧫" },
+  { id: "toxicWaste", name: "Toxic Waste", icon: "☣️" },
+  { id: "radioactiveMaterial", name: "Radioactive Material", icon: "☣️" },
+  { id: "frozenCores", name: "Frozen Cores", icon: "❄️" },
+  { id: "lavaFragments", name: "Lava Fragments", icon: "🔥" },
+  { id: "shadowEssence", name: "Shadow Essence", icon: "☣️" },
+  { id: "lightEssence", name: "Light Essence", icon: "✨" },
+  { id: "crystalDust", name: "Crystal Dust", icon: "💎" },
+  { id: "salvagedTech", name: "Salvaged Tech", icon: "🔩" },
+  { id: "aiChips", name: "AI Chips", icon: "💾" },
+  { id: "droneParts", name: "Drone Parts", icon: "⚙️" },
+  { id: "generatorParts", name: "Generator Parts", icon: "🔋" },
+  { id: "toolKits", name: "Tool Kits", icon: "⚙️" },
+  { id: "weaponParts", name: "Weapon Parts", icon: "🔫" },
+  { id: "armorFragments", name: "Armor Fragments", icon: "🔫" },
+  { id: "survivorManuals", name: "Survivor Manuals", icon: "📡" },
+  { id: "energyGel", name: "Energy Gel", icon: "📦" },
+  { id: "batteryCells", name: "Battery Cells", icon: "🔋" },
+  { id: "militaryRations", name: "Military Rations", icon: "🥫" },
+  { id: "medicalHerbs", name: "Medical Herbs", icon: "🧫" },
+  { id: "blackMarketTokens", name: "Black Market Tokens", icon: "🪙" },
+  { id: "containmentCells", name: "Containment Cells", icon: "🔋" },
+  { id: "ritualCandles", name: "Ritual Candles", icon: "🏺" },
+  { id: "ancientCoins", name: "Ancient Coins", icon: "🏺" },
+  { id: "goldBars", name: "Gold Bars", icon: "🪙" },
+  { id: "silverFragments", name: "Silver Fragments", icon: "🪙" },
+  { id: "campSupplies", name: "Camp Supplies", icon: "🥫" },
+  { id: "survivalGear", name: "Survival Gear", icon: "📦" },
+  { id: "tacticalEquipment", name: "Tactical Equipment", icon: "🔫" },
+  { id: "signalTransmitters", name: "Signal Transmitters", icon: "📡" },
+  { id: "radarComponents", name: "Radar Components", icon: "📡" },
+  { id: "securityModules", name: "Security Modules", icon: "⚙️" },
+  { id: "bunkerKeys", name: "Bunker Keys", icon: "🪙" },
+  { id: "dataFragments", name: "Data Fragments", icon: "💾" },
+  { id: "expeditionMaps", name: "Expedition Maps", icon: "📡" },
+  { id: "creatureEggs", name: "Creature Eggs", icon: "🧫" },
+  { id: "fusionMaterials", name: "Fusion Materials", icon: "📦" },
+  { id: "beastHearts", name: "Beast Hearts", icon: "🧫" },
+  { id: "plantSpores", name: "Plant Spores", icon: "🧫" },
+  { id: "fungalSamples", name: "Fungal Samples", icon: "🧫" },
+  { id: "virusSamples", name: "Virus Samples", icon: "☣️" },
+  { id: "naniteClusters", name: "Nanite Clusters", icon: "☣️" },
+  { id: "plasmaCells", name: "Plasma Cells", icon: "⛽" },
+  { id: "voidResidue", name: "Void Residue", icon: "☣️" },
+  { id: "dimensionalShards", name: "Dimensional Shards", icon: "🌀" },
+  { id: "gravityStones", name: "Gravity Stones", icon: "🧱" },
+  { id: "timeFragments", name: "Time Fragments", icon: "🌀" },
+  { id: "weatherBatteries", name: "Weather Batteries", icon: "📦" },
+  { id: "reinforcedConcrete", name: "Reinforced Concrete", icon: "🧱" },
+  { id: "carbonFiber", name: "Carbon Fiber", icon: "🧱" },
+  { id: "titanAlloy", name: "Titan Alloy", icon: "🧱" },
+  { id: "nanoFiber", name: "Nano Fiber", icon: "🧱" },
+  { id: "heatCores", name: "Heat Cores", icon: "🔋" },
+  { id: "coolingUnits", name: "Cooling Units", icon: "🔋" },
+  { id: "purifiedWater", name: "Purified Water", icon: "💧" },
+  { id: "solarCells", name: "Solar Cells", icon: "🔋" },
+  { id: "windTurbineParts", name: "Wind Turbine Parts", icon: "🔋" },
+  { id: "hydroCores", name: "Hydro Cores", icon: "🔋" },
+  { id: "fireSalts", name: "Fire Salts", icon: "🔥" },
+  { id: "iceCrystals", name: "Ice Crystals", icon: "💎" },
+  { id: "stormEssence", name: "Storm Essence", icon: "🔥" },
+  { id: "earthShards", name: "Earth Shards", icon: "🔥" },
+  { id: "natureBloom", name: "Nature Bloom", icon: "🧫" },
+  { id: "corruptedBlood", name: "Corrupted Blood", icon: "🧫" },
+  { id: "demonFlesh", name: "Demon Flesh", icon: "😈" },
+  { id: "angelFeathers", name: "Angel Feathers", icon: "✨" },
+  { id: "spiritAshes", name: "Spirit Ashes", icon: "✨" },
+  { id: "phantomDust", name: "Phantom Dust", icon: "☣️" },
+  { id: "nightmareFuel", name: "Nightmare Fuel", icon: "⛽" },
+  { id: "beaconParts", name: "Beacon Parts", icon: "⚙️" },
+  { id: "supplyCrates", name: "Supply Crates", icon: "🥫" },
+  { id: "tradeGoods", name: "Trade Goods", icon: "🪙" },
+  { id: "rareMinerals", name: "Rare Minerals", icon: "📦" },
+  { id: "campTokens", name: "Camp Tokens", icon: "🪙" },
+  { id: "survivorTags", name: "Survivor Tags", icon: "📡" },
+  { id: "tacticalIntel", name: "Tactical Intel", icon: "💾" },
+  { id: "blueprintPages", name: "Blueprint Pages", icon: "💾" },
+  { id: "craftingSchematics", name: "Crafting Schematics", icon: "💾" },
+  { id: "repairKits", name: "Repair Kits", icon: "⚙️" },
+  { id: "excavationTools", name: "Excavation Tools", icon: "⚙️" },
+  { id: "miningCharges", name: "Mining Charges", icon: "⛏️" },
+  { id: "lootKeys", name: "Loot Keys", icon: "🪙" },
+  { id: "vaultCodes", name: "Vault Codes", icon: "🪙" },
+  { id: "energyCubes", name: "Energy Cubes", icon: "🔋" },
+  { id: "relicDust", name: "Relic Dust", icon: "🏺" },
+  { id: "mythicEssence", name: "Mythic Essence", icon: "🏺" },
+  { id: "ancientBones", name: "Ancient Bones", icon: "🏺" },
+  { id: "mechanicalLimbs", name: "Mechanical Limbs", icon: "⚙️" },
+  { id: "syntheticOrgans", name: "Synthetic Organs", icon: "🧫" },
+  { id: "neuralGel", name: "Neural Gel", icon: "💾" },
+  { id: "memoryChips", name: "Memory Chips", icon: "💾" },
+  { id: "holoShards", name: "Holo Shards", icon: "💾" },
+  { id: "cyberneticParts", name: "Cybernetic Parts", icon: "💾" },
+  { id: "droneBatteries", name: "Drone Batteries", icon: "⚙️" },
+  { id: "plasmaOre", name: "Plasma Ore", icon: "⛽" },
+  { id: "etherFuel", name: "Ether Fuel", icon: "💎" },
+  { id: "darkMatter", name: "Dark Matter", icon: "☣️" },
+  { id: "lightCores", name: "Light Cores", icon: "✨" },
+  { id: "scpSamples", name: "SCP Samples", icon: "🧬" },
+  { id: "containmentFluid", name: "Containment Fluid", icon: "🧬" },
 ];
 const _SALVAGE_BY_ID = SALVAGE_RES.reduce((m, r) => { m[r.id] = r; return m; }, {});
 function _ensureSalvageLedger() {
@@ -31960,7 +32109,14 @@ function _baseBridgeResources() {
     const led = (typeof _ensureSalvageLedger === 'function') ? _ensureSalvageLedger() : (Profile.salvage || {});
     const cst = (typeof campStatus === 'function') ? campStatus() : { out: [], low: [] };
     const rate = (typeof CAMP_CONSUME_PER_DAY !== 'undefined') ? CAMP_CONSUME_PER_DAY : {};
-    return (typeof SALVAGE_RES !== 'undefined' ? SALVAGE_RES : []).map(r => {
+    // ~149 resources exist — showing them all would be unusable. Show the
+    // 5 core consumables ALWAYS (keeps OUT/LOW warnings visible) + every
+    // other resource the player actually HAS (>0). Neat & meaningful.
+    const CORE = ['food', 'water', 'fuel', 'ammo', 'medicine'];
+    const list = (typeof SALVAGE_RES !== 'undefined' ? SALVAGE_RES : []).filter(r =>
+      (CORE.indexOf(r.id) >= 0) || ((led[r.id] | 0) > 0)
+    );
+    return list.map(r => {
       const c = led[r.id] | 0;
       const cr = rate[r.id] || 0;
       const out = cst.out.indexOf(r.id) >= 0, low = cst.low.indexOf(r.id) >= 0;
@@ -32269,6 +32425,32 @@ const _WB_RES_MAP = {
   supplies: 'supplies', medicine: 'medicine', dna: 'dna',
   corrupted: 'corruptedEssence', memshard: 'memoryShards',
 };
+// 🎲 100% RNG salvage loot — pulls `n` random resources from the FULL
+// ~149-resource set straight into secured camp storage. Pure "what do I
+// get" — no fixed tables. Guarantees fuel/ammo/etc. eventually flow in
+// so the World-Map Fight button (and everything else) stays usable.
+function _rollSalvageLoot(n, qtyMax) {
+  const got = {};
+  try {
+    if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+    const pool = (typeof SALVAGE_RES !== 'undefined' ? SALVAGE_RES : []);
+    if (!pool.length) return got;
+    const picks = Math.max(1, n | 0);
+    const qm = Math.max(1, qtyMax | 0 || 5);
+    for (let i = 0; i < picks; i++) {
+      const r = pool[Math.floor(Math.random() * pool.length)];
+      const amt = 1 + Math.floor(Math.random() * qm);
+      Profile.salvage[r.id] = (Profile.salvage[r.id] | 0) + amt;
+      got[r.id] = (got[r.id] || 0) + amt;
+    }
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  } catch (e) {}
+  return got;
+}
+function _salvageLootLine(map) {
+  return Object.keys(map || {}).filter(k => (map[k] | 0) > 0)
+    .map(k => ((_SALVAGE_BY_ID[k] || {}).icon || '') + (map[k] | 0)).join('  ');
+}
 function worldBattleStart(z) {
   try {
     if (!z || !z.zoneId) return;
@@ -32323,6 +32505,10 @@ function worldBattleAfter() {
         got[sid] = (got[sid] || 0) + amt;
       }
     });
+    // 🎲 100% RNG haul on top — the "what do I get" factor. Harder zones
+    // roll more random resources from the full set.
+    const _rng = _rollSalvageLoot(3 + Math.floor((p.threat || 2) * 1.5), Math.round(3 * tMul) + 2);
+    Object.keys(_rng).forEach(function (k) { got[k] = (got[k] || 0) + _rng[k]; });
     if (!Object.keys(got).length) { Profile.salvage.supplies = (Profile.salvage.supplies | 0) + 2; got.supplies = 2; }
     // 🃏 ~30% — a card to the collection.
     let cardName = '';

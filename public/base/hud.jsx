@@ -60,7 +60,8 @@ function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
         </div>
       </div>
 
-      <div className="res-bar">
+      <div className="res-bar" title="Everything secured in your camp stockpile — scroll to see it all">
+        <div className="res-bar-label"><b>CAMP</b><span>RESOURCES</span></div>
         {((window.__BRIDGE && window.__BRIDGE.resources) || window.RESOURCES).map((r) => (
           <div
             className="res"

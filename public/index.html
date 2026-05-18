@@ -24037,6 +24037,287 @@ async function resMarketCancel(listing) {
 }
 
 // ============================================================================
+// 🏛️ FOUNDATION RESERVE SYSTEM — world-scale manufacturing & stabilization.
+// Players deposit camp resources into a GLOBAL shared reserve (a permanent
+// sink). Products (packs / crates / capsules) only become manufacturable when
+// the world has contributed enough — the reserve totals drive how many of
+// each product can currently exist (bottleneck math). Contributing earns
+// Cinders + Reserve Reputation rank. Race-free by design: every player only
+// ever writes their OWN reserve_contributions row (single-writer per
+// user+resource, same proven model as gym_supporters); the global totals are
+// a security_invoker VIEW that SUMs all rows, so there are no lost updates
+// and no RPC needed. Degrades gracefully offline / before one-time setup.
+// ============================================================================
+const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select resource, sum(qty)::numeric as total, sum(points)::numeric as points, count(distinct user_id) as contributors\n  from public.reserve_contributions group by resource;\ngrant select on public.reserve_totals to authenticated;";
+
+// Contribution point weight per resource (strategic / scarce = worth more).
+const RESERVE_WEIGHTS = {
+  corruptedEssence: 6, dna: 6, memoryShards: 8, fuel: 3, medicine: 3,
+  ammo: 1, metal: 1, supplies: 1, water: 1, food: 1,
+};
+const RESERVE_WEIGHT_DEFAULT = 2;
+function _frWeight(id) { return RESERVE_WEIGHTS[id] != null ? RESERVE_WEIGHTS[id] : RESERVE_WEIGHT_DEFAULT; }
+
+// Reserve Reputation ladder (by lifetime contribution points).
+const RESERVE_RANKS = [
+  { min: 0,     name: 'Resource Runner',      icon: '🎒' },
+  { min: 250,   name: 'Supply Courier',       icon: '🚚' },
+  { min: 1000,  name: 'Foundation Supplier',  icon: '📦' },
+  { min: 4000,  name: 'Strategic Contributor',icon: '🛰' },
+  { min: 15000, name: 'Reserve Architect',    icon: '🏗' },
+  { min: 50000, name: 'Civilization Builder', icon: '🏛' },
+];
+function frRankFor(pts) {
+  pts = pts || 0;
+  let r = RESERVE_RANKS[0];
+  for (const x of RESERVE_RANKS) if (pts >= x.min) r = x;
+  const next = RESERVE_RANKS.find(x => x.min > pts) || null;
+  return { rank: r, next: next, toNext: next ? Math.max(0, next.min - pts) : 0 };
+}
+
+// Manufacturable products. recipe = per-unit reserve cost (core resource ids
+// only, so every recipe is always valid). max = circulation cap (scales the
+// % bar). Categories mirror the Vendor Market vocabulary.
+const RESERVE_PRODUCTS = [
+  { id: 'genesis',  cat: 'Booster Pack',  icon: '🃏', name: 'Survivor Genesis Pack',  max: 100000, recipe: { metal: 5, fuel: 2, supplies: 3, memoryShards: 1 }, blurb: 'The backbone print run — broad card pool.' },
+  { id: 'scpcorr',  cat: 'Booster Pack',  icon: '☣️', name: 'SCP Corruption Pack',    max: 60000,  recipe: { corruptedEssence: 4, dna: 2, memoryShards: 1 }, blurb: 'Anomalous stock — corrupted & void-touched cards.' },
+  { id: 'arsenal',  cat: 'Booster Pack',  icon: '🔫', name: 'Military Arsenal Pack',  max: 80000,  recipe: { ammo: 8, fuel: 5, metal: 10 }, blurb: 'Hardware-heavy — the fuel-hungry print line.' },
+  { id: 'relicarc', cat: 'Relic Capsule', icon: '🗝', name: 'Relic Archive Capsule',  max: 30000,  recipe: { memoryShards: 5, corruptedEssence: 1, dna: 2 }, blurb: 'Relics, cursed items, anomaly fragments.' },
+  { id: 'medrelief',cat: 'Supply Crate',  icon: '⚕️', name: 'Medical Relief Crate',   max: 50000,  recipe: { medicine: 12, water: 6, supplies: 4 }, blurb: 'Field medicine for wounded survivors.' },
+  { id: 'expkit',   cat: 'Supply Crate',  icon: '🧭', name: 'Expedition Kit',         max: 70000,  recipe: { food: 6, water: 6, ammo: 4, supplies: 3 }, blurb: 'Everything a scout needs to survive the road.' },
+];
+
+const FoundationReserve = {
+  totals: {},          // resource -> { total, points, contributors }
+  mine: {},            // resource -> { qty, points }
+  myPoints: 0,
+  tableMissing: false, loading: false, lastFetch: 0, _err: null, _poll: null,
+};
+function _frErr(e) {
+  const msg = (e && (e.message || e.code || '')) + '';
+  if (/reserve_contributions|reserve_totals|relation|does not exist|schema cache|PGRST205|42P01/i.test(msg)
+      || /row-level security|permission denied|not authoriz|insufficient_privilege|42501|PGRST301|forbidden/i.test(msg)) {
+    FoundationReserve.tableMissing = true;
+  }
+  FoundationReserve._err = msg;
+  return null;
+}
+async function frFetch() {
+  if (!initCloud() || !Profile.cloud.signedIn) { FoundationReserve._err = 'Sign in to use the Reserve.'; return; }
+  if (FoundationReserve.loading) return;
+  FoundationReserve.loading = true;
+  try {
+    const tot = await Cloud.client.from('reserve_totals').select('*');
+    if (tot.error) { _frErr(tot.error); FoundationReserve.loading = false; return; }
+    FoundationReserve.tableMissing = false;
+    const T = {};
+    (tot.data || []).forEach(r => { T[r.resource] = { total: Number(r.total) || 0, points: Number(r.points) || 0, contributors: Number(r.contributors) || 0 }; });
+    FoundationReserve.totals = T;
+    const me = Profile.cloud.userId;
+    const mineRes = await Cloud.client.from('reserve_contributions').select('resource,qty,points').eq('user_id', me).limit(300);
+    const M = {}; let mp = 0;
+    if (mineRes && mineRes.data) mineRes.data.forEach(r => { M[r.resource] = { qty: Number(r.qty) || 0, points: Number(r.points) || 0 }; mp += Number(r.points) || 0; });
+    FoundationReserve.mine = M;
+    FoundationReserve.myPoints = mp;
+    FoundationReserve.lastFetch = Date.now();
+  } catch (e) { _frErr(e); }
+  FoundationReserve.loading = false;
+}
+// Returns { can, max, pct, bottleneck, out } for a product vs current totals.
+function frManufacture(p) {
+  const T = FoundationReserve.totals || {};
+  let can = Infinity, bottleneck = null, out = null, bestRatio = Infinity;
+  Object.keys(p.recipe).forEach(id => {
+    const per = p.recipe[id] || 0; if (per <= 0) return;
+    const have = (T[id] && T[id].total) || 0;
+    const n = Math.floor(have / per);
+    if (have <= 0 && out == null) out = id;
+    if (n < can) can = n;
+    const ratio = have / per;
+    if (ratio < bestRatio) { bestRatio = ratio; bottleneck = id; }
+  });
+  if (!isFinite(can)) can = 0;
+  can = Math.max(0, Math.min(p.max, can));
+  return { can: can, max: p.max, pct: Math.round((can / p.max) * 100), bottleneck: bottleneck, out: out };
+}
+async function frDeposit(resId, qty) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('☁ Sign in to contribute to the Reserve.', 2600); return false; }
+  qty = Math.floor(qty);
+  if (!resId || !(qty > 0)) { showToast('Pick a resource and amount.'); return false; }
+  if (!(typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[resId])) { showToast('Unknown resource.'); return false; }
+  const R = _ensureResources();
+  const have = (R[resId] || 0) | 0;
+  if (have < qty) { showToast(`You only have ${have} ${_meta(resId).icon} ${_meta(resId).name}.`, 3000); return false; }
+  // 🔻 THE SINK — pull the resources out of the player's ledger permanently.
+  if (!spendResources({ [resId]: qty })) { showToast('Could not deduct resources.'); return false; }
+  try { saveProfile(); } catch (e) {}
+  const gained = qty * _frWeight(resId);
+  const me = Profile.cloud.userId;
+  try {
+    // Single-writer upsert on MY row for this resource (no race).
+    const cur = await Cloud.client.from('reserve_contributions').select('qty,points').eq('user_id', me).eq('resource', resId).maybeSingle();
+    if (cur.error && !/PGRST116|no rows/i.test((cur.error.message || '') + '')) throw cur.error;
+    const newQty = (Number(cur.data && cur.data.qty) || 0) + qty;
+    const newPts = (Number(cur.data && cur.data.points) || 0) + gained;
+    const up = await Cloud.client.from('reserve_contributions')
+      .upsert({ user_id: me, user_name: ((Profile.cloud.displayName || (Profile.account && Profile.account.displayName) || 'Survivor') + '').slice(0, 40), resource: resId, qty: newQty, points: newPts, updated_at: new Date().toISOString() }, { onConflict: 'user_id,resource' });
+    if (up.error) throw up.error;
+  } catch (e) {
+    // Refund the sink — the contribution didn't land.
+    try { addSalvage({ [resId]: qty }); } catch (_) {}
+    _frErr(e);
+    showToast(FoundationReserve.tableMissing
+      ? '⚠ Reserve needs its one-time setup — see the Reserve panel.'
+      : '⚠ Contribution failed — resources refunded.', 3400);
+    return false;
+  }
+  // Reward: Cinders + reputation progress.
+  const reward = Math.max(1, Math.round(gained * 0.5));
+  try { if (typeof addCinders === 'function') addCinders(reward); } catch (e) {}
+  showToast(`🏛 Reserve received ${qty} ${_meta(resId).icon} — +${reward} 🔥 · +${gained} rep`, 3800);
+  await frFetch();
+  return true;
+}
+function openFoundationReserve() {
+  try {
+    const ID = 'fr-modal';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
+    const online = !!(typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn);
+    let tab = 'reserve';        // 'reserve' | 'deposit' | 'production'
+    let pickRes = '';
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483645;display:flex;align-items:center;justify-content:center;background:rgba(2,4,10,0.86);backdrop-filter:blur(3px)';
+    document.body.appendChild(ov);
+
+    const cleanup = () => { try { if (FoundationReserve._poll) { clearInterval(FoundationReserve._poll); FoundationReserve._poll = null; } } catch (e) {} };
+    const close = () => { cleanup(); const h = document.getElementById(ID); if (h) h.remove(); };
+
+    const numF = (n) => { n = Number(n) || 0; return n >= 1000 ? n.toLocaleString() : String(n); };
+
+    const reserveTab = () => {
+      const T = FoundationReserve.totals || {};
+      const ids = Object.keys(T).filter(id => _SALVAGE_BY_ID[id]).sort((a, b) => (T[b].total || 0) - (T[a].total || 0));
+      const grid = ids.length
+        ? ids.map(id => {
+            const m = _meta(id);
+            return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid rgba(120,170,255,0.18);border-radius:8px;background:rgba(40,70,130,0.10)">' +
+              '<span style="font-size:1.25rem;width:26px;text-align:center">' + (m.icon || '📦') + '</span>' +
+              '<div style="flex:1;min-width:0"><div style="color:#dce8ff;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(m.name || id) + '</div>' +
+              '<div class="small-text" style="color:#8fb0e0">' + numF(T[id].contributors) + ' contributors</div></div>' +
+              '<div style="color:#aee0ff;font-weight:800;white-space:nowrap">' + numF(T[id].total) + '</div></div>';
+          }).join('')
+        : '<div class="ink-dim" style="padding:1.6rem;text-align:center">The Reserve is empty. Be the first to supply civilization.</div>';
+      return '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Global resources the survivor world has pooled. Deposited resources are removed from circulation forever — that is what keeps products scarce and valuable.</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">' + grid + '</div>';
+    };
+
+    const depositTab = () => {
+      const R = _ensureResources();
+      const owned = Object.keys(R).filter(id => (R[id] | 0) > 0 && _SALVAGE_BY_ID[id])
+        .sort((a, b) => String(_meta(a).name).localeCompare(String(_meta(b).name)));
+      if (!owned.length) return '<div class="ink-dim" style="padding:1.6rem;text-align:center">No resources to contribute yet — loot tombstones, run expeditions, or raid.</div>';
+      if (!owned.includes(pickRes)) pickRes = owned[0];
+      const sel = '<select id="fr-res" style="flex:1;min-width:0;padding:0.55rem;border-radius:8px;border:1px solid rgba(120,170,255,0.4);background:rgba(12,20,40,0.7);color:#e6f0ff">' +
+        owned.map(id => '<option value="' + esc(id) + '"' + (id === pickRes ? ' selected' : '') + '>' + esc(_meta(id).icon + ' ' + (_meta(id).name || id)) + ' — you have ' + (R[id] | 0) + ' · ' + _frWeight(id) + ' rep/ea</option>').join('') + '</select>';
+      const rk = frRankFor(FoundationReserve.myPoints);
+      return '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(255,209,102,0.35);border-radius:8px;background:rgba(255,209,102,0.07);color:#ffd166;font-size:0.86rem">' +
+          rk.rank.icon + ' <strong>' + esc(rk.rank.name) + '</strong> · ' + numF(FoundationReserve.myPoints) + ' rep' +
+          (rk.next ? ' <span class="small-text" style="color:#cdb87a">— ' + numF(rk.toNext) + ' to ' + esc(rk.next.name) + '</span>' : ' <span class="small-text">— max rank</span>') + '</div>' +
+        '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Contribute resources to the world Reserve. They leave your camp permanently and fuel global manufacturing. You earn 🔥 Cinders + Reserve Reputation.</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + sel +
+          '<input id="fr-qty" type="number" min="1" value="1" style="width:90px;padding:0.55rem;border-radius:8px;border:1px solid rgba(120,170,255,0.4);background:rgba(12,20,40,0.7);color:#e6f0ff">' +
+          '<button id="fr-max" style="cursor:pointer;border-radius:8px;padding:0.55rem 0.7rem;border:1px solid rgba(120,170,255,0.45);background:rgba(60,100,170,0.25);color:#dce8ff;font-weight:700">Max</button>' +
+          '<button id="fr-give" style="cursor:pointer;border-radius:8px;padding:0.55rem 1rem;border:1px solid #5fa0e0;background:linear-gradient(180deg,#3a6fb0,#1c3a6a);color:#eaf3ff;font-weight:800">Deposit</button>' +
+        '</div>';
+    };
+
+    const productionTab = () => {
+      return '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Products only exist when the world has supplied enough. The Reserve auto-calculates how many can currently be manufactured — the bottleneck resource caps the run.</div>' +
+        RESERVE_PRODUCTS.map(p => {
+          const mf = frManufacture(p);
+          const barCol = mf.pct >= 66 ? '#5fd08a' : mf.pct >= 25 ? '#e0b84a' : '#e07a6a';
+          const status = mf.out
+            ? '<span style="color:#e07a6a;font-weight:800">OUT OF ' + esc((_meta(mf.out).name || mf.out).toUpperCase()) + '</span>'
+            : (mf.can <= 0
+                ? '<span style="color:#e07a6a;font-weight:800">Manufacturing stalled</span>'
+                : '<span style="color:#9fe0b0;font-weight:800">' + numF(mf.can) + ' / ' + numF(mf.max) + ' ready</span>');
+          const recipe = Object.keys(p.recipe).map(id => (_meta(id).icon || '📦') + (p.recipe[id])).join(' ');
+          return '<div style="padding:9px 11px;border:1px solid rgba(120,170,255,0.18);border-radius:9px;background:rgba(40,70,130,0.10);margin-bottom:7px">' +
+            '<div style="display:flex;align-items:center;gap:9px">' +
+              '<span style="font-size:1.4rem">' + p.icon + '</span>' +
+              '<div style="flex:1;min-width:0"><div style="color:#dce8ff;font-weight:800">' + esc(p.name) + ' <span class="small-text" style="color:#8fb0e0">· ' + esc(p.cat) + '</span></div>' +
+              '<div class="small-text" style="color:#9fb6d6">' + esc(p.blurb) + '</div></div>' +
+              '<div style="text-align:right">' + status + '<div class="small-text" style="color:#8fb0e0">' + mf.pct + '% capacity</div></div>' +
+            '</div>' +
+            '<div style="height:7px;border-radius:5px;background:rgba(10,18,36,0.8);margin:7px 0 5px;overflow:hidden"><div style="height:100%;width:' + Math.max(2, mf.pct) + '%;background:' + barCol + '"></div></div>' +
+            '<div class="small-text" style="color:#8fb0e0">Per-unit reserve cost: ' + esc(recipe) + (mf.bottleneck ? ' · <span style="color:#e0b84a">bottleneck: ' + esc(_meta(mf.bottleneck).name || mf.bottleneck) + '</span>' : '') + '</div>' +
+          '</div>';
+        }).join('');
+    };
+
+    const render = () => {
+      const host = document.getElementById(ID); if (!host) return;
+      let body;
+      if (!online) {
+        body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">📡 The Foundation Reserve is a shared world economy. Sign in to your account to contribute and see global production.</div>';
+      } else if (FoundationReserve.tableMissing) {
+        const isAdm = (typeof isAdmin === 'function') && isAdmin();
+        body = isAdm
+          ? '<div style="padding:0.3rem 0"><div style="color:#e0a06b;font-weight:700;margin-bottom:6px">The Reserve isn’t set up yet.</div>' +
+            '<div class="small-text ink-dim" style="margin-bottom:6px">Run this once in the Supabase SQL editor, then Retry.</div>' +
+            '<textarea readonly id="fr-sql" style="width:100%;height:150px;background:#0a0d13;color:#cbd5e8;border:1px solid #243042;border-radius:6px;font-family:monospace;font-size:0.66rem;padding:0.6rem">' + esc(FOUNDATION_RESERVE_SQL) + '</textarea>' +
+            '<div style="display:flex;gap:8px;margin-top:8px"><button id="fr-sql-copy" style="cursor:pointer;border-radius:7px;padding:0.45rem 0.8rem;border:1px solid rgba(120,170,255,0.45);background:rgba(60,100,170,0.22);color:#dce8ff;font-weight:700">📋 Copy SQL</button>' +
+            '<button id="fr-sql-retry" style="cursor:pointer;border-radius:7px;padding:0.45rem 0.8rem;border:1px solid #5fa0e0;background:linear-gradient(180deg,#3a6fb0,#1c3a6a);color:#eaf3ff;font-weight:800">↻ Retry</button></div></div>'
+          : '<div class="ink-dim" style="padding:1.8rem;text-align:center">🏛 The Foundation Reserve is warming up — check back soon.</div>';
+      } else if (FoundationReserve.loading && !FoundationReserve.lastFetch) {
+        body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">Querying the world Reserve…</div>';
+      } else {
+        body = tab === 'reserve' ? reserveTab() : tab === 'deposit' ? depositTab() : productionTab();
+      }
+      const tBtn = (id, label) => '<button data-fr-tab="' + id + '" style="flex:1;cursor:pointer;border-radius:8px 8px 0 0;padding:0.5rem;border:1px solid rgba(120,170,255,0.35);border-bottom:none;background:' + (tab === id ? 'rgba(60,100,170,0.30)' : 'rgba(40,70,130,0.10)') + ';color:' + (tab === id ? '#eaf3ff' : '#9fb6d6') + ';font-weight:800">' + label + '</button>';
+
+      host.innerHTML =
+        '<div style="width:min(660px,95vw);max-height:90vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(12,20,38,0.99),rgba(6,10,22,0.99));border:2px solid rgba(120,170,255,0.5);border-radius:16px;padding:16px 18px;box-shadow:0 24px 80px rgba(0,0,0,0.9),0 0 30px rgba(90,150,230,0.25)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">' +
+            '<div><div style="font-family:\'Cinzel\',serif;font-size:1.3rem;font-weight:800;color:#9fc6ff">🏛 Foundation Reserve</div>' +
+            '<div class="small-text ink-dim">World-scale manufacturing & stabilization. ' + (online ? '<span style="color:#7fdca0">● live</span>' : '<span style="color:#ff9a6b">○ offline</span>') + '</div></div>' +
+            '<button id="fr-x" style="cursor:pointer;border:1px solid rgba(150,190,255,0.4);background:transparent;color:#aec8ff;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
+          '</div>' +
+          (online && !FoundationReserve.tableMissing ? '<div style="display:flex;gap:4px;margin-bottom:-1px">' + tBtn('reserve', '🏛 Reserve') + tBtn('deposit', '➕ Contribute') + tBtn('production', '⚙️ Production') + '</div>' : '') +
+          '<div id="fr-body" style="flex:1;min-height:240px;max-height:56vh;overflow:auto;border:1px solid rgba(120,170,255,0.22);border-radius:0 0 8px 8px;padding:11px">' + body + '</div>' +
+          '<button id="fr-close" style="margin-top:12px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(120,170,255,0.5);background:rgba(60,100,170,0.18);color:#dce8ff;font-weight:800">Close</button>' +
+          '<div class="small-text ink-dim" style="margin-top:6px">Products are manufactured by the world itself — not generated for free. Your deposits keep civilization’s supply chains running.</div>' +
+        '</div>';
+
+      const x = document.getElementById('fr-x'); if (x) x.onclick = close;
+      const cl = document.getElementById('fr-close'); if (cl) cl.onclick = close;
+      host.querySelectorAll('[data-fr-tab]').forEach(b => { b.onclick = () => { tab = b.getAttribute('data-fr-tab'); render(); }; });
+      const sc = document.getElementById('fr-sql-copy'); if (sc) sc.onclick = () => { try { navigator.clipboard.writeText(FOUNDATION_RESERVE_SQL); showToast('📋 SQL copied.'); } catch (e) { const t = document.getElementById('fr-sql'); if (t) t.select(); } };
+      const sr = document.getElementById('fr-sql-retry'); if (sr) sr.onclick = () => { FoundationReserve.tableMissing = false; FoundationReserve.lastFetch = 0; frFetch().then(render); };
+      const rsel = document.getElementById('fr-res'); if (rsel) rsel.onchange = () => { pickRes = rsel.value; };
+      const mx = document.getElementById('fr-max'); if (mx) mx.onclick = () => { const R = _ensureResources(); const id = (document.getElementById('fr-res') || {}).value || pickRes; const q = document.getElementById('fr-qty'); if (q) q.value = String((R[id] | 0) || 1); };
+      const give = document.getElementById('fr-give');
+      if (give) give.onclick = () => {
+        const id = (document.getElementById('fr-res') || {}).value || pickRes;
+        const q = parseInt((document.getElementById('fr-qty') || {}).value, 10) || 0;
+        if (!id) { showToast('Pick a resource.'); return; }
+        if (q <= 0) { showToast('Enter an amount.'); return; }
+        frDeposit(id, q).then(ok => { if (ok) { tab = 'reserve'; render(); } });
+      };
+    };
+
+    render();
+    if (online) {
+      frFetch().then(render);
+      cleanup();
+      FoundationReserve._poll = setInterval(() => { if (!document.getElementById(ID)) { cleanup(); return; } frFetch().then(() => { if (document.getElementById(ID)) render(); }); }, 20000);
+    }
+  } catch (e) {}
+}
+
+// ============================================================================
 // 🏛️ GYM CORE WARS — persistent online gym / territory system.
 // Phase 1 foundation: 8 Cores, each with a themed Gym-Leader NPC + AI deck
 // (PvE "Core Trial"). Win a Trial → earn that Core Badge. Collect all 8 →
@@ -37540,6 +37821,12 @@ function renderTitle() {
       { id: 'btn-vendor-market', icon: '<img src="assets/artwork/gameicons/Azacoin.png" alt="Vendor Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Vendor Market', sub: 'Card packs + Aza coin Store',   accent: '#d8b8ff',
         badge: `<span class="cinder-icon"></span> ${Profile.gems || 0} · <span class="aza-icon"></span> ${Profile.sovereigns || 0}`,
         onclick: () => { App.screen = 'vendorMarket'; App._packReveal = null; render(); } },
+      // Foundation Reserve — world-scale manufacturing & resource sink. Players
+      // pool resources globally; products only exist when the world supplies
+      // enough. Opens a self-contained overlay (no screen nav).
+      { id: 'btn-foundation-reserve', icon: '🏛', name: 'Foundation Reserve', sub: 'Supply the world · drive production', accent: '#7fb0ff',
+        badge: (() => { try { const p = (typeof FoundationReserve !== 'undefined' && FoundationReserve.myPoints) || 0; return p > 0 ? (frRankFor(p).rank.icon + ' ' + frRankFor(p).rank.name) : '🎒 Contribute'; } catch (e) { return '🎒 Contribute'; } })(),
+        onclick: () => { if (typeof openFoundationReserve === 'function') openFoundationReserve(); } },
       // Sports-betting hub — wager Cinders on AI vs AI fixtures + future tournaments.
       { id: 'btn-wager-hall', icon: '<img src="assets/artwork/gameicons/Blood%20dice%20Icon.png" alt="Wager Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(2.0);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Wager Hall', sub: 'Bet <span class="cinder-icon"></span> on AI matches · tournaments soon', accent: '#ff7755',
         badge: (() => {

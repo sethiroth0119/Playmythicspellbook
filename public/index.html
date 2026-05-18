@@ -30660,17 +30660,26 @@ function _lootWithUnit(unitId) {
     if (!t) return false;
     const base = (t.salvage && typeof t.salvage === 'object') ? t.salvage : {};
     const got = _looterRarityBoost(base, u);
-    addSalvage(got);
+    // → into the volatile FIELD BAG (capacity-limited), not camp storage.
+    const { taken, left } = addToFieldBag(got);
     t.looted = true;
     // Looting forfeits the rest of the unit's turn.
     s.units = s.units.map(x => x.id === u.id ? { ...x, hasMoved: true, hasAttacked: true, _looted: true } : x);
     s._salvageRun = s._salvageRun || { gained: {}, looted: 0 };
     s._salvageRun.looted++;
-    for (const k in got) { const n = got[k] | 0; if (n) s._salvageRun.gained[k] = (s._salvageRun.gained[k] || 0) + n; }
-    const pills = Object.keys(got).filter(k => (got[k] | 0) > 0)
-      .map(k => `${(_SALVAGE_BY_ID[k] || {}).icon || ''}${got[k]}`).join('  ');
+    for (const k in taken) { const n = taken[k] | 0; if (n) s._salvageRun.gained[k] = (s._salvageRun.gained[k] || 0) + n; }
+    const pills = _resLine(taken);
+    const overflow = _resLine(left);
+    const cap = _fieldBagCap(), usedSlots = _bagSlots(_ensureFieldBag());
     try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
-    try { if (typeof showToast === 'function') showToast(`🪦 ${u.name || 'Unit'} looted ${t.name || 'body'}: ${pills || 'nothing of use'}`, 2800); } catch (e) {}
+    try {
+      if (typeof showToast === 'function') {
+        const msg = `🎒 ${u.name || 'Unit'} looted ${t.name || 'body'}: ${pills || 'nothing of use'}`
+          + (overflow ? ` — ⚠ bag full, left ${overflow}` : '')
+          + ` · bag ${usedSlots}/${cap}`;
+        showToast(msg, overflow ? 3800 : 2800);
+      }
+    } catch (e) {}
     try { App.ui.modalUnitId = null; } catch (e) {}
     try { if (typeof render === 'function') render(); } catch (e) {}
     return true;
@@ -30687,6 +30696,105 @@ function _unitCanLoot(u) {
     return !!(Array.isArray(s.tombstones) && s.tombstones.some(o =>
       o && o.lootable && !o.looted && !o.glowing && o.x === u.pos.x && o.y === u.pos.y));
   } catch (e) { return false; }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// 🎒 FIELD BAG — the EXTRACTION LOOP. Salvage looted in battle goes into a
+// volatile, capacity-limited field bag (Profile.fieldBag), NOT straight to
+// camp. It only becomes real, usable, secured storage (Profile.salvage)
+// when the player DEPOSITS it at camp. Lose a fight and you keep only a
+// small "secured pouch" — the rest of the carried loot is gone. That risk
+// is the retention engine. (v1 = capacity/slot model, not a spatial grid.)
+// ════════════════════════════════════════════════════════════════════════
+const FIELD_BAG_CAP = 36;        // carry slots (later raised by bag tiers)
+const SECURED_POUCH_CAP = 8;     // slots kept on defeat — the rest is lost
+// Per-UNIT slot cost (item-size classes from the design): 1×1 small = 1,
+// bulkier survival goods = 2. Drives the "drop food for the artifact" tension.
+const _RES_SLOT = { ammo:1, memoryShards:1, dna:1, medicine:1, fuel:1,
+                    metal:2, supplies:2, food:2, water:2, corruptedEssence:2 };
+// Most-valuable-first — what the secured pouch keeps when you fall.
+const _RES_VALUE = ['dna','memoryShards','corruptedEssence','fuel','medicine',
+                    'metal','supplies','ammo','food','water'];
+function _resSlot(id) { return _RES_SLOT[id] || 1; }
+function _ensureFieldBag() { if (!Profile.fieldBag || typeof Profile.fieldBag !== 'object') Profile.fieldBag = {}; return Profile.fieldBag; }
+function _bagSlots(bag) { let n = 0; for (const k in (bag || {})) n += (bag[k] | 0) * _resSlot(k); return n; }
+function _fieldBagCap() { try { return (Profile.bagCap | 0) || FIELD_BAG_CAP; } catch (e) { return FIELD_BAG_CAP; } }
+// Add salvage to the field bag, respecting capacity. Smallest-slot items
+// first so a near-full bag still grabs the precious 1×1 mats. Returns
+// { taken, left } so the looter can tell the player what didn't fit.
+function addToFieldBag(map) {
+  const bag = _ensureFieldBag(); const taken = {}, left = {};
+  let used = _bagSlots(bag); const cap = _fieldBagCap();
+  const keys = Object.keys(map || {}).filter(k => (map[k] | 0) > 0)
+    .sort((a, b) => _resSlot(a) - _resSlot(b) || _RES_VALUE.indexOf(a) - _RES_VALUE.indexOf(b));
+  for (const k of keys) {
+    let want = map[k] | 0; const cost = _resSlot(k);
+    while (want > 0 && used + cost <= cap) { bag[k] = (bag[k] || 0) + 1; taken[k] = (taken[k] || 0) + 1; used += cost; want--; }
+    if (want > 0) left[k] = (left[k] || 0) + want;
+  }
+  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  return { taken, left };
+}
+// Camp deposit — field bag → SECURED storage (Profile.salvage), bag cleared.
+function _depositFieldBag() {
+  const bag = _ensureFieldBag(); const moved = {};
+  if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+  for (const k in bag) { const n = bag[k] | 0; if (n > 0) { Profile.salvage[k] = (Profile.salvage[k] || 0) + n; moved[k] = n; } }
+  Profile.fieldBag = {};
+  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  return moved;
+}
+// Defeat — keep the most valuable resources up to the secured pouch; the
+// rest of the carried field bag is lost. Returns { kept, lost }.
+function _fieldBagLossOnDefeat() {
+  const bag = _ensureFieldBag(); const kept = {}, lost = {};
+  let used = 0;
+  for (const k of _RES_VALUE) {
+    let have = bag[k] | 0; const cost = _resSlot(k);
+    while (have > 0 && used + cost <= SECURED_POUCH_CAP) { kept[k] = (kept[k] || 0) + 1; used += cost; have--; }
+    if (have > 0) lost[k] = (lost[k] || 0) + have;
+  }
+  for (const k in bag) { if (_RES_VALUE.indexOf(k) < 0 && (bag[k] | 0) > 0) lost[k] = (lost[k] || 0) + (bag[k] | 0); }
+  Profile.fieldBag = { ...kept };
+  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  return { kept, lost };
+}
+function _resLine(map) {
+  return Object.keys(map || {}).filter(k => (map[k] | 0) > 0)
+    .map(k => `${(_SALVAGE_BY_ID[k] || {}).icon || ''}${map[k]}`).join('  ');
+}
+// Body-anchored deposit panel — shows ONLY at Camp when the field bag has
+// loot. "Deposit All" moves it into secured storage with dopamine feedback.
+function mountFieldBagDeposit() {
+  try {
+    const ID = 'field-bag-deposit';
+    let el = document.getElementById(ID);
+    if (typeof App === 'undefined' || App.screen !== 'camp') { if (el) el.remove(); return; }
+    const bag = _ensureFieldBag();
+    const keys = Object.keys(bag).filter(k => (bag[k] | 0) > 0);
+    if (!keys.length) { if (el) el.remove(); return; }
+    const cap = _fieldBagCap(), used = _bagSlots(bag);
+    const pills = keys.map(k => { const r = _SALVAGE_BY_ID[k] || {};
+      return `<span style="display:inline-block;margin:2px 4px;padding:2px 7px;border:1px solid rgba(212,175,55,0.5);border-radius:10px;color:#ffe9b8;background:rgba(202,162,62,0.15);font-size:0.82rem">${r.icon || ''} ${r.name || k} ${bag[k]}</span>`;
+    }).join('');
+    if (!el) { el = document.createElement('div'); el.id = ID; document.body.appendChild(el); }
+    el.style.cssText = "position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483280;max-width:min(680px,94vw);background:linear-gradient(180deg,rgba(26,16,46,0.98),rgba(14,9,26,0.98));border:2px solid rgba(212,175,55,0.6);border-radius:14px;padding:12px 16px;box-shadow:0 18px 50px rgba(0,0,0,0.7),0 0 26px rgba(184,136,255,0.3);font-family:'Crimson Text',Georgia,serif;color:#e8ddff";
+    el.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between">' +
+        '<div style="font-family:\'Cinzel\',serif;color:#ffd166;font-weight:800">🎒 Field Bag <span style="color:#cdb6ff;font-size:0.8rem">' + used + '/' + cap + ' slots — UNSECURED</span></div>' +
+        '<button id="fbd-deposit" style="font-family:\'Cinzel\',serif;font-weight:800;cursor:pointer;border-radius:10px;padding:0.55rem 1.1rem;border:1px solid #ffd166;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206">📥 Deposit All to Camp Storage</button>' +
+      '</div>' +
+      '<div style="margin-top:6px">' + pills + '</div>' +
+      '<div class="small-text" style="color:#9a8fbf;margin-top:4px">Deposited = secured (usable for crafting / forge / trade / upkeep). Carried loot is lost if you fall in battle.</div>';
+    const btn = document.getElementById('fbd-deposit');
+    if (btn) btn.onclick = () => {
+      const moved = _depositFieldBag();
+      const line = (typeof _resLine === 'function') ? _resLine(moved) : '';
+      try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast('📦 Deposited to Camp Storage: ' + (line || 'nothing') + ' — supplies updated.', 4200); } catch (e) {}
+      try { if (typeof render === 'function') render(); } catch (e) {}
+    };
+  } catch (e) {}
 }
 
 const getOccupant = (pos, units) => units.find(u => u.alive && u.pos.x === pos.x && u.pos.y === pos.y);
@@ -34761,6 +34869,9 @@ function render() {
   // 👑 Keep the admin's collection complete — re-grants 3× when new cards
   // appear (catalog publish / forge create). Self-throttled; no-op otherwise.
   try { if (typeof ensureAdminCardGrant === 'function') ensureAdminCardGrant(); } catch (e) {}
+  // 🎒 Camp-only field-bag deposit panel (body-anchored so we never splice
+  // the huge camp template). Appears at Camp when the bag has loot.
+  try { if (typeof mountFieldBagDeposit === 'function') mountFieldBagDeposit(); } catch (e) {}
 
   // ===== Audio routing FIRST =====
   // Must run BEFORE the screen-specific early-returns below — otherwise screens
@@ -48449,21 +48560,33 @@ function renderGameOverOverlay() {
         })()}
 
         ${(() => {
-          // 🪦 Salvage harvested this run + bodies left unlooted.
+          // 🎒 Field bag status — what's CARRIED (not yet secured), plus the
+          // defeat toll if the player fell.
           const run = s._salvageRun || { gained: {}, looted: 0 };
           const missed = Array.isArray(s.tombstones)
             ? s.tombstones.filter(t => t && t.lootable && !t.looted && !t.glowing).length : 0;
-          const keys = Object.keys(run.gained || {}).filter(k => (run.gained[k] | 0) > 0);
-          if (!run.looted && !missed && !keys.length) return '';
-          const pills = keys.map(k => {
+          const loss = App._fieldBagLoss;     // {kept,lost} on defeat, else null
+          const bag = (typeof _ensureFieldBag === 'function') ? _ensureFieldBag() : (Profile.fieldBag || {});
+          const bagKeys = Object.keys(bag).filter(k => (bag[k] | 0) > 0);
+          const cap = (typeof _fieldBagCap === 'function') ? _fieldBagCap() : 36;
+          const usedSlots = (typeof _bagSlots === 'function') ? _bagSlots(bag) : 0;
+          if (!run.looted && !missed && !bagKeys.length && !loss) return '';
+          const pills = bagKeys.map(k => {
             const r = _SALVAGE_BY_ID[k] || {};
-            return `<span class="essence-pill" style="border-color:#caa23e;color:#ffe9b8;background:#caa23e22">${r.icon || ''} ${r.name || k} +${run.gained[k]}</span>`;
+            return `<span class="essence-pill" style="border-color:#caa23e;color:#ffe9b8;background:#caa23e22">${r.icon || ''} ${r.name || k} ${bag[k]}</span>`;
           }).join('');
+          const lostLine = (loss && typeof _resLine === 'function' && _resLine(loss.lost))
+            ? `<div class="small-text" style="color:#ff9a88;margin-top:3px">☠ Lost to the field: ${_resLine(loss.lost)} — only the secured pouch survived.</div>`
+            : '';
+          const carryNote = won
+            ? '🎒 Carried out — <strong>deposit at Camp</strong> to bank it for crafting/trade. Unbanked loot is lost if you fall.'
+            : '☠ You fell — most of the bag was lost; a small secured pouch remains.';
           return `
             <div class="game-over-essence-row">
-              <div class="ge-label">🪦 Battlefield Salvage</div>
-              <div class="ge-pills">${pills || '<span class="small-text ink-dim">No bodies looted</span>'}</div>
-              <div class="small-text ink-dim">Tombstones looted: <strong>${run.looted}</strong>${missed ? ` &middot; <span style="color:#ff9a88">missed: ${missed}</span> — harvest bodies during the fight!` : ' &middot; battlefield cleared 🧹'}</div>
+              <div class="ge-label">🎒 Field Bag <span class="small-text ink-dim">${usedSlots}/${cap} slots</span></div>
+              <div class="ge-pills">${pills || '<span class="small-text ink-dim">Bag empty</span>'}</div>
+              ${lostLine}
+              <div class="small-text ink-dim" style="margin-top:3px">Looted this run: <strong>${run.looted}</strong>${missed ? ` &middot; <span style="color:#ff9a88">missed: ${missed}</span>` : ''} &middot; ${carryNote}</div>
             </div>
           `;
         })()}
@@ -48600,6 +48723,13 @@ function recordBattleProgress() {
   Profile.records.battles = (Profile.records.battles || 0) + 1;
   if (won) Profile.records.wins = (Profile.records.wins || 0) + 1;
   else Profile.records.losses = (Profile.records.losses || 0) + 1;
+  // 🎒 EXTRACTION STAKES — fall in battle and the carried field bag is lost
+  // except for a small secured pouch. Win and you keep it all (carry it to
+  // camp and deposit). Stashed so the game-over panel can show the toll.
+  try {
+    App._fieldBagLoss = won ? null
+      : ((typeof _fieldBagLossOnDefeat === 'function') ? _fieldBagLossOnDefeat() : null);
+  } catch (e) { App._fieldBagLoss = null; }
   // NOTE: per-hero wins + per-unit kills + per-unit level/xp persistence
   // happens further down this function (around line ~34050 — see the
   // "Hero" / "Units (per cardId)" blocks). Those blocks read each unit's

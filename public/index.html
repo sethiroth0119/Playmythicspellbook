@@ -26576,7 +26576,7 @@ const NPC_SPRITE_SUBJECTS = [
 // Camp is gated behind hero progression — the player needs to have trained at least
 // one hero to this level before the Camp screen opens. Keeps very new players from
 // stumbling into Camp before they've earned a unit / hero worth parking.
-const CAMP_UNLOCK_LEVEL = 10;
+const CAMP_UNLOCK_LEVEL = 3;
 // Tutor Shop unlocks at this ACCOUNT level (long-term meta progression).
 const TUTOR_UNLOCK_ACCOUNT_LEVEL = 5;
 // Player Market unlocks once the player has at least N heroes at this hero level.
@@ -26660,10 +26660,16 @@ function _campForgeArtificer() {
 // Staffable bunker rooms. rule 'artificer' = only Artificer-faction units
 // (Card Forge); 'any' = any owned unit or a hired NPC.
 const CAMP_STAFF_ROOMS = [
-  { id: 'FRG-01', name: 'Card Forge',    rule: 'artificer', npcRole: 'Blacksmith',  fx: '−20% craft cost (Artificer unit only)' },
-  { id: 'AIL-01', name: 'AI Lab',        rule: 'any',       npcRole: 'Technician',  fx: '+' + Math.round(CAMP_AILAB_STUDY_BONUS * 100) + '% Study success' },
-  { id: 'RCT-01', name: 'Power Reactor', rule: 'any',       npcRole: 'Engineer',    fx: '+' + Math.round(CAMP_REACTOR_BUILD_BONUS * 100) + '% build speed · halves fuel drain' },
-  { id: 'CNT-01', name: 'Containment',   rule: 'any',       npcRole: 'Warden',      fx: 'Generates Corrupted Essence + DNA over time' },
+  { id: 'FRG-01', name: 'Card Forge',      rule: 'artificer', npcRole: 'Blacksmith',  fx: '−20% craft cost (Artificer unit only)' },
+  { id: 'AIL-01', name: 'AI Lab',          rule: 'any',       npcRole: 'Technician',  fx: '+' + Math.round(CAMP_AILAB_STUDY_BONUS * 100) + '% Study success' },
+  { id: 'RCT-01', name: 'Power Reactor',   rule: 'any',       npcRole: 'Engineer',    fx: '+' + Math.round(CAMP_REACTOR_BUILD_BONUS * 100) + '% build speed · halves fuel drain' },
+  { id: 'CNT-01', name: 'Containment',     rule: 'any',       npcRole: 'Warden',      fx: 'Generates Corrupted Essence + DNA over time' },
+  // These contribute a flat bonus to their facility's effect via campBonus()
+  // while staffed (stacks on top of the built facility, works standalone).
+  { id: 'CMD-01', name: 'Command Center',  rule: 'any',       npcRole: 'Operator',    fx: '+8 loot-run survival',            staffKey: 'lootSurvive',  staffAmt: 8 },
+  { id: 'MED-01', name: 'Medical Bay',     rule: 'any',       npcRole: 'Medic',       fx: '+4 morale recovery for the camp', staffKey: 'moraleRegen',  staffAmt: 4 },
+  { id: 'TRN-01', name: 'Training Hall',   rule: 'any',       npcRole: 'Drillmaster', fx: '+15% loot quality',               staffKey: 'lootQuality',  staffAmt: 0.15 },
+  { id: 'VLT-01', name: 'Relic Vault',     rule: 'any',       npcRole: 'Curator',     fx: '+5 salvage tithe per camp visit', staffKey: 'tithe',        staffAmt: 5 },
 ];
 function _campStaffRoom(id) { return CAMP_STAFF_ROOMS.find(r => r.id === id) || null; }
 // Owned units the player could station at a room (respecting its rule).
@@ -27412,6 +27418,18 @@ function campBonus(key) {
       if (typeof b[key] === 'number') total += b[key];
     }
   }
+  // 👷 Staffed-room flat bonuses — Command/Medical/Training/Vault add to
+  // their facility's effect while staffed (stacks; works standalone).
+  try {
+    if (typeof CAMP_STAFF_ROOMS !== 'undefined') {
+      for (const r of CAMP_STAFF_ROOMS) {
+        if (r.staffKey === key && typeof r.staffAmt === 'number'
+            && typeof _campRoomStaffed === 'function' && _campRoomStaffed(r.id)) {
+          total += r.staffAmt;
+        }
+      }
+    }
+  } catch (e) {}
   return total;
 }
 function campMaxSlots() { return 6 + campBonus('slots'); }

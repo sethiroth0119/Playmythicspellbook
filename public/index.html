@@ -26561,6 +26561,13 @@ const CAMP_XP_CAP       = 240; // per slot (24 hours of stockpiled XP)
 const CAMP_PARK_COST    = 5;   // 🔥 cost to park a unit
 const CAMP_NPC_HIRE_COST = 30; // 🔥 cost to hire a generic NPC worker
 const CAMP_MAX_WORKERS   = 9;  // one per bunker room
+// 🏭 Room-effect tuning (only apply while the room is STAFFED). Declared
+// here — BEFORE CAMP_STAFF_ROOMS — so the fx strings can read them at
+// module-eval time (moving these out of order blanked the whole game).
+const CAMP_REACTOR_FUEL_MUL    = 0.5;                          // Reactor → fuel drain ×0.5
+const CAMP_REACTOR_BUILD_BONUS = 0.15;                         // Reactor → +15% build speed
+const CAMP_AILAB_STUDY_BONUS   = 0.12;                         // AI Lab  → +12% study success
+const CAMP_CONTAINMENT_TRICKLE = { corruptedEssence: 4, dna: 3 }; // Containment → /day faucet
 // 👷 NPC sprite slots — author art for these in the Sprite Atelier (admin).
 // Hiring an NPC randomly picks one of the slots that HAS frames uploaded.
 const NPC_SPRITE_SUBJECTS = [
@@ -31317,11 +31324,6 @@ function mountFieldBagDeposit() {
 // ════════════════════════════════════════════════════════════════════════
 const CAMP_CONSUME_PER_DAY = { food: 6, water: 6, fuel: 3, medicine: 2, ammo: 4 };
 const CAMP_CATCHUP_MAX_DAYS = 3;   // offline catch-up cap so returns aren't nuked
-// 🏭 Room-effect tuning (only apply while the room is STAFFED):
-const CAMP_REACTOR_FUEL_MUL    = 0.5;                          // Reactor → fuel drain ×0.5
-const CAMP_REACTOR_BUILD_BONUS = 0.15;                         // Reactor → +15% build speed
-const CAMP_AILAB_STUDY_BONUS   = 0.12;                         // AI Lab  → +12% study success
-const CAMP_CONTAINMENT_TRICKLE = { corruptedEssence: 4, dna: 3 }; // Containment → /day faucet
 const CAMP_LOW_DAYS = 1;           // < this many days of stock = "LOW"
 const _CAMP_SHORTAGE_FX = {
   food:     'Survivors starving — weak & low morale',

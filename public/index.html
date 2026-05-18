@@ -30779,6 +30779,8 @@ function _lootWithUnit(unitId, mode) {
     if (mode === 'dna')     got = _biasSalvage(got, 'dna');
     else if (mode === 'essence') got = _biasSalvage(got, 'corruptedEssence');
     else if (mode === 'shards')  got = _biasSalvage(got, 'memoryShards');
+    // 🌐 Active world event reshapes the haul (scarcity / bonus).
+    if (typeof _applyEventLootMods === 'function') got = _applyEventLootMods(got);
 
     let destLine, where;
     if (mode === 'research') {
@@ -31539,6 +31541,174 @@ function mountCampDecayFx() {
     el.style.background = bg;
     el.style.opacity = '1';
     el.className = (out.indexOf('fuel') >= 0) ? 'fuelout' : '';
+  } catch (e) {}
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// 🌐 DYNAMIC WORLD EVENTS — server-less but GLOBAL. There is no event bus,
+// so the active event is derived DETERMINISTICALLY from wall-clock time:
+// every client independently computes the SAME event for the same window,
+// so it's genuinely world-wide with zero backend. Events modify salvage
+// drop rates (real economy impact), announce on begin/end, and show a live
+// panel. v1 = the economy core + UI; per-zone mechanics, enemy modifiers,
+// deep market integration, and a chat-broadcast channel are roadmap.
+// ════════════════════════════════════════════════════════════════════════
+const WORLD_EVENTS = [
+  { id:'scpOutbreak', name:'SCP Outbreak', sev:3, zones:['Abandoned Lab','Containment Wing'],
+    mods:{ medicine:0.5, ammo:0.7, supplies:0.6, corruptedEssence:1.8, dna:1.3 },
+    begin:'An SCP containment breach floods the dead zones — Corrupted Essence pours out; Medicine, Ammo & Supplies run dry.',
+    end:'The breach is contained. Salvage rates normalize.' },
+  { id:'campFamine', name:'Camp Famine', sev:2, zones:['Survivor Territories'],
+    mods:{ food:0.3, water:0.4, medicine:0.75 },
+    begin:'Food & Water collapse across survivor territories. Sickness looms — Medicine grows scarce.',
+    end:'Supply lines recover. Food & Water return to normal.' },
+  { id:'dimStorm', name:'Dimensional Storm', sev:3, zones:['Rift Fields'],
+    mods:{ fuel:0.5, metal:0.8, memoryShards:2.0, corruptedEssence:1.5 },
+    begin:'A dimensional storm tears the sky — Memory Shards rain down; Fuel & Metal vanish.',
+    end:'The storm passes. The veil settles.' },
+  { id:'infectedInvasion', name:'Infected Invasion', sev:4, zones:['Old Shelter District','City Sewers'],
+    mods:{ medicine:0.25, food:0.65, ammo:0.55, dna:1.7, corruptedEssence:1.35 },
+    begin:'The infected swarm the districts — DNA everywhere; Medicine, Ammo & Food collapse.',
+    end:'The horde thins. The districts fall quiet.' },
+  { id:'relicCorruption', name:'Relic Corruption', sev:3, zones:['Ancient Vaults'],
+    mods:{ memoryShards:1.6, corruptedEssence:2.0, medicine:0.7, supplies:0.65 },
+    begin:'Ancient relics bleed corruption — Essence & Shards surge; Medicine & Supplies decay.',
+    end:'The relics fall dormant.' },
+  { id:'cityCollapse', name:'City Collapse', sev:3, zones:['Downtown Ruins'],
+    mods:{ metal:1.8, fuel:0.6, water:0.5, supplies:1.3, medicine:0.7 },
+    begin:'The towers come down — Metal & scrap everywhere; Water, Fuel & Medicine choke off.',
+    end:'The dust settles over the ruins.' },
+  { id:'fuelShortage', name:'Fuel Shortage', sev:2, zones:['Fuel Depots'],
+    mods:{ fuel:0.3, metal:0.85 },
+    begin:'Fuel reserves run dry region-wide.', end:'Fuel convoys roll again.' },
+  { id:'waterPoisoning', name:'Water Poisoning', sev:2, zones:['Reservoirs'],
+    mods:{ water:0.3, medicine:0.7, food:0.8 },
+    begin:'The water is poisoned — clean Water & Medicine grow scarce.', end:'The wells are purged.' },
+  { id:'resourceBoom', name:'Resource Boom', sev:1, zones:['Scrap Fields'], positive:true,
+    mods:{ metal:1.8, fuel:1.6, supplies:1.6 },
+    begin:'A salvage motherlode is uncovered — Metal, Fuel & Supplies pour in!',
+    end:'The motherlode runs dry.' },
+  { id:'cleanWater', name:'Clean Water Discovery', sev:1, zones:['Hidden Springs'], positive:true,
+    mods:{ water:2.0, food:1.3 },
+    begin:'A clean aquifer is found — Water & Food flow freely!', end:'The spring slows to a trickle.' },
+  { id:'medShipment', name:'Medical Shipment Crash', sev:1, zones:['Crash Site'], positive:true,
+    mods:{ medicine:2.2 },
+    begin:'A medical shipment crashed nearby — Medicine is abundant!', end:'The crash site is picked clean.' },
+  { id:'relicSurge', name:'Relic Surge', sev:2, zones:['Glowing Caches'], positive:true,
+    mods:{ memoryShards:1.8, corruptedEssence:1.8, dna:1.3 },
+    begin:'A relic surge supercharges rare salvage — danger rises with reward.', end:'The surge fades.' },
+];
+const _WE_SEV_NAME = { 1:'Warning', 2:'Crisis', 3:'Disaster', 4:'Catastrophe', 5:'Extinction' };
+const WE_PERIOD_MS = 6 * 3600000;     // a fresh schedule slot every 6 real hours
+const WE_CHANCE = 60;                 // % of slots that carry an event
+function _weHash(n) { let h = (n ^ 0x9e3779b9) >>> 0; h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0; h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0; return (h ^ (h >>> 16)) >>> 0; }
+// The active world event for a given time — pure function of the clock, so
+// every player computes the same one. Fairness: never run the same event
+// two slots running; Catastrophe(sev4)+ only on a rare hash bucket.
+function _weForSlot(si) {
+  const h = _weHash(si);
+  if (h % 100 >= WE_CHANCE) return null;                 // calm slot
+  let idx = (h >>> 7) % WORLD_EVENTS.length;
+  // No repeat of the immediately-previous slot's event.
+  const prevH = _weHash(si - 1);
+  if (prevH % 100 < WE_CHANCE) {
+    const prevIdx = (prevH >>> 7) % WORLD_EVENTS.length;
+    if (idx === prevIdx) idx = (idx + 1) % WORLD_EVENTS.length;
+  }
+  const ev = WORLD_EVENTS[idx];
+  // Cap severe events: only allow sev>=4 when a rare bucket hits.
+  let sev = ev.sev;
+  if (sev >= 4 && (h % 13) !== 0) sev = 3;
+  // Deterministic duration: 1–2 slots (longer = rarer, gated by hash).
+  const slots = (h % 100 < 14) ? 2 : 1;
+  return { ev, sev, startMs: si * WE_PERIOD_MS, endMs: (si + slots) * WE_PERIOD_MS };
+}
+function currentWorldEvent(now) {
+  try {
+    now = now || Date.now();
+    const si = Math.floor(now / WE_PERIOD_MS);
+    // An event can span 2 slots — check this slot and the previous one.
+    for (const s of [si, si - 1]) {
+      const w = _weForSlot(s);
+      if (w && now >= w.startMs && now < w.endMs) return w;
+    }
+    return null;
+  } catch (e) { return null; }
+}
+// Apply the active event's drop multipliers to a salvage map (real impact).
+function _applyEventLootMods(map) {
+  try {
+    const w = currentWorldEvent();
+    if (!w || !w.ev || !w.ev.mods) return map;
+    const out = {};
+    for (const k in map) {
+      const mul = w.ev.mods[k];
+      out[k] = (mul == null) ? (map[k] | 0) : Math.max(0, Math.round((map[k] | 0) * mul));
+    }
+    return out;
+  } catch (e) { return map; }
+}
+function _weScarce(ev) { return Object.keys(ev.mods).filter(k => ev.mods[k] < 1); }
+function _weBonus(ev)  { return Object.keys(ev.mods).filter(k => ev.mods[k] > 1); }
+function _weResLine(ev, keys, up) {
+  return keys.map(k => { const r = _SALVAGE_BY_ID[k] || {}; const p = Math.round((ev.mods[k] - 1) * 100);
+    return `${r.icon || ''} ${r.name || k} ${up ? '+' + p : p}%`; }).join(' · ');
+}
+// Begin/End announcement (toast). Deterministic schedule means every client
+// fires this within the same window — effectively a global broadcast.
+function _worldEventAlert() {
+  try {
+    const w = currentWorldEvent();
+    const sig = w ? (w.ev.id + ':' + w.startMs) : 'none';
+    if (App._weSig === sig) return;
+    const prev = App._weSig;
+    App._weSig = sig;
+    if (prev === undefined) return;     // first paint of the session — no spam
+    if (w) {
+      const sevN = _WE_SEV_NAME[w.sev] || ('Lv' + w.sev);
+      try { if (typeof showToast === 'function') showToast(`🌐 WORLD EVENT — ${w.ev.name} (${sevN}): ${w.ev.begin}`, 7000); } catch (e) {}
+    } else if (prev && prev !== 'none') {
+      const pid = String(prev).split(':')[0];
+      const pe = WORLD_EVENTS.find(x => x.id === pid);
+      try { if (typeof showToast === 'function') showToast(`🌐 WORLD EVENT ENDED — ${pe ? pe.name : 'event'}. ${pe ? pe.end : 'Salvage rates normalize.'}`, 6000); } catch (e) {}
+    }
+  } catch (e) {}
+}
+// Body-anchored World Event panel (top-right; collapsible). Hidden in battle
+// to avoid clutter — the post-battle salvage screen notes it instead.
+function mountWorldEventBanner() {
+  try {
+    const ID = 'world-event-banner';
+    let el = document.getElementById(ID);
+    const w = currentWorldEvent();
+    if (!w || (typeof App !== 'undefined' && App.screen === 'battle')) { if (el) el.remove(); return; }
+    let collapsed = false;
+    try { collapsed = localStorage.getItem('mg_weHidden') === '1'; } catch (e) {}
+    const ev = w.ev, sevN = _WE_SEV_NAME[w.sev] || ('Lv' + w.sev);
+    const col = ev.positive ? '#7CFFB2' : (w.sev >= 4 ? '#ff6b6b' : w.sev >= 3 ? '#ffa05a' : '#ffd166');
+    const remMs = Math.max(0, w.endMs - Date.now());
+    const rh = Math.floor(remMs / 3600000), rm = Math.floor((remMs % 3600000) / 60000);
+    if (!el) { el = document.createElement('div'); el.id = ID; document.body.appendChild(el); }
+    const base = "position:fixed;right:12px;top:74px;z-index:2147483268;font-family:'Crimson Text',Georgia,serif;color:#e8ddff;";
+    if (collapsed) {
+      el.style.cssText = base + "background:linear-gradient(180deg,rgba(26,16,46,0.95),rgba(14,9,26,0.95));border:2px solid " + col + "88;border-radius:10px;padding:6px 10px;cursor:pointer;box-shadow:0 8px 22px rgba(0,0,0,0.55)";
+      el.innerHTML = '<span id="we-toggle" style="font-family:\'Cinzel\',serif;font-weight:800;color:' + col + '">🌐 ' + escapeHtml(ev.name) + ' ◂ <span class="small-text" style="color:#cdb6ff">' + rh + 'h ' + rm + 'm</span></span>';
+      const tg = document.getElementById('we-toggle'); if (tg) tg.onclick = () => { try { localStorage.setItem('mg_weHidden','0'); } catch (e) {} mountWorldEventBanner(); };
+      return;
+    }
+    const sc = _weScarce(ev), bo = _weBonus(ev);
+    el.style.cssText = base + "width:min(320px,42vw);max-height:70vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.97),rgba(14,9,26,0.97));border:2px solid " + col + "88;border-radius:12px;padding:9px 13px;box-shadow:0 12px 36px rgba(0,0,0,0.6)";
+    el.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">' +
+        '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:' + col + '">🌐 ' + escapeHtml(ev.name) + '</div>' +
+        '<button id="we-toggle" title="Hide" style="flex:0 0 auto;cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:rgba(20,12,40,0.6);color:#cdb6ff;border-radius:8px;padding:1px 8px;font-weight:800">▸</button>' +
+      '</div>' +
+      '<div class="small-text" style="color:' + col + '">' + sevN + (ev.positive ? ' · OPPORTUNITY' : '') + ' · ⏳ ' + rh + 'h ' + rm + 'm left</div>' +
+      '<div class="small-text ink-dim" style="margin:4px 0">' + escapeHtml(ev.begin) + '</div>' +
+      (sc.length ? '<div class="small-text" style="color:#ff9a88">▼ Scarce: ' + _weResLine(ev, sc, false) + '</div>' : '') +
+      (bo.length ? '<div class="small-text" style="color:#7CFFB2">▲ Bonus: ' + _weResLine(ev, bo, true) + '</div>' : '') +
+      '<div class="small-text ink-dim" style="margin-top:4px">📍 ' + (ev.zones || []).map(escapeHtml).join(', ') + '</div>';
+    const tg = document.getElementById('we-toggle'); if (tg) tg.onclick = () => { try { localStorage.setItem('mg_weHidden','1'); } catch (e) {} mountWorldEventBanner(); };
   } catch (e) {}
 }
 
@@ -35627,6 +35797,10 @@ function render() {
   try { if (typeof _campRaidAlert === 'function') _campRaidAlert(); } catch (e) {}
   try { if (typeof mountCampStatus === 'function') mountCampStatus(); } catch (e) {}
   try { if (typeof mountCampDecayFx === 'function') mountCampDecayFx(); } catch (e) {}
+  // 🌐 Dynamic world events — global (clock-deterministic): announce begin/
+  // end + show the live event panel.
+  try { if (typeof _worldEventAlert === 'function') _worldEventAlert(); } catch (e) {}
+  try { if (typeof mountWorldEventBanner === 'function') mountWorldEventBanner(); } catch (e) {}
 
   // ===== Audio routing FIRST =====
   // Must run BEFORE the screen-specific early-returns below — otherwise screens
@@ -49321,12 +49495,22 @@ function renderGameOverOverlay() {
           const carryNote = won
             ? '🎒 Carried out — <strong>deposit at Camp</strong> to bank it for crafting/trade. Unbanked loot is lost if you fall.'
             : '☠ You fell — most of the bag was lost; a small secured pouch remains.';
+          let weNote = '';
+          try {
+            const w = (typeof currentWorldEvent === 'function') ? currentWorldEvent() : null;
+            if (w && w.ev) {
+              const sc = _weScarce(w.ev), bo = _weBonus(w.ev);
+              const c = w.ev.positive ? '#7CFFB2' : '#ff9a88';
+              weNote = `<div class="small-text" style="margin-top:4px;color:${c}">🌐 Event Modifier: <strong>${escapeHtml(w.ev.name)}</strong> — drops reshaped${sc.length ? ` · scarce ${_weResLine(w.ev, sc, false)}` : ''}${bo.length ? ` · bonus ${_weResLine(w.ev, bo, true)}` : ''}</div>`;
+            }
+          } catch (e) {}
           return `
             <div class="game-over-essence-row">
               <div class="ge-label">🎒 Field Bag <span class="small-text ink-dim">${usedSlots}/${cap} slots</span></div>
               <div class="ge-pills">${pills || '<span class="small-text ink-dim">Bag empty</span>'}</div>
               ${lostLine}
               <div class="small-text ink-dim" style="margin-top:3px">Looted this run: <strong>${run.looted}</strong>${missed ? ` &middot; <span style="color:#ff9a88">missed: ${missed}</span>` : ''} &middot; ${carryNote}</div>
+              ${weNote}
             </div>
           `;
         })()}

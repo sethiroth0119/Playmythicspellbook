@@ -58453,6 +58453,7 @@ const RLC_NODE_TYPES = {
   mystery:   { name: 'Mystery',     icon: '❓', color: '#b06bff', glow: 'rgba(176,107,255,0.6)' },
   rest:      { name: 'Rest Point',  icon: '🔥', color: '#c8923c', glow: 'rgba(220,150,70,0.5)'  },
   upgrade:   { name: 'Card Forge',  icon: '🔨', color: '#c89b3c', glow: 'rgba(220,170,80,0.55)' },
+  convoy:    { name: 'Convoy',      icon: '🚚', color: '#3c9bd4', glow: 'rgba(60,160,220,0.55)' },
 };
 // 🏺 RELICS — persistent run-wide passive items (Slay-the-Spire style).
 // Effects are read at RLC-owned hooks only (run start, after-battle, node
@@ -58642,6 +58643,7 @@ function rlcStartRun(campaignId) {
     relics: [],
     purchases: [],
     choices: {},
+    haul: {},
     isComplete: false, isFailed: false,
     startedAt: Date.now(),
   };
@@ -58743,6 +58745,49 @@ function _rlcGrantCard(key) {
   }
   return true;
 }
+// ════════════════════════════════════════════════════════════════════════
+// 🎒 RLC HAUL — camp salvage carried INSIDE a run, UNSECURED. Picked up on
+// battle wins / treasure; banked to secured camp storage (Profile.salvage)
+// ONLY at a 🚚 Convoy node or on final extraction (boss). Forfeited on death
+// (Phase 4). This is the bridge between the roguelite and the camp economy.
+// ════════════════════════════════════════════════════════════════════════
+const RLC_HAUL_TIER = { battle: 1, elite: 2, boss: 3, finalBoss: 4, treasure: 2 };
+function _rlcAwardHaul(run, map) {
+  if (!run || !map) return null;
+  if (!run.haul || typeof run.haul !== 'object') run.haul = {};
+  const got = {};
+  for (const k in map) { const n = map[k] | 0; if (n > 0) { run.haul[k] = (run.haul[k] || 0) + n; got[k] = n; } }
+  return got;
+}
+// Small weighted roll: 2–3 resource kinds, amount scaled by node tier.
+function _rlcHaulRoll(tier) {
+  const t = Math.max(1, tier | 0);
+  const pool = (typeof SALVAGE_RES !== 'undefined' ? SALVAGE_RES : []).map(r => r.id);
+  if (!pool.length) return {};
+  const out = {};
+  const picks = 2 + Math.floor(Math.random() * 2);
+  for (let i = 0; i < picks; i++) {
+    const id = pool[Math.floor(Math.random() * pool.length)];
+    out[id] = (out[id] || 0) + (1 + Math.floor(Math.random() * 3)) * t;
+  }
+  return out;
+}
+function _rlcHaulLine(map) {
+  return Object.keys(map || {}).filter(k => (map[k] | 0) > 0)
+    .map(k => `${(_SALVAGE_BY_ID[k] || {}).icon || ''}${map[k]}`).join('  ');
+}
+// Move ALL carried haul → SECURED camp storage. Returns the moved map.
+function _rlcBankHaul(run) {
+  const h = (run && run.haul) || {};
+  const ks = Object.keys(h).filter(k => (h[k] | 0) > 0);
+  if (!ks.length) return {};
+  if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+  const moved = {};
+  ks.forEach(k => { Profile.salvage[k] = (Profile.salvage[k] || 0) + (h[k] | 0); moved[k] = h[k] | 0; });
+  run.haul = {};
+  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  return moved;
+}
 function _rlcCompleteNode(nodeId) {
   const run = Profile.rlcRun; if (!run) return;
   if (!Array.isArray(run.completed)) run.completed = [];
@@ -58766,6 +58811,11 @@ function _rlcCompleteNode(nodeId) {
   const _runAfter = () => { if (_afterDlg) { try { _rlcPlayDialogue(_afterDlg); } catch (e) {} } };
   if (node && (node.type === 'finalBoss')) {
     run.isComplete = true;
+    // 🎒 Final extraction — any haul still carried is secured to camp.
+    try {
+      const _bnk = _rlcBankHaul(run);
+      if (Object.keys(_bnk).length) { try { showToast('🎒 Extraction — haul secured to camp: ' + _rlcHaulLine(_bnk), 3200); } catch (e) {} }
+    } catch (e) {}
     // 🗺️ Record the clear so any campaign chained off this one unlocks.
     if (!Array.isArray(Profile.rlcCompleted)) Profile.rlcCompleted = [];
     if (run.campaignId && Profile.rlcCompleted.indexOf(run.campaignId) < 0) {
@@ -58805,12 +58855,31 @@ function rlcEnterNode(nodeId) {
       App.screen = 'rlcMystery'; return render();
     }
     if (node.type === 'upgrade') { App._rlcNodeId = nodeId; App.screen = 'rlcForge';   return render(); }
+    if (node.type === 'convoy') {
+      // 🚚 Extraction point — the ONLY safe way to bank carried haul into
+      // SECURED camp storage before the boss. Reach it or risk losing it.
+      const moved = _rlcBankHaul(run);
+      if (Object.keys(moved).length) {
+        try { if (typeof playSfx === 'function') playSfx('uiConfirm'); } catch (e) {}
+        showToast('🚚 Convoy — haul extracted to camp: ' + _rlcHaulLine(moved) + ' (secured).', 3600);
+      } else {
+        showToast('🚚 Convoy reached — no haul to bank yet.', 2200);
+      }
+      _rlcCompleteNode(nodeId); return;
+    }
     if (node.type === 'treasure' || node.type === 'rest') {
       // Instant nodes — apply reward / small heal, then back to map.
       const r = node.reward || {};
       if (r.currency) run.currency += parseInt(r.currency, 10) || 0;
       if (r.medPoints) run.medPoints += parseInt(r.medPoints, 10) || 0;
       if (node.type === 'rest') run.heroHP = Math.min(run.maxHP, run.heroHP + _rlcHealPct(run, 30));
+      // 💰 Treasure also yields carried camp salvage (unsecured haul).
+      if (node.type === 'treasure') {
+        try {
+          const _tg = _rlcAwardHaul(run, _rlcHaulRoll(RLC_HAUL_TIER.treasure || 2));
+          if (_tg && Object.keys(_tg).length) { try { showToast('🎒 Haul +' + _rlcHaulLine(_tg) + ' — bank at a 🚚 Convoy', 2800); } catch (e) {} }
+        } catch (e) {}
+      }
       if (Array.isArray(r.cardKeys) && r.cardKeys.length && (r.choiceCount || 0) > 0) {
         App._rlcNodeId = nodeId; App.screen = 'rlcReward'; return render();
       }
@@ -58908,6 +58977,13 @@ function rlcAfterBattle() {
   if (_wc) run.currency = (run.currency || 0) + _wc;
   const _whp = _rlcRelicSum(run, 'winHealPct');
   if (_whp) run.heroHP = Math.min(run.maxHP, run.heroHP + _rlcHealPct(run, _whp));
+  // 🎒 Battle haul — camp salvage carried in the run (bank at a 🚚 Convoy).
+  try {
+    const _hbn = _rlcNode(_rlcCampaign(run.campaignId), res.nodeId);
+    const _ht = (_hbn && RLC_HAUL_TIER[_hbn.type]) || 1;
+    const _hg = _rlcAwardHaul(run, _rlcHaulRoll(_ht));
+    if (_hg && Object.keys(_hg).length) { try { showToast('🎒 Haul +' + _rlcHaulLine(_hg) + ' — unsecured, bank at a 🚚 Convoy', 2800); } catch (e) {} }
+  } catch (e) {}
   _persistProgressNow();
   const camp = _rlcCampaign(run.campaignId);
   const node = _rlcNode(camp, res.nodeId);
@@ -58937,6 +59013,13 @@ function _rlcHUD(run, camp) {
       <div style="color:#7fdca0;font-weight:700">⛑️ ${run.medPoints} <span class="small-text ink-dim">Med Pts</span></div>
       <div style="color:#b8a0ff;font-weight:700">🃏 ${(run.deck || []).length} <span class="small-text ink-dim">cards</span></div>
       <div style="color:#cdb6ff;font-weight:700">📍 ${done}/${total} <span class="small-text ink-dim">nodes</span></div>
+      ${(() => {
+        const h = (run && run.haul) || {};
+        const ks = Object.keys(h).filter(k => (h[k] | 0) > 0);
+        return ks.length
+          ? `<div title="Unsecured run haul — reach a 🚚 Convoy (or the boss) to bank it to camp. Lost if you fall." style="color:#ffd166;font-weight:700">🎒 ${ks.map(k => `${(_SALVAGE_BY_ID[k] || {}).icon || ''}${h[k]}`).join(' ')} <span class="small-text ink-dim">haul · unsecured</span></div>`
+          : '';
+      })()}
       <button class="btn-mini" id="rlc-abandon" style="color:#ff8080">✖ Abandon Run</button>
       ${(Array.isArray(run.relics) && run.relics.length) ? `
         <div style="flex-basis:100%;height:0"></div>

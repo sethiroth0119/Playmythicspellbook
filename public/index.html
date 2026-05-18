@@ -26657,8 +26657,17 @@ function _campForgeArtificer() {
     return !!(c && typeof getFactionsOf === 'function' && getFactionsOf(c).indexOf('artificer') >= 0);
   } catch (e) { return false; }
 }
-// Owned Artificer-faction units the player could station (id, name, have).
-function _campArtificerUnits() {
+// Staffable bunker rooms. rule 'artificer' = only Artificer-faction units
+// (Card Forge); 'any' = any owned unit or a hired NPC.
+const CAMP_STAFF_ROOMS = [
+  { id: 'FRG-01', name: 'Card Forge',    rule: 'artificer', npcRole: 'Blacksmith',  fx: '−20% craft cost (Artificer unit only)' },
+  { id: 'AIL-01', name: 'AI Lab',        rule: 'any',       npcRole: 'Technician',  fx: '+' + Math.round(CAMP_AILAB_STUDY_BONUS * 100) + '% Study success' },
+  { id: 'RCT-01', name: 'Power Reactor', rule: 'any',       npcRole: 'Engineer',    fx: '+' + Math.round(CAMP_REACTOR_BUILD_BONUS * 100) + '% build speed · halves fuel drain' },
+  { id: 'CNT-01', name: 'Containment',   rule: 'any',       npcRole: 'Warden',      fx: 'Generates Corrupted Essence + DNA over time' },
+];
+function _campStaffRoom(id) { return CAMP_STAFF_ROOMS.find(r => r.id === id) || null; }
+// Owned units the player could station at a room (respecting its rule).
+function _campStationableUnits(rule) {
   const out = [];
   try {
     const coll = Profile.cardCollection || {};
@@ -26668,7 +26677,7 @@ function _campArtificerUnits() {
       try { c = (typeof lookupCustomCard === 'function') ? lookupCustomCard(id) : null; } catch (e) {}
       if (!c) { try { c = (typeof _resolveAnyCard === 'function') ? _resolveAnyCard(id) : null; } catch (e2) {} }
       if (!c || (c.type || 'unit') !== 'unit') return;
-      if (!(typeof getFactionsOf === 'function') || getFactionsOf(c).indexOf('artificer') < 0) return;
+      if (rule === 'artificer' && (!(typeof getFactionsOf === 'function') || getFactionsOf(c).indexOf('artificer') < 0)) return;
       out.push({ id: id, name: c.name || id, have: coll[id] | 0, reserved: _campStationReserved(id) });
     });
   } catch (e) {}
@@ -26693,36 +26702,41 @@ function _npcSpritePool() {
   } catch (e) {}
   return out;
 }
-function hireCampBlacksmith() {
+function hireCampWorker(roomId) {
+  const room = _campStaffRoom(roomId);
+  if (!room) { showToast('Unknown room.', 2200); return false; }
   const ws = _campWorkers();
   if (ws.length >= CAMP_MAX_WORKERS) { showToast(`Worker pool full (${CAMP_MAX_WORKERS}).`, 2600); return false; }
-  if (_campRoomStaffed('FRG-01')) { showToast('The Card Forge already has a worker.', 2400); return false; }
+  if (_campRoomStaffed(roomId)) { showToast(`The ${room.name} already has a worker.`, 2400); return false; }
   if ((Profile.gems || 0) < CAMP_NPC_HIRE_COST) { showToast(`Need ${CAMP_NPC_HIRE_COST} 🔥 to hire — you have ${Profile.gems || 0}`, 3000); return false; }
   Profile.gems = (Profile.gems || 0) - CAMP_NPC_HIRE_COST;
   const nm = _npcRandName();
   const pool = _npcSpritePool();
   const sid = pool.length ? pool[Math.floor(Math.random() * pool.length)] : '';
-  ws.push({ id: 'w_' + Date.now() + '_' + Math.floor(Math.random() * 1e4), kind: 'npc', role: 'Blacksmith', name: nm, spriteId: sid, station: 'FRG-01', at: Date.now() });
+  ws.push({ id: 'w_' + Date.now() + '_' + Math.floor(Math.random() * 1e4), kind: 'npc', role: room.npcRole, name: nm, spriteId: sid, station: roomId, at: Date.now() });
   try { saveProfile(); } catch (e) {} saveCamp();
-  showToast(`🔧 ${nm} hired as Blacksmith & stationed at the Card Forge (−${CAMP_NPC_HIRE_COST} 🔥).`, 3600);
+  showToast(`🔧 ${nm} hired as ${room.npcRole} & stationed at the ${room.name} (−${CAMP_NPC_HIRE_COST} 🔥).`, 3600);
   return true;
 }
-function stationUnitAtForge(refId) {
+function stationUnitAtRoom(roomId, refId) {
+  const room = _campStaffRoom(roomId);
+  if (!room) { showToast('Unknown room.', 2200); return false; }
   const ws = _campWorkers();
   if (ws.length >= CAMP_MAX_WORKERS) { showToast(`Worker pool full (${CAMP_MAX_WORKERS}).`, 2600); return false; }
-  if (_campRoomStaffed('FRG-01')) { showToast('The Card Forge already has a worker.', 2400); return false; }
+  if (_campRoomStaffed(roomId)) { showToast(`The ${room.name} already has a worker.`, 2400); return false; }
   const have = (Profile.cardCollection && (Profile.cardCollection[refId] | 0)) || 0;
   if (have <= _campStationReserved(refId)) { showToast('No free copy of that unit to station.', 2800); return false; }
   let c = null;
   try { c = (typeof _resolveAnyCard === 'function') ? _resolveAnyCard(refId) : null; } catch (e) {}
-  if (!c || !(typeof getFactionsOf === 'function') || getFactionsOf(c).indexOf('artificer') < 0) {
+  if (!c || (c.type || 'unit') !== 'unit') { showToast('That is not a unit.', 2600); return false; }
+  if (room.rule === 'artificer' && (!(typeof getFactionsOf === 'function') || getFactionsOf(c).indexOf('artificer') < 0)) {
     showToast('Only an Artificer-faction unit can run the Card Forge.', 3000); return false;
   }
   if ((Profile.gems || 0) < CAMP_PARK_COST) { showToast(`Need ${CAMP_PARK_COST} 🔥 to deploy — you have ${Profile.gems || 0}`, 3000); return false; }
   Profile.gems = (Profile.gems || 0) - CAMP_PARK_COST;
-  ws.push({ id: 'w_' + Date.now() + '_' + Math.floor(Math.random() * 1e4), kind: 'unit', role: 'artificer', name: c.name || refId, refId: refId, station: 'FRG-01', at: Date.now() });
+  ws.push({ id: 'w_' + Date.now() + '_' + Math.floor(Math.random() * 1e4), kind: 'unit', role: room.npcRole, name: c.name || refId, refId: refId, station: roomId, at: Date.now() });
   try { saveProfile(); } catch (e) {} saveCamp();
-  showToast(`🔧 ${c.name || 'Unit'} deployed to the Card Forge (−${CAMP_PARK_COST} 🔥). Its copy is reserved from decks.`, 3800);
+  showToast(`🔧 ${c.name || 'Unit'} deployed to the ${room.name} (−${CAMP_PARK_COST} 🔥). Its copy is reserved from decks.`, 3800);
   return true;
 }
 function unstationCampWorker(workerId) {
@@ -27067,7 +27081,8 @@ function _resolveCampSlot(slot) {
 
   if (slot.activity === 'study') {
     // Learning chance: intelligence proxy = level + bond + morale.
-    const chance = Math.min(0.95, 0.18 + lvl * 0.012 + bond * 0.004 + (morale - 50) * 0.002 + campBonus('studyBonus'));
+    const _aiLab = (typeof _campRoomStaffed === 'function' && _campRoomStaffed('AIL-01')) ? CAMP_AILAB_STUDY_BONUS : 0;
+    const chance = Math.min(0.95, 0.18 + lvl * 0.012 + bond * 0.004 + (morale - 50) * 0.002 + campBonus('studyBonus') + _aiLab);
     const r = Math.random();
     if (r < 0.015) { // rare mutation
       prof.xp = (prof.xp || 0) + 60;
@@ -27438,7 +27453,8 @@ function _campResCost(f, targetLevel) {
 }
 function _campBuildMs(f, targetLevel) {
   const baseH = (f.buildH && f.buildH[targetLevel - 1]) || 1;
-  const speed = Math.min(0.48, campBonus('buildSpeed')); // workshop, capped
+  const _reactor = (typeof _campRoomStaffed === 'function' && _campRoomStaffed('RCT-01')) ? CAMP_REACTOR_BUILD_BONUS : 0;
+  const speed = Math.min(0.6, campBonus('buildSpeed') + _reactor); // workshop + staffed reactor, capped
   return Math.max(60000, Math.round(baseH * 3600000 * (1 - speed)));
 }
 function campStartBuild(facId) {
@@ -31283,6 +31299,11 @@ function mountFieldBagDeposit() {
 // ════════════════════════════════════════════════════════════════════════
 const CAMP_CONSUME_PER_DAY = { food: 6, water: 6, fuel: 3, medicine: 2, ammo: 4 };
 const CAMP_CATCHUP_MAX_DAYS = 3;   // offline catch-up cap so returns aren't nuked
+// 🏭 Room-effect tuning (only apply while the room is STAFFED):
+const CAMP_REACTOR_FUEL_MUL    = 0.5;                          // Reactor → fuel drain ×0.5
+const CAMP_REACTOR_BUILD_BONUS = 0.15;                         // Reactor → +15% build speed
+const CAMP_AILAB_STUDY_BONUS   = 0.12;                         // AI Lab  → +12% study success
+const CAMP_CONTAINMENT_TRICKLE = { corruptedEssence: 4, dna: 3 }; // Containment → /day faucet
 const CAMP_LOW_DAYS = 1;           // < this many days of stock = "LOW"
 const _CAMP_SHORTAGE_FX = {
   food:     'Survivors starving — weak & low morale',
@@ -31309,11 +31330,14 @@ function runCampConsumptionTick() {
     hrs = Math.min(hrs, CAMP_CATCHUP_MAX_DAYS * 24);
     // 🏚 Workshop "Repair & Triage" cuts consumption in half while active.
     const repairMul = (Profile.campRepairUntil && Profile.campRepairUntil > now) ? 0.5 : 1;
+    // 🏭 Staffed Power Reactor halves fuel drain.
+    const _reactorStaffed = (typeof _campRoomStaffed === 'function') && !!_campRoomStaffed('RCT-01');
     const frac = (Profile.campConsumeFrac && typeof Profile.campConsumeFrac === 'object') ? Profile.campConsumeFrac : {};
     const consumed = {};
     let changed = false;
     for (const k in CAMP_CONSUME_PER_DAY) {
-      const debt = (frac[k] || 0) + (CAMP_CONSUME_PER_DAY[k] / 24) * hrs * repairMul;
+      const km = (k === 'fuel' && _reactorStaffed) ? CAMP_REACTOR_FUEL_MUL : 1;
+      const debt = (frac[k] || 0) + (CAMP_CONSUME_PER_DAY[k] / 24) * hrs * repairMul * km;
       const whole = Math.floor(debt);
       frac[k] = debt - whole;
       if (whole > 0) {
@@ -31326,6 +31350,17 @@ function runCampConsumptionTick() {
       }
     }
     Profile.campConsumeFrac = frac;
+    // 🧪 Staffed Containment slowly produces deep-tier salvage (faucet).
+    if ((typeof _campRoomStaffed === 'function') && _campRoomStaffed('CNT-01')) {
+      const tf = (Profile.campTrickleFrac && typeof Profile.campTrickleFrac === 'object') ? Profile.campTrickleFrac : {};
+      for (const k in CAMP_CONTAINMENT_TRICKLE) {
+        const gain = (tf[k] || 0) + (CAMP_CONTAINMENT_TRICKLE[k] / 24) * hrs;
+        const whole = Math.floor(gain);
+        tf[k] = gain - whole;
+        if (whole > 0) { Profile.salvage[k] = (Profile.salvage[k] | 0) + whole; changed = true; }
+      }
+      Profile.campTrickleFrac = tf;
+    }
     Profile.campLastTick = now;
     if (changed) { try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {} }
     return consumed;
@@ -31553,67 +31588,74 @@ function openCampWorkersModal() {
     const close = () => { const h = document.getElementById(ID); if (h) h.remove(); };
     const build = () => {
       const old = document.getElementById(ID); if (old) old.remove();
-      const staff = (typeof _campRoomStaffed === 'function') ? _campRoomStaffed('FRG-01') : null;
       const gems = Profile.gems | 0;
-      const units = (typeof _campArtificerUnits === 'function') ? _campArtificerUnits() : [];
-      let body;
-      if (staff) {
-        const isArt = staff.kind === 'unit';
-        body =
-          '<div style="padding:10px 12px;border:1px solid rgba(127,220,160,0.5);border-radius:10px;background:rgba(40,70,45,0.4)">' +
-            '<div style="color:#9be8b8;font-weight:800;font-family:\'Cinzel\',serif">⚒ Card Forge — STAFFED</div>' +
-            '<div class="small-text" style="color:#cfe9d6;margin-top:4px">' + escapeHtml(staff.name || 'Worker') +
-              (isArt ? ' <span style="color:#ffd166">· Artificer (−20% craft cost)</span>' : ' <span class="ink-dim">· hired NPC</span>') + '</div>' +
-            '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
-              '<button id="cwm-craft" style="cursor:pointer;border-radius:8px;padding:0.5rem 0.9rem;border:1px solid #caa23e;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;font-weight:800">⚒ Open Card Forge</button>' +
-              '<button id="cwm-recall" data-id="' + escapeHtml(String(staff.id)) + '" style="cursor:pointer;border-radius:8px;padding:0.5rem 0.9rem;border:1px solid rgba(224,85,106,0.6);background:transparent;color:#e0879a;font-weight:700">✖ ' + (isArt ? 'Recall Unit' : 'Dismiss') + '</button>' +
-            '</div>' +
-          '</div>';
-      } else {
+      const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
+      const sections = (typeof CAMP_STAFF_ROOMS !== 'undefined' ? CAMP_STAFF_ROOMS : []).map(room => {
+        const staff = (typeof _campRoomStaffed === 'function') ? _campRoomStaffed(room.id) : null;
+        if (staff) {
+          const isUnit = staff.kind === 'unit';
+          return '<div style="padding:10px 12px;border:1px solid rgba(127,220,160,0.5);border-radius:10px;background:rgba(40,70,45,0.35);margin-bottom:10px">' +
+              '<div style="color:#9be8b8;font-weight:800;font-family:\'Cinzel\',serif">' + esc(room.name) + ' — STAFFED</div>' +
+              '<div class="small-text" style="color:#cfe9d6;margin-top:3px">' + esc(staff.name || 'Worker') + ' · ' + esc(staff.role || (isUnit ? 'Unit' : 'NPC')) + (isUnit ? ' <span style="color:#ffd166">(copy reserved)</span>' : ' <span class="ink-dim">(hired)</span>') + '</div>' +
+              '<div class="small-text ink-dim" style="margin-top:2px">' + esc(room.fx) + '</div>' +
+              '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
+                (room.id === 'FRG-01' ? '<button data-craft="1" style="cursor:pointer;border-radius:8px;padding:0.45rem 0.85rem;border:1px solid #caa23e;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;font-weight:800">⚒ Open Card Forge</button>' : '') +
+                '<button data-recall="' + esc(staff.id) + '" style="cursor:pointer;border-radius:8px;padding:0.45rem 0.85rem;border:1px solid rgba(224,85,106,0.6);background:transparent;color:#e0879a;font-weight:700">✖ ' + (isUnit ? 'Recall Unit' : 'Dismiss') + '</button>' +
+              '</div>' +
+            '</div>';
+        }
+        const units = (typeof _campStationableUnits === 'function') ? _campStationableUnits(room.rule) : [];
         const unitRows = units.length
           ? units.map(u => {
               const free = (u.have - u.reserved) > 0;
-              return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 7px;border-bottom:1px solid rgba(184,136,255,0.12)">' +
-                '<span style="color:#e8ddff;font-size:0.86rem">🔧 ' + escapeHtml(u.name) + ' <span class="small-text ink-dim">×' + u.have + (u.reserved ? ' · ' + u.reserved + ' on duty' : '') + '</span></span>' +
-                '<button data-deploy="' + escapeHtml(String(u.id)) + '" ' + (free ? '' : 'disabled') + ' style="cursor:' + (free ? 'pointer' : 'not-allowed') + ';border-radius:7px;padding:0.3rem 0.7rem;border:1px solid #8be0c4;background:' + (free ? 'rgba(139,224,196,0.18)' : 'rgba(80,110,100,0.3)') + ';color:#dfffe9;font-weight:800;font-size:0.8rem">Deploy −' + CAMP_PARK_COST + ' 🔥</button>' +
+              return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px;border-bottom:1px solid rgba(184,136,255,0.12)">' +
+                '<span style="color:#e8ddff;font-size:0.84rem">🔧 ' + esc(u.name) + ' <span class="small-text ink-dim">×' + u.have + (u.reserved ? ' · ' + u.reserved + ' on duty' : '') + '</span></span>' +
+                '<button data-deploy="' + esc(room.id + ':' + u.id) + '" ' + (free ? '' : 'disabled') + ' style="cursor:' + (free ? 'pointer' : 'not-allowed') + ';border-radius:7px;padding:0.28rem 0.6rem;border:1px solid #8be0c4;background:' + (free ? 'rgba(139,224,196,0.18)' : 'rgba(80,110,100,0.3)') + ';color:#dfffe9;font-weight:800;font-size:0.78rem">Deploy −' + CAMP_PARK_COST + ' 🔥</button>' +
               '</div>';
             }).join('')
-          : '<div class="small-text ink-dim" style="padding:6px 2px">You own no Artificer-faction units. Hire a Blacksmith instead, or get an Artificer unit.</div>';
-        body =
-          '<div style="padding:10px 12px;border:1px solid rgba(224,150,80,0.5);border-radius:10px;background:rgba(70,45,25,0.4)">' +
-            '<div style="color:#ffc24a;font-weight:800;font-family:\'Cinzel\',serif">⚒ Card Forge — UNSTAFFED</div>' +
-            '<div class="small-text ink-dim" style="margin-top:4px">Crafting is locked until someone runs the Forge. Hire a Blacksmith, or deploy one of your Artificer units (its copy is reserved from decks while on duty).</div>' +
-            '<button id="cwm-hire" style="margin-top:10px;cursor:pointer;border-radius:8px;padding:0.5rem 0.9rem;border:1px solid #caa23e;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;font-weight:800">🔧 Hire Blacksmith — ' + CAMP_NPC_HIRE_COST + ' 🔥</button>' +
-            '<div style="margin-top:12px;color:#cdb6ff;font-weight:700;font-size:0.85rem;font-family:\'Cinzel\',serif">Or deploy an Artificer unit</div>' +
-            '<div style="margin-top:4px;max-height:200px;overflow:auto">' + unitRows + '</div>' +
+          : '<div class="small-text ink-dim" style="padding:5px 2px">' + (room.rule === 'artificer' ? 'No Artificer-faction units owned.' : 'No spare units owned.') + ' Hire an NPC instead.</div>';
+        return '<div style="padding:10px 12px;border:1px solid rgba(224,150,80,0.45);border-radius:10px;background:rgba(70,45,25,0.32);margin-bottom:10px">' +
+            '<div style="color:#ffc24a;font-weight:800;font-family:\'Cinzel\',serif">' + esc(room.name) + ' — UNSTAFFED</div>' +
+            '<div class="small-text ink-dim" style="margin-top:3px">' + esc(room.fx) + '</div>' +
+            '<button data-hire="' + esc(room.id) + '" style="margin-top:9px;cursor:pointer;border-radius:8px;padding:0.45rem 0.85rem;border:1px solid #caa23e;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;font-weight:800">🔧 Hire ' + esc(room.npcRole) + ' — ' + CAMP_NPC_HIRE_COST + ' 🔥</button>' +
+            '<div style="margin-top:10px;color:#cdb6ff;font-weight:700;font-size:0.82rem;font-family:\'Cinzel\',serif">Or deploy a unit' + (room.rule === 'artificer' ? ' (Artificer only)' : '') + '</div>' +
+            '<div style="margin-top:3px;max-height:160px;overflow:auto">' + unitRows + '</div>' +
           '</div>';
-      }
+      }).join('');
       const ov = document.createElement('div');
       ov.id = ID;
       ov.style.cssText = 'position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:rgba(4,2,10,0.74);backdrop-filter:blur(2px)';
       ov.innerHTML =
-        '<div style="max-width:min(460px,94vw);max-height:86vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.99),rgba(12,7,22,0.99));border:2px solid rgba(212,175,55,0.55);border-radius:16px;padding:16px 18px;box-shadow:0 24px 70px rgba(0,0,0,0.85)">' +
+        '<div style="max-width:min(480px,94vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg,rgba(26,16,46,0.99),rgba(12,7,22,0.99));border:2px solid rgba(212,175,55,0.55);border-radius:16px;padding:16px 18px;box-shadow:0 24px 70px rgba(0,0,0,0.85)">' +
           '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">' +
             '<div style="font-family:\'Cinzel\',serif;font-size:1.15rem;font-weight:800;color:#ffd166">👷 Camp Workers</div>' +
             '<div style="display:flex;align-items:center;gap:10px">' +
               '<span class="small-text" style="color:#ffd166"><span class="cinder-icon"></span> ' + gems + '</span>' +
               '<button id="cwm-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✖</button>' +
             '</div>' +
-          '</div>' + body +
+          '</div>' +
+          '<div class="small-text ink-dim" style="margin-bottom:10px">Station a hired NPC or one of your units to run each room. A stationed unit\'s copy is reserved from decks while on duty.</div>' +
+          sections +
         '</div>';
       document.body.appendChild(ov);
       ov.onclick = (e) => { if (e.target === ov) close(); };
       const x = document.getElementById('cwm-x'); if (x) x.onclick = close;
       const refresh = () => { try { if (typeof _baseSendData === 'function') _baseSendData(); } catch (e) {} build(); };
-      const hire = document.getElementById('cwm-hire');
-      if (hire) hire.onclick = () => { if (typeof hireCampBlacksmith === 'function' && hireCampBlacksmith()) refresh(); };
-      const recall = document.getElementById('cwm-recall');
-      if (recall) recall.onclick = () => { if (typeof unstationCampWorker === 'function' && unstationCampWorker(recall.dataset.id)) refresh(); };
-      document.querySelectorAll('#' + ID + ' [data-deploy]').forEach(b => {
-        b.onclick = () => { if (typeof stationUnitAtForge === 'function' && stationUnitAtForge(b.dataset.deploy)) refresh(); };
+      document.querySelectorAll('#' + ID + ' [data-hire]').forEach(b => {
+        b.onclick = () => { if (typeof hireCampWorker === 'function' && hireCampWorker(b.dataset.hire)) refresh(); };
       });
-      const craft = document.getElementById('cwm-craft');
-      if (craft) craft.onclick = () => { close(); if (typeof openForgeCraftModal === 'function') openForgeCraftModal(); };
+      document.querySelectorAll('#' + ID + ' [data-recall]').forEach(b => {
+        b.onclick = () => { if (typeof unstationCampWorker === 'function' && unstationCampWorker(b.dataset.recall)) refresh(); };
+      });
+      document.querySelectorAll('#' + ID + ' [data-deploy]').forEach(b => {
+        b.onclick = () => {
+          const parts = String(b.dataset.deploy || '').split(':');
+          if (parts.length === 2 && typeof stationUnitAtRoom === 'function' && stationUnitAtRoom(parts[0], parts[1])) refresh();
+        };
+      });
+      document.querySelectorAll('#' + ID + ' [data-craft]').forEach(b => {
+        b.onclick = () => { close(); if (typeof openForgeCraftModal === 'function') openForgeCraftModal(); };
+      });
     };
     build();
   } catch (e) {}

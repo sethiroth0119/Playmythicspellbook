@@ -24218,6 +24218,41 @@ function _frEventHitsProduct(ev, p) {
   if (ev.relief) return true;
   return Object.keys(p.recipe).some(r => ev.res.indexOf(r) >= 0);
 }
+// Salvage id → world-data yield id (reverse of _WB_RES_MAP) for convoys.
+const _FR_RES_TO_WB = {
+  fuel: 'fuel', corruptedEssence: 'corrupted', dna: 'dna', memoryShards: 'memshard',
+  medicine: 'medicine', water: 'water', ammo: 'ammo', metal: 'metal', supplies: 'supplies', food: 'food',
+};
+// 🚚 The Director spawns a Convoy Mission to recover the starved resource
+// while a (non-relief) crisis is active — derived, global, deterministic.
+function frActiveConvoy() {
+  const ev = (typeof frActiveEvent === 'function') ? frActiveEvent() : null;
+  if (!ev || ev.relief || !(ev.res && ev.res.length)) return null;
+  const res = ev.res[0];
+  return {
+    res: res,
+    wb: _FR_RES_TO_WB[res] || 'supplies',
+    name: '🚚 Foundation Convoy — ' + ((_meta(res).name) || res) + ' Run',
+    evName: ev.name, evIcon: ev.icon,
+  };
+}
+// Launches the convoy as a real World-Map battle (reuses the proven
+// worldBattleStart → deck select → battle → worldBattleAfter pipeline; costs
+// the standard fuel). On win, worldBattleAfter pays the convoy cache.
+function frRunConvoy() {
+  try {
+    const cv = frActiveConvoy();
+    if (!cv) { showToast('No active convoy mission right now.'); return; }
+    if (typeof worldBattleStart !== 'function') { showToast('World map unavailable.'); return; }
+    worldBattleStart({
+      zoneId: 'fr_convoy_' + frEconomyWindow(),
+      name: cv.name,
+      threat: 3,
+      yields: [{ r: cv.wb, p: 95 }, { r: cv.wb, p: 70 }],
+      convoy: { res: cv.res, name: cv.name },
+    });
+  } catch (e) {}
+}
 // Returns { can, max, pct, bottleneck, out, event } vs current totals AND the
 // active world event (a crisis throttles, a relief surge boosts).
 function frManufacture(p) {
@@ -24533,7 +24568,11 @@ function openFoundationReserve() {
           '<div class="small-text" style="color:#cfe0f4;margin-top:2px">' + esc(ev.line) +
             (ev.relief ? '' : ' <span style="color:#ffd166">Contributing ' + (ev.res || []).map(r => esc(_meta(r).name || r)).join(' / ') + ' pays +60% rep & Cinders.</span>') + '</div>'
         : '<div class="small-text" style="color:#9fb6d6;margin-top:3px">Markets are calm — no active world crisis. Stock & prices sit at baseline.</div>';
-      return '<div style="margin:8px 0 0;padding:9px 11px;border:1px solid ' + stCol + '55;border-radius:8px;background:' + stCol + '12">' + head + bodyL + '</div>';
+      const cv = (typeof frActiveConvoy === 'function') ? frActiveConvoy() : null;
+      const cvBtn = cv
+        ? '<button id="fr-convoy" style="margin-top:8px;width:100%;cursor:pointer;border-radius:8px;padding:0.55rem 0.8rem;border:1px solid #e0a060;background:linear-gradient(180deg,#7a4a1c,#3a2410);color:#ffe8c8;font-weight:800">🚚 Run Convoy Mission — recover ' + esc(_meta(cv.res).name || cv.res) + ' (−4 ⛽, World battle)</button>'
+        : '';
+      return '<div style="margin:8px 0 0;padding:9px 11px;border:1px solid ' + stCol + '55;border-radius:8px;background:' + stCol + '12">' + head + bodyL + cvBtn + '</div>';
     };
 
     const productionTab = () => {
@@ -24606,6 +24645,8 @@ function openFoundationReserve() {
       const sc = document.getElementById('fr-sql-copy'); if (sc) sc.onclick = () => { try { navigator.clipboard.writeText(FOUNDATION_RESERVE_SQL); showToast('📋 SQL copied.'); } catch (e) { const t = document.getElementById('fr-sql'); if (t) t.select(); } };
       const sr = document.getElementById('fr-sql-retry'); if (sr) sr.onclick = () => { FoundationReserve.tableMissing = false; FoundationReserve.lastFetch = 0; frFetch().then(render); };
       const rsel = document.getElementById('fr-res'); if (rsel) rsel.onchange = () => { pickRes = rsel.value; };
+      const cvB = document.getElementById('fr-convoy');
+      if (cvB) cvB.onclick = () => { close(); try { if (typeof frRunConvoy === 'function') frRunConvoy(); } catch (e) {} };
       const spSet = document.getElementById('fr-spec-set');
       if (spSet) spSet.onclick = () => {
         const v = (document.getElementById('fr-spec') || {}).value || '';
@@ -33129,6 +33170,23 @@ function _rollSalvageLoot(n, qtyMax) {
       Profile.salvage[r.id] = (Profile.salvage[r.id] | 0) + amt;
       got[r.id] = (got[r.id] || 0) + amt;
     }
+    // 📈 AI ECONOMY DIRECTOR relief — during a world crisis the Director
+    // floods drop-rates of the STARVED resource so scarcity self-corrects
+    // (controlled scarcity, never a total collapse). Deterministic from the
+    // crisis window, so it needs no fetched Reserve data and is global.
+    try {
+      const _ev = (typeof frActiveEvent === 'function') ? frActiveEvent() : null;
+      if (_ev) {
+        const _bump = (sid, a) => { if (a > 0 && _SALVAGE_BY_ID[sid]) { Profile.salvage[sid] = (Profile.salvage[sid] | 0) + a; got[sid] = (got[sid] || 0) + a; } };
+        if (_ev.relief) {
+          const b = Math.max(1, Math.round(picks * 0.4));
+          ['supplies', 'ammo', 'food', 'water'].forEach(s => _bump(s, 1 + Math.floor(Math.random() * b)));
+        } else {
+          const b = Math.max(1, Math.round(picks * 0.6));
+          (_ev.res || []).forEach(s => _bump(s, b + Math.floor(Math.random() * (b + 1))));
+        }
+      }
+    } catch (e) {}
     try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
   } catch (e) {}
   return got;
@@ -33152,6 +33210,7 @@ function worldBattleStart(z) {
       zoneId: z.zoneId, name: z.name || 'Encounter',
       threat: z.threat || 2,
       yields: Array.isArray(z.yields) ? z.yields.slice(0, 12) : [],
+      convoy: z.convoy || null,   // 🚚 Director convoy mission context (or null)
     };
     if (!App.selectedHero) {
       App.selectedHero =
@@ -33195,6 +33254,17 @@ function worldBattleAfter() {
     // roll more random resources from the full set.
     const _rng = _rollSalvageLoot(3 + Math.floor((p.threat || 2) * 1.5), Math.round(3 * tMul) + 2);
     Object.keys(_rng).forEach(function (k) { got[k] = (got[k] || 0) + _rng[k]; });
+    // 🚚 Director Convoy Mission — recovering the convoy hands you a big
+    // guaranteed cache of the STARVED resource (the AI's stabilization
+    // payload). You now hold the scarce good — deposit it to break the
+    // shortage, or sell into the spiked market.
+    let _convoyLine = '';
+    if (p.convoy && p.convoy.res && (typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[p.convoy.res])) {
+      const cb = 6 + Math.floor(Math.random() * 8) + Math.round((p.threat || 3) * 2);
+      Profile.salvage[p.convoy.res] = (Profile.salvage[p.convoy.res] | 0) + cb;
+      got[p.convoy.res] = (got[p.convoy.res] || 0) + cb;
+      _convoyLine = ' · 🚚 convoy cache: ' + ((_SALVAGE_BY_ID[p.convoy.res] || {}).icon || '') + cb;
+    }
     if (!Object.keys(got).length) { Profile.salvage.supplies = (Profile.salvage.supplies | 0) + 2; got.supplies = 2; }
     // 🃏 ~30% — a card to the collection.
     let cardName = '';
@@ -33214,7 +33284,7 @@ function worldBattleAfter() {
     }
     try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
     const line = Object.keys(got).map(function (k) { return ((_SALVAGE_BY_ID[k] || {}).icon || '') + got[k]; }).join('  ');
-    try { showToast('🏆 ' + (p.name || 'Encounter') + ' cleared! Camp gained: ' + line + (cardName ? '  ·  🃏 ' + cardName : ''), 5200); } catch (e) {}
+    try { showToast('🏆 ' + (p.name || 'Encounter') + ' cleared! Camp gained: ' + line + _convoyLine + (cardName ? '  ·  🃏 ' + cardName : ''), 5200); } catch (e) {}
     try { _baseSendData(); } catch (e) {}
   } catch (e) {}
   App.screen = 'camp'; render();
@@ -51698,6 +51768,7 @@ function recordBattleProgress() {
       name:   App.battlePrep.worldBattle.name,
       threat: App.battlePrep.worldBattle.threat,
       yields: App.battlePrep.worldBattle.yields,
+      convoy: App.battlePrep.worldBattle.convoy || null,
       won: !!won,
     };
   }

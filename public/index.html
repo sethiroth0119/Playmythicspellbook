@@ -18593,10 +18593,29 @@ function _ensureResources() {
   return S;
 }
 function getRes(id) { return _ensureResources()[id] || 0; }
+// Coalesced resource persistence. addRes() is hit in tight loot-roll loops,
+// so we don't stringify the whole Profile per call — but we DO mark the
+// profile dirty synchronously (so the tab-close / heartbeat flush in the
+// bulletproof save infra never loses a freshly collected resource even if
+// the debounce hasn't fired), then write localStorage + schedule the cloud
+// upload shortly after the burst. Net effect: collected resources ALWAYS
+// save; the only ways a count goes down remain raid / drain / spend.
+let _resSaveTimer = null;
+function _persistResourcesSoon() {
+  try {
+    if (Profile.cloud) { Profile.cloud.lastLocalEditAt = Date.now(); Profile.cloud.pendingChanges = true; }
+  } catch (e) {}
+  if (_resSaveTimer) return;
+  _resSaveTimer = setTimeout(() => {
+    _resSaveTimer = null;
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  }, 200);
+}
 function addRes(id, n) {
   if (!id || !n) return;
   const R = _ensureResources();
   R[id] = Math.max(0, (R[id] || 0) + Math.floor(n));
+  _persistResourcesSoon();
 }
 function canAffordResources(cost) {
   if (!cost || typeof cost !== 'object') return true;
@@ -21398,6 +21417,12 @@ async function cloudSyncProfile() {
       decks:         Profile.deckByHero || {},
       settings:      Profile.settings || {},
       forge:         forgeSmall,
+      // 🧰 Resource ledger (camp salvage / ~149 resources). Cloud-synced so
+      // collected resources survive cache clears, new devices and cloud
+      // restores — they must NEVER vanish on a refresh. Restored with a
+      // per-resource MAX merge on fetch so a stale snapshot can never reduce
+      // a count; the only things that lower it are raid / drain / spend.
+      salvage:       (Profile.salvage && typeof Profile.salvage === 'object') ? Profile.salvage : {},
       updated_at:    new Date().toISOString(),
     };
     let { error } = await Cloud.client.from('user_profiles').upsert(row, { onConflict: 'user_id' });
@@ -21611,9 +21636,20 @@ async function cloudFetchProfile() {
     if (data.units)        Profile.units        = { ...Profile.units, ...data.units };
     if (typeof data.gems       === 'number') Profile.gems       = data.gems;
     if (typeof data.sovereigns === 'number') Profile.sovereigns = data.sovereigns;
-    // 🧰 Resources are LOCAL-ONLY (persist via localStorage, like equipment) —
-    // intentionally not cloud-synced so no user_profiles schema change is
-    // needed. _ensureResources() keeps the wallet shape valid on load.
+    // 🧰 Resource ledger — restored from cloud so collected resources survive
+    // cache clears, new devices and cloud restores. Merged per-resource with
+    // MAX(local, cloud): a sync can NEVER drop a count. Legit reductions
+    // (raid / drain / spend) always write local first then upload, so by the
+    // time a fetch runs both sides already hold the lower value and MAX is a
+    // no-op — the only ways a resource goes down stay raid / drain / spend.
+    if (data.salvage && typeof data.salvage === 'object') {
+      if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+      const _loc = Profile.salvage, _cl = data.salvage;
+      for (const k in _cl) {
+        const cv = _cl[k] | 0, lv = _loc[k] | 0;
+        if (cv > lv) _loc[k] = cv;
+      }
+    }
     if (typeof _ensureResources === 'function') _ensureResources();
     if (data.deck_history) Profile.deckHistory  = { ...Profile.deckHistory, ...data.deck_history };
     // 🔧 `decks` column is the flat deckByHero map (legacy + current shape).
@@ -22871,11 +22907,13 @@ create table if not exists public.user_profiles (
   decks        jsonb default '{}'::jsonb,
   settings     jsonb default '{}'::jsonb,
   forge        jsonb default '{}'::jsonb,
+  salvage      jsonb default '{}'::jsonb,
   updated_at   timestamptz default now()
 );
 
--- If you ran the v1 schema before this column was added, run this once to upgrade:
+-- If you ran the v1 schema before these columns were added, run this once to upgrade:
 -- alter table public.user_profiles add column if not exists forge jsonb default '{}'::jsonb;
+-- alter table public.user_profiles add column if not exists salvage jsonb default '{}'::jsonb;
 alter table public.user_profiles enable row level security;
 
 -- Each user can read / insert / update / delete ONLY their own row.

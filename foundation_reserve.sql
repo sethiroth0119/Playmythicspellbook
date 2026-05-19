@@ -146,4 +146,64 @@ drop policy if exists cl_ins on public.corp_licenses;
 create policy cl_ins on public.corp_licenses for insert to authenticated with check (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));
 drop policy if exists cl_del on public.corp_licenses;
 create policy cl_del on public.corp_licenses for delete to authenticated using (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));
+create table if not exists public.court_officials (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  user_name text,
+  role text not null default 'lawyer',
+  rank text not null default 'Associate',
+  status text not null default 'active',
+  registered_at timestamptz default now()
+);
+alter table public.court_officials enable row level security;
+drop policy if exists cof_sel on public.court_officials;
+create policy cof_sel on public.court_officials for select to authenticated using (true);
+drop policy if exists cof_ins on public.court_officials;
+create policy cof_ins on public.court_officials for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists cof_upd on public.court_officials;
+create policy cof_upd on public.court_officials for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create table if not exists public.court_cases (
+  id uuid primary key default gen_random_uuid(),
+  case_no text,
+  plaintiff_id uuid references auth.users(id) on delete set null,
+  plaintiff_name text,
+  defendant_name text not null,
+  crime_type text not null,
+  severity int not null default 3,
+  summary text,
+  status text not null default 'open',
+  judge_id uuid references auth.users(id) on delete set null,
+  judge_name text,
+  prosecutor_name text,
+  defender_name text,
+  verdict text,
+  sentence text,
+  filed_by uuid references auth.users(id) on delete set null,
+  filed_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create index if not exists court_cases_time on public.court_cases (filed_at desc);
+alter table public.court_cases enable row level security;
+drop policy if exists ccz_sel on public.court_cases;
+create policy ccz_sel on public.court_cases for select to authenticated using (true);
+drop policy if exists ccz_ins on public.court_cases;
+create policy ccz_ins on public.court_cases for insert to authenticated with check (filed_by = auth.uid());
+drop policy if exists ccz_upd on public.court_cases;
+create policy ccz_upd on public.court_cases for update to authenticated using (true) with check (true);
+create table if not exists public.court_records (
+  id uuid primary key default gen_random_uuid(),
+  offender_name text not null,
+  crime_type text,
+  severity int not null default 3,
+  verdict text,
+  sentence text,
+  case_id uuid references public.court_cases(id) on delete set null,
+  judge_name text,
+  recorded_at timestamptz default now()
+);
+create index if not exists court_records_time on public.court_records (recorded_at desc);
+alter table public.court_records enable row level security;
+drop policy if exists crr_sel on public.court_records;
+create policy crr_sel on public.court_records for select to authenticated using (true);
+drop policy if exists crr_ins on public.court_records;
+create policy crr_ins on public.court_records for insert to authenticated with check (true);
 grant select on public.reserve_totals to authenticated;

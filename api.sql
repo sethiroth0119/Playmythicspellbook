@@ -101,6 +101,25 @@ create or replace view public.api_updates as
   from public.site_updates
   where published_at <= now();
 
+-- ── Global node reward pool ledger ─────────────────────────────────────
+-- Every node payout is recorded here. The in-game pool = a share of the
+-- Foundation Treasury minus sum(amount). Public-read so pool status is
+-- auditable; inserts are self-scoped (the collecting operator only).
+create table if not exists public.node_payouts (
+  id uuid primary key default gen_random_uuid(),
+  node_id uuid references public.economy_nodes(id) on delete set null,
+  corp_id uuid,
+  user_id uuid references auth.users(id) on delete set null,
+  amount numeric not null default 0,
+  created_at timestamptz default now()
+);
+create index if not exists node_payouts_time on public.node_payouts (created_at desc);
+alter table public.node_payouts enable row level security;
+drop policy if exists np_sel on public.node_payouts;
+create policy np_sel on public.node_payouts for select to authenticated using (true);
+drop policy if exists np_ins on public.node_payouts;
+create policy np_ins on public.node_payouts for insert to authenticated with check (user_id = auth.uid());
+
 grant select on
   public.api_corporations,
   public.api_reserve_totals,

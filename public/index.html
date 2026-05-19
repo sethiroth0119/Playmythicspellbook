@@ -24148,6 +24148,7 @@ const FoundationReserve = {
   taxStats: null,      // aggregated reserve_tax_log dashboard stats
   taxLastFetch: 0,
   nodes: [], nodesNeedSetup: false, nodesFetched: 0,
+  nodePool: null,      // { total, paid, avail, legacy, fetched } global reward pool
   tableMissing: false, loading: false, lastFetch: 0, _err: null, _poll: null,
 };
 function _frErr(e) {
@@ -25243,7 +25244,45 @@ const NODE_CLAIM_COOLDOWN_MS = 6 * 3600000;  // collect once per 6h per node
 const NODE_MAX_PER_CORP      = 6;
 const NODE_EFF_DECAY_PER_HR  = 2.2;          // efficiency % lost per idle hour
 const NODE_EFF_FLOOR         = 20;
-const NODE_PAYOUT_CAP        = 250000;       // hard cap per collect (anti-abuse)
+const NODE_PAYOUT_CAP        = 250000;       // hard cap per collect (anti-abuse ceiling)
+// 🌍 GLOBAL REWARD POOL — the real treasury split. Node payouts are funded
+// from (and bounded by) a finite pool = a share of the Foundation Treasury
+// (the reserve_tax_log sink: taxes, fines, bail, license fees). Each collect
+// is the LESSER of the bounded per-node accrual (above) and a % slice of the
+// remaining pool, so a finite, shared pot is distributed across all
+// operators rather than every node independently minting up to its cap.
+const NODE_POOL_TREASURY_SHARE = 0.30;       // 30% of the Treasury funds node payouts
+const NODE_POOL_MAX_SLICE      = 0.05;       // one collect ≤ 5% of the remaining pool
+async function nodePoolFetch() {
+  try {
+    if (!FoundationReserve.taxStats) { try { if (typeof frTaxFetch === 'function') await frTaxFetch(); } catch (e) {} }
+    const treasury = (FoundationReserve.taxStats && FoundationReserve.taxStats.total) || 0;
+    let paid = 0, legacy = false;
+    try {
+      const r = await Cloud.client.from('node_payouts').select('amount').limit(5000);
+      if (r && r.error) {
+        if (/node_payouts|PGRST205|does not exist|42P01|schema cache/i.test((r.error.message || '') + '')) legacy = true;
+      } else if (r && r.data) {
+        r.data.forEach(x => { paid += Number(x.amount) || 0; });
+      }
+    } catch (e) { legacy = true; }
+    const total = Math.floor(treasury * NODE_POOL_TREASURY_SHARE);
+    FoundationReserve.nodePool = { total: total, paid: paid, avail: Math.max(0, total - paid), legacy: legacy, fetched: Date.now() };
+  } catch (e) {
+    FoundationReserve.nodePool = FoundationReserve.nodePool || { total: 0, paid: 0, avail: 0, legacy: true, fetched: 0 };
+  }
+  return FoundationReserve.nodePool;
+}
+// The real expected payout for a node: bounded accrual, clamped to a % slice
+// of the remaining global pool (unless the pool ledger isn't set up → legacy
+// bounded-only behavior, so existing players never regress).
+function _nodeRealPay(n) {
+  const bounded = _nodeClaimable(n);
+  const pool = FoundationReserve.nodePool;
+  if (!pool || pool.legacy) return bounded;
+  const slice = Math.floor((pool.avail || 0) * NODE_POOL_MAX_SLICE);
+  return Math.max(0, Math.min(bounded, slice, pool.avail | 0));
+}
 const RESERVE_NODE_TYPES = [
   { id: 'supply',  name: 'Supply Node',       icon: '📦', proc: 'Food · Water · Supplies · Medicine', cinder: 60000,  res: { supplies: 200, food: 150 },                 buildH: 6,  blurb: 'Resource intake & relief routing.' },
   { id: 'fuel',    name: 'Fuel Node',         icon: '⛽', proc: 'Fuel · Power',                        cinder: 90000,  res: { fuel: 300, metal: 120 },                    buildH: 10, blurb: 'Fuel processing & energy distribution.' },
@@ -25338,14 +25377,37 @@ async function nodeCollect(nodeId) {
   if (!_nodeActive(n)) { showToast('That node is still under construction.', 3000); return false; }
   const cd = _nodeCooldownLeft(n);
   if (cd > 0) { showToast('⏳ Payout on cooldown — ' + Math.ceil(cd / 3600000) + 'h left.', 3200); return false; }
-  const pay = _nodeClaimable(n);
-  if (pay <= 0) { showToast('No new contribution to convert. Deposit resources to the Reserve, then collect — nodes pay for ACTIVE supply, not idling.', 5600); return false; }
+  const bounded = _nodeClaimable(n);
+  if (bounded <= 0) { showToast('No new contribution to convert. Deposit resources to the Reserve, then collect — nodes pay for ACTIVE supply, not idling.', 5600); return false; }
+  // 🌍 Draw from the real, finite global pool (a share of the Treasury).
+  try { await nodePoolFetch(); } catch (e) {}
+  const pool = FoundationReserve.nodePool || { avail: 0, legacy: true };
+  let pay = bounded;
+  if (!pool.legacy) {
+    pay = _nodeRealPay(n);
+    if (pay <= 0) {
+      showToast('🌍 The global reward pool is depleted. It refills as the Foundation Treasury grows (taxes, fines, bail & license fees) — try again once it does.', 6400);
+      return false;
+    }
+  }
   try {
     const m = Object.assign({}, n.meta || {}, { claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: Date.now(), eff: _nodeEff(n), lastTick: Date.now(), status: 'active' });
     const up = await Cloud.client.from('economy_nodes').update({ status: 'active', meta: m, updated_at: new Date().toISOString() }).eq('id', n.id).eq('owner_id', Profile.cloud.userId);
     if (up && up.error) throw up.error;
+    if (!pool.legacy) {
+      try {
+        const ins = await Cloud.client.from('node_payouts').insert({ node_id: n.id, corp_id: n.corp_id || (Corp.mine && Corp.mine.id) || null, user_id: Profile.cloud.userId, amount: pay });
+        if (ins && ins.error) throw ins.error;
+        pool.paid += pay; pool.avail = Math.max(0, pool.avail - pay);
+      } catch (e) {
+        // Pool ledger unavailable mid-collect → don't double-bill the pool;
+        // fall back to the bounded amount so the operator still gets paid.
+        pay = bounded;
+      }
+    }
     if (typeof addCinders === 'function') addCinders(pay);
-    showToast('🔌 ' + (n.name || 'Node') + ' payout collected — +' + pay.toLocaleString() + ' 🔥 for your contribution.', 5200);
+    const tail = (!pool.legacy && pool.total > 0) ? ' · pool ' + numF(pool.avail) + '/' + numF(pool.total) + ' 🔥 left' : '';
+    showToast('🔌 ' + (n.name || 'Node') + ' payout collected — +' + pay.toLocaleString() + ' 🔥' + tail + '.', 5200);
     await nodeFetch();
     return true;
   } catch (e) { showToast('⚠ Payout failed — try again.', 3000); return false; }
@@ -25526,11 +25588,29 @@ function openFoundationReserve() {
         return head + '<div class="ink-dim" style="padding:1.6rem;text-align:center">Only <strong>registered corporations</strong> operate Reserve nodes. Found or join one in <strong>⚖️ City Hall</strong> / Just Business, then return here.</div>';
       }
       const ns = FoundationReserve.nodes || [];
+      const pool = FoundationReserve.nodePool;
+      if (!pool || (Date.now() - (pool.fetched || 0) > 30000)) {
+        try { nodePoolFetch().then(() => { try { render(); } catch (e) {} }); } catch (e) {}
+      }
+      let poolBox;
+      if (!pool) {
+        poolBox = '<div class="small-text ink-dim" style="margin-bottom:8px">🌍 Sizing the global reward pool…</div>';
+      } else if (pool.legacy) {
+        poolBox = '<div class="small-text" style="margin-bottom:8px;padding:7px 10px;border:1px solid rgba(224,184,74,0.35);border-radius:8px;background:rgba(80,64,20,0.18);color:#e8cf94">🌍 Global reward pool inactive — run the updated <strong>api.sql</strong> (adds <strong>node_payouts</strong>) to fund payouts from the real Treasury split. Until then nodes use the bounded per-node accrual only.</div>';
+      } else {
+        const pct = pool.total > 0 ? Math.max(0, Math.min(100, Math.round(pool.avail / pool.total * 100))) : 0;
+        const col = pct >= 50 ? '#7fe0a0' : pct >= 20 ? '#e0b84a' : '#e07a6a';
+        poolBox = '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(127,224,160,0.3);border-radius:8px;background:rgba(30,60,45,0.18)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><span style="color:#bfe8cf;font-weight:800">🌍 Global Reward Pool</span><span class="small-text" style="color:' + col + ';font-weight:800;white-space:nowrap">' + numF(pool.avail) + ' / ' + numF(pool.total) + ' 🔥</span></div>' +
+          '<div style="height:7px;border-radius:5px;background:rgba(0,0,0,0.4);margin-top:6px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:' + col + '"></div></div>' +
+          '<div class="small-text" style="color:#8fb0a0;margin-top:5px">' + Math.round(NODE_POOL_TREASURY_SHARE * 100) + '% of the Foundation Treasury · each collect ≤ ' + Math.round(NODE_POOL_MAX_SLICE * 100) + '% of what remains. Refills as taxes / fines / bail / license fees grow the Treasury.</div>' +
+        '</div>';
+      }
       const list = ns.length
         ? ns.map(n => {
             const active = _nodeActive(n);
             const eff = _nodeEff(n);
-            const claim = _nodeClaimable(n);
+            const claim = _nodeRealPay(n);
             const cd = _nodeCooldownLeft(n);
             const m = n.meta || {};
             const status = active
@@ -25555,7 +25635,7 @@ function openFoundationReserve() {
           '<button id="fr-node-build" ' + (ns.length >= NODE_MAX_PER_CORP ? 'disabled' : '') + ' style="cursor:pointer;border-radius:8px;padding:0.5rem 1rem;border:1px solid #5fa0e0;background:linear-gradient(180deg,#3a6fb0,#1c3a6a);color:#eaf3ff;font-weight:800;opacity:' + (ns.length >= NODE_MAX_PER_CORP ? '0.5' : '1') + '">Build</button>' +
         '</div>' +
         '<div id="fr-node-desc" class="small-text" style="color:#8fb0e0;margin-top:6px"></div></div>';
-      return head + '<div style="font-weight:800;color:#9fc6ff;margin:2px 0 6px">' + esc(corp.name) + ' nodes</div>' + list + build;
+      return head + poolBox + '<div style="font-weight:800;color:#9fc6ff;margin:2px 0 6px">' + esc(corp.name) + ' nodes</div>' + list + build;
     };
 
     const productionTab = () => {

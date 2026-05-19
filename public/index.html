@@ -21399,9 +21399,10 @@ async function cloudSyncProfile() {
       aiDecks:        Array.isArray(Forge.aiDecks) ? Forge.aiDecks : [],
       starterDecks:   Array.isArray(Forge.starterDecks) ? Forge.starterDecks : [],
       campaigns:      Array.isArray(Forge.campaigns) ? Forge.campaigns : [],
-      // 🖼 Admin Operations / Real-Estate photos (small, compressed JPEGs).
-      opArt:          (Forge.opArt && typeof Forge.opArt === 'object') ? Forge.opArt : {},
-      reArt:          (Forge.reArt && typeof Forge.reArt === 'object') ? Forge.reArt : {},
+      // 🖼 NOTE: opArt/reArt are NOT put in this cloud JSONB blob — like
+      // cardArt/packArt they're IDB-canonical (saveForge) and distributed
+      // to all players via the Catalog Publish pipeline. Base64 photos
+      // here would bloat / 400 the whole forge upsert.
       // 🧰 Resource ledger (camp salvage / ~149 resources) piggybacks on the
       // existing `forge` JSONB column — same pattern as userDecks — so it
       // cloud-syncs with NO schema migration (no missing-column nag) and
@@ -21695,8 +21696,6 @@ async function cloudFetchProfile() {
       if (Array.isArray(f.aiDecks))   Forge.aiDecks = f.aiDecks;
       if (Array.isArray(f.starterDecks)) Forge.starterDecks = f.starterDecks;
       if (Array.isArray(f.campaigns)) Forge.campaigns = f.campaigns;
-      if (f.opArt && typeof f.opArt === 'object') Forge.opArt = f.opArt;
-      if (f.reArt && typeof f.reArt === 'object') Forge.reArt = f.reArt;
       if (Array.isArray(f.pageGuides)) Forge.pageGuides = f.pageGuides;
       // 🌐 WEBSITE PURCHASE REDEMPTION — when a player buys a pack from the
       // marketing site, that flow writes a receipt into forge.webPurchases and
@@ -28733,7 +28732,7 @@ async function idbDel(key) {
 // game starts immediately with text+stats, and sprites pop in as soon as IDB
 // resolves (sub-second on modern devices). Triggers a render once data lands.
 async function loadHeavyForgeFromIdb() {
-  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'itemArt', 'catalogMedia'];
+  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'itemArt', 'catalogMedia', 'opArt', 'reArt'];
   let changed = false;
   for (const k of keys) {
     const v = await idbGet('forge_' + k);
@@ -29123,6 +29122,8 @@ function saveForge() {
       idbSet('forge_packArt',      Forge.packArt      || {});
       idbSet('forge_catalogMedia', Forge.catalogMedia || {});
       idbSet('forge_itemArt',      Forge.itemArt      || {});
+      idbSet('forge_opArt',        Forge.opArt        || {});
+      idbSet('forge_reArt',        Forge.reArt        || {});
       // 🗄️ ALSO mirror the custom-CONTENT chunks to IndexedDB. These used
       // to be localStorage-only, but customEvents now carries base64 sprite
       // frames (and cards can carry inline art), so they grew big enough to

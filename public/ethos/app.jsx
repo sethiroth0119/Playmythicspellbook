@@ -400,6 +400,9 @@ function App() {
           // Real owned cards (id+name+icon+rarity+count) — must be captured
           // so the Marketplace listing modal can pick from real collection.
           cards: Array.isArray(d.cards) ? d.cards : ((prev && prev.cards) || []),
+          // Pending-application flag: if true the AuthScreen is rendered
+          // instead of the dashboard until the player files their form.
+          pendingApplication: (typeof d.pendingApplication === 'boolean') ? d.pendingApplication : ((prev && prev.pendingApplication) || false),
           mercSplit: (d.mercSplit && typeof d.mercSplit === 'object') ? d.mercSplit : ((prev && prev.mercSplit) || { merc: 0.40, employer: 0.52, tax: 0.08, perCinder: 5000, maxHours: 24, maxTarget: 5000000 }),
           created: (prev && prev.created) || new Date().toISOString(),
           recoveryKey: (prev && prev.recoveryKey) || '—',
@@ -418,8 +421,8 @@ function App() {
     return function () { window.removeEventListener('message', onMsg); clearInterval(hi); clearTimeout(stop); };
   }, []);
 
-  if (!account) {
-    if (linking) {
+  if (!account || account.pendingApplication) {
+    if (!account && linking) {
       return (
         <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', color: '#caa46a', fontFamily: 'inherit' }}>
           <div style={{ textAlign: 'center' }}>
@@ -429,7 +432,11 @@ function App() {
         </div>
       );
     }
-    return <AuthScreen onAccount={(a) => { saveAccount(a); setAccount(a); }} />;
+    // AuthScreen handles the account-creation application (handle +
+    // password + sign). On submit it both saves the local account AND
+    // posts boe:apply to the parent so the application is filed at
+    // City Hall and application_submitted flips to true on the bank row.
+    return <AuthScreen prevAccount={account} onAccount={(a) => { saveAccount(a); setAccount(a); }} />;
   }
 
   const updateAccount = (patch) => {
@@ -736,16 +743,36 @@ function PageVaults({ role, account, liveCinder, sessionSec, onSend }) {
       {/* Active Mercs + Live profit feed */}
       <div className="grid" style={{ gridTemplateColumns: "1.6fr 1fr", gap: 14 }}>
         <div className="panel">
-          <div className="panel-h">
-            <h3>Active Mercenaries</h3>
-            <div className="row">
-              <span className="chip live"><span className="live-dot"></span>7 online</span>
-              <button className="btn sm ghost">View all →</button>
-            </div>
-          </div>
-          <div>
-            {MERCS.slice(0, 5).map(m => <MercRow key={m.name} m={m} />)}
-          </div>
+          {(() => {
+            const list = Array.isArray(account && account.mercListings) ? account.mercListings.filter(l => l && l.status === "open") : [];
+            return (
+              <>
+                <div className="panel-h">
+                  <h3>Active Mercenaries</h3>
+                  <div className="row">
+                    <span className="chip live"><span className="live-dot"></span>{list.length} listed</span>
+                  </div>
+                </div>
+                <div>
+                  {list.length === 0 ? (
+                    <div className="panel-b muted" style={{ fontSize: 12 }}>No mercenaries are listed for hire right now. (none) — head to Mercenary Operations to list yourself.</div>
+                  ) : list.slice(0, 6).map(l => (
+                    <div key={l.id} className="row between" style={{ padding: "10px 14px", borderBottom: "1px solid var(--hair)", gap: 8 }}>
+                      <div className="row" style={{ gap: 10, minWidth: 0, flex: 1 }}>
+                        <div className="merc-av" style={{ background: "linear-gradient(135deg, #ff7a3d, #8a6bff)", width: 32, height: 32, fontSize: 11 }}>{(l.label || l.handle || "MR").slice(0, 2).toUpperCase()}</div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{l.label || l.handle}</div>
+                          <div className="mono" style={{ fontSize: 10, color: "var(--violet)" }}>{l.handle}</div>
+                          {l.bio ? <div style={{ fontSize: 11, color: "var(--ink-dim)", marginTop: 2 }}>{l.bio}</div> : null}
+                        </div>
+                      </div>
+                      {l.rate_per_hour ? <div className="mono" style={{ fontSize: 12, color: "var(--cinder)" }}>{fmt(l.rate_per_hour)} 🜂/hr</div> : null}
+                    </div>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         <div className="panel">
@@ -1734,9 +1761,26 @@ function NewListingModal({ account, defaultAuction, onClose }) {
             <select value={itemId} onChange={(e) => setItemId(e.target.value)} style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px" }}>
               <option value="">— select —</option>
               {cards.map(c => (
-                <option key={c.id} value={c.id}>{c.icon ? c.icon + " " : ""}{c.name} (×{c.count}{c.rarity ? " · " + c.rarity : ""})</option>
+                <option key={c.id} value={c.id}>{c.icon ? c.icon + " " : ""}{c.name} (×{c.count}{c.rarity ? " · " + c.rarity : ""}{c.type ? " · " + c.type : ""})</option>
               ))}
             </select>
+            {(() => {
+              const sel = cards.find(c => c.id === itemId);
+              if (!sel) return null;
+              return (
+                <div className="row" style={{ gap: 10, alignItems: "center", border: "1px solid var(--hair)", background: "var(--bg-1)", padding: 8, marginTop: 6 }}>
+                  {sel.img ? (
+                    <img src={sel.img} alt="" style={{ width: 56, height: 56, objectFit: "contain", imageRendering: "auto" }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                  ) : (
+                    <div style={{ width: 56, height: 56, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>{sel.icon || "🃏"}</div>
+                  )}
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{sel.name}</div>
+                    <div className="small-text" style={{ color: "var(--ink-dim)" }}>{sel.type || ""}{sel.rarity ? " · " + sel.rarity : ""} · you own {sel.count}</div>
+                  </div>
+                </div>
+              );
+            })()}
             {cards.length === 0 && <div className="small-text" style={{ color: "var(--warn)" }}>You don't own any cards yet.</div>}
           </>
         )}
@@ -1801,7 +1845,11 @@ function MarketCard({ l, mine, myHandle, onBuy, onBid, onCancel }) {
     <div className={"listing"}>
       <div className="img" style={{ position: "relative" }}>
         <span className="rarity-tag" style={{ color: tagColor }}>{l.kind.toUpperCase()}{isAuction ? " · AUCTION" : ""}</span>
-        <div style={{ fontSize: 48 }}>{l.item_icon || (l.kind === "card" ? "🃏" : l.kind === "resource" ? "📦" : l.kind === "relic" ? "🏺" : "🎁")}</div>
+        {/* If item_icon is a URL (card listings store the artwork URL there)
+            render the real image, otherwise show the emoji glyph. */}
+        {l.item_icon && /^(https?:|\/|data:|assets\/)/.test(l.item_icon)
+          ? <img src={l.item_icon} alt={l.item_name || ""} style={{ maxWidth: "78%", maxHeight: "78%", objectFit: "contain", filter: "drop-shadow(0 6px 14px rgba(0,0,0,0.6))" }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          : <div style={{ fontSize: 48 }}>{l.item_icon || (l.kind === "card" ? "🃏" : l.kind === "resource" ? "📦" : l.kind === "relic" ? "🏺" : "🎁")}</div>}
       </div>
       <div className="body">
         <div className="name">{l.item_name}</div>
@@ -2343,14 +2391,26 @@ function TweaksPanelHost({ t, setTweak }) {
 /* ============================================================
    AUTH SCREEN — Create / Sign in to account
    ============================================================ */
-function AuthScreen({ onAccount }) {
+// SHA-256 a string in the browser; returns lowercase hex.
+async function _sha256Hex(s) {
+  try {
+    const enc = new TextEncoder().encode(String(s || ""));
+    const buf = await window.crypto.subtle.digest("SHA-256", enc);
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  } catch (e) { return ""; }
+}
+
+function AuthScreen({ onAccount, prevAccount }) {
   const [mode, setMode] = useState("create"); // create | signin
   const [stage, setStage] = useState("intro"); // intro | application
-  const [callsign, setCallsign] = useState("");
-  const [handle, setHandle] = useState(genHandle());
+  const [callsign, setCallsign] = useState((prevAccount && prevAccount.callsign) || "");
+  const [handle, setHandle] = useState((prevAccount && prevAccount.handle) || genHandle());
   const [palette, setPalette] = useState(0);
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
   const [signinHandle, setSigninHandle] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const initials = (callsign || "??").trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase() || "??";
 
@@ -2358,23 +2418,43 @@ function AuthScreen({ onAccount }) {
     setError("");
     const cs = callsign.trim();
     if (cs.length < 2) { setError("Choose a callsign at least 2 characters long."); return; }
+    if (!password || password.length < 6) { setError("Password must be at least 6 characters."); return; }
+    if (password !== password2) { setError("Passwords don't match."); return; }
     setStage("application");
   };
 
-  const finalizeAccount = (formData) => {
+  const finalizeAccount = async (formData) => {
+    setBusy(true);
+    const pwHash = await _sha256Hex(password + "::" + handle);
     const acc = {
       handle,
       callsign: callsign.trim(),
       initials,
       c1: AVATAR_PALETTES[palette][0],
       c2: AVATAR_PALETTES[palette][1],
-      cinder: 5_000,
-      aza: 1_000,
+      cinder: 0,
+      aza: 0,
       created: new Date().toISOString(),
       recoveryKey: Math.random().toString(36).slice(2, 14).toUpperCase(),
       application: formData,
+      pendingApplication: false,
+      _gameLinked: true,
     };
+    // File the application with the parent — this records to City Hall
+    // and flips application_submitted on the bank row so the form never
+    // shows again. Then save locally and continue to the dashboard.
+    try {
+      window.parent.postMessage({
+        type: "boe:apply",
+        handle: handle,
+        callsign: callsign.trim(),
+        passwordHash: pwHash,
+        c1: acc.c1, c2: acc.c2,
+        application: formData,
+      }, "*");
+    } catch (e) {}
     onAccount(acc);
+    setBusy(false);
   };
 
   const signinSubmit = () => {
@@ -2487,30 +2567,27 @@ function AuthScreen({ onAccount }) {
               </div>
             </div>
 
-            <div style={{ padding: 14, border: "1px solid var(--hair)", background: "var(--bg-1)" }}>
-              <div className="label">Starting deposit · Ethos welcome grant</div>
-              <div className="row" style={{ gap: 18, marginTop: 8 }}>
-                <div className="row" style={{ gap: 8 }}>
-                  <CinderGlyph size={20} />
-                  <div>
-                    <div className="mono" style={{ fontSize: 18, fontWeight: 600, color: "var(--cinder)" }}>5,000</div>
-                    <div className="label">Cinder</div>
-                  </div>
-                </div>
-                <div className="row" style={{ gap: 8 }}>
-                  <AzaGlyph size={20} />
-                  <div>
-                    <div className="mono" style={{ fontSize: 18, fontWeight: 600, color: "var(--aza)" }}>1,000</div>
-                    <div className="label">Aza Coin</div>
-                  </div>
-                </div>
+            {/* Bank password — at least 6 chars. SHA-256 hashed before
+                ever leaving the page; the bank stores only the digest. */}
+            <div className="grid g-2" style={{ gap: 14 }}>
+              <div className="field">
+                <label>Bank password</label>
+                <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" maxLength={64} />
               </div>
+              <div className="field">
+                <label>Confirm password</label>
+                <input type="password" autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="Repeat" maxLength={64} />
+              </div>
+            </div>
+
+            <div style={{ padding: 12, border: "1px solid var(--hair)", background: "var(--bg-1)", fontSize: 12, color: "var(--ink-dim)" }}>
+              By submitting this application your handle, callsign, and signed timestamp are filed to <b>City Hall</b> as a permanent register entry. Your password is hashed client-side (SHA-256) before transit.
             </div>
 
             {error && <div className="chip warn" style={{ alignSelf: "flex-start" }}>{error}</div>}
 
             <div className="row" style={{ gap: 10 }}>
-              <button className="btn primary" onClick={proceedToForm} style={{ padding: "10px 18px" }}><Icon name="check" size={14}/> Continue → Application form</button>
+              <button className="btn primary" disabled={busy} onClick={proceedToForm} style={{ padding: "10px 18px" }}><Icon name="check" size={14}/> Continue → Application form</button>
               <span className="muted" style={{ fontSize: 11 }}>Form is required. Survivor protocol.</span>
             </div>
           </div>

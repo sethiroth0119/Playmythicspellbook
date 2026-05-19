@@ -240,6 +240,32 @@ create table if not exists public.bank_of_ethos (
 -- Idempotent upgrades for accounts created before Aza/resource banking.
 alter table public.bank_of_ethos add column if not exists aza numeric not null default 0;
 alter table public.bank_of_ethos add column if not exists resources jsonb not null default '{}'::jsonb;
+-- 📝 Account-creation flow. Players fill in handle + callsign + bank
+-- password on first visit; the form is also recorded to boe_applications
+-- so City Hall has a permanent register of every account opened.
+alter table public.bank_of_ethos add column if not exists application_submitted boolean not null default false;
+alter table public.bank_of_ethos add column if not exists app_password_hash text;
+alter table public.bank_of_ethos add column if not exists app_signed_at timestamptz;
+
+create table if not exists public.boe_applications (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  handle text,
+  callsign text,
+  c1 text, c2 text,
+  org text, role text, region text, purpose text,
+  signed_at timestamptz default now(),
+  status text not null default 'submitted'
+);
+create index if not exists boe_app_user on public.boe_applications (user_id, signed_at desc);
+create index if not exists boe_app_status on public.boe_applications (status, signed_at desc);
+alter table public.boe_applications enable row level security;
+-- Self can read own; City Hall admins (via is_admin() defined for the
+-- gifts inbox) can read everyone's applications.
+drop policy if exists boe_app_sel on public.boe_applications;
+create policy boe_app_sel on public.boe_applications for select to authenticated using (user_id = auth.uid() or (exists (select 1 from pg_proc where proname = 'is_admin') and public.is_admin()));
+drop policy if exists boe_app_ins on public.boe_applications;
+create policy boe_app_ins on public.boe_applications for insert to authenticated with check (user_id = auth.uid());
 alter table public.bank_of_ethos enable row level security;
 drop policy if exists boe_sel on public.bank_of_ethos;
 create policy boe_sel on public.bank_of_ethos for select to authenticated using (user_id = auth.uid());

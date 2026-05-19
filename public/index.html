@@ -25480,6 +25480,14 @@ async function boeMarketList(kind, opts) {
     if (Profile.cardCollection[refId] <= 0) delete Profile.cardCollection[refId];
     try { saveProfile(); } catch (e) {}
     name = _boeFindCardName(refId);
+    // Stash the card image url in item_icon so the marketplace can render
+    // the real artwork instead of a generic glyph.
+    try {
+      const allC = (typeof getAllCustomCards === 'function') ? getAllCustomCards() : [];
+      const heroes = (typeof STARTER_HEROES !== 'undefined' && Array.isArray(STARTER_HEROES)) ? STARTER_HEROES : [];
+      const c = allC.find(x => x && x.id === refId) || heroes.find(x => x && x.id === refId) || {};
+      icon = c.img || c.image || c.icon || '';
+    } catch (e) {}
   } else if (kind === 'resource') {
     if (!refId || !(typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[refId])) { showToast('Pick a resource.'); return false; }
     const have = (typeof getRes === 'function') ? getRes(refId) : 0;
@@ -25742,6 +25750,57 @@ async function boeAcceptPost(id) {
   await boeFetchMercContracts();
   return true;
 }
+// 📝 Submit the player's Bank of Ethos account-creation form. Stores the
+// handle + bank-PIN hash on bank_of_ethos, inserts a permanent record into
+// boe_applications (City Hall register), and flips application_submitted
+// so the AuthScreen is never shown again.
+async function boeApplySubmit(payload) {
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  payload = payload || {};
+  const me = Profile.cloud.userId;
+  const handle = (payload.handle || '').toString().trim().slice(0, 24);
+  const callsign = (payload.callsign || '').toString().trim().slice(0, 40);
+  const pwHash = (payload.passwordHash || '').toString().slice(0, 128);
+  const app = payload.application || {};
+  if (!handle || !callsign || !pwHash) { showToast('Handle, callsign, and password required.', 4200); return false; }
+  // Update our own bank row (RLS-safe — single writer).
+  try {
+    const b = await _boeRow();
+    const up = await b.update({
+      handle: handle,
+      application_submitted: true,
+      app_password_hash: pwHash,
+      app_signed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('user_id', me);
+    if (up && up.error) {
+      if (_boeMissingTbl(up.error)) showToast('Run the latest api.sql to enable account submission.', 6000);
+      else showToast('⚠ Submission failed.', 4000);
+      return false;
+    }
+    BankEthos._appSubmitted = true;
+    BankEthos._handle = handle;
+    BankEthos._label = callsign;
+  } catch (e) { showToast('⚠ Submission failed — try again.', 4200); return false; }
+  // City Hall register — fire-and-forget; the bank row already records
+  // submission so the player isn't blocked if this insert fails.
+  try {
+    const a = _boeTbl('boe_applications');
+    if (a) {
+      await a.insert({
+        user_id: me, handle: handle, callsign: callsign,
+        c1: (payload.c1 || '') + '', c2: (payload.c2 || '') + '',
+        org: (app.org || '') + '', role: (app.role || '') + '',
+        region: (app.region || '') + '', purpose: (app.purpose || '') + '',
+        status: 'submitted',
+      });
+    }
+  } catch (e) {}
+  // Mirror handle into the public directory + the bank handle column.
+  try { await boeSyncDirectory(); } catch (e) {}
+  showToast('📝 Bank of Ethos account opened — application filed to City Hall.', 6000);
+  return true;
+}
 async function boeFetch() {
   try {
     const t = await _boeRow();
@@ -25757,12 +25816,19 @@ async function boeFetch() {
       if (ins && ins.error) { BankEthos._err = 'setup'; return false; }
       BankEthos.balance = 0; BankEthos.aza = 0; BankEthos.resources = {};
       BankEthos.lastFeeAt = Date.now(); BankEthos.openedAt = Date.now();
+      BankEthos._appSubmitted = false;
     } else {
       BankEthos.balance = Math.max(0, Math.round(Number(r.data.balance) || 0));
       // aza/resources columns exist only after the api.sql upgrade is run.
       BankEthos._extCols = ('aza' in r.data) && ('resources' in r.data);
       BankEthos.aza = Math.max(0, Math.round(Number(r.data.aza) || 0));
       BankEthos.resources = (r.data.resources && typeof r.data.resources === 'object') ? r.data.resources : {};
+      // Account-creation flow: if application_submitted is false (or the
+      // column doesn't yet exist) the embedded AuthScreen will be shown
+      // and the player must complete handle + password + sign before
+      // entering the dashboard. Once submitted, the bank row keeps the
+      // flag true so they never see the form again.
+      BankEthos._appSubmitted = ('application_submitted' in r.data) ? !!r.data.application_submitted : true;
       BankEthos.lastFeeAt = r.data.last_fee_at ? Date.parse(r.data.last_fee_at) : Date.now();
       BankEthos.openedAt = r.data.opened_at ? Date.parse(r.data.opened_at) : Date.now();
     }
@@ -26079,6 +26145,10 @@ function openBankOfEthos() {
           bankRes: (BankEthos.ready && BankEthos.resources) ? BankEthos.resources : {},
           bankReady: !!BankEthos.ready,
           extCols: !!BankEthos._extCols,
+          // True until the player completes the AuthScreen application
+          // form (handle + password + sign). The embedded app shows the
+          // form instead of the dashboard while this is true.
+          pendingApplication: !BankEthos._appSubmitted,
           // real transaction ledger + cinder requests
           ledger: Array.isArray(BankEthos.ledger) ? BankEthos.ledger.slice(0, 80) : [],
           reqIn: Array.isArray(BankEthos.reqIn) ? BankEthos.reqIn : [],
@@ -26110,7 +26180,7 @@ function openBankOfEthos() {
                 const n = coll[id] | 0;
                 if (!(n > 0)) continue;
                 const c = lookup[id] || {};
-                out.push({ id: id, name: c.name || id, icon: c.icon || (c.type === 'hero' ? '⚔️' : '🃏'), rarity: (c.rarity || ''), count: n });
+                out.push({ id: id, name: c.name || id, icon: c.icon || (c.type === 'hero' ? '⚔️' : '🃏'), img: c.img || c.image || '', rarity: (c.rarity || ''), type: (c.type || ''), count: n });
               }
               return out.sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name));
             } catch (e) { return []; }
@@ -26205,7 +26275,7 @@ function openBankOfEthos() {
         else { _mktBusy = false; }
       } catch (e) { _mktBusy = false; }
     };
-    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); else if (e.data.type === 'boe:request') onReq(e.data); else if (e.data.type === 'boe:loan') onLoan(e.data); else if (e.data.type === 'boe:merc') onMerc(e.data); else if (e.data.type === 'boe:post') onPost(e.data); else if (e.data.type === 'boe:market') onMkt(e.data); } catch (x) {} };
+    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); else if (e.data.type === 'boe:request') onReq(e.data); else if (e.data.type === 'boe:loan') onLoan(e.data); else if (e.data.type === 'boe:merc') onMerc(e.data); else if (e.data.type === 'boe:post') onPost(e.data); else if (e.data.type === 'boe:market') onMkt(e.data); else if (e.data.type === 'boe:apply') { (async () => { try { await boeApplySubmit(e.data); await boeFetch(); paint(); postSeed(); try { if (typeof render === 'function') render(); } catch (er) {} } catch (er) {} })(); } } catch (x) {} };
     window.addEventListener('message', onMsg);
     const _origClose = back.onclick;
     back.onclick = () => { try { window.removeEventListener('message', onMsg); } catch (e) {} _origClose(); };
@@ -26238,6 +26308,10 @@ function openBankOfEthos() {
         walletCinder: (Profile && Profile.gems) | 0,
         walletAza: (Profile && Profile.sovereigns) | 0,
         vault: { resCatalog: ((typeof SALVAGE_RES !== 'undefined' && SALVAGE_RES.length) ? SALVAGE_RES : (typeof RESOURCES !== 'undefined' ? RESOURCES : [])).map((r) => ({ id: r.id, name: r.name, icon: r.icon, color: r.color })), walletRes: {}, bankRes: {}, bankReady: !!BankEthos.ready, extCols: !!BankEthos._extCols },
+        // First-paint default: if we haven't fetched the bank row yet,
+        // treat as pending so the AuthScreen renders. postSeed updates
+        // this with the real flag once boeFetch resolves.
+        pendingApplication: !BankEthos._appSubmitted,
         created: new Date().toISOString(),
         recoveryKey: '—',
         application: { org: cs, role: 'Operator', region: 'Camp Heights', purpose: 'Treasury access', linked: true },

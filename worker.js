@@ -204,16 +204,26 @@ async function handleCashout(request, env, u) {
   if (seg === 'connect' && request.method === 'POST') {
     let acct = await sbAcctGet(env, user);
     if (!acct) {
-      // Accounts v2 + controller props: Stripe collects requirements & owns
-      // risk (safer than Express/Custom). dashboard:none → API/Account-Link only.
-      const a = await stripeApi(env, 'POST', '/v2/core/accounts', {
-        contact_email: undefined,
-        identity: { country: 'US' },
-        configuration: { recipient: { capabilities: { stripe_balance: { stripe_transfers: { requested: true } } } } },
-        defaults: { responsibilities: { fees_collector: 'stripe', losses_collector: 'stripe' } },
-        dashboard: 'none',
-        metadata: { game_user: user.id },
-      }, true);
+      // Prefer Accounts v2 (Stripe-managed risk). Many accounts are not yet
+      // enrolled in v2 and that call errors — fall back to the universally
+      // available v1 Express account. Either way onboarding is Stripe-hosted
+      // (Stripe collects KYC). Express liability only matters once payouts
+      // are enabled (off by default here) — see STRIPE.md.
+      let a = null;
+      try {
+        a = await stripeApi(env, 'POST', '/v2/core/accounts', {
+          identity: { country: 'US' },
+          configuration: { recipient: { capabilities: { stripe_balance: { stripe_transfers: { requested: true } } } } },
+          dashboard: 'none',
+          metadata: { game_user: user.id },
+        }, true);
+      } catch (e2) {
+        a = await stripeApi(env, 'POST', '/v1/accounts', {
+          type: 'express', country: 'US',
+          capabilities: { transfers: { requested: true } },
+          metadata: { game_user: user.id },
+        });
+      }
       acct = a && a.id;
       if (!acct) return cjson({ error: 'account_create_failed' }, 502);
       await sbAcctSet(env, user, acct);
@@ -259,6 +269,66 @@ async function handleCashout(request, env, u) {
   return cjson({ error: 'not_found' }, 404);
 }
 
+/* ============================================================================
+ * 🪙 BUY AZA COIN — real one-time purchase via Stripe Checkout (hosted).
+ * Per Stripe guidance, one-time payments use Checkout Sessions. Prices are
+ * SERVER-AUTHORITATIVE (AZA_PACKS) so a tampered client can't change them.
+ * Crediting is spoof-proof WITHOUT a webhook: on return the client calls
+ * /confirm, the Worker retrieves the session from Stripe with the secret
+ * key and only confirms if payment_status==='paid' AND the session belongs
+ * to the signed-in user. The game then records the session id in
+ * aza_purchases (own-JWT, UNIQUE) so a coin pack credits exactly once.
+ * Disabled (503) until STRIPE_SECRET_KEY is set — game stays in mock mode.
+ * ========================================================================== */
+const AZA_PACKS = {
+  sp_starter: { aza: 100,  cents: 199,  name: 'Starter Cache' },
+  sp_adv:     { aza: 280,  cents: 499,  name: "Adventurer's Coffer" },
+  sp_hero:    { aza: 600,  cents: 999,  name: "Hero's Vault" },
+  sp_champ:   { aza: 1300, cents: 1999, name: "Champion's Trove" },
+  sp_legend:  { aza: 3500, cents: 4999, name: "Legend's Hoard" },
+};
+async function handleBuy(request, env, u) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_RW });
+  const seg = u.pathname.replace(/^\/api\/buy\//, '').replace(/\/+$/, '');
+  const configured = !!env.STRIPE_SECRET_KEY;
+  if (seg === 'config' && request.method === 'GET') return cjson({ enabled: configured });
+  if (!configured) return cjson({ error: 'stripe_not_configured', hint: 'Set STRIPE_SECRET_KEY (see STRIPE.md). Aza store stays in mock mode until then.' }, 503);
+  const user = await sbUser(env, request);
+  if (!user) return cjson({ error: 'unauthorized', hint: 'Send your Supabase access token as Authorization: Bearer.' }, 401);
+
+  if (seg === 'checkout' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const p = AZA_PACKS[body && body.pack];
+    if (!p) return cjson({ error: 'bad_pack' }, 400);
+    const origin = (env.PUBLIC_BASE_URL || u.origin).replace(/\/+$/, '');
+    const s = await stripeApi(env, 'POST', '/v1/checkout/sessions', {
+      mode: 'payment',
+      'line_items[0][quantity]': 1,
+      'line_items[0][price_data][currency]': 'usd',
+      'line_items[0][price_data][unit_amount]': p.cents,
+      'line_items[0][price_data][product_data][name]': p.aza + ' Aza coin — ' + p.name,
+      client_reference_id: user.id,
+      'metadata[user_id]': user.id,
+      'metadata[pack]': body.pack,
+      'metadata[aza]': p.aza,
+      success_url: origin + '/?aza=ok&sid={CHECKOUT_SESSION_ID}',
+      cancel_url: origin + '/?aza=cancel',
+    });
+    return cjson({ url: s && s.url });
+  }
+
+  if (seg === 'confirm' && request.method === 'GET') {
+    const sid = u.searchParams.get('sid') || '';
+    if (!sid) return cjson({ error: 'no_session' }, 400);
+    const s = await stripeApi(env, 'GET', '/v1/checkout/sessions/' + encodeURIComponent(sid), null);
+    const md = (s && s.metadata) || {};
+    if (!s || s.payment_status !== 'paid' || md.user_id !== user.id) return cjson({ ok: false });
+    return cjson({ ok: true, sid: sid, pack: md.pack, aza: Number(md.aza) || (AZA_PACKS[md.pack] && AZA_PACKS[md.pack].aza) || 0 });
+  }
+
+  return cjson({ error: 'not_found' }, 404);
+}
+
 export default {
   async fetch(request, env) {
     let u;
@@ -267,6 +337,11 @@ export default {
     if (u.pathname.startsWith('/api/cashout/')) {
       try { return await handleCashout(request, env, u); }
       catch (e) { return cjson({ error: 'cashout_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
+    }
+
+    if (u.pathname.startsWith('/api/buy/')) {
+      try { return await handleBuy(request, env, u); }
+      catch (e) { return cjson({ error: 'buy_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
     }
 
     if (u.pathname === '/api' || u.pathname === '/api/') {

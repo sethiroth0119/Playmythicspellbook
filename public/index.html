@@ -21243,6 +21243,8 @@ function initCloud() {
             try { if (typeof maybeShowGiftPopup === 'function') maybeShowGiftPopup(); } catch (e) {}
           }); } catch (e) {}
         }, 1200);
+        // 🪙 Credit any Aza coin bought via Stripe Checkout (return redirect).
+        setTimeout(() => { try { if (typeof azaConfirmReturn === 'function') azaConfirmReturn(); } catch (e) {} }, 1400);
       }
     });
     return true;
@@ -57429,6 +57431,8 @@ function _bindPackShopHandlers() {
 
 // ----- Sovereigns Store body (extracted from renderSovereignsStore) -----
 function _buildSovereignsStoreBody(sovBal) {
+  if ((!StripeCashout.fetched || (Date.now() - StripeCashout.fetched > 60000))) { try { cashoutStripeRefresh(); } catch (e) {} }
+  const live = !!StripeCashout.enabled;
   const cards = SOVEREIGN_PACKAGES.map(pkg => `
     <div class="sov-pkg ${pkg.popular ? 'sov-pkg-popular' : ''}" data-sov-buy="${pkg.id}">
       ${pkg.popular ? '<div class="sov-pkg-ribbon">⭐ MOST POPULAR</div>' : ''}
@@ -57437,12 +57441,17 @@ function _buildSovereignsStoreBody(sovBal) {
       <div class="sov-pkg-coins"><span class="aza-icon aza-icon-lg"></span> ${pkg.sovereigns.toLocaleString()}</div>
       ${pkg.bonus > 0 ? `<div class="sov-pkg-bonus">+${pkg.bonus}% bonus</div>` : '<div class="sov-pkg-bonus" style="visibility:hidden">.</div>'}
       <div class="sov-pkg-tagline">${escapeHtml(pkg.tagline)}</div>
-      <button class="btn-primary sov-pkg-buy" data-sov-buy-btn="${pkg.id}">$${pkg.price.toFixed(2)}</button>
+      ${live
+        ? `<button class="btn-primary sov-pkg-buy" data-aza-card="${pkg.id}">💳 Buy · $${pkg.price.toFixed(2)}</button>
+           <button class="btn-secondary sov-pkg-buy" data-sov-buy-btn="${pkg.id}" style="margin-top:6px;opacity:.8">🧪 Test (instant)</button>`
+        : `<button class="btn-primary sov-pkg-buy" data-sov-buy-btn="${pkg.id}">$${pkg.price.toFixed(2)}</button>`}
     </div>
   `).join('');
   return `
     <div class="sov-mock-banner">
-      ⚠️ <strong>Mock checkout.</strong> Single-player build — no real charges are made. Purchases credit instantly so you can test downstream features.
+      ${live
+        ? '💳 <strong>Card checkout is live (Stripe).</strong> "Buy" opens Stripe’s secure hosted checkout — your card is entered on Stripe, never in the game. "Test" credits instantly without a charge.'
+        : '⚠️ <strong>Mock checkout.</strong> Single-player build — no real charges are made. Purchases credit instantly so you can test downstream features.'}
     </div>
     <div class="sov-pkg-grid">${cards}</div>
     <div class="sov-info-grid">
@@ -57482,6 +57491,13 @@ function _bindSovereignsStoreHandlers() {
       addSovereigns(pkg.sovereigns);
       showToast(`+${pkg.sovereigns} Aza coin credited!`);
       render();
+    };
+  });
+  document.querySelectorAll('[data-aza-card]').forEach(btn => {
+    btn.onclick = () => {
+      if (btn.disabled) return;
+      btn.disabled = true; btn.textContent = 'Opening checkout…';
+      azaCheckout(btn.dataset.azaCard);
     };
   });
 }
@@ -57936,7 +57952,7 @@ async function cashoutStripeRefresh() {
     }
   } catch (e) {}
   StripeCashout.fetched = Date.now();
-  try { if (App.screen === 'cashout' && typeof render === 'function') render(); } catch (e) {}
+  try { if (typeof render === 'function' && ['cashout', 'vendorMarket', 'sovStore', 'shop'].indexOf(App.screen) >= 0) render(); } catch (e) {}
 }
 async function cashoutConnectStripe() {
   if (StripeCashout._busy) return;
@@ -57951,10 +57967,70 @@ async function cashoutConnectStripe() {
       showToast('↪ Redirecting to Stripe’s secure onboarding — complete identity verification there. The game never sees your bank or ID details.', 6000);
       setTimeout(() => { try { window.location.href = j.url; } catch (e) {} }, 900);
     } else {
-      showToast('⚠ Could not start Stripe onboarding' + (j && j.error ? ' (' + j.error + ')' : '') + '.', 4600);
+      const why = (j && (j.detail || j.error)) ? ' — ' + (j.detail || j.error) : '';
+      showToast('⚠ Could not start Stripe onboarding' + why + '. (Check Connect is enabled & the key has Connect permissions.)', 7000);
     }
   } catch (e) { showToast('⚠ Stripe connection failed — try again.', 4000); }
   finally { StripeCashout._busy = false; }
+}
+// 🪙 Buy Aza coin with a card via Stripe-hosted Checkout. The Worker holds
+// the secret key + authoritative prices; we only redirect and, on return,
+// verify + idempotently credit. No card data ever touches the game.
+const AzaBuy = { _busy: false };
+async function azaCheckout(pkgId) {
+  if (AzaBuy._busy) return;
+  AzaBuy._busy = true;
+  try {
+    const tok = await _sbToken();
+    if (!tok) { showToast('☁ Sign in to buy Aza coin with a card.', 4200); return; }
+    const r = await fetch('/api/buy/checkout', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify({ pack: pkgId }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 503 || (j && j.error === 'stripe_not_configured')) { showToast('💳 Card purchases aren’t configured on this deployment yet.', 5200); return; }
+    if (j && j.url) {
+      showToast('↪ Opening Stripe’s secure checkout — your card is entered on Stripe, never in the game.', 5200);
+      setTimeout(() => { try { window.location.href = j.url; } catch (e) {} }, 800);
+    } else {
+      const why = (j && (j.detail || j.error)) ? ' — ' + (j.detail || j.error) : '';
+      showToast('⚠ Could not start checkout' + why + '.', 6000);
+    }
+  } catch (e) { showToast('⚠ Checkout failed — try again.', 4000); }
+  finally { AzaBuy._busy = false; }
+}
+// On return from Stripe Checkout (?aza=ok&sid=…): verify the session with
+// the Worker, then credit exactly once via the UNIQUE aza_purchases row.
+async function azaConfirmReturn() {
+  try {
+    const sp = new URLSearchParams(location.search || '');
+    const st = sp.get('aza');
+    if (!st) return;
+    // Always clean the URL so a refresh can't re-trigger.
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    if (st === 'cancel') { showToast('Checkout cancelled — no charge made.', 3600); return; }
+    if (st !== 'ok') return;
+    const sid = sp.get('sid') || '';
+    if (!sid) return;
+    if (!(typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn)) { showToast('☁ Sign in so we can credit your Aza purchase.', 5000); return; }
+    const tok = await _sbToken();
+    if (!tok) return;
+    const j = await fetch('/api/buy/confirm?sid=' + encodeURIComponent(sid), { headers: { accept: 'application/json', authorization: 'Bearer ' + tok } }).then(r => r.json()).catch(() => null);
+    if (!j || !j.ok || !(Number(j.aza) > 0)) { showToast('⚠ Could not verify that purchase. If you were charged, contact support with no card details.', 6000); return; }
+    // Idempotent credit: the UNIQUE session_id makes a duplicate insert fail
+    // → we only addSovereigns when THIS client wrote the row.
+    try {
+      const ins = await Cloud.client.from('aza_purchases').insert({ user_id: Profile.cloud.userId, session_id: sid, aza: Number(j.aza) });
+      if (ins && ins.error) {
+        if (/duplicate|unique|23505|conflict/i.test((ins.error.message || '') + '')) { showToast('✓ This Aza purchase was already credited.', 4200); return; }
+        throw ins.error;
+      }
+    } catch (e) {
+      if (/aza_purchases|PGRST205|does not exist/i.test((e && e.message) || '')) { showToast('⚠ Run the updated api.sql so purchases can be credited.', 6000); return; }
+      showToast('⚠ Crediting failed — your session is valid; retry by reopening this link.', 6000); return;
+    }
+    addSovereigns(Number(j.aza));
+    try { saveProfile(); } catch (e) {}
+    showToast('🪙 +' + Number(j.aza).toLocaleString() + ' Aza coin — purchase complete. Thank you!', 6000);
+    try { if (typeof render === 'function') render(); } catch (e) {}
+  } catch (e) {}
 }
 function renderCashoutVault() {
   // Entry gate — Cashout Vault requires a hero at Lv 15+. Bounce on direct

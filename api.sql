@@ -162,6 +162,25 @@ create policy ca_ins on public.cashout_accounts for insert to authenticated with
 drop policy if exists ca_upd on public.cashout_accounts;
 create policy ca_upd on public.cashout_accounts for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 
+-- ── Aza coin purchases (Stripe Checkout) ───────────────────────────────
+-- One row per PAID Stripe Checkout Session. session_id is UNIQUE, so a
+-- given paid session credits Aza exactly once even across reloads/devices
+-- (the client inserts on its own JWT after the Worker verifies the payment
+-- with Stripe). No card/PII here — only the in-game coin amount + the
+-- Stripe session id.
+create table if not exists public.aza_purchases (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  session_id text not null unique,
+  aza numeric not null default 0,
+  created_at timestamptz default now()
+);
+alter table public.aza_purchases enable row level security;
+drop policy if exists ap_sel on public.aza_purchases;
+create policy ap_sel on public.aza_purchases for select to authenticated using (user_id = auth.uid());
+drop policy if exists ap_ins on public.aza_purchases;
+create policy ap_ins on public.aza_purchases for insert to authenticated with check (user_id = auth.uid());
+
 grant select on
   public.api_corporations,
   public.api_reserve_totals,

@@ -397,6 +397,9 @@ function App() {
           market: Array.isArray(d.market) ? d.market : ((prev && prev.market) || []),
           marketMine: Array.isArray(d.marketMine) ? d.marketMine : ((prev && prev.marketMine) || []),
           directory: Array.isArray(d.directory) ? d.directory : ((prev && prev.directory) || []),
+          // Real owned cards (id+name+icon+rarity+count) — must be captured
+          // so the Marketplace listing modal can pick from real collection.
+          cards: Array.isArray(d.cards) ? d.cards : ((prev && prev.cards) || []),
           mercSplit: (d.mercSplit && typeof d.mercSplit === 'object') ? d.mercSplit : ((prev && prev.mercSplit) || { merc: 0.40, employer: 0.52, tax: 0.08, perCinder: 5000, maxHours: 24, maxTarget: 5000000 }),
           created: (prev && prev.created) || new Date().toISOString(),
           recoveryKey: (prev && prev.recoveryKey) || '—',

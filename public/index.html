@@ -26116,7 +26116,11 @@ function openFoundationReserve() {
             '<div class="small-text" style="color:#ffb499;margin-top:3px">Node payouts throttled to <strong>' + guard.pct + '%</strong> to stop Cinder inflation · trigger: ' + esc(guard.why) + '. Lifts automatically when the economy stabilises.</div>' +
           '</div>'
         : '';
-      const head = guardBox + '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(120,170,255,0.3);border-radius:8px;background:rgba(40,70,130,0.12);color:#cfe0f4;font-size:0.86rem">' +
+      const nodeExplainer = '<div style="margin-bottom:8px;padding:10px 12px;border:1px solid rgba(212,175,55,0.4);border-radius:10px;background:linear-gradient(180deg,rgba(60,46,16,0.3),rgba(30,24,10,0.3));color:#f0e4c4;font-size:0.86rem;line-height:1.65">' +
+        '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:#ffcf5a;margin-bottom:4px">🔌 What is a Foundation Reserve Node?</div>' +
+        'Foundation Reserve Nodes are high-tier infrastructure memberships connected to the world economy of the game. Node Holders gain access to the Foundation Reserve system, treasury tracking, and <strong>Bank Of Ethos</strong> rewards. As players trade, build corporations, operate businesses, and pay taxes in Cinder across the ecosystem, the Foundation Reserve grows. When reserve milestones are reached, eligible Node Holders receive Cinder distributions directly to their Bank Of Ethos account. Nodes are limited and designed for players who want to help support and participate in the long-term economy of the world.' +
+        '</div>';
+      const head = guardBox + nodeExplainer + '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(120,170,255,0.3);border-radius:8px;background:rgba(40,70,130,0.12);color:#cfe0f4;font-size:0.86rem">' +
         '🔌 <strong>Foundation Reserve Node System</strong> — registered corporations run infrastructure and earn 🔥 for <strong>active contribution</strong>. A node only pays your NEW Reserve points since the last collect — idling pays nothing.' +
         '<div class="small-text" style="color:#9fb6d6;margin-top:4px">' + rk.rank.icon + ' ' + esc(rk.rank.name) + ' · ' + numF(FoundationReserve.myPoints) + ' rep · rate ' + NODE_CINDER_PER_POINT + ' 🔥/point' + (guard ? ' · <span style="color:#ff9a6b">guard ×' + guard.mul.toFixed(2) + '</span>' : '') + '</div></div>';
       if (FoundationReserve.nodesNeedSetup) {
@@ -58012,7 +58016,7 @@ const SOVEREIGN_PACKAGES = [
 // without a server-side admin endpoint. Moderation uses the detention
 // table's existing permissive policy (same as the Detention Complex).
 // ============================================================================
-const AdmUM = { q: '', results: [], all: [], total: 0, onlineCount: 0, mode: 'public', adminFetched: false, _loadingAll: false, _adminErr: '', sel: null, dossier: null, _loading: false, _busy: false, _t: null };
+const AdmUM = { q: '', results: [], all: [], total: 0, onlineCount: 0, mode: 'public', adminFetched: false, _loadingAll: false, _adminErr: '', sel: null, dossier: null, grantKind: 'cinder', _loading: false, _busy: false, _t: null };
 // Pull the FULL account directory from the admin Worker endpoint (service
 // role, admin-gated). Falls back to public-table search if SB_SERVICE
 // isn't set or the caller isn't an allow-listed admin.
@@ -58167,10 +58171,14 @@ function renderUserManagement() {
           `<div style="font-weight:800;color:#ffcf5a;margin-bottom:6px">🎁 Grant a reward</div>` +
           `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
             `<select id="um-gk" style="padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` +
-              `<option value="cinder">Cinders 🔥</option><option value="aza">Aza coin 🪙</option><option value="resource">Resource</option><option value="item">Item</option><option value="card">Card</option><option value="node">Node 🔌</option><option value="coupon">Coupon 🎟</option>` +
+              ['cinder|Cinders 🔥', 'aza|Aza coin 🪙', 'resource|Resource', 'item|Item', 'card|Card', 'node|Node 🔌', 'coupon|Coupon 🎟'].map(function (o) { var p = o.split('|'); return '<option value="' + p[0] + '"' + (AdmUM.grantKind === p[0] ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('') +
             `</select>` +
-            `<input id="um-ga" type="number" min="1" value="1000" style="width:90px;padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` +
-            `<input id="um-gr" placeholder="id / code (resource·item·card·coupon · node: mining,fuel,mfg,storage,supply,convoy,security,research)" style="flex:1;min-width:150px;padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` +
+            (AdmUM.grantKind === 'node'
+              ? ''
+              : `<input id="um-ga" type="number" min="1" value="1000" style="width:90px;padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">`) +
+            (AdmUM.grantKind === 'node'
+              ? `<select id="um-gr" style="flex:1;min-width:170px;padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` + ((typeof RESERVE_NODE_TYPES !== 'undefined' ? RESERVE_NODE_TYPES : []).map(function (n) { return '<option value="' + esc(n.id) + '">' + esc((n.icon ? n.icon + ' ' : '') + n.name) + '</option>'; }).join('') || '<option value="">(no node types)</option>') + `</select>`
+              : `<input id="um-gr" placeholder="${AdmUM.grantKind === 'resource' ? 'resource id (fuel, metal, food…)' : AdmUM.grantKind === 'item' ? 'item id' : AdmUM.grantKind === 'card' ? 'card id' : AdmUM.grantKind === 'coupon' ? 'coupon code / label' : 'optional'}" style="flex:1;min-width:150px;padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">`) +
             `<button class="btn-primary" id="um-gsend" ${AdmUM._busy ? 'disabled' : ''}>Send</button>` +
           `</div>` +
           `<div class="small-text ink-dim" style="margin-top:4px">Lands in the player's gift inbox — they claim it like any reward.</div>` +
@@ -58230,10 +58238,12 @@ function renderUserManagement() {
   const jb = document.getElementById('um-jail'); if (jb && d) jb.onclick = () => _admJail(d.handle);
   const rb = document.getElementById('um-release'); if (rb && d) rb.onclick = () => _admRelease(d.handle);
   if (d && d.user_id) {
+    const gk = document.getElementById('um-gk');
+    if (gk) gk.onchange = () => { AdmUM.grantKind = gk.value || 'cinder'; render(); };
     const gs = document.getElementById('um-gsend');
     if (gs) gs.onclick = async () => {
       const kind = (document.getElementById('um-gk') || {}).value || 'cinder';
-      const amt = parseInt((document.getElementById('um-ga') || {}).value, 10) || 0;
+      const amt = kind === 'node' ? 1 : (parseInt((document.getElementById('um-ga') || {}).value, 10) || 0);
       const ref = ((document.getElementById('um-gr') || {}).value || '').trim();
       gs.disabled = true; gs.textContent = '…';
       const r = await adminGrant(d.user_id, kind, amt, ref, ref);

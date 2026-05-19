@@ -58075,10 +58075,14 @@ function renderUserManagement() {
   const resHtml = AdmUM._loadingAll
     ? '<div class="ink-dim small-text" style="padding:1rem;text-align:center">Loading account directory…</div>'
     : (listSrc.length
-      ? listSrc.map(u => `<button class="btn-secondary" data-um-pick="${esc(u.handle)}" data-um-id="${esc(u.user_id || '')}" data-um-g="${u.gems != null ? (u.gems | 0) : ''}" data-um-s="${u.sovereigns != null ? (u.sovereigns | 0) : ''}" data-um-ls="${esc(u.last_seen || '')}" style="display:flex;justify-content:space-between;gap:8px;align-items:center;width:100%;text-align:left;margin-bottom:5px;padding:0.5rem 0.7rem">`
-          + `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${full ? (u.online ? '🟢 ' : '⚫ ') : ''}${esc(u.handle)}${u.user_id ? '' : ' <span class="small-text ink-dim">(name only)</span>'}</span>`
-          + (full ? `<span class="small-text ink-dim" style="white-space:nowrap">${(u.gems | 0).toLocaleString()}🔥 · ${(u.sovereigns | 0)}🪙</span>` : '')
-          + `</button>`).join('')
+      ? listSrc.map(u => {
+          const seld = AdmUM.sel && (AdmUM.sel.handle === u.handle && (AdmUM.sel.user_id || '') === (u.user_id || ''));
+          return `<button class="btn-secondary" data-um-pick="${esc(u.handle)}" data-um-id="${esc(u.user_id || '')}" data-um-g="${u.gems != null ? (u.gems | 0) : ''}" data-um-s="${u.sovereigns != null ? (u.sovereigns | 0) : ''}" data-um-ls="${esc(u.last_seen || '')}" style="box-sizing:border-box;display:flex;align-items:center;gap:10px;width:100%;max-width:100%;text-align:left;margin-bottom:6px;padding:0.55rem 0.7rem;overflow:hidden;${seld ? 'border-color:#ffcf5a;background:rgba(212,175,55,0.14);' : ''}">`
+            + (full ? `<span style="flex:0 0 auto;font-size:0.7rem">${u.online ? '🟢' : '⚫'}</span>` : '')
+            + `<span style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#ffe6b0;font-weight:700">${esc(u.handle)}${u.user_id ? '' : ' <span class="small-text ink-dim" style="font-weight:400">(name only)</span>'}</span>`
+            + (full ? `<span class="small-text ink-dim" style="flex:0 0 auto;white-space:nowrap">${(u.gems | 0) >= 1000 ? Math.round((u.gems | 0) / 1000) + 'k' : (u.gems | 0)} 🔥 · ${(u.sovereigns | 0)} 🪙</span>` : '')
+            + `</button>`;
+        }).join('')
       : (full ? '<div class="ink-dim small-text" style="padding:1rem;text-align:center">No accounts match.</div>'
         : (AdmUM.q && AdmUM.q.length >= 2 ? '<div class="ink-dim small-text" style="padding:1rem;text-align:center">No players match.</div>' : '<div class="ink-dim small-text" style="padding:1rem;text-align:center">Search by handle (2+ chars).</div>')));
   let dossier = '<div class="ink-dim small-text" style="padding:1.4rem;text-align:center">Select a player to view their dossier.</div>';
@@ -58119,9 +58123,9 @@ function renderUserManagement() {
       <div style="display:flex;gap:8px;margin:14px 0">
         <input id="um-q" autocomplete="off" value="${esc(AdmUM.q)}" placeholder="${full ? 'Filter ' + (AdmUM.total | 0).toLocaleString() + ' accounts by handle…' : 'Search player handle…'}" style="flex:1;padding:0.6rem 0.8rem;border-radius:8px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">
       </div>
-      <div style="display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start">
-        <div class="card" style="padding:10px;max-height:60vh;overflow:auto">${resHtml}</div>
-        <div class="card" style="padding:14px">${dossier}</div>
+      <div style="display:flex;gap:14px;align-items:stretch;flex-wrap:wrap">
+        <div class="card" style="flex:1 1 340px;min-width:280px;max-width:420px;padding:8px;height:62vh;min-height:360px;overflow-y:auto;overflow-x:hidden">${resHtml}</div>
+        <div class="card" style="flex:2 1 380px;min-width:280px;padding:16px;min-height:360px">${dossier}</div>
       </div>
     </div>`;
   const back = document.getElementById('um-back');

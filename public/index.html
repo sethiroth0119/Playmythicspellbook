@@ -57957,7 +57957,30 @@ const SOVEREIGN_PACKAGES = [
 // without a server-side admin endpoint. Moderation uses the detention
 // table's existing permissive policy (same as the Detention Complex).
 // ============================================================================
-const AdmUM = { q: '', results: [], sel: null, dossier: null, _loading: false, _busy: false, _t: null };
+const AdmUM = { q: '', results: [], all: [], total: 0, onlineCount: 0, mode: 'public', adminFetched: false, _loadingAll: false, _adminErr: '', sel: null, dossier: null, _loading: false, _busy: false, _t: null };
+// Pull the FULL account directory from the admin Worker endpoint (service
+// role, admin-gated). Falls back to public-table search if SB_SERVICE
+// isn't set or the caller isn't an allow-listed admin.
+async function _admFetchAll() {
+  if (AdmUM._loadingAll) return;
+  AdmUM._loadingAll = true;
+  try {
+    const tok = (typeof _sbToken === 'function') ? await _sbToken() : null;
+    if (!tok) { AdmUM.mode = 'public'; AdmUM._adminErr = 'sign in'; }
+    else {
+      const r = await fetch('/api/admin/users?limit=600', { headers: { accept: 'application/json', authorization: 'Bearer ' + tok } });
+      const j = await r.json().catch(() => null);
+      if (r.ok && j && Array.isArray(j.users)) {
+        AdmUM.all = j.users; AdmUM.total = j.count | 0; AdmUM.onlineCount = j.online | 0; AdmUM.mode = 'full'; AdmUM._adminErr = '';
+      } else {
+        AdmUM.mode = 'public';
+        AdmUM._adminErr = (j && (j.hint || j.error)) ? (j.hint || j.error) : ('HTTP ' + r.status);
+      }
+    }
+  } catch (e) { AdmUM.mode = 'public'; AdmUM._adminErr = 'unreachable'; }
+  AdmUM.adminFetched = true; AdmUM._loadingAll = false;
+  try { if (App.screen === 'userMgmt') render(); } catch (e) {}
+}
 async function _admUserSearch(term) {
   try {
     const qx = (term || '').trim().replace(/^@+\s*/, '');
@@ -57971,7 +57994,10 @@ async function _admUserSearch(term) {
   } catch (e) { return []; }
 }
 async function _admDossier(u) {
-  const d = { handle: u.handle, user_id: u.user_id || null, corp: null, rep: 0, official: null, records: 0, jailed: null };
+  const d = { handle: u.handle, user_id: u.user_id || null, corp: null, rep: 0, official: null, records: 0, jailed: null,
+    gems: (u.gems != null && u.gems !== '') ? (u.gems | 0) : null,
+    sovereigns: (u.sovereigns != null && u.sovereigns !== '') ? (u.sovereigns | 0) : null,
+    last_seen: u.last_seen || null };
   try {
     if (u.user_id) {
       const cm = await Cloud.client.from('corp_members').select('corp_id,role').eq('user_id', u.user_id).maybeSingle();
@@ -58035,10 +58061,26 @@ function renderUserManagement() {
     App.screen = 'title'; App.titleHub = 'arcanum'; setTimeout(() => render(), 0); return;
   }
   const esc = (s) => escapeHtml(String(s == null ? '' : s));
+  if (!AdmUM.adminFetched && !AdmUM._loadingAll) { try { _admFetchAll(); } catch (e) {} }
   const d = AdmUM.dossier;
-  const resHtml = (AdmUM.results || []).length
-    ? AdmUM.results.map(u => `<button class="btn-secondary" data-um-pick="${esc(u.handle)}" data-um-id="${esc(u.user_id || '')}" style="display:block;width:100%;text-align:left;margin-bottom:5px;padding:0.5rem 0.7rem">${esc(u.handle)}${u.user_id ? '' : ' <span class="small-text ink-dim">(name only)</span>'}</button>`).join('')
-    : (AdmUM.q && AdmUM.q.length >= 2 ? '<div class="ink-dim small-text" style="padding:1rem;text-align:center">No players match.</div>' : '<div class="ink-dim small-text" style="padding:1rem;text-align:center">Search by handle (2+ chars).</div>');
+  const full = AdmUM.mode === 'full';
+  const ago = (iso) => { if (!iso) return 'never'; const ms = Date.now() - Date.parse(iso); if (ms < 0) return 'now'; const m = Math.floor(ms / 60000); if (m < 1) return 'now'; if (m < 60) return m + 'm ago'; const h = Math.floor(m / 60); if (h < 24) return h + 'h ago'; return Math.floor(h / 24) + 'd ago'; };
+  let listSrc;
+  if (full) {
+    const qf = (AdmUM.q || '').trim().toLowerCase();
+    listSrc = (AdmUM.all || []).filter(u => !qf || (u.handle || '').toLowerCase().indexOf(qf) >= 0).slice(0, 300);
+  } else {
+    listSrc = AdmUM.results || [];
+  }
+  const resHtml = AdmUM._loadingAll
+    ? '<div class="ink-dim small-text" style="padding:1rem;text-align:center">Loading account directory…</div>'
+    : (listSrc.length
+      ? listSrc.map(u => `<button class="btn-secondary" data-um-pick="${esc(u.handle)}" data-um-id="${esc(u.user_id || '')}" data-um-g="${u.gems != null ? (u.gems | 0) : ''}" data-um-s="${u.sovereigns != null ? (u.sovereigns | 0) : ''}" data-um-ls="${esc(u.last_seen || '')}" style="display:flex;justify-content:space-between;gap:8px;align-items:center;width:100%;text-align:left;margin-bottom:5px;padding:0.5rem 0.7rem">`
+          + `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${full ? (u.online ? '🟢 ' : '⚫ ') : ''}${esc(u.handle)}${u.user_id ? '' : ' <span class="small-text ink-dim">(name only)</span>'}</span>`
+          + (full ? `<span class="small-text ink-dim" style="white-space:nowrap">${(u.gems | 0).toLocaleString()}🔥 · ${(u.sovereigns | 0)}🪙</span>` : '')
+          + `</button>`).join('')
+      : (full ? '<div class="ink-dim small-text" style="padding:1rem;text-align:center">No accounts match.</div>'
+        : (AdmUM.q && AdmUM.q.length >= 2 ? '<div class="ink-dim small-text" style="padding:1rem;text-align:center">No players match.</div>' : '<div class="ink-dim small-text" style="padding:1rem;text-align:center">Search by handle (2+ chars).</div>')));
   let dossier = '<div class="ink-dim small-text" style="padding:1.4rem;text-align:center">Select a player to view their dossier.</div>';
   if (AdmUM._loading) dossier = '<div class="ink-dim small-text" style="padding:1.4rem;text-align:center">Loading dossier…</div>';
   else if (d) {
@@ -58048,6 +58090,9 @@ function renderUserManagement() {
       `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px"><div style="font-family:'Cinzel',serif;font-size:1.15rem;font-weight:800;color:#ffcf5a">${esc(d.handle)}</div>` +
       (d.jailed ? `<span class="small-text" style="color:#ff6b6b;font-weight:800">🔒 JAILED</span>` : `<span class="small-text" style="color:#7fe0a0;font-weight:800">● free</span>`) + `</div>` +
       row('User ID', d.user_id ? `<code style="font-size:0.8rem">${esc(d.user_id)}</code> <button class="btn-secondary btn-mini" id="um-copy">copy</button>` : '<span class="ink-dim">unknown (name-only record)</span>') +
+      (d.gems != null ? row('Cinders 🔥', (d.gems | 0).toLocaleString()) : '') +
+      (d.sovereigns != null ? row('Aza coin 🪙', (d.sovereigns | 0).toLocaleString()) : '') +
+      (d.last_seen != null ? row('Last seen', `${ago(d.last_seen)} <span class="ink-dim">(${esc(new Date(d.last_seen).toLocaleString())})</span>`) : '') +
       row('Corporation', d.corp ? `${esc(d.corp.name)} <span class="ink-dim">[${esc(d.corp.tag)}]</span> · ${esc(d.corp.role)}` : '—') +
       row('Reserve rep', `${(rk.rank.icon || '')} ${esc(rk.rank.name || '')} · ${(d.rep | 0).toLocaleString()}`) +
       row('Court role', d.official ? `${esc(d.official.rank || '')} ${esc(d.official.role || '')}` : '—') +
@@ -58058,19 +58103,21 @@ function renderUserManagement() {
           ? `<button class="btn-primary" id="um-release" ${AdmUM._busy ? 'disabled' : ''}>🔓 Release from detention</button>`
           : `<button class="btn-secondary" id="um-jail" ${AdmUM._busy ? 'disabled' : ''} style="border-color:#ff9a6b;color:#ffb499">🔒 Jail 24h (moderation)</button>`) +
       `</div>` +
-      `<div class="small-text ink-dim" style="margin-top:10px;line-height:1.6">Dossier is built from public game data. Private values (Cinder/Aza balance, cashout &amp; purchase history) are RLS-locked per user and need a server-side admin endpoint — say the word and I'll add one.</div>`;
+      `<div class="small-text ink-dim" style="margin-top:10px;line-height:1.6">${full ? 'Balances + last-seen come from the secure admin endpoint (service role, admin-gated). Cashout/purchase history is still per-user RLS — ask for it as a dedicated admin view.' : 'Public-data only. Cinder/Aza balance &amp; last-seen need the admin endpoint — set the SB_SERVICE secret to enable the full directory.'}</div>`;
   }
   root.innerHTML = `
     <div class="campaign-page" style="max-width:920px;margin:0 auto;padding:1.4rem">
       <div class="campaign-header">
         <div>
           <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🛡️ User Management</h2>
-          <div class="small-text ink-dim">Admin · find players, view dossiers, moderate (jail / release).</div>
+          <div class="small-text ink-dim">${full
+            ? '🟢 ' + (AdmUM.onlineCount | 0) + ' online · ' + (AdmUM.total | 0).toLocaleString() + ' accounts · click for full dossier · jail / release'
+            : 'Public search mode' + (AdmUM._adminErr ? ' (' + esc(AdmUM._adminErr) + ')' : '') + ' — set the SB_SERVICE Worker secret for the full account directory.'}</div>
         </div>
         <button class="btn-secondary btn-mini" id="um-back">← Arcanum</button>
       </div>
       <div style="display:flex;gap:8px;margin:14px 0">
-        <input id="um-q" autocomplete="off" value="${esc(AdmUM.q)}" placeholder="Search player handle…" style="flex:1;padding:0.6rem 0.8rem;border-radius:8px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">
+        <input id="um-q" autocomplete="off" value="${esc(AdmUM.q)}" placeholder="${full ? 'Filter ' + (AdmUM.total | 0).toLocaleString() + ' accounts by handle…' : 'Search player handle…'}" style="flex:1;padding:0.6rem 0.8rem;border-radius:8px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">
       </div>
       <div style="display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start">
         <div class="card" style="padding:10px;max-height:60vh;overflow:auto">${resHtml}</div>
@@ -58084,12 +58131,19 @@ function renderUserManagement() {
     qi.oninput = (e) => {
       AdmUM.q = e.target.value;
       clearTimeout(AdmUM._t);
+      if (AdmUM.mode === 'full') { AdmUM._t = setTimeout(() => render(), 120); return; }   // client-side filter
       AdmUM._t = setTimeout(() => { _admUserSearch(AdmUM.q).then(rows => { AdmUM.results = rows; render(); }); }, 260);
     };
     qi.focus(); try { qi.setSelectionRange(qi.value.length, qi.value.length); } catch (e) {}
   }
   root.querySelectorAll('[data-um-pick]').forEach(b => {
-    b.onclick = () => _admSelect({ handle: b.getAttribute('data-um-pick'), user_id: b.getAttribute('data-um-id') || null });
+    b.onclick = () => _admSelect({
+      handle: b.getAttribute('data-um-pick'),
+      user_id: b.getAttribute('data-um-id') || null,
+      gems: b.getAttribute('data-um-g') !== '' ? b.getAttribute('data-um-g') : null,
+      sovereigns: b.getAttribute('data-um-s') !== '' ? b.getAttribute('data-um-s') : null,
+      last_seen: b.getAttribute('data-um-ls') || null,
+    });
   });
   const cp = document.getElementById('um-copy');
   if (cp && d && d.user_id) cp.onclick = () => { try { navigator.clipboard.writeText(d.user_id); showToast('📋 User ID copied.'); } catch (e) {} };

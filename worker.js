@@ -144,7 +144,7 @@ async function sbUser(env, request) {
   });
   if (!r.ok) return null;
   const j = await r.json().catch(() => null);
-  return j && j.id ? { id: j.id, token: tok } : null;
+  return j && j.id ? { id: j.id, token: tok, email: (j.email || '').toLowerCase() } : null;
 }
 // Read/write the user→stripe-account map in Supabase AS THE USER (their JWT →
 // PostgREST applies RLS). Requires the cashout_accounts table from api.sql.
@@ -329,10 +329,64 @@ async function handleBuy(request, env, u) {
   return cjson({ error: 'not_found' }, 404);
 }
 
+/* ============================================================================
+ * 🛡️ ADMIN — full account directory (Arcanum → User Management).
+ * Lists EVERY user_profiles row with profile info + an "online" flag
+ * (updated_at within 5 min). Reads the private user_profiles table with the
+ * Supabase SERVICE-ROLE key (bypasses RLS) — so it is doubly gated:
+ *   1) the caller's Supabase token is verified server-side, and their
+ *      email must be in ADMIN_EMAILS (same allowlist as the game client —
+ *      these emails already ship in the client, they are not secrets);
+ *   2) the service key lives ONLY in a Cloudflare secret (env.SB_SERVICE),
+ *      never in the client or repo.
+ * If SB_SERVICE is unset → 501; the game falls back to the public-table
+ * search and nothing breaks.
+ * ========================================================================== */
+const ADMIN_EMAILS = ['richaegisop@gmail.com', 'play@mythicsoa.com', 'dev@mythicspellbook.com'];
+const ADMIN_ONLINE_MS = 5 * 60 * 1000;
+async function handleAdmin(request, env, u) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_RW });
+  const seg = u.pathname.replace(/^\/api\/admin\//, '').replace(/\/+$/, '');
+  if (!env.SB_SERVICE) return cjson({ error: 'admin_not_configured', hint: 'Set the SB_SERVICE secret (Supabase service_role key) to enable the full account directory. See STRIPE.md.' }, 501);
+  const user = await sbUser(env, request);
+  if (!user) return cjson({ error: 'unauthorized' }, 401);
+  if (ADMIN_EMAILS.indexOf(user.email) < 0) return cjson({ error: 'forbidden' }, 403);
+
+  if (seg === 'users' && request.method === 'GET') {
+    const lim = Math.max(1, Math.min(1000, parseInt(u.searchParams.get('limit') || '500', 10) || 500));
+    const q = (u.searchParams.get('q') || '').trim();
+    let path = '/rest/v1/user_profiles?select=user_id,display_name,gems,sovereigns,updated_at&order=updated_at.desc&limit=' + lim;
+    if (q) path += '&display_name=ilike.' + encodeURIComponent('%' + q + '%');
+    const base = String(env.SB_URL || '').replace(/\/+$/, '');
+    const r = await fetch(base + path, { headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, accept: 'application/json' } });
+    if (!r.ok) { let t = ''; try { t = await r.text(); } catch (e) {} return cjson({ error: 'upstream', detail: ('sb ' + r.status + ' ' + t).slice(0, 200) }, 502); }
+    const rows = await r.json().catch(() => []);
+    const now = Date.now();
+    const users = (Array.isArray(rows) ? rows : []).map(function (x) {
+      const t = x.updated_at ? Date.parse(x.updated_at) : 0;
+      return {
+        user_id: x.user_id,
+        handle: x.display_name || '(no handle)',
+        gems: Math.max(0, Math.floor(Number(x.gems) || 0)),
+        sovereigns: Math.max(0, Math.floor(Number(x.sovereigns) || 0)),
+        last_seen: x.updated_at || null,
+        online: !!(t && (now - t) < ADMIN_ONLINE_MS),
+      };
+    });
+    return cjson({ count: users.length, online: users.filter(x => x.online).length, users: users });
+  }
+  return cjson({ error: 'not_found' }, 404);
+}
+
 export default {
   async fetch(request, env) {
     let u;
     try { u = new URL(request.url); } catch (e) { return env.ASSETS.fetch(request); }
+
+    if (u.pathname.startsWith('/api/admin/')) {
+      try { return await handleAdmin(request, env, u); }
+      catch (e) { return cjson({ error: 'admin_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
+    }
 
     if (u.pathname.startsWith('/api/cashout/')) {
       try { return await handleCashout(request, env, u); }

@@ -68,3 +68,24 @@ Callers authenticate with their Supabase access token
 
 This repo intentionally ships payouts **off**. Turning them on is a
 deliberate, operator-only action.
+
+---
+
+## Admin User Management — full account directory (optional)
+
+Arcanum → **User Management** works in a limited public-search mode out of
+the box. To list **every account** with profile info (Cinders / Aza / last
+seen / online), set the Supabase **service-role** key as a Worker secret:
+
+```sh
+npx wrangler secret put SB_SERVICE   # paste your Supabase service_role key
+```
+
+- Find it in Supabase → Project Settings → API → **service_role** secret.
+- It is **only** read server-side by `/api/admin/users`, which first
+  verifies the caller's Supabase token and that their email is in the
+  Worker's `ADMIN_EMAILS` allowlist. Never goes to the client or repo.
+- The service key bypasses RLS — treat it like a root password. Rotate it
+  if exposed. Until it's set, the endpoint returns 501 and the screen
+  silently falls back to public search (nothing breaks).
+- "Online" = the account's profile synced within the last 5 minutes.

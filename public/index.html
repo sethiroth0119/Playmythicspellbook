@@ -5237,6 +5237,14 @@
     object-position: center bottom;
     image-rendering: pixelated;
     opacity: 0;
+    /* Belt-and-suspenders: visibility AND opacity = 0 so even if a more
+       specific rule somewhere (.preview-box img, .unit-icon img, …)
+       trumps `opacity` via element-selector specificity, the non-active
+       frame still can't paint on top of the active one. The Sprite
+       Atelier preview was showing all frames stacked because the
+       editor's preview-box CSS targeted `img` directly (specificity
+       beat .sprite-stack .sprite-frame) and could mask opacity:0. */
+    visibility: hidden;
     pointer-events: none;
     backface-visibility: hidden;
     transform: translateZ(0);
@@ -5245,7 +5253,7 @@
        transparent dithering that the eye reads as flickering. With instant
        opacity toggle, each frame is fully visible or fully hidden — clean. */
   }
-  .sprite-stack .sprite-frame.is-on { opacity: 1; }
+  .sprite-stack .sprite-frame.is-on { opacity: 1; visibility: visible; }
   /* First frame defines the wrapper's natural layout size ONLY before the JS
      ticker has stamped [data-sprite-init] on this stack. Once JS sets an
      explicit aspect-ratio on the wrapper, every frame stays absolutely

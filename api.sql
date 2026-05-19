@@ -191,6 +191,39 @@ create or replace view public.api_players as
   from public.user_profiles
   where display_name is not null and btrim(display_name) <> '';
 
+-- ── Gift inbox (player rewards + admin grants) ─────────────────────────
+-- The game's "You got a gift" inbox. Players read/claim their own pending
+-- gifts; ADMINS (email allowlist) insert gifts for anyone. Admin grants of
+-- Cinders/Aza/resources/items/cards/nodes/coupons all land here as a
+-- claimable row (card_id encodes the kind; no schema churn per reward).
+create table if not exists public.gifts (
+  id uuid primary key default gen_random_uuid(),
+  to_user uuid not null references auth.users(id) on delete cascade,
+  card_id text not null,
+  card_name text,
+  qty numeric not null default 1,
+  message text,
+  from_label text default 'Mythic Spellbook',
+  status text not null default 'pending',
+  created_at timestamptz default now(),
+  claimed_at timestamptz
+);
+create index if not exists gifts_to_user on public.gifts (to_user, status);
+alter table public.gifts enable row level security;
+-- Admin allowlist via the verified top-level JWT email claim (NOT
+-- user_metadata — safe for authz). security invoker (default).
+create or replace function public.is_admin() returns boolean
+  language sql stable as $$
+  select lower(coalesce((auth.jwt() ->> 'email'), '')) in
+    ('richaegisop@gmail.com', 'play@mythicsoa.com', 'dev@mythicspellbook.com')
+$$;
+drop policy if exists gifts_sel on public.gifts;
+create policy gifts_sel on public.gifts for select to authenticated using (to_user = auth.uid() or public.is_admin());
+drop policy if exists gifts_ins on public.gifts;
+create policy gifts_ins on public.gifts for insert to authenticated with check (public.is_admin());
+drop policy if exists gifts_upd on public.gifts;
+create policy gifts_upd on public.gifts for update to authenticated using (to_user = auth.uid()) with check (to_user = auth.uid());
+
 grant select on
   public.api_corporations,
   public.api_reserve_totals,

@@ -60594,7 +60594,7 @@ async function adminGrant(toUserId, kind, amount, ref, label) {
       to_user: toUserId, card_id: card_id, card_name: card_name, qty: qty,
       message: 'Granted by Admin', from_label: 'Admin', status: 'pending',
     });
-    if (error) return { error: error.message || 'Grant failed.' };
+    if (error) return { error: (/gifts|PGRST205|schema cache|does not exist/i.test(error.message || '') ? 'Gift inbox not set up — run the updated api.sql in Supabase (creates the gifts table).' : (error.message || 'Grant failed.')) };
     return { ok: true, label: card_name };
   } catch (e) { return { error: (e && e.message) || 'Network error.' }; }
 }

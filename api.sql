@@ -120,6 +120,30 @@ create policy np_sel on public.node_payouts for select to authenticated using (t
 drop policy if exists np_ins on public.node_payouts;
 create policy np_ins on public.node_payouts for insert to authenticated with check (user_id = auth.uid());
 
+-- ── Cashout (withdrawal) audit log ─────────────────────────────────────
+-- Tamper-evident transaction trail for the (mock) Cinder → cash payout
+-- pipeline. Contains NO bank / card / ID data — only the in-game amount,
+-- a non-sensitive method label, status and the safeguard reason. A row is
+-- append-only (no update/delete policy) and each user can read only their
+-- own rows. Real KYC + settlement happen off-platform via a licensed
+-- processor in a live build; this table never stores PII.
+create table if not exists public.cashout_requests (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  cinders numeric not null default 0,
+  usd numeric not null default 0,
+  method text,
+  status text not null default 'pending',
+  reason text,
+  created_at timestamptz default now()
+);
+create index if not exists cashout_requests_user on public.cashout_requests (user_id, created_at desc);
+alter table public.cashout_requests enable row level security;
+drop policy if exists cor_sel on public.cashout_requests;
+create policy cor_sel on public.cashout_requests for select to authenticated using (user_id = auth.uid());
+drop policy if exists cor_ins on public.cashout_requests;
+create policy cor_ins on public.cashout_requests for insert to authenticated with check (user_id = auth.uid());
+
 grant select on
   public.api_corporations,
   public.api_reserve_totals,

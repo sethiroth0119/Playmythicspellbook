@@ -30136,6 +30136,10 @@ function loadForge() {
           pending:  Math.max(0, p.cashout.pending  || 0),
           lifetime: Math.max(0, p.cashout.lifetime || 0),
           history:  Array.isArray(p.cashout.history) ? p.cashout.history.slice(0, 50) : [],
+          lastTs:   Math.max(0, p.cashout.lastTs || 0),
+          verified: !!p.cashout.verified,
+          method:   (typeof p.cashout.method === 'string') ? p.cashout.method.slice(0, 24) : '',
+          paidUsd:  Math.max(0, p.cashout.paidUsd || p.cashout.lifetime || 0),
         };
       }
       if (p.account && typeof p.account === 'object') {
@@ -57572,6 +57576,113 @@ const CASHOUT_TIERS = [
   { cinders: 10000000, dollars: 2400,  bonus: 20 },   // +20% bonus — top tier
 ];
 
+// ── Withdrawal safeguards (mock build — NO real money moves, and NO bank /
+// card / ID numbers are ever collected here; real KYC + payout settlement
+// are handled off-platform by a licensed processor in a live build). These
+// gate the request pipeline: verification, cooldown rate-limit, pending
+// cap, anti-fraud velocity check, Reserve-balance (Treasury) protection,
+// and the AI inflation monitor. Every request is logged locally and, best
+// -effort, to a tamper-evident Supabase audit table.
+const CASHOUT_COOLDOWN_MS     = 72 * 3600000;  // 72h between payout requests
+const CASHOUT_MAX_PENDING_USD = 2400;          // cap unsettled (queued) payout
+const CASHOUT_RESERVE_SHARE   = 0.10;          // global allowance = 10% of Treasury
+const CASHOUT_METHODS = ['PayPal', 'Bank transfer', 'Crypto wallet'];
+function _cashoutEnsure() {
+  if (!Profile.cashout || typeof Profile.cashout !== 'object') Profile.cashout = {};
+  const c = Profile.cashout;
+  if (typeof c.pending !== 'number') c.pending = 0;
+  if (typeof c.lifetime !== 'number') c.lifetime = 0;
+  if (!Array.isArray(c.history)) c.history = [];
+  if (typeof c.lastTs !== 'number') c.lastTs = 0;
+  if (typeof c.verified !== 'boolean') c.verified = false;
+  if (typeof c.method !== 'string') c.method = '';
+  if (typeof c.paidUsd !== 'number') c.paidUsd = c.lifetime || 0;
+  if (!c._snap || typeof c._snap !== 'object') c._snap = { ts: Date.now(), gems: Profile.gems || 0 };
+  return c;
+}
+function _cashoutSafeguards() {
+  const c = _cashoutEnsure();
+  const now = Date.now();
+  const cdLeft = Math.max(0, (c.lastTs || 0) + CASHOUT_COOLDOWN_MS - now);
+  let inflationHold = null;
+  try {
+    const g = (typeof frInflationGuard === 'function') ? frInflationGuard() : null;
+    const es = (typeof frEconomyState === 'function') ? frEconomyState() : null;
+    if (g) inflationHold = 'AI inflation guard active (' + g.why + ')';
+    else if (es && es.state === 'CRISIS') inflationHold = 'Economy in CRISIS';
+  } catch (e) {}
+  let allowanceUsd = null, allowanceLeft = null;
+  try {
+    const treasury = (typeof FoundationReserve !== 'undefined' && FoundationReserve.taxStats && FoundationReserve.taxStats.total) || 0;
+    allowanceUsd = Math.floor((treasury * CASHOUT_RESERVE_SHARE) / CASHOUT_RATE_PER_DOLLAR);
+    allowanceLeft = Math.max(0, allowanceUsd - (c.paidUsd || 0));
+  } catch (e) {}
+  let fraudHold = null;
+  try {
+    const snap = c._snap;
+    if (snap && snap.ts && now > snap.ts) {
+      const perHr = Math.max(0, (Profile.gems || 0) - (snap.gems || 0)) / Math.max(0.25, (now - snap.ts) / 3600000);
+      if (perHr > 300000) fraudHold = 'Unusual balance velocity (' + Math.round(perHr).toLocaleString() + ' 🔥/hr)';
+    }
+  } catch (e) {}
+  return {
+    verified: !!c.verified, method: c.method || '', cooldownLeft: cdLeft,
+    pendingUsd: c.pending || 0, pendingCap: CASHOUT_MAX_PENDING_USD,
+    inflationHold: inflationHold, allowanceUsd: allowanceUsd, allowanceLeft: allowanceLeft,
+    fraudHold: fraudHold,
+  };
+}
+function cashoutVerify(method) {
+  const c = _cashoutEnsure();
+  if (!method || CASHOUT_METHODS.indexOf(method) < 0) { showToast('Pick a payout method first.'); return false; }
+  const online = !!(typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn);
+  if (!online) { showToast('☁ Sign in to your account before verifying for payouts.', 4000); return false; }
+  if (!confirm('Verify this account for payouts via ' + method + '?\n\nMOCK BUILD: no bank, card or ID numbers are ever collected here. In a live build, identity (KYC) and payout details are handled off-platform by a licensed payment processor — never stored in the game. Continue?')) return false;
+  c.verified = true; c.method = method; c._snap = { ts: Date.now(), gems: Profile.gems || 0 };
+  try { saveProfile(); } catch (e) {}
+  showToast('✅ Account verified for payouts — ' + method + ' (mock).', 4600);
+  return true;
+}
+function requestCashout(cinders) {
+  const tier = CASHOUT_TIERS.find(t => t.cinders === cinders);
+  if (!tier) return false;
+  const c = _cashoutEnsure();
+  const sg = _cashoutSafeguards();
+  if (!sg.verified) { showToast('Verify your account for payouts first (panel above).', 4600); return false; }
+  if (cinders < CASHOUT_MIN_CINDERS) { showToast('Minimum cashout is ' + CASHOUT_MIN_CINDERS.toLocaleString() + ' Cinders.'); return false; }
+  if ((Profile.gems || 0) < cinders) { showToast('Not enough Cinders'); return false; }
+  if (sg.cooldownLeft > 0) { showToast('⏳ Payout cooldown — ' + Math.ceil(sg.cooldownLeft / 3600000) + 'h left (anti-fraud rate limit).', 5200); return false; }
+  if ((sg.pendingUsd + tier.dollars) > sg.pendingCap) { showToast('You have $' + sg.pendingUsd.toFixed(2) + ' unsettled — let it settle before queuing more (cap $' + sg.pendingCap + ').', 5600); return false; }
+  let status = 'pending', reason = '';
+  if (sg.inflationHold) { status = 'held'; reason = 'AI inflation safeguard — ' + sg.inflationHold; }
+  else if (sg.allowanceLeft != null && tier.dollars > sg.allowanceLeft) { status = 'held'; reason = 'Reserve-balance protection — Treasury allowance $' + sg.allowanceLeft.toFixed(2) + ' left'; }
+  else if (sg.fraudHold) { status = 'held'; reason = 'Anti-fraud manual review — ' + sg.fraudHold; }
+  if (!confirm('💵 MOCK CASHOUT\n\nSpend ' + cinders.toLocaleString() + ' Cinders → $' + tier.dollars.toFixed(2) + (tier.bonus ? ' (+' + tier.bonus + '%)' : '') + '\nMethod: ' + sg.method + '\n' + (status === 'held' ? '\n⚠ HELD: ' + reason + '. The Cinders are still spent and the request is logged for review.\n' : '') + '\nNo real money moves in this build. Proceed?')) return false;
+  if (!spendCinders(cinders)) { showToast('Not enough Cinders'); return false; }
+  const entry = { ts: Date.now(), cinders: cinders, dollars: tier.dollars, status: status };
+  if (reason) entry.reason = reason;
+  c.history.push(entry);
+  c.lastTs = Date.now();
+  c._snap = { ts: Date.now(), gems: Profile.gems || 0 };
+  if (status === 'pending') {
+    c.pending = (c.pending || 0) + tier.dollars;
+    const pend = c.history.filter(h => h.status === 'pending');
+    if (pend.length > 3) {
+      const oldest = c.history.find(h => h.status === 'pending');
+      if (oldest) { oldest.status = 'paid'; c.pending = Math.max(0, (c.pending || 0) - oldest.dollars); c.lifetime = (c.lifetime || 0) + oldest.dollars; c.paidUsd = (c.paidUsd || 0) + oldest.dollars; }
+    }
+  }
+  // Best-effort tamper-evident cloud audit (NEVER blocks the mock flow; no PII).
+  try {
+    if (typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn && Cloud.client) {
+      Promise.resolve(Cloud.client.from('cashout_requests').insert({ user_id: Profile.cloud.userId, cinders: cinders, usd: tier.dollars, method: sg.method, status: status, reason: reason || null })).then(function () {}).catch(function () {});
+    }
+  } catch (e) {}
+  try { saveProfile(); } catch (e) {}
+  showToast(status === 'held' ? '🛡 Request HELD for review — ' + reason + '.' : '💵 $' + tier.dollars.toFixed(2) + ' queued for payout (mock).', 5600);
+  if (typeof render === 'function') render();
+  return true;
+}
 function renderCashoutVault() {
   // Entry gate — Cashout Vault requires a hero at Lv 15+. Bounce on direct
   // navigation so manual state edits or stale App.screen don't bypass the gate.
@@ -57582,7 +57693,8 @@ function renderCashoutVault() {
     setTimeout(() => render(), 0);
     return;
   }
-  if (!Profile.cashout) Profile.cashout = { pending: 0, lifetime: 0, history: [] };
+  _cashoutEnsure();
+  const sg = _cashoutSafeguards();
   const cinders = Profile.gems || 0;
   const reachedThreshold = cinders >= CASHOUT_MIN_CINDERS;
   // Progress bar shows how close you are to the minimum threshold.
@@ -57610,14 +57722,19 @@ function renderCashoutVault() {
   const history = (Profile.cashout.history || []).slice().reverse().slice(0, 10);
   const historyHtml = history.length === 0
     ? '<div class="ink-dim small-text" style="padding:1rem;text-align:center">No payouts yet. Reach the 500,000 <span class="cinder-icon"></span> threshold above to start your ledger.</div>'
-    : history.map(h => `
+    : history.map(h => {
+        const st = h.status === 'paid' ? { c: 'paid', t: '✓ Paid' }
+                 : h.status === 'held' ? { c: 'pending', t: '🛡 Held' }
+                 : h.status === 'denied' ? { c: 'pending', t: '✕ Denied' }
+                 : { c: 'pending', t: '⌛ Pending' };
+        return `
         <div class="cashout-row">
           <div class="cashout-row-date">${new Date(h.ts).toLocaleDateString()}</div>
-          <div class="cashout-row-cinders"><span class="cinder-icon"></span> -${h.cinders.toLocaleString()}</div>
-          <div class="cashout-row-dollars">$${h.dollars.toFixed(2)}</div>
-          <div class="cashout-row-status ${h.status === 'paid' ? 'paid' : 'pending'}">${h.status === 'paid' ? '✓ Paid' : '⌛ Pending'}</div>
-        </div>
-      `).join('');
+          <div class="cashout-row-cinders"><span class="cinder-icon"></span> -${(h.cinders || 0).toLocaleString()}</div>
+          <div class="cashout-row-dollars">$${(h.dollars || 0).toFixed(2)}</div>
+          <div class="cashout-row-status ${st.c}" title="${h.reason ? esc(h.reason) : ''}">${st.t}</div>
+        </div>${h.reason ? `<div class="small-text ink-dim" style="padding:0 0.6rem 0.4rem">↳ ${esc(h.reason)}</div>` : ''}`;
+      }).join('');
 
   root.innerHTML = `
     <div class="campaign-page cashout-page">
@@ -57634,7 +57751,29 @@ function renderCashoutVault() {
       </div>
 
       <div class="cashout-mock-banner">
-        ⚠️ <strong>Mock payout system.</strong> This is a single-player build — no real money is moved. The ledger records what <em>would</em> have paid out so you can test the flow.
+        ⚠️ <strong>Mock payout system.</strong> No real money is moved and <strong>no bank, card or ID numbers are ever collected here</strong> — real identity (KYC) &amp; payout settlement are handled off-platform by a licensed processor in a live build. The ledger records what <em>would</em> have paid out so you can test the full flow.
+      </div>
+
+      <!-- ===== Verification + withdrawal safeguards ===== -->
+      <div class="cashout-explainer" style="border-color:rgba(180,240,200,0.35)">
+        <div class="cashout-explainer-title">🛡 Withdrawal verification &amp; safeguards</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin:8px 0">
+          <div class="cashout-stat"><div class="cashout-stat-num" style="font-size:1rem;color:${sg.verified ? '#a0ffb0' : '#ffb070'}">${sg.verified ? '✅ Verified' : '⚠ Not verified'}</div><div class="cashout-stat-label">${sg.verified ? esc(sg.method || 'account') : 'verify to enable payouts'}</div></div>
+          <div class="cashout-stat"><div class="cashout-stat-num" style="font-size:1rem;color:${sg.cooldownLeft > 0 ? '#ffb070' : '#a0ffb0'}">${sg.cooldownLeft > 0 ? Math.ceil(sg.cooldownLeft / 3600000) + 'h' : 'Ready'}</div><div class="cashout-stat-label">request cooldown (72h)</div></div>
+          <div class="cashout-stat"><div class="cashout-stat-num" style="font-size:1rem;color:${sg.inflationHold ? '#ff8a8a' : '#a0ffb0'}">${sg.inflationHold ? '⏸ Paused' : '✓ Clear'}</div><div class="cashout-stat-label">AI inflation monitor</div></div>
+          <div class="cashout-stat"><div class="cashout-stat-num" style="font-size:1rem;color:#a0c8ff">${sg.allowanceUsd != null ? '$' + Math.max(0, sg.allowanceLeft).toLocaleString() : '—'}</div><div class="cashout-stat-label">Reserve allowance left</div></div>
+        </div>
+        ${sg.inflationHold ? `<div class="cashout-mock-banner" style="background:rgba(120,40,30,0.25);border-color:rgba(255,120,90,0.5);color:#ffb499">⏸ <strong>Payouts safeguarded:</strong> ${esc(sg.inflationHold)} — new requests are recorded but <strong>HELD</strong> until the economy stabilises (anti-inflation protection).</div>` : ''}
+        ${sg.fraudHold ? `<div class="cashout-mock-banner" style="background:rgba(120,40,30,0.2);border-color:rgba(255,120,90,0.45);color:#ffb499">🚨 <strong>Anti-fraud:</strong> ${esc(sg.fraudHold)} — your next request will be held for manual review.</div>` : ''}
+        ${!sg.verified ? `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
+          <select id="cashout-method" style="flex:1;min-width:160px;padding:0.55rem;border-radius:8px;border:1px solid rgba(180,240,200,0.4);background:rgba(12,28,20,0.7);color:#dff4e6">
+            ${CASHOUT_METHODS.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('')}
+          </select>
+          <button class="btn-primary" id="cashout-verify" style="padding:0.55rem 1rem">✅ Verify account</button>
+        </div>
+        <div class="small-text ink-dim" style="margin-top:6px">Verification here is a <strong>mock self-attestation</strong> — it never asks for bank/card/ID numbers. A live build performs real KYC through the payment processor, off-platform.</div>
+        ` : `<div class="small-text ink-dim" style="margin-top:4px">Verified for <strong>${esc(sg.method)}</strong> payouts (mock). Requests are rate-limited, capped, fraud-screened, Reserve-protected and inflation-monitored, and logged to a tamper-evident audit trail.</div>`}
       </div>
 
       <!-- ===== Explainer: how the Cashout Vault works ===== -->
@@ -57707,43 +57846,16 @@ function renderCashoutVault() {
   `;
 
   document.getElementById('btn-back-cashout').onclick = () => { App.screen = 'title'; render(); };
+  const vbtn = document.getElementById('cashout-verify');
+  if (vbtn) vbtn.onclick = () => {
+    const m = (document.getElementById('cashout-method') || {}).value || '';
+    if (cashoutVerify(m)) render();
+  };
   document.querySelectorAll('[data-cashout-btn]').forEach(btn => {
     btn.onclick = () => {
       if (btn.disabled) return;
       const cost = parseInt(btn.dataset.cashoutBtn, 10);
-      const tier = CASHOUT_TIERS.find(t => t.cinders === cost);
-      if (!tier) return;
-      if (cost < CASHOUT_MIN_CINDERS) {
-        showToast(`Minimum cashout is ${CASHOUT_MIN_CINDERS.toLocaleString()} Cinders`);
-        return;
-      }
-      if ((Profile.gems || 0) < cost) { showToast('Not enough Cinders'); return; }
-      const ok = confirm(
-        `💵 MOCK CASHOUT\n\n` +
-        `Spending: <span class="cinder-icon"></span> ${cost.toLocaleString()} Cinders\n` +
-        `Payout: $${tier.dollars.toFixed(2)}${tier.bonus ? ` (+${tier.bonus}% bonus)` : ''}\n` +
-        `(Minimum cashout: ${CASHOUT_MIN_CINDERS.toLocaleString()} Cinders = $${CASHOUT_MIN_DOLLARS})\n\n` +
-        `In a live build this would queue a payout to your linked wallet after KYC verification. Proceed?`
-      );
-      if (!ok) return;
-      if (!spendCinders(cost)) { showToast('Not enough Cinders'); return; }
-      if (!Profile.cashout) Profile.cashout = { pending: 0, lifetime: 0, history: [] };
-      Profile.cashout.pending = (Profile.cashout.pending || 0) + tier.dollars;
-      Profile.cashout.history = Profile.cashout.history || [];
-      Profile.cashout.history.push({ ts: Date.now(), cinders: cost, dollars: tier.dollars, status: 'pending' });
-      // Auto-promote oldest pending entries to "paid" after a tick (simulates batch processing).
-      const pendingCount = Profile.cashout.history.filter(h => h.status === 'pending').length;
-      if (pendingCount > 3) {
-        const oldest = Profile.cashout.history.find(h => h.status === 'pending');
-        if (oldest) {
-          oldest.status = 'paid';
-          Profile.cashout.pending = Math.max(0, (Profile.cashout.pending || 0) - oldest.dollars);
-          Profile.cashout.lifetime = (Profile.cashout.lifetime || 0) + oldest.dollars;
-        }
-      }
-      saveProfile();
-      showToast(`💵 $${tier.dollars.toFixed(2)} queued for payout!`);
-      render();
+      requestCashout(cost);   // all gates (verify · cooldown · cap · fraud · Reserve · inflation · audit log) live here
     };
   });
 }

@@ -24967,7 +24967,7 @@ function openCityHall() {
       host.innerHTML =
         '<div style="width:min(680px,95vw);max-height:90vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(26,20,8,0.99),rgba(12,9,4,0.99));border:2px solid rgba(212,175,55,0.5);border-radius:16px;padding:16px 18px;box-shadow:0 24px 80px rgba(0,0,0,0.9),0 0 30px rgba(180,140,40,0.22)">' +
           '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">' +
-            '<div><div style="font-family:\'Cinzel\',serif;font-size:1.3rem;font-weight:800;color:#ffcf5a">⚖️ City Hall</div>' +
+            '<div><div style="font-family:\'Cinzel\',serif;font-size:1.3rem;font-weight:800;color:#ffcf5a;display:flex;align-items:center;gap:8px"><img src="assets/artwork/gameicons/SCP%20City%20Hall.png" alt="" style="width:1.7rem;height:1.7rem;object-fit:contain;filter:drop-shadow(0 2px 6px rgba(0,0,0,0.7))">City Hall</div>' +
             '<div class="small-text ink-dim">Corporation registry · law · licensing · treasury. ' + (online ? '<span style="color:#7fdca0">● live</span>' : '<span style="color:#ff9a6b">○ offline</span>') + '</div></div>' +
             '<button id="ch-x" style="cursor:pointer;border:1px solid rgba(212,175,55,0.4);background:transparent;color:#ffcf5a;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
           '</div>' +
@@ -25120,6 +25120,108 @@ async function frDeposit(resId, qty) {
   showToast(`🏛 Reserve received ${qty} ${_meta(resId).icon} — +${reward} 🔥 · +${gained} rep${_emergency ? ' · 🚨 EMERGENCY +60%' : ''}${_specialty ? ' · 🏭 SPECIALTY +35%' : ''}`, (_emergency || _specialty) ? 4600 : 3800);
   await frFetch();
   return true;
+}
+// ============================================================================
+// 🚚 CONVOY PHYSICAL TRANSPORT — contributions don't teleport. A Convoy Run
+// dispatches the cargo on a timed haul that can be INTERCEPTED en route
+// (deterministic per-convoy roll, reload-safe) or ESCORTED (pay to slash the
+// risk; a Security node/licence also helps). It only credits the Reserve on
+// safe ARRIVAL — survivors of an ambush deliver a fraction. Higher payoff
+// than the instant deposit (risk/reward). Persisted in Profile (no schema).
+// ============================================================================
+const FR_CONVOY_MIN      = 20;          // min cargo for a convoy run
+const FR_CONVOY_RISK     = 30;          // % base interception chance
+const FR_CONVOY_SEC_CUT  = 15;          // − risk if corp has Security node/licence
+const FR_CONVOY_ESC_CUT  = 22;          // − risk when escorted
+const FR_CONVOY_RISK_MIN = 4;           // floor risk %
+const FR_CONVOY_BONUS    = 1.5;         // payoff multiplier vs. instant deposit
+const FR_CONVOY_LOSS     = 0.55;        // fraction lost if intercepted
+function _frConvoyTravelMs(qty) { return Math.max(120000, Math.min(600000, 120000 + (qty | 0) * 1200)); }
+function _frConvoyEscortCost(qty) { return { ammo: Math.ceil((qty | 0) * 0.5), fuel: Math.ceil((qty | 0) * 0.3) }; }
+function _frConvoyRisk(escorted) {
+  let r = FR_CONVOY_RISK;
+  try { if (typeof _corpHasSecurity === 'function' && _corpHasSecurity()) r -= FR_CONVOY_SEC_CUT; } catch (e) {}
+  if (escorted) r -= FR_CONVOY_ESC_CUT;
+  return Math.max(FR_CONVOY_RISK_MIN, Math.min(95, r));
+}
+function _frConvoys() { if (!Array.isArray(Profile.reserveConvoys)) Profile.reserveConvoys = []; return Profile.reserveConvoys; }
+async function frConvoyDispatch(resId, qty, escort) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('☁ Sign in to run a convoy.', 2600); return false; }
+  qty = Math.floor(qty);
+  if (!resId || !(qty > 0)) { showToast('Pick a resource and amount.'); return false; }
+  if (!(typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[resId])) { showToast('Unknown resource.'); return false; }
+  if (qty < FR_CONVOY_MIN) { showToast('Convoy runs need at least ' + FR_CONVOY_MIN + ' units — smaller hauls use instant Deposit.', 4200); return false; }
+  const R = _ensureResources();
+  if (((R[resId] || 0) | 0) < qty) { showToast('You only have ' + ((R[resId] | 0)) + ' ' + _meta(resId).icon + ' ' + _meta(resId).name + '.', 3000); return false; }
+  const esc = _frConvoyEscortCost(qty);
+  if (escort && !canAffordResources(esc)) { showToast('Escort detail needs ' + Object.keys(esc).map(k => esc[k] + '× ' + ((_meta(k).name) || k)).join(' + ') + '.', 4600); return false; }
+  // 🔻 Cargo leaves the camp NOW — it is physically on the road.
+  if (!spendResources({ [resId]: qty })) { showToast('Could not load the convoy.'); return false; }
+  if (escort && !spendResources(esc)) { addSalvage({ [resId]: qty }); showToast('Could not equip the escort.'); return false; }
+  try { saveProfile(); } catch (e) {}
+  const _ev = (typeof frActiveEvent === 'function') ? frActiveEvent() : null;
+  const emergency = !!(_ev && !_ev.relief && (_ev.res || []).indexOf(resId) >= 0);
+  const specialty = !!(Profile.reserveSpecialty && Profile.reserveSpecialty === resId);
+  const mul = Math.min(2.4, (emergency ? 1.6 : 1) * (specialty ? 1.35 : 1)) * FR_CONVOY_BONUS;
+  const gained = Math.round(qty * _frWeight(resId) * mul);
+  const id = 'cv' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+  const ms = _frConvoyTravelMs(qty);
+  _frConvoys().push({ id: id, resId: resId, qty: qty, gained: gained, reward: Math.max(1, Math.round(gained * 0.5)), departAt: Date.now(), arriveAt: Date.now() + ms, riskPct: _frConvoyRisk(escort), escorted: !!escort, emergency: emergency, specialty: specialty });
+  try { saveProfile(); } catch (e) {}
+  showToast('🚚 Convoy dispatched — ' + qty + ' ' + _meta(resId).icon + ' en route. ETA ' + Math.round(ms / 60000) + 'm · interception risk ' + _frConvoyRisk(escort) + '%' + (escort ? ' · 🛡 escorted' : ''), 5200);
+  return true;
+}
+async function frConvoyEscort(id) {
+  const cv = _frConvoys().find(c => c.id === id);
+  if (!cv || cv.escorted || cv.arriveAt <= Date.now()) { showToast('That convoy can no longer be escorted.', 3000); return false; }
+  const esc = _frConvoyEscortCost(cv.qty);
+  const cstr = Object.keys(esc).map(k => esc[k] + '× ' + ((_meta(k).name) || k)).join(' + ');
+  if (!canAffordResources(esc)) { showToast('Escort detail needs ' + cstr + '.', 4600); return false; }
+  if (!confirm('Send an escort to the ' + cv.qty + '× ' + (_meta(cv.resId).name || cv.resId) + ' convoy?\n\nCost: ' + cstr + '\nDrops interception risk to ~' + _frConvoyRisk(true) + '%.')) return false;
+  if (!spendResources(esc)) { showToast('Not enough resources.'); return false; }
+  cv.escorted = true; cv.riskPct = _frConvoyRisk(true);
+  try { saveProfile(); } catch (e) {}
+  showToast('🛡 Escort dispatched — convoy risk down to ' + cv.riskPct + '%.', 4200);
+  return true;
+}
+// Resolve any arrived convoys (also processes ones that landed while away).
+async function frConvoyTick() {
+  try {
+    const list = _frConvoys();
+    if (!list.length) return false;
+    if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return false;
+    if (typeof FoundationReserve !== 'undefined' && FoundationReserve.tableMissing) return false;
+    const now = Date.now();
+    const due = list.filter(c => c.arriveAt <= now);
+    if (!due.length) return false;
+    const me = Profile.cloud.userId;
+    let changed = false;
+    for (const cv of due) {
+      const intercepted = (_nodeSeed(cv.id) % 100) < (cv.riskPct | 0);
+      const keep = intercepted ? (1 - FR_CONVOY_LOSS) : 1;
+      const qty = Math.max(0, Math.round(cv.qty * keep));
+      const gained = Math.max(0, Math.round(cv.gained * keep));
+      const reward = Math.max(0, Math.round(cv.reward * keep));
+      if (qty > 0) {
+        try {
+          const cur = await Cloud.client.from('reserve_contributions').select('qty,points').eq('user_id', me).eq('resource', cv.resId).maybeSingle();
+          if (cur.error && !/PGRST116|no rows/i.test((cur.error.message || '') + '')) throw cur.error;
+          const up = await Cloud.client.from('reserve_contributions').upsert({ user_id: me, user_name: ((Profile.cloud.displayName || (Profile.account && Profile.account.displayName) || 'Survivor') + '').slice(0, 40), resource: cv.resId, qty: (Number(cur.data && cur.data.qty) || 0) + qty, points: (Number(cur.data && cur.data.points) || 0) + gained, updated_at: new Date().toISOString() }, { onConflict: 'user_id,resource' });
+          if (up.error) throw up.error;
+        } catch (e) { _frErr(e); continue; }   // keep convoy, retry next tick
+        try { if (reward > 0 && typeof addCinders === 'function') addCinders(reward); } catch (e) {}
+      }
+      const i = list.indexOf(cv); if (i >= 0) list.splice(i, 1);
+      changed = true;
+      try {
+        showToast(intercepted
+          ? '🏴 Convoy intercepted! ' + (cv.qty - qty) + ' ' + _meta(cv.resId).icon + ' raided — ' + qty + ' delivered (+' + reward + ' 🔥 · +' + gained + ' rep).'
+          : '🚚 Convoy delivered safely — ' + qty + ' ' + _meta(cv.resId).icon + ' to the Reserve (+' + reward + ' 🔥 · +' + gained + ' rep).', 5600);
+      } catch (e) {}
+    }
+    if (changed) { try { saveProfile(); } catch (e) {} try { await frFetch(); } catch (e) {} }
+    return changed;
+  } catch (e) { return false; }
 }
 function frProductById(pid) { return RESERVE_PRODUCTS.find(p => p.id === pid) || null; }
 // 🛒 Buy a manufactured product from the world Reserve. The recipe cost is
@@ -25590,16 +25692,35 @@ function openFoundationReserve() {
             '</select>' +
             '<button id="fr-spec-set" style="cursor:pointer;border-radius:7px;padding:0.45rem 0.8rem;border:1px solid #5fbf88;background:linear-gradient(180deg,#2f7a52,#163d2a);color:#eafff2;font-weight:800">Set</button>' +
           '</div></div>';
+      // 🚚 In-transit convoys (physical haul that can be intercepted/escorted).
+      const _cvs = (typeof _frConvoys === 'function') ? _frConvoys() : [];
+      const convoyBlock = _cvs.length
+        ? '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(224,160,96,0.35);border-radius:8px;background:rgba(70,45,18,0.16)">' +
+            '<div style="color:#e8c79a;font-weight:800;font-size:0.86rem;margin-bottom:5px">🚚 Convoys in transit <span class="small-text" style="color:#bfa274;font-weight:400">(' + _cvs.length + ')</span></div>' +
+            _cvs.map(c => {
+              const left = c.arriveAt - Date.now();
+              const eta = left > 0 ? ((typeof _frFmtDur === 'function') ? _frFmtDur(left) : Math.ceil(left / 60000) + 'm') : 'arriving…';
+              return '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid rgba(224,160,96,0.22);border-radius:7px;background:rgba(50,32,14,0.3);margin-bottom:5px">' +
+                '<div style="flex:1;min-width:0"><div style="color:#ffe3c0;font-weight:700">' + (_meta(c.resId).icon || '📦') + ' ' + (c.qty | 0) + ' ' + esc(_meta(c.resId).name || c.resId) + (c.escorted ? ' <span class="small-text" style="color:#9fe0b0">· 🛡 escorted</span>' : '') + '</div>' +
+                  '<div class="small-text" style="color:#c6a87e">ETA ' + esc(eta) + ' · interception risk ' + (c.riskPct | 0) + '%</div></div>' +
+                (!c.escorted && left > 0 ? '<button data-fr-escort="' + esc(c.id) + '" style="cursor:pointer;border-radius:6px;padding:0.32rem 0.6rem;border:1px solid #5fbf88;background:rgba(47,122,82,0.3);color:#dff4e6;font-weight:800;font-size:0.78rem;white-space:nowrap">🛡 Escort</button>' : '<span class="small-text" style="color:#8a7a4a;white-space:nowrap">' + (left > 0 ? 'unescorted' : 'inbound') + '</span>') +
+              '</div>';
+            }).join('') +
+          '</div>'
+        : '';
       return '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(255,209,102,0.35);border-radius:8px;background:rgba(255,209,102,0.07);color:#ffd166;font-size:0.86rem">' +
           rk.rank.icon + ' <strong>' + esc(rk.rank.name) + '</strong> · ' + numF(FoundationReserve.myPoints) + ' rep' +
           (rk.next ? ' <span class="small-text" style="color:#cdb87a">— ' + numF(rk.toNext) + ' to ' + esc(rk.next.name) + '</span>' : ' <span class="small-text">— max rank</span>') + '</div>' +
         '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Contribute resources to the world Reserve. They leave your camp permanently and fuel global manufacturing. You earn 🔥 Cinders + Reserve Reputation.</div>' +
         specBlock +
+        convoyBlock +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + sel +
           '<input id="fr-qty" type="number" min="1" value="1" style="width:90px;padding:0.55rem;border-radius:8px;border:1px solid rgba(120,170,255,0.4);background:rgba(12,20,40,0.7);color:#e6f0ff">' +
           '<button id="fr-max" style="cursor:pointer;border-radius:8px;padding:0.55rem 0.7rem;border:1px solid rgba(120,170,255,0.45);background:rgba(60,100,170,0.25);color:#dce8ff;font-weight:700">Max</button>' +
           '<button id="fr-give" style="cursor:pointer;border-radius:8px;padding:0.55rem 1rem;border:1px solid #5fa0e0;background:linear-gradient(180deg,#3a6fb0,#1c3a6a);color:#eaf3ff;font-weight:800">Deposit</button>' +
-        '</div>';
+        '</div>' +
+        '<label style="display:flex;align-items:center;gap:7px;margin-top:8px;color:#e0b894;font-size:0.85rem;cursor:pointer"><input type="checkbox" id="fr-convoy-mode" style="width:16px;height:16px"> 🚚 Send as a <strong>Convoy Run</strong> — +' + Math.round((FR_CONVOY_BONUS - 1) * 100) + '% payoff but it physically travels &amp; can be intercepted (≥' + FR_CONVOY_MIN + ' units)</label>' +
+        '<label style="display:flex;align-items:center;gap:7px;margin-top:5px;color:#9fe0b0;font-size:0.85rem;cursor:pointer"><input type="checkbox" id="fr-convoy-escort" style="width:16px;height:16px"> 🛡 Dispatch with an <strong>escort</strong> — slashes interception risk (costs ammo + fuel)</label>';
     };
 
     const taxTab = () => {
@@ -25811,8 +25932,15 @@ function openFoundationReserve() {
         const q = parseInt((document.getElementById('fr-qty') || {}).value, 10) || 0;
         if (!id) { showToast('Pick a resource.'); return; }
         if (q <= 0) { showToast('Enter an amount.'); return; }
-        frDeposit(id, q).then(ok => { if (ok) { tab = 'reserve'; render(); } });
+        const convoyMode = !!(document.getElementById('fr-convoy-mode') || {}).checked;
+        const escort = !!(document.getElementById('fr-convoy-escort') || {}).checked;
+        if (convoyMode) {
+          frConvoyDispatch(id, q, escort).then(ok => { if (ok) render(); });
+        } else {
+          frDeposit(id, q).then(ok => { if (ok) { tab = 'reserve'; render(); } });
+        }
       };
+      host.querySelectorAll('[data-fr-escort]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; frConvoyEscort(b.getAttribute('data-fr-escort')).then(() => render()); }; });
       const npick = document.getElementById('fr-node-pick');
       const ndesc = document.getElementById('fr-node-desc');
       const paintNodeDesc = () => {
@@ -25831,8 +25959,9 @@ function openFoundationReserve() {
     render();
     if (online) {
       frFetch().then(() => { render(); try { nodeFetch().then(render); } catch (e) {} });
+      try { frConvoyTick().then(ok => { if (ok && document.getElementById(ID)) render(); }); } catch (e) {}
       cleanup();
-      FoundationReserve._poll = setInterval(() => { if (!document.getElementById(ID)) { cleanup(); return; } frFetch().then(() => { if (document.getElementById(ID)) render(); }); if (tab === 'nodes') { try { nodeFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {} } }, 20000);
+      FoundationReserve._poll = setInterval(() => { if (!document.getElementById(ID)) { cleanup(); return; } frFetch().then(() => { if (document.getElementById(ID)) render(); }); try { frConvoyTick().then(ok => { if (ok && document.getElementById(ID)) render(); }); } catch (e) {} if (tab === 'nodes') { try { nodeFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {} } }, 20000);
     }
   } catch (e) {}
 }
@@ -39983,7 +40112,7 @@ function renderTitle() {
         onclick: () => { App.screen = 'justBusiness'; render(); } },
       // 🏛️ City Hall — survivor government: corp registry, law, licensing,
       // treasury. Opens a self-contained overlay (no screen nav).
-      { id: 'btn-city-hall', icon: '⚖️', name: 'City Hall', sub: 'Registry · law · licensing · treasury', accent: '#ffcf5a',
+      { id: 'btn-city-hall', icon: '<img src="assets/artwork/gameicons/SCP%20City%20Hall.png" alt="City Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'City Hall', sub: 'Registry · law · licensing · treasury', accent: '#ffcf5a',
         badge: 'Civic',
         onclick: () => { if (typeof openCityHall === 'function') openCityHall(); } },
       // Sports-betting hub — wager Cinders on AI vs AI fixtures + future tournaments.

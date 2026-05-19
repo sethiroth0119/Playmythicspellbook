@@ -58006,8 +58006,8 @@ function renderCashoutVault() {
           <div class="cashout-row-date">${new Date(h.ts).toLocaleDateString()}</div>
           <div class="cashout-row-cinders"><span class="cinder-icon"></span> -${(h.cinders || 0).toLocaleString()}</div>
           <div class="cashout-row-dollars">$${(h.dollars || 0).toFixed(2)}</div>
-          <div class="cashout-row-status ${st.c}" title="${h.reason ? esc(h.reason) : ''}">${st.t}</div>
-        </div>${h.reason ? `<div class="small-text ink-dim" style="padding:0 0.6rem 0.4rem">↳ ${esc(h.reason)}</div>` : ''}`;
+          <div class="cashout-row-status ${st.c}" title="${h.reason ? escapeHtml(h.reason) : ''}">${st.t}</div>
+        </div>${h.reason ? `<div class="small-text ink-dim" style="padding:0 0.6rem 0.4rem">↳ ${escapeHtml(h.reason)}</div>` : ''}`;
       }).join('');
 
   root.innerHTML = `
@@ -58032,22 +58032,22 @@ function renderCashoutVault() {
       <div class="cashout-explainer" style="border-color:rgba(180,240,200,0.35)">
         <div class="cashout-explainer-title">🛡 Withdrawal verification &amp; safeguards</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin:8px 0">
-          <div class="cashout-stat"><div class="cashout-stat-num" style="font-size:1rem;color:${sg.verified ? '#a0ffb0' : '#ffb070'}">${sg.verified ? '✅ Verified' : '⚠ Not verified'}</div><div class="cashout-stat-label">${sg.verified ? esc(sg.method || 'account') : 'verify to enable payouts'}</div></div>
+          <div class="cashout-stat"><div class="cashout-stat-num" style="font-size:1rem;color:${sg.verified ? '#a0ffb0' : '#ffb070'}">${sg.verified ? '✅ Verified' : '⚠ Not verified'}</div><div class="cashout-stat-label">${sg.verified ? escapeHtml(sg.method || 'account') : 'verify to enable payouts'}</div></div>
           <div class="cashout-stat"><div class="cashout-stat-num" style="font-size:1rem;color:${sg.cooldownLeft > 0 ? '#ffb070' : '#a0ffb0'}">${sg.cooldownLeft > 0 ? Math.ceil(sg.cooldownLeft / 3600000) + 'h' : 'Ready'}</div><div class="cashout-stat-label">request cooldown (72h)</div></div>
           <div class="cashout-stat"><div class="cashout-stat-num" style="font-size:1rem;color:${sg.inflationHold ? '#ff8a8a' : '#a0ffb0'}">${sg.inflationHold ? '⏸ Paused' : '✓ Clear'}</div><div class="cashout-stat-label">AI inflation monitor</div></div>
           <div class="cashout-stat"><div class="cashout-stat-num" style="font-size:1rem;color:#a0c8ff">${sg.allowanceUsd != null ? '$' + Math.max(0, sg.allowanceLeft).toLocaleString() : '—'}</div><div class="cashout-stat-label">Reserve allowance left</div></div>
         </div>
-        ${sg.inflationHold ? `<div class="cashout-mock-banner" style="background:rgba(120,40,30,0.25);border-color:rgba(255,120,90,0.5);color:#ffb499">⏸ <strong>Payouts safeguarded:</strong> ${esc(sg.inflationHold)} — new requests are recorded but <strong>HELD</strong> until the economy stabilises (anti-inflation protection).</div>` : ''}
-        ${sg.fraudHold ? `<div class="cashout-mock-banner" style="background:rgba(120,40,30,0.2);border-color:rgba(255,120,90,0.45);color:#ffb499">🚨 <strong>Anti-fraud:</strong> ${esc(sg.fraudHold)} — your next request will be held for manual review.</div>` : ''}
+        ${sg.inflationHold ? `<div class="cashout-mock-banner" style="background:rgba(120,40,30,0.25);border-color:rgba(255,120,90,0.5);color:#ffb499">⏸ <strong>Payouts safeguarded:</strong> ${escapeHtml(sg.inflationHold)} — new requests are recorded but <strong>HELD</strong> until the economy stabilises (anti-inflation protection).</div>` : ''}
+        ${sg.fraudHold ? `<div class="cashout-mock-banner" style="background:rgba(120,40,30,0.2);border-color:rgba(255,120,90,0.45);color:#ffb499">🚨 <strong>Anti-fraud:</strong> ${escapeHtml(sg.fraudHold)} — your next request will be held for manual review.</div>` : ''}
         ${!sg.verified ? `
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
           <select id="cashout-method" style="flex:1;min-width:160px;padding:0.55rem;border-radius:8px;border:1px solid rgba(180,240,200,0.4);background:rgba(12,28,20,0.7);color:#dff4e6">
-            ${CASHOUT_METHODS.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('')}
+            ${CASHOUT_METHODS.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')}
           </select>
           <button class="btn-primary" id="cashout-verify" style="padding:0.55rem 1rem">✅ Verify account</button>
         </div>
         <div class="small-text ink-dim" style="margin-top:6px">Verification here is a <strong>mock self-attestation</strong> — it never asks for bank/card/ID numbers. A live build performs real KYC through the payment processor, off-platform.</div>
-        ` : `<div class="small-text ink-dim" style="margin-top:4px">Verified for <strong>${esc(sg.method)}</strong> payouts (mock). Requests are rate-limited, capped, fraud-screened, Reserve-protected and inflation-monitored, and logged to a tamper-evident audit trail.</div>`}
+        ` : `<div class="small-text ink-dim" style="margin-top:4px">Verified for <strong>${escapeHtml(sg.method)}</strong> payouts (mock). Requests are rate-limited, capped, fraud-screened, Reserve-protected and inflation-monitored, and logged to a tamper-evident audit trail.</div>`}
         <div style="margin-top:10px;padding-top:9px;border-top:1px solid rgba(180,240,200,0.18)">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span style="font-weight:800;color:#cfe0f4">💳 Real payout rail (Stripe Connect)</span>

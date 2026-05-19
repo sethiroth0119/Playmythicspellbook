@@ -40302,6 +40302,7 @@ function render() {
   if (App.screen === 'gymLivePing')  return renderGymLivePing();
   if (App.screen === 'settings')     return renderSettings();
   if (App.screen === 'profile')      return renderProfile();
+  if (App.screen === 'userMgmt')     return renderUserManagement();
   if (App.screen === 'friends')      return renderFriends();
   if (App.screen === 'bookOfKnowledge') return renderBookOfKnowledge();
   if (App.screen === 'matchmaking')  return renderMatchmaking();
@@ -40792,6 +40793,8 @@ function renderTitle() {
           onclick: () => { window.open('https://mythicspellbook.xyz/', '_blank', 'noopener'); } },
       ];
       if (_arcAdmin) {
+        tiles.push({ id: 'btn-usermgmt', icon: '🛡️', name: 'User Management', sub: 'Find players · dossier · moderation', accent: '#ffcf5a',
+          onclick: () => { App.screen = 'userMgmt'; render(); } });
         tiles.push({ id: 'btn-data', icon: '💾', name: 'Data Vault', sub: 'Export / import your profile', accent: '#c0a0e0',
           onclick: () => { App.screen = 'data'; render(); } });
       }
@@ -57946,6 +57949,153 @@ const SOVEREIGN_PACKAGES = [
   { id: 'sp_legend',  name: "Legend's Hoard",    price: 49.99, sovereigns: 3500, bonus: 40, icon: '🏛️', tagline: '+40% bonus. Fill the coffers.' },
 ];
 
+// ============================================================================
+// 🛡️ ADMIN — USER MANAGEMENT (Arcanum). Admin-only player lookup + dossier
+// built from PUBLIC-read tables (api_players / reserve_contributions /
+// corp_members / corporations / court_* / detention) — private profile
+// rows (gems, cashout, purchases) stay RLS-locked and are NOT exposed here
+// without a server-side admin endpoint. Moderation uses the detention
+// table's existing permissive policy (same as the Detention Complex).
+// ============================================================================
+const AdmUM = { q: '', results: [], sel: null, dossier: null, _loading: false, _busy: false, _t: null };
+async function _admUserSearch(term) {
+  try {
+    const qx = (term || '').trim().replace(/^@+\s*/, '');
+    if (!initCloud() || !Cloud.client || qx.length < 2) return [];
+    const out = [], seen = {};
+    const add = (id, nm) => { nm = (nm || '').trim(); const k = (id || nm).toLowerCase(); if (!nm || seen[k]) return; seen[k] = 1; out.push({ user_id: id || null, handle: nm }); };
+    try { const r = await Cloud.client.from('api_players').select('user_id,handle').ilike('handle', '%' + qx + '%').limit(15); if (r && !r.error && r.data) r.data.forEach(x => add(x.user_id, x.handle)); } catch (e) {}
+    if (out.length < 15) { try { const r2 = await Cloud.client.from('reserve_contributions').select('user_id,user_name').ilike('user_name', '%' + qx + '%').limit(20); if (r2 && !r2.error && r2.data) r2.data.forEach(x => add(x.user_id, x.user_name)); } catch (e) {} }
+    if (out.length < 15) { try { const r3 = await Cloud.client.from('corp_members').select('user_id,user_name').ilike('user_name', '%' + qx + '%').limit(20); if (r3 && !r3.error && r3.data) r3.data.forEach(x => add(x.user_id, x.user_name)); } catch (e) {} }
+    return out.slice(0, 15);
+  } catch (e) { return []; }
+}
+async function _admDossier(u) {
+  const d = { handle: u.handle, user_id: u.user_id || null, corp: null, rep: 0, official: null, records: 0, jailed: null };
+  try {
+    if (u.user_id) {
+      const cm = await Cloud.client.from('corp_members').select('corp_id,role').eq('user_id', u.user_id).maybeSingle();
+      if (cm && cm.data && cm.data.corp_id) {
+        const co = await Cloud.client.from('corporations').select('name,tag').eq('id', cm.data.corp_id).maybeSingle();
+        d.corp = { name: (co && co.data && co.data.name) || '—', tag: (co && co.data && co.data.tag) || '', role: cm.data.role || 'member' };
+      }
+      const pr = await Cloud.client.from('reserve_contributions').select('points').eq('user_id', u.user_id).limit(2000);
+      if (pr && pr.data) pr.data.forEach(x => { d.rep += Number(x.points) || 0; });
+      const of = await Cloud.client.from('court_officials').select('role,rank,status').eq('user_id', u.user_id).maybeSingle();
+      if (of && of.data) d.official = of.data;
+    }
+    const cr = await Cloud.client.from('court_records').select('id', { count: 'exact', head: true }).eq('offender_name', u.handle);
+    d.records = (cr && typeof cr.count === 'number') ? cr.count : 0;
+    const jl = await Cloud.client.from('detention').select('id,severity,crime_type,release_at,bail_cinder').eq('offender_name', u.handle).eq('status', 'jailed').order('jailed_at', { ascending: false }).limit(1);
+    if (jl && jl.data && jl.data[0]) {
+      const j = jl.data[0]; const rel = j.release_at ? Date.parse(j.release_at) : 0;
+      if (!rel || rel > Date.now()) d.jailed = j;
+    }
+  } catch (e) {}
+  return d;
+}
+function _admSelect(u) {
+  AdmUM.sel = u; AdmUM.dossier = null; AdmUM._loading = true; render();
+  _admDossier(u).then(function (d) { AdmUM.dossier = d; AdmUM._loading = false; render(); });
+}
+async function _admJail(handle) {
+  if (!((typeof isAdmin === 'function') && isAdmin())) { showToast('👑 Admin only.', 2600); return; }
+  if (!confirm('Jail "' + handle + '" for 24h (admin moderation)?\n\nThey lose Black Market + node control until released. You can release them anytime here.')) return;
+  AdmUM._busy = true; render();
+  try {
+    const me = (Profile.cloud && Profile.cloud.userId) || null;
+    const nm = ((Profile.cloud && Profile.cloud.displayName) || 'Admin') + '';
+    const ins = await Cloud.client.from('detention').insert({
+      offender_name: handle, crime_type: 'admin_action', severity: 3, status: 'jailed',
+      jailed_at: new Date().toISOString(), release_at: new Date(Date.now() + 24 * 3600000).toISOString(),
+      bail_cinder: 90000, seize_cinder: 0, seized_done: true,
+      committed_by: me, committed_name: 'Admin · ' + nm.slice(0, 24),
+    });
+    if (ins && ins.error) throw ins.error;
+    showToast('🔒 ' + handle + ' jailed (24h, admin).', 4200);
+  } catch (e) { showToast('⚠ Jail failed. ' + (/detention|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run the Reserve setup SQL.' : ''), 4600); }
+  AdmUM._busy = false;
+  if (AdmUM.sel) _admSelect(AdmUM.sel); else render();
+}
+async function _admRelease(handle) {
+  if (!((typeof isAdmin === 'function') && isAdmin())) { showToast('👑 Admin only.', 2600); return; }
+  if (!confirm('Release "' + handle + '" from detention now?')) return;
+  AdmUM._busy = true; render();
+  try {
+    const up = await Cloud.client.from('detention').update({ status: 'released', released_by: 'admin', updated_at: new Date().toISOString() }).eq('offender_name', handle).eq('status', 'jailed');
+    if (up && up.error) throw up.error;
+    showToast('🔓 ' + handle + ' released.', 4000);
+  } catch (e) { showToast('⚠ Release failed.', 3600); }
+  AdmUM._busy = false;
+  if (AdmUM.sel) _admSelect(AdmUM.sel); else render();
+}
+function renderUserManagement() {
+  if (!((typeof isAdmin === 'function') && isAdmin())) {
+    showToast('🛡️ Admin only.', 2600);
+    App.screen = 'title'; App.titleHub = 'arcanum'; setTimeout(() => render(), 0); return;
+  }
+  const esc = (s) => escapeHtml(String(s == null ? '' : s));
+  const d = AdmUM.dossier;
+  const resHtml = (AdmUM.results || []).length
+    ? AdmUM.results.map(u => `<button class="btn-secondary" data-um-pick="${esc(u.handle)}" data-um-id="${esc(u.user_id || '')}" style="display:block;width:100%;text-align:left;margin-bottom:5px;padding:0.5rem 0.7rem">${esc(u.handle)}${u.user_id ? '' : ' <span class="small-text ink-dim">(name only)</span>'}</button>`).join('')
+    : (AdmUM.q && AdmUM.q.length >= 2 ? '<div class="ink-dim small-text" style="padding:1rem;text-align:center">No players match.</div>' : '<div class="ink-dim small-text" style="padding:1rem;text-align:center">Search by handle (2+ chars).</div>');
+  let dossier = '<div class="ink-dim small-text" style="padding:1.4rem;text-align:center">Select a player to view their dossier.</div>';
+  if (AdmUM._loading) dossier = '<div class="ink-dim small-text" style="padding:1.4rem;text-align:center">Loading dossier…</div>';
+  else if (d) {
+    const row = (k, v) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid rgba(212,175,55,0.14)"><span class="small-text" style="color:#b59a66">${k}</span><span style="color:#ffe6b0;font-weight:700;text-align:right">${v}</span></div>`;
+    const rk = (typeof frRankFor === 'function') ? frRankFor(d.rep) : { rank: { icon: '', name: '' } };
+    dossier =
+      `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px"><div style="font-family:'Cinzel',serif;font-size:1.15rem;font-weight:800;color:#ffcf5a">${esc(d.handle)}</div>` +
+      (d.jailed ? `<span class="small-text" style="color:#ff6b6b;font-weight:800">🔒 JAILED</span>` : `<span class="small-text" style="color:#7fe0a0;font-weight:800">● free</span>`) + `</div>` +
+      row('User ID', d.user_id ? `<code style="font-size:0.8rem">${esc(d.user_id)}</code> <button class="btn-secondary btn-mini" id="um-copy">copy</button>` : '<span class="ink-dim">unknown (name-only record)</span>') +
+      row('Corporation', d.corp ? `${esc(d.corp.name)} <span class="ink-dim">[${esc(d.corp.tag)}]</span> · ${esc(d.corp.role)}` : '—') +
+      row('Reserve rep', `${(rk.rank.icon || '')} ${esc(rk.rank.name || '')} · ${(d.rep | 0).toLocaleString()}`) +
+      row('Court role', d.official ? `${esc(d.official.rank || '')} ${esc(d.official.role || '')}` : '—') +
+      row('Criminal records', String(d.records | 0)) +
+      row('Detention', d.jailed ? `Class ${d.jailed.severity | 0} · release ${d.jailed.release_at ? new Date(d.jailed.release_at).toLocaleString() : '—'}` : 'not detained') +
+      `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">` +
+        (d.jailed
+          ? `<button class="btn-primary" id="um-release" ${AdmUM._busy ? 'disabled' : ''}>🔓 Release from detention</button>`
+          : `<button class="btn-secondary" id="um-jail" ${AdmUM._busy ? 'disabled' : ''} style="border-color:#ff9a6b;color:#ffb499">🔒 Jail 24h (moderation)</button>`) +
+      `</div>` +
+      `<div class="small-text ink-dim" style="margin-top:10px;line-height:1.6">Dossier is built from public game data. Private values (Cinder/Aza balance, cashout &amp; purchase history) are RLS-locked per user and need a server-side admin endpoint — say the word and I'll add one.</div>`;
+  }
+  root.innerHTML = `
+    <div class="campaign-page" style="max-width:920px;margin:0 auto;padding:1.4rem">
+      <div class="campaign-header">
+        <div>
+          <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🛡️ User Management</h2>
+          <div class="small-text ink-dim">Admin · find players, view dossiers, moderate (jail / release).</div>
+        </div>
+        <button class="btn-secondary btn-mini" id="um-back">← Arcanum</button>
+      </div>
+      <div style="display:flex;gap:8px;margin:14px 0">
+        <input id="um-q" autocomplete="off" value="${esc(AdmUM.q)}" placeholder="Search player handle…" style="flex:1;padding:0.6rem 0.8rem;border-radius:8px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">
+      </div>
+      <div style="display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start">
+        <div class="card" style="padding:10px;max-height:60vh;overflow:auto">${resHtml}</div>
+        <div class="card" style="padding:14px">${dossier}</div>
+      </div>
+    </div>`;
+  const back = document.getElementById('um-back');
+  if (back) back.onclick = () => { App.screen = 'title'; App.titleHub = 'arcanum'; render(); };
+  const qi = document.getElementById('um-q');
+  if (qi) {
+    qi.oninput = (e) => {
+      AdmUM.q = e.target.value;
+      clearTimeout(AdmUM._t);
+      AdmUM._t = setTimeout(() => { _admUserSearch(AdmUM.q).then(rows => { AdmUM.results = rows; render(); }); }, 260);
+    };
+    qi.focus(); try { qi.setSelectionRange(qi.value.length, qi.value.length); } catch (e) {}
+  }
+  root.querySelectorAll('[data-um-pick]').forEach(b => {
+    b.onclick = () => _admSelect({ handle: b.getAttribute('data-um-pick'), user_id: b.getAttribute('data-um-id') || null });
+  });
+  const cp = document.getElementById('um-copy');
+  if (cp && d && d.user_id) cp.onclick = () => { try { navigator.clipboard.writeText(d.user_id); showToast('📋 User ID copied.'); } catch (e) {} };
+  const jb = document.getElementById('um-jail'); if (jb && d) jb.onclick = () => _admJail(d.handle);
+  const rb = document.getElementById('um-release'); if (rb && d) rb.onclick = () => _admRelease(d.handle);
+}
 function renderSovereignsStore() {
   const cards = SOVEREIGN_PACKAGES.map(pkg => `
     <div class="sov-pkg ${pkg.popular ? 'sov-pkg-popular' : ''}" data-sov-buy="${pkg.id}">

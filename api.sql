@@ -144,6 +144,24 @@ create policy cor_sel on public.cashout_requests for select to authenticated usi
 drop policy if exists cor_ins on public.cashout_requests;
 create policy cor_ins on public.cashout_requests for insert to authenticated with check (user_id = auth.uid());
 
+-- ── Stripe Connect account map ─────────────────────────────────────────
+-- One row per user → their Stripe connected-account id (created via
+-- Stripe-hosted onboarding; KYC + bank details live on STRIPE, never here).
+-- Self-scoped RLS; the Worker reads/writes this AS THE USER (their JWT).
+create table if not exists public.cashout_accounts (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  stripe_account_id text not null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.cashout_accounts enable row level security;
+drop policy if exists ca_sel on public.cashout_accounts;
+create policy ca_sel on public.cashout_accounts for select to authenticated using (user_id = auth.uid());
+drop policy if exists ca_ins on public.cashout_accounts;
+create policy ca_ins on public.cashout_accounts for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists ca_upd on public.cashout_accounts;
+create policy ca_upd on public.cashout_accounts for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
 grant select on
   public.api_corporations,
   public.api_reserve_totals,

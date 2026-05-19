@@ -24101,7 +24101,7 @@ async function resMarketCancel(listing) {
 // a security_invoker VIEW that SUMs all rows, so there are no lost updates
 // and no RPC needed. Degrades gracefully offline / before one-time setup.
 // ============================================================================
-const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ncreate table if not exists public.reserve_tax_log (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  buyer_id uuid,\n  corp_id text,\n  resource text,\n  quantity numeric not null default 0,\n  sale_value numeric not null default 0,\n  tax_rate numeric not null default 0.02,\n  tax_amount numeric not null default 0,\n  market_type text not null default 'base',\n  created_at timestamptz default now()\n);\ncreate index if not exists reserve_tax_log_time on public.reserve_tax_log (created_at desc);\nalter table public.reserve_tax_log enable row level security;\ndrop policy if exists tx_sel on public.reserve_tax_log;\ncreate policy tx_sel on public.reserve_tax_log for select to authenticated using (true);\ndrop policy if exists tx_ins on public.reserve_tax_log;\ncreate policy tx_ins on public.reserve_tax_log for insert to authenticated with check (seller_id = auth.uid());\ncreate table if not exists public.corporations (\n  id uuid primary key default gen_random_uuid(),\n  name text not null,\n  tag text not null,\n  founder_id uuid not null references auth.users(id) on delete cascade,\n  faction text,\n  element text,\n  created_at timestamptz default now()\n);\nalter table public.corporations add column if not exists faction text;\nalter table public.corporations add column if not exists element text;\ncreate table if not exists public.corp_members (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  joined_at timestamptz default now()\n);\ncreate index if not exists corp_members_corp on public.corp_members (corp_id);\nalter table public.corporations enable row level security;\nalter table public.corp_members enable row level security;\ndrop policy if exists corp_sel on public.corporations;\ncreate policy corp_sel on public.corporations for select to authenticated using (true);\ndrop policy if exists corp_ins on public.corporations;\ncreate policy corp_ins on public.corporations for insert to authenticated with check (founder_id = auth.uid());\ndrop policy if exists cm_sel on public.corp_members;\ncreate policy cm_sel on public.corp_members for select to authenticated using (true);\ndrop policy if exists cm_ins on public.corp_members;\ncreate policy cm_ins on public.corp_members for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cm_upd on public.corp_members;\ncreate policy cm_upd on public.corp_members for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists cm_del on public.corp_members;\ncreate policy cm_del on public.corp_members for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_members.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_requests (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  status text not null default 'pending',\n  created_at timestamptz default now(),\n  unique (corp_id, user_id)\n);\ncreate index if not exists corp_requests_corp on public.corp_requests (corp_id);\nalter table public.corp_requests enable row level security;\ndrop policy if exists creq_sel on public.corp_requests;\ncreate policy creq_sel on public.corp_requests for select to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists creq_ins on public.corp_requests;\ncreate policy creq_ins on public.corp_requests for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists creq_upd on public.corp_requests;\ncreate policy creq_upd on public.corp_requests for update to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid())) with check (true);\ndrop policy if exists creq_del on public.corp_requests;\ncreate policy creq_del on public.corp_requests for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_vault (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  depositor_id uuid not null references auth.users(id) on delete cascade,\n  depositor_name text,\n  kind text not null,\n  item_id text not null,\n  name text,\n  icon text,\n  qty numeric not null default 0,\n  created_at timestamptz default now(),\n  updated_at timestamptz default now(),\n  unique (corp_id, depositor_id, kind, item_id)\n);\ncreate index if not exists corp_vault_corp on public.corp_vault (corp_id);\nalter table public.corp_vault enable row level security;\ndrop policy if exists cv_sel on public.corp_vault;\ncreate policy cv_sel on public.corp_vault for select to authenticated using (exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()) or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists cv_ins on public.corp_vault;\ncreate policy cv_ins on public.corp_vault for insert to authenticated with check (depositor_id = auth.uid() and exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()));\ndrop policy if exists cv_upd on public.corp_vault;\ncreate policy cv_upd on public.corp_vault for update to authenticated using (depositor_id = auth.uid()) with check (depositor_id = auth.uid());\ndrop policy if exists cv_del on public.corp_vault;\ncreate policy cv_del on public.corp_vault for delete to authenticated using (depositor_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ncreate table if not exists public.corp_licenses (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  license_type text not null,\n  status text not null default 'active',\n  issued_by uuid references auth.users(id) on delete set null,\n  issued_at timestamptz default now(),\n  unique (corp_id, license_type)\n);\ncreate index if not exists corp_licenses_corp on public.corp_licenses (corp_id);\nalter table public.corp_licenses enable row level security;\ndrop policy if exists cl_sel on public.corp_licenses;\ncreate policy cl_sel on public.corp_licenses for select to authenticated using (true);\ndrop policy if exists cl_ins on public.corp_licenses;\ncreate policy cl_ins on public.corp_licenses for insert to authenticated with check (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists cl_del on public.corp_licenses;\ncreate policy cl_del on public.corp_licenses for delete to authenticated using (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.court_officials (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  user_name text,\n  role text not null default 'lawyer',\n  rank text not null default 'Associate',\n  status text not null default 'active',\n  registered_at timestamptz default now()\n);\nalter table public.court_officials enable row level security;\ndrop policy if exists cof_sel on public.court_officials;\ncreate policy cof_sel on public.court_officials for select to authenticated using (true);\ndrop policy if exists cof_ins on public.court_officials;\ncreate policy cof_ins on public.court_officials for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cof_upd on public.court_officials;\ncreate policy cof_upd on public.court_officials for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.court_cases (\n  id uuid primary key default gen_random_uuid(),\n  case_no text,\n  plaintiff_id uuid references auth.users(id) on delete set null,\n  plaintiff_name text,\n  defendant_name text not null,\n  crime_type text not null,\n  severity int not null default 3,\n  summary text,\n  status text not null default 'open',\n  judge_id uuid references auth.users(id) on delete set null,\n  judge_name text,\n  prosecutor_name text,\n  defender_name text,\n  verdict text,\n  sentence text,\n  filed_by uuid references auth.users(id) on delete set null,\n  filed_at timestamptz default now(),\n  updated_at timestamptz default now()\n);\ncreate index if not exists court_cases_time on public.court_cases (filed_at desc);\nalter table public.court_cases enable row level security;\ndrop policy if exists ccz_sel on public.court_cases;\ncreate policy ccz_sel on public.court_cases for select to authenticated using (true);\ndrop policy if exists ccz_ins on public.court_cases;\ncreate policy ccz_ins on public.court_cases for insert to authenticated with check (filed_by = auth.uid());\ndrop policy if exists ccz_upd on public.court_cases;\ncreate policy ccz_upd on public.court_cases for update to authenticated using (true) with check (true);\ncreate table if not exists public.court_records (\n  id uuid primary key default gen_random_uuid(),\n  offender_name text not null,\n  crime_type text,\n  severity int not null default 3,\n  verdict text,\n  sentence text,\n  case_id uuid references public.court_cases(id) on delete set null,\n  judge_name text,\n  recorded_at timestamptz default now()\n);\ncreate index if not exists court_records_time on public.court_records (recorded_at desc);\nalter table public.court_records enable row level security;\ndrop policy if exists crr_sel on public.court_records;\ncreate policy crr_sel on public.court_records for select to authenticated using (true);\ndrop policy if exists crr_ins on public.court_records;\ncreate policy crr_ins on public.court_records for insert to authenticated with check (true);\ncreate table if not exists public.detention (\n  id uuid primary key default gen_random_uuid(),\n  offender_name text not null,\n  user_id uuid references auth.users(id) on delete set null,\n  crime_type text,\n  severity int not null default 3,\n  status text not null default 'jailed',\n  jailed_at timestamptz default now(),\n  release_at timestamptz,\n  bail_cinder numeric not null default 0,\n  seize_cinder numeric not null default 0,\n  seized_done boolean not null default false,\n  case_id uuid references public.court_cases(id) on delete set null,\n  committed_by uuid references auth.users(id) on delete set null,\n  committed_name text,\n  released_by text,\n  created_at timestamptz default now(),\n  updated_at timestamptz default now()\n);\ncreate index if not exists detention_status on public.detention (status, release_at);\nalter table public.detention enable row level security;\ndrop policy if exists det_sel on public.detention;\ncreate policy det_sel on public.detention for select to authenticated using (true);\ndrop policy if exists det_ins on public.detention;\ncreate policy det_ins on public.detention for insert to authenticated with check (true);\ndrop policy if exists det_upd on public.detention;\ncreate policy det_upd on public.detention for update to authenticated using (true) with check (true);\ngrant select on public.reserve_totals to authenticated;";
+const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ncreate table if not exists public.reserve_tax_log (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  buyer_id uuid,\n  corp_id text,\n  resource text,\n  quantity numeric not null default 0,\n  sale_value numeric not null default 0,\n  tax_rate numeric not null default 0.02,\n  tax_amount numeric not null default 0,\n  market_type text not null default 'base',\n  created_at timestamptz default now()\n);\ncreate index if not exists reserve_tax_log_time on public.reserve_tax_log (created_at desc);\nalter table public.reserve_tax_log enable row level security;\ndrop policy if exists tx_sel on public.reserve_tax_log;\ncreate policy tx_sel on public.reserve_tax_log for select to authenticated using (true);\ndrop policy if exists tx_ins on public.reserve_tax_log;\ncreate policy tx_ins on public.reserve_tax_log for insert to authenticated with check (seller_id = auth.uid());\ncreate table if not exists public.corporations (\n  id uuid primary key default gen_random_uuid(),\n  name text not null,\n  tag text not null,\n  founder_id uuid not null references auth.users(id) on delete cascade,\n  faction text,\n  element text,\n  created_at timestamptz default now()\n);\nalter table public.corporations add column if not exists faction text;\nalter table public.corporations add column if not exists element text;\ncreate table if not exists public.corp_members (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  joined_at timestamptz default now()\n);\ncreate index if not exists corp_members_corp on public.corp_members (corp_id);\nalter table public.corporations enable row level security;\nalter table public.corp_members enable row level security;\ndrop policy if exists corp_sel on public.corporations;\ncreate policy corp_sel on public.corporations for select to authenticated using (true);\ndrop policy if exists corp_ins on public.corporations;\ncreate policy corp_ins on public.corporations for insert to authenticated with check (founder_id = auth.uid());\ndrop policy if exists cm_sel on public.corp_members;\ncreate policy cm_sel on public.corp_members for select to authenticated using (true);\ndrop policy if exists cm_ins on public.corp_members;\ncreate policy cm_ins on public.corp_members for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cm_upd on public.corp_members;\ncreate policy cm_upd on public.corp_members for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists cm_del on public.corp_members;\ncreate policy cm_del on public.corp_members for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_members.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_requests (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  status text not null default 'pending',\n  created_at timestamptz default now(),\n  unique (corp_id, user_id)\n);\ncreate index if not exists corp_requests_corp on public.corp_requests (corp_id);\nalter table public.corp_requests enable row level security;\ndrop policy if exists creq_sel on public.corp_requests;\ncreate policy creq_sel on public.corp_requests for select to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists creq_ins on public.corp_requests;\ncreate policy creq_ins on public.corp_requests for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists creq_upd on public.corp_requests;\ncreate policy creq_upd on public.corp_requests for update to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid())) with check (true);\ndrop policy if exists creq_del on public.corp_requests;\ncreate policy creq_del on public.corp_requests for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_vault (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  depositor_id uuid not null references auth.users(id) on delete cascade,\n  depositor_name text,\n  kind text not null,\n  item_id text not null,\n  name text,\n  icon text,\n  qty numeric not null default 0,\n  created_at timestamptz default now(),\n  updated_at timestamptz default now(),\n  unique (corp_id, depositor_id, kind, item_id)\n);\ncreate index if not exists corp_vault_corp on public.corp_vault (corp_id);\nalter table public.corp_vault enable row level security;\ndrop policy if exists cv_sel on public.corp_vault;\ncreate policy cv_sel on public.corp_vault for select to authenticated using (exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()) or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists cv_ins on public.corp_vault;\ncreate policy cv_ins on public.corp_vault for insert to authenticated with check (depositor_id = auth.uid() and exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()));\ndrop policy if exists cv_upd on public.corp_vault;\ncreate policy cv_upd on public.corp_vault for update to authenticated using (depositor_id = auth.uid()) with check (depositor_id = auth.uid());\ndrop policy if exists cv_del on public.corp_vault;\ncreate policy cv_del on public.corp_vault for delete to authenticated using (depositor_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ncreate table if not exists public.corp_licenses (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  license_type text not null,\n  status text not null default 'active',\n  issued_by uuid references auth.users(id) on delete set null,\n  issued_at timestamptz default now(),\n  unique (corp_id, license_type)\n);\ncreate index if not exists corp_licenses_corp on public.corp_licenses (corp_id);\nalter table public.corp_licenses enable row level security;\ndrop policy if exists cl_sel on public.corp_licenses;\ncreate policy cl_sel on public.corp_licenses for select to authenticated using (true);\ndrop policy if exists cl_ins on public.corp_licenses;\ncreate policy cl_ins on public.corp_licenses for insert to authenticated with check (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists cl_del on public.corp_licenses;\ncreate policy cl_del on public.corp_licenses for delete to authenticated using (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.court_officials (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  user_name text,\n  role text not null default 'lawyer',\n  rank text not null default 'Associate',\n  status text not null default 'active',\n  registered_at timestamptz default now()\n);\nalter table public.court_officials enable row level security;\ndrop policy if exists cof_sel on public.court_officials;\ncreate policy cof_sel on public.court_officials for select to authenticated using (true);\ndrop policy if exists cof_ins on public.court_officials;\ncreate policy cof_ins on public.court_officials for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cof_upd on public.court_officials;\ncreate policy cof_upd on public.court_officials for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.court_cases (\n  id uuid primary key default gen_random_uuid(),\n  case_no text,\n  plaintiff_id uuid references auth.users(id) on delete set null,\n  plaintiff_name text,\n  defendant_name text not null,\n  crime_type text not null,\n  severity int not null default 3,\n  summary text,\n  status text not null default 'open',\n  judge_id uuid references auth.users(id) on delete set null,\n  judge_name text,\n  prosecutor_name text,\n  defender_name text,\n  verdict text,\n  sentence text,\n  filed_by uuid references auth.users(id) on delete set null,\n  filed_at timestamptz default now(),\n  updated_at timestamptz default now()\n);\ncreate index if not exists court_cases_time on public.court_cases (filed_at desc);\nalter table public.court_cases enable row level security;\ndrop policy if exists ccz_sel on public.court_cases;\ncreate policy ccz_sel on public.court_cases for select to authenticated using (true);\ndrop policy if exists ccz_ins on public.court_cases;\ncreate policy ccz_ins on public.court_cases for insert to authenticated with check (filed_by = auth.uid());\ndrop policy if exists ccz_upd on public.court_cases;\ncreate policy ccz_upd on public.court_cases for update to authenticated using (true) with check (true);\ncreate table if not exists public.court_records (\n  id uuid primary key default gen_random_uuid(),\n  offender_name text not null,\n  crime_type text,\n  severity int not null default 3,\n  verdict text,\n  sentence text,\n  case_id uuid references public.court_cases(id) on delete set null,\n  judge_name text,\n  recorded_at timestamptz default now()\n);\ncreate index if not exists court_records_time on public.court_records (recorded_at desc);\nalter table public.court_records enable row level security;\ndrop policy if exists crr_sel on public.court_records;\ncreate policy crr_sel on public.court_records for select to authenticated using (true);\ndrop policy if exists crr_ins on public.court_records;\ncreate policy crr_ins on public.court_records for insert to authenticated with check (true);\ncreate table if not exists public.detention (\n  id uuid primary key default gen_random_uuid(),\n  offender_name text not null,\n  user_id uuid references auth.users(id) on delete set null,\n  crime_type text,\n  severity int not null default 3,\n  status text not null default 'jailed',\n  jailed_at timestamptz default now(),\n  release_at timestamptz,\n  bail_cinder numeric not null default 0,\n  seize_cinder numeric not null default 0,\n  seized_done boolean not null default false,\n  case_id uuid references public.court_cases(id) on delete set null,\n  committed_by uuid references auth.users(id) on delete set null,\n  committed_name text,\n  released_by text,\n  created_at timestamptz default now(),\n  updated_at timestamptz default now()\n);\ncreate index if not exists detention_status on public.detention (status, release_at);\nalter table public.detention enable row level security;\ndrop policy if exists det_sel on public.detention;\ncreate policy det_sel on public.detention for select to authenticated using (true);\ndrop policy if exists det_ins on public.detention;\ncreate policy det_ins on public.detention for insert to authenticated with check (true);\ndrop policy if exists det_upd on public.detention;\ncreate policy det_upd on public.detention for update to authenticated using (true) with check (true);\ncreate table if not exists public.corp_treasury (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_id uuid references auth.users(id) on delete set null,\n  amount numeric not null default 0,\n  kind text not null default 'deposit',\n  note text,\n  created_at timestamptz default now()\n);\ncreate index if not exists corp_treasury_corp on public.corp_treasury (corp_id, created_at desc);\nalter table public.corp_treasury enable row level security;\ndrop policy if exists ct_sel on public.corp_treasury;\ncreate policy ct_sel on public.corp_treasury for select to authenticated using (true);\ndrop policy if exists ct_ins on public.corp_treasury;\ncreate policy ct_ins on public.corp_treasury for insert to authenticated with check (user_id = auth.uid());\ngrant select on public.reserve_totals to authenticated;";
 
 // Contribution point weight per resource (strategic / scarce = worth more).
 const RESERVE_WEIGHTS = {
@@ -25551,7 +25551,7 @@ async function nodeFetch() {
     FoundationReserve.nodesFetched = Date.now();
   } catch (e) {}
 }
-async function nodeEstablish(typeId) {
+async function nodeEstablish(typeId, fromTreasury) {
   const t = _nodeType(typeId);
   if (!t) return false;
   if (typeof _jailBlocked === 'function' && _jailBlocked('establishing nodes')) return false;
@@ -25564,26 +25564,53 @@ async function nodeEstablish(typeId) {
     return false;
   }
   if ((FoundationReserve.nodes || []).length >= NODE_MAX_PER_CORP) { showToast('Your corporation is at its node cap (' + NODE_MAX_PER_CORP + ').', 3600); return false; }
-  if ((Profile.gems || 0) < t.cinder) { showToast('Need ' + t.cinder.toLocaleString() + ' 🔥 to license & build the ' + t.name + ' — you have ' + (Profile.gems || 0).toLocaleString() + '.', 5200); return false; }
+  // 🏦 Treasury-funded construction: the corp's shared Cinder pays the build
+  // cost (founder authorises). Materials still come from the builder.
+  if (fromTreasury) {
+    if (!Corp.amOwner) { showToast('Only the corporation founder/CEO can authorise Treasury-funded construction.', 4600); return false; }
+    try { await corpTreasuryFetch(); } catch (e) {}
+    if ((Corp.treasury | 0) < t.cinder) { showToast('🏦 Corp Treasury has ' + (Corp.treasury | 0).toLocaleString() + ' 🔥 — needs ' + t.cinder.toLocaleString() + ' for the ' + t.name + '. Deposit more.', 6000); return false; }
+  } else {
+    if ((Profile.gems || 0) < t.cinder) { showToast('Need ' + t.cinder.toLocaleString() + ' 🔥 to license & build the ' + t.name + ' — you have ' + (Profile.gems || 0).toLocaleString() + '. (Tip: fund it from the Corp Treasury.)', 5600); return false; }
+  }
   if (!canAffordResources(t.res)) { showToast('Not enough resources to build the ' + t.name + ' (' + Object.keys(t.res).map(k => t.res[k] + ' ' + ((_meta(k).name) || k)).join(', ') + ').', 5200); return false; }
-  if (!confirm('License & build a ' + t.name + ' for your corporation?\n\nCost: ' + t.cinder.toLocaleString() + ' 🔥 + ' + Object.keys(t.res).map(k => t.res[k] + '× ' + ((_meta(k).name) || k)).join(', ') + '\nBuild time: ' + t.buildH + 'h')) return false;
-  if (!spendGems(t.cinder)) { showToast('Not enough Cinders'); return false; }
-  if (!spendResources(t.res)) { addGems(t.cinder); showToast('Not enough resources'); return false; }
+  if (!confirm((fromTreasury ? '🏦 Treasury-fund & build ' : 'License & build ') + 'a ' + t.name + ' for your corporation?\n\nCost: ' + t.cinder.toLocaleString() + ' 🔥 (' + (fromTreasury ? 'from Corp Treasury — balance ' + (Corp.treasury | 0).toLocaleString() : 'your Cinder') + ') + ' + Object.keys(t.res).map(k => t.res[k] + '× ' + ((_meta(k).name) || k)).join(', ') + '\nBuild time: ' + t.buildH + 'h')) return false;
+  // Take the Cinder (Treasury debit row, or personal), then materials.
+  let treasuryDebited = false;
+  if (fromTreasury) {
+    try {
+      const dr = await Cloud.client.from('corp_treasury').insert({ corp_id: Corp.mine.id, user_id: Profile.cloud.userId, amount: -t.cinder, kind: 'construction', note: t.name });
+      if (dr && dr.error) throw dr.error;
+      treasuryDebited = true; Corp.treasury = Math.max(0, (Corp.treasury | 0) - t.cinder);
+    } catch (e) {
+      showToast('⚠ Treasury debit failed — construction cancelled. ' + (/corp_treasury|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run the Reserve setup SQL first.' : ''), 4600);
+      return false;
+    }
+  } else {
+    if (!spendGems(t.cinder)) { showToast('Not enough Cinders'); return false; }
+  }
+  if (!spendResources(t.res)) {
+    if (treasuryDebited) { try { await Cloud.client.from('corp_treasury').insert({ corp_id: Corp.mine.id, user_id: Profile.cloud.userId, amount: t.cinder, kind: 'refund', note: t.name + ' (materials short)' }); Corp.treasury = (Corp.treasury | 0) + t.cinder; } catch (_) {} }
+    else { addGems(t.cinder); }
+    showToast('Not enough resources'); return false;
+  }
   try { saveProfile(); } catch (e) {}
   const me = Profile.cloud.userId;
   try {
     const ins = await Cloud.client.from('economy_nodes').insert({
       owner_id: me, corp_id: Corp.mine.id, name: Corp.mine.tag + ' ' + t.name,
       node_type: t.id, resource: t.proc, level: 1, status: 'building',
-      meta: { readyAt: Date.now() + t.buildH * 3600000, claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: 0, eff: 100, lastTick: Date.now() },
+      meta: { readyAt: Date.now() + t.buildH * 3600000, claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: 0, eff: 100, lastTick: Date.now(), funded: fromTreasury ? 'treasury' : 'personal' },
     });
     if (ins && ins.error) throw ins.error;
   } catch (e) {
-    addGems(t.cinder); try { addSalvage(t.res); } catch (_) {} try { saveProfile(); } catch (_) {}
+    if (treasuryDebited) { try { await Cloud.client.from('corp_treasury').insert({ corp_id: Corp.mine.id, user_id: me, amount: t.cinder, kind: 'refund', note: t.name + ' (filing failed)' }); Corp.treasury = (Corp.treasury | 0) + t.cinder; } catch (_) {} }
+    else { addGems(t.cinder); }
+    try { addSalvage(t.res); } catch (_) {} try { saveProfile(); } catch (_) {}
     showToast('⚠ Node filing failed — refunded. ' + (/economy_nodes|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run api.sql first.' : ''), 4600);
     return false;
   }
-  showToast('🔌 ' + t.name + ' licensed — construction started (' + t.buildH + 'h). It pays out for active contribution once online.', 6000);
+  showToast('🔌 ' + t.name + (fromTreasury ? ' Treasury-funded — ' : ' licensed — ') + 'construction started (' + t.buildH + 'h). It pays out for active contribution once online.', 6000);
   await nodeFetch();
   return true;
 }
@@ -25953,14 +25980,23 @@ function openFoundationReserve() {
           }).join('')
         : '<div class="ink-dim" style="padding:1rem 0;text-align:center">No nodes yet — license one below.</div>';
       const opts = RESERVE_NODE_TYPES.map(t => '<option value="' + t.id + '">' + esc(t.icon + ' ' + t.name + ' — ' + t.cinder.toLocaleString() + ' 🔥') + '</option>').join('');
+      const treasuryBox = '<div style="margin-top:12px;padding:8px 10px;border:1px solid rgba(127,224,160,0.3);border-radius:8px;background:rgba(30,60,45,0.16)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><span style="color:#bfe8cf;font-weight:800">🏦 Corp Treasury</span><span class="small-text" style="color:#9fe0b0;font-weight:800">' + (Corp.treasury | 0).toLocaleString() + ' 🔥</span></div>' +
+          '<div class="small-text" style="color:#8fb0a0;margin:3px 0 6px">Shared funds for construction. Any member can deposit; the founder authorises Treasury-funded builds.</div>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+            '<input id="fr-treas-amt" type="number" min="1" placeholder="amount 🔥" style="flex:1;min-width:90px;padding:0.45rem;border-radius:7px;border:1px solid rgba(127,224,160,0.4);background:rgba(10,26,18,0.7);color:#dff4e6">' +
+            '<button id="fr-treas-dep" style="cursor:pointer;border-radius:7px;padding:0.45rem 0.9rem;border:1px solid #5fbf88;background:linear-gradient(180deg,#2f7a52,#163d2a);color:#eafff2;font-weight:800">Deposit</button>' +
+          '</div></div>';
       const build = '<div style="margin-top:12px;border-top:1px solid rgba(120,170,255,0.2);padding-top:10px">' +
         '<div style="font-weight:800;color:#9fc6ff;margin-bottom:6px">License & build a node <span class="small-text" style="color:#8fb0e0">(' + ns.length + '/' + NODE_MAX_PER_CORP + ')</span></div>' +
         '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
           '<select id="fr-node-pick" style="flex:1;min-width:0;padding:0.5rem;border-radius:8px;border:1px solid rgba(120,170,255,0.4);background:rgba(12,20,40,0.7);color:#e6f0ff">' + opts + '</select>' +
           '<button id="fr-node-build" ' + (ns.length >= NODE_MAX_PER_CORP ? 'disabled' : '') + ' style="cursor:pointer;border-radius:8px;padding:0.5rem 1rem;border:1px solid #5fa0e0;background:linear-gradient(180deg,#3a6fb0,#1c3a6a);color:#eaf3ff;font-weight:800;opacity:' + (ns.length >= NODE_MAX_PER_CORP ? '0.5' : '1') + '">Build</button>' +
         '</div>' +
+        (Corp.amOwner ? '<label style="display:flex;align-items:center;gap:7px;margin-top:7px;color:#9fe0b0;font-size:0.85rem;cursor:pointer"><input type="checkbox" id="fr-node-treasury" style="width:16px;height:16px"> 🏦 Fund this build from the Corp Treasury (' + (Corp.treasury | 0).toLocaleString() + ' 🔥 available)</label>' : '') +
         '<div id="fr-node-desc" class="small-text" style="color:#8fb0e0;margin-top:6px"></div></div>';
-      return head + poolBox + '<div style="font-weight:800;color:#9fc6ff;margin:2px 0 6px">' + esc(corp.name) + ' nodes</div>' + list + build;
+      const buildWrap = treasuryBox + build;
+      return head + poolBox + '<div style="font-weight:800;color:#9fc6ff;margin:2px 0 6px">' + esc(corp.name) + ' nodes</div>' + list + buildWrap;
     };
 
     const productionTab = () => {
@@ -26067,7 +26103,9 @@ function openFoundationReserve() {
       };
       if (npick) { npick.onchange = paintNodeDesc; paintNodeDesc(); }
       const nbuild = document.getElementById('fr-node-build');
-      if (nbuild) nbuild.onclick = () => { const id = (document.getElementById('fr-node-pick') || {}).value; if (id) nodeEstablish(id).then(ok => { if (ok) render(); }); };
+      if (nbuild) nbuild.onclick = () => { const id = (document.getElementById('fr-node-pick') || {}).value; const ft = !!(document.getElementById('fr-node-treasury') || {}).checked; if (id) nodeEstablish(id, ft).then(ok => { if (ok) render(); }); };
+      const tdep = document.getElementById('fr-treas-dep');
+      if (tdep) tdep.onclick = () => { const a = parseInt((document.getElementById('fr-treas-amt') || {}).value, 10) || 0; corpTreasuryDeposit(a).then(ok => { if (ok) render(); }); };
       host.querySelectorAll('[data-node-collect]').forEach(b => { b.onclick = () => { if (b.disabled) return; nodeCollect(b.getAttribute('data-node-collect')).then(() => render()); }; });
       host.querySelectorAll('[data-node-maintain]').forEach(b => { b.onclick = () => { nodeMaintain(b.getAttribute('data-node-maintain')).then(() => render()); }; });
       host.querySelectorAll('[data-node-defend]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; nodeDefend(b.getAttribute('data-node-defend')).then(() => render()); }; });
@@ -34771,7 +34809,42 @@ function _baseNavTo(screen) {
 // so corpId is always real. All Supabase access is guarded — the app still
 // works (mock data) if offline / tables not yet set up.
 // ============================================================================
-const Corp = { mine: null, roster: [], requests: [], vault: [], directory: [], licenses: [], compliance: 0, complianceParts: [], amOwner: false, _ensuring: false, _err: null };
+const Corp = { mine: null, roster: [], requests: [], vault: [], directory: [], licenses: [], compliance: 0, complianceParts: [], treasury: 0, amOwner: false, _ensuring: false, _err: null };
+// 🏦 Corp Treasury — a shared Cinder balance (append-only ledger; balance =
+// sum(amount)). Members deposit; node construction can be funded from it
+// instead of the founder's personal Cinder. No new race surface — same
+// client-aggregated ledger pattern as reserve_contributions/node_payouts.
+async function corpTreasuryFetch() {
+  try {
+    if (!Corp.mine || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { Corp.treasury = 0; return 0; }
+    const r = await Cloud.client.from('corp_treasury').select('amount').eq('corp_id', Corp.mine.id).limit(5000);
+    if (r && r.error) { Corp.treasury = 0; return 0; }
+    let b = 0; (r && r.data ? r.data : []).forEach(x => { b += Number(x.amount) || 0; });
+    Corp.treasury = Math.max(0, Math.round(b));
+    return Corp.treasury;
+  } catch (e) { Corp.treasury = 0; return 0; }
+}
+async function corpTreasuryDeposit(amount) {
+  amount = Math.floor(amount);
+  if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in.', 2600); return false; }
+  if (!Corp.mine) { showToast('Join or found a corporation first.', 3600); return false; }
+  if (!(amount > 0)) { showToast('Enter a deposit amount.'); return false; }
+  if ((Profile.gems || 0) < amount) { showToast('Need ' + amount.toLocaleString() + ' 🔥 — you have ' + (Profile.gems || 0).toLocaleString() + '.', 4200); return false; }
+  if (!confirm('Deposit ' + amount.toLocaleString() + ' 🔥 into the ' + Corp.mine.name + ' Treasury?\n\nShared funds — used to construct nodes/operations. This is not refundable to you personally.')) return false;
+  if (!spendGems(amount)) { showToast('Not enough Cinders'); return false; }
+  try { saveProfile(); } catch (e) {}
+  try {
+    const ins = await Cloud.client.from('corp_treasury').insert({ corp_id: Corp.mine.id, user_id: Profile.cloud.userId, amount: amount, kind: 'deposit', note: 'member deposit' });
+    if (ins && ins.error) throw ins.error;
+  } catch (e) {
+    addGems(amount); try { saveProfile(); } catch (_) {}
+    showToast('⚠ Deposit failed — refunded. ' + (/corp_treasury|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run the Reserve setup SQL first.' : ''), 4600);
+    return false;
+  }
+  Corp.treasury = (Corp.treasury | 0) + amount;
+  showToast('🏦 Deposited ' + amount.toLocaleString() + ' 🔥 to the ' + Corp.mine.name + ' Treasury (balance ' + Corp.treasury.toLocaleString() + ').', 5200);
+  return true;
+}
 // 📜 City Hall licence catalogue. Each gates a Reserve Node type. Issued to
 // a corporation (founder applies) for Cinder + resources + a minimum
 // compliance score. Smuggling is illicit — no compliance gate.
@@ -34923,8 +34996,9 @@ async function corpEnsure() {
           Corp.complianceParts = parts;
           Corp.compliance = clamp(40 + taxPts + resPts + opsPts - smugPen - raidPen - missPen, 0, 100);
         } catch (e) { Corp.compliance = 40; Corp.complianceParts = [{ k: 'Base standing', v: 40 }]; }
+        try { await corpTreasuryFetch(); } catch (e) { Corp.treasury = 0; }
       }
-    } else { Corp.mine = null; Corp.roster = []; Corp.requests = []; Corp.vault = []; Corp.licenses = []; Corp.compliance = 0; Corp.complianceParts = []; Corp.amOwner = false; }
+    } else { Corp.mine = null; Corp.roster = []; Corp.requests = []; Corp.vault = []; Corp.licenses = []; Corp.compliance = 0; Corp.complianceParts = []; Corp.treasury = 0; Corp.amOwner = false; }
     // 🏢 Public directory of EVERY corporation started (so players who
     // aren't in one can see them). corporations select RLS is public.
     try {
@@ -57683,6 +57757,53 @@ function requestCashout(cinders) {
   if (typeof render === 'function') render();
   return true;
 }
+// ── Stripe Connect (real payout rail; onboarding is Stripe-hosted, KYC on
+// Stripe's pages — the game never collects bank/ID data). All Stripe calls
+// go through our Worker; the client only forwards its Supabase token and
+// follows the returned hosted-onboarding URL. Reports disabled gracefully.
+const StripeCashout = { fetched: 0, enabled: false, payoutsEnabled: false, connected: false, payouts_enabled: false, _busy: false };
+async function _sbToken() {
+  try {
+    if (!(typeof Cloud !== 'undefined' && Cloud.client && Cloud.client.auth)) return null;
+    const s = await Cloud.client.auth.getSession();
+    return (s && s.data && s.data.session && s.data.session.access_token) || null;
+  } catch (e) { return null; }
+}
+async function cashoutStripeRefresh() {
+  try {
+    const cfg = await fetch('/api/cashout/config', { headers: { accept: 'application/json' } }).then(r => r.json()).catch(() => null);
+    StripeCashout.enabled = !!(cfg && cfg.enabled);
+    StripeCashout.payoutsEnabled = !!(cfg && cfg.payoutsEnabled);
+    if (StripeCashout.enabled) {
+      const tok = await _sbToken();
+      if (tok) {
+        const st = await fetch('/api/cashout/status', { headers: { accept: 'application/json', authorization: 'Bearer ' + tok } }).then(r => r.json()).catch(() => null);
+        StripeCashout.connected = !!(st && st.connected);
+        StripeCashout.payouts_enabled = !!(st && st.payouts_enabled);
+      }
+    }
+  } catch (e) {}
+  StripeCashout.fetched = Date.now();
+  try { if (App.screen === 'cashout' && typeof render === 'function') render(); } catch (e) {}
+}
+async function cashoutConnectStripe() {
+  if (StripeCashout._busy) return;
+  StripeCashout._busy = true;
+  try {
+    const tok = await _sbToken();
+    if (!tok) { showToast('☁ Sign in to your account before connecting a payout account.', 4200); return; }
+    const r = await fetch('/api/cashout/connect', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok } });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 503 || (j && j.error === 'stripe_not_configured')) { showToast('💳 Real payouts aren’t configured on this deployment — staying in mock mode.', 5200); return; }
+    if (j && j.url) {
+      showToast('↪ Redirecting to Stripe’s secure onboarding — complete identity verification there. The game never sees your bank or ID details.', 6000);
+      setTimeout(() => { try { window.location.href = j.url; } catch (e) {} }, 900);
+    } else {
+      showToast('⚠ Could not start Stripe onboarding' + (j && j.error ? ' (' + j.error + ')' : '') + '.', 4600);
+    }
+  } catch (e) { showToast('⚠ Stripe connection failed — try again.', 4000); }
+  finally { StripeCashout._busy = false; }
+}
 function renderCashoutVault() {
   // Entry gate — Cashout Vault requires a hero at Lv 15+. Bounce on direct
   // navigation so manual state edits or stale App.screen don't bypass the gate.
@@ -57695,6 +57816,7 @@ function renderCashoutVault() {
   }
   _cashoutEnsure();
   const sg = _cashoutSafeguards();
+  if (!StripeCashout.fetched || (Date.now() - StripeCashout.fetched > 60000)) { StripeCashout.fetched = Date.now(); try { cashoutStripeRefresh(); } catch (e) {} }
   const cinders = Profile.gems || 0;
   const reachedThreshold = cinders >= CASHOUT_MIN_CINDERS;
   // Progress bar shows how close you are to the minimum threshold.
@@ -57774,6 +57896,19 @@ function renderCashoutVault() {
         </div>
         <div class="small-text ink-dim" style="margin-top:6px">Verification here is a <strong>mock self-attestation</strong> — it never asks for bank/card/ID numbers. A live build performs real KYC through the payment processor, off-platform.</div>
         ` : `<div class="small-text ink-dim" style="margin-top:4px">Verified for <strong>${esc(sg.method)}</strong> payouts (mock). Requests are rate-limited, capped, fraud-screened, Reserve-protected and inflation-monitored, and logged to a tamper-evident audit trail.</div>`}
+        <div style="margin-top:10px;padding-top:9px;border-top:1px solid rgba(180,240,200,0.18)">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-weight:800;color:#cfe0f4">💳 Real payout rail (Stripe Connect)</span>
+            ${!StripeCashout.enabled
+              ? `<span class="small-text" style="color:#e0b870">Not configured — mock mode</span>`
+              : StripeCashout.connected
+                ? `<span class="small-text" style="color:${StripeCashout.payouts_enabled ? '#a0ffb0' : '#e0b870'}">${StripeCashout.payouts_enabled ? '✅ Connected · payouts enabled' : '⏳ Connected · finish verification on Stripe'}</span>`
+                : `<span class="small-text ink-dim">Not connected</span>`}
+          </div>
+          ${StripeCashout.enabled && !(StripeCashout.connected && StripeCashout.payouts_enabled)
+            ? `<button class="btn-secondary btn-mini" id="cashout-stripe-connect" style="margin-top:7px">🔗 ${StripeCashout.connected ? 'Resume Stripe verification' : 'Connect payout account (Stripe)'}</button>` : ''}
+          <div class="small-text ink-dim" style="margin-top:6px">Identity (KYC) &amp; bank details are entered on <strong>Stripe’s own secure pages</strong> — never in this game. ${StripeCashout.payoutsEnabled ? '' : 'Live transfers are disabled on this deployment; the ledger stays mock.'}</div>
+        </div>
       </div>
 
       <!-- ===== Explainer: how the Cashout Vault works ===== -->
@@ -57851,6 +57986,8 @@ function renderCashoutVault() {
     const m = (document.getElementById('cashout-method') || {}).value || '';
     if (cashoutVerify(m)) render();
   };
+  const scb = document.getElementById('cashout-stripe-connect');
+  if (scb) scb.onclick = () => { scb.disabled = true; scb.textContent = 'Connecting…'; cashoutConnectStripe(); };
   document.querySelectorAll('[data-cashout-btn]').forEach(btn => {
     btn.onclick = () => {
       if (btn.disabled) return;

@@ -233,4 +233,19 @@ drop policy if exists det_ins on public.detention;
 create policy det_ins on public.detention for insert to authenticated with check (true);
 drop policy if exists det_upd on public.detention;
 create policy det_upd on public.detention for update to authenticated using (true) with check (true);
+create table if not exists public.corp_treasury (
+  id uuid primary key default gen_random_uuid(),
+  corp_id uuid not null references public.corporations(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
+  amount numeric not null default 0,
+  kind text not null default 'deposit',
+  note text,
+  created_at timestamptz default now()
+);
+create index if not exists corp_treasury_corp on public.corp_treasury (corp_id, created_at desc);
+alter table public.corp_treasury enable row level security;
+drop policy if exists ct_sel on public.corp_treasury;
+create policy ct_sel on public.corp_treasury for select to authenticated using (true);
+drop policy if exists ct_ins on public.corp_treasury;
+create policy ct_ins on public.corp_treasury for insert to authenticated with check (user_id = auth.uid());
 grant select on public.reserve_totals to authenticated;

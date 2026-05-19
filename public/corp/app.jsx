@@ -113,9 +113,9 @@ function App() {
       return;
     }
     if (illicit) {
-      toast(`Smuggled ${l.qty}× ${l.asset} for ${fmt(total)} AZA. Convoy dispatched (high risk).`);
+      toast(`Smuggled ${l.qty}× ${l.asset} for ${fmt(total)} Aza coin. Convoy dispatched (high risk).`);
     } else {
-      toast(`Purchased ${l.qty}× ${l.asset} for ${fmt(total)} AZA.`);
+      toast(`Purchased ${l.qty}× ${l.asset} for ${fmt(total)} Aza coin.`);
     }
     setBalances(b => ({ ...b, aza: b.aza - total }));
   };
@@ -129,8 +129,15 @@ function App() {
       toast(`Sold ${qty}× ${asset.name} for ${fmt(qty * price)} 🔥 — 2% Foundation Tax → Reserve.`);
       return;
     }
-    toast(`Listed ${qty}× ${asset.name} at ${fmt(price)} AZA. Market tax 2%.`);
+    toast(`Listed ${qty}× ${asset.name} at ${fmt(price)} Aza coin. Market tax 2%.`);
   };
+
+  const [foundOpen, setFoundOpen] = useState(false);
+  const _jbE = (window.__JB && window.__JB.econ) || null;
+  const jbSignedIn = !!(_jbE && _jbE.signedIn);
+  const noCorp = !!(_jbE && _jbE.signedIn && !_jbE.corp);
+  const foundCost = _jbE ? (_jbE.foundCost | 0) : 1000000;
+  const isAdm = !!(_jbE && _jbE.isAdmin);
 
   const unreadMail = mail.filter(m => m.unread).length;
   const blackCount = window.ECON.BLACK_MARKET.length;
@@ -159,9 +166,27 @@ function App() {
 
       <ToastHost toasts={toasts} />
 
+      {noCorp && (
+        <button onClick={() => setFoundOpen(true)} style={{
+          position: 'fixed', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 90,
+          cursor: 'pointer', border: '1px solid var(--rust)', background: 'linear-gradient(180deg,#3a2410,#1c1208)',
+          color: '#ffe8c8', borderRadius: 8, padding: '0.5rem 1rem', fontWeight: 700,
+          fontFamily: 'var(--f-display)', letterSpacing: '.02em', boxShadow: '0 8px 24px rgba(0,0,0,.6)',
+        }}>
+          🏢 Found a Corporation {isAdm ? '· Admin (free)' : '· ' + fmt(foundCost) + ' Cinder'}
+        </button>
+      )}
+
       {sendTarget && <SendModal asset={sendTarget} onClose={() => setSendTarget(null)} onSend={doSend} />}
       {listTarget && <ListModal asset={listTarget} onClose={() => setListTarget(null)} onList={doList} />}
       {buyTarget && <BuyModal listing={buyTarget.listing} illicit={buyTarget.illicit} onClose={() => setBuyTarget(null)} onBuy={doBuy} />}
+      {foundOpen && <FoundCorpFlow cost={foundCost} admin={isAdm} handle={(_jbE && _jbE.handle) || 'Founder'}
+        onClose={() => setFoundOpen(false)}
+        onFiled={(p) => {
+          try { window.JB_action && window.JB_action({ kind: 'corpCreate', name: p.name, faction: p.faction, element: p.element }); } catch (e) {}
+          setFoundOpen(false);
+          toast('Incorporation filed with the Foundation. Processing…');
+        }} />}
 
       <TweaksPanel>
         <TweakSection label="Palette">
@@ -199,7 +224,7 @@ function App() {
 
         <TweakSection label="Quick demo">
           <TweakButton label="Trigger raid (toast)" onClick={() => toast('Convoy CV-014 ambushed. 220 Iron lost.', true)} />
-          <TweakButton label="Bank +10k AZA" secondary onClick={() => { setBalances(b => ({ ...b, aza: b.aza + 10000 })); toast('Treasury credit: +10,000 AZA.'); }} />
+          <TweakButton label="Bank +10k Aza coin" secondary onClick={() => { setBalances(b => ({ ...b, aza: b.aza + 10000 })); toast('Treasury credit: +10,000 Aza coin.'); }} />
         </TweakSection>
       </TweaksPanel>
     </div>
@@ -307,7 +332,7 @@ function SendModal({ asset, onClose, onSend }) {
             <SumRow label="Quantity" value={`${fmt(qty)} ${asset.unit || '×'}`} />
             <SumRow label="Recipient" value={target?.handle || '—'} />
             <SumRow label="Method" value={method[0].toUpperCase() + method.slice(1)} />
-            <SumRow label="Transfer fee" value={fee ? `${fmt(fee)} AZA` : 'Free'} />
+            <SumRow label="Transfer fee" value={fee ? `${fmt(fee)} Aza coin` : 'Free'} />
             <SumRow label="Logged to" value="Ownership history" />
           </div>
         </div>
@@ -359,7 +384,7 @@ function ListModal({ asset, onClose, onList }) {
     <Modal title={`List · ${asset.name}`} onClose={onClose}
       footer={<>
         <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn primary" onClick={() => onList(asset, qty, price)}>List for {fmt(total)} AZA</button>
+        <button className="btn primary" onClick={() => onList(asset, qty, price)}>List for {fmt(total)} Aza coin</button>
       </>}>
       <div className="row" style={{ gap: 14, marginBottom: 18, alignItems: 'flex-start' }}>
         <AssetGlyph asset={asset} size="lg" />
@@ -368,7 +393,7 @@ function ListModal({ asset, onClose, onList }) {
           <div className="mono muted" style={{ fontSize: 11, marginTop: 2 }}>{asset.id}</div>
           <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <RarityChip rarity={asset.rarity} />
-            {asset.market && <span className="chip flat">Market price · {fmt(asset.market)} AZA</span>}
+            {asset.market && <span className="chip flat">Market price · {fmt(asset.market)} Aza coin</span>}
           </div>
         </div>
       </div>
@@ -378,7 +403,7 @@ function ListModal({ asset, onClose, onList }) {
           <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>Unit price</div>
           <div className="row" style={{ gap: 8 }}>
             <input className="input" type="number" value={price} onChange={e => setPrice(Math.max(0, Number(e.target.value)))} />
-            <span className="mono">AZA</span>
+            <span className="mono">Aza coin</span>
           </div>
         </div>
 
@@ -400,9 +425,9 @@ function ListModal({ asset, onClose, onList }) {
       </div>
 
       <div className="card flat" style={{ marginTop: 18, padding: 14 }}>
-        <SumRow label="Listing total" value={`${fmt(total)} AZA`} />
-        <SumRow label="Marketplace tax (2%)" value={`−${fmt(tax)} AZA`} />
-        <SumRow label="Payout on sale" value={`${fmt(total - tax)} AZA`} />
+        <SumRow label="Listing total" value={`${fmt(total)} Aza coin`} />
+        <SumRow label="Marketplace tax (2%)" value={`−${fmt(tax)} Aza coin`} />
+        <SumRow label="Payout on sale" value={`${fmt(total - tax)} Aza coin`} />
         <SumRow label="Visibility" value={scope} />
       </div>
     </Modal>
@@ -430,7 +455,7 @@ function BuyModal({ listing, illicit, onClose, onBuy }) {
         <>
           <button className="btn ghost" onClick={onClose}>Cancel</button>
           <button className={illicit ? 'btn toxic' : 'btn primary'} onClick={confirm} disabled={holding}>
-            {holding ? 'Holding · 5s…' : (illicit ? `Smuggle for ${fmt(total)} AZA` : `Buy for ${fmt(total)} AZA`)}
+            {holding ? 'Holding · 5s…' : (illicit ? `Smuggle for ${fmt(total)} Aza coin` : `Buy for ${fmt(total)} Aza coin`)}
           </button>
         </>
       }>
@@ -472,10 +497,10 @@ function BuyModal({ listing, illicit, onClose, onBuy }) {
         <div>
           <div className="card flat" style={{ padding: 14 }}>
             <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 10 }}>Transaction</div>
-            <SumRow label={`${listing.qty} × ${fmt(listing.price)} AZA`} value={`${fmt(listing.price * listing.qty)} AZA`} />
-            <SumRow label={illicit ? 'Tax (off-ledger)' : 'Marketplace tax (2%)'} value={tax ? `+${fmt(tax)} AZA` : 'Avoided'} />
-            <SumRow label="Insurance" value={ins ? `+${fmt(ins)} AZA` : '—'} />
-            <SumRow label="Total" value={`${fmt(total)} AZA`} />
+            <SumRow label={`${listing.qty} × ${fmt(listing.price)} Aza coin`} value={`${fmt(listing.price * listing.qty)} Aza coin`} />
+            <SumRow label={illicit ? 'Tax (off-ledger)' : 'Marketplace tax (2%)'} value={tax ? `+${fmt(tax)} Aza coin` : 'Avoided'} />
+            <SumRow label="Insurance" value={ins ? `+${fmt(ins)} Aza coin` : '—'} />
+            <SumRow label="Total" value={`${fmt(total)} Aza coin`} />
 
             <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--line-soft)' }}>
               <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>Counterparty</div>
@@ -496,6 +521,125 @@ function BuyModal({ listing, illicit, onClose, onBuy }) {
           )}
         </div>
       </div>
+    </Modal>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Found a Corporation — application form → SCP Foundation incorporation
+// document with an e-signature. Funnels into JB_action({kind:'corpCreate'}).
+// ──────────────────────────────────────────────────────────────────────────
+const CORP_FACTIONS = ['Berserker', 'Eldritch', 'Plant', 'Celestial', 'Vampire', 'Construct', 'Elemental', 'Corrupted', 'Foundation', 'Independent'];
+const CORP_ELEMENTS = ['Fire', 'Void', 'Nature', 'Light', 'Blood', 'Metal', 'Storm', 'Corruption', 'Arcane', 'Ice'];
+
+function FoundCorpFlow({ cost, admin, handle, onClose, onFiled }) {
+  const [step, setStep] = useState(1);
+  const [name, setName] = useState('');
+  const [faction, setFaction] = useState('');
+  const [element, setElement] = useState('');
+  const [sig, setSig] = useState('');
+  const tag = (name.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 4) || '----');
+  const step1ok = name.trim().length >= 3 && faction && element;
+  const signed = sig.trim().length >= 2;
+  const docNo = 'EC-' + (10000 + ((name.length * 37 + faction.length * 13 + element.length * 7) % 89999));
+
+  const field = (label, node) => (
+    <div style={{ marginBottom: 14 }}>
+      <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
+      {node}
+    </div>
+  );
+
+  return (
+    <Modal title={step === 1 ? 'Found a Corporation' : 'SCP Foundation — Articles of Incorporation'} onClose={onClose}
+      footer={step === 1 ? (
+        <>
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={!step1ok} onClick={() => setStep(2)}>
+            {step1ok ? 'Review filing →' : 'Complete the form'}
+          </button>
+        </>
+      ) : (
+        <>
+          <button className="btn ghost" onClick={() => setStep(1)}>← Back</button>
+          <button className="btn primary" disabled={!signed} onClick={() => onFiled({ name: name.trim(), faction, element })}>
+            {signed ? (admin ? 'File incorporation (admin · free)' : 'File incorporation · ' + fmt(cost) + ' Cinder') : 'Sign to file'}
+          </button>
+        </>
+      )}>
+      {step === 1 ? (
+        <div>
+          <div className="muted" style={{ fontSize: 12.5, marginBottom: 16 }}>
+            A corporation is your guild — a chartered economic entity. Members pool vaults, run logistics &amp; markets, and trade under one banner. Every corporation sale pays a flat <b style={{ color: 'var(--rust)' }}>2% Foundation Tax</b> into the Foundation Reserve.
+          </div>
+          {field('Corporation name', (
+            <input className="input" placeholder="e.g. Black Sun Holdings" value={name} maxLength={40}
+              onChange={e => setName(e.target.value)} />
+          ))}
+          {name.trim() && <div className="mono muted" style={{ fontSize: 11, marginTop: -8, marginBottom: 14 }}>Ticker tag: <b style={{ color: 'var(--aza)' }}>[{tag}]</b></div>}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            {field('Favourite faction', (
+              <select className="select" value={faction} onChange={e => setFaction(e.target.value)}>
+                <option value="">— choose —</option>
+                {CORP_FACTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            ))}
+            {field('Best element', (
+              <select className="select" value={element} onChange={e => setElement(e.target.value)}>
+                <option value="">— choose —</option>
+                {CORP_ELEMENTS.map(el => <option key={el} value={el}>{el}</option>)}
+              </select>
+            ))}
+          </div>
+          <div className="card flat" style={{ padding: 14, marginTop: 4 }}>
+            <SumRow label="Incorporation bond" value={admin ? 'Waived (admin)' : fmt(cost) + ' Cinder'} />
+            <SumRow label="Standing tax on all sales" value="2% → Foundation Reserve" />
+            <SumRow label="Charter type" value="Player guild / economic entity" />
+          </div>
+        </div>
+      ) : (
+        <div>
+          <div style={{
+            background: '#100c08', border: '1px solid var(--line-soft)', borderRadius: 4,
+            padding: '22px 24px', fontFamily: 'var(--f-mono)', fontSize: 12, lineHeight: 1.7, color: '#d8cdb8',
+          }}>
+            <div style={{ textAlign: 'center', borderBottom: '1px solid var(--line-soft)', paddingBottom: 12, marginBottom: 14 }}>
+              <div style={{ letterSpacing: '.32em', fontWeight: 700, color: '#e8d089' }}>SCP FOUNDATION</div>
+              <div style={{ letterSpacing: '.18em', fontSize: 10.5, color: 'var(--muted)' }}>OFFICE OF ECONOMIC CONTAINMENT</div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: 'var(--muted)', marginBottom: 12 }}>
+              <span>DOC&nbsp;{docNo}</span><span>CLASSIFICATION: <b style={{ color: 'var(--rust)' }}>EUCLID-FISCAL</b></span><span>COPY 1 OF 1</span>
+            </div>
+            <div style={{ fontWeight: 700, color: '#e8d089', marginBottom: 8 }}>ARTICLES OF INCORPORATION &amp; FOUNDATION OVERSIGHT</div>
+            <p style={{ margin: '0 0 10px' }}>
+              This instrument charters <b style={{ color: '#fff' }}>{name.trim() || '████████'}</b> [{tag}] as a recognised economic entity ("the Corporation"), aligned <b>{faction || '████'}</b> / <b>{element || '████'}</b> under the supervision of the Foundation.
+            </p>
+            <p style={{ margin: '0 0 10px' }}>
+              <b style={{ color: '#e8d089' }}>§1 Powers.</b> The Corporation may operate a shared vault, dispatch logistics convoys, list on the public &amp; corporation markets, hold real estate, and conduct sanctioned black-market commerce. Membership functions as a guild.
+            </p>
+            <p style={{ margin: '0 0 10px' }}>
+              <b style={{ color: '#e8d089' }}>§2 Taxation.</b> A standing <b style={{ color: 'var(--rust)' }}>2% Foundation Tax</b> is levied on the gross of every Corporation sale, transfer-for-value and contract. Levied funds are removed from circulation into the <b>Foundation Reserve</b> and are non-refundable. Black-market disposals are assessed identically as a <b>Foundation Seizure Fee</b>.
+            </p>
+            <p style={{ margin: '0 0 10px' }}>
+              <b style={{ color: '#e8d089' }}>§3 Bond.</b> An incorporation bond of <b>{admin ? '0 (waived — Foundation staff)' : fmt(cost) + ' Cinder'}</b> is due on filing and is forfeit to the Reserve. This bond exists to constrain unbounded capital accumulation per Containment Directive 12-ECON.
+            </p>
+            <p style={{ margin: '0 0 14px' }}>
+              <b style={{ color: '#e8d089' }}>§4 Compliance.</b> The Corporation submits to audit. Falsified ledgers, tax evasion or convoy fraud void this charter and may escalate the holder's threat rating.
+            </p>
+            <div style={{ borderTop: '1px dashed var(--line-soft)', paddingTop: 14, marginTop: 4 }}>
+              <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>
+                E-signature — sign as {handle} to bind this charter
+              </div>
+              <input className="input" placeholder="Type your signature…" value={sig}
+                onChange={e => setSig(e.target.value)}
+                style={{ fontFamily: 'Newsreader, serif', fontSize: 20, fontStyle: 'italic', letterSpacing: '.04em' }} />
+              <div className="mono muted" style={{ fontSize: 10, marginTop: 8 }}>
+                By signing you accept §1–§4 and authorise the {admin ? 'waived' : fmt(cost) + ' Cinder'} bond. Filed: {new Date().toISOString().slice(0, 10)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }

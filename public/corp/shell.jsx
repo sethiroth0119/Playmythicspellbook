@@ -12,7 +12,7 @@ const fmt = (n) => {
   if (Math.abs(n) >= 1)    return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   return n.toFixed(2);
 };
-const fmtAza = (n) => `${fmt(n)} AZA`;
+const fmtAza = (n) => `${fmt(n)} Aza coin`;
 
 const RAR = window.ECON.RARITY;
 
@@ -89,6 +89,9 @@ const NAV = [
 
 function Sidebar({ route, setRoute, mailCount, blackCount }) {
   const { PLAYER } = window.ECON;
+  const JB = (window.__JB && window.__JB.econ) || null;
+  const corpName = JB ? (JB.corp ? JB.corp.name : 'Independent') : PLAYER.corp;
+  const corpRole = JB ? (JB.corp ? String(JB.corp.role || 'member').toUpperCase() : 'Unincorporated') : PLAYER.corpRole;
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -115,8 +118,8 @@ function Sidebar({ route, setRoute, mailCount, blackCount }) {
       <div className="corp-card">
         <div className="row">
           <div>
-            <div className="name">{PLAYER.corp}</div>
-            <div className="role">{PLAYER.corpRole}</div>
+            <div className="name">{corpName}</div>
+            <div className="role">{corpRole}</div>
           </div>
           <span className="chip rust">RANK 04</span>
         </div>
@@ -136,6 +139,8 @@ function Sidebar({ route, setRoute, mailCount, blackCount }) {
 
 function Topbar({ route, balances }) {
   const { PLAYER } = window.ECON;
+  const _jb = (window.__JB && window.__JB.econ) || null;
+  const handle = (_jb && _jb.handle) ? _jb.handle : PLAYER.handle;
   const path = ({
     vault:     ['Holdings', 'Vault'],
     corp:      ['Holdings', 'Corp Treasury'],
@@ -176,9 +181,9 @@ function Topbar({ route, balances }) {
       </div>
 
       <div className="me">
-        <div className="av">{PLAYER.handle.slice(0, 2)}</div>
+        <div className="av">{String(handle).slice(0, 2).toUpperCase()}</div>
         <div>
-          <div className="name">{PLAYER.handle}</div>
+          <div className="name">{handle}</div>
           <div className="role">{PLAYER.title} · REP {Math.round(PLAYER.rep * 100)}</div>
         </div>
       </div>

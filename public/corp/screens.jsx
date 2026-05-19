@@ -58,7 +58,7 @@ function VaultScreen({ openRelic, openSend, openList }) {
         right={
           <div style={{ textAlign: 'right' }}>
             <div className="mono muted" style={{ fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase' }}>Est. Net Worth</div>
-            <div className="disp" style={{ fontSize: 26, color: 'var(--aza)' }}>{fmt(totalValue)} <span style={{ fontSize: 12, color: 'var(--muted)' }}>AZA</span></div>
+            <div className="disp" style={{ fontSize: 26, color: 'var(--aza)' }}>{fmt(totalValue)} <span style={{ fontSize: 12, color: 'var(--muted)' }}>Aza coin</span></div>
           </div>
         }
       />
@@ -244,7 +244,7 @@ function MarketplaceScreen({ openBuy }) {
                 </td>
                 <td><RarityChip rarity={l.rarity} /></td>
                 <td className="num mono">{fmt(l.qty)}</td>
-                <td className="num mono" style={{ color: 'var(--aza)' }}>{fmt(l.price)} AZA</td>
+                <td className="num mono" style={{ color: 'var(--aza)' }}>{fmt(l.price)} Aza coin</td>
                 <td><Trend dir={l.trend} /> <span className="mono muted" style={{ fontSize: 11, marginLeft: 4 }}>30d</span></td>
                 <td className="mono muted" style={{ fontSize: 11 }}>{l.posted} ago</td>
                 <td>
@@ -309,8 +309,8 @@ function BlackMarketScreen({ openBuy }) {
           <option value="extreme">Extreme</option>
         </select>
         <div className="spacer" />
-        <button className="btn toxic">Bribe inspector ·  220 AZA</button>
-        <button className="btn">Insure all  ·  1,400 AZA</button>
+        <button className="btn toxic">Bribe inspector ·  220 Aza coin</button>
+        <button className="btn">Insure all  ·  1,400 Aza coin</button>
       </div>
 
       <div className="card">
@@ -339,7 +339,7 @@ function BlackMarketScreen({ openBuy }) {
                 <td><div className="mono">{l.seller}</div></td>
                 <td><RarityChip rarity={l.rarity} /></td>
                 <td className="num mono">{fmt(l.qty)}</td>
-                <td className="num mono" style={{ color: 'var(--toxic)' }}>{fmt(l.price)} AZA</td>
+                <td className="num mono" style={{ color: 'var(--toxic)' }}>{fmt(l.price)} Aza coin</td>
                 <td><RiskPips level={l.risk} /></td>
                 <td className="mono muted" style={{ fontSize: 11 }}>{l.posted} ago</td>
                 <td>
@@ -442,7 +442,7 @@ function LogisticsScreen() {
             <Incident time="−4h" tag="RAID"  text="Convoy CV-011 ambushed. 200 Iron lost." />
             <Incident time="−7h" tag="THEFT" text="Vault — 12 Energy Cells unaccounted." />
             <Incident time="−1d" tag="SEIZURE" text="Contraband CV-005 seized at checkpoint." />
-            <Incident time="−2d" tag="OK" text="Insurance payout received: 1,420 AZA." good />
+            <Incident time="−2d" tag="OK" text="Insurance payout received: 1,420 Aza coin." good />
           </div>
         </div>
       </div>
@@ -550,8 +550,8 @@ function MailboxScreen({ mail, setMail, openTrade }) {
                       {cur.attach.map((a, i) => (
                         <div key={i} className="row" style={{ gap: 12 }}>
                           <span className="chip flat" style={{ minWidth: 80, justifyContent: 'center' }}>{a.kind.toUpperCase()}</span>
-                          <span style={{ flex: 1, fontWeight: 500 }}>{a.name || (a.kind === 'aza' ? 'AZA Coin' : '—')}</span>
-                          {a.qty && <span className="mono">{fmt(a.qty)}{a.kind === 'aza' ? ' AZA' : ' ×'}</span>}
+                          <span style={{ flex: 1, fontWeight: 500 }}>{a.name || (a.kind === 'aza' ? 'Aza coin' : '—')}</span>
+                          {a.qty && <span className="mono">{fmt(a.qty)}{a.kind === 'aza' ? ' Aza coin' : ' ×'}</span>}
                         </div>
                       ))}
                     </div>
@@ -671,7 +671,7 @@ function CorpScreen() {
           <div className="card">
             <div className="row-head"><h3>Role permissions</h3></div>
             <div className="col" style={{ padding: 14, gap: 8, fontSize: 12.5 }}>
-              <PermRow role="Director"     can="Withdraw relics · Heroes · AZA" />
+              <PermRow role="Director"     can="Withdraw relics · Heroes · Aza coin" />
               <PermRow role="Officer"      can="Deposit · Withdraw resources · View vault" />
               <PermRow role="Quartermaster" can="Move items · Deposit resources" />
               <PermRow role="Smuggler"     can="Black market funding only" />
@@ -731,7 +731,7 @@ function PermRow({ role, can }) {
 function TradeScreen({ assets }) {
   const [mine, setMine] = useState([
     { ...assets.find(a => a.name === 'Ancient Reactor Core'), tradeQty: 1 },
-    { kind: 'aza', name: 'AZA Coin', qty: 12_000, tradeQty: 12_000 },
+    { kind: 'aza', name: 'Aza coin', qty: 12_000, tradeQty: 12_000 },
   ]);
   const [theirs, setTheirs] = useState([
     { name: 'Crown of the Fallen King', rarity: 'mythic', kind: 'relic', tradeQty: 1 },
@@ -779,7 +779,7 @@ function TradeScreen({ assets }) {
           <div className="disp" style={{ fontSize: 18, color: delta > 0 ? 'oklch(0.78 0.15 145)' : 'var(--blood)' }}>
             {delta > 0 ? '+' : ''}{fmt(delta)}
           </div>
-          <div className="mono muted" style={{ fontSize: 10 }}>AZA</div>
+          <div className="mono muted" style={{ fontSize: 10 }}>Aza coin</div>
           <div style={{ width: 1, flex: 1, background: 'var(--line-soft)' }} />
         </div>
 
@@ -798,7 +798,7 @@ function TradeScreen({ assets }) {
       <div className="card" style={{ marginTop: 18, padding: 14 }}>
         <div className="row" style={{ gap: 14 }}>
           <span className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase' }}>Audit</span>
-          <span className="muted">Transaction will be logged: counterparties, asset IDs, AZA paid, marketplace tax (2%), and timestamp. Both parties' ownership history is updated atomically.</span>
+          <span className="muted">Transaction will be logged: counterparties, asset IDs, Aza coin paid, marketplace tax (2%), and timestamp. Both parties' ownership history is updated atomically.</span>
           <div style={{ flex: 1 }} />
           <button className="btn ghost">Cancel</button>
           <button className="btn primary" disabled={!lock}>{lock ? 'Confirm trade (5s hold)' : 'Awaiting both to lock'}</button>
@@ -848,7 +848,7 @@ function TradeSide({ title, who, rep, assets, value, ready, onToggle, locked, mi
 
       <div style={{ padding: '10px 14px', borderTop: '1px solid var(--line-soft)', display: 'flex', justifyContent: 'space-between' }}>
         <span className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase' }}>Estimated value</span>
-        <span className="disp" style={{ fontSize: 16, color: 'var(--aza)' }}>{fmt(value)} AZA</span>
+        <span className="disp" style={{ fontSize: 16, color: 'var(--aza)' }}>{fmt(value)} Aza coin</span>
       </div>
     </div>
   );
@@ -892,8 +892,8 @@ function RelicDetailScreen({ relicId, onBack }) {
             <Spec label="Original finder" value={r.foundBy || 'Unknown'} />
             <Spec label="Origin event" value={r.origin || '—'} />
             <Spec label="Insurance" value="Tier III · 60% payout" />
-            <Spec label="Rentable per cycle" value="2,400 AZA / 24h" />
-            <Spec label="Market floor" value="34,500 AZA" />
+            <Spec label="Rentable per cycle" value="2,400 Aza coin / 24h" />
+            <Spec label="Market floor" value="34,500 Aza coin" />
           </div>
 
           <div className="row" style={{ gap: 10, marginTop: 28 }}>

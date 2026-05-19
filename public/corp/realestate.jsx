@@ -194,7 +194,7 @@ function PropertyCard({ p, onSelect, onHover }) {
         </div>
       </div>
       <div className="prop-card-body">
-        <div className="prop-card-price">{fmt(p.price)} <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>AZA</span></div>
+        <div className="prop-card-price">{fmt(p.price)} <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>Aza coin</span></div>
         <div className="prop-card-stats mono">
           <b>{p.tier}</b> tier
           <span className="sep">·</span>
@@ -258,7 +258,7 @@ function RealEstateScreen({ openDetail }) {
 
         <FilterDD label={`Price · ≤ ${fmtPriceShort(priceMax)}`}>
           <div style={{ padding: '12px 14px', width: 220 }}>
-            <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', marginBottom: 8 }}>MAX PRICE (AZA)</div>
+            <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', marginBottom: 8 }}>MAX PRICE (Aza coin)</div>
             <input type="range" min={5000} max={250000} step={5000} value={priceMax} onChange={e => setPriceMax(Number(e.target.value))} style={{ width: '100%', accentColor: 'var(--rust)' }} />
             <div className="row" style={{ justifyContent: 'space-between', marginTop: 6 }}>
               <span className="mono muted" style={{ fontSize: 10.5 }}>5K</span>
@@ -440,7 +440,7 @@ function PropertyDetailScreen({ propertyId, onBack }) {
             </span>
           </div>
 
-          <div className="prop-price">{fmt(p.price)} <span className="prop-price-cur">AZA</span></div>
+          <div className="prop-price">{fmt(p.price)} <span className="prop-price-cur">Aza coin</span></div>
 
           <div className="prop-headline">{p.name}, <span className="muted">{dist.name}</span></div>
 
@@ -506,9 +506,9 @@ function PropertyDetailScreen({ propertyId, onBack }) {
             <h3 className="disp" style={{ fontSize: 22, fontWeight: 600, margin: '0 0 12px' }}>Ownership history</h3>
             <ul className="prop-attr-list">
               <li><span className="mono muted">Y2 Q1 D08</span> &nbsp; Recovered from ruin · Founder cohort</li>
-              <li><span className="mono muted">Y2 Q3 D14</span> &nbsp; Sold → IronHand Co. · 24,000 AZA</li>
-              <li><span className="mono muted">Y3 Q2 D02</span> &nbsp; Sold → {agent?.handle} · {fmt(p.price * 0.78)} AZA</li>
-              <li><span className="mono muted">Y3 Q3 D18</span> &nbsp; Listed at {fmt(p.price)} AZA</li>
+              <li><span className="mono muted">Y2 Q3 D14</span> &nbsp; Sold → IronHand Co. · 24,000 Aza coin</li>
+              <li><span className="mono muted">Y3 Q2 D02</span> &nbsp; Sold → {agent?.handle} · {fmt(p.price * 0.78)} Aza coin</li>
+              <li><span className="mono muted">Y3 Q3 D18</span> &nbsp; Listed at {fmt(p.price)} Aza coin</li>
             </ul>
           </div>
         </div>

@@ -24097,7 +24097,7 @@ async function resMarketCancel(listing) {
 // a security_invoker VIEW that SUMs all rows, so there are no lost updates
 // and no RPC needed. Degrades gracefully offline / before one-time setup.
 // ============================================================================
-const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ncreate table if not exists public.reserve_tax_log (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  buyer_id uuid,\n  corp_id text,\n  resource text,\n  quantity numeric not null default 0,\n  sale_value numeric not null default 0,\n  tax_rate numeric not null default 0.02,\n  tax_amount numeric not null default 0,\n  market_type text not null default 'base',\n  created_at timestamptz default now()\n);\ncreate index if not exists reserve_tax_log_time on public.reserve_tax_log (created_at desc);\nalter table public.reserve_tax_log enable row level security;\ndrop policy if exists tx_sel on public.reserve_tax_log;\ncreate policy tx_sel on public.reserve_tax_log for select to authenticated using (true);\ndrop policy if exists tx_ins on public.reserve_tax_log;\ncreate policy tx_ins on public.reserve_tax_log for insert to authenticated with check (seller_id = auth.uid());\ncreate table if not exists public.corporations (\n  id uuid primary key default gen_random_uuid(),\n  name text not null,\n  tag text not null,\n  founder_id uuid not null references auth.users(id) on delete cascade,\n  created_at timestamptz default now()\n);\ncreate table if not exists public.corp_members (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  joined_at timestamptz default now()\n);\ncreate index if not exists corp_members_corp on public.corp_members (corp_id);\nalter table public.corporations enable row level security;\nalter table public.corp_members enable row level security;\ndrop policy if exists corp_sel on public.corporations;\ncreate policy corp_sel on public.corporations for select to authenticated using (true);\ndrop policy if exists corp_ins on public.corporations;\ncreate policy corp_ins on public.corporations for insert to authenticated with check (founder_id = auth.uid());\ndrop policy if exists cm_sel on public.corp_members;\ncreate policy cm_sel on public.corp_members for select to authenticated using (true);\ndrop policy if exists cm_ins on public.corp_members;\ncreate policy cm_ins on public.corp_members for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cm_upd on public.corp_members;\ncreate policy cm_upd on public.corp_members for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists cm_del on public.corp_members;\ncreate policy cm_del on public.corp_members for delete to authenticated using (user_id = auth.uid());\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ngrant select on public.reserve_totals to authenticated;";
+const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ncreate table if not exists public.reserve_tax_log (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  buyer_id uuid,\n  corp_id text,\n  resource text,\n  quantity numeric not null default 0,\n  sale_value numeric not null default 0,\n  tax_rate numeric not null default 0.02,\n  tax_amount numeric not null default 0,\n  market_type text not null default 'base',\n  created_at timestamptz default now()\n);\ncreate index if not exists reserve_tax_log_time on public.reserve_tax_log (created_at desc);\nalter table public.reserve_tax_log enable row level security;\ndrop policy if exists tx_sel on public.reserve_tax_log;\ncreate policy tx_sel on public.reserve_tax_log for select to authenticated using (true);\ndrop policy if exists tx_ins on public.reserve_tax_log;\ncreate policy tx_ins on public.reserve_tax_log for insert to authenticated with check (seller_id = auth.uid());\ncreate table if not exists public.corporations (\n  id uuid primary key default gen_random_uuid(),\n  name text not null,\n  tag text not null,\n  founder_id uuid not null references auth.users(id) on delete cascade,\n  faction text,\n  element text,\n  created_at timestamptz default now()\n);\nalter table public.corporations add column if not exists faction text;\nalter table public.corporations add column if not exists element text;\ncreate table if not exists public.corp_members (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  joined_at timestamptz default now()\n);\ncreate index if not exists corp_members_corp on public.corp_members (corp_id);\nalter table public.corporations enable row level security;\nalter table public.corp_members enable row level security;\ndrop policy if exists corp_sel on public.corporations;\ncreate policy corp_sel on public.corporations for select to authenticated using (true);\ndrop policy if exists corp_ins on public.corporations;\ncreate policy corp_ins on public.corporations for insert to authenticated with check (founder_id = auth.uid());\ndrop policy if exists cm_sel on public.corp_members;\ncreate policy cm_sel on public.corp_members for select to authenticated using (true);\ndrop policy if exists cm_ins on public.corp_members;\ncreate policy cm_ins on public.corp_members for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cm_upd on public.corp_members;\ncreate policy cm_upd on public.corp_members for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists cm_del on public.corp_members;\ncreate policy cm_del on public.corp_members for delete to authenticated using (user_id = auth.uid());\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ngrant select on public.reserve_totals to authenticated;";
 
 // Contribution point weight per resource (strategic / scarce = worth more).
 const RESERVE_WEIGHTS = {
@@ -33527,8 +33527,11 @@ function _baseNavTo(screen) {
 // so corpId is always real. All Supabase access is guarded — the app still
 // works (mock data) if offline / tables not yet set up.
 // ============================================================================
-const Corp = { mine: null, _ensuring: false, _err: null };   // mine: {id,name,tag,role}
+const Corp = { mine: null, _ensuring: false, _err: null };   // mine: {id,name,tag,role,faction,element}
+const CORP_FOUNDING_COST = 1000000;   // 1,000,000 Cinder to incorporate (admins free)
 function _jbCorpInfo() { return Corp.mine || null; }
+// Resolve the player's EXISTING corporation membership. Does NOT auto-create
+// — founding a corporation is a deliberate, paid act (see corpCreate).
 async function corpEnsure() {
   if (Corp._ensuring) return Corp.mine;
   if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return null;
@@ -33538,19 +33541,9 @@ async function corpEnsure() {
     const mem = await Cloud.client.from('corp_members').select('corp_id,role').eq('user_id', me).maybeSingle();
     if (mem && mem.error && !/PGRST116|no rows/i.test((mem.error.message || '') + '')) { Corp._err = mem.error.message; Corp._ensuring = false; return null; }
     if (mem && mem.data && mem.data.corp_id) {
-      const c = await Cloud.client.from('corporations').select('id,name,tag').eq('id', mem.data.corp_id).maybeSingle();
-      if (c && c.data) Corp.mine = { id: c.data.id, name: c.data.name, tag: c.data.tag, role: mem.data.role || 'member' };
-      Corp._ensuring = false; return Corp.mine;
+      const c = await Cloud.client.from('corporations').select('id,name,tag,faction,element').eq('id', mem.data.corp_id).maybeSingle();
+      if (c && c.data) Corp.mine = { id: c.data.id, name: c.data.name, tag: c.data.tag, role: mem.data.role || 'member', faction: c.data.faction || '', element: c.data.element || '' };
     }
-    // No membership → found a personal corporation so corpId is always real.
-    const handle = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor') + '';
-    const tag = (handle.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 4) || 'CORP');
-    const ins = await Cloud.client.from('corporations')
-      .insert({ name: handle + "'s Holdings", tag: tag, founder_id: me }).select('id,name,tag').maybeSingle();
-    if (ins && ins.data) {
-      await Cloud.client.from('corp_members').insert({ user_id: me, corp_id: ins.data.id, user_name: handle.slice(0, 40), role: 'founder' });
-      Corp.mine = { id: ins.data.id, name: ins.data.name, tag: ins.data.tag, role: 'founder' };
-    } else if (ins && ins.error) { Corp._err = ins.error.message; }
   } catch (e) { Corp._err = (e && e.message) || 'corp error'; }
   Corp._ensuring = false;
   return Corp.mine;
@@ -33563,11 +33556,15 @@ function _jbEcon() {
     const pool = (typeof SALVAGE_RES !== 'undefined' ? SALVAGE_RES : []);
     pool.forEach(function (r) { const q = R[r.id] | 0; if (q > 0) res.push({ id: r.id, name: r.name, icon: r.icon, qty: q }); });
   } catch (e) {}
+  const adm = !!((typeof isAdmin === 'function') && isAdmin());
   return {
     cinders: (Profile && Profile.gems) | 0,
     aza: (Profile && Profile.sovereigns) | 0,
     handle: ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'),
     corp: _jbCorpInfo(),
+    isAdmin: adm,
+    foundCost: adm ? 0 : CORP_FOUNDING_COST,
+    signedIn: !!(Profile.cloud && Profile.cloud.signedIn),
     resources: res,
   };
 }
@@ -33604,17 +33601,28 @@ function _jbHandleAction(a) {
       _jbSendData();
     } else if (a.kind === 'corpCreate') {
       const nm = (a.name || '').toString().trim().slice(0, 40);
-      const tg = (a.tag || '').toString().trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
-      if (!nm || !tg) { try { showToast('Corporation needs a name and a tag.', 3000); } catch (e) {} return; }
+      const tg = (a.tag || (nm.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 4))).toString().trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+      const fac = (a.faction || '').toString().trim().slice(0, 40);
+      const elem = (a.element || '').toString().trim().slice(0, 40);
+      if (!nm || !tg) { try { showToast('Corporation needs a name.', 3000); } catch (e) {} return; }
       (async function () {
         try {
           if (!initCloud() || !Profile.cloud.signedIn) { showToast('☁ Sign in to found a corporation.', 3000); return; }
+          const adm = !!((typeof isAdmin === 'function') && isAdmin());
+          const cost = adm ? 0 : CORP_FOUNDING_COST;
+          if (cost > 0 && (Profile.gems || 0) < cost) {
+            showToast('🏢 Founding a corporation costs ' + cost.toLocaleString() + ' 🔥 Cinder — you have ' + (Profile.gems || 0).toLocaleString() + '.', 5200);
+            _jbSendData(); return;
+          }
           const me = Profile.cloud.userId;
-          const ins = await Cloud.client.from('corporations').insert({ name: nm, tag: tg, founder_id: me }).select('id,name,tag').maybeSingle();
-          if (ins && ins.error) { showToast('⚠ Could not found corporation.', 3000); return; }
+          const ins = await Cloud.client.from('corporations').insert({ name: nm, tag: tg, founder_id: me, faction: fac, element: elem }).select('id,name,tag,faction,element').maybeSingle();
+          if (ins && ins.error) { showToast('⚠ Could not file incorporation — ' + (ins.error.message || 'try again'), 4200); _jbSendData(); return; }
           await Cloud.client.from('corp_members').upsert({ user_id: me, corp_id: ins.data.id, user_name: (_jbEcon().handle || '').slice(0, 40), role: 'founder' }, { onConflict: 'user_id' });
-          Corp.mine = { id: ins.data.id, name: ins.data.name, tag: ins.data.tag, role: 'founder' };
-          showToast('🏢 Founded ' + ins.data.name + ' [' + ins.data.tag + '].', 4200);
+          // Charge the incorporation fee (the Cinder sink) only after the
+          // corp row + membership are committed.
+          if (cost > 0) { Profile.gems = Math.max(0, (Profile.gems || 0) - cost); try { saveProfile(); } catch (e) {} }
+          Corp.mine = { id: ins.data.id, name: ins.data.name, tag: ins.data.tag, role: 'founder', faction: ins.data.faction || fac, element: ins.data.element || elem };
+          showToast('🏢 ' + ins.data.name + ' [' + ins.data.tag + '] incorporated' + (cost > 0 ? ' — −' + cost.toLocaleString() + ' 🔥' : ' (admin · free)') + '.', 5200);
           _jbSendData();
         } catch (e) {}
       })();
@@ -33656,36 +33664,52 @@ function mountJustBusiness() {
       if (App && App._jbMsgBound) { try { window.removeEventListener('message', App._jbMsgHandler); } catch (e) {} App._jbMsgBound = false; }
       return;
     }
+    const EASE = 'cubic-bezier(.22,.61,.36,1)';
     if (!g) {
       g = document.createElement('div');
       g.id = GID;
-      g.style.cssText = 'position:fixed;inset:0;z-index:2147483299;background:#0b0b10';
+      g.style.cssText = 'position:fixed;inset:0;z-index:2147483299;background:#0b0b10;opacity:0;transition:opacity .5s ' + EASE;
       document.body.appendChild(g);
+      requestAnimationFrame(function () { try { g.style.opacity = '1'; } catch (e) {} });
     }
     if (!f) {
       f = document.createElement('iframe');
       f.id = FID; f.src = 'corp/';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect
-      f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transition:opacity .5s ease';
-      f.onload = function () { try { requestAnimationFrame(function () { f.style.opacity = '1'; }); } catch (e) { f.style.opacity = '1'; } };
+      // Smooth cross-fade + gentle scale-in (no hard cut on enter/exit).
+      f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transform:scale(.986);transition:opacity .6s ' + EASE + ',transform .6s ' + EASE + ';will-change:opacity,transform';
+      f.onload = function () {
+        try { requestAnimationFrame(function () { f.style.opacity = '1'; f.style.transform = 'scale(1)'; }); }
+        catch (e) { f.style.opacity = '1'; f.style.transform = 'scale(1)'; }
+      };
       document.body.appendChild(f);
     }
     if (!b) {
       b = document.createElement('button');
       b.id = BID;
       b.textContent = '← Ruin Exchange';
-      b.style.cssText = 'position:fixed;left:14px;top:12px;z-index:2147483400;cursor:pointer;border:1px solid rgba(212,175,55,0.55);background:rgba(12,10,18,0.92);color:#ffcf5a;border-radius:8px;padding:0.45rem 0.85rem;font-weight:800;font-family:inherit;box-shadow:0 6px 20px rgba(0,0,0,0.6)';
+      b.style.cssText = 'position:fixed;left:14px;top:12px;z-index:2147483400;cursor:pointer;border:1px solid rgba(212,175,55,0.55);background:rgba(12,10,18,0.92);color:#ffcf5a;border-radius:8px;padding:0.45rem 0.85rem;font-weight:800;font-family:inherit;box-shadow:0 6px 20px rgba(0,0,0,0.6);opacity:0;transition:opacity .45s ' + EASE;
       b.onclick = function () {
+        if (b._leaving) return; b._leaving = true;
         try {
           const ff = document.getElementById(FID), gg = document.getElementById(GID), bb = document.getElementById(BID);
-          if (ff) ff.style.opacity = '0';
           if (bb) bb.style.opacity = '0';
-          if (gg) gg.style.opacity = '0';
+          if (ff) { ff.style.opacity = '0'; ff.style.transform = 'scale(.986)'; }
+          // Keep the dark backdrop opaque through the swap, then fade it out
+          // over the freshly-rendered Exchange so there is no pop.
         } catch (e) {}
         setTimeout(function () {
           try { App.screen = 'title'; App.titleHub = 'exchange'; if (typeof render === 'function') render(); } catch (e) {}
-        }, 300);
+          try {
+            const gg2 = document.createElement('div');
+            gg2.style.cssText = 'position:fixed;inset:0;z-index:2147483290;background:#0b0b10;opacity:1;transition:opacity .5s ' + EASE + ';pointer-events:none';
+            document.body.appendChild(gg2);
+            requestAnimationFrame(function () { gg2.style.opacity = '0'; });
+            setTimeout(function () { try { gg2.remove(); } catch (e) {} }, 620);
+          } catch (e) {}
+        }, 600);
       };
       document.body.appendChild(b);
+      requestAnimationFrame(function () { try { b.style.opacity = '1'; } catch (e) {} });
     }
     if (!App._jbMsgBound) {
       App._jbMsgHandler = function (e) {

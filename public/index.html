@@ -33517,6 +33517,58 @@ function _baseNavTo(screen) {
     }, 280);
   } catch (e) {}
 }
+// 💼 "Just Business" — the player-economy / Corporation app, embedded as a
+// full-screen iframe overlay exactly like the bunker. Reached from the Ruin
+// Exchange hub. Self-contained React app (public/corp/) — no game bridge yet;
+// a floating "← Ruin Exchange" button is the only exit (the app posts no
+// back message, unlike the bunker whose HUD has its own).
+function renderJustBusiness() {
+  // The iframe (mounted by mountJustBusiness, called earlier in render) covers
+  // everything — root just needs a dark backdrop so nothing flashes behind it.
+  root.innerHTML = '<div style="position:fixed;inset:0;background:#0b0b10;z-index:1"></div>';
+}
+function mountJustBusiness() {
+  try {
+    const FID = 'jb-frame', BID = 'jb-back', GID = 'jb-bg';
+    let f = document.getElementById(FID), b = document.getElementById(BID), g = document.getElementById(GID);
+    const onJB = (typeof App !== 'undefined' && App.screen === 'justBusiness');
+    if (!onJB) {
+      if (f) f.remove(); if (b) b.remove(); if (g) g.remove();
+      return;
+    }
+    if (!g) {
+      g = document.createElement('div');
+      g.id = GID;
+      g.style.cssText = 'position:fixed;inset:0;z-index:2147483299;background:#0b0b10';
+      document.body.appendChild(g);
+    }
+    if (!f) {
+      f = document.createElement('iframe');
+      f.id = FID; f.src = 'corp/index.html';
+      f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transition:opacity .5s ease';
+      f.onload = function () { try { requestAnimationFrame(function () { f.style.opacity = '1'; }); } catch (e) { f.style.opacity = '1'; } };
+      document.body.appendChild(f);
+    }
+    if (!b) {
+      b = document.createElement('button');
+      b.id = BID;
+      b.textContent = '← Ruin Exchange';
+      b.style.cssText = 'position:fixed;left:14px;top:12px;z-index:2147483400;cursor:pointer;border:1px solid rgba(212,175,55,0.55);background:rgba(12,10,18,0.92);color:#ffcf5a;border-radius:8px;padding:0.45rem 0.85rem;font-weight:800;font-family:inherit;box-shadow:0 6px 20px rgba(0,0,0,0.6)';
+      b.onclick = function () {
+        try {
+          const ff = document.getElementById(FID), gg = document.getElementById(GID), bb = document.getElementById(BID);
+          if (ff) ff.style.opacity = '0';
+          if (bb) bb.style.opacity = '0';
+          if (gg) gg.style.opacity = '0';
+        } catch (e) {}
+        setTimeout(function () {
+          try { App.screen = 'title'; App.titleHub = 'exchange'; if (typeof render === 'function') render(); } catch (e) {}
+        }, 300);
+      };
+      document.body.appendChild(b);
+    }
+  } catch (e) {}
+}
 function mountBaseBuilder() {
   try {
     const FID = 'base-builder-frame', BID = 'base-builder-back', GID = 'base-builder-bg';
@@ -37911,6 +37963,7 @@ function render() {
   try { if (typeof mountCampStatus === 'function') mountCampStatus(); } catch (e) {}
   try { if (typeof mountCampDecayFx === 'function') mountCampDecayFx(); } catch (e) {}
   try { if (typeof mountBaseBuilder === 'function') mountBaseBuilder(); } catch (e) {}
+  try { if (typeof mountJustBusiness === 'function') mountJustBusiness(); } catch (e) {}
   // 🌐 Dynamic world events — global (clock-deterministic): announce begin/
   // end + show the live event panel.
   try { if (typeof _worldEventAlert === 'function') _worldEventAlert(); } catch (e) {}
@@ -37971,6 +38024,7 @@ function render() {
   if (App.screen === 'tutor')      return renderTutor();
   if (App.screen === 'camp')       return renderCamp();
   if (App.screen === 'campOps')    return renderCamp();   // real camp ops, opened from the bunker
+  if (App.screen === 'justBusiness') return renderJustBusiness();   // 💼 Corporation / player-economy app (iframe)
   if (App.screen === 'market')     return renderMarket();
   if (App.screen === 'deck')       return renderDeckBuilder();
   if (App.screen === 'collection') return renderCollection();
@@ -38384,6 +38438,11 @@ function renderTitle() {
       { id: 'btn-foundation-reserve', icon: '<img src="assets/artwork/gameicons/SCP%20Foundation%20logo.png" alt="Foundation Reserve" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Foundation Reserve', sub: 'Supply the world · drive production', accent: '#7fb0ff',
         badge: (() => { try { const p = (typeof FoundationReserve !== 'undefined' && FoundationReserve.myPoints) || 0; return p > 0 ? (frRankFor(p).rank.icon + ' ' + frRankFor(p).rank.name) : '🎒 Contribute'; } catch (e) { return '🎒 Contribute'; } })(),
         onclick: () => { if (typeof openFoundationReserve === 'function') openFoundationReserve(); } },
+      // 💼 Just Business — the player-economy / Corporation app (full-screen
+      // iframe, like the bunker). Reached only from here.
+      { id: 'btn-just-business', icon: '💼', name: 'Just Business', sub: 'Corporations · vault · logistics · markets', accent: '#c89a4a',
+        badge: 'Player economy',
+        onclick: () => { App.screen = 'justBusiness'; render(); } },
       // Sports-betting hub — wager Cinders on AI vs AI fixtures + future tournaments.
       { id: 'btn-wager-hall', icon: '<img src="assets/artwork/gameicons/Blood%20dice%20Icon.png" alt="Wager Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(2.0);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Wager Hall', sub: 'Bet <span class="cinder-icon"></span> on AI matches · tournaments soon', accent: '#ff7755',
         badge: (() => {

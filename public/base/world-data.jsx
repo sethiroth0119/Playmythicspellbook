@@ -841,6 +841,28 @@ function _bbApplyWorld() {
       rlc: true,
     });
   });
+  // 🖤 The Black Market is a PERMANENT hub, not a published campaign — the
+  // campaign rebuild above would otherwise wipe it off the map. Always
+  // re-inject it, launchable via the real Black Market run (id 'bm_run',
+  // resolved by the parent's _blackMarketRunCampaign / rlcStartRun).
+  if (!dests.some((x) => x.campaignId === "bm_run" || x.id === "rlc:bm_run")) {
+    dests.push({
+      id: "rlc:bm_run",
+      campaignId: "bm_run",
+      name: "The Hollow Bazaar",
+      tag: "Black Market · hub",
+      kind: "black-market",
+      glyph: "bazaar",
+      blurb: "Built into the bones of a sunken tanker east of the city. No questions, no records, no refunds. Bring contraband and leave with relics.",
+      x: 95, y: 72,
+      threat: 4,
+      distance: 8,
+      rewards: ["Illegal artifacts", "Rare cards", "Mutations", "Relic shards"],
+      theme: "black-market",
+      knownThreats: ["Smuggler crews", "Foundation patrols", "Bounty hunters"],
+      blackMarket: true,
+    });
+  }
   // Mutate the SAME array reference so generateRoute / getDestination /
   // window.DESTINATIONS / WorldMap.destinations all stay in sync.
   DESTINATIONS.splice(0, DESTINATIONS.length, ...dests);

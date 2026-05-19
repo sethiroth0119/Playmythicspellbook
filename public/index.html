@@ -25302,7 +25302,10 @@ function openBankOfEthos() {
     const postSeed = () => {
       try {
         const nm = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Operator') + '';
-        const resCatalog = (typeof RESOURCES !== 'undefined' ? RESOURCES : []).map((r) => ({ id: r.id, name: r.name, icon: r.icon, color: r.color }));
+        // FULL 149-item salvage catalog (not just the 10 camp resources) so
+        // the Ops Vault lists every resource the player can find/bank.
+        const _boeCat = (typeof SALVAGE_RES !== 'undefined' && SALVAGE_RES.length) ? SALVAGE_RES : (typeof RESOURCES !== 'undefined' ? RESOURCES : []);
+        const resCatalog = _boeCat.map((r) => ({ id: r.id, name: r.name, icon: r.icon, color: r.color }));
         const walletRes = {};
         try { const S = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage || {}); resCatalog.forEach((r) => { walletRes[r.id] = S[r.id] | 0; }); } catch (e) {}
         f.contentWindow && f.contentWindow.postMessage({
@@ -25370,7 +25373,7 @@ function openBankOfEthos() {
         aza: BankEthos.ready ? (BankEthos.aza | 0) : 0,
         walletCinder: (Profile && Profile.gems) | 0,
         walletAza: (Profile && Profile.sovereigns) | 0,
-        vault: { resCatalog: (typeof RESOURCES !== 'undefined' ? RESOURCES : []).map((r) => ({ id: r.id, name: r.name, icon: r.icon, color: r.color })), walletRes: {}, bankRes: {}, bankReady: !!BankEthos.ready, extCols: !!BankEthos._extCols },
+        vault: { resCatalog: ((typeof SALVAGE_RES !== 'undefined' && SALVAGE_RES.length) ? SALVAGE_RES : (typeof RESOURCES !== 'undefined' ? RESOURCES : [])).map((r) => ({ id: r.id, name: r.name, icon: r.icon, color: r.color })), walletRes: {}, bankRes: {}, bankReady: !!BankEthos.ready, extCols: !!BankEthos._extCols },
         created: new Date().toISOString(),
         recoveryKey: '—',
         application: { org: cs, role: 'Operator', region: 'Camp Heights', purpose: 'Treasury access', linked: true },
@@ -33408,6 +33411,11 @@ function processTombstoneDrops(state) {
       turnsLeft: 2,
       lootable: true,
       looted: false,
+      // Snapshot the dead unit's tier so loot card-drop odds scale to who
+      // actually died (the tombstone outlives the unit object).
+      rarity: (u.rarity || (u.card && u.card.rarity) || 'common'),
+      level: (parseInt(u.level, 10) || 1),
+      isBoss: /boss|finalboss/.test(String(u.name || '').toLowerCase()) || !!u.isBoss,
       salvage: (typeof _rollUnitSalvage === 'function') ? _rollUnitSalvage(u) : {},
       risk: (typeof _rollTombstoneRisk === 'function') ? _rollTombstoneRisk(u) : null,
     });
@@ -33728,8 +33736,73 @@ function _rollUnitSalvage(unit) {
       if (Math.random() < 0.5) add('dna', R(1, 2));
     }
     if (isBoss) { add('memoryShards', R(2, 4)); add('corruptedEssence', R(1, 3)); add('dna', R(1, 3)); add('metal', R(2, 5)); }
+    // 🎲 EXOTIC SALVAGE — every body can also yield from the FULL ~149-item
+    // resource catalog (scrap metal, ether crystals, SCP samples, dark
+    // matter, …), not just the 10 camp staples. These are rarer bonus
+    // finds scaled by the unit's rarity / level / boss status, so all
+    // 100+ resources are obtainable in loot without flooding the economy.
+    try {
+      if (typeof SALVAGE_RES !== 'undefined' && SALVAGE_RES.length) {
+        const campSet = (typeof RESOURCE_IDS !== 'undefined') ? new Set(RESOURCE_IDS) : new Set();
+        const exotic = SALVAGE_RES.filter(r => r && r.id && !campSet.has(r.id));
+        if (exotic.length) {
+          // Base ~28% chance, boosted by rarity/level, guaranteed for bosses.
+          const baseChance = Math.min(0.92, 0.28 * rarMul * (1 + (lvl - 1) * 0.05));
+          if (isBoss || Math.random() < baseChance) {
+            // 1 kind for commons up to ~4 for mythic/boss hauls.
+            let kinds = 1 + Math.floor(Math.random() * Math.max(1, Math.round(rarMul)));
+            if (isBoss) kinds += R(1, 2);
+            kinds = Math.min(4, kinds);
+            for (let i = 0; i < kinds; i++) {
+              const pick = exotic[Math.floor(Math.random() * exotic.length)];
+              add(pick.id, Math.max(1, Math.round(R(1, 3) * (isBoss ? 1.5 : 1))));
+            }
+          }
+        }
+      }
+    } catch (e) {}
     return out;
   } catch (e) { return { supplies: 1 }; }
+}
+// 🃏 LOOT CARD DROP — a defeated body can rarely yield a CARD (not just
+// salvage), drawn from the same universe packs use and weighted by the
+// standard pack rarity table. Chance scales with the looted unit's
+// rarity / level and is far higher on bosses. Grants straight into
+// Profile.cardCollection and returns { id, name, rarity } or null.
+function _rollLootCard(unit) {
+  try {
+    if (typeof getCardPoolForPacks !== 'function') return null;
+    const rar = String((unit && (unit.rarity || (unit.card && unit.card.rarity))) || 'common').toLowerCase();
+    const lvl = Math.max(1, parseInt(unit && unit.level, 10) || 1);
+    const blob = String((unit && unit.name) || '').toLowerCase();
+    const isBoss = /boss|finalboss/.test(blob) || !!(unit && unit.isBoss);
+    const rarMul = rar === 'mythic' ? 5 : rar === 'legendary' ? 4 : rar === 'epic' ? 3
+      : rar === 'rare' ? 2.2 : rar === 'uncommon' ? 1.5 : 1;
+    // ~2.5% baseline, scaled by rarity + a little by level; bosses ~45%.
+    let chance = 0.025 * rarMul * (1 + (lvl - 1) * 0.03);
+    if (isBoss) chance = Math.max(chance, 0.45);
+    chance = Math.min(0.75, chance);
+    if (Math.random() >= chance) return null;
+    const pool = getCardPoolForPacks({ includeHeroes: false }) || [];
+    if (!pool.length) return null;
+    const weights = (typeof DEFAULT_PACK_RARITY_WEIGHTS !== 'undefined') ? DEFAULT_PACK_RARITY_WEIGHTS : null;
+    let pick = null;
+    for (let i = 0; i < 6 && weights && typeof rollRarityFromWeights === 'function'; i++) {
+      const tr = rollRarityFromWeights(weights);
+      if (!tr) break;
+      const matches = pool.filter(p => p && p.card && typeof getRarity === 'function' && getRarity(p.card).id === tr);
+      if (matches.length) { pick = matches[Math.floor(Math.random() * matches.length)]; break; }
+    }
+    if (!pick) pick = pool[Math.floor(Math.random() * pool.length)];
+    const card = pick && pick.card;
+    if (!card || !card.id) return null;
+    if (!Profile.cardCollection || typeof Profile.cardCollection !== 'object') Profile.cardCollection = {};
+    Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1;
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+    let rname = 'Common';
+    try { rname = (getRarity(card).name) || 'Common'; } catch (e) {}
+    return { id: card.id, name: card.name || card.id, rarity: rname, icon: card.icon || '🃏' };
+  } catch (e) { return null; }
 }
 // Looter-rarity RNG boost: a rarer unit harvests more thoroughly. Scales the
 // base haul up and rolls bonus rare materials. Pure RNG, capped sane.
@@ -33878,7 +33951,16 @@ function _lootWithUnit(unitId, mode) {
 
     // Risk consequence applies to ANY harvest (not Destroy/Leave).
     const riskMsg = _applyTombstoneRisk(s, u.id, t.risk);
-    const harvestMsg = `${u.name || 'Unit'} harvested ${t.name || 'body'} → ${destLine}${riskMsg ? ' · ' + riskMsg : ''}`;
+    // 🃏 Rare card drop from the body (added straight to the collection).
+    let cardMsg = '';
+    try {
+      const lc = (typeof _rollLootCard === 'function') ? _rollLootCard(t) : null;
+      if (lc) {
+        cardMsg = ` · 🃏 CARD DROP: ${lc.icon || ''} ${lc.name} (${lc.rarity}) → collection`;
+        try { s.log = [...(s.log || []), { msg: `🃏 ${u.name || 'Unit'} found a card — ${lc.name} (${lc.rarity})!`, color: 'gold' }]; } catch (e) {}
+      }
+    } catch (e) {}
+    const harvestMsg = `${u.name || 'Unit'} harvested ${t.name || 'body'} → ${destLine}${riskMsg ? ' · ' + riskMsg : ''}${cardMsg}`;
     // 🪦 Battle-log the loot so players keep a running record of the haul.
     try { s.log = [...(s.log || []), { msg: '🪦 ' + harvestMsg, color: riskMsg ? 'red' : 'green' }]; } catch (e) {}
     try { if (typeof playSfx === 'function') playSfx(t.risk ? 'uiError' : 'uiConfirm'); } catch (e) {}

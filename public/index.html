@@ -25507,7 +25507,9 @@ async function boeMarketList(kind, opts) {
     // Roll back escrow on insert failure.
     if (kind === 'card') { Profile.cardCollection = Profile.cardCollection || {}; Profile.cardCollection[refId] = ((Profile.cardCollection[refId] | 0) + qty); try { saveProfile(); } catch (_) {} }
     else if (kind === 'resource') { if (typeof addRes === 'function') addRes(refId, qty); try { _persistResourcesSoon(); } catch (_) {} }
-    showToast('⚠ Listing failed — try again.', 4000); return false;
+    if (_boeMissingTbl(e)) showToast('Run the latest api.sql to enable the Marketplace (creates boe_market_listings).', 6000);
+    else showToast('⚠ Listing failed — escrow refunded.', 4000);
+    return false;
   }
   try { boeLog('market_list', 0, 0, (isAuction ? 'Auction · ' : 'Listed · ') + qty + '× ' + name + ' @ ' + price.toLocaleString() + ' ' + (currency === 'aza' ? '👑' : '🜂'), ''); } catch (e) {}
   showToast('🛒 Listed ' + qty + '× ' + name + (isAuction ? ' (auction)' : '') + '.', 4600);
@@ -25654,6 +25656,13 @@ async function boeFetchMercPosts() {
     BankEthos.mercPosts = (r && !r.error && Array.isArray(r.data)) ? r.data : [];
   } catch (e) {}
 }
+// Recognize a "missing table / schema cache" error from PostgREST so we
+// can prompt the player to run the latest api.sql instead of dying with
+// a generic "try again".
+function _boeMissingTbl(err) {
+  const m = (err && (err.message || err.toString())) + '';
+  return /PGRST205|does not exist|schema cache|relation .* does not exist/i.test(m);
+}
 async function boePostContract(role, hours, target, description) {
   hours = Math.max(1, Math.min(BOE_MERC_MAX_HOURS, Math.floor(hours) || 1));
   target = Math.max(1, Math.min(BOE_MERC_MAX_TARGET, Math.floor(target) || 0));
@@ -25673,7 +25682,11 @@ async function boePostContract(role, hours, target, description) {
       status: 'open',
     });
     if (ins && ins.error) throw ins.error;
-  } catch (e) { showToast('⚠ Posting failed — try again.', 4000); return false; }
+  } catch (e) {
+    if (_boeMissingTbl(e)) { showToast('Run the latest api.sql to enable Contract Postings (creates boe_merc_posts).', 6000); }
+    else { showToast('⚠ Posting failed — try again.', 4000); }
+    return false;
+  }
   try { boeLog('merc_post', 0, 0, (role === 'merc' ? 'Posted service' : 'Posted job') + ' · ' + target.toLocaleString() + ' 🜂 · ' + hours + 'h', ''); } catch (e) {}
   showToast('📝 Contract posted to the marketplace.', 4400);
   await boeFetchMercPosts();
@@ -26082,6 +26095,26 @@ function openBankOfEthos() {
           market: Array.isArray(BankEthos.market) ? BankEthos.market : [],
           marketMine: Array.isArray(BankEthos.marketMine) ? BankEthos.marketMine : [],
           directory: Array.isArray(BankEthos.directory) ? BankEthos.directory : [],
+          // Player's REAL owned cards (id+name+icon+count) so the
+          // Marketplace listing modal can pick from the actual collection.
+          cards: (function () {
+            try {
+              const coll = (Profile.cardCollection && typeof Profile.cardCollection === 'object') ? Profile.cardCollection : {};
+              const all = (typeof getAllCustomCards === 'function') ? getAllCustomCards() : [];
+              const heroes = (typeof STARTER_HEROES !== 'undefined' && Array.isArray(STARTER_HEROES)) ? STARTER_HEROES : [];
+              const lookup = {};
+              for (const c of all) if (c && c.id) lookup[c.id] = c;
+              for (const h of heroes) if (h && h.id && !lookup[h.id]) lookup[h.id] = h;
+              const out = [];
+              for (const id of Object.keys(coll)) {
+                const n = coll[id] | 0;
+                if (!(n > 0)) continue;
+                const c = lookup[id] || {};
+                out.push({ id: id, name: c.name || id, icon: c.icon || (c.type === 'hero' ? '⚔️' : '🃏'), rarity: (c.rarity || ''), count: n });
+              }
+              return out.sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name));
+            } catch (e) { return []; }
+          })(),
           mercSplit: { merc: BOE_MERC_SHARE_MERC, employer: BOE_MERC_SHARE_EMPLOYER, tax: BOE_MERC_SHARE_TAX, perCinder: AZA_TO_CINDER, maxHours: BOE_MERC_MAX_HOURS, maxTarget: BOE_MERC_MAX_TARGET },
           handle: '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20),
           callsign: nm.slice(0, 28),

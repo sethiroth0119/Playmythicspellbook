@@ -1696,7 +1696,9 @@ function PageOpsVault({ account }) {
    ============================================================ */
 // Modal: post a new marketplace listing (4 kinds + optional auction).
 function NewListingModal({ account, defaultAuction, onClose }) {
-  const cardOwned = (account && account.cardCollection) || {};
+  // Real owned cards (id + name + icon + count) from the parent seed,
+  // and the real salvage ledger for resource listings.
+  const cards = Array.isArray(account && account.cards) ? account.cards : [];
   const vault = (account && account.vault) || {};
   const cat = vault.resCatalog || [];
   const walletRes = vault.walletRes || {};
@@ -1728,10 +1730,11 @@ function NewListingModal({ account, defaultAuction, onClose }) {
             <label className="label">Pick a card you own</label>
             <select value={itemId} onChange={(e) => setItemId(e.target.value)} style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px" }}>
               <option value="">— select —</option>
-              {Object.keys(cardOwned).filter(id => (cardOwned[id] | 0) > 0).map(id => (
-                <option key={id} value={id}>{id} (×{cardOwned[id]})</option>
+              {cards.map(c => (
+                <option key={c.id} value={c.id}>{c.icon ? c.icon + " " : ""}{c.name} (×{c.count}{c.rarity ? " · " + c.rarity : ""})</option>
               ))}
             </select>
+            {cards.length === 0 && <div className="small-text" style={{ color: "var(--warn)" }}>You don't own any cards yet.</div>}
           </>
         )}
         {kind === "resource" && (

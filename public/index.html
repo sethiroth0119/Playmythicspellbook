@@ -20976,6 +20976,7 @@ const Profile = {
     lastReseed: 0,
   },
   itemInventory: {},            // { itemId: count } — held-item inventory used by the Market
+  coupons: [],                  // [{ code, value, ts }] — claimed admin coupons (history)
   deckByHero: {},               // LEGACY — kept for migration; real source of truth is `decks` below
   decks: [],                    // Array<{ id, name, heroId, cards: [cardKey, ...], createdAt }> — named decks the player builds
   cardCollection: {},           // { cardId: count } — cards dropped from rare event rolls (0.1%) AND crafted from essence
@@ -58107,7 +58108,28 @@ function renderUserManagement() {
           ? `<button class="btn-primary" id="um-release" ${AdmUM._busy ? 'disabled' : ''}>🔓 Release from detention</button>`
           : `<button class="btn-secondary" id="um-jail" ${AdmUM._busy ? 'disabled' : ''} style="border-color:#ff9a6b;color:#ffb499">🔒 Jail 24h (moderation)</button>`) +
       `</div>` +
-      `<div class="small-text ink-dim" style="margin-top:10px;line-height:1.6">${full ? 'Balances + last-seen come from the secure admin endpoint (service role, admin-gated). Cashout/purchase history is still per-user RLS — ask for it as a dedicated admin view.' : 'Public-data only. Cinder/Aza balance &amp; last-seen need the admin endpoint — set the SB_SERVICE secret to enable the full directory.'}</div>`;
+      (d.user_id ? (
+        `<div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(212,175,55,0.22)">` +
+          `<div style="font-weight:800;color:#ffcf5a;margin-bottom:6px">🎁 Grant a reward</div>` +
+          `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
+            `<select id="um-gk" style="padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` +
+              `<option value="cinder">Cinders 🔥</option><option value="aza">Aza coin 🪙</option><option value="resource">Resource</option><option value="item">Item</option><option value="card">Card</option><option value="coupon">Coupon 🎟</option>` +
+            `</select>` +
+            `<input id="um-ga" type="number" min="1" value="1000" style="width:90px;padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` +
+            `<input id="um-gr" placeholder="id / code (for resource·item·card·coupon)" style="flex:1;min-width:150px;padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` +
+            `<button class="btn-primary" id="um-gsend" ${AdmUM._busy ? 'disabled' : ''}>Send</button>` +
+          `</div>` +
+          `<div class="small-text ink-dim" style="margin-top:4px">Lands in the player's gift inbox — they claim it like any reward.</div>` +
+          `<div style="font-weight:800;color:#ff9a6b;margin:12px 0 6px">🛠 Account</div>` +
+          `<div style="display:flex;gap:6px;flex-wrap:wrap">` +
+            `<button class="btn-secondary btn-mini" id="um-ban" ${AdmUM._busy ? 'disabled' : ''}>🚫 Ban</button>` +
+            `<button class="btn-secondary btn-mini" id="um-unban" ${AdmUM._busy ? 'disabled' : ''}>↩ Unban</button>` +
+            `<button class="btn-secondary btn-mini" id="um-email" ${AdmUM._busy ? 'disabled' : ''}>✉ Email</button>` +
+            `<button class="btn-secondary btn-mini" id="um-pass" ${AdmUM._busy ? 'disabled' : ''}>🔑 Password</button>` +
+            `<button class="btn-secondary btn-mini" id="um-del" ${AdmUM._busy ? 'disabled' : ''} style="border-color:#ff6b6b;color:#ff8a8a">🗑 Delete</button>` +
+          `</div>`
+      ) : `<div class="small-text ink-dim" style="margin-top:10px">Grants &amp; account actions need a real account (this is a name-only public record).</div>`) +
+      `<div class="small-text ink-dim" style="margin-top:10px;line-height:1.6">Grants use the gift inbox (no schema change). Ban / email / password / delete go through the secure admin endpoint (Supabase Auth Admin, service role) — ${full ? 'configured ✓' : 'set the SB_SERVICE secret to enable them'}. Password/email changes are account-takeover-level — use responsibly.</div>`;
   }
   root.innerHTML = `
     <div class="campaign-page" style="max-width:920px;margin:0 auto;padding:1.4rem">
@@ -58153,6 +58175,45 @@ function renderUserManagement() {
   if (cp && d && d.user_id) cp.onclick = () => { try { navigator.clipboard.writeText(d.user_id); showToast('📋 User ID copied.'); } catch (e) {} };
   const jb = document.getElementById('um-jail'); if (jb && d) jb.onclick = () => _admJail(d.handle);
   const rb = document.getElementById('um-release'); if (rb && d) rb.onclick = () => _admRelease(d.handle);
+  if (d && d.user_id) {
+    const gs = document.getElementById('um-gsend');
+    if (gs) gs.onclick = async () => {
+      const kind = (document.getElementById('um-gk') || {}).value || 'cinder';
+      const amt = parseInt((document.getElementById('um-ga') || {}).value, 10) || 0;
+      const ref = ((document.getElementById('um-gr') || {}).value || '').trim();
+      gs.disabled = true; gs.textContent = '…';
+      const r = await adminGrant(d.user_id, kind, amt, ref, ref);
+      gs.disabled = false; gs.textContent = 'Send';
+      if (r && r.ok) showToast('🎁 Sent to ' + d.handle + ': ' + (r.label || kind) + '.', 5000);
+      else showToast('⚠ ' + ((r && r.error) || 'Grant failed') + '.', 4600);
+    };
+    const _acct = async (op, extra, confirmMsg) => {
+      if (confirmMsg && !confirm(confirmMsg)) return;
+      const tok = (typeof _sbToken === 'function') ? await _sbToken() : null;
+      if (!tok) { showToast('☁ Sign in (admin) required.', 3600); return; }
+      AdmUM._busy = true; render();
+      let j = null, st = 0;
+      try {
+        const rr = await fetch('/api/admin/account', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(Object.assign({ user_id: d.user_id, op: op }, extra || {})) });
+        st = rr.status; j = await rr.json().catch(() => null);
+      } catch (e) {}
+      AdmUM._busy = false;
+      if (j && j.ok) {
+        showToast('✓ ' + op + ' done for ' + d.handle + '.', 4600);
+        if (op === 'delete') { AdmUM.sel = null; AdmUM.dossier = null; }
+        _admFetchAll();
+      } else {
+        const why = j && (j.hint || j.detail || j.error) ? (j.hint || j.detail || j.error) : ('HTTP ' + st);
+        showToast('⚠ ' + op + ' failed — ' + why + (st === 501 ? ' (set SB_SERVICE secret)' : ''), 6000);
+        render();
+      }
+    };
+    const eb = document.getElementById('um-ban'); if (eb) eb.onclick = () => _acct('ban', null, 'Ban "' + d.handle + '"? They cannot sign in until unbanned.');
+    const ub = document.getElementById('um-unban'); if (ub) ub.onclick = () => _acct('unban', null, 'Lift the ban on "' + d.handle + '"?');
+    const em = document.getElementById('um-email'); if (em) em.onclick = () => { const v = (prompt('New email for "' + d.handle + '":') || '').trim(); if (v) _acct('email', { email: v }); };
+    const pw = document.getElementById('um-pass'); if (pw) pw.onclick = () => { const v = (prompt('New password for "' + d.handle + '" (min 8 chars). They are not auto-notified — tell them.') || '').trim(); if (v) _acct('password', { password: v }, 'Reset password for "' + d.handle + '"? This is account-takeover-level — use responsibly.'); };
+    const dl = document.getElementById('um-del'); if (dl) dl.onclick = () => { if (!confirm('DELETE the account "' + d.handle + '"? This permanently removes their auth + profile and cannot be undone.')) return; const t = (prompt('Type DELETE to confirm permanent deletion of "' + d.handle + '".') || '').trim(); if (t === 'DELETE') _acct('delete'); else showToast('Deletion cancelled.', 2600); };
+  }
 }
 function renderSovereignsStore() {
   const cards = SOVEREIGN_PACKAGES.map(pkg => `
@@ -60440,8 +60501,25 @@ async function claimGift(g) {
     if (error) return { error: error.message || 'Could not claim.' };
     if (!data || data.length === 0) return { error: 'This gift was already claimed.' };
     const qty = Math.max(1, parseInt(g.qty, 10) || 1);
-    if (!Profile.cardCollection) Profile.cardCollection = {};
-    Profile.cardCollection[g.card_id] = (Profile.cardCollection[g.card_id] || 0) + qty;
+    // Reward kind is encoded in card_id (admin grants reuse the gifts table
+    // with NO schema change). A plain card id falls through to the deck.
+    const cid = String(g.card_id || '');
+    const mRes = cid.match(/^__res:(.+)__$/);
+    const mItem = cid.match(/^__item:(.+)__$/);
+    try {
+      if (cid === '__cinder__') { if (typeof addGems === 'function') addGems(qty); }
+      else if (cid === '__aza__') { if (typeof addSovereigns === 'function') addSovereigns(qty); }
+      else if (mRes) { if (typeof addSalvage === 'function') addSalvage({ [mRes[1]]: qty }); }
+      else if (mItem) { if (!Profile.itemInventory) Profile.itemInventory = {}; Profile.itemInventory[mItem[1]] = (Profile.itemInventory[mItem[1]] || 0) + qty; }
+      else if (cid === '__coupon__') {
+        if (!Array.isArray(Profile.coupons)) Profile.coupons = [];
+        Profile.coupons.push({ code: g.card_name || 'Coupon', value: qty, ts: Date.now() });
+        if (qty > 0 && typeof addGems === 'function') addGems(qty);   // coupon value pays out in Cinders
+      } else {
+        if (!Profile.cardCollection) Profile.cardCollection = {};
+        Profile.cardCollection[cid] = (Profile.cardCollection[cid] || 0) + qty;
+      }
+    } catch (e) {}
     _persistProgressNow();
     GiftsCache.pending = GiftsCache.pending.filter(x => x.id !== g.id);
     return { ok: true };
@@ -60465,6 +60543,31 @@ async function adminSendGift(toUserId, card, qty, message) {
     });
     if (error) return { error: error.message || 'Send failed.' };
     return { ok: true };
+  } catch (e) { return { error: (e && e.message) || 'Network error.' }; }
+}
+// Admin → grant ANY reward via the gifts inbox (reuses card_id/card_name/
+// qty columns, no schema change). kind ∈ cinder|aza|resource|item|card|
+// coupon. `ref` = resource/item/card id or coupon code. Lands as a
+// claimable gift in the player's "You got a gift" inbox.
+async function adminGrant(toUserId, kind, amount, ref, label) {
+  if (typeof isAdmin === 'function' && !isAdmin()) return { error: 'Admin only.' };
+  if (!Cloud.client || !toUserId) return { error: 'Pick a player.' };
+  const qty = Math.max(1, Math.floor(Number(amount) || 0));
+  let card_id = '', card_name = '';
+  if (kind === 'cinder') { card_id = '__cinder__'; card_name = qty.toLocaleString() + ' Cinders 🔥'; }
+  else if (kind === 'aza') { card_id = '__aza__'; card_name = qty.toLocaleString() + ' Aza coin 🪙'; }
+  else if (kind === 'resource') { if (!ref) return { error: 'Pick a resource id.' }; card_id = '__res:' + ref + '__'; card_name = qty + '× ' + (((typeof _meta === 'function' && _meta(ref).name)) || ref); }
+  else if (kind === 'item') { if (!ref) return { error: 'Enter an item id.' }; card_id = '__item:' + ref + '__'; card_name = qty + '× ' + (label || ref); }
+  else if (kind === 'card') { if (!ref) return { error: 'Enter a card id.' }; card_id = String(ref); card_name = (label || ref); }
+  else if (kind === 'coupon') { card_id = '__coupon__'; card_name = (label || ref || 'Coupon') + (qty > 0 ? ' (' + qty.toLocaleString() + ' 🔥)' : ''); }
+  else return { error: 'Unknown grant kind.' };
+  try {
+    const { error } = await Cloud.client.from('gifts').insert({
+      to_user: toUserId, card_id: card_id, card_name: card_name, qty: qty,
+      message: 'Granted by Admin', from_label: 'Admin', status: 'pending',
+    });
+    if (error) return { error: error.message || 'Grant failed.' };
+    return { ok: true, label: card_name };
   } catch (e) { return { error: (e && e.message) || 'Network error.' }; }
 }
 

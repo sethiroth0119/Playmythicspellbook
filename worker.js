@@ -375,6 +375,31 @@ async function handleAdmin(request, env, u) {
     });
     return cjson({ count: users.length, online: users.filter(x => x.online).length, users: users });
   }
+
+  // Account moderation via the Supabase Auth Admin API (service role).
+  // op ∈ ban | unban | email | password | delete. Highly privileged —
+  // already double-gated (admin token + ADMIN_EMAILS + SB_SERVICE).
+  if (seg === 'account' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const id = String((body && body.user_id) || '').trim();
+    const op = String((body && body.op) || '').trim();
+    if (!id) return cjson({ error: 'no_user' }, 400);
+    if (ADMIN_EMAILS.indexOf((user.email || '').toLowerCase()) < 0) return cjson({ error: 'forbidden' }, 403);
+    const base = String(env.SB_URL || '').replace(/\/+$/, '');
+    const au = base + '/auth/v1/admin/users/' + encodeURIComponent(id);
+    const H = { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, 'content-type': 'application/json' };
+    let method = 'PUT', payload = null;
+    if (op === 'ban') payload = { ban_duration: '876000h' };
+    else if (op === 'unban') payload = { ban_duration: 'none' };
+    else if (op === 'email') { const e = String((body && body.email) || '').trim(); if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return cjson({ error: 'bad_email' }, 400); payload = { email: e, email_confirm: true }; }
+    else if (op === 'password') { const p = String((body && body.password) || ''); if (p.length < 8) return cjson({ error: 'weak_password', hint: 'min 8 chars' }, 400); payload = { password: p }; }
+    else if (op === 'delete') { method = 'DELETE'; }
+    else return cjson({ error: 'bad_op' }, 400);
+    const r = await fetch(au, { method: method, headers: H, body: payload ? JSON.stringify(payload) : undefined });
+    if (!r.ok) { let t = ''; try { t = await r.text(); } catch (e) {} return cjson({ error: 'auth_admin', detail: ('sb ' + r.status + ' ' + t).slice(0, 200) }, 502); }
+    return cjson({ ok: true, op: op });
+  }
+
   return cjson({ error: 'not_found' }, 404);
 }
 

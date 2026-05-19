@@ -61074,9 +61074,22 @@ function getAllCampaigns() {
   } catch (e) {}
   return Object.values(byId);
 }
+// Button-only campaigns — the Black Market Run and the per-event Crisis-
+// Response runs are reached ONLY via their dedicated buttons (Black Market
+// tile / the AI Director "Run Crisis-Response Campaign"). They must NOT show
+// in the general campaign list / world map, but stay resolvable by
+// _rlcCampaign (so the buttons work) and editable in the Campaign Builder
+// (which lists Forge.campaigns directly, not this).
+function _frButtonOnlyCampaign(c) {
+  if (!c) return false;
+  const bmId = (typeof BM_RUN_ID !== 'undefined') ? BM_RUN_ID : 'bm_run';
+  return c.id === bmId || String(c.id || '').indexOf('fr_evt_') === 0 || !!c.frEvent;
+}
 function getPlayableCampaigns() {
   const admin = (typeof isAdmin === 'function') && isAdmin();
-  return getAllCampaigns().filter(c => c && Array.isArray(c.nodes) && c.nodes.length > 0 && (admin || c.isPublished));
+  return getAllCampaigns().filter(c =>
+    c && Array.isArray(c.nodes) && c.nodes.length > 0 && (admin || c.isPublished) && !_frButtonOnlyCampaign(c)
+  );
 }
 function _rlcCampaign(id) { return getAllCampaigns().find(c => c && c.id === id) || null; }
 function _rlcNode(camp, nodeId) { return camp && Array.isArray(camp.nodes) ? camp.nodes.find(n => n && n.id === nodeId) || null : null; }

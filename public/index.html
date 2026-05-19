@@ -24127,6 +24127,32 @@ function frRankFor(pts) {
   const next = RESERVE_RANKS.find(x => x.min > pts) || null;
   return { rank: r, next: next, toNext: next ? Math.max(0, next.min - pts) : 0 };
 }
+// 🏆 Global contribution leaderboard. reserve_contributions is RLS-readable
+// by all authenticated (rc_sel using(true)); we aggregate per-user
+// client-side (no schema change) — same pattern as the tax/compliance rollups.
+async function frLeaderboardFetch() {
+  if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return;
+  try {
+    const res = await Cloud.client.from('reserve_contributions')
+      .select('user_id,user_name,points').order('points', { ascending: false }).limit(4000);
+    if (res.error) { _frErr(res.error); return; }
+    const by = {};
+    (res.data || []).forEach(r => {
+      const id = r.user_id; if (!id) return;
+      if (!by[id]) by[id] = { id: id, name: (r.user_name || 'Survivor'), points: 0 };
+      by[id].points += Number(r.points) || 0;
+      if (r.user_name && (by[id].name === 'Survivor')) by[id].name = r.user_name;
+    });
+    const all = Object.keys(by).map(k => by[k]).sort((a, b) => b.points - a.points);
+    const me = Profile.cloud.userId;
+    const myIdx = all.findIndex(x => x.id === me);
+    FoundationReserve.leaderboard = all.slice(0, 25).map((x, i) => ({ pos: i + 1, name: x.name, points: Math.round(x.points), me: x.id === me, rank: frRankFor(x.points).rank }));
+    FoundationReserve.lbMe = myIdx >= 0
+      ? { pos: myIdx + 1, of: all.length, points: Math.round(all[myIdx].points), rank: frRankFor(all[myIdx].points).rank }
+      : { pos: 0, of: all.length, points: (FoundationReserve.myPoints | 0), rank: frRankFor(FoundationReserve.myPoints).rank };
+    FoundationReserve.lbFetched = Date.now();
+  } catch (e) { _frErr(e); }
+}
 
 // Manufacturable products. recipe = per-unit reserve cost (core resource ids
 // only, so every recipe is always valid). max = circulation cap (scales the
@@ -24149,6 +24175,7 @@ const FoundationReserve = {
   taxLastFetch: 0,
   nodes: [], nodesNeedSetup: false, nodesFetched: 0,
   nodePool: null,      // { total, paid, avail, legacy, fetched } global reward pool
+  leaderboard: [], lbMe: null, lbFetched: 0, _lbFetching: false,  // global contribution leaderboard
   tableMissing: false, loading: false, lastFetch: 0, _err: null, _poll: null,
 };
 function _frErr(e) {
@@ -25754,6 +25781,46 @@ function openFoundationReserve() {
         '<div style="font-weight:800;color:#caa0e6;margin:12px 0 6px">Recent tax log</div><div style="border:1px solid rgba(120,170,255,0.16);border-radius:8px;overflow:hidden">' + recent + '</div>';
     };
 
+    const ranksTab = () => {
+      const meP = FoundationReserve.myPoints | 0;
+      const rkNow = frRankFor(meP);
+      if ((!FoundationReserve.lbFetched || (Date.now() - FoundationReserve.lbFetched > 30000)) && !FoundationReserve._lbFetching) {
+        FoundationReserve._lbFetching = true;
+        try { frLeaderboardFetch().then(() => { FoundationReserve._lbFetching = false; render(); }); } catch (e) { FoundationReserve._lbFetching = false; }
+      }
+      const prog = rkNow.next
+        ? '<div class="small-text" style="color:#9fc0ec;margin:6px 0 8px">' + rkNow.rank.icon + ' <strong>' + esc(rkNow.rank.name) + '</strong> · ' + numF(meP) + ' rep — ' + numF(rkNow.toNext) + ' to ' + rkNow.next.icon + ' ' + esc(rkNow.next.name) + '</div>'
+        : '<div class="small-text" style="color:#9fe0b0;margin:6px 0 8px">' + rkNow.rank.icon + ' <strong>' + esc(rkNow.rank.name) + '</strong> · max rank · ' + numF(meP) + ' rep</div>';
+      const ladder = RESERVE_RANKS.map((r, i) => {
+        const reached = meP >= r.min;
+        const isCur = rkNow.rank.name === r.name;
+        return '<div style="display:flex;align-items:center;gap:9px;padding:7px 10px;border:1px solid ' + (isCur ? 'rgba(127,224,160,0.5)' : 'rgba(120,170,255,0.18)') + ';border-radius:8px;background:' + (isCur ? 'rgba(40,90,60,0.22)' : reached ? 'rgba(40,70,130,0.12)' : 'rgba(30,40,60,0.10)') + ';margin-bottom:5px;opacity:' + (reached ? '1' : '0.6') + '">' +
+          '<span style="font-size:1.3rem">' + r.icon + '</span>' +
+          '<div style="flex:1;min-width:0"><div style="color:' + (reached ? '#dce8ff' : '#8fa0c0') + ';font-weight:800">' + esc(r.name) + (isCur ? ' <span class="small-text" style="color:#7fe0a0">· YOU</span>' : '') + '</div>' +
+            '<div class="small-text" style="color:#9fb6d6">' + (r.min === 0 ? 'starting rank' : numF(r.min) + '+ rep') + '</div></div>' +
+          (reached ? '<span style="color:#7fe0a0;font-weight:800">✓</span>' : '<span class="small-text" style="color:#8fa0c0;white-space:nowrap">' + numF(r.min - meP) + ' to go</span>') +
+        '</div>';
+      }).join('');
+      const lb = FoundationReserve.leaderboard || [];
+      const medal = (p) => p === 1 ? '🥇' : p === 2 ? '🥈' : p === 3 ? '🥉' : ('#' + p);
+      const rows = lb.length
+        ? lb.map(e => '<div style="display:flex;align-items:center;gap:9px;padding:6px 10px;border:1px solid ' + (e.me ? 'rgba(127,224,160,0.5)' : 'rgba(120,170,255,0.16)') + ';border-radius:7px;background:' + (e.me ? 'rgba(40,90,60,0.22)' : 'rgba(40,70,130,0.10)') + ';margin-bottom:4px">' +
+            '<span style="width:2.3rem;text-align:center;font-weight:800;color:#ffd166">' + medal(e.pos) + '</span>' +
+            '<span style="font-size:1.05rem">' + e.rank.icon + '</span>' +
+            '<div style="flex:1;min-width:0"><div style="color:#dce8ff;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.name) + (e.me ? ' <span class="small-text" style="color:#7fe0a0">(YOU)</span>' : '') + '</div>' +
+              '<div class="small-text" style="color:#9fb6d6">' + esc(e.rank.name) + '</div></div>' +
+            '<span style="color:#ffd166;font-weight:800;white-space:nowrap">' + numF(e.points) + ' rep</span>' +
+          '</div>').join('')
+        : (FoundationReserve.lbFetched ? '<div class="small-text ink-dim" style="padding:1rem;text-align:center">No contributions logged yet — be the first to supply the Reserve.</div>' : '<div class="small-text ink-dim" style="padding:1rem;text-align:center">Tallying the world leaderboard…</div>');
+      const meLine = (FoundationReserve.lbMe && FoundationReserve.lbMe.of)
+        ? '<div class="small-text" style="color:#9fc0ec;margin:8px 0 4px">Your standing: <strong style="color:#ffd166">' + (FoundationReserve.lbMe.pos ? '#' + numF(FoundationReserve.lbMe.pos) : 'unranked') + '</strong> of ' + numF(FoundationReserve.lbMe.of) + ' contributors · ' + numF(FoundationReserve.lbMe.points) + ' rep</div>'
+        : '';
+      return '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Reserve Reputation is earned by contributing resources &amp; running nodes — it sets your rank <strong>and</strong> drives node payout rate. Higher ranks are the survivors holding civilization together.</div>' +
+        prog +
+        '<div style="font-weight:800;color:#9fc6ff;margin:4px 0 6px">🎖 Rank ladder</div>' + ladder +
+        '<div style="font-weight:800;color:#9fc6ff;margin:12px 0 6px">🏆 Top contributors</div>' + meLine + rows;
+    };
+
     const directorBanner = () => {
       const es = frEconomyState();
       const ev = es.ev;
@@ -25892,7 +25959,7 @@ function openFoundationReserve() {
       } else if (FoundationReserve.loading && !FoundationReserve.lastFetch) {
         body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">Querying the world Reserve…</div>';
       } else {
-        body = tab === 'reserve' ? reserveTab() : tab === 'deposit' ? depositTab() : tab === 'tax' ? taxTab() : tab === 'nodes' ? nodesTab() : productionTab();
+        body = tab === 'reserve' ? reserveTab() : tab === 'deposit' ? depositTab() : tab === 'tax' ? taxTab() : tab === 'nodes' ? nodesTab() : tab === 'ranks' ? ranksTab() : productionTab();
       }
       const tBtn = (id, label) => '<button data-fr-tab="' + id + '" style="flex:1;cursor:pointer;border-radius:8px 8px 0 0;padding:0.5rem;border:1px solid rgba(120,170,255,0.35);border-bottom:none;background:' + (tab === id ? 'rgba(60,100,170,0.30)' : 'rgba(40,70,130,0.10)') + ';color:' + (tab === id ? '#eaf3ff' : '#9fb6d6') + ';font-weight:800">' + label + '</button>';
 
@@ -25904,7 +25971,7 @@ function openFoundationReserve() {
             '<button id="fr-x" style="cursor:pointer;border:1px solid rgba(150,190,255,0.4);background:transparent;color:#aec8ff;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
           '</div>' +
           ((online && !FoundationReserve.tableMissing && FoundationReserve.lastFetch) ? directorBanner() : '') +
-          (online && !FoundationReserve.tableMissing ? '<div style="display:flex;gap:4px;margin:8px 0 -1px">' + tBtn('reserve', '🏛 Reserve') + tBtn('deposit', '➕ Contribute') + tBtn('production', '⚙️ Production') + tBtn('nodes', '🔌 Nodes') + tBtn('tax', '💰 Tax') + '</div>' : '') +
+          (online && !FoundationReserve.tableMissing ? '<div style="display:flex;gap:4px;margin:8px 0 -1px;flex-wrap:wrap">' + tBtn('reserve', '🏛 Reserve') + tBtn('deposit', '➕ Contribute') + tBtn('production', '⚙️ Production') + tBtn('nodes', '🔌 Nodes') + tBtn('ranks', '🏆 Ranks') + tBtn('tax', '💰 Tax') + '</div>' : '') +
           '<div id="fr-body" style="flex:1;min-height:240px;max-height:56vh;overflow:auto;border:1px solid rgba(120,170,255,0.22);border-radius:0 0 8px 8px;padding:11px">' + body + '</div>' +
           '<button id="fr-close" style="margin-top:12px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(120,170,255,0.5);background:rgba(60,100,170,0.18);color:#dce8ff;font-weight:800">Close</button>' +
           '<div class="small-text ink-dim" style="margin-top:6px">Products are manufactured by the world itself — not generated for free. Your deposits keep civilization’s supply chains running.</div>' +
@@ -25961,7 +26028,7 @@ function openFoundationReserve() {
       frFetch().then(() => { render(); try { nodeFetch().then(render); } catch (e) {} });
       try { frConvoyTick().then(ok => { if (ok && document.getElementById(ID)) render(); }); } catch (e) {}
       cleanup();
-      FoundationReserve._poll = setInterval(() => { if (!document.getElementById(ID)) { cleanup(); return; } frFetch().then(() => { if (document.getElementById(ID)) render(); }); try { frConvoyTick().then(ok => { if (ok && document.getElementById(ID)) render(); }); } catch (e) {} if (tab === 'nodes') { try { nodeFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {} } }, 20000);
+      FoundationReserve._poll = setInterval(() => { if (!document.getElementById(ID)) { cleanup(); return; } frFetch().then(() => { if (document.getElementById(ID)) render(); }); try { frConvoyTick().then(ok => { if (ok && document.getElementById(ID)) render(); }); } catch (e) {} if (tab === 'nodes') { try { nodeFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {} } if (tab === 'ranks') { try { frLeaderboardFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {} } }, 20000);
     }
   } catch (e) {}
 }

@@ -224,6 +224,25 @@ create policy gifts_ins on public.gifts for insert to authenticated with check (
 drop policy if exists gifts_upd on public.gifts;
 create policy gifts_upd on public.gifts for update to authenticated using (to_user = auth.uid()) with check (to_user = auth.uid());
 
+-- ── Bank of Ethos — per-player Cinder treasury account ─────────────────
+-- Players deposit/withdraw Cinder here; a 200-Cinder maintenance fee per
+-- 30-day period is debited and routed to the Foundation Reserve. Self-RLS
+-- single-writer (same pattern as reserve_contributions).
+create table if not exists public.bank_of_ethos (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  balance numeric not null default 0,
+  opened_at timestamptz default now(),
+  last_fee_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.bank_of_ethos enable row level security;
+drop policy if exists boe_sel on public.bank_of_ethos;
+create policy boe_sel on public.bank_of_ethos for select to authenticated using (user_id = auth.uid());
+drop policy if exists boe_ins on public.bank_of_ethos;
+create policy boe_ins on public.bank_of_ethos for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists boe_upd on public.bank_of_ethos;
+create policy boe_upd on public.bank_of_ethos for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
 grant select on
   public.api_corporations,
   public.api_reserve_totals,

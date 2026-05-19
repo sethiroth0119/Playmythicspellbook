@@ -24979,10 +24979,91 @@ async function detentionRelease(id) {
   showToast('🔓 ' + d.offender_name + ' released by judicial order.', 5000);
   return true;
 }
-// 🏦 BANK OF ETHOS — Camp Heights treasury sub-app (Babel/React iframe under
-// /ethos/, same embed pattern as Just Business / World Map). Standalone for
-// now (localStorage-backed); wiring it to Cinder / nodes / Aza coin is the
-// next pass. Full-screen overlay with a floating return control.
+// 🏦 BANK OF ETHOS — a REAL per-player Cinder treasury account, cloud-backed
+// (bank_of_ethos table). Deposit / withdraw Cinder; a 200🔥 maintenance fee
+// per 30-day period is auto-debited and routed to the Foundation Reserve
+// (frLogCivic → City Hall Treasury). The /ethos/ React app is embedded as
+// the themed presentation below a working control bar. Self-RLS single-
+// writer; degrades gracefully offline / pre-setup.
+const BOE_FEE = 200;                       // 🔥 maintenance per period
+const BOE_FEE_PERIOD_MS = 30 * 24 * 3600000; // 30 days
+const BankEthos = { balance: 0, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '' };
+async function _boeRow() {
+  if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
+  return Cloud.client.from('bank_of_ethos');
+}
+async function boeFetch() {
+  try {
+    const t = await _boeRow();
+    if (!t) { BankEthos._err = 'signin'; return false; }
+    const me = Profile.cloud.userId;
+    let r = await t.select('balance,last_fee_at,opened_at').eq('user_id', me).maybeSingle();
+    if (r && r.error && !/PGRST116|no rows/i.test((r.error.message || '') + '')) {
+      if (/bank_of_ethos|PGRST205|does not exist|schema cache/i.test((r.error.message || '') + '')) { BankEthos._err = 'setup'; }
+      return false;
+    }
+    if (!r || !r.data) {
+      const ins = await t.insert({ user_id: me, balance: 0 });
+      if (ins && ins.error) { BankEthos._err = 'setup'; return false; }
+      BankEthos.balance = 0; BankEthos.lastFeeAt = Date.now(); BankEthos.openedAt = Date.now();
+    } else {
+      BankEthos.balance = Math.max(0, Math.round(Number(r.data.balance) || 0));
+      BankEthos.lastFeeAt = r.data.last_fee_at ? Date.parse(r.data.last_fee_at) : Date.now();
+      BankEthos.openedAt = r.data.opened_at ? Date.parse(r.data.opened_at) : Date.now();
+    }
+    BankEthos.ready = true; BankEthos._err = '';
+    return true;
+  } catch (e) { return false; }
+}
+// Auto-charge any due 30-day maintenance periods → Foundation Reserve.
+async function boeApplyMaintenance() {
+  try {
+    if (!BankEthos.ready) return;
+    const now = Date.now();
+    const periods = Math.floor((now - (BankEthos.lastFeeAt || now)) / BOE_FEE_PERIOD_MS);
+    if (periods < 1) return;
+    const due = periods * BOE_FEE;
+    const charged = Math.min(BankEthos.balance, due);
+    const newLast = (BankEthos.lastFeeAt || now) + periods * BOE_FEE_PERIOD_MS;
+    const t = await _boeRow(); if (!t) return;
+    const up = await t.update({ balance: BankEthos.balance - charged, last_fee_at: new Date(newLast).toISOString(), updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+    if (up && up.error) return;
+    BankEthos.balance -= charged; BankEthos.lastFeeAt = newLast;
+    if (charged > 0) { try { frLogCivic(charged, 'fee', { resource: 'Bank of Ethos maintenance' }); } catch (e) {} }
+    showToast('🏦 Bank of Ethos maintenance — ' + charged.toLocaleString() + ' 🔥 (' + periods + '× 30-day fee) → Foundation Reserve.' + (charged < due ? ' Account underfunded.' : ''), 6000);
+  } catch (e) {}
+}
+async function boeDeposit(amt) {
+  amt = Math.floor(amt);
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (!(amt > 0)) { showToast('Enter an amount.'); return false; }
+  if ((Profile.gems || 0) < amt) { showToast('Need ' + amt.toLocaleString() + ' 🔥 — you have ' + (Profile.gems || 0).toLocaleString() + '.', 4200); return false; }
+  if (!spendGems(amt)) { showToast('Not enough Cinders'); return false; }
+  try { saveProfile(); } catch (e) {}
+  try {
+    const t = await _boeRow();
+    const up = await t.update({ balance: BankEthos.balance + amt, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+    if (up && up.error) throw up.error;
+    BankEthos.balance += amt;
+  } catch (e) { addGems(amt); try { saveProfile(); } catch (_) {} showToast('⚠ Deposit failed — refunded.', 4200); return false; }
+  showToast('🏦 Deposited ' + amt.toLocaleString() + ' 🔥 — balance ' + BankEthos.balance.toLocaleString() + '.', 4600);
+  return true;
+}
+async function boeWithdraw(amt) {
+  amt = Math.floor(amt);
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (!(amt > 0)) { showToast('Enter an amount.'); return false; }
+  if (BankEthos.balance < amt) { showToast('Bank balance is ' + BankEthos.balance.toLocaleString() + ' 🔥.', 4000); return false; }
+  try {
+    const t = await _boeRow();
+    const up = await t.update({ balance: BankEthos.balance - amt, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+    if (up && up.error) throw up.error;
+    BankEthos.balance -= amt;
+  } catch (e) { showToast('⚠ Withdrawal failed — try again.', 3600); return false; }
+  addGems(amt); try { saveProfile(); } catch (e) {}
+  showToast('🏦 Withdrew ' + amt.toLocaleString() + ' 🔥 — balance ' + BankEthos.balance.toLocaleString() + '.', 4600);
+  return true;
+}
 function openBankOfEthos() {
   try {
     const ID = 'be-frame-wrap';
@@ -24990,18 +25071,39 @@ function openBankOfEthos() {
     const wrap = document.createElement('div');
     wrap.id = ID;
     wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483300;background:#0b0b10;opacity:0;transition:opacity .4s cubic-bezier(.22,.61,.36,1)';
+    const bar = document.createElement('div');
+    bar.style.cssText = 'position:absolute;top:0;left:0;right:0;height:auto;min-height:50px;z-index:6;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:linear-gradient(180deg,rgba(20,15,6,0.97),rgba(12,9,4,0.95));border-bottom:1px solid rgba(212,175,55,0.4);font-family:inherit';
     const f = document.createElement('iframe');
     f.src = 'ethos/Bank%20of%20Ethos.html';
-    f.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:#0b0b10';
+    f.style.cssText = 'position:absolute;left:0;right:0;bottom:0;top:62px;width:100%;border:0;background:#0b0b10';
     f.setAttribute('title', 'Bank of Ethos');
     const back = document.createElement('button');
     back.textContent = '← Ruin Exchange';
-    back.style.cssText = 'position:absolute;top:10px;right:12px;z-index:5;cursor:pointer;border:1px solid rgba(212,175,55,0.55);background:rgba(16,12,6,0.9);color:#ffcf5a;border-radius:8px;padding:0.45rem 0.85rem;font-weight:800;font-family:inherit;box-shadow:0 4px 16px rgba(0,0,0,0.6)';
+    back.style.cssText = 'cursor:pointer;border:1px solid rgba(212,175,55,0.55);background:rgba(16,12,6,0.9);color:#ffcf5a;border-radius:8px;padding:0.4rem 0.8rem;font-weight:800;font-family:inherit';
     back.onclick = () => { wrap.style.opacity = '0'; setTimeout(() => { try { wrap.remove(); } catch (e) {} }, 380); };
+    const paint = () => {
+      const nextDue = BankEthos.ready ? Math.max(0, Math.ceil(((BankEthos.lastFeeAt || Date.now()) + BOE_FEE_PERIOD_MS - Date.now()) / 86400000)) : 0;
+      bar.innerHTML =
+        '<span style="font-family:\'Cinzel\',serif;font-weight:800;color:#ffcf5a;font-size:1.05rem">🏦 Bank of Ethos</span>' +
+        (BankEthos.ready
+          ? '<span style="color:#ffe6b0;font-weight:800">Balance: ' + BankEthos.balance.toLocaleString() + ' 🔥</span>' +
+            '<input id="boe-amt" type="number" min="1" placeholder="amount 🔥" style="width:120px;padding:0.4rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
+            '<button id="boe-dep" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid #5fbf88;background:rgba(47,122,82,0.35);color:#dff4e6;font-weight:800">Deposit</button>' +
+            '<button id="boe-wd" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid rgba(212,175,55,0.5);background:rgba(120,90,30,0.3);color:#ffcf5a;font-weight:800">Withdraw</button>' +
+            '<span class="small-text" style="color:#caa46a">Maintenance ' + BOE_FEE + ' 🔥 / 30d → Foundation Reserve · next in ' + nextDue + 'd</span>'
+          : '<span class="small-text" style="color:#ff9a6b">' + (BankEthos._err === 'setup' ? 'Run the updated api.sql to open banking (creates bank_of_ethos).' : BankEthos._err === 'signin' ? 'Sign in to use the Bank of Ethos.' : 'Connecting…') + '</span>') +
+        '<span style="flex:1"></span>';
+      bar.appendChild(back);
+      const amtEl = () => parseInt((document.getElementById('boe-amt') || {}).value, 10) || 0;
+      const dep = document.getElementById('boe-dep'); if (dep) dep.onclick = () => { const a = amtEl(); dep.disabled = true; boeDeposit(a).then(() => { dep.disabled = false; paint(); }); };
+      const wd = document.getElementById('boe-wd'); if (wd) wd.onclick = () => { const a = amtEl(); wd.disabled = true; boeWithdraw(a).then(() => { wd.disabled = false; paint(); }); };
+    };
+    paint();
     wrap.appendChild(f);
-    wrap.appendChild(back);
+    wrap.appendChild(bar);
     document.body.appendChild(wrap);
     requestAnimationFrame(() => { wrap.style.opacity = '1'; });
+    boeFetch().then(function (ok) { if (ok) { boeApplyMaintenance().then(paint); } paint(); });
   } catch (e) {}
 }
 function openCityHall() {

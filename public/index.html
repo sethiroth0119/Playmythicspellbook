@@ -24991,7 +24991,7 @@ const BOE_FEE_PERIOD_MS = 30 * 24 * 3600000; // 30 days
 // rate the cashout vault settles at (CASHOUT_RATE_PER_DOLLAR = 5000), so
 // value is consistent end-to-end: buy Aza → exchange → cash out.
 const AZA_TO_CINDER = 5000;                 // 1 👑 → 5,000 🔥 (irreversible)
-const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true, ledger: [], reqIn: [], reqOut: [], _handle: '', _label: '' };
+const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true, ledger: [], reqIn: [], reqOut: [], loans: [], _handle: '', _label: '' };
 async function _boeRow() {
   if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
   return Cloud.client.from('bank_of_ethos');
@@ -25142,6 +25142,108 @@ async function boeAutoSettle() {
       showToast('💰 ' + (req.to_handle || 'A player') + ' paid your request — +' + amt.toLocaleString() + ' 🔥 to bank.', 5600);
     }
   } catch (e) {}
+}
+// 🏦 LOAN system — apply for up to BOE_LOAN_MAX_AZA Aza, capped per the
+// player's owned-hero levels (1 Aza per 5 hero levels summed). Repaid in
+// Cinder at the canonical peg on a weekly installment schedule.
+const BOE_LOAN_MAX_AZA = 20;
+const BOE_LOAN_AZA_PER_HERO_LEVELS = 5;
+function boeHeroLevelTotal() {
+  try {
+    const H = (Profile && Profile.heroes) || {};
+    let s = 0;
+    Object.keys(H).forEach((k) => { const lv = ((H[k] && H[k].level) | 0) || 0; if (lv > 0) s += lv; });
+    return s;
+  } catch (e) { return 0; }
+}
+function boeLoanCapacityAza() {
+  const lv = boeHeroLevelTotal();
+  return Math.max(0, Math.min(BOE_LOAN_MAX_AZA, Math.floor(lv / BOE_LOAN_AZA_PER_HERO_LEVELS)));
+}
+async function boeFetchLoans() {
+  try {
+    const t = _boeTbl('boe_loans'); if (!t) return;
+    const r = await t.select('*').eq('user_id', Profile.cloud.userId).order('started_at', { ascending: false }).limit(20);
+    BankEthos.loans = (r && !r.error && Array.isArray(r.data)) ? r.data : [];
+  } catch (e) {}
+}
+async function boeCreateLoan(azaAmt, installments) {
+  azaAmt = Math.floor(azaAmt);
+  installments = Math.max(1, Math.min(24, Math.floor(installments) || 4));
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (!BankEthos._extCols) { showToast('Run the updated api.sql to enable loans.', 5200); return false; }
+  const cap = boeLoanCapacityAza();
+  if (!(azaAmt > 0)) { showToast('Enter a loan amount.'); return false; }
+  if (azaAmt > cap) { showToast('Your hero-level capacity is ' + cap.toLocaleString() + ' 👑.', 4200); return false; }
+  if (azaAmt > BOE_LOAN_MAX_AZA) { showToast('Maximum loan is ' + BOE_LOAN_MAX_AZA + ' 👑.', 4000); return false; }
+  // Single active loan policy keeps repayment math sane.
+  const hasActive = (BankEthos.loans || []).some(l => l && l.status === 'active');
+  if (hasActive) { showToast('You already have an active loan — pay it off first.', 4600); return false; }
+  const cinderOwed = azaAmt * AZA_TO_CINDER;
+  const prevBal = BankEthos.balance;
+  try {
+    const t = _boeTbl('boe_loans'); if (!t) return false;
+    const ins = await t.insert({ user_id: Profile.cloud.userId, aza_amount: azaAmt, cinder_owed: cinderOwed, cinder_paid: 0, installments: installments, period_days: 7, status: 'active', hero_capacity_aza: cap, note: 'Hero-collateralized loan' }).select('*').maybeSingle();
+    if (ins && ins.error) throw ins.error;
+    // Credit bank with the principal Cinder.
+    const b = await _boeRow();
+    const up = await b.update({ balance: prevBal + cinderOwed, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+    if (up && up.error) throw up.error;
+    BankEthos.balance = prevBal + cinderOwed;
+  } catch (e) { BankEthos.balance = prevBal; showToast('⚠ Loan application failed.', 4200); return false; }
+  try { boeLog('loan_principal', cinderOwed, 0, 'Loan principal · ' + azaAmt + ' 👑 → bank', ''); } catch (e) {}
+  showToast('🏦 Loan approved — +' + cinderOwed.toLocaleString() + ' 🔥 to bank. Repay ' + Math.ceil(cinderOwed / installments).toLocaleString() + ' 🔥 × ' + installments + '.', 6200);
+  await boeFetchLoans();
+  return true;
+}
+async function _boeLoanPay(loanId, payAmt) {
+  payAmt = Math.floor(payAmt);
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (!(payAmt > 0)) return false;
+  const me = Profile.cloud.userId;
+  const t = _boeTbl('boe_loans'); if (!t) return false;
+  const r = await t.select('*').eq('id', loanId).eq('user_id', me).maybeSingle();
+  const ln = r && r.data;
+  if (!ln || ln.status !== 'active') { showToast('Loan unavailable.', 3000); return false; }
+  const owed = Math.max(0, (ln.cinder_owed | 0) - (ln.cinder_paid | 0));
+  if (owed <= 0) return false;
+  const due = Math.min(payAmt, owed);
+  const wallet = (Profile && Profile.gems) | 0;
+  const total = wallet + (BankEthos.balance | 0);
+  if (total < due) { showToast('Need ' + due.toLocaleString() + ' 🔥 — you have ' + total.toLocaleString() + '.', 4200); return false; }
+  const wTake = Math.min(due, wallet), bTake = due - wTake;
+  const prevBal = BankEthos.balance;
+  if (wTake > 0 && !spendGems(wTake)) { showToast('Not enough Cinders'); return false; }
+  if (bTake > 0) {
+    const b = await _boeRow();
+    const up = await b.update({ balance: prevBal - bTake, updated_at: new Date().toISOString() }).eq('user_id', me);
+    if (up && up.error) { if (wTake > 0) addGems(wTake); showToast('⚠ Payment failed.'); return false; }
+    BankEthos.balance = prevBal - bTake;
+  }
+  try { saveProfile(); } catch (e) {}
+  const newPaid = (ln.cinder_paid | 0) + due;
+  const closed = newPaid >= (ln.cinder_owed | 0);
+  try {
+    const upd = await t.update({ cinder_paid: newPaid, status: closed ? 'paid' : 'active', closed_at: closed ? new Date().toISOString() : null }).eq('id', loanId).eq('user_id', me);
+    if (upd && upd.error) throw upd.error;
+  } catch (e) { /* funds already moved; ledger row still records the payment */ }
+  try { boeLog('loan_payment', -due, 0, closed ? 'Loan paid off' : 'Loan installment', ''); } catch (e) {}
+  showToast(closed ? '🏦 Loan paid off — ' + due.toLocaleString() + ' 🔥.' : '🏦 Paid ' + due.toLocaleString() + ' 🔥 toward loan.', 5000);
+  await boeFetchLoans();
+  return true;
+}
+async function boePayInstallment(loanId) {
+  const ln = (BankEthos.loans || []).find(x => x && x.id === loanId);
+  if (!ln) { await boeFetchLoans(); return false; }
+  const per = Math.ceil((ln.cinder_owed | 0) / Math.max(1, ln.installments | 0));
+  const owed = Math.max(0, (ln.cinder_owed | 0) - (ln.cinder_paid | 0));
+  return _boeLoanPay(loanId, Math.min(per, owed));
+}
+async function boePayLoanFull(loanId) {
+  const ln = (BankEthos.loans || []).find(x => x && x.id === loanId);
+  if (!ln) { await boeFetchLoans(); return false; }
+  const owed = Math.max(0, (ln.cinder_owed | 0) - (ln.cinder_paid | 0));
+  return _boeLoanPay(loanId, owed);
 }
 async function boeFetch() {
   try {
@@ -25484,6 +25586,9 @@ function openBankOfEthos() {
           ledger: Array.isArray(BankEthos.ledger) ? BankEthos.ledger.slice(0, 80) : [],
           reqIn: Array.isArray(BankEthos.reqIn) ? BankEthos.reqIn : [],
           reqOut: Array.isArray(BankEthos.reqOut) ? BankEthos.reqOut : [],
+          // hero-collateralized loans + the player's current capacity
+          loans: Array.isArray(BankEthos.loans) ? BankEthos.loans : [],
+          loanCap: { aza: boeLoanCapacityAza(), max: BOE_LOAN_MAX_AZA, perLv: BOE_LOAN_AZA_PER_HERO_LEVELS, heroLv: boeHeroLevelTotal(), perCinder: AZA_TO_CINDER },
           handle: '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20),
           callsign: nm.slice(0, 28),
         }, '*');
@@ -25519,7 +25624,20 @@ function openBankOfEthos() {
         else { _reqBusy = false; }
       } catch (e) { _reqBusy = false; }
     };
-    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); else if (e.data.type === 'boe:request') onReq(e.data); } catch (x) {} };
+    // Loan ops: apply / pay-installment / pay-full. Parent re-validates
+    // capacity, principal, and balances; refreshes the app after.
+    let _loanBusy = false;
+    const onLoan = (d) => {
+      if (_loanBusy) return; _loanBusy = true;
+      const fin = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _loanBusy = false; paint(); postSeed(); }); };
+      try {
+        if (d.op === 'apply') fin(boeCreateLoan(Math.floor(Number(d.aza) || 0), Math.floor(Number(d.installments) || 4)));
+        else if (d.op === 'pay') fin(boePayInstallment(d.id));
+        else if (d.op === 'payoff') fin(boePayLoanFull(d.id));
+        else { _loanBusy = false; }
+      } catch (e) { _loanBusy = false; }
+    };
+    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); else if (e.data.type === 'boe:request') onReq(e.data); else if (e.data.type === 'boe:loan') onLoan(e.data); } catch (x) {} };
     window.addEventListener('message', onMsg);
     const _origClose = back.onclick;
     back.onclick = () => { try { window.removeEventListener('message', onMsg); } catch (e) {} _origClose(); };
@@ -25575,6 +25693,7 @@ function openBankOfEthos() {
           .then(function () { return boeAutoSettle(); })
           .then(function () { return boeFetchLedger(); })
           .then(function () { return boeFetchRequests(); })
+          .then(function () { return boeFetchLoans(); })
           .then(function () { paint(); postSeed(); })
           .catch(function () {});
       }

@@ -248,6 +248,11 @@ function boeTx(op, kind, amount, resId) {
 function boeReq(op, args) {
   try { window.parent.postMessage(Object.assign({ type: 'boe:request', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
 }
+// Apply for / pay / pay off a hero-collateralized loan.
+//   op: 'apply' | 'pay' | 'payoff'
+function boeLoan(op, args) {
+  try { window.parent.postMessage(Object.assign({ type: 'boe:loan', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
+}
 // 🧾 Print-to-PDF statement. Opens a styled popup the player can "Save as
 // PDF" via the system print dialog. Pure client-side, no libraries.
 function openStatementWindow(account) {
@@ -364,6 +369,9 @@ function App() {
           ledger: Array.isArray(d.ledger) ? d.ledger : ((prev && prev.ledger) || []),
           reqIn: Array.isArray(d.reqIn) ? d.reqIn : ((prev && prev.reqIn) || []),
           reqOut: Array.isArray(d.reqOut) ? d.reqOut : ((prev && prev.reqOut) || []),
+          // Hero-collateralized loans + the player's current capacity.
+          loans: Array.isArray(d.loans) ? d.loans : ((prev && prev.loans) || []),
+          loanCap: (d.loanCap && typeof d.loanCap === 'object') ? d.loanCap : ((prev && prev.loanCap) || { aza: 0, max: 20, perLv: 5, heroLv: 0, perCinder: 5000 }),
           created: (prev && prev.created) || new Date().toISOString(),
           recoveryKey: (prev && prev.recoveryKey) || '—',
           application: (prev && prev.application) || { org: cs, role: 'Operator', region: 'Camp Heights', purpose: 'Treasury access', linked: true },
@@ -495,7 +503,7 @@ function AppInner({ account, updateAccount, transfers, sendMoney, pushToast, onL
           {route === "transfers" && <PageTransfers account={account} transfers={transfers} onSend={(c) => setSendTo(c || {})} />}
           {route === "directory" && <PageDirectory account={account} onSend={(c) => setSendTo(c)} />}
           {route === "ledger" && <PageLedger account={account} transfers={transfers} />}
-          {route === "loans" && <PageLoans />}
+          {route === "loans" && <PageLoans account={account} />}
           {route === "mercs" && <PageMercs role={role} sessionSec={sessionSec} liveCinder={liveCinder} running={running} setRunning={setRunning} />}
           {route === "contracts" && <PageContracts />}
           {route === "ops" && <PageOpsVault account={account} />}
@@ -1358,103 +1366,177 @@ function PageMarket() {
 /* ============================================================
    PAGE: LOANS
    ============================================================ */
-function PageLoans() {
+// Modal: apply for a hero-collateralized loan. Validates against the
+// player's hero-derived capacity before posting boe:loan 'apply'.
+function ApplyLoanModal({ account, onClose }) {
+  const cap = (account && account.loanCap) || { aza: 0, max: 20, perLv: 5, heroLv: 0, perCinder: 5000 };
+  const [aza, setAza] = useState(cap.aza > 0 ? String(Math.min(cap.aza, 5)) : "");
+  const [inst, setInst] = useState(4);
+  const [accept, setAccept] = useState(false);
+  const n = Math.max(0, Math.floor(Number(aza) || 0));
+  const cinder = n * (cap.perCinder | 0);
+  const per = inst > 0 ? Math.ceil(cinder / inst) : 0;
+  const finalDate = new Date(Date.now() + inst * 7 * 86400000);
+  const ok = n > 0 && n <= cap.aza && inst > 0 && accept;
+  const submit = () => { if (!ok) return; if (boeLoan("apply", { aza: n, installments: inst })) onClose(); };
+  return (
+    <ModalFrame title="Apply for Loan" onClose={onClose}>
+      <div className="small-text" style={{ color: "var(--ink-dim)", marginBottom: 10 }}>
+        Hero collateral: <b>{cap.heroLv.toLocaleString()}</b> total hero levels grant up to <b>{cap.aza} 👑</b> (1 Aza per {cap.perLv} levels · max {cap.max}).
+        Principal is credited to your bank as Cinder at <b>1 👑 = {(cap.perCinder | 0).toLocaleString()} 🔥</b>. Repaid in Cinder on a weekly schedule.
+      </div>
+      <div className="stack-sm" style={{ marginBottom: 12 }}>
+        <label className="label">Loan amount (Aza)</label>
+        <div className="row" style={{ gap: 8 }}>
+          <input type="number" min="1" max={cap.aza} step="1" value={aza}
+            onChange={(e) => setAza(e.target.value)}
+            style={{ flex: 1, background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+          <button className="btn sm ghost" disabled={!cap.aza} onClick={() => setAza(String(cap.aza))}>Max ({cap.aza})</button>
+        </div>
+      </div>
+      <div className="stack-sm" style={{ marginBottom: 14 }}>
+        <label className="label">Repayment installments (weekly)</label>
+        <div className="row" style={{ gap: 6 }}>
+          {[2, 4, 8, 12].map(v => (
+            <button key={v} className={"btn sm" + (inst === v ? "" : " ghost")} onClick={() => setInst(v)}>{v} × wk</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ border: "1px solid var(--hair)", background: "var(--bg-1)", padding: 12, marginBottom: 12 }}>
+        <div className="row between" style={{ padding: "3px 0" }}><span className="label">Principal credited to bank</span><span className="mono">{fmt(cinder)} 🜂 ({n} 👑)</span></div>
+        <div className="row between" style={{ padding: "3px 0" }}><span className="label">Per installment</span><span className="mono">{fmt(per)} 🜂 / week</span></div>
+        <div className="row between" style={{ padding: "3px 0" }}><span className="label">Final payment due</span><span className="mono">{cinder > 0 ? finalDate.toLocaleDateString() : "—"}</span></div>
+        <div className="row between" style={{ padding: "3px 0" }}><span className="label">Total repaid</span><span className="mono">{fmt(cinder)} 🜂 (no interest)</span></div>
+      </div>
+      <label className="row" style={{ gap: 8, marginBottom: 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={accept} onChange={(e) => setAccept(e.target.checked)} />
+        <span className="small-text" style={{ color: "var(--ink-dim)" }}>I accept the repayment schedule. The bank may garnish my Cinder if the loan defaults.</span>
+      </label>
+      <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn primary" onClick={submit} disabled={!ok}>Apply</button>
+      </div>
+    </ModalFrame>
+  );
+}
+
+function LoanRow({ loan }) {
+  const owed = Math.max(0, (loan.cinder_owed | 0) - (loan.cinder_paid | 0));
+  const per = Math.ceil((loan.cinder_owed | 0) / Math.max(1, loan.installments | 0));
+  const paidCount = Math.min(loan.installments | 0, Math.floor((loan.cinder_paid | 0) / Math.max(1, per)));
+  const startMs = loan.started_at ? Date.parse(loan.started_at) : Date.now();
+  const periodMs = (loan.period_days | 0 || 7) * 86400000;
+  const schedule = [];
+  for (let i = 0; i < (loan.installments | 0); i++) {
+    const dueAmt = (i === (loan.installments | 0) - 1) ? Math.max(0, (loan.cinder_owed | 0) - per * ((loan.installments | 0) - 1)) : per;
+    schedule.push({ i: i + 1, due: new Date(startMs + (i + 1) * periodMs), amt: dueAmt, paid: i < paidCount });
+  }
+  const active = loan.status === "active";
+  return (
+    <div className="panel" style={{ marginBottom: 12 }}>
+      <div className="panel-h">
+        <h3>Loan #{loan.id} · <span className="mono" style={{ color: "var(--aza)" }}>{fmt(loan.aza_amount)} 👑</span></h3>
+        {active
+          ? <span className="chip live"><span className="live-dot"></span>Active</span>
+          : <span className="chip"><span className="dot" style={{ background: "var(--ink-mute)" }}></span>{(loan.status || "closed").toUpperCase()}</span>}
+      </div>
+      <div className="panel-b">
+        <div className="grid g-4" style={{ marginBottom: 10 }}>
+          <div><div className="label">Principal</div><div className="mono" style={{ color: "var(--cinder)" }}>{fmt(loan.cinder_owed)} 🜂</div></div>
+          <div><div className="label">Paid</div><div className="mono">{fmt(loan.cinder_paid)} 🜂</div></div>
+          <div><div className="label">Remaining</div><div className="mono" style={{ color: owed > 0 ? "var(--warn)" : "var(--good)" }}>{fmt(owed)} 🜂</div></div>
+          <div><div className="label">Per installment</div><div className="mono">{fmt(per)} 🜂 / week</div></div>
+        </div>
+        <div className="bar" style={{ marginBottom: 12 }}>
+          <div style={{ width: `${Math.min(100, ((loan.cinder_paid | 0) / Math.max(1, loan.cinder_owed | 0)) * 100)}%`, background: "linear-gradient(90deg, var(--violet), var(--cinder))" }}></div>
+        </div>
+        <div className="label" style={{ marginBottom: 6 }}>Repayment schedule</div>
+        <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--hair)" }}>
+          <table className="t" style={{ width: "100%" }}>
+            <thead><tr><th style={{ width: 40 }}>#</th><th>Due</th><th style={{ textAlign: "right" }}>Amount</th><th style={{ width: 90 }}>Status</th></tr></thead>
+            <tbody>
+              {schedule.map(s => (
+                <tr key={s.i}>
+                  <td className="mono dim">{s.i}</td>
+                  <td className="mono">{s.due.toLocaleDateString()}</td>
+                  <td className="mono" style={{ textAlign: "right" }}>{fmt(s.amt)} 🜂</td>
+                  <td>{s.paid ? <span className="chip" style={{ borderColor: "rgba(90,226,138,0.4)", color: "var(--good)" }}>Paid</span> : <span className="chip">Due</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {active && (
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+            <button className="btn ghost" onClick={() => boeLoan("payoff", { id: loan.id })}>Pay Full ({fmt(owed)} 🜂)</button>
+            <button className="btn primary" onClick={() => boeLoan("pay", { id: loan.id })}>Pay Installment</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PageLoans({ account }) {
+  const [applyOpen, setApplyOpen] = useState(false);
+  const loans = Array.isArray(account && account.loans) ? account.loans : [];
+  const cap = (account && account.loanCap) || { aza: 0, max: 20, perLv: 5, heroLv: 0, perCinder: 5000 };
+  const active = loans.filter(l => l && l.status === "active");
+  const past = loans.filter(l => l && l.status !== "active");
+  const canApply = cap.aza > 0 && active.length === 0;
   return (
     <div>
+      {applyOpen && <ApplyLoanModal account={account} onClose={() => setApplyOpen(false)} />}
       <div className="page-head">
         <div>
           <div className="page-crumb">Treasury / Loans</div>
           <div className="page-title display">Loans & Credit Lines</div>
         </div>
         <div className="page-actions">
-          <button className="btn ghost">Repayment schedule</button>
-          <button className="btn primary"><Icon name="plus" size={14}/> Apply for loan</button>
+          <button className="btn primary" disabled={!canApply} onClick={() => setApplyOpen(true)} title={!canApply ? (active.length > 0 ? "Pay off your active loan first" : "Train heroes to unlock loan capacity") : ""}>
+            <Icon name="plus" size={14}/> Apply for Loan
+          </button>
         </div>
       </div>
 
       <div className="grid g-4" style={{ marginBottom: 14 }}>
-        <Metric k="Active loans" v="2" sub="332,500 outstanding" />
-        <Metric k="Avg APR" v="5.5%" d="−0.4 pts" dir="up" />
-        <Metric k="Credit score" v="784 · A−" d="+12 this cycle" dir="up" />
-        <Metric k="Approved ceiling" v="1.2M CDR eq" sub="based on vault wealth" />
+        <Metric k="Active loans" v={String(active.length)} sub={active.length ? fmt(active.reduce((s, l) => s + Math.max(0, (l.cinder_owed | 0) - (l.cinder_paid | 0)), 0)) + " 🜂 outstanding" : "(none)"} />
+        <Metric k="Hero levels" v={fmt(cap.heroLv)} sub="collateral basis" />
+        <Metric k="Loan capacity" v={cap.aza + " 👑"} sub={"max " + cap.max + " 👑"} />
+        <Metric k="Cinder per Aza" v={fmt(cap.perCinder | 0)} sub="canonical peg" />
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: "1.4fr 1fr", gap: 14 }}>
-        <div className="panel">
-          <div className="panel-h"><h3>Active & past loans</h3><span className="label">3 records</span></div>
-          <table className="t">
-            <thead><tr><th>ID</th><th>Type</th><th>Principal</th><th>APR</th><th>Term · remaining</th><th>Progress</th><th>Status</th></tr></thead>
-            <tbody>
-              {LOANS.map(l => (
-                <tr key={l.id}>
-                  <td className="mono">{l.id}</td>
-                  <td>{l.type}</td>
-                  <td>
-                    <span className="row" style={{ gap: 6 }}>
-                      {l.currency === "cinder" ? <CinderGlyph size={12}/> : <AzaGlyph size={12}/>}
-                      <span className="mono" style={{ color: l.currency === "cinder" ? "var(--cinder)" : "var(--aza)" }}>{fmt(l.principal)}</span>
-                    </span>
-                  </td>
-                  <td className="mono">{l.apr}%</td>
-                  <td className="mono">{l.term}d · {l.remaining}d</td>
-                  <td style={{ minWidth: 140 }}>
-                    <div className="bar" style={{ marginBottom: 4 }}><div style={{ width: `${(l.paid/l.principal)*100}%` }}></div></div>
-                    <span className="mono" style={{ fontSize: 10, color: "var(--ink-mute)" }}>{fmt(l.paid)} / {fmt(l.principal)}</span>
-                  </td>
-                  <td>
-                    {l.status === "active"
-                      ? <span className="chip live"><span className="live-dot"></span>Active</span>
-                      : <span className="chip"><span className="dot" style={{ background: "var(--ink-mute)" }}></span>Closed</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {active.length === 0 && past.length === 0 ? (
+        <div className="panel" style={{ padding: 22, textAlign: "center", color: "var(--ink-dim)" }}>
+          <div style={{ fontSize: 14, marginBottom: 6 }}>No loans on record. <span style={{ color: "var(--ink-mute)" }}>(none)</span></div>
+          {cap.aza > 0
+            ? <div className="small-text">You're approved for up to <b style={{ color: "var(--aza)" }}>{cap.aza} 👑</b> — credited as <b style={{ color: "var(--cinder)" }}>{fmt(cap.aza * (cap.perCinder | 0))} 🜂</b> on apply.</div>
+            : <div className="small-text">Train a hero to at least Lv {cap.perLv} to unlock 1 👑 of loan capacity.</div>}
         </div>
-
-        <div className="panel">
-          <div className="panel-h"><h3>Loan products</h3></div>
-          <div>
-            {[
-              { name: "Business Loan",           apr: "4.5–7.2%", max: "500K CDR" },
-              { name: "Mercenary Payroll Loan",  apr: "3.8–6.0%", max: "300K CDR", featured: true },
-              { name: "Corporation Expansion",   apr: "5.0–9.0%", max: "2M AZA" },
-              { name: "Base Upgrade",            apr: "5.5–8.0%", max: "150K AZA" },
-              { name: "Real Estate",             apr: "6.0–10%",  max: "1.5M AZA" },
-              { name: "Resource Operation",      apr: "4.0–6.5%", max: "200K CDR" },
-            ].map(p => (
-              <div key={p.name} className="row between" style={{ padding: "12px 16px", borderBottom: "1px solid var(--hair)", background: p.featured ? "linear-gradient(90deg, rgba(138,107,255,0.08), transparent)" : "transparent" }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name} {p.featured && <span className="chip violet" style={{ marginLeft: 6 }}>Pre-approved</span>}</div>
-                  <div className="label" style={{ marginTop: 2 }}>APR {p.apr} · up to {p.max}</div>
-                </div>
-                <button className="btn sm">Apply →</button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="panel" style={{ marginTop: 14 }}>
-        <div className="panel-h"><h3>Approval factors</h3><span className="label">Your standing</span></div>
-        <div className="panel-b">
-          <div className="grid g-3" style={{ gap: 18 }}>
-            {[
-              { k: "Vault wealth",        v: 92 },
-              { k: "Business ownership",  v: 78 },
-              { k: "Battle activity",     v: 88 },
-              { k: "Economic reputation", v: 84 },
-              { k: "Repayment history",   v: 96 },
-              { k: "Corporation status",  v: 70 },
-            ].map(f => (
-              <div key={f.k}>
-                <div className="row between" style={{ marginBottom: 6 }}><span className="label">{f.k}</span><span className="mono" style={{ fontSize: 12 }}>{f.v}/100</span></div>
-                <div className="bar"><div style={{ width: `${f.v}%`, background: f.v > 85 ? "var(--good)" : f.v > 75 ? "var(--violet)" : "var(--warn)" }}></div></div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      ) : (
+        <>
+          {active.map(l => <LoanRow key={l.id} loan={l} />)}
+          {past.length > 0 && (
+            <div className="panel">
+              <div className="panel-h"><h3>Closed loans</h3><span className="label">{past.length} record{past.length === 1 ? "" : "s"}</span></div>
+              <table className="t">
+                <thead><tr><th>ID</th><th>Aza</th><th>Cinder principal</th><th>Status</th><th>Closed</th></tr></thead>
+                <tbody>
+                  {past.map(l => (
+                    <tr key={l.id}>
+                      <td className="mono">{l.id}</td>
+                      <td className="mono" style={{ color: "var(--aza)" }}>{fmt(l.aza_amount)}</td>
+                      <td className="mono" style={{ color: "var(--cinder)" }}>{fmt(l.cinder_owed)}</td>
+                      <td><span className="chip">{(l.status || "").toUpperCase()}</span></td>
+                      <td className="mono dim">{l.closed_at ? new Date(l.closed_at).toLocaleDateString() : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

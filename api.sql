@@ -316,6 +316,32 @@ create policy boe_req_ins on public.boe_requests for insert to authenticated wit
 drop policy if exists boe_req_upd on public.boe_requests;
 create policy boe_req_upd on public.boe_requests for update to authenticated using (from_user = auth.uid() or to_user = auth.uid()) with check (from_user = auth.uid() or to_user = auth.uid());
 
+-- 🏦 Loans — apply for up to 20 Aza (capped to (sum of owned-hero levels) / 5),
+-- credited to the bank as Cinder at the canonical peg, repaid in Cinder on a
+-- weekly installment schedule. Self-RLS: borrower reads/writes own only.
+create table if not exists public.boe_loans (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  aza_amount numeric not null check (aza_amount > 0),
+  cinder_owed numeric not null check (cinder_owed > 0),
+  cinder_paid numeric not null default 0,
+  installments int not null default 4 check (installments between 1 and 24),
+  period_days int not null default 7 check (period_days between 1 and 90),
+  status text not null default 'active',
+  started_at timestamptz default now(),
+  closed_at timestamptz,
+  hero_capacity_aza numeric not null default 0,
+  note text
+);
+create index if not exists boe_loans_user_status on public.boe_loans (user_id, status, started_at desc);
+alter table public.boe_loans enable row level security;
+drop policy if exists boe_ln_sel on public.boe_loans;
+create policy boe_ln_sel on public.boe_loans for select to authenticated using (user_id = auth.uid());
+drop policy if exists boe_ln_ins on public.boe_loans;
+create policy boe_ln_ins on public.boe_loans for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists boe_ln_upd on public.boe_loans;
+create policy boe_ln_upd on public.boe_loans for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
 grant select on
   public.api_corporations,
   public.api_reserve_totals,

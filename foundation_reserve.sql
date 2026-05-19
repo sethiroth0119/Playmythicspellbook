@@ -129,4 +129,21 @@ create view public.reserve_totals with (security_invoker = true) as
   select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors
   from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c
   left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;
+create table if not exists public.corp_licenses (
+  id uuid primary key default gen_random_uuid(),
+  corp_id uuid not null references public.corporations(id) on delete cascade,
+  license_type text not null,
+  status text not null default 'active',
+  issued_by uuid references auth.users(id) on delete set null,
+  issued_at timestamptz default now(),
+  unique (corp_id, license_type)
+);
+create index if not exists corp_licenses_corp on public.corp_licenses (corp_id);
+alter table public.corp_licenses enable row level security;
+drop policy if exists cl_sel on public.corp_licenses;
+create policy cl_sel on public.corp_licenses for select to authenticated using (true);
+drop policy if exists cl_ins on public.corp_licenses;
+create policy cl_ins on public.corp_licenses for insert to authenticated with check (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));
+drop policy if exists cl_del on public.corp_licenses;
+create policy cl_del on public.corp_licenses for delete to authenticated using (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));
 grant select on public.reserve_totals to authenticated;

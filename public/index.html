@@ -24101,7 +24101,7 @@ async function resMarketCancel(listing) {
 // a security_invoker VIEW that SUMs all rows, so there are no lost updates
 // and no RPC needed. Degrades gracefully offline / before one-time setup.
 // ============================================================================
-const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ncreate table if not exists public.reserve_tax_log (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  buyer_id uuid,\n  corp_id text,\n  resource text,\n  quantity numeric not null default 0,\n  sale_value numeric not null default 0,\n  tax_rate numeric not null default 0.02,\n  tax_amount numeric not null default 0,\n  market_type text not null default 'base',\n  created_at timestamptz default now()\n);\ncreate index if not exists reserve_tax_log_time on public.reserve_tax_log (created_at desc);\nalter table public.reserve_tax_log enable row level security;\ndrop policy if exists tx_sel on public.reserve_tax_log;\ncreate policy tx_sel on public.reserve_tax_log for select to authenticated using (true);\ndrop policy if exists tx_ins on public.reserve_tax_log;\ncreate policy tx_ins on public.reserve_tax_log for insert to authenticated with check (seller_id = auth.uid());\ncreate table if not exists public.corporations (\n  id uuid primary key default gen_random_uuid(),\n  name text not null,\n  tag text not null,\n  founder_id uuid not null references auth.users(id) on delete cascade,\n  faction text,\n  element text,\n  created_at timestamptz default now()\n);\nalter table public.corporations add column if not exists faction text;\nalter table public.corporations add column if not exists element text;\ncreate table if not exists public.corp_members (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  joined_at timestamptz default now()\n);\ncreate index if not exists corp_members_corp on public.corp_members (corp_id);\nalter table public.corporations enable row level security;\nalter table public.corp_members enable row level security;\ndrop policy if exists corp_sel on public.corporations;\ncreate policy corp_sel on public.corporations for select to authenticated using (true);\ndrop policy if exists corp_ins on public.corporations;\ncreate policy corp_ins on public.corporations for insert to authenticated with check (founder_id = auth.uid());\ndrop policy if exists cm_sel on public.corp_members;\ncreate policy cm_sel on public.corp_members for select to authenticated using (true);\ndrop policy if exists cm_ins on public.corp_members;\ncreate policy cm_ins on public.corp_members for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cm_upd on public.corp_members;\ncreate policy cm_upd on public.corp_members for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists cm_del on public.corp_members;\ncreate policy cm_del on public.corp_members for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_members.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_requests (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  status text not null default 'pending',\n  created_at timestamptz default now(),\n  unique (corp_id, user_id)\n);\ncreate index if not exists corp_requests_corp on public.corp_requests (corp_id);\nalter table public.corp_requests enable row level security;\ndrop policy if exists creq_sel on public.corp_requests;\ncreate policy creq_sel on public.corp_requests for select to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists creq_ins on public.corp_requests;\ncreate policy creq_ins on public.corp_requests for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists creq_upd on public.corp_requests;\ncreate policy creq_upd on public.corp_requests for update to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid())) with check (true);\ndrop policy if exists creq_del on public.corp_requests;\ncreate policy creq_del on public.corp_requests for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_vault (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  depositor_id uuid not null references auth.users(id) on delete cascade,\n  depositor_name text,\n  kind text not null,\n  item_id text not null,\n  name text,\n  icon text,\n  qty numeric not null default 0,\n  created_at timestamptz default now(),\n  updated_at timestamptz default now(),\n  unique (corp_id, depositor_id, kind, item_id)\n);\ncreate index if not exists corp_vault_corp on public.corp_vault (corp_id);\nalter table public.corp_vault enable row level security;\ndrop policy if exists cv_sel on public.corp_vault;\ncreate policy cv_sel on public.corp_vault for select to authenticated using (exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()) or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists cv_ins on public.corp_vault;\ncreate policy cv_ins on public.corp_vault for insert to authenticated with check (depositor_id = auth.uid() and exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()));\ndrop policy if exists cv_upd on public.corp_vault;\ncreate policy cv_upd on public.corp_vault for update to authenticated using (depositor_id = auth.uid()) with check (depositor_id = auth.uid());\ndrop policy if exists cv_del on public.corp_vault;\ncreate policy cv_del on public.corp_vault for delete to authenticated using (depositor_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ngrant select on public.reserve_totals to authenticated;";
+const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ncreate table if not exists public.reserve_tax_log (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  buyer_id uuid,\n  corp_id text,\n  resource text,\n  quantity numeric not null default 0,\n  sale_value numeric not null default 0,\n  tax_rate numeric not null default 0.02,\n  tax_amount numeric not null default 0,\n  market_type text not null default 'base',\n  created_at timestamptz default now()\n);\ncreate index if not exists reserve_tax_log_time on public.reserve_tax_log (created_at desc);\nalter table public.reserve_tax_log enable row level security;\ndrop policy if exists tx_sel on public.reserve_tax_log;\ncreate policy tx_sel on public.reserve_tax_log for select to authenticated using (true);\ndrop policy if exists tx_ins on public.reserve_tax_log;\ncreate policy tx_ins on public.reserve_tax_log for insert to authenticated with check (seller_id = auth.uid());\ncreate table if not exists public.corporations (\n  id uuid primary key default gen_random_uuid(),\n  name text not null,\n  tag text not null,\n  founder_id uuid not null references auth.users(id) on delete cascade,\n  faction text,\n  element text,\n  created_at timestamptz default now()\n);\nalter table public.corporations add column if not exists faction text;\nalter table public.corporations add column if not exists element text;\ncreate table if not exists public.corp_members (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  joined_at timestamptz default now()\n);\ncreate index if not exists corp_members_corp on public.corp_members (corp_id);\nalter table public.corporations enable row level security;\nalter table public.corp_members enable row level security;\ndrop policy if exists corp_sel on public.corporations;\ncreate policy corp_sel on public.corporations for select to authenticated using (true);\ndrop policy if exists corp_ins on public.corporations;\ncreate policy corp_ins on public.corporations for insert to authenticated with check (founder_id = auth.uid());\ndrop policy if exists cm_sel on public.corp_members;\ncreate policy cm_sel on public.corp_members for select to authenticated using (true);\ndrop policy if exists cm_ins on public.corp_members;\ncreate policy cm_ins on public.corp_members for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cm_upd on public.corp_members;\ncreate policy cm_upd on public.corp_members for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists cm_del on public.corp_members;\ncreate policy cm_del on public.corp_members for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_members.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_requests (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  status text not null default 'pending',\n  created_at timestamptz default now(),\n  unique (corp_id, user_id)\n);\ncreate index if not exists corp_requests_corp on public.corp_requests (corp_id);\nalter table public.corp_requests enable row level security;\ndrop policy if exists creq_sel on public.corp_requests;\ncreate policy creq_sel on public.corp_requests for select to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists creq_ins on public.corp_requests;\ncreate policy creq_ins on public.corp_requests for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists creq_upd on public.corp_requests;\ncreate policy creq_upd on public.corp_requests for update to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid())) with check (true);\ndrop policy if exists creq_del on public.corp_requests;\ncreate policy creq_del on public.corp_requests for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_vault (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  depositor_id uuid not null references auth.users(id) on delete cascade,\n  depositor_name text,\n  kind text not null,\n  item_id text not null,\n  name text,\n  icon text,\n  qty numeric not null default 0,\n  created_at timestamptz default now(),\n  updated_at timestamptz default now(),\n  unique (corp_id, depositor_id, kind, item_id)\n);\ncreate index if not exists corp_vault_corp on public.corp_vault (corp_id);\nalter table public.corp_vault enable row level security;\ndrop policy if exists cv_sel on public.corp_vault;\ncreate policy cv_sel on public.corp_vault for select to authenticated using (exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()) or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists cv_ins on public.corp_vault;\ncreate policy cv_ins on public.corp_vault for insert to authenticated with check (depositor_id = auth.uid() and exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()));\ndrop policy if exists cv_upd on public.corp_vault;\ncreate policy cv_upd on public.corp_vault for update to authenticated using (depositor_id = auth.uid()) with check (depositor_id = auth.uid());\ndrop policy if exists cv_del on public.corp_vault;\ncreate policy cv_del on public.corp_vault for delete to authenticated using (depositor_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ncreate table if not exists public.corp_licenses (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  license_type text not null,\n  status text not null default 'active',\n  issued_by uuid references auth.users(id) on delete set null,\n  issued_at timestamptz default now(),\n  unique (corp_id, license_type)\n);\ncreate index if not exists corp_licenses_corp on public.corp_licenses (corp_id);\nalter table public.corp_licenses enable row level security;\ndrop policy if exists cl_sel on public.corp_licenses;\ncreate policy cl_sel on public.corp_licenses for select to authenticated using (true);\ndrop policy if exists cl_ins on public.corp_licenses;\ncreate policy cl_ins on public.corp_licenses for insert to authenticated with check (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists cl_del on public.corp_licenses;\ncreate policy cl_del on public.corp_licenses for delete to authenticated using (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));\ngrant select on public.reserve_totals to authenticated;";
 
 // Contribution point weight per resource (strategic / scarce = worth more).
 const RESERVE_WEIGHTS = {
@@ -24485,6 +24485,41 @@ function openCityHall() {
         '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' + card('Total collected', s.total, '#7fe0a0') + card('Today', s.day) + card('7 days', s.week) + card('30 days', s.month) + '</div>' +
         '<div style="display:flex;gap:6px;flex-wrap:wrap">' + card('🖤 Black-market seizures', s.black, '#e0a0ff') + card('🏢 Corporation tax', s.corp, '#9fe0b0') + '</div>';
     };
+    const licensingTab = () => {
+      if (!Corp.mine) {
+        return '<div class="ink-dim" style="padding:1.4rem;text-align:center;line-height:1.7">📜 The Licensing Office issues industrial permits to <strong>chartered corporations</strong>.<br>Found or join a corporation first (Registry tab / Just Business), then your founder files here.</div>';
+      }
+      const held = Corp.licenses || [];
+      const comp = Corp.compliance | 0;
+      const owner = !!Corp.amOwner;
+      const cc = comp >= 70 ? '#7fe0a0' : comp >= 45 ? '#ffd27a' : '#ff9a6b';
+      const bar =
+        '<div style="border:1px solid rgba(212,175,55,0.22);border-radius:8px;background:rgba(40,32,12,0.18);padding:9px 12px;margin-bottom:10px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><div style="color:#ffe6b0;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(Corp.mine.name) + ' <span class="small-text" style="color:#caa46a">[' + esc(Corp.mine.tag) + ']</span></div>' +
+          '<div class="small-text" style="color:#b59a66;white-space:nowrap">Compliance <strong style="color:' + cc + '">' + comp + '</strong>/100</div></div>' +
+          '<div style="height:7px;border-radius:5px;background:rgba(0,0,0,0.4);margin-top:6px;overflow:hidden"><div style="height:100%;width:' + comp + '%;background:' + cc + '"></div></div>' +
+          '<div class="small-text" style="color:#8a7a4a;margin-top:5px">Earned from Reserve contributions + corporation tax paid. Raise it to unlock higher licenses.' + (owner ? '' : ' Only the founder/CEO can file.') + '</div>' +
+        '</div>';
+      const rows = CITY_LICENSES.map(L => {
+        const has = held.indexOf(L.id) >= 0;
+        const resStr = Object.keys(L.res).length ? Object.keys(L.res).map(k => L.res[k] + '× ' + ((_meta(k).name) || k)).join(' · ') : '—';
+        const meets = L.illicit || comp >= L.minCompliance;
+        let right;
+        if (has) right = '<span style="color:#7fe0a0;font-weight:800;white-space:nowrap">✓ HELD</span>';
+        else if (!owner) right = '<span class="small-text" style="color:#8a7a4a;white-space:nowrap">founder files</span>';
+        else if (!meets) right = '<span class="small-text" style="color:#ff9a6b;white-space:nowrap">🔒 need ' + L.minCompliance + '</span>';
+        else right = '<button data-ch-license="' + esc(L.id) + '" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid rgba(212,175,55,0.5);background:rgba(212,175,55,0.14);color:#ffcf5a;font-weight:800;white-space:nowrap">File →</button>';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid ' + (has ? 'rgba(127,224,160,0.4)' : L.illicit ? 'rgba(224,160,255,0.3)' : 'rgba(212,175,55,0.22)') + ';border-radius:8px;background:rgba(40,32,12,0.18);margin-bottom:6px">' +
+          '<div style="font-size:1.3rem">' + L.icon + '</div>' +
+          '<div style="flex:1;min-width:0"><div style="color:#ffe6b0;font-weight:800">' + esc(L.name) + (L.illicit ? ' <span class="small-text" style="color:#e0a0ff">· ILLICIT</span>' : '') + '</div>' +
+            '<div class="small-text" style="color:#b59a66">' + esc(L.blurb) + '</div>' +
+            '<div class="small-text" style="color:#8a7a4a">Fee ' + L.cinder.toLocaleString() + ' 🔥 · ' + resStr + (L.illicit ? '' : ' · min compliance ' + L.minCompliance) + '</div></div>' +
+          right +
+        '</div>';
+      }).join('');
+      return '<div class="small-text" style="color:#cdb37a;margin-bottom:8px">Industrial permits. A corporation must hold the matching license before it can establish that Reserve Node type. Fees are a permanent sink.</div>' +
+        bar + rows;
+    };
     const soonTab = (title, lines) =>
       '<div style="text-align:center;padding:1.4rem 1rem"><div style="font-size:2rem;margin-bottom:6px">🚧</div>' +
       '<div style="color:#ffe6b0;font-weight:800;font-size:1.05rem;margin-bottom:6px">' + title + ' — opening tomorrow</div>' +
@@ -24500,7 +24535,7 @@ function openCityHall() {
       } else {
         body = tab === 'registry' ? registryTab()
           : tab === 'treasury' ? treasuryTab()
-          : tab === 'licensing' ? soonTab('Licensing Office', 'Operation &amp; corporation licenses (Mining / Oil / Construction / Medical / Research / Smuggling). Approved corporations apply here for industrial permits with Cinder + resource + compliance requirements.')
+          : tab === 'licensing' ? licensingTab()
           : tab === 'court' ? soonTab('Courtroom', 'Judge &amp; Lawyer registration, representation filings, the Case Board, public trials and the Criminal Registry. Voice court runs on Discord; the game tracks cases, rulings, evidence &amp; sentences.')
           : soonTab('Detention Complex', 'Jail timers, bail (Cinder / resources / corporation support), asset seizure, prisoner tracking and global wanted status. Jailed players lose Black Market + operation control until released.');
       }
@@ -24528,10 +24563,19 @@ function openCityHall() {
           cityHallApply(b.getAttribute('data-ch-apply'), b.getAttribute('data-ch-name')).then(() => { try { render(); } catch (e) {} });
         };
       });
+      host.querySelectorAll('[data-ch-license]').forEach(b => {
+        b.onclick = () => {
+          if (b.disabled) return; b.disabled = true; b.textContent = 'Filing…';
+          cityHallApplyLicense(b.getAttribute('data-ch-license')).then(() => {
+            try { if (typeof corpEnsure === 'function') corpEnsure().then(render); else render(); } catch (e) { try { render(); } catch (_) {} }
+          });
+        };
+      });
     };
     render();
     if (online && !(typeof FoundationReserve !== 'undefined' && FoundationReserve.tableMissing)) {
       cityHallFetch().then(render);
+      try { if (typeof corpEnsure === 'function') corpEnsure().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {}
       cleanup();
       CityHall._poll = setInterval(() => { if (!document.getElementById(ID)) { cleanup(); return; } cityHallFetch().then(() => { if (document.getElementById(ID)) render(); }); }, 25000);
     }
@@ -24820,6 +24864,12 @@ async function nodeEstablish(typeId) {
   if (!t) return false;
   if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in to operate Reserve nodes.', 3000); return false; }
   if (!Corp.mine) { showToast('🏛️ Only registered corporations operate Reserve nodes — found or join one in City Hall.', 4600); return false; }
+  const reqLic = NODE_REQUIRED_LICENSE[t.id];
+  if (reqLic && (Corp.licenses || []).indexOf(reqLic) < 0) {
+    const lic = _cityLicense(reqLic);
+    showToast('📜 ' + t.name + ' needs your corporation to hold the ' + (lic ? lic.name : reqLic + ' license') + '. File for it in City Hall → Licensing.', 6000);
+    return false;
+  }
   if ((FoundationReserve.nodes || []).length >= NODE_MAX_PER_CORP) { showToast('Your corporation is at its node cap (' + NODE_MAX_PER_CORP + ').', 3600); return false; }
   if ((Profile.gems || 0) < t.cinder) { showToast('Need ' + t.cinder.toLocaleString() + ' 🔥 to license & build the ' + t.name + ' — you have ' + (Profile.gems || 0).toLocaleString() + '.', 5200); return false; }
   if (!canAffordResources(t.res)) { showToast('Not enough resources to build the ' + t.name + ' (' + Object.keys(t.res).map(k => t.res[k] + ' ' + ((_meta(k).name) || k)).join(', ') + ').', 5200); return false; }
@@ -33863,7 +33913,52 @@ function _baseNavTo(screen) {
 // so corpId is always real. All Supabase access is guarded — the app still
 // works (mock data) if offline / tables not yet set up.
 // ============================================================================
-const Corp = { mine: null, roster: [], requests: [], vault: [], directory: [], amOwner: false, _ensuring: false, _err: null };
+const Corp = { mine: null, roster: [], requests: [], vault: [], directory: [], licenses: [], compliance: 0, amOwner: false, _ensuring: false, _err: null };
+// 📜 City Hall licence catalogue. Each gates a Reserve Node type. Issued to
+// a corporation (founder applies) for Cinder + resources + a minimum
+// compliance score. Smuggling is illicit — no compliance gate.
+const CITY_LICENSES = [
+  { id: 'mining',       name: 'Mining License',       icon: '⛏',  cinder: 80000,  res: { metal: 200 },                              minCompliance: 50, blurb: 'Permits Mining Reserve nodes.' },
+  { id: 'oil',          name: 'Oil License',          icon: '⛽', cinder: 120000, res: { fuel: 300, metal: 150 },                   minCompliance: 60, blurb: 'Permits Fuel Reserve nodes.' },
+  { id: 'construction', name: 'Construction License', icon: '🏗', cinder: 100000, res: { metal: 300 },                              minCompliance: 55, blurb: 'Permits Manufacturing & Storage nodes.' },
+  { id: 'medical',      name: 'Medical License',      icon: '⚕️', cinder: 90000,  res: { medicine: 60, supplies: 120 },             minCompliance: 50, blurb: 'Permits Supply Reserve nodes.' },
+  { id: 'agriculture',  name: 'Agriculture License',  icon: '🌾', cinder: 60000,  res: { water: 200, food: 150 },                   minCompliance: 40, blurb: 'Food & biomass operations (ops update).' },
+  { id: 'logistics',    name: 'Logistics License',    icon: '🚚', cinder: 70000,  res: { fuel: 180, supplies: 120 },                minCompliance: 45, blurb: 'Permits Convoy Reserve nodes.' },
+  { id: 'security',     name: 'Security License',     icon: '🛡', cinder: 90000,  res: { ammo: 200, metal: 150 },                   minCompliance: 55, blurb: 'Permits Security Reserve nodes.' },
+  { id: 'research',     name: 'Research License',     icon: '🔬', cinder: 200000, res: { memoryShards: 25, corruptedEssence: 15 },  minCompliance: 75, blurb: 'Permits Research Reserve nodes.' },
+  { id: 'smuggling',    name: 'Smuggling License',    icon: '🕶', cinder: 60000,  res: {},                                          minCompliance: 0,  illicit: true, blurb: 'Off-ledger trade. No compliance gate — flagged by the Foundation.' },
+];
+function _cityLicense(id) { return CITY_LICENSES.find(l => l.id === id) || null; }
+// Reserve-node type → required corporation licence.
+const NODE_REQUIRED_LICENSE = { mining: 'mining', fuel: 'oil', mfg: 'construction', storage: 'construction', supply: 'medical', convoy: 'logistics', security: 'security', research: 'research' };
+async function cityHallApplyLicense(licId) {
+  const L = _cityLicense(licId);
+  if (!L) return false;
+  if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in to file with City Hall.', 3000); return false; }
+  if (!Corp.mine) { showToast('🏛️ Only registered corporations hold licenses — found or join one.', 4200); return false; }
+  if (!Corp.amOwner) { showToast('Only the corporation founder/CEO can file for licenses.', 3600); return false; }
+  if ((Corp.licenses || []).indexOf(L.id) >= 0) { showToast('Your corporation already holds the ' + L.name + '.', 3000); return false; }
+  const comp = Corp.compliance | 0;
+  if (!L.illicit && comp < L.minCompliance) { showToast('🏛️ Compliance too low for the ' + L.name + ' — need ' + L.minCompliance + ', your corp is at ' + comp + '. Pay taxes & contribute to the Reserve.', 5600); return false; }
+  if ((Profile.gems || 0) < L.cinder) { showToast('Need ' + L.cinder.toLocaleString() + ' 🔥 for the ' + L.name + ' — you have ' + (Profile.gems || 0).toLocaleString() + '.', 5200); return false; }
+  if (!canAffordResources(L.res)) { showToast('License requires ' + (Object.keys(L.res).length ? Object.keys(L.res).map(k => L.res[k] + ' ' + ((_meta(k).name) || k)).join(', ') : 'no resources') + '.', 4600); return false; }
+  if (!confirm('File for the ' + L.name + '?\n\nFee: ' + L.cinder.toLocaleString() + ' 🔥' + (Object.keys(L.res).length ? ' + ' + Object.keys(L.res).map(k => L.res[k] + '× ' + ((_meta(k).name) || k)).join(', ') : '') + (L.illicit ? '\n\n⚠ Illicit — increases Foundation scrutiny.' : ''))) return false;
+  if (!spendGems(L.cinder)) { showToast('Not enough Cinders'); return false; }
+  if (!spendResources(L.res)) { addGems(L.cinder); showToast('Not enough resources'); return false; }
+  try { saveProfile(); } catch (e) {}
+  try {
+    const ins = await Cloud.client.from('corp_licenses').insert({ corp_id: Corp.mine.id, license_type: L.id, status: 'active', issued_by: Profile.cloud.userId });
+    if (ins && ins.error) throw ins.error;
+  } catch (e) {
+    addGems(L.cinder); try { addSalvage(L.res); saveProfile(); } catch (_) {}
+    showToast('⚠ Filing failed — refunded. ' + (/corp_licenses|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run the Reserve setup SQL first.' : ''), 4600);
+    return false;
+  }
+  if (!Array.isArray(Corp.licenses)) Corp.licenses = [];
+  Corp.licenses.push(L.id);
+  showToast('📜 ' + L.name + ' issued to ' + Corp.mine.name + ' — filed at City Hall.', 5200);
+  return true;
+}
 const CORP_FOUNDING_COST = 1000000;   // 1,000,000 Cinder to incorporate (admins free)
 const CORP_MEMBER_CAP    = 25;        // free roster cap
 const CORP_OVERFLOW_FEE  = 3000;      // Aza coin per hire beyond the cap
@@ -33910,8 +34005,26 @@ async function corpEnsure() {
             return { depId: v.depositor_id, dep: v.depositor_name || 'Member', kind: v.kind, id: v.item_id, name: v.name || v.item_id, icon: v.icon || '', qty: v.qty | 0 };
           }) : [];
         } catch (e) { Corp.vault = []; }
+        // 📜 Licences held + compliance score (City Hall). Compliance is
+        // EARNED: base + the corp's pooled Reserve contribution + the tax
+        // its members have paid. (Black-market penalty is a later pass.)
+        try {
+          const lc = await Cloud.client.from('corp_licenses').select('license_type,status').eq('corp_id', c.data.id).limit(40);
+          Corp.licenses = (lc && lc.data) ? lc.data.filter(function (x) { return x.status === 'active'; }).map(function (x) { return x.license_type; }) : [];
+        } catch (e) { Corp.licenses = []; }
+        try {
+          const ids = (Corp.roster || []).map(function (m) { return m.userId; }).filter(Boolean).slice(0, 60);
+          let pts = 0, tax = 0;
+          if (ids.length) {
+            const pr = await Cloud.client.from('reserve_contributions').select('points').in('user_id', ids).limit(2000);
+            if (pr && pr.data) pr.data.forEach(function (r) { pts += Number(r.points) || 0; });
+          }
+          const tr = await Cloud.client.from('reserve_tax_log').select('tax_amount').eq('corp_id', c.data.id).limit(3000);
+          if (tr && tr.data) tr.data.forEach(function (r) { tax += Number(r.tax_amount) || 0; });
+          Corp.compliance = Math.max(0, Math.min(100, 40 + Math.floor(pts / 500) + Math.floor(tax / 5000)));
+        } catch (e) { Corp.compliance = 40; }
       }
-    } else { Corp.mine = null; Corp.roster = []; Corp.requests = []; Corp.vault = []; Corp.amOwner = false; }
+    } else { Corp.mine = null; Corp.roster = []; Corp.requests = []; Corp.vault = []; Corp.licenses = []; Corp.compliance = 0; Corp.amOwner = false; }
     // 🏢 Public directory of EVERY corporation started (so players who
     // aren't in one can see them). corporations select RLS is public.
     try {

@@ -1111,12 +1111,24 @@ function OperationsScreen({ econ }) {
                   <span className="mono">{oe.ratePerWorkerHr.toLocaleString()} 🔥 / worker·hr</span>
                 </div>
               )}
+              {oe && oe.yields && (
+                <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                  <span className="muted">Resource yield</span>
+                  <span className="mono" style={{ color: 'var(--toxic)' }}>{Object.keys(oe.yields).map(k => oe.yields[k] + ' ' + k).join(' · ')} / wkr·hr</span>
+                </div>
+              )}
               {owned && (
                 <React.Fragment>
                   <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
                     <span className="muted">Net accrued</span>
                     <span className="mono" style={{ color: 'var(--aza)' }}>+{(owned.net | 0).toLocaleString()} 🔥</span>
                   </div>
+                  {owned.yieldStr ? (
+                    <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                      <span className="muted">Resources accrued</span>
+                      <span className="mono" style={{ color: 'var(--toxic)' }}>{owned.yieldStr}</span>
+                    </div>
+                  ) : null}
                   <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
                     <span className="muted">Settles in</span>
                     <span className="mono">{fmtH(owned.cdLeftMs)}</span>

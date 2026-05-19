@@ -34854,18 +34854,21 @@ async function corpTreasuryDeposit(amount) {
 // pattern as nodes); founder-managed; degrades gracefully pre-setup.
 const OP_COLLECT_CD_MS = 6 * 3600000;          // settle/collect once per 6h
 const OP_ACCRUAL_CAP_H = 36;                   // unattended accrual caps at 36h
+// `yields` = real resources deposited to the collecting founder's ledger
+// per worker·hr (on top of the Cinder→Treasury revenue). 'parts' has no
+// real resource → mapped to metal. Smuggling stays Cinder/contraband only.
 const OPS_ECON = {
-  mining:       { startup: 400000, ratePerWorkerHr: 900,  salaryPerWorkerHr: 220, maxWorkers: 12 },
-  oil:          { startup: 500000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 10 },
-  construction: { startup: 350000, ratePerWorkerHr: 800,  salaryPerWorkerHr: 200, maxWorkers: 12 },
-  medical:      { startup: 450000, ratePerWorkerHr: 1000, salaryPerWorkerHr: 260, maxWorkers: 10 },
-  agri:         { startup: 300000, ratePerWorkerHr: 700,  salaryPerWorkerHr: 170, maxWorkers: 14 },
-  research:     { startup: 700000, ratePerWorkerHr: 1700, salaryPerWorkerHr: 430, maxWorkers: 8  },
+  mining:       { startup: 400000, ratePerWorkerHr: 900,  salaryPerWorkerHr: 220, maxWorkers: 12, yields: { metal: 2.2 } },
+  oil:          { startup: 500000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 10, yields: { fuel: 2.6 } },
+  construction: { startup: 350000, ratePerWorkerHr: 800,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { metal: 2.0 } },
+  medical:      { startup: 450000, ratePerWorkerHr: 1000, salaryPerWorkerHr: 260, maxWorkers: 10, yields: { medicine: 0.9 } },
+  agri:         { startup: 300000, ratePerWorkerHr: 700,  salaryPerWorkerHr: 170, maxWorkers: 14, yields: { food: 2.4 } },
+  research:     { startup: 700000, ratePerWorkerHr: 1700, salaryPerWorkerHr: 430, maxWorkers: 8,  yields: { memoryShards: 0.25 } },
   smuggling:    { startup: 600000, ratePerWorkerHr: 1900, salaryPerWorkerHr: 360, maxWorkers: 8, illicit: true },
-  salvage:      { startup: 250000, ratePerWorkerHr: 650,  salaryPerWorkerHr: 150, maxWorkers: 14 },
-  gas:          { startup: 350000, ratePerWorkerHr: 850,  salaryPerWorkerHr: 200, maxWorkers: 12 },
-  cars:         { startup: 450000, ratePerWorkerHr: 1100, salaryPerWorkerHr: 280, maxWorkers: 10 },
-  fishing:      { startup: 300000, ratePerWorkerHr: 750,  salaryPerWorkerHr: 180, maxWorkers: 14 },
+  salvage:      { startup: 250000, ratePerWorkerHr: 650,  salaryPerWorkerHr: 150, maxWorkers: 14, yields: { metal: 1.6 } },
+  gas:          { startup: 350000, ratePerWorkerHr: 850,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { fuel: 2.2 } },
+  cars:         { startup: 450000, ratePerWorkerHr: 1100, salaryPerWorkerHr: 280, maxWorkers: 10, yields: { metal: 1.8 } },
+  fishing:      { startup: 300000, ratePerWorkerHr: 750,  salaryPerWorkerHr: 180, maxWorkers: 14, yields: { food: 2.4 } },
 };
 function _opEcon(t) { return OPS_ECON[t] || null; }
 const Operations = { list: [], _fetched: 0 };
@@ -34893,7 +34896,12 @@ function _opComputed(o) {
   const salary = Math.floor(salaryPerHr * hrs);
   const net = Math.max(0, gross - salary);
   const cdLeft = Math.max(0, (last + OP_COLLECT_CD_MS) - Date.now());
-  return { e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last };
+  const yields = {};
+  if (e.yields) Object.keys(e.yields).forEach(function (rid) {
+    const q = Math.floor(w * (e.yields[rid] || 0) * hrs);
+    if (q > 0) yields[rid] = q;
+  });
+  return { e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last, yields: yields };
 }
 function _opLaborPool() { return Math.max(1, (Corp.roster || []).length || 1); }
 function _opLaborUsed(exceptId) {
@@ -34919,13 +34927,27 @@ async function _opSettle(o) {
   if (salaryPay > 0) { await _opTreasuryRow(-salaryPay, 'op_salary', (o.op_type || 'op') + ' wages'); }
   const net = Math.max(0, gross - salaryPay);
   if (net > 0) { await _opTreasuryRow(net, 'op_revenue', (o.op_type || 'op') + ' production'); }
+  // 📦 Real resource output → the collecting founder's ledger. Same
+  // wages-short 50% penalty as Cinder revenue.
+  const yielded = {};
+  try {
+    const cy = c.yields || {};
+    Object.keys(cy).forEach(function (rid) {
+      const q = Math.max(0, Math.floor(cy[rid] * (wagesShort ? 0.5 : 1)));
+      if (q > 0) yielded[rid] = q;
+    });
+    if (Object.keys(yielded).length && typeof addSalvage === 'function') {
+      addSalvage(yielded);
+      try { saveProfile(); } catch (e) {}
+    }
+  } catch (e) {}
   const meta = Object.assign({}, o.meta || {}, { lastCollect: Date.now() });
   try {
     const up = await Cloud.client.from('corp_operations').update({ meta: meta, updated_at: new Date().toISOString() }).eq('id', o.id);
     if (up && up.error) throw up.error;
     o.meta = meta;
   } catch (e) {}
-  return { net: net, salary: salaryPay, gross: gross, wagesShort: wagesShort };
+  return { net: net, salary: salaryPay, gross: gross, wagesShort: wagesShort, yielded: yielded };
 }
 // 📜 City Hall licence catalogue. Each gates a Reserve Node type. Issued to
 // a corporation (founder applies) for Cinder + resources + a minimum
@@ -35199,9 +35221,12 @@ function _jbEcon() {
       try {
         return (Operations.list || []).map(function (o) {
           const c = _opComputed(o);
+          const ys = Object.keys(c.yields || {}).map(function (rid) { return ((_meta(rid).icon) || '📦') + ' ' + c.yields[rid].toLocaleString(); }).join(' · ');
+          const yp = (c.e && c.e.yields) ? Object.keys(c.e.yields).map(function (rid) { return ((_meta(rid).icon) || '📦') + (c.e.yields[rid]) + '/wkr·hr'; }).join(' · ') : '';
           return { id: o.id, op_type: o.op_type, workers: o.workers | 0, level: o.level | 0,
             grossPerHr: c.grossPerHr, salaryPerHr: c.salaryPerHr, net: c.net, gross: c.gross,
-            salary: c.salary, cdLeftMs: c.cdLeft, hrs: Math.round(c.hrs * 10) / 10 };
+            salary: c.salary, cdLeftMs: c.cdLeft, hrs: Math.round(c.hrs * 10) / 10,
+            yieldStr: ys, yieldRate: yp };
         });
       } catch (e) { return []; }
     })(),
@@ -35516,7 +35541,8 @@ function _jbHandleAction(a) {
           if (c.cdLeft > 0) { showToast('⏳ Production settles every 6h — ' + Math.ceil(c.cdLeft / 3600000) + 'h left.', 3600); _jbSendData(); return; }
           if (c.gross <= 0) { showToast('No production yet — hire workers into this operation.', 4200); _jbSendData(); return; }
           const s = await _opSettle(o);
-          showToast('⚙️ ' + o.op_type + ' produced — Treasury +' + s.net.toLocaleString() + ' 🔥 (gross ' + s.gross.toLocaleString() + ' − wages ' + s.salary.toLocaleString() + ')' + (s.wagesShort ? ' ⚠ wages short: output halved.' : ''), 6200);
+          const yStr = Object.keys(s.yielded || {}).map(function (rid) { return '+' + s.yielded[rid].toLocaleString() + ' ' + ((_meta(rid).icon) || '') + ' ' + ((_meta(rid).name) || rid); }).join(' · ');
+          showToast('⚙️ ' + o.op_type + ' produced — Treasury +' + s.net.toLocaleString() + ' 🔥' + (yStr ? ' · ' + yStr + ' to your stores' : '') + ' (gross ' + s.gross.toLocaleString() + ' − wages ' + s.salary.toLocaleString() + ')' + (s.wagesShort ? ' ⚠ wages short: output halved.' : ''), 6800);
           await opFetch(); _jbSendData();
         } catch (e) { _jbSendData(); }
       })();

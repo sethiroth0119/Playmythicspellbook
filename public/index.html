@@ -58113,10 +58113,10 @@ function renderUserManagement() {
           `<div style="font-weight:800;color:#ffcf5a;margin-bottom:6px">🎁 Grant a reward</div>` +
           `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
             `<select id="um-gk" style="padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` +
-              `<option value="cinder">Cinders 🔥</option><option value="aza">Aza coin 🪙</option><option value="resource">Resource</option><option value="item">Item</option><option value="card">Card</option><option value="coupon">Coupon 🎟</option>` +
+              `<option value="cinder">Cinders 🔥</option><option value="aza">Aza coin 🪙</option><option value="resource">Resource</option><option value="item">Item</option><option value="card">Card</option><option value="node">Node 🔌</option><option value="coupon">Coupon 🎟</option>` +
             `</select>` +
             `<input id="um-ga" type="number" min="1" value="1000" style="width:90px;padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` +
-            `<input id="um-gr" placeholder="id / code (for resource·item·card·coupon)" style="flex:1;min-width:150px;padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` +
+            `<input id="um-gr" placeholder="id / code (resource·item·card·coupon · node: mining,fuel,mfg,storage,supply,convoy,security,research)" style="flex:1;min-width:150px;padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` +
             `<button class="btn-primary" id="um-gsend" ${AdmUM._busy ? 'disabled' : ''}>Send</button>` +
           `</div>` +
           `<div class="small-text ink-dim" style="margin-top:4px">Lands in the player's gift inbox — they claim it like any reward.</div>` +
@@ -60490,6 +60490,14 @@ async function refreshGiftsCache() {
 // both grant), then add the card to the local inventory + sync.
 async function claimGift(g) {
   if (!Cloud.client || !g || !Profile.cloud || !Profile.cloud.userId) return { error: 'Not signed in.' };
+  // 🔌 Node gifts can only be placed inside a corporation (the node system
+  // is corp-scoped). Check BEFORE flipping the gift to claimed so it stays
+  // in the inbox until the player has a corp.
+  const _cid0 = String((g && g.card_id) || '');
+  if (/^__node:.+__$/.test(_cid0)) {
+    try { if (!Corp.mine && typeof corpEnsure === 'function') await corpEnsure(); } catch (e) {}
+    if (!Corp.mine || !Corp.mine.id) return { error: 'Found or join a corporation first — your granted node waits in the gift inbox until then.' };
+  }
   try {
     const { data, error } = await Cloud.client
       .from('gifts')
@@ -60506,11 +60514,26 @@ async function claimGift(g) {
     const cid = String(g.card_id || '');
     const mRes = cid.match(/^__res:(.+)__$/);
     const mItem = cid.match(/^__item:(.+)__$/);
+    const mNode = cid.match(/^__node:(.+)__$/);
     try {
       if (cid === '__cinder__') { if (typeof addGems === 'function') addGems(qty); }
       else if (cid === '__aza__') { if (typeof addSovereigns === 'function') addSovereigns(qty); }
       else if (mRes) { if (typeof addSalvage === 'function') addSalvage({ [mRes[1]]: qty }); }
       else if (mItem) { if (!Profile.itemInventory) Profile.itemInventory = {}; Profile.itemInventory[mItem[1]] = (Profile.itemInventory[mItem[1]] || 0) + qty; }
+      else if (mNode) {
+        const t = (typeof _nodeType === 'function' && _nodeType(mNode[1])) || { id: mNode[1], name: 'Node', proc: '' };
+        const ins = await Cloud.client.from('economy_nodes').insert({
+          owner_id: Profile.cloud.userId, corp_id: Corp.mine.id,
+          name: ((Corp.mine.tag || 'CORP') + ' ' + t.name), node_type: t.id,
+          resource: t.proc || '', level: 1, status: 'active',
+          meta: { claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: 0, eff: 100, lastTick: Date.now(), funded: 'gift' },
+        });
+        if (ins && ins.error) {
+          try { await Cloud.client.from('gifts').update({ status: 'pending', claimed_at: null }).eq('id', g.id); } catch (_) {}
+          return { error: 'Node grant failed — ' + (((ins.error.message) || 'try again').slice(0, 80)) };
+        }
+        try { if (typeof nodeFetch === 'function') nodeFetch(); } catch (e) {}
+      }
       else if (cid === '__coupon__') {
         if (!Array.isArray(Profile.coupons)) Profile.coupons = [];
         Profile.coupons.push({ code: g.card_name || 'Coupon', value: qty, ts: Date.now() });
@@ -60560,6 +60583,11 @@ async function adminGrant(toUserId, kind, amount, ref, label) {
   else if (kind === 'item') { if (!ref) return { error: 'Enter an item id.' }; card_id = '__item:' + ref + '__'; card_name = qty + '× ' + (label || ref); }
   else if (kind === 'card') { if (!ref) return { error: 'Enter a card id.' }; card_id = String(ref); card_name = (label || ref); }
   else if (kind === 'coupon') { card_id = '__coupon__'; card_name = (label || ref || 'Coupon') + (qty > 0 ? ' (' + qty.toLocaleString() + ' 🔥)' : ''); }
+  else if (kind === 'node') {
+    const t = (typeof _nodeType === 'function') ? _nodeType(ref) : null;
+    if (!t) return { error: 'Pick a node type id: ' + ((typeof RESERVE_NODE_TYPES !== 'undefined') ? RESERVE_NODE_TYPES.map(n => n.id).join(', ') : 'mining, fuel, mfg, …') };
+    card_id = '__node:' + t.id + '__'; card_name = '🔌 ' + t.name + ' (node)';
+  }
   else return { error: 'Unknown grant kind.' };
   try {
     const { error } = await Cloud.client.from('gifts').insert({

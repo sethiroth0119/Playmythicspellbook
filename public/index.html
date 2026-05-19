@@ -25113,26 +25113,38 @@ async function boeWithdrawAza(amt) {
   return true;
 }
 // ── Currency exchange ──────────────────────────────────────────────
-// 💱 IRREVERSIBLE. Burns Aza from the bank vault and mints Cinder into it
-// at the canonical peg (1 👑 = 5,000 🔥). One atomic row update sets both
-// columns; rolled back on cloud failure. There is no Cinder → Aza path —
-// Aza is premium reserve and only flows in via real-money purchase.
+// 💱 IRREVERSIBLE. Spends the player's REAL Aza — wallet (Profile.sovereigns)
+// first, then any banked Aza — and mints Cinder into the bank at the
+// canonical peg (1 👑 = 5,000 🔥). One atomic row update; wallet + bank are
+// rolled back together on cloud failure. No Cinder → Aza path — Aza is
+// premium reserve and only flows in via real-money purchase.
+function boeTotalAza() { return ((Profile && Profile.sovereigns) | 0) + (BankEthos.aza | 0); }
 async function boeExchangeAzaToCinder(azaAmt) {
   azaAmt = Math.floor(azaAmt);
   if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
   if (_boeNeedCols()) return false;
   if (!(azaAmt > 0)) { showToast('Enter an Aza amount.'); return false; }
-  if (BankEthos.aza < azaAmt) { showToast('Bank Aza is ' + BankEthos.aza.toLocaleString() + ' 👑.', 4000); return false; }
+  const total = boeTotalAza();
+  if (total < azaAmt) { showToast('You have ' + total.toLocaleString() + ' 👑 (wallet + bank).', 4200); return false; }
   const cinderOut = azaAmt * AZA_TO_CINDER;
+  // Take from wallet first, remainder from the bank vault.
+  const wTake = Math.min(azaAmt, (Profile && Profile.sovereigns) | 0);
+  const bTake = azaAmt - wTake;
   const prevAza = BankEthos.aza, prevBal = BankEthos.balance;
+  if (wTake > 0 && !spendSovereigns(wTake)) { showToast('Not enough Aza.'); return false; }
   try {
     const t = await _boeRow();
-    const up = await t.update({ aza: prevAza - azaAmt, balance: prevBal + cinderOut, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+    const up = await t.update({ aza: prevAza - bTake, balance: prevBal + cinderOut, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
     if (up && up.error) throw up.error;
-    BankEthos.aza = prevAza - azaAmt;
+    BankEthos.aza = prevAza - bTake;
     BankEthos.balance = prevBal + cinderOut;
-  } catch (e) { BankEthos.aza = prevAza; BankEthos.balance = prevBal; showToast('⚠ Exchange failed — nothing moved.', 4200); return false; }
-  showToast('💱 Exchanged ' + azaAmt.toLocaleString() + ' 👑 → ' + cinderOut.toLocaleString() + ' 🔥 (bank).', 5200);
+    try { saveProfile(); } catch (e) {}
+  } catch (e) {
+    if (wTake > 0) { addSovereigns(wTake); try { saveProfile(); } catch (_) {} }
+    BankEthos.aza = prevAza; BankEthos.balance = prevBal;
+    showToast('⚠ Exchange failed — nothing moved.', 4200); return false;
+  }
+  showToast('💱 Exchanged ' + azaAmt.toLocaleString() + ' 👑 → ' + cinderOut.toLocaleString() + ' 🔥 → bank.', 5200);
   return true;
 }
 // ── Resource banking ───────────────────────────────────────────────
@@ -25234,11 +25246,12 @@ function openBankOfEthos() {
         const ov = document.createElement('div');
         ov.id = EID;
         ov.style.cssText = 'position:absolute;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(4,3,1,0.78);backdrop-filter:blur(3px);font-family:inherit';
-        const maxAza = BankEthos.aza | 0;
+        const maxAza = boeTotalAza();
         ov.innerHTML =
           '<div role="dialog" aria-modal="true" style="width:min(440px,92vw);background:linear-gradient(180deg,#161007,#0c0903);border:1px solid rgba(212,175,55,0.55);border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,0.7);padding:20px 20px 18px;color:#ffe6b0">' +
             '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:#ffcf5a;font-size:1.15rem;margin-bottom:2px">💱 Currency Exchange</div>' +
-            '<div class="small-text" style="color:#caa46a;margin-bottom:14px">1 👑 Aza Coin = ' + AZA_TO_CINDER.toLocaleString() + ' 🔥 Cinder · settles into your bank</div>' +
+            '<div class="small-text" style="color:#caa46a;margin-bottom:10px">1 👑 Aza Coin = ' + AZA_TO_CINDER.toLocaleString() + ' 🔥 Cinder · settles into your bank</div>' +
+            '<div class="small-text" style="color:#ffd98a;margin-bottom:12px">You have <b>' + maxAza.toLocaleString() + ' 👑</b> available (wallet + bank)</div>' +
             '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
               '<input id="be-ex-in" type="number" min="1" max="' + maxAza + '" placeholder="Aza to exchange 👑" style="flex:1;padding:0.55rem;border-radius:8px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.8);color:#ffe6b0;font-weight:700">' +
               '<button id="be-ex-max" style="cursor:pointer;border-radius:7px;padding:0.5rem 0.7rem;border:1px solid rgba(212,175,55,0.5);background:rgba(120,90,30,0.3);color:#ffcf5a;font-weight:800">Max</button>' +

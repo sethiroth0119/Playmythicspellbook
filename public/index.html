@@ -24575,17 +24575,42 @@ function _courtFee(sev) { return 15000 + Math.max(1, Math.min(5, sev | 0)) * 700
 // if the view isn't there yet, returns [] and the field is free-typed.
 async function _courtPlayerSearch(term) {
   try {
-    term = (term || '').trim();
-    if (!initCloud() || !Cloud.client || term.length < 2) return [];
-    const r = await Cloud.client.from('api_players').select('user_id,handle').ilike('handle', '%' + term + '%').limit(8);
-    if (r && r.error) return [];
-    return (r && r.data ? r.data : []).filter(x => x && x.handle).map(x => ({ user_id: x.user_id, handle: x.handle }));
+    // '@' is the mention trigger — strip it (and any leading spaces) so the
+    // query matches actual handles. One char after '@' is enough; plain
+    // typing needs 2+ to avoid querying on every keystroke.
+    const raw = (term || '').trim();
+    const at = /^@/.test(raw);
+    const q = raw.replace(/^@+\s*/, '').trim();
+    if (!initCloud() || !Cloud.client) return [];
+    if (q.length < (at ? 1 : 2)) return [];
+    const out = []; const seen = {};
+    const add = (id, nm) => { nm = (nm || '').trim(); const k = (id || nm).toLowerCase(); if (!nm || seen[k]) return; seen[k] = 1; out.push({ user_id: id || null, handle: nm }); };
+    // 1) Preferred: the privacy-safe api_players directory (all players).
+    try {
+      const r = await Cloud.client.from('api_players').select('user_id,handle').ilike('handle', '%' + q + '%').limit(8);
+      if (r && !r.error && r.data) r.data.forEach(x => add(x.user_id, x.handle));
+    } catch (e) {}
+    // 2) Fallback / supplement (works WITHOUT api_players): public name
+    //    sources — Reserve contributors + corp members.
+    if (out.length < 8) {
+      try {
+        const r2 = await Cloud.client.from('reserve_contributions').select('user_id,user_name').ilike('user_name', '%' + q + '%').limit(12);
+        if (r2 && !r2.error && r2.data) r2.data.forEach(x => add(x.user_id, x.user_name));
+      } catch (e) {}
+    }
+    if (out.length < 8) {
+      try {
+        const r3 = await Cloud.client.from('corp_members').select('user_id,user_name').ilike('user_name', '%' + q + '%').limit(12);
+        if (r3 && !r3.error && r3.data) r3.data.forEach(x => add(x.user_id, x.user_name));
+      } catch (e) {}
+    }
+    return out.slice(0, 8);
   } catch (e) { return []; }
 }
 // Search the public corporation registry (corp_sel is public-read).
 async function _courtCorpSearch(term) {
   try {
-    term = (term || '').trim();
+    term = (term || '').trim().replace(/^@+\s*/, '');
     if (!initCloud() || !Cloud.client || term.length < 2) return [];
     const r = await Cloud.client.from('corporations').select('id,name,tag').or('name.ilike.%' + term + '%,tag.ilike.%' + term + '%').limit(8);
     if (r && r.error) return [];
@@ -24632,7 +24657,7 @@ function courtFile() {
           '<input data-cf="ent-' + which + '" value="' + esc(cur.name || ent) + '" placeholder="' + esc(ent || 'Entity') + '" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0"></div>';
       }
       return '<div style="flex:1;min-width:170px;position:relative"><div class="small-text" style="color:#b59a66;margin-bottom:3px">' + label + ' · ' + mode + '</div>' +
-        '<input data-cf="srch-' + which + '" data-cfk="' + mode + '" autocomplete="off" value="' + esc(cur.name || '') + '" placeholder="' + (mode === 'corp' ? 'Search corporation name / tag…' : 'Search player handle…') + '" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
+        '<input data-cf="srch-' + which + '" data-cfk="' + mode + '" autocomplete="off" value="' + esc(cur.name || '') + '" placeholder="' + (mode === 'corp' ? 'Search corporation name / tag…' : 'Type @ to find a player…') + '" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
         '<div data-cf="res-' + which + '" style="position:absolute;left:0;right:0;top:100%;z-index:5;background:#1a1408;border:1px solid rgba(212,175,55,0.4);border-radius:0 0 7px 7px;max-height:160px;overflow:auto;display:none"></div></div>';
     };
     const feeNow = () => _courtFee(state.sev);
@@ -24713,7 +24738,7 @@ function courtFile() {
       });
       q('file').onclick = async () => {
         const btn = q('file'); if (btn.disabled) return;
-        const pN = (state.p.name || '').trim(), dN = (state.d.name || '').trim();
+        const pN = (state.p.name || '').trim().replace(/^@+\s*/, ''), dN = (state.d.name || '').trim().replace(/^@+\s*/, '');
         if (!pN) { showToast('Pick or enter a plaintiff.', 3000); return; }
         if (!dN) { showToast('Pick or enter a defendant.', 3000); return; }
         if (pN.toLowerCase() === dN.toLowerCase()) { showToast('Plaintiff and defendant can’t be the same.', 3200); return; }

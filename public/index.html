@@ -24560,32 +24560,181 @@ async function courtRegister(role) {
   showToast('⚖️ Sworn in as ' + rank + ' (' + role + ') of the City Court.', 5200);
   return true;
 }
-async function courtFile() {
-  if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in to file a case.', 3000); return false; }
-  const def = (prompt('File a case with City Hall.\n\nDefendant — enter the accused player\'s handle exactly:') || '').trim();
-  if (!def) return false;
-  const list = CRIME_TYPES.map((c, i) => (i + 1) + '. ' + c.name + ' (Class ' + c.sev + ')').join('\n');
-  const pick = parseInt((prompt('Charge — pick the crime by number:\n\n' + list) || '').trim(), 10);
-  const cr = CRIME_TYPES[pick - 1];
-  if (!cr) { showToast('No charge selected — case not filed.', 3200); return false; }
-  let sev = parseInt((prompt('Severity Class (1 = petty … 5 = capital).\n\nDefault for ' + cr.name + ' is Class ' + cr.sev + ':', String(cr.sev)) || '').trim(), 10);
-  sev = Math.max(1, Math.min(5, sev || cr.sev));
-  const sum = (prompt('Brief statement of the allegation (public, on the Case Board):') || '').trim().slice(0, 400);
-  const nm = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor') + '';
-  if (!confirm('File this case?\n\nDefendant: ' + def + '\nCharge: ' + cr.name + ' — Class ' + sev + '\n\nIt goes on the public Case Board for a judge to take.')) return false;
+// ⚖️ Lawsuit kinds. p/d = which side is a searchable PLAYER vs a fixed
+// ENTITY (SCP / Foundation / a corporation the filer names).
+const COURT_SUIT_TYPES = [
+  { id: 'pvp', name: 'Player vs Player',      p: 'player', d: 'player' },
+  { id: 'scp', name: 'SCP vs Player',         p: 'entity', d: 'player', pE: 'SCP Anomaly' },
+  { id: 'fvp', name: 'Foundation vs Player',  p: 'entity', d: 'player', pE: 'The Foundation' },
+  { id: 'pvf', name: 'Player vs Foundation',  p: 'player', d: 'entity', dE: 'The Foundation' },
+  { id: 'pvc', name: 'Player vs Corporation', p: 'player', d: 'entity', dE: '' },
+  { id: 'cvp', name: 'Corporation vs Player', p: 'entity', d: 'player', pE: '' },
+];
+function _courtFee(sev) { return 15000 + Math.max(1, Math.min(5, sev | 0)) * 7000; }
+// Search the public player handle directory (api_players view). Graceful:
+// if the view isn't there yet, returns [] and the field is free-typed.
+async function _courtPlayerSearch(term) {
   try {
-    const cno = 'MSC-' + Date.now().toString(36).toUpperCase().slice(-6);
-    const ins = await Cloud.client.from('court_cases').insert({
-      case_no: cno, plaintiff_id: Profile.cloud.userId, plaintiff_name: nm.slice(0, 40),
-      defendant_name: def.slice(0, 40), crime_type: cr.id, severity: sev,
-      summary: sum, status: 'open', filed_by: Profile.cloud.userId });
-    if (ins && ins.error) throw ins.error;
-  } catch (e) {
-    showToast('⚠ Filing failed. ' + (/court_cases|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run the Reserve setup SQL first.' : ''), 4600);
-    return false;
-  }
-  showToast('⚖️ Case filed against ' + def + ' — now on the public Case Board.', 5200);
-  return true;
+    term = (term || '').trim();
+    if (!initCloud() || !Cloud.client || term.length < 2) return [];
+    const r = await Cloud.client.from('api_players').select('user_id,handle').ilike('handle', '%' + term + '%').limit(8);
+    if (r && r.error) return [];
+    return (r && r.data ? r.data : []).filter(x => x && x.handle);
+  } catch (e) { return []; }
+}
+// 🏛️ File-a-case MODAL (replaces the browser prompt chain). Plaintiff &
+// defendant pull from the player base; suit type drives which side is a
+// player vs a fixed entity; charges a Cinder filing fee → City Hall
+// Treasury. Returns a Promise<bool> so the caller can refresh after.
+function courtFile() {
+  return new Promise(function (resolve) {
+    if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in to file a case.', 3000); return resolve(false); }
+    const esc = (s) => escapeHtml(String(s == null ? '' : s));
+    const meName = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor') + '';
+    const ID = 'court-file-modal';
+    const old = document.getElementById(ID); if (old) old.remove();
+    let done = false;
+    const state = {
+      suit: 'pvp',
+      p: { name: meName, id: Profile.cloud.userId },   // plaintiff
+      d: { name: '', id: null },                       // defendant
+      crime: CRIME_TYPES[0].id,
+      sev: CRIME_TYPES[0].sev,
+    };
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;background:rgba(4,3,8,0.9);backdrop-filter:blur(3px)';
+    document.body.appendChild(ov);
+    const close = (v) => { if (done) return; done = true; const h = document.getElementById(ID); if (h) h.remove(); resolve(!!v); };
+
+    const side = (which) => {
+      const st = COURT_SUIT_TYPES.find(s => s.id === state.suit);
+      const mode = which === 'p' ? st.p : st.d;
+      const label = which === 'p' ? 'Plaintiff (accuser)' : 'Defendant (accused)';
+      const cur = state[which];
+      if (mode === 'entity') {
+        const ent = which === 'p' ? (st.pE || '') : (st.dE || '');
+        return '<div style="flex:1;min-width:170px"><div class="small-text" style="color:#b59a66;margin-bottom:3px">' + label + ' · entity</div>' +
+          '<input data-cf="ent-' + which + '" value="' + esc(cur.name || ent) + '" placeholder="' + (ent || 'Corporation name / tag') + '" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0"></div>';
+      }
+      return '<div style="flex:1;min-width:170px;position:relative"><div class="small-text" style="color:#b59a66;margin-bottom:3px">' + label + ' · player</div>' +
+        '<input data-cf="srch-' + which + '" autocomplete="off" value="' + esc(cur.name || '') + '" placeholder="Search player handle…" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
+        '<div data-cf="res-' + which + '" style="position:absolute;left:0;right:0;top:100%;z-index:5;background:#1a1408;border:1px solid rgba(212,175,55,0.4);border-radius:0 0 7px 7px;max-height:160px;overflow:auto;display:none"></div></div>';
+    };
+    const feeNow = () => _courtFee(state.sev);
+
+    const paint = () => {
+      const host = document.getElementById(ID); if (!host) return;
+      const fee = feeNow();
+      const afford = (Profile.gems || 0) >= fee;
+      host.innerHTML =
+        '<div style="width:min(560px,95vw);max-height:92vh;overflow:auto;background:linear-gradient(180deg,rgba(26,20,8,0.99),rgba(12,9,4,0.99));border:2px solid rgba(212,175,55,0.55);border-radius:16px;padding:18px 20px;box-shadow:0 24px 80px rgba(0,0,0,0.9)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px">' +
+            '<div style="font-family:\'Cinzel\',serif;font-size:1.2rem;font-weight:800;color:#ffcf5a">⚖️ File a Court Case</div>' +
+            '<button data-cf="x" style="cursor:pointer;border:1px solid rgba(212,175,55,0.4);background:transparent;color:#ffcf5a;border-radius:8px;padding:0.3rem 0.6rem">✕</button>' +
+          '</div>' +
+          '<div class="small-text" style="color:#b59a66;margin-bottom:3px">Type of lawsuit</div>' +
+          '<select data-cf="suit" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0;margin-bottom:10px">' +
+            COURT_SUIT_TYPES.map(s => '<option value="' + s.id + '"' + (s.id === state.suit ? ' selected' : '') + '>' + esc(s.name) + '</option>').join('') + '</select>' +
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">' + side('p') + side('d') + '</div>' +
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">' +
+            '<div style="flex:2;min-width:170px"><div class="small-text" style="color:#b59a66;margin-bottom:3px">Charge</div>' +
+              '<select data-cf="crime" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
+                CRIME_TYPES.map(c => '<option value="' + c.id + '"' + (c.id === state.crime ? ' selected' : '') + '>' + esc(c.name) + ' · Class ' + c.sev + '</option>').join('') + '</select></div>' +
+            '<div style="flex:1;min-width:110px"><div class="small-text" style="color:#b59a66;margin-bottom:3px">Severity</div>' +
+              '<select data-cf="sev" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
+                [1, 2, 3, 4, 5].map(n => '<option value="' + n + '"' + (n === (state.sev | 0) ? ' selected' : '') + '>Class ' + n + ' · ' + _SEV_CLASS[n].t.split('· ')[1] + '</option>').join('') + '</select></div>' +
+          '</div>' +
+          '<div class="small-text" style="color:#b59a66;margin-bottom:3px">Statement of allegation (public on the Case Board)</div>' +
+          '<textarea data-cf="sum" rows="3" maxlength="400" placeholder="What happened, where, the harm done…" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0;resize:vertical"></textarea>' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:14px">' +
+            '<div class="small-text" style="color:' + (afford ? '#cdb37a' : '#ff9a6b') + '">Filing fee <strong style="color:' + (afford ? '#ffcf5a' : '#ff9a6b') + '">' + fee.toLocaleString() + ' 🔥</strong> → City Hall Treasury' + (afford ? '' : ' · you have ' + (Profile.gems || 0).toLocaleString()) + '</div>' +
+            '<div style="display:flex;gap:8px">' +
+              '<button data-cf="cancel" style="cursor:pointer;border-radius:8px;padding:0.55rem 0.9rem;border:1px solid rgba(212,175,55,0.4);background:transparent;color:#cdb37a;font-weight:700">Cancel</button>' +
+              '<button data-cf="file" ' + (afford ? '' : 'disabled') + ' style="cursor:' + (afford ? 'pointer' : 'not-allowed') + ';border-radius:8px;padding:0.55rem 1rem;border:1px solid #d4af37;background:' + (afford ? 'linear-gradient(180deg,#caa23e,#7a5a18)' : 'rgba(120,90,30,0.3)') + ';color:#1a1206;font-weight:800;opacity:' + (afford ? '1' : '0.6') + '">⚖️ File · ' + fee.toLocaleString() + ' 🔥</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      const q = (s) => host.querySelector('[data-cf="' + s + '"]');
+      const sumEl = q('sum'); if (sumEl) sumEl.value = state._sum || '';
+      q('x').onclick = () => close(false);
+      q('cancel').onclick = () => close(false);
+      q('suit').onchange = (e) => {
+        state.suit = e.target.value;
+        const st = COURT_SUIT_TYPES.find(s => s.id === state.suit);
+        // Reset sides to suit defaults (plaintiff defaults to YOU when it's a player side).
+        state.p = st.p === 'player' ? { name: meName, id: Profile.cloud.userId } : { name: st.pE || '', id: null };
+        state.d = st.d === 'player' ? { name: '', id: null } : { name: st.dE || '', id: null };
+        paint();
+      };
+      q('crime').onchange = (e) => { state.crime = e.target.value; const cr = _crime(state.crime); if (cr) state.sev = cr.sev; paint(); };
+      q('sev').onchange = (e) => { state.sev = parseInt(e.target.value, 10) || 3; paint(); };
+      if (sumEl) sumEl.oninput = (e) => { state._sum = e.target.value; };
+      ['p', 'd'].forEach(function (w) {
+        const ent = q('ent-' + w);
+        if (ent) ent.oninput = (e) => { state[w] = { name: e.target.value, id: null }; };
+        const srch = q('srch-' + w);
+        const res = q('res-' + w);
+        if (srch) {
+          srch.oninput = (e) => {
+            state[w] = { name: e.target.value, id: null };
+            const term = e.target.value;
+            clearTimeout(srch._t);
+            srch._t = setTimeout(function () {
+              _courtPlayerSearch(term).then(function (rows) {
+                if (!res) return;
+                if (!rows.length) { res.style.display = 'none'; res.innerHTML = ''; return; }
+                res.innerHTML = rows.map(function (r) {
+                  return '<div data-pick="' + esc(r.user_id) + '" data-nm="' + esc(r.handle) + '" style="padding:7px 10px;cursor:pointer;color:#ffe6b0;border-bottom:1px solid rgba(212,175,55,0.15)">' + esc(r.handle) + '</div>';
+                }).join('');
+                res.style.display = 'block';
+                res.querySelectorAll('[data-pick]').forEach(function (d) {
+                  d.onclick = () => { state[w] = { name: d.getAttribute('data-nm'), id: d.getAttribute('data-pick') }; srch.value = d.getAttribute('data-nm'); res.style.display = 'none'; };
+                });
+              });
+            }, 260);
+          };
+        }
+      });
+      q('file').onclick = async () => {
+        const btn = q('file'); if (btn.disabled) return;
+        const pN = (state.p.name || '').trim(), dN = (state.d.name || '').trim();
+        if (!pN) { showToast('Pick or enter a plaintiff.', 3000); return; }
+        if (!dN) { showToast('Pick or enter a defendant.', 3000); return; }
+        if (pN.toLowerCase() === dN.toLowerCase()) { showToast('Plaintiff and defendant can’t be the same.', 3200); return; }
+        const fee = feeNow();
+        if ((Profile.gems || 0) < fee) { showToast('Need ' + fee.toLocaleString() + ' 🔥 to file.', 4000); return; }
+        btn.disabled = true; btn.textContent = 'Filing…';
+        const cr = _crime(state.crime) || CRIME_TYPES[0];
+        const suit = COURT_SUIT_TYPES.find(s => s.id === state.suit);
+        const cno = 'MSC-' + Date.now().toString(36).toUpperCase().slice(-6);
+        const stmt = (state._sum || '').trim().slice(0, 360);
+        const summary = '[' + suit.name + '] ' + stmt;
+        if (!spendGems(fee)) { showToast('Not enough Cinders'); btn.disabled = false; return; }
+        try { saveProfile(); } catch (e) {}
+        try {
+          const ins = await Cloud.client.from('court_cases').insert({
+            case_no: cno,
+            plaintiff_id: state.p.id || Profile.cloud.userId,
+            plaintiff_name: pN.slice(0, 40),
+            defendant_name: dN.slice(0, 40),
+            crime_type: cr.id, severity: Math.max(1, Math.min(5, state.sev | 0)),
+            summary: summary, status: 'open', filed_by: Profile.cloud.userId,
+          });
+          if (ins && ins.error) throw ins.error;
+        } catch (e) {
+          addGems(fee); try { saveProfile(); } catch (_) {}
+          showToast('⚠ Filing failed — fee refunded. ' + (/court_cases|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run the Reserve setup SQL first.' : ''), 5200);
+          btn.disabled = false; btn.textContent = '⚖️ File · ' + fee.toLocaleString() + ' 🔥';
+          return;
+        }
+        try { if (typeof frLogCivic === 'function') frLogCivic(fee, 'fine', { resource: 'Court filing · ' + cno }); } catch (e) {}
+        showToast('⚖️ ' + suit.name + ' filed — ' + pN + ' vs ' + dN + ' (' + cr.name + ', Class ' + (state.sev | 0) + '). On the public Case Board.', 6000);
+        close(true);
+      };
+    };
+    paint();
+  });
 }
 async function courtTakeRole(caseId, slot) {
   const c = (Court.cases || []).find(x => x.id === caseId);

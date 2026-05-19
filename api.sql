@@ -181,10 +181,21 @@ create policy ap_sel on public.aza_purchases for select to authenticated using (
 drop policy if exists ap_ins on public.aza_purchases;
 create policy ap_ins on public.aza_purchases for insert to authenticated with check (user_id = auth.uid());
 
+-- ── Player handle directory (for the Courtroom file-a-case search) ─────
+-- Exposes ONLY the public handle + user id from user_profiles — no email,
+-- gems, decks or any private column. Definer view (bypasses the private
+-- per-user RLS on user_profiles by design, selecting only public-safe
+-- columns), granted to authenticated so signed-in players can search.
+create or replace view public.api_players as
+  select user_id, coalesce(display_name, '') as handle
+  from public.user_profiles
+  where display_name is not null and btrim(display_name) <> '';
+
 grant select on
   public.api_corporations,
   public.api_reserve_totals,
   public.api_tax_summary,
   public.api_nodes,
-  public.api_updates
+  public.api_updates,
+  public.api_players
 to anon, authenticated;

@@ -76,6 +76,7 @@ const NAV = [
   { group: 'Holdings' },
   { id: 'vault',      label: 'Vault',          ico: '◇' },
   { id: 'corp',       label: 'Corp Treasury',  ico: '◈' },
+  { id: 'guild',      label: 'Guild & Hiring', ico: '👥', modal: 'guild' },
   { id: 'operations', label: 'Operations',     ico: '⛏' },
   { id: 'logistics',  label: 'Logistics',      ico: '⇄', badge: 3 },
   { group: 'Economy' },
@@ -110,7 +111,8 @@ function Sidebar({ route, setRoute, mailCount, blackCount }) {
         {NAV.map((n, i) => n.group ? (
           <div key={'g'+i} className="group">{n.group}</div>
         ) : (
-          <button key={n.id} data-active={route === n.id ? '1' : '0'} onClick={() => setRoute(n.id)}>
+          <button key={n.id} data-active={route === n.id ? '1' : '0'}
+            onClick={() => { if (n.modal) { try { window.dispatchEvent(new CustomEvent('jb:open', { detail: n.modal })); } catch (e) {} } else { setRoute(n.id); } }}>
             <span className="ico mono">{n.ico}</span>
             <span>{n.label}</span>
             {n.id === 'mail' && mailCount > 0 && <span className="badge alert">{mailCount}</span>}

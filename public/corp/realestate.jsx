@@ -395,6 +395,8 @@ function FilterChk({ label, defaultChecked }) {
 function PropertyDetailScreen({ propertyId, onBack }) {
   const { PROPERTIES, PLAYERS, DISTRICTS, REVIEWS } = window.ECON;
   const p = PROPERTIES.find(x => x.id === propertyId) || PROPERTIES[0];
+  const rePhoto = (window.JB_art && window.JB_art('re', p.id)) || '';
+  const reAdm = !!(window.JB_isAdmin && window.JB_isAdmin());
   const agent = PLAYERS.find(x => x.id === p.agent);
   const dist = DISTRICTS[p.district];
   const reviews = REVIEWS[agent?.id] || [];
@@ -411,12 +413,21 @@ function PropertyDetailScreen({ propertyId, onBack }) {
         <button className="btn ghost sm">⋯</button>
       </div>
 
-      <div className={'prop-hero tier-' + p.tier.toLowerCase() + (p.flag ? ' flag-' + p.flag : '')}>
-        <div className="prop-hero-watermark mono">
-          <div>{p.id}</div>
-          <div>{p.name.toUpperCase()}</div>
-          <div style={{ fontSize: 11, opacity: .6 }}>PHOTO PLACEHOLDER · DROP IN-GAME SCREENSHOT</div>
-        </div>
+      <div className={'prop-hero tier-' + p.tier.toLowerCase() + (p.flag ? ' flag-' + p.flag : '')}
+        style={{ position: 'relative', overflow: 'hidden', backgroundImage: rePhoto ? 'url(' + rePhoto + ')' : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+        {reAdm && (
+          <button className="btn sm" onClick={() => window.JB_uploadArt('re', p.id)}
+            style={{ position: 'absolute', top: 12, right: 12, zIndex: 5 }}>
+            📷 {rePhoto ? 'Replace photo' : 'Add photo'}
+          </button>
+        )}
+        {!rePhoto && (
+          <div className="prop-hero-watermark mono">
+            <div>{p.id}</div>
+            <div>{p.name.toUpperCase()}</div>
+            <div style={{ fontSize: 11, opacity: .6 }}>PHOTO PLACEHOLDER · DROP IN-GAME SCREENSHOT</div>
+          </div>
+        )}
         <div className="prop-hero-progress">
           {Array(p.photos).fill(0).map((_, i) => <i key={i} data-on={i === 0 ? '1' : '0'} />)}
         </div>

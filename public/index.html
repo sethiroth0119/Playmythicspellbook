@@ -33755,8 +33755,12 @@ function _jbHandleAction(a) {
           // corp row + membership are committed.
           if (cost > 0) { Profile.gems = Math.max(0, (Profile.gems || 0) - cost); try { saveProfile(); } catch (e) {} }
           Corp.mine = { id: ins.data.id, name: ins.data.name, tag: ins.data.tag, role: 'founder', faction: ins.data.faction || fac, element: ins.data.element || elem };
+          Corp.amOwner = true; Corp.roster = []; Corp.requests = []; Corp.vault = [];
           showToast('🏢 ' + ins.data.name + ' [' + ins.data.tag + '] incorporated' + (cost > 0 ? ' — −' + cost.toLocaleString() + ' 🔥' : ' (admin · free)') + '.', 5200);
-          _jbSendData();
+          _jbSendData();   // snappy: corp + balance update immediately
+          // Full refresh (amOwner / roster / requests) → tells the app to
+          // auto-open Guild & Hiring (corpJustFounded flag).
+          try { corpEnsure().then(function () { try { const _e = _jbEcon(); _e.corpJustFounded = true; const f = document.getElementById('jb-frame'); if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'jb:data', econ: _e }, '*'); } catch (e) {} }); } catch (e) { _jbSendData(); }
         } catch (e) {}
       })();
     } else if (a.kind === 'corpJoin') {

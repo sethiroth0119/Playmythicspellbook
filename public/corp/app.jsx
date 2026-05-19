@@ -32,6 +32,9 @@ function App() {
     const onJB = () => {
       const e = (window.__JB && window.__JB.econ) || null;
       if (e) setBalances(b => ({ ...b, aza: e.cinders | 0 }));
+      // 🏢 Just founded a corporation → pop the Guild & Hiring panel so the
+      // owner can start hiring right away.
+      if (e && e.corpJustFounded) { setFoundOpen(false); setGuildOpen(true); }
     };
     window.addEventListener('jbdata', onJB);
     onJB();

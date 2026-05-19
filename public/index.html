@@ -24372,6 +24372,18 @@ function frApplyTax(gross, opts) {
   try { frLogTax(q, opts); } catch (e) {}
   return q;
 }
+// Civic ledger — court fines (asset seizures), bail and license fees are
+// permanent Foundation sinks too. They flow into the SAME reserve_tax_log
+// the Treasury reads, tagged market_type ∈ 'license' | 'fine' | 'bail'
+// (the full amount is the "tax"). Fire-and-forget; never blocks the action.
+function frLogCivic(amount, kind, opts) {
+  try {
+    amount = Math.max(0, Math.floor(amount || 0));
+    if (amount <= 0) return;
+    const q = { gross: amount, tax: amount, net: 0, rate: 1, label: 'Foundation ' + (kind || 'civic') };
+    frLogTax(q, Object.assign({ market: kind || 'civic' }, opts || {}));
+  } catch (e) {}
+}
 async function frTaxFetch() {
   if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return;
   try {
@@ -24381,18 +24393,21 @@ async function frTaxFetch() {
     if (res.error) { _frErr(res.error); return; }
     const rows = res.data || [];
     const now = Date.now(), DAY = 86400000;
-    const st = { total: 0, day: 0, week: 0, month: 0, corp: 0, black: 0,
+    const st = { total: 0, day: 0, week: 0, month: 0, corp: 0, black: 0, license: 0, fine: 0, bail: 0, civic: 0,
       byRes: {}, byMarket: {}, recent: rows.slice(0, 24) };
+    const CIVIC = { license: 1, fine: 1, bail: 1 };
     rows.forEach(r => {
       const tax = Number(r.tax_amount) || 0, t = Date.parse(r.created_at || 0) || 0;
+      const mk = r.market_type || 'base';
       st.total += tax;
       if (now - t < DAY) st.day += tax;
       if (now - t < DAY * 7) st.week += tax;
       if (now - t < DAY * 30) st.month += tax;
-      if (r.corp_id) st.corp += tax;
-      if (r.market_type === 'black') st.black += tax;
-      const rk = r.resource || '—'; st.byRes[rk] = (st.byRes[rk] || 0) + tax;
-      const mk = r.market_type || 'base'; st.byMarket[mk] = (st.byMarket[mk] || 0) + tax;
+      if (r.corp_id && !CIVIC[mk]) st.corp += tax;
+      if (mk === 'black') st.black += tax;
+      if (CIVIC[mk]) { st[mk] += tax; st.civic += tax; }
+      else { const rk = r.resource || '—'; st.byRes[rk] = (st.byRes[rk] || 0) + tax; }
+      st.byMarket[mk] = (st.byMarket[mk] || 0) + tax;
     });
     st.topRes = Object.keys(st.byRes).sort((a, b) => st.byRes[b] - st.byRes[a]).slice(0, 6);
     FoundationReserve.taxStats = st;
@@ -24630,6 +24645,7 @@ function _isJailed() {
       const take = Math.min(Profile.gems || 0, row.seize_cinder | 0);
       if (take > 0 && typeof spendGems === 'function') { spendGems(take); try { saveProfile(); } catch (e) {} }
       Cloud.client.from('detention').update({ seized_done: true, updated_at: new Date().toISOString() }).eq('id', row.id);
+      try { frLogCivic(take, 'fine', { resource: 'Seizure · ' + (row.offender_name || '') }); } catch (e) {}
       showToast('💸 Foundation asset seizure — ' + take.toLocaleString() + ' 🔥 forfeited to City Hall.', 5200);
     } catch (e) {}
   }
@@ -24725,6 +24741,7 @@ async function detentionBail(id) {
     showToast('⚠ Bail failed — refunded.', 4200);
     return false;
   }
+  try { frLogCivic(bail, 'bail', { resource: 'Bail · ' + (d.offender_name || '') }); } catch (e) {}
   showToast('🔓 Bail posted — ' + d.offender_name + ' is released.', 5200);
   return true;
 }
@@ -24774,9 +24791,10 @@ function openCityHall() {
       const s = (typeof FoundationReserve !== 'undefined' && FoundationReserve.taxStats) || null;
       if (!s) { try { if (typeof frTaxFetch === 'function') frTaxFetch().then(render); } catch (e) {} return '<div class="ink-dim" style="padding:1.6rem;text-align:center">Auditing the public ledger…</div>'; }
       const card = (l, v, c) => '<div style="flex:1;min-width:130px;padding:9px 11px;border:1px solid rgba(212,175,55,0.22);border-radius:8px;background:rgba(40,32,12,0.18)"><div class="small-text" style="color:#b59a66">' + l + '</div><div style="color:' + (c || '#ffe6b0') + ';font-weight:800;font-size:1.05rem">' + numF(v) + ' 🔥</div></div>';
-      return '<div class="small-text" style="color:#cdb37a;margin-bottom:8px">City Hall Treasury & Tax Office — every Foundation Tax / Seizure Fee flows here as a permanent sink. (Court fines, bail &amp; license fees join this ledger tomorrow.)</div>' +
+      return '<div class="small-text" style="color:#cdb37a;margin-bottom:8px">City Hall Treasury &amp; Tax Office — every Foundation Tax, Seizure Fee, <strong>court fine</strong>, <strong>bail</strong> &amp; <strong>license fee</strong> flows here as a permanent Cinder sink (removed from circulation, never paid back).</div>' +
         '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' + card('Total collected', s.total, '#7fe0a0') + card('Today', s.day) + card('7 days', s.week) + card('30 days', s.month) + '</div>' +
-        '<div style="display:flex;gap:6px;flex-wrap:wrap">' + card('🖤 Black-market seizures', s.black, '#e0a0ff') + card('🏢 Corporation tax', s.corp, '#9fe0b0') + '</div>';
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' + card('🖤 Black-market seizures', s.black, '#e0a0ff') + card('🏢 Corporation tax', s.corp, '#9fe0b0') + '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap">' + card('📜 License fees', s.license || 0, '#ffcf5a') + card('⚖️ Court fines', s.fine || 0, '#ff9a6b') + card('🔓 Bail posted', s.bail || 0, '#9fd0ff') + '</div>';
     };
     const licensingTab = () => {
       if (!Corp.mine) {
@@ -25448,7 +25466,7 @@ function openFoundationReserve() {
         return '<div class="ink-dim" style="padding:1.8rem;text-align:center">Tallying Foundation tax receipts…</div>';
       }
       const card = (label, val, col) => '<div style="flex:1;min-width:120px;padding:8px 10px;border:1px solid rgba(120,170,255,0.2);border-radius:8px;background:rgba(40,70,130,0.10)"><div class="small-text" style="color:#8fb0e0">' + label + '</div><div style="color:' + (col || '#aee0ff') + ';font-weight:800;font-size:1.05rem">' + numF(val) + ' 🔥</div></div>';
-      const mkName = { base: 'Base Market', black: 'Black Market', direct: 'Direct Trade', corp: 'Corporation', shipment: 'Shipment', vendor: 'Vendor' };
+      const mkName = { base: 'Base Market', black: 'Black Market', direct: 'Direct Trade', corp: 'Corporation', shipment: 'Shipment', vendor: 'Vendor', license: 'License fee', fine: 'Court fine', bail: 'Bail' };
       const topRes = (s.topRes || []).length
         ? (s.topRes || []).map(r => '<div style="display:flex;justify-content:space-between;padding:5px 9px;border:1px solid rgba(120,170,255,0.16);border-radius:7px;background:rgba(40,70,130,0.08);margin-bottom:4px"><span style="color:#dce8ff">' + esc((typeof _meta === 'function' && _meta(r).name) || r) + '</span><span style="color:#ffd166;font-weight:700">' + numF(s.byRes[r]) + ' 🔥</span></div>').join('')
         : '<div class="small-text ink-dim">No taxed sales yet.</div>';
@@ -25462,7 +25480,8 @@ function openFoundationReserve() {
         : '<div class="small-text ink-dim" style="padding:0.5rem 0">No tax log entries yet.</div>';
       return '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Every resource &amp; goods sale pays a flat <strong>2% Foundation Tax</strong> (Black Market: <strong>Seizure Fee</strong>). It is a permanent Cinder sink — removed from circulation, never paid back. Corporation sales feed in here too once Corporations launch.</div>' +
         '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' + card('Total collected', s.total, '#7fe0a0') + card('Today', s.day) + card('7 days', s.week) + card('30 days', s.month) + '</div>' +
-        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' + card('🖤 Black Market seizures', s.black, '#e0a0ff') + card('🏢 Corporation tax', s.corp, '#9fe0b0') + '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">' + card('🖤 Black Market seizures', s.black, '#e0a0ff') + card('🏢 Corporation tax', s.corp, '#9fe0b0') + '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' + card('📜 License fees', s.license || 0, '#ffcf5a') + card('⚖️ Court fines', s.fine || 0, '#ff9a6b') + card('🔓 Bail posted', s.bail || 0, '#9fd0ff') + '</div>' +
         '<div style="font-weight:800;color:#caa0e6;margin:4px 0 6px">By market</div><div style="margin-bottom:10px">' + byMk + '</div>' +
         '<div style="font-weight:800;color:#caa0e6;margin:4px 0 6px">Most-taxed resources</div>' + topRes +
         '<div style="font-weight:800;color:#caa0e6;margin:12px 0 6px">Recent tax log</div><div style="border:1px solid rgba(120,170,255,0.16);border-radius:8px;overflow:hidden">' + recent + '</div>';
@@ -34371,6 +34390,7 @@ async function cityHallApplyLicense(licId) {
   }
   if (!Array.isArray(Corp.licenses)) Corp.licenses = [];
   Corp.licenses.push(L.id);
+  try { frLogCivic(L.cinder, 'license', { corpId: Corp.mine.id, resource: L.name }); } catch (e) {}
   showToast('📜 ' + L.name + ' issued to ' + Corp.mine.name + ' — filed at City Hall.', 5200);
   return true;
 }

@@ -24579,9 +24579,20 @@ async function _courtPlayerSearch(term) {
     if (!initCloud() || !Cloud.client || term.length < 2) return [];
     const r = await Cloud.client.from('api_players').select('user_id,handle').ilike('handle', '%' + term + '%').limit(8);
     if (r && r.error) return [];
-    return (r && r.data ? r.data : []).filter(x => x && x.handle);
+    return (r && r.data ? r.data : []).filter(x => x && x.handle).map(x => ({ user_id: x.user_id, handle: x.handle }));
   } catch (e) { return []; }
 }
+// Search the public corporation registry (corp_sel is public-read).
+async function _courtCorpSearch(term) {
+  try {
+    term = (term || '').trim();
+    if (!initCloud() || !Cloud.client || term.length < 2) return [];
+    const r = await Cloud.client.from('corporations').select('id,name,tag').or('name.ilike.%' + term + '%,tag.ilike.%' + term + '%').limit(8);
+    if (r && r.error) return [];
+    return (r && r.data ? r.data : []).filter(x => x && x.name).map(x => ({ user_id: null, handle: x.name + ' [' + (x.tag || '—') + ']' }));
+  } catch (e) { return []; }
+}
+function _courtSideSearch(kind, term) { return kind === 'corp' ? _courtCorpSearch(term) : _courtPlayerSearch(term); }
 // 🏛️ File-a-case MODAL (replaces the browser prompt chain). Plaintiff &
 // defendant pull from the player base; suit type drives which side is a
 // player vs a fixed entity; charges a Cinder filing fee → City Hall
@@ -24609,16 +24620,19 @@ function courtFile() {
 
     const side = (which) => {
       const st = COURT_SUIT_TYPES.find(s => s.id === state.suit);
-      const mode = which === 'p' ? st.p : st.d;
+      let mode = which === 'p' ? st.p : st.d;
+      // Corporation-side suits search the corp registry instead of free text.
+      const isCorpSide = (st.id === 'pvc' && which === 'd') || (st.id === 'cvp' && which === 'p');
+      if (mode === 'entity' && isCorpSide) mode = 'corp';
       const label = which === 'p' ? 'Plaintiff (accuser)' : 'Defendant (accused)';
       const cur = state[which];
       if (mode === 'entity') {
         const ent = which === 'p' ? (st.pE || '') : (st.dE || '');
         return '<div style="flex:1;min-width:170px"><div class="small-text" style="color:#b59a66;margin-bottom:3px">' + label + ' · entity</div>' +
-          '<input data-cf="ent-' + which + '" value="' + esc(cur.name || ent) + '" placeholder="' + (ent || 'Corporation name / tag') + '" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0"></div>';
+          '<input data-cf="ent-' + which + '" value="' + esc(cur.name || ent) + '" placeholder="' + esc(ent || 'Entity') + '" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0"></div>';
       }
-      return '<div style="flex:1;min-width:170px;position:relative"><div class="small-text" style="color:#b59a66;margin-bottom:3px">' + label + ' · player</div>' +
-        '<input data-cf="srch-' + which + '" autocomplete="off" value="' + esc(cur.name || '') + '" placeholder="Search player handle…" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
+      return '<div style="flex:1;min-width:170px;position:relative"><div class="small-text" style="color:#b59a66;margin-bottom:3px">' + label + ' · ' + mode + '</div>' +
+        '<input data-cf="srch-' + which + '" data-cfk="' + mode + '" autocomplete="off" value="' + esc(cur.name || '') + '" placeholder="' + (mode === 'corp' ? 'Search corporation name / tag…' : 'Search player handle…') + '" style="width:100%;padding:0.5rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
         '<div data-cf="res-' + which + '" style="position:absolute;left:0;right:0;top:100%;z-index:5;background:#1a1408;border:1px solid rgba(212,175,55,0.4);border-radius:0 0 7px 7px;max-height:160px;overflow:auto;display:none"></div></div>';
     };
     const feeNow = () => _courtFee(state.sev);
@@ -24680,8 +24694,9 @@ function courtFile() {
             state[w] = { name: e.target.value, id: null };
             const term = e.target.value;
             clearTimeout(srch._t);
+            const kind = srch.getAttribute('data-cfk') || 'player';
             srch._t = setTimeout(function () {
-              _courtPlayerSearch(term).then(function (rows) {
+              _courtSideSearch(kind, term).then(function (rows) {
                 if (!res) return;
                 if (!rows.length) { res.style.display = 'none'; res.innerHTML = ''; return; }
                 res.innerHTML = rows.map(function (r) {
@@ -25031,6 +25046,8 @@ function openCityHall() {
         const open = (Court.cases || []).filter(c => c.status !== 'closed' && c.status !== 'dismissed');
         const rows = open.length ? open.map(c => {
           const cr = _crime(c.crime_type), sc = _sevClass(c.severity);
+          const _sm = (c.summary || ''); const _sg = _sm.match(/^\[([^\]]+)\]\s*([\s\S]*)$/);
+          const suitLabel = _sg ? _sg[1] : ''; const stmt = _sg ? _sg[2] : _sm;
           const canJudge = mine && mine.role === 'judge' && !c.judge_id;
           const canPros = mine && mine.role === 'lawyer' && !c.prosecutor_name;
           const canDef = mine && mine.role === 'lawyer' && !c.defender_name;
@@ -25042,9 +25059,10 @@ function openCityHall() {
             canRule ? '<button data-court-rule="' + esc(c.id) + '" style="cursor:pointer;border-radius:6px;padding:0.3rem 0.6rem;border:1px solid #d4af37;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800;font-size:0.78rem">Rule ⚖️</button>' : '',
           ].filter(Boolean).join(' ');
           return '<div style="padding:9px 12px;border:1px solid rgba(212,175,55,0.22);border-radius:8px;background:rgba(40,32,12,0.18);margin-bottom:6px">' +
-            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><div style="color:#ffe6b0;font-weight:800">' + esc(c.case_no || 'Case') + ' · <span style="color:#ff9a6b">' + esc(c.defendant_name) + '</span></div><div class="small-text" style="color:' + sc.c + ';font-weight:800;white-space:nowrap">' + sc.t + '</div></div>' +
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><div style="color:#ffe6b0;font-weight:800">' + esc(c.case_no || 'Case') + ' · <span style="color:#9fd0ff">' + esc(c.plaintiff_name || '—') + '</span> <span style="color:#8a7a4a">vs</span> <span style="color:#ff9a6b">' + esc(c.defendant_name) + '</span></div><div class="small-text" style="color:' + sc.c + ';font-weight:800;white-space:nowrap">' + sc.t + '</div></div>' +
+            (suitLabel ? '<span class="small-text" style="display:inline-block;margin:3px 0;padding:1px 8px;border-radius:999px;border:1px solid rgba(159,208,255,0.4);background:rgba(40,60,90,0.3);color:#bcd0ec;font-weight:700">⚖ ' + esc(suitLabel) + '</span>' : '') +
             '<div class="small-text" style="color:#cdb37a;margin:2px 0">' + esc(cr ? cr.name : c.crime_type) + ' · filed by ' + esc(c.plaintiff_name || '—') + (c.status === 'in_trial' ? ' · <span style="color:#ffd27a">IN TRIAL</span>' : ' · <span style="color:#9fd0ff">OPEN</span>') + '</div>' +
-            (c.summary ? '<div class="small-text" style="color:#b59a66;margin-bottom:4px">' + esc(c.summary) + '</div>' : '') +
+            (stmt ? '<div class="small-text" style="color:#b59a66;margin-bottom:4px">' + esc(stmt) + '</div>' : '') +
             '<div class="small-text" style="color:#8a7a4a">⚖️ ' + esc(c.judge_name || '—') + '  ·  ▲ ' + esc(c.prosecutor_name || 'unrepresented') + '  ·  ▼ ' + esc(c.defender_name || 'unrepresented') + '</div>' +
             (acts ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">' + acts + '</div>' : '') +
           '</div>';
@@ -58278,9 +58296,6 @@ function renderCashoutVault() {
         <button class="btn-secondary btn-mini" id="btn-back-cashout">← Menu</button>
       </div>
 
-      <div class="cashout-mock-banner">
-        ⚠️ <strong>Mock payout system.</strong> No real money is moved and <strong>no bank, card or ID numbers are ever collected here</strong> — real identity (KYC) &amp; payout settlement are handled off-platform by a licensed processor in a live build. The ledger records what <em>would</em> have paid out so you can test the full flow.
-      </div>
 
       <!-- ===== Verification + withdrawal safeguards ===== -->
       <div class="cashout-explainer" style="border-color:rgba(180,240,200,0.35)">

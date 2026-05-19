@@ -25214,16 +25214,20 @@ function openBankOfEthos() {
     back.onclick = () => { wrap.style.opacity = '0'; setTimeout(() => { try { wrap.remove(); } catch (e) {} }, 380); };
     const paint = () => {
       const nextDue = BankEthos.ready ? Math.max(0, Math.ceil(((BankEthos.lastFeeAt || Date.now()) + BOE_FEE_PERIOD_MS - Date.now()) / 86400000)) : 0;
+      // Real player balances: what's in the bank vault PLUS what's loose in
+      // the wallet (Profile), so the header never reads a confusing "0".
+      const wC = (Profile && Profile.gems) | 0, wA = (Profile && Profile.sovereigns) | 0;
+      const bC = BankEthos.balance | 0, bA = BankEthos.aza | 0;
       bar.innerHTML =
         '<span style="display:inline-flex;align-items:center;gap:8px;font-family:\'Cinzel\',serif;font-weight:800;color:#ffcf5a;font-size:1.05rem"><img src="/assets/artwork/gameicons/Bank%20of%20Ethos.png" alt="" style="width:26px;height:26px;object-fit:contain;border-radius:5px" onerror="this.style.display=\'none\'">Bank of Ethos</span>' +
         (BankEthos.ready
-          ? '<span style="color:#ffe6b0;font-weight:800">' + BankEthos.balance.toLocaleString() + ' 🔥</span>' +
-            '<span style="color:#ffd98a;font-weight:800">' + (BankEthos.aza | 0).toLocaleString() + ' 👑</span>' +
-            '<input id="boe-amt" type="number" min="1" placeholder="amount 🔥" style="width:110px;padding:0.4rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
+          ? '<span title="Cinder — bank vault · loose in wallet" style="display:inline-flex;align-items:center;gap:5px;color:#ffe6b0;font-weight:800"><span class="cinder-icon"></span>' + bC.toLocaleString() + '<span class="small-text" style="color:#caa46a;font-weight:700"> · ' + wC.toLocaleString() + ' wallet</span></span>' +
+            '<span title="Aza Coin — bank vault · loose in wallet" style="display:inline-flex;align-items:center;gap:5px;color:#ffd98a;font-weight:800"><span class="aza-icon"></span>' + bA.toLocaleString() + '<span class="small-text" style="color:#caa46a;font-weight:700"> · ' + wA.toLocaleString() + ' wallet</span></span>' +
+            '<input id="boe-amt" type="number" min="1" placeholder="amount" style="width:110px;padding:0.4rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
             '<button id="boe-dep" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid #5fbf88;background:rgba(47,122,82,0.35);color:#dff4e6;font-weight:800">Deposit</button>' +
             '<button id="boe-wd" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid rgba(212,175,55,0.5);background:rgba(120,90,30,0.3);color:#ffcf5a;font-weight:800">Withdraw</button>' +
             '<button id="boe-exch" title="Exchange Aza Coin → Cinder at 1 👑 = ' + AZA_TO_CINDER.toLocaleString() + ' 🔥" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid rgba(212,175,55,0.7);background:linear-gradient(180deg,rgba(120,90,30,0.5),rgba(60,44,14,0.5));color:#ffd98a;font-weight:800">💱 Exchange</button>' +
-            '<span class="small-text" style="color:#caa46a">Maintenance ' + BOE_FEE + ' 🔥 / 30d → Foundation Reserve · next in ' + nextDue + 'd</span>'
+            '<span class="small-text" style="display:inline-flex;align-items:center;gap:3px;color:#caa46a">Maintenance ' + BOE_FEE + '<span class="cinder-icon" style="width:1.1em;height:1.1em;vertical-align:-0.2em"></span>/ 30d → Foundation Reserve · next in ' + nextDue + 'd</span>'
           : '<span class="small-text" style="color:#ff9a6b">' + (BankEthos._err === 'setup' ? 'Run the updated api.sql to open banking (creates bank_of_ethos).' : BankEthos._err === 'signin' ? 'Sign in to use the Bank of Ethos.' : 'Connecting…') + '</span>') +
         '<span style="flex:1"></span>';
       bar.appendChild(back);

@@ -972,6 +972,9 @@ const OPERATIONS = [
   { id: 'research',     name: 'Research Facility',   cat: 'Research',  icon: '🔬', focus: 'Data, relics, mutations',    produces: ['Data Cores', 'Relic Dust'],           startup: '700,000 Cinder · 2k Electronics',                    maint: 'Energy 140/d · Medicine 60/d', risk: 'High' },
   { id: 'smuggling',    name: 'Smuggling Network',   cat: 'Illicit',   icon: '🕶', focus: 'Contraband logistics',       produces: ['Contraband', 'Illegal Goods'],        startup: '600,000 Cinder · off-ledger',                        maint: 'Fuel 240/d · bribes',          risk: 'SCP RAID', illicit: true },
   { id: 'salvage',      name: 'Salvage Operation',   cat: 'Logistics', icon: '♻',  focus: 'Reclaim & components',       produces: ['Scrap', 'Nano Components'],           startup: '250,000 Cinder · 3k Scrap',                          maint: 'Fuel 130/d · Supplies 120/d',  risk: 'Low' },
+  { id: 'gas',          name: 'Gas Station Chain',   cat: 'Energy',    icon: '⛽', focus: 'Fuel retail & distribution', produces: ['Fuel', 'Convenience'],                startup: '350,000 Cinder · 3k Fuel',                           maint: 'Fuel 160/d · Supplies 140/d',  risk: 'Low' },
+  { id: 'cars',         name: 'Car Dealership',      cat: 'Logistics', icon: '🚗', focus: 'Vehicles & spare parts',     produces: ['Parts', 'Vehicles'],                  startup: '450,000 Cinder · 4k Metal',                          maint: 'Metal 200/d · Fuel 120/d',     risk: 'Low' },
+  { id: 'fishing',      name: 'Fishing Company',     cat: 'Medical',   icon: '🎣', focus: 'Seafood & provisions',       produces: ['Fish', 'Food'],                       startup: '300,000 Cinder · 2k Supplies',                       maint: 'Fuel 140/d · Water 180/d',     risk: 'Low' },
 ];
 const OP_CATS = ['All', 'Industry', 'Energy', 'Medical', 'Research', 'Logistics', 'Illicit'];
 

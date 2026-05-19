@@ -83,7 +83,7 @@ function VaultScreen({ openRelic, openSend, openList }) {
           <option value="name">Sort: Name</option>
         </select>
         <div className="spacer" />
-        <button className="btn">Deposit to Corp</button>
+        <button className="btn" onClick={() => { try { window.dispatchEvent(new CustomEvent('jb:open', { detail: 'vault' })); } catch (e) {} }}>Deposit to Corp</button>
         <button className="btn primary">Send asset</button>
       </div>
 

@@ -135,12 +135,14 @@ function App() {
   const [foundOpen, setFoundOpen] = useState(false);
   const [myResOpen, setMyResOpen] = useState(false);
   const [guildOpen, setGuildOpen] = useState(false);
+  const [vaultOpen, setVaultOpen] = useState(false);
   useEffect(() => {
     const onOpen = (e) => {
       const d = e && e.detail;
       if (d === 'resources') setMyResOpen(true);
       else if (d === 'guild') setGuildOpen(true);
       else if (d === 'found') setFoundOpen(true);
+      else if (d === 'vault') setVaultOpen(true);
     };
     window.addEventListener('jb:open', onOpen);
     return () => window.removeEventListener('jb:open', onOpen);
@@ -202,6 +204,7 @@ function App() {
       {myResOpen && <MyResourcesModal econ={_jbE} onClose={() => setMyResOpen(false)} />}
       {guildOpen && <CorpGuild econ={_jbE} toast={toast} onClose={() => setGuildOpen(false)}
         onFound={() => { setGuildOpen(false); setFoundOpen(true); }} />}
+      {vaultOpen && <CorpVaultModal econ={_jbE} toast={toast} onClose={() => setVaultOpen(false)} />}
 
       <TweaksPanel>
         <TweakSection label="Palette">
@@ -810,6 +813,95 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
             )}
           </div>
           {rolesPanel}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Corporation Vault — shared store. ANY corp member can deposit their real
+// cards / items / resources; depositing removes them from that player's
+// collection (deck-locked card copies are protected so a 40-card deck always
+// survives). Everything deposited shows here for the whole corp.
+// ──────────────────────────────────────────────────────────────────────────
+function CorpVaultModal({ econ, toast, onClose }) {
+  const [kindTab, setKindTab] = useState('card');
+  const [qty, setQty] = useState({});
+  const corp = econ && econ.corp;
+  const vault = (econ && Array.isArray(econ.vault)) ? econ.vault : [];
+  const dep = (econ && econ.depositable) || { cards: [], items: [], resources: [] };
+  const act = (p) => { try { window.JB_action && window.JB_action(p); } catch (e) {} };
+  const KMETA = { card: 'Cards', item: 'Items / Relics', resource: 'Resources' };
+  const list = kindTab === 'card' ? (dep.cards || []) : kindTab === 'item' ? (dep.items || []) : (dep.resources || []);
+
+  const vaultByKind = {};
+  vault.forEach(v => { (vaultByKind[v.kind] = vaultByKind[v.kind] || []).push(v); });
+
+  return (
+    <Modal title="Corporation Vault" onClose={onClose} wide
+      footer={<button className="btn ghost" onClick={onClose}>Close</button>}>
+      {!econ || !econ.signedIn ? (
+        <div className="muted" style={{ padding: 24, textAlign: 'center' }}>Sign in inside the game to use the shared vault.</div>
+      ) : !corp ? (
+        <div className="muted" style={{ padding: 24, textAlign: 'center' }}>Join or found a corporation to use a shared vault. Use <b>Guild &amp; Hiring</b> from the Corp screen.</div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
+          <div>
+            <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 8 }}>
+              {corp.name} vault · {vault.length} stacks
+            </div>
+            {vault.length === 0 ? (
+              <div className="muted" style={{ fontSize: 12.5, padding: 16 }}>Empty. Anyone in the corporation can deposit — start filling it.</div>
+            ) : (
+              <div style={{ maxHeight: '56vh', overflow: 'auto' }}>
+                {['card', 'item', 'resource'].filter(k => vaultByKind[k]).map(k => (
+                  <div key={k} style={{ marginBottom: 12 }}>
+                    <div className="mono muted" style={{ fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: 4 }}>{KMETA[k]}</div>
+                    {vaultByKind[k].map((v, i) => (
+                      <div key={k + i} className="row" style={{ justifyContent: 'space-between', padding: '7px 11px', border: '1px solid var(--line-soft)', borderRadius: 4, marginBottom: 4, background: 'var(--bg-2)' }}>
+                        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.icon || '📦'} {v.name} <span className="mono muted" style={{ fontSize: 10 }}>· {v.dep}</span></span>
+                        <span className="mono" style={{ color: 'var(--aza)', fontWeight: 600 }}>{fmt(v.qty)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 8 }}>Deposit from your collection</div>
+            <div className="row" style={{ gap: 6, marginBottom: 10 }}>
+              {['card', 'item', 'resource'].map(k => (
+                <button key={k} className={'btn sm' + (kindTab === k ? ' primary' : '')} onClick={() => setKindTab(k)}>{KMETA[k]}</button>
+              ))}
+            </div>
+            {list.length === 0 ? (
+              <div className="muted" style={{ fontSize: 12.5, padding: 14 }}>
+                {kindTab === 'card' ? 'No spare cards — every copy is locked into a 40-card deck.' : 'Nothing here to deposit.'}
+              </div>
+            ) : (
+              <div style={{ maxHeight: '52vh', overflow: 'auto' }}>
+                {list.map(it => {
+                  const max = kindTab === 'card' ? (it.free | 0) : (it.qty | 0);
+                  const v = Math.max(1, Math.min(max, qty[it.id] || 1));
+                  return (
+                    <div key={it.id} className="row" style={{ justifyContent: 'space-between', gap: 8, padding: '7px 10px', border: '1px solid var(--line-soft)', borderRadius: 4, marginBottom: 4 }}>
+                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {it.icon || '📦'} {it.name}
+                        <span className="mono muted" style={{ fontSize: 10 }}> · {max}{kindTab === 'card' && it.locked ? ' (' + it.locked + ' deck-locked)' : ''}</span>
+                      </span>
+                      <input className="input" type="number" min={1} max={max} value={v}
+                        onChange={e => setQty(q => ({ ...q, [it.id]: Math.max(1, Math.min(max, Number(e.target.value) || 1)) }))}
+                        style={{ width: 64, padding: '4px 6px' }} />
+                      <button className="btn sm primary" onClick={() => { act({ kind: 'vaultDeposit', itemKind: kindTab, itemId: it.id, qty: v }); onClose(); }}>Deposit</button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="muted" style={{ fontSize: 11, marginTop: 10 }}>Deposited assets leave your collection and become corporation property. Deck-committed cards are protected (40-card decks stay intact).</div>
+          </div>
         </div>
       )}
     </Modal>

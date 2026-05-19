@@ -24979,6 +24979,31 @@ async function detentionRelease(id) {
   showToast('🔓 ' + d.offender_name + ' released by judicial order.', 5000);
   return true;
 }
+// 🏦 BANK OF ETHOS — Camp Heights treasury sub-app (Babel/React iframe under
+// /ethos/, same embed pattern as Just Business / World Map). Standalone for
+// now (localStorage-backed); wiring it to Cinder / nodes / Aza coin is the
+// next pass. Full-screen overlay with a floating return control.
+function openBankOfEthos() {
+  try {
+    const ID = 'be-frame-wrap';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const wrap = document.createElement('div');
+    wrap.id = ID;
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483300;background:#0b0b10;opacity:0;transition:opacity .4s cubic-bezier(.22,.61,.36,1)';
+    const f = document.createElement('iframe');
+    f.src = 'ethos/Bank%20of%20Ethos.html';
+    f.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:#0b0b10';
+    f.setAttribute('title', 'Bank of Ethos');
+    const back = document.createElement('button');
+    back.textContent = '← Ruin Exchange';
+    back.style.cssText = 'position:absolute;top:10px;right:12px;z-index:5;cursor:pointer;border:1px solid rgba(212,175,55,0.55);background:rgba(16,12,6,0.9);color:#ffcf5a;border-radius:8px;padding:0.45rem 0.85rem;font-weight:800;font-family:inherit;box-shadow:0 4px 16px rgba(0,0,0,0.6)';
+    back.onclick = () => { wrap.style.opacity = '0'; setTimeout(() => { try { wrap.remove(); } catch (e) {} }, 380); };
+    wrap.appendChild(f);
+    wrap.appendChild(back);
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => { wrap.style.opacity = '1'; });
+  } catch (e) {}
+}
 function openCityHall() {
   try {
     const ID = 'ch-modal';
@@ -40691,6 +40716,11 @@ function renderTitle() {
       { id: 'btn-city-hall', icon: '<img src="assets/artwork/gameicons/SCP%20City%20Hall.png" alt="City Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'City Hall', sub: 'Registry · law · licensing · treasury', accent: '#ffcf5a',
         badge: 'Civic',
         onclick: () => { if (typeof openCityHall === 'function') openCityHall(); } },
+      // 🏦 Bank of Ethos — Camp Heights treasury sub-app (iframe). Node /
+      // Reserve / Aza wiring is the next pass.
+      { id: 'btn-bank-ethos', icon: '<img src="assets/artwork/gameicons/Bank%20of%20Ethos.png" alt="Bank of Ethos" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Bank of Ethos', sub: 'Camp Heights treasury · accounts', accent: '#c9a24a',
+        badge: 'Banking',
+        onclick: () => { if (typeof openBankOfEthos === 'function') openBankOfEthos(); } },
       // Sports-betting hub — wager Cinders on AI vs AI fixtures + future tournaments.
       { id: 'btn-wager-hall', icon: '<img src="assets/artwork/gameicons/Blood%20dice%20Icon.png" alt="Wager Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(2.0);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Wager Hall', sub: 'Bet <span class="cinder-icon"></span> on AI matches · tournaments soon', accent: '#ff7755',
         badge: (() => {

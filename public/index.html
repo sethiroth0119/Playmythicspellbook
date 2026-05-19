@@ -24147,6 +24147,7 @@ const FoundationReserve = {
   barons: {},          // resource -> { userId, name, qty }  (top world supplier)
   taxStats: null,      // aggregated reserve_tax_log dashboard stats
   taxLastFetch: 0,
+  nodes: [], nodesNeedSetup: false, nodesFetched: 0,
   tableMissing: false, loading: false, lastFetch: 0, _err: null, _poll: null,
 };
 function _frErr(e) {
@@ -24747,6 +24748,140 @@ async function frConvoyIntercept(haulMap) {
     try { if (typeof FoundationReserve !== 'undefined') FoundationReserve.lastFetch = 0; } catch (e) {}
   } catch (e) { /* never let interception affect the player's haul */ }
 }
+
+// ============================================================================
+// 🔌 FOUNDATION RESERVE NODE SYSTEM — registered corporations operate Reserve
+// infrastructure and earn Cinder for ACTIVE contribution (never passive).
+// A node only ever pays out the operator's NEW Reserve-contribution points
+// since the last collect, scaled by node level + efficiency, on a cooldown.
+// No contribution since last claim → nothing to collect. Idle nodes decay.
+// Built on the economy_nodes table (api.sql). Cashout / AI controls / convoy
+// risk / global pool-% are future passes.
+// ============================================================================
+const NODE_CINDER_PER_POINT  = 4;            // Cinder per new reserve point, ×mods
+const NODE_CLAIM_COOLDOWN_MS = 6 * 3600000;  // collect once per 6h per node
+const NODE_MAX_PER_CORP      = 6;
+const NODE_EFF_DECAY_PER_HR  = 2.2;          // efficiency % lost per idle hour
+const NODE_EFF_FLOOR         = 20;
+const NODE_PAYOUT_CAP        = 250000;       // hard cap per collect (anti-abuse)
+const RESERVE_NODE_TYPES = [
+  { id: 'supply',  name: 'Supply Node',       icon: '📦', proc: 'Food · Water · Supplies · Medicine', cinder: 60000,  res: { supplies: 200, food: 150 },                 buildH: 6,  blurb: 'Resource intake & relief routing.' },
+  { id: 'fuel',    name: 'Fuel Node',         icon: '⛽', proc: 'Fuel · Power',                        cinder: 90000,  res: { fuel: 300, metal: 120 },                    buildH: 10, blurb: 'Fuel processing & energy distribution.' },
+  { id: 'mining',  name: 'Mining Node',       icon: '⛏',  proc: 'Metal · Ore · Components',            cinder: 80000,  res: { metal: 250 },                               buildH: 8,  blurb: 'Metal & industrial extraction.' },
+  { id: 'mfg',     name: 'Manufacturing Node',icon: '🏭', proc: 'Packs · Crates · Capsules',           cinder: 150000, res: { metal: 300, fuel: 120, supplies: 100 },      buildH: 18, blurb: 'Turns Reserve stock into market products.' },
+  { id: 'convoy',  name: 'Convoy Node',       icon: '🚚', proc: 'Transport · Routing',                 cinder: 70000,  res: { fuel: 220, supplies: 120 },                 buildH: 7,  blurb: 'Moves supply between operations & the Reserve.' },
+  { id: 'storage', name: 'Storage Node',      icon: '🏗', proc: 'Preservation · Warehousing',          cinder: 50000,  res: { metal: 180 },                               buildH: 5,  blurb: 'Expands Reserve storage capacity.' },
+  { id: 'security',name: 'Security Node',     icon: '🛡', proc: 'Defense · Anti-smuggling',            cinder: 90000,  res: { ammo: 200, metal: 150 },                    buildH: 9,  blurb: 'Protects the Reserve & convoys.' },
+  { id: 'research',name: 'Research Node',     icon: '🔬', proc: 'DNA · Memory Shards · Corrupted',     cinder: 200000, res: { memoryShards: 30, corruptedEssence: 20 },   buildH: 24, blurb: 'SCP research & relic analysis.' },
+];
+function _nodeType(id) { return RESERVE_NODE_TYPES.find(t => t.id === id) || null; }
+function _nodeEff(n) {
+  try {
+    const m = n.meta || {};
+    const last = m.lastTick || (n.updated_at ? Date.parse(n.updated_at) : Date.now());
+    const hrs = Math.max(0, (Date.now() - last) / 3600000);
+    return Math.max(NODE_EFF_FLOOR, Math.round((m.eff != null ? m.eff : 100) - hrs * NODE_EFF_DECAY_PER_HR));
+  } catch (e) { return 100; }
+}
+function _nodeActive(n) {
+  const m = n.meta || {};
+  if (n.status === 'building') { return (m.readyAt && Date.now() >= m.readyAt); }
+  return n.status === 'active';
+}
+function _nodeClaimable(n) {
+  if (!_nodeActive(n)) return 0;
+  const m = n.meta || {};
+  const fresh = Math.max(0, (FoundationReserve.myPoints | 0) - (m.claimedPoints | 0));
+  const lvlMul = 1 + 0.25 * ((n.level | 0) - 1);
+  const eff = _nodeEff(n) / 100;
+  return Math.min(NODE_PAYOUT_CAP, Math.floor(fresh * NODE_CINDER_PER_POINT * lvlMul * eff));
+}
+function _nodeCooldownLeft(n) {
+  const m = n.meta || {};
+  return Math.max(0, ((m.lastClaim | 0) + NODE_CLAIM_COOLDOWN_MS) - Date.now());
+}
+async function nodeFetch() {
+  if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return;
+  try {
+    if (!Corp.mine && typeof corpEnsure === 'function') { try { await corpEnsure(); } catch (e) {} }
+    if (!Corp.mine) { FoundationReserve.nodes = []; FoundationReserve.nodesFetched = Date.now(); return; }
+    const r = await Cloud.client.from('economy_nodes').select('*').eq('corp_id', Corp.mine.id).limit(50);
+    if (r && r.error) {
+      if (/economy_nodes|relation|does not exist|schema cache|PGRST205|42P01/i.test((r.error.message || '') + '')) FoundationReserve.nodesNeedSetup = true;
+      FoundationReserve.nodes = []; return;
+    }
+    FoundationReserve.nodesNeedSetup = false;
+    FoundationReserve.nodes = (r && r.data) ? r.data : [];
+    FoundationReserve.nodesFetched = Date.now();
+  } catch (e) {}
+}
+async function nodeEstablish(typeId) {
+  const t = _nodeType(typeId);
+  if (!t) return false;
+  if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in to operate Reserve nodes.', 3000); return false; }
+  if (!Corp.mine) { showToast('🏛️ Only registered corporations operate Reserve nodes — found or join one in City Hall.', 4600); return false; }
+  if ((FoundationReserve.nodes || []).length >= NODE_MAX_PER_CORP) { showToast('Your corporation is at its node cap (' + NODE_MAX_PER_CORP + ').', 3600); return false; }
+  if ((Profile.gems || 0) < t.cinder) { showToast('Need ' + t.cinder.toLocaleString() + ' 🔥 to license & build the ' + t.name + ' — you have ' + (Profile.gems || 0).toLocaleString() + '.', 5200); return false; }
+  if (!canAffordResources(t.res)) { showToast('Not enough resources to build the ' + t.name + ' (' + Object.keys(t.res).map(k => t.res[k] + ' ' + ((_meta(k).name) || k)).join(', ') + ').', 5200); return false; }
+  if (!confirm('License & build a ' + t.name + ' for your corporation?\n\nCost: ' + t.cinder.toLocaleString() + ' 🔥 + ' + Object.keys(t.res).map(k => t.res[k] + '× ' + ((_meta(k).name) || k)).join(', ') + '\nBuild time: ' + t.buildH + 'h')) return false;
+  if (!spendGems(t.cinder)) { showToast('Not enough Cinders'); return false; }
+  if (!spendResources(t.res)) { addGems(t.cinder); showToast('Not enough resources'); return false; }
+  try { saveProfile(); } catch (e) {}
+  const me = Profile.cloud.userId;
+  try {
+    const ins = await Cloud.client.from('economy_nodes').insert({
+      owner_id: me, corp_id: Corp.mine.id, name: Corp.mine.tag + ' ' + t.name,
+      node_type: t.id, resource: t.proc, level: 1, status: 'building',
+      meta: { readyAt: Date.now() + t.buildH * 3600000, claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: 0, eff: 100, lastTick: Date.now() },
+    });
+    if (ins && ins.error) throw ins.error;
+  } catch (e) {
+    addGems(t.cinder); try { addSalvage(t.res); } catch (_) {} try { saveProfile(); } catch (_) {}
+    showToast('⚠ Node filing failed — refunded. ' + (/economy_nodes|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run api.sql first.' : ''), 4600);
+    return false;
+  }
+  showToast('🔌 ' + t.name + ' licensed — construction started (' + t.buildH + 'h). It pays out for active contribution once online.', 6000);
+  await nodeFetch();
+  return true;
+}
+async function nodeCollect(nodeId) {
+  const n = (FoundationReserve.nodes || []).find(x => x.id === nodeId);
+  if (!n) return false;
+  if (!_nodeActive(n)) { showToast('That node is still under construction.', 3000); return false; }
+  const cd = _nodeCooldownLeft(n);
+  if (cd > 0) { showToast('⏳ Payout on cooldown — ' + Math.ceil(cd / 3600000) + 'h left.', 3200); return false; }
+  const pay = _nodeClaimable(n);
+  if (pay <= 0) { showToast('No new contribution to convert. Deposit resources to the Reserve, then collect — nodes pay for ACTIVE supply, not idling.', 5600); return false; }
+  try {
+    const m = Object.assign({}, n.meta || {}, { claimedPoints: (FoundationReserve.myPoints | 0), lastClaim: Date.now(), eff: _nodeEff(n), lastTick: Date.now(), status: 'active' });
+    const up = await Cloud.client.from('economy_nodes').update({ status: 'active', meta: m, updated_at: new Date().toISOString() }).eq('id', n.id).eq('owner_id', Profile.cloud.userId);
+    if (up && up.error) throw up.error;
+    if (typeof addCinders === 'function') addCinders(pay);
+    showToast('🔌 ' + (n.name || 'Node') + ' payout collected — +' + pay.toLocaleString() + ' 🔥 for your contribution.', 5200);
+    await nodeFetch();
+    return true;
+  } catch (e) { showToast('⚠ Payout failed — try again.', 3000); return false; }
+}
+async function nodeMaintain(nodeId) {
+  const n = (FoundationReserve.nodes || []).find(x => x.id === nodeId);
+  if (!n) return false;
+  const up = { fuel: 80, supplies: 60 };
+  if (!canAffordResources(up)) { showToast('Maintenance needs ' + Object.keys(up).map(k => up[k] + ' ' + ((_meta(k).name) || k)).join(' + ') + '.', 4200); return false; }
+  if (!spendResources(up)) { showToast('Not enough resources to maintain.'); return false; }
+  try { saveProfile(); } catch (e) {}
+  try {
+    const m = Object.assign({}, n.meta || {}, { eff: 100, lastTick: Date.now() });
+    const r = await Cloud.client.from('economy_nodes').update({ status: (n.status === 'building' ? 'building' : 'active'), meta: m, updated_at: new Date().toISOString() }).eq('id', n.id).eq('owner_id', Profile.cloud.userId);
+    if (r && r.error) throw r.error;
+    showToast('🛠 ' + (n.name || 'Node') + ' maintained — efficiency restored to 100%.', 4200);
+    await nodeFetch();
+    return true;
+  } catch (e) {
+    try { addSalvage(up); saveProfile(); } catch (_) {}
+    showToast('⚠ Maintenance failed — refunded.', 3000);
+    return false;
+  }
+}
 function openFoundationReserve() {
   try {
     const ID = 'fr-modal';
@@ -24888,6 +25023,51 @@ function openFoundationReserve() {
       return '<div style="margin:8px 0 0;padding:9px 11px;border:1px solid ' + stCol + '55;border-radius:8px;background:' + stCol + '12">' + head + bodyL + cvBtn + '</div>';
     };
 
+    const nodesTab = () => {
+      const corp = (typeof Corp !== 'undefined') && Corp.mine;
+      const rk = frRankFor(FoundationReserve.myPoints);
+      const head = '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(120,170,255,0.3);border-radius:8px;background:rgba(40,70,130,0.12);color:#cfe0f4;font-size:0.86rem">' +
+        '🔌 <strong>Foundation Reserve Node System</strong> — registered corporations run infrastructure and earn 🔥 for <strong>active contribution</strong>. A node only pays your NEW Reserve points since the last collect — idling pays nothing.' +
+        '<div class="small-text" style="color:#9fb6d6;margin-top:4px">' + rk.rank.icon + ' ' + esc(rk.rank.name) + ' · ' + numF(FoundationReserve.myPoints) + ' rep · rate ' + NODE_CINDER_PER_POINT + ' 🔥/point</div></div>';
+      if (FoundationReserve.nodesNeedSetup) {
+        return head + '<div class="ink-dim" style="padding:1.4rem;text-align:center">🔌 The node system isn’t set up yet — run <strong>api.sql</strong> in Supabase (creates economy_nodes), then reopen.</div>';
+      }
+      if (!corp) {
+        return head + '<div class="ink-dim" style="padding:1.6rem;text-align:center">Only <strong>registered corporations</strong> operate Reserve nodes. Found or join one in <strong>⚖️ City Hall</strong> / Just Business, then return here.</div>';
+      }
+      const ns = FoundationReserve.nodes || [];
+      const list = ns.length
+        ? ns.map(n => {
+            const active = _nodeActive(n);
+            const eff = _nodeEff(n);
+            const claim = _nodeClaimable(n);
+            const cd = _nodeCooldownLeft(n);
+            const m = n.meta || {};
+            const status = active
+              ? '<span style="color:#7fe0a0;font-weight:800">● ACTIVE</span>'
+              : ('<span style="color:#e0b84a;font-weight:800">⛏ BUILDING</span> <span class="small-text" style="color:#9fb6d6">' + (m.readyAt ? Math.max(0, Math.ceil((m.readyAt - Date.now()) / 3600000)) + 'h left' : '') + '</span>');
+            return '<div style="padding:9px 11px;border:1px solid rgba(120,170,255,0.2);border-radius:9px;background:rgba(40,70,130,0.10);margin-bottom:7px">' +
+              '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:1.3rem">' + ((_nodeType(n.node_type) || {}).icon || '🔌') + '</span>' +
+                '<div style="flex:1;min-width:0"><div style="color:#dce8ff;font-weight:800">' + esc(n.name || 'Node') + '</div>' +
+                '<div class="small-text" style="color:#9fb6d6">' + esc(n.resource || '') + ' · LV ' + (n.level | 0) + ' · eff ' + eff + '%</div></div>' +
+                '<div style="text-align:right">' + status + '<div class="small-text" style="color:#8fb0e0">claimable: ' + numF(claim) + ' 🔥</div></div></div>' +
+              '<div style="display:flex;gap:6px;margin-top:8px">' +
+                '<button data-node-collect="' + esc(n.id) + '" ' + ((!active || claim <= 0 || cd > 0) ? 'disabled' : '') + ' style="flex:1;cursor:pointer;border-radius:7px;padding:0.45rem 0.7rem;border:1px solid #5fa0e0;background:' + ((!active || claim <= 0 || cd > 0) ? 'rgba(60,100,170,0.16)' : 'linear-gradient(180deg,#3a6fb0,#1c3a6a)') + ';color:#eaf3ff;font-weight:800;opacity:' + ((!active || claim <= 0 || cd > 0) ? '0.55' : '1') + '">' + (cd > 0 ? 'Cooldown ' + Math.ceil(cd / 3600000) + 'h' : (claim > 0 ? 'Collect ' + numF(claim) + ' 🔥' : 'Nothing to collect')) + '</button>' +
+                '<button data-node-maintain="' + esc(n.id) + '" style="cursor:pointer;border-radius:7px;padding:0.45rem 0.8rem;border:1px solid rgba(120,170,255,0.45);background:rgba(60,100,170,0.22);color:#dce8ff;font-weight:700">🛠 Maintain</button>' +
+              '</div></div>';
+          }).join('')
+        : '<div class="ink-dim" style="padding:1rem 0;text-align:center">No nodes yet — license one below.</div>';
+      const opts = RESERVE_NODE_TYPES.map(t => '<option value="' + t.id + '">' + esc(t.icon + ' ' + t.name + ' — ' + t.cinder.toLocaleString() + ' 🔥') + '</option>').join('');
+      const build = '<div style="margin-top:12px;border-top:1px solid rgba(120,170,255,0.2);padding-top:10px">' +
+        '<div style="font-weight:800;color:#9fc6ff;margin-bottom:6px">License & build a node <span class="small-text" style="color:#8fb0e0">(' + ns.length + '/' + NODE_MAX_PER_CORP + ')</span></div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+          '<select id="fr-node-pick" style="flex:1;min-width:0;padding:0.5rem;border-radius:8px;border:1px solid rgba(120,170,255,0.4);background:rgba(12,20,40,0.7);color:#e6f0ff">' + opts + '</select>' +
+          '<button id="fr-node-build" ' + (ns.length >= NODE_MAX_PER_CORP ? 'disabled' : '') + ' style="cursor:pointer;border-radius:8px;padding:0.5rem 1rem;border:1px solid #5fa0e0;background:linear-gradient(180deg,#3a6fb0,#1c3a6a);color:#eaf3ff;font-weight:800;opacity:' + (ns.length >= NODE_MAX_PER_CORP ? '0.5' : '1') + '">Build</button>' +
+        '</div>' +
+        '<div id="fr-node-desc" class="small-text" style="color:#8fb0e0;margin-top:6px"></div></div>';
+      return head + '<div style="font-weight:800;color:#9fc6ff;margin:2px 0 6px">' + esc(corp.name) + ' nodes</div>' + list + build;
+    };
+
     const productionTab = () => {
       return '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Products only exist when the world has supplied enough. The AI Economy Director throttles lines during a crisis and prices on scarcity — the bottleneck resource caps the run.</div>' +
         RESERVE_PRODUCTS.map(p => {
@@ -24934,7 +25114,7 @@ function openFoundationReserve() {
       } else if (FoundationReserve.loading && !FoundationReserve.lastFetch) {
         body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">Querying the world Reserve…</div>';
       } else {
-        body = tab === 'reserve' ? reserveTab() : tab === 'deposit' ? depositTab() : tab === 'tax' ? taxTab() : productionTab();
+        body = tab === 'reserve' ? reserveTab() : tab === 'deposit' ? depositTab() : tab === 'tax' ? taxTab() : tab === 'nodes' ? nodesTab() : productionTab();
       }
       const tBtn = (id, label) => '<button data-fr-tab="' + id + '" style="flex:1;cursor:pointer;border-radius:8px 8px 0 0;padding:0.5rem;border:1px solid rgba(120,170,255,0.35);border-bottom:none;background:' + (tab === id ? 'rgba(60,100,170,0.30)' : 'rgba(40,70,130,0.10)') + ';color:' + (tab === id ? '#eaf3ff' : '#9fb6d6') + ';font-weight:800">' + label + '</button>';
 
@@ -24946,7 +25126,7 @@ function openFoundationReserve() {
             '<button id="fr-x" style="cursor:pointer;border:1px solid rgba(150,190,255,0.4);background:transparent;color:#aec8ff;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
           '</div>' +
           ((online && !FoundationReserve.tableMissing && FoundationReserve.lastFetch) ? directorBanner() : '') +
-          (online && !FoundationReserve.tableMissing ? '<div style="display:flex;gap:4px;margin:8px 0 -1px">' + tBtn('reserve', '🏛 Reserve') + tBtn('deposit', '➕ Contribute') + tBtn('production', '⚙️ Production') + tBtn('tax', '💰 Tax') + '</div>' : '') +
+          (online && !FoundationReserve.tableMissing ? '<div style="display:flex;gap:4px;margin:8px 0 -1px">' + tBtn('reserve', '🏛 Reserve') + tBtn('deposit', '➕ Contribute') + tBtn('production', '⚙️ Production') + tBtn('nodes', '🔌 Nodes') + tBtn('tax', '💰 Tax') + '</div>' : '') +
           '<div id="fr-body" style="flex:1;min-height:240px;max-height:56vh;overflow:auto;border:1px solid rgba(120,170,255,0.22);border-radius:0 0 8px 8px;padding:11px">' + body + '</div>' +
           '<button id="fr-close" style="margin-top:12px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(120,170,255,0.5);background:rgba(60,100,170,0.18);color:#dce8ff;font-weight:800">Close</button>' +
           '<div class="small-text ink-dim" style="margin-top:6px">Products are manufactured by the world itself — not generated for free. Your deposits keep civilization’s supply chains running.</div>' +
@@ -24976,13 +25156,25 @@ function openFoundationReserve() {
         if (q <= 0) { showToast('Enter an amount.'); return; }
         frDeposit(id, q).then(ok => { if (ok) { tab = 'reserve'; render(); } });
       };
+      const npick = document.getElementById('fr-node-pick');
+      const ndesc = document.getElementById('fr-node-desc');
+      const paintNodeDesc = () => {
+        if (!npick || !ndesc) return;
+        const t = _nodeType(npick.value);
+        ndesc.innerHTML = t ? (esc(t.blurb) + ' · processes ' + esc(t.proc) + ' · cost ' + t.cinder.toLocaleString() + ' 🔥 + ' + Object.keys(t.res).map(k => t.res[k] + '× ' + esc((_meta(k).name) || k)).join(', ') + ' · build ' + t.buildH + 'h') : '';
+      };
+      if (npick) { npick.onchange = paintNodeDesc; paintNodeDesc(); }
+      const nbuild = document.getElementById('fr-node-build');
+      if (nbuild) nbuild.onclick = () => { const id = (document.getElementById('fr-node-pick') || {}).value; if (id) nodeEstablish(id).then(ok => { if (ok) render(); }); };
+      host.querySelectorAll('[data-node-collect]').forEach(b => { b.onclick = () => { if (b.disabled) return; nodeCollect(b.getAttribute('data-node-collect')).then(() => render()); }; });
+      host.querySelectorAll('[data-node-maintain]').forEach(b => { b.onclick = () => { nodeMaintain(b.getAttribute('data-node-maintain')).then(() => render()); }; });
     };
 
     render();
     if (online) {
-      frFetch().then(render);
+      frFetch().then(() => { render(); try { nodeFetch().then(render); } catch (e) {} });
       cleanup();
-      FoundationReserve._poll = setInterval(() => { if (!document.getElementById(ID)) { cleanup(); return; } frFetch().then(() => { if (document.getElementById(ID)) render(); }); }, 20000);
+      FoundationReserve._poll = setInterval(() => { if (!document.getElementById(ID)) { cleanup(); return; } frFetch().then(() => { if (document.getElementById(ID)) render(); }); if (tab === 'nodes') { try { nodeFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {} } }, 20000);
     }
   } catch (e) {}
 }

@@ -25299,7 +25299,10 @@ function _nodeEff(n) {
     const m = n.meta || {};
     const last = m.lastTick || (n.updated_at ? Date.parse(n.updated_at) : Date.now());
     const hrs = Math.max(0, (Date.now() - last) / 3600000);
-    return Math.max(NODE_EFF_FLOOR, Math.round((m.eff != null ? m.eff : 100) - hrs * NODE_EFF_DECAY_PER_HR));
+    let v = (m.eff != null ? m.eff : 100) - hrs * NODE_EFF_DECAY_PER_HR;
+    const rk = _nodeActiveRisk(n);
+    if (rk) v -= rk.effHit;                               // ⚠️ active hazard gouges efficiency
+    return Math.max(NODE_EFF_FLOOR, Math.round(v));
   } catch (e) { return 100; }
 }
 function _nodeActive(n) {
@@ -25309,6 +25312,8 @@ function _nodeActive(n) {
 }
 function _nodeClaimable(n) {
   if (!_nodeActive(n)) return 0;
+  const rk = _nodeActiveRisk(n);
+  if (rk && rk.lock) return 0;                            // ⚠️ locked down until defended
   const m = n.meta || {};
   const fresh = Math.max(0, (FoundationReserve.myPoints | 0) - (m.claimedPoints | 0));
   const lvlMul = 1 + 0.25 * ((n.level | 0) - 1);
@@ -25318,6 +25323,50 @@ function _nodeClaimable(n) {
 function _nodeCooldownLeft(n) {
   const m = n.meta || {};
   return Math.max(0, ((m.lastClaim | 0) + NODE_CLAIM_COOLDOWN_MS) - Date.now());
+}
+// ⚠️ NODE RISK EVENTS — raids, sabotage, SCP breach, convoy attacks. Like
+// the AI Director, a hazard is a DETERMINISTIC function of (node, 6h window)
+// so every client sees the same threat with zero shared infra. Effects are
+// real: efficiency is gouged (→ lower payouts) and lock-type events freeze
+// collection until the operator pays to DEFEND. A Security node / Security
+// licence lowers both the odds and the damage. Defending clears the threat
+// for the current window only (stored as meta.riskClear); a new window can
+// roll a fresh one. Purely meta-driven — no schema change.
+const NODE_RISK_WINDOW_MS = 6 * 3600000;   // aligns with the collect cooldown
+const NODE_RISK_EVENTS = [
+  { id: 'raid',     name: 'Armed Raid',     icon: '💥', effHit: 35, lock: false, vuln: ['mining', 'fuel', 'storage', 'supply'],                                          cost: { ammo: 80, metal: 40 },     blurb: 'Scavenger crews are hitting the site — output is bleeding out.' },
+  { id: 'sabotage', name: 'Sabotage',       icon: '🧨', effHit: 25, lock: false, vuln: ['mfg', 'fuel', 'research', 'mining', 'convoy', 'storage', 'supply', 'security'],   cost: { metal: 60, supplies: 40 }, blurb: 'A rival slipped a saboteur inside. Machinery is failing.' },
+  { id: 'scp',      name: 'SCP Breach',     icon: '☣️', effHit: 50, lock: true,  vuln: ['research', 'mfg', 'security'],                                                   cost: { ammo: 120, medicine: 30 }, blurb: 'An anomaly broke containment near the node — site locked down.' },
+  { id: 'convoy',   name: 'Convoy Attack',  icon: '🚚', effHit: 30, lock: true,  vuln: ['convoy', 'supply', 'fuel'],                                                      cost: { fuel: 90, supplies: 60 },  blurb: 'The supply convoy was ambushed — the node is cut off.' },
+];
+function _nodeSeed(id) {
+  let h = 2166136261; const s = (id || '') + '';
+  for (let i = 0; i < s.length; i++) { h = Math.imul(h ^ s.charCodeAt(i), 16777619); }
+  return h >>> 0;
+}
+function _nodeRiskWindow() { return Math.floor(Date.now() / NODE_RISK_WINDOW_MS); }
+function _corpHasSecurity() {
+  try {
+    if (typeof Corp !== 'undefined' && (Corp.licenses || []).indexOf('security') >= 0) return true;
+    return (FoundationReserve.nodes || []).some(n => n.node_type === 'security' && _nodeActive(n));
+  } catch (e) { return false; }
+}
+function _nodeActiveRisk(n) {
+  try {
+    if (!n || !_nodeActive(n)) return null;
+    const m = n.meta || {};
+    const w = _nodeRiskWindow();
+    if ((m.riskClear | 0) === w) return null;            // defended this window
+    const h = _frHash(_nodeSeed(n.id) ^ Math.imul(w, 0x9e3779b1));
+    const sec = _corpHasSecurity();
+    const gate = sec ? 6 : 4;                            // ~1/4 windows, ~1/6 with Security
+    if ((h % gate) !== 0) return null;
+    const pool = NODE_RISK_EVENTS.filter(e => e.vuln.indexOf(n.node_type) >= 0);
+    const list = pool.length ? pool : NODE_RISK_EVENTS;
+    const ev = list[(h >>> 3) % list.length];
+    const effHit = sec ? Math.round(ev.effHit * 0.6) : ev.effHit;
+    return Object.assign({}, ev, { effHit: effHit, mitigated: sec, window: w, endsInMs: Math.max(0, (w + 1) * NODE_RISK_WINDOW_MS - Date.now()) });
+  } catch (e) { return null; }
 }
 async function nodeFetch() {
   if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return;
@@ -25377,6 +25426,8 @@ async function nodeCollect(nodeId) {
   if (!_nodeActive(n)) { showToast('That node is still under construction.', 3000); return false; }
   const cd = _nodeCooldownLeft(n);
   if (cd > 0) { showToast('⏳ Payout on cooldown — ' + Math.ceil(cd / 3600000) + 'h left.', 3200); return false; }
+  const rkLock = _nodeActiveRisk(n);
+  if (rkLock && rkLock.lock) { showToast('⚠ ' + rkLock.icon + ' ' + rkLock.name + ' — ' + (n.name || 'the node') + ' is locked down. Defend it first.', 6000); return false; }
   const bounded = _nodeClaimable(n);
   if (bounded <= 0) { showToast('No new contribution to convert. Deposit resources to the Reserve, then collect — nodes pay for ACTIVE supply, not idling.', 5600); return false; }
   // 🌍 Draw from the real, finite global pool (a share of the Treasury).
@@ -25432,6 +25483,33 @@ async function nodeMaintain(nodeId) {
     showToast('⚠ Maintenance failed — refunded.', 3000);
     return false;
   }
+}
+// 🛡 Repel an active node hazard: pay the defense cost, restore efficiency
+// and clear the threat for the current 6h window (meta.riskClear).
+async function nodeDefend(nodeId) {
+  const n = (FoundationReserve.nodes || []).find(x => x.id === nodeId);
+  if (!n) return false;
+  if (typeof _jailBlocked === 'function' && _jailBlocked('defending nodes')) return false;
+  const rk = _nodeActiveRisk(n);
+  if (!rk) { showToast('No active threat on ' + (n.name || 'that node') + '.', 3000); return false; }
+  const cost = rk.cost || { metal: 60, ammo: 40 };
+  const cstr = Object.keys(cost).map(k => cost[k] + '× ' + ((_meta(k).name) || k)).join(' + ');
+  if (!canAffordResources(cost)) { showToast('Defending against the ' + rk.name + ' needs ' + cstr + '.', 5200); return false; }
+  if (!confirm('Defend ' + (n.name || 'the node') + ' against the ' + rk.name + '?\n\nCost: ' + cstr + '\nRepels the threat & restores efficiency for this window.')) return false;
+  if (!spendResources(cost)) { showToast('Not enough resources to mount a defense.'); return false; }
+  try { saveProfile(); } catch (e) {}
+  try {
+    const m = Object.assign({}, n.meta || {}, { riskClear: _nodeRiskWindow(), eff: 100, lastTick: Date.now() });
+    const r = await Cloud.client.from('economy_nodes').update({ status: 'active', meta: m, updated_at: new Date().toISOString() }).eq('id', n.id).eq('owner_id', Profile.cloud.userId);
+    if (r && r.error) throw r.error;
+  } catch (e) {
+    try { addSalvage(cost); saveProfile(); } catch (_) {}
+    showToast('⚠ Defense failed — refunded.', 4200);
+    return false;
+  }
+  showToast('🛡 ' + (n.name || 'Node') + ' secured — ' + rk.name + ' repelled, efficiency restored.', 5600);
+  await nodeFetch();
+  return true;
 }
 function openFoundationReserve() {
   try {
@@ -25613,16 +25691,25 @@ function openFoundationReserve() {
             const claim = _nodeRealPay(n);
             const cd = _nodeCooldownLeft(n);
             const m = n.meta || {};
+            const risk = _nodeActiveRisk(n);
             const status = active
               ? '<span style="color:#7fe0a0;font-weight:800">● ACTIVE</span>'
               : ('<span style="color:#e0b84a;font-weight:800">⛏ BUILDING</span> <span class="small-text" style="color:#9fb6d6">' + (m.readyAt ? Math.max(0, Math.ceil((m.readyAt - Date.now()) / 3600000)) + 'h left' : '') + '</span>');
-            return '<div style="padding:9px 11px;border:1px solid rgba(120,170,255,0.2);border-radius:9px;background:rgba(40,70,130,0.10);margin-bottom:7px">' +
+            const riskBox = risk
+              ? '<div style="margin-top:7px;padding:6px 9px;border:1px solid ' + (risk.lock ? 'rgba(255,107,107,0.55)' : 'rgba(224,184,74,0.5)') + ';border-radius:7px;background:' + (risk.lock ? 'rgba(70,20,20,0.32)' : 'rgba(70,55,18,0.28)') + '">' +
+                  '<div style="color:' + (risk.lock ? '#ff8a8a' : '#e8cf94') + ';font-weight:800;font-size:0.86rem">' + risk.icon + ' ' + esc(risk.name) + (risk.lock ? ' — LOCKED DOWN' : '') + (risk.mitigated ? ' <span class="small-text" style="color:#7fe0a0">· Security mitigated</span>' : '') + '</div>' +
+                  '<div class="small-text" style="color:#cbb98a;margin-top:2px">' + esc(risk.blurb) + ' −' + (risk.effHit | 0) + '% efficiency.' + (risk.lock ? ' Payout frozen until defended.' : '') + '</div>' +
+                  '<button data-node-defend="' + esc(n.id) + '" style="margin-top:6px;cursor:pointer;border-radius:6px;padding:0.35rem 0.7rem;border:1px solid #d4af37;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800;font-size:0.8rem">🛡 Defend · ' + esc(Object.keys(risk.cost || {}).map(k => risk.cost[k] + ((_meta(k).icon) || '×' + k)).join(' ')) + '</button>' +
+                '</div>'
+              : '';
+            return '<div style="padding:9px 11px;border:1px solid ' + (risk ? (risk.lock ? 'rgba(255,107,107,0.4)' : 'rgba(224,184,74,0.38)') : 'rgba(120,170,255,0.2)') + ';border-radius:9px;background:rgba(40,70,130,0.10);margin-bottom:7px">' +
               '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:1.3rem">' + ((_nodeType(n.node_type) || {}).icon || '🔌') + '</span>' +
-                '<div style="flex:1;min-width:0"><div style="color:#dce8ff;font-weight:800">' + esc(n.name || 'Node') + '</div>' +
+                '<div style="flex:1;min-width:0"><div style="color:#dce8ff;font-weight:800">' + esc(n.name || 'Node') + (risk ? ' <span class="small-text" style="color:' + (risk.lock ? '#ff8a8a' : '#e8cf94') + '">' + risk.icon + '</span>' : '') + '</div>' +
                 '<div class="small-text" style="color:#9fb6d6">' + esc(n.resource || '') + ' · LV ' + (n.level | 0) + ' · eff ' + eff + '%</div></div>' +
                 '<div style="text-align:right">' + status + '<div class="small-text" style="color:#8fb0e0">claimable: ' + numF(claim) + ' 🔥</div></div></div>' +
+              riskBox +
               '<div style="display:flex;gap:6px;margin-top:8px">' +
-                '<button data-node-collect="' + esc(n.id) + '" ' + ((!active || claim <= 0 || cd > 0) ? 'disabled' : '') + ' style="flex:1;cursor:pointer;border-radius:7px;padding:0.45rem 0.7rem;border:1px solid #5fa0e0;background:' + ((!active || claim <= 0 || cd > 0) ? 'rgba(60,100,170,0.16)' : 'linear-gradient(180deg,#3a6fb0,#1c3a6a)') + ';color:#eaf3ff;font-weight:800;opacity:' + ((!active || claim <= 0 || cd > 0) ? '0.55' : '1') + '">' + (cd > 0 ? 'Cooldown ' + Math.ceil(cd / 3600000) + 'h' : (claim > 0 ? 'Collect ' + numF(claim) + ' 🔥' : 'Nothing to collect')) + '</button>' +
+                '<button data-node-collect="' + esc(n.id) + '" ' + ((!active || claim <= 0 || cd > 0) ? 'disabled' : '') + ' style="flex:1;cursor:pointer;border-radius:7px;padding:0.45rem 0.7rem;border:1px solid #5fa0e0;background:' + ((!active || claim <= 0 || cd > 0) ? 'rgba(60,100,170,0.16)' : 'linear-gradient(180deg,#3a6fb0,#1c3a6a)') + ';color:#eaf3ff;font-weight:800;opacity:' + ((!active || claim <= 0 || cd > 0) ? '0.55' : '1') + '">' + (cd > 0 ? 'Cooldown ' + Math.ceil(cd / 3600000) + 'h' : (claim > 0 ? 'Collect ' + numF(claim) + ' 🔥' : (risk && risk.lock ? '🔒 Locked' : 'Nothing to collect'))) + '</button>' +
                 '<button data-node-maintain="' + esc(n.id) + '" style="cursor:pointer;border-radius:7px;padding:0.45rem 0.8rem;border:1px solid rgba(120,170,255,0.45);background:rgba(60,100,170,0.22);color:#dce8ff;font-weight:700">🛠 Maintain</button>' +
               '</div></div>';
           }).join('')
@@ -25738,6 +25825,7 @@ function openFoundationReserve() {
       if (nbuild) nbuild.onclick = () => { const id = (document.getElementById('fr-node-pick') || {}).value; if (id) nodeEstablish(id).then(ok => { if (ok) render(); }); };
       host.querySelectorAll('[data-node-collect]').forEach(b => { b.onclick = () => { if (b.disabled) return; nodeCollect(b.getAttribute('data-node-collect')).then(() => render()); }; });
       host.querySelectorAll('[data-node-maintain]').forEach(b => { b.onclick = () => { nodeMaintain(b.getAttribute('data-node-maintain')).then(() => render()); }; });
+      host.querySelectorAll('[data-node-defend]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; nodeDefend(b.getAttribute('data-node-defend')).then(() => render()); }; });
     };
 
     render();

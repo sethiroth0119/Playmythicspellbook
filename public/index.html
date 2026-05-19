@@ -33533,7 +33533,7 @@ function _baseNavTo(screen) {
 // so corpId is always real. All Supabase access is guarded — the app still
 // works (mock data) if offline / tables not yet set up.
 // ============================================================================
-const Corp = { mine: null, roster: [], requests: [], vault: [], amOwner: false, _ensuring: false, _err: null };
+const Corp = { mine: null, roster: [], requests: [], vault: [], directory: [], amOwner: false, _ensuring: false, _err: null };
 const CORP_FOUNDING_COST = 1000000;   // 1,000,000 Cinder to incorporate (admins free)
 const CORP_MEMBER_CAP    = 25;        // free roster cap
 const CORP_OVERFLOW_FEE  = 3000;      // Aza coin per hire beyond the cap
@@ -33582,6 +33582,19 @@ async function corpEnsure() {
         } catch (e) { Corp.vault = []; }
       }
     } else { Corp.mine = null; Corp.roster = []; Corp.requests = []; Corp.vault = []; Corp.amOwner = false; }
+    // 🏢 Public directory of EVERY corporation started (so players who
+    // aren't in one can see them). corporations select RLS is public.
+    try {
+      const all = await Cloud.client.from('corporations').select('id,name,tag,faction,element,founder_id').limit(200);
+      const cnt = {};
+      try {
+        const ms = await Cloud.client.from('corp_members').select('corp_id').limit(4000);
+        if (ms && ms.data) ms.data.forEach(function (m) { cnt[m.corp_id] = (cnt[m.corp_id] || 0) + 1; });
+      } catch (e) {}
+      Corp.directory = (all && all.data) ? all.data.map(function (c) {
+        return { id: c.id, name: c.name, tag: c.tag, faction: c.faction || '', element: c.element || '', members: cnt[c.id] || 0, mine: !!(Corp.mine && Corp.mine.id === c.id) };
+      }).sort(function (a, b) { return (b.members - a.members) || String(a.name).localeCompare(String(b.name)); }) : [];
+    } catch (e) { Corp.directory = []; }
   } catch (e) { Corp._err = (e && e.message) || 'corp error'; }
   Corp._ensuring = false;
   return Corp.mine;
@@ -33671,6 +33684,7 @@ function _jbEcon() {
     memberCap: CORP_MEMBER_CAP,
     overflowFee: CORP_OVERFLOW_FEE,
     vault: Corp.vault || [],
+    corps: Corp.directory || [],
     depositable: _jbDepositable(),
     // 🖼 Admin-curated photos — published Catalog art with the admin's local
     // Forge override on top (mirrors getPackImage's resolution order).

@@ -487,6 +487,18 @@ function MailboxScreen({ mail, setMail, openTrade }) {
     setMail(mail.map(m => m.id === id ? { ...m, unread: false, claimed: true } : m));
   };
 
+  if (!cur) {
+    return (
+      <div className="screen">
+        <ScreenHead title="Mailbox" desc="Trade requests, sales, convoy reports and notices arrive here." />
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
+          <div className="mono" style={{ fontSize: 11, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 8 }}>Inbox empty</div>
+          <div style={{ fontSize: 14 }}>No messages yet.</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="screen">
       <ScreenHead
@@ -733,13 +745,8 @@ function PermRow({ role, can }) {
 // ============================================================================
 
 function TradeScreen({ assets }) {
-  const [mine, setMine] = useState([
-    { ...assets.find(a => a.name === 'Ancient Reactor Core'), tradeQty: 1 },
-    { kind: 'aza', name: 'Aza coin', qty: 12_000, tradeQty: 12_000 },
-  ]);
-  const [theirs, setTheirs] = useState([
-    { name: 'Crown of the Fallen King', rarity: 'mythic', kind: 'relic', tradeQty: 1 },
-  ]);
+  const [mine, setMine] = useState([]);
+  const [theirs, setTheirs] = useState([]);
   const [meReady, setMeReady] = useState(false);
   const [theyReady, setTheyReady] = useState(false);
   const [lock, setLock] = useState(false);
@@ -865,6 +872,14 @@ function TradeSide({ title, who, rep, assets, value, ready, onToggle, locked, mi
 function RelicDetailScreen({ relicId, onBack }) {
   const { ASSETS, HISTORY } = window.ECON;
   const r = ASSETS.find(a => a.id === relicId) || ASSETS.find(a => a.kind === 'relic');
+  if (!r) {
+    return (
+      <div className="screen">
+        <ScreenHead title="Relic" desc="Relic detail." right={<button className="btn ghost" onClick={onBack}>← Back</button>} />
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>No relic to display.</div>
+      </div>
+    );
+  }
   const hist = HISTORY[r.id] || [];
 
   return (

@@ -733,6 +733,7 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
   const count = (econ && econ.memberCount) || roster.length;
   const fee = (econ && econ.overflowFee) || 3000;
   const me = (econ && econ.handle) || '';
+  const corps = (econ && Array.isArray(econ.corps)) ? econ.corps : [];
   const act = (p) => { try { window.JB_action && window.JB_action(p); } catch (e) {} };
 
   const rolesPanel = (
@@ -746,6 +747,30 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+
+  const dirPanel = (
+    <div>
+      <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 8 }}>
+        Corporations · {corps.length} started
+      </div>
+      {corps.length === 0 ? (
+        <div className="muted" style={{ fontSize: 12.5, padding: 12 }}>No corporations have been founded yet. Be the first.</div>
+      ) : (
+        <div style={{ maxHeight: '46vh', overflow: 'auto' }}>
+          {corps.map(c => (
+            <div key={c.id} className="card flat" style={{ padding: '9px 12px', marginBottom: 6, display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700 }}>{c.name} <span className="mono muted" style={{ fontSize: 11 }}>[{c.tag}]</span>{c.mine && <span className="chip flat" style={{ marginLeft: 6 }}>YOURS</span>}</div>
+                <div className="mono muted" style={{ fontSize: 10.5 }}>{(c.faction || '—')} · {(c.element || '—')} · {c.members} member{c.members === 1 ? '' : 's'}</div>
+              </div>
+              {!corp && !c.mine && <button className="btn sm" onClick={() => setTag(c.tag)}>Apply ▸</button>}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>Joining a corporation will run through <b>City Hall</b> (coming soon).</div>
     </div>
   );
 
@@ -769,8 +794,9 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
               <button className="btn primary" disabled={!tag.trim()} onClick={() => { act({ kind: 'corpRequest', tag: tag.trim(), role }); onClose(); }}>Send application</button>
               <button className="btn ghost" onClick={onFound}>Found your own →</button>
             </div>
+            <div style={{ marginTop: 18 }}>{rolesPanel}</div>
           </div>
-          {rolesPanel}
+          {dirPanel}
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>

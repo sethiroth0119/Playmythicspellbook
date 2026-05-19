@@ -395,6 +395,14 @@ function FilterChk({ label, defaultChecked }) {
 function PropertyDetailScreen({ propertyId, onBack }) {
   const { PROPERTIES, PLAYERS, DISTRICTS, REVIEWS } = window.ECON;
   const p = PROPERTIES.find(x => x.id === propertyId) || PROPERTIES[0];
+  if (!p) {
+    return (
+      <div className="re-screen" style={{ padding: 24 }}>
+        <button className="btn ghost" onClick={onBack}>← Back</button>
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--muted)', marginTop: 16 }}>No listing to display yet.</div>
+      </div>
+    );
+  }
   const rePhoto = (window.JB_art && window.JB_art('re', p.id)) || '';
   const reAdm = !!(window.JB_isAdmin && window.JB_isAdmin());
   const agent = PLAYERS.find(x => x.id === p.agent);

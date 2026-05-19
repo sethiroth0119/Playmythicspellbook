@@ -25488,8 +25488,8 @@ function openBankOfEthos() {
         '<span style="flex:1"></span>';
       bar.appendChild(back);
       const amtEl = () => parseInt((document.getElementById('boe-amt') || {}).value, 10) || 0;
-      const dep = document.getElementById('boe-dep'); if (dep) dep.onclick = () => { const a = amtEl(); dep.disabled = true; boeDeposit(a).then(() => { dep.disabled = false; paint(); try { postSeed(); } catch (e) {} }); };
-      const wd = document.getElementById('boe-wd'); if (wd) wd.onclick = () => { const a = amtEl(); wd.disabled = true; boeWithdraw(a).then(() => { wd.disabled = false; paint(); try { postSeed(); } catch (e) {} }); };
+      const dep = document.getElementById('boe-dep'); if (dep) dep.onclick = () => { const a = amtEl(); dep.disabled = true; boeDeposit(a).then(() => { dep.disabled = false; paint(); try { postSeed(); } catch (e) {} try { if (typeof render === 'function') render(); } catch (e) {} }); };
+      const wd = document.getElementById('boe-wd'); if (wd) wd.onclick = () => { const a = amtEl(); wd.disabled = true; boeWithdraw(a).then(() => { wd.disabled = false; paint(); try { postSeed(); } catch (e) {} try { if (typeof render === 'function') render(); } catch (e) {} }); };
       const ex = document.getElementById('boe-exch'); if (ex) ex.onclick = () => openExchange();
     };
     // 💱 Aza → Cinder exchange — confirmation modal with live preview and an
@@ -25550,7 +25550,7 @@ function openBankOfEthos() {
         goEl.onclick = () => {
           const n = Math.floor(Number(inEl.value) || 0);
           goEl.disabled = true; goEl.style.opacity = '0.5'; goEl.textContent = 'Exchanging…';
-          boeExchangeAzaToCinder(n).then((okok) => { close(); paint(); try { postSeed(); } catch (e) {} });
+          boeExchangeAzaToCinder(n).then((okok) => { close(); paint(); try { postSeed(); } catch (e) {} try { if (typeof render === 'function') render(); } catch (e) {} });
         };
         setTimeout(() => { try { inEl.focus(); } catch (e) {} }, 30);
         sync();
@@ -25600,7 +25600,7 @@ function openBankOfEthos() {
     let _txBusy = false;
     const onTx = (d) => {
       if (_txBusy) return; _txBusy = true;
-      const done = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _txBusy = false; paint(); postSeed(); }); };
+      const done = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _txBusy = false; paint(); postSeed(); try { if (typeof render === 'function') render(); } catch (e) {} }); };
       try {
         const amt = Math.floor(Number(d.amount) || 0);
         const kind = d.kind, op = d.op;
@@ -25615,7 +25615,7 @@ function openBankOfEthos() {
     let _reqBusy = false;
     const onReq = (d) => {
       if (_reqBusy) return; _reqBusy = true;
-      const fin = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _reqBusy = false; paint(); postSeed(); }); };
+      const fin = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _reqBusy = false; paint(); postSeed(); try { if (typeof render === 'function') render(); } catch (e) {} }); };
       try {
         if (d.op === 'create') fin(boeCreateRequest(d.toHandle, Math.floor(Number(d.amount) || 0), d.message));
         else if (d.op === 'pay') fin(boePayRequest(d.id));
@@ -25629,7 +25629,7 @@ function openBankOfEthos() {
     let _loanBusy = false;
     const onLoan = (d) => {
       if (_loanBusy) return; _loanBusy = true;
-      const fin = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _loanBusy = false; paint(); postSeed(); }); };
+      const fin = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _loanBusy = false; paint(); postSeed(); try { if (typeof render === 'function') render(); } catch (e) {} }); };
       try {
         if (d.op === 'apply') fin(boeCreateLoan(Math.floor(Number(d.aza) || 0), Math.floor(Number(d.installments) || 4)));
         else if (d.op === 'pay') fin(boePayInstallment(d.id));

@@ -46,31 +46,17 @@ const Icon = ({ name, size = 16, className = "" }) => {
 /* ============================================================
    CURRENCY GLYPHS — Aza coin, Cinder ember
    ============================================================ */
+// Real game currency art (served at site root — same origin as the
+// embedded /ethos/ app). Sized to match the old glyph call sites.
 const CinderGlyph = ({ size = 22 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24">
-    <defs>
-      <radialGradient id="cg" cx="35%" cy="30%">
-        <stop offset="0%" stopColor="#fff" stopOpacity="0.9" />
-        <stop offset="60%" stopColor="#ffb066" stopOpacity="0" />
-      </radialGradient>
-    </defs>
-    <path d="M12 3c1.2 3.4 5 4.6 5 9a5 5 0 11-10 0c0-2.8 1.8-3.8 2-6.5 2 1 2 3.2 3 -2.5z" fill="#fff" opacity="0.95" />
-    <ellipse cx="10" cy="10" rx="4" ry="3" fill="url(#cg)" />
-  </svg>
+  <img src="/assets/artwork/gameicons/Cinder.png" alt="Cinder"
+    width={size} height={size}
+    style={{ width: size, height: size, objectFit: "contain", verticalAlign: "middle", display: "inline-block" }} />
 );
 const AzaGlyph = ({ size = 22 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24">
-    <defs>
-      <radialGradient id="ag" cx="35%" cy="30%">
-        <stop offset="0%" stopColor="#fff" stopOpacity="0.9" />
-        <stop offset="60%" stopColor="#8ff0ff" stopOpacity="0" />
-      </radialGradient>
-    </defs>
-    <polygon points="12,3 19,8 19,16 12,21 5,16 5,8" fill="#06222b" />
-    <polygon points="12,5 17,8.5 17,15.5 12,19 7,15.5 7,8.5" fill="none" stroke="#fff" strokeWidth="1.4" opacity="0.95" />
-    <text x="12" y="14.5" textAnchor="middle" fontSize="7" fontFamily="Space Grotesk" fontWeight="700" fill="#fff">A</text>
-    <ellipse cx="10" cy="10" rx="4" ry="3" fill="url(#ag)" />
-  </svg>
+  <img src="/assets/artwork/gameicons/Azacoin.png" alt="Aza Coin"
+    width={size} height={size}
+    style={{ width: size, height: size, objectFit: "contain", verticalAlign: "middle", display: "inline-block" }} />
 );
 
 /* ============================================================
@@ -256,6 +242,62 @@ function boeTx(op, kind, amount, resId) {
   if (!(n > 0)) return false;
   try { window.parent.postMessage({ type: 'boe:tx', op: op, kind: kind, amount: n, resId: resId || null }, '*'); return true; } catch (e) { return false; }
 }
+// Cross-player Cinder request actions. The parent is authoritative and
+// re-validates / re-seeds; we just transmit the intent.
+//   op: 'create' | 'pay' | 'decline' | 'cancel'
+function boeReq(op, args) {
+  try { window.parent.postMessage(Object.assign({ type: 'boe:request', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
+}
+// 🧾 Print-to-PDF statement. Opens a styled popup the player can "Save as
+// PDF" via the system print dialog. Pure client-side, no libraries.
+function openStatementWindow(account) {
+  try {
+    var w = window.open("", "BoeStatement", "width=820,height=1000");
+    if (!w) { alert("Pop-up blocked — allow pop-ups to print the statement."); return; }
+    var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); };
+    var fmtN = function (n) { return Number(n || 0).toLocaleString(); };
+    var fmtDate = function (ms) { try { return new Date(ms).toLocaleString(); } catch (e) { return ""; } };
+    var v = (account && account.vault) || {};
+    var cat = v.resCatalog || [];
+    var bRes = v.bankRes || {};
+    var resRows = cat.filter(function (r) { return (bRes[r.id] | 0) > 0; })
+      .map(function (r) { return "<tr><td>" + esc(r.icon || "") + " " + esc(r.name) + "</td><td style='text-align:right'>" + fmtN(bRes[r.id]) + "</td></tr>"; })
+      .join("");
+    if (!resRows) resRows = "<tr><td colspan='2' style='color:#888;text-align:center'>(none)</td></tr>";
+    var led = Array.isArray(account.ledger) ? account.ledger : [];
+    var ledRows = led.length ? led.slice(0, 60).map(function (e) {
+      var c = (e.cinder | 0), a = (e.aza | 0);
+      var amt = (c ? (c > 0 ? "+" : "") + fmtN(c) + " 🜂 Cinder" : "") + (c && a ? " · " : "") + (a ? (a > 0 ? "+" : "") + fmtN(a) + " ◉ Aza" : "");
+      if (!amt) amt = "—";
+      return "<tr><td>" + esc(fmtDate(e.ts)) + "</td><td>" + esc(e.kind || "") + "</td><td>" + esc(e.note || "") + (e.counterparty ? " · " + esc(e.counterparty) : "") + "</td><td style='text-align:right;white-space:nowrap'>" + amt + "</td></tr>";
+    }).join("") : "<tr><td colspan='4' style='color:#888;text-align:center'>(none)</td></tr>";
+    var html = "<!doctype html><html><head><meta charset='utf-8'><title>Bank of Ethos — Statement</title><style>"
+      + "body{margin:0;font:14px/1.5 'Space Grotesk',system-ui,Arial,sans-serif;background:#fff;color:#161616;padding:36px 44px}"
+      + "h1{font-size:22px;margin:0 0 4px;letter-spacing:-0.01em}h2{font-size:14px;margin:24px 0 8px;letter-spacing:0.06em;text-transform:uppercase;color:#444}"
+      + ".muted{color:#777;font-size:12px}.row{display:flex;justify-content:space-between;gap:24px}"
+      + "table{width:100%;border-collapse:collapse;font-size:12.5px}td{padding:6px 8px;border-bottom:1px solid #eee;vertical-align:top}"
+      + ".bar{height:1px;background:#000;margin:14px 0 18px}"
+      + ".chip{display:inline-block;border:1px solid #ccc;padding:4px 10px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#444;margin-right:6px}"
+      + "@media print{body{padding:18mm 16mm}}"
+      + "</style></head><body>"
+      + "<h1>🏛 Bank of Ethos — Statement</h1>"
+      + "<div class='muted'>" + esc(account.callsign || "") + " · <span style='font-family:monospace'>" + esc(account.handle || "") + "</span> · Generated " + esc(fmtDate(Date.now())) + "</div>"
+      + "<div class='bar'></div>"
+      + "<h2>Balance</h2>"
+      + "<table>"
+        + "<tr><td>🜂 Cinder · in bank</td><td style='text-align:right'>" + fmtN(account.cinder) + "</td></tr>"
+        + "<tr><td>🜂 Cinder · in wallet</td><td style='text-align:right'>" + fmtN(account.walletCinder) + "</td></tr>"
+        + "<tr><td>◉ Aza Coin · in bank</td><td style='text-align:right'>" + fmtN(account.aza) + "</td></tr>"
+        + "<tr><td>◉ Aza Coin · in wallet</td><td style='text-align:right'>" + fmtN(account.walletAza) + "</td></tr>"
+      + "</table>"
+      + "<h2>Banked Resources</h2><table><tr><th style='text-align:left'>Resource</th><th style='text-align:right'>Units</th></tr>" + resRows + "</table>"
+      + "<h2>Transaction Ledger</h2><table><tr><th style='text-align:left'>When</th><th style='text-align:left'>Kind</th><th style='text-align:left'>Note</th><th style='text-align:right'>Amount</th></tr>" + ledRows + "</table>"
+      + "<div class='muted' style='margin-top:24px'>End of statement. Bank of Ethos · Camp Heights Treasury.</div>"
+      + "<script>setTimeout(function(){window.print();},250);</" + "script>"
+      + "</body></html>";
+    w.document.open(); w.document.write(html); w.document.close();
+  } catch (e) { try { alert("Could not open statement."); } catch (e2) {} }
+}
 
 function genHandle() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -317,6 +359,11 @@ function App() {
             bankReady: !!d.bankReady,
             extCols: !!d.extCols,
           },
+          // Real ledger + Cinder requests (incoming pending = ask to pay,
+          // outgoing = ones we sent).
+          ledger: Array.isArray(d.ledger) ? d.ledger : ((prev && prev.ledger) || []),
+          reqIn: Array.isArray(d.reqIn) ? d.reqIn : ((prev && prev.reqIn) || []),
+          reqOut: Array.isArray(d.reqOut) ? d.reqOut : ((prev && prev.reqOut) || []),
           created: (prev && prev.created) || new Date().toISOString(),
           recoveryKey: (prev && prev.recoveryKey) || '—',
           application: (prev && prev.application) || { org: cs, role: 'Operator', region: 'Camp Heights', purpose: 'Treasury access', linked: true },
@@ -447,7 +494,7 @@ function AppInner({ account, updateAccount, transfers, sendMoney, pushToast, onL
           {route === "vaults" && <PageVaults role={role} account={account} liveCinder={liveCinder} sessionSec={sessionSec} onSend={() => setSendTo({})} />}
           {route === "transfers" && <PageTransfers account={account} transfers={transfers} onSend={(c) => setSendTo(c || {})} />}
           {route === "directory" && <PageDirectory account={account} onSend={(c) => setSendTo(c)} />}
-          {route === "ledger" && <PageLedger transfers={transfers} />}
+          {route === "ledger" && <PageLedger account={account} transfers={transfers} />}
           {route === "loans" && <PageLoans />}
           {route === "mercs" && <PageMercs role={role} sessionSec={sessionSec} liveCinder={liveCinder} running={running} setRunning={setRunning} />}
           {route === "contracts" && <PageContracts />}
@@ -544,17 +591,19 @@ function Topbar({ account, onSend, onLogout }) {
    PAGE: VAULTS (Dashboard)
    ============================================================ */
 function PageVaults({ role, account, liveCinder, sessionSec, onSend }) {
+  const [depOpen, setDepOpen] = useState(false);
   return (
     <div>
+      {depOpen && <DepositModal account={account} onClose={() => setDepOpen(false)} />}
       <div className="page-head">
         <div>
           <div className="page-crumb">Treasury / Vaults Overview</div>
           <div className="page-title display">{account.callsign}'s Vault</div>
         </div>
         <div className="page-actions">
-          <button className="btn ghost"><Icon name="download" size={14} /> Statement</button>
+          <button className="btn ghost" onClick={() => openStatementWindow(account)}><Icon name="download" size={14} /> Statement</button>
           <button className="btn" onClick={onSend}><Icon name="arrow_out" size={14} /> Send</button>
-          <button className="btn primary"><Icon name="arrow_in" size={14} /> Deposit</button>
+          <button className="btn primary" onClick={() => setDepOpen(true)}><Icon name="arrow_in" size={14} /> Deposit</button>
         </div>
       </div>
 
@@ -655,6 +704,87 @@ function PageVaults({ role, account, liveCinder, sessionSec, onSend }) {
 /* ============================================================
    COMPOSITE PIECES
    ============================================================ */
+// Shared compact modal frame so Deposit / Request match the dashboard's
+// dark gold-bronze aesthetic without growing a CSS surface area.
+function ModalFrame({ title, onClose, children }) {
+  return (
+    <div onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(4,3,8,0.78)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div role="dialog" aria-modal="true" style={{ width: "min(440px,92vw)", background: "linear-gradient(180deg,#13101f,#0a0815)", border: "1px solid var(--hair)", boxShadow: "0 24px 60px rgba(0,0,0,0.7)", padding: 20, color: "var(--ink)" }}>
+        <div className="row between" style={{ marginBottom: 12 }}>
+          <div className="display" style={{ fontWeight: 700, fontSize: 18, color: "var(--ink)" }}>{title}</div>
+          <button className="btn sm ghost" onClick={onClose}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function DepositModal({ account, onClose }) {
+  const [kind, setKind] = useState("cinder");
+  const [amt, setAmt] = useState("");
+  const isCinder = kind === "cinder";
+  const wallet = isCinder ? (account.walletCinder | 0) : (account.walletAza | 0);
+  const n = Math.max(0, Math.floor(Number(amt) || 0));
+  const submit = () => {
+    if (!(n > 0)) return;
+    if (n > wallet) { setAmt(String(wallet)); return; }
+    if (boeTx("deposit", kind, n)) onClose();
+  };
+  return (
+    <ModalFrame title="Deposit to Bank" onClose={onClose}>
+      <div className="row" style={{ gap: 8, marginBottom: 12 }}>
+        <button className={"btn sm" + (isCinder ? "" : " ghost")} onClick={() => setKind("cinder")}><CinderGlyph size={14} /> Cinder</button>
+        <button className={"btn sm" + (!isCinder ? "" : " ghost")} onClick={() => setKind("aza")}><AzaGlyph size={14} /> Aza Coin</button>
+      </div>
+      <div className="small-text" style={{ color: "var(--ink-dim)", marginBottom: 8 }}>You have <b>{fmt(wallet)}</b> {isCinder ? "Cinder" : "Aza"} in your wallet.</div>
+      <div className="row" style={{ gap: 8, marginBottom: 14 }}>
+        <input type="number" min="1" step="1" placeholder="amount" value={amt}
+          onChange={(e) => setAmt(e.target.value)}
+          style={{ flex: 1, background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+        <button className="btn sm ghost" onClick={() => setAmt(String(wallet))}>Max</button>
+      </div>
+      <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn primary" onClick={submit} disabled={!(n > 0)}>Deposit</button>
+      </div>
+    </ModalFrame>
+  );
+}
+
+function RequestModal({ account, onClose }) {
+  const [to, setTo] = useState("");
+  const [amt, setAmt] = useState("");
+  const [msg, setMsg] = useState("");
+  const n = Math.max(0, Math.floor(Number(amt) || 0));
+  const submit = () => {
+    const h = to.trim();
+    if (!h || !(n > 0)) return;
+    if (boeReq("create", { toHandle: h, amount: n, message: msg })) onClose();
+  };
+  return (
+    <ModalFrame title="Request Cinder" onClose={onClose}>
+      <div className="small-text" style={{ color: "var(--ink-dim)", marginBottom: 10 }}>Ask another Bank of Ethos holder for Cinder. They see a pending request and choose to Pay or Decline. Paid Cinder lands in your bank automatically.</div>
+      <div className="stack-sm" style={{ marginBottom: 14 }}>
+        <input placeholder="@handle (exact)" value={to}
+          onChange={(e) => setTo(e.target.value)}
+          style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+        <input type="number" min="1" step="1" placeholder="amount of Cinder" value={amt}
+          onChange={(e) => setAmt(e.target.value)}
+          style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+        <input placeholder="message (optional)" value={msg} maxLength={200}
+          onChange={(e) => setMsg(e.target.value)}
+          style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px" }} />
+      </div>
+      <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn primary" onClick={submit} disabled={!to.trim() || !(n > 0)}>Send Request</button>
+      </div>
+    </ModalFrame>
+  );
+}
+
 function BalanceCard({ kind, amount, decimals = 0, delta, spark, onSend, wallet = 0, bankReady = true }) {
   const isCinder = kind === "cinder";
   const sym = isCinder ? "🔥" : "👑";
@@ -1332,19 +1462,20 @@ function PageLoans() {
 /* ============================================================
    PAGE: LEDGER
    ============================================================ */
-function PageLedger({ transfers = [] }) {
-  // merge user transfers (most recent first) with mock ledger entries
-  const merged = [
-    ...transfers.map(tx => ({
-      t: new Date(tx.t).toLocaleTimeString("en-US", { hour12: false }),
-      type: "P2P Send",
-      actor: tx.toName + " · " + tx.to,
-      memo: tx.memo || "Player-to-player transfer",
-      amt: -tx.amount,
-      cur: tx.currency,
-    })),
-    ...LEDGER,
-  ];
+function PageLedger({ account, transfers = [] }) {
+  // Real ledger from the parent (deposit/withdraw/exchange/resource ops +
+  // request settlements). Each entry may carry cinder OR aza OR both
+  // (exchange) — we surface both on one row.
+  const ledger = Array.isArray(account && account.ledger) ? account.ledger : [];
+  const fmtT = (ms) => { try { return new Date(ms).toLocaleString(); } catch (e) { return ""; } };
+  const merged = ledger.map(e => ({
+    t: fmtT(e.ts),
+    type: e.kind || "—",
+    actor: e.counterparty || "",
+    memo: e.note || "",
+    cinder: e.cinder | 0,
+    aza: e.aza | 0,
+  }));
   return (
     <div>
       <div className="page-head">
@@ -1385,17 +1516,17 @@ function PageLedger({ transfers = [] }) {
                 <td><span className="chip">{e.type}</span></td>
                 <td>{e.actor}</td>
                 <td className="dim">{e.memo}</td>
-                <td className="mono" style={{ textAlign: "right", color: e.amt === null ? "var(--ink-dim)" : (e.amt > 0 ? "var(--good)" : "var(--bad)"), fontWeight: 600 }}>
-                  {e.amt === null ? "—" : `${e.amt > 0 ? "+" : ""}${fmt(e.amt)}`}
+                <td className="mono" style={{ textAlign: "right", color: e.cinder > 0 ? "var(--good)" : e.cinder < 0 ? "var(--bad)" : "var(--ink-dim)", fontWeight: 600 }}>
+                  {e.cinder ? <span><span className="row" style={{ display: "inline-flex", gap: 4, alignItems: "center" }}><CinderGlyph size={12}/>{(e.cinder > 0 ? "+" : "") + fmt(e.cinder)}</span></span> : "—"}
+                  {e.aza ? <span style={{ marginLeft: 8, color: e.aza > 0 ? "var(--good)" : "var(--bad)" }}><span className="row" style={{ display: "inline-flex", gap: 4, alignItems: "center" }}><AzaGlyph size={12}/>{(e.aza > 0 ? "+" : "") + fmt(e.aza)}</span></span> : null}
                 </td>
-                <td>
-                  {e.cur === "cinder" && <span className="row" style={{ gap: 6 }}><CinderGlyph size={12}/><span className="mono dim">CDR</span></span>}
-                  {e.cur === "aza" && <span className="row" style={{ gap: 6 }}><AzaGlyph size={12}/><span className="mono dim">AZA</span></span>}
-                  {e.cur === null && <span className="dim mono">items</span>}
-                </td>
-                <td><button className="btn sm ghost">View</button></td>
+                <td className="dim mono">{e.cinder && e.aza ? "CDR · AZA" : (e.cinder ? "CDR" : (e.aza ? "AZA" : "—"))}</td>
+                <td></td>
               </tr>
             ))}
+            {merged.length === 0 && (
+              <tr><td colSpan="7" className="dim" style={{ textAlign: "center", padding: 28, fontStyle: "italic" }}>(none) — no transactions yet</td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -2219,15 +2350,22 @@ function SendModal({ account, initialContact, onClose, onSend }) {
    PAGE: SEND & REQUEST
    ============================================================ */
 function PageTransfers({ account, transfers, onSend }) {
+  const [reqOpen, setReqOpen] = useState(false);
+  const reqIn = Array.isArray(account.reqIn) ? account.reqIn : [];
+  const reqOut = Array.isArray(account.reqOut) ? account.reqOut : [];
+  const pendIn = reqIn.filter(r => r.status === "pending");
+  const pendOut = reqOut.filter(r => r.status === "pending");
+  const histOut = reqOut.filter(r => r.status !== "pending");
   return (
     <div>
+      {reqOpen && <RequestModal account={account} onClose={() => setReqOpen(false)} />}
       <div className="page-head">
         <div>
           <div className="page-crumb">Treasury / Send & Request</div>
           <div className="page-title display">Send & Request</div>
         </div>
         <div className="page-actions">
-          <button className="btn ghost"><Icon name="arrow_in" size={14}/> Request Cinder</button>
+          <button className="btn ghost" onClick={() => setReqOpen(true)}><Icon name="arrow_in" size={14}/> Request Cinder</button>
           <button className="btn primary" onClick={() => onSend()}><Icon name="arrow_out" size={14}/> Send money</button>
         </div>
       </div>
@@ -2235,6 +2373,52 @@ function PageTransfers({ account, transfers, onSend }) {
       <div className="grid g-2" style={{ marginBottom: 14 }}>
         <BalanceCard kind="cinder" amount={account.cinder} wallet={account.walletCinder || 0} bankReady={!!(account.vault && account.vault.bankReady)} delta="+4.2%" spark={SPK_CINDER} onSend={() => onSend()} />
         <BalanceCard kind="aza"    amount={account.aza}    wallet={account.walletAza || 0}    bankReady={!!(account.vault && account.vault.bankReady && account.vault.extCols)} delta="-0.6%" spark={SPK_AZA} onSend={() => onSend()} />
+      </div>
+
+      {/* Cinder requests — incoming (pay or decline) + outgoing status. */}
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+        <div className="panel">
+          <div className="panel-h"><h3>Incoming Requests</h3><span className="label">{pendIn.length} pending</span></div>
+          <div style={{ maxHeight: 320, overflowY: "auto" }}>
+            {pendIn.length === 0 ? (
+              <div className="panel-b muted" style={{ fontSize: 12 }}>No one is asking you for Cinder. (none)</div>
+            ) : pendIn.map(r => (
+              <div key={r.id} className="row between" style={{ padding: "10px 14px", borderBottom: "1px solid var(--hair)", gap: 8 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>From <span className="mono" style={{ color: "var(--violet)" }}>{r.from_handle}</span></div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--cinder)", marginTop: 2 }}>{fmt(r.amount)} CDR</div>
+                  {r.message && <div style={{ fontSize: 11, color: "var(--ink-dim)", marginTop: 2 }}>{r.message}</div>}
+                </div>
+                <div className="row" style={{ gap: 6 }}>
+                  <button className="btn sm primary" onClick={() => boeReq("pay", { id: r.id })}>Pay</button>
+                  <button className="btn sm ghost" onClick={() => boeReq("decline", { id: r.id })}>Decline</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-h"><h3>Outgoing Requests</h3><span className="label">{pendOut.length} pending · {histOut.length} history</span></div>
+          <div style={{ maxHeight: 320, overflowY: "auto" }}>
+            {(pendOut.length + histOut.length) === 0 ? (
+              <div className="panel-b muted" style={{ fontSize: 12 }}>You haven't requested any Cinder yet. (none)</div>
+            ) : (
+              [...pendOut, ...histOut].map(r => (
+                <div key={r.id} className="row between" style={{ padding: "10px 14px", borderBottom: "1px solid var(--hair)", gap: 8 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600 }}>To <span className="mono" style={{ color: "var(--violet)" }}>{r.to_handle}</span></div>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--cinder)", marginTop: 2 }}>{fmt(r.amount)} CDR · <span style={{ color: "var(--ink-dim)" }}>{r.status}</span></div>
+                    {r.message && <div style={{ fontSize: 11, color: "var(--ink-dim)", marginTop: 2 }}>{r.message}</div>}
+                  </div>
+                  {r.status === "pending" && (
+                    <button className="btn sm ghost" onClick={() => boeReq("cancel", { id: r.id })}>Cancel</button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 14 }}>

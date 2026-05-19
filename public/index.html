@@ -24991,10 +24991,157 @@ const BOE_FEE_PERIOD_MS = 30 * 24 * 3600000; // 30 days
 // rate the cashout vault settles at (CASHOUT_RATE_PER_DOLLAR = 5000), so
 // value is consistent end-to-end: buy Aza → exchange → cash out.
 const AZA_TO_CINDER = 5000;                 // 1 👑 → 5,000 🔥 (irreversible)
-const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true };
+const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true, ledger: [], reqIn: [], reqOut: [], _handle: '', _label: '' };
 async function _boeRow() {
   if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
   return Cloud.client.from('bank_of_ethos');
+}
+function _boeTbl(name) {
+  if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
+  return Cloud.client.from(name);
+}
+// 📒 Append a signed ledger entry (memory + cloud, best-effort). Memory copy
+// is what the embedded app's Ledger view + PDF statement render.
+async function boeLog(kind, cinder, aza, note, counterparty) {
+  try {
+    const e = { ts: Date.now(), kind: kind, cinder: cinder | 0, aza: aza | 0, note: note || '', counterparty: counterparty || '' };
+    BankEthos.ledger.unshift(e);
+    if (BankEthos.ledger.length > 120) BankEthos.ledger.length = 120;
+    const t = _boeTbl('boe_ledger'); if (!t) return;
+    await t.insert({ user_id: Profile.cloud.userId, kind: e.kind, cinder: e.cinder, aza: e.aza, note: e.note, counterparty: e.counterparty });
+  } catch (e2) {}
+}
+// Publish our @handle ↔ user_id so other players can request Cinder from
+// us, and stamp it on our own bank row. Best-effort, never blocks banking.
+async function boeSyncDirectory() {
+  try {
+    if (!BankEthos._handle) return;
+    const me = Profile.cloud.userId;
+    const d = _boeTbl('boe_directory');
+    if (d) { try { await d.upsert({ user_id: me, handle: BankEthos._handle, label: BankEthos._label || BankEthos._handle, updated_at: new Date().toISOString() }, { onConflict: 'user_id' }); } catch (e) {} }
+    const b = await _boeRow();
+    if (b) { try { await b.update({ handle: BankEthos._handle }).eq('user_id', me); } catch (e) {} }
+  } catch (e) {}
+}
+// Pull recent ledger rows from cloud into memory (most-recent first).
+async function boeFetchLedger() {
+  try {
+    const t = _boeTbl('boe_ledger'); if (!t) return;
+    const r = await t.select('ts,kind,cinder,aza,note,counterparty').eq('user_id', Profile.cloud.userId).order('ts', { ascending: false }).limit(120);
+    if (r && !r.error && Array.isArray(r.data)) {
+      BankEthos.ledger = r.data.map(x => ({ ts: x.ts ? Date.parse(x.ts) : Date.now(), kind: x.kind || '', cinder: Number(x.cinder) || 0, aza: Number(x.aza) || 0, note: x.note || '', counterparty: x.counterparty || '' }));
+    }
+  } catch (e) {}
+}
+// Resolve an @handle → user_id via the public directory (handle only,
+// never balances). Returns { user_id, handle, label } or null.
+async function boeResolveHandle(handle) {
+  try {
+    const h = String(handle || '').trim().replace(/^@+/, '').toLowerCase();
+    if (!h) return null;
+    const d = _boeTbl('boe_directory'); if (!d) return null;
+    const r = await d.select('user_id,handle,label').ilike('handle', '@' + h).limit(1);
+    if (r && !r.error && r.data && r.data[0]) return r.data[0];
+    const r2 = await d.select('user_id,handle,label').ilike('handle', h).limit(1);
+    if (r2 && !r2.error && r2.data && r2.data[0]) return r2.data[0];
+    return null;
+  } catch (e) { return null; }
+}
+// Create a Cinder request to another holder (resolved via directory).
+async function boeCreateRequest(toHandle, amount, message) {
+  amount = Math.floor(amount);
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (!(amount > 0)) { showToast('Enter an amount.'); return false; }
+  const tgt = await boeResolveHandle(toHandle);
+  if (!tgt || !tgt.user_id) { showToast('No Bank of Ethos account for ' + toHandle + '.', 4200); return false; }
+  if (tgt.user_id === Profile.cloud.userId) { showToast("You can't request from yourself.", 3200); return false; }
+  try {
+    const t = _boeTbl('boe_requests'); if (!t) { showToast('Bank not ready.'); return false; }
+    const ins = await t.insert({ from_user: Profile.cloud.userId, from_handle: BankEthos._handle, from_label: BankEthos._label || BankEthos._handle, to_user: tgt.user_id, to_handle: tgt.handle || ('@' + String(toHandle).replace(/^@+/, '')), amount: amount, message: String(message || '').slice(0, 200), status: 'pending' });
+    if (ins && ins.error) throw ins.error;
+  } catch (e) { showToast('⚠ Request failed — try again.', 4000); return false; }
+  await boeLog('request_sent', 0, 0, 'Requested ' + amount.toLocaleString() + ' Cinder', tgt.handle || ('@' + toHandle));
+  showToast('💸 Requested ' + amount.toLocaleString() + ' 🔥 from ' + (tgt.handle || toHandle) + '.', 4600);
+  await boeFetchRequests();
+  return true;
+}
+// Load my incoming (to me, pending) + outgoing requests.
+async function boeFetchRequests() {
+  try {
+    const t = _boeTbl('boe_requests'); if (!t) return;
+    const me = Profile.cloud.userId;
+    const ri = await t.select('*').eq('to_user', me).order('created_at', { ascending: false }).limit(60);
+    const ro = await t.select('*').eq('from_user', me).order('created_at', { ascending: false }).limit(60);
+    BankEthos.reqIn = (ri && !ri.error && Array.isArray(ri.data)) ? ri.data : [];
+    BankEthos.reqOut = (ro && !ro.error && Array.isArray(ro.data)) ? ro.data : [];
+  } catch (e) {}
+}
+// Pay an incoming request: debit me (wallet-first then bank), mark paid.
+async function boePayRequest(id) {
+  try {
+    const t = _boeTbl('boe_requests'); if (!t) return false;
+    const me = Profile.cloud.userId;
+    const r = await t.select('*').eq('id', id).maybeSingle();
+    const req = r && r.data;
+    if (!req || req.to_user !== me || req.status !== 'pending') { showToast('Request unavailable.', 3200); return false; }
+    const amt = Math.floor(Number(req.amount) || 0);
+    if (!(amt > 0)) return false;
+    const wallet = (Profile && Profile.gems) | 0;
+    const total = wallet + (BankEthos.balance | 0);
+    if (total < amt) { showToast('You have ' + total.toLocaleString() + ' 🔥 (wallet + bank).', 4200); return false; }
+    const wTake = Math.min(amt, wallet), bTake = amt - wTake;
+    const prevBal = BankEthos.balance;
+    if (wTake > 0 && !spendGems(wTake)) { showToast('Not enough Cinders'); return false; }
+    if (bTake > 0) {
+      const b = await _boeRow();
+      const up = await b.update({ balance: prevBal - bTake, updated_at: new Date().toISOString() }).eq('user_id', me);
+      if (up && up.error) { if (wTake > 0) { addGems(wTake); } showToast('⚠ Payment failed.', 4000); return false; }
+      BankEthos.balance = prevBal - bTake;
+    }
+    try { saveProfile(); } catch (e) {}
+    const upd = await t.update({ status: 'paid', resolved_at: new Date().toISOString() }).eq('id', id).eq('to_user', me);
+    if (upd && upd.error) { /* funds already moved; requester still collects by status */ }
+    await boeLog('request_paid', -amt, 0, 'Paid request', req.from_handle || '');
+    showToast('💸 Paid ' + amt.toLocaleString() + ' 🔥 to ' + (req.from_handle || 'requester') + '.', 5000);
+    await boeFetchRequests();
+    return true;
+  } catch (e) { showToast('⚠ Payment failed.', 4000); return false; }
+}
+async function boeDeclineRequest(id) {
+  try {
+    const t = _boeTbl('boe_requests'); if (!t) return false;
+    await t.update({ status: 'declined', resolved_at: new Date().toISOString() }).eq('id', id).eq('to_user', Profile.cloud.userId).eq('status', 'pending');
+    await boeFetchRequests(); return true;
+  } catch (e) { return false; }
+}
+async function boeCancelRequest(id) {
+  try {
+    const t = _boeTbl('boe_requests'); if (!t) return false;
+    await t.update({ status: 'cancelled', resolved_at: new Date().toISOString() }).eq('id', id).eq('from_user', Profile.cloud.userId).eq('status', 'pending');
+    await boeFetchRequests(); return true;
+  } catch (e) { return false; }
+}
+// Claim-on-read settlement: any request I sent that the payer marked
+// 'paid' credits my BANK balance, then flips to 'settled' (single-writer
+// safe — I only ever write my own bank row).
+async function boeAutoSettle() {
+  try {
+    const t = _boeTbl('boe_requests'); if (!t) return;
+    const me = Profile.cloud.userId;
+    const r = await t.select('*').eq('from_user', me).eq('status', 'paid').limit(40);
+    if (!r || r.error || !Array.isArray(r.data) || !r.data.length) return;
+    for (const req of r.data) {
+      const amt = Math.floor(Number(req.amount) || 0);
+      if (!(amt > 0)) continue;
+      const b = await _boeRow(); if (!b) continue;
+      const up = await b.update({ balance: (BankEthos.balance | 0) + amt, updated_at: new Date().toISOString() }).eq('user_id', me);
+      if (up && up.error) continue;
+      BankEthos.balance = (BankEthos.balance | 0) + amt;
+      await t.update({ status: 'settled', resolved_at: new Date().toISOString() }).eq('id', req.id).eq('from_user', me);
+      await boeLog('request_received', amt, 0, 'Request paid', req.to_handle || '');
+      showToast('💰 ' + (req.to_handle || 'A player') + ' paid your request — +' + amt.toLocaleString() + ' 🔥 to bank.', 5600);
+    }
+  } catch (e) {}
 }
 async function boeFetch() {
   try {
@@ -25055,6 +25202,7 @@ async function boeDeposit(amt) {
     if (up && up.error) throw up.error;
     BankEthos.balance += amt;
   } catch (e) { addGems(amt); try { saveProfile(); } catch (_) {} showToast('⚠ Deposit failed — refunded.', 4200); return false; }
+  try { boeLog('deposit', amt, 0, 'Cinder deposit to bank'); } catch (e) {}
   showToast('🏦 Deposited ' + amt.toLocaleString() + ' 🔥 — balance ' + BankEthos.balance.toLocaleString() + '.', 4600);
   return true;
 }
@@ -25070,6 +25218,7 @@ async function boeWithdraw(amt) {
     BankEthos.balance -= amt;
   } catch (e) { showToast('⚠ Withdrawal failed — try again.', 3600); return false; }
   addGems(amt); try { saveProfile(); } catch (e) {}
+  try { boeLog('withdraw', -amt, 0, 'Cinder withdrawal'); } catch (e) {}
   showToast('🏦 Withdrew ' + amt.toLocaleString() + ' 🔥 — balance ' + BankEthos.balance.toLocaleString() + '.', 4600);
   return true;
 }
@@ -25093,6 +25242,7 @@ async function boeDepositAza(amt) {
     if (up && up.error) throw up.error;
     BankEthos.aza += amt;
   } catch (e) { addSovereigns(amt); try { saveProfile(); } catch (_) {} showToast('⚠ Aza deposit failed — refunded.', 4200); return false; }
+  try { boeLog('deposit', 0, amt, 'Aza deposit to bank'); } catch (e) {}
   showToast('🏦 Deposited ' + amt.toLocaleString() + ' 👑 — bank Aza ' + BankEthos.aza.toLocaleString() + '.', 4600);
   return true;
 }
@@ -25109,6 +25259,7 @@ async function boeWithdrawAza(amt) {
     BankEthos.aza -= amt;
   } catch (e) { showToast('⚠ Aza withdrawal failed — try again.', 3600); return false; }
   addSovereigns(amt); try { saveProfile(); } catch (e) {}
+  try { boeLog('withdraw', 0, -amt, 'Aza withdrawal'); } catch (e) {}
   showToast('🏦 Withdrew ' + amt.toLocaleString() + ' 👑 — bank Aza ' + BankEthos.aza.toLocaleString() + '.', 4600);
   return true;
 }
@@ -25144,6 +25295,7 @@ async function boeExchangeAzaToCinder(azaAmt) {
     BankEthos.aza = prevAza; BankEthos.balance = prevBal;
     showToast('⚠ Exchange failed — nothing moved.', 4200); return false;
   }
+  try { boeLog('exchange', cinderOut, -azaAmt, 'Exchanged Aza → Cinder'); } catch (e) {}
   showToast('💱 Exchanged ' + azaAmt.toLocaleString() + ' 👑 → ' + cinderOut.toLocaleString() + ' 🔥 → bank.', 5200);
   return true;
 }
@@ -25168,6 +25320,7 @@ async function boeDepositRes(id, qty) {
     if (up && up.error) throw up.error;
     BankEthos.resources = nextRes;
   } catch (e) { if (typeof addRes === 'function') addRes(id, qty); try { _persistResourcesSoon(); } catch (_) {} showToast('⚠ Deposit failed — refunded.', 4200); return false; }
+  try { boeLog('resource', 0, 0, 'Banked ' + qty.toLocaleString() + ' ' + _boeResName(id)); } catch (e) {}
   showToast('🏦 Banked ' + qty.toLocaleString() + ' ' + _boeResName(id) + '.', 4200);
   return true;
 }
@@ -25188,6 +25341,7 @@ async function boeWithdrawRes(id, qty) {
     BankEthos.resources = nextRes;
   } catch (e) { showToast('⚠ Withdrawal failed — try again.', 3600); return false; }
   if (typeof addRes === 'function') addRes(id, qty); try { _persistResourcesSoon(); } catch (e) {}
+  try { boeLog('resource', 0, 0, 'Withdrew ' + qty.toLocaleString() + ' ' + _boeResName(id)); } catch (e) {}
   showToast('🏦 Withdrew ' + qty.toLocaleString() + ' ' + _boeResName(id) + '.', 4200);
   return true;
 }
@@ -25326,6 +25480,10 @@ function openBankOfEthos() {
           bankRes: (BankEthos.ready && BankEthos.resources) ? BankEthos.resources : {},
           bankReady: !!BankEthos.ready,
           extCols: !!BankEthos._extCols,
+          // real transaction ledger + cinder requests
+          ledger: Array.isArray(BankEthos.ledger) ? BankEthos.ledger.slice(0, 80) : [],
+          reqIn: Array.isArray(BankEthos.reqIn) ? BankEthos.reqIn : [],
+          reqOut: Array.isArray(BankEthos.reqOut) ? BankEthos.reqOut : [],
           handle: '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20),
           callsign: nm.slice(0, 28),
         }, '*');
@@ -25347,7 +25505,21 @@ function openBankOfEthos() {
         else { _txBusy = false; }
       } catch (e) { _txBusy = false; }
     };
-    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); } catch (x) {} };
+    // Cinder request actions (create / pay / decline / cancel). Parent is
+    // authoritative; re-seeds the app with fresh ledger + request lists.
+    let _reqBusy = false;
+    const onReq = (d) => {
+      if (_reqBusy) return; _reqBusy = true;
+      const fin = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _reqBusy = false; paint(); postSeed(); }); };
+      try {
+        if (d.op === 'create') fin(boeCreateRequest(d.toHandle, Math.floor(Number(d.amount) || 0), d.message));
+        else if (d.op === 'pay') fin(boePayRequest(d.id));
+        else if (d.op === 'decline') fin(boeDeclineRequest(d.id));
+        else if (d.op === 'cancel') fin(boeCancelRequest(d.id));
+        else { _reqBusy = false; }
+      } catch (e) { _reqBusy = false; }
+    };
+    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); else if (e.data.type === 'boe:request') onReq(e.data); } catch (x) {} };
     window.addEventListener('message', onMsg);
     const _origClose = back.onclick;
     back.onclick = () => { try { window.removeEventListener('message', onMsg); } catch (e) {} _origClose(); };
@@ -25364,6 +25536,8 @@ function openBankOfEthos() {
       const nm = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Operator') + '';
       const cs = (nm.trim() || 'Operator').slice(0, 28);
       const ini = (cs.trim().split(/\s+/).map((s) => s[0]).slice(0, 2).join('') || 'OP').toUpperCase();
+      BankEthos._handle = '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20);
+      BankEthos._label = cs;
       // Seed the player's TRUE balances on first paint (bank values fill in
       // ~1s later when boeFetch + postSeed resolve). Wallet balances are
       // already loaded synchronously, so they're exact immediately.
@@ -25391,7 +25565,21 @@ function openBankOfEthos() {
     wrap.appendChild(f);
     document.body.appendChild(wrap);
     requestAnimationFrame(() => { wrap.style.opacity = '1'; });
-    boeFetch().then(function (ok) { if (ok) { boeApplyMaintenance().then(function () { paint(); postSeed(); }); } paint(); postSeed(); });
+    boeFetch().then(function (ok) {
+      if (ok) {
+        boeApplyMaintenance().then(function () { paint(); postSeed(); });
+        // Publish handle, settle any paid requests, then load ledger +
+        // requests so the Ledger / Send & Request views are real.
+        Promise.resolve()
+          .then(function () { return boeSyncDirectory(); })
+          .then(function () { return boeAutoSettle(); })
+          .then(function () { return boeFetchLedger(); })
+          .then(function () { return boeFetchRequests(); })
+          .then(function () { paint(); postSeed(); })
+          .catch(function () {});
+      }
+      paint(); postSeed();
+    });
   } catch (e) {}
 }
 function openCityHall() {

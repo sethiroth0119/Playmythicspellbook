@@ -247,6 +247,74 @@ drop policy if exists boe_ins on public.bank_of_ethos;
 create policy boe_ins on public.bank_of_ethos for insert to authenticated with check (user_id = auth.uid());
 drop policy if exists boe_upd on public.bank_of_ethos;
 create policy boe_upd on public.bank_of_ethos for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+alter table public.bank_of_ethos add column if not exists handle text;
+
+-- 📒 Transaction ledger — self-scoped, append-only in practice. Every bank
+-- deposit / withdraw / exchange / resource move / request settlement logs
+-- one signed row here so the Ledger view + PDF statement are real.
+create table if not exists public.boe_ledger (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  ts timestamptz not null default now(),
+  kind text not null,
+  cinder numeric not null default 0,
+  aza numeric not null default 0,
+  note text,
+  counterparty text
+);
+create index if not exists boe_ledger_user_ts on public.boe_ledger (user_id, ts desc);
+alter table public.boe_ledger enable row level security;
+drop policy if exists boe_led_sel on public.boe_ledger;
+create policy boe_led_sel on public.boe_ledger for select to authenticated using (user_id = auth.uid());
+drop policy if exists boe_led_ins on public.boe_ledger;
+create policy boe_led_ins on public.boe_ledger for insert to authenticated with check (user_id = auth.uid());
+
+-- 🪪 Handle directory — ONLY user_id ↔ @handle ↔ label (no balances), so a
+-- player can resolve "request cinder from @someone" without exposing any
+-- private bank data. Readable by any signed-in player; writable only by
+-- its owner.
+create table if not exists public.boe_directory (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  handle text,
+  label text,
+  updated_at timestamptz default now()
+);
+create index if not exists boe_directory_handle on public.boe_directory (lower(handle));
+alter table public.boe_directory enable row level security;
+drop policy if exists boe_dir_sel on public.boe_directory;
+create policy boe_dir_sel on public.boe_directory for select to authenticated using (true);
+drop policy if exists boe_dir_ins on public.boe_directory;
+create policy boe_dir_ins on public.boe_directory for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists boe_dir_upd on public.boe_directory;
+create policy boe_dir_upd on public.boe_directory for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- 💸 Cinder requests — player asks another Bank of Ethos holder for Cinder.
+-- to_user is resolved from boe_directory at creation. Settlement is
+-- claim-on-read (no cross-user writes): payer debits self + sets 'paid';
+-- requester self-credits on next open + sets 'settled'. Both sides only
+-- ever write their own bank row, so RLS stays single-writer-safe.
+create table if not exists public.boe_requests (
+  id bigint generated always as identity primary key,
+  from_user uuid not null references auth.users(id) on delete cascade,
+  from_handle text,
+  from_label text,
+  to_user uuid not null references auth.users(id) on delete cascade,
+  to_handle text,
+  amount numeric not null check (amount > 0),
+  message text,
+  status text not null default 'pending',
+  created_at timestamptz default now(),
+  resolved_at timestamptz
+);
+create index if not exists boe_req_to on public.boe_requests (to_user, status);
+create index if not exists boe_req_from on public.boe_requests (from_user, status);
+alter table public.boe_requests enable row level security;
+drop policy if exists boe_req_sel on public.boe_requests;
+create policy boe_req_sel on public.boe_requests for select to authenticated using (from_user = auth.uid() or to_user = auth.uid());
+drop policy if exists boe_req_ins on public.boe_requests;
+create policy boe_req_ins on public.boe_requests for insert to authenticated with check (from_user = auth.uid());
+drop policy if exists boe_req_upd on public.boe_requests;
+create policy boe_req_upd on public.boe_requests for update to authenticated using (from_user = auth.uid() or to_user = auth.uid()) with check (from_user = auth.uid() or to_user = auth.uid());
 
 grant select on
   public.api_corporations,

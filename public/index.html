@@ -33544,7 +33544,7 @@ function mountJustBusiness() {
     }
     if (!f) {
       f = document.createElement('iframe');
-      f.id = FID; f.src = 'corp/index.html';
+      f.id = FID; f.src = 'corp/';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect
       f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transition:opacity .5s ease';
       f.onload = function () { try { requestAnimationFrame(function () { f.style.opacity = '1'; }); } catch (e) { f.style.opacity = '1'; } };
       document.body.appendChild(f);

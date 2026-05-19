@@ -24991,7 +24991,7 @@ const BOE_FEE_PERIOD_MS = 30 * 24 * 3600000; // 30 days
 // rate the cashout vault settles at (CASHOUT_RATE_PER_DOLLAR = 5000), so
 // value is consistent end-to-end: buy Aza → exchange → cash out.
 const AZA_TO_CINDER = 5000;                 // 1 👑 → 5,000 🔥 (irreversible)
-const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true, ledger: [], reqIn: [], reqOut: [], loans: [], _handle: '', _label: '' };
+const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true, ledger: [], reqIn: [], reqOut: [], loans: [], mercListings: [], mercAsEmployer: [], mercAsMerc: [], _handle: '', _label: '' };
 async function _boeRow() {
   if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
   return Cloud.client.from('bank_of_ethos');
@@ -25244,6 +25244,198 @@ async function boePayLoanFull(loanId) {
   if (!ln) { await boeFetchLoans(); return false; }
   const owed = Math.max(0, (ln.cinder_owed | 0) - (ln.cinder_paid | 0));
   return _boeLoanPay(loanId, owed);
+}
+// 🪖 MERCENARY MARKETPLACE — players self-list (boe_merc_listings) and
+// hire each other via contracts (boe_merc_contracts). Cinder is minted at
+// the contract's target on clock-out and split 40/52/8:
+//   40 % mercenary · 52 % employer · 8 % Foundation Reserve tax.
+const BOE_MERC_SHARE_MERC = 0.40;
+const BOE_MERC_SHARE_EMPLOYER = 0.52;
+const BOE_MERC_SHARE_TAX = 0.08;
+const BOE_MERC_MAX_HOURS = 24;
+const BOE_MERC_MAX_TARGET = 5_000_000; // anti-abuse ceiling
+async function boeFetchMercListings() {
+  try {
+    const t = _boeTbl('boe_merc_listings'); if (!t) return;
+    const r = await t.select('*').eq('status', 'open').order('updated_at', { ascending: false }).limit(60);
+    BankEthos.mercListings = (r && !r.error && Array.isArray(r.data)) ? r.data : [];
+  } catch (e) {}
+}
+async function boeFetchMercContracts() {
+  try {
+    const t = _boeTbl('boe_merc_contracts'); if (!t) return;
+    const me = Profile.cloud.userId;
+    const re = await t.select('*').eq('employer_user', me).order('created_at', { ascending: false }).limit(40);
+    const rm = await t.select('*').eq('mercenary_user', me).order('created_at', { ascending: false }).limit(40);
+    BankEthos.mercAsEmployer = (re && !re.error && Array.isArray(re.data)) ? re.data : [];
+    BankEthos.mercAsMerc     = (rm && !rm.error && Array.isArray(rm.data)) ? rm.data : [];
+  } catch (e) {}
+}
+async function boeMercList(ratePerHour, bio) {
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  const me = Profile.cloud.userId;
+  try {
+    const t = _boeTbl('boe_merc_listings'); if (!t) return false;
+    // Upsert my single listing (one per player); reactivate if previously hired/withdrawn.
+    const ex = await t.select('id').eq('user_id', me).maybeSingle();
+    const row = {
+      user_id: me,
+      handle: BankEthos._handle || ('@' + (Profile.cloud.displayName || 'op').replace(/\s+/g, '').toLowerCase()),
+      label: BankEthos._label || (Profile.cloud.displayName || 'Operator'),
+      rate_per_hour: Math.max(0, Math.floor(Number(ratePerHour) || 0)),
+      bio: String(bio || '').slice(0, 280),
+      status: 'open',
+      updated_at: new Date().toISOString(),
+    };
+    if (ex && ex.data && ex.data.id) {
+      const up = await t.update(row).eq('id', ex.data.id);
+      if (up && up.error) throw up.error;
+    } else {
+      const ins = await t.insert(row);
+      if (ins && ins.error) throw ins.error;
+    }
+  } catch (e) { showToast('⚠ Listing failed — try again.', 4000); return false; }
+  showToast('🪖 You are listed for hire on the Mercenary board.', 4400);
+  await boeFetchMercListings(); await boeFetchMercContracts();
+  return true;
+}
+async function boeMercUnlist() {
+  if (!BankEthos.ready) return false;
+  try {
+    const t = _boeTbl('boe_merc_listings'); if (!t) return false;
+    const up = await t.update({ status: 'withdrawn', updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId).eq('status', 'open');
+    if (up && up.error) throw up.error;
+  } catch (e) { return false; }
+  showToast('🪖 Listing withdrawn.', 3200);
+  await boeFetchMercListings();
+  return true;
+}
+async function boeMercHire(listingId, hours, targetCinder) {
+  hours = Math.max(1, Math.min(BOE_MERC_MAX_HOURS, Math.floor(hours) || 1));
+  targetCinder = Math.max(1, Math.min(BOE_MERC_MAX_TARGET, Math.floor(targetCinder) || 0));
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (!(targetCinder > 0)) { showToast('Enter a target Cinder amount.'); return false; }
+  const me = Profile.cloud.userId;
+  // Only one active employer contract at a time keeps the live UI sane.
+  const haveActive = (BankEthos.mercAsEmployer || []).some(c => c && (c.status === 'offered' || c.status === 'active' || c.status === 'paused'));
+  if (haveActive) { showToast('You already have an open contract — finish it first.', 4400); return false; }
+  try {
+    const lt = _boeTbl('boe_merc_listings'); if (!lt) return false;
+    const lr = await lt.select('*').eq('id', listingId).eq('status', 'open').maybeSingle();
+    const lst = lr && lr.data;
+    if (!lst) { showToast('That mercenary is no longer available.', 4000); return false; }
+    if (lst.user_id === me) { showToast("You can't hire yourself.", 3600); return false; }
+    const ct = _boeTbl('boe_merc_contracts'); if (!ct) return false;
+    const ins = await ct.insert({
+      employer_user: me, employer_handle: BankEthos._handle, employer_label: BankEthos._label,
+      mercenary_user: lst.user_id, mercenary_handle: lst.handle, mercenary_label: lst.label,
+      hours: hours, target_cinder: targetCinder, status: 'offered',
+    });
+    if (ins && ins.error) throw ins.error;
+    // Best-effort: flip the listing so the board reflects the hire.
+    try { await lt.update({ status: 'hired', updated_at: new Date().toISOString() }).eq('id', listingId); } catch (e) {}
+  } catch (e) { showToast('⚠ Hire failed — try again.', 4000); return false; }
+  try { boeLog('merc_hire', 0, 0, 'Hired ' + (BankEthos.mercListings.find(x => x.id === listingId) || {}).handle + ' · target ' + targetCinder.toLocaleString() + ' 🜂', ''); } catch (e) {}
+  showToast('🪖 Contract sent — awaiting mercenary clock-in.', 5200);
+  await boeFetchMercListings();
+  await boeFetchMercContracts();
+  return true;
+}
+async function boeMercClockIn(contractId) {
+  if (!BankEthos.ready) return false;
+  try {
+    const t = _boeTbl('boe_merc_contracts'); if (!t) return false;
+    const me = Profile.cloud.userId;
+    const up = await t.update({ status: 'active', clocked_in_at: new Date().toISOString() }).eq('id', contractId).eq('mercenary_user', me).eq('status', 'offered');
+    if (up && up.error) throw up.error;
+  } catch (e) { showToast('⚠ Clock-in failed.', 4000); return false; }
+  showToast('🪖 Clocked in — session live.', 4000);
+  await boeFetchMercContracts();
+  return true;
+}
+async function boeMercPause(contractId, pause) {
+  if (!BankEthos.ready) return false;
+  try {
+    const t = _boeTbl('boe_merc_contracts'); if (!t) return false;
+    const me = Profile.cloud.userId;
+    const r = await t.select('*').eq('id', contractId).maybeSingle();
+    const c = r && r.data; if (!c) return false;
+    if (c.mercenary_user !== me && c.employer_user !== me) return false;
+    if (pause && c.status === 'active') {
+      const up = await t.update({ status: 'paused', paused_at: new Date().toISOString() }).eq('id', contractId);
+      if (up && up.error) throw up.error;
+    } else if (!pause && c.status === 'paused') {
+      const accum = (c.pause_ms_accum | 0) + (c.paused_at ? (Date.now() - Date.parse(c.paused_at)) : 0);
+      const up = await t.update({ status: 'active', paused_at: null, pause_ms_accum: accum }).eq('id', contractId);
+      if (up && up.error) throw up.error;
+    }
+  } catch (e) { return false; }
+  await boeFetchMercContracts();
+  return true;
+}
+async function boeMercClockOut(contractId, forced) {
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  const me = Profile.cloud.userId;
+  try {
+    const t = _boeTbl('boe_merc_contracts'); if (!t) return false;
+    const r = await t.select('*').eq('id', contractId).maybeSingle();
+    const c = r && r.data;
+    if (!c) { showToast('Contract not found.', 3200); return false; }
+    if (c.status !== 'active' && c.status !== 'paused' && c.status !== 'offered') { showToast('Contract already settled.', 3200); return false; }
+    const isEmp = c.employer_user === me, isMerc = c.mercenary_user === me;
+    if (!isEmp && !isMerc) return false;
+    const T = Math.floor(Number(c.target_cinder) || 0);
+    const mercShare = Math.floor(T * BOE_MERC_SHARE_MERC);
+    const empShare = Math.floor(T * BOE_MERC_SHARE_EMPLOYER);
+    const tax = Math.max(0, T - mercShare - empShare);
+    // The clocker credits THEIR OWN bank directly. The other side picks
+    // up their share on next bank open (same claim-on-read pattern as
+    // requests — single-writer-safe under boe_upd RLS).
+    const nextStatus = isMerc ? 'completed_pending_employer' : 'completed_pending_merc';
+    const myShare = isMerc ? mercShare : empShare;
+    const prevBal = BankEthos.balance;
+    if (myShare > 0) {
+      const b = await _boeRow();
+      const up = await b.update({ balance: prevBal + myShare, updated_at: new Date().toISOString() }).eq('user_id', me);
+      if (up && up.error) throw up.error;
+      BankEthos.balance = prevBal + myShare;
+    }
+    const upd = await t.update({ status: nextStatus, clocked_out_at: new Date().toISOString(), merc_payout: mercShare, employer_payout: empShare, fr_tax: tax }).eq('id', contractId);
+    if (upd && upd.error) { /* funds already credited; partner still settles by status */ }
+    // Foundation Reserve tax (4% from each side, charged once here).
+    try { if (typeof frLogCivic === 'function' && tax > 0) frLogCivic(tax, 'tax', { resource: 'Mercenary contract', market: 'mercenary' }); } catch (e) {}
+    try { boeLog(isMerc ? 'merc_earn' : 'merc_yield', myShare, 0, (forced ? 'Force clock-out · ' : 'Clock-out · ') + (isMerc ? 'mercenary 40%' : 'employer 52%'), isMerc ? (c.employer_handle || '') : (c.mercenary_handle || '')); } catch (e) {}
+    showToast('🪖 Clocked out — +' + myShare.toLocaleString() + ' 🜂 to bank. ' + (isMerc ? 'Employer' : 'Mercenary') + ' settles on next open.', 5800);
+  } catch (e) { showToast('⚠ Clock-out failed — try again.', 4200); return false; }
+  await boeFetchMercContracts();
+  return true;
+}
+// Pick up our share for any contract the OTHER side already clocked out.
+async function boeMercAutoSettle() {
+  try {
+    const t = _boeTbl('boe_merc_contracts'); if (!t) return;
+    const me = Profile.cloud.userId;
+    // I am the mercenary, and the employer-side completion is pending mine.
+    const r1 = await t.select('*').eq('mercenary_user', me).eq('status', 'completed_pending_merc').limit(20);
+    // I am the employer, and the merc-side completion is pending mine.
+    const r2 = await t.select('*').eq('employer_user', me).eq('status', 'completed_pending_employer').limit(20);
+    const list = []
+      .concat((r1 && !r1.error && Array.isArray(r1.data)) ? r1.data : [])
+      .concat((r2 && !r2.error && Array.isArray(r2.data)) ? r2.data : []);
+    for (const c of list) {
+      const isMerc = c.mercenary_user === me;
+      const myShare = Math.floor(isMerc ? Number(c.merc_payout) || 0 : Number(c.employer_payout) || 0);
+      if (myShare > 0) {
+        const b = await _boeRow(); if (!b) continue;
+        const up = await b.update({ balance: (BankEthos.balance | 0) + myShare, updated_at: new Date().toISOString() }).eq('user_id', me);
+        if (up && up.error) continue;
+        BankEthos.balance = (BankEthos.balance | 0) + myShare;
+      }
+      await t.update({ status: 'completed' }).eq('id', c.id);
+      try { boeLog(isMerc ? 'merc_earn' : 'merc_yield', myShare, 0, 'Mercenary contract settled', isMerc ? (c.employer_handle || '') : (c.mercenary_handle || '')); } catch (e) {}
+      if (myShare > 0) showToast('🪖 Mercenary contract paid — +' + myShare.toLocaleString() + ' 🜂 to bank.', 5400);
+    }
+  } catch (e) {}
 }
 async function boeFetch() {
   try {
@@ -25589,6 +25781,11 @@ function openBankOfEthos() {
           // hero-collateralized loans + the player's current capacity
           loans: Array.isArray(BankEthos.loans) ? BankEthos.loans : [],
           loanCap: { aza: boeLoanCapacityAza(), max: BOE_LOAN_MAX_AZA, perLv: BOE_LOAN_AZA_PER_HERO_LEVELS, heroLv: boeHeroLevelTotal(), perCinder: AZA_TO_CINDER },
+          // mercenary marketplace
+          mercListings: Array.isArray(BankEthos.mercListings) ? BankEthos.mercListings : [],
+          mercAsEmployer: Array.isArray(BankEthos.mercAsEmployer) ? BankEthos.mercAsEmployer : [],
+          mercAsMerc: Array.isArray(BankEthos.mercAsMerc) ? BankEthos.mercAsMerc : [],
+          mercSplit: { merc: BOE_MERC_SHARE_MERC, employer: BOE_MERC_SHARE_EMPLOYER, tax: BOE_MERC_SHARE_TAX, perCinder: AZA_TO_CINDER, maxHours: BOE_MERC_MAX_HOURS, maxTarget: BOE_MERC_MAX_TARGET },
           handle: '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20),
           callsign: nm.slice(0, 28),
         }, '*');
@@ -25637,7 +25834,23 @@ function openBankOfEthos() {
         else { _loanBusy = false; }
       } catch (e) { _loanBusy = false; }
     };
-    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); else if (e.data.type === 'boe:request') onReq(e.data); else if (e.data.type === 'boe:loan') onLoan(e.data); } catch (x) {} };
+    // Mercenary marketplace actions. Parent re-validates and refreshes
+    // listings/contracts in the seed after each op.
+    let _mercBusy = false;
+    const onMerc = (d) => {
+      if (_mercBusy) return; _mercBusy = true;
+      const fin = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _mercBusy = false; paint(); postSeed(); try { if (typeof render === 'function') render(); } catch (e) {} }); };
+      try {
+        if (d.op === 'list') fin(boeMercList(d.ratePerHour, d.bio));
+        else if (d.op === 'unlist') fin(boeMercUnlist());
+        else if (d.op === 'hire') fin(boeMercHire(d.listingId, d.hours, d.target));
+        else if (d.op === 'clockin') fin(boeMercClockIn(d.id));
+        else if (d.op === 'pause') fin(boeMercPause(d.id, !!d.pause));
+        else if (d.op === 'clockout') fin(boeMercClockOut(d.id, !!d.forced));
+        else { _mercBusy = false; }
+      } catch (e) { _mercBusy = false; }
+    };
+    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); else if (e.data.type === 'boe:request') onReq(e.data); else if (e.data.type === 'boe:loan') onLoan(e.data); else if (e.data.type === 'boe:merc') onMerc(e.data); } catch (x) {} };
     window.addEventListener('message', onMsg);
     const _origClose = back.onclick;
     back.onclick = () => { try { window.removeEventListener('message', onMsg); } catch (e) {} _origClose(); };
@@ -25694,6 +25907,9 @@ function openBankOfEthos() {
           .then(function () { return boeFetchLedger(); })
           .then(function () { return boeFetchRequests(); })
           .then(function () { return boeFetchLoans(); })
+          .then(function () { return boeMercAutoSettle(); })
+          .then(function () { return boeFetchMercListings(); })
+          .then(function () { return boeFetchMercContracts(); })
           .then(function () { paint(); postSeed(); })
           .catch(function () {});
       }

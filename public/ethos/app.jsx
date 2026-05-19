@@ -253,6 +253,11 @@ function boeReq(op, args) {
 function boeLoan(op, args) {
   try { window.parent.postMessage(Object.assign({ type: 'boe:loan', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
 }
+// Mercenary marketplace actions.
+//   op: 'list' | 'unlist' | 'hire' | 'clockin' | 'pause' | 'clockout'
+function boeMerc(op, args) {
+  try { window.parent.postMessage(Object.assign({ type: 'boe:merc', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
+}
 // 🧾 Print-to-PDF statement. Opens a styled popup the player can "Save as
 // PDF" via the system print dialog. Pure client-side, no libraries.
 function openStatementWindow(account) {
@@ -372,6 +377,12 @@ function App() {
           // Hero-collateralized loans + the player's current capacity.
           loans: Array.isArray(d.loans) ? d.loans : ((prev && prev.loans) || []),
           loanCap: (d.loanCap && typeof d.loanCap === 'object') ? d.loanCap : ((prev && prev.loanCap) || { aza: 0, max: 20, perLv: 5, heroLv: 0, perCinder: 5000 }),
+          // Mercenary marketplace: open listings + my contracts (both
+          // sides) + the canonical 40/52/8 split.
+          mercListings: Array.isArray(d.mercListings) ? d.mercListings : ((prev && prev.mercListings) || []),
+          mercAsEmployer: Array.isArray(d.mercAsEmployer) ? d.mercAsEmployer : ((prev && prev.mercAsEmployer) || []),
+          mercAsMerc: Array.isArray(d.mercAsMerc) ? d.mercAsMerc : ((prev && prev.mercAsMerc) || []),
+          mercSplit: (d.mercSplit && typeof d.mercSplit === 'object') ? d.mercSplit : ((prev && prev.mercSplit) || { merc: 0.40, employer: 0.52, tax: 0.08, perCinder: 5000, maxHours: 24, maxTarget: 5000000 }),
           created: (prev && prev.created) || new Date().toISOString(),
           recoveryKey: (prev && prev.recoveryKey) || '—',
           application: (prev && prev.application) || { org: cs, role: 'Operator', region: 'Camp Heights', purpose: 'Treasury access', linked: true },
@@ -504,7 +515,7 @@ function AppInner({ account, updateAccount, transfers, sendMoney, pushToast, onL
           {route === "directory" && <PageDirectory account={account} onSend={(c) => setSendTo(c)} />}
           {route === "ledger" && <PageLedger account={account} transfers={transfers} />}
           {route === "loans" && <PageLoans account={account} />}
-          {route === "mercs" && <PageMercs role={role} sessionSec={sessionSec} liveCinder={liveCinder} running={running} setRunning={setRunning} />}
+          {route === "mercs" && <PageMercs account={account} role={role} sessionSec={sessionSec} liveCinder={liveCinder} running={running} setRunning={setRunning} />}
           {route === "contracts" && <PageContracts />}
           {route === "ops" && <PageOpsVault account={account} />}
           {route === "market" && <PageMarket />}
@@ -954,115 +965,319 @@ function FeedRow({ e }) {
 /* ============================================================
    PAGE: MERCENARIES
    ============================================================ */
-function PageMercs({ role, sessionSec, liveCinder, running, setRunning }) {
-  const [filter, setFilter] = useState("all");
+// Modal: list yourself as available for hire on the mercenary board.
+function ListMyselfModal({ account, onClose }) {
+  const [rate, setRate] = useState("");
+  const [bio, setBio] = useState("");
+  const submit = () => {
+    const r = Math.max(0, Math.floor(Number(rate) || 0));
+    if (boeMerc("list", { ratePerHour: r, bio: bio })) onClose();
+  };
+  return (
+    <ModalFrame title="List Myself for Hire" onClose={onClose}>
+      <div className="small-text" style={{ color: "var(--ink-dim)", marginBottom: 12 }}>
+        Post yourself on the Mercenary Operations board. Employers see your handle, optional rate, and bio, and can hire you for a contract. You can withdraw or update your listing at any time.
+      </div>
+      <div className="stack-sm" style={{ marginBottom: 14 }}>
+        <label className="label">Advertised rate (Cinder / hour, optional)</label>
+        <input type="number" min="0" step="1" placeholder="0 = no rate set" value={rate}
+          onChange={(e) => setRate(e.target.value)}
+          style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+        <label className="label">Bio (optional)</label>
+        <textarea placeholder="What kind of work you take, your strengths…" value={bio} maxLength={280} rows="3"
+          onChange={(e) => setBio(e.target.value)}
+          style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "inherit", resize: "vertical" }} />
+      </div>
+      <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn primary" onClick={submit}>Publish Listing</button>
+      </div>
+    </ModalFrame>
+  );
+}
+
+// Modal: hire a mercenary. Shows 40/52/8 split preview live.
+function HireMercModal({ account, listing, onClose }) {
+  const split = (account && account.mercSplit) || { merc: 0.40, employer: 0.52, tax: 0.08, perCinder: 5000, maxHours: 24, maxTarget: 5000000 };
+  const [hours, setHours] = useState(1);
+  const [target, setTarget] = useState(listing && listing.rate_per_hour ? String(listing.rate_per_hour) : "5000");
+  const t = Math.max(0, Math.floor(Number(target) || 0));
+  const usd = (t / Math.max(1, split.perCinder | 0));
+  const mercShare = Math.floor(t * split.merc);
+  const empShare = Math.floor(t * split.employer);
+  const tax = Math.max(0, t - mercShare - empShare);
+  const ok = t > 0 && t <= split.maxTarget && hours > 0 && hours <= split.maxHours;
+  const submit = () => { if (!ok) return; if (boeMerc("hire", { listingId: listing.id, hours: hours, target: t })) onClose(); };
+  return (
+    <ModalFrame title={"Hire " + (listing.label || listing.handle || "Mercenary")} onClose={onClose}>
+      <div className="small-text" style={{ color: "var(--ink-dim)", marginBottom: 10 }}>
+        <span className="mono" style={{ color: "var(--violet)" }}>{listing.handle}</span>
+        {listing.rate_per_hour ? <span> · advertised <span className="mono">{fmt(listing.rate_per_hour)} 🜂/hr</span></span> : null}
+        {listing.bio ? <div style={{ marginTop: 4 }}>{listing.bio}</div> : null}
+      </div>
+      <div className="stack-sm" style={{ marginBottom: 12 }}>
+        <label className="label">Contract length (hours, up to {split.maxHours})</label>
+        <input type="number" min="1" max={split.maxHours} step="1" value={hours}
+          onChange={(e) => setHours(Math.max(1, Math.min(split.maxHours, Math.floor(Number(e.target.value) || 1))))}
+          style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+        <label className="label">Cinder you want to achieve (target)</label>
+        <input type="number" min="1" max={split.maxTarget} step="100" value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+        <div className="small-text" style={{ color: "var(--ink-dim)" }}>≈ <b>${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> USD at the canonical peg (1 👑 = {(split.perCinder | 0).toLocaleString()} 🜂)</div>
+      </div>
+      <div style={{ border: "1px solid var(--hair)", background: "var(--bg-1)", padding: 12, marginBottom: 12 }}>
+        <div className="row between" style={{ padding: "3px 0" }}><span className="label">Mercenary earns ({Math.round(split.merc * 100)}%)</span><span className="mono" style={{ color: "var(--cinder)" }}>{fmt(mercShare)} 🜂</span></div>
+        <div className="row between" style={{ padding: "3px 0" }}><span className="label">You (Mercenary Operator) earn ({Math.round(split.employer * 100)}%)</span><span className="mono" style={{ color: "var(--good)" }}>{fmt(empShare)} 🜂</span></div>
+        <div className="row between" style={{ padding: "3px 0", borderTop: "1px solid var(--hair)", marginTop: 4 }}><span className="label">Foundation Reserve tax ({Math.round(split.tax * 100)}% · 4% each side)</span><span className="mono" style={{ color: "var(--warn)" }}>{fmt(tax)} 🜂</span></div>
+      </div>
+      <div className="small-text" style={{ color: "var(--ink-dim)", marginBottom: 12 }}>Contract goes pending until the mercenary clocks in. On clock-out the target Cinder is generated and split as above.</div>
+      <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn primary" onClick={submit} disabled={!ok}>Send Offer</button>
+      </div>
+    </ModalFrame>
+  );
+}
+
+function _mercSession(c) {
+  // Effective elapsed seconds (active time, excluding paused accum).
+  if (!c) return 0;
+  const inMs = c.clocked_in_at ? Date.parse(c.clocked_in_at) : 0;
+  if (!inMs) return 0;
+  let end = c.clocked_out_at ? Date.parse(c.clocked_out_at) : Date.now();
+  if (c.status === "paused" && c.paused_at) end = Date.parse(c.paused_at);
+  return Math.max(0, Math.floor((end - inMs - (c.pause_ms_accum | 0)) / 1000));
+}
+
+function ContractCard({ c, mySide, split }) {
+  const me = mySide; // 'merc' | 'employer'
+  const totalSec = (c.hours | 0) * 3600;
+  const elapsed = _mercSession(c);
+  const T = (c.target_cinder | 0);
+  const liveCinder = c.status === "active" || c.status === "paused"
+    ? Math.min(T, Math.floor(T * Math.min(1, elapsed / Math.max(1, totalSec))))
+    : (c.status === "completed" || c.status === "completed_pending_merc" || c.status === "completed_pending_employer" ? T : 0);
+  const mercShare = Math.floor(T * (split.merc || 0.40));
+  const empShare = Math.floor(T * (split.employer || 0.52));
+  const tax = Math.max(0, T - mercShare - empShare);
+  const canClockIn = me === "merc" && c.status === "offered";
+  const canPauseResume = (c.status === "active" || c.status === "paused");
+  const canClockOut = (c.status === "active" || c.status === "paused");
+  return (
+    <div className="clock-panel" style={{ marginBottom: 14 }}>
+      <div className="row between" style={{ alignItems: "flex-start", flexWrap: "wrap", gap: 18 }}>
+        <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
+          <div className="merc-av" style={{ width: 56, height: 56, fontSize: 18, background: "linear-gradient(135deg, #ff7a3d, #8a6bff)" }}>
+            {(me === "merc" ? (c.employer_label || c.employer_handle || "EM") : (c.mercenary_label || c.mercenary_handle || "MR")).slice(0, 2).toUpperCase()}
+          </div>
+          <div>
+            <div className="label">{me === "merc" ? "Offer / contract from" : "Contract with"}</div>
+            <div className="display" style={{ fontSize: 18, fontWeight: 600 }}>
+              {me === "merc" ? (c.employer_label || c.employer_handle) : (c.mercenary_label || c.mercenary_handle)}
+            </div>
+            <div className="row" style={{ gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+              <span className="chip">#{c.id}</span>
+              <span className="chip cinder">{Math.round((split.merc || 0.4) * 100)} / {Math.round((split.employer || 0.52) * 100)} split</span>
+              <span className="chip">{c.hours}h contract</span>
+              <span className={"chip " + (c.status === "active" ? "live" : c.status === "completed" ? "" : "warn")}>
+                {c.status === "active" ? <><span className="live-dot"></span>Active</> : c.status.toUpperCase()}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div className="label">Session · auto clock-out at {String(c.hours).padStart(2, "0")}:00:00</div>
+          <div className="clock-time mono">{fmtTime(elapsed)}<span className="ms"> / {String(c.hours).padStart(2, "0")}:00:00</span></div>
+          <div className="row" style={{ justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
+            {canClockIn && (
+              <button className="btn sm primary" onClick={() => boeMerc("clockin", { id: c.id })}>
+                <Icon name="play" size={12}/> Clock In
+              </button>
+            )}
+            {canPauseResume && (
+              <button className="btn sm" onClick={() => boeMerc("pause", { id: c.id, pause: c.status === "active" })}>
+                <Icon name={c.status === "active" ? "pause" : "play"} size={12}/> {c.status === "active" ? "Pause stream" : "Resume"}
+              </button>
+            )}
+            {canClockOut && (
+              <button className="btn sm danger" onClick={() => boeMerc("clockout", { id: c.id, forced: me === "employer" })}>
+                <Icon name="x" size={12}/> {me === "employer" ? "Force clock-out" : "Clock Out"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="bar" style={{ marginTop: 18, marginBottom: 18 }}>
+        <div style={{ width: `${Math.min(100, (elapsed / Math.max(1, totalSec)) * 100)}%`, background: "linear-gradient(90deg, var(--violet), var(--cinder))" }}></div>
+      </div>
+      <div className="grid g-4">
+        <SmallStat k="Cinder target" v={fmt(T)} cur="cinder" />
+        <SmallStat k="Cinder generated" v={fmt(liveCinder)} cur="cinder" />
+        <SmallStat k={"Mercenary earns (" + Math.round((split.merc || 0.4) * 100) + "%)"} v={fmt(mercShare)} cur="cinder" />
+        <SmallStat k={"Operator earns (" + Math.round((split.employer || 0.52) * 100) + "%)"} v={fmt(empShare)} cur="cinder" />
+        <SmallStat k="Time remaining" v={fmtTime(Math.max(0, totalSec - elapsed))} cur={null} />
+        <SmallStat k={"Foundation Reserve tax (" + Math.round((split.tax || 0.08) * 100) + "%)"} v={fmt(tax)} cur="cinder" />
+        <SmallStat k="Your role" v={me === "merc" ? "Mercenary" : "Mercenary Operator"} cur={null} />
+        <SmallStat k="USD value of target" v={"$" + (T / Math.max(1, split.perCinder | 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} cur={null} />
+      </div>
+    </div>
+  );
+}
+
+function PageMercs({ account, role, sessionSec, liveCinder, running, setRunning }) {
+  const [tab, setTab] = useState("board");
+  const [listOpen, setListOpen] = useState(false);
+  const [hireListing, setHireListing] = useState(null);
+  const split = (account && account.mercSplit) || { merc: 0.40, employer: 0.52, tax: 0.08, perCinder: 5000, maxHours: 24, maxTarget: 5000000 };
+  const listings = Array.isArray(account && account.mercListings) ? account.mercListings : [];
+  const asEmp = Array.isArray(account && account.mercAsEmployer) ? account.mercAsEmployer : [];
+  const asMerc = Array.isArray(account && account.mercAsMerc) ? account.mercAsMerc : [];
+  const myListing = listings.find(l => l.handle && account && account.handle && l.handle.toLowerCase() === String(account.handle).toLowerCase());
+  const board = listings.filter(l => l && l.status === "open" && (!myListing || l.id !== myListing.id));
+  const offersMerc = asMerc.filter(c => c.status === "offered" || c.status === "active" || c.status === "paused" || c.status === "completed_pending_merc");
+  const contractsEmp = asEmp.filter(c => c.status !== "completed" && c.status !== "cancelled");
+  const history = [...asMerc, ...asEmp].filter(c => c.status === "completed" || c.status === "completed_pending_merc" || c.status === "completed_pending_employer" || c.status === "cancelled");
   return (
     <div>
+      {listOpen && <ListMyselfModal account={account} onClose={() => setListOpen(false)} />}
+      {hireListing && <HireMercModal account={account} listing={hireListing} onClose={() => setHireListing(null)} />}
       <div className="page-head">
         <div>
           <div className="page-crumb">Operations / Mercenaries</div>
           <div className="page-title display">Mercenary Operations</div>
         </div>
         <div className="page-actions">
-          <button className="btn ghost"><Icon name="download" size={14} /> Work reports</button>
-          <button className="btn primary"><Icon name="plus" size={14} /> Hire mercenary</button>
+          {myListing
+            ? <button className="btn ghost" onClick={() => boeMerc("unlist")}>Withdraw listing</button>
+            : <button className="btn ghost" onClick={() => setListOpen(true)}><Icon name="plus" size={14}/> List myself</button>}
         </div>
       </div>
 
-      {/* Featured live contract */}
-      <div className="clock-panel" style={{ marginBottom: 14 }}>
-        <div className="row between" style={{ alignItems: "flex-start", flexWrap: "wrap", gap: 18 }}>
-          <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
-            <div className="merc-av" style={{ width: 64, height: 64, fontSize: 22, background: "linear-gradient(135deg, #ff7a3d, #8a6bff)" }}>VK</div>
-            <div>
-              <div className="label">Featured contract · live</div>
-              <div className="display" style={{ fontSize: 22, fontWeight: 600 }}>Vash Korr <span className="muted" style={{ fontWeight: 400 }}>under</span> Camp Heights Recovery Div.</div>
-              <div className="row" style={{ gap: 8, marginTop: 8 }}>
-                <span className="chip violet">Roguelite + Ranked</span>
-                <span className="chip cinder">60 / 40 default split</span>
-                <span className="chip">Contract #C-204A</span>
-              </div>
-            </div>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <div className="label">Session · auto clock-out at 08:00:00</div>
-            <div className="clock-time mono">{fmtTime(sessionSec)}<span className="ms"> / 08:00:00</span></div>
-            <div className="row" style={{ justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
-              <button className="btn sm" onClick={() => setRunning(r => !r)}>
-                <Icon name={running ? "pause" : "play"} size={12} /> {running ? "Pause stream" : "Resume"}
-              </button>
-              <button className="btn sm danger"><Icon name="x" size={12} /> Force clock-out</button>
-            </div>
-          </div>
-        </div>
+      {/* Active session(s): show the player's currently active or pending
+          contract front-and-center, with Clock In / Pause / Force clock-out
+          wired to the real backend. */}
+      {(asMerc.find(c => c.status === "active" || c.status === "paused")
+        || asEmp.find(c => c.status === "active" || c.status === "paused")
+        || asMerc.find(c => c.status === "offered")) && (
+        <>
+          {asMerc.filter(c => c.status === "active" || c.status === "paused" || c.status === "offered").map(c => (
+            <ContractCard key={c.id} c={c} mySide="merc" split={split} />
+          ))}
+          {asEmp.filter(c => c.status === "active" || c.status === "paused").map(c => (
+            <ContractCard key={c.id} c={c} mySide="employer" split={split} />
+          ))}
+        </>
+      )}
 
-        <div className="bar" style={{ marginTop: 18, marginBottom: 18 }}>
-          <div style={{ width: `${(sessionSec / (8*3600)) * 100}%`, background: "linear-gradient(90deg, var(--violet), var(--cinder))" }}></div>
-        </div>
-
-        <div className="grid g-4">
-          <SmallStat k="Battles completed" v="14" cur={null} />
-          <SmallStat k="Roguelite runs" v="3" cur={null} />
-          <SmallStat k="Cinder generated" v={fmt(liveCinder)} cur="cinder" />
-          <SmallStat k="Loot recovered" v="47 items" sub="Ether ×42 · Relics ×3 · Cards ×2" cur={null} />
-          <SmallStat k="Mercenary earns (60%)" v={fmt(Math.round(liveCinder * 0.6))} cur="cinder" />
-          <SmallStat k="Employer earns (40%)" v={fmt(Math.round(liveCinder * 0.4))} cur="cinder" />
-          <SmallStat k="Live tick rate" v="+12 / sec" cur="cinder" />
-          <SmallStat k="Time remaining" v={fmtTime(8*3600 - sessionSec)} cur={null} />
-        </div>
-      </div>
-
-      {/* Filter tabs */}
       <div className="tabs">
         {[
-          { id: "all", label: "All mercenaries" },
-          { id: "online", label: "Online · 7" },
-          { id: "near", label: "Near limit · 1" },
-          { id: "history", label: "Session history" },
+          { id: "board", label: "Mercenary board · " + board.length },
+          { id: "offers", label: "My offers · " + offersMerc.length },
+          { id: "contracts", label: "My contracts · " + contractsEmp.length },
+          { id: "history", label: "History · " + history.length },
         ].map(t => (
-          <div key={t.id} className={`tab ${filter === t.id ? "active" : ""}`} onClick={() => setFilter(t.id)}>{t.label}</div>
+          <div key={t.id} className={"tab " + (tab === t.id ? "active" : "")} onClick={() => setTab(t.id)}>{t.label}</div>
         ))}
       </div>
 
-      {/* Mercenary table */}
-      <div className="panel">
-        <table className="t">
-          <thead>
-            <tr>
-              <th>Mercenary</th>
-              <th>Current task</th>
-              <th>Clocked in</th>
-              <th>Battles · Runs</th>
-              <th>Cinder generated</th>
-              <th>Loot value</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {MERCS.map(m => (
-              <tr key={m.name}>
-                <td>
-                  <div className="row" style={{ gap: 10 }}>
-                    <div className="merc-av" style={{ background: `linear-gradient(135deg, ${m.color1}, ${m.color2})` }}>{m.tag}</div>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{m.name}</div>
-                      <div className="label" style={{ marginTop: 2 }}>Rank B · Reputation 84</div>
-                    </div>
-                  </div>
-                </td>
-                <td className="dim">{m.task}</td>
-                <td className="mono">{fmtTime(m.in)}</td>
-                <td className="mono">{m.battles} · {m.runs}</td>
-                <td><span className="row" style={{ gap: 6 }}><CinderGlyph size={12} /><span className="mono" style={{ color: "var(--cinder)" }}>{fmt(m.cinder)}</span></span></td>
-                <td><span className="row" style={{ gap: 6 }}><AzaGlyph size={12} /><span className="mono" style={{ color: "var(--aza)" }}>{fmt(Math.round(m.cinder * 0.18))}</span></span></td>
-                <td><span className={`chip ${m.status === "warn" ? "warn" : "live"}`}>{m.status === "warn" ? <><span className="dot" style={{ background: "var(--warn)" }}></span>2h to limit</> : <><span className="live-dot"></span>Live</>}</span></td>
-                <td><button className="btn sm">Manage</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {tab === "board" && (
+        <div className="panel">
+          {board.length === 0 ? (
+            <div className="panel-b muted" style={{ fontSize: 12 }}>No mercenaries listed right now. (none) — be the first: <b>List myself</b>.</div>
+          ) : (
+            <table className="t">
+              <thead>
+                <tr><th>Mercenary</th><th>Advertised rate</th><th>Bio</th><th>Listed</th><th></th></tr>
+              </thead>
+              <tbody>
+                {board.map(l => (
+                  <tr key={l.id}>
+                    <td>
+                      <div className="row" style={{ gap: 10 }}>
+                        <div className="merc-av" style={{ background: "linear-gradient(135deg, #ff7a3d, #8a6bff)", width: 32, height: 32, fontSize: 11 }}>
+                          {(l.label || l.handle || "MR").slice(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 600 }}>{l.label || l.handle}</div>
+                          <div className="mono" style={{ fontSize: 10, color: "var(--violet)" }}>{l.handle}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="mono">{l.rate_per_hour ? fmt(l.rate_per_hour) + " 🜂/hr" : "—"}</td>
+                    <td className="dim" style={{ maxWidth: 360 }}>{l.bio || ""}</td>
+                    <td className="mono dim">{l.updated_at ? new Date(l.updated_at).toLocaleDateString() : ""}</td>
+                    <td><button className="btn sm primary" onClick={() => setHireListing(l)}><Icon name="plus" size={12}/> Hire</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {tab === "offers" && (
+        <div className="panel">
+          {offersMerc.length === 0 ? (
+            <div className="panel-b muted" style={{ fontSize: 12 }}>No employers have hired you yet. (none) — list yourself on the board to receive offers.</div>
+          ) : offersMerc.map(c => (
+            <div key={c.id} className="row between" style={{ padding: "12px 16px", borderBottom: "1px solid var(--hair)", gap: 8 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>From <span className="mono" style={{ color: "var(--violet)" }}>{c.employer_handle}</span></div>
+                <div className="mono" style={{ fontSize: 11, color: "var(--cinder)", marginTop: 2 }}>{fmt(c.target_cinder)} 🜂 target · {c.hours}h · earn {fmt(Math.floor((c.target_cinder | 0) * split.merc))} 🜂 (40%)</div>
+              </div>
+              <div className="row" style={{ gap: 6 }}>
+                <span className="chip">{c.status.toUpperCase()}</span>
+                {c.status === "offered" && <button className="btn sm primary" onClick={() => boeMerc("clockin", { id: c.id })}>Clock In</button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "contracts" && (
+        <div className="panel">
+          {contractsEmp.length === 0 ? (
+            <div className="panel-b muted" style={{ fontSize: 12 }}>No active contracts. (none) — <b>Hire</b> a mercenary from the board.</div>
+          ) : contractsEmp.map(c => (
+            <div key={c.id} className="row between" style={{ padding: "12px 16px", borderBottom: "1px solid var(--hair)", gap: 8 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>Hired <span className="mono" style={{ color: "var(--violet)" }}>{c.mercenary_handle}</span></div>
+                <div className="mono" style={{ fontSize: 11, color: "var(--cinder)", marginTop: 2 }}>{fmt(c.target_cinder)} 🜂 target · {c.hours}h · yield {fmt(Math.floor((c.target_cinder | 0) * split.employer))} 🜂 (52%)</div>
+              </div>
+              <span className="chip">{c.status.toUpperCase()}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "history" && (
+        <div className="panel">
+          {history.length === 0 ? (
+            <div className="panel-b muted" style={{ fontSize: 12 }}>No completed contracts yet. (none)</div>
+          ) : (
+            <table className="t">
+              <thead><tr><th>#</th><th>Role</th><th>Counterparty</th><th>Target</th><th>Your share</th><th>Status</th></tr></thead>
+              <tbody>
+                {history.map(c => {
+                  const isMerc = account && account.handle && c.mercenary_handle && c.mercenary_handle.toLowerCase() === String(account.handle).toLowerCase();
+                  const share = isMerc ? (c.merc_payout | 0) : (c.employer_payout | 0);
+                  return (
+                    <tr key={c.id}>
+                      <td className="mono">{c.id}</td>
+                      <td>{isMerc ? "Mercenary" : "Operator"}</td>
+                      <td className="mono dim">{isMerc ? c.employer_handle : c.mercenary_handle}</td>
+                      <td className="mono">{fmt(c.target_cinder)}</td>
+                      <td className="mono" style={{ color: "var(--good)" }}>{fmt(share)}</td>
+                      <td><span className="chip">{c.status.toUpperCase()}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }

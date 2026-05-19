@@ -342,6 +342,64 @@ create policy boe_ln_ins on public.boe_loans for insert to authenticated with ch
 drop policy if exists boe_ln_upd on public.boe_loans;
 create policy boe_ln_upd on public.boe_loans for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 
+-- 🪖 Mercenary marketplace — players post themselves as available for work
+-- (boe_merc_listings, read-any · write-own); employers hire from the board
+-- by creating a contract (boe_merc_contracts, visible to either party).
+-- Earnings split 40 % mercenary · 52 % employer · 8 % Foundation Reserve
+-- tax (4 % each side), minted at clock-out from the contract's target.
+create table if not exists public.boe_merc_listings (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  handle text,
+  label text,
+  rate_per_hour numeric not null default 0,
+  bio text,
+  status text not null default 'open',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create index if not exists boe_mlist_status on public.boe_merc_listings (status, updated_at desc);
+create index if not exists boe_mlist_user on public.boe_merc_listings (user_id);
+alter table public.boe_merc_listings enable row level security;
+drop policy if exists boe_mlist_sel on public.boe_merc_listings;
+create policy boe_mlist_sel on public.boe_merc_listings for select to authenticated using (true);
+drop policy if exists boe_mlist_ins on public.boe_merc_listings;
+create policy boe_mlist_ins on public.boe_merc_listings for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists boe_mlist_upd on public.boe_merc_listings;
+create policy boe_mlist_upd on public.boe_merc_listings for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+drop policy if exists boe_mlist_del on public.boe_merc_listings;
+create policy boe_mlist_del on public.boe_merc_listings for delete to authenticated using (user_id = auth.uid());
+
+create table if not exists public.boe_merc_contracts (
+  id bigint generated always as identity primary key,
+  employer_user uuid not null references auth.users(id) on delete cascade,
+  employer_handle text,
+  employer_label text,
+  mercenary_user uuid not null references auth.users(id) on delete cascade,
+  mercenary_handle text,
+  mercenary_label text,
+  hours int not null default 1 check (hours between 1 and 24),
+  target_cinder numeric not null check (target_cinder > 0),
+  status text not null default 'offered',  -- offered|active|paused|completed_pending_merc|completed_pending_employer|completed|cancelled
+  created_at timestamptz default now(),
+  clocked_in_at timestamptz,
+  clocked_out_at timestamptz,
+  pause_ms_accum int not null default 0,
+  paused_at timestamptz,
+  merc_payout numeric not null default 0,
+  employer_payout numeric not null default 0,
+  fr_tax numeric not null default 0
+);
+create index if not exists boe_mcon_emp on public.boe_merc_contracts (employer_user, status, created_at desc);
+create index if not exists boe_mcon_mer on public.boe_merc_contracts (mercenary_user, status, created_at desc);
+alter table public.boe_merc_contracts enable row level security;
+drop policy if exists boe_mcon_sel on public.boe_merc_contracts;
+create policy boe_mcon_sel on public.boe_merc_contracts for select to authenticated using (employer_user = auth.uid() or mercenary_user = auth.uid());
+drop policy if exists boe_mcon_ins on public.boe_merc_contracts;
+create policy boe_mcon_ins on public.boe_merc_contracts for insert to authenticated with check (employer_user = auth.uid());
+drop policy if exists boe_mcon_upd on public.boe_merc_contracts;
+create policy boe_mcon_upd on public.boe_merc_contracts for update to authenticated using (employer_user = auth.uid() or mercenary_user = auth.uid()) with check (employer_user = auth.uid() or mercenary_user = auth.uid());
+
 grant select on
   public.api_corporations,
   public.api_reserve_totals,

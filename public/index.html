@@ -25117,38 +25117,35 @@ function openBankOfEthos() {
     window.addEventListener('message', onMsg);
     const _origClose = back.onclick;
     back.onclick = () => { try { window.removeEventListener('message', onMsg); } catch (e) {} _origClose(); };
-    // Deterministic link: the iframe is same-origin, so write the player's
-    // complete Bank of Ethos account straight into the app's localStorage on
-    // first load and reload it once. The reloaded app's loadAccount() returns
-    // the account synchronously → it boots into the dashboard, never the
-    // signup AuthScreen (no postMessage race). postSeed still syncs live
+    // 🔗 Deterministic link. localStorage is keyed by ORIGIN, not path, so the
+    // parent (playmythicspellbook.com/) and the iframe
+    // (playmythicspellbook.com/ethos/…) share the SAME localStorage. Write the
+    // player's complete Bank of Ethos account into it NOW — before the iframe
+    // is attached, so it cannot have loaded yet. When the app mounts, its
+    // synchronous loadAccount() reads this same storage and boots straight into
+    // the dashboard; the signup AuthScreen is never reached (no load-event
+    // race, no reload, no cross-window access). postSeed still pushes live
     // balances after deposit/withdraw.
-    let _beSeeded = false;
-    f.addEventListener('load', () => {
-      try {
-        if (_beSeeded) { setTimeout(postSeed, 120); return; }
-        const w = f.contentWindow;
-        const nm = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Operator') + '';
-        const cs = (nm.trim() || 'Operator').slice(0, 28);
-        const ini = (cs.trim().split(/\s+/).map((s) => s[0]).slice(0, 2).join('') || 'OP').toUpperCase();
-        const acct = {
-          handle: '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20),
-          callsign: cs,
-          initials: ini,
-          c1: '#8a6bff',
-          c2: '#ff7a3d',
-          cinder: BankEthos.ready ? (BankEthos.balance | 0) : 0,
-          aza: (Profile && Profile.sovereigns) | 0,
-          created: new Date().toISOString(),
-          recoveryKey: '—',
-          application: { org: cs, role: 'Operator', region: 'Camp Heights', purpose: 'Treasury access', linked: true },
-          _gameLinked: true,
-        };
-        w.localStorage.setItem('boe.account.v1', JSON.stringify(acct));
-        _beSeeded = true;
-        w.location.reload();
-      } catch (e) { setTimeout(postSeed, 120); }
-    });
+    try {
+      const nm = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Operator') + '';
+      const cs = (nm.trim() || 'Operator').slice(0, 28);
+      const ini = (cs.trim().split(/\s+/).map((s) => s[0]).slice(0, 2).join('') || 'OP').toUpperCase();
+      const acct = {
+        handle: '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20),
+        callsign: cs,
+        initials: ini,
+        c1: '#8a6bff',
+        c2: '#ff7a3d',
+        cinder: BankEthos.ready ? (BankEthos.balance | 0) : 0,
+        aza: (Profile && Profile.sovereigns) | 0,
+        created: new Date().toISOString(),
+        recoveryKey: '—',
+        application: { org: cs, role: 'Operator', region: 'Camp Heights', purpose: 'Treasury access', linked: true },
+        _gameLinked: true,
+      };
+      localStorage.setItem('boe.account.v1', JSON.stringify(acct));
+    } catch (e) {}
+    f.addEventListener('load', () => { setTimeout(postSeed, 120); });
     paint();
     wrap.appendChild(f);
     wrap.appendChild(bar);

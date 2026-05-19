@@ -24987,6 +24987,10 @@ async function detentionRelease(id) {
 // writer; degrades gracefully offline / pre-setup.
 const BOE_FEE = 200;                       // 🔥 maintenance per period
 const BOE_FEE_PERIOD_MS = 30 * 24 * 3600000; // 30 days
+// 💱 Canonical currency peg. 1 Aza Coin = $1 USD = 5,000 Cinder, the SAME
+// rate the cashout vault settles at (CASHOUT_RATE_PER_DOLLAR = 5000), so
+// value is consistent end-to-end: buy Aza → exchange → cash out.
+const AZA_TO_CINDER = 5000;                 // 1 👑 → 5,000 🔥 (irreversible)
 const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true };
 async function _boeRow() {
   if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
@@ -25108,6 +25112,29 @@ async function boeWithdrawAza(amt) {
   showToast('🏦 Withdrew ' + amt.toLocaleString() + ' 👑 — bank Aza ' + BankEthos.aza.toLocaleString() + '.', 4600);
   return true;
 }
+// ── Currency exchange ──────────────────────────────────────────────
+// 💱 IRREVERSIBLE. Burns Aza from the bank vault and mints Cinder into it
+// at the canonical peg (1 👑 = 5,000 🔥). One atomic row update sets both
+// columns; rolled back on cloud failure. There is no Cinder → Aza path —
+// Aza is premium reserve and only flows in via real-money purchase.
+async function boeExchangeAzaToCinder(azaAmt) {
+  azaAmt = Math.floor(azaAmt);
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (_boeNeedCols()) return false;
+  if (!(azaAmt > 0)) { showToast('Enter an Aza amount.'); return false; }
+  if (BankEthos.aza < azaAmt) { showToast('Bank Aza is ' + BankEthos.aza.toLocaleString() + ' 👑.', 4000); return false; }
+  const cinderOut = azaAmt * AZA_TO_CINDER;
+  const prevAza = BankEthos.aza, prevBal = BankEthos.balance;
+  try {
+    const t = await _boeRow();
+    const up = await t.update({ aza: prevAza - azaAmt, balance: prevBal + cinderOut, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+    if (up && up.error) throw up.error;
+    BankEthos.aza = prevAza - azaAmt;
+    BankEthos.balance = prevBal + cinderOut;
+  } catch (e) { BankEthos.aza = prevAza; BankEthos.balance = prevBal; showToast('⚠ Exchange failed — nothing moved.', 4200); return false; }
+  showToast('💱 Exchanged ' + azaAmt.toLocaleString() + ' 👑 → ' + cinderOut.toLocaleString() + ' 🔥 (bank).', 5200);
+  return true;
+}
 // ── Resource banking ───────────────────────────────────────────────
 // Profile.salvage[id] ⇄ bank_of_ethos.resources[id]. Validated against
 // the real salvage ledger; rolled back on cloud failure.
@@ -25178,10 +25205,12 @@ function openBankOfEthos() {
       bar.innerHTML =
         '<span style="font-family:\'Cinzel\',serif;font-weight:800;color:#ffcf5a;font-size:1.05rem">🏦 Bank of Ethos</span>' +
         (BankEthos.ready
-          ? '<span style="color:#ffe6b0;font-weight:800">Balance: ' + BankEthos.balance.toLocaleString() + ' 🔥</span>' +
-            '<input id="boe-amt" type="number" min="1" placeholder="amount 🔥" style="width:120px;padding:0.4rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
+          ? '<span style="color:#ffe6b0;font-weight:800">' + BankEthos.balance.toLocaleString() + ' 🔥</span>' +
+            '<span style="color:#ffd98a;font-weight:800">' + (BankEthos.aza | 0).toLocaleString() + ' 👑</span>' +
+            '<input id="boe-amt" type="number" min="1" placeholder="amount 🔥" style="width:110px;padding:0.4rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">' +
             '<button id="boe-dep" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid #5fbf88;background:rgba(47,122,82,0.35);color:#dff4e6;font-weight:800">Deposit</button>' +
             '<button id="boe-wd" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid rgba(212,175,55,0.5);background:rgba(120,90,30,0.3);color:#ffcf5a;font-weight:800">Withdraw</button>' +
+            '<button id="boe-exch" title="Exchange Aza Coin → Cinder at 1 👑 = ' + AZA_TO_CINDER.toLocaleString() + ' 🔥" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid rgba(212,175,55,0.7);background:linear-gradient(180deg,rgba(120,90,30,0.5),rgba(60,44,14,0.5));color:#ffd98a;font-weight:800">💱 Exchange</button>' +
             '<span class="small-text" style="color:#caa46a">Maintenance ' + BOE_FEE + ' 🔥 / 30d → Foundation Reserve · next in ' + nextDue + 'd</span>'
           : '<span class="small-text" style="color:#ff9a6b">' + (BankEthos._err === 'setup' ? 'Run the updated api.sql to open banking (creates bank_of_ethos).' : BankEthos._err === 'signin' ? 'Sign in to use the Bank of Ethos.' : 'Connecting…') + '</span>') +
         '<span style="flex:1"></span>';
@@ -25189,6 +25218,70 @@ function openBankOfEthos() {
       const amtEl = () => parseInt((document.getElementById('boe-amt') || {}).value, 10) || 0;
       const dep = document.getElementById('boe-dep'); if (dep) dep.onclick = () => { const a = amtEl(); dep.disabled = true; boeDeposit(a).then(() => { dep.disabled = false; paint(); try { postSeed(); } catch (e) {} }); };
       const wd = document.getElementById('boe-wd'); if (wd) wd.onclick = () => { const a = amtEl(); wd.disabled = true; boeWithdraw(a).then(() => { wd.disabled = false; paint(); try { postSeed(); } catch (e) {} }); };
+      const ex = document.getElementById('boe-exch'); if (ex) ex.onclick = () => openExchange();
+    };
+    // 💱 Aza → Cinder exchange — confirmation modal with live preview and an
+    // explicit irreversibility warning, per spec. Parent-authoritative:
+    // boeExchangeAzaToCinder re-validates the amount against the real bank
+    // before any value moves.
+    const openExchange = () => {
+      try {
+        const EID = 'be-exch-modal';
+        const old = document.getElementById(EID); if (old) old.remove();
+        if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return; }
+        if (!BankEthos._extCols) { showToast('Run the updated api.sql to enable Aza & exchange.', 5200); return; }
+        const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
+        const ov = document.createElement('div');
+        ov.id = EID;
+        ov.style.cssText = 'position:absolute;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(4,3,1,0.78);backdrop-filter:blur(3px);font-family:inherit';
+        const maxAza = BankEthos.aza | 0;
+        ov.innerHTML =
+          '<div role="dialog" aria-modal="true" style="width:min(440px,92vw);background:linear-gradient(180deg,#161007,#0c0903);border:1px solid rgba(212,175,55,0.55);border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,0.7);padding:20px 20px 18px;color:#ffe6b0">' +
+            '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:#ffcf5a;font-size:1.15rem;margin-bottom:2px">💱 Currency Exchange</div>' +
+            '<div class="small-text" style="color:#caa46a;margin-bottom:14px">1 👑 Aza Coin = ' + AZA_TO_CINDER.toLocaleString() + ' 🔥 Cinder · settles into your bank</div>' +
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
+              '<input id="be-ex-in" type="number" min="1" max="' + maxAza + '" placeholder="Aza to exchange 👑" style="flex:1;padding:0.55rem;border-radius:8px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.8);color:#ffe6b0;font-weight:700">' +
+              '<button id="be-ex-max" style="cursor:pointer;border-radius:7px;padding:0.5rem 0.7rem;border:1px solid rgba(212,175,55,0.5);background:rgba(120,90,30,0.3);color:#ffcf5a;font-weight:800">Max</button>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;background:rgba(212,175,55,0.07);border:1px solid rgba(212,175,55,0.25);border-radius:8px;padding:10px 12px;margin-bottom:12px">' +
+              '<span style="color:#ffd98a;font-weight:800"><span id="be-ex-a">0</span> 👑</span>' +
+              '<span style="color:#caa46a">→</span>' +
+              '<span style="color:#ffe6b0;font-weight:800"><span id="be-ex-c">0</span> 🔥</span>' +
+            '</div>' +
+            '<div style="font-size:0.82rem;line-height:1.5;color:#ffb38a;background:rgba(180,70,40,0.12);border:1px solid rgba(180,70,40,0.35);border-radius:8px;padding:9px 11px;margin-bottom:14px">⚠ <b>Irreversible.</b> Exchanged Aza is permanently burned for Cinder. There is no Cinder → Aza path — Aza only enters via real-money purchase.</div>' +
+            '<div style="display:flex;gap:10px;justify-content:flex-end">' +
+              '<button id="be-ex-cancel" style="cursor:pointer;border-radius:8px;padding:0.5rem 0.9rem;border:1px solid rgba(212,175,55,0.4);background:rgba(20,15,6,0.8);color:#caa46a;font-weight:800">Cancel</button>' +
+              '<button id="be-ex-go" disabled style="cursor:pointer;border-radius:8px;padding:0.5rem 1rem;border:1px solid #d4af37;background:linear-gradient(180deg,#caa046,#8a6a1e);color:#1a1305;font-weight:900;opacity:0.5">Confirm Exchange</button>' +
+            '</div>' +
+          '</div>';
+        wrap.appendChild(ov);
+        const inEl = ov.querySelector('#be-ex-in');
+        const aEl = ov.querySelector('#be-ex-a');
+        const cEl = ov.querySelector('#be-ex-c');
+        const goEl = ov.querySelector('#be-ex-go');
+        const close = () => { try { ov.remove(); } catch (e) {} };
+        const sync = () => {
+          let n = Math.floor(Number(inEl.value) || 0);
+          if (n < 0) n = 0;
+          if (n > maxAza) { n = maxAza; inEl.value = String(maxAza); }
+          aEl.textContent = n.toLocaleString();
+          cEl.textContent = (n * AZA_TO_CINDER).toLocaleString();
+          const ok = n > 0 && n <= maxAza;
+          goEl.disabled = !ok;
+          goEl.style.opacity = ok ? '1' : '0.5';
+        };
+        inEl.addEventListener('input', sync);
+        ov.querySelector('#be-ex-max').onclick = () => { inEl.value = String(maxAza); sync(); inEl.focus(); };
+        ov.querySelector('#be-ex-cancel').onclick = close;
+        ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+        goEl.onclick = () => {
+          const n = Math.floor(Number(inEl.value) || 0);
+          goEl.disabled = true; goEl.style.opacity = '0.5'; goEl.textContent = 'Exchanging…';
+          boeExchangeAzaToCinder(n).then((okok) => { close(); paint(); try { postSeed(); } catch (e) {} });
+        };
+        setTimeout(() => { try { inEl.focus(); } catch (e) {} }, 30);
+        sync();
+      } catch (e) {}
     };
     // 🔗 Feed the embedded Bank of Ethos app the player's REAL identity +
     // balances (Cinder bank balance + Aza coin) so its dashboard shows
@@ -25234,7 +25327,7 @@ function openBankOfEthos() {
         else { _txBusy = false; }
       } catch (e) { _txBusy = false; }
     };
-    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); } catch (x) {} };
+    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); } catch (x) {} };
     window.addEventListener('message', onMsg);
     const _origClose = back.onclick;
     back.onclick = () => { try { window.removeEventListener('message', onMsg); } catch (e) {} _origClose(); };

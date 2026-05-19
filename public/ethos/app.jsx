@@ -682,7 +682,16 @@ function BalanceCard({ kind, amount, decimals = 0, delta, spark, onSend, wallet 
         <span className="chip" style={{ color: delta.startsWith("+") ? "var(--good)" : "var(--bad)", borderColor: delta.startsWith("+") ? "rgba(90,226,138,0.3)" : "rgba(255,107,138,0.3)" }}>
           {delta.startsWith("+") ? "▲" : "▼"} {delta} · 24h
         </span>
-        <button className="chip-btn" onClick={onSend}>Send</button>
+        <div className="row" style={{ gap: 6 }}>
+          {!isCinder && (
+            <button
+              className="chip-btn"
+              title="Exchange Aza Coin → Cinder"
+              onClick={() => { try { window.parent.postMessage({ type: "boe:exchange-open" }, "*"); } catch (e) {} }}
+            >Exchange</button>
+          )}
+          <button className="chip-btn" onClick={onSend}>Send</button>
+        </div>
       </div>
       {/* Deposit / withdraw against the player's REAL wallet */}
       <div className="row" style={{ gap: 8, marginTop: 12, position: "relative", zIndex: 1, flexWrap: "wrap" }}>

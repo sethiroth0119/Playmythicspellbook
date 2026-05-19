@@ -25439,6 +25439,45 @@ function _nodeActive(n) {
   if (n.status === 'building') { return (m.readyAt && Date.now() >= m.readyAt); }
   return n.status === 'active';
 }
+// 🛡 AI DIRECTOR — INFLATION GUARD on node payouts. Nodes mint Cinder; if
+// they keep paying full rate while the economy is destabilised (or the
+// global pool is draining faster than the Treasury refills it), Cinder
+// inflates. The Director throttles payout rate as an emergency brake —
+// deterministic, derived from the SAME signals as the rest of the Director
+// (economy state + active world event + pool drain). Returns a multiplier
+// in [0.3, 1]; never zeroes payouts (activity is always worth something).
+function frNodePayoutMul() {
+  try {
+    let m = 1;
+    const es = (typeof frEconomyState === 'function') ? frEconomyState() : null;
+    if (es) {
+      if (es.state === 'CRISIS') m = 0.5;
+      else if (es.state === 'STRAINED') m = 0.8;
+      if (es.ev && !es.ev.relief) m = Math.min(m, 0.65);   // active world crisis = brake
+    }
+    const pool = FoundationReserve.nodePool;
+    if (pool && !pool.legacy && pool.total > 0) {
+      const frac = pool.avail / pool.total;
+      if (frac < 0.10) m = Math.min(m, 0.40);              // pool nearly dry → hard throttle
+      else if (frac < 0.25) m = Math.min(m, 0.70);
+    }
+    return Math.max(0.30, Math.min(1, m));
+  } catch (e) { return 1; }
+}
+// Human-readable guard status for the UI (null = guard not engaged).
+function frInflationGuard() {
+  const mul = frNodePayoutMul();
+  if (mul >= 0.999) return null;
+  let why = 'economy pressure';
+  try {
+    const es = frEconomyState();
+    const pool = FoundationReserve.nodePool;
+    if (pool && !pool.legacy && pool.total > 0 && (pool.avail / pool.total) < 0.25) why = 'reward pool draining';
+    else if (es && es.ev && !es.ev.relief) why = es.ev.icon + ' ' + es.ev.name;
+    else if (es && es.state !== 'STABLE') why = 'economy ' + es.state;
+  } catch (e) {}
+  return { mul: mul, pct: Math.round(mul * 100), why: why };
+}
 function _nodeClaimable(n) {
   if (!_nodeActive(n)) return 0;
   const rk = _nodeActiveRisk(n);
@@ -25447,7 +25486,7 @@ function _nodeClaimable(n) {
   const fresh = Math.max(0, (FoundationReserve.myPoints | 0) - (m.claimedPoints | 0));
   const lvlMul = 1 + 0.25 * ((n.level | 0) - 1);
   const eff = _nodeEff(n) / 100;
-  return Math.min(NODE_PAYOUT_CAP, Math.floor(fresh * NODE_CINDER_PER_POINT * lvlMul * eff));
+  return Math.min(NODE_PAYOUT_CAP, Math.floor(fresh * NODE_CINDER_PER_POINT * lvlMul * eff * frNodePayoutMul()));
 }
 function _nodeCooldownLeft(n) {
   const m = n.meta || {};
@@ -25834,19 +25873,30 @@ function openFoundationReserve() {
           '<div class="small-text" style="color:#cfe0f4;margin-top:2px">' + esc(ev.line) +
             (ev.relief ? '' : ' <span style="color:#ffd166">Contributing ' + (ev.res || []).map(r => esc(_meta(r).name || r)).join(' / ') + ' pays +60% rep & Cinders.</span>') + '</div>'
         : '<div class="small-text" style="color:#9fb6d6;margin-top:3px">Markets are calm — no active world crisis. Stock & prices sit at baseline.</div>';
+      const guard = (typeof frInflationGuard === 'function') ? frInflationGuard() : null;
+      const guardL = guard
+        ? '<div class="small-text" style="margin-top:4px;color:#ff9a6b;font-weight:700">🛡 Inflation guard engaged — node payouts throttled to ' + guard.pct + '% (' + esc(guard.why) + ').</div>'
+        : '';
       const cv = (typeof frActiveConvoy === 'function') ? frActiveConvoy() : null;
       const cvBtn = cv
         ? '<button id="fr-convoy" style="margin-top:8px;width:100%;cursor:pointer;border-radius:8px;padding:0.55rem 0.8rem;border:1px solid #e0a060;background:linear-gradient(180deg,#7a4a1c,#3a2410);color:#ffe8c8;font-weight:800">🗺️ Run Crisis-Response Campaign — recover ' + esc(_meta(cv.res).name || cv.res) + ' (−7 ⛽)</button>'
         : '';
-      return '<div style="margin:8px 0 0;padding:9px 11px;border:1px solid ' + stCol + '55;border-radius:8px;background:' + stCol + '12">' + head + bodyL + cvBtn + '</div>';
+      return '<div style="margin:8px 0 0;padding:9px 11px;border:1px solid ' + stCol + '55;border-radius:8px;background:' + stCol + '12">' + head + bodyL + guardL + cvBtn + '</div>';
     };
 
     const nodesTab = () => {
       const corp = (typeof Corp !== 'undefined') && Corp.mine;
       const rk = frRankFor(FoundationReserve.myPoints);
-      const head = '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(120,170,255,0.3);border-radius:8px;background:rgba(40,70,130,0.12);color:#cfe0f4;font-size:0.86rem">' +
+      const guard = (typeof frInflationGuard === 'function') ? frInflationGuard() : null;
+      const guardBox = guard
+        ? '<div style="margin-bottom:8px;padding:8px 11px;border:1px solid rgba(255,150,110,0.5);border-radius:8px;background:rgba(70,30,20,0.28);color:#ffcaa0;font-size:0.86rem">' +
+            '🛡 <strong>AI Director — Inflation Guard ACTIVE</strong>' +
+            '<div class="small-text" style="color:#ffb499;margin-top:3px">Node payouts throttled to <strong>' + guard.pct + '%</strong> to stop Cinder inflation · trigger: ' + esc(guard.why) + '. Lifts automatically when the economy stabilises.</div>' +
+          '</div>'
+        : '';
+      const head = guardBox + '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(120,170,255,0.3);border-radius:8px;background:rgba(40,70,130,0.12);color:#cfe0f4;font-size:0.86rem">' +
         '🔌 <strong>Foundation Reserve Node System</strong> — registered corporations run infrastructure and earn 🔥 for <strong>active contribution</strong>. A node only pays your NEW Reserve points since the last collect — idling pays nothing.' +
-        '<div class="small-text" style="color:#9fb6d6;margin-top:4px">' + rk.rank.icon + ' ' + esc(rk.rank.name) + ' · ' + numF(FoundationReserve.myPoints) + ' rep · rate ' + NODE_CINDER_PER_POINT + ' 🔥/point</div></div>';
+        '<div class="small-text" style="color:#9fb6d6;margin-top:4px">' + rk.rank.icon + ' ' + esc(rk.rank.name) + ' · ' + numF(FoundationReserve.myPoints) + ' rep · rate ' + NODE_CINDER_PER_POINT + ' 🔥/point' + (guard ? ' · <span style="color:#ff9a6b">guard ×' + guard.mul.toFixed(2) + '</span>' : '') + '</div></div>';
       if (FoundationReserve.nodesNeedSetup) {
         return head + '<div class="ink-dim" style="padding:1.4rem;text-align:center">🔌 The node system isn’t set up yet — run <strong>api.sql</strong> in Supabase (creates economy_nodes), then reopen.</div>';
       }

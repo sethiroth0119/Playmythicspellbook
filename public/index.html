@@ -24809,7 +24809,13 @@ function openCityHall() {
           '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><div style="color:#ffe6b0;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(Corp.mine.name) + ' <span class="small-text" style="color:#caa46a">[' + esc(Corp.mine.tag) + ']</span></div>' +
           '<div class="small-text" style="color:#b59a66;white-space:nowrap">Compliance <strong style="color:' + cc + '">' + comp + '</strong>/100</div></div>' +
           '<div style="height:7px;border-radius:5px;background:rgba(0,0,0,0.4);margin-top:6px;overflow:hidden"><div style="height:100%;width:' + comp + '%;background:' + cc + '"></div></div>' +
-          '<div class="small-text" style="color:#8a7a4a;margin-top:5px">Earned from Reserve contributions + corporation tax paid. Raise it to unlock higher licenses.' + (owner ? '' : ' Only the founder/CEO can file.') + '</div>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px">' +
+            ((Corp.complianceParts || []).length ? (Corp.complianceParts || []).map(function (p) {
+              var pos = (p.v | 0) >= 0;
+              return '<span class="small-text" style="white-space:nowrap;padding:2px 7px;border-radius:999px;border:1px solid ' + (pos ? 'rgba(127,224,160,0.3)' : 'rgba(255,154,107,0.35)') + ';background:' + (pos ? 'rgba(40,80,50,0.22)' : 'rgba(80,40,30,0.22)') + ';color:' + (pos ? '#9fe0b0' : '#ff9a6b') + '">' + esc(p.k) + ' ' + (pos ? '+' : '') + (p.v | 0) + '</span>';
+            }).join('') : '<span class="small-text" style="color:#8a7a4a">Scoring…</span>') +
+          '</div>' +
+          '<div class="small-text" style="color:#8a7a4a;margin-top:6px">↑ pay taxes/fees · support the Reserve · keep ops running &nbsp;·&nbsp; ↓ smuggling · member crimes/raids · dodged taxes.' + (owner ? '' : ' Only the founder/CEO can file.') + '</div>' +
         '</div>';
       const rows = CITY_LICENSES.map(L => {
         const has = held.indexOf(L.id) >= 0;
@@ -34347,7 +34353,7 @@ function _baseNavTo(screen) {
 // so corpId is always real. All Supabase access is guarded — the app still
 // works (mock data) if offline / tables not yet set up.
 // ============================================================================
-const Corp = { mine: null, roster: [], requests: [], vault: [], directory: [], licenses: [], compliance: 0, amOwner: false, _ensuring: false, _err: null };
+const Corp = { mine: null, roster: [], requests: [], vault: [], directory: [], licenses: [], compliance: 0, complianceParts: [], amOwner: false, _ensuring: false, _err: null };
 // 📜 City Hall licence catalogue. Each gates a Reserve Node type. Issued to
 // a corporation (founder applies) for Cinder + resources + a minimum
 // compliance score. Smuggling is illicit — no compliance gate.
@@ -34440,26 +34446,67 @@ async function corpEnsure() {
             return { depId: v.depositor_id, dep: v.depositor_name || 'Member', kind: v.kind, id: v.item_id, name: v.name || v.item_id, icon: v.icon || '', qty: v.qty | 0 };
           }) : [];
         } catch (e) { Corp.vault = []; }
-        // 📜 Licences held + compliance score (City Hall). Compliance is
-        // EARNED: base + the corp's pooled Reserve contribution + the tax
-        // its members have paid. (Black-market penalty is a later pass.)
+        // 📜 Licences held.
         try {
           const lc = await Cloud.client.from('corp_licenses').select('license_type,status').eq('corp_id', c.data.id).limit(40);
           Corp.licenses = (lc && lc.data) ? lc.data.filter(function (x) { return x.status === 'active'; }).map(function (x) { return x.license_type; }) : [];
         } catch (e) { Corp.licenses = []; }
+        // 🏛️ COMPLIANCE SCORE — a live ledger of corporate citizenship.
+        //   ↑ paying taxes/fees · supporting the Reserve · maintaining ops
+        //   ↓ smuggling (illicit licence + black-market) · raids/crimes by
+        //     members (convictions + jail) · missed taxes (untaxed black vol)
+        // Base 40, clamped 0–100. A transparent breakdown drives the UI.
         try {
+          const clamp = function (n, lo, hi) { return Math.max(lo, Math.min(hi, n | 0)); };
           const ids = (Corp.roster || []).map(function (m) { return m.userId; }).filter(Boolean).slice(0, 60);
-          let pts = 0, tax = 0;
+          const rnames = {};
+          (Corp.roster || []).forEach(function (m) { var n = ((m.name || '') + '').trim().toLowerCase(); if (n) rnames[n] = 1; });
+          let pts = 0, taxPaid = 0, blackTax = 0, blackVal = 0;
           if (ids.length) {
             const pr = await Cloud.client.from('reserve_contributions').select('points').in('user_id', ids).limit(2000);
             if (pr && pr.data) pr.data.forEach(function (r) { pts += Number(r.points) || 0; });
           }
-          const tr = await Cloud.client.from('reserve_tax_log').select('tax_amount').eq('corp_id', c.data.id).limit(3000);
-          if (tr && tr.data) tr.data.forEach(function (r) { tax += Number(r.tax_amount) || 0; });
-          Corp.compliance = Math.max(0, Math.min(100, 40 + Math.floor(pts / 500) + Math.floor(tax / 5000)));
-        } catch (e) { Corp.compliance = 40; }
+          const tr = await Cloud.client.from('reserve_tax_log').select('tax_amount,sale_value,market_type').eq('corp_id', c.data.id).limit(3000);
+          if (tr && tr.data) tr.data.forEach(function (r) {
+            var amt = Number(r.tax_amount) || 0;
+            if (r.market_type === 'black') { blackTax += amt; blackVal += Number(r.sale_value) || 0; }
+            else taxPaid += amt;
+          });
+          let nodes = 0;
+          try {
+            const nq = await Cloud.client.from('economy_nodes').select('status').eq('corp_id', c.data.id).limit(50);
+            if (nq && nq.data) nodes = nq.data.filter(function (n) { return n.status === 'active' || n.status === 'building'; }).length;
+          } catch (e) {}
+          let convictions = 0, jailed = 0;
+          try {
+            const cv = await Cloud.client.from('court_records').select('offender_name').limit(800);
+            if (cv && cv.data) cv.data.forEach(function (r) { if (rnames[(((r.offender_name || '') + '').trim().toLowerCase())]) convictions++; });
+          } catch (e) {}
+          try {
+            const dj = await Cloud.client.from('detention').select('offender_name,status').eq('status', 'jailed').limit(400);
+            if (dj && dj.data) dj.data.forEach(function (r) { if (rnames[(((r.offender_name || '') + '').trim().toLowerCase())]) jailed++; });
+          } catch (e) {}
+          const hasSmug = (Corp.licenses || []).indexOf('smuggling') >= 0;
+          const taxPts = clamp(Math.floor(taxPaid / 5000), 0, 30);
+          const resPts = clamp(Math.floor(pts / 500), 0, 20);
+          const opsPts = clamp(nodes * 3, 0, 15);
+          const smugPen = clamp((hasSmug ? 15 : 0) + Math.floor(blackTax / 8000), 0, 25);
+          const raidPen = clamp(convictions * 6 + jailed * 10, 0, 40);
+          const missPen = clamp(Math.floor(blackVal / 40000), 0, 20);
+          const parts = [
+            { k: 'Base standing', v: 40 },
+            { k: 'Taxes & fees paid', v: taxPts },
+            { k: 'Reserve support', v: resPts },
+            { k: 'Operations upkeep', v: opsPts },
+          ];
+          if (smugPen) parts.push({ k: 'Smuggling' + (hasSmug ? ' (illicit licence)' : ''), v: -smugPen });
+          if (raidPen) parts.push({ k: 'Raids / member crimes', v: -raidPen });
+          if (missPen) parts.push({ k: 'Missed taxes (black-market)', v: -missPen });
+          Corp.complianceParts = parts;
+          Corp.compliance = clamp(40 + taxPts + resPts + opsPts - smugPen - raidPen - missPen, 0, 100);
+        } catch (e) { Corp.compliance = 40; Corp.complianceParts = [{ k: 'Base standing', v: 40 }]; }
       }
-    } else { Corp.mine = null; Corp.roster = []; Corp.requests = []; Corp.vault = []; Corp.licenses = []; Corp.compliance = 0; Corp.amOwner = false; }
+    } else { Corp.mine = null; Corp.roster = []; Corp.requests = []; Corp.vault = []; Corp.licenses = []; Corp.compliance = 0; Corp.complianceParts = []; Corp.amOwner = false; }
     // 🏢 Public directory of EVERY corporation started (so players who
     // aren't in one can see them). corporations select RLS is public.
     try {

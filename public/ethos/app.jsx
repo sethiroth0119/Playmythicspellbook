@@ -263,6 +263,11 @@ function boeMerc(op, args) {
 function boePost(op, args) {
   try { window.parent.postMessage(Object.assign({ type: 'boe:post', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
 }
+// Marketplace actions.
+//   op: 'list' | 'cancel' | 'buy' | 'bid'
+function boeMkt(op, args) {
+  try { window.parent.postMessage(Object.assign({ type: 'boe:market', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
+}
 // 🧾 Print-to-PDF statement. Opens a styled popup the player can "Save as
 // PDF" via the system print dialog. Pure client-side, no libraries.
 function openStatementWindow(account) {
@@ -388,6 +393,10 @@ function App() {
           mercAsEmployer: Array.isArray(d.mercAsEmployer) ? d.mercAsEmployer : ((prev && prev.mercAsEmployer) || []),
           mercAsMerc: Array.isArray(d.mercAsMerc) ? d.mercAsMerc : ((prev && prev.mercAsMerc) || []),
           mercPosts: Array.isArray(d.mercPosts) ? d.mercPosts : ((prev && prev.mercPosts) || []),
+          // Marketplace (open + my listings) + bank-of-ethos handle directory
+          market: Array.isArray(d.market) ? d.market : ((prev && prev.market) || []),
+          marketMine: Array.isArray(d.marketMine) ? d.marketMine : ((prev && prev.marketMine) || []),
+          directory: Array.isArray(d.directory) ? d.directory : ((prev && prev.directory) || []),
           mercSplit: (d.mercSplit && typeof d.mercSplit === 'object') ? d.mercSplit : ((prev && prev.mercSplit) || { merc: 0.40, employer: 0.52, tax: 0.08, perCinder: 5000, maxHours: 24, maxTarget: 5000000 }),
           created: (prev && prev.created) || new Date().toISOString(),
           recoveryKey: (prev && prev.recoveryKey) || '—',
@@ -524,7 +533,7 @@ function AppInner({ account, updateAccount, transfers, sendMoney, pushToast, onL
           {route === "mercs" && <PageMercs account={account} role={role} sessionSec={sessionSec} liveCinder={liveCinder} running={running} setRunning={setRunning} />}
           {route === "contracts" && <PageContracts />}
           {route === "ops" && <PageOpsVault account={account} />}
-          {route === "market" && <PageMarket />}
+          {route === "market" && <PageMarket account={account} />}
           {route === "charts" && <PageCharts />}
           </PageBoundary>
         </div>
@@ -1685,62 +1694,258 @@ function PageOpsVault({ account }) {
 /* ============================================================
    PAGE: MARKETPLACE
    ============================================================ */
-function PageMarket() {
+// Modal: post a new marketplace listing (4 kinds + optional auction).
+function NewListingModal({ account, defaultAuction, onClose }) {
+  const cardOwned = (account && account.cardCollection) || {};
+  const vault = (account && account.vault) || {};
+  const cat = vault.resCatalog || [];
+  const walletRes = vault.walletRes || {};
+  const [kind, setKind] = useState("card");
+  const [itemId, setItemId] = useState("");
+  const [name, setName] = useState("");
+  const [qty, setQty] = useState("1");
+  const [price, setPrice] = useState("1000");
+  const [currency, setCurrency] = useState("cinder");
+  const [isAuction, setAuction] = useState(!!defaultAuction);
+  const [hours, setHours] = useState(24);
+  const n = Math.max(1, Math.floor(Number(qty) || 1));
+  const p = Math.max(1, Math.floor(Number(price) || 0));
+  const ok = (kind === "card" ? !!itemId : kind === "resource" ? !!itemId : !!name.trim()) && n > 0 && p > 0;
+  const submit = () => {
+    if (!ok) return;
+    if (boeMkt("list", { kind: kind, itemId: itemId, name: name, qty: n, price: p, currency: currency, isAuction: isAuction, hours: hours })) onClose();
+  };
+  return (
+    <ModalFrame title={isAuction ? "Create Auction" : "List Item for Sale"} onClose={onClose}>
+      <div className="row" style={{ gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+        {["card", "item", "resource", "relic"].map(k => (
+          <button key={k} className={"btn sm" + (kind === k ? "" : " ghost")} onClick={() => { setKind(k); setItemId(""); setName(""); }}>{k.charAt(0).toUpperCase() + k.slice(1)}</button>
+        ))}
+      </div>
+      <div className="stack-sm" style={{ marginBottom: 12 }}>
+        {kind === "card" && (
+          <>
+            <label className="label">Pick a card you own</label>
+            <select value={itemId} onChange={(e) => setItemId(e.target.value)} style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px" }}>
+              <option value="">— select —</option>
+              {Object.keys(cardOwned).filter(id => (cardOwned[id] | 0) > 0).map(id => (
+                <option key={id} value={id}>{id} (×{cardOwned[id]})</option>
+              ))}
+            </select>
+          </>
+        )}
+        {kind === "resource" && (
+          <>
+            <label className="label">Pick a resource you own</label>
+            <select value={itemId} onChange={(e) => setItemId(e.target.value)} style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px" }}>
+              <option value="">— select —</option>
+              {cat.filter(r => (walletRes[r.id] | 0) > 0).map(r => (
+                <option key={r.id} value={r.id}>{r.icon} {r.name} (×{walletRes[r.id]})</option>
+              ))}
+            </select>
+          </>
+        )}
+        {(kind === "item" || kind === "relic") && (
+          <>
+            <label className="label">{kind === "item" ? "Item" : "Relic"} name</label>
+            <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} placeholder={kind === "item" ? "e.g. Steel Plating Bundle" : "e.g. Pyrelord Relic"}
+              style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px" }} />
+            <div className="small-text" style={{ color: "var(--ink-dim)" }}>Items / relics are name-only listings (no inventory enforcement in this build).</div>
+          </>
+        )}
+        <label className="label">Quantity</label>
+        <input type="number" min="1" step="1" value={qty} onChange={(e) => setQty(e.target.value)}
+          style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+        <label className="label">{isAuction ? "Starting bid" : "Price"}</label>
+        <div className="row" style={{ gap: 6 }}>
+          <input type="number" min="1" step="1" value={price} onChange={(e) => setPrice(e.target.value)}
+            style={{ flex: 1, background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+          <button className={"btn sm" + (currency === "cinder" ? "" : " ghost")} onClick={() => setCurrency("cinder")}><CinderGlyph size={12}/> CDR</button>
+          <button className={"btn sm" + (currency === "aza" ? "" : " ghost")} onClick={() => setCurrency("aza")}><AzaGlyph size={12}/> AZA</button>
+        </div>
+        <label className="row" style={{ gap: 8, cursor: "pointer", marginTop: 6 }}>
+          <input type="checkbox" checked={isAuction} onChange={(e) => setAuction(e.target.checked)} />
+          <span className="small-text">Auction (highest bid wins)</span>
+        </label>
+        {isAuction && (
+          <>
+            <label className="label">Duration (hours, up to 168)</label>
+            <input type="number" min="1" max="168" step="1" value={hours} onChange={(e) => setHours(Math.max(1, Math.min(168, Math.floor(Number(e.target.value) || 1))))}
+              style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+          </>
+        )}
+      </div>
+      <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn primary" onClick={submit} disabled={!ok}>{isAuction ? "Start Auction" : "List for Sale"}</button>
+      </div>
+    </ModalFrame>
+  );
+}
+
+function MarketCard({ l, mine, myHandle, onBuy, onBid, onCancel }) {
+  const isAuction = !!l.is_auction;
+  const cur = l.currency === "aza" ? "AZA" : "CDR";
+  const Glyph = l.currency === "aza" ? AzaGlyph : CinderGlyph;
+  const price = Math.floor(Number(l.is_auction ? (l.current_bid || l.price) : l.price) || 0);
+  const tagColor = l.kind === "card" ? "var(--violet)" : l.kind === "resource" ? "var(--aza)" : l.kind === "relic" ? "var(--warn)" : "var(--ink-dim)";
+  const [bid, setBid] = useState("");
+  const isMine = mine || (l.seller_handle && myHandle && l.seller_handle.toLowerCase() === myHandle);
+  return (
+    <div className={"listing"}>
+      <div className="img" style={{ position: "relative" }}>
+        <span className="rarity-tag" style={{ color: tagColor }}>{l.kind.toUpperCase()}{isAuction ? " · AUCTION" : ""}</span>
+        <div style={{ fontSize: 48 }}>{l.item_icon || (l.kind === "card" ? "🃏" : l.kind === "resource" ? "📦" : l.kind === "relic" ? "🏺" : "🎁")}</div>
+      </div>
+      <div className="body">
+        <div className="name">{l.item_name}</div>
+        <div className="meta">
+          <span>by <span className="mono" style={{ color: "var(--violet)" }}>{l.seller_handle}</span></span>
+          <span>×{l.qty}</span>
+        </div>
+        {isAuction && (
+          <div className="small-text" style={{ marginTop: 4, color: "var(--ink-dim)" }}>
+            {l.current_bid ? <>Top bid: <b>{fmt(l.current_bid)}</b> by <span className="mono">{l.current_bidder_handle}</span></> : <>Starting bid: <b>{fmt(l.price)}</b></>}
+            {l.ends_at ? <> · ends {new Date(l.ends_at).toLocaleString()}</> : null}
+          </div>
+        )}
+      </div>
+      <div className="price" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+        <span className="amt row" style={{ gap: 6, color: l.currency === "cinder" ? "var(--cinder)" : "var(--aza)" }}>
+          <Glyph size={14}/> {fmt(price)}
+        </span>
+        {isMine ? (
+          <button className="btn sm ghost" onClick={() => onCancel(l.id)}>Cancel</button>
+        ) : isAuction ? (
+          <div className="row" style={{ gap: 4 }}>
+            <input type="number" min="1" step="1" placeholder="bid"
+              value={bid} onChange={(e) => setBid(e.target.value)}
+              style={{ flex: 1, background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "5px 8px", fontFamily: "JetBrains Mono, monospace", fontSize: 12 }} />
+            <button className={"btn sm " + (l.currency === "cinder" ? "cinder" : "aza")} onClick={() => { const n = Math.floor(Number(bid) || 0); if (n > 0) { onBid(l.id, n); setBid(""); } }}>Bid</button>
+          </div>
+        ) : (
+          <button className={"btn sm " + (l.currency === "cinder" ? "cinder" : "aza")} onClick={() => onBuy(l.id)}>Buy now</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PageMarket({ account }) {
   const [tab, setTab] = useState("all");
+  const [filter, setFilter] = useState("all");
+  const [newOpen, setNewOpen] = useState(false);
+  const [auctionMode, setAuctionMode] = useState(false);
+  const market = Array.isArray(account && account.market) ? account.market : [];
+  const mine = Array.isArray(account && account.marketMine) ? account.marketMine : [];
+  const myHandle = (account && account.handle || "").toLowerCase();
+  const active = market.filter(l => l.status === "active");
+  const byKind = (kind) => filter === "all" || filter === "auctions" ? (filter === "auctions" ? active.filter(l => l.is_auction) : active) : active.filter(l => l.kind === filter);
+  const list = byKind(filter);
+  const mineActive = mine.filter(l => l.status === "active");
+  const mineHistory = mine.filter(l => l.status !== "active");
   return (
     <div>
+      {newOpen && <NewListingModal account={account} defaultAuction={auctionMode} onClose={() => setNewOpen(false)} />}
       <div className="page-head">
         <div>
           <div className="page-crumb">Economy / Marketplace</div>
           <div className="page-title display">Bank of Ethos Marketplace</div>
         </div>
         <div className="page-actions">
-          <button className="btn ghost"><Icon name="eye" size={14}/> My listings · 4</button>
-          <button className="btn"><Icon name="bolt" size={14}/> Create auction</button>
-          <button className="btn primary"><Icon name="plus" size={14}/> List item</button>
+          <button className="btn ghost" onClick={() => setTab("mine")}><Icon name="eye" size={14}/> My listings · {mineActive.length}</button>
+          <button className="btn" onClick={() => { setAuctionMode(true); setNewOpen(true); }}><Icon name="bolt" size={14}/> Create auction</button>
+          <button className="btn primary" onClick={() => { setAuctionMode(false); setNewOpen(true); }}><Icon name="plus" size={14}/> List item</button>
         </div>
       </div>
 
-      <div className="row" style={{ marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
-        <div className="search" style={{ flex: "1 1 280px" }}>
-          <Icon name="search" size={14} />
-          <input placeholder="Search cards, resources, loot, materials…" />
-        </div>
-        <button className="btn">All items</button>
-        <button className="btn ghost">Cards</button>
-        <button className="btn ghost">Resources</button>
-        <button className="btn ghost">Relics</button>
-        <button className="btn ghost">Materials</button>
-        <button className="btn ghost">Auctions</button>
-        <div style={{ flex: 1 }}></div>
-        <button className="btn ghost">Pay in <CinderGlyph size={12}/> CDR</button>
-        <button className="btn ghost">Pay in <AzaGlyph size={12}/> AZA</button>
-      </div>
-
-      <div className="grid g-4">
-        {MARKET.map((m, i) => (
-          <div key={i} className={`listing rarity-${m.rarity}`}>
-            <div className="img">
-              <span className="rarity-tag" style={{ color: m.rarity === "legend" ? "var(--warn)" : m.rarity === "epic" ? "var(--cinder)" : "var(--violet)" }}>{m.rarityLabel}</span>
-              <Icon name={m.glyph} size={56} className="glyph" />
-            </div>
-            <div className="body">
-              <div className="name">{m.name}</div>
-              <div className="meta">
-                <span>by {m.seller}</span>
-                <span>×{m.stock}</span>
-              </div>
-            </div>
-            <div className="price">
-              <span className="amt row" style={{ gap: 6, color: m.currency === "cinder" ? "var(--cinder)" : "var(--aza)" }}>
-                {m.currency === "cinder" ? <CinderGlyph size={14}/> : <AzaGlyph size={14}/>}
-                {fmt(m.price)}
-              </span>
-              <button className={`btn sm ${m.currency === "cinder" ? "cinder" : "aza"}`}>Buy</button>
-            </div>
-          </div>
+      <div className="tabs">
+        {[
+          { id: "all", label: "Browse · " + active.length },
+          { id: "mine", label: "My Listings · " + mineActive.length },
+          { id: "history", label: "History · " + mineHistory.length },
+        ].map(t => (
+          <div key={t.id} className={"tab " + (tab === t.id ? "active" : "")} onClick={() => setTab(t.id)}>{t.label}</div>
         ))}
       </div>
+
+      {tab === "all" && (
+        <>
+          <div className="row" style={{ marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
+            {[
+              { id: "all", label: "All" },
+              { id: "card", label: "Cards" },
+              { id: "item", label: "Items" },
+              { id: "resource", label: "Resources" },
+              { id: "relic", label: "Relics" },
+              { id: "auctions", label: "Auctions" },
+            ].map(f => (
+              <button key={f.id} className={"btn sm" + (filter === f.id ? "" : " ghost")} onClick={() => setFilter(f.id)}>{f.label}</button>
+            ))}
+          </div>
+
+          {list.length === 0 ? (
+            <div className="panel" style={{ padding: 22, textAlign: "center", color: "var(--ink-dim)" }}>No active listings. <span style={{ color: "var(--ink-mute)" }}>(none)</span></div>
+          ) : (
+            <div className="grid g-4">
+              {list.map(l => (
+                <MarketCard key={l.id} l={l} myHandle={myHandle}
+                  onBuy={(id) => boeMkt("buy", { id: id })}
+                  onBid={(id, b) => boeMkt("bid", { id: id, bid: b })}
+                  onCancel={(id) => boeMkt("cancel", { id: id })} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === "mine" && (
+        <div className="panel">
+          {mineActive.length === 0 ? (
+            <div className="panel-b muted" style={{ fontSize: 12 }}>You have no active listings. (none) — use <b>List item</b> or <b>Create auction</b>.</div>
+          ) : (
+            <table className="t">
+              <thead><tr><th>Kind</th><th>Item</th><th>Qty</th><th>Price / Top bid</th><th>Type</th><th></th></tr></thead>
+              <tbody>
+                {mineActive.map(l => (
+                  <tr key={l.id}>
+                    <td><span className="chip">{l.kind.toUpperCase()}</span></td>
+                    <td>{l.item_icon ? <span>{l.item_icon} </span> : null}{l.item_name}</td>
+                    <td className="mono">{fmt(l.qty)}</td>
+                    <td className="mono" style={{ color: l.currency === "cinder" ? "var(--cinder)" : "var(--aza)" }}>{fmt(l.is_auction ? (l.current_bid || l.price) : l.price)} {l.currency === "cinder" ? "🜂" : "👑"}</td>
+                    <td>{l.is_auction ? <span className="chip violet">Auction</span> : <span className="chip">Buy-now</span>}</td>
+                    <td><button className="btn sm ghost" onClick={() => boeMkt("cancel", { id: l.id })}>Cancel</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {tab === "history" && (
+        <div className="panel">
+          {mineHistory.length === 0 ? (
+            <div className="panel-b muted" style={{ fontSize: 12 }}>No completed listings yet. (none)</div>
+          ) : (
+            <table className="t">
+              <thead><tr><th>Kind</th><th>Item</th><th>Qty</th><th>Price</th><th>Status</th><th>Counterparty</th></tr></thead>
+              <tbody>
+                {mineHistory.map(l => (
+                  <tr key={l.id}>
+                    <td><span className="chip">{l.kind.toUpperCase()}</span></td>
+                    <td>{l.item_icon ? <span>{l.item_icon} </span> : null}{l.item_name}</td>
+                    <td className="mono">{fmt(l.qty)}</td>
+                    <td className="mono" style={{ color: l.currency === "cinder" ? "var(--cinder)" : "var(--aza)" }}>{fmt(l.price)}</td>
+                    <td><span className="chip">{l.status.toUpperCase()}</span></td>
+                    <td className="mono dim">{l.buyer_handle || ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2939,11 +3144,23 @@ function PageTransfers({ account, transfers, onSend }) {
    ============================================================ */
 function PageDirectory({ account, onSend }) {
   const [q, setQ] = useState("");
-  const results = useMemo(() => {
-    const s = q.trim().toUpperCase();
-    if (!s) return DIRECTORY;
-    return DIRECTORY.filter(c => c.handle.toUpperCase().includes(s) || c.callsign.toUpperCase().includes(s));
-  }, [q]);
+  const dir = Array.isArray(account && account.directory) ? account.directory : [];
+  // Build display rows from the REAL boe_directory only — i.e. players
+  // who actually have a Bank of Ethos account. Each row gets a stable
+  // initials/avatar derived from the label.
+  const myHandle = (account && account.handle || "").toLowerCase();
+  const rows = useMemo(() => {
+    const all = dir
+      .filter(d => d && d.handle)
+      .map(d => {
+        const label = d.label || d.handle || "Operator";
+        const initials = (label.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("") || "OP").toUpperCase();
+        return { handle: d.handle, label: label, initials: initials, isMe: d.handle && d.handle.toLowerCase() === myHandle };
+      });
+    const s = q.trim().toLowerCase();
+    if (!s) return all;
+    return all.filter(c => c.handle.toLowerCase().includes(s) || c.label.toLowerCase().includes(s));
+  }, [dir, q, myHandle]);
 
   return (
     <div>
@@ -2953,7 +3170,6 @@ function PageDirectory({ account, onSend }) {
           <div className="page-title display">Player Directory</div>
         </div>
         <div className="page-actions">
-          <button className="btn ghost"><Icon name="plus" size={14}/> Save contact</button>
           <button className="btn primary" onClick={() => onSend(null)}><Icon name="arrow_out" size={14}/> Send to handle</button>
         </div>
       </div>
@@ -2962,47 +3178,40 @@ function PageDirectory({ account, onSend }) {
         <div className="panel-b row" style={{ gap: 12 }}>
           <div className="search" style={{ flex: 1 }}>
             <Icon name="search" size={14}/>
-            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by callsign or ETH-XXXX handle…" />
+            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Bank of Ethos holders by handle or callsign…" />
           </div>
-          <span className="chip">{results.length} accounts</span>
-          <span className="chip live"><span className="live-dot"></span>{results.filter(r => r.online).length} online</span>
+          <span className="chip">{rows.length} Bank of Ethos accounts</span>
         </div>
       </div>
 
       <div className="panel">
-        <table className="t">
-          <thead>
-            <tr><th>Account</th><th>Handle</th><th>Status</th><th>Reputation</th><th>Type</th><th></th></tr>
-          </thead>
-          <tbody>
-            {results.map(c => (
-              <tr key={c.handle}>
-                <td>
-                  <div className="row" style={{ gap: 10 }}>
-                    <div className="merc-av" style={{ background: `linear-gradient(135deg, ${c.c1}, ${c.c2})`, width: 32, height: 32, fontSize: 11 }}>{c.initials}</div>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{c.callsign}</div>
-                  </div>
-                </td>
-                <td className="mono" style={{ color: "var(--violet)" }}>{c.handle}</td>
-                <td>
-                  {c.online
-                    ? <span className="chip live"><span className="live-dot"></span>Online</span>
-                    : <span className="chip"><span className="dot" style={{ background: "var(--ink-mute)" }}></span>Offline</span>}
-                </td>
-                <td>
-                  <div className="row" style={{ gap: 8 }}>
-                    <div className="bar" style={{ width: 90 }}><div style={{ width: `${c.rep}%`, background: c.rep > 85 ? "var(--good)" : "var(--violet)" }}></div></div>
-                    <span className="mono" style={{ fontSize: 12 }}>{c.rep}</span>
-                  </div>
-                </td>
-                <td className="dim" style={{ fontSize: 12 }}>{c.tag}</td>
-                <td style={{ textAlign: "right" }}>
-                  <button className="btn sm" onClick={() => onSend(c)}><Icon name="arrow_out" size={11}/> Send</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {rows.length === 0 ? (
+          <div className="panel-b muted" style={{ fontSize: 12, padding: 22, textAlign: "center" }}>
+            No Bank of Ethos accounts found. <span style={{ color: "var(--ink-mute)" }}>(none)</span>
+          </div>
+        ) : (
+          <table className="t">
+            <thead>
+              <tr><th>Account</th><th>Handle</th><th></th></tr>
+            </thead>
+            <tbody>
+              {rows.map(c => (
+                <tr key={c.handle}>
+                  <td>
+                    <div className="row" style={{ gap: 10 }}>
+                      <div className="merc-av" style={{ background: "linear-gradient(135deg, #8a6bff, #ff7a3d)", width: 32, height: 32, fontSize: 11 }}>{c.initials}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{c.label} {c.isMe && <span className="chip" style={{ marginLeft: 6 }}>You</span>}</div>
+                    </div>
+                  </td>
+                  <td className="mono" style={{ color: "var(--violet)" }}>{c.handle}</td>
+                  <td style={{ textAlign: "right" }}>
+                    {!c.isMe && <button className="btn sm" onClick={() => onSend({ handle: c.handle, callsign: c.label, initials: c.initials, c1: "#8a6bff", c2: "#ff7a3d" })}><Icon name="arrow_out" size={11}/> Send</button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

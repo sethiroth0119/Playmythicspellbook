@@ -24991,7 +24991,7 @@ const BOE_FEE_PERIOD_MS = 30 * 24 * 3600000; // 30 days
 // rate the cashout vault settles at (CASHOUT_RATE_PER_DOLLAR = 5000), so
 // value is consistent end-to-end: buy Aza → exchange → cash out.
 const AZA_TO_CINDER = 5000;                 // 1 👑 → 5,000 🔥 (irreversible)
-const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true, ledger: [], reqIn: [], reqOut: [], loans: [], mercListings: [], mercAsEmployer: [], mercAsMerc: [], mercPosts: [], _handle: '', _label: '' };
+const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true, ledger: [], reqIn: [], reqOut: [], loans: [], mercListings: [], mercAsEmployer: [], mercAsMerc: [], mercPosts: [], market: [], marketMine: [], directory: [], _handle: '', _label: '' };
 async function _boeRow() {
   if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
   return Cloud.client.from('bank_of_ethos');
@@ -25437,6 +25437,213 @@ async function boeMercAutoSettle() {
     }
   } catch (e) {}
 }
+// 🛒 BANK OF ETHOS MARKETPLACE — players list cards / items / resources /
+// relics for sale. Inventory is escrowed off the seller at list time and
+// delivered to the buyer at buy time. Buyer writes their own bank to pay;
+// seller settles their payout on next bank open (single-writer-safe).
+async function boeFetchMarket() {
+  try {
+    const t = _boeTbl('boe_market_listings'); if (!t) return;
+    const me = Profile.cloud.userId;
+    const o = await t.select('*').eq('status', 'active').order('created_at', { ascending: false }).limit(80);
+    const m = await t.select('*').or('seller_user.eq.' + me + ',buyer_user.eq.' + me).order('created_at', { ascending: false }).limit(60);
+    BankEthos.market = (o && !o.error && Array.isArray(o.data)) ? o.data : [];
+    BankEthos.marketMine = (m && !m.error && Array.isArray(m.data)) ? m.data : [];
+  } catch (e) {}
+}
+function _boeFindCardName(cardId) {
+  try {
+    if (typeof getAllCustomCards === 'function') {
+      const c = (getAllCustomCards() || []).find(x => x && x.id === cardId);
+      if (c) return c.name || c.id;
+    }
+    if (typeof STARTER_HEROES !== 'undefined') { const h = STARTER_HEROES.find(x => x.id === cardId); if (h) return h.name; }
+  } catch (e) {}
+  return cardId;
+}
+async function boeMarketList(kind, opts) {
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  opts = opts || {};
+  const qty = Math.max(1, Math.floor(Number(opts.qty) || 1));
+  const price = Math.max(1, Math.floor(Number(opts.price) || 0));
+  const currency = (opts.currency === 'aza') ? 'aza' : 'cinder';
+  const isAuction = !!opts.isAuction;
+  const hours = Math.max(1, Math.min(168, Math.floor(opts.hours) || 24));
+  if (!(price > 0)) { showToast('Enter a price.'); return false; }
+  // Escrow real inventory by kind. Items/relics are name-only listings.
+  let name = '', icon = '', refId = String(opts.itemId || '').trim();
+  if (kind === 'card') {
+    if (!refId) { showToast('Pick a card.'); return false; }
+    const owned = (Profile.cardCollection || {})[refId] | 0;
+    if (owned < qty) { showToast('You own ' + owned + ' × ' + _boeFindCardName(refId) + '.', 4200); return false; }
+    Profile.cardCollection[refId] = owned - qty;
+    if (Profile.cardCollection[refId] <= 0) delete Profile.cardCollection[refId];
+    try { saveProfile(); } catch (e) {}
+    name = _boeFindCardName(refId);
+  } else if (kind === 'resource') {
+    if (!refId || !(typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[refId])) { showToast('Pick a resource.'); return false; }
+    const have = (typeof getRes === 'function') ? getRes(refId) : 0;
+    if (have < qty) { showToast('You have ' + have + ' ' + (_SALVAGE_BY_ID[refId].name || refId) + '.', 4200); return false; }
+    if (typeof spendResources === 'function') { if (!spendResources({ [refId]: qty })) { showToast('Not enough.'); return false; } }
+    try { if (typeof _persistResourcesSoon === 'function') _persistResourcesSoon(); } catch (e) {}
+    name = (_SALVAGE_BY_ID[refId].name || refId);
+    icon = _SALVAGE_BY_ID[refId].icon || '';
+  } else { // 'item' or 'relic' — name-only (no inventory mutation)
+    name = String(opts.name || '').slice(0, 80) || refId || 'Listed item';
+  }
+  try {
+    const t = _boeTbl('boe_market_listings'); if (!t) return false;
+    const row = {
+      seller_user: Profile.cloud.userId, seller_handle: BankEthos._handle, seller_label: BankEthos._label,
+      kind: kind, item_id: refId || null, item_name: name, item_icon: icon,
+      qty: qty, currency: currency, price: price, is_auction: isAuction,
+      current_bid: isAuction ? null : null,
+      ends_at: isAuction ? new Date(Date.now() + hours * 3600000).toISOString() : null,
+      status: 'active',
+    };
+    const ins = await t.insert(row);
+    if (ins && ins.error) throw ins.error;
+  } catch (e) {
+    // Roll back escrow on insert failure.
+    if (kind === 'card') { Profile.cardCollection = Profile.cardCollection || {}; Profile.cardCollection[refId] = ((Profile.cardCollection[refId] | 0) + qty); try { saveProfile(); } catch (_) {} }
+    else if (kind === 'resource') { if (typeof addRes === 'function') addRes(refId, qty); try { _persistResourcesSoon(); } catch (_) {} }
+    showToast('⚠ Listing failed — try again.', 4000); return false;
+  }
+  try { boeLog('market_list', 0, 0, (isAuction ? 'Auction · ' : 'Listed · ') + qty + '× ' + name + ' @ ' + price.toLocaleString() + ' ' + (currency === 'aza' ? '👑' : '🜂'), ''); } catch (e) {}
+  showToast('🛒 Listed ' + qty + '× ' + name + (isAuction ? ' (auction)' : '') + '.', 4600);
+  await boeFetchMarket();
+  return true;
+}
+async function boeMarketCancel(id) {
+  if (!BankEthos.ready) return false;
+  try {
+    const t = _boeTbl('boe_market_listings'); if (!t) return false;
+    const me = Profile.cloud.userId;
+    const r = await t.select('*').eq('id', id).eq('seller_user', me).eq('status', 'active').maybeSingle();
+    const l = r && r.data;
+    if (!l) { showToast('Listing not found.'); return false; }
+    const up = await t.update({ status: 'cancelled' }).eq('id', id).eq('seller_user', me);
+    if (up && up.error) throw up.error;
+    // Return escrow to seller.
+    if (l.kind === 'card' && l.item_id) {
+      Profile.cardCollection = Profile.cardCollection || {};
+      Profile.cardCollection[l.item_id] = ((Profile.cardCollection[l.item_id] | 0) + (l.qty | 0));
+      try { saveProfile(); } catch (e) {}
+    } else if (l.kind === 'resource' && l.item_id) {
+      if (typeof addRes === 'function') addRes(l.item_id, l.qty | 0);
+      try { _persistResourcesSoon(); } catch (e) {}
+    }
+  } catch (e) { showToast('⚠ Cancel failed.', 4000); return false; }
+  showToast('🛒 Listing cancelled — escrow returned.', 4200);
+  await boeFetchMarket();
+  return true;
+}
+async function boeMarketBuyNow(id) {
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  const me = Profile.cloud.userId;
+  try {
+    const t = _boeTbl('boe_market_listings'); if (!t) return false;
+    const r = await t.select('*').eq('id', id).eq('status', 'active').maybeSingle();
+    const l = r && r.data;
+    if (!l) { showToast('Listing unavailable.', 3600); return false; }
+    if (l.seller_user === me) { showToast("You can't buy your own listing.", 3600); return false; }
+    if (l.is_auction) { showToast('Use Place Bid for auctions.', 3600); return false; }
+    const price = Math.floor(Number(l.price) || 0);
+    if (l.currency === 'aza') {
+      const wA = (Profile && Profile.sovereigns) | 0;
+      const total = wA + (BankEthos.aza | 0);
+      if (total < price) { showToast('Need ' + price + ' 👑.', 4000); return false; }
+      const wTake = Math.min(price, wA), bTake = price - wTake;
+      if (wTake > 0 && !spendSovereigns(wTake)) return false;
+      const prevAza = BankEthos.aza;
+      if (bTake > 0) {
+        const b = await _boeRow();
+        const up = await b.update({ aza: prevAza - bTake, updated_at: new Date().toISOString() }).eq('user_id', me);
+        if (up && up.error) { if (wTake > 0) addSovereigns(wTake); showToast('⚠ Payment failed.'); return false; }
+        BankEthos.aza = prevAza - bTake;
+      }
+    } else {
+      const wC = (Profile && Profile.gems) | 0;
+      const total = wC + (BankEthos.balance | 0);
+      if (total < price) { showToast('Need ' + price.toLocaleString() + ' 🜂.', 4000); return false; }
+      const wTake = Math.min(price, wC), bTake = price - wTake;
+      if (wTake > 0 && !spendGems(wTake)) return false;
+      const prevBal = BankEthos.balance;
+      if (bTake > 0) {
+        const b = await _boeRow();
+        const up = await b.update({ balance: prevBal - bTake, updated_at: new Date().toISOString() }).eq('user_id', me);
+        if (up && up.error) { if (wTake > 0) addGems(wTake); showToast('⚠ Payment failed.'); return false; }
+        BankEthos.balance = prevBal - bTake;
+      }
+    }
+    try { saveProfile(); } catch (e) {}
+    // Deliver the item to me (claim-on-buy for my own profile/collection).
+    if (l.kind === 'card' && l.item_id) {
+      Profile.cardCollection = Profile.cardCollection || {};
+      Profile.cardCollection[l.item_id] = ((Profile.cardCollection[l.item_id] | 0) + (l.qty | 0));
+      try { saveProfile(); } catch (e) {}
+    } else if (l.kind === 'resource' && l.item_id && typeof addRes === 'function') {
+      addRes(l.item_id, l.qty | 0); try { _persistResourcesSoon(); } catch (e) {}
+    }
+    const upd = await t.update({ status: 'sold_pending_seller', buyer_user: me, buyer_handle: BankEthos._handle, sold_at: new Date().toISOString() }).eq('id', id).eq('status', 'active');
+    if (upd && upd.error) { /* item already delivered + paid; seller still settles via status */ }
+    try { boeLog('market_buy', l.currency === 'aza' ? 0 : -price, l.currency === 'aza' ? -price : 0, 'Bought ' + (l.qty | 0) + '× ' + (l.item_name || ''), l.seller_handle || ''); } catch (e) {}
+    showToast('🛒 Bought ' + (l.qty | 0) + '× ' + (l.item_name || '') + '.', 5200);
+  } catch (e) { showToast('⚠ Purchase failed.', 4000); return false; }
+  await boeFetchMarket();
+  return true;
+}
+async function boeMarketBid(id, bid) {
+  if (!BankEthos.ready) return false;
+  bid = Math.floor(Number(bid) || 0);
+  if (!(bid > 0)) { showToast('Enter a bid.'); return false; }
+  try {
+    const t = _boeTbl('boe_market_listings'); if (!t) return false;
+    const me = Profile.cloud.userId;
+    const r = await t.select('*').eq('id', id).eq('status', 'active').maybeSingle();
+    const l = r && r.data;
+    if (!l || !l.is_auction) { showToast('Auction unavailable.'); return false; }
+    if (l.seller_user === me) { showToast("You can't bid on your own auction.", 3600); return false; }
+    const cur = Math.floor(Number(l.current_bid) || Number(l.price) || 0);
+    if (bid <= cur) { showToast('Bid must beat ' + cur.toLocaleString() + '.', 4000); return false; }
+    const up = await t.update({ current_bid: bid, current_bidder_user: me, current_bidder_handle: BankEthos._handle }).eq('id', id).eq('status', 'active');
+    if (up && up.error) throw up.error;
+  } catch (e) { showToast('⚠ Bid failed.', 4000); return false; }
+  showToast('🛒 Bid placed.', 3600);
+  await boeFetchMarket();
+  return true;
+}
+// Settle every sold listing where I am the SELLER and the buyer has paid.
+// Mirrors the request claim-on-read pattern.
+async function boeMarketAutoSettle() {
+  try {
+    const t = _boeTbl('boe_market_listings'); if (!t) return;
+    const me = Profile.cloud.userId;
+    const r = await t.select('*').eq('seller_user', me).eq('status', 'sold_pending_seller').limit(40);
+    if (!r || r.error || !Array.isArray(r.data) || !r.data.length) return;
+    for (const l of r.data) {
+      const price = Math.floor(Number(l.price) || 0);
+      if (price <= 0) continue;
+      const b = await _boeRow(); if (!b) continue;
+      const prevBal = BankEthos.balance, prevAza = BankEthos.aza;
+      const patch = (l.currency === 'aza') ? { aza: prevAza + price, updated_at: new Date().toISOString() } : { balance: prevBal + price, updated_at: new Date().toISOString() };
+      const up = await b.update(patch).eq('user_id', me);
+      if (up && up.error) continue;
+      if (l.currency === 'aza') BankEthos.aza = prevAza + price; else BankEthos.balance = prevBal + price;
+      await t.update({ status: 'paid', settled_at: new Date().toISOString() }).eq('id', l.id);
+      try { boeLog('market_sale', l.currency === 'aza' ? 0 : price, l.currency === 'aza' ? price : 0, 'Sold ' + (l.qty | 0) + '× ' + (l.item_name || ''), l.buyer_handle || ''); } catch (e) {}
+      showToast('🛒 Sale settled — +' + price.toLocaleString() + ' ' + (l.currency === 'aza' ? '👑' : '🜂') + ' to bank.', 5200);
+    }
+  } catch (e) {}
+}
+// 🪪 Bank of Ethos handle directory — only signed-in Bank holders.
+async function boeFetchDirectory() {
+  try {
+    const t = _boeTbl('boe_directory'); if (!t) return;
+    const r = await t.select('user_id,handle,label,updated_at').order('updated_at', { ascending: false }).limit(200);
+    BankEthos.directory = (r && !r.error && Array.isArray(r.data)) ? r.data : [];
+  } catch (e) {}
+}
 // 📝 CONTRACT POSTINGS — either side posts a specific job; the other
 // side accepts and a boe_merc_contracts row is auto-created with the
 // accepter taking the opposite role.
@@ -25871,6 +26078,10 @@ function openBankOfEthos() {
           mercAsEmployer: Array.isArray(BankEthos.mercAsEmployer) ? BankEthos.mercAsEmployer : [],
           mercAsMerc: Array.isArray(BankEthos.mercAsMerc) ? BankEthos.mercAsMerc : [],
           mercPosts: Array.isArray(BankEthos.mercPosts) ? BankEthos.mercPosts : [],
+          // marketplace (open + mine) and bank-of-ethos directory (handle-only)
+          market: Array.isArray(BankEthos.market) ? BankEthos.market : [],
+          marketMine: Array.isArray(BankEthos.marketMine) ? BankEthos.marketMine : [],
+          directory: Array.isArray(BankEthos.directory) ? BankEthos.directory : [],
           mercSplit: { merc: BOE_MERC_SHARE_MERC, employer: BOE_MERC_SHARE_EMPLOYER, tax: BOE_MERC_SHARE_TAX, perCinder: AZA_TO_CINDER, maxHours: BOE_MERC_MAX_HOURS, maxTarget: BOE_MERC_MAX_TARGET },
           handle: '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20),
           callsign: nm.slice(0, 28),
@@ -25948,7 +26159,20 @@ function openBankOfEthos() {
         else { _postBusy = false; }
       } catch (e) { _postBusy = false; }
     };
-    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); else if (e.data.type === 'boe:request') onReq(e.data); else if (e.data.type === 'boe:loan') onLoan(e.data); else if (e.data.type === 'boe:merc') onMerc(e.data); else if (e.data.type === 'boe:post') onPost(e.data); } catch (x) {} };
+    // Marketplace actions.
+    let _mktBusy = false;
+    const onMkt = (d) => {
+      if (_mktBusy) return; _mktBusy = true;
+      const fin = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _mktBusy = false; paint(); postSeed(); try { if (typeof render === 'function') render(); } catch (e) {} }); };
+      try {
+        if (d.op === 'list') fin(boeMarketList(d.kind, d));
+        else if (d.op === 'cancel') fin(boeMarketCancel(d.id));
+        else if (d.op === 'buy') fin(boeMarketBuyNow(d.id));
+        else if (d.op === 'bid') fin(boeMarketBid(d.id, d.bid));
+        else { _mktBusy = false; }
+      } catch (e) { _mktBusy = false; }
+    };
+    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); else if (e.data.type === 'boe:request') onReq(e.data); else if (e.data.type === 'boe:loan') onLoan(e.data); else if (e.data.type === 'boe:merc') onMerc(e.data); else if (e.data.type === 'boe:post') onPost(e.data); else if (e.data.type === 'boe:market') onMkt(e.data); } catch (x) {} };
     window.addEventListener('message', onMsg);
     const _origClose = back.onclick;
     back.onclick = () => { try { window.removeEventListener('message', onMsg); } catch (e) {} _origClose(); };
@@ -26009,6 +26233,9 @@ function openBankOfEthos() {
           .then(function () { return boeFetchMercListings(); })
           .then(function () { return boeFetchMercContracts(); })
           .then(function () { return boeFetchMercPosts(); })
+          .then(function () { return boeMarketAutoSettle(); })
+          .then(function () { return boeFetchMarket(); })
+          .then(function () { return boeFetchDirectory(); })
           .then(function () { paint(); postSeed(); })
           .catch(function () {});
       }

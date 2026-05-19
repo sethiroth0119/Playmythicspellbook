@@ -435,6 +435,47 @@ create policy boe_mpost_upd on public.boe_merc_posts for update to authenticated
 drop policy if exists boe_mpost_del on public.boe_merc_posts;
 create policy boe_mpost_del on public.boe_merc_posts for delete to authenticated using (poster_user = auth.uid());
 
+-- 🛒 Bank of Ethos Marketplace — players list cards / items / resources /
+-- relics for sale (buy-now) or auction. The listed inventory (cards,
+-- resources) is escrowed off the seller's side at listing time and
+-- delivered to the buyer at purchase time (buyer writes their own bank
+-- to pay; seller settles their payout on next bank open).
+create table if not exists public.boe_market_listings (
+  id bigint generated always as identity primary key,
+  seller_user uuid not null references auth.users(id) on delete cascade,
+  seller_handle text, seller_label text,
+  kind text not null check (kind in ('card', 'item', 'resource', 'relic')),
+  item_id text,
+  item_name text not null,
+  item_icon text,
+  qty numeric not null check (qty > 0),
+  currency text not null check (currency in ('cinder', 'aza')) default 'cinder',
+  price numeric not null check (price > 0),
+  is_auction boolean not null default false,
+  current_bid numeric,
+  current_bidder_user uuid references auth.users(id) on delete set null,
+  current_bidder_handle text,
+  ends_at timestamptz,
+  status text not null default 'active',  -- active|sold_pending_seller|paid|cancelled|auction_resolved
+  buyer_user uuid references auth.users(id) on delete set null,
+  buyer_handle text,
+  created_at timestamptz default now(),
+  sold_at timestamptz,
+  settled_at timestamptz
+);
+create index if not exists boe_mkt_status on public.boe_market_listings (status, created_at desc);
+create index if not exists boe_mkt_seller on public.boe_market_listings (seller_user, status, created_at desc);
+create index if not exists boe_mkt_buyer on public.boe_market_listings (buyer_user, status);
+alter table public.boe_market_listings enable row level security;
+drop policy if exists boe_mkt_sel on public.boe_market_listings;
+create policy boe_mkt_sel on public.boe_market_listings for select to authenticated using (true);
+drop policy if exists boe_mkt_ins on public.boe_market_listings;
+create policy boe_mkt_ins on public.boe_market_listings for insert to authenticated with check (seller_user = auth.uid());
+-- USING is broad so a buyer can flip status; WITH CHECK pins the new row
+-- to a valid actor (seller cancels / settles, or buyer/bidder updates).
+drop policy if exists boe_mkt_upd on public.boe_market_listings;
+create policy boe_mkt_upd on public.boe_market_listings for update to authenticated using (true) with check (seller_user = auth.uid() or buyer_user = auth.uid() or current_bidder_user = auth.uid());
+
 grant select on
   public.api_corporations,
   public.api_reserve_totals,

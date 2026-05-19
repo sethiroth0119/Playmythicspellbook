@@ -24398,6 +24398,144 @@ async function frTaxFetch() {
     FoundationReserve.taxLastFetch = Date.now();
   } catch (e) { _frErr(e); }
 }
+
+// ============================================================================
+// 🏛️ CITY HALL — survivor-civilization government hub (Ruin Exchange).
+// STARTED tonight: the real Corporation Registry (every corp, public-read),
+// the canonical place to APPLY to join a corporation, and a live Treasury &
+// Tax view (reuses reserve_tax_log). Courtroom / Detention / Licensing are
+// scaffolded sections — the legal/jail/license systems land tomorrow.
+// Self-contained overlay (no App.screen nav), graceful offline / pre-setup.
+// ============================================================================
+const CityHall = { corps: [], loading: false, lastFetch: 0, _poll: null, _err: null };
+async function cityHallFetch() {
+  if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { CityHall._err = 'Sign in'; return; }
+  if (CityHall.loading) return;
+  CityHall.loading = true;
+  try {
+    const me = Profile.cloud.userId;
+    const all = await Cloud.client.from('corporations').select('id,name,tag,faction,element,founder_id,created_at').limit(300);
+    if (all && all.error) { _frErr(all.error); CityHall.loading = false; return; }
+    const cnt = {};
+    try {
+      const ms = await Cloud.client.from('corp_members').select('corp_id').limit(5000);
+      if (ms && ms.data) ms.data.forEach(m => { cnt[m.corp_id] = (cnt[m.corp_id] || 0) + 1; });
+    } catch (e) {}
+    let myCorp = null;
+    try {
+      const mm = await Cloud.client.from('corp_members').select('corp_id').eq('user_id', me).maybeSingle();
+      if (mm && mm.data) myCorp = mm.data.corp_id;
+    } catch (e) {}
+    CityHall.corps = (all && all.data ? all.data : []).map(c => ({
+      id: c.id, name: c.name, tag: c.tag, faction: c.faction || '', element: c.element || '',
+      members: cnt[c.id] || 0, mine: c.founder_id === me, joined: myCorp === c.id,
+      since: c.created_at ? String(c.created_at).slice(0, 10) : '',
+    })).sort((a, b) => (b.members - a.members) || String(a.name).localeCompare(String(b.name)));
+    CityHall.lastFetch = Date.now();
+  } catch (e) { _frErr(e); }
+  CityHall.loading = false;
+}
+async function cityHallApply(corpId, corpName) {
+  if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in to file with City Hall.', 3000); return; }
+  if (!corpId) return;
+  try {
+    const me = Profile.cloud.userId;
+    const nm = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor') + '';
+    const up = await Cloud.client.from('corp_requests').upsert(
+      { corp_id: corpId, user_id: me, user_name: nm.slice(0, 40), role: 'member', status: 'pending' },
+      { onConflict: 'corp_id,user_id' });
+    if (up && up.error) { _frErr(up.error); showToast('⚠ City Hall could not file the application.', 3400); return; }
+    showToast('🏛️ Application filed with City Hall — ' + corpName + ' has been notified.', 4600);
+  } catch (e) { showToast('⚠ Filing failed.', 3000); }
+}
+function openCityHall() {
+  try {
+    const ID = 'ch-modal';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
+    const online = !!(typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn);
+    const numF = (n) => { n = Number(n) || 0; return n >= 1000 ? n.toLocaleString() : String(n); };
+    let tab = 'registry';
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483645;display:flex;align-items:center;justify-content:center;background:rgba(4,3,8,0.88);backdrop-filter:blur(3px)';
+    document.body.appendChild(ov);
+    const cleanup = () => { try { if (CityHall._poll) { clearInterval(CityHall._poll); CityHall._poll = null; } } catch (e) {} };
+    const close = () => { cleanup(); const h = document.getElementById(ID); if (h) h.remove(); };
+
+    const registryTab = () => {
+      const cs = CityHall.corps || [];
+      const rows = cs.length
+        ? cs.map(c => '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid rgba(212,175,55,0.22);border-radius:8px;background:rgba(40,32,12,0.18);margin-bottom:6px">' +
+            '<div style="flex:1;min-width:0"><div style="color:#ffe6b0;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(c.name) + ' <span class="small-text" style="color:#caa46a">[' + esc(c.tag) + ']</span>' + (c.mine ? ' <span style="color:#7fe0a0">· FOUNDER</span>' : c.joined ? ' <span style="color:#9fd0ff">· MEMBER</span>' : '') + '</div>' +
+              '<div class="small-text" style="color:#b59a66">' + esc(c.faction || '—') + ' · ' + esc(c.element || '—') + ' · ' + numF(c.members) + ' member' + (c.members === 1 ? '' : 's') + (c.since ? ' · since ' + esc(c.since) : '') + ' · <span style="color:#7fe0a0">REGISTERED</span></div></div>' +
+            (!c.mine && !c.joined ? '<button data-ch-apply="' + esc(c.id) + '" data-ch-name="' + esc(c.name) + '" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid rgba(212,175,55,0.5);background:rgba(212,175,55,0.14);color:#ffcf5a;font-weight:800">Apply to join</button>' : '<span class="small-text" style="color:#8a7a4a">enrolled</span>') +
+          '</div>').join('')
+        : '<div class="ink-dim" style="padding:1.6rem;text-align:center">No corporations registered yet. Found one in Just Business — the charter is filed here automatically.</div>';
+      return '<div class="small-text" style="color:#cdb37a;margin-bottom:8px">Every chartered corporation is on the public registry. Apply here to join one — the corporation’s owner approves hires in <strong>Just Business → Guild &amp; Hiring</strong>. Founding a new corporation is done in <strong>Just Business</strong> (signed charter + registration fee).</div>' +
+        '<div style="display:flex;gap:8px;margin-bottom:10px"><button id="ch-found" style="cursor:pointer;border-radius:8px;padding:0.5rem 0.9rem;border:1px solid #d4af37;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800">🏢 Register a corporation →</button></div>' +
+        rows;
+    };
+    const treasuryTab = () => {
+      const s = (typeof FoundationReserve !== 'undefined' && FoundationReserve.taxStats) || null;
+      if (!s) { try { if (typeof frTaxFetch === 'function') frTaxFetch().then(render); } catch (e) {} return '<div class="ink-dim" style="padding:1.6rem;text-align:center">Auditing the public ledger…</div>'; }
+      const card = (l, v, c) => '<div style="flex:1;min-width:130px;padding:9px 11px;border:1px solid rgba(212,175,55,0.22);border-radius:8px;background:rgba(40,32,12,0.18)"><div class="small-text" style="color:#b59a66">' + l + '</div><div style="color:' + (c || '#ffe6b0') + ';font-weight:800;font-size:1.05rem">' + numF(v) + ' 🔥</div></div>';
+      return '<div class="small-text" style="color:#cdb37a;margin-bottom:8px">City Hall Treasury & Tax Office — every Foundation Tax / Seizure Fee flows here as a permanent sink. (Court fines, bail &amp; license fees join this ledger tomorrow.)</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' + card('Total collected', s.total, '#7fe0a0') + card('Today', s.day) + card('7 days', s.week) + card('30 days', s.month) + '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap">' + card('🖤 Black-market seizures', s.black, '#e0a0ff') + card('🏢 Corporation tax', s.corp, '#9fe0b0') + '</div>';
+    };
+    const soonTab = (title, lines) =>
+      '<div style="text-align:center;padding:1.4rem 1rem"><div style="font-size:2rem;margin-bottom:6px">🚧</div>' +
+      '<div style="color:#ffe6b0;font-weight:800;font-size:1.05rem;margin-bottom:6px">' + title + ' — opening tomorrow</div>' +
+      '<div class="small-text" style="color:#b59a66;max-width:460px;margin:0 auto;line-height:1.7">' + lines + '</div></div>';
+
+    const render = () => {
+      const host = document.getElementById(ID); if (!host) return;
+      let body;
+      if (!online) {
+        body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">📡 City Hall is a shared civic system. Sign in to your account to access the registry &amp; courts.</div>';
+      } else if (typeof FoundationReserve !== 'undefined' && FoundationReserve.tableMissing) {
+        body = '<div class="ink-dim" style="padding:1.8rem;text-align:center">🏛️ City Hall is being established — run the Foundation Reserve setup SQL (see the Foundation Reserve panel), then return.</div>';
+      } else {
+        body = tab === 'registry' ? registryTab()
+          : tab === 'treasury' ? treasuryTab()
+          : tab === 'licensing' ? soonTab('Licensing Office', 'Operation &amp; corporation licenses (Mining / Oil / Construction / Medical / Research / Smuggling). Approved corporations apply here for industrial permits with Cinder + resource + compliance requirements.')
+          : tab === 'court' ? soonTab('Courtroom', 'Judge &amp; Lawyer registration, representation filings, the Case Board, public trials and the Criminal Registry. Voice court runs on Discord; the game tracks cases, rulings, evidence &amp; sentences.')
+          : soonTab('Detention Complex', 'Jail timers, bail (Cinder / resources / corporation support), asset seizure, prisoner tracking and global wanted status. Jailed players lose Black Market + operation control until released.');
+      }
+      const tB = (id, label) => '<button data-ch-tab="' + id + '" style="flex:1;cursor:pointer;border-radius:8px 8px 0 0;padding:0.5rem 0.4rem;border:1px solid rgba(212,175,55,0.3);border-bottom:none;font-size:0.84rem;background:' + (tab === id ? 'rgba(120,90,30,0.32)' : 'rgba(40,32,12,0.16)') + ';color:' + (tab === id ? '#ffe6b0' : '#b59a66') + ';font-weight:800">' + label + '</button>';
+      host.innerHTML =
+        '<div style="width:min(680px,95vw);max-height:90vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(26,20,8,0.99),rgba(12,9,4,0.99));border:2px solid rgba(212,175,55,0.5);border-radius:16px;padding:16px 18px;box-shadow:0 24px 80px rgba(0,0,0,0.9),0 0 30px rgba(180,140,40,0.22)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px">' +
+            '<div><div style="font-family:\'Cinzel\',serif;font-size:1.3rem;font-weight:800;color:#ffcf5a">⚖️ City Hall</div>' +
+            '<div class="small-text ink-dim">Corporation registry · law · licensing · treasury. ' + (online ? '<span style="color:#7fdca0">● live</span>' : '<span style="color:#ff9a6b">○ offline</span>') + '</div></div>' +
+            '<button id="ch-x" style="cursor:pointer;border:1px solid rgba(212,175,55,0.4);background:transparent;color:#ffcf5a;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
+          '</div>' +
+          (online ? '<div style="display:flex;gap:3px;margin:8px 0 -1px">' + tB('registry', '🏢 Registry') + tB('treasury', '💰 Treasury') + tB('licensing', '📜 Licensing') + tB('court', '⚖️ Courtroom') + tB('detention', '🔒 Detention') + '</div>' : '') +
+          '<div style="flex:1;min-height:240px;max-height:58vh;overflow:auto;border:1px solid rgba(212,175,55,0.22);border-radius:0 0 8px 8px;padding:11px">' + body + '</div>' +
+          '<button id="ch-close" style="margin-top:12px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(212,175,55,0.5);background:rgba(120,90,30,0.18);color:#ffe6b0;font-weight:800">Close</button>' +
+          '<div class="small-text ink-dim" style="margin-top:6px">A functioning survivor civilization: corporations, law, industry &amp; consequences. More opens tomorrow.</div>' +
+        '</div>';
+      const x = document.getElementById('ch-x'); if (x) x.onclick = close;
+      const cl = document.getElementById('ch-close'); if (cl) cl.onclick = close;
+      host.querySelectorAll('[data-ch-tab]').forEach(b => { b.onclick = () => { tab = b.getAttribute('data-ch-tab'); render(); }; });
+      const fnd = document.getElementById('ch-found');
+      if (fnd) fnd.onclick = () => { close(); try { App.screen = 'justBusiness'; if (typeof render === 'function') render(); } catch (e) {} };
+      host.querySelectorAll('[data-ch-apply]').forEach(b => {
+        b.onclick = () => {
+          if (b.disabled) return; b.disabled = true; b.textContent = 'Filing…';
+          cityHallApply(b.getAttribute('data-ch-apply'), b.getAttribute('data-ch-name')).then(() => { try { render(); } catch (e) {} });
+        };
+      });
+    };
+    render();
+    if (online && !(typeof FoundationReserve !== 'undefined' && FoundationReserve.tableMissing)) {
+      cityHallFetch().then(render);
+      cleanup();
+      CityHall._poll = setInterval(() => { if (!document.getElementById(ID)) { cleanup(); return; } cityHallFetch().then(() => { if (document.getElementById(ID)) render(); }); }, 25000);
+    }
+  } catch (e) {}
+}
 // Returns { can, max, pct, bottleneck, out, event } vs current totals AND the
 // active world event (a crisis throttles, a relief surge boosts).
 function frManufacture(p) {
@@ -38888,6 +39026,11 @@ function renderTitle() {
       { id: 'btn-just-business', icon: '<img src="assets/artwork/gameicons/Business%20icon.png" alt="Just Business" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Just Business', sub: 'Corporations · vault · operations · markets', accent: '#c89a4a',
         badge: 'Player economy',
         onclick: () => { App.screen = 'justBusiness'; render(); } },
+      // 🏛️ City Hall — survivor government: corp registry, law, licensing,
+      // treasury. Opens a self-contained overlay (no screen nav).
+      { id: 'btn-city-hall', icon: '⚖️', name: 'City Hall', sub: 'Registry · law · licensing · treasury', accent: '#ffcf5a',
+        badge: 'Civic',
+        onclick: () => { if (typeof openCityHall === 'function') openCityHall(); } },
       // Sports-betting hub — wager Cinders on AI vs AI fixtures + future tournaments.
       { id: 'btn-wager-hall', icon: '<img src="assets/artwork/gameicons/Blood%20dice%20Icon.png" alt="Wager Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(2.0);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Wager Hall', sub: 'Bet <span class="cinder-icon"></span> on AI matches · tournaments soon', accent: '#ff7755',
         badge: (() => {

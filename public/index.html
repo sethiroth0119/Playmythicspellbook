@@ -27393,7 +27393,7 @@ function renderGymWars() {
     <div class="campaign-page" style="max-width:1180px;margin:0 auto">
       <div class="campaign-header">
         <div>
-          <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🏛️ Gym Core Wars ${_activeTitleObj ? `<span style="font-size:0.6em;font-family:'Cinzel',serif;color:${_activeTitleObj.color};border:1px solid ${_activeTitleObj.color};border-radius:5px;padding:1px 7px;vertical-align:middle">${_activeTitleObj.icon} ${escapeHtml(_activeTitleObj.name)}</span>` : ''}</h2>
+          <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem"><img src="assets/artwork/gameicons/Gym%20Icon.png" alt="" style="height:1.5em;width:1.5em;object-fit:contain;vertical-align:middle;margin-right:6px;filter:drop-shadow(0 2px 6px rgba(0,0,0,0.7))">Gym Core Wars ${_activeTitleObj ? `<span style="font-size:0.6em;font-family:'Cinzel',serif;color:${_activeTitleObj.color};border:1px solid ${_activeTitleObj.color};border-radius:5px;padding:1px 7px;vertical-align:middle">${_activeTitleObj.icon} ${escapeHtml(_activeTitleObj.name)}</span>` : ''}</h2>
           <div class="small-text ink-dim">Conquer 8 Core Trials, then seize and defend the world's gyms. ${escapeHtml(seasonTxt)}.</div>
         </div>
         <div style="display:flex;gap:0.5rem;align-items:center">
@@ -40366,7 +40366,7 @@ function renderTitle() {
       // 🏛️ Gym Core Wars — the persistent online gym/territory system. Always
       // visible. PvE Core Trials collect 8 badges → unlock challenging the
       // live online Gym Leaders.
-      { id: 'btn-gymwars', icon: '🏛️', name: 'Gym Core Wars', sub: (() => {
+      { id: 'btn-gymwars', icon: '<img src="assets/artwork/gameicons/Gym%20Icon.png" alt="Gym Core Wars" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Gym Core Wars', sub: (() => {
             const my = (typeof myLedGym === 'function') ? myLedGym() : null;
             if (my) { const co = getGymCore(my.core_id); return `👑 You rule the ${co ? co.name : 'gym'} · 🛡 ${my.defense_streak || 0}`; }
             const n = gymBadgeCount();

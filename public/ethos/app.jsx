@@ -100,18 +100,22 @@ const Spark = ({ data, color = "#8a6bff", width = 110, height = 36 }) => {
 /* ============================================================
    BRAND MARK
    ============================================================ */
+// Real Bank of Ethos medallion (served at site root — same origin as the
+// embedded /ethos/ app, so the absolute path resolves). Falls back to the
+// old vector mark if the asset is ever missing.
 const BrandMark = () => (
-  <svg viewBox="0 0 40 40">
-    <defs>
-      <linearGradient id="bm" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stopColor="#8a6bff" />
-        <stop offset="100%" stopColor="#ff7a3d" />
-      </linearGradient>
-    </defs>
-    <rect x="2" y="2" width="36" height="36" fill="url(#bm)" />
-    <path d="M10 28V14l10-6 10 6v14" fill="none" stroke="#fff" strokeWidth="1.6" />
-    <path d="M14 28V18M20 28V16M26 28V18M8 30h24" stroke="#fff" strokeWidth="1.6" strokeLinecap="square" />
-  </svg>
+  <img
+    src="/assets/artwork/gameicons/Bank%20of%20Ethos.png"
+    alt="Bank of Ethos"
+    style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+    onError={(e) => {
+      const el = e.currentTarget;
+      el.onerror = null;
+      el.replaceWith(Object.assign(document.createElement("div"), {
+        style: "width:100%;height:100%;background:linear-gradient(135deg,#8a6bff,#ff7a3d)",
+      }));
+    }}
+  />
 );
 
 /* ============================================================

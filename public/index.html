@@ -25203,7 +25203,7 @@ function openBankOfEthos() {
     const paint = () => {
       const nextDue = BankEthos.ready ? Math.max(0, Math.ceil(((BankEthos.lastFeeAt || Date.now()) + BOE_FEE_PERIOD_MS - Date.now()) / 86400000)) : 0;
       bar.innerHTML =
-        '<span style="font-family:\'Cinzel\',serif;font-weight:800;color:#ffcf5a;font-size:1.05rem">🏦 Bank of Ethos</span>' +
+        '<span style="display:inline-flex;align-items:center;gap:8px;font-family:\'Cinzel\',serif;font-weight:800;color:#ffcf5a;font-size:1.05rem"><img src="/assets/artwork/gameicons/Bank%20of%20Ethos.png" alt="" style="width:26px;height:26px;object-fit:contain;border-radius:5px" onerror="this.style.display=\'none\'">Bank of Ethos</span>' +
         (BankEthos.ready
           ? '<span style="color:#ffe6b0;font-weight:800">' + BankEthos.balance.toLocaleString() + ' 🔥</span>' +
             '<span style="color:#ffd98a;font-weight:800">' + (BankEthos.aza | 0).toLocaleString() + ' 👑</span>' +
@@ -25344,6 +25344,9 @@ function openBankOfEthos() {
       const nm = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Operator') + '';
       const cs = (nm.trim() || 'Operator').slice(0, 28);
       const ini = (cs.trim().split(/\s+/).map((s) => s[0]).slice(0, 2).join('') || 'OP').toUpperCase();
+      // Seed the player's TRUE balances on first paint (bank values fill in
+      // ~1s later when boeFetch + postSeed resolve). Wallet balances are
+      // already loaded synchronously, so they're exact immediately.
       const acct = {
         handle: '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20),
         callsign: cs,
@@ -25351,7 +25354,10 @@ function openBankOfEthos() {
         c1: '#8a6bff',
         c2: '#ff7a3d',
         cinder: BankEthos.ready ? (BankEthos.balance | 0) : 0,
-        aza: (Profile && Profile.sovereigns) | 0,
+        aza: BankEthos.ready ? (BankEthos.aza | 0) : 0,
+        walletCinder: (Profile && Profile.gems) | 0,
+        walletAza: (Profile && Profile.sovereigns) | 0,
+        vault: { resCatalog: (typeof RESOURCES !== 'undefined' ? RESOURCES : []).map((r) => ({ id: r.id, name: r.name, icon: r.icon, color: r.color })), walletRes: {}, bankRes: {}, bankReady: !!BankEthos.ready, extCols: !!BankEthos._extCols },
         created: new Date().toISOString(),
         recoveryKey: '—',
         application: { org: cs, role: 'Operator', region: 'Camp Heights', purpose: 'Treasury access', linked: true },

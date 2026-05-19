@@ -278,13 +278,25 @@ function App() {
       var d = e && e.data;
       if (!d || d.type !== 'boe:seed') return;
       setAccount(function (prev) {
-        var next = Object.assign({}, prev || {}, {
-          handle: d.handle || (prev && prev.handle) || 'operator',
-          callsign: d.callsign || (prev && prev.callsign) || 'Operator',
+        // Build a COMPLETE account (same shape a successful create-signup
+        // produces) — not a merge over a possibly-broken prior account —
+        // so every dashboard component has the fields it expects.
+        var cs = (d.callsign || (prev && prev.callsign) || 'Operator') + '';
+        var ini = (cs.trim().split(/\s+/).map(function (w) { return w[0]; }).slice(0, 2).join('') || 'OP').toUpperCase();
+        var pal = (typeof AVATAR_PALETTES !== 'undefined' && AVATAR_PALETTES[0]) || ['#8a6bff', '#ff7a3d'];
+        var next = {
+          handle: (d.handle || (prev && prev.handle) || 'operator') + '',
+          callsign: cs,
+          initials: ini,
+          c1: (prev && prev.c1) || pal[0],
+          c2: (prev && prev.c2) || pal[1],
           cinder: Math.max(0, Number(d.cinder) || 0),
           aza: Math.max(0, Number(d.aza) || 0),
+          created: (prev && prev.created) || new Date().toISOString(),
+          recoveryKey: (prev && prev.recoveryKey) || '—',
+          application: (prev && prev.application) || { org: cs, role: 'Operator', region: 'Camp Heights', purpose: 'Treasury access', linked: true },
           _gameLinked: true,
-        });
+        };
         try { saveAccount(next); } catch (e2) {}
         return next;
       });
@@ -356,6 +368,26 @@ function App() {
   />;
 }
 
+// Page-level error boundary: a single failing widget shows an inline
+// message instead of blanking the whole dashboard (and surfaces the cause).
+class PageBoundary extends React.Component {
+  constructor(p) { super(p); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err: err }; }
+  componentDidCatch(err) { try { console.error('[BankOfEthos] page error:', err); } catch (e) {} }
+  render() {
+    if (this.state.err) {
+      return (
+        <div style={{ padding: '28px', color: '#ffb499', fontFamily: 'JetBrains Mono, monospace' }}>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8, color: '#ff8a8a' }}>⚠ This panel hit an error.</div>
+          <div style={{ fontSize: 12, opacity: 0.85, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+            {String((this.state.err && (this.state.err.stack || this.state.err.message)) || this.state.err).slice(0, 800)}
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 function AppInner({ account, updateAccount, transfers, sendMoney, pushToast, onLogout, toasts }) {
   const [route, setRoute] = useState("vaults");
   const [t, setTweak] = (window.useTweaks || (() => [TWEAK_DEFAULTS, () => {}]))(TWEAK_DEFAULTS);
@@ -386,6 +418,7 @@ function AppInner({ account, updateAccount, transfers, sendMoney, pushToast, onL
       <div className="main">
         <Topbar account={account} onSend={() => setSendTo({})} onLogout={onLogout} />
         <div className="content">
+          <PageBoundary key={route} route={route}>
           {route === "vaults" && <PageVaults role={role} account={account} liveCinder={liveCinder} sessionSec={sessionSec} onSend={() => setSendTo({})} />}
           {route === "transfers" && <PageTransfers account={account} transfers={transfers} onSend={(c) => setSendTo(c || {})} />}
           {route === "directory" && <PageDirectory account={account} onSend={(c) => setSendTo(c)} />}
@@ -396,6 +429,7 @@ function AppInner({ account, updateAccount, transfers, sendMoney, pushToast, onL
           {route === "ops" && <PageOpsVault />}
           {route === "market" && <PageMarket />}
           {route === "charts" && <PageCharts />}
+          </PageBoundary>
         </div>
       </div>
       <TweaksPanelHost t={t} setTweak={setTweak} />

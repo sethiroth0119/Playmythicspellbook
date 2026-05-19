@@ -25070,12 +25070,16 @@ function openBankOfEthos() {
     const old = document.getElementById(ID); if (old) old.remove();
     const wrap = document.createElement('div');
     wrap.id = ID;
-    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483300;background:#0b0b10;opacity:0;transition:opacity .4s cubic-bezier(.22,.61,.36,1)';
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483300;background:#0b0b10;opacity:0;transition:opacity .4s cubic-bezier(.22,.61,.36,1);display:flex;flex-direction:column';
     const bar = document.createElement('div');
-    bar.style.cssText = 'position:absolute;top:0;left:0;right:0;height:auto;min-height:50px;z-index:6;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:linear-gradient(180deg,rgba(20,15,6,0.97),rgba(12,9,4,0.95));border-bottom:1px solid rgba(212,175,55,0.4);font-family:inherit';
+    // Flex column layout: an <iframe> is a REPLACED element, so an absolutely
+    // positioned iframe with top+bottom+height:auto keeps its intrinsic 150px
+    // height (CSS spec drops `bottom`) — that clipped the app to a thin strip.
+    // As a flex child it correctly stretches to fill the remaining height.
+    bar.style.cssText = 'flex:0 0 auto;min-height:50px;z-index:6;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:linear-gradient(180deg,rgba(20,15,6,0.97),rgba(12,9,4,0.95));border-bottom:1px solid rgba(212,175,55,0.4);font-family:inherit';
     const f = document.createElement('iframe');
     f.src = 'ethos/Bank%20of%20Ethos.html';
-    f.style.cssText = 'position:absolute;left:0;right:0;bottom:0;top:62px;width:100%;border:0;background:#0b0b10';
+    f.style.cssText = 'flex:1 1 auto;width:100%;min-height:0;border:0;background:#0b0b10;display:block';
     f.setAttribute('title', 'Bank of Ethos');
     const back = document.createElement('button');
     back.textContent = '← Ruin Exchange';
@@ -25147,8 +25151,8 @@ function openBankOfEthos() {
     } catch (e) {}
     f.addEventListener('load', () => { setTimeout(postSeed, 120); });
     paint();
-    wrap.appendChild(f);
     wrap.appendChild(bar);
+    wrap.appendChild(f);
     document.body.appendChild(wrap);
     requestAnimationFrame(() => { wrap.style.opacity = '1'; });
     boeFetch().then(function (ok) { if (ok) { boeApplyMaintenance().then(function () { paint(); postSeed(); }); } paint(); postSeed(); });

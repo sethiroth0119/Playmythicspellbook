@@ -630,15 +630,19 @@ function FeedScreen() {
 // ============================================================================
 
 function CorpScreen() {
+  const _jb = (window.__JB && window.__JB.econ) || null;
+  const corpName = _jb ? (_jb.corp ? _jb.corp.name : 'No Corporation') : 'BLACK SUN';
+  const memStr = _jb && _jb.corp ? ((_jb.memberCount || 0) + ' / ' + (_jb.memberCap || 25)) : '34 / 50';
+  const openGuild = () => { try { window.dispatchEvent(new CustomEvent('jb:open', { detail: 'guild' })); } catch (e) {} };
   return (
     <div className="screen">
       <ScreenHead
-        title="BLACK SUN — Treasury"
+        title={corpName + ' — Treasury'}
         desc="Corporation-wide vault. Role-based access controls who can withdraw relics, deposit resources, transfer heroes, or fund operations."
         right={<div className="row" style={{ gap: 18 }}>
           <Stat label="Treasury" value={fmtAza(2_438_120)} delta="+18k" up />
-          <Stat label="Members" value="34 / 50" />
-          <Stat label="War chest" value={fmtAza(412_000)} />
+          <Stat label="Members" value={memStr} />
+          <button className="btn primary" onClick={openGuild} style={{ alignSelf: 'center' }}>👥 Guild &amp; Hiring</button>
         </div>}
       />
 

@@ -24097,7 +24097,7 @@ async function resMarketCancel(listing) {
 // a security_invoker VIEW that SUMs all rows, so there are no lost updates
 // and no RPC needed. Degrades gracefully offline / before one-time setup.
 // ============================================================================
-const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ncreate table if not exists public.reserve_tax_log (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  buyer_id uuid,\n  corp_id text,\n  resource text,\n  quantity numeric not null default 0,\n  sale_value numeric not null default 0,\n  tax_rate numeric not null default 0.02,\n  tax_amount numeric not null default 0,\n  market_type text not null default 'base',\n  created_at timestamptz default now()\n);\ncreate index if not exists reserve_tax_log_time on public.reserve_tax_log (created_at desc);\nalter table public.reserve_tax_log enable row level security;\ndrop policy if exists tx_sel on public.reserve_tax_log;\ncreate policy tx_sel on public.reserve_tax_log for select to authenticated using (true);\ndrop policy if exists tx_ins on public.reserve_tax_log;\ncreate policy tx_ins on public.reserve_tax_log for insert to authenticated with check (seller_id = auth.uid());\ncreate table if not exists public.corporations (\n  id uuid primary key default gen_random_uuid(),\n  name text not null,\n  tag text not null,\n  founder_id uuid not null references auth.users(id) on delete cascade,\n  faction text,\n  element text,\n  created_at timestamptz default now()\n);\nalter table public.corporations add column if not exists faction text;\nalter table public.corporations add column if not exists element text;\ncreate table if not exists public.corp_members (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  joined_at timestamptz default now()\n);\ncreate index if not exists corp_members_corp on public.corp_members (corp_id);\nalter table public.corporations enable row level security;\nalter table public.corp_members enable row level security;\ndrop policy if exists corp_sel on public.corporations;\ncreate policy corp_sel on public.corporations for select to authenticated using (true);\ndrop policy if exists corp_ins on public.corporations;\ncreate policy corp_ins on public.corporations for insert to authenticated with check (founder_id = auth.uid());\ndrop policy if exists cm_sel on public.corp_members;\ncreate policy cm_sel on public.corp_members for select to authenticated using (true);\ndrop policy if exists cm_ins on public.corp_members;\ncreate policy cm_ins on public.corp_members for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cm_upd on public.corp_members;\ncreate policy cm_upd on public.corp_members for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists cm_del on public.corp_members;\ncreate policy cm_del on public.corp_members for delete to authenticated using (user_id = auth.uid());\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ngrant select on public.reserve_totals to authenticated;";
+const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ncreate table if not exists public.reserve_tax_log (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  buyer_id uuid,\n  corp_id text,\n  resource text,\n  quantity numeric not null default 0,\n  sale_value numeric not null default 0,\n  tax_rate numeric not null default 0.02,\n  tax_amount numeric not null default 0,\n  market_type text not null default 'base',\n  created_at timestamptz default now()\n);\ncreate index if not exists reserve_tax_log_time on public.reserve_tax_log (created_at desc);\nalter table public.reserve_tax_log enable row level security;\ndrop policy if exists tx_sel on public.reserve_tax_log;\ncreate policy tx_sel on public.reserve_tax_log for select to authenticated using (true);\ndrop policy if exists tx_ins on public.reserve_tax_log;\ncreate policy tx_ins on public.reserve_tax_log for insert to authenticated with check (seller_id = auth.uid());\ncreate table if not exists public.corporations (\n  id uuid primary key default gen_random_uuid(),\n  name text not null,\n  tag text not null,\n  founder_id uuid not null references auth.users(id) on delete cascade,\n  faction text,\n  element text,\n  created_at timestamptz default now()\n);\nalter table public.corporations add column if not exists faction text;\nalter table public.corporations add column if not exists element text;\ncreate table if not exists public.corp_members (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  joined_at timestamptz default now()\n);\ncreate index if not exists corp_members_corp on public.corp_members (corp_id);\nalter table public.corporations enable row level security;\nalter table public.corp_members enable row level security;\ndrop policy if exists corp_sel on public.corporations;\ncreate policy corp_sel on public.corporations for select to authenticated using (true);\ndrop policy if exists corp_ins on public.corporations;\ncreate policy corp_ins on public.corporations for insert to authenticated with check (founder_id = auth.uid());\ndrop policy if exists cm_sel on public.corp_members;\ncreate policy cm_sel on public.corp_members for select to authenticated using (true);\ndrop policy if exists cm_ins on public.corp_members;\ncreate policy cm_ins on public.corp_members for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cm_upd on public.corp_members;\ncreate policy cm_upd on public.corp_members for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists cm_del on public.corp_members;\ncreate policy cm_del on public.corp_members for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_members.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_requests (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  status text not null default 'pending',\n  created_at timestamptz default now(),\n  unique (corp_id, user_id)\n);\ncreate index if not exists corp_requests_corp on public.corp_requests (corp_id);\nalter table public.corp_requests enable row level security;\ndrop policy if exists creq_sel on public.corp_requests;\ncreate policy creq_sel on public.corp_requests for select to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists creq_ins on public.corp_requests;\ncreate policy creq_ins on public.corp_requests for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists creq_upd on public.corp_requests;\ncreate policy creq_upd on public.corp_requests for update to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid())) with check (true);\ndrop policy if exists creq_del on public.corp_requests;\ncreate policy creq_del on public.corp_requests for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ngrant select on public.reserve_totals to authenticated;";
 
 // Contribution point weight per resource (strategic / scarce = worth more).
 const RESERVE_WEIGHTS = {
@@ -33527,23 +33527,49 @@ function _baseNavTo(screen) {
 // so corpId is always real. All Supabase access is guarded — the app still
 // works (mock data) if offline / tables not yet set up.
 // ============================================================================
-const Corp = { mine: null, _ensuring: false, _err: null };   // mine: {id,name,tag,role,faction,element}
+const Corp = { mine: null, roster: [], requests: [], amOwner: false, _ensuring: false, _err: null };
 const CORP_FOUNDING_COST = 1000000;   // 1,000,000 Cinder to incorporate (admins free)
+const CORP_MEMBER_CAP    = 25;        // free roster cap
+const CORP_OVERFLOW_FEE  = 3000;      // Aza coin per hire beyond the cap
 function _jbCorpInfo() { return Corp.mine || null; }
-// Resolve the player's EXISTING corporation membership. Does NOT auto-create
-// — founding a corporation is a deliberate, paid act (see corpCreate).
+// Resolve membership + reconcile any "hired" request into a real membership
+// (RLS only lets a user write their OWN corp_members row, so the hire lands
+// on the requester's next sync — proven single-writer pattern). Then load
+// the roster, and pending requests if the player owns the corp.
 async function corpEnsure() {
   if (Corp._ensuring) return Corp.mine;
   if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return null;
   Corp._ensuring = true;
   try {
     const me = Profile.cloud.userId;
+    const meName = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor') + '';
+    // Self-join: a request the owner marked 'hired' becomes my membership.
+    try {
+      const hired = await Cloud.client.from('corp_requests').select('id,corp_id,role').eq('user_id', me).eq('status', 'hired').limit(1).maybeSingle();
+      if (hired && hired.data && hired.data.corp_id) {
+        await Cloud.client.from('corp_members').upsert({ user_id: me, corp_id: hired.data.corp_id, user_name: meName.slice(0, 40), role: hired.data.role || 'member' }, { onConflict: 'user_id' });
+        await Cloud.client.from('corp_requests').update({ status: 'joined' }).eq('id', hired.data.id);
+      }
+    } catch (e) {}
     const mem = await Cloud.client.from('corp_members').select('corp_id,role').eq('user_id', me).maybeSingle();
     if (mem && mem.error && !/PGRST116|no rows/i.test((mem.error.message || '') + '')) { Corp._err = mem.error.message; Corp._ensuring = false; return null; }
     if (mem && mem.data && mem.data.corp_id) {
-      const c = await Cloud.client.from('corporations').select('id,name,tag,faction,element').eq('id', mem.data.corp_id).maybeSingle();
-      if (c && c.data) Corp.mine = { id: c.data.id, name: c.data.name, tag: c.data.tag, role: mem.data.role || 'member', faction: c.data.faction || '', element: c.data.element || '' };
-    }
+      const c = await Cloud.client.from('corporations').select('id,name,tag,faction,element,founder_id').eq('id', mem.data.corp_id).maybeSingle();
+      if (c && c.data) {
+        Corp.mine = { id: c.data.id, name: c.data.name, tag: c.data.tag, role: mem.data.role || 'member', faction: c.data.faction || '', element: c.data.element || '' };
+        Corp.amOwner = (c.data.founder_id === me) || (mem.data.role === 'founder') || (mem.data.role === 'CEO') || (mem.data.role === 'Corp CEO');
+        try {
+          const rs = await Cloud.client.from('corp_members').select('user_id,user_name,role').eq('corp_id', c.data.id).limit(60);
+          Corp.roster = (rs && rs.data) ? rs.data.map(function (m) { return { userId: m.user_id, name: m.user_name || 'Member', role: m.role || 'member' }; }) : [];
+        } catch (e) { Corp.roster = []; }
+        if (Corp.amOwner) {
+          try {
+            const rq = await Cloud.client.from('corp_requests').select('id,user_id,user_name,role,status').eq('corp_id', c.data.id).eq('status', 'pending').limit(50);
+            Corp.requests = (rq && rq.data) ? rq.data.map(function (r) { return { id: r.id, userId: r.user_id, name: r.user_name || 'Applicant', role: r.role || 'member' }; }) : [];
+          } catch (e) { Corp.requests = []; }
+        } else { Corp.requests = []; }
+      }
+    } else { Corp.mine = null; Corp.roster = []; Corp.requests = []; Corp.amOwner = false; }
   } catch (e) { Corp._err = (e && e.message) || 'corp error'; }
   Corp._ensuring = false;
   return Corp.mine;
@@ -33566,6 +33592,12 @@ function _jbEcon() {
     foundCost: adm ? 0 : CORP_FOUNDING_COST,
     signedIn: !!(Profile.cloud && Profile.cloud.signedIn),
     resources: res,
+    roster: Corp.roster || [],
+    requests: Corp.requests || [],
+    amOwner: !!Corp.amOwner,
+    memberCount: (Corp.roster || []).length,
+    memberCap: CORP_MEMBER_CAP,
+    overflowFee: CORP_OVERFLOW_FEE,
   };
 }
 function _jbSendData() {
@@ -33638,6 +33670,77 @@ function _jbHandleAction(a) {
           await Cloud.client.from('corp_members').upsert({ user_id: me, corp_id: c.data.id, user_name: (_jbEcon().handle || '').slice(0, 40), role: 'member' }, { onConflict: 'user_id' });
           Corp.mine = { id: c.data.id, name: c.data.name, tag: c.data.tag, role: 'member' };
           showToast('🏢 Joined ' + c.data.name + ' [' + c.data.tag + '].', 4200);
+          _jbSendData();
+        } catch (e) {}
+      })();
+    } else if (a.kind === 'corpRequest') {
+      const tg = (a.tag || '').toString().trim().toUpperCase().slice(0, 8);
+      const role = (a.role || 'member').toString().trim().slice(0, 30);
+      if (!tg) { showToast('Enter the corporation tag you want to join.', 3000); return; }
+      (async function () {
+        try {
+          if (!initCloud() || !Profile.cloud.signedIn) { showToast('☁ Sign in to apply.', 3000); return; }
+          const me = Profile.cloud.userId;
+          const c = await Cloud.client.from('corporations').select('id,name,tag').eq('tag', tg).limit(1).maybeSingle();
+          if (!c || !c.data) { showToast('No corporation with tag [' + tg + '].', 3200); return; }
+          const up = await Cloud.client.from('corp_requests').upsert({ corp_id: c.data.id, user_id: me, user_name: (_jbEcon().handle || '').slice(0, 40), role: role, status: 'pending' }, { onConflict: 'corp_id,user_id' });
+          if (up && up.error) { showToast('⚠ Could not file the application.', 3200); return; }
+          showToast('📨 Application sent to ' + c.data.name + ' [' + c.data.tag + '] as ' + role + '.', 4600);
+          _jbSendData();
+        } catch (e) {}
+      })();
+    } else if (a.kind === 'corpApprove') {
+      const rid = (a.requestId || '').toString();
+      if (!rid || !Corp.amOwner || !Corp.mine) { return; }
+      (async function () {
+        try {
+          const rq = await Cloud.client.from('corp_requests').select('id,user_id,user_name,role,corp_id,status').eq('id', rid).maybeSingle();
+          if (!rq || !rq.data || rq.data.corp_id !== Corp.mine.id || rq.data.status !== 'pending') { showToast('That application is no longer open.', 3000); return; }
+          const count = (Corp.roster || []).length;
+          if (count >= CORP_MEMBER_CAP) {
+            const fee = CORP_OVERFLOW_FEE;
+            if ((Profile.sovereigns || 0) < fee) { showToast('🏢 Roster is at ' + CORP_MEMBER_CAP + '. Hiring beyond it costs ' + fee + ' Aza coin — you have ' + (Profile.sovereigns || 0) + '.', 5200); return; }
+            Profile.sovereigns = Math.max(0, (Profile.sovereigns || 0) - fee);
+            try { saveProfile(); } catch (e) {}
+            showToast('🏢 Over-cap hire — −' + fee + ' Aza coin.', 3600);
+          }
+          await Cloud.client.from('corp_requests').update({ status: 'hired', role: rq.data.role }).eq('id', rid);
+          showToast('✅ Hired ' + (rq.data.user_name || 'applicant') + ' as ' + rq.data.role + '. They join on their next sync.', 4800);
+          try { corpEnsure().then(_jbSendData); } catch (e) { _jbSendData(); }
+        } catch (e) {}
+      })();
+    } else if (a.kind === 'corpDeny') {
+      const rid = (a.requestId || '').toString();
+      if (!rid || !Corp.amOwner) return;
+      (async function () {
+        try {
+          await Cloud.client.from('corp_requests').update({ status: 'denied' }).eq('id', rid);
+          showToast('Application declined.', 2600);
+          try { corpEnsure().then(_jbSendData); } catch (e) { _jbSendData(); }
+        } catch (e) {}
+      })();
+    } else if (a.kind === 'corpKick') {
+      const uid = (a.userId || '').toString();
+      if (!uid || !Corp.amOwner || !Corp.mine) return;
+      if (uid === (Profile.cloud && Profile.cloud.userId)) { showToast('Use Leave to step down.', 2600); return; }
+      (async function () {
+        try {
+          await Cloud.client.from('corp_members').delete().eq('user_id', uid).eq('corp_id', Corp.mine.id);
+          await Cloud.client.from('corp_requests').delete().eq('user_id', uid).eq('corp_id', Corp.mine.id);
+          showToast('Member removed from the corporation.', 3000);
+          try { corpEnsure().then(_jbSendData); } catch (e) { _jbSendData(); }
+        } catch (e) {}
+      })();
+    } else if (a.kind === 'corpLeave') {
+      (async function () {
+        try {
+          const me = Profile.cloud && Profile.cloud.userId;
+          if (!me || !Corp.mine) return;
+          if (Corp.amOwner) { showToast('Founders cannot leave their own corporation.', 3200); return; }
+          await Cloud.client.from('corp_members').delete().eq('user_id', me);
+          await Cloud.client.from('corp_requests').delete().eq('user_id', me);
+          Corp.mine = null; Corp.roster = []; Corp.requests = []; Corp.amOwner = false;
+          showToast('You left the corporation.', 3000);
           _jbSendData();
         } catch (e) {}
       })();

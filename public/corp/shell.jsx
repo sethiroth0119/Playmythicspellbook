@@ -180,13 +180,15 @@ function Topbar({ route, balances }) {
         </div>
       </div>
 
-      <div className="me">
+      <button className="me" title="My Resources — view everything you hold"
+        onClick={() => { try { window.dispatchEvent(new CustomEvent('jb:open', { detail: 'resources' })); } catch (e) {} }}
+        style={{ cursor: 'pointer', background: 'transparent', border: 0, font: 'inherit', color: 'inherit', textAlign: 'left' }}>
         <div className="av">{String(handle).slice(0, 2).toUpperCase()}</div>
         <div>
           <div className="name">{handle}</div>
-          <div className="role">{PLAYER.title} · REP {Math.round(PLAYER.rep * 100)}</div>
+          <div className="role">My Resources ▾</div>
         </div>
-      </div>
+      </button>
     </header>
   );
 }

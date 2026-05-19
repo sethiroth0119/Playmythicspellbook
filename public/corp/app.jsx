@@ -133,6 +133,18 @@ function App() {
   };
 
   const [foundOpen, setFoundOpen] = useState(false);
+  const [myResOpen, setMyResOpen] = useState(false);
+  const [guildOpen, setGuildOpen] = useState(false);
+  useEffect(() => {
+    const onOpen = (e) => {
+      const d = e && e.detail;
+      if (d === 'resources') setMyResOpen(true);
+      else if (d === 'guild') setGuildOpen(true);
+      else if (d === 'found') setFoundOpen(true);
+    };
+    window.addEventListener('jb:open', onOpen);
+    return () => window.removeEventListener('jb:open', onOpen);
+  }, []);
   const _jbE = (window.__JB && window.__JB.econ) || null;
   const jbSignedIn = !!(_jbE && _jbE.signedIn);
   const noCorp = !!(_jbE && _jbE.signedIn && !_jbE.corp);
@@ -187,6 +199,9 @@ function App() {
           setFoundOpen(false);
           toast('Incorporation filed with the Foundation. Processing…');
         }} />}
+      {myResOpen && <MyResourcesModal econ={_jbE} onClose={() => setMyResOpen(false)} />}
+      {guildOpen && <CorpGuild econ={_jbE} toast={toast} onClose={() => setGuildOpen(false)}
+        onFound={() => { setGuildOpen(false); setFoundOpen(true); }} />}
 
       <TweaksPanel>
         <TweakSection label="Palette">
@@ -638,6 +653,163 @@ function FoundCorpFlow({ cost, admin, handle, onClose, onFiled }) {
               </div>
             </div>
           </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// My Resources — everything the player really holds (bridged from the game).
+// ──────────────────────────────────────────────────────────────────────────
+function MyResourcesModal({ econ, onClose }) {
+  const res = (econ && Array.isArray(econ.resources)) ? econ.resources.slice().sort((a, b) => (b.qty | 0) - (a.qty | 0)) : [];
+  return (
+    <Modal title="My Resources" onClose={onClose}
+      footer={<button className="btn primary" onClick={onClose}>Close</button>}>
+      {!econ ? (
+        <div className="muted" style={{ padding: 24, textAlign: 'center' }}>Open Just Business from inside the game to see your real holdings.</div>
+      ) : (
+        <div>
+          <div className="row" style={{ gap: 12, marginBottom: 16 }}>
+            <div className="card flat" style={{ flex: 1, padding: 14, textAlign: 'center' }}>
+              <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase' }}>Cinder</div>
+              <div className="disp" style={{ fontSize: 24, color: 'var(--rust)' }}>{fmt(econ.cinders | 0)}</div>
+            </div>
+            <div className="card flat" style={{ flex: 1, padding: 14, textAlign: 'center' }}>
+              <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase' }}>Aza coin</div>
+              <div className="disp" style={{ fontSize: 24, color: 'var(--aza)' }}>{fmt(econ.aza | 0)}</div>
+            </div>
+          </div>
+          <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Camp resources · {res.length} types
+          </div>
+          {res.length === 0 ? (
+            <div className="muted" style={{ padding: 18, textAlign: 'center', fontSize: 12.5 }}>No resources yet — loot, raid and run expeditions in the game to fill your vault.</div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, maxHeight: '52vh', overflow: 'auto' }}>
+              {res.map(r => (
+                <div key={r.id} className="row" style={{ justifyContent: 'space-between', padding: '8px 12px', border: '1px solid var(--line-soft)', borderRadius: 4, background: 'var(--bg-2)' }}>
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.icon || '📦'} {r.name}</span>
+                  <span className="mono" style={{ color: 'var(--aza)', fontWeight: 600 }}>{fmt(r.qty | 0)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Corporation = Guild. Owners hire players (roles below). Cap 25; over-cap
+// hires cost the owner Aza coin. Players apply for a role by corp tag.
+// ──────────────────────────────────────────────────────────────────────────
+const CORP_ROLES = [
+  { id: 'CEO',               name: 'CEO',               d: 'Top executive — full treasury & strategic authority, second only to the Founder. Hire a CEO when you need someone to run the whole corporation while you are away.' },
+  { id: 'Corp CEO',          name: 'Corp CEO',          d: 'Operations officer — can approve applications and help manage members on the owner’s behalf. Your day-to-day manager.' },
+  { id: 'Real Estate Agent', name: 'Real Estate Agent', d: 'Lists & manages corporation property, scouts rentable territory, and negotiates land deals. Hire when expanding holdings.' },
+  { id: 'Mercenary',         name: 'Mercenary',         d: 'Muscle for convoys, raids and defense — protects high-value shipments and black-market runs. Hire to move goods through danger.' },
+  { id: 'Lawyer',            name: 'Lawyer',            d: 'Handles compliance & contracts; lowers audit / seizure heat and tax-evasion risk. Hire to keep the Foundation off your back.' },
+  { id: 'member',            name: 'Member',            d: 'General corporation member — pools resources and shares in the corporation’s success.' },
+];
+
+function CorpGuild({ econ, toast, onClose, onFound }) {
+  const [tag, setTag] = useState('');
+  const [role, setRole] = useState('member');
+  const corp = econ && econ.corp;
+  const roster = (econ && Array.isArray(econ.roster)) ? econ.roster : [];
+  const requests = (econ && Array.isArray(econ.requests)) ? econ.requests : [];
+  const amOwner = !!(econ && econ.amOwner);
+  const cap = (econ && econ.memberCap) || 25;
+  const count = (econ && econ.memberCount) || roster.length;
+  const fee = (econ && econ.overflowFee) || 3000;
+  const me = (econ && econ.handle) || '';
+  const act = (p) => { try { window.JB_action && window.JB_action(p); } catch (e) {} };
+
+  const rolesPanel = (
+    <div style={{ marginTop: 4 }}>
+      <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 8 }}>Roles you can hire / apply for</div>
+      <div className="col" style={{ gap: 6 }}>
+        {CORP_ROLES.map(r => (
+          <div key={r.id} className="card flat" style={{ padding: '9px 12px' }}>
+            <div style={{ fontWeight: 600, color: 'var(--aza)' }}>{r.name}</div>
+            <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>{r.d}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <Modal title="Corporation — Guild & Hiring" onClose={onClose} wide
+      footer={<button className="btn ghost" onClick={onClose}>Close</button>}>
+      {!econ || !econ.signedIn ? (
+        <div className="muted" style={{ padding: 24, textAlign: 'center' }}>Sign in inside the game to use corporations.</div>
+      ) : !corp ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>You’re independent</div>
+            <div className="muted" style={{ fontSize: 12.5, marginBottom: 14 }}>Apply to an existing corporation by its tag, or found your own.</div>
+            <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>Corporation tag</div>
+            <input className="input" placeholder="e.g. BLAC" value={tag} maxLength={8} onChange={e => setTag(e.target.value.toUpperCase())} />
+            <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', margin: '14px 0 6px' }}>Apply as</div>
+            <select className="select" value={role} onChange={e => setRole(e.target.value)}>
+              {CORP_ROLES.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+            <div className="row" style={{ gap: 8, marginTop: 16 }}>
+              <button className="btn primary" disabled={!tag.trim()} onClick={() => { act({ kind: 'corpRequest', tag: tag.trim(), role }); onClose(); }}>Send application</button>
+              <button className="btn ghost" onClick={onFound}>Found your own →</button>
+            </div>
+          </div>
+          {rolesPanel}
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
+          <div>
+            <div className="card flat" style={{ padding: 14, marginBottom: 14 }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>{corp.name} <span className="mono muted" style={{ fontSize: 12 }}>[{corp.tag}]</span></div>
+              <SumRow label="Your role" value={String(corp.role || 'member')} />
+              <SumRow label="Members" value={count + ' / ' + cap} />
+              {amOwner && <SumRow label="Over-cap hire" value={fee + ' Aza coin each'} />}
+            </div>
+            <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>Roster</div>
+            <div className="col" style={{ gap: 4, maxHeight: '34vh', overflow: 'auto' }}>
+              {roster.length === 0 && <div className="muted" style={{ fontSize: 12 }}>Just you so far.</div>}
+              {roster.map(m => (
+                <div key={m.userId} className="row" style={{ justifyContent: 'space-between', padding: '8px 12px', border: '1px solid var(--line-soft)', borderRadius: 4 }}>
+                  <span>{m.name} <span className="mono muted" style={{ fontSize: 10.5 }}>· {m.role}</span></span>
+                  {amOwner && m.role !== 'founder' && m.name !== me && (
+                    <button className="btn sm" onClick={() => act({ kind: 'corpKick', userId: m.userId })} style={{ color: 'var(--toxic)' }}>Remove</button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {!amOwner && (
+              <button className="btn ghost" style={{ marginTop: 14 }} onClick={() => { act({ kind: 'corpLeave' }); onClose(); }}>Leave corporation</button>
+            )}
+            {amOwner && (
+              <div style={{ marginTop: 16 }}>
+                <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Applications {requests.length ? '· ' + requests.length : ''}
+                </div>
+                {requests.length === 0 ? (
+                  <div className="muted" style={{ fontSize: 12 }}>No pending applications.</div>
+                ) : requests.map(rq => (
+                  <div key={rq.id} className="row" style={{ justifyContent: 'space-between', padding: '8px 12px', border: '1px solid var(--rust)', borderRadius: 4, marginBottom: 6 }}>
+                    <span>{rq.name} <span className="mono muted" style={{ fontSize: 10.5 }}>→ {rq.role}</span></span>
+                    <span className="row" style={{ gap: 6 }}>
+                      <button className="btn sm primary" onClick={() => act({ kind: 'corpApprove', requestId: rq.id })}>Hire</button>
+                      <button className="btn sm" onClick={() => act({ kind: 'corpDeny', requestId: rq.id })}>Deny</button>
+                    </span>
+                  </div>
+                ))}
+                {count >= cap && <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>Roster full — each new hire costs you {fee} Aza coin.</div>}
+              </div>
+            )}
+          </div>
+          {rolesPanel}
         </div>
       )}
     </Modal>

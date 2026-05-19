@@ -206,4 +206,31 @@ drop policy if exists crr_sel on public.court_records;
 create policy crr_sel on public.court_records for select to authenticated using (true);
 drop policy if exists crr_ins on public.court_records;
 create policy crr_ins on public.court_records for insert to authenticated with check (true);
+create table if not exists public.detention (
+  id uuid primary key default gen_random_uuid(),
+  offender_name text not null,
+  user_id uuid references auth.users(id) on delete set null,
+  crime_type text,
+  severity int not null default 3,
+  status text not null default 'jailed',
+  jailed_at timestamptz default now(),
+  release_at timestamptz,
+  bail_cinder numeric not null default 0,
+  seize_cinder numeric not null default 0,
+  seized_done boolean not null default false,
+  case_id uuid references public.court_cases(id) on delete set null,
+  committed_by uuid references auth.users(id) on delete set null,
+  committed_name text,
+  released_by text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create index if not exists detention_status on public.detention (status, release_at);
+alter table public.detention enable row level security;
+drop policy if exists det_sel on public.detention;
+create policy det_sel on public.detention for select to authenticated using (true);
+drop policy if exists det_ins on public.detention;
+create policy det_ins on public.detention for insert to authenticated with check (true);
+drop policy if exists det_upd on public.detention;
+create policy det_upd on public.detention for update to authenticated using (true) with check (true);
 grant select on public.reserve_totals to authenticated;

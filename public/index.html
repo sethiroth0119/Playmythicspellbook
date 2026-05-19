@@ -24101,7 +24101,7 @@ async function resMarketCancel(listing) {
 // a security_invoker VIEW that SUMs all rows, so there are no lost updates
 // and no RPC needed. Degrades gracefully offline / before one-time setup.
 // ============================================================================
-const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ncreate table if not exists public.reserve_tax_log (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  buyer_id uuid,\n  corp_id text,\n  resource text,\n  quantity numeric not null default 0,\n  sale_value numeric not null default 0,\n  tax_rate numeric not null default 0.02,\n  tax_amount numeric not null default 0,\n  market_type text not null default 'base',\n  created_at timestamptz default now()\n);\ncreate index if not exists reserve_tax_log_time on public.reserve_tax_log (created_at desc);\nalter table public.reserve_tax_log enable row level security;\ndrop policy if exists tx_sel on public.reserve_tax_log;\ncreate policy tx_sel on public.reserve_tax_log for select to authenticated using (true);\ndrop policy if exists tx_ins on public.reserve_tax_log;\ncreate policy tx_ins on public.reserve_tax_log for insert to authenticated with check (seller_id = auth.uid());\ncreate table if not exists public.corporations (\n  id uuid primary key default gen_random_uuid(),\n  name text not null,\n  tag text not null,\n  founder_id uuid not null references auth.users(id) on delete cascade,\n  faction text,\n  element text,\n  created_at timestamptz default now()\n);\nalter table public.corporations add column if not exists faction text;\nalter table public.corporations add column if not exists element text;\ncreate table if not exists public.corp_members (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  joined_at timestamptz default now()\n);\ncreate index if not exists corp_members_corp on public.corp_members (corp_id);\nalter table public.corporations enable row level security;\nalter table public.corp_members enable row level security;\ndrop policy if exists corp_sel on public.corporations;\ncreate policy corp_sel on public.corporations for select to authenticated using (true);\ndrop policy if exists corp_ins on public.corporations;\ncreate policy corp_ins on public.corporations for insert to authenticated with check (founder_id = auth.uid());\ndrop policy if exists cm_sel on public.corp_members;\ncreate policy cm_sel on public.corp_members for select to authenticated using (true);\ndrop policy if exists cm_ins on public.corp_members;\ncreate policy cm_ins on public.corp_members for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cm_upd on public.corp_members;\ncreate policy cm_upd on public.corp_members for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists cm_del on public.corp_members;\ncreate policy cm_del on public.corp_members for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_members.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_requests (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  status text not null default 'pending',\n  created_at timestamptz default now(),\n  unique (corp_id, user_id)\n);\ncreate index if not exists corp_requests_corp on public.corp_requests (corp_id);\nalter table public.corp_requests enable row level security;\ndrop policy if exists creq_sel on public.corp_requests;\ncreate policy creq_sel on public.corp_requests for select to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists creq_ins on public.corp_requests;\ncreate policy creq_ins on public.corp_requests for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists creq_upd on public.corp_requests;\ncreate policy creq_upd on public.corp_requests for update to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid())) with check (true);\ndrop policy if exists creq_del on public.corp_requests;\ncreate policy creq_del on public.corp_requests for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_vault (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  depositor_id uuid not null references auth.users(id) on delete cascade,\n  depositor_name text,\n  kind text not null,\n  item_id text not null,\n  name text,\n  icon text,\n  qty numeric not null default 0,\n  created_at timestamptz default now(),\n  updated_at timestamptz default now(),\n  unique (corp_id, depositor_id, kind, item_id)\n);\ncreate index if not exists corp_vault_corp on public.corp_vault (corp_id);\nalter table public.corp_vault enable row level security;\ndrop policy if exists cv_sel on public.corp_vault;\ncreate policy cv_sel on public.corp_vault for select to authenticated using (exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()) or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists cv_ins on public.corp_vault;\ncreate policy cv_ins on public.corp_vault for insert to authenticated with check (depositor_id = auth.uid() and exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()));\ndrop policy if exists cv_upd on public.corp_vault;\ncreate policy cv_upd on public.corp_vault for update to authenticated using (depositor_id = auth.uid()) with check (depositor_id = auth.uid());\ndrop policy if exists cv_del on public.corp_vault;\ncreate policy cv_del on public.corp_vault for delete to authenticated using (depositor_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ncreate table if not exists public.corp_licenses (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  license_type text not null,\n  status text not null default 'active',\n  issued_by uuid references auth.users(id) on delete set null,\n  issued_at timestamptz default now(),\n  unique (corp_id, license_type)\n);\ncreate index if not exists corp_licenses_corp on public.corp_licenses (corp_id);\nalter table public.corp_licenses enable row level security;\ndrop policy if exists cl_sel on public.corp_licenses;\ncreate policy cl_sel on public.corp_licenses for select to authenticated using (true);\ndrop policy if exists cl_ins on public.corp_licenses;\ncreate policy cl_ins on public.corp_licenses for insert to authenticated with check (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists cl_del on public.corp_licenses;\ncreate policy cl_del on public.corp_licenses for delete to authenticated using (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.court_officials (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  user_name text,\n  role text not null default 'lawyer',\n  rank text not null default 'Associate',\n  status text not null default 'active',\n  registered_at timestamptz default now()\n);\nalter table public.court_officials enable row level security;\ndrop policy if exists cof_sel on public.court_officials;\ncreate policy cof_sel on public.court_officials for select to authenticated using (true);\ndrop policy if exists cof_ins on public.court_officials;\ncreate policy cof_ins on public.court_officials for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cof_upd on public.court_officials;\ncreate policy cof_upd on public.court_officials for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.court_cases (\n  id uuid primary key default gen_random_uuid(),\n  case_no text,\n  plaintiff_id uuid references auth.users(id) on delete set null,\n  plaintiff_name text,\n  defendant_name text not null,\n  crime_type text not null,\n  severity int not null default 3,\n  summary text,\n  status text not null default 'open',\n  judge_id uuid references auth.users(id) on delete set null,\n  judge_name text,\n  prosecutor_name text,\n  defender_name text,\n  verdict text,\n  sentence text,\n  filed_by uuid references auth.users(id) on delete set null,\n  filed_at timestamptz default now(),\n  updated_at timestamptz default now()\n);\ncreate index if not exists court_cases_time on public.court_cases (filed_at desc);\nalter table public.court_cases enable row level security;\ndrop policy if exists ccz_sel on public.court_cases;\ncreate policy ccz_sel on public.court_cases for select to authenticated using (true);\ndrop policy if exists ccz_ins on public.court_cases;\ncreate policy ccz_ins on public.court_cases for insert to authenticated with check (filed_by = auth.uid());\ndrop policy if exists ccz_upd on public.court_cases;\ncreate policy ccz_upd on public.court_cases for update to authenticated using (true) with check (true);\ncreate table if not exists public.court_records (\n  id uuid primary key default gen_random_uuid(),\n  offender_name text not null,\n  crime_type text,\n  severity int not null default 3,\n  verdict text,\n  sentence text,\n  case_id uuid references public.court_cases(id) on delete set null,\n  judge_name text,\n  recorded_at timestamptz default now()\n);\ncreate index if not exists court_records_time on public.court_records (recorded_at desc);\nalter table public.court_records enable row level security;\ndrop policy if exists crr_sel on public.court_records;\ncreate policy crr_sel on public.court_records for select to authenticated using (true);\ndrop policy if exists crr_ins on public.court_records;\ncreate policy crr_ins on public.court_records for insert to authenticated with check (true);\ngrant select on public.reserve_totals to authenticated;";
+const FOUNDATION_RESERVE_SQL = "create table if not exists public.reserve_contributions (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  resource text not null,\n  qty numeric not null default 0,\n  points numeric not null default 0,\n  updated_at timestamptz default now(),\n  unique (user_id, resource)\n);\nalter table public.reserve_contributions enable row level security;\ndrop policy if exists rc_sel on public.reserve_contributions;\ncreate policy rc_sel on public.reserve_contributions for select to authenticated using (true);\ndrop policy if exists rc_ins on public.reserve_contributions;\ncreate policy rc_ins on public.reserve_contributions for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists rc_upd on public.reserve_contributions;\ncreate policy rc_upd on public.reserve_contributions for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.reserve_consumption (\n  id uuid primary key default gen_random_uuid(),\n  user_id uuid not null references auth.users(id) on delete cascade,\n  resource text not null,\n  qty numeric not null default 0,\n  product text,\n  created_at timestamptz default now()\n);\nalter table public.reserve_consumption enable row level security;\ndrop policy if exists rx_sel on public.reserve_consumption;\ncreate policy rx_sel on public.reserve_consumption for select to authenticated using (true);\ndrop policy if exists rx_ins on public.reserve_consumption;\ncreate policy rx_ins on public.reserve_consumption for insert to authenticated with check (user_id = auth.uid());\ncreate table if not exists public.reserve_tax_log (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  buyer_id uuid,\n  corp_id text,\n  resource text,\n  quantity numeric not null default 0,\n  sale_value numeric not null default 0,\n  tax_rate numeric not null default 0.02,\n  tax_amount numeric not null default 0,\n  market_type text not null default 'base',\n  created_at timestamptz default now()\n);\ncreate index if not exists reserve_tax_log_time on public.reserve_tax_log (created_at desc);\nalter table public.reserve_tax_log enable row level security;\ndrop policy if exists tx_sel on public.reserve_tax_log;\ncreate policy tx_sel on public.reserve_tax_log for select to authenticated using (true);\ndrop policy if exists tx_ins on public.reserve_tax_log;\ncreate policy tx_ins on public.reserve_tax_log for insert to authenticated with check (seller_id = auth.uid());\ncreate table if not exists public.corporations (\n  id uuid primary key default gen_random_uuid(),\n  name text not null,\n  tag text not null,\n  founder_id uuid not null references auth.users(id) on delete cascade,\n  faction text,\n  element text,\n  created_at timestamptz default now()\n);\nalter table public.corporations add column if not exists faction text;\nalter table public.corporations add column if not exists element text;\ncreate table if not exists public.corp_members (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  joined_at timestamptz default now()\n);\ncreate index if not exists corp_members_corp on public.corp_members (corp_id);\nalter table public.corporations enable row level security;\nalter table public.corp_members enable row level security;\ndrop policy if exists corp_sel on public.corporations;\ncreate policy corp_sel on public.corporations for select to authenticated using (true);\ndrop policy if exists corp_ins on public.corporations;\ncreate policy corp_ins on public.corporations for insert to authenticated with check (founder_id = auth.uid());\ndrop policy if exists cm_sel on public.corp_members;\ncreate policy cm_sel on public.corp_members for select to authenticated using (true);\ndrop policy if exists cm_ins on public.corp_members;\ncreate policy cm_ins on public.corp_members for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cm_upd on public.corp_members;\ncreate policy cm_upd on public.corp_members for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ndrop policy if exists cm_del on public.corp_members;\ncreate policy cm_del on public.corp_members for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_members.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_requests (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  user_id uuid not null references auth.users(id) on delete cascade,\n  user_name text,\n  role text not null default 'member',\n  status text not null default 'pending',\n  created_at timestamptz default now(),\n  unique (corp_id, user_id)\n);\ncreate index if not exists corp_requests_corp on public.corp_requests (corp_id);\nalter table public.corp_requests enable row level security;\ndrop policy if exists creq_sel on public.corp_requests;\ncreate policy creq_sel on public.corp_requests for select to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists creq_ins on public.corp_requests;\ncreate policy creq_ins on public.corp_requests for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists creq_upd on public.corp_requests;\ncreate policy creq_upd on public.corp_requests for update to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid())) with check (true);\ndrop policy if exists creq_del on public.corp_requests;\ncreate policy creq_del on public.corp_requests for delete to authenticated using (user_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_requests.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.corp_vault (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  depositor_id uuid not null references auth.users(id) on delete cascade,\n  depositor_name text,\n  kind text not null,\n  item_id text not null,\n  name text,\n  icon text,\n  qty numeric not null default 0,\n  created_at timestamptz default now(),\n  updated_at timestamptz default now(),\n  unique (corp_id, depositor_id, kind, item_id)\n);\ncreate index if not exists corp_vault_corp on public.corp_vault (corp_id);\nalter table public.corp_vault enable row level security;\ndrop policy if exists cv_sel on public.corp_vault;\ncreate policy cv_sel on public.corp_vault for select to authenticated using (exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()) or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists cv_ins on public.corp_vault;\ncreate policy cv_ins on public.corp_vault for insert to authenticated with check (depositor_id = auth.uid() and exists (select 1 from public.corp_members m where m.corp_id = corp_vault.corp_id and m.user_id = auth.uid()));\ndrop policy if exists cv_upd on public.corp_vault;\ncreate policy cv_upd on public.corp_vault for update to authenticated using (depositor_id = auth.uid()) with check (depositor_id = auth.uid());\ndrop policy if exists cv_del on public.corp_vault;\ncreate policy cv_del on public.corp_vault for delete to authenticated using (depositor_id = auth.uid() or exists (select 1 from public.corporations c where c.id = corp_vault.corp_id and c.founder_id = auth.uid()));\ndrop view if exists public.reserve_totals;\ncreate view public.reserve_totals with (security_invoker = true) as\n  select c.resource, greatest(c.contributed - coalesce(x.consumed, 0), 0)::numeric as total, c.points, c.contributors\n  from (select resource, sum(qty)::numeric as contributed, sum(points)::numeric as points, count(distinct user_id) as contributors from public.reserve_contributions group by resource) c\n  left join (select resource, sum(qty)::numeric as consumed from public.reserve_consumption group by resource) x on x.resource = c.resource;\ncreate table if not exists public.corp_licenses (\n  id uuid primary key default gen_random_uuid(),\n  corp_id uuid not null references public.corporations(id) on delete cascade,\n  license_type text not null,\n  status text not null default 'active',\n  issued_by uuid references auth.users(id) on delete set null,\n  issued_at timestamptz default now(),\n  unique (corp_id, license_type)\n);\ncreate index if not exists corp_licenses_corp on public.corp_licenses (corp_id);\nalter table public.corp_licenses enable row level security;\ndrop policy if exists cl_sel on public.corp_licenses;\ncreate policy cl_sel on public.corp_licenses for select to authenticated using (true);\ndrop policy if exists cl_ins on public.corp_licenses;\ncreate policy cl_ins on public.corp_licenses for insert to authenticated with check (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));\ndrop policy if exists cl_del on public.corp_licenses;\ncreate policy cl_del on public.corp_licenses for delete to authenticated using (exists (select 1 from public.corporations c where c.id = corp_licenses.corp_id and c.founder_id = auth.uid()));\ncreate table if not exists public.court_officials (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  user_name text,\n  role text not null default 'lawyer',\n  rank text not null default 'Associate',\n  status text not null default 'active',\n  registered_at timestamptz default now()\n);\nalter table public.court_officials enable row level security;\ndrop policy if exists cof_sel on public.court_officials;\ncreate policy cof_sel on public.court_officials for select to authenticated using (true);\ndrop policy if exists cof_ins on public.court_officials;\ncreate policy cof_ins on public.court_officials for insert to authenticated with check (user_id = auth.uid());\ndrop policy if exists cof_upd on public.court_officials;\ncreate policy cof_upd on public.court_officials for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());\ncreate table if not exists public.court_cases (\n  id uuid primary key default gen_random_uuid(),\n  case_no text,\n  plaintiff_id uuid references auth.users(id) on delete set null,\n  plaintiff_name text,\n  defendant_name text not null,\n  crime_type text not null,\n  severity int not null default 3,\n  summary text,\n  status text not null default 'open',\n  judge_id uuid references auth.users(id) on delete set null,\n  judge_name text,\n  prosecutor_name text,\n  defender_name text,\n  verdict text,\n  sentence text,\n  filed_by uuid references auth.users(id) on delete set null,\n  filed_at timestamptz default now(),\n  updated_at timestamptz default now()\n);\ncreate index if not exists court_cases_time on public.court_cases (filed_at desc);\nalter table public.court_cases enable row level security;\ndrop policy if exists ccz_sel on public.court_cases;\ncreate policy ccz_sel on public.court_cases for select to authenticated using (true);\ndrop policy if exists ccz_ins on public.court_cases;\ncreate policy ccz_ins on public.court_cases for insert to authenticated with check (filed_by = auth.uid());\ndrop policy if exists ccz_upd on public.court_cases;\ncreate policy ccz_upd on public.court_cases for update to authenticated using (true) with check (true);\ncreate table if not exists public.court_records (\n  id uuid primary key default gen_random_uuid(),\n  offender_name text not null,\n  crime_type text,\n  severity int not null default 3,\n  verdict text,\n  sentence text,\n  case_id uuid references public.court_cases(id) on delete set null,\n  judge_name text,\n  recorded_at timestamptz default now()\n);\ncreate index if not exists court_records_time on public.court_records (recorded_at desc);\nalter table public.court_records enable row level security;\ndrop policy if exists crr_sel on public.court_records;\ncreate policy crr_sel on public.court_records for select to authenticated using (true);\ndrop policy if exists crr_ins on public.court_records;\ncreate policy crr_ins on public.court_records for insert to authenticated with check (true);\ncreate table if not exists public.detention (\n  id uuid primary key default gen_random_uuid(),\n  offender_name text not null,\n  user_id uuid references auth.users(id) on delete set null,\n  crime_type text,\n  severity int not null default 3,\n  status text not null default 'jailed',\n  jailed_at timestamptz default now(),\n  release_at timestamptz,\n  bail_cinder numeric not null default 0,\n  seize_cinder numeric not null default 0,\n  seized_done boolean not null default false,\n  case_id uuid references public.court_cases(id) on delete set null,\n  committed_by uuid references auth.users(id) on delete set null,\n  committed_name text,\n  released_by text,\n  created_at timestamptz default now(),\n  updated_at timestamptz default now()\n);\ncreate index if not exists detention_status on public.detention (status, release_at);\nalter table public.detention enable row level security;\ndrop policy if exists det_sel on public.detention;\ncreate policy det_sel on public.detention for select to authenticated using (true);\ndrop policy if exists det_ins on public.detention;\ncreate policy det_ins on public.detention for insert to authenticated with check (true);\ndrop policy if exists det_upd on public.detention;\ncreate policy det_upd on public.detention for update to authenticated using (true) with check (true);\ngrant select on public.reserve_totals to authenticated;";
 
 // Contribution point weight per resource (strategic / scarce = worth more).
 const RESERVE_WEIGHTS = {
@@ -24595,6 +24595,153 @@ async function courtRule(caseId) {
   showToast('⚖️ Ruling entered — ' + (c.case_no || 'case') + ' closed' + (verdict === 'guilty' ? ' · added to the Criminal Registry.' : '.'), 6000);
   return true;
 }
+// 🔒 Detention Complex — convicted offenders serve a timer. Bail (Cinder +
+// resources, payable by self / corp / ally) buys early release. A guilty
+// verdict can carry an asset seizure (self-enforced on the offender's own
+// client, single-writer-safe). While jailed: Black Market + Reserve nodes
+// are locked out. Trials/sentencing happen in the Courtroom + Discord.
+const DETENTION_HOURS = { 1: 2, 2: 6, 3: 12, 4: 24, 5: 48 };
+const DET_BAIL_PER_CLASS = 30000;   // 🔥 per severity class
+const DET_SEIZE_PER_CLASS = 20000;  // 🔥 asset seizure per severity class
+const DET_BAIL_RES = (sev) => ({ fuel: sev * 20, supplies: sev * 15 });
+const Detention = { list: [], loading: false, _lastFetch: 0, _err: null };
+function _detHandle() {
+  return (((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || '') + '').trim().toLowerCase();
+}
+// Synchronous: returns my ACTIVE detention row (or null). Self-enforces the
+// asset seizure exactly once, and treats an elapsed timer as freed.
+function _isJailed() {
+  const me = _detHandle();
+  if (!me) return null;
+  const now = Date.now();
+  const row = (Detention.list || []).find(d => d && d.status === 'jailed' && ((d.offender_name || '') + '').trim().toLowerCase() === me);
+  if (!row) return null;
+  const rel = row.release_at ? Date.parse(row.release_at) : 0;
+  if (rel && rel <= now) {
+    // Timer served — free locally now; flip the row best-effort.
+    row.status = 'released';
+    try { Cloud.client.from('detention').update({ status: 'released', released_by: 'time served', updated_at: new Date().toISOString() }).eq('id', row.id); } catch (e) {}
+    return null;
+  }
+  // 💸 Asset seizure — runs once, on the offender's own client.
+  if ((row.seize_cinder | 0) > 0 && !row.seized_done) {
+    row.seized_done = true;
+    try {
+      const take = Math.min(Profile.gems || 0, row.seize_cinder | 0);
+      if (take > 0 && typeof spendGems === 'function') { spendGems(take); try { saveProfile(); } catch (e) {} }
+      Cloud.client.from('detention').update({ seized_done: true, updated_at: new Date().toISOString() }).eq('id', row.id);
+      showToast('💸 Foundation asset seizure — ' + take.toLocaleString() + ' 🔥 forfeited to City Hall.', 5200);
+    } catch (e) {}
+  }
+  return row;
+}
+// Lockout gate: true = blocked (and a toast shown). Opportunistically
+// refreshes the detention roster so the gate works without opening City Hall.
+function _jailBlocked(action) {
+  try {
+    if (typeof detentionFetch === 'function' && Date.now() - (Detention._lastFetch || 0) > 60000) detentionFetch();
+  } catch (e) {}
+  const j = (typeof _isJailed === 'function') ? _isJailed() : null;
+  if (j) {
+    const ms = j.release_at ? (Date.parse(j.release_at) - Date.now()) : 0;
+    const left = ms > 0 ? (Math.floor(ms / 3600000) + 'h ' + Math.floor((ms % 3600000) / 60000) + 'm') : 'pending bail';
+    showToast('🔒 You are in the Detention Complex — ' + (action || 'that') + ' is locked out. Release in ' + left + ', or post bail at City Hall → Detention.', 6000);
+    return true;
+  }
+  return false;
+}
+async function detentionFetch() {
+  if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { Detention._err = 'Sign in'; return; }
+  if (Detention.loading) return;
+  Detention.loading = true;
+  try {
+    const r = await Cloud.client.from('detention').select('*').order('jailed_at', { ascending: false }).limit(120);
+    if (r && r.error) { _frErr(r.error); Detention.loading = false; return; }
+    const rows = (r && r.data) ? r.data : [];
+    const now = Date.now();
+    rows.forEach(d => {
+      if (d.status === 'jailed' && d.release_at && Date.parse(d.release_at) <= now) {
+        d.status = 'released';
+        try { Cloud.client.from('detention').update({ status: 'released', released_by: 'time served', updated_at: new Date().toISOString() }).eq('id', d.id); } catch (e) {}
+      }
+    });
+    Detention.list = rows;
+    Detention._lastFetch = Date.now();
+  } catch (e) { _frErr(e); }
+  Detention.loading = false;
+}
+// Judge commits a convicted offender (from the Wanted list / a closed case).
+async function detentionCommit(name, crime, sev, caseId) {
+  if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in.', 3000); return false; }
+  if (!Court.mine || Court.mine.role !== 'judge') { showToast('Only a registered judge commits offenders to detention.', 4200); return false; }
+  name = ((name || '') + '').trim();
+  if (!name) return false;
+  sev = Math.max(1, Math.min(5, (sev | 0) || 3));
+  if ((Detention.list || []).some(d => d.status === 'jailed' && ((d.offender_name || '') + '').trim().toLowerCase() === name.toLowerCase())) {
+    showToast(name + ' is already in detention.', 3200); return false;
+  }
+  const hrs = DETENTION_HOURS[sev] || 12;
+  const bail = sev * DET_BAIL_PER_CLASS;
+  const seize = sev * DET_SEIZE_PER_CLASS;
+  if (!confirm('Commit ' + name + ' to the Detention Complex?\n\nClass ' + sev + ' · ' + hrs + 'h sentence\nBail: ' + bail.toLocaleString() + ' 🔥 (+ resources)\nAsset seizure: ' + seize.toLocaleString() + ' 🔥')) return false;
+  try {
+    const ins = await Cloud.client.from('detention').insert({
+      offender_name: name.slice(0, 40), crime_type: crime || null, severity: sev,
+      status: 'jailed', release_at: new Date(Date.now() + hrs * 3600000).toISOString(),
+      bail_cinder: bail, seize_cinder: seize, seized_done: false,
+      case_id: caseId || null, committed_by: Profile.cloud.userId,
+      committed_name: (Court.mine.user_name || 'Judge') });
+    if (ins && ins.error) throw ins.error;
+  } catch (e) {
+    showToast('⚠ Commit failed. ' + (/detention|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run the Reserve setup SQL first.' : ''), 4600);
+    return false;
+  }
+  showToast('🔒 ' + name + ' committed to detention — Class ' + sev + ', ' + hrs + 'h. Locked out of the Black Market & nodes.', 6000);
+  return true;
+}
+// Post bail — payable by the offender OR anyone (corp / ally support).
+async function detentionBail(id) {
+  const d = (Detention.list || []).find(x => x.id === id);
+  if (!d || d.status !== 'jailed') { showToast('That detainee is no longer held.', 3000); return false; }
+  if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in to post bail.', 3000); return false; }
+  const bail = d.bail_cinder | 0;
+  const res = DET_BAIL_RES(d.severity | 0);
+  const resStr = Object.keys(res).map(k => res[k] + '× ' + ((_meta(k).name) || k)).join(' + ');
+  const mine = ((d.offender_name || '') + '').trim().toLowerCase() === _detHandle();
+  if ((Profile.gems || 0) < bail) { showToast('Bail is ' + bail.toLocaleString() + ' 🔥 — you have ' + (Profile.gems || 0).toLocaleString() + '.', 5200); return false; }
+  if (!canAffordResources(res)) { showToast('Bail also requires ' + resStr + '.', 4600); return false; }
+  if (!confirm('Post bail for ' + d.offender_name + (mine ? ' (yourself)' : ' — corp/ally support') + '?\n\n' + bail.toLocaleString() + ' 🔥 + ' + resStr + '\n\nThis frees them immediately.')) return false;
+  if (!spendGems(bail)) { showToast('Not enough Cinders'); return false; }
+  if (!spendResources(res)) { addGems(bail); showToast('Not enough resources'); return false; }
+  try { saveProfile(); } catch (e) {}
+  try {
+    const up = await Cloud.client.from('detention').update({
+      status: 'released', released_by: (mine ? 'bail (self)' : 'bail · ' + (((Profile.cloud && Profile.cloud.displayName) || 'ally') + '').slice(0, 30)),
+      updated_at: new Date().toISOString() }).eq('id', id);
+    if (up && up.error) throw up.error;
+    d.status = 'released';
+  } catch (e) {
+    addGems(bail); try { addSalvage(res); saveProfile(); } catch (_) {}
+    showToast('⚠ Bail failed — refunded.', 4200);
+    return false;
+  }
+  showToast('🔓 Bail posted — ' + d.offender_name + ' is released.', 5200);
+  return true;
+}
+// Judge release (time served / pardon, no bail).
+async function detentionRelease(id) {
+  const d = (Detention.list || []).find(x => x.id === id);
+  if (!d || d.status !== 'jailed') return false;
+  if (!Court.mine || Court.mine.role !== 'judge') { showToast('Only a judge can order release.', 3600); return false; }
+  if (!confirm('Order the release of ' + d.offender_name + ' (judicial pardon / time served)?')) return false;
+  try {
+    const up = await Cloud.client.from('detention').update({ status: 'released', released_by: 'judge · ' + (Court.mine.user_name || 'Judge'), updated_at: new Date().toISOString() }).eq('id', id);
+    if (up && up.error) throw up.error;
+    d.status = 'released';
+  } catch (e) { showToast('⚠ Release failed.', 3400); return false; }
+  showToast('🔓 ' + d.offender_name + ' released by judicial order.', 5000);
+  return true;
+}
 function openCityHall() {
   try {
     const ID = 'ch-modal';
@@ -24726,6 +24873,52 @@ function openCityHall() {
       }
       return head + cbody;
     };
+    const detentionTab = () => {
+      const fmtLeft = (iso) => {
+        if (!iso) return 'until bail';
+        const ms = Date.parse(iso) - Date.now();
+        if (ms <= 0) return 'released';
+        const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+        return h > 0 ? h + 'h ' + m + 'm' : m + 'm';
+      };
+      const isJudge = !!(Court.mine && Court.mine.role === 'judge');
+      const jailed = (Detention.list || []).filter(d => d.status === 'jailed');
+      const myRow = (typeof _isJailed === 'function') ? _isJailed() : null;
+      let dbody = '<div class="small-text" style="color:#cdb37a;margin-bottom:8px">Convicted offenders serve a timer. <strong>Bail</strong> (Cinder + resources — payable by self, corp or an ally) frees them early. Detainees are locked out of the <strong>Black Market</strong> and <strong>Reserve nodes</strong>; a guilty verdict also carries an asset seizure.</div>';
+      if (myRow) {
+        const sc = _sevClass(myRow.severity), cr = _crime(myRow.crime_type);
+        dbody += '<div style="border:2px solid rgba(255,107,107,0.6);border-radius:10px;background:rgba(60,16,16,0.4);padding:11px 13px;margin-bottom:10px">' +
+          '<div style="color:#ff6b6b;font-weight:800;font-size:1.05rem">🔒 You are detained</div>' +
+          '<div class="small-text" style="color:#ffb499;margin:3px 0">' + esc(cr ? cr.name : (myRow.crime_type || 'Offense')) + ' · <span style="color:' + sc.c + '">' + sc.t + '</span> · release in <strong>' + fmtLeft(myRow.release_at) + '</strong></div>' +
+          '<div class="small-text" style="color:#cdb37a;margin-bottom:7px">Black Market &amp; node control are suspended until you are released.</div>' +
+          '<button data-det-bail="' + esc(myRow.id) + '" style="cursor:pointer;border-radius:7px;padding:0.45rem 0.85rem;border:1px solid #d4af37;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800">🔓 Post bail · ' + (myRow.bail_cinder | 0).toLocaleString() + ' 🔥 + res</button></div>';
+      }
+      dbody += '<div style="color:#ffe6b0;font-weight:800;margin:6px 0 5px">🔒 In Detention <span class="small-text" style="color:#8a7a4a">(' + jailed.length + ')</span></div>';
+      dbody += jailed.length ? jailed.map(d => {
+        const sc = _sevClass(d.severity), cr = _crime(d.crime_type);
+        const rel = fmtLeft(d.release_at);
+        return '<div style="padding:9px 12px;border:1px solid ' + (d.severity >= 4 ? 'rgba(255,107,107,0.4)' : 'rgba(212,175,55,0.22)') + ';border-radius:8px;background:rgba(40,32,12,0.18);margin-bottom:6px">' +
+          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><div style="color:#ff9a6b;font-weight:800">' + esc(d.offender_name) + '</div><div class="small-text" style="color:' + sc.c + ';font-weight:800;white-space:nowrap">' + sc.t + '</div></div>' +
+          '<div class="small-text" style="color:#cdb37a;margin:2px 0">' + esc(cr ? cr.name : (d.crime_type || 'Offense')) + ' · ⏳ ' + rel + ' · committed by ' + esc(d.committed_name || 'court') + '</div>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' +
+            '<button data-det-bail="' + esc(d.id) + '" style="cursor:pointer;border-radius:6px;padding:0.3rem 0.65rem;border:1px solid rgba(212,175,55,0.5);background:rgba(212,175,55,0.14);color:#ffcf5a;font-weight:800;font-size:0.78rem">Post bail · ' + (d.bail_cinder | 0).toLocaleString() + ' 🔥</button>' +
+            (isJudge ? '<button data-det-release="' + esc(d.id) + '" style="cursor:pointer;border-radius:6px;padding:0.3rem 0.65rem;border:1px solid rgba(127,224,160,0.5);background:rgba(60,160,110,0.16);color:#9fe0b0;font-weight:800;font-size:0.78rem">Release ⚖️</button>' : '') +
+          '</div></div>';
+      }).join('') : '<div class="small-text ink-dim" style="padding:1rem;text-align:center">No one is currently detained.</div>';
+      // 🚨 Wanted — guilty convictions (Class ≥3) with no active detention.
+      const heldNames = new Set(jailed.map(d => ((d.offender_name || '') + '').trim().toLowerCase()));
+      const wanted = (Court.records || []).filter(r => (r.severity | 0) >= 3 && !heldNames.has(((r.offender_name || '') + '').trim().toLowerCase()));
+      dbody += '<div style="color:#ffe6b0;font-weight:800;margin:12px 0 5px">🚨 Wanted <span class="small-text" style="color:#8a7a4a">(' + wanted.length + ' · Class 3+ at large)</span></div>';
+      dbody += wanted.length ? wanted.slice(0, 30).map(r => {
+        const sc = _sevClass(r.severity), cr = _crime(r.crime_type);
+        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid rgba(255,107,107,0.3);border-radius:8px;background:rgba(50,20,20,0.22);margin-bottom:6px">' +
+          '<div style="flex:1;min-width:0"><div style="color:#ff9a6b;font-weight:800">' + esc(r.offender_name) + ' <span class="small-text" style="color:' + sc.c + '">· ' + sc.t + '</span></div>' +
+            '<div class="small-text" style="color:#cdb37a">' + esc(cr ? cr.name : (r.crime_type || 'Offense')) + ' · convicted · ' + esc(r.judge_name || 'court') + '</div></div>' +
+          (isJudge ? '<button data-det-commit="1" data-det-name="' + esc(r.offender_name) + '" data-det-crime="' + esc(r.crime_type || '') + '" data-det-sev="' + (r.severity | 0) + '" data-det-case="' + esc(r.case_id || '') + '" style="cursor:pointer;border-radius:6px;padding:0.3rem 0.65rem;border:1px solid #d4af37;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:800;font-size:0.78rem;white-space:nowrap">Commit 🔒</button>' : '<span class="small-text" style="color:#8a7a4a;white-space:nowrap">judge commits</span>') +
+        '</div>';
+      }).join('') : '<div class="small-text ink-dim" style="padding:1rem;text-align:center">No one at large. ' + (isJudge ? 'Convict offenders in the Courtroom.' : 'Justice is served.') + '</div>';
+      return dbody;
+    };
     const soonTab = (title, lines) =>
       '<div style="text-align:center;padding:1.4rem 1rem"><div style="font-size:2rem;margin-bottom:6px">🚧</div>' +
       '<div style="color:#ffe6b0;font-weight:800;font-size:1.05rem;margin-bottom:6px">' + title + ' — opening tomorrow</div>' +
@@ -24743,7 +24936,7 @@ function openCityHall() {
           : tab === 'treasury' ? treasuryTab()
           : tab === 'licensing' ? licensingTab()
           : tab === 'court' ? courtTab()
-          : soonTab('Detention Complex', 'Jail timers, bail (Cinder / resources / corporation support), asset seizure, prisoner tracking and global wanted status. Jailed players lose Black Market + operation control until released.');
+          : detentionTab();
       }
       const tB = (id, label) => '<button data-ch-tab="' + id + '" style="flex:1;cursor:pointer;border-radius:8px 8px 0 0;padding:0.5rem 0.4rem;border:1px solid rgba(212,175,55,0.3);border-bottom:none;font-size:0.84rem;background:' + (tab === id ? 'rgba(120,90,30,0.32)' : 'rgba(40,32,12,0.16)') + ';color:' + (tab === id ? '#ffe6b0' : '#b59a66') + ';font-weight:800">' + label + '</button>';
       host.innerHTML =
@@ -24784,14 +24977,19 @@ function openCityHall() {
       host.querySelectorAll('[data-court-reg]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; courtRegister(b.getAttribute('data-court-reg')).then(_courtRefresh); }; });
       host.querySelectorAll('[data-court-role]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; b.textContent = 'Filing…'; courtTakeRole(b.getAttribute('data-court-case'), b.getAttribute('data-court-role')).then(_courtRefresh); }; });
       host.querySelectorAll('[data-court-rule]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; courtRule(b.getAttribute('data-court-rule')).then(_courtRefresh); }; });
+      const _detRefresh = () => { try { detentionFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {} };
+      host.querySelectorAll('[data-det-commit]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; detentionCommit(b.getAttribute('data-det-name'), b.getAttribute('data-det-crime'), parseInt(b.getAttribute('data-det-sev'), 10), b.getAttribute('data-det-case') || null).then(_detRefresh); }; });
+      host.querySelectorAll('[data-det-bail]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; b.textContent = 'Posting…'; detentionBail(b.getAttribute('data-det-bail')).then(_detRefresh); }; });
+      host.querySelectorAll('[data-det-release]').forEach(b => { b.onclick = () => { if (b.disabled) return; b.disabled = true; detentionRelease(b.getAttribute('data-det-release')).then(_detRefresh); }; });
     };
     render();
     if (online && !(typeof FoundationReserve !== 'undefined' && FoundationReserve.tableMissing)) {
       cityHallFetch().then(render);
       try { if (typeof corpEnsure === 'function') corpEnsure().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {}
       try { courtFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {}
+      try { detentionFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {}
       cleanup();
-      CityHall._poll = setInterval(() => { if (!document.getElementById(ID)) { cleanup(); return; } cityHallFetch().then(() => { if (document.getElementById(ID)) render(); }); try { courtFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {} }, 25000);
+      CityHall._poll = setInterval(() => { if (!document.getElementById(ID)) { cleanup(); return; } cityHallFetch().then(() => { if (document.getElementById(ID)) render(); }); try { courtFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {} try { detentionFetch().then(() => { if (document.getElementById(ID)) render(); }); } catch (e) {} }, 25000);
     }
   } catch (e) {}
 }
@@ -25076,6 +25274,7 @@ async function nodeFetch() {
 async function nodeEstablish(typeId) {
   const t = _nodeType(typeId);
   if (!t) return false;
+  if (typeof _jailBlocked === 'function' && _jailBlocked('establishing nodes')) return false;
   if (!initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in to operate Reserve nodes.', 3000); return false; }
   if (!Corp.mine) { showToast('🏛️ Only registered corporations operate Reserve nodes — found or join one in City Hall.', 4600); return false; }
   const reqLic = NODE_REQUIRED_LICENSE[t.id];
@@ -25111,6 +25310,7 @@ async function nodeEstablish(typeId) {
 async function nodeCollect(nodeId) {
   const n = (FoundationReserve.nodes || []).find(x => x.id === nodeId);
   if (!n) return false;
+  if (typeof _jailBlocked === 'function' && _jailBlocked('collecting node payouts')) return false;
   if (!_nodeActive(n)) { showToast('That node is still under construction.', 3000); return false; }
   const cd = _nodeCooldownLeft(n);
   if (cd > 0) { showToast('⏳ Payout on cooldown — ' + Math.ceil(cd / 3600000) + 'h left.', 3200); return false; }
@@ -25129,6 +25329,7 @@ async function nodeCollect(nodeId) {
 async function nodeMaintain(nodeId) {
   const n = (FoundationReserve.nodes || []).find(x => x.id === nodeId);
   if (!n) return false;
+  if (typeof _jailBlocked === 'function' && _jailBlocked('maintaining nodes')) return false;
   const up = { fuel: 80, supplies: 60 };
   if (!canAffordResources(up)) { showToast('Maintenance needs ' + Object.keys(up).map(k => up[k] + ' ' + ((_meta(k).name) || k)).join(' + ') + '.', 4200); return false; }
   if (!spendResources(up)) { showToast('Not enough resources to maintain.'); return false; }
@@ -61514,6 +61715,7 @@ function grantBmPass() {
 // roguelite — the goods aren't safe until you carry them all the way back.
 function openBlackMarketHall() {
   try {
+    if (typeof _jailBlocked === 'function' && _jailBlocked('the Black Market')) return;
     const ID = 'bm-hall-modal';
     const old = document.getElementById(ID); if (old) old.remove();
     const sb = (typeof Cloud !== 'undefined' && Cloud.client) ? Cloud.client : null;
@@ -62144,6 +62346,7 @@ function openBlackMarketAuction() {
 }
 function _startBlackMarketRun() {
   try {
+    if (typeof _jailBlocked === 'function' && _jailBlocked('the Black Market')) return;
     const r = (typeof Profile !== 'undefined' && Profile.rlcRun) ? Profile.rlcRun : null;
     if (r && !r.isComplete && !r.isFailed && r.campaignId !== BM_RUN_ID) {
       if (!confirm('Starting the Black Market Run abandons your current roguelite run. Continue?')) return;

@@ -231,10 +231,15 @@ create policy gifts_upd on public.gifts for update to authenticated using (to_us
 create table if not exists public.bank_of_ethos (
   user_id uuid primary key references auth.users(id) on delete cascade,
   balance numeric not null default 0,
+  aza numeric not null default 0,
+  resources jsonb not null default '{}'::jsonb,
   opened_at timestamptz default now(),
   last_fee_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+-- Idempotent upgrades for accounts created before Aza/resource banking.
+alter table public.bank_of_ethos add column if not exists aza numeric not null default 0;
+alter table public.bank_of_ethos add column if not exists resources jsonb not null default '{}'::jsonb;
 alter table public.bank_of_ethos enable row level security;
 drop policy if exists boe_sel on public.bank_of_ethos;
 create policy boe_sel on public.bank_of_ethos for select to authenticated using (user_id = auth.uid());

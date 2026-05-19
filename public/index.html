@@ -24987,7 +24987,7 @@ async function detentionRelease(id) {
 // writer; degrades gracefully offline / pre-setup.
 const BOE_FEE = 200;                       // 🔥 maintenance per period
 const BOE_FEE_PERIOD_MS = 30 * 24 * 3600000; // 30 days
-const BankEthos = { balance: 0, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '' };
+const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true };
 async function _boeRow() {
   if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
   return Cloud.client.from('bank_of_ethos');
@@ -24997,7 +24997,7 @@ async function boeFetch() {
     const t = await _boeRow();
     if (!t) { BankEthos._err = 'signin'; return false; }
     const me = Profile.cloud.userId;
-    let r = await t.select('balance,last_fee_at,opened_at').eq('user_id', me).maybeSingle();
+    let r = await t.select('*').eq('user_id', me).maybeSingle();
     if (r && r.error && !/PGRST116|no rows/i.test((r.error.message || '') + '')) {
       if (/bank_of_ethos|PGRST205|does not exist|schema cache/i.test((r.error.message || '') + '')) { BankEthos._err = 'setup'; }
       return false;
@@ -25005,9 +25005,14 @@ async function boeFetch() {
     if (!r || !r.data) {
       const ins = await t.insert({ user_id: me, balance: 0 });
       if (ins && ins.error) { BankEthos._err = 'setup'; return false; }
-      BankEthos.balance = 0; BankEthos.lastFeeAt = Date.now(); BankEthos.openedAt = Date.now();
+      BankEthos.balance = 0; BankEthos.aza = 0; BankEthos.resources = {};
+      BankEthos.lastFeeAt = Date.now(); BankEthos.openedAt = Date.now();
     } else {
       BankEthos.balance = Math.max(0, Math.round(Number(r.data.balance) || 0));
+      // aza/resources columns exist only after the api.sql upgrade is run.
+      BankEthos._extCols = ('aza' in r.data) && ('resources' in r.data);
+      BankEthos.aza = Math.max(0, Math.round(Number(r.data.aza) || 0));
+      BankEthos.resources = (r.data.resources && typeof r.data.resources === 'object') ? r.data.resources : {};
       BankEthos.lastFeeAt = r.data.last_fee_at ? Date.parse(r.data.last_fee_at) : Date.now();
       BankEthos.openedAt = r.data.opened_at ? Date.parse(r.data.opened_at) : Date.now();
     }
@@ -25064,6 +25069,89 @@ async function boeWithdraw(amt) {
   showToast('🏦 Withdrew ' + amt.toLocaleString() + ' 🔥 — balance ' + BankEthos.balance.toLocaleString() + '.', 4600);
   return true;
 }
+// ── Aza coin banking ───────────────────────────────────────────────
+// 👑 wallet (Profile.sovereigns) ⇄ bank (bank_of_ethos.aza). No fee.
+function _boeNeedCols() {
+  if (!BankEthos._extCols) { showToast('Run the updated api.sql to enable Aza & resource banking.', 5200); return true; }
+  return false;
+}
+async function boeDepositAza(amt) {
+  amt = Math.floor(amt);
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (_boeNeedCols()) return false;
+  if (!(amt > 0)) { showToast('Enter an amount.'); return false; }
+  if ((Profile.sovereigns || 0) < amt) { showToast('Need ' + amt.toLocaleString() + ' 👑 — you have ' + (Profile.sovereigns || 0).toLocaleString() + '.', 4200); return false; }
+  if (!spendSovereigns(amt)) { showToast('Not enough Aza.'); return false; }
+  try { saveProfile(); } catch (e) {}
+  try {
+    const t = await _boeRow();
+    const up = await t.update({ aza: BankEthos.aza + amt, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+    if (up && up.error) throw up.error;
+    BankEthos.aza += amt;
+  } catch (e) { addSovereigns(amt); try { saveProfile(); } catch (_) {} showToast('⚠ Aza deposit failed — refunded.', 4200); return false; }
+  showToast('🏦 Deposited ' + amt.toLocaleString() + ' 👑 — bank Aza ' + BankEthos.aza.toLocaleString() + '.', 4600);
+  return true;
+}
+async function boeWithdrawAza(amt) {
+  amt = Math.floor(amt);
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (_boeNeedCols()) return false;
+  if (!(amt > 0)) { showToast('Enter an amount.'); return false; }
+  if (BankEthos.aza < amt) { showToast('Bank Aza is ' + BankEthos.aza.toLocaleString() + ' 👑.', 4000); return false; }
+  try {
+    const t = await _boeRow();
+    const up = await t.update({ aza: BankEthos.aza - amt, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+    if (up && up.error) throw up.error;
+    BankEthos.aza -= amt;
+  } catch (e) { showToast('⚠ Aza withdrawal failed — try again.', 3600); return false; }
+  addSovereigns(amt); try { saveProfile(); } catch (e) {}
+  showToast('🏦 Withdrew ' + amt.toLocaleString() + ' 👑 — bank Aza ' + BankEthos.aza.toLocaleString() + '.', 4600);
+  return true;
+}
+// ── Resource banking ───────────────────────────────────────────────
+// Profile.salvage[id] ⇄ bank_of_ethos.resources[id]. Validated against
+// the real salvage ledger; rolled back on cloud failure.
+function _boeResName(id) { try { return (typeof _meta === 'function' ? _meta(id).name : id) || id; } catch (e) { return id; } }
+async function boeDepositRes(id, qty) {
+  qty = Math.floor(qty);
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (_boeNeedCols()) return false;
+  if (!id || !(qty > 0)) { showToast('Enter an amount.'); return false; }
+  const have = (typeof getRes === 'function') ? getRes(id) : 0;
+  if (have < qty) { showToast('Need ' + qty.toLocaleString() + ' ' + _boeResName(id) + ' — you have ' + have.toLocaleString() + '.', 4200); return false; }
+  if (typeof spendResources === 'function' && !spendResources({ [id]: qty })) { showToast('Not enough ' + _boeResName(id) + '.'); return false; }
+  try { if (typeof _persistResourcesSoon === 'function') _persistResourcesSoon(); } catch (e) {}
+  const nextRes = Object.assign({}, BankEthos.resources);
+  nextRes[id] = (nextRes[id] | 0) + qty;
+  try {
+    const t = await _boeRow();
+    const up = await t.update({ resources: nextRes, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+    if (up && up.error) throw up.error;
+    BankEthos.resources = nextRes;
+  } catch (e) { if (typeof addRes === 'function') addRes(id, qty); try { _persistResourcesSoon(); } catch (_) {} showToast('⚠ Deposit failed — refunded.', 4200); return false; }
+  showToast('🏦 Banked ' + qty.toLocaleString() + ' ' + _boeResName(id) + '.', 4200);
+  return true;
+}
+async function boeWithdrawRes(id, qty) {
+  qty = Math.floor(qty);
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (_boeNeedCols()) return false;
+  if (!id || !(qty > 0)) { showToast('Enter an amount.'); return false; }
+  const inBank = BankEthos.resources[id] | 0;
+  if (inBank < qty) { showToast('Bank holds ' + inBank.toLocaleString() + ' ' + _boeResName(id) + '.', 4000); return false; }
+  const nextRes = Object.assign({}, BankEthos.resources);
+  nextRes[id] = inBank - qty;
+  if (nextRes[id] <= 0) delete nextRes[id];
+  try {
+    const t = await _boeRow();
+    const up = await t.update({ resources: nextRes, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
+    if (up && up.error) throw up.error;
+    BankEthos.resources = nextRes;
+  } catch (e) { showToast('⚠ Withdrawal failed — try again.', 3600); return false; }
+  if (typeof addRes === 'function') addRes(id, qty); try { _persistResourcesSoon(); } catch (e) {}
+  showToast('🏦 Withdrew ' + qty.toLocaleString() + ' ' + _boeResName(id) + '.', 4200);
+  return true;
+}
 function openBankOfEthos() {
   try {
     const ID = 'be-frame-wrap';
@@ -25108,16 +25196,45 @@ function openBankOfEthos() {
     const postSeed = () => {
       try {
         const nm = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Operator') + '';
+        const resCatalog = (typeof RESOURCES !== 'undefined' ? RESOURCES : []).map((r) => ({ id: r.id, name: r.name, icon: r.icon, color: r.color }));
+        const walletRes = {};
+        try { const S = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage || {}); resCatalog.forEach((r) => { walletRes[r.id] = S[r.id] | 0; }); } catch (e) {}
         f.contentWindow && f.contentWindow.postMessage({
           type: 'boe:seed',
+          // bank balances
           cinder: BankEthos.ready ? (BankEthos.balance | 0) : 0,
-          aza: (Profile && Profile.sovereigns) | 0,
+          aza: BankEthos.ready ? (BankEthos.aza | 0) : 0,
+          // spendable wallet balances
+          walletCinder: (Profile && Profile.gems) | 0,
+          walletAza: (Profile && Profile.sovereigns) | 0,
+          // resource ledger (real salvage) + what's banked
+          resCatalog: resCatalog,
+          walletRes: walletRes,
+          bankRes: (BankEthos.ready && BankEthos.resources) ? BankEthos.resources : {},
+          bankReady: !!BankEthos.ready,
+          extCols: !!BankEthos._extCols,
           handle: '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20),
           callsign: nm.slice(0, 28),
         }, '*');
       } catch (e) {}
     };
-    const onMsg = (e) => { try { if (e && e.data && e.data.type === 'boe:hello') postSeed(); } catch (x) {} };
+    // App → parent: deposit/withdraw intents. The parent is authoritative —
+    // every amount is re-validated here against the REAL Profile/ledger
+    // (client input is untrusted), mutated, persisted, then re-seeded.
+    let _txBusy = false;
+    const onTx = (d) => {
+      if (_txBusy) return; _txBusy = true;
+      const done = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _txBusy = false; paint(); postSeed(); }); };
+      try {
+        const amt = Math.floor(Number(d.amount) || 0);
+        const kind = d.kind, op = d.op;
+        if (kind === 'cinder') done(op === 'withdraw' ? boeWithdraw(amt) : boeDeposit(amt));
+        else if (kind === 'aza') done(op === 'withdraw' ? boeWithdrawAza(amt) : boeDepositAza(amt));
+        else if (kind === 'res') done(op === 'withdraw' ? boeWithdrawRes(d.resId, amt) : boeDepositRes(d.resId, amt));
+        else { _txBusy = false; }
+      } catch (e) { _txBusy = false; }
+    };
+    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); } catch (x) {} };
     window.addEventListener('message', onMsg);
     const _origClose = back.onclick;
     back.onclick = () => { try { window.removeEventListener('message', onMsg); } catch (e) {} _origClose(); };

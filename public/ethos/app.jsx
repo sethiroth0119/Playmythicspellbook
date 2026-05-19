@@ -243,6 +243,16 @@ function loadTransfers() {
 }
 function saveTransfers(t) { localStorage.setItem(STORAGE_TX, JSON.stringify(t)); }
 
+// Ask the parent game to move REAL Cinder / Aza / resources between the
+// player's wallet and their Bank of Ethos vault. The parent re-validates
+// every amount against the real Profile/ledger and re-seeds us after.
+//   kind: 'cinder' | 'aza' | 'res'   op: 'deposit' | 'withdraw'
+function boeTx(op, kind, amount, resId) {
+  var n = Math.floor(Number(amount) || 0);
+  if (!(n > 0)) return false;
+  try { window.parent.postMessage({ type: 'boe:tx', op: op, kind: kind, amount: n, resId: resId || null }, '*'); return true; } catch (e) { return false; }
+}
+
 function genHandle() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let s = "ETH-";
@@ -292,6 +302,17 @@ function App() {
           c2: (prev && prev.c2) || pal[1],
           cinder: Math.max(0, Number(d.cinder) || 0),
           aza: Math.max(0, Number(d.aza) || 0),
+          // real spendable wallet balances + the salvage ledger / banked
+          // resources, so deposit/withdraw shows true numbers everywhere.
+          walletCinder: Math.max(0, Number(d.walletCinder) || 0),
+          walletAza: Math.max(0, Number(d.walletAza) || 0),
+          vault: {
+            resCatalog: Array.isArray(d.resCatalog) ? d.resCatalog : ((prev && prev.vault && prev.vault.resCatalog) || []),
+            walletRes: (d.walletRes && typeof d.walletRes === 'object') ? d.walletRes : {},
+            bankRes: (d.bankRes && typeof d.bankRes === 'object') ? d.bankRes : {},
+            bankReady: !!d.bankReady,
+            extCols: !!d.extCols,
+          },
           created: (prev && prev.created) || new Date().toISOString(),
           recoveryKey: (prev && prev.recoveryKey) || '—',
           application: (prev && prev.application) || { org: cs, role: 'Operator', region: 'Camp Heights', purpose: 'Treasury access', linked: true },
@@ -426,7 +447,7 @@ function AppInner({ account, updateAccount, transfers, sendMoney, pushToast, onL
           {route === "loans" && <PageLoans />}
           {route === "mercs" && <PageMercs role={role} sessionSec={sessionSec} liveCinder={liveCinder} running={running} setRunning={setRunning} />}
           {route === "contracts" && <PageContracts />}
-          {route === "ops" && <PageOpsVault />}
+          {route === "ops" && <PageOpsVault account={account} />}
           {route === "market" && <PageMarket />}
           {route === "charts" && <PageCharts />}
           </PageBoundary>
@@ -535,8 +556,8 @@ function PageVaults({ role, account, liveCinder, sessionSec, onSend }) {
 
       {/* dual balance + recent metrics */}
       <div className="grid g-2" style={{ marginBottom: 14 }}>
-        <BalanceCard kind="cinder" amount={account.cinder} delta="+4.2%" spark={SPK_CINDER} onSend={onSend} />
-        <BalanceCard kind="aza"    amount={account.aza}    decimals={2} delta="-0.6%" spark={SPK_AZA} onSend={onSend} />
+        <BalanceCard kind="cinder" amount={account.cinder} wallet={account.walletCinder || 0} bankReady={!!(account.vault && account.vault.bankReady)} delta="+4.2%" spark={SPK_CINDER} onSend={onSend} />
+        <BalanceCard kind="aza"    amount={account.aza}    wallet={account.walletAza || 0}    bankReady={!!(account.vault && account.vault.bankReady && account.vault.extCols)} delta="-0.6%" spark={SPK_AZA} onSend={onSend} />
       </div>
 
       <div className="grid g-4" style={{ marginBottom: 14 }}>
@@ -630,9 +651,17 @@ function PageVaults({ role, account, liveCinder, sessionSec, onSend }) {
 /* ============================================================
    COMPOSITE PIECES
    ============================================================ */
-function BalanceCard({ kind, amount, decimals = 0, delta, spark, onSend }) {
+function BalanceCard({ kind, amount, decimals = 0, delta, spark, onSend, wallet = 0, bankReady = true }) {
   const isCinder = kind === "cinder";
-  const color = isCinder ? "var(--cinder)" : "var(--aza)";
+  const sym = isCinder ? "🔥" : "👑";
+  const [amt, setAmt] = useState("");
+  const n = Math.max(0, Math.floor(Number(amt) || 0));
+  const act = (op) => {
+    const max = op === "deposit" ? wallet : amount;
+    if (!(n > 0)) return;
+    if (n > max) { setAmt(String(max)); return; }
+    if (boeTx(op, kind, n)) setAmt("");
+  };
   return (
     <div className={`bal ${kind}`}>
       <div className="row between" style={{ position: "relative", zIndex: 1 }}>
@@ -647,22 +676,30 @@ function BalanceCard({ kind, amount, decimals = 0, delta, spark, onSend }) {
       </div>
       <div className="bal-amt" style={{ position: "relative", zIndex: 1 }}>
         {fmt(amount, { decimals })}
-        <span className="sub" style={{ marginLeft: 8 }}>{isCinder ? "CDR" : "AZA"}</span>
+        <span className="sub" style={{ marginLeft: 8 }}>{isCinder ? "CDR" : "AZA"} · in bank</span>
       </div>
       <div className="bal-row" style={{ position: "relative", zIndex: 1 }}>
         <span className="chip" style={{ color: delta.startsWith("+") ? "var(--good)" : "var(--bad)", borderColor: delta.startsWith("+") ? "rgba(90,226,138,0.3)" : "rgba(255,107,138,0.3)" }}>
           {delta.startsWith("+") ? "▲" : "▼"} {delta} · 24h
         </span>
-        <div className="row" style={{ gap: 6 }}>
-          <button className="chip-btn" onClick={onSend}>Send</button>
-          <button className="chip-btn">Receive</button>
-          <button className="chip-btn">Swap</button>
-        </div>
+        <button className="chip-btn" onClick={onSend}>Send</button>
+      </div>
+      {/* Deposit / withdraw against the player's REAL wallet */}
+      <div className="row" style={{ gap: 8, marginTop: 12, position: "relative", zIndex: 1, flexWrap: "wrap" }}>
+        <input
+          className="mono"
+          type="number" min="1" step="1" placeholder={`amount ${sym}`}
+          value={amt}
+          onChange={(e) => setAmt(e.target.value)}
+          style={{ flex: "1 1 110px", minWidth: 90, background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontSize: 13 }}
+        />
+        <button className="btn sm" disabled={!bankReady} onClick={() => act("deposit")} title={`Move ${sym} from wallet into the bank`}>Deposit</button>
+        <button className="btn sm ghost" disabled={!bankReady} onClick={() => act("withdraw")} title={`Move ${sym} from the bank to your wallet`}>Withdraw</button>
       </div>
       <div className="bal-foot" style={{ position: "relative", zIndex: 1 }}>
-        <div style={{ flex: 1 }}><div className="k">Available</div><div className="v">{fmt(amount * 0.92, { decimals })}</div></div>
-        <div style={{ flex: 1 }}><div className="k">Pledged</div><div className="v">{fmt(amount * 0.06, { decimals })}</div></div>
-        <div style={{ flex: 1 }}><div className="k">Pending</div><div className="v">{fmt(amount * 0.02, { decimals })}</div></div>
+        <div style={{ flex: 1 }}><div className="k">In Bank</div><div className="v">{fmt(amount, { decimals })}</div></div>
+        <div style={{ flex: 1 }}><div className="k">In Wallet</div><div className="v">{fmt(wallet, { decimals })}</div></div>
+        <div style={{ flex: 1 }}><div className="k">Total</div><div className="v">{fmt(amount + wallet, { decimals })}</div></div>
       </div>
     </div>
   );
@@ -1011,7 +1048,62 @@ function ProjectionRow({ label, v, cur }) {
 /* ============================================================
    PAGE: OPS VAULT — resources, cards, relics
    ============================================================ */
-function PageOpsVault() {
+function OpsResCard({ meta, banked, inWallet, canBank }) {
+  const [amt, setAmt] = useState("");
+  const n = Math.max(0, Math.floor(Number(amt) || 0));
+  const tone = meta.color || "var(--violet)";
+  const total = banked + inWallet;
+  const act = (op) => {
+    const max = op === "deposit" ? inWallet : banked;
+    if (!(n > 0)) return;
+    if (n > max) { setAmt(String(max)); return; }
+    if (boeTx(op, "res", n, meta.id)) setAmt("");
+  };
+  return (
+    <div className="panel" style={{ padding: 16 }}>
+      <div className="row" style={{ gap: 12 }}>
+        <div style={{ width: 56, height: 56, background: `linear-gradient(135deg, ${tone}, transparent)`, border: "1px solid var(--hair)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26 }}>
+          <span>{meta.icon || "📦"}</span>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>{meta.name}</div>
+          <div className="row" style={{ gap: 8, marginTop: 4 }}>
+            <span className="mono" style={{ fontSize: 20, fontWeight: 600 }}>{fmt(banked)}</span>
+            <span className="label">in bank</span>
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div className="label">In wallet</div>
+          <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{fmt(inWallet)}</div>
+        </div>
+      </div>
+      <div className="bar" style={{ marginTop: 14 }}>
+        <div style={{ width: `${total > 0 ? Math.round((banked / total) * 100) : 0}%`, background: tone }}></div>
+      </div>
+      <div className="row" style={{ gap: 6, marginTop: 12, flexWrap: "wrap" }}>
+        <input
+          className="mono" type="number" min="1" step="1" placeholder="amount"
+          value={amt} onChange={(e) => setAmt(e.target.value)}
+          style={{ flex: "1 1 80px", minWidth: 70, background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "7px 9px", fontSize: 13 }}
+        />
+        <button className="btn sm" disabled={!canBank || inWallet <= 0} onClick={() => act("deposit")} title="Move from wallet into the bank">Deposit</button>
+        <button className="btn sm ghost" disabled={!canBank || banked <= 0} onClick={() => act("withdraw")} title="Move from the bank to your wallet">Withdraw</button>
+      </div>
+    </div>
+  );
+}
+
+function PageOpsVault({ account }) {
+  const vault = (account && account.vault) || null;
+  const cat = (vault && vault.resCatalog) || [];
+  const wRes = (vault && vault.walletRes) || {};
+  const bRes = (vault && vault.bankRes) || {};
+  const canBank = !!(vault && vault.bankReady && vault.extCols);
+
+  const bankedTotal = Object.keys(bRes).reduce((s, k) => s + (bRes[k] | 0), 0);
+  const walletTotal = cat.reduce((s, r) => s + (wRes[r.id] | 0), 0);
+  const bankedTypes = cat.filter(r => (bRes[r.id] | 0) > 0).length;
+
   return (
     <div>
       <div className="page-head">
@@ -1020,57 +1112,39 @@ function PageOpsVault() {
           <div className="page-title display">Operation Vault — Camp Heights</div>
         </div>
         <div className="page-actions">
-          <button className="btn ghost"><Icon name="eye" size={14}/> Audit log</button>
-          <button className="btn"><Icon name="market" size={14}/> List on Market</button>
-          <button className="btn primary"><Icon name="arrow_out" size={14}/> Transfer</button>
+          <span className="chip"><span className="dot" style={{ background: canBank ? "var(--good)" : "var(--warn)" }}></span>{canBank ? "Vault online" : "Banking offline"}</span>
         </div>
       </div>
 
       <div className="grid g-4" style={{ marginBottom: 14 }}>
-        <Metric k="Total resources" v="11,923 units" sub="14 types" />
-        <Metric k="Cards stored" v="64" sub="3 legendary" />
-        <Metric k="Relics secured" v="8" sub="2 unique" />
-        <Metric k="Vault value · CDR eq" v="1.84M" d="+8.2%" dir="up" />
+        <Metric k="Resources in bank" v={`${fmt(bankedTotal)} units`} sub={`${bankedTypes} of ${cat.length} types`} />
+        <Metric k="Resources in wallet" v={`${fmt(walletTotal)} units`} sub="loose salvage" />
+        <Metric k="Cinder in bank" v={fmt(account ? account.cinder : 0)} sub="🔥 CDR" />
+        <Metric k="Aza in bank" v={fmt(account ? account.aza : 0)} sub="👑 AZA" />
       </div>
 
-      <div className="tabs">
-        <div className="tab active">Resources</div>
-        <div className="tab">Cards (64)</div>
-        <div className="tab">Relics (8)</div>
-        <div className="tab">Craft Materials</div>
-        <div className="tab">Payroll Log</div>
-      </div>
+      {!vault && (
+        <div className="panel" style={{ padding: 22, textAlign: "center", color: "var(--ink-dim)" }}>Syncing resource ledger…</div>
+      )}
+      {vault && !canBank && (
+        <div className="panel" style={{ padding: "12px 16px", marginBottom: 14, color: "var(--warn)", fontSize: 12.5 }}>
+          Resource &amp; Aza banking needs the latest <span className="mono">api.sql</span> upgrade. Your live quantities are shown below; deposits unlock once the operator runs it.
+        </div>
+      )}
 
-      <div className="grid g-3">
-        {RESOURCES.map(r => (
-          <div key={r.name} className="panel" style={{ padding: 16 }}>
-            <div className="row" style={{ gap: 12 }}>
-              <div style={{ width: 56, height: 56, background: `linear-gradient(135deg, ${r.tone}, transparent)`, border: "1px solid var(--hair)", display: "flex", alignItems: "center", justifyContent: "center", color: r.tone }}>
-                <Icon name={r.icon} size={26} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>{r.name}</div>
-                <div className="row" style={{ gap: 8, marginTop: 4 }}>
-                  <span className="mono" style={{ fontSize: 20, fontWeight: 600 }}>{fmt(r.qty)}</span>
-                  <span className="label">units</span>
-                </div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div className="label">Last in</div>
-                <div className="mono" style={{ fontSize: 11 }}>4m ago</div>
-              </div>
-            </div>
-            <div className="bar" style={{ marginTop: 14 }}><div style={{ width: `${Math.min(100, r.qty/50)}%`, background: r.tone }}></div></div>
-            <div className="row between" style={{ marginTop: 12 }}>
-              <span className="label">Market · {fmt(r.qty * (12 + Math.random()*8), { decimals: 0 })} AZA</span>
-              <div className="row" style={{ gap: 6 }}>
-                <button className="btn sm ghost">Transfer</button>
-                <button className="btn sm">List</button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      {vault && (
+        <div className="grid g-3">
+          {cat.map(r => (
+            <OpsResCard
+              key={r.id}
+              meta={r}
+              banked={bRes[r.id] | 0}
+              inWallet={wRes[r.id] | 0}
+              canBank={canBank}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -2146,8 +2220,8 @@ function PageTransfers({ account, transfers, onSend }) {
       </div>
 
       <div className="grid g-2" style={{ marginBottom: 14 }}>
-        <BalanceCard kind="cinder" amount={account.cinder} delta="+4.2%" spark={SPK_CINDER} onSend={() => onSend()} />
-        <BalanceCard kind="aza"    amount={account.aza}    decimals={2} delta="-0.6%" spark={SPK_AZA} onSend={() => onSend()} />
+        <BalanceCard kind="cinder" amount={account.cinder} wallet={account.walletCinder || 0} bankReady={!!(account.vault && account.vault.bankReady)} delta="+4.2%" spark={SPK_CINDER} onSend={() => onSend()} />
+        <BalanceCard kind="aza"    amount={account.aza}    wallet={account.walletAza || 0}    bankReady={!!(account.vault && account.vault.bankReady && account.vault.extCols)} delta="-0.6%" spark={SPK_AZA} onSend={() => onSend()} />
       </div>
 
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 14 }}>

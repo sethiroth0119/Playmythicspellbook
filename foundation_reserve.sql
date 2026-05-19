@@ -248,4 +248,24 @@ drop policy if exists ct_sel on public.corp_treasury;
 create policy ct_sel on public.corp_treasury for select to authenticated using (true);
 drop policy if exists ct_ins on public.corp_treasury;
 create policy ct_ins on public.corp_treasury for insert to authenticated with check (user_id = auth.uid());
+create table if not exists public.corp_operations (
+  id uuid primary key default gen_random_uuid(),
+  corp_id uuid not null references public.corporations(id) on delete cascade,
+  op_type text not null,
+  level int not null default 1,
+  workers int not null default 0,
+  status text not null default 'active',
+  meta jsonb default '{}'::jsonb,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (corp_id, op_type)
+);
+create index if not exists corp_operations_corp on public.corp_operations (corp_id);
+alter table public.corp_operations enable row level security;
+drop policy if exists cop_sel on public.corp_operations;
+create policy cop_sel on public.corp_operations for select to authenticated using (true);
+drop policy if exists cop_ins on public.corp_operations;
+create policy cop_ins on public.corp_operations for insert to authenticated with check (exists (select 1 from public.corporations c where c.id = corp_operations.corp_id and c.founder_id = auth.uid()));
+drop policy if exists cop_upd on public.corp_operations;
+create policy cop_upd on public.corp_operations for update to authenticated using (exists (select 1 from public.corporations c where c.id = corp_operations.corp_id and c.founder_id = auth.uid())) with check (true);
 grant select on public.reserve_totals to authenticated;

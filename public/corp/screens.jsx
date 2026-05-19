@@ -1065,6 +1065,14 @@ function OperationsScreen({ econ }) {
         {rows.map(o => {
           const photo = (window.JB_art && window.JB_art('op', o.id)) || '';
           const adm = !!(window.JB_isAdmin && window.JB_isAdmin());
+          const E = econ || {};
+          const oe = (E.opEcon || {})[o.id] || null;
+          const owned = (E.operations || []).find(x => x.op_type === o.id) || null;
+          const isOwner = !!E.amOwner;
+          const treasury = E.corpTreasury | 0;
+          const poolFree = Math.max(0, (E.laborPool | 0) - (E.operations || []).reduce((s, x) => s + (x.workers | 0), 0));
+          const fmtH = (ms) => { ms = ms || 0; if (ms <= 0) return 'ready'; const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000); return h > 0 ? h + 'h ' + m + 'm' : m + 'm'; };
+          const act = (p) => { try { window.JB_action && window.JB_action(p); } catch (e) {} };
           return (
           <div key={o.id} className="card" style={{ padding: 14 }}>
             <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
@@ -1082,12 +1090,70 @@ function OperationsScreen({ econ }) {
               {o.produces.map(p => <span key={p} className="chip flat" style={{ fontSize: 10.5 }}>{p}</span>)}
             </div>
             <div className="card flat" style={{ padding: 10, fontSize: 11.5 }}>
-              <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}><span className="muted">Startup</span><span className="mono">{o.startup}</span></div>
-              <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}><span className="muted">Upkeep</span><span className="mono">{o.maint}</span></div>
+              {!owned && (
+                <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                  <span className="muted">Startup (Treasury)</span>
+                  <span className="mono">{oe ? oe.startup.toLocaleString() + ' 🔥' : o.startup}</span>
+                </div>
+              )}
+              {oe && (
+                <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                  <span className="muted">Wages</span>
+                  <span className="mono">{oe.salaryPerWorkerHr.toLocaleString()} 🔥 / worker·hr</span>
+                </div>
+              )}
+              {oe && (
+                <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                  <span className="muted">Output</span>
+                  <span className="mono">{oe.ratePerWorkerHr.toLocaleString()} 🔥 / worker·hr</span>
+                </div>
+              )}
+              {owned && (
+                <React.Fragment>
+                  <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                    <span className="muted">Net accrued</span>
+                    <span className="mono" style={{ color: 'var(--aza)' }}>+{(owned.net | 0).toLocaleString()} 🔥</span>
+                  </div>
+                  <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                    <span className="muted">Settles in</span>
+                    <span className="mono">{fmtH(owned.cdLeftMs)}</span>
+                  </div>
+                </React.Fragment>
+              )}
             </div>
-            <button className="btn" disabled style={{ width: '100%', marginTop: 10, opacity: 0.7, cursor: 'default' }}>
-              {hasCorp ? 'Fund operation — coming soon' : 'Corporation required'}
-            </button>
+
+            {!hasCorp && (
+              <button className="btn" disabled style={{ width: '100%', marginTop: 10, opacity: 0.7, cursor: 'default' }}>Corporation required</button>
+            )}
+            {hasCorp && !owned && (
+              <button className="btn primary" disabled={!isOwner} title={isOwner ? '' : 'Founder/CEO only'}
+                style={{ width: '100%', marginTop: 10, opacity: isOwner ? 1 : 0.6, cursor: isOwner ? 'pointer' : 'default' }}
+                onClick={() => { if (isOwner) act({ kind: 'opFound', op: o.id }); }}>
+                {isOwner ? ('🏦 Fund from Treasury · ' + (oe ? oe.startup.toLocaleString() : '?') + ' 🔥') : 'Founder/CEO funds this'}
+              </button>
+            )}
+            {hasCorp && owned && (
+              <div style={{ marginTop: 10 }}>
+                <div className="row" style={{ gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span className="mono muted" style={{ fontSize: 11 }}>👷 Workers</span>
+                  <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                    <button className="btn sm" disabled={!isOwner || (owned.workers | 0) <= 0}
+                      onClick={() => act({ kind: 'opAssign', opId: owned.id, workers: (owned.workers | 0) - 1 })}>−</button>
+                    <span className="mono" style={{ minWidth: 56, textAlign: 'center' }}>{owned.workers | 0}{oe ? ' / ' + oe.maxWorkers : ''}</span>
+                    <button className="btn sm" disabled={!isOwner || (oe && (owned.workers | 0) >= oe.maxWorkers) || poolFree <= 0}
+                      onClick={() => act({ kind: 'opAssign', opId: owned.id, workers: (owned.workers | 0) + 1 })}>+</button>
+                  </div>
+                </div>
+                <div className="mono muted" style={{ fontSize: 10.5, marginTop: 4 }}>
+                  labour pool free: {poolFree} · ≈{((owned.workers | 0) * (oe ? oe.salaryPerWorkerHr : 0)).toLocaleString()} 🔥/hr wages
+                </div>
+                <button className="btn primary" disabled={!isOwner || (owned.cdLeftMs | 0) > 0 || (owned.net | 0) <= 0}
+                  style={{ width: '100%', marginTop: 8, opacity: (!isOwner || (owned.cdLeftMs | 0) > 0 || (owned.net | 0) <= 0) ? 0.6 : 1 }}
+                  onClick={() => { if (isOwner) act({ kind: 'opCollect', opId: owned.id }); }}>
+                  {(owned.cdLeftMs | 0) > 0 ? ('⏳ ' + fmtH(owned.cdLeftMs)) : ((owned.net | 0) > 0 ? ('⚙️ Collect +' + (owned.net | 0).toLocaleString() + ' 🔥 → Treasury') : 'Hire workers to produce')}
+                </button>
+              </div>
+            )}
           </div>
           );
         })}
@@ -1095,7 +1161,7 @@ function OperationsScreen({ econ }) {
       </div>
 
       <div className="muted" style={{ fontSize: 11, marginTop: 16, textAlign: 'center' }}>
-        Operations are corporate infrastructure: funding, production, convoys, worker salaries, territory &amp; reputation roll out in the Operations update. Today this is the registry &amp; charter rules.
+        Operations are live: the founder funds them from the corp Treasury, hires workers (paid wages from the Treasury), and they <b>produce Cinder over time</b> back into it. Territory &amp; reputation come next.
       </div>
     </div>
   );

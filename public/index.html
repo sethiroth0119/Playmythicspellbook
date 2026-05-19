@@ -25278,6 +25278,7 @@ async function boeMercList(ratePerHour, bio) {
     const t = _boeTbl('boe_merc_listings'); if (!t) return false;
     // Upsert my single listing (one per player); reactivate if previously hired/withdrawn.
     const ex = await t.select('id').eq('user_id', me).maybeSingle();
+    if (ex && ex.error && _boeMissingTbl(ex.error)) throw ex.error;
     const row = {
       user_id: me,
       handle: BankEthos._handle || ('@' + (Profile.cloud.displayName || 'op').replace(/\s+/g, '').toLowerCase()),
@@ -25294,7 +25295,11 @@ async function boeMercList(ratePerHour, bio) {
       const ins = await t.insert(row);
       if (ins && ins.error) throw ins.error;
     }
-  } catch (e) { showToast('⚠ Listing failed — try again.', 4000); return false; }
+  } catch (e) {
+    if (_boeMissingTbl(e)) showToast('Run the latest api.sql to enable Mercenary listings (creates boe_merc_listings).', 6000);
+    else showToast('⚠ Listing failed — try again.', 4000);
+    return false;
+  }
   showToast('🪖 You are listed for hire on the Mercenary board.', 4400);
   await boeFetchMercListings(); await boeFetchMercContracts();
   return true;
@@ -25334,7 +25339,11 @@ async function boeMercHire(listingId, hours, targetCinder) {
     if (ins && ins.error) throw ins.error;
     // Best-effort: flip the listing so the board reflects the hire.
     try { await lt.update({ status: 'hired', updated_at: new Date().toISOString() }).eq('id', listingId); } catch (e) {}
-  } catch (e) { showToast('⚠ Hire failed — try again.', 4000); return false; }
+  } catch (e) {
+    if (_boeMissingTbl(e)) showToast('Run the latest api.sql to enable Mercenary contracts (creates boe_merc_contracts).', 6000);
+    else showToast('⚠ Hire failed — try again.', 4000);
+    return false;
+  }
   try { boeLog('merc_hire', 0, 0, 'Hired ' + (BankEthos.mercListings.find(x => x.id === listingId) || {}).handle + ' · target ' + targetCinder.toLocaleString() + ' 🜂', ''); } catch (e) {}
   showToast('🪖 Contract sent — awaiting mercenary clock-in.', 5200);
   await boeFetchMercListings();
@@ -25346,9 +25355,20 @@ async function boeMercClockIn(contractId) {
   try {
     const t = _boeTbl('boe_merc_contracts'); if (!t) return false;
     const me = Profile.cloud.userId;
-    const up = await t.update({ status: 'active', clocked_in_at: new Date().toISOString() }).eq('id', contractId).eq('mercenary_user', me).eq('status', 'offered');
+    // `.select()` after update returns the affected rows so we can detect
+    // the silent-zero-rows case PostgREST otherwise reports as success.
+    const up = await t.update({ status: 'active', clocked_in_at: new Date().toISOString() }).eq('id', contractId).eq('mercenary_user', me).eq('status', 'offered').select('id');
     if (up && up.error) throw up.error;
-  } catch (e) { showToast('⚠ Clock-in failed.', 4000); return false; }
+    if (!up || !up.data || up.data.length === 0) {
+      showToast('Contract is no longer pending — refresh.', 4000);
+      await boeFetchMercContracts();
+      return false;
+    }
+  } catch (e) {
+    if (_boeMissingTbl(e)) showToast('Run the latest api.sql to enable Mercenary contracts.', 6000);
+    else showToast('⚠ Clock-in failed.', 4000);
+    return false;
+  }
   showToast('🪖 Clocked in — session live.', 4000);
   await boeFetchMercContracts();
   return true;
@@ -25745,7 +25765,11 @@ async function boeAcceptPost(id) {
     if (upd && upd.error) { /* contract already created; status flip is best-effort */ }
     try { boeLog('merc_accept', 0, 0, 'Accepted ' + (post.poster_role === 'merc' ? 'service' : 'job') + ' from ' + (post.poster_handle || ''), post.poster_handle || ''); } catch (e) {}
     showToast('📝 Contract accepted — see Mercenary Operations.', 4800);
-  } catch (e) { showToast('⚠ Accept failed — try again.', 4000); return false; }
+  } catch (e) {
+    if (_boeMissingTbl(e)) showToast('Run the latest api.sql to enable Contract Postings.', 6000);
+    else showToast('⚠ Accept failed — try again.', 4000);
+    return false;
+  }
   await boeFetchMercPosts();
   await boeFetchMercContracts();
   return true;

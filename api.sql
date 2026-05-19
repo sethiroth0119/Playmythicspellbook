@@ -400,6 +400,41 @@ create policy boe_mcon_ins on public.boe_merc_contracts for insert to authentica
 drop policy if exists boe_mcon_upd on public.boe_merc_contracts;
 create policy boe_mcon_upd on public.boe_merc_contracts for update to authenticated using (employer_user = auth.uid() or mercenary_user = auth.uid()) with check (employer_user = auth.uid() or mercenary_user = auth.uid());
 
+-- 📝 Contract postings — either side posts a specific job:
+--   poster_role = 'merc'      → "I'll do X work for Y Cinder over Z hours"
+--   poster_role = 'employer'  → "I need X done for Y Cinder over Z hours"
+-- Anyone can browse open posts; accepting one creates a boe_merc_contracts
+-- row with the accepter taking the opposite role.
+create table if not exists public.boe_merc_posts (
+  id bigint generated always as identity primary key,
+  poster_user uuid not null references auth.users(id) on delete cascade,
+  poster_handle text,
+  poster_label text,
+  poster_role text not null check (poster_role in ('merc', 'employer')),
+  hours int not null default 1 check (hours between 1 and 24),
+  target_cinder numeric not null check (target_cinder > 0),
+  description text,
+  status text not null default 'open',  -- open|taken|cancelled
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  accepted_by uuid references auth.users(id) on delete set null,
+  contract_id bigint
+);
+create index if not exists boe_mpost_status on public.boe_merc_posts (status, updated_at desc);
+create index if not exists boe_mpost_poster on public.boe_merc_posts (poster_user);
+alter table public.boe_merc_posts enable row level security;
+drop policy if exists boe_mpost_sel on public.boe_merc_posts;
+create policy boe_mpost_sel on public.boe_merc_posts for select to authenticated using (true);
+drop policy if exists boe_mpost_ins on public.boe_merc_posts;
+create policy boe_mpost_ins on public.boe_merc_posts for insert to authenticated with check (poster_user = auth.uid());
+-- Either the poster (cancel) or an accepter (flip 'taken' + stamp self
+-- as accepted_by) may update. USING is broad (any authenticated user may
+-- target a row) but WITH CHECK pins the new row to a valid actor.
+drop policy if exists boe_mpost_upd on public.boe_merc_posts;
+create policy boe_mpost_upd on public.boe_merc_posts for update to authenticated using (true) with check (poster_user = auth.uid() or accepted_by = auth.uid());
+drop policy if exists boe_mpost_del on public.boe_merc_posts;
+create policy boe_mpost_del on public.boe_merc_posts for delete to authenticated using (poster_user = auth.uid());
+
 grant select on
   public.api_corporations,
   public.api_reserve_totals,

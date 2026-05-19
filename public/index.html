@@ -24991,7 +24991,7 @@ const BOE_FEE_PERIOD_MS = 30 * 24 * 3600000; // 30 days
 // rate the cashout vault settles at (CASHOUT_RATE_PER_DOLLAR = 5000), so
 // value is consistent end-to-end: buy Aza → exchange → cash out.
 const AZA_TO_CINDER = 5000;                 // 1 👑 → 5,000 🔥 (irreversible)
-const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true, ledger: [], reqIn: [], reqOut: [], loans: [], mercListings: [], mercAsEmployer: [], mercAsMerc: [], _handle: '', _label: '' };
+const BankEthos = { balance: 0, aza: 0, resources: {}, lastFeeAt: 0, openedAt: 0, ready: false, _busy: false, _err: '', _extCols: true, ledger: [], reqIn: [], reqOut: [], loans: [], mercListings: [], mercAsEmployer: [], mercAsMerc: [], mercPosts: [], _handle: '', _label: '' };
 async function _boeRow() {
   if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) return null;
   return Cloud.client.from('bank_of_ethos');
@@ -25437,6 +25437,91 @@ async function boeMercAutoSettle() {
     }
   } catch (e) {}
 }
+// 📝 CONTRACT POSTINGS — either side posts a specific job; the other
+// side accepts and a boe_merc_contracts row is auto-created with the
+// accepter taking the opposite role.
+async function boeFetchMercPosts() {
+  try {
+    const t = _boeTbl('boe_merc_posts'); if (!t) return;
+    const r = await t.select('*').eq('status', 'open').order('updated_at', { ascending: false }).limit(80);
+    BankEthos.mercPosts = (r && !r.error && Array.isArray(r.data)) ? r.data : [];
+  } catch (e) {}
+}
+async function boePostContract(role, hours, target, description) {
+  hours = Math.max(1, Math.min(BOE_MERC_MAX_HOURS, Math.floor(hours) || 1));
+  target = Math.max(1, Math.min(BOE_MERC_MAX_TARGET, Math.floor(target) || 0));
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  if (role !== 'merc' && role !== 'employer') return false;
+  if (!(target > 0)) { showToast('Enter a target Cinder amount.'); return false; }
+  try {
+    const t = _boeTbl('boe_merc_posts'); if (!t) return false;
+    const ins = await t.insert({
+      poster_user: Profile.cloud.userId,
+      poster_handle: BankEthos._handle,
+      poster_label: BankEthos._label || BankEthos._handle,
+      poster_role: role,
+      hours: hours,
+      target_cinder: target,
+      description: String(description || '').slice(0, 280),
+      status: 'open',
+    });
+    if (ins && ins.error) throw ins.error;
+  } catch (e) { showToast('⚠ Posting failed — try again.', 4000); return false; }
+  try { boeLog('merc_post', 0, 0, (role === 'merc' ? 'Posted service' : 'Posted job') + ' · ' + target.toLocaleString() + ' 🜂 · ' + hours + 'h', ''); } catch (e) {}
+  showToast('📝 Contract posted to the marketplace.', 4400);
+  await boeFetchMercPosts();
+  return true;
+}
+async function boeCancelPost(id) {
+  if (!BankEthos.ready) return false;
+  try {
+    const t = _boeTbl('boe_merc_posts'); if (!t) return false;
+    const up = await t.update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', id).eq('poster_user', Profile.cloud.userId).eq('status', 'open');
+    if (up && up.error) throw up.error;
+  } catch (e) { return false; }
+  showToast('📝 Post cancelled.', 3200);
+  await boeFetchMercPosts();
+  return true;
+}
+async function boeAcceptPost(id) {
+  if (!BankEthos.ready) { showToast('Bank not ready.', 2600); return false; }
+  const me = Profile.cloud.userId;
+  try {
+    const t = _boeTbl('boe_merc_posts'); if (!t) return false;
+    const r = await t.select('*').eq('id', id).eq('status', 'open').maybeSingle();
+    const post = r && r.data;
+    if (!post) { showToast('That post is no longer open.', 4000); return false; }
+    if (post.poster_user === me) { showToast("You can't accept your own post.", 3600); return false; }
+    // Build the contract — accepter takes the opposite role.
+    const ct = _boeTbl('boe_merc_contracts'); if (!ct) return false;
+    let emp, mer;
+    if (post.poster_role === 'employer') {
+      emp = { user: post.poster_user, handle: post.poster_handle, label: post.poster_label };
+      mer = { user: me, handle: BankEthos._handle, label: BankEthos._label };
+    } else {
+      // poster is a mercenary; I become the employer.
+      // Single-active-employer policy.
+      const haveActive = (BankEthos.mercAsEmployer || []).some(c => c && (c.status === 'offered' || c.status === 'active' || c.status === 'paused'));
+      if (haveActive) { showToast('You already have an open contract — finish it first.', 4400); return false; }
+      emp = { user: me, handle: BankEthos._handle, label: BankEthos._label };
+      mer = { user: post.poster_user, handle: post.poster_handle, label: post.poster_label };
+    }
+    const ins = await ct.insert({
+      employer_user: emp.user, employer_handle: emp.handle, employer_label: emp.label,
+      mercenary_user: mer.user, mercenary_handle: mer.handle, mercenary_label: mer.label,
+      hours: post.hours, target_cinder: post.target_cinder, status: 'offered',
+    }).select('id').maybeSingle();
+    if (ins && ins.error) throw ins.error;
+    const contractId = ins && ins.data && ins.data.id;
+    const upd = await t.update({ status: 'taken', accepted_by: me, contract_id: contractId, updated_at: new Date().toISOString() }).eq('id', id).eq('status', 'open');
+    if (upd && upd.error) { /* contract already created; status flip is best-effort */ }
+    try { boeLog('merc_accept', 0, 0, 'Accepted ' + (post.poster_role === 'merc' ? 'service' : 'job') + ' from ' + (post.poster_handle || ''), post.poster_handle || ''); } catch (e) {}
+    showToast('📝 Contract accepted — see Mercenary Operations.', 4800);
+  } catch (e) { showToast('⚠ Accept failed — try again.', 4000); return false; }
+  await boeFetchMercPosts();
+  await boeFetchMercContracts();
+  return true;
+}
 async function boeFetch() {
   try {
     const t = await _boeRow();
@@ -25785,6 +25870,7 @@ function openBankOfEthos() {
           mercListings: Array.isArray(BankEthos.mercListings) ? BankEthos.mercListings : [],
           mercAsEmployer: Array.isArray(BankEthos.mercAsEmployer) ? BankEthos.mercAsEmployer : [],
           mercAsMerc: Array.isArray(BankEthos.mercAsMerc) ? BankEthos.mercAsMerc : [],
+          mercPosts: Array.isArray(BankEthos.mercPosts) ? BankEthos.mercPosts : [],
           mercSplit: { merc: BOE_MERC_SHARE_MERC, employer: BOE_MERC_SHARE_EMPLOYER, tax: BOE_MERC_SHARE_TAX, perCinder: AZA_TO_CINDER, maxHours: BOE_MERC_MAX_HOURS, maxTarget: BOE_MERC_MAX_TARGET },
           handle: '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20),
           callsign: nm.slice(0, 28),
@@ -25850,7 +25936,19 @@ function openBankOfEthos() {
         else { _mercBusy = false; }
       } catch (e) { _mercBusy = false; }
     };
-    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); else if (e.data.type === 'boe:request') onReq(e.data); else if (e.data.type === 'boe:loan') onLoan(e.data); else if (e.data.type === 'boe:merc') onMerc(e.data); } catch (x) {} };
+    // Contract postings — same authoritative pattern.
+    let _postBusy = false;
+    const onPost = (d) => {
+      if (_postBusy) return; _postBusy = true;
+      const fin = (p) => { Promise.resolve(p).then(() => {}).catch(() => {}).finally(() => { _postBusy = false; paint(); postSeed(); try { if (typeof render === 'function') render(); } catch (e) {} }); };
+      try {
+        if (d.op === 'create') fin(boePostContract(d.role, d.hours, d.target, d.description));
+        else if (d.op === 'cancel') fin(boeCancelPost(d.id));
+        else if (d.op === 'accept') fin(boeAcceptPost(d.id));
+        else { _postBusy = false; }
+      } catch (e) { _postBusy = false; }
+    };
+    const onMsg = (e) => { try { if (!e || !e.data) return; if (e.data.type === 'boe:hello') postSeed(); else if (e.data.type === 'boe:tx') onTx(e.data); else if (e.data.type === 'boe:exchange-open') openExchange(); else if (e.data.type === 'boe:request') onReq(e.data); else if (e.data.type === 'boe:loan') onLoan(e.data); else if (e.data.type === 'boe:merc') onMerc(e.data); else if (e.data.type === 'boe:post') onPost(e.data); } catch (x) {} };
     window.addEventListener('message', onMsg);
     const _origClose = back.onclick;
     back.onclick = () => { try { window.removeEventListener('message', onMsg); } catch (e) {} _origClose(); };
@@ -25910,6 +26008,7 @@ function openBankOfEthos() {
           .then(function () { return boeMercAutoSettle(); })
           .then(function () { return boeFetchMercListings(); })
           .then(function () { return boeFetchMercContracts(); })
+          .then(function () { return boeFetchMercPosts(); })
           .then(function () { paint(); postSeed(); })
           .catch(function () {});
       }

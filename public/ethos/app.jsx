@@ -258,6 +258,11 @@ function boeLoan(op, args) {
 function boeMerc(op, args) {
   try { window.parent.postMessage(Object.assign({ type: 'boe:merc', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
 }
+// Contract postings — either side posts a specific job; the other side accepts.
+//   op: 'create' | 'cancel' | 'accept'
+function boePost(op, args) {
+  try { window.parent.postMessage(Object.assign({ type: 'boe:post', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
+}
 // 🧾 Print-to-PDF statement. Opens a styled popup the player can "Save as
 // PDF" via the system print dialog. Pure client-side, no libraries.
 function openStatementWindow(account) {
@@ -382,6 +387,7 @@ function App() {
           mercListings: Array.isArray(d.mercListings) ? d.mercListings : ((prev && prev.mercListings) || []),
           mercAsEmployer: Array.isArray(d.mercAsEmployer) ? d.mercAsEmployer : ((prev && prev.mercAsEmployer) || []),
           mercAsMerc: Array.isArray(d.mercAsMerc) ? d.mercAsMerc : ((prev && prev.mercAsMerc) || []),
+          mercPosts: Array.isArray(d.mercPosts) ? d.mercPosts : ((prev && prev.mercPosts) || []),
           mercSplit: (d.mercSplit && typeof d.mercSplit === 'object') ? d.mercSplit : ((prev && prev.mercSplit) || { merc: 0.40, employer: 0.52, tax: 0.08, perCinder: 5000, maxHours: 24, maxTarget: 5000000 }),
           created: (prev && prev.created) || new Date().toISOString(),
           recoveryKey: (prev && prev.recoveryKey) || '—',
@@ -632,12 +638,33 @@ function PageVaults({ role, account, liveCinder, sessionSec, onSend }) {
         <BalanceCard kind="aza"    amount={account.aza}    wallet={account.walletAza || 0}    bankReady={!!(account.vault && account.vault.bankReady && account.vault.extCols)} delta="-0.6%" spark={SPK_AZA} onSend={onSend} />
       </div>
 
-      <div className="grid g-4" style={{ marginBottom: 14 }}>
-        <Metric k="Mercenaries Online" v="7" d="+2 since 04:00" dir="up" />
-        <Metric k="Live Profit Feed (24h)" v="142,820" sub={<><CinderGlyph size={11}/> CDR</>} d="+12.4%" dir="up" />
-        <Metric k="Payroll Outstanding" v="68,400" sub={<><CinderGlyph size={11}/> CDR</>} d="-3.1%" dir="down" />
-        <Metric k="Active Loans" v="2 · 332,500" sub={<><AzaGlyph size={11}/> mixed</>} />
-      </div>
+      {/* Real summary tiles. Resources reflect deposits made via Operation
+          Vault — Camp Heights immediately (bankRes is re-seeded after every
+          boe:tx). */}
+      {(() => {
+        const v = (account && account.vault) || {};
+        const cat = v.resCatalog || [];
+        const bRes = v.bankRes || {};
+        const bankedTotal = Object.keys(bRes).reduce((s, k) => s + (bRes[k] | 0), 0);
+        const bankedTypes = cat.filter(r => (bRes[r.id] | 0) > 0).length;
+        const loans = Array.isArray(account && account.loans) ? account.loans : [];
+        const activeLoans = loans.filter(l => l && l.status === "active");
+        const owed = activeLoans.reduce((s, l) => s + Math.max(0, (l.cinder_owed | 0) - (l.cinder_paid | 0)), 0);
+        const asMerc = Array.isArray(account && account.mercAsMerc) ? account.mercAsMerc : [];
+        const asEmp  = Array.isArray(account && account.mercAsEmployer) ? account.mercAsEmployer : [];
+        const activeContracts = asMerc.concat(asEmp).filter(c => c && (c.status === "active" || c.status === "paused" || c.status === "offered"));
+        const ledger = Array.isArray(account && account.ledger) ? account.ledger : [];
+        const last24 = Date.now() - 24 * 3600 * 1000;
+        const inflow24 = ledger.filter(e => (e.ts || 0) >= last24 && (e.cinder | 0) > 0).reduce((s, e) => s + (e.cinder | 0), 0);
+        return (
+          <div className="grid g-4" style={{ marginBottom: 14 }}>
+            <Metric k="Resources in Bank" v={fmt(bankedTotal) + " units"} sub={bankedTotal > 0 ? bankedTypes + " of " + cat.length + " types" : "deposit via Ops Vault"} />
+            <Metric k="Cinder Inflow (24h)" v={fmt(inflow24)} sub={<><CinderGlyph size={11}/> CDR</>} />
+            <Metric k="Active Mercenary Contracts" v={String(activeContracts.length)} sub={activeContracts.length ? "see Mercenary Ops" : "(none)"} />
+            <Metric k="Active Loans" v={activeLoans.length ? activeLoans.length + " · " + fmt(owed) : "0"} sub={activeLoans.length ? <><CinderGlyph size={11}/> CDR owed</> : "(none)"} />
+          </div>
+        );
+      })()}
 
       <div className="grid" style={{ gridTemplateColumns: "1.4fr 1fr", gap: 14, marginBottom: 14 }}>
         {/* Active session live panel */}
@@ -1040,6 +1067,58 @@ function HireMercModal({ account, listing, onClose }) {
   );
 }
 
+// Modal: post a new contract (either as a mercenary offering services, or
+// as an employer requesting work). Live 40/52/8 + USD preview.
+function PostContractModal({ account, defaultRole, onClose }) {
+  const split = (account && account.mercSplit) || { merc: 0.40, employer: 0.52, tax: 0.08, perCinder: 5000, maxHours: 24, maxTarget: 5000000 };
+  const [role, setRole] = useState(defaultRole || "merc");
+  const [hours, setHours] = useState(1);
+  const [target, setTarget] = useState("10000");
+  const [desc, setDesc] = useState("");
+  const t = Math.max(0, Math.floor(Number(target) || 0));
+  const usd = (t / Math.max(1, split.perCinder | 0));
+  const mercShare = Math.floor(t * split.merc);
+  const empShare = Math.floor(t * split.employer);
+  const tax = Math.max(0, t - mercShare - empShare);
+  const ok = t > 0 && t <= split.maxTarget && hours > 0 && hours <= split.maxHours;
+  const submit = () => { if (!ok) return; if (boePost("create", { role: role, hours: hours, target: t, description: desc })) onClose(); };
+  return (
+    <ModalFrame title="Post a Contract" onClose={onClose}>
+      <div className="small-text" style={{ color: "var(--ink-dim)", marginBottom: 10 }}>
+        Choose your side. <b>Mercenary</b> = "I'll do this work for you". <b>Employer</b> = "I need this work done — willing to pay". Either kind shows up on the public Contract Postings board.
+      </div>
+      <div className="row" style={{ gap: 8, marginBottom: 12 }}>
+        <button className={"btn sm" + (role === "merc" ? "" : " ghost")} onClick={() => setRole("merc")}>I'm the Mercenary</button>
+        <button className={"btn sm" + (role === "employer" ? "" : " ghost")} onClick={() => setRole("employer")}>I'm the Employer</button>
+      </div>
+      <div className="stack-sm" style={{ marginBottom: 12 }}>
+        <label className="label">Contract length (hours, up to {split.maxHours})</label>
+        <input type="number" min="1" max={split.maxHours} step="1" value={hours}
+          onChange={(e) => setHours(Math.max(1, Math.min(split.maxHours, Math.floor(Number(e.target.value) || 1))))}
+          style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+        <label className="label">Cinder target</label>
+        <input type="number" min="1" max={split.maxTarget} step="100" value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "JetBrains Mono, monospace" }} />
+        <div className="small-text" style={{ color: "var(--ink-dim)" }}>≈ <b>${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> USD at the canonical peg</div>
+        <label className="label">Description (optional, ≤ 280 chars)</label>
+        <textarea value={desc} maxLength={280} rows="3" placeholder="What kind of work, conditions, location…"
+          onChange={(e) => setDesc(e.target.value)}
+          style={{ background: "var(--bg-2)", border: "1px solid var(--hair)", color: "var(--ink)", padding: "8px 10px", fontFamily: "inherit", resize: "vertical" }} />
+      </div>
+      <div style={{ border: "1px solid var(--hair)", background: "var(--bg-1)", padding: 12, marginBottom: 12 }}>
+        <div className="row between" style={{ padding: "3px 0" }}><span className="label">Mercenary earns ({Math.round(split.merc * 100)}%)</span><span className="mono" style={{ color: "var(--cinder)" }}>{fmt(mercShare)} 🜂</span></div>
+        <div className="row between" style={{ padding: "3px 0" }}><span className="label">Employer earns ({Math.round(split.employer * 100)}%)</span><span className="mono" style={{ color: "var(--good)" }}>{fmt(empShare)} 🜂</span></div>
+        <div className="row between" style={{ padding: "3px 0" }}><span className="label">Foundation Reserve tax ({Math.round(split.tax * 100)}%)</span><span className="mono" style={{ color: "var(--warn)" }}>{fmt(tax)} 🜂</span></div>
+      </div>
+      <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn primary" onClick={submit} disabled={!ok}>Publish Post</button>
+      </div>
+    </ModalFrame>
+  );
+}
+
 function _mercSession(c) {
   // Effective elapsed seconds (active time, excluding paused accum).
   if (!c) return 0;
@@ -1129,10 +1208,17 @@ function PageMercs({ account, role, sessionSec, liveCinder, running, setRunning 
   const [tab, setTab] = useState("board");
   const [listOpen, setListOpen] = useState(false);
   const [hireListing, setHireListing] = useState(null);
+  const [postOpen, setPostOpen] = useState(false);
+  const [postRole, setPostRole] = useState("merc");
   const split = (account && account.mercSplit) || { merc: 0.40, employer: 0.52, tax: 0.08, perCinder: 5000, maxHours: 24, maxTarget: 5000000 };
   const listings = Array.isArray(account && account.mercListings) ? account.mercListings : [];
   const asEmp = Array.isArray(account && account.mercAsEmployer) ? account.mercAsEmployer : [];
   const asMerc = Array.isArray(account && account.mercAsMerc) ? account.mercAsMerc : [];
+  const posts = Array.isArray(account && account.mercPosts) ? account.mercPosts : [];
+  const myHandle = (account && account.handle || "").toLowerCase();
+  const mercPosts = posts.filter(p => p && p.status === "open" && p.poster_role === "merc");
+  const empPosts = posts.filter(p => p && p.status === "open" && p.poster_role === "employer");
+  const myPosts = posts.filter(p => p && p.poster_handle && p.poster_handle.toLowerCase() === myHandle && p.status === "open");
   const myListing = listings.find(l => l.handle && account && account.handle && l.handle.toLowerCase() === String(account.handle).toLowerCase());
   const board = listings.filter(l => l && l.status === "open" && (!myListing || l.id !== myListing.id));
   const offersMerc = asMerc.filter(c => c.status === "offered" || c.status === "active" || c.status === "paused" || c.status === "completed_pending_merc");
@@ -1142,12 +1228,14 @@ function PageMercs({ account, role, sessionSec, liveCinder, running, setRunning 
     <div>
       {listOpen && <ListMyselfModal account={account} onClose={() => setListOpen(false)} />}
       {hireListing && <HireMercModal account={account} listing={hireListing} onClose={() => setHireListing(null)} />}
+      {postOpen && <PostContractModal account={account} defaultRole={postRole} onClose={() => setPostOpen(false)} />}
       <div className="page-head">
         <div>
           <div className="page-crumb">Operations / Mercenaries</div>
           <div className="page-title display">Mercenary Operations</div>
         </div>
         <div className="page-actions">
+          <button className="btn ghost" onClick={() => { setPostRole("merc"); setPostOpen(true); }}><Icon name="plus" size={14}/> Post a Contract</button>
           {myListing
             ? <button className="btn ghost" onClick={() => boeMerc("unlist")}>Withdraw listing</button>
             : <button className="btn ghost" onClick={() => setListOpen(true)}><Icon name="plus" size={14}/> List myself</button>}
@@ -1173,6 +1261,7 @@ function PageMercs({ account, role, sessionSec, liveCinder, running, setRunning 
       <div className="tabs">
         {[
           { id: "board", label: "Mercenary board · " + board.length },
+          { id: "postings", label: "Contract Postings · " + (mercPosts.length + empPosts.length) },
           { id: "offers", label: "My offers · " + offersMerc.length },
           { id: "contracts", label: "My contracts · " + contractsEmp.length },
           { id: "history", label: "History · " + history.length },
@@ -1180,6 +1269,84 @@ function PageMercs({ account, role, sessionSec, liveCinder, running, setRunning 
           <div key={t.id} className={"tab " + (tab === t.id ? "active" : "")} onClick={() => setTab(t.id)}>{t.label}</div>
         ))}
       </div>
+
+      {tab === "postings" && (
+        <div className="stack-sm">
+          {myPosts.length > 0 && (
+            <div className="panel">
+              <div className="panel-h"><h3>My active posts</h3><span className="label">{myPosts.length}</span></div>
+              {myPosts.map(p => (
+                <div key={p.id} className="row between" style={{ padding: "10px 14px", borderBottom: "1px solid var(--hair)", gap: 8 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="row" style={{ gap: 6, alignItems: "center" }}>
+                      <span className={"chip " + (p.poster_role === "merc" ? "violet" : "cinder")}>{p.poster_role === "merc" ? "I'll do work" : "Need work done"}</span>
+                      <span className="mono" style={{ fontSize: 11, color: "var(--cinder)" }}>{fmt(p.target_cinder)} 🜂 · {p.hours}h</span>
+                    </div>
+                    {p.description && <div style={{ fontSize: 12, color: "var(--ink-dim)", marginTop: 4 }}>{p.description}</div>}
+                  </div>
+                  <button className="btn sm ghost" onClick={() => boePost("cancel", { id: p.id })}>Cancel</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="panel">
+            <div className="panel-h">
+              <h3>Mercenaries offering services · {mercPosts.length}</h3>
+              <span className="label">Players willing to do work</span>
+            </div>
+            {mercPosts.length === 0 ? (
+              <div className="panel-b muted" style={{ fontSize: 12 }}>No mercenaries are posting services right now. (none)</div>
+            ) : mercPosts.map(p => {
+              const mine = p.poster_handle && p.poster_handle.toLowerCase() === myHandle;
+              return (
+                <div key={p.id} className="row between" style={{ padding: "12px 16px", borderBottom: "1px solid var(--hair)", gap: 8 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                      <div className="merc-av" style={{ background: "linear-gradient(135deg, #ff7a3d, #8a6bff)", width: 28, height: 28, fontSize: 10 }}>{(p.poster_label || p.poster_handle || "MR").slice(0, 2).toUpperCase()}</div>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{p.poster_label || p.poster_handle}</div>
+                        <div className="mono" style={{ fontSize: 10, color: "var(--violet)" }}>{p.poster_handle}</div>
+                      </div>
+                    </div>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--cinder)", marginTop: 6 }}>{fmt(p.target_cinder)} 🜂 target · {p.hours}h · earn {fmt(Math.floor((p.target_cinder | 0) * split.merc))} 🜂 (40 %) · operator yield {fmt(Math.floor((p.target_cinder | 0) * split.employer))} 🜂 (52 %)</div>
+                    {p.description && <div style={{ fontSize: 12, color: "var(--ink-dim)", marginTop: 4 }}>{p.description}</div>}
+                  </div>
+                  <button className="btn sm primary" disabled={mine} onClick={() => boePost("accept", { id: p.id })}>{mine ? "(your post)" : "Hire (Accept)"}</button>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="panel">
+            <div className="panel-h">
+              <h3>Employers posting jobs · {empPosts.length}</h3>
+              <span className="label">Players hiring</span>
+            </div>
+            {empPosts.length === 0 ? (
+              <div className="panel-b muted" style={{ fontSize: 12 }}>No open jobs right now. (none)</div>
+            ) : empPosts.map(p => {
+              const mine = p.poster_handle && p.poster_handle.toLowerCase() === myHandle;
+              return (
+                <div key={p.id} className="row between" style={{ padding: "12px 16px", borderBottom: "1px solid var(--hair)", gap: 8 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                      <div className="merc-av" style={{ background: "linear-gradient(135deg, #5ee3ff, #8a6bff)", width: 28, height: 28, fontSize: 10 }}>{(p.poster_label || p.poster_handle || "EM").slice(0, 2).toUpperCase()}</div>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{p.poster_label || p.poster_handle}</div>
+                        <div className="mono" style={{ fontSize: 10, color: "var(--violet)" }}>{p.poster_handle}</div>
+                      </div>
+                    </div>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--cinder)", marginTop: 6 }}>{fmt(p.target_cinder)} 🜂 target · {p.hours}h · you earn {fmt(Math.floor((p.target_cinder | 0) * split.merc))} 🜂 (40 %) as the mercenary</div>
+                    {p.description && <div style={{ fontSize: 12, color: "var(--ink-dim)", marginTop: 4 }}>{p.description}</div>}
+                  </div>
+                  <button className="btn sm primary" disabled={mine} onClick={() => boePost("accept", { id: p.id })}>{mine ? "(your post)" : "Take Job (Accept)"}</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {tab === "board" && (
         <div className="panel">

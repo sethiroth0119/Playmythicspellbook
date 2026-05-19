@@ -1021,30 +1021,46 @@ function OperationsScreen({ econ }) {
       {/* Sponsored row */}
       <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.14em', textTransform: 'uppercase', margin: '4px 2px 8px' }}>Featured operations</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 18 }}>
-        {sponsored.map(o => (
-          <div key={o.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--rust) 30%, var(--bg-3)), var(--bg-3))', padding: '22px 16px', textAlign: 'center', borderBottom: '1px solid var(--line-soft)' }}>
-              <div style={{ fontSize: 34 }}>{o.icon}</div>
-              <div className="disp" style={{ fontWeight: 700, fontSize: 16, marginTop: 4 }}>{o.name}</div>
+        {sponsored.map(o => {
+          const photo = (window.JB_art && window.JB_art('op', o.id)) || '';
+          const adm = !!(window.JB_isAdmin && window.JB_isAdmin());
+          return (
+            <div key={o.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ position: 'relative', height: 132, borderBottom: '1px solid var(--line-soft)', background: photo ? 'transparent' : 'linear-gradient(135deg, color-mix(in srgb, var(--rust) 30%, var(--bg-3)), var(--bg-3))', display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
+                {photo
+                  ? <img src={photo} alt={o.name} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : <div style={{ fontSize: 34 }}>{o.icon}</div>}
+                <div className="disp" style={{ position: 'relative', fontWeight: 700, fontSize: 16, color: '#fff', textShadow: '0 2px 8px rgba(0,0,0,.85)', alignSelf: 'flex-end', padding: '0 0 10px' }}>{o.name}</div>
+                {adm && (
+                  <button className="btn sm" onClick={() => window.JB_uploadArt('op', o.id)}
+                    style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}>📷 {photo ? 'Replace' : 'Add photo'}</button>
+                )}
+              </div>
+              <div style={{ padding: '10px 14px' }}>
+                <div className="mono muted" style={{ fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase' }}>Sponsored · {o.cat}</div>
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{o.focus}</div>
+              </div>
             </div>
-            <div style={{ padding: '10px 14px' }}>
-              <div className="mono muted" style={{ fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase' }}>Sponsored · {o.cat}</div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{o.focus}</div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Operation grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: 12 }}>
-        {rows.map(o => (
+        {rows.map(o => {
+          const photo = (window.JB_art && window.JB_art('op', o.id)) || '';
+          const adm = !!(window.JB_isAdmin && window.JB_isAdmin());
+          return (
           <div key={o.id} className="card" style={{ padding: 14 }}>
             <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
-              <div style={{ width: 46, height: 46, borderRadius: 6, display: 'grid', placeItems: 'center', fontSize: 24, background: 'var(--bg-3)', border: '1px solid var(--line-soft)' }}>{o.icon}</div>
+              <div style={{ width: 46, height: 46, borderRadius: 6, display: 'grid', placeItems: 'center', fontSize: 24, background: 'var(--bg-3)', border: '1px solid var(--line-soft)', overflow: 'hidden' }}>
+                {photo ? <img src={photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : o.icon}
+              </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="disp" style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.15 }}>{o.name}</div>
                 <div className="mono muted" style={{ fontSize: 11, marginTop: 2 }}>{o.cat} · risk: <span style={{ color: o.illicit ? 'var(--toxic)' : 'var(--muted)' }}>{o.risk}</span></div>
               </div>
+              {adm && <button className="btn sm" onClick={() => window.JB_uploadArt('op', o.id)}>📷</button>}
             </div>
             <div className="muted" style={{ fontSize: 12.5, margin: '10px 0' }}>{o.focus}</div>
             <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
@@ -1058,7 +1074,8 @@ function OperationsScreen({ econ }) {
               {hasCorp ? 'Fund operation — coming soon' : 'Corporation required'}
             </button>
           </div>
-        ))}
+          );
+        })}
         {rows.length === 0 && <div className="muted" style={{ padding: 24, gridColumn: '1/-1', textAlign: 'center' }}>No operations match that search.</div>}
       </div>
 

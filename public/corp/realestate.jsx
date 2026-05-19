@@ -184,7 +184,15 @@ function PropertyCard({ p, onSelect, onHover }) {
       onMouseEnter={() => onHover(p.id)}
       onMouseLeave={() => onHover(null)}
       onClick={() => onSelect(p.id)}>
-      <div className={'prop-card-img tier-' + p.tier.toLowerCase() + (p.flag ? ' flag-' + p.flag : '')}>
+      <div className={'prop-card-img tier-' + p.tier.toLowerCase() + (p.flag ? ' flag-' + p.flag : '')} style={{ position: 'relative', overflow: 'hidden' }}>
+        {(() => {
+          const photo = (window.JB_art && window.JB_art('re', p.id)) || '';
+          return photo ? <img src={photo} alt={p.name} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /> : null;
+        })()}
+        {(window.JB_isAdmin && window.JB_isAdmin()) && (
+          <button className="btn sm" onClick={(e) => { e.stopPropagation(); window.JB_uploadArt('re', p.id); }}
+            style={{ position: 'absolute', bottom: 8, right: 8, zIndex: 3 }}>📷 Photo</button>
+        )}
         {p.showcase && <span className="prop-card-tag">SHOWCASE</span>}
         {p.status === 'auction' && <span className="prop-card-tag tag-auction">AUCTION · 04:12</span>}
         <button className="prop-card-fav" onClick={(e) => e.stopPropagation()}>♡</button>

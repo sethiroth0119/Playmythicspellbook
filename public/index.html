@@ -21399,6 +21399,9 @@ async function cloudSyncProfile() {
       aiDecks:        Array.isArray(Forge.aiDecks) ? Forge.aiDecks : [],
       starterDecks:   Array.isArray(Forge.starterDecks) ? Forge.starterDecks : [],
       campaigns:      Array.isArray(Forge.campaigns) ? Forge.campaigns : [],
+      // 🖼 Admin Operations / Real-Estate photos (small, compressed JPEGs).
+      opArt:          (Forge.opArt && typeof Forge.opArt === 'object') ? Forge.opArt : {},
+      reArt:          (Forge.reArt && typeof Forge.reArt === 'object') ? Forge.reArt : {},
       // 🧰 Resource ledger (camp salvage / ~149 resources) piggybacks on the
       // existing `forge` JSONB column — same pattern as userDecks — so it
       // cloud-syncs with NO schema migration (no missing-column nag) and
@@ -21692,6 +21695,8 @@ async function cloudFetchProfile() {
       if (Array.isArray(f.aiDecks))   Forge.aiDecks = f.aiDecks;
       if (Array.isArray(f.starterDecks)) Forge.starterDecks = f.starterDecks;
       if (Array.isArray(f.campaigns)) Forge.campaigns = f.campaigns;
+      if (f.opArt && typeof f.opArt === 'object') Forge.opArt = f.opArt;
+      if (f.reArt && typeof f.reArt === 'object') Forge.reArt = f.reArt;
       if (Array.isArray(f.pageGuides)) Forge.pageGuides = f.pageGuides;
       // 🌐 WEBSITE PURCHASE REDEMPTION — when a player buys a pack from the
       // marketing site, that flow writes a receipt into forge.webPurchases and
@@ -33666,6 +33671,10 @@ function _jbEcon() {
     overflowFee: CORP_OVERFLOW_FEE,
     vault: Corp.vault || [],
     depositable: _jbDepositable(),
+    // 🖼 Admin-curated photos — published Catalog art with the admin's local
+    // Forge override on top (mirrors getPackImage's resolution order).
+    opArt: Object.assign({}, (typeof Catalog !== 'undefined' && Catalog.opArt) || {}, (typeof Forge !== 'undefined' && Forge.opArt) || {}),
+    reArt: Object.assign({}, (typeof Catalog !== 'undefined' && Catalog.reArt) || {}, (typeof Forge !== 'undefined' && Forge.reArt) || {}),
   };
 }
 function _jbSendData() {
@@ -33876,6 +33885,25 @@ function _jbHandleAction(a) {
           try { corpEnsure().then(_jbSendData); } catch (e) { _jbSendData(); }
         } catch (e) {}
       })();
+    } else if (a.kind === 'setArt') {
+      // 🖼 Admin only — attach a photo to an Operation ('op') or a Real
+      // Estate listing ('re'). Stored in Forge, persisted + cloud-synced;
+      // Publish (Pricing Admin) pushes it to every player.
+      if (!((typeof isAdmin === 'function') && isAdmin())) { showToast('👑 Admin only.', 2600); return; }
+      const ak = (a.artKind === 're') ? 're' : (a.artKind === 'op') ? 'op' : '';
+      const id = (a.id || '').toString().slice(0, 80);
+      const img = (a.img || '').toString();
+      if (!ak || !id) return;
+      if (img && img.indexOf('data:image/') !== 0) { showToast('⚠ Unsupported image.', 2600); return; }
+      if (img.length > 320000) { showToast('⚠ Image too large after compression — try a smaller picture.', 4200); return; }
+      try {
+        const key = ak + 'Art';
+        if (!Forge[key] || typeof Forge[key] !== 'object') Forge[key] = {};
+        if (img) Forge[key][id] = img; else delete Forge[key][id];
+        if (typeof _persistForgeNow === 'function') _persistForgeNow();
+        showToast('🖼 Photo saved for ' + (ak === 'op' ? 'operation' : 'listing') + ' “' + id + '”. Publish in Pricing Admin to show it to everyone.', 5200);
+        _jbSendData();
+      } catch (e) {}
     }
   } catch (e) {}
 }

@@ -165,15 +165,13 @@ function Topbar({ route, balances }) {
 
       <div className="balances">
         <div className="bal aza">
-          AZA <span className="num">{fmt(balances.aza)}</span>
-          <span className="delta up">+184</span>
+          CINDER <span className="num">{fmt(balances.aza)}</span>
         </div>
         <div className="bal">
           IRON <span className="num">{fmt(balances.iron)}</span>
         </div>
         <div className="bal">
           ESSENCE <span className="num">{balances.essence}</span>
-          <span className="delta up">+1</span>
         </div>
       </div>
 

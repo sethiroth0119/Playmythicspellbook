@@ -21,11 +21,22 @@ function App() {
   const [mail, setMail] = useState(window.ECON.MAIL);
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
-  const [balances, setBalances] = useState({
-    aza: window.ECON.PLAYER.aza,
-    iron: 14_280,
-    essence: 9,
+  const [balances, setBalances] = useState(() => {
+    const e = (window.__JB && window.__JB.econ) || null;
+    return { aza: e ? (e.cinders | 0) : window.ECON.PLAYER.aza, iron: 14_280, essence: 9 };
   });
+
+  // 🌉 Live bridge — when the embedding game pushes real economy data, mirror
+  // the player's real Cinder balance into the app. Standalone = mock.
+  useEffect(() => {
+    const onJB = () => {
+      const e = (window.__JB && window.__JB.econ) || null;
+      if (e) setBalances(b => ({ ...b, aza: e.cinders | 0 }));
+    };
+    window.addEventListener('jbdata', onJB);
+    onJB();
+    return () => window.removeEventListener('jbdata', onJB);
+  }, []);
 
   // Apply tweak: palette
   useEffect(() => {
@@ -91,18 +102,33 @@ function App() {
     if (asset.name === 'Iron') setBalances(b => ({ ...b, iron: b.iron - qty }));
   };
 
+  const bridged = () => !!(window.JB_isBridged && window.JB_isBridged());
+
   const doBuy = (l, illicit) => {
     setBuyTarget(null);
-    if (illicit) {
-      toast(`Smuggled ${l.qty}× ${l.asset} for ${fmt(l.price * l.qty)} AZA. Convoy dispatched (high risk).`);
-    } else {
-      toast(`Purchased ${l.qty}× ${l.asset} for ${fmt(l.price * l.qty)} AZA.`);
+    const total = l.price * l.qty;
+    if (bridged()) {
+      window.JB_action({ kind: 'buy', total });
+      toast(`${illicit ? 'Smuggled' : 'Purchased'} ${l.qty}× ${l.asset} for ${fmt(total)} 🔥.`);
+      return;
     }
-    setBalances(b => ({ ...b, aza: b.aza - (l.price * l.qty) }));
+    if (illicit) {
+      toast(`Smuggled ${l.qty}× ${l.asset} for ${fmt(total)} AZA. Convoy dispatched (high risk).`);
+    } else {
+      toast(`Purchased ${l.qty}× ${l.asset} for ${fmt(total)} AZA.`);
+    }
+    setBalances(b => ({ ...b, aza: b.aza - total }));
   };
 
   const doList = (asset, qty, price) => {
     setListTarget(null);
+    if (bridged()) {
+      // Corp sale → routed to the real economy: net Cinders credited, the
+      // 2% Foundation Tax logged to the Reserve (Corporation bucket).
+      window.JB_action({ kind: 'sell', resource: asset.name, qty, unit: price });
+      toast(`Sold ${qty}× ${asset.name} for ${fmt(qty * price)} 🔥 — 2% Foundation Tax → Reserve.`);
+      return;
+    }
     toast(`Listed ${qty}× ${asset.name} at ${fmt(price)} AZA. Market tax 2%.`);
   };
 

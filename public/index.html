@@ -56570,6 +56570,40 @@ function renderProfile() {
   const xpPct = getAccountXpPct();
   const createdLabel = a.createdAt ? new Date(a.createdAt).toLocaleDateString() : '—';
 
+  // 🎁 Rewards & Gifts — a persistent inbox in the profile so players can
+  // claim admin grants / rewards any time (not just the sign-in pop-up).
+  const _signedIn = !!(Profile.cloud && Profile.cloud.signedIn);
+  if (_signedIn && (typeof refreshGiftsCache === 'function') && !renderProfile._giftsBusy &&
+      (!GiftsCache.lastFetch || Date.now() - GiftsCache.lastFetch > 8000)) {
+    renderProfile._giftsBusy = true;
+    try { refreshGiftsCache().then(() => { renderProfile._giftsBusy = false; if (App.screen === 'profile') render(); }); }
+    catch (e) { renderProfile._giftsBusy = false; }
+  }
+  const _pend = (_signedIn && Array.isArray(GiftsCache.pending)) ? GiftsCache.pending : [];
+  const _coupons = Array.isArray(Profile.coupons) ? Profile.coupons.slice().reverse().slice(0, 12) : [];
+  const _giftRows = _pend.length
+    ? _pend.map(g => `<div style="display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 11px;border:1px solid rgba(255,209,102,0.35);border-radius:8px;background:rgba(40,30,12,0.35);margin-bottom:6px">
+          <div style="min-width:0">
+            <div style="color:#ffd166;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(g.card_name || g.card_id)}${(g.qty > 1 && !/^__/.test(String(g.card_id))) ? ' ×' + g.qty : ''}</div>
+            <div class="small-text" style="color:#cdbff0">${escapeHtml(g.message || ('From ' + (g.from_label || 'Mythic Spellbook')))}</div>
+          </div>
+          <button class="btn-primary btn-mini" data-claim-gift="${escapeHtml(String(g.id))}">🎁 Claim</button>
+        </div>`).join('')
+    : `<div class="small-text ink-dim" style="padding:0.8rem;text-align:center">${_signedIn ? 'No unclaimed rewards right now.' : '☁ Sign in to receive rewards & gifts.'}</div>`;
+  const _couponRows = _coupons.length
+    ? `<div class="profile-card-note" style="margin-top:6px">🎟 Coupons claimed: ` + _coupons.map(c => escapeHtml(String((c && c.code) || 'Coupon')) + ((c && c.value > 0) ? ' (' + (c.value | 0).toLocaleString() + '🔥)' : '')).join(' · ') + `</div>`
+    : '';
+  const rewardsCard = `
+        <div class="profile-card" style="grid-column:1/-1">
+          <div class="profile-card-header">🎁 Rewards &amp; Gifts${_pend.length ? ' <span class="profile-chip profile-chip-warn" style="margin-left:6px">' + _pend.length + ' to claim</span>' : ''}</div>
+          <div class="profile-card-body">
+            ${_giftRows}
+            ${_pend.length > 1 ? '<button class="btn-secondary btn-mini" id="prof-claim-all" style="margin-top:4px">🎁 Claim all (' + _pend.length + ')</button>' : ''}
+            ${_couponRows}
+            <div class="profile-card-note">Cinders, Aza, resources, items, cards, nodes &amp; coupons granted to you appear here — claim to add them. Nodes need a corporation.</div>
+          </div>
+        </div>`;
+
   root.innerHTML = `
     <div class="profile-page">
       <div class="profile-header-bar">
@@ -56596,6 +56630,8 @@ function renderProfile() {
           <div class="profile-totalxp">Lifetime: ${(a.totalXp || 0).toLocaleString()} XP</div>
         </div>
       </div>
+
+      ${rewardsCard}
 
       <!-- ===== Two-column grid: Account / Stats ===== -->
       <div class="profile-grid">
@@ -56737,6 +56773,24 @@ function renderProfile() {
       render();
     };
   });
+  // 🎁 Claim rewards from the profile inbox.
+  document.querySelectorAll('[data-claim-gift]').forEach(btn => {
+    btn.onclick = async () => {
+      if (btn.disabled) return;
+      btn.disabled = true; btn.textContent = '…';
+      const g = (GiftsCache.pending || []).find(x => String(x.id) === btn.getAttribute('data-claim-gift'));
+      if (!g) { render(); return; }
+      const r = await claimGift(g);
+      if (r && r.ok) { showToast('🎁 "' + (g.card_name || g.card_id) + '" claimed!', 3200); render(); }
+      else { btn.disabled = false; btn.textContent = '🎁 Claim'; showToast('⨯ ' + ((r && r.error) || 'Claim failed'), 4600); }
+    };
+  });
+  const _claimAll = document.getElementById('prof-claim-all');
+  if (_claimAll) _claimAll.onclick = async () => {
+    _claimAll.disabled = true; _claimAll.textContent = '…claiming';
+    for (const g of (GiftsCache.pending || []).slice()) { try { await claimGift(g); } catch (e) {} }
+    showToast('🎁 Rewards claimed!', 3000); render();
+  };
 }
 
 // ============================================================================

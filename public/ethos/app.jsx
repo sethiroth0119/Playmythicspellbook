@@ -266,8 +266,48 @@ function App() {
   const [account, setAccount] = useState(() => loadAccount());
   const [transfers, setTransfers] = useState(() => loadTransfers());
   const [toasts, setToasts] = useState([]);
+  const _embedded = (function () { try { return window.parent && window.parent !== window; } catch (e) { return false; } })();
+  const [linking, setLinking] = useState(_embedded && !account);
+
+  // 🔗 Game bridge: when embedded in Mythic Spellbook the parent seeds the
+  // player's real identity + balances (Cinder bank balance, Aza coin), so
+  // there's no separate signup and the dashboard shows REAL numbers.
+  useEffect(() => {
+    if (!_embedded) return;
+    function onMsg(e) {
+      var d = e && e.data;
+      if (!d || d.type !== 'boe:seed') return;
+      setAccount(function (prev) {
+        var next = Object.assign({}, prev || {}, {
+          handle: d.handle || (prev && prev.handle) || 'operator',
+          callsign: d.callsign || (prev && prev.callsign) || 'Operator',
+          cinder: Math.max(0, Number(d.cinder) || 0),
+          aza: Math.max(0, Number(d.aza) || 0),
+          _gameLinked: true,
+        });
+        try { saveAccount(next); } catch (e2) {}
+        return next;
+      });
+      setLinking(false);
+    }
+    window.addEventListener('message', onMsg);
+    try { window.parent.postMessage({ type: 'boe:hello' }, '*'); } catch (e) {}
+    var hi = setInterval(function () { try { window.parent.postMessage({ type: 'boe:hello' }, '*'); } catch (e) {} }, 1200);
+    var stop = setTimeout(function () { clearInterval(hi); setLinking(false); }, 8000);
+    return function () { window.removeEventListener('message', onMsg); clearInterval(hi); clearTimeout(stop); };
+  }, []);
 
   if (!account) {
+    if (linking) {
+      return (
+        <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', color: '#caa46a', fontFamily: 'inherit' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 30, marginBottom: 8 }}>🏦</div>
+            <div style={{ fontWeight: 700 }}>Linking to your Mythic Spellbook account…</div>
+          </div>
+        </div>
+      );
+    }
     return <AuthScreen onAccount={(a) => { saveAccount(a); setAccount(a); }} />;
   }
 

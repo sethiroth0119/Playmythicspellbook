@@ -25095,15 +25095,35 @@ function openBankOfEthos() {
         '<span style="flex:1"></span>';
       bar.appendChild(back);
       const amtEl = () => parseInt((document.getElementById('boe-amt') || {}).value, 10) || 0;
-      const dep = document.getElementById('boe-dep'); if (dep) dep.onclick = () => { const a = amtEl(); dep.disabled = true; boeDeposit(a).then(() => { dep.disabled = false; paint(); }); };
-      const wd = document.getElementById('boe-wd'); if (wd) wd.onclick = () => { const a = amtEl(); wd.disabled = true; boeWithdraw(a).then(() => { wd.disabled = false; paint(); }); };
+      const dep = document.getElementById('boe-dep'); if (dep) dep.onclick = () => { const a = amtEl(); dep.disabled = true; boeDeposit(a).then(() => { dep.disabled = false; paint(); try { postSeed(); } catch (e) {} }); };
+      const wd = document.getElementById('boe-wd'); if (wd) wd.onclick = () => { const a = amtEl(); wd.disabled = true; boeWithdraw(a).then(() => { wd.disabled = false; paint(); try { postSeed(); } catch (e) {} }); };
     };
+    // 🔗 Feed the embedded Bank of Ethos app the player's REAL identity +
+    // balances (Cinder bank balance + Aza coin) so its dashboard shows
+    // real numbers and skips its own signup.
+    const postSeed = () => {
+      try {
+        const nm = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Operator') + '';
+        f.contentWindow && f.contentWindow.postMessage({
+          type: 'boe:seed',
+          cinder: BankEthos.ready ? (BankEthos.balance | 0) : 0,
+          aza: (Profile && Profile.sovereigns) | 0,
+          handle: '@' + nm.replace(/\s+/g, '').toLowerCase().slice(0, 20),
+          callsign: nm.slice(0, 28),
+        }, '*');
+      } catch (e) {}
+    };
+    const onMsg = (e) => { try { if (e && e.data && e.data.type === 'boe:hello') postSeed(); } catch (x) {} };
+    window.addEventListener('message', onMsg);
+    const _origClose = back.onclick;
+    back.onclick = () => { try { window.removeEventListener('message', onMsg); } catch (e) {} _origClose(); };
+    f.addEventListener('load', () => { setTimeout(postSeed, 120); });
     paint();
     wrap.appendChild(f);
     wrap.appendChild(bar);
     document.body.appendChild(wrap);
     requestAnimationFrame(() => { wrap.style.opacity = '1'; });
-    boeFetch().then(function (ok) { if (ok) { boeApplyMaintenance().then(paint); } paint(); });
+    boeFetch().then(function (ok) { if (ok) { boeApplyMaintenance().then(function () { paint(); postSeed(); }); } paint(); postSeed(); });
   } catch (e) {}
 }
 function openCityHall() {

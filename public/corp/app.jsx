@@ -159,6 +159,7 @@ function App() {
   let screen;
   if (route === 'vault')      screen = <VaultScreen openRelic={openRelic} openSend={setSendTarget} openList={setListTarget} />;
   else if (route === 'corp')      screen = <CorpScreen />;
+  else if (route === 'operations')screen = <OperationsScreen econ={_jbE} />;
   else if (route === 'logistics') screen = <LogisticsScreen />;
   else if (route === 'market')    screen = <MarketplaceScreen openBuy={(l) => setBuyTarget({ listing: l })} />;
   else if (route === 'realestate')screen = <RealEstateScreen openDetail={openProperty} />;

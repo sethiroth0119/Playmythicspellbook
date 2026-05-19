@@ -76,6 +76,7 @@ const NAV = [
   { group: 'Holdings' },
   { id: 'vault',      label: 'Vault',          ico: '◇' },
   { id: 'corp',       label: 'Corp Treasury',  ico: '◈' },
+  { id: 'operations', label: 'Operations',     ico: '⛏' },
   { id: 'logistics',  label: 'Logistics',      ico: '⇄', badge: 3 },
   { group: 'Economy' },
   { id: 'market',     label: 'Marketplace',    ico: '▤' },

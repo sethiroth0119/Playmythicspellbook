@@ -943,8 +943,134 @@ function Spec({ label, value }) {
   );
 }
 
+// ============================================================================
+// OPERATIONS — corporate industry registry. ONLY corporations can own / fund
+// operations (funding lands in a later update). Styled as a dark-warm web
+// portal (browser chrome + search + sponsored row + tile grid).
+// ============================================================================
+const OPERATIONS = [
+  { id: 'mining',       name: 'Mining Company',      cat: 'Industry',  icon: '⛏',  focus: 'Metal & raw extraction',     produces: ['Metal', 'Stone', 'Scrap'],            startup: '400,000 Cinder · 4k Metal',                          maint: 'Fuel 200/d · Supplies 150/d',  risk: 'Low' },
+  { id: 'oil',          name: 'Oil Company',         cat: 'Energy',    icon: '🛢', focus: 'Fuel production',            produces: ['Fuel'],                               startup: '500,000 Cinder · 5k Metal · 2k Fuel · 1.5k Electronics', maint: 'Fuel 300/d · Medicine 50/d · Supplies 200/d', risk: 'Medium' },
+  { id: 'construction', name: 'Construction Co.',    cat: 'Industry',  icon: '🏗', focus: 'Build materials',            produces: ['Concrete', 'Steel'],                  startup: '350,000 Cinder · 6k Metal',                          maint: 'Fuel 180/d · Supplies 220/d',  risk: 'Low' },
+  { id: 'medical',      name: 'Medical Corporation', cat: 'Medical',   icon: '⚕️', focus: 'Medicine & supplies',        produces: ['Medicine', 'Med Supplies'],           startup: '450,000 Cinder · 2k Supplies',                       maint: 'Water 120/d · Supplies 160/d', risk: 'Low' },
+  { id: 'agri',         name: 'Agricultural Op.',    cat: 'Medical',   icon: '🌾', focus: 'Food & biomass',             produces: ['Food', 'Biomass'],                    startup: '300,000 Cinder · 3k Water',                          maint: 'Water 260/d · Fuel 90/d',      risk: 'Low' },
+  { id: 'research',     name: 'Research Facility',   cat: 'Research',  icon: '🔬', focus: 'Data, relics, mutations',    produces: ['Data Cores', 'Relic Dust'],           startup: '700,000 Cinder · 2k Electronics',                    maint: 'Energy 140/d · Medicine 60/d', risk: 'High' },
+  { id: 'smuggling',    name: 'Smuggling Network',   cat: 'Illicit',   icon: '🕶', focus: 'Contraband logistics',       produces: ['Contraband', 'Illegal Goods'],        startup: '600,000 Cinder · off-ledger',                        maint: 'Fuel 240/d · bribes',          risk: 'SCP RAID', illicit: true },
+  { id: 'salvage',      name: 'Salvage Operation',   cat: 'Logistics', icon: '♻',  focus: 'Reclaim & components',       produces: ['Scrap', 'Nano Components'],           startup: '250,000 Cinder · 3k Scrap',                          maint: 'Fuel 130/d · Supplies 120/d',  risk: 'Low' },
+];
+const OP_CATS = ['All', 'Industry', 'Energy', 'Medical', 'Research', 'Logistics', 'Illicit'];
+
+function OperationsScreen({ econ }) {
+  const [q, setQ] = useState('');
+  const [cat, setCat] = useState('All');
+  const corp = econ && econ.corp;
+  const hasCorp = !!corp;
+  const treasury = corp ? '2,438,120 Aza coin' : 'NO CORPORATION';
+  const ql = q.trim().toLowerCase();
+  const rows = OPERATIONS.filter(o =>
+    (cat === 'All' || o.cat === cat) &&
+    (!ql || o.name.toLowerCase().includes(ql) || o.focus.toLowerCase().includes(ql) || o.produces.join(' ').toLowerCase().includes(ql))
+  );
+  const sponsored = OPERATIONS.slice(0, 3);
+
+  const navBtn = (t) => (
+    <span style={{ width: 26, height: 26, display: 'grid', placeItems: 'center', borderRadius: 4, border: '1px solid var(--line-soft)', color: 'var(--muted)', fontSize: 12 }}>{t}</span>
+  );
+
+  return (
+    <div className="screen">
+      {/* Browser chrome */}
+      <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 14 }}>
+        <div className="row" style={{ gap: 8, padding: '10px 12px', background: 'var(--bg-2)', borderBottom: '1px solid var(--line-soft)' }}>
+          {navBtn('◂')}{navBtn('▸')}{navBtn('⟳')}{navBtn('⌂')}
+          <div className="row" style={{ flex: 1, gap: 8, padding: '6px 12px', background: 'var(--bg)', border: '1px solid var(--line-soft)', borderRadius: 4, fontFamily: 'var(--f-mono)', fontSize: 12, color: 'var(--muted)' }}>
+            <span style={{ color: 'var(--toxic)' }}>⛓</span> operations.scp/registry
+          </div>
+          <span className="mono" style={{ fontSize: 12, color: hasCorp ? 'var(--aza)' : 'var(--toxic)' }}>$ {treasury}</span>
+        </div>
+
+        {/* Brand + search */}
+        <div style={{ padding: '20px 22px', background: 'linear-gradient(180deg, color-mix(in srgb, var(--rust) 14%, var(--bg-2)), var(--bg-2))', borderBottom: '1px solid var(--line-soft)' }}>
+          <div className="row" style={{ alignItems: 'baseline', gap: 10, marginBottom: 14 }}>
+            <span className="disp" style={{ fontSize: 26, fontWeight: 700, color: 'var(--rust)' }}>OperaFind</span>
+            <span className="muted" style={{ fontSize: 12 }}>· the corporate industry registry</span>
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <input className="input" placeholder="Search operations, output, focus…" value={q} onChange={e => setQ(e.target.value)} style={{ flex: 1, fontSize: 14, padding: '10px 14px' }} />
+            <button className="btn primary" onClick={() => setQ('')}>{q ? 'Clear' : 'Search'}</button>
+            <button className="btn" onClick={() => { const r = OPERATIONS[Math.floor(Math.random() * OPERATIONS.length)]; setQ(r.name); }}>Random</button>
+          </div>
+          <div className="row" style={{ gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
+            {OP_CATS.map(c => (
+              <button key={c} className={'chip' + (cat === c ? '' : ' flat')} onClick={() => setCat(c)}
+                style={{ cursor: 'pointer', border: '1px solid ' + (cat === c ? 'var(--rust)' : 'var(--line-soft)'), color: cat === c ? 'var(--rust)' : 'var(--muted)' }}>
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {!hasCorp && (
+        <div className="card flat" style={{ padding: 14, marginBottom: 14, borderColor: 'var(--toxic-soft)' }}>
+          <div className="mono" style={{ fontSize: 10.5, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--toxic)', marginBottom: 4 }}>Restricted</div>
+          <div style={{ fontSize: 13 }}>Only <b>corporations</b> can own, fund and operate industry — individuals cannot. Found or join one via <b>Guild &amp; Hiring</b>, then operations unlock here.</div>
+        </div>
+      )}
+
+      {/* Sponsored row */}
+      <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.14em', textTransform: 'uppercase', margin: '4px 2px 8px' }}>Featured operations</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 18 }}>
+        {sponsored.map(o => (
+          <div key={o.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--rust) 30%, var(--bg-3)), var(--bg-3))', padding: '22px 16px', textAlign: 'center', borderBottom: '1px solid var(--line-soft)' }}>
+              <div style={{ fontSize: 34 }}>{o.icon}</div>
+              <div className="disp" style={{ fontWeight: 700, fontSize: 16, marginTop: 4 }}>{o.name}</div>
+            </div>
+            <div style={{ padding: '10px 14px' }}>
+              <div className="mono muted" style={{ fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase' }}>Sponsored · {o.cat}</div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{o.focus}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Operation grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: 12 }}>
+        {rows.map(o => (
+          <div key={o.id} className="card" style={{ padding: 14 }}>
+            <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
+              <div style={{ width: 46, height: 46, borderRadius: 6, display: 'grid', placeItems: 'center', fontSize: 24, background: 'var(--bg-3)', border: '1px solid var(--line-soft)' }}>{o.icon}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="disp" style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.15 }}>{o.name}</div>
+                <div className="mono muted" style={{ fontSize: 11, marginTop: 2 }}>{o.cat} · risk: <span style={{ color: o.illicit ? 'var(--toxic)' : 'var(--muted)' }}>{o.risk}</span></div>
+              </div>
+            </div>
+            <div className="muted" style={{ fontSize: 12.5, margin: '10px 0' }}>{o.focus}</div>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+              {o.produces.map(p => <span key={p} className="chip flat" style={{ fontSize: 10.5 }}>{p}</span>)}
+            </div>
+            <div className="card flat" style={{ padding: 10, fontSize: 11.5 }}>
+              <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}><span className="muted">Startup</span><span className="mono">{o.startup}</span></div>
+              <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}><span className="muted">Upkeep</span><span className="mono">{o.maint}</span></div>
+            </div>
+            <button className="btn" disabled style={{ width: '100%', marginTop: 10, opacity: 0.7, cursor: 'default' }}>
+              {hasCorp ? 'Fund operation — coming soon' : 'Corporation required'}
+            </button>
+          </div>
+        ))}
+        {rows.length === 0 && <div className="muted" style={{ padding: 24, gridColumn: '1/-1', textAlign: 'center' }}>No operations match that search.</div>}
+      </div>
+
+      <div className="muted" style={{ fontSize: 11, marginTop: 16, textAlign: 'center' }}>
+        Operations are corporate infrastructure: funding, production, convoys, worker salaries, territory &amp; reputation roll out in the Operations update. Today this is the registry &amp; charter rules.
+      </div>
+    </div>
+  );
+}
+
 Object.assign(window, {
   VaultScreen, MarketplaceScreen, BlackMarketScreen,
   LogisticsScreen, MailboxScreen, FeedScreen,
-  CorpScreen, TradeScreen, RelicDetailScreen,
+  CorpScreen, OperationsScreen, TradeScreen, RelicDetailScreen,
 });

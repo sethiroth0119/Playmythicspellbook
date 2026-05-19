@@ -33683,6 +33683,29 @@ function _jbSendData() {
     if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'jb:data', econ: _jbEcon() }, '*');
   } catch (e) {}
 }
+// Smooth exit back to the Ruin Exchange. Triggered by the in-app sidebar
+// "← Ruin Exchange" control (the app posts jb:back) — no floating parent
+// button, so nothing can overlap the corp app's own chrome.
+let _jbLeaving = false;
+function _jbLeave() {
+  if (_jbLeaving) return; _jbLeaving = true;
+  const EASE = 'cubic-bezier(.22,.61,.36,1)';
+  try {
+    const ff = document.getElementById('jb-frame');
+    if (ff) { ff.style.opacity = '0'; ff.style.transform = 'scale(.986)'; }
+  } catch (e) {}
+  setTimeout(function () {
+    _jbLeaving = false;
+    try { App.screen = 'title'; App.titleHub = 'exchange'; if (typeof render === 'function') render(); } catch (e) {}
+    try {
+      const gg2 = document.createElement('div');
+      gg2.style.cssText = 'position:fixed;inset:0;z-index:2147483290;background:#0b0b10;opacity:1;transition:opacity .5s ' + EASE + ';pointer-events:none';
+      document.body.appendChild(gg2);
+      requestAnimationFrame(function () { gg2.style.opacity = '0'; });
+      setTimeout(function () { try { gg2.remove(); } catch (e) {} }, 620);
+    } catch (e) {}
+  }, 560);
+}
 // Run a real economy action posted by the app.
 function _jbHandleAction(a) {
   try {
@@ -33946,34 +33969,12 @@ function mountJustBusiness() {
       };
       document.body.appendChild(f);
     }
-    if (!b) {
-      b = document.createElement('button');
-      b.id = BID;
-      b.textContent = '← Ruin Exchange';
-      b.style.cssText = 'position:fixed;left:14px;top:12px;z-index:2147483400;cursor:pointer;border:1px solid rgba(212,175,55,0.55);background:rgba(12,10,18,0.92);color:#ffcf5a;border-radius:8px;padding:0.45rem 0.85rem;font-weight:800;font-family:inherit;box-shadow:0 6px 20px rgba(0,0,0,0.6);opacity:0;transition:opacity .45s ' + EASE;
-      b.onclick = function () {
-        if (b._leaving) return; b._leaving = true;
-        try {
-          const ff = document.getElementById(FID), gg = document.getElementById(GID), bb = document.getElementById(BID);
-          if (bb) bb.style.opacity = '0';
-          if (ff) { ff.style.opacity = '0'; ff.style.transform = 'scale(.986)'; }
-          // Keep the dark backdrop opaque through the swap, then fade it out
-          // over the freshly-rendered Exchange so there is no pop.
-        } catch (e) {}
-        setTimeout(function () {
-          try { App.screen = 'title'; App.titleHub = 'exchange'; if (typeof render === 'function') render(); } catch (e) {}
-          try {
-            const gg2 = document.createElement('div');
-            gg2.style.cssText = 'position:fixed;inset:0;z-index:2147483290;background:#0b0b10;opacity:1;transition:opacity .5s ' + EASE + ';pointer-events:none';
-            document.body.appendChild(gg2);
-            requestAnimationFrame(function () { gg2.style.opacity = '0'; });
-            setTimeout(function () { try { gg2.remove(); } catch (e) {} }, 620);
-          } catch (e) {}
-        }, 600);
-      };
-      document.body.appendChild(b);
-      requestAnimationFrame(function () { try { b.style.opacity = '1'; } catch (e) {} });
-    }
+    // No floating parent back button — it overlapped the corp app's own
+    // sidebar. The app renders its own "← Ruin Exchange" control in its
+    // sidebar (posts jb:back → _jbLeave), exactly like the bunker's in-HUD
+    // back. Any stale jb-back element from an older build is torn down by
+    // the !onJB branch above.
+    if (b) { try { b.remove(); } catch (e) {} b = null; }
     if (!App._jbMsgBound) {
       App._jbMsgHandler = function (e) {
         const d = e && e.data;
@@ -33984,7 +33985,7 @@ function mountJustBusiness() {
           _jbSendData();
           try { corpEnsure().then(function () { _jbSendData(); }); } catch (e2) {}
         } else if (d.type === 'jb:back') {
-          const bb = document.getElementById('jb-back'); if (bb) bb.onclick();
+          _jbLeave();
         } else if (d.type === 'jb:action') {
           _jbHandleAction(d.action);
         }

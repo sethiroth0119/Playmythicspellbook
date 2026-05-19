@@ -95,6 +95,13 @@ function Sidebar({ route, setRoute, mailCount, blackCount }) {
   const corpRole = JB ? (JB.corp ? String(JB.corp.role || 'member').toUpperCase() : 'Unincorporated') : PLAYER.corpRole;
   return (
     <aside className="sidebar">
+      <button onClick={() => { try { window.JB_back && window.JB_back(); } catch (e) {} }}
+        style={{ display: 'block', width: '100%', cursor: 'pointer', margin: '0 0 12px',
+          border: '1px solid rgba(212,175,55,0.5)', background: 'rgba(212,175,55,0.10)',
+          color: '#ffcf5a', borderRadius: 8, padding: '0.5rem 0.7rem', fontWeight: 700,
+          fontFamily: 'var(--f-display)', letterSpacing: '.02em', fontSize: 13 }}>
+        ← Ruin Exchange
+      </button>
       <div className="brand">
         <div className="mark"><span className="glyph" />Just Business</div>
         <div className="sub">PLAYER ECONOMY · v0.34</div>

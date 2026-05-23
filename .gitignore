@@ -17,3 +17,19 @@ Desktop.ini
 # Logs / temporary
 *.log
 *.tmp
+
+# Node + build artifacts
+node_modules/
+.wrangler/
+public/_preview/
+public/.index.dev.html
+
+# Local secrets / env
+.env
+.env.local
+.dev.vars
+
+# Oversized binary assets — exceed GitHub's per-file limits and shouldn't
+# ship with the repo. Use external storage / asset CDN for these.
+public/assets/Exports/gambit-full-export-*.json
+public/assets/Units/unit frames/Mythic Spellbook units/Last units/Bonus units/Newunits.zip

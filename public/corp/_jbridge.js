@@ -9,7 +9,7 @@
   window.__JB = window.__JB || { econ: null, ready: false };
 
   function announce() {
-    try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'jb:ready' }, '*'); } catch (e) {}
+    try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'jb:ready' }, window.location.origin); } catch (e) {}
   }
 
   window.addEventListener('message', function (e) {
@@ -24,7 +24,7 @@
 
   // Send the embedding game back to the Ruin Exchange.
   window.JB_back = function () {
-    try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'jb:back' }, '*'); } catch (e) {}
+    try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'jb:back' }, window.location.origin); } catch (e) {}
   };
 
   // Ask the parent to run a real economy action against the game:
@@ -33,7 +33,7 @@
   //   { kind:'corpCreate', name, tag }        — found a corporation (guild)
   //   { kind:'corpJoin',  tag }               — join a corporation by tag
   window.JB_action = function (payload) {
-    try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'jb:action', action: payload }, '*'); } catch (e) {}
+    try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'jb:action', action: payload }, window.location.origin); } catch (e) {}
   };
 
   window.JB_isBridged = function () { return !!(window.__JB && window.__JB.econ); };

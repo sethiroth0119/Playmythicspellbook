@@ -168,7 +168,7 @@ function useTweaks(defaults) {
     const edits = typeof keyOrEdits === 'object' && keyOrEdits !== null
       ? keyOrEdits : { [keyOrEdits]: val };
     setValues((prev) => ({ ...prev, ...edits }));
-    window.parent.postMessage({ type: '__edit_mode_set_keys', edits }, '*');
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits }, window.location.origin);
     // Same-window signal so in-page listeners (deck-stage rail thumbnails)
     // can react — the parent message only reaches the host, not peers.
     window.dispatchEvent(new CustomEvent('tweakchange', { detail: edits }));
@@ -217,7 +217,7 @@ function TweaksPanel({ title = 'Tweaks', noDeckControls = false, children }) {
   });
   const toggleRail = (on) => {
     setRailVisible(on);
-    window.postMessage({ type: '__deck_rail_visible', on }, '*');
+    window.postMessage({ type: '__deck_rail_visible', on }, window.location.origin);
   };
   const offsetRef = React.useRef({ x: 16, y: 16 });
   const PAD = 16;
@@ -255,13 +255,13 @@ function TweaksPanel({ title = 'Tweaks', noDeckControls = false, children }) {
       else if (t === '__deactivate_edit_mode') setOpen(false);
     };
     window.addEventListener('message', onMsg);
-    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    window.parent.postMessage({ type: '__edit_mode_available' }, window.location.origin);
     return () => window.removeEventListener('message', onMsg);
   }, []);
 
   const dismiss = () => {
     setOpen(false);
-    window.parent.postMessage({ type: '__edit_mode_dismissed' }, '*');
+    window.parent.postMessage({ type: '__edit_mode_dismissed' }, window.location.origin);
   };
 
   const onDragStart = (e) => {

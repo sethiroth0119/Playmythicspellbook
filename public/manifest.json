@@ -1,0 +1,52 @@
+{
+  "name": "Mythic Spellbook",
+  "short_name": "Spellbook",
+  "description": "Tactical card-and-board battler — survival, factions, ranked multiplayer.",
+  "id": "/?source=pwa",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "fullscreen", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#03020a",
+  "theme_color": "#03020a",
+  "categories": ["games", "entertainment", "strategy"],
+  "lang": "en-US",
+  "icons": [
+    {
+      "src": "/assets/artwork/Mythic Spellbook.png",
+      "sizes": "192x192 256x256 384x384 512x512 1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/artwork/Mythic Spellbook.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Play Online",
+      "short_name": "Play",
+      "description": "Jump straight into a ranked multiplayer match",
+      "url": "/?source=pwa&go=play-online"
+    },
+    {
+      "name": "Daily Challenge",
+      "short_name": "Daily",
+      "description": "Today's mission with bonus rewards",
+      "url": "/?source=pwa&go=daily"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/assets/artwork/Mythic Spellbook.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide"
+    }
+  ],
+  "prefer_related_applications": false
+}

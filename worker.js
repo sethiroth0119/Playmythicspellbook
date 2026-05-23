@@ -280,12 +280,21 @@ async function handleCashout(request, env, u) {
  * aza_purchases (own-JWT, UNIQUE) so a coin pack credits exactly once.
  * Disabled (503) until STRIPE_SECRET_KEY is set — game stays in mock mode.
  * ========================================================================== */
+// 🚨 PRICING SOURCE OF TRUTH — these MUST match SOVEREIGN_PACKAGES in
+// public/index.html. The server-side amounts are what Stripe charges and
+// what gets credited to the player; the client values are display-only.
+// Any drift here = wrong amount of Aza credited.
+//
+// Pricing peg: 1 Aza Coin = $1 USD (5000 Cinder = $1).
+// sp_starter is an INTENTIONAL conversion sweetener (2 Aza for $1.99
+// instead of 1 Aza for $0.99) — keep it off-peg as the first-purchase
+// bonus tier. Every other bundle is 1 Aza per $1 on-peg.
 const AZA_PACKS = {
-  sp_starter: { aza: 100,  cents: 199,  name: 'Starter Cache' },
-  sp_adv:     { aza: 280,  cents: 499,  name: "Adventurer's Coffer" },
-  sp_hero:    { aza: 600,  cents: 999,  name: "Hero's Vault" },
-  sp_champ:   { aza: 1300, cents: 1999, name: "Champion's Trove" },
-  sp_legend:  { aza: 3500, cents: 4999, name: "Legend's Hoard" },
+  sp_starter: { aza: 2,   cents: 199,    name: 'Starter Cache' },
+  sp_adv:     { aza: 5,   cents: 499,    name: "Adventurer's Coffer" },
+  sp_hero:    { aza: 20,  cents: 1999,   name: "Hero's Vault" },
+  sp_champ:   { aza: 50,  cents: 4999,   name: "Champion's Trove" },
+  sp_legend:  { aza: 150, cents: 14999,  name: "Legend's Hoard" },
 };
 async function handleBuy(request, env, u) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_RW });
@@ -358,12 +367,40 @@ async function handleAdmin(request, env, u) {
     let path = '/rest/v1/user_profiles?select=user_id,display_name,gems,sovereigns,updated_at&order=updated_at.desc&limit=' + lim;
     if (q) path += '&display_name=ilike.' + encodeURIComponent('%' + q + '%');
     const base = String(env.SB_URL || '').replace(/\/+$/, '');
-    const r = await fetch(base + path, { headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, accept: 'application/json' } });
+    const SH = { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, accept: 'application/json' };
+    const r = await fetch(base + path, { headers: SH });
     if (!r.ok) { let t = ''; try { t = await r.text(); } catch (e) {} return cjson({ error: 'upstream', detail: ('sb ' + r.status + ' ' + t).slice(0, 200) }, 502); }
     const rows = await r.json().catch(() => []);
+    // 📧 Pull auth metadata (email, signup time, confirmation status, last sign-in,
+    // ban) and merge by user_id. Page through up to 5×1000 = 5,000 accounts —
+    // enough for the early game; tighten if the user count grows past that.
+    const authById = {};
+    try {
+      for (let pg = 1; pg <= 5; pg++) {
+        const ar = await fetch(base + '/auth/v1/admin/users?page=' + pg + '&per_page=1000', { headers: SH });
+        if (!ar.ok) break;
+        const aj = await ar.json().catch(() => null);
+        const list = (aj && Array.isArray(aj.users)) ? aj.users : [];
+        if (!list.length) break;
+        for (const au of list) {
+          if (!au || !au.id) continue;
+          authById[au.id] = {
+            email: au.email || null,
+            created_at: au.created_at || null,
+            confirmed_at: au.email_confirmed_at || au.confirmed_at || null,
+            last_sign_in_at: au.last_sign_in_at || null,
+            banned_until: au.banned_until || null,
+            phone: au.phone || null,
+            provider: (au.app_metadata && au.app_metadata.provider) || null,
+          };
+        }
+        if (list.length < 1000) break;
+      }
+    } catch (e) { /* auth admin unreachable — proceed with profile-only data */ }
     const now = Date.now();
     const users = (Array.isArray(rows) ? rows : []).map(function (x) {
       const t = x.updated_at ? Date.parse(x.updated_at) : 0;
+      const a = authById[x.user_id] || {};
       return {
         user_id: x.user_id,
         handle: x.display_name || '(no handle)',
@@ -371,9 +408,74 @@ async function handleAdmin(request, env, u) {
         sovereigns: Math.max(0, Math.floor(Number(x.sovereigns) || 0)),
         last_seen: x.updated_at || null,
         online: !!(t && (now - t) < ADMIN_ONLINE_MS),
+        // 📧 Auth metadata for the dossier
+        email: a.email || null,
+        created_at: a.created_at || null,
+        email_confirmed: !!a.confirmed_at,
+        confirmed_at: a.confirmed_at || null,
+        last_sign_in_at: a.last_sign_in_at || null,
+        banned: !!(a.banned_until && Date.parse(a.banned_until) > now),
+        banned_until: a.banned_until || null,
+        provider: a.provider || 'email',
       };
     });
+    // 🆕 Include auth-only users (signed up but never landed a profile row yet —
+    // these are the most useful for tracking who got stuck during onboarding).
+    const haveProfile = {}; users.forEach(x => { if (x.user_id) haveProfile[x.user_id] = 1; });
+    for (const uid in authById) {
+      if (haveProfile[uid]) continue;
+      const a = authById[uid];
+      users.push({
+        user_id: uid,
+        handle: (a.email ? a.email.split('@')[0] : '(no handle)') + ' · no-profile',
+        gems: 0, sovereigns: 0,
+        last_seen: a.last_sign_in_at || a.created_at || null,
+        online: false,
+        email: a.email, created_at: a.created_at,
+        email_confirmed: !!a.confirmed_at, confirmed_at: a.confirmed_at,
+        last_sign_in_at: a.last_sign_in_at,
+        banned: !!(a.banned_until && Date.parse(a.banned_until) > now),
+        banned_until: a.banned_until,
+        provider: a.provider || 'email',
+        noProfile: true,
+      });
+    }
     return cjson({ count: users.length, online: users.filter(x => x.online).length, users: users });
+  }
+
+  // 📧 Send a password-reset email via Supabase Auth (uses whatever SMTP is
+  // configured on the project — custom SMTP if set up, default Supabase
+  // mailer otherwise). Admin-initiated rescue for stuck players.
+  if (seg === 'reset-email' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const email = String((body && body.email) || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return cjson({ error: 'bad_email' }, 400);
+    if (ADMIN_EMAILS.indexOf((user.email || '').toLowerCase()) < 0) return cjson({ error: 'forbidden' }, 403);
+    const base = String(env.SB_URL || '').replace(/\/+$/, '');
+    const r = await fetch(base + '/auth/v1/recover', {
+      method: 'POST',
+      headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, 'content-type': 'application/json' },
+      body: JSON.stringify({ email: email }),
+    });
+    if (!r.ok) { let t = ''; try { t = await r.text(); } catch (e) {} return cjson({ error: 'recover_failed', detail: ('sb ' + r.status + ' ' + t).slice(0, 200) }, 502); }
+    return cjson({ ok: true });
+  }
+
+  // 📨 Resend the signup confirmation email — for players who never received
+  // their original confirmation. Also uses the project's SMTP.
+  if (seg === 'resend-confirmation' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const email = String((body && body.email) || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return cjson({ error: 'bad_email' }, 400);
+    if (ADMIN_EMAILS.indexOf((user.email || '').toLowerCase()) < 0) return cjson({ error: 'forbidden' }, 403);
+    const base = String(env.SB_URL || '').replace(/\/+$/, '');
+    const r = await fetch(base + '/auth/v1/resend', {
+      method: 'POST',
+      headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, 'content-type': 'application/json' },
+      body: JSON.stringify({ email: email, type: 'signup' }),
+    });
+    if (!r.ok) { let t = ''; try { t = await r.text(); } catch (e) {} return cjson({ error: 'resend_failed', detail: ('sb ' + r.status + ' ' + t).slice(0, 200) }, 502); }
+    return cjson({ ok: true });
   }
 
   // Account moderation via the Supabase Auth Admin API (service role).

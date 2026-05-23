@@ -81,6 +81,10 @@ const NAV = [
   { id: 'logistics',  label: 'Logistics',      ico: '⇄', badge: 3 },
   { group: 'Economy' },
   { id: 'market',     label: 'Marketplace',    ico: '▤' },
+  // 🚗 Player-to-player vehicle marketplace — no corp required.
+  // Triggers parent-window navigation to the standalone Vehicle Market
+  // screen via the existing jb:open bridge.
+  { id: 'vehicleMarket', label: 'Vehicle Market', ico: '🚗', action: 'openVehicleMarket' },
   { id: 'realestate', label: 'Real Estate',    ico: '⌂' },
   { id: 'black',      label: 'Black Market',   ico: '▥', badgeCls: 'toxic', badge: '6' },
   { id: 'feed',       label: 'Live Feed',      ico: '☷' },
@@ -89,11 +93,31 @@ const NAV = [
   { id: 'trade',      label: 'Trade Window',   ico: '⇋' },
 ];
 
+// Map of op_type → { label, ico, action } for ops that have a dedicated
+// mini-game accessed from the sidebar. Owned ops appear under "My Companies".
+const COMPANY_PAGES = {
+  fishing: { label: 'Woods Fishing',          ico: '⚓', action: 'openWoodsFishing' },
+  cars:    { label: 'Prince Portfolios',      ico: '🚗', action: 'openPrincePortfolios' },
+  oil:     { label: 'Black River Petroleum',  ico: '⛽', action: 'openBlackRiver' },
+  gas:     { label: 'Ethos Fuel Command',     ico: '⛽', action: 'openFuelCommand' },
+};
+
 function Sidebar({ route, setRoute, mailCount, blackCount }) {
   const { PLAYER } = window.ECON;
   const JB = (window.__JB && window.__JB.econ) || null;
   const corpName = JB ? (JB.corp ? JB.corp.name : 'Independent') : PLAYER.corp;
   const corpRole = JB ? (JB.corp ? String(JB.corp.role || 'member').toUpperCase() : 'Unincorporated') : PLAYER.corpRole;
+  // 🏢 Owned ops the player has funded — turn each into a "My Companies"
+  //    sidebar entry. Clicking the Fishing Company tab opens the Woods
+  //    Fishing maritime ops screen (handled by the parent).
+  const ownedCompanies = ((JB && JB.operations) || [])
+    .filter(o => o && o.op_type && COMPANY_PAGES[o.op_type])
+    .map(o => ({
+      op_type: o.op_type,
+      ...COMPANY_PAGES[o.op_type],
+      workers: o.workers | 0,
+      net: o.net | 0,
+    }));
   return (
     <aside className="sidebar">
       <button onClick={() => { try { window.JB_back && window.JB_back(); } catch (e) {} }}
@@ -112,7 +136,11 @@ function Sidebar({ route, setRoute, mailCount, blackCount }) {
           <div key={'g'+i} className="group">{n.group}</div>
         ) : (
           <button key={n.id} data-active={route === n.id ? '1' : '0'}
-            onClick={() => { if (n.modal) { try { window.dispatchEvent(new CustomEvent('jb:open', { detail: n.modal })); } catch (e) {} } else { setRoute(n.id); } }}>
+            onClick={() => {
+              if (n.modal) { try { window.dispatchEvent(new CustomEvent('jb:open', { detail: n.modal })); } catch (e) {} }
+              else if (n.action) { try { window.JB_action && window.JB_action({ kind: n.action }); } catch (e) {} }
+              else { setRoute(n.id); }
+            }}>
             <span className="ico mono">{n.ico}</span>
             <span>{n.label}</span>
             {n.id === 'mail' && mailCount > 0 && <span className="badge alert">{mailCount}</span>}
@@ -123,6 +151,26 @@ function Sidebar({ route, setRoute, mailCount, blackCount }) {
             )}
           </button>
         ))}
+
+        {ownedCompanies.length > 0 && (
+          <React.Fragment>
+            <div className="group">My Companies</div>
+            {ownedCompanies.map(c => (
+              <button key={'co_' + c.op_type} data-active="0"
+                title={'Open ' + c.label + ' — managed via the parent app'}
+                onClick={() => {
+                  try { window.JB_action && window.JB_action({ kind: c.action }); } catch (e) {}
+                }}
+                style={{ position: 'relative' }}>
+                <span className="ico mono" style={{ color: '#6cd4ff' }}>{c.ico}</span>
+                <span>{c.label}</span>
+                <span className="badge" style={{
+                  background: 'linear-gradient(180deg,rgba(108,212,255,0.22),rgba(108,212,255,0.06))',
+                  color: '#6cd4ff', borderColor: '#6cd4ff' }}>OPEN</span>
+              </button>
+            ))}
+          </React.Fragment>
+        )}
       </nav>
 
       <div className="corp-card">

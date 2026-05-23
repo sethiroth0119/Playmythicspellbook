@@ -240,33 +240,33 @@ function saveTransfers(t) { localStorage.setItem(STORAGE_TX, JSON.stringify(t));
 function boeTx(op, kind, amount, resId) {
   var n = Math.floor(Number(amount) || 0);
   if (!(n > 0)) return false;
-  try { window.parent.postMessage({ type: 'boe:tx', op: op, kind: kind, amount: n, resId: resId || null }, '*'); return true; } catch (e) { return false; }
+  try { window.parent.postMessage({ type: 'boe:tx', op: op, kind: kind, amount: n, resId: resId || null }, window.location.origin); return true; } catch (e) { return false; }
 }
 // Cross-player Cinder request actions. The parent is authoritative and
 // re-validates / re-seeds; we just transmit the intent.
 //   op: 'create' | 'pay' | 'decline' | 'cancel'
 function boeReq(op, args) {
-  try { window.parent.postMessage(Object.assign({ type: 'boe:request', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
+  try { window.parent.postMessage(Object.assign({ type: 'boe:request', op: op }, args || {}), window.location.origin); return true; } catch (e) { return false; }
 }
 // Apply for / pay / pay off a hero-collateralized loan.
 //   op: 'apply' | 'pay' | 'payoff'
 function boeLoan(op, args) {
-  try { window.parent.postMessage(Object.assign({ type: 'boe:loan', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
+  try { window.parent.postMessage(Object.assign({ type: 'boe:loan', op: op }, args || {}), window.location.origin); return true; } catch (e) { return false; }
 }
 // Mercenary marketplace actions.
 //   op: 'list' | 'unlist' | 'hire' | 'clockin' | 'pause' | 'clockout'
 function boeMerc(op, args) {
-  try { window.parent.postMessage(Object.assign({ type: 'boe:merc', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
+  try { window.parent.postMessage(Object.assign({ type: 'boe:merc', op: op }, args || {}), window.location.origin); return true; } catch (e) { return false; }
 }
 // Contract postings — either side posts a specific job; the other side accepts.
 //   op: 'create' | 'cancel' | 'accept'
 function boePost(op, args) {
-  try { window.parent.postMessage(Object.assign({ type: 'boe:post', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
+  try { window.parent.postMessage(Object.assign({ type: 'boe:post', op: op }, args || {}), window.location.origin); return true; } catch (e) { return false; }
 }
 // Marketplace actions.
 //   op: 'list' | 'cancel' | 'buy' | 'bid'
 function boeMkt(op, args) {
-  try { window.parent.postMessage(Object.assign({ type: 'boe:market', op: op }, args || {}), '*'); return true; } catch (e) { return false; }
+  try { window.parent.postMessage(Object.assign({ type: 'boe:market', op: op }, args || {}), window.location.origin); return true; } catch (e) { return false; }
 }
 // 🧾 Print-to-PDF statement. Opens a styled popup the player can "Save as
 // PDF" via the system print dialog. Pure client-side, no libraries.
@@ -387,6 +387,12 @@ function App() {
           // Hero-collateralized loans + the player's current capacity.
           loans: Array.isArray(d.loans) ? d.loans : ((prev && prev.loans) || []),
           loanCap: (d.loanCap && typeof d.loanCap === 'object') ? d.loanCap : ((prev && prev.loanCap) || { aza: 0, max: 20, perLv: 5, heroLv: 0, perCinder: 5000 }),
+          // 🏢 Business loans from owned operations (Black River Petroleum,
+          //    Ethos Fuel Command, etc.). Mirrored from BankEthos.businessLoans
+          //    on the parent. NO hero-level gate — these are corporate, not
+          //    hero-collateralized. They live in PageLoans below the personal
+          //    loans section so the player sees both in one place.
+          businessLoans: Array.isArray(d.businessLoans) ? d.businessLoans : ((prev && prev.businessLoans) || []),
           // Mercenary marketplace: open listings + my contracts (both
           // sides) + the canonical 40/52/8 split.
           mercListings: Array.isArray(d.mercListings) ? d.mercListings : ((prev && prev.mercListings) || []),
@@ -415,8 +421,8 @@ function App() {
       setLinking(false);
     }
     window.addEventListener('message', onMsg);
-    try { window.parent.postMessage({ type: 'boe:hello' }, '*'); } catch (e) {}
-    var hi = setInterval(function () { try { window.parent.postMessage({ type: 'boe:hello' }, '*'); } catch (e) {} }, 1200);
+    try { window.parent.postMessage({ type: 'boe:hello' }, window.location.origin); } catch (e) {}
+    var hi = setInterval(function () { try { window.parent.postMessage({ type: 'boe:hello' }, window.location.origin); } catch (e) {} }, 1200);
     var stop = setTimeout(function () { clearInterval(hi); setLinking(false); }, 8000);
     return function () { window.removeEventListener('message', onMsg); clearInterval(hi); clearTimeout(stop); };
   }, []);
@@ -906,7 +912,7 @@ function BalanceCard({ kind, amount, decimals = 0, delta, spark, onSend, wallet 
             <button
               className="chip-btn"
               title="Exchange Aza Coin → Cinder"
-              onClick={() => { try { window.parent.postMessage({ type: "boe:exchange-open" }, "*"); } catch (e) {} }}
+              onClick={() => { try { window.parent.postMessage({ type: "boe:exchange-open" }, window.location.origin); } catch (e) {} }}
             >Exchange</button>
           )}
           <button className="chip-btn" onClick={onSend}>Send</button>
@@ -2121,6 +2127,7 @@ function LoanRow({ loan }) {
 function PageLoans({ account }) {
   const [applyOpen, setApplyOpen] = useState(false);
   const loans = Array.isArray(account && account.loans) ? account.loans : [];
+  const businessLoans = Array.isArray(account && account.businessLoans) ? account.businessLoans : [];
   const cap = (account && account.loanCap) || { aza: 0, max: 20, perLv: 5, heroLv: 0, perCinder: 5000 };
   const active = loans.filter(l => l && l.status === "active");
   const past = loans.filter(l => l && l.status !== "active");
@@ -2147,19 +2154,83 @@ function PageLoans({ account }) {
         <Metric k="Cinder per Aza" v={fmt(cap.perCinder | 0)} sub="canonical peg" />
       </div>
 
+      {/* 🏢 Business loans render FIRST — players took these via their owned
+          operations (Black River, Ethos Fuel, etc.), so when they come to
+          City Hall expecting to see the loan, it must be the top section. */}
+      {businessLoans.length > 0 && (
+        <div className="panel" style={{ marginTop: 0, marginBottom: 18, borderColor: "var(--cinder)" }}>
+          <div className="panel-h">
+            <h3>🏢 Ethos Loans — Business Operations</h3>
+            <span className="label" style={{ color: "var(--cinder)" }}>
+              {businessLoans.length} active · {fmt(businessLoans.reduce((s, l) => s + (l.balance | 0), 0))} 🜂 outstanding
+            </span>
+          </div>
+          <div className="small-text" style={{ color: "var(--ink-dim)", marginBottom: 10 }}>
+            Loans taken inside your owned businesses (oil company, dealership, gas station chain, etc.). <b style={{ color: "var(--cinder-bright)" }}>No hero-level gate</b> — these are corporate debt. Manage them inside the business UI; balances update here in real time.
+          </div>
+          {businessLoans.map(l => (
+            <div key={l.id} style={{
+              background: "var(--bg-2)", border: "1px solid var(--line)",
+              borderLeft: "3px solid var(--cinder)", borderRadius: 6,
+              padding: "12px 14px", marginBottom: 8,
+            }}>
+              <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
+                <div>
+                  <div className="display" style={{ fontSize: 14, color: "#fff" }}>{l.businessName || l.businessId}</div>
+                  <div className="mono small-text" style={{ color: "var(--ink-mute)" }}>ID {l.id}</div>
+                </div>
+                <div className="mono" style={{ color: "var(--cinder)", fontSize: 18 }}>{fmt(l.balance)} 🜂</div>
+              </div>
+              <div className="row" style={{ gap: 18, flexWrap: "wrap", fontSize: 12 }}>
+                <span className="mono"><span className="dim">Principal:</span> <b>{fmt(l.principal)} 🜂</b></span>
+                <span className="mono"><span className="dim">Rate:</span> <b style={{ color: "var(--toxic)" }}>{Math.round((l.rate || 0) * 100)}% {l.ratePeriod || ""}</b></span>
+                <span className="mono"><span className="dim">Opened:</span> <b>{l.openedAt ? new Date(l.openedAt).toLocaleDateString() : "—"}</b></span>
+                <span className="mono"><span className="dim">Paid down:</span> <b>{fmt((l.principal | 0) - (l.balance | 0))} 🜂 ({Math.round((1 - (l.balance | 0) / Math.max(1, l.principal | 0)) * 100)}%)</b></span>
+              </div>
+              {l.documentText && (
+                <div style={{
+                  marginTop: 10, padding: "8px 10px",
+                  background: "rgba(0,0,0,0.3)", border: "1px dashed var(--line)",
+                  fontSize: 11, color: "var(--ink-dim)", fontStyle: "italic", lineHeight: 1.5,
+                }}>
+                  📜 {l.documentText}
+                </div>
+              )}
+              <div style={{ marginTop: 8 }}>
+                <div className="bar" style={{ height: 5, background: "var(--bg-3)", borderRadius: 999, overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%",
+                    width: Math.max(0, Math.min(100, (1 - (l.balance | 0) / Math.max(1, l.principal | 0)) * 100)) + "%",
+                    background: "linear-gradient(90deg, var(--toxic), var(--cinder))",
+                    transition: "width 0.4s",
+                  }} />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 🧑 Personal hero-collateralized loans — these DO require hero
+          training (the gate text below). Separate system from business
+          loans above. Renders below so business-loan users see their
+          mirrored debt first. */}
+      <div className="section-head" style={{ marginTop: 4, marginBottom: 8 }}>
+        <h3 style={{ fontSize: 13, letterSpacing: "0.06em", color: "var(--ink-mute)", textTransform: "uppercase" }}>🧑 Personal Hero Loans</h3>
+      </div>
       {active.length === 0 && past.length === 0 ? (
         <div className="panel" style={{ padding: 22, textAlign: "center", color: "var(--ink-dim)" }}>
-          <div style={{ fontSize: 14, marginBottom: 6 }}>No loans on record. <span style={{ color: "var(--ink-mute)" }}>(none)</span></div>
+          <div style={{ fontSize: 14, marginBottom: 6 }}>No personal loans on record. <span style={{ color: "var(--ink-mute)" }}>(none)</span></div>
           {cap.aza > 0
             ? <div className="small-text">You're approved for up to <b style={{ color: "var(--aza)" }}>{cap.aza} 👑</b> — credited as <b style={{ color: "var(--cinder)" }}>{fmt(cap.aza * (cap.perCinder | 0))} 🜂</b> on apply.</div>
-            : <div className="small-text">Train a hero to at least Lv {cap.perLv} to unlock 1 👑 of loan capacity.</div>}
+            : <div className="small-text"><b style={{ color: "var(--ink-dim)" }}>Personal</b> hero-collateralized loans require a hero at Lv {cap.perLv}+. <span style={{ color: "var(--ink-mute)" }}>(Business loans from your owned operations bypass this gate — they appear above.)</span></div>}
         </div>
       ) : (
         <>
           {active.map(l => <LoanRow key={l.id} loan={l} />)}
           {past.length > 0 && (
             <div className="panel">
-              <div className="panel-h"><h3>Closed loans</h3><span className="label">{past.length} record{past.length === 1 ? "" : "s"}</span></div>
+              <div className="panel-h"><h3>Closed personal loans</h3><span className="label">{past.length} record{past.length === 1 ? "" : "s"}</span></div>
               <table className="t">
                 <thead><tr><th>ID</th><th>Aza</th><th>Cinder principal</th><th>Status</th><th>Closed</th></tr></thead>
                 <tbody>
@@ -2451,7 +2522,7 @@ function AuthScreen({ onAccount, prevAccount }) {
         passwordHash: pwHash,
         c1: acc.c1, c2: acc.c2,
         application: formData,
-      }, "*");
+      }, window.location.origin);
     } catch (e) {}
     onAccount(acc);
     setBusy(false);

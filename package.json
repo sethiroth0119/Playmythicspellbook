@@ -4,11 +4,15 @@
   "version": "1.0.0",
   "description": "Mythic Spellbook — Cloudflare Workers static deploy of ./public",
   "scripts": {
-    "deploy": "wrangler deploy",
+    "deploy": "node deploy.mjs",
+    "deploy:raw": "wrangler deploy",
+    "build": "node build.mjs minify",
+    "restore": "node build.mjs restore",
     "login": "wrangler login",
     "whoami": "wrangler whoami"
   },
   "devDependencies": {
+    "terser": "^5.48.0",
     "wrangler": "^4"
   }
 }

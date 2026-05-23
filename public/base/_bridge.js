@@ -3,10 +3,10 @@
    The parent game posts REAL data in; the sub-app reads it live and the
    React tree re-renders on the 'bridgedata' window event. */
 (function () {
-  window.__BRIDGE = window.__BRIDGE || { resources: null, threat: null, alerts: null, roster: null, world: null, bag: null, camprooms: null, ready: false };
+  window.__BRIDGE = window.__BRIDGE || { resources: null, threat: null, alerts: null, roster: null, world: null, bag: null, camprooms: null, heroBeds: null, ready: false };
 
   function announce() {
-    try { window.parent && window.parent.postMessage({ type: 'base:ready' }, '*'); } catch (e) {}
+    try { window.parent && window.parent.postMessage({ type: 'base:ready' }, window.location.origin); } catch (e) {}
   }
 
   window.addEventListener('message', function (e) {
@@ -20,6 +20,7 @@
       if (d.world && typeof d.world === 'object') window.__BRIDGE.world = d.world;
       if (d.bag && typeof d.bag === 'object') window.__BRIDGE.bag = d.bag;
       if (d.camprooms && typeof d.camprooms === 'object') window.__BRIDGE.camprooms = d.camprooms;
+      if (Array.isArray(d.heroBeds)) window.__BRIDGE.heroBeds = d.heroBeds;
       window.__BRIDGE.ready = true;
       try { window.dispatchEvent(new Event('bridgedata')); } catch (e2) {}
     }
@@ -27,7 +28,7 @@
 
   // Let the embedding game send us back to its menu.
   window.BB_back = function () {
-    try { window.parent && window.parent.postMessage({ type: 'base:back' }, '*'); } catch (e) {}
+    try { window.parent && window.parent.postMessage({ type: 'base:back' }, window.location.origin); } catch (e) {}
   };
 
   // Announce as soon as possible AND once more after load (covers both the

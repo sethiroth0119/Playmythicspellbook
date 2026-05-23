@@ -34,7 +34,7 @@ function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
           onClick={() => {
             try {
               if (window.BB_back) window.BB_back();
-              else window.parent.postMessage({ type: "base:back" }, "*");
+              else window.parent.postMessage({ type: "base:back" }, window.location.origin);
             } catch (e) {}
           }}
           style={{
@@ -65,7 +65,7 @@ function TopBar({ day = "DAY 047", clock = "02:14:32", threat = 38 }) {
           className="res-bar-label"
           title="📒 Open My Resources — every resource you own (craft / sell / trade / Black Market)"
           style={{ cursor: "pointer" }}
-          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "ledger" }, "*"); } catch (e) {} }}
+          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "ledger" }, window.location.origin); } catch (e) {} }}
         >
           <b>CAMP</b><span>RESOURCES 📒</span>
         </div>
@@ -128,13 +128,13 @@ function LeftColumn() {
   const bagAccent = bagLocked ? "#7ec0ff" : "#ffd166";
   const depositBag = () => {
     if (bagLocked) return;
-    try { window.parent.postMessage({ type: "base:action", action: "deposit" }, "*"); } catch (e) {}
+    try { window.parent.postMessage({ type: "base:action", action: "deposit" }, window.location.origin); } catch (e) {}
   };
   const plain = (s) => String(s || "").replace(/<[^>]+>/g, "");
   const isImg = (s) => /^(https?:|data:|blob:|\/)/i.test(String(s || ""));
   const openCard = (id) => {
     if (!id) return;
-    try { window.parent.postMessage({ type: "base:action", action: "card", id }, "*"); } catch (e) {}
+    try { window.parent.postMessage({ type: "base:action", action: "card", id }, window.location.origin); } catch (e) {}
   };
   const Avatar = ({ p }) =>
     isImg(p.icon)
@@ -280,6 +280,107 @@ function LeftColumn() {
 }
 
 // ───────────────────────────────────────────────────────────────
+// 🛏 BEDS RACK — right-side panel showing each hero's energy /
+// fatigue / stress and a state pill (READY / TIRED / EXHAUSTED).
+// Bridged in via window.__BRIDGE.heroBeds from the parent app.
+// Clicking a bed posts a "rest" action back so the parent opens
+// the full Hero Rest panel.
+// ───────────────────────────────────────────────────────────────
+function BedsRack() {
+  const BEDS = (window.__BRIDGE && Array.isArray(window.__BRIDGE.heroBeds)) ? window.__BRIDGE.heroBeds : [];
+  const isImg = (s) => /^(https?:|data:|blob:|\/)/i.test(String(s || ""));
+  const openRest = () => {
+    try { window.parent.postMessage({ type: "base:action", action: "rest" }, window.location.origin); } catch (e) {}
+  };
+  // ALWAYS render the rack so the player can see where heroes go to rest.
+  // If the bridge hasn't delivered any beds yet (cold open / fresh profile),
+  // show an empty-state card pointing at Hero Loadout.
+  if (BEDS.length === 0) {
+    return (
+      <aside className="hud-beds-rack" title="Hero Beds — assign heroes via Hero Loadout. They'll appear here for one-tap resting.">
+        <div className="beds-rack-h">
+          <span className="beds-rack-icon">🛏</span>
+          <span className="beds-rack-title">HERO BEDS</span>
+          <span className="beds-rack-count">0</span>
+        </div>
+        <div className="beds-rack-list">
+          <div className="bed-card" style={{ opacity: 0.7, cursor: "default" }}>
+            <div className="bed-icon"><span style={{ fontSize: 18 }}>🛌</span></div>
+            <div className="bed-meta">
+              <div className="bed-name">No heroes assigned</div>
+              <div className="bed-bar"><div className="bed-bar-fill" style={{ width: "0%" }} /></div>
+              <div className="bed-foot">
+                <span className="bed-val">—</span>
+                <span className="bed-state" style={{ color: "#bcdcff", borderColor: "#bcdcff" }}>EMPTY</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button className="beds-rack-cta" onClick={openRest} title="Open the Hero Rest panel in the main game">
+          🦸 Pick Heroes
+        </button>
+      </aside>
+    );
+  }
+  return (
+    <aside className="hud-beds-rack" title="Hero Beds — each owned hero's recovery state. Hover for full numbers. Click to open the Rest panel.">
+      <div className="beds-rack-h">
+        <span className="beds-rack-icon">🛏</span>
+        <span className="beds-rack-title">HERO BEDS</span>
+        <span className="beds-rack-count">{BEDS.length}</span>
+      </div>
+      <div className="beds-rack-list">
+        {BEDS.map((b) => {
+          const pct = Math.max(0, Math.min(100, Math.round((b.energy / (b.energyMax || 100)) * 100)));
+          const stateLabel = b.state === "exhausted" ? "EXHAUSTED"
+                          : b.state === "ready"      ? "READY"
+                          : "TIRED";
+          const stateColor = b.state === "exhausted" ? "var(--ember, #ff7755)"
+                          : b.state === "ready"     ? "var(--toxic, #4ade80)"
+                          : "var(--amber, #ffd166)";
+          return (
+            <button
+              key={b.id}
+              className={`bed-card bed-${b.state}`}
+              onClick={openRest}
+              title={
+                `${b.name}\n` +
+                `Energy ${b.energy}/${b.energyMax || 100} · Fatigue ${b.fatigue}/100 · Stress ${b.stress}/100\n` +
+                (b.state === "exhausted"
+                  ? "Exhausted — taking deployment penalty. Rest before next battle."
+                  : b.state === "ready"
+                    ? "Fully rested — ready to deploy."
+                    : "Tired — could use a rest before next match.") +
+                "\nClick to open the Rest panel."
+              }
+            >
+              <div className="bed-icon">
+                {isImg(b.icon)
+                  ? <img src={b.icon} alt={b.name} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 4 }} />
+                  : <span style={{ fontSize: 18 }}>{b.icon || "🦸"}</span>}
+              </div>
+              <div className="bed-meta">
+                <div className="bed-name">{b.name}</div>
+                <div className="bed-bar">
+                  <div className="bed-bar-fill" style={{ width: pct + "%" }} />
+                </div>
+                <div className="bed-foot">
+                  <span className="bed-val">{b.energy}/{b.energyMax || 100}</span>
+                  <span className="bed-state" style={{ color: stateColor, borderColor: stateColor }}>{stateLabel}</span>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <button className="beds-rack-cta" onClick={openRest} title="Open the full Hero Rest panel — rest 1h, or pay Cinder Sprint">
+        🛌 Open Rest Panel
+      </button>
+    </aside>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────
 // BOTTOM RIBBON — minimap + actions + tick speed
 // ───────────────────────────────────────────────────────────────
 function BottomBar({ activeId, onSelect, speed, setSpeed, paused, setPaused }) {
@@ -335,7 +436,7 @@ function BottomBar({ activeId, onSelect, speed, setSpeed, paused, setPaused }) {
         <button
           className="act"
           title="Open Camp Ops — station units, assign Rest / Study / Raid, build & upgrade facilities (hotkey: A)"
-          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "nav:campOps" }, "*"); } catch (e) {} }}
+          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "nav:campOps" }, window.location.origin); } catch (e) {} }}
         >
           {Ic.recruit}
           <span className="act-lbl">Assign</span>
@@ -344,7 +445,7 @@ function BottomBar({ activeId, onSelect, speed, setSpeed, paused, setPaused }) {
         <button
           className="act"
           title="Hire NPC staff / station units to run the camp rooms"
-          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "workers" }, "*"); } catch (e) {} }}
+          onClick={() => { try { window.parent.postMessage({ type: "base:action", action: "workers" }, window.location.origin); } catch (e) {} }}
         >
           {Ic.research}
           <span className="act-lbl">Hire</span>

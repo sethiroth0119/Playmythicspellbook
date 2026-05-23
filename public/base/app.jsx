@@ -66,6 +66,7 @@ function App() {
     >
       <TopBar day="DAY 047" clock={clockStr} threat={38} />
       <LeftColumn />
+      <BedsRack />
 
       <main className="stage" onClick={(e) => {
         // background click closes panel

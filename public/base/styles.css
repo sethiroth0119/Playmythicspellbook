@@ -974,3 +974,123 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   outline: 1px solid var(--bronze-hi);
   outline-offset: 1px;
 }
+
+/* ============================================================
+   🛏 BEDS RACK — right-side panel showing each hero's energy
+   ============================================================ */
+.hud-beds-rack {
+  position: fixed;
+  right: 14px;
+  top: calc(var(--hud-top, 56px) + 14px);
+  width: 218px;
+  max-height: calc(100vh - var(--hud-top, 56px) - var(--hud-bot, 76px) - 30px);
+  z-index: 30;
+  background: linear-gradient(160deg, rgba(28, 18, 40, 0.96) 0%, rgba(12, 8, 22, 0.98) 100%);
+  border: 1px solid rgba(126, 192, 255, 0.4);
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem 0.7rem;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 14px rgba(126, 192, 255, 0.18);
+  color: var(--text-1, #ffe9b8);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-family: inherit;
+}
+.beds-rack-h {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid rgba(126, 192, 255, 0.25);
+}
+.beds-rack-icon { font-size: 1.1rem; color: #bcdcff; filter: drop-shadow(0 0 6px rgba(126, 192, 255, 0.6)); }
+.beds-rack-title { font-weight: 800; font-size: 0.78rem; letter-spacing: 0.14em; color: #bcdcff; flex: 1; }
+.beds-rack-count {
+  background: rgba(126, 192, 255, 0.15);
+  border: 1px solid rgba(126, 192, 255, 0.5);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.66rem;
+  color: #bcdcff;
+}
+.beds-rack-list {
+  display: flex; flex-direction: column; gap: 0.35rem;
+  flex: 1;
+}
+.bed-card {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
+  background: rgba(20, 28, 55, 0.55);
+  border: 1px solid rgba(126, 192, 255, 0.28);
+  border-radius: 7px;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s, transform 0.12s;
+  font-family: inherit;
+}
+.bed-card:hover { transform: translateY(-1px); border-color: rgba(126, 192, 255, 0.7); }
+.bed-exhausted { border-color: rgba(255, 120, 90, 0.55); background: rgba(60, 18, 12, 0.45); }
+.bed-ready     { border-color: rgba(74, 222, 128, 0.55); background: rgba(20, 50, 28, 0.32); }
+.bed-tired     { /* default amber */ }
+.bed-icon {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.bed-meta { min-width: 0; }
+.bed-name {
+  color: #ffe9b8; font-weight: 700; font-size: 0.78rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 0.18rem;
+}
+.bed-bar {
+  height: 5px; border-radius: 3px;
+  background: rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  margin-bottom: 0.18rem;
+}
+.bed-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6cd4ff, #2a8fd4);
+  transition: width 0.25s ease;
+}
+.bed-exhausted .bed-bar-fill { background: linear-gradient(90deg, #ff9a7a, #e85d3c); }
+.bed-ready     .bed-bar-fill { background: linear-gradient(90deg, #b4f0c0, #4ade80); }
+.bed-foot {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 0.62rem; letter-spacing: 0.06em;
+}
+.bed-val { color: #bcdcff; font-family: 'JetBrains Mono', monospace; }
+.bed-state {
+  padding: 0.05rem 0.4rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.beds-rack-cta {
+  width: 100%;
+  cursor: pointer;
+  padding: 0.45rem 0.6rem;
+  background: linear-gradient(180deg, #6cd4ff 0%, #2a8fd4 100%);
+  color: #04162a;
+  border: 1px solid #6cd4ff;
+  border-radius: 6px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  font-family: inherit;
+}
+.beds-rack-cta:hover { filter: brightness(1.12); }
+
+/* On narrow screens, hide the rack so the room grid keeps breathing room. */
+@media (max-width: 1100px) {
+  .hud-beds-rack { display: none; }
+}

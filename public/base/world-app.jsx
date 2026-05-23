@@ -230,13 +230,35 @@ function TopBar({ filter, setFilter }) {
         <a href="index.html">◂ Camp</a>
         <span className="sep">/</span>
         <span className="here">World Map · Ethos Heights</span>
+        {/* ⛽ Player-owned Gas Stations directory — cross-player P2P fuel market */}
+        <button
+          className="chip"
+          title="Browse every player-owned gas station's listed fuel price and buy fuel directly from them"
+          style={{ marginLeft: 12, borderColor: "var(--amber)", color: "var(--amber)" }}
+          onClick={() => {
+            try { window.parent.postMessage({ type: "base:action", action: "gasStations" }, window.location.origin); } catch (e) {}
+          }}
+        >
+          ⛽ Gas Stations
+        </button>
+        {/* ⛽ Gas Station Run — roguelite campaign */}
+        <button
+          className="chip"
+          title="Run an abandoned gas station for scrap, fuel, raider loot. Roguelite rules — death stakes."
+          style={{ marginLeft: 6, borderColor: "var(--purple-hi)", color: "var(--purple-hi)" }}
+          onClick={() => {
+            try { window.parent.postMessage({ type: "base:action", action: "gasStationRun" }, window.location.origin); } catch (e) {}
+          }}
+        >
+          ⛽ Gas Station Run
+        </button>
         {window.__BRIDGE && window.__BRIDGE.world && window.__BRIDGE.world.admin && (
           <button
             className="chip"
             title="Create / edit roguelite campaigns — they appear here on the World Map"
             style={{ marginLeft: 12, borderColor: "var(--bronze-hi)", color: "var(--bronze-hi)" }}
             onClick={() => {
-              try { window.parent.postMessage({ type: "base:action", action: "nav:rlcAdmin" }, "*"); } catch (e) {}
+              try { window.parent.postMessage({ type: "base:action", action: "nav:rlcAdmin" }, window.location.origin); } catch (e) {}
             }}
           >
             ✎ New / Edit Campaign
@@ -370,7 +392,7 @@ function App() {
           threat: z.threat || 2,
           yields: Array.isArray(z.yields) ? z.yields : [],
         },
-      }, "*");
+      }, window.location.origin);
     } catch (e) {}
     setBriefDest(null);
   };

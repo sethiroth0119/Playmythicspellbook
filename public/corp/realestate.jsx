@@ -177,14 +177,18 @@ function fmtPriceShort(n) {
 // ── Listing card ─────────────────────────────────────────────────────────
 
 function PropertyCard({ p, onSelect, onHover }) {
-  const { PLAYERS } = window.ECON;
+  const { PLAYERS, DISTRICTS } = window.ECON;
   const agent = PLAYERS.find(x => x.id === p.agent);
+  // Defensive fallbacks so listings missing tier/district don't kill the
+  // whole list render — falls back to T1 + lower if upstream forgot to set.
+  const tierLc = (p.tier ? String(p.tier) : 'T1').toLowerCase();
+  const distName = (DISTRICTS[p.district] && DISTRICTS[p.district].name) || 'Unsorted';
   return (
     <div className="prop-card"
       onMouseEnter={() => onHover(p.id)}
       onMouseLeave={() => onHover(null)}
       onClick={() => onSelect(p.id)}>
-      <div className={'prop-card-img tier-' + p.tier.toLowerCase() + (p.flag ? ' flag-' + p.flag : '')} style={{ position: 'relative', overflow: 'hidden' }}>
+      <div className={'prop-card-img tier-' + tierLc + (p.flag ? ' flag-' + p.flag : '')} style={{ position: 'relative', overflow: 'hidden' }}>
         {(() => {
           const photo = (window.JB_art && window.JB_art('re', p.id)) || '';
           return photo ? <img src={photo} alt={p.name} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /> : null;
@@ -212,7 +216,7 @@ function PropertyCard({ p, onSelect, onHover }) {
           <span className="sep">·</span>
           {p.area}
         </div>
-        <div className="prop-card-addr">{p.name} <span className="muted">· {window.ECON.DISTRICTS[p.district].name}</span></div>
+        <div className="prop-card-addr">{p.name} <span className="muted">· {distName}</span></div>
         <div className="prop-card-agent">
           <span className="agent-av" style={{ background: 'linear-gradient(135deg, var(--rust), var(--void))' }}>{agent?.handle.slice(0, 2)}</span>
           <span className="mono" style={{ fontSize: 10.5, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>{agent?.handle} · {agent?.corp}</span>
@@ -222,11 +226,139 @@ function PropertyCard({ p, onSelect, onHover }) {
   );
 }
 
+// ── List Property modal (admin only) ─────────────────────────────────────
+// Single form → posts `realEstateList` action up to the parent. Parent
+// places the house on Camp Heights and mirrors back via econ.
+function ListPropertyModal({ onClose }) {
+  const [name,    setName]    = useState('');
+  const [address, setAddress] = useState('');
+  const [price,   setPrice]   = useState(15000);
+  const [tier,    setTier]    = useState('T1');
+  const [district,setDistrict]= useState('lower');
+  const [capacity,setCapacity]= useState(200);
+  const [blurb,   setBlurb]   = useState('');
+  const submit = () => {
+    if (!name.trim()) { alert('Please give the property a name.'); return; }
+    const id = 're_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    // Naive scatter for the map pin — picks a point inside the district's
+    // ellipse so the pin lands roughly in the right zone.
+    const dpos = {
+      foundry: [42, 22], ai: [42, 50], lower: [56, 36],
+      drowned: [36, 80], verge: [86, 38], anomaly: [92, 74],
+    }[district] || [50, 50];
+    const x = Math.max(4, Math.min(96, dpos[0] + (Math.random() - 0.5) * 18));
+    const y = Math.max(4, Math.min(96, dpos[1] + (Math.random() - 0.5) * 16));
+    try {
+      window.JB_action({
+        kind: 'realEstateList',
+        listing: {
+          id, name: name.trim(), address: address.trim(),
+          price: price | 0, tier, district, capacity: capacity | 0,
+          blurb: blurb.trim(), x, y, color: '#88c4ff',
+        },
+      });
+    } catch (e) { alert('Listing failed: ' + (e.message || e)); return; }
+    onClose();
+  };
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(4px)' }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ width: 560, maxWidth: '92vw', background:'var(--bg-1, #14111a)', border:'1px solid var(--line-soft, #2a2330)', borderRadius:12, padding:'20px 22px', color:'var(--fg, #e8ddff)' }}>
+        <div className="row" style={{ justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+          <h3 style={{ margin:0, fontFamily:'var(--disp)', fontSize:18 }}>🏘 List New Property</h3>
+          <button className="btn ghost sm" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ display:'grid', gap:10 }}>
+          <Field label="Property name *">
+            <input className="select" value={name} onChange={e => setName(e.target.value)} placeholder="Lakeview Manor" maxLength={50} />
+          </Field>
+          <Field label="Address (optional)">
+            <input className="select" value={address} onChange={e => setAddress(e.target.value)} placeholder="14 Drowned Wharf" maxLength={60} />
+          </Field>
+          <div className="row" style={{ gap:10 }}>
+            <Field label="Price (Cinder)" style={{ flex:1 }}>
+              <input className="select" type="number" min={100} max={9999999} value={price} onChange={e => setPrice(Math.max(100, Number(e.target.value) || 0))} />
+            </Field>
+            <Field label="Tier" style={{ flex:1 }}>
+              <select className="select" value={tier} onChange={e => setTier(e.target.value)}>
+                {['T1','T2','T3','T4'].map(t => <option key={t} value={t}>Tier {t.slice(1)}</option>)}
+              </select>
+            </Field>
+            <Field label="Stash slots" style={{ flex:1 }}>
+              <input className="select" type="number" min={20} max={2000} value={capacity} onChange={e => setCapacity(Math.max(20, Number(e.target.value) || 0))} />
+            </Field>
+          </div>
+          <Field label="District">
+            <select className="select" value={district} onChange={e => setDistrict(e.target.value)}>
+              {Object.values(window.ECON.DISTRICTS).map(d => (
+                <option key={d.id} value={d.id}>{d.name} — {d.blurb}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Blurb (1 sentence)">
+            <textarea className="select" rows={2} value={blurb} onChange={e => setBlurb(e.target.value)} placeholder="Pre-Collapse townhouse on the safe side of the floodline."  maxLength={200} />
+          </Field>
+        </div>
+        <div style={{ background:'rgba(199,93,212,0.06)', border:'1px dashed rgba(199,93,212,0.32)', borderRadius:6, padding:'8px 10px', marginTop:14, fontSize:12, color:'var(--muted, #9a93a8)' }}>
+          🔒 <b>Single-owner deed</b> — once a player buys this, no one else can. The house will auto-place on Camp Heights so the eventual owner can walk to it.
+        </div>
+        <div className="row" style={{ justifyContent:'flex-end', gap:8, marginTop:16 }}>
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={submit}>🏘 Publish Listing</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function Field({ label, children, style }) {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:4, ...(style||{}) }}>
+      <label className="mono muted" style={{ fontSize:11, letterSpacing:'.08em', textTransform:'uppercase' }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
 // ── Real Estate screen ───────────────────────────────────────────────────
 
+// 🏘 Live listings — derive from the parent game (window.__JB.econ.realEstateListings)
+// so admin-added properties appear here. Falls back to ECON.PROPERTIES for
+// standalone dev mode. Filters out listings already owned by someone other
+// than the current player (single-owner deeds).
+function useLiveProperties() {
+  const [props, setProps] = useState(() => buildPropsList());
+  useEffect(() => {
+    const refresh = () => setProps(buildPropsList());
+    refresh();
+    window.addEventListener('jbdata', refresh);
+    return () => window.removeEventListener('jbdata', refresh);
+  }, []);
+  return props;
+}
+function buildPropsList() {
+  try {
+    const econ = window.__JB && window.__JB.econ;
+    const myUid = (econ && econ.myUid) || null;
+    const live = (econ && Array.isArray(econ.realEstateListings)) ? econ.realEstateListings : null;
+    if (live && live.length) {
+      return live
+        // 🔒 SINGLE-OWNER FILTER — hide listings claimed by another survivor.
+        // The owner themselves keeps seeing it (so they can manage / view).
+        .filter(p => !p.ownedBy || p.ownedBy === myUid)
+        .map(p => ({
+          ...p,
+          status: p.ownedBy ? 'owned' : 'sale',
+          agent: '',
+          showcase: !!p.showcase,
+        }));
+    }
+  } catch (e) {}
+  return (window.ECON && window.ECON.PROPERTIES) || [];
+}
+
 function RealEstateScreen({ openDetail }) {
-  const { PROPERTIES } = window.ECON;
+  const PROPERTIES = useLiveProperties();
   const [q, setQ] = useState('');
+  const [showList, setShowList] = useState(false);
   const [status, setStatus] = useState('any');
   const [tier, setTier] = useState('any');
   const [district, setDistrict] = useState('any');
@@ -305,8 +437,14 @@ function RealEstateScreen({ openDetail }) {
         </FilterDD>
 
         <div style={{ flex: 1 }} />
+        {window.JB_isAdmin && window.JB_isAdmin() && (
+          <button className="btn primary" onClick={() => setShowList(true)} title="Admin: list a new property — auto-places on Camp Heights map">
+            🏘 + List Property
+          </button>
+        )}
         <button className="btn primary">Save search</button>
       </div>
+      {showList && <ListPropertyModal onClose={() => setShowList(false)} />}
 
       <div className="re-grid">
         <div className="re-map-wrap">
@@ -393,8 +531,13 @@ function FilterChk({ label, defaultChecked }) {
 // ── Detail screen ────────────────────────────────────────────────────────
 
 function PropertyDetailScreen({ propertyId, onBack }) {
-  const { PROPERTIES, PLAYERS, DISTRICTS, REVIEWS } = window.ECON;
-  const p = PROPERTIES.find(x => x.id === propertyId) || PROPERTIES[0];
+  const livePROPS = useLiveProperties();
+  const { PLAYERS, DISTRICTS, REVIEWS } = window.ECON;
+  // Use the live (bridged) list so admin-added properties render here.
+  const p = livePROPS.find(x => x.id === propertyId)
+        || (window.ECON.PROPERTIES || []).find(x => x.id === propertyId)
+        || livePROPS[0]
+        || (window.ECON.PROPERTIES || [])[0];
   if (!p) {
     return (
       <div className="re-screen" style={{ padding: 24 }}>
@@ -558,9 +701,55 @@ function PropertyDetailScreen({ propertyId, onBack }) {
             </div>
 
             <div className="col" style={{ gap: 6, marginTop: 14 }}>
-              <button className="btn primary" style={{ justifyContent: 'center' }}>Contact {agent?.handle.split('-')[0]}</button>
-              <button className="btn" style={{ justifyContent: 'center' }}>Make offer</button>
-              <button className="btn ghost" style={{ justifyContent: 'center' }}>Schedule walkthrough</button>
+              {(() => {
+                // 🏘 BUY CTA — player-driven listings (have an .ownedBy field
+                // on the live econ; PROPERTIES from window.ECON are the mock
+                // pool with an agent). When ownedBy is undefined we treat as
+                // a "real" listing and show the BUY action.
+                const econ = (window.__JB && window.__JB.econ) || {};
+                const live = (Array.isArray(econ.realEstateListings) ? econ.realEstateListings : []).find(x => x.id === p.id);
+                if (!live) {
+                  // Mock / default — keep the legacy agent UI.
+                  return (
+                    <>
+                      <button className="btn primary" style={{ justifyContent: 'center' }}>Contact {agent?.handle.split('-')[0]}</button>
+                      <button className="btn" style={{ justifyContent: 'center' }}>Make offer</button>
+                      <button className="btn ghost" style={{ justifyContent: 'center' }}>Schedule walkthrough</button>
+                    </>
+                  );
+                }
+                const myUid = econ.myUid || null;
+                const owned = !!live.ownedBy;
+                const mine  = owned && live.ownedBy === myUid;
+                const canBuy = !owned && (econ.cinders | 0) >= (live.price | 0);
+                if (mine) {
+                  return (
+                    <>
+                      <div style={{ padding:'8px 10px', background:'rgba(124,232,168,0.10)', border:'1px solid rgba(124,232,168,0.4)', borderRadius:6, color:'rgb(124,232,168)', fontSize:13, textAlign:'center' }}>✓ Owned by you — walk to it in Camp Heights.</div>
+                      <button className="btn ghost" style={{ justifyContent: 'center' }} onClick={() => window.JB_back && window.JB_back()}>← Leave to Camp</button>
+                    </>
+                  );
+                }
+                if (owned) {
+                  return (
+                    <div style={{ padding:'8px 10px', background:'rgba(255,107,107,0.10)', border:'1px solid rgba(255,107,107,0.4)', borderRadius:6, color:'rgb(255,150,140)', fontSize:13, textAlign:'center' }}>🔒 Single-owner deed already claimed by another survivor.</div>
+                  );
+                }
+                return (
+                  <>
+                    <button className="btn primary" style={{ justifyContent: 'center' }} disabled={!canBuy}
+                      onClick={() => {
+                        if (!confirm(`Buy "${live.name}" for ${(live.price|0).toLocaleString()} Cinder?\n\nThis is a single-owner deed — no other player can buy it after you.`)) return;
+                        try { window.JB_action({ kind: 'realEstateBuy', listingId: live.id }); } catch (e) {}
+                        onBack && onBack();
+                      }}>
+                      🔥 Buy for {(live.price|0).toLocaleString()} Cinder
+                    </button>
+                    {!canBuy && <div style={{ fontSize:11, color:'rgb(255,150,140)', textAlign:'center' }}>Not enough Cinder.</div>}
+                    <button className="btn ghost" style={{ justifyContent: 'center' }} onClick={onBack}>← Back to listings</button>
+                  </>
+                );
+              })()}
             </div>
 
             <div style={{ borderTop: '1px solid var(--line-soft)', marginTop: 16, paddingTop: 12 }}>

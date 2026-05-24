@@ -61337,33 +61337,13 @@ function _openRedeemCouponModal() {
 }
 try { window._openRedeemCouponModal = _openRedeemCouponModal; window._redeemCouponCode = _redeemCouponCode; } catch (e) {}
 
-// 🎁 Floating "🎁 Redeem Code" button — mounted on the title screen for every
-// player so the entry point is always visible. Admins see an extra "📋
-// Coupons" tile that opens the manager.
+// 🎁 Redeem Code / Coupon Manager entry points now live inside the player's
+// Profile screen (Rewards & Gifts card). This stub keeps existing callers
+// (App.subscribe hook, etc.) working while ensuring no floating FAB renders.
 function mountRedeemCouponFab() {
   try {
-    const show = (typeof App !== 'undefined' && App.screen === 'title');
     const ex = document.getElementById('redeem-code-fab');
-    if (!show) { if (ex) ex.remove(); return; }
-    if (ex) return;
-    const wrap = document.createElement('div');
-    wrap.id = 'redeem-code-fab';
-    wrap.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483250;display:flex;flex-direction:column;gap:8px;align-items:flex-end;font-family:\'Cinzel\',serif';
-    const btn = document.createElement('button');
-    btn.title = '🎁 Redeem a code from a giveaway, event, or admin.';
-    btn.innerHTML = '🎁 Redeem Code';
-    btn.style.cssText = 'padding:0.55rem 1.1rem;background:linear-gradient(135deg,#ffd166,#d4a84a);color:#1a0f02;border:1px solid #d4a84a;border-radius:8px;cursor:pointer;font-weight:800;font-size:0.86rem;letter-spacing:0.05em;box-shadow:0 8px 22px rgba(0,0,0,0.45),0 0 18px rgba(255,209,102,0.32)';
-    btn.onclick = _openRedeemCouponModal;
-    wrap.appendChild(btn);
-    if (typeof isAdmin === 'function' && isAdmin()) {
-      const aBtn = document.createElement('button');
-      aBtn.title = '👑 Admin: create and manage redeem codes.';
-      aBtn.innerHTML = '📋 Coupon Manager';
-      aBtn.style.cssText = 'padding:0.45rem 0.9rem;background:rgba(28,22,52,0.92);color:#cdb6ff;border:1px solid rgba(168,130,220,0.55);border-radius:8px;cursor:pointer;font-weight:700;font-size:0.78rem;letter-spacing:0.04em;box-shadow:0 6px 16px rgba(0,0,0,0.55)';
-      aBtn.onclick = _openCouponAdminModal;
-      wrap.appendChild(aBtn);
-    }
-    document.body.appendChild(wrap);
+    if (ex) ex.remove();
   } catch (e) {}
 }
 
@@ -83158,6 +83138,12 @@ function renderProfile() {
   const _couponRows = _coupons.length
     ? `<div class="profile-card-note" style="margin-top:6px">🎟 Coupons claimed: ` + _coupons.map(c => escapeHtml(String((c && c.code) || 'Coupon')) + ((c && c.value > 0) ? ' (' + (c.value | 0).toLocaleString() + '🔥)' : '')).join(' · ') + `</div>`
     : '';
+  const _isAdmin = (typeof isAdmin === 'function') && isAdmin();
+  const _couponBtns = `
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+              <button class="btn-primary btn-mini" id="prof-open-redeem" style="background:linear-gradient(135deg,#ffd166,#d4a84a);color:#1a0f02;border-color:#d4a84a;font-weight:800">🎁 Redeem Code</button>
+              ${_isAdmin ? '<button class="btn-secondary btn-mini" id="prof-open-coupon-admin" style="background:rgba(28,22,52,0.92);color:#cdb6ff;border-color:rgba(168,130,220,0.55);font-weight:700">📋 Coupon Manager</button>' : ''}
+            </div>`;
   const rewardsCard = `
         <div class="profile-card" style="grid-column:1/-1">
           <div class="profile-card-header">🎁 Rewards &amp; Gifts${_pend.length ? ' <span class="profile-chip profile-chip-warn" style="margin-left:6px">' + _pend.length + ' to claim</span>' : ''}</div>
@@ -83165,7 +83151,8 @@ function renderProfile() {
             ${_giftRows}
             ${_pend.length > 1 ? '<button class="btn-secondary btn-mini" id="prof-claim-all" style="margin-top:4px">🎁 Claim all (' + _pend.length + ')</button>' : ''}
             ${_couponRows}
-            <div class="profile-card-note">Cinders, Aza, resources, items, cards, nodes &amp; coupons granted to you appear here — claim to add them. Nodes need a corporation.</div>
+            ${_couponBtns}
+            <div class="profile-card-note">Cinders, Aza, resources, items, cards, nodes &amp; coupons granted to you appear here — claim to add them. Nodes need a corporation. Got a code? Tap <strong>🎁 Redeem Code</strong> above.</div>
           </div>
         </div>`;
 
@@ -83457,6 +83444,11 @@ function renderProfile() {
     for (const g of (GiftsCache.pending || []).slice()) { try { await claimGift(g); } catch (e) {} }
     showToast('🎁 Rewards claimed!', 3000); render();
   };
+  // 🎁 Coupon entry points — opens the same modals the old floating FAB used.
+  const _btnRedeem = document.getElementById('prof-open-redeem');
+  if (_btnRedeem) _btnRedeem.onclick = () => { try { _openRedeemCouponModal(); } catch (e) {} };
+  const _btnCouponAdmin = document.getElementById('prof-open-coupon-admin');
+  if (_btnCouponAdmin) _btnCouponAdmin.onclick = () => { try { _openCouponAdminModal(); } catch (e) {} };
 }
 
 // ============================================================================

@@ -59243,19 +59243,36 @@ function showGameAlert(opts) {
     const fsBtn      = document.getElementById('app-tb-fs');
 
     // --- Install button visibility + click handler.
+    // 🕙 Auto-hide after 10s once shown — players complained it stayed in the
+    // way for the whole session. Hidden flag is per-session; refresh to see
+    // it again. The fade keeps it briefly visible to anyone who actually
+    // wants to install, then gets out of the way.
+    let _installAutoHidden = false;
+    let _installHideTimer = null;
     function _refreshInstallBtn() {
       if (!window.PWA) return;
       // Hide when already-installed OR no prompt available AND not iOS (iOS
-      // still gets the button as an instructional helper).
+      // still gets the button as an instructional helper). Also honor the
+      // auto-hide once the 10s timer has fired.
       const standalone = !!window.PWA.installed;
       const haveEvent  = !!window.PWA.installEvent;
       const isIOS      = window.PWA.isIOS && window.PWA.isIOS();
-      const show = !standalone && (haveEvent || isIOS);
+      const show = !standalone && (haveEvent || isIOS) && !_installAutoHidden;
       installBtn.hidden = !show;
       if (isIOS && !haveEvent) {
         installBtn.querySelector('span').textContent = 'Add to Home Screen';
       } else {
         installBtn.querySelector('span').textContent = 'Install App';
+      }
+      // Start the auto-hide countdown once we ACTUALLY made the button visible
+      // (and haven't already). Subsequent _refreshInstallBtn calls don't reset
+      // the timer — the player only gets one 10s window per page load.
+      if (show && !_installHideTimer) {
+        _installHideTimer = setTimeout(() => {
+          _installAutoHidden = true;
+          _installHideTimer = null;
+          installBtn.hidden = true;
+        }, 10000);
       }
     }
     if (window.PWA && typeof window.PWA.onInstallStateChange === 'function') {

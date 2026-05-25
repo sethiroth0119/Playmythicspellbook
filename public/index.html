@@ -35057,6 +35057,9 @@ function recordCardPlayed(card) {
   if (typeof studyRecordCardPlay === 'function') studyRecordCardPlay(card);
   // Leaderboard hook — counts toward "Most cards played in one match"
   if (App.matchStats) App.matchStats.cardsPlayed = (App.matchStats.cardsPlayed || 0) + 1;
+  // 📊 Global Player Market stocks — push to usage_events so the dashboard
+  // can aggregate across every signed-in player. Fire-and-forget.
+  try { pushUsageEvent('card', card.id, 1); } catch (e) {}
   saveProfile();
 }
 function recordHeroSelected(heroId) {
@@ -35067,6 +35070,7 @@ function recordHeroSelected(heroId) {
   // Player-study: track which heroes the player favors so the AI can preempt
   const ps = ensurePlayerStudy();
   ps.heroPicks[heroId] = (ps.heroPicks[heroId] || 0) + 1;
+  try { pushUsageEvent('hero', heroId, 1); } catch (e) {}
   saveProfile();
 }
 function recordItemEquipped(itemId) {
@@ -35074,7 +35078,126 @@ function recordItemEquipped(itemId) {
   ensureProfileUsage();
   Profile.usage.items[itemId] = (Profile.usage.items[itemId] || 0) + 1;
   Profile.usage.byType.item = (Profile.usage.byType.item || 0) + 1;
+  try { pushUsageEvent('item', itemId, 1); } catch (e) {}
   saveProfile();
+}
+
+// 📊 GLOBAL USAGE TELEMETRY — fire-and-forget push of one play event to the
+// usage_events Supabase table. Aggregates across every signed-in player feed
+// the Player Market "Faction Stocks / Top Cards / Hero Picks / Item Equips"
+// dashboard. Silent no-op when offline or signed out — local Profile.usage
+// still drives the personal stats either way. Batched + debounced to keep
+// the DB write rate reasonable even during a fast-paced match.
+const _UsageEventQueue = { pending: [], flushTimer: null, lastFlushAt: 0 };
+function pushUsageEvent(kind, refId, qty) {
+  if (!kind || !refId) return;
+  qty = Math.max(1, Math.min(1000, qty | 0)) || 1;
+  // Validate kind to match the SQL CHECK constraint so a bad caller never
+  // poisons the queue with un-insertable rows.
+  if (kind !== 'card' && kind !== 'hero' && kind !== 'item') return;
+  _UsageEventQueue.pending.push({ kind, ref_id: String(refId), qty });
+  // Debounce: flush after 1.2s of idle OR when queue reaches 25 events,
+  // whichever fires first. Limits a 30-event match to ~2 inserts.
+  if (_UsageEventQueue.pending.length >= 25) {
+    _flushUsageEventQueue();
+  } else if (!_UsageEventQueue.flushTimer) {
+    _UsageEventQueue.flushTimer = setTimeout(_flushUsageEventQueue, 1200);
+  }
+}
+async function _flushUsageEventQueue() {
+  if (_UsageEventQueue.flushTimer) {
+    try { clearTimeout(_UsageEventQueue.flushTimer); } catch (e) {}
+    _UsageEventQueue.flushTimer = null;
+  }
+  const batch = _UsageEventQueue.pending.splice(0, _UsageEventQueue.pending.length);
+  if (batch.length === 0) return;
+  // Bail (silently drop) if no cloud yet — local Profile.usage is the
+  // single source of truth in that case. Match user_id from the active
+  // session so RLS lets us insert.
+  if (!Cloud.ready || !Cloud.client || !(Profile.cloud && Profile.cloud.signedIn && Profile.cloud.userId)) return;
+  const userId = Profile.cloud.userId;
+  const rows = batch.map(b => ({ user_id: userId, kind: b.kind, ref_id: b.ref_id, qty: b.qty }));
+  try {
+    const { error } = await Cloud.client.from('usage_events').insert(rows);
+    if (error) {
+      // Migration not applied yet → 'usage_events' table missing.
+      // Mute the noise on subsequent calls so the console stays clean.
+      if (!_UsageEventQueue._mutedMigrationWarning &&
+          /relation .*usage_events.* does not exist|does not exist/i.test(error.message || '')) {
+        _UsageEventQueue._mutedMigrationWarning = true;
+        try { console.info('[usage_events] migration not applied yet — global Player Market stats disabled until SQL is run.'); } catch (_) {}
+      }
+    } else {
+      _UsageEventQueue.lastFlushAt = Date.now();
+    }
+  } catch (e) {
+    // Network blip — drop the batch, it's not worth blocking gameplay over.
+  }
+}
+
+// 📈 GLOBAL TOPS FETCH — pulls aggregated top N for a kind via the
+// public.usage_top RPC. Cached in-memory for 60s to avoid hammering the DB
+// when the Player Market screen re-renders frequently. Returns the same
+// shape as the local Profile.usage.<kind> map: { ref_id: count }.
+const _GlobalUsageCache = { card: null, hero: null, item: null };
+function _gucExpired(slot) {
+  return !slot || (Date.now() - slot.fetchedAt > 60000);
+}
+async function fetchGlobalUsageTops(kind, limit) {
+  if (!Cloud.ready || !Cloud.client) return null;
+  if (kind !== 'card' && kind !== 'hero' && kind !== 'item') return null;
+  if (!_gucExpired(_GlobalUsageCache[kind])) return _GlobalUsageCache[kind].data;
+  try {
+    const { data, error } = await Cloud.client.rpc('usage_top', {
+      p_kind: kind,
+      p_limit: Math.max(1, Math.min(200, limit | 0 || 25)),
+      p_since_days: null,
+    });
+    if (error) {
+      if (!_GlobalUsageCache._mutedRpcWarning &&
+          /function .*usage_top.* does not exist|could not find the function/i.test(error.message || '')) {
+        _GlobalUsageCache._mutedRpcWarning = true;
+        try { console.info('[usage_top] migration not applied yet — Player Market falling back to local counts.'); } catch (_) {}
+      }
+      return null;
+    }
+    const out = {};
+    (data || []).forEach(row => { out[row.ref_id] = (row.plays | 0); });
+    _GlobalUsageCache[kind] = { fetchedAt: Date.now(), data: out };
+    return out;
+  } catch (e) { return null; }
+}
+
+// 🌐 Get effective usage counts for the Player Market screen. Prefers global
+// aggregated counts when available (cached fetch + best-effort refresh in the
+// background), falls back to local Profile.usage when offline / migration
+// not applied. The local fallback also preserves the screen for single-player
+// users so they still see something useful.
+function getEffectiveUsage() {
+  ensureProfileUsage();
+  const local = {
+    cards:  Profile.usage.cards  || {},
+    heroes: Profile.usage.heroes || {},
+    items:  Profile.usage.items  || {},
+    source: 'local',
+  };
+  // Trigger background refresh (next render after fetch lands will use it).
+  try {
+    if (Cloud.ready && Cloud.client) {
+      if (_gucExpired(_GlobalUsageCache.card)) fetchGlobalUsageTops('card', 100).then(d => { if (d && typeof render === 'function' && App.screen === 'market') render(); });
+      if (_gucExpired(_GlobalUsageCache.hero)) fetchGlobalUsageTops('hero',  50).then(() => {});
+      if (_gucExpired(_GlobalUsageCache.item)) fetchGlobalUsageTops('item',  50).then(() => {});
+    }
+  } catch (e) {}
+  const gc = _GlobalUsageCache.card && _GlobalUsageCache.card.data;
+  const gh = _GlobalUsageCache.hero && _GlobalUsageCache.hero.data;
+  const gi = _GlobalUsageCache.item && _GlobalUsageCache.item.data;
+  // Only switch to global when ALL three caches are warm — otherwise the
+  // mismatch (e.g. global cards + local heroes) makes the charts wrong.
+  if (gc && gh && gi) {
+    return { cards: gc, heroes: gh, items: gi, source: 'global' };
+  }
+  return local;
 }
 function logSale(sale) {
   Market.salesLog.unshift({ ...sale, soldAt: Date.now() });
@@ -44432,6 +44555,9 @@ function onSaveStatus(fn) {
       // idempotent-safe.
       try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
       _flushPending();
+      // 📊 Flush the global Player Market usage-event buffer too — otherwise
+      // the last 1.2s of plays before the tab hides would never reach the DB.
+      try { if (typeof _flushUsageEventQueue === 'function') _flushUsageEventQueue(); } catch (e) {}
     }
   });
 
@@ -44466,6 +44592,7 @@ function onSaveStatus(fn) {
   window.addEventListener('pagehide', () => {
     try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
     _flushPending();
+    try { if (typeof _flushUsageEventQueue === 'function') _flushUsageEventQueue(); } catch (e) {}
   });
 })();
 
@@ -81932,6 +82059,16 @@ function bindMarketMyListings() {
 // ===== Stock-market dashboard: sales ticker, type breakdown, usage leaderboards =====
 function renderMarketStock() {
   ensureProfileUsage();
+  // 🌐 Pull effective usage — global aggregated counts when the cloud RPC is
+  // wired and warm; falls back to the local player's Profile.usage when offline
+  // or before the SQL migration is applied. Tagged so we can show a small
+  // "GLOBAL" / "LOCAL" pill in the header.
+  const _usage = (typeof getEffectiveUsage === 'function') ? getEffectiveUsage()
+                : { cards: Profile.usage.cards || {}, heroes: Profile.usage.heroes || {}, items: Profile.usage.items || {}, source: 'local' };
+  const _usageCards  = _usage.cards  || {};
+  const _usageHeroes = _usage.heroes || {};
+  const _usageItems  = _usage.items  || {};
+  const _usageSource = _usage.source || 'local';
   // ========== Faction-level aggregation (NEW — replaces type breakdown) ==========
   // A card can belong to multiple factions, so each card / sale contributes to
   // every faction it carries. This mirrors how a stock-market sector breakdown
@@ -81956,7 +82093,7 @@ function renderMarketStock() {
   }
   // Faction usage — sum each card's play count into every faction it belongs to.
   const factionUsage = {};
-  for (const [cid, count] of Object.entries(Profile.usage.cards || {})) {
+  for (const [cid, count] of Object.entries(_usageCards)) {
     const c = cardLookup(cid);
     const facs = (c && getFactionsOf(c)) || [];
     if (facs.length === 0) {
@@ -81967,7 +82104,7 @@ function renderMarketStock() {
   }
   // Also fold hero picks into faction usage so the leaderboard reflects every
   // way a faction shows up at the table. Heroes have factions too.
-  for (const [hid, count] of Object.entries(Profile.usage.heroes || {})) {
+  for (const [hid, count] of Object.entries(_usageHeroes)) {
     const h = (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES.find(x => x.id === hid))
             || (Forge.customCards || []).find(x => x.id === hid && x.type === 'hero');
     const facs = (h && getFactionsOf(h)) || [];
@@ -81991,10 +82128,11 @@ function renderMarketStock() {
     return f ? f.color : '#7a8aa0';
   };
 
-  // Most-used cards (top 10) — unchanged below; just re-using the cardLookup defined above.
-  const cardEntries = Object.entries(Profile.usage.cards || {}).map(([id, count]) => ({ id, count, card: cardLookup(id) })).filter(x => x.card).sort((a, b) => b.count - a.count).slice(0, 10);
-  const heroEntries = Object.entries(Profile.usage.heroes || {}).map(([id, count]) => ({ id, count, hero: STARTER_HEROES.find(h => h.id === id) })).filter(x => x.hero).sort((a, b) => b.count - a.count);
-  const itemEntries = Object.entries(Profile.usage.items || {}).map(([id, count]) => ({ id, count, item: HELD_ITEMS[id] })).filter(x => x.item).sort((a, b) => b.count - a.count).slice(0, 8);
+  // Most-used cards (top 10) — uses _usageCards which prefers global aggregated
+  // counts when available, falls back to local. Same shape either way.
+  const cardEntries = Object.entries(_usageCards).map(([id, count]) => ({ id, count, card: cardLookup(id) })).filter(x => x.card).sort((a, b) => b.count - a.count).slice(0, 10);
+  const heroEntries = Object.entries(_usageHeroes).map(([id, count]) => ({ id, count, hero: STARTER_HEROES.find(h => h.id === id) })).filter(x => x.hero).sort((a, b) => b.count - a.count);
+  const itemEntries = Object.entries(_usageItems).map(([id, count]) => ({ id, count, item: HELD_ITEMS[id] })).filter(x => x.item).sort((a, b) => b.count - a.count).slice(0, 8);
 
   const totalSales = Market.salesLog.length;
   const totalRevenue = Market.salesLog.reduce((sum, s) => sum + (s.price || 0), 0);
@@ -82382,6 +82520,12 @@ function renderMarketStock() {
         `;
       }).join('');
 
+  // 🟢 GLOBAL / 🟡 LOCAL pill — tells the player whether the leaderboards
+  // include every signed-in player or just their own history. Lights up
+  // 'GLOBAL' once the usage_top RPC has returned at least once.
+  const _srcPill = _usageSource === 'global'
+    ? '<span style="display:inline-block;padding:2px 8px;margin-left:8px;background:rgba(94,179,122,0.15);border:1px solid rgba(94,179,122,0.5);border-radius:4px;color:#7be8a8;font-size:0.65rem;letter-spacing:0.12em;font-weight:800;vertical-align:middle" title="Aggregated across every signed-in player via usage_top RPC">🌐 GLOBAL</span>'
+    : '<span style="display:inline-block;padding:2px 8px;margin-left:8px;background:rgba(212,175,55,0.10);border:1px dashed rgba(212,175,55,0.45);border-radius:4px;color:#d4af37;font-size:0.65rem;letter-spacing:0.12em;font-weight:800;vertical-align:middle" title="Cloud aggregation not available yet — showing this player\'s local plays only.">🏠 LOCAL ONLY</span>';
   return `
     <div class="stock-summary-grid">
       <div class="stock-summary-card"><div class="stock-summary-num">${totalSales}</div><div class="stock-summary-label">Total Sales</div></div>
@@ -82391,7 +82535,7 @@ function renderMarketStock() {
     </div>
 
     <div class="stock-section">
-      <div class="forge-section-header"><h3>📈 Faction Stocks</h3><div class="small-text">Click a faction ticker to chart it. <span style="color:#5eb37a">▲</span> rising · <span style="color:#e87a7a">▼</span> falling · daily volume = sales below.</div></div>
+      <div class="forge-section-header"><h3>📈 Faction Stocks ${_srcPill}</h3><div class="small-text">Click a faction ticker to chart it. <span style="color:#5eb37a">▲</span> rising · <span style="color:#e87a7a">▼</span> falling · daily volume = sales below.</div></div>
       ${typeBars}
     </div>
 
@@ -82402,15 +82546,15 @@ function renderMarketStock() {
 
     <div class="stock-leader-grid">
       <div class="stock-section">
-        <div class="forge-section-header"><h3>🃏 Top Cards Played</h3></div>
+        <div class="forge-section-header"><h3>🃏 Top Cards Played ${_srcPill}</h3></div>
         <div class="stock-leader-list">${cardsHtml}</div>
       </div>
       <div class="stock-section">
-        <div class="forge-section-header"><h3>⚔️ Hero Picks</h3></div>
+        <div class="forge-section-header"><h3>⚔️ Hero Picks ${_srcPill}</h3></div>
         <div class="stock-leader-list">${heroesHtml}</div>
       </div>
       <div class="stock-section">
-        <div class="forge-section-header"><h3>🎒 Item Equips</h3></div>
+        <div class="forge-section-header"><h3>🎒 Item Equips ${_srcPill}</h3></div>
         <div class="stock-leader-list">${itemsHtml}</div>
       </div>
     </div>
@@ -117650,18 +117794,18 @@ function renderCrashExchange() {
     ]},
   ];
   const navGroupsSpec = [
-    { label: '// 📈 INDEXES (read-only)', items: [
+    { label: '// 📈 INDEX SHARES', items: [
       ['cards',     'CARD MARKET',         String(markets.cards.items.length)],
       ['corps',     'CORPORATION SHARES',  String(markets.corps.items.length)],
       ['currency',  'CURRENCY DESK',       String(markets.currency.items.length)],
     ]},
-    { label: '// 🔒 CHANNELS (read-only)', items: [
+    { label: '// 🔒 CHANNELS', items: [
       ['black',     'BLACK MARKET',          'HOT'],
       ['relics',    'RELICS &amp; ARTIFACTS', String(markets.relics.items.length)],
       ['salvage',   'SALVAGE SECTORS',      String(markets.salvage.items.length)],
       ['routes',    'PLAYER TRADE ROUTES',  String(markets.routes.items.length)],
     ]},
-    { label: '// ⚙ OPERATIONS (read-only)', items: [
+    { label: '// ⚙ OPERATIONS', items: [
       ['mining',    'MINING OPS',           String(markets.mining.items.length)],
       ['fishing',   'FISHING OPS',          String(markets.fishing.items.length)],
       ['oil',       'OIL CORPORATIONS',     String(markets.oil.items.length)],
@@ -117675,7 +117819,7 @@ function renderCrashExchange() {
     ).join('') + '</div>';
   const navHtml =
     navGroupsOwn.map(g => _renderNavSection(g, false)).join('') +
-    '<div class="cx-nav-divider"><span>SPECULATION ONLY · NO OWNERSHIP</span></div>' +
+    '<div class="cx-nav-divider"><span>INDEX SHARES · TRADE THE PRICE, NOT THE UNDERLYING</span></div>' +
     navGroupsSpec.map(g => _renderNavSection(g, true)).join('');
 
   // Wallet + AZA desk
@@ -117804,7 +117948,7 @@ function renderCrashExchange() {
           '<div class="cx-tf"><label>QUANTITY</label><input id="cx-buy-qty" type="text" value="' + initQty + '"></div>' +
           '<div class="cx-tf"><label>TOTAL EST. (incl. 0.4% FEE)</label><input id="cx-buy-tot" type="text" readonly value="' + buyTotal + '"></div>' +
           '<button class="cx-submit buy" id="cx-buy-go"' + (tradable ? '' : ' disabled') + '>EXECUTE BUY</button>' +
-          (tradable ? '' : '<div style="margin-top:0.5rem;padding:0.45rem 0.55rem;background:rgba(184,152,96,0.10);border:1px dashed rgba(184,152,96,0.50);border-radius:4px;font-size:0.7rem;color:#e8c878;letter-spacing:0.06em;line-height:1.4"><strong style="color:#ffd166">📈 SPECULATION ONLY</strong><br>This channel is a price ticker — you cannot own the underlying asset here. Only the <strong>RESOURCES</strong> channel adds bought items to your inventory.</div>') +
+          (tradable ? '' : '<div style="margin-top:0.5rem;padding:0.45rem 0.55rem;background:rgba(184,152,96,0.10);border:1px dashed rgba(184,152,96,0.50);border-radius:4px;font-size:0.7rem;color:#e8c878;letter-spacing:0.06em;line-height:1.4"><strong style="color:#ffd166">📈 INDEX SHARES — NOT THE UNDERLYING</strong><br>This channel tracks an index price. Buying gives you a share position, <strong>not</strong> the underlying resource. To actually receive a resource (oil, supplies, etc.), trade it in the <strong>RESOURCES</strong> channel above.</div>') +
         '</div>' +
         '<div class="cx-trade-box book">' +
           '<h3>// ORDER BOOK</h3>' +
@@ -117819,7 +117963,7 @@ function renderCrashExchange() {
           '<div class="cx-tf"><label>QUANTITY</label><input id="cx-sell-qty" type="text" value="' + initQty + '"></div>' +
           '<div class="cx-tf"><label>NET (less 0.4% TRADE + 0.2% LISTING)</label><input id="cx-sell-tot" type="text" readonly value="' + sellTotal + '"></div>' +
           '<button class="cx-submit sell" id="cx-sell-go"' + (tradable ? '' : ' disabled') + '>EXECUTE SELL</button>' +
-          (tradable ? '' : '<div style="margin-top:0.5rem;padding:0.45rem 0.55rem;background:rgba(184,152,96,0.10);border:1px dashed rgba(184,152,96,0.50);border-radius:4px;font-size:0.7rem;color:#e8c878;letter-spacing:0.06em;line-height:1.4"><strong style="color:#ffd166">📈 SPECULATION ONLY</strong><br>No inventory to sell here — this channel only tracks an index price.</div>') +
+          (tradable ? '' : '<div style="margin-top:0.5rem;padding:0.45rem 0.55rem;background:rgba(184,152,96,0.10);border:1px dashed rgba(184,152,96,0.50);border-radius:4px;font-size:0.7rem;color:#e8c878;letter-spacing:0.06em;line-height:1.4"><strong style="color:#ffd166">📈 INDEX SHARES</strong><br>Selling a share position closes it for Cinder. No physical resource is removed — that\'s the <strong>RESOURCES</strong> channel.</div>') +
         '</div>' +
       '</div>';
 

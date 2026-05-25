@@ -99891,12 +99891,38 @@ function closeAuthModal() {
   if (el) el.remove();
 }
 
+// 🩺 Render-friendly version of any auth error. Strings pass through; Error
+// objects use .message; anything else gets JSON-stringified so the player
+// at least sees the shape ("Got {}" rather than a blank box). Returns null
+// when the input is genuinely empty so the banner can stay hidden.
+function _authErrToString(err) {
+  if (err == null) return null;
+  if (typeof err === 'string') return err.length ? err : null;
+  if (err instanceof Error)    return err.message || String(err);
+  // Supabase often returns { message, status, name, ... } — pull message first.
+  if (typeof err === 'object') {
+    if (typeof err.message === 'string' && err.message) return err.message;
+    if (typeof err.error_description === 'string' && err.error_description) return err.error_description;
+    if (typeof err.error === 'string' && err.error) return err.error;
+    try {
+      const j = JSON.stringify(err);
+      if (j && j !== '{}' && j !== '"{}"') return 'Server response: ' + j;
+      // Genuinely empty object → at least tell the player something happened.
+      return 'Action failed but the server returned an empty error. Open devtools → Network → look for the most recent auth call.';
+    } catch (e) { return String(err); }
+  }
+  return String(err);
+}
+
 function renderAuthModal() {
   const s = App.authModal || { open: false };
   // Remove any prior instance so we don't stack overlays.
   const prior = document.getElementById('auth-modal-root');
   if (prior) prior.remove();
   if (!s.open) return;
+  // Normalize the error every render so a malformed value (object, Error,
+  // null in disguise) never leaks into the HTML as "[object Object]" or "{}".
+  const _errMsg = _authErrToString(s.error);
   // Diagnostic banner if Supabase isn't configured yet — helps the user know
   // exactly why sign-in attempts won't go through.
   const cfgMissing = !Cloud.ready;
@@ -99929,7 +99955,7 @@ function renderAuthModal() {
       <p class="auth-sub">${subByMode[s.mode] || subByMode.signin}</p>
 
       ${cfgWarn}
-      ${s.error ? `<div class="auth-error auth-error-big">⚠ <strong>${escapeHtml(s.error)}</strong></div>` : ''}
+      ${_errMsg ? `<div class="auth-error auth-error-big">⚠ <strong>${escapeHtml(_errMsg)}</strong></div>` : ''}
       ${s.info  ? `<div class="auth-info">✓ ${escapeHtml(s.info)}</div>` : ''}
 
       ${s.mode === 'signupSuccess' ? `

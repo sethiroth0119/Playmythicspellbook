@@ -12269,6 +12269,25 @@
   }
   .cx-nav-btn.is-active .count { color: #ff3a1f; background: #1f1815; }
 
+  /* OWN vs SPECULATE — colored stripe + divider so players see the line. */
+  .cx-nav-own .cx-nav-label { color: #6fcf6f; }
+  .cx-nav-own .cx-nav-btn { border-left-color: #1f3a1f; }
+  .cx-nav-own .cx-nav-btn:hover { border-left-color: #6fcf6f; }
+  .cx-nav-spec .cx-nav-label { color: #888; }
+  .cx-nav-spec .cx-nav-btn { border-left-color: #2a201c; opacity: 0.92; }
+  .cx-nav-divider {
+    display: flex; align-items: center; gap: 0.5rem;
+    margin: 0.4rem 0 1.1rem;
+    font-size: 0.58rem; letter-spacing: 0.22em; color: #b89860;
+    text-transform: uppercase; font-weight: 700;
+  }
+  .cx-nav-divider span {
+    background: linear-gradient(90deg, transparent, rgba(184,152,96,0.20), transparent);
+    padding: 0.2rem 0.5rem; border-top: 1px dashed rgba(184,152,96,0.40);
+    border-bottom: 1px dashed rgba(184,152,96,0.40);
+    width: 100%; text-align: center;
+  }
+
   .cx-wallet {
     background: linear-gradient(135deg, #14100e, #1f1815);
     border: 1px solid #2a201c; border-top: 2px solid #d4a843;
@@ -26743,15 +26762,25 @@ function _meta(id) {
     || { id: id, name: id, icon: '📦' };
 }
 // Compact "🥫2 ⛓️3" HTML for a cost object (admins / craft buttons).
+// opts:
+//   flagShort  — color red when the player can't afford an entry
+//   withNames  — also show the resource name next to its icon+amount
+//                (e.g. "🥫 2 Supplies"). Better readability for build screens.
 function resourceCostHtml(cost, opts) {
   opts = opts || {};
   if (!cost) return '<span class="ink-dim">free</span>';
   const R = _ensureResources();
   const parts = RESOURCE_IDS.filter(id => (cost[id] || 0) > 0).map(id => {
     const short = (R[id] || 0) < (cost[id] || 0);
-    return `<span style="white-space:nowrap;color:${short && opts.flagShort ? '#e0556a' : 'inherit'}" title="${_meta(id).name}">${_meta(id).icon}${cost[id]}</span>`;
+    const meta = _meta(id);
+    const color = short && opts.flagShort ? '#e0556a' : 'inherit';
+    if (opts.withNames) {
+      // Each entry on its own chip-style row so the name doesn't crowd siblings.
+      return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px;margin:2px 4px 2px 0;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:4px;white-space:nowrap;color:${color}" title="${meta.name}"><span style="font-size:1em">${meta.icon}</span><strong style="font-weight:700">${cost[id]}</strong> <span style="opacity:0.85">${meta.name}</span></span>`;
+    }
+    return `<span style="white-space:nowrap;color:${color}" title="${meta.name}">${meta.icon}${cost[id]}</span>`;
   });
-  return parts.length ? parts.join(' ') : '<span class="ink-dim">free</span>';
+  return parts.length ? parts.join(opts.withNames ? '' : ' ') : '<span class="ink-dim">free</span>';
 }
 // Default resource bundle by rarity when the admin hasn't set a custom cost.
 const _CRAFT_DEFAULT_BY_RARITY = {
@@ -82526,7 +82555,7 @@ function renderCamp() {
         const rc = _campResCost(f, s.level + 1);
         const aff = (Profile.gems || 0) >= c && ((typeof canAffordResources !== 'function') || canAffordResources(rc));
         action = `<button class="btn-mini" data-build="${f.id}" ${aff ? '' : 'disabled'} style="margin-top:6px;border-color:${f.accent}66;color:${aff ? f.accent : '#666'}">⬆ Upgrade — ${c} 🔥</button>
-          <div class="small-text" style="margin-top:3px">${(typeof resourceCostHtml === 'function') ? resourceCostHtml(rc, { flagShort: true }) : ''}</div>`;
+          <div class="small-text" style="margin-top:5px;line-height:1.6">${(typeof resourceCostHtml === 'function') ? resourceCostHtml(rc, { flagShort: true, withNames: true }) : ''}</div>`;
       } else {
         action = `<div class="small-text" style="color:${f.accent};margin-top:6px">★ MAX LEVEL</div>`;
       }
@@ -82538,7 +82567,7 @@ function renderCamp() {
       const aff = (Profile.gems || 0) >= c && ((typeof canAffordResources !== 'function') || canAffordResources(rc));
       badge = `<span style="font-family:'Cinzel',serif;font-size:0.72rem;letter-spacing:0.12em;color:#7d8aa0">［ UNDEVELOPED ］</span>`;
       action = `<button class="btn-mini" data-build="${f.id}" ${aff ? '' : 'disabled'} style="margin-top:6px;border-color:${f.accent}66;color:${aff ? f.accent : '#666'}">🔨 Build — ${c} 🔥</button>
-        <div class="small-text" style="margin-top:3px">${(typeof resourceCostHtml === 'function') ? resourceCostHtml(rc, { flagShort: true }) : ''}</div>`;
+        <div class="small-text" style="margin-top:5px;line-height:1.6">${(typeof resourceCostHtml === 'function') ? resourceCostHtml(rc, { flagShort: true, withNames: true }) : ''}</div>`;
     }
     const _isAdm = (typeof isAdmin === 'function') && isAdmin();
     const adminArt = _isAdm ? `
@@ -99673,7 +99702,7 @@ function renderAuthModal() {
     confirm: '📧 Confirm Your Email',
   };
   const subByMode = {
-    signup:  'Save your progress to the cloud + unlock multiplayer when it ships.',
+    signup:  'Save your progress to the cloud + unlock multiplayer when it ships. You\'ll get a 6-digit confirmation code by email — please check spam if it doesn\'t arrive within 5 minutes.',
     reset:   "Enter your email — we'll send a password reset link.",
     signin:  'Sync your inventory, ranks, and decks across devices.',
     confirm: 'We sent a confirmation code to ' + escapeHtml(s.email || 'your email') + '. Enter the 6-digit code below, OR click the link in the email.',
@@ -99689,6 +99718,14 @@ function renderAuthModal() {
       ${s.info  ? `<div class="auth-info">✓ ${escapeHtml(s.info)}</div>` : ''}
 
       ${s.mode === 'confirm' ? `
+        <div class="auth-warn" style="margin-bottom:0.9rem;background:rgba(255,180,0,0.10);border-color:rgba(255,180,0,0.45);color:#ffd980">
+          📧 <strong>Email delivery can take up to 5 minutes</strong> — and Supabase free-tier caps at ~3 confirmation emails per hour, so during busy periods it may not arrive at all. If nothing shows up:
+          <ul style="margin:0.4rem 0 0 1.1rem;padding:0;font-size:0.85em;line-height:1.5">
+            <li>Check your <strong>spam / promotions</strong> folder</li>
+            <li>Wait a few minutes, then tap <strong>Resend email</strong> below</li>
+            <li>Still stuck after 10 minutes? The site owner needs to set up custom SMTP in Supabase</li>
+          </ul>
+        </div>
         <label class="auth-field">
           <span>6-digit confirmation code</span>
           <input type="text" id="auth-code" placeholder="123456" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" style="letter-spacing:0.4em;font-size:1.2rem;text-align:center;color:#fff" required />
@@ -99698,15 +99735,12 @@ function renderAuthModal() {
             ${s.busy ? '…' : 'Confirm Code'}
           </button>
           <button class="btn-secondary" id="auth-resend" ${s.busy ? 'disabled' : ''} style="margin-top:0.5rem">
-            Resend email
+            📧 Resend email
           </button>
         </div>
         <div class="auth-switch">
           <button class="auth-link" data-auth-switch="signin">← Back to sign in</button>
         </div>
-        <p class="auth-fineprint">
-          Didn't get the email? Check spam. Default Supabase email is rate-limited (~3/hour) — if many players are stuck, the game owner should switch to custom SMTP (SendGrid/AWS SES/Resend) in Supabase → Authentication → SMTP Settings.
-        </p>
       ` : `
         ${s.mode === 'signup' ? `
           <label class="auth-field">
@@ -117607,32 +117641,42 @@ function renderCrashExchange() {
   const tickerHtml = tickerInner + tickerInner;  // doubled for seamless scroll
 
   // -------- 4. LEFT NAV --------
-  const navGroups = [
-    { label: '// CORE MARKETS', items: [
+  // Two-tier layout so players see at a glance what they can actually OWN
+  // vs what's pure speculation. RESOURCES is the only channel where buying
+  // adds the asset to your inventory; everything else is read-only ticker.
+  const navGroupsOwn = [
+    { label: '// 🟢 YOUR MARKET · TRADE FOR REAL', items: [
       ['resources', 'RESOURCES',           String(markets.resources.items.length)],
+    ]},
+  ];
+  const navGroupsSpec = [
+    { label: '// 📈 INDEXES (read-only)', items: [
       ['cards',     'CARD MARKET',         String(markets.cards.items.length)],
       ['corps',     'CORPORATION SHARES',  String(markets.corps.items.length)],
       ['currency',  'CURRENCY DESK',       String(markets.currency.items.length)],
     ]},
-    { label: '// CHANNELS', items: [
+    { label: '// 🔒 CHANNELS (read-only)', items: [
       ['black',     'BLACK MARKET',          'HOT'],
       ['relics',    'RELICS &amp; ARTIFACTS', String(markets.relics.items.length)],
       ['salvage',   'SALVAGE SECTORS',      String(markets.salvage.items.length)],
       ['routes',    'PLAYER TRADE ROUTES',  String(markets.routes.items.length)],
     ]},
-    { label: '// OPERATIONS', items: [
+    { label: '// ⚙ OPERATIONS (read-only)', items: [
       ['mining',    'MINING OPS',           String(markets.mining.items.length)],
       ['fishing',   'FISHING OPS',          String(markets.fishing.items.length)],
       ['oil',       'OIL CORPORATIONS',     String(markets.oil.items.length)],
     ]},
   ];
-  const navHtml = navGroups.map(g =>
-    '<div class="cx-nav-section"><div class="cx-nav-label">' + g.label + '</div>' +
+  const _renderNavSection = (g, isSpec) =>
+    '<div class="cx-nav-section' + (isSpec ? ' cx-nav-spec' : ' cx-nav-own') + '"><div class="cx-nav-label">' + g.label + '</div>' +
     g.items.map(([k, label, count]) =>
       '<button class="cx-nav-btn ' + (node === k ? 'is-active' : '') + '" data-cx-node="' + k + '">' +
       label + ' <span class="count">' + count + '</span></button>'
-    ).join('') + '</div>'
-  ).join('');
+    ).join('') + '</div>';
+  const navHtml =
+    navGroupsOwn.map(g => _renderNavSection(g, false)).join('') +
+    '<div class="cx-nav-divider"><span>SPECULATION ONLY · NO OWNERSHIP</span></div>' +
+    navGroupsSpec.map(g => _renderNavSection(g, true)).join('');
 
   // Wallet + AZA desk
   const azaInfo = _cxAzaRate();
@@ -117760,7 +117804,7 @@ function renderCrashExchange() {
           '<div class="cx-tf"><label>QUANTITY</label><input id="cx-buy-qty" type="text" value="' + initQty + '"></div>' +
           '<div class="cx-tf"><label>TOTAL EST. (incl. 0.4% FEE)</label><input id="cx-buy-tot" type="text" readonly value="' + buyTotal + '"></div>' +
           '<button class="cx-submit buy" id="cx-buy-go"' + (tradable ? '' : ' disabled') + '>EXECUTE BUY</button>' +
-          (tradable ? '' : '<div style="margin-top:0.4rem;font-size:0.6rem;color:#a89878;letter-spacing:0.12em">[CHANNEL READ-ONLY]</div>') +
+          (tradable ? '' : '<div style="margin-top:0.5rem;padding:0.45rem 0.55rem;background:rgba(184,152,96,0.10);border:1px dashed rgba(184,152,96,0.50);border-radius:4px;font-size:0.7rem;color:#e8c878;letter-spacing:0.06em;line-height:1.4"><strong style="color:#ffd166">📈 SPECULATION ONLY</strong><br>This channel is a price ticker — you cannot own the underlying asset here. Only the <strong>RESOURCES</strong> channel adds bought items to your inventory.</div>') +
         '</div>' +
         '<div class="cx-trade-box book">' +
           '<h3>// ORDER BOOK</h3>' +
@@ -117775,7 +117819,7 @@ function renderCrashExchange() {
           '<div class="cx-tf"><label>QUANTITY</label><input id="cx-sell-qty" type="text" value="' + initQty + '"></div>' +
           '<div class="cx-tf"><label>NET (less 0.4% TRADE + 0.2% LISTING)</label><input id="cx-sell-tot" type="text" readonly value="' + sellTotal + '"></div>' +
           '<button class="cx-submit sell" id="cx-sell-go"' + (tradable ? '' : ' disabled') + '>EXECUTE SELL</button>' +
-          (tradable ? '' : '<div style="margin-top:0.4rem;font-size:0.6rem;color:#a89878;letter-spacing:0.12em">[CHANNEL READ-ONLY]</div>') +
+          (tradable ? '' : '<div style="margin-top:0.5rem;padding:0.45rem 0.55rem;background:rgba(184,152,96,0.10);border:1px dashed rgba(184,152,96,0.50);border-radius:4px;font-size:0.7rem;color:#e8c878;letter-spacing:0.06em;line-height:1.4"><strong style="color:#ffd166">📈 SPECULATION ONLY</strong><br>No inventory to sell here — this channel only tracks an index price.</div>') +
         '</div>' +
       '</div>';
 

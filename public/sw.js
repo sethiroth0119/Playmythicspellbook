@@ -13,7 +13,9 @@
 // flushes the prior cache so the new asset versions are picked up.
 // ============================================================================
 
-const CACHE_VERSION = 'mythic-v1';
+// Bumped 2026-05-25 — force-eject stale shells so the auth-modal diagnostic
+// fixes reach players who were sitting on a long-cached version.
+const CACHE_VERSION = 'mythic-v2-2026-05-25';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

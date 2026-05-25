@@ -100125,6 +100125,11 @@ function renderAuthModal() {
 
   const submit = document.getElementById('auth-submit');
   if (submit) submit.onclick = async () => {
+   // 🛡 BULLETPROOF DIAGNOSTICS — every previous "nothing happens" report
+   // boiled down to a thrown exception killing the handler silently. Wrap
+   // the whole flow so ANY thrown error surfaces in the modal + console.
+   try {
+    console.info('[auth] submit clicked', { mode: App.authModal.mode, cloudReady: Cloud.ready, hasClient: !!(Cloud && Cloud.client) });
     // 📧 Confirm mode — verify the 6-digit code instead of email+password.
     if (App.authModal.mode === 'confirm') {
       const codeEl = document.getElementById('auth-code');
@@ -100134,12 +100139,12 @@ function renderAuthModal() {
       setBusy(true);
       const v = await cloudVerifyEmailCode(email, code);
       setBusy(false);
-      if (v.ok) {
+      if (v && v.ok) {
         showToast('✨ Email confirmed — welcome!', 2500);
         closeAuthModal();
         if (App.screen === 'authGate') { App.screen = 'title'; render(); }
       } else {
-        App.authModal.error = v.error;
+        App.authModal.error = (v && v.error) || 'Code verification failed (no error returned).';
         App.authModal.info = null;
         renderAuthModal();
       }
@@ -100163,19 +100168,46 @@ function renderAuthModal() {
       renderAuthModal();
       return;
     }
+    // 🛡 Pre-flight cloud-readiness check — used to fail silently when the
+    // Supabase client wasn't initialized (typo'd anon key, offline boot, etc).
+    // Now we surface it to the player + the console so admins see exactly
+    // what's wrong instead of "nothing happens".
+    if (!Cloud.ready || !Cloud.client) {
+      const why = Cloud._initError || 'Cloud client never initialized (check SUPABASE_URL / SUPABASE_ANON_KEY in the HTML).';
+      console.error('[auth] Cloud not ready when submit fired:', why);
+      App.authModal.error = 'Cloud unavailable: ' + why;
+      App.authModal.info  = null;
+      try { showToast('⚠ ' + App.authModal.error, 7000); } catch (e) {}
+      renderAuthModal();
+      return;
+    }
     setBusy(true);
     let result;
     const isSignup = (App.authModal.mode === 'signup');
+    console.info('[auth] calling cloud', { mode: App.authModal.mode, email });
     if (isSignup)                            result = await cloudSignUp(email, pass, name);
     else if (App.authModal.mode === 'reset') result = await cloudResetPassword(email);
     else                                     result = await cloudSignIn(email, pass);
+    console.info('[auth] cloud returned', result);
     setBusy(false);
+    // Defensive — if a helper somehow returns undefined, treat it as a hard
+    // failure with a debuggable message instead of crashing on `result.ok`.
+    if (!result || typeof result !== 'object') {
+      const msg = 'Unexpected response from auth (got ' + (result === undefined ? 'undefined' : typeof result) + ').';
+      console.error('[auth] ' + msg);
+      App.authModal.error = msg;
+      App.authModal.info  = null;
+      try { showToast('⚠ ' + msg, 6000); } catch (e) {}
+      renderAuthModal();
+      return;
+    }
     if (!result.ok) {
       // ⚠ Loud error — make sure the player CANNOT miss why the action failed.
-      App.authModal.error = result.error;
+      console.warn('[auth] action failed:', result.error);
+      App.authModal.error = result.error || 'Action failed (no error returned from server).';
       App.authModal.info  = null;
       // Toast too so a user who scrolled past the modal still gets feedback.
-      try { showToast('⚠ ' + (result.error || 'Account action failed.'), 5000); } catch (e) {}
+      try { showToast('⚠ ' + App.authModal.error, 5000); } catch (e) {}
       renderAuthModal();
     } else {
       App.authModal.error = null;
@@ -100234,6 +100266,18 @@ function renderAuthModal() {
         }
       }
     }
+   } catch (err) {
+    // 💥 Any unexpected throw (CORS, network, malformed Supabase response,
+    // a typo in this function, …) lands here. We turn it into a VISIBLE
+    // failure so the player + admin can react instead of staring at a
+    // frozen button.
+    console.error('[auth] submit handler threw', err);
+    setBusy(false);
+    App.authModal.error = 'Unexpected error: ' + ((err && err.message) || String(err) || 'see browser console for stack trace.');
+    App.authModal.info  = null;
+    try { showToast('⚠ ' + App.authModal.error, 7000); } catch (e) {}
+    try { renderAuthModal(); } catch (e) {}
+   }
   };
 }
 

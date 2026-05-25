@@ -17354,6 +17354,58 @@
   .auth-error { padding: 0.55rem 0.8rem; background: rgba(232,93,60,0.15); border: 1px solid rgba(232,93,60,0.45); border-radius: 6px; color: #ff8c75; margin-bottom: 0.8rem; font-size: 0.9rem; }
   .auth-info  { padding: 0.55rem 0.8rem; background: rgba(122,208,122,0.15); border: 1px solid rgba(122,208,122,0.45); border-radius: 6px; color: #a8e0a8; margin-bottom: 0.8rem; font-size: 0.9rem; }
   .auth-warn  { padding: 0.55rem 0.8rem; background: rgba(255,209,102,0.12); border: 1px solid rgba(255,209,102,0.45); border-radius: 6px; color: #ffd166; margin-bottom: 0.8rem; font-size: 0.88rem; line-height: 1.4; }
+  /* 🔴 Loud error variant — when account creation fails the player MUST
+     see exactly why. Bigger padding, brighter color, shake animation. */
+  .auth-error-big {
+    padding: 0.9rem 1rem;
+    font-size: 1rem;
+    background: rgba(232,93,60,0.22);
+    border: 2px solid #ff5a3a;
+    color: #ffd1c8;
+    box-shadow: 0 0 18px rgba(255,90,58,0.35);
+    animation: authErrorShake 0.45s ease;
+  }
+  .auth-error-big strong { color: #fff; }
+  @keyframes authErrorShake {
+    0%,100% { transform: translateX(0); }
+    20%,60% { transform: translateX(-6px); }
+    40%,80% { transform: translateX(6px); }
+  }
+  /* 🎉 Account-created celebration. Big emoji + clear hierarchy so the
+     player can't possibly think "nothing happened". */
+  .auth-modal.is-success { border-color: rgba(122,208,122,0.65); box-shadow: 0 18px 64px rgba(0,0,0,0.65), 0 0 32px rgba(122,208,122,0.30); }
+  .auth-success-celebrate {
+    text-align: center; padding: 0.6rem 0 1rem;
+  }
+  .auth-success-emoji {
+    font-size: 3.4rem; line-height: 1; margin-bottom: 0.6rem;
+    animation: authCelebrate 0.7s cubic-bezier(0.16,1.2,0.36,1);
+  }
+  .auth-success-msg {
+    font-size: 1.05rem; line-height: 1.55; color: #e8eef7;
+    margin-bottom: 0.8rem;
+  }
+  .auth-success-note {
+    padding: 0.7rem 0.9rem;
+    background: rgba(255,209,102,0.10);
+    border: 1px dashed rgba(255,209,102,0.45);
+    border-radius: 6px;
+    color: #ffd980;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    text-align: left;
+  }
+  @keyframes authCelebrate {
+    0%   { transform: scale(0.3) rotate(-15deg); opacity: 0; }
+    60%  { transform: scale(1.15) rotate(8deg);  opacity: 1; }
+    100% { transform: scale(1)    rotate(0deg);  opacity: 1; }
+  }
+  .btn-link {
+    background: transparent; border: none; color: #88c8e0;
+    cursor: pointer; padding: 0.35rem 0.6rem;
+    font: inherit; text-decoration: underline; font-size: 0.86rem;
+  }
+  .btn-link:hover { color: #b6dff0; }
 
   .cloud-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.6rem; }
   .cloud-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.6rem; margin: 0.6rem 0; }
@@ -99857,28 +99909,57 @@ function renderAuthModal() {
   wrap.id = 'auth-modal-root';
   wrap.className = 'auth-backdrop';
   const titleByMode = {
-    signup:  '✨ Create Account',
-    reset:   '🔑 Reset Password',
-    signin:  '☁ Sign In',
-    confirm: '📧 Confirm Your Email',
+    signup:        '✨ Create Account',
+    reset:         '🔑 Reset Password',
+    signin:        '☁ Sign In',
+    confirm:       '📧 Confirm Your Email',
+    signupSuccess: '✅ Account Created!',
   };
   const subByMode = {
-    signup:  'Save your progress to the cloud + unlock multiplayer when it ships. You\'ll get a 6-digit confirmation code by email — please check spam if it doesn\'t arrive within 5 minutes.',
-    reset:   "Enter your email — we'll send a password reset link.",
-    signin:  'Sync your inventory, ranks, and decks across devices.',
-    confirm: 'We sent a confirmation code to ' + escapeHtml(s.email || 'your email') + '. Enter the 6-digit code below, OR click the link in the email.',
+    signup:        'Save your progress to the cloud + unlock multiplayer when it ships. You\'ll get a 6-digit confirmation code by email — please check spam if it doesn\'t arrive within 5 minutes.',
+    reset:         "Enter your email — we'll send a password reset link.",
+    signin:        'Sync your inventory, ranks, and decks across devices.',
+    confirm:       'We sent a confirmation code to ' + escapeHtml(s.email || 'your email') + '. Enter the 6-digit code below, OR click the link in the email.',
+    signupSuccess: 'Your account is live — welcome aboard. One more step to unlock cloud sync.',
   };
   wrap.innerHTML = `
-    <div class="auth-modal">
+    <div class="auth-modal ${s.mode === 'signupSuccess' ? 'is-success' : ''}">
       <button class="auth-close" id="auth-close" title="Close (Esc)">✕</button>
       <h2>${titleByMode[s.mode] || titleByMode.signin}</h2>
       <p class="auth-sub">${subByMode[s.mode] || subByMode.signin}</p>
 
       ${cfgWarn}
-      ${s.error ? `<div class="auth-error">⨯ ${escapeHtml(s.error)}</div>` : ''}
+      ${s.error ? `<div class="auth-error auth-error-big">⚠ <strong>${escapeHtml(s.error)}</strong></div>` : ''}
       ${s.info  ? `<div class="auth-info">✓ ${escapeHtml(s.info)}</div>` : ''}
 
-      ${s.mode === 'confirm' ? `
+      ${s.mode === 'signupSuccess' ? `
+        <div class="auth-success-celebrate">
+          <div class="auth-success-emoji">🎉</div>
+          <div class="auth-success-msg">
+            Welcome${s.displayName ? ', <strong>' + escapeHtml(s.displayName) + '</strong>' : ''}! Your account
+            <strong style="color:#ffd166">${escapeHtml(s.email || '')}</strong> was created successfully.
+          </div>
+          ${s.needsConfirmation ? `
+            <div class="auth-success-note">
+              📧 We sent a 6-digit confirmation code to your email so you can unlock cloud sync.
+              <strong>Email delivery can take up to 5 minutes</strong> — please check your spam folder.
+            </div>
+          ` : `
+            <div class="auth-success-note" style="background:rgba(122,208,122,0.12);border-color:rgba(122,208,122,0.45);color:#a8e0a8">
+              ✓ Your email is already verified — you're fully signed in.
+            </div>
+          `}
+        </div>
+        <div class="auth-actions">
+          ${s.needsConfirmation ? `
+            <button class="btn-primary" id="auth-to-confirm">📧 I Have the Code — Enter It</button>
+            <button class="btn-secondary" id="auth-try-signin" style="margin-top:0.5rem">▶ Try Signing In Now</button>
+            <button class="btn-link" id="auth-resend-quick" style="margin-top:0.4rem">Resend confirmation email</button>
+          ` : `
+            <button class="btn-primary" id="auth-continue">▶ Continue to Game</button>
+          `}
+        </div>
+      ` : s.mode === 'confirm' ? `
         <div class="auth-warn" style="margin-bottom:0.9rem;background:rgba(255,180,0,0.10);border-color:rgba(255,180,0,0.45);color:#ffd980">
           📧 <strong>Email delivery can take up to 5 minutes</strong> — and Supabase free-tier caps at ~3 confirmation emails per hour, so during busy periods it may not arrive at all. If nothing shows up:
           <ul style="margin:0.4rem 0 0 1.1rem;padding:0;font-size:0.85em;line-height:1.5">
@@ -99895,7 +99976,10 @@ function renderAuthModal() {
           <button class="btn-primary" id="auth-submit" ${s.busy ? 'disabled' : ''}>
             ${s.busy ? '…' : 'Confirm Code'}
           </button>
-          <button class="btn-secondary" id="auth-resend" ${s.busy ? 'disabled' : ''} style="margin-top:0.5rem">
+          <button class="btn-secondary" id="auth-try-signin-confirm" ${s.busy ? 'disabled' : ''} style="margin-top:0.5rem">
+            ▶ Try Signing In Now
+          </button>
+          <button class="btn-secondary" id="auth-resend" ${s.busy ? 'disabled' : ''} style="margin-top:0.4rem">
             📧 Resend email
           </button>
         </div>
@@ -99964,9 +100048,41 @@ function renderAuthModal() {
 
   const setBusy = (busy) => { App.authModal.busy = busy; renderAuthModal(); };
 
-  // 📧 Resend button (confirm mode only).
+  // 🎯 Helper — attempt an immediate sign-in using stored credentials. Used
+  // by both 'signupSuccess' and 'confirm' modes so players can bypass the
+  // email step if the Supabase project has confirmations disabled OR
+  // already auto-verified them (e.g. they clicked the link in another tab).
+  const tryQuickSignIn = async () => {
+    const email = App.authModal.email || '';
+    const pass  = App.authModal.password || '';
+    if (!email || !pass) {
+      App.authModal.error = 'Need email + password — switch back to Sign In.';
+      App.authModal.mode  = 'signin';
+      renderAuthModal();
+      return;
+    }
+    setBusy(true);
+    const si = await cloudSignIn(email, pass);
+    setBusy(false);
+    if (si.ok) {
+      showToast('☁ Signed in — welcome!', 3000);
+      closeAuthModal();
+      if (App.screen === 'authGate') { App.screen = 'title'; render(); }
+    } else {
+      // Most likely: email not yet confirmed. Keep them on the same screen
+      // but explain clearly so they don't think we lost the account.
+      App.authModal.error = /confirm/i.test(si.error || '')
+        ? 'Your email is still pending confirmation. Click the link in the email or enter the 6-digit code below.'
+        : si.error;
+      App.authModal.info = null;
+      renderAuthModal();
+    }
+  };
+
+  // 📧 Resend button (confirm mode + signupSuccess mode).
   const resendBtn = document.getElementById('auth-resend');
-  if (resendBtn) resendBtn.onclick = async () => {
+  const resendQuickBtn = document.getElementById('auth-resend-quick');
+  const doResend = async () => {
     const email = App.authModal.email || '';
     if (!email) { App.authModal.error = 'No email on file — re-create the account.'; renderAuthModal(); return; }
     setBusy(true);
@@ -99976,7 +100092,7 @@ function renderAuthModal() {
       App.authModal.error = null;
       App.authModal.info = 'New confirmation email sent. Check your inbox (and spam).';
     } else if (r.alreadyConfirmed) {
-      // Switch to sign-in mode so they can just sign in.
+      // Already confirmed — try a sign-in immediately to advance them in.
       App.authModal.mode = 'signin';
       App.authModal.info = 'Your email is already confirmed — sign in below.';
       App.authModal.error = null;
@@ -99984,6 +100100,26 @@ function renderAuthModal() {
       App.authModal.info = null;
       App.authModal.error = r.error;
     }
+    renderAuthModal();
+  };
+  if (resendBtn)      resendBtn.onclick      = doResend;
+  if (resendQuickBtn) resendQuickBtn.onclick = doResend;
+
+  // ▶ Continue / Try-sign-in / Enter-code buttons (signupSuccess mode).
+  const continueBtn = document.getElementById('auth-continue');
+  if (continueBtn) continueBtn.onclick = async () => {
+    // Account was created with no confirmation required → sign in directly.
+    await tryQuickSignIn();
+  };
+  const trySigninBtn = document.getElementById('auth-try-signin');
+  if (trySigninBtn) trySigninBtn.onclick = tryQuickSignIn;
+  const trySigninConfirmBtn = document.getElementById('auth-try-signin-confirm');
+  if (trySigninConfirmBtn) trySigninConfirmBtn.onclick = tryQuickSignIn;
+  const toConfirmBtn = document.getElementById('auth-to-confirm');
+  if (toConfirmBtn) toConfirmBtn.onclick = () => {
+    App.authModal.mode  = 'confirm';
+    App.authModal.error = null;
+    App.authModal.info  = null;
     renderAuthModal();
   };
 
@@ -100029,44 +100165,68 @@ function renderAuthModal() {
     }
     setBusy(true);
     let result;
-    if (App.authModal.mode === 'signup')  result = await cloudSignUp(email, pass, name);
+    const isSignup = (App.authModal.mode === 'signup');
+    if (isSignup)                            result = await cloudSignUp(email, pass, name);
     else if (App.authModal.mode === 'reset') result = await cloudResetPassword(email);
-    else                                  result = await cloudSignIn(email, pass);
+    else                                     result = await cloudSignIn(email, pass);
     setBusy(false);
     if (!result.ok) {
+      // ⚠ Loud error — make sure the player CANNOT miss why the action failed.
       App.authModal.error = result.error;
       App.authModal.info  = null;
+      // Toast too so a user who scrolled past the modal still gets feedback.
+      try { showToast('⚠ ' + (result.error || 'Account action failed.'), 5000); } catch (e) {}
+      renderAuthModal();
     } else {
       App.authModal.error = null;
       if (App.authModal.mode === 'reset') {
         App.authModal.info = 'Check your email for the password reset link.';
         renderAuthModal();
-      } else if (App.authModal.mode === 'signup' && result.needsConfirmation) {
-        // Email confirmation REQUIRED — Supabase didn't return a session, so
-        // the project's "Confirm email" toggle is ON. Try a silent sign-in
-        // first (in case the project just flipped the toggle OFF moments
-        // ago); if that fails, switch the modal into the confirm-code flow.
-        setBusy(true);
-        const si = await cloudSignIn(email, pass);
-        setBusy(false);
-        if (si.ok) {
-          showToast('✨ Welcome — account created!', 2500);
-          closeAuthModal();
-          if (App.screen === 'authGate') { App.screen = 'title'; render(); }
-        } else {
-          // Switch to the confirm-code modal so the player can enter the
-          // 6-digit OTP from the email OR resend it. The "Default Supabase
-          // email is rate-limited" footer text guides them if it never lands.
-          App.authModal.mode = 'confirm';
-          App.authModal.email = email;
-          App.authModal.error = null;
-          App.authModal.info = 'Account created! We sent a confirmation email — enter the 6-digit code below or click the link in the email.';
-          renderAuthModal();
+      } else if (isSignup) {
+        // 🎉 SUCCESS — show the giant celebration screen so it's IMPOSSIBLE
+        // for the player to miss that their account was created. From there,
+        // they pick a next step (try sign-in / enter code / resend email).
+        // Stash email + password so the celebration screen's "Try Sign In"
+        // shortcut can do an instant attempt without re-prompting.
+        App.authModal.mode             = 'signupSuccess';
+        App.authModal.email            = email;
+        App.authModal.password         = pass;       // memory only — never persisted
+        App.authModal.displayName      = name || (email && email.split('@')[0]) || '';
+        App.authModal.needsConfirmation = !!result.needsConfirmation;
+        App.authModal.info             = null;
+        // Big toast so off-screen / dismissed-modal players still see it.
+        try { showToast('✅ Account created for ' + email + (result.needsConfirmation ? ' — check your email to confirm.' : ' — signing you in…'), 6000); } catch (e) {}
+        // 🛠 Admin help — log the project-fix steps so anyone running the
+        // owner console sees exactly how to stop player complaints.
+        if (result.needsConfirmation) {
+          try {
+            console.warn(
+              '%c[SIGNUP] Supabase requires email confirmation%c\n\n' +
+              '👉 Players will be stuck on the confirmation screen until they receive the email.\n' +
+              '👉 Default Supabase email is rate-limited to ~3/hour, which causes mass signup failures.\n\n' +
+              '🟢 INSTANT FIX (1 minute):\n' +
+              '   Supabase Dashboard → Authentication → Settings →\n' +
+              '   toggle OFF "Enable email confirmations" → Save.\n\n' +
+              '🟢 PROPER FIX (long-term):\n' +
+              '   Authentication → SMTP Settings → set up Resend/SendGrid/SES/Mailgun.',
+              'color:#ffd166;font-weight:bold;font-size:1.05em', 'color:inherit;font-weight:normal'
+            );
+          } catch (e) {}
         }
+        // If confirmation NOT required, try an immediate silent sign-in
+        // so the celebration screen lands already-authed. The "Continue"
+        // button then just closes the modal.
+        if (!result.needsConfirmation) {
+          try {
+            const si = await cloudSignIn(email, pass);
+            if (si.ok) App.authModal._autoSignedIn = true;
+          } catch (e) {}
+        }
+        renderAuthModal();
       } else {
-        // Success — close the modal, advance off the auth gate if we're there,
-        // and let onAuthStateChange handle the cascade re-render.
-        showToast(App.authModal.mode === 'signup' ? '✨ Welcome — account created!' : '☁ Signed in', 2500);
+        // Sign-in success — close the modal, advance off the auth gate if
+        // we're there, and let onAuthStateChange handle the cascade re-render.
+        showToast('☁ Signed in', 2500);
         closeAuthModal();
         if (App.screen === 'authGate') {
           App.screen = 'title';

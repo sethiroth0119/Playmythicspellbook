@@ -60556,15 +60556,18 @@ function renderTitle() {
   // Each portal: { id, icon, name, sub, accent, badge?, alertBadge?, onclick }
   const PORTALS = {
     main: [
-      // 🏚 Walk Camp Heights — the social/exploration view. Lives alongside
-      // the menu hub: players can walk to buildings via this OR click portal
-      // tiles like normal. New, so it gets a "NEW" alert badge for a while.
-      { id: 'p-walk', icon: '🏚', name: 'Walk Camp Heights',
-        sub: 'Explore the camp · talk to survivors · daily quests',
-        accent: '#c9a24a',
-        badge: 'NEW',
-        alertBadge: true,
-        onclick: () => { App.screen = 'campView'; render(); } },
+      // 🏚 Walk Camp Heights — admin-only for now. Still in active dev so
+      // hiding it from regular players until the social/exploration loop is
+      // production-ready. Returns null when the player isn't admin and the
+      // null entry is filtered out below before the tile grid renders.
+      ((typeof isAdmin === 'function') && isAdmin())
+        ? { id: 'p-walk', icon: '🏚', name: 'Walk Camp Heights',
+            sub: 'Explore the camp · talk to survivors · daily quests',
+            accent: '#c9a24a',
+            badge: 'ADMIN',
+            alertBadge: true,
+            onclick: () => { App.screen = 'campView'; render(); } }
+        : null,
       { id: 'p-battle',   icon: '<img src="assets/artwork/gameicons/Battle%20icon.png" alt="Battle Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'Battle Hall',    sub: 'Fight, climb, win the day',          accent: '#ff7755',
         badge: streak > 1 ? `<span class="cinder-icon"></span> ${streak} streak` : (campTotal.done > 0 ? `${campTotal.done}/${campTotal.total} chapters` : null),
         alertBadge: streak > 4,
@@ -60972,7 +60975,9 @@ function renderTitle() {
   };
 
   const meta    = HUB_META[hub] || HUB_META.main;
-  const portals = PORTALS[hub]  || PORTALS.main;
+  // 🛡 Filter null/undefined entries — some portals (e.g. Walk Camp Heights)
+  // resolve to null when the player isn't admin / lacks an unlock condition.
+  const portals = (PORTALS[hub] || PORTALS.main).filter(Boolean);
 
   // Portal card HTML. A `locked` portal gets a dimmed treatment and a lock-themed
   // badge so the player can see the feature exists but understands it's not yet

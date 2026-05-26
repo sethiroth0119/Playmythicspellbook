@@ -57890,6 +57890,25 @@ const endPlayerTurn = (state) => {
 };
 const endAITurn = (state) => {
   let s = { ...state, turn: 'player', turnNumber: state.turnNumber + 1, selection: null };
+  // 🧹 Belt + suspenders — clear any UI state that could have leaked from
+  // the AI turn (counter prompt that never closed, chain stack that never
+  // settled, half-applied counter flash). Without this, a stuck counter
+  // overlay or busy flag could keep the player's cards "locked" for the
+  // next turn even though it's their turn. Cheap to do regardless.
+  try {
+    if (typeof _resetCounterPromptState === 'function') _resetCounterPromptState();
+  } catch (e) {}
+  try {
+    if (App && App.ui) {
+      App.ui.counterFlash = null;
+      App.ui.counterPrompt = null;
+      App.ui._counterChainView = null;
+    }
+    s._counterChain = [];
+    if (typeof _renderCounterChainOverlay === 'function') {
+      try { _renderCounterChainOverlay(s); } catch (e) {}
+    }
+  } catch (e) {}
   // ⏱ Sweep expired one-turn scans — any entry in state.scannedTemp whose
   // expiry turn is now in the past gets dropped, so the temp map can't
   // grow unbounded across long matches. Permanent scans on state.scanned
@@ -72603,6 +72622,48 @@ function _resetCounterPromptState() {
   } catch (e) {}
 }
 try { window._resetCounterPromptState = _resetCounterPromptState; } catch (e) {}
+
+// 🚑 EMERGENCY UNFREEZE — last-line player rescue when the battle UI gets
+// stuck (AI step never fires, counter prompt is invisible but blocking,
+// chain overlay hangs, etc.). Wipes every busy flag + scheduled hang
+// timer, force-ends the AI phase if it's running, and rerenders. Exposed
+// on window AND bound to Ctrl-Shift-U so players can recover without
+// opening devtools. Logs to console so we still capture diagnostics.
+function _forceUnfreeze() {
+  try { console.warn('[force-unfreeze] requested by user — wiping busy state'); } catch (e) {}
+  try { _resetCounterPromptState(); } catch (e) {}
+  try { if (App._aiHangTimer) { clearTimeout(App._aiHangTimer); App._aiHangTimer = null; } } catch (e) {}
+  try { App._spellInFlight = 0; } catch (e) {}
+  try {
+    if (App && App.ui) {
+      App.ui.counterPrompt = null;
+      App.ui.counterFlash  = null;
+      App.ui._counterChainView = null;
+    }
+    if (App && App.state) App.state._counterChain = [];
+  } catch (e) {}
+  try { if (typeof _renderCounterChainOverlay === 'function') _renderCounterChainOverlay(App.state); } catch (e) {}
+  // If we're stuck on the AI turn, force-end it so the player gets control.
+  try {
+    if (App.state && App.state.turn === 'ai' && !App.state.gameOver) {
+      if (typeof finishAIPhase === 'function') finishAIPhase();
+    }
+  } catch (e) {}
+  // Always make sure the player isn't locked out of inputs.
+  try { if (App && App.ui) App.ui.aiBusy = (App.state && App.state.turn === 'ai'); } catch (e) {}
+  try { if (typeof renderBattle === 'function') renderBattle(); } catch (e) {}
+  try { if (typeof showToast === 'function') showToast('🚑 Force-unfreeze: battle state reset', 2400); } catch (e) {}
+}
+try { window._forceUnfreeze = _forceUnfreeze; } catch (e) {}
+// 🎹 Ctrl-Shift-U hotkey — players can self-rescue when the UI hangs.
+try {
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.key === 'U' || e.key === 'u')) {
+      e.preventDefault();
+      _forceUnfreeze();
+    }
+  });
+} catch (e) {}
 // Called by the prompt UI when the player clicks a counter card to activate.
 function _battleActivateCounter(cardInstanceId) {
   const s = App.state;
@@ -79122,6 +79183,16 @@ function playSpell(card) {
     openFusionSelectionMode(card);
     return;
   }
+  // 🛡 Re-entrancy guard — if a previous playSpell is still mid-chain,
+  // ignore the new click. Without this, players who double-tap the play
+  // button can fire two parallel chains and burn double the resources /
+  // leave the hand in a stuck "card locked" state. Hard cap of 12s so a
+  // crashed promise can never lock the player out forever.
+  if (App._spellInFlight && (Date.now() - App._spellInFlight) < 12000) {
+    try { console.info('[spell] ignored re-entrant play during chain'); } catch (_) {}
+    return;
+  }
+  App._spellInFlight = Date.now();
   // 🤖 AI counter — give the AI a chance to negate this spell before
   // resolution. 🪞 If the AI fires a counter, the player still has one
   // shot to counter the counter via _runCounterChain. Chain is async so we
@@ -79131,22 +79202,35 @@ function playSpell(card) {
     if (typeof _runCounterChain === 'function') {
       _runCounterChain(s, { trigger: 'spell', source: playerHero, label: 'spell' }, 0)
         .then((wasCountered) => {
-          if (wasCountered) {
-            App.state = s;
-            renderBattle();
-            return;
+          try {
+            if (wasCountered) {
+              App.state = s;
+              renderBattle();
+              return;
+            }
+            // Chain resolved in our favor (or no counter fired) — resume spell
+            // resolution. We re-enter playSpell with a sentinel so the chain
+            // doesn't double-fire.
+            try { _resolveSpellAfterChain(card); } catch (e) { console.warn('[spell] post-chain resolve threw', e); }
+          } finally {
+            // 🧹 Clear chain state + re-enable the play button regardless
+            // of outcome. The overlay fade-out is handled by the renderer.
+            try { if (App.state) App.state._counterChain = []; } catch (e) {}
+            try { if (typeof _renderCounterChainOverlay === 'function') _renderCounterChainOverlay(App.state); } catch (e) {}
+            App._spellInFlight = 0;
           }
-          // Chain resolved in our favor (or no counter fired) — resume spell
-          // resolution. We re-enter playSpell with a sentinel so the chain
-          // doesn't double-fire.
-          try { _resolveSpellAfterChain(card); } catch (e) { console.warn('[spell] post-chain resolve threw', e); }
         })
-        .catch((err) => { try { console.warn('[spell] chain threw', err); _resolveSpellAfterChain(card); } catch (_) {} });
+        .catch((err) => {
+          try { console.warn('[spell] chain threw', err); _resolveSpellAfterChain(card); } catch (_) {}
+          try { if (App.state) App.state._counterChain = []; } catch (e) {}
+          try { if (typeof _renderCounterChainOverlay === 'function') _renderCounterChainOverlay(App.state); } catch (e) {}
+          App._spellInFlight = 0;
+        });
       return;
     }
   } catch (e) {}
   // Fallback (no chain helper) — preserve legacy behavior.
-  _resolveSpellAfterChain(card);
+  try { _resolveSpellAfterChain(card); } finally { App._spellInFlight = 0; }
 }
 
 // Spell resolution body — extracted so the async chain helper can call it
@@ -79476,11 +79560,13 @@ function scheduleAIStep(delay) {
   // realtime channel, not from the local AI scoring loop. Skipping here
   // prevents the AI from acting on the opponent's units.
   if (App.battlePrep && App.battlePrep.multiplayer) return;
-  // 🩺 Watchdog — if doAIStep doesn't fire within 15s of being scheduled
+  // 🩺 Watchdog — if doAIStep doesn't fire within 8s of being scheduled
   // (counter-prompt hang, JS exception swallowed by a try/catch, etc.) we
   // force-complete the AI phase so the player isn't stuck staring at
-  // "Enemy Acting…" forever. The doAIStep wrapper bumps the lastTick so
-  // a normal step resets the watchdog.
+  // "Enemy Acting…" forever. 8s was 15s before — players reported turns
+  // stalling for 15+ seconds before the watchdog cleaned up, so we err
+  // toward faster recovery. A real AI step that legitimately needs >8s
+  // would already have called scheduleAIStep itself by then.
   App._aiLastSchedule = Date.now();
   if (App._aiHangTimer) { try { clearTimeout(App._aiHangTimer); } catch (e) {} }
   App._aiHangTimer = setTimeout(() => {
@@ -79489,11 +79575,17 @@ function scheduleAIStep(delay) {
     // player took over, or a fresh schedule happened in between.
     if (!App.state || App.state.gameOver) return;
     if (App.state.turn !== 'ai') return;
-    if (Date.now() - (App._aiLastSchedule || 0) < 14500) return;
-    try { console.warn('[ai] watchdog — AI step never fired in 15s. Force-ending turn.'); } catch (e) {}
+    if (Date.now() - (App._aiLastSchedule || 0) < 7500) return;
+    try { console.warn('[ai] watchdog — AI step never fired in 8s. Force-ending turn.'); } catch (e) {}
     try { if (typeof _resetCounterPromptState === 'function') _resetCounterPromptState(); } catch (e) {}
+    try {
+      // Also nuke any lingering chain UI/state so the player's turn starts clean.
+      if (App.state) App.state._counterChain = [];
+      if (App.ui) { App.ui.counterPrompt = null; App.ui.counterFlash = null; App.ui._counterChainView = null; }
+      if (typeof _renderCounterChainOverlay === 'function') _renderCounterChainOverlay(App.state);
+    } catch (e) {}
     try { finishAIPhase(); } catch (e) {}
-  }, 15000);
+  }, 8000);
   // Animation speed setting divides the delay (higher animSpeed = faster AI turns).
   setTimeout(() => doAIStep(), applyAnimSpeed(delay || 600));
 }

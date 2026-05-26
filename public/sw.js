@@ -15,7 +15,9 @@
 
 // Bumped 2026-05-25 — force-eject stale shells so the auth-modal diagnostic
 // fixes reach players who were sitting on a long-cached version.
-const CACHE_VERSION = 'mythic-v2-2026-05-25';
+// Bumped again 2026-05-26 — ship the battle-hang defenses (8s watchdog,
+// turn-start sanitization, force-unfreeze hotkey) immediately.
+const CACHE_VERSION = 'mythic-v3-2026-05-26';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

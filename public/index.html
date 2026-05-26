@@ -30164,13 +30164,35 @@ async function cloudSignUp(email, password, displayName) {
       password,
       options: { data: { display_name: displayName || email.split('@')[0] } },
     });
-    if (error) return { ok: false, error: error.message };
+    if (error) {
+      // 🛰 Translate gateway/timeout failures into something the player can
+      // actually act on. Supabase Auth returns a 504 when its outgoing
+      // confirmation email times out — this is a SERVER config issue, not
+      // anything the player did wrong.
+      const status = (error.status | 0) || 0;
+      const raw    = String(error.message || '').toLowerCase();
+      if (status === 504 || /timeout|gateway/i.test(raw)) {
+        try { console.error('[auth] signup 504 — Supabase Auth could not send the confirmation email in time. Check Auth → SMTP Settings in the Supabase dashboard; the configured provider (Resend) may be unreachable or the project is using the default rate-limited service.'); } catch (_) {}
+        return {
+          ok: false,
+          status: 504,
+          error: 'Sign-up timed out while the server was sending your confirmation email. This is on our end — try again in a minute. If it keeps happening, ping the admin: Supabase → Authentication → SMTP Settings needs to point at a working Resend (or other SMTP) provider.',
+        };
+      }
+      if (status === 429 || /rate.?limit/i.test(raw)) {
+        return { ok: false, status: 429, error: 'Too many signups right now — wait a minute and try again. (Server is rate-limited.)' };
+      }
+      if (status >= 500) {
+        return { ok: false, status, error: 'Server error (' + status + ') while creating your account. Please try again shortly.' };
+      }
+      return { ok: false, status, error: error.message };
+    }
     // Some projects require email confirmation. If `session` is null, account
     // is created but inactive until the player clicks the verification link.
     return {
       ok: true,
-      needsConfirmation: !data.session,
-      user: data.user,
+      needsConfirmation: !(data && data.session),
+      user: data && data.user,
     };
   } catch (e) {
     return { ok: false, error: (e && e.message) || 'Sign-up failed.' };

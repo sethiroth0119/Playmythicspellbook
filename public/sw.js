@@ -17,7 +17,10 @@
 // fixes reach players who were sitting on a long-cached version.
 // Bumped again 2026-05-26 — ship the battle-hang defenses (8s watchdog,
 // turn-start sanitization, force-unfreeze hotkey) immediately.
-const CACHE_VERSION = 'mythic-v3-2026-05-26';
+// Bumped again later 2026-05-26 — push the Card Forge soft-gate +
+// discount-cost fields and the War Map admin gate to every returning
+// player (previously stuck on a cached UI without these fields).
+const CACHE_VERSION = 'mythic-v4-2026-05-26-pm';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

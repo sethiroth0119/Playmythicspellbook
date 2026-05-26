@@ -60765,19 +60765,24 @@ function renderTitle() {
         alertBadge: !dailyDone,
         onclick: () => { App.screen = 'daily'; render(); } },
       // 🗺 War Map — Territory Wars (corp control, node battles, guards,
-      // node-shop upgrades). Admins build regions/sectors/nodes/guard-decks
-      // in Pricing Admin → Territory Wars Builder.
-      { id: 'btn-warmap', icon: '🗺', name: 'War Map', sub: 'Corp territory · capture nodes · defend with guards', accent: '#6cd4ff',
-        badge: (() => {
-          try {
-            const t = (Forge.territoryWars || {});
-            const nodes = (t.nodes || []).length;
-            const owned = Object.keys((Profile.tw_state || {}).ownedNodes || {}).length;
-            if (nodes === 0) return null;
-            return owned > 0 ? `${owned} owned · ${nodes} total` : `${nodes} nodes available`;
-          } catch (e) { return null; }
-        })(),
-        onclick: () => { App._twSelectedNode = null; App.screen = 'territoryWars'; render(); } },
+      // node-shop upgrades). Admin-only for now — corporation onboarding,
+      // node defense balancing, and the resource cycle still need polish
+      // before regular players see it. Same pattern as Walk Camp Heights:
+      // returns null for non-admins and the renderer's .filter(Boolean)
+      // strips the gap so neighbouring portals close ranks.
+      ((typeof isAdmin === 'function') && isAdmin())
+        ? { id: 'btn-warmap', icon: '🗺', name: 'War Map', sub: 'Corp territory · capture nodes · defend with guards', accent: '#6cd4ff',
+            badge: (() => {
+              try {
+                const t = (Forge.territoryWars || {});
+                const nodes = (t.nodes || []).length;
+                const owned = Object.keys((Profile.tw_state || {}).ownedNodes || {}).length;
+                if (nodes === 0) return null;
+                return owned > 0 ? `${owned} owned · ${nodes} total` : `${nodes} nodes available`;
+              } catch (e) { return null; }
+            })(),
+            onclick: () => { App._twSelectedNode = null; App.screen = 'territoryWars'; render(); } }
+        : null,
     ],
     forge: (() => {
       const _isAdmin = (typeof isAdmin === 'function') && isAdmin();

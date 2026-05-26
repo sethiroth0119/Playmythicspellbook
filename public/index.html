@@ -47579,8 +47579,13 @@ function tickSurfaces(state) {
       }
       let nu = u;
       if (cfg.standDamage > 0) {
-        nu = { ...nu, currentHp: Math.max(0, nu.currentHp - cfg.standDamage) };
-        if (nu.currentHp <= 0) nu.alive = false;
+        // Routed through applyDamageTriggers so Sturdy / Immortal / lethal-avoid /
+        // stabilize fire on surface DoT and the 🩺 HP-receipt log records the math.
+        const _hpBefore = nu.currentHp;
+        const trig = applyDamageTriggers(nu, cfg.standDamage, 'surface');
+        nu = trig.unit;
+        (trig.log || []).forEach(l => state.log.push(l));
+        try { console.info('[damage:surface]', { name: nu.name, surface: cfg.name || 'surface', hpBefore: _hpBefore, dmg: cfg.standDamage, hpAfter: nu.currentHp, alive: nu.alive }); } catch (err) {}
         state.log.push({ msg: `${cfg.icon} ${u.name} takes ${cfg.standDamage} damage standing in the ${cfg.name}.`, color: u.owner === 'player' ? 'red' : 'green' });
       }
       if (cfg.standStatus && cfg.standStatus.id && typeof applyStatusEffect === 'function') {
@@ -47629,8 +47634,13 @@ function tickSurfaces(state) {
         // 🕊 Flying units soar over the puddle — the bolt passes through.
         if (typeof isEffectivelyFlying === 'function' && isEffectivelyFlying(u)) return u;
         hit++;
-        const nu = { ...u, currentHp: Math.max(0, u.currentHp - SURFACE_SHOCK_DMG) };
-        if (nu.currentHp <= 0) nu.alive = false;
+        // Routed through applyDamageTriggers so Sturdy / Immortal / lethal-avoid /
+        // stabilize fire on lightning + the 🩺 HP-receipt log records the math.
+        const _hpBefore = u.currentHp;
+        const trig = applyDamageTriggers(u, SURFACE_SHOCK_DMG, 'magic');
+        const nu = trig.unit;
+        (trig.log || []).forEach(l => state.log.push(l));
+        try { console.info('[damage:surface-shock]', { name: nu.name, hpBefore: _hpBefore, dmg: SURFACE_SHOCK_DMG, hpAfter: nu.currentHp, alive: nu.alive }); } catch (err) {}
         return nu;
       });
       state.log.push({ msg: hit
@@ -47725,8 +47735,13 @@ function _resolveSurfaceForMove(state, attacker, target, move, log) {
         // 🕊 Flying units soar over the puddle — the bolt passes through.
         if (typeof isEffectivelyFlying === 'function' && isEffectivelyFlying(u)) return u;
         hit++;
-        const nu = { ...u, currentHp: Math.max(0, u.currentHp - SURFACE_SHOCK_DMG) };
-        if (nu.currentHp <= 0) nu.alive = false;
+        // Routed through applyDamageTriggers so Sturdy / Immortal / lethal-avoid /
+        // stabilize fire on lightning + the 🩺 HP-receipt log records the math.
+        const _hpBefore = u.currentHp;
+        const trig = applyDamageTriggers(u, SURFACE_SHOCK_DMG, 'magic');
+        const nu = trig.unit;
+        (trig.log || []).forEach(l => log.push(l));
+        try { console.info('[damage:surface-shock]', { name: nu.name, hpBefore: _hpBefore, dmg: SURFACE_SHOCK_DMG, hpAfter: nu.currentHp, alive: nu.alive }); } catch (err) {}
         return nu;
       });
       if (hit) {
@@ -52865,11 +52880,16 @@ function applyLocationFieldEffects(s, who) {
     units = units.map(u => {
       if (!unitMatchesLocationFilter(u, fx.dot, owner)) return u;
       const dmg = fx.dot.amount;
-      const newHp = u.currentHp - dmg;
-      const dies = newHp <= 0;
-      if (dies) log.push({ msg: `💀 ${u.name} succumbs to ${loc.name}!`, color: u.owner === 'player' ? 'red' : 'green' });
-      else      log.push({ msg: `${loc.icon || '🏯'} ${u.name} -${dmg} (${loc.name})`, color: 'amber' });
-      return { ...u, currentHp: Math.max(0, newHp), alive: !dies };
+      // Routed through applyDamageTriggers so Sturdy / Immortal / lethal-avoid /
+      // stabilize fire on location DoT and the 🩺 HP-receipt log records the math.
+      const _hpBefore = u.currentHp;
+      const trig = applyDamageTriggers(u, dmg, 'location');
+      const nu = trig.unit;
+      (trig.log || []).forEach(l => log.push(l));
+      try { console.info('[damage:location]', { name: nu.name, location: loc.name, hpBefore: _hpBefore, dmg: dmg, hpAfter: nu.currentHp, alive: nu.alive }); } catch (err) {}
+      if (!nu.alive) log.push({ msg: `💀 ${nu.name} succumbs to ${loc.name}!`, color: nu.owner === 'player' ? 'red' : 'green' });
+      else           log.push({ msg: `${loc.icon || '🏯'} ${nu.name} -${dmg} (${loc.name})`, color: 'amber' });
+      return nu;
     });
   }
   // --- Heal tick ---
@@ -53818,7 +53838,14 @@ function _applyInGraveTick(state, who, trigger) {
         });
         const target = enemies[0];
         const dmg = Math.max(1, ig.amount | 0 || 3);
-        s = { ...s, units: s.units.map(u => u.id === target.id ? { ...u, currentHp: Math.max(0, u.currentHp - dmg), alive: u.currentHp - dmg > 0 } : u) };
+        // Routed through applyDamageTriggers so Sturdy / Immortal / lethal-avoid /
+        // stabilize fire on graveyard pings + the 🩺 HP-receipt log records the math.
+        const _hpBefore = target.currentHp;
+        const trig = applyDamageTriggers(target, dmg, 'grave');
+        const nuT = trig.unit;
+        (trig.log || []).forEach(l => log.push(l));
+        try { console.info('[damage:grave-enemy]', { name: nuT.name, hpBefore: _hpBefore, dmg: dmg, hpAfter: nuT.currentHp, alive: nuT.alive }); } catch (err) {}
+        s = { ...s, units: s.units.map(u => u.id === target.id ? nuT : u) };
         log.push({ msg: `⚰️ ${card.name}'s lingering spirit strikes ${target.name} for ${dmg}!`, color: who === 'player' ? 'green' : 'red' });
         break;
       }
@@ -53826,7 +53853,14 @@ function _applyInGraveTick(state, who, trigger) {
         const enemyHero = (s.units || []).find(u => u && u.owner === opp && u.isHero && u.alive);
         if (!enemyHero) continue;
         const dmg = Math.max(1, ig.amount | 0 || 3);
-        s = { ...s, units: s.units.map(u => u.id === enemyHero.id ? { ...u, currentHp: Math.max(0, u.currentHp - dmg), alive: u.currentHp - dmg > 0 } : u) };
+        // Routed through applyDamageTriggers so Sturdy / Immortal / lethal-avoid /
+        // stabilize fire on graveyard hero strikes + the 🩺 HP-receipt log records the math.
+        const _hpBefore = enemyHero.currentHp;
+        const trig = applyDamageTriggers(enemyHero, dmg, 'grave');
+        const nuH = trig.unit;
+        (trig.log || []).forEach(l => log.push(l));
+        try { console.info('[damage:grave-hero]', { name: nuH.name, hpBefore: _hpBefore, dmg: dmg, hpAfter: nuH.currentHp, alive: nuH.alive }); } catch (err) {}
+        s = { ...s, units: s.units.map(u => u.id === enemyHero.id ? nuH : u) };
         log.push({ msg: `☠️ ${card.name} curses ${enemyHero.name} for ${dmg} from beyond!`, color: who === 'player' ? 'green' : 'red' });
         break;
       }
@@ -56650,22 +56684,27 @@ const executeMove = (state, attacker, target, move) => {
     }
   }
 
-  // Recoil & Self-Damage: deal recoil HP to attacker
+  // Recoil & Self-Damage: deal recoil HP to attacker.
+  // Routed through applyDamageTriggers so Sturdy / Immortal / lethal-avoid charms /
+  // stabilize bleed-out can fire and the 🩺 HP-receipt log records the math.
   let recoilDmg = 0;
   if (move.recoil && dmg > 0) recoilDmg += Math.max(1, Math.floor(dmg * move.recoil));
   if (move.recoilFixed) recoilDmg += move.recoilFixed;
   if (recoilDmg > 0) {
-    s.units = s.units.map(u => {
-      if (u.id !== attacker.id) return u;
-      const newHp = u.currentHp - recoilDmg;
-      const alive = newHp > 0;
-      return { ...u, currentHp: newHp, alive };
-    });
-    log.push({ msg: `💢 ${attacker.name} takes ${recoilDmg} recoil!`, color: 'amber' });
-    const a2 = s.units.find(u => u.id === attacker.id);
-    if (a2 && !a2.alive) {
-      log.push({ msg: `${a2.name} collapsed from recoil!`, color: a2.owner === 'ai' ? 'green' : 'red' });
-      if (a2.isHero) s.gameOver = a2.owner === 'player' ? 'ai' : 'player';
+    const aBefore = s.units.find(u => u.id === attacker.id);
+    if (aBefore) {
+      const _hpBefore = aBefore.currentHp;
+      // Recoil inherits the attack's damage type so Physical/Magical Immortal lines up.
+      const trig = applyDamageTriggers(aBefore, recoilDmg, move && move.type);
+      const a2 = trig.unit;
+      (trig.log || []).forEach(l => log.push(l));
+      try { console.info('[damage:recoil]', { name: a2.name, hpBefore: _hpBefore, dmg: recoilDmg, hpAfter: a2.currentHp, alive: a2.alive }); } catch (err) {}
+      s.units = s.units.map(u => u.id === attacker.id ? a2 : u);
+      log.push({ msg: `💢 ${attacker.name} takes ${recoilDmg} recoil!`, color: 'amber' });
+      if (!a2.alive) {
+        log.push({ msg: `${a2.name} collapsed from recoil!`, color: a2.owner === 'ai' ? 'green' : 'red' });
+        if (a2.isHero) s.gameOver = a2.owner === 'player' ? 'ai' : 'player';
+      }
     }
   }
   if (hasPassive(attacker, 'lifesteal') && dmg > 0) {
@@ -56714,7 +56753,17 @@ const executeMove = (state, attacker, target, move) => {
   if (hasPassive(target, 'thorns') && dmg > 0 && distance(attacker.pos, target.pos) <= 1) {
     const reflect = Math.floor(dmg * 0.25);
     if (reflect > 0) {
-      s.units = s.units.map(u => u.id === attacker.id ? { ...u, currentHp: u.currentHp - reflect, alive: u.currentHp - reflect > 0 } : u);
+      // Routed through applyDamageTriggers so Sturdy / Immortal / lethal-avoid fires
+      // on reflect + the 🩺 HP-receipt log records the math.
+      const aBefore = s.units.find(u => u.id === attacker.id);
+      if (aBefore) {
+        const _hpBefore = aBefore.currentHp;
+        const trig = applyDamageTriggers(aBefore, reflect, 'physical');
+        const a2 = trig.unit;
+        (trig.log || []).forEach(l => log.push(l));
+        try { console.info('[damage:thorns]', { name: a2.name, hpBefore: _hpBefore, dmg: reflect, hpAfter: a2.currentHp, alive: a2.alive }); } catch (err) {}
+        s.units = s.units.map(u => u.id === attacker.id ? a2 : u);
+      }
       log.push({ msg: `Thorns reflect ${reflect}`, color: 'amber' });
     }
   }
@@ -56724,7 +56773,16 @@ const executeMove = (state, attacker, target, move) => {
   if (target && (target._armorThorns | 0) > 0 && dmg > 0 && distance(attacker.pos, target.pos) <= 1) {
     const reflect = Math.floor(dmg * (target._armorThorns / 100));
     if (reflect > 0) {
-      s.units = s.units.map(u => u.id === attacker.id ? { ...u, currentHp: u.currentHp - reflect, alive: u.currentHp - reflect > 0 } : u);
+      // Routed through applyDamageTriggers (same reasoning as thorns passive above).
+      const aBefore = s.units.find(u => u.id === attacker.id);
+      if (aBefore) {
+        const _hpBefore = aBefore.currentHp;
+        const trig = applyDamageTriggers(aBefore, reflect, 'physical');
+        const a2 = trig.unit;
+        (trig.log || []).forEach(l => log.push(l));
+        try { console.info('[damage:armor-thorns]', { name: a2.name, hpBefore: _hpBefore, dmg: reflect, hpAfter: a2.currentHp, alive: a2.alive }); } catch (err) {}
+        s.units = s.units.map(u => u.id === attacker.id ? a2 : u);
+      }
       log.push({ msg: `🌿 Thorn Vest reflects ${reflect}`, color: 'amber' });
     }
   }
@@ -57500,8 +57558,13 @@ function applyEventRewardsToState(state, enc) {
         nu.currentHp = Math.min(nu.maxHp, nu.currentHp + (r.amount || 0));
         log.push({ msg: `💚 ${nu.name} restored ${heal} HP`, color: 'green' });
       } else if (r.type === 'damage') {
-        nu.currentHp = Math.max(0, nu.currentHp - (r.amount || 0));
-        if (nu.currentHp <= 0) nu.alive = false;
+        // Routed through applyDamageTriggers so Sturdy / Immortal / lethal-avoid charms /
+        // stabilize bleed-out can fire and the 🩺 HP-receipt log records the math.
+        const _hpBefore = nu.currentHp;
+        const trig = applyDamageTriggers(nu, r.amount || 0, 'event');
+        nu = trig.unit;
+        (trig.log || []).forEach(l => log.push(l));
+        try { console.info('[damage:event]', { name: nu.name, hpBefore: _hpBefore, dmg: r.amount || 0, hpAfter: nu.currentHp, alive: nu.alive }); } catch (err) {}
         log.push({ msg: `💥 ${nu.name} took ${r.amount || 0} damage`, color: 'red' });
       } else if (r.type === 'buff') {
         nu = applyStatusEffect(nu, r.status || 'strong', r.duration || 2);
@@ -57776,22 +57839,38 @@ const startTurn = (state, who) => {
     let newEffects = [];
     (u.statusEffects || []).forEach(e => {
       const eff = STATUS_EFFECTS[e.type];
-      // ☢️ Toxic — ramping DoT. Each tick scales damage by tickCount × dmgMin
-      // so the unit takes 3, 6, 9, 12 HP across four turns (default values).
-      // tickCount starts at 1 and is incremented as the status persists.
+      // 🩺 Route DoT damage through applyDamageTriggers so the unified
+      // pipeline runs: lethal-avoid charm, Sturdy, physical/magical
+      // Immortal, Stabilize bleed-out — all of these used to be SKIPPED
+      // when a DoT ticked, which is the "had 34 HP, hit for 9, died"
+      // bug. The killing tick was actually a stacked DoT (e.g. toxic 12
+      // + burn 3 + bleed 4 = 19) hitting all at once with no save chance.
+      // The receipt log now shows the exact subtraction so the player
+      // can audit the math.
+      let dotDmg = 0;
+      let dotLabel = '';
+      // ☢️ Toxic — ramping DoT. Each tick scales by tickCount × dmgMin
+      // so the unit takes 3, 6, 9, 12 HP across four turns.
       if (eff && eff.dmgMin && eff.escalating) {
         const tickN = (e.tickCount || 0) + 1;
-        const d = (eff.dmgMin || 1) * tickN;
-        const _hpBefore = nu.currentHp;
-        nu.currentHp -= d;
-        try { console.info('[damage:status] ' + u.name + ' [' + u.owner + '] ☢️ ' + eff.name + ' tick ' + tickN + ' — HP ' + _hpBefore + ' → ' + nu.currentHp + ' (-' + d + ')'); } catch (e) {}
-        log.push({ msg: `☢️ ${u.name} -${d} ${eff.name} (turn ${tickN}) → ${Math.max(0, nu.currentHp)} HP`, color: 'amber' });
+        dotDmg = (eff.dmgMin || 1) * tickN;
+        dotLabel = `${eff.name} (turn ${tickN})`;
       } else if (eff && eff.dmgMin) {
-        const d = rand(eff.dmgMin, eff.dmgMax);
+        dotDmg = rand(eff.dmgMin, eff.dmgMax);
+        dotLabel = eff.name;
+      }
+      if (dotDmg > 0) {
         const _hpBefore = nu.currentHp;
-        nu.currentHp -= d;
-        try { console.info('[damage:status] ' + u.name + ' [' + u.owner + '] ' + eff.name + ' — HP ' + _hpBefore + ' → ' + nu.currentHp + ' (-' + d + ')'); } catch (e) {}
-        log.push({ msg: `${u.name} -${d} ${eff.name} → ${Math.max(0, nu.currentHp)} HP`, color: 'amber' });
+        // applyDamageTriggers does the math AND runs save-passives.
+        // Pass 'status' as the damageType — Immortal passives gate on
+        // physical/magic, so status DoTs are not immortal-saved by
+        // design (they're chip you should cleanse). Sturdy +
+        // lethal-avoid still fire because they don't check type.
+        const trig = applyDamageTriggers(nu, dotDmg, 'status');
+        nu = trig.unit;
+        (trig.log || []).forEach(l => log.push(l));
+        try { console.info('[damage:status] ' + u.name + ' [' + u.owner + '] ' + (eff && eff.icon || '') + ' ' + dotLabel + ' — HP ' + _hpBefore + ' → ' + nu.currentHp + ' (-' + dotDmg + ')'); } catch (err) {}
+        log.push({ msg: `${(eff && eff.icon) ? eff.icon + ' ' : ''}${u.name} -${dotDmg} ${dotLabel} → ${Math.max(0, nu.currentHp)} HP`, color: 'amber' });
       }
       // 🎯 Ambush Guard watch — never decays on its own; it persists until it
       // fires a reaction (then it's removed where the reaction resolves) or
@@ -57881,7 +57960,13 @@ const startTurn = (state, who) => {
         if (hasPassive(u, 'dustcloak')) return u;
         // 🌪️ Weather Walker — immune to all weather DoT
         if (hasPassive(u, 'weatherWalker')) return u;
-        const nu = { ...u, currentHp: u.currentHp - 3, alive: u.currentHp - 3 > 0 };
+        // Routed through applyDamageTriggers so Sturdy / Immortal / lethal-avoid /
+        // stabilize fire on sandstorm + the 🩺 HP-receipt log records the math.
+        const _hpBefore = u.currentHp;
+        const trig = applyDamageTriggers(u, 3, 'weather');
+        const nu = trig.unit;
+        (trig.log || []).forEach(l => log.push(l));
+        try { console.info('[damage:sandstorm]', { name: nu.name, hpBefore: _hpBefore, dmg: 3, hpAfter: nu.currentHp, alive: nu.alive }); } catch (err) {}
         log.push({ msg: `${u.name} -3 sandstorm`, color: 'amber' });
         return nu;
       });
@@ -79204,6 +79289,9 @@ function placeUnit(card, pos) {
 
 function placeLocation(card, pos) {
   const s = App.state;
+  // 🪞 Play-requirement gate (e.g. "need 3 of your units on the field").
+  const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
+  if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
   // ===== FIELD SPELL MODE (current model) =====
   // One location is active at a time. Playing a new one REPLACES the existing
   // active location — the old card stays in the graveyard, and the new one's
@@ -79313,6 +79401,9 @@ function placeTrap(card, pos) {
   const s = App.state;
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
   if (!ph) { showToast('Hero needed to set traps'); return; }
+  // 🪞 Play-requirement gate.
+  const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
+  if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
   const valid = getValidPlacementTiles(card, ph, s);
   if (!valid.some(p => p.x === pos.x && p.y === pos.y)) {
     const r = getCardRange(card);
@@ -79345,6 +79436,9 @@ function placeWall(card, pos) {
   const s = App.state;
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
   if (!ph) { showToast('Hero needed to place walls'); return; }
+  // 🪞 Play-requirement gate.
+  const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
+  if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
   const valid = getValidPlacementTiles(card, ph, s);
   if (!valid.some(p => p.x === pos.x && p.y === pos.y)) {
     const r = getCardRange(card);
@@ -79400,6 +79494,11 @@ function _twFireCardSummon(card, anchorPos, ownerSide) {
 
 function playWeather(card) {
   const s = App.state;
+  // 🪞 Play-requirement gate — checked BEFORE the energy gate so the player
+  // sees the more specific reason ('need 3 units') instead of just an
+  // 'Not enough energy' when both fail simultaneously.
+  const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
+  if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
   if (getEffectiveCardCost(card, s, 'player') > s.player.energy) { showToast('Not enough energy'); return; }
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
   let duration = card.duration;
@@ -79425,6 +79524,10 @@ function playWeather(card) {
 
 function playSpell(card) {
   const s = App.state;
+  // 🪞 Play-requirement gate — fires before EVERYTHING else (polycreation,
+  // chain, energy) so the player gets the right rejection message.
+  const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
+  if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
   // 🌌 Polycreation spell — divert to Fusion Selection Mode instead of
   // running the normal spell pipeline. No mana is consumed and the card
   // stays in hand if the activation gate rejects.

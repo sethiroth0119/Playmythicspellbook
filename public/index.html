@@ -5831,6 +5831,152 @@
   @keyframes cf-icon-spin { 0% { transform: scale(0) rotate(-180deg); } 60% { transform: scale(1.3) rotate(20deg); } 100% { transform: scale(1) rotate(0deg); } }
 
   /* ============================================================
+     🪞 COUNTER CHAIN CINEMATIC — stacked cards w/ LIFO resolution
+     ============================================================
+     One link per counter played in the current chain. Surviving
+     (topmost) card glows gold; broken cards flash red + slash.
+     The stage uses radial gold→ember backdrop to read as "this is
+     a chain in progress, hold your breath". */
+  .counter-chain-overlay {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 2147483290;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center,
+      rgba(255,180,60,0.30) 0%,
+      rgba(120,30,180,0.18) 38%,
+      rgba(8,4,18,0.55) 70%,
+      rgba(8,4,18,0.85) 100%);
+    backdrop-filter: blur(4px);
+    animation: cc-overlay-in 0.22s cubic-bezier(0.2,0.9,0.3,1) both;
+    transition: opacity 0.5s ease;
+  }
+  .counter-chain-overlay.is-fading { opacity: 0; }
+  @keyframes cc-overlay-in {
+    0%   { opacity: 0; backdrop-filter: blur(0); }
+    100% { opacity: 1; backdrop-filter: blur(4px); }
+  }
+  .counter-chain-stage {
+    max-width: 92vw; max-height: 92vh;
+    overflow-y: auto;
+    padding: 1.4rem 1.6rem;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 0.6rem;
+  }
+  .cc-title {
+    font-family: 'Cinzel', serif;
+    font-weight: 900;
+    font-size: clamp(1.2rem, 2.4vw, 1.8rem);
+    letter-spacing: 0.18em;
+    color: #ffd166;
+    text-shadow: 0 0 22px rgba(255,209,102,0.65), 0 4px 14px rgba(0,0,0,0.85);
+    text-transform: uppercase;
+    margin-bottom: 0.3rem;
+  }
+  .cc-stack {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 0.55rem;
+  }
+  .cc-arrow {
+    font-family: 'Cinzel', serif;
+    font-weight: 700;
+    font-size: 0.85rem;
+    letter-spacing: 0.18em;
+    color: #ffd166;
+    opacity: 0.78;
+    text-shadow: 0 0 8px rgba(255,209,102,0.4);
+    animation: cc-arrow-pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes cc-arrow-pulse {
+    0%, 100% { opacity: 0.5; transform: translateY(0); }
+    50%      { opacity: 1;   transform: translateY(3px); }
+  }
+  .cc-card {
+    position: relative;
+    min-width: 280px; max-width: 380px;
+    padding: 0.7rem 0.9rem 0.7rem 1rem;
+    background: linear-gradient(160deg, rgba(28,18,40,0.95), rgba(14,8,22,0.96));
+    border: 2px solid var(--cc-accent, #ffd166);
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.75), 0 0 24px color-mix(in srgb, var(--cc-accent, #ffd166) 45%, transparent);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-column-gap: 0.9rem;
+    align-items: center;
+    animation: cc-card-in 0.45s cubic-bezier(0.16,1.2,0.36,1) both;
+    color: #e8eef7;
+  }
+  .cc-card.is-top {
+    transform: scale(1.04);
+    box-shadow: 0 10px 38px rgba(0,0,0,0.85),
+                0 0 36px color-mix(in srgb, var(--cc-accent, #ffd166) 70%, transparent),
+                inset 0 0 18px color-mix(in srgb, var(--cc-accent, #ffd166) 22%, transparent);
+  }
+  .cc-card.is-broken {
+    filter: saturate(0.5) brightness(0.6);
+    animation: cc-card-in 0.45s cubic-bezier(0.16,1.2,0.36,1) both,
+               cc-card-break 0.55s 0.25s ease-out both;
+  }
+  @keyframes cc-card-in {
+    0%   { opacity: 0; transform: translateY(-22px) scale(0.85); }
+    60%  { opacity: 1; transform: translateY(4px)   scale(1.04); }
+    100% { opacity: 1; transform: translateY(0)     scale(1); }
+  }
+  @keyframes cc-card-break {
+    0%   { box-shadow: 0 8px 32px rgba(0,0,0,0.75), 0 0 24px rgba(255,90,58,0.6); }
+    50%  { transform: translateX(-6px) rotate(-1.2deg); box-shadow: 0 8px 32px rgba(0,0,0,0.75), 0 0 38px rgba(255,90,58,0.95); }
+    100% { transform: translateX(0) rotate(0); }
+  }
+  .cc-card-side {
+    position: absolute; top: 6px; right: 9px;
+    font-family: 'Cinzel', serif;
+    font-size: 0.62rem; font-weight: 800;
+    letter-spacing: 0.18em;
+    color: var(--cc-accent, #ffd166);
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
+  .cc-card-icon {
+    font-size: 2.2rem;
+    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--cc-accent, #ffd166) 60%, transparent));
+  }
+  .cc-card-body { display: flex; flex-direction: column; gap: 2px; }
+  .cc-card-name {
+    font-family: 'Cinzel', serif;
+    font-weight: 800;
+    font-size: 1.05rem;
+    color: var(--cc-accent, #ffd166);
+    letter-spacing: 0.04em;
+  }
+  .cc-card-eff {
+    font-size: 0.72rem;
+    color: #d4c89a;
+    letter-spacing: 0.18em;
+    font-weight: 700;
+  }
+  .cc-card-against {
+    font-size: 0.72rem;
+    color: #a89888;
+    font-style: italic;
+  }
+  .cc-card-broken {
+    position: absolute; left: 0; right: 0; bottom: -16px;
+    text-align: center;
+    font-family: 'Cinzel', serif;
+    font-weight: 900;
+    font-size: 0.78rem;
+    letter-spacing: 0.16em;
+    color: #ff5a3a;
+    text-shadow: 0 0 10px rgba(255,90,58,0.85);
+    animation: cc-broken-pulse 0.6s ease-out 0.15s both;
+  }
+  @keyframes cc-broken-pulse {
+    0%   { opacity: 0; transform: scale(0.5); }
+    60%  { opacity: 1; transform: scale(1.18); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+
+  /* ============================================================
      ⚡ HERO ULTIMATE CINEMATIC — 0–1s "the world holds its breath"
      ------------------------------------------------------------
      Plays the instant a hero fires its ultimate. The board UI fades,
@@ -66307,6 +66453,9 @@ function renderCardEditor() {
     { id: 'summon',    label: '🌀 Summon — opponent tries to summon a unit' },
     { id: 'location',  label: '🌋 Location — location card plays' },
     { id: 'weather',   label: '☀️ Weather — weather card plays' },
+    // 🪞 NEW — counter a counter. Builds chains: spell → counter → counter-counter
+    // → ... resolves LIFO. Pure chain cards typically pick this trigger alone.
+    { id: 'counter',   label: '🪞 Counter — opponent activates a counter card (builds a chain)' },
   ];
   const counterTriggers = Array.isArray(card.counterTriggers) ? card.counterTriggers : (card.counterTrigger ? [card.counterTrigger] : []);
 
@@ -72058,6 +72207,140 @@ function bindEventModal() {
 }
 
 // ============================================================================
+// 🪞 COUNTER CHAIN — multi-link interrupt stack.
+// ----------------------------------------------------------------------------
+// When a counter resolves, the OPPOSITE side gets one shot to counter THAT
+// counter via cards with counterTriggers including 'counter'. The chain
+// recurses (capped at depth 5 for safety) and resolves LIFO. A simple stack
+// kept on state._counterChain so the UI cinematic can show every link.
+//
+// Async-via-Promise so synchronous callers stay synchronous: the result
+// flows through `.then(wasCountered => …)` exactly like the existing
+// tryPromptCounter pattern (see scheduleAIStep above).
+//
+// Returns a Promise that resolves to TRUE when the original action ends
+// up negated (top of chain survives), FALSE when it should proceed (top of
+// chain was beaten by a deeper counter).
+// ============================================================================
+// 🎬 CHAIN CINEMATIC — mounts a fixed overlay showing the current chain
+// stack as floating cards with "→ COUNTERS" arrows between them. Each
+// link reads its `broken` flag from the chain state so resolved-but-
+// negated counters fade red while the surviving topmost card stays gold.
+// Auto-removes itself ~1.6s after the chain stack empties so the player
+// gets a visible "settle" beat after the last counter resolves.
+function _renderCounterChainOverlay(state) {
+  try {
+    const chain = (state && state._counterChain) || [];
+    let host = document.getElementById('counter-chain-overlay');
+    if (chain.length === 0) {
+      if (host) {
+        host.classList.add('is-fading');
+        setTimeout(() => { const h = document.getElementById('counter-chain-overlay'); if (h) h.remove(); }, 1600);
+      }
+      return;
+    }
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'counter-chain-overlay';
+      host.className = 'counter-chain-overlay';
+      document.body.appendChild(host);
+    }
+    host.classList.remove('is-fading');
+    const linksHtml = chain.map((link, i) => {
+      const broken = !!link.broken;
+      const isTop  = (i === chain.length - 1);
+      const color  = broken ? '#ff5a3a' : (isTop ? '#ffd166' : '#88c8e0');
+      const icon   = (link.card && link.card.icon) || '⏱';
+      const name   = (link.card && link.card.name)  || 'Counter';
+      const eff    = link.effect || 'negate';
+      const ownerLabel = link.owner === 'ai' ? 'AI' : 'YOU';
+      const arrow = (i > 0) ? `<div class="cc-arrow">↓ COUNTERS ↓</div>` : '';
+      return arrow + `
+        <div class="cc-card ${broken ? 'is-broken' : ''} ${isTop ? 'is-top' : ''}" style="--cc-accent:${color}">
+          <div class="cc-card-side">${ownerLabel}</div>
+          <div class="cc-card-icon">${icon}</div>
+          <div class="cc-card-body">
+            <div class="cc-card-name">${(typeof escapeHtml === 'function') ? escapeHtml(name) : name}</div>
+            <div class="cc-card-eff">${eff.toUpperCase()}</div>
+            <div class="cc-card-against">vs ${(typeof escapeHtml === 'function') ? escapeHtml(link.againstName || '') : (link.againstName || '')}</div>
+          </div>
+          ${broken ? '<div class="cc-card-broken">⚡ NEGATED ⚡</div>' : ''}
+        </div>`;
+    }).join('');
+    host.innerHTML = `
+      <div class="counter-chain-stage">
+        <div class="cc-title">🪞 COUNTER CHAIN · depth ${chain.length}</div>
+        <div class="cc-stack">${linksHtml}</div>
+      </div>`;
+  } catch (e) { try { console.warn('[chain] overlay render threw', e); } catch (_) {} }
+}
+
+const COUNTER_CHAIN_MAX_DEPTH = 5;
+function _runCounterChain(state, action, depth) {
+  depth = depth | 0;
+  if (depth === 0) {
+    state._counterChain = [];
+    try { if (App.ui) App.ui._counterChainView = null; } catch (e) {}
+  }
+  if (depth > COUNTER_CHAIN_MAX_DEPTH) return Promise.resolve(false);
+  // Decide who's DEFENDING against this action. The source's owner is the
+  // attacker; the defender is the other side. If source has no owner
+  // (e.g. global field event), default the defender to 'ai' so the player
+  // still gets a prompt.
+  const attacker = (action.source && action.source.owner) || 'player';
+  const defender = (attacker === 'player') ? 'ai' : 'player';
+  const fireDefenderCounter = () => {
+    if (defender === 'ai') {
+      // Sync — _aiAutoCounter applies effects immediately if it fires and
+      // stashes the card it used into state._lastAiCounterCard.
+      state._lastAiCounterCard = null;
+      const ok = (typeof _aiAutoCounter === 'function') && _aiAutoCounter(state, action);
+      return Promise.resolve(ok ? { card: state._lastAiCounterCard, owner: 'ai' } : null);
+    }
+    // Player side — open the timed prompt.
+    state._lastPlayerCounterCard = null;
+    return tryPromptCounter(state, action).then((ok) => ok
+      ? { card: state._lastPlayerCounterCard, owner: 'player' }
+      : null);
+  };
+  return fireDefenderCounter().then((counterFired) => {
+    if (!counterFired) return false;  // action proceeds normally
+    // Track this link of the chain for the UI cinematic.
+    state._counterChain.push({
+      card: counterFired.card || { name: 'Counter', icon: '⏱' },
+      owner: counterFired.owner,
+      againstName: (action.source && action.source.name) || action.label || 'action',
+      effect: (counterFired.card && counterFired.card.counterEffect) || 'negate',
+      depth,
+    });
+    try { _renderCounterChainOverlay(state); } catch (e) {}
+    try { renderBattle(); } catch (e) {}
+    // Recurse — give the OPPOSITE side a chance to counter THIS counter.
+    const chainAction = {
+      trigger: 'counter',
+      source: counterFired.card || { name: 'Counter', owner: counterFired.owner },
+      target: action.source,
+      label: (counterFired.card && counterFired.card.name) || 'counter',
+    };
+    return _runCounterChain(state, chainAction, depth + 1).then((subCountered) => {
+      if (subCountered) {
+        // 🔁 Our counter was itself countered — the deeper counter wins.
+        // Mark this link as 'broken' and let the original action proceed.
+        const link = state._counterChain[state._counterChain.length - 1 - (subCountered ? 0 : 0)];
+        // Tag the link we just lost (one below the latest) so the cinematic
+        // can flash it red. The "topmost" survivor stays green.
+        const broken = state._counterChain[state._counterChain.length - 2];
+        if (broken) broken.broken = true;
+        try { _renderCounterChainOverlay(state); } catch (e) {}
+        try { renderBattle(); } catch (e) {}
+        return false;  // ⬅ action proceeds because our counter was broken
+      }
+      return true;  // chain held — original action is negated
+    });
+  });
+}
+
+// ============================================================================
 // ⏱ COUNTER-CARD PROMPT — interrupt window for hand-playable Counter cards.
 // Any engine site that's about to apply a counterable action calls
 //   await tryPromptCounter(state, { trigger:'attack', source:enemyUnit,
@@ -72159,6 +72442,17 @@ function _aiAutoCounter(state, opts) {
     if (aiDeployedUnit && typeof playSfx === 'function') playSfx('unitSummon');
   } catch (e) {}
   const effect = cheapest.counterEffect || 'negate';
+  // 🪞 Stash the card the AI just used so the chain helper can attach it
+  // to the chain stack and render the cinematic. When the AI counter was
+  // a deployed Counter Unit, also carry the unit's `id` + `pos` so a
+  // player counter-counter with the 'killUnit' (execute) effect can find
+  // and kill the AI's counter unit on the field.
+  state._lastAiCounterCard = Object.assign({}, cheapest, {
+    owner: 'ai',
+    id:    aiDeployedUnit ? aiDeployedUnit.id  : undefined,
+    pos:   aiDeployedUnit ? aiDeployedUnit.pos : undefined,
+    isHero: false,
+  });
   if (effect === 'negate') {
     log.push({ msg: `⏱ AI counters with ${cheapest.name} — ${sourceName}'s ${opts.trigger} is NEGATED!`, color: 'red' });
     state._lastAICounter = { effect: 'negate', at: Date.now() };
@@ -72365,6 +72659,9 @@ function _battleActivateCounter(cardInstanceId) {
     s.player.graveyard = (s.player.graveyard || []).concat([card]);
   }
   s.units = nextUnits;
+  // 🪞 Stash for the chain helper. If a chain is in progress, this lets
+  // _runCounterChain know exactly which card the player just used.
+  s._lastPlayerCounterCard = Object.assign({}, card, { owner: 'player', _deployedId: deployedUnit && deployedUnit.id });
   const logMsg = isCounterUnit
     ? (deployedUnit
         ? `⏱ ${card.name} counters and deploys to the field!`
@@ -78826,17 +79123,36 @@ function playSpell(card) {
     return;
   }
   // 🤖 AI counter — give the AI a chance to negate this spell before
-  // resolution. If they fire a counter, bail and return the card to hand
-  // unspent (the negate path) — energy was never deducted yet.
+  // resolution. 🪞 If the AI fires a counter, the player still has one
+  // shot to counter the counter via _runCounterChain. Chain is async so we
+  // bail out of the sync path and continue inside the .then() once resolved.
   try {
     const playerHero = (s.units || []).find(u => u && u.owner === 'player' && u.isHero);
-    if (typeof _aiAutoCounter === 'function' && _aiAutoCounter(s, { trigger: 'spell', source: playerHero, label: 'spell' })) {
-      // Re-render so log + counter chip update; spell is negated.
-      App.state = s;
-      renderBattle();
+    if (typeof _runCounterChain === 'function') {
+      _runCounterChain(s, { trigger: 'spell', source: playerHero, label: 'spell' }, 0)
+        .then((wasCountered) => {
+          if (wasCountered) {
+            App.state = s;
+            renderBattle();
+            return;
+          }
+          // Chain resolved in our favor (or no counter fired) — resume spell
+          // resolution. We re-enter playSpell with a sentinel so the chain
+          // doesn't double-fire.
+          try { _resolveSpellAfterChain(card); } catch (e) { console.warn('[spell] post-chain resolve threw', e); }
+        })
+        .catch((err) => { try { console.warn('[spell] chain threw', err); _resolveSpellAfterChain(card); } catch (_) {} });
       return;
     }
   } catch (e) {}
+  // Fallback (no chain helper) — preserve legacy behavior.
+  _resolveSpellAfterChain(card);
+}
+
+// Spell resolution body — extracted so the async chain helper can call it
+// once the counter chain (if any) has resolved in the player's favor.
+function _resolveSpellAfterChain(card) {
+  const s = App.state;
   // "Spendthrift" daily modifier zeroes out spell costs for both sides
   const spellCost = (s.mods && s.mods.cheapSpells) ? 0 : card.cost;
   if (spellCost > s.player.energy) { showToast('Not enough energy'); return; }

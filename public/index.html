@@ -28164,6 +28164,22 @@ function getEffectiveCardCost(card, state, side) {
       if (!need || need === wt) return 0;
     }
   }
+  // 🪞 PLAY-REQUIREMENT DISCOUNT — when the card's playRequirement carries
+  // a discountedCost (>= 0) AND the board condition is currently met, the
+  // card costs that amount instead of baseCost. Works alongside the soft-
+  // gate flag (allowNormalPlay) — the gate decides whether the card is
+  // playable; this decides what it costs when the condition fires. Checked
+  // before the Outnumbered branch so admins can stack mechanics cleanly.
+  if (card && card.playRequirement && typeof card.playRequirement === 'object') {
+    const _pr = card.playRequirement;
+    const _disc = (_pr.discountedCost | 0);
+    if ((_pr.discountedCost !== undefined && _pr.discountedCost !== null)
+        && _disc >= 0
+        && typeof _isPlayRequirementMet === 'function'
+        && _isPlayRequirementMet(card, state, (side === 'ai') ? 'ai' : 'player')) {
+      return _disc;
+    }
+  }
   // Only THIS card matters — must carry the passive itself.
   if (!cardHasPassive(card, 'outnumbered')) return baseCost;
   side = (side === 'ai') ? 'ai' : 'player';
@@ -66689,6 +66705,18 @@ function renderCardEditor() {
         <span>Count heroes too (off by default — only non-hero units count)</span>
       </label>
     </div>
+    <div class="editor-field full">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="ed-playreq-softgate" ${playReq.allowNormalPlay ? 'checked' : ''}>
+        <span>Card can still be played normally (soft gate — only unlocks the discount below)</span>
+      </label>
+      <div class="small-text ink-dim" style="margin-top:0.25rem">When ON, this card is always playable. The requirement just decides when the discounted cost below fires. Leave OFF for a hard gate that locks the card until the condition is met.</div>
+    </div>
+    <div class="editor-field full">
+      <label>💰 Discounted cost when requirement is met (-1 = no discount)</label>
+      <input id="ed-playreq-disccost" type="number" min="-1" max="20" value="${(playReq.discountedCost == null) ? -1 : (playReq.discountedCost | 0)}">
+      <div class="small-text ink-dim" style="margin-top:0.25rem">Example: this card normally costs ⚡5. Set Minimum Count to 8 and Discounted Cost to 1 — when 8 units are on the field, the card costs ⚡1 instead of ⚡5.</div>
+    </div>
   ` : '';
 
   // Location block — covers-whole-board toggle + board image upload. The toggle
@@ -68278,14 +68306,21 @@ function captureEditorIntoCard(card) {
   }
 
   // 🪞 Play Requirement — gate this card behind board state. None = no gate.
+  // `allowNormalPlay` flips it from a hard lock to a soft trigger that only
+  // unlocks the `discountedCost` (when >= 0). Both fields are persisted so
+  // the same admin-authored card data behaves identically in web + Godot.
   if (document.getElementById('ed-playreq-type')) {
     const reqType = v('ed-playreq-type');
     if (reqType === 'unitsOnField') {
+      const _softEl = document.getElementById('ed-playreq-softgate');
+      const _heroEl = document.getElementById('ed-playreq-includehero');
       card.playRequirement = {
-        type:        'unitsOnField',
-        count:       Math.max(1, num('ed-playreq-count', 1, 20, 3)),
-        scope:       v('ed-playreq-scope') || 'any',
-        includeHero: (() => { const el = document.getElementById('ed-playreq-includehero'); return el ? !!el.checked : false; })(),
+        type:            'unitsOnField',
+        count:           Math.max(1, num('ed-playreq-count', 1, 20, 3)),
+        scope:           v('ed-playreq-scope') || 'any',
+        includeHero:     _heroEl ? !!_heroEl.checked : false,
+        allowNormalPlay: _softEl ? !!_softEl.checked : false,
+        discountedCost:  num('ed-playreq-disccost', -1, 20, -1),
       };
     } else {
       delete card.playRequirement;
@@ -79227,9 +79262,52 @@ function buildKalonElementLayers(elementId) {
 // human-readable reason ('need 3 of your units on the field') when it can't.
 // Pure read of state.units; no mutation. Re-used by every play path so the
 // rule is enforced consistently (units, spells, weather, locations, traps).
+//
+// SCHEMA:
+//   playRequirement = {
+//     type:            'unitsOnField',
+//     count:           <int>,            // minimum count
+//     scope:           'self'|'enemy'|'any',
+//     includeHero:     <bool>,           // off by default (only non-heroes count)
+//     allowNormalPlay: <bool>,           // soft gate (always playable, condition only unlocks discount)
+//     discountedCost:  <int>,            // cost when condition met (-1 = none, read by getEffectiveCardCost)
+//   }
 function _checkPlayRequirement(card, state, side) {
   const req = card && card.playRequirement;
   if (!req || req.type !== 'unitsOnField') return null;
+  // 🟢 SOFT GATE — when allowNormalPlay is true, the card is ALWAYS
+  // playable. The requirement just decides if the discount fires (see
+  // getEffectiveCardCost). Bail before counting so the play path never
+  // blocks the card.
+  if (req.allowNormalPlay) return null;
+  if (!_isPlayRequirementMet(card, state, side)) {
+    const scope = req.scope || 'any';
+    const need  = Math.max(1, req.count | 0);
+    const me    = side || 'player';
+    const opp   = me === 'player' ? 'ai' : 'player';
+    const heroOk = !!req.includeHero;
+    const count = ((state && state.units) || []).filter(u => {
+      if (!u || !u.alive) return false;
+      if (!heroOk && u.isHero) return false;
+      if (scope === 'self')  return u.owner === me;
+      if (scope === 'enemy') return u.owner === opp;
+      return true;
+    }).length;
+    const scopeLabel = scope === 'self' ? 'your own units'
+                     : scope === 'enemy' ? 'enemy units'
+                     : 'units';
+    return `Need ${need} ${scopeLabel} on the field to play this (you have ${count}).`;
+  }
+  return null;
+}
+
+// 🟩 Returns true when the playRequirement condition is currently met.
+// Pure read of state.units. Used by both _checkPlayRequirement (gate
+// check) and getEffectiveCardCost (discount trigger) so the soft-gate
+// path can fire the discount without unlocking the gate.
+function _isPlayRequirementMet(card, state, side) {
+  const req = card && card.playRequirement;
+  if (!req || req.type !== 'unitsOnField') return false;
   const need  = Math.max(1, req.count | 0);
   const scope = req.scope || 'any';
   const me    = side || 'player';
@@ -79240,13 +79318,9 @@ function _checkPlayRequirement(card, state, side) {
     if (!heroOk && u.isHero) return false;
     if (scope === 'self')  return u.owner === me;
     if (scope === 'enemy') return u.owner === opp;
-    return true;  // 'any'
+    return true;
   }).length;
-  if (count >= need) return null;
-  const scopeLabel = scope === 'self' ? 'your own units'
-                   : scope === 'enemy' ? 'enemy units'
-                   : 'units';
-  return `Need ${need} ${scopeLabel} on the field to play this (you have ${count}).`;
+  return count >= need;
 }
 
 function placeUnit(card, pos) {
@@ -100286,7 +100360,9 @@ async function _declareDcWin() {
   // clients used to call .update() unconditionally and both ended up with
   // a local VICTORY screen because neither's gameover broadcast was sent.
   if (App.state) App.state = { ...App.state, gameOver: 'player' };
-  try { submitMatchResult(MatchBroadcast.myUserId, App.state); } catch (e) {}
+  // endReason: 'dc' — bypasses the dead-hero sanity guard since a DC win is
+  // legitimately closed without a hero death.
+  try { submitMatchResult(MatchBroadcast.myUserId, App.state, { endReason: 'dc' }); } catch (e) {}
   showToast('🔌 Opponent timed out — confirming with server…', 3500);
   if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
 }
@@ -100596,9 +100672,36 @@ function _onRemoteGameOverArrived(payload) {
 // each client would unconditionally UPDATE the row + broadcast a gameover
 // packet, and the LAST write (whichever arrived after the other) silently
 // overwrote the truthful first one. Now the first writer is the only writer.
-async function submitMatchResult(winnerUserId, finalState) {
+// 🛡 SANITY GUARD — refuse to submit a match result unless there's a real
+// reason: either a hero is genuinely dead in the local state, OR this is a
+// disconnect declaration (which intentionally has no hero death). The
+// 'random winner after 2 turns with no damage' bug was caused by something
+// else setting App.state.gameOver and our submit firing blindly. With this
+// guard the spurious case is logged but never reaches the server.
+function _mpResultIsLegitimate(finalState, endReason) {
+  if (endReason === 'dc') return true;  // disconnect submits are intentional
+  if (!finalState || !Array.isArray(finalState.units)) return false;
+  const deadHero = finalState.units.find(u => u && u.isHero && (u.alive === false || u.currentHp <= 0));
+  return !!deadHero;
+}
+
+async function submitMatchResult(winnerUserId, finalState, opts) {
+  const endReason = (opts && opts.endReason) || 'normal';
   if (!MatchBroadcast.matchId || !Cloud.client) return;
   if (MatchBroadcast._matchEndSubmitted) return;   // local guard — never double-fire
+  // 🛡 Sanity gate — was the match really over? Drop spurious submits caused
+  // by a stray gameOver flag (deserialized snapshot, passive bug, state leak
+  // from a previous match) BEFORE we hit the Edge Function.
+  if (!_mpResultIsLegitimate(finalState, endReason)) {
+    try {
+      const aliveHeroes = ((finalState && finalState.units) || []).filter(u => u && u.isHero && u.alive !== false && u.currentHp > 0).length;
+      console.warn('[MP] ⚠ submitMatchResult REFUSED — no hero is actually dead but gameOver was set.',
+        { gameOver: finalState && finalState.gameOver, aliveHeroes, endReason, turn: finalState && finalState.turnNumber, units: ((finalState && finalState.units) || []).map(u => ({ name: u && u.name, isHero: !!(u && u.isHero), alive: u && u.alive, hp: u && u.currentHp })) });
+    } catch (e) {}
+    // Clear the bogus flag locally so the next checkPostAction doesn't retry.
+    if (App.state && App.state.gameOver) App.state = { ...App.state, gameOver: null };
+    return;
+  }
   MatchBroadcast._matchEndSubmitted = true;
   try {
     // 🛡️ EDGE FUNCTION — server-authoritative winner arbitration. Replaces

@@ -65234,6 +65234,7 @@ function renderForgeCards() {
             </div>
             <div class="forge-row-actions">
               ${renderObtToggles('card', c.id)}
+              <button class="btn-mini" data-act="duplicate" data-id="${c.id}" title="Duplicate this card so you can edit a variant without touching the original">📋 Duplicate</button>
               <button class="btn-mini" data-act="edit" data-id="${c.id}">Edit</button>
               <button class="btn-mini btn-danger" data-act="delete" data-id="${c.id}">×</button>
             </div>
@@ -65320,6 +65321,7 @@ function _forgeRebuildListInPlace() {
           </div>
           <div class="forge-row-actions">
             ${renderObtToggles('card', c.id)}
+            <button class="btn-mini" data-act="duplicate" data-id="${c.id}" title="Duplicate this card so you can edit a variant without touching the original">📋 Duplicate</button>
             <button class="btn-mini" data-act="edit" data-id="${c.id}">Edit</button>
             <button class="btn-mini btn-danger" data-act="delete" data-id="${c.id}">×</button>
           </div>
@@ -65371,6 +65373,16 @@ function _forgeRebuildListInPlace() {
       const card = (Forge.customCards || []).find(c => c.id === id);
       if (!card) return;
       if (act === 'edit') { App._cardDraft = card; App.editingCardId = id; render(); }
+      else if (act === 'duplicate') {
+        const copy = (typeof _duplicateForgeCard === 'function') ? _duplicateForgeCard(card) : null;
+        if (!copy) return;
+        Forge.customCards.push(copy);
+        try { saveForge(); } catch (e) {}
+        try { showToast(`📋 Duplicated "${card.name}" — open the copy to edit`, 2800); } catch (e) {}
+        App.editingCardId = copy.id;
+        App._cardDraft    = copy;
+        render();
+      }
       else if (act === 'delete') {
         if (!confirm(`Delete "${card.name}"? This can't be undone.`)) return;
         Forge.customCards = Forge.customCards.filter(c => c.id !== id);
@@ -65750,9 +65762,56 @@ function bindGuideEditor() {
   };
 }
 
+// 📋 Deep-clone a Forge card into a fresh entry suitable for editing as a
+// variant. The copy gets a brand-new id (cc_<ts>_<rand>) so saves don't
+// collide with the original, appends '(Copy)' to the name for quick visual
+// distinction, and resets per-card runtime state (e.g. obtainability stamps
+// that would otherwise leak the original's unlock history into the copy).
+// JSON round-trip is the cheapest reliable deep-clone for the nested onPlay /
+// kalonForm / inGrave / learnset / counterTriggers shape the editor produces.
+function _duplicateForgeCard(orig) {
+  if (!orig || typeof orig !== 'object') return null;
+  let copy;
+  try { copy = JSON.parse(JSON.stringify(orig)); }
+  catch (e) { try { console.warn('[forge] duplicate clone failed', e); } catch (_) {} return null; }
+  // Fresh id — same shape as makeNewCardDraft so any id-keyed catalog reads
+  // (sprite cache, ownership, leaderboards) treat the copy as brand-new.
+  copy.id = 'cc_' + Date.now() + '_' + Math.floor(Math.random() * 100000).toString(36);
+  // Name suffix — kept short so the list row doesn't overflow. If the source
+  // is already a copy, increment the (Copy N) counter instead of stacking.
+  const baseName = String(orig.name || 'Card');
+  const copyMatch = baseName.match(/^(.+?) \(Copy(?: (\d+))?\)\s*$/);
+  if (copyMatch) {
+    const n = (copyMatch[2] ? (copyMatch[2] | 0) : 1) + 1;
+    copy.name = `${copyMatch[1]} (Copy ${n})`;
+  } else {
+    copy.name = baseName + ' (Copy)';
+  }
+  // Reset per-card admin/runtime state that doesn't belong on a fresh copy.
+  delete copy.createdAt;
+  copy.createdAt = Date.now();
+  return copy;
+}
+
 function bindForgeCards() {
   document.getElementById('btn-new-card').onclick = () => { App.editingCardId = 'NEW'; render(); };
   document.querySelectorAll('[data-act="edit"]').forEach(el => { el.onclick = () => { App.editingCardId = el.dataset.id; render(); }; });
+  document.querySelectorAll('[data-act="duplicate"]').forEach(el => {
+    el.onclick = () => {
+      const id = el.dataset.id;
+      const orig = (Forge.customCards || []).find(c => c.id === id);
+      if (!orig) return;
+      const copy = _duplicateForgeCard(orig);
+      if (!copy) return;
+      Forge.customCards.push(copy);
+      try { saveForge(); } catch (e) {}
+      showToast(`📋 Duplicated "${orig.name}" — open the copy to edit`, 2800);
+      // Open the new card in the editor immediately so the player can tweak it.
+      App.editingCardId = copy.id;
+      App._cardDraft    = copy;
+      render();
+    };
+  });
   document.querySelectorAll('[data-act="delete"]').forEach(el => {
     el.onclick = () => {
       if (!confirm('Delete this card? Sprites and held items keyed to it will remain.')) return;

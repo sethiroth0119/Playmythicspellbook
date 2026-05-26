@@ -46014,6 +46014,11 @@ function buildExportPayload(opts) {
       customMoves: Forge.customMoves || {},
       customEvents: Forge.customEvents || [],
       customEncounters: Forge.customEncounters || [],
+      // 📖 Page guides + 🤝 trader overrides — admin-authored content that
+      // belongs in any Forge export so admins can hand a single JSON to a
+      // teammate and re-import the full set on another browser.
+      pageGuides: Array.isArray(Forge.pageGuides) ? Forge.pageGuides : [],
+      traders: (Forge.traders && typeof Forge.traders === 'object') ? Forge.traders : {},
     };
   }
   if (opts.profile !== false) {
@@ -46086,6 +46091,22 @@ function applyImportPayload(payload, opts) {
       } else {
         Forge.customEncounters = payload.forge.customEncounters;
       }
+    }
+    // 📖 Page guides — array keyed by id. Same merge pattern as events.
+    if (Array.isArray(payload.forge.pageGuides)) {
+      if (opts.merge) {
+        const byId = {};
+        (Forge.pageGuides || []).forEach(g => { byId[g.id] = g; });
+        payload.forge.pageGuides.forEach(g => { if (g && g.id) byId[g.id] = g; });
+        Forge.pageGuides = Object.values(byId);
+      } else {
+        Forge.pageGuides = payload.forge.pageGuides;
+      }
+    }
+    // 🤝 Trader overrides — object keyed by trader id. Merge defaults to
+    // keeping local entries that aren't in the payload.
+    if (payload.forge.traders && typeof payload.forge.traders === 'object') {
+      Forge.traders = opts.merge ? Object.assign({}, Forge.traders || {}, payload.forge.traders) : payload.forge.traders;
     }
     saveForge();
   }
@@ -105346,6 +105367,13 @@ function renderDataPanel() {
             <button class="btn-secondary" id="btn-export-decks">⬇ Decks Only</button>
             <button class="btn-secondary" id="btn-copy-clipboard">📋 Copy to Clipboard</button>
           </div>
+          <p class="small-text ink-dim" style="margin-top:0.9rem">🎯 <strong>Per-category exports</strong> — slice out just one type of admin content. Each file is importable on its own and merges cleanly with the rest.</p>
+          <div class="data-action-row">
+            <button class="btn-secondary" id="btn-export-cards"   title="Just your forged cards (no moves / guides / traders)">🃏 Cards Only (${(Forge.customCards||[]).length})</button>
+            <button class="btn-secondary" id="btn-export-moves"   title="Just your custom moves">⚔ Moves Only (${Object.keys(Forge.customMoves||{}).length})</button>
+            <button class="btn-secondary" id="btn-export-guides"  title="Just your RPG page guides">📖 Guides Only (${(Forge.pageGuides||[]).length})</button>
+            <button class="btn-secondary" id="btn-export-traders" title="Just your trader overrides (photos + custom names)">🤝 Traders Only (${Object.keys(Forge.traders||{}).length})</button>
+          </div>
         </div>
 
         <div class="data-section">
@@ -105400,6 +105428,30 @@ function renderDataPanel() {
     const payload = { version: EXPORT_VERSION, exportedAt: new Date().toISOString(), profile: { decks: Profile.decks || [] } };
     if (downloadExportFile(payload, 'gambit-decks-export')) showToast('✓ Decks exported');
   };
+  // 🎯 Per-category exports — each downloads ONLY one slice of Forge data.
+  // The payload still nests under `forge.<key>` so the same applyImportPayload
+  // path picks it up cleanly on the receiving end (merge or replace).
+  const _exportSlice = (sliceKey, sliceValue, hint, labelN) => {
+    const payload = {
+      version:    EXPORT_VERSION,
+      exportedAt: new Date().toISOString(),
+      forge:      { [sliceKey]: sliceValue },
+    };
+    if (downloadExportFile(payload, hint)) showToast('✓ ' + labelN + ' exported');
+    else showToast('⚠ Export failed');
+  };
+  const _btnCards   = document.getElementById('btn-export-cards');
+  if (_btnCards)   _btnCards.onclick   = () => _exportSlice('customCards', Forge.customCards || [],
+    'gambit-cards-export', `${(Forge.customCards || []).length} card${(Forge.customCards || []).length === 1 ? '' : 's'}`);
+  const _btnMoves  = document.getElementById('btn-export-moves');
+  if (_btnMoves)   _btnMoves.onclick   = () => _exportSlice('customMoves', Forge.customMoves || {},
+    'gambit-moves-export', `${Object.keys(Forge.customMoves || {}).length} move${Object.keys(Forge.customMoves || {}).length === 1 ? '' : 's'}`);
+  const _btnGuides = document.getElementById('btn-export-guides');
+  if (_btnGuides)  _btnGuides.onclick  = () => _exportSlice('pageGuides',  Forge.pageGuides  || [],
+    'gambit-guides-export', `${(Forge.pageGuides || []).length} guide${(Forge.pageGuides || []).length === 1 ? '' : 's'}`);
+  const _btnTraders = document.getElementById('btn-export-traders');
+  if (_btnTraders) _btnTraders.onclick = () => _exportSlice('traders',     Forge.traders     || {},
+    'gambit-traders-export', `${Object.keys(Forge.traders || {}).length} trader${Object.keys(Forge.traders || {}).length === 1 ? '' : 's'}`);
   document.getElementById('btn-copy-clipboard').onclick = async () => {
     const payload = buildExportPayload({});
     try {

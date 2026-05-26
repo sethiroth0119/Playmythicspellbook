@@ -53633,6 +53633,19 @@ const ONPLAY_TYPES = [
   // type, faction, passives, moves, and stat block instead of question marks.
   { id: 'scanAllEnemies', label: '🔍 Scan All Enemies (reveal every enemy permanently)', needs: [] },
   { id: 'scanAllTurn',    label: '⏱ Scan This Turn (reveal every enemy for one turn only)', needs: [] },
+  // 💥 BOARD WIPE — globally destroy non-hero units. wipeTarget controls who:
+  //   'all'      — every unit on the board (both sides)
+  //   'enemies'  — opponent units only
+  //   'allies'   — your own units only (Yu-Gi-Oh "Crush Card" style sacrifice)
+  // The summoner is never killed by its own wipe. wipeSpareHero (default ON)
+  // also leaves both heroes alive so a wipe can't accidentally end the game.
+  { id: 'boardWipe',     label: '💥 Board Wipe (destroy units globally)', needs: ['wipeTarget','wipeSpareHero'] },
+  // ✨ Apply Buff / Debuff — unified target picker (self / allies / enemies /
+  // all units in radius) + any status + duration. Subsumes intimidate /
+  // buffSelf / buffAllies / aoeStatus with one consistent authoring path.
+  // Use this for "temp buff on play", "debuff nearby enemies when summoned",
+  // "boost the whole party for 2 turns", etc.
+  { id: 'applyBuffDebuff', label: '✨ Apply Buff / Debuff (status to a target group)', needs: ['radius','status','statusDuration','buffTarget','chance'] },
 ];
 
 // ============================================================================
@@ -53918,6 +53931,81 @@ function applyOnPlayEffect(state, unit, card) {
       return { ...u, currentHp: 0, alive: false };
     });
     if (killed === 0) log.push({ msg: `${unit.name}'s execution aura sweeps the field — but everyone holds.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 💥 BOARD WIPE — destroys non-hero units globally (ignores radius). Three
+  // scopes via eff.wipeTarget:
+  //   'all'      — every unit (both sides)
+  //   'enemies'  — opponent's units only  (default — safest default)
+  //   'allies'   — own units only (sacrifice play; pairs with on-death effects)
+  // The summoner itself is always spared. eff.wipeSpareHero (default true)
+  // leaves both heroes alive so a wipe never accidentally ends the game.
+  if (eff.type === 'boardWipe') {
+    const target     = (eff.wipeTarget === 'all' || eff.wipeTarget === 'enemies' || eff.wipeTarget === 'allies')
+                       ? eff.wipeTarget : 'enemies';
+    const spareHero  = (eff.wipeSpareHero === undefined) ? true : !!eff.wipeSpareHero;
+    let killed = 0;
+    state.units = state.units.map(u => {
+      if (!u || !u.alive) return u;
+      if (u.id === unit.id) return u;                  // never kill the summoner
+      if (spareHero && u.isHero) return u;             // hero immunity gate
+      const include = target === 'all'
+        ? true
+        : target === 'enemies' ? u.owner !== owner
+                               : u.owner === owner;
+      if (!include) return u;
+      killed++;
+      if (u.isHero) state.gameOver = u.owner === 'player' ? 'ai' : 'player';
+      return { ...u, currentHp: 0, alive: false };
+    });
+    const scopeLabel = target === 'all' ? 'EVERY unit' : target === 'enemies' ? 'every enemy unit' : 'every allied unit';
+    log.push({ msg: `💥 ${unit.name} BOARD WIPE — ${scopeLabel} destroyed (${killed}).`, color: owner === 'player' ? 'green' : 'red' });
+    // 🩸 Death-trigger sweep + side stinger so on-death passives still fire.
+    try {
+      state.units.forEach(u => {
+        if (!u.alive && !u._wipeDeathHandled) {
+          u._wipeDeathHandled = true;
+          if (typeof _battleOnUnitKilled === 'function') {
+            const ph = (state.units || []).find(h => h && h.owner === (u.owner === 'player' ? 'ai' : 'player') && h.isHero);
+            try { _battleOnUnitKilled(state, ph || null, u); } catch (e) {}
+          }
+        }
+      });
+    } catch (e) {}
+    return { ...state, log };
+  }
+  // ✨ APPLY BUFF / DEBUFF — generic target-group wrapper. eff.buffTarget:
+  //   'self'    — only the summoner
+  //   'allies'  — same-side units in radius (excludes the summoner unless self)
+  //   'enemies' — opposing units in radius
+  //   'all'     — every unit in radius (both sides + summoner)
+  // Status comes from eff.status, duration from eff.statusDuration, optional
+  // per-target chance from eff.chance.
+  if (eff.type === 'applyBuffDebuff') {
+    const statusId = eff.status || 'strong';
+    const dur      = Math.max(1, eff.statusDuration || 2);
+    const chance   = (eff.chance == null) ? 100 : Math.max(1, Math.min(100, eff.chance));
+    const scope    = (['self','allies','enemies','all'].indexOf(eff.buffTarget) >= 0) ? eff.buffTarget : 'self';
+    const matches = (u) => {
+      if (!u || !u.alive) return false;
+      if (scope === 'self')    return u.id === unit.id;
+      if (scope === 'allies')  return u.owner === owner && u.id !== unit.id && inRadius(u);
+      if (scope === 'enemies') return u.owner !== owner && inRadius(u);
+      /* all */                return inRadius(u);
+    };
+    let hit = 0;
+    state.units = state.units.map(u => {
+      if (!matches(u)) return u;
+      if (Math.random() * 100 >= chance) return u;
+      if (typeof isImmuneToStatus === 'function' && isImmuneToStatus(u, statusId)) return u;
+      hit++;
+      return applyStatusEffect(u, statusId, dur);
+    });
+    if (hit > 0) {
+      const scopeLabel = scope === 'self' ? 'self' : scope === 'allies' ? `${hit} ally${hit === 1 ? '' : 'ies'}`
+                       : scope === 'enemies' ? `${hit} enem${hit === 1 ? 'y' : 'ies'}` : `${hit} unit${hit === 1 ? '' : 's'}`;
+      log.push({ msg: `✨ ${unit.name} grants ${nameFor(statusId)} → ${scopeLabel} (${dur} turn${dur === 1 ? '' : 's'}).`, color: owner === 'player' ? 'green' : 'red' });
+    }
     return { ...state, log };
   }
   if (eff.type === 'heal') {
@@ -66385,6 +66473,73 @@ function renderCardEditor() {
         + `<select id="ed-onplay-surface">${_sOpts}</select>`
         + `<div class="small-text ink-dim" style="margin-top:0.25rem">Coats the tiles around this unit (uses the Radius field above) when it's summoned.</div></div>`;
     })()}
+    ${(() => {
+      // 💥 Board Wipe target picker — used only by 'boardWipe'.
+      const wt = onPlay.wipeTarget || 'enemies';
+      const sh = (onPlay.wipeSpareHero === undefined) ? true : !!onPlay.wipeSpareHero;
+      return `<div class="editor-field"><label>💥 Board Wipe — Target Scope (when effect is "Board Wipe")</label>`
+        + `<select id="ed-onplay-wipe-target">`
+        + `<option value="enemies" ${wt === 'enemies' ? 'selected' : ''}>Enemy units only</option>`
+        + `<option value="allies"  ${wt === 'allies'  ? 'selected' : ''}>Your own units only (sacrifice)</option>`
+        + `<option value="all"     ${wt === 'all'     ? 'selected' : ''}>EVERY unit (both sides)</option>`
+        + `</select>`
+        + `<div class="small-text ink-dim" style="margin-top:0.25rem">The summoner is never killed by its own wipe.</div></div>`
+        + `<div class="editor-field full"><label style="display:flex;align-items:center;gap:6px;cursor:pointer">`
+        + `<input type="checkbox" id="ed-onplay-wipe-sparehero" ${sh ? 'checked' : ''}> `
+        + `<span>🛡 Spare heroes (recommended — otherwise the wipe can end the match instantly)</span></label></div>`;
+    })()}
+    ${(() => {
+      // ✨ Buff/Debuff target picker — used only by 'applyBuffDebuff'.
+      const bt = onPlay.buffTarget || 'self';
+      return `<div class="editor-field"><label>✨ Buff/Debuff — Target Group (when effect is "Apply Buff/Debuff")</label>`
+        + `<select id="ed-onplay-buff-target">`
+        + `<option value="self"    ${bt === 'self'    ? 'selected' : ''}>Self only</option>`
+        + `<option value="allies"  ${bt === 'allies'  ? 'selected' : ''}>Allies in radius</option>`
+        + `<option value="enemies" ${bt === 'enemies' ? 'selected' : ''}>Enemies in radius</option>`
+        + `<option value="all"     ${bt === 'all'     ? 'selected' : ''}>All units in radius</option>`
+        + `</select>`
+        + `<div class="small-text ink-dim" style="margin-top:0.25rem">Uses the Status, Status Duration, Chance, and Radius fields above.</div></div>`;
+    })()}
+  ` : '';
+
+  // ===== 🪞 PLAY REQUIREMENT — gate this card so it can only be played when
+  //       a number of units of a chosen scope are already on the field.
+  //       Use for "swarm payoffs" (need 3 of your units), or "reactions"
+  //       (need 2 enemy units to retaliate). Units-only gate; the player's
+  //       hero doesn't count by default.
+  const playReq = (card.playRequirement && typeof card.playRequirement === 'object')
+                ? card.playRequirement
+                : { type: '', count: 3, scope: 'any', includeHero: false };
+  const playReqBlock = (isUnitLike || type === 'spell' || type === 'weather' || type === 'location' || type === 'trap' || type === 'wall') ? `
+    <div class="editor-field full" style="border-top:1px dashed rgba(180,120,255,0.35);padding-top:0.8rem;margin-top:0.4rem">
+      <label style="font-weight:700;color:#b88aff">🪞 Play Requirement (gate the card behind board state)</label>
+      <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Optional. Blocks playing this card until N units of the chosen scope are on the field.</div>
+    </div>
+    <div class="editor-field">
+      <label>Requirement</label>
+      <select id="ed-playreq-type">
+        <option value=""             ${playReq.type === ''             ? 'selected' : ''}>— None —</option>
+        <option value="unitsOnField" ${playReq.type === 'unitsOnField' ? 'selected' : ''}>Units on the field</option>
+      </select>
+    </div>
+    <div class="editor-field">
+      <label>Minimum Count</label>
+      <input id="ed-playreq-count" type="number" min="1" max="20" value="${Math.max(1, playReq.count | 0 || 3)}">
+    </div>
+    <div class="editor-field">
+      <label>Scope (who counts)</label>
+      <select id="ed-playreq-scope">
+        <option value="self"  ${playReq.scope === 'self'  ? 'selected' : ''}>Your own units</option>
+        <option value="enemy" ${playReq.scope === 'enemy' ? 'selected' : ''}>Enemy units</option>
+        <option value="any"   ${playReq.scope === 'any'   ? 'selected' : ''}>Any units (both sides)</option>
+      </select>
+    </div>
+    <div class="editor-field full">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="ed-playreq-includehero" ${playReq.includeHero ? 'checked' : ''}>
+        <span>Count heroes too (off by default — only non-hero units count)</span>
+      </label>
+    </div>
   ` : '';
 
   // Location block — covers-whole-board toggle + board image upload. The toggle
@@ -66710,6 +66865,7 @@ function renderCardEditor() {
         ${elemModsBlock}
         ${craftCostBlock}
         ${onPlayBlock}
+        ${playReqBlock}
         ${inGraveBlock}
         ${kalonBlock}
         ${rebirthBlock}
@@ -67961,9 +68117,29 @@ function captureEditorIntoCard(card) {
         searchDeckCardIds: _readMultiSelectValues('ed-onplay-searchcards'),
         // 🌋 Paint-Surface hazard — used only by the 'paintSurface' type.
         surfaceType: v('ed-onplay-surface') || 'oil',
+        // 💥 Board Wipe — target scope + hero-safety flag (defaults to ON).
+        wipeTarget:     v('ed-onplay-wipe-target') || 'enemies',
+        wipeSpareHero:  (() => { const el = document.getElementById('ed-onplay-wipe-sparehero'); return el ? !!el.checked : true; })(),
+        // ✨ Buff/Debuff target group — used by 'applyBuffDebuff'.
+        buffTarget:     v('ed-onplay-buff-target') || 'self',
       };
     } else {
       delete card.onPlay;
+    }
+  }
+
+  // 🪞 Play Requirement — gate this card behind board state. None = no gate.
+  if (document.getElementById('ed-playreq-type')) {
+    const reqType = v('ed-playreq-type');
+    if (reqType === 'unitsOnField') {
+      card.playRequirement = {
+        type:        'unitsOnField',
+        count:       Math.max(1, num('ed-playreq-count', 1, 20, 3)),
+        scope:       v('ed-playreq-scope') || 'any',
+        includeHero: (() => { const el = document.getElementById('ed-playreq-includehero'); return el ? !!el.checked : false; })(),
+      };
+    } else {
+      delete card.playRequirement;
     }
   }
 
@@ -78898,10 +79074,40 @@ function buildKalonElementLayers(elementId) {
   }
 }
 
+// 🪞 Play-requirement gate — returns null when the card can play, or a
+// human-readable reason ('need 3 of your units on the field') when it can't.
+// Pure read of state.units; no mutation. Re-used by every play path so the
+// rule is enforced consistently (units, spells, weather, locations, traps).
+function _checkPlayRequirement(card, state, side) {
+  const req = card && card.playRequirement;
+  if (!req || req.type !== 'unitsOnField') return null;
+  const need  = Math.max(1, req.count | 0);
+  const scope = req.scope || 'any';
+  const me    = side || 'player';
+  const opp   = me === 'player' ? 'ai' : 'player';
+  const heroOk = !!req.includeHero;
+  const count = ((state && state.units) || []).filter(u => {
+    if (!u || !u.alive) return false;
+    if (!heroOk && u.isHero) return false;
+    if (scope === 'self')  return u.owner === me;
+    if (scope === 'enemy') return u.owner === opp;
+    return true;  // 'any'
+  }).length;
+  if (count >= need) return null;
+  const scopeLabel = scope === 'self' ? 'your own units'
+                   : scope === 'enemy' ? 'enemy units'
+                   : 'units';
+  return `Need ${need} ${scopeLabel} on the field to play this (you have ${count}).`;
+}
+
 function placeUnit(card, pos) {
   const s = App.state;
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
   if (!ph) return;
+  // 🪞 Play-requirement gate — fires BEFORE the placement-tile check so the
+  // player gets the right error message ('need 3 units' vs 'tile too far').
+  const _reqFail = _checkPlayRequirement(card, s, 'player');
+  if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
   const valid = getValidPlacementTiles(card, ph, s);
   if (!valid.some(p => p.x === pos.x && p.y === pos.y)) {
     const r = getCardRange(card);

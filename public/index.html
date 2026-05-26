@@ -55482,8 +55482,47 @@ const executeKalonTransform = (state, unit, opts) => {
 
 // Apply held-item triggers to a unit object after it takes damage; returns possibly-modified unit + log entries
 const applyDamageTriggers = (unit, incomingDmg, damageType) => {
+  // 🩺 DAMAGE RECEIPT — diagnostic trace so we can audit any 'I had 34 HP
+  // and died from 9 dmg' reports. Captures HP-before, raw damage, type,
+  // and the resulting HP. The receipt also goes into the in-game battle
+  // log for HERO hits so the player can see the math themselves.
+  const _oldHp     = (unit && typeof unit.currentHp === 'number') ? unit.currentHp : 0;
+  const _maxHp     = (unit && typeof unit.maxHp === 'number')     ? unit.maxHp     : 0;
+  const _dmgIn     = (typeof incomingDmg === 'number' && incomingDmg >= 0) ? (incomingDmg | 0) : 0;
+  const _newHp     = _oldHp - _dmgIn;
+  try {
+    console.info(
+      '[damage] ' + ((unit && unit.name) || '?') +
+      ' [' + ((unit && unit.owner) || '?') + ']' +
+      ' HP ' + _oldHp + '/' + _maxHp +
+      ' - ' + _dmgIn + ' = ' + _newHp + '/' + _maxHp +
+      ' (type: ' + (damageType || 'untyped') + ')'
+    );
+  } catch (e) {}
+  // 🚨 Sanity gate — fires only when the post-hit HP is <= 0 even though
+  // oldHp was strictly greater than the damage we were told about. That
+  // means *something else* (DoT tick, secondary hit, bug) is responsible
+  // for the death — exactly the math-broken case the player reported.
+  if (_newHp <= 0 && _oldHp > _dmgIn && _dmgIn >= 0) {
+    try {
+      console.warn(
+        '[damage] ⚠ SUSPICIOUS DEATH — ' + ((unit && unit.name) || '?') +
+        ' had ' + _oldHp + ' HP, took ' + _dmgIn + ' damage, but ended ' + _newHp +
+        '. Expected ' + (_oldHp - _dmgIn) + '. Investigate caller / status effects.'
+      );
+    } catch (e) {}
+  }
   let nu = { ...unit, currentHp: unit.currentHp - incomingDmg };
   const log = [];
+  // 🩺 In-game receipt for HERO hits — players see the exact math so a
+  // future 'why did I die?' bug report comes with the data instead of
+  // a guess. Only fires on heroes to keep the log uncluttered.
+  if (unit && unit.isHero && _dmgIn > 0) {
+    log.push({
+      msg: '🩺 ' + (unit.name || 'Hero') + ' HP ' + _oldHp + ' − ' + _dmgIn + ' = ' + Math.max(0, _newHp),
+      color: 'amber',
+    });
+  }
   // Unified item lookup so Forge custom items can also drive on-damage triggers
   // (lethalAvoid charm, thorns return, etc) when their definition opts in.
   const item = nu.heldItem
@@ -57655,12 +57694,16 @@ const startTurn = (state, who) => {
       if (eff && eff.dmgMin && eff.escalating) {
         const tickN = (e.tickCount || 0) + 1;
         const d = (eff.dmgMin || 1) * tickN;
+        const _hpBefore = nu.currentHp;
         nu.currentHp -= d;
-        log.push({ msg: `☢️ ${u.name} -${d} ${eff.name} (turn ${tickN})`, color: 'amber' });
+        try { console.info('[damage:status] ' + u.name + ' [' + u.owner + '] ☢️ ' + eff.name + ' tick ' + tickN + ' — HP ' + _hpBefore + ' → ' + nu.currentHp + ' (-' + d + ')'); } catch (e) {}
+        log.push({ msg: `☢️ ${u.name} -${d} ${eff.name} (turn ${tickN}) → ${Math.max(0, nu.currentHp)} HP`, color: 'amber' });
       } else if (eff && eff.dmgMin) {
         const d = rand(eff.dmgMin, eff.dmgMax);
+        const _hpBefore = nu.currentHp;
         nu.currentHp -= d;
-        log.push({ msg: `${u.name} -${d} ${eff.name}`, color: 'amber' });
+        try { console.info('[damage:status] ' + u.name + ' [' + u.owner + '] ' + eff.name + ' — HP ' + _hpBefore + ' → ' + nu.currentHp + ' (-' + d + ')'); } catch (e) {}
+        log.push({ msg: `${u.name} -${d} ${eff.name} → ${Math.max(0, nu.currentHp)} HP`, color: 'amber' });
       }
       // 🎯 Ambush Guard watch — never decays on its own; it persists until it
       // fires a reaction (then it's removed where the reaction resolves) or

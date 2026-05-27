@@ -79941,9 +79941,27 @@ function onEndTurn() {
         }
         if (!data || !data.ok) {
           console.warn('[MP] mp_end_turn rejected', data && data.reason, data);
-          // 'not_your_turn' / 'turn_out_of_sync' → the server thinks we were
-          // not the active player. The realtime broadcast will resync state
-          // shortly; no further action needed here.
+          // 🛡 'not_your_turn' / 'turn_out_of_sync' → the server thinks we
+          // were not the active player. Previously we just waited for the
+          // realtime broadcast to drift our state back in line, which could
+          // take SECONDS during low-activity turns. During that gap our UI
+          // claimed it was the opponent's turn but our state thought it was
+          // ours, and any move the player made then would silently fail.
+          // Fix: actively ask the opponent for a full snapshot RIGHT NOW
+          // and hold input until it arrives. The flag is cleared by the
+          // resync handler when the snapshot lands.
+          try {
+            const r = data && data.reason;
+            if ((r === 'not_your_turn' || r === 'turn_out_of_sync') && MatchBroadcast.channel) {
+              MatchBroadcast.awaitingResync = true;
+              MatchBroadcast.channel.send({
+                type: 'broadcast', event: 'resync',
+                payload: { from: MatchBroadcast.myUserId, reason: r },
+              });
+              try { showToast('🔁 Re-syncing with opponent…', 1800); } catch (e) {}
+              if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
+            }
+          } catch (e) {}
           return;
         }
         // If the server flagged a gameover in the same call, mark resolved
@@ -100262,6 +100280,25 @@ function _startDcWatchdog() {
 
 async function _declareDcWin() {
   if (MatchBroadcast.dcDeclared) return;
+  // 🛡 DETERMINISTIC TIEBREAKER — if both clients hit the 90s DC threshold in
+  // the SAME watchdog window (whole-network hiccup, ISP burp, Supabase
+  // Realtime stutter), the conditional UPDATE in submitMatchResult still
+  // race-gates the WRITE — but BOTH clients would flip their local
+  // App.state.gameOver and show 'I won' / 'opponent timed out'. Then the
+  // race-loser silently corrects later. Players see flicker.
+  // Fix: only the client with the LEXICOGRAPHICALLY-LOWER userId is allowed
+  // to declare. The other side waits one extra watchdog cycle (5s); if the
+  // opponent truly DC'd they'll never resolve and the lower-id client will
+  // submit; if it was a mutual hiccup, the lower-id client's submission
+  // arrives and propagates a verdict to both sides. Bypassed for solo DC
+  // (no opponentId means we ARE the only one watching).
+  const myId  = String(MatchBroadcast.myUserId || '');
+  const oppId = String(MatchBroadcast.opponentId || '');
+  if (oppId && myId > oppId && !MatchBroadcast._dcDeferredOnce) {
+    MatchBroadcast._dcDeferredOnce = true;
+    try { console.info('[MP] DC tiebreaker — deferring one watchdog cycle (lower userId declares first)'); } catch (e) {}
+    return;
+  }
   MatchBroadcast.dcDeclared = true;
   // 🛡️ Route through the same RACE-PROOF submission path as a normal end —
   // conditional UPDATE on winner_id IS NULL ensures that if BOTH clients
@@ -100515,10 +100552,25 @@ function _onRemoteStateDeltaArrived(payload) {
   MatchBroadcast.presenceLastSeen = Date.now();
   if (App._mpOpponentWasAbsent) { App._mpOpponentWasAbsent = false; }
   if (!MatchBroadcast.lastRecvSnapshot) {
-    // No baseline yet — request a full sync by re-broadcasting our own state,
-    // which will prompt the opponent to send their next packet as a full one
-    // (they'll see our state echoed back as their lastSentSnapshot being stale).
-    // For now: just wait for the next full snapshot from them.
+    // 🛡 No baseline yet (just reconnected, missed the initial full snapshot,
+    // etc.). Previously we silently dropped the delta and waited for the next
+    // full broadcast — which could be many seconds away during low-activity
+    // turns and caused 'I can't see my opponent move' reports.
+    // Fix: actively ask the opponent for a full snapshot RIGHT NOW. Their
+    // resync handler responds with _sendFullSnapshot, which gives us the
+    // baseline this delta would have patched. Throttled by an in-flight
+    // flag so a burst of dropped deltas doesn't spam the channel.
+    try {
+      if (MatchBroadcast.channel && !MatchBroadcast._resyncRequestedAt
+          || (Date.now() - (MatchBroadcast._resyncRequestedAt || 0) > 2000)) {
+        MatchBroadcast._resyncRequestedAt = Date.now();
+        MatchBroadcast.channel.send({
+          type: 'broadcast', event: 'resync',
+          payload: { from: MatchBroadcast.myUserId, reason: 'delta-without-baseline' },
+        });
+        try { console.info('[MP] delta dropped — no baseline yet, requested resync from opponent'); } catch (e) {}
+      }
+    } catch (e) {}
     return;
   }
   const merged = _applyStateDelta(MatchBroadcast.lastRecvSnapshot, payload.delta);
@@ -100655,12 +100707,20 @@ async function submitMatchResult(winnerUserId, finalState, opts) {
     }
     MatchBroadcast.gameOverResolved = true;
   } catch (e) {
-    // Network blip — let a single retry happen in case the function was
-    // briefly unreachable. After that we accept the local verdict.
-    if (!MatchBroadcast._matchEndRetried) {
-      MatchBroadcast._matchEndRetried = true;
+    // 🛡 EXPONENTIAL BACKOFF — gameover submission is critical. A single
+    // 1.2s retry isn't enough if the Edge Function is briefly down or two
+    // transient failures pile up. Retry 3 more times at 1s / 2s / 4s, then
+    // accept the local verdict (the postgres-changes listener still
+    // back-fills if winner_id ever lands later).
+    const attempt = (MatchBroadcast._matchEndRetryCount | 0) + 1;
+    try { console.warn('[MP] submitMatchResult failed (attempt ' + attempt + '/4): ' + ((e && e.message) || String(e))); } catch (_) {}
+    if (attempt <= 3) {
+      MatchBroadcast._matchEndRetryCount = attempt;
       MatchBroadcast._matchEndSubmitted = false;
-      setTimeout(() => submitMatchResult(winnerUserId, finalState), 1200);
+      const delay = 1000 * Math.pow(2, attempt - 1);   // 1s, 2s, 4s
+      setTimeout(() => submitMatchResult(winnerUserId, finalState, opts), delay);
+    } else {
+      try { console.error('[MP] submitMatchResult permanently failed after 4 attempts. Accepting local verdict.'); } catch (_) {}
     }
   }
 }

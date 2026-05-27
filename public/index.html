@@ -81174,79 +81174,102 @@ function doAIStep() {
 
     // Only commit if the score clears a small threshold — otherwise save energy for attacks
     if (best && best.score >= 15) {
-      const card = best.card;
-      if (best.kind === 'damage') {
-        // AI spell cards = magical damage for Immortal-passive clamping.
-        const trig = applyDamageTriggers(best.target, card.effect.amount, 'magic');
-        const log = [...s.log, ...trig.log, { msg: `Enemy ${card.name} → ${best.target.name} (${card.effect.amount})`, color: 'red' }];
-        let gameOver = s.gameOver;
-        if (!trig.unit.alive) {
-          log.push({ msg: `${trig.unit.name} defeated!`, color: 'red' });
-          if (trig.unit.isHero) gameOver = 'ai';
+      // ⏱ Counter window — give the player a chance to interrupt the spell
+      // before it resolves. Mirrors the counter check that already guards AI
+      // attacks and AI moves. If tryPromptCounter resolves true the spell is
+      // cancelled; false (or any error) lets _doAISpell() fire normally.
+      const _doAISpell = () => {
+        const card = best.card;
+        if (best.kind === 'damage') {
+          // AI spell cards = magical damage for Immortal-passive clamping.
+          const trig = applyDamageTriggers(best.target, card.effect.amount, 'magic');
+          const log = [...s.log, ...trig.log, { msg: `Enemy ${card.name} → ${best.target.name} (${card.effect.amount})`, color: 'red' }];
+          let gameOver = s.gameOver;
+          if (!trig.unit.alive) {
+            log.push({ msg: `${trig.unit.name} defeated!`, color: 'red' });
+            if (trig.unit.isHero) gameOver = 'ai';
+          }
+          App.state = {
+            ...s,
+            units: s.units.map(u => u.id === best.target.id ? trig.unit : u),
+            ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) },
+            log, gameOver,
+          };
+          setAIActor(best.target.id, `✨ Enemy casts ${card.name}`);
+        } else if (best.kind === 'heal') {
+          App.state = {
+            ...s,
+            units: s.units.map(u => u.id === best.target.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + card.effect.amount) } : u),
+            ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) },
+            log: [...s.log, { msg: `Enemy heals ${best.target.name}`, color: 'green' }],
+          };
+          setAIActor(best.target.id, `💚 Enemy heals ${best.target.name}`);
+        } else if (best.kind === 'buffAll') {
+          App.state = {
+            ...s,
+            units: s.units.map(u => u.owner === 'ai' && u.alive ? applyStatusEffect(u, card.effect.status, card.effect.duration) : u),
+            ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) },
+            log: [...s.log, { msg: `Enemy casts ${card.name}`, color: 'red' }],
+          };
+          setAIActor(null, `🛡 Enemy casts ${card.name}`);
+        } else if (best.kind === 'draw') {
+          App.state = {
+            ...s,
+            ai: drawCards({ ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) }, card.effect.amount),
+            log: [...s.log, { msg: `Enemy draws ${card.effect.amount} card${card.effect.amount === 1 ? '' : 's'}`, color: 'red' }],
+          };
+          setAIActor(null, `📜 Enemy draws cards`);
+        } else if (best.kind === 'restoreKalon') {
+          const amt = Math.max(1, card.effect.amount || 1);
+          const before = s.ai.kalonsRemaining || 0;
+          const after = Math.min(3, before + amt);
+          App.state = {
+            ...s,
+            ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')), kalonsRemaining: after },
+            log: [...s.log, { msg: `Enemy ${card.name} → 🌟 +${after - before} Kalon use${after - before === 1 ? '' : 's'}`, color: 'red' }],
+          };
+          setAIActor(null, `🌟 Enemy refreshes Kalon`);
+        } else if (best.kind === 'restoreEnergy') {
+          const amt = Math.max(1, card.effect.amount || 1);
+          const refreshed = Math.min(s.ai.maxEnergy, s.ai.energy + amt);
+          // Pay cost AFTER the refund — same accounting as the player path.
+          App.state = {
+            ...s,
+            ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: refreshed - (aiCheapSpells ? 0 : card.cost) },
+            log: [...s.log, { msg: `Enemy ${card.name} → ⚡ +${refreshed - s.ai.energy} energy`, color: 'red' }],
+          };
+          setAIActor(null, `⚡ Enemy channels energy`);
+        } else if (best.kind === 'kalonLock') {
+          const dur = Math.max(1, Math.min(5, card.effect.duration || 2));
+          const before = s.player.kalonLockedTurns || 0;
+          App.state = {
+            ...s,
+            player: { ...s.player, kalonLockedTurns: Math.max(before, dur) },
+            ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) },
+            log: [...s.log, { msg: `🚫 Enemy ${card.name} — your Kalon awakenings sealed for ${dur} turn${dur === 1 ? '' : 's'}!`, color: 'red' }],
+          };
+          setAIActor(null, `🚫 Enemy seals Kalon awakenings`);
         }
-        App.state = {
-          ...s,
-          units: s.units.map(u => u.id === best.target.id ? trig.unit : u),
-          ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) },
-          log, gameOver,
-        };
-        setAIActor(best.target.id, `✨ Enemy casts ${card.name}`);
-      } else if (best.kind === 'heal') {
-        App.state = {
-          ...s,
-          units: s.units.map(u => u.id === best.target.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + card.effect.amount) } : u),
-          ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) },
-          log: [...s.log, { msg: `Enemy heals ${best.target.name}`, color: 'green' }],
-        };
-        setAIActor(best.target.id, `💚 Enemy heals ${best.target.name}`);
-      } else if (best.kind === 'buffAll') {
-        App.state = {
-          ...s,
-          units: s.units.map(u => u.owner === 'ai' && u.alive ? applyStatusEffect(u, card.effect.status, card.effect.duration) : u),
-          ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) },
-          log: [...s.log, { msg: `Enemy casts ${card.name}`, color: 'red' }],
-        };
-        setAIActor(null, `🛡 Enemy casts ${card.name}`);
-      } else if (best.kind === 'draw') {
-        App.state = {
-          ...s,
-          ai: drawCards({ ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) }, card.effect.amount),
-          log: [...s.log, { msg: `Enemy draws ${card.effect.amount} card${card.effect.amount === 1 ? '' : 's'}`, color: 'red' }],
-        };
-        setAIActor(null, `📜 Enemy draws cards`);
-      } else if (best.kind === 'restoreKalon') {
-        const amt = Math.max(1, card.effect.amount || 1);
-        const before = s.ai.kalonsRemaining || 0;
-        const after = Math.min(3, before + amt);
-        App.state = {
-          ...s,
-          ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')), kalonsRemaining: after },
-          log: [...s.log, { msg: `Enemy ${card.name} → 🌟 +${after - before} Kalon use${after - before === 1 ? '' : 's'}`, color: 'red' }],
-        };
-        setAIActor(null, `🌟 Enemy refreshes Kalon`);
-      } else if (best.kind === 'restoreEnergy') {
-        const amt = Math.max(1, card.effect.amount || 1);
-        const refreshed = Math.min(s.ai.maxEnergy, s.ai.energy + amt);
-        // Pay cost AFTER the refund — same accounting as the player path.
-        App.state = {
-          ...s,
-          ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: refreshed - (aiCheapSpells ? 0 : card.cost) },
-          log: [...s.log, { msg: `Enemy ${card.name} → ⚡ +${refreshed - s.ai.energy} energy`, color: 'red' }],
-        };
-        setAIActor(null, `⚡ Enemy channels energy`);
-      } else if (best.kind === 'kalonLock') {
-        const dur = Math.max(1, Math.min(5, card.effect.duration || 2));
-        const before = s.player.kalonLockedTurns || 0;
-        App.state = {
-          ...s,
-          player: { ...s.player, kalonLockedTurns: Math.max(before, dur) },
-          ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) },
-          log: [...s.log, { msg: `🚫 Enemy ${card.name} — your Kalon awakenings sealed for ${dur} turn${dur === 1 ? '' : 's'}!`, color: 'red' }],
-        };
-        setAIActor(null, `🚫 Enemy seals Kalon awakenings`);
-      }
-      renderBattle();
-      scheduleAIStep(AI_DELAYS.spell);
+        renderBattle();
+        scheduleAIStep(AI_DELAYS.spell);
+      };
+      try {
+        tryPromptCounter(App.state, {
+          trigger: 'spell',
+          source: aiHero,
+          target: best.target,
+          label: `Enemy casts ${best.card.name}`,
+        }).then((countered) => {
+          if (countered) {
+            // Spell was intercepted — AI still loses the card and energy
+            // since the counter cost was already paid; skip spell effects.
+            renderBattle();
+            scheduleAIStep(AI_DELAYS.spell);
+          } else {
+            _doAISpell();
+          }
+        }).catch(() => { _doAISpell(); });
+      } catch (e) { _doAISpell(); }
       return;
     }
   }

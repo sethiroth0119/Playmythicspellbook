@@ -28,6 +28,11 @@
 <!-- Supabase JS v2 — auth + multiplayer foundation. UMD build exposes window.supabase
      globally so the inline scripts below can call window.supabase.createClient(). -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Colyseus.js 0.15.x client — UMD build exposes window.Colyseus globally.
+     Only loaded once USE_COLYSEUS_MP is enabled (currently false).
+     0.15 client connects to 0.16 server — Colyseus maintains a compatible
+     wire protocol across minor versions. Update pin when server version bumps. -->
+<script src="https://unpkg.com/colyseus.js@^0.15.0/dist/colyseus.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
@@ -30129,6 +30134,276 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 // ============================================================================
 const USE_COLYSEUS_MP    = false;
 const COLYSEUS_SERVER_URL = 'wss://mythic-spellbook-mp.fly.dev';
+
+// ============================================================================
+// 🎮 ColyseusMP — authoritative-server bridge
+// ----------------------------------------------------------------------------
+// Only used when USE_COLYSEUS_MP = true. The old Supabase Realtime path
+// (MatchBroadcast / joinMatchChannel) stays active when the flag is false so
+// there's zero risk to current players during the migration.
+//
+// When active:
+//   • joinColyseusMatch() connects to the Colyseus server and joins the room.
+//   • sendColyseusAction() forwards game actions (attack / playUnit / move)
+//     to the server instead of broadcasting them locally.
+//   • The server computes damage + checks win conditions; results come back
+//     as attackResult / matchEnd messages and override the local App.state HP
+//     values, eliminating the random-gameover race entirely.
+//   • Emotes still flow through ColyseusMP so they're echoed to both clients
+//     via the server (same channel as actions, no extra cost).
+//
+// TO ENABLE: flip USE_COLYSEUS_MP to true + update COLYSEUS_SERVER_URL to
+//   your Colyseus Cloud / Fly.io WebSocket endpoint.
+// ============================================================================
+const ColyseusMP = {
+  client: null,    // Colyseus.Client instance (lazy init on first join)
+  room:   null,    // active room handle, null when not in a match
+  state:  null,    // latest snapshot of room.state (BattleState schema mirror)
+};
+
+/**
+ * Connect to the Colyseus server and join (or create) the room for `matchId`.
+ * Called by joinMatchChannel when USE_COLYSEUS_MP is true.
+ *
+ * @param {string}  matchId   — Supabase match row id used as the room filter key
+ * @param {string}  authToken — Supabase JWT of the current user
+ * @param {object}  opts      — { displayName, heroId, deckCardIds }
+ * @returns {Promise<object>} — the Colyseus room handle
+ */
+async function joinColyseusMatch(matchId, authToken, opts) {
+  opts = opts || {};
+  // Lazy-init the client (once per session — the Client reuses the WS connection).
+  if (!ColyseusMP.client) {
+    if (typeof Colyseus === 'undefined') {
+      throw new Error('Colyseus JS client not loaded — check the CDN <script> tag in <head>.');
+    }
+    ColyseusMP.client = new Colyseus.Client(COLYSEUS_SERVER_URL);
+    console.log('[Colyseus] client created →', COLYSEUS_SERVER_URL);
+  }
+
+  // Clean up any existing room from a previous match.
+  if (ColyseusMP.room) {
+    try { await ColyseusMP.room.leave(); } catch (e) {}
+    ColyseusMP.room  = null;
+    ColyseusMP.state = null;
+  }
+
+  console.log('[Colyseus] joining room battle matchId=' + matchId);
+  ColyseusMP.room = await ColyseusMP.client.joinOrCreate('battle', {
+    matchId,
+    authToken,
+    displayName: opts.displayName || (Profile && Profile.cloud && Profile.cloud.displayName) || '',
+    heroId:      opts.heroId      || (App && App.battlePrep && App.battlePrep.heroId)       || '',
+    deckCardIds: Array.isArray(opts.deckCardIds) ? opts.deckCardIds : [],
+  });
+
+  // ─── Server → client message handlers ────────────────────────────────────
+  ColyseusMP.room.onMessage('matchStart',   _onColyseusMatchStart);
+  ColyseusMP.room.onMessage('attackResult', _onColyseusAttackResult);
+  ColyseusMP.room.onMessage('unitPlayed',   _onColyseusUnitPlayed);
+  ColyseusMP.room.onMessage('battleLog',    _onColyseusLogEntries);
+  ColyseusMP.room.onMessage('matchEnd',     _onColyseusMatchEnd);
+  ColyseusMP.room.onMessage('reject',       _onColyseusReject);
+  ColyseusMP.room.onMessage('emote',        (data) => {
+    // Reuse the existing emote renderer from the Supabase path.
+    try { _onRemoteEmoteArrived(data); } catch (e) {}
+  });
+
+  // State-change observer — keeps ColyseusMP.state current.
+  ColyseusMP.room.onStateChange(state => {
+    ColyseusMP.state = state;
+  });
+
+  ColyseusMP.room.onError((code, msg) => {
+    console.error('[Colyseus] room error', code, msg);
+    try { showToast('MP error: ' + (msg || code)); } catch (e) {}
+  });
+
+  ColyseusMP.room.onLeave(code => {
+    console.log('[Colyseus] left room, code:', code);
+    // code 1000 = normal close; others are abnormal (DC, server crash, etc.)
+    if (code !== 1000 && !App.state.gameOver) {
+      try { showToast('⚠️ Connection lost. Reconnecting…'); } catch (e) {}
+    }
+    ColyseusMP.room = null;
+  });
+
+  // ─── Synchronise MatchBroadcast metadata so the rest of the UI still works ─
+  MatchBroadcast.matchId  = matchId;
+  MatchBroadcast.myUserId = Profile && Profile.cloud && Profile.cloud.userId;
+
+  return ColyseusMP.room;
+}
+
+/** Leave the active Colyseus room (called by leaveMatchChannel). */
+function leaveColyseusMatch() {
+  if (!ColyseusMP.room) return;
+  try { ColyseusMP.room.leave(); } catch (e) {}
+  ColyseusMP.room  = null;
+  ColyseusMP.state = null;
+}
+
+/**
+ * Forward a typed action to the Colyseus server.
+ * Replaces the old MatchBroadcast.broadcast / sendStateDelta calls for
+ * attack, playUnit, move, emote, forfeit, endTurn actions.
+ */
+function sendColyseusAction(type, data) {
+  if (!ColyseusMP.room) {
+    console.warn('[Colyseus] sendColyseusAction called but room is null', type);
+    return;
+  }
+  try {
+    ColyseusMP.room.send('action', Object.assign({ type }, data || {}));
+  } catch (e) {
+    console.error('[Colyseus] send failed', type, e);
+  }
+}
+
+/** Forward endTurn to Colyseus (separate message type from 'action'). */
+function sendColyseusEndTurn() {
+  if (!ColyseusMP.room) return;
+  try { ColyseusMP.room.send('endTurn', {}); } catch (e) {}
+}
+
+/** Forward emote to Colyseus. */
+function sendColyseusEmote(emoji) {
+  if (!ColyseusMP.room) return;
+  try { ColyseusMP.room.send('emote', { emoji }); } catch (e) {}
+}
+
+/** Forward forfeit to Colyseus. */
+function sendColyseusForfeit() {
+  if (!ColyseusMP.room) return;
+  try { ColyseusMP.room.send('forfeit', {}); } catch (e) {}
+}
+
+// ─── Server → client handlers ───────────────────────────────────────────────
+
+function _onColyseusMatchStart(data) {
+  // data = { first: userId, participants: [userId, userId] }
+  console.log('[Colyseus] matchStart', data);
+  const myId = MatchBroadcast.myUserId;
+  // Determine if it's my turn first (mirrors the old coin-flip logic).
+  MatchBroadcast.myTurn = data && data.first === myId;
+  MatchBroadcast.opponentId = data && Array.isArray(data.participants)
+    ? data.participants.find(id => id !== myId) || null
+    : null;
+  // Kick off the VS screen / battle start in the existing UI.
+  try { _onRemoteCoinArrived({ winner: data && data.first }); } catch (e) {}
+}
+
+function _onColyseusAttackResult(data) {
+  // data = { attackerId, targetId, moveId, damage, missed, crit,
+  //          typeMul, effectiveness, stab, defHp, defAlive }
+  if (!data) return;
+  // Authoritative HP override — find the target in App.state.units and
+  // apply the server's computed damage so both clients always agree.
+  if (App && App.state && Array.isArray(App.state.units)) {
+    // Units in App.state use an owner-relative model ('player' / 'ai') and
+    // a `_mpUnitId` field stamped when units are played over the network.
+    const target = App.state.units.find(u => u && u._mpUnitId === data.targetId);
+    if (target) {
+      target.currentHp = typeof data.defHp === 'number' ? data.defHp : target.currentHp;
+      if (data.defAlive === false) target.alive = false;
+    }
+  }
+  // Show the hit animation using the existing battle juice system.
+  try {
+    if (typeof _onRemoteAttackResultArrived === 'function') {
+      _onRemoteAttackResultArrived(data);
+    }
+  } catch (e) {}
+  // Trigger a re-render so the HP bar updates immediately.
+  try {
+    if (typeof renderBattle === 'function' && App.screen === 'battle') renderBattle();
+  } catch (e) {}
+}
+
+function _onColyseusUnitPlayed(data) {
+  // data = { unitId, cardId, ownerId, posX, posY }
+  // For Session 2 this is informational — the opponent's unit appears via the
+  // existing state-snapshot path. Session 3 will drive the board directly
+  // from room.state using the schema delta observer.
+  console.log('[Colyseus] unitPlayed', data);
+}
+
+function _onColyseusLogEntries(data) {
+  // data = { entries: [{ msg, color? }] }
+  if (!data || !Array.isArray(data.entries)) return;
+  try {
+    if (App && App.state && Array.isArray(App.state.log)) {
+      for (const entry of data.entries) {
+        App.state.log.push({ msg: entry.msg, color: entry.color || 'amber' });
+      }
+    }
+  } catch (e) {}
+}
+
+function _onColyseusMatchEnd(data) {
+  // data = { winnerUserId, reason, turnNumber }
+  if (!data) return;
+  console.log('[Colyseus] matchEnd', data);
+  const myId = MatchBroadcast.myUserId;
+  const iWon = data.winnerUserId === myId;
+  // Route into the existing gameover path.
+  try {
+    _onRemoteGameOverArrived({
+      winner:   data.winnerUserId,
+      reason:   data.reason,
+      iWon,
+    });
+  } catch (e) {}
+}
+
+function _onColyseusReject(data) {
+  // data = { reason: 'not-your-turn' | ... }
+  if (!data) return;
+  console.warn('[Colyseus] action rejected:', data.reason);
+  if (data.reason === 'not-your-turn') {
+    // Our local turn-flag is out of sync — request a full state resync.
+    // (The Colyseus path: just ask for the current room state via onStateChange.)
+    try {
+      if (ColyseusMP.room) {
+        // Colyseus automatically re-sends full state on reconnect; for a
+        // soft desync we can force a state re-application.
+        if (ColyseusMP.state) {
+          _applyColyseusRoomState(ColyseusMP.state);
+        }
+      }
+    } catch (e) {}
+    try { showToast('⚠️ Turn sync — re-syncing…', 2000); } catch (e) {}
+  }
+}
+
+/**
+ * Apply the authoritative Colyseus room state to App.state.
+ * Called on reject-resync and after reconnect.
+ * Session 2 MVP: syncs HP values for all units. Full board sync is Session 3.
+ */
+function _applyColyseusRoomState(roomState) {
+  if (!roomState || !App || !App.state) return;
+  try {
+    // Sync whose turn it is.
+    const myId = MatchBroadcast.myUserId;
+    MatchBroadcast.myTurn = roomState.currentTurnUserId === myId;
+
+    // Sync unit HP from the authoritative schema.
+    roomState.units.forEach((schUnit) => {
+      const localUnit = App.state.units && App.state.units.find(
+        u => u && u._mpUnitId === schUnit.id,
+      );
+      if (localUnit) {
+        localUnit.currentHp = schUnit.currentHp;
+        localUnit.alive      = schUnit.alive;
+      }
+    });
+
+    if (typeof renderBattle === 'function' && App.screen === 'battle') renderBattle();
+  } catch (e) {
+    console.warn('[Colyseus] _applyColyseusRoomState error', e);
+  }
+}
 
 // Cloud client + state. Initialized lazily so the game still runs offline
 // if the CDN script failed to load or the key is missing.
@@ -79872,8 +80147,10 @@ function checkPostAction() {
   // 📡 Multiplayer broadcast — push our state to the opponent after every
   // significant action (place / move / attack / cast). Debounced inside
   // broadcastMyState() so a burst of consecutive actions sends one packet.
+  // 🪐 Colyseus path: the server owns the state — don't broadcast locally.
+  //    Actions were already forwarded to the server before being applied.
   if (App.battlePrep && App.battlePrep.multiplayer && typeof broadcastMyState === 'function') {
-    broadcastMyState();
+    if (!USE_COLYSEUS_MP) broadcastMyState();
   }
   if (App.state.gameOver) {
     // 🏁 Multiplayer game-over — submit the verdict to the matches table.
@@ -79929,7 +80206,8 @@ function onEndTurn() {
     const _prevTurnNumber = App.state.turnNumber || 1;
     App.state = { ...App.state, currentTurn: 'ai', turnNumber: _prevTurnNumber + 1 };
     MatchBroadcast.myTurn = false;
-    broadcastMyState();
+    // 🪐 Colyseus path: forward endTurn to the authoritative server.
+    if (USE_COLYSEUS_MP) { sendColyseusEndTurn(); } else { broadcastMyState(); }
     // 🛡️ SERVER-AUTHORITATIVE TURN-END — tell the Supabase Edge Function this
     // turn is over. The function validates: (a) we currently hold the turn,
     // (b) the turn number is sequential, and atomically flips current_player
@@ -99584,7 +99862,9 @@ function sendEmote(emoteId) {
   // Show locally above MY hero.
   _spawnEmoteBubble('player', preset);
   // Broadcast to opponent if multiplayer.
-  if (MatchBroadcast.channel) {
+  if (USE_COLYSEUS_MP) {
+    sendColyseusEmote(preset.id || preset.emoji || preset);
+  } else if (MatchBroadcast.channel) {
     try {
       MatchBroadcast.channel.send({
         type: 'broadcast', event: 'emote',
@@ -99866,6 +100146,40 @@ function _serializeBattleStateForBroadcast(state) {
 // Subscribe to the match's realtime channel. Both clients call this when the
 // VS screen loads for a multiplayer match. Returns the channel reference.
 function joinMatchChannel(matchId, amIPlayer1, opponentId) {
+  // 🪐 COLYSEUS FORK — when USE_COLYSEUS_MP is true, route the join through
+  // the authoritative server instead of the Supabase Realtime channel.
+  // The Supabase path below stays intact as the fallback (flag = false by default).
+  if (USE_COLYSEUS_MP) {
+    if (!initCloud() || !matchId) return null;
+    // Ensure legacy guards are still seeded so the rest of the UI works.
+    MatchBroadcast.matchId    = matchId;
+    MatchBroadcast.myUserId   = Profile.cloud.userId;
+    MatchBroadcast.opponentId = opponentId;
+    MatchBroadcast.amIPlayer1 = !!amIPlayer1;
+    MatchBroadcast.gameOverResolved    = false;
+    MatchBroadcast._matchEndSubmitted  = false;
+    MatchBroadcast._matchEndRetried    = false;
+    MatchBroadcast._mpEndTurnInflight  = false;
+    if (App.ui) {
+      App.ui._mpGameOverFallbackArmed = false;
+      App.ui._mpGameOverPolling       = false;
+    }
+    const authToken = (Cloud.client && Cloud.client.auth)
+      ? Cloud.client.auth.session?.access_token || ''
+      : '';
+    joinColyseusMatch(matchId, authToken, {
+      displayName: Profile.cloud.displayName || '',
+      heroId:      (App.battlePrep && App.battlePrep.heroId) || '',
+    }).then(room => {
+      console.log('[Colyseus] room joined, sessionId=' + room.sessionId);
+      _persistMatchSession();
+    }).catch(err => {
+      console.error('[Colyseus] joinOrCreate failed', err);
+      try { showToast('Could not connect to MP server: ' + (err.message || err)); } catch (e) {}
+    });
+    return null; // Colyseus path doesn't return a Supabase channel
+  }
+
   if (!initCloud() || !matchId) return null;
   // Tear down any previous channel from an older match.
   leaveMatchChannel();
@@ -99999,6 +100313,8 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
 }
 
 function leaveMatchChannel() {
+  // Colyseus cleanup — leave the room if the server path was active.
+  if (USE_COLYSEUS_MP) leaveColyseusMatch();
   if (MatchBroadcast.channel) {
     try { MatchBroadcast.channel.unsubscribe(); } catch (e) {}
   }

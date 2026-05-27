@@ -61530,6 +61530,17 @@ function renderTitle() {
     </div>
   `;
 
+  // 🎬 Kick-start the background video — browsers block autoplay on elements
+  // injected via innerHTML until .play() is called explicitly.
+  const _hubVid = root.querySelector('.spellbook-hub-bg video');
+  if (_hubVid) {
+    _hubVid.muted = true; // ensure muted so autoplay policy is satisfied
+    _hubVid.play().catch(() => {
+      // Autoplay blocked (rare on desktop, possible on some mobile browsers).
+      // The poster frame (CampHeights.png) is still visible as the fallback.
+    });
+  }
+
   bindSubclassPickModal();
 
   // Wire portal clicks

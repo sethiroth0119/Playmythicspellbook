@@ -73311,6 +73311,10 @@ async function tryPromptCounter(state, opts) {
           windowMs: windowSec * 1000,
           resolve: _resolveSafely,
         };
+        // Push the AI hang-watchdog deadline so it doesn't fire before the
+        // player's counter window closes. Without this the 8s watchdog fires
+        // mid-prompt and the pending .then() is left as an abandoned promise.
+        try { if (typeof App._aiLastSchedule !== 'undefined') App._aiLastSchedule = Date.now(); } catch (e) {}
         try { renderBattle(); } catch (e) { /* render failed — still proceed */ }
         // Auto-resolve on timeout. _resolveSafely is idempotent so this
         // safely no-ops if the player already clicked a counter.
@@ -73333,10 +73337,14 @@ async function tryPromptCounter(state, opts) {
 function _resetCounterPromptState() {
   try {
     _battleCounterPromptBusy = false;
-    if (App && App.ui && App.ui.counterPrompt && App.ui.counterPrompt._timer) {
-      clearTimeout(App.ui.counterPrompt._timer);
+    if (App && App.ui && App.ui.counterPrompt) {
+      // Resolve the pending Promise as false (not countered) BEFORE nulling it
+      // so any .then() callback fires and can apply its aiBusy guard rather
+      // than hanging as an abandoned promise forever.
+      if (App.ui.counterPrompt._timer) clearTimeout(App.ui.counterPrompt._timer);
+      try { if (typeof App.ui.counterPrompt.resolve === 'function') App.ui.counterPrompt.resolve(false); } catch (e) {}
+      App.ui.counterPrompt = null;
     }
-    if (App && App.ui) App.ui.counterPrompt = null;
   } catch (e) {}
 }
 try { window._resetCounterPromptState = _resetCounterPromptState; } catch (e) {}
@@ -81260,6 +81268,8 @@ function doAIStep() {
           target: best.target,
           label: `Enemy casts ${best.card.name}`,
         }).then((countered) => {
+          // Guard: if the watchdog already ended the AI turn, bail out.
+          if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
           if (countered) {
             // Spell was intercepted — AI still loses the card and energy
             // since the counter cost was already paid; skip spell effects.
@@ -81268,7 +81278,10 @@ function doAIStep() {
           } else {
             _doAISpell();
           }
-        }).catch(() => { _doAISpell(); });
+        }).catch(() => {
+          if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
+          _doAISpell();
+        });
       } catch (e) { _doAISpell(); }
       return;
     }
@@ -81399,6 +81412,8 @@ function doAIStep() {
             source: unit, target: pick.target,
             label: `${unit.name} → ${pick.move.name} → ${pick.target.name}`,
           }).then((countered) => {
+            // Guard: if the watchdog already ended the AI turn, bail out.
+            if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
             if (countered) {
               // Attack negated — AI eats the move attempt + cost, target untouched.
               markAIUnitActed(unit.id);
@@ -81409,6 +81424,9 @@ function doAIStep() {
             } else {
               _doAttack();
             }
+          }).catch(() => {
+            if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
+            _doAttack();
           });
           return;
         } catch (e) {
@@ -81474,6 +81492,8 @@ function doAIStep() {
               target: null,
               label: `${unit.name} attempts to move`,
             }).then((countered) => {
+              // Guard: if the watchdog already ended the AI turn, bail out.
+              if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
               if (countered) {
                 // Move negated — the unit eats its move action but stays in place.
                 App.state.units = (App.state.units || []).map(u => u && u.id === unit.id ? { ...u, hasMoved: true } : u);
@@ -81485,7 +81505,10 @@ function doAIStep() {
               } else {
                 _doMove();
               }
-            }).catch(() => { _doMove(); });
+            }).catch(() => {
+              if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
+              _doMove();
+            });
             return;
           } catch (e) {
             _doMove();

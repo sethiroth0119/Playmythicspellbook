@@ -30112,6 +30112,24 @@ const Profile = {
 const SUPABASE_URL      = 'https://ktsiasyjusesawtrwrjc.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt0c2lhc3lqdXNlc2F3dHJ3cmpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NDU5MjgsImV4cCI6MjA5NDIyMTkyOH0.fYpQFCs03ZE5AIv88S_GStqp7g71sTQe9yUxmXgyKQo';
 
+// ============================================================================
+// 🪐 COLYSEUS MULTIPLAYER (in-progress migration — see docs/multiplayer-architecture.md)
+// ----------------------------------------------------------------------------
+// Authoritative-server architecture: instead of two clients broadcasting
+// state-deltas via Supabase Realtime and racing on win conditions, both
+// clients connect to a Colyseus room hosted on Fly.io. The server holds
+// the truth; clients send actions + render received state deltas.
+//
+// FEATURE FLAG: USE_COLYSEUS_MP. While false (default), the current
+// Supabase Realtime path runs as-is. When the server is deployed +
+// engine ported, flip this to true to cut over.
+//
+// COLYSEUS_SERVER_URL is the WSS endpoint of the Fly app. Update after
+// `fly launch` picks a name — typically wss://<app>.fly.dev.
+// ============================================================================
+const USE_COLYSEUS_MP    = false;
+const COLYSEUS_SERVER_URL = 'wss://mythic-spellbook-mp.fly.dev';
+
 // Cloud client + state. Initialized lazily so the game still runs offline
 // if the CDN script failed to load or the key is missing.
 const Cloud = {

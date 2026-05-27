@@ -60,6 +60,15 @@ export class Unit extends Schema {
   @type('number')  stageMag: number = 0;
   @type('number')  stageRes: number = 0;
   @type('number')  stageSpd: number = 0;
+
+  // Card-static fields — stamped at playUnit time. Stored as JSON strings so
+  // the schema stays flat (ArraySchema<string> adds per-item change tracking
+  // overhead we don't need for these rarely-changing arrays).
+  @type('string')  elementsJson: string = '[]';   // JSON string array of element ids
+  @type('string')  passivesJson: string = '[]';   // JSON string array of passive ids
+
+  // Survival flags (set by applyDamageTriggers)
+  @type('boolean') sturdyUsed: boolean = false;
 }
 
 // ─── A card sitting in a player's hand / deck / graveyard ────────────────────

@@ -23,7 +23,7 @@
 // Bumped 2026-05-27 — Session 2 Colyseus bridge: ColyseusMP client lib
 // added, joinColyseusMatch() + action forwarding hooks wired. Force-push
 // new index.html so the Colyseus CDN script tag is visible to all clients.
-const CACHE_VERSION = 'mythic-v5-2026-05-27';
+const CACHE_VERSION = 'mythic-v6-2026-05-27';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

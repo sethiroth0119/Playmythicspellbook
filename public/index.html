@@ -257,16 +257,14 @@
     background-color: #03020a; /* fallback while video loads */
     overflow: hidden;
   }
-  /* Looping MP4 video fills the entire background — same cover behaviour as
-     the old background-image. object-fit:cover + width/height 100% keeps it
-     filling the viewport without letterboxing on any aspect ratio. */
-  .spellbook-hub-bg video {
+  /* Static photo fills the entire background — cover/center so it works on
+     any aspect ratio without letterboxing. */
+  .spellbook-hub-bg img.hub-bg-img {
     position: absolute; inset: 0;
     width: 100%; height: 100%;
     object-fit: cover;
     object-position: center center;
     pointer-events: none;
-    /* Slightly darken the video so the portal cards + text stay readable. */
     filter: brightness(0.72);
   }
   /* Edge vignette so portal cards near the corners don't fight the painting's bright spots. */
@@ -61451,10 +61449,7 @@ function renderTitle() {
   root.innerHTML = `
     <div class="spellbook-hub ${isMain ? 'is-main' : 'is-sub'}">
       <div class="spellbook-hub-bg">
-        <video autoplay loop muted playsinline preload="auto"
-               poster="assets/background/Backgrounds/CampHeights.png">
-          <source src="assets/background/Backgrounds/Mainmenu.mp4" type="video/mp4">
-        </video>
+        <img class="hub-bg-img" src="assets/background/Backgrounds/CampHeights.png" alt="" draggable="false">
       </div>
       <div class="spellbook-smoke">${smokePuffs}</div>
       <div class="spellbook-embers">${embers}</div>
@@ -61530,16 +61525,6 @@ function renderTitle() {
     </div>
   `;
 
-  // 🎬 Kick-start the background video — browsers block autoplay on elements
-  // injected via innerHTML until .play() is called explicitly.
-  const _hubVid = root.querySelector('.spellbook-hub-bg video');
-  if (_hubVid) {
-    _hubVid.muted = true; // ensure muted so autoplay policy is satisfied
-    _hubVid.play().catch(() => {
-      // Autoplay blocked (rare on desktop, possible on some mobile browsers).
-      // The poster frame (CampHeights.png) is still visible as the fallback.
-    });
-  }
 
   bindSubclassPickModal();
 

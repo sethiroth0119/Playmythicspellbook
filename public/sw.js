@@ -72,7 +72,11 @@
 // v36 — Crash Exchange Stock tab always populated: removed the factionOrder
 //        that required activity > 0, so all factions show at launch (new players
 //        no longer see blank ticker). Active factions sort to top by score.
-const CACHE_VERSION = 'mythic-v36-' + Date.now().toString(36);
+// v37 — War Map complete layout redesign to match standalone app: full-screen
+//        flex column, 260px left Field Reports feed, right map canvas fills
+//        viewport, slide-in node drawer replaces static side pane, coordinate
+//        ticks + dark backgrounds + standalone CSS design language applied.
+const CACHE_VERSION = 'mythic-v37-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

@@ -5072,33 +5072,33 @@
   .hand-card:disabled { opacity: 0.55; cursor: not-allowed; filter: grayscale(0.5); }
 
   /* ✨ HOLOGRAPHIC CARD EFFECT ✨
-     A subtle prismatic shimmer painted over each hand card. Two layered
-     pseudo-elements:
-       • ::before — diagonal rainbow conic-gradient with screen blend
-         (the "iridescent foil" pass)
+     Subtle "wet foil" sheen on each hand card. Tuned so the underlying
+     art reads CLEARLY at rest — the holo is meant to be a flourish, not
+     a filter. Two layered pseudo-elements:
+       • ::before — diagonal iridescent sweep that travels across the card
        • ::after  — radial highlight that tracks the cursor via --mx/--my
-         (the "wet sheen" pass)
-     Both are positioned absolute / pointer-events:none so they don't
-     interfere with the underlying frame art or clicks.
-     Rarity tier scales the intensity — common cards show a hint, mythic
-     cards shimmer prominently. Hover boosts the effect ~2× across all
-     rarities to give the player tactile feedback.
-     Honors prefers-reduced-motion: the conic gradient stops rotating
-     for users who opt out of motion. */
+     Both use mix-blend-mode: soft-light (gentle — preserves underlying
+     hues rather than recoloring them like color-dodge did).
+     Rarity tier scales the AT-REST intensity. Hover/selected boosts it
+     ~4× so the shimmer blooms when the player engages the card.
+     Honors prefers-reduced-motion: the sweep stops moving for users who
+     opt out of motion. */
   .hand-card {
     /* Default holo strength — overridden by data-rarity below. Range 0..1. */
-    --holo-strength: 0.18;
+    --holo-strength: 0.05;
     /* Mouse position percentages, defaulting to center. JS updates these on
        pointermove (see hand-strip pointermove handler). */
     --mx: 50%;
     --my: 50%;
   }
-  .hand-card[data-rarity="common"]    { --holo-strength: 0.10; }
-  .hand-card[data-rarity="uncommon"]  { --holo-strength: 0.18; }
-  .hand-card[data-rarity="rare"]      { --holo-strength: 0.32; }
-  .hand-card[data-rarity="epic"]      { --holo-strength: 0.46; }
-  .hand-card[data-rarity="legendary"] { --holo-strength: 0.60; }
-  .hand-card[data-rarity="mythic"]    { --holo-strength: 0.75; }
+  /* AT-REST strengths — chosen so the art is fully readable. Hover boost
+     multiplies these by 4× for the engaged state. */
+  .hand-card[data-rarity="common"]    { --holo-strength: 0.03; }
+  .hand-card[data-rarity="uncommon"]  { --holo-strength: 0.05; }
+  .hand-card[data-rarity="rare"]      { --holo-strength: 0.08; }
+  .hand-card[data-rarity="epic"]      { --holo-strength: 0.11; }
+  .hand-card[data-rarity="legendary"] { --holo-strength: 0.15; }
+  .hand-card[data-rarity="mythic"]    { --holo-strength: 0.20; }
 
   .hand-card::before,
   .hand-card::after {
@@ -5108,7 +5108,7 @@
     border-radius: inherit;
     pointer-events: none;
     opacity: var(--holo-strength);
-    transition: opacity 220ms ease;
+    transition: opacity 260ms ease;
     /* Stay clipped to the card's rounded frame so the holo doesn't leak. */
     -webkit-mask-image: url('assets/Frames/unit%20card.png?v=4');
     -webkit-mask-size: 100% 100%;
@@ -5117,49 +5117,50 @@
             mask-size: 100% 100%;
             mask-repeat: no-repeat;
   }
-  /* Iridescent foil — conic rainbow blended onto the card art. */
+  /* Iridescent diagonal sweep — pink/cyan/gold band that slides across.
+     soft-light blend keeps the underlying art intact (color-dodge from
+     the old version was washing everything green/blue — that's the bug
+     this fix addresses). */
   .hand-card::before {
-    background:
-      conic-gradient(from 210deg at 50% 50%,
-        rgba(255, 80, 120, 0.55),
-        rgba(255, 200, 80, 0.45),
-        rgba(120, 255, 180, 0.45),
-        rgba(80, 180, 255, 0.55),
-        rgba(180, 120, 255, 0.55),
-        rgba(255, 80, 120, 0.55));
-    mix-blend-mode: color-dodge;
-    filter: saturate(1.2) blur(2px);
-    animation: holo-spin 8s linear infinite;
+    background: linear-gradient(115deg,
+      transparent 30%,
+      rgba(255, 180, 220, 0.55) 44%,
+      rgba(190, 240, 255, 0.55) 50%,
+      rgba(255, 240, 180, 0.55) 56%,
+      transparent 70%);
+    background-size: 300% 300%;
+    mix-blend-mode: soft-light;
+    animation: holo-sweep 5s linear infinite;
     z-index: 2;
   }
-  /* Wet sheen — radial highlight that follows the cursor. */
+  /* Wet sheen — small radial highlight tracking the cursor. Soft-light
+     again, so the highlight just brightens what's there. */
   .hand-card::after {
     background:
       radial-gradient(circle at var(--mx) var(--my),
-        rgba(255, 255, 255, 0.55) 0%,
-        rgba(255, 255, 255, 0.16) 18%,
-        rgba(255, 255, 255, 0.00) 42%),
-      linear-gradient(120deg,
-        transparent 30%,
-        rgba(255, 255, 255, 0.22) 48%,
-        rgba(255, 255, 255, 0.00) 65%);
-    mix-blend-mode: overlay;
+        rgba(255, 255, 255, 0.45) 0%,
+        rgba(255, 255, 255, 0.10) 22%,
+        rgba(255, 255, 255, 0.00) 48%);
+    mix-blend-mode: soft-light;
     z-index: 3;
   }
-  /* Hover boost — about 2× the strength + adds saturation. */
+  /* Hover boost — 4× the at-rest strength so the holo blooms when
+     the player engages a card, then settles back when they move away. */
   .hand-card:hover:not(:disabled)::before,
   .hand-card:hover:not(:disabled)::after,
   .hand-card.selected::before,
   .hand-card.selected::after {
-    opacity: calc(var(--holo-strength) * 2);
+    opacity: calc(var(--holo-strength) * 4);
   }
   /* Disabled cards drop the holo so they read as inert. */
   .hand-card:disabled::before,
   .hand-card:disabled::after { opacity: 0; }
 
-  @keyframes holo-spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
+  /* Sweep — the diagonal gradient travels across the card's background
+     area. 300% size means the band can fully exit and re-enter. */
+  @keyframes holo-sweep {
+    0%   { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
   }
   @media (prefers-reduced-motion: reduce) {
     .hand-card::before { animation: none; }
@@ -27525,6 +27526,69 @@ const MOVES = {
     scansAllEnemies: true, scansRadius: 0,
     desc: '🛰 Deploy a satellite ping — scans EVERY enemy unit + hero on the board. The ultimate intel move.',
   },
+  // ╔══════════════════════════════════════════════════════════════════════
+  // 🔁 MULTI-HIT MOVES — strike multiple times in one action
+  // ────────────────────────────────────────────────────────────────────────
+  // dualHit: true          → always exactly 2 hits (each is an independent roll)
+  // multiHit: { min, max } → random count each use; each hit rolls damage/crit separately
+  // Recoil and drain both apply to the TOTAL damage dealt across all hits.
+  // ╚══════════════════════════════════════════════════════════════════════
+  dualSlice: {
+    id: 'dualSlice', name: 'Dual Slice', kind: 'attack',
+    type: 'physical', element: 'none', cost: 2, range: 1,
+    power: 55, accuracy: 95, crit: 10,
+    dualHit: true,
+    desc: '⚔️⚔️ Two arcing blade swings delivered in one fluid motion. Always strikes exactly twice — each hit rolls crits independently.',
+  },
+  doubleKick: {
+    id: 'doubleKick', name: 'Double Kick', kind: 'attack',
+    type: 'physical', element: 'none', cost: 1, range: 1,
+    power: 45, accuracy: 100, crit: 5,
+    dualHit: true,
+    desc: '🦵🦵 A swift two-kick combo that never misses. Guaranteed 2 hits — great for reliable chip damage.',
+  },
+  twinStrike: {
+    id: 'twinStrike', name: 'Twin Strike', kind: 'attack',
+    type: 'physical', element: 'none', cost: 2, range: 2,
+    power: 50, accuracy: 95, crit: 12,
+    dualHit: true,
+    desc: '⚡⚡ Two rapid strikes at mid-range, both rolls fully independent. Higher crit chance than Dual Slice.',
+  },
+  furySwipes: {
+    id: 'furySwipes', name: 'Fury Swipes', kind: 'attack',
+    type: 'physical', element: 'none', cost: 2, range: 1,
+    power: 30, accuracy: 85, crit: 5,
+    multiHit: { min: 2, max: 5 },
+    desc: '🐾 Relentless clawing frenzy — 2 to 5 hits per use, each rolled independently. Low power per claw, but 5-hit rolls are brutal.',
+  },
+  bulletSeed: {
+    id: 'bulletSeed', name: 'Bullet Seed', kind: 'attack',
+    type: 'physical', element: 'nature', cost: 2, range: 3,
+    power: 30, accuracy: 100, crit: 5,
+    multiHit: { min: 2, max: 5 },
+    desc: '🌱💥 Fires 2 to 5 nature seeds at range 3. Never misses — each seed deals damage independently.',
+  },
+  pinMissile: {
+    id: 'pinMissile', name: 'Pin Missile', kind: 'attack',
+    type: 'physical', element: 'storm', cost: 2, range: 4,
+    power: 28, accuracy: 90, crit: 8,
+    multiHit: { min: 2, max: 5 },
+    desc: '📌 A volley of razor-sharp needles fired at long range — 2 to 5 hits. Each spike rolls crits independently.',
+  },
+  doubleDragon: {
+    id: 'doubleDragon', name: 'Double Dragon', kind: 'attack',
+    type: 'magic', element: 'arcane', cost: 3, range: 3,
+    power: 65, accuracy: 90, crit: 15,
+    dualHit: true,
+    desc: '🐉🐉 Conjure twin dragon maws that snap twice in sequence. Both hits are magical; each can crit. Best magic dual-hit in the catalog.',
+  },
+  rockBlast: {
+    id: 'rockBlast', name: 'Rock Blast', kind: 'attack',
+    type: 'physical', element: 'earth', cost: 2, range: 3,
+    power: 32, accuracy: 90, crit: 5,
+    multiHit: { min: 2, max: 5 },
+    desc: '🪨 Hurls 2 to 5 jagged boulders in rapid succession. Breaks through barriers — each boulder is an independent earth hit.',
+  },
 };
 
 // ============ FACTIONS ============
@@ -47032,7 +47096,7 @@ function getSettings() {
       colorBlindPalette: false,
       logFilters: { showDamage: true, showEffects: true, showPlaysHeals: true, searchText: '' },
       aiDifficulty: 'normal',   // 'easy' | 'normal' | 'hard'
-      pixiBoard: true,          // 🎮 WebGL board renderer — default ON (slice 12). Toggle in Settings to roll back.
+      pixiBoard: false,         // 🎮 WebGL board renderer — HOTFIX rolled default back to OFF (live regression). See App.flags.forceDisablePixi.
     };
   }
   if (!Profile.settings.logFilters) {
@@ -47042,18 +47106,25 @@ function getSettings() {
   if (typeof Profile.settings.aiDifficulty !== 'string') {
     Profile.settings.aiDifficulty = 'normal';
   }
-  // Backfill pixiBoard on existing profiles. As of slice 12 the default is
-  // ON — saves that predate the field (or where it was explicitly removed)
-  // get the new default. Saves where the player explicitly opted OUT still
-  // keep their `false` because the typeof check only fires when undefined.
+  // Backfill pixiBoard on existing profiles. HOTFIX: default is OFF after
+  // the live regression rolled the WebGL board back. Saves that predate the
+  // field get the new default. Saves with an explicit preference are
+  // preserved (typeof check only fires when undefined) — but the force-
+  // disable override below ignores even an explicit "On".
   if (typeof Profile.settings.pixiBoard !== 'boolean') {
-    Profile.settings.pixiBoard = true;
+    Profile.settings.pixiBoard = false;
   }
   // Mirror the saved preference into the live App.flags every read so the
   // first call after auth-load picks it up. App.flags is the source of truth
   // for renderBoard() — Profile.settings is just the persistence layer.
   if (typeof App !== 'undefined' && App.flags) {
     App.flags.pixiBoard = !!Profile.settings.pixiBoard;
+    // ⚠ HOTFIX OVERRIDE — until the live-board regression is fixed, force
+    // Pixi off for everyone regardless of saved preference. Remove this
+    // block after the root cause is identified and patched.
+    if (App.flags.forceDisablePixi) {
+      App.flags.pixiBoard = false;
+    }
   }
   return Profile.settings;
 }
@@ -57970,6 +58041,15 @@ const executeMove = (state, attacker, target, move) => {
     s.log = log; return s;
   }
 
+  // ===== Multi-hit: determine total strike count =====
+  // move.dualHit: true           → exactly 2 hits (e.g. Dual Slice — same move delivered twice)
+  // move.multiHit: { min, max }  → random count in range  (e.g. Fury Swipes 2–5)
+  // Neither flag                 → 1 hit (normal behaviour, zero overhead)
+  const _totalHits = move.dualHit ? 2
+    : (move.multiHit
+        ? (Math.floor(Math.random() * ((move.multiHit.max || 5) - (move.multiHit.min || 2) + 1)) + (move.multiHit.min || 2))
+        : 1);
+
   let dmg = result.damage;
   // (Legacy `tile.location === 'altar'` bonus removed — Power Altar now flows
   // through the location aura system in getStatBonus so it stacks properly with
@@ -58082,6 +58162,75 @@ const executeMove = (state, attacker, target, move) => {
   }
 
   s.units = s.units.map(u => u.id === target.id ? updatedTarget : (u.id === attacker.id ? markAttackerActed(u) : u));
+
+  // Accumulate total damage across all strikes (recoil + drain use this total below).
+  let _totalDmgDealt = dmg;
+
+  // ===== Extra hits for multi-hit / dual-hit moves =====
+  if (_totalHits > 1) {
+    // Queue hit-1 animation NOW so hit visuals play in correct order (1 → 2 → … → N)
+    queueBattleAnim({
+      attacker, defender: target, move, dmg, crit: result.crit, missed: false,
+      oldDefHp: target.currentHp, newDefHp: updatedTarget.currentHp, defMaxHp: target.maxHp,
+    });
+    // Log hit 1 immediately so it appears ABOVE hits 2–N in the combat feed
+    {
+      let _h1Line = `Hit 1: ${attacker.name} → ${move.name} → ${target.name} (${dmg})`;
+      if (result.crit) _h1Line = '💥 CRIT! ' + _h1Line;
+      if (result.stab) _h1Line += ' — STAB!';
+      log.push({ msg: _h1Line, color: result.crit ? 'amber' : (attacker.owner === 'player' ? 'green' : 'red') });
+    }
+    let _hitsLanded = 1;
+    for (let _hi = 1; _hi < _totalHits; _hi++) {
+      const _htTgt = s.units.find(u => u.id === target.id);
+      if (!_htTgt || !_htTgt.alive) break;
+      const _hr = calculateDamage(move, attacker, _htTgt, s.weather);
+      if (_hr.missed) {
+        queueBattleAnim({ attacker, defender: target, move, dmg: 0, missed: true,
+          oldDefHp: _htTgt.currentHp, newDefHp: _htTgt.currentHp, defMaxHp: _htTgt.maxHp });
+        log.push({ msg: `  Hit ${_hi + 1}: MISSED!`, color: 'amber' });
+        continue;
+      }
+      let _hd = _hr.damage;
+      // Attacker emotion mod
+      if (attacker && attacker.isHero && typeof _battleEmotionStatMod === 'function') {
+        _hd = Math.max(1, Math.round(_battleEmotionStatMod(attacker.id, 'damage', _battleEmotionStatMod(attacker.id, 'atk', _hd))));
+      }
+      // Defender emotion mod
+      if (_htTgt && _htTgt.isHero && typeof _battleEmotionStatMod === 'function') {
+        const _dm = _battleEmotionStatMod(_htTgt.id, 'def', 1);
+        if (_dm && _dm !== 1) _hd = Math.max(1, Math.round(_hd / _dm));
+      }
+      const _htrig = applyDamageTriggers(_htTgt, _hd, move && move.type);
+      let _hu = _htrig.unit;
+      _htrig.log.forEach(l => log.push(l));
+      try {
+        if (!_hu.alive && typeof _battleOnUnitKilled === 'function') _battleOnUnitKilled(s, attacker, _hu);
+        else if (_hu.alive && typeof _battleCheckSurvivedNearDeath === 'function') _battleCheckSurvivedNearDeath(s, _hu, _htTgt.currentHp || 0);
+      } catch (e) {}
+      s.units = s.units.map(u => u.id === target.id ? _hu : u);
+      updatedTarget = _hu;
+      _totalDmgDealt += _hd;
+      _hitsLanded++;
+      if (attacker.owner === 'player' && App.matchStats) {
+        App.matchStats.damageTotal = (App.matchStats.damageTotal || 0) + _hd;
+        if (_hd > (App.matchStats.biggestHit || 0)) {
+          App.matchStats.biggestHit = _hd;
+          App.matchStats.biggestHitMoveName = (move && move.name) || null;
+        }
+      }
+      queueBattleAnim({ attacker, defender: target, move, dmg: _hd, crit: _hr.crit, missed: false,
+        oldDefHp: _htTgt.currentHp, newDefHp: _hu.currentHp, defMaxHp: _htTgt.maxHp });
+      let _hLine = `  Hit ${_hi + 1}: ${attacker.name} → ${move.name} → ${target.name} (${_hd})`;
+      if (_hr.crit) _hLine = '💥 CRIT! ' + _hLine;
+      log.push({ msg: _hLine, color: _hr.crit ? 'amber' : (attacker.owner === 'player' ? 'green' : 'red') });
+      if (!_hu.alive) {
+        if (_hu.isHero) s.gameOver = _hu.owner === 'player' ? 'ai' : 'player';
+        break;
+      }
+    }
+    log.push({ msg: `${move.name} hit ${_hitsLanded} time${_hitsLanded !== 1 ? 's' : ''}! — Total: ${_totalDmgDealt}`, color: 'amber' });
+  }
 
   // ===== 🛡️⚡ Elemental reactive shields =====
   // If the DEFENDER holds a shield whose reactStatus matches this attack's
@@ -58201,26 +58350,31 @@ const executeMove = (state, attacker, target, move) => {
   } catch (e) { /* surfaces never break the attack */ }
 
   // ===== Trigger Pokemon-style battle cinematic =====
-  queueBattleAnim({
-    attacker, defender: target, move,
-    dmg, crit: result.crit, missed: false,
-    oldDefHp: target.currentHp,
-    newDefHp: updatedTarget.currentHp,
-    defMaxHp: target.maxHp,
-  });
-
-  // Damage line in log
-  let dmgLine = `${attacker.name} → ${move.name} → ${target.name} (${dmg})`;
-  if (result.crit) dmgLine = `💥 CRIT! ` + dmgLine;
-  if (result.stab) dmgLine += ' — STAB!';
-  if (result.effectiveness === 'super') dmgLine += ' — Super effective!';
-  else if (result.effectiveness === 'weak') dmgLine += ' — Not very effective...';
-  if ((attacker.statusEffects || []).some(e => e.type === 'assisted')) dmgLine += ' 🤝';
-  if (comboHit) {
-    const stackCount = priorAttackers.length + 1; // include this hit
-    dmgLine += ` 🔗 COMBO ×${stackCount}! +20%`;
+  // Multi-hit: hit-1 anim was already queued in the extra-hits block above.
+  if (_totalHits === 1) {
+    queueBattleAnim({
+      attacker, defender: target, move,
+      dmg, crit: result.crit, missed: false,
+      oldDefHp: target.currentHp,
+      newDefHp: updatedTarget.currentHp,
+      defMaxHp: target.maxHp,
+    });
   }
-  log.push({ msg: dmgLine, color: result.crit ? 'amber' : (attacker.owner === 'player' ? 'green' : 'red') });
+
+  // Damage line in log (single-hit only; multi-hit logs each hit individually above)
+  if (_totalHits === 1) {
+    let dmgLine = `${attacker.name} → ${move.name} → ${target.name} (${dmg})`;
+    if (result.crit) dmgLine = `💥 CRIT! ` + dmgLine;
+    if (result.stab) dmgLine += ' — STAB!';
+    if (result.effectiveness === 'super') dmgLine += ' — Super effective!';
+    else if (result.effectiveness === 'weak') dmgLine += ' — Not very effective...';
+    if ((attacker.statusEffects || []).some(e => e.type === 'assisted')) dmgLine += ' 🤝';
+    if (comboHit) {
+      const stackCount = priorAttackers.length + 1; // include this hit
+      dmgLine += ` 🔗 COMBO ×${stackCount}! +20%`;
+    }
+    log.push({ msg: dmgLine, color: result.crit ? 'amber' : (attacker.owner === 'player' ? 'green' : 'red') });
+  }
 
   // Consume 'assisted' status — it only boosts ONE strike, then drops off
   if ((attacker.statusEffects || []).some(e => e.type === 'assisted')) {
@@ -58230,9 +58384,9 @@ const executeMove = (state, attacker, target, move) => {
     });
   }
 
-  if (move.effect === 'drain' && dmg > 0) {
-    s.units = s.units.map(u => u.id === attacker.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + dmg) } : u);
-    log.push({ msg: `${attacker.name} drains ${dmg}`, color: attacker.owner === 'player' ? 'green' : 'red' });
+  if (move.effect === 'drain' && _totalDmgDealt > 0) {
+    s.units = s.units.map(u => u.id === attacker.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + _totalDmgDealt) } : u);
+    log.push({ msg: `${attacker.name} drains ${_totalDmgDealt}`, color: attacker.owner === 'player' ? 'green' : 'red' });
   }
 
   // ===== Splash + Lane AOE =====
@@ -58323,7 +58477,7 @@ const executeMove = (state, attacker, target, move) => {
   // Routed through applyDamageTriggers so Sturdy / Immortal / lethal-avoid charms /
   // stabilize bleed-out can fire and the 🩺 HP-receipt log records the math.
   let recoilDmg = 0;
-  if (move.recoil && dmg > 0) recoilDmg += Math.max(1, Math.floor(dmg * move.recoil));
+  if (move.recoil && _totalDmgDealt > 0) recoilDmg += Math.max(1, Math.floor(_totalDmgDealt * move.recoil));
   if (move.recoilFixed) recoilDmg += move.recoilFixed;
   if (recoilDmg > 0) {
     const aBefore = s.units.find(u => u.id === attacker.id);
@@ -60505,17 +60659,16 @@ const App = {
   tutorial: { active: false, step: 0 },
 
   // 🎮 Feature flags — runtime toggles for the hybrid PixiJS renderer.
-  // When pixiBoard is true, renderBoard() emits a Pixi mount-point div and
-  // MSPixiBoard renders units/tiles on a WebGL canvas instead of DOM cells.
-  // Default ON as of slice 12 — players get smooth tweens, particle VFX,
-  // damage numbers, status overlays, ambient weather, decals, in-board
-  // cinematics. The in-game settings toggle (Settings → 🎮 WebGL Board
-  // Renderer) is the rollback escape hatch — flips this back to false
-  // and re-renders the battle with the classic DOM grid.
-  // getSettings() mirrors Profile.settings.pixiBoard into this on every
-  // read, so an existing player's saved preference (off) overrides this
-  // initial true. Brand-new profiles get the default of true.
-  flags: { pixiBoard: true },
+  // ⚠ HOTFIX ROLLBACK — Pixi renderer disabled in production after a
+  // live-board regression (units/heroes failed to render on the canvas
+  // in at least one battle path — the DOM board MUST be the path that
+  // ships until that is diagnosed). `forceDisablePixi` short-circuits
+  // even a player's saved preference (Profile.settings.pixiBoard), so
+  // anyone already opted-in gets rolled back to the working DOM grid.
+  // The Pixi code is still loaded (in /pixi/) and the settings toggle
+  // is still visible — but the toggle's "On" position is a no-op until
+  // forceDisablePixi is set to false here.
+  flags: { pixiBoard: false, forceDisablePixi: true },
 };
 
 // ============ TUTORIAL ============
@@ -70532,6 +70685,28 @@ function renderMoveEditor() {
         })()}
         <div class="editor-field"><label>Recoil % of dmg dealt (0-50)</label><input id="mv-recoil" type="number" min="0" max="50" value="${Math.round((move.recoil || 0) * 100)}"></div>
         <div class="editor-field"><label>Recoil Fixed (flat HP cost)</label><input id="mv-recoil-fixed" type="number" min="0" max="40" value="${move.recoilFixed || 0}"></div>
+
+        <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.15);padding-top:0.6rem;margin-top:0.3rem">
+          <label style="font-weight:700;color:#ffd166">🔁 Multi-Hit</label>
+          <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Strike multiple times in one action. Recoil and drain apply to the TOTAL damage across all hits.</div>
+        </div>
+        <div class="editor-field full">
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+            <input type="checkbox" id="mv-dual-hit" ${move.dualHit ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+            <span>⚔️⚔️ Dual-Hit — always strikes exactly twice (e.g. Dual Slice). Overrides multi-hit range fields.</span>
+          </label>
+        </div>
+        <div class="editor-field">
+          <label>Multi-Hit Min (2–5)</label>
+          <input id="mv-multi-hit-min" type="number" min="0" max="5" value="${(move.multiHit && move.multiHit.min) || 0}">
+          <div class="small-text" style="margin-top:0.25rem;opacity:0.7">Minimum hits per use. Set to 0 to disable. (e.g. 2 for Fury Swipes)</div>
+        </div>
+        <div class="editor-field">
+          <label>Multi-Hit Max (2–5)</label>
+          <input id="mv-multi-hit-max" type="number" min="0" max="5" value="${(move.multiHit && move.multiHit.max) || 0}">
+          <div class="small-text" style="margin-top:0.25rem;opacity:0.7">Maximum hits per use. Set equal to min for a fixed count. (e.g. 5 for fury-type)</div>
+        </div>
+
         <div class="editor-field"><label>⚡ Gain Energy on use (0-5)</label><input id="mv-gain-energy" type="number" min="0" max="5" value="${move.gainEnergy || 0}"></div>
         <div class="editor-field"><label>🌟 Gain Kalon use on use (0-3)</label><input id="mv-gain-kalon" type="number" min="0" max="3" value="${move.gainKalon || 0}"></div>
         <div class="editor-field"><label>💥 AOE Radius around attacker (0-3)</label><input id="mv-aoe-radius" type="number" min="0" max="3" value="${move.aoeRadius || 0}"><div class="small-text" style="margin-top:0.25rem;opacity:0.7">N tiles around the ATTACKER. Damages everyone (friend + foe) in the ring.</div></div>
@@ -70731,6 +70906,9 @@ function bindMoveEditor() {
     const stageDelta = parseInt((document.getElementById('mv-stage-delta') || {}).value, 10) || 0;
     const recoilPct = Math.max(0, Math.min(50, parseInt((document.getElementById('mv-recoil') || {}).value, 10) || 0));
     const recoilFixed = Math.max(0, Math.min(40, parseInt((document.getElementById('mv-recoil-fixed') || {}).value, 10) || 0));
+    const isDualHit    = !!(document.getElementById('mv-dual-hit') && document.getElementById('mv-dual-hit').checked);
+    const multiHitMin  = Math.max(0, Math.min(5, parseInt((document.getElementById('mv-multi-hit-min') || {}).value, 10) || 0));
+    const multiHitMax  = Math.max(0, Math.min(5, parseInt((document.getElementById('mv-multi-hit-max') || {}).value, 10) || 0));
     const gainEnergy  = Math.max(0, Math.min(5,  parseInt((document.getElementById('mv-gain-energy') || {}).value, 10) || 0));
     const gainKalon   = Math.max(0, Math.min(3,  parseInt((document.getElementById('mv-gain-kalon')  || {}).value, 10) || 0));
     const aoeRadius   = Math.max(0, Math.min(3,  parseInt((document.getElementById('mv-aoe-radius')  || {}).value, 10) || 0));
@@ -70782,6 +70960,17 @@ function bindMoveEditor() {
     if (stageStat && stageDelta) move.stageMods = [{ stat: stageStat, delta: stageDelta }];
     if (recoilPct > 0)  move.recoil = recoilPct / 100;
     if (recoilFixed > 0) move.recoilFixed = recoilFixed;
+    // Multi-hit — dualHit takes precedence; multiHit only saves when both min/max are ≥ 2
+    if (isDualHit) {
+      move.dualHit = true;
+      delete move.multiHit;
+    } else if (multiHitMin >= 2 && multiHitMax >= multiHitMin) {
+      move.multiHit = { min: multiHitMin, max: multiHitMax };
+      delete move.dualHit;
+    } else {
+      delete move.dualHit;
+      delete move.multiHit;
+    }
     if (gainEnergy > 0)  move.gainEnergy  = gainEnergy;
     if (gainKalon > 0)   move.gainKalon   = gainKalon;
     if (aoeRadius > 0)   move.aoeRadius   = aoeRadius;

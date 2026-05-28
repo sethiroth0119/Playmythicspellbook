@@ -76,7 +76,13 @@
 //        flex column, 260px left Field Reports feed, right map canvas fills
 //        viewport, slide-in node drawer replaces static side pane, coordinate
 //        ticks + dark backgrounds + standalone CSS design language applied.
-const CACHE_VERSION = 'mythic-v37-' + Date.now().toString(36);
+// v38 — Multi-hit attack system: move.dualHit (exactly 2 hits) and
+//        move.multiHit: { min, max } (random 2-5 hits). Each hit rolls damage
+//        and crits independently. Recoil/drain apply to total dmg dealt.
+//        8 catalog moves added (Dual Slice, Double Kick, Twin Strike,
+//        Fury Swipes, Bullet Seed, Pin Missile, Double Dragon, Rock Blast).
+//        Card Forge move editor gains Dual-Hit checkbox + min/max fields.
+const CACHE_VERSION = 'mythic-v38-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

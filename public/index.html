@@ -18747,16 +18747,13 @@
     --node-color: #6cd4ff;
   }
   .tw-node-marker:focus { outline: none; }
-  /* Full-coverage hit-area overlay: covers every pixel of the button (plus
-     12px margin) so clicks anywhere on or near the node register correctly.
-     Pseudo-elements report the host element as e.target, so canvas delegation
-     still resolves to the [data-tw-node] button. */
-  .tw-node-marker::after {
+  /* Expanded transparent hit-area so any click inside/near the node fires.
+     No z-index so children (diamond, label) are not obscured. */
+  .tw-node-marker::before {
     content: '';
     position: absolute;
-    inset: -12px;
-    z-index: 9;
-    cursor: pointer;
+    inset: -10px;
+    pointer-events: auto;
   }
 
   /* Diamond — outer wireframe ring + inner filled core via pseudo-elements */
@@ -127539,7 +127536,8 @@ function renderTerritoryWars() {
     ].join('\n');
     return `<button class="tw-node-marker${selCls}${_nAttackCls}" data-tw-node="${escapeHtml(n.id)}" data-tw-state="${_nState}"
         title="${escapeHtml(tip)}"
-        style="left:${pos.x}%;top:${pos.y}%;--node-color:${paint.color}">
+        style="left:${pos.x}%;top:${pos.y}%;--node-color:${paint.color}"
+        onclick="_twSelectNode(this.dataset.twNode)">
       ${(isThriving || selCls) ? '<div class="tw-node-marker-pulse"></div>' : ''}
       <div class="tw-node-diamond"></div>
       <div class="tw-node-marker-label">
@@ -128008,18 +128006,16 @@ function renderTerritoryWars() {
     App._twFilters[c.dataset.twFilter] = c.checked;
     render();
   });
-  // Single delegated listener on the canvas — catches clicks on ANY part of a
-  // node button (diamond, label, pulse, badge, gap) via .closest(), so the
-  // entire button area is reliably clickable without needing precise aim.
-  const _twCanvas = document.getElementById('tw-map-canvas');
-  if (_twCanvas) {
-    _twCanvas.onclick = (e) => {
-      const btn = e.target.closest('[data-tw-node]');
-      if (!btn) return;
-      App._twSelectedNode = btn.dataset.twNode;
-      render();
-    };
-  }
+  // Global helper called by each button's inline onclick="_twSelectNode(...)".
+  // Must be window-scoped so inline handlers (which run in global scope) can find it.
+  window._twSelectNode = (id) => { App._twSelectedNode = id; render(); };
+
+  // Belt-and-suspenders: also bind .onclick directly on every node button so
+  // clicks that bubble through children still resolve even if the inline handler
+  // is not reached (e.g. when the ::before pseudo-element catches the click).
+  document.querySelectorAll('[data-tw-node]').forEach(b => {
+    b.onclick = (e) => { e.stopPropagation(); App._twSelectedNode = b.dataset.twNode; render(); };
+  });
   // v37: Drawer close — clicking ✕ deselects the node and closes the drawer.
   const _drawerClose = document.getElementById('tw-drawer-close');
   if (_drawerClose) _drawerClose.onclick = () => { App._twSelectedNode = null; App._twNodeTab = 'overview'; render(); };

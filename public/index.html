@@ -31763,7 +31763,20 @@ function _applyAuthState(session) {
     if (Profile.cloud) Profile.cloud.lastLocalEditAt = _preCFEditAt;
     // On fresh sign-ins, pull the player's saved profile data from the cloud.
     if (typeof cloudFetchProfile === 'function') {
-      try { if (window.BootSplash) window.BootSplash.set('profile', 0.4, 'Fetching your profile…'); } catch (e) {}
+      // 🛟 Show a clearer message when the local profile is empty — this is
+      // the "cleared cache / new device" recovery flow, where the cloud is
+      // about to repopulate the entire account. Without this distinction
+      // the user just sees "Fetching your profile…" and thinks the game is
+      // still booting normally when actually their account is being restored.
+      try {
+        if (window.BootSplash) {
+          const localLooksEmpty = (typeof _profileLooksEmpty === 'function') && _profileLooksEmpty(Profile);
+          const msg = localLooksEmpty
+            ? '🛟 Restoring your account from cloud…'
+            : 'Fetching your profile…';
+          window.BootSplash.set('profile', 0.4, msg);
+        }
+      } catch (e) {}
       cloudFetchProfile()
         .then(() => {
           // 🔒 Pull the BULLETPROOF canonical wallet + inventory row. This is
@@ -32085,6 +32098,27 @@ async function _retryCloudOp(opFn, opts) {
 
 async function cloudSyncProfile() {
   if (!initCloud() || !Profile.cloud.signedIn) return { ok: false, error: 'Not signed in.' };
+  // 🔒 HYDRATION GATE — refuse to upload until the FIRST cloud fetch has
+  // resolved this session. This is the canonical fix for the cache-clear
+  // data-loss bug: without this gate, a saveProfile() that fires during
+  // boot (before cloudFetchProfile() resolves) can debounce-upload an
+  // EMPTY local profile over a player's populated cloud row, permanently
+  // wiping their account.
+  //
+  // cloudFetchProfile() sets _hydratedFromCloud = true on success OR on a
+  // 404-no-row (genuine first-time user with no cloud copy yet). Any other
+  // path that wants to bypass — e.g. a deliberate "force upload" — can set
+  // _forceCloudPush = true on Profile.cloud for one call.
+  if (!Profile.cloud._hydratedFromCloud && !Profile.cloud._forceCloudPush) {
+    try { console.info('☁ Cloud sync deferred — local has not been hydrated from cloud yet.'); } catch (_) {}
+    // Mark pending so the listeners / UI know there's an unsent change. The
+    // sync will fire automatically once cloudFetchProfile resolves and
+    // _scheduleCloudSync runs again from saveProfile().
+    if (Profile.cloud) Profile.cloud.pendingChanges = true;
+    return { ok: false, error: 'Awaiting cloud hydration.', deferred: true };
+  }
+  // Clear the force-push flag after consuming it once.
+  if (Profile.cloud._forceCloudPush) Profile.cloud._forceCloudPush = false;
   try {
     // Stuff the small Forge data (card defs, moves, items, packs, etc.) into
     // a single `forge` JSONB column. Sprites + cardArt are EXCLUDED here — at
@@ -32538,6 +32572,28 @@ function _profileLooksEmpty(p) {
     // real advancement counts.
     const H = p.heroes || {};
     for (const k in H) { const h = H[k] || {}; if ((h.level || 1) > 1 || (h.xp || 0) > 0 || (h.battles || 0) > 0 || (h.kills || 0) > 0 || (h.wins || 0) > 0) return false; }
+    // 🔒 EXTRA SAFETY CHECKS — additional progression signals so the
+    // empty check NEVER falsely returns true for a player with real
+    // progress. Better to err on the side of "looks empty" and pull
+    // cloud than to wrongly believe local is fresh.
+    if (typeof p.gems === 'number' && p.gems > 0) return false;
+    if (typeof p.sovereigns === 'number' && p.sovereigns > 0) return false;
+    if (p.itemInventory && typeof p.itemInventory === 'object') {
+      for (const k in p.itemInventory) { if ((p.itemInventory[k] | 0) > 0) return false; }
+    }
+    if (p.resources && typeof p.resources === 'object') {
+      for (const k in p.resources) { if ((p.resources[k] | 0) > 0) return false; }
+    }
+    if (p.salvage && typeof p.salvage === 'object') {
+      for (const k in p.salvage) { if ((p.salvage[k] | 0) > 0) return false; }
+    }
+    if (p.heroLoadouts && Object.keys(p.heroLoadouts).length > 0) return false;
+    if (p.heroSkillTrees && Object.keys(p.heroSkillTrees).length > 0) return false;
+    if (Array.isArray(p.replays) && p.replays.length > 0) return false;
+    if (p.campaignProgress && Object.keys(p.campaignProgress).length > 0) return false;
+    if (Array.isArray(p.unlockedTraders) && p.unlockedTraders.length > 0) return false;
+    if (p.rlcRun && (p.rlcRun._battlesWon || 0) > 0) return false;
+    if (p.competitive && ((p.competitive.rr | 0) !== 0 || (p.competitive.winStreak | 0) > 0)) return false;
     return true;
   } catch (e) { return false; }
 }
@@ -32569,8 +32625,14 @@ async function cloudFetchProfile() {
       .eq('user_id', Profile.cloud.userId)
       .maybeSingle();
     if (error) return { ok: false, error: error.message };
+    // 🔒 HYDRATION GATE — the fetch succeeded (we either have a cloud row,
+    // or we know there isn't one yet). Either way, future cloudSyncProfile
+    // uploads are now safe — they can't accidentally clobber a cloud row
+    // that we hadn't checked yet. See cloudSyncProfile for the gate.
+    if (Profile.cloud) Profile.cloud._hydratedFromCloud = true;
     if (!data) {
       // No cloud profile yet — upload current local state to create one.
+      // The hydration gate just opened above, so this is safe.
       return cloudSyncProfile();
     }
     // 🛡️ STALE-CLOUD GUARD 🛡️
@@ -32595,6 +32657,18 @@ async function cloudFetchProfile() {
     // 🛡️ ANTI-WIPE gates (the actual fix for the fresh-device account erase):
     const localEmpty   = _profileLooksEmpty(Profile);
     const cloudHasProg = _cloudRowHasProgress(data);
+    // 🛟 FORCE RESTORE — emergency-recovery flag set by the "Restore from
+    // Cloud" button in Settings. Bypasses every local-wins guard so the
+    // cloud copy unconditionally overwrites local. The button is gated
+    // behind a strong confirmation prompt that explains the trade-off.
+    const forceRestore = !!(Profile.cloud && Profile.cloud._forceRestoreFromCloud);
+    if (forceRestore) {
+      // Consume the flag so a subsequent fetch doesn't accidentally re-force.
+      Profile.cloud._forceRestoreFromCloud = false;
+      Profile.cloud.lastFetchAt = Date.now();
+      try { console.info('☁ FORCE RESTORE — bypassing local-fresher / empty-cloud guards.'); } catch (_) {}
+      // fall through to the cloud-merge block below (skip local-wins).
+    } else
     // If local is a brand-new/empty profile but the cloud has real progress
     // (classic fresh-device sign-in), NEVER treat local as fresher and NEVER
     // push it up — always restore the cloud account instead.
@@ -46667,15 +46741,16 @@ function _scheduleCloudSync() {
   // the player keeps typing / clicking is the trust signal.
   if (SaveStatus.state !== 'saving') _setSaveStatus('pending');
   if (_cloudSyncTimer) clearTimeout(_cloudSyncTimer);
-  // 10s debounce (was 4s). Longer window means more changes batch into one
-  // upsert — a player making 8 quick edits used to fire 8 cloud writes;
-  // now it's typically 1. Cut DB write rate ~5× without losing data (the
-  // dedicated localStorage keys + hg_profile still capture every change
-  // synchronously, so refresh-after-edit is still safe).
+  // 2s debounce (was 10s, was 4s before that). Slice 16 phase-1 cloud-first
+  // hardening narrows the race window: a browser crash mid-debounce now loses
+  // at most 2s of edits instead of 10s. Critical events (battle end, card
+  // unlock, gem purchase) call _persistProgressNow() to bypass the debounce
+  // entirely. The dedicated synchronous localStorage keys still capture every
+  // change so refresh-after-edit is also safe.
   _cloudSyncTimer = setTimeout(() => {
     _cloudSyncTimer = null;
     _runCloudSyncWithRetry();
-  }, 10000);
+  }, 2000);
 }
 
 // Wraps cloudSyncProfile with retry-on-failure. On success, clears the
@@ -60940,6 +61015,11 @@ function render() {
   // on every screen without editing each renderX, and keeps the chat overlay
   // alive across screen re-renders.
   try { if (typeof mountChatButton === 'function') mountChatButton(); } catch (e) {}
+  // 🛟 Slice 16 — persistent offline-mode warning + cloud sync state pip.
+  // Same idempotent body-mount pattern as the chat FAB. Banner only shows
+  // when offline-mode is active; pip only shows when signed-in.
+  try { if (typeof mountOfflineBanner === 'function') mountOfflineBanner(); } catch (e) {}
+  try { if (typeof mountCloudStatusPip === 'function') mountCloudStatusPip(); } catch (e) {}
   // 🩸 Survival-Pass moodles HUD — top-right status pips, same idempotent
   // body-mount pattern as the chat FAB. Decay-tick fires first so the pips
   // reflect drained satiation if the player has been afk.
@@ -74119,6 +74199,16 @@ function _renderBattleImmediate() {
   if (s.gameOver && !App.battleProgressRecorded && !App.replayViewing) {
     recordBattleProgress();
     App.battleProgressRecorded = true;
+    // 🛟 Slice 16 — immediate cloud push for the highest-stakes save event.
+    // Battle results (wins/losses, hero levels, kills, gems earned, ranked
+    // RR delta) are the changes players are most upset about losing. Bypass
+    // the 2s debounce so they hit the cloud the instant the gameover screen
+    // appears — no waiting on the next debounce tick.
+    try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); } catch (e) {}
+    // 🛟 Slice 16 — first-battle offline warning. Educates offline-mode
+    // players that their victory just saved to localStorage only. Fires
+    // at most once per session via _offlineWarnedThisSession.
+    try { if (typeof _warnOfflineProgressOnce === 'function') _warnOfflineProgressOnce('battle progress'); } catch (e) {}
     // 🗺 Territory Wars post-battle resolver — runs ONCE per match. Wins
     // strip a Shield layer (or capture the node); losses log to attack
     // history. Idempotent via ctx._twResolvedAttack.
@@ -90395,6 +90485,16 @@ function renderSettings() {
               <button class="btn-secondary btn-mini" id="btn-cloud-push-sprites" title="Upload sprites + card art + location art + weather audio to Supabase Storage (one-time after import).">🎨 Push Sprites/Art (one-time)</button>
               <button class="btn-secondary btn-mini" id="btn-cloud-signout">⨯ Sign Out</button>
             </div>
+            <!-- 🛟 RECOVERY — bypasses every local-wins guard. Use if your
+                 account got into a bad state after a cache clear or device
+                 switch and a normal Fetch isn't pulling your data back. -->
+            <div style="margin-top:0.7rem;padding:0.7rem 0.85rem;border:1px solid rgba(160,40,40,0.35);background:rgba(160,40,40,0.06);border-radius:6px">
+              <div style="font-weight:600;color:#e85d3c;font-size:0.9rem;margin-bottom:0.3rem">🛟 Lost progress recovery</div>
+              <div class="small-text ink-dim" style="margin-bottom:0.5rem">
+                If your account got into a bad state (cleared browser cache, switched device, etc.) and the normal <em>Fetch</em> isn't restoring your progress, use the button below. It will UNCONDITIONALLY overwrite anything on this device with the cloud copy.
+              </div>
+              <button class="btn-secondary btn-mini" id="btn-cloud-restore" style="border-color:rgba(160,40,40,0.65);color:#ffb3a3">🛟 Force Restore from Cloud</button>
+            </div>
             <div class="small-text ink-dim" style="margin-top:0.5rem">
               🃏 Cards / moves / items / packs auto-sync after each save. <strong>Sprites and card art</strong> are too large for the row data — hit <em>Push Sprites/Art</em> once after importing your full export and they'll restore automatically on every future sign-in.
             </div>
@@ -90724,6 +90824,36 @@ function renderSettings() {
     bFetch.disabled = false; bFetch.textContent = '⬇ Fetch from Cloud';
     if (r.ok) { showToast('☁ Fetched from cloud', 1800); render(); }
     else      showToast('⨯ ' + (r.error || 'Fetch failed'), 3500);
+  };
+  // 🛟 FORCE RESTORE — bypasses every local-wins guard for emergency
+  // recovery when a player's account got corrupted by a cache clear
+  // or a device switch. Confirmation prompt makes the consequence
+  // explicit so this can't be triggered by accident.
+  const bRestore = document.getElementById('btn-cloud-restore');
+  if (bRestore) bRestore.onclick = async () => {
+    const ok = await showGameConfirm({
+      title: '🛟 Force Restore from Cloud?',
+      bodyHtml: '<div><strong>This will UNCONDITIONALLY overwrite this device with your cloud account.</strong></div>'
+              + '<div style="color:#a89878;font-size:0.85rem;margin-top:0.5rem">Use this if you cleared your cache, switched devices, or your progress is missing and a normal Fetch hasn\'t restored it. Any local changes that have not yet uploaded will be lost.</div>'
+              + '<div style="color:#e85d3c;font-size:0.85rem;margin-top:0.5rem;font-style:italic">There is no undo.</div>',
+      yesLabel: 'RESTORE FROM CLOUD', noLabel: 'Cancel',
+      yesAccent: 'crimson',
+    });
+    if (!ok) return;
+    bRestore.disabled = true; bRestore.textContent = '…restoring';
+    // Set the bypass flag — cloudFetchProfile's force-restore branch
+    // ignores localEmpty/localIsFresher and overwrites local with cloud.
+    Profile.cloud._forceRestoreFromCloud = true;
+    const r = await cloudFetchProfile();
+    bRestore.disabled = false; bRestore.textContent = '🛟 Force Restore from Cloud';
+    if (r.ok) {
+      showToast('🛟 Restored from cloud — your account is back.', 3500);
+      render();
+    } else {
+      // Clear the flag so a retry doesn't re-arm it accidentally.
+      Profile.cloud._forceRestoreFromCloud = false;
+      showToast('⨯ Restore failed: ' + (r.error || 'unknown error'), 4500);
+    }
   };
   const bPushSprites = document.getElementById('btn-cloud-push-sprites');
   if (bPushSprites) bPushSprites.onclick = async () => {
@@ -101702,6 +101832,143 @@ function mountMoodleHud() {
 })();
 
 // ---- Persistent bottom-left FAB (body-mounted; survives screen renders) ----
+// 🛟 OFFLINE PROGRESS WARNING (slice 16) — fires once per session the
+// first time an offline-mode player completes an action that would
+// normally save progress (e.g. first battle end). Educational, not
+// blocking: the player can continue offline OR sign in. After the user
+// makes a choice it doesn't fire again this session, so we don't nag.
+// Returns a Promise<boolean> indicating whether the player chose to
+// sign in (true) or continue offline (false). Callers can ignore.
+async function _warnOfflineProgressOnce(actionLabel) {
+  try {
+    const cc = (Profile && Profile.cloud) || {};
+    if (cc.signedIn) return false;          // signed in — no warning needed
+    if (!cc.offlineMode) return false;       // not in offline mode
+    if (App._offlineWarnedThisSession) return false; // already shown
+    App._offlineWarnedThisSession = true;
+    if (typeof showGameConfirm !== 'function') return false;
+    const body = '<div style="font-size:0.95rem;margin-bottom:0.5rem"><strong>You\'re playing offline.</strong></div>'
+      + '<div style="color:#a89878;font-size:0.88rem;margin-bottom:0.5rem">'
+      + 'Your ' + (actionLabel || 'progress') + ' just saved to this device only. '
+      + 'If you clear your browser data or switch devices, this progress will be lost.'
+      + '</div>'
+      + '<div style="color:#e8e0d0;font-size:0.88rem">'
+      + 'Sign in (free) to back your account up to the cloud — your progress will be safe and sync across devices.'
+      + '</div>';
+    const wantsSignIn = await showGameConfirm({
+      title: '☁ Sign in to save your progress?',
+      bodyHtml: body,
+      yesLabel: '☁ SIGN IN', noLabel: 'Continue offline',
+    });
+    if (wantsSignIn) {
+      try { openAuthModal('signin'); } catch (e) {}
+      return true;
+    }
+    return false;
+  } catch (e) { return false; }
+}
+
+// 🛟 OFFLINE-MODE WARNING BANNER (slice 16) — persistent top-of-screen
+// chip that appears whenever the player is in Continue-offline mode. It
+// is the primary way new players learn that their progress is on this
+// device only, and that clearing browser data will wipe it. One-click
+// "Sign In" opens the auth modal.
+// Body-mounted so it survives every screen re-render; mountOfflineBanner
+// is idempotent and runs once per render() to add/remove based on state.
+function mountOfflineBanner() {
+  try {
+    if (typeof document === 'undefined') return;
+    const ex = document.getElementById('offline-warn-banner');
+    const cc = (Profile && Profile.cloud) || {};
+    const inOffline = !!cc.offlineMode && !cc.signedIn;
+    // Don't show on the auth gate itself (the gate already has a sign-in
+    // button right there) or while the player is mid-battle (the banner
+    // shouldn't steal real estate during play).
+    const hide = !inOffline
+      || (App && (App.screen === 'authGate' || App.screen === 'battle' || App.screen === 'coinFlip' || App.screen === 'vsScreen'));
+    if (hide) { if (ex) ex.remove(); return; }
+    if (ex) return; // already mounted
+    const b = document.createElement('div');
+    b.id = 'offline-warn-banner';
+    b.style.cssText = 'position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:2147483400;'
+      + 'padding:0.45rem 0.85rem;border-radius:8px;'
+      + 'background:linear-gradient(180deg,#3a1818,#1f0a0a);'
+      + 'border:1px solid rgba(232,93,60,0.55);'
+      + 'color:#ffd5cc;font-size:0.85rem;font-family:Crimson Text,Georgia,serif;'
+      + 'box-shadow:0 6px 20px rgba(0,0,0,0.6),0 0 14px rgba(232,93,60,0.25);'
+      + 'display:flex;align-items:center;gap:0.7rem;max-width:min(94vw,720px);';
+    b.innerHTML = '<span style="font-size:1rem">⚠</span>'
+      + '<span><strong>Playing offline</strong> — progress is on this device only. Clearing browser data will wipe it.</span>'
+      + '<button id="offline-warn-signin" style="border:1px solid rgba(212,175,55,0.55);background:linear-gradient(180deg,#3a2a6a,#1a1030);color:#ffe6a8;padding:0.3rem 0.65rem;border-radius:6px;cursor:pointer;font-family:inherit;font-size:0.8rem;font-weight:600">☁ Sign In to Save</button>';
+    document.body.appendChild(b);
+    const sb = document.getElementById('offline-warn-signin');
+    if (sb) sb.onclick = () => { try { openAuthModal('signin'); } catch (e) {} };
+  } catch (e) {}
+}
+
+// ☁ PERSISTENT CLOUD-SYNC STATE PIP (slice 16) — small fixed-position
+// chip that ALWAYS shows the current sync state to signed-in players so
+// they never have to wonder whether their progress is in the cloud.
+// States: 🟢 Synced · 🟡 Saving… · 🔴 Cloud unreachable · ⚪ Offline.
+// Updates via SaveStatus.subscribe so the chip changes the instant state
+// changes — no polling. Body-mounted, idempotent across renders.
+function mountCloudStatusPip() {
+  try {
+    if (typeof document === 'undefined') return;
+    const ex = document.getElementById('cloud-status-pip');
+    const cc = (Profile && Profile.cloud) || {};
+    // Only show the pip for signed-in players. Offline mode has its own
+    // banner; not-signed-in players see neither (the auth gate handles it).
+    const show = !!cc.signedIn;
+    if (!show) { if (ex) ex.remove(); return; }
+    if (ex) { _cloudStatusPipUpdate(); return; }
+    const b = document.createElement('button');
+    b.id = 'cloud-status-pip';
+    b.title = 'Cloud sync status — click for Settings';
+    b.style.cssText = 'position:fixed;left:14px;bottom:18px;z-index:2147483300;'
+      + 'padding:0.32rem 0.55rem 0.32rem 0.45rem;border-radius:18px;'
+      + 'border:1px solid rgba(212,175,55,0.35);'
+      + 'background:rgba(10,8,20,0.78);backdrop-filter:blur(6px);'
+      + 'color:#e8e0d0;font-family:Crimson Text,Georgia,serif;font-size:0.78rem;'
+      + 'display:flex;align-items:center;gap:0.4rem;cursor:pointer;'
+      + 'box-shadow:0 4px 12px rgba(0,0,0,0.5)';
+    b.innerHTML = '<span id="cloud-status-pip-dot" style="font-size:0.85rem;line-height:1"></span>'
+      + '<span id="cloud-status-pip-text"></span>';
+    b.onclick = () => {
+      App._settingsReturnScreen = App.screen;
+      App.screen = 'settings';
+      if (typeof render === 'function') render();
+      // Scroll to the cloud account section.
+      setTimeout(() => { const el = document.getElementById('settings-cloud-section'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
+    };
+    document.body.appendChild(b);
+    _cloudStatusPipUpdate();
+    // Subscribe to live SaveStatus changes once. The flag prevents stacking
+    // a new listener on every render (which would otherwise leak forever).
+    if (!window._cloudPipSubscribed) {
+      window._cloudPipSubscribed = true;
+      try { if (typeof onSaveStatus === 'function') onSaveStatus(_cloudStatusPipUpdate); } catch (e) {}
+    }
+  } catch (e) {}
+}
+function _cloudStatusPipUpdate() {
+  const dot = document.getElementById('cloud-status-pip-dot');
+  const txt = document.getElementById('cloud-status-pip-text');
+  if (!dot || !txt) return;
+  const state = (typeof SaveStatus !== 'undefined' && SaveStatus.state) || 'idle';
+  const map = {
+    idle:     { d: '🟢', t: 'Synced' },
+    saved:    { d: '🟢', t: 'Synced' },
+    pending:  { d: '🟡', t: 'Pending…' },
+    saving:   { d: '🟡', t: 'Saving…' },
+    error:    { d: '🔴', t: 'Cloud unreachable' },
+    offline:  { d: '⚪', t: 'Offline' },
+  };
+  const v = map[state] || map.idle;
+  dot.textContent = v.d;
+  txt.textContent = v.t;
+}
+
 function mountChatButton() {
   try {
     if (typeof document === 'undefined') return;
@@ -127480,7 +127747,7 @@ function renderTerritoryWars() {
         </div>
         <div class="tw-top-bar-corp">${myCorp ? `🏢 ${escapeHtml(myCorp.name)}` : '<span style="color:#5b6772">No corporation — view only</span>'}</div>
       </div>
-      <div class="tw-workspace">
+      <div class="tw-workspace${selNode ? ' has-drawer' : ''}">
         <div class="tw-event-feed">
           <div class="tw-feed-hdr">
             <div class="tw-feed-hdr-title">Field Reports</div>
@@ -127504,8 +127771,8 @@ function renderTerritoryWars() {
           <div class="tw-map-canvas" id="tw-map-canvas">
             ${_twCanvasContent}
           </div>
-          ${nodeDrawerHtml}
         </div>
+        ${nodeDrawerHtml}
       </div>
       <div class="tw-statusbar-bottom">
         <div class="group">

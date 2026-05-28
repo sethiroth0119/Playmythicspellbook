@@ -82,6 +82,10 @@
 //        8 catalog moves added (Dual Slice, Double Kick, Twin Strike,
 //        Fury Swipes, Bullet Seed, Pin Missile, Double Dragon, Rock Blast).
 //        Card Forge move editor gains Dual-Hit checkbox + min/max fields.
+// v40 — War Map node click fix: drawer moved from position:absolute overlay
+//        to a real 3rd grid column in .tw-workspace so no nodes are ever
+//        blocked by the open panel. grid-template-columns expands to
+//        260px 1fr 400px when .has-drawer class is present.
 // v39 — War Map node detail panel redesign (5 tabs: OVERVIEW / CAMPAIGNS /
 //        EVENTS / RESOURCES / CHARTER), vital signs + reconstruction progress
 //        + foundation reserve cinder sections. Missing TW functions implemented
@@ -90,7 +94,7 @@
 //        Sprite Atelier DEATH tab: _injectDeathSprite() plays death frames
 //        before renderBattle() removes the unit / shows tombstone.
 //        ANIMATION_TYPES now includes 'death'.
-const CACHE_VERSION = 'mythic-v39-' + Date.now().toString(36);
+const CACHE_VERSION = 'mythic-v40-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

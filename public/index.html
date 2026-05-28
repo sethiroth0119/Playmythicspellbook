@@ -18580,23 +18580,32 @@
   /* ================================================================
      🗺 WAR MAP CANVAS LAYOUT (v33) — diamond node markers on map
      ================================================================ */
+  /* ── v35: canvas fills the stage vertically, matching the standalone app ── */
+  .tw-stage { align-items: stretch; }
+  .tw-map-pane { gap: 0; overflow: visible; }
+  .tw-side-pane { overflow-y: auto; max-height: max(520px, calc(100vh - 300px)); }
+
   .tw-map-canvas {
     position: relative;
     width: 100%;
-    aspect-ratio: 16 / 9;
-    min-height: 360px;
-    overflow: hidden;
+    /* Fill available height — min matches the shortest expected desktop */
+    min-height: max(520px, calc(100vh - 300px));
+    overflow: visible; /* let labels near edges bleed out gracefully */
     border-radius: 6px;
     background-image:
-      linear-gradient(180deg, rgba(8,5,14,0.50) 0%, rgba(8,5,14,0.18) 38%, rgba(8,5,14,0.28) 62%, rgba(8,5,14,0.60) 100%),
+      linear-gradient(180deg,
+        rgba(6,4,12,0.62) 0%,
+        rgba(6,4,12,0.12) 30%,
+        rgba(6,4,12,0.10) 60%,
+        rgba(6,4,12,0.55) 100%),
       url('assets/background/Backgrounds/warmap.png');
     background-size: cover;
-    background-position: center;
+    background-position: center center;
     background-repeat: no-repeat;
-    border: 1px solid rgba(108,212,255,0.14);
+    border: 1px solid rgba(108,212,255,0.16);
   }
 
-  /* Supply-line SVG routes — z below markers */
+  /* Supply-line SVG routes */
   .tw-map-routes {
     position: absolute; inset: 0;
     width: 100%; height: 100%;
@@ -18604,134 +18613,168 @@
     overflow: visible;
   }
   .tw-map-routes path {
-    fill: none; stroke: #3e3e58; stroke-width: 0.8;
-    stroke-dasharray: 3 4; opacity: 0.65;
+    fill: none;
+    stroke: rgba(108,212,255,0.22);
+    stroke-width: 1;
+    stroke-dasharray: 4 6;
+    opacity: 1;
+    stroke-linecap: round;
   }
-  .tw-map-routes path.allied  { stroke: #6cd4ff; stroke-dasharray: none;  opacity: 0.82; stroke-width: 1.1; }
-  .tw-map-routes path.enemy   { stroke: #b888ff; stroke-dasharray: none;  opacity: 0.78; stroke-width: 1.0; }
-  .tw-map-routes path.contest { stroke: #e25555; stroke-dasharray: 5 3;   opacity: 0.82; stroke-width: 1.0; }
-  .tw-map-routes path.frontier{ stroke: #ffcf5a; stroke-dasharray: 6 4;   opacity: 0.72; }
-  .tw-map-routes path.broken  { stroke: #5a3030; stroke-dasharray: 2 6;   opacity: 0.50; }
+  .tw-map-routes path.allied  { stroke: #6cd4ff; stroke-dasharray: none;  opacity: 0.88; stroke-width: 1.4; }
+  .tw-map-routes path.enemy   { stroke: #b888ff; stroke-dasharray: none;  opacity: 0.80; stroke-width: 1.2; }
+  .tw-map-routes path.contest { stroke: #e25555; stroke-dasharray: 5 3;   opacity: 0.85; stroke-width: 1.2; }
+  .tw-map-routes path.frontier{ stroke: #ffcf5a; stroke-dasharray: 7 4;   opacity: 0.75; stroke-width: 1.0; }
+  .tw-map-routes path.broken  { stroke: #5a3030; stroke-dasharray: 2 8;   opacity: 0.50; }
 
-  /* Floating region labels */
+  /* Floating region labels — large, map-grade typography */
   .tw-map-region-label {
     position: absolute; z-index: 5; pointer-events: none;
     font-family: 'JetBrains Mono','Consolas',monospace;
-    font-size: 0.53rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.15em;
-    text-shadow: 0 1px 5px rgba(0,0,0,0.95), 0 0 14px rgba(0,0,0,0.7);
+    font-size: 0.62rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.20em;
+    opacity: 0.55;
+    text-shadow: 0 1px 8px rgba(0,0,0,1), 0 0 20px rgba(0,0,0,0.85);
     transform: translate(-50%, 0);
     white-space: nowrap;
-    border-bottom: 1px solid rgba(212,175,55,0.22);
-    padding-bottom: 2px;
+    padding-bottom: 3px;
+    border-bottom: 1px solid currentColor;
   }
 
-  /* Node marker — absolutely positioned button on the canvas */
+  /* Node marker — absolutely positioned on the canvas */
   .tw-node-marker {
     position: absolute;
     transform: translate(-50%, -50%);
-    background: none; border: none; padding: 6px 4px 2px;
+    background: none; border: none; padding: 8px 6px 0;
     cursor: pointer; z-index: 8;
     display: flex; flex-direction: column; align-items: center;
-    gap: 5px;
-    --node-color: #7a7a82;
+    gap: 6px;
+    --node-color: #6cd4ff;
   }
   .tw-node-marker:focus { outline: none; }
 
-  /* Diamond core shape */
+  /* Diamond — outer wireframe ring + inner filled core via pseudo-elements */
   .tw-node-diamond {
-    width: 14px; height: 14px;
-    background: var(--node-color, #7a7a82);
-    transform: rotate(45deg);
-    border-radius: 2px;
-    box-shadow:
-      0 0 8px var(--node-color, #7a7a82),
-      0 0 18px var(--node-color, #7a7a82),
-      inset 0 0 5px rgba(255,255,255,0.18);
-    transition: box-shadow 0.18s, transform 0.14s;
     position: relative; flex-shrink: 0;
+    width: 24px; height: 24px;
   }
-  .tw-node-marker:hover .tw-node-diamond,
-  .tw-node-marker.is-selected .tw-node-diamond {
-    transform: rotate(45deg) scale(1.35);
-    box-shadow:
-      0 0 14px var(--node-color, #7a7a82),
-      0 0 30px var(--node-color, #7a7a82),
-      inset 0 0 6px rgba(255,255,255,0.28);
+  /* Outer wireframe ring */
+  .tw-node-diamond::before {
+    content: '';
+    position: absolute; top: 50%; left: 50%;
+    width: 22px; height: 22px;
+    border: 1.5px solid var(--node-color, #6cd4ff);
+    border-radius: 3px;
+    transform: translate(-50%,-50%) rotate(45deg);
+    box-shadow: 0 0 10px var(--node-color, #6cd4ff),
+                inset 0 0 8px rgba(0,0,0,0.6);
+    background: rgba(0,0,0,0.35);
+    transition: all 0.15s ease;
+  }
+  /* Inner filled core */
+  .tw-node-diamond::after {
+    content: '';
+    position: absolute; top: 50%; left: 50%;
+    width: 7px; height: 7px;
+    background: var(--node-color, #6cd4ff);
+    border-radius: 1px;
+    transform: translate(-50%,-50%) rotate(45deg);
+    box-shadow: 0 0 8px var(--node-color, #6cd4ff),
+                0 0 16px var(--node-color, #6cd4ff);
+    transition: all 0.15s ease;
+  }
+  /* Hover / selected — expand both rings */
+  .tw-node-marker:hover .tw-node-diamond::before,
+  .tw-node-marker.is-selected .tw-node-diamond::before {
+    width: 30px; height: 30px;
+    box-shadow: 0 0 20px var(--node-color, #6cd4ff),
+                0 0 40px var(--node-color, #6cd4ff),
+                inset 0 0 12px rgba(0,0,0,0.4);
+    background: rgba(0,0,0,0.15);
+  }
+  .tw-node-marker:hover .tw-node-diamond::after,
+  .tw-node-marker.is-selected .tw-node-diamond::after {
+    width: 10px; height: 10px;
+    box-shadow: 0 0 12px var(--node-color, #6cd4ff),
+                0 0 24px var(--node-color, #6cd4ff);
   }
 
   /* Node label below the diamond */
   .tw-node-marker-label {
     display: flex; flex-direction: column; align-items: center;
     text-align: center; pointer-events: none;
-    line-height: 1.25; white-space: nowrap;
+    line-height: 1.30; white-space: nowrap;
+    background: rgba(4,3,10,0.65);
+    padding: 2px 5px 1px;
+    border-radius: 2px;
+    border: 1px solid rgba(108,212,255,0.10);
   }
   .tw-node-marker-label .name {
     font-family: 'JetBrains Mono','Consolas',monospace;
-    font-size: 0.54rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.09em;
-    color: rgba(220,208,172,0.95);
-    text-shadow: 0 1px 5px rgba(0,0,0,0.98), 0 0 10px rgba(0,0,0,0.75);
+    font-size: 0.56rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: rgba(226,214,182,0.98);
+    text-shadow: 0 1px 4px rgba(0,0,0,0.95);
   }
   .tw-node-marker-label .id {
     font-family: 'JetBrains Mono','Consolas',monospace;
-    font-size: 0.44rem; letter-spacing: 0.06em;
-    color: rgba(165,148,110,0.72);
-    text-shadow: 0 1px 4px rgba(0,0,0,0.95);
+    font-size: 0.46rem; letter-spacing: 0.06em;
+    color: var(--node-color, #6cd4ff);
+    opacity: 0.80;
   }
+  .tw-node-marker.is-selected .tw-node-marker-label { border-color: rgba(255,209,102,0.45); }
   .tw-node-marker.is-selected .tw-node-marker-label .name { color: #ffd166; }
 
   /* Pulse ring on selected / thriving nodes */
   .tw-node-marker-pulse {
     position: absolute;
     top: 50%; left: 50%;
-    width: 26px; height: 26px;
-    margin-top: -6px; /* offset for label space below */
+    width: 34px; height: 34px;
     transform: translate(-50%, -50%) rotate(45deg);
-    border: 1px solid var(--node-color, #7a7a82);
-    border-radius: 3px;
+    border: 1px solid var(--node-color, #6cd4ff);
+    border-radius: 4px;
     opacity: 0; pointer-events: none;
     animation: tw-marker-pulse 3.2s ease-out infinite;
     z-index: -1;
   }
   @keyframes tw-marker-pulse {
-    0%  { opacity: 0.72; transform: translate(-50%,-50%) rotate(45deg) scale(1.0); }
-    75% { opacity: 0;    transform: translate(-50%,-50%) rotate(45deg) scale(1.9); }
-    100%{ opacity: 0;    transform: translate(-50%,-50%) rotate(45deg) scale(1.9); }
+    0%  { opacity: 0.65; transform: translate(-50%,-50%) rotate(45deg) scale(1.0); }
+    75% { opacity: 0;    transform: translate(-50%,-50%) rotate(45deg) scale(2.0); }
+    100%{ opacity: 0;    transform: translate(-50%,-50%) rotate(45deg) scale(2.0); }
   }
 
-  /* Attack badge on the diamond */
-  .tw-node-marker.is-attacking .tw-node-diamond::after {
+  /* Attack badge on the marker itself */
+  .tw-node-marker.is-attacking::after {
     content: '⚔';
-    position: absolute; top: -16px; right: -12px;
-    font-size: 0.62rem; line-height: 1;
-    transform: rotate(-45deg);
+    position: absolute; top: -4px; right: -6px;
+    font-size: 0.65rem; line-height: 1;
     animation: tw-wm-dot-pulse 0.9s ease-in-out infinite;
-    pointer-events: none;
+    pointer-events: none; z-index: 10;
   }
 
   /* Event badge */
   .tw-node-event-badge {
-    position: absolute; top: -4px; right: -8px;
-    width: 13px; height: 13px;
+    position: absolute; top: 2px; right: -4px;
+    width: 14px; height: 14px;
     background: var(--tw-arc, #6655c4);
-    color: #fff; font-size: 0.55rem; font-weight: 900;
+    color: #fff; font-size: 0.6rem; font-weight: 900;
     display: flex; align-items: center; justify-content: center;
     transform: rotate(-45deg); border-radius: 2px;
-    pointer-events: none; z-index: 2;
+    pointer-events: none; z-index: 10;
+    box-shadow: 0 0 8px var(--tw-arc, #6655c4);
   }
 
-  /* State color overrides on canvas markers */
+  /* State color overrides */
   .tw-node-marker[data-tw-state="thriving"]  { --node-color: var(--tw-moss,  #4d9e68); }
   .tw-node-marker[data-tw-state="stable"]    { --node-color: var(--tw-steel, #4e7ea8); }
   .tw-node-marker[data-tw-state="strained"]  { --node-color: var(--tw-amber, #c89428); }
   .tw-node-marker[data-tw-state="failing"]   { --node-color: var(--tw-rust,  #b84e2c); }
   .tw-node-marker[data-tw-state="collapsing"]{ --node-color: var(--tw-blood, #891c1e); }
-  .tw-node-marker[data-tw-state="neutral"]   { --node-color: #7a7a82; }
+  .tw-node-marker[data-tw-state="neutral"]   { --node-color: #5a6e7a; }
   .tw-node-marker[data-tw-state="event"]     { --node-color: var(--tw-arc,   #6655c4); }
 
-  /* Collapsing markers flicker */
-  .tw-node-marker[data-tw-state="collapsing"] .tw-node-diamond {
+  /* Collapsing flicker */
+  .tw-node-marker[data-tw-state="collapsing"] .tw-node-diamond::before,
+  .tw-node-marker[data-tw-state="collapsing"] .tw-node-diamond::after {
     animation: tw-wm-node-flicker 1.6s ease-in-out infinite;
   }
   /* ================================================================ */
@@ -46675,7 +46718,7 @@ function getSettings() {
       colorBlindPalette: false,
       logFilters: { showDamage: true, showEffects: true, showPlaysHeals: true, searchText: '' },
       aiDifficulty: 'normal',   // 'easy' | 'normal' | 'hard'
-      pixiBoard: false,         // 🎮 WebGL board renderer (experimental hybrid Pixi port)
+      pixiBoard: true,          // 🎮 WebGL board renderer — default ON (slice 12). Toggle in Settings to roll back.
     };
   }
   if (!Profile.settings.logFilters) {
@@ -46685,10 +46728,12 @@ function getSettings() {
   if (typeof Profile.settings.aiDifficulty !== 'string') {
     Profile.settings.aiDifficulty = 'normal';
   }
-  // Backfill pixiBoard on existing profiles (introduced after the hybrid
-  // Pixi renderer landed — older saves don't have the field).
+  // Backfill pixiBoard on existing profiles. As of slice 12 the default is
+  // ON — saves that predate the field (or where it was explicitly removed)
+  // get the new default. Saves where the player explicitly opted OUT still
+  // keep their `false` because the typeof check only fires when undefined.
   if (typeof Profile.settings.pixiBoard !== 'boolean') {
-    Profile.settings.pixiBoard = false;
+    Profile.settings.pixiBoard = true;
   }
   // Mirror the saved preference into the live App.flags every read so the
   // first call after auth-load picks it up. App.flags is the source of truth
@@ -60145,12 +60190,18 @@ const App = {
   // the player's first battle. `step` is the 0-indexed step in TUTORIAL_STEPS.
   tutorial: { active: false, step: 0 },
 
-  // 🎮 Feature flags — runtime toggles for in-progress hybrid PixiJS port.
+  // 🎮 Feature flags — runtime toggles for the hybrid PixiJS renderer.
   // When pixiBoard is true, renderBoard() emits a Pixi mount-point div and
   // MSPixiBoard renders units/tiles on a WebGL canvas instead of DOM cells.
-  // Default off — the DOM renderer remains canonical until proven on live boards.
-  // Toggle from console: App.flags.pixiBoard = true; renderBattle();
-  flags: { pixiBoard: false },
+  // Default ON as of slice 12 — players get smooth tweens, particle VFX,
+  // damage numbers, status overlays, ambient weather, decals, in-board
+  // cinematics. The in-game settings toggle (Settings → 🎮 WebGL Board
+  // Renderer) is the rollback escape hatch — flips this back to false
+  // and re-renders the battle with the classic DOM grid.
+  // getSettings() mirrors Profile.settings.pixiBoard into this on every
+  // read, so an existing player's saved preference (off) overrides this
+  // initial true. Brand-new profiles get the default of true.
+  flags: { pixiBoard: true },
 };
 
 // ============ TUTORIAL ============

@@ -64,7 +64,12 @@
 //        Campaign node fix: _rlcAvailableNodeIds falls through to the union fallback
 //        when the current node has no forward connections, preventing soft-locks on
 //        final nodes with incomplete connection graphs.
-const CACHE_VERSION = 'mythic-v34-2026-05-28';
+// v35 — War Map canvas redesign: wireframe-diamond nodes (outer ring + inner
+//        core, matching the standalone app visual), canvas fills full viewport
+//        height instead of 16:9, overflow:visible so edge labels show, stage
+//        stretches, side-pane scrolls. Routes use visible teal dashes. Region
+//        labels use larger type with opacity. Cache bust forced.
+const CACHE_VERSION = 'mythic-v35-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

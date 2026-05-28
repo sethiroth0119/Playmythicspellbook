@@ -82,7 +82,15 @@
 //        8 catalog moves added (Dual Slice, Double Kick, Twin Strike,
 //        Fury Swipes, Bullet Seed, Pin Missile, Double Dragon, Rock Blast).
 //        Card Forge move editor gains Dual-Hit checkbox + min/max fields.
-const CACHE_VERSION = 'mythic-v38-' + Date.now().toString(36);
+// v39 — War Map node detail panel redesign (5 tabs: OVERVIEW / CAMPAIGNS /
+//        EVENTS / RESOURCES / CHARTER), vital signs + reconstruction progress
+//        + foundation reserve cinder sections. Missing TW functions implemented
+//        (tw_collectNode 1-hr cooldown, _twHireFlow inline guard picker,
+//        _twShopFlow inline upgrade shop, TW_GUARD_DAILY_UPKEEP constant).
+//        Sprite Atelier DEATH tab: _injectDeathSprite() plays death frames
+//        before renderBattle() removes the unit / shows tombstone.
+//        ANIMATION_TYPES now includes 'death'.
+const CACHE_VERSION = 'mythic-v39-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

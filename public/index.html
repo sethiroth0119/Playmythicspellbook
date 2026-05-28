@@ -19081,6 +19081,60 @@
   .tw-drawer-vital.ok .meter > i { background: #4d9e68; }
   .tw-drawer-vital.warn .meter > i { background: #c89428; }
   .tw-drawer-vital.crit .meter > i { background: #b84e2c; }
+  /* v39 — Rich node detail panel */
+  .tw-drawer-crumb-bar { display:flex; align-items:center; gap:0.5rem; padding:0.5rem 0.8rem 0.45rem; border-bottom:1px solid rgba(35,44,54,0.7); flex-shrink:0; }
+  .tw-drawer-crumb-text { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.52rem; letter-spacing:0.18em; text-transform:uppercase; color:#5b6772; flex:1; }
+  .tw-drawer-barcode { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.55rem; letter-spacing:0.06em; color:rgba(91,103,114,0.4); white-space:nowrap; }
+  .tw-drawer-title-block { padding:0.7rem 1rem 0.6rem; border-bottom:1px solid rgba(35,44,54,0.7); flex-shrink:0; }
+  .tw-drawer-node-name { font-family:'JetBrains Mono','Consolas',monospace; font-size:1.55rem; font-weight:900; letter-spacing:0.06em; text-transform:uppercase; color:#e8b84e; line-height:1.05; }
+  .tw-drawer-node-coords { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.72rem; color:#4e7ea8; letter-spacing:0.18em; margin-top:0.15rem; }
+  .tw-drawer-node-sub { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.6rem; color:#8a96a3; letter-spacing:0.05em; margin-top:0.2rem; }
+  .tw-drawer-tabs { display:flex; border-bottom:1px solid rgba(35,44,54,0.7); flex-shrink:0; background:rgba(10,12,16,0.6); }
+  .tw-drawer-tab { flex:1; padding:0.5rem 0.2rem; font-family:'JetBrains Mono','Consolas',monospace; font-size:0.52rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#5b6772; background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; transition:all 0.12s; }
+  .tw-drawer-tab:hover { color:#a89878; }
+  .tw-drawer-tab.is-active { color:#ffe9a8; border-bottom-color:#c89428; }
+  .tw-drawer-tab-badge { display:inline-block; background:rgba(78,126,168,0.25); color:#4e7ea8; border-radius:3px; padding:0 4px; font-size:0.5rem; margin-left:2px; vertical-align:middle; }
+  .tw-nd-tab-panel { display:none; flex:1; overflow-y:auto; flex-direction:column; }
+  .tw-nd-tab-panel.is-active { display:flex; }
+  .tw-nd-section-hdr { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.54rem; font-weight:700; letter-spacing:0.2em; text-transform:uppercase; color:#5b6772; padding:0.55rem 1rem 0.3rem; border-top:1px solid rgba(35,44,54,0.5); flex-shrink:0; }
+  .tw-nd-vitals { display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; padding:0 1rem 0.5rem; }
+  .tw-nd-vital-card { background:rgba(22,28,35,0.6); border:1px solid rgba(35,44,54,0.7); padding:0.55rem 0.65rem; }
+  .tw-nd-vital-label { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.5rem; letter-spacing:0.16em; text-transform:uppercase; color:#5b6772; margin-bottom:0.18rem; }
+  .tw-nd-vital-value { font-family:'JetBrains Mono','Consolas',monospace; font-size:1.1rem; font-weight:700; color:#d6dee6; line-height:1.1; }
+  .tw-nd-vital-max { font-size:0.62rem; color:#5b6772; font-weight:400; }
+  .tw-nd-vital-pct { font-size:0.65rem; color:#8a96a3; font-weight:400; }
+  .tw-nd-vital-bar { height:2px; background:rgba(35,44,54,0.8); margin:0.3rem 0 0.2rem; position:relative; overflow:hidden; }
+  .tw-nd-vital-bar div { position:absolute; left:0; top:0; bottom:0; transition:width 0.4s; }
+  .tw-nd-vital-delta { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.52rem; letter-spacing:0.08em; color:#5b6772; }
+  .tw-nd-vital-delta.pos { color:#4d9e68; }
+  .tw-nd-vital-delta.neg { color:#b84e2c; }
+  .tw-nd-progress-list { display:flex; flex-direction:column; gap:0; padding:0 1rem 0.5rem; }
+  .tw-nd-progress-row { display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0; border-bottom:1px solid rgba(35,44,54,0.4); }
+  .tw-nd-prog-label { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.5rem; letter-spacing:0.12em; text-transform:uppercase; color:#8a96a3; min-width:90px; flex-shrink:0; }
+  .tw-nd-prog-bar { flex:1; height:3px; background:rgba(35,44,54,0.7); position:relative; overflow:hidden; }
+  .tw-nd-prog-bar div { position:absolute; left:0; top:0; bottom:0; }
+  .tw-nd-prog-val { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.6rem; color:#d6dee6; min-width:38px; text-align:right; flex-shrink:0; }
+  .tw-nd-cinder-box { margin:0 1rem 0.6rem; background:rgba(22,28,35,0.5); border:1px solid rgba(35,44,54,0.7); padding:0.65rem 0.8rem; }
+  .tw-nd-cinder-hdr { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.2rem; }
+  .tw-nd-cinder-label { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.52rem; letter-spacing:0.16em; text-transform:uppercase; color:#5b6772; }
+  .tw-nd-node-level { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.52rem; letter-spacing:0.12em; text-transform:uppercase; color:#4e7ea8; }
+  .tw-nd-cinder-value { font-family:'JetBrains Mono','Consolas',monospace; font-size:1.5rem; font-weight:900; color:#e8b84e; line-height:1.1; margin:0.2rem 0; }
+  .tw-nd-cinder-unit { font-size:0.7rem; color:#a89878; font-weight:400; vertical-align:middle; margin-left:4px; }
+  .tw-nd-cinder-bar-stacked { display:flex; height:5px; width:100%; margin:0.45rem 0 0.35rem; gap:1px; }
+  .tw-nd-cinder-bar-stacked div { border-radius:1px; height:100%; }
+  .tw-nd-cinder-legend { display:flex; flex-wrap:wrap; gap:0.4rem 0.7rem; }
+  .tw-nd-cinder-legend span { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.48rem; color:#5b6772; display:flex; align-items:center; gap:3px; }
+  .tw-nd-cinder-legend i { display:inline-block; width:8px; height:8px; border-radius:1px; flex-shrink:0; }
+  .tw-nd-history-list { padding:0.3rem 1rem; display:flex; flex-direction:column; gap:0.25rem; }
+  .tw-nd-hist-row { display:flex; align-items:center; gap:0.5rem; padding:0.3rem 0.5rem; background:rgba(22,28,35,0.5); border-left:2px solid rgba(55,65,75,0.8); }
+  .tw-nd-hist-row.win { border-left-color:#4d9e68; }
+  .tw-nd-hist-row.loss { border-left-color:#b84e2c; }
+  .tw-nd-hist-tag { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.5rem; letter-spacing:0.1em; color:#8a96a3; min-width:44px; }
+  .tw-nd-hist-actor { font-size:0.68rem; color:#d6dee6; flex:1; }
+  .tw-nd-hist-age { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.5rem; color:#5b6772; }
+  .tw-nd-empty { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.6rem; color:#5b6772; padding:0.6rem 1rem; font-style:italic; }
+  .tw-nd-actions { padding:0.5rem 1rem 0.8rem; display:flex; flex-direction:column; gap:0.4rem; }
+  .tw-nd-action-row { display:flex; gap:0.4rem; }
   /* Bottom status bar */
   .tw-statusbar-bottom {
     flex-shrink: 0; display: flex; justify-content: space-between;
@@ -29176,7 +29230,7 @@ const CAMPAIGN = {
   ],
 };
 
-const ANIMATION_TYPES = ['idle', 'attack', 'walk', 'hurt'];
+const ANIMATION_TYPES = ['idle', 'attack', 'walk', 'hurt', 'death'];
 
 // ============ FORGE STATE & PERSISTENCE ============
 // ===== Dual-passive helpers =====
@@ -57437,6 +57491,44 @@ const applyDamageTriggers = (unit, incomingDmg, damageType) => {
   return { unit: nu, log };
 };
 
+// ===== Death sprite injection =====
+// Plays authored death frames on the defender's unit element if they exist.
+// Returns the ms to wait before calling renderBattle(), or 0 if no frames.
+function _injectDeathSprite(def) {
+  try {
+    if (!def) return 0;
+    const heroId = def.heroId;
+    const isHero = !!def.isHero;
+    const primaryKey = isHero ? ('h_' + heroId) : ('u_' + (def.originalCardId || def.cardId));
+    const siblingKey = isHero ? ('u_' + (def.originalCardId || def.cardId)) : ('h_' + heroId);
+    let frames = null;
+    const sprites = (typeof Forge !== 'undefined' && Forge.sprites) ? Forge.sprites : null;
+    if (sprites) {
+      if (sprites[primaryKey] && sprites[primaryKey].death) {
+        frames = sprites[primaryKey].death;
+      } else if (sprites[siblingKey] && sprites[siblingKey].death) {
+        frames = sprites[siblingKey].death;
+      }
+    }
+    if (!frames) return 0;
+    frames = frames.filter(Boolean);
+    if (!frames.length) return 0;
+    const unitEl = document.querySelector('[data-unit="' + def.id + '"]');
+    if (!unitEl) return 0;
+    const iconEl = unitEl.querySelector('.unit-icon');
+    if (!iconEl) return 0;
+    // Build a sprite-stack with death frames
+    const imgs = frames.map((src, i) =>
+      `<img src="${src}" class="sprite-frame${i === 0 ? ' is-on' : ''}" draggable="false" aria-hidden="true">`
+    ).join('');
+    iconEl.innerHTML = `<div class="sprite-stack" data-anim="death" data-sprite-frame-ms="${DEFAULT_SPRITE_FRAME_MS || 80}">${imgs}</div>`;
+    unitEl.dataset.anim = 'death';
+    return Math.max(750, frames.length * (DEFAULT_SPRITE_FRAME_MS || 80) + 200);
+  } catch (e) {
+    return 0;
+  }
+}
+
 // ===== Pokemon-style attack cinematic =====
 const BATTLE_ANIM_DURATION = 1500;
 function queueBattleAnim(opts) {
@@ -57471,11 +57563,18 @@ function queueBattleAnim(opts) {
   setTimeout(() => {
     if (App.ui.battleAnim && App.ui.battleAnim.startedAt === snap.startedAt) {
       App.ui.battleAnim = null;
-      renderBattle();
-      // 🧃 Battle juice — fires after the cinematic AND after the next render
-      // has drawn the post-damage state. rAF chains us behind renderBattle's
-      // rAF so the floats land on the fresh DOM.
-      try { requestAnimationFrame(() => _fireBattleJuice(snap)); } catch (e) {}
+      // 💀 Death sprite — if the defender died and has authored death frames,
+      // play them before renderBattle() replaces the unit with a tombstone.
+      const _deathDelay = (snap.newDefHp <= 0) ? _injectDeathSprite(snap.defender) : 0;
+      const _doFinishAnim = () => {
+        renderBattle();
+        // 🧃 Battle juice — fires after the cinematic AND after the next render
+        // has drawn the post-damage state. rAF chains us behind renderBattle's
+        // rAF so the floats land on the fresh DOM.
+        try { requestAnimationFrame(() => _fireBattleJuice(snap)); } catch (e) {}
+      };
+      if (_deathDelay > 0) setTimeout(_doFinishAnim, _deathDelay);
+      else _doFinishAnim();
     }
   }, BATTLE_ANIM_DURATION);
 }
@@ -60652,6 +60751,7 @@ const App = {
   loadoutGroup: 'heroes',
 
   spriteSubjectId: null,
+  _twNodeTab: 'overview',
   spriteActiveAnim: 'idle',
 
   // First-run tutorial state. `active: true` while the floating step panel is visible during
@@ -73410,7 +73510,7 @@ function renderSpriteEditor() {
         <div class="editor-field"><label>Rows</label><input id="sheet-rows" type="number" min="1" max="16" value="5"></div>
         <div class="editor-field"><label>Mode</label>
           <select id="sheet-mode">
-            <option value="rows">Each row → an animation (idle/attack/walk/hurt)</option>
+            <option value="rows">Each row → an animation (idle/attack/walk/hurt/death)</option>
             <option value="flat">All frames → current animation (${activeAnim})</option>
           </select>
         </div>
@@ -73739,7 +73839,7 @@ async function importSpriteSheet(file, opts) {
     saveForge();
     showToast(`✓ ${flat.length} frame${flat.length === 1 ? '' : 's'} → ${targetAnim}`);
   } else {
-    // 'rows' — assign each row in order to ANIMATION_TYPES (idle/attack/walk/hurt)
+    // 'rows' — assign each row in order to ANIMATION_TYPES (idle/attack/walk/hurt/death)
     // Any extra rows beyond the 4 anims are appended to the last anim.
     let assigned = 0;
     for (let r = 0; r < rowsTrim.length; r++) {
@@ -127180,91 +127280,187 @@ function renderTerritoryWars() {
     return `<div class="tw-dark-events-banner"><div class="tw-dark-events-title">🜏 ACTIVE DARK EVENTS</div><div class="tw-dark-events-grid">${cards}</div></div>`;
   })();
 
-  // Node drawer — slides in from right over the map when a node is selected.
+  // Node drawer — v39 redesign matching standalone app detail panel
   const nodeDrawerHtml = selNode ? (() => {
-    const guards = (selOwn && selOwn.guards) || [];
+    const guards = (selOwn && selOwn.upgrades) || [];  // reuse for level calc
     const upgrades = (selOwn && selOwn.upgrades) || [];
     const stability = selOwn ? (selOwn.stability | 0) : 100;
-    const stabCls = stability >= 80 ? 'ok' : stability >= 50 ? '' : stability >= 25 ? 'warn' : 'crit';
-    const guardsN = guards.length;
-    const guardsMax = Math.max(1,(selNode.maxGuardSlots|0)||1);
-    const defPts = guardsN * 15 + upgrades.length * 10;
-    // Compute region name
     const _dRegion = (() => { const sec = t.sectors.find(s=>s.id===selNode.sectorId); const reg = sec ? t.regions.find(r=>r.id===sec.regionId) : null; return reg ? reg.name : '—'; })();
+    const _dSector = (() => { return t.sectors.find(s=>s.id===selNode.sectorId) || null; })();
+    const _nodeLevel = Math.min(20, (upgrades.length * 2) + ((selOwn && selOwn.guards ? selOwn.guards.length : 0) * 2) + 5);
+    const _ndtab = App._twNodeTab || 'overview';
+    // Deterministic synthetic vitals seeded from node ID
+    const _sh = (s) => { let h=0; for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))|0; return Math.abs(h); };
+    const _ns = _sh(selNode.id);
+    const _popMax = 180000 + (_ns % 40) * 1000;
+    const _popPct = 0.72 + (stability / 100) * 0.25;
+    const _pop = Math.round(_popMax * _popPct);
+    const _popDelta = stability > 55 ? ((_ns % 12) + 1) : -((_ns % 18) + 2);
+    const _corruption = Math.max(5, Math.min(92, Math.round((100 - stability) * 0.75 + (_ns % 12))));
+    const _corrDelta = stability > 60 ? -1.8 : 2.2;
+    const _civ = Math.max(15, Math.min(90, Math.round(stability * 0.68 + upgrades.length * 2.5 + (_ns % 14))));
+    const _civDelta = stability > 50 ? 1.9 : -1.4;
+    const _trade = Math.max(10, Math.min(96, Math.round(stability * 0.5 + ((selOwn&&selOwn.guards)||[]).length * 7 + (_ns % 18))));
+    const _tradeRoutes = Math.max(1, Math.round(_trade / 6) + ((selOwn&&selOwn.guards)||[]).length);
+    const _roads = _sh(selNode.id + 'r') % 35 + 8;
+    const _roadsMax = 60;
+    const _buildings = _sh(selNode.id + 'b') % 55 + 12;
+    const _civSaved = ((_sh(selNode.id + 'c') % 22 + 5) * 1000 + _sh(selNode.id + 'cs') % 900);
+    const _ah = (selOwn && selOwn.attackHistory) || [];
+    const _campaigns = _ah.length + Math.round(_sh(selNode.id + 'ca') % 400 + 50);
+    const _cinderTotal = Math.round(_sh(selNode.id + 'ci') % 35000 + 8000 + upgrades.length * 1500);
+    const _statusStr = stability >= 80 ? 'STABLE' : stability >= 60 ? 'STRAINED' : stability >= 30 ? 'FAILING' : 'COLLAPSING';
+    const _fmtPop = (v) => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(0)+','+('000'+Math.round(v%1000)).slice(-3) : String(v);
+    const _fmtN = (v) => v >= 1000 ? (v/1000).toFixed(1)+'K' : String(v);
+    const _relTime = (ms) => { const dt=Math.max(0,Date.now()-(ms|0)); if(dt<60000) return Math.floor(dt/1000)+'s ago'; if(dt<3600000) return Math.floor(dt/60000)+'m ago'; if(dt<86400000) return Math.floor(dt/3600000)+'h ago'; return Math.floor(dt/86400000)+'d ago'; };
+    // World feed events mentioning this node
+    const _nodeEvents = (t.worldFeed || []).filter(f => f && ((f.nodeId === selNode.id) || (f.msg || '').includes(selNode.id)));
+    const _eventsCount = _nodeEvents.length;
+
+    // --- Overview tab ---
+    const overviewHtml = `
+      <div class="tw-nd-section-hdr">— VITAL SIGNS</div>
+      <div class="tw-nd-vitals">
+        <div class="tw-nd-vital-card">
+          <div class="tw-nd-vital-label">NPC POPULATION</div>
+          <div class="tw-nd-vital-value">${_fmtPop(_pop)} <span class="tw-nd-vital-max">/ ${(_popMax/1000).toFixed(1)}K</span></div>
+          <div class="tw-nd-vital-bar"><div style="width:${(_pop/_popMax*100).toFixed(1)}%;background:#4d9e68"></div></div>
+          <div class="tw-nd-vital-delta ${_popDelta>=0?'pos':'neg'}">${_popDelta>=0?'▲':'▼'} ${Math.abs(_popDelta)} / DAY</div>
+        </div>
+        <div class="tw-nd-vital-card">
+          <div class="tw-nd-vital-label">CORRUPTION</div>
+          <div class="tw-nd-vital-value">${_corruption} <span class="tw-nd-vital-pct">%</span></div>
+          <div class="tw-nd-vital-bar"><div style="width:${_corruption}%;background:${_corruption>60?'#b84e2c':'#c89428'}"></div></div>
+          <div class="tw-nd-vital-delta ${_corrDelta<0?'pos':'neg'}">${_corrDelta<0?'▼':'▲'} ${Math.abs(_corrDelta).toFixed(1)}% / DAY</div>
+        </div>
+        <div class="tw-nd-vital-card">
+          <div class="tw-nd-vital-label">CIVILIZATION</div>
+          <div class="tw-nd-vital-value">${_civ} <span class="tw-nd-vital-pct">%</span></div>
+          <div class="tw-nd-vital-bar"><div style="width:${_civ}%;background:#4e7ea8"></div></div>
+          <div class="tw-nd-vital-delta ${_civDelta>=0?'pos':'neg'}">${_civDelta>=0?'▲':'▼'} ${Math.abs(_civDelta).toFixed(1)}% / DAY</div>
+        </div>
+        <div class="tw-nd-vital-card">
+          <div class="tw-nd-vital-label">TRADE STABILITY</div>
+          <div class="tw-nd-vital-value">${_trade} <span class="tw-nd-vital-pct">%</span></div>
+          <div class="tw-nd-vital-bar"><div style="width:${_trade}%;background:#c89428"></div></div>
+          <div class="tw-nd-vital-delta">${_tradeRoutes} ROUTES ACTIVE</div>
+        </div>
+      </div>
+      <div class="tw-nd-section-hdr">— RECONSTRUCTION PROGRESS</div>
+      <div class="tw-nd-progress-list">
+        <div class="tw-nd-progress-row"><div class="tw-nd-prog-label">ROADS REPAIRED</div><div class="tw-nd-prog-bar"><div style="width:${(_roads/_roadsMax*100).toFixed(0)}%;background:#4d9e68"></div></div><div class="tw-nd-prog-val">${_roads} / ${_roadsMax}</div></div>
+        <div class="tw-nd-progress-row"><div class="tw-nd-prog-label">BUILDINGS RESTORED</div><div class="tw-nd-prog-bar"><div style="width:${Math.min(100,_buildings).toFixed(0)}%;background:#4d9e68"></div></div><div class="tw-nd-prog-val">${_buildings}</div></div>
+        <div class="tw-nd-progress-row"><div class="tw-nd-prog-label">CIVILIANS SAVED</div><div class="tw-nd-prog-bar"><div style="width:${Math.min(100,(_civSaved/40000)*100).toFixed(0)}%;background:#4d9e68"></div></div><div class="tw-nd-prog-val">${_fmtN(_civSaved)}</div></div>
+        <div class="tw-nd-progress-row"><div class="tw-nd-prog-label">CAMPAIGNS RUN</div><div class="tw-nd-prog-bar"><div style="width:${Math.min(100,(_campaigns/800)*100).toFixed(0)}%;background:#c89428"></div></div><div class="tw-nd-prog-val">${_campaigns}</div></div>
+      </div>
+      <div class="tw-nd-section-hdr">— FOUNDATION RESERVE CONTRIBUTION</div>
+      <div class="tw-nd-cinder-box">
+        <div class="tw-nd-cinder-hdr"><div class="tw-nd-cinder-label">TOTAL CINDER GENERATED</div><div class="tw-nd-node-level">NODE LV ${_nodeLevel}</div></div>
+        <div class="tw-nd-cinder-value">${_fmtN(_cinderTotal)} <span class="tw-nd-cinder-unit">CINDER</span></div>
+        <div class="tw-nd-cinder-bar-stacked">
+          <div style="width:32%;background:#4e8a9a" title="CAMPAIGNS 32%"></div>
+          <div style="width:22%;background:#c89428" title="RESOURCES 22%"></div>
+          <div style="width:18%;background:#4d9e68" title="CIV REPAIR 18%"></div>
+          <div style="width:14%;background:#9055b4" title="ANOMALY 14%"></div>
+          <div style="width:14%;background:#b84e2c" title="COMBAT 14%"></div>
+        </div>
+        <div class="tw-nd-cinder-legend">
+          <span><i style="background:#4e8a9a"></i> CAMPAIGNS 32%</span>
+          <span><i style="background:#c89428"></i> RESOURCES 22%</span>
+          <span><i style="background:#4d9e68"></i> CIV REPAIR 18%</span>
+          <span><i style="background:#9055b4"></i> ANOMALY 14%</span>
+          <span><i style="background:#b84e2c"></i> COMBAT 14%</span>
+        </div>
+      </div>
+      <div class="tw-nd-section-hdr">— ACTIONS</div>
+      <div class="tw-nd-actions">
+        <div class="tw-nd-action-row">
+          ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">⚔ Attack PRN</button>` : ''}
+          ${iOwn ? `<button class="btn-primary" id="tw-act-collect">💎 Collect Resources</button>` : ''}
+        </div>
+        <div class="tw-nd-action-row">
+          ${iOwn ? `<button class="btn-secondary" id="tw-act-hire">🛡 Hire Guard</button>` : ''}
+          ${iOwn ? `<button class="btn-secondary" id="tw-act-shop">🏗 Node Shop</button>` : ''}
+        </div>
+        ${iOwn && (selOwn.guards||[]).length ? `<div class="small-text ink-dim" style="margin-top:0.3rem">Guards: ${(selOwn.guards||[]).map(g=>{const d=t.guardDecks.find(x=>x.id===g.deckId);return escapeHtml(d?d.name:g.deckId);}).join(' · ')}</div>` : ''}
+      </div>
+    `;
+
+    // --- Campaigns tab ---
+    const campaignsHtml = `
+      <div class="tw-nd-section-hdr">— BATTLE HISTORY (${_ah.length} records)</div>
+      <div class="tw-nd-history-list">
+        ${_ah.length ? _ah.slice(0,30).map(a=>`<div class="tw-nd-hist-row ${a.win?'win':'loss'}">
+          <span class="tw-nd-hist-tag">${a.win?'⚔ WIN':'🛡 REPEL'}</span>
+          <span class="tw-nd-hist-actor">${escapeHtml(a.attackerCorp||'?')}</span>
+          <span class="tw-nd-hist-age">${_relTime(a.at)}</span>
+        </div>`).join('') : '<div class="tw-nd-empty">No battles recorded yet.</div>'}
+      </div>
+    `;
+
+    // --- Events tab ---
+    const eventsHtml = `
+      <div class="tw-nd-section-hdr">— NODE EVENTS (${_nodeEvents.length})</div>
+      <div class="tw-nd-history-list">
+        ${_nodeEvents.length ? _nodeEvents.slice(0,20).map(f=>`<div class="tw-nd-hist-row">
+          <span class="tw-nd-hist-tag" style="color:#c89428">${escapeHtml((f.kind||'').toUpperCase())}</span>
+          <span class="tw-nd-hist-actor">${escapeHtml(f.msg||'')}</span>
+          <span class="tw-nd-hist-age">${_relTime(f.at)}</span>
+        </div>`).join('') : '<div class="tw-nd-empty">No events recorded for this node.</div>'}
+      </div>
+    `;
+
+    // --- Resources tab ---
+    const yieldEntries = Object.entries(selNode.resourceYield || {});
+    const resourcesHtml = `
+      <div class="tw-nd-section-hdr">— RESOURCE YIELD</div>
+      <div class="tw-nd-progress-list">
+        ${yieldEntries.length ? yieldEntries.map(([res,amt])=>`<div class="tw-nd-progress-row">
+          <div class="tw-nd-prog-label">${escapeHtml(res.toUpperCase())}</div>
+          <div class="tw-nd-prog-bar"><div style="width:${Math.min(100,amt*10)}%;background:#4e7ea8"></div></div>
+          <div class="tw-nd-prog-val">+${amt}/hr</div>
+        </div>`).join('') : '<div class="tw-nd-empty">No resources defined for this node.</div>'}
+      </div>
+      ${(selOwn&&selOwn.upgrades&&selOwn.upgrades.length) ? `
+        <div class="tw-nd-section-hdr">— INSTALLED UPGRADES</div>
+        <div class="tw-nd-history-list">${(selOwn.upgrades||[]).map(uid=>{const u=t.nodeShopUpgrades.find(x=>x.id===uid);return `<div class="tw-nd-hist-row"><span class="tw-nd-hist-actor" style="color:#4d9e68">✓ ${escapeHtml(u?u.name:uid)}</span></div>`;}).join('')}</div>
+      ` : ''}
+    `;
+
+    // --- Charter tab ---
+    const alwaysMods = Array.isArray(selNode.runModifiers) ? selNode.runModifiers : [];
+    const objList = Array.isArray(selNode.victoryConditions) ? selNode.victoryConditions : [];
+    const charterHtml = `
+      <div class="tw-nd-section-hdr">— RUN MODIFIERS</div>
+      ${alwaysMods.length ? `<div class="tw-nd-history-list">${alwaysMods.map(mid=>{const m=TW_RUN_MODIFIERS.find(x=>x.id===mid);return `<div class="tw-nd-hist-row" style="border-left-color:#b84e2c"><span class="tw-nd-hist-actor" style="color:#ffd0d0">${escapeHtml(m?`${m.icon} ${m.name}`:mid)}</span></div>`;}).join('')}</div>` : '<div class="tw-nd-empty">No run modifiers on this node.</div>'}
+      <div class="tw-nd-section-hdr">— VICTORY CONDITIONS</div>
+      ${objList.length ? `<div class="tw-nd-history-list">${objList.map(id=>{const def=TW_NODE_OBJECTIVES.find(o=>o.id===id);return `<div class="tw-nd-hist-row"><span class="tw-nd-hist-actor">${escapeHtml(def?`${def.icon} ${def.name}`:id)}</span></div>`;}).join('')}</div>` : '<div class="tw-nd-empty">Standard capture conditions.</div>'}
+    `;
+
     return `
-      <div class="tw-node-drawer">
-        <div class="tw-drawer-head">
-          <div class="tw-drawer-crumb"><b>${escapeHtml(selNode.id)}</b> · ${escapeHtml(_dRegion)}</div>
-          <div class="tw-drawer-name">${escapeHtml(selNode.name)}<span class="node-id">${escapeHtml(selNode.id)}</span></div>
-          <div class="tw-drawer-sub">Owner: ${selOwn ? escapeHtml(selOwn.ownerCorpId) : 'Neutral'} · Stability ${stability}% · ${escapeHtml(selNode.type||'PRN')}</div>
+      <div class="tw-node-drawer" data-node-id="${escapeHtml(selNode.id)}">
+        <div class="tw-drawer-crumb-bar">
+          <span class="tw-drawer-crumb-text">WAR MAP · ${escapeHtml(_dRegion.toUpperCase())} · NODE CONTROL</span>
+          <span class="tw-drawer-barcode">||||||||||||||||</span>
           <button class="tw-drawer-close" id="tw-drawer-close">✕</button>
         </div>
-        <div class="tw-drawer-body">
-          <div>
-            <div class="tw-drawer-sec-title">Vitals</div>
-            <div class="tw-drawer-vitals">
-              <div class="tw-drawer-vital ${stabCls}">
-                <div class="k">Stability</div><div class="v">${stability}<small>%</small></div>
-                <div class="meter"><i style="width:${stability}%"></i></div>
-              </div>
-              <div class="tw-drawer-vital">
-                <div class="k">Guards</div><div class="v">${guardsN}<small>/ ${guardsMax}</small></div>
-                <div class="meter"><i style="width:${Math.min(100,(guardsN/guardsMax)*100).toFixed(0)}%"></i></div>
-              </div>
-              <div class="tw-drawer-vital"><div class="k">Upgrades</div><div class="v">${upgrades.length}</div></div>
-              <div class="tw-drawer-vital"><div class="k">Defense</div><div class="v">${defPts}</div></div>
-            </div>
-          </div>
-          ${Object.keys(selNode.resourceYield||{}).length ? `
-          <div>
-            <div class="tw-drawer-sec-title">Yield</div>
-            <div class="tw-action-row">${Object.entries(selNode.resourceYield||{}).map(([k,v])=>`<span class="tw-yield-pill">${escapeHtml(k)} +${v}</span>`).join('')}</div>
-          </div>` : ''}
-          <div>
-            <div class="tw-drawer-sec-title">Actions</div>
-            <div class="tw-action-buttons">
-              ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">⚔ Attack PRN</button>` : ''}
-              ${iOwn ? `<button class="btn-primary" id="tw-act-collect">💎 Collect</button>` : ''}
-              ${iOwn ? `<button class="btn-secondary" id="tw-act-hire">🛡 Hire Guard</button>` : ''}
-              ${iOwn ? `<button class="btn-secondary" id="tw-act-shop">🏗 Shop</button>` : ''}
-            </div>
-            ${iOwn && guards.length ? `<div class="small-text ink-dim" style="margin-top:0.4rem">Guards: ${guards.map(g=>{const d=t.guardDecks.find(x=>x.id===g.deckId);return escapeHtml(d?d.name:g.deckId);}).join(' · ')}<br>💸 ¢${(guards.length*TW_GUARD_DAILY_UPKEEP).toLocaleString()} Cinder / 24h upkeep</div>` : ''}
-          </div>
-          ${/* Modifiers, objectives, and history come from actionPanel inline content */
-            (() => {
-              const _modName = (mid) => { const m=TW_RUN_MODIFIERS.find(x=>x.id===mid); return m?`${m.icon} ${m.name}`:mid; };
-              const alwaysMods = Array.isArray(selNode.runModifiers) ? selNode.runModifiers : [];
-              const poolMods = Array.isArray(selNode.runModifierPool) ? selNode.runModifierPool : [];
-              const poolN = selNode.runModifierCount|0;
-              const objList = Array.isArray(selNode.victoryConditions) ? selNode.victoryConditions : [];
-              const modsHtml = alwaysMods.length || poolN > 0 ? `<div>
-                <div class="tw-drawer-sec-title">Run Modifiers</div>
-                <div class="tw-action-row small-text">
-                  ${alwaysMods.map(m=>`<span class="tw-yield-pill" style="background:rgba(255,80,80,0.18);border-color:rgba(255,140,140,0.45);color:#ffd0d0">${escapeHtml(_modName(m))}</span>`).join('')}
-                  ${poolN>0&&poolMods.length?`<span class="ink-dim small-text">+${poolN} from pool of ${poolMods.length}</span>`:''}
-                </div></div>` : '';
-              const objHtml = objList.length ? `<div>
-                <div class="tw-drawer-sec-title">Victory Conditions</div>
-                <div class="tw-action-row small-text">
-                  ${objList.map(id=>{const def=TW_NODE_OBJECTIVES.find(o=>o.id===id);return `<span class="tw-yield-pill" title="${escapeHtml(def?def.desc:id)}">${def?def.icon:'🎯'} ${escapeHtml(def?def.name:id)}</span>`;}).join('')}
-                </div></div>` : '';
-              const open = !!App._twShowHistory;
-              const ah = (selOwn&&selOwn.attackHistory)||[];
-              const gh = (selOwn&&selOwn.guardDefeatHistory)||[];
-              const rel=(ms)=>{const dt=Math.max(0,Date.now()-(ms|0));if(dt<60000)return Math.floor(dt/1000)+'s ago';if(dt<3600000)return Math.floor(dt/60000)+'m ago';if(dt<86400000)return Math.floor(dt/3600000)+'h ago';return Math.floor(dt/86400000)+'d ago';};
-              const histHtml = (ah.length||gh.length) ? `<div class="tw-history-wrap">
-                <button class="tw-history-toggle" id="tw-hist-toggle">${open?'▾':'▸'} 📜 Battle History (${ah.length} attacks · ${gh.length} losses)</button>
-                ${open?`<div class="tw-history-pane">
-                  <div class="tw-hist-section-title">⚔ Attack History</div>
-                  <div class="tw-hist-list">${ah.slice(0,20).map(a=>`<div class="tw-hist-row tw-hist-${a.win?'win':'loss'}"><span class="tw-hist-tag">${a.win?'⚔ WIN':'🛡 REPEL'}</span><span class="tw-hist-actor">${escapeHtml(a.attackerCorp||'?')}</span><span class="tw-hist-age">${rel(a.at)}</span></div>`).join('')||'<div class="ink-dim small-text">No attacks recorded.</div>'}</div>
-                  <div class="tw-hist-section-title" style="margin-top:0.5rem">🛡 Guard Defeats</div>
-                  <div class="tw-hist-list">${gh.slice(0,20).map(g=>{const d=t.guardDecks.find(x=>x.id===g.deckId);return `<div class="tw-hist-row tw-hist-defeat"><span class="tw-hist-tag">☠ DOWN</span><span class="tw-hist-actor">${escapeHtml((d&&d.name)||g.deckId||'?')}</span><span class="tw-hist-by">by ${escapeHtml(g.by||'?')}</span><span class="tw-hist-age">${rel(g.at)}</span></div>`;}).join('')||'<div class="ink-dim small-text">No guards defeated yet.</div>'}</div>
-                </div>`:''}
-              </div>` : '';
-              return modsHtml + objHtml + histHtml;
-            })()
-          }
+        <div class="tw-drawer-title-block">
+          <div class="tw-drawer-node-name">${escapeHtml(selNode.name)}</div>
+          <div class="tw-drawer-node-coords">${escapeHtml(selNode.id)} · ${_dSector ? escapeHtml(_dSector.id) : '??'}</div>
+          <div class="tw-drawer-node-sub">${escapeHtml(selNode.purpose||selNode.type||'PRN')} — ${yieldEntries.map(([k])=>k).join(', ')||'multi-resource'} production · <span style="color:${stability>=80?'#4d9e68':stability>=50?'#c89428':'#b84e2c'}">${_statusStr}</span></div>
         </div>
+        <div class="tw-drawer-tabs">
+          <button class="tw-drawer-tab ${_ndtab==='overview'?'is-active':''}" data-ndtab="overview">OVERVIEW</button>
+          <button class="tw-drawer-tab ${_ndtab==='campaigns'?'is-active':''}" data-ndtab="campaigns">CAMPAIGNS${_ah.length?` <span class="tw-drawer-tab-badge">${_ah.length}</span>`:''}</button>
+          <button class="tw-drawer-tab ${_ndtab==='events'?'is-active':''}" data-ndtab="events">EVENTS${_eventsCount?` <span class="tw-drawer-tab-badge">${_eventsCount}</span>`:''}</button>
+          <button class="tw-drawer-tab ${_ndtab==='resources'?'is-active':''}" data-ndtab="resources">RESOURCES</button>
+          <button class="tw-drawer-tab ${_ndtab==='charter'?'is-active':''}" data-ndtab="charter">CHARTER</button>
+        </div>
+        <div class="tw-nd-tab-panel ${_ndtab==='overview'?'is-active':''}" id="tw-nd-overview">${overviewHtml}</div>
+        <div class="tw-nd-tab-panel ${_ndtab==='campaigns'?'is-active':''}" id="tw-nd-campaigns">${campaignsHtml}</div>
+        <div class="tw-nd-tab-panel ${_ndtab==='events'?'is-active':''}" id="tw-nd-events">${eventsHtml}</div>
+        <div class="tw-nd-tab-panel ${_ndtab==='resources'?'is-active':''}" id="tw-nd-resources">${resourcesHtml}</div>
+        <div class="tw-nd-tab-panel ${_ndtab==='charter'?'is-active':''}" id="tw-nd-charter">${charterHtml}</div>
       </div>`;
   })() : '';
   // ──────────────────────────────────────────────────────────────────────────
@@ -127351,7 +127547,14 @@ function renderTerritoryWars() {
   });
   // v37: Drawer close — clicking ✕ deselects the node and closes the drawer.
   const _drawerClose = document.getElementById('tw-drawer-close');
-  if (_drawerClose) _drawerClose.onclick = () => { App._twSelectedNode = null; render(); };
+  if (_drawerClose) _drawerClose.onclick = () => { App._twSelectedNode = null; App._twNodeTab = 'overview'; render(); };
+  // Node detail tabs
+  document.querySelectorAll('[data-ndtab]').forEach(b => b.onclick = () => {
+    App._twNodeTab = b.dataset.ndtab;
+    // Partial re-render: just swap active tab classes without full render
+    document.querySelectorAll('[data-ndtab]').forEach(t => t.classList.toggle('is-active', t.dataset.ndtab === App._twNodeTab));
+    document.querySelectorAll('.tw-nd-tab-panel').forEach(p => p.classList.toggle('is-active', p.id === 'tw-nd-' + App._twNodeTab));
+  });
   // 🜏 Dark Event banner cards — clicking jumps to the Sabotage Node so
   // the player can attack it immediately.
   document.querySelectorAll('[data-tw-sabotage-node]').forEach(b => b.onclick = () => {
@@ -127703,20 +127906,101 @@ function _twResolveAttackOutcome() {
   } catch (e) { console.warn('[BRP run]', e); }
   try { saveProfile(); saveForge(); } catch (e) {}
 }
-// 🪟 Picker-modal openers — set App._twPickerModal so the next render
-// shows the modal layer. The modal lives in renderTerritoryWars and is
-// click-to-pick (no more prompt()). State is cleared on close / commit.
 function _twHireFlow(nodeId) {
+  if (!nodeId) return;
   const t = _twForge();
-  if ((t.guardDecks || []).length === 0) { showToast('⚠ No guard decks created yet (admin builds these).'); return; }
-  App._twPickerModal = { kind: 'hire', nodeId };
-  render();
+  const st = _twState();
+  const node = t.nodes.find(n => n.id === nodeId);
+  if (!node) return;
+  const myCorp = _twPlayerCorp();
+  if (!myCorp) { showToast('⚠ Join a corporation to hire guards.'); return; }
+  const own = st.ownedNodes && st.ownedNodes[nodeId];
+  if (!own || own.ownerCorpId !== myCorp.id) { showToast('⚠ You must own this PRN to hire guards.'); return; }
+  const decks = (t.guardDecks || []).filter(d => d && d.id);
+  if (!decks.length) { showToast('⚠ No guard decks available — admin must create guard decks in the Forge.'); return; }
+  const maxSlots = Math.max(1, (node.maxGuardSlots | 0) || 1);
+  const current = (own.guards || []).length;
+  if (current >= maxSlots) { showToast(`🛡 Max guards reached (${maxSlots}). Defeat or dismiss a guard first.`); return; }
+  // Show a picker modal
+  const existing = new Set((own.guards || []).map(g => g.deckId));
+  const opts = decks.map(d => `<button class="btn-secondary" style="margin:0.25rem;text-align:left" data-hire-deck="${d.id}">${escapeHtml(d.name||d.id)}</button>`).join('');
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9000;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `<div style="background:#0d1116;border:1px solid rgba(35,44,54,0.9);padding:1.5rem;max-width:380px;width:90%;border-radius:4px">
+    <div style="font-family:JetBrains Mono,monospace;font-size:0.75rem;letter-spacing:0.18em;text-transform:uppercase;color:#ffe9a8;margin-bottom:0.8rem">🛡 Hire Guard — ${escapeHtml(node.name)}</div>
+    <div style="font-size:0.78rem;color:#8a96a3;margin-bottom:0.8rem">Select a guard deck (slot ${current+1}/${maxSlots}):</div>
+    <div>${opts}</div>
+    <button class="btn-danger" id="tw-hire-cancel" style="margin-top:0.8rem">Cancel</button>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.querySelectorAll('[data-hire-deck]').forEach(b => b.onclick = () => {
+    const deckId = b.dataset.hireDeck;
+    if (!own.guards) own.guards = [];
+    own.guards.push({ deckId, hiredAt: Date.now() });
+    try { _twSave(); } catch (e) {}
+    document.body.removeChild(modal);
+    showToast(`🛡 Guard hired at ${escapeHtml(node.name)}!`);
+    render();
+  });
+  document.getElementById('tw-hire-cancel').onclick = () => document.body.removeChild(modal);
+  modal.onclick = (e) => { if (e.target === modal) document.body.removeChild(modal); };
 }
+
 function _twShopFlow(nodeId) {
+  if (!nodeId) return;
   const t = _twForge();
-  if ((t.nodeShopUpgrades || []).length === 0) { showToast('⚠ No node shop upgrades created yet (admin builds these).'); return; }
-  App._twPickerModal = { kind: 'shop', nodeId };
-  render();
+  const st = _twState();
+  const node = t.nodes.find(n => n.id === nodeId);
+  if (!node) return;
+  const myCorp = _twPlayerCorp();
+  if (!myCorp) { showToast('⚠ Join a corporation to shop.'); return; }
+  const own = st.ownedNodes && st.ownedNodes[nodeId];
+  if (!own || own.ownerCorpId !== myCorp.id) { showToast('⚠ You must own this PRN to access its shop.'); return; }
+  const upgrades = (t.nodeShopUpgrades || []).filter(u => u && u.id);
+  if (!upgrades.length) { showToast('⚠ No upgrades available — admin must add upgrades in the Forge.'); return; }
+  const owned = new Set((own.upgrades || []).map(u => (typeof u === 'string' ? u : u.id)));
+  const rows = upgrades.map(u => {
+    const have = owned.has(u.id);
+    const cost = u.cost || {};
+    const costStr = Object.entries(cost).map(([k,v]) => `${v} ${k}`).join(', ') || 'free';
+    return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.4rem 0;border-bottom:1px solid rgba(35,44,54,0.5)">
+      <div style="flex:1">
+        <div style="font-size:0.82rem;color:#d6dee6">${escapeHtml(u.name||u.id)}</div>
+        <div style="font-size:0.68rem;color:#5b6772">${escapeHtml(u.desc||'')} · ${escapeHtml(costStr)}</div>
+      </div>
+      ${have ? '<span style="color:#4d9e68;font-size:0.7rem">✓ OWNED</span>'
+        : `<button class="btn-secondary btn-mini" data-shop-upgrade="${u.id}" data-shop-cost='${JSON.stringify(cost)}'>Buy</button>`}
+    </div>`;
+  }).join('');
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9000;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `<div style="background:#0d1116;border:1px solid rgba(35,44,54,0.9);padding:1.5rem;max-width:420px;width:90%;border-radius:4px;max-height:80vh;overflow-y:auto">
+    <div style="font-family:JetBrains Mono,monospace;font-size:0.75rem;letter-spacing:0.18em;text-transform:uppercase;color:#ffe9a8;margin-bottom:0.8rem">🏗 Node Shop — ${escapeHtml(node.name)}</div>
+    ${rows}
+    <button class="btn-secondary" id="tw-shop-close" style="margin-top:0.8rem">Close</button>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.querySelectorAll('[data-shop-upgrade]').forEach(b => b.onclick = () => {
+    const uid = b.dataset.shopUpgrade;
+    let cost; try { cost = JSON.parse(b.dataset.shopCost || '{}'); } catch (e) { cost = {}; }
+    // Check resources
+    for (const [res, amt] of Object.entries(cost)) {
+      if ((typeof getResource === 'function' ? getResource(res) : 0) < amt) {
+        showToast(`⚠ Not enough ${res} (need ${amt}).`); return;
+      }
+    }
+    for (const [res, amt] of Object.entries(cost)) {
+      try { spendResource(res, amt); } catch (e) {}
+    }
+    if (!own.upgrades) own.upgrades = [];
+    own.upgrades.push(uid);
+    try { _twSave(); } catch (e) {}
+    document.body.removeChild(modal);
+    showToast(`🏗 Upgrade purchased!`);
+    render();
+  });
+  document.getElementById('tw-shop-close').onclick = () => document.body.removeChild(modal);
+  modal.onclick = (e) => { if (e.target === modal) document.body.removeChild(modal); };
 }
 // Render the active picker modal (when set). Click a row to commit; ✕
 // or backdrop click closes without action.

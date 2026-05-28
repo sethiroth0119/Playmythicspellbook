@@ -19032,6 +19032,23 @@
     from { transform: translateX(28px); opacity: 0; }
     to   { transform: translateX(0);    opacity: 1; }
   }
+  /* ── War Map admin node editor ── */
+  .tw-admin-field-row { display:flex; align-items:center; gap:0.5rem; margin-bottom:0.4rem; padding:0 0.75rem; }
+  .tw-admin-label { font-size:0.60rem; color:#8899aa; letter-spacing:0.10em; text-transform:uppercase; flex:0 0 88px; }
+  .tw-admin-input {
+    flex:1; background:rgba(20,25,32,0.85); border:1px solid rgba(35,44,54,0.9);
+    color:#e6dfc8; font-size:0.70rem; padding:4px 8px; border-radius:3px;
+    font-family:'JetBrains Mono',monospace;
+  }
+  .tw-admin-input-sm { flex:0 0 58px; }
+  .tw-admin-input:focus { outline:none; border-color:rgba(108,212,255,0.5); }
+  .tw-admin-btn-row { display:flex; gap:0.5rem; padding:0.6rem 0.75rem 0.75rem; }
+  .tw-admin-save-btn { flex:1; background:rgba(77,158,104,0.22); border:1px solid rgba(77,158,104,0.5); color:#4d9e68; padding:7px; border-radius:3px; cursor:pointer; font-size:0.70rem; font-family:'JetBrains Mono',monospace; letter-spacing:0.08em; }
+  .tw-admin-save-btn:hover { background:rgba(77,158,104,0.40); }
+  .tw-admin-del-btn { flex:0 0 auto; background:rgba(184,78,44,0.18); border:1px solid rgba(184,78,44,0.4); color:#b84e2c; padding:7px 12px; border-radius:3px; cursor:pointer; font-size:0.70rem; font-family:'JetBrains Mono',monospace; }
+  .tw-admin-del-btn:hover { background:rgba(184,78,44,0.35); }
+  .tw-new-node-btn { background:rgba(108,212,255,0.10); border:1px solid rgba(108,212,255,0.28); color:#6cd4ff; padding:3px 10px; border-radius:3px; cursor:pointer; font-size:0.60rem; letter-spacing:0.10em; font-family:'JetBrains Mono',monospace; }
+  .tw-new-node-btn:hover { background:rgba(108,212,255,0.22); }
   .tw-drawer-head {
     border-bottom: 1px solid rgba(35,44,54,0.85);
     padding: 0.9rem 1rem 0.75rem; position: relative; flex-shrink: 0;
@@ -127773,7 +127790,9 @@ function renderTerritoryWars() {
     const _civSaved = ((_sh(selNode.id + 'c') % 22 + 5) * 1000 + _sh(selNode.id + 'cs') % 900);
     const _ah = (selOwn && selOwn.attackHistory) || [];
     const _campaigns = _ah.length + Math.round(_sh(selNode.id + 'ca') % 400 + 50);
-    const _cinderTotal = Math.round(_sh(selNode.id + 'ci') % 35000 + 8000 + upgrades.length * 1500);
+    const _cinderTotal = (selOwn && selOwn.cinderOverride > 0)
+      ? selOwn.cinderOverride
+      : Math.round(_sh(selNode.id + 'ci') % 35000 + 8000 + upgrades.length * 1500);
     const _statusStr = stability >= 80 ? 'STABLE' : stability >= 60 ? 'STRAINED' : stability >= 30 ? 'FAILING' : 'COLLAPSING';
     const _fmtPop = (v) => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(0)+','+('000'+Math.round(v%1000)).slice(-3) : String(v);
     const _fmtN = (v) => v >= 1000 ? (v/1000).toFixed(1)+'K' : String(v);
@@ -127902,6 +127921,45 @@ function renderTerritoryWars() {
       ${objList.length ? `<div class="tw-nd-history-list">${objList.map(id=>{const def=TW_NODE_OBJECTIVES.find(o=>o.id===id);return `<div class="tw-nd-hist-row"><span class="tw-nd-hist-actor">${escapeHtml(def?`${def.icon} ${def.name}`:id)}</span></div>`;}).join('')}</div>` : '<div class="tw-nd-empty">Standard capture conditions.</div>'}
     `;
 
+    // Admin tab — only rendered for admins
+    const _isAdm = typeof isAdmin === 'function' && isAdmin();
+    const adminHtml = _isAdm ? `
+      <div class="tw-nd-section-hdr">— NODE IDENTITY</div>
+      <div class="tw-admin-field-row">
+        <label class="tw-admin-label">Name</label>
+        <input class="tw-admin-input" id="tw-admin-name" value="${escapeHtml(selNode.name)}" placeholder="Node name">
+      </div>
+      <div class="tw-admin-field-row">
+        <label class="tw-admin-label">Type</label>
+        <input class="tw-admin-input" id="tw-admin-type" value="${escapeHtml(selNode.type||selNode.purpose||'PRN')}" placeholder="PRN">
+      </div>
+      <div class="tw-admin-field-row">
+        <label class="tw-admin-label">Sector ID</label>
+        <input class="tw-admin-input" id="tw-admin-sector" value="${escapeHtml(selNode.sectorId||'')}" placeholder="S-ASH">
+      </div>
+      <div class="tw-admin-field-row">
+        <label class="tw-admin-label">Pos X %</label>
+        <input class="tw-admin-input tw-admin-input-sm" id="tw-admin-px" type="number" min="1" max="99" step="0.5" value="${((selNode.position||{}).x||50).toFixed(1)}">
+        <label class="tw-admin-label" style="flex:0 0 30px">Y %</label>
+        <input class="tw-admin-input tw-admin-input-sm" id="tw-admin-py" type="number" min="1" max="99" step="0.5" value="${((selNode.position||{}).y||50).toFixed(1)}">
+      </div>
+      <div class="tw-nd-section-hdr">— RESOURCE YIELD</div>
+      <div class="tw-admin-field-row">
+        <label class="tw-admin-label">Yield JSON</label>
+        <input class="tw-admin-input" id="tw-admin-yield" value="${escapeHtml(JSON.stringify(selNode.resourceYield||{}))}" placeholder='{"FOOD":10}'>
+      </div>
+      <div class="tw-nd-section-hdr">— CINDER STATS</div>
+      <div class="tw-admin-field-row">
+        <label class="tw-admin-label">Cinder Total</label>
+        <input class="tw-admin-input tw-admin-input-sm" id="tw-admin-cinder" type="number" min="0" value="${(selOwn && selOwn.cinderOverride) ? selOwn.cinderOverride : ''}" placeholder="auto">
+        <span style="font-size:0.58rem;color:#5b6772;margin-left:4px">blank = synthetic</span>
+      </div>
+      <div class="tw-admin-btn-row">
+        <button class="tw-admin-save-btn" id="tw-admin-save-btn">💾 Save Changes</button>
+        <button class="tw-admin-del-btn" id="tw-admin-del-btn">🗑 Delete</button>
+      </div>
+    ` : '';
+
     return `
       <div class="tw-node-drawer" data-node-id="${escapeHtml(selNode.id)}">
         <div class="tw-drawer-crumb-bar">
@@ -127920,12 +127978,14 @@ function renderTerritoryWars() {
           <button class="tw-drawer-tab ${_ndtab==='events'?'is-active':''}" data-ndtab="events">EVENTS${_eventsCount?` <span class="tw-drawer-tab-badge">${_eventsCount}</span>`:''}</button>
           <button class="tw-drawer-tab ${_ndtab==='resources'?'is-active':''}" data-ndtab="resources">RESOURCES</button>
           <button class="tw-drawer-tab ${_ndtab==='charter'?'is-active':''}" data-ndtab="charter">CHARTER</button>
+          ${_isAdm ? `<button class="tw-drawer-tab ${_ndtab==='admin'?'is-active':''}" data-ndtab="admin">ADMIN</button>` : ''}
         </div>
         <div class="tw-nd-tab-panel ${_ndtab==='overview'?'is-active':''}" id="tw-nd-overview">${overviewHtml}</div>
         <div class="tw-nd-tab-panel ${_ndtab==='campaigns'?'is-active':''}" id="tw-nd-campaigns">${campaignsHtml}</div>
         <div class="tw-nd-tab-panel ${_ndtab==='events'?'is-active':''}" id="tw-nd-events">${eventsHtml}</div>
         <div class="tw-nd-tab-panel ${_ndtab==='resources'?'is-active':''}" id="tw-nd-resources">${resourcesHtml}</div>
         <div class="tw-nd-tab-panel ${_ndtab==='charter'?'is-active':''}" id="tw-nd-charter">${charterHtml}</div>
+        ${_isAdm ? `<div class="tw-nd-tab-panel ${_ndtab==='admin'?'is-active':''}" id="tw-nd-admin">${adminHtml}</div>` : ''}
       </div>`;
   })() : '';
   // ──────────────────────────────────────────────────────────────────────────
@@ -127943,7 +128003,10 @@ function renderTerritoryWars() {
             `<button class="tw-top-view-btn ${view===v?'is-active':''}" data-tw-view="${v}">${v[0].toUpperCase()+v.slice(1)}</button>`
           ).join('')}
         </div>
-        <div class="tw-top-bar-corp">${myCorp ? `🏢 ${escapeHtml(myCorp.name)}` : '<span style="color:#5b6772">No corporation — view only</span>'}</div>
+        <div class="tw-top-bar-corp" style="display:flex;align-items:center;gap:0.6rem">
+          ${typeof isAdmin === 'function' && isAdmin() ? `<button class="tw-new-node-btn" id="tw-admin-new-node">＋ New Node</button>` : ''}
+          ${myCorp ? `🏢 ${escapeHtml(myCorp.name)}` : '<span style="color:#5b6772">No corporation — view only</span>'}
+        </div>
       </div>
       <div class="tw-workspace${selNode ? ' has-drawer' : ''}">
         <div class="tw-event-feed">
@@ -128053,6 +128116,86 @@ function renderTerritoryWars() {
   act('tw-act-hire', () => _twHireFlow(App._twSelectedNode));
   act('tw-act-shop', () => _twShopFlow(App._twSelectedNode));
   act('tw-hist-toggle', () => { App._twShowHistory = !App._twShowHistory; render(); });
+
+  // ── Admin: save node changes ──
+  const _admSaveBtn = document.getElementById('tw-admin-save-btn');
+  if (_admSaveBtn) {
+    _admSaveBtn.onclick = () => {
+      const tf = _twForge(); const ts = _twState();
+      const node = tf.nodes.find(n => n.id === App._twSelectedNode);
+      if (!node) return;
+      const nameVal = (document.getElementById('tw-admin-name') || {}).value || '';
+      const typeVal = (document.getElementById('tw-admin-type') || {}).value || '';
+      const secVal  = (document.getElementById('tw-admin-sector') || {}).value || '';
+      const pxVal   = parseFloat((document.getElementById('tw-admin-px') || {}).value);
+      const pyVal   = parseFloat((document.getElementById('tw-admin-py') || {}).value);
+      const yldVal  = (document.getElementById('tw-admin-yield') || {}).value || '';
+      const cinVal  = parseInt((document.getElementById('tw-admin-cinder') || {}).value);
+      if (nameVal.trim()) node.name = nameVal.trim();
+      if (typeVal.trim()) { node.type = typeVal.trim(); node.purpose = typeVal.trim(); }
+      if (secVal.trim()) node.sectorId = secVal.trim();
+      if (!isNaN(pxVal) && !isNaN(pyVal)) node.position = { x: Math.max(1, Math.min(99, pxVal)), y: Math.max(1, Math.min(99, pyVal)) };
+      try {
+        const yObj = JSON.parse(yldVal || '{}');
+        if (yObj && typeof yObj === 'object') node.resourceYield = yObj;
+      } catch (e) { showToast('⚠ Yield JSON invalid — not saved', 3000); }
+      if (!ts.ownedNodes[node.id]) ts.ownedNodes[node.id] = {};
+      if (!isNaN(cinVal) && cinVal > 0) ts.ownedNodes[node.id].cinderOverride = cinVal;
+      else delete ts.ownedNodes[node.id].cinderOverride;
+      try { saveForge(); } catch (e) {}
+      try { _twSave(); } catch (e) {}
+      showToast(`✅ ${node.name} saved`, 2500);
+      render();
+    };
+  }
+
+  // ── Admin: delete node ──
+  const _admDelBtn = document.getElementById('tw-admin-del-btn');
+  if (_admDelBtn) {
+    _admDelBtn.onclick = () => {
+      const nid = App._twSelectedNode; if (!nid) return;
+      const tf = _twForge();
+      const node = tf.nodes.find(n => n.id === nid);
+      if (!confirm(`Delete "${node ? node.name : nid}"? This cannot be undone.`)) return;
+      tf.nodes = tf.nodes.filter(n => n.id !== nid);
+      tf.nodes.forEach(n => { n.connections = (n.connections || []).filter(c => c !== nid); });
+      App._twSelectedNode = null;
+      try { saveForge(); } catch (e) {}
+      showToast('🗑 Node deleted', 2500);
+      render();
+    };
+  }
+
+  // ── Admin: create new node ──
+  const _admNewBtn = document.getElementById('tw-admin-new-node');
+  if (_admNewBtn) {
+    _admNewBtn.onclick = () => {
+      const tf = _twForge();
+      const nextNum = tf.nodes.length + 1;
+      const newId = 'N-' + String(nextNum).padStart(2, '0');
+      tf.nodes.push({
+        id: newId,
+        name: 'NEW NODE ' + nextNum,
+        sectorId: (tf.sectors[0] && tf.sectors[0].id) || 'S-01',
+        type: 'PRN',
+        resourceYield: { FOOD: 5 },
+        quality: 1.0,
+        population: 100,
+        maxGuardSlots: 2,
+        baseClearsRequired: 1,
+        mapType: 'ruined-city',
+        difficulty: 'T1',
+        connections: [],
+        runModifiers: [],
+        position: { x: 50, y: 50 }
+      });
+      App._twSelectedNode = newId;
+      App._twNodeTab = 'admin';
+      try { saveForge(); } catch (e) {}
+      showToast(`✨ Created ${newId} — rename + position it in the ADMIN tab`, 3500);
+      render();
+    };
+  }
 }
 
 // 🎯 LIVE BATTLE ATTACK FLOW — launches the real battle engine using

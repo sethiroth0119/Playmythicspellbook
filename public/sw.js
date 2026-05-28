@@ -82,6 +82,10 @@
 //        8 catalog moves added (Dual Slice, Double Kick, Twin Strike,
 //        Fury Swipes, Bullet Seed, Pin Missile, Double Dragon, Rock Blast).
 //        Card Forge move editor gains Dual-Hit checkbox + min/max fields.
+// v44 — War Map admin node editor: ADMIN tab in node drawer (rename, reposition,
+//        edit yield JSON, set cinder override, delete). + New Node button in
+//        top bar creates a scaffolded node at 50,50 and opens admin tab.
+//        Cinder display uses selOwn.cinderOverride when set by admin.
 // v43 — War Map node click root-cause fix: App is const (not on window) so
 //        inline onclick="App..." silently failed. Added window._twSelectNode
 //        helper (window-scoped, accessible from inline handlers) + restored
@@ -107,7 +111,7 @@
 //        Sprite Atelier DEATH tab: _injectDeathSprite() plays death frames
 //        before renderBattle() removes the unit / shows tombstone.
 //        ANIMATION_TYPES now includes 'death'.
-const CACHE_VERSION = 'mythic-v43-' + Date.now().toString(36);
+const CACHE_VERSION = 'mythic-v44-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

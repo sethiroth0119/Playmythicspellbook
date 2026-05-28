@@ -86,6 +86,10 @@
 //        edit yield JSON, set cinder override, delete). + New Node button in
 //        top bar creates a scaffolded node at 50,50 and opens admin tab.
 //        Cinder display uses selOwn.cinderOverride when set by admin.
+// v45 — War Map admin UX: always show admin tab + New Node button (WM is already
+//        admin-gated); remove City Collapse / dark-events banner from WM page;
+//        fix node middle-click: background:rgba(0,0,0,0.001) forces paint layer
+//        so pointer-events hit-test reliably across the full button border-box.
 // v43 — War Map node click root-cause fix: App is const (not on window) so
 //        inline onclick="App..." silently failed. Added window._twSelectNode
 //        helper (window-scoped, accessible from inline handlers) + restored
@@ -111,7 +115,7 @@
 //        Sprite Atelier DEATH tab: _injectDeathSprite() plays death frames
 //        before renderBattle() removes the unit / shows tombstone.
 //        ANIMATION_TYPES now includes 'death'.
-const CACHE_VERSION = 'mythic-v44-' + Date.now().toString(36);
+const CACHE_VERSION = 'mythic-v45-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

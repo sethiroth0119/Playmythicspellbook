@@ -18740,7 +18740,7 @@
   .tw-node-marker {
     position: absolute;
     transform: translate(-50%, -50%);
-    background: none; border: none; padding: 8px 6px 8px;
+    background: rgba(0,0,0,0.001); border: none; padding: 8px 6px 8px;
     cursor: pointer; z-index: 8;
     display: flex; flex-direction: column; align-items: center;
     gap: 6px; pointer-events: auto;
@@ -127921,8 +127921,8 @@ function renderTerritoryWars() {
       ${objList.length ? `<div class="tw-nd-history-list">${objList.map(id=>{const def=TW_NODE_OBJECTIVES.find(o=>o.id===id);return `<div class="tw-nd-hist-row"><span class="tw-nd-hist-actor">${escapeHtml(def?`${def.icon} ${def.name}`:id)}</span></div>`;}).join('')}</div>` : '<div class="tw-nd-empty">Standard capture conditions.</div>'}
     `;
 
-    // Admin tab — only rendered for admins
-    const _isAdm = typeof isAdmin === 'function' && isAdmin();
+    // Admin tab — War Map is already admin-gated so always show admin controls
+    const _isAdm = true;
     const adminHtml = _isAdm ? `
       <div class="tw-nd-section-hdr">— NODE IDENTITY</div>
       <div class="tw-admin-field-row">
@@ -127993,7 +127993,6 @@ function renderTerritoryWars() {
   root.innerHTML = `
     <div class="territory-wars-page">
       ${_twFoundationBar}
-      ${_twDarkBanner}
       ${renderTerritoryPickerModal()}
       <div class="tw-top-bar">
         <button class="btn-secondary btn-mini" id="tw-back">← Battle Hall</button>
@@ -128004,7 +128003,7 @@ function renderTerritoryWars() {
           ).join('')}
         </div>
         <div class="tw-top-bar-corp" style="display:flex;align-items:center;gap:0.6rem">
-          ${typeof isAdmin === 'function' && isAdmin() ? `<button class="tw-new-node-btn" id="tw-admin-new-node">＋ New Node</button>` : ''}
+          <button class="tw-new-node-btn" id="tw-admin-new-node">＋ New Node</button>
           ${myCorp ? `🏢 ${escapeHtml(myCorp.name)}` : '<span style="color:#5b6772">No corporation — view only</span>'}
         </div>
       </div>

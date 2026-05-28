@@ -82,6 +82,11 @@
 //        8 catalog moves added (Dual Slice, Double Kick, Twin Strike,
 //        Fury Swipes, Bullet Seed, Pin Missile, Double Dragon, Rock Blast).
 //        Card Forge move editor gains Dual-Hit checkbox + min/max fields.
+// v42 — War Map node click area: .tw-node-marker::after pseudo-element
+//        covers the full button + 12px margin at z-index:9 so any click
+//        on/near the node (not just the 24px diamond) fires correctly.
+//        .tw-map-region overflow changed hidden->visible so edge nodes
+//        are not clip-blocked. padding-bottom added to button (8px).
 // v41 — War Map node full-button click: label pointer-events changed from
 //        none→auto; per-button onclick loop replaced with single delegated
 //        listener on #tw-map-canvas using e.target.closest('[data-tw-node]')
@@ -98,7 +103,7 @@
 //        Sprite Atelier DEATH tab: _injectDeathSprite() plays death frames
 //        before renderBattle() removes the unit / shows tombstone.
 //        ANIMATION_TYPES now includes 'death'.
-const CACHE_VERSION = 'mythic-v41-' + Date.now().toString(36);
+const CACHE_VERSION = 'mythic-v42-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

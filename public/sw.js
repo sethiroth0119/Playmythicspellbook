@@ -58,7 +58,13 @@
 //        rendered as inline SVG quadratic bezier paths. Region labels float above
 //        clusters. 16 starter PRNs get real x/y positions; one-time migration patch
 //        fixes existing 0,0-seeded nodes. No more _twPaintConnections() on render.
-const CACHE_VERSION = 'mythic-v33-2026-05-28';
+// v34 — Covert Actions mission debrief modal: collecting a returned squad now
+//        opens a styled mission-debrief modal showing squad roster, duration, and
+//        exact rewards earned instead of just a toast. CSS + handler included.
+//        Campaign node fix: _rlcAvailableNodeIds falls through to the union fallback
+//        when the current node has no forward connections, preventing soft-locks on
+//        final nodes with incomplete connection graphs.
+const CACHE_VERSION = 'mythic-v34-2026-05-28';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

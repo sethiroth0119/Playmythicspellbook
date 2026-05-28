@@ -7853,6 +7853,81 @@
   }
   .cr-mission-limit.is-locked { background: rgba(220,80,100,0.25); border-color: rgba(255,150,170,0.6); color: #ffb0b0; }
 
+  /* Mission debrief modal */
+  .cr-debrief-modal {
+    max-width: 460px; width: 92%;
+    padding: 0; overflow: hidden;
+    border: 1px solid rgba(155,224,196,0.45);
+    background: linear-gradient(160deg, rgba(10,22,18,0.98), rgba(8,14,26,0.98));
+  }
+  .cr-debrief-header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 20px 22px 14px;
+    border-bottom: 1px solid rgba(155,224,196,0.18);
+    background: rgba(30,60,48,0.35);
+  }
+  .cr-debrief-icon {
+    font-size: 2.2rem; line-height: 1; flex-shrink: 0;
+    filter: drop-shadow(0 0 12px rgba(155,224,196,0.6));
+  }
+  .cr-debrief-title {
+    font-family: 'JetBrains Mono','Consolas',monospace;
+    font-size: 0.58rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.18em;
+    color: rgba(155,224,196,0.70);
+    margin-bottom: 2px;
+  }
+  .cr-debrief-mission-name {
+    font-family: 'Cinzel', serif; font-weight: 700;
+    font-size: 1.15rem; color: #f3e7c8;
+  }
+  .cr-debrief-flavour {
+    padding: 10px 22px 8px;
+    font-size: 0.82rem; font-style: italic;
+    color: #8fa89a; line-height: 1.45;
+    border-bottom: 1px solid rgba(155,224,196,0.10);
+  }
+  .cr-debrief-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 22px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    font-size: 0.84rem;
+  }
+  .cr-debrief-label {
+    color: #a89878; font-weight: 700; white-space: nowrap; min-width: 80px;
+  }
+  .cr-debrief-val { color: #d8cdb8; }
+  .cr-debrief-units { display: flex; flex-wrap: wrap; gap: 6px; }
+  .cr-debrief-unit {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 8px 2px 4px;
+    background: rgba(212,175,55,0.10); border: 1px solid rgba(212,175,55,0.28);
+    border-radius: 4px; font-size: 0.78rem; color: #f3e7c8;
+  }
+  .cr-debrief-unit img {
+    width: 20px; height: 20px; object-fit: cover;
+    border-radius: 3px; border: 1px solid rgba(212,175,55,0.35);
+  }
+  .cr-debrief-unit-icon { font-size: 1rem; line-height: 1; }
+  .cr-debrief-reward-box {
+    margin: 12px 22px 14px;
+    padding: 12px 14px;
+    background: rgba(155,224,196,0.08);
+    border: 1px solid rgba(155,224,196,0.30);
+    border-radius: 8px;
+  }
+  .cr-debrief-reward-label {
+    font-family: 'JetBrains Mono','Consolas',monospace;
+    font-size: 0.60rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: rgba(155,224,196,0.60); margin-bottom: 5px;
+  }
+  .cr-debrief-reward-value {
+    font-size: 1.05rem; font-weight: 700;
+    color: #9be0c4;
+    text-shadow: 0 0 12px rgba(155,224,196,0.35);
+  }
+
   /* ====== 🜏 Dark Events — War Map banner ====== */
   .tw-dark-events-banner {
     margin: 0.55rem 0 0.8rem;
@@ -104346,14 +104421,19 @@ function _rlcAvailableNodeIds(camp, run) {
     } catch (e) { return ids; }
   };
   if (cur) {
-    return _heatGate((cur.connections || []).filter(id => !done.has(id) && _rlcNode(camp, id)));
+    const _next = _heatGate((cur.connections || []).filter(id => !done.has(id) && _rlcNode(camp, id)));
+    if (_next.length) return _next;
+    // cur node has no reachable forward connections — fall through to the
+    // union fallback below so an incompletely-wired map (or a dead-end
+    // branch) cannot permanently soft-lock an in-progress run.
   }
-  // Legacy fallback (run with no recorded current node): forward edges of
-  // completed nodes — kept so old in-progress runs don't soft-lock.
+  // Union fallback: every undone node reachable as a forward edge from ANY
+  // completed node. Used when there is no current node, OR when the current
+  // node's own forward connections are exhausted / missing.
   const avail = new Set();
   (run.completed || []).forEach(cidDone => {
     const dn = _rlcNode(camp, cidDone);
-    (dn && dn.connections || []).forEach(nid => { if (!done.has(nid)) avail.add(nid); });
+    (dn && dn.connections || []).forEach(nid => { if (!done.has(nid) && _rlcNode(camp, nid)) avail.add(nid); });
   });
   return _heatGate(Array.from(avail));
 }
@@ -106726,8 +106806,8 @@ function _covertCollect(missionInstanceId) {
   // Remove from active list.
   Profile.covertActions = list.filter(x => !x.collected);
   try { saveProfile(); } catch (e) {}
-  showToast(`🜂 ${m.missionName} complete: ${payout}`, 6500);
-  return true;
+  // Return the snapshot so the caller can show a results modal.
+  return { ...m };
 }
 
 function renderResistanceRing() {
@@ -106832,10 +106912,67 @@ function renderResistanceRing() {
         <div class="cr-section-title">🜂 Available Missions</div>
         <div class="cr-mission-list">${missionsHtml}</div>
       </div>
+      ${(() => {
+        const res = App._covertResult;
+        if (!res) return '';
+        // Resolve unit names + art for the debrief roster.
+        const unitChips = (res.unitIds || []).map(uid => {
+          try {
+            const c = (typeof lookupCustomCard === 'function') ? lookupCustomCard(uid) : null;
+            const art = (typeof getCardArt === 'function') ? getCardArt(uid) : null;
+            const name = c ? (c.name || uid) : uid;
+            const icon = c ? (c.icon || '🪖') : '🪖';
+            return art
+              ? `<span class="cr-debrief-unit"><img src="${escapeHtml(art)}" alt="">${escapeHtml(name)}</span>`
+              : `<span class="cr-debrief-unit"><span class="cr-debrief-unit-icon">${icon}</span>${escapeHtml(name)}</span>`;
+          } catch(e) { return `<span class="cr-debrief-unit">🪖 ${escapeHtml(uid)}</span>`; }
+        }).join('');
+        const durMs = (res.endsAt || 0) - (res.startedAt || 0);
+        const durH  = Math.floor(durMs / 3600000);
+        const durM  = Math.floor((durMs % 3600000) / 60000);
+        const durStr = durH > 0 ? `${durH}h ${durM}m` : `${durM}m`;
+        // Determine success flavour by mission type.
+        const flavour = {
+          cv_resource: 'Cache located and stripped clean. Assets secured.',
+          cv_intel:    'Surveillance complete. Intelligence extracted.',
+          cv_cardhunt: 'Archives swept. Something useful recovered.',
+          cv_recruit:  'Contacts made. Networks expanded.',
+        }[res.missionId] || 'Squad returned safely.';
+        return `
+          <div class="modal-backdrop" id="cr-debrief-bd" style="z-index:1400">
+            <div class="ds-modal cr-debrief-modal">
+              <div class="cr-debrief-header">
+                <span class="cr-debrief-icon">${escapeHtml(res.missionIcon || '🜂')}</span>
+                <div>
+                  <div class="cr-debrief-title">Mission Debrief</div>
+                  <div class="cr-debrief-mission-name">${escapeHtml(res.missionName || 'Covert Action')}</div>
+                </div>
+              </div>
+              <div class="cr-debrief-flavour">${escapeHtml(flavour)}</div>
+              <div class="cr-debrief-row">
+                <span class="cr-debrief-label">⏱ Duration</span>
+                <span class="cr-debrief-val">${escapeHtml(durStr)}</span>
+              </div>
+              <div class="cr-debrief-row">
+                <span class="cr-debrief-label">🪖 Squad</span>
+                <span class="cr-debrief-units">${unitChips}</span>
+              </div>
+              <div class="cr-debrief-reward-box">
+                <div class="cr-debrief-reward-label">📦 Rewards Collected</div>
+                <div class="cr-debrief-reward-value">${escapeHtml(res.reward || 'No reward data.')}</div>
+              </div>
+              <button class="btn-primary" id="cr-debrief-close" style="width:100%;margin-top:4px">✓ Acknowledged</button>
+            </div>
+          </div>`;
+      })()}
     </div>
   `;
   document.getElementById('app').innerHTML = html;
   document.getElementById('cr-back').onclick = () => { App.screen = 'camp'; render(); };
+  const _debriefClose = document.getElementById('cr-debrief-close');
+  if (_debriefClose) _debriefClose.onclick = () => { App._covertResult = null; render(); };
+  const _debriefBd = document.getElementById('cr-debrief-bd');
+  if (_debriefBd) _debriefBd.onclick = (e) => { if (e.target === _debriefBd) { App._covertResult = null; render(); } };
   document.querySelectorAll('[data-cv-pick]').forEach(b => b.onclick = () => {
     const id = b.dataset.cvPick;
     const arr = App._covertPicked = App._covertPicked || [];
@@ -106854,7 +106991,8 @@ function renderResistanceRing() {
     }
   });
   document.querySelectorAll('[data-cv-collect]').forEach(b => b.onclick = () => {
-    if (_covertCollect(b.dataset.cvCollect)) render();
+    const _res = _covertCollect(b.dataset.cvCollect);
+    if (_res) { App._covertResult = _res; render(); }
   });
   // Live-tick the bars + READY badge.
   if (!App._crTickInterval) {

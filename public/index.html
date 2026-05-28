@@ -19065,6 +19065,10 @@
   .tw-admin-del-btn:hover { background:rgba(184,78,44,0.35); }
   .tw-new-node-btn { background:rgba(108,212,255,0.10); border:1px solid rgba(108,212,255,0.28); color:#6cd4ff; padding:3px 10px; border-radius:3px; cursor:pointer; font-size:0.60rem; letter-spacing:0.10em; font-family:'JetBrains Mono',monospace; }
   .tw-new-node-btn:hover { background:rgba(108,212,255,0.22); }
+  .tw-admin-lit-btn { flex:0 0 auto; padding:3px 10px; border-radius:3px; cursor:pointer; font-size:0.68rem; font-family:'JetBrains Mono',monospace; background:rgba(60,60,60,0.3); border:1px solid rgba(90,90,90,0.5); color:#7a8a9a; transition:all 0.15s; }
+  .tw-admin-lit-btn:hover { background:rgba(255,207,90,0.12); border-color:rgba(255,207,90,0.4); color:#ffcf5a; }
+  .tw-admin-lit-btn.is-lit { background:rgba(255,207,90,0.18); border-color:rgba(255,207,90,0.6); color:#ffe880; }
+  .tw-admin-lit-btn.is-lit:hover { background:rgba(255,207,90,0.30); }
   .tw-drawer-head {
     border-bottom: 1px solid rgba(35,44,54,0.85);
     padding: 0.9rem 1rem 0.75rem; position: relative; flex-shrink: 0;
@@ -127516,6 +127520,10 @@ function renderTerritoryWars() {
   }).join('');
 
   // Supply-line SVG routes using node.position percentages as SVG viewBox coords.
+  // Admin-lit routes: Forge.territoryWars.litRoutes is an array of "nodeA|nodeB"
+  // keys (sorted) that force the frontier (glowing yellow) class regardless of
+  // ownership. Toggled from the node drawer ADMIN tab and persisted via saveForge().
+  const _litRouteSet = new Set(Array.isArray(t.litRoutes) ? t.litRoutes : []);
   const _routeById = {};
   for (const n of t.nodes) _routeById[n.id] = n;
   const _seenRoutes = new Set();
@@ -127539,7 +127547,9 @@ function renderTerritoryWars() {
       const ownA = st.ownedNodes[n.id];
       const ownB = st.ownedNodes[cid];
       let cls = '';
-      if (ownA && ownB) {
+      if (_litRouteSet.has(key)) {
+        cls = 'frontier'; // admin-forced glow
+      } else if (ownA && ownB) {
         const same = ownA.ownerCorpId === ownB.ownerCorpId;
         if (same && myCorp && ownA.ownerCorpId === myCorp.id) cls = 'allied';
         else if (same) cls = 'enemy';
@@ -127547,22 +127557,39 @@ function renderTerritoryWars() {
       } else if (ownA || ownB) {
         cls = 'frontier';
       }
-      // Give lit routes an ID so trucks can reference them via <mpath>
+      // Give lit routes an ID so trucks can reference them via <mpath>.
+      // Normalise path direction: always left→right so rotate="auto" never
+      // produces a θ > 90° tangent that would flip the truck upside-down.
       let idAttr = '';
       if ((cls === 'frontier' || cls === 'allied') && _truckRoutes.length < _MAX_TRUCKS) {
+        // Left-to-right normalisation: swap endpoints so truck travels toward +X.
+        const [sP, eP] = pA.x <= pB.x ? [pA, pB] : [pB, pA];
+        const nMidX = ((sP.x + eP.x) / 2 + 1.5).toFixed(2);
+        const nMidY = ((sP.y + eP.y) / 2 - 1.5).toFixed(2);
         const rid = 'tw-r-' + _litRouteIdx++;
         idAttr = ` id="${rid}"`;
-        // Stagger truck durations so they never all arrive at the same moment
+        // Stagger durations so trucks desync over time
         const dur = 14 + _truckRoutes.length * 4; // 14 / 18 / 22 / 26 s
-        _truckRoutes.push({ id: rid, dur });
+        _truckRoutes.push({ id: rid, dur, sP, eP, nMidX, nMidY });
       }
-      _routePaths += `<path d="M ${pA.x} ${pA.y} Q ${midX} ${midY} ${pB.x} ${pB.y}"${idAttr}${cls ? ` class="${cls}"` : ''}/>`;
+      // NOTE: idAttr intentionally NOT applied to visible route — truck guide paths
+      // (hidden, below) carry the IDs so there are no duplicate-ID conflicts.
+      _routePaths += `<path d="M ${pA.x} ${pA.y} Q ${midX} ${midY} ${pB.x} ${pB.y}"${cls ? ` class="${cls}"` : ''}/>`;
     }
   }
+  // Hidden left-to-right guide paths that trucks follow via <mpath>.
+  // (we computed them above but stored them separately to avoid rewriting the
+  //  visible route path which has the original direction for visual consistency).
+  // We inject hidden duplicate <path> elements that trucks follow.
+  const _truckGuidePaths = _truckRoutes.map(r =>
+    `<path id="${r.id}" d="M ${r.sP.x} ${r.sP.y} Q ${r.nMidX} ${r.nMidY} ${r.eP.x} ${r.eP.y}" fill="none" stroke="none" visibility="hidden"/>`
+  ).join('');
 
   // Animated convoy trucks — one per lit route (military side-profile, cab at +X).
-  // rotate="auto" keeps the cab facing the direction of travel at all times.
-  // keyPoints="0;1;0" drives A→B then B→A endlessly (back-and-forth convoy).
+  // ONE-DIRECTION only (A→B loop) so rotate="auto" never flips the truck upside-down.
+  // The path definition normalises direction so trucks always travel left-to-right,
+  // keeping the tangent angle < 90° so LOCAL+Y points down = wheels at screen-bottom.
+  // A soft fade-out near the end masks the teleport back to the start of the route.
   const _truckSVG = (rid, dur) => `<g>
     <rect x="-1.5" y="-0.52" width="3.0" height="1.12" rx="0.22" fill="#3a4e1e" stroke="#19280d" stroke-width="0.1"/>
     <rect x="0.22" y="-0.52" width="1.28" height="1.12" rx="0.2"  fill="#4a6028" stroke="#19280d" stroke-width="0.1"/>
@@ -127575,15 +127602,15 @@ function renderTerritoryWars() {
     <ellipse cx="0.88"  cy="0.63" rx="0.27" ry="0.21" fill="#111" stroke="#444" stroke-width="0.06"/>
     <circle cx="-1.52" cy="-0.3" r="0.09" fill="#aaa" opacity="0.6"/>
     <circle cx="-1.68" cy="-0.45" r="0.07" fill="#999" opacity="0.35"/>
-    <animateMotion dur="${dur}s" repeatCount="indefinite" rotate="auto"
-      calcMode="spline"
-      keyPoints="0;1;0" keyTimes="0;0.47;1"
-      keySplines="0.4 0 0.6 1;0.4 0 0.6 1">
+    <animate attributeName="opacity" dur="${dur}s" repeatCount="indefinite"
+      values="0;1;1;0;0" keyTimes="0;0.05;0.88;0.96;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"/>
+    <animateMotion dur="${dur}s" repeatCount="indefinite" rotate="auto">
       <mpath href="#${rid}"/>
     </animateMotion>
   </g>`;
 
-  const _twCanvasRoutes = `<svg class="tw-map-routes" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}${_truckRoutes.map(r => _truckSVG(r.id, r.dur)).join('')}</svg>`;
+  const _twCanvasRoutes = `<svg class="tw-map-routes" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}${_truckGuidePaths}${_truckRoutes.map(r => _truckSVG(r.id, r.dur)).join('')}</svg>`;
 
   // Node markers — absolutely positioned diamonds.
   const _twCanvasMarkers = t.nodes.filter(filtered).map(n => {
@@ -128011,6 +128038,20 @@ function renderTerritoryWars() {
         <input class="tw-admin-input tw-admin-input-sm" id="tw-admin-cinder" type="number" min="0" value="${(selOwn && selOwn.cinderOverride) ? selOwn.cinderOverride : ''}" placeholder="auto">
         <span style="font-size:0.58rem;color:#5b6772;margin-left:4px">blank = synthetic</span>
       </div>
+      <div class="tw-nd-section-hdr">— LIT ROUTES ⚡</div>
+      <div style="padding:0 0.75rem 0.5rem;font-size:0.60rem;color:#5b6772;line-height:1.5">Toggle which supply lines glow + carry convoy trucks. Changes save instantly.</div>
+      ${(Array.isArray(selNode.connections) && selNode.connections.length)
+        ? selNode.connections.map(cid => {
+            const nb = t.nodes.find(x => x.id === cid);
+            const rkey = [selNode.id, cid].sort().join('|');
+            const isLit = _litRouteSet.has(rkey);
+            return `<div class="tw-admin-field-row">
+              <label class="tw-admin-label" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(nb ? nb.name : cid)}</label>
+              <button class="tw-admin-lit-btn${isLit ? ' is-lit' : ''}" data-tw-lit-key="${escapeHtml(rkey)}">${isLit ? '⚡ Lit' : '○ Unlit'}</button>
+            </div>`;
+          }).join('')
+        : '<div class="tw-nd-empty" style="padding:0.4rem 0.75rem">No connections on this node yet.</div>'
+      }
       <div class="tw-admin-btn-row">
         <button class="tw-admin-save-btn" id="tw-admin-save-btn">💾 Save Changes</button>
         <button class="tw-admin-del-btn" id="tw-admin-del-btn">🗑 Delete</button>
@@ -128221,6 +128262,20 @@ function renderTerritoryWars() {
       render();
     };
   }
+
+  // ── Admin: toggle lit routes ──
+  document.querySelectorAll('[data-tw-lit-key]').forEach(btn => {
+    btn.onclick = () => {
+      const key = btn.dataset.twLitKey; if (!key) return;
+      const tf = _twForge();
+      if (!Array.isArray(tf.litRoutes)) tf.litRoutes = [];
+      const idx = tf.litRoutes.indexOf(key);
+      if (idx >= 0) tf.litRoutes.splice(idx, 1);
+      else tf.litRoutes.push(key);
+      try { saveForge(); } catch (e) {}
+      render();
+    };
+  });
 
   // ── Admin: create new node ──
   const _admNewBtn = document.getElementById('tw-admin-new-node');

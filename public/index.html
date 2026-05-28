@@ -5070,6 +5070,101 @@
     z-index: 5;
   }
   .hand-card:disabled { opacity: 0.55; cursor: not-allowed; filter: grayscale(0.5); }
+
+  /* ✨ HOLOGRAPHIC CARD EFFECT ✨
+     A subtle prismatic shimmer painted over each hand card. Two layered
+     pseudo-elements:
+       • ::before — diagonal rainbow conic-gradient with screen blend
+         (the "iridescent foil" pass)
+       • ::after  — radial highlight that tracks the cursor via --mx/--my
+         (the "wet sheen" pass)
+     Both are positioned absolute / pointer-events:none so they don't
+     interfere with the underlying frame art or clicks.
+     Rarity tier scales the intensity — common cards show a hint, mythic
+     cards shimmer prominently. Hover boosts the effect ~2× across all
+     rarities to give the player tactile feedback.
+     Honors prefers-reduced-motion: the conic gradient stops rotating
+     for users who opt out of motion. */
+  .hand-card {
+    /* Default holo strength — overridden by data-rarity below. Range 0..1. */
+    --holo-strength: 0.18;
+    /* Mouse position percentages, defaulting to center. JS updates these on
+       pointermove (see hand-strip pointermove handler). */
+    --mx: 50%;
+    --my: 50%;
+  }
+  .hand-card[data-rarity="common"]    { --holo-strength: 0.10; }
+  .hand-card[data-rarity="uncommon"]  { --holo-strength: 0.18; }
+  .hand-card[data-rarity="rare"]      { --holo-strength: 0.32; }
+  .hand-card[data-rarity="epic"]      { --holo-strength: 0.46; }
+  .hand-card[data-rarity="legendary"] { --holo-strength: 0.60; }
+  .hand-card[data-rarity="mythic"]    { --holo-strength: 0.75; }
+
+  .hand-card::before,
+  .hand-card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: var(--holo-strength);
+    transition: opacity 220ms ease;
+    /* Stay clipped to the card's rounded frame so the holo doesn't leak. */
+    -webkit-mask-image: url('assets/Frames/unit%20card.png?v=4');
+    -webkit-mask-size: 100% 100%;
+    -webkit-mask-repeat: no-repeat;
+            mask-image: url('assets/Frames/unit%20card.png?v=4');
+            mask-size: 100% 100%;
+            mask-repeat: no-repeat;
+  }
+  /* Iridescent foil — conic rainbow blended onto the card art. */
+  .hand-card::before {
+    background:
+      conic-gradient(from 210deg at 50% 50%,
+        rgba(255, 80, 120, 0.55),
+        rgba(255, 200, 80, 0.45),
+        rgba(120, 255, 180, 0.45),
+        rgba(80, 180, 255, 0.55),
+        rgba(180, 120, 255, 0.55),
+        rgba(255, 80, 120, 0.55));
+    mix-blend-mode: color-dodge;
+    filter: saturate(1.2) blur(2px);
+    animation: holo-spin 8s linear infinite;
+    z-index: 2;
+  }
+  /* Wet sheen — radial highlight that follows the cursor. */
+  .hand-card::after {
+    background:
+      radial-gradient(circle at var(--mx) var(--my),
+        rgba(255, 255, 255, 0.55) 0%,
+        rgba(255, 255, 255, 0.16) 18%,
+        rgba(255, 255, 255, 0.00) 42%),
+      linear-gradient(120deg,
+        transparent 30%,
+        rgba(255, 255, 255, 0.22) 48%,
+        rgba(255, 255, 255, 0.00) 65%);
+    mix-blend-mode: overlay;
+    z-index: 3;
+  }
+  /* Hover boost — about 2× the strength + adds saturation. */
+  .hand-card:hover:not(:disabled)::before,
+  .hand-card:hover:not(:disabled)::after,
+  .hand-card.selected::before,
+  .hand-card.selected::after {
+    opacity: calc(var(--holo-strength) * 2);
+  }
+  /* Disabled cards drop the holo so they read as inert. */
+  .hand-card:disabled::before,
+  .hand-card:disabled::after { opacity: 0; }
+
+  @keyframes holo-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hand-card::before { animation: none; }
+  }
+
   .hand-card.selected {
     transform: translateY(-32px) scale(1.2);
     filter: drop-shadow(0 0 16px var(--gold-bright)) drop-shadow(0 0 30px rgba(212,175,55,0.7));
@@ -73683,7 +73778,7 @@ function _renderBattleImmediate() {
       ${App.replayViewing ? '' : renderCounterPrompt()}
       ${App.replayViewing ? '' : renderDeckSearchModal()}
       ${App.replayViewing ? '' : renderFusionSelectionOverlay()}
-      ${App.replayViewing ? '' : renderPolycreationCinematic()}
+      ${(App.replayViewing || (App.flags && App.flags.pixiBoard)) ? '' : renderPolycreationCinematic()}
       ${App.replayViewing ? '' : renderHackPrompt()}
       ${App.replayViewing ? '' : renderGameModeSummary()}
       ${App.replayViewing ? '' : renderEventModal()}
@@ -77296,7 +77391,7 @@ function renderHandCard(c, opts) {
     ? renderIcon('u_' + c.id, c.icon, 'fill')
     : `<span class="hand-card-glyph">${c.icon}</span>`;
   return `
-    <button class="hand-card ${isSel ? 'selected' : ''} type-${c.type} ${sizeClass}" data-card="${c.instanceId}" ${enabled ? '' : 'disabled'}>
+    <button class="hand-card ${isSel ? 'selected' : ''} type-${c.type} ${sizeClass}" data-card="${c.instanceId}" data-rarity="${escapeHtml(String(c.rarity || 'common').toLowerCase())}" ${enabled ? '' : 'disabled'}>
       ${levelBadge}
       <div class="hand-card-icon">${iconInner}</div>
       <div class="hand-card-name">${escapeHtml(c.name)}</div>
@@ -78051,6 +78146,22 @@ function bindBattleEvents() {
       App.ui.selectedUnitId = null;
       App.ui.modalUnitId = null;
       renderBattle();
+    };
+    // ✨ Holographic mouse tracking — update --mx/--my CSS vars so the
+    // wet-sheen radial gradient (see .hand-card::after) follows the
+    // cursor. pointermove on the card itself (not the strip) so we get
+    // accurate coords relative to the card's box without parent math.
+    el.onpointermove = (e) => {
+      const r = el.getBoundingClientRect();
+      const mx = ((e.clientX - r.left) / r.width) * 100;
+      const my = ((e.clientY - r.top) / r.height) * 100;
+      el.style.setProperty('--mx', mx + '%');
+      el.style.setProperty('--my', my + '%');
+    };
+    el.onpointerleave = () => {
+      // Snap back to center so the next hover starts from a clean state.
+      el.style.removeProperty('--mx');
+      el.style.removeProperty('--my');
     };
   });
 
@@ -84991,8 +85102,10 @@ function renderMarketStock() {
   // Order factions by combined activity (used + sold) descending so the busiest
   // tickers appear at the top — just like a "most active" stock list.
   const _factionScore = (fid) => (factionUsage[fid] || 0) + (factionSold[fid] || 0) * 3;
+  // Always show every faction (even with 0 activity) so the stock screen is
+  // populated for new players. Active factions naturally sort to the top via
+  // _factionScore; idle ones appear at the bottom with 0 counts.
   const factionOrder = [...FACTIONS.map(f => f.id), 'other']
-    .filter(fid => (factionUsage[fid] || 0) > 0 || (factionSold[fid] || 0) > 0)
     .sort((a, b) => _factionScore(b) - _factionScore(a));
   const factionIconFor = (fid) => {
     if (fid === 'other') return '❔';

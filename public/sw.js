@@ -69,7 +69,10 @@
 //        height instead of 16:9, overflow:visible so edge labels show, stage
 //        stretches, side-pane scrolls. Routes use visible teal dashes. Region
 //        labels use larger type with opacity. Cache bust forced.
-const CACHE_VERSION = 'mythic-v35-' + Date.now().toString(36);
+// v36 — Crash Exchange Stock tab always populated: removed the factionOrder
+//        that required activity > 0, so all factions show at launch (new players
+//        no longer see blank ticker). Active factions sort to top by score.
+const CACHE_VERSION = 'mythic-v36-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

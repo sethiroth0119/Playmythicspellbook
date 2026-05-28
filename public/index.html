@@ -49,6 +49,9 @@
 <!-- Ambient registry — board-wide weather-driven particles (rain, snow, embers,
      sand, fog). MSPixiAmbient.register(kind, factory) for custom ambients. -->
 <script src="/pixi/pixi-ambient.js" defer></script>
+<!-- Decal registry — persistent ground residue (bloodstain, scorch, footprint).
+     MSPixiDecals.register(kind, factory) for custom decals. -->
+<script src="/pixi/pixi-decals.js" defer></script>
 <script src="/pixi/pixi-board.js" defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18497,6 +18500,165 @@
   .tw-feed-line.tw-feed-collect { border-left-color: #a3d977; }
   .tw-feed-line.tw-feed-upgrade { border-left-color: #ffd166; }
   .tw-feed-line.tw-feed-decay   { border-left-color: #c878c8; }
+  /* ================================================================ */
+
+  /* ================================================================
+     🗺 WAR MAP CANVAS LAYOUT (v33) — diamond node markers on map
+     ================================================================ */
+  .tw-map-canvas {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    min-height: 360px;
+    overflow: hidden;
+    border-radius: 6px;
+    background-image:
+      linear-gradient(180deg, rgba(8,5,14,0.50) 0%, rgba(8,5,14,0.18) 38%, rgba(8,5,14,0.28) 62%, rgba(8,5,14,0.60) 100%),
+      url('assets/background/Backgrounds/warmap.png');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    border: 1px solid rgba(108,212,255,0.14);
+  }
+
+  /* Supply-line SVG routes — z below markers */
+  .tw-map-routes {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    z-index: 3; pointer-events: none;
+    overflow: visible;
+  }
+  .tw-map-routes path {
+    fill: none; stroke: #3e3e58; stroke-width: 0.8;
+    stroke-dasharray: 3 4; opacity: 0.65;
+  }
+  .tw-map-routes path.allied  { stroke: #6cd4ff; stroke-dasharray: none;  opacity: 0.82; stroke-width: 1.1; }
+  .tw-map-routes path.enemy   { stroke: #b888ff; stroke-dasharray: none;  opacity: 0.78; stroke-width: 1.0; }
+  .tw-map-routes path.contest { stroke: #e25555; stroke-dasharray: 5 3;   opacity: 0.82; stroke-width: 1.0; }
+  .tw-map-routes path.frontier{ stroke: #ffcf5a; stroke-dasharray: 6 4;   opacity: 0.72; }
+  .tw-map-routes path.broken  { stroke: #5a3030; stroke-dasharray: 2 6;   opacity: 0.50; }
+
+  /* Floating region labels */
+  .tw-map-region-label {
+    position: absolute; z-index: 5; pointer-events: none;
+    font-family: 'JetBrains Mono','Consolas',monospace;
+    font-size: 0.53rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.15em;
+    text-shadow: 0 1px 5px rgba(0,0,0,0.95), 0 0 14px rgba(0,0,0,0.7);
+    transform: translate(-50%, 0);
+    white-space: nowrap;
+    border-bottom: 1px solid rgba(212,175,55,0.22);
+    padding-bottom: 2px;
+  }
+
+  /* Node marker — absolutely positioned button on the canvas */
+  .tw-node-marker {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    background: none; border: none; padding: 6px 4px 2px;
+    cursor: pointer; z-index: 8;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 5px;
+    --node-color: #7a7a82;
+  }
+  .tw-node-marker:focus { outline: none; }
+
+  /* Diamond core shape */
+  .tw-node-diamond {
+    width: 14px; height: 14px;
+    background: var(--node-color, #7a7a82);
+    transform: rotate(45deg);
+    border-radius: 2px;
+    box-shadow:
+      0 0 8px var(--node-color, #7a7a82),
+      0 0 18px var(--node-color, #7a7a82),
+      inset 0 0 5px rgba(255,255,255,0.18);
+    transition: box-shadow 0.18s, transform 0.14s;
+    position: relative; flex-shrink: 0;
+  }
+  .tw-node-marker:hover .tw-node-diamond,
+  .tw-node-marker.is-selected .tw-node-diamond {
+    transform: rotate(45deg) scale(1.35);
+    box-shadow:
+      0 0 14px var(--node-color, #7a7a82),
+      0 0 30px var(--node-color, #7a7a82),
+      inset 0 0 6px rgba(255,255,255,0.28);
+  }
+
+  /* Node label below the diamond */
+  .tw-node-marker-label {
+    display: flex; flex-direction: column; align-items: center;
+    text-align: center; pointer-events: none;
+    line-height: 1.25; white-space: nowrap;
+  }
+  .tw-node-marker-label .name {
+    font-family: 'JetBrains Mono','Consolas',monospace;
+    font-size: 0.54rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.09em;
+    color: rgba(220,208,172,0.95);
+    text-shadow: 0 1px 5px rgba(0,0,0,0.98), 0 0 10px rgba(0,0,0,0.75);
+  }
+  .tw-node-marker-label .id {
+    font-family: 'JetBrains Mono','Consolas',monospace;
+    font-size: 0.44rem; letter-spacing: 0.06em;
+    color: rgba(165,148,110,0.72);
+    text-shadow: 0 1px 4px rgba(0,0,0,0.95);
+  }
+  .tw-node-marker.is-selected .tw-node-marker-label .name { color: #ffd166; }
+
+  /* Pulse ring on selected / thriving nodes */
+  .tw-node-marker-pulse {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 26px; height: 26px;
+    margin-top: -6px; /* offset for label space below */
+    transform: translate(-50%, -50%) rotate(45deg);
+    border: 1px solid var(--node-color, #7a7a82);
+    border-radius: 3px;
+    opacity: 0; pointer-events: none;
+    animation: tw-marker-pulse 3.2s ease-out infinite;
+    z-index: -1;
+  }
+  @keyframes tw-marker-pulse {
+    0%  { opacity: 0.72; transform: translate(-50%,-50%) rotate(45deg) scale(1.0); }
+    75% { opacity: 0;    transform: translate(-50%,-50%) rotate(45deg) scale(1.9); }
+    100%{ opacity: 0;    transform: translate(-50%,-50%) rotate(45deg) scale(1.9); }
+  }
+
+  /* Attack badge on the diamond */
+  .tw-node-marker.is-attacking .tw-node-diamond::after {
+    content: '⚔';
+    position: absolute; top: -16px; right: -12px;
+    font-size: 0.62rem; line-height: 1;
+    transform: rotate(-45deg);
+    animation: tw-wm-dot-pulse 0.9s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  /* Event badge */
+  .tw-node-event-badge {
+    position: absolute; top: -4px; right: -8px;
+    width: 13px; height: 13px;
+    background: var(--tw-arc, #6655c4);
+    color: #fff; font-size: 0.55rem; font-weight: 900;
+    display: flex; align-items: center; justify-content: center;
+    transform: rotate(-45deg); border-radius: 2px;
+    pointer-events: none; z-index: 2;
+  }
+
+  /* State color overrides on canvas markers */
+  .tw-node-marker[data-tw-state="thriving"]  { --node-color: var(--tw-moss,  #4d9e68); }
+  .tw-node-marker[data-tw-state="stable"]    { --node-color: var(--tw-steel, #4e7ea8); }
+  .tw-node-marker[data-tw-state="strained"]  { --node-color: var(--tw-amber, #c89428); }
+  .tw-node-marker[data-tw-state="failing"]   { --node-color: var(--tw-rust,  #b84e2c); }
+  .tw-node-marker[data-tw-state="collapsing"]{ --node-color: var(--tw-blood, #891c1e); }
+  .tw-node-marker[data-tw-state="neutral"]   { --node-color: #7a7a82; }
+  .tw-node-marker[data-tw-state="event"]     { --node-color: var(--tw-arc,   #6655c4); }
+
+  /* Collapsing markers flicker */
+  .tw-node-marker[data-tw-state="collapsing"] .tw-node-diamond {
+    animation: tw-wm-node-flicker 1.6s ease-in-out infinite;
+  }
   /* ================================================================ */
 
   /* 🗺️ Roguelite map — the campaign-map background fills the ENTIRE viewport
@@ -46438,6 +46600,7 @@ function getSettings() {
       colorBlindPalette: false,
       logFilters: { showDamage: true, showEffects: true, showPlaysHeals: true, searchText: '' },
       aiDifficulty: 'normal',   // 'easy' | 'normal' | 'hard'
+      pixiBoard: false,         // 🎮 WebGL board renderer (experimental hybrid Pixi port)
     };
   }
   if (!Profile.settings.logFilters) {
@@ -46446,6 +46609,17 @@ function getSettings() {
   // Backfill aiDifficulty on existing profiles
   if (typeof Profile.settings.aiDifficulty !== 'string') {
     Profile.settings.aiDifficulty = 'normal';
+  }
+  // Backfill pixiBoard on existing profiles (introduced after the hybrid
+  // Pixi renderer landed — older saves don't have the field).
+  if (typeof Profile.settings.pixiBoard !== 'boolean') {
+    Profile.settings.pixiBoard = false;
+  }
+  // Mirror the saved preference into the live App.flags every read so the
+  // first call after auth-load picks it up. App.flags is the source of truth
+  // for renderBoard() — Profile.settings is just the persistence layer.
+  if (typeof App !== 'undefined' && App.flags) {
+    App.flags.pixiBoard = !!Profile.settings.pixiBoard;
   }
   return Profile.settings;
 }
@@ -73378,8 +73552,8 @@ function _renderBattleImmediate() {
 
       ${App.replayViewing ? '' : renderUnitModal()}
       ${App.replayViewing ? '' : renderCardDetailModal()}
-      ${App.replayViewing ? '' : renderBattleAnim()}
-      ${App.replayViewing ? '' : renderHeroUltCinematic()}
+      ${(App.replayViewing || (App.flags && App.flags.pixiBoard)) ? '' : renderBattleAnim()}
+      ${(App.replayViewing || (App.flags && App.flags.pixiBoard)) ? '' : renderHeroUltCinematic()}
       ${App.replayViewing ? '' : renderCounterPrompt()}
       ${App.replayViewing ? '' : renderDeckSearchModal()}
       ${App.replayViewing ? '' : renderFusionSelectionOverlay()}
@@ -89287,6 +89461,22 @@ function renderSettings() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">🎮 WebGL Board Renderer <span class="ink-dim small-text">— experimental</span></div>
+        <div class="settings-section-desc">
+          Switches the battlefield to a GPU-accelerated renderer. Adds smooth movement tweens,
+          particle attack VFX (projectile + impact burst, crit shockwave), floating damage numbers,
+          looping status overlays (burn, poison, frozen, etc.), weather-driven ambient particles,
+          AI movement trails, and persistent ground decals (bloodstains, scorch marks, footprints).
+          The classic DOM renderer remains available — toggle this off any time if anything misbehaves.
+        </div>
+        <label class="settings-toggle">
+          <input type="checkbox" id="set-pixi-board" ${st.pixiBoard ? 'checked' : ''}>
+          <span class="settings-toggle-slider"></span>
+          <span class="settings-toggle-label">${st.pixiBoard ? 'On — WebGL board with particle VFX' : 'Off — classic DOM board'}</span>
+        </label>
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🖥 Display · Fullscreen</div>
         <div class="settings-section-desc">Toggle fullscreen for an immersive game window — removes browser UI. Keyboard shortcut <kbd>F</kbd> still works at any time. (Moved here from the top-left toolbar.)</div>
         <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-top:0.5rem">
@@ -89565,6 +89755,20 @@ function renderSettings() {
 
   const skipEl = document.getElementById('set-skip-empty');
   if (skipEl) skipEl.onchange = () => { st.skipEmptyTurns = !!skipEl.checked; saveProfile(); render(); };
+
+  // 🎮 WebGL board renderer toggle — persists the preference and mirrors
+  // it into App.flags.pixiBoard (the live source of truth that renderBoard()
+  // reads). When toggled from the in-battle settings screen (App._settingsReturnScreen
+  // === 'battle'), we don't need to push a renderBattle() here because
+  // returning to the battle screen will re-run renderBoard() with the new flag.
+  const pixiEl = document.getElementById('set-pixi-board');
+  if (pixiEl) pixiEl.onchange = () => {
+    const on = !!pixiEl.checked;
+    st.pixiBoard = on;
+    if (App.flags) App.flags.pixiBoard = on;
+    saveProfile();
+    render();
+  };
 
   // 🖥 Fullscreen toggle — replaces the removed top-left toolbar chip.
   // Calls window.FS.toggle() (initialized in the early-boot helper block)
@@ -125153,6 +125357,14 @@ function _twSeedStarterData() {
     { n: 'VEINSHEAR',    s: 2, r: 'CRYSTAL' },
     { n: 'LAST WICK',    s: 3, r: 'RELIC'   },
   ];
+  // Real map positions matching the standalone War Map's regional layout.
+  // ASH region (NW) → TIDE (N-centre) → COAL (NE)
+  // HOLL region (SW) → RUST (S-centre) → GLAS (SE)
+  const _nodePos = [
+    {x:12,y:22},{x:38,y:18},{x:66,y:20},{x:16,y:54},{x:42,y:52},{x:70,y:56},
+    {x:22,y:34},{x:50,y:26},{x:78,y:24},{x:26,y:66},{x:56,y:66},{x:82,y:64},
+    {x:30,y:42},{x:44,y:36},{x:86,y:35},{x:18,y:76},
+  ];
   t.nodes = _nodeDefs.map((d, i) => ({
     id: 'N-' + String(i + 1).padStart(2, '0'),
     name: d.n,
@@ -125166,7 +125378,7 @@ function _twSeedStarterData() {
     runModifiers: [], runModifierPool: [], runModifierCount: 0,
     rewardTable: [], enemyPool: [], guardDeckPool: [],
     tileLayout: '', turnLimit: 0, victoryConditions: [], specialRules: [],
-    position: { x: 0, y: 0 },
+    position: _nodePos[i] ? { ..._nodePos[i] } : { x: 10, y: 10 },
   }));
   // Supply-line connections from the standalone War Map's TRADE_ROUTES
   const _routes = [
@@ -125195,6 +125407,18 @@ function _twForge() {
   // Auto-seed the 16-PRN starter map the first time the map opens with no data.
   // Admins can rename/add/remove everything in Pricing Admin → Territory Wars.
   if (t.regions.length === 0 && t.nodes.length === 0) { _twSeedStarterData(); }
+  // v33 — one-time migration: give real map positions to starter PRNs that were
+  // seeded with {x:0,y:0} in v32. Patch is idempotent and self-removing.
+  { const _v33p = {'N-01':{x:12,y:22},'N-02':{x:38,y:18},'N-03':{x:66,y:20},'N-04':{x:16,y:54},'N-05':{x:42,y:52},'N-06':{x:70,y:56},'N-07':{x:22,y:34},'N-08':{x:50,y:26},'N-09':{x:78,y:24},'N-10':{x:26,y:66},'N-11':{x:56,y:66},'N-12':{x:82,y:64},'N-13':{x:30,y:42},'N-14':{x:44,y:36},'N-15':{x:86,y:35},'N-16':{x:18,y:76}};
+    let _v33hit = false;
+    for (const n of t.nodes) {
+      const pp = _v33p[n.id];
+      if (pp && (!n.position || (n.position.x === 0 && n.position.y === 0))) {
+        n.position = { ...pp }; _v33hit = true;
+      }
+    }
+    if (_v33hit) { try { saveForge(); } catch(e){} }
+  }
   if (!Array.isArray(t.guardDecks))       t.guardDecks = [];
   if (!Array.isArray(t.nodeShopUpgrades)) t.nodeShopUpgrades = [];
   if (!Array.isArray(t.worldFeed))        t.worldFeed = [];
@@ -125955,110 +126179,102 @@ function renderTerritoryWars() {
     return { color: '#6cd4ff', meta: 'Controlled' };
   };
   const nodeColor = (n) => nodePaint(n).color;
-  const sectorBlocks = regions.map(({ r, sectors }) => {
-    // 🌐 Region-wide control + bonuses the player's corp has earned.
-    const myRegPct = myCorp ? tw_regionControlPct(r.id, myCorp.id) : 0;
-    const totalRegPct = tw_regionControlPct(r.id, null);
-    const regionBonus = myCorp ? tw_regionBonusForCorp(r.id, myCorp.id) : null;
-    const regionBonusChips = (regionBonus && regionBonus.labels.length)
-      ? `<div class="tw-region-bonus" title="Region-wide bonuses earned by ${escapeHtml(myCorp.name)}">${regionBonus.labels.map(l => `<span class="tw-region-bonus-pill">🌐 ${escapeHtml(l)}</span>`).join('')}</div>`
-      : '';
-    // 🖼 bannerImg — optional region cover photo on the header card.
-    const bannerStyle = r.bannerImg
-      ? ` style="--accent:${r.accent || '#ffcf5a'};background-image:linear-gradient(180deg, rgba(8,5,14,0.65), rgba(8,5,14,0.85)), url('${(r.bannerImg + '').replace(/'/g, "\\'")}');background-size:cover;background-position:center"`
-      : ` style="--accent:${r.accent || '#ffcf5a'}"`;
-    return `
-    <div class="tw-region${r.bannerImg ? ' has-banner' : ''}"${bannerStyle}>
-      <div class="tw-region-head">
-        <span class="tw-region-name">${escapeHtml(r.name)}</span>
-        <span class="tw-region-sub small-text ink-dim">${sectors.length} sector${sectors.length === 1 ? '' : 's'} · region ${myRegPct}% me · ${totalRegPct}% any</span>
+  // ── v33: Canvas layout — diamond markers positioned by n.position (0-100%) ──
+  // Replaces the old CSS-grid sectorBlocks. Supply-line SVG routes are drawn
+  // inline using the same % coordinate space as node positions, so nothing
+  // needs to run after the DOM is inserted (no _twPaintConnections needed).
+
+  // Region centroid labels — float above each cluster.
+  const _regCentroid = {};
+  for (const n of t.nodes) {
+    const sec = t.sectors.find(s => s.id === n.sectorId);
+    const rid = sec ? sec.regionId : null;
+    if (!rid) continue;
+    const pos = n.position || { x: 5, y: 5 };
+    if (!_regCentroid[rid]) _regCentroid[rid] = { sx: 0, sy: 0, cnt: 0 };
+    _regCentroid[rid].sx += pos.x; _regCentroid[rid].sy += pos.y; _regCentroid[rid].cnt++;
+  }
+  const _twCanvasLabels = t.regions.map(r => {
+    const g = _regCentroid[r.id];
+    if (!g || g.cnt === 0) return '';
+    const cx = (g.sx / g.cnt).toFixed(1);
+    const cy = Math.max(1.5, (g.sy / g.cnt) - 9).toFixed(1);
+    const accent = r.accent || '#d4af37';
+    return `<div class="tw-map-region-label" style="left:${cx}%;top:${cy}%;color:${escapeHtml(accent)};border-bottom-color:${escapeHtml(accent)}55">${escapeHtml(r.name || r.id)}</div>`;
+  }).join('');
+
+  // Supply-line SVG routes using node.position percentages as SVG viewBox coords.
+  const _routeById = {};
+  for (const n of t.nodes) _routeById[n.id] = n;
+  const _seenRoutes = new Set();
+  let _routePaths = '';
+  for (const n of t.nodes) {
+    const conns = Array.isArray(n.connections) ? n.connections : [];
+    const pA = n.position || { x: 5, y: 5 };
+    for (const cid of conns) {
+      const key = [n.id, cid].sort().join('|');
+      if (_seenRoutes.has(key)) continue;
+      _seenRoutes.add(key);
+      const nb = _routeById[cid];
+      if (!nb) continue;
+      const pB = nb.position || { x: 5, y: 5 };
+      // Slight midpoint offset for the quadratic bezier curve
+      const midX = ((pA.x + pB.x) / 2 + 1.5).toFixed(2);
+      const midY = ((pA.y + pB.y) / 2 - 1.5).toFixed(2);
+      const ownA = st.ownedNodes[n.id];
+      const ownB = st.ownedNodes[cid];
+      let cls = '';
+      if (ownA && ownB) {
+        const same = ownA.ownerCorpId === ownB.ownerCorpId;
+        if (same && myCorp && ownA.ownerCorpId === myCorp.id) cls = 'allied';
+        else if (same) cls = 'enemy';
+        else cls = 'contest';
+      } else if (ownA || ownB) {
+        cls = 'frontier';
+      }
+      _routePaths += `<path d="M ${pA.x} ${pA.y} Q ${midX} ${midY} ${pB.x} ${pB.y}"${cls ? ` class="${cls}"` : ''}/>`;
+    }
+  }
+  const _twCanvasRoutes = `<svg class="tw-map-routes" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}</svg>`;
+
+  // Node markers — absolutely positioned diamonds.
+  const _twCanvasMarkers = t.nodes.filter(filtered).map(n => {
+    const pos = n.position || { x: 5, y: 5 };
+    const own = st.ownedNodes[n.id];
+    const paint = nodePaint(n);
+    const selCls = selectedNodeId === n.id ? ' is-selected' : '';
+    const _nAttackCls = (own && own.underAttack) ? ' is-attacking' : '';
+    const _nState = !own ? 'neutral'
+      : own.destroyed ? 'collapsing'
+      : own.eventActive ? 'event'
+      : (() => { const s=(own.stability|0)||100; return s>=80?'thriving':s>=60?'stable':s>=40?'strained':s>=20?'failing':'collapsing'; })();
+    const isThriving = _nState === 'thriving';
+    const yieldKeys = Object.keys(n.resourceYield || {});
+    const guards = own ? (own.guards || []).length : 0;
+    const tip = [
+      `${n.name} (${n.type || 'PRN'})`,
+      `Owner: ${(own && own.ownerCorpId) ? own.ownerCorpId : 'Neutral'}`,
+      `Stability: ${own ? (own.stability | 0) : 100}`,
+      `Guards: ${guards} / ${Math.max(1, (n.maxGuardSlots | 0) || 1)}`,
+      `Clears req: ${_twClearsRequired(n, own)}`,
+      `Yield: ${yieldKeys.join(', ') || '—'}`,
+      `View [${view}]: ${paint.meta}`,
+    ].join('\n');
+    return `<button class="tw-node-marker${selCls}${_nAttackCls}" data-tw-node="${escapeHtml(n.id)}" data-tw-state="${_nState}"
+        title="${escapeHtml(tip)}"
+        style="left:${pos.x}%;top:${pos.y}%;--node-color:${paint.color}">
+      ${(isThriving || selCls) ? '<div class="tw-node-marker-pulse"></div>' : ''}
+      <div class="tw-node-diamond"></div>
+      <div class="tw-node-marker-label">
+        <span class="name">${escapeHtml(n.name)}</span>
+        <span class="id">${escapeHtml(n.id)} · ${escapeHtml(yieldKeys[0] || '—')}</span>
       </div>
-      ${regionBonusChips}
-      <div class="tw-sectors">
-        ${sectors.map(sec => {
-          const sectorNodes = t.nodes.filter(n => n.sectorId === sec.id).filter(filtered);
-          const allSecNodes = t.nodes.filter(n => n.sectorId === sec.id);
-          const myPct = tw_sectorControlPct(sec.id, myCorp && myCorp.id);
-          const totalPct = tw_sectorControlPct(sec.id, null);
-          // 🏆 Active sector bonuses for the player's corp — chip line
-          // below the sector header so the player sees what they earn.
-          const sBonus = myCorp ? tw_sectorBonusForCorp(sec.id, myCorp.id) : null;
-          const bonusChips = (sBonus && sBonus.labels.length)
-            ? `<div class="tw-sector-bonus" title="Sector-control bonuses earned by ${escapeHtml(myCorp.name)}">${sBonus.labels.map(l => `<span class="tw-sector-bonus-pill">🏆 ${escapeHtml(l)}</span>`).join('')}</div>`
-            : '';
-          // 🏛 Owning-corp banner — find the dominant owner across the
-          // sector's nodes. Multiple owners → list the top 2 by share.
-          const ownerCounts = {};
-          for (const sn of allSecNodes) {
-            const own = st.ownedNodes[sn.id];
-            if (own && own.ownerCorpId) ownerCounts[own.ownerCorpId] = (ownerCounts[own.ownerCorpId] | 0) + 1;
-          }
-          const ownerLines = Object.entries(ownerCounts).sort((a, b) => b[1] - a[1]).slice(0, 2);
-          const ownerBanner = ownerLines.length === 0
-            ? '<span class="tw-sector-owner none">Neutral</span>'
-            : ownerLines.map(([cid, cnt]) => {
-                const isMe = myCorp && cid === myCorp.id;
-                return `<span class="tw-sector-owner ${isMe ? 'me' : ''}" title="${escapeHtml(cid)} owns ${cnt}/${allSecNodes.length}">${isMe ? '🏢' : '⚑'} ${escapeHtml(cid)} <b>${cnt}/${allSecNodes.length}</b></span>`;
-              }).join('');
-          // 💰 Tax estimate — sum of every owned node's base yield × pop
-          // multiplier. Pretty close to actual daily intake (without
-          // sector/region bonuses or supply depot stacks).
-          let myTaxTotal = 0;
-          const myNodeIds = [];
-          for (const sn of allSecNodes) {
-            const own = st.ownedNodes[sn.id];
-            if (!own || (myCorp && own.ownerCorpId !== myCorp.id)) continue;
-            const ry = sn.resourceYield || {};
-            const popMult = (typeof sn.population === 'number' ? sn.population : 100) / 100;
-            for (const k of Object.keys(ry)) myTaxTotal += Math.round((ry[k] | 0) * popMult);
-            myNodeIds.push(sn.id);
-          }
-          const tierLabel = tw_ownershipThresholdLabel(myPct);
-          return `
-            <div class="tw-sector"
-                 title="${escapeHtml(sec.name)} — ${escapeHtml(tierLabel || 'No control')} (${myPct}% you · ${totalPct}% any)\n${myNodeIds.length}/${allSecNodes.length} controlled · ~${myTaxTotal.toLocaleString()} tax/cycle\n${sec.bonusDesc || ''}">
-              <div class="tw-sector-head">
-                <span class="tw-sector-name">${escapeHtml(sec.name)}</span>
-                <span class="tw-sector-pct">${myPct}% me · ${totalPct}% any</span>
-              </div>
-              <div class="tw-sector-owners">${ownerBanner}${tierLabel ? `<span class="tw-sector-tier">${escapeHtml(tierLabel)}</span>` : ''}${myTaxTotal > 0 ? `<span class="tw-sector-tax" title="Estimated tax per collection cycle">💰 ~${myTaxTotal.toLocaleString()}</span>` : ''}</div>
-              ${bonusChips}
-              <div class="tw-nodes">
-                ${sectorNodes.map(n => {
-                  const own = st.ownedNodes[n.id];
-                  const guards = own ? (own.guards || []).length : 0;
-                  const yieldKeys = Object.keys(n.resourceYield || {});
-                  const paint = nodePaint(n);
-                  const tip = [
-                    `${n.name} (${n.type || 'PRN'})`,
-                    `Owner: ${(own && own.ownerCorpId) ? own.ownerCorpId : 'Neutral'}`,
-                    `Stability: ${own ? (own.stability | 0) : 100}`,
-                    `Guards: ${guards} / ${Math.max(1, (n.maxGuardSlots | 0) || 1)}`,
-                    `Clears req: ${_twClearsRequired(n, own)}`,
-                    `Yield: ${yieldKeys.join(', ') || '—'}`,
-                    `View [${view}]: ${paint.meta}`,
-                  ].join('\n');
-                  const selCls = selectedNodeId === n.id ? ' is-selected' : '';
-                  // Derive visual state from stability — maps to the standalone app's thriving/stable/strained/failing/collapsing palette
-                  const _nState = !own ? 'neutral'
-                    : own.destroyed ? 'collapsing'
-                    : own.eventActive ? 'event'
-                    : (() => { const s=(own.stability|0)||100; return s>=80?'thriving':s>=60?'stable':s>=40?'strained':s>=20?'failing':'collapsing'; })();
-                  const _nAttackCls = (own && own.underAttack) ? ' is-attacking' : '';
-                  return `<button class="tw-node${selCls}${_nAttackCls}" data-tw-node="${escapeHtml(n.id)}" data-tw-state="${_nState}" title="${escapeHtml(tip)}"
-                                  style="--node-color:${paint.color}">
-                    <span class="tw-node-name">${escapeHtml(n.name)}</span>
-                    <span class="tw-node-meta">${escapeHtml(paint.meta)}</span>
-                  </button>`;
-                }).join('') || '<div class="small-text ink-dim" style="padding:0.4rem">No nodes here yet — admin can add them.</div>'}
-              </div>
-            </div>
-          `;
-        }).join('') || '<div class="small-text ink-dim" style="padding:0.4rem">No sectors yet.</div>'}
-      </div>
-    </div>
-  `;
-  }).join('') || '<div class="empty-list-note">No regions defined yet. Admins build the war map in Pricing Admin → Territory Wars.</div>';
+      ${(own && own.eventActive) ? '<div class="tw-node-event-badge">!</div>' : ''}
+    </button>`;
+  }).join('') || '';
+
+  // Final canvas HTML — routes (z3) + region labels (z5) + markers (z8)
+  const _twCanvasContent = _twCanvasRoutes + _twCanvasLabels + _twCanvasMarkers;
 
   // Node action panel.
   const selNode = selectedNodeId ? t.nodes.find(n => n.id === selectedNodeId) : null;
@@ -126278,8 +126494,9 @@ function renderTerritoryWars() {
           <div class="tw-wm-stamp tl" aria-hidden="true">THEATER 7 · NORTH WORKS</div>
           <div class="tw-wm-stamp tr" aria-hidden="true">CHART REV-04 · ${_twDateStr}</div>
           <div class="tw-wm-stamp br" aria-hidden="true">FOUNDATION RESERVE // CLASSIFIED</div>
-          <svg class="tw-connections" id="tw-connections" aria-hidden="true"></svg>
-          ${sectorBlocks}
+          <div class="tw-map-canvas" id="tw-map-canvas">
+            ${_twCanvasContent}
+          </div>
         </div>
         <aside class="tw-side-pane">
           <div class="tw-side-section">
@@ -126302,11 +126519,10 @@ function renderTerritoryWars() {
     </div>
   `;
 
-  // 🛣 Paint connection lines AFTER the DOM exists so we can read
-  // bounding rects. Each node carries an optional `connections` array
-  // of other node ids; for each pair we draw an SVG line colored by
-  // the ownership state of both endpoints. Re-runs on every render.
-  _twPaintConnections();
+  // 🛣 Connection lines are now rendered as inline SVG paths inside
+  // .tw-map-canvas using n.position percentages (v33 canvas layout).
+  // _twPaintConnections() is kept for legacy/admin views that may still
+  // use DOM-bounding-rect approach, but not called here.
   // 🪟 Bind picker-modal handlers when one is active.
   bindTerritoryPickerModal();
 

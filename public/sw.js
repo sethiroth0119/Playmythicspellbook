@@ -53,7 +53,12 @@
 // v32 — Auto-seed 16 starter PRNs (Kiln-7, Emberfall … Last Wick) across 6 regions /
 //        6 sectors when TW data is empty on first open; supply-line connections wired.
 //        Admin panel: "Reset to 16-PRN Starter Map" button; "✎ Rename / Edit" label.
-const CACHE_VERSION = 'mythic-v32-2026-05-28';
+// v33 — War Map canvas layout: replaced CSS-grid sectorBlocks with absolutely
+//        positioned diamond node markers on a 16:9 map canvas. Supply-line routes
+//        rendered as inline SVG quadratic bezier paths. Region labels float above
+//        clusters. 16 starter PRNs get real x/y positions; one-time migration patch
+//        fixes existing 0,0-seeded nodes. No more _twPaintConnections() on render.
+const CACHE_VERSION = 'mythic-v33-2026-05-28';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

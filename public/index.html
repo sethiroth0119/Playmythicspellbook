@@ -127350,6 +127350,11 @@ function tw_decayTick() {
 }
 // ===== WAR MAP SCREEN =====
 function renderTerritoryWars() {
+  // Immediately remove the global world-event banner — it is position:fixed
+  // and overlaps the War Map HUD. mountWorldEventBanner() also guards against
+  // re-mounting it while this screen is active (v46), but nuking it here on
+  // every render guarantees instant removal even before the interval fires.
+  try { const _web = document.getElementById('world-event-banner'); if (_web) _web.remove(); } catch (e) {}
   try { tw_decayTick(); } catch (e) {}
   try { tw_upkeepTick(); } catch (e) {}
   // 🜏 Dark Events tick — rolls daily, ticks AVATAR every 4h, sweeps

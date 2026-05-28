@@ -33,6 +33,17 @@
      0.15 client connects to 0.16 server — Colyseus maintains a compatible
      wire protocol across minor versions. Update pin when server version bumps. -->
 <script src="https://unpkg.com/colyseus.js@^0.15.0/dist/colyseus.js"></script>
+<!-- PixiJS v8 — GPU board renderer for the battle screen. Gated behind
+     App.flags.pixiBoard so the existing DOM renderer stays the source of
+     truth until the hybrid port is proven on the live board. Loaded eagerly
+     so the first battle that flips the flag doesn't wait on a CDN round-trip. -->
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@8/dist/pixi.min.js"></script>
+<script src="/pixi/pixi-loader.js" defer></script>
+<!-- VFX registry — built-in effect kinds (projectile, burst, ring, flash, heal)
+     plus the extension hook MSPixiVfx.register(kind, factory). MUST load before
+     pixi-board.js because the board's ticker references MSPixiVfx directly. -->
+<script src="/pixi/pixi-vfx.js" defer></script>
+<script src="/pixi/pixi-board.js" defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
@@ -1320,13 +1331,259 @@
   .vs-winrecord-foe { border-color: rgba(232,152,152,0.5); background: linear-gradient(180deg, rgba(60,15,15,0.55), rgba(20,5,5,0.65)); }
   .vs-winrecord-foe .vs-winrecord-icon { filter: drop-shadow(0 0 6px rgba(232,152,152,0.7)); }
   .vs-winrecord-foe .vs-winrecord-num   { color: #e8b6b6; }
+  .hub-game-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.55rem;
+    margin-top: 1.4rem;
+    padding-bottom: 0.8rem;
+  }
   .hub-footer-sigil {
     text-align: center;
-    margin-top: 1.2rem;
     color: #3a2a1a;
     letter-spacing: 0.35em;
     font-size: 0.78rem;
   }
+  .tos-link-btn {
+    background: none;
+    border: none;
+    color: rgba(184,136,255,0.38);
+    font-size: 0.68rem;
+    letter-spacing: 0.07em;
+    cursor: pointer;
+    font-family: inherit;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-color: rgba(184,136,255,0.25);
+    padding: 0;
+    transition: color 0.2s;
+  }
+  .tos-link-btn:hover { color: #d4c89a; text-decoration-color: rgba(212,200,154,0.5); }
+
+  /* ── Terms of Service Modal ── */
+  .tos-overlay {
+    position: fixed; inset: 0; z-index: 8800;
+    background: rgba(3,2,10,0.88);
+    display: flex; align-items: center; justify-content: center;
+    padding: 1rem;
+    backdrop-filter: blur(4px);
+    animation: fadeIn 0.15s ease;
+  }
+  .tos-modal {
+    background: linear-gradient(175deg, #0d0918 0%, #060410 100%);
+    border: 1px solid rgba(184,136,255,0.28);
+    border-radius: 8px;
+    max-width: 720px; width: 100%; max-height: 88vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 12px 70px rgba(0,0,0,0.85), 0 0 0 1px rgba(184,136,255,0.1);
+  }
+  .tos-modal-head {
+    padding: 1.3rem 1.8rem 1rem;
+    border-bottom: 1px solid rgba(184,136,255,0.18);
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem;
+    flex-shrink: 0;
+  }
+  .tos-modal-head-title {
+    color: var(--gold-bright);
+    font-size: 1.05rem;
+    letter-spacing: 0.05em;
+    line-height: 1.3;
+  }
+  .tos-modal-head-sub {
+    color: rgba(168,152,120,0.7);
+    font-size: 0.72rem;
+    margin-top: 0.2rem;
+    letter-spacing: 0.03em;
+  }
+  .tos-modal-x {
+    background: none; border: none; color: #6a5a4a;
+    font-size: 1.2rem; cursor: pointer; padding: 0.1rem 0.35rem;
+    border-radius: 3px; transition: color 0.15s; flex-shrink: 0;
+  }
+  .tos-modal-x:hover { color: #d4c89a; }
+  .tos-modal-body {
+    overflow-y: auto; padding: 1.4rem 1.8rem;
+    flex: 1; min-height: 0;
+    color: #b8a888; font-size: 0.8rem; line-height: 1.7;
+  }
+  .tos-modal-body h2 {
+    color: #d4c89a; font-size: 0.88rem; letter-spacing: 0.05em;
+    margin: 1.6rem 0 0.45rem; border-bottom: 1px solid rgba(184,136,255,0.12);
+    padding-bottom: 0.3rem;
+  }
+  .tos-modal-body h2:first-child { margin-top: 0; }
+  .tos-modal-body p { margin: 0 0 0.6rem; }
+  .tos-modal-body ul {
+    margin: 0.2rem 0 0.7rem 1.3rem; padding: 0;
+    color: #9a8a6a;
+  }
+  .tos-modal-body ul li { margin-bottom: 0.15rem; }
+  .tos-modal-body .tos-final {
+    margin-top: 1.6rem; padding: 1rem 1.2rem;
+    border: 1px solid rgba(184,136,255,0.2);
+    border-radius: 5px; background: rgba(184,136,255,0.05);
+    color: #c8b898; font-size: 0.8rem; line-height: 1.75;
+  }
+  .tos-modal-foot {
+    padding: 0.9rem 1.8rem;
+    border-top: 1px solid rgba(184,136,255,0.15);
+    display: flex; justify-content: flex-end; flex-shrink: 0;
+  }
+  .tos-modal-foot button {
+    background: rgba(184,136,255,0.12);
+    border: 1px solid rgba(184,136,255,0.35);
+    color: #d4c89a; padding: 0.5rem 2rem;
+    border-radius: 4px; cursor: pointer;
+    font-size: 0.82rem; letter-spacing: 0.06em;
+    font-family: inherit;
+    transition: background 0.2s;
+  }
+  .tos-modal-foot button:hover { background: rgba(184,136,255,0.25); }
+
+  /* ======= PLEDGE / FOUNDER PACKAGES ======= */
+  .pledge-screen {
+    max-width: 1280px; margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+    animation: fadeIn 0.25s ease;
+  }
+  .pledge-head {
+    text-align: center; margin-bottom: 2.6rem;
+  }
+  .pledge-head-title {
+    font-size: 2.1rem; color: var(--gold-bright);
+    letter-spacing: 0.07em; margin-bottom: 0.45rem;
+  }
+  .pledge-head-sub {
+    color: #a89878; font-size: 0.9rem; max-width: 560px;
+    margin: 0 auto; line-height: 1.65;
+  }
+  .pledge-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1.1rem;
+  }
+  .pledge-tier {
+    background: linear-gradient(170deg, rgba(14,10,28,0.98) 0%, rgba(6,4,14,0.98) 100%);
+    border: 1px solid var(--pt-accent,rgba(184,136,255,0.28));
+    border-radius: 7px;
+    display: flex; flex-direction: column;
+    position: relative; overflow: hidden;
+    transition: transform 0.18s, box-shadow 0.18s;
+  }
+  .pledge-tier:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 36px rgba(0,0,0,0.55), 0 0 0 1px var(--pt-accent,rgba(184,136,255,0.35));
+  }
+  .pledge-tier.is-featured {
+    border-width: 2px;
+    box-shadow: 0 0 0 1px var(--pt-accent), 0 6px 40px rgba(0,0,0,0.6);
+  }
+  .pledge-tier-glow {
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: var(--pt-accent, rgba(184,136,255,0.5));
+    opacity: 0.85;
+  }
+  .pledge-tier-head {
+    padding: 1.3rem 1.3rem 0.8rem;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .pledge-tier-name {
+    font-size: 0.98rem; color: var(--pt-accent,#d4c89a);
+    letter-spacing: 0.07em; font-weight: 700;
+    margin-bottom: 0.25rem;
+  }
+  .pledge-tier-price {
+    font-size: 1.9rem; color: var(--gold-bright);
+    font-weight: 800; letter-spacing: -0.01em;
+    line-height: 1;
+  }
+  .pledge-tier-price span {
+    font-size: 0.95rem; color: #a89878;
+    font-weight: 400; margin-left: 0.25rem;
+  }
+  .pledge-tier-tagline {
+    margin-top: 0.5rem; color: #9a8a72;
+    font-size: 0.78rem; line-height: 1.5;
+    font-style: italic;
+  }
+  .pledge-tier-body {
+    padding: 0.9rem 1.3rem; flex: 1;
+  }
+  .pledge-tier-feat-label {
+    color: #7a6a5a; font-size: 0.68rem;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    margin-bottom: 0.45rem;
+  }
+  .pledge-tier-feats {
+    list-style: none; padding: 0; margin: 0 0 0.8rem;
+    display: flex; flex-direction: column; gap: 0.3rem;
+  }
+  .pledge-tier-feats li {
+    color: #c8b898; font-size: 0.78rem;
+    display: flex; align-items: baseline; gap: 0.4rem;
+  }
+  .pledge-tier-feats li::before {
+    content: '✦'; color: var(--pt-accent,#b888ff);
+    font-size: 0.55rem; flex-shrink: 0; margin-top: 0.15rem;
+  }
+  .pledge-tier-feats li.feat-inherit {
+    color: #6a5a4a;
+    font-style: italic;
+  }
+  .pledge-tier-feats li.feat-inherit::before { color: #3a3030; }
+  .pledge-tier-node-box {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 4px; padding: 0.55rem 0.7rem;
+    margin-top: 0.5rem; margin-bottom: 0.5rem;
+  }
+  .pledge-tier-node-label {
+    color: var(--pt-accent,#b888ff);
+    font-size: 0.68rem; letter-spacing: 0.08em;
+    text-transform: uppercase; margin-bottom: 0.2rem;
+  }
+  .pledge-tier-node-desc {
+    color: #8a7a60; font-size: 0.73rem; line-height: 1.5;
+  }
+  .pledge-tier-perfect {
+    border-top: 1px solid rgba(255,255,255,0.05);
+    padding: 0.65rem 1.3rem; font-size: 0.74rem;
+    color: #7a6a52; font-style: italic; line-height: 1.45;
+  }
+  .pledge-tier-perfect strong { color: #a09060; font-style: normal; }
+  .pledge-tier-foot {
+    padding: 0.8rem 1.3rem 1.2rem;
+  }
+  .pledge-cta {
+    width: 100%; padding: 0.65rem 0;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--pt-accent,rgba(184,136,255,0.4));
+    border-radius: 4px;
+    color: var(--pt-accent,#d4c89a);
+    font-size: 0.82rem; letter-spacing: 0.08em;
+    cursor: pointer; font-family: inherit;
+    transition: background 0.18s, color 0.18s;
+  }
+  .pledge-cta:hover {
+    background: var(--pt-accent-bg,rgba(184,136,255,0.18));
+    color: #fff;
+  }
+  .pledge-cta.is-free {
+    border-color: rgba(140,200,140,0.4);
+    color: #8cc88a;
+  }
+  .pledge-cta.is-free:hover { background: rgba(140,200,140,0.12); color: #aaeea8; }
+  .pledge-back-row {
+    text-align: center; margin-bottom: 1.6rem;
+  }
+  .pledge-back-btn {
+    background: none; border: none; color: #6a5a4a;
+    font-size: 0.82rem; cursor: pointer; font-family: inherit;
+    letter-spacing: 0.04em;
+    transition: color 0.15s;
+  }
+  .pledge-back-btn:hover { color: #d4c89a; }
 
   /* ======= HERO SELECT ======= */
   .hero-select { max-width: 1200px; margin: 0 auto; padding: 2.5rem 1.5rem; }
@@ -6427,6 +6684,23 @@
      board photographed from a low angle. The board itself tilts back
      ~15°, and the pieces (units / tile markers) counter-rotate so they
      stand vertically like physical figures on the tilted surface. */
+  /* 🎮 Hybrid Pixi port — when renderBoard() emits the mount-point div, this
+     override neutralizes the .board grid layout (the canvas is one element,
+     not 56 tiles) while keeping the same outer footprint so the .battle-grid
+     center column doesn't reflow. The 3D tilt also drops since Pixi handles
+     2.5D projection in-canvas. */
+  .board.pixi-board {
+    display: block;
+    transform: none;
+    aspect-ratio: 8 / 7;
+    overflow: hidden;
+  }
+  .board.pixi-board .pixi-board-canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+  }
+
   .board {
     display: grid;
     /* 8 columns × 7 rows = 56 tiles. The board is one tilted ground
@@ -13856,32 +14130,35 @@
     box-shadow: 0 10px 26px rgba(0,0,0,0.55), 0 0 22px rgba(212,175,55,0.18);
   }
   .shop-pack.unaffordable { opacity: 0.55; }
-  /* Admin-uploaded cover image — fills the top of the tile in a hero-poster strip. */
+  /* Admin-uploaded cover image — full-bleed top strip, no letterbox bars. */
   .shop-pack-image {
+    /* Bleed past the tile's 1rem top / 0.9rem side padding to reach the edges */
     width: calc(100% + 1.8rem);
-    margin: -1rem -0.9rem 0.4rem;
-    height: 140px;
+    margin: -1rem -0.9rem 0.7rem;
+    height: 280px;
     overflow: hidden;
     position: relative;
-    border-bottom: 1px solid rgba(212,175,55,0.25);
+    border-bottom: 1px solid rgba(212,175,55,0.2);
+    background: #05030e;
   }
   .shop-pack-image img {
     width: 100%; height: 100%;
-    object-fit: cover;
+    object-fit: cover;       /* fill the box edge-to-edge, no black bars */
+    object-position: center center;
     display: block;
-    filter: brightness(0.95) saturate(1.05);
   }
+  /* Subtle fade at the bottom so the image bleeds into the card content */
   .shop-pack-image::after {
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(13,10,28,0.85) 100%);
+    background: linear-gradient(180deg, transparent 50%, rgba(5,3,14,0.85) 100%);
     pointer-events: none;
   }
-  /* When a cover image is present, shrink the emoji icon — the image is the hero. */
+  /* Hide the accent stripe and emoji icon when real cover art is present. */
+  .shop-pack.has-image::before { display: none; }
   .shop-pack.has-image .shop-pack-icon {
-    font-size: 1.6rem;
-    margin-top: -0.2rem;
+    display: none;
   }
   .shop-pack-icon {
     font-size: 3rem;
@@ -18010,6 +18287,212 @@
     font-size: 0.78rem;
     color: #ffe9a8;
   }
+
+  /* ================================================================
+     🗺 WAR MAP VISUAL CHROME — design language from standalone app
+     ================================================================ */
+  body.tw-active {
+    --tw-moss:  #4d9e68;
+    --tw-steel: #4e7ea8;
+    --tw-amber: #c89428;
+    --tw-rust:  #b84e2c;
+    --tw-blood: #891c1e;
+    --tw-arc:   #6655c4;
+  }
+  /* Foundation resource bar — sticky top-of-screen HUD strip */
+  .tw-wm-bar {
+    display: flex; align-items: stretch; gap: 0;
+    background: rgba(6,4,12,0.92);
+    border-bottom: 1px solid rgba(212,175,55,0.30);
+    box-shadow: 0 2px 20px rgba(0,0,0,0.70);
+    font-family: 'JetBrains Mono','Consolas','Courier New',monospace;
+    letter-spacing: 0.03em; font-size: 0.7rem;
+    position: sticky; top: 0; z-index: 12;
+    overflow-x: auto; flex-shrink: 0;
+  }
+  .tw-wm-brand {
+    display: flex; align-items: center; gap: 0.55rem;
+    padding: 0.45rem 0.85rem;
+    border-right: 1px solid rgba(212,175,55,0.20);
+    flex-shrink: 0;
+  }
+  .tw-wm-brand-mark {
+    width: 30px; height: 30px;
+    border: 1.5px solid rgba(212,175,55,0.65);
+    border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 0.78rem; color: #d4af37;
+    background: rgba(212,175,55,0.08); flex-shrink: 0;
+  }
+  .tw-wm-brand-text .title {
+    font-weight: 700; font-size: 0.72rem;
+    letter-spacing: 0.07em; color: #ffe9a8; text-transform: uppercase;
+  }
+  .tw-wm-brand-text .sub {
+    font-size: 0.56rem; color: #a89878; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .tw-wm-bays { display: flex; align-items: stretch; flex: 1; min-width: 0; }
+  .tw-wm-bay {
+    display: flex; align-items: center; gap: 0.4rem;
+    padding: 0.35rem 0.7rem;
+    border-right: 1px solid rgba(212,175,55,0.13);
+    flex-shrink: 0;
+    position: relative; transition: background 0.18s;
+  }
+  .tw-wm-bay:hover { background: rgba(212,175,55,0.06); }
+  .tw-wm-bay.warn { background: rgba(212,130,20,0.09); }
+  .tw-wm-bay.crit { background: rgba(190,48,28,0.11); }
+  .tw-wm-bay-icon {
+    font-size: 0.88rem; min-width: 18px;
+    color: rgba(212,175,55,0.75); font-weight: 800;
+  }
+  .tw-wm-bay-body { display: flex; flex-direction: column; gap: 1px; min-width: 64px; }
+  .tw-wm-bay-label { font-size: 0.56rem; color: #a89878; letter-spacing: 0.09em; text-transform: uppercase; white-space: nowrap; }
+  .tw-wm-bay-value { font-size: 0.76rem; font-weight: 700; color: #ffe9a8; }
+  .tw-wm-bay.warn .tw-wm-bay-value { color: #ffd080; }
+  .tw-wm-bay.crit .tw-wm-bay-value { color: #ff9080; }
+  .tw-wm-bay-bar { height: 2px; background: rgba(255,255,255,0.10); border-radius: 1px; overflow: hidden; margin-top: 2px; }
+  .tw-wm-bay-bar i { display: block; height: 100%; background: rgba(212,175,55,0.60); border-radius: 1px; transition: width 0.5s ease; }
+  .tw-wm-bay.warn .tw-wm-bay-bar i { background: rgba(220,135,22,0.90); }
+  .tw-wm-bay.crit .tw-wm-bay-bar i {
+    background: rgba(200,52,32,0.95);
+    animation: tw-wm-crit-pulse 1.3s ease-in-out infinite;
+  }
+  @keyframes tw-wm-crit-pulse { 0%,100%{opacity:0.95} 50%{opacity:0.40} }
+  .tw-wm-stats {
+    display: flex; align-items: stretch;
+    margin-left: auto; border-left: 1px solid rgba(212,175,55,0.20); flex-shrink: 0;
+  }
+  .tw-wm-stat {
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    padding: 0.35rem 0.85rem;
+    border-right: 1px solid rgba(212,175,55,0.13);
+    flex-shrink: 0; min-width: 80px; gap: 1px;
+  }
+  .tw-wm-stat .k { font-size: 0.56rem; color: #a89878; letter-spacing: 0.09em; text-transform: uppercase; }
+  .tw-wm-stat .v { font-size: 0.78rem; font-weight: 700; color: #ffe9a8; }
+  .tw-wm-stat .v.ok { color: var(--tw-moss, #4d9e68); }
+  /* Live pulse dot */
+  .tw-wm-live-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--tw-moss, #4d9e68);
+    box-shadow: 0 0 6px var(--tw-moss, #4d9e68);
+    animation: tw-wm-dot-pulse 2s ease-in-out infinite;
+    vertical-align: middle; margin-right: 4px; flex-shrink: 0;
+  }
+  @keyframes tw-wm-dot-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.50;transform:scale(0.80)} }
+
+  /* Scanline sweep across the map pane */
+  .tw-wm-scanline {
+    position: absolute; inset: 0; pointer-events: none; overflow: hidden;
+    z-index: 3; border-radius: inherit;
+  }
+  .tw-wm-scanline::after {
+    content: '';
+    position: absolute; top: 0; left: -32%;
+    width: 32%; height: 100%;
+    background: linear-gradient(90deg,
+      transparent 0%, rgba(108,212,255,0.025) 40%,
+      rgba(108,212,255,0.07) 50%,
+      rgba(108,212,255,0.025) 60%, transparent 100%);
+    animation: tw-wm-scan 9s linear infinite;
+    pointer-events: none;
+  }
+  @keyframes tw-wm-scan { 0%{left:-32%} 100%{left:110%} }
+
+  /* Subtle grid overlay */
+  .tw-wm-grid {
+    position: absolute; inset: 0; pointer-events: none; z-index: 2; border-radius: inherit;
+    background-image:
+      linear-gradient(rgba(108,212,255,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(108,212,255,0.035) 1px, transparent 1px);
+    background-size: 8.333% 12.5%;
+  }
+
+  /* Corner stamps (cartographic label corners) */
+  .tw-wm-stamp {
+    position: absolute; z-index: 4; pointer-events: none;
+    font-family: 'JetBrains Mono','Consolas',monospace;
+    font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: rgba(212,175,55,0.42);
+    display: flex; align-items: center; gap: 5px;
+  }
+  .tw-wm-stamp::before, .tw-wm-stamp::after {
+    content: ''; display: block;
+    width: 16px; height: 1px;
+    background: rgba(212,175,55,0.35); flex-shrink: 0;
+  }
+  .tw-wm-stamp.tl { top: 8px; left: 8px; }
+  .tw-wm-stamp.tr { top: 8px; right: 8px; flex-direction: row-reverse; }
+  .tw-wm-stamp.bl { bottom: 8px; left: 8px; }
+  .tw-wm-stamp.br { bottom: 8px; right: 8px; flex-direction: row-reverse; }
+
+  /* Node state colors via data-tw-state */
+  .tw-node[data-tw-state="thriving"]  { --node-color: var(--tw-moss,  #4d9e68); }
+  .tw-node[data-tw-state="stable"]    { --node-color: var(--tw-steel, #4e7ea8); }
+  .tw-node[data-tw-state="strained"]  { --node-color: var(--tw-amber, #c89428); }
+  .tw-node[data-tw-state="failing"]   { --node-color: var(--tw-rust,  #b84e2c); }
+  .tw-node[data-tw-state="collapsing"]{ --node-color: var(--tw-blood, #891c1e); }
+  .tw-node[data-tw-state="neutral"]   { --node-color: #7a7a82; }
+  .tw-node[data-tw-state="event"]     { --node-color: var(--tw-arc,   #6655c4); }
+
+  /* Thriving nodes get a soft outward pulse ring */
+  .tw-node[data-tw-state="thriving"] { position: relative; overflow: visible; }
+  .tw-node[data-tw-state="thriving"]::after {
+    content: '';
+    position: absolute; inset: -3px;
+    border-radius: 5px;
+    border: 1px solid var(--tw-moss, #4d9e68);
+    opacity: 0;
+    pointer-events: none;
+    animation: tw-wm-node-ring 3.5s ease-out infinite;
+  }
+  @keyframes tw-wm-node-ring {
+    0%  { opacity: 0.75; transform: scale(1); }
+    70% { opacity: 0;    transform: scale(1.08); }
+    100%{ opacity: 0;    transform: scale(1.08); }
+  }
+
+  /* Collapsing nodes flicker */
+  .tw-node[data-tw-state="collapsing"] {
+    animation: tw-wm-node-flicker 1.6s ease-in-out infinite;
+  }
+  @keyframes tw-wm-node-flicker { 0%,100%{opacity:1} 50%{opacity:0.68} }
+
+  /* Under-attack indicator */
+  .tw-node.is-attacking::before {
+    content: '⚔';
+    position: absolute; top: -9px; right: -8px;
+    font-size: 0.68rem; line-height: 1;
+    animation: tw-wm-dot-pulse 0.9s ease-in-out infinite;
+    pointer-events: none; z-index: 5;
+  }
+
+  /* World feed restyle — terminal ticker header */
+  .tw-wm-feed-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 0.4rem; padding-bottom: 0.35rem;
+    border-bottom: 1px solid rgba(212,175,55,0.20);
+  }
+  .tw-wm-feed-title {
+    font-family: 'JetBrains Mono','Consolas',monospace;
+    font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.10em; text-transform: uppercase; color: #ffe9a8;
+  }
+  .tw-wm-feed-meta {
+    display: flex; align-items: center; gap: 3px;
+    font-family: 'JetBrains Mono','Consolas',monospace;
+    font-size: 0.60rem; color: #a89878; letter-spacing: 0.07em;
+  }
+  /* Feed row tone accents */
+  .tw-feed-line { border-left: 2px solid transparent; padding-left: 0.25rem; }
+  .tw-feed-line.tw-feed-capture { border-left-color: #6cd4ff; }
+  .tw-feed-line.tw-feed-attack  { border-left-color: #e25555; }
+  .tw-feed-line.tw-feed-collect { border-left-color: #a3d977; }
+  .tw-feed-line.tw-feed-upgrade { border-left-color: #ffd166; }
+  .tw-feed-line.tw-feed-decay   { border-left-color: #c878c8; }
+  /* ================================================================ */
+
   /* 🗺️ Roguelite map — the campaign-map background fills the ENTIRE viewport
      (fixed layer behind the content) instead of just the content band. */
   .rlc-map-page { position: relative; min-height: 100vh; }
@@ -28178,10 +28661,26 @@ function getEffectiveCardCost(card, state, side) {
       return _disc;
     }
   }
+  // 😰 STRESS SURCHARGE — when the player's active hero has stress ≥ 50
+  //    every non-free card costs +1 energy (≥ 80 stress → +2). The AI
+  //    never pays a surcharge. Camp therapy / bonfire events clear stress.
+  //    Cards already discounted to 0 (weatherborn, outnumbered) stay free.
+  const _stressSurcharge = (() => {
+    if (side === 'ai') return 0;
+    try {
+      const _hid = (typeof App !== 'undefined' && App.battlePrep && App.battlePrep.hero && App.battlePrep.hero.id) || null;
+      if (!_hid || typeof getHeroEnergy !== 'function') return 0;
+      const _s = (getHeroEnergy(_hid).stress | 0);
+      if (_s >= 80) return 2;
+      if (_s >= 50) return 1;
+    } catch (_) {}
+    return 0;
+  })();
+
   // Only THIS card matters — must carry the passive itself.
-  if (!cardHasPassive(card, 'outnumbered')) return baseCost;
+  if (!cardHasPassive(card, 'outnumbered')) return baseCost > 0 ? baseCost + _stressSurcharge : baseCost;
   side = (side === 'ai') ? 'ai' : 'player';
-  if (!state || !Array.isArray(state.units)) return baseCost;
+  if (!state || !Array.isArray(state.units)) return baseCost > 0 ? baseCost + _stressSurcharge : baseCost;
   // Count alive units on each side. Bleeding units don't count as
   // controlling the field — they're downed and waiting on a stabilize.
   let mine = 0, theirs = 0;
@@ -28192,7 +28691,8 @@ function getEffectiveCardCost(card, state, side) {
     if (u.owner === side)      mine++;
     else if (u.owner === opp)  theirs++;
   }
-  return (theirs > mine) ? 0 : baseCost;
+  const _outnumberedCost = (theirs > mine) ? 0 : baseCost;
+  return _outnumberedCost > 0 ? _outnumberedCost + _stressSurcharge : _outnumberedCost;
 }
 
 const Forge = {
@@ -28251,6 +28751,7 @@ const Forge = {
   // bloating the pack record itself (large data URLs go to IndexedDB / Storage
   // alongside cardArt, not the small Forge JSON that syncs to user_profiles).
   packArt: {},          // { packId: dataURL or URL }
+  starterDeckArt: {},   // { deckId: dataURL or URL } — same IDB lifecycle as packArt
   // Item icon image for Forge custom held items. Shown in the loadout list, the
   // shop, on-field tooltips, and the VS-screen item strip. Keyed by item id so
   // it sits alongside cardArt / packArt — same lifecycle, same IDB chunk.
@@ -28397,6 +28898,13 @@ function getLocationBoardImage(cardId) {
 function getPackImage(packId) {
   if (!packId || !Forge.packArt) return null;
   return Forge.packArt[packId] || null;
+}
+// Returns the uploaded cover-art image for a starter deck. Same IDB/Storage
+// lifecycle as packArt — stored in Forge.starterDeckArt[deckId] to survive
+// the _stripDataUrls() pass that wipes d.img on every localStorage cycle.
+function getStarterDeckImage(deckId) {
+  if (!deckId || !Forge.starterDeckArt) return null;
+  return Forge.starterDeckArt[deckId] || null;
 }
 
 // 📦 PACK INVENTORY HELPERS
@@ -30521,7 +31029,20 @@ function _applyAuthState(session) {
     if (Profile.cloud.email && !Profile.account.email) {
       Profile.account.email = String(Profile.cloud.email).slice(0, 96);
     }
-    saveProfile();
+    // 🔒 CROSS-DEVICE SYNC GUARD — preserve the real last-edit timestamp before
+    // saveProfile() overwrites it with the current time.
+    //
+    // The stale-cloud guard in cloudFetchProfile() compares Profile.cloud.lastLocalEditAt
+    // against the cloud row's updated_at to decide whether local is newer than cloud.
+    // If we let saveProfile() stamp NOW here, then ANY device that has ever had local
+    // data would always appear "fresher than cloud" (NOW > any previous cloud timestamp),
+    // which means cloudFetchProfile would skip the cloud merge and keep the stale local
+    // copy — exactly the bug where "I signed into my iPad and got my old data, not my
+    // computer account". Restoring the real value in memory fixes cross-device sign-in
+    // without breaking the same-device guard (where local genuinely IS fresher).
+    const _preCFEditAt = (Profile.cloud && Profile.cloud.lastLocalEditAt) || 0;
+    saveProfile();   // must persist signedIn/userId/email to localStorage for crash safety
+    if (Profile.cloud) Profile.cloud.lastLocalEditAt = _preCFEditAt;
     // On fresh sign-ins, pull the player's saved profile data from the cloud.
     if (typeof cloudFetchProfile === 'function') {
       try { if (window.BootSplash) window.BootSplash.set('profile', 0.4, 'Fetching your profile…'); } catch (e) {}
@@ -30532,6 +31053,25 @@ function _applyAuthState(session) {
           // it overrides whatever the blob restore landed on.
           try { if (window.BootSplash) window.BootSplash.set('profile', 1, 'Profile loaded.'); } catch (e) {}
           if (typeof walletFetchProgress === 'function') walletFetchProgress().catch(() => {});
+          // 🎴 NEW PLAYER GATE — explicitly redirect to starter pick after cloud
+          // fetch resolves. Belt-and-suspenders alongside render()'s built-in gate.
+          // Needed because the modal dismissal calls render() BEFORE cloudFetchProfile
+          // resolves, so the first render might fire with signedIn not yet stamped OR
+          // with a stale profile that looks non-empty (hasPickedStarter=true) until the
+          // cloud fetch clears it. After the fetch we know the true state.
+          try {
+            if (typeof _mustPickStarter === 'function' && _mustPickStarter()
+                && App.screen !== 'starterPick' && App.screen !== 'battle'
+                && App.screen !== 'coinFlip' && App.screen !== 'vsScreen') {
+              App.screen = 'starterPick';
+            }
+          } catch (e) {}
+          // 🔄 Re-render so any screen that loaded BEFORE the cloud data
+          // arrived (CX portfolio, inventory, resource ledger, etc.) now shows
+          // the correct cloud-restored values instead of the localStorage
+          // fast-path defaults. Without this, profiles with correct cloud data
+          // still showed empty until the user navigated away and back.
+          try { if (typeof render === 'function') setTimeout(render, 80); } catch (e) {}
         })
         .catch(() => { try { if (window.BootSplash) window.BootSplash.set('profile', 1); } catch (e) {} });
     } else {
@@ -30560,6 +31100,15 @@ function _applyAuthState(session) {
         // synthetic placeholder decks to the admin's real published ones
         // the moment they arrive (admin art, names, hero portraits).
         try { if (window.BootSplash) window.BootSplash.set('catalog', 1, 'Catalog ready.'); } catch (e) {}
+        // 🎴 Catalog just landed — if player still needs a starter deck, snap
+        // them to the picker now (real admin-authored decks are now available).
+        try {
+          if (typeof _mustPickStarter === 'function' && _mustPickStarter()
+              && App.screen !== 'starterPick' && App.screen !== 'battle'
+              && App.screen !== 'coinFlip' && App.screen !== 'vsScreen') {
+            App.screen = 'starterPick';
+          }
+        } catch (e) {}
         try { if (typeof render === 'function') render(); } catch (e) {}
       }).catch(() => { try { if (window.BootSplash) window.BootSplash.set('catalog', 1); } catch (e) {} });
     }
@@ -30570,11 +31119,16 @@ function _applyAuthState(session) {
         // before the media arrived. Then re-render to fire any pending guide.
         try { App._catalogMediaReady = true; } catch (e) {}
         try { if (typeof render === 'function') render(); } catch (e) {}
+        // render() only retriggers guides on ROUTE CHANGES. Since the player
+        // is already on their current page, explicitly re-fire the guide check
+        // so any guide held back by the media gate now plays (with full art+audio).
+        try { if (typeof maybeShowPageGuide === 'function') setTimeout(maybeShowPageGuide, 280); } catch (e) {}
       }).catch(() => {
         // Art fetch failed — don't block guides forever; let them play with
         // whatever media is cached. (The 12s boot ceiling also covers this.)
         try { App._catalogMediaReady = true; } catch (e) {}
         try { if (typeof render === 'function') render(); } catch (e) {}
+        try { if (typeof maybeShowPageGuide === 'function') setTimeout(maybeShowPageGuide, 280); } catch (e) {}
       });
     }
   } else {
@@ -30951,6 +31505,9 @@ async function cloudSyncProfile() {
       // still survives cache clears / new devices / cloud restores. It is
       // tiny (numeric map) so it never strains the forge payload.
       __salvage__:    (Profile.salvage && typeof Profile.salvage === 'object') ? Profile.salvage : {},
+      // 📊 CX share positions — per-resource { qty, avgCost }. Pure-speculation
+      // positions; never contain real resources (that's the exploit fix).
+      __cxHoldings__: (Profile.cxHoldings && typeof Profile.cxHoldings === 'object') ? Profile.cxHoldings : {},
       // 🪖 Hero Loadouts (Prime / Secondary / Backpack / 4 Consumables per hero)
       // piggyback the forge JSONB so they survive cache clears + new devices
       // without a schema migration. Tiny payload (a few item-ids per hero).
@@ -31420,6 +31977,19 @@ async function cloudFetchProfile() {
       }
     }
     if (typeof _ensureResources === 'function') _ensureResources();
+    // 📊 Restore CX share holdings from cloud.
+    const _cloudCxH = (data.forge && typeof data.forge === 'object' && data.forge.__cxHoldings__ && typeof data.forge.__cxHoldings__ === 'object')
+      ? data.forge.__cxHoldings__ : null;
+    if (_cloudCxH) {
+      if (!Profile.cxHoldings || typeof Profile.cxHoldings !== 'object') Profile.cxHoldings = {};
+      for (const _cxk in _cloudCxH) {
+        const _cv = _cloudCxH[_cxk];
+        if (_cv && typeof _cv === 'object') {
+          // Cloud is authoritative (force-flush fires on every trade).
+          Profile.cxHoldings[_cxk] = _cv;
+        }
+      }
+    }
     if (data.deck_history) Profile.deckHistory  = { ...Profile.deckHistory, ...data.deck_history };
     // 🔧 `decks` column is the flat deckByHero map (legacy + current shape).
     // Defensive: if some older cloud row still has the temporary {list, byHero}
@@ -31898,6 +32468,10 @@ async function cloudFetchProfile() {
     }
     Profile.cloud.lastFetchAt = Date.now();
     saveProfile();
+    // 💾 Sync dedicated cxHoldings key with whatever the cloud just restored.
+    // This ensures the dedicated key is always up-to-date so the next boot
+    // can load it instantly without waiting for the cloud roundtrip.
+    try { if (typeof _saveCxHoldings === 'function') _saveCxHoldings(); } catch (e) {}
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e && e.message) || 'Cloud fetch failed.' };
@@ -31949,9 +32523,10 @@ const STORAGE_CATEGORIES = [
   ['weatherAudio', 'weatherAudio.json'],
   ['campArt',      'campArt.json'],
   ['campAudio',    'campAudio.json'],
-  ['packArt',      'packArt.json'],
-  ['itemArt',      'itemArt.json'],
-  ['catalogMedia', 'catalogMedia.json'],
+  ['packArt',        'packArt.json'],
+  ['starterDeckArt', 'starterDeckArt.json'],
+  ['itemArt',        'itemArt.json'],
+  ['catalogMedia',   'catalogMedia.json'],
 ];
 
 async function _storageUploadJSON(filename, payload) {
@@ -32480,6 +33055,9 @@ function _applyCatalogRow(data) {
   if (rawMoves.__ai_behavior__       && typeof rawMoves.__ai_behavior__       === 'object') Catalog.aiBehavior       = rawMoves.__ai_behavior__;
   if (Array.isArray(rawMoves.__custom_ultimates__)) Catalog.ultimates = rawMoves.__custom_ultimates__;
   if (rawMoves.__hero_ultimates__ && typeof rawMoves.__hero_ultimates__ === 'object' && !Array.isArray(rawMoves.__hero_ultimates__)) Catalog.heroUltimates = rawMoves.__hero_ultimates__;
+  // 📈 Crash Exchange — market prices + reserve pool
+  if (rawMoves.__crash_exchange__ && typeof rawMoves.__crash_exchange__ === 'object') Catalog.crashExchange = rawMoves.__crash_exchange__;
+  if (rawMoves.__cx_reserve__     && typeof rawMoves.__cx_reserve__     === 'object') Catalog.cxReserve     = rawMoves.__cx_reserve__;
   const cleanMoves = { ...rawMoves };
   delete cleanMoves.__ai_decks__;
   delete cleanMoves.__starter_decks__;
@@ -32509,6 +33087,8 @@ function _applyCatalogRow(data) {
   delete cleanMoves.__ai_behavior__;
   delete cleanMoves.__custom_ultimates__;
   delete cleanMoves.__hero_ultimates__;
+  delete cleanMoves.__crash_exchange__;
+  delete cleanMoves.__cx_reserve__;
   Catalog.moves  = cleanMoves;
   Catalog.items  = Array.isArray(data.items)  ? data.items  : [];
   Catalog.packs  = Array.isArray(data.packs)  ? data.packs  : [];
@@ -32597,6 +33177,28 @@ function _rehydrateForgeFromCatalog() {
   // published set so every player's heroes fire the same ultimates.
   if (Array.isArray(C.ultimates)) F.customUltimates = C.ultimates;
   if (C.heroUltimates && typeof C.heroUltimates === 'object' && !Array.isArray(C.heroUltimates)) F.heroUltimates = C.heroUltimates;
+  // 📈 Crash Exchange — MERGE prices so the admin's published price model
+  // reaches all players. We only update `prices` and `lastDecayAt` — the
+  // per-player txnLog (trade history visible in the CX log) is intentionally
+  // NOT overwritten, since each player's log is their own trade history.
+  if (C.crashExchange && typeof C.crashExchange === 'object') {
+    if (!F.crashExchange || typeof F.crashExchange !== 'object') F.crashExchange = { prices: {}, txnLog: [], lastDecayAt: 0 };
+    if (C.crashExchange.prices && typeof C.crashExchange.prices === 'object')
+      F.crashExchange.prices = C.crashExchange.prices;
+    if (C.crashExchange.lastDecayAt) F.crashExchange.lastDecayAt = C.crashExchange.lastDecayAt;
+    // txnLog: merge only entries the admin published (shared market events) that
+    // aren't already in the player's own log. Identified by a shared `id` field
+    // if one exists; fall back to keeping the player's local log intact.
+    if (Array.isArray(C.crashExchange.txnLog) && C.crashExchange.txnLog.length) {
+      const _localLog = Array.isArray(F.crashExchange.txnLog) ? F.crashExchange.txnLog : [];
+      const _localIds = new Set(_localLog.map(e => e && e.id).filter(Boolean));
+      const _newEntries = C.crashExchange.txnLog.filter(e => e && e.id && !_localIds.has(e.id));
+      if (_newEntries.length) F.crashExchange.txnLog = [..._newEntries, ..._localLog].slice(-500);
+    }
+  }
+  // Reserve pool — shared market-maker state; replace wholesale since it's
+  // admin-managed, not per-player.
+  if (C.cxReserve && typeof C.cxReserve === 'object') F.cxReserve = C.cxReserve;
 }
 
 // 🛟 RLS-PROOF fallback. The card_catalog DB read needs a working SELECT RLS
@@ -32826,6 +33428,16 @@ async function cloudPublishCatalog(opts) {
       // every player needs these so heroes fire the admin's ultimates.
       __custom_ultimates__:  Array.isArray(Forge.customUltimates) ? Forge.customUltimates : [],
       __hero_ultimates__:    (Forge.heroUltimates && typeof Forge.heroUltimates === 'object' && !Array.isArray(Forge.heroUltimates)) ? Forge.heroUltimates : {},
+      // 📈 Crash Exchange — market prices + reserve pool. These were LOCAL-ONLY;
+      // without a catalog publish they never reached non-admin players, so every
+      // player saw different prices and could never share CX data.  The txnLog is
+      // trimmed to the last 200 entries so the row stays slim.
+      __crash_exchange__: (function() {
+        const cx = (Forge.crashExchange && typeof Forge.crashExchange === 'object') ? Forge.crashExchange : {};
+        const txnLog = Array.isArray(cx.txnLog) ? cx.txnLog.slice(-200) : [];
+        return { prices: (cx.prices && typeof cx.prices === 'object') ? cx.prices : {}, txnLog, lastDecayAt: cx.lastDecayAt || 0 };
+      })(),
+      __cx_reserve__: (Forge.cxReserve && typeof Forge.cxReserve === 'object') ? Forge.cxReserve : {},
     };
     // 🪶 Deep-strip heavy inline base64 / data: URLs from EVERYTHING that
     // rides the single card_catalog row. Big inline blobs (starter-deck
@@ -39525,19 +40137,19 @@ function _nodeRealPay(n) {
   return Math.max(0, Math.min(bounded, slice, pool.avail | 0));
 }
 const RESERVE_NODE_TYPES = [
-  { id: 'supply',  name: 'Supply Node',       icon: '📦', proc: 'Food · Water · Supplies · Medicine', cinder: 60000,  res: { supplies: 200, food: 150 },                 buildH: 6,  blurb: 'Resource intake & relief routing.' },
-  { id: 'fuel',    name: 'Fuel Node',         icon: '⛽', proc: 'Fuel · Power',                        cinder: 90000,  res: { fuel: 300, metal: 120 },                    buildH: 10, blurb: 'Fuel processing & energy distribution.' },
-  { id: 'mining',  name: 'Mining Node',       icon: '⛏',  proc: 'Metal · Ore · Components',            cinder: 80000,  res: { metal: 250 },                               buildH: 8,  blurb: 'Metal & industrial extraction.' },
-  { id: 'mfg',     name: 'Manufacturing Node',icon: '🏭', proc: 'Packs · Crates · Capsules',           cinder: 150000, res: { metal: 300, fuel: 120, supplies: 100 },      buildH: 18, blurb: 'Turns Reserve stock into market products.' },
-  { id: 'convoy',  name: 'Convoy Node',       icon: '🚚', proc: 'Transport · Routing',                 cinder: 70000,  res: { fuel: 220, supplies: 120 },                 buildH: 7,  blurb: 'Moves supply between operations & the Reserve.' },
-  { id: 'storage', name: 'Storage Node',      icon: '🏗', proc: 'Preservation · Warehousing',          cinder: 50000,  res: { metal: 180 },                               buildH: 5,  blurb: 'Expands Reserve storage capacity.' },
-  { id: 'security',name: 'Security Node',     icon: '🛡', proc: 'Defense · Anti-smuggling',            cinder: 90000,  res: { ammo: 200, metal: 150 },                    buildH: 9,  blurb: 'Protects the Reserve & convoys.' },
-  { id: 'research',name: 'Research Node',     icon: '🔬', proc: 'DNA · Memory Shards · Corrupted',     cinder: 200000, res: { memoryShards: 30, corruptedEssence: 20 },   buildH: 24, blurb: 'SCP research & relic analysis.' },
+  { id: 'supply',  name: 'Supply PRN',       icon: '📦', proc: 'Food · Water · Supplies · Medicine', cinder: 60000,  res: { supplies: 200, food: 150 },                 buildH: 6,  blurb: 'Resource intake & relief routing.' },
+  { id: 'fuel',    name: 'Fuel PRN',         icon: '⛽', proc: 'Fuel · Power',                        cinder: 90000,  res: { fuel: 300, metal: 120 },                    buildH: 10, blurb: 'Fuel processing & energy distribution.' },
+  { id: 'mining',  name: 'Mining PRN',       icon: '⛏',  proc: 'Metal · Ore · Components',            cinder: 80000,  res: { metal: 250 },                               buildH: 8,  blurb: 'Metal & industrial extraction.' },
+  { id: 'mfg',     name: 'Manufacturing PRN',icon: '🏭', proc: 'Packs · Crates · Capsules',           cinder: 150000, res: { metal: 300, fuel: 120, supplies: 100 },      buildH: 18, blurb: 'Turns Reserve stock into market products.' },
+  { id: 'convoy',  name: 'Convoy PRN',       icon: '🚚', proc: 'Transport · Routing',                 cinder: 70000,  res: { fuel: 220, supplies: 120 },                 buildH: 7,  blurb: 'Moves supply between operations & the Reserve.' },
+  { id: 'storage', name: 'Storage PRN',      icon: '🏗', proc: 'Preservation · Warehousing',          cinder: 50000,  res: { metal: 180 },                               buildH: 5,  blurb: 'Expands Reserve storage capacity.' },
+  { id: 'security',name: 'Security PRN',     icon: '🛡', proc: 'Defense · Anti-smuggling',            cinder: 90000,  res: { ammo: 200, metal: 150 },                    buildH: 9,  blurb: 'Protects the Reserve & convoys.' },
+  { id: 'research',name: 'Research PRN',     icon: '🔬', proc: 'DNA · Memory Shards · Corrupted',     cinder: 200000, res: { memoryShards: 30, corruptedEssence: 20 },   buildH: 24, blurb: 'SCP research & relic analysis.' },
   // 🏛 FOUNDER NODE — special tier that unlocks every Resource Trader without
   // a per-trader Cinder unlock fee. Marks the owner as a backer/operator who
   // built the marketplace itself. Stat-wise it functions like a Storage Node
   // (warehousing for the trader supply chain) but is purchasable at a premium.
-  { id: 'founder', name: 'Founder Reserve Node', icon: '🏛',
+  { id: 'founder', name: 'Founder Reserve PRN', icon: '🏛',
     proc: 'Resource Traders · Founder Access',
     cinder: 1500000,
     res: { metal: 600, supplies: 400, fuel: 250, memoryShards: 50 },
@@ -39729,7 +40341,7 @@ async function nodeEstablish(typeId, fromTreasury) {
     if (treasuryDebited) { try { await Cloud.client.from('corp_treasury').insert({ corp_id: Corp.mine.id, user_id: me, amount: t.cinder, kind: 'refund', note: t.name + ' (filing failed)' }); Corp.treasury = (Corp.treasury | 0) + t.cinder; } catch (_) {} }
     else { addGems(t.cinder); }
     try { addSalvage(t.res); } catch (_) {} try { saveProfile(); } catch (_) {}
-    showToast('⚠ Node filing failed — refunded. ' + (/economy_nodes|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run api.sql first.' : ''), 4600);
+    showToast('⚠ PRN filing failed — refunded. ' + (/economy_nodes|PGRST205|does not exist/i.test((e && e.message) || '') ? 'Run api.sql first.' : ''), 4600);
     return false;
   }
   showToast('🔌 ' + t.name + (fromTreasury ? ' Treasury-funded — ' : ' licensed — ') + 'construction started (' + t.buildH + 'h). It pays out for active contribution once online.', 6000);
@@ -39775,7 +40387,7 @@ async function nodeCollect(nodeId) {
     }
     if (typeof addCinders === 'function') addCinders(pay);
     const tail = (!pool.legacy && pool.total > 0) ? ' · pool ' + numF(pool.avail) + '/' + numF(pool.total) + ' 🔥 left' : '';
-    showToast('🔌 ' + (n.name || 'Node') + ' payout collected — +' + pay.toLocaleString() + ' 🔥' + tail + '.', 5200);
+    showToast('🔌 ' + (n.name || 'PRN') + ' payout collected — +' + pay.toLocaleString() + ' 🔥' + tail + '.', 5200);
     await nodeFetch();
     return true;
   } catch (e) { showToast('⚠ Payout failed — try again.', 3000); return false; }
@@ -39792,7 +40404,7 @@ async function nodeMaintain(nodeId) {
     const m = Object.assign({}, n.meta || {}, { eff: 100, lastTick: Date.now() });
     const r = await Cloud.client.from('economy_nodes').update({ status: (n.status === 'building' ? 'building' : 'active'), meta: m, updated_at: new Date().toISOString() }).eq('id', n.id).eq('owner_id', Profile.cloud.userId);
     if (r && r.error) throw r.error;
-    showToast('🛠 ' + (n.name || 'Node') + ' maintained — efficiency restored to 100%.', 4200);
+    showToast('🛠 ' + (n.name || 'PRN') + ' maintained — efficiency restored to 100%.', 4200);
     await nodeFetch();
     return true;
   } catch (e) {
@@ -39824,7 +40436,7 @@ async function nodeDefend(nodeId) {
     showToast('⚠ Defense failed — refunded.', 4200);
     return false;
   }
-  showToast('🛡 ' + (n.name || 'Node') + ' secured — ' + rk.name + ' repelled, efficiency restored.', 5600);
+  showToast('🛡 ' + (n.name || 'PRN') + ' secured — ' + rk.name + ' repelled, efficiency restored.', 5600);
   await nodeFetch();
   return true;
 }
@@ -40063,21 +40675,21 @@ function openFoundationReserve() {
       const guardBox = guard
         ? '<div style="margin-bottom:8px;padding:8px 11px;border:1px solid rgba(255,150,110,0.5);border-radius:8px;background:rgba(70,30,20,0.28);color:#ffcaa0;font-size:0.86rem">' +
             '🛡 <strong>AI Director — Inflation Guard ACTIVE</strong>' +
-            '<div class="small-text" style="color:#ffb499;margin-top:3px">Node payouts throttled to <strong>' + guard.pct + '%</strong> to stop Cinder inflation · trigger: ' + esc(guard.why) + '. Lifts automatically when the economy stabilises.</div>' +
+            '<div class="small-text" style="color:#ffb499;margin-top:3px">PRN payouts throttled to <strong>' + guard.pct + '%</strong> to stop Cinder inflation · trigger: ' + esc(guard.why) + '. Lifts automatically when the economy stabilises.</div>' +
           '</div>'
         : '';
       const nodeExplainer = '<div style="margin-bottom:8px;padding:10px 12px;border:1px solid rgba(212,175,55,0.4);border-radius:10px;background:linear-gradient(180deg,rgba(60,46,16,0.3),rgba(30,24,10,0.3));color:#f0e4c4;font-size:0.86rem;line-height:1.65">' +
-        '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:#ffcf5a;margin-bottom:4px">🔌 What is a Foundation Reserve Node?</div>' +
-        'Foundation Reserve Nodes are high-tier infrastructure memberships connected to the world economy of the game. Node Holders gain access to the Foundation Reserve system, treasury tracking, and <strong>Bank Of Ethos</strong> rewards. As players trade, build corporations, operate businesses, and pay taxes in Cinder across the ecosystem, the Foundation Reserve grows. When reserve milestones are reached, eligible Node Holders receive Cinder distributions directly to their Bank Of Ethos account. Nodes are limited and designed for players who want to help support and participate in the long-term economy of the world.' +
+        '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:#ffcf5a;margin-bottom:4px">🔌 What is a Foundation Reserve PRN?</div>' +
+        'Foundation Reserve PRNs are high-tier infrastructure memberships connected to the world economy of the game. PRN Holders gain access to the Foundation Reserve system, treasury tracking, and <strong>Bank Of Ethos</strong> rewards. As players trade, build corporations, operate businesses, and pay taxes in Cinder across the ecosystem, the Foundation Reserve grows. When reserve milestones are reached, eligible PRN Holders receive Cinder distributions directly to their Bank Of Ethos account. PRNs are limited and designed for players who want to help support and participate in the long-term economy of the world.' +
         '</div>';
       const head = guardBox + nodeExplainer + '<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(120,170,255,0.3);border-radius:8px;background:rgba(40,70,130,0.12);color:#cfe0f4;font-size:0.86rem">' +
-        '🔌 <strong>Foundation Reserve Node System</strong> — registered corporations run infrastructure and earn 🔥 for <strong>active contribution</strong>. A node only pays your NEW Reserve points since the last collect — idling pays nothing.' +
+        '🔌 <strong>Foundation Reserve PRN System</strong> — registered corporations run infrastructure and earn 🔥 for <strong>active contribution</strong>. A PRN only pays your NEW Reserve points since the last collect — idling pays nothing.' +
         '<div class="small-text" style="color:#9fb6d6;margin-top:4px">' + rk.rank.icon + ' ' + esc(rk.rank.name) + ' · ' + numF(FoundationReserve.myPoints) + ' rep · rate ' + NODE_CINDER_PER_POINT + ' 🔥/point' + (guard ? ' · <span style="color:#ff9a6b">guard ×' + guard.mul.toFixed(2) + '</span>' : '') + '</div></div>';
       if (FoundationReserve.nodesNeedSetup) {
         return head + '<div class="ink-dim" style="padding:1.4rem;text-align:center">🔌 The node system isn’t set up yet — run <strong>api.sql</strong> in Supabase (creates economy_nodes), then reopen.</div>';
       }
       if (!corp) {
-        return head + '<div class="ink-dim" style="padding:1.6rem;text-align:center">Only <strong>registered corporations</strong> operate Reserve nodes. Found or join one in <strong>⚖️ City Hall</strong> / Just Business, then return here.</div>';
+        return head + '<div class="ink-dim" style="padding:1.6rem;text-align:center">Only <strong>registered corporations</strong> operate Reserve PRNs. Found or join one in <strong>⚖️ City Hall</strong> / Just Business, then return here.</div>';
       }
       const ns = FoundationReserve.nodes || [];
       const pool = FoundationReserve.nodePool;
@@ -40118,7 +40730,7 @@ function openFoundationReserve() {
               : '';
             return '<div style="padding:9px 11px;border:1px solid ' + (risk ? (risk.lock ? 'rgba(255,107,107,0.4)' : 'rgba(224,184,74,0.38)') : 'rgba(120,170,255,0.2)') + ';border-radius:9px;background:rgba(40,70,130,0.10);margin-bottom:7px">' +
               '<div style="display:flex;align-items:center;gap:9px"><span style="font-size:1.3rem">' + ((_nodeType(n.node_type) || {}).icon || '🔌') + '</span>' +
-                '<div style="flex:1;min-width:0"><div style="color:#dce8ff;font-weight:800">' + esc(n.name || 'Node') + (risk ? ' <span class="small-text" style="color:' + (risk.lock ? '#ff8a8a' : '#e8cf94') + '">' + risk.icon + '</span>' : '') + '</div>' +
+                '<div style="flex:1;min-width:0"><div style="color:#dce8ff;font-weight:800">' + esc(n.name || 'PRN') + (risk ? ' <span class="small-text" style="color:' + (risk.lock ? '#ff8a8a' : '#e8cf94') + '">' + risk.icon + '</span>' : '') + '</div>' +
                 '<div class="small-text" style="color:#9fb6d6">' + esc(n.resource || '') + ' · LV ' + (n.level | 0) + ' · eff ' + eff + '%</div></div>' +
                 '<div style="text-align:right">' + status + '<div class="small-text" style="color:#8fb0e0">claimable: ' + numF(claim) + ' 🔥</div></div></div>' +
               riskBox +
@@ -40206,7 +40818,7 @@ function openFoundationReserve() {
             '<button id="fr-x" style="cursor:pointer;border:1px solid rgba(150,190,255,0.4);background:transparent;color:#aec8ff;border-radius:8px;padding:0.35rem 0.7rem">✕</button>' +
           '</div>' +
           ((online && !FoundationReserve.tableMissing && FoundationReserve.lastFetch) ? directorBanner() : '') +
-          (online && !FoundationReserve.tableMissing ? '<div style="display:flex;gap:4px;margin:8px 0 -1px;flex-wrap:wrap">' + tBtn('reserve', '🏛 Reserve') + tBtn('deposit', '➕ Contribute') + tBtn('production', '⚙️ Production') + tBtn('nodes', '🔌 Nodes') + tBtn('ranks', '🏆 Ranks') + tBtn('tax', '💰 Tax') + '</div>' : '') +
+          (online && !FoundationReserve.tableMissing ? '<div style="display:flex;gap:4px;margin:8px 0 -1px;flex-wrap:wrap">' + tBtn('reserve', '🏛 Reserve') + tBtn('deposit', '➕ Contribute') + tBtn('production', '⚙️ Production') + tBtn('nodes', '🔌 PRNs') + tBtn('ranks', '🏆 Ranks') + tBtn('tax', '💰 Tax') + '</div>' : '') +
           '<div id="fr-body" style="flex:1;min-height:240px;max-height:56vh;overflow:auto;border:1px solid rgba(120,170,255,0.22);border-radius:0 0 8px 8px;padding:11px">' + body + '</div>' +
           '<button id="fr-close" style="margin-top:12px;cursor:pointer;border-radius:9px;padding:0.6rem 0.9rem;border:1px solid rgba(120,170,255,0.5);background:rgba(60,100,170,0.18);color:#dce8ff;font-weight:800">Close</button>' +
           '<div class="small-text ink-dim" style="margin-top:6px">Products are manufactured by the world itself — not generated for free. Your deposits keep civilization’s supply chains running.</div>' +
@@ -44178,7 +44790,7 @@ async function idbDel(key) {
 // game starts immediately with text+stats, and sprites pop in as soon as IDB
 // resolves (sub-second on modern devices). Triggers a render once data lands.
 async function loadHeavyForgeFromIdb() {
-  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'itemArt', 'catalogMedia', 'opArt', 'reArt'];
+  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'catalogMedia', 'opArt', 'reArt'];
   let changed = false;
   for (const k of keys) {
     const v = await idbGet('forge_' + k);
@@ -44367,6 +44979,11 @@ async function loadForgeContentFromIdb() {
 
 function loadForge() {
   try {
+    // 📈 CX HOLDINGS — load the dedicated key FIRST, before anything else can
+    // touch Profile. This is the fastest and most reliable restore path: it
+    // bypasses the Profile JSON blob pipeline entirely. Even if the Profile
+    // blob is stale/corrupt/empty, holdings come back immediately.
+    try { if (typeof _loadCxHoldings === 'function') _loadCxHoldings(); } catch (e) {}
     // ⚠️ Heavy chunks (sprites / cardArt / locationArt / weatherAudio) load
     // asynchronously from IndexedDB via loadHeavyForgeFromIdb() during boot —
     // not here. We still read them from localStorage as a one-time fallback
@@ -44425,6 +45042,9 @@ function loadForge() {
     try { const cp = localStorage.getItem('hg_useCustomOnlyPool'); if (cp != null) Forge.useCustomOnlyPool = JSON.parse(cp) === true; } catch (err) {}
     // 🎁 Coupons — restore admin-authored redeem codes from localStorage fast-path.
     try { const cps = localStorage.getItem('hg_coupons'); if (cps) { const x = JSON.parse(cps); if (Array.isArray(x)) Forge.coupons = x; } } catch (err) {}
+    // 📈 Crash Exchange market state — restore prices/reserve from fast-path.
+    try { const cxs = localStorage.getItem('hg_crashExchange'); if (cxs) { const x = JSON.parse(cxs); if (x && typeof x === 'object') { if (!Forge.crashExchange || typeof Forge.crashExchange !== 'object') Forge.crashExchange = { prices: {}, txnLog: [], lastDecayAt: 0 }; if (x.prices && typeof x.prices === 'object') Forge.crashExchange.prices = x.prices; if (x.lastDecayAt) Forge.crashExchange.lastDecayAt = x.lastDecayAt; if (Array.isArray(x.txnLog)) { const _ll = Array.isArray(Forge.crashExchange.txnLog) ? Forge.crashExchange.txnLog : []; if (!_ll.length) Forge.crashExchange.txnLog = x.txnLog; } } } } catch (err) {}
+    try { const cxr = localStorage.getItem('hg_cxReserve'); if (cxr) { const x = JSON.parse(cxr); if (x && typeof x === 'object') Forge.cxReserve = x; } } catch (err) {}
     // 🚨 PRODUCTION OVERRIDE — force custom-only pool ON regardless of saved
     // state. The admin explicitly wants ONLY their forged/cataloged cards in
     // the live game. Any prior `false` in localStorage / cloud save (left over
@@ -44575,6 +45195,10 @@ function loadForge() {
       // reload keeps them, and there's no transient-empty window that could
       // upload an empty blob over the good cloud copy.
       if (p.salvage         && typeof p.salvage         === 'object') Profile.salvage         = p.salvage;          // ⛏ resource ledger
+      // 📈 CX share positions — per-resource { qty, avgCost } holding object.
+      // Previously absent from the whitelist, so every refresh silently dropped
+      // bought share positions even though they were in the localStorage blob.
+      if (p.cxHoldings     && typeof p.cxHoldings     === 'object') Profile.cxHoldings      = p.cxHoldings;       // 📈 CX share positions
       if (Array.isArray(p.unopenedPacks))                              Profile.unopenedPacks   = p.unopenedPacks;    // 📦 pack inventory
       if (p.fieldBag        && typeof p.fieldBag        === 'object') Profile.fieldBag        = p.fieldBag;         // 🎒 field bag
       if (p.heroLoadouts    && typeof p.heroLoadouts    === 'object') Profile.heroLoadouts    = p.heroLoadouts;     // 🪖 loadouts
@@ -44781,6 +45405,9 @@ function saveForge() {
   // move / new event) use _persistForgeNow() to bypass this debounce and
   // upload immediately so a quick refresh can't lose the work.
   try { if (typeof _scheduleCloudSync === 'function') _scheduleCloudSync(); } catch (e) {}
+  // 🌐 Auto-publish to the shared catalog so admin changes are immediately
+  // visible to all players — no manual "Publish" click required.
+  try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(); } catch (e) {}
   // 🗄️ Heavy chunks — sprites / cardArt / locationArt / weatherAudio — go to
   // IndexedDB (capacity 100MB+) instead of localStorage (5-10MB hard cap).
   // Fire and forget — these don't block the synchronous save below.
@@ -44812,8 +45439,9 @@ function saveForge() {
       // restores admin-uploaded tree/building/container art.
       idbSet('forge_campLayout',   Forge.campLayout   || null);
       idbSet('forge_campZones',    Forge.campZones    || []);
-      idbSet('forge_packArt',      Forge.packArt      || {});
-      idbSet('forge_catalogMedia', Forge.catalogMedia || {});
+      idbSet('forge_packArt',        Forge.packArt        || {});
+      idbSet('forge_starterDeckArt', Forge.starterDeckArt || {});
+      idbSet('forge_catalogMedia',   Forge.catalogMedia   || {});
       idbSet('forge_itemArt',      Forge.itemArt      || {});
       idbSet('forge_opArt',        Forge.opArt        || {});
       idbSet('forge_reArt',        Forge.reArt        || {});
@@ -44926,6 +45554,13 @@ function saveForge() {
     // in the localStorage fast-path. Distributed to players via the catalog.
     { key: 'hg_customUltimates',    value: _stripDataUrls(Forge.customUltimates || []),    name: 'customUltimates' },
     { key: 'hg_heroUltimates',      value: (Forge.heroUltimates && typeof Forge.heroUltimates === 'object') ? Forge.heroUltimates : {}, name: 'heroUltimates' },
+    // 📈 Crash Exchange market state — prices/reserve only, no per-player history.
+    // Keep the txnLog trimmed so this never approaches the localStorage cap.
+    { key: 'hg_crashExchange',      value: (function() {
+        const cx = (Forge.crashExchange && typeof Forge.crashExchange === 'object') ? Forge.crashExchange : {};
+        return { prices: cx.prices || {}, txnLog: Array.isArray(cx.txnLog) ? cx.txnLog.slice(-200) : [], lastDecayAt: cx.lastDecayAt || 0 };
+      })(), name: 'crashExchange' },
+    { key: 'hg_cxReserve',          value: (Forge.cxReserve && typeof Forge.cxReserve === 'object') ? Forge.cxReserve : {}, name: 'cxReserve' },
   ];
   const failures = [];
   for (const c of chunks) {
@@ -44937,6 +45572,59 @@ function saveForge() {
     return false;
   }
   return true;
+}
+
+// ============================================================================
+// 🌐 ADMIN AUTO-PUBLISH — debounced catalog broadcast
+// ----------------------------------------------------------------------------
+// Every time the admin calls saveForge() their edits are committed locally and
+// to their own user_profiles.forge row. BUT regular players read from the
+// shared card_catalog (written only by cloudPublishCatalog()). Without an
+// explicit "Publish" click, every admin change — new CX prices, new guides,
+// updated cards — stays invisible to players.
+//
+// _adminAutoPublish() wraps cloudPublishCatalog() with a 45-second debounce
+// so rapid Forge edits batch into a single network request. It's automatically
+// called from saveForge() when the user is admin + signed in. A subtle toast
+// ("🔄 Syncing to all players…" → "✅ Live for all players") lets the admin
+// know their changes are propagating without any extra click.
+// ============================================================================
+let _autoPublishTimer = null;
+let _autoPublishInFlight = false; // guard against cloudPublishCatalog → saveForge → loop
+function _adminAutoPublish() {
+  try {
+    // Only fire for signed-in admins.
+    if (typeof isAdmin !== 'function' || !isAdmin()) return;
+    if (!Profile || !Profile.cloud || !Profile.cloud.signedIn) return;
+    if (typeof cloudPublishCatalog !== 'function') return;
+    // 🛡 LOOP GUARD — cloudPublishCatalog() calls saveForge() internally to
+    // snapshot catalogMedia. Without this, every publish triggers another
+    // saveForge → _adminAutoPublish → publish → saveForge loop forever.
+    if (_autoPublishInFlight) return;
+    if (_autoPublishTimer) clearTimeout(_autoPublishTimer);
+    _autoPublishTimer = setTimeout(async () => {
+      _autoPublishTimer = null;
+      _autoPublishInFlight = true;
+      try {
+        // Non-disruptive notification — a small amber toast so the admin knows
+        // their edits are being broadcast, without blocking or requiring action.
+        try { if (typeof showToast === 'function') showToast('🔄 Syncing changes to all players…', 2500); } catch (e) {}
+        const result = await cloudPublishCatalog();
+        if (result && result.ok) {
+          try { if (typeof showToast === 'function') showToast('✅ Changes are live for all players.', 3000); } catch (e) {}
+        } else if (result && result.blocked) {
+          // Safety guard triggered — don't toast, just log quietly.
+          try { console.warn('[autoPublish] blocked:', result.error); } catch (e) {}
+        } else if (result && !result.ok) {
+          try { if (typeof showToast === 'function') showToast('⚠ Auto-publish failed: ' + (result.error || 'unknown error'), 4000); } catch (e) {}
+        }
+      } catch (e) {
+        try { console.warn('[autoPublish] exception:', e); } catch (e2) {}
+      } finally {
+        _autoPublishInFlight = false;
+      }
+    }, 45000); // 45s debounce — rapid Forge edits batch into one publish
+  } catch (e) {}
 }
 
 // ============================================================================
@@ -48561,7 +49249,7 @@ const TRADER_DEFAULTS = [
   {
     id: 'marshal', name: 'The Marshal', icon: '🛡',
     title: 'Arms & Armor',
-    blurb: 'Weapons-grade goods, security modules, tactical kit. Restock via Security Node ops.',
+    blurb: 'Weapons-grade goods, security modules, tactical kit. Restock via Security PRN ops.',
     nodeReq: 'security',
     zone: 'campHeights',
     catalog: _trCatalog([
@@ -48712,7 +49400,7 @@ function _trUnlockReason(id) {
   // Returns a short human-readable reason for free unlock, or '' if paid.
   const def = getTraderDef(id);
   if (!def) return '';
-  if (_trHasFounder()) return 'Founder Reserve Node';
+  if (_trHasFounder()) return 'Founder Reserve PRN';
   if (def.nodeReq && _trOwnsNodeType(def.nodeReq)) {
     const nt = (typeof _nodeType === 'function') ? _nodeType(def.nodeReq) : null;
     return (nt && nt.name) || (def.nodeReq + ' Node');
@@ -48756,7 +49444,7 @@ function unlockTrader(id) {
   if (isTraderUnlocked(id)) return true;
   const cinder = (Profile.gems | 0);
   if (cinder < TRADER_UNLOCK_CINDER) {
-    try { showToast(`Need ${TRADER_UNLOCK_CINDER.toLocaleString()} Cinder to unlock ${def.name}. (Or own a ${(_nodeType(def.nodeReq) || {}).name || 'matching'} / Founder Node.)`, 4600); } catch (e) {}
+    try { showToast(`Need ${TRADER_UNLOCK_CINDER.toLocaleString()} Cinder to unlock ${def.name}. (Or own a ${(_nodeType(def.nodeReq) || {}).name || 'matching'} / Founder PRN.)`, 4600); } catch (e) {}
     return false;
   }
   // Charge with the standard 5% Foundation Reserve tax. _frPayTax mints the
@@ -50854,7 +51542,17 @@ function _baseHeroBeds() {
       const exhausted = (typeof isHeroExhausted === 'function') && isHeroExhausted(h.id);
       const energyMax = (typeof getHeroBattleMax === 'function') ? getHeroBattleMax(h.id) : 20;
       let art = null;
-      try { art = (typeof getCardArt === 'function') ? getCardArt(h.id) : null; } catch (_) {}
+      try {
+        // Prefer battle sprite (idle first-frame) so the bed rack shows the
+        // same character portrait the player sees during combat — no more
+        // generic emoji or mismatched card illustration.
+        if (typeof getSpriteFrames === 'function') {
+          const frames = getSpriteFrames('h_' + h.id, 'idle') || getSpriteFrames('h_' + h.id, 'walk');
+          if (frames && frames.length) art = frames[0];
+        }
+        // Fall back to card art if no sprite is uploaded yet.
+        if (!art && typeof getCardArt === 'function') art = getCardArt(h.id);
+      } catch (_) {}
       return {
         id: h.id,
         name: h.name || h.id,
@@ -58398,19 +59096,33 @@ const startTurn = (state, who) => {
 
   // ===== Auto-fire any charged moves =====
   // Units that finished a charge-up last turn release the move automatically now.
+  // Hyper-Beam style: the move fires at the start of the owner's next turn.
+  // • Vanish moves (Fly/Dig/Realm) teleport to the target — no range check needed.
+  // • Non-vanish charges (Sunfire Lance, Meteor Charge, etc.) require the target
+  //   to still be within effective attack range; if they moved away the beam fizzles.
   const chargedReleases = s.units.filter(u => u.owner === who && u.alive && u.charging);
   for (const releaser of chargedReleases) {
     const move = lookupMove(releaser.charging.moveId);
-    const target = releaser.charging.targetId ? s.units.find(t => t.id === releaser.charging.targetId && t.alive) : null;
-    // Clear charging first so executeMove doesn't re-enter the charging branch
+    let target = releaser.charging.targetId ? s.units.find(t => t.id === releaser.charging.targetId && t.alive) : null;
+    // Clear charging first so executeMove doesn't re-enter the charging branch.
     s.units = s.units.map(u => u.id === releaser.id ? { ...u, charging: null } : u);
+    // 🏹 Range check (non-vanish only) — if target stepped out of range, fizzle.
+    let outOfRange = false;
+    if (move && target && !move.vanish) {
+      const dist = distance(releaser.pos, target.pos);
+      if (dist > getEffectiveAttackRange(releaser, move)) {
+        outOfRange = true;
+        target = null;
+      }
+    }
     if (move && target) {
       log.push({ msg: `🔆 ${releaser.name} releases ${move.name}!`, color: 'amber' });
       s.log = log;
       s = executeMove(s, releaser, target, move);
       log = s.log;
     } else if (move) {
-      log.push({ msg: `${releaser.name}'s ${move.name} fizzled — no target.`, color: 'amber' });
+      const reason = outOfRange ? 'target stepped out of range' : 'no target';
+      log.push({ msg: `${releaser.name}'s ${move.name} fizzled — ${reason}.`, color: 'amber' });
     }
   }
 
@@ -59177,6 +59889,13 @@ const App = {
   // First-run tutorial state. `active: true` while the floating step panel is visible during
   // the player's first battle. `step` is the 0-indexed step in TUTORIAL_STEPS.
   tutorial: { active: false, step: 0 },
+
+  // 🎮 Feature flags — runtime toggles for in-progress hybrid PixiJS port.
+  // When pixiBoard is true, renderBoard() emits a Pixi mount-point div and
+  // MSPixiBoard renders units/tiles on a WebGL canvas instead of DOM cells.
+  // Default off — the DOM renderer remains canonical until proven on live boards.
+  // Toggle from console: App.flags.pixiBoard = true; renderBattle();
+  flags: { pixiBoard: false },
 };
 
 // ============ TUTORIAL ============
@@ -59331,7 +60050,14 @@ function render() {
         if (typeof _clearGuideTimers === 'function') _clearGuideTimers();
         const _gv = document.getElementById('rpgg-overlay'); if (_gv) _gv.remove();
         const _gf = document.getElementById('rpgg-replay-fab'); if (_gf) _gf.remove();
-        if (typeof RPGGuide !== 'undefined') RPGGuide.activeId = null;
+        if (typeof RPGGuide !== 'undefined') {
+          RPGGuide.activeId = null;
+          // 🔄 Clear "seen this load" for the new route so everyVisit guides
+          // play again when the player returns to their page. We only clear the
+          // guide that was attached to the PREVIOUS route (if any) so other
+          // guides' seen-state isn't lost.
+          try { RPGGuide._seenThisLoad = {}; } catch (e) {}
+        }
         setTimeout(() => { try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {} }, 120);
       }
     } catch (e) {}
@@ -59494,6 +60220,7 @@ function render() {
   if (App.screen === 'friends')      return renderFriends();
   if (App.screen === 'bookOfKnowledge') return renderBookOfKnowledge();
   if (App.screen === 'matchmaking')  return renderMatchmaking();
+  if (App.screen === 'pledge')       return renderPledge();
   if (App.screen === 'coliseum')     return renderColiseum();
   if (App.screen === 'wagerHall')    return renderWagerHall();
   if (App.screen === 'vendorMarket') return renderVendorMarket();
@@ -61518,15 +62245,20 @@ function renderTitle() {
         </div>
       ` : `
         <div class="hub-portal-grid">${portalCards}</div>
-        <div class="hub-footer-sigil">◇  ⚔  ◇</div>
       `}
+      <div class="hub-game-footer">
+        <div class="hub-footer-sigil">◇  ⚔  ◇</div>
+        <button class="tos-link-btn" id="hub-tos-btn">Terms of Service</button>
+      </div>
 
       ${renderSubclassPickModal()}
+      ${renderTosModal()}
     </div>
   `;
 
 
   bindSubclassPickModal();
+  bindTosModal();
 
   // Wire portal clicks
   portals.forEach(p => {
@@ -61966,13 +62698,69 @@ function grantStarterDeckToPlayer(deck, opts) {
   _persistProgressNow();
   return true;
 }
+// 👑 Admin-only helper: grant the full published card catalog to the current
+// profile (3 copies of every non-hero card, 1 copy of every hero). Guarded by
+// isAdmin() so it never fires for regular players — they earn cards through
+// gameplay. Call from the browser console: _grantAllCatalogCardsToNewPlayer()
+function _grantAllCatalogCardsToNewPlayer() {
+  if (typeof isAdmin !== 'function' || !isAdmin()) {
+    console.warn('[grantAllCatalogCards] admin-only — skipped for non-admin player');
+    return;
+  }
+  try {
+    if (!Profile.cardCollection) Profile.cardCollection = {};
+    const COPIES = 3; // standard playset count
+    // All custom / published cards from the catalog.
+    // Catalog.cards is the published mirror of Forge.customCards; we merge
+    // both sources (dedup by id) so offline / pre-publish runs still work.
+    const _catCards   = Array.isArray(Catalog && Catalog.cards)       ? Catalog.cards       : [];
+    const _forgeCards = Array.isArray(Forge   && Forge.customCards)   ? Forge.customCards   : [];
+    const _seen = new Set();
+    const all = [];
+    for (const c of [..._catCards, ..._forgeCards]) {
+      if (c && c.id && !_seen.has(c.id)) { _seen.add(c.id); all.push(c); }
+    }
+    for (const card of all) {
+      if (!card || !card.id) continue;
+      const isHero = card.type === 'hero'
+        || (Array.isArray(card.tags) && card.tags.includes('hero'));
+      const want = isHero ? 1 : COPIES;
+      if ((Profile.cardCollection[card.id] | 0) < want) Profile.cardCollection[card.id] = want;
+    }
+    // All heroes from the hero roster
+    const heroes = (typeof getAllHeroes === 'function') ? getAllHeroes() : [];
+    for (const h of heroes) {
+      if (!h || !h.id) continue;
+      if ((Profile.cardCollection[h.id] | 0) < 1) Profile.cardCollection[h.id] = 1;
+    }
+    // All cards from every starter deck — ensures starter-deck exclusives are included
+    const sDecks = (typeof getAllStarterDecks === 'function') ? getAllStarterDecks() : [];
+    for (const sd of sDecks) {
+      if (!sd || !Array.isArray(sd.cards)) continue;
+      const sdHero = (typeof _starterDeckHero === 'function') ? _starterDeckHero(sd) : null;
+      const sdHeroId = (sdHero && sdHero.id) || sd.heroId;
+      if (sdHeroId && (Profile.cardCollection[sdHeroId] | 0) < 1) Profile.cardCollection[sdHeroId] = 1;
+      for (const key of sd.cards) {
+        let c = null;
+        try { c = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null; } catch (_) {}
+        if (!c || !c.id) continue;
+        if ((Profile.cardCollection[c.id] | 0) < COPIES) Profile.cardCollection[c.id] = COPIES;
+      }
+    }
+  } catch (e) { try { console.warn('[grantAllCatalogCards] failed:', e); } catch (_) {} }
+}
+// Expose admin helper to the browser console for manual use.
+try { window._grantAllCatalogCardsToNewPlayer = _grantAllCatalogCardsToNewPlayer; } catch (e) {}
+
 function pickStarterDeck(deckId) {
   const deck = getAllStarterDecks().find(d => d.id === deckId);
   if (!deck) { showToast('That starter deck is no longer available.', 2600); return; }
+  // Grant chosen deck (marks starterPicked = true)
   grantStarterDeckToPlayer(deck, { markPicked: true });
+  try { saveProfile(); } catch (e) {}
   App.screen = 'title';
   if (typeof render === 'function') render();
-  showToast(`🦸 "${deck.name || 'Starter deck'}" is yours! ${(deck.cards||[]).length} cards added — head to Battle Hall.`, 4600);
+  showToast(`🦸 "${deck.name || 'Starter deck'}" chosen! Head to Battle Hall to start your journey!`, 4500);
 }
 
 // ============================================================================
@@ -62496,9 +63284,10 @@ function renderStarterPick() {
     const heroVisual = (h && h.id && typeof renderIcon === 'function')
       ? renderIcon('h_' + h.id, h.icon || '🦸', 'xl')
       : `<span style="font-size:3rem">${h && h.icon ? h.icon : '🦸'}</span>`;
-    const art = d.img
-      ? `<img src="${d.img}" alt="" style="width:100%;height:auto;display:block;object-fit:contain;border-radius:12px 12px 0 0;background:#0c0718">`
-      : `<div style="height:150px;display:flex;align-items:center;justify-content:center;border-radius:12px 12px 0 0;background:radial-gradient(ellipse at center,rgba(212,175,55,0.2),transparent 70%)">${heroVisual}</div>`;
+    const artSrc = (typeof getStarterDeckImage === 'function' ? getStarterDeckImage(d.id) : null) || d.img || null;
+    const art = artSrc
+      ? `<div style="height:280px;overflow:hidden;background:#05030e;border-bottom:1px solid rgba(212,175,55,0.2);position:relative"><img src="${escapeHtml(artSrc)}" alt="${escapeHtml(d.name||'')}" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block" loading="lazy"><div style="position:absolute;inset:0;background:linear-gradient(180deg,transparent 50%,rgba(5,3,14,0.85) 100%);pointer-events:none"></div></div>`
+      : `<div style="height:180px;display:flex;align-items:center;justify-content:center;border-radius:12px 12px 0 0;background:radial-gradient(ellipse at center,rgba(212,175,55,0.2),transparent 70%)">${heroVisual}</div>`;
     return `
       <div style="width:260px;background:rgba(20,12,40,0.7);border:1px solid rgba(212,175,55,0.4);border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
         ${art}
@@ -63980,6 +64769,7 @@ function startBattleWithPrep(playerGoesFirst) {
   // If AI goes first, kick off the AI controller immediately
   if (!playerGoesFirst) {
     App.ui.aiBusy = true;
+    _startAIHardDeadline();
     if (App.state && App.state.units) {
       App.state = { ...App.state, units: App.state.units.map(u => u.owner === 'ai' ? { ...u, aiActed: false } : u) };
     }
@@ -64305,7 +65095,7 @@ function renderPricingAdmin() {
               return `
             <div class="ai-deck-row" data-sd-idx="${i}" style="display:flex;align-items:center;gap:0.6rem;padding:0.55rem 0.8rem;background:rgba(20,12,40,0.5);border:1px solid rgba(255,180,90,0.28);border-radius:6px;margin-bottom:0.4rem;flex-wrap:wrap">
               <div style="width:46px;height:46px;flex:0 0 46px;border-radius:6px;overflow:hidden;background:rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center">
-                ${d.img ? `<img id="sd-img-prev-${i}" src="${d.img}" style="width:100%;height:100%;object-fit:cover">` : `<span id="sd-img-prev-${i}" style="font-size:1.4rem;opacity:0.5">🖼️</span>`}
+                ${(() => { const _art = (typeof getStarterDeckImage === 'function' ? getStarterDeckImage(d.id) : null) || d.img || null; return _art ? `<img id="sd-img-prev-${i}" src="${escapeHtml(_art)}" style="width:100%;height:100%;object-fit:cover">` : `<span id="sd-img-prev-${i}" style="font-size:1.4rem;opacity:0.5">🖼️</span>`; })()}
               </div>
               <div style="flex:1 1 180px;min-width:140px">
                 <div style="font-family:'Cinzel',serif;color:#ffd166;font-weight:700">${escapeHtml(d.name || 'Untitled Starter Deck')}</div>
@@ -64933,7 +65723,8 @@ function renderPricingAdmin() {
       render();
     };
   });
-  // Photo upload (resized to 512px, stored inline as a data URL on the record).
+  // Photo upload — stored in Forge.starterDeckArt[id] (IDB-backed, like packArt)
+  // rather than d.img so _stripDataUrls() can't wipe the image on each save.
   document.querySelectorAll('[data-act="sd-img"]').forEach(el => {
     el.onclick = () => {
       const idx = parseInt(el.dataset.idx, 10);
@@ -64941,7 +65732,7 @@ function renderPricingAdmin() {
       if (file) file.click();
     };
   });
-  (Forge.starterDecks || []).forEach((_, idx) => {
+  (Forge.starterDecks || []).forEach((d, idx) => {
     const file = document.getElementById('sd-img-file-' + idx);
     if (!file) return;
     file.onchange = async (e) => {
@@ -64950,7 +65741,9 @@ function renderPricingAdmin() {
       try {
         const dataUrl = await resizeImage(f, 512);
         if (Forge.starterDecks[idx]) {
-          Forge.starterDecks[idx].img = dataUrl;
+          const deckId = Forge.starterDecks[idx].id;
+          if (!Forge.starterDeckArt) Forge.starterDeckArt = {};
+          if (deckId) Forge.starterDeckArt[deckId] = dataUrl;
           saveForge();
           showToast('📷 Cover photo saved.', 1800);
           render();
@@ -73311,10 +74104,12 @@ async function tryPromptCounter(state, opts) {
           windowMs: windowSec * 1000,
           resolve: _resolveSafely,
         };
-        // Push the AI hang-watchdog deadline so it doesn't fire before the
-        // player's counter window closes. Without this the 8s watchdog fires
-        // mid-prompt and the pending .then() is left as an abandoned promise.
-        try { if (typeof App._aiLastSchedule !== 'undefined') App._aiLastSchedule = Date.now(); } catch (e) {}
+        // NOTE: we intentionally do NOT update App._aiLastSchedule here.
+        // Doing so was defeating the 8s hang-watchdog: the watchdog would
+        // fire, see a fresh timestamp from tryPromptCounter, and silently
+        // return without force-ending the turn. The hard-deadline timer on
+        // App._aiTurnDeadline (set when aiBusy turns true) is the backstop
+        // that covers the entire AI turn regardless of counter window length.
         try { renderBattle(); } catch (e) { /* render failed — still proceed */ }
         // Auto-resolve on timeout. _resolveSafely is idempotent so this
         // safely no-ops if the player already clicked a counter.
@@ -73359,6 +74154,7 @@ function _forceUnfreeze() {
   try { console.warn('[force-unfreeze] requested by user — wiping busy state'); } catch (e) {}
   try { _resetCounterPromptState(); } catch (e) {}
   try { if (App._aiHangTimer) { clearTimeout(App._aiHangTimer); App._aiHangTimer = null; } } catch (e) {}
+  _clearAIHardDeadline();
   try { App._spellInFlight = 0; } catch (e) {}
   try {
     if (App && App.ui) {
@@ -74505,6 +75301,340 @@ function renderMoveLearnModal() {
 
 // Subclass-pick modal — renders for the first entry in App.pendingSubclassPicks, if any.
 // Player must pick one (no skip option — this is a permanent commitment, like a class in D&D).
+// ============================================================================
+// 👑 FOUNDER PACKAGES / PLEDGE SCREEN
+// ============================================================================
+const PLEDGE_TIERS = [
+  {
+    id: 'survivor', name: 'Survivor Access', price: 'FREE', accent: '#8ecc8a', featured: false,
+    tagline: 'Enter the world of Mythic Spellbook and begin your survival.',
+    features: [
+      'Full access to Mythic Spellbook',
+      '1 Cash Out per month',
+      '3 Booster Packs',
+      '1 Starter Deck',
+      '3 Tester Promo Cards',
+    ],
+    perfect: 'New survivors entering the economy for the first time.',
+  },
+  {
+    id: 'vault', name: 'Vault Key', price: '$10', accent: '#88aaff', featured: false,
+    tagline: 'Unlock your first step into the Vault economy.',
+    features: [
+      '3 Cash Outs per month',
+      '5 Booster Packs',
+      '1 Starter Deck',
+      '5 Tester Promo Cards',
+      'Vault Key Profile Badge',
+    ],
+    perfect: 'Players looking to trade, grind, and start building value.',
+  },
+  {
+    id: 'scavenger', name: 'Scavenger Tier', price: '$50', accent: '#44cc88', featured: false,
+    tagline: 'For survivors ready to become active traders and collectors.',
+    features: [
+      '5 Cash Outs per month',
+      '8 Booster Packs',
+      '1 Starter Deck',
+      '8 Tester Promo Cards',
+      '25,000 Cinder',
+      'Full Access to the Codex',
+      'Exclusive Tester Deck Sleeves',
+      'Exclusive Tester Tombstone Cosmetic',
+    ],
+    perfect: 'Dedicated players wanting deeper access to the ecosystem.',
+  },
+  {
+    id: 'node-starter', name: 'Starter PRN License', price: '$250', accent: '#ffb344', featured: false,
+    tagline: 'Become part of the infrastructure powering the world.',
+    features: [
+      '8 Cash Outs per month',
+      '12 Booster Packs',
+      '1 Starter Deck',
+      '10 Tester Promo Cards',
+      '25,000 Cinder',
+      'Full Codex Access',
+      'Tester Deck Sleeves',
+      'Tester Tombstone Cosmetic',
+      '10 FREE Packs Every Set Release',
+      '+1% PRN Power Progression',
+    ],
+    nodeBox: {
+      label: 'PRN Power Progression',
+      desc: 'Increases how quickly your PRN levels up through daily player activity, improving long-term reward payouts.',
+    },
+    perfect: 'Early PRN operators and community builders.',
+  },
+  {
+    id: 'outpost', name: 'Outpost Operator', price: '$500', accent: '#ff8855', featured: false,
+    tagline: 'Take control of a growing economic territory.',
+    inherit: 'Everything in Starter PRN, PLUS:',
+    features: [
+      '+3% PRN Power Progression',
+      '+5% Cinder Boost when starting Operations',
+      '+5% Cinder Boost from higher-level player activity',
+      'Priority access to future PRN expansions',
+      'Exclusive Operator cosmetics',
+    ],
+    perfect: 'Players building influence inside the economy.',
+  },
+  {
+    id: 'foundation', name: 'Foundation Contributor', price: '$2,000', accent: '#b888ff', featured: true,
+    tagline: 'Become permanently embedded in the Mythic Spellbook universe.',
+    inherit: 'Everything in Outpost Operator, PLUS:',
+    features: [
+      'Your Character Added Into the Game World',
+      '+8% PRN Power Progression',
+      '+5% Cinder Boost when starting Operations',
+      '+5% Cinder Boost from Just Business businesses',
+      '+10% Cinder Boost from higher-level player activity',
+      'Founder Recognition inside the Codex Archives',
+      'Exclusive Founder cosmetics and title',
+    ],
+    perfect: 'Serious supporters helping shape the future of the universe.',
+  },
+  {
+    id: 'dominion', name: 'Dominion Founder', price: '$3,500', accent: '#ff88cc', featured: true,
+    tagline: 'A high-level economic founder package for major supporters.',
+    inherit: 'Everything in Foundation Contributor, PLUS:',
+    features: [
+      'Expanded in-game character presence',
+      'Founder Statue or Memorial in select regions',
+      'Exclusive Dominion-tier cosmetics',
+      'Increased visibility in the community economy',
+      'Priority access to future land, business &amp; PRN systems',
+      'Founder-only seasonal rewards',
+      'Additional Collector Pack allocations every expansion',
+    ],
+    perfect: 'Players and investors who want lasting influence in the ecosystem.',
+  },
+  {
+    id: 'titan', name: 'Titan PRN Founder', price: '$5,000', accent: '#44d4ff', featured: true,
+    tagline: 'Own part of the infrastructure powering Mythic Spellbook.',
+    inherit: 'Everything in Dominion Founder, PLUS:',
+    features: [
+      '5% Royalty Participation Pool',
+      'Access to ALL in-game businesses',
+      '100 FREE Packs Every New Set Release',
+      'Exclusive Titan Founder Badge',
+      'Priority economic expansion access',
+      'Elite PRN cosmetics and branding',
+      'Enhanced Founder profile recognition',
+      '+8% PRN Power Progression',
+      '+5% Cinder Boost when starting Operations',
+      '+5% Cinder Boost from Just Business businesses',
+      '+10% Cinder Boost from higher-level player activity',
+    ],
+    perfect: 'Whales, guild leaders, infrastructure supporters, and long-term ecosystem believers.',
+  },
+  {
+    id: 'eternal', name: 'Eternal Founder', price: '$10,000', accent: '#ffd700', featured: true,
+    tagline: 'The highest level of Mythic Spellbook founding status.',
+    inherit: 'Everything in Titan Founder, PLUS:',
+    features: [
+      'Major Character Integration Into the World Lore',
+      '25% Royalty Participation Pool',
+      '1,000 FREE Packs Every Set Release',
+      'Access to all businesses and future expansion systems',
+      'Legendary Founder Status',
+      'Direct access to future ecosystem planning discussions',
+      'Eternal Founder Monument or Tribute inside the world',
+      'Ultra-exclusive cosmetics never sold again',
+      '+15% PRN Power Progression',
+      '+15% Cinder Boost when starting Operations',
+      '+15% Cinder Boost from Just Business businesses',
+      '+20% Cinder Boost from higher-level player activity',
+    ],
+    perfect: 'Legacy founders helping build the future of player-owned gaming.',
+  },
+];
+
+function renderPledge() {
+  const host = document.getElementById('app');
+  if (!host) return;
+
+  const tierHtml = PLEDGE_TIERS.map(t => {
+    const accentRgb = t.accent;
+    const featHtml  = t.features.map(f => `<li>${f}</li>`).join('');
+    const inheritRow = t.inherit
+      ? `<li class="feat-inherit">${t.inherit}</li>`
+      : '';
+    const nodeBox = t.nodeBox ? `
+      <div class="pledge-tier-node-box">
+        <div class="pledge-tier-node-label">${t.nodeBox.label}</div>
+        <div class="pledge-tier-node-desc">${t.nodeBox.desc}</div>
+      </div>` : '';
+    const ctaCls  = t.id === 'survivor' ? 'is-free' : '';
+    const ctaText = t.id === 'survivor' ? 'Play Free' : `Pledge ${t.price}`;
+
+    return `
+      <div class="pledge-tier${t.featured ? ' is-featured' : ''}"
+           style="--pt-accent:${accentRgb};--pt-accent-bg:${accentRgb}22">
+        <div class="pledge-tier-glow"></div>
+        <div class="pledge-tier-head">
+          <div class="pledge-tier-name">${t.name}</div>
+          <div class="pledge-tier-price">${t.price}${t.id !== 'survivor' ? '<span>one-time</span>' : ''}</div>
+          <div class="pledge-tier-tagline">${t.tagline}</div>
+        </div>
+        <div class="pledge-tier-body">
+          <div class="pledge-tier-feat-label">Includes</div>
+          <ul class="pledge-tier-feats">
+            ${inheritRow}
+            ${featHtml}
+          </ul>
+          ${nodeBox}
+        </div>
+        <div class="pledge-tier-perfect">
+          <strong>Perfect for:</strong> ${t.perfect}
+        </div>
+        <div class="pledge-tier-foot">
+          <button class="pledge-cta ${ctaCls}" data-pledge-id="${t.id}">${ctaText}</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  host.innerHTML = `
+    <div class="pledge-screen">
+      <div class="pledge-back-row">
+        <button class="pledge-back-btn" id="pledge-back">← Back to Hub</button>
+      </div>
+      <div class="pledge-head">
+        <div class="pledge-head-title">👑 Mythic Spellbook — Founder &amp; PRN Packages</div>
+        <div class="pledge-head-sub">Support the world you play in. Every tier helps build the economy, the lore, and the infrastructure that powers Mythic Spellbook.</div>
+      </div>
+      <div class="pledge-grid">${tierHtml}</div>
+    </div>
+  `;
+
+  document.getElementById('pledge-back').onclick = () => {
+    App.screen = 'title'; App.titleHub = 'main'; render();
+  };
+
+  host.querySelectorAll('[data-pledge-id]').forEach(btn => {
+    btn.onclick = () => {
+      const tid = btn.dataset.pledgeId;
+      const tier = PLEDGE_TIERS.find(t => t.id === tid);
+      if (!tier) return;
+      if (tier.id === 'survivor') {
+        // Already free — just close back to hub
+        App.screen = 'title'; App.titleHub = 'main'; render();
+        showToast('🦸 You already have Survivor Access — play on!', 3000);
+        return;
+      }
+      // Open pledge link — update this URL when the campaign goes live
+      const pledgeUrl = 'https://hidnstudios.com/pledge';
+      try { window.open(pledgeUrl, '_blank', 'noopener,noreferrer'); } catch (e) {}
+      showToast(`👑 Opening pledge page for ${tier.name}…`, 2800);
+    };
+  });
+}
+
+// ============================================================================
+// ⚖ TERMS OF SERVICE MODAL
+// ============================================================================
+function renderTosModal() {
+  return `
+    <div id="tos-overlay" class="tos-overlay" style="display:none" role="dialog" aria-modal="true" aria-label="Terms of Service">
+      <div class="tos-modal">
+        <div class="tos-modal-head">
+          <div>
+            <div class="tos-modal-head-title">⚖ Mythic Spellbook — Terms of Service</div>
+            <div class="tos-modal-head-sub">Last Updated: May 27, 2026 · Hidn Studios</div>
+          </div>
+          <button class="tos-modal-x" id="tos-close-btn" aria-label="Close">✕</button>
+        </div>
+        <div class="tos-modal-body">
+          <p>Welcome to Hidn Studios and the world of Mythic Spellbook.</p>
+          <p>These Terms of Service ("Terms") govern your access to and use of Mythic Spellbook, its game servers, marketplace systems, websites, applications, economy systems, node systems, digital assets, and related services operated by Hidn Studios ("Hidn Studios," "we," "our," or "us").</p>
+          <p>By creating an account, accessing the game, or using any related services, you agree to these Terms. If you do not agree, do not use the game or services.</p>
+
+          <h2>1. Eligibility</h2>
+          <p>You must be at least 13 years old to access Mythic Spellbook.</p>
+          <p>Users under the age of 18 may play the game, participate in trading systems, and own in-game digital assets, but may not use cashout systems, withdrawal systems, or real-world earnings features without verified parental or legal guardian consent.</p>
+          <p>Hidn Studios reserves the right to request age verification, parental consent verification, or identity verification at any time for users utilizing monetization or withdrawal features.</p>
+
+          <h2>2. Ownership of Digital Assets</h2>
+          <p>Unlike many traditional games, Mythic Spellbook allows players to own, trade, sell, and exchange eligible in-game digital assets through approved systems.</p>
+          <p>Eligible digital assets may include:</p>
+          <ul><li>Cards</li><li>Cosmetics</li><li>Packs</li><li>PRN rewards</li><li>Resources</li><li>Collectibles</li><li>Marketplace items</li><li>Other approved digital property</li></ul>
+          <p>Subject to compliance with these Terms, players retain the right to trade or sell their earned or acquired assets. Hidn Studios will not interfere with legitimate player-to-player trading, real-money trading ("RMT"), marketplace activity, or collection ownership unless violations of these Terms occur.</p>
+
+          <h2>3. Real Money Trading (RMT)</h2>
+          <p>Mythic Spellbook openly permits player-driven economies and real-money trading activity through approved systems and community marketplaces.</p>
+          <p>However, the following activities are strictly prohibited:</p>
+          <ul><li>Fraudulent transactions</li><li>Chargeback abuse</li><li>Marketplace manipulation</li><li>Impersonation</li><li>Stolen payment methods</li><li>Account theft</li><li>Money laundering</li><li>Exploiting bugs for economic gain</li><li>Duplication exploits</li><li>Unauthorized automation</li><li>Scamming players or Hidn Studios</li><li>False representation of assets</li><li>Circumventing security systems</li><li>Selling illegally obtained assets</li><li>Coordinated market abuse or artificial price manipulation</li><li>Use of hacked or compromised accounts</li></ul>
+          <p>Any player found engaging in these activities may face permanent account termination, asset removal, marketplace restrictions, cashout suspension, legal action, civil claims for damages, and cooperation with law enforcement where applicable.</p>
+
+          <h2>4. Anti-Cheat &amp; Fair Play</h2>
+          <p>Cheating destroys economies, communities, and competitive integrity. The following are prohibited:</p>
+          <ul><li>Bots, automation software, and scripts</li><li>Duping and packet manipulation</li><li>Unauthorized third-party tools and exploits</li><li>Memory editing and reverse engineering</li><li>Unauthorized client modifications</li><li>Win trading and AFK farming systems</li><li>Economic abuse and exploit abuse</li><li>Circumvention of gameplay systems</li></ul>
+          <p>Players caught cheating may lose accounts, digital assets, marketplace privileges, node ownership benefits, tournament eligibility, and cashout access. Hidn Studios reserves the right to pursue legal remedies against individuals or organizations that intentionally damage the game, economy, infrastructure, or player experience.</p>
+
+          <h2>5. Marketplace &amp; Trading Risks</h2>
+          <p>Players are responsible for their own trades, deals, negotiations, and marketplace activity. While Hidn Studios may investigate reports of fraud or abuse, we do not guarantee reimbursement for player mistakes, poor trades, external platform risks, or unofficial agreements.</p>
+          <p>Players are strongly encouraged to verify trades carefully, avoid suspicious offers, use approved systems, protect account credentials, and enable security protections. You are responsible for the security of your account.</p>
+
+          <h2>6. Cashout Vault &amp; Earnings</h2>
+          <p>Certain systems within Mythic Spellbook may allow players to withdraw eligible earnings through approved cashout systems or "Cashout Vault" features. Participation may require identity verification, tax documentation, compliance checks, age verification, regional eligibility review, and anti-fraud screening.</p>
+          <p>Hidn Studios reserves the right to freeze, delay, review, or reject withdrawals associated with fraud, suspicious activity, chargebacks, exploit abuse, Terms violations, regulatory concerns, or security investigations.</p>
+          <p>Players understand that participation in the player economy involves risk and that digital asset values may fluctuate based on community demand and market conditions.</p>
+
+          <h2>7. Account Suspension &amp; Termination</h2>
+          <p>Hidn Studios may suspend or permanently terminate accounts for scamming, harassment, hate speech, threats, exploit abuse, fraud, illegal activity, payment abuse, unauthorized software use, or attempting to damage the game ecosystem. Banned users may lose access to accounts, assets, marketplace systems, node systems, cashout systems, and community services.</p>
+
+          <h2>8. Community Conduct</h2>
+          <p>Players agree not to harass, threaten, or doxx others; distribute malicious software; encourage cheating; impersonate staff; spread illegal content; engage in targeted abuse; promote fraud schemes; or use the platform for criminal activity.</p>
+          <p>Healthy competition, rivalries, trading, politics, and player-driven conflict are part of the Mythic Spellbook experience. Crossing into fraud, abuse, or illegal activity is not.</p>
+
+          <h2>9. Intellectual Property</h2>
+          <p>All game systems, branding, lore, visual assets, mechanics, code, music, trademarks, logos, and proprietary technology associated with Mythic Spellbook remain the property of Hidn Studios unless otherwise stated. Ownership of digital assets does not grant ownership of the underlying intellectual property. Players may not repackage, clone, or sell unauthorized copies of the game, use official assets commercially without permission, or reverse engineer proprietary systems.</p>
+
+          <h2>10. Service Availability</h2>
+          <p>Mythic Spellbook is an evolving live-service game. Hidn Studios may update systems, rebalance gameplay, adjust economy systems, patch exploits, modify features, add or remove content, conduct maintenance, or reset bugged assets. We will make reasonable efforts to maintain stable service but do not guarantee uninterrupted access.</p>
+
+          <h2>11. Limitation of Liability</h2>
+          <p>To the maximum extent permitted by law, Hidn Studios is not liable for market losses, trade losses, lost profits, asset devaluation, service interruptions, unauthorized account access caused by user negligence, third-party platform risks, or external marketplace disputes. Use of the game and economy systems is at your own risk.</p>
+
+          <h2>12. Changes to These Terms</h2>
+          <p>Hidn Studios may update these Terms at any time. Continued use of Mythic Spellbook after changes are posted constitutes acceptance of the revised Terms.</p>
+
+          <h2>13. Contact</h2>
+          <p>For support, legal inquiries, fraud reports, or appeals, contact Hidn Studios through official channels provided on our platforms.</p>
+
+          <div class="tos-final">
+            <strong style="color:#d4c89a;letter-spacing:0.04em">Final Statement</strong><br><br>
+            Mythic Spellbook was built around the belief that players should have freedom, ownership, and the ability to build real value inside living game worlds.<br><br>
+            We support player-driven economies. We support trading. We support collectors. We support grinders. We support creators.<br><br>
+            But we will aggressively protect the integrity of the ecosystem against fraud, cheating, exploitation, and abuse.
+          </div>
+        </div>
+        <div class="tos-modal-foot">
+          <button id="tos-accept-btn">I Understand</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindTosModal() {
+  const openBtn  = document.getElementById('hub-tos-btn');
+  const overlay  = document.getElementById('tos-overlay');
+  const closeBtn = document.getElementById('tos-close-btn');
+  const acceptBtn = document.getElementById('tos-accept-btn');
+  if (!overlay) return;
+  const open  = () => { overlay.style.display = 'flex'; };
+  const close = () => { overlay.style.display = 'none'; };
+  if (openBtn)  openBtn.onclick  = open;
+  if (closeBtn) closeBtn.onclick = close;
+  if (acceptBtn) acceptBtn.onclick = close;
+  // Click backdrop to close
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  // Escape key to close
+  const onKey = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
+}
+
 function renderSubclassPickModal() {
   const queue = App.pendingSubclassPicks || [];
   if (queue.length === 0) return '';
@@ -75161,6 +76291,13 @@ function renderWeatherFx() {
 }
 
 function renderBoard() {
+  // 🎮 Hybrid Pixi port — when App.flags.pixiBoard is on, skip the DOM cell
+  // rebuild and emit a mount-point div instead. _mountPixiBoard() (called
+  // from _renderBattleImmediate after innerHTML lands) attaches the canvas
+  // and runs the first sync. Default off — the DOM path below is canonical.
+  if (App.flags && App.flags.pixiBoard) {
+    return `<div class="board pixi-board" id="pixi-board-mount" aria-label="Battlefield (Pixi renderer)"></div>`;
+  }
   const s = App.state;
   const sel = App.ui.selectedUnitId ? s.units.find(u => u.id === App.ui.selectedUnitId) : null;
   const moveCard = App.ui.selectedCardId ? s.player.hand.find(c => c.instanceId === App.ui.selectedCardId) : null;
@@ -76487,6 +77624,28 @@ function bindBattleEvents() {
   document.querySelectorAll('.unit').forEach(el => {
     el.onclick = (e) => { e.stopPropagation(); onUnitClick(el.dataset.unit); };
   });
+
+  // 🎮 Hybrid Pixi port — when the flag is on, the DOM .tile/.unit queries
+  // above find nothing (renderBoard emitted only a mount-point div). Attach
+  // the Pixi canvas and sync sprites to current App.state. Sprite click
+  // forwarding is wired inside MSPixiBoard so it lands in the same handlers.
+  if (App.flags && App.flags.pixiBoard) {
+    const mount = document.getElementById('pixi-board-mount');
+    if (mount && typeof MSPixiBoard !== 'undefined') {
+      // Warm the texture cache on first mount of each battle. The Promise
+      // resolves quickly because most assets are already loaded by the
+      // existing DOM renderer (browser HTTP cache hit).
+      if (typeof MSPixiLoader !== 'undefined') {
+        MSPixiLoader.warmForBattle(App.state).catch(() => {});
+      }
+      MSPixiBoard.mount(mount).then(() => MSPixiBoard.sync()).catch(err => {
+        console.warn('[pixi-board] mount failed:', err);
+      });
+    }
+  } else if (typeof MSPixiBoard !== 'undefined') {
+    // Flag flipped off mid-session — detach the canvas so the DOM grid renders cleanly.
+    MSPixiBoard.destroy();
+  }
 
   document.querySelectorAll('.move-btn[data-move], .quick-move[data-move]').forEach(el => {
     el.onclick = () => {
@@ -80202,6 +81361,7 @@ function onEndTurn() {
   stopClockRunningOut();   // turn is ending — kill the final-10s alarm now
   App.state = endPlayerTurn(App.state);
   App.ui.aiBusy = true;
+  _startAIHardDeadline();   // 45s absolute cap — survives tryPromptCounter timestamp resets
   App.ui.selectedUnitId = null; App.ui.selectedMoveId = null; App.ui.selectedCardId = null; App.ui.modalUnitId = null; App.ui.actionMode = null;
   App.ui.aiActorId = null; App.ui.aiActionLabel = ''; App.ui.aiMoveTrail = null;
   // Reset per-turn AI flags on AI units so the controller knows what's been resolved
@@ -80389,6 +81549,31 @@ const AI_DELAYS = {
   finish: 450,
 };
 
+// 🔒 HARD AI TURN DEADLINE — a single 45-second absolute cap on the entire
+// AI turn. Unlike the per-step watchdog (scheduleAIStep's 8s timer), this
+// one cannot be reset by tryPromptCounter or any other mid-turn code. It is
+// the last-resort backstop that fires even if every other recovery path fails.
+// Set whenever App.ui.aiBusy transitions to true; cleared in finishAIPhase.
+function _startAIHardDeadline() {
+  try {
+    if (App._aiTurnDeadline) { clearTimeout(App._aiTurnDeadline); App._aiTurnDeadline = null; }
+    App._aiTurnDeadline = setTimeout(() => {
+      if (!App.state || App.state.gameOver || App.state.turn !== 'ai') return;
+      if (!App.ui || !App.ui.aiBusy) return;
+      try { console.warn('[ai] HARD DEADLINE — AI turn exceeded 45s. Force-ending.'); } catch (e) {}
+      try { _resetCounterPromptState(); } catch (e) {}
+      try { if (App.state) App.state._counterChain = []; } catch (e) {}
+      try { if (App.ui) { App.ui.counterPrompt = null; App.ui.counterFlash = null; App.ui._counterChainView = null; } } catch (e) {}
+      try { finishAIPhase(); } catch (e) {}
+    }, 45000);
+  } catch (e) {}
+}
+function _clearAIHardDeadline() {
+  try {
+    if (App._aiTurnDeadline) { clearTimeout(App._aiTurnDeadline); App._aiTurnDeadline = null; }
+  } catch (e) {}
+}
+
 function scheduleAIStep(delay) {
   // 📡 In multiplayer the AI is OFF — the opponent's moves come from the
   // realtime channel, not from the local AI scoring loop. Skipping here
@@ -80438,6 +81623,7 @@ function clearAIActor() {
 
 function finishAIPhase() {
   clearAIActor();
+  _clearAIHardDeadline();   // ← cancel the 45s absolute cap now that the turn is ending
   // Clear the AI thinking hint — its turn is over (or won't happen).
   if (App._aiHintTimer) { try { clearTimeout(App._aiHintTimer); } catch (e) {} App._aiHintTimer = null; }
   try { _hideAIThinkingHint(); } catch (e) {}
@@ -80464,6 +81650,7 @@ function finishAIPhase() {
         renderBattle();
         // Start the AI controller for the new AI turn
         App.ui.aiBusy = true;
+        _startAIHardDeadline();
         if (App.state && App.state.units) {
           App.state = { ...App.state, units: App.state.units.map(u => u.owner === 'ai' ? { ...u, aiActed: false } : u) };
         }
@@ -81878,6 +83065,15 @@ function bindGameOverEvents() {
       // 🟢 Friends see us back online (not in-battle).
       try { if (typeof setMyLobbyStatus === 'function') setMyLobbyStatus('online'); } catch (e) {}
     }
+    // 🎓 Tutorial: mark complete whenever the player leaves the tutorial battle
+    // (win, loss, or manual exit) so they never get stuck on the tutorial screen.
+    if (App.tutorial && App.tutorial.active) {
+      App.tutorial.active = false;
+      App.tutorial.step   = 0;
+      Profile.tutorialComplete = true;
+      try { saveProfile(); } catch (e) {}
+      showToast('🎓 Tutorial complete — head to Battle Hall to test your skills!', 4000);
+    }
     // 🗺️ Roguelite: still resolve the run (HP carry / fail) before leaving so
     // progress isn't silently lost — rlcAfterBattle routes appropriately.
     if (wasWorld && typeof worldBattleAfter === 'function') { worldBattleAfter(); return; }
@@ -81972,13 +83168,17 @@ function recordBattleProgress() {
       // Each completed battle consumes 1 slot from the hero's battle pool
       // (pool size = 20 + 2 per hero level, regens +5 every 5 minutes).
       spendHeroEnergy(heroId, 1);
-      // 🩹 Stress climbs on a loss (fallen hero) — sustained losses push
-      //    the hero toward exhausted, which gates redeploy.
+      // 😰 STRESS — every battle chips away at base stress (you're doing
+      //    what you trained for — fighting is cathartic). Wins give a big
+      //    relief; losses add trauma back, but less than the base reduction
+      //    so a hero can grind their way back to calm over time. Camp bonfire
+      //    / therapy sessions speed up recovery between battles.
+      if (typeof reduceHeroStress === 'function') {
+        try { reduceHeroStress(heroId, won ? 15 : 5); } catch (e) {}
+      }
       if (!won && typeof addHeroStress === 'function') {
-        try { addHeroStress(heroId, 12 + Math.floor(Math.random() * 8)); } catch (e) {}
-      } else if (won && typeof reduceHeroStress === 'function') {
-        // Wins shed a touch of stress — small relief, not a full reset.
-        try { reduceHeroStress(heroId, 4); } catch (e) {}
+        // Loss trauma: +8–15 stress (net 3–10 after base reduction above).
+        try { addHeroStress(heroId, 8 + Math.floor(Math.random() * 8)); } catch (e) {}
       }
       try {
         const e = getHeroEnergy(heroId);
@@ -84696,7 +85896,7 @@ function renderProfile() {
             ${_pend.length > 1 ? '<button class="btn-secondary btn-mini" id="prof-claim-all" style="margin-top:4px">🎁 Claim all (' + _pend.length + ')</button>' : ''}
             ${_couponRows}
             ${_couponBtns}
-            <div class="profile-card-note">Cinders, Aza, resources, items, cards, nodes &amp; coupons granted to you appear here — claim to add them. Nodes need a corporation. Got a code? Tap <strong>🎁 Redeem Code</strong> above.</div>
+            <div class="profile-card-note">Cinders, Aza, resources, items, cards, PRNs &amp; coupons granted to you appear here — claim to add them. PRNs need a corporation. Got a code? Tap <strong>🎁 Redeem Code</strong> above.</div>
           </div>
         </div>`;
 
@@ -85598,7 +86798,6 @@ function _bindPackOpeningRevealHandlers() {
 function renderVendorMarket() {
   const tab = (App.vendorMarketTab === 'sovereigns') ? 'sovereigns'
             : (App.vendorMarketTab === 'starter')    ? 'starter'
-            : (App.vendorMarketTab === 'tomb')       ? 'tomb'
             : 'packs';
   const gems = Profile.gems || 0;
   const sovBal = Profile.sovereigns || 0;
@@ -85607,7 +86806,6 @@ function renderVendorMarket() {
   const packsBody   = _buildPackShopBody(gems, sovBal);
   const sovBody     = _buildSovereignsStoreBody(sovBal);
   const starterBody = _buildStarterDeckShopBody(gems, sovBal);
-  const tombBody    = _buildTombstoneShopBody(gems, sovBal);
 
   root.innerHTML = `
     <div class="campaign-page vendor-market-page">
@@ -85659,14 +86857,10 @@ function renderVendorMarket() {
           🦸 Starter Decks
           <span class="vm-tab-sub">Ready-to-play bundles</span>
         </button>
-        <button class="vm-tab ${tab === 'tomb' ? 'vm-tab-active' : ''}" data-vm-tab="tomb">
-          🪦 Tombstones
-          <span class="vm-tab-sub">Cosmetic grave markers</span>
-        </button>
       </div>
 
       <div class="vm-tab-body">
-        ${tab === 'packs' ? packsBody : tab === 'sovereigns' ? sovBody : tab === 'starter' ? starterBody : tombBody}
+        ${tab === 'packs' ? packsBody : tab === 'sovereigns' ? sovBody : starterBody}
       </div>
 
       ${App._packReveal ? renderPackRevealModal() : ''}
@@ -85690,8 +86884,7 @@ function renderVendorMarket() {
   // ----- Tab-specific bindings -----
   if (tab === 'packs')           _bindPackShopHandlers();
   else if (tab === 'sovereigns') _bindSovereignsStoreHandlers();
-  else if (tab === 'starter')    _bindStarterDeckShopHandlers();
-  else                           _bindTombstoneShopHandlers();
+  else                           _bindStarterDeckShopHandlers();
 }
 // ----- 🪦 Tombstone cosmetics shop — admin-listed grave markers. Buying one
 // adds its id to Profile.ownedTombstones; the player equips it from
@@ -85766,9 +86959,10 @@ function _buildStarterDeckShopBody(gems, sovBal) {
     const curIcon = cur === 'sovereigns' ? '<span class="aza-icon"></span>' : '<span class="cinder-icon"></span>';
     const bal = cur === 'sovereigns' ? sovBal : gems;
     const canAfford = bal >= price;
-    const art = d.img
-      ? `<img src="${d.img}" alt="" style="width:100%;height:150px;object-fit:cover;border-radius:10px 10px 0 0">`
-      : `<div style="height:150px;display:flex;align-items:center;justify-content:center;border-radius:10px 10px 0 0;background:radial-gradient(ellipse at center,rgba(212,175,55,0.18),transparent 70%)">${h && typeof renderIcon === 'function' ? renderIcon('h_' + h.id, h.icon, 'xl') : '<span style=\"font-size:3rem\">🦸</span>'}</div>`;
+    const artSrc = (typeof getStarterDeckImage === 'function' ? getStarterDeckImage(d.id) : null) || d.img || null;
+    const art = artSrc
+      ? `<div style="height:280px;overflow:hidden;background:#05030e;border-bottom:1px solid rgba(212,175,55,0.2);position:relative"><img src="${escapeHtml(artSrc)}" alt="${escapeHtml(d.name||'')}" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block" loading="lazy"><div style="position:absolute;inset:0;background:linear-gradient(180deg,transparent 50%,rgba(5,3,14,0.85) 100%);pointer-events:none"></div></div>`
+      : `<div style="height:180px;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,rgba(212,175,55,0.18),transparent 70%)">${h && typeof renderIcon === 'function' ? renderIcon('h_' + h.id, h.icon, 'xl') : '<span style="font-size:3rem">🦸</span>'}</div>`;
     const btn = isOwned
       ? `<button class="btn-secondary" disabled style="margin-top:auto">✓ Owned</button>`
       : `<button class="btn-primary ${canAfford ? '' : 'btn-disabled'}" data-buy-starter="${escapeHtml(String(d.id))}" ${canAfford ? '' : 'disabled'} style="margin-top:auto">${canAfford ? `Buy — ${price} ${curIcon}` : `Need ${price} ${curIcon}`}</button>`;
@@ -85823,9 +87017,9 @@ function _bindStarterDeckShopHandlers() {
 // ----- Pack Shop body (extracted from renderShop) -----
 function _buildPackShopBody(gems, sovBal) {
   const totalOwned = Object.values(Profile.cardCollection || {}).reduce((a, n) => a + n, 0);
-  // Built-in packs + every custom pack the Forge has produced — same engine shape.
+  // Only admin-published custom packs — no default built-in packs in the storefront.
   const customAsEngine = (Forge.customPacks || []).map(toEnginePackDef).filter(Boolean);
-  const allPacks = [...PACK_DEFINITIONS, ...customAsEngine];
+  const allPacks = [...customAsEngine];
 
   const renderPackTile = (p) => {
     // 💰 Honor admin price overrides — `getEffectivePrice('pack', id, default)`
@@ -85910,8 +87104,9 @@ function _buildPackShopBody(gems, sovBal) {
     `;
   };
 
-  const packCardsHtml = allPacks.map(renderPackTile).join('');
-  const structHtml    = structDecks.length > 0 ? structDecks.map(renderStructTile).join('') : '';
+  const packCardsHtml = allPacks.length > 0
+    ? allPacks.map(renderPackTile).join('')
+    : `<div class="ink-dim" style="padding:2rem;text-align:center">No card packs are available yet — check back soon!</div>`;
 
   // 🏛 Foundation Reserve Stock — products manufactured by the world. Buying
   // one DRAWS its recipe out of the global Reserve (consumption ledger →
@@ -85975,22 +87170,9 @@ function _buildPackShopBody(gems, sovBal) {
         <div class="shop-summary-num">${allPacks.length}</div>
         <div class="shop-summary-label">Pack types</div>
       </div>
-      ${structDecks.length > 0 ? `
-        <div class="shop-summary-stat">
-          <div class="shop-summary-num">${structDecks.length}</div>
-          <div class="shop-summary-label">Structure Decks</div>
-        </div>` : ''}
     </div>
     <h3 class="section-title-mini" style="margin-top:0.4rem;color:#ffd166">🎴 Card Packs</h3>
     <div class="shop-pack-grid">${packCardsHtml}</div>
-    ${structDecks.length > 0 ? `
-      <h3 class="section-title-mini" style="margin-top:1.6rem;color:#88c8e0">🃏 Structure Decks</h3>
-      <div class="shop-pack-grid">${structHtml}</div>
-    ` : ''}
-    <h3 class="section-title-mini" style="margin-top:1.6rem;color:#7fb0ff">🏛 Foundation Reserve Stock</h3>
-    ${_frEvBanner}
-    <div class="small-text ink-dim" style="margin:-0.2rem 0 0.6rem">Manufactured by the survivor world. Buying one <strong>draws its recipe out of the global Reserve</strong> — stock falls for everyone, and prices move with scarcity + active crises. Contribute resources in the <strong>Ruin Exchange → Foundation Reserve</strong>.</div>
-    <div class="shop-pack-grid">${reserveHtml}</div>
   `;
 }
 
@@ -86836,7 +88018,7 @@ function renderUserManagement() {
           `<div style="font-weight:800;color:#ffcf5a;margin-bottom:6px">🎁 Grant a reward</div>` +
           `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">` +
             `<select id="um-gk" style="padding:0.45rem;border-radius:7px;border:1px solid rgba(212,175,55,0.4);background:rgba(12,9,4,0.7);color:#ffe6b0">` +
-              ['cinder|Cinders <span class="cinder-icon"></span>', 'aza|Aza coin 🪙', 'resource|Resource', 'item|Item', 'card|Card', 'node|Node 🔌', 'coupon|Coupon 🎟'].map(function (o) { var p = o.split('|'); return '<option value="' + p[0] + '"' + (AdmUM.grantKind === p[0] ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('') +
+              ['cinder|Cinders <span class="cinder-icon"></span>', 'aza|Aza coin 🪙', 'resource|Resource', 'item|Item', 'card|Card', 'node|PRN 🔌', 'coupon|Coupon 🎟'].map(function (o) { var p = o.split('|'); return '<option value="' + p[0] + '"' + (AdmUM.grantKind === p[0] ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('') +
             `</select>` +
             (AdmUM.grantKind === 'node'
               ? ''
@@ -98326,7 +99508,7 @@ async function claimGift(g) {
       else if (mRes) { if (typeof addSalvage === 'function') addSalvage({ [mRes[1]]: qty }); }
       else if (mItem) { if (!Profile.itemInventory) Profile.itemInventory = {}; Profile.itemInventory[mItem[1]] = (Profile.itemInventory[mItem[1]] || 0) + qty; }
       else if (mNode) {
-        const t = (typeof _nodeType === 'function' && _nodeType(mNode[1])) || { id: mNode[1], name: 'Node', proc: '' };
+        const t = (typeof _nodeType === 'function' && _nodeType(mNode[1])) || { id: mNode[1], name: 'PRN', proc: '' };
         const ins = await Cloud.client.from('economy_nodes').insert({
           owner_id: Profile.cloud.userId, corp_id: Corp.mine.id,
           name: ((Corp.mine.tag || 'CORP') + ' ' + t.name), node_type: t.id,
@@ -98335,7 +99517,7 @@ async function claimGift(g) {
         });
         if (ins && ins.error) {
           try { await Cloud.client.from('gifts').update({ status: 'pending', claimed_at: null }).eq('id', g.id); } catch (_) {}
-          return { error: 'Node grant failed — ' + (((ins.error.message) || 'try again').slice(0, 80)) };
+          return { error: 'PRN grant failed — ' + (((ins.error.message) || 'try again').slice(0, 80)) };
         }
         try { if (typeof nodeFetch === 'function') nodeFetch(); } catch (e) {}
       }
@@ -98516,7 +99698,10 @@ const RPG_GUIDE_PAGES = [
 const RPG_GUIDE_DEFAULT_CHAR = 'assets/Characters/Merchant.png';
 
 // Runtime state for the currently-playing guide.
-const RPGGuide = { activeId: null, _typeTimer: null, _advTimer: null, _seenThisLoad: {} };
+const RPGGuide = { activeId: null, _typeTimer: null, _advTimer: null, _seenThisLoad: {}, _lastGuideId: null };
+// Restore the last-played guide id so the fallback replay FAB is correct
+// across page reloads (before the player has replayed anything this session).
+try { RPGGuide._lastGuideId = localStorage.getItem('rpgg_last_guide') || null; } catch (e) {}
 
 // localStorage keys for player opt-out.
 function _guideDoneKey(id)  { return 'mg_guide_done_' + id; }
@@ -98636,6 +99821,7 @@ function maybeShowPageGuide() {
       const autoPlay = g.triggerType !== 'button'
         && !optedOff
         && !((g.showOnce || g.triggerType === 'firstVisit') && done)
+        && !RPGGuide._seenThisLoad[g.id]   // already played this page-load → only FAB
         && (g.triggerType === 'everyVisit' || g.triggerType === 'load' || g.triggerType === 'firstVisit' || !g.triggerType);
       if (autoPlay) { playPageGuide(g); return; }
     }
@@ -98815,6 +100001,8 @@ function playPageGuide(guide, opts) {
   const oldOv = document.getElementById('rpgg-overlay'); if (oldOv) oldOv.remove();
   RPGGuide.activeId = guide.id;
   RPGGuide._lastGuideId = guide.id;   // persistent-FAB fallback target
+  RPGGuide._seenThisLoad[guide.id] = true;  // prevent same-page retriggers double-firing
+  try { localStorage.setItem('rpgg_last_guide', guide.id); } catch (e) {}  // survive page reload
 
   const bubbles = guide.bubbles.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
   const dir   = guide.slideDirection === 'left' ? 'from-left' : 'from-right';
@@ -107912,6 +109100,10 @@ function isHeroExhausted(heroId) {
 // show fatigue + stress as informational secondary signals.
 const HERO_REST_CINDER_COST = 500;   // Flat Cinder cost per restore
 const HERO_REST_CINDER_PCT  = 0.5;   // Restores 50% of max battles (floor)
+const HERO_CALM_CINDER      = 100;   // Cinder cost: single-hero calm session (−30 stress)
+const HERO_CALM_AMT         = 30;    // Stress points removed per calm session
+const HERO_BONFIRE_CINDER   = 250;   // Cinder cost: all-heroes bonfire (−15 stress each)
+const HERO_BONFIRE_AMT      = 15;    // Stress points removed from every hero per bonfire
 function openHeroRestPanel() {
   try {
     const ID = 'hero-rest-modal';
@@ -107957,11 +109149,19 @@ function openHeroRestPanel() {
       const regenLine = isFull
         ? '<div style="text-align:center;color:#6fcf6f;font-size:0.78rem;font-weight:700;padding:0.25rem 0">✓ Full pool</div>'
         : '<div style="text-align:center;color:#7fc4ff;font-size:0.82rem;font-weight:700;padding:0.25rem 0">+5 in ' + _fmtRestTime(regenMs) + '</div>';
-      const actions = isFull
+      // 🧘 Calm therapy button — visible whenever hero has any stress.
+      const hasStress = (e.stress | 0) > 0;
+      const canCalm = hasStress && cinderWallet >= HERO_CALM_CINDER;
+      const calmBtn = hasStress
+        ? '<button class="hr-btn hr-btn-calm ' + (canCalm ? '' : 'is-disabled') + '" data-hr-calm="' + esc(h.id) + '" ' + (canCalm ? '' : 'disabled') +
+            ' title="Spend ' + HERO_CALM_CINDER + ' 🔥 to reduce stress by ' + HERO_CALM_AMT + '">' +
+            '🧘 Calm −' + HERO_CALM_AMT + ' · ' + HERO_CALM_CINDER + ' 🔥</button>'
+        : '';
+      const actions = (isFull
         ? '<div style="text-align:center;color:#6fcf6f;font-size:0.86rem;font-weight:700;padding:0.55rem 0">✓ Fully Rested</div>'
         : '<button class="hr-btn hr-btn-sprint ' + (canRestore ? '' : 'is-disabled') + '" data-hr-restore="' + esc(h.id) + '" ' + (canRestore ? '' : 'disabled') +
             ' title="Spend ' + HERO_REST_CINDER_COST + ' Cinder to restore ' + restoreAmt + ' battles (50% of max)">' +
-            '<span class="cinder-icon"></span> Restore +' + restoreAmt + ' · ' + HERO_REST_CINDER_COST.toLocaleString() + '</button>';
+            '<span class="cinder-icon"></span> Restore +' + restoreAmt + ' · ' + HERO_REST_CINDER_COST.toLocaleString() + '</button>') + calmBtn;
       return `
         <div class="hr-card ${exhausted ? 'is-exhausted' : isFresh ? 'is-fresh' : ''}" data-hr-hero="${esc(h.id)}">
           <div class="hr-portrait">${portraitHtml}</div>
@@ -107988,6 +109188,8 @@ function openHeroRestPanel() {
         ? '<div class="ink-dim" style="padding:1.4rem;text-align:center">No heroes to rest yet.</div>'
         : heroes.map(heroCard).join('');
       const cinderWallet = (Profile.gems | 0).toLocaleString();
+      const _anyStressed = heroes.some(h => (getHeroEnergy(h.id).stress | 0) > 0);
+      const _canBonfire  = _anyStressed && (Profile.gems | 0) >= HERO_BONFIRE_CINDER;
       host.innerHTML =
         '<div class="hr-modal-body">' +
           '<div class="hr-modal-head">' +
@@ -107997,7 +109199,10 @@ function openHeroRestPanel() {
           '</div>' +
           '<div class="hr-modal-list">' + cardsHtml + '</div>' +
           '<div class="hr-modal-foot">' +
-            '<div class="hr-modal-note">Exhausted heroes (0 battles left) take <strong>-2 to every primary stat</strong> if deployed.</div>' +
+            '<div class="hr-modal-note">Exhausted heroes take <strong>−2 to every primary stat</strong> if deployed. Stressed heroes (≥50 stress) pay <strong>+1 energy per card</strong> in battle (≥80 → +2). Fight to reduce stress — wins clear −15, losses net +3–10.</div>' +
+            '<button id="hr-bonfire" class="hr-btn hr-btn-bonfire' + (_canBonfire ? '' : ' is-disabled') + '" ' + (_canBonfire ? '' : 'disabled') +
+              ' title="Spend ' + HERO_BONFIRE_CINDER + ' 🔥 — all heroes lose ' + HERO_BONFIRE_AMT + ' stress instantly">' +
+              '🔥 Bonfire Gathering · −' + HERO_BONFIRE_AMT + ' All · ' + HERO_BONFIRE_CINDER + ' 🔥</button>' +
             '<button id="hr-close-2" class="hr-btn-secondary">Close</button>' +
           '</div>' +
         '</div>';
@@ -108017,6 +109222,30 @@ function openHeroRestPanel() {
           try { _serverMirrorCharge(cost, 'Hero: Cinder battle restore'); } catch (e) {}
           restoreHeroEnergy(hid, restoreAmt);
           showToast(`<span class="cinder-icon"></span> +${restoreAmt} battles for ${cost.toLocaleString()} Cinder`);
+          render();
+        };
+      });
+      // 🔥 Bonfire Gathering — 250 Cinder, ALL heroes −15 stress instantly.
+      const _bf = document.getElementById('hr-bonfire');
+      if (_bf) _bf.onclick = () => {
+        if ((Profile.gems | 0) < HERO_BONFIRE_CINDER) { showToast('⚠ Need ' + HERO_BONFIRE_CINDER + ' 🔥 Cinder'); return; }
+        Profile.gems = (Profile.gems | 0) - HERO_BONFIRE_CINDER;
+        try { _serverMirrorCharge(HERO_BONFIRE_CINDER, 'Bonfire Gathering: group stress relief'); } catch (_) {}
+        heroes.forEach(h => { try { reduceHeroStress(h.id, HERO_BONFIRE_AMT); } catch (_) {} });
+        showToast('🔥 Bonfire! All heroes −' + HERO_BONFIRE_AMT + ' stress', 3500);
+        render();
+      };
+      // 🧘 Calm Therapy — 100 Cinder per hero, −30 stress for that hero.
+      host.querySelectorAll('[data-hr-calm]').forEach(b => {
+        b.onclick = () => {
+          const hid = b.dataset.hrCalm;
+          const e = getHeroEnergy(hid);
+          if ((e.stress | 0) <= 0) { render(); return; }
+          if ((Profile.gems | 0) < HERO_CALM_CINDER) { showToast('⚠ Need ' + HERO_CALM_CINDER + ' 🔥 Cinder'); return; }
+          Profile.gems = (Profile.gems | 0) - HERO_CALM_CINDER;
+          try { _serverMirrorCharge(HERO_CALM_CINDER, 'Hero: calm therapy session'); } catch (_) {}
+          reduceHeroStress(hid, HERO_CALM_AMT);
+          showToast('🧘 −' + HERO_CALM_AMT + ' stress for ' + HERO_CALM_CINDER + ' 🔥', 3000);
           render();
         };
       });
@@ -109805,6 +111034,41 @@ function _cxAzaRate() {
   return { rate: cx.azaRate, delta: cx.azaDelta24h, vol: cx.azaVol24h };
 }
 
+// ─── DEDICATED CX HOLDINGS PERSISTENCE ──────────────────────────────────────
+// Profile.cxHoldings was getting lost because it relies on:
+//   (a) being saved inside the giant Profile JSON blob, AND
+//   (b) being restored via the whitelist loader on boot.
+// Either path can fail (quota, whitelist miss, cloud lag). This dedicated key
+// ('hg_cxHoldings') is written SYNCHRONOUSLY on every buy/sell — completely
+// bypassing the Profile blob pipeline — and is read back FIRST at boot before
+// anything else can overwrite it. Belt-and-suspenders: even if the Profile
+// blob is stale, empty, or corrupted the holdings WILL come back.
+function _saveCxHoldings() {
+  try {
+    const h = (Profile.cxHoldings && typeof Profile.cxHoldings === 'object') ? Profile.cxHoldings : {};
+    localStorage.setItem('hg_cxHoldings', JSON.stringify(h));
+  } catch (e) {}
+}
+function _loadCxHoldings() {
+  try {
+    const raw = localStorage.getItem('hg_cxHoldings');
+    if (!raw) return;
+    const h = JSON.parse(raw);
+    if (!h || typeof h !== 'object') return;
+    // Merge into Profile — cloud may have already set some keys; keep the
+    // higher qty so neither a stale cloud nor a stale local can wipe a buy.
+    if (!Profile.cxHoldings || typeof Profile.cxHoldings !== 'object') Profile.cxHoldings = {};
+    for (const id in h) {
+      const lv = h[id];
+      const pv = Profile.cxHoldings[id];
+      if (!lv || typeof lv !== 'object') continue;
+      if (!pv || typeof pv !== 'object' || (lv.qty | 0) > (pv.qty | 0)) {
+        Profile.cxHoldings[id] = lv; // local is richer — take it
+      }
+    }
+  } catch (e) {}
+}
+
 // Player-side execute BUY of a resource — debits Profile.gems, credits salvage.
 function _cxExecuteBuy(id, qty, _pxOverride) {
   if (!id) return { ok: false, msg: 'No asset selected.' };
@@ -109831,8 +111095,20 @@ function _cxExecuteBuy(id, qty, _pxOverride) {
   // in sync so the canonical Cinder figure restored on next sign-in matches.
   Profile.gems = have - total;
   try { _serverMirrorCharge(total, 'Crash Exchange BUY: ' + (meta.name || id)); } catch (e) {}
-  try { if (typeof addRes === 'function') addRes(id, qty); else { _ensureResources()[id] = (_ensureResources()[id] || 0) + qty; } } catch (e) {}
-  // 🏛 Reserve update — pool LOSES the units it sold to us and GAINS the Cinder.
+  // 📊 Credit CX SHARE position — the CX is a pure speculation market.
+  // Players hold financial shares, NOT the physical resource in their inventory.
+  // Real resources (Profile.salvage) are never touched here — this is the fix
+  // that prevents free-farmed resources from being sold for unlimited Cinder.
+  if (!Profile.cxHoldings || typeof Profile.cxHoldings !== 'object') Profile.cxHoldings = {};
+  const _cxBuyPos = Profile.cxHoldings[id] || { qty: 0, avgCost: 0 };
+  const _cxNewTotalCost = (_cxBuyPos.qty * (_cxBuyPos.avgCost || 0)) + total;
+  _cxBuyPos.qty = (_cxBuyPos.qty | 0) + qty;
+  _cxBuyPos.avgCost = _cxBuyPos.qty > 0 ? Math.round((_cxNewTotalCost / _cxBuyPos.qty) * 100) / 100 : buyPx;
+  Profile.cxHoldings[id] = _cxBuyPos;
+  // 💾 DEDICATED SAVE — write cxHoldings to its own localStorage key immediately
+  // after every trade so it can NEVER be lost inside the Profile blob pipeline.
+  try { _saveCxHoldings(); } catch (e) {}
+  // 🏛 Reserve update — pool GAINS the Cinder; unit depth tracked for slippage.
   try { _cxReserveOnBuy(id, qty, total); } catch (e) {}
   try { bumpMarketPriceUp(id, qty, 'buy'); } catch (e) {}
   // 🏷 Tag the most recent txn as player-initiated and stamp px + total so
@@ -109861,9 +111137,12 @@ function _cxExecuteSell(id, qty, _pxOverride) {
   qty = Math.max(1, qty | 0);
   const meta = (typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[id]) || null;
   if (!meta) return { ok: false, msg: 'This channel is read-only. Trade only Resources.' };
-  const R = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage || {});
-  const have = R[id] | 0;
-  if (have < qty) return { ok: false, msg: 'Inventory short. Have ' + have + ', need ' + qty + '.' };
+  // 📊 Check CX SHARE position — players sell shares, NOT real resources.
+  // Real inventory (Profile.salvage) is never touched here.
+  if (!Profile.cxHoldings || typeof Profile.cxHoldings !== 'object') Profile.cxHoldings = {};
+  const _cxSellPos = Profile.cxHoldings[id] || { qty: 0, avgCost: 0 };
+  const have = _cxSellPos.qty | 0;
+  if (have < qty) return { ok: false, msg: 'Insufficient CX shares. Holding ' + have + ' share' + (have === 1 ? '' : 's') + ', need ' + qty + '. Buy on the market first.' };
   const marketPx = (typeof _pxOverride === 'number') ? _pxOverride : (getMarketPrice(id).current || _cxBasePrice(id));
   // 🏛 Foundation Reserve sell quote — symmetric 4% markdown + slippage so
   // big dumps eat themselves. Wash trading round-trip pays the 8% spread.
@@ -109872,8 +111151,13 @@ function _cxExecuteSell(id, qty, _pxOverride) {
   const gross = sellPx * qty;
   const fee   = gross * 0.006;  // 0.4% trade + 0.2% listing
   const net   = Math.floor(gross - fee);
-  R[id] = Math.max(0, have - qty);
+  // Deduct sold shares from position (never touches Profile.salvage).
+  _cxSellPos.qty = Math.max(0, have - qty);
+  if (_cxSellPos.qty === 0) delete Profile.cxHoldings[id];
+  else Profile.cxHoldings[id] = _cxSellPos;
   Profile.gems = (Profile.gems | 0) + net;
+  // 💾 DEDICATED SAVE — same immediate dedicated key as buy path.
+  try { _saveCxHoldings(); } catch (e) {}
   // 🏛 Reserve update — pool BUYS our units (gains them, loses the Cinder).
   try { _cxReserveOnSell(id, qty, net); } catch (e) {}
   try { dropMarketPriceDown(id, qty, 'sell'); } catch (e) {}
@@ -109882,14 +111166,14 @@ function _cxExecuteSell(id, qty, _pxOverride) {
     const cxx = getCrashExchange();
     if (cxx.txnLog && cxx.txnLog[0]) {
       cxx.txnLog[0].byPlayer = true;
-      cxx.txnLog[0].px = +px;
+      cxx.txnLog[0].px = +sellPx;   // fix: was `px` (undefined); now correctly `sellPx`
       cxx.txnLog[0].net = net;
       cxx.txnLog[0].fee = +fee.toFixed(2);
     }
   } catch (e) {}
   try { saveProfile && saveProfile(); } catch (e) {} try { saveForge && saveForge(); } catch (e) {}
-  // 💾 Force-flush — see _cxExecuteBuy for rationale. Resource subtraction
-  // must reach the cloud row immediately so refresh restores correctly.
+  // 💾 Force-flush — CX share deduction must reach the cloud immediately so
+  // a refresh always restores the correct holding count.
   try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); } catch (e) {}
   _cxPushEvent({ cat: 'SELL', cls: 'crit', msg: 'Operator executed sell: ' + qty + ' × ' + (meta.name || id) + ' @ ' + _cxFmtCR(sellPx) + (quote.slip > 0.001 ? ' (slip -' + (quote.slip * 100).toFixed(1) + '%)' : ''), impact: 'NET ' + _cxFmtCR(net) + ' (4% spread + 0.6% fees)' });
   return { ok: true, msg: 'Sold ' + qty + ' × ' + (meta.name || id) + ' for ' + _cxFmtCR(net) + ' net.', net, fee };
@@ -118848,25 +120132,27 @@ function _cxRenderPortfolio(holdings, totalValue, cinderBal, azaBal, azaInfo, pl
     '<div class="cx-holdings-row h">' +
       '<span></span>' +
       '<span>ASSET</span>' +
-      '<span style="text-align:right">QTY</span>' +
-      '<span style="text-align:right">PRICE / UNIT</span>' +
-      '<span style="text-align:right">TOTAL VALUE</span>' +
-      '<span style="text-align:right">24H Δ</span>' +
+      '<span style="text-align:right">SHARES</span>' +
+      '<span style="text-align:right">AVG COST</span>' +
+      '<span style="text-align:right">CURRENT PX</span>' +
+      '<span style="text-align:right">P&amp;L</span>' +
       '<span style="text-align:right">ACTION</span>' +
     '</div>';
 
   const holdingsBody = holdings.length === 0
-    ? '<div class="cx-pf-empty"><span class="big">⌘</span>No holdings yet.<br><span style="font-size:0.7rem;letter-spacing:0.2em">// LOOT, CRAFT, OR BUY ON THE MARKET TO BUILD A POSITION</span></div>'
+    ? '<div class="cx-pf-empty"><span class="big">⌘</span>No CX share positions yet.<br><span style="font-size:0.7rem;letter-spacing:0.2em">// BUY SHARES ON THE MARKETS TAB TO BUILD A POSITION</span></div>'
     : holdings.map(h => {
-        const upDown = (h.delta || 0) >= 0 ? 'up' : 'down';
-        const sign = (h.delta || 0) >= 0 ? '+' : '';
+        const pnlPos = (h.pnl || 0) >= 0;
+        const pnlCls = pnlPos ? 'up' : 'down';
+        const pnlSign = pnlPos ? '+' : '';
+        const pnlPctSign = (h.pnlPct || 0) >= 0 ? '+' : '';
         return '<div class="cx-holdings-row" data-cx-pf-focus="' + escapeHtml(h.id) + '" style="cursor:pointer">' +
           '<span class="icon">' + (h.icon || '◇') + '</span>' +
-          '<span class="name">' + escapeHtml(h.name) + '<small>' + escapeHtml(h.cat) + '</small></span>' +
+          '<span class="name">' + escapeHtml(h.name) + '<small>' + escapeHtml(h.cat) + ' · shares</small></span>' +
           '<span class="num">' + h.qty.toLocaleString() + '</span>' +
+          '<span class="num">' + (h.avgCost ? _cxFmt(h.avgCost) + ' CR' : '—') + '</span>' +
           '<span class="num">' + _cxFmt(h.price) + ' CR</span>' +
-          '<span class="num"><b>' + _cxFmt(h.value) + ' CR</b></span>' +
-          '<span class="ch ' + upDown + '">' + sign + (h.delta || 0).toFixed(2) + '%</span>' +
+          '<span class="ch ' + pnlCls + '">' + pnlSign + _cxFmt(h.pnl || 0) + ' CR<small> ' + pnlPctSign + (h.pnlPct || 0).toFixed(1) + '%</small></span>' +
           '<span class="act"><button>TRADE →</button></span>' +
         '</div>';
       }).join('');
@@ -118992,8 +120278,8 @@ function _renderTraderModal() {
       <div style="font-family:'Cinzel',serif;color:#ffcf5a;font-size:1.15rem;font-weight:800;margin-bottom:0.3rem">${escapeHtml(def.name)} is locked</div>
       <div class="small-text ink-dim" style="max-width:430px;margin:0 auto 1rem;line-height:1.55">${escapeHtml(def.blurb || '')}</div>
       <div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:0.6rem">
-        ${def.nodeReq ? `<span class="rarity-badge" style="color:#9bd6ff;border-color:#9bd6ff">Free with ${escapeHtml((_nodeType(def.nodeReq) || {}).name || def.nodeReq + ' Node')}</span>` : ''}
-        <span class="rarity-badge" style="color:#ffd166;border-color:#ffd166">Free with 🏛 Founder Node</span>
+        ${def.nodeReq ? `<span class="rarity-badge" style="color:#9bd6ff;border-color:#9bd6ff">Free with ${escapeHtml((_nodeType(def.nodeReq) || {}).name || def.nodeReq + ' PRN')}</span>` : ''}
+        <span class="rarity-badge" style="color:#ffd166;border-color:#ffd166">Free with 🏛 Founder PRN</span>
       </div>
       <div style="margin-top:0.6rem">
         <button class="btn-primary" id="tr-unlock" style="padding:0.6rem 1.2rem;font-size:0.95rem">🔓 Unlock for ${TRADER_UNLOCK_CINDER.toLocaleString()} Cinder (+ 5% tax)</button>
@@ -119293,7 +120579,7 @@ function renderTraderHub() {
         </div>
       </div>
       <div class="small-text ink-dim" style="margin-bottom:0.9rem;padding:0.5rem 0.7rem;background:rgba(18,14,32,0.55);border:1px solid rgba(212,175,55,0.22);border-radius:6px;line-height:1.5">
-        🔓 Each trader unlocks for <strong>25,000 Cinder</strong> · or free with the matching Reserve Node · or free with a <strong>🏛 Founder Reserve Node</strong> (unlocks all 11). 5% Foundation Reserve tax applies on every purchase + unlock.
+        🔓 Each trader unlocks for <strong>25,000 Cinder</strong> · or free with the matching Reserve PRN · or free with a <strong>🏛 Founder Reserve PRN</strong> (unlocks all 11). 5% Foundation Reserve tax applies on every purchase + unlock.
       </div>
       <div class="tr-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.7rem">${tiles}</div>
     </div>
@@ -119320,21 +120606,26 @@ function renderCrashExchange() {
   const mkt      = markets[node] || markets.resources;
 
   // -------- 1b. PORTFOLIO DATA --------
-  // Build holdings from Profile.salvage (every resource the player owns) and
-  // the player's own trade log (txns marked byPlayer=true via the CX trade
-  // form). 24h % comes from the live market.
-  const playerSalvage = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage || {});
-  const holdings = Object.keys(playerSalvage)
-    .filter(id => (playerSalvage[id] | 0) > 0)
+  // Build holdings from Profile.cxHoldings (CX share positions, NOT real
+  // inventory). Each entry has { qty, avgCost } — the CX is a pure speculation
+  // market; real resources are never transferred through it any more.
+  const cxH = (Profile.cxHoldings && typeof Profile.cxHoldings === 'object') ? Profile.cxHoldings : {};
+  const holdings = Object.keys(cxH)
+    .filter(id => cxH[id] && (cxH[id].qty | 0) > 0)
     .map(id => {
       const meta = (typeof _SALVAGE_BY_ID !== 'undefined' && _SALVAGE_BY_ID[id]) || { id, name: id, icon: '◇' };
       const p = getMarketPrice(id);
-      const qty = playerSalvage[id] | 0;
+      const pos = cxH[id];
+      const qty = pos.qty | 0;
+      const avgCost = pos.avgCost || 0;
+      const pnl = (p.current - avgCost) * qty;
+      const pnlPct = avgCost > 0 ? ((p.current - avgCost) / avgCost) * 100 : 0;
       return {
         id, name: meta.name || id, icon: meta.icon || '◇',
         cat: meta.cat || 'basic',
         qty, price: p.current, base: p.base, delta: p.delta24h,
         value: p.current * qty,
+        avgCost, pnl, pnlPct,
       };
     })
     .sort((a, b) => b.value - a.value);
@@ -119379,7 +120670,7 @@ function renderCrashExchange() {
   // vs what's pure speculation. RESOURCES is the only channel where buying
   // adds the asset to your inventory; everything else is read-only ticker.
   const navGroupsOwn = [
-    { label: '// 🟢 YOUR MARKET · TRADE FOR REAL', items: [
+    { label: '// 📈 RESOURCE INDEX · SHARES', items: [
       ['resources', 'RESOURCES',           String(markets.resources.items.length)],
     ]},
   ];
@@ -119538,7 +120829,7 @@ function renderCrashExchange() {
           '<div class="cx-tf"><label>QUANTITY</label><input id="cx-buy-qty" type="text" value="' + initQty + '"></div>' +
           '<div class="cx-tf"><label>TOTAL EST. (incl. 0.4% FEE)</label><input id="cx-buy-tot" type="text" readonly value="' + buyTotal + '"></div>' +
           '<button class="cx-submit buy" id="cx-buy-go"' + (tradable ? '' : ' disabled') + '>EXECUTE BUY</button>' +
-          (tradable ? '' : '<div style="margin-top:0.5rem;padding:0.45rem 0.55rem;background:rgba(184,152,96,0.10);border:1px dashed rgba(184,152,96,0.50);border-radius:4px;font-size:0.7rem;color:#e8c878;letter-spacing:0.06em;line-height:1.4"><strong style="color:#ffd166">📈 INDEX SHARES — NOT THE UNDERLYING</strong><br>This channel tracks an index price. Buying gives you a share position, <strong>not</strong> the underlying resource. To actually receive a resource (oil, supplies, etc.), trade it in the <strong>RESOURCES</strong> channel above.</div>') +
+          '<div style="margin-top:0.5rem;padding:0.45rem 0.55rem;background:rgba(184,152,96,0.10);border:1px dashed rgba(184,152,96,0.50);border-radius:4px;font-size:0.7rem;color:#e8c878;letter-spacing:0.06em;line-height:1.4"><strong style="color:#ffd166">📈 SHARES — NOT THE PHYSICAL RESOURCE</strong><br>' + (tradable ? 'Buying credits your CX share position. Shares are financial instruments — <strong>no resource is added to your inventory.</strong> Sell your shares later for CR.' : 'This channel tracks an index price. Buying gives you a share position, <strong>not</strong> the underlying resource.') + '</div>' +
         '</div>' +
         '<div class="cx-trade-box book">' +
           '<h3>// ORDER BOOK</h3>' +
@@ -119553,7 +120844,7 @@ function renderCrashExchange() {
           '<div class="cx-tf"><label>QUANTITY</label><input id="cx-sell-qty" type="text" value="' + initQty + '"></div>' +
           '<div class="cx-tf"><label>NET (less 0.4% TRADE + 0.2% LISTING)</label><input id="cx-sell-tot" type="text" readonly value="' + sellTotal + '"></div>' +
           '<button class="cx-submit sell" id="cx-sell-go"' + (tradable ? '' : ' disabled') + '>EXECUTE SELL</button>' +
-          (tradable ? '' : '<div style="margin-top:0.5rem;padding:0.45rem 0.55rem;background:rgba(184,152,96,0.10);border:1px dashed rgba(184,152,96,0.50);border-radius:4px;font-size:0.7rem;color:#e8c878;letter-spacing:0.06em;line-height:1.4"><strong style="color:#ffd166">📈 INDEX SHARES</strong><br>Selling a share position closes it for Cinder. No physical resource is removed — that\'s the <strong>RESOURCES</strong> channel.</div>') +
+          '<div style="margin-top:0.5rem;padding:0.45rem 0.55rem;background:rgba(184,152,96,0.10);border:1px dashed rgba(184,152,96,0.50);border-radius:4px;font-size:0.7rem;color:#e8c878;letter-spacing:0.06em;line-height:1.4"><strong style="color:#ffd166">📈 SHARES</strong><br>' + (tradable ? 'Selling closes your CX share position for CR. <strong>No resource is removed from your inventory</strong> — you must own shares (bought on this exchange) to sell.' : 'Selling a share position closes it for Cinder. No physical resource is removed.') + '</div>' +
         '</div>' +
       '</div>';
 
@@ -122093,6 +123384,8 @@ setTimeout(() => {
     if (typeof App !== 'undefined' && !App._catalogMediaReady) {
       App._catalogMediaReady = true;
       if (typeof render === 'function') render();
+      // 12s ceiling lifted — retrigger guide check for the current page.
+      try { if (typeof maybeShowPageGuide === 'function') setTimeout(maybeShowPageGuide, 280); } catch (e2) {}
     }
   } catch (e) {}
 }, 12000);
@@ -122169,6 +123462,10 @@ setTimeout(() => {
     // localStorage fast-path copy (if any) is the best we have, so reveal it.
     App._forgeIdbLoaded = true;
     try { if (typeof render === 'function') render(); } catch (e) {}
+    // 📖 Guide check: render() only retriggers guides on ROUTE CHANGES, but IDB
+    // loading happens on the same route. Any guide held back by !_forgeIdbLoaded
+    // (or waiting for catalog media) should now play / FAB should mount.
+    try { if (typeof maybeShowPageGuide === 'function') setTimeout(maybeShowPageGuide, 280); } catch (e) {}
   }
 })();
 loadLab();
@@ -124408,7 +125705,7 @@ function tw_buyUpgrade(nodeId, upgradeId) {
       return false;
     }
     Profile.gems = wallet - cost;
-    try { _serverMirrorCharge(cost, 'Territory Wars: Node upgrade (' + (up.name || upgradeId) + ')'); } catch (e) {}
+    try { _serverMirrorCharge(cost, 'Territory Wars: PRN upgrade (' + (up.name || upgradeId) + ')'); } catch (e) {}
   }
   own.upgrades = own.upgrades || [];
   own.upgrades.push(upgradeId);
@@ -124645,7 +125942,7 @@ function renderTerritoryWars() {
                   const yieldKeys = Object.keys(n.resourceYield || {});
                   const paint = nodePaint(n);
                   const tip = [
-                    `${n.name} (${n.type || 'Node'})`,
+                    `${n.name} (${n.type || 'PRN'})`,
                     `Owner: ${(own && own.ownerCorpId) ? own.ownerCorpId : 'Neutral'}`,
                     `Stability: ${own ? (own.stability | 0) : 100}`,
                     `Guards: ${guards} / ${Math.max(1, (n.maxGuardSlots | 0) || 1)}`,
@@ -124654,7 +125951,13 @@ function renderTerritoryWars() {
                     `View [${view}]: ${paint.meta}`,
                   ].join('\n');
                   const selCls = selectedNodeId === n.id ? ' is-selected' : '';
-                  return `<button class="tw-node${selCls}" data-tw-node="${escapeHtml(n.id)}" title="${escapeHtml(tip)}"
+                  // Derive visual state from stability — maps to the standalone app's thriving/stable/strained/failing/collapsing palette
+                  const _nState = !own ? 'neutral'
+                    : own.destroyed ? 'collapsing'
+                    : own.eventActive ? 'event'
+                    : (() => { const s=(own.stability|0)||100; return s>=80?'thriving':s>=60?'stable':s>=40?'strained':s>=20?'failing':'collapsing'; })();
+                  const _nAttackCls = (own && own.underAttack) ? ' is-attacking' : '';
+                  return `<button class="tw-node${selCls}${_nAttackCls}" data-tw-node="${escapeHtml(n.id)}" data-tw-state="${_nState}" title="${escapeHtml(tip)}"
                                   style="--node-color:${paint.color}">
                     <span class="tw-node-name">${escapeHtml(n.name)}</span>
                     <span class="tw-node-meta">${escapeHtml(paint.meta)}</span>
@@ -124708,7 +126011,7 @@ function renderTerritoryWars() {
     actionPanel = `
       <div class="tw-action-card">
         <div class="tw-action-head">
-          <div class="tw-action-title">${escapeHtml(selNode.name)} <span class="ink-dim small-text">(${escapeHtml(selNode.type || 'Node')})</span></div>
+          <div class="tw-action-title">${escapeHtml(selNode.name)} <span class="ink-dim small-text">(${escapeHtml(selNode.type || 'PRN')})</span></div>
           <div class="tw-action-sub">Owner: <b>${selOwn ? escapeHtml(selOwn.ownerCorpId) : 'Neutral'}</b> · Stability ${selOwn ? (selOwn.stability | 0) : 100}%</div>
         </div>
         <div class="tw-action-row">${yieldList}</div>
@@ -124721,15 +126024,15 @@ function renderTerritoryWars() {
         <div class="tw-action-row small-text">
           <span class="tw-defense-chip" title="Defense Rating = guards × 15 + upgrades × 10">🛡 Defense ${(guards.length * 15) + (upgrades.length * 10)}</span>
           ${selNode.population != null ? `<span class="tw-defense-chip" style="background:rgba(120,220,140,0.14);border-color:rgba(120,220,140,0.45);color:#c8f0c4" title="Population multiplier on yields">👥 Pop ${selNode.population}</span>` : ''}
-          ${selNode.quality != null && selNode.quality !== 1 ? `<span class="tw-defense-chip" style="background:rgba(255,209,102,0.14);border-color:rgba(255,209,102,0.45);color:#ffe9a8" title="Node quality yield multiplier">✨ Quality ${selNode.quality}×</span>` : ''}
+          ${selNode.quality != null && selNode.quality !== 1 ? `<span class="tw-defense-chip" style="background:rgba(255,209,102,0.14);border-color:rgba(255,209,102,0.45);color:#ffe9a8" title="PRN quality yield multiplier">✨ Quality ${selNode.quality}×</span>` : ''}
         </div>
         ${modsHtml}
         ${objHtml}
         <div class="tw-action-buttons">
-          ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">⚔ Attack Node</button>` : ''}
+          ${!iOwn ? `<button class="btn-primary" id="tw-act-attack">⚔ Attack PRN</button>` : ''}
           ${iOwn ? `<button class="btn-primary" id="tw-act-collect">💎 Collect Resources</button>` : ''}
           ${iOwn ? `<button class="btn-secondary" id="tw-act-hire">🛡 Hire Guard</button>` : ''}
-          ${iOwn ? `<button class="btn-secondary" id="tw-act-shop">🏗 Node Shop</button>` : ''}
+          ${iOwn ? `<button class="btn-secondary" id="tw-act-shop">🏗 PRN Shop</button>` : ''}
         </div>
         ${iOwn && guards.length ? `<div class="tw-action-row small-text ink-dim">Active guards: ${guards.map(g => {
           const deck = t.guardDecks.find(d => d.id === g.deckId);
@@ -124781,8 +126084,50 @@ function renderTerritoryWars() {
   // Vault summary.
   const vaultRows = Object.entries(st.vault || {}).map(([k, v]) => `<span class="tw-vault-pill">${escapeHtml(k)} <b>${(v | 0).toLocaleString()}</b></span>`).join('') || '<span class="ink-dim small-text">Vault empty — capture and collect nodes.</span>';
 
+  // ── War Map Visual Chrome (v31) ────────────────────────────────────────────
+  // Foundation Bar: sticky resource-bay HUD strip using vault data.
+  const _twDate = new Date();
+  const _twDateStr = _twDate.getFullYear() + '.' +
+    String(_twDate.getMonth()+1).padStart(2,'0') + '.' +
+    String(_twDate.getDate()).padStart(2,'0');
+  const _vaultEntries = Object.entries(st.vault || {});
+  const _vaultMax = Math.max(1000, _vaultEntries.reduce((mx,[,v])=>Math.max(mx,v|0),0));
+  const _twBays = _vaultEntries.slice(0,6).map(([k,v])=>{
+    const pct = Math.min(100,(v|0)/_vaultMax*100);
+    const warnCls = (v|0)<100?' crit':(v|0)<400?' warn':'';
+    const icon = escapeHtml(k.slice(0,2).toUpperCase());
+    return '<div class="tw-wm-bay' + warnCls + '">'
+      + '<div class="tw-wm-bay-icon">' + icon + '</div>'
+      + '<div class="tw-wm-bay-body">'
+      + '<div class="tw-wm-bay-label">' + escapeHtml(k) + '</div>'
+      + '<div class="tw-wm-bay-value">' + (v|0).toLocaleString() + '</div>'
+      + '<div class="tw-wm-bay-bar"><i style="width:' + pct.toFixed(0) + '%"></i></div>'
+      + '</div></div>';
+  }).join('') || '<div class="tw-wm-bay" style="padding:0.55rem 1rem;color:#a89878;font-size:0.7rem;white-space:nowrap">Vault empty — capture nodes to fill the Reserve</div>';
+  const _twOwnedCount = Object.keys(st.ownedNodes||{}).length;
+  const _twThreats = t.nodes.filter(function(n){ var o=st.ownedNodes[n.id]; return !!(o&&o.underAttack); }).length;
+  const _twFoundationBar =
+    '<div class="tw-wm-bar">'
+    + '<div class="tw-wm-brand">'
+    +   '<div class="tw-wm-brand-mark">MS</div>'
+    +   '<div class="tw-wm-brand-text">'
+    +     '<div class="title">FOUNDATION RESERVE</div>'
+    +     '<div class="sub">Territory Wars · Theater 7</div>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="tw-wm-bays">' + _twBays + '</div>'
+    + '<div class="tw-wm-stats">'
+    +   '<div class="tw-wm-stat"><div class="k">PRNs Held</div><div class="v">' + _twOwnedCount + ' / ' + t.nodes.length + '</div></div>'
+    +   '<div class="tw-wm-stat"><div class="k">Active Threats</div><div class="v' + (_twThreats>0?'':' ok') + '">' + (_twThreats>0?_twThreats:'—') + '</div></div>'
+    +   '<div class="tw-wm-stat"><div class="k">Corp</div><div class="v">' + (myCorp?escapeHtml(myCorp.name):'<span style="color:#a89878">—</span>') + '</div></div>'
+    +   '<div class="tw-wm-stat"><div class="k">Map Sync</div><div class="v ok"><span class="tw-wm-live-dot"></span>LIVE</div></div>'
+    + '</div>'
+    + '</div>';
+  // ──────────────────────────────────────────────────────────────────────────
+
   root.innerHTML = `
     <div class="territory-wars-page">
+      ${_twFoundationBar}
       <div class="tw-header">
         <button class="btn-secondary btn-mini" id="tw-back">← Battle Hall</button>
         <h2 class="section-title" style="text-align:left;margin:0">🗺 War Map · Territory Wars</h2>
@@ -124831,7 +126176,7 @@ function renderTerritoryWars() {
               </div>
               <div class="tw-dark-event-desc">${escapeHtml(def.desc)}</div>
               ${avatarBar}
-              <div class="tw-dark-event-cta">🜏 Find the Sabotage Node →</div>
+              <div class="tw-dark-event-cta">🜏 Find the Sabotage PRN →</div>
             </button>
           `;
         }).join('');
@@ -124840,6 +126185,11 @@ function renderTerritoryWars() {
       ${renderTerritoryPickerModal()}
       <div class="tw-stage">
         <div class="tw-map-pane" data-tw-view="${escapeHtml(view)}">
+          <div class="tw-wm-scanline" aria-hidden="true"></div>
+          <div class="tw-wm-grid" aria-hidden="true"></div>
+          <div class="tw-wm-stamp tl" aria-hidden="true">THEATER 7 · NORTH WORKS</div>
+          <div class="tw-wm-stamp tr" aria-hidden="true">CHART REV-04 · ${_twDateStr}</div>
+          <div class="tw-wm-stamp br" aria-hidden="true">FOUNDATION RESERVE // CLASSIFIED</div>
           <svg class="tw-connections" id="tw-connections" aria-hidden="true"></svg>
           ${sectorBlocks}
         </div>
@@ -124849,11 +126199,14 @@ function renderTerritoryWars() {
             <div class="tw-vault">${vaultRows}</div>
           </div>
           <div class="tw-side-section">
-            <div class="tw-side-title">⚡ Selected Node</div>
+            <div class="tw-side-title">⚡ Selected PRN</div>
             ${actionPanel}
           </div>
-          <div class="tw-side-section">
-            <div class="tw-side-title">📰 World Feed</div>
+          <div class="tw-side-section tw-wm-feed-section">
+            <div class="tw-wm-feed-header">
+              <div class="tw-wm-feed-title">Field Reports</div>
+              <div class="tw-wm-feed-meta"><span class="tw-wm-live-dot"></span>LIVE</div>
+            </div>
             <div class="tw-feed">${feed}</div>
           </div>
         </aside>
@@ -124932,7 +126285,7 @@ function _twAttackFlow(nodeId) {
   if (!node._isSabotageNode && own && typeof _twDarkSectorLockdown === 'function') {
     const regionId = _twRegionIdForNode(nodeId);
     if (_twDarkSectorLockdown(own.ownerCorpId, regionId)) {
-      showToast('🚫 SECTOR LOCKDOWN active in this region — find and clear the Sabotage Node to break the seal.', 6000);
+      showToast('🚫 SECTOR LOCKDOWN active in this region — find and clear the Sabotage PRN to break the seal.', 6000);
       return;
     }
   }
@@ -124986,7 +126339,7 @@ function _twAttackFlow(nodeId) {
   }
   if (!foe) {
     foe = {
-      id: 'guard_captain', name: (guardDeck.name || 'Node Guard') + ' Captain',
+      id: 'guard_captain', name: (guardDeck.name || 'PRN Guard') + ' Captain',
       icon: (guardDeck.faction === 'Boss') ? '👹' : (guardDeck.faction === 'Elite' ? '🛡' : '☠'),
       hp: 28 + ((guardDeck.threatLevel | 0) * 2),
       stats: { atk: 14, def: 10, mag: 10, res: 10, spd: 1 },
@@ -125342,10 +126695,10 @@ function renderTerritoryPickerModal() {
     }).join('') || '<div class="tw-empty">No node-shop upgrades available.</div>';
     return `
       <div class="tw-picker-backdrop" id="tw-picker-backdrop">
-        <div class="tw-picker-modal" role="dialog" aria-label="Node Shop">
+        <div class="tw-picker-modal" role="dialog" aria-label="PRN Shop">
           <div class="tw-picker-head">
             <div>
-              <div class="tw-picker-h-title">🏗 Node Shop · ${escapeHtml(node.name)}</div>
+              <div class="tw-picker-h-title">🏗 PRN Shop · ${escapeHtml(node.name)}</div>
               <div class="tw-picker-h-sub small-text ink-dim">${(own && own.upgrades || []).length} installed · Wallet ¢${wallet.toLocaleString()} <span class="cinder-icon"></span> Cinder${regionB.upgradeDiscount > 0 ? ` · Region discount −${Math.round(regionB.upgradeDiscount * 100)}%` : ''}</div>
             </div>
             <button class="tw-picker-close" id="tw-picker-close" title="Cancel">✕</button>
@@ -125453,10 +126806,10 @@ function renderTerritoryWarsAdmin() {
     nodes: `
       <div class="tw-admin-form">
         <select id="tw-nd-sector">${t.sectors.map(s => `<option value="${s.id}">${escapeHtml(s.name)} (${(t.regions.find(r => r.id === s.regionId) || {}).name || '?'})</option>`).join('') || '<option value="">— create a sector first —</option>'}</select>
-        <input id="tw-nd-name" placeholder="Node name (e.g. Iron Ridge)">
+        <input id="tw-nd-name" placeholder="PRN name (e.g. Iron Ridge)">
         <select id="tw-nd-type">${TW_NODE_TYPES.map(tp => `<option value="${tp}">${tp}</option>`).join('')}</select>
         <input id="tw-nd-yield" placeholder="resourceYield e.g. Cinder=100, Oil=20, Aza=5, Card:goblin=1, Relic:relic_skull=1, RandomCard=1" title="Special keys: Aza/Cinder→wallet, Card:&lt;id&gt;→cardCollection, Relic:&lt;id&gt;→itemInventory, RandomCard/RandomRelic→pull from custom pool. Everything else goes to the Territory Vault.">
-        <input id="tw-nd-quality" type="number" min="0.1" max="3" step="0.1" value="1.0" title="Node quality multiplier (1.0 = standard, 1.5 = rich seam)">
+        <input id="tw-nd-quality" type="number" min="0.1" max="3" step="0.1" value="1.0" title="PRN quality multiplier (1.0 = standard, 1.5 = rich seam)">
         <input id="tw-nd-population" type="number" min="0" max="200" value="100" title="Population 0–200 (multiplies yield by population/100)">
         <input id="tw-nd-guards" type="number" min="1" max="20" value="3" title="Max guard slots">
         <input id="tw-nd-clears" type="number" min="1" max="10" value="1" title="Base clears required">
@@ -125470,7 +126823,7 @@ function renderTerritoryWarsAdmin() {
           ${t.difficultyTiers.map(d => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}</option>`).join('')}
         </select>
         <input id="tw-nd-connections" placeholder="Connections (comma-separated node ids — draws supply lines)" style="flex:1 1 100%">
-        <button class="btn-primary btn-mini" id="tw-add-node">➕ Add Node</button>
+        <button class="btn-primary btn-mini" id="tw-add-node">➕ Add PRN</button>
         <div style="flex:1 1 100%; padding:0.5rem 0.6rem; border-top:1px dashed rgba(212,175,55,0.25); margin-top:0.3rem">
           <div class="small-text" style="color:#ffd166;margin-bottom:0.3rem">🎲 Roguelite Run Modifiers (always-on)</div>
           <div style="display:flex;flex-wrap:wrap;gap:0.35rem">
@@ -125522,7 +126875,7 @@ function renderTerritoryWarsAdmin() {
       <div class="campaign-header">
         <div>
           <h2 class="section-title" style="text-align:left;margin:0">🗺 Territory Wars Builder (Admin)</h2>
-          <div class="small-text ink-dim">Build the world map players fight over. Regions → Sectors → Nodes. Each node holds guards + node-shop upgrades + a resource yield. Cloud-synced via the forge JSONB blob.</div>
+          <div class="small-text ink-dim">Build the world map players fight over. Regions → Sectors → PRNs. Each PRN holds guards + node-shop upgrades + a resource yield. Cloud-synced via the forge JSONB blob.</div>
         </div>
         <button class="btn-secondary btn-mini" id="tw-admin-back">← Pricing Admin</button>
       </div>
@@ -125784,10 +127137,10 @@ function _twRenderNodeEditor(node, t) {
     </div>`).join('');
   return `
     <div class="tw-edit-backdrop" id="tw-edit-backdrop">
-      <div class="tw-edit-modal" role="dialog" aria-label="Edit Node ${escapeHtml(node.name)}">
+      <div class="tw-edit-modal" role="dialog" aria-label="Edit PRN ${escapeHtml(node.name)}">
         <div class="tw-edit-head">
           <div>
-            <div class="tw-picker-h-title">✎ Edit Node — ${escapeHtml(node.name)}</div>
+            <div class="tw-picker-h-title">✎ Edit PRN — ${escapeHtml(node.name)}</div>
             <div class="tw-picker-h-sub small-text ink-dim">${escapeHtml(node.id)}</div>
           </div>
           <button class="tw-picker-close" id="tw-edit-close" title="Close">✕</button>
@@ -125838,7 +127191,7 @@ function _twRenderNodeEditor(node, t) {
         </div>
         <div class="tw-edit-footer">
           <button class="btn-secondary btn-mini" id="tw-ed-cancel">Cancel</button>
-          <button class="btn-primary btn-mini" id="tw-ed-save">💾 Save Node</button>
+          <button class="btn-primary btn-mini" id="tw-ed-save">💾 Save PRN</button>
         </div>
       </div>
     </div>
@@ -125939,7 +127292,7 @@ function _twBindNodeEditor(t) {
       node.position.y = parseInt(m.style.top, 10) || 0;
     }
     saveForge();
-    showToast(`💾 Node "${node.name}" saved.`);
+    showToast(`💾 PRN "${node.name}" saved.`);
     close();
   };
 }

@@ -13,17 +13,44 @@
 // flushes the prior cache so the new asset versions are picked up.
 // ============================================================================
 
-// Bumped 2026-05-25 — force-eject stale shells so the auth-modal diagnostic
-// fixes reach players who were sitting on a long-cached version.
-// Bumped again 2026-05-26 — ship the battle-hang defenses (8s watchdog,
-// turn-start sanitization, force-unfreeze hotkey) immediately.
-// Bumped again later 2026-05-26 — push the Card Forge soft-gate +
-// discount-cost fields and the War Map admin gate to every returning
-// player (previously stuck on a cached UI without these fields).
-// Bumped 2026-05-27 — Session 2 Colyseus bridge: ColyseusMP client lib
-// added, joinColyseusMatch() + action forwarding hooks wired. Force-push
-// new index.html so the Colyseus CDN script tag is visible to all clients.
-const CACHE_VERSION = 'mythic-v8-2026-05-27';
+// Version history (2026-05-25 → 2026-05-27, v1–v19):
+//   Battle-hang defenses, Card Forge soft-gate, War Map admin gate,
+//   Colyseus MP bridge (disabled by flag), charge-move range check,
+//   guide system hardening, Crash Exchange share-market exploit fix,
+//   admin auto-publish, CX-holdings triple-persistence, bunker hero
+//   sprites, stress mechanic (cost surcharge + camp relief), cross-
+//   device cloud sync, onboarding race-condition fix, tutorial auto-
+//   complete on battle exit.
+//
+// v20 — Card access policy: new players receive only their chosen
+// starter deck. _grantAllCatalogCardsToNewPlayer() is admin-only.
+// v21 — Terms of Service modal: ToS button in hub footer, full ToS text
+// from Hidn Studios, scrollable modal, Escape/backdrop/accept to close.
+// v22 — Founder &amp; Node Packages pledge screen: all 9 tiers (FREE → $10k),
+// feature lists, node power boxes, per-tier accent colors. Hub portal tile
+// hidden (screen + data kept for marketing site use).
+// v24 — Vendor Market cleanup: removed Tombstones tab, Foundation Reserve
+// Stock section, and Structure Decks section. Card Packs tab now shows
+// only admin-published custom packs (no default built-in packs).
+// v25 — Pack art display fix: uploaded pack image now fills the tile at
+// 280px height with object-fit:contain so full portrait art shows; emoji
+// icon hidden entirely when cover art is present.
+// v26 — Starter deck art persistence: images stored in Forge.starterDeckArt
+//   (IDB + Storage pipeline, same as packArt) so they survive _stripDataUrls()
+//   on every localStorage save. Vendor Market starter tile shows 280px art.
+// v27 — Pack image full-bleed: object-fit:cover fills box edge-to-edge (no
+//   black bars), accent stripe hidden when art present, soft bottom fade.
+// v28 — Starter deck tiles same full-bleed treatment: cover + center + fade
+//   on both Vendor Market shop tiles and the free starter-pick screen.
+// v29 — Rebrand: "Node" / "Nodes" → "PRN" / "PRNs" (Planetary Reconstruction
+//   Networks) across all user-facing UI text (57 replacements).
+// v30 — AI turn hard-deadline fix: tryPromptCounter no longer poisons the
+//   per-step watchdog timestamp; a new 45s absolute cap (_aiTurnDeadline)
+//   force-ends the turn regardless of counter-prompt state.
+// v31 — War Map visual chrome: Foundation Bar HUD, scanline, grid, corner stamps,
+//        node state colors (thriving/stable/strained/failing/collapsing), pulse/flicker
+//        animations, field-report feed header. All overlaid on existing warmap.png bg.
+const CACHE_VERSION = 'mythic-v31-2026-05-28';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

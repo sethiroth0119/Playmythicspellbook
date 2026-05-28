@@ -18794,10 +18794,11 @@
                 0 0 24px var(--node-color, #6cd4ff);
   }
 
-  /* Node label below the diamond */
+  /* Node label below the diamond — pointer-events auto so the full button
+     area (including label text) registers clicks on the parent <button>. */
   .tw-node-marker-label {
     display: flex; flex-direction: column; align-items: center;
-    text-align: center; pointer-events: none;
+    text-align: center; pointer-events: auto;
     line-height: 1.30; white-space: nowrap;
     background: rgba(4,3,10,0.65);
     padding: 2px 5px 1px;
@@ -28408,7 +28409,10 @@ function craftCard(card) {
   if (!spendResources(getCardCraftCost(card))) return false;
   if (!Profile.cardCollection) Profile.cardCollection = {};
   Profile.cardCollection[card.id] = (Profile.cardCollection[card.id] || 0) + 1;
-  saveProfile();
+  // 🌩 Slice 18 — write-through cloud-first. Crafting consumes resources
+  // AND grants a card; both legs need to reach cloud before the player can
+  // legitimately lose either side of the transaction.
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); else saveProfile(); } catch (e) { try { saveProfile(); } catch (_) {} }
   return true;
 }
 // Returns the refunded resource object (for toast display).
@@ -28419,7 +28423,9 @@ function disenchantCard(card) {
   Profile.cardCollection[card.id]--;
   if (Profile.cardCollection[card.id] <= 0) delete Profile.cardCollection[card.id];
   RESOURCE_IDS.forEach(id => { if (refund[id]) addRes(id, refund[id]); });
-  saveProfile();
+  // 🌩 Slice 18 — same pattern as craftCard. Disenchant destroys a card
+  // and creates resources; both need cloud confirmation.
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); else saveProfile(); } catch (e) { try { saveProfile(); } catch (_) {} }
   return refund;
 }
 // Drop essence at battle end based on the elements the AI used during the match. Reads
@@ -28982,7 +28988,10 @@ function commitSubclassPick(heroId, subclassId) {
   if (!Profile.heroes) Profile.heroes = {};
   Profile.heroes[heroId] = Profile.heroes[heroId] || { level: 1, xp: 0, kills: 0, wins: 0, statGains: emptyGains(), evs: emptyEvs(), bond: 0, nature: null };
   Profile.heroes[heroId].subclass = subclassId;
-  saveProfile();
+  // 🌩 Slice 18 — subclass pick is a one-time per-hero decision the player
+  // can't redo. Write-through cloud-first so a refresh between pick and
+  // sync can't reset the hero to no subclass.
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); else saveProfile(); } catch (e) { try { saveProfile(); } catch (_) {} }
   // Drop this pick from the queue (allow processing the next one if multiple piled up).
   App.pendingSubclassPicks = (App.pendingSubclassPicks || []).filter(p => p.heroId !== heroId);
 }
@@ -29647,8 +29656,12 @@ function addUnopenedPack(def, source) {
     source: source || 'shop',
   };
   Profile.unopenedPacks.push(entry);
-  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
-  try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); } catch (e) {}
+  // 🌩 Slice 17 — pack purchase → write-through cloud-first.
+  try {
+    if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {});
+    else if (typeof _persistProgressNow === 'function') _persistProgressNow();
+    else if (typeof saveProfile === 'function') saveProfile();
+  } catch (e) {}
   return id;
 }
 // Remove one pack (by inventory entry id) — called right before opening it.
@@ -29657,8 +29670,14 @@ function removeUnopenedPack(entryId) {
   const idx = Profile.unopenedPacks.findIndex(p => p && p.id === entryId);
   if (idx < 0) return null;
   const [entry] = Profile.unopenedPacks.splice(idx, 1);
-  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
-  try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); } catch (e) {}
+  // 🌩 Slice 17 — pack consumed (about to be opened) → write-through.
+  // Player would be furious if their just-opened pack vanished due to a
+  // network blip between local-save and cloud-sync.
+  try {
+    if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {});
+    else if (typeof _persistProgressNow === 'function') _persistProgressNow();
+    else if (typeof saveProfile === 'function') saveProfile();
+  } catch (e) {}
   return entry;
 }
 // Count helper for HUD pills / nav badges.
@@ -33431,7 +33450,10 @@ function redeemWebPurchases(receipts) {
     }
   } catch (e) {}
   if (openedAny) {
-    try { saveProfile(); } catch (e) {}
+    // 🌩 Slice 18 — batch-opened multiple packs (e.g. claiming a bundle).
+    // Cards just landed in the collection; write-through cloud-first so
+    // an immediate refresh can't lose any of them.
+    try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); else saveProfile(); } catch (e) { try { saveProfile(); } catch (_) {} }
     try { render(); } catch (e) {}
   }
 }
@@ -34790,7 +34812,9 @@ function claimSeasonReward(tier, track) {
     }
   }
   claimedMap[String(tier)] = true;
-  try { saveProfile(); } catch (e) {}
+  // 🌩 Slice 18 — Season Pass tier claim is a one-shot reward moment.
+  // Player paid attention to it; losing the claim would be infuriating.
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); else saveProfile(); } catch (e) { try { saveProfile(); } catch (_) {} }
   return { ok: true, reward };
 }
 
@@ -36582,7 +36606,9 @@ function setPlayerFaction(factionId) {
   if (!FACTIONS.find(f => f.id === factionId)) return false;
   Profile.competitive.factionId = factionId;
   Profile.competitive.factionJoinedAt = Date.now();
-  saveProfile();
+  // 🌩 Slice 18 — faction choice is a major one-time decision with season-
+  // long consequences for contribution + rewards. Write-through cloud-first.
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); else saveProfile(); } catch (e) { try { saveProfile(); } catch (_) {} }
   return true;
 }
 function awardFactionContribution(amount) {
@@ -36877,14 +36903,18 @@ function saveDeckEntry(deck) {
   // Keep legacy deckByHero in sync (used by getSavedDeckForHero for AI / fallback paths)
   Profile.deckByHero = Profile.deckByHero || {};
   Profile.deckByHero[deck.heroId] = { name: entry.name, cards: entry.cards.slice(0) };
-  saveProfile();
+  // 🌩 Slice 18 — deck save is a major UX moment. The player just hit Save
+  // expecting their deck to persist. Cloud-first guarantees that.
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); else saveProfile(); } catch (e) { try { saveProfile(); } catch (_) {} }
   // Achievement hook — deck-builder trophies (architect, polyglot).
   try { if (typeof checkAchievements === 'function') checkAchievements('deckSaved', { deck: entry }); } catch (e) { console.warn('Achievement deckSaved check failed', e); }
   return entry;
 }
 function deleteDeckEntry(deckId) {
   Profile.decks = getAllDecks().filter(d => d.id !== deckId);
-  saveProfile();
+  // 🌩 Slice 18 — deck delete is destructive and player-initiated.
+  // Cloud-first so a refresh can't resurrect the deck or leave it half-deleted.
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); else saveProfile(); } catch (e) { try { saveProfile(); } catch (_) {} }
 }
 
 // ===== Deck Codes (share between players) =====
@@ -43721,14 +43751,28 @@ function spendGems(amount) {
   if (amount <= 0) return true;
   if ((Profile.gems || 0) < amount) return false;
   Profile.gems = (Profile.gems || 0) - amount;
-  saveProfile();
+  // 🌩 Slice 17 — write-through cloud-first. Gem spend is one of the most
+  // upsetting things to lose; this fires an immediate cloud upload that the
+  // beforeunload guard sees in _saveProgressInFlight so the player can't
+  // close the tab before the spend is persisted. saveProfile() still runs
+  // first inside saveProgressCloud() for crash safety.
+  try {
+    if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {});
+    else saveProfile();
+  } catch (e) { try { saveProfile(); } catch (_) {} }
   return true;
 }
 function addGems(amount) {
   amount = Math.floor(amount || 0);
   if (amount === 0) return;
   Profile.gems = (Profile.gems || 0) + amount;
-  saveProfile();
+  // 🌩 Slice 17 — gem gain (battle reward, achievement, daily) goes through
+  // the cloud immediately. Without this, a player who earns 500 gems and
+  // closes the tab within 2s of seeing the reward would lose them.
+  try {
+    if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {});
+    else saveProfile();
+  } catch (e) { try { saveProfile(); } catch (_) {} }
 }
 
 // ===== The Ruin Exchange — currency aliases & helpers =====
@@ -46574,9 +46618,13 @@ function onSaveStatus(fn) {
     } catch (err) {}
     if (!Profile.cloud || !Profile.cloud.signedIn) return;
     // Sync in flight OR scheduled-but-not-yet-fired? Both deserve a nag.
+    // saveProgressCloud bumps _saveProgressInFlight per call, so this also
+    // catches the case where a critical write started seconds ago but the
+    // cloud upload is still resolving.
     const inFlight  = !!_cloudSyncInFlight;
     const pending   = !!Profile.cloud.pendingChanges;
-    if (!inFlight && !pending) return;
+    const critical  = (_saveProgressInFlight | 0) > 0;
+    if (!inFlight && !pending && !critical) return;
     // Fire a final fetch() with keepalive so it survives the unload — best-
     // effort, browsers may still drop it but most modern engines honor it.
     try { _flushPending(); } catch (err) {}
@@ -46854,6 +46902,95 @@ function _persistProgressNow() {
     }
   } catch (e) {}
 }
+// ============================================================================
+// 🌩 SLICE 17 — WRITE-THROUGH CLOUD-FIRST PROGRESS API
+// ----------------------------------------------------------------------------
+// The new preferred API for any progression-affecting mutation (battle wins,
+// purchases, card grants, achievement unlocks, hero level-ups).
+//
+// Why this exists: previously even _persistProgressNow() wrote localStorage,
+// then fire-and-forget the cloud upload. If the upload failed, the player saw
+// no feedback and had no idea their cloud copy didn't get updated. After
+// they cleared cache, the local copy was gone and the cloud was stale.
+//
+// What this does:
+//   1. saveProfile()    — local write FIRST (crash safety)
+//   2. cloudSyncProfile — immediate upload, NOT debounced, AWAITED
+//   3. on cloud success → SaveStatus 'saved', resolve { ok: true }
+//   4. on cloud failure → SaveStatus 'error', schedule retry via existing
+//                         infrastructure, resolve { ok: false, error }
+//
+// Callers can either fire-and-forget (most cases) or `await` it to gate UI.
+// The "Saving to cloud..." overlay (mountCloudSavingOverlay) watches the
+// in-flight counter and blocks tab-close while writes are mid-flight.
+//
+// This is additive — saveProfile() / _persistProgressNow() still work. New
+// progression sites prefer saveProgressCloud(); future slices migrate the rest.
+// ============================================================================
+let _saveProgressInFlight = 0;
+function _bumpSaveProgressInFlight(delta) {
+  _saveProgressInFlight = Math.max(0, _saveProgressInFlight + delta);
+  try { if (typeof mountCloudSavingOverlay === 'function') mountCloudSavingOverlay(); } catch (e) {}
+}
+async function saveProgressCloud(opts) {
+  // Always do the local write first — if the network call hangs, at least
+  // the player can refresh and recover the progression from localStorage.
+  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  // Not signed in? Local was already saved; we're done. Caller can decide
+  // whether to nag the player to sign in (the offline banner already does).
+  const cc = (Profile && Profile.cloud) || {};
+  if (!cc.signedIn) return { ok: false, error: 'Not signed in', skipped: 'offline' };
+  if (cc.autoSync === false) return { ok: false, error: 'Auto-sync disabled', skipped: 'autosync-off' };
+  // Hydration gate guard — if cloudFetchProfile hasn't resolved yet this
+  // session, defer the write until it does (the existing gate in
+  // cloudSyncProfile catches this too, but checking here avoids spinning
+  // the saving overlay for a write we know will defer).
+  if (!cc._hydratedFromCloud && !cc._forceCloudPush) {
+    if (Profile.cloud) Profile.cloud.pendingChanges = true;
+    return { ok: false, error: 'Awaiting cloud hydration', deferred: true };
+  }
+  // Multi-tab safety — only the writer tab pushes.
+  if (typeof MultiTab !== 'undefined' && MultiTab && MultiTab.amWriter === false) {
+    return { ok: false, error: 'Reader tab — writer tab handles sync' };
+  }
+  // Cancel any scheduled debounce; we're firing NOW. This is the whole
+  // point of the API: progression doesn't wait.
+  if (_cloudSyncTimer) { clearTimeout(_cloudSyncTimer); _cloudSyncTimer = null; }
+  // Show saving overlay (if any) and bump the in-flight counter so the
+  // beforeunload guard stays armed across overlapping writes.
+  _bumpSaveProgressInFlight(+1);
+  Profile.cloud.pendingChanges = true;
+  let result = { ok: false, error: 'unknown' };
+  try {
+    // If a sync is already in flight, wait briefly for it to clear so we
+    // don't fight the existing retry path. Cap at 3s to avoid hanging UI.
+    if (_cloudSyncInFlight) {
+      const t0 = Date.now();
+      while (_cloudSyncInFlight && (Date.now() - t0) < 3000) {
+        await new Promise(r => setTimeout(r, 60));
+      }
+    }
+    _cloudSyncInFlight = true;
+    _setSaveStatus('saving');
+    try { result = await cloudSyncProfile(); }
+    catch (e) { result = { ok: false, error: (e && e.message) || 'threw' }; }
+  } finally {
+    _cloudSyncInFlight = false;
+    _bumpSaveProgressInFlight(-1);
+  }
+  if (result && result.ok) {
+    _setSaveStatus('saved');
+    _cloudRetryAttempt = 0;
+    return result;
+  }
+  // Failure — surface the error to the indicator and schedule a retry via
+  // the existing backoff infrastructure. Don't await the retry — the caller
+  // gets the failure result NOW, the retry happens in the background.
+  _setSaveStatus('error', { error: (result && result.error) || 'sync failed' });
+  setTimeout(() => { try { if (typeof _runCloudSyncWithRetry === 'function') _runCloudSyncWithRetry(); } catch (e) {} }, 1500);
+  return result;
+}
+
 // Same, but for admin Forge content (AI decks / starter decks / campaigns):
 // write localStorage + IndexedDB AND push to the cloud forge column NOW so the
 // admin's work is never stuck in the debounce window.
@@ -63648,7 +63785,13 @@ function grantStarterDeckToPlayer(deck, opts) {
   if (!Array.isArray(Profile.ownedStarterDecks)) Profile.ownedStarterDecks = [];
   if (deck.id && Profile.ownedStarterDecks.indexOf(deck.id) < 0) Profile.ownedStarterDecks.push(deck.id);
   if (opts.markPicked) { Profile.starterPicked = true; Profile.starterDeckId = deck.id || null; }
-  _persistProgressNow();
+  // 🌩 Slice 17 — starter pick is THE most consequential first-time save.
+  // Without this, a new player who picks a deck and refreshes immediately
+  // loses their starter and is stuck on the picker forever.
+  try {
+    if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {});
+    else _persistProgressNow();
+  } catch (e) { try { _persistProgressNow(); } catch (_) {} }
   return true;
 }
 // 👑 Admin-only helper: grant the full published card catalog to the current
@@ -74199,12 +74342,21 @@ function _renderBattleImmediate() {
   if (s.gameOver && !App.battleProgressRecorded && !App.replayViewing) {
     recordBattleProgress();
     App.battleProgressRecorded = true;
-    // 🛟 Slice 16 — immediate cloud push for the highest-stakes save event.
-    // Battle results (wins/losses, hero levels, kills, gems earned, ranked
-    // RR delta) are the changes players are most upset about losing. Bypass
-    // the 2s debounce so they hit the cloud the instant the gameover screen
-    // appears — no waiting on the next debounce tick.
-    try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); } catch (e) {}
+    // 🌩 Slice 17 — write-through cloud-first save. saveProgressCloud()
+    // writes localStorage then AWAITS the cloud upload, showing a visible
+    // "Saving to cloud…" overlay until it confirms. Failures schedule a
+    // retry via the existing infrastructure. Battle results (wins/losses,
+    // hero levels, kills, gems, ranked RR delta) are the highest-stakes
+    // save event; this is the canonical place to use the new API.
+    try {
+      if (typeof saveProgressCloud === 'function') {
+        // Fire-and-forget — the overlay handles visible progress; the
+        // gameover screen renders immediately while the cloud write runs.
+        saveProgressCloud().catch(() => {});
+      } else if (typeof _persistProgressNow === 'function') {
+        _persistProgressNow(); // fallback
+      }
+    } catch (e) {}
     // 🛟 Slice 16 — first-battle offline warning. Educates offline-mode
     // players that their victory just saved to localStorage only. Fires
     // at most once per session via _offlineWarnedThisSession.
@@ -101832,6 +101984,42 @@ function mountMoodleHud() {
 })();
 
 // ---- Persistent bottom-left FAB (body-mounted; survives screen renders) ----
+// 🌩 SAVING-TO-CLOUD OVERLAY (slice 17) — mounts a small floating chip
+// when one or more critical writes are mid-flight. Differs from the
+// cloud-status pip: the pip ALWAYS shows current state; this overlay
+// ONLY appears while a saveProgressCloud() call is in flight, and is
+// visually louder so the player knows their progression is being
+// persisted RIGHT NOW. Auto-removes when in-flight counter hits 0.
+function mountCloudSavingOverlay() {
+  try {
+    if (typeof document === 'undefined') return;
+    const ex = document.getElementById('cloud-saving-overlay');
+    const active = (_saveProgressInFlight | 0) > 0;
+    if (!active) { if (ex) ex.remove(); return; }
+    if (ex) return; // already mounted
+    const b = document.createElement('div');
+    b.id = 'cloud-saving-overlay';
+    b.style.cssText = 'position:fixed;right:14px;top:14px;z-index:2147483500;'
+      + 'padding:0.45rem 0.85rem 0.45rem 0.65rem;border-radius:18px;'
+      + 'border:1px solid rgba(212,175,55,0.6);'
+      + 'background:linear-gradient(180deg,rgba(28,22,52,0.95),rgba(14,10,28,0.95));'
+      + 'backdrop-filter:blur(8px);'
+      + 'color:#ffe6a8;font-family:Crimson Text,Georgia,serif;font-size:0.88rem;'
+      + 'display:flex;align-items:center;gap:0.5rem;'
+      + 'box-shadow:0 8px 24px rgba(0,0,0,0.7),0 0 16px rgba(212,175,55,0.3);';
+    b.innerHTML = '<span style="display:inline-block;width:12px;height:12px;border:2px solid #ffe6a8;border-top-color:transparent;border-radius:50%;animation:cloud-spin 0.9s linear infinite"></span>'
+      + '<span><strong>Saving to cloud…</strong></span>';
+    document.body.appendChild(b);
+    // Inject the spin keyframe once if not already present.
+    if (!document.getElementById('cloud-saving-keyframes')) {
+      const st = document.createElement('style');
+      st.id = 'cloud-saving-keyframes';
+      st.textContent = '@keyframes cloud-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }';
+      document.head.appendChild(st);
+    }
+  } catch (e) {}
+}
+
 // 🛟 OFFLINE PROGRESS WARNING (slice 16) — fires once per session the
 // first time an offline-mode player completes an action that would
 // normally save progress (e.g. first battle end). Educational, not
@@ -127808,10 +127996,18 @@ function renderTerritoryWars() {
     App._twFilters[c.dataset.twFilter] = c.checked;
     render();
   });
-  document.querySelectorAll('[data-tw-node]').forEach(b => b.onclick = () => {
-    App._twSelectedNode = b.dataset.twNode;
-    render();
-  });
+  // Single delegated listener on the canvas — catches clicks on ANY part of a
+  // node button (diamond, label, pulse, badge, gap) via .closest(), so the
+  // entire button area is reliably clickable without needing precise aim.
+  const _twCanvas = document.getElementById('tw-map-canvas');
+  if (_twCanvas) {
+    _twCanvas.onclick = (e) => {
+      const btn = e.target.closest('[data-tw-node]');
+      if (!btn) return;
+      App._twSelectedNode = btn.dataset.twNode;
+      render();
+    };
+  }
   // v37: Drawer close — clicking ✕ deselects the node and closes the drawer.
   const _drawerClose = document.getElementById('tw-drawer-close');
   if (_drawerClose) _drawerClose.onclick = () => { App._twSelectedNode = null; App._twNodeTab = 'overview'; render(); };

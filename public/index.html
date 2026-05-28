@@ -18716,10 +18716,26 @@
     opacity: 1;
     stroke-linecap: round;
   }
-  .tw-map-routes path.allied  { stroke: #6cd4ff; stroke-dasharray: none;  opacity: 0.88; stroke-width: 1.4; }
+  /* Energy surge animations — lit supply lines (v48) */
+  @keyframes tw-energy-flow   { to { stroke-dashoffset: -22; } }
+  @keyframes tw-frontier-glow {
+    0%,100% { stroke: #ffcf5a; filter: drop-shadow(0 0 1px rgba(255,210,80,0.5)); }
+    50%     { stroke: #ffe880; filter: drop-shadow(0 0 4px rgba(255,215,60,1)) drop-shadow(0 0 9px rgba(255,165,0,0.75)); }
+  }
+  @keyframes tw-allied-glow {
+    0%,100% { stroke: #6cd4ff; filter: drop-shadow(0 0 1px rgba(108,212,255,0.5)); }
+    50%     { stroke: #a8eeff; filter: drop-shadow(0 0 4px rgba(108,212,255,1)) drop-shadow(0 0 9px rgba(0,185,255,0.75)); }
+  }
+  .tw-map-routes path.allied  {
+    stroke: #6cd4ff; stroke-dasharray: 8 3; stroke-width: 1.8; opacity: 1; stroke-linecap: round;
+    animation: tw-energy-flow 1.4s linear infinite, tw-allied-glow 2s ease-in-out infinite;
+  }
   .tw-map-routes path.enemy   { stroke: #b888ff; stroke-dasharray: none;  opacity: 0.80; stroke-width: 1.2; }
   .tw-map-routes path.contest { stroke: #e25555; stroke-dasharray: 5 3;   opacity: 0.85; stroke-width: 1.2; }
-  .tw-map-routes path.frontier{ stroke: #ffcf5a; stroke-dasharray: 7 4;   opacity: 0.75; stroke-width: 1.0; }
+  .tw-map-routes path.frontier{
+    stroke: #ffcf5a; stroke-dasharray: 7 3; stroke-width: 1.5; opacity: 1; stroke-linecap: round;
+    animation: tw-energy-flow 1.8s linear infinite, tw-frontier-glow 2.5s ease-in-out infinite;
+  }
   .tw-map-routes path.broken  { stroke: #5a3030; stroke-dasharray: 2 8;   opacity: 0.50; }
 
   /* Floating region labels — large, map-grade typography */
@@ -127504,6 +127520,9 @@ function renderTerritoryWars() {
   for (const n of t.nodes) _routeById[n.id] = n;
   const _seenRoutes = new Set();
   let _routePaths = '';
+  let _litRouteIdx = 0;
+  const _truckRoutes = []; // up to 4 lit routes that get convoy trucks
+  const _MAX_TRUCKS = 4;
   for (const n of t.nodes) {
     const conns = Array.isArray(n.connections) ? n.connections : [];
     const pA = n.position || { x: 5, y: 5 };
@@ -127528,10 +127547,43 @@ function renderTerritoryWars() {
       } else if (ownA || ownB) {
         cls = 'frontier';
       }
-      _routePaths += `<path d="M ${pA.x} ${pA.y} Q ${midX} ${midY} ${pB.x} ${pB.y}"${cls ? ` class="${cls}"` : ''}/>`;
+      // Give lit routes an ID so trucks can reference them via <mpath>
+      let idAttr = '';
+      if ((cls === 'frontier' || cls === 'allied') && _truckRoutes.length < _MAX_TRUCKS) {
+        const rid = 'tw-r-' + _litRouteIdx++;
+        idAttr = ` id="${rid}"`;
+        // Stagger truck durations so they never all arrive at the same moment
+        const dur = 14 + _truckRoutes.length * 4; // 14 / 18 / 22 / 26 s
+        _truckRoutes.push({ id: rid, dur });
+      }
+      _routePaths += `<path d="M ${pA.x} ${pA.y} Q ${midX} ${midY} ${pB.x} ${pB.y}"${idAttr}${cls ? ` class="${cls}"` : ''}/>`;
     }
   }
-  const _twCanvasRoutes = `<svg class="tw-map-routes" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}</svg>`;
+
+  // Animated convoy trucks — one per lit route (military side-profile, cab at +X).
+  // rotate="auto" keeps the cab facing the direction of travel at all times.
+  // keyPoints="0;1;0" drives A→B then B→A endlessly (back-and-forth convoy).
+  const _truckSVG = (rid, dur) => `<g>
+    <rect x="-1.5" y="-0.52" width="3.0" height="1.12" rx="0.22" fill="#3a4e1e" stroke="#19280d" stroke-width="0.1"/>
+    <rect x="0.22" y="-0.52" width="1.28" height="1.12" rx="0.2"  fill="#4a6028" stroke="#19280d" stroke-width="0.1"/>
+    <rect x="0.32" y="-0.42" width="0.66" height="0.5"  rx="0.07" fill="#6aafc4" opacity="0.82"/>
+    <circle cx="1.42" cy="-0.12" r="0.12" fill="#ffffa0" opacity="0.95"/>
+    <rect x="-1.36" y="-0.47" width="1.4"  height="0.11" rx="0.05" fill="#2c3d17"/>
+    <rect x="-1.36" y="-0.25" width="1.4"  height="0.09" rx="0.04" fill="#2c3d17"/>
+    <ellipse cx="-0.78" cy="0.63" rx="0.27" ry="0.21" fill="#111" stroke="#444" stroke-width="0.06"/>
+    <ellipse cx="-0.18" cy="0.63" rx="0.27" ry="0.21" fill="#111" stroke="#444" stroke-width="0.06"/>
+    <ellipse cx="0.88"  cy="0.63" rx="0.27" ry="0.21" fill="#111" stroke="#444" stroke-width="0.06"/>
+    <circle cx="-1.52" cy="-0.3" r="0.09" fill="#aaa" opacity="0.6"/>
+    <circle cx="-1.68" cy="-0.45" r="0.07" fill="#999" opacity="0.35"/>
+    <animateMotion dur="${dur}s" repeatCount="indefinite" rotate="auto"
+      calcMode="spline"
+      keyPoints="0;1;0" keyTimes="0;0.47;1"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1">
+      <mpath href="#${rid}"/>
+    </animateMotion>
+  </g>`;
+
+  const _twCanvasRoutes = `<svg class="tw-map-routes" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}${_truckRoutes.map(r => _truckSVG(r.id, r.dur)).join('')}</svg>`;
 
   // Node markers — absolutely positioned diamonds.
   const _twCanvasMarkers = t.nodes.filter(filtered).map(n => {

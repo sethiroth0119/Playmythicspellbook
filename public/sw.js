@@ -90,6 +90,10 @@
 //        admin-gated); remove City Collapse / dark-events banner from WM page;
 //        fix node middle-click: background:rgba(0,0,0,0.001) forces paint layer
 //        so pointer-events hit-test reliably across the full button border-box.
+// v46 — Hide world-event banner (mountWorldEventBanner) on territoryWars screen.
+//        The badge was position:fixed so removing _twDarkBanner alone wasn't
+//        enough — the FR event pill (City Collapse etc.) is a separate global
+//        overlay removed now when App.screen === 'territoryWars'.
 // v43 — War Map node click root-cause fix: App is const (not on window) so
 //        inline onclick="App..." silently failed. Added window._twSelectNode
 //        helper (window-scoped, accessible from inline handlers) + restored
@@ -115,7 +119,7 @@
 //        Sprite Atelier DEATH tab: _injectDeathSprite() plays death frames
 //        before renderBattle() removes the unit / shows tombstone.
 //        ANIMATION_TYPES now includes 'death'.
-const CACHE_VERSION = 'mythic-v45-' + Date.now().toString(36);
+const CACHE_VERSION = 'mythic-v46-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

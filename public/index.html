@@ -54232,8 +54232,8 @@ function mountWorldEventBanner() {
   try {
     const ID = 'world-event-banner';
     let el = document.getElementById(ID);
-    // Hide on battle only.
-    if (typeof App !== 'undefined' && App.screen === 'battle') { if (el) el.remove(); return; }
+    // Hide on battle + territory wars (War Map has its own HUD).
+    if (typeof App !== 'undefined' && (App.screen === 'battle' || App.screen === 'territoryWars')) { if (el) el.remove(); return; }
     // Admin can force-pin an event via App._weForceId (set by weForce()).
     let w = currentWorldEvent();
     if ((typeof App !== 'undefined' && App._weForceId) && (typeof WORLD_EVENTS !== 'undefined')) {

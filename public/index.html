@@ -43,6 +43,12 @@
      plus the extension hook MSPixiVfx.register(kind, factory). MUST load before
      pixi-board.js because the board's ticker references MSPixiVfx directly. -->
 <script src="/pixi/pixi-vfx.js" defer></script>
+<!-- Status overlay registry — per-unit looping visuals (burn, poison, frozen,
+     stun, etc.). Same extension pattern: MSPixiStatus.register(type, factory). -->
+<script src="/pixi/pixi-status.js" defer></script>
+<!-- Ambient registry — board-wide weather-driven particles (rain, snow, embers,
+     sand, fog). MSPixiAmbient.register(kind, factory) for custom ambients. -->
+<script src="/pixi/pixi-ambient.js" defer></script>
 <script src="/pixi/pixi-board.js" defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -125099,6 +125105,85 @@ function _twDarkGildedTaxRate(targetCorpId) {
   return e ? 0.50 : 0;
 }
 
+// ── Starter Map Seed ──────────────────────────────────────────────────────────
+// Populates Forge.territoryWars with the 16 canonical PRNs from the standalone
+// War Map design (Ashbelt, Tidewall, Coalfangs, Hollowmire, Rust Crescent,
+// Glasswastes). Called automatically the first time the map is opened with no
+// regions/nodes defined. Admins can rename everything afterwards.
+function _twSeedStarterData() {
+  const t = Forge.territoryWars;
+  // 6 Regions
+  t.regions = [
+    { id: 'R-ASH',  name: 'Ashbelt',            accent: '#e8844a', bonusDesc: '' },
+    { id: 'R-TIDE', name: 'Tidewall',            accent: '#6cd4ff', bonusDesc: '' },
+    { id: 'R-COAL', name: 'Coalfangs',           accent: '#ff9060', bonusDesc: '' },
+    { id: 'R-HOLL', name: 'Hollowmire',          accent: '#a3d977', bonusDesc: '' },
+    { id: 'R-RUST', name: 'Rust Crescent',       accent: '#e25555', bonusDesc: '' },
+    { id: 'R-GLAS', name: 'Glasswastes',         accent: '#c090ff', bonusDesc: '' },
+  ];
+  // 6 Sectors — one per region (admins can split further later)
+  t.sectors = [
+    { id: 'S-ASH',  name: 'Ashbelt Sector',         regionId: 'R-ASH',  bonusDesc: '', bonusType: '' },
+    { id: 'S-TIDE', name: 'Tidewall Sector',         regionId: 'R-TIDE', bonusDesc: '', bonusType: '' },
+    { id: 'S-COAL', name: 'Coalfangs Sector',        regionId: 'R-COAL', bonusDesc: '', bonusType: '' },
+    { id: 'S-HOLL', name: 'Hollowmire Sector',       regionId: 'R-HOLL', bonusDesc: '', bonusType: '' },
+    { id: 'S-RUST', name: 'Rust Crescent Sector',    regionId: 'R-RUST', bonusDesc: '', bonusType: '' },
+    { id: 'S-GLAS', name: 'Glasswastes Sector',      regionId: 'R-GLAS', bonusDesc: '', bonusType: '' },
+  ];
+  // 16 PRNs — from the standalone War Map node roster.
+  // Sector index cycles through 0-5; resource follows the same pattern as the
+  // standalone app so every node is meaningful out of the box.
+  const _secIds  = ['S-ASH','S-TIDE','S-COAL','S-HOLL','S-RUST','S-GLAS'];
+  const _resKeys = ['FOOD','FUEL','MED','METAL','CRYSTAL','RELIC','ETHER','WOOD','BIO','ELEC'];
+  const _nodeDefs = [
+    { n: 'KILN-7',       s: 0, r: 'FOOD'    },
+    { n: 'EMBERFALL',    s: 1, r: 'FUEL'    },
+    { n: 'SALTGATE',     s: 2, r: 'MED'     },
+    { n: 'BREAKWATER',   s: 3, r: 'METAL'   },
+    { n: 'BLACKHARROW',  s: 4, r: 'CRYSTAL' },
+    { n: 'IRONLUNG',     s: 5, r: 'RELIC'   },
+    { n: 'HOLLOW SEPT',  s: 0, r: 'ETHER'   },
+    { n: 'ROOKSWAY',     s: 1, r: 'WOOD'    },
+    { n: 'GREYMARSH',    s: 2, r: 'BIO'     },
+    { n: 'CINDER FORK',  s: 3, r: 'ELEC'    },
+    { n: 'LATHE-9',      s: 4, r: 'FOOD'    },
+    { n: 'MIRRORWELL',   s: 5, r: 'FUEL'    },
+    { n: 'DUSTHAVEN',    s: 0, r: 'MED'     },
+    { n: 'CARRION GAP',  s: 1, r: 'METAL'   },
+    { n: 'VEINSHEAR',    s: 2, r: 'CRYSTAL' },
+    { n: 'LAST WICK',    s: 3, r: 'RELIC'   },
+  ];
+  t.nodes = _nodeDefs.map((d, i) => ({
+    id: 'N-' + String(i + 1).padStart(2, '0'),
+    name: d.n,
+    sectorId: _secIds[d.s],
+    type: 'PRN',
+    resourceYield: { [d.r]: 10 },
+    quality: 1.0, population: 100,
+    maxGuardSlots: 3, baseClearsRequired: 1,
+    mapType: 'ruined-city', weather: '', difficulty: 'T1',
+    connections: [],
+    runModifiers: [], runModifierPool: [], runModifierCount: 0,
+    rewardTable: [], enemyPool: [], guardDeckPool: [],
+    tileLayout: '', turnLimit: 0, victoryConditions: [], specialRules: [],
+    position: { x: 0, y: 0 },
+  }));
+  // Supply-line connections from the standalone War Map's TRADE_ROUTES
+  const _routes = [
+    ['N-01','N-02'],['N-02','N-03'],['N-03','N-04'],['N-04','N-12'],
+    ['N-01','N-05'],['N-05','N-06'],['N-06','N-15'],['N-07','N-08'],
+    ['N-07','N-09'],['N-09','N-13'],['N-10','N-11'],['N-11','N-14'],
+    ['N-13','N-16'],['N-14','N-15'],['N-08','N-10'],['N-02','N-11'],
+  ];
+  for (const [a, b] of _routes) {
+    const nA = t.nodes.find(n => n.id === a);
+    const nB = t.nodes.find(n => n.id === b);
+    if (nA && !nA.connections.includes(b)) nA.connections.push(b);
+    if (nB && !nB.connections.includes(a)) nB.connections.push(a);
+  }
+  try { saveForge(); } catch (e) {}
+}
+
 function _twForge() {
   if (!Forge.territoryWars || typeof Forge.territoryWars !== 'object') {
     Forge.territoryWars = { regions: [], sectors: [], nodes: [], guardDecks: [], nodeShopUpgrades: [], worldFeed: [], mapTypes: [], difficultyTiers: [], darkEvents: [], darkEventsLastRoll: 0 };
@@ -125107,6 +125192,9 @@ function _twForge() {
   if (!Array.isArray(t.regions))          t.regions = [];
   if (!Array.isArray(t.sectors))          t.sectors = [];
   if (!Array.isArray(t.nodes))            t.nodes = [];
+  // Auto-seed the 16-PRN starter map the first time the map opens with no data.
+  // Admins can rename/add/remove everything in Pricing Admin → Territory Wars.
+  if (t.regions.length === 0 && t.nodes.length === 0) { _twSeedStarterData(); }
   if (!Array.isArray(t.guardDecks))       t.guardDecks = [];
   if (!Array.isArray(t.nodeShopUpgrades)) t.nodeShopUpgrades = [];
   if (!Array.isArray(t.worldFeed))        t.worldFeed = [];
@@ -126760,7 +126848,11 @@ function renderTerritoryWarsAdmin() {
   const cards = {
     regions: t.regions.map(r => `<div class="tw-admin-row"><b>${escapeHtml(r.name)}</b> <span class="ink-dim small-text">${r.id}</span> <span class="ink-dim small-text">accent ${r.accent || '—'}</span> <button class="btn-mini danger" data-tw-del-region="${r.id}">🗑</button></div>`).join('') || '<div class="ink-dim small-text">No regions yet.</div>',
     sectors: t.sectors.map(s => `<div class="tw-admin-row"><b>${escapeHtml(s.name)}</b> <span class="ink-dim small-text">in ${(t.regions.find(r => r.id === s.regionId) || {}).name || '?'}</span> <button class="btn-mini danger" data-tw-del-sector="${s.id}">🗑</button></div>`).join('') || '<div class="ink-dim small-text">No sectors yet.</div>',
-    nodes: t.nodes.map(n => `<div class="tw-admin-row"><b>${escapeHtml(n.name)}</b> <span class="ink-dim small-text">${escapeHtml(n.type || '?')} · sector ${(t.sectors.find(s => s.id === n.sectorId) || {}).name || '?'} · pos ${(n.position && n.position.x) | 0},${(n.position && n.position.y) | 0}</span> <button class="btn-mini" data-tw-edit-node="${n.id}">✎ Edit</button> <button class="btn-mini danger" data-tw-del-node="${n.id}">🗑</button></div>`).join('') || '<div class="ink-dim small-text">No nodes yet.</div>',
+    nodes: `<div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.4rem;padding-bottom:0.35rem;border-bottom:1px dashed rgba(212,175,55,0.20)">
+        <span class="small-text ink-dim">${t.nodes.length} PRN${t.nodes.length===1?'':'s'} defined</span>
+        <button class="btn-secondary btn-mini" id="tw-reseed-btn" title="Clear all regions, sectors &amp; PRNs and restore the 16-PRN starter map">↺ Reset to 16-PRN Starter Map</button>
+      </div>`
+      + (t.nodes.map(n => `<div class="tw-admin-row"><b>${escapeHtml(n.name)}</b> <span class="ink-dim small-text">${escapeHtml(n.type || '?')} · sector ${(t.sectors.find(s => s.id === n.sectorId) || {}).name || '?'} · pos ${(n.position && n.position.x) | 0},${(n.position && n.position.y) | 0}</span> <button class="btn-mini" data-tw-edit-node="${n.id}">✎ Rename / Edit</button> <button class="btn-mini danger" data-tw-del-node="${n.id}">🗑</button></div>`).join('') || '<div class="ink-dim small-text">No nodes yet.</div>'),
     guards: t.guardDecks.map(d => `<div class="tw-admin-row"><b>${escapeHtml(d.name)}</b> <span class="ink-dim small-text">${escapeHtml(d.faction || '?')} · ${escapeHtml(d.tier || 'T1')} · ${escapeHtml(d.aiBehavior || 'Random')}</span> <button class="btn-mini danger" data-tw-del-guard="${d.id}">🗑</button></div>`).join('') || '<div class="ink-dim small-text">No guard decks yet.</div>',
     upgrades: t.nodeShopUpgrades.map(u => `<div class="tw-admin-row"><b>${escapeHtml(u.name)}</b> <span class="ink-dim small-text">${escapeHtml(u.kind || '?')} · cost ${u.cost || 0}</span> <button class="btn-mini danger" data-tw-del-up="${u.id}">🗑</button></div>`).join('') || '<div class="ink-dim small-text">No upgrades yet.</div>',
     // ⚙ Settings tab — registered map types + difficulty tiers admin can
@@ -127061,6 +127153,15 @@ function renderTerritoryWarsAdmin() {
     document.querySelectorAll(sel).forEach(b => b.onclick = () => {
       const id = b.getAttribute(sel.replace('[','').replace(']','').replace('data-', 'data-').split('=')[0].replace('data-', ''));
     });
+  };
+  // ↺ Reset to 16-PRN Starter Map
+  const _reseedBtn = document.getElementById('tw-reseed-btn');
+  if (_reseedBtn) _reseedBtn.onclick = () => {
+    if (!confirm('This will clear ALL regions, sectors, and PRNs and restore the 16-PRN starter map.\n\nContinue?')) return;
+    t.regions = []; t.sectors = []; t.nodes = [];
+    _twSeedStarterData();
+    showToast('✅ Starter map loaded — 16 PRNs ready. Rename them in the Nodes tab.', 3200);
+    render();
   };
   // Simple delete handlers
   document.querySelectorAll('[data-tw-del-region]').forEach(b => b.onclick = () => { t.regions = t.regions.filter(r => r.id !== b.dataset.twDelRegion); saveForge(); render(); });

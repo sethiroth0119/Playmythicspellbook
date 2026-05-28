@@ -50,7 +50,10 @@
 // v31 — War Map visual chrome: Foundation Bar HUD, scanline, grid, corner stamps,
 //        node state colors (thriving/stable/strained/failing/collapsing), pulse/flicker
 //        animations, field-report feed header. All overlaid on existing warmap.png bg.
-const CACHE_VERSION = 'mythic-v31-2026-05-28';
+// v32 — Auto-seed 16 starter PRNs (Kiln-7, Emberfall … Last Wick) across 6 regions /
+//        6 sectors when TW data is empty on first open; supply-line connections wired.
+//        Admin panel: "Reset to 16-PRN Starter Map" button; "✎ Rename / Edit" label.
+const CACHE_VERSION = 'mythic-v32-2026-05-28';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

@@ -34282,6 +34282,9 @@ async function cloudPublishCatalog(opts) {
           mapTypes:         Array.isArray(tw.mapTypes)         ? tw.mapTypes         : [],
           difficultyTiers:  Array.isArray(tw.difficultyTiers)  ? tw.difficultyTiers  : [],
           chosenByRegion:   (tw.chosenByRegion   && typeof tw.chosenByRegion   === 'object') ? tw.chosenByRegion   : {},
+          // 🗺 Admin-lit supply routes — published so the marketing site and
+          // all players see the same highlighted connections the admin set.
+          litRoutes:        Array.isArray(tw.litRoutes)        ? tw.litRoutes        : [],
         };
       })(),
       __dark_events__:       Array.isArray(Forge.darkEvents)       ? Forge.darkEvents       : (typeof Forge.darkEvents === 'object' && Forge.darkEvents ? Forge.darkEvents : []),

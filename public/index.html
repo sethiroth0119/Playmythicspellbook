@@ -33002,7 +33002,17 @@ async function cloudFetchProfile() {
       if (typeof f.itemGridUniformH === 'number') Forge.itemGridUniformH = Math.max(1, Math.min(4, f.itemGridUniformH | 0));
       // 🗺 Territory Wars restore — admin map data. Keep whichever copy is
       // richer so a stale/empty cloud row can't blank a just-built war map.
-      if (f.territoryWars && typeof f.territoryWars === 'object') Forge.territoryWars = _preferRicherObj(f.territoryWars, Forge.territoryWars);
+      if (f.territoryWars && typeof f.territoryWars === 'object') {
+        // Preserve admin-set litRoutes across cloud merge: _preferRicherObj may
+        // pick the cloud copy (snapshotted before litRoutes existed) and silently
+        // drop the local array. Save & restore so they always survive a refresh.
+        const _savedLitRoutes = Array.isArray(Forge.territoryWars && Forge.territoryWars.litRoutes)
+          ? Forge.territoryWars.litRoutes.slice() : [];
+        Forge.territoryWars = _preferRicherObj(f.territoryWars, Forge.territoryWars);
+        if (!Array.isArray(Forge.territoryWars.litRoutes) || Forge.territoryWars.litRoutes.length === 0) {
+          if (_savedLitRoutes.length > 0) Forge.territoryWars.litRoutes = _savedLitRoutes;
+        }
+      }
       // 🪙 Cinder Shop catalog + 🔨 Crafting recipes — cloud-restore so
       // admin edits propagate across devices (richer/union so a stale cloud
       // copy can never delete a just-authored shop item or recipe).
@@ -33587,7 +33597,7 @@ const Catalog = {
   cinderShop:         { inventory: [] },
   craftingRecipes:    [],
   obtainability:      {},
-  territoryWars:      { regions: [], sectors: [], nodes: [], guardDecks: [], nodeShopUpgrades: [], mapTypes: [], difficultyTiers: [], chosenByRegion: {} },
+  territoryWars:      { regions: [], sectors: [], nodes: [], guardDecks: [], nodeShopUpgrades: [], mapTypes: [], difficultyTiers: [], chosenByRegion: {}, litRoutes: [] },
   darkEvents:         [],
   vipPool:            [],
   woodsFishing:       { boatPhotos: {}, crewPhotos: {}, enabled: true },

@@ -76,6 +76,9 @@
 //        flex column, 260px left Field Reports feed, right map canvas fills
 //        viewport, slide-in node drawer replaces static side pane, coordinate
 //        ticks + dark backgrounds + standalone CSS design language applied.
+// v50 — litRoutes persistence: save/restore Forge.territoryWars.litRoutes around
+//        _preferRicherObj cloud-merge so admin-set lit supply lines survive refresh.
+//        litRoutes: [] added to initial Forge.territoryWars default.
 // v38 — Multi-hit attack system: move.dualHit (exactly 2 hits) and
 //        move.multiHit: { min, max } (random 2-5 hits). Each hit rolls damage
 //        and crits independently. Recoil/drain apply to total dmg dealt.
@@ -119,7 +122,7 @@
 //        Sprite Atelier DEATH tab: _injectDeathSprite() plays death frames
 //        before renderBattle() removes the unit / shows tombstone.
 //        ANIMATION_TYPES now includes 'death'.
-const CACHE_VERSION = 'mythic-v49-' + Date.now().toString(36);
+const CACHE_VERSION = 'mythic-v50-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

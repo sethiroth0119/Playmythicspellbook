@@ -128142,6 +128142,7 @@ function renderTerritoryWars() {
         </div>
         <div class="tw-top-bar-corp" style="display:flex;align-items:center;gap:0.6rem">
           <button class="tw-new-node-btn" id="tw-admin-new-node">＋ New Node</button>
+          ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-publish-map" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.55);color:#d4af37" title="Immediately push current node/route data to the website and all players">🌐 Publish Map</button>` : ''}
           ${myCorp ? `🏢 ${escapeHtml(myCorp.name)}` : '<span style="color:#5b6772">No corporation — view only</span>'}
         </div>
       </div>
@@ -128316,6 +128317,29 @@ function renderTerritoryWars() {
       render();
     };
   });
+
+  // ── Admin: Publish Map NOW (bypass the 45s debounce) ──
+  const _pubMapBtn = document.getElementById('tw-admin-publish-map');
+  if (_pubMapBtn) {
+    _pubMapBtn.onclick = async () => {
+      _pubMapBtn.disabled = true;
+      _pubMapBtn.textContent = '⏳ Publishing…';
+      try {
+        const r = await cloudPublishCatalog();
+        if (r && r.ok) {
+          showToast('✅ Map published to website + all players', 3500);
+          _pubMapBtn.textContent = '✅ Published';
+        } else {
+          showToast('⚠ Publish failed: ' + (r && r.error || 'unknown error'), 4000);
+          _pubMapBtn.textContent = '🌐 Publish Map';
+        }
+      } catch (e) {
+        showToast('⚠ Publish error: ' + e.message, 4000);
+        _pubMapBtn.textContent = '🌐 Publish Map';
+      }
+      setTimeout(() => { if (_pubMapBtn) { _pubMapBtn.disabled = false; _pubMapBtn.textContent = '🌐 Publish Map'; } }, 5000);
+    };
+  }
 
   // ── Admin: create new node ──
   const _admNewBtn = document.getElementById('tw-admin-new-node');
@@ -129467,7 +129491,19 @@ function _twBindNodeEditor(t) {
       node.position.y = parseInt(m.style.top, 10) || 0;
     }
     saveForge();
-    showToast(`💾 PRN "${node.name}" saved.`);
+    // Immediately push updated connections/positions to the catalog so the
+    // marketing site and all players see the change without waiting for the
+    // 45-second debounce to fire.
+    try {
+      if (typeof cloudPublishCatalog === 'function' && typeof isAdmin === 'function' && isAdmin()) {
+        cloudPublishCatalog().then(r => {
+          if (r && r.ok) showToast(`✅ PRN "${node.name}" saved & map published.`);
+          else showToast(`💾 PRN "${node.name}" saved — publish pending.`);
+        }).catch(() => showToast(`💾 PRN "${node.name}" saved.`));
+      } else {
+        showToast(`💾 PRN "${node.name}" saved.`);
+      }
+    } catch (e) { showToast(`💾 PRN "${node.name}" saved.`); }
     close();
   };
 }

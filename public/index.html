@@ -46511,7 +46511,9 @@ function saveForge() {
 // ============================================================================
 let _autoPublishTimer = null;
 let _autoPublishInFlight = false; // guard against cloudPublishCatalog → saveForge → loop
-function _adminAutoPublish() {
+// _adminAutoPublish(delay) — delay=0 for immediate (e.g. from explicit admin
+// save actions), omit/undefined to use the 8s batch debounce (e.g. card edits).
+function _adminAutoPublish(delay) {
   try {
     // Only fire for signed-in admins.
     if (typeof isAdmin !== 'function' || !isAdmin()) return;
@@ -46522,6 +46524,10 @@ function _adminAutoPublish() {
     // saveForge → _adminAutoPublish → publish → saveForge loop forever.
     if (_autoPublishInFlight) return;
     if (_autoPublishTimer) clearTimeout(_autoPublishTimer);
+    // delay=0 → run immediately (used by explicit admin save buttons).
+    // delay undefined → 8s batching window so rapid card/guide edits don't
+    //   spam the network but DO propagate before any reasonable page refresh.
+    const ms = (typeof delay === 'number') ? delay : 8000;
     _autoPublishTimer = setTimeout(async () => {
       _autoPublishTimer = null;
       _autoPublishInFlight = true;
@@ -46543,7 +46549,7 @@ function _adminAutoPublish() {
       } finally {
         _autoPublishInFlight = false;
       }
-    }, 45000); // 45s debounce — rapid Forge edits batch into one publish
+    }, ms);
   } catch (e) {}
 }
 
@@ -102075,6 +102081,17 @@ function mountMoodleHud() {
 // visually louder so the player knows their progression is being
 // persisted RIGHT NOW. Auto-removes when in-flight counter hits 0.
 function mountCloudSavingOverlay() {
+  // 🤫 HIDDEN by user request — the "Saving…" gold chip was visually
+  // intrusive. Sync logic (saveProgressCloud, _saveProgressInFlight,
+  // SaveStatus.subscribe) all still works; we just don't paint the chip.
+  // To re-enable, delete this early-return block.
+  try {
+    if (typeof document === 'undefined') return;
+    const ex = document.getElementById('cloud-saving-overlay');
+    if (ex) ex.remove();
+    return;
+  } catch (e) {}
+  // (Unreachable — kept for documentation of the original behavior.)
   try {
     if (typeof document === 'undefined') return;
     const ex = document.getElementById('cloud-saving-overlay');
@@ -102185,6 +102202,17 @@ function mountOfflineBanner() {
 // Updates via SaveStatus.subscribe so the chip changes the instant state
 // changes — no polling. Body-mounted, idempotent across renders.
 function mountCloudStatusPip() {
+  // 🤫 HIDDEN by user request — the "Saved 1:08 AM" green pip was visually
+  // intrusive. The underlying SaveStatus system + cloud sync still works
+  // fully; we just don't paint the pip. To re-enable, delete this
+  // early-return block.
+  try {
+    if (typeof document === 'undefined') return;
+    const ex = document.getElementById('cloud-status-pip');
+    if (ex) ex.remove();
+    return;
+  } catch (e) {}
+  // (Unreachable — kept for documentation of the original behavior.)
   try {
     if (typeof document === 'undefined') return;
     const ex = document.getElementById('cloud-status-pip');
@@ -105685,27 +105713,24 @@ function rlcStartRun(campaignId) {
   startRelics.forEach(rid => { try { _rlcGrantRelic(Profile.rlcRun, rid, { silent: true }); } catch (e) {} });
   try { saveProfile(); } catch (e) {}
   App._rlcIntroFor = camp.id;   // intro modal still shows once when the map loads
-  // 🃏 Pre-run deck modes: defer the map until the player picks / drafts a deck.
-  if (camp.startingDeckMode === 'pick' && Array.isArray(camp.startingDeckChoices) && camp.startingDeckChoices.length) {
-    Profile.rlcRun.deck = [];
-    App.screen = 'rlcDeckPick'; render(); return;
-  }
+  // 🃏 Pre-run deck modes — bug-fix: ALWAYS go through the deck-pick screen
+  // (except for draft mode which has its own UI) so the player can pick
+  // their own deck. Previously the launcher silently auto-fell-through to
+  // the map when the player had no built decks OR when an admin set
+  // startingDeckMode='pick' without including any of the player's options.
+  // Players reported they couldn't take their own decks into roguelite
+  // campaigns; this routes to renderRlcDeckPick which now offers admin-
+  // curated + player-built + owned starter decks together.
   if (camp.startingDeckMode === 'draft' && Array.isArray(camp.draftPool) && camp.draftPool.length) {
     Profile.rlcRun.deck = [];
     App._rlcDraftOffer = null;
     App.screen = 'rlcDraft'; render(); return;
   }
-  // 🃏 "Player's own deck" mode — let the player pick which of THEIR decks
-  // (built decks + owned starter decks) to take in, instead of silently
-  // auto-grabbing one. Falls through to the auto deck if they have none.
-  if (camp.startingDeckMode === 'player' || !camp.startingDeckMode) {
-    const pOpts = _rlcPlayerDeckOptions();
-    if (pOpts.length) {
-      Profile.rlcRun.deck = [];
-      App.screen = 'rlcDeckPick'; render(); return;
-    }
-  }
-  App.screen = 'rlcMap';
+  // Every non-draft mode (pick / player / undefined) routes to deck pick.
+  // renderRlcDeckPick has its own fallback to camp.startingDeckId + auto-map
+  // when the player genuinely has zero options anywhere.
+  Profile.rlcRun.deck = [];
+  App.screen = 'rlcDeckPick';
   render();
 }
 // 🧹 Clear ALL roguelite run artifacts when a run ends (death / completion /
@@ -107340,14 +107365,45 @@ function renderRlcDeckPick() {
   const run = Profile.rlcRun; if (!run) { App.screen = 'rlcList'; return render(); }
   const camp = _rlcCampaign(run.campaignId);
   const mode = (camp && camp.startingDeckMode) || 'player';
-  let opts;
+  // 🃏 BUG-FIX: build a UNIFIED picker that always lets the player choose
+  // their OWN decks alongside whatever the admin curated. Previously a
+  // campaign with startingDeckMode='pick' hid the player's own decks
+  // entirely; players reported they couldn't bring their built decks into
+  // roguelite runs. Now the order is:
+  //   1) Admin-curated picks (when mode === 'pick')
+  //   2) Every deck the player has built (Profile.decks via _rlcPlayerDeckOptions)
+  //   3) Every owned starter deck (fallback for players who haven't built one)
+  // Dedupes by id so the same starter deck doesn't show twice.
+  let opts = [];
+  const seen = {};
+  const _addOpt = (o) => { if (o && o.id && !seen[o.id]) { seen[o.id] = 1; opts.push(o); } };
+
+  // 1) Admin-curated picks — only relevant in 'pick' mode.
   if (mode === 'pick') {
     const allow = (camp && Array.isArray(camp.startingDeckChoices)) ? camp.startingDeckChoices : [];
-    opts = _rlcDeckOptions().filter(o => o.id && allow.indexOf(o.id) >= 0);
-  } else {
-    // "Player's own deck" — their built decks + owned starter decks.
-    opts = _rlcPlayerDeckOptions();
+    try {
+      _rlcDeckOptions().filter(o => o.id && allow.indexOf(o.id) >= 0).forEach(_addOpt);
+    } catch (e) {}
   }
+
+  // 2) Player's own built decks — ALWAYS shown (the user-facing fix).
+  try { _rlcPlayerDeckOptions().forEach(_addOpt); } catch (e) {}
+
+  // 3) Owned starter decks — fallback for new players who haven't built
+  //    a deck yet. Only the ones the player actually owns are listed.
+  if (!opts.length || mode !== 'pick') {
+    try {
+      const owned = Array.isArray(Profile.ownedStarterDecks) ? Profile.ownedStarterDecks : [];
+      const starters = typeof getAllStarterDecks === 'function' ? getAllStarterDecks() : [];
+      starters.forEach(d => {
+        if (d && d.id && Array.isArray(d.cards) && d.cards.length && owned.indexOf(d.id) >= 0) {
+          _addOpt({ id: d.id, label: '🦸 ' + (d.name || d.id) });
+        }
+      });
+    } catch (e) {}
+  }
+
+  // Genuinely nothing — fall back to camp default + auto-route to map.
   if (!opts.length) {
     if (!(Array.isArray(run.deck) && run.deck.length)) run.deck = _rlcDeckKeys((camp && camp.startingDeckId) || '');
     try { saveProfile(); } catch (e) {}
@@ -126747,12 +126803,13 @@ function _twSeedStarterData() {
 
 function _twForge() {
   if (!Forge.territoryWars || typeof Forge.territoryWars !== 'object') {
-    Forge.territoryWars = { regions: [], sectors: [], nodes: [], guardDecks: [], nodeShopUpgrades: [], worldFeed: [], mapTypes: [], difficultyTiers: [], darkEvents: [], darkEventsLastRoll: 0 };
+    Forge.territoryWars = { regions: [], sectors: [], nodes: [], guardDecks: [], nodeShopUpgrades: [], worldFeed: [], mapTypes: [], difficultyTiers: [], darkEvents: [], darkEventsLastRoll: 0, litRoutes: [] };
   }
   const t = Forge.territoryWars;
   if (!Array.isArray(t.regions))          t.regions = [];
   if (!Array.isArray(t.sectors))          t.sectors = [];
   if (!Array.isArray(t.nodes))            t.nodes = [];
+  if (!Array.isArray(t.litRoutes))        t.litRoutes = [];
   // Auto-seed the 16-PRN starter map the first time the map opens with no data.
   // Admins can rename/add/remove everything in Pricing Admin → Territory Wars.
   if (t.regions.length === 0 && t.nodes.length === 0) { _twSeedStarterData(); }
@@ -128282,7 +128339,9 @@ function renderTerritoryWars() {
       else delete ts.ownedNodes[node.id].cinderOverride;
       try { saveForge(); } catch (e) {}
       try { _twSave(); } catch (e) {}
-      showToast(`✅ ${node.name} saved`, 2500);
+      // Immediate publish so node admin changes reach all players now.
+      try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {}
+      showToast(`✅ ${node.name} saved — publishing to all players…`, 2500);
       render();
     };
   }
@@ -128304,7 +128363,8 @@ function renderTerritoryWars() {
     };
   }
 
-  // ── Admin: toggle lit routes ──
+  // ── Admin: toggle lit routes — immediate cloud publish so other players
+  //    and the marketing site see the update without any debounce delay. ──
   document.querySelectorAll('[data-tw-lit-key]').forEach(btn => {
     btn.onclick = () => {
       const key = btn.dataset.twLitKey; if (!key) return;
@@ -128314,6 +128374,9 @@ function renderTerritoryWars() {
       if (idx >= 0) tf.litRoutes.splice(idx, 1);
       else tf.litRoutes.push(key);
       try { saveForge(); } catch (e) {}
+      // Publish immediately (delay=0) so litRoutes land in card_catalog
+      // right away — no 8s wait, no "did it publish before I refreshed?" risk.
+      try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {}
       render();
     };
   });

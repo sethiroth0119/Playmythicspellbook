@@ -33003,14 +33003,21 @@ async function cloudFetchProfile() {
       // 🗺 Territory Wars restore — admin map data. Keep whichever copy is
       // richer so a stale/empty cloud row can't blank a just-built war map.
       if (f.territoryWars && typeof f.territoryWars === 'object') {
-        // Preserve admin-set litRoutes across cloud merge: _preferRicherObj may
-        // pick the cloud copy (snapshotted before litRoutes existed) and silently
-        // drop the local array. Save & restore so they always survive a refresh.
+        // litRoutes now live in the localStorage fast-path (hg_tw_litRoutes)
+        // so they always survive a refresh regardless of cloud-sync timing.
+        // Still save/restore here as a belt-and-suspenders: _preferRicherObj
+        // may pick an older cloud copy that predates any litRoute being set.
+        // ALWAYS restore local litRoutes after the merge — local is authoritative.
         const _savedLitRoutes = Array.isArray(Forge.territoryWars && Forge.territoryWars.litRoutes)
           ? Forge.territoryWars.litRoutes.slice() : [];
         Forge.territoryWars = _preferRicherObj(f.territoryWars, Forge.territoryWars);
-        if (!Array.isArray(Forge.territoryWars.litRoutes) || Forge.territoryWars.litRoutes.length === 0) {
-          if (_savedLitRoutes.length > 0) Forge.territoryWars.litRoutes = _savedLitRoutes;
+        // Unconditionally restore local routes: litRoutes are admin-device-local
+        // and the cloud copy may be stale.  If local was empty and cloud has
+        // them (multi-device edge case), keep the cloud's.
+        if (_savedLitRoutes.length > 0) {
+          Forge.territoryWars.litRoutes = _savedLitRoutes;
+        } else if (!Array.isArray(Forge.territoryWars.litRoutes)) {
+          Forge.territoryWars.litRoutes = [];
         }
       }
       // 🪙 Cinder Shop catalog + 🔨 Crafting recipes — cloud-restore so
@@ -45937,6 +45944,20 @@ function loadForge() {
     // 📈 Crash Exchange market state — restore prices/reserve from fast-path.
     try { const cxs = localStorage.getItem('hg_crashExchange'); if (cxs) { const x = JSON.parse(cxs); if (x && typeof x === 'object') { if (!Forge.crashExchange || typeof Forge.crashExchange !== 'object') Forge.crashExchange = { prices: {}, txnLog: [], lastDecayAt: 0 }; if (x.prices && typeof x.prices === 'object') Forge.crashExchange.prices = x.prices; if (x.lastDecayAt) Forge.crashExchange.lastDecayAt = x.lastDecayAt; if (Array.isArray(x.txnLog)) { const _ll = Array.isArray(Forge.crashExchange.txnLog) ? Forge.crashExchange.txnLog : []; if (!_ll.length) Forge.crashExchange.txnLog = x.txnLog; } } } } catch (err) {}
     try { const cxr = localStorage.getItem('hg_cxReserve'); if (cxr) { const x = JSON.parse(cxr); if (x && typeof x === 'object') Forge.cxReserve = x; } } catch (err) {}
+    // 🗺 War Map admin-lit supply routes — restore from localStorage fast-path
+    // so the routes survive a page refresh even before the cloud sync (10s
+    // debounce) has completed. The full Forge.territoryWars is cloud-only;
+    // litRoutes are the only admin-set field that never travelled through LS.
+    try {
+      const _lr = localStorage.getItem('hg_tw_litRoutes');
+      if (_lr) {
+        const x = JSON.parse(_lr);
+        if (Array.isArray(x) && x.length > 0) {
+          if (!Forge.territoryWars || typeof Forge.territoryWars !== 'object') Forge.territoryWars = {};
+          Forge.territoryWars.litRoutes = x;
+        }
+      }
+    } catch (err) {}
     // 🚨 PRODUCTION OVERRIDE — force custom-only pool ON regardless of saved
     // state. The admin explicitly wants ONLY their forged/cataloged cards in
     // the live game. Any prior `false` in localStorage / cloud save (left over
@@ -46453,6 +46474,10 @@ function saveForge() {
         return { prices: cx.prices || {}, txnLog: Array.isArray(cx.txnLog) ? cx.txnLog.slice(-200) : [], lastDecayAt: cx.lastDecayAt || 0 };
       })(), name: 'crashExchange' },
     { key: 'hg_cxReserve',          value: (Forge.cxReserve && typeof Forge.cxReserve === 'object') ? Forge.cxReserve : {}, name: 'cxReserve' },
+    // 🗺 War Map admin-lit supply routes — tiny array of "nodeA|nodeB" strings.
+    // Full Forge.territoryWars is cloud-only; persist just litRoutes to the
+    // localStorage fast-path so they survive refresh before cloud sync completes.
+    { key: 'hg_tw_litRoutes', value: Array.isArray(Forge.territoryWars && Forge.territoryWars.litRoutes) ? Forge.territoryWars.litRoutes : [], name: 'tw_litRoutes' },
   ];
   const failures = [];
   for (const c of chunks) {
@@ -126770,6 +126795,8 @@ function _twForge() {
       { id: 'Boss', name: 'Boss — Capital',  modRolls: 4, statScale: 1.8,  accent: '#b888ff' },
     ];
   }
+  // 🗺 litRoutes: admin-toggled supply lines — must always be an array.
+  if (!Array.isArray(t.litRoutes)) t.litRoutes = [];
   return t;
 }
 function _twState() {

@@ -76,6 +76,10 @@
 //        flex column, 260px left Field Reports feed, right map canvas fills
 //        viewport, slide-in node drawer replaces static side pane, coordinate
 //        ticks + dark backgrounds + standalone CSS design language applied.
+// v51 — litRoutes localStorage fast-path: hg_tw_litRoutes saved in saveForge()
+//        chunks + restored in loadForge() so routes survive refresh before the
+//        10s-debounced cloud sync completes. _twForge() guard ensures litRoutes
+//        is always an array. Cloud-merge unconditionally restores local routes.
 // v50 — litRoutes persistence: save/restore Forge.territoryWars.litRoutes around
 //        _preferRicherObj cloud-merge so admin-set lit supply lines survive refresh.
 //        litRoutes: [] added to initial Forge.territoryWars default.
@@ -122,7 +126,7 @@
 //        Sprite Atelier DEATH tab: _injectDeathSprite() plays death frames
 //        before renderBattle() removes the unit / shows tombstone.
 //        ANIMATION_TYPES now includes 'death'.
-const CACHE_VERSION = 'mythic-v50-' + Date.now().toString(36);
+const CACHE_VERSION = 'mythic-v51-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

@@ -364,7 +364,14 @@
 //        side. (2) Gem connection now falls back to ALL your gems when you have
 //        no gem deck set, so gems are always socketable (units still need gem
 //        slots set in the Card Forge). Clearer empty-state guidance.
-const CACHE_VERSION = 'mythic-v88b-' + Date.now().toString(36);
+// v88c — 💎 GEM SLOTS end-to-end: new "Gem Slots (0-3)" field in the Card Forge
+//        (units) → card.gemSlots; a "💎 Gem Slots" section in the card detail
+//        panel with one dropdown per slot to connect gems (from your gem deck,
+//        falling back to all owned gems); each connection writes the shared
+//        socket store and counts toward the 5-gem cap (shows "N/5 connected"),
+//        wired in BOTH the Deck Builder (Profile.socketedGems) and pre-battle
+//        (App.battlePrep.socketedGems). Nothing removed.
+const CACHE_VERSION = 'mythic-v88c-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

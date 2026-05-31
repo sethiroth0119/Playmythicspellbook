@@ -38462,7 +38462,51 @@ async function cardMarketFetch() {
       const del = await Cloud.client.from('card_market_listings').delete().eq('id', r.id).eq('seller_id', me).eq('status', 'open').select('id');
       if (del && del.data && del.data.length) { if ((r.kind || 'card') === 'item') _cmGiveItem(r.card_id); else _restoreCardCopy(r.card_id); }
     }
-    const live = (data || []).filter(r => !_cmExpired(r));
+    // ── Auction settlement + escrow reconciliation (Stage 2) ──────────────────
+    const _now = Date.now();
+    const _settled = new Set();
+    let _changed = false;
+    for (const r of (data || [])) {
+      if (r.listing_type !== 'auction' || r.status !== 'open') continue;
+      if (!(r.ends_at && Date.parse(r.ends_at) < _now)) continue; // not ended yet
+      if (r.current_bidder_id === me && (r.current_bid || 0) > 0) {
+        // I won — atomic claim, pay from my escrow, grant the card.
+        const claim = await Cloud.client.from('card_market_listings').update({ status: 'sold', buyer_id: me }).eq('id', r.id).eq('status', 'open').select('*');
+        if (claim && claim.data && claim.data.length) {
+          const locked = unlockGemsForBid(r.id);
+          if (CardMarket.myBids) delete CardMarket.myBids[r.id];
+          Profile.gems = Math.max(0, (Profile.gems || 0) - (locked || r.current_bid || 0));
+          _cmGrantPurchase(claim.data[0]);
+          showToast(`🏆 You won "${(r.card_json && r.card_json.name) || 'card'}" for ${r.current_bid} 🔥!`, 4200);
+          _changed = true;
+        }
+        _settled.add(r.id);
+      } else if (r.seller_id === me && (r.current_bid || 0) <= 0) {
+        // My auction ended with no bids — reclaim the escrowed copy.
+        const del = await Cloud.client.from('card_market_listings').delete().eq('id', r.id).eq('seller_id', me).eq('status', 'open').select('id');
+        if (del && del.data && del.data.length) {
+          if ((r.kind || 'card') === 'item') _cmGiveItem(r.card_id); else _restoreCardCopy(r.card_id);
+          showToast('⌛ Your auction ended with no bids — returned to you.', 3200);
+          _changed = true;
+        }
+        _settled.add(r.id);
+      } else {
+        _settled.add(r.id); // ended; neither winner nor seller — drop from board
+      }
+    }
+    // Release escrow on bids where I'm no longer the top bidder (outbid) or that
+    // have left the board (bought-now / settled to someone else).
+    if (CardMarket.myBids) {
+      const _byId = {}; (data || []).forEach(r => { _byId[r.id] = r; });
+      for (const id of Object.keys(CardMarket.myBids)) {
+        const r = _byId[id];
+        if (!r || r.status !== 'open' || r.current_bidder_id !== me || _settled.has(id)) {
+          unlockGemsForBid(id); delete CardMarket.myBids[id]; _changed = true;
+        }
+      }
+    }
+    if (_changed) { try { saveProfile(); } catch (e) {} }
+    const live = (data || []).filter(r => !_cmExpired(r) && !_settled.has(r.id));
     CardMarket.open = live.filter(r => r.seller_id !== me).map(r => _cardRowToListing(r, me));
     CardMarket.mine = live.filter(r => r.seller_id === me).map(r => _cardRowToListing(r, me));
     CardMarket.lastFetch = Date.now();
@@ -38541,6 +38585,104 @@ async function cardMarketCancel(listing) {
   await cardMarketFetch();
   return true;
 }
+
+// ─── Stage 2: cloud AUCTIONS ────────────────────────────────────────────────
+// Self-escrow model (no edge functions): a bidder locks THEIR OWN cinders
+// (Profile.lockedGems) and self-releases when outbid on the next fetch; the
+// winner claims the row on expiry and pays from the released escrow; the seller
+// collects the cinder payout (handled in cardMarketFetch). Bids are race-safe
+// via an atomic compare-and-set (only succeeds if current_bid < amount).
+function _cmMinNextBid(l) {
+  const cur = l.currentBid || 0;
+  if (cur <= 0) return l.startingBid || (typeof AUCTION_MIN_STARTING !== 'undefined' ? AUCTION_MIN_STARTING : 5);
+  return cur + Math.max((typeof AUCTION_MIN_INCREMENT !== 'undefined' ? AUCTION_MIN_INCREMENT : 5), Math.ceil(cur * 0.05));
+}
+async function cardMarketPostAuction(opts) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('Sign in to auction.'); return false; }
+  const since = Date.now() - (CardMarket._lastPostAt || 0);
+  if (since < CARD_MARKET_POST_COOLDOWN) { showToast(`Slow down — wait ${Math.ceil((CARD_MARKET_POST_COOLDOWN - since) / 1000)}s.`, 2400); return false; }
+  if ((CardMarket.mine || []).length >= CARD_MARKET_MAX_ACTIVE) { showToast(`You already have ${CARD_MARKET_MAX_ACTIVE} active listings.`, 3200); return false; }
+  const startingBid = Math.max(1, opts.startingBid | 0);
+  const durationMs = opts.durationMs || (24 * 3600000);
+  const row = {
+    seller_id: Profile.cloud.userId,
+    seller_name: (Profile.cloud.displayName || (Profile.account && Profile.account.displayName) || 'Survivor').slice(0, 40),
+    kind: opts.kind === 'item' ? 'item' : 'card',
+    card_id: opts.cardId || (opts.cardJson && opts.cardJson.id) || null,
+    card_json: opts.cardJson || null,
+    unit_json: opts.unitJson || null,
+    listing_type: 'auction', currency: 'cinders',
+    price: startingBid, starting_bid: startingBid, current_bid: 0,
+    buy_now_price: (opts.buyNowPrice ? Math.max(1, opts.buyNowPrice | 0) : null),
+    bid_history: [],
+    ends_at: new Date(Date.now() + durationMs).toISOString(),
+    status: 'open',
+  };
+  const { error } = await Cloud.client.from('card_market_listings').insert(row);
+  if (error) { _cmMarkErr(error); showToast('⚠ Could not start auction.'); return false; }
+  CardMarket._lastPostAt = Date.now();
+  await cardMarketFetch();
+  return true;
+}
+async function cardMarketBid(listing, amount) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('Sign in to bid.'); return false; }
+  if (listing.sellerId === 'player') { showToast("You can't bid on your own auction."); return false; }
+  if (listing.endsAt && Date.now() >= listing.endsAt) { showToast('Auction ended.'); await cardMarketFetch(); return false; }
+  amount = parseInt(amount, 10) || 0;
+  const min = _cmMinNextBid(listing);
+  if (amount < min) { showToast(`Bid must be at least ${min} 🔥`); return false; }
+  const myPrior = (Profile.lockedGems && Profile.lockedGems[listing.id]) || 0;
+  if (getAvailableGems() + myPrior < amount) { showToast(`Need ${amount} 🔥 — only ${getAvailableGems() + myPrior} available (rest is locked in other bids).`, 3200); return false; }
+  let endsIso;
+  if (listing.endsAt && (listing.endsAt - Date.now()) < 60000) endsIso = new Date(Date.now() + 60000).toISOString();
+  const hist = (Array.isArray(listing.bidHistory) ? listing.bidHistory : [])
+    .concat([{ bidderName: (Profile.cloud.displayName || 'Bidder'), amount, at: Date.now() }]).slice(-30);
+  const upd = {
+    current_bid: amount,
+    current_bidder_id: Profile.cloud.userId,
+    current_bidder_name: (Profile.cloud.displayName || (Profile.account && Profile.account.displayName) || 'Bidder').slice(0, 40),
+    bid_history: hist,
+  };
+  if (endsIso) upd.ends_at = endsIso;
+  const { data, error } = await Cloud.client.from('card_market_listings')
+    .update(upd).eq('id', listing.id).eq('status', 'open').lt('current_bid', amount).select('*');
+  if (error) { _cmMarkErr(error); showToast('⚠ Bid failed.'); return false; }
+  if (!data || !data.length) { showToast('Outbid — someone bid higher. Try again.', 2800); await cardMarketFetch(); return false; }
+  // Self-escrow: release my prior lock on THIS listing, lock the new amount.
+  unlockGemsForBid(listing.id);
+  lockGemsForBid(listing.id, amount);
+  CardMarket.myBids = CardMarket.myBids || {}; CardMarket.myBids[listing.id] = amount;
+  try { saveProfile(); } catch (e) {}
+  showToast(`🔨 Bid ${amount} 🔥 placed.`, 2400);
+  await cardMarketFetch();
+  return true;
+}
+async function cardMarketBuyNow(listing) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('Sign in to buy.'); return false; }
+  if (listing.sellerId === 'player') { showToast("You can't buy your own auction."); return false; }
+  const price = listing.buyNowPrice || 0;
+  if (!price) { showToast('No Buy Now on this auction.'); return false; }
+  const myPrior = (Profile.lockedGems && Profile.lockedGems[listing.id]) || 0;
+  if (getAvailableGems() + myPrior < price) { showToast(`Need ${price} 🔥 available.`); return false; }
+  const { data, error } = await Cloud.client.from('card_market_listings')
+    .update({ status: 'sold', buyer_id: Profile.cloud.userId, current_bid: price, current_bidder_id: Profile.cloud.userId, current_bidder_name: (Profile.cloud.displayName || 'Buyer').slice(0, 40) })
+    .eq('id', listing.id).eq('status', 'open').select('*');
+  if (error) { _cmMarkErr(error); showToast('⚠ Buy Now failed.'); return false; }
+  if (!data || !data.length) { showToast('Too slow — already sold.', 2600); await cardMarketFetch(); return false; }
+  unlockGemsForBid(listing.id); if (CardMarket.myBids) delete CardMarket.myBids[listing.id];
+  Profile.gems = Math.max(0, (Profile.gems || 0) - price);
+  try { _serverMirrorCharge(price | 0, 'Player Market: Buy Now'); } catch (e) {}
+  _cmGrantPurchase(data[0]);
+  try { saveProfile(); } catch (e) {}
+  showToast(`🛒 Bought "${(listing.item && listing.item.name) || 'card'}" for ${price} 🔥`, 3600);
+  await cardMarketFetch();
+  return true;
+}
+async function cardMarketCancelAuction(listing) {
+  if ((listing.currentBid || 0) > 0) { showToast('Cannot cancel — bidders are already in. Wait for it to end.', 3200); return false; }
+  return cardMarketCancel(listing);
+}
+
 // One-time setup panel (shown on Browse when the table doesn't exist yet).
 function renderCardMarketSetup() {
   return `
@@ -44633,6 +44775,14 @@ function listCardForAuction(customCardId, opts) {
   const bnA = (opts && opts.buyNowAza)     ? Math.max(1, parseInt(opts.buyNowAza, 10)     || 0) : null;
   const buyNow = { cinders: bnC, aza: bnA };
   const _esc = _escrowCardCopy(card.id);
+  // ☁ Cloud player market — post the auction to the shared table when signed in
+  // (cinders bid track for Stage 2). The card copy is already escrowed above.
+  if (typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn && typeof cardMarketPostAuction === 'function') {
+    const _ui = ((card.type || 'unit') === 'unit' && typeof unitInstanceSnapshot === 'function') ? unitInstanceSnapshot(card) : null;
+    cardMarketPostAuction({ kind: 'card', cardId: card.id, cardJson: cardSnapshotForListing(card), unitJson: _ui, startingBid, buyNowPrice: bnC, durationMs })
+      .then(ok => { if (!ok) { if (_esc) _restoreCardCopy(card.id); } else { showToast(`Auction started — "${card.name}" from ${startingBid} 🔥`); if (App.screen === 'market' && typeof render === 'function') render(); } });
+    return true;
+  }
   Market.listings.push({
     id: 'lst_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
     sellerId: 'player', sellerName: 'You',
@@ -44670,6 +44820,12 @@ function listHeldItemForAuction(itemId, opts) {
   const bnA = (opts && opts.buyNowAza)     ? Math.max(1, parseInt(opts.buyNowAza, 10)     || 0) : null;
   const buyNow = { cinders: bnC, aza: bnA };
   inv[itemId] -= 1; saveProfile();
+  // ☁ Cloud player market — post held-item auctions to the shared table too.
+  if (typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn && typeof cardMarketPostAuction === 'function') {
+    cardMarketPostAuction({ kind: 'item', cardId: itemId, cardJson: itemSnapshotForListing(itemId), startingBid, buyNowPrice: bnC, durationMs })
+      .then(ok => { if (!ok) { _cmGiveItem(itemId); try { saveProfile(); } catch (e) {} } else { showToast(`Auction started — "${it.name}" from ${startingBid} 🔥`); if (App.screen === 'market' && typeof render === 'function') render(); } });
+    return true;
+  }
   Market.listings.push({
     id: 'lst_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
     sellerId: 'player', sellerName: 'You',
@@ -88911,6 +89067,9 @@ function bindMarketBrowse() {
         yesLabel: 'BUY NOW', noLabel: 'Cancel',
       });
       if (!ok) return;
+      // ☁ Cloud auction → cloud buy-now (atomic claim + pay + grant); else local.
+      const _bnCl = (typeof CardMarket !== 'undefined') ? (CardMarket.open || []).find(x => x && x.id === el.dataset.listing) : null;
+      if (_bnCl) { await cardMarketBuyNow(_bnCl); render(); return; }
       const res = buyNowOnAuction(el.dataset.listing, cur);
       if (res.error) showToast('⚠ ' + res.error, 2400);
       render();
@@ -89002,6 +89161,9 @@ function bindBidModal() {
   if (c) c.onclick = close;
   if (s) s.onclick = () => {
     const amt = parseInt((document.getElementById('bid-modal-amount') || {}).value, 10) || 0;
+    // ☁ Cloud auction → atomic cloud bid with self-escrow; else local fallback.
+    const _clB = (typeof CardMarket !== 'undefined') ? (CardMarket.open || []).find(x => x && x.id === App._bidModalListingId) : null;
+    if (_clB) { App._bidModalListingId = null; cardMarketBid(_clB, amt).then(() => render()); return; }
     const _bl = Market.listings.find(x => x.id === App._bidModalListingId);
     const _bcur = _bl ? _auctBidCur(_bl) : 'cinders';
     const res = placeBidOnListing(App._bidModalListingId, amt, 'player');
@@ -89256,12 +89418,8 @@ function bindMarketSell() {
   // duration / dual-currency Buy Now).
   document.querySelectorAll('[data-act="auction-open"]').forEach(el => {
     el.onclick = () => {
-      // ☁ Cloud auctions arrive in Stage 2 — block local-only auctions while the
-      // cloud market is active so they aren't invisible to other players.
-      if ((typeof initCloud === 'function') && initCloud() && Profile.cloud && Profile.cloud.signedIn) {
-        showToast('🔨 Cloud auctions arrive in the next update — list at a fixed price for now.', 4200);
-        return;
-      }
+      // 🔨 Cloud auctions are live (Stage 2) — the auction modal's confirm routes
+      // to cardMarketPostAuction when signed in (see listCardForAuction).
       App.auctionListModal = { kind: el.dataset.akind === 'item' ? 'item' : 'card', id: el.dataset.aid, cur: 'cinders' };
       render();
     };
@@ -89322,6 +89480,9 @@ function bindMarketMyListings() {
         yesAccent: 'crimson',
       });
       if (!ok) return;
+      // ☁ Cloud auction → cloud cancel (only when no bids); else local.
+      const _caCl = (typeof CardMarket !== 'undefined') ? (CardMarket.mine || []).find(x => x && x.id === el.dataset.listing) : null;
+      if (_caCl) { await cardMarketCancelAuction(_caCl); render(); return; }
       cancelAuction(el.dataset.listing);
       render();
     };

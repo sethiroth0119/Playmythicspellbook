@@ -371,7 +371,14 @@
 //        socket store and counts toward the 5-gem cap (shows "N/5 connected"),
 //        wired in BOTH the Deck Builder (Profile.socketedGems) and pre-battle
 //        (App.battlePrep.socketedGems). Nothing removed.
-const CACHE_VERSION = 'mythic-v88c-' + Date.now().toString(36);
+// v88d — 🔨 Cloud Market Stage 2: AUCTIONS go cross-player. Sell→Auction posts
+//        to card_market_listings (cinders bid track); bids are race-safe atomic
+//        compare-and-set with self-escrow (Profile.lockedGems); outbid players
+//        self-release on fetch; the winner claims + pays on expiry; sellers
+//        collect payouts; Buy-Now is an atomic claim; cancel only with no bids.
+//        Stage-1 'auctions coming' guard removed. No new migration (table already
+//        has the auction columns).
+const CACHE_VERSION = 'mythic-v88d-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

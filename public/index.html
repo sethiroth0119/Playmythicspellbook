@@ -125082,11 +125082,32 @@ function renderDeckBuilder() {
   const GEM_CAP  = 5;
   const _sideCards = Profile.sideDeck.cards;
   const _sideCount = _sideCards.length;
+  // Side deck only applies to a player's OWN decks — when building an AI or
+  // starter deck (admin tools) the player's personal side deck is irrelevant,
+  // so it must NOT factor into the AI/starter deck's copy limits.
+  const _sideEnabled = !App.aiDeckEdit && !App.starterDeckEdit;
+  const _sideCopiesOf = (key) => _sideEnabled ? _sideCards.filter(k => k === key).length : 0;
   const _sockedGems = Profile.socketedGems;
   const _totalGems = Object.values(_sockedGems).flat().filter(g => g && g !== '').length;
   // Gem catalog from Item Forge (same fix as preBattleLoadout)
   const _gemCat = (typeof Forge !== 'undefined' && Array.isArray(Forge.customItems)) ? Forge.customItems : [];
   const _gemInv = (() => { const _i = {}; _gemCat.forEach(it => { if (it && it.id) _i[it.id] = 99; }); return _i; })();
+  // ── Gem DECK POOL ─────────────────────────────────────────────────────────
+  // Players build a gem deck of up to GEM_DECK_MAX (8) gems; only gems that are
+  // IN that pool can be socketed onto units (still capped at GEM_CAP=5 socketed
+  // total). The pool lives on Profile.sideDeck.gems (per player).
+  const GEM_DECK_MAX = 8;
+  // Migrate: seed the pool from any already-socketed gems so loadouts created
+  // before the pool existed keep working (never silently un-sockets a gem).
+  if (_sideEnabled && Array.isArray(Profile.sideDeck.gems) && Profile.sideDeck.gems.length === 0) {
+    const _alreadySocketed = Object.values(_sockedGems).flat().filter(g => g && g !== '');
+    if (_alreadySocketed.length) Profile.sideDeck.gems = _alreadySocketed.slice(0, GEM_DECK_MAX);
+  }
+  const _gemPool = Array.isArray(Profile.sideDeck.gems) ? Profile.sideDeck.gems : (Profile.sideDeck.gems = []);
+  const _gemPoolCount = _gemPool.length;
+  // How many copies of each gem id sit in the pool, and how many are socketed.
+  const _gemPoolCounts = (() => { const m = {}; _gemPool.forEach(id => { if (id) m[id] = (m[id]||0)+1; }); return m; })();
+  const _gemSocketCounts = (() => { const m = {}; Object.values(_sockedGems).flat().forEach(g => { if (g) m[g] = (m[g]||0)+1; }); return m; })();
 
   // Hero picker — custom dropdown so we can render each hero's actual sprite icon (not just
   // an emoji fallback). Lists every hero the player owns: starter + custom forge heroes.
@@ -125184,7 +125205,13 @@ function renderDeckBuilder() {
   const collectionHtml = filtered.length === 0
     ? `<div class="empty-list-note">${emptyMsg}</div>`
     : filtered.map(({ key, kind, card, isCustom }) => {
-        const count = deckCounts[key] || 0;
+        // Tab-aware counts: the Side panel adds copies to the SIDE deck, the
+        // Main panel to the main deck. The 3-copy rule is COMBINED across
+        // main + side (e.g. 1 in main → at most 2 of that card in side).
+        const _mainCount = deckCounts[key] || 0;
+        const _sideCnt   = _sideCopiesOf(key);
+        const _isSideTab = _sideEnabled && _pTab === 'side';
+        const count = _isSideTab ? _sideCnt : _mainCount;
         const elemIcons = getElementsOf(card).map(e => ELEMENT_DATA[e] ? getElemIcon(e, '1.6em') : '').join('');
         const isHeroCard = card.type === 'hero';
         // 🔒 Ownership — players may only deck cards they own (up to copies
@@ -125194,13 +125221,22 @@ function renderDeckBuilder() {
         // One-hero-per-deck: disable other hero cards once one is in the deck
         const heroLocked = isHeroCard && alreadyHasHero && count === 0;
         const ownCap = isFinite(ownedC) ? ownedC : (isHeroCard ? 1 : MAX_COPIES_PER_CARD);
-        const full = !isOwned || count >= ownCap || count >= MAX_COPIES_PER_CARD || deckSize >= DECK_SIZE || heroLocked;
+        // Combined cap = the most copies of this card allowed across main + side
+        // together (bounded by the 3-copy rule and how many you own).
+        const _combinedCap = !isOwned ? 0 : (isHeroCard ? 1 : Math.min(MAX_COPIES_PER_CARD, isFinite(ownedC) ? ownedC : MAX_COPIES_PER_CARD));
+        const full = _isSideTab
+          ? (!isOwned || isHeroCard || heroLocked || _sideCount >= SIDE_MAX || (_mainCount + _sideCnt) >= _combinedCap)
+          : (!isOwned || _mainCount >= ownCap || _mainCount >= MAX_COPIES_PER_CARD || (_mainCount + _sideCnt) >= _combinedCap || deckSize >= DECK_SIZE || heroLocked);
         const metaLine = !isOwned
           ? '<span style="color:#9aa0a6">🔒 Not owned — right-click for details</span>'
           : isHeroCard
             ? `Hero · ${elemIcons || ''}${heroLocked ? ' — only one hero per deck' : ''}`
             : `Cost ${card.cost || 0} <span class="energy-orb"></span> ${elemIcons ? '· ' + elemIcons : ''}`;
-        const maxCopies = !isOwned ? 0 : (isHeroCard ? 1 : Math.min(MAX_COPIES_PER_CARD, isFinite(ownedC) ? ownedC : MAX_COPIES_PER_CARD));
+        // Badge denominator: on the Side tab show how many more of this card the
+        // side deck can still hold (combined cap minus what's already in main).
+        const maxCopies = _isSideTab
+          ? (isHeroCard ? 0 : Math.max(0, _combinedCap - _mainCount))
+          : _combinedCap;
         // Resolve the correct sprite key for any card type — getSpriteFrames cross-falls-back
         // between u_/h_ prefixes, and uploaded images live under one of those slots regardless
         // of card type, so we always pass the appropriate prefix and let the renderer find it.
@@ -125301,15 +125337,55 @@ function renderDeckBuilder() {
     const _gemSlots  = key => { try { const c=resolveDeckCard(key); return c && c.gemSlots ? Math.min(3, c.gemSlots|0) : 0; } catch(e){return 0;} };
     const _cNameG    = key => { try { const c=resolveDeckCard(key); return c&&c.name?c.name:(key||'?'); } catch(e){return key||'?';} };
     const uniqueUnitKeys = [...new Set(App.deckEdit.filter(_isUnitKey))];
-    if (!uniqueUnitKeys.length) return `<div class="empty-list-note">No unit cards in deck yet.<br><span class="ink-dim" style="font-size:0.8rem">Add unit cards to the Main Deck first, then socket gems here.</span></div>`;
     if (!_gemCat.length) return `<div class="empty-list-note" style="text-align:center">No gems created yet.<br><span class="ink-dim" style="font-size:0.8rem">Go to The Forge → 🎒 Items to create gems first.</span></div>`;
     const gemsOkG = _totalGems <= GEM_CAP;
-    const infoBar = `<div class="pbl-deck-info ${gemsOkG?'ok':'warn'}" style="margin-bottom:0.8rem;padding:0.5rem 0.8rem;border-radius:6px;font-size:0.82rem;background:${gemsOkG?'rgba(77,158,104,0.12)':'rgba(184,78,44,0.15)'};border:1px solid ${gemsOkG?'rgba(77,158,104,0.4)':'rgba(184,78,44,0.5)'}">${gemsOkG?`💎 ${_totalGems} of ${GEM_CAP} gem slots used`:`⚠ Over limit: ${_totalGems}/${GEM_CAP} — remove a gem`}</div>`;
+    const poolOkG = _gemPoolCount <= GEM_DECK_MAX;
+    const infoBar = _sideEnabled
+      ? `<div class="pbl-deck-info ${gemsOkG&&poolOkG?'ok':'warn'}" style="margin-bottom:0.8rem;padding:0.5rem 0.8rem;border-radius:6px;font-size:0.82rem;background:${gemsOkG&&poolOkG?'rgba(77,158,104,0.12)':'rgba(184,78,44,0.15)'};border:1px solid ${gemsOkG&&poolOkG?'rgba(77,158,104,0.4)':'rgba(184,78,44,0.5)'}">💎 Gem Deck: ${_gemPoolCount} of ${GEM_DECK_MAX} gems · Socketed: ${_totalGems} of ${GEM_CAP}${_totalGems>GEM_CAP?' ⚠ over limit':''}</div>`
+      : `<div class="pbl-deck-info ${gemsOkG?'ok':'warn'}" style="margin-bottom:0.8rem;padding:0.5rem 0.8rem;border-radius:6px;font-size:0.82rem;background:${gemsOkG?'rgba(77,158,104,0.12)':'rgba(184,78,44,0.15)'};border:1px solid ${gemsOkG?'rgba(77,158,104,0.4)':'rgba(184,78,44,0.5)'}">${gemsOkG?`💎 ${_totalGems} of ${GEM_CAP} gem slots used`:`⚠ Over limit: ${_totalGems}/${GEM_CAP} — remove a gem`}</div>`;
+    // ── Gem deck pool editor (player decks only) — add up to GEM_DECK_MAX gems;
+    // only pooled gems can be socketed. "−" is blocked below the count that's
+    // currently socketed so the pool can never drop below what units are using.
+    const poolHtml = _sideEnabled ? (() => {
+      const poolRows = _gemCat.map(g => {
+        if (!g || !g.id) return '';
+        const inPool   = _gemPoolCounts[g.id] || 0;
+        const socketed = _gemSocketCounts[g.id] || 0;
+        const addDisabled = _gemPoolCount >= GEM_DECK_MAX;
+        const rmDisabled  = inPool <= 0 || inPool <= socketed;
+        return `<div class="pbl-gem-pool-row" style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.5rem;border:1px solid rgba(184,136,255,0.25);border-radius:6px;background:${inPool?'rgba(184,136,255,0.1)':'rgba(255,255,255,0.02)'}">
+          <span style="font-size:1.1rem">${g.icon||'💎'}</span>
+          <span style="flex:1;font-size:0.82rem;color:#f0e6ff">${escapeHtml(g.name||g.id)}</span>
+          ${socketed?`<span class="ink-dim" style="font-size:0.7rem">${socketed} socketed</span>`:''}
+          <span style="font-size:0.82rem;color:#d8b8ff;min-width:1.6em;text-align:center">×${inPool}</span>
+          <button class="btn-mini ${rmDisabled?'btn-disabled':'btn-danger'}" data-gempool-rm="${escapeHtml(g.id)}" ${rmDisabled?'disabled':''} title="${inPool<=socketed&&inPool>0?'Unsocket this gem from a unit first':'Remove one from gem deck'}" style="font-size:0.7rem;padding:1px 6px">−</button>
+          <button class="btn-mini ${addDisabled?'btn-disabled':''}" data-gempool-add="${escapeHtml(g.id)}" ${addDisabled?'disabled':''} title="Add one to gem deck" style="font-size:0.7rem;padding:1px 6px">+</button>
+        </div>`;
+      }).join('');
+      return `<div style="margin-bottom:0.9rem">
+        <div style="font-family:'Cinzel',serif;color:#d8b8ff;font-weight:700;font-size:0.9rem;margin-bottom:0.4rem">🔮 Gem Deck (${_gemPoolCount}/${GEM_DECK_MAX})</div>
+        <div class="ink-dim" style="font-size:0.74rem;margin-bottom:0.5rem">Pick the gems you'll bring. Only gems in your gem deck can be socketed onto units (up to ${GEM_CAP}).</div>
+        <div style="display:flex;flex-direction:column;gap:0.3rem;max-height:220px;overflow-y:auto;padding-right:0.2rem">${poolRows}</div>
+      </div>`;
+    })() : '';
     const _gemOpts = (cardKey, si) => {
       const socketed = _sockedGems[cardKey] || [];
       const cur  = socketed[si] || '';
       const excl = socketed.filter((g,gi) => g && gi!==si);
-      const avail = Object.keys(_gemInv).filter(did => (_gemInv[did]||0)>0 && !excl.includes(did));
+      let avail;
+      if (_sideEnabled) {
+        // Gate to the gem deck pool: a gem is selectable only if the pool holds
+        // more copies than are already socketed elsewhere (the current slot's
+        // own use is excluded so re-picking the same gem stays valid).
+        avail = Object.keys(_gemPoolCounts).filter(did => {
+          if (excl.includes(did)) return false;
+          const socketedElsewhere = (_gemSocketCounts[did] || 0) - (cur === did ? 1 : 0);
+          return (_gemPoolCounts[did] || 0) > socketedElsewhere;
+        });
+      } else {
+        // AI / starter admin decks: no personal pool — socket from full catalog.
+        avail = Object.keys(_gemInv).filter(did => (_gemInv[did]||0)>0 && !excl.includes(did));
+      }
       let html = '<option value="">— empty —</option>';
       if (cur && !avail.includes(cur)) {
         const gx = _gemCat.find(x => x.id===cur);
@@ -125322,6 +125398,7 @@ function renderDeckBuilder() {
       });
       return html;
     };
+    if (!uniqueUnitKeys.length) return `${infoBar}${poolHtml}<div class="empty-list-note">No unit cards in deck yet.<br><span class="ink-dim" style="font-size:0.8rem">Add unit cards to the Main Deck first, then socket gems from your gem deck here.</span></div>`;
     const cards = uniqueUnitKeys.map(key => {
       const slots = _gemSlots(key);
       const name  = _cNameG(key);
@@ -125342,7 +125419,7 @@ function renderDeckBuilder() {
         <div class="pbl-gem-slots-grid">${slotItems}</div>
       </div>`;
     }).join('');
-    return `${infoBar}<div class="pbl-gem-cards-grid">${cards}</div>`;
+    return `${infoBar}${poolHtml}<div class="pbl-gem-cards-grid">${cards}</div>`;
   })();
 
   // Deck distribution (cost curve)
@@ -125596,11 +125673,32 @@ function renderDeckBuilder() {
     });
   }
 
+  // Add a card directly to the SIDE deck from the Inventory (Side tab).
+  // Enforces: 15-card side cap, no heroes, ownership, and the COMBINED
+  // main+side 3-copy rule (e.g. 1 copy in main → at most 2 in side).
+  const _addToSide = (key) => {
+    if (!_sideEnabled) return;
+    if (isHeroCardKey(key)) { try { showToast('Heroes stay in the main deck.'); } catch(_) {} return; }
+    if (_sideCards.length >= SIDE_MAX) { try { showToast(`⚠ Side deck is full (${SIDE_MAX} max)`); } catch(_) {} return; }
+    const owned = deckKeyOwnedCount(key);
+    if (owned <= 0) { try { showToast("You don't own this card — right-click to view its details.", 2800); } catch(_) {} return; }
+    const cap = Math.min(MAX_COPIES_PER_CARD, isFinite(owned) ? owned : MAX_COPIES_PER_CARD);
+    const mainCount = deckCounts[key] || 0;
+    const sideCount = _sideCopiesOf(key);
+    if ((mainCount + sideCount) >= cap) { try { showToast(`Max ${cap} of that card across Main + Side.`, 2800); } catch(_) {} return; }
+    Profile.sideDeck.cards.push(key);
+    try { saveProfile(); } catch(_) {}
+  };
   document.querySelectorAll('[data-add]').forEach(el => {
     el.onclick = () => {
       if (el.disabled) return;
+      const key = el.dataset.add;
       withDeckScrollPreserved(() => {
-        App.deckEdit = addToDeck(App.deckEdit, el.dataset.add);
+        if (_sideEnabled && App.deckPanelTab === 'side') {
+          _addToSide(key);
+        } else {
+          App.deckEdit = addToDeck(App.deckEdit, key);
+        }
         render();
       });
     };
@@ -125764,8 +125862,18 @@ function renderDeckBuilder() {
       const key = btn.dataset.mvSideToMain;
       const idx = Profile.sideDeck.cards.indexOf(key);
       if (idx === -1) return;
+      // Try the main-deck add FIRST. addToDeck returns the SAME array (no length
+      // change) when it rejects (deck full / copy cap / ownership). Only pull the
+      // card out of the side deck if it was actually accepted into main — this
+      // prevents the card being lost when main can't take it.
+      const before = App.deckEdit.length;
+      const next = addToDeck(App.deckEdit, key);
+      if (next.length === before) {
+        try { showToast("Can't move to Main — deck full or copy limit reached."); } catch(_) {}
+        return;
+      }
       Profile.sideDeck.cards.splice(idx, 1);
-      App.deckEdit = addToDeck(App.deckEdit, key);
+      App.deckEdit = next;
       App.deckPanelTab = 'main';
       try { saveProfile(); } catch(_) {}
       render();
@@ -125791,26 +125899,61 @@ function renderDeckBuilder() {
       // last part is the slot index; everything before is the card key (may contain ':')
       const si  = parseInt(parts[parts.length - 1], 10);
       const cardKey = parts.slice(0, -1).join(':');
-      // tentative update — check total gem cap first
+      const did = sel.value || '';
+      // tentative update — check caps first
       const tent = JSON.parse(JSON.stringify(Profile.socketedGems));
       if (!tent[cardKey]) tent[cardKey] = [];
-      tent[cardKey][si] = sel.value || '';
+      tent[cardKey][si] = did;
       const newTotal = Object.values(tent).flat().filter(g => g && g !== '').length;
+      const revert = () => { sel.value = (Profile.socketedGems[cardKey] || [])[si] || ''; };
       if (newTotal > GEM_CAP) {
         try { showToast(`⚠ Max ${GEM_CAP} gems connected — remove one first`); } catch(_) {}
-        const existing = (Profile.socketedGems[cardKey] || [])[si] || '';
-        sel.value = existing;
-        return;
+        revert(); return;
+      }
+      // Pool gate (player decks only): you can't socket more copies of a gem
+      // than your gem deck actually holds.
+      if (_sideEnabled && did) {
+        const socketedOfDid = Object.values(tent).flat().filter(g => g === did).length;
+        const poolOfDid = _gemPoolCounts[did] || 0;
+        if (socketedOfDid > poolOfDid) {
+          try { showToast('Add more of that gem to your Gem Deck first.'); } catch(_) {}
+          revert(); return;
+        }
       }
       if (!Profile.socketedGems[cardKey]) Profile.socketedGems[cardKey] = [];
-      Profile.socketedGems[cardKey][si] = sel.value || '';
+      Profile.socketedGems[cardKey][si] = did;
       try { saveProfile(); } catch(_) {}
-      // No full re-render needed — just update the counter badge in the tab
-      const tabGemBtn = document.querySelector('[data-db-ptab="gems"]');
-      if (tabGemBtn) {
-        const newCount = Object.values(Profile.socketedGems).flat().filter(g => g && g !== '').length;
-        tabGemBtn.textContent = `💎 Gems (${newCount}/${GEM_CAP})`;
-      }
+      // Re-render so the gem-deck pool's "N socketed" labels, − button states,
+      // and the tab badge all reflect the change.
+      render();
+    };
+  });
+
+  // ── Gem deck pool +/− (player decks only) ─────────────────────────────────
+  document.querySelectorAll('[data-gempool-add]').forEach(btn => {
+    btn.onclick = () => {
+      if (btn.disabled || !_sideEnabled) return;
+      if (!Array.isArray(Profile.sideDeck.gems)) Profile.sideDeck.gems = [];
+      if (Profile.sideDeck.gems.length >= GEM_DECK_MAX) { try { showToast(`⚠ Gem deck is full (${GEM_DECK_MAX} max)`); } catch(_) {} return; }
+      Profile.sideDeck.gems.push(btn.dataset.gempoolAdd);
+      try { saveProfile(); } catch(_) {}
+      render();
+    };
+  });
+  document.querySelectorAll('[data-gempool-rm]').forEach(btn => {
+    btn.onclick = () => {
+      if (btn.disabled || !_sideEnabled) return;
+      const id = btn.dataset.gempoolRm;
+      if (!Array.isArray(Profile.sideDeck.gems)) Profile.sideDeck.gems = [];
+      const inPool   = Profile.sideDeck.gems.filter(g => g === id).length;
+      const socketed = Object.values(Profile.socketedGems).flat().filter(g => g === id).length;
+      // Never let the pool drop below what's socketed — would orphan a gem.
+      if (inPool <= socketed) { try { showToast('Unsocket this gem from a unit first.'); } catch(_) {} return; }
+      const idx = Profile.sideDeck.gems.lastIndexOf(id);
+      if (idx === -1) return;
+      Profile.sideDeck.gems.splice(idx, 1);
+      try { saveProfile(); } catch(_) {}
+      render();
     };
   });
 

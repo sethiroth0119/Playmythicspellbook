@@ -254,7 +254,17 @@
 //         AI never valued sandstorm for earth heroes — key corrected to 'sand'.
 //         Persistence (Side Deck + socketed Gems) added to the load whitelist +
 //         cloud sync so they survive reload and device switches.
-const CACHE_VERSION = 'mythic-v86u-' + Date.now().toString(36);
+// v86v — Deck Builder Side Deck + Gem Deck rules. (1) 📋 Side Deck: the 3-copy
+//         limit is now COMBINED across main + side (1 copy in main → at most 2
+//         of that card in the side deck), enforced on both add paths. You can
+//         add cards to the side deck DIRECTLY from the Inventory while the Side
+//         tab is active. Fixed a data-loss bug where "← Main" removed a card
+//         from the side deck even when the main deck rejected it (full / cap).
+//         (2) 🔮 Gem Deck: new pool of up to 8 gems on the Gems tab — only gems
+//         that are in your gem deck can be socketed onto units (still capped at
+//         5 socketed total). The pool can't drop below what's currently socketed.
+//         AI/Starter admin decks keep the old full-catalog gem behavior.
+const CACHE_VERSION = 'mythic-v86v-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

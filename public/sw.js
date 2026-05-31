@@ -297,7 +297,18 @@
 //         indicator (deal / fair / over) comparing the asking price to the
 //         suggested value. Cards only; deal badge shown only for Cinder-priced
 //         listings. Nothing removed.
-const CACHE_VERSION = 'mythic-v86y-' + Date.now().toString(36);
+// v86z — ⚙️ Pre-Battle "Side Deck & Gem Setup" upgrades (renderPreBattleLoadout).
+//         (1) Lock-in is now gated: "✓ Done — Return to Match" only proceeds when
+//         the main deck holds EXACTLY 40 cards AND the side deck holds EXACTLY 15
+//         (button dims + a toast explains the live counts otherwise). The main/side
+//         swap buttons ("Side →" / "← Main") already moved cards between decks and
+//         still do. (2) Right-clicking any main- or side-deck row opens the full
+//         card-detail panel (the same context modal used in the Deck Builder).
+//         (3) The gem dropdowns now only offer gems from the player's own Gem Deck
+//         (Profile.sideDeck.gems), gated by pool count vs. copies socketed
+//         elsewhere, capped at 5 connected gems — sockets carried over from a prior
+//         session stay selected so nothing is lost. Nothing removed.
+const CACHE_VERSION = 'mythic-v86z-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

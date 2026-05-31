@@ -66825,10 +66825,21 @@ function renderPreBattleLoadout() {
   }
 
   // catalog = all custom items (gems, node shards, equipment) created in the Item Forge (v86r fix).
-  // Forge.gemCatalog was a dead reference — Forge.customItems is the canonical list.
+  // Forge.gemCatalog was a dead reference — Forge.customItems is the canonical list. Used only to
+  // resolve gem name/icon for display — NOT as the selectable pool (v86z).
   const catalog = (typeof Forge !== 'undefined' && Array.isArray(Forge.customItems)) ? Forge.customItems : [];
   // gemInv = { itemId: availableCount } — all items are available with count 99 (unlimited for now). (v86r fix for undefined _ensureGemInventory)
   const gemInv = (() => { const _inv = {}; catalog.forEach(it => { if (it && it.id) _inv[it.id] = 99; }); return _inv; })();
+
+  // ── Gem-deck pool (v86z) — the player picks which gems they bring in the Deck
+  // Builder; those live on Profile.sideDeck.gems. Per request ("connect gems they
+  // have from their gem deck"), the pre-battle gem dropdowns may ONLY socket gems
+  // from this pool — not the entire Item Forge catalog. Cap on socketed gems stays
+  // GEM_MAX (5). A gem already socketed (carried over from a prior session) is still
+  // shown as its slot's selected option so existing sockets are never silently lost.
+  if (prof.sideDeck && !Array.isArray(prof.sideDeck.gems)) prof.sideDeck.gems = [];
+  const _gemPool = (prof.sideDeck && Array.isArray(prof.sideDeck.gems)) ? prof.sideDeck.gems : [];
+  const _gemPoolCounts = (() => { const m = {}; _gemPool.forEach(id => { if (id) m[id] = (m[id]||0)+1; }); return m; })();
 
   // ── Card key helpers — keys are 'kind:id' e.g. 'unit:goblin', 'custom:cc_123'
   const _parseKey = key => {
@@ -66867,6 +66878,7 @@ function renderPreBattleLoadout() {
     if (!prof.sideDeck || typeof prof.sideDeck !== 'object') prof.sideDeck = { cards: [], gems: [] };
     const sideSnap = Array.isArray(prof.sideDeck.cards) ? [...prof.sideDeck.cards] : [];
     bp._preBattleEdit = { mainDeck: mainSnap, sideDeck: sideSnap, activeTab: 'deck' };
+    App.deckCardCtxKey = null;  // start with no card-detail panel open (cleared from any prior screen)
   }
   const edit = bp._preBattleEdit;
   if (!['deck','gems'].includes(edit.activeTab)) edit.activeTab = 'deck';
@@ -66877,9 +66889,9 @@ function renderPreBattleLoadout() {
   const sideCount  = edit.sideDeck.length;
   const totalConnected = Object.values(bp.socketedGems).flat().filter(g => g && g !== '').length;
   const mainOk  = mainCount === MAIN_SIZE;
-  const sideOk  = sideCount <= SIDE_SIZE;   // side deck is optional — any size up to cap is fine
+  const sideOk  = sideCount === SIDE_SIZE;  // side deck must be EXACTLY 15 to lock in (per request — v86z)
   const gemsOk  = totalConnected <= GEM_MAX;
-  const doneOk  = mainCount > 0 && gemsOk;  // always saveable if there's a deck + gems are within limit
+  const doneOk  = mainOk && sideOk && gemsOk;  // lock-in needs exactly 40 main + exactly 15 side + gems within cap
 
   // ── Tab bar ───────────────────────────────────────────────────────────
   const tabHtml = `
@@ -66899,7 +66911,7 @@ function renderPreBattleLoadout() {
 
   if (edit.activeTab === 'deck') {
     const sideRows = sideGroups.map(g => `
-      <div class="pbl-card-row-side">
+      <div class="pbl-card-row-side" data-ctx-key="${escapeHtml(g.key)}" title="Right-click for card details">
         <span class="pbl-cr-cost">${g.cost !== '' ? g.cost : '—'}</span>
         <span class="pbl-cr-name">${escapeHtml(g.name)}</span>
         <span class="pbl-cr-kind" style="color:${_kindColor(g.kind)}">${escapeHtml(g.kindLbl)}</span>
@@ -66909,7 +66921,7 @@ function renderPreBattleLoadout() {
       </div>`).join('');
 
     const mainRows = mainGroups.map(g => `
-      <div class="pbl-card-row-main">
+      <div class="pbl-card-row-main" data-ctx-key="${escapeHtml(g.key)}" title="Right-click for card details">
         <span class="pbl-cr-cost">${g.cost !== '' ? g.cost : '—'}</span>
         <span class="pbl-cr-name">${escapeHtml(g.name)}</span>
         <span class="pbl-cr-kind" style="color:${_kindColor(g.kind)}">${escapeHtml(g.kindLbl)}</span>
@@ -66926,7 +66938,7 @@ function renderPreBattleLoadout() {
             <span class="pbl-tab-badge ${sideOk ? 'ok' : 'warn'}">${sideCount}/${SIDE_SIZE}</span>
           </div>
           <div class="pbl-panel-status ${sideOk ? 'ok' : 'warn'}">
-            ${sideOk ? '✓ Ready' : sideCount === 0 ? 'Move cards from Main →' : `Need ${SIDE_SIZE - sideCount} more`}
+            ${sideOk ? '✓ Ready' : sideCount === 0 ? 'Move cards from Main →' : sideCount > SIDE_SIZE ? `⚠ Remove ${sideCount - SIDE_SIZE} — max ${SIDE_SIZE}` : `Need ${SIDE_SIZE - sideCount} more`}
           </div>
           <div class="pbl-panel-list">
             ${sideRows || `<div class="pbl-empty" style="font-size:0.78rem;padding:1rem 0.5rem;text-align:center">Empty — tap <strong>Side →</strong> on any main deck card.</div>`}
@@ -66938,7 +66950,7 @@ function renderPreBattleLoadout() {
             <span class="pbl-tab-badge ${mainOk ? 'ok' : 'warn'}">${mainCount}/${MAIN_SIZE}</span>
           </div>
           <div class="pbl-panel-status ${mainOk ? 'ok' : 'warn'}">
-            ${mainOk ? '✓ Ready' : mainCount === 0 ? '⚠ No cards — verify deck selection' : `⚠ Move ${MAIN_SIZE - mainCount} card${MAIN_SIZE - mainCount !== 1 ? 's' : ''} to side deck`}
+            ${mainOk ? '✓ Ready' : mainCount === 0 ? '⚠ No cards — verify deck selection' : mainCount > MAIN_SIZE ? `⚠ Move ${mainCount - MAIN_SIZE} card${mainCount - MAIN_SIZE !== 1 ? 's' : ''} to side` : `⚠ Need ${MAIN_SIZE - mainCount} more — pull from side`}
           </div>
           <div class="pbl-panel-list">
             ${mainRows || `<div class="pbl-empty" style="padding:1rem 0.7rem;font-size:0.82rem">No cards loaded.</div>`}
@@ -66950,26 +66962,45 @@ function renderPreBattleLoadout() {
     // ── GEMS TAB ──────────────────────────────────────────────────────────
     const uniqueUnitKeys = [...new Set(edit.mainDeck.filter(_isUnit))];
 
+    // How many copies of each gem id are currently socketed across all units —
+    // used (with the gem-deck pool counts) to gate the dropdowns so a player can
+    // never socket more copies of a gem than their gem deck actually holds (v86z).
+    const _gemSocketCounts = (() => {
+      const m = {};
+      Object.values(bp.socketedGems || {}).forEach(arr => { (arr || []).forEach(id => { if (id) m[id] = (m[id]||0)+1; }); });
+      return m;
+    })();
+
     const _gemOpts = (cardId, si, socketed) => {
       const cur  = socketed[si] || '';
       const excl = socketed.filter((g, gi) => g && gi !== si);
-      const avail = Object.keys(gemInv).filter(did => (gemInv[did]||0) > 0 && !excl.includes(did));
+      // Selectable = gems in THIS player's gem deck pool that still have an unsocketed
+      // copy available (pool count minus copies socketed elsewhere). Mirrors the Deck
+      // Builder's pool-gating so the two screens behave identically.
+      const avail = Object.keys(_gemPoolCounts).filter(did => {
+        if (excl.includes(did)) return false;
+        const socketedElsewhere = (_gemSocketCounts[did] || 0) - (cur === did ? 1 : 0);
+        return (_gemPoolCounts[did] || 0) > socketedElsewhere;
+      });
       let html = '<option value="">— empty —</option>';
+      // Keep an already-socketed gem visible as its slot's selected option even if it
+      // is no longer in the pool — so carried-over sockets are never silently dropped.
       if (cur && !avail.includes(cur)) {
         const gx = catalog.find(x => x.id === cur);
         html += `<option value="${escapeHtml(cur)}" selected>${escapeHtml(gx ? `${gx.icon||'💎'} ${gx.name||cur}` : cur)}</option>`;
       }
       avail.forEach(did => {
         const gx = catalog.find(x => x.id === did);
-        const lbl = gx ? `${gx.icon||'💎'} ${gx.name||did} (×${gemInv[did]})` : `${did} (×${gemInv[did]})`;
+        const lbl = gx ? `${gx.icon||'💎'} ${gx.name||did}` : did;
         html += `<option value="${escapeHtml(did)}" ${cur === did ? 'selected' : ''}>${escapeHtml(lbl)}</option>`;
       });
       return html;
     };
 
+    const _poolEmpty = _gemPool.length === 0;
     const gemInfoBar = `<div class="pbl-deck-info ${gemsOk ? 'ok' : 'warn'}" style="margin-bottom:0.8rem">
-      ${gemsOk ? `💎 ${totalConnected} of ${GEM_MAX} gem slots connected` : `⚠ Over limit: ${totalConnected}/${GEM_MAX} — remove a gem`}
-    </div>`;
+      ${gemsOk ? `💎 ${totalConnected} of ${GEM_MAX} gem slots connected · Gem deck: ${_gemPool.length} gem${_gemPool.length===1?'':'s'}` : `⚠ Over limit: ${totalConnected}/${GEM_MAX} — remove a gem`}
+    </div>${_poolEmpty ? `<div class="pbl-deck-info warn" style="margin-bottom:0.8rem;font-size:0.8rem">🔮 Your gem deck is empty — add gems to it in the Deck Builder (🔮 Gem Deck) first, then come back to socket them onto your units.</div>` : ''}`;
 
     const gemCards = uniqueUnitKeys.length ? uniqueUnitKeys.map(key => {
       const p      = _parseKey(key);
@@ -67010,11 +67041,10 @@ function renderPreBattleLoadout() {
     ? `⚠ Too many gems — max ${GEM_MAX} connected`
     : mainCount === 0
       ? '⚠ No main deck cards — return to Deck Select first'
-      : mainOk && sideOk
+      : doneOk
         ? '✓ Deck ready — hit Done to lock in and return to the VS screen.'
-        : [mainCount < MAIN_SIZE ? `Main: ${mainCount}/${MAIN_SIZE}` : null,
-           sideCount > SIDE_SIZE ? `Side over cap (${sideCount}/${SIDE_SIZE})` : (sideCount > 0 ? `Side: ${sideCount}/${SIDE_SIZE}` : null)]
-          .filter(Boolean).join(' · ') + ' — hit Done to save as-is.';
+        : `🔒 Lock-in needs exactly ${MAIN_SIZE} main + ${SIDE_SIZE} side · `
+          + [`Main ${mainCount}/${MAIN_SIZE}`, `Side ${sideCount}/${SIDE_SIZE}`].join(' · ');
 
   root.innerHTML = `
     <div class="pbl-screen">
@@ -67024,9 +67054,10 @@ function renderPreBattleLoadout() {
       <div class="pbl-footer">
         <div class="pbl-hint" style="width:100%;text-align:center">${escapeHtml(hintText)}</div>
         <button class="pbl-back-btn btn-secondary" id="btn-pbl-back">← Back to Opponent</button>
-        <button class="pbl-done-btn btn-primary" id="btn-pbl-done">✓ Done — Return to Match</button>
+        <button class="pbl-done-btn btn-primary" id="btn-pbl-done"${doneOk ? '' : ' style="opacity:0.55;filter:grayscale(0.35)"'} title="${doneOk ? 'Lock in your decks and return to the match' : `Requires exactly ${MAIN_SIZE} main + ${SIDE_SIZE} side`}">${doneOk ? '✓ Done — Return to Match' : '🔒 Done — Return to Match'}</button>
       </div>
-    </div>`;
+    </div>
+    ${typeof renderDeckCardContextModal === 'function' ? renderDeckCardContextModal() : ''}`;
 
   document.querySelectorAll('[data-pbl-tab]').forEach(btn => {
     btn.onclick = () => { edit.activeTab = btn.dataset.pblTab; renderPreBattleLoadout(); };
@@ -67054,6 +67085,23 @@ function renderPreBattleLoadout() {
     };
   });
 
+  // ── Right-click any deck row → full card-detail panel (request: "allow the
+  // player right click the cards"). Reuses the Deck Builder context modal
+  // (renderDeckCardContextModal); render() routes back here because
+  // App.screen === 'preBattleLoadout'. Re-clicking the same row toggles it shut.
+  document.querySelectorAll('.pbl-card-row-side[data-ctx-key], .pbl-card-row-main[data-ctx-key]').forEach(row => {
+    row.oncontextmenu = (e) => {
+      e.preventDefault();
+      App.deckCardCtxKey = (App.deckCardCtxKey === row.dataset.ctxKey) ? null : row.dataset.ctxKey;
+      render();
+    };
+  });
+  const _pblCtxClose = document.getElementById('btn-ctx-close');
+  if (_pblCtxClose) _pblCtxClose.onclick = () => { App.deckCardCtxKey = null; render(); };
+  // Wire the held-item / relic pickers that live inside the detail panel (units).
+  try { if (typeof bindItemPickers === 'function') bindItemPickers(); } catch(_) {}
+  try { if (typeof bindRelicPickers === 'function') bindRelicPickers(); } catch(_) {}
+
   document.querySelectorAll('.pbl-gem-sel').forEach(sel => {
     sel.onchange = () => {
       const parts  = sel.dataset.gemSlot.split(':');
@@ -67075,7 +67123,7 @@ function renderPreBattleLoadout() {
   });
 
   const backBtn = document.getElementById('btn-pbl-back');
-  if (backBtn) backBtn.onclick = () => { delete bp._preBattleEdit; App.screen = 'vsScreen'; render(); };
+  if (backBtn) backBtn.onclick = () => { App.deckCardCtxKey = null; delete bp._preBattleEdit; App.screen = 'vsScreen'; render(); };
 
   const doneBtn = document.getElementById('btn-pbl-done');
   if (doneBtn) doneBtn.onclick = () => {
@@ -67102,11 +67150,23 @@ function renderPreBattleLoadout() {
         return;
       }
     }
+    // Exact-size gate — lock-in requires EXACTLY 40 main + EXACTLY 15 side (v86z, per request).
+    // Use the live working-copy lengths so this stays correct even after the deck-reload branch above.
+    const _curMain = edit.mainDeck.length;
+    const _curSide = edit.sideDeck.length;
+    if (_curMain !== MAIN_SIZE || _curSide !== SIDE_SIZE) {
+      if (typeof showToast === 'function') {
+        showToast(`⚠ Main must be exactly ${MAIN_SIZE} (now ${_curMain}) and Side exactly ${SIDE_SIZE} (now ${_curSide}).`, 3200);
+      }
+      renderPreBattleLoadout();  // re-render so the player sees the live counts and can keep adjusting
+      return;
+    }
     bp.deck = [...edit.mainDeck];
     if (!prof.sideDeck || typeof prof.sideDeck !== 'object') prof.sideDeck = { cards: [], gems: [] };
     prof.sideDeck.cards = [...edit.sideDeck];
     try { if (typeof saveProfile === 'function') saveProfile(); } catch(e) {}
     delete bp._preBattleEdit;
+    App.deckCardCtxKey = null;
     App.screen = 'vsScreen';
     // Call renderVsScreen() DIRECTLY — bypasses the RAF-batching + dispatch
     // chain so nothing can override App.screen between now and the next paint

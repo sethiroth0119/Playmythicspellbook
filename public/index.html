@@ -26223,6 +26223,117 @@
   /* Weather/Wall reset — keep gradient backgrounds; outrank the unit-frame data URL above */
   .hand-card.type-weather { background-image: none !important; background: linear-gradient(180deg, #142838 0%, #2a5060 5%, #2a5060 58%, #0f1e2a 58%, #0f1e2a 68%, #c8d2dc 70%, #c8d2dc 93%, #142838 93%, #142838 100%) !important; border: 2px solid #5da7b8; border-radius: 8px; }
   .hand-card.type-wall { background-image: none !important; background: linear-gradient(180deg, #1a1410 0%, #4a3525 5%, #4a3525 58%, #1a1208 58%, #1a1208 68%, #d8c9a4 70%, #d8c9a4 93%, #1a1410 93%, #1a1410 100%) !important; border: 2px solid #8a7045; border-radius: 8px; }
+
+  /* ============================================================
+     NODE LEVEL PROGRESS SYSTEM (demo token-powered node leveling)
+     Mythic style: dark glass, gold border, purple glow, fire fill.
+     ============================================================ */
+  .node-power-panel {
+    margin: 0.2rem 0.75rem 0.6rem; padding: 0.7rem 0.75rem 0.75rem;
+    border-radius: 8px; position: relative;
+    background: radial-gradient(120% 140% at 50% 0%, rgba(40,24,60,0.55) 0%, rgba(10,8,16,0.92) 70%);
+    border: 1px solid rgba(212,175,55,0.55);
+    box-shadow: 0 0 0 1px rgba(10,8,16,0.6), 0 0 18px rgba(150,85,180,0.30), inset 0 0 24px rgba(120,60,160,0.10);
+  }
+  .node-power-head { display:flex; align-items:center; justify-content:space-between; gap:0.5rem; margin-bottom:0.55rem; }
+  .node-power-name { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.82rem; font-weight:700; letter-spacing:0.04em; color:#f3e7c8; line-height:1.1; }
+  .node-power-sub  { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.56rem; letter-spacing:0.08em; color:#9a86bf; margin-top:0.15rem; text-transform:uppercase; }
+
+  .node-lvl-badge {
+    flex:0 0 auto; display:inline-flex; align-items:center; gap:0.3rem;
+    padding:0.25rem 0.55rem; border-radius:999px;
+    background:linear-gradient(180deg, rgba(60,40,90,0.9), rgba(20,12,30,0.9));
+    border:1px solid rgba(212,175,55,0.6); box-shadow:0 0 10px rgba(150,85,180,0.4); white-space:nowrap;
+  }
+  .node-lvl-badge-num { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.72rem; font-weight:700; color:#ffe9a8; letter-spacing:0.06em; }
+  .node-lvl-badge-of  { font-size:0.56rem; color:#8a7bb0; }
+  .node-lvl-badge-max { font-size:0.56rem; font-weight:700; color:#ffcf5a; letter-spacing:0.12em; }
+  .node-lvl-badge.is-max { border-color:#ffcf5a; animation:node-badge-max 1.6s ease-in-out infinite; }
+  @keyframes node-badge-max { 0%,100%{box-shadow:0 0 10px rgba(255,180,60,0.5);} 50%{box-shadow:0 0 18px rgba(255,180,60,0.95);} }
+
+  .node-prog-wrap { margin:0.1rem 0 0.55rem; }
+  .node-prog-track {
+    position:relative; height:22px; border-radius:6px; overflow:hidden;
+    background:linear-gradient(180deg, #0a0710 0%, #160d22 100%);
+    border:1px solid rgba(212,175,55,0.5);
+    box-shadow:inset 0 0 10px rgba(0,0,0,0.8), 0 0 12px rgba(150,85,180,0.25);
+  }
+  .node-prog-fill {
+    position:absolute; left:0; top:0; bottom:0; width:0%;
+    background:linear-gradient(90deg, #ff5a1e 0%, #ff8c2c 45%, #ffd14a 100%);
+    box-shadow:0 0 12px rgba(255,120,40,0.8), 0 0 20px rgba(255,90,30,0.5);
+    transition:width 600ms cubic-bezier(0.22,1,0.36,1);
+  }
+  .node-prog-fill::after {
+    content:''; position:absolute; inset:0;
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+    animation:node-fill-sheen 2.2s linear infinite;
+  }
+  @keyframes node-fill-sheen { 0%{transform:translateX(-100%);} 100%{transform:translateX(100%);} }
+  .node-prog-track.is-max .node-prog-fill { background:linear-gradient(90deg,#ffcf5a,#ffe9a8,#ffcf5a); box-shadow:0 0 16px rgba(255,200,80,0.9); }
+  .node-prog-text {
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-family:'JetBrains Mono','Consolas',monospace; font-size:0.62rem; font-weight:700;
+    letter-spacing:0.08em; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.95); z-index:2;
+  }
+  .node-prog-track.xp-pulse { animation:node-xp-pulse 0.6s ease-out; }
+  @keyframes node-xp-pulse {
+    0%{box-shadow:inset 0 0 10px rgba(0,0,0,0.8), 0 0 12px rgba(150,85,180,0.25);}
+    35%{box-shadow:inset 0 0 10px rgba(0,0,0,0.8), 0 0 22px rgba(255,140,60,0.95);}
+    100%{box-shadow:inset 0 0 10px rgba(0,0,0,0.8), 0 0 12px rgba(150,85,180,0.25);}
+  }
+
+  .node-cinder-prod { display:flex; gap:0.5rem; margin-bottom:0.6rem; }
+  .node-cinder-prod > div { flex:1; padding:0.45rem 0.55rem; border-radius:6px; background:rgba(20,12,30,0.7); border:1px solid rgba(120,80,160,0.35); }
+  .node-cinder-prod .ncp-label { display:block; font-family:'JetBrains Mono','Consolas',monospace; font-size:0.52rem; letter-spacing:0.12em; color:#9a86bf; text-transform:uppercase; }
+  .node-cinder-prod .ncp-val { display:block; font-family:'JetBrains Mono','Consolas',monospace; font-size:0.84rem; font-weight:700; color:#ffb347; margin-top:0.18rem; }
+  .node-cinder-prod .ncp-delta { font-size:0.6rem; color:#7fd18a; }
+  .node-cinder-prod-next.is-max .ncp-val { color:#ffcf5a; font-size:0.7rem; }
+
+  .node-boost-btns { display:flex; gap:0.5rem; }
+  .node-boost-btn {
+    flex:1; display:flex; flex-direction:column; align-items:center; gap:0.12rem;
+    padding:0.5rem 0.4rem; border-radius:6px; cursor:pointer; transition:all 0.15s;
+    font-family:'JetBrains Mono','Consolas',monospace;
+    border:1px solid rgba(212,175,55,0.4); background:rgba(30,18,44,0.8); color:#e6dfc8;
+  }
+  .node-boost-btn .nbb-icon { font-size:1rem; }
+  .node-boost-btn .nbb-text { font-size:0.62rem; font-weight:700; letter-spacing:0.04em; }
+  .node-boost-btn .nbb-gain { font-size:0.54rem; color:#ffb347; letter-spacing:0.06em; }
+  .node-boost-btn.is-owner { border-color:rgba(255,180,60,0.55); box-shadow:0 0 10px rgba(255,160,40,0.2); }
+  .node-boost-btn.is-owner:hover { background:rgba(60,38,12,0.9); box-shadow:0 0 16px rgba(255,160,40,0.45); }
+  .node-boost-btn.is-player { border-color:rgba(150,110,200,0.55); box-shadow:0 0 10px rgba(150,85,180,0.2); }
+  .node-boost-btn.is-player:hover { background:rgba(40,24,60,0.95); box-shadow:0 0 16px rgba(150,85,180,0.5); }
+  .node-boost-btn:active { transform:scale(0.96); }
+  .node-boost-btn:disabled { opacity:0.45; cursor:not-allowed; box-shadow:none; }
+  .node-power-hint { margin-top:0.5rem; font-family:'JetBrains Mono','Consolas',monospace; font-size:0.5rem; color:#6b5d85; letter-spacing:0.04em; line-height:1.4; text-align:center; }
+
+  .node-power-float {
+    position:fixed; transform:translate(-50%,0); z-index:99999; pointer-events:none;
+    font-family:'JetBrains Mono','Consolas',monospace; font-size:0.85rem; font-weight:700;
+    color:#ffd14a; text-shadow:0 0 8px rgba(255,140,40,0.9), 0 2px 4px rgba(0,0,0,0.9);
+    animation:node-power-float 1.3s ease-out forwards;
+  }
+  @keyframes node-power-float {
+    0%{opacity:0; transform:translate(-50%,4px) scale(0.85);}
+    18%{opacity:1; transform:translate(-50%,-6px) scale(1.05);}
+    100%{opacity:0; transform:translate(-50%,-42px) scale(1);}
+  }
+
+  .node-levelup-overlay {
+    position:absolute; inset:0; z-index:50; display:flex; align-items:center; justify-content:center;
+    pointer-events:none; border-radius:8px;
+    background:radial-gradient(circle at 50% 50%, rgba(255,160,40,0.25), rgba(10,8,16,0) 70%);
+    animation:node-levelup-flash 1.8s ease-out forwards;
+  }
+  .node-levelup-card { text-align:center; animation:node-levelup-pop 1.8s cubic-bezier(0.18,1.4,0.4,1) forwards; }
+  .node-levelup-card .nlu-title {
+    font-family:'JetBrains Mono','Consolas',monospace; font-size:1.05rem; font-weight:800; letter-spacing:0.1em;
+    color:#ffe9a8; text-shadow:0 0 14px rgba(255,170,50,0.95);
+  }
+  .node-levelup-card .nlu-sub { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.6rem; letter-spacing:0.1em; color:#ffb347; margin-top:0.25rem; }
+  @keyframes node-levelup-flash { 0%{opacity:0;} 15%{opacity:1;} 75%{opacity:1;} 100%{opacity:0;} }
+  @keyframes node-levelup-pop { 0%{transform:scale(0.4); opacity:0;} 20%{transform:scale(1.15); opacity:1;} 40%{transform:scale(1);} 80%{transform:scale(1); opacity:1;} 100%{transform:scale(1.05); opacity:0;} }
 </style>
 </head>
 <body>
@@ -132249,6 +132360,246 @@ function tw_decayTick() {
   }
   try { saveProfile(); saveForge(); } catch (e) {}
 }
+// ============================================================================
+// 🔥 NODE LEVEL PROGRESS SYSTEM — visual/demo "token-powered" node leveling.
+//   Each node earns XP from (simulated) token purchases; reaching nodeXPRequired
+//   levels the node up and raises its Cinder-per-cycle output. The node owner's
+//   purchase contributes MORE XP than an ordinary player's purchase. NOTHING in
+//   here touches normal gameplay — it is a cosmetic progression layer only.
+//   Real blockchain/token-purchase events can later call addNodeXP() directly.
+//   Persistence: the fields live on the node object inside _twForge().nodes,
+//   which is exactly what saveForge() already serializes — so level / XP /
+//   xpRequired / cinder rate survive a refresh with no extra plumbing.
+// ============================================================================
+const NODE_MAX_LEVEL = 10;
+const OWNER_TOKEN_XP_GAIN = 100;   // owner buying the token powers their node more
+const PLAYER_TOKEN_XP_GAIN = 25;   // players still help, at a smaller share
+
+// Cinder produced per cycle at a given node level (Lv1 = least, scales upward).
+function getCinderProductionByLevel(level) {
+  const productionTable = {
+    1: 25,
+    2: 50,
+    3: 100,
+    4: 175,
+    5: 275,
+    6: 400,
+    7: 600,
+    8: 850,
+    9: 1200,
+    10: 1600,
+  };
+  return productionTable[level] || productionTable[NODE_MAX_LEVEL];
+}
+
+// XP required to advance FROM the given level to the next (exponential curve).
+function calculateNextLevelRequirement(level) {
+  return Math.floor(1000 * Math.pow(1.45, level - 1));
+}
+
+// Idempotently ensure a node carries the level-progress fields. Safe to call on
+// every render — it never lowers an existing level or wipes earned XP.
+function ensureNodeProgress(node) {
+  if (!node || typeof node !== 'object') return node;
+  if (typeof node.nodeLevel !== 'number' || !isFinite(node.nodeLevel) || node.nodeLevel < 1) node.nodeLevel = 1;
+  if (node.nodeLevel > NODE_MAX_LEVEL) node.nodeLevel = NODE_MAX_LEVEL;
+  node.nodeLevel = Math.floor(node.nodeLevel);
+  if (typeof node.nodeXP !== 'number' || !isFinite(node.nodeXP) || node.nodeXP < 0) node.nodeXP = 0;
+  if (typeof node.nodeXPRequired !== 'number' || !isFinite(node.nodeXPRequired) || node.nodeXPRequired <= 0) {
+    node.nodeXPRequired = calculateNextLevelRequirement(node.nodeLevel);
+  }
+  // At max level the bar is pinned full.
+  if (node.nodeLevel >= NODE_MAX_LEVEL) node.nodeXP = node.nodeXPRequired;
+  node.cinderProductionRate = getCinderProductionByLevel(node.nodeLevel);
+  // Mirror the descriptive fields requested by the spec (kept in sync, additive).
+  if (typeof node.nodeName !== 'string' || !node.nodeName) node.nodeName = node.name || node.id || 'Node';
+  if (typeof node.nodeType !== 'string' || !node.nodeType) node.nodeType = node.type || node.purpose || 'PRN';
+  return node;
+}
+
+// Resolve a node object by id inside the territory forge (the persisted store).
+function _nodeProgressFind(nodeId) {
+  try { const tf = _twForge(); return (tf.nodes || []).find(n => n.id === nodeId) || null; }
+  catch (e) { return null; }
+}
+
+// 🧩 MODULAR ENTRY POINT — real token / blockchain events can call this directly.
+//   addNodeXP(nodeId, amount, source) applies XP, resolves level-ups (and the
+//   max-level cap), refreshes the cinder rate, and persists. Returns a small
+//   result object describing what happened (used to drive the level-up VFX).
+function addNodeXP(nodeId, amount, source) {
+  const node = _nodeProgressFind(nodeId);
+  if (!node) return { ok: false, leveledUp: false, levelsGained: 0, node: null };
+  ensureNodeProgress(node);
+  amount = Math.max(0, Math.floor(amount || 0));
+  let levelsGained = 0;
+  const fromLevel = node.nodeLevel;
+  if (node.nodeLevel < NODE_MAX_LEVEL) {
+    node.nodeXP += amount;
+    while (node.nodeLevel < NODE_MAX_LEVEL && node.nodeXP >= node.nodeXPRequired) {
+      node.nodeXP -= node.nodeXPRequired;
+      node.nodeLevel += 1;
+      node.nodeXPRequired = calculateNextLevelRequirement(node.nodeLevel);
+      levelsGained++;
+    }
+    if (node.nodeLevel >= NODE_MAX_LEVEL) {
+      node.nodeLevel = NODE_MAX_LEVEL;
+      node.nodeXP = node.nodeXPRequired; // keep the bar full at MAX
+    }
+  } else {
+    // Already maxed — keep the bar full; output stays at peak (future-expandable).
+    node.nodeXP = node.nodeXPRequired;
+  }
+  node.cinderProductionRate = getCinderProductionByLevel(node.nodeLevel);
+  // Persist into the existing node store (same path the admin Save button uses).
+  try { saveForge(); } catch (e) {}
+  try { if (typeof _twSave === 'function') _twSave(); } catch (e) {}
+  return { ok: true, leveledUp: levelsGained > 0, levelsGained, fromLevel, toLevel: node.nodeLevel, gained: amount, source: source || 'unknown', node };
+}
+
+// Placeholder demo hooks (later wired to real token-purchase events).
+function simulateOwnerTokenPurchase(nodeId)  { return addNodeXP(nodeId, OWNER_TOKEN_XP_GAIN,  'owner');  }
+function simulatePlayerTokenPurchase(nodeId) { return addNodeXP(nodeId, PLAYER_TOKEN_XP_GAIN, 'player'); }
+
+// ── Reusable, modular UI components (HTML-string builders) ──
+function NodeLevelBadge(node) {
+  ensureNodeProgress(node);
+  const isMax = node.nodeLevel >= NODE_MAX_LEVEL;
+  return `<span class="node-lvl-badge${isMax ? ' is-max' : ''}">
+    <span class="node-lvl-badge-num">LV ${node.nodeLevel}</span>
+    ${isMax ? '<span class="node-lvl-badge-max">MAX</span>' : `<span class="node-lvl-badge-of">/ ${NODE_MAX_LEVEL}</span>`}
+  </span>`;
+}
+
+function NodeProgressBar(node) {
+  ensureNodeProgress(node);
+  const isMax = node.nodeLevel >= NODE_MAX_LEVEL;
+  const pct = isMax ? 100 : Math.max(0, Math.min(100, (node.nodeXP / node.nodeXPRequired) * 100));
+  const label = isMax
+    ? 'MAX LEVEL'
+    : `${Math.floor(node.nodeXP).toLocaleString()} / ${Math.floor(node.nodeXPRequired).toLocaleString()} XP`;
+  return `<div class="node-prog-track${isMax ? ' is-max' : ''}">
+    <div class="node-prog-fill" style="width:${pct.toFixed(1)}%"></div>
+    <div class="node-prog-text">${label}</div>
+  </div>`;
+}
+
+function NodeCinderProductionPanel(node) {
+  ensureNodeProgress(node);
+  const isMax = node.nodeLevel >= NODE_MAX_LEVEL;
+  const cur = getCinderProductionByLevel(node.nodeLevel);
+  const next = isMax ? null : getCinderProductionByLevel(node.nodeLevel + 1);
+  return `<div class="node-cinder-prod">
+    <div class="node-cinder-prod-now">
+      <span class="ncp-label">Cinder / Cycle</span>
+      <span class="ncp-val">🔥 ${cur.toLocaleString()}</span>
+    </div>
+    ${isMax
+      ? `<div class="node-cinder-prod-next is-max"><span class="ncp-label">Status</span><span class="ncp-val">⭐ Peak Output</span></div>`
+      : `<div class="node-cinder-prod-next"><span class="ncp-label">Next Level</span><span class="ncp-val">🔥 ${next.toLocaleString()} <span class="ncp-delta">(+${(next - cur).toLocaleString()})</span></span></div>`}
+  </div>`;
+}
+
+function NodeBoostButtons(node) {
+  ensureNodeProgress(node);
+  const dis = node.nodeLevel >= NODE_MAX_LEVEL ? ' disabled' : '';
+  return `<div class="node-boost-btns">
+    <button class="node-boost-btn is-owner" data-node-boost="owner" data-node-boost-id="${escapeHtml(node.id)}"${dis}>
+      <span class="nbb-icon">👑</span><span class="nbb-text">Owner Buys Token</span><span class="nbb-gain">+${OWNER_TOKEN_XP_GAIN} Power</span>
+    </button>
+    <button class="node-boost-btn is-player" data-node-boost="player" data-node-boost-id="${escapeHtml(node.id)}"${dis}>
+      <span class="nbb-icon">⚡</span><span class="nbb-text">Player Buys Token</span><span class="nbb-gain">+${PLAYER_TOKEN_XP_GAIN} Power</span>
+    </button>
+  </div>`;
+}
+
+// Full section, assembled from the components above (used in the node drawer).
+function renderNodeLevelProgressSection(node, iOwn) {
+  if (!node) return '';
+  ensureNodeProgress(node);
+  const ownerLabel = node.nodeOwnerId ? node.nodeOwnerId : (iOwn ? 'You' : 'Unclaimed');
+  return `
+    <div class="tw-nd-section-hdr">— NODE POWER &amp; CINDER LEVEL</div>
+    <div class="node-power-panel" id="node-power-panel" data-node-id="${escapeHtml(node.id)}">
+      <div class="node-power-head">
+        <div class="node-power-meta">
+          <div class="node-power-name">${escapeHtml(node.name || node.nodeName || node.id)}</div>
+          <div class="node-power-sub">${escapeHtml(node.type || node.purpose || node.nodeType || 'PRN')} · Owner: ${escapeHtml(ownerLabel)}</div>
+        </div>
+        <span id="node-lvl-badge-slot">${NodeLevelBadge(node)}</span>
+      </div>
+      <div class="node-prog-wrap" id="node-prog-slot">${NodeProgressBar(node)}</div>
+      <div id="node-cinder-slot">${NodeCinderProductionPanel(node)}</div>
+      <div id="node-boost-slot">${NodeBoostButtons(node)}</div>
+      <div class="node-power-hint">Buying the token powers this node — the owner boosts it faster, players add a smaller share. Demo only: no real crypto is connected.</div>
+    </div>
+  `;
+}
+
+// In-place refresh of just the power panel (keeps the boost buttons + their
+// handlers bound; updates the fill width directly so the CSS transition glides).
+function _refreshNodePower(nodeId) {
+  const node = _nodeProgressFind(nodeId);
+  if (!node) return;
+  ensureNodeProgress(node);
+  const badge = document.getElementById('node-lvl-badge-slot');
+  if (badge) badge.innerHTML = NodeLevelBadge(node);
+  const isMax = node.nodeLevel >= NODE_MAX_LEVEL;
+  const pct = isMax ? 100 : Math.max(0, Math.min(100, (node.nodeXP / node.nodeXPRequired) * 100));
+  const label = isMax
+    ? 'MAX LEVEL'
+    : `${Math.floor(node.nodeXP).toLocaleString()} / ${Math.floor(node.nodeXPRequired).toLocaleString()} XP`;
+  const slot = document.getElementById('node-prog-slot');
+  if (slot) {
+    const track = slot.querySelector('.node-prog-track');
+    const fill = slot.querySelector('.node-prog-fill');
+    const text = slot.querySelector('.node-prog-text');
+    if (track && fill && text) {
+      fill.style.width = pct.toFixed(1) + '%';
+      text.textContent = label;
+      track.classList.toggle('is-max', isMax);
+    } else {
+      slot.innerHTML = NodeProgressBar(node);
+    }
+  }
+  const cinder = document.getElementById('node-cinder-slot');
+  if (cinder) cinder.innerHTML = NodeCinderProductionPanel(node);
+  if (isMax) document.querySelectorAll('[data-node-boost]').forEach(btn => { btn.disabled = true; });
+}
+
+// Visual feedback: floating power text, XP-gain pulse, level-up banner.
+const NodeLevelUpAnimation = {
+  floatPower(anchorEl, amount) {
+    try {
+      const f = document.createElement('div');
+      f.className = 'node-power-float';
+      f.textContent = '+' + amount + ' Node Power';
+      const r = (anchorEl && anchorEl.getBoundingClientRect) ? anchorEl.getBoundingClientRect() : null;
+      if (r) { f.style.left = (r.left + r.width / 2) + 'px'; f.style.top = (r.top - 4) + 'px'; }
+      else { f.style.left = '50%'; f.style.top = '40%'; }
+      document.body.appendChild(f);
+      setTimeout(() => { try { f.remove(); } catch (e) {} }, 1300);
+    } catch (e) {}
+  },
+  pulseBar() {
+    try {
+      document.querySelectorAll('#node-prog-slot .node-prog-track').forEach(tr => {
+        tr.classList.remove('xp-pulse'); void tr.offsetWidth; tr.classList.add('xp-pulse');
+      });
+    } catch (e) {}
+  },
+  levelUp() {
+    try {
+      const host = document.getElementById('node-power-panel') || document.querySelector('.tw-node-drawer') || document.body;
+      const o = document.createElement('div');
+      o.className = 'node-levelup-overlay';
+      o.innerHTML = '<div class="node-levelup-card"><div class="nlu-title">NODE LEVEL UP!</div><div class="nlu-sub">Cinder Production Increased</div></div>';
+      host.appendChild(o);
+      setTimeout(() => { try { o.remove(); } catch (e) {} }, 1800);
+    } catch (e) {}
+  }
+};
+
 // ===== WAR MAP SCREEN =====
 function renderTerritoryWars() {
   // ⚠️ _isAdm must be function-scoped — it is used both inside the
@@ -132824,6 +133175,7 @@ function renderTerritoryWars() {
           <span><i style="background:#b84e2c"></i> COMBAT 14%</span>
         </div>
       </div>
+      ${renderNodeLevelProgressSection(selNode, iOwn)}
       <div class="tw-nd-section-hdr">— ACTIONS</div>
       <div class="tw-nd-actions">
         <div class="tw-nd-action-row">
@@ -133098,6 +133450,28 @@ function renderTerritoryWars() {
   act('tw-act-hire', () => _twHireFlow(App._twSelectedNode));
   act('tw-act-shop', () => _twShopFlow(App._twSelectedNode));
   act('tw-hist-toggle', () => { App._twShowHistory = !App._twShowHistory; render(); });
+
+  // ── 🔥 Node Level Progress — demo token-boost buttons ──
+  //   Owner / Player "buy token" → addNodeXP → in-place panel refresh + VFX.
+  //   No full re-render so the floating text + bar animation stay smooth.
+  document.querySelectorAll('[data-node-boost]').forEach(btn => {
+    btn.onclick = () => {
+      if (btn.disabled) return;
+      const nodeId = btn.dataset.nodeBoostId || App._twSelectedNode;
+      const source = btn.dataset.nodeBoost; // 'owner' | 'player'
+      if (!nodeId) return;
+      const gain = source === 'owner' ? OWNER_TOKEN_XP_GAIN : PLAYER_TOKEN_XP_GAIN;
+      const res = source === 'owner' ? simulateOwnerTokenPurchase(nodeId) : simulatePlayerTokenPurchase(nodeId);
+      if (!res || !res.ok) return;
+      try { NodeLevelUpAnimation.floatPower(btn, gain); } catch (e) {}
+      try { NodeLevelUpAnimation.pulseBar(); } catch (e) {}
+      if (res.leveledUp) {
+        try { NodeLevelUpAnimation.levelUp(); } catch (e) {}
+        try { showToast(`🔥 ${res.node.name} reached Node Level ${res.toLevel}! Cinder/cycle now ${getCinderProductionByLevel(res.toLevel)}.`, 3200); } catch (e) {}
+      }
+      try { _refreshNodePower(nodeId); } catch (e) {}
+    };
+  });
 
   // ── Admin: save node changes ──
   const _admSaveBtn = document.getElementById('tw-admin-save-btn');

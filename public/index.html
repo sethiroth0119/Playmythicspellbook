@@ -31417,6 +31417,13 @@ const Profile = {
   // until its prerequisite id is in here.
   rlcCompleted: [],
   records: { wins: 0, losses: 0, battles: 0 },
+  // 📋 Side Deck — extra cards the player swaps in via the Deck Builder /
+  // pre-battle loadout. 💎 socketedGems — per-card gem assignments keyed by
+  // cardKey. Declared here (v86u) so any read before the Deck Builder seeds
+  // them never hits `undefined.cards`; persisted via the load whitelist +
+  // forge JSONB cloud blob.
+  sideDeck: { cards: [], gems: [] },
+  socketedGems: {},
   // ===== The Ruin Exchange — dual currency =====
   // Profile.gems is the LEGACY data field that now powers 🔥 CINDERS, the earned currency.
   // Cinders drop from battles, daily challenges, achievements, event cards, and selling cards.
@@ -32622,6 +32629,12 @@ async function cloudSyncProfile() {
       // a player who picks their starter on Device A would land on Device B
       // with ZERO cards. Piggybacks the forge JSONB (no schema migration).
       __cardCollection__:  (Profile.cardCollection  && typeof Profile.cardCollection  === 'object') ? Profile.cardCollection  : {},
+      // 📋 Side Deck + 💎 Socketed Gems — piggyback the forge JSONB (v86u) so the
+      // Deck Builder's side-deck cards and per-card gem sockets survive new
+      // devices / cloud restores, same as cardCollection above. Both were
+      // localStorage-only AND missing from the load whitelist before v86u.
+      __sideDeck__:        (Profile.sideDeck        && typeof Profile.sideDeck        === 'object') ? Profile.sideDeck        : { cards: [], gems: [] },
+      __socketedGems__:    (Profile.socketedGems    && typeof Profile.socketedGems    === 'object') ? Profile.socketedGems    : {},
       // 🎒 HELD-ITEM INVENTORY + EQUIPPED GEAR — purchased medicine / relics /
       // weapons + per-hero equipment. These were localStorage-ONLY: a corrupt
       // or cleared hg_profile, or a new device, lost every bought item FOREVER
@@ -33398,6 +33411,25 @@ async function cloudFetchProfile() {
           const cv = _cc[id] | 0, lv = Profile.cardCollection[id] | 0;
           if (cv > lv) Profile.cardCollection[id] = cv;
         }
+      }
+      // 📋 SIDE DECK restore — cloud fills in ONLY when local has no side deck
+      // yet (new device / cleared cache). A populated local side deck wins so a
+      // stale cloud copy can never wipe a freshly-edited one (v86u).
+      if (f.__sideDeck__ && typeof f.__sideDeck__ === 'object') {
+        const _localSide = (Profile.sideDeck && Array.isArray(Profile.sideDeck.cards)) ? Profile.sideDeck.cards : [];
+        if (_localSide.length === 0) {
+          Profile.sideDeck = {
+            cards: Array.isArray(f.__sideDeck__.cards) ? f.__sideDeck__.cards.slice(0) : [],
+            gems:  Array.isArray(f.__sideDeck__.gems)  ? f.__sideDeck__.gems.slice(0)  : [],
+          };
+        }
+      }
+      // 💎 SOCKETED GEMS restore — same policy: cloud fills only when local has
+      // no sockets, so editing gems on this device isn't clobbered by old cloud.
+      if (f.__socketedGems__ && typeof f.__socketedGems__ === 'object') {
+        const _localGemCount = (Profile.socketedGems && typeof Profile.socketedGems === 'object')
+          ? Object.values(Profile.socketedGems).flat().filter(g => g && g !== '').length : 0;
+        if (_localGemCount === 0) Profile.socketedGems = f.__socketedGems__;
       }
       // 🎒 HELD-ITEM INVENTORY restore — MERGED with MAX so a stale cloud copy
       // can NEVER wipe an item bought on this device the cloud hasn't synced
@@ -46382,6 +46414,18 @@ function loadForge() {
         });
       }
       if (p.cardCollection && typeof p.cardCollection === 'object') Profile.cardCollection = p.cardCollection;
+      // 📋 Side Deck + 💎 Socketed Gems — added to the whitelist (v86u). Both
+      // were written by the Deck Builder and stringified to localStorage by
+      // saveProfile(), but were MISSING from this loader, so every reload
+      // silently dropped them — the v86s feature looked broken (side-deck
+      // cards + gem sockets reset on refresh). Shape is normalised defensively.
+      if (p.sideDeck && typeof p.sideDeck === 'object') {
+        Profile.sideDeck = {
+          cards: Array.isArray(p.sideDeck.cards) ? p.sideDeck.cards.slice(0) : [],
+          gems:  Array.isArray(p.sideDeck.gems)  ? p.sideDeck.gems.slice(0)  : [],
+        };
+      }
+      if (p.socketedGems && typeof p.socketedGems === 'object') Profile.socketedGems = p.socketedGems;
       // 🧰 CRITICAL SAVE FIX — saveProfile() stringifies the WHOLE Profile to
       // localStorage, but this loader is a field whitelist. These player-
       // progress maps were missing from it, so every reload silently dropped
@@ -55674,6 +55718,10 @@ const calculateDamage = (move, attacker, defender, weather) => {
   const moveElem = move.element || 'neutral';
   const defElems = getElementsOf(defender);
   let typeMul = 1;
+  // 🛡️ Immunity flag — set true when a Ward or elemental-trait immunity zeroes
+  // the damage. It bypasses the final Math.max(1) chip-damage floor so an immune
+  // unit takes 0, not 1. (Without this, "immune" still leaked 1 damage per hit.)
+  let _immune = false;
   if (moveElem !== 'neutral' && defElems.length) {
     for (const de of defElems) typeMul *= getTypeMultiplier(moveElem, de);
   }
@@ -55690,7 +55738,7 @@ const calculateDamage = (move, attacker, defender, weather) => {
   }
   dmg = Math.floor(dmg * typeMul);
   if (dmg < 1 && typeMul > 0) dmg = 1;
-  if (typeMul === 0) dmg = 0;
+  if (typeMul === 0) { dmg = 0; _immune = true; }
   // 🎯 Universal weakness — Vulnerable status (from Weak Point Scan etc.)
   // multiplies incoming damage. Stacks AFTER elemental matchup so a
   // resistant-element target still takes more than they would unmarked.
@@ -55893,7 +55941,7 @@ const calculateDamage = (move, attacker, defender, weather) => {
     // immune_* trait, zero the damage entirely.
     const moveElem = move && move.element;
     if (moveElem && _defTraits.includes('immune_' + String(moveElem).toLowerCase())) {
-      dmg = 0;
+      dmg = 0; _immune = true;
     }
   }
 
@@ -55931,7 +55979,7 @@ const calculateDamage = (move, attacker, defender, weather) => {
   if (typeMul >= 2)        effectiveness = 'super';
   else if (typeMul <= 0.5) effectiveness = 'weak';
 
-  return { damage: Math.max(1, dmg), missed: false, crit: isCrit, typeMul, effectiveness, stab };
+  return { damage: _immune ? 0 : Math.max(1, dmg), missed: false, crit: isCrit, typeMul, effectiveness, stab };
 };
 
 const initBoard = () => Array.from({ length: BOARD_H }, (_, y) => Array.from({ length: BOARD_W }, (_, x) => ({ x, y, location: null, trap: null, event: null })));
@@ -58636,6 +58684,65 @@ const executeMove = (state, attacker, target, move) => {
   }
 
   if (move.cost > 0) { const _eff = getEffectiveMoveCost(move, attacker, s); if (_eff > 0) s[playerKey] = { ...s[playerKey], energy: s[playerKey].energy - _eff }; }
+
+  // ⚔️ ===== SACRIFICE MOVE — consume a friendly unit to power an effect on the
+  // caster's side. Saved by the Move Editor as { sacrifice:true,
+  // target:'sacrificeAlly', sacrificeEffect, kind:'ability' }. The clicked
+  // `target` is the ally being sacrificed (player picks it via ally-targeting;
+  // the AI passes a chosen friendly non-hero, or the move fizzles cleanly).
+  // Cost was already paid above. This branch resolves the effect and returns
+  // early so the move never falls through to the ability/attack damage paths.
+  if (move.sacrifice || move.target === 'sacrificeAlly') {
+    const victim = (target && target.alive && target.owner === attacker.owner && target.id !== attacker.id && !target.isHero)
+      ? target : null;
+    if (!victim) {
+      log.push({ msg: `${attacker.name}'s ${move.name} fizzles — no ally to sacrifice.`, color: 'amber' });
+      s.units = s.units.map(u => u.id === attacker.id ? markAttackerActed(u) : u);
+      s.log = log; return s;
+    }
+    // Remove the sacrificed ally.
+    s.units = s.units.map(u => u.id === victim.id ? { ...u, currentHp: 0, alive: false } : u);
+    log.push({ msg: `⚔ ${victim.name} is sacrificed for ${attacker.name}!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+    // Apply the chosen sacrifice effect.
+    const _se = move.sacrificeEffect || 'buffSelf';
+    if (_se === 'draw') {
+      const _n = Math.max(1, move.drawCount || 1);
+      s[playerKey] = drawCards(s[playerKey], _n, true);
+      log.push({ msg: `📜 The sacrifice draws ${_n} card${_n === 1 ? '' : 's'}!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+    } else if (_se === 'gainEnergy') {
+      const _n = Math.max(1, move.gainEnergy || 2);
+      const _cap = s[playerKey].maxEnergy || 10;
+      s[playerKey] = { ...s[playerKey], energy: Math.min(_cap, (s[playerKey].energy || 0) + _n) };
+      log.push({ msg: `⚡ The sacrifice grants ${_n} energy!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+    } else if (_se === 'healSelf') {
+      const _n = Math.max(1, move.healAmount || 20);
+      s.units = s.units.map(u => u.id === attacker.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + _n) } : u);
+      log.push({ msg: `❤️ ${attacker.name} absorbs the sacrifice — heals ${_n} HP!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+    } else if (_se === 'damage') {
+      const _dmg = Math.max(1, move.power || 20);
+      s.units = s.units.map(u => {
+        if (!u.alive || u.owner === attacker.owner) return u;
+        const trig = applyDamageTriggers(u, _dmg, 'magical');
+        trig.log.forEach(l => log.push(l));
+        if (!trig.unit.alive && trig.unit.isHero) s.gameOver = trig.unit.owner === 'player' ? 'ai' : 'player';
+        return trig.unit;
+      });
+      log.push({ msg: `💥 The sacrifice blasts all enemies for ${_dmg}!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+    } else if (_se === 'allEnemyStatus') {
+      const _sid = (move.applyStatus && move.applyStatus.id) || 'poison';
+      const _dur = Math.max(1, (move.applyStatus && move.applyStatus.duration) || 2);
+      s.units = s.units.map(u => (u.alive && u.owner !== attacker.owner) ? applyStatusEffect(u, _sid, _dur, attacker.id) : u);
+      log.push({ msg: `😵 The sacrifice afflicts all enemies with ${(STATUS_EFFECTS[_sid] || {}).name || _sid}!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+    } else {
+      // buffSelf — apply the chosen status (or 'strong' fallback) to the caster.
+      const _sid = (move.applyStatus && move.applyStatus.id) || 'strong';
+      const _dur = Math.max(1, (move.applyStatus && move.applyStatus.duration) || 2);
+      s.units = s.units.map(u => u.id === attacker.id ? applyStatusEffect(u, _sid, _dur, attacker.id) : u);
+      log.push({ msg: `✨ ${attacker.name} absorbs the sacrifice — gains ${(STATUS_EFFECTS[_sid] || {}).name || _sid}!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+    }
+    s.units = s.units.map(u => u.id === attacker.id ? markAttackerActed(u) : u);
+    s.log = log; return s;
+  }
 
   // ===== Move-granted resources =====
   // `move.gainEnergy` and `move.gainKalon` let custom Forge moves act as resource taps.
@@ -72701,6 +72808,11 @@ function bindMoveEditor() {
       move.sacrifice = true;
       move.target = 'sacrificeAlly';
       move.sacrificeEffect = (document.getElementById('mv-sacrifice-effect') || {}).value || 'buffSelf';
+      // Force ability-kind so the engine routes this through ally-targeting and
+      // the sacrifice resolution branch (NOT the attack/damage path). A
+      // sacrifice move is fundamentally a utility ability that consumes a
+      // friendly unit, so this keeps targeting + resolution consistent.
+      move.kind = 'ability';
     } else {
       delete move.sacrifice;
       delete move.sacrificeEffect;
@@ -77133,6 +77245,28 @@ function _executeSacrifice(st, victim) {
   } else if (se === 'healSelf') {
     s = { ...s, units: s.units.map(u => u.id === unit.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + n) } : u) };
     log.push({ msg: `❤️ ${unit.name} absorbs the sacrifice — heals ${n} HP!`, color: 'green' });
+  } else if (se === 'damage') {
+    // Deal damage to ALL enemies of the sacrificing unit. (KO is captured in a
+    // local first, then applied after the reassignment — mutating s.gameOver
+    // inside the map would be lost because the {...s} spread runs before it.)
+    const dmg = Math.max(1, eff.damage || eff.amount || 20);
+    let _ko = null;
+    const newUnits = s.units.map(u => {
+      if (!u.alive || u.owner === unit.owner) return u;
+      const trig = applyDamageTriggers(u, dmg, 'magical');
+      trig.log.forEach(l => log.push(l));
+      if (!trig.unit.alive && trig.unit.isHero) _ko = trig.unit.owner === 'player' ? 'ai' : 'player';
+      return trig.unit;
+    });
+    s = { ...s, units: newUnits };
+    if (_ko) s.gameOver = _ko;
+    log.push({ msg: `💥 The sacrifice blasts all enemies for ${dmg}!`, color: 'green' });
+  } else if (se === 'allEnemyStatus') {
+    // Apply a status to ALL enemies of the sacrificing unit.
+    const statusId = eff.status || 'poison';
+    const dur = Math.max(1, eff.statusDuration || 2);
+    s = { ...s, units: s.units.map(u => (u.alive && u.owner !== unit.owner) ? applyStatusEffect(u, statusId, dur, unit.id) : u) };
+    log.push({ msg: `😵 The sacrifice afflicts all enemies with ${(STATUS_EFFECTS[statusId] || {}).name || statusId}!`, color: 'green' });
   } else {
     // buffSelf — apply status from eff.status
     const statusId = eff.status || 'strong';
@@ -81100,6 +81234,7 @@ function onTileClick(x, y) {
       if (distance(sel.pos, occupant.pos) > effRange) { showToast(getSpeedPenalty(sel) > 0 ? 'Out of range — slowed' : 'Out of range'); return; }
       const validTarget = (move.kind === 'attack' && occupant.owner !== 'player') ||
                           (move.target === 'ally' && occupant.owner === 'player') ||
+                          (move.target === 'sacrificeAlly' && occupant.owner === 'player' && !occupant.isHero && occupant.id !== sel.id) ||
                           (move.target === 'enemy' && occupant.owner !== 'player');
       if (!validTarget) { showToast('Invalid target'); return; }
       // 🧱 A Wall Unit with attacking disabled can't initiate attacks.
@@ -85454,9 +85589,11 @@ function doAIStep() {
     if (weathers.length > 0) {
       const playerLead = playerProf.elements && playerProf.elements[0];
       // Weather → element it suppresses (penalty side)
-      const suppresses = { sun: 'water', rain: 'fire', eclipse: 'light', sandstorm: null, mindRealm: null, parallelWorld: null, mist: null, bloodmoon: null };
-      // Weather → element it favors
-      const favors     = { sun: 'fire',  rain: 'water', eclipse: 'shadow', sandstorm: 'earth' };
+      const suppresses = { sun: 'water', rain: 'fire', eclipse: 'light', sand: null, mindRealm: null, parallelWorld: null, mist: null, bloodmoon: null };
+      // Weather → element it favors. (Keyed by real weatherType — the Sandstorm
+      // card's weatherType is 'sand', so this must be 'sand' not 'sandstorm'
+      // or the AI never scores the earth-favoring bonus during a sandstorm.)
+      const favors     = { sun: 'fire',  rain: 'water', eclipse: 'shadow', sand: 'earth' };
       let best = null, bestScore = -Infinity;
       for (const w of weathers) {
         let sc = 5; // any weather is mildly useful
@@ -124936,7 +125073,8 @@ function renderDeckBuilder() {
   const isDirty = (JSON.stringify(savedCards) !== JSON.stringify(App.deckEdit)) || (savedName !== App.deckEditName) || (App.editingDeckId === 'NEW' && App.deckEdit.length > 0);
 
   // ── Side Deck + Gem panel state ───────────────────────────────────────────
-  if (!Profile.sideDeck || typeof Profile.sideDeck !== 'object') Profile.sideDeck = { cards: [] };
+  if (!Profile.sideDeck || typeof Profile.sideDeck !== 'object') Profile.sideDeck = { cards: [], gems: [] };
+  if (!Array.isArray(Profile.sideDeck.gems)) Profile.sideDeck.gems = [];
   if (!Array.isArray(Profile.sideDeck.cards)) Profile.sideDeck.cards = [];
   if (!Profile.socketedGems || typeof Profile.socketedGems !== 'object') Profile.socketedGems = {};
   const _pTab = App.deckPanelTab || 'main';

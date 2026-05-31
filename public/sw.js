@@ -242,7 +242,19 @@
 //         section added to the Move Forge editor — checkbox enables sacrifice
 //         mode; sacrifice effect dropdown (buffSelf/damage/allEnemyStatus/
 //         draw/healSelf/gainEnergy) sets what fires after the ally is consumed.
-const CACHE_VERSION = 'mythic-v86t-' + Date.now().toString(36);
+// v86u — Battle-engine fixes from the full-game audit: (1) 💀 Sacrifice Move is
+//         now wired into combat — it routes through ally-targeting and resolves
+//         in executeMove (consumes the picked ally, applies buffSelf/damage/
+//         allEnemyStatus/draw/healSelf/gainEnergy). Previously saved but inert.
+//         (2) 🛡️ Ward / elemental-immunity now deals 0 damage instead of leaking
+//         1 chip — calculateDamage no longer floors an immune hit up to 1.
+//         (3) On-play Sacrifice (_executeSacrifice) gained the damage + apply-
+//         status-to-all-enemies effects to match the move editor. (4) AI weather
+//         scoring keyed on 'sandstorm' but the real weatherType is 'sand', so the
+//         AI never valued sandstorm for earth heroes — key corrected to 'sand'.
+//         Persistence (Side Deck + socketed Gems) added to the load whitelist +
+//         cloud sync so they survive reload and device switches.
+const CACHE_VERSION = 'mythic-v86u-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

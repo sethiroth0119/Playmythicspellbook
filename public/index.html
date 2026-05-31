@@ -88452,21 +88452,27 @@ function renderMarketTile(listing, opts) {
     : '';
   let dvsBody = '';
   if (dvs) {
+    // 💎 For a specific listed UNIT, scale the suggested value by THIS copy's
+    // instance (level / trait / moveset) so the deal indicator reflects the
+    // exact unit being sold — not just the generic per-card valuation.
+    const _inst = (listing && listing.unitInstance) ? listing.unitInstance : null;
+    const suggCinder = (_inst && typeof dvsInstanceCinder === 'function') ? dvsInstanceCinder(dvs.cinder, _inst) : dvs.cinder;
     const refCur = isAuction ? _auctBidCur(listing) : 'cinders';
     let deal = '';
-    if (refCur === 'cinders' && dvs.cinder > 0) {
+    if (refCur === 'cinders' && suggCinder > 0) {
       const refPrice = isAuction ? (listing.currentBid > 0 ? listing.currentBid : (listing.startingBid || 0)) : (listing.price || 0);
       if (refPrice > 0) {
-        const pct = Math.round(((refPrice - dvs.cinder) / dvs.cinder) * 100);
+        const pct = Math.round(((refPrice - suggCinder) / suggCinder) * 100);
         if (pct <= -10) deal = `<span class="mkt-deal good">▼ ${Math.abs(pct)}% • deal</span>`;
         else if (pct >= 10) deal = `<span class="mkt-deal high">▲ ${pct}% • over</span>`;
         else deal = `<span class="mkt-deal fair">≈ fair value</span>`;
       }
     }
+    const _scaledNote = (_inst && suggCinder !== dvs.cinder) ? ` · scaled for this copy (Lv ${_inst.level || 1})` : '';
     dvsBody = `
-      <div class="mkt-tile-dvs" title="Digital Valuation — ${dvs.classLabel} · suggested ${dvs.cinder} 🔥 (${_dvsUsd(dvs.cinder)})">
+      <div class="mkt-tile-dvs" title="Digital Valuation — ${dvs.classLabel} · suggested ${suggCinder} 🔥 (${_dvsUsd(suggCinder)})${_scaledNote}">
         <span class="dvs-class-badge" style="color:${dvs.classColor}">${dvs.classLabel}</span>
-        <span class="mkt-tile-dvs-val">sugg. <span class="cinder-icon"></span> ${dvs.cinder}</span>
+        <span class="mkt-tile-dvs-val">sugg. <span class="cinder-icon"></span> ${suggCinder}</span>
         ${deal}
       </div>`;
   }
@@ -89274,6 +89280,39 @@ function renderMarketValuation() {
   return header + dashboard + toolbar + grid;
 }
 
+// 💎 Per-INSTANCE price multiplier — scales a card's base DVS valuation by THIS
+// copy's level, rolled trait rarity, and moveset power. A maxed unit with a
+// legendary trait and a heavy kit is worth more than a fresh level-1 copy. The
+// base per-card valuation engine (dvsGet) is left untouched; this only adjusts
+// the SUGGESTED value shown for a specific listing.
+function dvsInstanceMultiplier(inst) {
+  if (!inst) return 1;
+  let mult = 1;
+  // Level — +5% per level above 1, capped at +60% (~level 13).
+  const lvl = Math.max(1, (inst.level | 0) || 1);
+  mult *= 1 + Math.min(0.60, (lvl - 1) * 0.05);
+  // Trait rarity.
+  if (inst.traitId && typeof getTrait === 'function') {
+    const tr = getTrait(inst.traitId);
+    const RB = { common: 0, uncommon: 0.05, rare: 0.15, legendary: 0.35 };
+    if (tr && tr.rarity && RB[tr.rarity] != null) mult *= 1 + RB[tr.rarity];
+  }
+  // Moveset — total move power vs a ~120 baseline, gently scaled (-15%..+20%).
+  const moves = (Array.isArray(inst.knownMoves) ? inst.knownMoves : [])
+    .map(mid => (typeof lookupMove === 'function') ? lookupMove(mid) : null).filter(Boolean);
+  if (moves.length) {
+    const totalPower = moves.reduce((s, m) => s + (Number(m.power) || 0), 0);
+    mult *= 1 + Math.max(-0.15, Math.min(0.20, (totalPower - 120) / 700));
+  }
+  return Math.max(0.5, Math.min(3, mult));
+}
+// Round a base cinder value up/down by this copy's instance multiplier.
+function dvsInstanceCinder(baseCinder, inst) {
+  const b = Math.max(0, baseCinder | 0);
+  if (!b || !inst) return b;
+  return Math.max(1, Math.round(b * dvsInstanceMultiplier(inst)));
+}
+
 // 🪖 Snapshot the SELLER's specific unit instance (level / nature / trait /
 // scaled stats / moveset) at list time. Every player's copy of a unit differs
 // by level, rolled trait, nature and learned moves — that's what justifies a
@@ -89321,7 +89360,7 @@ function unitInstanceBase(card) {
 
 // 🪖 Render a unit-instance detail block for the DVS modal (level, nature,
 // trait, scaled stats, moveset). Pure read of the snapshot — safe for buyers.
-function _marketUnitInstanceHtml(inst) {
+function _marketUnitInstanceHtml(inst, baseCinder) {
   if (!inst) return '';
   const st = inst.stats || {};
   const _kv = (k, val) => `<div class="dvs-kv"><span class="k">${k}</span><span class="v">${(val != null && val !== '') ? val : '—'}</span></div>`;
@@ -89346,6 +89385,15 @@ function _marketUnitInstanceHtml(inst) {
     : '<div class="dvs-row-sub">No recorded moves.</div>';
   const elems = (inst.elements || []).filter(e => e && e !== 'neutral');
   const title = inst._base ? '🪖 Unit — base profile' : "🪖 Seller's unit — this exact copy";
+  // 💎 Instance-adjusted suggested value (scales the card's base valuation by
+  // this copy's level / trait / moveset). Only shown for a real instance.
+  const _adj = (baseCinder && !inst._base && typeof dvsInstanceCinder === 'function') ? dvsInstanceCinder(baseCinder, inst) : null;
+  const _adjHtml = (_adj != null) ? `
+          <div class="dvs-value-row" style="margin-top:0.55rem">
+            <div class="dvs-value-box"><div class="v"><span class="cinder-icon"></span> ${_adj}</div><div class="l">This copy — suggested</div></div>
+            <div class="dvs-value-box"><div class="v">${(typeof _dvsUsd === 'function') ? _dvsUsd(_adj) : ''}</div><div class="l">Suggested USD</div></div>
+          </div>
+          <div class="dvs-row-sub" style="margin-top:0.25rem">Scaled from base ${baseCinder} 🔥 for Lv ${inst.level || 1}${inst.traitId ? ' + trait' : ''}${(Array.isArray(inst.knownMoves) && inst.knownMoves.length) ? ' + moveset' : ''}.</div>` : '';
   return `
         <div class="dvs-subpanel">
           <h4>${title}</h4>
@@ -89363,6 +89411,7 @@ function _marketUnitInstanceHtml(inst) {
             ${_kv('SPD', st.spd)}
           </div>
           ${elems.length ? `<div class="dvs-row-sub" style="margin-top:0.4rem">Elements: ${elems.map(e => escapeHtml(e)).join(', ')}</div>` : ''}
+          ${_adjHtml}
         </div>
         <div class="dvs-subpanel">
           <h4>📜 Moveset</h4>
@@ -89393,7 +89442,7 @@ function renderDvsAssetModal() {
       const _inst = _lst.unitInstance
         || (_lst.sellerId === 'player' ? unitInstanceSnapshot(_item) : null)
         || unitInstanceBase(_item);
-      _instHtml = _marketUnitInstanceHtml(_inst);
+      _instHtml = _marketUnitInstanceHtml(_inst, v.cinder);
     }
   } catch (e) {}
 

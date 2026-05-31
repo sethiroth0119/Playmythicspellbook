@@ -346,7 +346,12 @@
 //        this exact copy" section + full moveset, so buyers can judge price by
 //        the actual leveled/trait/move loadout. NPC + pre-update listings show a
 //        side-effect-free base profile. Purely additive — nothing removed.
-const CACHE_VERSION = 'mythic-v87f-' + Date.now().toString(36);
+// v87g — 💎 Suggested Cinder value now SCALES with the listed unit's instance:
+//        level (+5%/lvl, cap +60%), trait rarity (uncommon/rare/legendary), and
+//        moveset power. The listing tile's "sugg." price + deal badge use the
+//        per-copy value, and the detail modal shows a "This copy — suggested"
+//        line (base × instance). The base per-card valuation engine is unchanged.
+const CACHE_VERSION = 'mythic-v87g-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

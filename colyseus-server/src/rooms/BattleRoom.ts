@@ -276,7 +276,8 @@ export class BattleRoom extends Room<BattleState> {
   async onDispose() {
     console.log('[battle] onDispose', { matchId: this.state.matchId, winner: this.state.winnerUserId });
     if (this.turnTimer) { try { clearTimeout(this.turnTimer); } catch { /* no-op */ } }
-    // (Session 3) Persist winner_id to Supabase matches table.
+    // Winner is persisted to Supabase in endMatch() (race-gated). onDispose only
+    // tears down timers — no extra write needed here.
   }
 
   // ─── Match flow ─────────────────────────────────────────────────────────────
@@ -599,6 +600,9 @@ export class BattleRoom extends Room<BattleState> {
     this.state.endedAt      = Date.now();
     if (this.turnTimer) { try { clearTimeout(this.turnTimer); } catch { /* no-op */ } }
     console.log('[battle] endMatch', { winner: winnerUserId, reason });
+    // 🏁 Persist the authoritative winner to Supabase (race-gated single write).
+    // Fire-and-forget so the victory broadcast isn't delayed by the network call.
+    void persistMatchWinner(this.state.matchId, winnerUserId);
     this.broadcast('matchEnd', {
       winnerUserId,
       reason,
@@ -618,6 +622,40 @@ export class BattleRoom extends Room<BattleState> {
 }
 
 // ─── Pure helpers (module-level, no `this`) ──────────────────────────────────
+
+// 🏁 Persist the authoritative match winner to Supabase via a service-role,
+// race-gated PATCH — it only writes when winner_id is still NULL, so a late
+// legacy-client write can't clobber the server's verdict (and vice-versa).
+// Requires SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY env vars; no-ops (with a
+// warning) when unset so local/dev runs don't fail. Uses Node 20+ global fetch.
+async function persistMatchWinner(matchId: string, winnerUserId: string): Promise<void> {
+  const base = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+  const key  = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  if (!base || !key) { console.warn('[battle] winner persist skipped — set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY to enable'); return; }
+  if (!matchId || !winnerUserId) return;
+  try {
+    const endpoint = `${base}/rest/v1/matches?id=eq.${encodeURIComponent(matchId)}&winner_id=is.null`;
+    const res = await fetch(endpoint, {
+      method: 'PATCH',
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify({ winner_id: winnerUserId, status: 'complete' }),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      console.warn('[battle] winner persist HTTP', res.status, txt);
+      return;
+    }
+    const rows = await res.json().catch(() => []);
+    console.log('[battle] winner persisted', { matchId, winnerUserId, rows: Array.isArray(rows) ? rows.length : 0 });
+  } catch (e) {
+    console.warn('[battle] winner persist error', e);
+  }
+}
 
 /** Convert a schema Unit to the flat UnitInput shape the damage engine expects. */
 function unitToInput(u: Unit): UnitInput {

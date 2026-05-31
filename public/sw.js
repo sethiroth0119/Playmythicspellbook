@@ -274,7 +274,20 @@
 //         Buy Now / History / Cancel, auctions, timers and right-click detail
 //         all work unchanged (same data-* hooks). Nothing removed —
 //         renderListingCard is still defined for any other caller.
-const CACHE_VERSION = 'mythic-v86w-' + Date.now().toString(36);
+// v86x — 💎 Digital Valuation System (DVS), Phase 2. New "💎 Valuation" tab in
+//         The Market (6th tab; Browse/Sell/My Listings/Resources/Stock all
+//         preserved). A 100% client-side, stock-market-style engine scores every
+//         card 0–100 from six weighted sub-scores (Power .20 / Meta .20 /
+//         WinRate .15 / Scarcity .20 / Demand .20 / Historical .05) into a
+//         Suggested Cinder Value + USD value + asset classification (Common →
+//         Legendary). Tab shows a live exchange header, a Market Dashboard of
+//         leaderboards (Highest Valued / Gainers / Losers / Most Played /
+//         Highest Win Rate / Most Traded / Rarest), and a searchable+sortable
+//         asset grid; tapping a card opens a detail modal with sub-score bars,
+//         supply + integrity, recent sales and an hourly price-history chart.
+//         Recalculates hourly, persists to localStorage ('hg_dvs'). Pure read —
+//         no gameplay state is mutated.
+const CACHE_VERSION = 'mythic-v86x-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

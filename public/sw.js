@@ -287,7 +287,17 @@
 //         supply + integrity, recent sales and an hourly price-history chart.
 //         Recalculates hourly, persists to localStorage ('hg_dvs'). Pure read —
 //         no gameplay state is mutated.
-const CACHE_VERSION = 'mythic-v86x-' + Date.now().toString(36);
+// v86y — 💎 DVS Phase 3 + exchange-rate change. (1) Cinder→USD reference rate
+//         is now 5000 🔥 ≈ $1 (was 100); USD now renders with extra decimals so
+//         low-value cards don't all flatten to "$0.00", and is computed live off
+//         the current rate so a table cached at the old rate still displays
+//         correctly. (2) Listing tiles (Browse + My Listings) now surface the
+//         valuation inline: a 💎 value-score chip in the corner plus a body line
+//         with the asset classification, suggested Cinder value, and a deal
+//         indicator (deal / fair / over) comparing the asking price to the
+//         suggested value. Cards only; deal badge shown only for Cinder-priced
+//         listings. Nothing removed.
+const CACHE_VERSION = 'mythic-v86y-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

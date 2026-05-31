@@ -11024,6 +11024,13 @@
   }
   .dvs-tile-foot { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; margin-top: 0.3rem; }
   .dvs-tile-usd { font-size: 0.74rem; color: var(--ink-dim); }
+  /* Phase 3 — DVS line surfaced on a listing tile (Browse / My Listings) */
+  .mkt-tile-dvs { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; font-size: 0.7rem; }
+  .mkt-tile-dvs-val { color: #ffd166; font-weight: 600; }
+  .mkt-deal { font-weight: 700; padding: 0.04rem 0.4rem; border-radius: 999px; border: 1px solid currentColor; font-size: 0.66rem; }
+  .mkt-deal.good { color: #5fd38a; }
+  .mkt-deal.high { color: #ff6b6b; }
+  .mkt-deal.fair { color: var(--ink-dim); }
   /* Asset detail modal */
   .dvs-modal-overlay {
     position: fixed; inset: 0; z-index: 4000; background: rgba(5,3,12,0.82);
@@ -37871,7 +37878,7 @@ function saveMarket() {
 const DVS_WEIGHTS = { power: 0.20, meta: 0.20, win: 0.15, scarcity: 0.20, demand: 0.20, historical: 0.05 };
 const DVS_RECALC_MS = 3600000;          // hourly
 const DVS_SNAPSHOT_CAP = 720;           // ~30 days of hourly snapshots
-const DVS_CINDER_PER_USD = 100;         // display-only reference rate (100 🔥 ≈ $1)
+const DVS_CINDER_PER_USD = 5000;        // display-only reference rate (5000 🔥 ≈ $1)
 const DVS_CLASS_BANDS = [
   { min: 98, label: 'Legendary',   color: '#ff5d5d', glow: 'rgba(255,93,93,0.55)' },
   { min: 91, label: 'Mythic',      color: '#c77dff', glow: 'rgba(199,125,255,0.5)' },
@@ -38033,7 +38040,7 @@ function dvsValuate(card, ctx) {
     scarcity * DVS_WEIGHTS.scarcity + demand * DVS_WEIGHTS.demand + historical * DVS_WEIGHTS.historical
   ), 0, 100);
   const cinder = Math.max(1, Math.round(_dvsBaseValue(card) * valueScore));
-  const usd = +(cinder / DVS_CINDER_PER_USD).toFixed(2);
+  const usd = +(cinder / DVS_CINDER_PER_USD).toFixed(4);
   const cls = dvsClassify(valueScore);
   return {
     id: card.id, name: card.name, type: card.type || 'unit', cost: card.cost || 0,
@@ -88113,16 +88120,47 @@ function renderMarketTile(listing, opts) {
   const bidderLine = (isAuction && listing.currentBidderId)
     ? `<div class="mkt-tile-bidder">Top: <strong>${escapeHtml(listing.currentBidderName || '?')}</strong></div>`
     : '';
+  // 💎 Phase 3 — surface the Digital Valuation on the listing tile itself: a
+  // value-score chip in the top-right corner, plus a body line with the asset
+  // classification, suggested cinder value, and a deal indicator comparing the
+  // asking price to the suggested value. Cards only (held items aren't valued);
+  // the deal badge is shown only when the listing is priced in Cinders.
+  const dvs = (!isItem && card && card.id && typeof dvsGet === 'function') ? dvsGet(card.id) : null;
+  const dvsScoreChip = dvs
+    ? `<div class="dvs-tile-score" title="Valuation score ${dvs.valueScore}/100 · ${dvs.classLabel}">💎 ${dvs.valueScore}</div>`
+    : '';
+  let dvsBody = '';
+  if (dvs) {
+    const refCur = isAuction ? _auctBidCur(listing) : 'cinders';
+    let deal = '';
+    if (refCur === 'cinders' && dvs.cinder > 0) {
+      const refPrice = isAuction ? (listing.currentBid > 0 ? listing.currentBid : (listing.startingBid || 0)) : (listing.price || 0);
+      if (refPrice > 0) {
+        const pct = Math.round(((refPrice - dvs.cinder) / dvs.cinder) * 100);
+        if (pct <= -10) deal = `<span class="mkt-deal good">▼ ${Math.abs(pct)}% • deal</span>`;
+        else if (pct >= 10) deal = `<span class="mkt-deal high">▲ ${pct}% • over</span>`;
+        else deal = `<span class="mkt-deal fair">≈ fair value</span>`;
+      }
+    }
+    dvsBody = `
+      <div class="mkt-tile-dvs" title="Digital Valuation — ${dvs.classLabel} · suggested ${dvs.cinder} 🔥 (${_dvsUsd(dvs.cinder)})">
+        <span class="dvs-class-badge" style="color:${dvs.classColor}">${dvs.classLabel}</span>
+        <span class="mkt-tile-dvs-val">sugg. <span class="cinder-icon"></span> ${dvs.cinder}</span>
+        ${deal}
+      </div>`;
+  }
   return `
     <div class="mkt-tile ${isAuction ? 'is-auction' : ''}" data-listing-row="${escapeHtml(listing.id)}"${detailAttrs}>
       <div class="mkt-tile-img">
         ${badge}
+        ${dvsScoreChip}
         ${marketTileVisual(listing)}
         ${timer}
       </div>
       <div class="mkt-tile-body">
         <div class="mkt-tile-name">${escapeHtml(card.name || 'Listing')} ${elemIcons}</div>
         <div class="mkt-tile-meta">${metaLine}</div>
+        ${dvsBody}
         <div class="mkt-tile-seller">Seller: <strong>${escapeHtml(listing.sellerName || listing.sellerId)}</strong>${isMine ? ' (you)' : ''}</div>
         ${bidderLine}
         <div class="mkt-tile-foot">
@@ -88746,6 +88784,16 @@ function _dvsDeltaHtml(d) {
   const arrow = d > 0 ? '▲' : (d < 0 ? '▼' : '◆');
   return `<span class="dvs-delta ${cls}">${arrow} ${Math.abs(d)}%</span>`;
 }
+// Format a Suggested USD value from a cinder amount, computed LIVE off the
+// current exchange rate (so a DVS table cached at an older rate still displays
+// correctly). Adds decimals as the value shrinks so high rates don't flatten
+// every card to "$0.00".
+function _dvsUsd(cinder) {
+  const usd = (cinder || 0) / DVS_CINDER_PER_USD;
+  if (usd >= 1) return '$' + usd.toFixed(2);
+  if (usd >= 0.01) return '$' + usd.toFixed(3);
+  return '$' + usd.toFixed(4);
+}
 function _dvsAgoLabel(ms) {
   if (!ms) return 'just now';
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
@@ -88887,7 +88935,7 @@ function renderMarketValuation() {
           <div class="mkt-tile-meta">${escapeHtml((v.type || 'unit').toUpperCase())} · Cost ${v.cost || 0}</div>
           <div class="dvs-tile-foot">
             <div class="mkt-tile-price"><span class="cinder-icon"></span> ${v.cinder}</div>
-            <div class="dvs-tile-usd">≈ $${(v.usd || 0).toFixed(2)}</div>
+            <div class="dvs-tile-usd">≈ ${_dvsUsd(v.cinder)}</div>
           </div>
         </div>
       </div>`;
@@ -88972,7 +89020,7 @@ function renderDvsAssetModal() {
             </div>
             <div class="dvs-value-row">
               <div class="dvs-value-box"><div class="v"><span class="cinder-icon"></span> ${v.cinder}</div><div class="l">Suggested Cinder Value</div></div>
-              <div class="dvs-value-box"><div class="v">$${(v.usd || 0).toFixed(2)}</div><div class="l">Suggested USD</div></div>
+              <div class="dvs-value-box"><div class="v">${_dvsUsd(v.cinder)}</div><div class="l">Suggested USD</div></div>
             </div>
           </div>
         </div>

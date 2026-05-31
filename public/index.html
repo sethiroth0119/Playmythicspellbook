@@ -10909,7 +10909,7 @@
     overflow: hidden;
     border-bottom: 1px solid var(--border);
   }
-  .mkt-tile-img .mkt-art { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .mkt-tile-img .mkt-art { width: 100%; height: 100%; object-fit: contain; display: block; }
   .mkt-tile-img .sprite-stack { width: 84% !important; height: 84% !important; }
   .mkt-tile-img .sprite-stack img { object-fit: contain; image-rendering: pixelated; }
   .mkt-tile-img .mkt-emoji { font-size: 3.4rem; line-height: 1; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6)); }
@@ -10999,7 +10999,7 @@
     background: radial-gradient(circle at 50% 35%, rgba(212,175,55,0.18), rgba(11,8,20,0.6));
     display: flex; align-items: center; justify-content: center; overflow: hidden; font-size: 1.3rem;
   }
-  .dvs-mini-art img { width: 100%; height: 100%; object-fit: cover; }
+  .dvs-mini-art img { width: 100%; height: 100%; object-fit: contain; }
   .dvs-mini-art .sprite-stack { width: 90% !important; height: 90% !important; }
   .dvs-mini-art .sprite-stack img { object-fit: contain; image-rendering: pixelated; }
   .dvs-row-main { flex: 1 1 auto; min-width: 0; }
@@ -11054,7 +11054,7 @@
     display: flex; align-items: center; justify-content: center; font-size: 4rem;
     border: 1px solid var(--border);
   }
-  .dvs-asset-art img { width: 100%; height: 100%; object-fit: cover; }
+  .dvs-asset-art img { width: 100%; height: 100%; object-fit: contain; }
   .dvs-asset-art .sprite-stack { width: 88% !important; height: 88% !important; }
   .dvs-asset-art .sprite-stack img { object-fit: contain; image-rendering: pixelated; }
   .dvs-asset-info { flex: 1 1 220px; min-width: 0; }
@@ -62483,6 +62483,10 @@ function render() {
   try { _installSpendInterceptors(); } catch (e) {}
   // 🧹 Gem-picker backdrop cleanup
   try { const _gpw = document.getElementById('db-gem-picker-wrapper'); if (_gpw) _gpw.remove(); } catch (e) {}
+  // 🧹 DVS valuation-modal portal cleanup — the modal lives in a body-level host
+  // (see syncDvsModal). If we're no longer on the Market screen, tear it down so
+  // a left-open valuation overlay can never linger on top of another screen.
+  try { if (App.screen !== 'market') { const _dvh = document.getElementById('dvs-modal-host'); if (_dvh) _dvh.remove(); App.dvsAssetId = null; } } catch (e) {}
   // 🎴 STARTER DECK RESTORE — admin removed players' starter decks during the
   // global reset; this one-time pass grants every player ALL 3 (or however
   // many the catalog defines) starter decks if they're missing. Gated by a
@@ -88001,6 +88005,12 @@ function renderMarket() {
     setTimeout(() => render(), 0);
     return;
   }
+  // 🧹 The 📈 Stock tab was retired in favor of 💎 Valuation (which surfaces the
+  // same volume / price / trend data plus per-card value scores). Redirect any
+  // persisted 'stock' selection so returning players don't land on a hidden tab.
+  // NOTE: renderMarketStock() and its router branch are intentionally KEPT — the
+  // tab is simply unlinked from the UI, nothing is deleted.
+  if (App.marketTab === 'stock') App.marketTab = 'valuation';
   const tab = App.marketTab || 'browse';
   const filter = App.marketFilter || 'all';
   const myListings = Market.listings.filter(l => l.sellerId === 'player');
@@ -88012,7 +88022,6 @@ function renderMarket() {
       <button class="forge-tab ${tab === 'sell' ? 'active' : ''}" data-tab="sell">Sell</button>
       <button class="forge-tab ${tab === 'mine' ? 'active' : ''}" data-tab="mine">My Listings ${myListings.length > 0 ? `<span class="tab-count">${myListings.length}</span>` : ''}</button>
       <button class="forge-tab ${tab === 'resources' ? 'active' : ''}" data-tab="resources">🧰 Resources</button>
-      <button class="forge-tab ${tab === 'stock' ? 'active' : ''}" data-tab="stock">📈 Stock</button>
       <button class="forge-tab ${tab === 'valuation' ? 'active' : ''}" data-tab="valuation">💎 Valuation</button>
     </div>
   `;
@@ -88044,15 +88053,15 @@ function renderMarket() {
         title: '📖 How the Player Market works',
         steps: [
           { title: 'Browse — NPC traders post listings',
-            desc: 'NPC traders like Mira, Lyssa, and Old Bron restock every <strong>${MARKET_RESEED_HOURS}h</strong>. Each listing is a single card or held item priced in <span class="cinder-icon"></span> Cinders. Filter by Card / Item / All.' },
+            desc: `NPC traders like Mira, Lyssa, and Old Bron restock every <strong>${MARKET_RESEED_HOURS}h</strong>. Each listing is a single card or held item priced in <span class="cinder-icon"></span> Cinders. Filter by Card / Item / All. Click any card to see its full Valuation breakdown.` },
           { title: 'Sell — list your own',
             desc: 'In the <strong>Sell</strong> tab, list your duplicate Forge cards or extra held items. Pick a price; if it sells, the Cinders land in your pool instantly.' },
           { title: 'My Listings — track active offers',
             desc: 'See everything you have on the market in one place. Cancel unsold listings any time to pull cards back into your inventory.' },
-          { title: 'Stock — market history & trends',
-            desc: 'The Stock tab tracks volume sold per card type, average price, recent sales, and which cards lead the market. Use it to find arbitrage and price your own listings competitively.' },
+          { title: 'Valuation — live asset prices & trends',
+            desc: 'The <strong>💎 Valuation</strong> tab grades every card with a Value Score, suggests a fair Cinder/USD price, and charts price history (24h / 7d / 30d). Use it to spot deals in Browse and price your own listings competitively.' },
         ],
-        foot: '💡 <strong>This screen unlocks with 2 heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}+.</strong> Multiplayer is on the roadmap — when it ships, real-player listings appear here alongside the NPC traders without any extra setup.',
+        foot: `💡 <strong>This screen unlocks with 2 heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}+.</strong> Multiplayer is on the roadmap — when it ships, real-player listings appear here alongside the NPC traders without any extra setup.`,
       })}
       ${tabsHtml}
       <div class="forge-body">${body}</div>
@@ -88083,6 +88092,11 @@ function renderMarket() {
   // a read-only detail card — view only, no ownership/action change.
   bindCardDetailContextMenus();
   bindCollectionCardModal();
+  // 💎 Card-tile → Valuation modal: left-click any valued card (Browse / My
+  // Listings / Valuation grid) to open its breakdown, and (re)build the
+  // body-level modal portal so it always appears in the player's viewport.
+  bindDvsCardOpeners();
+  syncDvsModal();
 }
 
 function renderListingCard(listing, opts) {
@@ -88165,7 +88179,12 @@ function renderMarketTile(listing, opts) {
     : `${(card.type || 'unit').toUpperCase()} · Cost ${card.cost || 0} <span class="energy-orb"></span>${card.rarity ? ' · ' + escapeHtml(String(card.rarity).toUpperCase()) : ''}`;
   const action = (opts && opts.action) || '';
   const detailAttrs = (!isItem && card && card.id)
-    ? ` data-detail-card="${escapeHtml(card.id)}" data-detail-kind="${escapeHtml(card.type || 'unit')}" title="Right-click for details"`
+    ? ` data-detail-card="${escapeHtml(card.id)}" data-detail-kind="${escapeHtml(card.type || 'unit')}" title="Click for Valuation · right-click for full card details"`
+    : '';
+  // 💎 Left-click a card tile to open its Digital Valuation breakdown — the same
+  // modal the Valuation tab shows. Cards only (held items aren't DVS-valued).
+  const dvsAttr = (!isItem && card && card.id)
+    ? ` data-dvs-card="${escapeHtml(card.id)}" style="cursor:pointer"`
     : '';
   const badge = isAuction ? `<div class="mkt-auction-badge">🔨 AUCTION</div>` : '';
   const timer = isAuction ? `<div class="mkt-timer" data-auction-timer="${escapeHtml(listing.id)}">${formatAuctionTimeLeft(listing)} left</div>` : '';
@@ -88210,7 +88229,7 @@ function renderMarketTile(listing, opts) {
       </div>`;
   }
   return `
-    <div class="mkt-tile ${isAuction ? 'is-auction' : ''}" data-listing-row="${escapeHtml(listing.id)}"${detailAttrs}>
+    <div class="mkt-tile ${isAuction ? 'is-auction' : ''}" data-listing-row="${escapeHtml(listing.id)}"${detailAttrs}${dvsAttr}>
       <div class="mkt-tile-img">
         ${badge}
         ${dvsScoreChip}
@@ -89005,7 +89024,12 @@ function renderMarketValuation() {
     ? `<div class="mkt-grid">${tiles}</div>`
     : `<div class="empty-list-note">No assets match your search.</div>`;
 
-  return header + dashboard + toolbar + grid + renderDvsAssetModal();
+  // 💎 The asset-detail modal is now rendered into a body-level portal (see
+  // syncDvsModal) so it escapes the #app transform containing block and always
+  // appears in the player's current viewport. It's no longer injected inline
+  // here — that avoids a duplicate #dvs-modal-overlay id now that the same
+  // modal also opens from Browse / My Listings tiles.
+  return header + dashboard + toolbar + grid;
 }
 
 function renderDvsAssetModal() {
@@ -89143,6 +89167,55 @@ function bindMarketValuation() {
   const overlay = document.getElementById('dvs-modal-overlay');
   if (overlay) overlay.onclick = (e) => { if (e.target === overlay) { App.dvsAssetId = null; render(); } };
   document.querySelectorAll('[data-dvs-range]').forEach(el => {
+    el.onclick = (e) => { e.stopPropagation(); App.dvsRange = el.dataset.dvsRange; render(); };
+  });
+}
+
+// 💎 Shared DVS-modal openers — bound for EVERY market tab so a left-click on
+// any valued card tile (Browse, My Listings, or the Valuation grid) opens the
+// same valuation breakdown the Valuation tab shows.
+function bindDvsCardOpeners() {
+  document.querySelectorAll('[data-dvs-card]').forEach(el => {
+    el.onclick = (e) => {
+      // Don't hijack clicks on the tile's own controls — Buy / Bid / Buy Now /
+      // history buttons, links and form fields keep doing their job.
+      if (e.target.closest('button, a, input, select, textarea, [data-act], .mkt-tile-actions')) return;
+      const id = el.dataset.dvsCard;
+      if (!id) return;
+      App.dvsAssetId = id;
+      App.dvsRange = App.dvsRange || '7d';
+      render();
+    };
+  });
+}
+
+// 💎 Render the DVS asset-detail modal into a host appended directly to <body>.
+// Rendering it OUTSIDE #app sidesteps the persistent page-fade-in transform on
+// #app (animation-fill-mode:both retains transform:translateY(0), which makes a
+// position:fixed overlay resolve against the tall page box instead of the
+// viewport — that's why the modal used to appear way up at the top of the page
+// and forced players to scroll). Idempotent: called on every market render to
+// create / refresh / tear down the portal and (re)bind the modal's controls.
+function syncDvsModal() {
+  const html = (typeof renderDvsAssetModal === 'function') ? renderDvsAssetModal() : '';
+  let host = document.getElementById('dvs-modal-host');
+  if (!html) {
+    // Modal closed — remove the host so it never traps clicks underneath.
+    if (host) host.remove();
+    return;
+  }
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'dvs-modal-host';
+    document.body.appendChild(host);
+  }
+  host.innerHTML = html;
+  // Modal controls: close button, click-outside-to-close, and range toggle.
+  const closeBtn = host.querySelector('#dvs-modal-close');
+  if (closeBtn) closeBtn.onclick = () => { App.dvsAssetId = null; render(); };
+  const overlay = host.querySelector('#dvs-modal-overlay');
+  if (overlay) overlay.onclick = (e) => { if (e.target === overlay) { App.dvsAssetId = null; render(); } };
+  host.querySelectorAll('[data-dvs-range]').forEach(el => {
     el.onclick = (e) => { e.stopPropagation(); App.dvsRange = el.dataset.dvsRange; render(); };
   });
 }

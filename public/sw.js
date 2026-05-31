@@ -308,7 +308,13 @@
 //         (Profile.sideDeck.gems), gated by pool count vs. copies socketed
 //         elsewhere, capped at 5 connected gems — sockets carried over from a prior
 //         session stay selected so nothing is lost. Nothing removed.
-const CACHE_VERSION = 'mythic-v86z-' + Date.now().toString(36);
+// v87a — The Market: removed 📈 Stock tab (folded into 💎 Valuation), card tiles
+//        now open the full DVS Valuation modal on left-click, the modal renders
+//        in a body-level portal so it appears in the player's viewport (no more
+//        scrolling to the top), card art shows whole (object-fit:contain, no
+//        cropping) across Browse / My Listings / All Assets / leaderboard, and
+//        the How-To panel literal-template bugs were fixed. Nothing removed.
+const CACHE_VERSION = 'mythic-v87a-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

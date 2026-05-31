@@ -31,7 +31,9 @@ import {
 } from '../engine/damage';
 
 const MAX_CLIENTS        = 2;
-const RECONNECT_WINDOW_S = 30;
+// Reconnect grace before a dropped client forfeits. Env-tunable so tests can
+// shorten it and ops can adjust without a code change. Defaults to 30s.
+const RECONNECT_WINDOW_S = parseInt(process.env.RECONNECT_WINDOW_S || '30', 10);
 const TURN_TIMEOUT_MS    = 120_000; // 2 minutes per turn
 
 // ─── Join options ─────────────────────────────────────────────────────────────
@@ -107,6 +109,16 @@ export class BattleRoom extends Room<BattleState> {
 
   private turnTimer: NodeJS.Timeout | null = null;
 
+  // 📸 STAGED "server-owns-match" path — latest authoritative board snapshot
+  // each player has sent, keyed by userId. The client engine stays the source
+  // of board truth in this stage; the SERVER owns only turn order, match end,
+  // and disconnect handling. Snapshots are kept OFF the schema on purpose:
+  // they are perspective-mirrored per client, so we forward them point-to-point
+  // (relay) and replay the opponent's latest to a reconnecting client, instead
+  // of broadcasting via state diffing. (The schema-driven engine handlers below
+  // remain for the later "deepen toward full authority" stage.)
+  private lastSnapshotByUser: Record<string, string> = {};
+
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
   onCreate(options: BattleRoomCreateOptions) {
     console.log('[battle] onCreate', options);
@@ -146,6 +158,43 @@ export class BattleRoom extends Room<BattleState> {
       const opp = this.opponentOf(me);
       if (opp) this.endMatch(opp, 'forfeit');
     });
+
+    // 📸 Board snapshot relay (staged path) — the client that just acted sends
+    // its authoritative board state; we remember it (for reconnect resync) and
+    // forward it to the opponent. The payload is opaque to the server here: the
+    // client engine remains the source of board truth, while the server owns
+    // turn order, match end, and disconnect handling.
+    this.onMessage('snapshot', (client, payload) => {
+      const me = client.userData?.userId;
+      if (!me || !this.state.players.has(me) || this.state.winnerUserId) return;
+      const kind = (payload && typeof payload.kind === 'string') ? payload.kind : 'full';
+      const body = (payload && typeof payload === 'object' && 'payload' in payload) ? payload.payload : payload;
+      // Only remember FULL snapshots as the resync baseline — a lone delta can't
+      // rebuild a reconnecting client. Deltas still relay live to the opponent.
+      if (kind === 'full') {
+        try { this.lastSnapshotByUser[me] = JSON.stringify(body); } catch { /* no-op */ }
+      }
+      // 2-client room → except-sender is exactly the opponent.
+      this.broadcast('snapshot', { from: me, kind, payload: body }, { except: client });
+    });
+
+    // 🏁 Authoritative match result — the SINGLE writer. Either client may
+    // report the outcome it observed on its synced board (typically the loser
+    // reporting "my hero died"); the FIRST valid claim wins and is broadcast to
+    // both. Replaces the old client-vs-client double-submit race that produced
+    // wrong/duplicate win-loss results.
+    this.onMessage('claimResult', (client, payload) => {
+      const me = client.userData?.userId;
+      if (!me || !this.state.players.has(me) || this.state.winnerUserId) return;
+      const winner = String(payload?.winnerUserId || '');
+      if (!winner || !this.state.players.has(winner)) {
+        console.warn('[battle] claimResult: invalid winner', payload);
+        return;
+      }
+      const reason = String(payload?.reason || 'hero-killed').slice(0, 32);
+      console.log('[battle] claimResult accepted', { from: me, winner, reason });
+      this.endMatch(winner, reason);
+    });
   }
 
   async onAuth(_client: Client, options: BattleRoomJoinOptions): Promise<AuthResult> {
@@ -163,12 +212,25 @@ export class BattleRoom extends Room<BattleState> {
   onJoin(client: Client, options: BattleRoomJoinOptions, auth: AuthResult) {
     console.log('[battle] onJoin', { matchId: this.state.matchId, userId: auth.userId });
     client.userData = { userId: auth.userId, email: auth.email };
+    // Tell the joining client its own server-side userId + matchId. Handy for
+    // clients that don't already know it (e.g. the dev-bypass test harness) and
+    // a robust cross-check for the live client's perspective mapping.
+    try { client.send('welcome', { userId: auth.userId, matchId: this.state.matchId }); } catch { /* no-op */ }
 
     const existing = this.state.players.get(auth.userId);
     if (existing) {
       existing.connected  = true;
       existing.lastSeenAt = Date.now();
       console.log('[battle] reconnect — restoring', auth.userId);
+      // Resync the reconnecting client with the opponent's most recent FULL
+      // board snapshot so it never lands on a stale/empty board.
+      const opp = this.opponentOf(auth.userId);
+      const snap = opp ? this.lastSnapshotByUser[opp] : '';
+      if (snap) {
+        try {
+          client.send('snapshot', { from: opp, kind: 'full', payload: JSON.parse(snap), resync: true });
+        } catch { /* no-op */ }
+      }
       return;
     }
 

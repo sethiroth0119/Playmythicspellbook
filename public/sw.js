@@ -351,7 +351,14 @@
 //        moveset power. The listing tile's "sugg." price + deal badge use the
 //        per-copy value, and the detail modal shows a "This copy — suggested"
 //        line (base × instance). The base per-card valuation engine is unchanged.
-const CACHE_VERSION = 'mythic-v87g-' + Date.now().toString(36);
+// v88a — 🃏 PLAYER MARKET goes CLOUD (Stage 1, fixed-price): NPC "mockup"
+//        traders retired; Browse + My Listings now read the shared
+//        card_market_listings Supabase table so EVERY signed-in player's card
+//        listings appear to everyone. Sell posts to the cloud; buy = atomic
+//        claim + pay + grant copy (carries the seller's unit instance); cancel
+//        refunds the escrow. One-time SQL setup panel on Browse if the table is
+//        missing. Local market kept as offline fallback. Auctions = Stage 2.
+const CACHE_VERSION = 'mythic-v88a-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

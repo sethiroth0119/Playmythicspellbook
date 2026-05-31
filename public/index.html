@@ -38366,6 +38366,200 @@ async function resMarketCancel(listing) {
 }
 
 // ============================================================================
+// 🃏 PLAYER CARD MARKET (cloud) — real cross-player listings, mirroring the
+// resource exchange. This REPLACES the old NPC "mockup" listings on Browse.
+// Each row carries the seller's exact card snapshot + unit instance. Stage 1
+// is fixed-price (post / fetch / buy / cancel); cloud auctions land in Stage 2.
+// ============================================================================
+const CardMarket = {
+  open: [], mine: [],
+  tableMissing: false, lastFetch: 0, loading: false, _err: null,
+  _lastPostAt: 0, _channel: null, _refetchT: null, _rt: false,
+};
+const CARD_MARKET_TTL_MS        = 14 * 24 * 3600000; // listings auto-expire after 14 days
+const CARD_MARKET_MAX_ACTIVE    = 30;
+const CARD_MARKET_POST_COOLDOWN = 3000;
+const CARD_MARKET_SQL = "create table if not exists public.card_market_listings (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  seller_name text,\n  kind text not null default 'card',\n  card_id text,\n  card_json jsonb,\n  unit_json jsonb,\n  listing_type text not null default 'fixed',\n  currency text not null default 'cinders',\n  price integer not null default 0,\n  starting_bid integer not null default 0,\n  current_bid integer not null default 0,\n  current_bidder_id uuid references auth.users(id),\n  current_bidder_name text,\n  buy_now_price integer,\n  bid_history jsonb not null default '[]'::jsonb,\n  ends_at timestamptz,\n  buyer_id uuid references auth.users(id),\n  status text not null default 'open',\n  paid_out boolean not null default false,\n  created_at timestamptz default now()\n);\nalter table public.card_market_listings enable row level security;\ndrop policy if exists cml_sel on public.card_market_listings;\ncreate policy cml_sel on public.card_market_listings for select to authenticated using (status = 'open' or seller_id = auth.uid() or buyer_id = auth.uid() or current_bidder_id = auth.uid());\ndrop policy if exists cml_ins on public.card_market_listings;\ncreate policy cml_ins on public.card_market_listings for insert to authenticated with check (seller_id = auth.uid());\ndrop policy if exists cml_upd on public.card_market_listings;\ncreate policy cml_upd on public.card_market_listings for update to authenticated using (status = 'open' or seller_id = auth.uid()) with check (true);\ndrop policy if exists cml_del on public.card_market_listings;\ncreate policy cml_del on public.card_market_listings for delete to authenticated using (seller_id = auth.uid() and status = 'open');";
+function _cmAgeMs(r) { const t = r && r.created_at ? Date.parse(r.created_at) : NaN; return isNaN(t) ? 0 : (Date.now() - t); }
+function _cmExpired(r) { return _cmAgeMs(r) > CARD_MARKET_TTL_MS; }
+function _cmMarkErr(e) {
+  const msg = (e && (e.message || e.code || '')) + '';
+  if (/card_market_listings|relation|does not exist|schema cache|PGRST205|42P01/i.test(msg)) CardMarket.tableMissing = true;
+  CardMarket._err = msg; return null;
+}
+function _cmGiveItem(id) { if (!id) return; const inv = Profile.itemInventory || (Profile.itemInventory = {}); inv[id] = (inv[id] || 0) + 1; }
+// Map a cloud row into the local listing shape the market renderers expect.
+function _cardRowToListing(r, me) {
+  const mine = r.seller_id === me;
+  return {
+    id: r.id, _cloud: true,
+    sellerId: mine ? 'player' : r.seller_id,
+    sellerName: r.seller_name || 'Survivor',
+    kind: r.kind || 'card',
+    item: r.card_json || null,
+    cardId: r.card_id || (r.card_json && r.card_json.id) || null,
+    unitInstance: r.unit_json || null,
+    price: r.price || 0,
+    listingType: r.listing_type || 'fixed',
+    startingBid: r.starting_bid || 0,
+    currentBid: r.current_bid || 0,
+    currentBidderId: r.current_bidder_id || null,
+    currentBidderName: r.current_bidder_name || null,
+    buyNowPrice: r.buy_now_price || null,
+    endsAt: r.ends_at ? Date.parse(r.ends_at) : 0,
+    bidHistory: Array.isArray(r.bid_history) ? r.bid_history : [],
+    listedAt: r.created_at ? Date.parse(r.created_at) : Date.now(),
+  };
+}
+function cardMarketSubscribe() {
+  if (CardMarket._channel || !initCloud() || !Profile.cloud.signedIn || !Cloud.client) return;
+  try {
+    CardMarket._channel = Cloud.client.channel('card-market')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'card_market_listings' }, () => {
+        if (CardMarket._refetchT) clearTimeout(CardMarket._refetchT);
+        CardMarket._refetchT = setTimeout(() => {
+          cardMarketFetch().then(() => {
+            if (App.screen === 'market' && (App.marketTab === 'browse' || App.marketTab === 'mine') && typeof render === 'function') render();
+          });
+        }, 400);
+      })
+      .subscribe((st) => { if (st === 'SUBSCRIBED') CardMarket._rt = true; });
+  } catch (e) { CardMarket._channel = null; }
+}
+function cardMarketUnsubscribe() {
+  if (CardMarket._refetchT) { clearTimeout(CardMarket._refetchT); CardMarket._refetchT = null; }
+  if (CardMarket._channel) { try { CardMarket._channel.unsubscribe(); } catch (e) {} CardMarket._channel = null; }
+  CardMarket._rt = false;
+}
+async function cardMarketFetch() {
+  if (!initCloud() || !Profile.cloud.signedIn) { CardMarket._err = 'Sign in to trade.'; return; }
+  if (CardMarket.loading) return;
+  CardMarket.loading = true;
+  try {
+    const me = Profile.cloud.userId;
+    // Sellers collect Cinder payouts for anything that sold.
+    try {
+      const { data: sold } = await Cloud.client.from('card_market_listings')
+        .select('*').eq('seller_id', me).eq('status', 'sold').eq('paid_out', false).limit(50);
+      if (sold && sold.length) {
+        let total = 0;
+        for (const r of sold) {
+          const upd = await Cloud.client.from('card_market_listings').update({ paid_out: true }).eq('id', r.id).eq('paid_out', false).select('id');
+          if (!(upd && upd.data && upd.data.length)) continue;
+          const amt = (r.listing_type === 'auction') ? (r.current_bid || 0) : (r.price || 0);
+          Profile.gems = (Profile.gems || 0) + amt; total += amt;
+        }
+        if (total > 0) { try { saveProfile(); } catch (e) {} showToast(`💰 Market sales collected: +${total} 🔥`, 4200); }
+      }
+    } catch (e) { _cmMarkErr(e); }
+    const { data, error } = await Cloud.client.from('card_market_listings')
+      .select('*').eq('status', 'open').order('created_at', { ascending: false }).limit(200);
+    if (error) { _cmMarkErr(error); CardMarket.loading = false; return; }
+    CardMarket.tableMissing = false;
+    // Reclaim my own expired listings (refund the escrowed copy).
+    const mineExpired = (data || []).filter(r => r.seller_id === me && _cmExpired(r));
+    for (const r of mineExpired) {
+      const del = await Cloud.client.from('card_market_listings').delete().eq('id', r.id).eq('seller_id', me).eq('status', 'open').select('id');
+      if (del && del.data && del.data.length) { if ((r.kind || 'card') === 'item') _cmGiveItem(r.card_id); else _restoreCardCopy(r.card_id); }
+    }
+    const live = (data || []).filter(r => !_cmExpired(r));
+    CardMarket.open = live.filter(r => r.seller_id !== me).map(r => _cardRowToListing(r, me));
+    CardMarket.mine = live.filter(r => r.seller_id === me).map(r => _cardRowToListing(r, me));
+    CardMarket.lastFetch = Date.now();
+  } catch (e) { _cmMarkErr(e); }
+  CardMarket.loading = false;
+}
+// Post a FIXED-PRICE card/item listing. The caller escrows the copy first;
+// this only inserts the row (cancel/expiry refund the escrow).
+async function cardMarketPost(opts) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('Sign in to list on the player market.'); return false; }
+  const since = Date.now() - (CardMarket._lastPostAt || 0);
+  if (since < CARD_MARKET_POST_COOLDOWN) { showToast(`Slow down — wait ${Math.ceil((CARD_MARKET_POST_COOLDOWN - since) / 1000)}s.`, 2400); return false; }
+  if ((CardMarket.mine || []).length >= CARD_MARKET_MAX_ACTIVE) { showToast(`You already have ${CARD_MARKET_MAX_ACTIVE} active listings.`, 3200); return false; }
+  const row = {
+    seller_id: Profile.cloud.userId,
+    seller_name: (Profile.cloud.displayName || (Profile.account && Profile.account.displayName) || 'Survivor').slice(0, 40),
+    kind: opts.kind === 'item' ? 'item' : 'card',
+    card_id: opts.cardId || (opts.cardJson && opts.cardJson.id) || null,
+    card_json: opts.cardJson || null,
+    unit_json: opts.unitJson || null,
+    listing_type: 'fixed', currency: 'cinders',
+    price: Math.max(0, opts.price | 0), status: 'open',
+  };
+  const { error } = await Cloud.client.from('card_market_listings').insert(row);
+  if (error) { _cmMarkErr(error); showToast('⚠ Could not post listing.'); return false; }
+  CardMarket._lastPostAt = Date.now();
+  await cardMarketFetch();
+  return true;
+}
+// Grant the bought card/item into the buyer's inventory (mirrors local buy).
+function _cmGrantPurchase(r) {
+  if ((r.kind || 'card') === 'item') { _cmGiveItem(r.card_id); return; }
+  const snap = r.card_json || {};
+  const copy = { ...snap, id: 'cc_bought_' + Date.now() + '_' + Math.floor(Math.random() * 1000) };
+  try { if (Array.isArray(Forge.customCards)) { Forge.customCards.push(copy); saveForge(); } } catch (e) {}
+  if (!Profile.cardCollection) Profile.cardCollection = {};
+  Profile.cardCollection[copy.id] = (Profile.cardCollection[copy.id] || 0) + 1;
+  // 🪖 Carry the seller's unit instance (level/trait/nature) onto the new copy.
+  try {
+    if (r.unit_json && Profile.units && typeof Profile.units === 'object' && !Profile.units[copy.id]) {
+      const ui = r.unit_json;
+      Profile.units[copy.id] = { level: ui.level || 1, xp: ui.xp || 0, nature: ui.nature || null, trait: ui.traitId || null, kills: 0, fielded: 0 };
+    }
+  } catch (e) {}
+}
+// Buy a FIXED-PRICE cloud listing. Atomic claim, pay cinders, grant the copy.
+async function cardMarketBuy(listing) {
+  if (!initCloud() || !Profile.cloud.signedIn) { showToast('Sign in to trade.'); return false; }
+  if (listing.sellerId === 'player') { showToast('You cannot buy your own listing.'); return false; }
+  if ((Profile.gems || 0) < (listing.price || 0)) { showToast(`Need ${listing.price} 🔥 — you have ${Profile.gems || 0}`); return false; }
+  const { data, error } = await Cloud.client.from('card_market_listings')
+    .update({ status: 'sold', buyer_id: Profile.cloud.userId })
+    .eq('id', listing.id).eq('status', 'open').select('*');
+  if (error) { _cmMarkErr(error); showToast('⚠ Purchase failed.'); return false; }
+  if (!data || !data.length) { showToast('Too slow — someone already bought that.', 2600); await cardMarketFetch(); return false; }
+  Profile.gems = (Profile.gems || 0) - (listing.price || 0);
+  try { _serverMirrorCharge(listing.price | 0, 'Player Market: Buy ' + (listing.kind || 'card')); } catch (e) {}
+  _cmGrantPurchase(data[0]);
+  try { saveProfile(); } catch (e) {}
+  try { logSale({ kind: listing.kind, itemName: listing.item ? listing.item.name : 'Card', itemIcon: listing.item ? listing.item.icon : '?', itemType: listing.item ? listing.item.type : null, price: listing.price, sellerName: listing.sellerName, buyerName: 'You' }); } catch (e) {}
+  showToast(`✅ Acquired "${(listing.item && listing.item.name) || 'card'}" for ${listing.price} 🔥`, 3600);
+  await cardMarketFetch();
+  return true;
+}
+async function cardMarketCancel(listing) {
+  if (!initCloud() || !Profile.cloud.signedIn) return false;
+  const { data, error } = await Cloud.client.from('card_market_listings')
+    .delete().eq('id', listing.id).eq('seller_id', Profile.cloud.userId).eq('status', 'open').select('id');
+  if (error) { _cmMarkErr(error); showToast('⚠ Could not cancel.'); return false; }
+  if (data && data.length) {
+    if ((listing.kind || 'card') === 'item') _cmGiveItem(listing.cardId || (listing.item && listing.item.id));
+    else _restoreCardCopy(listing.cardId);
+    try { saveProfile(); } catch (e) {}
+    showToast('↩ Listing pulled.', 2600);
+  }
+  await cardMarketFetch();
+  return true;
+}
+// One-time setup panel (shown on Browse when the table doesn't exist yet).
+function renderCardMarketSetup() {
+  return `
+    <div style="background:rgba(224,85,106,0.08);border:1px solid rgba(224,85,106,0.35);border-radius:8px;padding:1rem 1.2rem;max-width:760px;margin:1rem auto">
+      <div style="font-family:'Cinzel',serif;color:#e0879a;font-size:1.05rem;margin-bottom:0.4rem">⚠ Player Market needs a one-time setup</div>
+      <div class="small-text ink-dim" style="margin-bottom:0.6rem">Run this once in your Supabase SQL editor, then hit Retry. Real cross-player card listings appear here as soon as the table exists.</div>
+      <textarea readonly id="cml-sql" style="width:100%;height:200px;background:#0a0d13;color:#cbd5e8;border:1px solid #243042;border-radius:6px;font-family:monospace;font-size:0.72rem;padding:0.6rem">${escapeHtml(CARD_MARKET_SQL)}</textarea>
+      <div style="margin-top:0.6rem;display:flex;gap:0.5rem">
+        <button class="btn-mini" id="cml-copy">📋 Copy SQL</button>
+        <button class="btn-mini" id="cml-retry">↻ Retry</button>
+      </div>
+      <div class="small-text ink-dim" style="margin-top:0.6rem">Optional — for <strong>instant</strong> updates instead of the 30s poll, also run:<br><code style="color:#9ad17a">alter publication supabase_realtime add table public.card_market_listings;</code></div>
+    </div>`;
+}
+function renderCardMarketSignin() {
+  return `<div class="empty-list-note" style="margin:1.2rem auto;max-width:560px">☁ Sign in to browse real card listings from every player.</div>`;
+}
+
+// ============================================================================
 // 🏛️ FOUNDATION RESERVE SYSTEM — world-scale manufacturing & stabilization.
 // Players deposit camp resources into a GLOBAL shared reserve (a permanent
 // sink). Products (packs / crates / capsules) only become manufacturable when
@@ -44122,6 +44316,17 @@ function listCardForSale(customCardId, price) {
   // stats / moveset) onto the listing so buyers see precisely what they'd buy.
   // Units only; null for spells / items.
   const _unitInst = ((card.type || 'unit') === 'unit') ? unitInstanceSnapshot(card) : null;
+  // ☁ Cloud player market — when signed in, post to the shared table so ALL
+  // players see the listing. The copy is already escrowed (_esc); refund it if
+  // the post fails. Local Market.listings is the offline-only fallback below.
+  if (typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn && typeof cardMarketPost === 'function') {
+    cardMarketPost({ kind: 'card', cardId: card.id, cardJson: cardSnapshotForListing(card), unitJson: _unitInst, price })
+      .then(ok => {
+        if (!ok) { if (_esc) _restoreCardCopy(card.id); }
+        else { showToast(`Listed "${card.name}" for ${price} 🔥`); if (App.screen === 'market' && typeof render === 'function') render(); }
+      });
+    return true;
+  }
   Market.listings.push({
     id: 'lst_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
     sellerId: 'player', sellerName: 'You',
@@ -44143,6 +44348,15 @@ function listHeldItemForSale(itemId, price) {
   if (!price) { showToast('Set a valid price'); return false; }
   inv[itemId] -= 1;
   saveProfile();
+  // ☁ Cloud player market — post held items to the shared table too.
+  if (typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn && typeof cardMarketPost === 'function') {
+    cardMarketPost({ kind: 'item', cardId: itemId, cardJson: itemSnapshotForListing(itemId), price })
+      .then(ok => {
+        if (!ok) { _cmGiveItem(itemId); try { saveProfile(); } catch (e) {} }
+        else { showToast(`Listed "${it.name}" for ${price} 🔥`); if (App.screen === 'market' && typeof render === 'function') render(); }
+      });
+    return true;
+  }
   Market.listings.push({
     id: 'lst_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
     sellerId: 'player', sellerName: 'You',
@@ -44252,16 +44466,16 @@ function buildNpcOffer() {
   };
 }
 function reseedNpcListingsIfStale(force) {
-  const now = Date.now();
-  const elapsed = now - (Market.lastSeedAt || 0);
-  const stale = force || elapsed >= MARKET_RESEED_HOURS * 3600000;
-  if (stale) Market.listings = Market.listings.filter(l => l.sellerId === 'player');
-  while (Market.listings.filter(l => l.sellerId !== 'player').length < 8) {
-    const offer = buildNpcOffer();
-    if (offer) Market.listings.push(offer); else break;
+  // 🧹 NPC "mockup" traders RETIRED — the Player Market now shows real
+  // cross-player listings (see CardMarket / card_market_listings). This is kept
+  // as a no-op so every existing caller still works; it only sweeps any stale
+  // NPC rows left in an old local save so the mockups never reappear.
+  if (Array.isArray(Market.listings)) {
+    const before = Market.listings.length;
+    Market.listings = Market.listings.filter(l => l && l.sellerId === 'player');
+    if (Market.listings.length !== before) { try { saveMarket(); } catch (e) {} }
   }
-  Market.lastSeedAt = now;
-  saveMarket();
+  // buildNpcOffer() is intentionally left defined but no longer called.
 }
 
 // ============================================================================
@@ -88255,8 +88469,19 @@ function renderMarket() {
   if (App.marketTab === 'stock') App.marketTab = 'valuation';
   const tab = App.marketTab || 'browse';
   const filter = App.marketFilter || 'all';
-  const myListings = Market.listings.filter(l => l.sellerId === 'player');
-  const otherListings = Market.listings.filter(l => l.sellerId !== 'player');
+  // ☁ Cloud player market — when signed in, Browse + My Listings come from the
+  // shared card_market_listings table (real cross-player listings). The NPC
+  // "mockups" are retired. Subscribe + fetch (30s stale guard) to stay live.
+  const _cmOn = (typeof initCloud === 'function') && initCloud() && Profile.cloud && Profile.cloud.signedIn;
+  if (_cmOn && typeof cardMarketSubscribe === 'function') {
+    cardMarketSubscribe();
+    if (!CardMarket.loading && (Date.now() - (CardMarket.lastFetch || 0) > 30000)) {
+      cardMarketFetch().then(() => { if (App.screen === 'market') render(); });
+    }
+  }
+  const _cmReady = _cmOn && !CardMarket.tableMissing;
+  const myListings = _cmReady ? CardMarket.mine : Market.listings.filter(l => l.sellerId === 'player');
+  const otherListings = _cmReady ? CardMarket.open : Market.listings.filter(l => l.sellerId !== 'player');
 
   const tabsHtml = `
     <div class="forge-tabs">
@@ -88269,9 +88494,10 @@ function renderMarket() {
   `;
 
   let body = '';
-  if (tab === 'browse') body = renderMarketBrowse(otherListings, filter);
+  if (tab === 'browse') body = (_cmOn && CardMarket.tableMissing) ? renderCardMarketSetup()
+                              : (!_cmOn ? renderCardMarketSignin() : renderMarketBrowse(otherListings, filter));
   else if (tab === 'sell') body = renderMarketSell();
-  else if (tab === 'mine') body = renderMarketMyListings(myListings);
+  else if (tab === 'mine') body = (_cmOn && CardMarket.tableMissing) ? renderCardMarketSetup() : renderMarketMyListings(myListings);
   else if (tab === 'resources') body = renderResourceMarket();
   else if (tab === 'stock') body = renderMarketStock();
   else if (tab === 'valuation') body = renderMarketValuation();
@@ -88282,20 +88508,19 @@ function renderMarket() {
         <h2 class="section-title"><img src="assets/artwork/gameicons/player%20market.png" alt="" style="height:2.3em;width:2.3em;object-fit:contain;vertical-align:middle;display:inline-block;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.75))"> The Market</h2>
         <div style="display:flex;gap:0.6rem;align-items:center">
           <span class="result-stat-pill" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.5);color:#ffd166;font-size:0.95rem;padding:0.3rem 0.8rem"><span class="cinder-icon"></span> ${Profile.gems || 0}</span>
-          <button class="btn-mini" id="btn-market-reseed">🔄 Refresh NPC Stock</button>
+          <button class="btn-mini" id="btn-market-reseed">🔄 Refresh Listings</button>
           <button class="btn-secondary" id="btn-back-market">← Back to Menu</button>
         </div>
       </div>
       <div class="placement-hint" style="margin-bottom:1rem">
-        Trade or sell custom Forge cards and held items. NPC traders restock every ${MARKET_RESEED_HOURS} hours.
-        <em>Multiplayer is coming — when it does, real-player listings will appear here alongside the NPCs.</em>
+        Trade or sell custom Forge cards and held items with <strong>real players</strong>. Every listing in Browse is a card or item another survivor put up for sale — sign in to buy, sell, and see each unit's exact level, traits, and moveset.
       </div>
       ${buildHowToPanel({
         id: 'player-market',
         title: '📖 How the Player Market works',
         steps: [
           { title: 'Browse — NPC traders post listings',
-            desc: `NPC traders like Mira, Lyssa, and Old Bron restock every <strong>${MARKET_RESEED_HOURS}h</strong>. Each listing is a single card or held item priced in <span class="cinder-icon"></span> Cinders. Filter by Card / Item / All. Click any card to see its full Valuation breakdown.` },
+            desc: `Every listing here is a single card or held item that <strong>another player</strong> put up for sale, priced in <span class="cinder-icon"></span> Cinders. Filter by Card / Item / All. Click any card to see its full Valuation breakdown — and, for units, the seller's exact level, traits, and moveset.` },
           { title: 'Sell — list your own',
             desc: 'In the <strong>Sell</strong> tab, list your duplicate Forge cards or extra held items. Pick a price; if it sells, the Cinders land in your pool instantly.' },
           { title: 'My Listings — track active offers',
@@ -88311,8 +88536,14 @@ function renderMarket() {
     ${renderCollectionCardModal()}
   `;
   if (tab !== 'resources' && typeof resMarketUnsubscribe === 'function') resMarketUnsubscribe();
-  document.getElementById('btn-back-market').onclick = () => { if (typeof resMarketUnsubscribe === 'function') resMarketUnsubscribe(); App.screen = 'title'; render(); };
-  document.getElementById('btn-market-reseed').onclick = () => { reseedNpcListingsIfStale(true); render(); };
+  document.getElementById('btn-back-market').onclick = () => { if (typeof resMarketUnsubscribe === 'function') resMarketUnsubscribe(); if (typeof cardMarketUnsubscribe === 'function') cardMarketUnsubscribe(); App.screen = 'title'; render(); };
+  // 🔄 Refresh — pull the latest cross-player listings (and sweep stale NPC rows).
+  document.getElementById('btn-market-reseed').onclick = () => {
+    reseedNpcListingsIfStale(true);
+    if ((typeof initCloud === 'function') && initCloud() && Profile.cloud && Profile.cloud.signedIn && typeof cardMarketFetch === 'function') {
+      CardMarket.lastFetch = 0; cardMarketFetch().then(render);
+    } else render();
+  };
   bindHowToPanels();
   document.querySelectorAll('.forge-tab').forEach(el => {
     el.onclick = () => { App.marketTab = el.dataset.tab; render(); };
@@ -88623,10 +88854,19 @@ function bindMarketBrowse() {
   document.querySelectorAll('[data-listing-type]').forEach(el => {
     el.onclick = () => { App.marketListingTypeFilter = el.dataset.listingType; render(); };
   });
+  // ☁ One-time setup panel (Browse) — copy SQL / retry the fetch.
+  const _cmlCopy = document.getElementById('cml-copy');
+  if (_cmlCopy) _cmlCopy.onclick = () => { try { navigator.clipboard.writeText(CARD_MARKET_SQL); showToast('📋 SQL copied.'); } catch (e) { const t = document.getElementById('cml-sql'); if (t) t.select(); } };
+  const _cmlRetry = document.getElementById('cml-retry');
+  if (_cmlRetry) _cmlRetry.onclick = () => { CardMarket.tableMissing = false; CardMarket.lastFetch = 0; cardMarketFetch().then(render); };
   document.querySelectorAll('[data-act="buy"]').forEach(el => {
-    el.onclick = () => {
+    el.onclick = async () => {
       if (el.disabled) return;
-      buyMarketListing(el.dataset.listing);
+      const lid = el.dataset.listing;
+      // ☁ Cloud listing → atomic cloud buy; else the local fallback path.
+      const cl = (typeof CardMarket !== 'undefined') ? (CardMarket.open || []).find(x => x && x.id === lid) : null;
+      if (cl) { await cardMarketBuy(cl); render(); return; }
+      buyMarketListing(lid);
       render();
     };
   });
@@ -89001,6 +89241,12 @@ function bindMarketSell() {
   // duration / dual-currency Buy Now).
   document.querySelectorAll('[data-act="auction-open"]').forEach(el => {
     el.onclick = () => {
+      // ☁ Cloud auctions arrive in Stage 2 — block local-only auctions while the
+      // cloud market is active so they aren't invisible to other players.
+      if ((typeof initCloud === 'function') && initCloud() && Profile.cloud && Profile.cloud.signedIn) {
+        showToast('🔨 Cloud auctions arrive in the next update — list at a fixed price for now.', 4200);
+        return;
+      }
       App.auctionListModal = { kind: el.dataset.akind === 'item' ? 'item' : 'card', id: el.dataset.aid, cur: 'cinders' };
       render();
     };
@@ -89044,7 +89290,11 @@ function bindMarketMyListings() {
         yesAccent: 'crimson',
       });
       if (!ok) return;
-      cancelMarketListing(el.dataset.listing);
+      const lid = el.dataset.listing;
+      // ☁ Cloud listing → cloud cancel (refunds the escrowed copy); else local.
+      const cl = (typeof CardMarket !== 'undefined') ? (CardMarket.mine || []).find(x => x && x.id === lid) : null;
+      if (cl) { await cardMarketCancel(cl); render(); return; }
+      cancelMarketListing(lid);
       render();
     };
   });

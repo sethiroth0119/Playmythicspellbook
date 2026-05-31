@@ -69319,35 +69319,41 @@ function renderCardEditor() {
     </div>
     ${type === 'unit' ? (() => {
       const ie = card.inspireEffect || {};
+      const ieEnabled = !!(card.inspireEffect);
       const ieType = ie.type || 'grantSwift';
       const ieStat = ie.stat || 'atk';
       const ieAmt = ie.amount || 1;
       return `<div class="editor-field full" style="background:rgba(168,230,207,0.06);border:1px dashed rgba(120,200,160,0.35);border-radius:6px;padding:0.7rem 0.85rem;margin-top:0.3rem">
-        <label style="font-weight:700;color:#a8e6cf">✨ Inspire Effect</label>
-        <div class="small-text" style="margin-top:0.15rem;margin-bottom:0.5rem;color:#c0ead0">Only used when Passive = Inspire. When an allied unit enters play whose energy cost ≥ this unit's cost, the new unit receives this effect.</div>
-        <div style="display:flex;flex-wrap:wrap;gap:0.5rem 1rem">
-          <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Effect Type
-            <select id="ed-inspire-type" style="font-size:0.82rem">
-              <option value="grantSwift"  ${ieType === 'grantSwift'  ? 'selected' : ''}>⚡ Grant Swift (remove summoning sickness)</option>
-              <option value="buffStats"   ${ieType === 'buffStats'   ? 'selected' : ''}>📈 Buff Stat (+N to one stat)</option>
-              <option value="buffAllStats" ${ieType === 'buffAllStats' ? 'selected' : ''}>🌟 Buff All Stats (+N to ATK/DEF/MAG/RES — only if new unit costs MORE)</option>
-              <option value="draw"        ${ieType === 'draw'        ? 'selected' : ''}>📜 Draw Cards (draw N cards)</option>
-              <option value="gainEnergy"  ${ieType === 'gainEnergy'  ? 'selected' : ''}>⚡ Gain Energy (+N energy)</option>
-            </select>
-          </label>
-          <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Amount (N)
-            <input type="number" id="ed-inspire-amount" min="1" max="10" value="${ieAmt}" style="width:60px;font-size:0.82rem">
-          </label>
-          <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Stat (for Buff Stat)
-            <select id="ed-inspire-stat" style="font-size:0.82rem">
-              <option value="atk" ${ieStat === 'atk' ? 'selected' : ''}>ATK</option>
-              <option value="def" ${ieStat === 'def' ? 'selected' : ''}>DEF</option>
-              <option value="mag" ${ieStat === 'mag' ? 'selected' : ''}>MAG</option>
-              <option value="res" ${ieStat === 'res' ? 'selected' : ''}>RES</option>
-              <option value="hp"  ${ieStat === 'hp'  ? 'selected' : ''}>HP (+to maxHp)</option>
-              <option value="spd" ${ieStat === 'spd' ? 'selected' : ''}>SPD</option>
-            </select>
-          </label>
+        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+          <input type="checkbox" id="ed-inspire-enabled" ${ieEnabled ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+          <span style="font-weight:700;color:#a8e6cf">✨ Inspire Effect — grant bonus when an ally enters play</span>
+        </label>
+        <div id="ed-inspire-fields" style="display:${ieEnabled ? 'block' : 'none'};margin-top:0.5rem">
+          <div class="small-text" style="margin-bottom:0.5rem;color:#c0ead0">Only fires when Passive = Inspire. When an allied unit enters play whose energy cost ≥ this unit's cost, that unit receives this effect.</div>
+          <div style="display:flex;flex-wrap:wrap;gap:0.5rem 1rem">
+            <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Effect Type
+              <select id="ed-inspire-type" style="font-size:0.82rem">
+                <option value="grantSwift"  ${ieType === 'grantSwift'  ? 'selected' : ''}>⚡ Grant Swift (remove summoning sickness)</option>
+                <option value="buffStats"   ${ieType === 'buffStats'   ? 'selected' : ''}>📈 Buff Stat (+N to one stat)</option>
+                <option value="buffAllStats" ${ieType === 'buffAllStats' ? 'selected' : ''}>🌟 Buff All Stats (+N to ATK/DEF/MAG/RES — only if new unit costs MORE)</option>
+                <option value="draw"        ${ieType === 'draw'        ? 'selected' : ''}>📜 Draw Cards (draw N cards)</option>
+                <option value="gainEnergy"  ${ieType === 'gainEnergy'  ? 'selected' : ''}>⚡ Gain Energy (+N energy)</option>
+              </select>
+            </label>
+            <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Amount (N)
+              <input type="number" id="ed-inspire-amount" min="1" max="10" value="${ieAmt}" style="width:60px;font-size:0.82rem">
+            </label>
+            <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Stat (for Buff Stat)
+              <select id="ed-inspire-stat" style="font-size:0.82rem">
+                <option value="atk" ${ieStat === 'atk' ? 'selected' : ''}>ATK</option>
+                <option value="def" ${ieStat === 'def' ? 'selected' : ''}>DEF</option>
+                <option value="mag" ${ieStat === 'mag' ? 'selected' : ''}>MAG</option>
+                <option value="res" ${ieStat === 'res' ? 'selected' : ''}>RES</option>
+                <option value="hp"  ${ieStat === 'hp'  ? 'selected' : ''}>HP (+to maxHp)</option>
+                <option value="spd" ${ieStat === 'spd' ? 'selected' : ''}>SPD</option>
+              </select>
+            </label>
+          </div>
         </div>
       </div>`;
     })() : ''}
@@ -69391,7 +69397,7 @@ function renderCardEditor() {
       </label>
       <div class="small-text" style="margin-top:0.3rem;color:#ffcfa0">When the opponent triggers a matching action, this unit can be <strong>popped from hand</strong> to negate (or stun/redirect/silence) the source — AND deploys to the field as a normal unit at the same time. Energy cost is paid once. The fields below appear when this is checked.</div>
     </div>` : ''}
-    ${(type === 'unit' || type === 'trap' || type === 'custom') ? `
+    ${(type === 'unit' || type === 'spell' || type === 'trap' || type === 'custom') ? `
     <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem;background:rgba(255,120,40,0.06);border:1px dashed rgba(255,140,60,0.4);border-radius:6px;padding:0.7rem 0.85rem">
       <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
         <input type="checkbox" id="ed-assault-on" ${card.isAssault ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
@@ -70067,7 +70073,8 @@ function renderCardEditor() {
         + `<div class="small-text ink-dim" style="margin-top:0.25rem">Effect granted after a friendly unit is sacrificed.</div></div>`;
     })()}
     ${(() => {
-      // ⚖️ Verdict sub-effect pickers — shown only when type === 'verdict'.
+      // ⚖️ Verdict sub-effect pickers — checkbox-gated (v86t).
+      const _verdictEnabled = !!(onPlay.verdictEnabled);
       const _vtypes = [
         ['aoeDamage','💥 AOE Damage (Amount dmg to enemies)'],
         ['drawCards','📜 Draw Cards (Amount cards)'],
@@ -70084,15 +70091,21 @@ function renderCardEditor() {
       const _vbAmt  = (onPlay.effectB && onPlay.effectB.amount) || 0;
       const _aOpts  = _vtypes.map(([v,l]) => `<option value="${v}" ${_vaType===v?'selected':''}>${escapeHtml(l)}</option>`).join('');
       const _bOpts  = _vtypes.map(([v,l]) => `<option value="${v}" ${_vbType===v?'selected':''}>${escapeHtml(l)}</option>`).join('');
-      return `<div class="editor-field full"><label>⚖️ Verdict — Label A (shown to opponent when choosing)</label>`
+      return `<div class="editor-field full" style="background:rgba(255,214,102,0.06);border:1px dashed rgba(255,214,102,0.35);border-radius:6px;padding:0.7rem 0.85rem;margin-top:0.3rem">`
+        + `<label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">`
+        + `<input type="checkbox" id="ed-verdict-enabled" ${_verdictEnabled ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">`
+        + `<span style="font-weight:700;color:#ffd166">⚖️ Verdict — player / AI choose between two effects</span></label>`
+        + `<div id="ed-verdict-fields" style="display:${_verdictEnabled ? 'block' : 'none'};margin-top:0.5rem">`
+        + `<div class="editor-field full"><label>Label A (shown when choosing)</label>`
         + `<input id="ed-verdict-labelA" value="${escapeHtml(onPlay.labelA || '')}" placeholder="e.g. Deal 8 damage to all enemies"></div>`
-        + `<div class="editor-field"><label>⚖️ Effect A — Type</label><select id="ed-verdict-typeA">${_aOpts}</select></div>`
-        + `<div class="editor-field"><label>⚖️ Effect A — Amount</label><input id="ed-verdict-amountA" type="number" min="0" max="200" value="${_vaAmt}"></div>`
-        + `<div class="editor-field full"><label>⚖️ Verdict — Label B (shown to opponent)</label>`
+        + `<div class="editor-field"><label>Effect A — Type</label><select id="ed-verdict-typeA">${_aOpts}</select></div>`
+        + `<div class="editor-field"><label>Effect A — Amount</label><input id="ed-verdict-amountA" type="number" min="0" max="200" value="${_vaAmt}"></div>`
+        + `<div class="editor-field full"><label>Label B (shown when choosing)</label>`
         + `<input id="ed-verdict-labelB" value="${escapeHtml(onPlay.labelB || '')}" placeholder="e.g. Draw 2 cards"></div>`
-        + `<div class="editor-field"><label>⚖️ Effect B — Type</label><select id="ed-verdict-typeB">${_bOpts}</select></div>`
-        + `<div class="editor-field"><label>⚖️ Effect B — Amount</label><input id="ed-verdict-amountB" type="number" min="0" max="200" value="${_vbAmt}"></div>`
-        + `<div class="small-text ink-dim" style="margin-top:0.25rem">When the PLAYER plays this, the AI picks less-harmful option. When the AI plays it, the player gets a choice overlay.</div>`;
+        + `<div class="editor-field"><label>Effect B — Type</label><select id="ed-verdict-typeB">${_bOpts}</select></div>`
+        + `<div class="editor-field"><label>Effect B — Amount</label><input id="ed-verdict-amountB" type="number" min="0" max="200" value="${_vbAmt}"></div>`
+        + `<div class="small-text ink-dim" style="margin-top:0.25rem">When the PLAYER plays this, the AI picks less-harmful option. When the AI plays it, the player gets a choice overlay.</div>`
+        + `</div></div>`;
     })()}
     ${(() => {
       // ✨ Buff/Debuff target picker — used only by 'applyBuffDebuff'.
@@ -70697,6 +70710,24 @@ function bindCardEditor() {
       }
       if (!isNew) saveForge();
       render();
+    };
+  }
+
+  // ✨ Inspire Effect — live show/hide the sub-fields below the checkbox (v86t).
+  const inspireChk = document.getElementById('ed-inspire-enabled');
+  if (inspireChk) {
+    inspireChk.onchange = () => {
+      const flds = document.getElementById('ed-inspire-fields');
+      if (flds) flds.style.display = inspireChk.checked ? 'block' : 'none';
+    };
+  }
+
+  // ⚖️ Verdict — live show/hide the sub-fields below the checkbox (v86t).
+  const verdictChk = document.getElementById('ed-verdict-enabled');
+  if (verdictChk) {
+    verdictChk.onchange = () => {
+      const flds = document.getElementById('ed-verdict-fields');
+      if (flds) flds.style.display = verdictChk.checked ? 'block' : 'none';
     };
   }
 
@@ -71563,13 +71594,19 @@ function captureEditorIntoCard(card) {
     if (tv > 0) card.tunnel = tv;
     else delete card.tunnel;
   }
-  // ✨ Inspire Effect — only stored when the passive is set to 'inspire'.
+  // ✨ Inspire Effect — only stored when the checkbox is explicitly enabled (v86t).
+  const _inspEnabledEl = document.getElementById('ed-inspire-enabled');
   const _inspTypeEl = document.getElementById('ed-inspire-type');
   if (_inspTypeEl) {
-    const _inspType = _inspTypeEl.value;
-    const _inspAmt  = Math.max(1, Math.min(10, parseInt((document.getElementById('ed-inspire-amount') || {}).value, 10) || 1));
-    const _inspStat = ((document.getElementById('ed-inspire-stat') || {}).value) || 'atk';
-    card.inspireEffect = { type: _inspType, amount: _inspAmt, stat: _inspStat };
+    const _inspEnabled = _inspEnabledEl ? _inspEnabledEl.checked : true;
+    if (_inspEnabled) {
+      const _inspType = _inspTypeEl.value;
+      const _inspAmt  = Math.max(1, Math.min(10, parseInt((document.getElementById('ed-inspire-amount') || {}).value, 10) || 1));
+      const _inspStat = ((document.getElementById('ed-inspire-stat') || {}).value) || 'atk';
+      card.inspireEffect = { type: _inspType, amount: _inspAmt, stat: _inspStat };
+    } else {
+      delete card.inspireEffect;
+    }
   }
   if (document.getElementById('ed-factions')) {
     const picked = [...document.querySelectorAll('#ed-factions input[data-faction]:checked')].map(el => el.dataset.faction);
@@ -71763,7 +71800,8 @@ function captureEditorIntoCard(card) {
         buffTarget:     v('ed-onplay-buff-target') || 'self',
         // ⚔ Sacrifice effect — used by 'sacrifice' on-play type.
         sacrificeEffect: v('ed-onplay-sac-effect') || 'buffSelf',
-        // ⚖️ Verdict — labels + sub-effects for effectA and effectB.
+        // ⚖️ Verdict — labels + sub-effects; only active when checkbox is enabled (v86t).
+        verdictEnabled: (() => { const el = document.getElementById('ed-verdict-enabled'); return el ? !!el.checked : false; })(),
         labelA: (document.getElementById('ed-verdict-labelA') || {}).value || '',
         labelB: (document.getElementById('ed-verdict-labelB') || {}).value || '',
         effectA: { type: v('ed-verdict-typeA') || '', amount: num('ed-verdict-amountA', 0, 200, 0) },
@@ -72462,6 +72500,26 @@ function renderMoveEditor() {
         <div class="editor-field"><label>Shield duration (turns)</label><input id="mv-shield-dur" type="number" min="1" max="9" value="${(move.grantShield && move.grantShield.duration) || 3}"></div>
         <div class="editor-field"><label>Trigger chance %</label><input id="mv-shield-chance" type="number" min="1" max="100" value="${(move.grantShield && move.grantShield.chance) || 100}"></div>
       </div>
+        <div class="editor-field full" style="background:rgba(255,60,60,0.05);border:1px dashed rgba(255,90,90,0.4);border-radius:6px;padding:0.7rem 0.85rem;margin-top:0.4rem">
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+            <input type="checkbox" id="mv-sacrifice" ${move.sacrifice ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+            <span style="font-weight:700;color:#ff6b6b">💀 Sacrifice Move — consume a friendly unit to power this move</span>
+          </label>
+          <div id="mv-sacrifice-fields" style="display:${move.sacrifice ? 'block' : 'none'};margin-top:0.5rem">
+            <div class="small-text ink-dim" style="margin-bottom:0.5rem">When this move is used, the player must choose a friendly unit to sacrifice. That unit is removed and the selected effect fires.</div>
+            <div class="editor-field">
+              <label>Sacrifice Effect</label>
+              <select id="mv-sacrifice-effect">
+                <option value="buffSelf"       ${(move.sacrificeEffect || 'buffSelf') === 'buffSelf'       ? 'selected' : ''}>✨ Buff Self (apply a status to self)</option>
+                <option value="damage"         ${(move.sacrificeEffect)               === 'damage'         ? 'selected' : ''}>💥 Deal Damage to All Enemies</option>
+                <option value="allEnemyStatus" ${(move.sacrificeEffect)               === 'allEnemyStatus' ? 'selected' : ''}>😵 Apply Status to All Enemies</option>
+                <option value="draw"           ${(move.sacrificeEffect)               === 'draw'           ? 'selected' : ''}>📜 Draw Cards (Amount)</option>
+                <option value="healSelf"       ${(move.sacrificeEffect)               === 'healSelf'       ? 'selected' : ''}>❤️ Heal Self (by Amount)</option>
+                <option value="gainEnergy"     ${(move.sacrificeEffect)               === 'gainEnergy'     ? 'selected' : ''}>⚡ Gain Energy (Amount)</option>
+              </select>
+            </div>
+          </div>
+        </div>
       <div class="editor-actions">
         <button class="btn-secondary" id="btn-cancel-move">Cancel</button>
         <button class="btn-primary" id="btn-save-move">${isNew ? 'Forge It' : 'Save Changes'}</button>
@@ -72480,6 +72538,15 @@ function bindMoveEditor() {
   };
   updateVisibility();
   document.getElementById('mv-kind').onchange = updateVisibility;
+
+  // 💀 Sacrifice — live show/hide the sub-fields (v86t).
+  const _sacChk = document.getElementById('mv-sacrifice');
+  if (_sacChk) {
+    _sacChk.onchange = () => {
+      const flds = document.getElementById('mv-sacrifice-fields');
+      if (flds) flds.style.display = _sacChk.checked ? 'block' : 'none';
+    };
+  }
 
   // ℹ Info buttons — open the modal with the relevant catalog so the admin
   // / player can see what each option does before picking it.
@@ -72626,6 +72693,19 @@ function bindMoveEditor() {
       if (sdCardIds.length) move.searchDeck.cardIds = sdCardIds;
     } else {
       delete move.searchDeck;
+    }
+
+    // 💀 Sacrifice — consume a friendly unit to power this move (v86t).
+    const _isSacrifice = !!(document.getElementById('mv-sacrifice') && document.getElementById('mv-sacrifice').checked);
+    if (_isSacrifice) {
+      move.sacrifice = true;
+      move.target = 'sacrificeAlly';
+      move.sacrificeEffect = (document.getElementById('mv-sacrifice-effect') || {}).value || 'buffSelf';
+    } else {
+      delete move.sacrifice;
+      delete move.sacrificeEffect;
+      // Only reset target when it was previously set to sacrificeAlly
+      if (move.target === 'sacrificeAlly') move.target = 'self';
     }
 
     // 🪶 Vanish (Fly/Dig/Realm) — a 2-turn charged vanish-and-return strike.

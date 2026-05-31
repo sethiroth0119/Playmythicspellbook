@@ -233,7 +233,16 @@
 //         Forge.customItems into Profile.socketedGems (persisted). Pre-battle
 //         loadout seeds bp.socketedGems from Profile.socketedGems so deck-
 //         builder gem selections carry into battle automatically.
-const CACHE_VERSION = 'mythic-v86s-' + Date.now().toString(36);
+// v86t — Card / Move Forge editor enhancements: (1) ✨ Inspire Effect now
+//         behind an enable checkbox — only stored when explicitly checked, so
+//         units don't accidentally inherit the inspire passive. (2) ⚖️ Verdict
+//         sub-effect block now behind an enable checkbox with verdictEnabled
+//         flag persisted on onPlay. (3) ⚔ Assault Card checkbox extended to
+//         spell cards (was unit/trap/custom only). (4) 💀 Sacrifice Move
+//         section added to the Move Forge editor — checkbox enables sacrifice
+//         mode; sacrifice effect dropdown (buffSelf/damage/allEnemyStatus/
+//         draw/healSelf/gainEnergy) sets what fires after the ally is consumed.
+const CACHE_VERSION = 'mythic-v86t-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

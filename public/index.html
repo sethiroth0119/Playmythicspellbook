@@ -116932,8 +116932,18 @@ const CX_EVENT_POOL = [
 function _cxEventList() {
   const cx = _cxEnsureHistory();
   // Top up the live event log so it always has 6+ visible items.
-  while (cx.eventLog.length < 6) {
-    const ev = CX_EVENT_POOL[(cx.eventLog.length + (Date.now() >> 16)) % CX_EVENT_POOL.length];
+  // 🛡 Index must stay a valid, NON-NEGATIVE slot. `Date.now() >> 16` was the
+  // bug: `>>` truncates to a 32-bit SIGNED int, and Date.now() (~1.75e12)
+  // overflows that and becomes negative for ~half of every ~49.7-day cycle,
+  // making the modulo negative → CX_EVENT_POOL[-n] === undefined → `ev.cat`
+  // crash. Use Math.floor(/65536) (never truncates, always ≥ 0) + a positive-
+  // modulo normalize + empty-pool / undefined-entry guards so it can't recur.
+  const _poolLen = (Array.isArray(CX_EVENT_POOL) ? CX_EVENT_POOL.length : 0);
+  while (_poolLen > 0 && cx.eventLog.length < 6) {
+    const _seed = cx.eventLog.length + Math.floor(Date.now() / 65536);
+    const _i = ((_seed % _poolLen) + _poolLen) % _poolLen;
+    const ev = CX_EVENT_POOL[_i];
+    if (!ev) break;
     cx.eventLog.unshift({ ts: Date.now() - cx.eventLog.length * 47000, cat: ev.cat, cls: ev.cls, msg: ev.msg, impact: ev.impact });
   }
   if (cx.eventLog.length > CX_EVENT_LOG_CAP) cx.eventLog.length = CX_EVENT_LOG_CAP;

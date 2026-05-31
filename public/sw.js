@@ -395,7 +395,14 @@
 //        in try/catch so a render error shows the actual error + a Back button
 //        (and logs the stack to console) instead of the hub button silently
 //        doing nothing / leaving a dead screen. Surfaces the real failing line.
-const CACHE_VERSION = 'mythic-v88g-' + Date.now().toString(36);
+// v88h — 🐛 FIX: Crash/Exchange crashed (TypeError reading 'cat' in
+//        _cxEventList). Root cause: `Date.now() >> 16` truncates to a 32-bit
+//        SIGNED int and Date.now() overflows it, going negative for ~half of
+//        every ~49.7-day cycle → negative modulo → CX_EVENT_POOL[-n] undefined
+//        → crash. Now uses Math.floor(/65536) (always ≥0) + positive-modulo
+//        normalize + empty-pool / undefined-entry guards. Crash/Exchange opens
+//        again. (v88g error-surface kept as a backstop.)
+const CACHE_VERSION = 'mythic-v88h-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

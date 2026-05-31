@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -3047,8 +3047,150 @@
 
   /* Action row — primary Ready button + skip-timer */
   .vs-actions {
-    display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
-    margin-top: 0.4rem;
+    display: flex; flex-direction: row; align-items: center; justify-content: center;
+    flex-wrap: wrap; gap: 0.7rem; margin-top: 0.4rem;
+  }
+  .vs-side-deck-btn {
+    font-size: 0.95rem; font-weight: 700; padding: 0.65rem 1.4rem;
+    background: linear-gradient(180deg, rgba(80,60,130,0.9), rgba(40,28,80,0.95));
+    border: 2px solid rgba(180,140,255,0.55); color: #d8c8ff; border-radius: 8px;
+    cursor: pointer; letter-spacing: 0.05em; transition: all 0.15s;
+  }
+  .vs-side-deck-btn:hover {
+    background: linear-gradient(180deg, rgba(120,90,200,0.95), rgba(60,40,120,0.95));
+    border-color: rgba(210,180,255,0.8); box-shadow: 0 4px 14px rgba(140,100,255,0.4);
+  }
+  .pbl-screen {
+    min-height: 100vh; background: linear-gradient(180deg,#0e0820,#1a0a2e);
+    display: flex; flex-direction: column; font-family: 'Cinzel',serif; color: #f0e6ff;
+  }
+  .pbl-header { padding: 1rem 1.5rem 0.6rem; border-bottom: 1px solid rgba(184,136,255,0.2); }
+  .pbl-title { font-size: 1.25rem; font-weight: 700; color: #d4af37; }
+  .pbl-tabs {
+    display: flex; gap: 0; border-bottom: 2px solid rgba(184,136,255,0.22);
+    padding: 0 1rem; background: rgba(0,0,0,0.25); flex-shrink: 0;
+  }
+  .pbl-tab {
+    padding: 0.7rem 1.3rem; background: none; border: none; border-bottom: 3px solid transparent;
+    margin-bottom: -2px; color: #9286bd; font-family: 'Cinzel',serif; font-size: 0.82rem;
+    font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;
+    transition: color 0.14s; letter-spacing: 0.04em; white-space: nowrap;
+  }
+  .pbl-tab:hover { color: #c8b4ff; }
+  .pbl-tab.active { color: #d4af37; border-bottom-color: #d4af37; }
+  .pbl-tab-badge {
+    font-size: 0.7rem; padding: 0.1rem 0.42rem; border-radius: 20px;
+    font-family: sans-serif; font-weight: 700; line-height: 1.4;
+  }
+  .pbl-tab-badge.ok   { background:rgba(80,200,80,0.16);  color:#5eb37a; border:1px solid rgba(80,200,80,0.4);  }
+  .pbl-tab-badge.warn { background:rgba(220,80,60,0.16);  color:#e85d3c; border:1px solid rgba(220,80,60,0.4);  }
+  .pbl-content {
+    flex: 1; overflow-y: auto; padding: 1rem 1.5rem;
+    max-width: 780px; width: 100%; box-sizing: border-box;
+  }
+  .pbl-deck-info {
+    font-size: 0.83rem; padding: 0.45rem 0.8rem; border-radius: 6px;
+    margin-bottom: 0.75rem; font-weight: 600; font-family: sans-serif;
+  }
+  .pbl-deck-info.ok   { background:rgba(80,200,80,0.1);  color:#5eb37a; border:1px solid rgba(80,200,80,0.3);  }
+  .pbl-deck-info.warn { background:rgba(220,80,60,0.1);  color:#e85d3c; border:1px solid rgba(220,80,60,0.3);  }
+  .pbl-card-list { display:flex; flex-direction:column; gap:0.3rem; margin-bottom:0.75rem; }
+  .pbl-card-row {
+    display:flex; align-items:center; gap:0.55rem;
+    padding:0.45rem 0.75rem; background:rgba(255,255,255,0.04);
+    border:1px solid rgba(184,136,255,0.14); border-radius:6px; transition:background 0.12s;
+  }
+  .pbl-card-row:hover { background:rgba(184,136,255,0.08); }
+  .pbl-card-cost { min-width:1.3rem; text-align:center; font-weight:700; font-size:0.88rem; color:#d4af37; font-family:sans-serif; }
+  .pbl-card-name { flex:1; font-size:0.86rem; color:#f0e6ff; font-family:sans-serif; }
+  .pbl-card-kind { font-size:0.66rem; font-weight:700; letter-spacing:0.06em; font-family:sans-serif; }
+  .pbl-card-count { font-size:0.78rem; color:#9286bd; font-family:sans-serif; min-width:2rem; text-align:right; }
+  .pbl-swap-btn { font-size:0.7rem; padding:0.18rem 0.55rem; white-space:nowrap; flex-shrink:0; }
+  .pbl-gem-list { display:flex; flex-direction:column; gap:0.55rem; margin-bottom:0.75rem; }
+  .pbl-gem-row {
+    display:flex; align-items:center; gap:0.8rem; flex-wrap:wrap;
+    padding:0.6rem 0.8rem; background:rgba(184,136,255,0.05);
+    border:1px solid rgba(184,136,255,0.18); border-radius:8px;
+  }
+  .pbl-gem-card-name { font-size:0.86rem; font-weight:700; color:#c8b4ff; min-width:130px; font-family:sans-serif; }
+  .pbl-gem-slots { display:flex; gap:0.4rem; flex-wrap:wrap; }
+  .pbl-hint { font-size:0.74rem; color:#7a6eac; font-style:italic; padding-top:0.5rem; border-top:1px solid rgba(255,255,255,0.06); font-family:sans-serif; }
+  .pbl-empty { font-size:0.84rem; color:#6a5e8a; font-style:italic; padding:1rem 0; font-family:sans-serif; text-align:center; }
+  .pbl-footer {
+    display:flex; gap:0.7rem; align-items:center; justify-content:center;
+    padding:0.9rem 1.5rem; border-top:1px solid rgba(184,136,255,0.18); flex-wrap:wrap; flex-shrink:0;
+  }
+  .pbl-done-btn { font-size:0.95rem; padding:0.7rem 1.8rem; }
+  .pbl-back-btn  { font-size:0.88rem; padding:0.7rem 1.4rem; }
+  /* ── Two-panel deck view ── */
+  .pbl-deck-view {
+    flex:1; display:flex; flex-direction:row; overflow:hidden; min-height:0;
+  }
+  .pbl-side-panel {
+    width:300px; min-width:220px; max-width:340px; flex-shrink:0;
+    display:flex; flex-direction:column; overflow:hidden;
+    background:rgba(10,6,22,0.6); border-right:1px solid rgba(184,136,255,0.18);
+  }
+  .pbl-main-panel {
+    flex:1; display:flex; flex-direction:column; overflow:hidden;
+    background:rgba(14,8,26,0.5);
+  }
+  .pbl-panel-header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0.55rem 0.9rem; background:rgba(0,0,0,0.3);
+    border-bottom:1px solid rgba(184,136,255,0.16);
+    font-family:'Cinzel',serif; font-size:0.78rem; font-weight:700;
+    letter-spacing:0.1em; color:#9286bd; flex-shrink:0;
+  }
+  .pbl-panel-list { flex:1; overflow-y:auto; padding:0.4rem 0.5rem; }
+  .pbl-panel-status { padding:0.3rem 0.9rem; font-size:0.74rem; font-family:sans-serif; font-weight:600; flex-shrink:0; }
+  .pbl-panel-status.ok   { color:#5eb37a; background:rgba(80,200,80,0.07); }
+  .pbl-panel-status.warn { color:#e85d3c; background:rgba(220,80,60,0.07); }
+  .pbl-card-row-side {
+    display:flex; align-items:center; gap:0.4rem; padding:0.32rem 0.55rem;
+    border-radius:5px; border:1px solid rgba(184,136,255,0.1); margin-bottom:2px;
+    background:rgba(255,255,255,0.03); font-family:sans-serif;
+  }
+  .pbl-card-row-side:hover { background:rgba(184,136,255,0.08); }
+  .pbl-card-row-main {
+    display:flex; align-items:center; gap:0.5rem; padding:0.36rem 0.65rem;
+    border-radius:5px; border:1px solid rgba(184,136,255,0.12); margin-bottom:2px;
+    background:rgba(255,255,255,0.03); font-family:sans-serif;
+  }
+  .pbl-card-row-main:hover { background:rgba(184,136,255,0.08); }
+  .pbl-cr-cost { min-width:1.2rem; text-align:center; font-weight:700; font-size:0.82rem; color:#d4af37; flex-shrink:0; }
+  .pbl-cr-name { flex:1; font-size:0.83rem; color:#f0e6ff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pbl-cr-kind { font-size:0.62rem; font-weight:700; letter-spacing:0.05em; flex-shrink:0; }
+  .pbl-cr-count { font-size:0.74rem; color:#9286bd; min-width:1.7rem; text-align:right; flex-shrink:0; }
+  .pbl-cr-btn {
+    font-size:0.68rem; padding:0.12rem 0.45rem; white-space:nowrap; flex-shrink:0;
+    border-radius:4px; border:1px solid rgba(184,136,255,0.35);
+    background:rgba(50,35,90,0.6); color:#c8b4ff; cursor:pointer; transition:background 0.12s;
+  }
+  .pbl-cr-btn:hover:not(:disabled) { background:rgba(100,70,180,0.7); }
+  .pbl-cr-btn:disabled { opacity:0.35; cursor:default; }
+  .pbl-gem-cards-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:0.7rem; padding:0.5rem 0; }
+  .pbl-gem-card {
+    background:rgba(30,18,50,0.7); border:1px solid rgba(184,136,255,0.28);
+    border-radius:10px; padding:0.75rem 0.9rem; display:flex; flex-direction:column; gap:0.55rem;
+  }
+  .pbl-gem-card-empty {
+    background:rgba(18,12,30,0.5); border:1px dashed rgba(184,136,255,0.2);
+    border-radius:10px; padding:0.75rem 0.9rem; display:flex; flex-direction:column; gap:0.4rem; opacity:0.65;
+  }
+  .pbl-gem-card-header { display:flex; align-items:center; justify-content:space-between; gap:0.5rem; }
+  .pbl-gem-card-name2 { font-size:0.88rem; font-weight:700; color:#f0e6ff; font-family:sans-serif; flex:1; }
+  .pbl-gem-slot-count { font-size:0.72rem; color:#9286bd; font-family:sans-serif; white-space:nowrap; }
+  .pbl-gem-no-slots { font-size:0.74rem; color:#6a5e8a; font-style:italic; font-family:sans-serif; }
+  .pbl-gem-slots-grid { display:flex; flex-direction:column; gap:0.35rem; }
+  .pbl-gem-slot-item { display:flex; flex-direction:column; gap:0.15rem; }
+  .pbl-gem-slot-label { font-size:0.66rem; color:#7a6eac; font-family:sans-serif; letter-spacing:0.04em; }
+  @media (max-width:640px) {
+    .pbl-content { padding:0.7rem 0.9rem; }
+    .pbl-tab     { padding:0.55rem 0.75rem; font-size:0.76rem; }
+    .pbl-deck-view { flex-direction:column; }
+    .pbl-side-panel { width:100%; max-width:100%; border-right:none; border-bottom:1px solid rgba(184,136,255,0.18); max-height:38vh; }
+    .pbl-main-panel { flex:1; min-height:0; }
   }
   .vs-ready-btn {
     font-size: 1.15rem; font-weight: 800;
@@ -6176,6 +6318,58 @@
     display: flex; justify-content: space-between; align-items: center;
     padding: 0.5rem 0.95rem; border-top: 1px solid rgba(255,140,80,0.30);
     background: rgba(0,0,0,0.25);
+  }
+  /* ⚔️ Assault prompt overlay — fires when the player attacks with assault cards in hand */
+  .assault-prompt-overlay {
+    position: fixed; inset: 0; z-index: 2147483250;
+    background: rgba(8,3,18,0.80); backdrop-filter: blur(3px);
+    display: flex; align-items: flex-end; justify-content: center;
+    animation: cp-back-fade 0.18s ease forwards;
+    padding-bottom: 3.5rem;
+  }
+  .assault-prompt-modal {
+    background: linear-gradient(160deg, rgba(30,16,60,0.97), rgba(15,8,30,0.99));
+    border: 2px solid rgba(255,120,60,0.55); border-radius: 14px;
+    box-shadow: 0 8px 36px rgba(255,80,40,0.35), 0 0 0 1px rgba(255,140,60,0.18);
+    min-width: min(420px, 96vw); max-width: 560px;
+    animation: cp-modal-in 0.22s cubic-bezier(.22,1,.36,1) both;
+  }
+  .assault-prompt-head {
+    padding: 0.85rem 1.1rem 0.55rem;
+    border-bottom: 1px solid rgba(255,120,60,0.25);
+  }
+  .assault-prompt-title {
+    font-size: 1.05rem; font-weight: 900; letter-spacing: 0.08em;
+    color: #ffb060; text-shadow: 0 0 10px rgba(255,140,60,0.5);
+  }
+  .assault-prompt-sub {
+    font-size: 0.82rem; color: #e8c890; font-weight: 600; margin-top: 2px;
+  }
+  .assault-prompt-hint {
+    margin-top: 4px; font-size: 0.75rem; color: #9988aa;
+  }
+  .assault-prompt-cards {
+    display: flex; flex-direction: column; gap: 0.45rem;
+    padding: 0.7rem 0.9rem; max-height: 240px; overflow-y: auto;
+  }
+  .assault-prompt-card {
+    display: flex; align-items: center; gap: 0.75rem;
+    background: rgba(255,100,40,0.09); border: 1.5px solid rgba(255,120,60,0.35);
+    border-radius: 9px; padding: 0.5rem 0.85rem;
+    cursor: pointer; width: 100%; text-align: left; transition: all 0.12s;
+  }
+  .assault-prompt-card:hover {
+    background: rgba(255,120,50,0.22); border-color: rgba(255,160,80,0.7);
+    box-shadow: 0 2px 12px rgba(255,100,40,0.35);
+  }
+  .assault-prompt-card-icon { font-size: 2rem; }
+  .assault-prompt-card-body { flex: 1; min-width: 0; }
+  .assault-prompt-card-name { font-weight: 800; color: #ffe090; font-size: 0.9rem; }
+  .assault-prompt-card-desc { color: #c8b4d8; font-size: 0.75rem; margin-top: 1px; }
+  .assault-prompt-foot {
+    display: flex; justify-content: flex-end; align-items: center;
+    padding: 0.5rem 0.95rem; border-top: 1px solid rgba(255,120,60,0.22);
+    background: rgba(0,0,0,0.22);
   }
   /* 🎇 Counter flash — brief celebratory overlay when activated */
   .counter-flash {
@@ -25934,9 +26128,18 @@
       // Defer registration until after first paint so the splash isn't
       // delayed by SW boot. Wrap in load event so it kicks off post-render.
       window.addEventListener('load', function () {
+        // Auto-reload when the SW controller changes (new deploy activated).
+        // Guard flag prevents reload loops if the event fires multiple times.
+        var _swRefreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', function () {
+          if (_swRefreshing) return;
+          _swRefreshing = true;
+          window.location.reload();
+        });
         navigator.serviceWorker.register('/sw.js').then(function (reg) {
           // Auto-skip-waiting when a new SW shows up so deploys take effect
-          // on next refresh without manual reload prompts.
+          // immediately — combined with controllerchange above this auto-reloads
+          // the page so the player always gets the latest code.
           if (reg.waiting) try { reg.waiting.postMessage({ type: 'skip-waiting' }); } catch (e) {}
           reg.addEventListener('updatefound', function () {
             var newSW = reg.installing;
@@ -26245,6 +26448,9 @@ const STATUS_EFFECTS = {
   burningRes: { id: 'burningRes', name: 'Burning Resurrection', icon: '🔥', atkMod: 4, magMod: 4, desc: 'Risen in flame — +4 ATK & +4 MAG while it burns.' },
   // 🛡️ SOUL FLAME — Phoenix advanced option: a protective revive ward.
   soulFlame:  { id: 'soulFlame',  name: 'Soul Flame',   icon: '🕯️', defMod: 4, resMod: 4, desc: 'Wreathed in soul-fire — +4 DEF & +4 RES while it lasts.' },
+  // ❄️ FROST FORM — granted by the Frost Form passive on near-KO. While
+  // active the unit is encased in magical frost: tougher but slower.
+  frostForm:  { id: 'frostForm',  name: 'Frost Form',   icon: '❄️', defMod: 4, resMod: 3, spdMod: -1, desc: 'Encased in frost: +4 DEF, +3 RES, -1 SPD. Fades after a few turns.' },
 };
 
 const PASSIVES = {
@@ -26272,7 +26478,7 @@ const PASSIVES = {
   warlord:      { id: 'warlord',      name: 'Warlord',      desc: 'Your units gain +2 Attack' },
   archmage:     { id: 'archmage',     name: 'Archmage',     desc: 'Spells cost 1 less energy' },
   guardian:     { id: 'guardian',     name: 'Guardian',     desc: 'Adjacent allies take 25% less damage' },
-  inspire:      { id: 'inspire',      name: 'Inspire',      desc: 'Draw an extra card every 3 turns' },
+  inspire:      { id: 'inspire',      name: 'Inspire',      desc: 'When an allied unit enters play whose cost ≥ this unit\'s cost, that unit gains the configured Inspire Effect (Swift / stat buff / buff-all-stats / draw / energy). Buff All Stats requires the new unit to cost strictly MORE.' },
   venomous:     { id: 'venomous',     name: 'Venomous',     desc: 'Attacks have 30% chance to poison' },
   bloodthirst:  { id: 'bloodthirst',  name: 'Bloodthirst',  desc: 'Heal 5 HP after killing a unit' },
   sunbather:    { id: 'sunbather',    name: 'Sunbather',    desc: 'Heal 4 HP at start of turn during ☀️ Sunny weather' },
@@ -26284,6 +26490,56 @@ const PASSIVES = {
   energySpring:   { id: 'energySpring',  name: 'Energy Spring', desc: '+1 energy at the start of your turn while this unit is on the field.' },
   kalonChannel:   { id: 'kalonChannel',  name: 'Kalon Channel', desc: 'When this unit KOs an enemy, refunds 1 Kalon use to your pool (cap 3).' },
   taunt:        { id: 'taunt',        name: 'Taunt',        desc: 'Enemies in range must attack this unit before any other target.' },
+  // ❄️ FROST FORM — survive one KO from non-ice damage, enter Frost Form.
+  frostForm:    { id: 'frostForm',    name: 'Frost Form',   desc: 'Once per battle: when this unit would be KO\'d by non-ice damage, survive at 1 HP and gain Frost Form status for 3 turns (more DEF/RES, less SPD).' },
+  // 🍖 CONSUME — absorb ATK + DEF from units you kill.
+  consume:      { id: 'consume',      name: 'Consume',      desc: 'When this unit KOs an enemy, absorb their ATK and DEF (+1 each per kill, capped at +5 total stacks).' },
+  // ===== HEX TCG KEYWORD PASSIVES =====
+  // 🏃 SPEED — enters play with no summoning sickness (Hex TCG: Speed keyword).
+  speed:        { id: 'speed',        name: 'Speed',        desc: 'Enters play with no summoning sickness — can move and attack immediately on the turn it is deployed.' },
+  // ⚡ SWIFTSTRIKE — deals damage before the target can retaliate (Hex TCG: Swiftstrike).
+  // Strips Countering stance when attacking; if the target dies the retribution also cannot fire.
+  swiftstrike:  { id: 'swiftstrike',  name: 'Swiftstrike',  desc: 'Attacks land before the target can counter. Strips the Countering stance on hit. If the target is killed, Lethal Retribution is also silenced.' },
+  // 💥 CRUSH — overkill damage carries through to the enemy hero (Hex TCG: Crush).
+  crush:        { id: 'crush',        name: 'Crush',        desc: 'Excess damage from a killing blow carries over to the enemy hero. If this unit kills with 4 overkill, the hero takes 4 damage.' },
+  // 🗡️ STEADFAST — one free bonus attack per turn (Hex TCG: Steadfast).
+  // The unit does not exhaust on its first attack; a second attack marks it as used.
+  steadfast:    { id: 'steadfast',    name: 'Steadfast',    desc: 'Does not exhaust on its first attack each turn — can attack a second time. The bonus resets every turn.' },
+  // 🛡️ SPELLSHIELD — immune to enemy on-play AoE effects and consumable targeting (Hex TCG: Spellshield).
+  spellshield:  { id: 'spellshield',  name: 'Spellshield',  desc: 'Cannot be targeted by opponent on-play AoE effects or consumables. Board-wipes and direct attacks still resolve normally.' },
+
+  // ===== HEX TCG KEYWORD PASSIVES (v86g) =====
+  // ☠️ LETHAL — any damage dealt instantly kills a non-hero target (Hex TCG: Lethal).
+  lethal:       { id: 'lethal',       name: 'Lethal',       desc: 'Any damage this unit deals to a non-hero unit is instantly fatal, regardless of remaining HP.' },
+  // ⚔️ DEFENDER — cannot attack; holds the line as a defensive blocker (Hex TCG: Defender).
+  defender:     { id: 'defender',     name: 'Defender',     desc: 'This unit cannot attack. It holds the line as a defensive blocker and cannot be directed to strike.' },
+  // 🌀 UNBLOCKABLE — bypasses Bodyguard/Guardian intercepts and can hit flying units (Hex TCG: Unblockable).
+  unblockable:  { id: 'unblockable',  name: 'Unblockable',  desc: 'Ignores Bodyguard and Guardian intercepts. Can hit flying units without needing aerial reach.' },
+  // 🔥 ATTACK RAGE — permanently gains +N ATK each time this unit attacks (Hex TCG: Rage N).
+  attackRage:   { id: 'attackRage',   name: 'Attack Rage',  desc: 'Each time this unit attacks, it permanently gains +1 ATK (or +N if rageN is set on the card). Stacks every swing.' },
+  // 🤝 MOBILIZE — costs 2 less energy when at least 1 allied non-hero unit is on the field (Hex TCG: Mobilize).
+  mobilize:     { id: 'mobilize',     name: 'Mobilize',     desc: 'Costs 2 less energy to play when at least 1 allied non-hero unit is already on the battlefield.' },
+  // 🔮 PROPHECY — when this unit enters play, the next unit you deploy gains +2 ATK and +2 DEF (Hex TCG: Prophecy).
+  prophecy:     { id: 'prophecy',     name: 'Prophecy',     desc: 'When this unit enters play, your next deployed unit gains +2 ATK and +2 DEF.' },
+
+  // ===== HEX TCG KEYWORD PASSIVES (v86h) =====
+  // 🩸 LIFEDRAIN — heal HP equal to 100% of combat damage dealt (Hex TCG: Lifedrain).
+  lifedrain:    { id: 'lifedrain',   name: 'Lifedrain',    desc: 'Heals this unit for HP equal to all combat damage it deals — full 1:1 drain (stronger than the 30% Lifesteal passive).' },
+  // 🌤️ SKYGUARD — can target and hit flying units with any attack (Hex TCG: Skyguard).
+  skyguard:     { id: 'skyguard',    name: 'Skyguard',     desc: 'This unit can target and hit flying units with any attack, regardless of move type or range. Anti-air specialist.' },
+  // 🌟 INVINCIBLE — cannot be killed by damage; all hits floor at 1 HP (Hex TCG: Invincible).
+  invincible:   { id: 'invincible',  name: 'Invincible',   desc: 'Cannot be destroyed by damage. Every attack, spell, or DoT that would reduce HP to 0 stops at 1 HP instead. Removal effects still work.' },
+
+  // ===== 🛡️ BODYGUARD / GUARDIAN — unit-level intercept passives =====
+  // Any unit (not just tank/warrior heroes) can now carry these. The intercept
+  // engine checks both the hero skill-tree flags (legacy) AND these passives so
+  // custom cards created in the Forge work identically.
+  //
+  // BODYGUARD — intercept any attack aimed at an ally within 1 tile. No limit.
+  bodyguard:    { id: 'bodyguard',   name: 'Bodyguard',    desc: 'Steps in front of attacks targeting allies within 1 tile. Redirects enemy hits to this unit instead. No use limit.' },
+  // GUARDIAN — intercept the FIRST incoming attack on any ally within 2 tiles (once per match).
+  // The one-shot limit is tracked via _guardianUsed on the unit object.
+  guardian:     { id: 'guardian',    name: 'Guardian',     desc: 'Once per match, redirects the first incoming attack on any ally within 2 tiles to this unit instead. Consumed after use.' },
 
   // ===== 💀 IMMORTAL — cannot be killed by a damage TYPE =====
   // Damage of the matching type can still drain the unit all the way to 1 HP,
@@ -26489,6 +26745,19 @@ const PASSIVES = {
   weatherbornBloodmoon: { id: 'weatherbornBloodmoon', name: 'Weatherborn — Bloodmoon',desc: '🌕 Bloodmoon only: this card costs 0 energy to play under a bloodmoon.' },
   weatherbornMind:      { id: 'weatherbornMind',      name: 'Weatherborn — Mind Realm',desc: '🧠 Mind Realm only: this card costs 0 energy to play in the Mind Realm.' },
   weatherbornParallel:  { id: 'weatherbornParallel',  name: 'Weatherborn — Parallel World', desc: '🔮 Parallel World only: this card costs 0 energy to play in a Parallel World.' },
+
+  // ===== ✨ PER-STAT INSPIRE PASSIVES (v86m) =====
+  // Each triggers when an ally that costs STRICTLY MORE than this unit enters
+  // play. That ally gains +1 in the respective stat. These are separate passive
+  // IDs from 'inspire' — they work independently and can stack with each other
+  // and with the main inspire passive.
+  inspireAtk: { id: 'inspireAtk', name: 'Inspire ATK', desc: '✨ When an allied unit that costs STRICTLY MORE than this unit enters play, that ally gains +1 ATK.' },
+  inspireDef: { id: 'inspireDef', name: 'Inspire DEF', desc: '✨ When an allied unit that costs STRICTLY MORE than this unit enters play, that ally gains +1 DEF.' },
+  inspireMag: { id: 'inspireMag', name: 'Inspire MAG', desc: '✨ When an allied unit that costs STRICTLY MORE than this unit enters play, that ally gains +1 MAG.' },
+  inspireRes: { id: 'inspireRes', name: 'Inspire RES', desc: '✨ When an allied unit that costs STRICTLY MORE than this unit enters play, that ally gains +1 RES.' },
+  // ✨ ARCANE TEMPO — draw 1 extra card every 3 turns while this unit is alive (v86o).
+  // Fires in startTurn. Uses the per-side drawCounter (no new state needed).
+  inspireDrawTimer: { id: 'inspireDrawTimer', name: 'Arcane Tempo', desc: '✨ While this unit is alive, you draw 1 extra card at the start of every 3rd turn.' },
 };
 // Maps each Weatherborn passive id → the weatherType it requires (null = any).
 const WEATHERBORN_PASSIVES = {
@@ -29451,6 +29720,15 @@ function getEffectiveCardCost(card, state, side) {
   })();
 
   // Only THIS card matters — must carry the passive itself.
+  // 🤝 MOBILIZE — costs 2 less when at least 1 allied non-hero unit is on the field (Hex TCG: Mobilize).
+  if (cardHasPassive(card, 'mobilize') && state && Array.isArray(state.units)) {
+    const _mobilizeSide = (side === 'ai') ? 'ai' : 'player';
+    const _hasAlly = state.units.some(u => u && u.alive && u.owner === _mobilizeSide && !u.isHero);
+    if (_hasAlly) {
+      const _mobilizedCost = Math.max(0, baseCost - 2);
+      return _mobilizedCost > 0 ? _mobilizedCost + _stressSurcharge : _mobilizedCost;
+    }
+  }
   if (!cardHasPassive(card, 'outnumbered')) return baseCost > 0 ? baseCost + _stressSurcharge : baseCost;
   side = (side === 'ai') ? 'ai' : 'player';
   if (!state || !Array.isArray(state.units)) return baseCost > 0 ? baseCost + _stressSurcharge : baseCost;
@@ -31858,7 +32136,8 @@ function _applyAuthState(session) {
           try {
             if (typeof _mustPickStarter === 'function' && _mustPickStarter()
                 && App.screen !== 'starterPick' && App.screen !== 'battle'
-                && App.screen !== 'coinFlip' && App.screen !== 'vsScreen') {
+                && App.screen !== 'coinFlip' && App.screen !== 'vsScreen'
+                && App.screen !== 'preBattleLoadout' && App.screen !== 'deck') {
               App.screen = 'starterPick';
             }
           } catch (e) {}
@@ -31901,7 +32180,8 @@ function _applyAuthState(session) {
         try {
           if (typeof _mustPickStarter === 'function' && _mustPickStarter()
               && App.screen !== 'starterPick' && App.screen !== 'battle'
-              && App.screen !== 'coinFlip' && App.screen !== 'vsScreen') {
+              && App.screen !== 'coinFlip' && App.screen !== 'vsScreen'
+              && App.screen !== 'preBattleLoadout' && App.screen !== 'deck') {
             App.screen = 'starterPick';
           }
         } catch (e) {}
@@ -55005,6 +55285,131 @@ function applyLocationFieldEffects(s, who) {
   return state;
 }
 
+// ===== PERSISTENT SPELL TICK (v86j) =====
+// Applies ongoing effects from enchantment spells still on the field.
+// Called once per turn-start (per-side). Mutates + returns new state.
+// Aura stat bonuses are NOT applied here — they're read at stat-computation
+// time via the persistent-spell aura block inside getStatBonus.
+
+// Does unit `u` match the target filter `target` for a spell owned by `owner`?
+function _persistMatchesTarget(u, owner, target) {
+  if (!u) return false;
+  if (target === 'all') return true;
+  const isAlly = (u.owner === owner);
+  if (target === 'allies')  return isAlly;
+  if (target === 'enemies') return !isAlly;
+  return false;
+}
+
+function applyPersistentSpellTick(s, who) {
+  if (!s || !(s.persistentSpells || []).length) return s;
+  const log = s.log ? [...s.log] : [];
+  let units = s.units ? [...s.units] : [];
+  let player = s.player || {};
+  let ai     = s.ai     || {};
+  const expired = [];
+
+  for (const ps of s.persistentSpells) {
+    if (!ps) continue;
+    const owner = ps.ownerHint || 'player';
+    const fx    = ps.fieldEffect || {};
+    const icon  = ps.icon  || '✨';
+    const name  = ps.name  || 'Enchantment';
+
+    // --- Draw per turn (owning side only, on their turn) ---
+    if ((ps.drawPerTurn || 0) > 0 && who === owner) {
+      const n = ps.drawPerTurn;
+      if (owner === 'player') {
+        const deck  = [...(player.deck || [])];
+        const drawn = deck.splice(0, n);
+        if (drawn.length > 0) {
+          player = { ...player, hand: [...(player.hand || []), ...drawn], deck };
+          log.push({ msg: `${icon} ${name} → drew ${drawn.length} card${drawn.length > 1 ? 's' : ''}!`, color: 'green' });
+        }
+      } else {
+        const deck  = [...(ai.deck || [])];
+        const drawn = deck.splice(0, n);
+        if (drawn.length > 0) {
+          ai = { ...ai, hand: [...(ai.hand || []), ...drawn], deck };
+          log.push({ msg: `${icon} ${name} → AI drew ${drawn.length} card${drawn.length > 1 ? 's' : ''}!`, color: 'red' });
+        }
+      }
+    }
+
+    // --- Damage-per-turn (DoT) ---
+    if (fx.dot && (fx.dot.amount || 0) > 0) {
+      const dotTgt = fx.dot.target || 'enemies';
+      units = units.map(u => {
+        if (!u || !u.alive) return u;
+        if (!_persistMatchesTarget(u, owner, dotTgt)) return u;
+        const dmg  = fx.dot.amount;
+        const trig = applyDamageTriggers(u, dmg, 'spell');
+        const nu   = trig.unit;
+        (trig.log || []).forEach(l => log.push(l));
+        if (!nu.alive) log.push({ msg: `💀 ${nu.name} falls to ${name}!`, color: nu.owner === 'player' ? 'red' : 'green' });
+        else           log.push({ msg: `${icon} ${nu.name} -${dmg} (${name})`, color: 'amber' });
+        return nu;
+      });
+    }
+
+    // --- Heal per turn ---
+    if (fx.heal && (fx.heal.amount || 0) > 0) {
+      const healTgt = fx.heal.target || 'allies';
+      units = units.map(u => {
+        if (!u || !u.alive) return u;
+        if (!_persistMatchesTarget(u, owner, healTgt)) return u;
+        const amt    = fx.heal.amount;
+        const healed = Math.min(u.maxHp, u.currentHp + amt);
+        if (healed === u.currentHp) return u;
+        log.push({ msg: `${icon} ${u.name} +${healed - u.currentHp} HP (${name})`, color: 'green' });
+        return { ...u, currentHp: healed };
+      });
+    }
+
+    // --- Status per turn ---
+    if (fx.status && fx.status.id) {
+      const stTgt  = fx.status.target || 'enemies';
+      const chance = (fx.status.chance != null) ? fx.status.chance / 100 : 1.0;
+      units = units.map(u => {
+        if (!u || !u.alive) return u;
+        if (!_persistMatchesTarget(u, owner, stTgt)) return u;
+        if (isImmuneToStatus(u, fx.status.id)) return u;
+        if (Math.random() >= chance) return u;
+        log.push({ msg: `${icon} ${u.name} → ${(STATUS_EFFECTS[fx.status.id] || {}).name || fx.status.id} (${name})`, color: 'amber' });
+        return applyStatusEffect(u, fx.status.id, fx.status.duration || 2);
+      });
+    }
+
+    // --- Energy regen (owning side's turn only) ---
+    if (fx.energyRegen && (fx.energyRegen.amount || 0) > 0 && who === owner) {
+      const amt = fx.energyRegen.amount;
+      if (owner === 'player') {
+        player = { ...player, energy: Math.min(10, (player.energy || 0) + amt) };
+      } else {
+        ai = { ...ai, energy: Math.min(10, (ai.energy || 0) + amt) };
+      }
+      log.push({ msg: `${icon} ${name} → +${amt}⚡`, color: owner === 'player' ? 'green' : 'red' });
+    }
+
+    // Decrement turnsLeft on every tick (both sides advance the countdown)
+    const tl = (ps.turnsLeft || 0) - 1;
+    if (tl <= 0) {
+      expired.push(ps.instanceId);
+      log.push({ msg: `${icon} ${name} fades away.`, color: 'amber' });
+    }
+  }
+
+  // Apply decremented turnsLeft and strip expired spells
+  const newPersistentSpells = s.persistentSpells
+    .map(ps => {
+      if (!ps || expired.includes(ps.instanceId)) return null;
+      return { ...ps, turnsLeft: Math.max(0, (ps.turnsLeft || 0) - 1) };
+    })
+    .filter(Boolean);
+
+  return { ...s, units, player, ai, log, persistentSpells: newPersistentSpells };
+}
+
 const getStatBonus = (unit, statKey) => {
   let bonus = 0;
   // Location field-spell stat aura — Power Altar / Sky Citadel / Necropolis /
@@ -55050,6 +55455,23 @@ const getStatBonus = (unit, statKey) => {
         (target === 'allies'  && unit.owner === owner) ||
         (target === 'enemies' && unit.owner !== owner);
       if (matches) bonus += ce.auraAmount;
+    }
+  }
+
+  // ✨ Persistent enchantment spell stat auras (v86j)
+  if (App.state && Array.isArray(App.state.persistentSpells)) {
+    for (const ps of App.state.persistentSpells) {
+      if (!ps || !ps.fieldEffect || !ps.fieldEffect.aura) continue;
+      const _psOwner = ps.ownerHint || 'player';
+      const _psAuras = Array.isArray(ps.fieldEffect.aura) ? ps.fieldEffect.aura : [ps.fieldEffect.aura];
+      for (const aura of _psAuras) {
+        if (!aura || aura.stat !== statKey) continue;
+        const _psTgt = aura.target || 'allies';
+        const _psMatch = (_psTgt === 'all') ||
+          (_psTgt === 'allies'  && unit.owner === _psOwner) ||
+          (_psTgt === 'enemies' && unit.owner !== _psOwner);
+        if (_psMatch) bonus += (aura.amount || 0);
+      }
     }
   }
 
@@ -55728,6 +56150,17 @@ const ONPLAY_TYPES = [
   // Use this for "temp buff on play", "debuff nearby enemies when summoned",
   // "boost the whole party for 2 turns", etc.
   { id: 'applyBuffDebuff', label: '✨ Apply Buff / Debuff (status to a target group)', needs: ['radius','status','statusDuration','buffTarget','chance'] },
+  // ⚔ SACRIFICE — the summoned unit's on-play requires the owner to target a
+  // friendly non-hero unit and remove it. The removed unit's departure powers
+  // the configured sacrificeEffect (draw cards / buff self / gain energy /
+  // heal self). `amount` controls the draw count / buff amount / energy gain.
+  // For AI: auto-picks the weakest ally that isn't the hero.
+  { id: 'sacrifice',     label: '⚔ Sacrifice Ally (remove a friendly unit for an effect)', needs: ['amount','status','statusDuration'] },
+  // ⚖️ VERDICT — opponent of the card owner must pick which effect resolves (Hex TCG: Verdict).
+  // Player plays it → AI (opponent) chooses. AI plays it → Player gets a choice overlay.
+  { id: 'verdict',      label: '⚖️ Verdict (opponent chooses effect A or B)',            needs: ['labelA','labelB'] },
+  // 🎁 BESTOW — on play, grant a status buff to the nearest ally in radius (Hex TCG: Bestow).
+  { id: 'bestow',       label: '🎁 Bestow (grant status buff to nearest ally)',           needs: ['radius','status','statusDuration'] },
 ];
 
 // ============================================================================
@@ -55976,7 +56409,11 @@ function applyOnPlayEffect(state, unit, card) {
   const radius = Math.max(0, Math.min(4, eff.radius || 1));
   const log = [...(state.log || [])];
   const owner = unit.owner;
-  const isEnemy = (u) => u && u.alive && u.owner !== owner && u.id !== unit.id;
+  // 🛡️ Spellshield: enemy units with this passive are excluded from on-play AoE
+  // targeting (intimidate, aoeDamage, aoeKill, aoeStatus, bounceUnit, etc.).
+  // Board-wipes (boardWipe type) ignore spellshield by design — they wipe the board.
+  const isEnemy = (u) => u && u.alive && u.owner !== owner && u.id !== unit.id
+    && !(typeof hasPassive === 'function' && hasPassive(u, 'spellshield'));
   const isAlly  = (u) => u && u.alive && u.owner === owner && u.id !== unit.id;
   const inRadius = (u) => {
     if (!u || !u.pos || !unit.pos) return false;
@@ -56566,6 +57003,97 @@ function applyOnPlayEffect(state, unit, card) {
     else             log.push({ msg: `🧹 ${unit.name} sweeps the ground — already clean.`, color: 'amber' });
     return { ...state, board, log };
   }
+  // ⚔ SACRIFICE — owner must target a friendly non-hero unit to remove.
+  // For PLAYER: open targeting mode (App.ui.sacrificeTargeting). The
+  // actual removal + effect fires in _executeSacrifice() when the player
+  // clicks a friendly. For AI: auto-removes the weakest ally.
+  if (eff.type === 'sacrifice') {
+    if (owner === 'player') {
+      App.ui.sacrificeTargeting = { unitId: unit.id, eff: { ...eff } };
+      log.push({ msg: `⚔ ${unit.name} demands a sacrifice — pick a friendly unit!`, color: 'amber' });
+    } else {
+      // AI: pick the weakest non-hero ally (lowest HP ratio).
+      const _candidates = (state.units || []).filter(u => u && u.alive && !u.isHero && u.owner === 'ai' && u.id !== unit.id);
+      if (_candidates.length > 0) {
+        _candidates.sort((a, b) => (a.currentHp / (a.maxHp || 1)) - (b.currentHp / (b.maxHp || 1)));
+        const victim = _candidates[0];
+        state.units = state.units.map(u => u.id === victim.id ? { ...u, currentHp: 0, alive: false } : u);
+        log.push({ msg: `⚔ ${unit.name} consumes ${victim.name} as a sacrifice!`, color: 'red' });
+        // Apply sacrifice effect to AI.
+        const n = Math.max(1, eff.amount || 1);
+        if (eff.sacrificeEffect === 'draw') {
+          state.ai = drawCards(state.ai, n, false);
+          log.push({ msg: `📜 The sacrifice draws ${n} card${n === 1 ? '' : 's'}.`, color: 'red' });
+        } else if (eff.sacrificeEffect === 'gainEnergy') {
+          state.ai = { ...state.ai, energy: Math.min(10, (state.ai.energy || 0) + n) };
+          log.push({ msg: `⚡ The sacrifice grants ${n} energy.`, color: 'red' });
+        } else if (eff.sacrificeEffect === 'healSelf') {
+          state.units = state.units.map(u => u.id === unit.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + n) } : u);
+          log.push({ msg: `❤️ ${unit.name} absorbs the sacrifice — heals ${n} HP.`, color: 'red' });
+        } else {
+          // buffSelf — apply status
+          const statusId = eff.status || 'strong';
+          const dur = Math.max(1, eff.statusDuration || 2);
+          state.units = state.units.map(u => u.id === unit.id ? applyStatusEffect(u, statusId, dur) : u);
+          log.push({ msg: `✨ ${unit.name} absorbs the sacrifice — gains ${statusId}!`, color: 'red' });
+        }
+      } else {
+        log.push({ msg: `⚔ ${unit.name}'s sacrifice demand goes unanswered — no allies to offer.`, color: 'red' });
+      }
+    }
+    return { ...state, log };
+  }
+
+  // ⚖️ VERDICT — the opponent of the unit owner chooses which effect resolves.
+  // Player unit → AI auto-picks the less-harmful option for itself.
+  // AI unit → Player gets a deferred choice overlay (App.ui.verdictChoice).
+  if (eff.type === 'verdict') {
+    if (owner === 'player') {
+      // AI picks: avoid effects that directly harm AI units.
+      const _eA = eff.effectA || {};
+      const _eB = eff.effectB || {};
+      const _badForAI = ['aoeDamage','aoeKill','aoeStatus','intimidate','boardWipe','discardCards','bounceUnit'];
+      const aiPrefersB = _badForAI.includes(_eA.type);
+      const chosenEff = aiPrefersB ? _eB : _eA;
+      const chosenLabel = aiPrefersB ? (eff.labelB || 'Effect B') : (eff.labelA || 'Effect A');
+      log.push({ msg: `⚖️ Verdict! The AI opponent chose: "${chosenLabel}"`, color: 'red' });
+      state = { ...state, log };
+      if (chosenEff && chosenEff.type) {
+        try { state = applyOnPlayEffect(state, unit, { ...card, onPlay: chosenEff }); } catch (e) {}
+      }
+      log = state.log;
+    } else {
+      // AI unit, player must choose — open the deferred overlay.
+      App.ui.verdictChoice = { unitId: unit.id, eff: { ...eff } };
+      log.push({ msg: `⚖️ ${unit.name} forces a Verdict — choose which effect resolves!`, color: 'amber' });
+    }
+    return { ...state, log };
+  }
+
+  // 🎁 BESTOW — on play, grant a status buff to the nearest ally in radius.
+  if (eff.type === 'bestow') {
+    const statusId = eff.status || 'strong';
+    const dur = Math.max(1, eff.statusDuration || 2);
+    const bestowTargets = (state.units || []).filter(u => isAlly(u) && inRadius(u));
+    if (bestowTargets.length > 0) {
+      bestowTargets.sort((a, b) => {
+        const da = Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y));
+        const db = Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y));
+        return da - db;
+      });
+      const tgt = bestowTargets[0];
+      if (!isImmuneToStatus(tgt, statusId)) {
+        state.units = state.units.map(u => u.id === tgt.id ? applyStatusEffect(u, statusId, dur) : u);
+        log.push({ msg: `🎁 ${unit.name}'s Bestow — ${tgt.name} gains ${nameFor(statusId)}!`, color: owner === 'player' ? 'green' : 'red' });
+      } else {
+        log.push({ msg: `🎁 ${unit.name}'s Bestow — ${tgt.name} is immune to ${nameFor(statusId)}.`, color: 'amber' });
+      }
+    } else {
+      log.push({ msg: `🎁 ${unit.name}'s Bestow — no allies in range to bless.`, color: 'amber' });
+    }
+    return { ...state, log };
+  }
+
   return { ...state, log };
 }
 
@@ -57764,6 +58292,19 @@ const applyDamageTriggers = (unit, incomingDmg, damageType) => {
     log.push({ msg: `🩸 ${nu.name} is BLEEDING OUT — 3 turns until permadeath. Stabilize them!`, color: 'amber' });
   }
 
+  // ❄️ FROST FORM passive — once per battle, survive a KO from non-ice damage
+  // at 1 HP and gain Frost Form status for 3 turns.
+  if (nu.currentHp <= 0 && !nu._frostFormUsed && typeof hasPassive === 'function' && hasPassive(nu, 'frostForm') && damageType !== 'ice') {
+    nu.currentHp = 1;
+    nu._frostFormUsed = true;
+    if (typeof applyStatusEffect === 'function') nu = applyStatusEffect(nu, 'frostForm', 3);
+    log.push({ msg: `❄️ ${nu.name}'s Frost Form activates — survived at 1 HP!`, color: 'amber' });
+  }
+  // 🌟 INVINCIBLE — cannot be destroyed by damage; HP floors at 1 (Hex TCG: Invincible).
+  if (nu.currentHp <= 0 && !nu.isHero && typeof hasPassive === 'function' && hasPassive(nu, 'invincible')) {
+    nu.currentHp = 1;
+    log.push({ msg: `🌟 ${nu.name} is Invincible — damage cannot destroy it!`, color: 'amber' });
+  }
   if (nu.currentHp <= 0) nu.alive = false;
 
   if (nu.alive && item && !nu.itemUsed) {
@@ -57947,7 +58488,8 @@ const executeMove = (state, attacker, target, move) => {
   // or warrior hero. Bodyguard fires within 1 tile; Guardian fires within
   // 2 tiles BUT only once per match. Only redirects ATTACK moves at enemy
   // non-heroes, so heals / buffs on allies still flow correctly.
-  if (move && move.kind === 'attack' && target && attacker && target.owner !== attacker.owner && !target.isHero) {
+  // 🌀 UNBLOCKABLE — skip the Bodyguard/Guardian intercept check entirely.
+  if (move && move.kind === 'attack' && target && attacker && target.owner !== attacker.owner && !target.isHero && !hasPassive(attacker, 'unblockable')) {
     if (typeof _battleFindInterceptor === 'function') {
       const intercept = _battleFindInterceptor(s, target, attacker);
       if (intercept && intercept.interceptor && intercept.interceptor.id !== target.id) {
@@ -57987,6 +58529,12 @@ const executeMove = (state, attacker, target, move) => {
         && !u.solarFlareUsed) {
       return { ...next, solarFlareUsed: true };
     }
+    // 🗡️ Steadfast — the unit's first attack each turn does not exhaust it.
+    // _steadfastAttacked tracks whether the free bonus has already been used
+    // this turn (reset to false each turn start in the per-unit reset map).
+    if (hasPassive(u, 'steadfast') && !u._steadfastAttacked && !move.priority) {
+      return { ...next, _steadfastAttacked: true }; // still has hasAttacked:false — can attack again
+    }
     // 🔫 Fast Reload (Ranger tree) — using a 0-cost attack grants a bonus
     // action (don't lock hasAttacked) up to 2 free chains per turn. The
     // counter resets every turn via the `_fastReloadUses` field that
@@ -58024,6 +58572,16 @@ const executeMove = (state, attacker, target, move) => {
   if (target && target.id !== attacker.id && target.owner !== attacker.owner
       && move.kind === 'attack'
       && (target.statusEffects || []).some(e => e.type === 'countering')) {
+    // ⚡ SWIFTSTRIKE — attacker hits before the counter can fire. Strip the countering
+    // status and fall through to the normal attack path below (no early return).
+    if (hasPassive(attacker, 'swiftstrike')) {
+      s.units = s.units.map(u => u.id === target.id
+        ? { ...u, statusEffects: (u.statusEffects || []).filter(e => e.type !== 'countering') }
+        : u);
+      target = s.units.find(u => u.id === target.id) || target;
+      log.push({ msg: `⚡ ${attacker.name}'s Swiftstrike cuts through ${target.name}'s counter stance!`, color: attacker.owner === 'player' ? 'green' : 'amber' });
+      // Fall through to the normal attack path — no return here.
+    } else {
     const counterPower = Math.max(8, Math.floor((target.stats.atk + target.stats.mag) * 0.8));
     log.push({ msg: `↩️ ${target.name} counters ${attacker.name}'s ${move.name}!`, color: 'amber' });
     // Apply the counter hit to the attacker — counters are physical retaliations.
@@ -58047,6 +58605,7 @@ const executeMove = (state, attacker, target, move) => {
     }
     if (move.cost > 0) { const _eff = getEffectiveMoveCost(move, attacker, s); if (_eff > 0) s[playerKey] = { ...s[playerKey], energy: s[playerKey].energy - _eff }; }
     s.log = log; return s;
+    } // end else (normal countering — Swiftstrike bypassed this branch)
   }
 
   // ===== Paralysis: chance to skip action entirely =====
@@ -58423,8 +58982,8 @@ const executeMove = (state, attacker, target, move) => {
     log.push({ msg: `${attacker.name}'s ${move.name} hits nothing — ${target.name} is not on the battlefield!`, color: 'amber' });
     s.log = log; return s;
   }
-  // Attack — flying check first
-  if (target && isEffectivelyFlying(target) && !canMoveHitTarget(move, target)) {
+  // Attack — flying check first (skipped for Unblockable / Skyguard attackers)
+  if (target && isEffectivelyFlying(target) && !canMoveHitTarget(move, target) && !hasPassive(attacker, 'unblockable') && !hasPassive(attacker, 'skyguard')) {
     s.units = s.units.map(u => u.id === attacker.id ? markAttackerActed(u) : u);
     log.push({ msg: `${attacker.name}'s ${move.name} cannot reach ${target.name} — Flying!`, color: 'amber' });
     s.log = log; return s;
@@ -58491,6 +59050,11 @@ const executeMove = (state, attacker, target, move) => {
   const trig = applyDamageTriggers(target, dmg, move && move.type);
   let updatedTarget = trig.unit;
   trig.log.forEach(l => log.push(l));
+  // ☠️ LETHAL — any hit that lands is an instant kill for non-hero targets (Hex TCG: Lethal).
+  if (dmg > 0 && updatedTarget.alive && !updatedTarget.isHero && hasPassive(attacker, 'lethal')) {
+    updatedTarget = { ...updatedTarget, currentHp: 0, alive: false };
+    log.push({ msg: `☠️ ${attacker.name}'s Lethal touch — ${target.name} instantly slain!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+  }
   // 🎯 Hero Ultimate + 😢 Emotion — precise attacker/victim hook for the
   // common attack path. Fires kill events with the real attacker (so the
   // killer hero gets +1 ult charge + Confident triggers), and the survived-
@@ -58563,6 +59127,17 @@ const executeMove = (state, attacker, target, move) => {
   }
 
   s.units = s.units.map(u => u.id === target.id ? updatedTarget : (u.id === attacker.id ? markAttackerActed(u) : u));
+
+  // 🔥 ATTACK RAGE — permanently +N ATK each time this unit attacks (Hex TCG: Rage N).
+  if (dmg > 0 && hasPassive(attacker, 'attackRage')) {
+    const _rageN = (attacker.rageN || 1);
+    s.units = s.units.map(u => {
+      if (u.id !== attacker.id || !u.alive) return u;
+      return { ...u, atk: (u.atk || 0) + _rageN };
+    });
+    const _rageAtk = ((s.units.find(u => u.id === attacker.id) || {}).atk || 0);
+    log.push({ msg: `🔥 ${attacker.name}'s rage builds! +${_rageN} ATK (now ${_rageAtk})`, color: attacker.owner === 'player' ? 'green' : 'red' });
+  }
 
   // Accumulate total damage across all strikes (recoil + drain use this total below).
   let _totalDmgDealt = dmg;
@@ -58901,6 +59476,11 @@ const executeMove = (state, attacker, target, move) => {
     const heal = Math.floor(dmg * 0.3);
     s.units = s.units.map(u => u.id === attacker.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + heal) } : u);
   }
+  // 🩸 LIFEDRAIN — heal 100% of combat damage dealt (Hex TCG: Lifedrain). Stronger than Lifesteal.
+  if (hasPassive(attacker, 'lifedrain') && dmg > 0) {
+    s.units = s.units.map(u => u.id === attacker.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + dmg) } : u);
+    log.push({ msg: `🩸 ${attacker.name}'s Lifedrain restores ${dmg} HP!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+  }
   // 🩸 Blood Lord — supercharged lifesteal in bloodmoon (50% of damage dealt, replaces the
   // standard bloodmoon 20% drain for this attacker). Stacks on top of regular lifesteal.
   if (hasPassive(attacker, 'bloodLord') && dmg > 0
@@ -58988,14 +59568,22 @@ const executeMove = (state, attacker, target, move) => {
     const physRetal = atkType === 'physical' && hasPassive(target, 'physicalRetribution');
     const magRetal  = atkType === 'magic'    && hasPassive(target, 'magicalRetribution');
     if ((physRetal || magRetal) && dmg > 0) {
-      const liveAttacker = s.units.find(u => u.id === attacker.id);
-      if (liveAttacker && liveAttacker.alive && !liveAttacker.isHero) {
-        s.units = s.units.map(u => u.id === attacker.id ? { ...u, currentHp: 0, alive: false } : u);
+      // ⚡ SWIFTSTRIKE — if the attacker killed the target, retribution is silenced
+      // (attacker struck and slew the target before it could lash back).
+      const _retTarget = s.units.find(u => u.id === target.id);
+      if (hasPassive(attacker, 'swiftstrike') && _retTarget && !_retTarget.alive) {
         const tag = physRetal ? '🩸 Spiked Carapace' : '🔮 Mana Feedback';
-        log.push({ msg: `${tag} — ${attacker.name} is slain striking ${target.name}!`, color: attacker.owner === 'ai' ? 'green' : 'red' });
-      } else if (liveAttacker && liveAttacker.isHero) {
-        const tag = physRetal ? 'Spiked Carapace' : 'Mana Feedback';
-        log.push({ msg: `${tag} recoils off ${attacker.name} — heroes are immune.`, color: 'amber' });
+        log.push({ msg: `⚡ ${attacker.name}'s Swiftstrike — ${tag} silenced (target already slain)!`, color: attacker.owner === 'player' ? 'green' : 'amber' });
+      } else {
+        const liveAttacker = s.units.find(u => u.id === attacker.id);
+        if (liveAttacker && liveAttacker.alive && !liveAttacker.isHero) {
+          s.units = s.units.map(u => u.id === attacker.id ? { ...u, currentHp: 0, alive: false } : u);
+          const tag = physRetal ? '🩸 Spiked Carapace' : '🔮 Mana Feedback';
+          log.push({ msg: `${tag} — ${attacker.name} is slain striking ${target.name}!`, color: attacker.owner === 'ai' ? 'green' : 'red' });
+        } else if (liveAttacker && liveAttacker.isHero) {
+          const tag = physRetal ? 'Spiked Carapace' : 'Mana Feedback';
+          log.push({ msg: `${tag} recoils off ${attacker.name} — heroes are immune.`, color: 'amber' });
+        }
       }
     }
   }
@@ -59003,7 +59591,43 @@ const executeMove = (state, attacker, target, move) => {
   const finalTarget = s.units.find(u => u.id === target.id);
   if (finalTarget && !finalTarget.alive) {
     log.push({ msg: `💀 ${finalTarget.name} defeated!`, color: finalTarget.owner === 'ai' ? 'green' : 'red' });
+    // 💥 CRUSH — overkill damage bleeds through to the enemy hero.
+    // finalTarget.currentHp is negative when the killing blow over-dealt;
+    // the absolute value of that negative is the excess that carries over.
+    if (hasPassive(attacker, 'crush') && !finalTarget.isHero) {
+      const _excess = Math.max(0, -(finalTarget.currentHp || 0));
+      if (_excess > 0) {
+        const _crushHero = s.units.find(u => u && u.alive && u.isHero && u.owner !== attacker.owner);
+        if (_crushHero) {
+          const _crushTrig = applyDamageTriggers(_crushHero, _excess, (move && move.type) || 'physical');
+          _crushTrig.log.forEach(l => log.push(l));
+          s.units = s.units.map(u => u.id === _crushHero.id ? _crushTrig.unit : u);
+          log.push({ msg: `💥 ${attacker.name}'s Crush — ${_excess} overkill damage crushes ${_crushHero.name}!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+          if (!_crushTrig.unit.alive) {
+            s.gameOver = _crushHero.owner === 'player' ? 'ai' : 'player';
+            log.push({ msg: `💥 ${_crushHero.name} is crushed into the ground!`, color: _crushHero.owner === 'ai' ? 'green' : 'red' });
+          }
+        }
+      }
+    }
     if (hasPassive(attacker, 'bloodthirst')) s.units = s.units.map(u => u.id === attacker.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + 5) } : u);
+    // 🍖 Consume — absorb ATK+DEF from killed enemy. Each kill adds +1 to both,
+    // tracked via a moxie-like stack entry. Capped at 5 stacks total (avoids spiraling).
+    if (hasPassive(attacker, 'consume')) {
+      s.units = s.units.map(u => {
+        if (u.id !== attacker.id) return u;
+        const nu = { ...u };
+        const curStacks = (nu._consumeStacks || 0);
+        if (curStacks < 5) {
+          nu._consumeStacks = curStacks + 1;
+          // Permanently raise the unit's base stats so all damage calcs see the buff.
+          nu.atk = (nu.atk || 0) + 1;
+          nu.def = (nu.def || 0) + 1;
+          log.push({ msg: `🍖 ${nu.name} consumes ${finalTarget.name} — ATK+1, DEF+1! (${nu._consumeStacks} stack${nu._consumeStacks === 1 ? '' : 's'})`, color: u.owner === 'player' ? 'green' : 'red' });
+        }
+        return nu;
+      });
+    }
     // ⚔️ Moxie (Pokémon) — stack +2 ATK per KO, max 5 stacks. Stored as a
     // 'moxie' status entry whose `stack` field is read by calculateDamage to
     // scale damage. We use a long duration so the buff persists for the
@@ -59852,6 +60476,8 @@ const startTurn = (state, who) => {
   // raiseFromDead glowing tombstones. Runs at the start of EVERY turn so
   // both sides' tombstones expire on a steady cadence.
   try { if (typeof tickTombstones === 'function') tickTombstones(s); } catch (e) {}
+  // 🌊 Tunnel tick — decrement underground unit counters; spawn emerged units.
+  try { if (typeof _tickTunneledCards === 'function') s = _tickTunneledCards(s, who); } catch (e) { console.warn('[tunnel tick]', e); }
   // 🚛 / 🛢 Territory Wars game-mode tick — convoy moves on AI turn start
   // (after player's turn ends); oil-tower progress advances on player
   // turn start; RNG events roll once per AI turn.
@@ -59985,8 +60611,10 @@ const startTurn = (state, who) => {
   s.units = s.units.map(u => {
     if (u.owner !== who) return u;
     // Reset per-turn weather-passive flags so solarFlare / ambushSoul work fresh each turn.
-    let nu = { ...u, hasMoved: false, hasAttacked: false, usedPriority: false, solarFlareUsed: false, ambushUsed: false };
-    if (hasPassive(u, 'regeneration') && u.alive) nu.currentHp = Math.min(u.maxHp, u.currentHp + 2);
+    let nu = { ...u, hasMoved: false, hasAttacked: false, usedPriority: false, solarFlareUsed: false, ambushUsed: false, _steadfastAttacked: false };
+    // ⚔️ DEFENDER — permanently blocks attacking; re-lock hasAttacked every turn reset.
+    if (hasPassive(u, 'defender')) nu = { ...nu, hasAttacked: true };
+    if (hasPassive(u, 'regeneration') && u.alive) nu.currentHp = Math.min(u.maxHp, nu.currentHp + 2);
     // 🪨 Geomancer — 20% chance per Geomancer per turn to shatter the enemy's
     // active location. Only triggers when the opposing side owns the field
     // spell (your own Watchtower / Mana Font is safe from your own Geomancers).
@@ -60138,6 +60766,13 @@ const startTurn = (state, who) => {
     (s.log || []).forEach(l => log.push(l));
   }
 
+  // ✨ Persistent enchantment spell tick (v86j) — draw / DoT / heal / status / energy
+  if ((s.persistentSpells || []).length > 0 && typeof applyPersistentSpellTick === 'function') {
+    s = applyPersistentSpellTick(s, who);
+    log.length = 0;
+    (s.log || []).forEach(l => log.push(l));
+  }
+
   // Weather: tick & apply
   if (s.weather && s.weather.turnsLeft > 0) {
     if (s.weather.weatherType === 'sand') {
@@ -60247,6 +60882,17 @@ const startTurn = (state, who) => {
     s[who] = drawCards(s[who], 1, /*playSound*/ who === 'player');
     log.push({ msg: `✨ ${heroOfPlayer.name}'s Inspire grants +1 card!`, color: who === 'player' ? 'green' : 'red' });
   }
+  // ✨ ARCANE TEMPO (inspireDrawTimer v86o) — any alive unit with this passive draws 1 extra card every 3 turns.
+  try {
+    const _tempoUnits = (s.units || []).filter(u => u && u.alive && u.owner === who && typeof hasPassive === 'function' && hasPassive(u, 'inspireDrawTimer'));
+    if (_tempoUnits.length > 0 && !isFirstTurnNoGain) {
+      const _dc = s[who].drawCounter || 0;
+      if (_dc > 0 && _dc % 3 === 0) {
+        s[who] = drawCards(s[who], 1, /*playSound*/ who === 'player');
+        log.push({ msg: `✨ Arcane Tempo — ${_tempoUnits[0].name} draws you an extra card!`, color: who === 'player' ? 'green' : 'red' });
+      }
+    }
+  } catch (_at) {}
   // 🃏 Card Frenzy daily modifier — bonus draw separated out the same way.
   // Plays at full strength only when the daily mod is selected.
   if (s.mods && s.mods.frenzy && !isFirstTurnNoGain) {
@@ -61165,6 +61811,8 @@ function render() {
   //    cha-ching notification on every Profile.gems / sovereigns /
   //    BankEthos.aza decrease across the entire game.
   try { _installSpendInterceptors(); } catch (e) {}
+  // 🧹 Gem-picker backdrop cleanup
+  try { const _gpw = document.getElementById('db-gem-picker-wrapper'); if (_gpw) _gpw.remove(); } catch (e) {}
   // 🎴 STARTER DECK RESTORE — admin removed players' starter decks during the
   // global reset; this one-time pass grants every player ALL 3 (or however
   // many the catalog defines) starter decks if they're missing. Gated by a
@@ -61194,6 +61842,12 @@ function render() {
         void root.offsetWidth;
         root.classList.add('page-fade-in');
       }
+    }
+  } catch (e) {}
+  try {
+    if (App._pageTransitionScreen === App.screen && root && root.classList.contains('page-entering')) {
+      root.classList.remove('page-entering');
+      try { clearTimeout(App._pageEnteringTimer); App._pageEnteringTimer = null; } catch (e2) {}
     }
   } catch (e) {}
 
@@ -61321,6 +61975,7 @@ function render() {
   // decks (admin authored none) — otherwise they'd be trapped.
   if (App.screen !== 'starterPick' && App.screen !== 'authGate'
       && App.screen !== 'battle' && App.screen !== 'coinFlip' && App.screen !== 'vsScreen'
+      && App.screen !== 'deck' && App.screen !== 'preBattleLoadout'
       && typeof _mustPickStarter === 'function' && _mustPickStarter()
       && (getAllStarterDecks().length > 0 || !_catalogResolved())) {
     App.screen = 'starterPick';
@@ -61411,9 +62066,13 @@ function render() {
   if (App.screen === 'cashout')      return renderCashoutVault();
   if (App.screen === 'vendor')       return renderBlackMarket();
   if (App.screen === 'deckSelect')  return renderDeckSelect();
-  if (App.screen === 'vsScreen')    return renderVsScreen();
-  if (App.screen === 'coinFlip')    return renderCoinFlip();
-  if (App.screen === 'battle')     return renderBattle();
+  if (App.screen === 'vsScreen')          return renderVsScreen();
+  if (App.screen === 'preBattleLoadout') return renderPreBattleLoadout();
+  if (App.screen === 'coinFlip')         return renderCoinFlip();
+  if (App.screen === 'battle')           return renderBattle();
+  // ⚠ Fallback: TW router normally intercepts this before we get here.
+  // NEVER reset App.screen to 'title' on a TW crash — just log + toast (v86p).
+  if (App.screen === 'territoryWars') { try { renderTerritoryWars(); } catch(e) { console.warn('[TW fallback]', e); try { if (typeof showToast === 'function') showToast('⚠ War Map error — check console', 3000); } catch(_){} } return; }
 }
 
 let toastTimer = null;
@@ -62979,24 +63638,32 @@ function renderTitle() {
         alertBadge: !dailyDone,
         onclick: () => { App.screen = 'daily'; render(); } },
       // 🗺 War Map — Territory Wars (corp control, node battles, guards,
-      // node-shop upgrades). Admin-only for now — corporation onboarding,
-      // node defense balancing, and the resource cycle still need polish
-      // before regular players see it. Same pattern as Walk Camp Heights:
-      // returns null for non-admins and the renderer's .filter(Boolean)
-      // strips the gap so neighbouring portals close ranks.
-      ((typeof isAdmin === 'function') && isAdmin())
-        ? { id: 'btn-warmap', icon: '🗺', name: 'War Map', sub: 'Corp territory · capture nodes · defend with guards', accent: '#6cd4ff',
-            badge: (() => {
-              try {
-                const t = (Forge.territoryWars || {});
-                const nodes = (t.nodes || []).length;
-                const owned = Object.keys((Profile.tw_state || {}).ownedNodes || {}).length;
-                if (nodes === 0) return null;
-                return owned > 0 ? `${owned} owned · ${nodes} total` : `${nodes} nodes available`;
-              } catch (e) { return null; }
-            })(),
-            onclick: () => { App._twSelectedNode = null; App.screen = 'territoryWars'; render(); } }
-        : null,
+      // node-shop upgrades). Visible to all players.
+      { id: 'btn-warmap', icon: '🗺', name: 'War Map', sub: 'Corp territory · capture nodes · defend with guards', accent: '#6cd4ff',
+          badge: (() => {
+            try {
+              const t = (Forge.territoryWars || {});
+              const nodes = (t.nodes || []).length;
+              const owned = Object.keys((Profile.tw_state || {}).ownedNodes || {}).length;
+              if (nodes === 0) return null;
+              return owned > 0 ? `${owned} owned · ${nodes} total` : `${nodes} nodes available`;
+            } catch (e) { return null; }
+          })(),
+          onclick: () => {
+            App._twSelectedNode = null;
+            App.screen = 'territoryWars';
+            try { document.body.classList.add('tw-active'); } catch(_) {}
+            // Call renderTerritoryWars() DIRECTLY — bypasses the entire
+            // dispatch chain (TW router + RAF batching) so a crash inside
+            // renderTerritoryWars can NEVER cause a fallback that resets
+            // App.screen back to 'title' (the "flash then nothing" bug v86p).
+            try {
+              renderTerritoryWars();
+            } catch(e) {
+              console.error('[WarMap button]', e);
+              try { if (typeof showToast === 'function') showToast('⚠ War Map error: ' + String(e && e.message || e).slice(0, 80), 4000); } catch(_) {}
+            }
+          } },
     ],
     forge: (() => {
       const _isAdmin = (typeof isAdmin === 'function') && isAdmin();
@@ -65360,10 +66027,13 @@ function renderVsScreen() {
 
       <!-- ===== Ready button ===== -->
       <div class="vs-actions">
-        <button class="btn-primary vs-ready-btn ${vs.playerReady ? 'vs-ready-btn-done' : ''}" id="btn-vs-ready" ${vs.playerReady ? 'disabled' : ''}>
-          ${vs.playerReady ? '✓ Ready — Waiting for opponent…' : '🎯 READY (or wait for auto-start)'}
+        <button class="btn-secondary vs-side-deck-btn" id="btn-vs-side-deck" title="Edit side deck and socket gems before the match">
+          ⚙️ Side Deck
         </button>
-        <button class="btn-secondary btn-mini" id="btn-vs-skip">⏭ Skip Timer — Start Now</button>
+        <button class="btn-primary vs-ready-btn ${vs.playerReady ? 'vs-ready-btn-done' : ''}" id="btn-vs-ready" ${vs.playerReady ? 'disabled' : ''}>
+          ${vs.playerReady ? '✓ Ready — Waiting for opponent…' : '🎯 Ready'}
+        </button>
+        <button class="btn-secondary btn-mini" id="btn-vs-skip">⏭ Skip Timer</button>
       </div>
     </div>
     ${renderCollectionCardModal()}
@@ -65439,6 +66109,12 @@ function renderVsScreen() {
   }
   const skipBtn = document.getElementById('btn-vs-skip');
   if (skipBtn) skipBtn.onclick = () => startBattle();
+  const sdBtn = document.getElementById('btn-vs-side-deck');
+  if (sdBtn) sdBtn.onclick = () => {
+    if (vs._interval) { clearInterval(vs._interval); vs._interval = null; }
+    App.screen = 'preBattleLoadout';
+    render();
+  };
   // 🔍 Right-click any unit (yours or the opponent's) for a read-only detail
   // card. Opponent units pass hideMoves so their move set stays secret.
   bindCardDetailContextMenus();
@@ -65449,6 +66125,327 @@ function renderVsScreen() {
     el.oncontextmenu = (e) => { e.preventDefault(); _vsOpenItemDetail(el.dataset.vsItemId, e.clientX, e.clientY); };
     el.onclick       = (e) => { e.preventDefault(); _vsOpenItemDetail(el.dataset.vsItemId, e.clientX, e.clientY); };
   });
+}
+
+function renderPreBattleLoadout() {
+  // NOTE: global `root` = document.getElementById('app').
+  if (!root) return;
+
+  const prof = Profile;
+  const bp   = App.battlePrep || {};
+  // Seed battlePrep gems from Profile.socketedGems (set in Deck Builder) if not
+  // already customised for this battle session (v86s).
+  if (!bp.socketedGems || Object.keys(bp.socketedGems).length === 0) {
+    bp.socketedGems = (Profile.socketedGems && typeof Profile.socketedGems === 'object')
+      ? JSON.parse(JSON.stringify(Profile.socketedGems))
+      : {};
+  }
+  App.battlePrep = bp;
+
+  const MAIN_SIZE = 40;
+  const SIDE_SIZE = 15;
+  const GEM_MAX   = 5;
+
+  // ── Resolve deck from deckId if bp.deck not populated ────────────────
+  if ((!Array.isArray(bp.deck) || !bp.deck.length) && bp.deckId) {
+    try {
+      const _rd = (typeof getDeckById === 'function') ? getDeckById(bp.deckId) : null;
+      if (_rd && Array.isArray(_rd.cards) && _rd.cards.length) bp.deck = _rd.cards.slice();
+    } catch(e) {}
+  }
+
+  // catalog = all custom items (gems, node shards, equipment) created in the Item Forge (v86r fix).
+  // Forge.gemCatalog was a dead reference — Forge.customItems is the canonical list.
+  const catalog = (typeof Forge !== 'undefined' && Array.isArray(Forge.customItems)) ? Forge.customItems : [];
+  // gemInv = { itemId: availableCount } — all items are available with count 99 (unlimited for now). (v86r fix for undefined _ensureGemInventory)
+  const gemInv = (() => { const _inv = {}; catalog.forEach(it => { if (it && it.id) _inv[it.id] = 99; }); return _inv; })();
+
+  // ── Card key helpers — keys are 'kind:id' e.g. 'unit:goblin', 'custom:cc_123'
+  const _parseKey = key => {
+    const ci = (key || '').indexOf(':');
+    return ci < 0 ? { kind: 'custom', id: key || '' } : { kind: key.slice(0, ci), id: key.slice(ci + 1) };
+  };
+  const _resolve  = key => { try { return (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null; } catch(e) { return null; } };
+  const _cName    = key => { const c = _resolve(key); if (c && c.name) return c.name; const p = _parseKey(key); return p.id || key || '?'; };
+  const _cCost    = key => { const c = _resolve(key); return (c && c.cost != null) ? c.cost : ''; };
+  const _cKindLbl = key => { const p = _parseKey(key); return p.kind ? p.kind.charAt(0).toUpperCase() + p.kind.slice(1) : ''; };
+  const _cGemSlots= key => { const c = _resolve(key); return (c && c.gemSlots) ? (c.gemSlots | 0) : 0; };
+  const _isUnit   = key => _parseKey(key).kind === 'unit';
+  const _kindColor= kind => ({ unit:'#7ed6a4', spell:'#7ab8f5', trap:'#f5a47a', location:'#d4af37', weather:'#b0d4ff' }[kind] || '#c8b4ff');
+
+  // Group card-key array → [{key,name,kindLbl,kind,cost,gemSlots,count}]
+  const groupCards = arr => {
+    const map = {};
+    (arr || []).forEach(key => {
+      if (!key) return;
+      if (!map[key]) {
+        const p = _parseKey(key);
+        map[key] = { key, name: _cName(key), kind: p.kind, kindLbl: _cKindLbl(key), cost: _cCost(key), gemSlots: _cGemSlots(key), count: 0 };
+      }
+      map[key].count++;
+    });
+    const ko = { unit:0, spell:1, trap:2, location:3, weather:4, custom:5 };
+    return Object.values(map).sort((a,b) => {
+      const k = (ko[a.kind]??9) - (ko[b.kind]??9);
+      return k || ((Number(a.cost)||0) - (Number(b.cost)||0)) || a.name.localeCompare(b.name);
+    });
+  };
+
+  // ── Initialise working copy (first entry only) ────────────────────────
+  if (!bp._preBattleEdit) {
+    const mainSnap = Array.isArray(bp.deck) ? [...bp.deck] : [];
+    if (!prof.sideDeck || typeof prof.sideDeck !== 'object') prof.sideDeck = { cards: [], gems: [] };
+    const sideSnap = Array.isArray(prof.sideDeck.cards) ? [...prof.sideDeck.cards] : [];
+    bp._preBattleEdit = { mainDeck: mainSnap, sideDeck: sideSnap, activeTab: 'deck' };
+  }
+  const edit = bp._preBattleEdit;
+  if (!['deck','gems'].includes(edit.activeTab)) edit.activeTab = 'deck';
+
+  const mainGroups = groupCards(edit.mainDeck);
+  const sideGroups = groupCards(edit.sideDeck);
+  const mainCount  = edit.mainDeck.length;
+  const sideCount  = edit.sideDeck.length;
+  const totalConnected = Object.values(bp.socketedGems).flat().filter(g => g && g !== '').length;
+  const mainOk  = mainCount === MAIN_SIZE;
+  const sideOk  = sideCount <= SIDE_SIZE;   // side deck is optional — any size up to cap is fine
+  const gemsOk  = totalConnected <= GEM_MAX;
+  const doneOk  = mainCount > 0 && gemsOk;  // always saveable if there's a deck + gems are within limit
+
+  // ── Tab bar ───────────────────────────────────────────────────────────
+  const tabHtml = `
+    <div class="pbl-tabs">
+      <button class="pbl-tab ${edit.activeTab === 'deck' ? 'active' : ''}" data-pbl-tab="deck">
+        🃏 Deck Setup
+        <span class="pbl-tab-badge ${mainOk && sideOk ? 'ok' : 'warn'}">${mainCount}/${MAIN_SIZE} · ${sideCount}/${SIDE_SIZE}</span>
+      </button>
+      <button class="pbl-tab ${edit.activeTab === 'gems' ? 'active' : ''}" data-pbl-tab="gems">
+        💎 Gems
+        <span class="pbl-tab-badge ${gemsOk ? 'ok' : 'warn'}">${totalConnected}/${GEM_MAX}</span>
+      </button>
+    </div>`;
+
+  // ── DECK VIEW — two-panel MTGA-style layout ───────────────────────────
+  let contentHtml = '';
+
+  if (edit.activeTab === 'deck') {
+    const sideRows = sideGroups.map(g => `
+      <div class="pbl-card-row-side">
+        <span class="pbl-cr-cost">${g.cost !== '' ? g.cost : '—'}</span>
+        <span class="pbl-cr-name">${escapeHtml(g.name)}</span>
+        <span class="pbl-cr-kind" style="color:${_kindColor(g.kind)}">${escapeHtml(g.kindLbl)}</span>
+        <span class="pbl-cr-count">×${g.count}</span>
+        <button class="pbl-cr-btn" data-mv-to-main="${escapeHtml(g.key)}"
+          ${mainCount >= MAIN_SIZE ? 'disabled' : ''}>← Main</button>
+      </div>`).join('');
+
+    const mainRows = mainGroups.map(g => `
+      <div class="pbl-card-row-main">
+        <span class="pbl-cr-cost">${g.cost !== '' ? g.cost : '—'}</span>
+        <span class="pbl-cr-name">${escapeHtml(g.name)}</span>
+        <span class="pbl-cr-kind" style="color:${_kindColor(g.kind)}">${escapeHtml(g.kindLbl)}</span>
+        <span class="pbl-cr-count">×${g.count}</span>
+        <button class="pbl-cr-btn" data-mv-to-side="${escapeHtml(g.key)}"
+          ${sideCount >= SIDE_SIZE ? 'disabled' : ''}>Side →</button>
+      </div>`).join('');
+
+    contentHtml = `
+      <div class="pbl-deck-view">
+        <div class="pbl-side-panel">
+          <div class="pbl-panel-header">
+            <span>📋 SIDE DECK</span>
+            <span class="pbl-tab-badge ${sideOk ? 'ok' : 'warn'}">${sideCount}/${SIDE_SIZE}</span>
+          </div>
+          <div class="pbl-panel-status ${sideOk ? 'ok' : 'warn'}">
+            ${sideOk ? '✓ Ready' : sideCount === 0 ? 'Move cards from Main →' : `Need ${SIDE_SIZE - sideCount} more`}
+          </div>
+          <div class="pbl-panel-list">
+            ${sideRows || `<div class="pbl-empty" style="font-size:0.78rem;padding:1rem 0.5rem;text-align:center">Empty — tap <strong>Side →</strong> on any main deck card.</div>`}
+          </div>
+        </div>
+        <div class="pbl-main-panel">
+          <div class="pbl-panel-header">
+            <span>🃏 MAIN DECK</span>
+            <span class="pbl-tab-badge ${mainOk ? 'ok' : 'warn'}">${mainCount}/${MAIN_SIZE}</span>
+          </div>
+          <div class="pbl-panel-status ${mainOk ? 'ok' : 'warn'}">
+            ${mainOk ? '✓ Ready' : mainCount === 0 ? '⚠ No cards — verify deck selection' : `⚠ Move ${MAIN_SIZE - mainCount} card${MAIN_SIZE - mainCount !== 1 ? 's' : ''} to side deck`}
+          </div>
+          <div class="pbl-panel-list">
+            ${mainRows || `<div class="pbl-empty" style="padding:1rem 0.7rem;font-size:0.82rem">No cards loaded.</div>`}
+          </div>
+        </div>
+      </div>`;
+
+  } else {
+    // ── GEMS TAB ──────────────────────────────────────────────────────────
+    const uniqueUnitKeys = [...new Set(edit.mainDeck.filter(_isUnit))];
+
+    const _gemOpts = (cardId, si, socketed) => {
+      const cur  = socketed[si] || '';
+      const excl = socketed.filter((g, gi) => g && gi !== si);
+      const avail = Object.keys(gemInv).filter(did => (gemInv[did]||0) > 0 && !excl.includes(did));
+      let html = '<option value="">— empty —</option>';
+      if (cur && !avail.includes(cur)) {
+        const gx = catalog.find(x => x.id === cur);
+        html += `<option value="${escapeHtml(cur)}" selected>${escapeHtml(gx ? `${gx.icon||'💎'} ${gx.name||cur}` : cur)}</option>`;
+      }
+      avail.forEach(did => {
+        const gx = catalog.find(x => x.id === did);
+        const lbl = gx ? `${gx.icon||'💎'} ${gx.name||did} (×${gemInv[did]})` : `${did} (×${gemInv[did]})`;
+        html += `<option value="${escapeHtml(did)}" ${cur === did ? 'selected' : ''}>${escapeHtml(lbl)}</option>`;
+      });
+      return html;
+    };
+
+    const gemInfoBar = `<div class="pbl-deck-info ${gemsOk ? 'ok' : 'warn'}" style="margin-bottom:0.8rem">
+      ${gemsOk ? `💎 ${totalConnected} of ${GEM_MAX} gem slots connected` : `⚠ Over limit: ${totalConnected}/${GEM_MAX} — remove a gem`}
+    </div>`;
+
+    const gemCards = uniqueUnitKeys.length ? uniqueUnitKeys.map(key => {
+      const p      = _parseKey(key);
+      const cardId = p.id;
+      const name   = _cName(key);
+      const slots  = Math.min(3, _cGemSlots(key));
+      const socketed = bp.socketedGems[cardId] || [];
+
+      if (!slots) {
+        return `<div class="pbl-gem-card-empty">
+          <div class="pbl-gem-card-name2">${escapeHtml(name)}</div>
+          <div class="pbl-gem-no-slots">No Gem Slots</div>
+        </div>`;
+      }
+      const slotItems = Array.from({length: slots}, (_, si) => `
+        <div class="pbl-gem-slot-item">
+          <div class="pbl-gem-slot-label">Gem Slot ${si+1}</div>
+          <select class="pbl-gem-sel" data-gem-slot="${escapeHtml(cardId)}:${si}"
+            style="width:100%;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.45);border-radius:6px;padding:0.26rem 0.4rem;font-size:0.8rem">
+            ${_gemOpts(cardId, si, socketed)}
+          </select>
+        </div>`).join('');
+      return `<div class="pbl-gem-card">
+        <div class="pbl-gem-card-header">
+          <span class="pbl-gem-card-name2">${escapeHtml(name)}</span>
+          <span class="pbl-gem-slot-count">⚙️ ${slots} slot${slots!==1?'s':''}</span>
+        </div>
+        <div class="pbl-gem-slots-grid">${slotItems}</div>
+      </div>`;
+    }).join('')
+    : `<div class="pbl-empty" style="padding:2.5rem 0;text-align:center">No unit cards in main deck.<br><span style="font-size:0.78rem">Switch to Deck Setup and verify your main deck has unit cards.</span></div>`;
+
+    contentHtml = `<div class="pbl-content">${gemInfoBar}<div class="pbl-gem-cards-grid">${gemCards}</div></div>`;
+  }
+
+  // ── Hint & footer ──────────────────────────────────────────────────────
+  const hintText = !gemsOk
+    ? `⚠ Too many gems — max ${GEM_MAX} connected`
+    : mainCount === 0
+      ? '⚠ No main deck cards — return to Deck Select first'
+      : mainOk && sideOk
+        ? '✓ Deck ready — hit Done to lock in and return to the VS screen.'
+        : [mainCount < MAIN_SIZE ? `Main: ${mainCount}/${MAIN_SIZE}` : null,
+           sideCount > SIDE_SIZE ? `Side over cap (${sideCount}/${SIDE_SIZE})` : (sideCount > 0 ? `Side: ${sideCount}/${SIDE_SIZE}` : null)]
+          .filter(Boolean).join(' · ') + ' — hit Done to save as-is.';
+
+  root.innerHTML = `
+    <div class="pbl-screen">
+      <div class="pbl-header"><div class="pbl-title">⚙️ Side Deck &amp; Gem Setup</div></div>
+      ${tabHtml}
+      ${contentHtml}
+      <div class="pbl-footer">
+        <div class="pbl-hint" style="width:100%;text-align:center">${escapeHtml(hintText)}</div>
+        <button class="pbl-back-btn btn-secondary" id="btn-pbl-back">← Back to Opponent</button>
+        <button class="pbl-done-btn btn-primary" id="btn-pbl-done">✓ Done — Return to Match</button>
+      </div>
+    </div>`;
+
+  document.querySelectorAll('[data-pbl-tab]').forEach(btn => {
+    btn.onclick = () => { edit.activeTab = btn.dataset.pblTab; renderPreBattleLoadout(); };
+  });
+
+  document.querySelectorAll('[data-mv-to-side]').forEach(btn => {
+    btn.onclick = () => {
+      if (edit.sideDeck.length >= SIDE_SIZE) return;
+      const key = btn.dataset.mvToSide;
+      const idx = edit.mainDeck.indexOf(key);
+      if (idx === -1) return;
+      edit.sideDeck.push(edit.mainDeck.splice(idx, 1)[0]);
+      renderPreBattleLoadout();
+    };
+  });
+
+  document.querySelectorAll('[data-mv-to-main]').forEach(btn => {
+    btn.onclick = () => {
+      if (edit.mainDeck.length >= MAIN_SIZE) return;
+      const key = btn.dataset.mvToMain;
+      const idx = edit.sideDeck.indexOf(key);
+      if (idx === -1) return;
+      edit.mainDeck.push(edit.sideDeck.splice(idx, 1)[0]);
+      renderPreBattleLoadout();
+    };
+  });
+
+  document.querySelectorAll('.pbl-gem-sel').forEach(sel => {
+    sel.onchange = () => {
+      const parts  = sel.dataset.gemSlot.split(':');
+      const cardId = parts.slice(0, -1).join(':');
+      const si     = parseInt(parts[parts.length - 1], 10);
+      const tent   = JSON.parse(JSON.stringify(bp.socketedGems));
+      if (!tent[cardId]) tent[cardId] = [];
+      tent[cardId][si] = sel.value || '';
+      const newTotal = Object.values(tent).flat().filter(g => g && g !== '').length;
+      if (newTotal > GEM_MAX) {
+        if (typeof showToast === 'function') showToast(`⚠ Max ${GEM_MAX} gems connected — remove one first`);
+        sel.value = (bp.socketedGems[cardId] || [])[si] || '';
+        return;
+      }
+      if (!bp.socketedGems[cardId]) bp.socketedGems[cardId] = [];
+      bp.socketedGems[cardId][si] = sel.value || '';
+      renderPreBattleLoadout();
+    };
+  });
+
+  const backBtn = document.getElementById('btn-pbl-back');
+  if (backBtn) backBtn.onclick = () => { delete bp._preBattleEdit; App.screen = 'vsScreen'; render(); };
+
+  const doneBtn = document.getElementById('btn-pbl-done');
+  if (doneBtn) doneBtn.onclick = () => {
+    // Gems over limit — hard block.
+    if (!gemsOk) {
+      if (typeof showToast === 'function') showToast(`⚠ Too many gems connected (max ${GEM_MAX}). Remove one first.`, 2800);
+      return;
+    }
+    // No cards in main deck — try to reload from deckId before blocking.
+    if (mainCount === 0) {
+      let reloaded = false;
+      if (bp.deckId && typeof getDeckById === 'function') {
+        try {
+          const _rel = getDeckById(bp.deckId);
+          if (_rel && Array.isArray(_rel.cards) && _rel.cards.length > 0) {
+            bp.deck = _rel.cards.slice();
+            edit.mainDeck = bp.deck.slice();
+            reloaded = true;
+          }
+        } catch(e) {}
+      }
+      if (!reloaded) {
+        if (typeof showToast === 'function') showToast('⚠ No cards in deck — go back and pick a deck first.', 2800);
+        return;
+      }
+    }
+    bp.deck = [...edit.mainDeck];
+    if (!prof.sideDeck || typeof prof.sideDeck !== 'object') prof.sideDeck = { cards: [], gems: [] };
+    prof.sideDeck.cards = [...edit.sideDeck];
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch(e) {}
+    delete bp._preBattleEdit;
+    App.screen = 'vsScreen';
+    // Call renderVsScreen() DIRECTLY — bypasses the RAF-batching + dispatch
+    // chain so nothing can override App.screen between now and the next paint
+    // (the "flash then nothing" bug v86p). Fall back to render() if it throws.
+    try {
+      if (typeof renderVsScreen === 'function') renderVsScreen();
+      else render();
+    } catch(e) { try { render(); } catch(_) {} }
+  };
 }
 
 // Pop a read-only detail popup for a single item — used by VS-screen item
@@ -67338,10 +68335,9 @@ function renderForge() {
   // 📝 Capture in-progress editor field values BEFORE the DOM is wiped, so a
   // background render (cloud retry / heartbeat) can't erase typed text.
   _captureForgeFormState();
-  // 🛠 Items + Relics live in the dedicated editor now (renderItemEditor),
-  //    not here in the Forge tab strip. If the user lands on those legacy
-  //    tabs, redirect them to Cards so they can't get stuck.
-  if (App.forgeTab === 'items' || App.forgeTab === 'relics') App.forgeTab = 'cards';
+  // 🛠 Relics live in the dedicated editor now (renderItemEditor),
+  //    not here in the Forge tab strip. Items tab is restored (v86o).
+  if (App.forgeTab === 'relics') App.forgeTab = 'cards';
   const tabs = [
     { id: 'cards',      label: 'Cards',      count: Forge.customCards.length },
     { id: 'moves',      label: 'Moves',      count: Object.keys(Forge.customMoves).length },
@@ -67352,6 +68348,7 @@ function renderForge() {
     { id: 'guides',     label: '📖 Guides',  count: (Forge.pageGuides || []).length },
     { id: 'traders',    label: '🤝 Traders', count: 11 },
     { id: 'loadouts',   label: 'Loadouts',   count: Object.keys(Profile.equipment).filter(k => Profile.equipment[k] && Profile.equipment[k] !== 'none').length },
+    { id: 'items',      label: '🎒 Items',   count: (Forge.customItems || []).filter(it => it && it.slot !== 'relic').length },
   ];
   const tabsHtml = tabs.map(t => `<button class="forge-tab ${App.forgeTab === t.id ? 'active' : ''}" data-tab="${t.id}">${t.label}${t.count > 0 ? ` <span class="tab-count">${t.count}</span>` : ''}</button>`).join('');
 
@@ -67373,6 +68370,7 @@ function renderForge() {
   else if (App.forgeTab === 'guides') body = renderForgeGuides();
   else if (App.forgeTab === 'traders') body = renderForgeTraders();
   else if (App.forgeTab === 'loadouts') body = renderForgeLoadouts();
+  else if (App.forgeTab === 'items') body = renderForgeItems();
 
   root.innerHTML = `
     <div class="forge-page">
@@ -67385,9 +68383,9 @@ function renderForge() {
     </div>
   `;
   document.getElementById('btn-back-forge').onclick = () => {
-    if (App.editingCardId || App.editingMoveId || App.editingEventId || App.editingEncounterId || App.editingPackId || App.editingStructDeckId || App.editingGuideId) {
+    if (App.editingCardId || App.editingMoveId || App.editingEventId || App.editingEncounterId || App.editingPackId || App.editingStructDeckId || App.editingGuideId || App.editingItemId) {
       App.editingCardId = null; App.editingMoveId = null; App.editingEventId = null; App.editingEncounterId = null;
-      App.editingPackId = null; App.editingStructDeckId = null; App.editingGuideId = null;
+      App.editingPackId = null; App.editingStructDeckId = null; App.editingGuideId = null; App.editingItemId = null;
       App._newCardDraft = null; App._newEventDraft = null; App._newEncounterDraft = null; App._learnNewMovePick = null;
       render();
     }
@@ -68319,6 +69317,40 @@ function renderCardEditor() {
       <select id="ed-passive2">${passive2Opts}</select>
       <div class="small-text" style="margin-top:0.25rem;opacity:0.7">Pick another passive to stack alongside the primary. Leave on <em>None</em> for a single-passive card.</div>
     </div>
+    ${type === 'unit' ? (() => {
+      const ie = card.inspireEffect || {};
+      const ieType = ie.type || 'grantSwift';
+      const ieStat = ie.stat || 'atk';
+      const ieAmt = ie.amount || 1;
+      return `<div class="editor-field full" style="background:rgba(168,230,207,0.06);border:1px dashed rgba(120,200,160,0.35);border-radius:6px;padding:0.7rem 0.85rem;margin-top:0.3rem">
+        <label style="font-weight:700;color:#a8e6cf">✨ Inspire Effect</label>
+        <div class="small-text" style="margin-top:0.15rem;margin-bottom:0.5rem;color:#c0ead0">Only used when Passive = Inspire. When an allied unit enters play whose energy cost ≥ this unit's cost, the new unit receives this effect.</div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.5rem 1rem">
+          <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Effect Type
+            <select id="ed-inspire-type" style="font-size:0.82rem">
+              <option value="grantSwift"  ${ieType === 'grantSwift'  ? 'selected' : ''}>⚡ Grant Swift (remove summoning sickness)</option>
+              <option value="buffStats"   ${ieType === 'buffStats'   ? 'selected' : ''}>📈 Buff Stat (+N to one stat)</option>
+              <option value="buffAllStats" ${ieType === 'buffAllStats' ? 'selected' : ''}>🌟 Buff All Stats (+N to ATK/DEF/MAG/RES — only if new unit costs MORE)</option>
+              <option value="draw"        ${ieType === 'draw'        ? 'selected' : ''}>📜 Draw Cards (draw N cards)</option>
+              <option value="gainEnergy"  ${ieType === 'gainEnergy'  ? 'selected' : ''}>⚡ Gain Energy (+N energy)</option>
+            </select>
+          </label>
+          <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Amount (N)
+            <input type="number" id="ed-inspire-amount" min="1" max="10" value="${ieAmt}" style="width:60px;font-size:0.82rem">
+          </label>
+          <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Stat (for Buff Stat)
+            <select id="ed-inspire-stat" style="font-size:0.82rem">
+              <option value="atk" ${ieStat === 'atk' ? 'selected' : ''}>ATK</option>
+              <option value="def" ${ieStat === 'def' ? 'selected' : ''}>DEF</option>
+              <option value="mag" ${ieStat === 'mag' ? 'selected' : ''}>MAG</option>
+              <option value="res" ${ieStat === 'res' ? 'selected' : ''}>RES</option>
+              <option value="hp"  ${ieStat === 'hp'  ? 'selected' : ''}>HP (+to maxHp)</option>
+              <option value="spd" ${ieStat === 'spd' ? 'selected' : ''}>SPD</option>
+            </select>
+          </label>
+        </div>
+      </div>`;
+    })() : ''}
     <div class="editor-field full">
       <label>Factions (pick any)</label>
       <div class="faction-picker" id="ed-factions">
@@ -68358,6 +69390,20 @@ function renderCardEditor() {
         <span>⏱ <strong>Counter Unit</strong> — also acts as a hand-playable counter</span>
       </label>
       <div class="small-text" style="margin-top:0.3rem;color:#ffcfa0">When the opponent triggers a matching action, this unit can be <strong>popped from hand</strong> to negate (or stun/redirect/silence) the source — AND deploys to the field as a normal unit at the same time. Energy cost is paid once. The fields below appear when this is checked.</div>
+    </div>` : ''}
+    ${(type === 'unit' || type === 'trap' || type === 'custom') ? `
+    <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem;background:rgba(255,120,40,0.06);border:1px dashed rgba(255,140,60,0.4);border-radius:6px;padding:0.7rem 0.85rem">
+      <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+        <input type="checkbox" id="ed-assault-on" ${card.isAssault ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+        <span>⚔ <strong>Assault Card</strong> — activates automatically when the player attacks</span>
+      </label>
+      <div class="small-text" style="margin-top:0.3rem;color:#ffcfa0">Whenever the player declares an attack while this card is in their hand, a prompt appears asking if they want to activate it. If yes: the card is sent to the graveyard, its effect fires immediately, and then combat proceeds normally. Free to activate — the card itself is the cost.</div>
+    </div>` : ''}
+    ${type === 'unit' ? `
+    <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem;background:rgba(40,100,180,0.06);border:1px dashed rgba(80,140,220,0.4);border-radius:6px;padding:0.7rem 0.85rem">
+      <label style="font-weight:700;color:#90c8ff">🌊 Tunnel (Hex TCG)</label>
+      <div class="small-text" style="margin-top:0.2rem;color:#b0d4ff">Set a number of turns this unit spends underground before auto-emerging adjacent to the hero. 0 = disabled (plays normally).</div>
+      <div style="margin-top:0.5rem"><input type="number" id="ed-tunnel" min="0" max="10" value="${card.tunnel || 0}" style="width:80px"> turns underground</div>
     </div>` : ''}
     ${type === 'unit' ? (() => { const w = card.wall || {}; const wOn = !!card.isWall; const wc = (k, d) => (w[k] != null ? w[k] : d); return `
     <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem">
@@ -68689,6 +69735,23 @@ function renderCardEditor() {
   const _fusionKalons = (typeof getAllFusionKalons === 'function') ? getAllFusionKalons() : [];
   const fusionKalonOpts = ['<option value="">— Auto-pick first eligible Kalon —</option>']
     .concat(_fusionKalons.map(k => `<option value="${escapeHtml(k.id)}" ${(card.fusionTargetCardId || '') === k.id ? 'selected' : ''}>${escapeHtml(k.icon || '🌌')} ${escapeHtml(k.name || k.id)}</option>`)).join('');
+  // ✨ Persistent enchantment field vars (v86j)
+  const _pcPersistOn  = !!(card.persistent);
+  const _pcPersistDur = card.persistDuration || 3;
+  const _pcPersistDrw = card.persistDrawPerTurn || 0;
+  const _pcPf    = card.persistFieldEffect || {};
+  const _pcAura0 = (Array.isArray(_pcPf.aura) ? _pcPf.aura[0] : _pcPf.aura) || {};
+  const _pcDot   = _pcPf.dot   || {};
+  const _pcHeal  = _pcPf.heal  || {};
+  const _pcSt    = _pcPf.status || {};
+  const _pcEnrgy = (_pcPf.energyRegen || {}).amount || 0;
+  const _pcAuraStatOpts = ['','atk','def','mag','res'].map(ss => `<option value="${ss}" ${(_pcAura0.stat||'')===ss?'selected':''}>${ss?ss.toUpperCase():'— None —'}</option>`).join('');
+  const _pcAuraTgtOpts  = ['allies','enemies','all'].map(t => `<option value="${t}" ${(_pcAura0.target||'allies')===t?'selected':''}>${t}</option>`).join('');
+  const _pcDotTgtOpts   = ['enemies','allies','all'].map(t => `<option value="${t}" ${(_pcDot.target||'enemies')===t?'selected':''}>${t}</option>`).join('');
+  const _pcHealTgtOpts  = ['allies','enemies','all'].map(t => `<option value="${t}" ${(_pcHeal.target||'allies')===t?'selected':''}>${t}</option>`).join('');
+  const _pcStOpts       = statusList.map(ss => `<option value="${ss}" ${(_pcSt.id||'')===ss?'selected':''}>${ss||'— None —'}</option>`).join('');
+  const _pcStTgtOpts    = ['enemies','allies','all'].map(t => `<option value="${t}" ${(_pcSt.target||'enemies')===t?'selected':''}>${t}</option>`).join('');
+
   const spellBlock = (type === 'spell') ? `
     <div class="editor-field"><label>Element</label><select id="ed-element">${elemOpts(primary)}</select></div>
     <div class="editor-field"><label>Effect Type</label><select id="ed-spell-effect">${spellEffectOpts}</select></div>
@@ -68705,6 +69768,50 @@ function renderCardEditor() {
     </div>
     <div class="editor-field"><label>🌌 Subtype</label><select id="ed-spell-subtype">${spellSubtypeOpts}</select></div>
     <div class="editor-field"><label>🌌 Fusion Target Kalon (Polycreation only)</label><select id="ed-spell-fusion-target">${fusionKalonOpts}</select></div>
+    <!-- ===== ✨ PERSISTENT ENCHANTMENT (v86j) ===== -->
+    <div class="editor-field full" style="border-top:2px solid rgba(184,136,255,0.55);padding-top:0.8rem;margin-top:0.7rem">
+      <label style="font-weight:700;color:#d8b8ff;font-size:1.05em">✨ Persistent Enchantment — Stays on Field</label>
+      <div class="small-text" style="margin:0.25rem 0 0.5rem;opacity:0.82">When activated, this spell stays on the battlefield and continuously applies its effects at the start of each turn instead of going to the graveyard.</div>
+    </div>
+    <div class="editor-field full">
+      <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+        <input type="checkbox" id="ed-persist-on" ${_pcPersistOn ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+        <span>✨ Persistent — this spell lingers on the field after activation</span>
+      </label>
+    </div>
+    <div class="editor-field"><label>Duration (turns active)</label><input id="ed-persist-duration" type="number" min="1" max="10" value="${_pcPersistDur}"></div>
+    <div class="editor-field"><label>🃏 Draw N cards / turn (your side)</label><input id="ed-persist-draw" type="number" min="0" max="3" value="${_pcPersistDrw}"></div>
+    <div class="editor-field full" style="background:rgba(100,60,160,0.12);border:1px solid rgba(184,136,255,0.35);border-radius:6px;padding:0.7rem;margin-top:0.3rem">
+      <div style="font-weight:700;color:#d8b8ff;margin-bottom:0.5rem">📊 Stat Aura (passive buff / debuff on the board)</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem">
+        <div class="editor-field" style="margin:0"><label>Stat</label><select id="ed-persist-aura-stat">${_pcAuraStatOpts}</select></div>
+        <div class="editor-field" style="margin:0"><label>Amount</label><input id="ed-persist-aura-amt" type="number" min="-5" max="5" value="${_pcAura0.amount||0}"></div>
+        <div class="editor-field" style="margin:0"><label>Affects</label><select id="ed-persist-aura-target">${_pcAuraTgtOpts}</select></div>
+      </div>
+    </div>
+    <div class="editor-field full" style="background:rgba(180,50,50,0.10);border:1px solid rgba(255,100,100,0.30);border-radius:6px;padding:0.7rem;margin-top:0.4rem">
+      <div style="font-weight:700;color:#ffaaaa;margin-bottom:0.5rem">🔥 Damage Per Turn (DoT)</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">
+        <div class="editor-field" style="margin:0"><label>Damage / turn</label><input id="ed-persist-dot-amt" type="number" min="0" max="30" value="${_pcDot.amount||0}"></div>
+        <div class="editor-field" style="margin:0"><label>Targets</label><select id="ed-persist-dot-target">${_pcDotTgtOpts}</select></div>
+      </div>
+    </div>
+    <div class="editor-field full" style="background:rgba(30,140,80,0.10);border:1px solid rgba(60,200,100,0.30);border-radius:6px;padding:0.7rem;margin-top:0.4rem">
+      <div style="font-weight:700;color:#80ffb0;margin-bottom:0.5rem">💚 Heal Per Turn</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">
+        <div class="editor-field" style="margin:0"><label>Heal / turn</label><input id="ed-persist-heal-amt" type="number" min="0" max="30" value="${_pcHeal.amount||0}"></div>
+        <div class="editor-field" style="margin:0"><label>Targets</label><select id="ed-persist-heal-target">${_pcHealTgtOpts}</select></div>
+      </div>
+    </div>
+    <div class="editor-field full" style="background:rgba(100,80,180,0.10);border:1px solid rgba(150,100,255,0.30);border-radius:6px;padding:0.7rem;margin-top:0.4rem">
+      <div style="font-weight:700;color:#c0a0ff;margin-bottom:0.5rem">🎭 Status Per Turn</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem">
+        <div class="editor-field" style="margin:0"><label>Status</label><select id="ed-persist-status-id">${_pcStOpts}</select></div>
+        <div class="editor-field" style="margin:0"><label>Duration</label><input id="ed-persist-status-dur" type="number" min="1" max="6" value="${_pcSt.duration||2}"></div>
+        <div class="editor-field" style="margin:0"><label>Targets</label><select id="ed-persist-status-target">${_pcStTgtOpts}</select></div>
+      </div>
+    </div>
+    <div class="editor-field"><label>⚡ Energy / turn (your side)</label><input id="ed-persist-energy" type="number" min="0" max="3" value="${_pcEnrgy}"></div>
   ` : '';
 
   // Trap block
@@ -68946,6 +70053,46 @@ function renderCardEditor() {
         + `<div class="editor-field full"><label style="display:flex;align-items:center;gap:6px;cursor:pointer">`
         + `<input type="checkbox" id="ed-onplay-wipe-sparehero" ${sh ? 'checked' : ''}> `
         + `<span>🛡 Spare heroes (recommended — otherwise the wipe can end the match instantly)</span></label></div>`;
+    })()}
+    ${(() => {
+      // ⚔ Sacrifice effect picker — used only by 'sacrifice' on-play type.
+      const se = onPlay.sacrificeEffect || 'buffSelf';
+      return `<div class="editor-field"><label>⚔ Sacrifice Effect (when effect is "Sacrifice Ally")</label>`
+        + `<select id="ed-onplay-sac-effect">`
+        + `<option value="buffSelf"   ${se === 'buffSelf'   ? 'selected' : ''}>✨ Buff Self (apply status from Status field)</option>`
+        + `<option value="healSelf"   ${se === 'healSelf'   ? 'selected' : ''}>❤️ Heal Self (by Amount)</option>`
+        + `<option value="draw"       ${se === 'draw'       ? 'selected' : ''}>📜 Draw Cards (Amount cards)</option>`
+        + `<option value="gainEnergy" ${se === 'gainEnergy' ? 'selected' : ''}>⚡ Gain Energy (Amount energy)</option>`
+        + `</select>`
+        + `<div class="small-text ink-dim" style="margin-top:0.25rem">Effect granted after a friendly unit is sacrificed.</div></div>`;
+    })()}
+    ${(() => {
+      // ⚖️ Verdict sub-effect pickers — shown only when type === 'verdict'.
+      const _vtypes = [
+        ['aoeDamage','💥 AOE Damage (Amount dmg to enemies)'],
+        ['drawCards','📜 Draw Cards (Amount cards)'],
+        ['energyGain','⚡ Gain Energy (Amount energy)'],
+        ['heal','❤️ Heal Allies (Amount HP, in radius)'],
+        ['buffSelf','✨ Buff Self (Status field)'],
+        ['aoeStatus','😵 AOE Status (Status to enemies)'],
+        ['boardWipe','💥 Board Wipe (enemies scope)'],
+        ['discardCards','🗑 Discard Cards (force opponent)'],
+      ];
+      const _vaType = (onPlay.effectA && onPlay.effectA.type) || '';
+      const _vbType = (onPlay.effectB && onPlay.effectB.type) || '';
+      const _vaAmt  = (onPlay.effectA && onPlay.effectA.amount) || 0;
+      const _vbAmt  = (onPlay.effectB && onPlay.effectB.amount) || 0;
+      const _aOpts  = _vtypes.map(([v,l]) => `<option value="${v}" ${_vaType===v?'selected':''}>${escapeHtml(l)}</option>`).join('');
+      const _bOpts  = _vtypes.map(([v,l]) => `<option value="${v}" ${_vbType===v?'selected':''}>${escapeHtml(l)}</option>`).join('');
+      return `<div class="editor-field full"><label>⚖️ Verdict — Label A (shown to opponent when choosing)</label>`
+        + `<input id="ed-verdict-labelA" value="${escapeHtml(onPlay.labelA || '')}" placeholder="e.g. Deal 8 damage to all enemies"></div>`
+        + `<div class="editor-field"><label>⚖️ Effect A — Type</label><select id="ed-verdict-typeA">${_aOpts}</select></div>`
+        + `<div class="editor-field"><label>⚖️ Effect A — Amount</label><input id="ed-verdict-amountA" type="number" min="0" max="200" value="${_vaAmt}"></div>`
+        + `<div class="editor-field full"><label>⚖️ Verdict — Label B (shown to opponent)</label>`
+        + `<input id="ed-verdict-labelB" value="${escapeHtml(onPlay.labelB || '')}" placeholder="e.g. Draw 2 cards"></div>`
+        + `<div class="editor-field"><label>⚖️ Effect B — Type</label><select id="ed-verdict-typeB">${_bOpts}</select></div>`
+        + `<div class="editor-field"><label>⚖️ Effect B — Amount</label><input id="ed-verdict-amountB" type="number" min="0" max="200" value="${_vbAmt}"></div>`
+        + `<div class="small-text ink-dim" style="margin-top:0.25rem">When the PLAYER plays this, the AI picks less-harmful option. When the AI plays it, the player gets a choice overlay.</div>`;
     })()}
     ${(() => {
       // ✨ Buff/Debuff target picker — used only by 'applyBuffDebuff'.
@@ -70403,6 +71550,27 @@ function captureEditorIntoCard(card) {
       delete card.isWall; delete card.canMove; delete card.wall;
     }
   }
+  // ⚔️ Assault Card toggle — any deckable type can be flagged as assault.
+  const _assaultToggle = document.getElementById('ed-assault-on');
+  if (_assaultToggle) {
+    if (_assaultToggle.checked) card.isAssault = true;
+    else delete card.isAssault;
+  }
+  // 🌊 Tunnel — unit-only underground delay.
+  const _tunnelEl = document.getElementById('ed-tunnel');
+  if (_tunnelEl) {
+    const tv = Math.max(0, Math.min(10, parseInt(_tunnelEl.value, 10) || 0));
+    if (tv > 0) card.tunnel = tv;
+    else delete card.tunnel;
+  }
+  // ✨ Inspire Effect — only stored when the passive is set to 'inspire'.
+  const _inspTypeEl = document.getElementById('ed-inspire-type');
+  if (_inspTypeEl) {
+    const _inspType = _inspTypeEl.value;
+    const _inspAmt  = Math.max(1, Math.min(10, parseInt((document.getElementById('ed-inspire-amount') || {}).value, 10) || 1));
+    const _inspStat = ((document.getElementById('ed-inspire-stat') || {}).value) || 'atk';
+    card.inspireEffect = { type: _inspType, amount: _inspAmt, stat: _inspStat };
+  }
   if (document.getElementById('ed-factions')) {
     const picked = [...document.querySelectorAll('#ed-factions input[data-faction]:checked')].map(el => el.dataset.faction);
     card.factions = picked;
@@ -70593,6 +71761,13 @@ function captureEditorIntoCard(card) {
         wipeSpareHero:  (() => { const el = document.getElementById('ed-onplay-wipe-sparehero'); return el ? !!el.checked : true; })(),
         // ✨ Buff/Debuff target group — used by 'applyBuffDebuff'.
         buffTarget:     v('ed-onplay-buff-target') || 'self',
+        // ⚔ Sacrifice effect — used by 'sacrifice' on-play type.
+        sacrificeEffect: v('ed-onplay-sac-effect') || 'buffSelf',
+        // ⚖️ Verdict — labels + sub-effects for effectA and effectB.
+        labelA: (document.getElementById('ed-verdict-labelA') || {}).value || '',
+        labelB: (document.getElementById('ed-verdict-labelB') || {}).value || '',
+        effectA: { type: v('ed-verdict-typeA') || '', amount: num('ed-verdict-amountA', 0, 200, 0) },
+        effectB: { type: v('ed-verdict-typeB') || '', amount: num('ed-verdict-amountB', 0, 200, 0) },
       };
     } else {
       delete card.onPlay;
@@ -70732,6 +71907,46 @@ function captureEditorIntoCard(card) {
     const ft = document.getElementById('ed-spell-fusion-target') ? v('ed-spell-fusion-target') : '';
     if (ft) card.fusionTargetCardId = ft;
     else delete card.fusionTargetCardId;
+  }
+  // ✨ Persistent enchantment fields (v86j)
+  if (document.getElementById('ed-persist-on')) {
+    const _isPersist = document.getElementById('ed-persist-on').checked;
+    if (_isPersist) {
+      card.persistent        = true;
+      card.persistDuration   = Math.max(1, Math.min(10, parseInt(v('ed-persist-duration'), 10) || 3));
+      card.persistDrawPerTurn = Math.max(0, Math.min(3, parseInt(v('ed-persist-draw'), 10) || 0));
+      const _pf = {};
+      // Aura
+      const _auraStat = v('ed-persist-aura-stat');
+      const _auraAmt  = parseInt(v('ed-persist-aura-amt'), 10) || 0;
+      if (_auraStat && _auraAmt !== 0) {
+        _pf.aura = [{ stat: _auraStat, amount: _auraAmt, target: v('ed-persist-aura-target') || 'allies' }];
+      }
+      // DoT
+      const _dotAmt = parseInt(v('ed-persist-dot-amt'), 10) || 0;
+      if (_dotAmt > 0) _pf.dot = { amount: _dotAmt, target: v('ed-persist-dot-target') || 'enemies' };
+      // Heal
+      const _healAmt = parseInt(v('ed-persist-heal-amt'), 10) || 0;
+      if (_healAmt > 0) _pf.heal = { amount: _healAmt, target: v('ed-persist-heal-target') || 'allies' };
+      // Status
+      const _stId = v('ed-persist-status-id');
+      if (_stId) {
+        _pf.status = {
+          id:       _stId,
+          duration: Math.max(1, Math.min(6, parseInt(v('ed-persist-status-dur'), 10) || 2)),
+          target:   v('ed-persist-status-target') || 'enemies',
+        };
+      }
+      // Energy
+      const _ergAmt = parseInt(v('ed-persist-energy'), 10) || 0;
+      if (_ergAmt > 0) _pf.energyRegen = { amount: _ergAmt };
+      card.persistFieldEffect = _pf;
+    } else {
+      delete card.persistent;
+      delete card.persistDuration;
+      delete card.persistDrawPerTurn;
+      delete card.persistFieldEffect;
+    }
   }
   // 🌌 Fusion Kalon config on summon cards.
   if (document.getElementById('ed-fusion-on')) {
@@ -72505,6 +73720,43 @@ function renderItemEditor() {
             ${['common','uncommon','rare','epic','legendary','mythic'].map(r => `<option value="${r}" ${(it.rarity === r) ? 'selected' : ''}>${r}</option>`).join('')}
           </select>
         </div>
+        <div class="editor-field full">
+          <label>🏷 Item Type</label>
+          <select id="it-slottype">
+            <option value="item" ${((it.slot === 'relic' ? 'relic' : (it.slotType || 'item')) === 'item') ? 'selected' : ''}>⚔️ Item (held equipment)</option>
+            <option value="gem" ${((it.slot === 'relic' ? 'relic' : (it.slotType || 'item')) === 'gem') ? 'selected' : ''}>💎 Gem (socketable gem slot)</option>
+            <option value="nodeShard" ${((it.slot === 'relic' ? 'relic' : (it.slotType || 'item')) === 'nodeShard') ? 'selected' : ''}>🔮 Node Shard (socketable)</option>
+            <option value="relic" ${((it.slot === 'relic' ? 'relic' : (it.slotType || 'item')) === 'relic') ? 'selected' : ''}>🔱 Relic (hero-only)</option>
+          </select>
+        </div>
+        <div class="editor-field full">
+          <label>🌟 Grant Passive (unit has this passive while gem/item is equipped)</label>
+          <select id="it-grantpassive">
+            <option value="" ${!(it.grantPassive) ? 'selected' : ''}>— None —</option>
+            ${(typeof PASSIVES !== 'undefined') ? Object.values(PASSIVES).map(p => `<option value="${escapeHtml(p.id)}" ${(it.grantPassive === p.id) ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('') : ''}
+          </select>
+        </div>
+        <div class="editor-field full">
+          <label>⚔️ Grant Move (unit can use this move while gem/item is equipped)</label>
+          <select id="it-grantsmove">
+            <option value="" ${!(it.grantsMove) ? 'selected' : ''}>— None —</option>
+            ${Object.values(Forge.customMoves||{}).map(m => `<option value="${escapeHtml(m.id)}" ${(it.grantsMove === m.id) ? 'selected' : ''}>${escapeHtml(m.name||m.id)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="editor-field full">
+          <label>✨ On-Play Effect (fires when this unit enters the battlefield)</label>
+          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+            <select id="it-onplay-type" style="flex:1;min-width:200px">
+              <option value="" ${!(it.grantOnPlayEffect && it.grantOnPlayEffect.type) ? 'selected' : ''}>— None —</option>
+              <option value="damage" ${(it.grantOnPlayEffect && it.grantOnPlayEffect.type === 'damage') ? 'selected' : ''}>💥 Damage to nearby enemies</option>
+              <option value="heal" ${(it.grantOnPlayEffect && it.grantOnPlayEffect.type === 'heal') ? 'selected' : ''}>💚 Heal self</option>
+              <option value="draw" ${(it.grantOnPlayEffect && it.grantOnPlayEffect.type === 'draw') ? 'selected' : ''}>🃏 Draw cards</option>
+              <option value="gainEnergy" ${(it.grantOnPlayEffect && it.grantOnPlayEffect.type === 'gainEnergy') ? 'selected' : ''}>⚡ Gain energy</option>
+              <option value="buffSelf" ${(it.grantOnPlayEffect && it.grantOnPlayEffect.type === 'buffSelf') ? 'selected' : ''}>📈 Buff self ATK</option>
+            </select>
+            <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.85rem">Amount <input id="it-onplay-amount" type="number" min="1" max="20" value="${(it.grantOnPlayEffect&&it.grantOnPlayEffect.amount)||1}" style="width:54px"></label>
+          </div>
+        </div>
         <div class="editor-field"><label>HP modifier</label><input id="it-hp" type="number" min="-99" max="99" value="${it.hpMod || 0}"></div>
         <div class="editor-field"><label>ATK</label><input id="it-atk" type="number" min="-20" max="20" value="${mods.atk || 0}"></div>
         <div class="editor-field"><label>DEF</label><input id="it-def" type="number" min="-20" max="20" value="${mods.def || 0}"></div>
@@ -72554,6 +73806,30 @@ function captureItemEditorInto(item) {
     item.statMods.spd = n('it-spd', -5,  5,  item.statMods.spd || 0);
   }
   item.immunities = Array.from(document.querySelectorAll('[data-it-immune]:checked')).map(el => el.dataset.itImmune);
+  // Slot type
+  if (v('it-slottype') != null) {
+    const _st = v('it-slottype') || 'item';
+    if (_st === 'relic') { item.slot = 'relic'; item.slotType = 'relic'; }
+    else { delete item.slot; item.slotType = _st; }
+  }
+  // Grant passive
+  if (v('it-grantpassive') != null) {
+    const _gp = (v('it-grantpassive') || '').trim();
+    if (_gp) item.grantPassive = _gp; else delete item.grantPassive;
+  }
+  // Grant move
+  if (v('it-grantsmove') != null) {
+    const _gm = (v('it-grantsmove') || '').trim();
+    if (_gm) item.grantsMove = _gm; else delete item.grantsMove;
+  }
+  // On-play effect
+  if (v('it-onplay-type') != null) {
+    const _ot = (v('it-onplay-type') || '').trim();
+    if (_ot) {
+      const _oa = Math.max(1, Math.min(20, parseInt(v('it-onplay-amount') || '1', 10) || 1));
+      item.grantOnPlayEffect = { type: _ot, amount: _oa };
+    } else { delete item.grantOnPlayEffect; }
+  }
   if (document.querySelector('[data-it-craftcost]')) {
     const cc = {};
     document.querySelectorAll('[data-it-craftcost]').forEach(inp => {
@@ -72594,7 +73870,7 @@ function bindItemEditor() {
     }
     saveForge();
   };
-  ['it-name','it-icon','it-desc','it-rarity','it-hp','it-atk','it-def','it-mag','it-res','it-spd'].forEach(id => {
+  ['it-name','it-icon','it-desc','it-rarity','it-slottype','it-grantpassive','it-grantsmove','it-onplay-type','it-onplay-amount','it-hp','it-atk','it-def','it-mag','it-res','it-spd'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('input',  liveSync);
@@ -74603,6 +75879,7 @@ function _renderBattleImmediate() {
             </div>
             ${renderBoard()}
             ${renderWeatherFx()}
+            ${renderPersistentSpells()}
           </div>
         </main>
       </div>
@@ -74616,6 +75893,9 @@ function _renderBattleImmediate() {
       ${(App.replayViewing || (App.flags && App.flags.pixiBoard)) ? '' : renderBattleAnim()}
       ${(App.replayViewing || (App.flags && App.flags.pixiBoard)) ? '' : renderHeroUltCinematic()}
       ${App.replayViewing ? '' : renderCounterPrompt()}
+      ${App.replayViewing ? '' : renderAssaultPrompt()}
+      ${App.replayViewing ? '' : renderSacrificePrompt()}
+      ${App.replayViewing ? '' : renderVerdictPrompt()}
       ${App.replayViewing ? '' : renderDeckSearchModal()}
       ${App.replayViewing ? '' : renderFusionSelectionOverlay()}
       ${(App.replayViewing || (App.flags && App.flags.pixiBoard)) ? '' : renderPolycreationCinematic()}
@@ -74708,6 +75988,9 @@ function _renderBattleImmediate() {
   bindTutorialPanel();
   if (typeof bindFusionSelectionOverlay === 'function') bindFusionSelectionOverlay();
   if (typeof bindHackPrompt === 'function') bindHackPrompt();
+  if (typeof bindAssaultPrompt === 'function') bindAssaultPrompt();
+  if (typeof bindSacrificePrompt === 'function') bindSacrificePrompt();
+  if (typeof bindVerdictPrompt === 'function') bindVerdictPrompt();
   if (typeof bindGameModeSummary === 'function') bindGameModeSummary();
   // Auto-shrink hand-card name text so long names (Bounty Collator, Bahamut King of
   // Good Dragons, etc.) don't overflow the title-bar strip on the new gold frame.
@@ -74784,8 +76067,17 @@ function renderBattlePiles(s) {
       ${gravePile('ai', 'Foe Grave', deadOf('ai').length)}
       ${kalon(s.ai.kalonsRemaining)}
     </div>`;
+  const _tunneled = Array.isArray(s.player.tunneled) ? s.player.tunneled : [];
+  const tunneledPanel = _tunneled.length > 0 ? `
+    <div class="bp-item">
+      <span class="bp-lbl">Tunneled</span>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        ${_tunneled.map(t => `<div title="${escapeHtml((t.card && t.card.name) || '?')} — ${t.turnsLeft} turn${t.turnsLeft === 1 ? '' : 's'} left" style="display:flex;align-items:center;gap:3px;background:rgba(40,100,180,0.18);border:1px solid rgba(80,140,220,0.4);border-radius:4px;padding:2px 6px;font-size:0.78rem;color:#90c8ff">🌊 ${escapeHtml((t.card && t.card.icon) || '?')} <span style="color:#c0e0ff">${t.turnsLeft}t</span></div>`).join('')}
+      </div>
+    </div>` : '';
   const meGrp = `<div class="bp-col">
       ${kalon(s.player.kalonsRemaining)}
+      ${tunneledPanel}
       ${gravePile('player', 'Graveyard', deadOf('player').length)}
       ${deckPile('Your Deck', len(s.player.deck))}
       ${idBlock(myName, myRank, myRankCol)}
@@ -75582,6 +76874,333 @@ function renderCounterPrompt() {
     </div>
   `;
 }
+// ============================================================
+// ⚔️ ASSAULT CARD PROMPT
+// Fires when a player declares a move.kind==='attack' and has ≥1 card with
+// card.isAssault===true in hand. Shows each assault card as a clickable
+// button. Clicking one sends it to the graveyard, applies its effect (via
+// the same engine as spells), then completes the attack.  "Skip" goes
+// straight to the attack.  The overlay is a separate DOM layer that sits
+// above the board — no extra modal state needed.
+// ============================================================
+function renderAssaultPrompt() {
+  const ap = App.ui && App.ui.assaultPrompt;
+  if (!ap) return '';
+  const s = App.state;
+  if (!s) return '';
+  // When triggered by a spell, exclude the pending spell card itself from the assault list.
+  const _pendingId = (ap.kind === 'spell' && ap.pendingSpellCard) ? ap.pendingSpellCard.instanceId : null;
+  const assaultCards = (s.player.hand || []).filter(c => c && c.isAssault && c.instanceId !== _pendingId);
+  if (!assaultCards.length) { App.ui.assaultPrompt = null; return ''; }
+  const isSpell  = ap.kind === 'spell';
+  const attacker = !isSpell ? (s.units || []).find(u => u.id === ap.attackerUnitId) : null;
+  const target   = !isSpell ? (s.units || []).find(u => u.id === ap.targetUnitId)   : null;
+  const subLine  = isSpell
+    ? `Casting: ${escapeHtml((ap.pendingSpellCard && ap.pendingSpellCard.name) || 'Spell')}`
+    : `${escapeHtml(attacker ? attacker.name : 'Unit')} → ${escapeHtml(target ? target.name : 'Enemy')}`;
+  const hintLine = isSpell
+    ? 'Activate an Assault card before the spell resolves? It fires for free — then the spell continues normally.'
+    : 'Activate a card before striking? It goes to the graveyard and its effect fires — then combat proceeds normally.';
+  const skipText = isSpell ? 'Skip — Cast spell without activating' : 'Skip — Attack without activating';
+  return `
+    <div class="assault-prompt-overlay" id="assault-prompt-overlay">
+      <div class="assault-prompt-modal">
+        <div class="assault-prompt-head">
+          <div class="assault-prompt-title">⚔ ASSAULT</div>
+          <div class="assault-prompt-sub">${subLine}</div>
+          <div class="assault-prompt-hint">${hintLine}</div>
+        </div>
+        <div class="assault-prompt-cards">
+          ${assaultCards.map(c => `<button class="assault-prompt-card" data-assault-pick="${escapeHtml(c.instanceId)}">
+            <div class="assault-prompt-card-icon">${escapeHtml(c.icon || '⚔')}</div>
+            <div class="assault-prompt-card-body">
+              <div class="assault-prompt-card-name">${escapeHtml(c.name || 'Assault Card')}</div>
+              ${c.desc ? `<div class="assault-prompt-card-desc">${escapeHtml(c.desc)}</div>` : ''}
+            </div>
+          </button>`).join('')}
+        </div>
+        <div class="assault-prompt-foot">
+          <button class="btn-secondary btn-mini" id="assault-prompt-skip">${escapeHtml(skipText)}</button>
+        </div>
+      </div>
+    </div>`;
+}
+function bindAssaultPrompt() {
+  if (!App.ui || !App.ui.assaultPrompt) return;
+  document.querySelectorAll('[data-assault-pick]').forEach(b => {
+    b.onclick = () => _activateAssaultCard(b.dataset.assaultPick);
+  });
+  const skip = document.getElementById('assault-prompt-skip');
+  if (skip) skip.onclick = () => {
+    const _apK = App.ui && App.ui.assaultPrompt && App.ui.assaultPrompt.kind;
+    if (_apK === 'spell') _completeAssaultSpell();
+    else _completeAssaultAttack();
+  };
+}
+
+// ============================================================
+// 🌊 TUNNEL SYSTEM — underground card emergence
+// ============================================================
+// Called each turn start for the active side ('player' | 'ai').
+// Decrements each tunneled entry's turnsLeft counter.
+// When turnsLeft hits 0, auto-spawns the unit adjacent to the hero.
+// Returns the modified state.
+function _tickTunneledCards(s, who) {
+  const tunneled = s[who] && s[who].tunneled;
+  if (!Array.isArray(tunneled) || tunneled.length === 0) return s;
+  const log = [...(s.log || [])];
+  let newTunneled = [];
+  for (const entry of tunneled) {
+    const tl = (entry.turnsLeft || 1) - 1;
+    if (tl > 0) {
+      newTunneled.push({ ...entry, turnsLeft: tl });
+      log.push({ msg: `🌊 ${(entry.card && entry.card.name) || 'Unit'} stirs underground — ${tl} turn${tl === 1 ? '' : 's'} left.`, color: who === 'player' ? 'green' : 'red' });
+      continue;
+    }
+    // turnsLeft reached 0 — emerge now.
+    const card = entry.card;
+    if (!card) continue;
+    const hero = (s.units || []).find(u => u && u.owner === who && u.isHero && u.alive);
+    if (!hero || !hero.pos) { newTunneled.push({ ...entry, turnsLeft: 0 }); continue; }
+    // Find first free adjacent tile.
+    const occupied = new Set((s.units || []).filter(u => u.alive && u.pos).map(u => u.pos.x + ',' + u.pos.y));
+    let placed = false;
+    for (let r = 1; r <= 3 && !placed; r++) {
+      for (let dy = -r; dy <= r && !placed; dy++) {
+        for (let dx = -r; dx <= r && !placed; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = hero.pos.x + dx, ny = hero.pos.y + dy;
+          const key = nx + ',' + ny;
+          if (occupied.has(key)) continue;
+          // Build and place the unit.
+          let emergedUnit;
+          try {
+            const prof = (typeof getUnitProfile === 'function') ? getUnitProfile(card.id) : { level: 1, xp: 0 };
+            emergedUnit = buildUnit(card, who, { x: nx, y: ny }, hero.heroPassive, prof.level, prof.xp);
+          } catch (_e) {
+            emergedUnit = { id: 'u_tun_' + Date.now(), owner: who, alive: true, name: card.name || 'Unit', icon: card.icon || '⬛', pos: { x: nx, y: ny }, currentHp: card.stats && card.stats.hp || 8, maxHp: card.stats && card.stats.hp || 8, atk: card.stats && card.stats.atk || 2, def: card.stats && card.stats.def || 0, mag: card.stats && card.stats.mag || 0, res: card.stats && card.stats.res || 0, spd: card.stats && card.stats.spd || 1, statusEffects: [], hasMoved: false, hasAttacked: false };
+          }
+          // Carry inspireEffect.
+          if (card.inspireEffect) emergedUnit.inspireEffect = card.inspireEffect;
+          if (card.cost != null) emergedUnit.cost = card.cost;
+          s = { ...s, units: [...s.units, emergedUnit] };
+          occupied.add(key);
+          placed = true;
+          log.push({ msg: `🌊 ${card.name} EMERGES from underground!`, color: who === 'player' ? 'green' : 'red' });
+          if (typeof playCardSummonVfx === 'function') {
+            try { playCardSummonVfx({ pos: { x: nx, y: ny } }); } catch (_e) {}
+          }
+        }
+      }
+    }
+    if (!placed) {
+      // No free tile — re-queue for next turn.
+      newTunneled.push({ ...entry, turnsLeft: 1 });
+      log.push({ msg: `🌊 ${card.name} tries to emerge but finds no room — waiting…`, color: 'amber' });
+    }
+  }
+  s = { ...s, [who]: { ...s[who], tunneled: newTunneled }, log };
+  return s;
+}
+
+// ============================================================
+// ⚔ SACRIFICE TARGETING UI
+// ============================================================
+// Rendered inside the battle overlay when App.ui.sacrificeTargeting is set.
+function renderSacrificePrompt() {
+  const st = App.ui && App.ui.sacrificeTargeting;
+  if (!st) return '';
+  const s = App.state;
+  const unit = (s && s.units) ? s.units.find(u => u.id === st.unitId) : null;
+  const unitName = (unit && unit.name) || 'Unit';
+  return `<div style="position:fixed;bottom:0;left:0;right:0;z-index:2100;padding:0.8rem 1rem;background:linear-gradient(0deg,rgba(20,8,40,0.97),rgba(30,14,60,0.93));border-top:2px solid rgba(255,120,40,0.55);display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+    <div style="flex:1;min-width:0">
+      <div style="font-family:'Cinzel',serif;font-size:0.95rem;color:#ffcfa0">⚔ ${escapeHtml(unitName)} demands a sacrifice</div>
+      <div class="small-text ink-dim">Click a friendly non-hero unit on the board to sacrifice it, or…</div>
+    </div>
+    <button class="btn-mini" id="sac-cancel-btn" style="background:rgba(255,60,60,0.18);border-color:rgba(255,80,80,0.5)">✖ Cancel</button>
+  </div>`;
+}
+
+function bindSacrificePrompt() {
+  const btn = document.getElementById('sac-cancel-btn');
+  if (btn) {
+    btn.onclick = () => {
+      if (App.ui) App.ui.sacrificeTargeting = null;
+      renderBattle();
+    };
+  }
+}
+
+function _executeSacrifice(st, victim) {
+  let s = App.state;
+  const unit = s.units.find(u => u.id === st.unitId && u.alive);
+  if (!unit) { renderBattle(); return; }
+  const eff = st.eff || {};
+  const n = Math.max(1, eff.amount || 1);
+  const log = [...s.log];
+  // Remove the victim.
+  s = { ...s, units: s.units.map(u => u.id === victim.id ? { ...u, currentHp: 0, alive: false } : u) };
+  log.push({ msg: `⚔ ${victim.name} is sacrificed for ${unit.name}!`, color: 'amber' });
+  // Apply effect.
+  const se = eff.sacrificeEffect || 'buffSelf';
+  if (se === 'draw') {
+    s = { ...s, player: drawCards(s.player, n, true) };
+    log.push({ msg: `📜 The sacrifice draws ${n} card${n === 1 ? '' : 's'}!`, color: 'green' });
+  } else if (se === 'gainEnergy') {
+    s = { ...s, player: { ...s.player, energy: Math.min(10, (s.player.energy || 0) + n) } };
+    log.push({ msg: `⚡ The sacrifice grants ${n} energy!`, color: 'green' });
+  } else if (se === 'healSelf') {
+    s = { ...s, units: s.units.map(u => u.id === unit.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + n) } : u) };
+    log.push({ msg: `❤️ ${unit.name} absorbs the sacrifice — heals ${n} HP!`, color: 'green' });
+  } else {
+    // buffSelf — apply status from eff.status
+    const statusId = eff.status || 'strong';
+    const dur = Math.max(1, eff.statusDuration || 2);
+    s = { ...s, units: s.units.map(u => u.id === unit.id ? applyStatusEffect(u, statusId, dur) : u) };
+    log.push({ msg: `✨ ${unit.name} absorbs the sacrifice — gains ${statusId}!`, color: 'green' });
+  }
+  s.log = log;
+  App.state = s;
+  if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
+}
+
+// ===== ⚖️ VERDICT PROMPT — shown when an AI unit plays a Verdict on-play effect.
+// The player (as opponent) sees a bottom bar with two buttons and picks which
+// effect resolves. The other option is discarded. Both buttons call _executeVerdict().
+function renderVerdictPrompt() {
+  const vc = App.ui && App.ui.verdictChoice;
+  if (!vc) return '';
+  const s = App.state;
+  const unit = (s && s.units) ? s.units.find(u => u.id === vc.unitId) : null;
+  const unitName = escapeHtml((unit && unit.name) || 'Unit');
+  const labelA = escapeHtml(vc.eff.labelA || 'Effect A');
+  const labelB = escapeHtml(vc.eff.labelB || 'Effect B');
+  return `<div style="position:fixed;bottom:0;left:0;right:0;z-index:2100;padding:0.75rem 1rem;background:linear-gradient(0deg,rgba(8,20,55,0.98),rgba(18,38,90,0.95));border-top:2px solid rgba(100,160,255,0.55);display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+    <div style="flex:1;min-width:0">
+      <div style="font-family:'Cinzel',serif;font-size:0.9rem;color:#a8ccff">⚖️ ${unitName} — VERDICT</div>
+      <div class="small-text ink-dim">You are the opposing player — choose which effect resolves:</div>
+    </div>
+    <button class="btn-mini" id="verdict-a-btn" style="background:rgba(80,130,255,0.22);border-color:rgba(100,160,255,0.55);min-width:130px;white-space:normal;text-align:center">
+      <span style="font-size:0.7rem;color:#88aaff;display:block">CHOICE A</span>${labelA}
+    </button>
+    <button class="btn-mini" id="verdict-b-btn" style="background:rgba(80,200,130,0.22);border-color:rgba(80,200,130,0.55);min-width:130px;white-space:normal;text-align:center">
+      <span style="font-size:0.7rem;color:#88ffaa;display:block">CHOICE B</span>${labelB}
+    </button>
+  </div>`;
+}
+
+function bindVerdictPrompt() {
+  const btnA = document.getElementById('verdict-a-btn');
+  const btnB = document.getElementById('verdict-b-btn');
+  if (btnA) btnA.onclick = () => _executeVerdict('a');
+  if (btnB) btnB.onclick = () => _executeVerdict('b');
+}
+
+function _executeVerdict(choice) {
+  const vc = App.ui && App.ui.verdictChoice;
+  if (!vc) { renderBattle(); return; }
+  const s = App.state;
+  const unit = (s.units || []).find(u => u.id === vc.unitId && u.alive);
+  App.ui.verdictChoice = null;
+  if (!unit) { renderBattle(); return; }
+  const eff = vc.eff;
+  const isB = choice === 'b';
+  const chosenEff = isB ? (eff.effectB || {}) : (eff.effectA || {});
+  const chosenLabel = isB ? (eff.labelB || 'Effect B') : (eff.labelA || 'Effect A');
+  let ns = { ...s, log: [...s.log, { msg: `⚖️ You chose: "${escapeHtml ? escapeHtml(chosenLabel) : chosenLabel}"`, color: 'green' }] };
+  if (chosenEff && chosenEff.type) {
+    try { ns = applyOnPlayEffect(ns, unit, { onPlay: chosenEff }); } catch (e) { console.warn('[verdict]', e); }
+  }
+  App.state = ns;
+  if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
+}
+
+// Apply the assault card's effect then complete the pending attack.
+function _activateAssaultCard(instanceId) {
+  const ap = App.ui && App.ui.assaultPrompt;
+  if (!ap) { _completeAssaultAttack(); return; }
+  const s = App.state;
+  const card = (s.player.hand || []).find(c => c && c.instanceId === instanceId);
+  if (!card) { _completeAssaultAttack(); return; }
+  let ns = { ...s };
+  const log = [...ns.log];
+  // The attacking unit serves as the "caster" for area/range calculations.
+  const caster = (ns.units || []).find(u => u.id === ap.attackerUnitId)
+    || (ns.units || []).find(u => u && u.owner === 'player' && u.isHero && u.alive);
+  const range = (typeof getCardRange === 'function') ? getCardRange(card) : 3;
+  log.push({ msg: `⚔ ${escapeHtml(card.name)} activated as Assault!${card.desc ? ' — ' + card.desc : ''}`, color: 'green' });
+  // ── Apply legacy card.effect (same paths as spells, but free — no energy cost) ──
+  try {
+    if (card.effect && card.effect.type) {
+      if (card.effect.type === 'damage') {
+        let tgts = ns.units.filter(u => u.owner === 'ai' && u.alive);
+        if (caster) tgts = tgts.filter(u => distance(u.pos, caster.pos) <= range);
+        if (tgts.length > 0) {
+          const t = tgts.sort((a, b) => a.currentHp - b.currentHp)[0];
+          const trig = applyDamageTriggers(t, card.effect.amount || 0, 'magic');
+          trig.log.forEach(l => log.push(l));
+          ns.units = ns.units.map(u => u.id === t.id ? trig.unit : u);
+          if (!trig.unit.alive && trig.unit.isHero) ns.gameOver = 'player';
+        }
+      } else if (card.effect.type === 'heal') {
+        let tgts = ns.units.filter(u => u.owner === 'player' && u.alive && u.currentHp < u.maxHp);
+        if (caster) tgts = tgts.filter(u => distance(u.pos, caster.pos) <= range);
+        if (tgts.length > 0) {
+          const t = tgts.sort((a, b) => (a.currentHp / a.maxHp) - (b.currentHp / b.maxHp))[0];
+          ns.units = ns.units.map(u => u.id === t.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + (card.effect.amount || 0)) } : u);
+          log.push({ msg: `${card.name} heals ${t.name} for ${card.effect.amount}`, color: 'green' });
+        }
+      } else if (card.effect.type === 'buffAll') {
+        ns.units = ns.units.map(u => u.owner === 'player' && u.alive ? applyStatusEffect(u, card.effect.status, card.effect.duration) : u);
+      } else if (card.effect.type === 'draw') {
+        ns.player = drawCards(ns.player, card.effect.amount || 1, true);
+      }
+    }
+  } catch (e) { console.warn('[assault] legacy effect failed', e); }
+  // ── Apply modern customEffects (boardWipe, applyBuffDebuff, aoeStatus, etc.) ──
+  try {
+    if (card.customEffects && caster && typeof applyOnPlayEffect === 'function') {
+      ns = applyOnPlayEffect(ns, caster, { ...card, onPlay: card.customEffects });
+    }
+  } catch (e) { console.warn('[assault] customEffects failed', e); }
+  // ── Remove card from hand → graveyard (activation IS the cost — no energy) ──
+  ns.player = {
+    ...ns.player,
+    hand: ns.player.hand.filter(c => c.instanceId !== instanceId),
+    graveyard: [...(ns.player.graveyard || []), card],
+  };
+  ns.log = log;
+  App.state = ns;
+  try { if (typeof playSpellActivationVfx === 'function') playSpellActivationVfx(card, { label: 'ASSAULT!' }); } catch (e) {}
+  // Complete the deferred action — attack or spell — based on what triggered the prompt.
+  const _apKind = ap.kind || 'attack';
+  if (_apKind === 'spell') _completeAssaultSpell();
+  else _completeAssaultAttack();
+}
+// Execute the pending attack that was deferred for the assault prompt.
+function _completeAssaultAttack() {
+  const ap = App.ui && App.ui.assaultPrompt;
+  App.ui.assaultPrompt = null;
+  if (!ap) { renderBattle(); return; }
+  const s = App.state;
+  const sel    = (s.units || []).find(u => u.id === ap.attackerUnitId);
+  const target = (s.units || []).find(u => u.id === ap.targetUnitId);
+  const move   = (typeof lookupMove === 'function') ? lookupMove(ap.moveId) : null;
+  if (!sel || !target || !target.alive || !move) { renderBattle(); return; }
+  App.state = executeMove(App.state, sel, target, move);
+  checkPostAction();
+}
+// Execute the pending spell cast that was deferred for the assault prompt (v86l).
+function _completeAssaultSpell() {
+  const ap = App.ui && App.ui.assaultPrompt;
+  App.ui.assaultPrompt = null;
+  if (!ap || !ap.pendingSpellCard) { renderBattle(); return; }
+  // _inAssaultSpellResume prevents re-triggering the assault prompt a second time.
+  App._inAssaultSpellResume = true;
+  try { playSpell(ap.pendingSpellCard); } finally { App._inAssaultSpellResume = false; }
+}
+
 // ============================================================
 // 🌌 POLYCREATION FUSION — Selection Mode UI + 4-phase cinematic
 // ============================================================
@@ -77377,6 +78996,46 @@ function heroHpBar(hero, side) {
   `;
 }
 
+// ===== ✨ Persistent enchantment spell strip (v86j) =====
+// Renders a non-blocking pill row above the hand strip showing every active
+// enchantment on the field with turns remaining. Pointer-events:none.
+function renderPersistentSpells() {
+  const s = App.state;
+  if (!s || !(s.persistentSpells || []).length) return '';
+  const pills = s.persistentSpells.map(ps => {
+    if (!ps) return '';
+    const icon  = escapeHtml(ps.icon  || '✨');
+    const name  = escapeHtml(ps.name  || 'Enchantment');
+    const tl    = ps.turnsLeft || 0;
+    const side  = ps.ownerHint === 'ai' ? 'enemy' : 'yours';
+    const color = ps.ownerHint === 'ai' ? 'rgba(255,80,80,0.20)' : 'rgba(120,80,255,0.22)';
+    const bord  = ps.ownerHint === 'ai' ? 'rgba(255,100,100,0.50)' : 'rgba(184,136,255,0.55)';
+    // Build a compact tooltip-style description of active effects
+    const fx = ps.fieldEffect || {};
+    const parts = [];
+    if ((ps.drawPerTurn || 0) > 0) parts.push(`+${ps.drawPerTurn} draw`);
+    if (fx.aura) {
+      const auras = Array.isArray(fx.aura) ? fx.aura : [fx.aura];
+      auras.forEach(a => { if (a && a.stat) parts.push(`${a.amount > 0 ? '+' : ''}${a.amount} ${a.stat.toUpperCase()} (${a.target || 'allies'})`); });
+    }
+    if (fx.dot  && fx.dot.amount)  parts.push(`-${fx.dot.amount} HP/turn (${fx.dot.target  || 'enemies'})`);
+    if (fx.heal && fx.heal.amount) parts.push(`+${fx.heal.amount} HP/turn (${fx.heal.target || 'allies'})`);
+    if (fx.status && fx.status.id) parts.push(`${fx.status.id} (${fx.status.target || 'enemies'})`);
+    if (fx.energyRegen && fx.energyRegen.amount) parts.push(`+${fx.energyRegen.amount}⚡/turn`);
+    const desc = parts.length ? parts.join(' · ') : 'active';
+    return `<div class="persist-spell-pill" title="${escapeHtml(desc)}" style="display:inline-flex;align-items:center;gap:0.3rem;padding:0.22rem 0.55rem;border-radius:999px;background:${color};border:1px solid ${bord};font-size:0.78rem;color:#e8d8ff;white-space:nowrap">
+      <span>${icon}</span>
+      <span style="font-weight:700">${name}</span>
+      <span style="opacity:0.72">${tl}t</span>
+      <span style="font-size:0.68rem;opacity:0.58">${escapeHtml(side)}</span>
+    </div>`;
+  }).join('');
+  if (!pills) return '';
+  return `<div class="persist-spell-strip" aria-label="Active enchantments" style="position:absolute;bottom:4px;left:50%;transform:translateX(-50%);display:flex;gap:0.35rem;flex-wrap:wrap;justify-content:center;pointer-events:none;z-index:8;max-width:90%">
+    ${pills}
+  </div>`;
+}
+
 // ===== Weather visual effects =====
 // Returns an overlay positioned over the board with animated particles / gradients matching
 // the current weather. Pointer-events:none so it never blocks clicks on the board.
@@ -78829,6 +80488,7 @@ function bindBattleEvents() {
     // sinking the slot / per-match use.
     App.ui.consumableTargeting = null;
     App.ui.skillTargeting = null;
+    App.ui.sacrificeTargeting = null;
     renderBattle();
   };
   document.addEventListener('keydown', App._battleEscListener);
@@ -79269,6 +80929,11 @@ function onTileClick(x, y) {
         showToast(`${occupantHere.name} is not on the battlefield.`);
         return;
       }
+      // 🛡️ Spellshield — blocks consumable targeting from the opposing side.
+      if (typeof hasPassive === 'function' && hasPassive(occupantHere, 'spellshield')) {
+        showToast(`🛡️ ${occupantHere.name} is protected by Spellshield!`);
+        return;
+      }
       resolveHeroConsumable(ct.slotIdx, { x, y }, occupantHere);
       return;
     }
@@ -79291,6 +80956,18 @@ function onTileClick(x, y) {
       resolveHeroConsumable(ct.slotIdx, { x, y }, null);
       return;
     }
+  }
+
+  // ⚔ Sacrifice targeting — player picks a friendly non-hero unit to remove.
+  if (App.ui && App.ui.sacrificeTargeting) {
+    const st = App.ui.sacrificeTargeting;
+    if (!occupantHere || !occupantHere.alive || occupantHere.owner !== 'player' || occupantHere.isHero) {
+      showToast('Pick a friendly non-hero unit to sacrifice.');
+      return;
+    }
+    App.ui.sacrificeTargeting = null;
+    _executeSacrifice(st, occupantHere);
+    return;
   }
 
   if (App.ui.selectedCardId) {
@@ -79380,6 +81057,18 @@ function onTileClick(x, y) {
           } else if (gate.reason === 'follow') {
             showToast(`🐑 ${sel.name} is Following — cannot attack while led.`);
           }
+          return;
+        }
+      }
+      // ⚔️ Assault prompt — if any assault cards are in hand, pause before
+      // the attack and give the player a chance to activate one.
+      if (move.kind === 'attack') {
+        const _assaultHand = (s.player.hand || []).filter(c => c && c.isAssault);
+        if (_assaultHand.length > 0) {
+          App.ui.assaultPrompt = { attackerUnitId: sel.id, targetUnitId: occupant.id, moveId: move.id };
+          App.ui.selectedMoveId = null;
+          App.ui.actionMode = null;
+          renderBattle();
           return;
         }
       }
@@ -82070,6 +83759,33 @@ function placeUnit(card, pos) {
   // player gets the right error message ('need 3 units' vs 'tile too far').
   const _reqFail = _checkPlayRequirement(card, s, 'player');
   if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
+  // 🌊 TUNNEL X — if the card has a tunnel value, it goes underground
+  // instead of onto the battlefield. We skip tile validation entirely
+  // (the card never occupies a tile now), deduct the energy cost, and
+  // add an entry to s.player.tunneled. The unit will auto-emerge after
+  // X turns in the _tickTunneledCards turn-start hook.
+  if (card.tunnel && card.tunnel > 0) {
+    const tunCost = getEffectiveCardCost(card, s, 'player');
+    if ((s.player.energy || 0) < tunCost) { showToast('Not enough energy.'); return; }
+    const turns = Math.max(1, Math.min(10, card.tunnel | 0));
+    const tunEntry = { card: { ...card }, turnsLeft: turns };
+    let tunNext = {
+      ...s,
+      player: {
+        ...s.player,
+        hand: s.player.hand.filter(c => c.instanceId !== card.instanceId),
+        graveyard: [...s.player.graveyard, card],
+        energy: s.player.energy - tunCost,
+        tunneled: [...(s.player.tunneled || []), tunEntry],
+      },
+      log: [...s.log, { msg: `🌊 ${card.name} burrows underground — emerges in ${turns} turn${turns === 1 ? '' : 's'}!`, color: 'green' }],
+    };
+    App.state = tunNext;
+    App.ui.selectedCardId = null;
+    if (typeof playSfx === 'function') playSfx('cardPlace');
+    if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
+    return;
+  }
   const valid = getValidPlacementTiles(card, ph, s);
   if (!valid.some(p => p.x === pos.x && p.y === pos.y)) {
     const r = getCardRange(card);
@@ -82078,7 +83794,20 @@ function placeUnit(card, pos) {
   }
   const prof = getUnitProfile(card.id);
   const unit = buildUnit(card, 'player', pos, ph.heroPassive, prof.level, prof.xp);
-  unit.hasMoved = true; unit.hasAttacked = true;
+  // 🔮 PROPHECY buff — apply any pending prophecy bonus to this unit before it enters play.
+  if (s.player._prophecyBuff) {
+    unit.atk = (unit.atk || 0) + (s.player._prophecyBuff.atk || 0);
+    unit.def = (unit.def || 0) + (s.player._prophecyBuff.def || 0);
+  }
+  // Carry inspire effect from the source card so the inspire trigger can read it.
+  if (card.inspireEffect) unit.inspireEffect = card.inspireEffect;
+  if (card.cost != null) unit.cost = card.cost;
+  else if (card.energy != null) unit.cost = card.energy;
+  // 🏃 Speed passive — unit enters play ready to act immediately (no summoning sickness).
+  // All other units are marked as already having moved/attacked so they must wait a turn.
+  if (!hasPassive(unit, 'speed')) { unit.hasMoved = true; unit.hasAttacked = true; }
+  // ⚔️ DEFENDER — this unit can never attack; keep hasAttacked=true even for Speed units.
+  if (hasPassive(unit, 'defender')) { unit.hasAttacked = true; }
   // 🤝 Bond XP — deploying a unit alongside the player's hero earns
   //    sharedDeployment XP toward the hero's bond with this unit (by
   //    card id, so bonds stick across matches).
@@ -82092,12 +83821,46 @@ function placeUnit(card, pos) {
     App._tutorialUnitPlayed = true;
     App._turnTimerKey = null;
   }
+  // 💎 GEM EFFECTS — apply socketed gem bonuses when unit enters play (v86q)
+  try {
+    const _gBp = App.battlePrep || {};
+    const _gSock = (_gBp.socketedGems || {})[card.id || ''] || [];
+    for (const _gId of _gSock) {
+      if (!_gId) continue;
+      const _gem = (typeof getItemById === 'function') ? getItemById(_gId) : null;
+      if (!_gem) continue;
+      // 1. Stat mods
+      const _sm = _gem.statMods || {};
+      for (const [_k, _v] of Object.entries(_sm)) { if (_v) unit[_k] = (unit[_k]||0)+(_v|0); }
+      if (_gem.hpMod) { unit.maxHp=(unit.maxHp||0)+(_gem.hpMod|0); unit.currentHp=(unit.currentHp||0)+(_gem.hpMod|0); }
+      // 2. Grant passive — add to passives array
+      if (_gem.grantPassive) {
+        if (!Array.isArray(unit.passives)) unit.passives = unit.passive ? [unit.passive] : [];
+        if (!unit.passives.includes(_gem.grantPassive)) unit.passives.push(_gem.grantPassive);
+      }
+      // 3. Grant move — add to knownMoves
+      if (_gem.grantsMove) {
+        if (!Array.isArray(unit.knownMoves)) unit.knownMoves = [];
+        if (!unit.knownMoves.includes(_gem.grantsMove)) unit.knownMoves.push(_gem.grantsMove);
+      }
+      // 4. On-play effect — stash for firing after next state is built
+      if (_gem.grantOnPlayEffect && _gem.grantOnPlayEffect.type) {
+        if (!Array.isArray(unit._gemOnPlayEffects)) unit._gemOnPlayEffects = [];
+        unit._gemOnPlayEffects.push({ ..._gem.grantOnPlayEffect, _gemName: _gem.name || _gId });
+      }
+    }
+  } catch (_ge) { /* gem effects never crash placement */ }
   let next = {
     ...s,
     units: [...s.units, unit],
     player: { ...s.player, hand: s.player.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.player.graveyard, card], energy: s.player.energy - getEffectiveCardCost(card, s, 'player') },
     log: [...s.log, { msg: `You play ${card.name} (Lv ${prof.level})`, color: 'green' }],
   };
+  // 🔮 Clear consumed prophecy buff so it only applies to the NEXT single deployment.
+  if (s.player._prophecyBuff) {
+    next = { ...next, player: { ...next.player, _prophecyBuff: null } };
+    next.log = [...next.log, { msg: `🔮 Prophecy fulfilled — ${unit.name} gains +${s.player._prophecyBuff.atk} ATK / +${s.player._prophecyBuff.def} DEF!`, color: 'green' }];
+  }
   // ⚰ In-Grave enemyPlayUnit trigger — fires for cards in the OPPOSING side's
   // graveyard (the AI's). Models "your enemy plays a unit and one of YOUR
   // discarded zombies awakens to greet them." We pass 'ai' as the side
@@ -82141,6 +83904,104 @@ function placeUnit(card, pos) {
       }
     }
   } catch (e) {}
+  // ✨ INSPIRE trigger — scan allied units for the inspire passive.
+  // Any inspiring unit whose cost ≤ the new unit's cost fires its
+  // inspireEffect on the newly placed unit.
+  try {
+    const newUnitCost = getEffectiveCardCost(card, next, 'player');
+    const inspireUnits = (next.units || []).filter(u => u && u.alive && u.owner === 'player' && u.id !== unit.id && hasPassive(u, 'inspire'));
+    for (const inspirer of inspireUnits) {
+      const inspCost = inspirer.cost || inspirer._baseCost || 0;
+      if (newUnitCost < inspCost) continue; // New unit's cost must be ≥ inspirer's cost
+      const ie = inspirer.inspireEffect || inspirer._sourceCard && inspirer._sourceCard.inspireEffect || null;
+      if (!ie || !ie.type) continue;
+      const n = Math.max(1, ie.amount || 1);
+      if (ie.type === 'grantSwift') {
+        // Remove summoning sickness — unit can act this turn.
+        next = { ...next, units: next.units.map(u => u.id === unit.id ? { ...u, hasMoved: false, hasAttacked: false } : u) };
+        next.log = [...next.log, { msg: `✨ ${inspirer.name}'s Inspire — ${unit.name} acts immediately (Swift)!`, color: 'green' }];
+      } else if (ie.type === 'buffStats') {
+        const stat = ie.stat || 'atk';
+        next = { ...next, units: next.units.map(u => u.id === unit.id ? { ...u, [stat]: (u[stat] || 0) + n } : u) };
+        next.log = [...next.log, { msg: `✨ ${inspirer.name}'s Inspire — ${unit.name} gains +${n} ${stat.toUpperCase()}!`, color: 'green' }];
+      } else if (ie.type === 'draw') {
+        next = { ...next, player: drawCards(next.player, n, true) };
+        next.log = [...next.log, { msg: `✨ ${inspirer.name}'s Inspire — draw ${n} card${n === 1 ? '' : 's'}!`, color: 'green' }];
+      } else if (ie.type === 'gainEnergy') {
+        next = { ...next, player: { ...next.player, energy: Math.min(10, (next.player.energy || 0) + n) } };
+        next.log = [...next.log, { msg: `✨ ${inspirer.name}'s Inspire — +${n} energy!`, color: 'green' }];
+      } else if (ie.type === 'buffAllStats') {
+        // Requires STRICTLY greater cost — "costs more than the inspire unit" (v86l).
+        if (newUnitCost > inspCost) {
+          next = { ...next, units: next.units.map(u => u.id === unit.id ? {
+            ...u,
+            atk: (u.atk || 0) + n,
+            def: (u.def || 0) + n,
+            mag: (u.mag || 0) + n,
+            res: (u.res || 0) + n,
+          } : u) };
+          next.log = [...next.log, { msg: `✨ ${inspirer.name}'s Inspire — ${unit.name} gains +${n} ATK/DEF/MAG/RES!`, color: 'green' }];
+        }
+      }
+    }
+  } catch (_ie) {}
+  // ✨ PER-STAT INSPIRE PASSIVES (v86m) — inspireAtk / inspireDef / inspireMag / inspireRes.
+  // Each fires when the newly placed unit costs STRICTLY MORE than the inspirer.
+  // Grants +1 to the respective stat on the newly placed unit.
+  try {
+    const _newCost2 = getEffectiveCardCost(card, next, 'player');
+    const _statPassives = [
+      { id: 'inspireAtk', stat: 'atk', label: 'ATK' },
+      { id: 'inspireDef', stat: 'def', label: 'DEF' },
+      { id: 'inspireMag', stat: 'mag', label: 'MAG' },
+      { id: 'inspireRes', stat: 'res', label: 'RES' },
+    ];
+    for (const _sp of _statPassives) {
+      const _inspirers2 = (next.units || []).filter(u => u && u.alive && u.owner === 'player' && u.id !== unit.id && hasPassive(u, _sp.id));
+      for (const _insp2 of _inspirers2) {
+        const _ic2 = _insp2.cost || _insp2._baseCost || 0;
+        if (_newCost2 <= _ic2) continue; // strictly greater cost required
+        next = { ...next, units: next.units.map(u => u.id === unit.id ? { ...u, [_sp.stat]: (u[_sp.stat] || 0) + 1 } : u) };
+        next.log = [...next.log, { msg: `✨ ${_insp2.name}'s Inspire — ${unit.name} gains +1 ${_sp.label}!`, color: 'green' }];
+      }
+    }
+  } catch (_ie2) {}
+  // 🔮 PROPHECY — entering play sets a buff for the NEXT unit deployed (Hex TCG: Prophecy).
+  try {
+    if (hasPassive(unit, 'prophecy')) {
+      next = { ...next, player: { ...next.player, _prophecyBuff: { atk: 2, def: 2 } } };
+      next.log = [...next.log, { msg: `🔮 ${unit.name}'s Prophecy — next deployed unit gains +2 ATK, +2 DEF!`, color: 'green' }];
+    }
+  } catch (_pr) {}
+  // 💎 GEM ON-PLAY EFFECTS — fire per-gem on-enter abilities
+  try {
+    const _gopfx = (next.units.find(u => u && u.id === unit.id) || unit)._gemOnPlayEffects || [];
+    for (const _gfx of _gopfx) {
+      if (!_gfx || !_gfx.type) continue;
+      const _ga = Math.max(1, _gfx.amount || 1);
+      if (_gfx.type === 'damage') {
+        const _near = (next.units||[]).filter(u => u && u.alive && u.owner === 'ai' && typeof distance==='function' && distance(u.pos, pos) <= 2);
+        for (const _ne of _near) {
+          const _trig = applyDamageTriggers(_ne, _ga, 'gem');
+          next = { ...next, units: next.units.map(u => u.id === _ne.id ? _trig.unit : u) };
+          (_trig.log||[]).forEach(l => next.log.push ? next.log.push(l) : (next = {...next, log: [...next.log, l]}));
+        }
+        if (_near.length) next = { ...next, log: [...next.log, { msg: `💎 ${_gfx._gemName} — ${unit.name} deals ${_ga} damage to ${_near.length} nearb${_near.length===1?'y enemy':'y enemies'}!`, color: 'green' }] };
+      } else if (_gfx.type === 'heal') {
+        next = { ...next, units: next.units.map(u => u.id === unit.id ? { ...u, currentHp: Math.min(u.maxHp||u.currentHp, (u.currentHp||0)+_ga) } : u) };
+        next = { ...next, log: [...next.log, { msg: `💎 ${_gfx._gemName} — ${unit.name} heals +${_ga} HP on entry!`, color: 'green' }] };
+      } else if (_gfx.type === 'draw') {
+        next = { ...next, player: drawCards(next.player, _ga, true) };
+        next = { ...next, log: [...next.log, { msg: `💎 ${_gfx._gemName} — ${unit.name} draws ${_ga} card${_ga===1?'':'s'}!`, color: 'green' }] };
+      } else if (_gfx.type === 'gainEnergy') {
+        next = { ...next, player: { ...next.player, energy: Math.min(10, (next.player.energy||0)+_ga) } };
+        next = { ...next, log: [...next.log, { msg: `💎 ${_gfx._gemName} — ${unit.name} generates +${_ga} energy!`, color: 'green' }] };
+      } else if (_gfx.type === 'buffSelf') {
+        next = { ...next, units: next.units.map(u => u.id === unit.id ? { ...u, atk: (u.atk||0)+_ga } : u) };
+        next = { ...next, log: [...next.log, { msg: `💎 ${_gfx._gemName} — ${unit.name} surges +${_ga} ATK on entry!`, color: 'green' }] };
+      }
+    }
+  } catch (_gfxe) { /* on-play gem effects never crash placement */ }
   App.state = next;
   recordCardPlayed(card);
   App.ui.selectedCardId = null;
@@ -82421,6 +84282,17 @@ function playSpell(card) {
     try { console.info('[spell] ignored re-entrant play during chain'); } catch (_) {}
     return;
   }
+  // ⚔️ Assault prompt (v86l) — if assault cards are in hand and we're not resuming
+  // from an assault activation, pause and let the player fire one before the spell.
+  if (!App._inAssaultSpellResume) {
+    const _assaultSpellHand = (s.player.hand || []).filter(c => c && c.isAssault && c.instanceId !== card.instanceId);
+    if (_assaultSpellHand.length > 0) {
+      App.ui.assaultPrompt = { kind: 'spell', pendingSpellCard: card };
+      App.ui.selectedCardId = null;
+      renderBattle();
+      return;
+    }
+  }
   App._spellInFlight = Date.now();
   // 🤖 AI counter — give the AI a chance to negate this spell before
   // resolution. 🪞 If the AI fires a counter, the player still has one
@@ -82544,7 +84416,25 @@ function _resolveSpellAfterChain(card) {
       else log.push({ msg: `🌀 ${card.name} fizzles — no open tiles.`, color: 'amber' });
     }
   }
-  ns.player = { ...ns.player, hand: ns.player.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...ns.player.graveyard, card], energy: ns.player.energy - spellCost };
+  // ✨ PERSISTENT SPELL (v86j) — stays on field instead of going to graveyard.
+  if (card.persistent && (card.persistDuration || card.duration)) {
+    const _turnsLeft = Math.max(1, card.persistDuration || card.duration || 3);
+    const _newPs = {
+      instanceId: card.instanceId || (card.id + '_' + Date.now()),
+      id:          card.id,
+      name:        card.name,
+      icon:        card.icon || '✨',
+      ownerHint:   'player',
+      turnsLeft:   _turnsLeft,
+      fieldEffect: card.persistFieldEffect || {},
+      drawPerTurn: card.persistDrawPerTurn || 0,
+    };
+    ns.persistentSpells = [...(ns.persistentSpells || []), _newPs];
+    ns.player = { ...ns.player, hand: ns.player.hand.filter(c => c.instanceId !== card.instanceId), energy: ns.player.energy - spellCost };
+    log.push({ msg: `✨ ${card.name} — enchantment active for ${_turnsLeft} turn${_turnsLeft !== 1 ? 's' : ''}!`, color: 'green' });
+  } else {
+    ns.player = { ...ns.player, hand: ns.player.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...ns.player.graveyard, card], energy: ns.player.energy - spellCost };
+  }
   ns.log = log;
   App.state = ns;
   recordCardPlayed(card);
@@ -83143,7 +85033,11 @@ function aiScoreUnitCard(card, state, playerProf) {
     else if (pid === 'thorns')    score += 12;
     else if (pid === 'taunt')     score += 14;
     else if (pid === 'guardian')  score += 16;
-    else if (pid === 'inspire')   score += 20;
+    else if (pid === 'inspire')    score += 20;
+    else if (pid === 'inspireAtk') score += 14;
+    else if (pid === 'inspireDef') score += 14;
+    else if (pid === 'inspireMag') score += 14;
+    else if (pid === 'inspireRes') score += 14;
     else if (pid === 'warlord')   score += 22;
     else if (pid === 'archmage')  score += 22;
     else if (pid === 'weatherSummoner') score += 24;
@@ -83621,6 +85515,30 @@ function doAIStep() {
           let sc = 30 + threats * 18 + (s.player.kalonsRemaining || 0) * 5;
           if (!best || sc > best.score) best = { card, target: null, kind: 'kalonLock', score: sc };
         }
+      } else if (card.persistent) {
+        // ✨ Persistent enchantment — score based on how much value it generates over its lifetime.
+        // A persistent spell that draws cards, buffs allies, damages enemies, or heals allies is
+        // always worth casting if the AI can afford it and doesn't already have a better play.
+        const _pf   = card.persistFieldEffect || {};
+        const _dur  = Math.max(1, card.persistDuration || 3);
+        const _allyCount  = s.units.filter(u => u.owner === 'ai' && u.alive).length;
+        const _enemyCount = s.units.filter(u => u.owner === 'player' && u.alive).length;
+        let sc = 10; // baseline — persistent spells are always worth considering
+        sc += (card.persistDrawPerTurn || 0) * 12 * _dur;          // draw value
+        if (_pf.aura) {
+          const _auras = Array.isArray(_pf.aura) ? _pf.aura : [_pf.aura];
+          for (const a of _auras) {
+            if (!a) continue;
+            const _cnt = (a.target === 'all') ? (_allyCount + _enemyCount) : (a.target === 'enemies' ? _enemyCount : _allyCount);
+            sc += Math.abs(a.amount || 0) * _cnt * 3 * _dur;
+          }
+        }
+        if (_pf.dot  && _pf.dot.amount)  sc += _pf.dot.amount  * _enemyCount * _dur;
+        if (_pf.heal && _pf.heal.amount) sc += _pf.heal.amount * _allyCount  * _dur * 0.7;
+        if (_pf.energyRegen && _pf.energyRegen.amount) sc += _pf.energyRegen.amount * _dur * 8;
+        if (_pf.status && _pf.status.id) sc += _enemyCount * _dur * 5;
+        sc -= (card.cost || 0) * 4; // pay-off penalty
+        if (sc >= 15 && (!best || sc > best.score)) best = { card, target: null, kind: 'persistent', score: sc };
       }
     }
 
@@ -83701,6 +85619,26 @@ function doAIStep() {
             log: [...s.log, { msg: `🚫 Enemy ${card.name} — your Kalon awakenings sealed for ${dur} turn${dur === 1 ? '' : 's'}!`, color: 'red' }],
           };
           setAIActor(null, `🚫 Enemy seals Kalon awakenings`);
+        } else if (best.kind === 'persistent') {
+          // ✨ AI plays a persistent enchantment — it stays on field.
+          const _turnsLeft = Math.max(1, card.persistDuration || card.duration || 3);
+          const _aiPs = {
+            instanceId: card.instanceId || (card.id + '_ai_' + Date.now()),
+            id:         card.id,
+            name:       card.name,
+            icon:       card.icon || '✨',
+            ownerHint:  'ai',
+            turnsLeft:  _turnsLeft,
+            fieldEffect: card.persistFieldEffect || {},
+            drawPerTurn: card.persistDrawPerTurn || 0,
+          };
+          App.state = {
+            ...s,
+            persistentSpells: [...(s.persistentSpells || []), _aiPs],
+            ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) },
+            log: [...s.log, { msg: `✨ Enemy ${card.name} — enchantment active for ${_turnsLeft} turn${_turnsLeft !== 1 ? 's' : ''}!`, color: 'red' }],
+          };
+          setAIActor(null, `✨ Enemy enchants the field`);
         }
         renderBattle();
         scheduleAIStep(AI_DELAYS.spell);
@@ -104697,6 +106635,7 @@ const RLC_NODE_TYPES = {
   rest:      { name: 'Rest Point',  icon: '🔥', color: '#c8923c', glow: 'rgba(220,150,70,0.5)'  },
   upgrade:   { name: 'Card Forge',  icon: '🔨', color: '#c89b3c', glow: 'rgba(220,170,80,0.55)' },
   convoy:    { name: 'Convoy',      icon: '🚚', color: '#3c9bd4', glow: 'rgba(60,160,220,0.55)' },
+  oilExtraction: { name: 'Oil Extraction', icon: '🛢️', color: '#c8923c', glow: 'rgba(220,150,70,0.6)' },
 };
 // 🏺 RELICS — persistent run-wide passive items (Slay-the-Spire style).
 // Effects are read at RLC-owned hooks only (run start, after-battle, node
@@ -105809,7 +107748,7 @@ function _rlcGrantCard(key) {
 // ONLY at a 🚚 Convoy node or on final extraction (boss). Forfeited on death
 // (Phase 4). This is the bridge between the roguelite and the camp economy.
 // ════════════════════════════════════════════════════════════════════════
-const RLC_HAUL_TIER = { battle: 1, elite: 2, boss: 3, finalBoss: 4, treasure: 2 };
+const RLC_HAUL_TIER = { battle: 1, elite: 2, boss: 3, finalBoss: 4, treasure: 2, oilExtraction: 3 };
 // 🔥 CONTRABAND HEAT — carrying illegal haul raises raid danger (tougher
 // fights) and, past a threshold, LOCKS SCP-surveillance nodes so you must
 // route around them. Banking at a 🚚 Convoy clears haul → heat resets.
@@ -106125,7 +108064,7 @@ function rlcEnterNode(nodeId) {
         try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
       }
     } catch (e) {}
-    if (['battle','elite','boss','finalBoss'].indexOf(node.type) >= 0) { rlcStartBattle(node); return; }
+    if (['battle','elite','boss','finalBoss','oilExtraction'].indexOf(node.type) >= 0) { rlcStartBattle(node); return; }
     if (node.type === 'medical') { App._rlcNodeId = nodeId; App.screen = 'rlcMedical'; return render(); }
     if (node.type === 'market')  { App._rlcNodeId = nodeId; App.screen = 'rlcShop';    return render(); }
     if (node.type === 'event')   { App._rlcNodeId = nodeId; App._rlcRandomEv = null; App.screen = 'rlcEvent'; return render(); }
@@ -106229,6 +108168,7 @@ function rlcStartBattle(node) {
     rlcEnemyMaxHp: (parseInt(_enemyCfg.hpOverride, 10) > 0) ? parseInt(_enemyCfg.hpOverride, 10) : null,
     coinCall: null, coinResult: null, playerWonFlip: null, playerGoesFirst: null,
     rankedMode: false, openCupRun: null, openCupAPPerWin: 0,
+    oilBattle: node.type === 'oilExtraction',
   };
   App.battlePrepFlags = null;
   App.screen = 'vsScreen';
@@ -106482,7 +108422,7 @@ function renderRlcAdmin() {
       </div>
     </div>`;
   const nodeCard = (n, idx) => {
-    const isBattle = ['battle','elite','boss','finalBoss'].indexOf(n.type) >= 0;
+    const isBattle = ['battle','elite','boss','finalBoss','oilExtraction'].indexOf(n.type) >= 0;
     const conns = (n.connections || []);
     return `
       <div style="border:1px solid rgba(184,136,255,0.35);border-radius:8px;padding:12px;margin-bottom:12px;background:rgba(18,10,32,0.6)">
@@ -106545,6 +108485,23 @@ function renderRlcAdmin() {
           <div class="small-text ink-dim" style="margin:6px 0 2px">🌪️ Element restriction (offered cards must match ≥1; none = unrestricted):</div>
           <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;max-height:110px;overflow:auto">${ELEMENTS.map(e => `<label class="small-text" style="display:flex;align-items:center;gap:3px;border:1px solid rgba(184,136,255,0.3);border-radius:4px;padding:2px 6px"><input type="checkbox" data-rlc-elemrestrict="${idx}" value="${escapeHtml(e)}" ${(((n.reward || {}).restrictElements) || []).indexOf(e) >= 0 ? 'checked' : ''}> ${escapeHtml(e)}</label>`).join('')}</div>
           <div style="margin-top:6px">${relicSel('🏺 Relic reward (granted automatically on clearing this node)', 'nodes.' + idx + '.reward.relicId', (n.reward || {}).relicId)}</div>
+        ` : ''}
+        ${n.type === 'oilExtraction' ? `
+          <div style="background:rgba(200,146,60,0.08);border:1px solid rgba(200,146,60,0.35);border-radius:8px;padding:10px 14px;margin-top:6px">
+            <div class="small-text" style="color:#c8923c;font-weight:700;margin-bottom:8px">🛢️ Oil Extraction Battle Settings</div>
+            <div class="small-text ink-dim" style="margin-bottom:8px">Configure the enemy and the three pump options shown on the extraction choice screen.</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:7px;margin-bottom:6px">
+              ${fld('Safe yield lo (bbl)', 'nodes.' + idx + '.oilExtract.safeYieldLo', (n.oilExtract || {}).safeYieldLo != null ? (n.oilExtract || {}).safeYieldLo : 40, 'number')}
+              ${fld('Safe yield hi (bbl)', 'nodes.' + idx + '.oilExtract.safeYieldHi', (n.oilExtract || {}).safeYieldHi != null ? (n.oilExtract || {}).safeYieldHi : 80, 'number')}
+              ${fld('Hard yield lo (bbl)', 'nodes.' + idx + '.oilExtract.hardYieldLo', (n.oilExtract || {}).hardYieldLo != null ? (n.oilExtract || {}).hardYieldLo : 80, 'number')}
+              ${fld('Hard yield hi (bbl)', 'nodes.' + idx + '.oilExtract.hardYieldHi', (n.oilExtract || {}).hardYieldHi != null ? (n.oilExtract || {}).hardYieldHi : 160, 'number')}
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
+              ${fld('Hard pump ambush risk % (0–100)', 'nodes.' + idx + '.oilExtract.hardRiskPct', (n.oilExtract || {}).hardRiskPct != null ? (n.oilExtract || {}).hardRiskPct : 30, 'number')}
+              ${fld('Ambush HP damage (flat)', 'nodes.' + idx + '.oilExtract.ambushDmg', (n.oilExtract || {}).ambushDmg != null ? (n.oilExtract || {}).ambushDmg : 0, 'number')}
+            </div>
+            <div class="small-text ink-dim" style="margin-top:4px">Ambush HP damage = 0 → uses default 15% of run max HP. Enemy hero/deck/level above control the Extraction Battle encounter.</div>
+          </div>
         ` : ''}
         ${n.type === 'market' ? `
           ${fld('Shop name', 'nodes.' + idx + '.shop.name', (n.shop || {}).name)}
@@ -106918,7 +108875,15 @@ function renderUltimateAdmin() {
     if (t === 'attack') return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${box('Radius (tiles)', numI(id, 'radius', d.radius))}${box('Damage', numI(id, 'damage', d.damage))}${box('Inflict status', statusSel(id, 'applyStatus', d.applyStatus))}${box('Status turns', numI(id, 'statusTurns', d.statusTurns))}</div>`;
     if (t === 'mapwide') return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${box('Damage', numI(id, 'damage', d.damage))}${box('Inflict status', statusSel(id, 'applyStatus', d.applyStatus))}${box('Status turns', numI(id, 'statusTurns', d.statusTurns))}<label style="display:flex;align-items:center;gap:6px;align-self:end"><input type="checkbox" data-ult-id="${escapeHtml(id)}" data-ult-field="skipFlying" data-ult-bool="1" ${d.skipFlying ? 'checked' : ''}> <span class="small-text">Skip flying enemies</span></label></div>`;
     if (t === 'buff') return `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">${box('+ ATK', numI(id, 'atkBuff', d.atkBuff))}${box('+ DEF', numI(id, 'defBuff', d.defBuff))}${box('+ MAG', numI(id, 'magBuff', d.magBuff))}${box('+ RES', numI(id, 'resBuff', d.resBuff))}${box('+ SPD', numI(id, 'spdBuff', d.spdBuff))}${box('Buff turns', numI(id, 'buffTurns', d.buffTurns))}${box('Heal allies (HP)', numI(id, 'healAmount', d.healAmount))}</div>`;
-    if (t === 'summon') return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${box('Summon name', inp(id, 'summonName', d.summonName, 'Battle Golem'))}${box('Summon icon', inp(id, 'summonIcon', d.summonIcon, '🗿'))}${box('HP', numI(id, 'summonHp', d.summonHp))}${box('ATK', numI(id, 'summonAtk', d.summonAtk))}${box('DEF', numI(id, 'summonDef', d.summonDef))}${box('MAG', numI(id, 'summonMag', d.summonMag))}${box('RES', numI(id, 'summonRes', d.summonRes))}${box('SPD', numI(id, 'summonSpd', d.summonSpd))}</div>`;
+    if (t === 'summon') {
+      // Build unique summon card list from forge custom cards + catalog.
+      const _scards2 = []
+        .concat((Forge.customCards || []).filter(c => c && (c.type === 'summon' || c.isSummon) && c.id))
+        .concat((typeof Catalog !== 'undefined' && Array.isArray(Catalog.cards) ? Catalog.cards : []).filter(c => c && (c.type === 'summon' || c.isSummon) && c.id));
+      const _seen2 = new Set(); const _uniq2 = _scards2.filter(c => { if (_seen2.has(c.id)) return false; _seen2.add(c.id); return true; });
+      const _summonPickHtml = `<select data-ult-id="${escapeHtml(id)}" data-ult-field="summonCardId" data-ult-retype="1" style="${inpStyle}"><option value="">— pick a summon card —</option>${_uniq2.map(c => `<option value="${escapeHtml(c.id)}" ${d.summonCardId === c.id ? 'selected' : ''}>${escapeHtml((c.icon || c.emoji || '🗿') + ' ' + (c.name || c.id))}</option>`).join('')}</select>`;
+      return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><label style="grid-column:1/-1;display:block"><span class="small-text ink-dim">Summon card (auto-fills stats below)</span><br>${_summonPickHtml}</label>${box('Summon name', inp(id, 'summonName', d.summonName, 'Battle Golem'))}${box('Summon icon', inp(id, 'summonIcon', d.summonIcon, '🗿'))}${box('HP', numI(id, 'summonHp', d.summonHp))}${box('ATK', numI(id, 'summonAtk', d.summonAtk))}${box('DEF', numI(id, 'summonDef', d.summonDef))}${box('MAG', numI(id, 'summonMag', d.summonMag))}${box('RES', numI(id, 'summonRes', d.summonRes))}${box('SPD', numI(id, 'summonSpd', d.summonSpd))}</div>`;
+    }
     if (t === 'reaction') return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${box('Counter status', statusSel(id, 'reactStatus', d.reactStatus))}${box('Counter turns', numI(id, 'reactTurns', d.reactTurns))}</div>`;
     return '';
   };
@@ -106998,6 +108963,21 @@ function renderUltimateAdmin() {
       else v = el.value;
       const e = _ultForgeEntry(id);
       e[field] = v;
+      // When a summon card is picked from the dropdown, auto-fill name/icon/stats.
+      if (field === 'summonCardId' && v) {
+        const _sc = (typeof resolveDeckCard === 'function')
+          ? (resolveDeckCard('custom:' + v) || resolveDeckCard('unit:' + v)) : null;
+        if (_sc) {
+          e.summonName = _sc.name || '';
+          e.summonIcon = _sc.icon || _sc.emoji || '🗿';
+          e.summonHp   = +(_sc.hp  || 0);
+          e.summonAtk  = +(_sc.atk || 0);
+          e.summonDef  = +(_sc.def || 0);
+          e.summonMag  = +(_sc.mag || 0);
+          e.summonRes  = +(_sc.res || 0);
+          e.summonSpd  = +(_sc.spd || 0);
+        }
+      }
       try { saveForge(); } catch (x) {}
       if (el.getAttribute('data-ult-retype')) render();   // type changed → swap param fields
     };
@@ -107153,7 +109133,7 @@ function renderRlcMap() {
   // with Engage / Cancel before committing, so players take in the scene.
   const _pvNode = App._rlcNodePreview ? _rlcNode(camp, App._rlcNodePreview) : null;
   const _pvT = _pvNode ? (RLC_NODE_TYPES[_pvNode.type] || RLC_NODE_TYPES.battle) : null;
-  const _pvIsBattle = _pvNode && ['battle','elite','boss','finalBoss'].indexOf(_pvNode.type) >= 0;
+  const _pvIsBattle = _pvNode && ['battle','elite','boss','finalBoss','oilExtraction'].indexOf(_pvNode.type) >= 0;
   const _pvModal = (_pvNode && _pvT) ? `
     <div class="modal-backdrop" id="rlc-pv-bd" style="z-index:1320">
       <div class="ds-modal" style="max-width:560px;padding:0;overflow:hidden;border:2px solid ${_pvT.color}">
@@ -119123,16 +121103,24 @@ function _defenderSkillFlag(defender, flag) {
 function _battleFindInterceptor(state, target, attacker) {
   if (!state || !target || !target.alive) return null;
   if (!attacker || attacker.owner === target.owner) return null;
-  // The protected unit must not BE the protector — heroes guarding themselves
-  // would create a no-op redirect.
+  // A hero that has the skill flag guards itself — skip the redirect so we don't
+  // send the attack in a loop. Passive holders are handled by u.id !== target.id below.
   if (target.isHero && (_defenderSkillFlag(target, 'bodyguard') || _defenderSkillFlag(target, 'guardian'))) return null;
   for (const u of (state.units || [])) {
-    if (!u || !u.alive || !u.isHero || !u.heroId) continue;
+    if (!u || !u.alive) continue;
     if (u.owner !== target.owner || u.id === target.id) continue;
-    if (heroHasSkillFlag(u.heroId, 'bodyguard') && _battleWithinRadius(u, target, 1)) {
+    // Hero skill-tree flags (Tank / Warrior tree — legacy path, unchanged).
+    const _heroBodyguard = u.isHero && u.heroId && typeof heroHasSkillFlag === 'function' && heroHasSkillFlag(u.heroId, 'bodyguard');
+    const _heroGuardian  = u.isHero && u.heroId && typeof heroHasSkillFlag === 'function' && heroHasSkillFlag(u.heroId, 'guardian');
+    // Passive path — any unit (hero or non-hero) carrying the bodyguard / guardian passive.
+    const _passBodyguard = typeof hasPassive === 'function' && hasPassive(u, 'bodyguard');
+    const _passGuardian  = typeof hasPassive === 'function' && hasPassive(u, 'guardian');
+    // 🛡️ BODYGUARD — intercept attacks on allies within 1 tile. No use limit.
+    if ((_heroBodyguard || _passBodyguard) && _battleWithinRadius(u, target, 1)) {
       return { interceptor: u, flag: 'bodyguard' };
     }
-    if (heroHasSkillFlag(u.heroId, 'guardian') && _battleWithinRadius(u, target, 2) && !u._guardianUsed) {
+    // 🛡️ GUARDIAN — intercept the first attack on any ally within 2 tiles (once per match).
+    if ((_heroGuardian || _passGuardian) && _battleWithinRadius(u, target, 2) && !u._guardianUsed) {
       return { interceptor: u, flag: 'guardian' };
     }
   }
@@ -122835,6 +124823,8 @@ function renderDeckBuilder() {
   const matchesKindFilter = (x) => {
     if (filter === 'all')    return true;
     if (filter === 'custom') return !!x.isCustom;
+    // Counter tab: pure counter-type cards AND unit cards with the isCounterUnit flag.
+    if (filter === 'counter') return x.kind === 'counter' || (x.kind === 'unit' && !!(x.card && x.card.isCounterUnit));
     return x.kind === filter;
   };
   const filtered = all.filter(x => {
@@ -122864,6 +124854,21 @@ function renderDeckBuilder() {
   const savedCards = currentDeck ? currentDeck.cards : [];
   const savedName  = currentDeck ? (currentDeck.name || '') : '';
   const isDirty = (JSON.stringify(savedCards) !== JSON.stringify(App.deckEdit)) || (savedName !== App.deckEditName) || (App.editingDeckId === 'NEW' && App.deckEdit.length > 0);
+
+  // ── Side Deck + Gem panel state ───────────────────────────────────────────
+  if (!Profile.sideDeck || typeof Profile.sideDeck !== 'object') Profile.sideDeck = { cards: [] };
+  if (!Array.isArray(Profile.sideDeck.cards)) Profile.sideDeck.cards = [];
+  if (!Profile.socketedGems || typeof Profile.socketedGems !== 'object') Profile.socketedGems = {};
+  const _pTab = App.deckPanelTab || 'main';
+  const SIDE_MAX = 15;
+  const GEM_CAP  = 5;
+  const _sideCards = Profile.sideDeck.cards;
+  const _sideCount = _sideCards.length;
+  const _sockedGems = Profile.socketedGems;
+  const _totalGems = Object.values(_sockedGems).flat().filter(g => g && g !== '').length;
+  // Gem catalog from Item Forge (same fix as preBattleLoadout)
+  const _gemCat = (typeof Forge !== 'undefined' && Array.isArray(Forge.customItems)) ? Forge.customItems : [];
+  const _gemInv = (() => { const _i = {}; _gemCat.forEach(it => { if (it && it.id) _i[it.id] = 99; }); return _i; })();
 
   // Hero picker — custom dropdown so we can render each hero's actual sprite icon (not just
   // an emoji fallback). Lists every hero the player owns: starter + custom forge heroes.
@@ -122914,8 +124919,8 @@ function renderDeckBuilder() {
   `;
 
   // Filter row — kind tab buttons (existing), plus the new search + element/faction multi-chips.
-  const filterButtons = ['all','unit','spell','trap','location','weather','custom']
-    .map(f => `<button class="forge-tab ${filter === f ? 'active' : ''}" data-deck-filter="${f}">${f.toUpperCase()}</button>`).join('');
+  const filterButtons = ['all','unit','spell','trap','location','weather','counter','custom']
+    .map(f => `<button class="forge-tab ${filter === f ? 'active' : ''}" data-deck-filter="${f}">${f === 'counter' ? '⏱ COUNTER' : f.toUpperCase()}</button>`).join('');
 
   // Element chip row — every element from ELEMENT_DATA. Active state toggles via classList
   // and is driven by App.deckBuilderElemFilter. Clicking the same chip again removes it.
@@ -123037,16 +125042,90 @@ function renderDeckBuilder() {
         const itemBadge = equippedItem ? `<span class="deck-current-item" title="Holding: ${escapeHtml(equippedItem.name)}">${itemBadgeIcon}</span>` : '';
         const isHeroCard = card.type === 'hero';
         const spriteKey = isHeroCard ? ('h_' + card.id) : ('u_' + card.id);
+        const _canSide = !isHeroCard; // heroes stay in main
         return `
           <div class="deck-current-row" data-remove="${key}" data-ctx-key="${key}" title="Right-click for details${isUnitLike ? ' / equip item' : ''}">
             <span class="deck-current-cost">${card.cost || 0}</span>
             <span class="deck-current-icon">${renderIcon(spriteKey, card.icon, 'sm')}</span>
             <span class="deck-current-name">${escapeHtml(card.name)} <span class="deck-kind-tag" style="background:${kindColors[kind]}22;color:${kindColors[kind]};border-color:${kindColors[kind]}55">${kind.toUpperCase()}</span>${itemBadge}</span>
             <span class="deck-current-count">×${count}</span>
+            ${_canSide ? `<button class="btn-mini" data-move-to-side="${key}" title="Move one copy to Side Deck" style="font-size:0.68rem;padding:1px 5px">→ Side</button>` : ''}
             <button class="btn-mini btn-danger" data-remove-key="${key}" title="Remove one">−</button>
           </div>
         `;
       }).join('');
+
+  // ── Side Deck list HTML ───────────────────────────────────────────────────
+  const _sideDeckHtml = (() => {
+    if (!_sideCards.length) return `<div class="empty-list-note">Side deck is empty.<br><span class="ink-dim" style="font-size:0.8rem">Hit "→ Side" on any main deck card, or add cards here directly from Inventory.</span></div>`;
+    const _sideGrouped = {};
+    for (const k of _sideCards) _sideGrouped[k] = (_sideGrouped[k] || 0) + 1;
+    return Object.entries(_sideGrouped).map(([key, cnt]) => {
+      const c = resolveDeckCard(key);
+      if (!c) return '';
+      const { kind } = parseCardKey(key);
+      const tc = kindColors[kind] || kindColors.custom;
+      return `<div class="deck-current-row" style="border-left-color:rgba(168,208,255,0.5)">
+        <span class="deck-current-cost">${c.cost || 0}</span>
+        <span class="deck-current-icon">${renderIcon((c.type==='hero'?'h_':'u_')+c.id, c.icon, 'sm')}</span>
+        <span class="deck-current-name">${escapeHtml(c.name)} <span class="deck-kind-tag" style="background:${tc}22;color:${tc};border-color:${tc}55">${kind.toUpperCase()}</span></span>
+        <span class="deck-current-count">×${cnt}</span>
+        <button class="btn-mini" data-mv-side-to-main="${escapeHtml(key)}" title="Move one copy back to Main Deck" style="font-size:0.68rem;padding:1px 5px">← Main</button>
+        <button class="btn-mini btn-danger" data-rm-side="${escapeHtml(key)}" title="Remove from Side Deck">−</button>
+      </div>`;
+    }).join('');
+  })();
+
+  // ── Gems panel HTML ───────────────────────────────────────────────────────
+  const _gemsHtml = (() => {
+    const _parseKeyG = key => { const ci = (key||'').indexOf(':'); return ci<0 ? {kind:'custom',id:key||''} : {kind:key.slice(0,ci),id:key.slice(ci+1)}; };
+    const _isUnitKey = key => _parseKeyG(key).kind === 'unit' || (() => { try { const c=resolveDeckCard(key); return c && c.type==='unit'; } catch(e){return false;} })();
+    const _gemSlots  = key => { try { const c=resolveDeckCard(key); return c && c.gemSlots ? Math.min(3, c.gemSlots|0) : 0; } catch(e){return 0;} };
+    const _cNameG    = key => { try { const c=resolveDeckCard(key); return c&&c.name?c.name:(key||'?'); } catch(e){return key||'?';} };
+    const uniqueUnitKeys = [...new Set(App.deckEdit.filter(_isUnitKey))];
+    if (!uniqueUnitKeys.length) return `<div class="empty-list-note">No unit cards in deck yet.<br><span class="ink-dim" style="font-size:0.8rem">Add unit cards to the Main Deck first, then socket gems here.</span></div>`;
+    if (!_gemCat.length) return `<div class="empty-list-note" style="text-align:center">No gems created yet.<br><span class="ink-dim" style="font-size:0.8rem">Go to The Forge → 🎒 Items to create gems first.</span></div>`;
+    const gemsOkG = _totalGems <= GEM_CAP;
+    const infoBar = `<div class="pbl-deck-info ${gemsOkG?'ok':'warn'}" style="margin-bottom:0.8rem;padding:0.5rem 0.8rem;border-radius:6px;font-size:0.82rem;background:${gemsOkG?'rgba(77,158,104,0.12)':'rgba(184,78,44,0.15)'};border:1px solid ${gemsOkG?'rgba(77,158,104,0.4)':'rgba(184,78,44,0.5)'}">${gemsOkG?`💎 ${_totalGems} of ${GEM_CAP} gem slots used`:`⚠ Over limit: ${_totalGems}/${GEM_CAP} — remove a gem`}</div>`;
+    const _gemOpts = (cardKey, si) => {
+      const socketed = _sockedGems[cardKey] || [];
+      const cur  = socketed[si] || '';
+      const excl = socketed.filter((g,gi) => g && gi!==si);
+      const avail = Object.keys(_gemInv).filter(did => (_gemInv[did]||0)>0 && !excl.includes(did));
+      let html = '<option value="">— empty —</option>';
+      if (cur && !avail.includes(cur)) {
+        const gx = _gemCat.find(x => x.id===cur);
+        html += `<option value="${escapeHtml(cur)}" selected>${escapeHtml(gx ? `${gx.icon||'💎'} ${gx.name||cur}` : cur)}</option>`;
+      }
+      avail.forEach(did => {
+        const gx = _gemCat.find(x => x.id===did);
+        const lbl = gx ? `${gx.icon||'💎'} ${gx.name||did}` : did;
+        html += `<option value="${escapeHtml(did)}" ${cur===did?'selected':''}>${escapeHtml(lbl)}</option>`;
+      });
+      return html;
+    };
+    const cards = uniqueUnitKeys.map(key => {
+      const slots = _gemSlots(key);
+      const name  = _cNameG(key);
+      if (!slots) return `<div class="pbl-gem-card-empty"><div class="pbl-gem-card-name2">${escapeHtml(name)}</div><div class="pbl-gem-no-slots">No Gem Slots</div></div>`;
+      const slotItems = Array.from({length:slots},(_,si) => `
+        <div class="pbl-gem-slot-item">
+          <div class="pbl-gem-slot-label">Gem Slot ${si+1}</div>
+          <select class="db-gem-sel" data-dbgem="${escapeHtml(key)}:${si}"
+            style="width:100%;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.45);border-radius:6px;padding:0.26rem 0.4rem;font-size:0.8rem">
+            ${_gemOpts(key, si)}
+          </select>
+        </div>`).join('');
+      return `<div class="pbl-gem-card">
+        <div class="pbl-gem-card-header">
+          <span class="pbl-gem-card-name2">${escapeHtml(name)}</span>
+          <span class="pbl-gem-slot-count">⚙️ ${slots} slot${slots!==1?'s':''}</span>
+        </div>
+        <div class="pbl-gem-slots-grid">${slotItems}</div>
+      </div>`;
+    }).join('');
+    return `${infoBar}<div class="pbl-gem-cards-grid">${cards}</div>`;
+  })();
 
   // Deck distribution (cost curve)
   const curve = [0,0,0,0,0,0,0,0,0]; // costs 0..8
@@ -123136,7 +125215,26 @@ function renderDeckBuilder() {
             <div class="small-text ink-dim">Hero: <strong>${escapeHtml(hero.name)}</strong> · Max ${MAX_COPIES_PER_CARD} copies of any card</div>
           </div>
           <div class="deck-curve">${curveHtml}</div>
-          <div class="deck-current-list">${deckListHtml}</div>
+          <!-- ── Panel tab bar: Main Deck / Side Deck / Gems ─────────────── -->
+          <div style="display:flex;gap:0;margin:0.5rem 0 0;border-bottom:2px solid rgba(255,255,255,0.08)">
+            <button class="forge-tab ${_pTab==='main'?'active':''}" data-db-ptab="main" style="border-radius:6px 6px 0 0;margin-right:2px">🃏 Main (${deckSize}/${DECK_SIZE})</button>
+            <button class="forge-tab ${_pTab==='side'?'active':''}" data-db-ptab="side" style="border-radius:6px 6px 0 0;margin-right:2px">📋 Side (${_sideCount}/${SIDE_MAX})</button>
+            <button class="forge-tab ${_pTab==='gems'?'active':''}" data-db-ptab="gems" style="border-radius:6px 6px 0 0">💎 Gems (${_totalGems}/${GEM_CAP})</button>
+          </div>
+          <!-- Main deck panel -->
+          <div style="display:${_pTab==='main'?'block':'none'}">
+            <div class="deck-current-list">${deckListHtml}</div>
+          </div>
+          <!-- Side deck panel -->
+          <div style="display:${_pTab==='side'?'block':'none'}">
+            <div style="padding:0.4rem 0.2rem 0.2rem;font-size:0.78rem;color:#8899aa">Up to ${SIDE_MAX} cards you can swap in before a battle. Use "→ Side" on main deck cards, or add from Inventory.</div>
+            <div class="deck-current-list" id="db-side-list">${_sideDeckHtml}</div>
+          </div>
+          <!-- Gems panel -->
+          <div style="display:${_pTab==='gems'?'block':'none'}">
+            <div style="padding:0.4rem 0.2rem 0.2rem;font-size:0.78rem;color:#8899aa">Socket gems into unit cards. Gems apply passives, moves, and on-play effects when that unit enters battle.</div>
+            <div id="db-gems-list" style="padding-top:0.4rem">${_gemsHtml}</div>
+          </div>
         </div>
       </div>
       ${renderDeckCardContextModal()}
@@ -123422,6 +125520,82 @@ function renderDeckBuilder() {
     showToast(isComplete ? `Saved "${finalName}" (${DECK_SIZE} cards)` : `Saved draft "${finalName}" (${App.deckEdit.length}/${DECK_SIZE})`);
     render();
   };
+  // ── Panel tab switching (Main / Side / Gems) ─────────────────────────────
+  document.querySelectorAll('[data-db-ptab]').forEach(btn => {
+    btn.onclick = () => { App.deckPanelTab = btn.dataset.dbPtab; render(); };
+  });
+
+  // ── Move card from Main deck → Side deck ─────────────────────────────────
+  document.querySelectorAll('[data-move-to-side]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      if (_sideCards.length >= SIDE_MAX) { try { showToast(`⚠ Side deck is full (${SIDE_MAX} max)`); } catch(_){} return; }
+      const key = btn.dataset.moveToSide;
+      const idx = App.deckEdit.indexOf(key);
+      if (idx === -1) return;
+      App.deckEdit.splice(idx, 1);
+      Profile.sideDeck.cards.push(key);
+      try { saveProfile(); } catch(_) {}
+      render();
+    };
+  });
+
+  // ── Move card from Side deck → Main deck ─────────────────────────────────
+  document.querySelectorAll('[data-mv-side-to-main]').forEach(btn => {
+    btn.onclick = () => {
+      const key = btn.dataset.mvSideToMain;
+      const idx = Profile.sideDeck.cards.indexOf(key);
+      if (idx === -1) return;
+      Profile.sideDeck.cards.splice(idx, 1);
+      App.deckEdit = addToDeck(App.deckEdit, key);
+      App.deckPanelTab = 'main';
+      try { saveProfile(); } catch(_) {}
+      render();
+    };
+  });
+
+  // ── Remove card from Side deck ────────────────────────────────────────────
+  document.querySelectorAll('[data-rm-side]').forEach(btn => {
+    btn.onclick = () => {
+      const key = btn.dataset.rmSide;
+      const idx = Profile.sideDeck.cards.indexOf(key);
+      if (idx === -1) return;
+      Profile.sideDeck.cards.splice(idx, 1);
+      try { saveProfile(); } catch(_) {}
+      render();
+    };
+  });
+
+  // ── Gem slot selectors ────────────────────────────────────────────────────
+  document.querySelectorAll('.db-gem-sel').forEach(sel => {
+    sel.onchange = () => {
+      const parts = sel.dataset.dbgem.split(':');
+      // last part is the slot index; everything before is the card key (may contain ':')
+      const si  = parseInt(parts[parts.length - 1], 10);
+      const cardKey = parts.slice(0, -1).join(':');
+      // tentative update — check total gem cap first
+      const tent = JSON.parse(JSON.stringify(Profile.socketedGems));
+      if (!tent[cardKey]) tent[cardKey] = [];
+      tent[cardKey][si] = sel.value || '';
+      const newTotal = Object.values(tent).flat().filter(g => g && g !== '').length;
+      if (newTotal > GEM_CAP) {
+        try { showToast(`⚠ Max ${GEM_CAP} gems connected — remove one first`); } catch(_) {}
+        const existing = (Profile.socketedGems[cardKey] || [])[si] || '';
+        sel.value = existing;
+        return;
+      }
+      if (!Profile.socketedGems[cardKey]) Profile.socketedGems[cardKey] = [];
+      Profile.socketedGems[cardKey][si] = sel.value || '';
+      try { saveProfile(); } catch(_) {}
+      // No full re-render needed — just update the counter badge in the tab
+      const tabGemBtn = document.querySelector('[data-db-ptab="gems"]');
+      if (tabGemBtn) {
+        const newCount = Object.values(Profile.socketedGems).flat().filter(g => g && g !== '').length;
+        tabGemBtn.textContent = `💎 Gems (${newCount}/${GEM_CAP})`;
+      }
+    };
+  });
+
   // Wire up any item pickers rendered on this screen (hero banner + right-click context modal)
   bindItemPickers();
   bindRelicPickers();
@@ -124248,7 +126422,7 @@ function renderDeckBuilderDeckList() {
       ${App._deckCodeModal ? renderDeckCodeModal() : ''}
     </div>
   `;
-  document.getElementById('btn-back-deck').onclick = () => { App.screen = 'title'; render(); };
+  document.getElementById('btn-back-deck').onclick = () => { try { const _gpw = document.getElementById('db-gem-picker-wrapper'); if (_gpw) _gpw.remove(); } catch (e) {} App.screen = 'title'; render(); };
   document.getElementById('btn-switch-hero').onclick = () => {
     App.deckBuilderHeroId = null; App.editingDeckId = null;
     App.deckEdit = undefined; App.deckEditName = undefined;
@@ -127467,6 +129641,9 @@ function tw_decayTick() {
 }
 // ===== WAR MAP SCREEN =====
 function renderTerritoryWars() {
+  // ⚠️ _isAdm must be function-scoped — it is used both inside the
+  // nodeDrawerHtml IIFE and outside it in root.innerHTML (v86r fix).
+  const _isAdm = true; // War Map is already admin-gated so always true
   // Immediately remove the global world-event banner — it is position:fixed
   // and overlaps the War Map HUD. mountWorldEventBanner() also guards against
   // re-mounting it while this screen is active (v46), but nuking it here on
@@ -129578,18 +131755,24 @@ function _twBindNodeEditor(t) {
   window.__twRouterHooked = true;
   const _origRender = window.render;
   window.render = function () {
-    try {
-      // Strip the war-map body backdrop whenever the player is NOT on the
-      // War Map screen — keeps the photo from bleeding through other UIs.
-      try {
-        if (!(App && App.screen === 'territoryWars')) document.body.classList.remove('tw-active');
-      } catch (e) {}
-      if (App && App.screen === 'territoryWars') { renderTerritoryWars(); return; }
-      if (App && App.screen === 'territoryWarsAdmin') {
-        if (typeof isAdmin === 'function' && !isAdmin()) { App.screen = 'title'; }
-        else { renderTerritoryWarsAdmin(); return; }
+    // Strip the war-map body backdrop whenever the player is NOT on the
+    // War Map screen — keeps the photo from bleeding through other UIs.
+    try { if (!(App && App.screen === 'territoryWars')) document.body.classList.remove('tw-active'); } catch (e) {}
+    // ⚠️ Each TW screen is wrapped in its own try/catch and ALWAYS returns.
+    // We must NEVER fall through to _origRender for TW screens — doing so
+    // would call the main render dispatch which resets App.screen to 'title'
+    // on any error, causing the "flash then nothing" bug (v86p).
+    if (App && App.screen === 'territoryWars') {
+      try { renderTerritoryWars(); } catch (e) {
+        console.warn('[TW] renderTerritoryWars error', e);
+        try { if (typeof showToast === 'function') showToast('⚠ War Map error — ' + String(e && e.message || e).slice(0, 80), 3500); } catch (_) {}
       }
-    } catch (e) { console.warn('[TW] dispatch error', e); }
+      return; // ALWAYS return — never let _origRender reset the screen
+    }
+    if (App && App.screen === 'territoryWarsAdmin') {
+      if (typeof isAdmin === 'function' && !isAdmin()) { App.screen = 'title'; }
+      else { try { renderTerritoryWarsAdmin(); } catch (e) { console.warn('[TW] admin error', e); } return; }
+    }
     return _origRender.apply(this, arguments);
   };
 })();

@@ -122,6 +122,35 @@
 //        to a real 3rd grid column in .tw-workspace so no nodes are ever
 //        blocked by the open panel. grid-template-columns expands to
 //        260px 1fr 400px when .has-drawer class is present.
+// v60 — Deathcry (on-death trigger: aoeDamage/aoeStatus/heal/buffAllies/energyGain/summon),
+//        Momentum (per-turn stat-stage growth while alive, fires in startTurn),
+//        Card History Trophies (Bronze 10+, Silver 25+, Gold 50+, Platinum 100+, Mythic 250+
+//        — badges in World Data bestiary + battle-anim stat chips).
+// v59 — Sacrifice Moves: new sacrifice:true move mechanic (target=sacrificeAlly) with
+//        three effect variants (buffSelf, damage, allEnemy-status). executeSacrificeMove
+//        engine + tile-highlight branch + tile-click handler added. 5 example catalog
+//        moves (bloodOffering, soulExplosion, cursedOffering, voidPact, deathRattle).
+//        Inspire Passives: inspireAtk/inspireDef/inspireMag/inspireRes PASSIVES entries;
+//        _triggerInspirePassives fires on player + AI unit placement; buildUnit now
+//        carries cost:cardData.cost so inspire cost-check works.
+// v58 — Rage move-blank fix: getAvailableMoves now only filters to attack-kind
+//        moves when the unit actually has at least one attack move; support-only
+//        units (e.g. Medic Drone) keep their full moveset visible so it never
+//        goes blank. Battle modal adds rageBlocked flag: non-attack moves shown
+//        but disabled with "😡 Raged" tooltip when unit is raged.
+// v57 — World Data bestiary: STARTER_HEROES and UNIT_CARDS (built-in mock-ups)
+//        removed from hero and unit lists for all users. Only admin-published
+//        custom cards (Forge.customCards) appear in Heroes and Units sections.
+// v56 — Gym Core Wars admin-only gate: hub portal tile hidden from non-admins
+//        (same null/.filter(Boolean) pattern as War Map), screen router
+//        redirects gymWars+gymLivePing to title for non-admins, gymLoreToast
+//        early-returns for non-admins so "Core Wars whisper" toasts never
+//        surface in PvE screens for regular players.
+// v55 — Roguelite hero-sync fix: renderRlcDeckPick() onclick now derives
+//        run.heroId from the chosen deck's heroId (Profile.decks → starter
+//        decks → App.selectedHero fallback chain) so Vex players stay Vex
+//        instead of silently defaulting to Cedric (getAllHeroes()[0]).
+//        Campaign-forced heroes (startingHeroId) are still honoured.
 // v39 — War Map node detail panel redesign (5 tabs: OVERVIEW / CAMPAIGNS /
 //        EVENTS / RESOURCES / CHARTER), vital signs + reconstruction progress
 //        + foundation reserve cinder sections. Missing TW functions implemented
@@ -130,7 +159,81 @@
 //        Sprite Atelier DEATH tab: _injectDeathSprite() plays death frames
 //        before renderBattle() removes the unit / shows tombstone.
 //        ANIMATION_TYPES now includes 'death'.
-const CACHE_VERSION = 'mythic-v54-' + Date.now().toString(36);
+// v62 — Empower (double cost = double on-play effect), Scrounge (consume graveyard
+//        units as cost for bonus effect triggers), Assault (hand cards trigger bonus
+//        on ally attack), Frostform (alt cheap deploy: DEF→1, gains Elemental subtype).
+//        Card Forge editor updated for all 4 mechanics.
+// v65 — Equipment item sub-type (weapon/armor/accessory/trinket, grants moves).
+//        Per-card gemSlots (0–3) set in Card Forge controls how many loadout slots
+//        each unit has. Slot picker shows both Node Shards + Equipment. Profile.
+//        unitSlots now cloud-synced via __unitSlots__ forge key (survives login/device).
+// v64 — Node Shards (gem system): 3-slot unit loadout (shared gems+equipment), admin
+//        creates shards via Item Forge (slotType:nodeShard, rarity, passive, stats).
+//        5% drop on battle win (2× boost when War Map node lit for 24h), 10% from
+//        Covert Actions. Unit card detail shows 3 slot pickers in Collection/Bestiary.
+// v63 — Tunneling (unit hides underground N turns, untargetable, surfaces with Speed),
+//        Prophecy (on-trigger: boost top deck cards or add graveyard copy to deck),
+//        Runic (spell persists as Runic Constant, re-pulses each player turn).
+//        Card Forge editor updated for all 3 mechanics.
+// v61 — Verdict (target chooses 1-of-2 negative effects; AI auto-picks, player gets choice modal),
+//        Escalation (per-unit move counter: +20% power per use beyond first, up to +80%),
+//        Shift (ability transfers a passive from caster to target ally permanently).
+//        Card Forge move editor gains Verdict options, Escalation checkbox, Shift passive picker.
+// v66 — Card Forge UI redesign: dramatic dark gradient container, section dividers
+//        (Identity / Combat Stats / Abilities / Hex Mechanics), portrait card-art
+//        frames, fixed Energy Cost dead space (now full-width), polished inputs
+//        with focus glow, themed actions bar.
+// v67 — SW auto-reload fix: controllerchange listener + reg.update() on every load
+//        so fresh deploys replace stale cached HTML immediately without manual
+//        hard-refresh. Version badge added to Forge header for confirmation.
+// v68 — SW activate now calls client.navigate() on all open tabs so fresh HTML
+//        is served immediately on deploy. Items tab restored to Forge tab strip
+//        with full renderForgeItems() list view (Node Shards + Equipment).
+// v69 — Remove dead duplicate renderForgeItems() (was being overridden at runtime).
+//        Real Items list now shows rarity-coloured borders, slotType badge,
+//        passive name, and grantsMove for Node Shards + Equipment.
+// v70 — Navigation requests (HTML) are NO LONGER intercepted by the SW.
+//        The browser fetches index.html directly from the server every time,
+//        so new deploys are always visible immediately without any hard-refresh.
+//        Static assets (artwork, audio) still use cache-first for speed.
+// v71 — Full-page Forge redesign: min-height:100vh flex-column layout, sticky
+//        60px header bar, modern underline tab strip, full-width card editor,
+//        3-column editor grid on desktop, polished section panels + dividers.
+// v72 — Counter-negate bug fix: when player counters an AI spell the card was
+//        NOT removed from the AI's hand, so the AI re-cast it immediately on
+//        the next doAIStep. Now countered spells are discarded + energy deducted.
+// v86o — Arcane Tempo passive (inspireDrawTimer): draw 1 extra card every 3
+//         turns while unit is alive. Items tab restored to Forge tab strip
+//         (renderForgeItems + bindForgeItems re-wired, back-button handles
+//         editingItemId). Forge back-button now catches item-editor exits.
+// v86p — Root-cause fix for "flash then nothing" on War Map + Side Deck Done:
+//         TW router now wraps renderTerritoryWars() in its own try/catch and
+//         ALWAYS returns for TW screens (never falls through to _origRender).
+//         Main render fallback no longer resets App.screen to 'title' on crash.
+//         Both button handlers call their target render function DIRECTLY,
+//         bypassing the dispatch chain entirely so no error can override the
+//         screen change.
+// v86q — Gem/Item system expansion: Item Forge gains slot-type selector
+//         (gem / item / nodeShard / relic), Grant Passive dropdown (all PASSIVES),
+//         Grant Move dropdown (all custom moves), On-Play Effect picker
+//         (damage / heal / draw / gainEnergy / buffSelf + amount). When a unit
+//         enters play its socketed gems apply: stat mods, passive IDs pushed to
+//         unit.passives[], move IDs pushed to unit.knownMoves[], and on-play
+//         effects fire immediately (damage to nearby enemies, heal, draw cards,
+//         gain energy, buff self ATK).
+// v86r — Two crash fixes: (1) _isAdm hoisted to renderTerritoryWars() function
+//         scope — was defined inside the nodeDrawerHtml IIFE but referenced
+//         outside it in root.innerHTML, causing ReferenceError on every War Map
+//         open. (2) _ensureGemInventory (undefined) + Forge.gemCatalog (dead
+//         reference) replaced inline in renderPreBattleLoadout — gem picker
+//         now uses Forge.customItems as the canonical item list with count 99.
+// v86s — Deck Builder restored: Side Deck panel + 💎 Gems panel added as tabs
+//         in the right column. "→ Side" button on main deck rows moves cards
+//         to Profile.sideDeck; "← Main" moves back. Gem slots socket gems from
+//         Forge.customItems into Profile.socketedGems (persisted). Pre-battle
+//         loadout seeds bp.socketedGems from Profile.socketedGems so deck-
+//         builder gem selections carry into battle automatically.
+const CACHE_VERSION = 'mythic-v86s-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if
@@ -165,6 +268,13 @@ self.addEventListener('activate', (event) => {
         .map((n) => caches.delete(n))
     );
     // Take control of open clients without waiting for a navigation.
+    // NOTE: We intentionally do NOT call _c.navigate() here. The fetch handler
+    // already passes navigation requests straight to the network (isNav → return),
+    // so every hard-reload fetches fresh HTML. Force-navigating from activate was
+    // causing the blank-black-screen bug: the SW activated mid page-load,
+    // _c.navigate() kicked the tab, and the interrupted boot produced an empty
+    // #app div. Removed in v84b — the opt-in "Reload now" toast in index.html
+    // is the only way a tab reloads after a SW update.
     await self.clients.claim();
   })());
 });
@@ -177,31 +287,12 @@ self.addEventListener('fetch', (event) => {
   // goes through the network untouched so the SW never breaks live calls.
   if (url.origin !== self.location.origin) return;
 
-  // 🌐 Navigations / HTML → network-first. Live deploys reach the player
-  // on next refresh; falls back to the cached index when offline.
+  // 🌐 Navigations / HTML — let the browser handle these directly.
+  // By NOT calling event.respondWith() the browser fetches index.html from
+  // the network every single time, bypassing the SW cache entirely.
+  // This guarantees every deploy is visible immediately without a hard-refresh.
   const isNav = req.mode === 'navigate' || req.headers.get('accept')?.includes('text/html');
-  if (isNav) {
-    event.respondWith((async () => {
-      try {
-        const fresh = await fetch(req);
-        // Update the cached HTML so the next offline open has the latest.
-        try {
-          const cache = await caches.open(STATIC_CACHE);
-          cache.put('/', fresh.clone());
-        } catch (e) {}
-        return fresh;
-      } catch (e) {
-        const cached = await caches.match('/') || await caches.match('/index.html');
-        if (cached) return cached;
-        // Last resort — a minimal offline page so the screen isn't blank.
-        return new Response(
-          '<html><body style="background:#03020a;color:#d4c89a;font-family:Cinzel,serif;text-align:center;padding:4rem"><h1>🌐 Offline</h1><p>Reconnect to continue. Local progress is safe.</p></body></html>',
-          { status: 200, headers: { 'Content-Type': 'text/html' } }
-        );
-      }
-    })());
-    return;
-  }
+  if (isNav) return; // ← SW steps aside; browser fetches fresh HTML normally
 
   // 🖼 Static assets → cache-first. Heaviest path is /assets/* art + audio
   // which never change once published; serving them from cache makes the

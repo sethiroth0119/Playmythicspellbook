@@ -67061,7 +67061,12 @@ function renderPreBattleLoadout() {
   // GEM_MAX (5). A gem already socketed (carried over from a prior session) is still
   // shown as its slot's selected option so existing sockets are never silently lost.
   if (prof.sideDeck && !Array.isArray(prof.sideDeck.gems)) prof.sideDeck.gems = [];
-  const _gemPool = (prof.sideDeck && Array.isArray(prof.sideDeck.gems)) ? prof.sideDeck.gems : [];
+  let _gemPool = (prof.sideDeck && Array.isArray(prof.sideDeck.gems)) ? prof.sideDeck.gems.slice() : [];
+  // 🔮 Fallback — if the player never built a gem deck, let them socket ANY gem
+  // they own (the full Item Forge catalog) so gem connection is never blocked.
+  // When a gem deck DOES exist, it stays the only pool (the v86z behavior).
+  const _gemPoolFallback = _gemPool.length === 0;
+  if (_gemPoolFallback) _gemPool = catalog.map(it => it && it.id).filter(Boolean);
   const _gemPoolCounts = (() => { const m = {}; _gemPool.forEach(id => { if (id) m[id] = (m[id]||0)+1; }); return m; })();
 
   // ── Card key helpers — keys are 'kind:id' e.g. 'unit:goblin', 'custom:cc_123'
@@ -67139,8 +67144,7 @@ function renderPreBattleLoadout() {
         <span class="pbl-cr-name">${escapeHtml(g.name)}</span>
         <span class="pbl-cr-kind" style="color:${_kindColor(g.kind)}">${escapeHtml(g.kindLbl)}</span>
         <span class="pbl-cr-count">×${g.count}</span>
-        <button class="pbl-cr-btn" data-mv-to-main="${escapeHtml(g.key)}"
-          ${mainCount >= MAIN_SIZE ? 'disabled' : ''}>← Main</button>
+        <button class="pbl-cr-btn" data-mv-to-main="${escapeHtml(g.key)}">← Main</button>
       </div>`).join('');
 
     const mainRows = mainGroups.map(g => `
@@ -67149,8 +67153,7 @@ function renderPreBattleLoadout() {
         <span class="pbl-cr-name">${escapeHtml(g.name)}</span>
         <span class="pbl-cr-kind" style="color:${_kindColor(g.kind)}">${escapeHtml(g.kindLbl)}</span>
         <span class="pbl-cr-count">×${g.count}</span>
-        <button class="pbl-cr-btn" data-mv-to-side="${escapeHtml(g.key)}"
-          ${sideCount >= SIDE_SIZE ? 'disabled' : ''}>Side →</button>
+        <button class="pbl-cr-btn" data-mv-to-side="${escapeHtml(g.key)}">Side →</button>
       </div>`).join('');
 
     contentHtml = `
@@ -67222,8 +67225,8 @@ function renderPreBattleLoadout() {
 
     const _poolEmpty = _gemPool.length === 0;
     const gemInfoBar = `<div class="pbl-deck-info ${gemsOk ? 'ok' : 'warn'}" style="margin-bottom:0.8rem">
-      ${gemsOk ? `💎 ${totalConnected} of ${GEM_MAX} gem slots connected · Gem deck: ${_gemPool.length} gem${_gemPool.length===1?'':'s'}` : `⚠ Over limit: ${totalConnected}/${GEM_MAX} — remove a gem`}
-    </div>${_poolEmpty ? `<div class="pbl-deck-info warn" style="margin-bottom:0.8rem;font-size:0.8rem">🔮 Your gem deck is empty — add gems to it in the Deck Builder (🔮 Gem Deck) first, then come back to socket them onto your units.</div>` : ''}`;
+      ${gemsOk ? `💎 ${totalConnected} of ${GEM_MAX} gem slots connected${_gemPoolFallback ? ' · using all your gems (no gem deck set)' : ` · Gem deck: ${_gemPool.length} gem${_gemPool.length===1?'':'s'}`}` : `⚠ Over limit: ${totalConnected}/${GEM_MAX} — remove a gem`}
+    </div>${_poolEmpty ? `<div class="pbl-deck-info warn" style="margin-bottom:0.8rem;font-size:0.8rem">🔮 You have no gems yet — create them in The Forge → 🎒 Items, then come back to socket them onto your units. (Units also need <strong>gem slots</strong> set in the Card Forge.)</div>` : ''}`;
 
     const gemCards = uniqueUnitKeys.length ? uniqueUnitKeys.map(key => {
       const p      = _parseKey(key);
@@ -67286,9 +67289,13 @@ function renderPreBattleLoadout() {
     btn.onclick = () => { edit.activeTab = btn.dataset.pblTab; renderPreBattleLoadout(); };
   });
 
+  // ↔ Free movement while editing — a card can ALWAYS move between Main and Side
+  // even when a deck is at its cap (otherwise, with Main 40/40 + Side 15/15 both
+  // full, no swap is possible and the screen deadlocks). The Done button still
+  // requires EXACTLY 40 main + 15 side to lock in, so over/under is just a
+  // transient editing state. Move one card across, then move one back to swap.
   document.querySelectorAll('[data-mv-to-side]').forEach(btn => {
     btn.onclick = () => {
-      if (edit.sideDeck.length >= SIDE_SIZE) return;
       const key = btn.dataset.mvToSide;
       const idx = edit.mainDeck.indexOf(key);
       if (idx === -1) return;
@@ -67299,7 +67306,6 @@ function renderPreBattleLoadout() {
 
   document.querySelectorAll('[data-mv-to-main]').forEach(btn => {
     btn.onclick = () => {
-      if (edit.mainDeck.length >= MAIN_SIZE) return;
       const key = btn.dataset.mvToMain;
       const idx = edit.sideDeck.indexOf(key);
       if (idx === -1) return;

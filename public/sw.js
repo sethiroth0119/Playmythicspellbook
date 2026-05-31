@@ -358,7 +358,13 @@
 //        claim + pay + grant copy (carries the seller's unit instance); cancel
 //        refunds the escrow. One-time SQL setup panel on Browse if the table is
 //        missing. Local market kept as offline fallback. Auctions = Stage 2.
-const CACHE_VERSION = 'mythic-v88a-' + Date.now().toString(36);
+// v88b — Pre-battle Side Deck & Gem Setup FIXES: (1) Side↔Main swap no longer
+//        deadlocks when both decks are full (40/40 + 15/15) — cards move freely
+//        while editing and the Done button still requires exactly 40 main + 15
+//        side. (2) Gem connection now falls back to ALL your gems when you have
+//        no gem deck set, so gems are always socketable (units still need gem
+//        slots set in the Card Forge). Clearer empty-state guidance.
+const CACHE_VERSION = 'mythic-v88b-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

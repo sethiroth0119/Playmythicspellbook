@@ -391,7 +391,11 @@
 //        (routes to resMarketBuy). Resources are fetched + kept subscribed
 //        whenever you're in the market (not just the Resources tab). Stale
 //        'NPC traders' / 'refresh NPC stock' copy replaced with real-player text.
-const CACHE_VERSION = 'mythic-v88f-' + Date.now().toString(36);
+// v88g — 🛡 Crash/Exchange safety net: the router now wraps renderCrashExchange
+//        in try/catch so a render error shows the actual error + a Back button
+//        (and logs the stack to console) instead of the hub button silently
+//        doing nothing / leaving a dead screen. Surfaces the real failing line.
+const CACHE_VERSION = 'mythic-v88g-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

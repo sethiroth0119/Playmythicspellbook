@@ -63144,7 +63144,25 @@ function render() {
   if (App.screen === 'baseVault')     return renderBaseVault();
   if (App.screen === 'cinderShop')    return renderCinderShop();
   if (App.screen === 'crafting')      return renderCrafting();
-  if (App.screen === 'crashExchange') return renderCrashExchange();
+  if (App.screen === 'crashExchange') {
+    // 🛡 Never let a Crash/Exchange render error leave a dead screen — catch it,
+    // show the actual error + a Back button, and log the stack so the failing
+    // line is visible instead of the hub button silently doing nothing.
+    try { return renderCrashExchange(); }
+    catch (cxErr) {
+      try { console.error('[CX] renderCrashExchange threw:', cxErr); } catch (e) {}
+      const _msg = (cxErr && (cxErr.stack || cxErr.message)) ? String(cxErr.stack || cxErr.message) : String(cxErr);
+      root.innerHTML =
+        '<div style="max-width:760px;margin:3rem auto;padding:1.4rem 1.6rem;background:rgba(40,10,10,0.85);border:1px solid #e85d3c;border-radius:12px;color:#ffd6c8;font-family:\'Cinzel\',serif">' +
+          '<div style="font-size:1.2rem;color:#ff8a6a;margin-bottom:0.6rem">⚠ Crash / Exchange hit an error</div>' +
+          '<div style="font-family:monospace;font-size:0.74rem;color:#ffb9a3;white-space:pre-wrap;background:#1a0a0a;border:1px solid #5a2418;border-radius:6px;padding:0.7rem;max-height:240px;overflow:auto">' + escapeHtml(_msg) + '</div>' +
+          '<button id="cx-err-back" style="margin-top:1rem;padding:0.5rem 1.1rem;background:#2a1410;border:1px solid #e85d3c;border-radius:8px;color:#ffd6c8;cursor:pointer">← Back</button>' +
+        '</div>';
+      const _b = document.getElementById('cx-err-back');
+      if (_b) _b.onclick = () => { App.screen = App._cxReturnScreen || 'title'; App._cxReturnScreen = null; render(); };
+      return;
+    }
+  }
   if (App.screen === 'traders')       return renderTraderHub();
   if (App.screen === 'woodsFishing')  return renderWoodsFishing();
   if (App.screen === 'princePortfolios') return renderPrincePortfolios();

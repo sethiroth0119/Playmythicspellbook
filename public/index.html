@@ -63449,6 +63449,11 @@ function showGameAlert(opts) {
     s.id = 'save-indicator-styles';
     s.textContent = `
 .save-indicator {
+  /* 🙈 Hidden per user request — the cloud-save status pill ("Saved … PM" /
+     "Synced" / "Saving…") is suppressed everywhere. `!important` + no display
+     override on `.visible` means no state can bring it back. Save logic is
+     untouched; only the visual pill is hidden. */
+  display: none !important;
   position: fixed;
   top: 12px; right: 14px;
   z-index: 9000;

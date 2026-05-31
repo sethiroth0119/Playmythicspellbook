@@ -38426,6 +38426,21 @@ function _cmMarkErr(e) {
   CardMarket._err = msg; return null;
 }
 function _cmGiveItem(id) { if (!id) return; const inv = Profile.itemInventory || (Profile.itemInventory = {}); inv[id] = (inv[id] || 0) + 1; }
+// 🧰 Map a cross-player RESOURCE listing (resource_listings row) into the
+// item-style tile shape Browse renders, so resources show alongside cards/items.
+// Tagged `_resource` so the Browse buy handler routes to resMarketBuy.
+function _resListingToTile(r) {
+  const meta = (typeof _meta === 'function') ? _meta(r.resource) : null;
+  return {
+    id: r.id, _cloud: true, _resource: true,
+    sellerId: r.seller_id, sellerName: r.seller_name || 'Survivor',
+    kind: 'item',
+    item: { id: 'res_' + r.resource, name: `${r.qty} ${meta ? meta.name : r.resource}`, icon: (meta && meta.icon) || '🧰', desc: 'Resource' },
+    price: r.price || 0,
+    listingType: 'fixed',
+    listedAt: r.created_at ? Date.parse(r.created_at) : Date.now(),
+  };
+}
 // Map a cloud row into the local listing shape the market renderers expect.
 function _cardRowToListing(r, me) {
   const mine = r.seller_id === me;
@@ -88695,10 +88710,23 @@ function renderMarket() {
     if (!CardMarket.loading && (Date.now() - (CardMarket.lastFetch || 0) > 30000)) {
       cardMarketFetch().then(() => { if (App.screen === 'market') render(); });
     }
+    // 🧰 Resources live in their own table — pull them too so Browse shows every
+    // player's RESOURCE listings alongside cards/items (one unified marketplace).
+    if (typeof resMarketSubscribe === 'function') {
+      resMarketSubscribe();
+      if (!ResMarket.loading && (Date.now() - (ResMarket.lastFetch || 0) > 30000)) {
+        resMarketFetch().then(() => { if (App.screen === 'market') render(); });
+      }
+    }
   }
   const _cmReady = _cmOn && !CardMarket.tableMissing;
+  // 🧰 Cinder-priced resource listings, mapped to item-style tiles for Browse
+  // (aza / barter resource trades stay in the dedicated Resources tab).
+  const _resTiles = (_cmOn && typeof ResMarket !== 'undefined' && Array.isArray(ResMarket.open))
+    ? ResMarket.open.filter(r => r && (r.currency || 'cinders') === 'cinders').map(_resListingToTile)
+    : [];
   const myListings = _cmReady ? CardMarket.mine : Market.listings.filter(l => l.sellerId === 'player');
-  const otherListings = _cmReady ? CardMarket.open : Market.listings.filter(l => l.sellerId !== 'player');
+  const otherListings = (_cmReady ? CardMarket.open.slice() : Market.listings.filter(l => l.sellerId !== 'player')).concat(_resTiles);
 
   const tabsHtml = `
     <div class="forge-tabs">
@@ -88736,7 +88764,7 @@ function renderMarket() {
         id: 'player-market',
         title: '📖 How the Player Market works',
         steps: [
-          { title: 'Browse — NPC traders post listings',
+          { title: 'Browse — every player\'s listings',
             desc: `Every listing here is a single card or held item that <strong>another player</strong> put up for sale, priced in <span class="cinder-icon"></span> Cinders. Filter by Card / Item / All. Click any card to see its full Valuation breakdown — and, for units, the seller's exact level, traits, and moveset.` },
           { title: 'Sell — list your own',
             desc: 'In the <strong>Sell</strong> tab, list your duplicate Forge cards or extra held items. Pick a price; if it sells, the Cinders land in your pool instantly.' },
@@ -88752,7 +88780,8 @@ function renderMarket() {
     </div>
     ${renderCollectionCardModal()}
   `;
-  if (tab !== 'resources' && typeof resMarketUnsubscribe === 'function') resMarketUnsubscribe();
+  // Keep the resource realtime sub alive on Browse too (resources show there now).
+  if (tab !== 'resources' && tab !== 'browse' && typeof resMarketUnsubscribe === 'function') resMarketUnsubscribe();
   document.getElementById('btn-back-market').onclick = () => { if (typeof resMarketUnsubscribe === 'function') resMarketUnsubscribe(); if (typeof cardMarketUnsubscribe === 'function') cardMarketUnsubscribe(); App.screen = 'title'; render(); };
   // 🔄 Refresh — pull the latest cross-player listings (and sweep stale NPC rows).
   document.getElementById('btn-market-reseed').onclick = () => {
@@ -89001,7 +89030,7 @@ function renderMarketBrowse(listings, filter) {
   `;
 
   if (filtered.length === 0) {
-    return toolbar + `<div class="empty-list-note">No listings match — try a different filter, clear the search, or refresh the NPC stock.</div>` + renderBidModal() + renderBidHistoryModal();
+    return toolbar + `<div class="empty-list-note">No player listings match. List a card / item / resource from the Sell or Resources tab, or hit 🔄 Refresh Listings to pull the latest from other players.</div>` + renderBidModal() + renderBidHistoryModal();
   }
 
   // Sort: default keeps auctions-ending-soonest first; other modes by price/name/recency.
@@ -89080,7 +89109,10 @@ function bindMarketBrowse() {
     el.onclick = async () => {
       if (el.disabled) return;
       const lid = el.dataset.listing;
-      // ☁ Cloud listing → atomic cloud buy; else the local fallback path.
+      // 🧰 Resource listing → resource-market buy (gives the resource, pays cinders).
+      const rl = (typeof ResMarket !== 'undefined') ? (ResMarket.open || []).find(x => x && x.id === lid) : null;
+      if (rl) { await resMarketBuy(rl); render(); return; }
+      // ☁ Cloud card/item listing → atomic cloud buy; else the local fallback path.
       const cl = (typeof CardMarket !== 'undefined') ? (CardMarket.open || []).find(x => x && x.id === lid) : null;
       if (cl) { await cardMarketBuy(cl); render(); return; }
       buyMarketListing(lid);

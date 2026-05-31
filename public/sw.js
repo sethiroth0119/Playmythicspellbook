@@ -385,7 +385,13 @@
 //        _onRemoteStateArrived path, and reports the result through the server's
 //        single-writer 'claimResult' (no client double-submit). 'welcome' syncs
 //        our authoritative userId. Zero impact until the flag is flipped.
-const CACHE_VERSION = 'mythic-v88e-' + Date.now().toString(36);
+// v88f — 🧰 Browse is now the UNIFIED player marketplace: cross-player RESOURCE
+//        listings (cinder-priced, from the resource_listings table) appear in
+//        Browse as item-style tiles alongside cards/items, buyable in place
+//        (routes to resMarketBuy). Resources are fetched + kept subscribed
+//        whenever you're in the market (not just the Resources tab). Stale
+//        'NPC traders' / 'refresh NPC stock' copy replaced with real-player text.
+const CACHE_VERSION = 'mythic-v88f-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

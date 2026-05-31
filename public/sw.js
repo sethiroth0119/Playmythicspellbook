@@ -264,7 +264,17 @@
 //         that are in your gem deck can be socketed onto units (still capped at
 //         5 socketed total). The pool can't drop below what's currently socketed.
 //         AI/Starter admin decks keep the old full-catalog gem behavior.
-const CACHE_VERSION = 'mythic-v86v-' + Date.now().toString(36);
+// v86w — 🛒 Player Market visual remodel (Phase 1), CS-Float-inspired. The
+//         Browse + My Listings tabs now render as a responsive card GRID
+//         instead of stacked rows: each tile shows the card's full uploaded
+//         art (falling back to animated sprite frames, then emoji) so cards,
+//         items and gems all show their images. New toolbar adds a live
+//         search box + sort dropdown (price/name/recency/ending), and the
+//         filter + auction/fixed toggles became rounded chips. Buy / Bid /
+//         Buy Now / History / Cancel, auctions, timers and right-click detail
+//         all work unchanged (same data-* hooks). Nothing removed —
+//         renderListingCard is still defined for any other caller.
+const CACHE_VERSION = 'mythic-v86w-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

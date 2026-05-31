@@ -10815,6 +10815,138 @@
     box-shadow: 0 0 0 2px rgba(212,175,55,0.2);
   }
 
+  /* ===== MARKETPLACE v2 — CS-Float-inspired grid skin =====
+     Additive: new `.mkt-*` classes only. The legacy `.market-listing`
+     row styles above are untouched and still used by any consumer that
+     calls renderListingCard directly. */
+  .mkt-page .forge-tabs { gap: 0.4rem; }
+  .mkt-toolbar {
+    display: flex;
+    gap: 0.7rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 0.7rem;
+  }
+  .mkt-search-wrap { position: relative; flex: 1 1 280px; min-width: 200px; }
+  .mkt-search-ico {
+    position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%);
+    opacity: 0.5; font-size: 0.95rem; pointer-events: none;
+  }
+  .mkt-search {
+    width: 100%;
+    background: var(--bg-deep);
+    border: 1px solid var(--border);
+    color: var(--ink);
+    padding: 0.6rem 0.8rem 0.6rem 2.3rem;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.92rem;
+  }
+  .mkt-search:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 2px rgba(212,175,55,0.18); }
+  .mkt-sort {
+    background: var(--bg-deep);
+    border: 1px solid var(--border);
+    color: var(--ink);
+    padding: 0.6rem 0.7rem;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.88rem;
+    cursor: pointer;
+  }
+  .mkt-sort:focus { outline: none; border-color: var(--gold); }
+  .mkt-chips-row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+  .mkt-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+  .mkt-chip {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    color: var(--ink-dim);
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: 0.78rem;
+    letter-spacing: 0.03em;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .mkt-chip:hover { border-color: var(--gold); color: var(--ink); }
+  .mkt-chip.active {
+    background: linear-gradient(180deg, rgba(212,175,55,0.25), rgba(212,175,55,0.1));
+    border-color: var(--gold);
+    color: var(--gold-bright);
+    font-weight: 700;
+  }
+  .mkt-result-count { margin-left: auto; color: var(--ink-dim); font-size: 0.8rem; white-space: nowrap; }
+  .mkt-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 1rem;
+  }
+  .mkt-tile {
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(180deg, var(--bg-panel), rgba(11,8,20,0.92));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  }
+  .mkt-tile:hover {
+    transform: translateY(-4px);
+    border-color: var(--gold);
+    box-shadow: 0 10px 28px rgba(0,0,0,0.5), 0 0 0 1px rgba(212,175,55,0.25);
+  }
+  .mkt-tile.is-auction { border-color: rgba(224,122,95,0.5); }
+  .mkt-tile.is-auction:hover { border-color: #e07a5f; box-shadow: 0 10px 28px rgba(0,0,0,0.5), 0 0 0 1px rgba(224,122,95,0.4); }
+  .mkt-tile-img {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    background:
+      radial-gradient(circle at 50% 36%, rgba(212,175,55,0.10), transparent 70%),
+      repeating-linear-gradient(45deg, rgba(255,255,255,0.018) 0 10px, transparent 10px 20px),
+      #0d0a18;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    border-bottom: 1px solid var(--border);
+  }
+  .mkt-tile-img .mkt-art { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .mkt-tile-img .sprite-stack { width: 84% !important; height: 84% !important; }
+  .mkt-tile-img .sprite-stack img { object-fit: contain; image-rendering: pixelated; }
+  .mkt-tile-img .mkt-emoji { font-size: 3.4rem; line-height: 1; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6)); }
+  .mkt-auction-badge {
+    position: absolute; top: 0.5rem; left: 0.5rem;
+    background: rgba(224,122,95,0.92);
+    color: #1a0f0a;
+    font-size: 0.64rem; font-weight: 800; letter-spacing: 0.05em;
+    padding: 0.2rem 0.5rem; border-radius: 6px; z-index: 2;
+  }
+  .mkt-timer {
+    position: absolute; bottom: 0.5rem; right: 0.5rem;
+    background: rgba(0,0,0,0.72);
+    color: #ffd166;
+    font-size: 0.68rem; font-weight: 700;
+    padding: 0.18rem 0.45rem; border-radius: 6px; z-index: 2;
+  }
+  .mkt-tile-body { display: flex; flex-direction: column; gap: 0.3rem; padding: 0.7rem 0.75rem 0.8rem; flex: 1; }
+  .mkt-tile-name { font-family: 'Cinzel', serif; font-weight: 700; color: var(--gold-bright); font-size: 0.95rem; line-height: 1.2; }
+  .mkt-tile-meta { font-size: 0.72rem; color: var(--ink-dim); letter-spacing: 0.03em; }
+  .mkt-tile-seller { font-size: 0.7rem; color: var(--ink); opacity: 0.8; }
+  .mkt-tile-bidder { font-size: 0.68rem; color: #e0a05f; }
+  .mkt-tile-foot {
+    margin-top: auto;
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 0.5rem;
+    padding-top: 0.55rem;
+  }
+  .mkt-tile-price { font-family: 'Cinzel', serif; font-weight: 800; color: #ffd166; font-size: 1.05rem; white-space: nowrap; }
+  .mkt-tile-price .small-text { font-weight: 600; font-size: 0.62rem; }
+  .mkt-tile-actions { display: flex; flex-direction: column; gap: 0.3rem; align-items: flex-end; }
+  .mkt-tile-actions .auction-actions { display: flex; flex-direction: column; gap: 0.3rem; align-items: stretch; }
+  @media (max-width: 560px) {
+    .mkt-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.7rem; }
+    .mkt-tile-name { font-size: 0.85rem; }
+    .mkt-tile-img .mkt-emoji { font-size: 2.6rem; }
+  }
+
   /* ===== STOCK MARKET DASHBOARD ===== */
   .stock-summary-grid {
     display: grid;
@@ -87401,7 +87533,7 @@ function renderMarket() {
   else if (tab === 'stock') body = renderMarketStock();
 
   root.innerHTML = `
-    <div class="forge-page">
+    <div class="forge-page mkt-page">
       <div class="forge-header">
         <h2 class="section-title"><img src="assets/artwork/gameicons/player%20market.png" alt="" style="height:2.3em;width:2.3em;object-fit:contain;vertical-align:middle;display:inline-block;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.75))"> The Market</h2>
         <div style="display:flex;gap:0.6rem;align-items:center">
@@ -87504,6 +87636,77 @@ function renderListingCard(listing, opts) {
   `;
 }
 
+// 🎴 Richest available visual for a market listing — full uploaded card art
+// first (the same illustration the hand card shows, synced via the catalog),
+// then animated sprite frames for units, then the emoji as a last resort.
+// Held items use their emoji icon. Guarantees a picture shows for every tile.
+function marketTileVisual(listing) {
+  const isItem = listing.kind === 'item';
+  const card = listing.item || {};
+  if (isItem) return `<span class="mkt-emoji">${card.icon || '🎒'}</span>`;
+  const id = card.id;
+  let art = (id && typeof getCardArt === 'function') ? getCardArt(id) : null;
+  if (!art && (card.art || card.image)) art = card.art || card.image;
+  if (art) return `<img class="mkt-art" src="${art}" alt="" loading="lazy" draggable="false">`;
+  if (card.type === 'unit' && id) {
+    let fr = null;
+    try { fr = (typeof getSpriteFrames === 'function') ? getSpriteFrames('u_' + id, 'idle') : null; } catch (e) {}
+    if (fr && fr.length) return renderIcon('u_' + id, card.icon, 'fill');
+  }
+  return `<span class="mkt-emoji">${card.icon || '🃏'}</span>`;
+}
+
+// CS-Float-inspired grid card. A drop-in alternative to renderListingCard that
+// reuses the SAME data-* attributes (data-listing-row / data-detail-card /
+// data-auction-timer and the action buttons' data-act / data-listing), so all
+// existing bind functions keep working with zero changes.
+function renderMarketTile(listing, opts) {
+  const isItem = listing.kind === 'item';
+  const isMine = listing.sellerId === 'player';
+  const card = listing.item || {};
+  const isAuction = isAuctionListing(listing);
+  const elemIcons = !isItem ? getElementsOf(card).map(e => ELEMENT_DATA[e] ? getElemIcon(e, '1.3em') : '').join('') : '';
+  const metaLine = isItem
+    ? escapeHtml(card.desc || 'Held Item')
+    : `${(card.type || 'unit').toUpperCase()} · Cost ${card.cost || 0} <span class="energy-orb"></span>${card.rarity ? ' · ' + escapeHtml(String(card.rarity).toUpperCase()) : ''}`;
+  const action = (opts && opts.action) || '';
+  const detailAttrs = (!isItem && card && card.id)
+    ? ` data-detail-card="${escapeHtml(card.id)}" data-detail-kind="${escapeHtml(card.type || 'unit')}" title="Right-click for details"`
+    : '';
+  const badge = isAuction ? `<div class="mkt-auction-badge">🔨 AUCTION</div>` : '';
+  const timer = isAuction ? `<div class="mkt-timer" data-auction-timer="${escapeHtml(listing.id)}">${formatAuctionTimeLeft(listing)} left</div>` : '';
+  let priceHtml;
+  if (isAuction) {
+    const _bc = _auctBidCur(listing);
+    const _bn = _auctBuyNow(listing);
+    priceHtml = `<div class="mkt-tile-price">${_curIcon(_bc)} ${listing.currentBid > 0 ? listing.currentBid : (listing.startingBid || 0)}<br><span class="small-text ink-dim">${listing.currentBid > 0 ? 'top bid' : 'start'}</span></div>`;
+  } else {
+    priceHtml = `<div class="mkt-tile-price"><span class="cinder-icon"></span> ${listing.price}</div>`;
+  }
+  const bidderLine = (isAuction && listing.currentBidderId)
+    ? `<div class="mkt-tile-bidder">Top: <strong>${escapeHtml(listing.currentBidderName || '?')}</strong></div>`
+    : '';
+  return `
+    <div class="mkt-tile ${isAuction ? 'is-auction' : ''}" data-listing-row="${escapeHtml(listing.id)}"${detailAttrs}>
+      <div class="mkt-tile-img">
+        ${badge}
+        ${marketTileVisual(listing)}
+        ${timer}
+      </div>
+      <div class="mkt-tile-body">
+        <div class="mkt-tile-name">${escapeHtml(card.name || 'Listing')} ${elemIcons}</div>
+        <div class="mkt-tile-meta">${metaLine}</div>
+        <div class="mkt-tile-seller">Seller: <strong>${escapeHtml(listing.sellerName || listing.sellerId)}</strong>${isMine ? ' (you)' : ''}</div>
+        ${bidderLine}
+        <div class="mkt-tile-foot">
+          ${priceHtml}
+          <div class="mkt-tile-actions">${action}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderMarketBrowse(listings, filter) {
   // Settle expired auctions BEFORE rendering so they don't show as zombie rows.
   sweepExpiredAuctions();
@@ -87511,28 +87714,66 @@ function renderMarketBrowse(listings, filter) {
   // they view the market. Throttled inside; cheap to call every render.
   try { npcMaybeBidOnAuctions(); } catch (e) {}
 
-  // Filter "type" row + new auction-vs-fixed quick toggle.
+  // Filter "type" + new auction-vs-fixed quick toggle + live search + sort.
   const listingTypeFilter = App.marketListingTypeFilter || 'all'; // 'all' | 'auction' | 'fixed'
-  const filterRow = `
-    <div class="forge-section-header" style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap">
-      <h3>Marketplace</h3>
-      <div style="display:flex;gap:0.3rem;flex-wrap:wrap">
-        ${['all','card','item'].map(f => `<button class="forge-tab ${filter === f ? 'active' : ''}" data-filter="${f}">${f.toUpperCase()}</button>`).join('')}
-        <span style="border-left:1px solid rgba(255,255,255,0.15);margin:0 0.2rem"></span>
-        <button class="forge-tab ${listingTypeFilter === 'all' ? 'active' : ''}" data-listing-type="all">ALL</button>
-        <button class="forge-tab ${listingTypeFilter === 'fixed' ? 'active' : ''}" data-listing-type="fixed">💰 BUY NOW</button>
-        <button class="forge-tab ${listingTypeFilter === 'auction' ? 'active' : ''}" data-listing-type="auction">🔨 AUCTIONS</button>
-      </div>
-    </div>
-  `;
+  const search = (App.marketSearch || '').trim().toLowerCase();
+  const sort = App.marketSort || 'ending';
+
   let filtered = listings;
   if (filter === 'card') filtered = filtered.filter(l => l.kind === 'card');
   else if (filter === 'item') filtered = filtered.filter(l => l.kind === 'item');
   if (listingTypeFilter === 'auction') filtered = filtered.filter(isAuctionListing);
   else if (listingTypeFilter === 'fixed') filtered = filtered.filter(l => !isAuctionListing(l));
-  if (filtered.length === 0) return filterRow + `<div class="empty-list-note">No listings — try refreshing the NPC stock.</div>`;
-  // Sort auctions ending soonest first; fixed-price after, by listed time.
+  if (search) filtered = filtered.filter(l => {
+    const it = l.item || {};
+    return (`${it.name || ''} ${it.type || ''} ${it.desc || ''} ${it.rarity || ''}`).toLowerCase().includes(search);
+  });
+
+  // CS-Float-style toolbar: live search box, sort dropdown, filter + type chips.
+  const SORTS = [
+    ['ending', '⏳ Ending / Newest'],
+    ['price-asc', '💰 Price: Low → High'],
+    ['price-desc', '💰 Price: High → Low'],
+    ['name', '🔤 Name: A → Z'],
+    ['newest', '🆕 Recently Listed'],
+  ];
+  const toolbar = `
+    <div class="mkt-toolbar">
+      <div class="mkt-search-wrap">
+        <span class="mkt-search-ico">🔍</span>
+        <input id="mkt-search-input" class="mkt-search" type="text" placeholder="Search cards & items…" value="${escapeHtml(App.marketSearch || '')}">
+      </div>
+      <select id="mkt-sort" class="mkt-sort">
+        ${SORTS.map(([v, lbl]) => `<option value="${v}" ${sort === v ? 'selected' : ''}>${lbl}</option>`).join('')}
+      </select>
+    </div>
+    <div class="mkt-chips-row">
+      <div class="mkt-chips">
+        ${['all','card','item'].map(f => `<button class="mkt-chip ${filter === f ? 'active' : ''}" data-filter="${f}">${f.toUpperCase()}</button>`).join('')}
+      </div>
+      <div class="mkt-chips">
+        <button class="mkt-chip ${listingTypeFilter === 'all' ? 'active' : ''}" data-listing-type="all">ALL</button>
+        <button class="mkt-chip ${listingTypeFilter === 'fixed' ? 'active' : ''}" data-listing-type="fixed">💰 BUY NOW</button>
+        <button class="mkt-chip ${listingTypeFilter === 'auction' ? 'active' : ''}" data-listing-type="auction">🔨 AUCTIONS</button>
+      </div>
+      <div class="mkt-result-count">${filtered.length} result${filtered.length === 1 ? '' : 's'}</div>
+    </div>
+  `;
+
+  if (filtered.length === 0) {
+    return toolbar + `<div class="empty-list-note">No listings match — try a different filter, clear the search, or refresh the NPC stock.</div>` + renderBidModal() + renderBidHistoryModal();
+  }
+
+  // Sort: default keeps auctions-ending-soonest first; other modes by price/name/recency.
   filtered = filtered.slice().sort((a, b) => {
+    if (sort === 'price-asc' || sort === 'price-desc') {
+      const pa = isAuctionListing(a) ? (a.currentBid > 0 ? a.currentBid : (a.startingBid || 0)) : (a.price || 0);
+      const pb = isAuctionListing(b) ? (b.currentBid > 0 ? b.currentBid : (b.startingBid || 0)) : (b.price || 0);
+      return sort === 'price-asc' ? pa - pb : pb - pa;
+    }
+    if (sort === 'name') return String((a.item && a.item.name) || '').localeCompare(String((b.item && b.item.name) || ''));
+    if (sort === 'newest') return (b.listedAt || 0) - (a.listedAt || 0);
+    // 'ending' (default): auctions ending soonest first, then fixed by listed time.
     const aa = isAuctionListing(a), bb = isAuctionListing(b);
     if (aa && !bb) return -1;
     if (!aa && bb) return 1;
@@ -87554,7 +87795,7 @@ function renderMarketBrowse(listings, filter) {
         const ok = auctAvail(cur) >= amt;
         return `<button class="btn-mini ${ok ? '' : 'btn-disabled'}" data-act="buynow" data-listing="${l.id}" data-bncur="${cur}" ${ok ? '' : 'disabled'}>Buy Now ${amt} ${cur === 'aza' ? '👑' : '🔥'}</button>`;
       };
-      return renderListingCard(l, {
+      return renderMarketTile(l, {
         action: `
           <div class="auction-actions">
             <button class="btn-mini ${canBid ? 'btn-primary' : 'btn-disabled'}" data-act="bid" data-listing="${l.id}" ${canBid ? '' : 'disabled'} title="${canBid ? 'Place a bid' : `Need ${min} ${_curName(bc)} available`}">${myBid ? 'Raise Bid' : 'Bid'} (≥ ${min})</button>
@@ -87564,14 +87805,26 @@ function renderMarketBrowse(listings, filter) {
       });
     }
     const canBuy = (Profile.gems || 0) >= l.price;
-    return renderListingCard(l, {
+    return renderMarketTile(l, {
       action: `<button class="btn-mini ${canBuy ? '' : 'btn-disabled'}" data-act="buy" data-listing="${l.id}" ${canBuy ? '' : 'disabled'}>Buy</button>`,
     });
   }).join('');
-  return filterRow + `<div class="forge-list">${rows}</div>` + renderBidModal() + renderBidHistoryModal();
+  return toolbar + `<div class="mkt-grid">${rows}</div>` + renderBidModal() + renderBidHistoryModal();
 }
 
 function bindMarketBrowse() {
+  // Live search + sort (CS-Float-style toolbar). Re-render on input and restore
+  // focus + caret to the search box so typing isn't interrupted by the re-render.
+  const _mktSearch = document.getElementById('mkt-search-input');
+  if (_mktSearch) {
+    _mktSearch.oninput = () => { App.marketSearch = _mktSearch.value; App._mktSearchFocus = true; render(); };
+    if (App._mktSearchFocus) {
+      try { _mktSearch.focus(); const _v = _mktSearch.value; _mktSearch.setSelectionRange(_v.length, _v.length); } catch (e) {}
+      App._mktSearchFocus = false;
+    }
+  }
+  const _mktSort = document.getElementById('mkt-sort');
+  if (_mktSort) _mktSort.onchange = () => { App.marketSort = _mktSort.value; render(); };
   document.querySelectorAll('[data-filter]').forEach(el => {
     el.onclick = () => { App.marketFilter = el.dataset.filter; render(); };
   });
@@ -87974,7 +88227,7 @@ function renderMarketMyListings(myListings) {
       const cancelBtn = hasBids
         ? `<button class="btn-mini btn-disabled" disabled title="Cannot cancel — bidders are in">🔒 Bids in</button>`
         : `<button class="btn-mini btn-danger" data-act="cancel-auction" data-listing="${l.id}">Cancel</button>`;
-      return renderListingCard(l, {
+      return renderMarketTile(l, {
         action: `
           <div class="auction-actions">
             ${cancelBtn}
@@ -87982,11 +88235,11 @@ function renderMarketMyListings(myListings) {
           </div>`,
       });
     }
-    return renderListingCard(l, {
+    return renderMarketTile(l, {
       action: `<button class="btn-mini btn-danger" data-act="cancel" data-listing="${l.id}">Cancel</button>`,
     });
   }).join('');
-  return `<div class="forge-list">${rows}</div>` + renderBidHistoryModal();
+  return `<div class="mkt-grid">${rows}</div>` + renderBidHistoryModal();
 }
 
 function bindMarketMyListings() {

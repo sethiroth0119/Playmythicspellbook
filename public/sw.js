@@ -378,7 +378,14 @@
 //        collect payouts; Buy-Now is an atomic claim; cancel only with no bids.
 //        Stage-1 'auctions coming' guard removed. No new migration (table already
 //        has the auction columns).
-const CACHE_VERSION = 'mythic-v88d-' + Date.now().toString(36);
+// v88e — 🪐 MP #65 client wiring (flag-gated, USE_COLYSEUS_MP still false):
+//        the Colyseus path now sends the board as a 'snapshot' the server relays
+//        to the opponent (sendColyseusSnapshot on every action + end-turn + an
+//        initial push), applies relayed opponent snapshots via the shared
+//        _onRemoteStateArrived path, and reports the result through the server's
+//        single-writer 'claimResult' (no client double-submit). 'welcome' syncs
+//        our authoritative userId. Zero impact until the flag is flipped.
+const CACHE_VERSION = 'mythic-v88e-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

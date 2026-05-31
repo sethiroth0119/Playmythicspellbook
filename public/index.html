@@ -32056,6 +32056,11 @@ async function joinColyseusMatch(matchId, authToken, opts) {
   ColyseusMP.room.onMessage('battleLog',    _onColyseusLogEntries);
   ColyseusMP.room.onMessage('matchEnd',     _onColyseusMatchEnd);
   ColyseusMP.room.onMessage('reject',       _onColyseusReject);
+  // 📸 Server relays the opponent's board snapshot (server-owns-match path).
+  ColyseusMP.room.onMessage('snapshot',     _onColyseusSnapshot);
+  // 👋 Server tells us our own authoritative userId on join — keep our
+  // perspective id in sync with what the server uses for turn / result checks.
+  ColyseusMP.room.onMessage('welcome',      (data) => { if (data && data.userId) MatchBroadcast.myUserId = data.userId; });
   ColyseusMP.room.onMessage('emote',        (data) => {
     // Reuse the existing emote renderer from the Supabase path.
     try { _onRemoteEmoteArrived(data); } catch (e) {}
@@ -32129,6 +32134,36 @@ function sendColyseusForfeit() {
   if (!ColyseusMP.room) return;
   try { ColyseusMP.room.send('forfeit', {}); } catch (e) {}
 }
+/** 📸 Send our authoritative board snapshot to the server, which relays it to
+ * the opponent (server-owns-match: clients keep the full engine; the board is
+ * synced via snapshots). Reuses broadcastMyState's payload shape so the receive
+ * path (_onRemoteStateArrived) is shared unchanged with the Supabase path. */
+function sendColyseusSnapshot() {
+  if (!ColyseusMP.room || !App.state) return;
+  if (typeof _serializeBattleStateForBroadcast !== 'function') return;
+  try {
+    const snap = _serializeBattleStateForBroadcast(App.state);
+    if (!snap) return;
+    ColyseusMP.room.send('snapshot', { kind: 'full', payload: { from: MatchBroadcast.myUserId, turn: snap.turnNumber || 0, state: snap } });
+  } catch (e) {}
+}
+/** 🏁 Report the match result to the server — the SINGLE authoritative writer.
+ * The server records it once, persists the winner to Supabase (#66), and
+ * broadcasts matchEnd to both clients. Replaces the client-side submitMatchResult
+ * double-write on the Colyseus path. */
+function sendColyseusClaimResult(winnerUserId, reason) {
+  if (!ColyseusMP.room || !winnerUserId) return;
+  try { ColyseusMP.room.send('claimResult', { winnerUserId, reason: reason || 'hero-killed' }); } catch (e) {}
+}
+/** Server relayed the opponent's board snapshot — apply it via the SAME path
+ * the Supabase realtime listener uses (perspective-swap + render). */
+function _onColyseusSnapshot(data) {
+  if (!data) return;
+  // The server forwards { from, kind, payload }, where payload = { from, turn, state }.
+  const p = data.payload || data;
+  if (!p || !p.state) return;
+  try { if (typeof _onRemoteStateArrived === 'function') _onRemoteStateArrived(p); } catch (e) {}
+}
 
 // ─── Server → client handlers ───────────────────────────────────────────────
 
@@ -32143,6 +32178,9 @@ function _onColyseusMatchStart(data) {
     : null;
   // Kick off the VS screen / battle start in the existing UI.
   try { _onRemoteCoinArrived({ winner: data && data.first }); } catch (e) {}
+  // 📸 Push our initial board once the battle scene has built so the opponent
+  // sees our starting layout (mirrors the Supabase path's first broadcast).
+  setTimeout(() => { try { if (typeof sendColyseusSnapshot === 'function') sendColyseusSnapshot(); } catch (e) {} }, 1500);
 }
 
 function _onColyseusAttackResult(data) {
@@ -85937,8 +85975,11 @@ function checkPostAction() {
   // broadcastMyState() so a burst of consecutive actions sends one packet.
   // 🪐 Colyseus path: the server owns the state — don't broadcast locally.
   //    Actions were already forwarded to the server before being applied.
-  if (App.battlePrep && App.battlePrep.multiplayer && typeof broadcastMyState === 'function') {
-    if (!USE_COLYSEUS_MP) broadcastMyState();
+  if (App.battlePrep && App.battlePrep.multiplayer) {
+    // 🪐 Colyseus path: push our board snapshot to the server, which relays it
+    //    to the opponent. Supabase path: broadcast directly.
+    if (USE_COLYSEUS_MP) { if (typeof sendColyseusSnapshot === 'function') sendColyseusSnapshot(); }
+    else if (typeof broadcastMyState === 'function') broadcastMyState();
   }
   if (App.state.gameOver) {
     // 🏁 Multiplayer game-over — submit the verdict to the matches table.
@@ -85953,7 +85994,10 @@ function checkPostAction() {
         ? MatchBroadcast.myUserId                                   // I won
         : (MatchBroadcast.opponentId || null);                      // I lost — opponent is the winner
       if (winnerId) {
-        try { submitMatchResult(winnerId, App.state); } catch (e) {}
+        // 🪐 Colyseus path: claim the result with the authoritative server (it
+        //    records once + persists the winner). Supabase path: submit directly.
+        if (USE_COLYSEUS_MP) { if (typeof sendColyseusClaimResult === 'function') sendColyseusClaimResult(winnerId, 'hero-killed'); }
+        else { try { submitMatchResult(winnerId, App.state); } catch (e) {} }
       }
     }
     renderBattle(); return;
@@ -85996,7 +86040,7 @@ function onEndTurn() {
     App.state = { ...App.state, currentTurn: 'ai', turnNumber: _prevTurnNumber + 1 };
     MatchBroadcast.myTurn = false;
     // 🪐 Colyseus path: forward endTurn to the authoritative server.
-    if (USE_COLYSEUS_MP) { sendColyseusEndTurn(); } else { broadcastMyState(); }
+    if (USE_COLYSEUS_MP) { if (typeof sendColyseusSnapshot === 'function') sendColyseusSnapshot(); sendColyseusEndTurn(); } else { broadcastMyState(); }
     // 🛡️ SERVER-AUTHORITATIVE TURN-END — tell the Supabase Edge Function this
     // turn is over. The function validates: (a) we currently hold the turn,
     // (b) the turn number is sequential, and atomically flips current_player
@@ -86073,7 +86117,9 @@ function onEndTurn() {
         ? MatchBroadcast.myUserId
         : (MatchBroadcast.opponentId || null);
       if (winnerId) {
-        try { submitMatchResult(winnerId, App.state); } catch (e) {}
+        // 🪐 Colyseus path: claim via the server; Supabase path: submit directly.
+        if (USE_COLYSEUS_MP) { if (typeof sendColyseusClaimResult === 'function') sendColyseusClaimResult(winnerId, 'hero-killed'); }
+        else { try { submitMatchResult(winnerId, App.state); } catch (e) {} }
       }
     }
   }

@@ -314,7 +314,39 @@
 //        scrolling to the top), card art shows whole (object-fit:contain, no
 //        cropping) across Browse / My Listings / All Assets / leaderboard, and
 //        the How-To panel literal-template bugs were fixed. Nothing removed.
-const CACHE_VERSION = 'mythic-v87a-' + Date.now().toString(36);
+// v87b — ⚔ Assault Cards: the Assault toggle now appears for SPELL (and trap)
+//        cards in the Forge — it was previously trapped inside the unit-only
+//        block. Assault activation is now ENERGY-GATED (prompt disables cards
+//        you can't afford and spends the cost on use), and assault now applies
+//        the card's full Effect Type (damage/heal/draw/restoreEnergy/restoreKalon/
+//        kalonLock/summon) with buffAll respecting Target so it can debuff
+//        enemies, not just buff allies. Unit assault toggle unchanged.
+// v87c — Black River missions can now launch CREATED campaigns: the Campaign
+//        Builder's "Where this campaign appears" dropdown gains Black River →
+//        Oil Extraction / Convoy Escort / VIP Rescue slots (placement
+//        br_oil/br_convoy/br_vip, kept off the Roguelite list). A mission's
+//        Deploy button launches the campaign routed to that slot (rlcStartRun);
+//        with none assigned it falls back to the built-in skirmish, unchanged.
+//        Tiles show the campaign name + a 🗺️ CAMPAIGN badge when one is set.
+// v87d — 🪦 Consume-from-Graveyard extra play cost: a new Forge field (spells +
+//        units) makes playing a card ALSO remove N cards from your graveyard, on
+//        top of energy. You can't play it unless the graveyard holds that many
+//        (gated in the shared _checkPlayRequirement → every play path). Paid in
+//        placeUnit, spell resolution, and assault activation; the played card
+//        never pays for itself. Set 0 to disable.
+// v87e — ⚔ Assault Cards get a DEDICATED Assault Effect picker (revealed when
+//        the toggle is checked): Deal Damage, Heal, 🩸 Life Drain (damage enemy
+//        + heal the attacker), Buff Allies, Debuff Enemies, Draw, Restore Energy,
+//        ⚡ Drain Enemy Energy, Summon. Stored as card.assaultEffect; activation
+//        prefers it and falls back to the card's normal Effect Type so existing
+//        assault cards are unchanged.
+// v87f — 🪖 Market listings now capture the SELLER's exact unit instance
+//        (level, XP, rolled trait, nature, scaled stats, moveset) at list time.
+//        Clicking a listed UNIT opens its detail modal with a "Seller's unit —
+//        this exact copy" section + full moveset, so buyers can judge price by
+//        the actual leveled/trait/move loadout. NPC + pre-update listings show a
+//        side-effect-free base profile. Purely additive — nothing removed.
+const CACHE_VERSION = 'mythic-v87f-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

@@ -44118,12 +44118,17 @@ function listCardForSale(customCardId, price) {
   price = Math.max(MARKET_MIN_PRICE, Math.min(MARKET_MAX_PRICE, parseInt(price, 10) || 0));
   if (!price) { showToast('Set a valid price'); return false; }
   const _esc = _escrowCardCopy(card.id);
+  // 🪖 Freeze the seller's exact unit instance (level / trait / nature / scaled
+  // stats / moveset) onto the listing so buyers see precisely what they'd buy.
+  // Units only; null for spells / items.
+  const _unitInst = ((card.type || 'unit') === 'unit') ? unitInstanceSnapshot(card) : null;
   Market.listings.push({
     id: 'lst_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
     sellerId: 'player', sellerName: 'You',
     kind: 'card', item: cardSnapshotForListing(card),
     cardId: card.id, escrowed: _esc,
     price, listedAt: Date.now(),
+    unitInstance: _unitInst,
   });
   saveMarket();
   showToast(`Listed "${card.name}" for ${price} 🔥`);
@@ -62486,7 +62491,7 @@ function render() {
   // 🧹 DVS valuation-modal portal cleanup — the modal lives in a body-level host
   // (see syncDvsModal). If we're no longer on the Market screen, tear it down so
   // a left-open valuation overlay can never linger on top of another screen.
-  try { if (App.screen !== 'market') { const _dvh = document.getElementById('dvs-modal-host'); if (_dvh) _dvh.remove(); App.dvsAssetId = null; } } catch (e) {}
+  try { if (App.screen !== 'market') { const _dvh = document.getElementById('dvs-modal-host'); if (_dvh) _dvh.remove(); App.dvsAssetId = null; App.dvsListingId = null; } } catch (e) {}
   // 🎴 STARTER DECK RESTORE — admin removed players' starter decks during the
   // global reset; this one-time pass grants every player ALL 3 (or however
   // many the catalog defines) starter decks if they're missing. Gated by a
@@ -70027,6 +70032,45 @@ function renderCardEditor() {
 
   // ----- Type-specific blocks -----
   const stats = card.stats || { hp: 20, atk: 10, def: 8, mag: 8, res: 8, spd: 1 };
+  // ⚔ Assault Effect picker — a dedicated effect that fires when the card is
+  // activated as an Assault (separate from the card's normal Effect Type, and
+  // the home of the new Life Drain / Debuff Enemies / Energy Drain options).
+  // Shared markup injected into BOTH assault toggles (unit block + spell/trap/
+  // custom block); only one renders per card type, so the ids never collide.
+  const _afx = (card.assaultEffect && typeof card.assaultEffect === 'object') ? card.assaultEffect : {};
+  const _afxTypeOpts = [
+    ['',              "— Inherit the card's own Effect Type —"],
+    ['damage',        '⚔ Deal Damage (enemy)'],
+    ['heal',          '💚 Heal (ally)'],
+    ['lifeDrain',     '🩸 Life Drain (damage enemy + heal you)'],
+    ['buffAllies',    '📈 Buff Allies (status)'],
+    ['debuffEnemies', '📉 Debuff Enemies (status)'],
+    ['draw',          '🃏 Draw Cards'],
+    ['restoreEnergy', '⚡ Restore Energy'],
+    ['energyDrain',   '⚡🩸 Drain Enemy Energy'],
+    ['summon',        '🌀 Summon'],
+  ].map(([v, l]) => `<option value="${v}" ${(_afx.type || '') === v ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
+  const _afxStatusOpts = ['', 'strong', 'weak', 'poison', 'burn', 'bleed', 'stun', 'slow', 'frozen', 'sleep', 'confusion', 'paralysis', 'assisted']
+    .map(st => `<option value="${st}" ${(_afx.status || '') === st ? 'selected' : ''}>${st || '— None —'}</option>`).join('');
+  const assaultFxFields = `
+    <div id="ed-assault-fx-wrap" style="display:${card.isAssault ? 'block' : 'none'};margin-top:0.55rem;border-top:1px dashed rgba(255,140,60,0.35);padding-top:0.55rem">
+      <div class="small-text" style="font-weight:800;color:#ffd6a3;letter-spacing:0.03em">⚙ ASSAULT EFFECT — fires when this card is activated</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-top:0.4rem">
+        <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Effect
+          <select id="ed-assault-fx-type" style="font-size:0.82rem">${_afxTypeOpts}</select>
+        </label>
+        <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Amount / Power / Count
+          <input type="number" id="ed-assault-fx-amount" min="0" max="200" value="${Math.max(0, (_afx.amount | 0))}" style="font-size:0.82rem">
+        </label>
+        <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Status (buff / debuff)
+          <select id="ed-assault-fx-status" style="font-size:0.82rem">${_afxStatusOpts}</select>
+        </label>
+        <label class="small-text" style="display:flex;flex-direction:column;gap:3px">Status Duration
+          <input type="number" id="ed-assault-fx-duration" min="1" max="6" value="${Math.max(1, (_afx.duration | 0) || 2)}" style="font-size:0.82rem">
+        </label>
+      </div>
+      <div class="small-text ink-dim" style="margin-top:0.3rem">Leave Effect on "Inherit" to reuse the card's normal Effect Type. 🩸 <strong>Life Drain</strong> hits the lowest-HP enemy in range and heals the attacker for the damage dealt.</div>
+    </div>`;
   const unitBlock = isUnitLike ? `
     <div class="editor-field"><label>Primary Element</label><select id="ed-element">${elemOpts(primary)}</select></div>
     <div class="editor-field"><label>Secondary Element</label><select id="ed-element2">${secondaryElemOpts}</select></div>
@@ -70137,7 +70181,8 @@ function renderCardEditor() {
         <input type="checkbox" id="ed-assault-on" ${card.isAssault ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
         <span>⚔ <strong>Assault Card</strong> — activates automatically when the player attacks</span>
       </label>
-      <div class="small-text" style="margin-top:0.3rem;color:#ffcfa0">Whenever the player declares an attack while this card is in their hand, a prompt appears asking if they want to activate it. If yes: the card is sent to the graveyard, its effect fires immediately, and then combat proceeds normally. Free to activate — the card itself is the cost.</div>
+      <div class="small-text" style="margin-top:0.3rem;color:#ffcfa0">While this card is in your hand, declaring an attack opens a prompt to activate it <strong>if you can pay its energy cost</strong>. On activate: its energy is spent, the card goes to the graveyard, and the Assault Effect below fires — then combat proceeds normally.</div>
+      ${assaultFxFields}
     </div>` : ''}
     ${type === 'unit' ? `
     <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem;background:rgba(40,100,180,0.06);border:1px dashed rgba(80,140,220,0.4);border-radius:6px;padding:0.7rem 0.85rem">
@@ -70553,6 +70598,32 @@ function renderCardEditor() {
     </div>
     <div class="editor-field"><label>⚡ Energy / turn (your side)</label><input id="ed-persist-energy" type="number" min="0" max="3" value="${_pcEnrgy}"></div>
   ` : '';
+
+  // ⚔ Assault Card toggle for NON-unit deckable types (spell / trap / custom).
+  // Units render their OWN copy inside unitBlock (gated to type==='unit'), so
+  // the two paths are mutually exclusive by type — there is never a duplicate
+  // #ed-assault-on in the DOM. This is what finally lets SPELL cards be flagged
+  // as Assault cards (the unit-only unitBlock used to swallow this control).
+  const assaultBlock = (type === 'spell' || type === 'trap' || type === 'custom') ? `
+    <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem;background:rgba(255,120,40,0.06);border:1px dashed rgba(255,140,60,0.4);border-radius:6px;padding:0.7rem 0.85rem">
+      <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+        <input type="checkbox" id="ed-assault-on" ${card.isAssault ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+        <span>⚔ <strong>Assault Card</strong> — play from hand when you attack (acts as a counter)</span>
+      </label>
+      <div class="small-text" style="margin-top:0.3rem;color:#ffcfa0">While this card is in your hand, declaring an attack opens a prompt to activate it <strong>if you can pay its energy cost</strong>. On activate: its energy is spent, the card goes to the graveyard, and the Assault Effect below fires — then combat proceeds normally.</div>
+      ${assaultFxFields}
+    </div>` : '';
+
+  // 🪦 Consume-from-graveyard extra cost (spells + units). An ADDITIONAL play
+  // cost on top of energy: playing the card removes N cards from your graveyard,
+  // and it can't be played unless your graveyard holds at least that many.
+  const _consumeN = Math.max(0, (card.consumeGrave | 0));
+  const consumeGraveBlock = (type === 'unit' || type === 'spell') ? `
+    <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem;background:rgba(150,90,200,0.07);border:1px dashed rgba(184,136,255,0.4);border-radius:6px;padding:0.7rem 0.85rem">
+      <label style="font-weight:700;color:#cdb4ff">🪦 Consume from Graveyard — extra play cost</label>
+      <div class="small-text" style="margin-top:0.3rem;color:#d8c4ff">On top of the energy cost, playing this card <strong>removes this many cards from your graveyard</strong> (oldest first). You can't play it unless your graveyard holds at least that many. Set <strong>0</strong> to disable.</div>
+      <div style="margin-top:0.5rem"><input type="number" id="ed-consume-grave" min="0" max="20" value="${_consumeN}" style="width:80px"> cards consumed on play</div>
+    </div>` : '';
 
   // Trap block
   const trapEff = card.effect || { type: 'damage', amount: 15 };
@@ -71221,6 +71292,8 @@ function renderCardEditor() {
         </div>
         ${unitBlock}
         ${spellBlock}
+        ${assaultBlock}
+        ${consumeGraveBlock}
         ${trapBlock}
         ${weatherBlock}
         ${wallBlock}
@@ -71453,6 +71526,14 @@ function bindCardEditor() {
     inspireChk.onchange = () => {
       const flds = document.getElementById('ed-inspire-fields');
       if (flds) flds.style.display = inspireChk.checked ? 'block' : 'none';
+    };
+  }
+  // ⚔ Reveal the Assault Effect picker when the Assault toggle is checked.
+  const _asChk = document.getElementById('ed-assault-on');
+  if (_asChk) {
+    _asChk.onchange = () => {
+      const w = document.getElementById('ed-assault-fx-wrap');
+      if (w) w.style.display = _asChk.checked ? 'block' : 'none';
     };
   }
 
@@ -72320,6 +72401,29 @@ function captureEditorIntoCard(card) {
   if (_assaultToggle) {
     if (_assaultToggle.checked) card.isAssault = true;
     else delete card.isAssault;
+  }
+  // ⚔ Assault Effect config — a dedicated on-activation effect. Empty type =
+  // inherit the card's own Effect Type (backward compatible).
+  const _afxTypeEl = document.getElementById('ed-assault-fx-type');
+  if (_afxTypeEl) {
+    const _aft = _afxTypeEl.value || '';
+    if (_aft) {
+      card.assaultEffect = {
+        type: _aft,
+        amount: Math.max(0, parseInt((document.getElementById('ed-assault-fx-amount') || {}).value, 10) || 0),
+        status: (document.getElementById('ed-assault-fx-status') || {}).value || '',
+        duration: Math.max(1, Math.min(6, parseInt((document.getElementById('ed-assault-fx-duration') || {}).value, 10) || 2)),
+      };
+    } else {
+      delete card.assaultEffect;
+    }
+  }
+  // 🪦 Consume-from-graveyard extra cost.
+  const _consumeEl = document.getElementById('ed-consume-grave');
+  if (_consumeEl) {
+    const _cn = Math.max(0, Math.min(20, parseInt(_consumeEl.value, 10) || 0));
+    if (_cn > 0) card.consumeGrave = _cn;
+    else delete card.consumeGrave;
   }
   // 🌊 Tunnel — unit-only underground delay.
   const _tunnelEl = document.getElementById('ed-tunnel');
@@ -77711,6 +77815,10 @@ function renderAssaultPrompt() {
   const _pendingId = (ap.kind === 'spell' && ap.pendingSpellCard) ? ap.pendingSpellCard.instanceId : null;
   const assaultCards = (s.player.hand || []).filter(c => c && c.isAssault && c.instanceId !== _pendingId);
   if (!assaultCards.length) { App.ui.assaultPrompt = null; return ''; }
+  // ⚡ Energy gating — an Assault card can only be activated if the player can
+  // pay its energy cost (mirrors normal play). Unaffordable cards still appear
+  // in the list but are disabled, with their cost shown, so it's clear why.
+  const _energy = (s.player && s.player.energy) || 0;
   const isSpell  = ap.kind === 'spell';
   const attacker = !isSpell ? (s.units || []).find(u => u.id === ap.attackerUnitId) : null;
   const target   = !isSpell ? (s.units || []).find(u => u.id === ap.targetUnitId)   : null;
@@ -77718,8 +77826,8 @@ function renderAssaultPrompt() {
     ? `Casting: ${escapeHtml((ap.pendingSpellCard && ap.pendingSpellCard.name) || 'Spell')}`
     : `${escapeHtml(attacker ? attacker.name : 'Unit')} → ${escapeHtml(target ? target.name : 'Enemy')}`;
   const hintLine = isSpell
-    ? 'Activate an Assault card before the spell resolves? It fires for free — then the spell continues normally.'
-    : 'Activate a card before striking? It goes to the graveyard and its effect fires — then combat proceeds normally.';
+    ? 'Activate an Assault card before the spell resolves? You pay its energy cost, its effect fires, then the spell continues normally.'
+    : 'Activate a card before striking? You pay its energy cost, its effect fires, then combat proceeds normally.';
   const skipText = isSpell ? 'Skip — Cast spell without activating' : 'Skip — Attack without activating';
   return `
     <div class="assault-prompt-overlay" id="assault-prompt-overlay">
@@ -77730,13 +77838,18 @@ function renderAssaultPrompt() {
           <div class="assault-prompt-hint">${hintLine}</div>
         </div>
         <div class="assault-prompt-cards">
-          ${assaultCards.map(c => `<button class="assault-prompt-card" data-assault-pick="${escapeHtml(c.instanceId)}">
+          ${assaultCards.map(c => {
+            const _cost = c.cost || 0;
+            const _afford = _energy >= _cost;
+            return `<button class="assault-prompt-card" data-assault-pick="${escapeHtml(c.instanceId)}" ${_afford ? '' : 'disabled'} title="${_afford ? '' : 'Need ' + _cost + ' energy (you have ' + _energy + ')'}" style="${_afford ? '' : 'opacity:0.5;cursor:not-allowed'}">
             <div class="assault-prompt-card-icon">${escapeHtml(c.icon || '⚔')}</div>
             <div class="assault-prompt-card-body">
               <div class="assault-prompt-card-name">${escapeHtml(c.name || 'Assault Card')}</div>
               ${c.desc ? `<div class="assault-prompt-card-desc">${escapeHtml(c.desc)}</div>` : ''}
             </div>
-          </button>`).join('')}
+            <div style="margin-left:auto;align-self:center;font-weight:800;white-space:nowrap;color:${_afford ? '#ffd166' : '#ff8f8f'}">${_cost} <span class="energy-orb"></span>${_afford ? '' : ' ✗'}</div>
+          </button>`;
+          }).join('')}
         </div>
         <div class="assault-prompt-foot">
           <button class="btn-secondary btn-mini" id="assault-prompt-skip">${escapeHtml(skipText)}</button>
@@ -77964,6 +78077,20 @@ function _activateAssaultCard(instanceId) {
   const s = App.state;
   const card = (s.player.hand || []).find(c => c && c.instanceId === instanceId);
   if (!card) { _completeAssaultAttack(); return; }
+  // ⚡ Energy gate — Assault activation now costs the card's energy (like a normal
+  // play). If the player can't afford it, keep the prompt open so they can pick a
+  // cheaper card or skip. (Backstop for the disabled button in renderAssaultPrompt.)
+  const _cost = card.cost || 0;
+  if (((s.player && s.player.energy) || 0) < _cost) {
+    showToast('Not enough energy for ' + (card.name || 'that Assault card'));
+    return;
+  }
+  // 🪦 Consume-graveyard extra cost gate (mirrors normal play).
+  const _cgNeed = Math.max(0, (card.consumeGrave) | 0);
+  if (_cgNeed > 0 && ((s.player && Array.isArray(s.player.graveyard)) ? s.player.graveyard.length : 0) < _cgNeed) {
+    showToast('Need ' + _cgNeed + ' cards in your graveyard for ' + (card.name || 'that Assault card') + '.');
+    return;
+  }
   let ns = { ...s };
   const log = [...ns.log];
   // The attacking unit serves as the "caster" for area/range calculations.
@@ -77971,45 +78098,115 @@ function _activateAssaultCard(instanceId) {
     || (ns.units || []).find(u => u && u.owner === 'player' && u.isHero && u.alive);
   const range = (typeof getCardRange === 'function') ? getCardRange(card) : 3;
   log.push({ msg: `⚔ ${escapeHtml(card.name)} activated as Assault!${card.desc ? ' — ' + card.desc : ''}`, color: 'green' });
-  // ── Apply legacy card.effect (same paths as spells, but free — no energy cost) ──
+  // ── Apply the assault effect. A dedicated card.assaultEffect (configured under
+  //    the ⚔ Assault toggle in the Forge) takes priority; otherwise fall back to
+  //    the card's main Effect Type so older assault cards keep working. ──
+  const fx = (card.assaultEffect && card.assaultEffect.type) ? card.assaultEffect : (card.effect || null);
   try {
-    if (card.effect && card.effect.type) {
-      if (card.effect.type === 'damage') {
+    if (fx && fx.type) {
+      const _amt = Math.max(0, (fx.amount | 0));
+      if (fx.type === 'damage') {
         let tgts = ns.units.filter(u => u.owner === 'ai' && u.alive);
         if (caster) tgts = tgts.filter(u => distance(u.pos, caster.pos) <= range);
         if (tgts.length > 0) {
           const t = tgts.sort((a, b) => a.currentHp - b.currentHp)[0];
-          const trig = applyDamageTriggers(t, card.effect.amount || 0, 'magic');
+          const trig = applyDamageTriggers(t, _amt, 'magic');
           trig.log.forEach(l => log.push(l));
           ns.units = ns.units.map(u => u.id === t.id ? trig.unit : u);
           if (!trig.unit.alive && trig.unit.isHero) ns.gameOver = 'player';
         }
-      } else if (card.effect.type === 'heal') {
+      } else if (fx.type === 'heal') {
         let tgts = ns.units.filter(u => u.owner === 'player' && u.alive && u.currentHp < u.maxHp);
         if (caster) tgts = tgts.filter(u => distance(u.pos, caster.pos) <= range);
         if (tgts.length > 0) {
           const t = tgts.sort((a, b) => (a.currentHp / a.maxHp) - (b.currentHp / b.maxHp))[0];
-          ns.units = ns.units.map(u => u.id === t.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + (card.effect.amount || 0)) } : u);
-          log.push({ msg: `${card.name} heals ${t.name} for ${card.effect.amount}`, color: 'green' });
+          ns.units = ns.units.map(u => u.id === t.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + _amt) } : u);
+          log.push({ msg: `${escapeHtml(card.name)} heals ${escapeHtml(t.name)} for ${_amt}`, color: 'green' });
         }
-      } else if (card.effect.type === 'buffAll') {
-        ns.units = ns.units.map(u => u.owner === 'player' && u.alive ? applyStatusEffect(u, card.effect.status, card.effect.duration) : u);
-      } else if (card.effect.type === 'draw') {
-        ns.player = drawCards(ns.player, card.effect.amount || 1, true);
+      } else if (fx.type === 'lifeDrain') {
+        // 🩸 Damage the lowest-HP enemy in range, heal the attacker (or the
+        //    player hero) for the damage actually dealt.
+        let tgts = ns.units.filter(u => u.owner === 'ai' && u.alive);
+        if (caster) tgts = tgts.filter(u => distance(u.pos, caster.pos) <= range);
+        if (tgts.length > 0) {
+          const t = tgts.sort((a, b) => a.currentHp - b.currentHp)[0];
+          const before = t.currentHp;
+          const trig = applyDamageTriggers(t, _amt, 'magic');
+          trig.log.forEach(l => log.push(l));
+          ns.units = ns.units.map(u => u.id === t.id ? trig.unit : u);
+          if (!trig.unit.alive && trig.unit.isHero) ns.gameOver = 'player';
+          const dealt = Math.max(0, before - trig.unit.currentHp);
+          const healId = (caster && caster.owner === 'player') ? caster.id
+            : ((ns.units.find(u => u.owner === 'player' && u.isHero) || {}).id);
+          if (dealt > 0 && healId) {
+            ns.units = ns.units.map(u => u.id === healId ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + dealt) } : u);
+            log.push({ msg: `🩸 ${escapeHtml(card.name)} drains ${dealt} life.`, color: 'green' });
+          }
+        }
+      } else if (fx.type === 'buffAllies') {
+        ns.units = ns.units.map(u => u.owner === 'player' && u.alive ? applyStatusEffect(u, fx.status, fx.duration) : u);
+        log.push({ msg: `📈 ${escapeHtml(card.name)} → ${escapeHtml(fx.status || 'buff')} on allies`, color: 'green' });
+      } else if (fx.type === 'debuffEnemies') {
+        ns.units = ns.units.map(u => u.owner === 'ai' && u.alive ? applyStatusEffect(u, fx.status, fx.duration) : u);
+        log.push({ msg: `📉 ${escapeHtml(card.name)} → ${escapeHtml(fx.status || 'debuff')} on enemies`, color: 'green' });
+      } else if (fx.type === 'buffAll') {
+        // Backward-compat: spell-style buffAll, side decided by the card's Target.
+        const _tgtOwner = ((fx.target || card.target) === 'enemy') ? 'ai' : 'player';
+        ns.units = ns.units.map(u => u.owner === _tgtOwner && u.alive ? applyStatusEffect(u, fx.status, fx.duration) : u);
+        log.push({ msg: `${escapeHtml(card.name)} → ${escapeHtml(fx.status || 'status')} on ${_tgtOwner === 'ai' ? 'enemies' : 'allies'}`, color: 'green' });
+      } else if (fx.type === 'draw') {
+        ns.player = drawCards(ns.player, Math.max(1, _amt || 1), true);
+        log.push({ msg: `🃏 ${escapeHtml(card.name)} → drew ${Math.max(1, _amt || 1)}`, color: 'green' });
+      } else if (fx.type === 'restoreEnergy') {
+        const amt = Math.max(1, _amt || 1);
+        const before = ns.player.energy || 0;
+        ns.player = { ...ns.player, energy: Math.min((ns.player.maxEnergy || (before + amt)), before + amt) };
+        log.push({ msg: `${escapeHtml(card.name)} → ⚡ +${ns.player.energy - before} energy`, color: 'green' });
+      } else if (fx.type === 'energyDrain') {
+        // ⚡🩸 Steal enemy energy → give it to the player (capped at maxEnergy).
+        const amt = Math.max(1, _amt || 1);
+        const taken = Math.min(amt, ns.ai.energy || 0);
+        ns.ai = { ...ns.ai, energy: Math.max(0, (ns.ai.energy || 0) - taken) };
+        const before = ns.player.energy || 0;
+        ns.player = { ...ns.player, energy: Math.min((ns.player.maxEnergy || (before + taken)), before + taken) };
+        log.push({ msg: `⚡ ${escapeHtml(card.name)} drains ${taken} enemy energy.`, color: 'green' });
+      } else if (fx.type === 'restoreKalon') {
+        const amt = Math.max(1, _amt || 1);
+        const before = ns.player.kalonsRemaining || 0;
+        ns.player = { ...ns.player, kalonsRemaining: Math.min(3, before + amt) };
+        log.push({ msg: `${escapeHtml(card.name)} → 🌟 +${ns.player.kalonsRemaining - before} Kalon use(s)`, color: 'green' });
+      } else if (fx.type === 'kalonLock') {
+        const dur = Math.max(1, Math.min(5, fx.duration || 2));
+        ns.ai = { ...ns.ai, kalonLockedTurns: Math.max(ns.ai.kalonLockedTurns || 0, dur) };
+        log.push({ msg: `🚫 ${escapeHtml(card.name)} seals enemy Kalon for ${dur} turn(s)`, color: 'green' });
+      } else if (fx.type === 'summon') {
+        const _ph = (ns.units || []).find(u => u.owner === 'player' && u.isHero);
+        if (_ph && typeof _battleSpawnSummonByCardId === 'function') {
+          const count = Math.max(1, Math.min(4, _amt || 1));
+          const result = _battleSpawnSummonByCardId(ns, _ph, fx.summonCardId, count);
+          ns.units = result.units;
+          if (result.count > 0) log.push({ msg: `🌀 ${escapeHtml(card.name)} summons ${result.count} ${escapeHtml(result.label || 'summon')}.`, color: 'green' });
+        }
       }
     }
-  } catch (e) { console.warn('[assault] legacy effect failed', e); }
+  } catch (e) { console.warn('[assault] effect failed', e); }
   // ── Apply modern customEffects (boardWipe, applyBuffDebuff, aoeStatus, etc.) ──
   try {
     if (card.customEffects && caster && typeof applyOnPlayEffect === 'function') {
       ns = applyOnPlayEffect(ns, caster, { ...card, onPlay: card.customEffects });
     }
   } catch (e) { console.warn('[assault] customEffects failed', e); }
-  // ── Remove card from hand → graveyard (activation IS the cost — no energy) ──
+  // ── Pay energy + consume-graveyard cost, then move card hand → graveyard ──
+  // (Energy-granting effects above already adjusted ns.player.energy, so this
+  // deducts the cost on top — net is grant-minus-cost, same as a normal play.
+  // Graveyard cards are consumed BEFORE this card joins the pile.)
+  const _cgRes = _applyConsumeGrave(ns.player, card);
+  if (_cgRes.removed) log.push({ msg: `🪦 ${escapeHtml(card.name)} consumes ${_cgRes.removed} card${_cgRes.removed === 1 ? '' : 's'} from your graveyard.`, color: 'amber' });
   ns.player = {
     ...ns.player,
+    energy: Math.max(0, (ns.player.energy || 0) - _cost),
     hand: ns.player.hand.filter(c => c.instanceId !== instanceId),
-    graveyard: [...(ns.player.graveyard || []), card],
+    graveyard: [..._cgRes.graveyard, card],
   };
   ns.log = log;
   App.state = ns;
@@ -84543,6 +84740,18 @@ function buildKalonElementLayers(elementId) {
 //     discountedCost:  <int>,            // cost when condition met (-1 = none, read by getEffectiveCardCost)
 //   }
 function _checkPlayRequirement(card, state, side) {
+  // 🪦 Consume-graveyard extra cost gate — block the play when the player's
+  // graveyard doesn't hold enough cards to pay the consume cost. Checked for
+  // EVERY play path (they all call this), so the card can never be played for
+  // free / without the cost being affordable.
+  const _cgNeed = Math.max(0, (card && card.consumeGrave) | 0);
+  if (_cgNeed > 0) {
+    const _meKey = (side === 'ai') ? 'ai' : 'player';
+    const _grave = (state && state[_meKey] && Array.isArray(state[_meKey].graveyard)) ? state[_meKey].graveyard : [];
+    if (_grave.length < _cgNeed) {
+      return `Need ${_cgNeed} card${_cgNeed === 1 ? '' : 's'} in your graveyard to play this (you have ${_grave.length}).`;
+    }
+  }
   const req = card && card.playRequirement;
   if (!req || req.type !== 'unitsOnField') return null;
   // 🟢 SOFT GATE — when allowNormalPlay is true, the card is ALWAYS
@@ -84593,14 +84802,39 @@ function _isPlayRequirementMet(card, state, side) {
   return count >= need;
 }
 
+// 🪦 Pay a card's consume-graveyard extra cost: remove N cards (oldest first)
+// from the given player object's graveyard. Returns the new graveyard array +
+// how many were actually removed, so callers can splice it into their
+// next-state player object and log it. No-op when the card has no such cost.
+function _applyConsumeGrave(playerObj, card) {
+  const need = Math.max(0, (card && card.consumeGrave) | 0);
+  const grave = (playerObj && Array.isArray(playerObj.graveyard)) ? playerObj.graveyard.slice() : [];
+  if (!need) return { graveyard: grave, removed: 0 };
+  const removed = Math.min(need, grave.length);
+  grave.splice(0, removed); // consume the oldest cards in the pile
+  return { graveyard: grave, removed };
+}
+
 function placeUnit(card, pos) {
-  const s = App.state;
+  let s = App.state;
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
   if (!ph) return;
   // 🪞 Play-requirement gate — fires BEFORE the placement-tile check so the
   // player gets the right error message ('need 3 units' vs 'tile too far').
   const _reqFail = _checkPlayRequirement(card, s, 'player');
   if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
+  // 🪦 Pay the consume-graveyard extra cost up front on the LOCAL snapshot, so
+  // every placement branch below (tunnel / normal) commits the already-consumed
+  // graveyard. The gate above guaranteed there are enough cards to remove.
+  if (card.consumeGrave) {
+    const _cg = _applyConsumeGrave(s.player, card);
+    if (_cg.removed) {
+      s = { ...s,
+        player: { ...s.player, graveyard: _cg.graveyard },
+        log: [...s.log, { msg: `🪦 ${card.name} consumes ${_cg.removed} card${_cg.removed === 1 ? '' : 's'} from your graveyard.`, color: 'amber' }],
+      };
+    }
+  }
   // 🌊 TUNNEL X — if the card has a tunnel value, it goes underground
   // instead of onto the battlefield. We skip tile validation entirely
   // (the card never occupies a tile now), deduct the energy cost, and
@@ -85257,6 +85491,14 @@ function _resolveSpellAfterChain(card) {
       if (result.count > 0) log.push({ msg: `🌀 ${card.name} summons ${result.count} ${result.label}.`, color: 'green' });
       else log.push({ msg: `🌀 ${card.name} fizzles — no open tiles.`, color: 'amber' });
     }
+  }
+  // 🪦 Consume-graveyard extra cost — remove N cards from the graveyard BEFORE
+  // this spell is committed to it, so the card never pays for itself. The
+  // playSpell gate already guaranteed enough cards are present.
+  if (card.consumeGrave) {
+    const _cg = _applyConsumeGrave(ns.player, card);
+    ns.player = { ...ns.player, graveyard: _cg.graveyard };
+    if (_cg.removed) log.push({ msg: `🪦 ${card.name} consumes ${_cg.removed} card${_cg.removed === 1 ? '' : 's'} from your graveyard.`, color: 'amber' });
   }
   // ✨ PERSISTENT SPELL (v86j) — stays on field instead of going to graveyard.
   if (card.persistent && (card.persistDuration || card.duration)) {
@@ -89032,6 +89274,102 @@ function renderMarketValuation() {
   return header + dashboard + toolbar + grid;
 }
 
+// 🪖 Snapshot the SELLER's specific unit instance (level / nature / trait /
+// scaled stats / moveset) at list time. Every player's copy of a unit differs
+// by level, rolled trait, nature and learned moves — that's what justifies a
+// listing's price — so we freeze those details onto the listing. Units only;
+// returns null for spells / items / heroes.
+function unitInstanceSnapshot(card) {
+  if (!card || !card.id || (card.type || 'unit') !== 'unit') return null;
+  let u = null;
+  try { u = (typeof buildUnit === 'function') ? buildUnit(card, 'player', { x: 0, y: 0 }, null) : null; } catch (e) {}
+  const prof = (typeof getUnitProfile === 'function') ? getUnitProfile(card.id) : { level: 1, xp: 0 };
+  let traitId = null;
+  try { traitId = (typeof ensureUnitTrait === 'function') ? ensureUnitTrait(card.id, card, false) : ((prof && prof.trait) || null); }
+  catch (e) { traitId = (prof && prof.trait) || null; }
+  const moves = (u && Array.isArray(u.knownMoves) && u.knownMoves.length)
+    ? u.knownMoves.slice(0, 6)
+    : (Array.isArray(card.learnset) ? card.learnset.map(l => l && l.m).filter(Boolean).slice(0, 4) : []);
+  return {
+    level:   (u && u.level) || (prof && prof.level) || 1,
+    xp:      (u && u.xp)    || (prof && prof.xp)    || 0,
+    nature:  (prof && prof.nature) || (u && u.nature) || null,
+    traitId: traitId || null,
+    knownMoves: moves,
+    stats:   (u && u.stats) ? { ...u.stats } : (card.stats ? { ...card.stats } : null),
+    maxHp:   (u && u.maxHp) || (card.stats && card.stats.hp) || 0,
+    elements: (u && Array.isArray(u.elements)) ? u.elements.slice(0) : [],
+  };
+}
+
+// 🪖 Side-effect-free BASE profile (level 1, no nature/trait) derived purely
+// from the card definition — used for NPC listings (and pre-update listings)
+// where we must NOT roll/persist a trait against a card the viewer may not own.
+function unitInstanceBase(card) {
+  if (!card || (card.type || 'unit') !== 'unit') return null;
+  const st = card.stats || {};
+  const lvl1 = Array.isArray(card.learnset) ? card.learnset.filter(l => l && (l.lvl || 1) <= 1).map(l => l.m).filter(Boolean) : [];
+  const allMoves = Array.isArray(card.learnset) ? card.learnset.map(l => l && l.m).filter(Boolean) : [];
+  return {
+    level: 1, xp: 0, nature: null, traitId: null,
+    knownMoves: (lvl1.length ? lvl1 : allMoves).slice(0, 4),
+    stats: { ...st }, maxHp: st.hp || 0,
+    elements: (typeof getElementsOf === 'function') ? getElementsOf(card) : [],
+    _base: true,
+  };
+}
+
+// 🪖 Render a unit-instance detail block for the DVS modal (level, nature,
+// trait, scaled stats, moveset). Pure read of the snapshot — safe for buyers.
+function _marketUnitInstanceHtml(inst) {
+  if (!inst) return '';
+  const st = inst.stats || {};
+  const _kv = (k, val) => `<div class="dvs-kv"><span class="k">${k}</span><span class="v">${(val != null && val !== '') ? val : '—'}</span></div>`;
+  let traitHtml = '';
+  if (inst.traitId && typeof getTrait === 'function') {
+    const tr = getTrait(inst.traitId);
+    if (tr) {
+      const col = (typeof TRAIT_RARITY_COLOR !== 'undefined' && TRAIT_RARITY_COLOR[tr.rarity]) || '#9aa0a6';
+      traitHtml = `<span class="nature-pill" style="border-color:${col};color:${col}" title="${escapeHtml(String(tr.rarity || '').toUpperCase() + (tr.desc ? ' — ' + tr.desc : ''))}">${tr.icon || '🧬'} ${escapeHtml(tr.name || inst.traitId)}</span>`;
+    }
+  }
+  let natureHtml = '';
+  if (inst.nature && typeof getNature === 'function') {
+    const n = getNature(inst.nature);
+    if (n) natureHtml = `<span class="nature-pill" title="${escapeHtml(n.desc || '')}">🌱 ${escapeHtml(n.name)}${(n.plus && n.minus && n.plus !== n.minus) ? ` (+${n.plus.toUpperCase()} −${n.minus.toUpperCase()})` : ''}</span>`;
+  }
+  const moves = (Array.isArray(inst.knownMoves) ? inst.knownMoves : [])
+    .map(mid => (typeof lookupMove === 'function') ? lookupMove(mid) : null)
+    .filter(Boolean);
+  const movesHtml = moves.length
+    ? moves.map(m => `<div class="dvs-kv"><span class="k">${escapeHtml(m.name || m.id || 'Move')}</span><span class="v">${m.kind ? escapeHtml(String(m.kind)) : ''}${(m.power != null && m.power !== '') ? ` · ${m.power}` : ''}</span></div>`).join('')
+    : '<div class="dvs-row-sub">No recorded moves.</div>';
+  const elems = (inst.elements || []).filter(e => e && e !== 'neutral');
+  const title = inst._base ? '🪖 Unit — base profile' : "🪖 Seller's unit — this exact copy";
+  return `
+        <div class="dvs-subpanel">
+          <h4>${title}</h4>
+          <div style="display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;margin-bottom:0.4rem">
+            <span class="dvs-stat-pill" style="font-weight:800">Lv ${inst.level || 1}</span>
+            ${inst.xp ? `<span class="dvs-row-sub">${inst.xp} XP</span>` : ''}
+            ${traitHtml}${natureHtml}
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 1rem">
+            ${_kv('HP', inst.maxHp || st.hp)}
+            ${_kv('ATK', st.atk)}
+            ${_kv('DEF', st.def)}
+            ${_kv('MAG', st.mag)}
+            ${_kv('RES', st.res)}
+            ${_kv('SPD', st.spd)}
+          </div>
+          ${elems.length ? `<div class="dvs-row-sub" style="margin-top:0.4rem">Elements: ${elems.map(e => escapeHtml(e)).join(', ')}</div>` : ''}
+        </div>
+        <div class="dvs-subpanel">
+          <h4>📜 Moveset</h4>
+          ${movesHtml}
+        </div>`;
+}
+
 function renderDvsAssetModal() {
   const id = App.dvsAssetId;
   if (!id) return '';
@@ -89041,6 +89379,23 @@ function renderDvsAssetModal() {
   const range = App.dvsRange || '7d';
   const RANGES = [['24h', 86400000], ['7d', 604800000], ['30d', 2592000000], ['all', 0]];
   const rangeMs = (RANGES.find(r => r[0] === range) || RANGES[1])[1];
+
+  // 🪖 If this modal was opened from a specific market listing of a UNIT, show
+  // the seller's exact copy. Prefer the frozen snapshot taken at list time; for
+  // the player's own (pre-update) listing fall back to a live snapshot; for NPC
+  // listings use a side-effect-free base profile.
+  let _instHtml = '';
+  try {
+    const _lst = (App.dvsListingId && typeof Market !== 'undefined' && Array.isArray(Market.listings))
+      ? Market.listings.find(l => l && l.id === App.dvsListingId) : null;
+    if (_lst && _lst.kind === 'card') {
+      const _item = _lst.item || card;
+      const _inst = _lst.unitInstance
+        || (_lst.sellerId === 'player' ? unitInstanceSnapshot(_item) : null)
+        || unitInstanceBase(_item);
+      _instHtml = _marketUnitInstanceHtml(_inst);
+    }
+  } catch (e) {}
 
   const bars = [
     ['Power', v.power, DVS_WEIGHTS.power],
@@ -89108,6 +89463,7 @@ function renderDvsAssetModal() {
             </div>
           </div>
         </div>
+        ${_instHtml}
 
         <div class="dvs-section-title" style="margin-top:1rem">Valuation breakdown</div>
         <div class="dvs-score-bars">${bars}</div>
@@ -89183,6 +89539,9 @@ function bindDvsCardOpeners() {
       const id = el.dataset.dvsCard;
       if (!id) return;
       App.dvsAssetId = id;
+      // 🪖 Remember WHICH listing was clicked so the modal can show that exact
+      // unit copy. Valuation-grid tiles have no listing row → null (generic view).
+      App.dvsListingId = el.dataset.listingRow || null;
       App.dvsRange = App.dvsRange || '7d';
       render();
     };
@@ -89212,9 +89571,9 @@ function syncDvsModal() {
   host.innerHTML = html;
   // Modal controls: close button, click-outside-to-close, and range toggle.
   const closeBtn = host.querySelector('#dvs-modal-close');
-  if (closeBtn) closeBtn.onclick = () => { App.dvsAssetId = null; render(); };
+  if (closeBtn) closeBtn.onclick = () => { App.dvsAssetId = null; App.dvsListingId = null; render(); };
   const overlay = host.querySelector('#dvs-modal-overlay');
-  if (overlay) overlay.onclick = (e) => { if (e.target === overlay) { App.dvsAssetId = null; render(); } };
+  if (overlay) overlay.onclick = (e) => { if (e.target === overlay) { App.dvsAssetId = null; App.dvsListingId = null; render(); } };
   host.querySelectorAll('[data-dvs-range]').forEach(el => {
     el.onclick = (e) => { e.stopPropagation(); App.dvsRange = el.dataset.dvsRange; render(); };
   });
@@ -108900,7 +109259,11 @@ function _frButtonOnlyCampaign(c) {
 // Anything unrecognized falls back to 'roguelite' so old campaigns still show.
 function _campaignPlacement(c) {
   const p = c && typeof c.placement === 'string' ? c.placement : '';
-  return (p === 'worldMap' || p === 'warMap' || p === 'hidden') ? p : 'roguelite';
+  // ⛽ 'br_oil' / 'br_convoy' / 'br_vip' route a campaign to a Black River
+  // mission-select Deploy button. Like worldMap/warMap/hidden they are kept OFF
+  // the general Roguelite list (reached only via their Black River tile).
+  return (p === 'worldMap' || p === 'warMap' || p === 'hidden'
+          || p === 'br_oil' || p === 'br_convoy' || p === 'br_vip') ? p : 'roguelite';
 }
 function getPlayableCampaigns() {
   const admin = (typeof isAdmin === 'function') && isAdmin();
@@ -108912,6 +109275,21 @@ function getPlayableCampaigns() {
     && !_frButtonOnlyCampaign(c)
     && _campaignPlacement(c) === 'roguelite'
   );
+}
+// ⛽ Campaign assigned (in the Campaign Builder) to a Black River mission slot.
+// missionId is one of the BRP_RUN_MISSIONS ids ('oil' | 'convoy' | 'vip'); the
+// matching placement is 'br_<missionId>'. Returns the published, node-bearing
+// campaign for that slot, or null. Admins also see unpublished ones so they can
+// test a campaign before publishing it.
+function getBlackRiverCampaign(missionId) {
+  if (!missionId) return null;
+  const want = 'br_' + missionId;
+  const admin = (typeof isAdmin === 'function') && isAdmin();
+  return getAllCampaigns().find(c =>
+    c && _campaignPlacement(c) === want
+    && Array.isArray(c.nodes) && c.nodes.length > 0
+    && (admin || c.isPublished)
+  ) || null;
 }
 // Campaigns the admin routed to a given map surface ('worldMap' | 'warMap').
 // Returns published, node-bearing campaigns tagged for that surface — the
@@ -110031,6 +110409,11 @@ function renderRlcAdmin() {
           <option value="worldMap" ${ed.placement === 'worldMap' ? 'selected' : ''}>🌍 World Map node — kept OFF the Roguelite list</option>
           <option value="warMap"   ${ed.placement === 'warMap'   ? 'selected' : ''}>⚔️ War Map node — kept OFF the Roguelite list</option>
           <option value="hidden"   ${ed.placement === 'hidden'   ? 'selected' : ''}>🚫 Hidden — reachable only via a dedicated button</option>
+          <optgroup label="⛽ Black River — Mission Select (Deploy buttons)">
+            <option value="br_oil"    ${ed.placement === 'br_oil'    ? 'selected' : ''}>🛢 Black River → Oil Extraction Run</option>
+            <option value="br_convoy" ${ed.placement === 'br_convoy' ? 'selected' : ''}>🚛 Black River → Convoy Escort Run</option>
+            <option value="br_vip"    ${ed.placement === 'br_vip'    ? 'selected' : ''}>🆘 Black River → VIP Rescue Run</option>
+          </optgroup>
         </select></label>
         <label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">🔒 Requires this campaign cleared first (chains acts / unlocks the next section)</span><br><select data-rlc-path="requiresCampaignId" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">— None (always available) —</option>${(Array.isArray(Forge.campaigns) ? Forge.campaigns : []).filter(c => c && c.id !== ed.id).map(c => `<option value="${escapeHtml(String(c.id))}" ${ed.requiresCampaignId === c.id ? 'selected' : ''}>${escapeHtml(c.name || c.id)}</option>`).join('')}</select></label>
       </div>
@@ -120248,14 +120631,24 @@ function renderBrpMissionPicker() {
   if (!App._brpMissionPicker) return '';
   const s = ensureBlackRiver();
   const R = BRP_RISK_PROFILE[s.risk] || BRP_RISK_PROFILE.med;
-  const tiles = BRP_RUN_MISSIONS.map(m => `
-    <button class="brp-run-tile" data-brp-run="${escapeHtml(m.id)}">
+  const tiles = BRP_RUN_MISSIONS.map(m => {
+    // If an admin routed a campaign to this mission slot, surface its name + a
+    // badge so the player knows Deploy launches the custom roguelite campaign
+    // (not the built-in skirmish).
+    const _camp = (typeof getBlackRiverCampaign === 'function') ? getBlackRiverCampaign(m.id) : null;
+    const _name = _camp ? (_camp.name || m.name) : m.name;
+    const _desc = _camp ? (_camp.intro || _camp.description || _camp.blurb || m.desc) : m.desc;
+    const _badge = _camp ? `<div style="position:absolute;top:6px;right:8px;font-size:0.6rem;font-weight:800;letter-spacing:0.04em;color:#d8b8ff;background:rgba(120,40,180,0.22);border:1px solid rgba(184,136,255,0.55);border-radius:999px;padding:2px 7px">🗺️ CAMPAIGN</div>` : '';
+    return `
+    <button class="brp-run-tile" data-brp-run="${escapeHtml(m.id)}" style="position:relative">
+      ${_badge}
       <div class="brp-run-icon">${m.icon}</div>
-      <div class="brp-run-name">${escapeHtml(m.name)}</div>
-      <div class="brp-run-desc">${escapeHtml(m.desc)}</div>
+      <div class="brp-run-name">${escapeHtml(_name)}</div>
+      <div class="brp-run-desc">${escapeHtml(_desc)}</div>
       <div class="brp-run-go">▶ Deploy</div>
     </button>
-  `).join('');
+  `;
+  }).join('');
   return `
     <div class="brp-run-backdrop" id="brp-run-backdrop">
       <div class="brp-run-modal">
@@ -120340,6 +120733,18 @@ function bindBrpDeckPicker() {
 function brLaunchRogueliteRun(missionId, pickedDeckId) {
   const def = BRP_RUN_MISSIONS.find(m => m.id === missionId);
   if (!def) return;
+  // ⛽ If an admin built a roguelite campaign in the Campaign Builder and routed
+  // it to this Black River mission slot (placement 'br_<missionId>'), DEPLOY THAT
+  // campaign — the player drops straight into its deck-pick → branching map.
+  // Falls back to the built-in synthetic skirmish below when none is assigned,
+  // so missions without a custom campaign behave exactly as before.
+  const _brCamp = (typeof getBlackRiverCampaign === 'function') ? getBlackRiverCampaign(missionId) : null;
+  if (_brCamp && typeof rlcStartRun === 'function') {
+    App._brpMissionPicker = false;
+    App._brpDeckPicker = null;
+    rlcStartRun(_brCamp.id);
+    return;
+  }
   const s = ensureBlackRiver();
   const R = BRP_RISK_PROFILE[s.risk] || BRP_RISK_PROFILE.med;
 

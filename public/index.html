@@ -32449,7 +32449,7 @@ function initCloud() {
     try { if (window.BootSplash) window.BootSplash.set('auth', 1, 'Reading credentials…'); } catch (e) {}
     // Subscribe to auth-state changes so the UI updates immediately on sign-in / out.
     Cloud.client.auth.onAuthStateChange((event, session) => {
-      _applyAuthState(session);
+      _applyAuthState(session, event);
       // 👥 Friends cache — refresh on sign-in so the Arcanum tile can show the
       // pending-request badge without forcing the player to open the panel.
       // Wrapped in a try/setTimeout so it never blocks the auth handler.
@@ -32503,8 +32503,11 @@ function initCloud() {
 }
 
 // Mirror the active session into Profile.cloud so UI code only ever has to
-// read from one place. Fetches the user profile on first sign-in.
-function _applyAuthState(session) {
+// read from one place. Fetches the user profile on first sign-in. `authEvent`
+// is the Supabase auth event ('SIGNED_IN' / 'INITIAL_SESSION' / 'TOKEN_REFRESHED'
+// / undefined for the persisted-session bootstrap) — used to make the cloud the
+// authoritative master on a real LOGIN without clobbering same-session progress.
+function _applyAuthState(session, authEvent) {
   if (session && session.user) {
     Profile.cloud.userId      = session.user.id;
     Profile.cloud.email       = session.user.email || null;
@@ -32534,6 +32537,18 @@ function _applyAuthState(session) {
     const _preCFEditAt = (Profile.cloud && Profile.cloud.lastLocalEditAt) || 0;
     saveProfile();   // must persist signedIn/userId/email to localStorage for crash safety
     if (Profile.cloud) Profile.cloud.lastLocalEditAt = _preCFEditAt;
+    // ☁ CLOUD IS MASTER ON LOGIN — on a real, explicit sign-in (SIGNED_IN event,
+    // i.e. the player just logged in / switched accounts), authoritatively load
+    // the cloud account so they see the SAME progress + cards on every device.
+    // We reuse the "Restore from Cloud" force flag so cloudFetchProfile bypasses
+    // the local-wins guards. This does NOT fire on same-session reloads
+    // (INITIAL_SESSION), token refreshes, or the persisted-session bootstrap, so
+    // un-uploaded in-session progress on the active device is still protected.
+    // (Safe vs an empty cloud row: the merge only overwrites fields the cloud
+    // actually has, so a blank cloud can never wipe local.)
+    if (authEvent === 'SIGNED_IN' && Profile.cloud) {
+      Profile.cloud._forceRestoreFromCloud = true;
+    }
     // On fresh sign-ins, pull the player's saved profile data from the cloud.
     if (typeof cloudFetchProfile === 'function') {
       // 🛟 Show a clearer message when the local profile is empty — this is

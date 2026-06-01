@@ -13,7 +13,7 @@
 # Pricing: free tier (shared-cpu-1x / 256MB) covers ~100 concurrent matches.
 # Scale up when needed: `fly scale memory 1024` or `fly scale count 2`.
 
-app = "mythic-spellbook-mp"
+app = "mythicspellbook"
 primary_region = "iad"
 
 [build]

@@ -89642,7 +89642,17 @@ function bindMarketSell() {
 function renderMarketMyListings(myListings) {
   // Settle any of MY auctions that just expired so the rendered list is fresh.
   sweepExpiredAuctions();
-  myListings = Market.listings.filter(l => l.sellerId === 'player');
+  // ☁ Respect the caller-supplied list. When signed in, the caller passes the
+  // cloud CardMarket.mine — which is exactly what the tab badge counts. Only
+  // fall back to the local player listings when nothing was passed (solo /
+  // offline). This line previously OVERWROTE the param with the local-only
+  // filter unconditionally, so cloud listings rendered as "You have no active
+  // listings." even though the badge counted them — the "I listed 2 cards but
+  // My Listings is empty" bug. (Row rendering + cancel below are already
+  // cloud-aware via renderMarketTile / CardMarket.mine, so this is the only fix.)
+  if (!Array.isArray(myListings)) {
+    myListings = Market.listings.filter(l => l.sellerId === 'player');
+  }
   if (myListings.length === 0) return `<div class="empty-list-note">You have no active listings.</div>`;
   const rows = myListings.map(l => {
     if (isAuctionListing(l)) {
@@ -113643,12 +113653,38 @@ function renderCollectionCardModal(active) {
 }
 
 function bindCollectionCardModal() {
-  if (!App.collectionDetailCard) return;
+  // 🪟 Portal the collection card-detail modal OUT of #app into a <body>-level
+  // host so it appears centered in the viewport in front of the player. #app
+  // permanently carries the page-fade-in transform (animation-fill-mode:both
+  // keeps transform:translateY(0)), which makes a position:fixed overlay resolve
+  // against the TALL page box instead of the viewport — that's why the modal
+  // used to open scrolled up near the top of the page. Relocating the backdrop
+  // to <body> (the same trick syncDvsModal uses for the valuation modal) pins it
+  // to the viewport center. All four screens that embed ${renderCollectionCardModal()}
+  // inline route through here, so this one relocation fixes every one of them.
+  let host = document.getElementById('ccm-modal-host');
+  if (!App.collectionDetailCard) {
+    // Modal closed — tear down the portal + Esc handler so nothing lingers.
+    if (host) host.remove();
+    if (App._ccmEsc) { document.removeEventListener('keydown', App._ccmEsc); App._ccmEsc = null; }
+    return;
+  }
+  if (!host) { host = document.createElement('div'); host.id = 'ccm-modal-host'; document.body.appendChild(host); }
+  // Move the freshly-rendered inline backdrop (still inside #app) into the host.
+  // Pick the copy that is NOT already inside the host so re-renders never leave a
+  // stale duplicate behind (appendChild MOVES the node, so #app keeps no copy).
+  let inlineBackdrop = null;
+  document.querySelectorAll('#ccm-backdrop').forEach(el => {
+    // Skip our own host AND the Camp/base screen's self-contained #base-card-modal
+    // host (it manages its own copy and never routes through here).
+    if (!inlineBackdrop && !host.contains(el) && !el.closest('#base-card-modal')) inlineBackdrop = el;
+  });
+  if (inlineBackdrop) { host.innerHTML = ''; host.appendChild(inlineBackdrop); }
   const close = () => { App.collectionDetailCard = null; render(); };
-  const back = document.getElementById('ccm-backdrop');
+  const back = host.querySelector('#ccm-backdrop');
   if (back) back.addEventListener('click', (e) => { if (e.target === back) close(); });
-  const x = document.getElementById('ccm-close');
-  const d = document.getElementById('ccm-done');
+  const x = host.querySelector('#ccm-close');
+  const d = host.querySelector('#ccm-done');
   if (x) x.onclick = close;
   if (d) d.onclick = close;
   // Esc-to-close

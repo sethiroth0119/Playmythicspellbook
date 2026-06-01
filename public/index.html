@@ -6802,6 +6802,27 @@
     82%  { opacity: 1; transform: scale(1.04) translateY(-2px); }
     100% { opacity: 0; transform: scale(1.18) translateY(-8px); }
   }
+  /* 📝 Effect line under the ULT name — says what the ultimate actually does. */
+  .hero-ult-cine-name-effect {
+    display: block;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-weight: 600;
+    color: #f3e9ff;
+    font-size: clamp(0.95rem, 1.7vw, 1.3rem);
+    line-height: 1.35;
+    letter-spacing: 0.02em;
+    margin: 10px auto 0;
+    max-width: min(86vw, 600px);
+    text-shadow: 0 0 12px rgba(212,140,255,0.6), 0 2px 6px rgba(0,0,0,0.95);
+    opacity: 0;
+    animation: ult-effect-fade 2400ms ease-out forwards;
+  }
+  @keyframes ult-effect-fade {
+    0%   { opacity: 0; transform: translateY(10px); }
+    24%  { opacity: 1; transform: translateY(0); }
+    84%  { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-6px); }
+  }
   .hero-ult-cine-name-flash {
     position: absolute;
     inset: -40px -10vw;
@@ -83135,6 +83156,60 @@ function _resolveCardElementColor(card) {
     return ed && ed.color ? ed.color : '#c9a5ff';   // arcane purple default
   } catch (e) { return '#c9a5ff'; }
 }
+
+// 📝 Short, human-readable "what does this card DO" line for the activation
+// cinematics — so when a spell / trap / weather / location / counter fires
+// (player OR enemy) the animation actually says what the effect is, not just
+// the name. Prefers the card's authored rules text, then derives a concise
+// summary from the structured effect + on-play data, then a type fallback.
+function _cineCardEffectText(card) {
+  try {
+    if (!card) return '';
+    // 1) Authored rules text wins (skip pure flavor text).
+    let txt = ((card.desc || card.text || card.rules || card.description || '') + '').trim();
+    // 2) Otherwise compose from structured data.
+    if (!txt) {
+      const bits = [];
+      const e = card.effect;
+      if (e && e.type) {
+        const amt = (typeof e.amount === 'number') ? e.amount : null;
+        switch (e.type) {
+          case 'damage':  bits.push('Deal ' + (amt != null ? amt + ' ' : '') + 'damage'); break;
+          case 'heal':    bits.push('Restore ' + (amt != null ? amt + ' ' : '') + 'HP'); break;
+          case 'stun':    bits.push('Stun the target' + (e.duration ? ' for ' + e.duration + ' turn' + (e.duration === 1 ? '' : 's') : '')); break;
+          case 'draw':    bits.push('Draw ' + (amt != null ? amt : 1) + ' card' + ((amt == null || amt === 1) ? '' : 's')); break;
+          case 'buffAll': bits.push('Buff all your units' + (amt != null ? ' +' + amt : '')); break;
+          case 'buff':    bits.push('Buff a unit' + (amt != null ? ' +' + amt : '')); break;
+          case 'debuff':  bits.push('Weaken a unit' + (amt != null ? ' -' + amt : '')); break;
+          case 'shield':  bits.push('Grant a shield' + (amt != null ? ' (' + amt + ')' : '')); break;
+          default:        if (amt != null) bits.push(amt + ' ' + e.type); break;
+        }
+        if (e.status) {
+          const sn = (typeof _abilityStatusName === 'function') ? _abilityStatusName(e.status) : null;
+          bits.push('applies ' + (sn ? sn.name : e.status));
+        }
+      }
+      if (card.onPlay && typeof describeOnPlayEffect === 'function') {
+        const op = (describeOnPlayEffect(card.onPlay) || '').trim();
+        if (op) bits.push(op);
+      }
+      txt = bits.join(' · ');
+    }
+    // 3) Type fallback so the line is never empty.
+    if (!txt) {
+      const ty = card && card.type;
+      txt = ty === 'weather'  ? 'Changes the battlefield weather.'
+          : ty === 'location' ? 'Reshapes the battlefield.'
+          : ty === 'trap'     ? 'Arms a hidden trap.'
+          : ty === 'wall'     ? 'Raises a protective barrier.'
+          : ty === 'counter'  ? 'Negates the triggering effect.'
+          : 'Casts an arcane effect.';
+    }
+    txt = txt.replace(/\s+/g, ' ').trim();
+    if (txt.length > 150) txt = txt.slice(0, 147).replace(/\s+\S*$/, '') + '…';
+    return txt;
+  } catch (e) { return ''; }
+}
 function playSpellActivationVfx(card, opts) {
   if (typeof requestAnimationFrame === 'function') {
     return requestAnimationFrame(() => _playSpellActivationVfxImpl(card, opts || {}));
@@ -83176,6 +83251,27 @@ function _trackAbilitySeen(moveId) {
     App._abilitySeen[moveId] = (App._abilitySeen[moveId] | 0) + 1;
     return App._abilitySeen[moveId];
   } catch (e) { return 0; }
+}
+// 📝 Concise "what this ability does" line — authored desc first, else a
+// summary from amount/range/status. Shared by the full + Fast-Cast variants so
+// enemy ability activations (which use Fast-Cast) still say what the effect is.
+function _cineAbilityDesc(move) {
+  if (!move) return '';
+  let desc = ((move.desc || '') + '').replace(/[<>&]/g, '');
+  if (!desc) {
+    const bits = [];
+    if (typeof move.amount === 'number' && move.amount > 0) {
+      bits.push(move.kind === 'attack' ? ('Deal ' + move.amount + ' damage') : (move.amount + ' effect'));
+    }
+    if (typeof move.range === 'number' && move.range > 0) bits.push('Range ' + move.range);
+    if (move.status) {
+      const sn = (typeof _abilityStatusName === 'function') ? _abilityStatusName(move.status) : null;
+      bits.push('Applies ' + (sn ? sn.name : move.status));
+    }
+    desc = bits.length ? (bits.join(' · ') + '.') : 'Activates this unit\'s special ability.';
+  }
+  if (desc.length > 120) desc = desc.slice(0, 117).replace(/\s+\S*$/, '') + '…';
+  return desc;
 }
 function playAbilityCinematic(unit, move, opts) {
   if (typeof requestAnimationFrame === 'function') {
@@ -83280,6 +83376,10 @@ function _playAbilityCinematicImpl(unit, move, opts) {
           box-shadow:0 0 24px rgba(0,0,0,0.7), 0 0 14px var(--ab-color-dim,rgba(201,165,255,0.5));
           opacity:0;animation:abCineFast var(--ab-dur,600ms) ease-out forwards;
           pointer-events:none;white-space:nowrap;max-width:80vw;overflow:hidden;text-overflow:ellipsis}
+        .ab-cine-fast .ab-cine-fast-desc{display:block;white-space:normal;
+          font-family:'Inter',system-ui,sans-serif;font-weight:600;letter-spacing:0.02em;
+          font-size:0.78rem;line-height:1.3;color:#dbe4f0;margin-top:3px;
+          text-shadow:0 1px 3px #000;max-width:62vw}
         @keyframes abCineFast{
           0%{opacity:0;transform:translate(-50%,-50%) scale(0.6)}
           25%{opacity:1;transform:translate(-50%,-50%) scale(1.04)}
@@ -83321,24 +83421,19 @@ function _playAbilityCinematicImpl(unit, move, opts) {
       }
     } catch (e) {}
     if (fastMode) {
-      // 🏎 Fast Cast — single inline banner, total 600ms.
-      overlay.innerHTML = ringHTML + `<div class="ab-cine-fast">🔮 ${(move.name || 'Ability').replace(/[<>&]/g,'')}</div>`;
+      // 🏎 Fast Cast — compact banner with the ability name AND a one-line
+      // effect summary so enemy casts (which run Fast-Cast) still tell the
+      // player what just happened.
+      const fastName = (move.name || 'Ability').replace(/[<>&]/g, '');
+      const fastDesc = _cineAbilityDesc(move);
+      overlay.innerHTML = ringHTML + `<div class="ab-cine-fast">🔮 ${fastName}${fastDesc ? `<span class="ab-cine-fast-desc">${fastDesc}</span>` : ''}</div>`;
     } else {
       // 🎬 Full cinematic — headline + name + caster line + description +
       // stat pills. Description prefers move.desc, falls back to a sane
       // auto-generated summary from amount/range/kind.
       const casterName = unit && unit.name ? unit.name.replace(/[<>&]/g, '') : '';
       const moveName   = (move.name || 'Ability').replace(/[<>&]/g, '');
-      let desc = (move.desc || '').replace(/[<>&]/g, '');
-      if (!desc) {
-        const bits = [];
-        if (typeof move.amount === 'number' && move.amount > 0) {
-          bits.push(move.kind === 'attack' ? `Deal ${move.amount} damage` : `${move.amount} effect`);
-        }
-        if (typeof move.range === 'number' && move.range > 0) bits.push(`Range ${move.range}`);
-        if (move.status) bits.push(`Applies ${move.status}`);
-        desc = bits.length ? bits.join(' · ') + '.' : 'Activates this unit\'s special ability.';
-      }
+      const desc = _cineAbilityDesc(move);
       // 🏷 Stat pills — cost, range, damage/heal, element.
       const pills = [];
       if (typeof move.cost === 'number' && move.cost > 0) {
@@ -83552,6 +83647,25 @@ function _playSpellActivationVfxImpl(card, opts) {
           78%{opacity:0.95;transform:scale(1.06)}
           100%{opacity:0;transform:scale(1.2)}
         }
+        /* 📝 EFFECT TEXT — a readable band UNDER the card saying what it does */
+        .spell-cine-effect{position:absolute;left:50%;top:74%;transform:translateX(-50%);
+          width:min(84vw,560px);text-align:center;
+          font-family:'Inter',system-ui,sans-serif;font-weight:600;
+          font-size:clamp(0.95rem,1.7vw,1.25rem);line-height:1.35;
+          color:#eef4ff;
+          text-shadow:0 0 10px var(--el-color,#c9a5ff),0 2px 6px #000;
+          background:linear-gradient(180deg,rgba(8,5,18,0.62),rgba(8,5,18,0.34));
+          border:1px solid var(--el-color-dim,rgba(201,165,255,0.5));
+          border-radius:10px;padding:0.5rem 0.95rem;
+          box-shadow:0 8px 28px rgba(0,0,0,0.5);
+          opacity:0;animation:scineEffect ${_SPELL_CINE_DURATION_MS}ms ease-out forwards;
+          pointer-events:none}
+        @keyframes scineEffect{
+          0%{opacity:0;transform:translateX(-50%) translateY(10px)}
+          22%{opacity:1;transform:translateX(-50%) translateY(0)}
+          82%{opacity:1;transform:translateX(-50%) translateY(0)}
+          100%{opacity:0;transform:translateX(-50%) translateY(-6px)}
+        }
         /* 🎯 ENERGY BEAM — single-target streak from card to target tile */
         .spell-cine-beam{position:absolute;height:6px;border-radius:3px;
           background:linear-gradient(90deg,transparent,var(--el-color,#c9a5ff) 30%,#fff 50%,var(--el-color,#c9a5ff) 70%,transparent);
@@ -83581,6 +83695,9 @@ function _playSpellActivationVfxImpl(card, opts) {
     const label = opts.label || _CARD_TYPE_HEADLINES[cardType] || 'CARD ACTIVATED';
     const cardName = (card && card.name) || '';
     const cardIcon = (card && card.icon) || '✦';
+    // 📝 What the spell actually DOES — shown so player + enemy casts both
+    // explain the effect, not just the card name.
+    const effectText = (opts.effectText != null) ? opts.effectText : _cineCardEffectText(card);
     // 🖼 Look up the real card art. Try in order:
     //   1. Forge.cardArt[card.id]  — admin-uploaded illustration
     //   2. Forge.locationArt[card.id] — board-bg for whole-field locations
@@ -83688,6 +83805,7 @@ function _playSpellActivationVfxImpl(card, opts) {
         ${elemBadgeHTML}
         ${cardName ? `<div class="scc-name">${cardName.replace(/[<>&]/g,'')}</div>` : ''}
       </div>
+      ${effectText ? `<div class="spell-cine-effect">${('' + effectText).replace(/[<>&]/g, m => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[m]))}</div>` : ''}
       <div class="spell-cine-shock"></div>
       ${beam}
     `;
@@ -116692,6 +116810,27 @@ function _applyUltimateEffect(s, hero, def) {
 // the actual effect resolves. Includes the ULT name, the hero portrait
 // zoom-in, ground cracks, orbiting runes/cards, rising dust, threat
 // symbols + a full-screen darkening. Auto-mounts inside renderBattle().
+// 📝 Short "what the ultimate does" line for the cinematic — authored desc
+// first, else derived from the ultimate's type/damage/buff so player AND enemy
+// ultimates both explain their effect, not just the name.
+function _ultEffectText(def) {
+  try {
+    if (!def) return '';
+    let t = ((def.desc || '') + '').trim();
+    if (!t) {
+      const dmg = def.damage | 0, rad = def.radius | 0;
+      if (def.type === 'attack')        t = 'Deal ' + dmg + ' damage to enemies' + (rad ? ' within ' + rad + ' tiles' : '') + '.';
+      else if (def.type === 'mapwide')  t = 'Deal ' + dmg + ' damage to EVERY enemy on the board.';
+      else if (def.type === 'buff')     t = 'Empower all allies' + ((def.atkBuff | 0) ? ' (+' + (def.atkBuff | 0) + ' ATK)' : '') + (def.buffTurns ? ' for ' + def.buffTurns + ' turns' : '') + '.';
+      else if (def.type === 'summon')   t = 'Summon ' + (def.summonName || 'an allied combatant') + ' beside the hero.';
+      else if (def.type === 'reaction') t = 'Enter Overwatch — counter attackers until next turn.';
+      else                              t = 'Unleashes a devastating ultimate.';
+    }
+    t = t.replace(/\s+/g, ' ').trim();
+    if (t.length > 140) t = t.slice(0, 137).replace(/\s+\S*$/, '') + '…';
+    return t;
+  } catch (e) { return ''; }
+}
 function renderHeroUltCinematic() {
   const cine = App.ui && App.ui.heroUltCinematic;
   if (!cine || !cine.heroUnitId || !cine.def) return '';
@@ -116748,6 +116887,7 @@ function renderHeroUltCinematic() {
         <span class="hero-ult-cine-name-flash"></span>
         <span class="hero-ult-cine-name-prefix">${escapeHtml(hero.name || 'Hero')} unleashes</span>
         <span class="hero-ult-cine-name-text">${escapeHtml(def.name || 'ULTIMATE')}</span>
+        <span class="hero-ult-cine-name-effect">${escapeHtml(_ultEffectText(def))}</span>
       </div>
     </div>
   `;

@@ -90008,7 +90008,7 @@ function unitInstanceBase(card) {
 
 // 🪖 Render a unit-instance detail block for the DVS modal (level, nature,
 // trait, scaled stats, moveset). Pure read of the snapshot — safe for buyers.
-function _marketUnitInstanceHtml(inst, baseCinder) {
+function _marketUnitInstanceHtml(inst, baseCinder, titleOverride) {
   if (!inst) return '';
   const st = inst.stats || {};
   const _kv = (k, val) => `<div class="dvs-kv"><span class="k">${k}</span><span class="v">${(val != null && val !== '') ? val : '—'}</span></div>`;
@@ -90032,7 +90032,7 @@ function _marketUnitInstanceHtml(inst, baseCinder) {
     ? moves.map(m => `<div class="dvs-kv"><span class="k">${escapeHtml(m.name || m.id || 'Move')}</span><span class="v">${m.kind ? escapeHtml(String(m.kind)) : ''}${(m.power != null && m.power !== '') ? ` · ${m.power}` : ''}</span></div>`).join('')
     : '<div class="dvs-row-sub">No recorded moves.</div>';
   const elems = (inst.elements || []).filter(e => e && e !== 'neutral');
-  const title = inst._base ? '🪖 Unit — base profile' : "🪖 Seller's unit — this exact copy";
+  const title = titleOverride || (inst._base ? '🪖 Unit — base profile' : "🪖 Seller's unit — this exact copy");
   // 💎 Instance-adjusted suggested value (scales the card's base valuation by
   // this copy's level / trait / moveset). Only shown for a real instance.
   const _adj = (baseCinder && !inst._base && typeof dvsInstanceCinder === 'function') ? dvsInstanceCinder(baseCinder, inst) : null;
@@ -90083,14 +90083,37 @@ function renderDvsAssetModal() {
   // listings use a side-effect-free base profile.
   let _instHtml = '';
   try {
-    const _lst = (App.dvsListingId && typeof Market !== 'undefined' && Array.isArray(Market.listings))
-      ? Market.listings.find(l => l && l.id === App.dvsListingId) : null;
-    if (_lst && _lst.kind === 'card') {
-      const _item = _lst.item || card;
-      const _inst = _lst.unitInstance
-        || (_lst.sellerId === 'player' ? unitInstanceSnapshot(_item) : null)
-        || unitInstanceBase(_item);
-      _instHtml = _marketUnitInstanceHtml(_inst, v.cinder);
+    if (card && (card.type || 'unit') === 'unit' && typeof _marketUnitInstanceHtml === 'function') {
+      let _inst = null, _instTitle = null;
+      // 1) A specific market listing — show the seller's exact copy. Check the
+      //    LOCAL Market.listings first, then the CLOUD CardMarket (open + mine),
+      //    so the panel works no matter where the listing lives.
+      let _lst = (App.dvsListingId && typeof Market !== 'undefined' && Array.isArray(Market.listings))
+        ? Market.listings.find(l => l && l.id === App.dvsListingId) : null;
+      if (!_lst && App.dvsListingId && typeof CardMarket !== 'undefined') {
+        _lst = (CardMarket.open || []).concat(CardMarket.mine || []).find(l => l && l.id === App.dvsListingId) || null;
+      }
+      if (_lst && _lst.kind !== 'item') {
+        const _item = _lst.item || card;
+        _inst = _lst.unitInstance
+          || (_lst.sellerId === 'player' ? unitInstanceSnapshot(_item) : null)
+          || unitInstanceBase(_item);
+      }
+      // 2) No specific listing matched (Valuation-grid view, or a listing with no
+      //    frozen instance) — ALWAYS still show stats/trait/nature/moveset: the
+      //    viewer's own copy if they own it, otherwise a side-effect-free base
+      //    profile. This restores the unit-detail panel everywhere the modal opens.
+      if (!_inst) {
+        const _owned = (Profile.cardCollection && Profile.cardCollection[card.id]) || 0;
+        if (_owned > 0 && typeof unitInstanceSnapshot === 'function') {
+          _inst = unitInstanceSnapshot(card);
+          _instTitle = '🪖 Your copy — level, trait, nature & moveset';
+        } else if (typeof unitInstanceBase === 'function') {
+          _inst = unitInstanceBase(card);
+          _instTitle = '🪖 Card profile — base stats & moveset';
+        }
+      }
+      if (_inst) _instHtml = _marketUnitInstanceHtml(_inst, v.cinder, _instTitle);
     }
   } catch (e) {}
 

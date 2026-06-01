@@ -50499,9 +50499,36 @@ function _mustPickStarter() {
     if (typeof isAdmin === 'function' && isAdmin()) return false;
     const cc = Profile.cloud || {};
     if (!cc.signedIn && !cc.offlineMode) return false;
-    return !hasPickedStarter();
+    if (!hasPickedStarter()) return true;
+    // 🩹 Force the selector for a fully WIPED player too (owns no hero AND no
+    // deck) even if a stale `starterPicked` flag or old battle records claim
+    // they already picked — otherwise they're stranded on an empty Deck Builder.
+    if (typeof _isWipedNewPlayer === 'function' && _isWipedNewPlayer()) return true;
+    return false;
   } catch (e) { return false; }
 }
+// 🩹 A signed-in (or offline) NON-admin who currently has NO hero in their
+// collection AND NO decks — i.e. brand-new OR fully wiped. Such a player cannot
+// build or battle anything, so the game must route them to the starter-deck
+// SELECTOR so they can (re)choose a free starter deck.
+function _isWipedNewPlayer() {
+  try {
+    if (typeof isAdmin === 'function' && isAdmin()) return false;
+    const cc = Profile.cloud || {};
+    if (!cc.signedIn && !cc.offlineMode) return false;            // still at the auth gate
+    if ((typeof getAllDecks === 'function') && getAllDecks().length > 0) return false; // has a deck
+    const coll = Profile.cardCollection || {};
+    // Owns a canonical starter hero?
+    if (typeof STARTER_HERO_IDS !== 'undefined' && Array.isArray(STARTER_HERO_IDS)
+        && STARTER_HERO_IDS.some(id => (coll[id] | 0) > 0)) return false;
+    // Owns ANY hero from the full roster (custom heroes included)?
+    if (typeof getAllHeroes === 'function') {
+      try { if (getAllHeroes().some(h => h && h.id && (coll[h.id] | 0) > 0)) return false; } catch (e) {}
+    }
+    return true;   // signed in, no decks, no heroes → must (re)pick a starter
+  } catch (e) { return false; }
+}
+try { window._isWipedNewPlayer = _isWipedNewPlayer; } catch (e) {}
 // Has the shared catalog been fetched at least once this session? (Set by
 // _applyCatalogRow on a DB or public-mirror fetch.) Used to decide whether
 // "no starter decks" is real or just "decks haven't loaded yet".
@@ -63195,9 +63222,14 @@ function render() {
   // hasn't resolved yet, so decks may still arrive). Only release them to the
   // game if the catalog HAS resolved and there are genuinely zero starter
   // decks (admin authored none) — otherwise they'd be trapped.
+  // A fully WIPED player (no hero + no deck) is pulled to the picker from ANY
+  // non-battle screen — INCLUDING the Deck Builder / pre-battle loadout, which a
+  // normal must-pick player is otherwise allowed to sit on. (They were landing on
+  // an empty Deck Builder with "you don't own any heroes yet" and no way out.)
+  const _wipedNeedsPicker = (typeof _isWipedNewPlayer === 'function') && _isWipedNewPlayer();
   if (App.screen !== 'starterPick' && App.screen !== 'authGate'
       && App.screen !== 'battle' && App.screen !== 'coinFlip' && App.screen !== 'vsScreen'
-      && App.screen !== 'deck' && App.screen !== 'preBattleLoadout'
+      && ((App.screen !== 'deck' && App.screen !== 'preBattleLoadout') || _wipedNeedsPicker)
       && typeof _mustPickStarter === 'function' && _mustPickStarter()
       && (getAllStarterDecks().length > 0 || !_catalogResolved())) {
     App.screen = 'starterPick';
@@ -65814,7 +65846,7 @@ function grantStarterDeckToPlayer(deck, opts) {
   } catch (e) {}
   if (!Array.isArray(Profile.ownedStarterDecks)) Profile.ownedStarterDecks = [];
   if (deck.id && Profile.ownedStarterDecks.indexOf(deck.id) < 0) Profile.ownedStarterDecks.push(deck.id);
-  if (opts.markPicked) { Profile.starterPicked = true; Profile.starterDeckId = deck.id || null; }
+  if (opts.markPicked) { Profile.starterPicked = true; Profile.starterDeckId = deck.id || null; try { Profile._starterRestore = STARTER_RESTORE_VERSION; } catch (e) {} }
   // 🌩 Slice 17 — starter pick is THE most consequential first-time save.
   // Without this, a new player who picks a deck and refreshes immediately
   // loses their starter and is stuck on the picker forever.
@@ -65910,6 +65942,18 @@ const STARTER_HERO_IDS = ['cedric', 'lyra', 'vex'];
 function _starterDeckRestoreCheck() {
   if (!Profile) return;
   if (typeof getAllStarterDecks !== 'function') return;
+  // 🎴 DEFER TO THE SELECTOR — a fully wiped / brand-new player (owns no hero AND
+  // no deck) must PICK their free starter deck from the selector, not have all of
+  // them silently auto-granted. Bail here (without stamping) when a selector is
+  // available; render()'s starter-pick gate then routes them to the picker. Once
+  // they pick, grantStarterDeckToPlayer({markPicked}) stamps _starterRestore so
+  // this self-heal won't later dump the remaining decks on them.
+  try {
+    if (typeof _isWipedNewPlayer === 'function' && _isWipedNewPlayer()
+        && getAllStarterDecks().length > 0) {
+      return;
+    }
+  } catch (e) {}
   // 🩹 SELF-HEAL — if the player has none of the three starter heroes in their
   // collection, treat them as wiped and rerun the grant even if the version
   // flag was already stamped on a previous (bad) pass. This survives the

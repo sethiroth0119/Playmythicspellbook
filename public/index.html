@@ -35907,9 +35907,15 @@ async function cloudFetchLeaderboard(force) {
     Leaderboard.error = (e && e.message) || 'fetch-failed';
   } finally {
     Leaderboard.fetching = false;
-    // Re-render the screens that show live leaderboard/match data. This fires
-    // ONLY after a real fetch (the cache-hit early-returns above never reach
-    // this finally), so it can't loop with renderWagerHall's fire-and-forget call.
+    // 🛡 ALWAYS stamp the attempt time — even on error / empty / exception — so
+    // the 30s cache guard arms after EVERY fetch. Previously fetchedAt was only
+    // set on SUCCESS; when the get_leaderboard RPC errored it stayed 0, so the
+    // re-render below re-entered cloudFetchLeaderboard, which (TTL never armed)
+    // re-fetched → re-rendered → … an infinite loop that FROZE the Wager Hall.
+    Leaderboard.fetchedAt = Date.now();
+    // Re-render the screens that show live leaderboard/match data — exactly once
+    // per fetch. The re-render's own cloudFetchLeaderboard() call now early-returns
+    // on the armed TTL guard, so this can never loop.
     try { if ((App.screen === 'leaderboard' || App.screen === 'wagerHall') && typeof render === 'function') render(); } catch (e) {}
   }
 }

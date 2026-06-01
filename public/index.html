@@ -87096,6 +87096,8 @@ function doAIStep() {
         const gate = canActivatePolycreation(s, 'ai', polySpell);
         if (gate && gate.ok && typeof _battleSpawnSummonByCardId === 'function') {
           setAIActor(aiHero.id, `🌌 ${aiHero.name} activates Polycreation`);
+          // 🎬 Show the cast cinematic for the enemy's Polycreation spell too.
+          try { if (typeof playSpellActivationVfx === 'function') playSpellActivationVfx(polySpell, { label: 'ENEMY SPELL' }); } catch (e) {}
           // Remove the spell from AI hand, consume materials, spawn the Kalon.
           const matIds = new Set(gate.materials);
           s.units = s.units.map(u => matIds.has(u.id) ? { ...u, alive: false, currentHp: 0, _fusionConsumed: true } : u);
@@ -87384,6 +87386,15 @@ function doAIStep() {
       // cancelled; false (or any error) lets _doAISpell() fire normally.
       const _doAISpell = () => {
         const card = best.card;
+        // 🎬 Play the SAME cast cinematic the player gets when they cast a spell,
+        // so the player can SEE the enemy's spell card + its name fly out (parity
+        // with playSpell). The battle log + AI actor label below name the card and
+        // describe what it does. Non-blocking overlay; the AI turn continues.
+        try {
+          if (typeof playSpellActivationVfx === 'function') {
+            playSpellActivationVfx(card, { label: 'ENEMY SPELL', targetPos: (best.target && best.target.pos) ? best.target.pos : null });
+          }
+        } catch (e) {}
         if (best.kind === 'damage') {
           // AI spell cards = magical damage for Immortal-passive clamping.
           const trig = applyDamageTriggers(best.target, card.effect.amount, 'magic');

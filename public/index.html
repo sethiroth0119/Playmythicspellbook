@@ -37976,6 +37976,9 @@ function logSale(sale) {
   Market.salesLog.unshift({ ...sale, soldAt: Date.now() });
   if (Market.salesLog.length > SALES_LOG_CAP) Market.salesLog.length = SALES_LOG_CAP;
   saveMarket();
+  // 📊 GLOBAL — count this purchase as a trade of the bought card so the live
+  // "Most Traded" panel + the Demand sub-score reflect real cross-player trading.
+  try { if (sale && sale.itemId && typeof pushUsageEvent === 'function') pushUsageEvent('trade', sale.itemId, 1); } catch (e) {}
 }
 const MARKET_NPC_SELLERS = [
   { id: 'npc_mira',  name: 'Mira the Trader' },
@@ -38150,7 +38153,8 @@ function dvsMetaScore(card, ctx) {
   return _dvsClamp(Math.round(t * 100), 0, 100);
 }
 function dvsDemandScore(card, ctx) {
-  const trades = (ctx.demandById[card.id] || 0) + (ctx.demandByName[card.name] || 0);
+  // Local sales log + listings, PLUS real global cross-player trades (tradeById).
+  const trades = (ctx.demandById[card.id] || 0) + (ctx.demandByName[card.name] || 0) + ((ctx.tradeById && ctx.tradeById[card.id]) || 0);
   const listed = (ctx.listingById[card.id] || 0) + (ctx.listingByName[card.name] || 0);
   const raw = trades * 3 + listed;
   if (ctx.maxDemand <= 0) return _dvsClamp(Math.round(dvsMetaScore(card, ctx) * 0.5), 0, 100);
@@ -38193,28 +38197,32 @@ function dvsBuildContext() {
     if (it.id)   listingById[it.id]     = (listingById[it.id]     || 0) + 1;
     if (it.name) listingByName[it.name] = (listingByName[it.name] || 0) + 1;
   }
-  let maxDemand = 0;
-  for (const c of dvsAllCards()) {
-    const raw = ((demandById[c.id] || 0) + (demandByName[c.name] || 0)) * 3 + ((listingById[c.id] || 0) + (listingByName[c.name] || 0));
-    if (raw > maxDemand) maxDemand = raw;
-  }
-  // 🌐 Global win/loss aggregates → REAL win rates. Cached + background-refreshed
-  // via the same usage-tops cache; a fetch is kicked off so the next recompute
-  // picks them up once warm. When present, the valuation is flagged GLOBAL.
-  let winById = {}, lossById = {}, statsGlobal = false;
+  // 🌐 Global aggregates (cached + background-refreshed via the usage-tops cache):
+  //   win/loss → REAL win rates · trade → real Demand · kill → per-card kills.
+  // A fetch is kicked off so the next recompute uses them once warm; when win+
+  // loss data is present the valuation is flagged GLOBAL.
+  let winById = {}, lossById = {}, tradeById = {}, killById = {}, statsGlobal = false;
   try {
     if (typeof Cloud !== 'undefined' && Cloud.ready && Cloud.client && typeof fetchGlobalUsageTops === 'function') {
-      if (_gucExpired(_GlobalUsageCache.win))  fetchGlobalUsageTops('win', 200).then(() => {});
-      if (_gucExpired(_GlobalUsageCache.loss)) fetchGlobalUsageTops('loss', 200).then(() => {});
-      const gw = _GlobalUsageCache.win  && _GlobalUsageCache.win.data;
-      const gl = _GlobalUsageCache.loss && _GlobalUsageCache.loss.data;
+      ['win', 'loss', 'trade', 'kill'].forEach(k => { if (_gucExpired(_GlobalUsageCache[k])) fetchGlobalUsageTops(k, 200).then(() => {}); });
+      const gw = _GlobalUsageCache.win   && _GlobalUsageCache.win.data;
+      const gl = _GlobalUsageCache.loss  && _GlobalUsageCache.loss.data;
+      const gt = _GlobalUsageCache.trade && _GlobalUsageCache.trade.data;
+      const gk = _GlobalUsageCache.kill  && _GlobalUsageCache.kill.data;
       if (gw) winById = gw;
       if (gl) lossById = gl;
+      if (gt) tradeById = gt;
+      if (gk) killById = gk;
       if (gw && gl) statsGlobal = true;
     }
   } catch (e) {}
+  let maxDemand = 0;
+  for (const c of dvsAllCards()) {
+    const raw = ((demandById[c.id] || 0) + (demandByName[c.name] || 0) + (tradeById[c.id] || 0)) * 3 + ((listingById[c.id] || 0) + (listingByName[c.name] || 0));
+    if (raw > maxDemand) maxDemand = raw;
+  }
   return { usageCards, maxUsage, demandById, demandByName, listingById, listingByName, maxDemand,
-           winById, lossById,
+           winById, lossById, tradeById, killById,
            source: (usage.source === 'global' || statsGlobal) ? 'global' : 'local' };
 }
 function dvsValuate(card, ctx) {
@@ -38236,6 +38244,7 @@ function dvsValuate(card, ctx) {
     id: card.id, name: card.name, type: card.type || 'unit', cost: card.cost || 0,
     power, meta, win, scarcity, demand, historical,
     valueScore, cinder, usd, supply: card._dvsSupply || 0,
+    kills: (ctx.killById && ctx.killById[card.id]) || 0,
     classLabel: cls.label, classColor: cls.color,
   };
 }
@@ -38771,7 +38780,7 @@ async function cardMarketBuy(listing) {
   try { _serverMirrorCharge(listing.price | 0, 'Player Market: Buy ' + (listing.kind || 'card')); } catch (e) {}
   _cmGrantPurchase(data[0]);
   try { saveProfile(); } catch (e) {}
-  try { logSale({ kind: listing.kind, itemName: listing.item ? listing.item.name : 'Card', itemIcon: listing.item ? listing.item.icon : '?', itemType: listing.item ? listing.item.type : null, price: listing.price, sellerName: listing.sellerName, buyerName: 'You' }); } catch (e) {}
+  try { logSale({ kind: listing.kind, itemId: listing.item ? listing.item.id : (listing.card_id || null), itemName: listing.item ? listing.item.name : 'Card', itemIcon: listing.item ? listing.item.icon : '?', itemType: listing.item ? listing.item.type : null, price: listing.price, sellerName: listing.sellerName, buyerName: 'You' }); } catch (e) {}
   showToast(`✅ Acquired "${(listing.item && listing.item.name) || 'card'}" for ${listing.price} 🔥`, 3600);
   await cardMarketFetch();
   return true;
@@ -44758,6 +44767,7 @@ function buyMarketListing(listingId) {
   // Log the sale for the stock-market view
   logSale({
     kind: listing.kind,
+    itemId: listing.item ? listing.item.id : (listing.card_id || null),
     itemName: listing.item ? listing.item.name : 'Unknown',
     itemIcon: listing.item ? listing.item.icon : '?',
     itemType: listing.item ? listing.item.type : null,
@@ -45182,6 +45192,7 @@ function sweepExpiredAuctions() {
     // Log it for the Stock tab.
     logSale({
       kind: l.kind,
+      itemId: l.item ? l.item.id : (l.card_id || null),
       itemName: l.item ? l.item.name : 'Unknown',
       itemIcon: l.item ? l.item.icon : '?',
       itemType: l.item ? l.item.type : null,
@@ -90535,6 +90546,7 @@ function renderDvsAssetModal() {
           <h4>📦 Supply &amp; integrity</h4>
           <div class="dvs-kv"><span class="k">Circulating supply (synthetic)</span><span class="v">${v.supply}</span></div>
           <div class="dvs-kv"><span class="k">Scarcity score</span><span class="v">${v.scarcity}/100</span></div>
+          <div class="dvs-kv"><span class="k">⚔ Confirmed kills (all players)</span><span class="v">${(v.kills | 0).toLocaleString()}</span></div>
           <div class="dvs-kv"><span class="k">Market integrity</span><span class="v">${dvsIntegrityScore()}/100</span></div>
         </div>
 

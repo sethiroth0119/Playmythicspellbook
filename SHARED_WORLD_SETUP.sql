@@ -175,14 +175,47 @@ create policy cxp_sel on public.cx_prices for select to authenticated using (tru
 drop policy if exists cxp_write on public.cx_prices;
 create policy cxp_write on public.cx_prices for all to authenticated using (true) with check (true);
 
+-- ── 6) WAGER HALL — live spectator bets on real matches ──────────────────────
+-- Pari-mutuel Cinder wagers on real, spectated multiplayer matches. All stakes
+-- on a match form ONE pool; when the match finishes (matches.winner_id is set)
+-- the whole pot is split among everyone who backed the winner, proportional to
+-- their stake. The pool is PUBLIC (read-all) so odds + the crowd's bets show
+-- live for every viewer. Each bettor inserts their own bet and settles their
+-- own payout (a conditional update on settled=false makes payout idempotent).
+create table if not exists public.match_bets (
+  id           uuid primary key default gen_random_uuid(),
+  match_id     text not null,
+  bettor_id    uuid not null references auth.users(id) on delete cascade,
+  bettor_name  text,
+  side         text not null check (side in ('p1','p2')),
+  pick_user_id uuid,
+  stake        integer not null check (stake > 0),
+  settled      boolean not null default false,
+  won          boolean,
+  payout       integer not null default 0,
+  created_at   timestamptz default now()
+);
+create index if not exists match_bets_match_idx on public.match_bets (match_id);
+create index if not exists match_bets_bettor_idx on public.match_bets (bettor_id);
+alter table public.match_bets enable row level security;
+-- Read all (public pool → live odds for every spectator).
+drop policy if exists mb_sel on public.match_bets;
+create policy mb_sel on public.match_bets for select to authenticated using (true);
+-- Insert only your own bets.
+drop policy if exists mb_ins on public.match_bets;
+create policy mb_ins on public.match_bets for insert to authenticated with check (bettor_id = auth.uid());
+-- Update only your own bets (settling your own payout).
+drop policy if exists mb_upd on public.match_bets;
+create policy mb_upd on public.match_bets for update to authenticated using (bettor_id = auth.uid()) with check (bettor_id = auth.uid());
+
 -- =============================================================================
 -- ✅ DONE. Now go to: Database → Replication and toggle Realtime ON for:
 --    public.card_market_listings   public.resource_listings
 --    public.tw_ownership           public.tw_world_feed
---    public.cx_prices
--- so listings + captures + live exchange prices show up for other players
--- instantly. (Without it, everything still works but refreshes on a slow poll
--- instead of live.)
+--    public.cx_prices              public.match_bets
+-- so listings + captures + live exchange prices + live wager odds show up for
+-- other players instantly. (Without it, everything still works but refreshes on
+-- a slow poll instead of live.)
 -- (usage_events is aggregated on read via the usage_top RPC — no Realtime
 -- toggle needed for it.)
 -- =============================================================================

@@ -30405,7 +30405,7 @@ function openOnePackFromInventory(groupId) {
   // with the CURRENT rarity weights (not whatever they were at buy time).
   let def = (typeof PACK_DEFINITIONS !== 'undefined') ? PACK_DEFINITIONS.find(p => p && p.id === groupId) : null;
   if (!def) {
-    const custom = (Forge.customPacks || []).find(p => p && p.id === groupId);
+    const custom = ((typeof getAllCustomPacks === 'function') ? getAllCustomPacks() : (Forge.customPacks || [])).find(p => p && p.id === groupId);
     if (custom && typeof toEnginePackDef === 'function') def = toEnginePackDef(custom);
   }
   if (!def) {
@@ -34207,7 +34207,7 @@ function redeemWebPurchases(receipts) {
     // Look up the engine pack def matching the receipt's packId. Built-in packs
     // live in PACK_DEFINITIONS; custom Forge packs live in Forge.customPacks.
     const builtIn = (typeof PACK_DEFINITIONS !== 'undefined') ? PACK_DEFINITIONS.find(p => p.id === r.packId) : null;
-    const custom  = (Forge.customPacks || []).find(p => p.id === r.packId);
+    const custom  = ((typeof getAllCustomPacks === 'function') ? getAllCustomPacks() : (Forge.customPacks || [])).find(p => p.id === r.packId);
     const customAsEngine = (custom && typeof toEnginePackDef === 'function') ? toEnginePackDef(custom) : null;
     const packDef = builtIn || customAsEngine || null;
     if (!packDef) {
@@ -92780,7 +92780,10 @@ function _bindStarterDeckShopHandlers() {
 function _buildPackShopBody(gems, sovBal) {
   const totalOwned = Object.values(Profile.cardCollection || {}).reduce((a, n) => a + n, 0);
   // Only admin-published custom packs — no default built-in packs in the storefront.
-  const customAsEngine = (Forge.customPacks || []).map(toEnginePackDef).filter(Boolean);
+  // 🌐 Use getAllCustomPacks() (Forge.customPacks + published Catalog.packs) so
+  // EVERY player sees the published booster / core-set packs, not just the admin
+  // who authored them locally.
+  const customAsEngine = getAllCustomPacks().map(toEnginePackDef).filter(Boolean);
   const allPacks = [...customAsEngine];
 
   const renderPackTile = (p) => {
@@ -92945,7 +92948,7 @@ function _bindPackShopHandlers() {
       // Match against BOTH built-in packs and custom packs (converted to engine shape).
       let def = PACK_DEFINITIONS.find(p => p.id === el.dataset.buyPack);
       if (!def) {
-        const custom = (Forge.customPacks || []).find(p => p.id === el.dataset.buyPack);
+        const custom = getAllCustomPacks().find(p => p.id === el.dataset.buyPack);
         if (custom) def = toEnginePackDef(custom);
       }
       if (!def) return;

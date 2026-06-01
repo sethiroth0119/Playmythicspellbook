@@ -88861,10 +88861,25 @@ function renderMarket() {
     : [];
   const myListings = _cmReady ? CardMarket.mine : Market.listings.filter(l => l.sellerId === 'player');
   const otherListings = (_cmReady ? CardMarket.open.slice() : Market.listings.filter(l => l.sellerId !== 'player')).concat(_resTiles);
+  // 🪪 Browse now shows the player's OWN listings ALONGSIDE everyone else's —
+  // not one tab or the other. Deduped by id (own first so they win). Own tiles
+  // render a "Your listing" badge instead of a Buy button (can't buy your own);
+  // they remain fully cancelable from the My Listings tab.
+  const browseListings = (() => {
+    const seen = new Set(); const out = [];
+    for (const l of (myListings || []).concat(otherListings || [])) {
+      if (!l) continue;
+      const k = (l.id != null) ? String(l.id) : null;
+      if (k && seen.has(k)) continue;
+      if (k) seen.add(k);
+      out.push(l);
+    }
+    return out;
+  })();
 
   const tabsHtml = `
     <div class="forge-tabs">
-      <button class="forge-tab ${tab === 'browse' ? 'active' : ''}" data-tab="browse">Browse ${otherListings.length > 0 ? `<span class="tab-count">${otherListings.length}</span>` : ''}</button>
+      <button class="forge-tab ${tab === 'browse' ? 'active' : ''}" data-tab="browse">Browse ${browseListings.length > 0 ? `<span class="tab-count">${browseListings.length}</span>` : ''}</button>
       <button class="forge-tab ${tab === 'sell' ? 'active' : ''}" data-tab="sell">Sell</button>
       <button class="forge-tab ${tab === 'mine' ? 'active' : ''}" data-tab="mine">My Listings ${myListings.length > 0 ? `<span class="tab-count">${myListings.length}</span>` : ''}</button>
       <button class="forge-tab ${tab === 'resources' ? 'active' : ''}" data-tab="resources">🧰 Resources</button>
@@ -88874,7 +88889,7 @@ function renderMarket() {
 
   let body = '';
   if (tab === 'browse') body = (_cmOn && CardMarket.tableMissing) ? renderCardMarketSetup()
-                              : (!_cmOn ? renderCardMarketSignin() : renderMarketBrowse(otherListings, filter));
+                              : (!_cmOn ? renderCardMarketSignin() : renderMarketBrowse(browseListings, filter));
   else if (tab === 'sell') body = renderMarketSell();
   else if (tab === 'mine') body = (_cmOn && CardMarket.tableMissing) ? renderCardMarketSetup() : renderMarketMyListings(myListings);
   else if (tab === 'resources') body = renderResourceMarket();
@@ -88892,14 +88907,14 @@ function renderMarket() {
         </div>
       </div>
       <div class="placement-hint" style="margin-bottom:1rem">
-        Trade or sell custom Forge cards and held items with <strong>real players</strong>. Every listing in Browse is a card or item another survivor put up for sale — sign in to buy, sell, and see each unit's exact level, traits, and moveset.
+        Trade or sell custom Forge cards and held items with <strong>real players</strong>. Browse shows every player's listings — <strong>including your own</strong> (marked 🪪 Your listing) — sign in to buy, sell, and see each unit's exact level, traits, and moveset.
       </div>
       ${buildHowToPanel({
         id: 'player-market',
         title: '📖 How the Player Market works',
         steps: [
           { title: 'Browse — every player\'s listings',
-            desc: `Every listing here is a single card or held item that <strong>another player</strong> put up for sale, priced in <span class="cinder-icon"></span> Cinders. Filter by Card / Item / All. Click any card to see its full Valuation breakdown — and, for units, the seller's exact level, traits, and moveset.` },
+            desc: `Every card or held item up for sale — from other players <strong>and your own</strong> (tagged 🪪 Your listing) — priced in <span class="cinder-icon"></span> Cinders. Filter by Card / Item / All. Click any card to see its full Valuation breakdown — and, for units, the seller's exact level, traits, and moveset.` },
           { title: 'Sell — list your own',
             desc: 'In the <strong>Sell</strong> tab, list your duplicate Forge cards or extra held items. Pick a price; if it sells, the Cinders land in your pool instantly.' },
           { title: 'My Listings — track active offers',
@@ -89110,6 +89125,25 @@ function renderMarketTile(listing, opts) {
   `;
 }
 
+// 🪪 Is this listing the current player's own? Covers local listings
+// (sellerId 'player'), cloud card/item listings (CardMarket.mine), cloud
+// resource listings (ResMarket.mine), and a direct cloud-user-id match. Used so
+// Browse can show your own cards WITH a "Your listing" badge instead of a Buy
+// button (you can't buy your own).
+function _isMyListing(l) {
+  if (!l) return false;
+  if (l.sellerId === 'player') return true;
+  const id = l.id;
+  if (id != null) {
+    try { if (typeof CardMarket !== 'undefined' && Array.isArray(CardMarket.mine) && CardMarket.mine.some(m => m && m.id === id)) return true; } catch (e) {}
+    try { if (typeof ResMarket !== 'undefined' && Array.isArray(ResMarket.mine) && ResMarket.mine.some(m => m && m.id === id)) return true; } catch (e) {}
+  }
+  try {
+    const myId = (Profile.cloud && (Profile.cloud.userId || Profile.cloud.id || Profile.cloud.uid)) || null;
+    if (myId && (l.sellerId === myId || l.seller_id === myId || l.userId === myId || l.user_id === myId)) return true;
+  } catch (e) {}
+  return false;
+}
 function renderMarketBrowse(listings, filter) {
   // Settle expired auctions BEFORE rendering so they don't show as zombie rows.
   sweepExpiredAuctions();
@@ -89183,7 +89217,16 @@ function renderMarketBrowse(listings, filter) {
     if (aa && bb)  return (a.endsAt || 0) - (b.endsAt || 0);
     return (b.listedAt || 0) - (a.listedAt || 0);
   });
+  const _ownBadge = `<span style="display:inline-block;padding:0.22rem 0.6rem;border-radius:4px;background:rgba(212,175,55,0.16);border:1px solid rgba(212,175,55,0.45);color:#ffd166;font-size:0.72rem;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em" title="This is your own listing — manage or cancel it from the My Listings tab">🪪 Your listing</span>`;
   const rows = filtered.map(l => {
+    // 🪪 The player's OWN listings appear here too — but with a badge instead of
+    // a Buy/Bid button (you can't buy your own). Cancel them from My Listings.
+    if ((typeof _isMyListing === 'function') && _isMyListing(l)) {
+      const histBtn = isAuctionListing(l)
+        ? ` <button class="btn-mini btn-link" data-act="history" data-listing="${l.id}">History (${(l.bidHistory || []).length})</button>`
+        : '';
+      return renderMarketTile(l, { action: `<div class="auction-actions">${_ownBadge}${histBtn}</div>` });
+    }
     if (isAuctionListing(l)) {
       const myBid = l.currentBidderId === 'player';
       const min = minNextBid(l);

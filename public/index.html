@@ -63031,6 +63031,15 @@ function render() {
   // many the catalog defines) starter decks if they're missing. Gated by a
   // version flag so it runs ONCE per player, not on every render.
   try { if (typeof _starterDeckRestoreCheck === 'function') _starterDeckRestoreCheck(); } catch (e) {}
+  // 🎴 PER-HERO DECK SELF-HEAL — owns a hero but lost the deck? Re-grant the
+  // matching starter deck. Once per session (so it heals on load but doesn't
+  // fight deliberate in-session deck deletions); retries until the catalog is
+  // ready (the function returns false until then).
+  try {
+    if (!App._heroDeckRestoreDone && typeof _restoreMissingHeroDecks === 'function') {
+      if (_restoreMissingHeroDecks()) App._heroDeckRestoreDone = true;
+    }
+  } catch (e) {}
   // 🎁 Mount the floating Redeem Code button on the title screen (always)
   // and the Coupon Manager admin button (admin-only).
   try { if (typeof mountRedeemCouponFab === 'function') mountRedeemCouponFab(); } catch (e) {}
@@ -65944,6 +65953,51 @@ function _starterDeckRestoreCheck() {
     showToast(`🦸 ${granted} starter deck${granted === 1 ? '' : 's'} restored to your collection.`, 4200);
   }
 }
+
+// ============================================================================
+// 🎴 PER-HERO STARTER-DECK SELF-HEAL — a player who still OWNS a hero but has
+// NO deck for that hero (e.g. they deleted/lost their decks) gets the matching
+// starter deck re-granted so they can never be left unable to build/battle.
+// Unlike _starterDeckRestoreCheck (which repairs a WIPED card collection), this
+// repairs a missing DECK while the hero is still owned. Returns true once it has
+// run a real check (decks loaded); the render caller stamps a session flag so it
+// self-heals on load without fighting deliberate in-session deck deletions.
+// ============================================================================
+function _restoreMissingHeroDecks() {
+  try {
+    if (!Profile) return false;
+    if (typeof getAllStarterDecks !== 'function' || typeof grantStarterDeckToPlayer !== 'function') return false;
+    const decks = getAllStarterDecks();
+    if (!decks || !decks.length) return false;      // catalog not ready — retry next render
+    const cc = Profile.cardCollection || {};
+    if (!Array.isArray(Profile.decks)) Profile.decks = [];
+    let restored = 0;
+    const _done = new Set();                          // one restore per heroId per pass
+    decks.forEach(sd => {
+      if (!sd || !sd.id) return;
+      const sdHero = (typeof _starterDeckHero === 'function') ? _starterDeckHero(sd) : null;
+      const heroId = (sdHero && sdHero.id) || sd.heroId;
+      if (!heroId || _done.has(heroId)) return;
+      if ((cc[heroId] | 0) <= 0) return;              // only heroes the player OWNS
+      // Re-read fresh each hero — findOrCreateLooseDeck reassigns Profile.decks.
+      const hasDeck = (typeof getDecksForHero === 'function')
+        ? getDecksForHero(heroId).some(d => d && Array.isArray(d.cards) && d.cards.length > 0)
+        : (Profile.decks || []).some(d => d && d.heroId === heroId && Array.isArray(d.cards) && d.cards.length > 0);
+      if (hasDeck) return;                            // already has a deck for this hero — leave it
+      try { grantStarterDeckToPlayer(sd, {}); _done.add(heroId); restored++; }
+      catch (e) { try { console.warn('[restoreMissingHeroDecks]', sd.id, e); } catch (_) {} }
+    });
+    if (restored > 0) {
+      try { saveProfile(); } catch (e) {}
+      try { _persistProgressNow(); } catch (e) {}
+      if (typeof showToast === 'function') {
+        showToast(`🦸 ${restored} starter deck${restored === 1 ? '' : 's'} restored — you owned the hero but had no deck.`, 4200);
+      }
+    }
+    return true;                                      // ran a real check this pass
+  } catch (e) { try { console.warn('[restoreMissingHeroDecks] failed:', e); } catch (_) {} return false; }
+}
+try { window._restoreMissingHeroDecks = _restoreMissingHeroDecks; } catch (e) {}
 // Expose so the admin can trigger it from the console if a player asks for
 // a manual re-grant later. Also expose a "nuke + restore" helper that wipes
 // the gate so a player can force-replay the grant (e.g. for GreyDragon).

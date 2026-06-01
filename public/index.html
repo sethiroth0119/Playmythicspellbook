@@ -65871,7 +65871,7 @@ function _onbEnsureStyle() {
   const st = document.createElement('style');
   st.id = 'onb-style';
   st.textContent =
-    '.onb-screen{position:fixed;inset:0;z-index:6000;overflow:hidden;background:#04030a;color:#eee;font-family:Inter,system-ui,sans-serif;display:flex;align-items:center;justify-content:center}' +
+    '.onb-screen{position:fixed;inset:0;z-index:2147483270;overflow:hidden;background:#04030a;color:#eee;font-family:Inter,system-ui,sans-serif;display:flex;align-items:center;justify-content:center}' +
     '.onb-bgimg{position:absolute;inset:0;background-size:cover;background-position:center;background-repeat:no-repeat;filter:saturate(1.05)}' +
     '.onb-vignette{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 40%,transparent 30%,rgba(2,1,8,0.55) 70%,rgba(2,1,8,0.92) 100%)}' +
     '.onb-fade{animation:onbFade 900ms ease-out both}' +
@@ -65897,7 +65897,7 @@ function _onbEnsureStyle() {
     '.onb-deck-body{padding:14px;display:flex;flex-direction:column;gap:8px;flex:1}' +
     '.onb-deck-name{font-family:"Cinzel",serif;font-size:1.18rem;font-weight:800;color:#f6d97a}' +
     '.onb-diff{display:inline-block;font-size:0.74rem;letter-spacing:0.04em;border:1px solid rgba(255,209,102,0.5);color:#ffd98a;border-radius:999px;padding:1px 9px}' +
-    '.onb-modal-bd{position:fixed;inset:0;z-index:6200;background:rgba(2,1,8,0.78);display:flex;align-items:center;justify-content:center;padding:1rem}' +
+    '.onb-modal-bd{position:fixed;inset:0;z-index:2147483280;background:rgba(2,1,8,0.78);display:flex;align-items:center;justify-content:center;padding:1rem}' +
     '.onb-modal{width:min(92vw,460px);background:linear-gradient(180deg,rgba(28,18,52,0.98),rgba(12,6,28,0.98));border:1px solid rgba(184,136,255,0.55);border-radius:16px;padding:1.6rem;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.6)}' +
     '.onb-dots{display:flex;gap:6px;justify-content:center;margin:1rem 0}' +
     '.onb-dot{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,0.22)}' +
@@ -65908,6 +65908,9 @@ function _onbEnsureStyle() {
 
 function renderOnboarding() {
   _onbEnsureStyle();
+  // 🧹 Remove the LEGACY first-run tutorial-welcome overlay if it ever mounted —
+  // the onboarding's own tutorial offer replaces it; it must never sit on top.
+  try { var _lw = document.getElementById('tutorial-welcome'); if (_lw) _lw.remove(); } catch (e) {}
   try { if (typeof syncMusicForScreen === 'function') syncMusicForScreen(); } catch (e) {}
   try {
     const step = Onboarding.step || 'welcome';

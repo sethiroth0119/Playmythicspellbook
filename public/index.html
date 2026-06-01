@@ -70887,8 +70887,8 @@ function renderCardEditor() {
     </div>` : ''}
     ${type === 'unit' ? `
     <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem;background:rgba(40,100,180,0.06);border:1px dashed rgba(80,140,220,0.4);border-radius:6px;padding:0.7rem 0.85rem">
-      <label style="font-weight:700;color:#90c8ff">🌊 Tunnel (Hex TCG)</label>
-      <div class="small-text" style="margin-top:0.2rem;color:#b0d4ff">Set a number of turns this unit spends underground before auto-emerging adjacent to the hero. 0 = disabled (plays normally).</div>
+      <label style="font-weight:700;color:#90c8ff">🌊 Tunnel</label>
+      <div class="small-text" style="margin-top:0.2rem;color:#b0d4ff">Turns underground before this unit auto-emerges (free) on a tile near the hero. Tunnel is the <strong>energy-starved fallback</strong>: if the player can pay the full cost it summons normally, but if they <strong>can't afford it</strong> they may spend just <strong>${typeof TUNNEL_DIG_COST !== 'undefined' ? TUNNEL_DIG_COST : 1} ⚡</strong> to bury it instead — e.g. with 1 energy, tunnel a cost-6 unit and it surfaces in this many turns. 0 = disabled (no tunnel).</div>
       <div style="margin-top:0.5rem"><input type="number" id="ed-tunnel" min="0" max="10" value="${card.tunnel || 0}" style="width:80px"> turns underground</div>
     </div>` : ''}
     ${type === 'unit' ? (() => { const w = card.wall || {}; const wOn = !!card.isWall; const wc = (k, d) => (w[k] != null ? w[k] : d); return `
@@ -81569,7 +81569,10 @@ function renderHandCard(c, opts) {
   // the click-gate and deduction sites use so the UI never disagrees with
   // what actually happens on click.
   const _effCost = (typeof getEffectiveCardCost === 'function') ? getEffectiveCardCost(c, s, 'player') : (c.cost | 0);
-  const enabled = s.turn === 'player' && _effCost <= s.player.energy && !App.ui.aiBusy;
+  // 🌊 A tunnel unit stays PLAYABLE even when unaffordable — the player can burrow
+  // it underground for the flat dig cost instead.
+  const enabled = s.turn === 'player' && !App.ui.aiBusy
+    && (_effCost <= s.player.energy || (typeof cardCanTunnelNow === 'function' && cardCanTunnelNow(c, s, 'player')));
   const isSel = App.ui.selectedCardId === c.instanceId;
   const cardElems = getElementsOf(c);
   let levelBadge = '';
@@ -81800,7 +81803,9 @@ function renderCardDetailModal() {
   // otherwise the modal disagrees with the hand strip / click handler.
   const effCost = (typeof getEffectiveCardCost === 'function') ? getEffectiveCardCost(card, s, 'player') : (card.cost | 0);
   const underdogActive = effCost < (card.cost | 0);
-  const enabled = s.turn === 'player' && effCost <= s.player.energy && !App.ui.aiBusy;
+  // 🌊 Tunnel units stay playable when unaffordable (burrow instead of summon).
+  const _tunnelDig = (typeof cardCanTunnelNow === 'function') && cardCanTunnelNow(card, s, 'player');
+  const enabled = s.turn === 'player' && !App.ui.aiBusy && (effCost <= s.player.energy || _tunnelDig);
   const targetingHelp = card.type === 'unit'    ? `Place adjacent to your hero (within ${getCardRange(card)} tile${getCardRange(card) === 1 ? '' : 's'}).`
                       : card.type === 'trap'    ? `Set on a tile within ${getCardRange(card)} of your hero.`
                       : card.type === 'location' ? (card.coversBoard ? `Reshapes the entire battlefield.` : `Place on any empty tile.`)
@@ -81989,6 +81994,7 @@ function renderCardDetailModal() {
               : (card.cost | 0)} <span class="energy-orb lg"></span></strong></div>
             ${getElementsOf(card).length ? `<div>Element: ${getElementsOf(card).map(e => (ELEMENT_DATA[e] ? getElemIcon(e, '1.6em') + ' ' + ELEMENT_DATA[e].name : '')).join(', ')}</div>` : ''}
             ${targetingHelp ? `<div>${targetingHelp}</div>` : ''}
+            ${_tunnelDig ? `<div style="color:#90c8ff"><strong>🌊 Can't afford — Tunnel it!</strong> Spend ${TUNNEL_DIG_COST} ⚡ to bury it; emerges in ${card.tunnel | 0} turn${(card.tunnel | 0) === 1 ? '' : 's'}.</div>` : ''}
             ${!enabled ? (function () {
               const _ec = (typeof getEffectiveCardCost === 'function') ? getEffectiveCardCost(card, s, 'player') : (card.cost | 0);
               return `<div style="color:var(--ember)"><strong>Cannot play right now</strong> ${_ec > s.player.energy ? '— need ' + _ec + ' ⚡' : ''}${App.ui.aiBusy ? ' — wait for the enemy turn' : ''}</div>`;
@@ -82011,7 +82017,7 @@ function renderCardDetailModal() {
           })() : ''}
           <div class="card-detail-actions">
             <button class="btn-secondary" id="card-detail-cancel">Close</button>
-            <button class="btn-primary ${enabled ? '' : 'btn-disabled'}" id="card-detail-play" ${enabled ? '' : 'disabled'}>${card.type === 'spell' || card.type === 'weather' ? `${getTypeIcon('spell','1.7em')} Cast` : '↗ Play this card'}</button>
+            <button class="btn-primary ${enabled ? '' : 'btn-disabled'}" id="card-detail-play" ${enabled ? '' : 'disabled'}>${_tunnelDig ? `🌊 Tunnel (−${TUNNEL_DIG_COST} ⚡)` : (card.type === 'spell' || card.type === 'weather' ? `${getTypeIcon('spell','1.7em')} Cast` : '↗ Play this card')}</button>
           </div>
         </div>
       </div>
@@ -82051,6 +82057,9 @@ function bindCardDetailModal() {
     } else if (card.type === 'location' && card.coversBoard) {
       // Whole-board locations don't need a tile target — play immediately like weather.
       placeLocation(card, { x: 0, y: 0 });
+    } else if (card.type === 'unit' && (typeof cardCanTunnelNow === 'function') && cardCanTunnelNow(card, App.state, 'player')) {
+      // 🌊 Can't afford this unit but it has Tunnel — burrow it now (no tile needed).
+      placeUnit(card, { x: 0, y: 0 });
     } else {
       App.ui.selectedCardId = id;
       App.ui.selectedUnitId = null;
@@ -85523,6 +85532,22 @@ function _applyConsumeGrave(playerObj, card) {
   return { graveyard: grave, removed };
 }
 
+// 🌊 TUNNEL — flat energy a player spends to bury a unit they can't afford.
+// The unit emerges (free) after card.tunnel turns. Tunnel is ONLY offered as a
+// fallback when the player cannot pay the unit's full energy cost.
+const TUNNEL_DIG_COST = 1;
+// True when `card` is a tunnel unit the given side can burrow RIGHT NOW: they
+// can't afford the full cost but have at least the flat dig cost in energy.
+function cardCanTunnelNow(card, state, side) {
+  try {
+    side = side || 'player';
+    if (!card || card.type !== 'unit' || !(card.tunnel > 0)) return false;
+    const st = (state && state[side]) || {};
+    const full = (typeof getEffectiveCardCost === 'function') ? getEffectiveCardCost(card, state, side) : (card.cost | 0);
+    const energy = st.energy || 0;
+    return energy < full && energy >= TUNNEL_DIG_COST;   // can't afford full, but can pay the dig
+  } catch (e) { return false; }
+}
 function placeUnit(card, pos) {
   let s = App.state;
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
@@ -85543,32 +85568,39 @@ function placeUnit(card, pos) {
       };
     }
   }
-  // 🌊 TUNNEL X — if the card has a tunnel value, it goes underground
-  // instead of onto the battlefield. We skip tile validation entirely
-  // (the card never occupies a tile now), deduct the energy cost, and
-  // add an entry to s.player.tunneled. The unit will auto-emerge after
-  // X turns in the _tickTunneledCards turn-start hook.
+  // 🌊 TUNNEL X — the ENERGY-STARVED fallback. A tunnel unit only burrows
+  // underground when the player CANNOT afford its full cost; if they CAN afford
+  // it, this branch falls through to a normal on-field summon below (tunnel
+  // units are NOT forced underground). Burrowing costs a flat TUNNEL_DIG_COST
+  // energy (e.g. spend your last 1 ⚡ to bury a cost-6 unit), skips tile
+  // placement, and the unit auto-emerges FREE on a tile near your hero after X
+  // turns via the _tickTunneledCards turn-start hook.
   if (card.tunnel && card.tunnel > 0) {
-    const tunCost = getEffectiveCardCost(card, s, 'player');
-    if ((s.player.energy || 0) < tunCost) { showToast('Not enough energy.'); return; }
-    const turns = Math.max(1, Math.min(10, card.tunnel | 0));
-    const tunEntry = { card: { ...card }, turnsLeft: turns };
-    let tunNext = {
-      ...s,
-      player: {
-        ...s.player,
-        hand: s.player.hand.filter(c => c.instanceId !== card.instanceId),
-        graveyard: [...s.player.graveyard, card],
-        energy: s.player.energy - tunCost,
-        tunneled: [...(s.player.tunneled || []), tunEntry],
-      },
-      log: [...s.log, { msg: `🌊 ${card.name} burrows underground — emerges in ${turns} turn${turns === 1 ? '' : 's'}!`, color: 'green' }],
-    };
-    App.state = tunNext;
-    App.ui.selectedCardId = null;
-    if (typeof playSfx === 'function') playSfx('cardPlace');
-    if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
-    return;
+    const fullCost = getEffectiveCardCost(card, s, 'player');
+    const energy = s.player.energy || 0;
+    if (energy < fullCost) {
+      if (energy < TUNNEL_DIG_COST) { showToast(`Need at least ${TUNNEL_DIG_COST} ⚡ to tunnel ${card.name}.`); return; }
+      const digCost = Math.min(energy, TUNNEL_DIG_COST);
+      const turns = Math.max(1, Math.min(10, card.tunnel | 0));
+      const tunEntry = { card: { ...card }, turnsLeft: turns };
+      let tunNext = {
+        ...s,
+        player: {
+          ...s.player,
+          hand: s.player.hand.filter(c => c.instanceId !== card.instanceId),
+          graveyard: [...s.player.graveyard, card],
+          energy: energy - digCost,
+          tunneled: [...(s.player.tunneled || []), tunEntry],
+        },
+        log: [...s.log, { msg: `🌊 ${card.name} burrows underground (−${digCost} ⚡) — emerges in ${turns} turn${turns === 1 ? '' : 's'}!`, color: 'green' }],
+      };
+      App.state = tunNext;
+      App.ui.selectedCardId = null;
+      if (typeof playSfx === 'function') playSfx('cardPlace');
+      if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
+      return;
+    }
+    // Can afford → fall through to the normal on-field placement path below.
   }
   const valid = getValidPlacementTiles(card, ph, s);
   if (!valid.some(p => p.x === pos.x && p.y === pos.y)) {

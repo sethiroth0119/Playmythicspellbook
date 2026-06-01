@@ -65775,6 +65775,34 @@ function grantStarterDeckToPlayer(deck, opts) {
       if (typeof saveDeckEntry === 'function') saveDeckEntry({ ...d, name: deck.name || 'Starter Deck', cards: deckKeys.slice(0) });
     }
   } catch (e) {}
+  // 🆕 Grant the starter deck's SIDE deck, if the admin authored one. The side
+  // cards are added to the collection (so the player owns them); on the primary
+  // pick (markPicked) they're also installed as the player's active side-deck
+  // loadout + gem set. We skip installing the loadout on secondary/bulk grants
+  // so the shared 15-card side deck never overflows.
+  try {
+    const _side = Array.isArray(deck.side) ? deck.side : [];
+    if (_side.length) {
+      const _SIDE_CAP = (typeof SIDE_MAX === 'number') ? SIDE_MAX : 15;
+      const _granted = [];
+      _side.forEach(key => {
+        let c = null; try { c = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null; } catch (e) {}
+        if (!c || !c.id) return;
+        Profile.cardCollection[c.id] = (Profile.cardCollection[c.id] || 0) + 1;
+        _granted.push(key);
+      });
+      if (opts.markPicked) {
+        if (!Profile.sideDeck || typeof Profile.sideDeck !== 'object') Profile.sideDeck = { cards: [], gems: [] };
+        if (!Array.isArray(Profile.sideDeck.cards)) Profile.sideDeck.cards = [];
+        if (!Array.isArray(Profile.sideDeck.gems))  Profile.sideDeck.gems  = [];
+        Profile.sideDeck.cards = _granted.slice(0, _SIDE_CAP);
+        if (Array.isArray(deck.sideGems) && deck.sideGems.length) {
+          const _GEM_CAP = (typeof GEM_MAX === 'number') ? GEM_MAX : 5;
+          Profile.sideDeck.gems = deck.sideGems.slice(0, _GEM_CAP);
+        }
+      }
+    }
+  } catch (e) {}
   if (!Array.isArray(Profile.ownedStarterDecks)) Profile.ownedStarterDecks = [];
   if (deck.id && Profile.ownedStarterDecks.indexOf(deck.id) < 0) Profile.ownedStarterDecks.push(deck.id);
   if (opts.markPicked) { Profile.starterPicked = true; Profile.starterDeckId = deck.id || null; }
@@ -69191,6 +69219,16 @@ function renderPricingAdmin() {
       App.deckBuilderHeroId = (deck.heroId && typeof findHeroById === 'function' && findHeroById(deck.heroId)) ? deck.heroId : null;
       App.editingDeckId = 'NEW';        // use our prefilled deckEdit, not a player deck
       App.deckEdit = Array.isArray(deck.cards) ? deck.cards.slice(0) : [];
+      // 🆕 Load the deck's saved SIDE deck + gem loadout into the live editing
+      // surface (Profile.sideDeck) so the admin sees them in the SIDE / GEMS
+      // tabs and they round-trip on save. Only when the deck actually carries a
+      // side, so editing an older (side-less) deck leaves the surface untouched.
+      if (Array.isArray(deck.side)) {
+        if (!Profile.sideDeck || typeof Profile.sideDeck !== 'object') Profile.sideDeck = { cards: [], gems: [] };
+        Profile.sideDeck.cards = deck.side.slice(0);
+        if (Array.isArray(deck.sideGems)) Profile.sideDeck.gems = deck.sideGems.slice(0);
+        try { saveProfile(); } catch (e) {}
+      }
       App.deckEditName = deck.name || 'Starter Deck';
       App.deckBuilderFilter = 'all';
       App.screen = 'deck';
@@ -128174,6 +128212,11 @@ function renderDeckBuilder() {
         }
       }
       const keys = App.deckEdit.slice(0);
+      // 🆕 Capture the SIDE deck + gem loadout the admin built (these live on the
+      // shared Profile.sideDeck editing surface) so the starter deck ships with
+      // its own side deck. New players who pick this deck get the side deck too.
+      const _starterSide = (Profile.sideDeck && Array.isArray(Profile.sideDeck.cards)) ? Profile.sideDeck.cards.slice(0) : [];
+      const _starterSideGems = (Profile.sideDeck && Array.isArray(Profile.sideDeck.gems)) ? Profile.sideDeck.gems.slice(0) : [];
       // 🦸 Pin the hero from the deck's OWN cards so heroId can never drift
       // (this is what caused "Magic Burst" to show a Cedric emoji). Also
       // snapshot name/icon/elements so new-player screens render correctly
@@ -128199,6 +128242,8 @@ function renderDeckBuilder() {
         heroIcon: (_hSnap && _hSnap.icon) || (prev && prev.heroIcon) || '',
         heroElements: (_hSnap && (_hSnap.elements || (_hSnap.element ? [_hSnap.element] : []))) || (prev && prev.heroElements) || [],
         cards: keys,
+        side:     _starterSide,       // 🆕 the deck's side deck (kind:id keys)
+        sideGems: _starterSideGems,   // 🆕 the deck's gem loadout
         img:      prev ? (prev.img || null) : null,
         inVendor: prev ? !!prev.inVendor : false,
         price:    prev ? (Number(prev.price) || 0) : 0,
@@ -128210,7 +128255,7 @@ function renderDeckBuilder() {
       App.starterDeckEdit = null;
       App.deckEdit = undefined; App.editingDeckId = null; App.deckBuilderHeroId = null; App.deckEditName = undefined;
       App.screen = 'pricingAdmin';
-      showToast(`🦸 Starter deck saved — "${finalName}" (${keys.length} cards). Add a photo / Vendor price on this page, then 📚 Publish.`, 4200);
+      showToast(`🦸 Starter deck saved — "${finalName}" (${keys.length} main${_starterSide.length ? ` + ${_starterSide.length} side` : ''}${_starterSideGems.length ? ` + ${_starterSideGems.length} gem${_starterSideGems.length === 1 ? '' : 's'}` : ''}). Add a photo / Vendor price on this page, then 📚 Publish.`, 4200);
       render();
       return;
     }

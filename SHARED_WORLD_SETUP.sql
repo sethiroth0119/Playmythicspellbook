@@ -208,6 +208,85 @@ create policy mb_ins on public.match_bets for insert to authenticated with check
 drop policy if exists mb_upd on public.match_bets;
 create policy mb_upd on public.match_bets for update to authenticated using (bettor_id = auth.uid()) with check (bettor_id = auth.uid());
 
+-- ── 7) LEADERBOARD + LIVE-MATCH RPCs (Leaderboard screen + Wager Hall) ───────
+-- Powers the Leaderboard AND the Wager Hall "Live Matches" list + spectating.
+-- (Canonical copies also live in bulletproof_saves.sql; included here, HARDENED,
+-- so running THIS one file is enough to make both work.) SECURITY DEFINER so
+-- they read across players without exposing private rows.
+--
+-- WHY THIS MATTERS: if get_leaderboard is missing or throws, the Leaderboard +
+-- Wager-Hall data calls fail. The versions below are crash-proof: they (a) make
+-- sure the jsonb columns exist first, and (b) parse rr/ap/etc. with a regex
+-- guard so a single bad value can never abort the whole query.
+
+-- 7a) Make sure the columns get_leaderboard reads actually exist. (No-op if the
+--     user_profiles table already has them. Guarded so it's safe even if the
+--     table somehow isn't present yet.)
+do $$
+begin
+  if exists (select 1 from information_schema.tables
+             where table_schema = 'public' and table_name = 'user_profiles') then
+    alter table public.user_profiles add column if not exists competitive jsonb not null default '{}'::jsonb;
+    alter table public.user_profiles add column if not exists records     jsonb not null default '{}'::jsonb;
+    alter table public.user_profiles add column if not exists display_name text;
+  end if;
+end $$;
+
+-- 7b) Safe integer extractor — returns the int inside a jsonb text value, or
+--     the fallback if it's missing/non-numeric. Stops a stray "S+" / "" / null
+--     from throwing a cast error that would break the entire leaderboard query.
+create or replace function public._jint(p jsonb, k text, d int default 0)
+returns int language sql immutable as $$
+  select case
+    when p ? k and (p->>k) ~ '^-?[0-9]+$' then (p->>k)::int
+    else d
+  end
+$$;
+
+-- 7c) Leaderboard — top players by RR (reads competitive/records jsonb safely).
+create or replace function public.get_leaderboard(p_limit int default 100)
+returns table(user_id uuid, display_name text, rr int, ap int, win_streak int, faction_id text, wins int, losses int)
+language sql stable security definer set search_path = public, pg_temp as $$
+  select user_id,
+         coalesce(display_name, 'Anonymous')      as display_name,
+         public._jint(competitive, 'rr', 0)        as rr,
+         public._jint(competitive, 'ap', 0)        as ap,
+         public._jint(competitive, 'winStreak', 0) as win_streak,
+         (competitive->>'factionId')               as faction_id,
+         public._jint(records, 'wins', 0)          as wins,
+         public._jint(records, 'losses', 0)        as losses
+  from public.user_profiles
+  where public._jint(competitive, 'rr', -2147483648) <> -2147483648
+  order by public._jint(competitive, 'rr', 0) desc,
+           public._jint(competitive, 'ap', 0) desc
+  limit greatest(1, least(coalesce(p_limit, 100), 200))
+$$;
+grant execute on function public._jint(jsonb, text, int) to anon, authenticated;
+grant execute on function public.get_leaderboard(int) to authenticated;
+
+-- 7d) Live matches — in-progress games (status='pending', not finished, recent)
+--     for the Wager Hall list + spectating. Only created if the matches table
+--     exists; otherwise skipped (no error) so the rest of this script still runs.
+do $$
+begin
+  if exists (select 1 from information_schema.tables
+             where table_schema = 'public' and table_name = 'matches') then
+    execute $f$
+      create or replace function public.get_active_matches(p_limit int default 20)
+      returns table(id uuid, player1_id uuid, player2_id uuid, hero1_id text, hero2_id text, created_at timestamptz)
+      language sql stable security definer set search_path = public, pg_temp as $body$
+        select id, player1_id, player2_id, hero1_id, hero2_id, created_at
+        from public.matches
+        where status = 'pending' and winner_id is null
+          and created_at > now() - interval '30 minutes'
+        order by created_at desc
+        limit greatest(1, least(coalesce(p_limit, 20), 50))
+      $body$;
+    $f$;
+    execute 'grant execute on function public.get_active_matches(int) to authenticated';
+  end if;
+end $$;
+
 -- =============================================================================
 -- ✅ DONE. Now go to: Database → Replication and toggle Realtime ON for:
 --    public.card_market_listings   public.resource_listings
@@ -216,6 +295,10 @@ create policy mb_upd on public.match_bets for update to authenticated using (bet
 -- so listings + captures + live exchange prices + live wager odds show up for
 -- other players instantly. (Without it, everything still works but refreshes on
 -- a slow poll instead of live.)
--- (usage_events is aggregated on read via the usage_top RPC — no Realtime
--- toggle needed for it.)
+-- (usage_events, get_leaderboard, and get_active_matches are read via RPC — no
+-- Realtime toggle needed for them.)
+--
+-- 🏆 The Leaderboard + Wager-Hall "Live Matches" list now work as soon as this
+-- script has run (section 7). If the Leaderboard was erroring before, that was
+-- get_leaderboard missing/throwing — section 7 (re)creates it crash-proof.
 -- =============================================================================

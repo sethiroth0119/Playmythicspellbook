@@ -115,10 +115,49 @@ create policy twwf_sel on public.tw_world_feed for select to authenticated using
 drop policy if exists twwf_ins on public.tw_world_feed;
 create policy twwf_ins on public.tw_world_feed for insert to authenticated with check (true);
 
+-- ── 4) GLOBAL LIVE STATS — plays / wins / losses / kills / trades ────────────
+-- Powers the REAL Market Dashboard + card valuation across every player:
+-- Most-Played, real Win Rate, kills, Most-Traded. One row per event; aggregated
+-- by the usage_top RPC. Relaxes any older card/hero/item-only kind check so the
+-- new live-stat kinds are accepted.
+create table if not exists public.usage_events (
+  id bigserial primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null,
+  ref_id text not null,
+  qty int not null default 1 check (qty between 1 and 1000),
+  created_at timestamptz not null default now()
+);
+alter table public.usage_events drop constraint if exists usage_events_kind_check;
+alter table public.usage_events add constraint usage_events_kind_check
+  check (kind in ('card','hero','item','win','loss','kill','trade'));
+create index if not exists usage_events_kind_ref_idx on public.usage_events (kind, ref_id);
+create index if not exists usage_events_created_at_idx on public.usage_events (created_at desc);
+create index if not exists usage_events_user_id_idx on public.usage_events (user_id);
+alter table public.usage_events enable row level security;
+drop policy if exists usage_events_self_insert on public.usage_events;
+create policy usage_events_self_insert on public.usage_events for insert with check (user_id = auth.uid());
+drop policy if exists usage_events_self_read on public.usage_events;
+create policy usage_events_self_read on public.usage_events for select using (user_id = auth.uid());
+
+create or replace function public.usage_top(p_kind text, p_limit int default 25, p_since_days int default null)
+returns table (ref_id text, plays bigint, distinct_players bigint)
+language sql security definer set search_path = public, pg_temp as $$
+  select ref_id, sum(qty)::bigint as plays, count(distinct user_id)::bigint as distinct_players
+  from public.usage_events
+  where kind = p_kind
+    and (p_since_days is null or created_at >= now() - (p_since_days::text || ' days')::interval)
+  group by ref_id order by plays desc
+  limit greatest(1, least(coalesce(p_limit, 25), 200));
+$$;
+grant execute on function public.usage_top(text, int, int) to anon, authenticated;
+
 -- =============================================================================
 -- ✅ DONE. Now go to: Database → Replication and toggle Realtime ON for:
 --    public.card_market_listings   public.resource_listings
 --    public.tw_ownership           public.tw_world_feed
 -- so listings + captures show up for other players instantly. (Without it,
 -- everything still works but refreshes on a slow poll instead of live.)
+-- (usage_events is aggregated on read via the usage_top RPC — no Realtime
+-- toggle needed for it.)
 -- =============================================================================

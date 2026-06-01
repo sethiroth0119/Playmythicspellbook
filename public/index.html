@@ -37865,8 +37865,9 @@ function pushUsageEvent(kind, refId, qty) {
   if (!kind || !refId) return;
   qty = Math.max(1, Math.min(1000, qty | 0)) || 1;
   // Validate kind to match the SQL CHECK constraint so a bad caller never
-  // poisons the queue with un-insertable rows.
-  if (kind !== 'card' && kind !== 'hero' && kind !== 'item') return;
+  // poisons the queue with un-insertable rows. 'win'/'loss'/'kill'/'trade' feed
+  // the GLOBAL live valuation (real win rates, kills, trade demand).
+  if (['card','hero','item','win','loss','kill','trade'].indexOf(kind) < 0) return;
   _UsageEventQueue.pending.push({ kind, ref_id: String(refId), qty });
   // Debounce: flush after 1.2s of idle OR when queue reaches 25 events,
   // whichever fires first. Limits a 30-event match to ~2 inserts.
@@ -37917,7 +37918,7 @@ function _gucExpired(slot) {
 }
 async function fetchGlobalUsageTops(kind, limit) {
   if (!Cloud.ready || !Cloud.client) return null;
-  if (kind !== 'card' && kind !== 'hero' && kind !== 'item') return null;
+  if (['card','hero','item','win','loss','kill','trade'].indexOf(kind) < 0) return null;
   if (!_gucExpired(_GlobalUsageCache[kind])) return _GlobalUsageCache[kind].data;
   try {
     const { data, error } = await Cloud.client.rpc('usage_top', {
@@ -38127,9 +38128,17 @@ function dvsScarcityScore(card) {
   const t = (Math.log(supply) - Math.log(20)) / (Math.log(1200) - Math.log(20));
   return _dvsClamp(Math.round(100 - t * 92), 3, 100);
 }
-function dvsWinRateScore(card, power) {
-  // No per-card W/L ledger — estimate from power, lightly dithered so equal-power
-  // cards aren't identical, centered on a 50% baseline.
+function dvsWinRateScore(card, power, ctx) {
+  // 🌐 REAL global win rate when there's a meaningful sample of games for this
+  // card across all players (wins / (wins+losses)). Pushed by recordBattleProgress.
+  if (ctx && ctx.winById && ctx.lossById) {
+    const w = ctx.winById[card.id] || 0;
+    const l = ctx.lossById[card.id] || 0;
+    const games = w + l;
+    if (games >= 5) return _dvsClamp(Math.round((w / games) * 100), 1, 100);
+  }
+  // Fallback: estimate from power until enough real games accumulate. Lightly
+  // dithered so equal-power cards aren't identical, centered on a 50% baseline.
   const p = (typeof power === 'number') ? power : dvsPowerScore(card);
   const dither = (_dvsHash('win:' + card.id) - 0.5) * 12;
   return _dvsClamp(Math.round(50 + (p - 50) * 0.45 + dither), 1, 100);
@@ -38189,13 +38198,30 @@ function dvsBuildContext() {
     const raw = ((demandById[c.id] || 0) + (demandByName[c.name] || 0)) * 3 + ((listingById[c.id] || 0) + (listingByName[c.name] || 0));
     if (raw > maxDemand) maxDemand = raw;
   }
-  return { usageCards, maxUsage, demandById, demandByName, listingById, listingByName, maxDemand, source: usage.source || 'local' };
+  // 🌐 Global win/loss aggregates → REAL win rates. Cached + background-refreshed
+  // via the same usage-tops cache; a fetch is kicked off so the next recompute
+  // picks them up once warm. When present, the valuation is flagged GLOBAL.
+  let winById = {}, lossById = {}, statsGlobal = false;
+  try {
+    if (typeof Cloud !== 'undefined' && Cloud.ready && Cloud.client && typeof fetchGlobalUsageTops === 'function') {
+      if (_gucExpired(_GlobalUsageCache.win))  fetchGlobalUsageTops('win', 200).then(() => {});
+      if (_gucExpired(_GlobalUsageCache.loss)) fetchGlobalUsageTops('loss', 200).then(() => {});
+      const gw = _GlobalUsageCache.win  && _GlobalUsageCache.win.data;
+      const gl = _GlobalUsageCache.loss && _GlobalUsageCache.loss.data;
+      if (gw) winById = gw;
+      if (gl) lossById = gl;
+      if (gw && gl) statsGlobal = true;
+    }
+  } catch (e) {}
+  return { usageCards, maxUsage, demandById, demandByName, listingById, listingByName, maxDemand,
+           winById, lossById,
+           source: (usage.source === 'global' || statsGlobal) ? 'global' : 'local' };
 }
 function dvsValuate(card, ctx) {
   ctx = ctx || dvsBuildContext();
   const power = dvsPowerScore(card);
   const meta = dvsMetaScore(card, ctx);
-  const win = dvsWinRateScore(card, power);
+  const win = dvsWinRateScore(card, power, ctx);
   const scarcity = dvsScarcityScore(card);   // also stashes card._dvsSupply
   const demand = dvsDemandScore(card, ctx);
   const historical = dvsHistoricalScore(card);
@@ -88519,6 +88545,25 @@ function recordBattleProgress() {
     if (!won && !faintedByCard[id] && aliveByCard[id]) adjustBond(cur, -1);
     Profile.units[id] = cur;
   }
+
+  // 📊 GLOBAL LIVE STATS — push per-card win/loss + kill events to the cloud so
+  // the Player Market valuation shows REAL aggregated win rates + kills across
+  // every player (not estimates). Fire-and-forget + batched; no-ops when signed
+  // out (local progression above is unaffected either way).
+  try {
+    if (typeof pushUsageEvent === 'function') {
+      const _wl = won ? 'win' : 'loss';
+      if (hero && hero.heroId) {
+        pushUsageEvent(_wl, hero.heroId, 1);
+        if ((hero.battleKills | 0) > 0) pushUsageEvent('kill', hero.heroId, hero.battleKills | 0);
+      }
+      for (const id of fieldedSet) {
+        if (!id) continue;
+        pushUsageEvent(_wl, id, 1);
+        if ((killsPerCard[id] | 0) > 0) pushUsageEvent('kill', id, killsPerCard[id] | 0);
+      }
+    }
+  } catch (e) {}
 
   // ===== Record AI hero / units too — opponent grows stronger between battles =====
   const aiUnits = s.units.filter(u => u.owner === 'ai');

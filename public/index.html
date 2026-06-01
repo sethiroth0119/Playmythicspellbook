@@ -89995,6 +89995,11 @@ function dvsInstanceMultiplier(inst) {
     const totalPower = moves.reduce((s, m) => s + (Number(m.power) || 0), 0);
     mult *= 1 + Math.max(-0.15, Math.min(0.20, (totalPower - 120) / 700));
   }
+  // ⚔ Battle record — a unit that has racked up kills is a proven, blooded copy
+  // and commands a premium. +1.2% per kill, capped at +30% (~25 kills). A fresh
+  // copy with 0 kills gets no bonus.
+  const kills = Math.max(0, (inst.kills | 0) || 0);
+  if (kills > 0) mult *= 1 + Math.min(0.30, kills * 0.012);
   return Math.max(0.5, Math.min(3, mult));
 }
 // Round a base cinder value up/down by this copy's instance multiplier.
@@ -90023,6 +90028,7 @@ function unitInstanceSnapshot(card) {
   return {
     level:   (u && u.level) || (prof && prof.level) || 1,
     xp:      (u && u.xp)    || (prof && prof.xp)    || 0,
+    kills:   Math.max(0, (prof && prof.kills | 0) || (u && u.kills | 0) || 0),
     nature:  (prof && prof.nature) || (u && u.nature) || null,
     traitId: traitId || null,
     knownMoves: moves,
@@ -90041,7 +90047,7 @@ function unitInstanceBase(card) {
   const lvl1 = Array.isArray(card.learnset) ? card.learnset.filter(l => l && (l.lvl || 1) <= 1).map(l => l.m).filter(Boolean) : [];
   const allMoves = Array.isArray(card.learnset) ? card.learnset.map(l => l && l.m).filter(Boolean) : [];
   return {
-    level: 1, xp: 0, nature: null, traitId: null,
+    level: 1, xp: 0, kills: 0, nature: null, traitId: null,
     knownMoves: (lvl1.length ? lvl1 : allMoves).slice(0, 4),
     stats: { ...st }, maxHp: st.hp || 0,
     elements: (typeof getElementsOf === 'function') ? getElementsOf(card) : [],
@@ -90084,13 +90090,14 @@ function _marketUnitInstanceHtml(inst, baseCinder, titleOverride) {
             <div class="dvs-value-box"><div class="v"><span class="cinder-icon"></span> ${_adj}</div><div class="l">This copy — suggested</div></div>
             <div class="dvs-value-box"><div class="v">${(typeof _dvsUsd === 'function') ? _dvsUsd(_adj) : ''}</div><div class="l">Suggested USD</div></div>
           </div>
-          <div class="dvs-row-sub" style="margin-top:0.25rem">Scaled from base ${baseCinder} 🔥 for Lv ${inst.level || 1}${inst.traitId ? ' + trait' : ''}${(Array.isArray(inst.knownMoves) && inst.knownMoves.length) ? ' + moveset' : ''}.</div>` : '';
+          <div class="dvs-row-sub" style="margin-top:0.25rem">Scaled from base ${baseCinder} 🔥 for Lv ${inst.level || 1}${inst.traitId ? ' + trait' : ''}${(Array.isArray(inst.knownMoves) && inst.knownMoves.length) ? ' + moveset' : ''}${(inst.kills | 0) > 0 ? ` + ${inst.kills | 0} kill${(inst.kills | 0) === 1 ? '' : 's'}` : ''}.</div>` : '';
   return `
         <div class="dvs-subpanel">
           <h4>${title}</h4>
           <div style="display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;margin-bottom:0.4rem">
             <span class="dvs-stat-pill" style="font-weight:800">Lv ${inst.level || 1}</span>
             ${inst.xp ? `<span class="dvs-row-sub">${inst.xp} XP</span>` : ''}
+            <span class="dvs-stat-pill" style="border-color:rgba(255,120,90,0.5);color:#ff9c7a" title="Confirmed enemy knockouts this copy has scored — a blooded unit is worth more">⚔ ${inst.kills | 0} kill${(inst.kills | 0) === 1 ? '' : 's'}</span>
             ${traitHtml}${natureHtml}
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 1rem">

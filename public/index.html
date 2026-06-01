@@ -33167,6 +33167,10 @@ async function cloudSyncProfile() {
       // these on the cloud, signing in on a new device re-forces the picker.
       __starterPicked__:   !!Profile.starterPicked,
       __starterDeckId__:   (typeof Profile.starterDeckId === 'string') ? Profile.starterDeckId : null,
+      // 🎓 New-player onboarding state (complete flag + last step) — travels
+      // across devices so a half-finished onboarding resumes and a finished one
+      // never replays.
+      __onboarding__:      (Profile.onboarding && typeof Profile.onboarding === 'object') ? Profile.onboarding : {},
       __ownedStarterDecks__: Array.isArray(Profile.ownedStarterDecks) ? Profile.ownedStarterDecks : [],
       // 🎁 Redeemed coupon ids — prevents double-claim across devices.
       __redeemedCoupons__:   Array.isArray(Profile.redeemedCoupons) ? Profile.redeemedCoupons : [],
@@ -34054,6 +34058,13 @@ async function cloudFetchProfile() {
       // 🦸 Starter-pick — last-writer-wins (boolean once true stays true).
       if (f.__starterPicked__ === true) Profile.starterPicked = true;
       if (typeof f.__starterDeckId__ === 'string') Profile.starterDeckId = f.__starterDeckId__;
+      // 🎓 Onboarding — merge (complete stays true once true; keep latest step).
+      if (f.__onboarding__ && typeof f.__onboarding__ === 'object') {
+        Profile.onboarding = (Profile.onboarding && typeof Profile.onboarding === 'object') ? Profile.onboarding : {};
+        if (f.__onboarding__.complete === true) Profile.onboarding.complete = true;
+        if (typeof f.__onboarding__.step === 'string' && !Profile.onboarding.complete) Profile.onboarding.step = f.__onboarding__.step;
+        if (typeof f.__onboarding__.deckId === 'string' && !Profile.onboarding.deckId) Profile.onboarding.deckId = f.__onboarding__.deckId;
+      }
       if (Array.isArray(f.__ownedStarterDecks__)) {
         Profile.ownedStarterDecks = Array.isArray(Profile.ownedStarterDecks) ? Profile.ownedStarterDecks : [];
         f.__ownedStarterDecks__.forEach(id => {
@@ -34702,6 +34713,7 @@ function _applyCatalogRow(data) {
   if (rawMoves.__cinder_shop__       && typeof rawMoves.__cinder_shop__       === 'object') Catalog.cinderShop       = rawMoves.__cinder_shop__;
   if (Array.isArray(rawMoves.__crafting_recipes__))  Catalog.craftingRecipes  = rawMoves.__crafting_recipes__;
   if (rawMoves.__obtainability__     && typeof rawMoves.__obtainability__     === 'object') Catalog.obtainability    = rawMoves.__obtainability__;
+  if (rawMoves.__onboarding__        && typeof rawMoves.__onboarding__        === 'object') Catalog.onboarding       = rawMoves.__onboarding__;
   if (rawMoves.__territory_wars__    && typeof rawMoves.__territory_wars__    === 'object') Catalog.territoryWars    = rawMoves.__territory_wars__;
   if (rawMoves.__dark_events__ !== undefined)        Catalog.darkEvents       = rawMoves.__dark_events__;
   if (Array.isArray(rawMoves.__vip_pool__))          Catalog.vipPool          = rawMoves.__vip_pool__;
@@ -35049,6 +35061,9 @@ async function cloudPublishCatalog(opts) {
       __cinder_shop__:       (Forge.cinderShop       && typeof Forge.cinderShop       === 'object') ? Forge.cinderShop       : { inventory: [] },
       __crafting_recipes__:  Array.isArray(Forge.craftingRecipes)  ? Forge.craftingRecipes  : [],
       __obtainability__:     (Forge.obtainability    && typeof Forge.obtainability    === 'object') ? Forge.obtainability    : {},
+      // 🎓 New-player onboarding config (welcome image / narration / enable) so
+      // every player gets the admin's onboarding, not the engine default.
+      __onboarding__:        (Forge.onboarding       && typeof Forge.onboarding       === 'object') ? Forge.onboarding       : {},
       // 🗺 Territory Wars — admin's world map, ALL players must see the same
       // regions/sectors/nodes/guard decks. (Excluding worldFeed which is
       // append-only chatter; it cloud-syncs via the live realtime channel.)
@@ -63328,6 +63343,26 @@ function render() {
   // non-battle screen — INCLUDING the Deck Builder / pre-battle loadout, which a
   // normal must-pick player is otherwise allowed to sit on. (They were landing on
   // an empty Deck Builder with "you don't own any heroes yet" and no way out.)
+  // 🎓 NEW-PLAYER ONBOARDING GATE — intercept brand-new players into the
+  // cinematic onboarding (welcome → starter pick → tutorial → menu tour) instead
+  // of the bare starter picker. Only hijacks menu screens (title / starterPick),
+  // plus a resume after the tutorial battle — NEVER a battle/gameplay screen.
+  // Fully fail-safe: shouldRunOnboarding() is false for admins/returning players,
+  // and renderOnboarding() drops the player into the game if any step throws.
+  try {
+    if (typeof shouldRunOnboarding === 'function' && shouldRunOnboarding()) {
+      const _s = App.screen;
+      const _inBattleish = (_s === 'battle' || _s === 'coinFlip' || _s === 'vsScreen' ||
+                            _s === 'deckSelect' || _s === 'preBattleLoadout' ||
+                            (App.tutorial && App.tutorial.active));
+      const _resumeFromTut = Onboarding._awaitTut && !_inBattleish;
+      if (_s !== 'onboarding' && (_s === 'title' || _s === 'starterPick' || _resumeFromTut)) {
+        startOnboarding();
+      }
+    }
+  } catch (e) {}
+  if (App.screen === 'onboarding') return renderOnboarding();
+
   const _wipedNeedsPicker = (typeof _isWipedNewPlayer === 'function') && _isWipedNewPlayer();
   if (App.screen !== 'starterPick' && App.screen !== 'authGate'
       && App.screen !== 'battle' && App.screen !== 'coinFlip' && App.screen !== 'vsScreen'
@@ -65691,6 +65726,583 @@ function renderTutorialWelcome() {
     overlay.remove();
   };
 }
+
+// ============================================================================
+// 🎓 NEW-PLAYER ONBOARDING — cinematic first-run experience (Ethos Heights)
+// ----------------------------------------------------------------------------
+// Welcome cinematic → starter-deck choice → tutorial offer → (tutorial/skip) →
+// main-menu guided tour → completion. Gated to brand-new accounts only; fully
+// admin-configurable (welcome image / narration / enable / reset); persisted to
+// the cloud so it shows ONCE and resumes across devices.
+//
+// FAIL-SAFE BY DESIGN: shouldRunOnboarding() only fires for a signed-in,
+// non-admin, brand-new player who hasn't picked a starter. The render gate only
+// hijacks the menu screens (title / starterPick) — never a battle — and every
+// step is wrapped so a thrown error marks onboarding complete and drops the
+// player straight into the game. A new player can never be soft-locked.
+// ============================================================================
+const ONB_DEFAULT_NARRATION =
+  'Welcome to Ethos Heights, survivor.\n\n' +
+  'You are entering a living world where players battle, explore, trade, build, collect, and shape the future of the realm.\n\n' +
+  'In Ethos Heights, every card has value, every choice matters, and every adventure can lead to new opportunities.\n\n' +
+  'Whether you become a warrior, merchant, explorer, collector, mercenary, or strategist, your journey begins today.\n\n' +
+  'Choose your path wisely.\n\n' +
+  'The future of Ethos Heights is now in your hands.';
+
+const ONB_MENU_TOUR = [
+  { icon: '🏠', name: 'Home',          desc: 'This is your central hub where you can quickly access your activities and track your progress.' },
+  { icon: '🏕️', name: 'Camp Heights',  desc: 'Visit Camp Heights to interact with services, players, vendors, businesses, and community activities.' },
+  { icon: '🛠️', name: 'Deck Builder',  desc: 'Build, edit, and customize your decks for battle.' },
+  { icon: '📚', name: 'Collection',    desc: 'View all cards, heroes, cosmetics, and items you have collected.' },
+  { icon: '⚔️', name: 'Play Game',     desc: 'Enter matches, campaigns, multiplayer battles, and events.' },
+  { icon: '🛒', name: 'Marketplace',   desc: 'Buy, sell, and trade cards, items, and resources with other players.' },
+  { icon: '🏦', name: 'Bank of Ethos', desc: 'Manage your Cinder, deposits, withdrawals, taxes, node rewards, and financial activities.' },
+  { icon: '🗺️', name: 'Territory Wars',desc: 'Fight alongside corporations to control sectors and earn rewards.' },
+  { icon: '🏛️', name: 'Corporations',  desc: 'Join or create organizations with other players.' },
+  { icon: '👤', name: 'Profile',       desc: 'View your statistics, achievements, rankings, and account progression.' },
+  { icon: '⚙️', name: 'Settings',      desc: 'Adjust graphics, audio, controls, and account settings.' },
+];
+
+const Onboarding = { step: null, _awaitTut: false, _confirmDeckId: null, _previewDeckId: null, _narrated: false, _tourIdx: 0, _adminPreview: false };
+
+// Admin config (Forge local edits win; else the published Catalog mirror).
+function _onbCfg() {
+  const f = (typeof Forge === 'object' && Forge && Forge.onboarding && typeof Forge.onboarding === 'object') ? Forge.onboarding : null;
+  const c = (typeof Catalog === 'object' && Catalog && Catalog.onboarding && typeof Catalog.onboarding === 'object') ? Catalog.onboarding : null;
+  const s = (f && Object.keys(f).length) ? f : (c || {});
+  return {
+    enabled:   s.enabled !== false,
+    image:     s.image || '',
+    title:     (typeof s.title === 'string' && s.title.trim()) ? s.title : 'WELCOME TO ETHOS HEIGHTS',
+    narration: (typeof s.narration === 'string' && s.narration.trim()) ? s.narration : ONB_DEFAULT_NARRATION,
+    voice:     s.voice !== false,
+  };
+}
+
+function _ensureOnboardingState() {
+  if (!Profile.onboarding || typeof Profile.onboarding !== 'object') Profile.onboarding = {};
+  if (typeof Profile.onboarding.complete === 'undefined') {
+    // Grandfather established players (already picked a starter) so first-run
+    // onboarding never interrupts someone who has been playing.
+    const established = (typeof hasPickedStarter === 'function') && hasPickedStarter();
+    Profile.onboarding.complete = !!established;
+    try { saveProfile && saveProfile(); } catch (e) {}
+  }
+  return Profile.onboarding;
+}
+
+function onboardingIsComplete() {
+  try { return !!(Profile.onboarding && Profile.onboarding.complete); } catch (e) { return true; }
+}
+
+function shouldRunOnboarding() {
+  try {
+    if (Onboarding._adminPreview) return true;                 // admin preview override
+    if (typeof isAdmin === 'function' && isAdmin()) return false;
+    const cc = Profile.cloud || {};
+    if (!cc.signedIn && !cc.offlineMode) return false;         // still at the auth gate
+    if (!_onbCfg().enabled) return false;                      // admin-disabled
+    _ensureOnboardingState();
+    if (Profile.onboarding.complete) return false;
+    if (Onboarding.step) return true;                          // already mid-flow
+    return (typeof hasPickedStarter === 'function') ? !hasPickedStarter() : true;
+  } catch (e) { return false; }
+}
+
+function startOnboarding() {
+  try { _ensureOnboardingState(); } catch (e) {}
+  if (!Onboarding.step) {
+    const saved = Profile.onboarding && Profile.onboarding.step;
+    Onboarding.step = (saved && saved !== 'complete') ? saved : 'welcome';
+  }
+  App.screen = 'onboarding';
+}
+
+function _onbAdvance(step) {
+  Onboarding.step = step;
+  Onboarding._narrated = false;
+  if (!Onboarding._adminPreview) {
+    try { _ensureOnboardingState(); Profile.onboarding.step = step; saveProfile && saveProfile(); } catch (e) {}
+  }
+  App.screen = 'onboarding';
+  try { render(); } catch (e) {}
+}
+
+function _onbFinish() {
+  try { _stopOnbNarration(); } catch (e) {}
+  if (Onboarding._adminPreview) {
+    Onboarding._adminPreview = false; Onboarding.step = null;
+    App.screen = 'title'; App.titleHub = 'forge';
+    try { render(); } catch (e) {}
+    return;
+  }
+  try {
+    _ensureOnboardingState();
+    Profile.onboarding.complete = true;
+    Profile.onboarding.step = 'complete';
+    saveProfile && saveProfile();
+    if (typeof saveProgressCloud === 'function') { saveProgressCloud().catch(() => {}); }
+  } catch (e) {}
+  // Suppress the LEGACY first-run tutorial-welcome overlay — the onboarding's
+  // own tutorial offer already covered it, so it must never double-pop.
+  try { App._tutorialWelcomeDismissed = true; } catch (e) {}
+  Onboarding.step = null;
+  App.screen = 'title'; App.titleHub = 'main';
+  try { render(); } catch (e) {}
+}
+
+// ---- Voice-over (Web Speech API) — optional, skippable, graceful fallback ----
+function _speakOnb(text) {
+  try {
+    if (!_onbCfg().voice) return;
+    const st = (typeof getSettings === 'function') ? getSettings() : (Profile.settings || {});
+    if (st.musicEnabled === false || st.sfxEnabled === false) { /* still allow voice unless fully muted below */ }
+    if (typeof window === 'undefined' || !window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(('' + text).replace(/\s+/g, ' ').trim());
+    u.rate = 0.92; u.pitch = 1.0; u.volume = 0.95;
+    window.speechSynthesis.speak(u);
+  } catch (e) {}
+}
+function _stopOnbNarration() { try { if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {} }
+
+function _onbEnsureStyle() {
+  if (document.getElementById('onb-style')) return;
+  const st = document.createElement('style');
+  st.id = 'onb-style';
+  st.textContent =
+    '.onb-screen{position:fixed;inset:0;z-index:6000;overflow:hidden;background:#04030a;color:#eee;font-family:Inter,system-ui,sans-serif;display:flex;align-items:center;justify-content:center}' +
+    '.onb-bgimg{position:absolute;inset:0;background-size:cover;background-position:center;background-repeat:no-repeat;filter:saturate(1.05)}' +
+    '.onb-vignette{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 40%,transparent 30%,rgba(2,1,8,0.55) 70%,rgba(2,1,8,0.92) 100%)}' +
+    '.onb-fade{animation:onbFade 900ms ease-out both}' +
+    '@keyframes onbFade{0%{opacity:0}100%{opacity:1}}' +
+    '@keyframes onbRise{0%{opacity:0;transform:translateY(24px)}100%{opacity:1;transform:translateY(0)}}' +
+    '.onb-title{font-family:"Cinzel",serif;font-weight:900;letter-spacing:0.14em;text-align:center;' +
+      'font-size:clamp(1.8rem,5vw,4rem);color:#ffe9a8;text-shadow:0 0 26px rgba(255,200,90,0.55),0 4px 16px #000;margin:0 0 1.1rem}' +
+    '.onb-narr{max-width:760px;margin:0 auto;text-align:center;line-height:1.6;font-size:clamp(0.98rem,1.7vw,1.2rem);color:#e8eefc;text-shadow:0 2px 8px #000}' +
+    '.onb-narr p{margin:0 0 0.85rem;animation:onbRise 700ms ease-out both}' +
+    '.onb-actions{display:flex;gap:0.8rem;justify-content:center;flex-wrap:wrap;margin-top:1.6rem}' +
+    '.onb-card{position:relative;z-index:2;width:min(94vw,980px);max-height:92vh;overflow:auto;padding:2rem 1.4rem;text-align:center}' +
+    '.onb-btn{font-family:"Cinzel",serif;font-weight:700;letter-spacing:0.04em;border-radius:10px;padding:0.7rem 1.4rem;cursor:pointer;border:1px solid;font-size:1rem;transition:transform 120ms,box-shadow 120ms}' +
+    '.onb-btn:hover{transform:translateY(-1px)}' +
+    '.onb-btn-primary{background:linear-gradient(180deg,#ffe09a,#e0a83a);color:#231405;border-color:#ffd166;box-shadow:0 6px 22px rgba(224,168,58,0.35)}' +
+    '.onb-btn-ghost{background:rgba(255,255,255,0.06);color:#dfe7f5;border-color:rgba(255,255,255,0.25)}' +
+    '.onb-portals{display:flex;gap:clamp(10px,3vw,40px);justify-content:center;align-items:stretch;flex-wrap:wrap;margin-top:1.4rem}' +
+    '.onb-deck{position:relative;width:clamp(220px,28vw,280px);background:rgba(16,10,32,0.86);border:1px solid rgba(212,175,55,0.45);border-radius:16px;overflow:hidden;display:flex;flex-direction:column;animation:onbRise 700ms ease-out both}' +
+    '.onb-deck::before{content:"";position:absolute;left:50%;top:-40px;width:160px;height:80px;transform:translateX(-50%);border-radius:50%;' +
+      'background:radial-gradient(ellipse at center,var(--pg,#b888ff) 0%,transparent 70%);filter:blur(8px);opacity:0.85;animation:onbPortal 2.6s ease-in-out infinite}' +
+    '@keyframes onbPortal{0%,100%{opacity:0.5;transform:translateX(-50%) scale(0.92)}50%{opacity:0.95;transform:translateX(-50%) scale(1.06)}}' +
+    '.onb-deck-art{height:200px;background:#05030e;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}' +
+    '.onb-deck-art img{width:100%;height:100%;object-fit:cover;object-position:center}' +
+    '.onb-deck-body{padding:14px;display:flex;flex-direction:column;gap:8px;flex:1}' +
+    '.onb-deck-name{font-family:"Cinzel",serif;font-size:1.18rem;font-weight:800;color:#f6d97a}' +
+    '.onb-diff{display:inline-block;font-size:0.74rem;letter-spacing:0.04em;border:1px solid rgba(255,209,102,0.5);color:#ffd98a;border-radius:999px;padding:1px 9px}' +
+    '.onb-modal-bd{position:fixed;inset:0;z-index:6200;background:rgba(2,1,8,0.78);display:flex;align-items:center;justify-content:center;padding:1rem}' +
+    '.onb-modal{width:min(92vw,460px);background:linear-gradient(180deg,rgba(28,18,52,0.98),rgba(12,6,28,0.98));border:1px solid rgba(184,136,255,0.55);border-radius:16px;padding:1.6rem;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.6)}' +
+    '.onb-dots{display:flex;gap:6px;justify-content:center;margin:1rem 0}' +
+    '.onb-dot{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,0.22)}' +
+    '.onb-dot.on{background:#ffd166;box-shadow:0 0 10px rgba(255,209,102,0.7)}' +
+    '.onb-skip{position:absolute;top:18px;right:22px;z-index:3}';
+  document.head.appendChild(st);
+}
+
+function renderOnboarding() {
+  _onbEnsureStyle();
+  try { if (typeof syncMusicForScreen === 'function') syncMusicForScreen(); } catch (e) {}
+  try {
+    const step = Onboarding.step || 'welcome';
+    if (step === 'welcome')       return _onbRenderWelcome();
+    if (step === 'starter')       return _onbRenderStarter();
+    if (step === 'tutorialOffer') return _onbRenderTutorialOffer();
+    if (step === 'tutorial') {
+      // Returning from the tutorial battle → advance to the menu tour WITHOUT a
+      // re-entrant render() (we're already inside render()): set state + paint.
+      Onboarding._awaitTut = false; Onboarding.step = 'menuTour'; Onboarding._tourIdx = 0;
+      try { _ensureOnboardingState(); Profile.onboarding.step = 'menuTour'; saveProfile && saveProfile(); } catch (e) {}
+      return _onbRenderMenuTour();
+    }
+    if (step === 'skipMsg')       return _onbRenderSkipMsg();
+    if (step === 'menuTour')      return _onbRenderMenuTour();
+    if (step === 'complete')      return _onbRenderComplete();
+    return _onbRenderWelcome();
+  } catch (e) {
+    try { console.error('[onboarding] step failed — skipping to game', e); } catch (_) {}
+    _onbFinish();
+  }
+}
+
+function _onbRoot(innerHtml) {
+  const r = document.getElementById('app');
+  if (r) r.innerHTML = innerHtml;
+  return r;
+}
+
+// ---- Step 2: Welcome cinematic ----
+function _onbRenderWelcome() {
+  const cfg = _onbCfg();
+  const bg = cfg.image
+    ? '<div class="onb-bgimg onb-fade" style="background-image:url(' + JSON.stringify(cfg.image) + ')"></div>'
+    : '<div class="onb-bgimg onb-fade" style="background:radial-gradient(ellipse at 50% 30%,#2a1850,#0a0518 60%,#04030a)"></div>';
+  const paras = ('' + cfg.narration).split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
+    .map((p, i) => '<p style="animation-delay:' + (i * 220) + 'ms">' + escapeHtml(p) + '</p>').join('');
+  _onbRoot(
+    '<div class="onb-screen">' +
+      bg +
+      '<div class="onb-vignette"></div>' +
+      '<div class="onb-card onb-fade">' +
+        '<h1 class="onb-title">' + escapeHtml(cfg.title) + '</h1>' +
+        '<div class="onb-narr">' + paras + '</div>' +
+        '<div class="onb-actions">' +
+          '<button class="onb-btn onb-btn-primary" id="onb-welcome-next">Choose Your Path →</button>' +
+          '<button class="onb-btn onb-btn-ghost" id="onb-welcome-skip">Skip narration</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+  if (!Onboarding._narrated) { Onboarding._narrated = true; _speakOnb(cfg.narration); }
+  const next = document.getElementById('onb-welcome-next');
+  if (next) next.onclick = () => { _stopOnbNarration(); _onbAdvance('starter'); };
+  const skip = document.getElementById('onb-welcome-skip');
+  if (skip) skip.onclick = () => { _stopOnbNarration(); try { showToast('🔇 Narration skipped.', 1400); } catch (e) {} };
+}
+
+// ---- Step 3: Starter-deck selection (portals + deck boxes) ----
+function _onbRenderStarter() {
+  const decks = (typeof getAllStarterDecks === 'function') ? (getAllStarterDecks() || []) : [];
+  const palette = ['#b888ff', '#ff7a5c', '#5cc8ff', '#7CE8A8', '#ffd166'];
+  const deckCard = (d, i) => {
+    const h = (typeof _starterDeckHero === 'function') ? _starterDeckHero(d) : null;
+    const heroName = h ? h.name : (d.heroId || 'Hero');
+    const artSrc = (typeof getStarterDeckImage === 'function' ? getStarterDeckImage(d.id) : null) || d.img || null;
+    const art = artSrc
+      ? '<div class="onb-deck-art"><img src="' + escapeHtml(artSrc) + '" alt=""></div>'
+      : '<div class="onb-deck-art" style="font-size:3.4rem">' + (h && h.icon ? h.icon : '🦸') + '</div>';
+    const desc = d.desc || d.theme || d.description || '';
+    const diff = d.difficulty || d.diff || '';
+    return '<div class="onb-deck" style="--pg:' + palette[i % palette.length] + ';animation-delay:' + (i * 120) + 'ms">' +
+      art +
+      '<div class="onb-deck-body">' +
+        '<div class="onb-deck-name">' + escapeHtml(d.name || 'Starter Deck') + '</div>' +
+        '<div class="small-text ink-dim">' + escapeHtml(heroName) + ' · ' + ((d.cards || []).length) + ' cards</div>' +
+        (diff ? '<div><span class="onb-diff">★ ' + escapeHtml(String(diff)) + '</span></div>' : '') +
+        (desc ? '<div style="font-size:0.86rem;color:#cdd6ea;line-height:1.4">' + escapeHtml(String(desc).slice(0, 160)) + '</div>' : '') +
+        '<div style="display:flex;gap:8px;margin-top:auto;padding-top:8px">' +
+          '<button class="onb-btn onb-btn-ghost" style="flex:1;padding:0.5rem" data-onb-preview="' + escapeHtml(String(d.id)) + '">Preview</button>' +
+          '<button class="onb-btn onb-btn-primary" style="flex:1;padding:0.5rem" data-onb-select="' + escapeHtml(String(d.id)) + '">Select</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  };
+  const body = decks.length
+    ? '<div class="onb-portals">' + decks.map(deckCard).join('') + '</div>'
+    : (typeof _catalogResolved === 'function' && !_catalogResolved()
+        ? '<div class="ink-dim" style="padding:2rem">⏳ Summoning your starter decks…</div>'
+        : '<div class="ink-dim" style="padding:2rem">No starter decks available yet — check back soon.</div>');
+  _onbRoot(
+    '<div class="onb-screen" style="background:radial-gradient(ellipse at 50% 20%,#1a1038,#080414 70%,#04030a)">' +
+      '<div class="onb-card onb-fade">' +
+        '<h1 class="onb-title" style="font-size:clamp(1.5rem,4vw,2.8rem)">Choose Your Starter Deck</h1>' +
+        '<div class="onb-narr" style="margin-bottom:0.4rem">Three paths open before you. Pick one to begin your journey — you can earn or buy the others later.</div>' +
+        body +
+      '</div>' +
+    '</div>'
+  );
+  // Reload decks shortly if the catalog hadn't resolved yet.
+  if (!decks.length && typeof _catalogResolved === 'function' && !_catalogResolved()) {
+    setTimeout(() => { if (App.screen === 'onboarding' && Onboarding.step === 'starter') { try { render(); } catch (e) {} } }, 1500);
+  }
+  document.querySelectorAll('[data-onb-select]').forEach(b => b.onclick = () => { Onboarding._confirmDeckId = b.dataset.onbSelect; _onbRenderConfirm(); });
+  document.querySelectorAll('[data-onb-preview]').forEach(b => b.onclick = () => { Onboarding._previewDeckId = b.dataset.onbPreview; _onbRenderPreview(); });
+}
+
+function _onbDeckById(id) { try { return (getAllStarterDecks() || []).find(d => String(d.id) === String(id)) || null; } catch (e) { return null; } }
+
+function _onbRenderConfirm() {
+  const d = _onbDeckById(Onboarding._confirmDeckId);
+  if (!d) return;
+  const bd = document.createElement('div');
+  bd.className = 'onb-modal-bd';
+  bd.innerHTML =
+    '<div class="onb-modal">' +
+      '<div style="font-size:2rem;margin-bottom:0.4rem">🎴</div>' +
+      '<h2 class="onb-title" style="font-size:1.4rem;margin-bottom:0.6rem">Choose This Starter Deck?</h2>' +
+      '<p style="color:#dfe7f5;margin:0 0 0.4rem">You are about to begin your journey with:</p>' +
+      '<div style="font-family:\'Cinzel\',serif;font-size:1.3rem;color:#ffd166;margin-bottom:1.1rem">' + escapeHtml(d.name || 'Starter Deck') + '</div>' +
+      '<div style="display:flex;gap:0.7rem;justify-content:center;flex-wrap:wrap">' +
+        '<button class="onb-btn onb-btn-primary" id="onb-confirm-yes">Confirm</button>' +
+        '<button class="onb-btn onb-btn-ghost" id="onb-confirm-no">Choose Another Deck</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(bd);
+  const close = () => { try { bd.remove(); } catch (e) {} };
+  bd.addEventListener('click', (e) => { if (e.target === bd) close(); });
+  document.getElementById('onb-confirm-no').onclick = close;
+  document.getElementById('onb-confirm-yes').onclick = () => {
+    close();
+    try {
+      if (Onboarding._adminPreview) { try { showToast('👑 Preview only — no deck granted.', 2600); } catch (e) {} }
+      else if (typeof grantStarterDeckToPlayer === 'function') {
+        grantStarterDeckToPlayer(d, { markPicked: true });
+        try { _ensureOnboardingState(); Profile.onboarding.deckId = String(d.id); saveProfile && saveProfile(); } catch (e) {}
+      }
+    } catch (e) { try { console.warn('[onboarding] grant failed', e); } catch (_) {} }
+    _onbAdvance('tutorialOffer');
+  };
+}
+
+function _onbRenderPreview() {
+  const d = _onbDeckById(Onboarding._previewDeckId);
+  if (!d) return;
+  let cardsHtml = '';
+  try {
+    const names = (d.cards || []).map(key => {
+      try { const c = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null; return c ? (c.name || key) : key; } catch (e) { return key; }
+    });
+    const counts = {}; names.forEach(n => counts[n] = (counts[n] || 0) + 1);
+    cardsHtml = Object.keys(counts).slice(0, 60).map(n => '<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 8px;border-bottom:1px solid rgba(255,255,255,0.06)"><span>' + escapeHtml(n) + '</span><span class="ink-dim">×' + counts[n] + '</span></div>').join('');
+  } catch (e) {}
+  const bd = document.createElement('div');
+  bd.className = 'onb-modal-bd';
+  bd.innerHTML =
+    '<div class="onb-modal" style="width:min(92vw,520px);text-align:left">' +
+      '<h2 class="onb-title" style="font-size:1.3rem;text-align:center">' + escapeHtml(d.name || 'Starter Deck') + '</h2>' +
+      '<div class="ink-dim small-text" style="text-align:center;margin-bottom:0.6rem">' + ((d.cards || []).length) + ' cards</div>' +
+      '<div style="max-height:50vh;overflow:auto;border:1px solid rgba(255,255,255,0.1);border-radius:10px">' + (cardsHtml || '<div class="ink-dim" style="padding:1rem;text-align:center">Card list unavailable.</div>') + '</div>' +
+      '<div style="display:flex;gap:0.7rem;justify-content:center;margin-top:1rem">' +
+        '<button class="onb-btn onb-btn-primary" id="onb-prev-pick">Select This Deck</button>' +
+        '<button class="onb-btn onb-btn-ghost" id="onb-prev-close">Close</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(bd);
+  const close = () => { try { bd.remove(); } catch (e) {} };
+  bd.addEventListener('click', (e) => { if (e.target === bd) close(); });
+  document.getElementById('onb-prev-close').onclick = close;
+  document.getElementById('onb-prev-pick').onclick = () => { close(); Onboarding._confirmDeckId = String(d.id); _onbRenderConfirm(); };
+}
+
+// ---- Step 4: Tutorial offer ----
+function _onbRenderTutorialOffer() {
+  _onbRoot(
+    '<div class="onb-screen" style="background:radial-gradient(ellipse at 50% 30%,#162038,#070b16 70%,#04030a)">' +
+      '<div class="onb-card onb-fade" style="max-width:620px">' +
+        '<div style="font-size:3rem;margin-bottom:0.4rem">🎖️</div>' +
+        '<h1 class="onb-title" style="font-size:clamp(1.5rem,4vw,2.6rem)">Learn How To Play?</h1>' +
+        '<div class="onb-narr">Would you like <strong>Commander Athena</strong> to teach you the basics of Mythic Spellbook? The tutorial covers Card Types, Playing Cards, Threat Levels, Combat, Movement, Winning Matches, Rewards, and the Economy.</div>' +
+        '<div class="onb-actions">' +
+          '<button class="onb-btn onb-btn-primary" id="onb-tut-start">📜 Start Tutorial</button>' +
+          '<button class="onb-btn onb-btn-ghost" id="onb-tut-skip">Skip Tutorial</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+  document.getElementById('onb-tut-start').onclick = () => {
+    if (Onboarding._adminPreview) { _onbAdvance('menuTour'); return; }
+    // Launch the existing scripted tutorial battle; resume onboarding (menu tour)
+    // when the player returns to the menu afterward.
+    Onboarding._awaitTut = true;
+    Onboarding.step = 'tutorial';
+    try { _ensureOnboardingState(); Profile.onboarding.step = 'tutorial'; saveProfile && saveProfile(); } catch (e) {}
+    try {
+      Profile.tutorialComplete = false;
+      App.tutorial = { active: true, step: 0 };
+      App._tutorialUnitPlayed = false;
+      App._tutorialWelcomeDismissed = true;
+      const chId = 'ch1', nodeId = 'ch1_1';
+      if (typeof getCampaignNode === 'function' && getCampaignNode(chId, nodeId)) {
+        App.activeCampaignNode = { chapterId: chId, nodeId };
+      }
+      App.screen = 'deckSelect';
+      render();
+    } catch (e) { _onbAdvance('menuTour'); }
+  };
+  document.getElementById('onb-tut-skip').onclick = () => {
+    try { Profile.tutorialComplete = true; saveProfile && saveProfile(); } catch (e) {}
+    _onbAdvance('skipMsg');
+  };
+}
+
+// ---- Step 6: Skip-tutorial message ----
+function _onbRenderSkipMsg() {
+  _onbRoot(
+    '<div class="onb-screen" style="background:radial-gradient(ellipse at 50% 30%,#162038,#070b16 70%,#04030a)">' +
+      '<div class="onb-card onb-fade" style="max-width:560px">' +
+        '<div style="font-size:2.6rem;margin-bottom:0.4rem">👍</div>' +
+        '<h1 class="onb-title" style="font-size:clamp(1.4rem,3.6vw,2.2rem)">No problem.</h1>' +
+        '<div class="onb-narr">You can access the tutorial at any time from the Help menu. Let’s take a quick look around your new home.</div>' +
+        '<div class="onb-actions"><button class="onb-btn onb-btn-primary" id="onb-skip-next">Continue →</button></div>' +
+      '</div>' +
+    '</div>'
+  );
+  document.getElementById('onb-skip-next').onclick = () => _onbAdvance('menuTour');
+}
+
+// ---- Step 7: Main-menu guided tour ----
+function _onbRenderMenuTour() {
+  if (Onboarding._tourIdx == null || Onboarding._tourIdx < 0) Onboarding._tourIdx = 0;
+  const i = Math.min(Onboarding._tourIdx, ONB_MENU_TOUR.length - 1);
+  const item = ONB_MENU_TOUR[i];
+  const dots = ONB_MENU_TOUR.map((_, k) => '<span class="onb-dot ' + (k === i ? 'on' : '') + '"></span>').join('');
+  const isLast = (i >= ONB_MENU_TOUR.length - 1);
+  _onbRoot(
+    '<div class="onb-screen" style="background:radial-gradient(ellipse at 50% 25%,#141a30,#070a14 70%,#04030a)">' +
+      '<button class="onb-btn onb-btn-ghost onb-skip" id="onb-tour-skip" style="padding:0.4rem 0.9rem;font-size:0.85rem">Skip Tour</button>' +
+      '<div class="onb-card onb-fade" style="max-width:560px">' +
+        '<div class="ink-dim small-text" style="letter-spacing:0.12em;text-transform:uppercase">Main Menu Tour · ' + (i + 1) + ' / ' + ONB_MENU_TOUR.length + '</div>' +
+        '<div style="font-size:3.4rem;margin:0.6rem 0">' + item.icon + '</div>' +
+        '<h1 class="onb-title" style="font-size:clamp(1.5rem,4vw,2.4rem)">' + escapeHtml(item.name) + '</h1>' +
+        '<div class="onb-narr">' + escapeHtml(item.desc) + '</div>' +
+        '<div class="onb-dots">' + dots + '</div>' +
+        '<div class="onb-actions">' +
+          (i > 0 ? '<button class="onb-btn onb-btn-ghost" id="onb-tour-back">← Back</button>' : '') +
+          '<button class="onb-btn onb-btn-primary" id="onb-tour-next">' + (isLast ? 'Finish Tour →' : 'Continue →') + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+  const back = document.getElementById('onb-tour-back');
+  if (back) back.onclick = () => { Onboarding._tourIdx = Math.max(0, i - 1); _onbRenderMenuTour(); };
+  document.getElementById('onb-tour-next').onclick = () => {
+    if (isLast) { Onboarding._tourIdx = 0; _onbAdvance('complete'); }
+    else { Onboarding._tourIdx = i + 1; _onbRenderMenuTour(); }
+  };
+  document.getElementById('onb-tour-skip').onclick = () => { Onboarding._tourIdx = 0; _onbAdvance('complete'); };
+}
+
+// ---- Step 8: Completion ----
+function _onbRenderComplete() {
+  _onbRoot(
+    '<div class="onb-screen" style="background:radial-gradient(ellipse at 50% 30%,#241a4a,#0a0518 65%,#04030a)">' +
+      '<div class="onb-card onb-fade" style="max-width:620px">' +
+        '<div style="font-size:3.4rem;margin-bottom:0.4rem">✨</div>' +
+        '<h1 class="onb-title">Welcome To Ethos Heights</h1>' +
+        '<div class="onb-narr">' +
+          '<p>Your journey begins now.</p>' +
+          '<p>Explore the world. Build your collection. Create your story.</p>' +
+          '<p style="color:#ffd166">Good luck, survivor.</p>' +
+        '</div>' +
+        '<div class="onb-actions"><button class="onb-btn onb-btn-primary" id="onb-begin" style="font-size:1.15rem;padding:0.85rem 2rem">⚔️ Begin Adventure</button></div>' +
+      '</div>' +
+    '</div>'
+  );
+  try { _speakOnb('Your journey begins now. Good luck, survivor.'); } catch (e) {}
+  document.getElementById('onb-begin').onclick = () => { try { playSfx && playSfx('victory'); } catch (e) {} _onbFinish(); };
+}
+
+// Admin: launch a non-destructive preview of the whole flow.
+function onbAdminPreview() {
+  Onboarding._adminPreview = true;
+  Onboarding._tourIdx = 0;
+  Onboarding._narrated = false;
+  Onboarding.step = 'welcome';
+  App.screen = 'onboarding';
+  try { render(); } catch (e) {}
+}
+
+// ---- 👑 ADMIN ONBOARDING PANEL (Forge tab) ----
+function renderForgeOnboarding() {
+  const cfg = _onbCfg();
+  const f = (Forge.onboarding && typeof Forge.onboarding === 'object') ? Forge.onboarding : {};
+  const enabled = f.enabled !== false;        // default ON
+  const voice = f.voice !== false;
+  const img = f.image || App._onbImg || '';
+  const imgPreview = img
+    ? '<div style="margin-top:8px"><img src="' + escapeHtml(img) + '" alt="" style="max-width:100%;max-height:200px;border-radius:10px;border:1px solid rgba(255,209,102,0.4)"></div>'
+    : '<div class="ink-dim small-text" style="margin-top:6px">No image set — players see a default gradient.</div>';
+  return '' +
+    '<div class="settings-section" style="max-width:760px;margin:0 auto">' +
+      '<div class="settings-section-title">🎓 New-Player Onboarding</div>' +
+      '<div class="placement-hint" style="margin-bottom:14px">Controls the cinematic first-run experience every brand-new player sees: welcome screen → starter-deck pick → tutorial offer → main-menu tour. Changes publish to <strong>all players</strong>.</div>' +
+
+      '<label style="display:flex;align-items:center;gap:10px;margin:10px 0;font-size:0.95rem">' +
+        '<input type="checkbox" id="onb-adm-enabled" ' + (enabled ? 'checked' : '') + '> <span>✅ Onboarding <strong>enabled</strong> for new players</span></label>' +
+      '<label style="display:flex;align-items:center;gap:10px;margin:10px 0;font-size:0.95rem">' +
+        '<input type="checkbox" id="onb-adm-voice" ' + (voice ? 'checked' : '') + '> <span>🔊 Voice-over narration (browser text-to-speech)</span></label>' +
+
+      '<label style="display:flex;flex-direction:column;gap:4px;margin:14px 0;font-size:0.72rem;color:#bfae87">WELCOME TITLE' +
+        '<input type="text" id="onb-adm-title" value="' + escapeHtml(cfg.title) + '" style="font-size:0.95rem;padding:8px;border-radius:8px;border:1px solid rgba(255,209,102,0.4);background:rgba(0,0,0,0.35);color:#f6e8c8"></label>' +
+
+      '<label style="display:flex;flex-direction:column;gap:4px;margin:14px 0;font-size:0.72rem;color:#bfae87">NARRATION TEXT (blank line = new paragraph; also read aloud)' +
+        '<textarea id="onb-adm-narr" rows="9" style="font-size:0.9rem;padding:10px;border-radius:8px;border:1px solid rgba(255,209,102,0.4);background:rgba(0,0,0,0.35);color:#e8eefc;line-height:1.5;resize:vertical">' + escapeHtml(cfg.narration) + '</textarea></label>' +
+
+      '<div style="margin:14px 0">' +
+        '<div style="font-size:0.72rem;color:#bfae87;margin-bottom:6px">WELCOME IMAGE (fills the screen behind the title)</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+          '<input type="file" id="onb-adm-imgfile" accept="image/*" style="font-size:0.85rem">' +
+          '<button class="btn-secondary btn-mini" id="onb-adm-imgclear">✕ Clear image</button>' +
+        '</div>' +
+        '<input type="text" id="onb-adm-imgurl" placeholder="…or paste an image URL" value="' + escapeHtml((img && img.indexOf('data:') !== 0) ? img : '') + '" style="margin-top:8px;width:100%;font-size:0.85rem;padding:7px;border-radius:8px;border:1px solid rgba(255,209,102,0.4);background:rgba(0,0,0,0.35);color:#f6e8c8">' +
+        '<div id="onb-adm-imgprev">' + imgPreview + '</div>' +
+      '</div>' +
+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:18px">' +
+        '<button class="btn-primary" id="onb-adm-save">💾 Save & Publish to All Players</button>' +
+        '<button class="btn-secondary" id="onb-adm-preview">👁 Preview Flow</button>' +
+        '<button class="btn-secondary" id="onb-adm-reset">↩ Reset MY onboarding (re-test)</button>' +
+      '</div>' +
+      '<div class="ink-dim small-text" style="margin-top:12px">🃏 Starter decks (and their names like “Brave Survivor”, “Magic Burst”, “Striking Shadows”) are configured in the <strong>🃏 Decks</strong> tab and Settings → Starter Decks. The onboarding shows whatever starter decks are published.</div>' +
+      '<div class="ink-dim small-text" style="margin-top:8px">↩ To reset onboarding for a SPECIFIC player, have them sign in and clear it, or run <code>window._resetOnboarding()</code> in their console.</div>' +
+    '</div>';
+}
+
+function bindForgeOnboarding() {
+  const fileInp = document.getElementById('onb-adm-imgfile');
+  if (fileInp) fileInp.onchange = () => {
+    const fl = fileInp.files && fileInp.files[0];
+    if (!fl) return;
+    if (fl.size > 4 * 1024 * 1024) { try { showToast('⚠ Image too large (max ~4MB). Use a URL for big images.', 4200); } catch (e) {} return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      App._onbImg = reader.result;
+      const prev = document.getElementById('onb-adm-imgprev');
+      if (prev) prev.innerHTML = '<div style="margin-top:8px"><img src="' + escapeHtml(App._onbImg) + '" alt="" style="max-width:100%;max-height:200px;border-radius:10px;border:1px solid rgba(255,209,102,0.4)"></div>';
+    };
+    try { reader.readAsDataURL(fl); } catch (e) {}
+  };
+  const clearBtn = document.getElementById('onb-adm-imgclear');
+  if (clearBtn) clearBtn.onclick = () => {
+    App._onbImg = '';
+    const url = document.getElementById('onb-adm-imgurl'); if (url) url.value = '';
+    const prev = document.getElementById('onb-adm-imgprev'); if (prev) prev.innerHTML = '<div class="ink-dim small-text" style="margin-top:6px">No image set — players see a default gradient.</div>';
+  };
+  const save = document.getElementById('onb-adm-save');
+  if (save) save.onclick = () => {
+    const enabled = !!(document.getElementById('onb-adm-enabled') || {}).checked;
+    const voice   = !!(document.getElementById('onb-adm-voice') || {}).checked;
+    const title   = ((document.getElementById('onb-adm-title') || {}).value || '').trim();
+    const narr    = ((document.getElementById('onb-adm-narr') || {}).value || '').trim();
+    const urlVal  = ((document.getElementById('onb-adm-imgurl') || {}).value || '').trim();
+    // Image precedence: a freshly-loaded file (App._onbImg) wins, else the URL field.
+    const image = (typeof App._onbImg === 'string' && App._onbImg) ? App._onbImg : urlVal;
+    Forge.onboarding = { enabled: enabled, voice: voice, title: title, narration: narr, image: image };
+    App._onbImg = undefined;
+    try { saveForge && saveForge(); } catch (e) {}
+    try {
+      if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0);
+      else if (typeof cloudPublishCatalog === 'function') cloudPublishCatalog();
+    } catch (e) {}
+    try { showToast('✅ Onboarding saved — publishing to all players…', 3200); } catch (e) {}
+  };
+  const prevBtn = document.getElementById('onb-adm-preview');
+  if (prevBtn) prevBtn.onclick = () => {
+    // Apply the current (unsaved) form values to a temp config for the preview.
+    const enabled = !!(document.getElementById('onb-adm-enabled') || {}).checked;
+    const voice   = !!(document.getElementById('onb-adm-voice') || {}).checked;
+    const title   = ((document.getElementById('onb-adm-title') || {}).value || '').trim();
+    const narr    = ((document.getElementById('onb-adm-narr') || {}).value || '').trim();
+    const urlVal  = ((document.getElementById('onb-adm-imgurl') || {}).value || '').trim();
+    const image = (typeof App._onbImg === 'string' && App._onbImg) ? App._onbImg : urlVal;
+    Forge.onboarding = { enabled: enabled || true, voice: voice, title: title, narration: narr, image: image };
+    onbAdminPreview();
+  };
+  const resetBtn = document.getElementById('onb-adm-reset');
+  if (resetBtn) resetBtn.onclick = () => {
+    try { Profile.onboarding = { complete: false, step: 'welcome' }; saveProfile && saveProfile(); } catch (e) {}
+    Onboarding.step = null; Onboarding._adminPreview = false; Onboarding._awaitTut = false; Onboarding._tourIdx = 0;
+    try { showToast('↩ Your onboarding will replay next time you are signed in as a non-admin / new player.', 4200); } catch (e) {}
+  };
+}
+// Console helper — reset onboarding for the current account (admin convenience).
+try { window._resetOnboarding = function () { try { Profile.onboarding = { complete: false, step: 'welcome' }; saveProfile && saveProfile(); } catch (e) {} Onboarding.step = null; Onboarding._adminPreview = false; Onboarding._awaitTut = false; try { console.info('[onboarding] reset — sign in as a non-admin new player to see it.'); } catch (e) {} }; } catch (e) {}
 
 // ============ DECK SELECT (deck-centric — one card per saved deck) ============
 // Lists every deck the player has built. Heroes with no saved decks still appear so the player
@@ -69890,6 +70502,7 @@ function renderForge() {
     { id: 'traders',    label: '🤝 Traders', count: 11 },
     { id: 'loadouts',   label: 'Loadouts',   count: Object.keys(Profile.equipment).filter(k => Profile.equipment[k] && Profile.equipment[k] !== 'none').length },
     { id: 'items',      label: '🎒 Items',   count: (Forge.customItems || []).filter(it => it && it.slot !== 'relic').length },
+    { id: 'onboarding', label: '🎓 Onboarding', count: 0 },
   ];
   const tabsHtml = tabs.map(t => `<button class="forge-tab ${App.forgeTab === t.id ? 'active' : ''}" data-tab="${t.id}">${t.label}${t.count > 0 ? ` <span class="tab-count">${t.count}</span>` : ''}</button>`).join('');
 
@@ -69912,6 +70525,7 @@ function renderForge() {
   else if (App.forgeTab === 'traders') body = renderForgeTraders();
   else if (App.forgeTab === 'loadouts') body = renderForgeLoadouts();
   else if (App.forgeTab === 'items') body = renderForgeItems();
+  else if (App.forgeTab === 'onboarding') body = renderForgeOnboarding();
 
   root.innerHTML = `
     <div class="forge-page">
@@ -69964,6 +70578,7 @@ function renderForge() {
   else if (App.forgeTab === 'structureDecks') bindForgeStructureDecks();
   else if (App.forgeTab === 'traders') bindForgeTraders();
   else if (App.forgeTab === 'loadouts') bindForgeLoadouts();
+  else if (App.forgeTab === 'onboarding') bindForgeOnboarding();
 
   // 🔒 Obtainability toggles — wire the 🔨 / 🎁 / 👑 pills for every list row.
   //    Bound LAST so it overrides any tab-level click handlers above.

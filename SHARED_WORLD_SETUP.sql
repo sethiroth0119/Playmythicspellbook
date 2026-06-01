@@ -73,9 +73,52 @@ create policy rl_upd on public.resource_listings for update to authenticated usi
 drop policy if exists rl_del on public.resource_listings;
 create policy rl_del on public.resource_listings for delete to authenticated using (seller_id = auth.uid() and status = 'open');
 
+-- ── 3) WAR MAP — live node ownership + world feed ───────────────────────────
+-- Minimal, CLIENT-COMPATIBLE version: the game only reads/writes tw_ownership
+-- (who owns each node → the "lit" nodes) and tw_world_feed (the live field-
+-- reports). Deliberately NO foreign keys to tw_territories / tw_corporations —
+-- the client authors nodes in the Forge (not those tables), so strict FKs would
+-- silently reject every ownership write. owner_corp_id / corp_id are plain text
+-- so any corp id the client sends round-trips cleanly.
+create table if not exists public.tw_ownership (
+  node_id          text primary key,
+  owner_corp_id    text,
+  captured_at      timestamptz default now(),
+  last_collect_at  timestamptz,
+  stability        integer default 100,
+  clears_applied   integer default 0,
+  under_attack     boolean default false,
+  contested        boolean default false,
+  destroyed        boolean default false,
+  meta             jsonb default '{}'::jsonb,
+  updated_at       timestamptz default now()
+);
+alter table public.tw_ownership enable row level security;
+drop policy if exists two_sel on public.tw_ownership;
+create policy two_sel on public.tw_ownership for select to authenticated using (true);
+drop policy if exists two_write on public.tw_ownership;
+create policy two_write on public.tw_ownership for all to authenticated using (true) with check (true);
+
+create table if not exists public.tw_world_feed (
+  id      uuid primary key default gen_random_uuid(),
+  kind    text not null default 'event',
+  msg     text not null default '',
+  actor   uuid,
+  corp_id text,
+  node_id text,
+  at      timestamptz default now()
+);
+create index if not exists tw_feed_at on public.tw_world_feed (at desc);
+alter table public.tw_world_feed enable row level security;
+drop policy if exists twwf_sel on public.tw_world_feed;
+create policy twwf_sel on public.tw_world_feed for select to authenticated using (true);
+drop policy if exists twwf_ins on public.tw_world_feed;
+create policy twwf_ins on public.tw_world_feed for insert to authenticated with check (true);
+
 -- =============================================================================
--- ✅ DONE. Now go to: Database → Replication and toggle Realtime ON for
---    public.card_market_listings  and  public.resource_listings
--- so listings show up for other players instantly. (Without it, the market
--- still works but refreshes every ~30s instead of live.)
+-- ✅ DONE. Now go to: Database → Replication and toggle Realtime ON for:
+--    public.card_market_listings   public.resource_listings
+--    public.tw_ownership           public.tw_world_feed
+-- so listings + captures show up for other players instantly. (Without it,
+-- everything still works but refreshes on a slow poll instead of live.)
 -- =============================================================================

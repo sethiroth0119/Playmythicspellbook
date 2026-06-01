@@ -127512,10 +127512,13 @@ function renderDeckBuilder() {
   const GEM_CAP  = 5;
   const _sideCards = Profile.sideDeck.cards;
   const _sideCount = _sideCards.length;
-  // Side deck only applies to a player's OWN decks — when building an AI or
-  // starter deck (admin tools) the player's personal side deck is irrelevant,
-  // so it must NOT factor into the AI/starter deck's copy limits.
-  const _sideEnabled = !App.aiDeckEdit && !App.starterDeckEdit;
+  // Side deck applies to a player's OWN decks AND to admin-authored STARTER
+  // decks (so a starter deck can ship with its own side deck — captured on save
+  // and granted to new players who pick it). It stays OFF only for AI decks,
+  // which never use a side deck. Note: the starter builder reuses the shared
+  // Profile.sideDeck as its working surface (same path as a player deck); the
+  // starter save snapshots it, and editing a starter deck loads its side back in.
+  const _sideEnabled = !App.aiDeckEdit;
   const _sideCopiesOf = (key) => _sideEnabled ? _sideCards.filter(k => k === key).length : 0;
   const _sockedGems = Profile.socketedGems;
   const _totalGems = Object.values(_sockedGems).flat().filter(g => g && g !== '').length;

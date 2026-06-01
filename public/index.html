@@ -45730,13 +45730,23 @@ function openPack(packDef) {
   if (drawn.length > 0) addAccountXp(30, 'Pack Opened');
   return drawn;
 }
-function getMoveGemPrice(move) {
+// Raw cost-ladder default for a move's tutor price (before any admin override).
+function _moveBaseGemPrice(move) {
   if (!move) return 0;
   const cost = move.cost || 0;
   // Tier price scaled out to cost-10 moves: 0→5, 1→10, 2→20, 3→35, 4→50,
   // 5→70, 6→95, 7→125, 8→160, 9→200, 10→250. Big high-cost moves are pricey.
   const ladder = [5, 10, 20, 35, 50, 70, 95, 125, 160, 200, 250];
   return ladder[Math.min(cost, ladder.length - 1)];
+}
+function getMoveGemPrice(move) {
+  if (!move) return 0;
+  const base = _moveBaseGemPrice(move);
+  // 💰 Admin can override any move's Tutor Shop price (edited inline in the Move
+  // Catalog → stored in Forge.priceOverrides under 'move:<id>:cinders'). Falls
+  // back to the cost-ladder default. Both the displayed price and the actual
+  // charge route through here, so they can never disagree.
+  return (typeof getEffectivePrice === 'function') ? getEffectivePrice('move', move.id, base, 'cinders') : base;
 }
 
 const STORAGE_KEYS = {
@@ -88739,6 +88749,9 @@ function renderTutor() {
     ? targets.find(t => (t.kind + ':' + t.id) === App.tutorTargetKey)
     : null;
   const filter = App.tutorFilter || 'all';
+  // 💰 Admins can edit each move's Tutor price inline (the price field becomes a
+  // number input). Edits save to Forge.priceOverrides and publish to all players.
+  const _isAdmTutor = (typeof isAdmin === 'function') && isAdmin();
 
   const filteredMoves = (() => {
     if (filter === 'attack') return allMoves.filter(m => m.kind === 'attack');
@@ -88762,7 +88775,11 @@ function renderTutor() {
           ${m.desc ? `<div class="tutor-move-desc">${escapeHtml(m.desc)}</div>` : ''}
         </div>
         <div class="tutor-move-buy">
-          <div class="tutor-price"><span class="cinder-icon"></span> ${price}</div>
+          <div class="tutor-price">
+            ${_isAdmTutor
+              ? `<span class="cinder-icon"></span> <input type="number" min="0" max="99999" step="1" class="tutor-price-edit" data-move-price="${escapeHtml(m.id)}" data-move-base="${_moveBaseGemPrice(m)}" value="${price}" title="Admin: set this move's Tutor price in Cinders (saves + publishes on change)" style="width:74px;background:rgba(20,16,30,0.9);border:1px solid rgba(212,175,55,0.55);color:#ffd166;font-weight:700;border-radius:4px;padding:2px 5px;text-align:right;font-family:'JetBrains Mono',monospace">`
+              : `<span class="cinder-icon"></span> ${price}`}
+          </div>
           ${known ? `<button class="btn-mini" disabled>Known</button>`
             : `<button class="btn-mini ${canBuy ? '' : 'btn-disabled'}" data-act="teach" data-move="${m.id}" ${canBuy ? '' : 'disabled'}>Teach</button>`}
         </div>
@@ -88856,6 +88873,30 @@ function renderTutor() {
       if (!selectedTarget) { showToast('Pick a recipient first'); return; }
       teachMoveToTarget(selectedTarget, el.dataset.move);
       render();
+    };
+  });
+  // 💰 Admin: edit a move's Tutor price inline. Writes to Forge.priceOverrides
+  // ('move:<id>:cinders'), saves, and publishes so every player sees the new
+  // price. Setting it back to the cost-ladder default removes the override. We
+  // deliberately DON'T re-render here so the admin's input keeps focus.
+  document.querySelectorAll('[data-move-price]').forEach(inp => {
+    inp.onclick = (e) => { e.stopPropagation(); };
+    inp.onchange = () => {
+      const id  = inp.dataset.movePrice;
+      const def = parseInt(inp.dataset.moveBase, 10);
+      const move = (typeof lookupMove === 'function') ? lookupMove(id) : null;
+      const raw = parseInt(inp.value, 10);
+      if (isNaN(raw) || raw < 0) { inp.value = move ? getMoveGemPrice(move) : (isNaN(def) ? 0 : def); return; }
+      const val = Math.max(0, Math.min(99999, raw));
+      if (!Forge.priceOverrides) Forge.priceOverrides = {};
+      const key = 'move:' + id + ':cinders';
+      const isDefault = !isNaN(def) && val === def;
+      if (isDefault) delete Forge.priceOverrides[key];
+      else Forge.priceOverrides[key] = val;
+      inp.value = val;
+      try { saveForge(); } catch (e) {}
+      try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {}
+      try { showToast(`💰 ${(move && move.name) || id} Tutor price → ${val} 🔥${isDefault ? ' (default)' : ''}`, 1800); } catch (e) {}
     };
   });
   // The pending-learn modal binding handles its own listeners

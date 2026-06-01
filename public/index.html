@@ -133059,7 +133059,10 @@ const NodeLevelUpAnimation = {
 function renderTerritoryWars() {
   // ⚠️ _isAdm must be function-scoped — it is used both inside the
   // nodeDrawerHtml IIFE and outside it in root.innerHTML (v86r fix).
-  const _isAdm = true; // War Map is already admin-gated so always true
+  // 🌐 War Map is now open to ALL players (view + attack/capture/collect — those
+  // gate on iOwn/corp, not this). _isAdm now ONLY governs map-EDITING controls
+  // (New Node / Publish / Admin tab / delete) so players can't alter the shared map.
+  const _isAdm = (typeof isAdmin === 'function') && isAdmin();
   // Immediately remove the global world-event banner — it is position:fixed
   // and overlaps the War Map HUD. mountWorldEventBanner() also guards against
   // re-mounting it while this screen is active (v46), but nuking it here on
@@ -133696,8 +133699,9 @@ function renderTerritoryWars() {
       ${objList.length ? `<div class="tw-nd-history-list">${objList.map(id=>{const def=TW_NODE_OBJECTIVES.find(o=>o.id===id);return `<div class="tw-nd-hist-row"><span class="tw-nd-hist-actor">${escapeHtml(def?`${def.icon} ${def.name}`:id)}</span></div>`;}).join('')}</div>` : '<div class="tw-nd-empty">Standard capture conditions.</div>'}
     `;
 
-    // Admin tab — War Map is already admin-gated so always show admin controls
-    const _isAdm = true;
+    // Admin tab — map-editing controls are admin-only (players get the map +
+    // attack/capture, never the New Node / delete / publish tools).
+    const _isAdm = (typeof isAdmin === 'function') && isAdmin();
     const adminHtml = _isAdm ? `
       <div class="tw-nd-section-hdr">— NODE IDENTITY</div>
       <div class="tw-admin-field-row">
@@ -133792,7 +133796,7 @@ function renderTerritoryWars() {
           ).join('')}
         </div>
         <div class="tw-top-bar-corp" style="display:flex;align-items:center;gap:0.6rem">
-          <button class="tw-new-node-btn" id="tw-admin-new-node">＋ New Node</button>
+          ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-new-node">＋ New Node</button>` : ''}
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-publish-map" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.55);color:#d4af37" title="Immediately push current node/route data to the website and all players">🌐 Publish Map</button>` : ''}
           ${myCorp ? `🏢 ${escapeHtml(myCorp.name)}` : '<span style="color:#5b6772">No corporation — view only</span>'}
         </div>

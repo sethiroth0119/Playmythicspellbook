@@ -113438,6 +113438,66 @@ function _covertStart(missionId, unitIds) {
   showToast(`🜂 ${def.name} deployed — ${Math.round(def.durMs / 3600000)}h until return.`);
   return true;
 }
+// 🖋 Procedurally-generated FIELD REPORT for a completed Covert Action. Builds
+// a randomized, world-flavored debrief from curated fragments so every
+// returning mission reads like its own little story — the ash, the corps, the
+// Resistance, ember-storms — and names the squad's own units in the action.
+// No two reports are identical. (Deterministic-free: uses Math.random at
+// collect time; the result is stored on the mission so it stays stable after.)
+function _covertGenerateReport(m) {
+  try {
+    if (!m) return '';
+    const pick = (a) => a[Math.floor(Math.random() * a.length)];
+    const names = (Array.isArray(m.unitIds) ? m.unitIds : []).map(uid => {
+      try { const c = (typeof lookupCustomCard === 'function') ? lookupCustomCard(uid) : null; return c && c.name ? c.name : null; } catch (e) { return null; }
+    }).filter(Boolean);
+    const lead = names[0] || 'The squad';
+    const team = names.length > 1
+      ? (lead + ' and ' + (names.length === 2 ? names[1] : (names.length - 1) + ' others'))
+      : lead;
+    const T = {
+      lead: lead, team: team,
+      place: pick(['the ash-choked underlevels','a collapsed transit spur','the old quarantine ring','a derelict cargo spine','the flooded substation','the cinder docks','a buried relay vault','the skeletal ruins of Sector 9','the black-glass wastes']),
+      threat: pick(['a corp security detail','a roaming scavver pack','an automated turret line','a rival Resistance cell','a swarm of drone sentries','a sudden ember-storm','a pack of feral mutts','a Dark Event patrol']),
+      corp: pick(['Ashford Munitions','Ironheart Mining','Petra Oil','Salvage Union','North Build Co','the Bank of Ethos','Woods Fishing Corp']),
+    };
+    const fill = (s) => ('' + s).replace(/\{(\w+)\}/g, (_, k) => (T[k] != null ? T[k] : ''));
+    const ARC = {
+      cv_resource: {
+        open:  ['{team} slipped into {place} under cover of ash-fall.', '{lead} cracked a {corp} supply line running through {place}.', 'The cache sat right where the broker swore it would — deep in {place}.'],
+        mid:   ['{threat} nearly pinned them at the chokepoint, but {lead} bought the squad ten seconds — enough.', 'Half the haul was slag, so they torched the rest before {threat} could trace the smoke.', 'A floor gave out under the weight; {lead} rigged a sled from scrap and dragged the crates clear.'],
+        close: ['They came home heavier than they left. The quartermaster is pleased.', 'Every crate accounted for. The Ring eats again tonight.', 'Clean lift, no tails. Textbook.'],
+      },
+      cv_intel: {
+        open:  ['{team} bugged a {corp} relay buried in {place}.', '{lead} ghosted past {corp} checkpoints into {place}.', 'The tap went live the moment {team} reached {place}.'],
+        mid:   ['{threat} swept the corridor twice; the squad held their breath in the dark and let them pass.', 'The feed was encrypted six ways — {lead} pulled the key off a courier in {place}.', 'A second cell was listening on the same line. {team} pulled out before either side noticed.'],
+        close: ['The chatter they carried back will save lives — maybe their own.', 'Names, dates, shipments — all of it now sits in the Ring’s ledger.', 'Whatever the corps are planning, we’ll see it coming now.'],
+      },
+      cv_cardhunt: {
+        open:  ['{team} swept the ruined archives beneath {place}.', '{lead} followed a dead courier’s map into {place}.', 'The vault doors in {place} hadn’t opened in a decade — until tonight.'],
+        mid:   ['{threat} guarded the prize; {lead} drew them off while the others worked the locks.', 'Most of the relics were ash, but one case had survived the burn intact.', 'The find was heavier than expected. {team} took turns carrying it out of {place}.'],
+        close: ['Something worth keeping came home tonight.', 'The Forge will want a look at this one.', 'Recovered, catalogued, and ours.'],
+      },
+      cv_recruit: {
+        open:  ['{team} worked the camps and corp-towns past {place}.', '{lead} spent days earning trust in {place}.', 'Word of the Resistance travels; {team} followed it into {place}.'],
+        mid:   ['{threat} had informants everywhere — one wrong word and it would have gone loud.', 'Not everyone could be trusted; {lead} cut two contacts loose before they turned.', 'A {corp} press-gang nearly swept the whole meet. {team} scattered and regrouped.'],
+        close: ['New hands, new eyes, and fresh debts owed to the Ring.', 'The network is wider tonight than it was a fortnight ago.', 'Contacts established. The cause grows.'],
+      },
+    };
+    const arc = ARC[m.missionId] || ARC.cv_resource;
+    const parts = [fill(pick(arc.open)), fill(pick(arc.mid)), fill(pick(arc.close))];
+    // Occasional extra "color" beat for variety.
+    if (Math.random() < 0.45) {
+      parts.splice(2, 0, fill(pick([
+        'The {threat} never saw them.', 'An ember-storm rolled in and swallowed their exit.',
+        '{lead} took a graze but waved it off.', 'They left nothing behind but boot prints in the ash.',
+        'One of the squad swears they heard the {corp} alarm too late to matter.',
+      ])));
+    }
+    return parts.join(' ');
+  } catch (e) { return ''; }
+}
+
 function _covertCollect(missionInstanceId) {
   const list = _covertList();
   const m = list.find(x => x.id === missionInstanceId);
@@ -113503,6 +113563,9 @@ function _covertCollect(missionInstanceId) {
   m.collected = true;
   m.collectedAt = Date.now();
   m.reward = payout;
+  // 🖋 Generate the world-flavored field report once, at collect time, and
+  // stash it so the debrief modal reads the same text on every re-render.
+  try { m.report = _covertGenerateReport(m); } catch (e) { m.report = ''; }
   // Keep the last 20 in history.
   Profile.covertActionHistory = Profile.covertActionHistory || [];
   Profile.covertActionHistory.unshift({ ...m });
@@ -113516,6 +113579,21 @@ function _covertCollect(missionInstanceId) {
 
 function renderResistanceRing() {
   if (!Array.isArray(Profile.covertActions)) Profile.covertActions = [];
+  // 🜂 AUTO-DEBRIEF ON ARRIVAL — any mission whose real-time timer has elapsed
+  // is collected automatically and queued, so a Mission Debrief modal greets
+  // the player the moment they walk in (no manual "Collect" click needed). The
+  // rewards still apply exactly as the manual path; this just surfaces them.
+  if (!App._covertResult) {
+    const _readyNow = _covertActive().filter(mm => mm && mm.endsAt <= Date.now());
+    if (_readyNow.length) {
+      App._covertResultQueue = App._covertResultQueue || [];
+      for (const rm of _readyNow) {
+        const _r = _covertCollect(rm.id);
+        if (_r) App._covertResultQueue.push(_r);
+      }
+      if (App._covertResultQueue.length) App._covertResult = App._covertResultQueue.shift();
+    }
+  }
   const active = _covertActive();
   const ready = active.filter(m => m.endsAt <= Date.now());
   // Build a quick unit picker — list owned units that aren't already locked.
@@ -113635,20 +113713,22 @@ function renderResistanceRing() {
         const durH  = Math.floor(durMs / 3600000);
         const durM  = Math.floor((durMs % 3600000) / 60000);
         const durStr = durH > 0 ? `${durH}h ${durM}m` : `${durM}m`;
-        // Determine success flavour by mission type.
-        const flavour = {
+        // 🖋 Use the procedurally-generated field report; fall back to a static
+        // per-mission line for any legacy/queued result that predates it.
+        const flavour = res.report || ({
           cv_resource: 'Cache located and stripped clean. Assets secured.',
           cv_intel:    'Surveillance complete. Intelligence extracted.',
           cv_cardhunt: 'Archives swept. Something useful recovered.',
           cv_recruit:  'Contacts made. Networks expanded.',
-        }[res.missionId] || 'Squad returned safely.';
+        }[res.missionId] || 'Squad returned safely.');
+        const _moreQueued = (App._covertResultQueue && App._covertResultQueue.length) || 0;
         return `
           <div class="modal-backdrop" id="cr-debrief-bd" style="z-index:1400">
             <div class="ds-modal cr-debrief-modal">
               <div class="cr-debrief-header">
                 <span class="cr-debrief-icon">${escapeHtml(res.missionIcon || '🜂')}</span>
                 <div>
-                  <div class="cr-debrief-title">Mission Debrief</div>
+                  <div class="cr-debrief-title">📨 Mission Debrief${_moreQueued ? ` <span style="font-size:0.72rem;font-weight:600;color:#9be0c4;letter-spacing:0.04em">+${_moreQueued} more to review</span>` : ''}</div>
                   <div class="cr-debrief-mission-name">${escapeHtml(res.missionName || 'Covert Action')}</div>
                 </div>
               </div>
@@ -113665,7 +113745,7 @@ function renderResistanceRing() {
                 <div class="cr-debrief-reward-label">📦 Rewards Collected</div>
                 <div class="cr-debrief-reward-value">${escapeHtml(res.reward || 'No reward data.')}</div>
               </div>
-              <button class="btn-primary" id="cr-debrief-close" style="width:100%;margin-top:4px">✓ Acknowledged</button>
+              <button class="btn-primary" id="cr-debrief-close" style="width:100%;margin-top:4px">${_moreQueued ? '→ Next Report' : '✓ Acknowledged'}</button>
             </div>
           </div>`;
       })()}
@@ -113673,10 +113753,17 @@ function renderResistanceRing() {
   `;
   document.getElementById('app').innerHTML = html;
   document.getElementById('cr-back').onclick = () => { App.screen = 'camp'; render(); };
+  // Advance through the debrief queue — show the next completed mission's
+  // report, or close the modal when none remain.
+  const _covertAdvanceDebrief = () => {
+    if (App._covertResultQueue && App._covertResultQueue.length) App._covertResult = App._covertResultQueue.shift();
+    else App._covertResult = null;
+    render();
+  };
   const _debriefClose = document.getElementById('cr-debrief-close');
-  if (_debriefClose) _debriefClose.onclick = () => { App._covertResult = null; render(); };
+  if (_debriefClose) _debriefClose.onclick = _covertAdvanceDebrief;
   const _debriefBd = document.getElementById('cr-debrief-bd');
-  if (_debriefBd) _debriefBd.onclick = (e) => { if (e.target === _debriefBd) { App._covertResult = null; render(); } };
+  if (_debriefBd) _debriefBd.onclick = (e) => { if (e.target === _debriefBd) _covertAdvanceDebrief(); };
   document.querySelectorAll('[data-cv-pick]').forEach(b => b.onclick = () => {
     const id = b.dataset.cvPick;
     const arr = App._covertPicked = App._covertPicked || [];

@@ -152,12 +152,37 @@ language sql security definer set search_path = public, pg_temp as $$
 $$;
 grant execute on function public.usage_top(text, int, int) to anon, authenticated;
 
+-- ── 5) LIVE SHARED CRASH/EXCHANGE PRICES ─────────────────────────────────────
+-- One row per tradable asset (resource / corp / currency / channel id). Every
+-- player's confirmed buy or sell upserts the new current price + 24h volume, so
+-- the WHOLE exchange moves together for everyone in real time. The deterministic
+-- base price is computed client-side (identical for all players); only the live
+-- `current_px` / `volume24h` travel through the cloud. Not money — it's a game
+-- economy — so any signed-in player may move prices by trading (write = true);
+-- last-writer-wins on the upsert is intentional and safe.
+create table if not exists public.cx_prices (
+  asset_id    text primary key,
+  current_px  double precision not null default 0,
+  volume24h   integer not null default 0,
+  last_dir    integer default 0,
+  last_reason text,
+  updated_by  uuid,
+  updated_at  timestamptz default now()
+);
+alter table public.cx_prices enable row level security;
+drop policy if exists cxp_sel on public.cx_prices;
+create policy cxp_sel on public.cx_prices for select to authenticated using (true);
+drop policy if exists cxp_write on public.cx_prices;
+create policy cxp_write on public.cx_prices for all to authenticated using (true) with check (true);
+
 -- =============================================================================
 -- ✅ DONE. Now go to: Database → Replication and toggle Realtime ON for:
 --    public.card_market_listings   public.resource_listings
 --    public.tw_ownership           public.tw_world_feed
--- so listings + captures show up for other players instantly. (Without it,
--- everything still works but refreshes on a slow poll instead of live.)
+--    public.cx_prices
+-- so listings + captures + live exchange prices show up for other players
+-- instantly. (Without it, everything still works but refreshes on a slow poll
+-- instead of live.)
 -- (usage_events is aggregated on read via the usage_top RPC — no Realtime
 -- toggle needed for it.)
 -- =============================================================================

@@ -116993,6 +116993,136 @@ function getCrashExchange() {
 }
 
 // ============================================================================
+// 🌐 LIVE SHARED CRASH/EXCHANGE PRICES — every player's buys & sells move the
+// SAME prices for everyone, in real time.
+// ----------------------------------------------------------------------------
+// A cloud row per asset (public.cx_prices) holds the current price + 24h
+// volume. Every confirmed trade upserts the new price (debounced ~0.9s, batched
+// up to 20 ids) and a Realtime channel merges OTHER players' moves in live.
+// The deterministic base price (_cxBasePrice) stays local so each player agrees
+// on it; only `current` / `volume24h` travel through the cloud. The cloud value
+// is the shared truth, clamped to the same MIN/MAX band as the local engine.
+//
+// Fully fallback-safe & additive: offline, signed-out, or before the SQL is
+// run, the local Forge.crashExchange ledger drives everything EXACTLY as
+// before — nothing here removes or changes the existing local behaviour.
+// ============================================================================
+const CXCloud = { channel: null, rt: false, pulledAt: 0, pushQueue: {}, flushTimer: null, _mutedMissing: false, _rerenderT: null };
+
+function _cxCloudReady() {
+  return !!(typeof initCloud === 'function' && initCloud() && typeof Cloud !== 'undefined' && Cloud.ready && Cloud.client &&
+            Profile.cloud && Profile.cloud.signedIn && Profile.cloud.userId);
+}
+
+// Merge one cloud row into the local ledger. Cloud `current` wins (shared truth);
+// base stays local & deterministic so delta24h recomputes correctly. Returns
+// true if the local price actually changed.
+function _cxCloudMergeRow(row) {
+  if (!row || !row.asset_id) return false;
+  try {
+    const cx = getCrashExchange();
+    const id = row.asset_id;
+    const base = _cxBasePrice(id);
+    if (!cx.prices[id]) cx.prices[id] = { base, current: base, delta24h: 0, lastTick: Date.now(), volume24h: 0 };
+    const p = cx.prices[id];
+    if (typeof p.base !== 'number' || !p.base) p.base = base;
+    const cur = +row.current_px;
+    if (!isFinite(cur) || cur <= 0) return false;
+    const clamped = Math.max(p.base * CX_PRICE_MIN_FACTOR, Math.min(p.base * CX_PRICE_MAX_FACTOR, cur));
+    const changed = Math.abs((p.current || 0) - clamped) > 0.0001;
+    p.current = clamped;
+    p.delta24h = ((p.current - p.base) / p.base) * 100;
+    p.volume24h = Math.max(p.volume24h | 0, row.volume24h | 0);
+    return changed;
+  } catch (e) { return false; }
+}
+
+// Queue a price push (debounced + batched). Called from bump/drop AFTER the
+// local price has already moved, so getMarketPrice(id).current is the new px.
+function cxCloudQueuePush(id, reason, dir) {
+  if (!id || !_cxCloudReady()) return;
+  try {
+    const p = getMarketPrice(id);
+    CXCloud.pushQueue[id] = {
+      asset_id:   id,
+      current_px: +(+p.current).toFixed(4),
+      volume24h:  p.volume24h | 0,
+      last_dir:   dir > 0 ? 1 : (dir < 0 ? -1 : 0),
+      last_reason: String(reason || '').slice(0, 24),
+    };
+  } catch (e) { return; }
+  if (Object.keys(CXCloud.pushQueue).length >= 20) { _cxCloudFlush(); }
+  else if (!CXCloud.flushTimer) { CXCloud.flushTimer = setTimeout(_cxCloudFlush, 900); }
+}
+
+async function _cxCloudFlush() {
+  if (CXCloud.flushTimer) { try { clearTimeout(CXCloud.flushTimer); } catch (e) {} CXCloud.flushTimer = null; }
+  const ids = Object.keys(CXCloud.pushQueue);
+  if (!ids.length) return;
+  if (!_cxCloudReady()) { CXCloud.pushQueue = {}; return; }
+  const me = Profile.cloud.userId;
+  const rows = ids.map(id => Object.assign({}, CXCloud.pushQueue[id], { updated_by: me }));
+  CXCloud.pushQueue = {};
+  try {
+    const { error } = await Cloud.client.from('cx_prices').upsert(rows, { onConflict: 'asset_id' });
+    if (error && !CXCloud._mutedMissing && /does not exist|relation .*cx_prices/i.test(error.message || '')) {
+      CXCloud._mutedMissing = true;
+      try { console.info('[cx_prices] migration not applied yet — live shared exchange prices disabled until SQL is run.'); } catch (_) {}
+    }
+  } catch (e) { /* network blip — drop, prices re-sync on next trade */ }
+}
+
+// Pull every shared price and merge into the local ledger. Throttled to once
+// per 20s unless forced. Re-renders the exchange if the operator is on it.
+async function cxCloudPullAll(force) {
+  if (!_cxCloudReady()) return;
+  if (!force && (Date.now() - CXCloud.pulledAt) < 20000) return;
+  CXCloud.pulledAt = Date.now();
+  try {
+    const { data, error } = await Cloud.client.from('cx_prices')
+      .select('asset_id,current_px,volume24h,updated_at').limit(1000);
+    if (error) {
+      if (!CXCloud._mutedMissing && /does not exist|relation .*cx_prices/i.test(error.message || '')) {
+        CXCloud._mutedMissing = true;
+        try { console.info('[cx_prices] migration not applied yet — live shared exchange prices disabled until SQL is run.'); } catch (_) {}
+      }
+      return;
+    }
+    if (!Array.isArray(data) || !data.length) return;
+    let changed = false;
+    for (const row of data) { if (_cxCloudMergeRow(row)) changed = true; }
+    try { saveForge(); } catch (e) {}
+    if (changed && App.screen === 'crashExchange' && typeof render === 'function') render();
+  } catch (e) {}
+}
+
+// Subscribe to live price changes from other players.
+function cxCloudSubscribe() {
+  if (CXCloud.channel || !_cxCloudReady()) return;
+  try {
+    CXCloud.channel = Cloud.client.channel('cx-prices')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cx_prices' }, (payload) => {
+        const row = payload && payload.new;
+        if (!row || !row.asset_id) return;
+        // Skip our own echoes — local ledger is already current for those.
+        if (row.updated_by && Profile.cloud && row.updated_by === Profile.cloud.userId) return;
+        const changed = _cxCloudMergeRow(row);
+        if (!changed) return;
+        if (CXCloud._rerenderT) clearTimeout(CXCloud._rerenderT);
+        CXCloud._rerenderT = setTimeout(() => {
+          if (App.screen === 'crashExchange' && typeof render === 'function') render();
+        }, 350);
+      })
+      .subscribe((st) => { if (st === 'SUBSCRIBED') CXCloud.rt = true; });
+  } catch (e) { CXCloud.channel = null; }
+}
+function cxCloudUnsubscribe() {
+  if (CXCloud._rerenderT) { try { clearTimeout(CXCloud._rerenderT); } catch (e) {} CXCloud._rerenderT = null; }
+  if (CXCloud.channel) { try { CXCloud.channel.unsubscribe(); } catch (e) {} CXCloud.channel = null; }
+  CXCloud.rt = false;
+}
+
+// ============================================================================
 // 🏛 FOUNDATION RESERVE LIQUIDITY — anti-fraud market maker
 // ----------------------------------------------------------------------------
 // Each tradable resource has a finite reserve owned by the Foundation. Players
@@ -117161,6 +117291,9 @@ function bumpMarketPriceUp(id, qty, reason) {
   p.lastTick = Date.now();
   recordMarketTxn(id, qty, reason || 'buy', +1);
   try { saveForge(); } catch (e) {}
+  // 🌐 Live shared price — broadcast the new price so every player's exchange
+  // moves together. No-op when offline / signed out (local ledger still works).
+  try { cxCloudQueuePush(id, reason || 'buy', +1); } catch (e) {}
   return p.current;
 }
 
@@ -117177,6 +117310,8 @@ function dropMarketPriceDown(id, qty, reason) {
   p.lastTick = Date.now();
   recordMarketTxn(id, qty, reason || 'sell', -1);
   try { saveForge(); } catch (e) {}
+  // 🌐 Live shared price — broadcast the new (lower) price to every player.
+  try { cxCloudQueuePush(id, reason || 'sell', -1); } catch (e) {}
   return p.current;
 }
 
@@ -127142,6 +127277,9 @@ function renderTraderHub() {
 
 function renderCrashExchange() {
   tickMarketDecay();
+  // 🌐 Live shared prices — subscribe once + pull the shared ledger (throttled)
+  // so the operator sees prices moved by every other player, in real time.
+  try { cxCloudSubscribe(); cxCloudPullAll(); } catch (e) {}
   const cx = _cxEnsureHistory();
 
   // -------- 1. STATE --------

@@ -35907,7 +35907,10 @@ async function cloudFetchLeaderboard(force) {
     Leaderboard.error = (e && e.message) || 'fetch-failed';
   } finally {
     Leaderboard.fetching = false;
-    try { if (App.screen === 'leaderboard' && typeof render === 'function') render(); } catch (e) {}
+    // Re-render the screens that show live leaderboard/match data. This fires
+    // ONLY after a real fetch (the cache-hit early-returns above never reach
+    // this finally), so it can't loop with renderWagerHall's fire-and-forget call.
+    try { if ((App.screen === 'leaderboard' || App.screen === 'wagerHall') && typeof render === 'function') render(); } catch (e) {}
   }
 }
 
@@ -92353,13 +92356,18 @@ function renderWagerHall() {
   if (!Profile.wagers) Profile.wagers = { schedule: [], history: [], stats: { wagered: 0, won: 0, lost: 0, profit: 0 }, lastReseed: 0 };
   ensureWagerSchedule(false);
   // 🔴 Pull REAL live matches for the Live tab + collect any wager winnings.
+  // ⚠ FIRE-AND-FORGET ONLY. cloudFetchLeaderboard is async (always returns a
+  // Promise, even on a cache-hit early-return), so chaining .then(render) here
+  // caused an infinite render loop (render → fetch → resolve → render → …) that
+  // froze the screen. It re-renders the wagerHall itself from its own `finally`
+  // (which fires only after a REAL fetch, never on the cache-hit path).
+  try { if (typeof cloudFetchLeaderboard === 'function') cloudFetchLeaderboard(); } catch (e) {}
   try {
-    if (typeof cloudFetchLeaderboard === 'function') {
-      const _p = cloudFetchLeaderboard();
-      if (_p && _p.then) _p.then(() => { if (App.screen === 'wagerHall' && typeof render === 'function') render(); });
+    if (typeof mbSettleCompleted === 'function' && (Date.now() - (App._wagerLastSettle || 0) > 15000)) {
+      App._wagerLastSettle = Date.now();
+      mbSettleCompleted();
     }
   } catch (e) {}
-  try { if (typeof mbSettleCompleted === 'function') mbSettleCompleted(); } catch (e) {}
   try { (Leaderboard.liveMatches || []).forEach(m => { if (m && m.id && typeof mbFetchPool === 'function') mbFetchPool(m.id, false); }); } catch (e) {}
   const tab = App.wagerTab || 'live';
   const cinders = Profile.gems || 0;
@@ -92537,14 +92545,14 @@ function renderWagerHall() {
         title: '📖 How the Wager Hall works',
         tone: 'amber',
         steps: [
-          { title: 'Pick a fixture',
-            desc: 'The house schedules <strong>6 ghost matches</strong> every ${WAGER_RESEED_HOURS} hours. Each match has two champions with computed odds based on their levels.' },
-          { title: 'Place your wager',
-            desc: 'Click a champion to bet on them. Minimum <strong>50 <span class="cinder-icon"></span></strong>, maximum <strong>50,000 <span class="cinder-icon"></span></strong>. Higher odds = bigger payout if your pick wins.' },
-          { title: 'Resolve & cash out',
-            desc: 'Click <strong>🎬 Resolve Match</strong> to roll the result. Win and you collect <em>stake × odds</em>; lose and the house keeps it.' },
-          { title: 'Long-term economy',
-            desc: 'The <strong>6% house edge</strong> means random betting bleeds slowly. Bet smart on level mismatches to come out ahead over time. Cancel a placed bet for a full refund before resolving.' },
+          { title: 'Find a live match',
+            desc: 'The <strong>Live Matches</strong> tab lists real players battling in ranked multiplayer right now. Hit <strong>👀 Spectate &amp; Bet</strong> to drop into a match as a viewer.' },
+          { title: 'Watch & chat',
+            desc: 'You see <strong>both players’ hands</strong> and the whole board live, and can chat with other spectators. You cannot touch the game — it’s view-only.' },
+          { title: 'Back a player',
+            desc: 'Stake <span class="cinder-icon"></span> Cinder on either player from the betting panel. Odds are <strong>live &amp; pari-mutuel</strong> — they shift as more Cinder comes in on each side.' },
+          { title: 'Win the pot',
+            desc: 'When the match ends, the <strong>entire pot is split</strong> among everyone who backed the winner, proportional to their stake. Winnings are collected automatically. Aza coin is <em>not</em> wagerable.' },
         ],
         foot: '🏆 <strong>Tournaments coming soon</strong> — bracket betting with escalating payouts each round.',
       })}

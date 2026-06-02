@@ -68040,8 +68040,16 @@ function renderVsScreen() {
   // 📡 Multiplayer — join the realtime channel for this match (once) so both
   // clients can broadcast state to each other through the upcoming coin flip
   // + battle screens. Idempotent: re-renders don't re-subscribe.
-  if (bp.multiplayer && bp.multiplayerMatchId && typeof joinMatchChannel === 'function'
-      && (!MatchBroadcast.channel || MatchBroadcast.matchId !== bp.multiplayerMatchId)) {
+  // ⚠ Colyseus fork returns NO Supabase channel (MatchBroadcast.channel stays
+  // null), so the old `!MatchBroadcast.channel` guard was TRUE on every render
+  // and re-joined each time — which reset MatchBroadcast.serverFirst=null and
+  // stranded a client on the coin toss. Under Colyseus we key idempotency off
+  // the already-joined matchId instead (joinMatchChannel sets MatchBroadcast
+  // .matchId synchronously), so we join exactly once per match.
+  const _needJoin = (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP)
+    ? (MatchBroadcast.matchId !== bp.multiplayerMatchId)
+    : (!MatchBroadcast.channel || MatchBroadcast.matchId !== bp.multiplayerMatchId);
+  if (bp.multiplayer && bp.multiplayerMatchId && typeof joinMatchChannel === 'function' && _needJoin) {
     joinMatchChannel(bp.multiplayerMatchId, !!MultiplayerMatch.amIPlayer1, MultiplayerMatch.opponentId);
   }
   const me = bp.hero, foe = bp.opponent;
@@ -68931,21 +68939,43 @@ function _vsOpenItemDetail(itemId, x, y) {
 }
 
 // ============ COIN FLIP (winner picks first turn) ============
+// 🪙 Deterministic first-mover for Colyseus MP. The authoritative server
+// (BattleRoom.startMatch) opens the match with Array.from(players.keys())
+// .sort()[0] — the lexicographically-smallest userId — and broadcasts it via
+// 'matchStart'. BOTH clients already know both userIds from matchmaking
+// (MatchBroadcast.myUserId + .opponentId), so each can compute the SAME answer
+// locally. That makes a dropped / delayed / reset 'matchStart' unable to strand
+// a client on the coin screen: prefer the authoritative serverFirst when it's
+// present, else derive the identical value ourselves. Both clients — and the
+// server — always agree on who goes first.
+function _mpResolvedFirst() {
+  if (MatchBroadcast.serverFirst) return MatchBroadcast.serverFirst;
+  const me  = MatchBroadcast.myUserId;
+  const opp = MatchBroadcast.opponentId;
+  if (me && opp) return [String(me), String(opp)].sort()[0];
+  return null;
+}
+
 function renderCoinFlip() {
   const bp = App.battlePrep;
   if (!bp || !bp.hero) { App.screen = 'deckSelect'; return render(); }
 
   // 🪙 SERVER-AUTHORITATIVE COIN (Colyseus MP) — the server decides who goes
-  // first. If that decision is already known (matchStart fired), resolve the
-  // coin from it so BOTH clients land on the reveal and can start the battle.
-  // This is the fix for the "one player stuck on the coin toss" desync: the
-  // toss outcome no longer depends on a broadcast the Colyseus path never sent.
+  // first. Resolve the coin from the deterministic first-mover (authoritative
+  // serverFirst if it arrived, else the locally-derived sort(userIds)[0] that
+  // matches the server) so BOTH clients land on the reveal and can start the
+  // battle. This is the fix for the "one player stuck on the coin toss" desync:
+  // the toss outcome no longer depends on a 'matchStart' broadcast that may have
+  // been missed, delayed, or wiped by a VS-screen re-join.
   if (bp.multiplayer && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP
-      && MatchBroadcast.serverFirst && !bp.coinResult) {
-    const iAmFirst = (MatchBroadcast.serverFirst === MatchBroadcast.myUserId);
-    bp.playerWonFlip = iAmFirst;
-    bp.coinResult = iAmFirst ? (bp.coinCall || 'heads') : (bp.coinCall === 'heads' ? 'tails' : 'heads');
-    if (!bp.coinCall) bp.coinCall = bp.coinResult;
+      && !bp.coinResult) {
+    const first = _mpResolvedFirst();
+    if (first) {
+      const iAmFirst = (first === MatchBroadcast.myUserId);
+      bp.playerWonFlip = iAmFirst;
+      bp.coinResult = iAmFirst ? (bp.coinCall || 'heads') : (bp.coinCall === 'heads' ? 'tails' : 'heads');
+      if (!bp.coinCall) bp.coinCall = bp.coinResult;
+    }
   }
 
   const phase = bp.coinResult ? 'reveal' : (bp.coinCall ? 'spinning' : 'pick');
@@ -69042,8 +69072,10 @@ function renderCoinFlip() {
         // caller can never start with a turn order that disagrees with the
         // server / the other client.
         let result, won;
-        if (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP && bp.multiplayer && MatchBroadcast.serverFirst) {
-          won = (MatchBroadcast.serverFirst === MatchBroadcast.myUserId);
+        const _mpFirst = (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP && bp.multiplayer)
+          ? _mpResolvedFirst() : null;
+        if (_mpFirst) {
+          won = (_mpFirst === MatchBroadcast.myUserId);
           result = won ? call : (call === 'heads' ? 'tails' : 'heads');
         } else {
           result = Math.random() < 0.5 ? 'heads' : 'tails';

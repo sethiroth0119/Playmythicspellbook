@@ -9204,19 +9204,34 @@
   }
   .unit-hp {
     width: 100%;
-    height: 4px;
-    background: rgba(0,0,0,0.7);
-    border-radius: 2px;
+    height: 5px;
+    background: rgba(0,0,0,0.72);
+    border-radius: 3px;
     overflow: hidden;
     margin: 2px 0;
     flex-shrink: 0;
+    /* Recessed track so the fill reads as a lit gauge sitting inside it. */
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.55), inset 0 1px 1px rgba(0,0,0,0.5);
   }
   .unit-hp-fill {
     height: 100%;
-    background: linear-gradient(90deg, #4ade80, #22c55e);
-    transition: width 0.25s ease;
+    /* Glossy vertical gradient (light top → deep bottom) + a top sheen line
+       via the inset highlight so the bar reads as a polished health gauge
+       instead of a flat block. Friend-foe coloring is preserved below. */
+    background: linear-gradient(180deg, #7be8a2 0%, #34d36b 45%, #16a34a 100%);
+    border-radius: 3px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .unit.ai .unit-hp-fill { background: linear-gradient(90deg, #f87171, #dc2626); }
+  .unit.ai .unit-hp-fill { background: linear-gradient(180deg, #ff9d9d 0%, #ef4444 45%, #b91c1c 100%); }
+  /* 🩸 Critical-HP pulse — a unit at ≤25% HP gets a brighter flicker so
+     near-death figures are obvious at a glance (works for both colors).
+     The .hp-low class is stamped in renderBoard when hpPct <= 25. */
+  .unit-hp-fill.hp-low { animation: hp-crit-pulse 0.9s ease-in-out infinite; }
+  @keyframes hp-crit-pulse {
+    0%, 100% { filter: brightness(1);    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5); }
+    50%      { filter: brightness(1.45); box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), 0 0 5px rgba(255,90,90,0.9); }
+  }
   .unit-info {
     display: flex;
     justify-content: space-between;
@@ -9234,12 +9249,16 @@
     white-space: nowrap;
     flex: 1 1 auto;
     min-width: 0;
+    /* Legibility over any battlefield / location vista — without this the
+       light name text washed out against bright tiles. */
+    text-shadow: 0 1px 2px rgba(0,0,0,0.95), 0 0 3px rgba(0,0,0,0.8);
   }
   .unit-meta {
     color: var(--gold);
     font-family: 'Cinzel', serif;
     font-weight: 700;
     flex-shrink: 0;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9);
   }
   .unit-status {
     position: absolute;
@@ -82247,7 +82266,7 @@ function renderBoard() {
         cellInner = `
           <div class="unit ${occupant.owner}${occupant.isHero ? ' hero' : ''}${occupant._decoyOf ? ' decoy' : ''}${isSel ? ' selected' : ''}${occupant.flying ? ' flying' : ''}${isAIActor ? ' ai-actor' : ''} rarity-${rarity}${polyClass}" data-unit="${occupant.id}" data-y="${y}" data-rarity="${rarity}">
             <div class="unit-icon">${unitBoardVisual(occupant)}</div>
-            <div class="unit-hp"><div class="unit-hp-fill" style="width:${hpPct}%"></div></div>
+            <div class="unit-hp"><div class="unit-hp-fill${hpPct <= 25 ? ' hp-low' : ''}" style="width:${hpPct}%"></div></div>
             <div class="unit-info">
               <span class="unit-name">${escapeHtml(occupant.name)}</span>
               <span class="unit-meta">${getLevelIcon('1.5em')} ${occupant.level}</span>

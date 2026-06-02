@@ -58303,11 +58303,12 @@ function _costIsEmpty(cost) {
   return !((cost.discard | 0) > 0 || (cost.payLifeHero | 0) > 0 || (cost.banish | 0) > 0
     || (cost.tribute | 0) > 0 || cost.tributeSelf);
 }
-function _costPayable(state, side, sourceUnit, cost) {
+function _costPayable(state, side, sourceUnit, cost, excludeCardId) {
   if (_costIsEmpty(cost)) return true;
   if (!state) return false;
   const ss = state[side] || {};
-  const hand = ss.hand || [];
+  // The activating spell/trap card itself can't be spent to pay its own cost.
+  const hand = (ss.hand || []).filter(c => !excludeCardId || c.instanceId !== excludeCardId);
   const grave = ss.graveyard || [];
   const hero = (state.units || []).find(u => u && u.owner === side && u.isHero && u.alive);
   const others = (state.units || []).filter(u => u && u.alive && u.owner === side && !u.isHero
@@ -58417,12 +58418,13 @@ function _aiPickCost(state, side, sourceUnit, cost) {
 // player pays, or null if they cancel. Self-contained (own DOM + style); reads
 // hand / graveyard / board units from `state`. selfSacrifice + payLife are
 // automatic (shown as fixed lines); discard / banish / tribute need picks.
-function _promptCostPayment(state, side, sourceUnit, cost, label) {
+function _promptCostPayment(state, side, sourceUnit, cost, label, excludeCardId) {
   return new Promise((resolve) => {
     try {
       if (_costIsEmpty(cost)) { resolve(_applyCostPayment(state, side, sourceUnit, cost, {})); return; }
       const ss = state[side] || {};
-      const hand = ss.hand || [];
+      // Exclude the activating spell/trap card from its own discard options.
+      const hand = (ss.hand || []).filter(c => !excludeCardId || c.instanceId !== excludeCardId);
       const grave = ss.graveyard || [];
       const others = (state.units || []).filter(u => u && u.alive && u.owner === side && !u.isHero
         && (!sourceUnit || u.id !== sourceUnit.id));
@@ -58566,6 +58568,35 @@ function _gateOnPlayThenPlace(card, placeFn) {
       placeFn();
     });
   } catch (e) { try { console.warn('[onplay cost gate]', e); } catch (_) {} placeFn(); }
+}
+
+// ⚡ Player spell / trap / counter activation-cost gate (card.activationCost).
+// Returns TRUE if it intercepted (caller must `return`): either a toast for
+// unaffordable / not-enough-energy, or it opened the pay modal and will re-
+// invoke `again()` once paid. Returns FALSE when there's no cost (caller
+// proceeds normally). The marker (App._cardCostPaid === instanceId) stops the
+// second pass from re-gating. The card still costs its normal energy; this is
+// an ADDITIONAL pay-to-activate prerequisite.
+function _interceptCardCost(card, again) {
+  try {
+    if (!card || App._cardCostPaid === card.instanceId) return false;
+    const cost = card.activationCost;
+    if (_costIsEmpty(cost)) return false;
+    if (typeof getEffectiveCardCost === 'function' && App.state && App.state.player
+        && getEffectiveCardCost(card, App.state, 'player') > (App.state.player.energy | 0)) {
+      showToast('Not enough energy'); return true;
+    }
+    if (!_costPayable(App.state, 'player', null, cost, card.instanceId)) {
+      showToast('🚫 Cost: ' + _costShortLabel(cost) + ' — you can\'t pay it.'); return true;
+    }
+    _promptCostPayment(App.state, 'player', null, cost, card.name, card.instanceId).then(res => {
+      if (!res) { try { renderBattle(); } catch (e) {} return; }   // cancelled — nothing spent
+      App.state = { ...res.state, log: [...(res.state.log || []), ...(res.log || [])] };
+      App._cardCostPaid = card.instanceId;
+      try { again(); } finally { App._cardCostPaid = null; }
+    });
+    return true;
+  } catch (e) { try { console.warn('[card cost gate]', e); } catch (_) {} return false; }
 }
 
 function applyOnPlayEffect(state, unit, card) {
@@ -74044,6 +74075,13 @@ function renderCardEditor() {
         ${locationBlock}
         ${summonBlock}
         ${counterBlock}
+        ${(type === 'spell' || type === 'trap') ? `
+          <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.35);padding-top:0.7rem;margin-top:0.4rem"><label style="font-weight:700;color:#ffd166">⚡ Activation Cost (Yu-Gi-Oh-style — pay to activate this ${type})</label><div class="small-text ink-dim">The player picks what to pay before the ${type} resolves; it can't be activated unless the cost can be paid.</div></div>
+          <div class="editor-field"><label>🗂 Discard cards from hand</label><input id="ed-card-cost-discard" type="number" min="0" max="5" value="${(card.activationCost && card.activationCost.discard) || 0}"></div>
+          <div class="editor-field"><label>🩸 Pay life (damage your hero)</label><input id="ed-card-cost-life" type="number" min="0" max="100" value="${(card.activationCost && card.activationCost.payLifeHero) || 0}"></div>
+          <div class="editor-field"><label>🌑 Banish from graveyard</label><input id="ed-card-cost-banish" type="number" min="0" max="5" value="${(card.activationCost && card.activationCost.banish) || 0}"></div>
+          <div class="editor-field"><label>⚰️ Tribute friendly units</label><input id="ed-card-cost-tribute" type="number" min="0" max="5" value="${(card.activationCost && card.activationCost.tribute) || 0}"></div>
+        ` : ''}
         ${elemModsBlock}
         ${craftCostBlock}
         ${onPlayBlock}
@@ -75419,6 +75457,22 @@ function captureEditorIntoCard(card) {
     } else {
       delete card.onPlay;
     }
+  }
+  // ⚡ Activation cost for spell / trap / counter cards (Yu-Gi-Oh-style pay-to-
+  // activate). Stored on card.activationCost; the play paths (playSpell /
+  // placeTrap / counter activation) gate on it. Undefined when all zero, and
+  // cleared when the card is some other type.
+  if (card.type === 'spell' || card.type === 'trap') {
+    const _ac = {
+      discard: num('ed-card-cost-discard', 0, 5, 0),
+      payLifeHero: num('ed-card-cost-life', 0, 100, 0),
+      banish: num('ed-card-cost-banish', 0, 5, 0),
+      tribute: num('ed-card-cost-tribute', 0, 5, 0),
+    };
+    if (_ac.discard || _ac.payLifeHero || _ac.banish || _ac.tribute) card.activationCost = _ac;
+    else delete card.activationCost;
+  } else {
+    delete card.activationCost;
   }
 
   // 🪞 Play Requirement — gate this card behind board state. None = no gate.
@@ -88699,6 +88753,9 @@ function placeTrap(card, pos) {
   }
   const tile = s.board[pos.y][pos.x];
   if (tile.trap || getOccupant(pos, s.units)) { showToast('Tile occupied'); return; }
+  // ⚡ Activation cost (pay-to-set this trap). Pays the cost, then re-enters
+  // placeTrap to finish setting it. No cost → falls through unchanged.
+  if (_interceptCardCost(card, () => placeTrap(card, pos))) return;
   App.state = {
     ...s,
     board: s.board.map(row => row.map(t => t === tile ? { ...t, trap: { card, owner: 'player' } } : t)),
@@ -88827,6 +88884,10 @@ function playSpell(card) {
   // chain, energy) so the player gets the right rejection message.
   const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
   if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
+  // ⚡ Activation cost (Yu-Gi-Oh-style "discard / pay life / banish / tribute to
+  // activate"). Pays the cost via the interactive modal, then re-enters
+  // playSpell to resolve. No cost → falls through unchanged.
+  if (_interceptCardCost(card, () => playSpell(card))) return;
   // 🌌 Polycreation spell — divert to Fusion Selection Mode instead of
   // running the normal spell pipeline. No mana is consumed and the card
   // stays in hand if the activation gate rejects.

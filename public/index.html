@@ -15071,6 +15071,42 @@
   .shop-balance-stack { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .shop-gems-pill-sov { background: rgba(170,110,255,0.14); border-color: rgba(170,110,255,0.45); color: #d8b8ff; }
 
+  /* 📦 Vendor shelf stock + quantity stepper (bulk pack buying, 1–99) */
+  .shop-pack-cost-each { font-size: 0.7rem; color: #b39ddb; margin-left: 0.2rem; opacity: 0.85; }
+  .shop-pack-stock {
+    font-size: 0.74rem; color: #cfe0b8; text-align: center; margin: 0.1rem 0 0.35rem;
+    letter-spacing: 0.02em;
+  }
+  .shop-pack-stock b { color: #eaf7d6; }
+  .shop-pack-stock.sold-out { color: #e07a6a; }
+  .shop-qty-row {
+    display: flex; align-items: stretch; justify-content: center; gap: 0.3rem; margin: 0 0 0.45rem;
+  }
+  .shop-qty-btn, .shop-qty-max {
+    flex: 0 0 auto; min-width: 30px; padding: 0.32rem 0.4rem;
+    background: rgba(170,110,255,0.14); border: 1px solid rgba(170,110,255,0.4);
+    color: #e6d8ff; border-radius: 6px; font-weight: 700; font-size: 1rem; line-height: 1;
+    cursor: pointer; transition: background 0.12s, border-color 0.12s, transform 0.05s;
+    -webkit-user-select: none; user-select: none;
+  }
+  .shop-qty-max { font-size: 0.68rem; letter-spacing: 0.06em; font-family: 'Cinzel', serif; }
+  .shop-qty-btn:not(:disabled):hover, .shop-qty-max:not(:disabled):hover {
+    background: rgba(170,110,255,0.28); border-color: #d8b8ff;
+  }
+  .shop-qty-btn:not(:disabled):active, .shop-qty-max:not(:disabled):active { transform: translateY(1px); }
+  .shop-qty-btn:disabled, .shop-qty-max:disabled { opacity: 0.4; cursor: not-allowed; }
+  .shop-qty-input {
+    flex: 1 1 auto; min-width: 0; width: 100%; max-width: 64px; text-align: center;
+    padding: 0.32rem 0.2rem; font-size: 0.95rem; font-weight: 700;
+    background: rgba(10,8,16,0.7); border: 1px solid rgba(170,110,255,0.4);
+    color: #fff; border-radius: 6px;
+  }
+  /* Hide the native number-input spinners — we provide −/＋/MAX controls. */
+  .shop-qty-input::-webkit-outer-spin-button,
+  .shop-qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .shop-qty-input { -moz-appearance: textfield; appearance: textfield; }
+  .shop-qty-input:focus { outline: none; border-color: #d8b8ff; box-shadow: 0 0 0 2px rgba(170,110,255,0.25); }
+
   /* ===== 👤 Profile Page — modern dashboard ===== */
   .profile-page {
     max-width: 1280px; margin: 0 auto; padding: 1.5rem;
@@ -30599,6 +30635,67 @@ function removeUnopenedPack(entryId) {
 // Count helper for HUD pills / nav badges.
 function getUnopenedPackCount() {
   return Array.isArray(Profile.unopenedPacks) ? Profile.unopenedPacks.length : 0;
+}
+
+// 📦 VENDOR PACK STOCK — each pack the Vendor Market sells starts at 100,000
+// units. Buying draws that many off the shelf (persisted per account so it's
+// remembered across sessions). Players can purchase 1–99 at a time.
+const VENDOR_PACK_STOCK_MAX = 100000;
+const VENDOR_PACK_BUY_MAX   = 99;
+function getVendorPackStock(packId) {
+  if (!packId) return 0;
+  if (!Profile.vendorStock || typeof Profile.vendorStock !== 'object') Profile.vendorStock = {};
+  const v = Profile.vendorStock[packId];
+  if (typeof v !== 'number' || !isFinite(v) || v < 0) {
+    Profile.vendorStock[packId] = VENDOR_PACK_STOCK_MAX;
+  }
+  return Profile.vendorStock[packId];
+}
+// Remove up to `n` units from a pack's shelf; returns how many were actually
+// taken (clamped to remaining stock).
+function takeVendorPackStock(packId, n) {
+  const cur = getVendorPackStock(packId);
+  const took = Math.max(0, Math.min(n | 0, cur));
+  Profile.vendorStock[packId] = cur - took;
+  return took;
+}
+// How many of this pack the player currently wants to buy (1–99, clamped to
+// the remaining shelf stock). Transient — lives on App, not persisted.
+function getPackBuyQty(packId, stock) {
+  if (!App._packQty || typeof App._packQty !== 'object') App._packQty = {};
+  let q = App._packQty[packId];
+  if (typeof q !== 'number' || !(q >= 1)) q = 1;
+  const cap = Math.max(1, Math.min(VENDOR_PACK_BUY_MAX, (typeof stock === 'number' ? stock : VENDOR_PACK_BUY_MAX)));
+  return Math.max(1, Math.min(cap, Math.round(q)));
+}
+function setPackBuyQty(packId, q) {
+  if (!App._packQty || typeof App._packQty !== 'object') App._packQty = {};
+  const stock = getVendorPackStock(packId);
+  const cap = Math.max(1, Math.min(VENDOR_PACK_BUY_MAX, stock || 1));
+  App._packQty[packId] = Math.max(1, Math.min(cap, (q | 0) || 1));
+  return App._packQty[packId];
+}
+// Grant N unopened packs in one shot with a SINGLE cloud persist (calling
+// addUnopenedPack in a loop would fire N write-throughs).
+function addUnopenedPacks(def, count, source) {
+  if (!def || !def.id) return 0;
+  const n = Math.max(1, Math.min(VENDOR_PACK_BUY_MAX, count | 0));
+  Profile.unopenedPacks = Array.isArray(Profile.unopenedPacks) ? Profile.unopenedPacks : [];
+  const art = (typeof getPackImage === 'function' ? getPackImage(def.id) : null) || null;
+  const now = Date.now();
+  for (let i = 0; i < n; i++) {
+    Profile.unopenedPacks.push({
+      id: `pk_${now.toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}_${i}`,
+      packId: def.id, name: def.name || 'Mystery Pack', icon: def.icon || '📦',
+      art, purchasedAt: now, source: source || 'shop',
+    });
+  }
+  try {
+    if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {});
+    else if (typeof _persistProgressNow === 'function') _persistProgressNow();
+    else if (typeof saveProfile === 'function') saveProfile();
+  } catch (e) {}
+  return n;
 }
 
 // 📦 Open ONE pack of a given packId from inventory. Top-level so the reveal
@@ -94499,23 +94596,40 @@ function _buildPackShopBody(gems, sovBal) {
     const imageBlock = packImage
       ? `<div class="shop-pack-image"><img src="${escapeHtml(packImage)}" alt="${escapeHtml(p.name)}" loading="lazy"></div>`
       : '';
+    // 📦 Vendor shelf stock (starts at 100,000, drawn down per purchase) +
+    // a 1–99 quantity stepper so players can bulk-buy. Cost shown is per-pack;
+    // the buy button charges qty × cost.
+    const stock = (typeof getVendorPackStock === 'function') ? getVendorPackStock(p.id) : VENDOR_PACK_STOCK_MAX;
+    const qty = (typeof getPackBuyQty === 'function') ? getPackBuyQty(p.id, stock) : 1;
+    const totalSov = sovCost * qty;
+    const canAffordSovQty = sovBal >= totalSov;
+    const soldOut = stock < 1;
+    const qtyMax = Math.max(1, Math.min(VENDOR_PACK_BUY_MAX, stock));
     return `
-      <div class="shop-pack ${(canAffordCinders || canAffordSov) ? '' : 'unaffordable'} ${packImage ? 'has-image' : ''}" data-pack="${p.id}" style="--pack-accent:${p.accent || '#d4af37'}">
+      <div class="shop-pack ${(canAffordSovQty && !soldOut) ? '' : 'unaffordable'} ${packImage ? 'has-image' : ''}" data-pack="${p.id}" style="--pack-accent:${p.accent || '#d4af37'}">
         ${customBadge}
         ${imageBlock}
         <div class="shop-pack-icon">${p.icon || '📦'}</div>
         <div class="shop-pack-name">${escapeHtml(p.name)}</div>
         <div class="shop-pack-desc">${escapeHtml(p.desc || '')}</div>
         <div class="shop-pack-rarities">${rarityPreview}</div>
+        <div class="shop-pack-stock ${soldOut ? 'sold-out' : ''}" data-stock-for="${p.id}">${soldOut ? '⛔ Sold out' : `📦 <b>${stock.toLocaleString()}</b> in stock`}</div>
         <div class="shop-pack-dual-cost">
           <div class="shop-pack-cost shop-pack-cost-sov">
             <span class="shop-pack-cost-num">${sovCost}</span>
             <span class="shop-pack-cost-icon"><span class="aza-icon"></span></span>
+            <span class="shop-pack-cost-each">each</span>
           </div>
         </div>
+        <div class="shop-qty-row" role="group" aria-label="Quantity to buy">
+          <button class="shop-qty-btn" data-qty-dec="${p.id}" ${soldOut ? 'disabled' : ''} aria-label="Decrease quantity">−</button>
+          <input class="shop-qty-input" data-qty-input="${p.id}" type="number" min="1" max="${qtyMax}" value="${qty}" inputmode="numeric" ${soldOut ? 'disabled' : ''} aria-label="Quantity">
+          <button class="shop-qty-btn" data-qty-inc="${p.id}" ${soldOut ? 'disabled' : ''} aria-label="Increase quantity">+</button>
+          <button class="shop-qty-max" data-qty-max="${p.id}" ${soldOut ? 'disabled' : ''} title="Set to 99 (or remaining stock)">MAX</button>
+        </div>
         <div class="shop-pack-buy-row">
-          <button class="btn-primary shop-pack-buy shop-pack-buy-sov" data-buy-pack="${p.id}" data-buy-with="sovereigns" ${canAffordSov ? '' : 'disabled'} title="Buy with Aza coin">
-            ${canAffordSov ? `<span class="aza-icon"></span> ${sovCost}` : `Need ${sovCost - sovBal} more <span class="aza-icon"></span>`}
+          <button class="btn-primary shop-pack-buy shop-pack-buy-sov" data-buy-pack="${p.id}" data-buy-with="sovereigns" data-pack-qty="${qty}" ${(canAffordSovQty && !soldOut) ? '' : 'disabled'} title="Buy with Aza coin">
+            ${soldOut ? 'SOLD OUT' : (canAffordSovQty ? `<span class="aza-icon"></span> Buy ${qty} · ${totalSov}` : `Need ${totalSov - sovBal} more <span class="aza-icon"></span>`)}
           </button>
         </div>
       </div>
@@ -94623,56 +94737,111 @@ function _buildPackShopBody(gems, sovBal) {
   `;
 }
 
+// Resolve a pack id to its engine def (built-in OR published custom).
+function _lookupPackDef(id) {
+  let def = (typeof PACK_DEFINITIONS !== 'undefined') ? PACK_DEFINITIONS.find(p => p.id === id) : null;
+  if (!def) {
+    const c = (typeof getAllCustomPacks === 'function') ? getAllCustomPacks().find(p => p.id === id) : null;
+    if (c && typeof toEnginePackDef === 'function') def = toEnginePackDef(c);
+  }
+  return def || null;
+}
+// Effective (admin-override-aware) per-pack Aza price — matches the tile display.
+function _effPackSovCost(def) {
+  const baseSov = (typeof def.sovCost === 'number' && def.sovCost > 0) ? def.sovCost : Math.max(1, Math.ceil((def.cost || 10) / 10));
+  return (typeof getEffectivePrice === 'function') ? getEffectivePrice('pack', def.id, baseSov, 'sov') : baseSov;
+}
+// Update one pack tile's qty / stock / buy-button in place (no full re-render)
+// so tapping −/＋/MAX feels instant.
+function _syncPackTileUi(packId) {
+  const tile = document.querySelector('.shop-pack[data-pack="' + packId + '"]');
+  if (!tile) return;
+  const def = _lookupPackDef(packId);
+  if (!def) return;
+  const stock = getVendorPackStock(packId);
+  const qty = getPackBuyQty(packId, stock);
+  const sovCost = _effPackSovCost(def);
+  const total = sovCost * qty;
+  const sovBal = Profile.sovereigns || 0;
+  const soldOut = stock < 1;
+  const afford = sovBal >= total;
+  const inp = tile.querySelector('[data-qty-input]');
+  if (inp) { inp.value = qty; inp.max = Math.max(1, Math.min(VENDOR_PACK_BUY_MAX, stock)); }
+  const stk = tile.querySelector('[data-stock-for]');
+  if (stk) {
+    stk.classList.toggle('sold-out', soldOut);
+    stk.innerHTML = soldOut ? '⛔ Sold out' : ('📦 <b>' + stock.toLocaleString() + '</b> in stock');
+  }
+  const btn = tile.querySelector('[data-buy-pack]');
+  if (btn) {
+    btn.dataset.packQty = qty;
+    btn.disabled = soldOut || !afford;
+    btn.innerHTML = soldOut ? 'SOLD OUT'
+      : afford ? ('<span class="aza-icon"></span> Buy ' + qty + ' · ' + total)
+      : ('Need ' + (total - sovBal) + ' more <span class="aza-icon"></span>');
+  }
+  tile.classList.toggle('unaffordable', soldOut || !afford);
+}
+
 function _bindPackShopHandlers() {
+  // ➖➕ Quantity steppers (1–99, clamped to remaining stock). Update in place.
+  document.querySelectorAll('[data-qty-dec]').forEach(el => el.onclick = () => {
+    const id = el.dataset.qtyDec; setPackBuyQty(id, getPackBuyQty(id, getVendorPackStock(id)) - 1); _syncPackTileUi(id);
+  });
+  document.querySelectorAll('[data-qty-inc]').forEach(el => el.onclick = () => {
+    const id = el.dataset.qtyInc; setPackBuyQty(id, getPackBuyQty(id, getVendorPackStock(id)) + 1); _syncPackTileUi(id);
+  });
+  document.querySelectorAll('[data-qty-max]').forEach(el => el.onclick = () => {
+    const id = el.dataset.qtyMax; setPackBuyQty(id, VENDOR_PACK_BUY_MAX); _syncPackTileUi(id);
+  });
+  document.querySelectorAll('[data-qty-input]').forEach(el => {
+    el.onchange = el.oninput = () => { const id = el.dataset.qtyInput; setPackBuyQty(id, parseInt(el.value, 10) || 1); _syncPackTileUi(id); };
+  });
   document.querySelectorAll('[data-buy-pack]').forEach(el => {
     el.onclick = async () => {
       if (el.disabled) return;
       // Match against BOTH built-in packs and custom packs (converted to engine shape).
-      let def = PACK_DEFINITIONS.find(p => p.id === el.dataset.buyPack);
-      if (!def) {
-        const custom = getAllCustomPacks().find(p => p.id === el.dataset.buyPack);
-        if (custom) def = toEnginePackDef(custom);
-      }
+      const def = _lookupPackDef(el.dataset.buyPack);
       if (!def) return;
+      // 📦 Stock + quantity gate. Players buy 1–99 at once; each unit drawn off
+      // the vendor's 100,000-deep shelf.
+      const stock = getVendorPackStock(def.id);
+      if (stock < 1) { showToast('That pack is sold out at the vendor.'); try { render(); } catch (e) {} return; }
+      const qty = Math.min(getPackBuyQty(def.id, stock), stock);
       const payMode = el.dataset.buyWith === 'sovereigns' ? 'sovereigns' : 'cinders';
-      const sovCost = (typeof def.sovCost === 'number' && def.sovCost > 0) ? def.sovCost : Math.max(1, Math.ceil(def.cost / 10));
-      if (payMode === 'sovereigns') {
-        if ((Profile.sovereigns || 0) < sovCost) { showToast('Not enough Aza coin'); return; }
-        const ok = await showGameConfirm({
-          title: '📦 Buy Pack?',
-          bodyHtml:
-            '<div>Purchase <b style="color:#d4a843">' + escapeHtml(def.name) + '</b>.</div>' +
-            '<div style="background:rgba(20,16,14,0.6);border:1px solid #2a201c;border-radius:4px;padding:0.7rem 0.9rem;margin:0.6rem 0">' +
-              '<div style="display:flex;justify-content:space-between"><span style="color:#a89878">Price</span><b style="color:#d4a843">' + sovCost + ' 👑 Aza coin</b></div>' +
-              '<div style="display:flex;justify-content:space-between"><span style="color:#a89878">You have</span><b style="color:#cfe5ff">' + ((Profile.sovereigns || 0)) + ' 👑</b></div>' +
-            '</div>',
-          yesLabel: 'BUY PACK', noLabel: 'Cancel',
-        });
-        if (!ok) return;
-        if (!spendSovereigns(sovCost)) { showToast('Not enough Aza coin'); return; }
-      } else {
-        if ((Profile.gems || 0) < def.cost) { showToast('Not enough Cinders'); return; }
-        const ok = await showGameConfirm({
-          title: '📦 Buy Pack?',
-          bodyHtml:
-            '<div>Purchase <b style="color:#d4a843">' + escapeHtml(def.name) + '</b>.</div>' +
-            '<div style="background:rgba(20,16,14,0.6);border:1px solid #2a201c;border-radius:4px;padding:0.7rem 0.9rem;margin:0.6rem 0">' +
-              '<div style="display:flex;justify-content:space-between"><span style="color:#a89878">Price</span><b style="color:#d4a843">' + def.cost + ' <span class="cinder-icon"></span> Cinders</b></div>' +
-              '<div style="display:flex;justify-content:space-between"><span style="color:#a89878">You have</span><b style="color:#cfe5ff">' + ((Profile.gems || 0)) + ' 🔥</b></div>' +
-            '</div>',
-          yesLabel: 'BUY PACK', noLabel: 'Cancel',
-        });
-        if (!ok) return;
-        if (!spendGems(def.cost)) { showToast('Not enough Cinders'); return; }
-      }
-      // 📦 INVENTORY FLOW — no auto-open. The pack lands in the player's
-      // unopenedPacks inventory; opening happens later from the dedicated
-      // Pack Opening page (Hearthstone-style — much less anxious for
-      // players buying multiple packs at once). The buy toast tells them
-      // where to find it.
-      addUnopenedPack(def, 'shop');
-      const total = getUnopenedPackCount();
-      showToast(`📦 ${def.name} added to your Pack Inventory (${total} unopened) — open from the Pack Opening page!`, 4200);
+      const sovCost = _effPackSovCost(def);
+      const cinderCost = (typeof getEffectivePrice === 'function') ? getEffectivePrice('pack', def.id, def.cost, 'cinders') : def.cost;
+      const unit  = payMode === 'sovereigns' ? sovCost : cinderCost;
+      const total = unit * qty;
+      const bal   = payMode === 'sovereigns' ? (Profile.sovereigns || 0) : (Profile.gems || 0);
+      const curIcon = payMode === 'sovereigns' ? '👑 Aza coin' : '<span class="cinder-icon"></span> Cinders';
+      if (bal < total) { showToast(payMode === 'sovereigns' ? 'Not enough Aza coin' : 'Not enough Cinders'); return; }
+      const ok = await showGameConfirm({
+        title: '📦 Buy ' + qty + ' Pack' + (qty > 1 ? 's' : '') + '?',
+        bodyHtml:
+          '<div>Purchase <b style="color:#d4a843">' + qty + ' × ' + escapeHtml(def.name) + '</b>.</div>' +
+          '<div style="background:rgba(20,16,14,0.6);border:1px solid #2a201c;border-radius:4px;padding:0.7rem 0.9rem;margin:0.6rem 0">' +
+            '<div style="display:flex;justify-content:space-between"><span style="color:#a89878">Unit price</span><b style="color:#d4a843">' + unit + ' ' + curIcon + '</b></div>' +
+            '<div style="display:flex;justify-content:space-between"><span style="color:#a89878">Quantity</span><b style="color:#cfe5ff">' + qty + '</b></div>' +
+            '<div style="display:flex;justify-content:space-between;border-top:1px solid #2a201c;margin-top:0.4rem;padding-top:0.4rem"><span style="color:#a89878">Total</span><b style="color:#ffd166">' + total + ' ' + curIcon + '</b></div>' +
+            '<div style="display:flex;justify-content:space-between"><span style="color:#a89878">You have</span><b style="color:#cfe5ff">' + bal + (payMode === 'sovereigns' ? ' 👑' : ' 🔥') + '</b></div>' +
+          '</div>',
+        yesLabel: 'BUY ' + qty + ' PACK' + (qty > 1 ? 'S' : ''), noLabel: 'Cancel',
+      });
+      if (!ok) return;
+      // Re-validate after the (async) confirm — stock/balance may have changed.
+      const stock2 = getVendorPackStock(def.id);
+      const buyN = Math.min(qty, stock2);
+      if (buyN < 1) { showToast('That pack just sold out.'); try { render(); } catch (e) {} return; }
+      const total2 = unit * buyN;
+      const spent = payMode === 'sovereigns' ? spendSovereigns(total2) : spendGems(total2);
+      if (!spent) { showToast(payMode === 'sovereigns' ? 'Not enough Aza coin' : 'Not enough Cinders'); return; }
+      // Draw the units off the vendor shelf, then grant them (single persist).
+      takeVendorPackStock(def.id, buyN);
+      addUnopenedPacks(def, buyN, 'shop');
+      setPackBuyQty(def.id, 1);  // reset stepper after purchase
+      const owned = getUnopenedPackCount();
+      showToast(`📦 Bought ${buyN} × ${def.name} — added to your Pack Inventory (${owned} unopened). Open from the Pack Opening page!`, 4400);
       try { if (typeof playSfx === 'function') playSfx('uiOpen'); } catch (e) {}
       try { render(); } catch (e) {}
     };

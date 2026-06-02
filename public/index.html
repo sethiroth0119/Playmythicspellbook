@@ -51461,7 +51461,12 @@ function _applyInfectionZone(state) {
 
 // Called on turn start to decrement timers, revive units, prune expired tombstones.
 function tickTombstones(state) {
-  if (!state || !Array.isArray(state.tombstones)) return state;
+  if (!state) return state;
+  // 🔒 NEGATE-GRAVEYARD — tick down each side's graveyard seal once per turn.
+  if (state.graveLock) {
+    ['player', 'ai'].forEach(k => { if ((state.graveLock[k] | 0) > 0) state.graveLock[k] = (state.graveLock[k] | 0) - 1; });
+  }
+  if (!Array.isArray(state.tombstones)) return state;
   // 🪦 ENEMY SCAVENGING — raiders loot too. Any AI unit ending on a still-
   // unlooted body strips it before you can: it's marked looted (denied to
   // the player). Runs at turn start so an enemy that camped a body last
@@ -51527,7 +51532,10 @@ function tickTombstones(state) {
     // Expired — handle revive or just drop the marker.
     if (t.glowing && t.reviveUnitId) {
       const u = state.units.find(x => x.id === t.reviveUnitId);
-      if (u && !u.alive) {
+      if (u && !u.alive && _graveLocked(state, u.owner)) {
+        // 🔒 Negate-Graveyard seals the rise — the tombstone just crumbles.
+        state.log = [...(state.log || []), { msg: `🔒 ${u.name}'s grave is sealed — it cannot rise.`, color: u.owner === 'player' ? 'red' : 'green' }];
+      } else if (u && !u.alive) {
         // Don't revive if another unit has occupied this tile.
         const blocker = state.units.find(x => x.alive && x.pos && x.pos.x === t.x && x.pos.y === t.y);
         if (!blocker) {
@@ -57416,6 +57424,11 @@ const ONPLAY_TYPES = [
   // `amount` controls how many cards drop. `chance` (0-100, default 100) gates
   // each individual drop so admins can dial it down for soft variants.
   { id: 'discardCards',  label: '🗑 Discard (force opponent to drop hand cards)', needs: ['amount', 'chance'] },
+  // 🪦 ===== GRAVEYARD / RECURSION EFFECTS (Yu-Gi-Oh / MTG flavor) =====
+  { id: 'millSelf',        label: '⚰️ Mill Self (top N of your deck → graveyard)',        needs: ['amount'] },
+  { id: 'graveToHand',     label: '♻️ Salvage (return N from your graveyard → hand)',     needs: ['amount'] },
+  { id: 'banishGrave',     label: '🌑 Banish Graveyard (void a graveyard to the Void)',   needs: ['graveSide'] },
+  { id: 'negateGraveyard', label: '🔒 Negate Graveyard (seal grave effects for N turns)', needs: ['graveSide', 'statusDuration'] },
   // 🪤 ===== COUNTER-PLAY REMOVAL EFFECTS =====
   // Wipe boardstate that the opponent set up. Each removal is symmetric
   // (works for both player + AI). These give cards an answer to weather /
@@ -57528,8 +57541,14 @@ function describeInGraveEffect(eff) {
 // applies the effect. Returns a new state with logs + (potentially) the card
 // moved out of the grave back to hand / onto the field. Idempotent: cards
 // without an `inGrave` block are skipped entirely.
+// 🔒 Is `who`'s graveyard currently sealed by a Negate-Graveyard effect?
+function _graveLocked(state, who) {
+  try { return !!(state && state.graveLock && (state.graveLock[who] | 0) > 0); } catch (e) { return false; }
+}
 function _applyInGraveTick(state, who, trigger) {
   if (!state || !who || !trigger) return state;
+  // 🔒 Negate-Graveyard — this side's graveyard effects are sealed; skip.
+  if (_graveLocked(state, who)) return state;
   const side = state[who]; if (!side || !Array.isArray(side.graveyard) || side.graveyard.length === 0) return state;
   const opp = (who === 'player') ? 'ai' : 'player';
   const turnNo = (state.turnNumber | 0) || 1;
@@ -58006,6 +58025,78 @@ function applyOnPlayEffect(state, unit, card) {
         log.push({ msg: `🔍 Enemy ${unit.name} searches their deck and adds a card to hand.`, color: 'red' });
       }
     }
+    return { ...state, log };
+  }
+  // ⚰️ MILL SELF — move the top N cards of YOUR deck into YOUR graveyard.
+  // Fuels graveyard synergies (recursion, raise-from-dead, consume-grave costs).
+  if (eff.type === 'millSelf') {
+    const n = Math.max(1, Math.min(10, eff.amount || 1));
+    const side = state[owner];
+    if (side && Array.isArray(side.deck) && side.deck.length) {
+      const deck = side.deck.slice();
+      const grave = (side.graveyard || []).slice();
+      const milled = [];
+      for (let i = 0; i < n && deck.length; i++) { const c = deck.shift(); grave.push(c); milled.push((c && c.name) || 'a card'); }
+      state[owner] = { ...side, deck, graveyard: grave };
+      if (milled.length) log.push({ msg: `⚰️ ${unit.name} mills ${milled.length} card${milled.length === 1 ? '' : 's'} to the graveyard — ${milled.join(', ')}.`, color: owner === 'player' ? 'green' : 'red' });
+    } else {
+      log.push({ msg: `⚰️ ${unit.name}'s mill fizzles — the deck is empty.`, color: 'amber' });
+    }
+    return { ...state, log };
+  }
+  // ♻️ GRAVE → HAND — salvage the most-recent N cards from YOUR graveyard back
+  // to your hand (Regrowth / Salvage). Fresh instanceId so they're playable.
+  if (eff.type === 'graveToHand') {
+    const n = Math.max(1, Math.min(5, eff.amount || 1));
+    const side = state[owner];
+    if (side && Array.isArray(side.graveyard) && side.graveyard.length) {
+      const grave = side.graveyard.slice();
+      const hand = (side.hand || []).slice();
+      const got = [];
+      for (let i = 0; i < n && grave.length; i++) {
+        const c = grave.pop();
+        hand.push(Object.assign({}, c, { instanceId: (typeof uid === 'function' ? uid() : ('g' + Math.floor(Math.random() * 1e9))) }));
+        got.push((c && c.name) || 'a card');
+      }
+      state[owner] = { ...side, graveyard: grave, hand };
+      if (got.length) log.push({ msg: `♻️ ${unit.name} salvages ${got.join(', ')} from the graveyard to ${owner === 'player' ? 'your' : 'the enemy'} hand.`, color: owner === 'player' ? 'green' : 'red' });
+    } else {
+      log.push({ msg: `♻️ ${unit.name} finds nothing to salvage — the graveyard is empty.`, color: 'amber' });
+    }
+    return { ...state, log };
+  }
+  // 🌑 BANISH GRAVE — remove every card from the target graveyard(s) to the
+  // Void (graveyard hate — shuts off recursion / raise / consume-grave decks).
+  // eff.graveSide: 'self' | 'enemy' | 'both' (default 'enemy').
+  if (eff.type === 'banishGrave') {
+    const scope = (['self', 'enemy', 'both'].indexOf(eff.graveSide) >= 0) ? eff.graveSide : 'enemy';
+    const opp = owner === 'player' ? 'ai' : 'player';
+    const targets = scope === 'both' ? [owner, opp] : scope === 'self' ? [owner] : [opp];
+    let banished = 0;
+    for (const t of targets) {
+      const side = state[t];
+      if (side && Array.isArray(side.graveyard) && side.graveyard.length) {
+        banished += side.graveyard.length;
+        state[t] = { ...side, graveyard: [], void: (side.void || []).concat(side.graveyard) };
+      }
+    }
+    if (banished) log.push({ msg: `🌑 ${unit.name} banishes ${banished} card${banished === 1 ? '' : 's'} from ${scope === 'both' ? 'both graveyards' : scope === 'self' ? 'your graveyard' : 'the enemy graveyard'} to the Void.`, color: owner === 'player' ? 'green' : 'red' });
+    else log.push({ msg: `🌑 ${unit.name}'s banish finds an empty graveyard.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 🔒 NEGATE GRAVEYARD — seal the target graveyard(s) so NO graveyard effect
+  // fires (no rising/recursion/in-grave triggers) for N turns. Implemented as a
+  // per-side lock that _applyInGraveTick + raise-from-dead honor via _graveLocked.
+  // eff.graveSide: 'self' | 'enemy' | 'both' (default 'enemy'); duration = statusDuration.
+  if (eff.type === 'negateGraveyard') {
+    const scope = (['self', 'enemy', 'both'].indexOf(eff.graveSide) >= 0) ? eff.graveSide : 'enemy';
+    const turns = Math.max(1, Math.min(9, eff.statusDuration || 3));
+    const opp = owner === 'player' ? 'ai' : 'player';
+    const lock = Object.assign({}, state.graveLock || {});
+    if (scope === 'both' || scope === 'self')  lock[owner] = Math.max(lock[owner] | 0, turns);
+    if (scope === 'both' || scope === 'enemy') lock[opp]   = Math.max(lock[opp]   | 0, turns);
+    state = { ...state, graveLock: lock };
+    log.push({ msg: `🔒 ${unit.name} seals ${scope === 'both' ? 'every graveyard' : scope === 'self' ? 'your graveyard' : 'the enemy graveyard'} for ${turns} turn${turns === 1 ? '' : 's'} — no rising, recursion, or graveyard effects.`, color: owner === 'player' ? 'green' : 'red' });
     return { ...state, log };
   }
   // 🌋 PAINT SURFACE — the unit's arrival coats the tiles around it with a
@@ -72250,17 +72341,25 @@ function renderCardEditor() {
   ).join('');
   const onPlayStatusOpts = ['weak','strong','poison','burn','bleed','siphoned','stun','slow','frozen','sleep','confusion','paralysis','shielded','focused','haste','assisted','stumble','rage']
     .map(s => `<option value="${s}" ${onPlay.status === s ? 'selected' : ''}>${s}</option>`).join('');
-  const onPlayBlock = (isUnitLike) ? `
+  // On-play effects are available to units/heroes/summons AND to field cards
+  // (locations + weather) — locations/weather fire their on-play through the
+  // same engine via a hero-anchored synthetic caster.
+  const _isFieldCard = (type === 'location' || type === 'weather');
+  const showOnPlay = isUnitLike || _isFieldCard;
+  const onPlayBlock = (showOnPlay) ? `
     <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.8rem;margin-top:0.4rem">
-      <label style="font-weight:700;color:#ffd166">🎴 On-Play Ability (fires when this unit is summoned from hand)</label>
-      <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Optional. Affects enemies / allies / self depending on the type picked.</div>
+      <label style="font-weight:700;color:#ffd166">🎴 On-Play Ability (fires the instant this ${_isFieldCard ? 'field card is played' : 'unit is summoned from hand'})</label>
+      <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Optional. ${_isFieldCard ? 'Field cards have no board token — positional effects (AOE/heal/etc.) center on your hero; card effects (search / draw / mill / salvage / banish / negate-graveyard / 🌌 polycreate / discard) just work.' : 'Affects enemies / allies / self depending on the type picked.'}</div>
     </div>
     <div class="editor-field"><label>Effect Type</label><select id="ed-onplay-type">${onPlayTypeOpts}</select></div>
-    <div class="editor-field"><label>Radius (tiles around the unit)</label><input id="ed-onplay-radius" type="number" min="0" max="4" value="${onPlay.radius || 1}"></div>
-    <div class="editor-field"><label>Amount (damage / heal / energy)</label><input id="ed-onplay-amount" type="number" min="0" max="200" value="${onPlay.amount || 0}"></div>
+    <div class="editor-field"><label>Radius (tiles around ${_isFieldCard ? 'your hero' : 'the unit'})</label><input id="ed-onplay-radius" type="number" min="0" max="4" value="${onPlay.radius || 1}"></div>
+    <div class="editor-field"><label>Amount (damage / heal / energy / mill / draw)</label><input id="ed-onplay-amount" type="number" min="0" max="200" value="${onPlay.amount || 0}"></div>
     <div class="editor-field"><label>Chance % (status / execution)</label><input id="ed-onplay-chance" type="number" min="1" max="100" value="${onPlay.chance || 100}"></div>
     <div class="editor-field"><label>Status (when applicable)</label><select id="ed-onplay-status">${onPlayStatusOpts}</select></div>
-    <div class="editor-field"><label>Status Duration (turns)</label><input id="ed-onplay-status-dur" type="number" min="1" max="6" value="${onPlay.statusDuration || 2}"></div>
+    <div class="editor-field"><label>Status / Seal Duration (turns)</label><input id="ed-onplay-status-dur" type="number" min="1" max="9" value="${onPlay.statusDuration || 2}"></div>
+    <div class="editor-field"><label>🪦 Graveyard Side (banish / negate-graveyard)</label><select id="ed-onplay-grave-side">
+      ${['enemy','self','both'].map(o => `<option value="${o}" ${(onPlay.graveSide || 'enemy') === o ? 'selected' : ''}>${o === 'enemy' ? "Enemy's graveyard" : o === 'self' ? 'Your graveyard' : 'Both graveyards'}</option>`).join('')}
+    </select></div>
     ${(() => {
       // 🌀 Summon-card picker for the on-play effect. Shown for every
       // on-play type but only used when `type === 'summon'`. Lists every
@@ -74110,6 +74209,8 @@ function captureEditorIntoCard(card) {
         wipeSpareHero:  (() => { const el = document.getElementById('ed-onplay-wipe-sparehero'); return el ? !!el.checked : true; })(),
         // ✨ Buff/Debuff target group — used by 'applyBuffDebuff'.
         buffTarget:     v('ed-onplay-buff-target') || 'self',
+        // 🪦 Graveyard side — used by 'banishGrave' + 'negateGraveyard'.
+        graveSide:      v('ed-onplay-grave-side') || 'enemy',
         // ⚔ Sacrifice effect — used by 'sacrifice' on-play type.
         sacrificeEffect: v('ed-onplay-sac-effect') || 'buffSelf',
         // ⚖️ Verdict — labels + sub-effects; only active when checkbox is enabled (v86t).
@@ -84759,6 +84860,10 @@ function _playOnPlayCinematicImpl(unit, card, opts) {
         case 'kalonSource': return `Gain ${a || 1} Kalon source.`;
         case 'summon':      return `Summon ${a || 1} reinforcement${(a||1) > 1 ? 's' : ''} adjacent.`;
         case 'polycreate':  return `Auto-fuse nearby allies into a Kalon.`;
+        case 'millSelf':    return `Mill ${a || 1} card${(a||1) > 1 ? 's' : ''} to your graveyard.`;
+        case 'graveToHand': return `Salvage ${a || 1} card${(a||1) > 1 ? 's' : ''} from grave to hand.`;
+        case 'banishGrave': return `Banish ${onPlay.graveSide === 'self' ? 'your' : onPlay.graveSide === 'both' ? 'both' : "enemy's"} graveyard.`;
+        case 'negateGraveyard': return `Seal ${onPlay.graveSide === 'self' ? 'your' : onPlay.graveSide === 'both' ? 'all' : "enemy's"} graveyard ${onPlay.statusDuration || 3}t.`;
       }
       return 'On-play effect activates.';
     })();
@@ -86707,6 +86812,23 @@ function placeUnit(card, pos) {
   if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
 }
 
+// 🎴 Fire a LOCATION / WEATHER card's on-play effect through the same engine
+// units use. The card has no board token, so we anchor a synthetic caster on
+// the side's hero (positional effects center on the hero; card-economy effects
+// — draw / search / mill / salvage / banish / negate-graveyard / polycreate —
+// only care about `owner`). Named after the card for clean battle-log text.
+function _fireFieldCardOnPlay(card, owner) {
+  try {
+    if (!card || !card.onPlay || !card.onPlay.type || typeof applyOnPlayEffect !== 'function') return;
+    const s = App.state; if (!s) return;
+    const hero = (s.units || []).find(u => u && u.owner === owner && u.isHero && u.alive);
+    const caster = hero
+      ? Object.assign({}, hero, { name: card.name || hero.name })
+      : { id: '_fieldcaster_' + owner, owner: owner, name: card.name || 'Field', isHero: false, alive: true, pos: { x: 0, y: 0 } };
+    App.state = applyOnPlayEffect(s, caster, card);
+  } catch (e) { try { console.warn('[fieldOnPlay]', e); } catch (_) {} }
+}
+
 function placeLocation(card, pos) {
   const s = App.state;
   // 🪞 Play-requirement gate (e.g. "need 3 of your units on the field").
@@ -86773,6 +86895,9 @@ function placeLocation(card, pos) {
     // 🌀 Location summon — spawn the admin-picked card near the hero
     // (whole-board locations don't have a specific tile anchor).
     _twFireCardSummon(card, null, 'player');
+    // 🎴 On-play effect (search / draw / mill / salvage / banish / negate-grave
+    // / polycreate / damage / buff / …) — locations now run the full engine.
+    _fireFieldCardOnPlay(card, 'player');
     recordCardPlayed(card);
     App.ui.selectedCardId = null;
     if (typeof playSfx === 'function') playSfx('cardPlace');
@@ -86794,6 +86919,7 @@ function placeLocation(card, pos) {
   };
   // 🌀 Single-tile location — anchor the summon at the placed tile.
   _twFireCardSummon(card, pos, 'player');
+  _fireFieldCardOnPlay(card, 'player');   // 🎴 run the card's on-play effect too
   recordCardPlayed(card);
   App.ui.selectedCardId = null;
   if (typeof playSfx === 'function') playSfx('cardPlace');
@@ -86934,6 +87060,7 @@ function playWeather(card) {
   };
   // 🌀 Weather summon — spawn near the player's hero when the weather rolls in.
   _twFireCardSummon(card, ph ? ph.pos : null, 'player');
+  _fireFieldCardOnPlay(card, 'player');   // 🎴 run the card's on-play effect too
   recordCardPlayed(card);
   App.ui.selectedCardId = null;
   if (typeof playSfx === 'function') playSfx('cardPlace');
@@ -88108,6 +88235,7 @@ function doAIStep() {
           },
           log: [...s.log, { msg: `Enemy summons ${best.name}! (${duration} turns)`, color: 'red' }],
         };
+        try { _fireFieldCardOnPlay(best, 'ai'); } catch (e) {}   // 🎴 AI weather on-play effect
         setAIActor(null, `⛈ Enemy summons ${best.name}`);
         renderBattle();
         scheduleAIStep(AI_DELAYS.weather);
@@ -130378,6 +130506,10 @@ function describeOnPlayEffect(eff) {
     case 'summon':       return `Summons ${eff.amount > 1 ? eff.amount + '× ' : ''}${_abilitySummonName(eff.summonCard)} on entering play.`;
     case 'polycreate':   return `Auto-fuses nearby allies ${within} into a Fusion Kalon when the materials match.`;
     case 'searchDeck':   return `Search your deck for a card and add it to your hand.`;
+    case 'millSelf':     return `Mills the top ${eff.amount || 1} card${(eff.amount || 1) === 1 ? '' : 's'} of your deck into your graveyard.`;
+    case 'graveToHand':  return `Returns the most recent ${eff.amount || 1} card${(eff.amount || 1) === 1 ? '' : 's'} from your graveyard to your hand.`;
+    case 'banishGrave':  { const sd = eff.graveSide || 'enemy'; return `Banishes ${sd === 'both' ? 'both graveyards' : sd === 'self' ? 'your graveyard' : "the enemy's graveyard"} to the Void.`; }
+    case 'negateGraveyard': { const sd = eff.graveSide || 'enemy'; const t = eff.statusDuration || 3; return `Seals ${sd === 'both' ? 'every graveyard' : sd === 'self' ? 'your graveyard' : "the enemy's graveyard"} for ${t} turn${t === 1 ? '' : 's'} — no rising, recursion, or graveyard effects.`; }
     case 'paintSurface': { const sf = _abilitySurfaceName(eff.surfaceType); return `Lays ${sf.icon} ${sf.name} on the battlefield (radius ${r}).`; }
     case 'clearWeather':  return 'Disperses any active weather card immediately.';
     case 'clearTraps':    return 'Disarms every enemy trap on the board.';

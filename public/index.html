@@ -32309,6 +32309,9 @@ function _onColyseusMatchStart(data) {
   const myId = MatchBroadcast.myUserId;
   // Determine if it's my turn first (mirrors the old coin-flip logic).
   MatchBroadcast.myTurn = data && data.first === myId;
+  // 🪙 Remember the server's first-mover decision so the coin screen can resolve
+  // from it even if matchStart arrived BEFORE the coin screen rendered.
+  MatchBroadcast.serverFirst = (data && data.first) || MatchBroadcast.serverFirst;
   MatchBroadcast.opponentId = data && Array.isArray(data.participants)
     ? data.participants.find(id => id !== myId) || null
     : null;
@@ -68792,6 +68795,19 @@ function renderCoinFlip() {
   const bp = App.battlePrep;
   if (!bp || !bp.hero) { App.screen = 'deckSelect'; return render(); }
 
+  // 🪙 SERVER-AUTHORITATIVE COIN (Colyseus MP) — the server decides who goes
+  // first. If that decision is already known (matchStart fired), resolve the
+  // coin from it so BOTH clients land on the reveal and can start the battle.
+  // This is the fix for the "one player stuck on the coin toss" desync: the
+  // toss outcome no longer depends on a broadcast the Colyseus path never sent.
+  if (bp.multiplayer && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP
+      && MatchBroadcast.serverFirst && !bp.coinResult) {
+    const iAmFirst = (MatchBroadcast.serverFirst === MatchBroadcast.myUserId);
+    bp.playerWonFlip = iAmFirst;
+    bp.coinResult = iAmFirst ? (bp.coinCall || 'heads') : (bp.coinCall === 'heads' ? 'tails' : 'heads');
+    if (!bp.coinCall) bp.coinCall = bp.coinResult;
+  }
+
   const phase = bp.coinResult ? 'reveal' : (bp.coinCall ? 'spinning' : 'pick');
 
   // Image paths for the two coin faces. The folder name has no spaces, but the
@@ -68881,9 +68897,20 @@ function renderCoinFlip() {
       render();
       // Spin for a moment, then resolve
       setTimeout(() => {
-        const result = Math.random() < 0.5 ? 'heads' : 'tails';
+        // 🪙 Under Colyseus the SERVER decides who goes first — make the toss
+        // outcome agree with it (the coin face just visualizes win/lose) so the
+        // caller can never start with a turn order that disagrees with the
+        // server / the other client.
+        let result, won;
+        if (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP && bp.multiplayer && MatchBroadcast.serverFirst) {
+          won = (MatchBroadcast.serverFirst === MatchBroadcast.myUserId);
+          result = won ? call : (call === 'heads' ? 'tails' : 'heads');
+        } else {
+          result = Math.random() < 0.5 ? 'heads' : 'tails';
+          won = (result === call);
+        }
         bp.coinResult = result;
-        bp.playerWonFlip = (result === call);
+        bp.playerWonFlip = won;
         // 📡 Broadcast the coin result + winner-from-P1's-perspective so P2
         // can mirror the reveal.
         if (bp.multiplayer && MatchBroadcast.channel) {
@@ -108728,6 +108755,7 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
     MatchBroadcast.myUserId   = Profile.cloud.userId;
     MatchBroadcast.opponentId = opponentId;
     MatchBroadcast.amIPlayer1 = !!amIPlayer1;
+    MatchBroadcast.serverFirst = null;   // 🪙 fresh coin authority per match
     MatchBroadcast.gameOverResolved    = false;
     MatchBroadcast._matchEndSubmitted  = false;
     MatchBroadcast._matchEndRetried    = false;
@@ -109869,11 +109897,26 @@ function _onRemoteStateDeltaArrived(payload) {
 function _onRemoteCoinArrived(payload) {
   if (!payload || App.screen !== 'coinFlip') return;
   if (!App.battlePrep) return;
-  App.battlePrep.coinCall      = payload.call      || App.battlePrep.coinCall;
-  App.battlePrep.coinResult    = payload.result    || App.battlePrep.coinResult;
-  App.battlePrep.playerWonFlip = (typeof payload.player1WonFlip === 'boolean')
+  const bp = App.battlePrep;
+  // 🪙 SERVER-AUTHORITATIVE (Colyseus) — the server's matchStart tells BOTH
+  // clients who goes first via { winner: <userId> }. Drive the coin reveal
+  // deterministically from it so both sides agree and BOTH advance past the
+  // toss (the previous payload shape was {call,result,…}, so this branch did
+  // nothing and the non-calling player got stranded on the pick screen).
+  if (payload.winner) {
+    const iAmFirst = (payload.winner === MatchBroadcast.myUserId);
+    bp.playerWonFlip = iAmFirst;
+    if (!bp.coinResult) bp.coinResult = iAmFirst ? (bp.coinCall || 'heads') : (bp.coinCall === 'heads' ? 'tails' : 'heads');
+    if (!bp.coinCall)   bp.coinCall   = iAmFirst ? bp.coinResult : (bp.coinResult === 'heads' ? 'tails' : 'heads');
+    if (typeof render === 'function') render();
+    return;
+  }
+  // Legacy Supabase-relay path: { call, result, player1WonFlip }.
+  bp.coinCall      = payload.call      || bp.coinCall;
+  bp.coinResult    = payload.result    || bp.coinResult;
+  bp.playerWonFlip = (typeof payload.player1WonFlip === 'boolean')
     ? (MatchBroadcast.amIPlayer1 ? payload.player1WonFlip : !payload.player1WonFlip)
-    : App.battlePrep.playerWonFlip;
+    : bp.playerWonFlip;
   if (typeof render === 'function') render();
 }
 

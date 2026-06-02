@@ -58019,7 +58019,12 @@ function applyOnPlayEffect(state, unit, card) {
   const eff = card && card.onPlay;
   if (!state || !unit || !eff || !eff.type) return state;
   const radius = Math.max(0, Math.min(4, eff.radius || 1));
-  const log = [...(state.log || [])];
+  // `log` MUST be `let`: the Verdict effect reassigns it (`log = state.log`)
+  // after recursively applying the chosen sub-effect. A `const` here threw
+  // "Assignment to constant variable" and froze the game whenever a card with a
+  // Verdict on-play effect resolved — the same crash class as the Sky Dive
+  // charge-release freeze.
+  let log = [...(state.log || [])];
   const owner = unit.owner;
   // 🛡️ Spellshield: enemy units with this passive are excluded from on-play AoE
   // targeting (intimidate, aoeDamage, aoeKill, aoeStatus, bounceUnit, etc.).

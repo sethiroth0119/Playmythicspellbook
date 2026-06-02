@@ -65654,6 +65654,10 @@ function renderTitle() {
 
       ${renderSubclassPickModal()}
       ${renderTosModal()}
+      ${isMain ? `
+        <div class="early-build-bar" aria-hidden="true" style="position:fixed;left:0;right:0;bottom:0;z-index:60;display:flex;align-items:center;justify-content:center;gap:0.55rem;padding:0.4rem 1rem;pointer-events:none;background:linear-gradient(180deg,rgba(8,5,2,0) 0%,rgba(8,5,2,0.82) 45%,rgba(8,5,2,0.95) 100%);border-top:1px solid rgba(212,175,55,0.4);color:#e0c074;font-family:'Cinzel',serif;font-size:0.74rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;text-shadow:0 1px 4px #000">
+          <span style="color:#d4a843">⚒</span><span>Early Build · v.1</span><span style="opacity:0.55;font-weight:400;letter-spacing:0.08em;text-transform:none">— work in progress, expect changes &amp; bugs</span>
+        </div>` : ''}
     </div>
   `;
 

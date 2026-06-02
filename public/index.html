@@ -30536,6 +30536,11 @@ const Forge = {
   //   { [facId]: { gem:[lvl1,…], res:[{metal:2,…},…] } }. Empty = built-in
   //   defaults. Rides the catalog so every player gets the same costs.
   campCosts: {},
+  // 🛢 Admin-set ENEMY HERO for each Black River roguelite run (oil / convoy /
+  //   vip), keyed by mission id → real hero id. When set, that hero (with its
+  //   real sprite + stats) is the opponent instead of the emoji "Black River
+  //   Hunter" synthetic foe. Empty = built-in emoji foe. Rides the catalog.
+  brpRunHeroes: {},     // { oil|convoy|vip: heroId }
   // 🪦 ADMIN-SET DEFAULT TOMBSTONE — base image rendered on dying units' tiles.
   // Players who haven't bought a custom tombstone use this one. URL string
   // (Cloudflare-served path or data URL).
@@ -35014,6 +35019,7 @@ function _applyCatalogRow(data) {
   Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
   Catalog.rlcRelics = Array.isArray(rawMoves.__rlc_relics__) ? rawMoves.__rlc_relics__ : [];
   Catalog.blackMarketPrices = (rawMoves.__black_market_prices__ && typeof rawMoves.__black_market_prices__ === 'object') ? rawMoves.__black_market_prices__ : {};
+  Catalog.brpRunHeroes = (rawMoves.__brp_run_heroes__ && typeof rawMoves.__brp_run_heroes__ === 'object') ? rawMoves.__brp_run_heroes__ : {};
   Catalog.campCosts = (rawMoves.__camp_costs__ && typeof rawMoves.__camp_costs__ === 'object') ? rawMoves.__camp_costs__ : {};
   // 🌐 Extract the 15 admin-authored fields that previously orphaned on the
   // admin's own profile row. Each gets a stable Catalog.* slot.
@@ -35358,6 +35364,7 @@ async function cloudPublishCatalog(opts) {
       __tombstone_cosmetics__: Array.isArray(Forge.tombstoneCosmetics) ? Forge.tombstoneCosmetics : [],
       __rlc_relics__: Array.isArray(Forge.rlcRelics) ? Forge.rlcRelics : [],
       __black_market_prices__: (Forge.blackMarketPrices && typeof Forge.blackMarketPrices === 'object') ? Forge.blackMarketPrices : {},
+      __brp_run_heroes__: (Forge.brpRunHeroes && typeof Forge.brpRunHeroes === 'object') ? Forge.brpRunHeroes : {},
       __camp_costs__: (Forge.campCosts && typeof Forge.campCosts === 'object') ? Forge.campCosts : {},
       // 🌐 ADMIN-AUTHORED CONTENT — every player needs these to play the
       // admin's game. Previously these only synced to the admin's own
@@ -47772,6 +47779,7 @@ function loadForge() {
     try { const hu = localStorage.getItem('hg_heroUltimates'); if (hu) { const x = JSON.parse(hu); if (x && typeof x === 'object' && !Array.isArray(x)) Forge.heroUltimates = x; } } catch (err) {}
     try { const po = localStorage.getItem('hg_priceOverrides'); if (po) { const x = JSON.parse(po); if (x && typeof x === 'object') Forge.priceOverrides = x; } } catch (err) {}
     try { const bmp = localStorage.getItem('hg_blackMarketPrices'); if (bmp) { const x = JSON.parse(bmp); if (x && typeof x === 'object') Forge.blackMarketPrices = x; } } catch (err) {}
+    try { const brh = localStorage.getItem('hg_brpRunHeroes'); if (brh) { const x = JSON.parse(brh); if (x && typeof x === 'object') Forge.brpRunHeroes = x; } } catch (err) {}
     try { const cmpc = localStorage.getItem('hg_campCosts'); if (cmpc) { const x = JSON.parse(cmpc); if (x && typeof x === 'object') Forge.campCosts = x; } } catch (err) {}
     // 🗺 Phase 4 Camp Heights layout. Null = use default CAMP_BUILDINGS/NPCs.
     try { const cl = localStorage.getItem('hg_campLayout'); if (cl) { const x = JSON.parse(cl); if (x && typeof x === 'object' && !Array.isArray(x)) Forge.campLayout = x; } } catch (err) {}
@@ -48305,6 +48313,7 @@ function saveForge() {
     { key: 'hg_campaigns',        value: _stripDataUrls(Forge.campaigns || []), name: 'campaigns' },
     { key: 'hg_priceOverrides',   value: Forge.priceOverrides  || {}, name: 'priceOverrides' },
     { key: 'hg_blackMarketPrices', value: Forge.blackMarketPrices || {}, name: 'blackMarketPrices' },
+    { key: 'hg_brpRunHeroes',      value: Forge.brpRunHeroes      || {}, name: 'brpRunHeroes' },
     { key: 'hg_campCosts', value: Forge.campCosts || {}, name: 'campCosts' },
     // 🔒 Per-card obtainability gates (lootable / craftable / admin-only).
     // These were CLOUD-only — a reload before the 4s debounced sync (or while
@@ -69899,6 +69908,34 @@ function renderPricingAdmin() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">🛢 Black River Run — Enemy Heroes (Admin)</div>
+        <div class="settings-section-desc">
+          Pick the <strong>enemy hero</strong> for each Black River roguelite run. When set, that hero fights with its real sprite + stats (still scaled by the run's risk level) instead of the default emoji <em>"Black River Hunter"</em>. Leave on <strong>Default</strong> to keep the emoji foe.
+        </div>
+        ${(() => {
+          const _runs = [
+            { id: 'oil',    icon: '🛢', label: 'Oil Extraction Run' },
+            { id: 'convoy', icon: '🚛', label: 'Convoy Escort Run' },
+            { id: 'vip',    icon: '🆘', label: 'VIP Rescue Run' },
+          ];
+          const _heroes = (typeof getAllHeroes === 'function') ? (getAllHeroes() || []) : [];
+          const _set = (Forge && Forge.brpRunHeroes) || {};
+          return _runs.map(r => {
+            const cur = _set[r.id] || '';
+            const opts = ['<option value="">— Default (emoji foe) —</option>']
+              .concat(_heroes.map(h => `<option value="${escapeHtml(String(h.id))}" ${h.id === cur ? 'selected' : ''}>${escapeHtml((h.icon ? h.icon + ' ' : '') + (h.name || h.id))}</option>`))
+              .join('');
+            return `
+              <div style="display:flex;align-items:center;gap:0.7rem;margin-top:0.6rem;flex-wrap:wrap">
+                <div style="flex:0 0 150px;color:#ffd28a;font-family:'Cinzel',serif;font-weight:700">${r.icon} ${r.label}</div>
+                <select data-brp-run-hero="${r.id}" style="flex:1 1 200px;min-width:160px;padding:0.45rem 0.6rem;background:rgba(30,18,8,0.7);border:1px solid rgba(200,140,60,0.45);border-radius:4px;color:#ffe6b0;font-family:'Crimson Text',serif">${opts}</select>
+              </div>`;
+          }).join('');
+        })()}
+        <div class="small-text ink-dim" style="margin-top:0.6rem">Saved instantly to this device; click <strong>📚 Publish</strong> in the Forge to apply it for all players.</div>
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🪦 Tombstones (Admin)</div>
         <div class="settings-section-desc">
           Set the <strong>default tombstone image</strong> every player sees when a unit dies. Players who unlock a cosmetic from the shop override this with their own.
@@ -70503,6 +70540,19 @@ function renderPricingAdmin() {
       saveForge();
       showToast('🛢 ' + tier + ' oil tower image cleared.', 2400);
       render();
+    };
+  });
+  // 🛢 Black River run enemy-hero pickers (per mission).
+  document.querySelectorAll('[data-brp-run-hero]').forEach(sel => {
+    sel.onchange = () => {
+      const mid = sel.dataset.brpRunHero;
+      if (!mid) return;
+      if (!Forge.brpRunHeroes || typeof Forge.brpRunHeroes !== 'object') Forge.brpRunHeroes = {};
+      const v = sel.value || '';
+      if (v) Forge.brpRunHeroes[mid] = v; else delete Forge.brpRunHeroes[mid];
+      saveForge();
+      const nm = v ? (((getAllHeroes && getAllHeroes()) || []).find(h => h && h.id === v) || {}).name || v : 'Default emoji foe';
+      showToast('🛢 ' + mid.charAt(0).toUpperCase() + mid.slice(1) + ' run enemy → ' + nm + '. Publish to apply for all players.', 3200);
     };
   });
   // 🖤 Black Market price overrides.
@@ -124323,20 +124373,34 @@ function brLaunchRogueliteRun(missionId, pickedDeckId) {
 // Shared helper that performs the actual battle-prep build + screen swap.
 function _brpBuildAndLaunch(def, R, myHero, myDeckCards, myDeckName, myDeckId) {
   const s = ensureBlackRiver();
-  // Build a synthetic foe — escalates with risk.
+  // Build the foe. If an admin set a REAL hero for this run via the Black River
+  // Run Heroes picker (Forge.brpRunHeroes, or the published Catalog copy), use
+  // that hero so the enemy shows its real sprite + stats instead of the emoji
+  // "Black River Hunter". The risk → AI-level scaling still applies below via
+  // battlePrep.enemyLevel, so a configured hero still escalates with risk.
   const foeIcons = { low: '☠', med: '🛡', high: '👹' };
-  const foe = {
-    id: 'brp_foe_' + s.risk,
-    name: 'Black River Hunter',
-    icon: foeIcons[s.risk] || '☠',
-    hp: 24 + R.aiLevel * 2,
-    stats: { atk: 10 + R.aiLevel, def: 8 + R.aiLevel, mag: 8 + R.aiLevel, res: 8 + R.aiLevel, spd: 1 },
-    learnset: [{ lvl: 1, m: 'slash' }, { lvl: 1, m: 'heavyStrike' }],
-    passive: 'warlord',
-    desc: 'BRP roguelite — ' + def.name + '.',
-    elements: ['shadow'],
-    factions: ['raider'],
-  };
+  const _runFoeId = (typeof Forge !== 'undefined' && Forge.brpRunHeroes && Forge.brpRunHeroes[def.id])
+    || (typeof Catalog !== 'undefined' && Catalog.brpRunHeroes && Catalog.brpRunHeroes[def.id]) || null;
+  const _runFoeHero = _runFoeId
+    ? (((typeof getAllHeroes === 'function') ? getAllHeroes() : []) || []).find(h => h && h.id === _runFoeId)
+    : null;
+  let foe;
+  if (_runFoeHero) {
+    foe = { ..._runFoeHero, desc: 'BRP roguelite — ' + def.name + '.' };
+  } else {
+    foe = {
+      id: 'brp_foe_' + s.risk,
+      name: 'Black River Hunter',
+      icon: foeIcons[s.risk] || '☠',
+      hp: 24 + R.aiLevel * 2,
+      stats: { atk: 10 + R.aiLevel, def: 8 + R.aiLevel, mag: 8 + R.aiLevel, res: 8 + R.aiLevel, spd: 1 },
+      learnset: [{ lvl: 1, m: 'slash' }, { lvl: 1, m: 'heavyStrike' }],
+      passive: 'warlord',
+      desc: 'BRP roguelite — ' + def.name + '.',
+      elements: ['shadow'],
+      factions: ['raider'],
+    };
+  }
 
   // Stamp battle prep with the game-mode objective. The post-battle
   // resolution hook already routes game-mode rewards (fuel / cinder)

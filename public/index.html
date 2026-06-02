@@ -62645,7 +62645,11 @@ let _isoCanvasRef = null;
 let _isoTickLast = 0;
 let _spriteTickLast = 0;
 const _ISO_TICK_MS    = 33;   // ~30fps for the background canvas
-const _SPRITE_TICK_MS = 33;   // ~30fps for unit sprite frame stepping
+const _SPRITE_TICK_MS = 16;   // ~60fps — finer than the 80ms frame step so frame
+                              // swaps land on time (the 33ms throttle caused
+                              // ±33ms jitter on an 80ms cadence = visible stutter).
+                              // The per-tick work is a cheap class-toggle that
+                              // only mutates the DOM when the frame index changes.
 // Attack-line removed — replaced by box-highlight glow on .attack-target
 // tiles (red for enemy, cyan for ally). The functions below are kept as
 // no-ops so old callers don't break, but they no longer draw anything.
@@ -62927,7 +62931,11 @@ function startSpriteTicker() {
     // ⚡ Throttle to ~30fps — sprite frames step at 150ms+ intervals, so a
     // 33ms check granularity is invisible while halving the per-frame DOM
     // scan + frame-index math cost.
-    if (t - _spriteTickLast < _SPRITE_TICK_MS) { _spriteRafHandle = requestAnimationFrame(tick); return; }
+    // Adaptive cadence: ~60fps on the battle board (where smooth frame timing
+    // matters) and ~30fps everywhere else (menus / decorative sprites) so we
+    // don't burn CPU scanning the DOM 60×/s on screens that don't need it.
+    const _tickMs = (typeof App !== 'undefined' && App.screen === 'battle') ? _SPRITE_TICK_MS : 33;
+    if (t - _spriteTickLast < _tickMs) { _spriteRafHandle = requestAnimationFrame(tick); return; }
     _spriteTickLast = t;
     // 🩻 ISO board: if the flag is on, make sure the canvas inside the
     // current .board.iso-mode container is hooked up to the iso ticker.
@@ -62942,6 +62950,23 @@ function startSpriteTicker() {
       const stack = stacks[i];
       const id = stack.dataset.spriteId;
       const anim = stack.dataset.spriteAnim || 'idle';
+      // 🌬 CLOCK-ANCHOR THE IDLE-BREATHE — renderBattle does a full innerHTML
+      // rebuild on every action, recreating each unit's .sprite-stack, which
+      // restarts the CSS `unit-idle-breathe` from scale 1 → the unit visibly
+      // "snaps back" (the jumping the player sees). We set a negative
+      // animation-delay equal to the current global phase so a freshly-created
+      // sprite resumes mid-breathe → continuous across rebuilds. Only board
+      // units (.unit) breathe, and only while idle (so attack/hurt/etc. one-shot
+      // animations play from their real start). Re-anchored each time the DOM
+      // node is recreated (the data-marker is gone on a fresh element).
+      if (!stack.dataset.breatheAnchored) {
+        const unitEl = stack.closest ? stack.closest('.unit') : null;
+        const st = unitEl ? unitEl.getAttribute('data-anim') : null;
+        if (unitEl && (!st || st === 'idle')) {
+          stack.style.animationDelay = '-' + ((t + _spritePhaseOffset(id)) % 3600) + 'ms';
+          stack.dataset.breatheAnchored = '1';
+        }
+      }
       const frames = getSpriteFrames(id, anim);
       if (!frames || frames.length <= 1) continue;
       if (!stack.dataset.spriteInit) {

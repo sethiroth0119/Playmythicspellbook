@@ -9449,6 +9449,33 @@
   @keyframes ace-slam-veil-anim   { 0% { opacity: 0; } 12% { opacity: 1; } 66% { opacity: 1; } 100% { opacity: 0; } }
   @keyframes ace-slam-streak-anim { 0% { transform: translateX(-180%) rotate(14deg); opacity: 0; } 40% { opacity: 0.9; } 100% { transform: translateX(180%) rotate(14deg); opacity: 0; } }
 
+  /* 💀 DRAMATIC HERO KO — match-ending cinematic. */
+  .hero-ko-overlay { position: fixed; inset: 0; z-index: 2147481200; pointer-events: none; overflow: hidden; }
+  .hero-ko-flash { position: absolute; inset: 0; mix-blend-mode: screen;
+    background: radial-gradient(circle at 50% 45%, rgba(255,255,255,0.95), rgba(255,120,120,0.5) 50%, transparent 75%);
+    animation: hero-ko-flash 0.55s ease-out forwards; }
+  .hero-ko-vignette { position: absolute; inset: 0;
+    background: radial-gradient(ellipse 120% 120% at 50% 50%, transparent 38%, rgba(120,0,14,0.5) 82%, rgba(60,0,8,0.88) 100%);
+    animation: hero-ko-vig 1.6s ease-out forwards; }
+  .hero-ko-skull { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: clamp(6rem, 22vw, 14rem); color: #ff5a5a;
+    text-shadow: 0 0 50px rgba(255,30,30,0.85), 0 0 14px rgba(0,0,0,0.8);
+    animation: hero-ko-skull 1.6s cubic-bezier(0.2, 1.0, 0.3, 1) forwards; }
+  .ko-desat { animation: ko-desat-anim 1.6s ease-out forwards; }
+  @keyframes ko-desat-anim { 0% { filter: none; } 12% { filter: grayscale(0.65) brightness(0.5) contrast(1.15); } 78% { filter: grayscale(0.6) brightness(0.55) contrast(1.1); } 100% { filter: none; } }
+  @keyframes hero-ko-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes hero-ko-vig { 0% { opacity: 0; } 14% { opacity: 1; } 70% { opacity: 0.95; } 100% { opacity: 0; } }
+  @keyframes hero-ko-skull { 0% { opacity: 0; transform: scale(0.3) rotate(-8deg); } 20% { opacity: 0.95; transform: scale(1.12) rotate(2deg); } 55% { opacity: 0.85; transform: scale(1) rotate(0deg); } 100% { opacity: 0; transform: scale(1.04); } }
+
+  /* 🔔 TURN BANNER — sweeping YOUR / ENEMY TURN wipe. */
+  .turn-banner { position: fixed; inset: 0; z-index: 2147481100; pointer-events: none; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .turn-banner-bar { width: 100%; padding: 16px 0; text-align: center; transform: translateX(-100%); will-change: transform, opacity; animation: turn-banner-sweep 1.3s cubic-bezier(0.2, 0.9, 0.2, 1) forwards; }
+  .tb-player .turn-banner-bar { background: linear-gradient(90deg, transparent 4%, rgba(40,110,210,0) 10%, rgba(40,110,210,0.8) 32%, rgba(90,170,255,0.95) 50%, rgba(40,110,210,0.8) 68%, transparent 96%); box-shadow: 0 0 34px rgba(90,170,255,0.45); }
+  .tb-enemy .turn-banner-bar { background: linear-gradient(90deg, transparent 4%, rgba(180,44,44,0) 10%, rgba(180,44,44,0.82) 32%, rgba(255,96,84,0.95) 50%, rgba(180,44,44,0.82) 68%, transparent 96%); box-shadow: 0 0 34px rgba(255,96,84,0.45); }
+  .turn-banner-text { font-family: 'Cinzel', serif; font-weight: 900; font-size: clamp(1.5rem, 5vw, 3rem); letter-spacing: 0.3em; color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,0.95), 0 0 22px rgba(0,0,0,0.6); }
+  @keyframes turn-banner-sweep { 0% { transform: translateX(-100%); opacity: 0; } 16% { transform: translateX(0); opacity: 1; } 68% { transform: translateX(0); opacity: 1; } 100% { transform: translateX(105%); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .ko-desat { animation: none; } }
+
   /* Owner indicator strip on unit cell */
   .unit::before {
     content: '';
@@ -78777,6 +78804,49 @@ function _playAceSlam(card, fromAI) {
   } catch (e) { _aceSlamBusy = false; }
 }
 
+// 💀 DRAMATIC HERO KO — the match-ending moment. A white flash, a crimson
+// vignette pulse, a falling-skull stamp, a desaturate "slow-mo" on the board,
+// and a double screen-shake. Fires once when a hero falls (gameOver set).
+// Reduced-motion opts out; the board-desat is skipped on Graphics = Low.
+function _playHeroKO(winner) {
+  try {
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let gfx = 'high'; try { gfx = (getSettings().gfxQuality) || 'high'; } catch (e) {}
+    const old = document.getElementById('hero-ko-overlay'); if (old) old.remove();
+    const host = document.createElement('div');
+    host.id = 'hero-ko-overlay';
+    host.className = 'hero-ko-overlay';
+    host.innerHTML = '<div class="hero-ko-flash"></div><div class="hero-ko-vignette"></div><div class="hero-ko-skull">☠</div>';
+    document.body.appendChild(host);
+    const bs = document.querySelector('.battle-screen') || document.body;
+    if (gfx !== 'low') { try { bs.classList.add('ko-desat'); } catch (e) {} }
+    try {
+      if (typeof Juice !== 'undefined' && Juice.shake) {
+        Juice.shake(bs);
+        setTimeout(() => { try { Juice.shake(bs); } catch (_) {} }, 200);
+      }
+    } catch (e) {}
+    setTimeout(() => { try { host.remove(); } catch (e) {} try { bs.classList.remove('ko-desat'); } catch (e) {} }, 1600);
+  } catch (e) {}
+}
+
+// 🔔 TURN BANNER — a clean "YOUR TURN / ENEMY TURN" bar sweeps across when the
+// active side changes. Color-coded (azure for you, crimson for the enemy).
+// Reduced-motion opts out.
+function _playTurnBanner(side) {
+  try {
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const isPlayer = (side !== 'ai');
+    const old = document.getElementById('turn-banner'); if (old) old.remove();
+    const host = document.createElement('div');
+    host.id = 'turn-banner';
+    host.className = 'turn-banner ' + (isPlayer ? 'tb-player' : 'tb-enemy');
+    host.innerHTML = '<div class="turn-banner-bar"><span class="turn-banner-text">' + (isPlayer ? 'YOUR TURN' : 'ENEMY TURN') + '</span></div>';
+    document.body.appendChild(host);
+    setTimeout(() => { try { host.remove(); } catch (e) {} }, 1300);
+  } catch (e) {}
+}
+
 // 🌟 STATUS-EFFECT APPLY VFX
 // ─────────────────────────────────────────────────────────────────────────
 // Classify a status as a buff / debuff / neutral so the pop-up can color
@@ -78881,6 +78951,21 @@ function _renderBattleImmediate() {
       const _go = () => { App._statusVfxQueued = false; try { _emitStatusVfx(); } catch (e) {} };
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_go);
       else setTimeout(_go, 16);
+    }
+  } catch (e) {}
+  // 👑 Master-Duel beats — fired on state transitions detected at render time.
+  try {
+    // 💀 Dramatic hero KO — fires once when gameOver first appears; resets when
+    // a fresh battle (no gameOver) renders so the next match can KO again.
+    if (App.state && App.state.gameOver) {
+      if (!App._koPlayed) { App._koPlayed = true; try { _playHeroKO(App.state.gameOver); } catch (e) {} }
+    } else { App._koPlayed = false; }
+    // 🔔 Turn banner — sweep when the active side changes (single-player AND
+    // multiplayer). Baselines on first sight so it only fires on real flips.
+    if (App.state && !App.state.gameOver) {
+      const _tk = (App.state.turn || '') + ':' + (App.state.turnNumber || 0);
+      if (App._lastTurnKey == null) { App._lastTurnKey = _tk; }
+      else if (App._lastTurnKey !== _tk) { App._lastTurnKey = _tk; try { _playTurnBanner(App.state.turn); } catch (e) {} }
     }
   } catch (e) {}
   // 📜 LOG TRIM — battles can rack up thousands of log entries (every

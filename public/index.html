@@ -58279,6 +58279,291 @@ function _seizeUnitControl(u, newOwner, durationTurns) {
   else delete flipped._controlRevertIn;
   return flipped;
 }
+
+// ============================================================================
+// ⚡ ACTIVATION COSTS (Yu-Gi-Oh-style "pay a cost to use this") — a cost object
+// gates a MOVE (move.activationCost) or an ON-PLAY effect (card.onPlay.cost).
+// Shape: { discard, payLifeHero, banish, tribute, tributeSelf }.
+//   discard      — send N cards from your hand to the graveyard
+//   payLifeHero  — deal N damage to your own hero (never below 1 HP)
+//   banish       — remove N cards from your own graveyard to the Void
+//   tribute      — send N OTHER friendly non-hero units to the graveyard
+//   tributeSelf  — also send the activating unit itself (applied AFTER the
+//                  effect resolves so the move/effect still goes off)
+// The player pays interactively (a picker modal); the AI auto-pays the cheapest
+// hand cards / weakest units / oldest graveyard cards. If a cost CAN'T be paid
+// the move can't be used and the on-play effect simply doesn't fire.
+// ============================================================================
+function _costIsEmpty(cost) {
+  if (!cost) return true;
+  return !((cost.discard | 0) > 0 || (cost.payLifeHero | 0) > 0 || (cost.banish | 0) > 0
+    || (cost.tribute | 0) > 0 || cost.tributeSelf);
+}
+function _costPayable(state, side, sourceUnit, cost) {
+  if (_costIsEmpty(cost)) return true;
+  if (!state) return false;
+  const ss = state[side] || {};
+  const hand = ss.hand || [];
+  const grave = ss.graveyard || [];
+  const hero = (state.units || []).find(u => u && u.owner === side && u.isHero && u.alive);
+  const others = (state.units || []).filter(u => u && u.alive && u.owner === side && !u.isHero
+    && (!sourceUnit || u.id !== sourceUnit.id));
+  if ((cost.discard | 0) > 0 && hand.length < (cost.discard | 0)) return false;
+  if ((cost.banish | 0) > 0 && grave.length < (cost.banish | 0)) return false;
+  if ((cost.payLifeHero | 0) > 0 && (!hero || hero.currentHp <= (cost.payLifeHero | 0))) return false;
+  if ((cost.tribute | 0) > 0 && others.length < (cost.tribute | 0)) return false;
+  if (cost.tributeSelf && (!sourceUnit || sourceUnit.isHero)) return false;
+  return true;
+}
+function _costShortLabel(cost) {
+  if (_costIsEmpty(cost)) return '';
+  const bits = [];
+  if ((cost.discard | 0) > 0) bits.push(`discard ${cost.discard}`);
+  if ((cost.payLifeHero | 0) > 0) bits.push(`pay ${cost.payLifeHero} life`);
+  if ((cost.banish | 0) > 0) bits.push(`banish ${cost.banish}`);
+  if ((cost.tribute | 0) > 0) bits.push(`tribute ${cost.tribute}`);
+  if (cost.tributeSelf) bits.push('sacrifice itself');
+  return bits.join(' + ');
+}
+// Apply a paid cost to `state`. `picks` = { discardIds:[instanceId], banishIdxs:[i],
+// tributeIds:[unitId] }. tributeSelf is NOT applied here — it's returned as a flag
+// so the caller can sacrifice the source AFTER the effect resolves. Returns
+// { state, log, selfSacrifice }.
+function _applyCostPayment(state, side, sourceUnit, cost, picks) {
+  const log = [];
+  if (_costIsEmpty(cost)) return { state, log, selfSacrifice: false };
+  let s = { ...state };
+  picks = picks || {};
+  const sideCol = (col) => `${side === 'player' ? 'amber' : 'red'}`;
+  if ((cost.discard | 0) > 0) {
+    const ids = new Set(picks.discardIds || []);
+    const hand = [...((s[side] && s[side].hand) || [])];
+    const grave = [...((s[side] && s[side].graveyard) || [])];
+    const kept = [], moved = [];
+    hand.forEach(c => { if (ids.has(c.instanceId)) moved.push(c); else kept.push(c); });
+    s = { ...s, [side]: { ...s[side], hand: kept, graveyard: [...grave, ...moved] } };
+    if (moved.length) log.push({ msg: `🗂 Cost — discarded ${moved.map(c => c.name).join(', ')}.`, color: sideCol() });
+  }
+  if ((cost.banish | 0) > 0) {
+    const idxs = new Set((picks.banishIdxs || []).map(Number));
+    const grave = [...((s[side] && s[side].graveyard) || [])];
+    const kept = [], gone = [];
+    grave.forEach((c, i) => { if (idxs.has(i)) gone.push(c); else kept.push(c); });
+    s = { ...s, [side]: { ...s[side], graveyard: kept } };
+    if (gone.length) log.push({ msg: `🌑 Cost — banished ${gone.length} card${gone.length === 1 ? '' : 's'} from the graveyard.`, color: sideCol() });
+  }
+  if ((cost.payLifeHero | 0) > 0) {
+    s = { ...s, units: (s.units || []).map(u => (u.owner === side && u.isHero && u.alive)
+      ? { ...u, currentHp: Math.max(1, u.currentHp - (cost.payLifeHero | 0)) } : u) };
+    log.push({ msg: `🩸 Cost — paid ${cost.payLifeHero} life.`, color: sideCol() });
+  }
+  if ((cost.tribute | 0) > 0) {
+    const victimIds = new Set(picks.tributeIds || []);
+    if (victimIds.size) {
+      const dead = [];
+      s = { ...s, units: (s.units || []).map(u => { if (victimIds.has(u.id) && u.alive && u.owner === side && !u.isHero) { dead.push(u); return { ...u, currentHp: 0, alive: false }; } return u; }) };
+      if (dead.length) {
+        const graveCards = dead.map(u => ({ id: u.cardId || u.originalCardId, name: u.name, icon: u.icon, type: 'unit', instanceId: 'tomb_' + u.id })).filter(c => c.id);
+        s = { ...s, [side]: { ...s[side], graveyard: [...((s[side] && s[side].graveyard) || []), ...graveCards] } };
+        log.push({ msg: `⚰️ Cost — tributed ${dead.map(u => u.name).join(', ')}.`, color: sideCol() });
+        try {
+          dead.forEach(u => {
+            if (typeof _battleOnUnitKilled === 'function') {
+              const ph = (s.units || []).find(h => h && h.owner === (u.owner === 'player' ? 'ai' : 'player') && h.isHero);
+              try { _battleOnUnitKilled(s, ph || null, u); } catch (e) {}
+            }
+          });
+        } catch (e) {}
+      }
+    }
+  }
+  return { state: s, log, selfSacrifice: !!cost.tributeSelf };
+}
+// Send the source unit to the graveyard (the tributeSelf half of a cost), AFTER
+// its move/effect has resolved.
+function _applySelfSacrifice(state, side, sourceUnit) {
+  if (!sourceUnit) return { state, log: [] };
+  const log = [{ msg: `⚰️ Cost — ${sourceUnit.name} sacrifices itself.`, color: side === 'player' ? 'amber' : 'red' }];
+  const card = { id: sourceUnit.cardId || sourceUnit.originalCardId, name: sourceUnit.name, icon: sourceUnit.icon, type: 'unit', instanceId: 'tomb_' + sourceUnit.id };
+  let s = { ...state, units: (state.units || []).map(u => u.id === sourceUnit.id ? { ...u, currentHp: 0, alive: false } : u) };
+  if (card.id) s = { ...s, [side]: { ...s[side], graveyard: [...((s[side] && s[side].graveyard) || []), card] } };
+  try {
+    if (typeof _battleOnUnitKilled === 'function') {
+      const ph = (s.units || []).find(h => h && h.owner === (side === 'player' ? 'ai' : 'player') && h.isHero);
+      _battleOnUnitKilled(s, ph || null, sourceUnit);
+    }
+  } catch (e) {}
+  return { state: s, log };
+}
+// AI auto-pay — cheapest hand cards, oldest graveyard cards, weakest other units.
+function _aiPickCost(state, side, sourceUnit, cost) {
+  const ss = state[side] || {};
+  const hand = (ss.hand || []).slice().sort((a, b) => ((a.cost | 0) - (b.cost | 0)));
+  const grave = ss.graveyard || [];
+  const others = (state.units || []).filter(u => u && u.alive && u.owner === side && !u.isHero
+    && (!sourceUnit || u.id !== sourceUnit.id)).sort((a, b) => (a.currentHp || 0) - (b.currentHp || 0));
+  return {
+    discardIds: hand.slice(0, cost.discard | 0).map(c => c.instanceId),
+    banishIdxs: Array.from({ length: Math.min(cost.banish | 0, grave.length) }, (_, i) => i),
+    tributeIds: others.slice(0, cost.tribute | 0).map(u => u.id),
+  };
+}
+
+// ⚡ INTERACTIVE COST MODAL — resolves to { state, log, selfSacrifice } once the
+// player pays, or null if they cancel. Self-contained (own DOM + style); reads
+// hand / graveyard / board units from `state`. selfSacrifice + payLife are
+// automatic (shown as fixed lines); discard / banish / tribute need picks.
+function _promptCostPayment(state, side, sourceUnit, cost, label) {
+  return new Promise((resolve) => {
+    try {
+      if (_costIsEmpty(cost)) { resolve(_applyCostPayment(state, side, sourceUnit, cost, {})); return; }
+      const ss = state[side] || {};
+      const hand = ss.hand || [];
+      const grave = ss.graveyard || [];
+      const others = (state.units || []).filter(u => u && u.alive && u.owner === side && !u.isHero
+        && (!sourceUnit || u.id !== sourceUnit.id));
+      const need = { discard: cost.discard | 0, banish: cost.banish | 0, tribute: cost.tribute | 0 };
+      const picks = { discardIds: new Set(), banishIdxs: new Set(), tributeIds: new Set() };
+
+      if (!document.getElementById('cost-pay-style')) {
+        const st = document.createElement('style'); st.id = 'cost-pay-style';
+        st.textContent = `
+          .cost-pay-overlay{position:fixed;inset:0;z-index:2147483560;display:flex;align-items:center;justify-content:center;
+            background:radial-gradient(ellipse at 50% 40%,rgba(10,6,20,0.82),rgba(2,1,8,0.94));backdrop-filter:blur(3px);}
+          .cost-pay-box{width:min(640px,92vw);max-height:88vh;overflow:auto;border-radius:14px;padding:18px 20px 16px;
+            background:linear-gradient(160deg,#1c1230,#120a1e);border:2px solid #c9a5ff;
+            box-shadow:0 24px 70px rgba(0,0,0,0.8),0 0 40px rgba(201,165,255,0.35);color:#e9e3f7;}
+          .cost-pay-title{font-family:'Cinzel',serif;font-weight:800;font-size:1.15rem;color:#ffd166;letter-spacing:.03em;}
+          .cost-pay-sub{font-size:0.82rem;color:#b9add6;margin:2px 0 12px;}
+          .cost-sec{margin:10px 0;padding:10px;border-radius:10px;background:rgba(255,255,255,0.04);border:1px solid rgba(201,165,255,0.22);}
+          .cost-sec-head{font-weight:700;font-size:0.9rem;margin-bottom:7px;color:#ffe3a8;display:flex;justify-content:space-between;align-items:center;}
+          .cost-sec-head .cost-count{font-size:0.78rem;color:#c9a5ff;}
+          .cost-sec-head.done .cost-count{color:#7CFC9A;}
+          .cost-grid{display:flex;flex-wrap:wrap;gap:7px;}
+          .cost-item{display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:8px;cursor:pointer;font-size:0.82rem;
+            background:rgba(0,0,0,0.35);border:1.5px solid rgba(255,255,255,0.14);user-select:none;transition:transform .08s,border-color .12s;}
+          .cost-item:hover{transform:translateY(-1px);border-color:rgba(201,165,255,0.6);}
+          .cost-item.selected{border-color:#ffd166;background:rgba(255,209,102,0.16);box-shadow:0 0 10px rgba(255,209,102,0.4);}
+          .cost-item .ci-ico{font-size:1.05rem;}
+          .cost-fixed{font-size:0.86rem;color:#ffb3b3;padding:8px 10px;border-radius:8px;background:rgba(255,90,90,0.08);border:1px solid rgba(255,90,90,0.3);margin:10px 0;}
+          .cost-pay-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;}
+          .cost-pay-actions button{font-family:'Cinzel',serif;font-weight:700;padding:9px 18px;border-radius:9px;cursor:pointer;border:1px solid #6a5a9e;background:#241636;color:#e9e3f7;}
+          .cost-pay-actions #cost-pay-confirm{background:linear-gradient(160deg,#ffd166,#e0a93a);color:#241204;border-color:#ffd166;}
+          .cost-pay-actions #cost-pay-confirm:disabled{opacity:0.4;cursor:not-allowed;filter:grayscale(0.6);}
+          .cost-pay-empty{font-size:0.8rem;color:#caa;font-style:italic;}`;
+        (document.head || document.documentElement).appendChild(st);
+      }
+
+      const esc = (x) => { try { return escapeHtml(String(x == null ? '' : x)); } catch (e) { return String(x || ''); } };
+      const itemHtml = (kind, id, icon, name) =>
+        `<div class="cost-item" data-kind="${kind}" data-id="${esc(id)}"><span class="ci-ico">${esc(icon || '🂠')}</span><span>${esc(name || '?')}</span></div>`;
+      let sections = '';
+      if (cost.tributeSelf) sections += `<div class="cost-fixed">⚰️ ${esc(sourceUnit ? sourceUnit.name : 'This unit')} will be sent to the graveyard.</div>`;
+      if ((cost.payLifeHero | 0) > 0) sections += `<div class="cost-fixed">🩸 Your hero takes ${cost.payLifeHero} damage.</div>`;
+      if (need.discard > 0) {
+        sections += `<div class="cost-sec"><div class="cost-sec-head" data-for="discard">🗂 Discard from hand <span class="cost-count">0 / ${need.discard}</span></div>`
+          + `<div class="cost-grid">${hand.length ? hand.map(c => itemHtml('discard', c.instanceId, c.icon, c.name)).join('') : '<span class="cost-pay-empty">No cards in hand.</span>'}</div></div>`;
+      }
+      if (need.banish > 0) {
+        sections += `<div class="cost-sec"><div class="cost-sec-head" data-for="banish">🌑 Banish from graveyard <span class="cost-count">0 / ${need.banish}</span></div>`
+          + `<div class="cost-grid">${grave.length ? grave.map((c, i) => itemHtml('banish', i, c.icon, c.name)).join('') : '<span class="cost-pay-empty">Graveyard is empty.</span>'}</div></div>`;
+      }
+      if (need.tribute > 0) {
+        sections += `<div class="cost-sec"><div class="cost-sec-head" data-for="tribute">⚰️ Tribute friendly units <span class="cost-count">0 / ${need.tribute}</span></div>`
+          + `<div class="cost-grid">${others.length ? others.map(u => itemHtml('tribute', u.id, u.icon, u.name)).join('') : '<span class="cost-pay-empty">No other units to tribute.</span>'}</div></div>`;
+      }
+
+      const ov = document.createElement('div');
+      ov.className = 'cost-pay-overlay'; ov.id = 'cost-pay-overlay';
+      ov.innerHTML = `<div class="cost-pay-box">
+        <div class="cost-pay-title">⚡ Activation Cost${label ? ' — ' + esc(label) : ''}</div>
+        <div class="cost-pay-sub">${esc(_costShortLabel(cost))}. Pick what to pay, then activate.</div>
+        ${sections}
+        <div class="cost-pay-actions"><button id="cost-pay-cancel">Cancel</button><button id="cost-pay-confirm" disabled>Pay &amp; Activate</button></div>
+      </div>`;
+      document.body.appendChild(ov);
+
+      const setOf = (kind) => kind === 'discard' ? picks.discardIds : kind === 'banish' ? picks.banishIdxs : picks.tributeIds;
+      const refresh = () => {
+        ['discard', 'banish', 'tribute'].forEach(kind => {
+          const head = ov.querySelector(`.cost-sec-head[data-for="${kind}"]`);
+          if (!head) return;
+          const cur = setOf(kind).size, req = need[kind];
+          head.querySelector('.cost-count').textContent = `${cur} / ${req}`;
+          head.classList.toggle('done', cur >= req);
+        });
+        const ok = picks.discardIds.size >= need.discard && picks.banishIdxs.size >= need.banish && picks.tributeIds.size >= need.tribute;
+        const btn = ov.querySelector('#cost-pay-confirm'); if (btn) btn.disabled = !ok;
+      };
+      ov.querySelectorAll('.cost-item').forEach(el => {
+        el.onclick = () => {
+          const kind = el.dataset.kind;
+          const raw = el.dataset.id;
+          const id = kind === 'banish' ? Number(raw) : raw;
+          const set = setOf(kind);
+          if (set.has(id)) { set.delete(id); el.classList.remove('selected'); }
+          else {
+            if (set.size >= need[kind]) return; // can't exceed the required count
+            set.add(id); el.classList.add('selected');
+          }
+          refresh();
+        };
+      });
+      const close = () => { try { ov.remove(); } catch (e) {} };
+      ov.querySelector('#cost-pay-cancel').onclick = () => { close(); resolve(null); };
+      ov.querySelector('#cost-pay-confirm').onclick = () => {
+        const paidPicks = {
+          discardIds: [...picks.discardIds],
+          banishIdxs: [...picks.banishIdxs],
+          tributeIds: [...picks.tributeIds],
+        };
+        close();
+        resolve(_applyCostPayment(state, side, sourceUnit, cost, paidPicks));
+      };
+      refresh();
+    } catch (e) {
+      try { console.warn('[cost modal] threw', e); } catch (_) {}
+      resolve(null);
+    }
+  });
+}
+
+// AI move resolution that auto-pays a move.activationCost first. If the AI can't
+// pay, the move is skipped (state unchanged) so the AI never gets a free effect.
+function _aiResolveMove(state, unit, target, move) {
+  const ac = move && move.activationCost;
+  if (_costIsEmpty(ac)) return executeMove(state, unit, target, move);
+  if (!_costPayable(state, 'ai', unit, ac)) return state;   // can't pay → skip
+  const pay = _applyCostPayment(state, 'ai', unit, ac, _aiPickCost(state, 'ai', unit, ac));
+  let s = { ...pay.state, log: [...(pay.state.log || []), ...(pay.log || [])] };
+  s = executeMove(s, unit, target, move);
+  if (pay.selfSacrifice) {
+    const live = (s.units || []).find(u => u.id === unit.id);
+    if (live) { const ss = _applySelfSacrifice(s, 'ai', live); s = { ...ss.state, log: [...(ss.state.log || []), ...ss.log] }; }
+  }
+  return s;
+}
+
+// Player card-play gate for ON-PLAY activation costs. The unit/location/wall is
+// ALWAYS summoned (placeFn); the cost only gates whether its on-play EFFECT
+// fires. If the cost can't be paid (or the player cancels), the card still
+// enters but App.ui._suppressOnPlay tells the place* fn to skip applyOnPlayEffect.
+function _gateOnPlayThenPlace(card, placeFn) {
+  try {
+    const cost = card && card.onPlay && card.onPlay.cost;
+    if (_costIsEmpty(cost)) { placeFn(); return; }
+    if (!_costPayable(App.state, 'player', null, cost)) {
+      try { showToast('⚡ ' + (card.name || 'Card') + ' enters — on-play cost (' + _costShortLabel(cost) + ') unpaid, effect skipped.'); } catch (e) {}
+      App.ui._suppressOnPlay = card.instanceId; placeFn(); return;
+    }
+    _promptCostPayment(App.state, 'player', null, cost, card.name).then(res => {
+      if (!res) { App.ui._suppressOnPlay = card.instanceId; placeFn(); return; }
+      App.state = { ...res.state, log: [...(res.state.log || []), ...(res.log || [])] };
+      placeFn();
+    });
+  } catch (e) { try { console.warn('[onplay cost gate]', e); } catch (_) {} placeFn(); }
+}
+
 function applyOnPlayEffect(state, unit, card) {
   const eff = card && card.onPlay;
   if (!state || !unit || !eff || !eff.type) return state;
@@ -73241,6 +73526,11 @@ function renderCardEditor() {
     <div class="editor-field"><label>Status (when applicable)</label><select id="ed-onplay-status">${onPlayStatusOpts}</select></div>
     <div class="editor-field"><label>Status / Seal Duration (turns)</label><input id="ed-onplay-status-dur" type="number" min="1" max="9" value="${onPlay.statusDuration || 2}"></div>
     <div class="editor-field"><label>👑 Control Duration (turns, 0 = permanent)</label><input id="ed-onplay-control-dur" type="number" min="0" max="9" value="${onPlay.controlDuration || 0}"></div>
+    <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.5rem;margin-top:0.2rem"><label style="font-weight:700;color:#ffd166">⚡ On-Play Activation Cost (pay to fire the effect)</label><div class="small-text ink-dim">The card still enters play; the player pays this to activate the on-play effect (skipped if it can't be paid).</div></div>
+    <div class="editor-field"><label>🗂 Discard from hand</label><input id="ed-onplay-cost-discard" type="number" min="0" max="5" value="${(onPlay.cost && onPlay.cost.discard) || 0}"></div>
+    <div class="editor-field"><label>🩸 Pay life (hero dmg)</label><input id="ed-onplay-cost-life" type="number" min="0" max="100" value="${(onPlay.cost && onPlay.cost.payLifeHero) || 0}"></div>
+    <div class="editor-field"><label>🌑 Banish from graveyard</label><input id="ed-onplay-cost-banish" type="number" min="0" max="5" value="${(onPlay.cost && onPlay.cost.banish) || 0}"></div>
+    <div class="editor-field"><label>⚰️ Tribute friendly units</label><input id="ed-onplay-cost-tribute" type="number" min="0" max="5" value="${(onPlay.cost && onPlay.cost.tribute) || 0}"></div>
     <div class="editor-field"><label>🪦 Graveyard Side (banish / negate-graveyard)</label><select id="ed-onplay-grave-side">
       ${['enemy','self','both'].map(o => `<option value="${o}" ${(onPlay.graveSide || 'enemy') === o ? 'selected' : ''}>${o === 'enemy' ? "Enemy's graveyard" : o === 'self' ? 'Your graveyard' : 'Both graveyards'}</option>`).join('')}
     </select></div>
@@ -75085,6 +75375,16 @@ function captureEditorIntoCard(card) {
         statusDuration: num('ed-onplay-status-dur', 1, 6, 2),
         // 👑 Take-Control duration — 0 = permanent, > 0 reverts after N turns.
         controlDuration: num('ed-onplay-control-dur', 0, 9, 0),
+        // ⚡ On-play activation cost (pay-to-activate). Undefined when all zero.
+        cost: (() => {
+          const c = {
+            discard: num('ed-onplay-cost-discard', 0, 5, 0),
+            payLifeHero: num('ed-onplay-cost-life', 0, 100, 0),
+            banish: num('ed-onplay-cost-banish', 0, 5, 0),
+            tribute: num('ed-onplay-cost-tribute', 0, 5, 0),
+          };
+          return (c.discard || c.payLifeHero || c.banish || c.tribute) ? c : undefined;
+        })(),
         // 🌀 Summon-card pin — used by 'summon' on-play type. The 🌌
         // 'polycreate' type uses the same field but reads from the
         // Fusion Kalon dropdown when set (which falls back to the
@@ -75659,6 +75959,12 @@ function renderMoveEditor() {
         <div class="editor-field"><label>👑 Take-Control Chance % (0 = off)</label><input id="mv-control-chance" type="number" min="0" max="100" value="${(move.takeControl && move.takeControl.chance) || 0}"></div>
         <div class="editor-field"><label>👑 Control Duration (turns, 0 = permanent)</label><input id="mv-control-dur" type="number" min="0" max="9" value="${(move.takeControl && move.takeControl.duration) || 0}"></div>
         <div class="editor-field full"><div class="small-text ink-dim">👑 Take-Control: set a chance above 0 to make this a mind-control move. Saving forces Kind → Ability and target → one enemy; on use it rolls the % to seize that enemy unit (heroes/walls/spellshielded immune). Duration 0 = keep it permanently.</div></div>
+        <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.6rem;margin-top:0.3rem"><label style="font-weight:700;color:#ffd166">⚡ Activation Cost (Yu-Gi-Oh-style — pay to use this move)</label><div class="small-text ink-dim">The player picks what to pay before the move resolves; the move can't be used unless the cost can be paid.</div></div>
+        <div class="editor-field"><label>🗂 Discard cards from hand</label><input id="mv-cost-discard" type="number" min="0" max="5" value="${(move.activationCost && move.activationCost.discard) || 0}"></div>
+        <div class="editor-field"><label>🩸 Pay life (damage your hero)</label><input id="mv-cost-life" type="number" min="0" max="100" value="${(move.activationCost && move.activationCost.payLifeHero) || 0}"></div>
+        <div class="editor-field"><label>🌑 Banish from graveyard</label><input id="mv-cost-banish" type="number" min="0" max="5" value="${(move.activationCost && move.activationCost.banish) || 0}"></div>
+        <div class="editor-field"><label>⚰️ Tribute OTHER friendly units</label><input id="mv-cost-tribute" type="number" min="0" max="5" value="${(move.activationCost && move.activationCost.tribute) || 0}"></div>
+        <div class="editor-field full"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="mv-cost-self" ${(move.activationCost && move.activationCost.tributeSelf) ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer"> <span>⚰️ Sacrifice THIS unit (send the user to the graveyard) to use — applied after the move resolves</span></label></div>
 
         <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.15);padding-top:0.6rem;margin-top:0.3rem">
           <label style="font-weight:700;color:#ffd166">🔁 Multi-Hit</label>
@@ -76043,6 +76349,18 @@ function bindMoveEditor() {
       if (move.target !== 'allEnemies') move.target = 'enemy';
     } else {
       delete move.takeControl;
+    }
+    // ⚡ Activation cost — Yu-Gi-Oh-style "pay to use" prerequisite.
+    {
+      const _mc = {
+        discard: Math.max(0, Math.min(5, parseInt((document.getElementById('mv-cost-discard') || {}).value, 10) || 0)),
+        payLifeHero: Math.max(0, Math.min(100, parseInt((document.getElementById('mv-cost-life') || {}).value, 10) || 0)),
+        banish: Math.max(0, Math.min(5, parseInt((document.getElementById('mv-cost-banish') || {}).value, 10) || 0)),
+        tribute: Math.max(0, Math.min(5, parseInt((document.getElementById('mv-cost-tribute') || {}).value, 10) || 0)),
+        tributeSelf: !!(document.getElementById('mv-cost-self') && document.getElementById('mv-cost-self').checked),
+      };
+      if (_mc.discard || _mc.payLifeHero || _mc.banish || _mc.tribute || _mc.tributeSelf) move.activationCost = _mc;
+      else delete move.activationCost;
     }
     // 🛡️ Elemental Shield — reactive self-buff: while active, when the user is
     // hit (matching vs), the attacker suffers `status`.
@@ -84500,21 +84818,44 @@ function bindBattleEvents() {
     el.onclick = () => {
       if (el.disabled) return;
       const move = lookupMove(el.dataset.move);
-      // No-target moves fire immediately (see modal-move handler comment)
-      if (move && move.kind === 'ability'
-          && (move.target === 'self' || move.target === 'allAllies' || move.target === 'allEnemies' || !move.target)) {
-        const sel = App.state.units.find(u => u.id === App.ui.selectedUnitId);
-        if (sel && sel.owner === 'player') {
+      if (!move) return;
+      // Deselecting an already-armed move — never charges an activation cost.
+      if (App.ui.selectedMoveId === el.dataset.move) {
+        App.ui.selectedMoveId = null; App.ui.actionMode = null; renderBattle(); return;
+      }
+      const sel = App.state.units.find(u => u.id === App.ui.selectedUnitId);
+      const isNoTarget = move.kind === 'ability'
+        && (move.target === 'self' || move.target === 'allAllies' || move.target === 'allEnemies' || !move.target);
+      // Original activation path: no-target abilities fire immediately;
+      // everything else arms the move for targeting.
+      const proceed = () => {
+        if (isNoTarget && sel && sel.owner === 'player') {
           App.ui.selectedMoveId = null;
           App.ui.actionMode = null;
           App.state = executeMove(App.state, sel, null, move);
           checkPostAction();
           return;
         }
+        App.ui.selectedMoveId = el.dataset.move;
+        App.ui.actionMode = null;
+        renderBattle();
+      };
+      // ⚡ Activation cost (Yu-Gi-Oh-style "pay to use") — gated at SELECTION so
+      // the player commits the cost up front, then the move resolves normally.
+      // tributeSelf is deferred to checkPostAction (after the move resolves).
+      const cost = move.activationCost;
+      if (sel && sel.owner === 'player' && !_costIsEmpty(cost)) {
+        if ((move.cost | 0) > (App.state.player.energy | 0)) { showToast('Not enough energy'); return; }
+        if (!_costPayable(App.state, 'player', sel, cost)) { showToast('🚫 Cost: ' + _costShortLabel(cost) + ' — you can\'t pay it.'); return; }
+        _promptCostPayment(App.state, 'player', sel, cost, move.name).then(res => {
+          if (!res) { renderBattle(); return; }   // cancelled — nothing was spent
+          App.state = { ...res.state, log: [...(res.state.log || []), ...(res.log || [])] };
+          if (res.selfSacrifice && sel) App.ui._pendingSelfSac = sel.id;
+          proceed();
+        });
+        return;
       }
-      App.ui.selectedMoveId = App.ui.selectedMoveId === el.dataset.move ? null : el.dataset.move;
-      App.ui.actionMode = null;
-      renderBattle();
+      proceed();
     };
   });
 
@@ -84926,10 +85267,12 @@ function onTileClick(x, y) {
     if (!card) { App.ui.selectedCardId = null; renderBattle(); return; }
     // 🆘 Underdog passive can drop this to 0 when outnumbered.
     if (getEffectiveCardCost(card, s, 'player') > s.player.energy) { showToast('Not enough energy'); return; }
-    if (card.type === 'unit') placeUnit(card, {x, y});
-    else if (card.type === 'location') placeLocation(card, {x, y});
+    // ⚡ On-play activation cost — gate unit/location/wall plays through the
+    // cost flow (the card still enters; only its on-play EFFECT is gated).
+    if (card.type === 'unit') _gateOnPlayThenPlace(card, () => placeUnit(card, {x, y}));
+    else if (card.type === 'location') _gateOnPlayThenPlace(card, () => placeLocation(card, {x, y}));
     else if (card.type === 'trap') placeTrap(card, {x, y});
-    else if (card.type === 'wall') placeWall(card, {x, y});
+    else if (card.type === 'wall') _gateOnPlayThenPlace(card, () => placeWall(card, {x, y}));
     return;
   }
 
@@ -88051,13 +88394,16 @@ function placeUnit(card, pos) {
   }
   // On-play ability — runs AFTER weather summon so any weather-triggered passive on
   // the new unit has its sky already in place when the AOE / heal / buff resolves.
-  if (card && card.onPlay && card.onPlay.type) {
+  // ⚡ _suppressOnPlay (set by the cost gate when an on-play cost was unpaid /
+  // cancelled) skips the EFFECT while still letting the unit enter the board.
+  if (card && card.onPlay && card.onPlay.type && App.ui._suppressOnPlay !== card.instanceId) {
     // 🌟 ON-PLAY CINEMATIC — fires BEFORE the effect resolves so the player
     // gets the dramatic name + description reveal first, then the actual
     // AOE / heal / buff / summon plays underneath the fading overlay.
     try { if (typeof playOnPlayCinematic === 'function') playOnPlayCinematic(unit, card); } catch (e) {}
     next = applyOnPlayEffect(next, unit, card);
   }
+  if (App.ui._suppressOnPlay === card.instanceId) App.ui._suppressOnPlay = null;
   // 🐕 PASSIVE: Trap Dog — every time a trapDog unit hits the board,
   // reveal every enemy trap. Cheap, immediate. The passive applies even
   // when there's no on-play effect on the card.
@@ -88209,6 +88555,8 @@ function placeUnit(card, pos) {
 function _fireFieldCardOnPlay(card, owner) {
   try {
     if (!card || !card.onPlay || !card.onPlay.type || typeof applyOnPlayEffect !== 'function') return;
+    // ⚡ Cost gate suppressed this field card's on-play effect (player only).
+    if (owner === 'player' && App.ui && App.ui._suppressOnPlay === card.instanceId) { App.ui._suppressOnPlay = null; return; }
     const s = App.state; if (!s) return;
     const hero = (s.units || []).find(u => u && u.owner === owner && u.isHero && u.alive);
     const caster = hero
@@ -88397,12 +88745,13 @@ function placeWall(card, pos) {
   // synthetic anchor on the wall's tile (mirrors _twFireCardSummon's anchoring).
   // Radius/AOE/take-control effects center on the barrier. The anchor is never
   // pushed into state.units, so nothing else sees a phantom unit.
-  if (card && card.onPlay && card.onPlay.type) {
+  if (card && card.onPlay && card.onPlay.type && App.ui._suppressOnPlay !== card.instanceId) {
     try {
       const _wallAnchor = { id: '_wall_anchor_' + pos.x + '_' + pos.y, name: card.name, icon: card.icon, owner: 'player', pos: { x: pos.x, y: pos.y }, alive: true, isWall: true };
       App.state = applyOnPlayEffect(App.state, _wallAnchor, card);
     } catch (e) { try { console.warn('[wall onPlay]', e); } catch (_) {} }
   }
+  if (App.ui._suppressOnPlay === card.instanceId) App.ui._suppressOnPlay = null;
   recordCardPlayed(card);
   App.ui.selectedCardId = null;
   if (typeof playSfx === 'function') playSfx('cardPlace');
@@ -88679,6 +89028,19 @@ function _resolveSpellAfterChain(card) {
 }
 
 function checkPostAction() {
+  // ⚰️ Deferred tributeSelf — a move whose activation cost is "sacrifice this
+  // unit" sends the user to the graveyard AFTER its effect has fully resolved,
+  // so the move still goes off. The flag is set when the cost was paid.
+  if (App.ui && App.ui._pendingSelfSac && App.state) {
+    const _suId = App.ui._pendingSelfSac; App.ui._pendingSelfSac = null;
+    const _su = (App.state.units || []).find(u => u && u.id === _suId && u.alive);
+    if (_su) {
+      try {
+        const _ss = _applySelfSacrifice(App.state, _su.owner || 'player', _su);
+        App.state = { ...(_ss.state), log: [...(((_ss.state) && _ss.state.log) || []), ..._ss.log] };
+      } catch (e) { try { console.warn('[selfSac]', e); } catch (_) {} }
+    }
+  }
   // 📡 Multiplayer broadcast — push our state to the opponent after every
   // significant action (place / move / attack / cast). Debounced inside
   // broadcastMyState() so a burst of consecutive actions sends one packet.
@@ -89578,10 +89940,22 @@ function doAIStep() {
           next = maybeTriggerWeatherSummoner(next, newUnit);
           // On-play ability — AI side runs the same effect engine the player uses.
           if (best && best.onPlay && best.onPlay.type) {
-            // 🌟 ON-PLAY CINEMATIC — same dramatic reveal for AI-deployed units
-            // so the player sees what the enemy unit's on-play just did.
-            try { if (typeof playOnPlayCinematic === 'function') playOnPlayCinematic(newUnit, best); } catch (e) {}
-            next = applyOnPlayEffect(next, newUnit, best);
+            // ⚡ AI auto-pays any on-play activation cost; if it can't afford it,
+            // the unit still enters but the on-play effect is skipped.
+            const _opCost = best.onPlay.cost;
+            let _opOk = true;
+            if (!_costIsEmpty(_opCost)) {
+              if (_costPayable(next, 'ai', newUnit, _opCost)) {
+                const _opPay = _applyCostPayment(next, 'ai', newUnit, _opCost, _aiPickCost(next, 'ai', newUnit, _opCost));
+                next = { ..._opPay.state, log: [...((_opPay.state && _opPay.state.log) || []), ...(_opPay.log || [])] };
+              } else { _opOk = false; }
+            }
+            if (_opOk) {
+              // 🌟 ON-PLAY CINEMATIC — same dramatic reveal for AI-deployed units
+              // so the player sees what the enemy unit's on-play just did.
+              try { if (typeof playOnPlayCinematic === 'function') playOnPlayCinematic(newUnit, best); } catch (e) {}
+              next = applyOnPlayEffect(next, newUnit, best);
+            }
           }
           // 🜂 FORCED KALON — 'onEnter' timing for AI-summoned units too.
           try {
@@ -90031,7 +90405,7 @@ function doAIStep() {
         // matching counter in the player's hand AND they can afford it;
         // otherwise tryPromptCounter resolves false immediately.
         const _doAttack = () => {
-          App.state = executeMove(App.state, unit, pick.target, pick.move);
+          App.state = _aiResolveMove(App.state, unit, pick.target, pick.move);
           markAIUnitActed(unit.id);
           setAIActor(unit.id, `⚔ Enemy ${unit.name} → ${pick.move.name} → ${pick.target.name}`);
           renderBattle();
@@ -90154,7 +90528,7 @@ function doAIStep() {
     if (unit && unit.alive && unit.hasMoved && !unit.hasAttacked) {
       const pick = tryAttackFromPos(unit.pos);
       if (pick) {
-        App.state = executeMove(App.state, unit, pick.target, pick.move);
+        App.state = _aiResolveMove(App.state, unit, pick.target, pick.move);
         markAIUnitActed(unit.id);
         setAIActor(unit.id, `⚔ Enemy ${unit.name} → ${pick.move.name} → ${pick.target.name}`);
         renderBattle();
@@ -132044,6 +132418,12 @@ function describeMoveExtras(mv) {
 // Plain-English line for a unit/hero's onPlay (enter-the-field) effect.
 function describeOnPlayEffect(eff) {
   if (!eff || !eff.type) return '';
+  // ⚡ Activation-cost prefix (pay-to-fire) when the on-play carries a cost.
+  const _costPre = (typeof _costShortLabel === 'function' && eff.cost && !_costIsEmpty(eff.cost))
+    ? `⚡ Cost: ${_costShortLabel(eff.cost)} — ` : '';
+  return _costPre + _describeOnPlayEffectBody(eff);
+}
+function _describeOnPlayEffectBody(eff) {
   const r = Math.max(0, Math.min(4, eff.radius || 1));
   const within = `within ${r} tile${r === 1 ? '' : 's'}`;
   const st = eff.status ? _abilityStatusName(eff.status) : null;

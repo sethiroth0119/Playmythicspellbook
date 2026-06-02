@@ -9276,6 +9276,94 @@
     .unit-hp { height: 5px; }
   }
 
+  /* ════════════════════════════════════════════════════════════════════
+     🌟 STATUS-EFFECT APPLY POP — a cool badge that bursts in over a unit
+     when it GAINS a status, holds for a beat, then floats up + fades.
+     Spawned by Juice.statusPop() into a body-level layer (survives the
+     board's full re-renders); color-themed buff / debuff / neutral.
+     ──────────────────────────────────────────────────────────────────── */
+  #status-vfx-layer {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2147480000;   /* above the board + HUD, below modals */
+    overflow: hidden;
+  }
+  .status-pop {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    pointer-events: none;
+    will-change: transform, opacity;
+    animation: status-pop-life 2.4s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+    --sp-color: #8fd2ff; --sp-glow: rgba(120,200,255,0.85); --sp-deep: #0c2740;
+  }
+  .status-pop-buff    { --sp-color: #74ec9d; --sp-glow: rgba(110,231,155,0.9); --sp-deep: #0b3a22; }
+  .status-pop-debuff  { --sp-color: #ff7188; --sp-glow: rgba(255,90,120,0.9);  --sp-deep: #3a0c18; }
+  .status-pop-neutral { --sp-color: #8fd2ff; --sp-glow: rgba(120,200,255,0.9); --sp-deep: #0c2740; }
+  .status-pop-badge {
+    position: relative;
+    width: 46px; height: 46px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; line-height: 1;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 38%, rgba(255,255,255,0.22), var(--sp-deep) 78%);
+    border: 2px solid var(--sp-color);
+    box-shadow: 0 0 14px 2px var(--sp-glow), inset 0 0 10px rgba(0,0,0,0.55),
+                0 4px 10px rgba(0,0,0,0.6);
+    text-shadow: 0 2px 4px rgba(0,0,0,0.85);
+    animation: status-badge-in 0.5s cubic-bezier(0.18, 1.4, 0.4, 1) both;
+  }
+  /* Bursting energy ring centered on the badge. */
+  .status-pop-ring {
+    position: absolute;
+    top: 23px; left: 50%;
+    width: 46px; height: 46px;
+    margin: -23px 0 0 -23px;
+    border-radius: 50%;
+    border: 2px solid var(--sp-color);
+    box-shadow: 0 0 12px var(--sp-glow);
+    pointer-events: none;
+    animation: status-ring-burst 0.7s ease-out forwards;
+  }
+  .status-pop-name {
+    font-family: 'Cinzel', serif;
+    font-weight: 700;
+    font-size: 0.62rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    background: linear-gradient(180deg, rgba(0,0,0,0.78), rgba(0,0,0,0.62));
+    border: 1px solid var(--sp-color);
+    box-shadow: 0 0 8px var(--sp-glow), 0 2px 6px rgba(0,0,0,0.6);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.95);
+  }
+  @keyframes status-pop-life {
+    0%   { opacity: 0; transform: translate(-50%, -50%) translateY(10px); }
+    9%   { opacity: 1; transform: translate(-50%, -50%) translateY(0); }
+    68%  { opacity: 1; transform: translate(-50%, -50%) translateY(-7px); }
+    100% { opacity: 0; transform: translate(-50%, -50%) translateY(-36px); }
+  }
+  @keyframes status-badge-in {
+    0%   { transform: scale(0.2) rotate(-14deg); }
+    55%  { transform: scale(1.28) rotate(5deg); }
+    78%  { transform: scale(0.94) rotate(0deg); }
+    100% { transform: scale(1); }
+  }
+  @keyframes status-ring-burst {
+    0%   { transform: scale(0.45); opacity: 0.9; }
+    100% { transform: scale(2.5); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .status-pop { animation-duration: 1.8s; }
+    .status-pop-ring { display: none; }
+  }
+
   /* Owner indicator strip on unit cell */
   .unit::before {
     content: '';
@@ -64686,6 +64774,41 @@ const Juice = {
       return el;
     } catch (e) {}
   },
+  // 🌟 Status-effect pop — a cool badge (icon + name) that bursts in over a
+  // unit, holds for a beat, then floats up and fades. Color-themed by kind
+  // ('buff' | 'debuff' | 'neutral'). Lives in a dedicated body-level layer so
+  // it survives the board's full-innerHTML re-renders. Self-cleaning.
+  _statusLayer: null,
+  statusPop(opts) {
+    try {
+      if (Juice._level >= 2) return;           // fully muted (accessibility)
+      opts = opts || {};
+      let layer = Juice._statusLayer;
+      if (!layer || !layer.isConnected) {
+        layer = document.getElementById('status-vfx-layer');
+        if (!layer) {
+          layer = document.createElement('div');
+          layer.id = 'status-vfx-layer';
+          document.body.appendChild(layer);
+        }
+        Juice._statusLayer = layer;
+      }
+      const kind = (opts.kind === 'buff' || opts.kind === 'debuff') ? opts.kind : 'neutral';
+      const el = document.createElement('div');
+      el.className = 'status-pop status-pop-' + kind;
+      const yOff = (opts.index || 0) * 30;     // stack multiple pops on one unit
+      el.style.left = (opts.x || 0) + 'px';
+      el.style.top  = ((opts.y || 0) - yOff) + 'px';
+      const nm = (typeof escapeHtml === 'function') ? escapeHtml(String(opts.name || '')) : String(opts.name || '');
+      el.innerHTML =
+        '<span class="status-pop-ring"></span>' +
+        '<span class="status-pop-badge">' + String(opts.icon || '✦') + '</span>' +
+        '<span class="status-pop-name">' + nm + '</span>';
+      layer.appendChild(el);
+      setTimeout(() => { try { el.remove(); } catch (e) {} }, 2400);
+      return el;
+    } catch (e) {}
+  },
   flash(el, kind) {
     try {
       if (Juice._level >= 2) return;
@@ -78282,6 +78405,79 @@ function _flipPlayBattle() {
 // the same turn is a free no-op. End result: at most ONE board repaint per
 // user action instead of 4. This single change is the biggest in-battle
 // FPS win in this pass.
+// 🌟 STATUS-EFFECT APPLY VFX
+// ─────────────────────────────────────────────────────────────────────────
+// Classify a status as a buff / debuff / neutral so the pop-up can color
+// itself (green-gold burst for good, crimson-violet for bad). Reads the
+// STATUS_EFFECTS catalog's effect fields — no per-status hardcoding needed
+// beyond a small positive-id allowlist for stat-less buffs (protect, etc.).
+function _statusVfxKind(def) {
+  if (!def) return 'neutral';
+  const BUFF_IDS = ['strong', 'shielded', 'focused', 'haste', 'assisted', 'protected',
+                    'countering', 'ambushGuard1', 'ambushGuard3'];
+  if (BUFF_IDS.indexOf(def.id) >= 0) return 'buff';
+  // Any clearly-harmful mechanic ⇒ debuff.
+  if (def.skipTurn || def.dmgMin || def.statMult || def.forceMiss || def.damageTakenMult ||
+      def.silencesCostMoves || def.selfHitChance || def.skipChance || def.forceAttackNearest ||
+      (typeof def.atkMod === 'number' && def.atkMod < 0) ||
+      (typeof def.defMod === 'number' && def.defMod < 0) ||
+      (typeof def.magMod === 'number' && def.magMod < 0) ||
+      (typeof def.resMod === 'number' && def.resMod < 0) ||
+      (typeof def.spdMod === 'number' && def.spdMod < 0) ||
+      (typeof def.accMod === 'number' && def.accMod < 0)) return 'debuff';
+  // Any positive stat bump ⇒ buff.
+  if ((def.atkMod > 0) || (def.defMod > 0) || (def.magMod > 0) || (def.resMod > 0) ||
+      (def.spdMod > 0)) return 'buff';
+  return 'neutral';
+}
+
+// Diff every unit's status set against what we showed last render, and pop a
+// cool floating badge over any unit (player, AI, or hero) that just GAINED a
+// status. Driven from the render-batcher (after the board paints) so it catches
+// EVERY application path uniformly — moves, locations, weather, passives, and
+// multiplayer-mirrored snapshots — without touching the pure engine functions.
+// Fully guarded: any failure is swallowed so it can never break a render.
+function _emitStatusVfx() {
+  try {
+    if (!App.state || !Array.isArray(App.state.units)) return;
+    if (typeof STATUS_EFFECTS === 'undefined' || typeof Juice === 'undefined' || !Juice.statusPop) return;
+    App.ui = App.ui || {};
+    const seen = App.ui._statusSeen || (App.ui._statusSeen = {});
+    const aliveIds = new Set();
+    const vw = window.innerWidth || 1280, vh = window.innerHeight || 720;
+    App.state.units.forEach(u => {
+      if (!u || !u.id || !u.alive) return;
+      aliveIds.add(u.id);
+      const cur = (u.statusEffects || []).map(e => e && e.type).filter(Boolean);
+      const prev = seen[u.id];
+      const curSet = new Set(cur);
+      // First time we see this unit → just record its baseline (don't pop a
+      // whole pre-existing stack on first paint / reconnect).
+      if (!prev) { seen[u.id] = curSet; return; }
+      const fresh = cur.filter(t => !prev.has(t));
+      seen[u.id] = curSet;
+      if (!fresh.length) return;
+      let el = null;
+      try { el = document.querySelector('[data-unit="' + u.id + '"]'); } catch (e) {}
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (!r.width || r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) return;
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height * 0.28;
+      // Cap pops per unit per render so a big multi-status hit doesn't spam.
+      fresh.slice(0, 3).forEach((t, i) => {
+        const def = STATUS_EFFECTS[t];
+        if (!def) return;
+        Juice.statusPop({ x: cx, y: cy, icon: def.icon || '✦', name: def.name || t,
+                          kind: _statusVfxKind(def), index: i });
+      });
+    });
+    // Prune units that are gone so a re-applied status (after death / cleanse
+    // + re-affliction) pops again next time.
+    Object.keys(seen).forEach(id => { if (!aliveIds.has(id)) delete seen[id]; });
+  } catch (e) {}
+}
+
 function renderBattle() {
   if (App._renderBattlePending) return;
   App._renderBattlePending = true;
@@ -78301,6 +78497,20 @@ function renderBattleNow() {
 }
 function _renderBattleImmediate() {
   const s = App.state;
+  // 🌟 STATUS-EFFECT APPLY VFX — schedule a status diff for the NEXT frame so
+  // it runs after this render's DOM has painted (accurate unit positions).
+  // Placed here because EVERY board-render path funnels through this function
+  // (renderBattle's debounce, renderBattleNow, and the batched render()), so a
+  // status applied by a move / location / weather / passive — or arriving via a
+  // multiplayer snapshot — always pops exactly once. Coalesced + fully guarded.
+  try {
+    if (!App._statusVfxQueued) {
+      App._statusVfxQueued = true;
+      const _go = () => { App._statusVfxQueued = false; try { _emitStatusVfx(); } catch (e) {} };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_go);
+      else setTimeout(_go, 16);
+    }
+  } catch (e) {}
   // 📜 LOG TRIM — battles can rack up thousands of log entries (every
   // damage tick, every passive proc). Each entry rerenders inside the
   // battle-screen log panel, so unbounded growth makes a long match

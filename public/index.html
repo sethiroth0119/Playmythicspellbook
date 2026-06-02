@@ -9499,6 +9499,32 @@
   @keyframes field-fx-wipe-anim { 0% { transform: translateX(-165%) skewX(-12deg); opacity: 0; } 35% { opacity: 0.95; } 100% { transform: translateX(165%) skewX(-12deg); opacity: 0; } }
   @keyframes field-fx-label-anim { 0% { opacity: 0; transform: scale(0.82) translateY(10px); } 18% { opacity: 1; transform: scale(1.06) translateY(0); } 32% { transform: scale(1); } 72% { opacity: 1; } 100% { opacity: 0; transform: translateY(-14px); } }
 
+  /* 🃏 CARD DRAW — a freshly-drawn hand card slides up + glows into place. */
+  .hand-card.card-drawn { animation: hand-card-draw-in 0.55s cubic-bezier(0.2, 1.1, 0.3, 1); z-index: 5; }
+  @keyframes hand-card-draw-in {
+    0%   { opacity: 0; transform: translateY(64px) scale(0.7) rotate(-6deg); box-shadow: 0 0 30px 8px rgba(255,222,130,0.9); }
+    55%  { opacity: 1; transform: translateY(-7px) scale(1.05) rotate(1.5deg); box-shadow: 0 0 24px 5px rgba(255,222,130,0.7); }
+    100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); box-shadow: 0 0 0 0 rgba(255,222,130,0); }
+  }
+  /* 💎 ENERGY SHIMMER — when energy goes up, the energy bar flares bright with a
+     light sweep across the fill. */
+  .energy-fill.energy-gained { animation: energy-fill-flare 0.9s ease-out; position: relative; }
+  .energy-fill.energy-gained::after {
+    content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 45%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.85), transparent);
+    mix-blend-mode: screen; animation: energy-fill-sweep 0.8s ease-out forwards;
+  }
+  @keyframes energy-fill-flare {
+    0%   { filter: brightness(1); }
+    35%  { filter: brightness(1.7) saturate(1.2); box-shadow: 0 0 14px 3px rgba(255,232,130,0.9); }
+    100% { filter: brightness(1); }
+  }
+  @keyframes energy-fill-sweep { 0% { transform: translateX(-120%); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateX(240%); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .hand-card.card-drawn, .energy-fill.energy-gained { animation: none; }
+    .energy-fill.energy-gained::after { display: none; }
+  }
+
   /* Owner indicator strip on unit cell */
   .unit::before {
     content: '';
@@ -78909,6 +78935,35 @@ function _playFieldFx(opts) {
   } catch (e) {}
 }
 
+// 🃏 CARD DRAW + 💎 ENERGY SHIMMER — runs in the post-paint rAF (alongside the
+// status pops, so the freshly-rendered hand DOM exists). Any card in the
+// player's hand we haven't shown before slides + glows in (Master-Duel draw),
+// and the energy pips shimmer when current energy goes UP. Player-side only.
+function _emitDrawVfx() {
+  try {
+    if (!App.state || !App.state.player || App.screen !== 'battle') return;
+    App.ui = App.ui || {};
+    const hand = App.state.player.hand || [];
+    const seen = (App.ui._handSeen instanceof Set) ? App.ui._handSeen : new Set();
+    hand.forEach(c => {
+      if (!c || !c.instanceId || seen.has(c.instanceId)) return;
+      let el = null;
+      try { el = document.querySelector('.hand-card[data-card="' + ((window.CSS && CSS.escape) ? CSS.escape(c.instanceId) : c.instanceId) + '"]'); } catch (e) {}
+      if (el) el.classList.add('card-drawn');
+    });
+    App.ui._handSeen = new Set(hand.map(c => c && c.instanceId).filter(Boolean));
+    const e = App.state.player.energy | 0;
+    if (App.ui._lastEnergy == null) { App.ui._lastEnergy = e; }
+    else {
+      if (e > App.ui._lastEnergy) {
+        const bar = document.querySelector('.battle-left .energy-fill') || document.querySelector('.energy-fill');
+        if (bar) { bar.classList.remove('energy-gained'); void bar.offsetWidth; bar.classList.add('energy-gained'); setTimeout(() => { try { bar.classList.remove('energy-gained'); } catch (_) {} }, 1000); }
+      }
+      App.ui._lastEnergy = e;
+    }
+  } catch (e) {}
+}
+
 // 🌟 STATUS-EFFECT APPLY VFX
 // ─────────────────────────────────────────────────────────────────────────
 // Classify a status as a buff / debuff / neutral so the pop-up can color
@@ -79010,7 +79065,7 @@ function _renderBattleImmediate() {
   try {
     if (!App._statusVfxQueued) {
       App._statusVfxQueued = true;
-      const _go = () => { App._statusVfxQueued = false; try { _emitStatusVfx(); } catch (e) {} };
+      const _go = () => { App._statusVfxQueued = false; try { _emitStatusVfx(); } catch (e) {} try { _emitDrawVfx(); } catch (e) {} };
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_go);
       else setTimeout(_go, 16);
     }

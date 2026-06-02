@@ -96556,21 +96556,6 @@ function renderSettings() {
       </div>
 
       <div class="settings-section">
-        <div class="settings-section-title">🤖 AI Difficulty</div>
-        <div class="settings-section-desc">How tough the AI opponent plays. New players: pick <strong>Easy</strong>. Veterans seeking a challenge: pick <strong>Hard</strong>. Default is Normal.</div>
-        <div class="settings-presets" style="margin-top:0.6rem">
-          <button class="btn-mini ${st.aiDifficulty === 'easy'   ? 'btn-primary' : ''}" data-ai-diff="easy">🌱 Easy</button>
-          <button class="btn-mini ${st.aiDifficulty === 'normal' ? 'btn-primary' : ''}" data-ai-diff="normal">⚖ Normal</button>
-          <button class="btn-mini ${st.aiDifficulty === 'hard'   ? 'btn-primary' : ''}" data-ai-diff="hard">🔥 Hard</button>
-        </div>
-        <div class="small-text ink-dim" style="margin-top:0.5rem">
-          ${st.aiDifficulty === 'easy'   ? '🌱 <strong>Easy</strong> — AI hesitates on Kalons, misses some KOs, less focused on your hero. Great for learning the ropes.' : ''}
-          ${st.aiDifficulty === 'normal' ? '⚖ <strong>Normal</strong> — Balanced opposition. The AI plays well but doesn\'t exploit every angle.' : ''}
-          ${st.aiDifficulty === 'hard'   ? '🔥 <strong>Hard</strong> — AI Kalons aggressively, laser-focuses your hero, and picks finishing blows ruthlessly. Veterans only.' : ''}
-        </div>
-      </div>
-
-      <div class="settings-section">
         <div class="settings-section-title">🃏 Card Frame Cosmetic</div>
         <div class="settings-section-desc">Pick a visual frame for your cards. Frames are unlocked by earning achievements — purely cosmetic, no gameplay effect.</div>
         ${(() => {
@@ -96904,23 +96889,10 @@ function renderSettings() {
     }
   };
 
-  // 🤖 AI difficulty buttons
-  document.querySelectorAll('[data-ai-diff]').forEach(el => {
-    el.onclick = () => {
-      const d = el.dataset.aiDiff;
-      if (d === 'easy' || d === 'normal' || d === 'hard') {
-        st.aiDifficulty = d;
-        saveProfile();
-        if (typeof showToast === 'function') {
-          showToast(d === 'easy'   ? '🌱 AI difficulty set to Easy — friendlier for newcomers.'
-                  : d === 'hard'   ? '🔥 AI difficulty set to Hard — brace yourself.'
-                                   : '⚖ AI difficulty set to Normal.',
-                  2400);
-        }
-        render();
-      }
-    };
-  });
+  // 🤖 AI difficulty selector removed — players don't control AI difficulty.
+  // The engine still reads Profile.settings.aiDifficulty (defaults to 'normal'
+  // for everyone) via getAIDifficulty(), so the balance logic is untouched;
+  // only the player-facing toggle is gone.
 
   const cbEl = document.getElementById('set-cb-palette');
   if (cbEl) cbEl.onchange = () => { st.colorBlindPalette = !!cbEl.checked; saveProfile(); render(); };

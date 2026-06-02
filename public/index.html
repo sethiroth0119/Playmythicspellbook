@@ -9537,6 +9537,16 @@
   @keyframes ult-release-flash-anim { 0% { opacity: 0; } 12% { opacity: 1; } 100% { opacity: 0; } }
   @keyframes ult-release-ring-anim { 0% { transform: scale(0.12); opacity: 0.95; } 100% { transform: scale(2.7); opacity: 0; } }
 
+  /* 💥 Shatter-on-death — burst of glowing shards at a dying unit's tile */
+  #shatter-layer { position: fixed; inset: 0; pointer-events: none; z-index: 2147480500; overflow: hidden; }
+  .shatter-burst { position: absolute; transform: translate(-50%, -50%); }
+  .shatter-flash { position: absolute; left: -32px; top: -32px; width: 64px; height: 64px; border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,0.95), rgba(255,235,180,0.4) 45%, transparent 72%); animation: shatter-flash-anim 0.34s ease-out forwards; }
+  .shard { position: absolute; left: 0; top: 0; display: block; background: linear-gradient(135deg, #ffffff, #ffd98a); box-shadow: 0 0 6px rgba(255,220,140,0.9); border-radius: 1px; animation: shard-fly 0.68s cubic-bezier(0.18,0.7,0.3,1) forwards; }
+  .sh-ai .shard { background: linear-gradient(135deg, #ffffff, #ff8a8a); box-shadow: 0 0 6px rgba(255,120,120,0.9); }
+  .sh-player .shard { background: linear-gradient(135deg, #ffffff, #9fd0ff); box-shadow: 0 0 6px rgba(140,190,255,0.9); }
+  @keyframes shatter-flash-anim { 0% { opacity: 0; transform: scale(0.4); } 22% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.45); } }
+  @keyframes shard-fly { 0% { opacity: 1; transform: translate(0,0) rotate(0deg) scale(1); } 12% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0.45); } }
+
   /* Owner indicator strip on unit cell */
   .unit::before {
     content: '';
@@ -78976,6 +78986,67 @@ function _emitDrawVfx() {
   } catch (e) {}
 }
 
+// 💥 SHATTER ON DEATH — when a non-hero unit dies, it bursts into a spray of
+// glowing shards (Master-Duel destroy). Detected via a render-diff on unit
+// alive-state; positioned on the unit's tile (which persists after the sprite
+// is gone). Heroes are skipped (they get the dramatic KO instead). Reduced-
+// motion + Graphics = Low opt out (but still re-baseline so nothing mass-shatters
+// later). Tinted by owner (azure = yours, crimson = enemy).
+function _shatterLayer() {
+  let l = document.getElementById('shatter-layer');
+  if (!l) { l = document.createElement('div'); l.id = 'shatter-layer'; document.body.appendChild(l); }
+  return l;
+}
+function _spawnShatter(tx, ty, owner) {
+  try {
+    const tile = document.querySelector('.tile[data-x="' + tx + '"][data-y="' + ty + '"]');
+    if (!tile) return;
+    const r = tile.getBoundingClientRect();
+    if (!r.width) return;
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const host = document.createElement('div');
+    host.className = 'shatter-burst ' + (owner === 'ai' ? 'sh-ai' : 'sh-player');
+    host.style.left = cx + 'px'; host.style.top = cy + 'px';
+    let html = '<div class="shatter-flash"></div>';
+    const N = 12;
+    for (let i = 0; i < N; i++) {
+      const ang = (i / N) * Math.PI * 2 + (i % 2 ? 0.35 : 0);
+      const dist = 26 + ((i * 11) % 42);
+      const dx = Math.cos(ang) * dist, dy = Math.sin(ang) * dist - 8;
+      const rot = (i * 57) % 360, sz = 5 + (i % 4) * 3;
+      html += '<span class="shard" style="--dx:' + dx.toFixed(0) + 'px;--dy:' + dy.toFixed(0) + 'px;--rot:' + rot + 'deg;width:' + sz + 'px;height:' + sz + 'px;animation-delay:' + ((i % 3) * 0.02).toFixed(2) + 's"></span>';
+    }
+    host.innerHTML = html;
+    _shatterLayer().appendChild(host);
+    setTimeout(() => { try { host.remove(); } catch (e) {} }, 750);
+  } catch (e) {}
+}
+function _emitDeathVfx() {
+  try {
+    if (!App.state || !Array.isArray(App.state.units) || App.screen !== 'battle') return;
+    App.ui = App.ui || {};
+    const _rebaseline = () => {
+      const t = {};
+      (App.state.units || []).forEach(u => { if (u && u.id && u.alive) t[u.id] = { x: u.pos && u.pos.x, y: u.pos && u.pos.y, owner: u.owner, isHero: u.isHero }; });
+      App.ui._deathTrack = t;
+    };
+    let gfx = 'high'; try { gfx = (getSettings().gfxQuality) || 'high'; } catch (e) {}
+    const reduce = (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (gfx === 'low' || reduce) { _rebaseline(); return; }
+    const prev = App.ui._deathTrack || {};
+    const byId = {};
+    (App.state.units || []).forEach(u => { if (u && u.id) byId[u.id] = u; });
+    Object.keys(prev).forEach(id => {
+      const was = prev[id];
+      if (!was || was.isHero) return;          // heroes → KO drama, not shatter
+      const u = byId[id];
+      // Died = still in the units array but no longer alive (and not just downed/bleeding).
+      if (u && !u.alive && !u._bleeding && u.pos) _spawnShatter(u.pos.x, u.pos.y, was.owner);
+    });
+    _rebaseline();
+  } catch (e) {}
+}
+
 // ⚡ ULTIMATE RELEASE — full-screen flash + dual shockwave rings + a screen
 // shake the instant a hero unleashes its ultimate, leading into the existing
 // ult name cinematic. The charge bar's own is-ready pulse handles the "building
@@ -79098,7 +79169,7 @@ function _renderBattleImmediate() {
   try {
     if (!App._statusVfxQueued) {
       App._statusVfxQueued = true;
-      const _go = () => { App._statusVfxQueued = false; try { _emitStatusVfx(); } catch (e) {} try { _emitDrawVfx(); } catch (e) {} };
+      const _go = () => { App._statusVfxQueued = false; try { _emitStatusVfx(); } catch (e) {} try { _emitDrawVfx(); } catch (e) {} try { _emitDeathVfx(); } catch (e) {} };
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_go);
       else setTimeout(_go, 16);
     }

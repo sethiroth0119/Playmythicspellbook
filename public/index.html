@@ -9416,8 +9416,12 @@
   }
   .ace-slam-overlay.from-left  .ace-slam-panel { animation: ace-slam-in-left  0.9s cubic-bezier(0.18, 1.0, 0.3, 1) forwards; }
   .ace-slam-overlay.from-right .ace-slam-panel { animation: ace-slam-in-right 0.9s cubic-bezier(0.18, 1.0, 0.3, 1) forwards; }
-  .ace-slam-art { flex: 1 1 auto; min-height: 0; background-size: cover; background-position: center top; }
-  .ace-slam-art-emoji { display: flex; align-items: center; justify-content: center; font-size: 9rem; background: radial-gradient(circle at 50% 35%, rgba(60,40,90,0.6), #0a0a12 75%); }
+  /* Holds the unit's board picture (sprite-stack / img / emoji), centered + contained. */
+  .ace-slam-art { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 6px; background: radial-gradient(circle at 50% 38%, rgba(50,34,80,0.55), #0a0a12 78%); }
+  .ace-slam-art > .sprite-stack { width: 100%; height: 100%; }
+  .ace-slam-art .sprite-img, .ace-slam-art .sprite-frame { object-fit: contain !important; }
+  .ace-slam-art > img { width: 100%; height: 100%; object-fit: contain; }
+  .ace-slam-art > span { font-size: clamp(5rem, 22vh, 10rem) !important; line-height: 1; filter: drop-shadow(0 6px 16px rgba(0,0,0,0.7)); }
   .ace-slam-tag {
     flex: 0 0 auto; text-align: center; font-family: 'Cinzel', serif; font-weight: 800;
     font-size: 0.78rem; letter-spacing: 0.35em; color: #1a1206;
@@ -59559,6 +59563,9 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
     heldItem: item ? item.id : null, itemUsed: false, battleKills: 0,
     kalonForm: cardData.kalonForm || null,
     flying: !!cardData.flying,
+    // 👑 Ace Slam — carried from the card so the summon cinematic can fire for
+    // this unit (player AND AI) via the playCardSummonVfx hook.
+    aceSlam: !!cardData.aceSlam,
     // 🧱 Wall Unit — stationary structure flags carried from the card.
     isWall: !!cardData.isWall,
     wall: cardData.isWall ? Object.assign({
@@ -78769,29 +78776,33 @@ function _flipPlayBattle() {
 // Respects Graphics Quality (skipped on Low) + reduced-motion, and is
 // click-to-skip so it never slows a fast player. Fully guarded.
 let _aceSlamBusy = false;
-function _playAceSlam(card, fromAI) {
+function _playAceSlam(unit, fromAI) {
   try {
-    if (!card || !card.aceSlam || _aceSlamBusy) return;
+    if (!unit || !unit.aceSlam || _aceSlamBusy) return;
     let gfx = 'high';
     try { gfx = (getSettings().gfxQuality) || 'high'; } catch (e) {}
     if (gfx === 'low') return;
     if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const art = (typeof getCardArt === 'function' ? getCardArt(card.id) : null) || null;
-    const name = card.name || 'Ace';
-    const side = fromAI ? 'right' : 'left';
+    const name = unit.name || 'Ace';
+    const fromAi = (fromAI != null) ? fromAI : (unit.owner === 'ai');
+    const side = fromAi ? 'right' : 'left';
+    // 🖼 "Picture of the unit" — the SAME visual shown on the board (animated
+    //    sprite / uploaded art / emoji), NOT the framed card. unitBoardVisual
+    //    handles the sprite-or-art-or-emoji resolution.
+    let pic = '';
+    try { pic = (typeof unitBoardVisual === 'function') ? (unitBoardVisual(unit) || '') : ''; } catch (e) {}
+    if (!pic) pic = '<span style="font-size:9rem;line-height:1">' + (unit.icon || '👑') + '</span>';
     _aceSlamBusy = true;
     const old = document.getElementById('ace-slam-overlay'); if (old) old.remove();
     const host = document.createElement('div');
     host.id = 'ace-slam-overlay';
     host.className = 'ace-slam-overlay from-' + side;
     const esc = (typeof escapeHtml === 'function') ? escapeHtml(String(name)) : String(name);
-    const artHtml = art
-      ? '<div class="ace-slam-art" style="background-image:url(\'' + String(art).replace(/'/g, "\\'") + '\')"></div>'
-      : '<div class="ace-slam-art ace-slam-art-emoji">' + (card.icon || '👑') + '</div>';
     host.innerHTML =
       '<div class="ace-slam-veil"></div>' +
       '<div class="ace-slam-streak"></div>' +
-      '<div class="ace-slam-panel">' + artHtml +
+      '<div class="ace-slam-panel">' +
+        '<div class="ace-slam-art">' + pic + '</div>' +
         '<div class="ace-slam-tag">✦ ACE ✦</div>' +
         '<div class="ace-slam-name">' + esc + '</div>' +
       '</div>';
@@ -86322,6 +86333,16 @@ function _playPackOpeningCinematicImpl(packDef, drawn, onComplete) {
 }
 
 function playCardSummonVfx(opts) {
+  // 👑 Ace Slam (universal) — if the unit just placed at this tile is flagged,
+  // run its boss-summon cinematic. Covers the AI's summons, counter-deploys, and
+  // tunnel-emerges (the player's main path also fires it from placeUnit; the
+  // one-at-a-time guard prevents a double-show). Uses the unit's board picture.
+  try {
+    if (opts && opts.pos && App.state && Array.isArray(App.state.units)) {
+      const _su = App.state.units.find(x => x && x.alive && !x.isHero && x.aceSlam && x.pos && x.pos.x === opts.pos.x && x.pos.y === opts.pos.y);
+      if (_su && typeof _playAceSlam === 'function') _playAceSlam(_su, _su.owner === 'ai');
+    }
+  } catch (e) {}
   // 🪞 Defer anchor lookup to the next frame so the post-mirror DOM is
   // already painted. Reading `getBoundingClientRect` synchronously can
   // grab the OLD tile position when the perspective swap re-renders the
@@ -87695,8 +87716,8 @@ function placeUnit(card, pos) {
   } else {
     playCardSummonVfx({ pos });
   }
-  // 👑 Ace Slam — boss summon cinematic for cards flagged in the Forge.
-  try { _playAceSlam(card, false); } catch (e) {}
+  // 👑 Ace Slam — boss summon cinematic for units flagged in the Forge.
+  try { _playAceSlam(unit, false); } catch (e) {}
   // 📡 Route through checkPostAction so multiplayer broadcasts the placement
   // immediately (was missing — opponent only saw the unit after end-turn).
   if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();

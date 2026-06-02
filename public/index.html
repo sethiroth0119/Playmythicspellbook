@@ -9480,6 +9480,25 @@
   @keyframes turn-banner-sweep { 0% { transform: translateX(-100%); opacity: 0; } 16% { transform: translateX(0); opacity: 1; } 68% { transform: translateX(0); opacity: 1; } 100% { transform: translateX(105%); opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { .ko-desat { animation: none; } }
 
+  /* 🗺️🌦️ FIELD FX — location/weather field-spell flourish (light-wipe + name). */
+  .field-fx-overlay { position: fixed; inset: 0; z-index: 2147481050; pointer-events: none; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .field-fx-tint { position: absolute; inset: 0; animation: field-fx-tint-anim 1.3s ease-out forwards; }
+  .field-fx-overlay.fx-location .field-fx-tint { background: radial-gradient(ellipse 120% 90% at 50% 50%, rgba(255,210,120,0.28), transparent 75%); }
+  .field-fx-overlay.fx-weather  .field-fx-tint { background: radial-gradient(ellipse 120% 90% at 50% 50%, rgba(130,180,255,0.28), transparent 75%); }
+  .field-fx-wipe { position: absolute; top: -10%; bottom: -10%; left: 50%; width: 46%;
+    transform: translateX(-50%) skewX(-12deg);
+    background: linear-gradient(90deg, transparent, rgba(255,245,210,0.5), rgba(255,255,255,0.92), rgba(255,245,210,0.5), transparent);
+    filter: blur(8px); mix-blend-mode: screen;
+    animation: field-fx-wipe-anim 0.95s ease-in-out forwards; }
+  .field-fx-overlay.fx-weather .field-fx-wipe { background: linear-gradient(90deg, transparent, rgba(190,220,255,0.5), rgba(255,255,255,0.92), rgba(190,220,255,0.5), transparent); }
+  .field-fx-label { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; animation: field-fx-label-anim 1.3s ease-out forwards; }
+  .field-fx-icon { font-size: clamp(2.5rem, 9vw, 5rem); line-height: 1; filter: drop-shadow(0 4px 14px rgba(0,0,0,0.85)); }
+  .field-fx-icon img { width: clamp(2.5rem, 9vw, 5rem); height: clamp(2.5rem, 9vw, 5rem); object-fit: contain; vertical-align: middle; }
+  .field-fx-name { font-family: 'Cinzel', serif; font-weight: 900; font-size: clamp(1.3rem, 4.6vw, 2.6rem); letter-spacing: 0.18em; color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,0.95), 0 0 24px rgba(255,220,150,0.5); }
+  @keyframes field-fx-tint-anim { 0% { opacity: 0; } 16% { opacity: 0.55; } 100% { opacity: 0; } }
+  @keyframes field-fx-wipe-anim { 0% { transform: translateX(-165%) skewX(-12deg); opacity: 0; } 35% { opacity: 0.95; } 100% { transform: translateX(165%) skewX(-12deg); opacity: 0; } }
+  @keyframes field-fx-label-anim { 0% { opacity: 0; transform: scale(0.82) translateY(10px); } 18% { opacity: 1; transform: scale(1.06) translateY(0); } 32% { transform: scale(1); } 72% { opacity: 1; } 100% { opacity: 0; transform: translateY(-14px); } }
+
   /* Owner indicator strip on unit cell */
   .unit::before {
     content: '';
@@ -78858,6 +78877,38 @@ function _playTurnBanner(side) {
   } catch (e) {}
 }
 
+// 🗺️🌦️ FIELD FX — a Master-Duel "field spell" flourish: a horizontal light-wipe
+// sweeps across while the new Location vista / Weather establishes, with the
+// field's icon + name. Driven by render-diffs (location id / weather type
+// change). Reduced-motion opts out; the wipe is dropped on Graphics = Low.
+function _weatherFxInfo(wt) {
+  const M = {
+    sun: { name: 'Sunny Day', icon: '☀️' }, rain: { name: 'Rainstorm', icon: '🌧️' },
+    lightningStorm: { name: 'Lightning Storm', icon: '⚡' }, sand: { name: 'Sandstorm', icon: '🏜️' },
+    parallelWorld: { name: 'Parallel World', icon: '🔮' }, mindRealm: { name: 'Mind Realm', icon: '🧠' },
+    eclipse: { name: 'Eclipse', icon: '🌑' }, mist: { name: 'Mistveil', icon: '🌫️' }, bloodmoon: { name: 'Bloodmoon', icon: '🌕' },
+  };
+  return M[wt] || { name: String(wt || 'Weather'), icon: '🌦️' };
+}
+function _playFieldFx(opts) {
+  try {
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let gfx = 'high'; try { gfx = (getSettings().gfxQuality) || 'high'; } catch (e) {}
+    opts = opts || {};
+    const old = document.getElementById('field-fx-overlay'); if (old) old.remove();
+    const host = document.createElement('div');
+    host.id = 'field-fx-overlay';
+    host.className = 'field-fx-overlay fx-' + (opts.kind || 'location');
+    const nm = (typeof escapeHtml === 'function') ? escapeHtml(String(opts.name || '')) : String(opts.name || '');
+    host.innerHTML =
+      '<div class="field-fx-tint"></div>' +
+      (gfx !== 'low' ? '<div class="field-fx-wipe"></div>' : '') +
+      '<div class="field-fx-label"><span class="field-fx-icon">' + (opts.icon || '') + '</span><span class="field-fx-name">' + nm + '</span></div>';
+    document.body.appendChild(host);
+    setTimeout(() => { try { host.remove(); } catch (e) {} }, 1300);
+  } catch (e) {}
+}
+
 // 🌟 STATUS-EFFECT APPLY VFX
 // ─────────────────────────────────────────────────────────────────────────
 // Classify a status as a buff / debuff / neutral so the pop-up can color
@@ -78977,6 +79028,22 @@ function _renderBattleImmediate() {
       const _tk = (App.state.turn || '') + ':' + (App.state.turnNumber || 0);
       if (App._lastTurnKey == null) { App._lastTurnKey = _tk; }
       else if (App._lastTurnKey !== _tk) { App._lastTurnKey = _tk; try { _playTurnBanner(App.state.turn); } catch (e) {} }
+      // 🗺️ Location field-spell transform — when the active board location changes.
+      const _locId = (App.state.activeLocation && App.state.activeLocation.id) || '';
+      if (App._lastLocId == null) { App._lastLocId = _locId; }
+      else if (App._lastLocId !== _locId) {
+        App._lastLocId = _locId;
+        if (_locId && App.state.activeLocation) {
+          try { _playFieldFx({ kind: 'location', name: App.state.activeLocation.name || 'Location', icon: App.state.activeLocation.icon || '🏯' }); } catch (e) {}
+        }
+      }
+      // 🌦️ Weather onset — when the active weather type changes to a new one.
+      const _wt = (App.state.weather && App.state.weather.weatherType) || '';
+      if (App._lastWeather == null) { App._lastWeather = _wt; }
+      else if (App._lastWeather !== _wt) {
+        App._lastWeather = _wt;
+        if (_wt) { const _wi = _weatherFxInfo(_wt); try { _playFieldFx({ kind: 'weather', name: _wi.name, icon: _wi.icon }); } catch (e) {} }
+      }
     }
   } catch (e) {}
   // 📜 LOG TRIM — battles can rack up thousands of log entries (every

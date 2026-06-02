@@ -9571,6 +9571,19 @@
   @keyframes shatter-flash-anim { 0% { opacity: 0; transform: scale(0.4); } 22% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.45); } }
   @keyframes shard-fly { 0% { opacity: 1; transform: translate(0,0) rotate(0deg) scale(1); } 12% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0.45); } }
 
+  /* 👑 Control-steal pulse — crown + ring when a unit changes allegiance */
+  #control-vfx-layer { position: fixed; inset: 0; pointer-events: none; z-index: 2147480600; overflow: hidden; }
+  .control-pulse { position: absolute; transform: translate(-50%, -50%); }
+  .control-ring { position: absolute; left: -26px; top: -26px; width: 52px; height: 52px; border-radius: 50%;
+    border: 3px solid #c9a5ff; box-shadow: 0 0 18px #c9a5ff, inset 0 0 14px rgba(201,165,255,0.6);
+    opacity: 0; animation: control-ring-anim 0.9s cubic-bezier(0.15,0.7,0.3,1) forwards; }
+  .control-crown { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); font-size: 26px; line-height: 1;
+    filter: drop-shadow(0 0 8px #c9a5ff); opacity: 0; animation: control-crown-anim 0.95s ease-out forwards; }
+  .cp-player .control-ring { border-color: #9fd0ff; box-shadow: 0 0 18px #9fd0ff, inset 0 0 14px rgba(140,190,255,0.6); }
+  .cp-ai .control-ring { border-color: #ff8a8a; box-shadow: 0 0 18px #ff8a8a, inset 0 0 14px rgba(255,120,120,0.6); }
+  @keyframes control-ring-anim { 0% { opacity: 0; transform: scale(0.3); } 18% { opacity: 1; } 100% { opacity: 0; transform: scale(2.6); } }
+  @keyframes control-crown-anim { 0% { opacity: 0; transform: translate(-50%,-30%) scale(0.4); } 30% { opacity: 1; transform: translate(-50%,-60%) scale(1.15); } 70% { opacity: 1; transform: translate(-50%,-70%) scale(1); } 100% { opacity: 0; transform: translate(-50%,-95%) scale(0.9); } }
+
   /* Owner indicator strip on unit cell */
   .unit::before {
     content: '';
@@ -57918,6 +57931,11 @@ const ONPLAY_TYPES = [
   { id: 'kalonSource',   label: 'Gain Kalon Source (+1 transformation)',   needs: ['amount'] },
   { id: 'bounceUnit',    label: 'Bounce Enemy (send 1 to enemy hand)',     needs: ['radius'] },
   { id: 'singleKill',    label: 'Single Execute (% chance to KO nearest enemy)', needs: ['radius','chance'] },
+  // 👑 TAKE CONTROL — %-chance per enemy in radius to seize its allegiance.
+  // `amount` caps how many can be stolen (default 1, highest-HP first).
+  // `controlDuration` 0 = permanent; > 0 reverts after that many of the new
+  // owner's turns. Skips heroes / walls / spellshielded units.
+  { id: 'takeControl',   label: '👑 Take Control (%-chance to seize enemy units)', needs: ['radius','chance','amount','controlDuration'] },
   { id: 'transformAlly', label: 'Transform Ally (force Kalon on nearby ally)', needs: ['radius'] },
   // 🌀 Summon — admin picks a summon-card id; spawns N copies adjacent
   // to the unit when it enters play. `amount` controls count.
@@ -58238,6 +58256,29 @@ function _applyInGraveTick(state, who, trigger) {
   s.log = log;
   return s;
 }
+// ============================================================================
+// 👑 CONTROL STEAL — flip a unit's allegiance to `newOwner`. Sets summoning
+// sickness (hasMoved/hasAttacked) so the seized unit can't act until the new
+// owner's NEXT turn. `durationTurns` 0 = permanent; > 0 stores a revert timer
+// (`_controlRevertIn`, decremented in startTurn) plus the original owner
+// (`_originalOwner`) so the unit returns home when the timer expires. The
+// _originalOwner is sticky — a re-steal keeps the FIRST recorded origin so
+// nested steals still revert to the true owner. Heroes / walls / spellshielded
+// units must be filtered by the CALLER (this helper just flips the field).
+// Shared by the takeControl on-play effect AND the move.takeControl path so
+// both behave identically.
+// ============================================================================
+function _seizeUnitControl(u, newOwner, durationTurns) {
+  const dur = Math.max(0, Math.min(9, durationTurns | 0));
+  const flipped = {
+    ...u, owner: newOwner, hasMoved: true, hasAttacked: true,
+    _originalOwner: (u._originalOwner != null ? u._originalOwner : u.owner),
+    _seizedAt: (u.pos ? { x: u.pos.x, y: u.pos.y } : null),
+  };
+  if (dur > 0) flipped._controlRevertIn = dur;
+  else delete flipped._controlRevertIn;
+  return flipped;
+}
 function applyOnPlayEffect(state, unit, card) {
   const eff = card && card.onPlay;
   if (!state || !unit || !eff || !eff.type) return state;
@@ -58304,6 +58345,33 @@ function applyOnPlayEffect(state, unit, card) {
       return { ...u, currentHp: 0, alive: false };
     });
     if (killed === 0) log.push({ msg: `${unit.name}'s execution aura sweeps the field — but everyone holds.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 👑 TAKE CONTROL — %-chance (eff.chance) per enemy in radius to seize its
+  // allegiance for this unit's owner. Steals up to `eff.amount` units (default
+  // 1), preferring the highest-HP target so a single seize grabs a real threat.
+  // Skips heroes, walls, and spellshielded units (isEnemy already filters
+  // spellshield). eff.controlDuration 0 = permanent; > 0 reverts after N turns.
+  if (eff.type === 'takeControl') {
+    const chance = (eff.chance == null) ? 100 : Math.max(1, Math.min(100, eff.chance));
+    const dur = Math.max(0, Math.min(9, eff.controlDuration | 0));
+    const cap = Math.max(1, eff.amount || 1);
+    const cands = (state.units || [])
+      .filter(u => isEnemy(u) && inRadius(u) && !u.isHero && !u.isWall)
+      .sort((a, b) => (b.currentHp || 0) - (a.currentHp || 0));
+    const stealIds = new Set();
+    for (const c of cands) {
+      if (stealIds.size >= cap) break;
+      if (Math.random() * 100 < chance) stealIds.add(c.id);
+    }
+    let stole = 0;
+    state.units = state.units.map(u => {
+      if (!stealIds.has(u.id)) return u;
+      stole++;
+      log.push({ msg: `👑 ${unit.name} seizes control of ${u.name}${dur > 0 ? ` for ${dur} turn${dur === 1 ? '' : 's'}` : ''}!`, color: owner === 'player' ? 'green' : 'red' });
+      return _seizeUnitControl(u, owner, dur);
+    });
+    if (stole === 0) log.push({ msg: `${unit.name}'s domination aura sweeps out — but no unit yields.`, color: 'amber' });
     return { ...state, log };
   }
   // 💥 BOARD WIPE — destroys non-hero units globally (ignores radius). Three
@@ -60713,6 +60781,28 @@ const executeMove = (state, attacker, target, move) => {
       }
       return nu;
     });
+    // 👑 TAKE CONTROL (move) — a %-chance to seize the targeted enemy unit(s).
+    // Operates on the move's enemy target group: target='enemy' → the single
+    // clicked unit; target='allEnemies' → every enemy in play. Skips heroes,
+    // walls, and spellshielded units. move.takeControl = { chance, duration }
+    // (duration 0 = permanent). Shares _seizeUnitControl with the on-play effect.
+    if (move.takeControl) {
+      const chance = Math.max(1, Math.min(100, move.takeControl.chance || 100));
+      const dur = Math.max(0, Math.min(9, move.takeControl.duration | 0));
+      const victims = updates.filter(up => up && up.alive && up.owner !== attacker.owner
+        && !up.isHero && !up.isWall
+        && !(typeof hasPassive === 'function' && hasPassive(up, 'spellshield')));
+      const stealIds = new Set();
+      victims.forEach(v => { if (Math.random() * 100 < chance) stealIds.add(v.id); });
+      let stole = 0;
+      s.units = s.units.map(u => {
+        if (!stealIds.has(u.id)) return u;
+        stole++;
+        log.push({ msg: `👑 ${attacker.name} seizes control of ${u.name}${dur > 0 ? ` for ${dur} turn${dur === 1 ? '' : 's'}` : ''}!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+        return _seizeUnitControl(u, attacker.owner, dur);
+      });
+      if (stole === 0 && victims.length) log.push({ msg: `${attacker.name}'s ${move.name} fails to seize control.`, color: 'amber' });
+    }
     // Trap-setting moves: lay a TRAP_CARDS-defined trap on the attacker's current tile
     if (move.setsTrap && move.setsTrap.cardId) {
       const trapCard = TRAP_CARDS.find(t => t.id === move.setsTrap.cardId);
@@ -62592,6 +62682,22 @@ const startTurn = (state, who) => {
     if (u.owner !== who) return u;
     // Reset per-turn weather-passive flags so solarFlare / ambushSoul work fresh each turn.
     let nu = { ...u, hasMoved: false, hasAttacked: false, usedPriority: false, solarFlareUsed: false, ambushUsed: false, _steadfastAttacked: false };
+    // 👑 CONTROL-STEAL REVERT — a temporarily-seized unit (set by takeControl /
+    // move.takeControl) ticks down once per turn it serves the new owner. When
+    // the counter runs out it returns to its original side, re-sick so it can't
+    // act until that side's next turn. Permanently-seized units never carry
+    // _controlRevertIn, so they're skipped here and stay put forever.
+    if (u._controlRevertIn != null) {
+      const left = (u._controlRevertIn | 0) - 1;
+      if (left < 0) {
+        const back = (u._originalOwner != null) ? u._originalOwner : (u.owner === 'player' ? 'ai' : 'player');
+        nu.owner = back; nu.hasMoved = true; nu.hasAttacked = true;
+        delete nu._controlRevertIn; delete nu._originalOwner; delete nu._seizedAt;
+        log.push({ msg: `⛓️‍💥 ${u.name} breaks free and returns to its side!`, color: back === 'player' ? 'green' : 'red' });
+      } else {
+        nu._controlRevertIn = left;
+      }
+    }
     // ⚔️ DEFENDER — permanently blocks attacking; re-lock hasAttacked every turn reset.
     if (hasPassive(u, 'defender')) nu = { ...nu, hasAttacked: true };
     if (hasPassive(u, 'regeneration') && u.alive) nu.currentHp = Math.min(u.maxHp, nu.currentHp + 2);
@@ -73118,18 +73224,23 @@ function renderCardEditor() {
   // (locations + weather) — locations/weather fire their on-play through the
   // same engine via a hero-anchored synthetic caster.
   const _isFieldCard = (type === 'location' || type === 'weather');
-  const showOnPlay = isUnitLike || _isFieldCard;
+  // 🧱 Walls now support on-play too — they fire through a synthetic anchor on
+  // the wall's tile (positional effects center on the barrier).
+  const _isWallCard = (type === 'wall');
+  const showOnPlay = isUnitLike || _isFieldCard || _isWallCard;
+  const _onPlayWhen = _isWallCard ? 'wall is raised on the board' : _isFieldCard ? 'field card is played' : 'unit is summoned from hand';
   const onPlayBlock = (showOnPlay) ? `
     <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.8rem;margin-top:0.4rem">
-      <label style="font-weight:700;color:#ffd166">🎴 On-Play Ability (fires the instant this ${_isFieldCard ? 'field card is played' : 'unit is summoned from hand'})</label>
-      <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Optional. ${_isFieldCard ? 'Field cards have no board token — positional effects (AOE/heal/etc.) center on your hero; card effects (search / draw / mill / salvage / banish / negate-graveyard / 🌌 polycreate / discard) just work.' : 'Affects enemies / allies / self depending on the type picked.'}</div>
+      <label style="font-weight:700;color:#ffd166">🎴 On-Play Ability (fires the instant this ${_onPlayWhen})</label>
+      <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Optional. ${_isFieldCard ? 'Field cards have no board token — positional effects (AOE/heal/etc.) center on your hero; card effects (search / draw / mill / salvage / banish / negate-graveyard / 🌌 polycreate / discard) just work.' : _isWallCard ? 'Walls have no unit token — positional effects (AOE / take-control / heal / etc.) center on the wall\'s tile.' : 'Affects enemies / allies / self depending on the type picked.'}</div>
     </div>
     <div class="editor-field"><label>Effect Type</label><select id="ed-onplay-type">${onPlayTypeOpts}</select></div>
-    <div class="editor-field"><label>Radius (tiles around ${_isFieldCard ? 'your hero' : 'the unit'})</label><input id="ed-onplay-radius" type="number" min="0" max="4" value="${onPlay.radius || 1}"></div>
+    <div class="editor-field"><label>Radius (tiles around ${_isFieldCard ? 'your hero' : _isWallCard ? 'the wall' : 'the unit'})</label><input id="ed-onplay-radius" type="number" min="0" max="4" value="${onPlay.radius || 1}"></div>
     <div class="editor-field"><label>Amount (damage / heal / energy / mill / draw)</label><input id="ed-onplay-amount" type="number" min="0" max="200" value="${onPlay.amount || 0}"></div>
     <div class="editor-field"><label>Chance % (status / execution)</label><input id="ed-onplay-chance" type="number" min="1" max="100" value="${onPlay.chance || 100}"></div>
     <div class="editor-field"><label>Status (when applicable)</label><select id="ed-onplay-status">${onPlayStatusOpts}</select></div>
     <div class="editor-field"><label>Status / Seal Duration (turns)</label><input id="ed-onplay-status-dur" type="number" min="1" max="9" value="${onPlay.statusDuration || 2}"></div>
+    <div class="editor-field"><label>👑 Control Duration (turns, 0 = permanent)</label><input id="ed-onplay-control-dur" type="number" min="0" max="9" value="${onPlay.controlDuration || 0}"></div>
     <div class="editor-field"><label>🪦 Graveyard Side (banish / negate-graveyard)</label><select id="ed-onplay-grave-side">
       ${['enemy','self','both'].map(o => `<option value="${o}" ${(onPlay.graveSide || 'enemy') === o ? 'selected' : ''}>${o === 'enemy' ? "Enemy's graveyard" : o === 'self' ? 'Your graveyard' : 'Both graveyards'}</option>`).join('')}
     </select></div>
@@ -74972,6 +75083,8 @@ function captureEditorIntoCard(card) {
         chance:         num('ed-onplay-chance', 1, 100, 100),
         status:         v('ed-onplay-status') || 'weak',
         statusDuration: num('ed-onplay-status-dur', 1, 6, 2),
+        // 👑 Take-Control duration — 0 = permanent, > 0 reverts after N turns.
+        controlDuration: num('ed-onplay-control-dur', 0, 9, 0),
         // 🌀 Summon-card pin — used by 'summon' on-play type. The 🌌
         // 'polycreate' type uses the same field but reads from the
         // Fusion Kalon dropdown when set (which falls back to the
@@ -75543,6 +75656,9 @@ function renderMoveEditor() {
         })()}
         <div class="editor-field"><label>Recoil % of dmg dealt (0-50)</label><input id="mv-recoil" type="number" min="0" max="50" value="${Math.round((move.recoil || 0) * 100)}"></div>
         <div class="editor-field"><label>Recoil Fixed (flat HP cost)</label><input id="mv-recoil-fixed" type="number" min="0" max="40" value="${move.recoilFixed || 0}"></div>
+        <div class="editor-field"><label>👑 Take-Control Chance % (0 = off)</label><input id="mv-control-chance" type="number" min="0" max="100" value="${(move.takeControl && move.takeControl.chance) || 0}"></div>
+        <div class="editor-field"><label>👑 Control Duration (turns, 0 = permanent)</label><input id="mv-control-dur" type="number" min="0" max="9" value="${(move.takeControl && move.takeControl.duration) || 0}"></div>
+        <div class="editor-field full"><div class="small-text ink-dim">👑 Take-Control: set a chance above 0 to make this a mind-control move. Saving forces Kind → Ability and target → one enemy; on use it rolls the % to seize that enemy unit (heroes/walls/spellshielded immune). Duration 0 = keep it permanently.</div></div>
 
         <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.15);padding-top:0.6rem;margin-top:0.3rem">
           <label style="font-weight:700;color:#ffd166">🔁 Multi-Hit</label>
@@ -75912,6 +76028,21 @@ function bindMoveEditor() {
       move.chargeTurns = 1;
       move.vanishKind = (document.getElementById('mv-vanish-kind') || {}).value || 'fly';
       if (move.vanishKind === 'fly' || move.vanishKind === 'realm') move.air = true;
+    }
+    // 👑 Take Control — a %-chance to seize the targeted enemy unit. Forcing
+    // kind=ability + target=enemy routes it through single-enemy targeting (the
+    // player clicks one enemy), and the engine's ability branch rolls the steal.
+    // duration 0 = permanent; > 0 reverts after that many of the new owner's turns.
+    const _ctrlChance = Math.max(0, Math.min(100, parseInt((document.getElementById('mv-control-chance') || {}).value, 10) || 0));
+    if (_ctrlChance > 0) {
+      move.takeControl = {
+        chance: _ctrlChance,
+        duration: Math.max(0, Math.min(9, parseInt((document.getElementById('mv-control-dur') || {}).value, 10) || 0)),
+      };
+      move.kind = 'ability';
+      if (move.target !== 'allEnemies') move.target = 'enemy';
+    } else {
+      delete move.takeControl;
     }
     // 🛡️ Elemental Shield — reactive self-buff: while active, when the user is
     // hit (matching vs), the attacker suffers `status`.
@@ -79072,6 +79203,50 @@ function _emitDeathVfx() {
   } catch (e) {}
 }
 
+// 👑 CONTROL-STEAL PULSE — when a unit's allegiance flips between renders
+// (takeControl effect / move, or a temporary control reverting), pulse a crown
+// + expanding ring in the new owner's color on its tile so the swap reads at a
+// glance. Render-diff in the post-paint rAF; first render establishes a baseline
+// so nothing false-fires. Honors Graphics = Low + reduced-motion.
+function _controlVfxLayer() {
+  let l = document.getElementById('control-vfx-layer');
+  if (!l) { l = document.createElement('div'); l.id = 'control-vfx-layer'; document.body.appendChild(l); }
+  return l;
+}
+function _spawnControlPulse(tx, ty, owner) {
+  try {
+    const tile = document.querySelector('.tile[data-x="' + tx + '"][data-y="' + ty + '"]');
+    if (!tile) return;
+    const r = tile.getBoundingClientRect();
+    if (!r.width) return;
+    const host = document.createElement('div');
+    host.className = 'control-pulse ' + (owner === 'ai' ? 'cp-ai' : 'cp-player');
+    host.style.left = (r.left + r.width / 2) + 'px';
+    host.style.top = (r.top + r.height / 2) + 'px';
+    host.innerHTML = '<span class="control-ring"></span><span class="control-crown">👑</span>';
+    _controlVfxLayer().appendChild(host);
+    setTimeout(() => { try { host.remove(); } catch (e) {} }, 1000);
+  } catch (e) {}
+}
+function _emitControlVfx() {
+  try {
+    if (!App.state || !Array.isArray(App.state.units) || App.screen !== 'battle') return;
+    App.ui = App.ui || {};
+    let gfx = 'high'; try { gfx = (getSettings().gfxQuality) || 'high'; } catch (e) {}
+    const reduce = (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const prev = App.ui._ownerTrack || {};
+    const next = {};
+    (App.state.units || []).forEach(u => {
+      if (!u || !u.id) return;
+      next[u.id] = u.owner;
+      if (prev[u.id] != null && prev[u.id] !== u.owner && u.alive && u.pos && gfx !== 'low' && !reduce) {
+        _spawnControlPulse(u.pos.x, u.pos.y, u.owner);
+      }
+    });
+    App.ui._ownerTrack = next;
+  } catch (e) {}
+}
+
 // ⚡ ULTIMATE RELEASE — full-screen flash + dual shockwave rings + a screen
 // shake the instant a hero unleashes its ultimate, leading into the existing
 // ult name cinematic. The charge bar's own is-ready pulse handles the "building
@@ -79194,7 +79369,7 @@ function _renderBattleImmediate() {
   try {
     if (!App._statusVfxQueued) {
       App._statusVfxQueued = true;
-      const _go = () => { App._statusVfxQueued = false; try { _emitStatusVfx(); } catch (e) {} try { _emitDrawVfx(); } catch (e) {} try { _emitDeathVfx(); } catch (e) {} };
+      const _go = () => { App._statusVfxQueued = false; try { _emitStatusVfx(); } catch (e) {} try { _emitDrawVfx(); } catch (e) {} try { _emitDeathVfx(); } catch (e) {} try { _emitControlVfx(); } catch (e) {} };
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_go);
       else setTimeout(_go, 16);
     }
@@ -86007,7 +86182,7 @@ function _playOnPlayCinematicImpl(unit, card, opts) {
         aoeStatus: 'Battle Shroud', heal: 'Emergency Repair', buffSelf: 'War Form',
         buffAllies: 'Battle Cry', energyGain: 'Mana Surge',
         drawCards: 'Scout Deployment', kalonSource: 'Soul Spark', bounceUnit: 'Dimensional Entry',
-        singleKill: 'Execution', transformAlly: 'Forced Ascension',
+        singleKill: 'Execution', transformAlly: 'Forced Ascension', takeControl: 'Domination',
         summon: 'Reinforcements', polycreate: 'Polycreation',
       };
       return labels[onPlay.type] || (onPlay.type || 'ON-PLAY').replace(/([A-Z])/g, ' $1').toUpperCase();
@@ -86027,6 +86202,7 @@ function _playOnPlayCinematicImpl(unit, card, opts) {
         case 'drawCards':   return `Draw ${a || 1} card${(a||1) > 1 ? 's' : ''}.`;
         case 'bounceUnit':  return `Bounce nearest enemy ${r} back to their hand.`;
         case 'singleKill':  return `${onPlay.chance || 25}% chance to execute nearest enemy ${r}.`;
+        case 'takeControl': return `${onPlay.chance || 100}% chance to seize ${(onPlay.amount || 1) > 1 ? (onPlay.amount + ' enemies') : 'an enemy'} ${r}${(onPlay.controlDuration | 0) > 0 ? ' for ' + onPlay.controlDuration + 't' : ' permanently'}.`;
         case 'transformAlly': return `Force-ascend a nearby ally to Kalon.`;
         case 'intimidate':  return `Debuff enemies ${r}.`;
         case 'kalonSource': return `Gain ${a || 1} Kalon source.`;
@@ -88217,6 +88393,16 @@ function placeWall(card, pos) {
   // use the hero as the "caster" for adjacency calculations but offset
   // the spawn ring toward the wall position via a synthetic anchor.
   _twFireCardSummon(card, pos, 'player');
+  // 🧱 Wall on-play effect — walls aren't units, so fire the on-play through a
+  // synthetic anchor on the wall's tile (mirrors _twFireCardSummon's anchoring).
+  // Radius/AOE/take-control effects center on the barrier. The anchor is never
+  // pushed into state.units, so nothing else sees a phantom unit.
+  if (card && card.onPlay && card.onPlay.type) {
+    try {
+      const _wallAnchor = { id: '_wall_anchor_' + pos.x + '_' + pos.y, name: card.name, icon: card.icon, owner: 'player', pos: { x: pos.x, y: pos.y }, alive: true, isWall: true };
+      App.state = applyOnPlayEffect(App.state, _wallAnchor, card);
+    } catch (e) { try { console.warn('[wall onPlay]', e); } catch (_) {} }
+  }
   recordCardPlayed(card);
   App.ui.selectedCardId = null;
   if (typeof playSfx === 'function') playSfx('cardPlace');
@@ -89061,6 +89247,7 @@ function aiScoreUnitCard(card, state, playerProf) {
     else if (t === 'kalonSource') score += 35 * (onPlay.amount || 1); // Kalon charges are gold
     else if (t === 'bounceUnit') score += 45;                         // removes a board threat
     else if (t === 'singleKill') score += 35 + 0.4 * (onPlay.chance || 25); // execute
+    else if (t === 'takeControl') score += 55 + 0.3 * (onPlay.chance || 100); // steal a unit — swings the board hard
     else if (t === 'transformAlly') score += 60;                      // free Kalon for an ally
     else if (t === 'aoeDamage')  score += 8 * (onPlay.amount || 6);
     else if (t === 'aoeKill')    score += 0.6 * (onPlay.chance || 25);
@@ -131875,6 +132062,7 @@ function describeOnPlayEffect(eff) {
     case 'kalonSource':  return `Grants ${eff.amount || 1} Kalon source (toward a transformation).`;
     case 'bounceUnit':   return `Bounces an enemy ${within} back to their hand.`;
     case 'singleKill':   return `${eff.chance || 0}% chance to execute the nearest enemy ${within}.`;
+    case 'takeControl':  { const n = Math.max(1, eff.amount || 1); const cd = eff.controlDuration | 0; return `${eff.chance || 100}% chance to seize control of ${n > 1 ? `up to ${n} enemies` : 'an enemy'} ${within}${cd > 0 ? ` for ${cd} turn${cd === 1 ? '' : 's'}` : ' permanently'}.`; }
     case 'transformAlly':return `Transforms a nearby ally ${within} into a Kalon.`;
     case 'summon':       return `Summons ${eff.amount > 1 ? eff.amount + '× ' : ''}${_abilitySummonName(eff.summonCard)} on entering play.`;
     case 'polycreate':   return `Auto-fuses nearby allies ${within} into a Fusion Kalon when the materials match.`;

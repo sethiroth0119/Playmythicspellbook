@@ -6499,6 +6499,30 @@
     text-transform: uppercase;
     opacity: 0.85;
   }
+  /* 🔗 Chain-link numeral — a YGO-style "CHAIN N" marker that pops onto the
+     top-left corner of each link as it's added to the stack. Link 1 = first
+     activation, ascending; the stack resolves LIFO (highest number first). */
+  .cc-link-num {
+    position: absolute; top: -11px; left: -11px;
+    min-width: 22px; height: 22px; padding: 0 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Cinzel', serif; font-size: 0.58rem; font-weight: 800;
+    letter-spacing: 0.04em; line-height: 1; white-space: nowrap;
+    color: #1a1206;
+    background: linear-gradient(160deg, #fff3cc, var(--cc-accent, #ffd166));
+    border: 1.5px solid rgba(0,0,0,0.55); border-radius: 999px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.7),
+                0 0 12px color-mix(in srgb, var(--cc-accent, #ffd166) 70%, transparent);
+    text-shadow: 0 1px 0 rgba(255,255,255,0.45);
+    z-index: 4;
+    animation: cc-link-pop 0.5s cubic-bezier(0.16,1.5,0.4,1) both;
+  }
+  @keyframes cc-link-pop {
+    0%   { opacity: 0; transform: scale(0.2) rotate(-25deg); }
+    60%  { opacity: 1; transform: scale(1.18) rotate(4deg); }
+    100% { opacity: 1; transform: scale(1) rotate(0); }
+  }
+  .cc-card.is-broken .cc-link-num { filter: saturate(0.45) brightness(0.7); }
   .cc-card-icon {
     font-size: 2.2rem;
     filter: drop-shadow(0 0 8px color-mix(in srgb, var(--cc-accent, #ffd166) 60%, transparent));
@@ -79922,6 +79946,7 @@ function _renderCounterChainOverlay(state) {
       const arrow = (i > 0) ? `<div class="cc-arrow">↓ COUNTERS ↓</div>` : '';
       return arrow + `
         <div class="cc-card ${broken ? 'is-broken' : ''} ${isTop ? 'is-top' : ''}" style="--cc-accent:${color}">
+          <div class="cc-link-num">CHAIN ${i + 1}</div>
           <div class="cc-card-side">${ownerLabel}</div>
           <div class="cc-card-icon">${icon}</div>
           <div class="cc-card-body">
@@ -85461,6 +85486,26 @@ function _playSpellActivationVfxImpl(card, opts) {
           box-shadow:inset 0 0 30px var(--el-color-dim,rgba(201,165,255,0.5)),
                      inset 0 0 60px rgba(0,0,0,0.45);
           pointer-events:none}
+        /* 🪞 HOLOGRAPHIC FOIL — a rainbow sheen that sweeps diagonally across the
+           revealed card art (Master-Duel "holo" glint), clipped inside the art
+           frame, then fades out before the card bursts. color-dodge makes it read
+           as a bright foil reflection over the artwork rather than a flat overlay. */
+        .spell-cine-card .scc-foil{position:absolute;inset:0;border-radius:10px;pointer-events:none;z-index:2;
+          background:linear-gradient(115deg,transparent 18%,rgba(255,90,170,0.34) 36%,rgba(120,200,255,0.42) 46%,
+            rgba(150,255,190,0.38) 54%,rgba(255,225,120,0.36) 62%,transparent 82%);
+          background-size:260% 260%;mix-blend-mode:color-dodge;opacity:0;
+          animation:scineFoil ${_SPELL_CINE_DURATION_MS}ms ease-in-out forwards}
+        @keyframes scineFoil{
+          0%{opacity:0;background-position:0% 0%}
+          14%{opacity:0.85;background-position:18% 16%}
+          50%{opacity:0.78;background-position:66% 58%}
+          72%{opacity:0.95;background-position:100% 92%}
+          82%{opacity:0}
+          100%{opacity:0;background-position:120% 108%}
+        }
+        @media (prefers-reduced-motion: reduce){
+          .spell-cine-card .scc-foil{animation:none;opacity:0.18;background-position:50% 50%}
+        }
         .spell-cine-card .scc-icon{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);
           font-size:5rem;filter:drop-shadow(0 0 20px var(--el-color,#c9a5ff))}
         .spell-cine-card .scc-name{position:absolute;left:0;right:0;bottom:14px;text-align:center;
@@ -85701,6 +85746,7 @@ function _playSpellActivationVfxImpl(card, opts) {
       <div class="spell-cine-card">
         <div class="scc-art">
           ${cardArtBody}
+          <div class="scc-foil"></div>
         </div>
         ${elemBadgeHTML}
         ${cardName ? `<div class="scc-name">${cardName.replace(/[<>&]/g,'')}</div>` : ''}
@@ -86997,7 +87043,22 @@ function playKalonCinematic(unit, opts) {
       return (fr && fr[0]) || null;
     } catch (e) { return null; }
   };
-  const fFrom = frameOf(base), fTo = frameOf(ev);
+  // 🖼 Portrait resolver — sprite frame first (animated), then the admin-
+  // uploaded card art, then any direct image, else null (emoji fallback handled
+  // at mount). This guarantees the evolution ALWAYS shows a base→evolved
+  // portrait, even for emoji- or art-only units that have no sprite sheet.
+  const portraitOf = (u) => {
+    const f = frameOf(u);
+    if (f) return { url: f, pixel: true };
+    try {
+      const cid = u && (u.cardId || u.originalCardId || u.id);
+      const art = (cid && typeof getCardArt === 'function') ? getCardArt(cid) : null;
+      if (art) return { url: art, pixel: false };
+    } catch (e) {}
+    try { if (u && (u.img || u.image)) return { url: u.img || u.image, pixel: false }; } catch (e) {}
+    return null;
+  };
+  const pFrom = portraitOf(base), pTo = portraitOf(ev);
   const nameFrom = (base && base.name) || '', nameTo = (ev && ev.name) || '';
 
   const mount = () => {
@@ -87019,11 +87080,14 @@ function playKalonCinematic(unit, opts) {
       .kc-pillar{position:absolute;left:0;top:0;width:170px;height:480px;margin:-400px 0 0 -85px;border-radius:50% 50% 44% 44%;background:linear-gradient(180deg,transparent 0%,var(--kc-2) 26%,var(--kc-1) 64%,#fff 92%,transparent 100%);filter:blur(8px);mix-blend-mode:screen;opacity:0;transform-origin:50% 100%;animation:kc-pillar 2.3s ease-out forwards;}
       .kc-p{position:absolute;left:0;top:0;width:14px;height:14px;border-radius:50%;background:var(--kc-1);box-shadow:0 0 14px var(--kc-1),0 0 26px var(--kc-2);opacity:0;animation:kc-p 2.3s ease-out forwards;}
       .kc-fig{position:absolute;left:0;top:0;width:250px;height:250px;margin:-230px 0 0 -125px;object-fit:contain;object-position:center bottom;image-rendering:pixelated;filter:drop-shadow(0 12px 18px rgba(0,0,0,.85));opacity:0;}
+      .kc-fig.smooth{image-rendering:auto;border-radius:12px;}
+      .kc-fig-emoji{display:flex;align-items:center;justify-content:center;font-size:148px;line-height:1;image-rendering:auto;text-shadow:0 10px 20px rgba(0,0,0,.85),0 0 26px var(--kc-1);}
       .kc-fig.from{animation:kc-figFrom 2.7s ease-out forwards;}
       .kc-fig.to{filter:drop-shadow(0 12px 18px rgba(0,0,0,.85)) drop-shadow(0 0 20px var(--kc-1));animation:kc-figTo 2.7s ease-out forwards;}
       .kc-flash{position:absolute;left:0;top:0;width:400px;height:400px;margin:-200px 0 0 -200px;border-radius:50%;background:radial-gradient(circle,#fff 0%,var(--kc-1) 34%,transparent 72%);mix-blend-mode:screen;opacity:0;animation:kc-flash 2.7s ease-out forwards;}
       .kc-shock{position:absolute;left:0;top:0;border-radius:50%;border:6px solid #fff;opacity:0;animation:kc-shock 1.5s ease-out .95s forwards;}
-      .kc-title{position:absolute;left:0;top:0;transform:translate(-50%,0);margin-top:70px;white-space:nowrap;font-family:'Cinzel',serif;font-weight:700;letter-spacing:.16em;text-transform:uppercase;font-size:1.6rem;color:#fff;text-shadow:0 0 14px var(--kc-1),0 0 28px var(--kc-2),0 3px 8px #000;opacity:0;animation:kc-title 2.7s ease-out forwards;}
+      .kc-eyebrow{position:absolute;left:0;top:0;transform:translate(-50%,0);margin-top:46px;white-space:nowrap;font-family:'Cinzel',serif;font-weight:700;letter-spacing:.34em;text-transform:uppercase;font-size:0.74rem;color:var(--kc-1);text-shadow:0 0 12px var(--kc-1),0 0 22px var(--kc-2),0 2px 6px #000;opacity:0;animation:kc-eyebrow 2.7s ease-out forwards;}
+      .kc-title{position:absolute;left:0;top:0;transform:translate(-50%,0);margin-top:84px;white-space:nowrap;font-family:'Cinzel',serif;font-weight:700;letter-spacing:.16em;text-transform:uppercase;font-size:1.6rem;color:#fff;text-shadow:0 0 14px var(--kc-1),0 0 28px var(--kc-2),0 3px 8px #000;opacity:0;animation:kc-title 2.7s ease-out forwards;}
       @keyframes kc-fade{0%,86%{opacity:1}100%{opacity:0}}
       @keyframes kc-bloom{0%{opacity:0;transform:scale(.4)}22%{opacity:.95;transform:scale(1)}70%{opacity:.55;transform:scale(1.06)}100%{opacity:0;transform:scale(1.1)}}
       @keyframes kc-ring{0%{width:0;height:0;margin:0 0 0 0;opacity:0}12%{opacity:1}100%{width:560px;height:560px;margin:-280px 0 0 -280px;opacity:0}}
@@ -87034,6 +87098,7 @@ function playKalonCinematic(unit, opts) {
       @keyframes kc-flash{0%,38%{opacity:0;transform:scale(.4)}48%{opacity:1;transform:scale(1.5)}56%{opacity:.85;transform:scale(1.3)}100%{opacity:0;transform:scale(1.1)}}
       @keyframes kc-shock{0%{width:60px;height:60px;margin:-30px 0 0 -30px;opacity:.9;border-width:7px}100%{width:820px;height:820px;margin:-410px 0 0 -410px;opacity:0;border-width:1px}}
       @keyframes kc-title{0%,40%{opacity:0;transform:translate(-50%,8px)}56%{opacity:1;transform:translate(-50%,0)}84%{opacity:1}100%{opacity:0;transform:translate(-50%,-6px)}}
+      @keyframes kc-eyebrow{0%,44%{opacity:0;transform:translate(-50%,6px) scale(.92)}58%{opacity:1;transform:translate(-50%,0) scale(1)}84%{opacity:1}100%{opacity:0;transform:translate(-50%,-4px)}}
     `;
     (document.head || document.documentElement).appendChild(st);
   }
@@ -87058,6 +87123,15 @@ function playKalonCinematic(unit, opts) {
     }
 
     const esc = (s) => { try { return escapeHtml(String(s)); } catch (e) { return String(s || ''); } };
+    // 🎭 Figure HTML — real portrait when we have one (sprite stays pixelated,
+    // card art renders smooth), else a large emoji glyph so SOMETHING evolves.
+    const figHtml = (p, u, cls) => {
+      if (p && p.url) {
+        return '<img class="kc-fig ' + cls + (p.pixel ? '' : ' smooth') + '" src="'
+          + String(p.url).replace(/"/g, '&quot;') + '" alt="">';
+      }
+      return '<div class="kc-fig kc-fig-emoji ' + cls + '">' + esc((u && u.icon) || '✦') + '</div>';
+    };
     const ov = document.createElement('div');
     ov.className = 'kc-overlay';
     ov.style.setProperty('--kc-1', pal[0]);
@@ -87068,10 +87142,11 @@ function playKalonCinematic(unit, opts) {
       + '<span class="kc-ring"></span><span class="kc-ring b"></span><span class="kc-ring c"></span>'
       + '<span class="kc-pillar"></span>'
       + parts
-      + (fFrom ? '<img class="kc-fig from" src="' + fFrom + '" alt="">' : '')
-      + (fTo   ? '<img class="kc-fig to" src="'   + fTo   + '" alt="">' : '')
+      + figHtml(pFrom, base, 'from')
+      + figHtml(pTo, ev, 'to')
       + '<span class="kc-flash"></span>'
       + '<span class="kc-shock"></span>'
+      + '<div class="kc-eyebrow">&#10022; EVOLUTION &#10022;</div>'
       + '<div class="kc-title">' + esc(nameFrom) + ' &rarr; ' + esc(nameTo) + '</div>'
       + '</div>';
     host.appendChild(ov);

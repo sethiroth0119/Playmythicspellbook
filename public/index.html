@@ -30453,6 +30453,11 @@ const Forge = {
   // shop, on-field tooltips, and the VS-screen item strip. Keyed by item id so
   // it sits alongside cardArt / packArt — same lifecycle, same IDB chunk.
   itemArt: {},          // { itemId: dataURL or URL }
+  // 🛢 Oil-extraction tower art — admin-uploaded board images per fuel tier
+  // (common / uncommon / rare / legendary). Shown on the oil-tower tile in
+  // Oil Extraction missions instead of the default 🛢 emoji. Same IDB lifecycle
+  // as packArt / itemArt so it persists across reloads.
+  oilTowerArt: {},      // { common|uncommon|rare|legendary: dataURL or URL }
   customCards: [],
   customMoves: {},
   customEvents: [],     // user-defined event cards { id, name, icon, image, desc, rewards: [...] }
@@ -47529,7 +47534,7 @@ async function idbDel(key) {
 // game starts immediately with text+stats, and sprites pop in as soon as IDB
 // resolves (sub-second on modern devices). Triggers a render once data lands.
 async function loadHeavyForgeFromIdb() {
-  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'catalogMedia', 'opArt', 'reArt'];
+  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
   let changed = false;
   for (const k of keys) {
     const v = await idbGet('forge_' + k);
@@ -48208,6 +48213,7 @@ function saveForge() {
       idbSet('forge_starterDeckArt', Forge.starterDeckArt || {});
       idbSet('forge_catalogMedia',   Forge.catalogMedia   || {});
       idbSet('forge_itemArt',      Forge.itemArt      || {});
+      idbSet('forge_oilTowerArt',  Forge.oilTowerArt  || {});
       idbSet('forge_opArt',        Forge.opArt        || {});
       idbSet('forge_reArt',        Forge.reArt        || {});
       // 🗄️ ALSO mirror the custom-CONTENT chunks to IndexedDB. These used
@@ -69861,6 +69867,38 @@ function renderPricingAdmin() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">🛢 Oil Extraction Tower Art (Admin)</div>
+        <div class="settings-section-desc">
+          Upload a board image for each <strong>oil-extraction tier</strong>. In Oil Extraction missions the matching image replaces the default 🛢 emoji on the tower tile (the <strong>X/3</strong> pump counter still shows on top). Saved to this device immediately; click <strong>📚 Publish</strong> in the Forge to ship them to all players.
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.7rem">
+          ${(() => {
+            const _oilTiers = [
+              { id: 'common',    label: 'Common',    color: '#cfd8dc' },
+              { id: 'uncommon',  label: 'Uncommon',  color: '#7fd0a0' },
+              { id: 'rare',      label: 'Rare',      color: '#7fb0ff' },
+              { id: 'legendary', label: 'Legendary', color: '#ffcf5a' },
+            ];
+            const _oilArt = (Forge && Forge.oilTowerArt) || {};
+            return _oilTiers.map(t => `
+              <div style="display:flex;align-items:center;gap:0.7rem;padding:0.5rem 0.7rem;background:rgba(30,18,8,0.5);border:1px solid ${t.color}55;border-radius:6px">
+                <div style="width:54px;height:54px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle,rgba(60,36,12,0.65),rgba(20,12,6,0.85) 80%);border:1px solid ${t.color}88;border-radius:6px;overflow:hidden">
+                  ${_oilArt[t.id] ? `<img src="${_oilArt[t.id]}" alt="" style="width:100%;height:100%;object-fit:contain">` : '<span style="font-size:1.6rem">🛢</span>'}
+                </div>
+                <div style="flex:1 1 auto;min-width:0">
+                  <div class="small-text" style="color:${t.color};font-family:'Cinzel',serif;font-weight:700">${t.label} Tower</div>
+                  <div class="small-text ink-dim">${_oilArt[t.id] ? '✅ Custom image set' : 'Using default 🛢 emoji'}</div>
+                </div>
+                <input type="file" id="oil-file-${t.id}" accept="image/*" style="display:none">
+                <button class="btn-primary btn-mini" data-oil-art-upload="${t.id}">📤 Upload</button>
+                ${_oilArt[t.id] ? `<button class="btn-mini" data-oil-art-clear="${t.id}" style="color:#ff8080">🗑</button>` : ''}
+              </div>`).join('');
+          })()}
+        </div>
+        <div class="small-text ink-dim" style="margin-top:0.5rem">PNG / JPG / SVG / WebP — resized to 256×256 and stored inline. Keep each under ~500 KB.</div>
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🪦 Tombstones (Admin)</div>
         <div class="settings-section-desc">
           Set the <strong>default tombstone image</strong> every player sees when a unit dies. Players who unlock a cosmetic from the shop override this with their own.
@@ -70431,6 +70469,42 @@ function renderPricingAdmin() {
     showToast('🪦 Default tombstone cleared — using emoji fallback.', 2400);
     render();
   };
+  // 🛢 Oil-extraction tower art — one upload per fuel tier.
+  ['common', 'uncommon', 'rare', 'legendary'].forEach(tier => {
+    const up  = document.querySelector('[data-oil-art-upload="' + tier + '"]');
+    const fin = document.getElementById('oil-file-' + tier);
+    if (up && fin) {
+      up.onclick = () => fin.click();
+      fin.onchange = async () => {
+        const file = fin.files && fin.files[0];
+        if (!file) return;
+        if (file.size > 1 * 1024 * 1024) {
+          if (!(await gcConfirm(`This file is ${(file.size/1024/1024).toFixed(1)} MB — large for a board image. Continue?`))) { fin.value = ''; return; }
+        }
+        up.disabled = true; up.textContent = '…';
+        try {
+          const dataUrl = await resizeImage(file, 256);
+          if (!Forge.oilTowerArt || typeof Forge.oilTowerArt !== 'object') Forge.oilTowerArt = {};
+          Forge.oilTowerArt[tier] = dataUrl;
+          saveForge();
+          showToast('🛢 ' + tier.charAt(0).toUpperCase() + tier.slice(1) + ' oil tower image saved! Publish the catalog to ship it to all players.', 3400);
+          render();
+        } catch (e) {
+          showToast('⨯ Upload failed: ' + ((e && e.message) || 'unknown'), 4000);
+        } finally {
+          up.disabled = false; up.textContent = '📤 Upload'; fin.value = '';
+        }
+      };
+    }
+    const cl = document.querySelector('[data-oil-art-clear="' + tier + '"]');
+    if (cl) cl.onclick = async () => {
+      if (!(await gcConfirm('Clear the ' + tier + ' oil tower image? It will fall back to the 🛢 emoji.'))) return;
+      if (Forge.oilTowerArt) delete Forge.oilTowerArt[tier];
+      saveForge();
+      showToast('🛢 ' + tier + ' oil tower image cleared.', 2400);
+      render();
+    };
+  });
   // 🖤 Black Market price overrides.
   const bBmpSave = document.getElementById('btn-bmp-save');
   if (bBmpSave) bBmpSave.onclick = () => {
@@ -82672,11 +82746,16 @@ function renderBoard() {
         // data-URL upload / emoji fallback).
         cellInner = `<div class="tile-marker event" title="${escapeHtml(tile.event.def.name || 'Event')}">${renderEventTileIcon(tile, x, y)}</div>`;
       } else if (_twOilTower) {
-        // 🛢 Oil tower marker — tier icon + a bold X/3 turn counter + progress bar.
-        const tierIco = _twOilTower.extracted ? '✅' : '🛢';
+        // 🛢 Oil tower marker — tier icon (admin-uploaded image if set) + a bold
+        // X/3 turn counter + progress bar.
         const tierName = (_twOilTower.fuelTier || 'common').toUpperCase();
         const _oilProg = _twOilTower.progress | 0;
         const pct = (_oilProg / 3) * 100;
+        // Admin-uploaded per-tier board image (Forge local, or published Catalog).
+        const _oilImg = (typeof Forge !== 'undefined' && Forge.oilTowerArt && Forge.oilTowerArt[_twOilTower.fuelTier])
+          || (typeof Catalog !== 'undefined' && Catalog.oilTowerArt && Catalog.oilTowerArt[_twOilTower.fuelTier]) || null;
+        const tierIco = _twOilTower.extracted ? '✅'
+          : (_oilImg ? `<img src="${_oilImg}" alt="" style="height:2rem;max-width:100%;object-fit:contain;filter:drop-shadow(0 0 4px rgba(255,180,80,0.85))">` : '🛢');
         // Highlight the counter when one of YOUR units is on the pad right now.
         const _oilOcc = (s.units || []).some(u => u && u.alive && u.owner === ((s.mods && s.mods.twAttackerSide) || 'player')
           && u.pos && u.pos.x === x && u.pos.y === y && !u._twConvoy);

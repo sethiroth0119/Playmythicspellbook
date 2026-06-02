@@ -9525,6 +9525,18 @@
     .energy-fill.energy-gained::after { display: none; }
   }
 
+  /* ⚡ ULTIMATE RELEASE — flash + shockwave the instant the ult unleashes. */
+  .ult-release-fx { position: fixed; inset: 0; z-index: 2147481150; pointer-events: none; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .ult-release-flash { position: absolute; inset: 0; mix-blend-mode: screen;
+    background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.95), rgba(255,225,120,0.55) 45%, transparent 76%);
+    animation: ult-release-flash-anim 0.6s ease-out forwards; }
+  .ult-release-ring { position: absolute; width: 42vmin; height: 42vmin; border-radius: 50%;
+    border: 6px solid rgba(255,235,150,0.9); box-shadow: 0 0 34px rgba(255,210,90,0.85), inset 0 0 24px rgba(255,210,90,0.5);
+    animation: ult-release-ring-anim 0.72s ease-out forwards; }
+  .ult-release-ring.r2 { border-color: rgba(150,200,255,0.85); box-shadow: 0 0 34px rgba(120,180,255,0.8); animation-delay: 0.09s; }
+  @keyframes ult-release-flash-anim { 0% { opacity: 0; } 12% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes ult-release-ring-anim { 0% { transform: scale(0.12); opacity: 0.95; } 100% { transform: scale(2.7); opacity: 0; } }
+
   /* Owner indicator strip on unit cell */
   .unit::before {
     content: '';
@@ -78964,6 +78976,27 @@ function _emitDrawVfx() {
   } catch (e) {}
 }
 
+// ⚡ ULTIMATE RELEASE — full-screen flash + dual shockwave rings + a screen
+// shake the instant a hero unleashes its ultimate, leading into the existing
+// ult name cinematic. The charge bar's own is-ready pulse handles the "building
+// glow"; this is the unleash punch. Reduced-motion opts out; rings dropped on
+// Graphics = Low.
+function _playUltRelease(def) {
+  try {
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let gfx = 'high'; try { gfx = (getSettings().gfxQuality) || 'high'; } catch (e) {}
+    const old = document.getElementById('ult-release-fx'); if (old) old.remove();
+    const host = document.createElement('div');
+    host.id = 'ult-release-fx';
+    host.className = 'ult-release-fx';
+    host.innerHTML = '<div class="ult-release-flash"></div>' +
+      (gfx !== 'low' ? '<div class="ult-release-ring"></div><div class="ult-release-ring r2"></div>' : '');
+    document.body.appendChild(host);
+    try { if (typeof Juice !== 'undefined' && Juice.shake) Juice.shake(document.querySelector('.battle-screen') || document.body); } catch (e) {}
+    setTimeout(() => { try { host.remove(); } catch (e) {} }, 820);
+  } catch (e) {}
+}
+
 // 🌟 STATUS-EFFECT APPLY VFX
 // ─────────────────────────────────────────────────────────────────────────
 // Classify a status as a buff / debuff / neutral so the pop-up can color
@@ -119016,6 +119049,8 @@ function resolveHeroUltimate(heroUnitId, opts) {
     App.ui.heroUltCinematic = { heroUnitId: hero.id, def, startedAt: Date.now() };
     _muffleBattleAudioForUlt(true);
     try { if (typeof playSfx === 'function') playSfx('ultimate'); } catch (e) {}
+    // ⚡ Release flash — full-screen flash + shockwave + shake as the ult unleashes.
+    try { if (typeof _playUltRelease === 'function') _playUltRelease(def); } catch (e) {}
     if (typeof renderBattle === 'function') renderBattle();
     setTimeout(() => {
       try {

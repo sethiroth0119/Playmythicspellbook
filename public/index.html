@@ -7510,6 +7510,85 @@
     box-shadow: inset 0 0 14px rgba(255, 209, 102, 0.5), 0 0 12px rgba(255, 209, 102, 0.35) !important;
   }
 
+  /* ════════════════════════════════════════════════════════════════════
+     🎨 BOARD CUSTOMIZATION & POLISH
+     Three additive systems, all driven by attributes on `.battle-screen`
+     (data-gfx / data-board-skin) so the DEFAULT look is byte-for-byte
+     unchanged unless the player opts in. Nothing here overrides the tuned
+     2.5D / iso tile geometry — it only recolors the ambient atmosphere,
+     reframes the board, and animates the location vista.
+     ──────────────────────────────────────────────────────────────────── */
+
+  /* — 🖼 FRAME POLISH (all skins, incl. default) — a soft inner frame +
+     vignette inside the gold border so the battlefield reads as a finished,
+     "put-together" plate rather than a bare grid. Lives on the ambient layer
+     (already inset 10px to match the frame), so it never shifts layout. */
+  .board-ambient {
+    box-shadow:
+      inset 0 0 0 1px rgba(212, 175, 55, 0.12),
+      inset 0 0 46px rgba(0, 0, 0, 0.20),
+      inset 0 0 90px var(--skin-inner-glow, rgba(212, 175, 55, 0.05));
+  }
+
+  /* — 🎚 GRAPHICS QUALITY — renderBoardAmbient() already scales particle
+     COUNT per tier; these dial the heavy compositing (blur/opacity) so
+     'med'/'low' rasterize cheaper. 'high' is untouched. */
+  .battle-screen[data-gfx="med"] .board-ambient .ba-fog { filter: blur(8px); opacity: 0.72; }
+  .battle-screen[data-gfx="med"] .board-ambient .ba-lightbeam { opacity: 0.4; }
+  .battle-screen[data-gfx="low"] .board-ambient .ba-depth-tint,
+  .battle-screen[data-gfx="low"] .board-ambient .ba-front-warm { opacity: 0.55; }
+  .battle-screen[data-gfx="low"] .board-ambient .ba-rune-pulse { display: none; }
+  .battle-screen[data-gfx="low"] .board.has-active-location-img { animation: none; }
+
+  /* — 🗺 PER-LOCATION ANIMATED VISTA — when a whole-board Location/Weather
+     image is active the painted scene slowly breathes (a gentle ken-burns
+     push) so the field reads as a living matte painting. The inline style
+     sets background-size:100% 100%; an animation overrides it only while
+     playing. Disabled at gfx 'low' (rule above). prefers-reduced-motion
+     also opts out (block at the very end). */
+  .board.has-active-location-img {
+    animation: loc-kenburns 32s ease-in-out infinite alternate;
+  }
+  @keyframes loc-kenburns {
+    0%   { background-size: 100% 100%; background-position: 50% 50%; }
+    100% { background-size: 116% 116%; background-position: 56% 42%; }
+  }
+
+  /* — 🎭 BOARD SKINS — recolor the entire living-ambient atmosphere with a
+     single hue-rotate (every ember/candle/rune/fog/tint is mix-blend:screen,
+     so one filter shifts them together) + a themed frame border & inner glow.
+     'default' has NO override (Ashen Keep — the original warm-gold look). */
+  .battle-screen[data-board-skin="frost"] .board-ambient,
+  .battle-screen[data-board-skin="frost"] .board-ambient-drift { filter: hue-rotate(158deg) saturate(0.88); }
+  .battle-screen[data-board-skin="frost"] .board { border-color: #8fd2ff; }
+  .battle-screen[data-board-skin="frost"] .board-ambient { --skin-inner-glow: rgba(120, 200, 255, 0.16); }
+
+  .battle-screen[data-board-skin="verdant"] .board-ambient,
+  .battle-screen[data-board-skin="verdant"] .board-ambient-drift { filter: hue-rotate(78deg) saturate(0.9); }
+  .battle-screen[data-board-skin="verdant"] .board { border-color: #88e0a0; }
+  .battle-screen[data-board-skin="verdant"] .board-ambient { --skin-inner-glow: rgba(120, 230, 150, 0.15); }
+
+  .battle-screen[data-board-skin="void"] .board-ambient,
+  .battle-screen[data-board-skin="void"] .board-ambient-drift { filter: hue-rotate(232deg) saturate(1.15); }
+  .battle-screen[data-board-skin="void"] .board { border-color: #c89bff; }
+  .battle-screen[data-board-skin="void"] .board-ambient { --skin-inner-glow: rgba(180, 120, 255, 0.18); }
+
+  .battle-screen[data-board-skin="ember"] .board-ambient,
+  .battle-screen[data-board-skin="ember"] .board-ambient-drift { filter: hue-rotate(-18deg) saturate(1.3) brightness(1.05); }
+  .battle-screen[data-board-skin="ember"] .board { border-color: #ff9a5a; }
+  .battle-screen[data-board-skin="ember"] .board-ambient { --skin-inner-glow: rgba(255, 130, 60, 0.18); }
+
+  .battle-screen[data-board-skin="abyss"] .board-ambient,
+  .battle-screen[data-board-skin="abyss"] .board-ambient-drift { filter: hue-rotate(186deg) saturate(1.05); }
+  .battle-screen[data-board-skin="abyss"] .board { border-color: #7fe6d4; }
+  .battle-screen[data-board-skin="abyss"] .board-ambient { --skin-inner-glow: rgba(90, 220, 210, 0.16); }
+
+  /* Respect reduced-motion: stop the vista breathing for players who ask the
+     OS to minimize animation (also a tiny perf win). */
+  @media (prefers-reduced-motion: reduce) {
+    .board.has-active-location-img { animation: none; }
+  }
+
   .tile {
     position: relative;
     /* Cells are now (essentially) see-through so the battlefield photo
@@ -31953,6 +32032,8 @@ const Profile = {
       showPlaysHeals: true,    // green entries (card plays, healing)
       searchText: '',          // free-text filter (case-insensitive substring match)
     },
+    gfxQuality: 'high',        // 'low' | 'med' | 'high' — scales board ambient particle density + effects (perf knob)
+    boardSkin: 'default',      // board surface/frame theme id (see BOARD_SKINS) — purely cosmetic
   },
   // Local leaderboard — single-player records the game tracks across sessions. Each record
   // stores both the scalar value and the context it was set in (which hero, opponent, date)
@@ -48999,6 +49080,8 @@ function getSettings() {
       logFilters: { showDamage: true, showEffects: true, showPlaysHeals: true, searchText: '' },
       aiDifficulty: 'normal',   // 'easy' | 'normal' | 'hard'
       pixiBoard: false,         // 🎮 WebGL board renderer — HOTFIX rolled default back to OFF (live regression). See App.flags.forceDisablePixi.
+      gfxQuality: 'high',       // 'low' | 'med' | 'high' — board ambient density / effects
+      boardSkin: 'default',     // board surface/frame theme id (BOARD_SKINS)
     };
   }
   if (!Profile.settings.logFilters) {
@@ -49015,6 +49098,15 @@ function getSettings() {
   // disable override below ignores even an explicit "On".
   if (typeof Profile.settings.pixiBoard !== 'boolean') {
     Profile.settings.pixiBoard = false;
+  }
+  // Backfill graphics-quality + board-skin on existing profiles (cosmetic/perf
+  // knobs added later). 'high' preserves the original full-density look so
+  // nobody's board changes unless they opt into a lower tier.
+  if (['low', 'med', 'high'].indexOf(Profile.settings.gfxQuality) < 0) {
+    Profile.settings.gfxQuality = 'high';
+  }
+  if (typeof Profile.settings.boardSkin !== 'string' || !Profile.settings.boardSkin) {
+    Profile.settings.boardSkin = 'default';
   }
   // Mirror the saved preference into the live App.flags every read so the
   // first call after auth-load picks it up. App.flags is the source of truth
@@ -78362,7 +78454,7 @@ function _renderBattleImmediate() {
 
   _flipCaptureBattle();   // 🎞️ snapshot unit positions BEFORE the rebuild
   root.innerHTML = `
-    <div class="battle-screen mtga-layout ${App.ui.aiBusy ? 'ai-busy' : ''} ${App.ui.heroUltCinematic ? 'ult-cine-active' : ''}">
+    <div class="battle-screen mtga-layout ${App.ui.aiBusy ? 'ai-busy' : ''} ${App.ui.heroUltCinematic ? 'ult-cine-active' : ''}" data-gfx="${(function(){try{return getSettings().gfxQuality||'high';}catch(e){return 'high';}})()}" data-board-skin="${(function(){try{return getSettings().boardSkin||'default';}catch(e){return 'default';}})()}">
       <div class="battle-grid">
         <!-- LEFT: hero bars, turn, banners, action panel, log -->
         <aside class="battle-left">
@@ -82277,8 +82369,19 @@ function renderBoard() {
 // (Ambient layer restored — it was NOT the zoom cause; debugging continues
 // against the board's 3D-projection sizing instead.)
 function renderBoardAmbient() {
+  // 🎚 Graphics-quality knob — scales how many animated particles we mount.
+  // 'high' = full original density; 'med' ≈ half; 'low' = sparse (big perf win
+  // on weak phones, since each particle is an independently-animated element).
+  // The fog / lightbeam / drifting-shadow heavy compositing layers are dropped
+  // entirely at 'low'. Defaults to 'high' so nobody's board changes unless they
+  // opt down. Read defensively (Profile may not be ready on the very first paint).
+  let _gfx = 'high';
+  try { _gfx = (getSettings().gfxQuality) || 'high'; } catch (e) {}
+  const _density = _gfx === 'low' ? 0.34 : (_gfx === 'med' ? 0.6 : 1);
+  const _heavyFx = _gfx !== 'low';   // fog roll + volumetric beam + drifting shadow
+  const _scaleN = (n) => Math.max(1, Math.round(n * _density));
   // Glowing embers floating up — warm gold-orange flecks.
-  const embers = Array.from({ length: 22 }, (_, i) => {
+  const embers = Array.from({ length: _scaleN(22) }, (_, i) => {
     const xPct  = ((i * 4.7) % 100).toFixed(1);
     const drift = ((i * 13) % 60) - 30;
     const delay = -((i * 0.6) % 10).toFixed(2);
@@ -82286,7 +82389,7 @@ function renderBoardAmbient() {
     return `<span class="ba-ember" style="left:${xPct}%;top:100%;--dx:${drift}px;animation-delay:${delay}s;animation-duration:${dur}s"></span>`;
   }).join('');
   // Drifting ash motes — neutral gray flecks slowly falling diagonally.
-  const ash = Array.from({ length: 28 }, (_, i) => {
+  const ash = Array.from({ length: _scaleN(28) }, (_, i) => {
     const xPct  = ((i * 3.7 + 7) % 100).toFixed(1);
     const yStart = -((i * 5) % 30) - 5;
     const delay = -((i * 0.55) % 16).toFixed(2);
@@ -82294,7 +82397,7 @@ function renderBoardAmbient() {
     return `<span class="ba-ash" style="left:${xPct}%;top:${yStart}%;animation-delay:${delay}s;animation-duration:${dur}s"></span>`;
   }).join('');
   // Background dust specks — atmospheric depth.
-  const dust = Array.from({ length: 20 }, (_, i) => {
+  const dust = Array.from({ length: _scaleN(20) }, (_, i) => {
     const xPct  = ((i * 4.3 + 3) % 100).toFixed(1);
     const yPct  = ((i * 5.7) % 100).toFixed(1);
     const delay = -((i * 0.8) % 20).toFixed(2);
@@ -82327,14 +82430,14 @@ function renderBoardAmbient() {
   return `
     <div class="board-ambient" aria-hidden="true">
       <div class="ba-depth-tint"></div>
-      <div class="ba-lightbeam"></div>
-      <div class="ba-fog"></div>
+      ${_heavyFx ? '<div class="ba-lightbeam"></div>' : ''}
+      ${_heavyFx ? '<div class="ba-fog"></div>' : ''}
       <div class="ba-front-warm"></div>
       ${runes}
       ${candles}
     </div>
     <div class="board-ambient-drift" aria-hidden="true">
-      <div class="ba-shadow"></div>
+      ${_heavyFx ? '<div class="ba-shadow"></div>' : ''}
       ${embers}
       ${ash}
       ${dust}
@@ -96380,6 +96483,46 @@ function renderSettings() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">🎚 Graphics Quality</div>
+        <div class="settings-section-desc">Scales the battlefield's living-ambient density — drifting embers, ash, fog, light beams and rune glows. <strong>High</strong> is the full lush look; <strong>Medium</strong> halves the particles; <strong>Low</strong> goes sparse and drops the heavy fog/light layers — pick it if the board ever feels choppy on a weaker phone or laptop.</div>
+        <div class="settings-presets" style="margin-top:0.6rem">
+          <button class="btn-mini ${st.gfxQuality === 'low'  ? 'btn-primary' : ''}" data-gfx-quality="low">🍃 Low</button>
+          <button class="btn-mini ${st.gfxQuality === 'med'  ? 'btn-primary' : ''}" data-gfx-quality="med">⚖ Medium</button>
+          <button class="btn-mini ${st.gfxQuality === 'high' || !st.gfxQuality ? 'btn-primary' : ''}" data-gfx-quality="high">✨ High</button>
+        </div>
+        <div class="small-text ink-dim" style="margin-top:0.5rem">
+          ${st.gfxQuality === 'low'  ? '🍃 <strong>Low</strong> — sparse particles, no fog/light beam. Smoothest on low-end devices.' : ''}
+          ${st.gfxQuality === 'med'  ? '⚖ <strong>Medium</strong> — about half the particle density with lighter compositing. A good balance.' : ''}
+          ${(st.gfxQuality === 'high' || !st.gfxQuality) ? '✨ <strong>High</strong> — full ambient density: embers, ash, fog, volumetric light, rune pulses.' : ''}
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">🎨 Board Theme</div>
+        <div class="settings-section-desc">Re-tints the whole battlefield atmosphere and frame — the drifting embers, fog, glow and border all shift to the chosen palette. Purely cosmetic; gameplay is unchanged. Applies to every battle (single-player and online).</div>
+        ${(() => {
+          const SKINS = [
+            { id: 'default', name: 'Ashen Keep',   sw: 'linear-gradient(135deg,#d4af37,#7a3b12)', border: '#d4af37' },
+            { id: 'ember',   name: 'Emberforge',   sw: 'linear-gradient(135deg,#ff9a5a,#7a1c0c)', border: '#ff9a5a' },
+            { id: 'frost',   name: 'Frostward',    sw: 'linear-gradient(135deg,#8fd2ff,#16406b)', border: '#8fd2ff' },
+            { id: 'verdant', name: 'Verdant Hollow',sw: 'linear-gradient(135deg,#88e0a0,#16562e)', border: '#88e0a0' },
+            { id: 'void',    name: 'Void Sanctum',  sw: 'linear-gradient(135deg,#c89bff,#3a1466)', border: '#c89bff' },
+            { id: 'abyss',   name: 'Abyssal Deep',  sw: 'linear-gradient(135deg,#7fe6d4,#0e4a47)', border: '#7fe6d4' },
+          ];
+          const active = st.boardSkin || 'default';
+          const tiles = SKINS.map(s => `
+            <button class="frame-pick unlocked ${s.id === active ? 'active' : ''}" data-board-skin-pick="${s.id}">
+              <div class="frame-pick-preview" style="background:${s.sw};border:2px solid ${s.border};display:flex;align-items:flex-end;justify-content:center;overflow:hidden;position:relative">
+                <span style="position:absolute;width:4px;height:4px;border-radius:50%;left:30%;bottom:30%;background:radial-gradient(circle,#fff,transparent);box-shadow:0 0 6px #fff,18px 8px 5px rgba(255,255,255,0.7),-12px 14px 4px rgba(255,255,255,0.6)"></span>
+              </div>
+              <div class="frame-pick-name">${escapeHtml(s.name)}</div>
+              ${s.id === active ? '<div class="frame-pick-active-tag">✓ Active</div>' : ''}
+            </button>`).join('');
+          return `<div class="frame-pick-grid">${tiles}</div>`;
+        })()}
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🖥 Display · Fullscreen</div>
         <div class="settings-section-desc">Toggle fullscreen for an immersive game window — removes browser UI. Keyboard shortcut <kbd>F</kbd> still works at any time. (Moved here from the top-left toolbar.)</div>
         <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-top:0.5rem">
@@ -96693,6 +96836,40 @@ function renderSettings() {
     saveProfile();
     render();
   };
+
+  // 🎚 Graphics-quality buttons — scales board ambient density (perf knob).
+  // renderBoardAmbient() reads gfxQuality on its next paint, and the battle
+  // root carries data-gfx for the CSS compositing dials. Re-render so the
+  // active-button highlight + description update immediately.
+  document.querySelectorAll('[data-gfx-quality]').forEach(el => {
+    el.onclick = () => {
+      const q = el.dataset.gfxQuality;
+      if (q === 'low' || q === 'med' || q === 'high') {
+        st.gfxQuality = q;
+        saveProfile();
+        if (typeof showToast === 'function') {
+          showToast(q === 'low'  ? '🍃 Graphics: Low — sparse ambient, smoothest performance.'
+                  : q === 'med'  ? '⚖ Graphics: Medium — balanced ambient density.'
+                                 : '✨ Graphics: High — full lush battlefield ambient.', 2200);
+        }
+        render();
+      }
+    };
+  });
+
+  // 🎨 Board-theme pickers — re-tints the battlefield atmosphere + frame.
+  // Writes boardSkin; the battle root reads it into data-board-skin. Re-render
+  // so the picker's ✓ Active tag moves and (if returning to a live battle) the
+  // board repaints with the new palette.
+  document.querySelectorAll('[data-board-skin-pick]').forEach(el => {
+    el.onclick = () => {
+      const skin = el.dataset.boardSkinPick;
+      if (!skin) return;
+      st.boardSkin = skin;
+      saveProfile();
+      render();
+    };
+  });
 
   // 🖥 Fullscreen toggle — replaces the removed top-left toolbar chip.
   // Calls window.FS.toggle() (initialized in the early-boot helper block)

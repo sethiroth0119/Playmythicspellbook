@@ -9382,6 +9382,73 @@
     .status-pop-ring { display: none; }
   }
 
+  /* ════════════════════════════════════════════════════════════════════
+     👑 ACE SLAM — boss summon cinematic. A full-art portrait slams in from
+     the side with a light streak + dark veil; the JS triggers a screen shake
+     at the impact beat. Opt-in per card (card.aceSlam). ~0.9s, click-to-skip.
+     ──────────────────────────────────────────────────────────────────── */
+  .ace-slam-overlay {
+    position: fixed; inset: 0; z-index: 2147481000;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden; pointer-events: auto;
+  }
+  .ace-slam-veil {
+    position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse 90% 90% at 50% 50%, rgba(10,6,2,0.30), rgba(0,0,0,0.82) 90%);
+    animation: ace-slam-veil-anim 0.9s ease-out forwards;
+  }
+  .ace-slam-streak {
+    position: absolute; top: -10%; bottom: -10%; left: 50%; width: 36%;
+    transform: translateX(-50%) rotate(14deg);
+    background: linear-gradient(90deg, transparent, rgba(255,225,150,0.5), rgba(255,255,255,0.85), rgba(255,225,150,0.5), transparent);
+    filter: blur(6px); mix-blend-mode: screen; pointer-events: none;
+    animation: ace-slam-streak-anim 0.7s ease-in-out forwards;
+  }
+  .ace-slam-panel {
+    position: relative; pointer-events: none;
+    width: min(420px, 44vw); height: min(560px, 66vh);
+    display: flex; flex-direction: column; align-items: stretch;
+    border-radius: 14px; overflow: hidden;
+    border: 3px solid var(--gold, #d4af37);
+    background: #0a0a12;
+    box-shadow: 0 0 40px 6px rgba(255,200,90,0.55), 0 20px 60px rgba(0,0,0,0.8), inset 0 0 30px rgba(0,0,0,0.55);
+    will-change: transform, opacity;
+  }
+  .ace-slam-overlay.from-left  .ace-slam-panel { animation: ace-slam-in-left  0.9s cubic-bezier(0.18, 1.0, 0.3, 1) forwards; }
+  .ace-slam-overlay.from-right .ace-slam-panel { animation: ace-slam-in-right 0.9s cubic-bezier(0.18, 1.0, 0.3, 1) forwards; }
+  .ace-slam-art { flex: 1 1 auto; min-height: 0; background-size: cover; background-position: center top; }
+  .ace-slam-art-emoji { display: flex; align-items: center; justify-content: center; font-size: 9rem; background: radial-gradient(circle at 50% 35%, rgba(60,40,90,0.6), #0a0a12 75%); }
+  .ace-slam-tag {
+    flex: 0 0 auto; text-align: center; font-family: 'Cinzel', serif; font-weight: 800;
+    font-size: 0.78rem; letter-spacing: 0.35em; color: #1a1206;
+    background: linear-gradient(90deg, #b8862a, #ffd97a, #b8862a);
+    padding: 3px 0; text-shadow: 0 1px 0 rgba(255,255,255,0.3);
+  }
+  .ace-slam-name {
+    flex: 0 0 auto; text-align: center; font-family: 'Cinzel', serif; font-weight: 800;
+    font-size: 1.5rem; line-height: 1.15; color: #fff; padding: 8px 10px 12px;
+    background: linear-gradient(180deg, rgba(10,8,16,0.55), rgba(10,8,16,0.96));
+    text-shadow: 0 2px 6px rgba(0,0,0,0.9), 0 0 14px rgba(255,200,90,0.5);
+  }
+  @keyframes ace-slam-in-left {
+    0%   { transform: translateX(-135%) rotate(-9deg) scale(0.9);  opacity: 0; }
+    16%  { transform: translateX(6%)    rotate(2deg)  scale(1.05); opacity: 1; }
+    24%  { transform: translateX(-2%)   rotate(-1deg) scale(0.99); }
+    34%  { transform: translateX(0)     rotate(0deg)  scale(1); }
+    68%  { transform: translateX(0)     rotate(0deg)  scale(1);     opacity: 1; }
+    100% { transform: translateX(46%)   rotate(3deg)  scale(0.95);  opacity: 0; }
+  }
+  @keyframes ace-slam-in-right {
+    0%   { transform: translateX(135%)  rotate(9deg)  scale(0.9);  opacity: 0; }
+    16%  { transform: translateX(-6%)   rotate(-2deg) scale(1.05); opacity: 1; }
+    24%  { transform: translateX(2%)    rotate(1deg)  scale(0.99); }
+    34%  { transform: translateX(0)     rotate(0deg)  scale(1); }
+    68%  { transform: translateX(0)     rotate(0deg)  scale(1);     opacity: 1; }
+    100% { transform: translateX(-46%)  rotate(-3deg) scale(0.95);  opacity: 0; }
+  }
+  @keyframes ace-slam-veil-anim   { 0% { opacity: 0; } 12% { opacity: 1; } 66% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes ace-slam-streak-anim { 0% { transform: translateX(-180%) rotate(14deg); opacity: 0; } 40% { opacity: 0.9; } 100% { transform: translateX(180%) rotate(14deg); opacity: 0; } }
+
   /* Owner indicator strip on unit cell */
   .unit::before {
     content: '';
@@ -72305,6 +72372,14 @@ function renderCardEditor() {
       </label>
       <div class="small-text" style="margin-top:0.3rem;color:#ffcfa0">When the opponent triggers a matching action, this unit can be <strong>popped from hand</strong> to negate (or stun/redirect/silence) the source — AND deploys to the field as a normal unit at the same time. Energy cost is paid once. The fields below appear when this is checked.</div>
     </div>` : ''}
+    ${type === 'unit' ? `
+    <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem;background:rgba(255,200,80,0.07);border:1px dashed rgba(255,200,80,0.5);border-radius:6px;padding:0.7rem 0.85rem">
+      <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+        <input type="checkbox" id="ed-ace-slam-on" ${card.aceSlam ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+        <span>👑 <strong>Ace Slam</strong> — boss summon cinematic</span>
+      </label>
+      <div class="small-text" style="margin-top:0.3rem;color:#ffe6a0">When this unit is summoned, a half-second full-art portrait <strong>slams in from the side</strong> with a screen shake before it lands — Master-Duel "ace monster" energy. Reserve it for bosses / legendaries so it stays special. Respects the player's Graphics Quality setting, honors reduced-motion, and is <strong>click-to-skip</strong>.</div>
+    </div>` : ''}
     ${(type === 'unit' || type === 'spell' || type === 'trap' || type === 'custom') ? `
     <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem;background:rgba(255,120,40,0.06);border:1px dashed rgba(255,140,60,0.4);border-radius:6px;padding:0.7rem 0.85rem">
       <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
@@ -74546,6 +74621,12 @@ function captureEditorIntoCard(card) {
   if (_assaultToggle) {
     if (_assaultToggle.checked) card.isAssault = true;
     else delete card.isAssault;
+  }
+  // 👑 Ace Slam — boss summon cinematic (unit cards only).
+  const _aceSlamToggle = document.getElementById('ed-ace-slam-on');
+  if (_aceSlamToggle) {
+    if (_aceSlamToggle.checked && card.type === 'unit') card.aceSlam = true;
+    else delete card.aceSlam;
   }
   // ⚔ Assault Effect config — a dedicated on-activation effect. Empty type =
   // inherit the card's own Effect Type (backward compatible).
@@ -78655,6 +78736,47 @@ function _flipPlayBattle() {
 // the same turn is a free no-op. End result: at most ONE board repaint per
 // user action instead of 4. This single change is the biggest in-battle
 // FPS win in this pass.
+// 👑 ACE SLAM — Master-Duel-style boss summon cinematic. A half-second full-art
+// portrait slams in from the side with a screen shake before the unit lands on
+// the board. Opt-in per card via card.aceSlam (Forge → unit editor → Ace Slam).
+// Respects Graphics Quality (skipped on Low) + reduced-motion, and is
+// click-to-skip so it never slows a fast player. Fully guarded.
+let _aceSlamBusy = false;
+function _playAceSlam(card, fromAI) {
+  try {
+    if (!card || !card.aceSlam || _aceSlamBusy) return;
+    let gfx = 'high';
+    try { gfx = (getSettings().gfxQuality) || 'high'; } catch (e) {}
+    if (gfx === 'low') return;
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const art = (typeof getCardArt === 'function' ? getCardArt(card.id) : null) || null;
+    const name = card.name || 'Ace';
+    const side = fromAI ? 'right' : 'left';
+    _aceSlamBusy = true;
+    const old = document.getElementById('ace-slam-overlay'); if (old) old.remove();
+    const host = document.createElement('div');
+    host.id = 'ace-slam-overlay';
+    host.className = 'ace-slam-overlay from-' + side;
+    const esc = (typeof escapeHtml === 'function') ? escapeHtml(String(name)) : String(name);
+    const artHtml = art
+      ? '<div class="ace-slam-art" style="background-image:url(\'' + String(art).replace(/'/g, "\\'") + '\')"></div>'
+      : '<div class="ace-slam-art ace-slam-art-emoji">' + (card.icon || '👑') + '</div>';
+    host.innerHTML =
+      '<div class="ace-slam-veil"></div>' +
+      '<div class="ace-slam-streak"></div>' +
+      '<div class="ace-slam-panel">' + artHtml +
+        '<div class="ace-slam-tag">✦ ACE ✦</div>' +
+        '<div class="ace-slam-name">' + esc + '</div>' +
+      '</div>';
+    document.body.appendChild(host);
+    // Bass-y shake at the impact beat (just as the portrait lands).
+    setTimeout(() => { try { if (typeof Juice !== 'undefined' && Juice.shake) Juice.shake(document.querySelector('.battle-screen') || document.body); } catch (e) {} }, 230);
+    const _done = () => { _aceSlamBusy = false; try { host.remove(); } catch (e) {} };
+    const _t = setTimeout(_done, 900);
+    host.onclick = () => { clearTimeout(_t); _done(); };   // click-to-skip
+  } catch (e) { _aceSlamBusy = false; }
+}
+
 // 🌟 STATUS-EFFECT APPLY VFX
 // ─────────────────────────────────────────────────────────────────────────
 // Classify a status as a buff / debuff / neutral so the pop-up can color
@@ -87488,6 +87610,8 @@ function placeUnit(card, pos) {
   } else {
     playCardSummonVfx({ pos });
   }
+  // 👑 Ace Slam — boss summon cinematic for cards flagged in the Forge.
+  try { _playAceSlam(card, false); } catch (e) {}
   // 📡 Route through checkPostAction so multiplayer broadcasts the placement
   // immediately (was missing — opponent only saw the unit after end-turn).
   if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();

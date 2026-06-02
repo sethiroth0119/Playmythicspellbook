@@ -39199,7 +39199,7 @@ function _frEventCampaign(ev) {
 // Launches the active event's roguelite Crisis-Response campaign (reuses
 // rlcStartRun → deck pick → map → battles; clearing it pays the relief
 // cache). Falls back to the legacy single world-battle if unavailable.
-function frRunConvoy() {
+async function frRunConvoy() {
   try {
     const ev = (typeof frActiveEvent === 'function') ? frActiveEvent() : null;
     if (!ev) { showToast('No active world event right now.'); return; }
@@ -39215,9 +39215,9 @@ function frRunConvoy() {
       }
       const r = (typeof Profile !== 'undefined') ? Profile.rlcRun : null;
       if (r && !r.isComplete && !r.isFailed && r.campaignId !== cid) {
-        if (!confirm('Starting the “' + ev.name + '” crisis-response campaign abandons your current roguelite run. Continue?')) return;
+        if (!(await gcConfirm('Starting the “' + ev.name + '” crisis-response campaign abandons your current roguelite run. Continue?'))) return;
       }
-      if (!confirm('Deploy the “' + ev.name + '” Crisis-Response campaign for ' + FR_CAMPAIGN_FUEL_COST + ' ⛽ Fuel?\n\nYou have ' + _fuel + ' ⛽.')) return;
+      if (!(await gcConfirm('Deploy the “' + ev.name + '” Crisis-Response campaign for ' + FR_CAMPAIGN_FUEL_COST + ' ⛽ Fuel?\n\nYou have ' + _fuel + ' ⛽.'))) return;
       Profile.salvage.fuel = (Profile.salvage.fuel | 0) - FR_CAMPAIGN_FUEL_COST;
       try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
       try { const h = document.getElementById('fr-modal'); if (h) h.remove(); } catch (e) {}
@@ -39923,7 +39923,7 @@ async function courtRegister(role) {
   if (Court.mine && Court.mine.role === role) { showToast('You are already registered as a ' + role + '.', 3000); return false; }
   const nm = ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor') + '';
   const rank = (COURT_RANKS[role] || ['Member'])[0];
-  if (!confirm(role === 'judge'
+  if (!await gcConfirm(role === 'judge'
     ? 'Register as a JUDGE of the City Court?\n\nJudges preside over cases, issue verdicts and record convictions. You are sworn in at the rank of ' + rank + '.'
     : 'Register as a LAWYER of the City Bar?\n\nLawyers file representation on cases as Prosecutor or Defender. You are sworn in at the rank of ' + rank + '.')) return false;
   try {
@@ -40182,15 +40182,15 @@ async function courtRule(caseId) {
   if (!c) return false;
   if (!Court.mine || Court.mine.role !== 'judge') { showToast('Only a presiding judge rules.', 3600); return false; }
   if (c.judge_id && c.judge_id !== Profile.cloud.userId) { showToast('Another judge presides over this case.', 3600); return false; }
-  const v = parseInt((prompt('Verdict for ' + (c.case_no || 'case') + ' — defendant ' + c.defendant_name + '\n\n1. Guilty\n2. Not guilty\n3. Dismissed') || '').trim(), 10);
+  const v = parseInt((await gcPrompt('Verdict for ' + (c.case_no || 'case') + ' — defendant ' + c.defendant_name + '\n\n1. Guilty\n2. Not guilty\n3. Dismissed') || '').trim(), 10);
   const verdict = v === 1 ? 'guilty' : v === 2 ? 'not_guilty' : v === 3 ? 'dismissed' : null;
   if (!verdict) { showToast('No verdict entered.', 3000); return false; }
   let sentence = '';
   if (verdict === 'guilty') {
-    sentence = (prompt('Sentence (e.g. "Class ' + c.severity + ' — 24h detention + 50k fine"). Recorded in the Criminal Registry:') || '').trim().slice(0, 200);
+    sentence = (await gcPrompt('Sentence (e.g. "Class ' + c.severity + ' — 24h detention + 50k fine"). Recorded in the Criminal Registry:') || '').trim().slice(0, 200);
     if (!sentence) sentence = 'Class ' + c.severity + ' — sentencing pending at the Detention Complex';
   }
-  if (!confirm('Enter the FINAL ruling on ' + (c.case_no || 'this case') + '?\n\nVerdict: ' + verdict.replace('_', ' ').toUpperCase() + (sentence ? '\nSentence: ' + sentence : ''))) return false;
+  if (!(await gcConfirm('Enter the FINAL ruling on ' + (c.case_no || 'this case') + '?\n\nVerdict: ' + verdict.replace('_', ' ').toUpperCase() + (sentence ? '\nSentence: ' + sentence : '')))) return false;
   try {
     const jn = c.judge_name || (Court.mine.user_name || 'Judge');
     const up = await Cloud.client.from('court_cases').update({
@@ -40296,7 +40296,7 @@ async function detentionCommit(name, crime, sev, caseId) {
   const hrs = DETENTION_HOURS[sev] || 12;
   const bail = sev * DET_BAIL_PER_CLASS;
   const seize = sev * DET_SEIZE_PER_CLASS;
-  if (!confirm('Commit ' + name + ' to the Detention Complex?\n\nClass ' + sev + ' · ' + hrs + 'h sentence\nBail: ' + bail.toLocaleString() + ' 🔥 (+ resources)\nAsset seizure: ' + seize.toLocaleString() + ' 🔥')) return false;
+  if (!(await gcConfirm('Commit ' + name + ' to the Detention Complex?\n\nClass ' + sev + ' · ' + hrs + 'h sentence\nBail: ' + bail.toLocaleString() + ' 🔥 (+ resources)\nAsset seizure: ' + seize.toLocaleString() + ' 🔥'))) return false;
   try {
     const ins = await Cloud.client.from('detention').insert({
       offender_name: name.slice(0, 40), crime_type: crime || null, severity: sev,
@@ -40323,7 +40323,7 @@ async function detentionBail(id) {
   const mine = ((d.offender_name || '') + '').trim().toLowerCase() === _detHandle();
   if ((Profile.gems || 0) < bail) { showToast('Bail is ' + bail.toLocaleString() + ' 🔥 — you have ' + (Profile.gems || 0).toLocaleString() + '.', 5200); return false; }
   if (!canAffordResources(res)) { showToast('Bail also requires ' + resStr + '.', 4600); return false; }
-  if (!confirm('Post bail for ' + d.offender_name + (mine ? ' (yourself)' : ' — corp/ally support') + '?\n\n' + bail.toLocaleString() + ' 🔥 + ' + resStr + '\n\nThis frees them immediately.')) return false;
+  if (!(await gcConfirm('Post bail for ' + d.offender_name + (mine ? ' (yourself)' : ' — corp/ally support') + '?\n\n' + bail.toLocaleString() + ' 🔥 + ' + resStr + '\n\nThis frees them immediately.'))) return false;
   if (!spendGems(bail)) { showToast('Not enough Cinders'); return false; }
   if (!spendResources(res)) { addGems(bail); showToast('Not enough resources'); return false; }
   try { saveProfile(); } catch (e) {}
@@ -40347,7 +40347,7 @@ async function detentionRelease(id) {
   const d = (Detention.list || []).find(x => x.id === id);
   if (!d || d.status !== 'jailed') return false;
   if (!Court.mine || Court.mine.role !== 'judge') { showToast('Only a judge can order release.', 3600); return false; }
-  if (!confirm('Order the release of ' + d.offender_name + ' (judicial pardon / time served)?')) return false;
+  if (!(await gcConfirm('Order the release of ' + d.offender_name + ' (judicial pardon / time served)?'))) return false;
   try {
     const up = await Cloud.client.from('detention').update({ status: 'released', released_by: 'judge · ' + (Court.mine.user_name || 'Judge'), updated_at: new Date().toISOString() }).eq('id', id);
     if (up && up.error) throw up.error;
@@ -42290,7 +42290,7 @@ async function frConvoyEscort(id) {
   const esc = _frConvoyEscortCost(cv.qty);
   const cstr = Object.keys(esc).map(k => esc[k] + '× ' + ((_meta(k).name) || k)).join(' + ');
   if (!canAffordResources(esc)) { showToast('Escort detail needs ' + cstr + '.', 4600); return false; }
-  if (!confirm('Send an escort to the ' + cv.qty + '× ' + (_meta(cv.resId).name || cv.resId) + ' convoy?\n\nCost: ' + cstr + '\nDrops interception risk to ~' + _frConvoyRisk(true) + '%.')) return false;
+  if (!(await gcConfirm('Send an escort to the ' + cv.qty + '× ' + (_meta(cv.resId).name || cv.resId) + ' convoy?\n\nCost: ' + cstr + '\nDrops interception risk to ~' + _frConvoyRisk(true) + '%.'))) return false;
   if (!spendResources(esc)) { showToast('Not enough resources.'); return false; }
   cv.escorted = true; cv.riskPct = _frConvoyRisk(true);
   try { saveProfile(); } catch (e) {}
@@ -42363,7 +42363,7 @@ async function frBuyProduct(productId) {
   const evHit = ev && _frEventHitsProduct(ev, p);
   const priceNote = price > base ? ` (▲ ${Math.round((price / base - 1) * 100)}% — scarcity)` : price < base ? ` (▼ ${Math.round((1 - price / base) * 100)}% — surplus)` : '';
   if ((Profile.gems || 0) < price) { showToast(`Need ${price} 🔥 — you have ${Profile.gems || 0}`, 3000); return false; }
-  if (!confirm(`Buy “${p.name}” for ${price} 🔥${priceNote}?\n\n${evHit ? '⚠ ' + ev.icon + ' ' + ev.name + ' is in effect.\n' : ''}This draws ${Object.keys(p.recipe).map(k => (p.recipe[k]) + '×' + (_meta(k).name || k)).join(', ')} out of the world Reserve.`)) return false;
+  if (!(await gcConfirm(`Buy “${p.name}” for ${price} 🔥${priceNote}?\n\n${evHit ? '⚠ ' + ev.icon + ' ' + ev.name + ' is in effect.\n' : ''}This draws ${Object.keys(p.recipe).map(k => (p.recipe[k]) + '×' + (_meta(k).name || k)).join(', ')} out of the world Reserve.`))) return false;
   if (typeof spendGems === 'function' ? !spendGems(price) : ((Profile.gems || 0) < price)) { showToast('Not enough Cinders'); return false; }
   // Draw the recipe out of the global Reserve (append-only — race-free).
   const me = Profile.cloud.userId;
@@ -42676,7 +42676,7 @@ async function nodeEstablish(typeId, fromTreasury) {
     if ((Profile.gems || 0) < t.cinder) { showToast('Need ' + t.cinder.toLocaleString() + ' 🔥 to license & build the ' + t.name + ' — you have ' + (Profile.gems || 0).toLocaleString() + '. (Tip: fund it from the Corp Treasury.)', 5600); return false; }
   }
   if (!canAffordResources(t.res)) { showToast('Not enough resources to build the ' + t.name + ' (' + Object.keys(t.res).map(k => t.res[k] + ' ' + ((_meta(k).name) || k)).join(', ') + ').', 5200); return false; }
-  if (!confirm((fromTreasury ? '🏦 Treasury-fund & build ' : 'License & build ') + 'a ' + t.name + ' for your corporation?\n\nCost: ' + t.cinder.toLocaleString() + ' 🔥 (' + (fromTreasury ? 'from Corp Treasury — balance ' + (Corp.treasury | 0).toLocaleString() : 'your Cinder') + ') + ' + Object.keys(t.res).map(k => t.res[k] + '× ' + ((_meta(k).name) || k)).join(', ') + '\nBuild time: ' + t.buildH + 'h')) return false;
+  if (!(await gcConfirm((fromTreasury ? '🏦 Treasury-fund & build ' : 'License & build ') + 'a ' + t.name + ' for your corporation?\n\nCost: ' + t.cinder.toLocaleString() + ' 🔥 (' + (fromTreasury ? 'from Corp Treasury — balance ' + (Corp.treasury | 0).toLocaleString() : 'your Cinder') + ') + ' + Object.keys(t.res).map(k => t.res[k] + '× ' + ((_meta(k).name) || k)).join(', ') + '\nBuild time: ' + t.buildH + 'h'))) return false;
   // Take the Cinder (Treasury debit row, or personal), then materials.
   let treasuryDebited = false;
   if (fromTreasury) {
@@ -42792,7 +42792,7 @@ async function nodeDefend(nodeId) {
   const cost = rk.cost || { metal: 60, ammo: 40 };
   const cstr = Object.keys(cost).map(k => cost[k] + '× ' + ((_meta(k).name) || k)).join(' + ');
   if (!canAffordResources(cost)) { showToast('Defending against the ' + rk.name + ' needs ' + cstr + '.', 5200); return false; }
-  if (!confirm('Defend ' + (n.name || 'the node') + ' against the ' + rk.name + '?\n\nCost: ' + cstr + '\nRepels the threat & restores efficiency for this window.')) return false;
+  if (!(await gcConfirm('Defend ' + (n.name || 'the node') + ' against the ' + rk.name + '?\n\nCost: ' + cstr + '\nRepels the threat & restores efficiency for this window.'))) return false;
   if (!spendResources(cost)) { showToast('Not enough resources to mount a defense.'); return false; }
   try { saveProfile(); } catch (e) {}
   try {
@@ -44568,7 +44568,7 @@ function renderGymWars() {
     b.onclick = () => startGymBattle(b.dataset.gymTrial, 'trial');
   });
   document.querySelectorAll('[data-gym-challenge]').forEach(b => {
-    b.onclick = () => {
+    b.onclick = async () => {
       if (b.disabled) return;
       const cid = b.dataset.gymChallenge;
       const row = gymRow(cid);
@@ -44578,7 +44578,7 @@ function renderGymWars() {
       const extra = liveLeader
         ? `\n\n🟢 ${who} is ONLINE — they'll be pinged to defend live; if they don't, you face their AI defender.`
         : '';
-      if (!confirm(`Challenge ${who} for control of the ${core ? core.name : 'Core'} gym?\n\nWin and the gym becomes yours. Lose and their defense streak grows.${extra}`)) return;
+      if (!(await gcConfirm(`Challenge ${who} for control of the ${core ? core.name : 'Core'} gym?\n\nWin and the gym becomes yours. Lose and their defense streak grows.${extra}`))) return;
       startGymBattle(cid, 'challenge', { tryLive: liveLeader });
     };
   });
@@ -44644,9 +44644,9 @@ function renderGymWars() {
     });
   };
   const hqUp = document.getElementById('hq-upgrade');
-  if (hqUp && _myG) hqUp.onclick = () => {
+  if (hqUp && _myG) hqUp.onclick = async () => {
     const lvl = _myG.gym_level || 1; const cost = GYM_UPGRADE_BASE * lvl;
-    if (!confirm(`Upgrade your gym to Lv ${lvl + 1} for ${cost} 🔥?\n\nA higher gym level makes your AI-piloted defender tougher for challengers.`)) return;
+    if (!(await gcConfirm(`Upgrade your gym to Lv ${lvl + 1} for ${cost} 🔥?\n\nA higher gym level makes your AI-piloted defender tougher for challengers.`))) return;
     hqUp.disabled = true;
     gymUpgradeLevel(_myG.core_id).then(r => {
       showToast(r && r.ok ? `⬆ Gym upgraded to Lv ${r.level}!` : `⚠ ${r && r.error || 'Failed.'}`, 3200);
@@ -44654,9 +44654,9 @@ function renderGymWars() {
     });
   };
   const hqMot = document.getElementById('hq-motto');
-  if (hqMot && _myG) hqMot.onclick = () => {
+  if (hqMot && _myG) hqMot.onclick = async () => {
     const cur = (_myG.hq && _myG.hq.motto) || '';
-    const m = prompt('Set your gym motto (shown on your gym banner, max 90 chars):', cur);
+    const m = await gcPrompt('Set your gym motto (shown on your gym banner, max 90 chars):', cur);
     if (m == null) return;
     gymSetMotto(_myG.core_id, m).then(r => {
       showToast(r && r.ok ? '✎ Motto updated.' : `⚠ ${r && r.error || 'Failed.'}`, 2600);
@@ -44668,8 +44668,8 @@ function renderGymWars() {
 
   // ---- Admin: advance season ----
   const seasonBtn = document.getElementById('gym-season');
-  if (seasonBtn) seasonBtn.onclick = () => {
-    if (!confirm('Advance the season?\n\nThis archives every current reign to the Hall of Legends, clears ALL gym ownership, resets stamina/levels, and starts a new season for everyone. This cannot be undone.')) return;
+  if (seasonBtn) seasonBtn.onclick = async () => {
+    if (!(await gcConfirm('Advance the season?\n\nThis archives every current reign to the Hall of Legends, clears ALL gym ownership, resets stamina/levels, and starts a new season for everyone. This cannot be undone.'))) return;
     seasonBtn.disabled = true;
     gymAdvanceSeason().then(r => {
       showToast(r && r.ok ? `⚙ Season ${r.season} begins — all gyms reset.` : `⚠ ${r && r.error || 'Failed.'}`, 4200);
@@ -54267,7 +54267,7 @@ async function corpTreasuryDeposit(amount) {
   if (!Corp.mine) { showToast('Join or found a corporation first.', 3600); return false; }
   if (!(amount > 0)) { showToast('Enter a deposit amount.'); return false; }
   if ((Profile.gems || 0) < amount) { showToast('Need ' + amount.toLocaleString() + ' 🔥 — you have ' + (Profile.gems || 0).toLocaleString() + '.', 4200); return false; }
-  if (!confirm('Deposit ' + amount.toLocaleString() + ' 🔥 into the ' + Corp.mine.name + ' Treasury?\n\nShared funds — used to construct nodes/operations. This is not refundable to you personally.')) return false;
+  if (!(await gcConfirm('Deposit ' + amount.toLocaleString() + ' 🔥 into the ' + Corp.mine.name + ' Treasury?\n\nShared funds — used to construct nodes/operations. This is not refundable to you personally.'))) return false;
   if (!spendGems(amount)) { showToast('Not enough Cinders'); return false; }
   try { saveProfile(); } catch (e) {}
   try {
@@ -54470,7 +54470,7 @@ async function cityHallApplyLicense(licId) {
   if (!L.illicit && comp < L.minCompliance) { showToast('🏛️ Compliance too low for the ' + L.name + ' — need ' + L.minCompliance + ', your corp is at ' + comp + '. Pay taxes & contribute to the Reserve.', 5600); return false; }
   if ((Profile.gems || 0) < L.cinder) { showToast('Need ' + L.cinder.toLocaleString() + ' 🔥 for the ' + L.name + ' — you have ' + (Profile.gems || 0).toLocaleString() + '.', 5200); return false; }
   if (!canAffordResources(L.res)) { showToast('License requires ' + (Object.keys(L.res).length ? Object.keys(L.res).map(k => L.res[k] + ' ' + ((_meta(k).name) || k)).join(', ') : 'no resources') + '.', 4600); return false; }
-  if (!confirm('File for the ' + L.name + '?\n\nFee: ' + L.cinder.toLocaleString() + ' 🔥' + (Object.keys(L.res).length ? ' + ' + Object.keys(L.res).map(k => L.res[k] + '× ' + ((_meta(k).name) || k)).join(', ') : '') + (L.illicit ? '\n\n⚠ Illicit — increases Foundation scrutiny.' : ''))) return false;
+  if (!(await gcConfirm('File for the ' + L.name + '?\n\nFee: ' + L.cinder.toLocaleString() + ' 🔥' + (Object.keys(L.res).length ? ' + ' + Object.keys(L.res).map(k => L.res[k] + '× ' + ((_meta(k).name) || k)).join(', ') : '') + (L.illicit ? '\n\n⚠ Illicit — increases Foundation scrutiny.' : '')))) return false;
   if (!spendGems(L.cinder)) { showToast('Not enough Cinders'); return false; }
   if (!spendResources(L.res)) { addGems(L.cinder); showToast('Not enough resources'); return false; }
   try { saveProfile(); } catch (e) {}
@@ -63702,6 +63702,52 @@ function showGameAlert(opts) {
 }
 
 // ============================================================================
+// 🪟 NATIVE-DIALOG REPLACEMENTS — never show the browser's ugly confirm/alert/
+// prompt. gcConfirm/gcPrompt take native-style args (a plain string, with \n
+// line breaks) and return Promises, so a call site converts with one `await`.
+// window.alert is overridden globally (it has no return value, so it's safe to
+// route every alert — present and future — through the themed modal).
+// ============================================================================
+function _gcBody(msg) {
+  var s = (msg == null) ? '' : String(msg);
+  return escapeHtml(s).replace(/\n/g, '<br>');
+}
+function gcConfirm(msg, opts) {
+  opts = opts || {};
+  return showGameConfirm({
+    title:   opts.title   || 'Confirm',
+    bodyHtml: _gcBody(msg),
+    yesLabel: opts.yesLabel || 'OK',
+    noLabel:  opts.noLabel  || 'Cancel',
+    yesAccent: opts.yesAccent || 'gold',
+  });
+}
+function gcPrompt(msg, defaultValue, opts) {
+  opts = opts || {};
+  return showGamePrompt({
+    title:    opts.title || 'Enter a value',
+    bodyHtml: _gcBody(msg),
+    defaultValue: defaultValue || '',
+    yesLabel: opts.yesLabel || 'OK',
+    noLabel:  opts.noLabel  || 'Cancel',
+  });
+}
+// 📢 GLOBAL NATIVE-DIALOG OVERRIDES — route EVERY browser alert/confirm/prompt
+// through the themed modal so the game never shows an OS dialog ("site says…").
+// Every existing call site has been converted to gcConfirm/gcPrompt, so the
+// native functions are unused today; these overrides are a future-proof catch:
+// any new (or third-party) confirm()/prompt()/alert() renders as a game modal.
+// They return Promises (await them) — alert() needs no return so it's fully
+// transparent.
+try {
+  if (typeof window !== 'undefined') {
+    window.alert   = function (msg) { try { return showGameAlert({ bodyHtml: _gcBody(msg) }); } catch (e) { try { console.warn('[alert]', msg); } catch (_) {} } };
+    window.confirm = function (msg) { try { return gcConfirm(msg); } catch (e) { return Promise.resolve(false); } };
+    window.prompt  = function (msg, def) { try { return gcPrompt(msg, def); } catch (e) { return Promise.resolve(null); } };
+  }
+} catch (e) {}
+
+// ============================================================================
 // 💰 SPEND NOTIFICATIONS + CASH SOUND
 // ----------------------------------------------------------------------------
 // Whenever Profile.gems (Cinder), Profile.sovereigns (legacy Aza), or
@@ -69623,7 +69669,7 @@ function renderPricingAdmin() {
     let r = await cloudPublishCatalog();
     if (r.blocked) {
       bPub.disabled = false; bPub.textContent = '📚 Publish Cards/Heroes/Items/Packs';
-      if (!confirm('⚠ ' + r.error + '\n\nClick OK ONLY if you really want to overwrite the shared catalog from this device. Cancel to keep the current published catalog safe.')) {
+      if (!(await gcConfirm('⚠ ' + r.error + '\n\nClick OK ONLY if you really want to overwrite the shared catalog from this device. Cancel to keep the current published catalog safe.'))) {
         showToast('🛡️ Publish cancelled — shared catalog kept safe.', 4000); return;
       }
       bPub.disabled = true; bPub.textContent = '…publishing (override)';
@@ -69651,7 +69697,7 @@ function renderPricingAdmin() {
   // 🎨 Publish public catalog art (sprites + cardArt for everyone to render).
   const bPubArt = document.getElementById('btn-publish-catalog-art');
   if (bPubArt) bPubArt.onclick = async () => {
-    if (!confirm('Upload all sprites + card art to the PUBLIC catalog bucket? Every signed-in player will download these on sign-in (~30-60 seconds).')) return;
+    if (!(await gcConfirm('Upload all sprites + card art to the PUBLIC catalog bucket? Every signed-in player will download these on sign-in (~30-60 seconds).'))) return;
     bPubArt.disabled = true; bPubArt.textContent = '…uploading art (30-60s)';
     const r = await cloudPublishCatalogArt();
     bPubArt.disabled = false; bPubArt.textContent = '🎨 Publish Art/Sprites to Public Bucket';
@@ -69724,7 +69770,7 @@ function renderPricingAdmin() {
     if (r1.blocked) {
       setLast(`🛡️ <strong>Step 1/3</strong> — SAFETY BLOCK (no changes made).`);
       add(`&nbsp;&nbsp;${escapeHtml(r1.error)}`);
-      if (confirm('⚠ ' + r1.error + '\n\nClick OK ONLY if you really mean to overwrite the shared catalog from THIS device. Cancel to keep everyone\'s cards safe.')) {
+      if (await gcConfirm('⚠ ' + r1.error + '\n\nClick OK ONLY if you really mean to overwrite the shared catalog from THIS device. Cancel to keep everyone\'s cards safe.')) {
         add(`⏳ <strong>Step 1/3</strong> — Override confirmed, publishing…`);
         try { r1 = await cloudPublishCatalog({ force: true }); } catch (e) { r1 = { ok: false, error: (e && e.message) || 'exception' }; }
       } else {
@@ -69817,7 +69863,7 @@ function renderPricingAdmin() {
       // Soft size guard — warn (don't block) over 1 MB so admins know their
       // catalog payload will be large.
       if (file.size > 1 * 1024 * 1024) {
-        if (!confirm(`This file is ${(file.size/1024/1024).toFixed(1)} MB — that's a lot to ship inside the catalog. Continue?`)) {
+        if (!(await gcConfirm(`This file is ${(file.size/1024/1024).toFixed(1)} MB — that's a lot to ship inside the catalog. Continue?`))) {
           bTombFile.value = '';
           return;
         }
@@ -69839,8 +69885,8 @@ function renderPricingAdmin() {
     };
   }
   const bTombClear = document.getElementById('btn-clear-tombstone-art');
-  if (bTombClear) bTombClear.onclick = () => {
-    if (!confirm('Clear the default tombstone image? Units will fall back to the built-in 🪦 emoji.')) return;
+  if (bTombClear) bTombClear.onclick = async () => {
+    if (!(await gcConfirm('Clear the default tombstone image? Units will fall back to the built-in 🪦 emoji.'))) return;
     Forge.tombstoneArt = null;
     saveForge();
     showToast('🪦 Default tombstone cleared — using emoji fallback.', 2400);
@@ -69861,8 +69907,8 @@ function renderPricingAdmin() {
     render();
   };
   const bBmpReset = document.getElementById('btn-bmp-reset');
-  if (bBmpReset) bBmpReset.onclick = () => {
-    if (!confirm('Reset every Black Market price back to the built-in defaults?')) return;
+  if (bBmpReset) bBmpReset.onclick = async () => {
+    if (!(await gcConfirm('Reset every Black Market price back to the built-in defaults?'))) return;
     Forge.blackMarketPrices = {};
     if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge();
     showToast('🖤 Black Market prices reset to defaults.', 2600);
@@ -69896,10 +69942,10 @@ function renderPricingAdmin() {
       }
     };
   }
-  document.querySelectorAll('[data-tomb-cos-del]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-tomb-cos-del]').forEach(b => b.onclick = async () => {
     const i = parseInt(b.dataset.tombCosDel, 10);
     if (!Array.isArray(Forge.tombstoneCosmetics) || !Forge.tombstoneCosmetics[i]) return;
-    if (!confirm('Remove "' + (Forge.tombstoneCosmetics[i].name || 'this cosmetic') + '"? Players who already bought it keep it.')) return;
+    if (!(await gcConfirm('Remove "' + (Forge.tombstoneCosmetics[i].name || 'this cosmetic') + '"? Players who already bought it keep it.'))) return;
     Forge.tombstoneCosmetics.splice(i, 1);
     if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge();
     render();
@@ -69914,10 +69960,10 @@ function renderPricingAdmin() {
       icon: '🏺', name: 'New Relic', desc: '' });
     _relicPersist(); render();
   };
-  document.querySelectorAll('[data-relic-del]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-relic-del]').forEach(b => b.onclick = async () => {
     const i = parseInt(b.dataset.relicDel, 10);
     if (!Array.isArray(Forge.rlcRelics) || !Forge.rlcRelics[i]) return;
-    if (!confirm('Delete "' + (Forge.rlcRelics[i].name || 'this relic') + '"? Campaigns referencing it fall back to no relic.')) return;
+    if (!(await gcConfirm('Delete "' + (Forge.rlcRelics[i].name || 'this relic') + '"? Campaigns referencing it fall back to no relic.'))) return;
     Forge.rlcRelics.splice(i, 1);
     _relicPersist(); render();
   });
@@ -69959,14 +70005,14 @@ function renderPricingAdmin() {
     render();
   };
   const bAiExport = document.getElementById('btn-ai-deck-export');
-  if (bAiExport) bAiExport.onclick = () => {
+  if (bAiExport) bAiExport.onclick = async () => {
     const json = JSON.stringify(Forge.aiDecks || [], null, 2);
     try {
       navigator.clipboard.writeText(json);
       showToast('📋 AI decks copied to clipboard (' + (Forge.aiDecks || []).length + ' decks)', 2400);
     } catch (e) {
       // Fallback: open in a prompt so the admin can copy manually
-      prompt('Copy your AI decks JSON:', json);
+      await gcPrompt('Copy your AI decks JSON:', json);
     }
   };
   document.querySelectorAll('[data-act="ai-deck-edit"]').forEach(el => {
@@ -69993,11 +70039,11 @@ function renderPricingAdmin() {
     };
   });
   document.querySelectorAll('[data-act="ai-deck-del"]').forEach(el => {
-    el.onclick = () => {
+    el.onclick = async () => {
       const idx = parseInt(el.dataset.idx, 10);
       const deck = Forge.aiDecks[idx];
       if (!deck) return;
-      if (!confirm('Delete AI deck "' + (deck.name || 'Untitled') + '"? This cannot be undone.')) return;
+      if (!(await gcConfirm('Delete AI deck "' + (deck.name || 'Untitled') + '"? This cannot be undone.'))) return;
       Forge.aiDecks.splice(idx, 1);
       _persistForgeNow();
       showToast('🗑 AI deck deleted.', 2000);
@@ -70051,11 +70097,11 @@ function renderPricingAdmin() {
     };
   });
   document.querySelectorAll('[data-act="starter-deck-del"]').forEach(el => {
-    el.onclick = () => {
+    el.onclick = async () => {
       const idx = parseInt(el.dataset.idx, 10);
       const deck = (Forge.starterDecks || [])[idx];
       if (!deck) return;
-      if (!confirm('Delete starter deck "' + (deck.name || 'Untitled') + '"? This cannot be undone.')) return;
+      if (!(await gcConfirm('Delete starter deck "' + (deck.name || 'Untitled') + '"? This cannot be undone.'))) return;
       Forge.starterDecks.splice(idx, 1);
       _persistForgeNow();
       showToast('🗑 Starter deck deleted.', 2000);
@@ -70284,12 +70330,12 @@ function renderPricingAdmin() {
     };
   });
   document.querySelectorAll('.re-delete').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       const id = btn.dataset.reId;
       const row = (Forge.realEstateListings || []).find(l => l && l.id === id);
       if (!row) return;
       // Soft confirm — admin click could be a slip.
-      if (!confirm(`Delete listing "${row.name}"? Players who already bought it keep their house.`)) return;
+      if (!(await gcConfirm(`Delete listing "${row.name}"? Players who already bought it keep their house.`))) return;
       Forge.realEstateListings = (Forge.realEstateListings || []).filter(l => l.id !== id);
       try { saveForge(); } catch (e) {}
       showToast(`🗑 "${row.name}" listing removed.`, 2400);
@@ -70388,8 +70434,8 @@ function renderPricingAdmin() {
   recalcUpc();
 
   // Reset / Save bindings.
-  document.getElementById('btn-pricing-reset').onclick = () => {
-    if (!confirm('Clear ALL price overrides? Defaults will be restored everywhere.')) return;
+  document.getElementById('btn-pricing-reset').onclick = async () => {
+    if (!(await gcConfirm('Clear ALL price overrides? Defaults will be restored everywhere.'))) return;
     Forge.priceOverrides = {};
     saveForge();
     showToast('💰 Price overrides cleared', 1800);
@@ -70838,7 +70884,7 @@ function _forgeRebuildListInPlace() {
   }
   // Re-bind row action buttons since they're inside the rebuilt list.
   document.querySelectorAll('.forge-list-row [data-act]').forEach(b => {
-    b.onclick = (ev) => {
+    b.onclick = async (ev) => {
       ev.stopPropagation();
       const id = b.dataset.id;
       const act = b.dataset.act;
@@ -70856,7 +70902,7 @@ function _forgeRebuildListInPlace() {
         render();
       }
       else if (act === 'delete') {
-        if (!confirm(`Delete "${card.name}"? This can't be undone.`)) return;
+        if (!(await gcConfirm(`Delete "${card.name}"? This can't be undone.`))) return;
         Forge.customCards = Forge.customCards.filter(c => c.id !== id);
         try { saveForge(); } catch (e) {}
         render();
@@ -70951,7 +70997,7 @@ function bindForgeGuides() {
     render();
   };
   document.querySelectorAll('[data-gact]').forEach(el => {
-    el.onclick = () => {
+    el.onclick = async () => {
       const id = el.dataset.id; const act = el.dataset.gact;
       const gi = (Forge.pageGuides || []).findIndex(g => g.id === id);
       const g = gi >= 0 ? Forge.pageGuides[gi] : null;
@@ -70959,7 +71005,7 @@ function bindForgeGuides() {
       if (!g) return;
       if (act === 'toggle') { g.isActive = !g.isActive; saveForge(); showToast(g.isActive ? '▶ Guide enabled' : '⏸ Guide disabled', 1800); render(); return; }
       if (act === 'preview') { try { localStorage.removeItem(_guideDoneKey(g.id)); localStorage.removeItem(_guideOffKey(g.id)); } catch (e) {} playPageGuide(g, { preview: true }); return; }
-      if (act === 'del') { if (!confirm('Delete this guide?')) return; Forge.pageGuides.splice(gi, 1); saveForge(); showToast('🗑 Guide deleted', 1800); render(); return; }
+      if (act === 'del') { if (!(await gcConfirm('Delete this guide?'))) return; Forge.pageGuides.splice(gi, 1); saveForge(); showToast('🗑 Guide deleted', 1800); render(); return; }
     };
   });
 }
@@ -71161,10 +71207,10 @@ function bindGuideEditor() {
     const fileEl = document.getElementById('gb-audiofile-' + i);
     if (up && fileEl) {
       up.onclick = () => fileEl.click();
-      fileEl.onchange = () => {
+      fileEl.onchange = async () => {
         const f = fileEl.files && fileEl.files[0];
         if (!f) return;
-        if (f.size > 1.5 * 1024 * 1024 && !confirm('That clip is ' + (f.size / 1024 / 1024).toFixed(1) + ' MB. Big audio bloats the published catalog every player downloads — keep voice lines short, or paste a hosted URL instead. Continue?')) { fileEl.value = ''; return; }
+        if (f.size > 1.5 * 1024 * 1024 && !(await gcConfirm('That clip is ' + (f.size / 1024 / 1024).toFixed(1) + ' MB. Big audio bloats the published catalog every player downloads — keep voice lines short, or paste a hosted URL instead. Continue?'))) { fileEl.value = ''; return; }
         const rd = new FileReader();
         rd.onload = () => {
           const inp = document.getElementById('gb-audio-' + i);
@@ -71285,8 +71331,8 @@ function bindForgeCards() {
     };
   });
   document.querySelectorAll('[data-act="delete"]').forEach(el => {
-    el.onclick = () => {
-      if (!confirm('Delete this card? Sprites and held items keyed to it will remain.')) return;
+    el.onclick = async () => {
+      if (!(await gcConfirm('Delete this card? Sprites and held items keyed to it will remain.'))) return;
       Forge.customCards = Forge.customCards.filter(c => c.id !== el.dataset.id);
       saveForge(); showToast('Card deleted'); render();
     };
@@ -73340,9 +73386,9 @@ function bindCardEditor() {
     };
   }
   if (locUrlBtn) {
-    locUrlBtn.onclick = (e) => {
+    locUrlBtn.onclick = async (e) => {
       e.preventDefault();
-      const url = prompt('Paste image URL for the board background:');
+      const url = await gcPrompt('Paste image URL for the board background:');
       if (!url) return;
       const trimmed = url.trim();
       if (!/^https?:\/\//i.test(trimmed) && !/^data:/i.test(trimmed)) { showToast('URL must start with http(s):// or data:'); return; }
@@ -73616,10 +73662,10 @@ function bindCardEditor() {
     };
   }
   document.querySelectorAll('[data-act="remove-sub"]').forEach(el => {
-    el.onclick = () => {
+    el.onclick = async () => {
       const t = subTargetCard(); if (!t || !Array.isArray(t.subclasses)) return;
       const idx = parseInt(el.dataset.subIdx, 10);
-      if (!confirm(`Remove "${t.subclasses[idx]?.name || 'this subclass'}"?`)) return;
+      if (!(await gcConfirm(`Remove "${t.subclasses[idx]?.name || 'this subclass'}"?`))) return;
       captureSubclassesFromDOM();
       t.subclasses.splice(idx, 1);
       if (!isNew) saveForge();
@@ -74476,8 +74522,8 @@ function bindForgeMoves() {
   document.getElementById('btn-new-move').onclick = () => { App.editingMoveId = 'NEW'; render(); };
   document.querySelectorAll('[data-act="edit-move"]').forEach(el => { el.onclick = () => { App.editingMoveId = el.dataset.id; render(); }; });
   document.querySelectorAll('[data-act="delete-move"]').forEach(el => {
-    el.onclick = () => {
-      if (!confirm('Delete this move? Cards using it will fall back to the next available move.')) return;
+    el.onclick = async () => {
+      if (!(await gcConfirm('Delete this move? Cards using it will fall back to the next available move.'))) return;
       delete Forge.customMoves[el.dataset.id];
       saveForge(); showToast('Move deleted'); render();
     };
@@ -75113,8 +75159,8 @@ function bindForgeEvents() {
     };
   });
   document.querySelectorAll('[data-act="delete-event"]').forEach(el => {
-    el.onclick = () => {
-      if (!confirm('Delete this event? Any in-progress battles already using it will still resolve.')) return;
+    el.onclick = async () => {
+      if (!(await gcConfirm('Delete this event? Any in-progress battles already using it will still resolve.'))) return;
       Forge.customEvents = Forge.customEvents.filter(e => e.id !== el.dataset.id);
       saveForge(); showToast('Event deleted'); render();
     };
@@ -75213,8 +75259,8 @@ function bindForgeEncounters() {
     el.onclick = () => { App.editingEncounterId = el.dataset.id; render(); };
   });
   document.querySelectorAll('[data-act="delete-enc"]').forEach(el => {
-    el.onclick = () => {
-      if (!confirm('Delete this encounter? This cannot be undone.')) return;
+    el.onclick = async () => {
+      if (!(await gcConfirm('Delete this encounter? This cannot be undone.'))) return;
       Forge.customEncounters = (Forge.customEncounters || []).filter(e => e.id !== el.dataset.id);
       saveForge(); showToast('Encounter deleted'); render();
     };
@@ -76269,9 +76315,9 @@ function bindItemEditor() {
     };
   }
   if (urlBtn) {
-    urlBtn.onclick = (e) => {
+    urlBtn.onclick = async (e) => {
       e.preventDefault();
-      const url = prompt('Paste image URL for the item icon:');
+      const url = await gcPrompt('Paste image URL for the item icon:');
       if (!url) return;
       const trimmed = url.trim();
       if (!/^https?:\/\//i.test(trimmed) && !/^data:/i.test(trimmed)) { showToast('URL must start with http(s):// or data:'); return; }
@@ -76334,9 +76380,9 @@ function bindForgeItems() {
     e.stopPropagation();
     App.editingItemId = el.dataset.editItem; render();
   });
-  document.querySelectorAll('[data-del-item]').forEach(el => el.onclick = (e) => {
+  document.querySelectorAll('[data-del-item]').forEach(el => el.onclick = async (e) => {
     e.stopPropagation();
-    if (!confirm('Delete this item permanently?')) return;
+    if (!(await gcConfirm('Delete this item permanently?'))) return;
     Forge.customItems = (Forge.customItems || []).filter(x => x.id !== el.dataset.delItem);
     saveForge(); render();
   });
@@ -76420,9 +76466,9 @@ function bindForgeRelics() {
     e.stopPropagation();
     App.editingItemId = el.dataset.editItem; render();
   });
-  document.querySelectorAll('[data-del-item]').forEach(el => el.onclick = (e) => {
+  document.querySelectorAll('[data-del-item]').forEach(el => el.onclick = async (e) => {
     e.stopPropagation();
-    if (!confirm('Delete this relic permanently?')) return;
+    if (!(await gcConfirm('Delete this relic permanently?'))) return;
     Forge.customItems = (Forge.customItems || []).filter(x => x.id !== el.dataset.delItem);
     saveForge(); render();
   });
@@ -76486,8 +76532,8 @@ function bindForgePacks() {
     el.onclick = () => { App.editingPackId = el.dataset.id; render(); };
   });
   document.querySelectorAll('[data-act="delete-pack"]').forEach(el => {
-    el.onclick = () => {
-      if (!confirm('Delete this pack? It will disappear from the Vendor Market.')) return;
+    el.onclick = async () => {
+      if (!(await gcConfirm('Delete this pack? It will disappear from the Vendor Market.'))) return;
       Forge.customPacks = (Forge.customPacks || []).filter(p => p.id !== el.dataset.id);
       saveForge(); showToast('Pack deleted'); render();
     };
@@ -76758,9 +76804,9 @@ function bindPackEditor() {
     };
   }
   if (pkUrlBtn) {
-    pkUrlBtn.onclick = (e) => {
+    pkUrlBtn.onclick = async (e) => {
       e.preventDefault();
-      const url = prompt('Paste image URL for the pack cover:');
+      const url = await gcPrompt('Paste image URL for the pack cover:');
       if (!url) return;
       const trimmed = url.trim();
       if (!/^https?:\/\//i.test(trimmed) && !/^data:/i.test(trimmed)) { showToast('URL must start with http(s):// or data:'); return; }
@@ -76980,8 +77026,8 @@ function bindForgeStructureDecks() {
     el.onclick = () => { App.editingStructDeckId = el.dataset.id; render(); };
   });
   document.querySelectorAll('[data-act="delete-sdeck"]').forEach(el => {
-    el.onclick = () => {
-      if (!confirm('Delete this structure deck? It will disappear from the Vendor Market.')) return;
+    el.onclick = async () => {
+      if (!(await gcConfirm('Delete this structure deck? It will disappear from the Vendor Market.'))) return;
       Forge.structureDecks = (Forge.structureDecks || []).filter(d => d.id !== el.dataset.id);
       saveForge(); showToast('Structure deck deleted'); render();
     };
@@ -77519,8 +77565,8 @@ function attachSpriteEditorHandlers() {
   });
 
   const clearAll = document.getElementById('btn-clear-all-sprites');
-  if (clearAll) clearAll.onclick = () => {
-    if (!confirm('Remove all sprites for this subject (every animation)?')) return;
+  if (clearAll) clearAll.onclick = async () => {
+    if (!(await gcConfirm('Remove all sprites for this subject (every animation)?'))) return;
     delete Forge.sprites[App.spriteSubjectId];
     saveForge();
     _softUpdateSpriteEditor();   // partial update — scroll preserved
@@ -92377,8 +92423,8 @@ function renderCamp() {
     };
   });
   document.querySelectorAll('[data-strike]').forEach(el => {
-    el.onclick = () => {
-      if (!confirm(`Send this unit to strike ${_campRival().name}? 6h op — it cripples their threat & builds your reputation, but a failed raid can get them killed.`)) return;
+    el.onclick = async () => {
+      if (!(await gcConfirm(`Send this unit to strike ${_campRival().name}? 6h op — it cripples their threat & builds your reputation, but a failed raid can get them killed.`))) return;
       if (campStartActivity(el.dataset.strike, 'raidRival')) render();
     };
   });
@@ -92408,8 +92454,8 @@ function renderCamp() {
     };
   });
   document.querySelectorAll('[data-campart-clear]').forEach(btn => {
-    btn.onclick = () => {
-      if (!confirm('Remove this facility backdrop?')) return;
+    btn.onclick = async () => {
+      if (!(await gcConfirm('Remove this facility backdrop?'))) return;
       if (Forge.campArt) delete Forge.campArt[btn.dataset.campartClear];
       if (typeof saveForge === 'function') saveForge();
       render();
@@ -92433,8 +92479,8 @@ function renderCamp() {
     rd.readAsDataURL(file);
   };
   const _ambClr = document.getElementById('btn-camp-amb-clear');
-  if (_ambClr) _ambClr.onclick = () => {
-    if (!confirm('Remove the camp ambience track?')) return;
+  if (_ambClr) _ambClr.onclick = async () => {
+    if (!(await gcConfirm('Remove the camp ambience track?'))) return;
     if (Forge.campAudio) delete Forge.campAudio.ambient;
     if (typeof saveForge === 'function') saveForge();
     try { if (typeof playCampAmbientMusic === 'function') playCampAmbientMusic(); } catch (e) {}
@@ -92502,8 +92548,8 @@ function renderCamp() {
     el.onclick = () => { collectCampSlot(el.dataset.slot); render(); };
   });
   document.querySelectorAll('[data-act="eject"]').forEach(el => {
-    el.onclick = () => {
-      if (!confirm('Eject this unit without applying XP?')) return;
+    el.onclick = async () => {
+      if (!(await gcConfirm('Eject this unit without applying XP?'))) return;
       ejectCampSlot(el.dataset.slot);
       render();
     };
@@ -94767,7 +94813,7 @@ function _admSelect(u) {
 }
 async function _admJail(handle) {
   if (!((typeof isAdmin === 'function') && isAdmin())) { showToast('👑 Admin only.', 2600); return; }
-  if (!confirm('Jail "' + handle + '" for 24h (admin moderation)?\n\nThey lose Black Market + node control until released. You can release them anytime here.')) return;
+  if (!(await gcConfirm('Jail "' + handle + '" for 24h (admin moderation)?\n\nThey lose Black Market + node control until released. You can release them anytime here.'))) return;
   AdmUM._busy = true; render();
   try {
     const me = (Profile.cloud && Profile.cloud.userId) || null;
@@ -94786,7 +94832,7 @@ async function _admJail(handle) {
 }
 async function _admRelease(handle) {
   if (!((typeof isAdmin === 'function') && isAdmin())) { showToast('👑 Admin only.', 2600); return; }
-  if (!confirm('Release "' + handle + '" from detention now?')) return;
+  if (!(await gcConfirm('Release "' + handle + '" from detention now?'))) return;
   AdmUM._busy = true; render();
   try {
     const up = await Cloud.client.from('detention').update({ status: 'released', released_by: 'admin', updated_at: new Date().toISOString() }).eq('offender_name', handle).eq('status', 'jailed');
@@ -94971,7 +95017,7 @@ function renderUserManagement() {
       else showToast('⚠ ' + ((r && r.error) || 'Grant failed') + '.', 4600);
     };
     const _acct = async (op, extra, confirmMsg) => {
-      if (confirmMsg && !confirm(confirmMsg)) return;
+      if (confirmMsg && !(await gcConfirm(confirmMsg))) return;
       const tok = (typeof _sbToken === 'function') ? await _sbToken() : null;
       if (!tok) { showToast('☁ Sign in (admin) required.', 3600); return; }
       AdmUM._busy = true; render();
@@ -94993,9 +95039,9 @@ function renderUserManagement() {
     };
     const eb = document.getElementById('um-ban'); if (eb) eb.onclick = () => _acct('ban', null, 'Ban "' + d.handle + '"? They cannot sign in until unbanned.');
     const ub = document.getElementById('um-unban'); if (ub) ub.onclick = () => _acct('unban', null, 'Lift the ban on "' + d.handle + '"?');
-    const em = document.getElementById('um-email'); if (em) em.onclick = () => { const v = (prompt('New email for "' + d.handle + '":') || '').trim(); if (v) _acct('email', { email: v }); };
-    const pw = document.getElementById('um-pass'); if (pw) pw.onclick = () => { const v = (prompt('New password for "' + d.handle + '" (min 8 chars). They are not auto-notified — tell them.') || '').trim(); if (v) _acct('password', { password: v }, 'Reset password for "' + d.handle + '"? This is account-takeover-level — use responsibly.'); };
-    const dl = document.getElementById('um-del'); if (dl) dl.onclick = () => { if (!confirm('DELETE the account "' + d.handle + '"? This permanently removes their auth + profile and cannot be undone.')) return; const t = (prompt('Type DELETE to confirm permanent deletion of "' + d.handle + '".') || '').trim(); if (t === 'DELETE') _acct('delete'); else showToast('Deletion cancelled.', 2600); };
+    const em = document.getElementById('um-email'); if (em) em.onclick = async () => { const v = (await gcPrompt('New email for "' + d.handle + '":') || '').trim(); if (v) _acct('email', { email: v }); };
+    const pw = document.getElementById('um-pass'); if (pw) pw.onclick = async () => { const v = (await gcPrompt('New password for "' + d.handle + '" (min 8 chars). They are not auto-notified — tell them.') || '').trim(); if (v) _acct('password', { password: v }, 'Reset password for "' + d.handle + '"? This is account-takeover-level — use responsibly.'); };
+    const dl = document.getElementById('um-del'); if (dl) dl.onclick = async () => { if (!(await gcConfirm('DELETE the account "' + d.handle + '"? This permanently removes their auth + profile and cannot be undone.'))) return; const t = (await gcPrompt('Type DELETE to confirm permanent deletion of "' + d.handle + '".') || '').trim(); if (t === 'DELETE') _acct('delete'); else showToast('Deletion cancelled.', 2600); };
     // 📧 Player Rescue — send password-reset or resend confirmation via the
     // admin endpoint (uses whichever SMTP the project has configured).
     const _emailAdmin = async (endpoint, label) => {
@@ -95014,9 +95060,9 @@ function renderUserManagement() {
       render();
     };
     const reb = document.getElementById('um-reset-email');
-    if (reb) reb.onclick = () => { if (!confirm('Send a password-reset email to ' + d.email + '?\n\nThey click the link, set a new password, sign in. Uses your configured SMTP.')) return; _emailAdmin('reset-email', 'password reset'); };
+    if (reb) reb.onclick = async () => { if (!(await gcConfirm('Send a password-reset email to ' + d.email + '?\n\nThey click the link, set a new password, sign in. Uses your configured SMTP.'))) return; _emailAdmin('reset-email', 'password reset'); };
     const rcb = document.getElementById('um-resend-conf');
-    if (rcb) rcb.onclick = () => { if (!confirm('Resend the signup confirmation email to ' + d.email + '?')) return; _emailAdmin('resend-confirmation', 'confirmation email'); };
+    if (rcb) rcb.onclick = async () => { if (!(await gcConfirm('Resend the signup confirmation email to ' + d.email + '?'))) return; _emailAdmin('resend-confirmation', 'confirmation email'); };
   }
 }
 function renderSovereignsStore() {
@@ -95665,7 +95711,7 @@ function renderBlackMarket() {
   }
 
   document.querySelectorAll('[data-vendor-sell]').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       if (btn.disabled) return;
       const cardId = btn.dataset.vendorSell;
       const amtSpec = btn.dataset.vendorAmt;
@@ -95675,7 +95721,7 @@ function renderBlackMarket() {
       if (amount <= 0 || amount > row.sellable) return;
       const payout = amount * row.value;
       const q = (typeof frApplyTax === 'function') ? frApplyTax(payout, { market: 'black', resource: cardId, quantity: amount }) : { gross: payout, tax: 0, net: payout, label: 'Foundation Seizure Fee' };
-      const ok = confirm(
+      const ok = await gcConfirm(
         `🕯️ Smuggle ${amount}× ${row.card.name}?\n\n` +
         `Sale: ${q.gross} Cinders\n` +
         `${q.label} (2%): −${q.tax}\n` +
@@ -95693,9 +95739,9 @@ function renderBlackMarket() {
 
   const dupesBtn = document.getElementById('btn-vendor-sell-dupes');
   if (dupesBtn) {
-    dupesBtn.onclick = () => {
+    dupesBtn.onclick = async () => {
       if (totalSellable === 0) return;
-      const ok = confirm(
+      const ok = await gcConfirm(
         `🕯️ Smuggle ALL ${totalSellable} duplicate copies?\n\n` +
         `Payout: <span class="cinder-icon"></span> ${totalValue} Cinders\n` +
         `One copy of every deck-bound card stays in your inventory.`
@@ -98869,8 +98915,8 @@ function openNotesAdmin() {
     const prevBtn = document.getElementById('na-preview');
     if (prevBtn) prevBtn.onclick = () => openNoteReader(sel);
     const delBtn = document.getElementById('na-delete');
-    if (delBtn) delBtn.onclick = () => {
-      if (!confirm(`Delete note "${sel.title || sel.id}"? This cannot be undone.`)) return;
+    if (delBtn) delBtn.onclick = async () => {
+      if (!(await gcConfirm(`Delete note "${sel.title || sel.id}"? This cannot be undone.`))) return;
       Forge.notes = Forge.notes.filter(n => n && n.id !== sel.id);
       App._notesAdminSel = null;
       commit();
@@ -99818,7 +99864,7 @@ async function _campOpenVisitLinkManager() {
       catch (e) { const inp = b.closest('div').parentElement.querySelector('input'); if (inp) { inp.select(); document.execCommand('copy'); showToast('📋 Link copied (fallback).', 1600); } }
     });
     list.querySelectorAll('.hvm-revoke').forEach(b => b.onclick = async () => {
-      if (!confirm('Revoke this visit link? Anyone with the URL will see "expired".')) return;
+      if (!(await gcConfirm('Revoke this visit link? Anyone with the URL will see "expired".'))) return;
       const code = b.dataset.code;
       const { error } = await Cloud.client.from('house_visits').delete().eq('code', code);
       if (error) { showToast('⚠ Revoke failed: ' + (error.message || 'unknown'), 3000); return; }
@@ -102150,12 +102196,12 @@ function _campCreateWildernessZone(name) {
   Forge.campZones.push(z);
   return z;
 }
-function _campDeleteZone(zid) {
+async function _campDeleteZone(zid) {
   if (zid === 'camp_heights' || zid === 'wilderness_edge') {
     showToast('🚫 Default zones cannot be deleted.', 2200);
     return;
   }
-  if (!confirm('Delete this wilderness zone? Player progress in it is lost.')) return;
+  if (!(await gcConfirm('Delete this wilderness zone? Player progress in it is lost.'))) return;
   Forge.campZones = (Forge.campZones || []).filter(z => z && z.id !== zid);
   // If we were editing it, fall back to Camp Heights.
   if (App.campEditZoneId === zid) App.campEditZoneId = 'camp_heights';
@@ -102256,9 +102302,9 @@ function _campLayoutToggle() {
   App._campLayoutSel = null;
   render();
 }
-function _campLayoutReset() {
+async function _campLayoutReset() {
   if (!_campRequireAdmin()) return;
-  if (!confirm('Reset Camp Heights to the default layout? This wipes all custom buildings + NPCs.')) return;
+  if (!(await gcConfirm('Reset Camp Heights to the default layout? This wipes all custom buildings + NPCs.'))) return;
   Forge.campLayout = null;
   App._campLayoutSel = null;
   _campLayoutCommit();
@@ -103351,8 +103397,8 @@ function _campEditorBind() {
     _ensureCampLayout();
     _campLayoutCommit();
   };
-  if ($('cme-zone-new')) $('cme-zone-new').onclick = () => {
-    const name = (typeof prompt === 'function') ? (prompt('Name for the new wilderness zone:', 'New Wilderness') || '') : 'New Wilderness';
+  if ($('cme-zone-new')) $('cme-zone-new').onclick = async () => {
+    const name = (typeof prompt === 'function') ? (await gcPrompt('Name for the new wilderness zone:', 'New Wilderness') || '') : 'New Wilderness';
     if (!name.trim()) return;
     const z = _campCreateWildernessZone(name.trim());
     App.campEditZoneId = z.id;
@@ -111487,8 +111533,8 @@ function openBlackMarketAuction() {
       host.querySelectorAll('[data-bma-tab]').forEach(b => { b.onclick = () => { tab = b.getAttribute('data-bma-tab'); render(); }; });
       const sc = document.getElementById('bma-sql-copy'); if (sc) sc.onclick = () => { try { navigator.clipboard.writeText(BM_MARKET_SQL); showToast('📋 SQL copied.'); } catch (e) { const t = document.getElementById('bma-sql'); if (t) t.select(); } };
       const sr = document.getElementById('bma-sql-retry'); if (sr) sr.onclick = () => { BmMarket.tableMissing = false; BmMarket.lastFetch = 0; bmMarketFetch().then(render); };
-      host.querySelectorAll('[data-bma-buy]').forEach(b => { b.onclick = () => { if (b.disabled) return; const l = (BmMarket.open || []).find(x => x.id === b.getAttribute('data-bma-buy')); if (l && confirm('Buy ' + l.qty + '× ' + (l.card_name || l.card_id) + ' for ' + l.price + ' 🔥?')) bmMarketBuy(l).then(render); }; });
-      host.querySelectorAll('[data-bma-cancel]').forEach(b => { b.onclick = () => { const l = (BmMarket.mine || []).find(x => x.id === b.getAttribute('data-bma-cancel')); if (l && confirm('Close this booth and return ' + l.qty + ' copies?')) bmMarketCancel(l).then(render); }; });
+      host.querySelectorAll('[data-bma-buy]').forEach(b => { b.onclick = async () => { if (b.disabled) return; const l = (BmMarket.open || []).find(x => x.id === b.getAttribute('data-bma-buy')); if (l && (await gcConfirm('Buy ' + l.qty + '× ' + (l.card_name || l.card_id) + ' for ' + l.price + ' 🔥?'))) bmMarketBuy(l).then(render); }; });
+      host.querySelectorAll('[data-bma-cancel]').forEach(b => { b.onclick = async () => { const l = (BmMarket.mine || []).find(x => x.id === b.getAttribute('data-bma-cancel')); if (l && (await gcConfirm('Close this booth and return ' + l.qty + ' copies?'))) bmMarketCancel(l).then(render); }; });
       const cardSel = document.getElementById('bma-card'); if (cardSel) cardSel.onchange = () => { pickCard = cardSel.value; };
       const post = document.getElementById('bma-post');
       if (post) post.onclick = () => {
@@ -111508,12 +111554,12 @@ function openBlackMarketAuction() {
     }
   } catch (e) {}
 }
-function _startBlackMarketRun() {
+async function _startBlackMarketRun() {
   try {
     if (typeof _jailBlocked === 'function' && _jailBlocked('the Black Market')) return;
     const r = (typeof Profile !== 'undefined' && Profile.rlcRun) ? Profile.rlcRun : null;
     if (r && !r.isComplete && !r.isFailed && r.campaignId !== BM_RUN_ID) {
-      if (!confirm('Starting the Black Market Run abandons your current roguelite run. Continue?')) return;
+      if (!(await gcConfirm('Starting the Black Market Run abandons your current roguelite run. Continue?'))) return;
     }
     // 🏚 If goods are waiting at the Bazaar, this run is the trip HOME.
     const returning = (typeof App !== 'undefined' && App._bmCarry != null);
@@ -111771,11 +111817,11 @@ function _rlcClearRunArtifacts() {
   } catch (e) {}
   try { saveProfile(); } catch (e) {}
 }
-function rlcAbandonRun() {
+async function rlcAbandonRun() {
   const run = Profile.rlcRun;
   const pend = (run && Array.isArray(run.pendingCards)) ? run.pendingCards.length : 0;
   const cin  = (run && Math.max(0, parseInt(run.currency, 10) || 0)) || 0;
-  if (!confirm(
+  if (!await gcConfirm(
     'Abandon this run?\n\n' +
     '⚠ You only KEEP your rewards if you DIE or COMPLETE the campaign.\n' +
     'Abandon now and you FORFEIT everything earned this run' +
@@ -112480,7 +112526,7 @@ function renderRlcAdmin() {
     document.querySelectorAll('[data-rlc-edit]').forEach(b => b.onclick = () => { App.rlcEdit = list[parseInt(b.dataset.rlcEdit, 10)].id; render(); });
     document.querySelectorAll('[data-rlc-pub]').forEach(b => b.onclick = () => { const c = list[parseInt(b.dataset.rlcPub, 10)]; c.isPublished = !c.isPublished; _persistForgeNow(); render(); });
     document.querySelectorAll('[data-rlc-dup]').forEach(b => b.onclick = () => { const c = JSON.parse(JSON.stringify(list[parseInt(b.dataset.rlcDup, 10)])); c.id = 'camp' + Date.now().toString(36); c.name = (c.name || 'Campaign') + ' (copy)'; c.isPublished = false; list.push(c); _persistForgeNow(); render(); });
-    document.querySelectorAll('[data-rlc-del]').forEach(b => b.onclick = () => { if (!confirm('Delete this campaign?')) return; list.splice(parseInt(b.dataset.rlcDel, 10), 1); _persistForgeNow(); render(); });
+    document.querySelectorAll('[data-rlc-del]').forEach(b => b.onclick = async () => { if (!(await gcConfirm('Delete this campaign?'))) return; list.splice(parseInt(b.dataset.rlcDel, 10), 1); _persistForgeNow(); render(); });
     return;
   }
   // ---- Campaign editor ----
@@ -112792,7 +112838,7 @@ function renderRlcAdmin() {
     saveForge();
   }));
   document.querySelectorAll('[data-rlc-ndup]').forEach(b => b.onclick = () => { const i = parseInt(b.dataset.rlcNdup, 10); const c = JSON.parse(JSON.stringify(ed.nodes[i])); c.id = 'n' + Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36); c.connections = []; ed.nodes.splice(i + 1, 0, c); reRender(); });
-  document.querySelectorAll('[data-rlc-ndel]').forEach(b => b.onclick = () => { if (!confirm('Delete this node?')) return; const i = parseInt(b.dataset.rlcNdel, 10); const id = ed.nodes[i].id; ed.nodes.splice(i, 1); ed.nodes.forEach(n => n.connections = (n.connections || []).filter(x => x !== id)); reRender(); });
+  document.querySelectorAll('[data-rlc-ndel]').forEach(b => b.onclick = async () => { if (!(await gcConfirm('Delete this node?'))) return; const i = parseInt(b.dataset.rlcNdel, 10); const id = ed.nodes[i].id; ed.nodes.splice(i, 1); ed.nodes.forEach(n => n.connections = (n.connections || []).filter(x => x !== id)); reRender(); });
   document.querySelectorAll('[data-rlc-rmcard]').forEach(b => b.onclick = () => { const [i, ki] = b.dataset.rlcRmcard.split(':').map(Number); ed.nodes[i].reward.cardKeys.splice(ki, 1); reRender(); });
   document.querySelectorAll('[data-rlc-deckchoice]').forEach(cb => cb.addEventListener('change', () => {
     ed.startingDeckChoices = Array.isArray(ed.startingDeckChoices) ? ed.startingDeckChoices : [];
@@ -113099,9 +113145,9 @@ function renderUltimateAdmin() {
     render();
   });
   // Delete a custom ultimate (+ clear any hero assignments pointing at it).
-  root.querySelectorAll('[data-ult-del]').forEach(b => b.onclick = () => {
+  root.querySelectorAll('[data-ult-del]').forEach(b => b.onclick = async () => {
     const id = b.getAttribute('data-ult-del');
-    if (!confirm('Delete this custom ultimate? Heroes assigned to it fall back to their default.')) return;
+    if (!(await gcConfirm('Delete this custom ultimate? Heroes assigned to it fall back to their default.'))) return;
     Forge.customUltimates = Forge.customUltimates.filter(u => u && u.id !== id);
     if (Forge.heroUltimates) { for (const h in Forge.heroUltimates) { if (Forge.heroUltimates[h] === id) delete Forge.heroUltimates[h]; } }
     try { saveForge(); } catch (x) {}
@@ -113156,9 +113202,9 @@ function renderRlcList() {
   const ab2 = document.getElementById('rlc-abandon2');
   if (ab2) ab2.onclick = rlcAbandonRun;
   document.querySelectorAll('[data-rlc-start]').forEach(b => {
-    b.onclick = () => {
+    b.onclick = async () => {
       const id = b.dataset.rlcStart;
-      if (run && !run.isComplete && !run.isFailed && !confirm('Starting a new run will abandon your current run. Continue?')) return;
+      if (run && !run.isComplete && !run.isFailed && !(await gcConfirm('Starting a new run will abandon your current run. Continue?'))) return;
       rlcStartRun(id);
     };
   });
@@ -122476,7 +122522,7 @@ function _ppOpenLotModal(vehicleId) {
   document.body.appendChild(wrap);
   document.getElementById('pp-modal-x').onclick = _ppCloseAnyModal;
   wrap.addEventListener('click', (e) => { if (e.target === wrap) _ppCloseAnyModal(); });
-  document.querySelectorAll('[data-pp-act]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-pp-act]').forEach(b => b.onclick = async () => {
     const act = b.dataset.ppAct;
     if (act === 'fuel') {
       if (ppFuelVehicle(vehicleId)) { _ppCloseAnyModal(); render(); }
@@ -122495,7 +122541,7 @@ function _ppOpenLotModal(vehicleId) {
       try {
         const ans = (typeof showGamePrompt === 'function')
           ? showGamePrompt(`List ${v.name} for sale to other players.\nAsking price (Cinder):`, String(v.listPrice | 0))
-          : Promise.resolve(prompt('Asking price (Cinder):', String(v.listPrice | 0)));
+          : Promise.resolve(await gcPrompt('Asking price (Cinder):', String(v.listPrice | 0)));
         Promise.resolve(ans).then((priceStr) => {
           if (priceStr == null) return;
           const price = parseInt(priceStr, 10);
@@ -127508,11 +127554,11 @@ function renderCinderShop() {
   // your resources to instantly refill +1. Defaults to 1 unit per click;
   // admin gets a quantity prompt for larger batches.
   document.querySelectorAll('[data-cs-restock]').forEach(b => {
-    b.onclick = () => {
+    b.onclick = async () => {
       const id = b.dataset.csRestock;
       let qty = 1;
       if (isAdminUser) {
-        const ans = parseInt(prompt('Restock quantity?', '1'), 10);
+        const ans = parseInt(await gcPrompt('Restock quantity?', '1'), 10);
         if (!Number.isFinite(ans) || ans <= 0) return;
         qty = ans;
       }
@@ -127525,8 +127571,8 @@ function renderCinderShop() {
       b.onclick = () => _csOpenShopModal('edit', b.dataset.csEdit);
     });
     document.querySelectorAll('[data-cs-remove]').forEach(b => {
-      b.onclick = () => {
-        if (confirm('Remove this item from the shop?')) {
+      b.onclick = async () => {
+        if (await gcConfirm('Remove this item from the shop?')) {
           adminRemoveShopItem(b.dataset.csRemove);
           render();
         }
@@ -128038,46 +128084,46 @@ function renderCrafting() {
   });
   if (isAdminUser) {
     document.querySelectorAll('[data-cr-edit]').forEach(b => {
-      b.onclick = () => {
+      b.onclick = async () => {
         const id = b.dataset.crEdit;
         const r = recipes.find(x => x && x.id === id);
         if (!r) return;
-        const newOut = prompt('Output item id?', r.outputItemId);
+        const newOut = await gcPrompt('Output item id?', r.outputItemId);
         if (!newOut) return;
-        const newQty = parseInt(prompt('Output quantity?', String(r.qty || 1)), 10);
-        const costStr = prompt('Cost (format: herbs:2,steel:1)?', Object.entries(r.cost || {}).map(([k, v]) => `${k}:${v}`).join(','));
+        const newQty = parseInt(await gcPrompt('Output quantity?', String(r.qty || 1)), 10);
+        const costStr = await gcPrompt('Cost (format: herbs:2,steel:1)?', Object.entries(r.cost || {}).map(([k, v]) => `${k}:${v}`).join(','));
         const cost = {};
         if (costStr) costStr.split(',').forEach(pair => {
           const [k, v] = pair.split(':').map(s => s.trim());
           if (k && Number.isFinite(parseInt(v, 10))) cost[k] = parseInt(v, 10);
         });
-        const newTier = parseInt(prompt('Tier (1-3)?', String(r.tier || 1)), 10);
+        const newTier = parseInt(await gcPrompt('Tier (1-3)?', String(r.tier || 1)), 10);
         adminUpsertCraftingRecipe({ id, outputItemId: newOut, qty: Number.isFinite(newQty) ? newQty : 1, cost, tier: Number.isFinite(newTier) ? newTier : 1 });
         render();
       };
     });
     document.querySelectorAll('[data-cr-remove]').forEach(b => {
-      b.onclick = () => {
-        if (confirm('Delete this recipe?')) {
+      b.onclick = async () => {
+        if (await gcConfirm('Delete this recipe?')) {
           adminRemoveCraftingRecipe(b.dataset.crRemove);
           render();
         }
       };
     });
     const addBtn = document.getElementById('cr-admin-add');
-    if (addBtn) addBtn.onclick = () => {
-      const id = prompt('Recipe id (e.g. r_myCustomItem):');
+    if (addBtn) addBtn.onclick = async () => {
+      const id = await gcPrompt('Recipe id (e.g. r_myCustomItem):');
       if (!id) return;
-      const out = prompt('Output item id (must exist in HELD_ITEMS / Forge.customItems):');
+      const out = await gcPrompt('Output item id (must exist in HELD_ITEMS / Forge.customItems):');
       if (!out) return;
-      const qty = parseInt(prompt('Output quantity?', '1'), 10);
-      const costStr = prompt('Cost (format: herbs:2,steel:1)?', '');
+      const qty = parseInt(await gcPrompt('Output quantity?', '1'), 10);
+      const costStr = await gcPrompt('Cost (format: herbs:2,steel:1)?', '');
       const cost = {};
       if (costStr) costStr.split(',').forEach(pair => {
         const [k, v] = pair.split(':').map(s => s.trim());
         if (k && Number.isFinite(parseInt(v, 10))) cost[k] = parseInt(v, 10);
       });
-      const tier = parseInt(prompt('Tier (1-3)?', '1'), 10);
+      const tier = parseInt(await gcPrompt('Tier (1-3)?', '1'), 10);
       adminUpsertCraftingRecipe({ id, outputItemId: out, qty: Number.isFinite(qty) ? qty : 1, cost, tier: Number.isFinite(tier) ? tier : 1 });
       render();
     };
@@ -128488,8 +128534,8 @@ function bindForgeTraders() {
     try { saveForge(); _persistForgeNow && _persistForgeNow(); } catch (e) {}
     render();
   };
-  const rs = $('fr-tr-reset'); if (rs) rs.onclick = () => {
-    if (!confirm('Reset this trader to its default catalog? Custom prices/photo will be lost.')) return;
+  const rs = $('fr-tr-reset'); if (rs) rs.onclick = async () => {
+    if (!(await gcConfirm('Reset this trader to its default catalog? Custom prices/photo will be lost.'))) return;
     if (Forge.traders && Forge.traders[sel]) { delete Forge.traders[sel]; }
     try { saveForge(); _persistForgeNow && _persistForgeNow(); } catch (e) {}
     render();
@@ -129724,8 +129770,8 @@ function renderDeckBuilder() {
     render();
   };
   const aiCancelBtn = document.getElementById('btn-ai-deck-cancel');
-  if (aiCancelBtn) aiCancelBtn.onclick = () => {
-    if (isDirty && !confirm('Discard this AI deck and go back?')) return;
+  if (aiCancelBtn) aiCancelBtn.onclick = async () => {
+    if (isDirty && !(await gcConfirm('Discard this AI deck and go back?'))) return;
     exitAiDeck();
   };
   // 🦸 Exit starter-deck mode cleanly back to the Pricing Admin panel.
@@ -129737,18 +129783,18 @@ function renderDeckBuilder() {
     render();
   };
   const sdCancelBtn = document.getElementById('btn-starter-deck-cancel');
-  if (sdCancelBtn) sdCancelBtn.onclick = () => {
-    if (isDirty && !confirm('Discard this starter deck and go back?')) return;
+  if (sdCancelBtn) sdCancelBtn.onclick = async () => {
+    if (isDirty && !(await gcConfirm('Discard this starter deck and go back?'))) return;
     exitStarterDeck();
   };
-  document.getElementById('btn-back-deck').onclick = () => {
-    if (App.aiDeckEdit) { if (isDirty && !confirm('Discard this AI deck and go back?')) return; exitAiDeck(); return; }
-    if (App.starterDeckEdit) { if (isDirty && !confirm('Discard this starter deck and go back?')) return; exitStarterDeck(); return; }
+  document.getElementById('btn-back-deck').onclick = async () => {
+    if (App.aiDeckEdit) { if (isDirty && !(await gcConfirm('Discard this AI deck and go back?'))) return; exitAiDeck(); return; }
+    if (App.starterDeckEdit) { if (isDirty && !(await gcConfirm('Discard this starter deck and go back?'))) return; exitStarterDeck(); return; }
     App.screen = 'title'; render();
   };
   const switchBtn = document.getElementById('btn-switch-hero');
-  if (switchBtn) switchBtn.onclick = () => {
-    if (isDirty && !confirm('You have unsaved changes. Switch heroes anyway?')) return;
+  if (switchBtn) switchBtn.onclick = async () => {
+    if (isDirty && !(await gcConfirm('You have unsaved changes. Switch heroes anyway?'))) return;
     App.deckBuilderHeroId = null;
     // In AI mode keep the in-progress card list + AI flag so re-picking a
     // hero doesn't throw away the deck you've built.
@@ -129760,10 +129806,10 @@ function renderDeckBuilder() {
     render();
   };
   const backDecksBtn = document.getElementById('btn-back-to-decks');
-  if (backDecksBtn) backDecksBtn.onclick = () => {
-    if (App.aiDeckEdit) { if (isDirty && !confirm('Discard this AI deck and go back?')) return; exitAiDeck(); return; }
-    if (App.starterDeckEdit) { if (isDirty && !confirm('Discard this starter deck and go back?')) return; exitStarterDeck(); return; }
-    if (isDirty && !confirm('You have unsaved changes. Leave anyway?')) return;
+  if (backDecksBtn) backDecksBtn.onclick = async () => {
+    if (App.aiDeckEdit) { if (isDirty && !(await gcConfirm('Discard this AI deck and go back?'))) return; exitAiDeck(); return; }
+    if (App.starterDeckEdit) { if (isDirty && !(await gcConfirm('Discard this starter deck and go back?'))) return; exitStarterDeck(); return; }
+    if (isDirty && !(await gcConfirm('You have unsaved changes. Leave anyway?'))) return;
     App.editingDeckId = null;
     App.deckEdit = undefined;
     App.deckEditName = undefined;
@@ -135418,11 +135464,11 @@ function renderTerritoryWars() {
   // ── Admin: delete node ──
   const _admDelBtn = document.getElementById('tw-admin-del-btn');
   if (_admDelBtn) {
-    _admDelBtn.onclick = () => {
+    _admDelBtn.onclick = async () => {
       const nid = App._twSelectedNode; if (!nid) return;
       const tf = _twForge();
       const node = tf.nodes.find(n => n.id === nid);
-      if (!confirm(`Delete "${node ? node.name : nid}"? This cannot be undone.`)) return;
+      if (!(await gcConfirm(`Delete "${node ? node.name : nid}"? This cannot be undone.`))) return;
       tf.nodes = tf.nodes.filter(n => n.id !== nid);
       tf.nodes.forEach(n => { n.connections = (n.connections || []).filter(c => c !== nid); });
       App._twSelectedNode = null;
@@ -136228,7 +136274,7 @@ function renderTerritoryWarsAdmin() {
   wireTool('tw-tool-war', async () => {
     if (t.regions.length === 0) { showToast('⚠ Create a region first.'); return; }
     const list = t.regions.map((r, i) => `${i + 1}. ${r.name}`).join('\n');
-    const pick = prompt('⚔ Force a region into war (every node flips to contested).\n\nWhich region?\n' + list);
+    const pick = await gcPrompt('⚔ Force a region into war (every node flips to contested).\n\nWhich region?\n' + list);
     const idx = parseInt(pick, 10) - 1;
     const r = t.regions[idx];
     if (!r) return;
@@ -136251,7 +136297,7 @@ function renderTerritoryWarsAdmin() {
   wireTool('tw-tool-reset', async () => {
     const ok = (typeof showGameConfirm === 'function')
       ? await showGameConfirm({ title: '💥 Reset Territory?', bodyHtml: '<div>Wipe ALL ownership state across the entire war map.</div><div style="color:#ff9088;margin-top:0.5rem"><b>This cannot be undone.</b> Every node returns to Neutral; vaults are unchanged.</div>', yesLabel: 'WIPE TERRITORY', noLabel: 'Cancel', yesAccent: 'crimson' })
-      : confirm('Reset ALL territory ownership? Cannot be undone.');
+      : await gcConfirm('Reset ALL territory ownership? Cannot be undone.');
     if (!ok) return;
     const st = _twState();
     const beforeCount = Object.keys(st.ownedNodes).length;
@@ -136270,7 +136316,7 @@ function renderTerritoryWarsAdmin() {
     render();
   });
   wireTool('tw-tool-event', async () => {
-    const msg = prompt('🌐 Spawn World Event — message broadcast to every player\'s World Feed:');
+    const msg = await gcPrompt('🌐 Spawn World Event — message broadcast to every player\'s World Feed:');
     if (!msg) return;
     _twLog('event', `🌐 ${msg}`);
     showToast('🌐 World event broadcast.', 2500);
@@ -136386,8 +136432,8 @@ function renderTerritoryWarsAdmin() {
   };
   // ↺ Reset to 16-PRN Starter Map
   const _reseedBtn = document.getElementById('tw-reseed-btn');
-  if (_reseedBtn) _reseedBtn.onclick = () => {
-    if (!confirm('This will clear ALL regions, sectors, and PRNs and restore the 16-PRN starter map.\n\nContinue?')) return;
+  if (_reseedBtn) _reseedBtn.onclick = async () => {
+    if (!(await gcConfirm('This will clear ALL regions, sectors, and PRNs and restore the 16-PRN starter map.\n\nContinue?'))) return;
     t.regions = []; t.sectors = []; t.nodes = [];
     _twSeedStarterData();
     showToast('✅ Starter map loaded — 16 PRNs ready. Rename them in the Nodes tab.', 3200);
@@ -136424,14 +136470,14 @@ function renderTerritoryWarsAdmin() {
   });
   document.querySelectorAll('[data-tw-del-tier]').forEach(b => b.onclick = () => { t.difficultyTiers = t.difficultyTiers.filter(x => x.id !== b.dataset.twDelTier); saveForge(); render(); });
   // (Inline tier edit — small prompt for the moment; future pass: inline inputs.)
-  document.querySelectorAll('[data-tw-edit-tier]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-tw-edit-tier]').forEach(b => b.onclick = async () => {
     const tier = t.difficultyTiers.find(x => x.id === b.dataset.twEditTier);
     if (!tier) return;
-    const newName = prompt('Tier name:', tier.name);
+    const newName = await gcPrompt('Tier name:', tier.name);
     if (newName != null) tier.name = newName;
-    const newRolls = prompt('Modifier rolls (0-6):', tier.modRolls);
+    const newRolls = await gcPrompt('Modifier rolls (0-6):', tier.modRolls);
     if (newRolls != null) tier.modRolls = Math.max(0, Math.min(6, parseInt(newRolls, 10) || 0));
-    const newScale = prompt('Stat scale (0.5-3):', tier.statScale);
+    const newScale = await gcPrompt('Stat scale (0.5-3):', tier.statScale);
     if (newScale != null) tier.statScale = Math.max(0.5, Math.min(3, parseFloat(newScale) || 1.0));
     saveForge(); render();
   });

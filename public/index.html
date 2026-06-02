@@ -48747,12 +48747,13 @@ function onSaveStatus(fn) {
     // Fire a final fetch() with keepalive so it survives the unload — best-
     // effort, browsers may still drop it but most modern engines honor it.
     try { _flushPending(); } catch (err) {}
-    // Modern browsers ignore the returned string but presence triggers the
-    // built-in "Leave site?" dialog. Chrome/Firefox/Safari all behave this way.
-    const msg = '⚠ Your latest changes are still uploading to the cloud. Leaving now risks losing them.';
-    e.preventDefault();
-    e.returnValue = msg;
-    return msg;
+    // NOTE: we intentionally do NOT call e.preventDefault() / set e.returnValue
+    // here. Doing so makes the browser show its blocking "Reload site? — Changes
+    // you made may not be saved" confirmation on every refresh, which was popping
+    // up even on routine reloads (the pending/in-flight flags can linger). The
+    // synchronous saveProfile() above + the keepalive _flushPending() + the
+    // pagehide / visibilitychange flushes already protect the player's data, so
+    // the confirmation dialog is pure friction and is now suppressed.
   });
 
   // 🌐 pagehide is the modern unload event; some mobile browsers fire it

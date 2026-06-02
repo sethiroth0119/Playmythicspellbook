@@ -7935,6 +7935,24 @@
   }
   .tw-oil-fill { height: 100%; background: linear-gradient(90deg, #d68a3a, #ffcf5a); transition: width 250ms ease-out; }
   .tw-oil-tier { font-size: 0.55rem; font-weight: 800; letter-spacing: 0.1em; color: #ffd28a; text-shadow: 0 1px 2px rgba(0,0,0,0.9); }
+  /* 🛢 Per-turn extraction counter (X/3) — always visible on the tower tile. */
+  .tw-oil-count {
+    font-family: 'Cinzel', serif; font-weight: 800; line-height: 1;
+    font-size: 0.78rem; letter-spacing: 0.04em;
+    color: #ffe6b0; text-shadow: 0 1px 2px rgba(0,0,0,0.95), 0 0 6px rgba(255,180,80,0.6);
+    padding: 1px 5px; border-radius: 999px;
+    background: rgba(20,12,6,0.7); border: 1px solid rgba(255,180,80,0.5);
+  }
+  .tw-oil-count.pumping {
+    color: #fff; border-color: #ffd166;
+    box-shadow: 0 0 8px rgba(255,200,90,0.85);
+    animation: tw-oil-count-pulse 0.9s ease-in-out infinite;
+  }
+  .tw-oil-count.done { color: #aef5c8; border-color: rgba(120,220,160,0.8); background: rgba(10,30,18,0.7); }
+  @keyframes tw-oil-count-pulse {
+    0%,100% { transform: scale(1);    box-shadow: 0 0 6px rgba(255,200,90,0.7); }
+    50%     { transform: scale(1.12); box-shadow: 0 0 12px rgba(255,210,110,1); }
+  }
 
   /* ====== 🩸 Bleed-Out / Stabilize ====== */
   .tile.has-bleeding {
@@ -82654,12 +82672,18 @@ function renderBoard() {
         // data-URL upload / emoji fallback).
         cellInner = `<div class="tile-marker event" title="${escapeHtml(tile.event.def.name || 'Event')}">${renderEventTileIcon(tile, x, y)}</div>`;
       } else if (_twOilTower) {
-        // 🛢 Oil tower marker — shows tier icon + progress bar.
+        // 🛢 Oil tower marker — tier icon + a bold X/3 turn counter + progress bar.
         const tierIco = _twOilTower.extracted ? '✅' : '🛢';
         const tierName = (_twOilTower.fuelTier || 'common').toUpperCase();
-        const pct = (_twOilTower.progress / 3) * 100;
-        cellInner = `<div class="tile-marker tw-oil-marker" title="Oil Tower (${tierName}) — ${_twOilTower.extracted ? 'EXTRACTED' : (_twOilTower.progress + '/3 turns')}">
+        const _oilProg = _twOilTower.progress | 0;
+        const pct = (_oilProg / 3) * 100;
+        // Highlight the counter when one of YOUR units is on the pad right now.
+        const _oilOcc = (s.units || []).some(u => u && u.alive && u.owner === ((s.mods && s.mods.twAttackerSide) || 'player')
+          && u.pos && u.pos.x === x && u.pos.y === y && !u._twConvoy);
+        const _oilCountTxt = _twOilTower.extracted ? '✅ DONE' : (_oilProg + '/3');
+        cellInner = `<div class="tile-marker tw-oil-marker" title="Oil Tower (${tierName}) — ${_twOilTower.extracted ? 'EXTRACTED' : (_oilProg + '/3 turns — stand a unit here to pump')}">
           <div class="tw-oil-icon">${tierIco}</div>
+          <div class="tw-oil-count ${_twOilTower.extracted ? 'done' : (_oilOcc ? 'pumping' : '')}">${_oilCountTxt}</div>
           <div class="tw-oil-bar"><div class="tw-oil-fill" style="width:${pct}%"></div></div>
           <div class="tw-oil-tier">${escapeHtml(tierName)}</div>
         </div>`;
@@ -133244,45 +133268,35 @@ function _twTickGameMode(state, who) {
     }
   }
 
-  // 🛢 Oil tower progress — only ticks on player-turn START (when
-  // who === player). A unit that's stayed put on a tower since last
-  // turn (`_twOilStandTowerIdx === idx`) gains +1 progress.
+  // 🛢 Oil tower progress — ticks on the ATTACKER's turn START. ROBUST RULE:
+  // count how many of YOUR turn-starts the tower has been OCCUPIED by one of
+  // your units. +1 per occupied turn-start (any of your units counts), reset to
+  // 0 the moment nobody's on the pad. Extract at 3. This replaced a fragile
+  // per-unit `_twOilStandTowerIdx` marker that could be dropped when a unit
+  // object was rebuilt between turns — which left progress stuck at 0 and never
+  // paid out fuel even though the player stood on the pad. Every turn logs the
+  // running X/3 counter so the player can see it climb.
   if (Array.isArray(state.mods.twOilTowers) && who === (state.mods.twAttackerSide || 'player')) {
+    const _atkSide = state.mods.twAttackerSide || 'player';
     state.mods.twOilTowers.forEach((tw, idx) => {
       if (tw.extracted) return;
-      // Find a player-side unit standing on this tile.
-      const standing = (state.units || []).find(u => u && u.alive && u.owner === (state.mods.twAttackerSide || 'player') && u.pos && u.pos.x === tw.pos.x && u.pos.y === tw.pos.y && !u._twConvoy);
+      // Any living attacker unit standing on this exact tile (convoy unit excluded).
+      const standing = (state.units || []).find(u => u && u.alive && u.owner === _atkSide
+        && u.pos && u.pos.x === tw.pos.x && u.pos.y === tw.pos.y && !u._twConvoy);
       if (standing) {
-        // Continue progress only if the SAME unit was here last turn.
-        if (standing._twOilStandTowerIdx === idx) {
-          tw.progress = Math.min(3, tw.progress + 1);
-          if (tw.progress >= 3) {
-            const earned = Math.floor(tw.fuelMin + Math.random() * Math.max(1, (tw.fuelMax - tw.fuelMin + 1)));
-            tw.fuelEarned = earned;
-            tw.extracted = true;
-            log.push({ msg: `🛢 Tower ${idx + 1} extracted — +${earned.toLocaleString()} Fuel (${tw.fuelTier}).`, color: 'green' });
-          } else {
-            log.push({ msg: `🛢 Tower ${idx + 1} extracting… ${tw.progress}/3 turns.`, color: 'amber' });
-          }
+        tw.progress = Math.min(3, (tw.progress | 0) + 1);
+        if (tw.progress >= 3) {
+          const earned = Math.floor(tw.fuelMin + Math.random() * Math.max(1, (tw.fuelMax - tw.fuelMin + 1)));
+          tw.fuelEarned = earned;
+          tw.extracted = true;
+          log.push({ msg: `🛢 Tower ${idx + 1} EXTRACTED by ${standing.name} — +${earned.toLocaleString()} Fuel (${tw.fuelTier})!`, color: 'green' });
         } else {
-          // First turn on tower — pumps start, progress stays 0 until next turn.
-          standing._twOilStandTowerIdx = idx;
-          log.push({ msg: `🛢 ${standing.name} starts pumping Tower ${idx + 1}.`, color: 'amber' });
+          log.push({ msg: `🛢 Tower ${idx + 1} pumping — ${tw.progress}/3 turns (${standing.name} on the pad).`, color: 'amber' });
         }
-      } else {
-        // No one on the tower — any partial progress resets.
-        if (tw.progress > 0 && !tw.extracted) {
-          tw.progress = 0;
-          log.push({ msg: `🛢 Tower ${idx + 1} progress reset — nobody on the pad.`, color: 'amber' });
-        }
-      }
-    });
-    // Clear stale stand-marker on units that aren't on a tower this turn.
-    (state.units || []).forEach(u => {
-      if (!u || !u.alive || u._twOilStandTowerIdx == null) return;
-      const tw = state.mods.twOilTowers[u._twOilStandTowerIdx];
-      if (!tw || tw.extracted || !u.pos || u.pos.x !== tw.pos.x || u.pos.y !== tw.pos.y) {
-        delete u._twOilStandTowerIdx;
+      } else if ((tw.progress | 0) > 0) {
+        // Pad vacated before extraction — progress is lost.
+        tw.progress = 0;
+        log.push({ msg: `🛢 Tower ${idx + 1} progress lost — nobody on the pad.`, color: 'amber' });
       }
     });
   }

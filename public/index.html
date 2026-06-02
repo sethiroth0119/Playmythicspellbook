@@ -28,11 +28,15 @@
 <!-- Supabase JS v2 — auth + multiplayer foundation. UMD build exposes window.supabase
      globally so the inline scripts below can call window.supabase.createClient(). -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<!-- Colyseus.js 0.15.x client — UMD build exposes window.Colyseus globally.
-     Only loaded once USE_COLYSEUS_MP is enabled (currently false).
-     0.15 client connects to 0.16 server — Colyseus maintains a compatible
-     wire protocol across minor versions. Update pin when server version bumps. -->
-<script src="https://unpkg.com/colyseus.js@^0.15.0/dist/colyseus.js"></script>
+<!-- Colyseus.js 0.16.x client — UMD build exposes window.Colyseus globally.
+     MUST MATCH THE SERVER MAJOR/MINOR: the server runs @colyseus/core ^0.16 with
+     @colyseus/schema ^3.0, whose wire encoding is NOT compatible with the 0.15
+     client (schema v2). A mismatched client connects + reserves a seat but can
+     never decode matchStart / snapshot / emote / matchEnd messages or the state
+     schema — which silently breaks every multiplayer sync. Pinned exact so a
+     future unpkg range can't drift onto an incompatible major. Bump in lockstep
+     with colyseus-server/package.json when the server version changes. -->
+<script src="https://unpkg.com/colyseus.js@0.16.22/dist/colyseus.js"></script>
 <!-- PixiJS v8 — GPU board renderer for the battle screen. Gated behind
      App.flags.pixiBoard so the existing DOM renderer stays the source of
      truth until the hybrid port is proven on the live board. Loaded eagerly

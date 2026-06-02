@@ -62209,7 +62209,13 @@ function applyEventEncounter() {
 
 // ============ TURN CYCLE ============
 const startTurn = (state, who) => {
-  let s = { ...state }; const log = [...s.log];
+  // NOTE: `log` is reassigned in the charged-move release loop below
+  // (`log = s.log` after executeMove returns a fresh state). It MUST be `let`,
+  // not `const` — a `const` here threw "Assignment to constant variable" the
+  // moment a charge move (Sky Dive / Burrow Fang / Rift Step, etc.) released
+  // against a living target, which propagated up through endAITurn and froze
+  // the turn on "Enemy Acting…".
+  let s = { ...state }; let log = [...s.log];
   // ⚰ In-Grave tick — every card in `who`'s graveyard with an inGrave block
   // tagged `turnStart` rolls its chance + cooldown and fires. Runs FIRST so
   // a zombie that rises gets full visibility on the rest of the turn's
@@ -88122,7 +88128,17 @@ function finishAIPhase() {
     renderBattle();
     return;
   }
-  App.state = endAITurn(App.state);
+  // 🛡 Guard the turn transition. endAITurn runs the next side's startTurn —
+  // which fires charged-move releases, in-grave ticks, weather flips, etc. If
+  // ANY of those throws, we must STILL clear aiBusy and re-render, or the player
+  // is frozen on "Enemy Acting…" forever (this is exactly what a stray throw in
+  // the charge-release loop did). Best-effort: apply whatever endAITurn produced.
+  try {
+    App.state = endAITurn(App.state);
+  } catch (e) {
+    try { console.error('[ai] endAITurn threw — recovering so the turn is not frozen', e); } catch (_) {}
+    try { if (App.state) App.state = { ...App.state, turn: 'player', selection: null }; } catch (_) {}
+  }
   App.ui.aiBusy = false;
   renderBattle();
   // Skip-empty-turns QoL: if the player has no legal action at all (no affordable card,

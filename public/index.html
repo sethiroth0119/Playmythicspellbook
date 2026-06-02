@@ -110704,19 +110704,35 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
       App.ui._mpGameOverFallbackArmed = false;
       App.ui._mpGameOverPolling       = false;
     }
-    const authToken = (Cloud.client && Cloud.client.auth)
-      ? Cloud.client.auth.session?.access_token || ''
-      : '';
-    joinColyseusMatch(matchId, authToken, {
-      displayName: Profile.cloud.displayName || '',
-      heroId:      (App.battlePrep && App.battlePrep.heroId) || '',
-    }).then(room => {
-      console.log('[Colyseus] room joined, sessionId=' + room.sessionId);
-      _persistMatchSession();
-    }).catch(err => {
-      console.error('[Colyseus] joinOrCreate failed', err);
-      try { showToast('Could not connect to MP server: ' + (err.message || err)); } catch (e) {}
-    });
+    // 🔑 Auth token — supabase-js v2 has NO synchronous `.auth.session` getter
+    // (that was v1). Reading it returned undefined → an EMPTY token → the server
+    // rejected the WebSocket join ("Invalid Compact JWS") and the client silently
+    // fell back to a fully-local battle. That is the "both players in two
+    // different games, nothing synced, turns don't pass" bug. Fetch the REAL
+    // access token asynchronously (getSession) the same way the rest of the app
+    // does, THEN join. joinColyseusMatch is already async, so deferring the join
+    // one tick to resolve the token changes nothing else.
+    const _doColyseusJoin = (authToken) => {
+      joinColyseusMatch(matchId, authToken || '', {
+        displayName: Profile.cloud.displayName || '',
+        heroId:      (App.battlePrep && App.battlePrep.heroId) || '',
+      }).then(room => {
+        console.log('[Colyseus] room joined, sessionId=' + room.sessionId);
+        _persistMatchSession();
+      }).catch(err => {
+        console.error('[Colyseus] joinOrCreate failed', err);
+        try { showToast('Could not connect to MP server: ' + ((err && err.message) || err)); } catch (e) {}
+      });
+    };
+    try {
+      if (Cloud.client && Cloud.client.auth && typeof Cloud.client.auth.getSession === 'function') {
+        Cloud.client.auth.getSession()
+          .then(({ data }) => _doColyseusJoin((data && data.session && data.session.access_token) || ''))
+          .catch(() => _doColyseusJoin(''));
+      } else {
+        _doColyseusJoin('');
+      }
+    } catch (e) { _doColyseusJoin(''); }
     return null; // Colyseus path doesn't return a Supabase channel
   }
 

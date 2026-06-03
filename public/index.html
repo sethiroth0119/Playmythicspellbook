@@ -119804,6 +119804,20 @@ function _applyUltimateEffect(s, hero, def) {
     s.log.push({ msg: `🔭 ${def.name} — ${hero.name} enters Overwatch (${watchRadius}-tile watch): counters attacks AND strikes enemies that move close.`, color: 'green' });
   }
   else if (type === 'summon') {
+    // 🎴 If the admin picked a real Summon CARD, spawn the ACTUAL unit — with its
+    // own battle sprite, stats, moves and passives — via the shared summoner
+    // (buildUnit stamps the real cardId so getSpriteId resolves 'u_'+cardId and
+    // the board shows the sprite, not an emoji). Only fall back to the generic
+    // configured golem for legacy ultimates that never picked a card.
+    if (def.summonCardId && typeof _battleSpawnSummonByCardId === 'function') {
+      const count = Math.max(1, Math.min(4, (def.summonCount | 0) || (def.amount | 0) || 1));
+      const res = _battleSpawnSummonByCardId(s, hero, def.summonCardId, count);
+      s.units = res.units;
+      if (res.count > 0) s.log.push({ msg: `✨ ${def.name} — ${res.count} ${res.label || 'ally'} joins the fight!`, color: 'green' });
+      else s.log.push({ msg: `✨ ${def.name} failed — no open adjacent tile.`, color: 'amber' });
+      return;
+    }
+    // Legacy fallback — no summon card chosen: spawn a generic configured golem.
     const open = (typeof _findOpenAdjacentTile === 'function') ? _findOpenAdjacentTile(s, hero.pos) : null;
     if (!open) { s.log.push({ msg: `✨ ${def.name} failed — no open adjacent tile.`, color: 'amber' }); return; }
     const hp = Math.max(1, (def.summonHp | 0) || 28);

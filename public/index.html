@@ -31324,8 +31324,14 @@ function stopWeatherAudio() {
 // ============================================================================
 const MENU_MUSIC_TRACKS = [
   // 🎵 Main menu theme — the default track that plays on the title / menu screens.
+  // It's deliberately FIRST so it's MENU_MUSIC_TRACKS[0]: any saved/cloud
+  // menuTrackId that no longer matches a track (e.g. the retired 'lavender'
+  // default) falls back to THIS one — guaranteeing the new theme, never the old.
   { id: 'mainmenu',  name: 'Main Menu Theme',        src: 'assets/Audio/new%20Main%20menu%20%20Music.mp3' },
-  { id: 'lavender',  name: 'Lavender Town Syndrome', src: 'assets/Audio/Lavender%20Town%20Syndrome.mp3' },
+  // 🪦 The old default is re-id'd to 'lavendertown' so the legacy 'lavender'
+  // value (still saved on existing/cloud profiles) no longer resolves to it —
+  // it's only played now if a player DELIBERATELY picks it from Settings.
+  { id: 'lavendertown', name: 'Lavender Town Syndrome', src: 'assets/Audio/Lavender%20Town%20Syndrome.mp3' },
   // Extra tracks the player can pick from in settings — same folder, same loop behavior.
   { id: 'blackmkt',  name: 'Black Market Basement',  src: 'assets/Audio/Black%20Market%20Basement.mp3' },
   { id: 'eurotas',   name: 'Last Stand at the Eurotas', src: 'assets/Audio/Last%20Stand%20at%20the%20Eurotas.mp3' },
@@ -31343,7 +31349,11 @@ function _ensureMenuAudioEl() {
   return _menuAudioEl;
 }
 function getMenuTrack() {
-  const id = (Profile.settings && Profile.settings.menuTrackId) || DEFAULT_MENU_TRACK_ID;
+  let id = (Profile.settings && Profile.settings.menuTrackId) || DEFAULT_MENU_TRACK_ID;
+  // 🎵 The retired old default ('lavender') always resolves to the new Main Menu
+  // Theme, even when a cloud profile re-restores the legacy value after the
+  // one-time settings migration already ran. (Deliberate picks use 'lavendertown'.)
+  if (id === 'lavender') id = 'mainmenu';
   return MENU_MUSIC_TRACKS.find(t => t.id === id) || MENU_MUSIC_TRACKS[0];
 }
 // One-shot listener so the FIRST user gesture (anywhere on the page) auto-starts

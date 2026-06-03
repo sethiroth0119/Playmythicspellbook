@@ -58588,12 +58588,22 @@ function _gateOnPlayThenPlace(card, placeFn) {
   try {
     const cost = card && card.onPlay && card.onPlay.cost;
     if (_costIsEmpty(cost)) { placeFn(); return; }
+    // 💡 The on-play cost is MANDATORY to play this card. If it can't be paid the
+    // card can NOT be played — it stays in hand, no energy spent, nothing summoned.
     if (!_costPayable(App.state, 'player', null, cost)) {
-      try { showToast('⚡ ' + (card.name || 'Card') + ' enters — on-play cost (' + _costShortLabel(cost) + ') unpaid, effect skipped.'); } catch (e) {}
-      App.ui._suppressOnPlay = card.instanceId; placeFn(); return;
+      try { showToast('🚫 ' + (card.name || 'This card') + ' needs ' + _costShortLabel(cost) + ' to play — you can\'t pay it.'); } catch (e) {}
+      try { renderBattle(); } catch (e) {}
+      return; // do NOT summon
     }
     _promptCostPayment(App.state, 'player', null, cost, card.name).then(res => {
-      if (!res) { App.ui._suppressOnPlay = card.instanceId; placeFn(); return; }
+      // ❌ Cancel = cancel the whole play. The card is NOT summoned, NO card is
+      // discarded, and no energy is spent — it simply stays in your hand.
+      if (!res) {
+        try { showToast('Play cancelled — ' + (card.name || 'card') + ' stays in your hand.'); } catch (e) {}
+        try { renderBattle(); } catch (e) {}
+        return;
+      }
+      // ✅ Cost paid → commit the payment, then summon + fire the on-play effect.
       App.state = { ...res.state, log: [...(res.state.log || []), ...(res.log || [])] };
       placeFn();
     });

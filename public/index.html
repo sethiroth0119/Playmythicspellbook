@@ -53028,6 +53028,17 @@ function _lootWithUnit(unitId, mode) {
 
     // Forfeit the unit's turn regardless of choice (it's an action).
     t.looted = true;
+    // 🪦 Looting clears the body from the graveyard too — once salvaged it can no
+    // longer be banished / recurred. Find the fallen unit on this tile and drop
+    // its stamped card from that side's graveyard.
+    try {
+      const _fallen = s.units.find(x => x && !x.alive && x.pos && x.pos.x === t.x && x.pos.y === t.y && x.owner === t.owner);
+      const _gside = (t.owner === 'player') ? 'player' : 'ai';
+      if (_fallen && s[_gside] && Array.isArray(s[_gside].graveyard)) {
+        const _gi = s[_gside].graveyard.findIndex(c => c && c._summonedUnitId === _fallen.id);
+        if (_gi >= 0) s[_gside] = { ...s[_gside], graveyard: s[_gside].graveyard.filter((_, i) => i !== _gi) };
+      }
+    } catch (e) {}
     s.units = s.units.map(x => x.id === u.id ? { ...x, hasMoved: true, hasAttacked: true, _looted: true } : x);
     s._salvageRun = s._salvageRun || { gained: {}, looted: 0 };
     s._salvageRun.looted++;
@@ -58333,6 +58344,22 @@ function _costIsEmpty(cost) {
   return !((cost.discard | 0) > 0 || (cost.payLifeHero | 0) > 0 || (cost.banish | 0) > 0
     || (cost.tribute | 0) > 0 || cost.tributeSelf);
 }
+// 🪦 Graveyard cards eligible to be BANISHED for a cost. placeUnit (and the AI
+// summon path) stamp each summoned unit's card with `_summonedUnitId`; while that
+// unit is still ALIVE on the field its card lives on the BOARD, not in the grave,
+// so it must NOT count toward a banish cost (that was the "it counted my field
+// units" bug). Returns [{ card, idx }] with idx = position in the FULL graveyard
+// so payment can splice the exact card out.
+function _banishableGrave(state, side) {
+  const grave = (state && state[side] && Array.isArray(state[side].graveyard)) ? state[side].graveyard : [];
+  const aliveIds = new Set(((state && state.units) || []).filter(u => u && u.alive).map(u => u.id));
+  const out = [];
+  grave.forEach((c, idx) => {
+    if (c && c._summonedUnitId && aliveIds.has(c._summonedUnitId)) return; // still on the board
+    out.push({ card: c, idx });
+  });
+  return out;
+}
 function _costPayable(state, side, sourceUnit, cost, excludeCardId) {
   if (_costIsEmpty(cost)) return true;
   if (!state) return false;
@@ -58344,7 +58371,9 @@ function _costPayable(state, side, sourceUnit, cost, excludeCardId) {
   const others = (state.units || []).filter(u => u && u.alive && u.owner === side && !u.isHero
     && (!sourceUnit || u.id !== sourceUnit.id));
   if ((cost.discard | 0) > 0 && hand.length < (cost.discard | 0)) return false;
-  if ((cost.banish | 0) > 0 && grave.length < (cost.banish | 0)) return false;
+  // Banish only counts cards actually IN the graveyard (not the cards of units
+  // that are still alive on the field).
+  if ((cost.banish | 0) > 0 && _banishableGrave(state, side).length < (cost.banish | 0)) return false;
   if ((cost.payLifeHero | 0) > 0 && (!hero || hero.currentHp <= (cost.payLifeHero | 0))) return false;
   if ((cost.tribute | 0) > 0 && others.length < (cost.tribute | 0)) return false;
   if (cost.tributeSelf && (!sourceUnit || sourceUnit.isHero)) return false;
@@ -58439,7 +58468,8 @@ function _aiPickCost(state, side, sourceUnit, cost) {
     && (!sourceUnit || u.id !== sourceUnit.id)).sort((a, b) => (a.currentHp || 0) - (b.currentHp || 0));
   return {
     discardIds: hand.slice(0, cost.discard | 0).map(c => c.instanceId),
-    banishIdxs: Array.from({ length: Math.min(cost.banish | 0, grave.length) }, (_, i) => i),
+    // Banish from the REAL graveyard (skip alive units' cards); oldest first.
+    banishIdxs: _banishableGrave(state, side).slice(0, cost.banish | 0).map(b => b.idx),
     tributeIds: others.slice(0, cost.tribute | 0).map(u => u.id),
   };
 }
@@ -58456,6 +58486,9 @@ function _promptCostPayment(state, side, sourceUnit, cost, label, excludeCardId)
       // Exclude the activating spell/trap card from its own discard options.
       const hand = (ss.hand || []).filter(c => !excludeCardId || c.instanceId !== excludeCardId);
       const grave = ss.graveyard || [];
+      // Only the REAL graveyard (not cards of units still alive on the field) is
+      // banishable. Each entry keeps its original index so payment splices it out.
+      const banishable = _banishableGrave(state, side);
       const others = (state.units || []).filter(u => u && u.alive && u.owner === side && !u.isHero
         && (!sourceUnit || u.id !== sourceUnit.id));
       const need = { discard: cost.discard | 0, banish: cost.banish | 0, tribute: cost.tribute | 0 };
@@ -58466,7 +58499,7 @@ function _promptCostPayment(state, side, sourceUnit, cost, label, excludeCardId)
         st.textContent = `
           .cost-pay-overlay{position:fixed;inset:0;z-index:2147483560;display:flex;align-items:center;justify-content:center;
             background:radial-gradient(ellipse at 50% 40%,rgba(10,6,20,0.82),rgba(2,1,8,0.94));backdrop-filter:blur(3px);}
-          .cost-pay-box{width:min(640px,92vw);max-height:88vh;overflow:auto;border-radius:14px;padding:18px 20px 16px;
+          .cost-pay-box{width:min(760px,94vw);max-height:88vh;overflow:auto;border-radius:14px;padding:18px 20px 16px;
             background:linear-gradient(160deg,#1c1230,#120a1e);border:2px solid #c9a5ff;
             box-shadow:0 24px 70px rgba(0,0,0,0.8),0 0 40px rgba(201,165,255,0.35);color:#e9e3f7;}
           .cost-pay-title{font-family:'Cinzel',serif;font-weight:800;font-size:1.15rem;color:#ffd166;letter-spacing:.03em;}
@@ -58502,7 +58535,7 @@ function _promptCostPayment(state, side, sourceUnit, cost, label, excludeCardId)
       }
       if (need.banish > 0) {
         sections += `<div class="cost-sec"><div class="cost-sec-head" data-for="banish">🌑 Banish from graveyard <span class="cost-count">0 / ${need.banish}</span></div>`
-          + `<div class="cost-grid">${grave.length ? grave.map((c, i) => itemHtml('banish', i, c.icon, c.name)).join('') : '<span class="cost-pay-empty">Graveyard is empty.</span>'}</div></div>`;
+          + `<div class="cost-grid">${banishable.length ? banishable.map(b => itemHtml('banish', b.idx, b.card && b.card.icon, b.card && b.card.name)).join('') : '<span class="cost-pay-empty">No cards in the graveyard to banish.</span>'}</div></div>`;
       }
       if (need.tribute > 0) {
         sections += `<div class="cost-sec"><div class="cost-sec-head" data-for="tribute">⚰️ Tribute friendly units <span class="cost-count">0 / ${need.tribute}</span></div>`
@@ -83033,7 +83066,7 @@ function renderUnitModal() {
 
   return `
     <div class="modal-backdrop" id="modal-backdrop">
-      <div class="unit-modal ${u.owner}${isHero ? ' is-hero' : ''}" role="dialog">
+      <div class="unit-modal ${u.owner}${isHero ? ' is-hero' : ''}" role="dialog" style="max-width:min(760px,96vw)">
         <button class="modal-close" id="modal-close" aria-label="Close">×</button>
         <div class="modal-header">
           <div class="modal-portrait">${unitBoardVisual(u)}</div>
@@ -88488,7 +88521,10 @@ function placeUnit(card, pos) {
   let next = {
     ...s,
     units: [...s.units, unit],
-    player: { ...s.player, hand: s.player.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.player.graveyard, card], energy: s.player.energy - getEffectiveCardCost(card, s, 'player') },
+    // 🪦 Stamp the card with its live unit id. While the unit is alive on the
+    // board this card is NOT counted as a banishable graveyard card (it only
+    // becomes a real grave card once the unit dies / is looted).
+    player: { ...s.player, hand: s.player.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.player.graveyard, { ...card, _summonedUnitId: unit.id }], energy: s.player.energy - getEffectiveCardCost(card, s, 'player') },
     log: [...s.log, { msg: `You play ${card.name} (Lv ${prof.level})`, color: 'green' }],
   };
   // 🔮 Clear consumed prophecy buff so it only applies to the NEXT single deployment.

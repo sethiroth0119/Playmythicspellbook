@@ -31323,6 +31323,8 @@ function stopWeatherAudio() {
 // rejection silently and retry on the next sync call once the user clicks.
 // ============================================================================
 const MENU_MUSIC_TRACKS = [
+  // 🎵 Main menu theme — the default track that plays on the title / menu screens.
+  { id: 'mainmenu',  name: 'Main Menu Theme',        src: 'assets/Audio/new%20Main%20menu%20%20Music.mp3' },
   { id: 'lavender',  name: 'Lavender Town Syndrome', src: 'assets/Audio/Lavender%20Town%20Syndrome.mp3' },
   // Extra tracks the player can pick from in settings — same folder, same loop behavior.
   { id: 'blackmkt',  name: 'Black Market Basement',  src: 'assets/Audio/Black%20Market%20Basement.mp3' },
@@ -31330,7 +31332,7 @@ const MENU_MUSIC_TRACKS = [
   { id: 'flesh',     name: 'The Price of Flesh',     src: 'assets/Audio/The%20Price%20of%20Flesh.mp3' },
   { id: 'thermo',    name: 'Thermopylae Finalis',    src: 'assets/Audio/Thermopylae%20Finalis.mp3' },
 ];
-const DEFAULT_MENU_TRACK_ID = 'lavender';
+const DEFAULT_MENU_TRACK_ID = 'mainmenu';
 let _menuAudioEl  = null;
 let _menuAudioSrc = null;   // currently-loaded src so we can detect track swaps
 function _ensureMenuAudioEl() {
@@ -32461,7 +32463,7 @@ const Profile = {
     weatherAudioVolume:  0.6,  // 0.0–1.0 volume slider for the looping weather track
     musicEnabled:        true, // master toggle for the menu music
     musicVolume:         0.5,  // 0.0–1.0 volume slider for the menu music
-    menuTrackId:         'lavender', // which track plays on the main menu (id from MENU_MUSIC_TRACKS)
+    menuTrackId:         'mainmenu', // which track plays on the main menu (id from MENU_MUSIC_TRACKS)
     sfxEnabled:          true, // master toggle for in-game sound effects (coin flip, etc.)
     sfxVolume:           0.8,  // 0.0–1.0 volume slider for one-shot sound effects
     logFilters: {
@@ -49551,6 +49553,16 @@ function getSettings() {
   }
   if (typeof Profile.settings.boardSkin !== 'string' || !Profile.settings.boardSkin) {
     Profile.settings.boardSkin = 'default';
+  }
+  // 🎵 One-time menu-music switch — the new "Main Menu Theme" replaces the old
+  // default ('lavender'). Flip saved profiles that are still on the old default
+  // to the new track exactly ONCE; the flag means a deliberate re-pick of any
+  // track afterwards is preserved (we never migrate again).
+  if (!Profile.settings._menuTrackSwitched_v90r) {
+    if (!Profile.settings.menuTrackId || Profile.settings.menuTrackId === 'lavender') {
+      Profile.settings.menuTrackId = 'mainmenu';
+    }
+    Profile.settings._menuTrackSwitched_v90r = true;
   }
   // Mirror the saved preference into the live App.flags every read so the
   // first call after auth-load picks it up. App.flags is the source of truth

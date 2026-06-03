@@ -57462,7 +57462,15 @@ const calculateDamage = (move, attacker, defender, weather) => {
   if (typeof _battleEvasiveRollHit === 'function' && _battleEvasiveRollHit(defender)) {
     return { damage: 0, missed: true, crit: false, typeMul: 1, effectiveness: 'miss' };
   }
-  let atkStat = (move.type === 'physical' ? attacker.stats.atk : attacker.stats.mag) + getStatBonus(attacker, move.type === 'physical' ? 'atk' : 'mag');
+  // 🛡️➡️⚔️ Body Press — when move.useDefenseAsOffense is set, the attacker's
+  // DEFENSE drives a physical move's damage and its RESISTANCE drives a magic
+  // move's damage (instead of ATK / MAG). Lets a tanky high-DEF unit or a
+  // high-RES wall punch with its armor. Stat stages + item / aura bonuses on
+  // DEF / RES carry through (getStatBonus handles all four stats).
+  const _offKey = move.useDefenseAsOffense
+    ? (move.type === 'physical' ? 'def' : 'res')
+    : (move.type === 'physical' ? 'atk' : 'mag');
+  let atkStat = (attacker.stats[_offKey] || 0) + getStatBonus(attacker, _offKey);
   // Status multiplier (e.g. Infected halves ATK/MAG). Applied before flat weather
   // bonuses below so the +5 rainmaker / +3 monsoon stack ON TOP of the halved stat —
   // an Infected mage in rain is still weaker than a healthy one but isn't useless.
@@ -76000,6 +76008,12 @@ function renderMoveEditor() {
             <span>🪦 Death Strike (OHKO) — if it lands, target HP zeroes out. Pair with low accuracy (20-35%) for balance.</span>
           </label>
         </div>
+        <div class="editor-field full">
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+            <input type="checkbox" id="mv-defense-offense" ${move.useDefenseAsOffense ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+            <span>🛡️➡️⚔️ Body Press — damage is computed from the user's <strong>DEFENSE</strong> (for a Physical move) or <strong>RESISTANCE</strong> (for a Magic move) instead of ATK / MAG. Great for tanky / high-armor units.</span>
+          </label>
+        </div>
         ${(() => {
           // Stage modifier UI: pick a stat and delta (use one slot per move for simplicity)
           const sm = (Array.isArray(move.stageMods) && move.stageMods[0]) || { stat: '', delta: 0 };
@@ -76324,6 +76338,9 @@ function bindMoveEditor() {
     // Combo status — only saved if non-empty and not a duplicate of the primary.
     if (status2 && status2 !== status) _saveMoveStatus(status2, status2Chance, status2Dur);
     if (isOhko) move.effect = 'ohko';
+    // 🛡️➡️⚔️ Body Press — damage scales off DEF (physical) / RES (magic).
+    if (document.getElementById('mv-defense-offense') && document.getElementById('mv-defense-offense').checked) move.useDefenseAsOffense = true;
+    else delete move.useDefenseAsOffense;
     if (stageStat && stageDelta) move.stageMods = [{ stat: stageStat, delta: stageDelta }];
     if (recoilPct > 0)  move.recoil = recoilPct / 100;
     if (recoilFixed > 0) move.recoilFixed = recoilFixed;
@@ -132541,6 +132558,8 @@ function describeMoveExtras(mv) {
   if (mv.vanish) out.push({ icon: '🪶', text: 'Vanishes, then strikes the following turn' });
   if (mv.priority) out.push({ icon: '⏩', text: 'Priority — always strikes first' });
   if (mv.lifesteal) out.push({ icon: '🩸', text: 'Lifesteal — heals the user for part of the damage dealt' });
+  // 🛡️➡️⚔️ Body Press — damage scales off the user's defensive stat.
+  if (mv.useDefenseAsOffense) out.push({ icon: '🛡️', text: 'Body Press — damage is based on the user\'s DEFENSE (physical move) or RESISTANCE (magic move) instead of ATK / MAG' });
   // 👑 Take Control — seize the targeted enemy unit (mind control).
   if (mv.takeControl) {
     const _tc = mv.takeControl;

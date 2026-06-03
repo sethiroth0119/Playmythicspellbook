@@ -84436,6 +84436,16 @@ function renderCardDetailModal() {
       </div>
     </div>` : '';
 
+  // ⚡ Activation cost for SPELL / TRAP cards (Yu-Gi-Oh-style pay-to-activate).
+  const activationCostHtml = (card.activationCost && typeof _costShortLabel === 'function'
+    && typeof _costIsEmpty === 'function' && !_costIsEmpty(card.activationCost)) ? `
+    <div class="modal-section" style="margin-top:0.7rem">
+      <div class="modal-section-title">⚡ Activation Cost</div>
+      <div style="border:1px solid rgba(255,209,102,0.4);border-left:3px solid #ffd166;border-radius:6px;padding:7px 10px;background:linear-gradient(90deg,rgba(255,209,102,0.10),rgba(20,12,40,0.4));color:#ffe9b8;font-size:0.85rem;line-height:1.45">
+        To activate this ${escapeHtml(card.type || 'card')} you must pay <strong>${escapeHtml(_costShortLabel(card.activationCost))}</strong>. You choose what to give up before it resolves — it can't be played unless you can pay the cost.
+      </div>
+    </div>` : '';
+
   // 🛡 Counter triggers — supports both legacy single-trigger cards (`counterTrigger`)
   // and the multi-trigger array (`counterTriggers`). Uses the same labels as the
   // editor so wording matches everywhere.
@@ -84571,6 +84581,7 @@ function renderCardDetailModal() {
           </div>
           ${passivesHtml}
           ${onPlayHtml}
+          ${activationCostHtml}
           ${counterHtml}
           ${handHtml}
           ${inGraveHtml}
@@ -89642,6 +89653,18 @@ function aiScoreAttack(attacker, target, move, state, playerProf) {
     const counter = getTypeMultiplier(move.element, playerLeaderElem);
     if (counter > 1 && (target.isHero || (getElementsOf(target) || []).includes(playerLeaderElem))) score += 40;
   }
+  // 👑 TAKE CONTROL — seizing an enemy unit is a massive tempo swing: it removes
+  // a threat AND adds it to our board. Value scales with the victim's strength
+  // and the steal chance; a permanent steal is worth far more than a temporary
+  // loan. (Control moves carry ~0 base damage, so this is what makes the AI use
+  // them — and prefer stealing the strongest reachable enemy.)
+  if (move.takeControl && target && !target.isHero) {
+    const _ts = target.stats || {};
+    const _strength = (target.maxHp || 0) / 4 + Math.max(_ts.atk || 0, _ts.mag || 0) + (_ts.spd || 0) * 2;
+    const _chance = Math.max(1, Math.min(100, move.takeControl.chance || 100)) / 100;
+    const _permaMul = (move.takeControl.duration | 0) > 0 ? 0.55 : 1;
+    score += (90 + _strength * 2.2) * _chance * _permaMul;
+  }
   return score;
 }
 
@@ -90129,7 +90152,10 @@ function doAIStep() {
   // ---- Phase 3: spells — score every (spell, target) pair, prefer lethal/big tempo ----
   // "Spendthrift" daily modifier zeroes out spell costs — the AI gets the same discount
   const aiCheapSpells = !!(s.mods && s.mods.cheapSpells);
-  const spellable = s.ai.hand.filter(c => c.type === 'spell' && ((aiCheapSpells ? 0 : c.cost) <= s.ai.energy));
+  const spellable = s.ai.hand.filter(c => c.type === 'spell'
+    && ((aiCheapSpells ? 0 : c.cost) <= s.ai.energy)
+    // ⚡ Skip spells whose Yu-Gi-Oh-style activation cost the AI can't pay.
+    && (typeof _costPayable !== 'function' || _costPayable(s, 'ai', null, c.activationCost)));
   if (spellable.length > 0) {
     let best = null;
     for (const card of spellable) {
@@ -90328,6 +90354,16 @@ function doAIStep() {
           };
           setAIActor(null, `✨ Enemy enchants the field`);
         }
+        // ⚡ Pay the spell's Yu-Gi-Oh-style activation cost (AI auto-pays its
+        // cheapest hand cards / oldest graveyard / weakest units). The spell card
+        // is already in the graveyard here, so the discard cost picks OTHERS.
+        try {
+          if (card.activationCost && typeof _costIsEmpty === 'function' && !_costIsEmpty(card.activationCost)
+              && typeof _applyCostPayment === 'function' && _costPayable(App.state, 'ai', null, card.activationCost)) {
+            const _pay = _applyCostPayment(App.state, 'ai', null, card.activationCost, _aiPickCost(App.state, 'ai', null, card.activationCost));
+            App.state = { ...(_pay.state), log: [...((_pay.state && _pay.state.log) || []), ...(_pay.log || [])] };
+          }
+        } catch (e) {}
         renderBattle();
         scheduleAIStep(AI_DELAYS.spell);
       };
@@ -90427,12 +90463,21 @@ function doAIStep() {
       const probe = { ...unit, pos: atPos };
       // 🧱 A Wall Unit with attacking disabled never attacks (AI side).
       if (probe.isWall && probe.wall && probe.wall.canAttack === false) return null;
-      const moves = getAvailableMoves(probe).filter(m => m.kind === 'attack');
+      // 👑 Also consider take-control ability moves (they target one enemy like
+      // an attack but seize it instead of dealing damage).
+      const moves = getAvailableMoves(probe).filter(m =>
+        (m.kind === 'attack') ||
+        (m.kind === 'ability' && m.takeControl && (m.target === 'enemy' || m.target === 'allEnemies')));
       const isDispelled = (probe.statusEffects || []).some(e => e.type === 'dispel');
       const playerUnits = App.state.units.filter(u => u.owner === 'player' && u.alive && !isVanished(u));
       const candidates = [];
       for (const move of moves) {
-        if (move.cost > App.state.ai.energy || !move.power) continue;
+        const _isControl = move.kind === 'ability' && !!move.takeControl;
+        if (move.cost > App.state.ai.energy) continue;
+        if (!_isControl && !move.power) continue;   // attacks need power; control moves don't
+        // ⚡ Skip a move whose Yu-Gi-Oh-style activation cost the AI can't pay.
+        if (move.activationCost && typeof _costPayable === 'function'
+            && !_costPayable(App.state, 'ai', probe, move.activationCost)) continue;
         if (isDispelled && (move.cost || 0) > 0) continue;
         // AI scoring also honors speed-penalty range shortening so a slowed AI unit
         // won't pick targets it can't actually reach.
@@ -90440,6 +90485,8 @@ function doAIStep() {
         for (const t of playerUnits) {
           if (distance(probe.pos, t.pos) > aiRange) continue;
           if (isEffectivelyFlying(t) && !canMoveHitTarget(move, t)) continue;
+          // 👑 Take-control can't seize heroes / walls / spellshielded units.
+          if (_isControl && (t.isHero || t.isWall || (typeof hasPassive === 'function' && hasPassive(t, 'spellshield')))) continue;
           // 🎭 Happy / Follow My Lead — skip targets the attacker is forbidden from
           // hitting. canAttackTarget reads source-tracked statuses on the probe.
           const gate = (typeof canAttackTarget === 'function') ? canAttackTarget(probe, t) : { ok: true };
@@ -132494,6 +132541,16 @@ function describeMoveExtras(mv) {
   if (mv.vanish) out.push({ icon: '🪶', text: 'Vanishes, then strikes the following turn' });
   if (mv.priority) out.push({ icon: '⏩', text: 'Priority — always strikes first' });
   if (mv.lifesteal) out.push({ icon: '🩸', text: 'Lifesteal — heals the user for part of the damage dealt' });
+  // 👑 Take Control — seize the targeted enemy unit (mind control).
+  if (mv.takeControl) {
+    const _tc = mv.takeControl;
+    const _dur = (_tc.duration | 0) > 0 ? ` for ${_tc.duration} turn${_tc.duration === 1 ? '' : 's'}` : ' permanently';
+    out.push({ icon: '👑', text: `${_tc.chance || 100}% chance to SEIZE CONTROL of the targeted enemy unit${_dur} — it joins your side (heroes / walls / spellshielded immune)` });
+  }
+  // ⚡ Activation cost — a Yu-Gi-Oh-style price paid to USE this move.
+  if (mv.activationCost && typeof _costShortLabel === 'function' && typeof _costIsEmpty === 'function' && !_costIsEmpty(mv.activationCost)) {
+    out.push({ icon: '⚡', text: `Activation cost — ${_costShortLabel(mv.activationCost)} (paid before the move resolves; can't be used unless you can pay)` });
+  }
   return out;
 }
 // Plain-English line for a unit/hero's onPlay (enter-the-field) effect.

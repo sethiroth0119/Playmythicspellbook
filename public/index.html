@@ -32674,6 +32674,9 @@ const ColyseusMP = {
   client: null,    // Colyseus.Client instance (lazy init on first join)
   room:   null,    // active room handle, null when not in a match
   state:  null,    // latest snapshot of room.state (BattleState schema mirror)
+  _joinedMatchId: null,        // matchId of the room we're currently in (dedup guard)
+  _joinInFlight: null,         // Promise of an in-progress join (concurrency guard)
+  _joinInFlightMatchId: null,  // matchId the in-flight join is targeting
 };
 
 /**
@@ -32687,77 +32690,143 @@ const ColyseusMP = {
  */
 async function joinColyseusMatch(matchId, authToken, opts) {
   opts = opts || {};
-  // Lazy-init the client (once per session — the Client reuses the WS connection).
-  if (!ColyseusMP.client) {
-    if (typeof Colyseus === 'undefined') {
-      throw new Error('Colyseus JS client not loaded — check the CDN <script> tag in <head>.');
-    }
-    ColyseusMP.client = new Colyseus.Client(COLYSEUS_SERVER_URL);
-    console.log('[Colyseus] client created →', COLYSEUS_SERVER_URL);
+  // 🛡 DEDUP — if we're already in the room for THIS exact match, reuse it.
+  // Re-joining would call room.leave() on the room we already hold; if we're
+  // the only member that DISPOSES the room, which expires the OPPONENT's pending
+  // seat reservation and strands them on a local fallback ("two different
+  // games"). This guard is the core multiplayer-sync fix.
+  if (ColyseusMP.room && ColyseusMP._joinedMatchId === matchId) {
+    return ColyseusMP.room;
+  }
+  // 🛡 CONCURRENCY — if a join for this same match is already running, await it
+  // rather than kicking off a second joinOrCreate (which races + double-creates).
+  if (ColyseusMP._joinInFlight && ColyseusMP._joinInFlightMatchId === matchId) {
+    return ColyseusMP._joinInFlight;
   }
 
-  // Clean up any existing room from a previous match.
-  if (ColyseusMP.room) {
-    try { await ColyseusMP.room.leave(); } catch (e) {}
-    ColyseusMP.room  = null;
+  const _join = (async () => {
+    // Lazy-init the client (once per session — the Client reuses the WS connection).
+    if (!ColyseusMP.client) {
+      if (typeof Colyseus === 'undefined') {
+        throw new Error('Colyseus JS client not loaded — check the CDN <script> tag in <head>.');
+      }
+      ColyseusMP.client = new Colyseus.Client(COLYSEUS_SERVER_URL);
+      console.log('[Colyseus] client created →', COLYSEUS_SERVER_URL);
+    }
+
+    // Clean up a room from a DIFFERENT match only — never tear down the one we
+    // want (see the dedup note above).
+    if (ColyseusMP.room && ColyseusMP._joinedMatchId !== matchId) {
+      try { await ColyseusMP.room.leave(); } catch (e) {}
+      ColyseusMP.room  = null;
+      ColyseusMP.state = null;
+      ColyseusMP._joinedMatchId = null;
+    }
+
+    console.log('[Colyseus] joining room battle matchId=' + matchId);
+    const joinOpts = {
+      matchId,
+      authToken,
+      displayName: opts.displayName || (Profile && Profile.cloud && Profile.cloud.displayName) || '',
+      heroId:      opts.heroId      || (App && App.battlePrep && App.battlePrep.heroId)       || '',
+      deckCardIds: Array.isArray(opts.deckCardIds) ? opts.deckCardIds : [],
+    };
+    // 🔁 RETRY — "seat reservation expired" is a TRANSIENT race: the matchmaker
+    // handed us a seat in a room that disposed (or our WS was too slow to consume
+    // it) before we connected. Re-running joinOrCreate routes us to the now-stable
+    // room (filterBy keeps both players on the same matchId), so the second player
+    // reliably lands in the SAME room instead of falling back to a local battle.
+    let room = null, lastErr = null;
+    const MAX_TRIES = 4;
+    for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+      try {
+        room = await ColyseusMP.client.joinOrCreate('battle', joinOpts);
+        break;
+      } catch (err) {
+        lastErr = err;
+        const msg = ((err && (err.message || err.code)) || '') + '';
+        const transient = /seat reservation|reservation expired|4002|disposed|locked|ETIMEDOUT|timeout|503/i.test(msg);
+        console.warn('[Colyseus] join attempt ' + (attempt + 1) + '/' + MAX_TRIES + ' failed: ' + msg + (transient && attempt < MAX_TRIES - 1 ? ' — retrying…' : ''));
+        if (!transient || attempt === MAX_TRIES - 1) throw err;
+        await new Promise(r => setTimeout(r, 450 + attempt * 450));
+      }
+    }
+    if (!room) throw (lastErr || new Error('joinOrCreate failed'));
+    ColyseusMP.room = room;
     ColyseusMP.state = null;
-  }
+    ColyseusMP._joinedMatchId = matchId;
 
-  console.log('[Colyseus] joining room battle matchId=' + matchId);
-  ColyseusMP.room = await ColyseusMP.client.joinOrCreate('battle', {
-    matchId,
-    authToken,
-    displayName: opts.displayName || (Profile && Profile.cloud && Profile.cloud.displayName) || '',
-    heroId:      opts.heroId      || (App && App.battlePrep && App.battlePrep.heroId)       || '',
-    deckCardIds: Array.isArray(opts.deckCardIds) ? opts.deckCardIds : [],
-  });
+    // ─── Server → client message handlers ────────────────────────────────────
+    room.onMessage('matchStart',   _onColyseusMatchStart);
+    room.onMessage('attackResult', _onColyseusAttackResult);
+    room.onMessage('unitPlayed',   _onColyseusUnitPlayed);
+    room.onMessage('battleLog',    _onColyseusLogEntries);
+    room.onMessage('matchEnd',     _onColyseusMatchEnd);
+    room.onMessage('reject',       _onColyseusReject);
+    // 📸 Server relays the opponent's board snapshot (server-owns-match path).
+    room.onMessage('snapshot',     _onColyseusSnapshot);
+    // 👋 Server tells us our own authoritative userId on join — keep our
+    // perspective id in sync with what the server uses for turn / result checks.
+    room.onMessage('welcome',      (data) => { if (data && data.userId) MatchBroadcast.myUserId = data.userId; });
+    room.onMessage('emote',        (data) => {
+      // Reuse the existing emote renderer from the Supabase path.
+      try { _onRemoteEmoteArrived(data); } catch (e) {}
+    });
 
-  // ─── Server → client message handlers ────────────────────────────────────
-  ColyseusMP.room.onMessage('matchStart',   _onColyseusMatchStart);
-  ColyseusMP.room.onMessage('attackResult', _onColyseusAttackResult);
-  ColyseusMP.room.onMessage('unitPlayed',   _onColyseusUnitPlayed);
-  ColyseusMP.room.onMessage('battleLog',    _onColyseusLogEntries);
-  ColyseusMP.room.onMessage('matchEnd',     _onColyseusMatchEnd);
-  ColyseusMP.room.onMessage('reject',       _onColyseusReject);
-  // 📸 Server relays the opponent's board snapshot (server-owns-match path).
-  ColyseusMP.room.onMessage('snapshot',     _onColyseusSnapshot);
-  // 👋 Server tells us our own authoritative userId on join — keep our
-  // perspective id in sync with what the server uses for turn / result checks.
-  ColyseusMP.room.onMessage('welcome',      (data) => { if (data && data.userId) MatchBroadcast.myUserId = data.userId; });
-  ColyseusMP.room.onMessage('emote',        (data) => {
-    // Reuse the existing emote renderer from the Supabase path.
-    try { _onRemoteEmoteArrived(data); } catch (e) {}
-  });
+    // State-change observer — keeps ColyseusMP.state current.
+    room.onStateChange(state => {
+      ColyseusMP.state = state;
+    });
 
-  // State-change observer — keeps ColyseusMP.state current.
-  ColyseusMP.room.onStateChange(state => {
-    ColyseusMP.state = state;
-  });
+    room.onError((code, msg) => {
+      console.error('[Colyseus] room error', code, msg);
+      try { showToast('MP error: ' + (msg || code)); } catch (e) {}
+    });
 
-  ColyseusMP.room.onError((code, msg) => {
-    console.error('[Colyseus] room error', code, msg);
-    try { showToast('MP error: ' + (msg || code)); } catch (e) {}
-  });
+    room.onLeave(code => {
+      console.log('[Colyseus] left room, code:', code);
+      // Only clear OUR handle if this leave is for the room we still hold.
+      if (ColyseusMP.room === room) {
+        ColyseusMP.room = null;
+        ColyseusMP._joinedMatchId = null;
+      }
+      // 1000 = normal close, 4000 = consented (we left on purpose). Anything else
+      // is an abnormal drop. Guard App.state — it is NULL outside an active battle,
+      // and reading `.gameOver` on null was throwing in the WS onclose handler
+      // (the "Cannot read properties of null (reading 'gameOver')" crash).
+      if (code !== 1000 && code !== 4000 && !(App && App.state && App.state.gameOver)) {
+        try { showToast('⚠️ Connection lost. Reconnecting…'); } catch (e) {}
+      }
+    });
 
-  ColyseusMP.room.onLeave(code => {
-    console.log('[Colyseus] left room, code:', code);
-    // code 1000 = normal close; others are abnormal (DC, server crash, etc.)
-    if (code !== 1000 && !App.state.gameOver) {
-      try { showToast('⚠️ Connection lost. Reconnecting…'); } catch (e) {}
+    // ─── Synchronise MatchBroadcast metadata so the rest of the UI still works ─
+    MatchBroadcast.matchId  = matchId;
+    MatchBroadcast.myUserId = Profile && Profile.cloud && Profile.cloud.userId;
+
+    return room;
+  })();
+
+  ColyseusMP._joinInFlight = _join;
+  ColyseusMP._joinInFlightMatchId = matchId;
+  try {
+    return await _join;
+  } finally {
+    // Clear the in-flight marker only if it's still ours (a newer join may have
+    // superseded it).
+    if (ColyseusMP._joinInFlight === _join) {
+      ColyseusMP._joinInFlight = null;
+      ColyseusMP._joinInFlightMatchId = null;
     }
-    ColyseusMP.room = null;
-  });
-
-  // ─── Synchronise MatchBroadcast metadata so the rest of the UI still works ─
-  MatchBroadcast.matchId  = matchId;
-  MatchBroadcast.myUserId = Profile && Profile.cloud && Profile.cloud.userId;
-
-  return ColyseusMP.room;
+  }
 }
 
 /** Leave the active Colyseus room (called by leaveMatchChannel). */
 function leaveColyseusMatch() {
   try { teardownSpectatorMirror(); } catch (e) {}
+  // Clear the join guards so the NEXT match (Play Again / requeue) can join cleanly.
+  ColyseusMP._joinedMatchId = null;
+  ColyseusMP._joinInFlight = null;
+  ColyseusMP._joinInFlightMatchId = null;
   if (!ColyseusMP.room) return;
   try { ColyseusMP.room.leave(); } catch (e) {}
   ColyseusMP.room  = null;
@@ -33039,6 +33108,9 @@ function initCloud() {
           FriendsCache.lastFetch = 0; FriendsCache.findResults = []; FriendsCache.findQuery = '';
         }
         if (typeof GiftsCache !== 'undefined') { GiftsCache.pending = []; GiftsCache.lastFetch = 0; GiftsCache.popupOpen = false; }
+        // Reset the once-per-user force-restore guard so a later sign-in (same or
+        // different account) authoritatively restores again.
+        App._forceRestoredForUser = null;
       }
       // Re-render so the title pill / settings / coliseum reflect the new state.
       if (typeof render === 'function') { try { render(); } catch (e) {} }
@@ -33111,8 +33183,18 @@ function _applyAuthState(session, authEvent) {
     // un-uploaded in-session progress on the active device is still protected.
     // (Safe vs an empty cloud row: the merge only overwrites fields the cloud
     // actually has, so a blank cloud can never wipe local.)
+    // ⚠ Supabase fires SIGNED_IN repeatedly (tab focus, token refresh, multi-tab),
+    // not just on a real login. Force-restoring on EVERY one re-pulls the whole
+    // cloud account each time — that's the "FORCE RESTORE" log spam + a storm of
+    // asset fetches (and localStorage-quota churn) that can stall other work like
+    // the multiplayer WebSocket handshake. Restore authoritatively ONCE per user
+    // per session; a genuine account switch (new userId) still re-triggers.
     if (authEvent === 'SIGNED_IN' && Profile.cloud) {
-      Profile.cloud._forceRestoreFromCloud = true;
+      const _uid = Profile.cloud.userId || '';
+      if (App._forceRestoredForUser !== _uid) {
+        Profile.cloud._forceRestoreFromCloud = true;
+        App._forceRestoredForUser = _uid;
+      }
     }
     // On fresh sign-ins, pull the player's saved profile data from the cloud.
     if (typeof cloudFetchProfile === 'function') {

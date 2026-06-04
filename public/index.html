@@ -6590,7 +6590,7 @@
     overflow: hidden;
     /* Radial darkening — preserves a bright window where the hero stands. */
     background: radial-gradient(ellipse 30% 38% at 50% 60%, rgba(255,255,255,0) 0%, rgba(0,0,0,0.55) 35%, rgba(0,0,0,0.93) 75%, rgba(0,0,0,0.98) 100%);
-    animation: ult-cine-fade 1900ms ease-out forwards;
+    animation: ult-cine-fade 1300ms ease-out forwards;
   }
   @keyframes ult-cine-fade {
     0%   { opacity: 0; backdrop-filter: blur(0px); }
@@ -6612,7 +6612,7 @@
     width: clamp(180px, 22vw, 320px);
     aspect-ratio: 1 / 1.4;
     transform-origin: center 90%;
-    animation: ult-hero-zoom 1900ms cubic-bezier(0.22, 1.0, 0.36, 1) forwards;
+    animation: ult-hero-zoom 1300ms cubic-bezier(0.22, 1.0, 0.36, 1) forwards;
   }
   @keyframes ult-hero-zoom {
     0%   { transform: scale(0.4) translateY(20px); opacity: 0; filter: brightness(0.5) saturate(0); }
@@ -6647,7 +6647,7 @@
     transform: translateX(-50%);
     pointer-events: none;
     opacity: 0;
-    animation: ult-cracks-flash 1900ms ease-out forwards;
+    animation: ult-cracks-flash 1300ms ease-out forwards;
     /* Asymmetric cracks built from layered conic gradients */
     background:
       conic-gradient(from 0deg at 50% 100%,
@@ -6677,7 +6677,7 @@
     height: clamp(280px, 32vw, 460px);
     pointer-events: none;
     opacity: 0;
-    animation: ult-energy-fade 1900ms ease-out forwards;
+    animation: ult-energy-fade 1300ms ease-out forwards;
     background:
       radial-gradient(ellipse 20% 60% at 30% 70%, rgba(255,200,90,0.45), transparent 70%),
       radial-gradient(ellipse 18% 55% at 70% 65%, rgba(212,140,255,0.40), transparent 70%),
@@ -6712,7 +6712,7 @@
       0 0 12px rgba(255,220,140,0.95),
       0 0 24px rgba(255,160,40,0.7);
     opacity: 0;
-    animation: ult-orbit-pop 1900ms ease-out forwards;
+    animation: ult-orbit-pop 1300ms ease-out forwards;
   }
   @keyframes ult-orbit-pop {
     0%   { opacity: 0; transform: translate(0, 30px) scale(0); }
@@ -6736,7 +6736,7 @@
     background: radial-gradient(circle, rgba(255,220,140,0.95) 0%, rgba(255,160,40,0.6) 50%, transparent 80%);
     border-radius: 50%;
     opacity: 0;
-    animation: ult-dust-rise var(--dur, 1900ms) ease-out forwards;
+    animation: ult-dust-rise var(--dur, 1300ms) ease-out forwards;
     animation-delay: var(--delay, 0ms);
   }
   @keyframes ult-dust-rise {
@@ -6752,7 +6752,7 @@
     display: flex; gap: 14px;
     pointer-events: none;
     opacity: 0;
-    animation: ult-threat-fade 1900ms ease-out forwards;
+    animation: ult-threat-fade 1300ms ease-out forwards;
   }
   @keyframes ult-threat-fade {
     0%   { opacity: 0; transform: translateX(-50%) translateY(-12px); letter-spacing: 0.6em; }
@@ -6793,7 +6793,7 @@
     letter-spacing: 0.35em;
     text-transform: uppercase;
     opacity: 0;
-    animation: ult-name-prefix 1900ms ease-out forwards;
+    animation: ult-name-prefix 1300ms ease-out forwards;
     text-shadow: 0 0 12px rgba(212,175,55,0.7), 0 2px 4px rgba(0,0,0,0.9);
   }
   @keyframes ult-name-prefix {
@@ -6821,7 +6821,7 @@
     background-clip: text;
     -webkit-text-fill-color: transparent;
     opacity: 0;
-    animation: ult-name-flash 1900ms cubic-bezier(0.18, 1.0, 0.36, 1.0) forwards;
+    animation: ult-name-flash 1300ms cubic-bezier(0.18, 1.0, 0.36, 1.0) forwards;
   }
   @keyframes ult-name-flash {
     0%   { opacity: 0; transform: scale(0.6) translateY(40px); letter-spacing: 0.8em; }
@@ -6843,7 +6843,7 @@
     max-width: min(86vw, 600px);
     text-shadow: 0 0 12px rgba(212,140,255,0.6), 0 2px 6px rgba(0,0,0,0.95);
     opacity: 0;
-    animation: ult-effect-fade 1900ms ease-out forwards;
+    animation: ult-effect-fade 1300ms ease-out forwards;
   }
   @keyframes ult-effect-fade {
     0%   { opacity: 0; transform: translateY(10px); }
@@ -6857,7 +6857,7 @@
     background: radial-gradient(ellipse 80% 60% at 50% 50%, rgba(255,220,140,0.55), rgba(255,160,40,0.18) 40%, transparent 70%);
     pointer-events: none;
     opacity: 0;
-    animation: ult-name-flash-glow 1900ms ease-out forwards;
+    animation: ult-name-flash-glow 1300ms ease-out forwards;
     mix-blend-mode: screen;
   }
   @keyframes ult-name-flash-glow {
@@ -9517,12 +9517,12 @@
     animation: hero-ko-flash 0.55s ease-out forwards; }
   .hero-ko-vignette { position: absolute; inset: 0;
     background: radial-gradient(ellipse 120% 120% at 50% 50%, transparent 38%, rgba(120,0,14,0.5) 82%, rgba(60,0,8,0.88) 100%);
-    animation: hero-ko-vig 2s ease-out forwards; }
+    animation: hero-ko-vig 1.3s ease-out forwards; }
   .hero-ko-skull { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     font-size: clamp(6rem, 22vw, 14rem); color: #ff5a5a;
     text-shadow: 0 0 50px rgba(255,30,30,0.85), 0 0 14px rgba(0,0,0,0.8);
-    animation: hero-ko-skull 2s cubic-bezier(0.2, 1.0, 0.3, 1) forwards; }
-  .ko-desat { animation: ko-desat-anim 2s ease-out forwards; }
+    animation: hero-ko-skull 1.3s cubic-bezier(0.2, 1.0, 0.3, 1) forwards; }
+  .ko-desat { animation: ko-desat-anim 1.3s ease-out forwards; }
   @keyframes ko-desat-anim { 0% { filter: none; } 12% { filter: grayscale(0.65) brightness(0.5) contrast(1.15); } 78% { filter: grayscale(0.6) brightness(0.55) contrast(1.1); } 100% { filter: none; } }
   @keyframes hero-ko-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
   @keyframes hero-ko-vig { 0% { opacity: 0; } 14% { opacity: 1; } 70% { opacity: 0.95; } 100% { opacity: 0; } }
@@ -9530,7 +9530,7 @@
 
   /* 🔔 TURN BANNER — sweeping YOUR / ENEMY TURN wipe. */
   .turn-banner { position: fixed; inset: 0; z-index: 2147481100; pointer-events: none; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  .turn-banner-bar { width: 100%; padding: 16px 0; text-align: center; transform: translateX(-100%); will-change: transform, opacity; animation: turn-banner-sweep 1.5s cubic-bezier(0.2, 0.9, 0.2, 1) forwards; }
+  .turn-banner-bar { width: 100%; padding: 16px 0; text-align: center; transform: translateX(-100%); will-change: transform, opacity; animation: turn-banner-sweep 1.3s cubic-bezier(0.2, 0.9, 0.2, 1) forwards; }
   .tb-player .turn-banner-bar { background: linear-gradient(90deg, transparent 4%, rgba(40,110,210,0) 10%, rgba(40,110,210,0.8) 32%, rgba(90,170,255,0.95) 50%, rgba(40,110,210,0.8) 68%, transparent 96%); box-shadow: 0 0 34px rgba(90,170,255,0.45); }
   .tb-enemy .turn-banner-bar { background: linear-gradient(90deg, transparent 4%, rgba(180,44,44,0) 10%, rgba(180,44,44,0.82) 32%, rgba(255,96,84,0.95) 50%, rgba(180,44,44,0.82) 68%, transparent 96%); box-shadow: 0 0 34px rgba(255,96,84,0.45); }
   .turn-banner-text { font-family: 'Cinzel', serif; font-weight: 900; font-size: clamp(1.5rem, 5vw, 3rem); letter-spacing: 0.3em; color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,0.95), 0 0 22px rgba(0,0,0,0.6); }
@@ -9539,7 +9539,7 @@
 
   /* 🗺️🌦️ FIELD FX — location/weather field-spell flourish (light-wipe + name). */
   .field-fx-overlay { position: fixed; inset: 0; z-index: 2147481050; pointer-events: none; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-  .field-fx-tint { position: absolute; inset: 0; animation: field-fx-tint-anim 1.8s ease-out forwards; }
+  .field-fx-tint { position: absolute; inset: 0; animation: field-fx-tint-anim 1.3s ease-out forwards; }
   .field-fx-overlay.fx-location .field-fx-tint { background: radial-gradient(ellipse 120% 90% at 50% 50%, rgba(255,210,120,0.28), transparent 75%); }
   .field-fx-overlay.fx-weather  .field-fx-tint { background: radial-gradient(ellipse 120% 90% at 50% 50%, rgba(130,180,255,0.28), transparent 75%); }
   .field-fx-wipe { position: absolute; top: -10%; bottom: -10%; left: 50%; width: 46%;
@@ -9548,7 +9548,7 @@
     filter: blur(8px); mix-blend-mode: screen;
     animation: field-fx-wipe-anim 0.95s ease-in-out forwards; }
   .field-fx-overlay.fx-weather .field-fx-wipe { background: linear-gradient(90deg, transparent, rgba(190,220,255,0.5), rgba(255,255,255,0.92), rgba(190,220,255,0.5), transparent); }
-  .field-fx-label { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; animation: field-fx-label-anim 1.8s ease-out forwards; }
+  .field-fx-label { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; animation: field-fx-label-anim 1.3s ease-out forwards; }
   .field-fx-icon { font-size: clamp(2.5rem, 9vw, 5rem); line-height: 1; filter: drop-shadow(0 4px 14px rgba(0,0,0,0.85)); }
   .field-fx-icon img { width: clamp(2.5rem, 9vw, 5rem); height: clamp(2.5rem, 9vw, 5rem); object-fit: contain; vertical-align: middle; }
   .field-fx-name { font-family: 'Cinzel', serif; font-weight: 900; font-size: clamp(1.3rem, 4.6vw, 2.6rem); letter-spacing: 0.18em; color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,0.95), 0 0 24px rgba(255,220,150,0.5); }
@@ -23929,7 +23929,7 @@
     width: 1100px; height: 1100px;
     margin-left: -550px; margin-top: -550px;
     z-index: 10001;
-    animation: mfx-lifetime 2s ease-out forwards;
+    animation: mfx-lifetime 1.3s ease-out forwards;
     will-change: opacity;
     /* Layout containment only — particles can still extend visually beyond
        the 1100px box (the meteor + 2000px shockwave + crack lines need to). */
@@ -23975,7 +23975,7 @@
     background: radial-gradient(circle at center, #ffffff 0%, rgba(220,180,255,0.85) 20%, rgba(140,60,220,0.45) 45%, transparent 75%);
     mix-blend-mode: screen;
     opacity: 0;
-    animation: mfx-impact-flash 0.9s ease-out forwards;
+    animation: mfx-impact-flash 0.6s ease-out forwards;
     animation-delay: 0.42s;
   }
   @keyframes mfx-impact-flash {
@@ -23996,7 +23996,7 @@
       0 0 60px #c060ff,
       0 0 120px #8030c0,
       inset 0 0 80px rgba(220,180,255,0.6);
-    animation: mfx-sigil 2s linear forwards;
+    animation: mfx-sigil 1.3s linear forwards;
     animation-delay: 0.42s;
     opacity: 0;
   }
@@ -24010,7 +24010,7 @@
     box-shadow:
       0 0 50px #ffd166,
       inset 0 0 60px rgba(255,200,100,0.7);
-    animation: mfx-sigil-inner 2s linear forwards;
+    animation: mfx-sigil-inner 1.3s linear forwards;
     animation-delay: 0.42s;
     opacity: 0;
   }
@@ -24037,7 +24037,7 @@
       0 0 80px #200840,
       0 0 160px #6020c0;
     opacity: 0;
-    animation: mfx-void 2s ease-out forwards;
+    animation: mfx-void 1.3s ease-out forwards;
     animation-delay: 0.42s;
   }
   @keyframes mfx-void {
@@ -24056,7 +24056,7 @@
     box-shadow:
       0 0 60px #ffd166,
       0 0 120px #c060ff;
-    animation: mfx-shock 1.6s cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
+    animation: mfx-shock 1.05s cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
     animation-delay: 0.42s;
   }
   @keyframes mfx-shock {
@@ -24079,7 +24079,7 @@
       0 0 32px rgba(180,80,255,0.6);
     transform-origin: top center;
     transform: rotate(var(--rot, 0deg));
-    animation: mfx-crack 1.6s ease-out forwards;
+    animation: mfx-crack 1.05s ease-out forwards;
     animation-delay: 0.45s;
     mix-blend-mode: screen;
     filter: blur(0.5px);
@@ -24114,7 +24114,7 @@
     border-radius: 50%;
     background: radial-gradient(circle, #ffffff, #ffd166 50%, transparent 100%);
     box-shadow: 0 0 12px #ffd166, 0 0 24px #ffd166;
-    animation: mfx-particle 1.1s cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
+    animation: mfx-particle 0.75s cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
     animation-delay: 0.45s;
   }
   .mythic-fx .mfx-particle.purple {
@@ -24134,7 +24134,7 @@
     border-radius: 50%;
     background: rgba(40,15,60,0.95);
     box-shadow: 0 0 6px rgba(160,80,220,0.7);
-    animation: mfx-ash-rise 1.6s ease-out forwards;
+    animation: mfx-ash-rise 1.05s ease-out forwards;
     animation-delay: 0.5s;
   }
   @keyframes mfx-ash-rise {
@@ -24152,7 +24152,7 @@
     backdrop-filter: blur(4px) contrast(1.3);
     -webkit-backdrop-filter: blur(4px) contrast(1.3);
     opacity: 0;
-    animation: mfx-pressure 1.5s ease-out forwards;
+    animation: mfx-pressure 1s ease-out forwards;
     animation-delay: 0.42s;
     mix-blend-mode: screen;
   }
@@ -25733,7 +25733,7 @@
     width: 600px; height: 600px;
     margin-left: -300px; margin-top: -300px;
     z-index: 9999;
-    animation: csv-lifetime 1.7s ease-out forwards;
+    animation: csv-lifetime 1.3s ease-out forwards;
     will-change: opacity, transform;
   }
   @keyframes csv-lifetime {
@@ -25747,7 +25747,7 @@
       radial-gradient(circle, rgba(220,180,255,0.65) 0%, rgba(180,120,255,0.45) 20%, rgba(212,175,55,0.30) 45%, transparent 70%);
     filter: blur(8px);
     mix-blend-mode: screen;
-    animation: csv-bloom 1.7s ease-out forwards;
+    animation: csv-bloom 1.3s ease-out forwards;
   }
   @keyframes csv-bloom {
     0%   { transform: scale(0);   opacity: 0; }
@@ -25763,7 +25763,7 @@
       0 0 30px rgba(212,175,55,0.85),
       0 0 60px rgba(180,120,255,0.55),
       inset 0 0 30px rgba(180,120,255,0.55);
-    animation: csv-circle-spin 1.7s linear forwards;
+    animation: csv-circle-spin 1.3s linear forwards;
   }
   @keyframes csv-circle-spin {
     0%   { transform: scale(0)   rotate(0deg);   opacity: 0; }
@@ -25778,7 +25778,7 @@
     box-shadow:
       0 0 24px rgba(180,120,255,0.85),
       inset 0 0 18px rgba(220,180,255,0.6);
-    animation: csv-ring-inner 1.7s linear forwards;
+    animation: csv-ring-inner 1.3s linear forwards;
   }
   @keyframes csv-ring-inner {
     0%   { transform: scale(0)   rotate(0deg);    opacity: 0; }
@@ -25794,7 +25794,7 @@
     border-radius: 50%;
     background: radial-gradient(circle, rgba(255,255,255,1) 0%, rgba(220,180,255,0.85) 30%, rgba(212,175,55,0.5) 60%, transparent 90%);
     filter: blur(2px);
-    animation: csv-core 1.7s ease-out forwards;
+    animation: csv-core 1.3s ease-out forwards;
     mix-blend-mode: screen;
   }
   @keyframes csv-core {
@@ -25812,7 +25812,7 @@
     font-size: 1.6rem;
     line-height: 1;
     text-shadow: 0 0 8px rgba(212,175,55,1), 0 0 16px rgba(180,120,255,0.85);
-    animation: csv-rune-orbit 1.7s ease-out forwards;
+    animation: csv-rune-orbit 1.3s ease-out forwards;
     transform-origin: 0 0;
   }
   @keyframes csv-rune-orbit {
@@ -25831,7 +25831,7 @@
     box-shadow:
       0 0 40px rgba(212,175,55,0.7),
       0 0 80px rgba(180,120,255,0.45);
-    animation: csv-shock 1.7s cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
+    animation: csv-shock 1.3s cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
   }
   @keyframes csv-shock {
     0%   { width: 0;    height: 0;    margin: 0;                opacity: 0; border-width: 6px; }
@@ -25847,7 +25847,7 @@
     border-radius: 50%;
     background: radial-gradient(circle, rgba(255,230,160,1), rgba(212,175,55,0.7) 60%, transparent 100%);
     box-shadow: 0 0 8px rgba(212,175,55,1), 0 0 16px rgba(212,175,55,0.6);
-    animation: csv-particle-burst 1.5s cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
+    animation: csv-particle-burst 1.2s cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
   }
   .csv-fx .csv-particle.purple {
     background: radial-gradient(circle, rgba(230,200,255,1), rgba(160,100,220,0.75) 60%, transparent 100%);
@@ -25866,7 +25866,7 @@
     border-radius: 50%;
     background: rgba(255,200,100,0.95);
     box-shadow: 0 0 8px rgba(255,180,80,1), 0 0 14px rgba(255,140,60,0.6);
-    animation: csv-ember-rise 1.6s ease-out forwards;
+    animation: csv-ember-rise 1.2s ease-out forwards;
   }
   @keyframes csv-ember-rise {
     0%   { transform: translate(0, 0) scale(0);  opacity: 0; }
@@ -25881,7 +25881,7 @@
     border-radius: 50%;
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
-    animation: csv-distort 1.5s ease-out forwards;
+    animation: csv-distort 1.2s ease-out forwards;
     mix-blend-mode: screen;
   }
   @keyframes csv-distort {
@@ -25899,7 +25899,7 @@
     background: radial-gradient(ellipse, rgba(180,120,255,0.35) 0%, rgba(120,80,180,0.18) 40%, transparent 70%);
     filter: blur(14px);
     mix-blend-mode: screen;
-    animation: csv-smoke 1.7s ease-out forwards;
+    animation: csv-smoke 1.3s ease-out forwards;
   }
   @keyframes csv-smoke {
     0%   { transform: translate(0, 0)    scale(0.4); opacity: 0; }
@@ -26130,7 +26130,9 @@
   /* Eclipse disc — a much bigger black sun with a glowing golden corona. */
   .weather-fx.fx-eclipse .wfx-eclipse-disc {
     position: absolute;
-    top: 14%; left: 50%;
+    /* Pulled to the upper-LEFT sky so the black sun sits over the ruined map,
+       not on top of the play grid. */
+    top: 13%; left: 12%;
     transform: translate(-50%, -50%);
     width: 180px; height: 180px;
     border-radius: 50%;
@@ -26157,7 +26159,7 @@
   /* Corona ray flares — thin golden rays radiating from the disc. */
   .weather-fx.fx-eclipse .wfx-eclipse-ray {
     position: absolute;
-    top: 14%; left: 50%;
+    top: 13%; left: 12%;
     width: 2px; height: 120px;
     margin-left: -1px; margin-top: -60px;
     background: linear-gradient(180deg, transparent, rgba(255,210,100,0.7), transparent);
@@ -79903,7 +79905,7 @@ function _playHeroKO(winner) {
         setTimeout(() => { try { Juice.shake(bs); } catch (_) {} }, 200);
       }
     } catch (e) {}
-    setTimeout(() => { try { host.remove(); } catch (e) {} try { bs.classList.remove('ko-desat'); } catch (e) {} }, 2000);
+    setTimeout(() => { try { host.remove(); } catch (e) {} try { bs.classList.remove('ko-desat'); } catch (e) {} }, 1300);
   } catch (e) {}
 }
 
@@ -79920,7 +79922,7 @@ function _playTurnBanner(side) {
     host.className = 'turn-banner ' + (isPlayer ? 'tb-player' : 'tb-enemy');
     host.innerHTML = '<div class="turn-banner-bar"><span class="turn-banner-text">' + (isPlayer ? 'YOUR TURN' : 'ENEMY TURN') + '</span></div>';
     document.body.appendChild(host);
-    setTimeout(() => { try { host.remove(); } catch (e) {} }, 1500);
+    setTimeout(() => { try { host.remove(); } catch (e) {} }, 1300);
   } catch (e) {}
 }
 
@@ -79952,7 +79954,7 @@ function _playFieldFx(opts) {
       (gfx !== 'low' ? '<div class="field-fx-wipe"></div>' : '') +
       '<div class="field-fx-label"><span class="field-fx-icon">' + (opts.icon || '') + '</span><span class="field-fx-name">' + nm + '</span></div>';
     document.body.appendChild(host);
-    setTimeout(() => { try { host.remove(); } catch (e) {} }, 1800);
+    setTimeout(() => { try { host.remove(); } catch (e) {} }, 1300);
   } catch (e) {}
 }
 
@@ -86078,7 +86080,7 @@ function _playMythicSummonVfxImpl(unit, pos) {
   // meteor + impact flash + shockwave + tile-cracks already carry enough
   // visual impact without needing to shake the page itself.
 
-  setTimeout(() => { try { fx.remove(); } catch (_) {} }, 2200);
+  setTimeout(() => { try { fx.remove(); } catch (_) {} }, 1500);
 }
 
 // ============================================================================
@@ -86118,7 +86120,7 @@ function _playMythicSummonVfxImpl(unit, pos) {
 // the local client; opponent gets it when they apply the snapshot via the
 // same render path).
 // ============================================================================
-const _SPELL_CINE_DURATION_MS = 1800;
+const _SPELL_CINE_DURATION_MS = 1300;
 const _CARD_TYPE_HEADLINES = {
   spell:    'SPELL ACTIVATED',
   location: 'LOCATION SET',
@@ -86222,7 +86224,7 @@ function playSpellActivationVfx(card, opts) {
 //
 // Click anywhere on the overlay to skip — same UX as the spell + ult cinematics.
 // ============================================================================
-const _ABILITY_CINE_DURATION_MS = 1800;
+const _ABILITY_CINE_DURATION_MS = 1300;
 const _ABILITY_CINE_FAST_MS     = 600;
 const _ABILITY_SEEN_THRESHOLD   = 3;
 function _trackAbilitySeen(moveId) {
@@ -86868,7 +86870,7 @@ function _playSpellActivationVfxImpl(card, opts) {
 //
 // Click anywhere on the overlay to skip — same UX as the spell + ult cinematics.
 // ============================================================================
-const _ONPLAY_CINE_DURATION_MS = 1800;
+const _ONPLAY_CINE_DURATION_MS = 1300;
 function playOnPlayCinematic(unit, card, opts) {
   if (typeof requestAnimationFrame === 'function') {
     return requestAnimationFrame(() => _playOnPlayCinematicImpl(unit, card, opts || {}));
@@ -87770,7 +87772,7 @@ function _playCardSummonVfxImpl(opts) {
 
   host.appendChild(fx);
   // Animation total is 1.9s — give it a small buffer then clean up the node.
-  setTimeout(() => { try { fx.remove(); } catch (_) {} }, 1800);
+  setTimeout(() => { try { fx.remove(); } catch (_) {} }, 1400);
 }
 
 // ============================================================================
@@ -89880,6 +89882,40 @@ function _clearAIHardDeadline() {
   } catch (e) {}
 }
 
+// 🎬 Cinematic gate — true while ANY battle cinematic overlay is on screen, so
+// the AI waits for animations to finish instead of rushing past them (otherwise
+// the player can't follow what just happened). Covers ace slam, hero KO, spell /
+// on-play / ability cinematics, card-summon + mythic VFX, the field flourish,
+// the hero-ultimate cinematic, and the attack cinematic.
+function _anyCinematicActive() {
+  try {
+    if (typeof _aceSlamBusy !== 'undefined' && _aceSlamBusy) return true;
+    if (App.ui && App.ui.heroUltCinematic) return true;
+    if (App.ui && App.ui.battleAnim) return true;
+    if (document.querySelector(
+      '#ace-slam-overlay, #hero-ko-overlay, #field-fx-overlay, ' +
+      '.spell-cine-overlay, .onplay-cine-overlay, .ab-cine-overlay, ' +
+      '.csv-fx, .mythic-fx'
+    )) return true;
+  } catch (e) {}
+  return false;
+}
+// Run the AI's next step ONLY once every cinematic has cleared. Polls on a short
+// interval, refreshing the hang-watchdog timestamp so a legit VFX wait doesn't
+// trip the 8s force-end. Hard 9s cap so a stuck overlay can never freeze the AI
+// turn — after the cap it proceeds regardless.
+function _runAIStepWhenClear(waited) {
+  waited = waited || 0;
+  if (App.battlePrep && App.battlePrep.multiplayer) return;
+  if (!App.state || App.state.gameOver || App.state.turn !== 'ai') return;
+  if (_anyCinematicActive() && waited < 9000) {
+    App._aiLastSchedule = Date.now();   // keep the watchdog calm while we wait
+    setTimeout(() => _runAIStepWhenClear(waited + 140), 140);
+    return;
+  }
+  try { doAIStep(); } catch (e) { try { console.warn('[ai] step threw', e); } catch (_) {} }
+}
+
 function scheduleAIStep(delay) {
   // 📡 In multiplayer the AI is OFF — the opponent's moves come from the
   // realtime channel, not from the local AI scoring loop. Skipping here
@@ -89912,7 +89948,9 @@ function scheduleAIStep(delay) {
     try { finishAIPhase(); } catch (e) {}
   }, 8000);
   // Animation speed setting divides the delay (higher animSpeed = faster AI turns).
-  setTimeout(() => doAIStep(), applyAnimSpeed(delay || 600));
+  // 🎬 Route through _runAIStepWhenClear so the AI holds for any in-flight
+  // cinematic before its next move (no rushing past animations).
+  setTimeout(() => _runAIStepWhenClear(), applyAnimSpeed(delay || 600));
 }
 
 function setAIActor(id, label, trail) {
@@ -120419,7 +120457,7 @@ function resolveHeroUltimate(heroUnitId, opts) {
         App.ui.heroUltCinematic = null;
         _muffleBattleAudioForUlt(false);
       }
-    }, 1900);   // ⏱ ULT NAME hold (≈1.9s) — kept in sync with the ult-cine CSS
+    }, 1300);   // ⏱ ULT NAME hold (≈1.3s) — kept in sync with the ult-cine CSS
     return;
   }
 

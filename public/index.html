@@ -30406,7 +30406,7 @@ const CAMPAIGN = {
   ],
 };
 
-const ANIMATION_TYPES = ['idle', 'attack', 'walk', 'hurt', 'death'];
+const ANIMATION_TYPES = ['idle', 'attack', 'walk', 'hurt', 'death', 'summon'];
 
 // ============ FORGE STATE & PERSISTENCE ============
 // ===== Dual-passive helpers =====
@@ -59647,6 +59647,7 @@ function _battleSpawnSummonByCardId(state, caster, summonCardId, requestedCount)
         u.hasMoved = true; u.hasAttacked = true;
         u._summoned = true;
         units.push(u);
+        try { _markSummonAnim(u); } catch (e) {}
         occ.add(spot.x + ',' + spot.y);
         spawned++;
       }
@@ -63599,7 +63600,8 @@ function renderIcon(spriteId, fallbackEmoji, size, animOverride) {
     const frameImgs = frames.map((url, i) => (
       `<img class="sprite-img sprite-frame${i === 0 ? ' is-on' : ''}" src="${url}" alt="" draggable="false" decoding="async" loading="eager">`
     )).join('');
-    return `<span class="sprite-stack" data-sprite-id="${spriteId}" data-sprite-anim="${chosenAnim}" style="${sizeStyle}">${frameImgs}</span>`;
+    const _cfm = (typeof _spriteCustomFrameMs === 'function') ? _spriteCustomFrameMs(spriteId, chosenAnim) : null;
+    return `<span class="sprite-stack" data-sprite-id="${spriteId}" data-sprite-anim="${chosenAnim}"${_cfm ? ` data-sprite-frame-ms="${_cfm}"` : ''} style="${sizeStyle}">${frameImgs}</span>`;
   }
   const fontSize = isFill ? '2.2rem' : `${Math.floor(px*0.85)}px`;
   return `<span style="font-size:${fontSize};line-height:1">${fallbackEmoji || '?'}</span>`;
@@ -63625,7 +63627,7 @@ function renderIcon(spriteId, fallbackEmoji, size, animOverride) {
 //  4. Only set `el.src` when the index actually changed — avoids redundant
 //     DOM writes on every frame.
 // ============================================================================
-const DEFAULT_SPRITE_FRAME_MS = 80; // ~12.5 fps — smoother than the old 8 fps (120ms) which read as choppy/"skipping"
+const DEFAULT_SPRITE_FRAME_MS = 62; // ~16 fps default (was 80ms/12.5fps). Per-animation speed can override this via the Forge SUMMON/idle Speed slider (data-sprite-frame-ms).
 
 // One-time preload + decode of every frame URL for a given animation. Decoded
 // images stay in the browser cache + bitmap memory, so subsequent `el.src =`
@@ -63644,6 +63646,132 @@ function preloadSpriteFrames(frames) {
     if (typeof img.decode === 'function') {
       img.decode().catch(() => {});
     }
+  }
+}
+
+// ============================================================================
+// 🎬 SPRITE POWER-UPS — per-animation speed + the SUMMON animation.
+// ----------------------------------------------------------------------------
+// Per-animation playback speed (FPS) is stored OUT-OF-BAND at the reserved
+// top-level key Forge.sprites.__speed (never a real subject id). It rides along
+// with the existing sprite persistence + cloud sync with zero new wiring, and
+// the per-id frame iterators (which only ever read Forge.sprites[<realId>])
+// never touch it. Shape: { '<spriteId>': { idle:12, attack:16, summon:18 } }.
+// ============================================================================
+function _spriteSpeedStore() {
+  if (!Forge.sprites) Forge.sprites = {};
+  if (!Forge.sprites.__speed || typeof Forge.sprites.__speed !== 'object') Forge.sprites.__speed = {};
+  return Forge.sprites.__speed;
+}
+// User-set FPS for a sprite+anim (with h_/u_ sibling fallback), or null if unset.
+function getSpriteAnimFps(spriteId, anim) {
+  try {
+    const store = (Forge.sprites && Forge.sprites.__speed) || null;
+    if (!store || !spriteId) return null;
+    const ids = [spriteId];
+    if (spriteId.indexOf('u_') === 0) ids.push('h_' + spriteId.slice(2));
+    else if (spriteId.indexOf('h_') === 0) ids.push('u_' + spriteId.slice(2));
+    for (const id of ids) {
+      const m = id && store[id];
+      if (m && m[anim] != null) { const fps = +m[anim]; if (fps > 0) return fps; }
+    }
+  } catch (e) {}
+  return null;
+}
+function setSpriteAnimFps(spriteId, anim, fps) {
+  if (!spriteId) return;
+  const store = _spriteSpeedStore();
+  if (fps == null || !(+fps > 0)) {
+    if (store[spriteId]) { delete store[spriteId][anim]; if (Object.keys(store[spriteId]).length === 0) delete store[spriteId]; }
+  } else {
+    if (!store[spriteId]) store[spriteId] = {};
+    store[spriteId][anim] = +fps;
+  }
+}
+// Custom per-frame interval in ms — null when the user has NOT overridden, so
+// the ticker keeps its own per-sprite default (e.g. Kalon's slower cadence).
+// Clamped to ≤50fps so a runaway value can't pin the main thread.
+function _spriteCustomFrameMs(spriteId, anim) {
+  const fps = getSpriteAnimFps(spriteId, anim || 'idle');
+  if (fps == null) return null;
+  return Math.max(20, Math.round(1000 / fps));
+}
+
+// ===== 🌟 SUMMON ANIMATION — one-shot, fires when a unit hits the board =====
+// A unit is queued via _markSummonAnim(unit) at every true summon SOURCE
+// (played from hand, summoned by an effect/ultimate, or deployed as a counter
+// unit). The sprite ticker drains the queue once the unit's DOM node is
+// painted, so it fires no matter which render finally draws it — and starting
+// units / heroes are never queued, so they don't pop on battle open.
+function _markSummonAnim(unit) {
+  try {
+    if (!unit || !unit.id || unit.isHero) return;
+    if (!App._pendingSummonAnim) App._pendingSummonAnim = new Map();
+    if (!App._pendingSummonAnim.has(unit.id)) {
+      App._pendingSummonAnim.set(unit.id, (typeof performance !== 'undefined' ? performance.now() : 0));
+    }
+  } catch (e) {}
+}
+function _flushSummonAnims(t) {
+  const m = App && App._pendingSummonAnim;
+  if (!m || !m.size) return;
+  for (const id of Array.from(m.keys())) {
+    const born = m.get(id);
+    // TTL — a unit that died before it was ever painted shouldn't linger.
+    if (t - born > 2600) { m.delete(id); continue; }
+    const el = document.querySelector('.unit[data-unit="' + id + '"]');
+    if (!el) continue; // not painted yet — retry next tick
+    m.delete(id);
+    try { _playSummonAnim(id, el); } catch (e) {}
+  }
+}
+function _playSummonAnim(unitId, el) {
+  if (!el) return;
+  // The CSS rise-and-pop (.unit[data-anim="summon"]) plays on ANY visual —
+  // sprite frames, static art, or emoji — so every unit gets a summon beat.
+  el.dataset.anim = 'summon';
+  let unit = null;
+  try { unit = App.state && App.state.units && App.state.units.find(u => u && u.id === unitId); } catch (e) {}
+  // Authored SUMMON frames (Forge → SUMMON tab) → play ONCE, then settle to idle.
+  let spriteId = null, frames = null;
+  try {
+    spriteId = unit ? getSpriteId(unit) : null;
+    const ids = spriteId ? [spriteId] : [];
+    if (spriteId && spriteId.indexOf('u_') === 0) ids.push('h_' + spriteId.slice(2));
+    else if (spriteId && spriteId.indexOf('h_') === 0) ids.push('u_' + spriteId.slice(2));
+    for (const id of ids) {
+      const raw = Forge.sprites && Forge.sprites[id] && Forge.sprites[id].summon;
+      if (Array.isArray(raw)) { const f = raw.filter(Boolean); if (f.length > 1) { frames = f; spriteId = id; break; } }
+    }
+  } catch (e) {}
+  const iconEl = el.querySelector('.unit-icon');
+  if (frames && iconEl) {
+    const stepMs = _spriteCustomFrameMs(spriteId, 'summon') || DEFAULT_SPRITE_FRAME_MS;
+    const start = (typeof performance !== 'undefined' ? performance.now() : 0);
+    const imgs = frames.map((src, i) => `<img src="${src}" class="sprite-img sprite-frame${i === 0 ? ' is-on' : ''}" draggable="false" decoding="async" aria-hidden="true">`).join('');
+    // data-sprite-oneshot makes the ticker play the frames once and clamp on the
+    // final frame instead of looping.
+    iconEl.innerHTML = `<span class="sprite-stack" data-sprite-id="${spriteId}" data-sprite-anim="summon" data-sprite-oneshot="1" data-sprite-start="${start}" data-sprite-frame-ms="${stepMs}" style="width:100%;height:100%">${imgs}</span>`;
+    const dur = Math.max(560, frames.length * stepMs + 140);
+    setTimeout(() => {
+      try {
+        const stillEl = document.querySelector('.unit[data-unit="' + unitId + '"]');
+        if (!stillEl) return;
+        if (stillEl.dataset.anim === 'summon') stillEl.dataset.anim = '';
+        const ic = stillEl.querySelector('.unit-icon');
+        const os = ic && ic.querySelector('.sprite-stack[data-sprite-oneshot]');
+        if (ic && os) ic.innerHTML = unit ? unitBoardVisual(unit) : renderIcon(spriteId, '', 'fill');
+      } catch (e) {}
+    }, dur);
+  } else {
+    // No authored frames — just clear the CSS state after the pop completes so
+    // the idle breathe re-anchors cleanly.
+    setTimeout(() => {
+      try {
+        const stillEl = document.querySelector('.unit[data-unit="' + unitId + '"]');
+        if (stillEl && stillEl.dataset.anim === 'summon') stillEl.dataset.anim = '';
+      } catch (e) {}
+    }, 640);
   }
 }
 
@@ -63969,6 +64097,8 @@ function startSpriteTicker() {
     const _tickMs = (typeof App !== 'undefined' && App.screen === 'battle') ? _SPRITE_TICK_MS : 33;
     if (t - _spriteTickLast < _tickMs) { _spriteRafHandle = requestAnimationFrame(tick); return; }
     _spriteTickLast = t;
+    // 🌟 Drain any queued summon animations onto freshly-painted units.
+    try { _flushSummonAnims(t); } catch (e) {}
     // 🩻 ISO board: if the flag is on, make sure the canvas inside the
     // current .board.iso-mode container is hooked up to the iso ticker.
     // Idempotent — bails out fast if already mounted on this canvas.
@@ -64054,7 +64184,17 @@ function startSpriteTicker() {
       // Frame index is a pure function of the global clock + the sprite's
       // stable phase offset — so a re-rendered stack resumes mid-loop instead
       // of restarting (which read as a "grow large then snap small" stutter).
-      const idx = Math.floor((t + _spritePhaseOffset(id)) / stepMs) % frames.length;
+      // 🌟 ONE-SHOT (summon / death-style) stacks play frames once from their
+      // own start stamp and clamp on the final frame instead of looping.
+      let idx;
+      if (stack.dataset.spriteOneshot === '1') {
+        const start = parseInt(stack.dataset.spriteStart, 10) || t;
+        idx = Math.floor((t - start) / stepMs);
+        if (idx >= frames.length) idx = frames.length - 1;
+        if (idx < 0) idx = 0;
+      } else {
+        idx = Math.floor((t + _spritePhaseOffset(id)) / stepMs) % frames.length;
+      }
       const cur = parseInt(stack.dataset.spriteIdx, 10);
       if (idx !== cur) {
         stack.dataset.spriteIdx = String(idx);
@@ -66044,7 +66184,7 @@ function renderTitle() {
   // ----- Stats / badge data -----
   const customCount  = Forge.customCards.length;
   const movesCount   = Object.keys(Forge.customMoves).length;
-  const spriteCount  = Object.keys(Forge.sprites).length;
+  const spriteCount  = Object.keys(Forge.sprites).filter(k => k.indexOf('__') !== 0).length;
   const wins         = Profile.records.wins, losses = Profile.records.losses;
   const labReady     = Lab.cores.filter(c => !c.hatchedCardId && c.battlesUntilHatch <= 0).length;
   const labIncubating= Lab.cores.filter(c => !c.hatchedCardId && c.battlesUntilHatch > 0).length;
@@ -78925,19 +79065,58 @@ function renderSpriteEditor() {
 
   const idleCount = (set.idle || []).length;
 
+  // 🎬 Power-up controls: per-animation speed (fps) + HD upload prefs.
+  const _defFps = Math.round(1000 / DEFAULT_SPRITE_FRAME_MS);
+  const _setFps = getSpriteAnimFps(id, activeAnim);            // null when unset → default
+  const _shownFps = _setFps || _defFps;
+  const previewFrames = frames.filter(Boolean).length;
+  const previewBlurb = previewFrames === 0
+    ? (activeAnim === 'idle' ? 'No sprites yet — emoji fallback shown.' : `No ${escapeHtml(activeAnim)} frames yet — idle is shown as a fallback.`)
+    : previewFrames === 1
+      ? `Static ${escapeHtml(activeAnim)} frame — add more to animate.`
+      : `Animating ${previewFrames} ${escapeHtml(activeAnim)} frame${previewFrames === 1 ? '' : 's'} at ~${_shownFps} fps.`;
+  const uploadRes    = _spriteUploadRes();
+  const uploadSmooth = _spriteUploadSmooth();
+
   return `
     <div class="editor-section-title">${escapeHtml(displayName)}</div>
 
     <div class="preview-anim-row">
-      <div class="preview-box">${renderIcon(id, fallbackEmoji, 'xl')}</div>
+      <div class="preview-box">${renderIcon(id, fallbackEmoji, 'xl', activeAnim)}</div>
       <div class="preview-meta">
-        <h4>Live Preview</h4>
-        <p>${idleCount === 0 ? 'No sprites yet — emoji fallback shown.' : idleCount === 1 ? 'Static sprite (add more idle frames to animate).' : `Animating ${idleCount} idle frames at ~4fps.`}</p>
+        <h4>Live Preview <span style="opacity:0.55;font-weight:400;font-size:0.8em">· ${escapeHtml(activeAnim)}</span></h4>
+        <p>${previewBlurb}</p>
       </div>
       ${idleCount > 0 ? '<button class="btn-danger" id="btn-clear-all-sprites">Clear All</button>' : ''}
     </div>
 
     <div class="anim-tabs">${tabs}</div>
+
+    <div class="sprite-tune-row" style="display:flex;flex-wrap:wrap;gap:0.8rem;align-items:flex-end;margin:0.2rem 0 0.7rem">
+      <div class="editor-field" style="flex:1 1 220px;min-width:190px">
+        <label style="display:flex;justify-content:space-between">
+          <span>⏱ ${escapeHtml(activeAnim)} speed</span>
+          <span><b id="sprite-speed-val">${_shownFps}</b> fps</span>
+        </label>
+        <input id="sprite-speed" type="range" min="4" max="30" step="1" value="${_shownFps}" style="width:100%">
+        <div class="small-text ink-dim" id="sprite-speed-note">${_setFps == null ? `Default (~${_defFps} fps)` : 'Custom speed'} · <button type="button" id="sprite-speed-reset" style="background:none;border:none;color:var(--gold);cursor:pointer;padding:0;font:inherit;text-decoration:underline">reset to default</button></div>
+      </div>
+      <div class="editor-field" style="flex:0 1 130px">
+        <label>🖼 Upload size</label>
+        <select id="sprite-upload-res">
+          <option value="128"${uploadRes === 128 ? ' selected' : ''}>128px</option>
+          <option value="256"${uploadRes === 256 ? ' selected' : ''}>256px</option>
+          <option value="512"${uploadRes === 512 ? ' selected' : ''}>512px · HD</option>
+        </select>
+      </div>
+      <div class="editor-field" style="flex:0 1 160px">
+        <label>✨ Scaling</label>
+        <select id="sprite-upload-smooth">
+          <option value="smooth"${uploadSmooth ? ' selected' : ''}>Smooth (HD art)</option>
+          <option value="crisp"${!uploadSmooth ? ' selected' : ''}>Crisp (pixel art)</option>
+        </select>
+      </div>
+    </div>
 
     <div style="font-family:'Cinzel',serif;letter-spacing:0.1em;font-size:0.78rem;color:var(--gold);margin-bottom:0.5rem;text-transform:uppercase">
       ${activeAnim} animation — ${frames.length} frame${frames.length === 1 ? '' : 's'}
@@ -78948,7 +79127,7 @@ function renderSpriteEditor() {
     <label class="upload-zone" id="upload-zone">
       <div class="upload-icon">⬆</div>
       <p>${frames.length > 0 ? '<strong>Add more frames</strong>' : '<strong>No frames yet — click to upload</strong>'} or drop images here</p>
-      <p style="font-size:0.78rem">Multiple images allowed · PNG/JPG/GIF · resized to 128px</p>
+      <p style="font-size:0.78rem">Multiple images allowed · PNG/JPG/GIF · resized to ${uploadRes}px${activeAnim === 'summon' ? ' · plays once on summon' : ''}</p>
       <input type="file" id="upload-input" accept="image/*" multiple style="display:none">
     </label>
 
@@ -78965,7 +79144,7 @@ function renderSpriteEditor() {
         <div class="editor-field"><label>Rows</label><input id="sheet-rows" type="number" min="1" max="16" value="5"></div>
         <div class="editor-field"><label>Mode</label>
           <select id="sheet-mode">
-            <option value="rows">Each row → an animation (idle/attack/walk/hurt/death)</option>
+            <option value="rows">Each row → an animation (idle/attack/walk/hurt/death/summon)</option>
             <option value="flat">All frames → current animation (${activeAnim})</option>
           </select>
         </div>
@@ -79013,11 +79192,55 @@ function _softUpdateSpriteEditor() {
   attachSpriteEditorHandlers();
 }
 
+// HD upload preferences (session-level; default 512px HD + smooth scaling).
+function _spriteUploadRes() {
+  const v = App && +App.spriteUploadRes;
+  return (v === 128 || v === 256 || v === 512) ? v : 512;
+}
+function _spriteUploadSmooth() {
+  // Default true (smooth) — best for detailed/painted art at HD. Pixel-art
+  // sprites can switch to crisp in the editor.
+  return !(App && App.spriteUploadSmooth === false);
+}
+
 function attachSpriteEditorHandlers() {
   document.querySelectorAll('[data-anim]').forEach(el => el.onclick = () => {
     App.spriteActiveAnim = el.dataset.anim;
     _softUpdateSpriteEditor();   // partial update — scroll preserved
   });
+
+  // 🎬 Per-animation SPEED slider — live-tunes playback fps for the active anim.
+  const speedEl = document.getElementById('sprite-speed');
+  if (speedEl) {
+    const valEl = document.getElementById('sprite-speed-val');
+    const _defFps = Math.round(1000 / DEFAULT_SPRITE_FRAME_MS);
+    speedEl.oninput = () => {
+      const fps = parseInt(speedEl.value, 10) || _defFps;
+      if (valEl) valEl.textContent = fps;
+      // Live-preview the cadence without a full editor rebuild.
+      try {
+        const ms = Math.max(20, Math.round(1000 / fps));
+        document.querySelectorAll('#sprite-editor .preview-box .sprite-stack').forEach(st => { st.dataset.spriteFrameMs = String(ms); });
+      } catch (e) {}
+    };
+    speedEl.onchange = () => {
+      const fps = parseInt(speedEl.value, 10) || _defFps;
+      setSpriteAnimFps(App.spriteSubjectId, App.spriteActiveAnim, fps);
+      saveForge();
+      _softUpdateSpriteEditor();
+    };
+  }
+  const speedReset = document.getElementById('sprite-speed-reset');
+  if (speedReset) speedReset.onclick = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    setSpriteAnimFps(App.spriteSubjectId, App.spriteActiveAnim, null);
+    saveForge();
+    _softUpdateSpriteEditor();
+  };
+  const resSel = document.getElementById('sprite-upload-res');
+  if (resSel) resSel.onchange = () => { App.spriteUploadRes = parseInt(resSel.value, 10) || 512; };
+  const smoothSel = document.getElementById('sprite-upload-smooth');
+  if (smoothSel) smoothSel.onchange = () => { App.spriteUploadSmooth = (smoothSel.value !== 'crisp'); };
 
   const removeBtns = document.querySelectorAll('[data-remove-frame]');
   removeBtns.forEach(btn => btn.onclick = (e) => {
@@ -79076,15 +79299,35 @@ function attachSpriteEditorHandlers() {
   }
 }
 
+// Approx KB on disk for one subject's whole sprite set (base64 → bytes).
+function _spriteSetKb(id) {
+  try {
+    const set = Forge.sprites && Forge.sprites[id];
+    if (!set) return 0;
+    let chars = 0;
+    for (const k of Object.keys(set)) {
+      const arr = set[k];
+      if (!Array.isArray(arr)) continue;
+      for (const s of arr) chars += (s ? s.length : 0);
+    }
+    return Math.round((chars * 0.75) / 1024);
+  } catch (e) { return 0; }
+}
+
 async function uploadSpriteFiles(files) {
   const id = App.spriteSubjectId;
   const anim = App.spriteActiveAnim;
   if (!id) return;
-  showToast(`Resizing ${files.length} image${files.length === 1 ? '' : 's'}...`);
+  const _res = _spriteUploadRes();
+  const _smooth = _spriteUploadSmooth();
+  showToast(`Resizing ${files.length} image${files.length === 1 ? '' : 's'} → ${_res}px…`);
   let okCount = 0, failCount = 0;
   for (const file of files) {
     try {
-      const dataUrl = await resizeImage(file, 128);
+      // HD-aware resize — honors the editor's size + scaling choice. Keeps PNG
+      // (transparency) for sprites. Existing callers passing no opts are
+      // unchanged; this is the only sprite-frame upload path.
+      const dataUrl = await resizeImage(file, _res, { smooth: _smooth });
       if (!Forge.sprites[id]) Forge.sprites[id] = {};
       if (!Forge.sprites[id][anim]) Forge.sprites[id][anim] = [];
       Forge.sprites[id][anim].push(dataUrl);
@@ -79097,6 +79340,12 @@ async function uploadSpriteFiles(files) {
   saveForge();
   if (failCount > 0) showToast(`⚠ ${okCount} added, ${failCount} failed`);
   else showToast(`✓ ${okCount} frame${okCount === 1 ? '' : 's'} added`);
+  // 📦 HD save-size guard — 512px frames are ~10–20× a 128px one, so warn once
+  // a subject's set gets heavy and suggest dialing the upload size back.
+  try {
+    const kb = _spriteSetKb(id);
+    if (kb > 3500) showToast(`📦 "${id}" sprites are now ~${(kb / 1024).toFixed(1)}MB — consider 256px or fewer frames if saves get heavy.`);
+  } catch (e) {}
   // Partial update preserves scroll position so the admin can keep
   // bulk-uploading frames without being snapped back to the top of
   // the page after every batch.
@@ -79272,10 +79521,11 @@ async function importSpriteSheet(file, opts) {
   const mode = opts.mode || 'flat'; // 'flat' = single anim, 'rows' = each row → next animation
   const targetAnim = opts.anim || 'idle';
 
-  showToast(`Slicing ${cols} × ${rows} sheet…`);
+  const _res = _spriteUploadRes();
+  showToast(`Slicing ${cols} × ${rows} sheet → ${_res}px…`);
   let grid;
   try {
-    grid = await sliceSpriteSheet(file, cols, rows, 128);
+    grid = await sliceSpriteSheet(file, cols, rows, _res);
   } catch (e) {
     console.warn('Slice failed', e);
     showToast('⚠ Could not slice that image');
@@ -80737,6 +80987,7 @@ function _aiAutoCounter(state, opts) {
           u.hasMoved = true; u.hasAttacked = true;
           aiDeployedUnit = u;
           state.units = [...state.units, u];
+          try { _markSummonAnim(u); } catch (e) {}
         }
       }
     } catch (e) {}
@@ -81023,6 +81274,7 @@ function _battleActivateCounter(cardInstanceId) {
           u.hasMoved = true; u.hasAttacked = true;
           deployedUnit = u;
           nextUnits = [...s.units, u];
+          try { _markSummonAnim(u); } catch (e) {}
         }
       }
     } catch (e) {}
@@ -88694,6 +88946,9 @@ function placeUnit(card, pos) {
   } else {
     playCardSummonVfx({ pos });
   }
+  // 🌟 Queue the sprite SUMMON animation (authored summon frames if present,
+  // else the built-in rise-and-pop) — fires once the unit is painted.
+  try { _markSummonAnim(unit); } catch (e) {}
   // 👑 Ace Slam — boss summon cinematic for units flagged in the Forge.
   try { _playAceSlam(unit, false); } catch (e) {}
   // 📡 Route through checkPostAction so multiplayer broadcasts the placement
@@ -90165,6 +90420,7 @@ function doAIStep() {
             }
           } catch (e) {}
           App.state = next;
+          try { _markSummonAnim(newUnit); } catch (e) {}
           setAIActor(newUnit.id, `🃏 Enemy plays ${best.name}`);
           renderBattle();
           scheduleAIStep(AI_DELAYS.card);
@@ -116942,7 +117198,7 @@ function renderDataPanel() {
     cards: (Forge.customCards || []).length,
     moves: Object.keys(Forge.customMoves || {}).length,
     events: (Forge.customEvents || []).length,
-    sprites: Object.keys(Forge.sprites || {}).length,
+    sprites: Object.keys(Forge.sprites || {}).filter(k => k.indexOf('__') !== 0).length,
     decks: (Profile.decks || []).length,
     heroes: Object.keys(Profile.heroes || {}).length,
     units: Object.keys(Profile.units || {}).length,

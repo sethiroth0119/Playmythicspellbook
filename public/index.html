@@ -66391,21 +66391,29 @@ function renderTitle() {
       // populated before clicking. Routes to deckSelect with a "go online"
       // intent so the picker auto-fires Find Match instead of solo Battle.
       { id: 'btn-play-online', icon: '🌐', name: 'Play Online', sub: (() => {
-            const online = (typeof LobbyPresence !== 'undefined' && LobbyPresence.count) || 0;
-            const q = (typeof LobbyPresence !== 'undefined' && LobbyPresence.queueCount) || 0;
             const sig = (Profile.cloud && Profile.cloud.signedIn);
             if (!sig) return 'Sign in to face real players';
+            // 🔒 Live online + queue counts are ADMIN-ONLY — regular players just
+            // get the call-to-action so the population numbers aren't exposed.
+            const _adm = (typeof isAdmin === 'function') && isAdmin();
+            if (!_adm) return 'Find a real opponent · ranked';
+            const online = (typeof LobbyPresence !== 'undefined' && LobbyPresence.count) || 0;
+            const q = (typeof LobbyPresence !== 'undefined' && LobbyPresence.queueCount) || 0;
             return online > 0
               ? `🟢 ${online} online · 🔍 ${q} searching`
               : 'Find a real opponent · ranked';
           })(), accent: '#b888ff',
         badge: (() => {
+          // 🔒 Admin-only online badge.
+          if (!((typeof isAdmin === 'function') && isAdmin())) return null;
           const online = (typeof LobbyPresence !== 'undefined' && LobbyPresence.count) || 0;
           if (online >= 2) return `🟢 ${online} online`;
           return null;
         })(),
         alertBadge: (() => {
-          // Pulse if someone else is searching — irresistible "join now" hook.
+          // 🔒 Admin-only — pulse if someone else is searching. Hidden from
+          // regular players so queue activity isn't exposed.
+          if (!((typeof isAdmin === 'function') && isAdmin())) return false;
           const q = (typeof LobbyPresence !== 'undefined' && LobbyPresence.queueCount) || 0;
           return q > 0;
         })(),

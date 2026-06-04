@@ -81970,11 +81970,11 @@ function renderDeckSearchModal() {
             <div style="flex:1 1 auto;min-height:0;overflow-y:auto;padding:1.1rem 1.3rem;display:flex;
               gap:1.3rem;flex-wrap:wrap">
               <div style="flex:0 0 220px;max-width:220px">
-                <div style="width:220px;height:170px;border-radius:8px;overflow:hidden;border:1px solid ${rd.color};
+                <div style="width:220px;height:300px;border-radius:8px;overflow:hidden;border:1px solid ${rd.color};
                   background:linear-gradient(180deg,#3a2870,#1f1244);display:flex;align-items:center;justify-content:center">
                   ${art
                     ? `<img src="${String(art).replace(/"/g, '&quot;')}" alt="${escapeHtml(c.name)}"
-                        style="width:100%;height:100%;object-fit:cover">`
+                        style="width:100%;height:100%;object-fit:contain">`
                     : `<span style="font-size:4.2rem">${c.icon || '🃏'}</span>`}
                 </div>
                 <div style="margin-top:0.6rem;text-align:center">
@@ -89023,7 +89023,11 @@ function playSpell(card) {
         .then((wasCountered) => {
           try {
             if (wasCountered) {
+              // 🛡 Negated — the spell FIZZLES OUT. It does NOT resolve: no
+              // effect happens. Clear feedback so it's obvious nothing activated.
               App.state = s;
+              try { s.log = [...(s.log || []), { msg: `🛡 ${card.name} was NEGATED — it fizzles out with no effect.`, color: 'amber' }]; } catch (e) {}
+              try { showToast('🛡 ' + (card.name || 'Spell') + ' negated — it fizzles out!'); } catch (e) {}
               renderBattle();
               return;
             }
@@ -89040,7 +89044,25 @@ function playSpell(card) {
           }
         })
         .catch((err) => {
-          try { console.warn('[spell] chain threw', err); _resolveSpellAfterChain(card); } catch (_) {}
+          try {
+            console.warn('[spell] chain threw', err);
+            // 🛡 If a counter was ALREADY applied before the chain threw, the
+            // spell is negated — it must NOT resolve. Only resume resolution
+            // when no counter actually fired. This guarantees a countered spell
+            // can never sneak through on an error path.
+            const _ctr = !!(App.state && (
+              (Array.isArray(App.state._counterChain) && App.state._counterChain.length > 0)
+              || App.state._lastAiCounterCard
+              || App.state._lastPlayerCounterCard
+            ));
+            if (_ctr) {
+              App.state = s;
+              try { showToast('🛡 ' + (card.name || 'Spell') + ' negated — it fizzles out!'); } catch (e) {}
+              try { renderBattle(); } catch (e) {}
+            } else {
+              _resolveSpellAfterChain(card);
+            }
+          } catch (_) {}
           try { if (App.state) App.state._counterChain = []; } catch (e) {}
           try { if (typeof _renderCounterChainOverlay === 'function') _renderCounterChainOverlay(App.state); } catch (e) {}
           App._spellInFlight = 0;
@@ -90471,6 +90493,14 @@ function doAIStep() {
           }
         }).catch(() => {
           if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
+          // 🛡 If the player ALREADY countered this spell before the prompt
+          // promise threw, the AI spell is negated — don't let it sneak through
+          // and resolve on the error path. Only resume when nothing countered.
+          const _ctr = !!(App.state && (
+            App.state._lastPlayerCounterCard
+            || (Array.isArray(App.state._counterChain) && App.state._counterChain.length > 0)
+          ));
+          if (_ctr) { try { renderBattle(); } catch (e) {} scheduleAIStep(AI_DELAYS.spell); return; }
           _doAISpell();
         });
       } catch (e) { _doAISpell(); }

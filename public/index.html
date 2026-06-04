@@ -9423,7 +9423,7 @@
   .ace-slam-veil {
     position: absolute; inset: 0; pointer-events: none;
     background: radial-gradient(ellipse 90% 90% at 50% 50%, rgba(10,6,2,0.30), rgba(0,0,0,0.82) 90%);
-    animation: ace-slam-veil-anim 0.9s ease-out forwards;
+    animation: ace-slam-veil-anim 3.5s ease-out forwards;
   }
   .ace-slam-streak {
     position: absolute; top: -10%; bottom: -10%; left: 50%; width: 36%;
@@ -9434,7 +9434,7 @@
   }
   .ace-slam-panel {
     position: relative; pointer-events: none;
-    width: min(420px, 44vw); height: min(560px, 66vh);
+    width: min(440px, 46vw); height: min(640px, 74vh);
     display: flex; flex-direction: column; align-items: stretch;
     border-radius: 14px; overflow: hidden;
     border: 3px solid var(--gold, #d4af37);
@@ -9442,8 +9442,8 @@
     box-shadow: 0 0 40px 6px rgba(255,200,90,0.55), 0 20px 60px rgba(0,0,0,0.8), inset 0 0 30px rgba(0,0,0,0.55);
     will-change: transform, opacity;
   }
-  .ace-slam-overlay.from-left  .ace-slam-panel { animation: ace-slam-in-left  0.9s cubic-bezier(0.18, 1.0, 0.3, 1) forwards; }
-  .ace-slam-overlay.from-right .ace-slam-panel { animation: ace-slam-in-right 0.9s cubic-bezier(0.18, 1.0, 0.3, 1) forwards; }
+  .ace-slam-overlay.from-left  .ace-slam-panel { animation: ace-slam-in-left  3.5s cubic-bezier(0.18, 1.0, 0.3, 1) forwards; }
+  .ace-slam-overlay.from-right .ace-slam-panel { animation: ace-slam-in-right 3.5s cubic-bezier(0.18, 1.0, 0.3, 1) forwards; }
   /* Holds the unit's board picture (sprite-stack / img / emoji), centered + contained. */
   .ace-slam-art { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 6px; background: radial-gradient(circle at 50% 38%, rgba(50,34,80,0.55), #0a0a12 78%); }
   .ace-slam-art > .sprite-stack { width: 100%; height: 100%; }
@@ -9458,27 +9458,56 @@
   }
   .ace-slam-name {
     flex: 0 0 auto; text-align: center; font-family: 'Cinzel', serif; font-weight: 800;
-    font-size: 1.5rem; line-height: 1.15; color: #fff; padding: 8px 10px 12px;
+    font-size: 1.5rem; line-height: 1.15; color: #fff; padding: 8px 10px 8px;
     background: linear-gradient(180deg, rgba(10,8,16,0.55), rgba(10,8,16,0.96));
     text-shadow: 0 2px 6px rgba(0,0,0,0.9), 0 0 14px rgba(255,200,90,0.5);
   }
+  /* 💠 Cost line — fades up just after the panel lands. */
+  .ace-slam-cost {
+    flex: 0 0 auto; text-align: center; font-family: 'Cinzel', serif; font-weight: 800;
+    font-size: 1.02rem; letter-spacing: 0.05em; color: #ffe6a3; padding: 2px 10px 6px;
+    background: rgba(10,8,16,0.96); text-shadow: 0 1px 4px rgba(0,0,0,0.85);
+    opacity: 0; animation: ace-slam-fade-up 0.5s ease-out 0.65s forwards;
+  }
+  /* 🌟 On-play effect — the unit's entrance ability, staggered in below the cost. */
+  .ace-slam-onplay {
+    flex: 0 0 auto; text-align: center; font-size: 0.84rem; line-height: 1.32;
+    color: #d6e6ff; padding: 6px 14px 12px; background: rgba(10,8,16,0.96);
+    max-height: 5.4em; overflow: hidden;
+    opacity: 0; animation: ace-slam-fade-up 0.55s ease-out 0.95s forwards;
+  }
+  .ace-slam-onplay-label {
+    display: inline-block; font-family: 'Cinzel', serif; font-weight: 800; font-size: 0.62rem;
+    letter-spacing: 0.2em; color: #8fd0ff; margin-right: 6px; vertical-align: middle;
+    border: 1px solid rgba(143,208,255,0.5); border-radius: 4px; padding: 1px 5px;
+  }
+  /* Gentle living glow on the portrait through the hold so it reads as "alive". */
+  .ace-slam-art > .sprite-stack, .ace-slam-art > img, .ace-slam-art > span {
+    animation: ace-slam-art-glow 2.2s ease-in-out 0.45s infinite;
+  }
+  @keyframes ace-slam-art-glow {
+    0%, 100% { filter: drop-shadow(0 0 2px rgba(255,200,90,0.15)); }
+    50%      { filter: drop-shadow(0 0 18px rgba(255,212,120,0.6)); }
+  }
+  @keyframes ace-slam-fade-up { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: translateY(0); } }
+  /* Land FAST (~6%≈0.2s), HOLD long (to ~86%≈3.0s), then slide out by 3.5s. */
   @keyframes ace-slam-in-left {
     0%   { transform: translateX(-135%) rotate(-9deg) scale(0.9);  opacity: 0; }
-    16%  { transform: translateX(6%)    rotate(2deg)  scale(1.05); opacity: 1; }
-    24%  { transform: translateX(-2%)   rotate(-1deg) scale(0.99); }
-    34%  { transform: translateX(0)     rotate(0deg)  scale(1); }
-    68%  { transform: translateX(0)     rotate(0deg)  scale(1);     opacity: 1; }
+    6%   { transform: translateX(6%)    rotate(2deg)  scale(1.06); opacity: 1; }
+    10%  { transform: translateX(-2%)   rotate(-1deg) scale(0.99); }
+    14%  { transform: translateX(0)     rotate(0deg)  scale(1); }
+    86%  { transform: translateX(0)     rotate(0deg)  scale(1);     opacity: 1; }
     100% { transform: translateX(46%)   rotate(3deg)  scale(0.95);  opacity: 0; }
   }
   @keyframes ace-slam-in-right {
     0%   { transform: translateX(135%)  rotate(9deg)  scale(0.9);  opacity: 0; }
-    16%  { transform: translateX(-6%)   rotate(-2deg) scale(1.05); opacity: 1; }
-    24%  { transform: translateX(2%)    rotate(1deg)  scale(0.99); }
-    34%  { transform: translateX(0)     rotate(0deg)  scale(1); }
-    68%  { transform: translateX(0)     rotate(0deg)  scale(1);     opacity: 1; }
+    6%   { transform: translateX(-6%)   rotate(-2deg) scale(1.06); opacity: 1; }
+    10%  { transform: translateX(2%)    rotate(1deg)  scale(0.99); }
+    14%  { transform: translateX(0)     rotate(0deg)  scale(1); }
+    86%  { transform: translateX(0)     rotate(0deg)  scale(1);     opacity: 1; }
     100% { transform: translateX(-46%)  rotate(-3deg) scale(0.95);  opacity: 0; }
   }
-  @keyframes ace-slam-veil-anim   { 0% { opacity: 0; } 12% { opacity: 1; } 66% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes ace-slam-veil-anim   { 0% { opacity: 0; } 4% { opacity: 1; } 88% { opacity: 1; } 100% { opacity: 0; } }
   @keyframes ace-slam-streak-anim { 0% { transform: translateX(-180%) rotate(14deg); opacity: 0; } 40% { opacity: 0.9; } 100% { transform: translateX(180%) rotate(14deg); opacity: 0; } }
 
   /* 💀 DRAMATIC HERO KO — match-ending cinematic. */
@@ -79799,18 +79828,39 @@ function _playAceSlam(unit, fromAI) {
     const name = unit.name || 'Ace';
     const fromAi = (fromAI != null) ? fromAI : (unit.owner === 'ai');
     const side = fromAi ? 'right' : 'left';
-    // 🖼 "Picture of the unit" — the SAME visual shown on the board (animated
-    //    sprite / uploaded art / emoji), NOT the framed card. unitBoardVisual
-    //    handles the sprite-or-art-or-emoji resolution.
+    // 🖼 "Picture of the unit" — play the unit's SUMMON animation (authored
+    //    summon frames if present, else idle), so the ace literally performs its
+    //    summon animation during the cinematic. Falls back to board art / emoji.
     let pic = '';
-    try { pic = (typeof unitBoardVisual === 'function') ? (unitBoardVisual(unit) || '') : ''; } catch (e) {}
+    try {
+      const _sId = (typeof getSpriteId === 'function') ? getSpriteId(unit) : null;
+      if (_sId && typeof renderIcon === 'function' && typeof getSpriteFrames === 'function'
+          && (getSpriteFrames(_sId, 'summon') || getSpriteFrames(_sId, 'idle'))) {
+        pic = renderIcon(_sId, unit.icon, 'fill', 'summon');
+      }
+    } catch (e) {}
+    if (!pic) { try { pic = (typeof unitBoardVisual === 'function') ? (unitBoardVisual(unit) || '') : ''; } catch (e) {} }
     if (!pic) pic = '<span style="font-size:9rem;line-height:1">' + (unit.icon || '👑') + '</span>';
+    // 💠 Cost + 🌟 on-play effect — the built unit doesn't carry cost/onPlay, so
+    //    resolve them from the published card def (fall back to the unit itself).
+    let _def = null;
+    try { _def = (typeof lookupCustomCard === 'function') ? lookupCustomCard(unit.originalCardId || unit.cardId) : null; } catch (e) {}
+    let _cost = null;
+    if (_def && _def.cost != null) _cost = _def.cost;
+    else if (unit.cost != null) _cost = unit.cost;
+    const _onPlay = (_def && _def.onPlay) || unit.onPlay || null;
+    let _onPlayText = '';
+    try { _onPlayText = (_onPlay && typeof describeOnPlayEffect === 'function') ? (describeOnPlayEffect(_onPlay) || '') : ''; } catch (e) {}
     _aceSlamBusy = true;
     const old = document.getElementById('ace-slam-overlay'); if (old) old.remove();
     const host = document.createElement('div');
     host.id = 'ace-slam-overlay';
     host.className = 'ace-slam-overlay from-' + side;
     const esc = (typeof escapeHtml === 'function') ? escapeHtml(String(name)) : String(name);
+    const _costHtml = (_cost != null) ? '<div class="ace-slam-cost">⚡ Cost ' + (_cost | 0) + '</div>' : '';
+    const _onPlayHtml = _onPlayText
+      ? '<div class="ace-slam-onplay"><span class="ace-slam-onplay-label">ON&nbsp;PLAY</span>' + ((typeof escapeHtml === 'function') ? escapeHtml(_onPlayText) : _onPlayText) + '</div>'
+      : '';
     host.innerHTML =
       '<div class="ace-slam-veil"></div>' +
       '<div class="ace-slam-streak"></div>' +
@@ -79818,12 +79868,15 @@ function _playAceSlam(unit, fromAI) {
         '<div class="ace-slam-art">' + pic + '</div>' +
         '<div class="ace-slam-tag">✦ ACE ✦</div>' +
         '<div class="ace-slam-name">' + esc + '</div>' +
+        _costHtml +
+        _onPlayHtml +
       '</div>';
     document.body.appendChild(host);
-    // Bass-y shake at the impact beat (just as the portrait lands).
-    setTimeout(() => { try { if (typeof Juice !== 'undefined' && Juice.shake) Juice.shake(document.querySelector('.battle-screen') || document.body); } catch (e) {} }, 230);
+    // Bass-y shake at the impact beat (just as the portrait lands ~0.2s in).
+    setTimeout(() => { try { if (typeof Juice !== 'undefined' && Juice.shake) Juice.shake(document.querySelector('.battle-screen') || document.body); } catch (e) {} }, 210);
+    // 👑 Hold the cinematic ~3.5s (name · cost · on-play on screen), click-to-skip.
     const _done = () => { _aceSlamBusy = false; try { host.remove(); } catch (e) {} };
-    const _t = setTimeout(_done, 900);
+    const _t = setTimeout(_done, 3500);
     host.onclick = () => { clearTimeout(_t); _done(); };   // click-to-skip
   } catch (e) { _aceSlamBusy = false; }
 }

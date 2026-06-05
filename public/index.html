@@ -31423,17 +31423,21 @@ function _armMenuAudioGesture() {
   });
 }
 
-function playMenuMusic() {
+function playMenuMusic(opts) {
+  const force = !!(opts && opts.force);   // onboarding forces music on, audibly
   const settings = (typeof getSettings === 'function') ? getSettings() : (Profile.settings || {});
-  // Master toggle — bail out silently when the player has muted music.
-  if (settings.musicEnabled === false) {
+  // Master toggle — bail out silently when the player has muted music, UNLESS a
+  // caller forces it (the first-run onboarding deliberately plays the theme).
+  if (!force && settings.musicEnabled === false) {
     stopMenuMusic();
     return;
   }
   const track = getMenuTrack();
   if (!track) return;
   const el = _ensureMenuAudioEl();
-  el.volume = Math.max(0, Math.min(1, settings.musicVolume != null ? settings.musicVolume : 0.5));
+  let _mvol = settings.musicVolume != null ? settings.musicVolume : 0.5;
+  if (force && (!_mvol || _mvol < 0.35)) _mvol = 0.45;   // ensure it's audible during onboarding
+  el.volume = Math.max(0, Math.min(1, _mvol));
   if (_menuAudioSrc !== track.src || !el.src) {
     el.src = track.src;
     _menuAudioSrc = track.src;
@@ -67628,8 +67632,9 @@ function renderOnboarding() {
   try { var _lw = document.getElementById('tutorial-welcome'); if (_lw) _lw.remove(); } catch (e) {}
   // 🎵 Onboarding plays the main-menu theme (idempotent — won't restart between
   // steps). The onboarding screen isn't a recognised music-screen, so
-  // syncMusicForScreen left it silent; play it directly instead.
-  try { if (typeof playMenuMusic === 'function') playMenuMusic(); } catch (e) {}
+  // syncMusicForScreen left it silent; play it directly instead. force:true so
+  // it plays the first-run theme even if the player's music toggle is off / low.
+  try { if (typeof playMenuMusic === 'function') playMenuMusic({ force: true }); } catch (e) {}
   try {
     const step = Onboarding.step || 'welcome';
     if (step === 'welcome')       return _onbRenderWelcome();
@@ -67665,7 +67670,7 @@ function _onbRenderWelcome() {
   // Layer the welcome image OVER the gradient so a missing/404 image degrades to
   // the gradient instead of a blank/broken background. cover+center fills nicely.
   const bg = cfg.image
-    ? '<div class="onb-bgimg onb-fade" style="background-image:url(' + JSON.stringify(cfg.image) + '),radial-gradient(ellipse at 50% 30%,#2a1850,#0a0518 60%,#04030a);background-size:cover;background-position:center"></div>'
+    ? '<div class="onb-bgimg onb-fade" style="background-image:url(\'' + ('' + cfg.image).replace(/'/g, '%27') + '\'),radial-gradient(ellipse at 50% 30%,#2a1850,#0a0518 60%,#04030a);background-size:cover;background-position:center"></div>'
     : '<div class="onb-bgimg onb-fade" style="background:radial-gradient(ellipse at 50% 30%,#2a1850,#0a0518 60%,#04030a)"></div>';
   const paras = ('' + cfg.narration).split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
     .map((p, i) => '<p style="animation-delay:' + (i * 220) + 'ms">' + escapeHtml(p) + '</p>').join('');

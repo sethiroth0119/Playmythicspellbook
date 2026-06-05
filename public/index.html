@@ -60440,6 +60440,11 @@ const DAY_NIGHT_PERIOD = 5; // flip every 5 player turns
 
 // ============ STATUS / EFFECTS ============
 const isImmuneToStatus = (unit, statusId) => {
+  // 🌀 Post-stun immunity — a unit (or hero) that just recovered from a Stun
+  // cannot be re-stunned on the immediately following turn. Prevents enemies
+  // from chaining stuns into a perma-lock. Granted in startTurn when a stun
+  // wears off; decays one turn later.
+  if (statusId === 'stun' && unit && (unit._stunImmuneTurns | 0) > 0) return true;
   // Element-keyed immunity (any matching element grants immunity)
   const elems = getElementsOf(unit);
   for (const e of elems) {
@@ -63316,6 +63321,20 @@ const startTurn = (state, who) => {
       }
     });
     nu.statusEffects = newEffects;
+    // 🌀 ANTI-STUN-LOCK — if a Stun JUST wore off on this tick, grant one turn
+    // of stun-immunity so the unit can't be immediately re-stunned (no stacking
+    // stun-lock). Otherwise age any existing immunity down. Applies to heroes
+    // and units alike; isImmuneToStatus reads _stunImmuneTurns.
+    try {
+      const _hadStun = (u.statusEffects || []).some(e => e && e.type === 'stun');
+      const _hasStun = newEffects.some(e => e && e.type === 'stun');
+      if (_hadStun && !_hasStun) {
+        nu._stunImmuneTurns = 1;
+        log.push({ msg: `💫 ${u.name} shakes off the stun — can't be stunned again next turn.`, color: who === 'player' ? 'green' : 'red' });
+      } else if ((nu._stunImmuneTurns | 0) > 0) {
+        nu._stunImmuneTurns = (nu._stunImmuneTurns | 0) - 1;
+      }
+    } catch (e) {}
     // ✨ Reraise (FFT) — one-time auto-revive at reviveAtPct of max HP. If a
     // unit would drop to 0 from any source (status DoT, lethal hit applied
     // earlier this frame, etc.) and they currently carry a reraise status,

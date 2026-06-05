@@ -67338,6 +67338,8 @@ function _onbCfg() {
     title:     (typeof s.title === 'string' && s.title.trim()) ? s.title : 'WELCOME TO ETHOS HEIGHTS',
     narration: (typeof s.narration === 'string' && s.narration.trim()) ? s.narration : ONB_DEFAULT_NARRATION,
     voice:     s.voice !== false,
+    voiceName: (typeof s.voiceName === 'string') ? s.voiceName : '',   // chosen TTS voice (by name); '' = browser default
+    speakerImage: (typeof s.speakerImage === 'string') ? s.speakerImage : '', // RPG narrator portrait shown on the side
   };
 }
 
@@ -67416,13 +67418,22 @@ function _onbFinish() {
 // ---- Voice-over (Web Speech API) — optional, skippable, graceful fallback ----
 function _speakOnb(text) {
   try {
-    if (!_onbCfg().voice) return;
+    const cfg = _onbCfg();
+    if (!cfg.voice) return;
     const st = (typeof getSettings === 'function') ? getSettings() : (Profile.settings || {});
     if (st.musicEnabled === false || st.sfxEnabled === false) { /* still allow voice unless fully muted below */ }
     if (typeof window === 'undefined' || !window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') return;
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(('' + text).replace(/\s+/g, ' ').trim());
     u.rate = 0.92; u.pitch = 1.0; u.volume = 0.95;
+    // 🎙 Admin-chosen narrator voice (by name). Falls back to the browser default.
+    if (cfg.voiceName) {
+      try {
+        const voices = window.speechSynthesis.getVoices() || [];
+        const v = voices.find(vv => vv && vv.name === cfg.voiceName);
+        if (v) u.voice = v;
+      } catch (e) {}
+    }
     window.speechSynthesis.speak(u);
   } catch (e) {}
 }
@@ -67464,7 +67475,16 @@ function _onbEnsureStyle() {
     '.onb-dots{display:flex;gap:6px;justify-content:center;margin:1rem 0}' +
     '.onb-dot{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,0.22)}' +
     '.onb-dot.on{background:#ffd166;box-shadow:0 0 10px rgba(255,209,102,0.7)}' +
-    '.onb-skip{position:absolute;top:18px;right:22px;z-index:3}';
+    '.onb-skip{position:absolute;top:18px;right:22px;z-index:3}' +
+    // 🗣 RPG narrator portrait — slides up from the right edge, full-ish height.
+    '.onb-speaker{position:absolute;right:0;bottom:0;height:96vh;width:auto;max-width:52vw;object-fit:contain;object-position:bottom right;z-index:1;pointer-events:none;filter:drop-shadow(0 10px 34px rgba(0,0,0,0.75));animation:onbSpeakerIn 900ms cubic-bezier(0.18,1,0.3,1) 200ms both}' +
+    '@keyframes onbSpeakerIn{0%{transform:translateX(60px) translateY(24px);opacity:0}100%{transform:translateX(0) translateY(0);opacity:1}}' +
+    // When a speaker is present the narration shifts LEFT so the character has the right side.
+    '.onb-screen.has-speaker .onb-card{margin:0 auto 0 clamp(16px,6vw,90px);text-align:left;max-width:min(640px,52vw)}' +
+    '.onb-screen.has-speaker .onb-title{text-align:left}' +
+    '.onb-screen.has-speaker .onb-narr{margin:0;text-align:left}' +
+    '.onb-screen.has-speaker .onb-actions{justify-content:flex-start}' +
+    '@media (max-width:760px){.onb-speaker{max-width:74vw;height:54vh;opacity:0.3}.onb-screen.has-speaker .onb-card{margin:auto;text-align:center;max-width:94vw}.onb-screen.has-speaker .onb-title{text-align:center}.onb-screen.has-speaker .onb-narr{text-align:center}.onb-screen.has-speaker .onb-actions{justify-content:center}}';
   document.head.appendChild(st);
 }
 
@@ -67473,7 +67493,10 @@ function renderOnboarding() {
   // 🧹 Remove the LEGACY first-run tutorial-welcome overlay if it ever mounted —
   // the onboarding's own tutorial offer replaces it; it must never sit on top.
   try { var _lw = document.getElementById('tutorial-welcome'); if (_lw) _lw.remove(); } catch (e) {}
-  try { if (typeof syncMusicForScreen === 'function') syncMusicForScreen(); } catch (e) {}
+  // 🎵 Onboarding plays the main-menu theme (idempotent — won't restart between
+  // steps). The onboarding screen isn't a recognised music-screen, so
+  // syncMusicForScreen left it silent; play it directly instead.
+  try { if (typeof playMenuMusic === 'function') playMenuMusic(); } catch (e) {}
   try {
     const step = Onboarding.step || 'welcome';
     if (step === 'welcome')       return _onbRenderWelcome();
@@ -67510,10 +67533,15 @@ function _onbRenderWelcome() {
     : '<div class="onb-bgimg onb-fade" style="background:radial-gradient(ellipse at 50% 30%,#2a1850,#0a0518 60%,#04030a)"></div>';
   const paras = ('' + cfg.narration).split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
     .map((p, i) => '<p style="animation-delay:' + (i * 220) + 'ms">' + escapeHtml(p) + '</p>').join('');
+  // 🗣 RPG narrator: a speaker portrait slides in on the side (like the page-guide).
+  const spk = cfg.speakerImage
+    ? '<img class="onb-speaker" src="' + escapeHtml(cfg.speakerImage) + '" alt="">'
+    : '';
   _onbRoot(
-    '<div class="onb-screen">' +
+    '<div class="onb-screen' + (cfg.speakerImage ? ' has-speaker' : '') + '">' +
       bg +
       '<div class="onb-vignette"></div>' +
+      spk +
       '<div class="onb-card onb-fade">' +
         '<h1 class="onb-title">' + escapeHtml(cfg.title) + '</h1>' +
         '<div class="onb-narr">' + paras + '</div>' +
@@ -67773,6 +67801,10 @@ function renderForgeOnboarding() {
   const imgPreview = img
     ? '<div style="margin-top:8px"><img src="' + escapeHtml(img) + '" alt="" style="max-width:100%;max-height:200px;border-radius:10px;border:1px solid rgba(255,209,102,0.4)"></div>'
     : '<div class="ink-dim small-text" style="margin-top:6px">No image set — players see a default gradient.</div>';
+  const spk = (typeof f.speakerImage === 'string' && f.speakerImage) ? f.speakerImage : (App._onbSpk || '');
+  const spkPreview = spk
+    ? '<div style="margin-top:8px"><img src="' + escapeHtml(spk) + '" alt="" style="max-height:160px;border-radius:10px;border:1px solid rgba(255,209,102,0.4)"></div>'
+    : '<div class="ink-dim small-text" style="margin-top:6px">No speaker set — narration shows with no character.</div>';
   return '' +
     '<div class="settings-section" style="max-width:760px;margin:0 auto">' +
       '<div class="settings-section-title">🎓 New-Player Onboarding</div>' +
@@ -67782,6 +67814,10 @@ function renderForgeOnboarding() {
         '<input type="checkbox" id="onb-adm-enabled" ' + (enabled ? 'checked' : '') + '> <span>✅ Onboarding <strong>enabled</strong> for new players</span></label>' +
       '<label style="display:flex;align-items:center;gap:10px;margin:10px 0;font-size:0.95rem">' +
         '<input type="checkbox" id="onb-adm-voice" ' + (voice ? 'checked' : '') + '> <span>🔊 Voice-over narration (browser text-to-speech)</span></label>' +
+
+      '<label style="display:flex;flex-direction:column;gap:4px;margin:10px 0 6px;font-size:0.72rem;color:#bfae87">🎙 NARRATOR VOICE (browser text-to-speech)' +
+        '<select id="onb-adm-voicename" style="font-size:0.9rem;padding:8px;border-radius:8px;border:1px solid rgba(255,209,102,0.4);background:rgba(0,0,0,0.35);color:#f6e8c8"><option value="">Default (browser voice)</option></select></label>' +
+      '<button class="btn-secondary btn-mini" id="onb-adm-voicetest" style="margin-bottom:8px">▶ Test voice</button>' +
 
       '<label style="display:flex;flex-direction:column;gap:4px;margin:14px 0;font-size:0.72rem;color:#bfae87">WELCOME TITLE' +
         '<input type="text" id="onb-adm-title" value="' + escapeHtml(cfg.title) + '" style="font-size:0.95rem;padding:8px;border-radius:8px;border:1px solid rgba(255,209,102,0.4);background:rgba(0,0,0,0.35);color:#f6e8c8"></label>' +
@@ -67797,6 +67833,16 @@ function renderForgeOnboarding() {
         '</div>' +
         '<input type="text" id="onb-adm-imgurl" placeholder="…or paste an image URL" value="' + escapeHtml((img && img.indexOf('data:') !== 0) ? img : '') + '" style="margin-top:8px;width:100%;font-size:0.85rem;padding:7px;border-radius:8px;border:1px solid rgba(255,209,102,0.4);background:rgba(0,0,0,0.35);color:#f6e8c8">' +
         '<div id="onb-adm-imgprev">' + imgPreview + '</div>' +
+      '</div>' +
+
+      '<div style="margin:14px 0">' +
+        '<div style="font-size:0.72rem;color:#bfae87;margin-bottom:6px">🗣 NARRATOR / SPEAKER IMAGE (RPG character shown on the SIDE during narration — like a guide)</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+          '<input type="file" id="onb-adm-spkfile" accept="image/*" style="font-size:0.85rem">' +
+          '<button class="btn-secondary btn-mini" id="onb-adm-spkclear">✕ Clear speaker</button>' +
+        '</div>' +
+        '<input type="text" id="onb-adm-spkurl" placeholder="…or paste an image URL" value="' + escapeHtml((spk && spk.indexOf('data:') !== 0) ? spk : '') + '" style="margin-top:8px;width:100%;font-size:0.85rem;padding:7px;border-radius:8px;border:1px solid rgba(255,209,102,0.4);background:rgba(0,0,0,0.35);color:#f6e8c8">' +
+        '<div id="onb-adm-spkprev">' + spkPreview + '</div>' +
       '</div>' +
 
       '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:18px">' +
@@ -67829,6 +67875,55 @@ function bindForgeOnboarding() {
     const url = document.getElementById('onb-adm-imgurl'); if (url) url.value = '';
     const prev = document.getElementById('onb-adm-imgprev'); if (prev) prev.innerHTML = '<div class="ink-dim small-text" style="margin-top:6px">No image set — players see a default gradient.</div>';
   };
+
+  // 🎙 Populate the narrator-voice picker from the browser's TTS voices.
+  const voiceSel = document.getElementById('onb-adm-voicename');
+  if (voiceSel) {
+    const _fillVoices = () => {
+      try {
+        const voices = (window.speechSynthesis && window.speechSynthesis.getVoices()) || [];
+        const cur = _onbCfg().voiceName || '';
+        voiceSel.innerHTML = '<option value="">Default (browser voice)</option>' +
+          voices.map(v => '<option value="' + escapeHtml(v.name) + '"' + (v.name === cur ? ' selected' : '') + '>' + escapeHtml(v.name + ' (' + v.lang + ')') + '</option>').join('');
+      } catch (e) {}
+    };
+    _fillVoices();
+    // getVoices() is frequently empty on the first call — refill when ready.
+    try { if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = _fillVoices; } catch (e) {}
+  }
+  const voiceTest = document.getElementById('onb-adm-voicetest');
+  if (voiceTest) voiceTest.onclick = () => {
+    try {
+      if (!window.speechSynthesis) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance('Welcome to Ethos Heights, survivor. Your journey begins now.');
+      u.rate = 0.92;
+      const nm = ((document.getElementById('onb-adm-voicename') || {}).value || '');
+      if (nm) { const v = (window.speechSynthesis.getVoices() || []).find(x => x.name === nm); if (v) u.voice = v; }
+      window.speechSynthesis.speak(u);
+    } catch (e) {}
+  };
+  // 🗣 Narrator/speaker image — file upload + clear (mirrors the welcome image).
+  const spkFile = document.getElementById('onb-adm-spkfile');
+  if (spkFile) spkFile.onchange = () => {
+    const fl = spkFile.files && spkFile.files[0];
+    if (!fl) return;
+    if (fl.size > 4 * 1024 * 1024) { try { showToast('⚠ Image too large (max ~4MB). Use a URL for big images.', 4200); } catch (e) {} return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      App._onbSpk = reader.result;
+      const prev = document.getElementById('onb-adm-spkprev');
+      if (prev) prev.innerHTML = '<div style="margin-top:8px"><img src="' + escapeHtml(App._onbSpk) + '" alt="" style="max-height:160px;border-radius:10px;border:1px solid rgba(255,209,102,0.4)"></div>';
+    };
+    try { reader.readAsDataURL(fl); } catch (e) {}
+  };
+  const spkClear = document.getElementById('onb-adm-spkclear');
+  if (spkClear) spkClear.onclick = () => {
+    App._onbSpk = '';
+    const url = document.getElementById('onb-adm-spkurl'); if (url) url.value = '';
+    const prev = document.getElementById('onb-adm-spkprev'); if (prev) prev.innerHTML = '<div class="ink-dim small-text" style="margin-top:6px">No speaker set — narration shows with no character.</div>';
+  };
+
   const save = document.getElementById('onb-adm-save');
   if (save) save.onclick = () => {
     const enabled = !!(document.getElementById('onb-adm-enabled') || {}).checked;
@@ -67836,10 +67931,13 @@ function bindForgeOnboarding() {
     const title   = ((document.getElementById('onb-adm-title') || {}).value || '').trim();
     const narr    = ((document.getElementById('onb-adm-narr') || {}).value || '').trim();
     const urlVal  = ((document.getElementById('onb-adm-imgurl') || {}).value || '').trim();
-    // Image precedence: a freshly-loaded file (App._onbImg) wins, else the URL field.
+    const voiceName = ((document.getElementById('onb-adm-voicename') || {}).value || '');
+    const spkUrl  = ((document.getElementById('onb-adm-spkurl') || {}).value || '').trim();
+    // Image precedence: a freshly-loaded file wins, else the URL field.
     const image = (typeof App._onbImg === 'string' && App._onbImg) ? App._onbImg : urlVal;
-    Forge.onboarding = { enabled: enabled, voice: voice, title: title, narration: narr, image: image };
-    App._onbImg = undefined;
+    const speakerImage = (typeof App._onbSpk === 'string' && App._onbSpk) ? App._onbSpk : spkUrl;
+    Forge.onboarding = { enabled: enabled, voice: voice, title: title, narration: narr, image: image, voiceName: voiceName, speakerImage: speakerImage };
+    App._onbImg = undefined; App._onbSpk = undefined;
     try { saveForge && saveForge(); } catch (e) {}
     try {
       if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0);
@@ -67855,8 +67953,11 @@ function bindForgeOnboarding() {
     const title   = ((document.getElementById('onb-adm-title') || {}).value || '').trim();
     const narr    = ((document.getElementById('onb-adm-narr') || {}).value || '').trim();
     const urlVal  = ((document.getElementById('onb-adm-imgurl') || {}).value || '').trim();
+    const voiceName = ((document.getElementById('onb-adm-voicename') || {}).value || '');
+    const spkUrl  = ((document.getElementById('onb-adm-spkurl') || {}).value || '').trim();
     const image = (typeof App._onbImg === 'string' && App._onbImg) ? App._onbImg : urlVal;
-    Forge.onboarding = { enabled: enabled || true, voice: voice, title: title, narration: narr, image: image };
+    const speakerImage = (typeof App._onbSpk === 'string' && App._onbSpk) ? App._onbSpk : spkUrl;
+    Forge.onboarding = { enabled: enabled || true, voice: voice, title: title, narration: narr, image: image, voiceName: voiceName, speakerImage: speakerImage };
     onbAdminPreview();
   };
   const resetBtn = document.getElementById('onb-adm-reset');

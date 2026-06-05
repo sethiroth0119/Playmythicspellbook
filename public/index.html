@@ -9420,95 +9420,93 @@
     display: flex; align-items: center; justify-content: center;
     overflow: hidden; pointer-events: auto;
   }
+  /* 🌑 MASTER-DUEL style — deep vignette, slow fade across the whole reveal. */
   .ace-slam-veil {
     position: absolute; inset: 0; pointer-events: none;
-    background: radial-gradient(ellipse 90% 90% at 50% 50%, rgba(10,6,2,0.30), rgba(0,0,0,0.82) 90%);
-    animation: ace-slam-veil-anim 3.5s ease-out forwards;
+    background: radial-gradient(ellipse 100% 100% at 50% 46%, rgba(8,6,16,0.55), rgba(0,0,0,0.94) 88%);
+    animation: ace-slam-veil-anim 5s ease-out forwards;
   }
-  .ace-slam-streak {
-    position: absolute; top: -10%; bottom: -10%; left: 50%; width: 36%;
-    transform: translateX(-50%) rotate(14deg);
-    background: linear-gradient(90deg, transparent, rgba(255,225,150,0.5), rgba(255,255,255,0.85), rgba(255,225,150,0.5), transparent);
-    filter: blur(6px); mix-blend-mode: screen; pointer-events: none;
-    animation: ace-slam-streak-anim 0.7s ease-in-out forwards;
+  /* Vertical pillar of light the unit rises out of. */
+  .ace-slam-pillar {
+    position: absolute; left: 50%; top: 50%; width: min(360px, 60vw); height: 160vh;
+    transform: translate(-50%, -50%); transform-origin: 50% 50%;
+    background: linear-gradient(180deg, transparent, rgba(255,224,150,0.04) 18%, rgba(255,232,170,0.42) 46%, rgba(255,246,214,0.72) 50%, rgba(255,232,170,0.42) 54%, rgba(255,224,150,0.04) 82%, transparent);
+    filter: blur(12px); mix-blend-mode: screen; pointer-events: none;
+    animation: ace-slam-pillar-anim 5s ease-out forwards;
   }
-  .ace-slam-panel {
-    position: relative; pointer-events: none;
-    width: min(440px, 46vw); height: min(640px, 74vh);
-    display: flex; flex-direction: column; align-items: stretch;
-    border-radius: 14px; overflow: hidden;
-    border: 3px solid var(--gold, #d4af37);
-    background: #0a0a12;
-    box-shadow: 0 0 40px 6px rgba(255,200,90,0.55), 0 20px 60px rgba(0,0,0,0.8), inset 0 0 30px rgba(0,0,0,0.55);
-    will-change: transform, opacity;
+  /* Radiant burst ring at the reveal beat. */
+  .ace-slam-burst {
+    position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px;
+    border-radius: 50%; opacity: 0; pointer-events: none; mix-blend-mode: screen;
+    background: radial-gradient(circle, rgba(255,250,235,0.95), rgba(255,222,140,0.32) 58%, transparent 72%);
+    box-shadow: 0 0 60px 30px rgba(255,236,180,0.85), 0 0 150px 70px rgba(255,210,110,0.4);
+    animation: ace-slam-burst-anim 5s ease-out forwards;
   }
-  .ace-slam-overlay.from-left  .ace-slam-panel { animation: ace-slam-in-left  3.5s cubic-bezier(0.18, 1.0, 0.3, 1) forwards; }
-  .ace-slam-overlay.from-right .ace-slam-panel { animation: ace-slam-in-right 3.5s cubic-bezier(0.18, 1.0, 0.3, 1) forwards; }
-  /* Holds the unit's board picture (sprite-stack / img / emoji), centered + contained. */
-  .ace-slam-art { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 6px; background: radial-gradient(circle at 50% 38%, rgba(50,34,80,0.55), #0a0a12 78%); }
+  /* Frameless centered stage — JUST the unit + its name, NO box / border / panel. */
+  .ace-slam-stage {
+    position: relative; pointer-events: none; z-index: 2;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; max-width: 92vw; padding: 0 12px;
+  }
+  /* The unit itself — large, frameless, emerges from the light. */
+  .ace-slam-art {
+    width: min(440px, 64vw); height: min(440px, 52vh);
+    display: flex; align-items: center; justify-content: center;
+    will-change: transform, opacity, filter;
+    animation: ace-slam-rise 5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
   .ace-slam-art > .sprite-stack { width: 100%; height: 100%; }
   .ace-slam-art .sprite-img, .ace-slam-art .sprite-frame { object-fit: contain !important; }
   .ace-slam-art > img { width: 100%; height: 100%; object-fit: contain; }
-  .ace-slam-art > span { font-size: clamp(5rem, 22vh, 10rem) !important; line-height: 1; filter: drop-shadow(0 6px 16px rgba(0,0,0,0.7)); }
-  .ace-slam-tag {
-    flex: 0 0 auto; text-align: center; font-family: 'Cinzel', serif; font-weight: 800;
-    font-size: 0.78rem; letter-spacing: 0.35em; color: #1a1206;
-    background: linear-gradient(90deg, #b8862a, #ffd97a, #b8862a);
-    padding: 3px 0; text-shadow: 0 1px 0 rgba(255,255,255,0.3);
-  }
+  .ace-slam-art > span { font-size: clamp(6rem, 30vh, 14rem) !important; line-height: 1; }
+  /* Name — floating text, NO box. Fades in after the unit rises. */
   .ace-slam-name {
-    flex: 0 0 auto; text-align: center; font-family: 'Cinzel', serif; font-weight: 800;
-    font-size: 1.5rem; line-height: 1.15; color: #fff; padding: 8px 10px 8px;
-    background: linear-gradient(180deg, rgba(10,8,16,0.55), rgba(10,8,16,0.96));
-    text-shadow: 0 2px 6px rgba(0,0,0,0.9), 0 0 14px rgba(255,200,90,0.5);
+    text-align: center; font-family: 'Cinzel', serif; font-weight: 800;
+    font-size: clamp(1.6rem, 4.6vw, 2.9rem); line-height: 1.1; color: #fff; letter-spacing: 0.04em;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.95), 0 0 26px rgba(255,212,120,0.65);
+    opacity: 0; animation: ace-slam-text-in 0.9s ease-out 1.7s forwards;
   }
-  /* 💠 Cost line — fades up just after the panel lands. */
   .ace-slam-cost {
-    flex: 0 0 auto; text-align: center; font-family: 'Cinzel', serif; font-weight: 800;
-    font-size: 1.02rem; letter-spacing: 0.05em; color: #ffe6a3; padding: 2px 10px 6px;
-    background: rgba(10,8,16,0.96); text-shadow: 0 1px 4px rgba(0,0,0,0.85);
-    opacity: 0; animation: ace-slam-fade-up 0.5s ease-out 0.65s forwards;
+    text-align: center; font-family: 'Cinzel', serif; font-weight: 800;
+    font-size: 1.05rem; letter-spacing: 0.05em; color: #ffe6a3;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.92);
+    opacity: 0; animation: ace-slam-text-in 0.7s ease-out 2s forwards;
   }
-  /* 🌟 On-play effect — the unit's entrance ability, staggered in below the cost. */
   .ace-slam-onplay {
-    flex: 0 0 auto; text-align: center; font-size: 0.84rem; line-height: 1.32;
-    color: #d6e6ff; padding: 6px 14px 12px; background: rgba(10,8,16,0.96);
-    max-height: 5.4em; overflow: hidden;
-    opacity: 0; animation: ace-slam-fade-up 0.55s ease-out 0.95s forwards;
+    text-align: center; font-size: 0.92rem; line-height: 1.35; color: #e6eeff;
+    max-width: min(560px, 86vw); text-shadow: 0 1px 6px rgba(0,0,0,0.95);
+    opacity: 0; animation: ace-slam-text-in 0.75s ease-out 2.3s forwards;
   }
   .ace-slam-onplay-label {
-    display: inline-block; font-family: 'Cinzel', serif; font-weight: 800; font-size: 0.62rem;
-    letter-spacing: 0.2em; color: #8fd0ff; margin-right: 6px; vertical-align: middle;
-    border: 1px solid rgba(143,208,255,0.5); border-radius: 4px; padding: 1px 5px;
+    display: inline-block; font-family: 'Cinzel', serif; font-weight: 800; font-size: 0.66rem;
+    letter-spacing: 0.2em; color: #9fd2ff; margin-right: 6px; vertical-align: middle;
+    border: 1px solid rgba(159,210,255,0.55); border-radius: 4px; padding: 1px 6px;
   }
-  /* Gentle living glow on the portrait through the hold so it reads as "alive". */
-  .ace-slam-art > .sprite-stack, .ace-slam-art > img, .ace-slam-art > span {
-    animation: ace-slam-art-glow 2.2s ease-in-out 0.45s infinite;
+  @keyframes ace-slam-text-in { 0% { opacity: 0; transform: translateY(10px); } 100% { opacity: 1; transform: translateY(0); } }
+  /* The unit RISES out of the light: tiny + blinding-bright, swells to full size
+     with a gentle overshoot, holds, then brightens + fades up and out. ~5s slow. */
+  @keyframes ace-slam-rise {
+    0%   { transform: translateY(46px) scale(0.16); opacity: 0; filter: brightness(4.5) drop-shadow(0 0 46px rgba(255,242,205,0.95)); }
+    12%  { opacity: 1; }
+    30%  { transform: translateY(0) scale(1.07); opacity: 1; filter: brightness(1.8) drop-shadow(0 0 36px rgba(255,224,150,0.85)); }
+    38%  { transform: translateY(0) scale(1);    filter: brightness(1.12) drop-shadow(0 12px 30px rgba(0,0,0,0.7)); }
+    84%  { transform: translateY(0) scale(1); opacity: 1; filter: brightness(1.12) drop-shadow(0 12px 30px rgba(0,0,0,0.7)); }
+    100% { transform: translateY(-16px) scale(1.03); opacity: 0; filter: brightness(1.5) drop-shadow(0 0 32px rgba(255,224,150,0.7)); }
   }
-  @keyframes ace-slam-art-glow {
-    0%, 100% { filter: drop-shadow(0 0 2px rgba(255,200,90,0.15)); }
-    50%      { filter: drop-shadow(0 0 18px rgba(255,212,120,0.6)); }
+  @keyframes ace-slam-pillar-anim {
+    0%   { opacity: 0; transform: translate(-50%,-50%) scaleX(0.18) scaleY(0.6); }
+    16%  { opacity: 0.95; transform: translate(-50%,-50%) scaleX(1.15) scaleY(1); }
+    34%  { opacity: 0.55; transform: translate(-50%,-50%) scaleX(0.82) scaleY(1); }
+    82%  { opacity: 0.3; }
+    100% { opacity: 0; }
   }
-  @keyframes ace-slam-fade-up { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: translateY(0); } }
-  /* Land FAST (~6%≈0.2s), HOLD long (to ~86%≈3.0s), then slide out by 3.5s. */
-  @keyframes ace-slam-in-left {
-    0%   { transform: translateX(-135%) rotate(-9deg) scale(0.9);  opacity: 0; }
-    6%   { transform: translateX(6%)    rotate(2deg)  scale(1.06); opacity: 1; }
-    10%  { transform: translateX(-2%)   rotate(-1deg) scale(0.99); }
-    14%  { transform: translateX(0)     rotate(0deg)  scale(1); }
-    86%  { transform: translateX(0)     rotate(0deg)  scale(1);     opacity: 1; }
-    100% { transform: translateX(46%)   rotate(3deg)  scale(0.95);  opacity: 0; }
+  @keyframes ace-slam-burst-anim {
+    0%, 16% { opacity: 0; transform: scale(0.2); }
+    23%     { opacity: 1; transform: scale(1); }
+    40%     { opacity: 0; transform: scale(3.6); }
+    100%    { opacity: 0; transform: scale(3.6); }
   }
-  @keyframes ace-slam-in-right {
-    0%   { transform: translateX(135%)  rotate(9deg)  scale(0.9);  opacity: 0; }
-    6%   { transform: translateX(-6%)   rotate(-2deg) scale(1.06); opacity: 1; }
-    10%  { transform: translateX(2%)    rotate(1deg)  scale(0.99); }
-    14%  { transform: translateX(0)     rotate(0deg)  scale(1); }
-    86%  { transform: translateX(0)     rotate(0deg)  scale(1);     opacity: 1; }
-    100% { transform: translateX(-46%)  rotate(-3deg) scale(0.95);  opacity: 0; }
-  }
-  @keyframes ace-slam-veil-anim   { 0% { opacity: 0; } 4% { opacity: 1; } 88% { opacity: 1; } 100% { opacity: 0; } }
-  @keyframes ace-slam-streak-anim { 0% { transform: translateX(-180%) rotate(14deg); opacity: 0; } 40% { opacity: 0.9; } 100% { transform: translateX(180%) rotate(14deg); opacity: 0; } }
+  @keyframes ace-slam-veil-anim { 0% { opacity: 0; } 5% { opacity: 1; } 88% { opacity: 1; } 100% { opacity: 0; } }
 
   /* 💀 DRAMATIC HERO KO — match-ending cinematic. */
   .hero-ko-overlay { position: fixed; inset: 0; z-index: 2147481200; pointer-events: none; overflow: hidden; }
@@ -79895,8 +79893,9 @@ function _playAceSlam(unit, fromAI) {
     if (gfx === 'low') return;
     if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const name = unit.name || 'Ace';
-    const fromAi = (fromAI != null) ? fromAI : (unit.owner === 'ai');
-    const side = fromAi ? 'right' : 'left';
+    // Master-Duel style: the unit rises from a central pillar of light (no side
+    // slam, no frame), so `fromAI` no longer affects layout — kept for callers.
+    void fromAI;
     // 🖼 "Picture of the unit" — play the unit's SUMMON animation (authored
     //    summon frames if present, else idle), so the ace literally performs its
     //    summon animation during the cinematic. Falls back to board art / emoji.
@@ -79924,28 +79923,31 @@ function _playAceSlam(unit, fromAI) {
     const old = document.getElementById('ace-slam-overlay'); if (old) old.remove();
     const host = document.createElement('div');
     host.id = 'ace-slam-overlay';
-    host.className = 'ace-slam-overlay from-' + side;
+    host.className = 'ace-slam-overlay';
     const esc = (typeof escapeHtml === 'function') ? escapeHtml(String(name)) : String(name);
     const _costHtml = (_cost != null) ? '<div class="ace-slam-cost">⚡ Cost ' + (_cost | 0) + '</div>' : '';
     const _onPlayHtml = _onPlayText
       ? '<div class="ace-slam-onplay"><span class="ace-slam-onplay-label">ON&nbsp;PLAY</span>' + ((typeof escapeHtml === 'function') ? escapeHtml(_onPlayText) : _onPlayText) + '</div>'
       : '';
+    // 🌑 Master-Duel reveal: dark veil + pillar of light + radiant burst, with
+    // the unit itself rising out of the light (NO card frame / box). Name, cost,
+    // and on-play float as plain text below.
     host.innerHTML =
       '<div class="ace-slam-veil"></div>' +
-      '<div class="ace-slam-streak"></div>' +
-      '<div class="ace-slam-panel">' +
+      '<div class="ace-slam-pillar"></div>' +
+      '<div class="ace-slam-burst"></div>' +
+      '<div class="ace-slam-stage">' +
         '<div class="ace-slam-art">' + pic + '</div>' +
-        '<div class="ace-slam-tag">✦ ACE ✦</div>' +
         '<div class="ace-slam-name">' + esc + '</div>' +
         _costHtml +
         _onPlayHtml +
       '</div>';
     document.body.appendChild(host);
-    // Bass-y shake at the impact beat (just as the portrait lands ~0.2s in).
-    setTimeout(() => { try { if (typeof Juice !== 'undefined' && Juice.shake) Juice.shake(document.querySelector('.battle-screen') || document.body); } catch (e) {} }, 210);
-    // 👑 Hold the cinematic ~3.5s (name · cost · on-play on screen), click-to-skip.
+    // Bass-y shake at the REVEAL beat — when the unit bursts out of the light (~1.1s).
+    setTimeout(() => { try { if (typeof Juice !== 'undefined' && Juice.shake) Juice.shake(document.querySelector('.battle-screen') || document.body); } catch (e) {} }, 1100);
+    // 👑 Slow, ~5s cinematic (rise → hold with name/cost/on-play → fade), click-to-skip.
     const _done = () => { _aceSlamBusy = false; try { host.remove(); } catch (e) {} };
-    const _t = setTimeout(_done, 3500);
+    const _t = setTimeout(_done, 5000);
     host.onclick = () => { clearTimeout(_t); _done(); };   // click-to-skip
   } catch (e) { _aceSlamBusy = false; }
 }

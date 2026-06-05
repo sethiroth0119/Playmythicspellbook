@@ -66269,6 +66269,43 @@ const SOCIAL_LINKS = [
 // Visual style inspired by the Mythic Spellbook art — gothic, dark, with green
 // energy accents. Each portal has its own accent color that drives its glow.
 // ============================================================================
+// 🪶 In-place refresh of the online-dependent hub UI (the Play Online tile),
+// called on every lobby-presence tick INSTEAD of a full render(). The old path
+// re-rendered the whole hub each tick, rebuilding every tile and restarting
+// their glow/pulse CSS animations — a visible flicker. This patches only the
+// sub + badge of #btn-play-online, and only writes when a value actually
+// changed (so no needless repaints / animation restarts). No-op when the tile
+// isn't mounted. Online/queue counts stay admin-only.
+function _refreshOnlinePresenceUi() {
+  const tile = document.getElementById('btn-play-online');
+  if (!tile) return false;
+  const adm = (typeof isAdmin === 'function') && isAdmin();
+  const sig = (Profile.cloud && Profile.cloud.signedIn);
+  const online = (typeof LobbyPresence !== 'undefined' && LobbyPresence.count) || 0;
+  const q = (typeof LobbyPresence !== 'undefined' && LobbyPresence.queueCount) || 0;
+  let sub;
+  if (!sig) sub = 'Sign in to face real players';
+  else if (adm) sub = (online > 0 ? ('🟢 ' + online + ' online · 🔍 ' + q + ' searching') : 'Find a real opponent · ranked');
+  else sub = 'Find a real opponent · ranked';
+  const subEl = tile.querySelector('.hub-portal-sub');
+  if (subEl && subEl.innerHTML !== sub) subEl.innerHTML = sub;
+  const badgeEl = tile.querySelector('.hub-portal-badge');
+  if (badgeEl) {
+    if (adm && online >= 2) {
+      const txt = '🟢 ' + online + ' online';
+      if (badgeEl.style.visibility === 'hidden') badgeEl.style.visibility = '';
+      if (badgeEl.innerHTML !== txt) badgeEl.innerHTML = txt;
+      if (badgeEl.classList.contains('alert') !== (adm && q > 0)) badgeEl.classList.toggle('alert', adm && q > 0);
+      badgeEl.classList.remove('lock');
+    } else {
+      if (badgeEl.style.visibility !== 'hidden') badgeEl.style.visibility = 'hidden';
+      if (badgeEl.innerHTML !== '.') badgeEl.innerHTML = '.';
+      if (badgeEl.classList.contains('alert')) badgeEl.classList.remove('alert');
+    }
+  }
+  return true;
+}
+
 function renderTitle() {
   // Scan for heroes who have leveled high enough to pick a subclass but haven't yet.
   try { scanForPendingSubclassPicks(); } catch (e) {}
@@ -66281,7 +66318,10 @@ function renderTitle() {
   if (typeof onLobbyPresence === 'function' && !App._titleLobbySub) {
     App._titleLobbySub = onLobbyPresence(() => {
       const s = App.screen;
-      if (s === 'title' || s === 'deckSelect') { try { render(); } catch (e) {} }
+      if (s !== 'title' && s !== 'deckSelect') return;
+      // 🪶 In-place tile update — NOT a full render() (which rebuilt every hub
+      // tile each lobby tick and restarted their glow animations = flicker).
+      try { _refreshOnlinePresenceUi(); } catch (e) {}
     });
   }
   // 🎵 Pick the right track for whichever hub we're on (menu music for most
@@ -100752,7 +100792,12 @@ function _getAllListings() {
   const extras = Array.isArray(Forge.realEstateListings) ? Forge.realEstateListings : [];
   return DEFAULT_HOUSE_LISTINGS.concat(extras);
 }
-function _findListing(id) { return _getAllListings().find(l => l.id === id) || null; }
+// Base listing lookup. The extended _findListing() below wraps this to also
+// resolve admin-placed houses. (Was a duplicate `function _findListing` that
+// collided via hoisting with the extension, making _findListing_original alias
+// the extension itself → infinite self-recursion on every call. Renamed so the
+// monkeypatch actually chains to the base.)
+function _findListing_original(id) { return _getAllListings().find(l => l.id === id) || null; }
 function _ensureOwnedHouses() {
   if (!Array.isArray(Profile.ownedHouses)) Profile.ownedHouses = [];
   return Profile.ownedHouses;
@@ -101939,7 +101984,8 @@ function _campOpenAdminHouseModal(houseId) {
 // stored as listingId on the owned record). Without this, a player walking
 // into their owned admin-house in the Suburbs zone gets "listing not found"
 // when opening the stash. We search Camp Heights + every wilderness zone.
-const _findListing_original = _findListing;
+// (_findListing_original is now a real base function declared above — no alias
+// needed; the previous `const ... = _findListing` self-aliased due to hoisting.)
 function _findListing(id) {
   const r = _findListing_original(id);
   if (r) return r;
@@ -108958,6 +109004,15 @@ function renderMatchmaking() {
   // is gated on a successful enqueue) so "others searching" reads right.
   const inQueue = Math.max(0, ((typeof LobbyPresence !== 'undefined' && LobbyPresence.queueCount) || 0) - 1);
 
+  // 🪶 Already mounted? Patch only the live numbers in place. Rebuilding the
+  // whole screen every poll tick restarted the three pulse-ring animations
+  // each second — a visible flicker. The structure is static; only the
+  // timer/counts change.
+  if (mp.pollTimer && document.querySelector('.matchmaking-screen')) {
+    _updateMatchmakingLive(elapsed, remaining, online, inQueue);
+    return;
+  }
+
   root.innerHTML = `
     <div class="matchmaking-screen">
       <div class="matchmaking-card">
@@ -108971,16 +109026,16 @@ function renderMatchmaking() {
         <p class="matchmaking-sub">
           You're queued as <strong>${escapeHtml(myHero.name || 'Survivor')}</strong>${myHero.icon ? ` ${myHero.icon}` : ''}.
           We'll match you with a player at similar skill — if no one shows up,
-          you'll battle a level-matched AI in <strong>${remaining}s</strong>.
+          you'll battle a level-matched AI in <strong id="mm-ai-in">${remaining}s</strong>.
         </p>
         <div class="matchmaking-stats" style="grid-template-columns:repeat(4,1fr)">
-          <div class="matchmaking-stat" title="Players online right now"><span>🟢 Online</span><strong>${online || '—'}</strong></div>
-          <div class="matchmaking-stat" title="Other players currently searching"><span>🔍 Searching</span><strong>${inQueue || '0'}</strong></div>
-          <div class="matchmaking-stat"><span>⏱ Elapsed</span><strong>${elapsed}s</strong></div>
-          <div class="matchmaking-stat"><span>🤖 AI in</span><strong>${remaining}s</strong></div>
+          <div class="matchmaking-stat" title="Players online right now"><span>🟢 Online</span><strong id="mm-online">${online || '—'}</strong></div>
+          <div class="matchmaking-stat" title="Other players currently searching"><span>🔍 Searching</span><strong id="mm-searching">${inQueue || '0'}</strong></div>
+          <div class="matchmaking-stat"><span>⏱ Elapsed</span><strong id="mm-elapsed">${elapsed}s</strong></div>
+          <div class="matchmaking-stat"><span>🤖 AI in</span><strong id="mm-remaining">${remaining}s</strong></div>
         </div>
         <div class="matchmaking-progress">
-          <div class="matchmaking-progress-bar" style="width:${Math.min(100, (elapsed / 30) * 100)}%"></div>
+          <div class="matchmaking-progress-bar" id="mm-progress" style="width:${Math.min(100, (elapsed / 30) * 100)}%"></div>
         </div>
         <button class="btn-secondary" id="btn-mm-cancel">⨯ Cancel — back to deck select</button>
       </div>
@@ -109004,6 +109059,19 @@ function renderMatchmaking() {
       renderMatchmaking();
     }, MATCHMAKING_POLL_INTERVAL_MS);
   }
+}
+
+// 🪶 Patch the matchmaking screen's live numbers in place (no innerHTML
+// rebuild → the pulse rings keep animating smoothly instead of restarting).
+function _updateMatchmakingLive(elapsed, remaining, online, inQueue) {
+  const set = (id, v) => { const el = document.getElementById(id); if (el && el.textContent !== String(v)) el.textContent = String(v); };
+  set('mm-online', online || '—');
+  set('mm-searching', inQueue || '0');
+  set('mm-elapsed', elapsed + 's');
+  set('mm-remaining', remaining + 's');
+  set('mm-ai-in', remaining + 's');
+  const bar = document.getElementById('mm-progress');
+  if (bar) { const w = Math.min(100, (elapsed / 30) * 100) + '%'; if (bar.style.width !== w) bar.style.width = w; }
 }
 
 async function startMatchmaking(opts) {

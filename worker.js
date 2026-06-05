@@ -228,7 +228,12 @@ async function handleCashout(request, env, u) {
       if (!acct) return cjson({ error: 'account_create_failed' }, 502);
       await sbAcctSet(env, user, acct);
     }
-    const origin = (env.PUBLIC_BASE_URL || u.origin).replace(/\/+$/, '');
+    let origin = (env.PUBLIC_BASE_URL || u.origin).replace(/\/+$/, '');
+    // Stripe requires an absolute https:// URL. If PUBLIC_BASE_URL was set
+    // without a scheme (e.g. "playmythicspellbook.com"), Stripe rejects the
+    // session with "Invalid URL: An explicit scheme must be provided". Prepend
+    // https:// defensively so a schemeless var can never break checkout.
+    if (!/^https?:\/\//i.test(origin)) origin = 'https://' + origin.replace(/^\/+/, '');
     const link = await stripeApi(env, 'POST', '/v1/account_links', {
       account: acct, type: 'account_onboarding',
       refresh_url: origin + '/?cashout=refresh', return_url: origin + '/?cashout=return',
@@ -309,7 +314,12 @@ async function handleBuy(request, env, u) {
     const body = await request.json().catch(() => ({}));
     const p = AZA_PACKS[body && body.pack];
     if (!p) return cjson({ error: 'bad_pack' }, 400);
-    const origin = (env.PUBLIC_BASE_URL || u.origin).replace(/\/+$/, '');
+    let origin = (env.PUBLIC_BASE_URL || u.origin).replace(/\/+$/, '');
+    // Stripe requires an absolute https:// URL. If PUBLIC_BASE_URL was set
+    // without a scheme (e.g. "playmythicspellbook.com"), Stripe rejects the
+    // session with "Invalid URL: An explicit scheme must be provided". Prepend
+    // https:// defensively so a schemeless var can never break checkout.
+    if (!/^https?:\/\//i.test(origin)) origin = 'https://' + origin.replace(/^\/+/, '');
     const s = await stripeApi(env, 'POST', '/v1/checkout/sessions', {
       mode: 'payment',
       'line_items[0][quantity]': 1,

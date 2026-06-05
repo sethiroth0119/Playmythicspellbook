@@ -32777,19 +32777,35 @@ async function joinColyseusMatch(matchId, authToken, opts) {
     // it) before we connected. Re-running joinOrCreate routes us to the now-stable
     // room (filterBy keeps both players on the same matchId), so the second player
     // reliably lands in the SAME room instead of falling back to a local battle.
+    // 🔑 HOST / GUEST split — fixes the "two onCreate, two rooms, two different
+    // games" race. With joinOrCreate, both clients raced to CREATE because
+    // neither saw the other's room in that split second. Instead: exactly ONE
+    // player (the host, chosen deterministically as the lower userId so both
+    // sides agree) CREATES the room; the other JOINS it, retrying until the
+    // host's room exists. filterBy(matchId) then routes the guest to the host's
+    // room. Result: one room, two players — the same game.
+    const _myId  = (Profile && Profile.cloud && Profile.cloud.userId) || '';
+    const _oppId = (MatchBroadcast && MatchBroadcast.opponentId) || '';
+    const amHost = _oppId ? (String(_myId) < String(_oppId)) : !!(MatchBroadcast && MatchBroadcast.amIPlayer1);
+    console.log('[Colyseus] role=' + (amHost ? 'HOST(create)' : 'GUEST(join)') + ' matchId=' + matchId + ' me=' + _myId.slice(0, 8) + ' opp=' + _oppId.slice(0, 8));
     let room = null, lastErr = null;
-    const MAX_TRIES = 4;
+    // Guest may need to wait for the host to create the room → more retries.
+    const MAX_TRIES = amHost ? 4 : 14;
     for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
       try {
-        room = await ColyseusMP.client.joinOrCreate('battle', joinOpts);
+        room = amHost
+          ? await ColyseusMP.client.create('battle', joinOpts)   // host: create exactly one room
+          : await ColyseusMP.client.join('battle', joinOpts);    // guest: join the host's room only
         break;
       } catch (err) {
         lastErr = err;
         const msg = ((err && (err.message || err.code)) || '') + '';
-        const transient = /seat reservation|reservation expired|4002|disposed|locked|ETIMEDOUT|timeout|503/i.test(msg);
-        console.warn('[Colyseus] join attempt ' + (attempt + 1) + '/' + MAX_TRIES + ' failed: ' + msg + (transient && attempt < MAX_TRIES - 1 ? ' — retrying…' : ''));
+        // For the guest, "no rooms found" just means the host hasn't created the
+        // room yet — retry. (Plus the usual transient seat/timeout cases.)
+        const transient = /seat reservation|reservation expired|4002|4212|disposed|locked|ETIMEDOUT|timeout|503|no rooms? (found|available)|not found/i.test(msg);
+        console.warn('[Colyseus] ' + (amHost ? 'create' : 'join') + ' attempt ' + (attempt + 1) + '/' + MAX_TRIES + ' failed: ' + msg + (transient && attempt < MAX_TRIES - 1 ? ' — retrying…' : ''));
         if (!transient || attempt === MAX_TRIES - 1) throw err;
-        await new Promise(r => setTimeout(r, 450 + attempt * 450));
+        await new Promise(r => setTimeout(r, 400 + attempt * 350));
       }
     }
     if (!room) throw (lastErr || new Error('joinOrCreate failed'));

@@ -67641,11 +67641,13 @@ function renderOnboarding() {
     if (step === 'starter')       return _onbRenderStarter();
     if (step === 'tutorialOffer') return _onbRenderTutorialOffer();
     if (step === 'tutorial') {
-      // Returning from the tutorial battle → advance to the menu tour WITHOUT a
-      // re-entrant render() (we're already inside render()): set state + paint.
-      Onboarding._awaitTut = false; Onboarding.step = 'menuTour'; Onboarding._tourIdx = 0;
-      try { _ensureOnboardingState(); Profile.onboarding.step = 'menuTour'; saveProfile && saveProfile(); } catch (e) {}
-      return _onbRenderMenuTour();
+      // Returning from the tutorial battle → go straight to the completion screen
+      // (→ main menu), per the new-player flow: deck → tutorial → main menu. No
+      // menu tour. Done WITHOUT a re-entrant render() (we're already inside
+      // render()): set state + paint the completion screen directly.
+      Onboarding._awaitTut = false; Onboarding.step = 'complete';
+      try { _ensureOnboardingState(); Profile.onboarding.step = 'complete'; saveProfile && saveProfile(); } catch (e) {}
+      return _onbRenderComplete();
     }
     if (step === 'skipMsg')       return _onbRenderSkipMsg();
     if (step === 'menuTour')      return _onbRenderMenuTour();
@@ -67774,13 +67776,29 @@ function _onbRenderConfirm() {
   document.getElementById('onb-confirm-no').onclick = close;
   document.getElementById('onb-confirm-yes').onclick = () => {
     close();
+    if (Onboarding._adminPreview) {
+      try { showToast('👑 Preview only — no deck granted.', 2600); } catch (e) {}
+      _onbAdvance('tutorialOffer');
+      return;
+    }
+    // 🎴 GUARANTEE the pick lands: grant the deck (cards → collection/inventory +
+    // a saved deck → Deck Builder), with a retry, then verify and persist. "No
+    // exceptions" — if the first grant throws or returns false, try once more.
+    let granted = false;
+    try { granted = (typeof grantStarterDeckToPlayer === 'function') && grantStarterDeckToPlayer(d, { markPicked: true }); }
+    catch (e) { try { console.warn('[onboarding] grant threw, retrying', e); } catch (_) {} }
+    if (!granted) {
+      try { granted = (typeof grantStarterDeckToPlayer === 'function') && grantStarterDeckToPlayer(d, { markPicked: true }); }
+      catch (e) { try { console.warn('[onboarding] grant retry threw', e); } catch (_) {} }
+    }
+    try { _ensureOnboardingState(); Profile.onboarding.deckId = String(d.id); saveProfile && saveProfile(); } catch (e) {}
+    // Belt-and-suspenders persistence so a refresh right after the pick can't lose it.
+    try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); else if (typeof _persistProgressNow === 'function') _persistProgressNow(); } catch (e) {}
     try {
-      if (Onboarding._adminPreview) { try { showToast('👑 Preview only — no deck granted.', 2600); } catch (e) {} }
-      else if (typeof grantStarterDeckToPlayer === 'function') {
-        grantStarterDeckToPlayer(d, { markPicked: true });
-        try { _ensureOnboardingState(); Profile.onboarding.deckId = String(d.id); saveProfile && saveProfile(); } catch (e) {}
-      }
-    } catch (e) { try { console.warn('[onboarding] grant failed', e); } catch (_) {} }
+      if (granted) showToast('🎴 ' + (d.name || 'Starter deck') + ' added to your collection & Deck Builder!', 3200);
+      else showToast('⚠ Could not grant that deck — please pick again.', 4000);
+    } catch (e) {}
+    if (!granted) { _onbAdvance('starter'); return; }   // grant failed → back to picker, don't proceed
     _onbAdvance('tutorialOffer');
   };
 }
@@ -67852,7 +67870,7 @@ function _onbRenderTutorialOffer() {
   };
   document.getElementById('onb-tut-skip').onclick = () => {
     try { Profile.tutorialComplete = true; saveProfile && saveProfile(); } catch (e) {}
-    _onbAdvance('skipMsg');
+    _onbAdvance('complete');   // skip tutorial → completion → main menu (no menu tour)
   };
 }
 
@@ -68442,8 +68460,12 @@ function grantStarterDeckToPlayer(deck, opts) {
   });
   try {
     if (typeof findOrCreateLooseDeck === 'function') {
-      const d = findOrCreateLooseDeck(deck.heroId || '', deckKeys, deck.name || 'Starter Deck');
-      if (typeof saveDeckEntry === 'function') saveDeckEntry({ ...d, name: deck.name || 'Starter Deck', cards: deckKeys.slice(0) });
+      // Use the RESOLVED hero id (not the possibly-blank deck.heroId) — saveDeckEntry
+      // bails when heroId is empty, which would leave the new deck out of the Deck
+      // Builder. This guarantees the starter deck lands in the editor under its hero.
+      const _hid = _grantHeroId || deck.heroId || '';
+      const d = findOrCreateLooseDeck(_hid, deckKeys, deck.name || 'Starter Deck');
+      if (typeof saveDeckEntry === 'function') saveDeckEntry({ ...d, heroId: _hid || d.heroId, name: deck.name || 'Starter Deck', cards: deckKeys.slice(0) });
     }
   } catch (e) {}
   // 🆕 Grant the starter deck's SIDE deck, if the admin authored one. The side

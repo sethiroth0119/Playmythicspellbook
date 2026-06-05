@@ -36157,8 +36157,14 @@ async function _cloudFetchCatalogArtImpl() {
         const inc = _unflattenCatalogMedia(merged);
         const cur   = Forge.catalogMedia || {};
         const _len = (o, k) => (o && Array.isArray(o[k])) ? o[k].length : 0;
-        const incScore = _len(inc, 'pageGuides') + _len(inc, 'campaigns');
-        const curScore = _len(cur, 'pageGuides') + _len(cur, 'campaigns');
+        // Count onboarding media so a freshly-built bundle that HAS onboarding
+        // (just authored, not yet in the published shards) is NOT clobbered by a
+        // fetched bundle that lacks it. Without this, the post-publish refetch
+        // adopts the old onboarding-less bundle and the onboarding media is lost
+        // before cloudPublishCatalogArt can upload it → media never ships.
+        const _onb = (o) => (o && o.onboarding && typeof o.onboarding === 'object' && (o.onboarding.image || o.onboarding.speakerImage || o.onboarding.narrationAudio)) ? 1 : 0;
+        const incScore = _len(inc, 'pageGuides') + _len(inc, 'campaigns') + _onb(inc);
+        const curScore = _len(cur, 'pageGuides') + _len(cur, 'campaigns') + _onb(cur);
         const _adopt = incScore >= curScore;
         if (_adopt) Forge.catalogMedia = inc;
         // 🔎 Observable truth — shows EXACTLY where campaign art lands or
@@ -68100,7 +68106,28 @@ function bindForgeOnboarding() {
     let r;
     try { r = await cloudPublishCatalog(); }
     catch (e) { try { showToast('⚠ Publish error: ' + ((e && e.message) || e), 6000); } catch (e2) {} try { console.warn('[onboarding] publish threw:', e); } catch (e3) {} return; }
-    if (r && r.ok) { try { showToast('✅ Onboarding is LIVE for all players.', 3500); } catch (e) {} return; }
+    if (r && r.ok) {
+      // 🎨 CRITICAL: the onboarding IMAGE / SPEAKER / AUDIO are data: URLs that
+      // ride the catalogMedia SHARD pipeline (Storage), NOT the catalog row —
+      // the row strips every data: URL via stripBig(). cloudPublishCatalog only
+      // writes the row, so without ALSO running cloudPublishCatalogArt() the
+      // media is built into Forge.catalogMedia but NEVER uploaded → players get
+      // text-only/defaults. This is the exact bug we chased: every "ok:true"
+      // published only the text. Mirror the canonical "Publish Cards" button,
+      // which ships the row + art in one click.
+      try { showToast('🎨 Uploading onboarding background / character / audio…', 3000); } catch (e) {}
+      let artR = { ok: true, count: 0 };
+      try { artR = (typeof cloudPublishCatalogArt === 'function') ? await cloudPublishCatalogArt() : { ok: true, count: 0 }; }
+      catch (e) { artR = { ok: false, error: (e && e.message) || 'art publish exception' }; }
+      if (artR && artR.ok) { try { showToast('✅ Onboarding is LIVE for all players (text + background + character + audio).', 4500); } catch (e) {} }
+      else {
+        try { console.warn('[onboarding] media (art) publish FAILED:', artR); } catch (e) {}
+        const _ae = (artR && artR.error) || 'unknown';
+        if (/bucket not found/i.test('' + _ae)) { try { showToast('⚠ Onboarding text published, but the media bucket is missing. In Supabase → Storage, create a PUBLIC bucket named "public-catalog", then Save again.', 11000); } catch (e) {} }
+        else { try { showToast('⚠ Onboarding text published, but the image/audio upload failed: ' + _ae + '. Tap 💾 Save & Publish again.', 9000); } catch (e) {} }
+      }
+      return;
+    }
     if (r && r.blocked) {
       // The card anti-wipe guard fired (this device's local card library looks
       // smaller than the published one — often an IDB that hasn't finished

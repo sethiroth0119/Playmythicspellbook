@@ -68009,7 +68009,7 @@ function bindForgeOnboarding() {
   };
 
   const save = document.getElementById('onb-adm-save');
-  if (save) save.onclick = () => {
+  if (save) save.onclick = async () => {
     const enabled = !!(document.getElementById('onb-adm-enabled') || {}).checked;
     const voice   = !!(document.getElementById('onb-adm-voice') || {}).checked;
     const title   = ((document.getElementById('onb-adm-title') || {}).value || '').trim();
@@ -68024,11 +68024,30 @@ function bindForgeOnboarding() {
     Forge.onboarding = { enabled: enabled, voice: voice, title: title, narration: narr, image: image, narrationAudio: narrationAudio, speakerImage: speakerImage };
     App._onbImg = undefined; App._onbSpk = undefined; App._onbAud = undefined;
     try { saveForge && saveForge(); } catch (e) {}
-    try {
-      if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0);
-      else if (typeof cloudPublishCatalog === 'function') cloudPublishCatalog();
-    } catch (e) {}
-    try { showToast('✅ Onboarding saved — publishing to all players…', 3200); } catch (e) {}
+    try { showToast('💾 Onboarding saved locally — publishing to all players…', 2500); } catch (e) {}
+    // 🚀 Publish DIRECTLY and AWAIT the real result. The background auto-publish
+    // swallows a "blocked" outcome silently (console-only), which is why a
+    // failed onboarding publish looked like "I published and nothing happened."
+    // Surface success / blocked / error here so the admin always knows.
+    if (typeof cloudPublishCatalog !== 'function') { try { showToast('⚠ Publish unavailable — are you signed in as admin?', 5000); } catch (e) {} return; }
+    let r;
+    try { r = await cloudPublishCatalog(); }
+    catch (e) { try { showToast('⚠ Publish error: ' + ((e && e.message) || e), 6000); } catch (e2) {} try { console.warn('[onboarding] publish threw:', e); } catch (e3) {} return; }
+    if (r && r.ok) { try { showToast('✅ Onboarding is LIVE for all players.', 3500); } catch (e) {} return; }
+    if (r && r.blocked) {
+      // The card anti-wipe guard fired (this device's local card library looks
+      // smaller than the published one — often an IDB that hasn't finished
+      // loading). We do NOT auto-force, because forcing while cards are missing
+      // would wipe the shared catalog. Surface it clearly so the admin knows
+      // exactly why the publish didn't go out, instead of failing silently.
+      const localCards = ((Forge.customCards || []).length);
+      const pubCards   = ((Catalog.cards || []).length);
+      try { console.warn('[onboarding] publish BLOCKED:', r.error, '| localCards=', localCards, 'pubCards=', pubCards); } catch (e) {}
+      try { showToast('⚠ Onboarding saved locally, but the cloud publish was BLOCKED by the card safety guard (this device shows ' + localCards + ' cards vs ' + pubCards + ' published). Wait for your card library to finish loading and Save again, or publish from the device where your cards were built. See console for details.', 11000); } catch (e) {}
+      return;
+    }
+    try { showToast('⚠ Onboarding publish failed: ' + ((r && r.error) || 'unknown error'), 7000); } catch (e) {}
+    try { console.warn('[onboarding] publish result:', r); } catch (e) {}
   };
   const prevBtn = document.getElementById('onb-adm-preview');
   if (prevBtn) prevBtn.onclick = () => {

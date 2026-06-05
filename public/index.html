@@ -32087,6 +32087,10 @@ const SFX = {
   // kicks in (3+ sees of the same ability) so the audio cue stays
   // consistent even when the visual is trimmed.
   abilityCast:    { src: 'assets/Audio/Abilitybeingused.mp3',            volume: 0.95 },
+  // 🌟 On-Play stinger — fires from the ON PLAY cinematic (playOnPlayCinematic)
+  // the moment a summoned unit's on-play effect triggers. Distinct from the
+  // generic unitSummon thud so on-play reveals get their own cue.
+  onPlay:         { src: 'assets/Audio/On%20Play%20summon.wav',           volume: 0.95 },
 };
 
 // ---- Global button-click SFX ----
@@ -86949,6 +86953,9 @@ function playOnPlayCinematic(unit, card, opts) {
 function _playOnPlayCinematicImpl(unit, card, opts) {
   try {
     if (!card || !card.onPlay || !card.onPlay.type) return;
+    // 🔊 On-Play stinger — plays whenever an on-play effect triggers (both sides),
+    // independent of graphics quality so the cue always lands.
+    try { if (typeof playSfx === 'function') playSfx('onPlay'); } catch (e) {}
     const host = document.body;
     if (!host) return;
     // 🎨 One-time stylesheet inject. All keyframes scoped under `.onplay-cine-*`.

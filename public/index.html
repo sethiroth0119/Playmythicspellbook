@@ -136946,6 +136946,16 @@ function _twForge() {
   }
   // 🗺 litRoutes: admin-toggled supply lines — must always be an array.
   if (!Array.isArray(t.litRoutes)) t.litRoutes = [];
+  // 🔒 BULLETPROOF litRoutes persistence. They're device-local via the
+  // hg_tw_litRoutes localStorage fast-path; re-sync from it on EVERY access so
+  // no profile merge / starter-seed / catalog rehydrate / cloud-sync race can
+  // silently drop the admin's lit supply lines after a refresh. (Only when LS
+  // actually holds routes — an empty LS leaves Forge's copy alone so a
+  // multi-device cloud route set still shows.)
+  try {
+    const _lr = localStorage.getItem('hg_tw_litRoutes');
+    if (_lr) { const _x = JSON.parse(_lr); if (Array.isArray(_x) && _x.length > 0) t.litRoutes = _x; }
+  } catch (e) {}
   return t;
 }
 function _twState() {
@@ -138732,6 +138742,10 @@ function renderTerritoryWars() {
       const idx = tf.litRoutes.indexOf(key);
       if (idx >= 0) tf.litRoutes.splice(idx, 1);
       else tf.litRoutes.push(key);
+      // 🔒 Write the device-local fast-path IMMEDIATELY — independent of
+      // saveForge's chunk loop — so a lit route survives a refresh no matter
+      // what. _twForge() re-reads this on every render.
+      try { localStorage.setItem('hg_tw_litRoutes', JSON.stringify(tf.litRoutes)); } catch (e) {}
       try { saveForge(); } catch (e) {}
       // Publish immediately (delay=0) so litRoutes land in card_catalog
       // right away — no 8s wait, no "did it publish before I refreshed?" risk.

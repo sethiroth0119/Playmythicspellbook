@@ -35274,6 +35274,16 @@ function _flattenCatalogMedia(m) {
     });
     out['cp:' + i] = sk;
   });
+  // 🎓 Onboarding media — welcome image / narrator portrait / narration audio.
+  // Each big data: URL travels as its OWN shard-safe key (onb:image /
+  // onb:speaker / onb:audio), reattached on unflatten. Short asset URLs (e.g.
+  // assets/Audio/intro.mp3) are tiny, so they're left inline in the moves blob.
+  if (m.onboarding && typeof m.onboarding === 'object') {
+    const ob = m.onboarding;
+    if (typeof ob.image          === 'string' && ob.image.length          > 1024 && fits(ob.image))          out['onb:image']   = ob.image;
+    if (typeof ob.speakerImage   === 'string' && ob.speakerImage.length   > 1024 && fits(ob.speakerImage))   out['onb:speaker'] = ob.speakerImage;
+    if (typeof ob.narrationAudio === 'string' && ob.narrationAudio.length > 1024 && fits(ob.narrationAudio)) out['onb:audio']   = ob.narrationAudio;
+  }
   return out;
 }
 function _unflattenCatalogMedia(obj) {
@@ -35281,6 +35291,7 @@ function _unflattenCatalogMedia(obj) {
   const isFlat = obj.__cmflat__ || Object.keys(obj).some(k => /^(pg|sd|cp):\d+$/.test(k));
   if (!isFlat) return obj;   // legacy non-flattened upload — pass through
   const sd = [], pg = [], cp = [];
+  let onb = null;
   for (const k in obj) {
     if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
     if (k.slice(0, 3) === 'sd:') sd[parseInt(k.slice(3), 10) || 0] = obj[k];
@@ -35308,6 +35319,13 @@ function _unflattenCatalogMedia(obj) {
       // Decomposed guide character image → reattach.
       const gi = parseInt(k.split(':')[1], 10);
       if (pg[gi] && typeof pg[gi] === 'object') pg[gi].characterImageUrl = obj[k];
+    } else if (k.slice(0, 4) === 'onb:') {
+      // Decomposed onboarding media → reattach into a single onboarding object.
+      if (!onb) onb = {};
+      const fld = k.slice(4);
+      if (fld === 'image')        onb.image          = obj[k];
+      else if (fld === 'speaker') onb.speakerImage   = obj[k];
+      else if (fld === 'audio')   onb.narrationAudio = obj[k];
     }
   }
   return {
@@ -35315,6 +35333,7 @@ function _unflattenCatalogMedia(obj) {
     starterDecks: sd.filter(x => x != null),
     pageGuides: pg.filter(x => x != null),
     campaigns: cp.filter(x => x != null),
+    onboarding: onb,
   };
 }
 function _rehydrateCatalogMedia() {
@@ -35334,6 +35353,18 @@ function _rehydrateCatalogMedia() {
     }
     if (Array.isArray(m.campaigns) && m.campaigns.length) {
       Catalog.campaigns = _preferRicher(m.campaigns, Catalog.campaigns);
+    }
+    // 🎓 Onboarding media — the moves blob carries the slim (image-stripped)
+    // onboarding config; overlay the FULL media (welcome image / narrator
+    // portrait / narration audio) from the shard bundle on top. This runs at
+    // the tail of _applyCatalogRow, AFTER `Catalog.onboarding = __onboarding__`,
+    // so the text-only row never clobbers the media restored here.
+    if (m.onboarding && typeof m.onboarding === 'object') {
+      if (!Catalog.onboarding || typeof Catalog.onboarding !== 'object' || Array.isArray(Catalog.onboarding)) Catalog.onboarding = {};
+      const ob = m.onboarding;
+      if (typeof ob.image          === 'string' && ob.image)          Catalog.onboarding.image          = ob.image;
+      if (typeof ob.speakerImage   === 'string' && ob.speakerImage)   Catalog.onboarding.speakerImage   = ob.speakerImage;
+      if (typeof ob.narrationAudio === 'string' && ob.narrationAudio) Catalog.onboarding.narrationAudio = ob.narrationAudio;
     }
   } catch (e) { /* non-fatal cosmetic rehydrate */ }
 }
@@ -35454,6 +35485,15 @@ function _rehydrateForgeFromCatalog() {
   _copyObj('priceOverrides');
   _copyObj('cinderShop');
   _copyList('craftingRecipes');
+  // 🎓 Onboarding config — seed the admin panel + every player's read sites
+  // from the published config (which now carries its media, reattached by
+  // _rehydrateCatalogMedia just before this runs). Only seed when there's no
+  // existing local copy, so a catalog rehydrate firing mid-edit never reverts
+  // the admin's unsaved onboarding work (their Save writes Forge.onboarding).
+  if (C.onboarding && typeof C.onboarding === 'object' && !Array.isArray(C.onboarding) &&
+      (!F.onboarding || typeof F.onboarding !== 'object' || Array.isArray(F.onboarding) || !Object.keys(F.onboarding).length)) {
+    F.onboarding = C.onboarding;
+  }
   // 🔒 Obtainability — MERGE (not replace). The catalog is the base, but
   // any locally-set admin toggle overlays on top so a catalog rehydrate
   // (which can fire after a media fetch completes) never reverts an
@@ -35675,6 +35715,16 @@ async function cloudPublishCatalog(opts) {
         // them (>6 KB data: URLs), so players saw emoji node placeholders.
         // Ship them through the Storage media pipeline like page guides.
         campaigns:    Array.isArray(_camps)    ? _clone(_camps)    : [],
+        // 🎓 Onboarding hero/welcome image + narrator portrait + narration
+        // audio can each be a big data: URL. Ship them through the SAME Storage
+        // media pipeline (sharded onb:* keys) so the `moves` JSONB stays small.
+        // An oversized moves blob makes the catalog upsert silently fail — that
+        // was the "I published onboarding and it did nothing / didn't save" bug.
+        onboarding: (Forge.onboarding && typeof Forge.onboarding === 'object') ? {
+          image:          typeof Forge.onboarding.image          === 'string' ? Forge.onboarding.image          : '',
+          speakerImage:   typeof Forge.onboarding.speakerImage   === 'string' ? Forge.onboarding.speakerImage   : '',
+          narrationAudio: typeof Forge.onboarding.narrationAudio === 'string' ? Forge.onboarding.narrationAudio : '',
+        } : null,
       };
       if (typeof saveForge === 'function') saveForge();
     } catch (e) { /* non-fatal: media still attempted via row, just stripped */ }
@@ -35717,8 +35767,21 @@ async function cloudPublishCatalog(opts) {
       __crafting_recipes__:  Array.isArray(Forge.craftingRecipes)  ? Forge.craftingRecipes  : [],
       __obtainability__:     (Forge.obtainability    && typeof Forge.obtainability    === 'object') ? Forge.obtainability    : {},
       // 🎓 New-player onboarding config (welcome image / narration / enable) so
-      // every player gets the admin's onboarding, not the engine default.
-      __onboarding__:        (Forge.onboarding       && typeof Forge.onboarding       === 'object') ? Forge.onboarding       : {},
+      // every player gets the admin's onboarding, not the engine default. Big
+      // data: URLs (welcome image / narrator portrait / narration audio) are
+      // STRIPPED here — they ride the catalogMedia shard pipeline (onb:* keys)
+      // and are reattached by _rehydrateCatalogMedia. Leaving them inline bloats
+      // the moves JSONB → the catalog upsert silently fails → onboarding "won't
+      // save". Short asset URLs (assets/…) stay inline since they're tiny.
+      __onboarding__:        (function () {
+        var ob = (Forge.onboarding && typeof Forge.onboarding === 'object') ? Forge.onboarding : {};
+        var s = {};
+        for (var k in ob) { if (Object.prototype.hasOwnProperty.call(ob, k)) s[k] = ob[k]; }
+        if (typeof s.image          === 'string' && s.image.length          > 1024) s.image          = '';
+        if (typeof s.speakerImage   === 'string' && s.speakerImage.length   > 1024) s.speakerImage   = '';
+        if (typeof s.narrationAudio === 'string' && s.narrationAudio.length > 1024) s.narrationAudio = '';
+        return s;
+      })(),
       // 🗺 Territory Wars — admin's world map, ALL players must see the same
       // regions/sectors/nodes/guard decks. (Excluding worldFeed which is
       // append-only chatter; it cloud-syncs via the live realtime channel.)
@@ -47963,6 +48026,17 @@ async function loadForgeContentFromIdb() {
     const survivors = await idbGet('forge_campSurvivors');
     if (Array.isArray(survivors) && survivors.length) Forge.campSurvivors = survivors;
   } catch (e) {}
+  // 🎓 Restore the admin's onboarding config (welcome image / narrator portrait
+  // / narration audio data: URLs) from IDB — the canonical local copy. Merge
+  // over whatever's in Forge.onboarding so authored fields survive a refresh
+  // even before the catalog round-trip completes.
+  try {
+    const onb = await idbGet('forge_onboarding');
+    if (onb && typeof onb === 'object' && !Array.isArray(onb) && Object.keys(onb).length) {
+      Forge.onboarding = Object.assign({}, (Forge.onboarding && typeof Forge.onboarding === 'object' && !Array.isArray(Forge.onboarding)) ? Forge.onboarding : {}, onb);
+      changed = true;
+    }
+  } catch (e) {}
   // 🗺 Restore the FULL camp layout + wilderness zones from IDB — the
   // localStorage copy was stripped of inline container photos (b.image
   // data URLs uploaded for trees / buildings / props), so without IDB
@@ -48586,6 +48660,12 @@ function saveForge() {
       // upload + reload lost the image. Persist them like everything else.
       idbSet('forge_tombstoneArt',       Forge.tombstoneArt       || null);
       idbSet('forge_tombstoneCosmetics', Forge.tombstoneCosmetics || []);
+      // 🎓 Onboarding config (welcome image / narrator portrait / narration
+      // audio data: URLs). Previously this ONLY survived a successful catalog
+      // Publish — an admin edit + reload lost it, and an oversized media blob
+      // made the publish itself silently fail. Persist the FULL object here
+      // (IDB has the capacity) so it survives reloads independent of publish.
+      idbSet('forge_onboarding',         Forge.onboarding         || null);
       idbSet('forge_rlcRelics',          Forge.rlcRelics          || []);
       idbSet('forge_blackMarketPrices',  Forge.blackMarketPrices  || {});
       idbSet('forge_campCosts',          Forge.campCosts          || {});

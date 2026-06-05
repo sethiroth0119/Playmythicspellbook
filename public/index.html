@@ -67411,7 +67411,7 @@ const ONB_DEFAULT_NARRATION =
 //   • audio       = voice-over that plays on the welcome screen
 const ONB_DEFAULT_IMAGE   = 'assets/onboarding/background.png';
 const ONB_DEFAULT_SPEAKER = 'assets/onboarding/character.png';
-const ONB_DEFAULT_AUDIO   = 'assets/Audio/Onbaording%20new%20player.mp3';
+const ONB_DEFAULT_AUDIO   = 'assets/Audio/onboarding-voice.mp3';
 
 const ONB_MENU_TOUR = [
   { icon: '🏠', name: 'Home',          desc: 'This is your central hub where you can quickly access your activities and track your progress.' },
@@ -67535,8 +67535,18 @@ function _speakOnb(_text) {
     _onbNarrAudio = new Audio(cfg.narrationAudio);
     _onbNarrAudio.volume = Math.max(0, Math.min(1, st.musicVolume != null ? st.musicVolume : 0.7));
     const p = _onbNarrAudio.play();
-    // Autoplay may be blocked until a gesture — fail quietly (player can click Next).
-    if (p && typeof p.catch === 'function') p.catch(() => {});
+    // Autoplay is often blocked until the first user gesture. If so, retry on
+    // the next pointer/key/touch/click so the voice-over starts the instant the
+    // player interacts — instead of silently never playing.
+    if (p && typeof p.catch === 'function') p.catch(() => {
+      try {
+        const resume = () => {
+          try { if (_onbNarrAudio) { const pr = _onbNarrAudio.play(); if (pr && pr.catch) pr.catch(() => {}); } } catch (e) {}
+          ['pointerdown', 'keydown', 'touchstart', 'click'].forEach(ev => { try { document.removeEventListener(ev, resume, true); } catch (e) {} });
+        };
+        ['pointerdown', 'keydown', 'touchstart', 'click'].forEach(ev => { try { document.addEventListener(ev, resume, true); } catch (e) {} });
+      } catch (e) {}
+    });
   } catch (e) {}
 }
 function _stopOnbNarration() {

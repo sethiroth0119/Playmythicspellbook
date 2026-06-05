@@ -36922,36 +36922,14 @@ function _startMatchmakingPoll() {
         .order('created_at', { ascending: true })
         .limit(1);
       if (mineRes && mineRes.data && mineRes.data.length) { _deliver(mineRes.data[0]); return; }
-      // (b) Hunt the queue for a compatible opponent.
-      const qRes = await Cloud.client.from('matchmaking_queue')
-        .select('*')
-        .neq('user_id', myId)
-        .order('queued_at', { ascending: true })
-        .limit(12);
-      const list = (qRes && qRes.data) || [];
-      const opp = list.find(o => o && o.user_id
-        && (o.mode || 'ranked') === (Cloud._mmMode || 'ranked')
-        && Math.abs((o.mmr || 1000) - (Cloud._mmMmr || 1000)) < 500);
-      // Only the higher user_id of the pair creates → exactly one creator,
-      // no double-insert for the common 2-player case.
-      if (opp && String(myId) > String(opp.user_id)) {
-        // Guard: don't create if that opponent was already paired by someone.
-        const oppM = await Cloud.client.from('matches')
-          .select('id').eq('status', 'pending').gte('created_at', since)
-          .or(`player1_id.eq.${opp.user_id},player2_id.eq.${opp.user_id}`)
-          .limit(1);
-        if (oppM && oppM.data && oppM.data.length) return; // already taken
-        const insRes = await Cloud.client.from('matches').insert({
-          player1_id: opp.user_id,
-          player2_id: myId,
-          hero1_id:   opp.hero_id || null,
-          hero2_id:   Cloud._mmHeroId || null,
-          deck1:      opp.deck_json || {},
-          deck2:      Cloud._mmDeck || {},
-          status:     'pending',
-        }).select('*').limit(1);
-        if (insRes && insRes.data && insRes.data.length) { _deliver(insRes.data[0]); return; }
-      }
+      // (b) PAIRING IS SERVER-SIDE ONLY — the atomic `try_pair_match` trigger on
+      // matchmaking_queue (api.sql) locks an opponent row (FOR UPDATE SKIP LOCKED)
+      // and creates EXACTLY ONE match for the pair. The old client-side
+      // query-then-insert raced that trigger: both players (or a player + the
+      // trigger) inserted separate `matches` rows, so each ended up in a DIFFERENT
+      // match against a DIFFERENT opponent — the "two different boards" bug. We now
+      // ONLY read our own trigger-created match in (a); we never insert one here.
+      // (Just keep polling until the trigger pairs us.)
     } catch (e) { /* transient — keep polling */ }
   };
   Cloud._mmPoll = setInterval(tick, 2500);

@@ -67402,6 +67402,17 @@ const ONB_DEFAULT_NARRATION =
   'Choose your path wisely.\n\n' +
   'The future of Ethos Heights is now in your hands.';
 
+// 🎬 Default onboarding MEDIA — bundled asset files (NOT data: URLs), so they
+// ship with the deploy and reach EVERY player with no publish / shard / upload
+// step. The admin can still override any of these in Forge → Onboarding; these
+// are just the built-in defaults shown when no custom value is set.
+//   • background  = full-screen welcome image behind the title
+//   • speaker     = RPG narrator portrait that slides in from the side
+//   • audio       = voice-over that plays on the welcome screen
+const ONB_DEFAULT_IMAGE   = 'assets/onboarding/background.png';
+const ONB_DEFAULT_SPEAKER = 'assets/onboarding/character.png';
+const ONB_DEFAULT_AUDIO   = 'assets/Audio/Onbaording%20new%20player.mp3';
+
 const ONB_MENU_TOUR = [
   { icon: '🏠', name: 'Home',          desc: 'This is your central hub where you can quickly access your activities and track your progress.' },
   { icon: '🏕️', name: 'Camp Heights',  desc: 'Visit Camp Heights to interact with services, players, vendors, businesses, and community activities.' },
@@ -67425,12 +67436,16 @@ function _onbCfg() {
   const s = (f && Object.keys(f).length) ? f : (c || {});
   return {
     enabled:   s.enabled !== false,
-    image:     s.image || '',
+    // Media falls back to the bundled asset defaults when the admin hasn't set
+    // a custom value, so the welcome background / character / voice-over always
+    // appear — no publish required. (A custom value, including the admin
+    // explicitly clearing it, still wins.)
+    image:     (typeof s.image === 'string' && s.image) ? s.image : ONB_DEFAULT_IMAGE,
     title:     (typeof s.title === 'string' && s.title.trim()) ? s.title : 'WELCOME TO ETHOS HEIGHTS',
     narration: (typeof s.narration === 'string' && s.narration.trim()) ? s.narration : ONB_DEFAULT_NARRATION,
     voice:     s.voice !== false,
-    narrationAudio: (typeof s.narrationAudio === 'string') ? s.narrationAudio : '', // admin-uploaded voice-over (data URL or asset URL)
-    speakerImage: (typeof s.speakerImage === 'string') ? s.speakerImage : '', // RPG narrator portrait shown on the side
+    narrationAudio: (typeof s.narrationAudio === 'string' && s.narrationAudio) ? s.narrationAudio : ONB_DEFAULT_AUDIO, // voice-over (asset URL or admin upload)
+    speakerImage: (typeof s.speakerImage === 'string' && s.speakerImage) ? s.speakerImage : ONB_DEFAULT_SPEAKER, // RPG narrator portrait shown on the side
   };
 }
 
@@ -67619,14 +67634,17 @@ function _onbRoot(innerHtml) {
 // ---- Step 2: Welcome cinematic ----
 function _onbRenderWelcome() {
   const cfg = _onbCfg();
+  // Layer the welcome image OVER the gradient so a missing/404 image degrades to
+  // the gradient instead of a blank/broken background. cover+center fills nicely.
   const bg = cfg.image
-    ? '<div class="onb-bgimg onb-fade" style="background-image:url(' + JSON.stringify(cfg.image) + ')"></div>'
+    ? '<div class="onb-bgimg onb-fade" style="background-image:url(' + JSON.stringify(cfg.image) + '),radial-gradient(ellipse at 50% 30%,#2a1850,#0a0518 60%,#04030a);background-size:cover;background-position:center"></div>'
     : '<div class="onb-bgimg onb-fade" style="background:radial-gradient(ellipse at 50% 30%,#2a1850,#0a0518 60%,#04030a)"></div>';
   const paras = ('' + cfg.narration).split(/\n{2,}/).map(p => p.trim()).filter(Boolean)
     .map((p, i) => '<p style="animation-delay:' + (i * 220) + 'ms">' + escapeHtml(p) + '</p>').join('');
   // 🗣 RPG narrator: a speaker portrait slides in on the side (like the page-guide).
+  // onerror hides a missing/404 portrait gracefully (no broken-image icon).
   const spk = cfg.speakerImage
-    ? '<img class="onb-speaker" src="' + escapeHtml(cfg.speakerImage) + '" alt="">'
+    ? '<img class="onb-speaker" src="' + escapeHtml(cfg.speakerImage) + '" alt="" onerror="this.style.display=\'none\'">'
     : '';
   _onbRoot(
     '<div class="onb-screen' + (cfg.speakerImage ? ' has-speaker' : '') + '">' +

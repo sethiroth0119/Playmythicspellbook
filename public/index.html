@@ -35280,9 +35280,13 @@ function _flattenCatalogMedia(m) {
   // assets/Audio/intro.mp3) are tiny, so they're left inline in the moves blob.
   if (m.onboarding && typeof m.onboarding === 'object') {
     const ob = m.onboarding;
-    if (typeof ob.image          === 'string' && ob.image.length          > 1024 && fits(ob.image))          out['onb:image']   = ob.image;
-    if (typeof ob.speakerImage   === 'string' && ob.speakerImage.length   > 1024 && fits(ob.speakerImage))   out['onb:speaker'] = ob.speakerImage;
-    if (typeof ob.narrationAudio === 'string' && ob.narrationAudio.length > 1024 && fits(ob.narrationAudio)) out['onb:audio']   = ob.narrationAudio;
+    // data: URLs are stripped from the moves blob (stripBig drops them), so they
+    // MUST travel as shards here. Asset URLs (assets/…) aren't data: URLs — they
+    // ride inline in the moves blob and don't need a shard. `fits` guards the
+    // 4 MB shard cap (an over-cap clip is dropped; use an asset URL for big audio).
+    if (typeof ob.image          === 'string' && ob.image.slice(0, 5)          === 'data:' && fits(ob.image))          out['onb:image']   = ob.image;
+    if (typeof ob.speakerImage   === 'string' && ob.speakerImage.slice(0, 5)   === 'data:' && fits(ob.speakerImage))   out['onb:speaker'] = ob.speakerImage;
+    if (typeof ob.narrationAudio === 'string' && ob.narrationAudio.slice(0, 5) === 'data:' && fits(ob.narrationAudio)) out['onb:audio']   = ob.narrationAudio;
   }
   return out;
 }
@@ -35767,19 +35771,20 @@ async function cloudPublishCatalog(opts) {
       __crafting_recipes__:  Array.isArray(Forge.craftingRecipes)  ? Forge.craftingRecipes  : [],
       __obtainability__:     (Forge.obtainability    && typeof Forge.obtainability    === 'object') ? Forge.obtainability    : {},
       // 🎓 New-player onboarding config (welcome image / narration / enable) so
-      // every player gets the admin's onboarding, not the engine default. Big
-      // data: URLs (welcome image / narrator portrait / narration audio) are
-      // STRIPPED here — they ride the catalogMedia shard pipeline (onb:* keys)
-      // and are reattached by _rehydrateCatalogMedia. Leaving them inline bloats
-      // the moves JSONB → the catalog upsert silently fails → onboarding "won't
-      // save". Short asset URLs (assets/…) stay inline since they're tiny.
+      // every player gets the admin's onboarding, not the engine default. The
+      // welcome image / narrator portrait / narration audio are data: URLs that
+      // CANNOT ride inline here — stripBig() (below) drops every data: URL over
+      // 6 KB from the moves JSONB. So we strip them here too and ship them via
+      // the catalogMedia SHARD pipeline (onb:* keys), which uploads to Storage
+      // separately (no stripBig) and is reattached by _rehydrateCatalogMedia.
+      // Short asset URLs (assets/…) are not data: URLs and stay inline.
       __onboarding__:        (function () {
         var ob = (Forge.onboarding && typeof Forge.onboarding === 'object') ? Forge.onboarding : {};
         var s = {};
         for (var k in ob) { if (Object.prototype.hasOwnProperty.call(ob, k)) s[k] = ob[k]; }
-        if (typeof s.image          === 'string' && s.image.length          > 1024) s.image          = '';
-        if (typeof s.speakerImage   === 'string' && s.speakerImage.length   > 1024) s.speakerImage   = '';
-        if (typeof s.narrationAudio === 'string' && s.narrationAudio.length > 1024) s.narrationAudio = '';
+        if (typeof s.image          === 'string' && s.image.slice(0, 5) === 'data:') s.image          = '';
+        if (typeof s.speakerImage   === 'string' && s.speakerImage.slice(0, 5) === 'data:') s.speakerImage   = '';
+        if (typeof s.narrationAudio === 'string' && s.narrationAudio.slice(0, 5) === 'data:') s.narrationAudio = '';
         return s;
       })(),
       // 🗺 Territory Wars — admin's world map, ALL players must see the same
@@ -67946,19 +67951,72 @@ function renderForgeOnboarding() {
     '</div>';
 }
 
+// 🖼 Downscale an uploaded image to a screen-friendly size so a big PNG/JPEG
+// (a 10 MB hero render) becomes a few-hundred-KB data URL that always fits and
+// is never silently rejected for being "too large" — which was the root cause
+// of "I uploaded an onboarding image and nothing happened." Preserves
+// transparency (PNG) for the speaker portrait; uses JPEG for the full-bleed
+// welcome background. Falls back to the original on any failure so an upload is
+// never lost.
+function _onbDownscaleImage(file, opts) {
+  opts = opts || {};
+  const maxDim = opts.maxDim || 1600;
+  const preferPng = !!opts.preferPng;
+  const jpegQ = (typeof opts.quality === 'number') ? opts.quality : 0.85;
+  return new Promise((resolve) => {
+    let done = false; const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    try {
+      const reader = new FileReader();
+      reader.onerror = () => finish('');
+      reader.onload = () => {
+        const original = reader.result;
+        try {
+          const img = new Image();
+          img.onerror = () => finish(original);
+          img.onload = () => {
+            try {
+              let w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+              if (!w || !h) { finish(original); return; }
+              const scale = Math.min(1, maxDim / Math.max(w, h));
+              const nw = Math.max(1, Math.round(w * scale)), nh = Math.max(1, Math.round(h * scale));
+              const canvas = document.createElement('canvas');
+              canvas.width = nw; canvas.height = nh;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) { finish(original); return; }
+              ctx.drawImage(img, 0, 0, nw, nh);
+              let out;
+              if (preferPng) {
+                out = canvas.toDataURL('image/png');
+                if (out.length > 1200000) out = canvas.toDataURL('image/jpeg', jpegQ); // too big → flatten
+              } else {
+                out = canvas.toDataURL('image/jpeg', jpegQ);
+              }
+              if (!out || out.length >= (original ? original.length : Infinity)) out = original; // never grow
+              finish(out);
+            } catch (e) { finish(original); }
+          };
+          img.src = original;
+        } catch (e) { finish(original); }
+      };
+      reader.readAsDataURL(file);
+    } catch (e) { finish(''); }
+  });
+}
+function _onbFmtKB(s) { try { return Math.max(1, Math.round((('' + s).length * 0.73) / 1024)) + ' KB'; } catch (e) { return '?'; } }
+
 function bindForgeOnboarding() {
   const fileInp = document.getElementById('onb-adm-imgfile');
-  if (fileInp) fileInp.onchange = () => {
+  if (fileInp) fileInp.onchange = async () => {
     const fl = fileInp.files && fileInp.files[0];
     if (!fl) return;
-    if (fl.size > 4 * 1024 * 1024) { try { showToast('⚠ Image too large (max ~4MB). Use a URL for big images.', 4200); } catch (e) {} return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      App._onbImg = reader.result;
-      const prev = document.getElementById('onb-adm-imgprev');
-      if (prev) prev.innerHTML = '<div style="margin-top:8px"><img src="' + escapeHtml(App._onbImg) + '" alt="" style="max-width:100%;max-height:200px;border-radius:10px;border:1px solid rgba(255,209,102,0.4)"></div>';
-    };
-    try { reader.readAsDataURL(fl); } catch (e) {}
+    const prev = document.getElementById('onb-adm-imgprev');
+    if (prev) prev.innerHTML = '<div class="ink-dim small-text" style="margin-top:6px">⏳ Processing image…</div>';
+    const dataUrl = await _onbDownscaleImage(fl, { maxDim: 1600, preferPng: false, quality: 0.85 });
+    if (!dataUrl) { try { showToast('⚠ Could not read that image — try a JPG or PNG.', 4200); } catch (e) {} if (prev) prev.innerHTML = '<div class="ink-dim small-text" style="margin-top:6px">No image set — players see a default gradient.</div>'; return; }
+    App._onbImg = dataUrl;
+    if (prev) prev.innerHTML = '<div style="margin-top:8px"><img src="' + escapeHtml(App._onbImg) + '" alt="" style="max-width:100%;max-height:200px;border-radius:10px;border:1px solid rgba(255,209,102,0.4)"></div>' +
+      '<div class="small-text" style="color:#7fdca0;margin-top:4px">✓ Loaded (' + _onbFmtKB(App._onbImg) + ') — now click 💾 Save &amp; Publish to apply.</div>';
+    try { showToast('✓ Welcome image loaded (' + _onbFmtKB(App._onbImg) + '). Now click 💾 Save & Publish.', 3800); } catch (e) {}
   };
   const clearBtn = document.getElementById('onb-adm-imgclear');
   if (clearBtn) clearBtn.onclick = () => {
@@ -67989,17 +68047,17 @@ function bindForgeOnboarding() {
   };
   // 🗣 Narrator/speaker image — file upload + clear (mirrors the welcome image).
   const spkFile = document.getElementById('onb-adm-spkfile');
-  if (spkFile) spkFile.onchange = () => {
+  if (spkFile) spkFile.onchange = async () => {
     const fl = spkFile.files && spkFile.files[0];
     if (!fl) return;
-    if (fl.size > 4 * 1024 * 1024) { try { showToast('⚠ Image too large (max ~4MB). Use a URL for big images.', 4200); } catch (e) {} return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      App._onbSpk = reader.result;
-      const prev = document.getElementById('onb-adm-spkprev');
-      if (prev) prev.innerHTML = '<div style="margin-top:8px"><img src="' + escapeHtml(App._onbSpk) + '" alt="" style="max-height:160px;border-radius:10px;border:1px solid rgba(255,209,102,0.4)"></div>';
-    };
-    try { reader.readAsDataURL(fl); } catch (e) {}
+    const prev = document.getElementById('onb-adm-spkprev');
+    if (prev) prev.innerHTML = '<div class="ink-dim small-text" style="margin-top:6px">⏳ Processing image…</div>';
+    const dataUrl = await _onbDownscaleImage(fl, { maxDim: 1400, preferPng: true, quality: 0.88 });
+    if (!dataUrl) { try { showToast('⚠ Could not read that image — try a JPG or PNG.', 4200); } catch (e) {} if (prev) prev.innerHTML = '<div class="ink-dim small-text" style="margin-top:6px">No speaker set — narration shows with no character.</div>'; return; }
+    App._onbSpk = dataUrl;
+    if (prev) prev.innerHTML = '<div style="margin-top:8px"><img src="' + escapeHtml(App._onbSpk) + '" alt="" style="max-height:160px;border-radius:10px;border:1px solid rgba(255,209,102,0.4)"></div>' +
+      '<div class="small-text" style="color:#7fdca0;margin-top:4px">✓ Loaded (' + _onbFmtKB(App._onbSpk) + ') — now click 💾 Save &amp; Publish to apply.</div>';
+    try { showToast('✓ Speaker image loaded (' + _onbFmtKB(App._onbSpk) + '). Now click 💾 Save & Publish.', 3800); } catch (e) {}
   };
   const spkClear = document.getElementById('onb-adm-spkclear');
   if (spkClear) spkClear.onclick = () => {
@@ -68021,6 +68079,15 @@ function bindForgeOnboarding() {
     const image = (typeof App._onbImg === 'string' && App._onbImg) ? App._onbImg : urlVal;
     const speakerImage = (typeof App._onbSpk === 'string' && App._onbSpk) ? App._onbSpk : spkUrl;
     const narrationAudio = (typeof App._onbAud === 'string' && App._onbAud) ? App._onbAud : audUrl;
+    // ⚠ Guard the silent "published a blank screen" trap: if there's no image,
+    // speaker, OR audio, warn before publishing so an empty config doesn't go
+    // out looking like "nothing changed" (the exact bug we chased for hours).
+    if (!image && !speakerImage && !narrationAudio) {
+      const goAhead = (typeof window !== 'undefined' && window.confirm)
+        ? window.confirm('Heads up — you have NO welcome image, speaker portrait, or audio set.\n\nPlayers would see plain text on a gradient (no background, no character, no voice-over).\n\nIf you meant to add media: click Cancel, upload your image/speaker/audio (wait for the green "✓ Loaded" line), then Save again.\n\nPublish text-only anyway?')
+        : true;
+      if (!goAhead) { try { showToast('Publish cancelled — upload your image / speaker / audio, then Save again.', 4500); } catch (e) {} return; }
+    }
     Forge.onboarding = { enabled: enabled, voice: voice, title: title, narration: narr, image: image, narrationAudio: narrationAudio, speakerImage: speakerImage };
     App._onbImg = undefined; App._onbSpk = undefined; App._onbAud = undefined;
     try { saveForge && saveForge(); } catch (e) {}

@@ -111767,9 +111767,38 @@ function swapBattlePerspective(state) {
 // opponent's screen.
 function _serializeBattleStateForBroadcast(state) {
   if (!state) return null;
-  // Deep-shallow copy — we strip transients but keep the rest verbatim. JSON
-  // round-trips are fine for our state shape (no functions, no DOM refs).
-  return JSON.parse(JSON.stringify(state));
+  // Deep copy, then STRIP heavy media (card art / sprite frames / inline data:
+  // URLs). The opponent re-derives all art from its OWN catalog by card id — so
+  // shipping it inline is pure waste, and it was catastrophic: a full board +
+  // both decks/hands of art data-URLs serialized to >100 MB, blowing the
+  // WebSocket frame limit → close code 1009 → the match disconnected the instant
+  // the first snapshot was sent (the "two different boards" symptom). Keeps every
+  // gameplay-relevant field (ids, positions, hp, stats, statuses, turn) verbatim.
+  let copy;
+  try { copy = JSON.parse(JSON.stringify(state)); } catch (e) { return null; }
+  const HEAVY_KEYS = {
+    img: 1, image: 1, imageUrl: 1, art: 1, artBase64: 1, artUrl: 1, cover: 1, coverArt: 1,
+    sprite: 1, spriteBase64: 1, spriteUrl: 1, spriteFrames: 1, frames: 1, portrait: 1,
+    portraitUrl: 1, bgImage: 1, background: 1, boardDataUrl: 1, audio: 1, audioUrl: 1, iconImg: 1,
+  };
+  const strip = (v) => {
+    if (v == null) return v;
+    if (typeof v === 'string') {
+      // Drop inline data: URLs and any oversized blob; keep ids / short refs.
+      return (v.slice(0, 5) === 'data:' || v.length > 4096) ? '' : v;
+    }
+    if (Array.isArray(v)) { for (let i = 0; i < v.length; i++) v[i] = strip(v[i]); return v; }
+    if (typeof v === 'object') {
+      for (const k in v) {
+        if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+        if (HEAVY_KEYS[k] && typeof v[k] === 'string') { v[k] = ''; continue; }
+        v[k] = strip(v[k]);
+      }
+      return v;
+    }
+    return v;
+  };
+  return strip(copy);
 }
 
 // Subscribe to the match's realtime channel. Both clients call this when the

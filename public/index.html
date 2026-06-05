@@ -69305,15 +69305,21 @@ function renderDeckSelect() {
   const mpIntent = !!App._mpIntent;
   const mpOnline = (typeof LobbyPresence !== 'undefined' && LobbyPresence.count) || 0;
   const mpQueue  = Math.max(0, ((typeof LobbyPresence !== 'undefined' && LobbyPresence.queueCount) || 0));
+  // 🔒 Online / searching COUNTS are admin-only — players shouldn't see how many
+  // people are online. Non-admins get a neutral "searching" status instead.
+  const _mpAdmin = (typeof isAdmin === 'function' && isAdmin());
+  const mpStatusHtml = _mpAdmin
+    ? `<span title="Players online right now">🟢 <strong style="color:#d4a8ff">${mpOnline || '—'}</strong> online</span>
+        <span style="opacity:0.5">·</span>
+        <span title="Players currently searching">🔍 <strong style="color:#d4a8ff">${mpQueue}</strong> searching</span>`
+    : `<span>🔍 <strong style="color:#d4a8ff">Searching for an opponent…</strong></span>`;
   const mpBanner = mpIntent ? `
     <div style="max-width:680px;margin:0 auto 1.2rem;padding:0.9rem 1.2rem;border-radius:10px;background:linear-gradient(90deg,rgba(184,136,255,0.18),rgba(140,80,220,0.08));border:1px solid rgba(184,136,255,0.5);display:flex;align-items:center;gap:0.9rem;justify-content:space-between;flex-wrap:wrap">
       <div style="color:#e4d4ff;font-size:1rem;letter-spacing:0.03em">
         <strong style="color:#d4a8ff">🌐 Online Play</strong> — pick a deck to take into a ranked match.
       </div>
       <div style="display:flex;gap:0.6rem;align-items:center;font-size:0.88rem;color:#bfa4e0">
-        <span title="Players online right now">🟢 <strong style="color:#d4a8ff">${mpOnline || '—'}</strong> online</span>
-        <span style="opacity:0.5">·</span>
-        <span title="Players currently searching">🔍 <strong style="color:#d4a8ff">${mpQueue}</strong> searching</span>
+        ${mpStatusHtml}
         <button class="btn-secondary" id="btn-mp-intent-cancel" style="padding:0.35rem 0.8rem;font-size:0.85rem">Cancel online</button>
       </div>
     </div>` : '';

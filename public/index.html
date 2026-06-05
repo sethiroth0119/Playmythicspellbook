@@ -67430,6 +67430,15 @@ const ONB_MENU_TOUR = [
 const Onboarding = { step: null, _awaitTut: false, _confirmDeckId: null, _previewDeckId: null, _narrated: false, _tourIdx: 0, _adminPreview: false };
 
 // Admin config (Forge local edits win; else the published Catalog mirror).
+// Pick a saved onboarding media value, but reject empties and the known-broken
+// legacy paths (early defaults pointed at assets/onboarding/* and a space-named
+// audio file that 404). Falls back to the bundled asset that actually serves.
+function _onbPick(v, def) {
+  if (typeof v !== 'string' || !v) return def;
+  if (v.indexOf('assets/onboarding/') === 0) return def;            // broken legacy default folder
+  if (v.indexOf('Onbaording%20') >= 0 || v.indexOf('Onbaording ') >= 0) return def; // 404 space-named audio
+  return v;
+}
 function _onbCfg() {
   const f = (typeof Forge === 'object' && Forge && Forge.onboarding && typeof Forge.onboarding === 'object') ? Forge.onboarding : null;
   const c = (typeof Catalog === 'object' && Catalog && Catalog.onboarding && typeof Catalog.onboarding === 'object') ? Catalog.onboarding : null;
@@ -67437,15 +67446,16 @@ function _onbCfg() {
   return {
     enabled:   s.enabled !== false,
     // Media falls back to the bundled asset defaults when the admin hasn't set
-    // a custom value, so the welcome background / character / voice-over always
-    // appear — no publish required. (A custom value, including the admin
-    // explicitly clearing it, still wins.)
-    image:     (typeof s.image === 'string' && s.image) ? s.image : ONB_DEFAULT_IMAGE,
+    // a custom value OR when a saved value points at a now-broken legacy path
+    // (early default attempts used assets/onboarding/* and a space-named audio
+    // file that 404). _onbPick rejects those so the welcome background /
+    // character / voice-over ALWAYS resolve to files that actually serve.
+    image:     _onbPick(s.image, ONB_DEFAULT_IMAGE),
     title:     (typeof s.title === 'string' && s.title.trim()) ? s.title : 'WELCOME TO ETHOS HEIGHTS',
     narration: (typeof s.narration === 'string' && s.narration.trim()) ? s.narration : ONB_DEFAULT_NARRATION,
     voice:     s.voice !== false,
-    narrationAudio: (typeof s.narrationAudio === 'string' && s.narrationAudio) ? s.narrationAudio : ONB_DEFAULT_AUDIO, // voice-over (asset URL or admin upload)
-    speakerImage: (typeof s.speakerImage === 'string' && s.speakerImage) ? s.speakerImage : ONB_DEFAULT_SPEAKER, // RPG narrator portrait shown on the side
+    narrationAudio: _onbPick(s.narrationAudio, ONB_DEFAULT_AUDIO),
+    speakerImage: _onbPick(s.speakerImage, ONB_DEFAULT_SPEAKER),
   };
 }
 
@@ -67528,12 +67538,19 @@ let _onbNarrAudio = null;
 function _speakOnb(_text) {
   try {
     const cfg = _onbCfg();
-    if (!cfg.voice || !cfg.narrationAudio) return;       // narration off, or nothing uploaded
+    if (!cfg.voice) { try { console.info('[onb] narration off (voice toggle disabled)'); } catch (e) {} return; }
+    if (!cfg.narrationAudio) { try { console.info('[onb] narration: no audio URL'); } catch (e) {} return; }
     const st = (typeof getSettings === 'function') ? getSettings() : (Profile.settings || {});
-    if (st.musicEnabled === false) return;               // respect the global mute
+    // The onboarding voice-over is a deliberate, one-time first-run narration —
+    // NOT background music — so it is intentionally NOT silenced by the music
+    // mute toggle. Volume is floored so a player with music turned down still
+    // hears the intro clearly.
     _stopOnbNarration();
     _onbNarrAudio = new Audio(cfg.narrationAudio);
-    _onbNarrAudio.volume = Math.max(0, Math.min(1, st.musicVolume != null ? st.musicVolume : 0.7));
+    let _vol = (st.musicVolume != null) ? st.musicVolume : 0.7;
+    if (!_vol || _vol < 0.5) _vol = 0.7;
+    _onbNarrAudio.volume = Math.max(0, Math.min(1, _vol));
+    try { console.info('[onb] playing narration:', cfg.narrationAudio); } catch (e) {}
     const p = _onbNarrAudio.play();
     // Autoplay is often blocked until the first user gesture. If so, retry on
     // the next pointer/key/touch/click so the voice-over starts the instant the
@@ -67644,6 +67661,7 @@ function _onbRoot(innerHtml) {
 // ---- Step 2: Welcome cinematic ----
 function _onbRenderWelcome() {
   const cfg = _onbCfg();
+  try { console.info('[onb] welcome render → bg=', cfg.image, '| character=', cfg.speakerImage, '| audio=', cfg.narrationAudio, '| voice=', cfg.voice); } catch (e) {}
   // Layer the welcome image OVER the gradient so a missing/404 image degrades to
   // the gradient instead of a blank/broken background. cover+center fills nicely.
   const bg = cfg.image

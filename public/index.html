@@ -32091,6 +32091,10 @@ const SFX = {
   // the moment a summoned unit's on-play effect triggers. Distinct from the
   // generic unitSummon thud so on-play reveals get their own cue.
   onPlay:         { src: 'assets/Audio/On%20Play%20summon.wav',           volume: 0.95 },
+  // 👑 Ace summon stinger — plays with the Ace Slam boss-summon cinematic
+  // (_playAceSlam) when an ace-flagged unit is summoned. Distinct from the
+  // regular onPlay cue.
+  aceSlam:        { src: 'assets/Audio/Ace%20onplay%20sound%20effect.wav', volume: 1.0 },
 };
 
 // ---- Global button-click SFX ----
@@ -79924,6 +79928,8 @@ function _playAceSlam(unit, fromAI) {
     let _onPlayText = '';
     try { _onPlayText = (_onPlay && typeof describeOnPlayEffect === 'function') ? (describeOnPlayEffect(_onPlay) || '') : ''; } catch (e) {}
     _aceSlamBusy = true;
+    // 🔊 Ace summon stinger — fires as the cinematic begins.
+    try { if (typeof playSfx === 'function') playSfx('aceSlam'); } catch (e) {}
     const old = document.getElementById('ace-slam-overlay'); if (old) old.remove();
     const host = document.createElement('div');
     host.id = 'ace-slam-overlay';

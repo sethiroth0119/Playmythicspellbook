@@ -136958,6 +136958,29 @@ function _twForge() {
   } catch (e) {}
   return t;
 }
+// 🗺 Find an OPEN map slot for a new node so it never spawns on top of existing
+// ones. Scans a candidate grid (map % coords) and returns the cell whose nearest
+// existing node is FARTHEST away (maximin) — i.e. the most empty area. With a
+// full map it still returns the least-crowded cell (best effort, no overlap).
+function _twFindEmptyNodePos(nodes) {
+  const placed = (Array.isArray(nodes) ? nodes : [])
+    .map(n => n && n.position)
+    .filter(p => p && typeof p.x === 'number' && typeof p.y === 'number');
+  if (placed.length === 0) return { x: 50, y: 36 };
+  const MINX = 8, MAXX = 92, MINY = 12, MAXY = 86, STEP = 5;
+  let best = { x: 50, y: 50 }, bestScore = -1;
+  for (let gy = MINY; gy <= MAXY; gy += STEP) {
+    for (let gx = MINX; gx <= MAXX; gx += STEP) {
+      let nearest = Infinity;
+      for (const p of placed) {
+        const dx = gx - p.x, dy = gy - p.y, d = dx * dx + dy * dy;
+        if (d < nearest) nearest = d;
+      }
+      if (nearest > bestScore) { bestScore = nearest; best = { x: gx, y: gy }; }
+    }
+  }
+  return best;
+}
 function _twState() {
   if (!Profile.tw_state || typeof Profile.tw_state !== 'object') {
     Profile.tw_state = { ownedNodes: {}, vault: {}, capturedSectors: {}, lastDecayCheck: 0 };
@@ -138784,6 +138807,9 @@ function renderTerritoryWars() {
       const tf = _twForge();
       const nextNum = tf.nodes.length + 1;
       const newId = 'N-' + String(nextNum).padStart(2, '0');
+      // Drop the new node into the emptiest open spot so it never overlaps an
+      // existing node (computed BEFORE the push, from the current node set).
+      const _newPos = _twFindEmptyNodePos(tf.nodes);
       tf.nodes.push({
         id: newId,
         name: 'NEW NODE ' + nextNum,
@@ -138798,7 +138824,7 @@ function renderTerritoryWars() {
         difficulty: 'T1',
         connections: [],
         runModifiers: [],
-        position: { x: 50, y: 50 }
+        position: _newPos
       });
       App._twSelectedNode = newId;
       App._twNodeTab = 'admin';

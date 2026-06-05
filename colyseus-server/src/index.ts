@@ -73,9 +73,14 @@ const httpServer = http.createServer(app);
 const gameServer = new Server({
   transport: new WebSocketTransport({
     server: httpServer,
-    // Reasonable defaults; Colyseus handles ping/pong automatically.
-    pingInterval: 8000,
-    pingMaxRetries: 3,
+    // More tolerant heartbeat. A briefly-backgrounded browser tab (e.g. an admin
+    // testing BOTH seats on one machine, or a player who alt-tabs) throttles JS
+    // timers and can miss pings — the old 8s×3 = 24s window dropped the host the
+    // moment it was backgrounded to set up the opponent. 12s × 8 = ~96s of
+    // silence tolerated before a drop; the 30s reconnect window still covers
+    // real network blips after that.
+    pingInterval: 12000,
+    pingMaxRetries: 8,
   }),
 });
 

@@ -1,4 +1,63 @@
-# Stripe Connect — Cashout payout rail (setup)
+# Stripe setup
+
+This game has **two** independent Stripe rails, each off until you set its
+secret. They share the same `STRIPE_SECRET_KEY` Worker secret:
+
+- **Part A — Aza-coin PURCHASES** (players buy premium currency). Uses Stripe
+  **Checkout**. *This is what you turn on to let players buy Aza coin.*
+- **Part B — Cashout PAYOUTS** (players cash Cinders out to real money). Uses
+  Stripe **Connect**. Stays off until you deliberately enable it.
+
+---
+
+# Part A — Aza-coin Purchases (Stripe Checkout)
+
+The store (Starter Cache … Legend's Hoard) is **fully built** and runs in
+**mock mode** until `STRIPE_SECRET_KEY` is set. The Worker then returns a real
+Stripe Checkout URL from `POST /api/buy/checkout`; the player pays on Stripe's
+hosted page; on return the client calls `GET /api/buy/confirm?sid=…`, which
+re-verifies `payment_status==='paid'` against Stripe and credits the Aza
+exactly once via the UNIQUE `aza_purchases` row. The card number is entered on
+Stripe, never in the game.
+
+**Server-side pricing is the source of truth** — `AZA_PACKS` in `worker.js`
+(sp_starter 2/$1.99, sp_adv 5/$4.99, sp_hero 20/$19.99, sp_champ 50/$49.99,
+sp_legend 150/$14999¢). Keep it in sync with `SOVEREIGN_PACKAGES` in
+`public/index.html`.
+
+### Activate it (≈5 min — you run these, the key never goes to chat/repo)
+
+1. **Database** — run `api.sql` in the Supabase SQL editor (idempotent). It
+   creates `aza_purchases` (self-scoped RLS) used for once-only crediting.
+2. **Stripe key** — in the Stripe Dashboard create a **Restricted API key**
+   (`rk_…`, least privilege) with **WRITE** on:
+   - **Checkout Sessions**
+   - **PaymentIntents**
+   - (Charges: Read is handy for reconciliation.)
+   Start in **test mode** to verify, then create the **live-mode** equivalent.
+   *(A full secret key `sk_…` also works but is broader — prefer the RAK.)*
+3. **Cloudflare secrets** — set them as Worker secrets (never in `wrangler.jsonc`):
+   ```sh
+   npx wrangler secret put STRIPE_SECRET_KEY    # paste the rk_… (or sk_…) key
+   npx wrangler secret put PUBLIC_BASE_URL       # value: https://playmythicspellbook.com
+   ```
+   Secrets take effect on the next request — re-deploy not required, but
+   `npm run deploy` is fine too.
+4. **Verify** — `GET https://playmythicspellbook.com/api/buy/config` should now
+   return `{"enabled":true}`. Test a purchase with Stripe test card
+   `4242 4242 4242 4242`, any future expiry/CVC. The Aza should land in the
+   buyer's balance once, even on refresh.
+
+### Optional hardening (recommended before high volume)
+- Checkout auto-redirects to the success URL, so the confirm-on-return flow
+  credits reliably. For belt-and-suspenders (credit even if the player closes
+  the tab mid-redirect), add a `checkout.session.completed` **webhook** that
+  credits server-side with the service-role key. Ask and I'll wire it.
+- Complete Stripe's go-live checklist and your tax obligations for paid users.
+
+---
+
+# Part B — Cashout payout rail (Stripe Connect)
 
 The game ships in **mock mode**. Real money only moves once *you* (the
 operator) configure your own Stripe account below. Until then every Cashout

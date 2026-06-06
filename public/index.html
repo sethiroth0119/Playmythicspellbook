@@ -33064,7 +33064,7 @@ function _onColyseusFx(msg) {
       break;
     }
     case 'attack':
-      try { if (typeof _onRemoteAttackResultArrived === 'function') _onRemoteAttackResultArrived(d); } catch (e) {}
+      try { if (d && d.snap && typeof _playRemoteBattleAnim === 'function') _playRemoteBattleAnim(d.snap); } catch (e) {}
       break;
   }
 }
@@ -61185,6 +61185,15 @@ function queueBattleAnim(opts) {
     startedAt: Date.now(),
   };
   App.ui.battleAnim = snap;
+  // 📡 Relay the attack cinematic so it ALSO plays on the opponent's screen.
+  // Only the acting player (my turn) relays — the watcher replays it via
+  // _playRemoteBattleAnim. The snap is fully serializable (ids/names/owners/nums).
+  try {
+    if (App.battlePrep && App.battlePrep.multiplayer && MatchBroadcast.myTurn
+        && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP && typeof sendColyseusFx === 'function') {
+      sendColyseusFx('attack', { snap: snap });
+    }
+  } catch (e) {}
   setTimeout(() => {
     if (App.ui.battleAnim && App.ui.battleAnim.startedAt === snap.startedAt) {
       App.ui.battleAnim = null;
@@ -61200,6 +61209,36 @@ function queueBattleAnim(opts) {
       };
       if (_deathDelay > 0) setTimeout(_doFinishAnim, _deathDelay);
       else _doFinishAnim();
+    }
+  }, BATTLE_ANIM_DURATION);
+}
+
+// 📡 Replay an opponent's attack cinematic on THIS screen from a relayed snap.
+// Perspective-swap the attacker/defender owners (their 'player' is my 'ai'), so
+// the lunge + flash + damage float land on the correct sides of MY board. Pure
+// visual — the authoritative HP already arrived via the board snapshot.
+function _playRemoteBattleAnim(snap) {
+  if (!snap || !snap.attacker || !snap.defender || !App.ui) return;
+  let s;
+  try { s = JSON.parse(JSON.stringify(snap)); } catch (e) { return; }
+  const sw = (o) => (o === 'player' ? 'ai' : (o === 'ai' ? 'player' : o));
+  s.attacker.owner = sw(s.attacker.owner);
+  s.defender.owner = sw(s.defender.owner);
+  // The sender's defenderPos is from THEIR screen — recompute on ours. Unit ids
+  // match (we adopted the sender's snapshot), so the DOM lookup resolves.
+  s.defenderPos = null;
+  try {
+    const _de = document.querySelector('[data-unit-id="' + s.defender.id + '"]');
+    if (_de) { const _r = _de.getBoundingClientRect(); s.defenderPos = { x: _r.left + _r.width / 2, y: _r.top + Math.max(20, _r.height * 0.3) }; }
+  } catch (e) {}
+  s.startedAt = Date.now() + Math.random();
+  App.ui.battleAnim = s;
+  if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
+  setTimeout(() => {
+    if (App.ui.battleAnim && App.ui.battleAnim.startedAt === s.startedAt) {
+      App.ui.battleAnim = null;
+      try { if (typeof renderBattle === 'function') renderBattle(); } catch (e) {}
+      try { requestAnimationFrame(() => _fireBattleJuice(s)); } catch (e) {}
     }
   }, BATTLE_ANIM_DURATION);
 }
@@ -90524,6 +90563,12 @@ const AI_DELAYS = {
 // the last-resort backstop that fires even if every other recovery path fails.
 // Set whenever App.ui.aiBusy transitions to true; cleared in finishAIPhase.
 function _startAIHardDeadline() {
+  // 📡 In MULTIPLAYER the "ai" turn is the OPPONENT's real turn — they control
+  // their own pace, and a real human can easily take >45s. Force-ending it here
+  // (finishAIPhase) would flip OUR turn state while they're still playing, fighting
+  // the snapshot sync and causing flicker / brief out-of-turn input. The server
+  // already owns the authoritative turn clock, so just skip the local watchdog.
+  if (App.battlePrep && App.battlePrep.multiplayer) return;
   try {
     if (App._aiTurnDeadline) { clearTimeout(App._aiTurnDeadline); App._aiTurnDeadline = null; }
     App._aiTurnDeadline = setTimeout(() => {
@@ -113214,6 +113259,23 @@ function _onRemoteStateArrived(payload) {
       }
     } else {
       MatchBroadcast._lastLocId = null;
+    }
+  } catch (e) {}
+  // 🌦️ WEATHER announcement sweep on the watcher. The weather object itself
+  // syncs in the snapshot (so the persistent overlay renders), but the one-time
+  // "Rainstorm!" sweep only fired on the caster — replay it when the weather
+  // CHANGES so the opponent's weather play is felt, not silently applied.
+  try {
+    const _w = App.state && App.state.weather;
+    const _wt = _w ? (_w.weatherType || (typeof _w === 'string' ? _w : '')) : '';
+    if (_wt && _wt !== MatchBroadcast._lastWxType) {
+      MatchBroadcast._lastWxType = _wt;
+      if (typeof _weatherFxInfo === 'function' && typeof _playFieldFx === 'function') {
+        const _wi = _weatherFxInfo(_wt);
+        _playFieldFx({ kind: 'weather', name: _wi.name, icon: _wi.icon });
+      }
+    } else if (!_wt) {
+      MatchBroadcast._lastWxType = '';
     }
   } catch (e) {}
   if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();

@@ -113026,6 +113026,16 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
   for (const u of newSpawns) {
     try { if (typeof _markSummonAnim === 'function') _markSummonAnim(u); } catch (e) {}
   }
+  // 📜 Queue correctly-attributed log lines for the opponent's actions (the
+  // adopted log says "You play X" from THEIR perspective — wrong on our screen).
+  // _onRemoteStateArrived appends these to our own log under the opponent's name.
+  try {
+    const _oppName = (App.battlePrep && App.battlePrep.opponentName) || 'Opponent';
+    const _q = [];
+    for (const u of newSpawns) { if (u && u.owner === 'ai') _q.push({ msg: '⚔ ' + _oppName + ' plays ' + (u.name || 'a unit'), color: 'red' }); }
+    for (const u of killed)    { _q.push({ msg: '☠ ' + (u.name || 'A unit') + ' fell' + (u.isHero ? '!' : '.'), color: 'red' }); }
+    if (_q.length) App._mpOppLogAppend = (App._mpOppLogAppend || []).concat(_q);
+  } catch (e) {}
   // Toasts — keep concise so the player isn't drowned in messages.
   if (newSpawns.length > 0) {
     const first = newSpawns[0];
@@ -113140,8 +113150,18 @@ function _onRemoteStateArrived(payload) {
   const _isMp = !!(App.battlePrep && App.battlePrep.multiplayer);
   if (_isMp && _myPrev && _myPrev.player) {
     swapped.player = _myPrev.player;   // my hand/deck/energy are mine, not their guess
+    // 📜 Keep my OWN battle log. The adopted log is written from the OPPONENT's
+    // perspective ("You play X" = THEM), so showing it verbatim mislabels their
+    // actions as mine. We keep our correctly-worded log and append the opponent's
+    // actions under their name (queued by the delta-feedback pass above).
+    if (Array.isArray(_myPrev.log)) swapped.log = _myPrev.log;
   }
   App.state = swapped;
+  // 📜 Append the opponent's actions to OUR log, attributed to their name.
+  if (_isMp && App._mpOppLogAppend && App._mpOppLogAppend.length) {
+    try { App.state.log = [...(App.state.log || []), ...App._mpOppLogAppend]; } catch (e) {}
+    App._mpOppLogAppend = null;
+  }
   // Whether it's now my turn depends on the swapped currentTurn.
   const _wasMyTurn = !!MatchBroadcast.myTurn;
   MatchBroadcast.myTurn = (swapped.currentTurn === 'player');

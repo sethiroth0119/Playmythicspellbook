@@ -113079,6 +113079,16 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
   for (const u of newSpawns) {
     try { if (typeof _markSummonAnim === 'function') _markSummonAnim(u); } catch (e) {}
   }
+  // 💥 RELIABLE combat juice from the state diff. The FX-relay cinematic (lunge)
+  // is best-effort; this is the guaranteed path — driven by the snapshots we KNOW
+  // arrive. Every unit that lost HP gets the real flash + floating damage number
+  // + impact particles (via _fireBattleJuice), fired AFTER the board re-renders so
+  // the DOM element exists. _onRemoteStateArrived drains this queue post-render.
+  try {
+    const _hits = [];
+    for (const h of damaged) { if (h && h.unit && h.unit.id) _hits.push({ id: h.unit.id, dmg: h.hpLost | 0 }); }
+    if (_hits.length) App._mpHitJuice = (App._mpHitJuice || []).concat(_hits);
+  } catch (e) {}
   // 📜 Queue correctly-attributed log lines for the opponent's actions (the
   // adopted log says "You play X" from THEIR perspective — wrong on our screen).
   // _onRemoteStateArrived appends these to our own log under the opponent's name.
@@ -113287,6 +113297,23 @@ function _onRemoteStateArrived(payload) {
     }
   } catch (e) {}
   if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
+  // 💥 Drain the hit-juice queue AFTER the board re-renders (so the damaged
+  // unit's DOM element exists). Skip a unit if the FX-relay cinematic is already
+  // showing it (avoid double flash/float). rAF chains us behind renderBattle.
+  if (App._mpHitJuice && App._mpHitJuice.length) {
+    const _hits = App._mpHitJuice; App._mpHitJuice = null;
+    try {
+      requestAnimationFrame(() => {
+        for (const h of _hits) {
+          try {
+            const _ba = App.ui && App.ui.battleAnim;
+            if (_ba && _ba.defender && _ba.defender.id === h.id) continue; // cinematic owns it
+            if (typeof _fireBattleJuice === 'function') _fireBattleJuice({ defender: { id: h.id }, dmg: h.dmg, missed: false, crit: false });
+          } catch (e) {}
+        }
+      });
+    } catch (e) {}
+  }
 }
 
 // Handler — opponent sent us a compact delta. Patch onto our last-received

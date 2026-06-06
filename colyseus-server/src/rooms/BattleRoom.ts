@@ -192,6 +192,13 @@ export class BattleRoom extends Room<BattleState> {
       if (kind === 'full') {
         try { this.lastSnapshotByUser[me] = JSON.stringify(body); } catch { /* no-op */ }
       }
+      // 🔎 Diagnostic — confirm snapshots arrive + are relayed to the opponent.
+      try {
+        const _bytes = JSON.stringify(body).length;
+        const _units = (body && body.state && Array.isArray(body.state.units)) ? body.state.units.length : -1;
+        const _others = this.clients.filter(c => c !== client).length;
+        console.log('[battle] snapshot from=' + String(me).slice(0, 8) + ' kind=' + kind + ' turn=' + ((body && body.turn) || '?') + ' units=' + _units + ' bytes=' + _bytes + ' → relayed to ' + _others);
+      } catch { /* no-op */ }
       // 2-client room → except-sender is exactly the opponent.
       this.broadcast('snapshot', { from: me, kind, payload: body }, { except: client });
     });

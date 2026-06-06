@@ -32967,6 +32967,29 @@ function _slimHeroForMp(hero) {
   return strip(copy);
 }
 
+/** 🔎 TEMP on-screen MP sync indicator — shows live whether THIS device is
+ *  sending board snapshots (↑) and receiving the opponent's (↓), so a single
+ *  screenshot pinpoints whether a desync is a send / relay / adopt problem.
+ *  Multiplayer-only; removed once sync is confirmed. */
+function _mpDbg(dir, snap) {
+  try {
+    if (!(App.battlePrep && App.battlePrep.multiplayer)) return;
+    if (!MatchBroadcast._dbg) MatchBroadcast._dbg = { sent: 0, recv: 0, su: 0, ru: 0, t: 0 };
+    const d = MatchBroadcast._dbg;
+    const units = (snap && Array.isArray(snap.units)) ? snap.units.length : 0;
+    if (dir === 'sent') { d.sent++; d.su = units; }
+    else { d.recv++; d.ru = units; d.t = (snap && snap.turnNumber) || d.t; }
+    let el = document.getElementById('mp-sync-dbg');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'mp-sync-dbg';
+      el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99999;background:rgba(0,0,0,0.8);color:#7fffd4;font:11px/1.4 monospace;padding:4px 8px;border:1px solid #2a6;border-radius:6px;pointer-events:none;white-space:pre';
+      document.body.appendChild(el);
+    }
+    el.textContent = '📡 ↑sent ' + d.sent + ' (u' + d.su + ')  ↓recv ' + d.recv + ' (u' + d.ru + ')  turn' + d.t + '  ' + (MatchBroadcast.myTurn ? 'MYTURN' : 'wait');
+  } catch (e) {}
+}
+
 /** 💓 No-op heartbeat — keeps the WebSocket from going idle so Fly's edge proxy
  *  doesn't close it during the silent VS-screen → coin-flip window (the ~20s
  *  HOST drop that killed every match before the coin flip). Server acks 'pong'. */
@@ -33005,6 +33028,7 @@ function sendColyseusSnapshot() {
     const snap = _serializeBattleStateForBroadcast(App.state);
     if (!snap) return;
     ColyseusMP.room.send('snapshot', { kind: 'full', payload: { from: MatchBroadcast.myUserId, turn: snap.turnNumber || 0, state: snap } });
+    try { console.log('[MP↑] snapshot sent turn=' + (snap.turnNumber || 0) + ' units=' + ((snap.units && snap.units.length) || 0)); _mpDbg('sent', snap); } catch (e) {}
     // 📡 Also mirror the snapshot onto the Supabase match channel so SPECTATORS
     // can watch this Colyseus match live (additive — players are unaffected).
     try { ensureSpectatorMirror(); _specMirrorSend('state', { from: MatchBroadcast.myUserId, turn: snap.turnNumber || 0, state: snap }); } catch (e) {}
@@ -33025,6 +33049,7 @@ function _onColyseusSnapshot(data) {
   // The server forwards { from, kind, payload }, where payload = { from, turn, state }.
   const p = data.payload || data;
   if (!p || !p.state) return;
+  try { console.log('[MP↓] snapshot recv turn=' + (p.turn || 0) + ' units=' + ((p.state.units && p.state.units.length) || 0) + ' from=' + String(p.from || '').slice(0, 8)); _mpDbg('recv', p.state); } catch (e) {}
   try { if (typeof _onRemoteStateArrived === 'function') _onRemoteStateArrived(p); } catch (e) {}
 }
 

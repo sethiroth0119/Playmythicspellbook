@@ -32841,7 +32841,14 @@ async function joinColyseusMatch(matchId, authToken, opts) {
     });
 
     room.onLeave(code => {
-      console.log('[Colyseus] left room, code:', code);
+      // 🔎 Human-readable close code so the disconnect cause is visible WITHOUT
+      // F12 — this is the data we need to fix the "drops ~20s into the match" bug.
+      const _codeLabel = ({
+        1000: 'normal close', 1001: 'tab/app going away', 1005: 'no status',
+        1006: 'abnormal — network/proxy/tab killed the socket', 1009: 'message too big',
+        1011: 'server error', 4000: 'left intentionally', 4002: 'seat reservation expired',
+      })[code] || ('code ' + code);
+      console.log('[Colyseus] left room, code:', code, '(' + _codeLabel + ')');
       // Only clear OUR handle if this leave is for the room we still hold.
       if (ColyseusMP.room === room) {
         ColyseusMP.room = null;
@@ -32852,7 +32859,7 @@ async function joinColyseusMatch(matchId, authToken, opts) {
       // and reading `.gameOver` on null was throwing in the WS onclose handler
       // (the "Cannot read properties of null (reading 'gameOver')" crash).
       if (code !== 1000 && code !== 4000 && !(App && App.state && App.state.gameOver)) {
-        try { showToast('⚠️ Connection lost. Reconnecting…'); } catch (e) {}
+        try { showToast('⚠️ MP disconnected — ' + _codeLabel + ' [' + code + ']', 8000); } catch (e) {}
       }
     });
 

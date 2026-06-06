@@ -49,6 +49,11 @@ export interface BattleRoomJoinOptions {
   displayName?: string;
   heroId?: string;
   deckCardIds?: string[];
+  // 🦸 Full (art-stripped) hero definition so the OPPONENT can build this
+  // player's hero with correct stats even when it's a CUSTOM hero not in the
+  // opponent's local catalog. Opaque to the server — relayed verbatim in
+  // matchStart. Kept small (no data: URLs) by the client before sending.
+  heroData?: unknown;
 }
 
 // ─── Action payload shapes ───────────────────────────────────────────────────
@@ -118,6 +123,9 @@ export class BattleRoom extends Room<BattleState> {
   // of broadcasting via state diffing. (The schema-driven engine handlers below
   // remain for the later "deepen toward full authority" stage.)
   private lastSnapshotByUser: Record<string, string> = {};
+  // 🦸 Art-stripped hero definition per user, relayed to the opponent in
+  // matchStart so each client builds the REAL opponent hero (no NaN stats).
+  private heroDataByUser: Record<string, unknown> = {};
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
   onCreate(options: BattleRoomCreateOptions) {
@@ -254,6 +262,8 @@ export class BattleRoom extends Room<BattleState> {
     p.maxEnergy   = 1;
     p.deckSize    = Array.isArray(options.deckCardIds) ? options.deckCardIds.length : 0;
     this.state.players.set(auth.userId, p);
+    // 🦸 Remember this player's full hero definition (if sent) for the opponent.
+    if (options.heroData) this.heroDataByUser[auth.userId] = options.heroData;
 
     if (this.state.players.size === MAX_CLIENTS && !this.state.currentTurnUserId) {
       this.startMatch();
@@ -318,11 +328,13 @@ export class BattleRoom extends Room<BattleState> {
     // placeholder opponent (the "NaN/NaN HP" + two-different-boards symptom).
     const heroes: Record<string, string> = {};
     const names: Record<string, string> = {};
+    const heroData: Record<string, unknown> = {};
     ids.forEach(id => {
       const pl = this.state.players.get(id);
       if (pl) { heroes[id] = pl.heroId || ''; names[id] = pl.displayName || ''; }
+      if (this.heroDataByUser[id]) heroData[id] = this.heroDataByUser[id];
     });
-    this.broadcast('matchStart', { first, seed, participants: ids, heroes, names });
+    this.broadcast('matchStart', { first, seed, participants: ids, heroes, names, heroData });
   }
 
   private handleEndTurn(client: Client) {

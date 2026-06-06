@@ -32771,6 +32771,9 @@ async function joinColyseusMatch(matchId, authToken, opts) {
       displayName: opts.displayName || (Profile && Profile.cloud && Profile.cloud.displayName) || '',
       heroId:      opts.heroId      || (App && App.battlePrep && App.battlePrep.heroId)       || '',
       deckCardIds: Array.isArray(opts.deckCardIds) ? opts.deckCardIds : [],
+      // 🦸 Art-stripped hero definition so the opponent builds our REAL hero
+      // (correct stats, even for a custom hero not in their catalog) → no NaN.
+      heroData:    opts.heroData || _slimHeroForMp((App && App.battlePrep && App.battlePrep.hero) || null),
     };
     // 🔁 RETRY — "seat reservation expired" is a TRANSIENT race: the matchmaker
     // handed us a seat in a room that disposed (or our WS was too slow to consume
@@ -32787,6 +32790,11 @@ async function joinColyseusMatch(matchId, authToken, opts) {
     const _myId  = (Profile && Profile.cloud && Profile.cloud.userId) || '';
     const _oppId = (MatchBroadcast && MatchBroadcast.opponentId) || '';
     const amHost = _oppId ? (String(_myId) < String(_oppId)) : !!(MatchBroadcast && MatchBroadcast.amIPlayer1);
+    // 🧭 Persist the host/guest role so gameplay code (playSpell, onTileClick,
+    // onEndTurn, startBattleWithPrep) can read it. Host = lower userId = the sole
+    // engine of record. Re-confirmed in _onColyseusMatchStart once opponentId is
+    // authoritative (matchStart participants).
+    MatchBroadcast.amIHost = amHost;
     console.log('[Colyseus] role=' + (amHost ? 'HOST(create)' : 'GUEST(join)') + ' matchId=' + matchId + ' me=' + _myId.slice(0, 8) + ' opp=' + _oppId.slice(0, 8));
     let room = null, lastErr = null;
     // Guest may need to wait for the host to create the room → more retries.
@@ -32938,6 +32946,27 @@ function sendColyseusEmote(emoji) {
   try { ColyseusMP.room.send('emote', { emoji }); } catch (e) {}
 }
 
+/** 🦸 Produce a small, art-free copy of a hero definition for handoff to the
+ *  opponent so THEY build our real hero (correct hp/stats/moves) on their board
+ *  — even if it's a custom hero not in their catalog. Strips inline data: URLs
+ *  and known heavy media keys so the join payload stays tiny. */
+function _slimHeroForMp(hero) {
+  if (!hero || typeof hero !== 'object') return null;
+  const HEAVY = { img:1, image:1, imageUrl:1, art:1, artBase64:1, artUrl:1, cover:1, coverArt:1,
+    sprite:1, spriteBase64:1, spriteUrl:1, spriteFrames:1, frames:1, portrait:1, portraitUrl:1,
+    bgImage:1, background:1, audio:1, audioUrl:1, iconImg:1 };
+  let copy;
+  try { copy = JSON.parse(JSON.stringify(hero)); } catch (e) { return null; }
+  const strip = (v) => {
+    if (v == null) return v;
+    if (typeof v === 'string') return (v.slice(0, 5) === 'data:' || v.length > 4096) ? '' : v;
+    if (Array.isArray(v)) { for (let i = 0; i < v.length; i++) v[i] = strip(v[i]); return v; }
+    if (typeof v === 'object') { for (const k in v) { if (!Object.prototype.hasOwnProperty.call(v, k)) continue; if (HEAVY[k] && typeof v[k] === 'string') { v[k] = ''; continue; } v[k] = strip(v[k]); } return v; }
+    return v;
+  };
+  return strip(copy);
+}
+
 /** 💓 No-op heartbeat — keeps the WebSocket from going idle so Fly's edge proxy
  *  doesn't close it during the silent VS-screen → coin-flip window (the ~20s
  *  HOST drop that killed every match before the coin flip). Server acks 'pong'. */
@@ -33013,6 +33042,12 @@ function _onColyseusMatchStart(data) {
   MatchBroadcast.opponentId = data && Array.isArray(data.participants)
     ? data.participants.find(id => id !== myId) || null
     : null;
+  // 🧭 Re-confirm host/guest role now that opponentId is authoritative. Host =
+  // the lower userId — the single engine of record for this match.
+  if (myId && MatchBroadcast.opponentId) {
+    MatchBroadcast.amIHost = String(myId) < String(MatchBroadcast.opponentId);
+    console.log('[Colyseus] role confirmed:', MatchBroadcast.amIHost ? 'HOST' : 'GUEST');
+  }
   // 🦸 Build the opponent hero from the server-relayed heroId so BOTH clients
   // construct the SAME opponent on their board — heroes are deterministic from
   // heroId via the shared catalog. This overrides the stat-less placeholder that
@@ -33021,31 +33056,45 @@ function _onColyseusMatchStart(data) {
   // NaN/NaN HP + the two boards never match" symptom. Must run BEFORE the coin
   // call below, because that path leads into startBattleWithPrep(initGame(foe)).
   try {
-    const _heroes = (data && data.heroes) || null;
     const _oppId  = MatchBroadcast.opponentId;
+    const _heroes = (data && data.heroes) || null;
+    const _heroData = (data && data.heroData) || null;
     const _oppHeroId = (_heroes && _oppId) ? _heroes[_oppId] : '';
-    if (_oppHeroId) {
-      const _realHero = (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES.find(h => h.id === _oppHeroId))
+    // 1) PREFER the full hero definition the opponent handed us — works even for
+    //    custom heroes not in our catalog (the real fix for the NaN/NaN opponent).
+    // 2) Fall back to resolving the heroId against our own catalog.
+    const _sentHero = (_heroData && _oppId && _heroData[_oppId]) ? _heroData[_oppId] : null;
+    const _catalogHero = _oppHeroId
+      ? ((typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES.find(h => h.id === _oppHeroId))
         || (typeof findCustomHeroCard === 'function' && findCustomHeroCard(_oppHeroId))
-        || null;
+        || null)
+      : null;
+    const _realHero = _sentHero || _catalogHero;
+    if (_realHero) {
       if (!App.battlePrep) App.battlePrep = {};
-      if (_realHero) {
-        App.battlePrep.opponent = _realHero;
-        App.battlePrep.opponentName = (data.names && _oppId && data.names[_oppId])
-          || App.battlePrep.opponentName || ('Opponent ' + String(_oppId || '').slice(0, 6));
-        console.log('[Colyseus] opponent hero resolved from matchStart:', _oppHeroId, '→', _realHero.name);
-      } else {
-        console.warn('[Colyseus] opponent heroId not found in local catalog:', _oppHeroId, '— keeping existing opponent');
-      }
+      App.battlePrep.opponent = _realHero;
+      App.battlePrep.opponentName = (data.names && _oppId && data.names[_oppId])
+        || App.battlePrep.opponentName || ('Opponent ' + String(_oppId || '').slice(0, 6));
+      console.log('[Colyseus] opponent hero resolved from matchStart:',
+        (_sentHero ? 'handoff' : 'catalog'), '→', _realHero.name || _oppHeroId);
+    } else if (_oppHeroId) {
+      console.warn('[Colyseus] opponent hero unresolved (no handoff + not in catalog):', _oppHeroId);
     }
   } catch (e) { try { console.warn('[Colyseus] opponent hero rebuild failed', e); } catch (_) {} }
   // Kick off the VS screen / battle start in the existing UI.
   try { _onRemoteCoinArrived({ winner: data && data.first }); } catch (e) {}
   // 📡 Open the spectator mirror channel so watchers can tune in to this match.
   try { ensureSpectatorMirror(); } catch (e) {}
-  // 📸 Push our initial board once the battle scene has built so the opponent
-  // sees our starting layout (mirrors the Supabase path's first broadcast).
-  setTimeout(() => { try { if (typeof sendColyseusSnapshot === 'function') sendColyseusSnapshot(); } catch (e) {} }, 1500);
+  // 📸 Best-effort initial board push. Only the FIRST player (active) broadcasts
+  // a reference board; the other adopts it (keeping its own hand). Both also
+  // build correct boards independently from the relayed heroes (so this is just
+  // belt-and-braces against any init non-determinism). Gated to the active side
+  // so the two don't ping-pong competing initial snapshots.
+  setTimeout(() => {
+    try {
+      if (MatchBroadcast.myTurn && typeof sendColyseusSnapshot === 'function') sendColyseusSnapshot();
+    } catch (e) {}
+  }, 1500);
 }
 
 function _onColyseusAttackResult(data) {
@@ -90187,7 +90236,21 @@ function onEndTurn() {
     try { _resolveFusionPlacement(); } catch (e) {}
   }
   stopClockRunningOut();   // turn is ending — kill the final-10s alarm now
-  App.state = endPlayerTurn(App.state);
+  // 📡 In Colyseus MP, the OPPONENT runs THEIR OWN turn-start (draw from their
+  // own deck + refresh their energy) when they adopt this snapshot — see the
+  // TURN-START ON FLIP block in _onRemoteStateArrived. So our end-turn must run
+  // turn-END effects ONLY and hand over control WITHOUT running the opponent's
+  // turn-start: doing it here would draw from our (wrong) model of their deck and
+  // double-tick their statuses. Single-player keeps the full local handoff.
+  const _mpColEnd = App.battlePrep && App.battlePrep.multiplayer
+    && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP;
+  if (_mpColEnd) {
+    let s = { ...App.state, turn: 'ai', selection: null };
+    try { if (typeof _applyInGraveTick === 'function') s = _applyInGraveTick(s, 'player', 'turnEnd'); } catch (e) {}
+    App.state = s;
+  } else {
+    App.state = endPlayerTurn(App.state);
+  }
   App.ui.aiBusy = true;
   _startAIHardDeadline();   // 45s absolute cap — survives tryPromptCounter timestamp resets
   App.ui.selectedUnitId = null; App.ui.selectedMoveId = null; App.ui.selectedCardId = null; App.ui.modalUnitId = null; App.ui.actionMode = null;
@@ -111589,6 +111652,15 @@ const MatchBroadcast = {
   myUserId:       null,
   opponentId:     null,
   amIPlayer1:     false,
+  // 🧭 HOST-AUTHORITATIVE role. Host (deterministically the LOWER userId) runs the
+  // ONLY battle engine; the guest runs none — it renders the host's board from
+  // its own perspective and sends inputs. This flag is the single discriminator
+  // the gameplay code reads. Set at join + matchStart; persisted for reconnect.
+  amIHost:        false,
+  // 🔒 Guest input lock — true between sending an input and receiving the host
+  // snapshot that confirms it. Blocks the guest from firing a 2nd input against
+  // a stale board (the make-or-break ordering race). Cleared on snapshot arrival.
+  guestInputPending: false,
   myTurn:         false,       // true when it's my turn to mutate state
   lastSeenTurn:   0,           // dedup: ignore old snapshots
   outboundQueue:  null,        // micro-debounce so quick consecutive actions coalesce into one packet
@@ -111622,6 +111694,7 @@ function _persistMatchSession() {
       myUserId:     MatchBroadcast.myUserId,
       opponentId:   MatchBroadcast.opponentId,
       amIPlayer1:   MatchBroadcast.amIPlayer1,
+      amIHost:      MatchBroadcast.amIHost,
       ts:           Date.now(),
     }));
   } catch (e) { /* sessionStorage full / disabled — ignore */ }
@@ -112952,10 +113025,35 @@ function _onRemoteStateArrived(payload) {
   MatchBroadcast.lastRecvSnapshot = payload.state;
   MatchBroadcast.awaitingResync = false; // we now hold authoritative truth
   const swapped = swapBattlePerspective(payload.state);
+  // 🔐 ALTERNATING-AUTHORITY MERGE — the core of PvP sync. The player whose turn
+  // it is, is authoritative for the ENTIRE shared board (units, positions, HP —
+  // including damage they dealt to MY units), so we adopt their board wholesale.
+  // BUT my `player` block (hand / deck / energy / graveyard / kalons) is PRIVATE:
+  // the opponent only ever held a stale, wrong model of it (they don't have my
+  // deck). So we KEEP my own player block from the pre-adopt state. This is what
+  // stops the adopt from wiping my real hand — and, combined with the hero
+  // handoff, what keeps the two boards identical instead of diverging.
+  const _myPrev = App.state;
+  const _isMp = !!(App.battlePrep && App.battlePrep.multiplayer);
+  if (_isMp && _myPrev && _myPrev.player) {
+    swapped.player = _myPrev.player;   // my hand/deck/energy are mine, not their guess
+  }
   App.state = swapped;
   // Whether it's now my turn depends on the swapped currentTurn.
   const _wasMyTurn = !!MatchBroadcast.myTurn;
   MatchBroadcast.myTurn = (swapped.currentTurn === 'player');
+  // 🔁 TURN-START ON FLIP — when control just passed to me, run MY OWN turn-start
+  // (draw from MY real deck + refresh MY energy + tick MY statuses) exactly once.
+  // The opponent CANNOT do this for me (they don't hold my deck), so their
+  // end-turn deliberately skips the opponent's turn-start (see onEndTurn MP path)
+  // and I do it here. Guarded by turnNumber so repeated snapshots don't re-draw.
+  if (_isMp && !_wasMyTurn && MatchBroadcast.myTurn && typeof startTurn === 'function'
+      && App.state && MatchBroadcast._mpLastTurnStarted !== App.state.turnNumber) {
+    try {
+      App.state = startTurn(App.state, 'player');
+      MatchBroadcast._mpLastTurnStarted = App.state.turnNumber;
+    } catch (e) { try { console.warn('[MP] turn-start on flip failed', e); } catch (_) {} }
+  }
   // 🎵 Premium audio — if the snapshot just handed control back to us, fire
   // the your-turn ping. Only fires on the TRANSITION (false → true) so the
   // cue isn't spammed by every snapshot the opponent broadcasts during
@@ -113181,7 +113279,15 @@ async function submitMatchResult(winnerUserId, finalState, opts) {
 // True iff this match is multiplayer AND it's NOT my turn — used by input
 // handlers to block actions when waiting on the opponent.
 function isWaitingForOpponent() {
-  return !!(App.battlePrep && App.battlePrep.multiplayer && MatchBroadcast.channel && !MatchBroadcast.myTurn);
+  // 🪐 Recognise BOTH transports: the Supabase channel AND the Colyseus room.
+  // The old check only looked at MatchBroadcast.channel (the Supabase channel),
+  // which is NULL on the Colyseus path — so this guard was a no-op there and the
+  // guest could act out of turn. Now: waiting iff multiplayer, connected via
+  // EITHER transport, and it's not my turn.
+  const _connected = MatchBroadcast.channel
+    || (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP
+        && typeof ColyseusMP !== 'undefined' && ColyseusMP && ColyseusMP.room);
+  return !!(App.battlePrep && App.battlePrep.multiplayer && _connected && !MatchBroadcast.myTurn);
 }
 
 // ============ ☁ AUTH GATE (splash) — first screen new players see ============

@@ -29,7 +29,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // Attach a message/state recorder to a room with a waitFor(type) helper.
 function attach(room) {
   const rec = { msgs: [], state: null, matchEnds: [] };
-  const TYPES = ['welcome', 'matchStart', 'snapshot', 'matchEnd', 'reject', 'battleLog', 'unitPlayed', 'attackResult', 'emote'];
+  const TYPES = ['welcome', 'matchStart', 'snapshot', 'matchEnd', 'reject', 'battleLog', 'unitPlayed', 'attackResult', 'emote', 'guestInput', 'guestEndTurn'];
   rec._waiters = [];
   for (const t of TYPES) {
     room.onMessage(t, (payload) => {
@@ -115,7 +115,9 @@ async function scenarioTurnsAndRelay() {
   const flipped = await waitState(recA, s => s.currentTurnUserId === other, 4000);
   check('on-turn endTurn flips currentTurnUserId to opponent', flipped, { now: recA.state?.currentTurnUserId, want: other });
 
-  // Snapshot relay: A sends a full snapshot → B receives it verbatim; A does not.
+  // Snapshot relay (two-way): A sends a full snapshot → B receives it verbatim; A does not.
+  // (Alternating-authority model: each player broadcasts on its own turn; the
+  //  opponent adopts. The server is a plain bidirectional relay.)
   const body = { hello: 'world', n: 7, units: [{ id: 'u1', hp: 12 }] };
   const beforeA = recA.msgs.filter(m => m.type === 'snapshot').length;
   rA.send('snapshot', { kind: 'full', payload: body });

@@ -282,12 +282,22 @@ export class BattleRoom extends Room<BattleState> {
 
   // ─── Match flow ─────────────────────────────────────────────────────────────
   private startMatch() {
-    const ids = Array.from(this.state.players.keys()).sort();
-    this.state.currentTurnUserId = ids[0];
-    this.state.turnNumber = 1;
-    console.log('[battle] match start — first turn:', ids[0]);
+    const ids = Array.from(this.state.players.keys());
+    // 🎲 One shared match seed — the single source of randomness both clients
+    // derive from (coin flip, deck shuffle, draws, crits) so they compute the
+    // SAME game. Synced via the schema (state.seed) AND echoed in matchStart.
+    const seed = (Math.floor(Math.random() * 0x7ffffffe) + 1) | 0;
+    this.state.seed = seed;
+    // 🪙 Real coin flip — first mover derived from the seed: fair (random) AND
+    // reproducible/verifiable from the shared seed. (Was a fixed sorted()[0],
+    // which always handed the same player the opening turn.)
+    const first = ids[seed % Math.max(1, ids.length)];
+    this.state.firstUserId       = first;
+    this.state.currentTurnUserId = first;
+    this.state.turnNumber        = 1;
+    console.log('[battle] match start — seed=' + seed + ' first=' + first);
     this.armTurnTimer();
-    this.broadcast('matchStart', { first: ids[0], participants: ids });
+    this.broadcast('matchStart', { first, seed, participants: ids });
   }
 
   private handleEndTurn(client: Client) {

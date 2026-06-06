@@ -102,6 +102,12 @@ export class PlayerState extends Schema {
 // ─── Top-level state for one BattleRoom ──────────────────────────────────────
 export class BattleState extends Schema {
   @type('string')  matchId: string = '';
+  // 🎲 Shared match RNG seed — set ONCE at match start by the server and synced
+  // to both clients. Every randomised decision (coin flip, deck shuffle, draws,
+  // crits) derives from this so both sides compute an IDENTICAL game. This is the
+  // single source of randomness that makes the match deterministic across clients.
+  @type('number')  seed: number = 0;
+  @type('string')  firstUserId: string = '';   // who the server's coin flip put first
   @type('string')  currentTurnUserId: string = '';
   @type('number')  turnNumber: number = 1;
   @type('string')  weather: string = '';             // 'sun' | 'rain' | etc. — empty when none

@@ -113052,6 +113052,7 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
   const newSpawns = [];
   const damaged = [];
   const killed = [];
+  const transformed = [];
   for (const u of next.units) {
     const old = prevById.get(u.id);
     if (!old) {
@@ -113063,7 +113064,14 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
       damaged.push({ unit: u, hpLost: old.currentHp - u.currentHp });
     }
     if (old.alive !== false && u.alive === false) killed.push(u);
+    // ✦ Kalon transform — kalonUsed flips false→true when a unit ascends.
+    if (u.alive !== false && !old.kalonUsed && u.kalonUsed) transformed.push(u);
   }
+  // ✦ Replay the kalon ascension cinematic for the opponent's transforms. The
+  // unit's new form already synced via the snapshot; this adds the cinematic.
+  // Queued + fired after the board re-renders (playKalonTransformVfx anchors on
+  // unit.pos and defers a frame, so this is safe). Drained in _onRemoteStateArrived.
+  if (transformed.length) { try { App._mpKalonFx = (App._mpKalonFx || []).concat(transformed); } catch (e) {} }
   // ✨ Animate the opponent's freshly-deployed units — feed each into the same
   // summon-pop queue the local engine uses (_markSummonAnim → flushed once the
   // unit is painted), so an opponent's play POPS in instead of silently appearing.
@@ -113302,6 +113310,15 @@ function _onRemoteStateArrived(payload) {
             if (typeof _fireBattleJuice === 'function') _fireBattleJuice({ defender: { id: h.id }, dmg: h.dmg, missed: false, crit: false });
           } catch (e) {}
         }
+      });
+    } catch (e) {}
+  }
+  // ✦ Drain the kalon-transform cinematic queue (opponent ascensions).
+  if (App._mpKalonFx && App._mpKalonFx.length) {
+    const _ks = App._mpKalonFx; App._mpKalonFx = null;
+    try {
+      requestAnimationFrame(() => {
+        for (const u of _ks) { try { if (typeof playKalonTransformVfx === 'function') playKalonTransformVfx(u); } catch (e) {} }
       });
     } catch (e) {}
   }

@@ -152,6 +152,16 @@ export class BattleRoom extends Room<BattleState> {
       }, { except: client });
     });
 
+    // 💓 Heartbeat ack. The client sends a no-op 'ping' every 5s so Fly's edge
+    // proxy never sees the WebSocket as idle and closes it during the silent
+    // VS-screen → coin-flip window (the ~20s HOST drop that killed every match
+    // before the coin flip). Pure ack, no state mutation — keeps the socket hot
+    // in BOTH directions. This is the load-bearing fix; the server ping config
+    // (index.ts) is only defense-in-depth since the proxy doesn't speak Colyseus.
+    this.onMessage('ping', (client, _payload) => {
+      try { client.send('pong', {}); } catch { /* no-op */ }
+    });
+
     this.onMessage('forfeit', (client, _payload) => {
       const me = client.userData?.userId;
       if (!me || this.state.winnerUserId) return;
@@ -257,7 +267,11 @@ export class BattleRoom extends Room<BattleState> {
     if (!p) return;
     p.connected  = false;
     p.lastSeenAt = Date.now();
-    console.log('[battle] onLeave', { userId, consented });
+    // Label HOST vs GUEST so a drop is diagnosable from logs alone. Host = the
+    // lower userId, matching the client's `String(myId) < String(oppId)` rule.
+    const _ids = Array.from(this.state.players.keys());
+    const _role = (_ids.length === 2 && userId === (_ids[0] < _ids[1] ? _ids[0] : _ids[1])) ? 'HOST' : 'GUEST';
+    console.log('[battle] onLeave', { userId, role: _role, consented });
 
     if (consented || this.state.winnerUserId) return;
 

@@ -32813,6 +32813,14 @@ async function joinColyseusMatch(matchId, authToken, opts) {
     ColyseusMP.state = null;
     ColyseusMP._joinedMatchId = matchId;
 
+    // 💓 Start the application-level heartbeat the instant we hold a room. Fly's
+    // edge proxy tears down an idle WebSocket at ~20s — which is exactly the
+    // silent VS-screen countdown → coin-flip window where the client sends
+    // nothing — dropping the HOST before the coin flip ever renders. A 5s no-op
+    // keeps the socket hot end-to-end (server acks 'pong'). THIS is the fix for
+    // the "match dies ~20-23s in, no coin flip" bug.
+    _startColyseusHeartbeat();
+
     // ─── Server → client message handlers ────────────────────────────────────
     room.onMessage('matchStart',   _onColyseusMatchStart);
     room.onMessage('attackResult', _onColyseusAttackResult);
@@ -32849,6 +32857,9 @@ async function joinColyseusMatch(matchId, authToken, opts) {
         1011: 'server error', 4000: 'left intentionally', 4002: 'seat reservation expired',
       })[code] || ('code ' + code);
       console.log('[Colyseus] left room, code:', code, '(' + _codeLabel + ')');
+      // Stop the heartbeat — the socket is gone; an orphaned interval would keep
+      // firing sends on a dead room across Play Again.
+      _stopColyseusHeartbeat();
       // Only clear OUR handle if this leave is for the room we still hold.
       if (ColyseusMP.room === room) {
         ColyseusMP.room = null;
@@ -32887,6 +32898,7 @@ async function joinColyseusMatch(matchId, authToken, opts) {
 /** Leave the active Colyseus room (called by leaveMatchChannel). */
 function leaveColyseusMatch() {
   try { teardownSpectatorMirror(); } catch (e) {}
+  _stopColyseusHeartbeat();
   // Clear the join guards so the NEXT match (Play Again / requeue) can join cleanly.
   ColyseusMP._joinedMatchId = null;
   ColyseusMP._joinInFlight = null;
@@ -32924,6 +32936,28 @@ function sendColyseusEndTurn() {
 function sendColyseusEmote(emoji) {
   if (!ColyseusMP.room) return;
   try { ColyseusMP.room.send('emote', { emoji }); } catch (e) {}
+}
+
+/** 💓 No-op heartbeat — keeps the WebSocket from going idle so Fly's edge proxy
+ *  doesn't close it during the silent VS-screen → coin-flip window (the ~20s
+ *  HOST drop that killed every match before the coin flip). Server acks 'pong'. */
+function sendColyseusPing() {
+  if (!ColyseusMP.room) return;
+  try { ColyseusMP.room.send('ping', {}); } catch (e) {}
+}
+function _startColyseusHeartbeat() {
+  _stopColyseusHeartbeat();
+  // 5s << the ~20s proxy idle cutoff, so the socket never goes idle.
+  ColyseusMP._heartbeat = setInterval(() => {
+    if (!ColyseusMP.room) { _stopColyseusHeartbeat(); return; }
+    sendColyseusPing();
+  }, 5000);
+}
+function _stopColyseusHeartbeat() {
+  if (ColyseusMP._heartbeat) {
+    try { clearInterval(ColyseusMP._heartbeat); } catch (e) {}
+    ColyseusMP._heartbeat = null;
+  }
 }
 
 /** Forward forfeit to Colyseus. */
@@ -111800,12 +111834,17 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
   // The Supabase path below stays intact as the fallback (flag = false by default).
   if (USE_COLYSEUS_MP) {
     if (!initCloud() || !matchId) return null;
+    // 🪙 Only reset coin authority when this is genuinely a NEW match. A stray
+    // re-join (renderVsScreen re-entry, requeue race) must NOT erase the server's
+    // already-resolved first-mover decision mid-coin-flip — that was a latent
+    // desync where one side randomized a different first player.
+    const _isNewMatch = (MatchBroadcast.matchId !== matchId);
     // Ensure legacy guards are still seeded so the rest of the UI works.
     MatchBroadcast.matchId    = matchId;
     MatchBroadcast.myUserId   = Profile.cloud.userId;
     MatchBroadcast.opponentId = opponentId;
     MatchBroadcast.amIPlayer1 = !!amIPlayer1;
-    MatchBroadcast.serverFirst = null;   // 🪙 fresh coin authority per match
+    if (_isNewMatch) MatchBroadcast.serverFirst = null;   // 🪙 fresh coin authority per match only
     MatchBroadcast.gameOverResolved    = false;
     MatchBroadcast._matchEndSubmitted  = false;
     MatchBroadcast._matchEndRetried    = false;

@@ -76,11 +76,16 @@ const gameServer = new Server({
     // More tolerant heartbeat. A briefly-backgrounded browser tab (e.g. an admin
     // testing BOTH seats on one machine, or a player who alt-tabs) throttles JS
     // timers and can miss pings — the old 8s×3 = 24s window dropped the host the
-    // moment it was backgrounded to set up the opponent. 12s × 8 = ~96s of
+    // moment it was backgrounded to set up the opponent. 8s × 12 = ~96s of
     // silence tolerated before a drop; the 30s reconnect window still covers
     // real network blips after that.
-    pingInterval: 12000,
-    pingMaxRetries: 8,
+    // ⚠ NOTE: this does NOT fix the real ~20s host drop — Fly's EDGE PROXY closes
+    // an idle WebSocket before this server-side budget ever applies, and the proxy
+    // doesn't speak the Colyseus ping protocol. The load-bearing fix is the CLIENT
+    // heartbeat (room.send('ping') every 5s, acked by BattleRoom's 'ping' handler),
+    // which keeps the socket non-idle end-to-end. This is defense-in-depth only.
+    pingInterval: 8000,
+    pingMaxRetries: 12,
   }),
 });
 

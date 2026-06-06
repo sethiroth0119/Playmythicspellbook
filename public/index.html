@@ -33049,6 +33049,27 @@ function _onColyseusFx(msg) {
     case 'attack':
       try { if (d && d.snap && typeof _playRemoteBattleAnim === 'function') _playRemoteBattleAnim(d.snap); } catch (e) {}
       break;
+    case 'coinReady':
+      // Opponent reached the coin screen — mark them ready so our handshake can
+      // proceed (and re-announce our own readiness so they learn we're ready too).
+      try {
+        if (App.battlePrep) {
+          App.battlePrep._coinReadyOpp = true;
+          if (App.battlePrep._coinReadyMe && typeof sendColyseusFx === 'function') sendColyseusFx('coinReady', {});
+          if (App.screen === 'coinFlip' && typeof render === 'function') render();
+        }
+      } catch (e) {}
+      break;
+    case 'coinCall':
+      // The caller chose heads/tails — adopt it so BOTH clients spin to the same
+      // result (the result face is computed from serverFirst when the spin schedules).
+      try {
+        if (App.battlePrep && d && d.call && !App.battlePrep.coinCall) {
+          App.battlePrep.coinCall = d.call;
+          if (App.screen === 'coinFlip' && typeof render === 'function') render();
+        }
+      } catch (e) {}
+      break;
   }
 }
 /** 📸 Send our authoritative board snapshot to the server, which relays it to
@@ -33096,6 +33117,17 @@ function _onColyseusMatchStart(data) {
   // 🪙 Remember the server's first-mover decision so the coin screen can resolve
   // from it even if matchStart arrived BEFORE the coin screen rendered.
   MatchBroadcast.serverFirst = (data && data.first) || MatchBroadcast.serverFirst;
+  // 🎲 Shared match seed — used to deterministically pick the coin CALLER (both
+  // clients derive the same caller) for the interactive toss.
+  if (data && typeof data.seed === 'number') MatchBroadcast.seed = data.seed;
+  // 🪙 Fresh coin-toss handshake state for THIS match (matchStart fires once,
+  // before the coin screen) so Play Again / a re-queue starts the toss clean.
+  if (App.battlePrep) {
+    const _bp = App.battlePrep;
+    _bp.coinResult = null; _bp.coinCall = null; _bp.coinCaller = null;
+    _bp._coinReadySent = false; _bp._coinReadyMe = false; _bp._coinReadyOpp = false;
+    _bp._iAmCaller = false; _bp._coinSpinScheduled = false; _bp._coinAdvanceScheduled = false;
+  }
   MatchBroadcast.opponentId = data && Array.isArray(data.participants)
     ? data.participants.find(id => id !== myId) || null
     : null;
@@ -70837,33 +70869,71 @@ function renderCoinFlip() {
   // battle. This is the fix for the "one player stuck on the coin toss" desync:
   // the toss outcome no longer depends on a 'matchStart' broadcast that may have
   // been missed, delayed, or wiped by a VS-screen re-join.
-  if (bp.multiplayer && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP
-      && !bp.coinResult) {
-    const first = _mpResolvedFirst();
-    if (first) {
-      const iAmFirst = (first === MatchBroadcast.myUserId);
-      // The outcome is DETERMINISTIC (both clients derive the same result from
-      // serverFirst), but play a brief SPIN before revealing it so the toss feels
-      // real instead of snapping straight to the answer. Both clients schedule the
-      // same spin → reveal in sync. Scheduled once (guard) — re-renders keep the
-      // 'spinning' phase until the timer commits coinResult.
-      const _result = iAmFirst ? (bp.coinCall || 'heads') : (bp.coinCall === 'heads' ? 'tails' : 'heads');
-      if (!bp.coinCall) bp.coinCall = _result;   // → phase becomes 'spinning'
-      bp.playerWonFlip = iAmFirst;
-      if (!bp._coinSpinScheduled) {
-        bp._coinSpinScheduled = true;
-        try { if (typeof playSfx === 'function') playSfx('coinFlip'); } catch (e) {}
+  // 🪙 INTERACTIVE MP COIN FLIP (Colyseus). Flow: both players announce READY →
+  // a deterministic seed-picked CALLER chooses heads/tails → the call relays →
+  // BOTH spin + reveal the same result (winner = serverFirst) → BOTH auto-advance
+  // into battle in sync. Every step has a BACKSTOP timer so it can never hang.
+  // (The legacy path used MatchBroadcast.channel + amIPlayer1 — both null/unset on
+  // Colyseus — which is why the toss never worked + the match stuck.)
+  const _mpCoin = bp.multiplayer && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP;
+  if (_mpCoin && !bp.coinResult) {
+    // 1) READY handshake — announce we're on the coin screen; wait for both.
+    if (!bp._coinReadySent) {
+      bp._coinReadySent = true; bp._coinReadyMe = true;
+      try { if (typeof sendColyseusFx === 'function') sendColyseusFx('coinReady', {}); } catch (e) {}
+      // Backstop: proceed even if the opponent's ready never arrives.
+      setTimeout(() => {
+        if (App.battlePrep && !App.battlePrep._coinReadyOpp) {
+          App.battlePrep._coinReadyOpp = true;
+          if (App.screen === 'coinFlip' && typeof render === 'function') render();
+        }
+      }, 6000);
+    }
+    const _bothReady = bp._coinReadyMe && bp._coinReadyOpp;
+    // 2) Pick the CALLER once both are ready (seed-derived → feels random, both
+    //    clients compute the SAME caller). Re-announce ready in case the opponent
+    //    arrived after our first announce (so they learn we're ready too).
+    if (!bp._coinReadyOpp) { try { if (typeof sendColyseusFx === 'function') sendColyseusFx('coinReady', {}); } catch (e) {} }
+    if (_bothReady && !bp.coinCaller) {
+      const _ids = [String(MatchBroadcast.myUserId || ''), String(MatchBroadcast.opponentId || '')].filter(Boolean).sort();
+      const _seed = (MatchBroadcast.seed | 0) || 1;
+      bp.coinCaller = (_ids.length === 2) ? _ids[_seed % 2] : (_ids[0] || String(MatchBroadcast.myUserId || ''));
+      bp._iAmCaller = (bp.coinCaller === String(MatchBroadcast.myUserId));
+      // Backstop: if I'm the caller and don't pick in 12s, auto-pick.
+      if (bp._iAmCaller) {
         setTimeout(() => {
-          if (App.screen !== 'coinFlip' || !App.battlePrep) return;
-          App.battlePrep.coinResult = _result;
-          App.battlePrep.playerWonFlip = iAmFirst;
-          if (typeof render === 'function') render();
-        }, 1500);
+          if (App.battlePrep && App.screen === 'coinFlip' && !App.battlePrep.coinCall) _mpCoinCall(Math.random() < 0.5 ? 'heads' : 'tails');
+        }, 12000);
       }
+    }
+    // 3) Once the call is known (mine or relayed), compute the result + spin.
+    if (_bothReady && bp.coinCall && !bp._coinSpinScheduled) {
+      bp._coinSpinScheduled = true;
+      const _first = _mpResolvedFirst();
+      const _iAmFirst = (_first === MatchBroadcast.myUserId);
+      const _callerWins = !!(_first && bp.coinCaller && _first === bp.coinCaller);
+      bp.playerWonFlip = _iAmFirst;
+      const _resultFace = _callerWins ? bp.coinCall : (bp.coinCall === 'heads' ? 'tails' : 'heads');
+      try { if (typeof playSfx === 'function') playSfx('coinFlip'); } catch (e) {}
+      setTimeout(() => {
+        if (!App.battlePrep) return;
+        App.battlePrep.coinResult = _resultFace;
+        App.battlePrep.playerWonFlip = _iAmFirst;
+        if (App.screen === 'coinFlip' && typeof render === 'function') render();
+      }, 1600);
     }
   }
 
-  const phase = bp.coinResult ? 'reveal' : (bp.coinCall ? 'spinning' : 'pick');
+  // Phase: reveal > (MP: waiting-ready / pick / waiting-call / spinning) > legacy.
+  let phase;
+  if (bp.coinResult) phase = 'reveal';
+  else if (_mpCoin) {
+    if (!(bp._coinReadyMe && bp._coinReadyOpp)) phase = 'mp-wait-ready';
+    else if (!bp.coinCall) phase = bp._iAmCaller ? 'pick' : 'mp-wait-call';
+    else phase = 'spinning';
+  } else {
+    phase = bp.coinCall ? 'spinning' : 'pick';
+  }
 
   // Image paths for the two coin faces. The folder name has no spaces, but the
   // heads file does — URL-encode it so the <img src> resolves correctly.
@@ -70877,10 +70947,26 @@ function renderCoinFlip() {
   `;
 
   let content = '';
-  if (phase === 'pick') {
+  if (phase === 'mp-wait-ready') {
     content = `
       <h2 class="section-title">Coin Toss</h2>
-      <div class="section-subtitle">Call it in the air — winner decides who moves first.</div>
+      <div class="section-subtitle">Waiting for both players to ready up…</div>
+      <div class="coin-wrap"><div class="coin coin-still">${coinFaces}</div></div>
+      <div class="coin-result-note">🕓 Syncing with your opponent…</div>
+    `;
+  } else if (phase === 'mp-wait-call') {
+    const _callerName = (bp.opponentName) || 'Your opponent';
+    content = `
+      <h2 class="section-title">Coin Toss</h2>
+      <div class="section-subtitle">${escapeHtml(_callerName)} won the call and is choosing…</div>
+      <div class="coin-wrap"><div class="coin coin-still">${coinFaces}</div></div>
+      <div class="coin-result-note">🪙 ${escapeHtml(_callerName)} is calling heads or tails…</div>
+    `;
+  } else if (phase === 'pick') {
+    const _mpPick = _mpCoin;
+    content = `
+      <h2 class="section-title">Coin Toss</h2>
+      <div class="section-subtitle">${_mpPick ? 'You won the call! Pick heads or tails — winner moves first.' : 'Call it in the air — winner decides who moves first.'}</div>
       <div class="coin-wrap"><div class="coin coin-still">${coinFaces}</div></div>
       <div class="coin-buttons">
         <button class="btn-primary coin-call" id="btn-heads"><img class="coin-call-icon" src="${HEADS_IMG}" alt=""> Heads</button>
@@ -70981,13 +71067,21 @@ function renderCoinFlip() {
         render();
       }, 1500);
     };
-    if (bp.multiplayer && !MultiplayerMatch.amIPlayer1) {
-      // P2: disable the buttons + show a "Player 1 is calling..." message
-      const hb = document.getElementById('btn-heads'); if (hb) { hb.disabled = true; hb.title = 'Player 1 is calling the toss…'; }
-      const tb = document.getElementById('btn-tails'); if (tb) { tb.disabled = true; tb.title = 'Player 1 is calling the toss…'; }
+    const _hb = document.getElementById('btn-heads');
+    const _tb = document.getElementById('btn-tails');
+    if (_mpCoin) {
+      // 🪙 Colyseus caller: the pick relays to the opponent via _mpCoinCall, then
+      // BOTH clients spin + reveal the same result. (Only the caller reaches this
+      // 'pick' phase — the other side sees 'mp-wait-call'.)
+      if (_hb) _hb.onclick = () => _mpCoinCall('heads');
+      if (_tb) _tb.onclick = () => _mpCoinCall('tails');
+    } else if (bp.multiplayer && !MultiplayerMatch.amIPlayer1) {
+      // Legacy Supabase P2: disable + wait for P1's broadcast.
+      if (_hb) { _hb.disabled = true; _hb.title = 'Player 1 is calling the toss…'; }
+      if (_tb) { _tb.disabled = true; _tb.title = 'Player 1 is calling the toss…'; }
     } else {
-      document.getElementById('btn-heads').onclick = () => onCall('heads');
-      document.getElementById('btn-tails').onclick = () => onCall('tails');
+      if (_hb) _hb.onclick = () => onCall('heads');
+      if (_tb) _tb.onclick = () => onCall('tails');
     }
   } else if (phase === 'reveal') {
     if (bp.playerWonFlip && bp.multiplayer) {
@@ -71000,7 +71094,28 @@ function renderCoinFlip() {
     } else {
       document.getElementById('btn-start-battle').onclick = () => startBattleWithPrep(false);
     }
+    // 🪙 MP AUTO-ADVANCE — both clients enter the battle on their own timer after
+    // the reveal, so a player who never clicks "Begin Battle" can't strand the
+    // match on the coin screen (the root of the "stuck on enemy turn" hang).
+    // Guarded so it fires once; the manual button still works (whichever first —
+    // startBattleWithPrep flips App.screen so the timer no-ops if already in).
+    if (_mpCoin && !bp._coinAdvanceScheduled) {
+      bp._coinAdvanceScheduled = true;
+      setTimeout(() => {
+        if (App.screen === 'coinFlip' && App.battlePrep) startBattleWithPrep(!!App.battlePrep.playerWonFlip);
+      }, 2400);
+    }
   }
+}
+
+// 🪙 Colyseus caller picks heads/tails → relay to the opponent + advance both to
+// the spin (the result is computed from serverFirst when the spin schedules).
+function _mpCoinCall(call) {
+  const bp = App.battlePrep; if (!bp || bp.coinCall) return;
+  bp.coinCall = call;
+  try { if (typeof sendColyseusFx === 'function') sendColyseusFx('coinCall', { call: call }); } catch (e) {}
+  try { if (typeof playSfx === 'function') playSfx('coinFlip'); } catch (e) {}
+  if (App.screen === 'coinFlip' && typeof render === 'function') render();
 }
 
 function startBattleWithPrep(playerGoesFirst) {
@@ -111755,12 +111870,19 @@ function _spawnEmoteBubble(side, preset) {
 }
 
 function _onRemoteEmoteArrived(payload) {
-  if (!payload || !payload.emoteId) return;
+  if (!payload) return;
   App.ui = App.ui || {};
   App.ui.emoteState = App.ui.emoteState || { cooldownUntil: 0, muted: false, bubbles: [] };
   // Respect mute toggle — silently drop opponent emotes.
   if (App.ui.emoteState.muted) return;
-  const preset = EMOTE_PRESETS.find(e => e.id === payload.emoteId);
+  // 🤝 Accept BOTH payload shapes: the Supabase path sends { emoteId }, while the
+  // Colyseus relay sends { emoji } (the value passed to sendColyseusEmote = the
+  // preset id). Resolve the preset by id OR by emoji glyph so emotes show on the
+  // opponent's screen on EITHER transport (this was the "emotes don't cross" bug).
+  const _key = payload.emoteId || payload.emoji || payload.id || '';
+  if (!_key) return;
+  const preset = EMOTE_PRESETS.find(e => e.id === _key)
+    || EMOTE_PRESETS.find(e => e.emoji === _key);
   if (!preset) return;
   _spawnEmoteBubble('ai', preset);
   if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();

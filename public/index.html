@@ -33039,6 +33039,7 @@ function sendColyseusFx(kind, data) {
  *  the sender's ids, so lookups match post-snapshot). */
 function _onColyseusFx(msg) {
   if (!msg || !msg.kind) return;
+  try { console.log('[MP-fx↓] recv kind=' + msg.kind); } catch (e) {}
   const d = msg.data || {};
   const findUnit = (id) => ((App.state && App.state.units) || []).find(u => u && u.id === id) || null;
   switch (msg.kind) {
@@ -61186,12 +61187,18 @@ function queueBattleAnim(opts) {
   };
   App.ui.battleAnim = snap;
   // 📡 Relay the attack cinematic so it ALSO plays on the opponent's screen.
-  // Only the acting player (my turn) relays — the watcher replays it via
+  // queueBattleAnim only ever fires on the ACTOR (the watcher adopts snapshots,
+  // it never runs executeMove), so no myTurn gate is needed — gating on it could
+  // wrongly block the relay if myTurn lagged. The watcher replays via
   // _playRemoteBattleAnim. The snap is fully serializable (ids/names/owners/nums).
   try {
-    if (App.battlePrep && App.battlePrep.multiplayer && MatchBroadcast.myTurn
-        && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP && typeof sendColyseusFx === 'function') {
-      sendColyseusFx('attack', { snap: snap });
+    if (App.battlePrep && App.battlePrep.multiplayer
+        && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP) {
+      console.log('[MP-fx↑] attack relay gate room=' + (typeof ColyseusMP !== 'undefined' && !!(ColyseusMP && ColyseusMP.room)) + ' myTurn=' + MatchBroadcast.myTurn);
+      if (typeof sendColyseusFx === 'function') {
+        sendColyseusFx('attack', { snap: snap });
+        console.log('[MP-fx↑] attack SENT ' + ((snap.attacker && snap.attacker.name) || '?') + '→' + ((snap.defender && snap.defender.name) || '?'));
+      }
     }
   } catch (e) {}
   setTimeout(() => {
@@ -61233,6 +61240,7 @@ function _playRemoteBattleAnim(snap) {
   } catch (e) {}
   s.startedAt = Date.now() + Math.random();
   App.ui.battleAnim = s;
+  try { console.log('[MP-fx] replay battleAnim ' + ((s.attacker && s.attacker.name) || '?') + '→' + ((s.defender && s.defender.name) || '?') + ' screen=' + App.screen + ' pixi=' + (App.flags && App.flags.pixiBoard)); } catch (e) {}
   if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
   setTimeout(() => {
     if (App.ui.battleAnim && App.ui.battleAnim.startedAt === s.startedAt) {

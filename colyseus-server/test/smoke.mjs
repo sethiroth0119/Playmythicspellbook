@@ -88,6 +88,14 @@ async function scenarioTurnsAndRelay() {
   const first = ms.payload.first;
   check('matchStart has a valid first-turn participant', first === idA || first === idB, { first, idA, idB });
   check('both clients have distinct ids', idA && idB && idA !== idB, { idA, idB });
+  // 🦸 matchStart must relay BOTH players' heroId so each client can build the
+  // SAME opponent hero (fix for "NaN/NaN HP opponent + two different boards").
+  const heroes = ms.payload.heroes || {};
+  check('matchStart relays a heroes map for both players',
+    heroes[idA] === 'h1' && heroes[idB] === 'h2', heroes);
+  const names = ms.payload.names || {};
+  check('matchStart relays a names map for both players',
+    names[idA] === 'A' && names[idB] === 'B', names);
   await waitState(recA, s => s.currentTurnUserId === first);
   check('state.currentTurnUserId === matchStart.first', recA.state?.currentTurnUserId === first);
 

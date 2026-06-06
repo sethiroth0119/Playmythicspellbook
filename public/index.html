@@ -33013,6 +33013,32 @@ function _onColyseusMatchStart(data) {
   MatchBroadcast.opponentId = data && Array.isArray(data.participants)
     ? data.participants.find(id => id !== myId) || null
     : null;
+  // 🦸 Build the opponent hero from the server-relayed heroId so BOTH clients
+  // construct the SAME opponent on their board — heroes are deterministic from
+  // heroId via the shared catalog. This overrides the stat-less placeholder that
+  // onMultiplayerMatchFound builds when the matches-table row lacks hero ids:
+  // THAT placeholder (no hp/stats) is the actual cause of the "opponent shows
+  // NaN/NaN HP + the two boards never match" symptom. Must run BEFORE the coin
+  // call below, because that path leads into startBattleWithPrep(initGame(foe)).
+  try {
+    const _heroes = (data && data.heroes) || null;
+    const _oppId  = MatchBroadcast.opponentId;
+    const _oppHeroId = (_heroes && _oppId) ? _heroes[_oppId] : '';
+    if (_oppHeroId) {
+      const _realHero = (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES.find(h => h.id === _oppHeroId))
+        || (typeof findCustomHeroCard === 'function' && findCustomHeroCard(_oppHeroId))
+        || null;
+      if (!App.battlePrep) App.battlePrep = {};
+      if (_realHero) {
+        App.battlePrep.opponent = _realHero;
+        App.battlePrep.opponentName = (data.names && _oppId && data.names[_oppId])
+          || App.battlePrep.opponentName || ('Opponent ' + String(_oppId || '').slice(0, 6));
+        console.log('[Colyseus] opponent hero resolved from matchStart:', _oppHeroId, '→', _realHero.name);
+      } else {
+        console.warn('[Colyseus] opponent heroId not found in local catalog:', _oppHeroId, '— keeping existing opponent');
+      }
+    }
+  } catch (e) { try { console.warn('[Colyseus] opponent hero rebuild failed', e); } catch (_) {} }
   // Kick off the VS screen / battle start in the existing UI.
   try { _onRemoteCoinArrived({ winner: data && data.first }); } catch (e) {}
   // 📡 Open the spectator mirror channel so watchers can tune in to this match.
@@ -111862,9 +111888,14 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
     // does, THEN join. joinColyseusMatch is already async, so deferring the join
     // one tick to resolve the token changes nothing else.
     const _doColyseusJoin = (authToken) => {
+      // 🦸 Send the REAL heroId so the server can relay it to the opponent (who
+      // builds our hero on their board from it). battlePrep.heroId may be unset —
+      // fall back to the hero OBJECT's id, which is always present by VS-screen.
+      const _myHeroId = (App.battlePrep && (App.battlePrep.heroId
+        || (App.battlePrep.hero && App.battlePrep.hero.id))) || '';
       joinColyseusMatch(matchId, authToken || '', {
         displayName: Profile.cloud.displayName || '',
-        heroId:      (App.battlePrep && App.battlePrep.heroId) || '',
+        heroId:      _myHeroId,
       }).then(room => {
         console.log('[Colyseus] room joined, sessionId=' + room.sessionId);
         _persistMatchSession();

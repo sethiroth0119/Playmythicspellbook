@@ -311,7 +311,18 @@ export class BattleRoom extends Room<BattleState> {
     this.state.turnNumber        = 1;
     console.log('[battle] match start — seed=' + seed + ' first=' + first);
     this.armTurnTimer();
-    this.broadcast('matchStart', { first, seed, participants: ids });
+    // 🦸 Relay BOTH players' heroId + displayName so each client can build the
+    // SAME authoritative opponent hero from the shared catalog (heroes are
+    // deterministic from heroId). Without this, the client fell back to the
+    // matches-table row — and if that row lacked hero ids, it built a stat-less
+    // placeholder opponent (the "NaN/NaN HP" + two-different-boards symptom).
+    const heroes: Record<string, string> = {};
+    const names: Record<string, string> = {};
+    ids.forEach(id => {
+      const pl = this.state.players.get(id);
+      if (pl) { heroes[id] = pl.heroId || ''; names[id] = pl.displayName || ''; }
+    });
+    this.broadcast('matchStart', { first, seed, participants: ids, heroes, names });
   }
 
   private handleEndTurn(client: Client) {

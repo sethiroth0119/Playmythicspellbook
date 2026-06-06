@@ -86,6 +86,11 @@ const gameServer = new Server({
     // which keeps the socket non-idle end-to-end. This is defense-in-depth only.
     pingInterval: 8000,
     pingMaxRetries: 12,
+    // 📦 Raise the max WebSocket frame so a board snapshot can't trip close code
+    // 1009 ("message too big"). The client already slims snapshots (id-only card
+    // zones, art stripped) so payloads are small — this 8 MB ceiling is a wide
+    // safety margin (ws default behaviour varies; being explicit avoids 1009).
+    maxPayload: 8 * 1024 * 1024,
   }),
 });
 

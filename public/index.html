@@ -111922,7 +111922,28 @@ function _serializeBattleStateForBroadcast(state) {
     }
     return v;
   };
-  return strip(copy);
+  const stripped = strip(copy);
+  // 🪶 SIZE CAP — the opponent never needs the CONTENTS of either player's hand /
+  // deck / graveyard: each player keeps its OWN private zones locally (see the
+  // merge in _onRemoteStateArrived), and the opponent's zones are shown only as
+  // COUNTS. Shipping both full 35-card decks + hands every action blew past the
+  // WebSocket frame limit → close code 1009 → "MP disconnected, message too big"
+  // → the boards never synced. So we reduce every card zone to tiny id-only stubs
+  // (array LENGTH is preserved so all the "N cards" counts still render). The
+  // board `units` (which DO need full stats for rendering + the active engine)
+  // are left untouched. This is the fix for the 1009 disconnect + diverging boards.
+  try {
+    const _stub = (c) => ({ instanceId: (c && c.instanceId) || '', cardId: (c && (c.id || c.cardId)) || '', name: (c && c.name) || '' });
+    const _slimZones = (block) => {
+      if (!block || typeof block !== 'object') return;
+      if (Array.isArray(block.hand))      block.hand      = block.hand.map(_stub);
+      if (Array.isArray(block.deck))      block.deck      = block.deck.map(_stub);
+      if (Array.isArray(block.graveyard)) block.graveyard = block.graveyard.map(_stub);
+      if (Array.isArray(block.tunneled))  block.tunneled  = block.tunneled.map(t => ({ turnsLeft: (t && t.turnsLeft) || 0 }));
+    };
+    if (stripped) { _slimZones(stripped.player); _slimZones(stripped.ai); }
+  } catch (e) { /* never let slimming break a broadcast */ }
+  return stripped;
 }
 
 // Subscribe to the match's realtime channel. Both clients call this when the

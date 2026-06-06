@@ -160,6 +160,14 @@ export class BattleRoom extends Room<BattleState> {
       }, { except: client });
     });
 
+    // ✨ Visual-effect relay — purely cosmetic action animations (attack lunge,
+    // spell cast, kalon transform, location/weather) replayed on the opponent's
+    // screen. Opaque to the server; just forwarded to the other client. The
+    // authoritative board state still travels via 'snapshot'.
+    this.onMessage('fx', (client, payload) => {
+      this.broadcast('fx', payload, { except: client });
+    });
+
     // 💓 Heartbeat ack. The client sends a no-op 'ping' every 5s so Fly's edge
     // proxy never sees the WebSocket as idle and closes it during the silent
     // VS-screen → coin-flip window (the ~20s HOST drop that killed every match

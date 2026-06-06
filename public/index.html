@@ -32845,6 +32845,13 @@ async function joinColyseusMatch(matchId, authToken, opts) {
       // Reuse the existing emote renderer from the Supabase path.
       try { _onRemoteEmoteArrived(data); } catch (e) {}
     });
+    // 💓 No-op ack for our heartbeat 'ping' — registered only to silence
+    // colyseus.js's "onMessage() not registered for type 'pong'" console spam.
+    room.onMessage('pong', () => {});
+    // ✨ Opponent action FX relay (attack lunge / spell cast / kalon transform /
+    // location). Pure VISUAL — the authoritative result already arrives via the
+    // board snapshot; this just replays the animation on the watching screen.
+    room.onMessage('fx', (data) => { try { _onColyseusFx(data); } catch (e) {} });
 
     // State-change observer — keeps ColyseusMP.state current.
     room.onStateChange(state => {
@@ -33016,6 +33023,50 @@ function _stopColyseusHeartbeat() {
 function sendColyseusForfeit() {
   if (!ColyseusMP.room) return;
   try { ColyseusMP.room.send('forfeit', {}); } catch (e) {}
+}
+
+/** ✨ Relay a purely-VISUAL effect to the opponent so an action ANIMATES on their
+ *  screen (the authoritative result already arrives via the board snapshot; this
+ *  just replays the juice). kind: 'location' | 'weather' | 'cinematic' | 'kalon'
+ *  | 'attack'. Safe to call always — no-ops when not in a Colyseus match. */
+function sendColyseusFx(kind, data) {
+  if (!ColyseusMP.room) return;
+  try { ColyseusMP.room.send('fx', { kind: kind, data: data || {} }); } catch (e) {}
+}
+/** Play an opponent-relayed visual effect on THIS screen. Pure animation — never
+ *  mutates game state (that comes from the snapshot), so a missing animator is a
+ *  harmless no-op. Units resolve by id (the opponent's units were adopted with
+ *  the sender's ids, so lookups match post-snapshot). */
+function _onColyseusFx(msg) {
+  if (!msg || !msg.kind) return;
+  const d = msg.data || {};
+  const findUnit = (id) => ((App.state && App.state.units) || []).find(u => u && u.id === id) || null;
+  switch (msg.kind) {
+    case 'location':
+      try { if (typeof _playFieldFx === 'function') _playFieldFx({ kind: 'location', name: d.name || 'Location', icon: d.icon || '🏯' }); } catch (e) {}
+      break;
+    case 'weather':
+      try { if (typeof _playFieldFx === 'function') _playFieldFx({ kind: 'weather', name: d.name || 'Weather', icon: d.icon || '🌦' }); } catch (e) {}
+      break;
+    case 'cinematic': {
+      try {
+        const u = findUnit(d.unitId);
+        const card = (typeof getCardById === 'function' && d.cardId) ? getCardById(d.cardId) : null;
+        if (u && typeof playOnPlayCinematic === 'function') playOnPlayCinematic(u, card || { id: d.cardId, name: d.name || (u && u.name) || '' });
+      } catch (e) {}
+      break;
+    }
+    case 'kalon': {
+      try {
+        const u = findUnit(d.unitId);
+        if (u && typeof _playKalonAscendFx === 'function') _playKalonAscendFx(u);
+      } catch (e) {}
+      break;
+    }
+    case 'attack':
+      try { if (typeof _onRemoteAttackResultArrived === 'function') _onRemoteAttackResultArrived(d); } catch (e) {}
+      break;
+  }
 }
 /** 📸 Send our authoritative board snapshot to the server, which relays it to
  * the opponent (server-owns-match: clients keep the full engine; the board is
@@ -112969,6 +113020,12 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
     }
     if (old.alive !== false && u.alive === false) killed.push(u);
   }
+  // ✨ Animate the opponent's freshly-deployed units — feed each into the same
+  // summon-pop queue the local engine uses (_markSummonAnim → flushed once the
+  // unit is painted), so an opponent's play POPS in instead of silently appearing.
+  for (const u of newSpawns) {
+    try { if (typeof _markSummonAnim === 'function') _markSummonAnim(u); } catch (e) {}
+  }
   // Toasts — keep concise so the player isn't drowned in messages.
   if (newSpawns.length > 0) {
     const first = newSpawns[0];
@@ -113119,6 +113176,26 @@ function _onRemoteStateArrived(payload) {
   // Future-proof: the swapped state carries _mirroredAiTrail if any was set.
   if (swapped._mirroredAiTrail) App.ui.aiMoveTrail = swapped._mirroredAiTrail;
   else App.ui.aiMoveTrail = null;
+  // 🏯 LOCATION board-art + FX sync. The snapshot strips activeLocation.image
+  // ('image' is a HEAVY_KEY), so the opponent's board reverted to the default
+  // background. Re-derive the board art from the location id via our own shared
+  // catalog, and replay the field-fx sweep whenever the active location CHANGES
+  // — so an opponent playing a location reshapes BOTH boards, with juice.
+  try {
+    const _loc = App.state && App.state.activeLocation;
+    if (_loc && _loc.id) {
+      if (!_loc.image && typeof getLocationBoardImage === 'function') {
+        const _img = getLocationBoardImage(_loc.id);
+        if (_img) _loc.image = _img;
+      }
+      if (_loc.id !== MatchBroadcast._lastLocId) {
+        MatchBroadcast._lastLocId = _loc.id;
+        if (typeof _playFieldFx === 'function') _playFieldFx({ kind: 'location', name: _loc.name || 'Location', icon: _loc.icon || '🏯' });
+      }
+    } else {
+      MatchBroadcast._lastLocId = null;
+    }
+  } catch (e) {}
   if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
 }
 

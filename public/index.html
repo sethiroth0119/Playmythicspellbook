@@ -33196,6 +33196,31 @@ function _onColyseusFx(msg) {
       } catch (e) {}
       break;
     }
+    case 'ultimate': {
+      // Opponent fired their hero ultimate — replay the SAME cinematic overlay
+      // (name card + release flash + stinger) so every player sees it, not just
+      // the owner. The effect itself arrives via the snapshot.
+      try {
+        const def = (typeof getUltimateDef === 'function') ? getUltimateDef(d.ultId) : null;
+        if (def) {
+          const hero = findUnit(d.heroId);
+          App.ui = App.ui || {};
+          App.ui.heroUltCinematic = { heroUnitId: (hero && hero.id) || d.heroId, def, startedAt: Date.now() };
+          try { if (typeof _muffleBattleAudioForUlt === 'function') _muffleBattleAudioForUlt(true); } catch (e) {}
+          try { if (typeof playSfx === 'function') playSfx('ultimate'); } catch (e) {}
+          try { if (typeof _playUltRelease === 'function') _playUltRelease(def); } catch (e) {}
+          if (typeof renderBattle === 'function') renderBattle();
+          setTimeout(() => {
+            try {
+              if (App.ui) App.ui.heroUltCinematic = null;
+              if (typeof _muffleBattleAudioForUlt === 'function') _muffleBattleAudioForUlt(false);
+              if (typeof renderBattle === 'function') renderBattle();
+            } catch (e) {}
+          }, 2000);
+        }
+      } catch (e) {}
+      break;
+    }
     case 'attack':
       try { if (d && d.snap && typeof _playRemoteBattleAnim === 'function') _playRemoteBattleAnim(d.snap); } catch (e) {}
       break;
@@ -33252,6 +33277,44 @@ function _onColyseusFx(msg) {
         }
       } catch (e) {}
       break;
+    case 'counterReq': {
+      // 🌐 The active player attacked/cast and is asking US (the defender) whether
+      // we want to counter. Run the REAL prompt against OUR hand, then reply.
+      try {
+        if (typeof tryPromptCounter !== 'function' || !App.state) {
+          sendColyseusFx('counterResp', { reqId: d.reqId, countered: false });
+          break;
+        }
+        const action = {
+          trigger: d.trigger,
+          label: d.label,
+          source: findUnit(d.sourceId) || { id: d.sourceId, name: d.sourceName, isHero: !!d.sourceIsHero, owner: 'ai' },
+          target: d.targetId ? (findUnit(d.targetId) || { id: d.targetId, isHero: !!d.targetIsHero, owner: 'player' }) : null,
+        };
+        tryPromptCounter(App.state, action).then((ok) => {
+          const cardName = (App.state && App.state._lastPlayerCounterCard && App.state._lastPlayerCounterCard.name) || '';
+          try { sendColyseusFx('counterResp', { reqId: d.reqId, countered: !!ok, cardName }); } catch (e) {}
+          try { if (typeof renderBattle === 'function') renderBattle(); } catch (e) {}
+        }).catch(() => { try { sendColyseusFx('counterResp', { reqId: d.reqId, countered: false }); } catch (e) {} });
+      } catch (e) {
+        try { sendColyseusFx('counterResp', { reqId: d.reqId, countered: false }); } catch (e2) {}
+      }
+      break;
+    }
+    case 'counterResp': {
+      // 🌐 The remote defender answered our counterReq. Resolve the pending wait.
+      try {
+        const p = MatchBroadcast._counterReqPending;
+        if (p && p.reqId === d.reqId) {
+          if (p.timer) clearTimeout(p.timer);
+          MatchBroadcast._counterReqPending = null;
+          p.resolve(d.countered
+            ? { card: { name: d.cardName || 'Counter', icon: '⏱', counterEffect: 'negate' }, owner: 'ai' }
+            : null);
+        }
+      } catch (e) {}
+      break;
+    }
   }
 }
 /** 📸 Send our authoritative board snapshot to the server, which relays it to
@@ -83059,6 +83122,38 @@ function _renderCounterChainOverlay(state) {
   } catch (e) { try { console.warn('[chain] overlay render threw', e); } catch (_) {} }
 }
 
+// 🌐 MP counter round-trip. In online PvP the "defender" is a REMOTE human, so
+// we can't resolve their counter locally. We send a counterReq to them, they get
+// the real prompt against THEIR hand, and reply with counterResp. Bounded by a
+// timeout so a silent/disconnected opponent can never freeze the attacker's turn
+// (timeout → null → the action simply proceeds). Returns { card, owner:'ai' } if
+// they countered, else null.
+function _mpRequestOpponentCounter(action) {
+  return new Promise((resolve) => {
+    try {
+      if (!(App.battlePrep && App.battlePrep.multiplayer) || typeof sendColyseusFx !== 'function') { resolve(null); return; }
+      const reqId = 'cr_' + (MatchBroadcast._crSeq = (MatchBroadcast._crSeq || 0) + 1);
+      const timer = setTimeout(() => {
+        if (MatchBroadcast._counterReqPending && MatchBroadcast._counterReqPending.reqId === reqId) {
+          MatchBroadcast._counterReqPending = null;
+          resolve(null);
+        }
+      }, 20000);
+      MatchBroadcast._counterReqPending = { reqId, resolve, timer };
+      sendColyseusFx('counterReq', {
+        reqId,
+        trigger: action.trigger,
+        label: action.label || action.trigger,
+        sourceId:    (action.source && action.source.id) || null,
+        sourceName:  (action.source && action.source.name) || 'Opponent',
+        sourceIsHero: !!(action.source && action.source.isHero),
+        targetId:    (action.target && action.target.id) || null,
+        targetIsHero: !!(action.target && action.target.isHero),
+      });
+    } catch (e) { resolve(null); }
+  });
+}
+
 const COUNTER_CHAIN_MAX_DEPTH = 5;
 function _runCounterChain(state, action, depth) {
   depth = depth | 0;
@@ -83075,7 +83170,12 @@ function _runCounterChain(state, action, depth) {
   const defender = (attacker === 'player') ? 'ai' : 'player';
   const fireDefenderCounter = () => {
     if (defender === 'ai') {
-      // Sync — _aiAutoCounter applies effects immediately if it fires and
+      // 🌐 MP — the "ai" side is the REMOTE opponent. Ask them over the network
+      // instead of running the (nonexistent) local AI counter.
+      if (App.battlePrep && App.battlePrep.multiplayer && typeof _mpRequestOpponentCounter === 'function') {
+        return _mpRequestOpponentCounter(action);
+      }
+      // Single-player — _aiAutoCounter applies effects immediately if it fires and
       // stashes the card it used into state._lastAiCounterCard.
       state._lastAiCounterCard = null;
       const ok = (typeof _aiAutoCounter === 'function') && _aiAutoCounter(state, action);
@@ -123319,6 +123419,13 @@ function resolveHeroUltimate(heroUnitId, opts) {
     try { if (typeof playSfx === 'function') playSfx('ultimate'); } catch (e) {}
     // ⚡ Release flash — full-screen flash + shockwave + shake as the ult unleashes.
     try { if (typeof _playUltRelease === 'function') _playUltRelease(def); } catch (e) {}
+    // 📡 MP — relay the ultimate cinematic so the OPPONENT sees it too (not just
+    // the owner). The watcher replays the same overlay via the 'ultimate' FX.
+    try {
+      if (!(opts && opts._remote) && App.battlePrep && App.battlePrep.multiplayer && typeof sendColyseusFx === 'function') {
+        sendColyseusFx('ultimate', { ultId: u.ultId, heroId: hero.id, heroName: hero.name });
+      }
+    } catch (e) {}
     if (typeof renderBattle === 'function') renderBattle();
     setTimeout(() => {
       try {
@@ -123351,7 +123458,10 @@ function resolveHeroUltimate(heroUnitId, opts) {
     _battleSetHeroEmotion(hero, 'inspired');
   }
 
-  if (typeof renderBattle === 'function') renderBattle();
+  // 📡 Broadcast the ultimate's EFFECT immediately in MP so the opponent's board
+  // reflects it now (the cinematic was already relayed at activation). No-ops to
+  // a plain render in single-player.
+  if (typeof checkPostAction === 'function') checkPostAction(); else if (typeof renderBattle === 'function') renderBattle();
 }
 
 // ============================================================================

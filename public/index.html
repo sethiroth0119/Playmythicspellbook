@@ -60453,6 +60453,268 @@ function _resolvePolycreationFusion() {
   renderBattle();
 }
 
+// ============================================================
+// 🜂 ARCHON SUMMON RITUAL
+// ============================================================
+// A parallel summon mechanic to Polycreation, but initiated by a
+// UNIT on the field (not a spell from hand). A unit carrying a
+// Catalyst passive (catalyst / catalystAscended / catalystDivine /
+// catalystPrimordial) can perform an Archon Summon when:
+//   • Its Catalyst rank ≥ the Archon's required rank
+//   • The (optional) Catalyst faction/element match the recipe
+//   • The required Offerings (faction/element/trait/Lv≥/×count) are
+//     alive on the same side, within offeringRange tiles of the Catalyst
+//   • The player has enough Kalon Source charges to pay kalonCost
+//   • An open tile exists near the Catalyst for the Archon
+// On resolve: Offerings are sacrificed, Kalon Source is spent, the
+// Catalyst stays (unless catalystConsumed), the Archon is spawned via
+// the shared _battleSpawnSummonByCardId pipeline, and Realm Alignment
+// with the chosen Creator deepens. MP sync rides the normal snapshot
+// broadcast (checkPostAction) — the opponent's diff-feedback surfaces
+// the spawn + the vanished offerings, exactly like Polycreation.
+
+const _ARCHON_RANKS = ['lesser', 'ascended', 'divine', 'primordial'];
+const _ARCHON_RANK_PASSIVE = { catalyst: 1, catalystAscended: 2, catalystDivine: 3, catalystPrimordial: 4 };
+const _ARCHON_CREATORS = { yahweh: 'Yahweh', abraxas: 'Abraxas', azathoth: 'Azathoth', leviathor: 'Leviathor' };
+function _archonCreatorName(id) { return _ARCHON_CREATORS[String(id || '').toLowerCase()] || (id || ''); }
+
+function isArchonCard(card) {
+  return !!(card && card.archonSummon && card.archonSummon.enabled);
+}
+
+// All custom + catalog cards forged as Archons.
+function getAllArchonCards() {
+  const out = [];
+  try { (Forge.customCards || []).forEach(c => { if (isArchonCard(c)) out.push(c); }); } catch (e) {}
+  try {
+    if (typeof Catalog !== 'undefined' && Array.isArray(Catalog.cards)) {
+      Catalog.cards.forEach(c => { if (isArchonCard(c)) out.push(c); });
+    }
+  } catch (e) {}
+  return out;
+}
+
+// Highest Catalyst rank carried by a unit (0 = not a Catalyst).
+function _catalystRankOf(unit) {
+  if (!unit) return 0;
+  let best = 0;
+  for (const pid in _ARCHON_RANK_PASSIVE) {
+    if (hasPassive(unit, pid)) best = Math.max(best, _ARCHON_RANK_PASSIVE[pid]);
+  }
+  return best;
+}
+// Rank an Archon requires of its Catalyst (1..4).
+function _archonRequiredRankOrder(archonCard) {
+  const r = archonCard && archonCard.archonSummon && archonCard.archonSummon.catalystRank;
+  const idx = _ARCHON_RANKS.indexOf(String(r || 'lesser').toLowerCase());
+  return idx < 0 ? 1 : idx + 1;
+}
+
+// Forgiving "Title" trait check — scans factions, elements, keyword/trait/tag
+// arrays, boolean keyword flags, and a few special cases (flying/hero/legendary).
+function _unitHasArchonTrait(unit, trait) {
+  if (!unit || !trait) return true;
+  const t = String(trait).toLowerCase();
+  if (t === 'flying') return !!(unit.flying || (typeof isEffectivelyFlying === 'function' && isEffectivelyFlying(unit)));
+  if (t === 'hero') return !!unit.isHero;
+  if (t === 'legendary') return !!(unit.legendary || String(unit.rarity || '').toLowerCase() === 'legendary');
+  const pools = [];
+  try { pools.push(...(typeof getFactionsOf === 'function' ? getFactionsOf(unit) : (unit.factions || []))); } catch (e) {}
+  try { pools.push(...(typeof getElementsOf === 'function' ? getElementsOf(unit) : (unit.elements || []))); } catch (e) {}
+  if (Array.isArray(unit.keywords)) pools.push(...unit.keywords);
+  if (Array.isArray(unit.traits)) pools.push(...unit.traits);
+  if (Array.isArray(unit.tags)) pools.push(...unit.tags);
+  if (pools.map(x => String(x).toLowerCase()).includes(t)) return true;
+  return unit[t] === true;   // boolean keyword flag (e.g. unit.divine, unit.mutated)
+}
+
+// True if a battlefield unit satisfies a single Archon offering spec
+// { faction?, element?, trait?, minLevel?, count }. Heroes never qualify.
+function _matchArchonOffering(unit, off) {
+  if (!unit || !unit.alive || unit.isHero || !off) return false;
+  if (off.faction) {
+    const fc = String(off.faction).toLowerCase();
+    const list = (typeof getFactionsOf === 'function' ? getFactionsOf(unit) : (unit.factions || [])).map(f => String(f).toLowerCase());
+    if (!list.includes(fc)) return false;
+  }
+  if (off.element) {
+    const el = String(off.element).toLowerCase();
+    const list = (typeof getElementsOf === 'function' ? getElementsOf(unit) : (unit.elements || [])).map(e => String(e).toLowerCase());
+    if (!list.includes(el)) return false;
+  }
+  if (off.trait && !_unitHasArchonTrait(unit, off.trait)) return false;
+  if (off.minLevel && (unit.level | 0) < (off.minLevel | 0)) return false;
+  return true;
+}
+
+// Greedily assigns living units within offeringRange of the Catalyst to the
+// Archon's offering specs (honoring each spec's ×count). Returns an array of
+// unit ids to sacrifice, or null if the offerings can't be fully met.
+function findArchonOfferings(state, side, catalyst, archonCard) {
+  if (!state || !catalyst || !catalyst.pos || !archonCard || !archonCard.archonSummon) return null;
+  const spec = archonCard.archonSummon;
+  const offs = Array.isArray(spec.offerings) ? spec.offerings : [];
+  if (!offs.length) return [];   // catalyst-only Archon (no offerings required)
+  const radius = Math.max(1, Math.min(4, (spec.offeringRange | 0) || 2));
+  const cx = catalyst.pos.x | 0, cy = catalyst.pos.y | 0;
+  const inRange = (state.units || []).filter(u =>
+    u && u.alive && u.owner === side && !u.isHero && u.id !== catalyst.id && u.pos &&
+    Math.max(Math.abs((u.pos.x | 0) - cx), Math.abs((u.pos.y | 0) - cy)) <= radius
+  );
+  const used = new Set();
+  const picked = [];
+  for (const off of offs) {
+    const need = Math.max(1, (off.count | 0) || 1);
+    let got = 0;
+    for (const u of inRange) {
+      if (used.has(u.id)) continue;
+      if (_matchArchonOffering(u, off)) { used.add(u.id); picked.push(u.id); if (++got >= need) break; }
+    }
+    if (got < need) return null;
+  }
+  return picked;
+}
+
+// Top-level gate: which Archon (if any) can THIS Catalyst summon right now?
+// Returns { ok, reason, archon, offerings, kalonCost, summonTile, alternatives }.
+function canActivateArchonSummon(state, catalyst) {
+  if (!state || !catalyst) return { ok: false, reason: 'No catalyst' };
+  if (!catalyst.alive) return { ok: false, reason: 'Catalyst is not alive' };
+  const side = catalyst.owner;
+  const rank = _catalystRankOf(catalyst);
+  if (!rank) return { ok: false, reason: 'This unit has no Catalyst passive' };
+  const all = getAllArchonCards();
+  if (!all.length) return { ok: false, reason: 'No Archons forged. Make a Summon card with Archon Summon enabled first.' };
+  const kalonHave = (state[side] && (state[side].kalonsRemaining | 0)) || 0;
+  const candidates = [];
+  for (const archon of all) {
+    const spec = archon.archonSummon || {};
+    if (rank < _archonRequiredRankOrder(archon)) continue;
+    if (spec.catalyst && spec.catalyst.faction) {
+      const list = (typeof getFactionsOf === 'function' ? getFactionsOf(catalyst) : (catalyst.factions || [])).map(f => String(f).toLowerCase());
+      if (!list.includes(String(spec.catalyst.faction).toLowerCase())) continue;
+    }
+    if (spec.catalyst && spec.catalyst.element) {
+      const list = (typeof getElementsOf === 'function' ? getElementsOf(catalyst) : (catalyst.elements || [])).map(e => String(e).toLowerCase());
+      if (!list.includes(String(spec.catalyst.element).toLowerCase())) continue;
+    }
+    const kc = Math.max(0, spec.kalonCost | 0);
+    if (kalonHave < kc) continue;
+    const offerings = findArchonOfferings(state, side, catalyst, archon);
+    if (!offerings) continue;
+    candidates.push({ archon, offerings, kalonCost: kc });
+  }
+  if (!candidates.length) return { ok: false, reason: 'No Archon ritual is ready (rank, offerings, or Kalon Source).' };
+  const pick = candidates[0];
+  const summonTile = _polycreationFindSummonTile(state, catalyst);
+  if (!summonTile) return { ok: false, reason: 'No open tile near the Catalyst.' };
+  return {
+    ok: true,
+    archon: pick.archon,
+    offerings: pick.offerings,
+    kalonCost: pick.kalonCost,
+    summonTile,
+    catalyst,
+    alternatives: candidates.slice(1).map(c => ({ id: c.archon.id, name: c.archon.name })),
+  };
+}
+
+// Opens the Archon Summon confirm overlay. Stashes the pending ritual on
+// App.ui.archonMode so the renderer + confirm handler can resolve it.
+function openArchonSummonMode(catalyst) {
+  const s = App.state;
+  if (!s || !catalyst) return;
+  const gate = canActivateArchonSummon(s, catalyst);
+  if (!gate.ok) {
+    if (typeof showToast === 'function') showToast('🜂 Cannot Summon Archon — ' + (gate.reason || 'no valid ritual'));
+    return;
+  }
+  App.ui.archonMode = {
+    catalystId: catalyst.id,
+    archonCardId: gate.archon.id,
+    offeringUnitIds: gate.offerings.slice(),
+    kalonCost: gate.kalonCost,
+    range: Math.max(1, Math.min(4, ((gate.archon.archonSummon && gate.archon.archonSummon.offeringRange) | 0) || 2)),
+    confirmed: false,
+  };
+  App.ui.selectedCardId = null;
+  App.ui.cardDetailId = null;
+  App.ui.modalUnitId = null;
+  renderBattle();
+}
+
+// Resolves a pending Archon Summon: sacrifices offerings, spends Kalon Source,
+// keeps/consumes the Catalyst, spawns the Archon near the Catalyst with archon
+// flags, and deepens Realm Alignment with the Creator.
+function _resolveArchonSummon() {
+  const am = App.ui && App.ui.archonMode;
+  if (!am) return;
+  const s = App.state;
+  if (!s) { App.ui.archonMode = null; return; }
+  const catalyst = (s.units || []).find(u => u && u.id === am.catalystId && u.alive);
+  if (!catalyst) { App.ui.archonMode = null; renderBattle(); return; }
+  const side = catalyst.owner;
+  let archon = null;
+  try { archon = getAllArchonCards().find(a => a && a.id === am.archonCardId) || null; } catch (e) {}
+  if (!archon) { App.ui.archonMode = null; renderBattle(); return; }
+  const spec = archon.archonSummon || {};
+  let ns = { ...s };
+  const log = [...(ns.log || [])];
+  const offIds = new Set(am.offeringUnitIds || []);
+  const consumed = (ns.units || []).filter(u => offIds.has(u.id));
+  // Sacrifice offerings (engine cleanup sweeps dead units; their tiles free up).
+  ns.units = (ns.units || []).map(u => offIds.has(u.id)
+    ? { ...u, alive: false, currentHp: 0, _archonConsumed: true }
+    : u);
+  // Catalyst either stays (spending its attack action) or is also sacrificed.
+  if (spec.catalystConsumed) {
+    ns.units = ns.units.map(u => u.id === catalyst.id ? { ...u, alive: false, currentHp: 0, _archonConsumed: true } : u);
+  } else {
+    ns.units = ns.units.map(u => u.id === catalyst.id ? { ...u, hasAttacked: true } : u);
+  }
+  // Spend Kalon Source.
+  const kc = Math.max(0, am.kalonCost | 0);
+  const curK = (ns[side] && (ns[side].kalonsRemaining | 0)) || 0;
+  ns[side] = { ...ns[side], kalonsRemaining: Math.max(0, curK - kc) };
+  // Deepen Realm Alignment with the Creator.
+  if (spec.creator) {
+    const ra = { ...((ns[side] && ns[side].realmAlignment) || {}) };
+    ra[spec.creator] = (ra[spec.creator] | 0) + 1;
+    ns[side] = { ...ns[side], realmAlignment: ra };
+  }
+  // Spawn the Archon near the Catalyst.
+  const result = _battleSpawnSummonByCardId(ns, catalyst, archon.id, 1);
+  ns.units = result.units;
+  const spawnedId = (ns.units[ns.units.length - 1] && ns.units[ns.units.length - 1]._summoned) ? ns.units[ns.units.length - 1].id : null;
+  if (spawnedId) {
+    ns.units = ns.units.map(u => u.id === spawnedId ? {
+      ...u,
+      isArchon: true,
+      isSummoned: true,
+      cannotNormalDeploy: true,
+      archonTier: spec.tier || 'lesser',
+      archonCreator: spec.creator || '',
+      summonSource: 'Archon Summon',
+      ...(spec.canActImmediately ? { hasMoved: false, hasAttacked: false } : {}),
+    } : u);
+  }
+  const offNames = consumed.map(u => u.name || 'Unit').join(' + ');
+  log.push({ msg: `🜂 Archon Summon: ${catalyst.name || 'Catalyst'}${offNames ? (' + ' + offNames) : ''} → ${archon.name || 'Archon'}!`, color: 'green' });
+  if (spec.creator) log.push({ msg: `🌌 Realm Alignment with ${_archonCreatorName(spec.creator)} deepens.`, color: 'purple' });
+  if (result.count === 0) log.push({ msg: `🜂 ${archon.name || 'Archon'} could not manifest — no open tile.`, color: 'amber' });
+  ns.log = log;
+  App.state = ns;
+  App.ui.archonMode = null;
+  App.ui.selectedCardId = null;
+  App.ui.modalUnitId = null;
+  try { if (typeof _markSummonAnim === 'function' && spawnedId) _markSummonAnim(ns.units.find(u => u.id === spawnedId)); } catch (e) {}
+  try { if (typeof playSfx === 'function') playSfx('unitSummon'); } catch (e) {}
+  // Broadcast to the opponent (MP) + render. checkPostAction does NOT end the
+  // turn — it pushes the snapshot, which the opponent adopts (diff-feedback
+  // animates the new Archon + the vanished offerings).
+  if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
+}
+
 // Returns true if the defender carries a ward passive that nullifies this move.
 // Walks the defender's passives once, checking BOTH element wards (matches the
 // move's element) AND faction wards (matches any of the attacker's factions).
@@ -81532,6 +81794,7 @@ function _renderBattleImmediate() {
       ${App.replayViewing ? '' : renderVerdictPrompt()}
       ${App.replayViewing ? '' : renderDeckSearchModal()}
       ${App.replayViewing ? '' : renderFusionSelectionOverlay()}
+      ${App.replayViewing ? '' : (typeof renderArchonSummonOverlay === 'function' ? renderArchonSummonOverlay() : '')}
       ${(App.replayViewing || (App.flags && App.flags.pixiBoard)) ? '' : renderPolycreationCinematic()}
       ${App.replayViewing ? '' : renderHackPrompt()}
       ${App.replayViewing ? '' : renderGameModeSummary()}
@@ -81621,6 +81884,7 @@ function _renderBattleImmediate() {
   bindEventModal();
   bindTutorialPanel();
   if (typeof bindFusionSelectionOverlay === 'function') bindFusionSelectionOverlay();
+  if (typeof bindArchonSummonOverlay === 'function') bindArchonSummonOverlay();
   if (typeof bindHackPrompt === 'function') bindHackPrompt();
   if (typeof bindAssaultPrompt === 'function') bindAssaultPrompt();
   if (typeof bindSacrificePrompt === 'function') bindSacrificePrompt();
@@ -83094,6 +83358,86 @@ function bindFusionSelectionOverlay() {
   };
 }
 
+// 🜂 Archon Summon confirm overlay — mirrors the Polycreation overlay but is
+// initiated by a Catalyst unit. Lists the Catalyst, the offerings to be
+// sacrificed, the Kalon Source cost, the Creator + tier, then resolves on
+// confirm. Reuses the poly-* styles so it matches the Polycreation modal.
+function renderArchonSummonOverlay() {
+  const am = App.ui && App.ui.archonMode;
+  if (!am || am.confirmed) return '';
+  const s = App.state;
+  if (!s) return '';
+  const catalyst = (s.units || []).find(u => u && u.id === am.catalystId && u.alive);
+  if (!catalyst) return '';
+  let archon = null;
+  try { archon = getAllArchonCards().find(a => a && a.id === am.archonCardId) || null; } catch (e) {}
+  if (!archon) return '';
+  const spec = archon.archonSummon || {};
+  const offIds = new Set(am.offeringUnitIds || []);
+  const offerings = (s.units || []).filter(u => offIds.has(u.id));
+  const offHtml = offerings.length
+    ? offerings.map(u => `<div class="poly-req-row"><span class="poly-req-fill">${escapeHtml(u.icon || '🪖')} ${escapeHtml(u.name || 'Unit')} <span class="ink-dim small-text">Lv${u.level || 1}</span></span></div>`).join('')
+    : '<div class="ink-dim">No offerings required — Catalyst + Kalon Source only.</div>';
+  const tierLabel = { lesser: 'Lesser', greater: 'Greater', divine: 'Divine', primordial: 'Primordial' }[spec.tier || 'lesser'] || 'Lesser';
+  const creator = spec.creator ? _archonCreatorName(spec.creator) : '';
+  const kalonHave = (s[catalyst.owner] && (s[catalyst.owner].kalonsRemaining | 0)) || 0;
+  return `
+    <div class="poly-backdrop" id="archon-select-backdrop">
+      <div class="poly-modal">
+        <div class="poly-head">
+          <div>
+            <div class="poly-title">🜂 ARCHON SUMMON READY</div>
+            <div class="poly-sub small-text">Catalyst Ritual → Summon ${escapeHtml(archon.name || 'Archon')}</div>
+          </div>
+          <button class="btn-mini btn-danger" id="archon-cancel" type="button">✕ Cancel</button>
+        </div>
+        <div class="poly-body">
+          <div class="poly-card-preview">
+            <div class="poly-card-spell">
+              <div class="poly-card-icon">${escapeHtml(catalyst.icon || '🜂')}</div>
+              <div class="poly-card-name">${escapeHtml(catalyst.name || 'Catalyst')}</div>
+              <div class="poly-card-tag">Catalyst</div>
+            </div>
+            <div class="poly-arrow">→</div>
+            <div class="poly-card-kalon">
+              <div class="poly-card-icon">${escapeHtml(archon.icon || '🜂')}</div>
+              <div class="poly-card-name">${escapeHtml(archon.name || 'Archon')}</div>
+              <div class="poly-card-tag">${escapeHtml(tierLabel)} Archon · Summon Unit</div>
+            </div>
+          </div>
+          <div class="poly-section-title">OFFERINGS (sacrificed)</div>
+          <div class="poly-req-list">${offHtml}</div>
+          <div class="poly-stats">
+            <div class="poly-stat"><span class="poly-stat-k">🌌 Kalon Source</span><span class="poly-stat-v">${am.kalonCost | 0} / ${kalonHave}</span></div>
+            <div class="poly-stat"><span class="poly-stat-k">📡 Offering Range</span><span class="poly-stat-v">${am.range | 0} tile${(am.range | 0) === 1 ? '' : 's'}</span></div>
+            ${creator ? `<div class="poly-stat"><span class="poly-stat-k">⛧ Realm Alignment</span><span class="poly-stat-v">${escapeHtml(creator)}</span></div>` : ''}
+            <div class="poly-stat"><span class="poly-stat-k">🜂 Catalyst</span><span class="poly-stat-v">${spec.catalystConsumed ? 'Sacrificed' : 'Stays'}</span></div>
+          </div>
+        </div>
+        <div class="poly-footer">
+          <button class="btn poly-fuse" id="archon-confirm" type="button">🜂 SUMMON ARCHON</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Bind cancel + confirm for the Archon overlay. Confirm resolves directly
+// (a short summon flash via _markSummonAnim inside _resolveArchonSummon).
+function bindArchonSummonOverlay() {
+  const back = document.getElementById('archon-select-backdrop');
+  if (!back) return;
+  back.onclick = (e) => { if (e.target === back) { App.ui.archonMode = null; renderBattle(); } };
+  const cancel = document.getElementById('archon-cancel');
+  if (cancel) cancel.onclick = () => { App.ui.archonMode = null; renderBattle(); };
+  const confirm = document.getElementById('archon-confirm');
+  if (confirm) confirm.onclick = () => {
+    if (!App.ui || !App.ui.archonMode) return;
+    App.ui.archonMode.confirmed = true;
+    try { _resolveArchonSummon(); } catch (e) { console.warn('[archon] resolve failed', e); App.ui.archonMode = null; renderBattle(); }
+  };
+}
+
 // Renders the 4-phase cinematic overlay. Driven by App.ui.polyCine.phase.
 // 💻 Hack Mainframe prompt — opens when a player unit completes 1 turn
 // on the mainframe tile. Three approaches, each with a different
@@ -84400,6 +84744,11 @@ function renderUnitModal() {
   const canMove = isPlayer && !u.hasMoved && s.turn === 'player';
   const canAct = isPlayer && !u.hasAttacked && s.turn === 'player';
   const canKalon = isPlayer && hasKalonForm(u) && !u.kalonUsed && s.player.kalonsRemaining > 0 && s.turn === 'player' && (s.player.kalonsThisTurn || 0) < 1;
+  // 🜂 Archon Summon — available when this is the player's Catalyst unit and a
+  // legal Archon ritual is ready (rank + offerings in range + Kalon Source).
+  const _archonGate = (isPlayer && s.turn === 'player' && typeof canActivateArchonSummon === 'function' && _catalystRankOf(u) > 0)
+    ? canActivateArchonSummon(s, u) : { ok: false };
+  const canArchon = !!(_archonGate && _archonGate.ok);
 
   const isDispelled = (u.statusEffects || []).some(e => e.type === 'dispel');
   const movesHtml = enemyHidden
@@ -84706,6 +85055,7 @@ function renderUnitModal() {
             return `<button class="btn-secondary modal-btn-swap" id="modal-btn-swap" ${disabled ? 'disabled title="' + tip + '"' : 'title="' + tip + '"'}>↔ Swap (${SWAP_ENERGY_COST} <span class="energy-orb"></span>)</button>`;
           })() : ''}
           ${canKalon ? `<button class="btn-primary kalon-btn" id="modal-btn-kalon">${getKalonIcon('1.6em')} KALON FORM (${s.player.kalonsRemaining} left)</button>` : ''}
+          ${canArchon ? `<button class="btn-primary kalon-btn" id="modal-btn-archon" title="Sacrifice nearby Offerings + pay Kalon Source to summon ${escapeHtml((_archonGate.archon && _archonGate.archon.name) || 'an Archon')}">🜂 ARCHON SUMMON</button>` : ''}
           <button class="btn-secondary" id="modal-btn-close">Close</button>
         </div>
       </div>
@@ -86544,6 +86894,17 @@ function bindBattleEvents() {
       App.ui.actionMode = null;
       App.ui.modalUnitId = null;
       renderBattle();
+    };
+
+    // 🜂 Archon Summon — open the ritual confirm overlay for this Catalyst.
+    const modalArchon = document.getElementById('modal-btn-archon');
+    if (modalArchon) modalArchon.onclick = (e) => {
+      e.stopPropagation();
+      const sel = App.state.units.find(u => u.id === App.ui.modalUnitId);
+      if (!sel) return;
+      App.ui.selectedMoveId = null;
+      App.ui.actionMode = null;
+      if (typeof openArchonSummonMode === 'function') openArchonSummonMode(sel);
     };
 
     document.querySelectorAll('.modal-move[data-move]').forEach(el => {

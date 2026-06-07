@@ -33067,6 +33067,20 @@ function _onColyseusFx(msg) {
         }
       } catch (e) {}
       break;
+    case 'locationBg':
+      // Opponent played a location — cache its board image (keyed by id) so the
+      // adopt path can reapply it (the snapshot strips it), and apply it now if
+      // that location is already active on our board, so OUR board reshapes too.
+      try {
+        if (d && d.id) {
+          MatchBroadcast._oppLoc = { id: d.id, image: d.image || '', name: d.name || '', icon: d.icon || '' };
+          if (App.state && App.state.activeLocation && App.state.activeLocation.id === d.id && d.image) {
+            App.state.activeLocation.image = d.image;
+            if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
+          }
+        }
+      } catch (e) {}
+      break;
     case 'coinReady':
       // Opponent reached the coin screen — mark them ready so our handshake can
       // proceed (and re-announce our own readiness so they learn we're ready too).
@@ -90016,6 +90030,17 @@ function placeLocation(card, pos) {
       player: { ...s.player, hand: s.player.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.player.graveyard, card], energy: s.player.energy - getEffectiveCardCost(card, s, 'player') },
       log: [...s.log, { msg, color: 'amber' }],
     };
+    // 📡 Relay the location's board IMAGE to the opponent. The snapshot strips
+    // activeLocation.image ('image' is a HEAVY_KEY) and the opponent's
+    // getLocationBoardImage only checks THEIR local store — so a board reshape
+    // never crossed. Send the art so the opponent's board changes too (even for
+    // custom locations). Cached on MatchBroadcast + reapplied on every adopt.
+    try {
+      if (boardImage && App.battlePrep && App.battlePrep.multiplayer && MatchBroadcast.myTurn
+          && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP && typeof sendColyseusFx === 'function') {
+        sendColyseusFx('locationBg', { id: card.id, image: boardImage, name: card.name || '', icon: card.icon || '' });
+      }
+    } catch (e) {}
     // 🌀 Location summon — spawn the admin-picked card near the hero
     // (whole-board locations don't have a specific tile anchor).
     _twFireCardSummon(card, null, 'player');
@@ -113436,9 +113461,14 @@ function _onRemoteStateArrived(payload) {
   try {
     const _loc = App.state && App.state.activeLocation;
     if (_loc && _loc.id) {
+      // Restore the board art the snapshot stripped: try our local store, then
+      // the image the opponent RELAYED for this location (cached by 'locationBg').
       if (!_loc.image && typeof getLocationBoardImage === 'function') {
         const _img = getLocationBoardImage(_loc.id);
         if (_img) _loc.image = _img;
+      }
+      if (!_loc.image && MatchBroadcast._oppLoc && MatchBroadcast._oppLoc.id === _loc.id && MatchBroadcast._oppLoc.image) {
+        _loc.image = MatchBroadcast._oppLoc.image;
       }
       if (_loc.id !== MatchBroadcast._lastLocId) {
         MatchBroadcast._lastLocId = _loc.id;

@@ -61940,6 +61940,10 @@ const isImmuneToStatus = (unit, statusId) => {
   // from chaining stuns into a perma-lock. Granted in startTurn when a stun
   // wears off; decays one turn later.
   if (statusId === 'stun' && unit && (unit._stunImmuneTurns | 0) > 0) return true;
+  // 🚫 No stun-STACKING — a unit/hero that is ALREADY stunned can't be stunned
+  // again; the new stun simply fails (no refresh, no extension). Stops stun-spam
+  // from chaining into a permanent lock.
+  if (statusId === 'stun' && unit && (unit.statusEffects || []).some(e => e && e.type === 'stun')) return true;
   // Element-keyed immunity (any matching element grants immunity)
   const elems = getElementsOf(unit);
   for (const e of elems) {
@@ -86111,9 +86115,14 @@ function renderUnitModal() {
   const xpToNext = xpForLevel(u.level || 1);
   const xpPct = Math.min(100, ((u.xp || 0) / xpToNext) * 100);
 
-  // Movement / attack status
-  const canMove = isPlayer && !u.hasMoved && s.turn === 'player';
-  const canAct = isPlayer && !u.hasAttacked && s.turn === 'player';
+  // Movement / attack status. 💫 A skipTurn status (Stun / Frozen / Sleep /
+  // Stumble / Knockdown / Petrified / Entangled) fully incapacitates the unit —
+  // it can neither move NOR attack while the status is active. getValidMoves
+  // already blocks movement tiles for these; this also disables the attack
+  // buttons (previously a stunned unit could still attack).
+  const _incapacitated = (u.statusEffects || []).some(e => STATUS_EFFECTS[e.type] && STATUS_EFFECTS[e.type].skipTurn);
+  const canMove = isPlayer && !u.hasMoved && s.turn === 'player' && !_incapacitated;
+  const canAct = isPlayer && !u.hasAttacked && s.turn === 'player' && !_incapacitated;
   const canKalon = isPlayer && hasKalonForm(u) && !u.kalonUsed && s.player.kalonsRemaining > 0 && s.turn === 'player' && (s.player.kalonsThisTurn || 0) < 1 && !(typeof anyUnitHasPassive === 'function' && anyUnitHasPassive(s, 'kalonSuppress'));
   // 🜂 Archon Summon — available when this is the player's Catalyst unit and a
   // legal Archon ritual is ready (rank + offerings in range + Kalon Source).
@@ -86129,7 +86138,7 @@ function renderUnitModal() {
     : moves.map(m => {
         const dispelBlocked = isDispelled && (m.cost || 0) > 0;
         // Priority moves can be used even when hasAttacked, as long as the priority slot is unused
-        const allowedByAction = m.priority ? (!u.usedPriority && isPlayer && s.turn === 'player') : canAct;
+        const allowedByAction = m.priority ? (!u.usedPriority && isPlayer && s.turn === 'player' && !_incapacitated) : canAct;
         const enabled = allowedByAction && m.cost <= s.player.energy && !dispelBlocked;
         const acc = m.accuracy != null ? m.accuracy : 100;
         const crit = m.crit != null ? m.crit : 6;
@@ -123537,7 +123546,8 @@ function renderHeroUltimateBar(heroUnit) {
   if (!def) return '';
   const pct = Math.max(0, Math.min(100, Math.round((s.charge / s.threshold) * 100)));
   const ready = s.charge >= s.threshold;
-  const canFire = ready && heroUnit.owner === 'player' && heroUnit.alive && App.state.turn === 'player' && !App.state.gameOver;
+  const _ultIncap = (heroUnit.statusEffects || []).some(e => STATUS_EFFECTS[e.type] && STATUS_EFFECTS[e.type].skipTurn);
+  const canFire = ready && heroUnit.owner === 'player' && heroUnit.alive && App.state.turn === 'player' && !App.state.gameOver && !_ultIncap;
   const fireBtn = canFire
     ? `<button class="hero-ult-fire" data-fire-ult="${heroUnit.id}" title="${escapeHtml(def.name)} — ${escapeHtml(def.desc || '')}"><span class="ult-orb lg"></span> FIRE ${escapeHtml(def.name.toUpperCase())}</button>`
     : '';
@@ -123805,6 +123815,13 @@ function resolveHeroUltimate(heroUnitId, opts) {
   if (App.state.gameOver) return;
   const hero = (App.state.units || []).find(u => u && u.id === heroUnitId && u.alive && u.isHero);
   if (!hero) return;
+  // 💫 Incapacitated heroes can't unleash an ultimate (Stun / Frozen / Sleep /
+  // etc.). Gate ONLY the initial activation — the post-cinematic re-entry
+  // (_ultCineResolved) must still resolve the already-committed effect.
+  if (!(opts && opts._ultCineResolved) && (hero.statusEffects || []).some(e => STATUS_EFFECTS[e.type] && STATUS_EFFECTS[e.type].skipTurn)) {
+    if (!_aiBypass) { try { showToast('💫 Stunned — your hero can\'t act this turn.'); } catch (e) {} }
+    return;
+  }
   // 🤖 AI counter — when it's a PLAYER ultimate, give the AI a chance to
   // negate before the cinematic fires. _ultCineResolved gates so the
   // counter only checks once per ult activation.

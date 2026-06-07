@@ -32048,7 +32048,7 @@ const SFX = {
   // ===== Battle SFX =====
   turnStart:      { src: 'assets/Audio/Start%20turn%20sound.mp3', volume: 0.9 },
   endTurn:        { src: 'assets/Audio/end%20turn.wav',         volume: 0.9 },
-  cardPlace:      { src: 'assets/Audio/card%20place.wav',       volume: 0.9 },
+  cardPlace:      { src: 'assets/Audio/card%20place.wav',       volume: 0.9, also: [{ src: 'assets/Audio/card%20placement.wav', volume: 0.95 }] },
   cardDraw:       { src: 'assets/Audio/card%20draw.wav',        volume: 0.85 },
   // 🌟 Kalon transformation — cosmic burst stinger played by the
   // local-VFX hook in performKalonTransformation. The playSfx call at
@@ -32084,7 +32084,7 @@ const SFX = {
   // 🃏 Unit summon stinger — fires from placeUnit() when a unit card lands
   // on the board. Replaces the generic cardPlace cue specifically for unit
   // deploys so summons feel weightier than spell/trap drops.
-  unitSummon:     { src: 'assets/Audio/audio-Summon-sound-effect-.mp3', volume: 0.95 },
+  unitSummon:     { src: 'assets/Audio/audio-Summon-sound-effect-.mp3', volume: 0.95, also: [{ src: 'assets/Audio/card%20placement.wav', volume: 0.9 }] },
   // 🔮 Ability stinger — plays when a hero/unit fires an `ability`-kind
   // move (NOT a basic attack, NOT a spell card from hand). Goes with the
   // ABILITY ACTIVATED cinematic. Same stinger reused after Fast Cast Mode
@@ -32202,16 +32202,29 @@ function playSfx(id) {
   if (settings.sfxEnabled === false) return;
   const def = SFX[id];
   if (!def) return;
-  try {
-    const audio = new Audio(def.src);
-    const baseVol = Math.max(0, Math.min(1, settings.sfxVolume != null ? settings.sfxVolume : 0.8));
-    audio.volume = Math.max(0, Math.min(1, baseVol * (def.volume != null ? def.volume : 1.0)));
-    const p = audio.play();
-    // Swallow autoplay blocks — SFX play in response to user actions, so
-    // rejections are rare. Don't bother arming a gesture listener for SFX
-    // since they're fire-and-forget; the next call will succeed.
-    if (p && typeof p.catch === 'function') p.catch(() => {});
-  } catch (e) { /* ignore */ }
+  const baseVol = Math.max(0, Math.min(1, settings.sfxVolume != null ? settings.sfxVolume : 0.8));
+  const _one = (src, vol) => {
+    try {
+      const audio = new Audio(src);
+      audio.volume = Math.max(0, Math.min(1, baseVol * (vol != null ? vol : 1.0)));
+      const p = audio.play();
+      // Swallow autoplay blocks — SFX play in response to user actions, so
+      // rejections are rare. Fire-and-forget; the next call will succeed.
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (e) { /* ignore */ }
+  };
+  _one(def.src, def.volume);
+  // 🔊 Layered "also" cues — extra sounds that play ALONGSIDE the main one (e.g.
+  // the card-placement thunk layered on top of the base card-place cue). Accepts
+  // a string src or { src, volume }, single or array.
+  if (def.also) {
+    const list = Array.isArray(def.also) ? def.also : [def.also];
+    for (const a of list) {
+      if (!a) continue;
+      if (typeof a === 'string') _one(a, null);
+      else _one(a.src, a.volume);
+    }
+  }
 }
 
 // 💬 Synthesized chat cue — a tiny WebAudio chime so we don't need a sound

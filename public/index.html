@@ -77791,7 +77791,8 @@ function captureEditorIntoCard(card) {
   }
   // 🜂 Archon Summon recipe capture (summon cards). Reads the Catalyst rank/title,
   // Offering requirement rows, Kalon Source cost, tier, Creator + options into
-  // card.archonSummon. Empty offerings are dropped at save.
+  // card.archonSummon. Wrapped so a malformed row can't abort the whole save.
+  try {
   if (document.getElementById('ed-archon-on')) {
     const on = !!document.getElementById('ed-archon-on').checked;
     if (on) {
@@ -77830,9 +77831,11 @@ function captureEditorIntoCard(card) {
       delete card.archonSummon;
     }
   }
+  } catch (e) { try { console.warn('[forge] archon capture failed', e); } catch (_) {} }
   // ⚡ Trigger Abilities capture — read every #trigger-rows .trg-row into
   // card.triggers[]. Each row keeps a stable id so per-turn / per-match limits
-  // can be tracked on the live unit at runtime.
+  // can be tracked on the live unit at runtime. Wrapped so a bad row can't abort save.
+  try {
   if (document.getElementById('trigger-rows')) {
     const rows = document.querySelectorAll('#trigger-rows .trg-row');
     if (rows.length) {
@@ -77869,6 +77872,7 @@ function captureEditorIntoCard(card) {
       delete card.triggers;
     }
   }
+  } catch (e) { try { console.warn('[forge] triggers capture failed', e); } catch (_) {} }
   // 🔥 Phoenix Rebirth Aura config.
   if (document.getElementById('ed-px-chance')) {
     const _pv = (id) => { const e = document.getElementById(id); return e ? e.value : ''; };
@@ -78070,7 +78074,9 @@ function saveCardFromInputs(commit) {
     pendingLearnEntry = { lvl: pendingLvl, m: pendingPick };
   }
 
-  captureEditorIntoCard(card);
+  // 🛡 Never let a single faulty capture block abort the entire save — capture
+  // is best-effort; whatever was read is kept and the card still persists.
+  try { captureEditorIntoCard(card); } catch (e) { try { console.warn('[forge] captureEditorIntoCard failed — saving partial card', e); } catch (_) {} }
 
   // Drop any element-modifier rows the admin added but never assigned an
   // element to, so empty placeholders aren't persisted.

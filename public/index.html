@@ -30922,22 +30922,74 @@ function getUnopenedPackCount() {
 // remembered across sessions). Players can purchase 1–99 at a time.
 const VENDOR_PACK_STOCK_MAX = 100000;
 const VENDOR_PACK_BUY_MAX   = 99;
+// 📦 Baseline already-sold per set — every set starts displayed at MAX-100 to
+// reflect packs bought before the GLOBAL counter existed (requested: "take away
+// 100 packs from each set").
+const VENDOR_PACK_STOCK_BASELINE_SOLD = 100;
+// 🌍 GLOBAL shelf stock. The number of packs SOLD per set is shared across ALL
+// players via the Supabase `pack_stock` table (fetched into Cloud.packSold,
+// incremented atomically on buy by the pack_buy RPC). Remaining = MAX - 100
+// baseline - global sold. When the cloud table/RPC is unavailable we fall back
+// to a LOCAL persisted sold count (Profile.vendorSold) so the shelf still draws
+// down + survives refresh for that player instead of resetting to 100,000.
+function _vendorPackSold(packId) {
+  // Prefer the global cloud count when we have it.
+  try {
+    if (typeof Cloud !== 'undefined' && Cloud && Cloud.packSold && typeof Cloud.packSold[packId] === 'number') {
+      return Cloud.packSold[packId] | 0;
+    }
+  } catch (e) {}
+  if (!Profile.vendorSold || typeof Profile.vendorSold !== 'object') Profile.vendorSold = {};
+  const v = Profile.vendorSold[packId];
+  return (typeof v === 'number' && isFinite(v) && v >= 0) ? (v | 0) : 0;
+}
 function getVendorPackStock(packId) {
   if (!packId) return 0;
-  if (!Profile.vendorStock || typeof Profile.vendorStock !== 'object') Profile.vendorStock = {};
-  const v = Profile.vendorStock[packId];
-  if (typeof v !== 'number' || !isFinite(v) || v < 0) {
-    Profile.vendorStock[packId] = VENDOR_PACK_STOCK_MAX;
-  }
-  return Profile.vendorStock[packId];
+  const remaining = VENDOR_PACK_STOCK_MAX - VENDOR_PACK_STOCK_BASELINE_SOLD - _vendorPackSold(packId);
+  return Math.max(0, remaining);
 }
 // Remove up to `n` units from a pack's shelf; returns how many were actually
-// taken (clamped to remaining stock).
+// taken (clamped to remaining stock). Records the sale GLOBALLY (cloud RPC) +
+// locally (optimistic) so the shelf draws down for everyone and persists.
 function takeVendorPackStock(packId, n) {
   const cur = getVendorPackStock(packId);
   const took = Math.max(0, Math.min(n | 0, cur));
-  Profile.vendorStock[packId] = cur - took;
+  if (took > 0) {
+    // Optimistic local bump (immediate UI + persists for this player offline).
+    if (!Profile.vendorSold || typeof Profile.vendorSold !== 'object') Profile.vendorSold = {};
+    Profile.vendorSold[packId] = (Profile.vendorSold[packId] | 0) + took;
+    try { if (typeof Cloud !== 'undefined' && Cloud && Cloud.packSold) Cloud.packSold[packId] = (Cloud.packSold[packId] | 0) + took; } catch (e) {}
+    // Global persist — atomic increment on the shared pack_stock table.
+    try { if (typeof recordGlobalPackBuy === 'function') recordGlobalPackBuy(packId, took); } catch (e) {}
+  }
   return took;
+}
+// 🌍 Pull the global per-set sold counts into Cloud.packSold (shared across all
+// players). Re-renders the shop if it's open so the numbers reflect reality.
+async function fetchGlobalPackStock() {
+  try {
+    if (typeof Cloud === 'undefined' || !Cloud || !Cloud.client) return;
+    const { data, error } = await Cloud.client.rpc('pack_stock_all');
+    if (error || !Array.isArray(data)) return;
+    const map = {};
+    data.forEach(r => { if (r && r.pack_id) map[r.pack_id] = (r.sold | 0); });
+    Cloud.packSold = map;
+    if (App.screen === 'vendorMarket' && typeof render === 'function') render();
+  } catch (e) { /* offline / table missing → local fallback stays in effect */ }
+}
+// 🌍 Atomically record a global pack purchase (shared across players).
+async function recordGlobalPackBuy(packId, qty) {
+  try {
+    if (typeof Cloud === 'undefined' || !Cloud || !Cloud.client || !packId || (qty | 0) < 1) return;
+    const { data, error } = await Cloud.client.rpc('pack_buy', { p_pack_id: packId, p_qty: (qty | 0) });
+    if (!error && data != null) {
+      const sold = (typeof data === 'number') ? data : (data && typeof data.sold === 'number' ? data.sold : null);
+      if (sold != null) {
+        Cloud.packSold = Cloud.packSold || {};
+        Cloud.packSold[packId] = sold | 0;   // authoritative server count
+      }
+    }
+  } catch (e) { /* keep optimistic local bump */ }
 }
 // How many of this pack the player currently wants to buy (1–99, clamped to
 // the remaining shelf stock). Transient — lives on App, not persisted.
@@ -99398,6 +99450,16 @@ function _bindPackShopHandlers() {
       frFetch().then(() => {
         if (App.screen === 'vendorMarket' && (App.vendorMarketTab || 'packs') === 'packs' && typeof render === 'function') render();
       });
+    }
+  } catch (e) {}
+  // 🌍 Pull the GLOBAL per-set pack stock (shared across all players). Re-renders
+  // when it lands. 12s freshness gate so it refreshes on each visit without
+  // hammering the RPC.
+  try {
+    if (typeof Cloud !== 'undefined' && Cloud && Cloud.client && typeof fetchGlobalPackStock === 'function'
+        && (Date.now() - (Cloud._packStockFetchedAt || 0) > 12000)) {
+      Cloud._packStockFetchedAt = Date.now();
+      fetchGlobalPackStock();
     }
   } catch (e) {}
   // Structure deck purchase — no flip reveal, just dump cards into the inventory.

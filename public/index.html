@@ -60494,6 +60494,25 @@ function getAllArchonCards() {
   return out;
 }
 
+// The player's Archon Deck — only Archons added to Profile.archonDeck can be
+// summoned in battle (Phase 3). Resolves each saved key to its card def,
+// de-duped by id. Falls back to ALL forged Archons only when the player has
+// never built an Archon deck AND has no archonDeck object (legacy safety).
+function getBattleArchonCards() {
+  const out = [];
+  const seen = new Set();
+  try {
+    const keys = (typeof Profile !== 'undefined' && Profile.archonDeck && Array.isArray(Profile.archonDeck.cards))
+      ? Profile.archonDeck.cards : [];
+    for (const key of keys) {
+      let def = null;
+      try { def = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null; } catch (e) {}
+      if (def && isArchonCard(def) && !seen.has(def.id)) { seen.add(def.id); out.push(def); }
+    }
+  } catch (e) {}
+  return out;
+}
+
 // Highest Catalyst rank carried by a unit (0 = not a Catalyst).
 function _catalystRankOf(unit) {
   if (!unit) return 0;
@@ -60583,8 +60602,8 @@ function canActivateArchonSummon(state, catalyst) {
   const side = catalyst.owner;
   const rank = _catalystRankOf(catalyst);
   if (!rank) return { ok: false, reason: 'This unit has no Catalyst passive' };
-  const all = getAllArchonCards();
-  if (!all.length) return { ok: false, reason: 'No Archons forged. Make a Summon card with Archon Summon enabled first.' };
+  const all = getBattleArchonCards();
+  if (!all.length) return { ok: false, reason: 'No Archons in your Archon Deck — add some in the Deck Builder (🜂 Archon tab).' };
   const kalonHave = (state[side] && (state[side].kalonsRemaining | 0)) || 0;
   const candidates = [];
   for (const archon of all) {
@@ -133877,6 +133896,17 @@ function renderDeckBuilder() {
   if (!Array.isArray(Profile.sideDeck.gems)) Profile.sideDeck.gems = [];
   if (!Array.isArray(Profile.sideDeck.cards)) Profile.sideDeck.cards = [];
   if (!Profile.socketedGems || typeof Profile.socketedGems !== 'object') Profile.socketedGems = {};
+  // ── Archon Deck state (player decks only) ─────────────────────────────────
+  // A separate roster of up to ARCHON_DECK_MAX Archons. ONLY Archons in this
+  // deck can be summoned in battle by a Catalyst ritual. Archon (summon) cards
+  // are already excluded from the main/side pool by getAllDeckableCards, so they
+  // live ONLY here. Shared across all of a player's decks (like the side deck).
+  if (!Profile.archonDeck || typeof Profile.archonDeck !== 'object') Profile.archonDeck = { cards: [] };
+  if (!Array.isArray(Profile.archonDeck.cards)) Profile.archonDeck.cards = [];
+  const ARCHON_DECK_MAX = 10;
+  const _archonEnabled = !App.aiDeckEdit && !App.starterDeckEdit;
+  const _archonCards = Profile.archonDeck.cards;
+  const _archonCount = _archonCards.length;
   const _pTab = App.deckPanelTab || 'main';
   const SIDE_MAX = 15;
   const GEM_CAP  = 5;
@@ -134133,6 +134163,37 @@ function renderDeckBuilder() {
     }).join('');
   })();
 
+  // ── Archon Deck panel HTML ────────────────────────────────────────────────
+  // Gem-pool-style editor: lists every forged Archon with +/- to add it to the
+  // player's Archon Deck (max ARCHON_DECK_MAX, 1 copy each). Only these Archons
+  // can be summoned in battle (getBattleArchonCards reads Profile.archonDeck).
+  const _archonDeckHtml = (() => {
+    let pool = [];
+    try { pool = (typeof getAllArchonCards === 'function') ? getAllArchonCards() : []; } catch (e) {}
+    const okCount = _archonCount <= ARCHON_DECK_MAX;
+    const infoBar = `<div class="pbl-deck-info ${okCount ? 'ok' : 'warn'}" style="margin-bottom:0.8rem;padding:0.5rem 0.8rem;border-radius:6px;font-size:0.82rem;background:${okCount ? 'rgba(255,200,80,0.12)' : 'rgba(184,78,44,0.15)'};border:1px solid ${okCount ? 'rgba(255,200,80,0.4)' : 'rgba(184,78,44,0.5)'}">🜂 Archon Deck: ${_archonCount} of ${ARCHON_DECK_MAX} Archons · summoned in battle by a Catalyst (costs Kalon Source)</div>`;
+    if (!pool.length) {
+      return infoBar + `<div class="empty-list-note" style="text-align:center">No Archons forged yet.<br><span class="ink-dim" style="font-size:0.8rem">Go to The Forge → Cards → <strong>Summon</strong>, then enable "🜂 Make this an Archon" to create some.</span></div>`;
+    }
+    const _inArchonDeck = (id) => _archonCards.some(k => { try { const c = resolveDeckCard(k); return c && c.id === id; } catch (e) { return false; } });
+    const rows = pool.map(a => {
+      if (!a || !a.id) return '';
+      const sp = a.archonSummon || {};
+      const tier = ({ lesser: 'Lesser', greater: 'Greater', divine: 'Divine', primordial: 'Primordial' })[sp.tier || 'lesser'] || 'Lesser';
+      const has = _inArchonDeck(a.id);
+      const full = _archonCount >= ARCHON_DECK_MAX;
+      const addDisabled = has || full;
+      return `<div class="pbl-gem-pool-row" style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.5rem;border:1px solid rgba(255,200,80,0.25);border-radius:6px;background:${has ? 'rgba(255,200,80,0.1)' : 'rgba(255,255,255,0.02)'}">
+        <span style="font-size:1.1rem">${escapeHtml(a.icon || '🜂')}</span>
+        <span style="flex:1;font-size:0.82rem;color:#fff3da">${escapeHtml(a.name || a.id)} <span class="ink-dim" style="font-size:0.7rem">${escapeHtml(tier)} · 🌌${(sp.kalonCost | 0) || 1}</span></span>
+        ${has ? `<span style="font-size:0.72rem;color:#ffd86b">✓ in deck</span>` : ''}
+        <button class="btn-mini ${has ? 'btn-danger' : 'btn-disabled'}" data-archonpool-rm="${escapeHtml(a.id)}" ${has ? '' : 'disabled'} title="Remove from Archon Deck" style="font-size:0.7rem;padding:1px 6px">−</button>
+        <button class="btn-mini ${addDisabled ? 'btn-disabled' : ''}" data-archonpool-add="${escapeHtml(a.id)}" ${addDisabled ? 'disabled' : ''} title="${full ? 'Archon Deck full' : 'Add to Archon Deck'}" style="font-size:0.7rem;padding:1px 6px">+</button>
+      </div>`;
+    }).join('');
+    return infoBar + `<div style="display:flex;flex-direction:column;gap:0.3rem;max-height:340px;overflow-y:auto;padding-right:0.2rem">${rows}</div>`;
+  })();
+
   // ── Gems panel HTML ───────────────────────────────────────────────────────
   const _gemsHtml = (() => {
     const _parseKeyG = key => { const ci = (key||'').indexOf(':'); return ci<0 ? {kind:'custom',id:key||''} : {kind:key.slice(0,ci),id:key.slice(ci+1)}; };
@@ -134318,6 +134379,7 @@ function renderDeckBuilder() {
             <button class="forge-tab ${_pTab==='main'?'active':''}" data-db-ptab="main" style="border-radius:6px 6px 0 0;margin-right:2px">🃏 Main (${deckSize}/${DECK_SIZE})</button>
             <button class="forge-tab ${_pTab==='side'?'active':''}" data-db-ptab="side" style="border-radius:6px 6px 0 0;margin-right:2px">📋 Side (${_sideCount}/${SIDE_MAX})</button>
             <button class="forge-tab ${_pTab==='gems'?'active':''}" data-db-ptab="gems" style="border-radius:6px 6px 0 0">💎 Gems (${_totalGems}/${GEM_CAP})</button>
+            ${_archonEnabled ? `<button class="forge-tab ${_pTab==='archon'?'active':''}" data-db-ptab="archon" style="border-radius:6px 6px 0 0;margin-left:2px">🜂 Archon (${_archonCount}/${ARCHON_DECK_MAX})</button>` : ''}
           </div>
           <!-- Main deck panel -->
           <div style="display:${_pTab==='main'?'block':'none'}">
@@ -134333,6 +134395,11 @@ function renderDeckBuilder() {
             <div style="padding:0.4rem 0.2rem 0.2rem;font-size:0.78rem;color:#8899aa">Socket gems into unit cards. Gems apply passives, moves, and on-play effects when that unit enters battle.</div>
             <div id="db-gems-list" style="padding-top:0.4rem">${_gemsHtml}</div>
           </div>
+          <!-- Archon deck panel -->
+          ${_archonEnabled ? `<div style="display:${_pTab==='archon'?'block':'none'}">
+            <div style="padding:0.4rem 0.2rem 0.2rem;font-size:0.78rem;color:#8899aa">Up to ${ARCHON_DECK_MAX} Archons. In battle, a unit with a Catalyst passive can sacrifice nearby Offerings + pay Kalon Source to summon one of these.</div>
+            <div id="db-archon-list" style="padding-top:0.4rem">${_archonDeckHtml}</div>
+          </div>` : ''}
         </div>
       </div>
       ${renderDeckCardContextModal()}
@@ -134698,6 +134765,32 @@ function renderDeckBuilder() {
       if (idx === -1) return;
       Profile.sideDeck.cards.splice(idx, 1);
       try { saveProfile(); } catch(_) {}
+      render();
+    };
+  });
+
+  // ── Archon Deck pool add/remove (max ARCHON_DECK_MAX, 1 copy each) ─────────
+  document.querySelectorAll('[data-archonpool-add]').forEach(btn => {
+    btn.onclick = () => {
+      if (btn.disabled) return;
+      const id = btn.dataset.archonpoolAdd;
+      if (!Profile.archonDeck || !Array.isArray(Profile.archonDeck.cards)) Profile.archonDeck = { cards: [] };
+      if (Profile.archonDeck.cards.length >= ARCHON_DECK_MAX) { try { showToast(`⚠ Archon Deck is full (${ARCHON_DECK_MAX} max)`); } catch (_) {} return; }
+      const already = Profile.archonDeck.cards.some(k => { try { const c = resolveDeckCard(k); return c && c.id === id; } catch (e) { return false; } });
+      if (already) return;
+      Profile.archonDeck.cards.push('custom:' + id);
+      try { saveProfile(); } catch (_) {}
+      render();
+    };
+  });
+  document.querySelectorAll('[data-archonpool-rm]').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.archonpoolRm;
+      if (!Profile.archonDeck || !Array.isArray(Profile.archonDeck.cards)) return;
+      const idx = Profile.archonDeck.cards.findIndex(k => { try { const c = resolveDeckCard(k); return c && c.id === id; } catch (e) { return false; } });
+      if (idx === -1) return;
+      Profile.archonDeck.cards.splice(idx, 1);
+      try { saveProfile(); } catch (_) {}
       render();
     };
   });

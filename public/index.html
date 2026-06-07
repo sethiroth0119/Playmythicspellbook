@@ -27337,6 +27337,15 @@ const STATUS_EFFECTS = {
 const PASSIVES = {
   none:         { id: 'none',         name: 'None',         desc: 'No passive ability' },
   regeneration: { id: 'regeneration', name: 'Regeneration', desc: 'Heal 2 HP at start of your turn' },
+  // 🜂 ARCHON SUMMON — CATALYST RANKS. A unit with a Catalyst passive holds a
+  // fragment of Primordial Energy and can initiate an Archon Summon ritual:
+  // surround it with the Offering units an Archon requires (within range), pay
+  // the Kalon Source cost, and the Archon answers the call. Higher ranks unlock
+  // higher Archon tiers. The required rank is set per-Archon in the Forge.
+  catalyst:           { id: 'catalyst',           name: 'Catalyst (Lesser)',      desc: '🜂 Holds Primordial Energy — can initiate an Archon Summon, summoning Lesser Archons.' },
+  catalystAscended:   { id: 'catalystAscended',   name: 'Ascended Catalyst',      desc: '🜂 Can initiate an Archon Summon, summoning up to Greater Archons.' },
+  catalystDivine:     { id: 'catalystDivine',     name: 'Divine Catalyst',        desc: '🜂 Can initiate an Archon Summon, summoning up to Divine Archons.' },
+  catalystPrimordial: { id: 'catalystPrimordial', name: 'Primordial Catalyst',    desc: '🜂 Can initiate an Archon Summon, summoning up to Creator Avatars & Primordial-class entities.' },
   // 🪦 RAISE FROM DEAD
   // On death, leave a GLOWING tombstone that blocks the tile for 1-3 turns.
   // When the timer expires, the unit revives on that tile at 60% HP.
@@ -74985,6 +74994,25 @@ function renderCardEditor() {
       <button class="btn-mini btn-danger" data-act="rm-fr" data-fr-idx="${i}">×</button>
     </div>
   `;
+  // 🜂 ARCHON SUMMON recipe — stored on the Archon (result) summon card, mirroring
+  // the fusion editor. Catalyst rank/title + Offering requirement rows + Kalon
+  // Source cost + tier + Creator realm. Offerings match by Title (faction /
+  // element / trait / min-level), each with a required count.
+  const _arc = (card.archonSummon && typeof card.archonSummon === 'object') ? card.archonSummon : {};
+  const _arcOffs = Array.isArray(_arc.offerings) ? _arc.offerings : [];
+  const _arcTraitOpts = (sel) => ['<option value="">— Any trait —</option>']
+    .concat(['flying','ancient','legendary','hero','mutated','divine','nightmare','undead','machine','construct','beast','alien','voidborn']
+      .map(t => `<option value="${t}" ${String(sel || '').toLowerCase() === t ? 'selected' : ''}>${t.charAt(0).toUpperCase() + t.slice(1)}</option>`)).join('');
+  const _archonReqRow = (r, i) => `
+    <div class="archon-req-row" data-ar-idx="${i}" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:rgba(40,90,180,0.10);border:1px solid rgba(120,180,255,0.35);border-radius:6px;padding:6px 8px;margin-bottom:6px">
+      <select class="ar-faction" data-ar-idx="${i}" style="min-width:150px">${_fusFacOpts(r.faction)}</select>
+      <select class="ar-element" data-ar-idx="${i}" style="min-width:140px">${_fusElOpts(r.element)}</select>
+      <select class="ar-trait" data-ar-idx="${i}" style="min-width:130px">${_arcTraitOpts(r.trait)}</select>
+      <label style="font-size:0.74rem;color:#a9c4ff">Lv≥<input class="ar-minlevel" data-ar-idx="${i}" type="number" min="0" max="20" value="${r.minLevel | 0}" style="width:48px;margin-left:3px"></label>
+      <label style="font-size:0.74rem;color:#a9c4ff">×<input class="ar-count" data-ar-idx="${i}" type="number" min="1" max="6" value="${(r.count | 0) || 1}" style="width:44px;margin-left:3px"></label>
+      <button class="btn-mini btn-danger" data-act="rm-ar" data-ar-idx="${i}">×</button>
+    </div>
+  `;
   const summonBlock = (type === 'summon') ? `
     <div class="editor-field full" style="background:rgba(120,40,180,0.10);border:1px dashed rgba(184,136,255,0.55);padding:0.55rem 0.7rem;border-radius:4px;color:#d8b8ff;font-size:0.85rem">
       🌀 <strong>Summon</strong> — this card is <strong>NOT</strong> deckable. It defines a unit that other effects (ultimates, moves, passives, spells, locations, weather, walls, events) can spawn on the battlefield. Reference this summon by its id from any effect that spawns units.
@@ -75023,6 +75051,62 @@ function renderCardEditor() {
         ${_fusReqs.length === 0 ? '<div class="small-text ink-dim" style="padding:0.35rem 0.5rem">No requirements yet — add at least one to make this a usable fusion target.</div>' : _fusReqs.map(_fusReqRow).join('')}
       </div>
       <button class="btn-mini" id="btn-add-fusion-req" type="button" style="margin-top:0.35rem">+ Add Requirement</button>
+    </div>
+
+    <div class="editor-field full" style="border-top:1px dashed rgba(120,180,255,0.5);padding-top:0.8rem;margin-top:0.7rem">
+      <div class="small-text" style="padding:0.45rem 0.65rem;background:rgba(40,90,180,0.12);border:1px solid rgba(120,180,255,0.45);border-radius:4px;color:#bcd4ff">
+        🜂 <strong>Archon Summon</strong> — make this summon an Archon called via a Catalyst ritual. A unit with a <strong>Catalyst</strong> passive, surrounded by the required <strong>Offerings</strong> (within range) and paying the <strong>Kalon Source</strong> cost, summons this Archon. The Catalyst stays on the field; the Offerings are sacrificed.
+      </div>
+    </div>
+    <div class="editor-field full">
+      <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+        <input type="checkbox" id="ed-archon-on" ${_arc.enabled ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
+        <span>🜂 Make this an <strong>Archon</strong> (summoned via a Catalyst ritual)</span>
+      </label>
+    </div>
+    <div class="editor-field"><label>Required Catalyst Rank</label>
+      <select id="ed-archon-rank">
+        ${[
+          { id: 'lesser',     label: 'Lesser Catalyst → Lesser Archons' },
+          { id: 'ascended',   label: 'Ascended Catalyst → Greater' },
+          { id: 'divine',     label: 'Divine Catalyst → Divine' },
+          { id: 'primordial', label: 'Primordial Catalyst → Creator/Primordial' },
+        ].map(o => `<option value="${o.id}" ${(_arc.catalystRank || 'lesser') === o.id ? 'selected' : ''}>${o.label}</option>`).join('')}
+      </select>
+    </div>
+    <div class="editor-field"><label>Archon Tier</label>
+      <select id="ed-archon-tier">
+        ${[
+          { id: 'lesser', label: 'Lesser (early)' }, { id: 'greater', label: 'Greater (mid)' },
+          { id: 'divine', label: 'Divine (late)' }, { id: 'primordial', label: 'Primordial (game-changing)' },
+        ].map(o => `<option value="${o.id}" ${(_arc.tier || 'lesser') === o.id ? 'selected' : ''}>${o.label}</option>`).join('')}
+      </select>
+    </div>
+    <div class="editor-field"><label>Kalon Source Cost</label><input id="ed-archon-kalon" type="number" min="0" max="20" value="${(_arc.kalonCost | 0) || 1}"></div>
+    <div class="editor-field"><label>Offering Range (tiles from Catalyst)</label><input id="ed-archon-range" type="number" min="1" max="4" value="${(_arc.offeringRange | 0) || 2}"></div>
+    <div class="editor-field"><label>Primordial Creator (Realm Alignment)</label>
+      <select id="ed-archon-creator">
+        ${[
+          { id: '', label: '— None —' }, { id: 'yahweh', label: 'Yahweh — Protection / Holy Fire' },
+          { id: 'abraxas', label: 'Abraxas — Mutation / Forbidden' }, { id: 'azathoth', label: 'Azathoth — Madness / Cosmic' },
+          { id: 'leviathor', label: 'Leviathor — Seas / Storms' },
+        ].map(o => `<option value="${o.id}" ${(_arc.creator || '') === o.id ? 'selected' : ''}>${o.label}</option>`).join('')}
+      </select>
+    </div>
+    <div class="editor-field"><label>Catalyst Faction (optional)</label><select id="ed-archon-cat-faction">${_fusFacOpts((_arc.catalyst && _arc.catalyst.faction) || '')}</select></div>
+    <div class="editor-field"><label>Catalyst Element (optional)</label><select id="ed-archon-cat-element">${_fusElOpts((_arc.catalyst && _arc.catalyst.element) || '')}</select></div>
+    <div class="editor-field"><label>Catalyst consumed by the ritual?</label>
+      <select id="ed-archon-cat-consumed">
+        <option value="0" ${!_arc.catalystConsumed ? 'selected' : ''}>No — Catalyst stays (default)</option>
+        <option value="1" ${_arc.catalystConsumed ? 'selected' : ''}>Yes — Catalyst is also sacrificed</option>
+      </select>
+    </div>
+    <div class="editor-field full">
+      <label>🜂 Offering Requirements (each row = one required offering · Lv≥ minimum · ×N how many)</label>
+      <div id="archon-req-rows" style="margin-top:0.45rem">
+        ${_arcOffs.length === 0 ? '<div class="small-text ink-dim" style="padding:0.35rem 0.5rem">No offerings yet — add at least one to make this a usable Archon.</div>' : _arcOffs.map(_archonReqRow).join('')}
+      </div>
+      <button class="btn-mini" id="btn-add-archon-req" type="button" style="margin-top:0.35rem">+ Add Offering</button>
     </div>
   ` : '';
   // ⏱ Counter block — hand-playable card that interrupts opponent
@@ -76258,6 +76342,33 @@ function bindCardEditor() {
     };
   });
 
+  // 🜂 Archon offering rows — same add/remove pattern as the fusion rows above.
+  const _arEnsureList = (t) => {
+    if (!t.archonSummon || typeof t.archonSummon !== 'object') t.archonSummon = { enabled: true, offerings: [] };
+    if (!Array.isArray(t.archonSummon.offerings)) t.archonSummon.offerings = [];
+    return t.archonSummon.offerings;
+  };
+  const addArBtn = document.getElementById('btn-add-archon-req');
+  if (addArBtn) addArBtn.onclick = () => {
+    const t = targetCard(); if (!t) return;
+    if (typeof captureEditorIntoCard === 'function') { try { captureEditorIntoCard(t); } catch (e) {} }
+    _arEnsureList(t).push({ faction: '', element: '', trait: '', minLevel: 0, count: 1 });
+    t.archonSummon.enabled = true;   // auto-enable so the capture doesn't strip it
+    if (!isNew && typeof saveForge === 'function') saveForge();
+    render();
+  };
+  document.querySelectorAll('[data-act="rm-ar"]').forEach(btn => {
+    btn.onclick = () => {
+      const t = targetCard(); if (!t) return;
+      const idx = parseInt(btn.dataset.arIdx, 10);
+      if (typeof captureEditorIntoCard === 'function') { try { captureEditorIntoCard(t); } catch (e) {} }
+      const list = _arEnsureList(t);
+      if (idx >= 0 && idx < list.length) list.splice(idx, 1);
+      if (!isNew && typeof saveForge === 'function') saveForge();
+      render();
+    };
+  });
+
   document.getElementById('btn-save-card').onclick = () => {
     App._traitPoolModal = false;
     // Capture subclass state into the card before the global save sweep runs.
@@ -76720,6 +76831,45 @@ function captureEditorIntoCard(card) {
         inheritEquip: _rc('ed-rb-iequip'),
         popupText: (_rv('ed-rb-popup') || '').trim(),
       };
+    }
+  }
+  // 🜂 Archon Summon recipe capture (summon cards). Reads the Catalyst rank/title,
+  // Offering requirement rows, Kalon Source cost, tier, Creator + options into
+  // card.archonSummon. Empty offerings are dropped at save.
+  if (document.getElementById('ed-archon-on')) {
+    const on = !!document.getElementById('ed-archon-on').checked;
+    if (on) {
+      const offerings = [];
+      document.querySelectorAll('#archon-req-rows .archon-req-row').forEach(r => {
+        const fc = r.querySelector('.ar-faction');
+        const el = r.querySelector('.ar-element');
+        const tr = r.querySelector('.ar-trait');
+        const ml = r.querySelector('.ar-minlevel');
+        const ct = r.querySelector('.ar-count');
+        const off = {};
+        if (fc && fc.value) off.faction = fc.value;
+        if (el && el.value) off.element = el.value;
+        if (tr && tr.value) off.trait = tr.value;
+        const minL = ml ? (parseInt(ml.value, 10) || 0) : 0;
+        if (minL > 0) off.minLevel = minL;
+        off.count = ct ? Math.max(1, Math.min(6, parseInt(ct.value, 10) || 1)) : 1;
+        if (off.faction || off.element || off.trait || off.minLevel || off.count > 1) offerings.push(off);
+      });
+      const catFac = v('ed-archon-cat-faction');
+      const catEl = v('ed-archon-cat-element');
+      card.archonSummon = {
+        enabled: true,
+        catalystRank: v('ed-archon-rank') || 'lesser',
+        tier: v('ed-archon-tier') || 'lesser',
+        kalonCost: Math.max(0, Math.min(20, parseInt(v('ed-archon-kalon'), 10) || 1)),
+        offeringRange: Math.max(1, Math.min(4, parseInt(v('ed-archon-range'), 10) || 2)),
+        creator: v('ed-archon-creator') || '',
+        catalyst: { faction: catFac || '', element: catEl || '' },
+        catalystConsumed: v('ed-archon-cat-consumed') === '1',
+        offerings: offerings,
+      };
+    } else {
+      delete card.archonSummon;
     }
   }
   // 🔥 Phoenix Rebirth Aura config.

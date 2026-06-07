@@ -5,6 +5,7 @@
   "description": "Mythic Spellbook — Cloudflare Workers static deploy of ./public",
   "scripts": {
     "deploy": "node deploy.mjs",
+    "deploy:test": "node deploy-test.mjs",
     "deploy:raw": "wrangler deploy",
     "build": "node build.mjs minify",
     "restore": "node build.mjs restore",

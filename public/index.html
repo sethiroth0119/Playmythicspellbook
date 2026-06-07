@@ -51986,9 +51986,19 @@ function processTombstoneDrops(state) {
             onBoard = true; didRevive = true;
           } else if (pcfg.allowHand) {
             const side = state[u.owner];
-            let card = null;
-            try { card = (typeof lookupCustomCard === 'function' && lookupCustomCard(u.cardId)) || (typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS.find(c => c.id === u.cardId)) || null; } catch (e) {}
-            if (side && Array.isArray(side.hand) && card) { side.hand.push({ ...card }); didRevive = true; }
+            // 🜂/✦ Archons can't be held (→ Archon Deck); Kalon forms revert to base.
+            const ret = (typeof _unitReturnToHandCard === 'function') ? _unitReturnToHandCard(u) : null;
+            if (ret && ret.archon) {
+              didRevive = true;   // leaves the board; stays summonable from the roster
+              try { state.log = [...(state.log || []), { msg: `🜂 ${u.name} returns to the Archon Deck instead of hand.`, color: u.owner === 'player' ? 'green' : 'red' }]; } catch (e) {}
+            } else if (ret && ret.card) {
+              if (side && Array.isArray(side.hand)) { side.hand.push(ret.card); didRevive = true; }
+            } else {
+              // Legacy fallback if the helper is unavailable.
+              let card = null;
+              try { card = (typeof lookupCustomCard === 'function' && lookupCustomCard(u.cardId)) || (typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS.find(c => c.id === u.cardId)) || null; } catch (e) {}
+              if (side && Array.isArray(side.hand) && card) { side.hand.push({ ...card }); didRevive = true; }
+            }
           }
           if (didRevive) {
             state._phoenixTurnRevives++; phx._phoenixMatch++;
@@ -58639,6 +58649,14 @@ function _applyInGraveTick(state, who, trigger) {
     // Apply the effect.
     switch (ig.effect) {
       case 'selfReturn': {
+        // 🜂 Archons never return to a hand — they belong to the Archon Deck. If
+        // one somehow carries this in-grave effect, drop it from the grave
+        // (back to the roster) without handing it to the player.
+        if (typeof isArchonCard === 'function' && isArchonCard(card)) {
+          toRemove.add(i);
+          log.push({ msg: `🜂 ${card.name} returns to the Archon Deck.`, color: who === 'player' ? 'green' : 'red' });
+          break;
+        }
         // Pull this card out of the grave and put it back in the owner's hand.
         // Carry a fresh instanceId so the in-battle hand-card tracking doesn't
         // collide with anything that already shipped the original.
@@ -59606,17 +59624,23 @@ function applyOnPlayEffect(state, unit, card) {
       log.push({ msg: `${unit.name} tries to banish ${target.name} — but heroes cannot be bounced.`, color: 'amber' });
       return { ...state, log };
     }
-    // Remove from board (kill alive flag so renderers skip it) AND restore to hand
+    // Remove from board (kill alive flag so renderers skip it) AND restore to hand.
     state.units = state.units.map(u => u.id === target.id ? { ...u, alive: false, _bounced: true } : u);
     const enemySide = target.owner;
-    const cardForHand = (typeof getCardById === 'function')
-      ? (getCardById(target.cardId) || { id: target.cardId, name: target.name, icon: target.icon, type: 'unit', cost: target.cost || 2 })
-      : { id: target.cardId, name: target.name, icon: target.icon, type: 'unit', cost: target.cost || 2 };
-    state[enemySide] = {
-      ...state[enemySide],
-      hand: [...(state[enemySide].hand || []), { ...cardForHand, instanceId: uid() }],
-    };
-    log.push({ msg: `↩ ${unit.name} banishes ${target.name} — returned to ${enemySide === 'player' ? 'your' : 'enemy'} hand!`, color: owner === 'player' ? 'green' : 'red' });
+    const sideLabel = enemySide === 'player' ? 'your' : 'enemy';
+    // 🜂/✦ Archons return to the Archon Deck (never a hand); Kalon forms revert to
+    // their original base card on the way back to hand.
+    const ret = _unitReturnToHandCard(target);
+    if (ret.archon) {
+      log.push({ msg: `🜂 ${unit.name} banishes ${target.name} — the Archon returns to ${sideLabel} Archon Deck!`, color: owner === 'player' ? 'green' : 'red' });
+    } else if (ret.card) {
+      state[enemySide] = {
+        ...state[enemySide],
+        hand: [...(state[enemySide].hand || []), ret.card],
+      };
+      const revertNote = ret.revertedKalon ? ` — reverts to ${ret.card.name}` : '';
+      log.push({ msg: `↩ ${unit.name} banishes ${target.name}${revertNote}, returned to ${sideLabel} hand!`, color: owner === 'player' ? 'green' : 'red' });
+    }
     return { ...state, log };
   }
   // 💀 SINGLE EXECUTE — % chance to KO the nearest enemy in radius. Targets
@@ -60523,6 +60547,41 @@ function getBattleArchonCards() {
     }
   } catch (e) {}
   return out;
+}
+
+// ✦/🜂 Decide what a FIELD unit becomes when it is bounced / returned to hand.
+//   • Archons NEVER enter a hand — they return to the Archon Deck (a persistent
+//     roster, so they simply leave play and stay summonable).
+//        → { card:null, archon:true }
+//   • A Kalon-transformed unit REVERTS to its original base form — the card put
+//     in hand is the base card (originalCardId), not the Kalon form.
+//        → { card:<base>, revertedKalon:true }
+//   • Everything else returns a card built from its own definition.
+// A unit is Kalon-transformed when its live cardId differs from originalCardId
+// (executeKalonTransform swaps cardId to the Kalon form, keeping originalCardId).
+function _unitReturnToHandCard(unit) {
+  if (!unit) return { card: null, archon: false, revertedKalon: false };
+  // Archon → back to the Archon Deck, never the hand.
+  if (unit.isArchon || unit.summonSource === 'Archon Summon') {
+    return { card: null, archon: true, revertedKalon: false };
+  }
+  const reverted = !!(unit.originalCardId && unit.cardId && unit.cardId !== unit.originalCardId);
+  const srcId = reverted ? unit.originalCardId : (unit.cardId || unit.originalCardId);
+  let def = null;
+  try {
+    if (srcId && typeof resolveDeckCard === 'function') {
+      def = resolveDeckCard('custom:' + srcId) || resolveDeckCard('unit:' + srcId) || null;
+    }
+  } catch (e) {}
+  if (!def) {
+    // Last-resort synthesis. For a reverted Kalon we don't know the base name
+    // here, so use a neutral label rather than the Kalon's name.
+    def = reverted
+      ? { id: srcId, name: 'Unit', icon: '🃏', type: 'unit', cost: unit.cost || 2 }
+      : { id: unit.cardId, name: unit.name, icon: unit.icon, type: 'unit', cost: unit.cost || 2 };
+  }
+  const iid = (typeof uid === 'function') ? uid() : ('ret_' + (unit.id || ''));
+  return { card: { ...def, instanceId: iid }, archon: false, revertedKalon: reverted };
 }
 
 // Highest Catalyst rank carried by a unit (0 = not a Catalyst).

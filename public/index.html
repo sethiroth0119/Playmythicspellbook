@@ -38603,7 +38603,13 @@ function buildDeckFromKeys(cardKeys) {
   const deck = [];
   for (const key of cardKeys || []) {
     const card = resolveDeckCard(key);
-    if (card) deck.push({ ...card, instanceId: uid() });
+    // 🜂 Summon / Archon cards are NEVER drawable — they're spawned or summoned
+    // (Archons via a Catalyst ritual from the separate Archon Deck), not drawn
+    // into hand. Belt-and-suspenders: even if one slipped into a saved deck's
+    // key list, keep it out of the in-battle draw pile.
+    if (card && card.type !== 'summon' && !card.isSummon && !(card.archonSummon && card.archonSummon.enabled)) {
+      deck.push({ ...card, instanceId: uid() });
+    }
   }
   return shuffle(deck);
 }
@@ -51389,7 +51395,11 @@ function getGeneratedDeckForHero(heroId) {
 const buildStarterDeck = (customCards = [], heroId = null, chosenDeckId = null) => {
   // Hero cards never go into a play deck — the chosen hero comes onto the field separately.
   // Filter them out of the custom-card pool before they get mixed in anywhere.
-  const playableCustoms = (customCards || []).filter(c => c && c.type !== 'hero');
+  // 🜂 Summon / Archon cards are likewise NON-drawable (spawned/summoned, never
+  // drawn) — exclude them so the "discoverable customs" mix-in + legacy fallback
+  // below can't inject an Archon into the draw pile.
+  const playableCustoms = (customCards || []).filter(c =>
+    c && c.type !== 'hero' && c.type !== 'summon' && !c.isSummon && !(c.archonSummon && c.archonSummon.enabled));
 
   // Highest priority: a specific deck picked from the deck-select screen
   if (chosenDeckId) {
@@ -51447,7 +51457,9 @@ const buildStarterDeck = (customCards = [], heroId = null, chosenDeckId = null) 
 //      can still start — better a broken-looking match than a hard crash.
 const buildAIDeck = () => {
   const deck = [];
-  const add = (c) => { if (c) deck.push({ ...c, instanceId: uid() }); };
+  // 🜂 Never put a Summon/Archon card into a draw deck — they're spawned/summoned,
+  // not drawn. Guards every tier below (admin AI decks + custom fallback).
+  const add = (c) => { if (c && c.type !== 'summon' && !c.isSummon && !(c.archonSummon && c.archonSummon.enabled)) deck.push({ ...c, instanceId: uid() }); };
 
   // Tier 1: admin-curated AI deck — Catalog (shared with all players) first,
   // local Forge.aiDecks (admin-only, dev) second. This is what makes

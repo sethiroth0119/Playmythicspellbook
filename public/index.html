@@ -27011,26 +27011,21 @@
       window.addEventListener('load', function () {
         // Auto-reload when the SW controller changes (new deploy activated).
         // Guard flag prevents reload loops if the event fires multiple times.
-        var _swRefreshing = false;
+        // 🛑 DO NOT force-reload the page when a new SW activates. Auto-reloading
+        // the instant a deploy lands was yanking players out of whatever they
+        // were doing — mid-Forge edit, mid-battle — and wiping unsaved input
+        // (this is what made "nothing saves in the Forge" + "the game randomly
+        // refreshes / flickers"). New code now applies on the player's NEXT
+        // natural reload (or a manual refresh). We only flag that an update is
+        // ready so the UI could show a gentle, dismissible notice if desired.
         navigator.serviceWorker.addEventListener('controllerchange', function () {
-          if (_swRefreshing) return;
-          _swRefreshing = true;
-          window.location.reload();
+          try { window.__mythicUpdateReady = true; } catch (e) {}
         });
         navigator.serviceWorker.register('/sw.js').then(function (reg) {
-          // Auto-skip-waiting when a new SW shows up so deploys take effect
-          // immediately — combined with controllerchange above this auto-reloads
-          // the page so the player always gets the latest code.
-          if (reg.waiting) try { reg.waiting.postMessage({ type: 'skip-waiting' }); } catch (e) {}
-          reg.addEventListener('updatefound', function () {
-            var newSW = reg.installing;
-            if (!newSW) return;
-            newSW.addEventListener('statechange', function () {
-              if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
-                try { newSW.postMessage({ type: 'skip-waiting' }); } catch (e) {}
-              }
-            });
-          });
+          // Let a new SW install + cache the next version in the background, but
+          // do NOT auto-skip-waiting and do NOT reload — the waiting SW takes
+          // over on the next full page load, so the player is never interrupted.
+          // (If you ever want an instant update, hard-refresh: Ctrl+Shift+R.)
         }).catch(function () { /* SW failures are non-fatal — game still runs */ });
       });
     }

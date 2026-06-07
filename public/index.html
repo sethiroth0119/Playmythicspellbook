@@ -77809,7 +77809,9 @@ function captureEditorIntoCard(card) {
         const minL = ml ? (parseInt(ml.value, 10) || 0) : 0;
         if (minL > 0) off.minLevel = minL;
         off.count = ct ? Math.max(1, Math.min(6, parseInt(ct.value, 10) || 1)) : 1;
-        if (off.faction || off.element || off.trait || off.minLevel || off.count > 1) offerings.push(off);
+        // Keep EVERY row the admin added — even an all-default "any unit ×1"
+        // offering is a valid requirement (it just means "any one unit nearby").
+        offerings.push(off);
       });
       const catFac = v('ed-archon-cat-faction');
       const catEl = v('ed-archon-cat-element');
@@ -78088,9 +78090,11 @@ function saveCardFromInputs(commit) {
 
   // Strip irrelevant fields for the chosen type to keep saved data clean
   const t = card.type || 'unit';
-  if (t !== 'unit') card.kalonForm = null;
+  // 🌀 Summons ARE units (they spawn onto the board and fight — incl. Archons),
+  // so they keep the full stat block / learnset / passive just like units.
+  if (t !== 'unit' && t !== 'summon') card.kalonForm = null;
   if (t !== 'hero') delete card.subclasses;
-  if (t !== 'unit' && t !== 'hero') {
+  if (t !== 'unit' && t !== 'hero' && t !== 'summon') {
     delete card.stats; delete card.learnset; delete card.passive;
   }
   if (t !== 'spell' && t !== 'trap') {

@@ -60673,8 +60673,10 @@ function canActivateArchonSummon(state, catalyst) {
   const side = catalyst.owner;
   const rank = _catalystRankOf(catalyst);
   if (!rank) return { ok: false, reason: 'This unit has no Catalyst passive' };
-  const all = getBattleArchonCards();
-  if (!all.length) return { ok: false, reason: 'No Archons in your Archon Deck — add some in the Deck Builder (🜂 Archon tab).' };
+  // Pool: the PLAYER summons only from their Archon Deck; the AI (no deck of its
+  // own) draws from every forged Archon so it can use the mechanic too.
+  const all = (side === 'player') ? getBattleArchonCards() : getAllArchonCards();
+  if (!all.length) return { ok: false, reason: side === 'player' ? 'No Archons in your Archon Deck — add some in the Deck Builder (🜂 Archon tab).' : 'No Archons forged.' };
   const kalonHave = (state[side] && (state[side].kalonsRemaining | 0)) || 0;
   const candidates = [];
   for (const archon of all) {
@@ -60752,23 +60754,22 @@ function openArchonSummonMode(catalyst) {
 // Resolves a pending Archon Summon: sacrifices offerings, spends Kalon Source,
 // keeps/consumes the Catalyst, spawns the Archon near the Catalyst with archon
 // flags, and deepens Realm Alignment with the Creator.
-function _resolveArchonSummon() {
-  const am = App.ui && App.ui.archonMode;
-  if (!am) return;
-  const cand = (am.candidates || [])[am.selectedIndex | 0];
-  if (!cand) { App.ui.archonMode = null; renderBattle(); return; }
-  const s = App.state;
-  if (!s) { App.ui.archonMode = null; return; }
-  const catalyst = (s.units || []).find(u => u && u.id === am.catalystId && u.alive);
-  if (!catalyst) { App.ui.archonMode = null; renderBattle(); return; }
+// Headless Archon-summon resolution — shared by the player's overlay AND the AI.
+// Sacrifices offerings, spends Kalon Source, keeps/consumes the Catalyst, spawns
+// the Archon near the Catalyst with archon flags, deepens Realm Alignment, and
+// appends log lines. Returns { state, spawnedId, archonName } or null.
+function _applyArchonSummon(state, opts) {
+  if (!state || !opts) return null;
+  const catalyst = (state.units || []).find(u => u && u.id === opts.catalystId && u.alive);
+  if (!catalyst) return null;
   const side = catalyst.owner;
   let archon = null;
-  try { archon = getAllArchonCards().find(a => a && a.id === cand.archonCardId) || null; } catch (e) {}
-  if (!archon) { App.ui.archonMode = null; renderBattle(); return; }
+  try { archon = getAllArchonCards().find(a => a && a.id === opts.archonCardId) || null; } catch (e) {}
+  if (!archon) return null;
   const spec = archon.archonSummon || {};
-  let ns = { ...s };
+  let ns = { ...state };
   const log = [...(ns.log || [])];
-  const offIds = new Set(cand.offeringUnitIds || []);
+  const offIds = new Set(opts.offeringUnitIds || []);
   const consumed = (ns.units || []).filter(u => offIds.has(u.id));
   // Sacrifice offerings (engine cleanup sweeps dead units; their tiles free up).
   ns.units = (ns.units || []).map(u => offIds.has(u.id)
@@ -60781,7 +60782,7 @@ function _resolveArchonSummon() {
     ns.units = ns.units.map(u => u.id === catalyst.id ? { ...u, hasAttacked: true } : u);
   }
   // Spend Kalon Source.
-  const kc = Math.max(0, cand.kalonCost | 0);
+  const kc = Math.max(0, opts.kalonCost | 0);
   const curK = (ns[side] && (ns[side].kalonsRemaining | 0)) || 0;
   ns[side] = { ...ns[side], kalonsRemaining: Math.max(0, curK - kc) };
   // Deepen Realm Alignment with the Creator.
@@ -60807,20 +60808,68 @@ function _resolveArchonSummon() {
     } : u);
   }
   const offNames = consumed.map(u => u.name || 'Unit').join(' + ');
-  log.push({ msg: `🜂 Archon Summon: ${catalyst.name || 'Catalyst'}${offNames ? (' + ' + offNames) : ''} → ${archon.name || 'Archon'}!`, color: 'green' });
-  if (spec.creator) log.push({ msg: `🌌 Realm Alignment with ${_archonCreatorName(spec.creator)} deepens.`, color: 'purple' });
+  const col = side === 'player' ? 'green' : 'red';
+  log.push({ msg: `🜂 ${side === 'player' ? '' : 'Enemy '}Archon Summon: ${catalyst.name || 'Catalyst'}${offNames ? (' + ' + offNames) : ''} → ${archon.name || 'Archon'}!`, color: col });
+  if (spec.creator) log.push({ msg: `🌌 ${side === 'player' ? 'Your' : 'Enemy'} Realm Alignment with ${_archonCreatorName(spec.creator)} deepens.`, color: 'purple' });
   if (result.count === 0) log.push({ msg: `🜂 ${archon.name || 'Archon'} could not manifest — no open tile.`, color: 'amber' });
   ns.log = log;
-  App.state = ns;
+  return { state: ns, spawnedId, archonName: archon.name || 'Archon' };
+}
+
+function _resolveArchonSummon() {
+  const am = App.ui && App.ui.archonMode;
+  if (!am) return;
+  const cand = (am.candidates || [])[am.selectedIndex | 0];
+  if (!cand) { App.ui.archonMode = null; renderBattle(); return; }
+  const res = _applyArchonSummon(App.state, {
+    catalystId: am.catalystId,
+    archonCardId: cand.archonCardId,
+    offeringUnitIds: cand.offeringUnitIds,
+    kalonCost: cand.kalonCost,
+  });
+  if (!res || !res.state) { App.ui.archonMode = null; renderBattle(); return; }
+  App.state = res.state;
   App.ui.archonMode = null;
   App.ui.selectedCardId = null;
   App.ui.modalUnitId = null;
-  try { if (typeof _markSummonAnim === 'function' && spawnedId) _markSummonAnim(ns.units.find(u => u.id === spawnedId)); } catch (e) {}
+  try { if (typeof _markSummonAnim === 'function' && res.spawnedId) _markSummonAnim(App.state.units.find(u => u.id === res.spawnedId)); } catch (e) {}
   try { if (typeof playSfx === 'function') playSfx('unitSummon'); } catch (e) {}
   // Broadcast to the opponent (MP) + render. checkPostAction does NOT end the
   // turn — it pushes the snapshot, which the opponent adopts (diff-feedback
   // animates the new Archon + the vanished offerings).
   if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
+}
+
+// 🤖 AI Archon ritual — resolves headlessly (no overlay/cinematic) and commits
+// to App.state. Returns true if an Archon was summoned. Picks the highest-tier
+// affordable Archon among the catalyst's candidates.
+function _aiTryArchonSummon(unit) {
+  try {
+    if (!unit || unit.owner !== 'ai' || !App.state) return false;
+    if (typeof canActivateArchonSummon !== 'function') return false;
+    const gate = canActivateArchonSummon(App.state, unit);
+    if (!gate || !gate.ok || !gate.candidates || !gate.candidates.length) return false;
+    // Prefer the strongest Archon the ritual can afford (tier, then kalon cost).
+    const tierRank = { lesser: 1, greater: 2, divine: 3, primordial: 4 };
+    const ranked = gate.candidates.slice().sort((a, b) => {
+      const ta = tierRank[(a.archon.archonSummon && a.archon.archonSummon.tier) || 'lesser'] || 1;
+      const tb = tierRank[(b.archon.archonSummon && b.archon.archonSummon.tier) || 'lesser'] || 1;
+      if (tb !== ta) return tb - ta;
+      return (b.kalonCost | 0) - (a.kalonCost | 0);
+    });
+    const pick = ranked[0];
+    const res = _applyArchonSummon(App.state, {
+      catalystId: unit.id,
+      archonCardId: pick.archon.id,
+      offeringUnitIds: pick.offerings,
+      kalonCost: pick.kalonCost,
+    });
+    if (!res || !res.state) return false;
+    App.state = res.state;
+    try { if (typeof _markSummonAnim === 'function' && res.spawnedId) _markSummonAnim(App.state.units.find(u => u.id === res.spawnedId)); } catch (e) {}
+    try { if (typeof playSfx === 'function') playSfx('unitSummon'); } catch (e) {}
+    return true;
+  } catch (e) { try { console.warn('[ai archon]', e); } catch (_) {} return false; }
 }
 
 // ============================================================
@@ -92647,6 +92696,17 @@ function doAIStep() {
         }
       }
       if (best) {
+        // 🚫 NEGATE — a player unit's 'negate' trigger (who:enemy) cancels +
+        // destroys the AI's unit play before it lands.
+        if (typeof _triggerNegateOnPlay === 'function') {
+          const _neg = _triggerNegateOnPlay(s, best, 'ai');
+          if (_neg.negated) {
+            App.state = { ..._neg.state, ai: { ..._neg.state.ai, hand: _neg.state.ai.hand.filter(c => c.instanceId !== best.instanceId), graveyard: [...(_neg.state.ai.graveyard || []), { ...best }] } };
+            renderBattle();
+            scheduleAIStep(AI_DELAYS.card);
+            return;
+          }
+        }
         const target = aiPickBestPlacement(best, aiHero, s);
         if (target) {
           const newUnit = { ...buildUnit(best, 'ai', target, aiHero.heroPassive), aiActed: false };
@@ -92694,6 +92754,15 @@ function doAIStep() {
               }
             }
           } catch (e) {}
+          // ⚡ Trigger abilities — the AI unit entered (summon) + a card was
+          // played (cardPlayed). actorOwner = 'ai', so player units with
+          // who:'enemy' triggers react to the AI's plays.
+          try {
+            if (typeof _fireTriggers === 'function') {
+              next = _fireTriggers(next, 'summon', { actorOwner: 'ai', unit: newUnit });
+              next = _fireTriggers(next, 'cardPlayed', { actorOwner: 'ai', card: best, unit: newUnit });
+            }
+          } catch (e) {}
           App.state = next;
           try { _markSummonAnim(newUnit); } catch (e) {}
           setAIActor(newUnit.id, `🃏 Enemy plays ${best.name}`);
@@ -92729,6 +92798,16 @@ function doAIStep() {
       }
       // Only play weather if it's clearly worth it (avoid auto-dump)
       if (best && bestScore >= 10) {
+        // 🚫 NEGATE — a player unit's weather-hate 'negate' trigger cancels it.
+        if (typeof _triggerNegateOnPlay === 'function') {
+          const _neg = _triggerNegateOnPlay(s, best, 'ai');
+          if (_neg.negated) {
+            App.state = { ..._neg.state, ai: { ..._neg.state.ai, hand: _neg.state.ai.hand.filter(c => c.instanceId !== best.instanceId), graveyard: [...(_neg.state.ai.graveyard || []), { ...best }] } };
+            renderBattle();
+            scheduleAIStep(AI_DELAYS.weather);
+            return;
+          }
+        }
         let duration = best.duration;
         // Weatherweaver from the AI hero OR any enemy unit on the field extends duration.
         if ((aiHero && hasPassive(aiHero, 'weatherweaver')) || sideHasPassive(s, 'ai', 'weatherweaver')) {
@@ -92746,6 +92825,8 @@ function doAIStep() {
           log: [...s.log, { msg: `Enemy summons ${best.name}! (${duration} turns)`, color: 'red' }],
         };
         try { _fireFieldCardOnPlay(best, 'ai'); } catch (e) {}   // 🎴 AI weather on-play effect
+        // ⚡ cardPlayed triggers — AI weather. actorOwner = 'ai'.
+        try { if (typeof _fireTriggers === 'function') App.state = _fireTriggers(App.state, 'cardPlayed', { actorOwner: 'ai', card: best }); } catch (e) {}
         setAIActor(null, `⛈ Enemy summons ${best.name}`);
         renderBattle();
         scheduleAIStep(AI_DELAYS.weather);
@@ -92893,6 +92974,17 @@ function doAIStep() {
       // cancelled; false (or any error) lets _doAISpell() fire normally.
       const _doAISpell = () => {
         const card = best.card;
+        // 🚫 NEGATE — a player unit's 'negate' trigger (who:enemy) cancels +
+        // destroys the AI's spell before it resolves.
+        if (typeof _triggerNegateOnPlay === 'function') {
+          const _neg = _triggerNegateOnPlay(App.state, card, 'ai');
+          if (_neg.negated) {
+            App.state = { ..._neg.state, ai: { ..._neg.state.ai, hand: (_neg.state.ai.hand || []).filter(c => c.instanceId !== card.instanceId), graveyard: [...(_neg.state.ai.graveyard || []), { ...card }] } };
+            renderBattle();
+            scheduleAIStep(AI_DELAYS.spell);
+            return;
+          }
+        }
         // 🎬 Play the SAME cast cinematic the player gets when they cast a spell,
         // so the player can SEE the enemy's spell card + its name fly out (parity
         // with playSpell). The battle log + AI actor label below name the card and
@@ -93002,6 +93094,8 @@ function doAIStep() {
             App.state = { ...(_pay.state), log: [...((_pay.state && _pay.state.log) || []), ...(_pay.log || [])] };
           }
         } catch (e) {}
+        // ⚡ cardPlayed triggers — AI spell. actorOwner = 'ai'.
+        try { if (typeof _fireTriggers === 'function') App.state = _fireTriggers(App.state, 'cardPlayed', { actorOwner: 'ai', card: card }); } catch (e) {}
         renderBattle();
         scheduleAIStep(AI_DELAYS.spell);
       };
@@ -93098,6 +93192,25 @@ function doAIStep() {
         markAIUnitActed(unit.id);
         const transformed = App.state.units.find(u => u.id === unit.id);
         setAIActor(unit.id, `🌟 Enemy ${unit.name} → ${transformed ? transformed.name : 'Kalon'}!`);
+        renderBattle();
+        scheduleAIStep(AI_DELAYS.kalon);
+        return;
+      }
+    }
+
+    // ===== 🜂 Archon Summon decision =====
+    // If this unit is a Catalyst with a legal ritual ready (rank + Offerings in
+    // range + Kalon Source), perform it. The AI sacrifices its nearby offerings
+    // and pays Kalon Source to bring out the strongest Archon it can afford.
+    // Gated by a readiness roll so it doesn't ALWAYS pop instantly.
+    if (typeof _catalystRankOf === 'function' && _catalystRankOf(unit) > 0
+        && App.state.ai && (App.state.ai.kalonsRemaining | 0) > 0
+        && Math.random() < 0.9) {
+      if (_aiTryArchonSummon(unit)) {
+        markAIUnitActed(unit.id);
+        const arch = (App.state.units || []).filter(u => u && u.owner === 'ai' && u.isArchon);
+        const newest = arch.length ? arch[arch.length - 1] : null;
+        setAIActor(unit.id, `🜂 Enemy summons ${newest ? newest.name : 'an Archon'}!`);
         renderBattle();
         scheduleAIStep(AI_DELAYS.kalon);
         return;

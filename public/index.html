@@ -60849,6 +60849,61 @@ const _ARCHON_RANK_PASSIVE = { catalyst: 1, catalystAscended: 2, catalystDivine:
 const _ARCHON_CREATORS = { yahweh: 'Yahweh', abraxas: 'Abraxas', azathoth: 'Azathoth', leviathor: 'Leviathor' };
 function _archonCreatorName(id) { return _ARCHON_CREATORS[String(id || '').toLowerCase()] || (id || ''); }
 
+// 🜂 Build a player-facing "how to summon this Archon" block from its
+// archonSummon recipe. Used by every card-detail modal so players can read the
+// Catalyst rank, Kalon Source cost, offering range, and the exact offerings to
+// sacrifice. Returns '' for non-Archon cards.
+function _archonReqDetailHtml(card) {
+  try {
+    if (!card || !card.archonSummon || !card.archonSummon.enabled) return '';
+    const sp = card.archonSummon;
+    const cap = (s) => s ? (String(s).charAt(0).toUpperCase() + String(s).slice(1)) : s;
+    const facName = (id) => {
+      const f = (typeof FACTION_BY_ID !== 'undefined' && FACTION_BY_ID[id]) || null;
+      return f ? ((f.icon ? f.icon + ' ' : '') + f.name) : cap(id);
+    };
+    const elName = (id) => {
+      const e = (typeof ELEMENT_DATA !== 'undefined' && ELEMENT_DATA[id]) || null;
+      return e ? ((e.icon ? e.icon + ' ' : '') + e.name) : cap(id);
+    };
+    const rankLabel = ({ lesser: 'Lesser', ascended: 'Ascended', divine: 'Divine', primordial: 'Primordial' })[sp.catalystRank || 'lesser'] || 'Lesser';
+    const tierLabel = ({ lesser: 'Lesser', greater: 'Greater', divine: 'Divine', primordial: 'Primordial' })[sp.tier || 'lesser'] || 'Lesser';
+    const range = Math.max(1, Math.min(4, (sp.offeringRange | 0) || 2));
+    const kalon = (sp.kalonCost | 0) || 1;
+    // Catalyst requirement (rank + optional faction/element).
+    const catReq = [];
+    if (sp.catalyst && sp.catalyst.faction) catReq.push(facName(sp.catalyst.faction));
+    if (sp.catalyst && sp.catalyst.element) catReq.push(elName(sp.catalyst.element));
+    const catLine = `a <strong>${rankLabel}+ Catalyst</strong>${catReq.length ? ' <span style="opacity:0.85">(' + catReq.map(escapeHtml).join(' · ') + ')</span>' : ''}`;
+    // Offering rows.
+    const offs = Array.isArray(sp.offerings) ? sp.offerings : [];
+    const offHtml = !offs.length
+      ? `<li>No offerings — the Catalyst alone summons it.</li>`
+      : offs.map(o => {
+          const parts = [];
+          if (o.faction) parts.push(facName(o.faction));
+          if (o.element) parts.push(elName(o.element));
+          if (o.trait) parts.push(cap(o.trait));
+          if (o.minLevel) parts.push('Lv≥' + o.minLevel);
+          const desc = parts.length ? parts.map(escapeHtml).join(' · ') : 'any unit';
+          const n = Math.max(1, (o.count | 0) || 1);
+          return `<li><strong>${n}×</strong> ${desc}</li>`;
+        }).join('');
+    const creatorName = sp.creator ? _archonCreatorName(sp.creator) : '';
+    return `<div style="margin-top:0.6rem;padding:0.65rem 0.8rem;border:1px solid rgba(255,200,80,0.45);border-radius:8px;background:rgba(255,200,80,0.07)">
+      <div style="font-family:'Cinzel',serif;font-weight:700;color:#ffd86b;font-size:0.88rem;margin-bottom:0.4rem">🜂 How to Summon (Archon Ritual)</div>
+      <div style="font-size:0.82rem;color:#f3e9d2;line-height:1.5">Have ${catLine} on the field with the offerings below within <strong>${range}</strong> tile${range === 1 ? '' : 's'}, then pay <strong>🌌 ${kalon} Kalon Source</strong>.</div>
+      <div style="font-size:0.76rem;color:#cdbf9c;margin:0.45rem 0 0.15rem;font-weight:700;letter-spacing:0.03em">OFFERINGS TO SACRIFICE</div>
+      <ul style="margin:0.15rem 0 0.1rem 1.1rem;padding:0;font-size:0.8rem;color:#f3e9d2;line-height:1.55">${offHtml}</ul>
+      <div style="font-size:0.74rem;color:#bcae8c;margin-top:0.4rem;line-height:1.45">
+        ${sp.catalystConsumed ? '⚠ The Catalyst is also sacrificed.' : 'The Catalyst stays on the field.'}
+        · Tier: <strong>${tierLabel}</strong>${creatorName ? ` · Creator: <strong>${escapeHtml(creatorName)}</strong>` : ''}
+      </div>
+      <div style="font-size:0.72rem;color:#a99b78;margin-top:0.3rem">Add this Archon to your 🜂 Archon Deck, then summon it in battle with a Catalyst unit.</div>
+    </div>`;
+  } catch (e) { return ''; }
+}
+
 function isArchonCard(card) {
   return !!(card && card.archonSummon && card.archonSummon.enabled);
 }
@@ -121439,6 +121494,7 @@ function renderCollectionCardModal(active) {
             ${traitNatureHtml}
             ${passiveHtml}
             ${onPlayHtml}
+            ${(typeof _archonReqDetailHtml === 'function') ? _archonReqDetailHtml(c) : ''}
             ${learnsetHtml}
           </div>
         </div>
@@ -136862,6 +136918,7 @@ function renderDeckCardContextModal() {
         ${effectHtml}
         ${statsHtml}
         ${onPlayHtml}
+        ${(typeof _archonReqDetailHtml === 'function') ? _archonReqDetailHtml(card) : ''}
         ${learnsetHtml}
         ${itemSectionHtml}
         ${gemSectionHtml}

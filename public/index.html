@@ -6590,7 +6590,7 @@
     overflow: hidden;
     /* Radial darkening — preserves a bright window where the hero stands. */
     background: radial-gradient(ellipse 30% 38% at 50% 60%, rgba(255,255,255,0) 0%, rgba(0,0,0,0.55) 35%, rgba(0,0,0,0.93) 75%, rgba(0,0,0,0.98) 100%);
-    animation: ult-cine-fade 2000ms ease-out forwards;
+    animation: ult-cine-fade 2800ms ease-out forwards;
   }
   @keyframes ult-cine-fade {
     0%   { opacity: 0; backdrop-filter: blur(0px); }
@@ -6612,7 +6612,7 @@
     width: clamp(180px, 22vw, 320px);
     aspect-ratio: 1 / 1.4;
     transform-origin: center 90%;
-    animation: ult-hero-zoom 2000ms cubic-bezier(0.22, 1.0, 0.36, 1) forwards;
+    animation: ult-hero-zoom 2800ms cubic-bezier(0.22, 1.0, 0.36, 1) forwards;
   }
   @keyframes ult-hero-zoom {
     0%   { transform: scale(0.4) translateY(20px); opacity: 0; filter: brightness(0.5) saturate(0); }
@@ -6647,7 +6647,7 @@
     transform: translateX(-50%);
     pointer-events: none;
     opacity: 0;
-    animation: ult-cracks-flash 2000ms ease-out forwards;
+    animation: ult-cracks-flash 2800ms ease-out forwards;
     /* Asymmetric cracks built from layered conic gradients */
     background:
       conic-gradient(from 0deg at 50% 100%,
@@ -6677,7 +6677,7 @@
     height: clamp(280px, 32vw, 460px);
     pointer-events: none;
     opacity: 0;
-    animation: ult-energy-fade 2000ms ease-out forwards;
+    animation: ult-energy-fade 2800ms ease-out forwards;
     background:
       radial-gradient(ellipse 20% 60% at 30% 70%, rgba(255,200,90,0.45), transparent 70%),
       radial-gradient(ellipse 18% 55% at 70% 65%, rgba(212,140,255,0.40), transparent 70%),
@@ -6712,7 +6712,7 @@
       0 0 12px rgba(255,220,140,0.95),
       0 0 24px rgba(255,160,40,0.7);
     opacity: 0;
-    animation: ult-orbit-pop 2000ms ease-out forwards;
+    animation: ult-orbit-pop 2800ms ease-out forwards;
   }
   @keyframes ult-orbit-pop {
     0%   { opacity: 0; transform: translate(0, 30px) scale(0); }
@@ -6736,7 +6736,7 @@
     background: radial-gradient(circle, rgba(255,220,140,0.95) 0%, rgba(255,160,40,0.6) 50%, transparent 80%);
     border-radius: 50%;
     opacity: 0;
-    animation: ult-dust-rise var(--dur, 2000ms) ease-out forwards;
+    animation: ult-dust-rise var(--dur, 2800ms) ease-out forwards;
     animation-delay: var(--delay, 0ms);
   }
   @keyframes ult-dust-rise {
@@ -6752,7 +6752,7 @@
     display: flex; gap: 14px;
     pointer-events: none;
     opacity: 0;
-    animation: ult-threat-fade 2000ms ease-out forwards;
+    animation: ult-threat-fade 2800ms ease-out forwards;
   }
   @keyframes ult-threat-fade {
     0%   { opacity: 0; transform: translateX(-50%) translateY(-12px); letter-spacing: 0.6em; }
@@ -6793,7 +6793,7 @@
     letter-spacing: 0.35em;
     text-transform: uppercase;
     opacity: 0;
-    animation: ult-name-prefix 2000ms ease-out forwards;
+    animation: ult-name-prefix 2800ms ease-out forwards;
     text-shadow: 0 0 12px rgba(212,175,55,0.7), 0 2px 4px rgba(0,0,0,0.9);
   }
   @keyframes ult-name-prefix {
@@ -6821,7 +6821,7 @@
     background-clip: text;
     -webkit-text-fill-color: transparent;
     opacity: 0;
-    animation: ult-name-flash 2000ms cubic-bezier(0.18, 1.0, 0.36, 1.0) forwards;
+    animation: ult-name-flash 2800ms cubic-bezier(0.18, 1.0, 0.36, 1.0) forwards;
   }
   @keyframes ult-name-flash {
     0%   { opacity: 0; transform: scale(0.6) translateY(40px); letter-spacing: 0.8em; }
@@ -6843,7 +6843,7 @@
     max-width: min(86vw, 600px);
     text-shadow: 0 0 12px rgba(212,140,255,0.6), 0 2px 6px rgba(0,0,0,0.95);
     opacity: 0;
-    animation: ult-effect-fade 2000ms ease-out forwards;
+    animation: ult-effect-fade 2800ms ease-out forwards;
   }
   @keyframes ult-effect-fade {
     0%   { opacity: 0; transform: translateY(10px); }
@@ -6857,7 +6857,7 @@
     background: radial-gradient(ellipse 80% 60% at 50% 50%, rgba(255,220,140,0.55), rgba(255,160,40,0.18) 40%, transparent 70%);
     pointer-events: none;
     opacity: 0;
-    animation: ult-name-flash-glow 2000ms ease-out forwards;
+    animation: ult-name-flash-glow 2800ms ease-out forwards;
     mix-blend-mode: screen;
   }
   @keyframes ult-name-flash-glow {
@@ -87772,6 +87772,8 @@ function bindBattleEvents() {
   document.querySelectorAll('.move-btn[data-move], .quick-move[data-move]').forEach(el => {
     el.onclick = () => {
       if (el.disabled) return;
+      // 🔒 Ignore ability activations while a cinematic / animation is playing.
+      if (typeof _battleInputBlocked === 'function' && _battleInputBlocked()) return;
       const move = lookupMove(el.dataset.move);
       if (!move) return;
       // Deselecting an already-armed move — never charges an activation cost.
@@ -87884,6 +87886,8 @@ function bindBattleEvents() {
     el.onclick = (e) => {
       e.stopPropagation();
       if (el.disabled) return;
+      // 🔒 Don't open the play flow mid-cinematic — wait for the animation.
+      if (typeof _battleInputBlocked === 'function' && _battleInputBlocked()) return;
       const cardId = el.dataset.card;
       // Open the card detail modal — player chooses Play / Cancel from there.
       App.ui.cardDetailId = cardId;
@@ -87910,10 +87914,14 @@ function bindBattleEvents() {
   });
 
   const endBtn = document.getElementById('btn-end-turn');
-  if (endBtn) endBtn.onclick = onEndTurn;
+  // 🔒 Block the manual End-Turn click while a cinematic plays (the turn-timer
+  // auto-end still calls onEndTurn() directly, so it's never starved).
+  if (endBtn) endBtn.onclick = () => { if (typeof _battleInputBlocked === 'function' && _battleInputBlocked()) return; onEndTurn(); };
 
   const kalonBtn = document.getElementById('btn-kalon');
   if (kalonBtn) kalonBtn.onclick = () => {
+    // 🔒 No Kalon transform mid-cinematic — wait for the animation to clear.
+    if (typeof _battleInputBlocked === 'function' && _battleInputBlocked()) return;
     const sel = App.state.units.find(u => u.id === App.ui.selectedUnitId);
     if (!sel) return;
     App.state = executeKalonTransform(App.state, sel);
@@ -88018,6 +88026,8 @@ function bindBattleEvents() {
 
 function onUnitClick(unitId) {
   const s = App.state;
+  // 🔒 Freeze all input (select / attack / swap) while a cinematic plays.
+  if (typeof _battleInputBlocked === 'function' && _battleInputBlocked()) return;
   if (App.ui.selectedCardId) return;
   const target = s.units.find(u => u.id === unitId);
   if (!target) return;
@@ -88128,6 +88138,9 @@ function cancelAction() {
 
 function onTileClick(x, y) {
   const s = App.state;
+  // 🔒 Freeze all board input while a cinematic / battle animation is playing —
+  // nothing can be done (or skipped) until it finishes.
+  if (typeof _battleInputBlocked === 'function' && _battleInputBlocked()) return;
   // 👀 Spectators are pure observers — their input never touches the board
   // (they have no broadcast path anyway; this just keeps their view clean).
   if (typeof Spectator !== 'undefined' && Spectator.active) return;
@@ -88549,7 +88562,7 @@ function _playMythicSummonVfxImpl(unit, pos) {
 // the local client; opponent gets it when they apply the snapshot via the
 // same render path).
 // ============================================================================
-const _SPELL_CINE_DURATION_MS = 2000;
+const _SPELL_CINE_DURATION_MS = 2800;
 const _CARD_TYPE_HEADLINES = {
   spell:    'SPELL ACTIVATED',
   location: 'LOCATION SET',
@@ -88667,8 +88680,8 @@ function playSpellActivationVfx(card, opts) {
 //
 // Click anywhere on the overlay to skip — same UX as the spell + ult cinematics.
 // ============================================================================
-const _ABILITY_CINE_DURATION_MS = 2000;
-const _ABILITY_CINE_FAST_MS     = 600;
+const _ABILITY_CINE_DURATION_MS = 2800;
+const _ABILITY_CINE_FAST_MS     = 2500;
 const _ABILITY_SEEN_THRESHOLD   = 3;
 function _trackAbilitySeen(moveId) {
   if (!moveId) return 0;
@@ -88728,7 +88741,7 @@ function _playAbilityCinematicImpl(unit, move, opts) {
       st.textContent = `
         .ab-cine-overlay{position:fixed;inset:0;z-index:2147483380;pointer-events:auto;overflow:hidden;
           background:radial-gradient(ellipse at 50% 50%,rgba(8,4,18,0.35) 0%,rgba(2,1,8,0.75) 70%,rgba(0,0,2,0.88) 100%);
-          opacity:0;animation:abCineFade var(--ab-dur,2000ms) ease-out forwards;cursor:pointer}
+          opacity:0;animation:abCineFade var(--ab-dur,2800ms) ease-out forwards;cursor:pointer}
         @keyframes abCineFade{
           0%{opacity:0;backdrop-filter:blur(0px)}
           12%{opacity:1;backdrop-filter:blur(2.5px)}
@@ -88739,7 +88752,7 @@ function _playAbilityCinematicImpl(unit, move, opts) {
           width:clamp(360px,46vw,640px);
           transform:translate(-50%,-50%) scale(0.7);
           opacity:0;text-align:center;pointer-events:none;
-          animation:abCineCard var(--ab-dur,2000ms) cubic-bezier(0.18,1,0.36,1) forwards}
+          animation:abCineCard var(--ab-dur,2800ms) cubic-bezier(0.18,1,0.36,1) forwards}
         @keyframes abCineCard{
           0%{opacity:0;transform:translate(-50%,-50%) scale(0.7) translateY(20px)}
           15%{opacity:1;transform:translate(-50%,-50%) scale(1.02) translateY(0)}
@@ -88782,7 +88795,7 @@ function _playAbilityCinematicImpl(unit, move, opts) {
           border-radius:50%;border:3px solid var(--ab-color,#c9a5ff);
           box-shadow:0 0 30px var(--ab-color,#c9a5ff),inset 0 0 20px var(--ab-color-dim,rgba(201,165,255,0.5));
           opacity:0;transform:scale(0.3);
-          animation:abCineRing var(--ab-dur,2000ms) cubic-bezier(0.22,1,0.36,1) forwards;
+          animation:abCineRing var(--ab-dur,2800ms) cubic-bezier(0.22,1,0.36,1) forwards;
           pointer-events:none}
         @keyframes abCineRing{
           0%{opacity:0;transform:scale(0.3)}
@@ -88897,8 +88910,9 @@ function _playAbilityCinematicImpl(unit, move, opts) {
         </div>
       `;
     }
-    // ⬛ Click-to-skip.
-    overlay.onclick = () => { try { overlay.remove(); } catch (e) {} };
+    // 🔒 No skip — the overlay swallows clicks so the cinematic always plays in
+    // full and the board behind it can't be acted on until it clears.
+    overlay.onclick = (e) => { try { e.stopPropagation(); e.preventDefault(); } catch (_) {} };  /* 🔒 no skip — cinematic plays in full */
     document.body.appendChild(overlay);
     // 🧹 Auto-cleanup at the end of the cinematic.
     setTimeout(() => {
@@ -89256,8 +89270,9 @@ function _playSpellActivationVfxImpl(card, opts) {
       <div class="spell-cine-shock"></div>
       ${beam}
     `;
-    // ⬛ Click-to-skip — the user can dismiss the cinematic instantly.
-    overlay.onclick = () => { try { overlay.remove(); } catch (e) {} };
+    // 🔒 No skip — the overlay swallows clicks so the cinematic always plays in
+    // full and the board behind it can't be acted on until it clears.
+    overlay.onclick = (e) => { try { e.stopPropagation(); e.preventDefault(); } catch (_) {} };  /* 🔒 no skip — cinematic plays in full */
     document.body.appendChild(overlay);
     // 📺 Screen shake on shockwave (around t=1.4s)
     if (!opts.skipShake) {
@@ -89313,7 +89328,7 @@ function _playSpellActivationVfxImpl(card, opts) {
 //
 // Click anywhere on the overlay to skip — same UX as the spell + ult cinematics.
 // ============================================================================
-const _ONPLAY_CINE_DURATION_MS = 2000;
+const _ONPLAY_CINE_DURATION_MS = 2800;
 function playOnPlayCinematic(unit, card, opts) {
   opts = opts || {};
   // 📡 Relay the on-play cinematic to the opponent, carrying art-stripped unit +
@@ -89424,7 +89439,7 @@ function _playOnPlayCinematicImpl(unit, card, opts) {
         .onplay-cine-particles .opp{position:absolute;left:0;top:0;width:4px;height:4px;border-radius:50%;
           background:var(--p-color,#fffcd5);
           box-shadow:0 0 6px var(--p-color,#fffcd5),0 0 12px var(--p-color,#fffcd5);
-          opacity:0;animation:opcineParticle 2000ms ease-out forwards;
+          opacity:0;animation:opcineParticle 2800ms ease-out forwards;
           will-change:transform,opacity}
         @keyframes opcineParticle{
           0%{opacity:0;transform:translate(0,0) scale(0.4)}
@@ -89603,7 +89618,7 @@ function _playOnPlayCinematicImpl(unit, card, opts) {
       </div>
       <div class="onplay-cine-ready">READY</div>
     `;
-    overlay.onclick = () => { try { overlay.remove(); } catch (e) {} };
+    overlay.onclick = (e) => { try { e.stopPropagation(); e.preventDefault(); } catch (_) {} };  /* 🔒 no skip — cinematic plays in full */
     document.body.appendChild(overlay);
     // 📺 Rare+ gets a quick screen shake during the surge.
     if (wantsShake && !opts.skipShake) {
@@ -92415,13 +92430,32 @@ function _anyCinematicActive() {
     if (typeof _aceSlamBusy !== 'undefined' && _aceSlamBusy) return true;
     if (App.ui && App.ui.heroUltCinematic) return true;
     if (App.ui && App.ui.battleAnim) return true;
+    if (App.ui && App.ui.archonCine) return true;   // 🜂 Archon summon ritual
+    if (App.ui && App.ui.polyCine) return true;      // 🌌 Polycreation fusion
     if (document.querySelector(
       '#ace-slam-overlay, #hero-ko-overlay, #field-fx-overlay, ' +
       '.spell-cine-overlay, .onplay-cine-overlay, .ab-cine-overlay, ' +
+      '.poly-cine-backdrop, .kc-overlay, ' +   // summon/fusion backdrop + Kalon evolution burst
       '.csv-fx, .mythic-fx'
     )) return true;
   } catch (e) {}
   return false;
+}
+// 🔒 Player-input gate. Returns TRUE when a cinematic / battle animation is mid-
+// play, meaning the player's action should be IGNORED — "all movement stops until
+// the animation is gone, nothing can be skipped." Shows a brief, throttled hint
+// so a blocked click doesn't feel dead. Called from every battle action entry
+// point (tile/unit click, ability button, card play, end turn).
+function _battleInputBlocked() {
+  if (typeof _anyCinematicActive !== 'function' || !_anyCinematicActive()) return false;
+  try {
+    const _now = Date.now();
+    if (!App._lastCineBlockToast || (_now - App._lastCineBlockToast) > 900) {
+      App._lastCineBlockToast = _now;
+      if (typeof showToast === 'function') showToast('✦ Hold — the animation is playing…', 800);
+    }
+  } catch (e) {}
+  return true;
 }
 // Run the AI's next step ONLY once every cinematic has cleared. Polls on a short
 // interval, refreshing the hang-watchdog timestamp so a legit VFX wait doesn't
@@ -123514,7 +123548,7 @@ function resolveHeroUltimate(heroUnitId, opts) {
         App.ui.heroUltCinematic = null;
         _muffleBattleAudioForUlt(false);
       }
-    }, 2000);   // ⏱ ULT NAME hold (≈2.0s) — kept in sync with the ult-cine CSS
+    }, 2800);   // ⏱ ULT NAME hold (≈2.8s) — kept in sync with the ult-cine CSS
     return;
   }
 

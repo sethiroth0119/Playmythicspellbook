@@ -60610,12 +60610,15 @@ function canActivateArchonSummon(state, catalyst) {
   if (!summonTile) return { ok: false, reason: 'No open tile near the Catalyst.' };
   return {
     ok: true,
+    // Full validated list — when length > 1 the player picks which Archon to
+    // become (some Archons can share offering requirements).
+    candidates,
+    // Convenience first-pick fields (used by the unit-menu button tooltip).
     archon: pick.archon,
     offerings: pick.offerings,
     kalonCost: pick.kalonCost,
     summonTile,
     catalyst,
-    alternatives: candidates.slice(1).map(c => ({ id: c.archon.id, name: c.archon.name })),
   };
 }
 
@@ -60631,10 +60634,23 @@ function openArchonSummonMode(catalyst) {
   }
   App.ui.archonMode = {
     catalystId: catalyst.id,
-    archonCardId: gate.archon.id,
-    offeringUnitIds: gate.offerings.slice(),
-    kalonCost: gate.kalonCost,
-    range: Math.max(1, Math.min(4, ((gate.archon.archonSummon && gate.archon.archonSummon.offeringRange) | 0) || 2)),
+    // One entry per eligible Archon; the overlay lets the player choose when
+    // there is more than one.
+    candidates: (gate.candidates || []).map(c => {
+      const sp = c.archon.archonSummon || {};
+      return {
+        archonCardId: c.archon.id,
+        archonName: c.archon.name || 'Archon',
+        archonIcon: c.archon.icon || '🜂',
+        tier: sp.tier || 'lesser',
+        creator: sp.creator || '',
+        catalystConsumed: !!sp.catalystConsumed,
+        offeringUnitIds: c.offerings.slice(),
+        kalonCost: c.kalonCost,
+        range: Math.max(1, Math.min(4, (sp.offeringRange | 0) || 2)),
+      };
+    }),
+    selectedIndex: 0,
     confirmed: false,
   };
   App.ui.selectedCardId = null;
@@ -60649,18 +60665,20 @@ function openArchonSummonMode(catalyst) {
 function _resolveArchonSummon() {
   const am = App.ui && App.ui.archonMode;
   if (!am) return;
+  const cand = (am.candidates || [])[am.selectedIndex | 0];
+  if (!cand) { App.ui.archonMode = null; renderBattle(); return; }
   const s = App.state;
   if (!s) { App.ui.archonMode = null; return; }
   const catalyst = (s.units || []).find(u => u && u.id === am.catalystId && u.alive);
   if (!catalyst) { App.ui.archonMode = null; renderBattle(); return; }
   const side = catalyst.owner;
   let archon = null;
-  try { archon = getAllArchonCards().find(a => a && a.id === am.archonCardId) || null; } catch (e) {}
+  try { archon = getAllArchonCards().find(a => a && a.id === cand.archonCardId) || null; } catch (e) {}
   if (!archon) { App.ui.archonMode = null; renderBattle(); return; }
   const spec = archon.archonSummon || {};
   let ns = { ...s };
   const log = [...(ns.log || [])];
-  const offIds = new Set(am.offeringUnitIds || []);
+  const offIds = new Set(cand.offeringUnitIds || []);
   const consumed = (ns.units || []).filter(u => offIds.has(u.id));
   // Sacrifice offerings (engine cleanup sweeps dead units; their tiles free up).
   ns.units = (ns.units || []).map(u => offIds.has(u.id)
@@ -60673,7 +60691,7 @@ function _resolveArchonSummon() {
     ns.units = ns.units.map(u => u.id === catalyst.id ? { ...u, hasAttacked: true } : u);
   }
   // Spend Kalon Source.
-  const kc = Math.max(0, am.kalonCost | 0);
+  const kc = Math.max(0, cand.kalonCost | 0);
   const curK = (ns[side] && (ns[side].kalonsRemaining | 0)) || 0;
   ns[side] = { ...ns[side], kalonsRemaining: Math.max(0, curK - kc) };
   // Deepen Realm Alignment with the Creator.
@@ -81795,6 +81813,7 @@ function _renderBattleImmediate() {
       ${App.replayViewing ? '' : renderDeckSearchModal()}
       ${App.replayViewing ? '' : renderFusionSelectionOverlay()}
       ${App.replayViewing ? '' : (typeof renderArchonSummonOverlay === 'function' ? renderArchonSummonOverlay() : '')}
+      ${App.replayViewing ? '' : (typeof renderArchonSummonCinematic === 'function' ? renderArchonSummonCinematic() : '')}
       ${(App.replayViewing || (App.flags && App.flags.pixiBoard)) ? '' : renderPolycreationCinematic()}
       ${App.replayViewing ? '' : renderHackPrompt()}
       ${App.replayViewing ? '' : renderGameModeSummary()}
@@ -83369,11 +83388,15 @@ function renderArchonSummonOverlay() {
   if (!s) return '';
   const catalyst = (s.units || []).find(u => u && u.id === am.catalystId && u.alive);
   if (!catalyst) return '';
+  const cands = Array.isArray(am.candidates) ? am.candidates : [];
+  if (!cands.length) return '';
+  const idx = Math.max(0, Math.min(cands.length - 1, am.selectedIndex | 0));
+  const cand = cands[idx];
   let archon = null;
-  try { archon = getAllArchonCards().find(a => a && a.id === am.archonCardId) || null; } catch (e) {}
+  try { archon = getAllArchonCards().find(a => a && a.id === cand.archonCardId) || null; } catch (e) {}
   if (!archon) return '';
   const spec = archon.archonSummon || {};
-  const offIds = new Set(am.offeringUnitIds || []);
+  const offIds = new Set(cand.offeringUnitIds || []);
   const offerings = (s.units || []).filter(u => offIds.has(u.id));
   const offHtml = offerings.length
     ? offerings.map(u => `<div class="poly-req-row"><span class="poly-req-fill">${escapeHtml(u.icon || '🪖')} ${escapeHtml(u.name || 'Unit')} <span class="ink-dim small-text">Lv${u.level || 1}</span></span></div>`).join('')
@@ -83381,6 +83404,18 @@ function renderArchonSummonOverlay() {
   const tierLabel = { lesser: 'Lesser', greater: 'Greater', divine: 'Divine', primordial: 'Primordial' }[spec.tier || 'lesser'] || 'Lesser';
   const creator = spec.creator ? _archonCreatorName(spec.creator) : '';
   const kalonHave = (s[catalyst.owner] && (s[catalyst.owner].kalonsRemaining | 0)) || 0;
+  // 🜂 When more than one Archon is eligible (some can share offering
+  // requirements), show a chip picker so the player chooses which to become.
+  const pickerHtml = cands.length > 1 ? `
+          <div class="poly-section-title">CHOOSE ARCHON (${cands.length} available)</div>
+          <div class="archon-pick-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:0.6rem">
+            ${cands.map((c, i) => `
+              <button class="archon-pick-chip" data-archon-pick="${i}" type="button" style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;cursor:pointer;border:1px solid ${i === idx ? '#ffd86b' : 'rgba(120,180,255,0.4)'};background:${i === idx ? 'rgba(255,200,80,0.18)' : 'rgba(40,90,180,0.12)'};color:#dce8ff;font-weight:${i === idx ? '700' : '500'}">
+                <span style="font-size:1.2em">${escapeHtml(c.archonIcon || '🜂')}</span>
+                <span>${escapeHtml(c.archonName || 'Archon')}</span>
+                <span class="ink-dim small-text">🌌${c.kalonCost | 0}</span>
+              </button>`).join('')}
+          </div>` : '';
   return `
     <div class="poly-backdrop" id="archon-select-backdrop">
       <div class="poly-modal">
@@ -83392,6 +83427,7 @@ function renderArchonSummonOverlay() {
           <button class="btn-mini btn-danger" id="archon-cancel" type="button">✕ Cancel</button>
         </div>
         <div class="poly-body">
+          ${pickerHtml}
           <div class="poly-card-preview">
             <div class="poly-card-spell">
               <div class="poly-card-icon">${escapeHtml(catalyst.icon || '🜂')}</div>
@@ -83408,8 +83444,8 @@ function renderArchonSummonOverlay() {
           <div class="poly-section-title">OFFERINGS (sacrificed)</div>
           <div class="poly-req-list">${offHtml}</div>
           <div class="poly-stats">
-            <div class="poly-stat"><span class="poly-stat-k">🌌 Kalon Source</span><span class="poly-stat-v">${am.kalonCost | 0} / ${kalonHave}</span></div>
-            <div class="poly-stat"><span class="poly-stat-k">📡 Offering Range</span><span class="poly-stat-v">${am.range | 0} tile${(am.range | 0) === 1 ? '' : 's'}</span></div>
+            <div class="poly-stat"><span class="poly-stat-k">🌌 Kalon Source</span><span class="poly-stat-v">${cand.kalonCost | 0} / ${kalonHave}</span></div>
+            <div class="poly-stat"><span class="poly-stat-k">📡 Offering Range</span><span class="poly-stat-v">${cand.range | 0} tile${(cand.range | 0) === 1 ? '' : 's'}</span></div>
             ${creator ? `<div class="poly-stat"><span class="poly-stat-k">⛧ Realm Alignment</span><span class="poly-stat-v">${escapeHtml(creator)}</span></div>` : ''}
             <div class="poly-stat"><span class="poly-stat-k">🜂 Catalyst</span><span class="poly-stat-v">${spec.catalystConsumed ? 'Sacrificed' : 'Stays'}</span></div>
           </div>
@@ -83422,20 +83458,100 @@ function renderArchonSummonOverlay() {
   `;
 }
 
-// Bind cancel + confirm for the Archon overlay. Confirm resolves directly
-// (a short summon flash via _markSummonAnim inside _resolveArchonSummon).
+// Bind cancel + confirm + the Archon picker chips. Confirm starts the summon
+// cinematic (App.ui.archonCine), which resolves _resolveArchonSummon at its end.
 function bindArchonSummonOverlay() {
   const back = document.getElementById('archon-select-backdrop');
   if (!back) return;
   back.onclick = (e) => { if (e.target === back) { App.ui.archonMode = null; renderBattle(); } };
   const cancel = document.getElementById('archon-cancel');
   if (cancel) cancel.onclick = () => { App.ui.archonMode = null; renderBattle(); };
+  document.querySelectorAll('[data-archon-pick]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      if (!App.ui || !App.ui.archonMode) return;
+      App.ui.archonMode.selectedIndex = parseInt(btn.dataset.archonPick, 10) || 0;
+      renderBattle();
+    };
+  });
   const confirm = document.getElementById('archon-confirm');
   if (confirm) confirm.onclick = () => {
     if (!App.ui || !App.ui.archonMode) return;
     App.ui.archonMode.confirmed = true;
-    try { _resolveArchonSummon(); } catch (e) { console.warn('[archon] resolve failed', e); App.ui.archonMode = null; renderBattle(); }
+    // 🜂 Kick off the summon cinematic, then resolve when it finishes.
+    App.ui.archonCine = { phase: 1 };
+    renderBattle();
+    try { if (typeof _muffleBattleAudioForUlt === 'function') _muffleBattleAudioForUlt(true); } catch (e) {}
+    try { if (typeof playSfx === 'function') playSfx('unitSummon'); } catch (e) {}
+    const phaseDurs = [850, 950, 950];   // sum ≈ 2750ms
+    let acc = 0;
+    phaseDurs.forEach((d, i) => {
+      acc += d;
+      setTimeout(() => {
+        if (!App.ui || !App.ui.archonCine) return;
+        App.ui.archonCine.phase = i + 2;
+        renderBattle();
+      }, acc);
+    });
+    setTimeout(() => {
+      try { if (typeof _muffleBattleAudioForUlt === 'function') _muffleBattleAudioForUlt(false); } catch (e) {}
+      App.ui.archonCine = null;
+      try { _resolveArchonSummon(); } catch (e) { console.warn('[archon] resolve failed', e); App.ui.archonMode = null; renderBattle(); }
+    }, acc + 650);
   };
+}
+
+// 🜂 Archon summon cinematic — a sigil-ring burst with the Creator glyph and the
+// Archon's name. Driven by App.ui.archonCine.phase (1→4). Reuses the poly-cine
+// styles so it shares the Polycreation VFX polish.
+function renderArchonSummonCinematic() {
+  const cine = App.ui && App.ui.archonCine;
+  if (!cine) return '';
+  const am = App.ui && App.ui.archonMode;
+  if (!am) return '';
+  const cand = (am.candidates || [])[am.selectedIndex | 0];
+  if (!cand) return '';
+  const phase = cine.phase | 0 || 1;
+  const phaseLabel = ({
+    1: 'ARCHON RITUAL INITIATED',
+    2: 'OFFERINGS CONSUMED',
+    3: 'THE ARCHON DESCENDS',
+    4: 'ARCHON MANIFESTED',
+  })[phase] || '';
+  const creatorGlyph = ({ yahweh: '✡', abraxas: '⛧', azathoth: '👁', leviathor: '🌊' })[String(cand.creator || '').toLowerCase()] || '🜂';
+  const showName = phase >= 3;
+  const ash = Array.from({ length: 18 }, (_, i) => {
+    const left = ((i * 53) % 100);
+    const dx = ((i * 17) % 80) - 40;
+    const delay = (i * 31) % 600;
+    const dur = 1400 + ((i * 91) % 800);
+    return `<span style="left:${left}%;--dx:${dx}px;--delay:${delay}ms;--dur:${dur}ms"></span>`;
+  }).join('');
+  const runes = ['☉','☽','✺','✦','⌬','☸','✧','⚛','✷','⌖','◈','✶'];
+  const runeRing = runes.map((g, i) => {
+    const angle = (i * 360 / runes.length);
+    return `<div class="poly-rune" style="transform: rotate(${angle}deg) translateY(-180px); animation-delay: ${i * 70}ms">${g}</div>`;
+  }).join('');
+  return `
+    <div class="poly-cine-backdrop poly-cine-phase-${phase}" aria-hidden="true" style="--archon-tint:#ffd86b">
+      <div class="poly-cine-vignette"></div>
+      <div class="poly-cine-stage">
+        <div class="poly-cine-circle">
+          <div class="poly-cine-ring poly-cine-ring-outer"></div>
+          <div class="poly-cine-ring poly-cine-ring-mid"></div>
+          <div class="poly-cine-ring poly-cine-ring-inner"></div>
+          <div class="poly-cine-rune-ring">${runeRing}</div>
+          <div class="poly-cine-energy"></div>
+          <div class="poly-cine-shockwave"></div>
+        </div>
+        <div class="poly-cine-ash">${ash}</div>
+        <div class="poly-cine-tear"></div>
+        <div class="poly-cine-kalon-portrait">${escapeHtml(showName ? (cand.archonIcon || '🜂') : creatorGlyph)}</div>
+      </div>
+      <div class="poly-cine-label">${escapeHtml(phaseLabel)}</div>
+      ${showName ? `<div class="poly-cine-kalon-name">${escapeHtml((cand.archonName || 'ARCHON').toUpperCase())}</div>` : ''}
+    </div>
+  `;
 }
 
 // Renders the 4-phase cinematic overlay. Driven by App.ui.polyCine.phase.

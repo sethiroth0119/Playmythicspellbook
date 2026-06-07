@@ -27346,6 +27346,11 @@ const PASSIVES = {
   catalystAscended:   { id: 'catalystAscended',   name: 'Ascended Catalyst',      desc: '🜂 Can initiate an Archon Summon, summoning up to Greater Archons.' },
   catalystDivine:     { id: 'catalystDivine',     name: 'Divine Catalyst',        desc: '🜂 Can initiate an Archon Summon, summoning up to Divine Archons.' },
   catalystPrimordial: { id: 'catalystPrimordial', name: 'Primordial Catalyst',    desc: '🜂 Can initiate an Archon Summon, summoning up to Creator Avatars & Primordial-class entities.' },
+  // 🚫 SUPPRESSION AURAS — while a unit carrying one of these is alive on the
+  // field, the named mechanic is shut off for BOTH players (a static "stax"
+  // lockdown). Put both on one card for a total Kalon + Archon null-field.
+  kalonSuppress:  { id: 'kalonSuppress',  name: 'Null Awakening',  desc: '🚫 While this unit lives, NEITHER player can Kalon Transform.' },
+  archonSuppress: { id: 'archonSuppress', name: 'Seal the Source', desc: '🚫 While this unit lives, NEITHER player can perform an Archon Summon.' },
   // 🪦 RAISE FROM DEAD
   // On death, leave a GLOWING tombstone that blocks the tile for 1-3 turns.
   // When the timer expires, the unit revives on that tile at 60% HP.
@@ -30473,6 +30478,14 @@ function sideHasPassive(state, owner, id) {
     if (hasPassive(u, id)) return true;
   }
   return false;
+}
+// True if ANY living unit on EITHER side carries the passive. Used by static
+// "suppression" auras (Null Awakening / Seal the Source) that lock a mechanic
+// for both players while the carrier is alive.
+function anyUnitHasPassive(state, id) {
+  if (!state || !id) return false;
+  const units = Array.isArray(state.units) ? state.units : [];
+  return units.some(u => u && u.alive && hasPassive(u, id));
 }
 // Build the runtime passives array from a card's passive + passive2 fields AND from
 // any extra entries the card carries in a `passives` array (custom Forge cards can
@@ -60673,6 +60686,12 @@ function canActivateArchonSummon(state, catalyst) {
   const side = catalyst.owner;
   const rank = _catalystRankOf(catalyst);
   if (!rank) return { ok: false, reason: 'This unit has no Catalyst passive' };
+  // 🚫 SEAL THE SOURCE — a static suppression aura. While ANY living unit on
+  // EITHER side carries archonSuppress, no Archon Summon can be performed.
+  if (typeof anyUnitHasPassive === 'function' && anyUnitHasPassive(state, 'archonSuppress')) {
+    const src = (state.units || []).find(u => u && u.alive && hasPassive(u, 'archonSuppress'));
+    return { ok: false, reason: `Archon Summons are sealed${src ? ' by ' + src.name : ''}.` };
+  }
   // Pool: the PLAYER summons only from their Archon Deck; the AI (no deck of its
   // own) draws from every forged Archon so it can use the mechanic too.
   const all = (side === 'player') ? getBattleArchonCards() : getAllArchonCards();
@@ -61667,6 +61686,16 @@ const executeKalonTransform = (state, unit, opts) => {
   const isFree = !!opts.free;
   const kalon = getKalonForm(unit);
   if (!kalon) return state;
+  // 🚫 NULL AWAKENING — a static suppression aura. While ANY living unit on
+  // EITHER side carries the kalonSuppress passive, NO ONE can Kalon Transform
+  // (this beats even forced / free transforms — it's a hard field lockdown).
+  if (typeof anyUnitHasPassive === 'function' && anyUnitHasPassive(state, 'kalonSuppress')) {
+    if (unit.owner === 'player' && typeof showToast === 'function') {
+      const src = (state.units || []).find(u => u && u.alive && hasPassive(u, 'kalonSuppress'));
+      showToast(`🚫 Kalon Transforms are suppressed${src ? ' by ' + src.name : ''}.`);
+    }
+    return state;
+  }
   // 🔒 Cannot-Normal-Kalon-Transform gate. Forced/effect transforms
   // (opts.forced, opts.free card-effect, opts.ignoreRestrictions) bypass the
   // normal-block; a card flagged forcedTransformOnly / canNormalKalon=false
@@ -85453,7 +85482,7 @@ function renderUnitModal() {
   // Movement / attack status
   const canMove = isPlayer && !u.hasMoved && s.turn === 'player';
   const canAct = isPlayer && !u.hasAttacked && s.turn === 'player';
-  const canKalon = isPlayer && hasKalonForm(u) && !u.kalonUsed && s.player.kalonsRemaining > 0 && s.turn === 'player' && (s.player.kalonsThisTurn || 0) < 1;
+  const canKalon = isPlayer && hasKalonForm(u) && !u.kalonUsed && s.player.kalonsRemaining > 0 && s.turn === 'player' && (s.player.kalonsThisTurn || 0) < 1 && !(typeof anyUnitHasPassive === 'function' && anyUnitHasPassive(s, 'kalonSuppress'));
   // 🜂 Archon Summon — available when this is the player's Catalyst unit and a
   // legal Archon ritual is ready (rank + offerings in range + Kalon Source).
   const _archonGate = (isPlayer && s.turn === 'player' && typeof canActivateArchonSummon === 'function' && _catalystRankOf(u) > 0)
@@ -93155,7 +93184,7 @@ function doAIStep() {
     // Hard difficulty checks all signals. Easy difficulty is more conservative.
     const diff = (typeof getAIDifficulty === 'function') ? getAIDifficulty() : null;
     const kalonReady = (diff ? diff.kalonReadiness : 1.0);
-    if (App.state.ai.kalonsRemaining > 0 && (App.state.ai.kalonsThisTurn || 0) < 1 && hasKalonForm(unit) && !unit.kalonUsed && App.state.turnNumber >= 2) {
+    if (App.state.ai.kalonsRemaining > 0 && (App.state.ai.kalonsThisTurn || 0) < 1 && hasKalonForm(unit) && !unit.kalonUsed && App.state.turnNumber >= 2 && !(typeof anyUnitHasPassive === 'function' && anyUnitHasPassive(App.state, 'kalonSuppress'))) {
       const incoming = aiIncomingThreatAt(unit, unit.pos, App.state);
       const hpFrac = unit.currentHp / Math.max(1, unit.maxHp);
       const transformedForm = getKalonForm(unit);

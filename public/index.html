@@ -32249,6 +32249,93 @@ function playSfx(id) {
   }
 }
 
+// ✨ Play an arbitrary audio file (path / URL) — used by custom Move audio that
+// points at a file rather than a built-in SFX name. Respects the SFX toggle +
+// master volume, times `vol` (0..1) on top.
+function _playAudioSrc(src, vol) {
+  try {
+    if (!src) return;
+    const settings = (typeof getSettings === 'function') ? getSettings() : ((typeof Profile !== 'undefined' && Profile.settings) || {});
+    if (settings.sfxEnabled === false) return;
+    const base = Math.max(0, Math.min(1, settings.sfxVolume != null ? settings.sfxVolume : 0.8));
+    const audio = new Audio(src);
+    audio.volume = Math.max(0, Math.min(1, base * (vol != null ? vol : 1)));
+    const p = audio.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch (e) { /* ignore */ }
+}
+
+// 🔊 Resolve + play one stage of a move's custom audio. The value can be a
+// built-in SFX name (→ playSfx) or a file path/URL under assets/Audio (→ direct).
+function playMoveAudio(move, stage) {
+  try {
+    const au = move && move.audio;
+    if (!au) return;
+    const val = au[stage];
+    if (!val) return;
+    if (typeof SFX !== 'undefined' && SFX[val]) { playSfx(val); return; }
+    _playAudioSrc(val, (au.volume != null ? au.volume : 1));
+  } catch (e) { /* ignore */ }
+}
+
+// 🎬 Inject the move-VFX keyframes once (camera shake / zoom / flash). Kept out
+// of the giant stylesheet so it's fully self-contained.
+function _ensureMoveVfxStyles() {
+  if (document.getElementById('move-vfx-styles')) return;
+  const st = document.createElement('style');
+  st.id = 'move-vfx-styles';
+  st.textContent =
+    '@keyframes mvfxShakeLight{0%,100%{transform:translate(0,0)}20%{transform:translate(-4px,2px)}40%{transform:translate(4px,-2px)}60%{transform:translate(-3px,-2px)}80%{transform:translate(3px,2px)}}' +
+    '@keyframes mvfxShakeHeavy{0%,100%{transform:translate(0,0)}10%{transform:translate(-9px,5px) rotate(-.6deg)}25%{transform:translate(10px,-6px) rotate(.6deg)}40%{transform:translate(-11px,-4px)}55%{transform:translate(11px,5px) rotate(-.5deg)}70%{transform:translate(-7px,6px)}85%{transform:translate(8px,-4px) rotate(.4deg)}}' +
+    '@keyframes mvfxZoom{0%{transform:scale(1)}35%{transform:scale(1.08)}100%{transform:scale(1)}}' +
+    '@keyframes mvfxFlash{0%{opacity:0}15%{opacity:1}100%{opacity:0}}' +
+    '.mvfx-shake-light{animation:mvfxShakeLight .35s ease-in-out}' +
+    '.mvfx-shake-heavy{animation:mvfxShakeHeavy .6s ease-in-out}' +
+    '.mvfx-zoom{animation:mvfxZoom .55s ease-in-out;transform-origin:center center}' +
+    '.mvfx-flash{position:fixed;inset:0;z-index:9000;pointer-events:none;background:radial-gradient(circle at center,rgba(255,255,255,.55),rgba(255,255,255,0) 60%);animation:mvfxFlash .5s ease-out forwards}';
+  document.head.appendChild(st);
+}
+
+// 🌋 Play a move's VFX (camera shake / dynamic zoom / screen effect). No-op when
+// the move has no vfx configured, so built-in moves are unaffected.
+function playMoveVfx(move, attacker, target) {
+  try {
+    const vfx = move && move.vfx;
+    if (!vfx) return;
+    _ensureMoveVfxStyles();
+    const board = document.querySelector('.board');
+    const screen = document.querySelector('.battle-screen') || document.body;
+    const flash = (el, cls, ms) => { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); setTimeout(() => { try { el.classList.remove(cls); } catch (e) {} }, ms); };
+    if (vfx.zoom && board) flash(board, 'mvfx-zoom', 600);
+    if (vfx.cameraShake === 'light') flash(screen, 'mvfx-shake-light', 380);
+    else if (vfx.cameraShake === 'heavy') flash(screen, 'mvfx-shake-heavy', 650);
+    if (vfx.screenFx === 'flash') { const o = document.createElement('div'); o.className = 'mvfx-flash'; document.body.appendChild(o); setTimeout(() => { try { o.remove(); } catch (e) {} }, 520); }
+    else if (vfx.screenFx === 'shockwave' && typeof playFxBurst === 'function' && target) { try { playFxBurst(target, { c1: '#ffd166', c2: '#ff9a3a', glyph: '💥' }); } catch (e) {} }
+    else if (vfx.screenFx === 'quake') { flash(screen, 'mvfx-shake-heavy', 650); if (board) flash(board, 'mvfx-shake-heavy', 650); }
+  } catch (e) { /* ignore */ }
+}
+
+// 🎼 Fire a move's full VFX + staged-audio sequence. Decoupled from the damage
+// math (timed) so it can never change combat outcomes. Called once per move use.
+function playMoveFx(move, attacker, target) {
+  try {
+    if (!move || (!move.vfx && !move.audio)) return;
+    if (typeof playMoveVfx === 'function') playMoveVfx(move, attacker, target);
+    if (!move.audio) return;
+    if (move.audio.voiceLine) setTimeout(() => playMoveAudio(move, 'voiceLine'), 60);
+    if (move.audio.chargeUp) setTimeout(() => playMoveAudio(move, 'chargeUp'), 110);
+    playMoveAudio(move, 'onCast');
+    const tid = target && target.id;
+    setTimeout(() => playMoveAudio(move, 'impact'), 240);
+    setTimeout(() => {
+      const t = tid && (typeof App !== 'undefined' && App.state) ? (App.state.units || []).find(u => u && u.id === tid) : null;
+      if (t && !t.alive) playMoveAudio(move, 'killBlow');
+      else playMoveAudio(move, 'hitConfirm');
+    }, 440);
+    if (move.audio.afterEffect) setTimeout(() => playMoveAudio(move, 'afterEffect'), 800);
+  } catch (e) { /* ignore */ }
+}
+
 // 💬 Synthesized chat cue — a tiny WebAudio chime so we don't need a sound
 // asset. kind:'in' = two-tone notification for an incoming message;
 // kind:'out' = a soft single tick for your own sent message. Respects the
@@ -62138,6 +62225,11 @@ function _fireBattleJuice(snap) {
 
 const executeMove = (state, attacker, target, move) => {
   let s = { ...state };
+  // ✨ Move VFX + staged custom audio (Forge). No-op unless the move has them
+  // configured. Decoupled from the damage math (timed) so it can't change combat.
+  if (move && (move.vfx || move.audio) && typeof playMoveFx === 'function') {
+    try { playMoveFx(move, attacker, target); } catch (e) {}
+  }
   // ⚡ Attack triggers — fire BEFORE the local log snapshot so responders'
   // log lines survive. Defenders with who:'enemy' react to an incoming attack;
   // attackers with who:'owner' react to their own. actorOwner = attacker side.
@@ -78409,6 +78501,38 @@ function renderMoveEditor() {
             </div>
           </div>
         </div>
+        ${(() => {
+          // ✨ Move VFX & Custom Audio (Forge). VFX shakes/zooms the battlefield
+          // on cast; staged audio plays at each beat. Audio value = a built-in
+          // sound name OR a file path/URL under assets/Audio/.
+          const vfx = move.vfx || {};
+          const au = move.audio || {};
+          const sfxNames = (typeof SFX !== 'undefined' && SFX) ? Object.keys(SFX) : [];
+          const dataList = `<datalist id="mv-sfx-list">${sfxNames.map(n => `<option value="${n}">`).join('')}</datalist>`;
+          const audioRow = (id, label, hint) => `<div class="editor-field"><label>${label}</label><input id="${id}" list="mv-sfx-list" placeholder="${hint}" value="${escapeHtml(au[id.replace('mv-audio-', '')] || '')}"></div>`;
+          return `
+          <div class="editor-field full" style="border-top:1px dashed rgba(120,180,255,0.45);padding-top:0.8rem;margin-top:0.5rem">
+            <label style="font-weight:700;color:#8fb6ff">✨ Move VFX &amp; Custom Audio</label>
+            <div class="small-text ink-dim" style="margin:0.2rem 0 0.4rem">Give signature / Ace moves cinematic punch. <strong>VFX</strong> shakes &amp; zooms the battlefield on cast. <strong>Audio</strong> fires at each beat — type a built-in sound name (autocomplete) or a file path like <code>assets/Audio/earthquake.wav</code>.</div>
+          </div>
+          ${dataList}
+          <div class="editor-field"><label>📷 Camera Shake</label><select id="mv-vfx-shake">
+            ${['none', 'light', 'heavy'].map(o => `<option value="${o}" ${(vfx.cameraShake || 'none') === o ? 'selected' : ''}>${o[0].toUpperCase() + o.slice(1)}</option>`).join('')}
+          </select></div>
+          <div class="editor-field"><label>🌋 Screen Effect</label><select id="mv-vfx-screen">
+            ${[['none', 'None'], ['flash', 'White Flash'], ['shockwave', 'Shockwave Burst'], ['quake', 'Battlefield Quake']].map(o => `<option value="${o[0]}" ${(vfx.screenFx || 'none') === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}
+          </select></div>
+          <div class="editor-field"><label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer"><input type="checkbox" id="mv-vfx-zoom" ${vfx.zoom ? 'checked' : ''} style="width:16px;height:16px"> 🔍 Dynamic Zoom</label></div>
+          <div class="editor-field"><label>🔊 Audio Volume %</label><input id="mv-audio-vol" type="number" min="0" max="100" value="${Math.round(((au.volume != null ? au.volume : 1)) * 100)}"></div>
+          ${audioRow('mv-audio-onCast',     '🎬 On Cast',      'sound when the move begins')}
+          ${audioRow('mv-audio-chargeUp',   '🔋 Charge Up',    'while power gathers')}
+          ${audioRow('mv-audio-impact',     '💥 Impact',       'when the attack lands')}
+          ${audioRow('mv-audio-hitConfirm', '✅ Hit Confirm',  'when damage is dealt')}
+          ${audioRow('mv-audio-killBlow',   '☠️ Kill Blow',    'when a target is defeated')}
+          ${audioRow('mv-audio-afterEffect','🌫️ After Effect', 'lingers after the move')}
+          ${audioRow('mv-audio-voiceLine',  '🗣️ Voice Line',   'character voice on cast')}
+        `;
+        })()}
       <div class="editor-actions">
         <button class="btn-secondary" id="btn-cancel-move">Cancel</button>
         <button class="btn-primary" id="btn-save-move">${isNew ? 'Forge It' : 'Save Changes'}</button>
@@ -78676,6 +78800,22 @@ function bindMoveEditor() {
     if (vsE) move.vsElementBonus  = vsE; else delete move.vsElementBonus;
     if (akF) move.atkFactionBonus = akF; else delete move.atkFactionBonus;
     if (akE) move.atkElementBonus = akE; else delete move.atkElementBonus;
+    // ✨ Move VFX + staged custom audio capture.
+    {
+      const _g = (idd) => { const e = document.getElementById(idd); return e ? e.value : ''; };
+      const shake = _g('mv-vfx-shake') || 'none';
+      const screen = _g('mv-vfx-screen') || 'none';
+      const zoom = !!(document.getElementById('mv-vfx-zoom') && document.getElementById('mv-vfx-zoom').checked);
+      if (shake !== 'none' || screen !== 'none' || zoom) move.vfx = { cameraShake: shake, screenFx: screen, zoom: zoom };
+      else delete move.vfx;
+      const stages = ['onCast', 'chargeUp', 'impact', 'hitConfirm', 'killBlow', 'afterEffect', 'voiceLine'];
+      const audio = {};
+      stages.forEach(st => { const val = (_g('mv-audio-' + st) || '').trim(); if (val) audio[st] = val; });
+      const vol = Math.max(0, Math.min(100, parseInt(_g('mv-audio-vol'), 10)));
+      if (!isNaN(vol) && vol !== 100) audio.volume = vol / 100;
+      if (Object.keys(audio).filter(k => k !== 'volume').length) move.audio = audio;
+      else delete move.audio;
+    }
     const wasNew = !Forge.customMoves[id];
     Forge.customMoves[id] = move;
     // 🛟 IMMEDIATE cloud push — moves were silently lost on refresh when this

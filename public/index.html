@@ -58791,6 +58791,13 @@ const ONPLAY_TYPES = [
   { id: 'verdict',      label: '⚖️ Verdict (opponent chooses effect A or B)',            needs: ['labelA','labelB'] },
   // 🎁 BESTOW — on play, grant a status buff to the nearest ally in radius (Hex TCG: Bestow).
   { id: 'bestow',       label: '🎁 Bestow (grant status buff to nearest ally)',           needs: ['radius','status','statusDuration'] },
+  // 🔒 CALL SEAL — the instant this unit (or Archon) is played OR summoned, the
+  // controller CALLS an element or a faction. While this unit is alive on the
+  // board, NEITHER player (owner OR enemy) may play units of that element/faction
+  // FROM HAND. The owner picks via a modal; the AI auto-picks the element/faction
+  // most common on the enemy's board. `callLockMode` ('either'|'element'|'faction')
+  // restricts what can be called. The seal lifts the moment the caller leaves play.
+  { id: 'callLock',     label: '🔒 Call Seal (lock an element/faction from hands)',        needs: ['callLockMode'] },
 ];
 
 // ============================================================================
@@ -59416,6 +59423,66 @@ function _interceptCardCost(card, again) {
     });
     return true;
   } catch (e) { try { console.warn('[card cost gate]', e); } catch (_) {} return false; }
+}
+
+// 🔒 ===== CALL SEAL (element/faction lock) helpers =====
+// Build a seal record tied to its caster unit. While that unit is alive on the
+// board, neither player may play units matching `value` FROM HAND.
+function _makeCallLock(caster, kind, value) {
+  let display = value;
+  try {
+    if (kind === 'element') display = (typeof ELEMENT_DATA !== 'undefined' && ELEMENT_DATA[value] && ELEMENT_DATA[value].name) || value;
+    else display = (typeof FACTION_BY_ID !== 'undefined' && FACTION_BY_ID[value] && FACTION_BY_ID[value].name) || value;
+  } catch (e) {}
+  return { casterId: caster && caster.id, owner: caster && caster.owner, kind, value, display, casterName: (caster && caster.name) || 'A unit' };
+}
+// AI auto-pick: seal whatever the HUMAN leans on most (tally the enemy board's
+// elements/factions); fall back to a random element when their board is empty.
+function _aiPickCallLock(state, caster, mode) {
+  try {
+    const enemyOwner = (caster && caster.owner === 'player') ? 'ai' : 'player';
+    const foes = ((state && state.units) || []).filter(u => u && u.alive && u.owner === enemyOwner && !u.isHero);
+    const elemTally = {}, facTally = {};
+    foes.forEach(u => {
+      ((typeof getElementsOf === 'function' ? getElementsOf(u) : (u.elements || [])) || []).forEach(e => { elemTally[e] = (elemTally[e] | 0) + 1; });
+      ((typeof getFactionsOf === 'function' ? getFactionsOf(u) : (u.factions || [])) || []).forEach(f => { facTally[f] = (facTally[f] | 0) + 1; });
+    });
+    const topOf = (t) => { let best = null, n = 0; for (const k in t) { if (t[k] > n) { n = t[k]; best = k; } } return best ? { k: best, n } : null; };
+    let kind = null, value = null;
+    if (mode === 'faction') { const tf = topOf(facTally); if (tf) { kind = 'faction'; value = tf.k; } }
+    else if (mode === 'element') { const te = topOf(elemTally); if (te) { kind = 'element'; value = te.k; } }
+    else {
+      const te = topOf(elemTally), tf = topOf(facTally);
+      if (te && (!tf || te.n >= tf.n)) { kind = 'element'; value = te.k; }
+      else if (tf) { kind = 'faction'; value = tf.k; }
+    }
+    if (!value) {
+      if (mode === 'faction' && typeof FACTIONS !== 'undefined' && FACTIONS.length) { kind = 'faction'; value = FACTIONS[Math.floor(Math.random() * FACTIONS.length)].id; }
+      else if (typeof ELEMENTS !== 'undefined' && ELEMENTS.length) { kind = 'element'; value = ELEMENTS[Math.floor(Math.random() * ELEMENTS.length)]; }
+    }
+    if (!value) return null;
+    return _makeCallLock(caster, kind, value);
+  } catch (e) { return null; }
+}
+// Returns a block reason string if `card` (a UNIT being played from hand) matches
+// an ACTIVE seal whose caster is still alive; else null. Self-healing: seals from
+// dead/removed casters are ignored automatically.
+function _cardPlayLockReason(card, state) {
+  try {
+    if (!card || card.type !== 'unit') return null;
+    const locks = state && state.mods && state.mods.callLocks;
+    if (!locks || !locks.length) return null;
+    const elems = (typeof getElementsOf === 'function') ? (getElementsOf(card) || []) : (card.elements || []);
+    const facs  = (typeof getFactionsOf === 'function') ? (getFactionsOf(card) || []) : (card.factions || []);
+    for (const lk of locks) {
+      if (!lk || !lk.value) continue;
+      const casterAlive = ((state.units) || []).some(u => u && u.id === lk.casterId && u.alive);
+      if (!casterAlive) continue;   // seal lifts when its caster leaves play
+      if (lk.kind === 'element' && elems.indexOf(lk.value) >= 0) return `${lk.display} is sealed by ${lk.casterName} — no ${lk.display} units can be played while it lives.`;
+      if (lk.kind === 'faction' && facs.indexOf(lk.value) >= 0) return `${lk.display} is sealed by ${lk.casterName} — that faction can't be played while it lives.`;
+    }
+  } catch (e) {}
+  return null;
 }
 
 function applyOnPlayEffect(state, unit, card) {
@@ -60215,6 +60282,27 @@ function applyOnPlayEffect(state, unit, card) {
       }
     } else {
       log.push({ msg: `🎁 ${unit.name}'s Bestow — no allies in range to bless.`, color: 'amber' });
+    }
+    return { ...state, log };
+  }
+
+  // 🔒 CALL SEAL — controller calls an element/faction; while this unit lives,
+  // NEITHER player may play units of it FROM HAND. Player → deferred picker
+  // overlay; AI → auto-pick the element/faction most common on the enemy board.
+  if (eff.type === 'callLock') {
+    const mode = (eff.callLockMode === 'element' || eff.callLockMode === 'faction') ? eff.callLockMode : 'either';
+    if (owner === 'player') {
+      // Defer to a modal so the human chooses (mirrors the Verdict pattern).
+      try { App.ui = App.ui || {}; App.ui.callLockPrompt = { casterId: unit.id, mode }; } catch (e) {}
+      log.push({ msg: `🔒 ${unit.name} prepares a Sealing — call ${mode === 'faction' ? 'a faction' : mode === 'element' ? 'an element' : 'an element or faction'}!`, color: 'amber' });
+      return { ...state, log };
+    }
+    // AI side — auto-pick to hurt the human, then register the seal immediately.
+    const pick = (typeof _aiPickCallLock === 'function') ? _aiPickCallLock(state, unit, mode) : null;
+    if (pick) {
+      const prior = ((state.mods && state.mods.callLocks) || []).filter(l => l && (state.units || []).some(u => u && u.id === l.casterId && u.alive));
+      state.mods = { ...(state.mods || {}), callLocks: [...prior, pick] };
+      log.push({ msg: `🔒 ${unit.name} seals ${pick.display} — neither side may play ${pick.kind === 'faction' ? 'that faction' : pick.display + ' units'} from hand while it lives!`, color: 'red' });
     }
     return { ...state, log };
   }
@@ -61066,6 +61154,16 @@ function _applyArchonSummon(state, opts) {
   if (spec.creator) log.push({ msg: `🌌 ${side === 'player' ? 'Your' : 'Enemy'} Realm Alignment with ${_archonCreatorName(spec.creator)} deepens.`, color: 'purple' });
   if (result.count === 0) log.push({ msg: `🜂 ${archon.name || 'Archon'} could not manifest — no open tile.`, color: 'amber' });
   ns.log = log;
+  // 🎴 Fire the summoned Archon's ON-PLAY ability now that it's on the board —
+  // this is how an Archon's "Call Seal" (and any other on-play effect) triggers
+  // on SUMMON, honoring "played OR summoned (not only from hand)". Log is already
+  // committed to ns above, so applyOnPlayEffect appends cleanly.
+  if (spawnedId && archon && archon.onPlay && archon.onPlay.type && typeof applyOnPlayEffect === 'function') {
+    try {
+      const _spawned = (ns.units || []).find(u => u && u.id === spawnedId);
+      if (_spawned) ns = applyOnPlayEffect(ns, _spawned, archon);
+    } catch (e) { try { console.warn('[archon onPlay]', e); } catch (_) {} }
+  }
   return { state: ns, spawnedId, archonName: archon.name || 'Archon' };
 }
 
@@ -75880,6 +75978,17 @@ function renderCardEditor() {
         + `</select>`
         + `<div class="small-text ink-dim" style="margin-top:0.25rem">Uses the Status, Status Duration, Chance, and Radius fields above.</div></div>`;
     })()}
+    ${(() => {
+      // 🔒 Call Seal — what the controller is allowed to call (used by 'callLock').
+      const clm = onPlay.callLockMode || 'either';
+      return `<div class="editor-field"><label>🔒 Call Seal — what can be called (when effect is "Call Seal")</label>`
+        + `<select id="ed-onplay-locktype">`
+        + `<option value="either"  ${clm === 'either'  ? 'selected' : ''}>Element OR faction (controller chooses)</option>`
+        + `<option value="element" ${clm === 'element' ? 'selected' : ''}>Element only</option>`
+        + `<option value="faction" ${clm === 'faction' ? 'selected' : ''}>Faction only</option>`
+        + `</select>`
+        + `<div class="small-text ink-dim" style="margin-top:0.25rem">On play OR summon, the controller calls one. While THIS unit/Archon lives, NEITHER player can play units of that element/faction from hand. The AI auto-picks what hurts you most.</div></div>`;
+    })()}
   ` : '';
 
   // ===== 🪞 PLAY REQUIREMENT — gate this card so it can only be played when
@@ -77819,6 +77928,8 @@ function captureEditorIntoCard(card) {
         graveSide:      v('ed-onplay-grave-side') || 'enemy',
         // ⚔ Sacrifice effect — used by 'sacrifice' on-play type.
         sacrificeEffect: v('ed-onplay-sac-effect') || 'buffSelf',
+        // 🔒 Call Seal — what the controller may call ('either'|'element'|'faction').
+        callLockMode:   v('ed-onplay-locktype') || 'either',
         // ⚖️ Verdict — labels + sub-effects; only active when checkbox is enabled (v86t).
         verdictEnabled: (() => { const el = document.getElementById('ed-verdict-enabled'); return el ? !!el.checked : false; })(),
         labelA: (document.getElementById('ed-verdict-labelA') || {}).value || '',
@@ -82730,6 +82841,8 @@ function _renderBattleImmediate() {
       ${App.replayViewing ? '' : renderAssaultPrompt()}
       ${App.replayViewing ? '' : renderSacrificePrompt()}
       ${App.replayViewing ? '' : renderVerdictPrompt()}
+      ${App.replayViewing ? '' : (typeof renderCallLockBanner === 'function' ? renderCallLockBanner() : '')}
+      ${App.replayViewing ? '' : (typeof renderCallLockPrompt === 'function' ? renderCallLockPrompt() : '')}
       ${App.replayViewing ? '' : renderDeckSearchModal()}
       ${App.replayViewing ? '' : renderFusionSelectionOverlay()}
       ${App.replayViewing ? '' : (typeof renderArchonSummonOverlay === 'function' ? renderArchonSummonOverlay() : '')}
@@ -82828,6 +82941,7 @@ function _renderBattleImmediate() {
   if (typeof bindAssaultPrompt === 'function') bindAssaultPrompt();
   if (typeof bindSacrificePrompt === 'function') bindSacrificePrompt();
   if (typeof bindVerdictPrompt === 'function') bindVerdictPrompt();
+  if (typeof bindCallLockPrompt === 'function') bindCallLockPrompt();
   if (typeof bindGameModeSummary === 'function') bindGameModeSummary();
   // Auto-shrink hand-card name text so long names (Bounty Collator, Bahamut King of
   // Good Dragons, etc.) don't overflow the title-bar strip on the new gold frame.
@@ -84003,6 +84117,76 @@ function bindVerdictPrompt() {
   const btnB = document.getElementById('verdict-b-btn');
   if (btnA) btnA.onclick = () => _executeVerdict('a');
   if (btnB) btnB.onclick = () => _executeVerdict('b');
+}
+
+// 🔒 ===== CALL SEAL UI — element/faction picker + active-seal banner =====
+// Shown to the human when a unit/Archon they played has the Call-Seal on-play.
+function renderCallLockPrompt() {
+  const cp = App.ui && App.ui.callLockPrompt;
+  if (!cp) return '';
+  const s = App.state;
+  const caster = (s && s.units) ? s.units.find(u => u.id === cp.casterId) : null;
+  const casterName = escapeHtml((caster && caster.name) || 'Your unit');
+  const mode = cp.mode || 'either';
+  const showElems = mode !== 'faction';
+  const showFacs  = mode !== 'element';
+  const chipBase = 'display:inline-flex;align-items:center;gap:4px;padding:5px 9px;border-radius:7px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.05);color:#f0eaff;font-size:0.82rem;cursor:pointer;font-family:inherit';
+  const elemChips = (typeof ELEMENTS !== 'undefined' ? ELEMENTS : []).map(e => {
+    const d = (typeof ELEMENT_DATA !== 'undefined' && ELEMENT_DATA[e]) || {};
+    return `<button class="cl-chip" data-cl-kind="element" data-cl-val="${escapeHtml(e)}" style="${chipBase};border-color:${(d.color || '#88a')}66">${d.icon || '✦'} ${escapeHtml(d.name || e)}</button>`;
+  }).join('');
+  const facChips = (typeof FACTIONS !== 'undefined' ? FACTIONS : []).map(f =>
+    `<button class="cl-chip" data-cl-kind="faction" data-cl-val="${escapeHtml(f.id)}" style="${chipBase};border-color:${(f.color || '#a98')}66">${f.icon || '🏷'} ${escapeHtml(f.name || f.id)}</button>`
+  ).join('');
+  const callWhat = showElems && showFacs ? 'an element or a faction' : showElems ? 'an element' : 'a faction';
+  return `<div class="cl-overlay" style="position:fixed;inset:0;z-index:2147483320;display:flex;align-items:center;justify-content:center;background:rgba(4,6,16,0.8);backdrop-filter:blur(2px)">
+    <div style="max-width:680px;width:92%;max-height:84vh;overflow-y:auto;background:linear-gradient(180deg,#1c1434,#0d0a1d);border:2px solid #b070ff;border-radius:14px;padding:1.15rem 1.25rem;box-shadow:0 0 48px rgba(176,112,255,0.5)">
+      <div style="font-family:'Cinzel',serif;font-size:1.18rem;color:#ecd9ff;text-align:center">🔒 ${casterName} — Seal a Power</div>
+      <div class="ink-dim" style="text-align:center;font-size:0.82rem;margin:0.3rem 0 0.9rem">Call ${callWhat}. While ${casterName} lives, <strong style="color:#e6c2ff">neither player</strong> can play units of it from hand.</div>
+      ${showElems ? `<div style="font-weight:700;color:#9fd0ff;font-size:0.78rem;letter-spacing:0.05em;margin:0.2rem 0 0.45rem">⚛ ELEMENTS</div><div style="display:flex;flex-wrap:wrap;gap:0.35rem">${elemChips}</div>` : ''}
+      ${showFacs ? `<div style="font-weight:700;color:#ffcf8a;font-size:0.78rem;letter-spacing:0.05em;margin:0.85rem 0 0.45rem">🏷 FACTIONS</div><div style="display:flex;flex-wrap:wrap;gap:0.35rem">${facChips}</div>` : ''}
+    </div>
+  </div>`;
+}
+// Thin top banner listing every ACTIVE seal (caster still alive), visible to both
+// players so everyone knows what's currently locked out of hands.
+function renderCallLockBanner() {
+  const s = App.state;
+  const locks = s && s.mods && s.mods.callLocks;
+  if (!locks || !locks.length) return '';
+  const active = locks.filter(l => l && (s.units || []).some(u => u && u.id === l.casterId && u.alive));
+  if (!active.length) return '';
+  const chips = active.map(l => {
+    const mine = l.owner === 'player';
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:0.72rem;background:${mine ? 'rgba(80,200,130,0.18)' : 'rgba(220,80,90,0.18)'};border:1px solid ${mine ? 'rgba(80,200,130,0.5)' : 'rgba(220,80,90,0.5)'};color:#fff">🔒 ${escapeHtml(l.display)}<span style="opacity:0.6">${l.kind === 'faction' ? 'faction' : 'units'}</span></span>`;
+  }).join('');
+  return `<div style="position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:1500;display:flex;gap:0.4rem;align-items:center;padding:4px 10px;border-radius:999px;background:rgba(10,8,22,0.85);border:1px solid rgba(176,112,255,0.4);pointer-events:none;flex-wrap:wrap;max-width:92vw">
+    <span style="font-size:0.7rem;color:#c8a8ff;font-family:'Cinzel',serif;letter-spacing:0.04em">SEALED</span>${chips}
+  </div>`;
+}
+function bindCallLockPrompt() {
+  if (!(App.ui && App.ui.callLockPrompt)) return;
+  document.querySelectorAll('.cl-chip[data-cl-kind]').forEach(btn => {
+    btn.onclick = () => _resolveCallLock(btn.dataset.clKind, btn.dataset.clVal);
+  });
+}
+function _resolveCallLock(kind, value) {
+  const cp = App.ui && App.ui.callLockPrompt;
+  App.ui.callLockPrompt = null;
+  if (!cp || !kind || !value) { renderBattle(); return; }
+  const s = App.state;
+  const caster = (s.units || []).find(u => u.id === cp.casterId && u.alive);
+  if (!caster) { renderBattle(); return; }
+  const lock = _makeCallLock(caster, kind, value);
+  // Drop any seals whose caster already left play, then add the new one.
+  const prior = ((s.mods && s.mods.callLocks) || []).filter(l => l && (s.units || []).some(u => u && u.id === l.casterId && u.alive));
+  App.state = {
+    ...s,
+    mods: { ...(s.mods || {}), callLocks: [...prior, lock] },
+    log: [...(s.log || []), { msg: `🔒 ${caster.name} seals ${lock.display} — no ${kind === 'faction' ? 'units of that faction' : lock.display + ' units'} can be played from hand while it lives!`, color: 'green' }],
+  };
+  try { if (typeof playSfx === 'function') playSfx('abilityCast'); } catch (e) {}
+  if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
 }
 
 function _executeVerdict(choice) {
@@ -91172,6 +91356,13 @@ function buildKalonElementLayers(elementId) {
 //     discountedCost:  <int>,            // cost when condition met (-1 = none, read by getEffectiveCardCost)
 //   }
 function _checkPlayRequirement(card, state, side) {
+  // 🔒 Call Seal gate — a unit whose element/faction has been SEALED (by a living
+  // caller's Call-Seal on-play) can't be played from hand by EITHER side. Units
+  // only; runs first so the player sees the seal message before other gates.
+  if (card && card.type === 'unit' && typeof _cardPlayLockReason === 'function') {
+    const _lock = _cardPlayLockReason(card, state);
+    if (_lock) return _lock;
+  }
   // 🪦 Consume-graveyard extra cost gate — block the play when the player's
   // graveyard doesn't hold enough cards to pay the consume cost. Checked for
   // EVERY play path (they all call this), so the card can never be played for
@@ -93089,7 +93280,8 @@ function doAIStep() {
   // ---- Phase 1: play the BEST unit card we can afford ----
   // Score by (raw stat density + anti-player tilt) / cost, accounting for placement safety.
   if (aiHero && aiHero.alive) {
-    const playable = s.ai.hand.filter(c => c.type === 'unit' && c.cost <= s.ai.energy);
+    const playable = s.ai.hand.filter(c => c.type === 'unit' && c.cost <= s.ai.energy
+      && !(typeof _cardPlayLockReason === 'function' && _cardPlayLockReason(c, s)));   // 🔒 skip sealed elements/factions
     if (playable.length > 0) {
       let best = null, bestScore = -Infinity;
       for (const card of playable) {

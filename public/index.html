@@ -111690,12 +111690,20 @@ function renderMatchmaking() {
           We'll match you with a player at similar skill — if no one shows up,
           you'll battle a level-matched AI in <strong id="mm-ai-in">${remaining}s</strong>.
         </p>
-        <div class="matchmaking-stats" style="grid-template-columns:repeat(4,1fr)">
+        ${(() => {
+          // 👁 The live Online + Searching counts are ADMIN-ONLY — players never
+          // see how many people are online anywhere in the game. Regular players
+          // get just Elapsed + AI-in (2-col); admins get the full 4-col view.
+          const _adm = (typeof isAdmin === 'function') && isAdmin();
+          const adminStats = _adm ? `
           <div class="matchmaking-stat" title="Players online right now"><span>🟢 Online</span><strong id="mm-online">${online || '—'}</strong></div>
-          <div class="matchmaking-stat" title="Other players currently searching"><span>🔍 Searching</span><strong id="mm-searching">${inQueue || '0'}</strong></div>
+          <div class="matchmaking-stat" title="Other players currently searching"><span>🔍 Searching</span><strong id="mm-searching">${inQueue || '0'}</strong></div>` : '';
+          return `<div class="matchmaking-stats" style="grid-template-columns:repeat(${_adm ? 4 : 2},1fr)">
+          ${adminStats}
           <div class="matchmaking-stat"><span>⏱ Elapsed</span><strong id="mm-elapsed">${elapsed}s</strong></div>
           <div class="matchmaking-stat"><span>🤖 AI in</span><strong id="mm-remaining">${remaining}s</strong></div>
-        </div>
+        </div>`;
+        })()}
         <div class="matchmaking-progress">
           <div class="matchmaking-progress-bar" id="mm-progress" style="width:${Math.min(100, (elapsed / 30) * 100)}%"></div>
         </div>

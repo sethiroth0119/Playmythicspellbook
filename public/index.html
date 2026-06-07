@@ -33264,10 +33264,12 @@ function sendColyseusSnapshot() {
   try {
     const snap = _serializeBattleStateForBroadcast(App.state);
     if (!snap) return;
-    ColyseusMP.room.send('snapshot', { kind: 'full', payload: { from: MatchBroadcast.myUserId, turn: snap.turnNumber || 0, state: snap } });
+    // 📜 Ship our NEW log lines so the opponent sees the full play-by-play.
+    const _newLog = (typeof _mpNewLogForBroadcast === 'function') ? _mpNewLogForBroadcast() : [];
+    ColyseusMP.room.send('snapshot', { kind: 'full', payload: { from: MatchBroadcast.myUserId, turn: snap.turnNumber || 0, state: snap, newLog: _newLog } });
     // 📡 Also mirror the snapshot onto the Supabase match channel so SPECTATORS
     // can watch this Colyseus match live (additive — players are unaffected).
-    try { ensureSpectatorMirror(); _specMirrorSend('state', { from: MatchBroadcast.myUserId, turn: snap.turnNumber || 0, state: snap }); } catch (e) {}
+    try { ensureSpectatorMirror(); _specMirrorSend('state', { from: MatchBroadcast.myUserId, turn: snap.turnNumber || 0, state: snap, newLog: _newLog }); } catch (e) {}
   } catch (e) {}
 }
 /** 🏁 Report the match result to the server — the SINGLE authoritative writer.
@@ -114973,7 +114975,7 @@ function _sendFullSnapshot() {
   try {
     MatchBroadcast.channel.send({
       type: 'broadcast', event: 'state',
-      payload: { from: MatchBroadcast.myUserId, turn: snapshot.turnNumber || 0, state: snapshot },
+      payload: { from: MatchBroadcast.myUserId, turn: snapshot.turnNumber || 0, state: snapshot, newLog: [] },
     });
     MatchBroadcast.lastSentSnapshot = { ...snapshot, _seq: 0 };
   } catch (e) { /* fire-and-forget */ }
@@ -115006,10 +115008,11 @@ function broadcastMyState() {
         // Update our "last sent" to reflect the merged state.
         MatchBroadcast.lastSentSnapshot = { ...snapshot, _seq: ((MatchBroadcast.lastSentSnapshot && MatchBroadcast.lastSentSnapshot._seq) || 0) + 1 };
       } else {
+        const _newLog = (typeof _mpNewLogForBroadcast === 'function') ? _mpNewLogForBroadcast() : [];
         MatchBroadcast.channel.send({
           type: 'broadcast',
           event: 'state',
-          payload: { from: MatchBroadcast.myUserId, turn: snapshot.turnNumber || 0, state: snapshot },
+          payload: { from: MatchBroadcast.myUserId, turn: snapshot.turnNumber || 0, state: snapshot, newLog: _newLog },
         });
         MatchBroadcast.lastSentSnapshot = { ...snapshot, _seq: 0 };
       }
@@ -115018,6 +115021,36 @@ function broadcastMyState() {
 }
 
 // Handler — opponent sent us a state snapshot. Swap perspective and apply.
+// 📜 MP battle-log sync. The watcher keeps its OWN correctly-worded log; we ship
+// the sender's NEW lines since its last broadcast so the watcher sees the FULL
+// play-by-play (flavor text, effect lines, attacks) — not just diff-derived
+// spawns/deaths. Returns the new lines (capped) + advances the pointer.
+function _mpNewLogForBroadcast() {
+  try {
+    const log = (App.state && Array.isArray(App.state.log)) ? App.state.log : [];
+    const from = MatchBroadcast._myLastBcastLogLen | 0;
+    const lines = (from >= 0 && from < log.length) ? log.slice(from) : [];
+    MatchBroadcast._myLastBcastLogLen = log.length;
+    return lines.slice(-50);   // bound payload size
+  } catch (e) { return []; }
+}
+// Re-word a sender log line for the WATCHER's view: the sender's first-person
+// ("You play X") becomes the opponent's name ("Inergy plays X"). Lines that use
+// unit names (attacks, flavor) pass through unchanged.
+function _mpReattributeLogLine(msg, oppName) {
+  if (typeof msg !== 'string' || !msg) return msg;
+  const nm = oppName || 'Opponent';
+  return msg
+    .replace(/^You play /,   nm + ' plays ')
+    .replace(/^You summon /, nm + ' summons ')
+    .replace(/^You cast /,   nm + ' casts ')
+    .replace(/^You /,        nm + ' ')
+    .replace(/\bYou\b/g,  nm)
+    .replace(/\byou\b/g,  nm)
+    .replace(/\bYour\b/g, nm + "'s")
+    .replace(/\byour\b/g, nm + "'s");
+}
+
 function _onRemoteStateArrived(payload) {
   if (!payload || !payload.state) return;
   if (payload.from === MatchBroadcast.myUserId) return; // own broadcast (defensive — self:false already filters)
@@ -115063,10 +115096,28 @@ function _onRemoteStateArrived(payload) {
     if (Array.isArray(_myPrev.log)) swapped.log = _myPrev.log;
   }
   App.state = swapped;
-  // 📜 Append the opponent's actions to OUR log, attributed to their name.
-  if (_isMp && App._mpOppLogAppend && App._mpOppLogAppend.length) {
-    try { App.state.log = [...(App.state.log || []), ...App._mpOppLogAppend]; } catch (e) {}
-    App._mpOppLogAppend = null;
+  // 📜 BATTLE LOG SYNC — prefer the sender's ACTUAL new log lines (the full
+  // play-by-play: card flavor, effect lines, attack lines), re-worded for our
+  // view, so the watcher sees EVERYTHING the active player did. Falls back to the
+  // diff-derived opponent actions for older clients that don't ship newLog.
+  if (_isMp) {
+    const _oppName = (App.battlePrep && App.battlePrep.opponentName) || 'Opponent';
+    const _newLog = Array.isArray(payload.newLog) ? payload.newLog : null;
+    if (_newLog && _newLog.length) {
+      const _reworded = _newLog.map(e => {
+        if (!e) return null;
+        if (typeof e === 'string') return { msg: _mpReattributeLogLine(e, _oppName), color: 'red' };
+        return Object.assign({}, e, { msg: _mpReattributeLogLine(e.msg, _oppName) });
+      }).filter(Boolean);
+      try { App.state.log = [...(App.state.log || []), ..._reworded]; } catch (e) {}
+      App._mpOppLogAppend = null;   // newLog supersedes the diff text (visuals already fired)
+    } else if (App._mpOppLogAppend && App._mpOppLogAppend.length) {
+      try { App.state.log = [...(App.state.log || []), ...App._mpOppLogAppend]; } catch (e) {}
+      App._mpOppLogAppend = null;
+    }
+    // Advance my own broadcast-log pointer PAST the lines I just appended so my
+    // next broadcast doesn't echo the opponent's actions back to them.
+    try { MatchBroadcast._myLastBcastLogLen = (App.state.log || []).length; } catch (e) {}
   }
   // Whether it's now my turn depends on the swapped currentTurn.
   const _wasMyTurn = !!MatchBroadcast.myTurn;

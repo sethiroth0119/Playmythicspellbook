@@ -135736,14 +135736,22 @@ function renderDeckBuilder() {
       const has = _inArchonDeck(a.id);
       const full = _archonCount >= ARCHON_DECK_MAX;
       const addDisabled = has || full;
-      // 🖼 Real Archon art — uploaded card art first, then the card's own image,
-      // then its emoji glyph as a last resort. Players wanted the actual icon.
-      let _art = null;
-      try { _art = (typeof getCardArt === 'function') ? getCardArt(a.id) : null; } catch (e) {}
-      if (!_art && (a.img || a.image)) _art = a.img || a.image;
-      const iconHtml = _art
-        ? `<span style="flex:0 0 auto;width:36px;height:36px;border-radius:5px;overflow:hidden;border:1px solid rgba(255,200,80,0.45);background:#1a1420"><img src="${escapeHtml(_art)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block"></span>`
-        : `<span style="flex:0 0 auto;width:36px;text-align:center;font-size:1.4rem">${escapeHtml(a.icon || '🜂')}</span>`;
+      // 🖼 Real Archon visual — authored SPRITE first, then uploaded card art /
+      // image, then the emoji glyph as a last resort. Players wanted the sprite.
+      let iconHtml = '';
+      const _sid = 'u_' + a.id;
+      let _hasSprite = false;
+      try { const _fr = (typeof getSpriteFrames === 'function') ? (getSpriteFrames(_sid, 'idle') || getSpriteFrames(_sid, 'attack')) : null; _hasSprite = !!(_fr && _fr.length); } catch (e) {}
+      if (_hasSprite) {
+        iconHtml = `<span style="flex:0 0 auto;width:36px;height:36px;border-radius:5px;overflow:hidden;border:1px solid rgba(255,200,80,0.45);background:#1a1420;display:inline-block">${renderIcon(_sid, a.icon || '🜂', 36)}</span>`;
+      } else {
+        let _art = null;
+        try { _art = (typeof getCardArt === 'function') ? getCardArt(a.id) : null; } catch (e) {}
+        if (!_art && (a.img || a.image)) _art = a.img || a.image;
+        iconHtml = _art
+          ? `<span style="flex:0 0 auto;width:36px;height:36px;border-radius:5px;overflow:hidden;border:1px solid rgba(255,200,80,0.45);background:#1a1420"><img src="${escapeHtml(_art)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block"></span>`
+          : `<span style="flex:0 0 auto;width:36px;text-align:center;font-size:1.4rem">${escapeHtml(a.icon || '🜂')}</span>`;
+      }
       // data-ctx-key wires this row into the deck builder's shared right-click
       // detail panel (bindDeckCardContextEvents → renderDeckCardContextModal),
       // exactly like the main/side deck card rows.
@@ -136901,7 +136909,19 @@ function renderDeckCardContextModal() {
       </div>
       <div class="deck-ctx-panel-body">
         <div class="ctx-head">
-          <div class="ctx-head-icon">${kind === 'unit' || (kind === 'custom' && card.type === 'unit') ? renderIcon('u_' + card.id, card.icon, 'lg') : `<span style="font-size:2.4rem">${card.icon || '🃏'}</span>`}</div>
+          <div class="ctx-head-icon">${(() => {
+            // 🜂 Units / summons / Archons get their real visual: authored SPRITE
+            // first, then uploaded card art, then the emoji as a last resort —
+            // so an Archon shows its sprite here instead of a placeholder emoji.
+            const _spriteable = kind === 'unit' || card.type === 'unit' || card.type === 'summon' || card.isSummon || (card.archonSummon && card.archonSummon.enabled);
+            if (_spriteable) {
+              const _sid = 'u_' + card.id;
+              try { const _fr = (typeof getSpriteFrames === 'function') ? (getSpriteFrames(_sid, 'idle') || getSpriteFrames(_sid, 'attack')) : null; if (_fr && _fr.length) return renderIcon(_sid, card.icon, 'lg'); } catch (e) {}
+              try { const _a = (typeof getCardArt === 'function') ? getCardArt(card.id) : null; if (_a) return `<img src="${String(_a).replace(/"/g, '&quot;')}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:8px">`; } catch (e) {}
+              return renderIcon(_sid, card.icon, 'lg');
+            }
+            return `<span style="font-size:2.4rem">${card.icon || '🃏'}</span>`;
+          })()}</div>
           <div class="ctx-head-info">
             <div class="hd-name">${escapeHtml(card.name)} <span class="hd-lvl-tag">${kindLabel}</span></div>
             <div class="hd-elems-row">${elementBadge(getElementsOf(card), 'sm')}</div>

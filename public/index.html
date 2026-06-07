@@ -98514,7 +98514,7 @@ function renderMyCardsModal() {
     const img = art
       ? `<img src="${String(art).replace(/"/g, '&quot;')}" alt="" style="width:100%;height:100%;object-fit:contain">`
       : `<span style="font-size:2.2rem">${escapeHtml(e.c.icon || '🃏')}</span>`;
-    return `<div title="${escapeHtml(e.c.name || e.id)}" style="display:flex;flex-direction:column;border:1.5px solid ${col};border-radius:8px;overflow:hidden;background:rgba(8,4,20,0.6)">
+    return `<div data-mycard="${escapeHtml(e.id)}" title="${escapeHtml(e.c.name || e.id)} — click for full details" style="display:flex;flex-direction:column;border:1.5px solid ${col};border-radius:8px;overflow:hidden;background:rgba(8,4,20,0.6);cursor:pointer">
       <div style="aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,${col}22,rgba(6,3,16,0.7));position:relative">${img}
         <div style="position:absolute;bottom:3px;right:4px;background:rgba(0,0,0,0.8);border:1px solid ${col};border-radius:9px;padding:0 6px;font-size:0.72rem;color:#fff;font-weight:800">×${e.count}</div></div>
       <div style="padding:4px 5px 1px;text-align:center;font-family:'Cinzel',serif;font-size:0.72rem;color:#efe9f5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(e.c.name || e.id)}</div>
@@ -98613,6 +98613,7 @@ function renderPackOpening() {
       <div class="pack-opening-grid">${tilesHtml}</div>
       ${renderPackRevealModal ? renderPackRevealModal() : ''}
       ${typeof renderMyCardsModal === 'function' ? renderMyCardsModal() : ''}
+      ${typeof renderCollectionCardModal === 'function' ? renderCollectionCardModal() : ''}
     </div>
   `;
 
@@ -98627,6 +98628,15 @@ function renderPackOpening() {
   if (myCardsClose) myCardsClose.onclick = () => { App._showMyCards = false; render(); };
   const myCardsBackdrop = document.getElementById('my-cards-backdrop');
   if (myCardsBackdrop) myCardsBackdrop.onclick = (e) => { if (e.target === myCardsBackdrop) { App._showMyCards = false; render(); } };
+  // 🔎 My Cards tiles → open the full rich detail modal (art + traits + moveset).
+  document.querySelectorAll('[data-mycard]').forEach(el => {
+    el.onclick = () => {
+      const id = el.getAttribute('data-mycard');
+      let card = null;
+      try { card = (typeof _resolveAnyCardById === 'function') ? _resolveAnyCardById(id) : null; } catch (e) {}
+      if (card && typeof openCardDetailView === 'function') openCardDetailView(card, card.type || 'unit');
+    };
+  });
 
   // "Go to shop" link in the empty state.
   const gotoShop = document.getElementById('poe-goto-shop');
@@ -98660,6 +98670,9 @@ function renderPackOpening() {
 
   // Bind the pack-reveal modal handlers too (since we render it inline).
   _bindPackOpeningRevealHandlers();
+  // 🔎 Bind the rich card-detail modal so clicking a pulled card (Hidden Cache
+  // grid → openCardDetailView) shows full art + traits + moveset + everything.
+  if (typeof bindCollectionCardModal === 'function') bindCollectionCardModal();
 }
 
 // 🪝 Local binder for the pack-reveal modal on the Pack Opening page so
@@ -98685,8 +98698,16 @@ function _bindPackOpeningRevealHandlers() {
         // (same click bubble or fast double-tap chain).
         const last = (App._packReveal._lastRevealAt || {})[idx] || 0;
         if (Date.now() - last < 350) return;
-        App._packReveal.detailIdx = idx;
-        render();
+        // 🔎 Open the FULL rich card-detail modal (art + traits + moveset +
+        // passives + on-play) instead of the lighter inline detail card.
+        const _d = App._packReveal.cards[idx];
+        const _c = _d && _d.card;
+        if (_c && typeof openCardDetailView === 'function') {
+          openCardDetailView(_c, _c.type || 'unit');
+        } else {
+          App._packReveal.detailIdx = idx;
+          render();
+        }
       }
     };
   });
@@ -120863,34 +120884,47 @@ function renderCollectionCardModal(active) {
     ? `<span class="owned-badge">✓ ×${ownedCount} owned</span>`
     : `<span class="unowned-badge">🔒 not owned</span>`;
 
+  // 🖼 Big card picture beside the details. Prefer the uploaded full-card art
+  // (getCardArt) → card.img/image → fall back to a framed sprite/emoji tile.
+  const _art = (typeof getCardArt === 'function') ? (getCardArt(c.id) || c.img || c.image || null) : (c.img || c.image || null);
+  const artPanel = _art
+    ? `<img src="${String(_art).replace(/"/g, '&quot;')}" alt="${escapeHtml(c.name || '')}" style="width:100%;border-radius:10px;border:2px solid ${r.color};box-shadow:0 8px 26px rgba(0,0,0,0.6);object-fit:contain;background:rgba(8,4,20,0.45)">`
+    : `<div style="width:100%;aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;font-size:4.4rem;border:2px solid ${r.color};border-radius:10px;background:radial-gradient(ellipse at center,${r.color}22,rgba(8,4,20,0.7))">${(typeof renderIcon === 'function') ? renderIcon(spriteKey, c.icon, 'lg') : (c.icon || '🃏')}</div>`;
+
   return `
     <div class="modal-backdrop ccm-backdrop" id="ccm-backdrop" style="z-index:2147483647">
-      <div class="ccm-modal">
+      <div class="ccm-modal" style="max-width:780px;width:95%">
         <button class="modal-close" id="ccm-close" aria-label="Close">×</button>
-        <div class="ccm-header">
-          <div class="ccm-icon">${(typeof renderIcon === 'function') ? renderIcon(spriteKey, c.icon, 'lg') : (c.icon || '🃏')}</div>
-          <div class="ccm-titlewrap">
-            <div class="ccm-name">${escapeHtml(c.name || 'Card')}</div>
-            <div class="ccm-subline">
-              <span class="rarity-badge" style="color:${r.color};border-color:${r.color}">${r.name}</span>
-              <span class="ccm-kind">${kind.toUpperCase()}</span>
-              ${c.isWall ? `<span class="ccm-kind" style="border-color:#9aa6c0;color:#bcc6dc" title="Stationary structure — cannot move${c.wall && c.wall.canAttack === false ? '; cannot attack' : ''}">🧱 WALL · CANNOT MOVE</span>` : ''}
-              ${ownedBadge}
+        <div style="display:flex;gap:1.1rem;align-items:flex-start;flex-wrap:wrap">
+          <!-- 🖼 Card picture column -->
+          <div style="flex:0 0 232px;max-width:240px;margin:0 auto">
+            ${artPanel}
+            <div style="text-align:center;margin-top:9px">
+              <div class="ccm-name" style="font-size:1.08rem;line-height:1.2">${escapeHtml(c.name || 'Card')}</div>
+              <div class="ccm-subline" style="justify-content:center;margin-top:5px;flex-wrap:wrap;gap:5px;display:flex">
+                <span class="rarity-badge" style="color:${r.color};border-color:${r.color}">${r.name}</span>
+                <span class="ccm-kind">${kind.toUpperCase()}</span>
+              </div>
+              ${c.isWall ? `<div style="margin-top:5px"><span class="ccm-kind" style="border-color:#9aa6c0;color:#bcc6dc">🧱 WALL · CANNOT MOVE</span></div>` : ''}
+              <div style="margin-top:7px">${ownedBadge}</div>
             </div>
           </div>
+          <!-- 📋 Details column -->
+          <div style="flex:1 1 330px;min-width:280px;max-height:72vh;overflow-y:auto;padding-right:4px">
+            ${c.desc ? `<div class="ccm-desc" style="margin-top:0">${escapeHtml(c.desc)}</div>` : ''}
+            <div class="ccm-meta-block">
+              ${costLine}
+              ${metaSpecific}
+            </div>
+            ${elemRow}
+            ${factionRow}
+            ${statsHtml}
+            ${traitNatureHtml}
+            ${passiveHtml}
+            ${onPlayHtml}
+            ${learnsetHtml}
+          </div>
         </div>
-        ${c.desc ? `<div class="ccm-desc">${escapeHtml(c.desc)}</div>` : ''}
-        <div class="ccm-meta-block">
-          ${costLine}
-          ${metaSpecific}
-        </div>
-        ${elemRow}
-        ${factionRow}
-        ${statsHtml}
-        ${traitNatureHtml}
-        ${passiveHtml}
-        ${onPlayHtml}
-        ${learnsetHtml}
         <div class="ccm-footer">
           <button class="btn-secondary" id="ccm-done">Close</button>
         </div>

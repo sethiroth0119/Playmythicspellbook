@@ -87812,7 +87812,10 @@ function bindBattleEvents() {
       App.ui.selectedMoveId = null;
       App.ui.actionMode = null;
       App.ui.modalUnitId = null;
-      renderBattle();
+      // 📡 Broadcast the transform IMMEDIATELY in MP (checkPostAction pushes the
+      // snapshot) so the opponent sees the Kalon form + its animation right away
+      // — not delayed until the next move. Single-player just re-renders.
+      if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
     };
 
     // 🜂 Archon Summon — open the ritual confirm overlay for this Catalyst.
@@ -91697,7 +91700,9 @@ function playWeather(card) {
   try { if (typeof _fireTriggers === 'function') App.state = _fireTriggers(App.state, 'cardPlayed', { actorOwner: 'player', card }); } catch (e) {}
   // 🎴 Weather called → cinematic over the whole board.
   playSpellActivationVfx(card, { label: 'WEATHER CALLED' });
-  renderBattle();
+  // 📡 Broadcast immediately in MP so the opponent's sky changes + the weather
+  // sweep play right away (not delayed until the next action).
+  if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
 }
 
 function playSpell(card) {

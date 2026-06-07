@@ -32116,6 +32116,9 @@ const SFX = {
   // (_playAceSlam) when an ace-flagged unit is summoned. Distinct from the
   // regular onPlay cue.
   aceSlam:        { src: 'assets/Audio/Ace%20onplay%20sound%20effect.wav', volume: 1.0 },
+  // 📦 Pack-open stinger — fires when the player cracks a pack / cache open
+  // (openLootRewardModal reveal). Plays once per pack-open.
+  packOpen:       { src: 'assets/Audio/pack%20open.wav',                  volume: 1.0 },
 };
 
 // ---- Global button-click SFX ----
@@ -104078,7 +104081,7 @@ function openLootRewardModal(opts) {
       : ((rarity && rarity.id) ? rarity.id : 'common');
     const safeRarityClass = 'lrm-r-' + safeRarity;
     const cardSig = card.image
-      ? `<img src="${escapeHtml(card.image)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:6px">`
+      ? `<img src="${escapeHtml(card.image)}" alt="" style="width:100%;height:100%;object-fit:contain;border-radius:6px">`
       : `<div class="lrm-card-art-sym">${escapeHtml(card.sigil || '?')}</div>`;
     // 🃏 Element + faction chips for the headline card — pulled into the
     // reveal so the player sees the SAME identifiers they'll use in the
@@ -104131,7 +104134,7 @@ function openLootRewardModal(opts) {
       const head = c.isHeadline ? '<div style="position:absolute;top:-9px;right:-9px;background:linear-gradient(135deg,#ffd166,#ff9050);color:#1a0f02;font-family:\'Cinzel\',serif;font-weight:900;font-size:0.62rem;padding:2px 7px;border-radius:10px;border:1px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.5);letter-spacing:0.05em;z-index:2">★ HEADLINE</div>' : '';
       const itemBadge = c.isItem ? '<div style="position:absolute;top:-9px;left:-9px;background:#ff9050;color:#1a0f02;font-family:\'Cinzel\',serif;font-weight:800;font-size:0.6rem;padding:2px 6px;border-radius:10px;border:1px solid #fff;z-index:2">ITEM</div>' : '';
       const art = c.image
-        ? `<img src="${escapeHtml(c.image)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:4px">`
+        ? `<img src="${escapeHtml(c.image)}" alt="" style="width:100%;height:100%;object-fit:contain;border-radius:4px">`
         : `<span style="font-size:2.4rem;line-height:1;filter:drop-shadow(0 2px 6px rgba(0,0,0,0.7))">${escapeHtml(c.sigil || '🃏')}</span>`;
       // 💎 Clickable — opens the card-detail modal. data-lrm-card carries the
       // id so the bound click handler (after the modal renders) can look it
@@ -104151,7 +104154,7 @@ function openLootRewardModal(opts) {
         onmouseover="this.style.transform='translateY(-3px)';this.style.boxShadow='0 10px 26px rgba(0,0,0,0.65),inset 0 0 18px ${acc.g},0 0 22px ${acc.g}';"
         onmouseout="this.style.transform='';this.style.boxShadow='0 6px 18px rgba(0,0,0,0.55),inset 0 0 14px ${acc.g.replace(/0\.\d+/, '0.10')},0 0 0 1px rgba(0,0,0,0.4)';">
         ${head}${itemBadge}
-        <div style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,${acc.g},rgba(6,3,16,0.65) 75%);border-radius:6px;border:1px solid ${acc.c}40;overflow:hidden">${art}</div>
+        <div style="aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,${acc.g},rgba(6,3,16,0.65) 75%);border-radius:6px;border:1px solid ${acc.c}40;overflow:hidden">${art}</div>
         <div style="font-family:'Cinzel',serif;font-weight:800;font-size:0.74rem;color:#efe9f5;text-align:center;letter-spacing:0.04em;line-height:1.2;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;margin-top:1px" title="${escapeHtml(c.name || '')}">${escapeHtml(c.name || 'Unknown')}</div>
         <div style="font-family:'Roboto Mono',monospace;font-size:0.6rem;color:${acc.c};text-align:center;text-transform:uppercase;letter-spacing:0.12em;font-weight:700">${escapeHtml(cr)}</div>
       </div>`;
@@ -104244,6 +104247,8 @@ function openLootRewardModal(opts) {
         <div class="lrm-crate-cta">▸ Click to breach seal ◂</div>
       </div>`;
     intro.onclick = () => {
+      // 📦 Pack-open stinger — fires the instant the player clicks the cache.
+      try { if (typeof playSfx === 'function') playSfx('packOpen'); } catch (e) {}
       intro.remove();
       // Opening flash + beam
       const op = document.createElement('div');

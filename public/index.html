@@ -33125,8 +33125,8 @@ function _onColyseusMatchStart(data) {
   if (App.battlePrep) {
     const _bp = App.battlePrep;
     _bp.coinResult = null; _bp.coinCall = null; _bp.coinCaller = null;
-    _bp._coinReadySent = false; _bp._coinReadyMe = false; _bp._coinReadyOpp = false;
-    _bp._iAmCaller = false; _bp._coinSpinScheduled = false; _bp._coinAdvanceScheduled = false;
+    _bp._iAmCaller = false; _bp._coinSpinScheduled = false;
+    _bp._coinAdvanceScheduled = false; _bp._coinPickBackstop = false;
   }
   MatchBroadcast.opponentId = data && Array.isArray(data.participants)
     ? data.participants.find(id => id !== myId) || null
@@ -70877,37 +70877,32 @@ function renderCoinFlip() {
   // Colyseus — which is why the toss never worked + the match stuck.)
   const _mpCoin = bp.multiplayer && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP;
   if (_mpCoin && !bp.coinResult) {
-    // 1) READY handshake — announce we're on the coin screen; wait for both.
-    if (!bp._coinReadySent) {
-      bp._coinReadySent = true; bp._coinReadyMe = true;
-      try { if (typeof sendColyseusFx === 'function') sendColyseusFx('coinReady', {}); } catch (e) {}
-      // Backstop: proceed even if the opponent's ready never arrives.
-      setTimeout(() => {
-        if (App.battlePrep && !App.battlePrep._coinReadyOpp) {
-          App.battlePrep._coinReadyOpp = true;
-          if (App.screen === 'coinFlip' && typeof render === 'function') render();
-        }
-      }, 6000);
-    }
-    const _bothReady = bp._coinReadyMe && bp._coinReadyOpp;
-    // 2) Pick the CALLER once both are ready (seed-derived → feels random, both
-    //    clients compute the SAME caller). Re-announce ready in case the opponent
-    //    arrived after our first announce (so they learn we're ready too).
-    if (!bp._coinReadyOpp) { try { if (typeof sendColyseusFx === 'function') sendColyseusFx('coinReady', {}); } catch (e) {} }
-    if (_bothReady && !bp.coinCaller) {
+    // 1) CALLER is deterministic (seed-derived → feels random; BOTH clients
+    //    compute the SAME caller with NO message needed). The caller sees the
+    //    heads/tails buttons IMMEDIATELY — no ready-handshake gate (that depended
+    //    on a cross-player message and could hide the buttons / hang the toss).
+    if (!bp.coinCaller) {
       const _ids = [String(MatchBroadcast.myUserId || ''), String(MatchBroadcast.opponentId || '')].filter(Boolean).sort();
       const _seed = (MatchBroadcast.seed | 0) || 1;
-      bp.coinCaller = (_ids.length === 2) ? _ids[_seed % 2] : (_ids[0] || String(MatchBroadcast.myUserId || ''));
+      bp.coinCaller = (_ids.length === 2) ? _ids[_seed % 2] : String(MatchBroadcast.myUserId || '');
       bp._iAmCaller = (bp.coinCaller === String(MatchBroadcast.myUserId));
-      // Backstop: if I'm the caller and don't pick in 12s, auto-pick.
-      if (bp._iAmCaller) {
-        setTimeout(() => {
-          if (App.battlePrep && App.screen === 'coinFlip' && !App.battlePrep.coinCall) _mpCoinCall(Math.random() < 0.5 ? 'heads' : 'tails');
-        }, 12000);
-      }
     }
-    // 3) Once the call is known (mine or relayed), compute the result + spin.
-    if (_bothReady && bp.coinCall && !bp._coinSpinScheduled) {
+    // 2) Backstop so it can NEVER hang regardless of the relay:
+    //    - caller: auto-pick after 15s if they never click.
+    //    - non-caller: default the call after 6s if the relay never arrives (the
+    //      OUTCOME is serverFirst either way; the call only flavors the coin face).
+    if (!bp._coinPickBackstop) {
+      bp._coinPickBackstop = true;
+      const _delay = bp._iAmCaller ? 15000 : 6000;
+      setTimeout(() => {
+        if (App.battlePrep && App.screen === 'coinFlip' && !App.battlePrep.coinCall) {
+          App.battlePrep.coinCall = 'heads';
+          if (typeof render === 'function') render();
+        }
+      }, _delay);
+    }
+    // 3) Once the call is known (my click, relayed, or backstop) → spin → reveal.
+    if (bp.coinCall && !bp._coinSpinScheduled) {
       bp._coinSpinScheduled = true;
       const _first = _mpResolvedFirst();
       const _iAmFirst = (_first === MatchBroadcast.myUserId);
@@ -70920,16 +70915,15 @@ function renderCoinFlip() {
         App.battlePrep.coinResult = _resultFace;
         App.battlePrep.playerWonFlip = _iAmFirst;
         if (App.screen === 'coinFlip' && typeof render === 'function') render();
-      }, 1600);
+      }, 1500);
     }
   }
 
-  // Phase: reveal > (MP: waiting-ready / pick / waiting-call / spinning) > legacy.
+  // Phase: reveal > (MP: caller picks / non-caller waits / spinning) > legacy.
   let phase;
   if (bp.coinResult) phase = 'reveal';
   else if (_mpCoin) {
-    if (!(bp._coinReadyMe && bp._coinReadyOpp)) phase = 'mp-wait-ready';
-    else if (!bp.coinCall) phase = bp._iAmCaller ? 'pick' : 'mp-wait-call';
+    if (!bp.coinCall) phase = bp._iAmCaller ? 'pick' : 'mp-wait-call';
     else phase = 'spinning';
   } else {
     phase = bp.coinCall ? 'spinning' : 'pick';

@@ -228,12 +228,7 @@ async function handleCashout(request, env, u) {
       if (!acct) return cjson({ error: 'account_create_failed' }, 502);
       await sbAcctSet(env, user, acct);
     }
-    let origin = (env.PUBLIC_BASE_URL || u.origin).replace(/\/+$/, '');
-    // Stripe requires an absolute https:// URL. If PUBLIC_BASE_URL was set
-    // without a scheme (e.g. "playmythicspellbook.com"), Stripe rejects the
-    // session with "Invalid URL: An explicit scheme must be provided". Prepend
-    // https:// defensively so a schemeless var can never break checkout.
-    if (!/^https?:\/\//i.test(origin)) origin = 'https://' + origin.replace(/^\/+/, '');
+    const origin = _safeReturnOrigin(env, u);
     const link = await stripeApi(env, 'POST', '/v1/account_links', {
       account: acct, type: 'account_onboarding',
       refresh_url: origin + '/?cashout=refresh', return_url: origin + '/?cashout=return',
@@ -301,6 +296,25 @@ const AZA_PACKS = {
   sp_champ:   { aza: 50,  cents: 4999,   name: "Champion's Trove" },
   sp_legend:  { aza: 150, cents: 14999,  name: "Legend's Hoard" },
 };
+// 🔗 Resolve a SAFE absolute https:// base for Stripe return URLs. PUBLIC_BASE_URL
+// is operator-set and can be wrong — most dangerously a Stripe KEY pasted into it
+// by mistake, which sends the checkout success redirect to a dead domain (the
+// "can't reach this page / rk_live_…" DNS error). We therefore REJECT a value
+// that looks like a key or isn't a real hostname, and fall back to the request's
+// own origin (this Worker serves the game, so that IS the site URL). Never logs
+// or returns the env value.
+function _safeReturnOrigin(env, u) {
+  let o = String((env && env.PUBLIC_BASE_URL) || '').trim();
+  const looksLikeKey = /^(rk|sk|pk|whsec)_(live|test)_/i.test(o) || /^(rk|sk|pk|whsec)_/i.test(o);
+  if (o && !looksLikeKey) {
+    if (!/^https?:\/\//i.test(o)) o = 'https://' + o.replace(/^\/+/, '');
+    try {
+      const url = new URL(o);
+      if (url.hostname && url.hostname.indexOf('.') > 0 && !/\s/.test(o)) return o.replace(/\/+$/, '');
+    } catch (e) { /* fall through to request origin */ }
+  }
+  return String((u && u.origin) || '').replace(/\/+$/, '');
+}
 async function handleBuy(request, env, u) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_RW });
   const seg = u.pathname.replace(/^\/api\/buy\//, '').replace(/\/+$/, '');
@@ -314,12 +328,11 @@ async function handleBuy(request, env, u) {
     const body = await request.json().catch(() => ({}));
     const p = AZA_PACKS[body && body.pack];
     if (!p) return cjson({ error: 'bad_pack' }, 400);
-    let origin = (env.PUBLIC_BASE_URL || u.origin).replace(/\/+$/, '');
-    // Stripe requires an absolute https:// URL. If PUBLIC_BASE_URL was set
-    // without a scheme (e.g. "playmythicspellbook.com"), Stripe rejects the
-    // session with "Invalid URL: An explicit scheme must be provided". Prepend
-    // https:// defensively so a schemeless var can never break checkout.
-    if (!/^https?:\/\//i.test(origin)) origin = 'https://' + origin.replace(/^\/+/, '');
+    // Safe absolute base for the return URLs — rejects a misconfigured
+    // PUBLIC_BASE_URL (e.g. a Stripe key) so the success redirect always lands
+    // on a reachable site URL. Carry the pack + aza so the site can show the
+    // success modal instantly even before /confirm round-trips.
+    const origin = _safeReturnOrigin(env, u);
     const s = await stripeApi(env, 'POST', '/v1/checkout/sessions', {
       mode: 'payment',
       'line_items[0][quantity]': 1,

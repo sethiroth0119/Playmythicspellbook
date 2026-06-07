@@ -98910,9 +98910,42 @@ async function azaConfirmReturn() {
     }
     addSovereigns(Number(j.aza));
     try { saveProfile(); } catch (e) {}
-    showToast('🪙 +' + Number(j.aza).toLocaleString() + ' Aza coin — purchase complete. Thank you!', 6000);
     try { if (typeof render === 'function') render(); } catch (e) {}
+    // 🎉 Success modal — confirm the purchase + show the NEW Aza balance.
+    _showAzaSuccessModal(Number(j.aza), Number(Profile.sovereigns || 0));
   } catch (e) {}
+}
+
+// 🪙 Celebratory "purchase complete" modal shown after a verified Aza checkout.
+function _showAzaSuccessModal(bought, balance) {
+  try {
+    const _b = Number(bought) || 0, _bal = Number(balance) || 0;
+    const old = document.getElementById('aza-success-modal');
+    if (old) old.remove();
+    const el = document.createElement('div');
+    el.id = 'aza-success-modal';
+    el.style.cssText = 'position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at 50% 40%,rgba(20,12,4,0.72),rgba(0,0,0,0.88));backdrop-filter:blur(3px)';
+    el.innerHTML =
+      '<div style="max-width:380px;width:90%;text-align:center;background:linear-gradient(180deg,#1c1710,#120d08);border:1px solid rgba(255,210,80,0.5);border-radius:16px;box-shadow:0 0 40px rgba(255,200,80,0.25),0 18px 50px rgba(0,0,0,0.7);padding:1.6rem 1.4rem">' +
+        '<div style="font-size:2.6rem;line-height:1;margin-bottom:0.5rem">🪙</div>' +
+        '<div style="font-family:\'Cinzel\',serif;font-weight:800;font-size:1.4rem;color:#ffe6a6;letter-spacing:0.04em">Purchase Successful!</div>' +
+        '<div style="margin-top:0.7rem;font-family:\'Cinzel\',serif;font-weight:800;font-size:1.7rem;color:#ffd34d;text-shadow:0 0 16px rgba(255,210,80,0.5)">+' + _b.toLocaleString() + ' Aza Coin</div>' +
+        '<div style="color:#b59a66;margin-top:0.2rem;font-size:0.9rem">credited to your account.</div>' +
+        '<div style="margin-top:1rem;padding:0.6rem 0.9rem;background:rgba(255,210,80,0.08);border:1px solid rgba(255,210,80,0.3);border-radius:10px">' +
+          '<div style="color:#b59a66;font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase">Your Aza Balance</div>' +
+          '<div style="font-size:1.5rem;font-weight:800;color:#ffd34d;margin-top:0.15rem">🪙 ' + _bal.toLocaleString() + '</div>' +
+        '</div>' +
+        '<button id="aza-success-ok" class="btn-primary" style="margin-top:1.2rem;width:100%;padding:0.7rem;font-family:\'Cinzel\',serif;font-weight:700;font-size:1rem">⚔ Continue</button>' +
+      '</div>';
+    document.body.appendChild(el);
+    const close = () => { try { el.remove(); } catch (e) {} };
+    const okBtn = el.querySelector('#aza-success-ok');
+    if (okBtn) okBtn.onclick = close;
+    el.addEventListener('click', (ev) => { if (ev.target === el) close(); });
+    try { if (typeof playSfx === 'function') playSfx('purchase'); } catch (e) {}
+  } catch (e) {
+    showToast('🪙 +' + (Number(bought) || 0).toLocaleString() + ' Aza coin — purchase complete!', 6000);
+  }
 }
 function renderCashoutVault() {
   // Entry gate — Cashout Vault requires a hero at Lv 15+. Bounce on direct

@@ -33049,6 +33049,16 @@ function _onColyseusFx(msg) {
     case 'attack':
       try { if (d && d.snap && typeof _playRemoteBattleAnim === 'function') _playRemoteBattleAnim(d.snap); } catch (e) {}
       break;
+    case 'spell':
+      // Opponent cast a spell/location/trap/wall/weather — replay its activation
+      // cinematic. _remote:true so playSpellActivationVfx doesn't relay it back.
+      try {
+        const _sc = (typeof getCardById === 'function' && d.cardId) ? getCardById(d.cardId) : null;
+        if (typeof playSpellActivationVfx === 'function') {
+          playSpellActivationVfx(_sc || { id: d.cardId, name: '' }, { label: d.label || 'ENEMY SPELL', _remote: true });
+        }
+      } catch (e) {}
+      break;
     case 'coinReady':
       // Opponent reached the coin screen — mark them ready so our handshake can
       // proceed (and re-announce our own readiness so they learn we're ready too).
@@ -33243,14 +33253,16 @@ function _onColyseusMatchEnd(data) {
   // then close the mirror channel shortly after the message flushes.
   try { _specMirrorSend('gameover', { winnerId: data.winnerUserId, reason: data.reason }); } catch (e) {}
   setTimeout(() => { try { teardownSpectatorMirror(); } catch (e) {} }, 1500);
-  // Route into the existing gameover path.
-  try {
-    _onRemoteGameOverArrived({
-      winner:   data.winnerUserId,
-      reason:   data.reason,
-      iWon,
-    });
-  } catch (e) {}
+  // 🏁 Set the AUTHORITATIVE result directly from the server's winnerUserId.
+  // (Do NOT route through _onRemoteGameOverArrived — that helper reads the
+  // Supabase 'gameover' payload's SENDER-perspective `winnerIsMe` and inverts it;
+  // passing our own `iWon` left winnerIsMe undefined → BOTH clients showed
+  // VICTORY. This is the "we both won" bug.) iWon → VICTORY, else DEFEAT.
+  MatchBroadcast.gameOverResolved = true;
+  if (App.state) {
+    App.state = { ...App.state, gameOver: iWon ? 'player' : 'ai' };
+    try { if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle(); } catch (e) {}
+  }
 }
 
 function _onColyseusReject(data) {
@@ -86985,10 +86997,23 @@ function _cineCardEffectText(card) {
   } catch (e) { return ''; }
 }
 function playSpellActivationVfx(card, opts) {
+  opts = opts || {};
+  // 📡 Relay the spell/location/trap/wall/weather/assault cast to the opponent so
+  // the SAME activation cinematic plays on their screen. Only the ACTIVE caster
+  // relays (MatchBroadcast.myTurn) — the watcher replays it via _onColyseusFx
+  // (which passes _remote:true so it never echoes back). Best-effort over the FX
+  // channel; the board result still syncs via snapshot regardless.
+  try {
+    if (!opts._remote && card && card.id
+        && App.battlePrep && App.battlePrep.multiplayer && MatchBroadcast.myTurn
+        && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP && typeof sendColyseusFx === 'function') {
+      sendColyseusFx('spell', { cardId: card.id, label: opts.label || '' });
+    }
+  } catch (e) {}
   if (typeof requestAnimationFrame === 'function') {
-    return requestAnimationFrame(() => _playSpellActivationVfxImpl(card, opts || {}));
+    return requestAnimationFrame(() => _playSpellActivationVfxImpl(card, opts));
   }
-  return _playSpellActivationVfxImpl(card, opts || {});
+  return _playSpellActivationVfxImpl(card, opts);
 }
 
 // ============================================================================
@@ -113194,6 +113219,13 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
   for (const u of newSpawns) {
     try { if (typeof _markSummonAnim === 'function') _markSummonAnim(u); } catch (e) {}
   }
+  // 🌟 Queue the opponent's ON-PLAY cinematic + ACE-summon slam for their newly
+  // deployed units (owner 'ai' on our board), so a unit the OPPONENT plays shows
+  // the same reveal/slam we'd see for our own. Fired after the board re-renders.
+  try {
+    const _newOppUnits = newSpawns.filter(u => u && u.owner === 'ai');
+    if (_newOppUnits.length) App._mpSpawnFx = (App._mpSpawnFx || []).concat(_newOppUnits);
+  } catch (e) {}
   // 💥 RELIABLE combat juice from the state diff. The FX-relay cinematic (lunge)
   // is best-effort; this is the guaranteed path — driven by the snapshots we KNOW
   // arrive. Every unit that lost HP gets the real flash + floating damage number
@@ -113435,6 +113467,26 @@ function _onRemoteStateArrived(payload) {
     try {
       requestAnimationFrame(() => {
         for (const u of _ks) { try { if (typeof playKalonTransformVfx === 'function') playKalonTransformVfx(u); } catch (e) {} }
+      });
+    } catch (e) {}
+  }
+  // 🌟 Drain the opponent deploy-FX queue: ON-PLAY cinematic (for cards with an
+  // onPlay effect) + ACE-summon slam (no-ops for non-ace units). Same juice the
+  // local engine plays when WE deploy — now shown for the opponent's deploys too.
+  if (App._mpSpawnFx && App._mpSpawnFx.length) {
+    const _sp = App._mpSpawnFx; App._mpSpawnFx = null;
+    try {
+      requestAnimationFrame(() => {
+        for (const u of _sp) {
+          try {
+            const _card = (typeof getCardById === 'function' && (u.cardId || u.originalCardId))
+              ? getCardById(u.cardId || u.originalCardId) : null;
+            if (_card && _card.onPlay && _card.onPlay.type && typeof playOnPlayCinematic === 'function') {
+              playOnPlayCinematic(u, _card);
+            }
+            if (typeof _playAceSlam === 'function') _playAceSlam(u, false);
+          } catch (e) {}
+        }
       });
     } catch (e) {}
   }

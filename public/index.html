@@ -60823,6 +60823,316 @@ function _resolveArchonSummon() {
   if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
 }
 
+// ============================================================
+// ⚡ TRIGGER ABILITIES  (units · Kalons · Archons)
+// ============================================================
+// A trigger = { event, who, …condition…, effect, …params… } stored on a card
+// as card.triggers[] and copied onto the unit instance (unit.triggers) by
+// buildUnit. When a battle EVENT fires, every alive unit's matching triggers
+// respond. `who` scopes the responder relative to the EVENT's actor:
+//   • owner — only when THIS unit's side caused the event
+//   • enemy — only when the OPPOSING side caused it
+//   • both  — either way
+// The special 'negate' event runs BEFORE a played card resolves and can
+// negate + destroy it (Yu-Gi-Oh style). All others fire AFTER the event.
+//
+// MP: triggers run inside whichever client is the active player (it owns the
+// real engine + the full board snapshot), so a defender's triggers fire on the
+// attacker's machine and ride the normal snapshot broadcast to the opponent.
+
+const TRIGGER_EVENTS = [
+  { id: 'cardPlayed', label: 'A card is played (from hand)', card: true },
+  { id: 'negate',     label: 'A card is played → NEGATE & DESTROY it', card: true, negate: true },
+  { id: 'attack',     label: 'A unit attacks' },
+  { id: 'summon',     label: 'A unit is summoned / deployed' },
+  { id: 'turnStart',  label: 'A turn begins' },
+  { id: 'turnEnd',    label: 'A turn ends' },
+  // ('death' / 'damaged' events are reserved — engine-ready but not yet wired
+  //  into the death sweep; omitted from the editor until that hook lands.)
+];
+const TRIGGER_EFFECTS = [
+  { id: 'draw',         label: '🃏 Draw N card(s)',                 amount: true },
+  { id: 'mill',         label: '🗜 Mill N from a deck → graveyard', amount: true, deck: true },
+  { id: 'damage',       label: '🔥 Deal N damage',                  amount: true, dmg: true },
+  { id: 'heal',         label: '💚 Heal N HP',                      amount: true, heal: true },
+  { id: 'gainEnergy',   label: '⚡ Gain N energy',                  amount: true },
+  { id: 'gainKalon',    label: '🌌 Gain N Kalon Source',            amount: true },
+  { id: 'buffSelf',     label: '💪 Buff self (status)',             status: true },
+  { id: 'buffAllies',   label: '🤝 Buff allies (status)',           status: true },
+  { id: 'discardEnemy', label: '🗑 Enemy discards N from hand',     amount: true },
+  { id: 'bounceEnemy',  label: '↩ Bounce nearest enemy unit' },
+  { id: 'summonToken',  label: '✨ Summon a card',                  summon: true },
+];
+// Card "kinds" a negate trigger can target.
+const TRIGGER_NEGATE_KINDS = [
+  { id: 'onPlayAbility', label: 'Unit with an On-Play ability' },
+  { id: 'counter',       label: 'Counter cards' },
+  { id: 'weather',       label: 'Weather cards' },
+  { id: 'unit',          label: 'Unit cards' },
+  { id: 'spell',         label: 'Spell cards' },
+  { id: 'trap',          label: 'Trap cards' },
+  { id: 'location',      label: 'Location cards' },
+  { id: 'any',           label: 'ANY card' },
+];
+
+function _unitTriggers(unit) {
+  return (unit && Array.isArray(unit.triggers)) ? unit.triggers : [];
+}
+// who-scope check. unitOwner = side of the responding unit; actorOwner = side
+// that caused the event (null = neutral/either).
+function _triggerWhoMatches(trg, unitOwner, actorOwner) {
+  const who = (trg && trg.who) || 'both';
+  if (who === 'both' || !actorOwner) return true;
+  if (who === 'owner') return actorOwner === unitOwner;
+  if (who === 'enemy') return actorOwner !== unitOwner;
+  return true;
+}
+// Per-turn / per-match activation limits, tracked on the live unit instance.
+function _triggerLimitOk(state, unit, trg) {
+  if (!trg) return false;
+  const id = trg.id || (trg.event + ':' + (trg.effect || 'x'));
+  const u = unit || {};
+  const turnNo = (state && state.turnNumber) | 0;
+  const rec = (u._trg && u._trg[id]) || null;
+  if (trg.limitPerMatch && rec && (rec.match | 0) >= (trg.limitPerMatch | 0)) return false;
+  if (trg.limitPerTurn) {
+    const turnCount = (rec && rec.turnNo === turnNo) ? (rec.turn | 0) : 0;
+    if (turnCount >= (trg.limitPerTurn | 0)) return false;
+  }
+  return true;
+}
+function _triggerMarkUsed(state, unit, trg) {
+  const id = trg.id || (trg.event + ':' + (trg.effect || 'x'));
+  const turnNo = (state && state.turnNumber) | 0;
+  return {
+    ...state,
+    units: (state.units || []).map(x => {
+      if (x.id !== unit.id) return x;
+      const prev = (x._trg && x._trg[id]) || { match: 0, turn: 0, turnNo };
+      const turn = (prev.turnNo === turnNo) ? (prev.turn | 0) + 1 : 1;
+      return { ...x, _trg: { ...(x._trg || {}), [id]: { match: (prev.match | 0) + 1, turn, turnNo } } };
+    }),
+  };
+}
+// The negation "kinds" a played card matches.
+function _cardNegateKinds(card) {
+  const out = [];
+  const t = (card && card.type) || 'unit';
+  out.push(t);
+  if (t === 'unit' && card && card.onPlay && card.onPlay.type) out.push('onPlayAbility');
+  return out;
+}
+// cardPlayed condition check (kind / faction / element of the played card).
+function _triggerCardCondOk(trg, card) {
+  if (!card) return false;
+  const kinds = (Array.isArray(trg.cardKinds) && trg.cardKinds.length) ? trg.cardKinds : ['any'];
+  if (!kinds.includes('any')) {
+    const ck = _cardNegateKinds(card);
+    if (!kinds.some(k => ck.includes(k))) return false;
+  }
+  if (trg.faction) {
+    const facs = (typeof getFactionsOf === 'function' ? getFactionsOf(card) : (card.factions || [])).map(f => String(f).toLowerCase());
+    if (!facs.includes(String(trg.faction).toLowerCase())) return false;
+  }
+  if (trg.element) {
+    const els = (typeof getElementsOf === 'function' ? getElementsOf(card) : (card.elements || [])).map(e => String(e).toLowerCase());
+    if (!els.includes(String(trg.element).toLowerCase())) return false;
+  }
+  return true;
+}
+
+// Fire every matching proactive trigger for an event. ctx may carry:
+//   actorOwner, card (cardPlayed), attacker/target (attack), unit (summon/death/damaged).
+function _fireTriggers(state, event, ctx) {
+  if (!state || !Array.isArray(state.units)) return state;
+  ctx = ctx || {};
+  let s = state;
+  // Snapshot the responder ids first; effects can mutate the unit list.
+  const ids = s.units.filter(u => u && u.alive && _unitTriggers(u).length).map(u => u.id);
+  for (const uid0 of ids) {
+    const live = (s.units || []).find(x => x && x.id === uid0 && x.alive);
+    if (!live) continue;
+    for (const trg of _unitTriggers(live)) {
+      if (!trg || trg.event !== event) continue;
+      if (!_triggerWhoMatches(trg, live.owner, ctx.actorOwner)) continue;
+      if (event === 'cardPlayed' && !_triggerCardCondOk(trg, ctx.card)) continue;
+      if ((trg.chance != null && trg.chance < 100) && Math.random() * 100 >= trg.chance) continue;
+      if (!_triggerLimitOk(s, live, trg)) continue;
+      try {
+        const before = s;
+        s = _applyTriggerEffect(s, live, trg, ctx);
+        if (s !== before) s = _triggerMarkUsed(s, live, trg);
+      } catch (e) { try { console.warn('[trigger]', e); } catch (_) {} }
+    }
+  }
+  return s;
+}
+
+// Resolve a single trigger effect → returns new state (+log).
+function _applyTriggerEffect(state, unit, trg, ctx) {
+  let s = { ...state };
+  const log = [...(s.log || [])];
+  const side = unit.owner;
+  const foe = side === 'player' ? 'ai' : 'player';
+  const tag = `⚡ ${unit.name}'s ${trg.name || 'Trigger'}`;
+  const col = side === 'player' ? 'green' : 'red';
+  const n = Math.max(1, (trg.amount | 0) || 1);
+  const _millDeck = (who, amt) => {
+    if (!s[who] || !Array.isArray(s[who].deck)) return 0;
+    const deck = [...s[who].deck];
+    const grave = [...(s[who].graveyard || [])];
+    let m = 0;
+    for (let i = 0; i < amt && deck.length; i++) { grave.push(deck.shift()); m++; }
+    s = { ...s, [who]: { ...s[who], deck, graveyard: grave } };
+    return m;
+  };
+  switch (trg.effect) {
+    case 'draw': {
+      if (typeof drawCards === 'function' && s[side]) {
+        s = { ...s, [side]: drawCards(s[side], n, side === 'player') };
+        log.push({ msg: `${tag} — ${side === 'player' ? 'you draw' : 'enemy draws'} ${n}.`, color: col });
+      }
+      break;
+    }
+    case 'mill': {
+      const tgt = trg.deckTarget || 'enemyDeck';
+      const targets = tgt === 'bothDecks' ? [side, foe] : (tgt === 'ownDeck' ? [side] : [foe]);
+      let total = 0; targets.forEach(w => { total += _millDeck(w, n); });
+      log.push({ msg: `${tag} — mills ${total} card${total === 1 ? '' : 's'} (${tgt}).`, color: col });
+      break;
+    }
+    case 'damage': {
+      const dt = trg.dmgTarget || 'nearestEnemy';
+      const dmg = n;
+      const hurt = (u) => ({ ...u, currentHp: (u.currentHp | 0) - dmg, alive: ((u.currentHp | 0) - dmg) > 0 ? u.alive : false });
+      let victims = [];
+      const enemies = (s.units || []).filter(u => u && u.alive && u.owner !== side);
+      if (dt === 'triggerUnit' && ctx.attacker) victims = (s.units || []).filter(u => u.id === ctx.attacker.id);
+      else if (dt === 'enemyHero') victims = enemies.filter(u => u.isHero);
+      else if (dt === 'allEnemies') victims = enemies;
+      else { // nearestEnemy to this unit
+        if (enemies.length && unit.pos) {
+          enemies.sort((a, b) => (Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y))) - (Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y))));
+          victims = [enemies[0]];
+        }
+      }
+      const vids = new Set(victims.map(v => v.id));
+      if (vids.size) {
+        s = { ...s, units: (s.units || []).map(u => vids.has(u.id) ? hurt(u) : u) };
+        log.push({ msg: `${tag} — deals ${dmg} damage (${dt}).`, color: col });
+        (s.units || []).forEach(u => { if (vids.has(u.id) && !u.alive && u.isHero) s.gameOver = u.owner === 'player' ? 'ai' : 'player'; });
+      }
+      break;
+    }
+    case 'heal': {
+      const ht = trg.healTarget || 'self';
+      const heal = (u) => ({ ...u, currentHp: Math.min(u.maxHp || u.currentHp, (u.currentHp | 0) + n) });
+      let ids = new Set();
+      if (ht === 'self') ids.add(unit.id);
+      else if (ht === 'ownHero') { const h = (s.units || []).find(u => u.owner === side && u.isHero && u.alive); if (h) ids.add(h.id); }
+      else if (ht === 'allies') (s.units || []).forEach(u => { if (u.alive && u.owner === side) ids.add(u.id); });
+      if (ids.size) {
+        s = { ...s, units: (s.units || []).map(u => ids.has(u.id) ? heal(u) : u) };
+        log.push({ msg: `${tag} — heals ${n} HP (${ht}).`, color: col });
+      }
+      break;
+    }
+    case 'gainEnergy': {
+      if (s[side]) { s = { ...s, [side]: { ...s[side], energy: Math.min(s[side].maxEnergy || 99, (s[side].energy | 0) + n) } }; log.push({ msg: `${tag} — +${n} energy.`, color: col }); }
+      break;
+    }
+    case 'gainKalon': {
+      if (s[side]) { s = { ...s, [side]: { ...s[side], kalonsRemaining: Math.min(3, (s[side].kalonsRemaining | 0) + n) } }; log.push({ msg: `${tag} — +${n} Kalon Source.`, color: col }); }
+      break;
+    }
+    case 'buffSelf':
+    case 'buffAllies': {
+      const st = trg.status || 'strong';
+      const dur = Math.max(1, (trg.duration | 0) || 2);
+      const apply = (u) => (typeof applyStatusEffect === 'function') ? applyStatusEffect(u, st, dur) : u;
+      let ids = new Set();
+      if (trg.effect === 'buffSelf') ids.add(unit.id);
+      else (s.units || []).forEach(u => { if (u.alive && u.owner === side) ids.add(u.id); });
+      s = { ...s, units: (s.units || []).map(u => ids.has(u.id) ? apply(u) : u) };
+      log.push({ msg: `${tag} — ${trg.effect === 'buffSelf' ? 'gains' : 'allies gain'} ${(typeof statusName === 'function' ? statusName(st) : st)}.`, color: col });
+      break;
+    }
+    case 'discardEnemy': {
+      if (s[foe] && Array.isArray(s[foe].hand) && s[foe].hand.length) {
+        const hand = [...s[foe].hand];
+        let d = 0;
+        for (let i = 0; i < n && hand.length; i++) { const idx = Math.floor(Math.random() * hand.length); hand.splice(idx, 1); d++; }
+        s = { ...s, [foe]: { ...s[foe], hand } };
+        log.push({ msg: `${tag} — ${foe === 'player' ? 'you discard' : 'enemy discards'} ${d}.`, color: col });
+      }
+      break;
+    }
+    case 'bounceEnemy': {
+      const enemies = (s.units || []).filter(u => u && u.alive && u.owner !== side && !u.isHero);
+      if (enemies.length && unit.pos) {
+        enemies.sort((a, b) => (Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y))) - (Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y))));
+        const tgt = enemies[0];
+        s = { ...s, units: (s.units || []).map(u => u.id === tgt.id ? { ...u, alive: false, _bounced: true } : u) };
+        const ret = (typeof _unitReturnToHandCard === 'function') ? _unitReturnToHandCard(tgt) : { card: null, archon: false };
+        if (ret.archon) log.push({ msg: `${tag} — banishes ${tgt.name} (returns to Archon Deck).`, color: col });
+        else if (ret.card && s[tgt.owner]) { s = { ...s, [tgt.owner]: { ...s[tgt.owner], hand: [...(s[tgt.owner].hand || []), ret.card] } }; log.push({ msg: `${tag} — bounces ${tgt.name} to hand.`, color: col }); }
+      }
+      break;
+    }
+    case 'summonToken': {
+      if (trg.summonCardId && typeof _battleSpawnSummonByCardId === 'function') {
+        const res = _battleSpawnSummonByCardId(s, unit, trg.summonCardId, Math.max(1, n));
+        s = { ...s, units: res.units };
+        log.push({ msg: `${tag} — summons ${res.label || 'a unit'}.`, color: col });
+      }
+      break;
+    }
+    default: return state;
+  }
+  s.log = log;
+  return s;
+}
+
+// Pre-play NEGATE gate. Scans the board for a 'negate' trigger (owned by the
+// opposing-or-matching side per `who`) that targets this card's kinds. If one
+// fires, returns { negated:true } and the caller sends the card to the grave
+// without resolving it. playedByOwner = the side playing the card.
+function _triggerNegateOnPlay(state, card, playedByOwner) {
+  if (!state || !card || !Array.isArray(state.units)) return { state, negated: false };
+  const kinds = _cardNegateKinds(card);
+  for (const u of state.units) {
+    if (!u || !u.alive) continue;
+    for (const trg of _unitTriggers(u)) {
+      if (!trg || trg.event !== 'negate') continue;
+      if (!_triggerWhoMatches(trg, u.owner, playedByOwner)) continue;
+      const wants = (Array.isArray(trg.cardKinds) && trg.cardKinds.length) ? trg.cardKinds : ['any'];
+      if (!(wants.includes('any') || wants.some(k => kinds.includes(k)))) continue;
+      if ((trg.chance != null && trg.chance < 100) && Math.random() * 100 >= trg.chance) continue;
+      if (!_triggerLimitOk(state, u, trg)) continue;
+      let s = _triggerMarkUsed(state, u, trg);
+      s = { ...s, log: [...(s.log || []), { msg: `🚫 ${u.name}'s ${trg.name || 'Negation'} negates & destroys ${card.name}!`, color: u.owner === 'player' ? 'green' : 'red' }] };
+      try { if (typeof playSfx === 'function') playSfx('cardPlace'); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast(`🚫 ${card.name} negated by ${u.name}!`, 2200); } catch (e) {}
+      return { state: s, negated: true, by: u };
+    }
+  }
+  return { state, negated: false };
+}
+
+// Convenience for the PLAYER's hand-play functions: runs the negate gate against
+// App.state. If the card is negated, commits it to the graveyard, refreshes the
+// board (+MP broadcast), and returns true so the caller aborts. Else false.
+function _playerNegateAbort(card) {
+  if (typeof _triggerNegateOnPlay !== 'function' || !App.state || !card) return false;
+  const _neg = _triggerNegateOnPlay(App.state, card, 'player');
+  if (!_neg.negated) return false;
+  const st = _neg.state;
+  App.state = { ...st, player: { ...st.player, hand: (st.player.hand || []).filter(c => c.instanceId !== card.instanceId), graveyard: [...(st.player.graveyard || []), { ...card }] } };
+  if (App.ui) { App.ui.selectedCardId = null; App.ui.cardDetailId = null; }
+  try { if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle(); } catch (e) { try { renderBattle(); } catch (_) {} }
+  return true;
+}
+
 // Returns true if the defender carries a ward passive that nullifies this move.
 // Walks the defender's passives once, checking BOTH element wards (matches the
 // move's element) AND faction wards (matches any of the attacker's factions).
@@ -60970,6 +61280,10 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
     bond: prof ? (prof.bond || 0) : 0,
     nature: natureId,
     trait: traitId,
+    // ⚡ Trigger abilities — carried from the card so this unit (incl. Kalons after
+    // transform, since executeKalonTransform spreads ...unit, and Archons via the
+    // summon pipeline) can respond to battle events.
+    triggers: Array.isArray(cardData.triggers) ? cardData.triggers.map(t => ({ ...t })) : [],
   };
 };
 
@@ -61745,7 +62059,14 @@ function _fireBattleJuice(snap) {
 }
 
 const executeMove = (state, attacker, target, move) => {
-  let s = { ...state }; const log = [...s.log]; const playerKey = attacker.owner;
+  let s = { ...state };
+  // ⚡ Attack triggers — fire BEFORE the local log snapshot so responders'
+  // log lines survive. Defenders with who:'enemy' react to an incoming attack;
+  // attackers with who:'owner' react to their own. actorOwner = attacker side.
+  if (move && move.kind === 'attack' && attacker && typeof _fireTriggers === 'function') {
+    try { s = _fireTriggers(s, 'attack', { actorOwner: attacker.owner, attacker, target }); } catch (e) {}
+  }
+  const log = [...s.log]; const playerKey = attacker.owner;
 
   // 🛡 Bodyguard / Guardian — redirect attacks on non-hero allies of a tank
   // or warrior hero. Bodyguard fires within 1 tile; Guardian fires within
@@ -64326,16 +64647,22 @@ const startTurn = (state, who) => {
 
 const endPlayerTurn = (state) => {
   let s = { ...state, turn: 'ai', selection: null };
+  // ⚡ turnEnd triggers (player's turn ending). actorOwner = 'player'.
+  try { if (typeof _fireTriggers === 'function') s = _fireTriggers(s, 'turnEnd', { actorOwner: 'player', side: 'player' }); } catch (e) {}
   // ⚰ In-Grave tick (player's turn ending) — fires before we transition the
   // turn pointer so 'turnEnd' graveyard effects belong to the side that just
   // finished playing. Symmetrical with the turnStart hook in startTurn.
   try { if (typeof _applyInGraveTick === 'function') s = _applyInGraveTick(s, 'player', 'turnEnd'); } catch (e) {}
   s = startTurn(s, 'ai');
+  // ⚡ turnStart triggers (AI turn beginning). actorOwner = 'ai'.
+  try { if (typeof _fireTriggers === 'function') s = _fireTriggers(s, 'turnStart', { actorOwner: 'ai', side: 'ai' }); } catch (e) {}
   s.log = [...s.log, { msg: '— Enemy turn —', color: 'red' }];
   return s;
 };
 const endAITurn = (state) => {
   let s = { ...state, turn: 'player', turnNumber: state.turnNumber + 1, selection: null };
+  // ⚡ turnEnd triggers (AI's turn ending). actorOwner = 'ai'.
+  try { if (typeof _fireTriggers === 'function') s = _fireTriggers(s, 'turnEnd', { actorOwner: 'ai', side: 'ai' }); } catch (e) {}
   // 🧹 Belt + suspenders — clear any UI state that could have leaked from
   // the AI turn (counter prompt that never closed, chain stack that never
   // settled, half-applied counter flash). Without this, a stuck counter
@@ -75479,6 +75806,72 @@ function renderCardEditor() {
       <button class="btn-mini" id="btn-add-archon-req" type="button" style="margin-top:0.35rem">+ Add Offering</button>
     </div>
   ` : '';
+  // ⚡ Trigger Abilities editor — units / Kalons / Archons respond to battle
+  // events (a card is played → negate it, an enemy attacks → mill, a faction is
+  // played → draw, etc.). Stored on card.triggers[] and copied to the unit by
+  // buildUnit. Shown for unit-like + summon cards.
+  const triggersBlock = isUnitLike ? (() => {
+    const trgs = Array.isArray(card.triggers) ? card.triggers : [];
+    const evOpts   = (sel) => TRIGGER_EVENTS.map(e => `<option value="${e.id}" ${sel === e.id ? 'selected' : ''}>${escapeHtml(e.label)}</option>`).join('');
+    const whoOpts  = (sel) => [['owner', 'Owner acts (you)'], ['enemy', 'Enemy acts'], ['both', 'Either side']].map(o => `<option value="${o[0]}" ${(sel || 'both') === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('');
+    const efOpts   = (sel) => TRIGGER_EFFECTS.map(e => `<option value="${e.id}" ${sel === e.id ? 'selected' : ''}>${escapeHtml(e.label)}</option>`).join('');
+    const deckOpts = (sel) => [['enemyDeck', 'Enemy deck'], ['ownDeck', 'Your deck'], ['bothDecks', 'Both decks']].map(o => `<option value="${o[0]}" ${(sel || 'enemyDeck') === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('');
+    const dmgOpts  = (sel) => [['nearestEnemy', 'Nearest enemy'], ['enemyHero', 'Enemy hero'], ['allEnemies', 'All enemies'], ['triggerUnit', 'The acting unit']].map(o => `<option value="${o[0]}" ${(sel || 'nearestEnemy') === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('');
+    const healOpts = (sel) => [['self', 'Self'], ['ownHero', 'Your hero'], ['allies', 'All allies']].map(o => `<option value="${o[0]}" ${(sel || 'self') === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('');
+    const stOpts   = (sel) => ['strong', 'weak', 'poison', 'burn', 'bleed', 'stun', 'slow', 'frozen', 'shielded', 'focused', 'haste', 'rage'].map(x => `<option value="${x}" ${(sel || 'strong') === x ? 'selected' : ''}>${x}</option>`).join('');
+    const summonOpts = (sel) => {
+      const list = [].concat((Forge.customCards || []).filter(c => c && c.id && (c.type === 'unit' || c.type === 'summon' || c.isSummon)),
+        (typeof Catalog !== 'undefined' && Array.isArray(Catalog.cards) ? Catalog.cards : []).filter(c => c && c.id && (c.type === 'unit' || c.type === 'summon' || c.isSummon)));
+      const seen = new Set();
+      return ['<option value="">— pick —</option>'].concat(list.filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; }).map(c => `<option value="${escapeHtml(c.id)}" ${sel === c.id ? 'selected' : ''}>${escapeHtml(c.icon || '✨')} ${escapeHtml(c.name || c.id)}</option>`)).join('');
+    };
+    const kindBoxes = (kinds) => TRIGGER_NEGATE_KINDS.map(k => `<label style="display:inline-flex;align-items:center;gap:3px;margin:0 8px 4px 0;font-size:0.74rem;color:#dfe6f0"><input type="checkbox" class="trg-kind" data-trg-idx="IDX" data-kind="${k.id}" ${(Array.isArray(kinds) && kinds.includes(k.id)) ? 'checked' : ''}> ${escapeHtml(k.label)}</label>`).join('');
+    const rowHtml = (t, i) => `
+      <div class="trg-row" data-trg-idx="${i}" style="border:1px solid rgba(255,170,90,0.4);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(60,40,20,0.15)">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:5px">
+          <input class="trg-name" data-trg-idx="${i}" placeholder="Trigger name (e.g. Abyssal Negation)" value="${escapeHtml(t.name || '')}" style="flex:1;min-width:160px">
+          <button class="btn-mini btn-danger" data-act="rm-trg" data-trg-idx="${i}" type="button">✕</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <label class="small-text">When <select class="trg-event" data-trg-idx="${i}">${evOpts(t.event)}</select></label>
+          <label class="small-text">Responds to <select class="trg-who" data-trg-idx="${i}">${whoOpts(t.who)}</select></label>
+        </div>
+        <div class="small-text ink-dim" style="margin-bottom:3px">▸ For "card played" / "negate": which cards (leave all unchecked = ANY):</div>
+        <div style="margin-bottom:6px">${kindBoxes(t.cardKinds).replace(/IDX/g, i)}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <label class="small-text">Faction <select class="trg-faction" data-trg-idx="${i}">${_fusFacOpts(t.faction || '')}</select></label>
+          <label class="small-text">Element <select class="trg-element" data-trg-idx="${i}">${_fusElOpts(t.element || '')}</select></label>
+        </div>
+        <div class="small-text ink-dim" style="margin-bottom:3px">▸ Effect (the NEGATE event ignores this — it always negates + destroys):</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <select class="trg-effect" data-trg-idx="${i}">${efOpts(t.effect)}</select>
+          <label class="small-text">N <input class="trg-amount" data-trg-idx="${i}" type="number" min="1" max="20" value="${(t.amount | 0) || 1}" style="width:54px"></label>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <label class="small-text">Mill <select class="trg-deck" data-trg-idx="${i}">${deckOpts(t.deckTarget)}</select></label>
+          <label class="small-text">Dmg→ <select class="trg-dmg" data-trg-idx="${i}">${dmgOpts(t.dmgTarget)}</select></label>
+          <label class="small-text">Heal→ <select class="trg-heal" data-trg-idx="${i}">${healOpts(t.healTarget)}</select></label>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <label class="small-text">Status <select class="trg-status" data-trg-idx="${i}">${stOpts(t.status)}</select></label>
+          <label class="small-text">Dur <input class="trg-dur" data-trg-idx="${i}" type="number" min="1" max="9" value="${(t.duration | 0) || 2}" style="width:46px"></label>
+          <label class="small-text">Summon <select class="trg-summon" data-trg-idx="${i}">${summonOpts(t.summonCardId)}</select></label>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <label class="small-text">Chance% <input class="trg-chance" data-trg-idx="${i}" type="number" min="1" max="100" value="${(t.chance | 0) || 100}" style="width:54px"></label>
+          <label class="small-text">Max/turn <input class="trg-lpt" data-trg-idx="${i}" type="number" min="0" max="9" value="${t.limitPerTurn | 0}" style="width:46px"></label>
+          <label class="small-text">Max/match <input class="trg-lpm" data-trg-idx="${i}" type="number" min="0" max="20" value="${t.limitPerMatch | 0}" style="width:46px"></label>
+        </div>
+      </div>`;
+    return `
+      <div class="editor-field full" style="border-top:1px dashed rgba(255,170,90,0.45);padding-top:0.8rem;margin-top:0.6rem">
+        <label style="font-weight:700;color:#ffb86b">⚡ Trigger Abilities</label>
+        <div class="small-text ink-dim" style="margin:0.2rem 0 0.55rem">Optional. This unit / Kalon / Archon <strong>responds to battle events</strong>. "Responds to" = whose action fires it (you / enemy / either). The <strong>Negate</strong> event cancels + destroys the played card (tick which kinds — e.g. on-play units, counters, weather). Other events run the chosen effect.</div>
+        <div id="trigger-rows">${trgs.length ? trgs.map(rowHtml).join('') : '<div class="small-text ink-dim" style="padding:0.3rem 0.5rem">No triggers yet — add one.</div>'}</div>
+        <button class="btn-mini" id="btn-add-trigger" type="button" style="margin-top:0.35rem">+ Add Trigger</button>
+      </div>
+    `;
+  })() : '';
   // ⏱ Counter block — hand-playable card that interrupts opponent
   // actions. Triggers are kept as a multi-select so one card can negate
   // multiple action types (e.g. "Negate any attack OR spell").
@@ -75697,6 +76090,7 @@ function renderCardEditor() {
         ${elemModsBlock}
         ${craftCostBlock}
         ${onPlayBlock}
+        ${triggersBlock}
         ${playReqBlock}
         ${inGraveBlock}
         ${kalonBlock}
@@ -76739,6 +77133,28 @@ function bindCardEditor() {
     };
   });
 
+  // ⚡ Trigger Abilities add / remove (mirror the archon offering handlers).
+  const _trgEnsure = (t) => { if (!Array.isArray(t.triggers)) t.triggers = []; return t.triggers; };
+  const addTrgBtn = document.getElementById('btn-add-trigger');
+  if (addTrgBtn) addTrgBtn.onclick = () => {
+    const t = targetCard(); if (!t) return;
+    if (typeof captureEditorIntoCard === 'function') { try { captureEditorIntoCard(t); } catch (e) {} }
+    _trgEnsure(t).push({ name: '', event: 'cardPlayed', who: 'enemy', cardKinds: [], effect: 'draw', amount: 1, chance: 100 });
+    if (!isNew && typeof saveForge === 'function') saveForge();
+    render();
+  };
+  document.querySelectorAll('[data-act="rm-trg"]').forEach(btn => {
+    btn.onclick = () => {
+      const t = targetCard(); if (!t) return;
+      const idx = parseInt(btn.dataset.trgIdx, 10);
+      if (typeof captureEditorIntoCard === 'function') { try { captureEditorIntoCard(t); } catch (e) {} }
+      const list = _trgEnsure(t);
+      if (idx >= 0 && idx < list.length) list.splice(idx, 1);
+      if (!isNew && typeof saveForge === 'function') saveForge();
+      render();
+    };
+  });
+
   document.getElementById('btn-save-card').onclick = () => {
     App._traitPoolModal = false;
     // Capture subclass state into the card before the global save sweep runs.
@@ -77240,6 +77656,45 @@ function captureEditorIntoCard(card) {
       };
     } else {
       delete card.archonSummon;
+    }
+  }
+  // ⚡ Trigger Abilities capture — read every #trigger-rows .trg-row into
+  // card.triggers[]. Each row keeps a stable id so per-turn / per-match limits
+  // can be tracked on the live unit at runtime.
+  if (document.getElementById('trigger-rows')) {
+    const rows = document.querySelectorAll('#trigger-rows .trg-row');
+    if (rows.length) {
+      const list = [];
+      rows.forEach((r, i) => {
+        const q = (sel) => r.querySelector(sel);
+        const val = (sel) => { const e = q(sel); return e ? e.value : ''; };
+        const num = (sel, d) => { const e = q(sel); const n = e ? parseInt(e.value, 10) : NaN; return isNaN(n) ? d : n; };
+        const kinds = Array.from(r.querySelectorAll('.trg-kind')).filter(c => c.checked).map(c => c.getAttribute('data-kind'));
+        const existing = (Array.isArray(card.triggers) && card.triggers[i]) ? card.triggers[i] : null;
+        list.push({
+          id: (existing && existing.id) || ('trg_' + i + '_' + ((val('.trg-event') || 'e') + (val('.trg-effect') || 'x'))),
+          name: (val('.trg-name') || '').trim(),
+          event: val('.trg-event') || 'cardPlayed',
+          who: val('.trg-who') || 'both',
+          cardKinds: kinds,
+          faction: val('.trg-faction') || '',
+          element: val('.trg-element') || '',
+          effect: val('.trg-effect') || 'draw',
+          amount: Math.max(1, Math.min(20, num('.trg-amount', 1))),
+          deckTarget: val('.trg-deck') || 'enemyDeck',
+          dmgTarget: val('.trg-dmg') || 'nearestEnemy',
+          healTarget: val('.trg-heal') || 'self',
+          status: val('.trg-status') || 'strong',
+          duration: Math.max(1, Math.min(9, num('.trg-dur', 2))),
+          summonCardId: val('.trg-summon') || '',
+          chance: Math.max(1, Math.min(100, num('.trg-chance', 100))),
+          limitPerTurn: Math.max(0, Math.min(9, num('.trg-lpt', 0))),
+          limitPerMatch: Math.max(0, Math.min(20, num('.trg-lpm', 0))),
+        });
+      });
+      card.triggers = list;
+    } else {
+      delete card.triggers;
     }
   }
   // 🔥 Phoenix Rebirth Aura config.
@@ -90382,6 +90837,18 @@ function placeUnit(card, pos) {
   // player gets the right error message ('need 3 units' vs 'tile too far').
   const _reqFail = _checkPlayRequirement(card, s, 'player');
   if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
+  // 🚫 NEGATE trigger — an opposing unit (e.g. an Archon whose 'negate' trigger
+  // targets units / on-play abilities) cancels + destroys this card before it
+  // resolves. The card goes to the graveyard; no unit is placed.
+  if (typeof _triggerNegateOnPlay === 'function') {
+    const _neg = _triggerNegateOnPlay(s, card, 'player');
+    if (_neg.negated) {
+      App.state = { ..._neg.state, player: { ..._neg.state.player, hand: _neg.state.player.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...(_neg.state.player.graveyard || []), { ...card }] } };
+      App.ui.selectedCardId = null; App.ui.cardDetailId = null;
+      if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
+      return;
+    }
+  }
   // 🪦 Pay the consume-graveyard extra cost up front on the LOCAL snapshot, so
   // every placement branch below (tunnel / normal) commits the already-consumed
   // graveyard. The gate above guaranteed there are enough cards to remove.
@@ -90532,6 +90999,14 @@ function placeUnit(card, pos) {
     next = applyOnPlayEffect(next, unit, card);
   }
   if (App.ui._suppressOnPlay === card.instanceId) App.ui._suppressOnPlay = null;
+  // ⚡ Trigger abilities — this unit entered (summon) AND a card was played
+  // (cardPlayed). actorOwner = 'player'. Both fire AFTER the on-play resolves.
+  try {
+    if (typeof _fireTriggers === 'function') {
+      next = _fireTriggers(next, 'summon', { actorOwner: 'player', unit });
+      next = _fireTriggers(next, 'cardPlayed', { actorOwner: 'player', card, unit });
+    }
+  } catch (e) {}
   // 🐕 PASSIVE: Trap Dog — every time a trapDog unit hits the board,
   // reveal every enemy trap. Cheap, immediate. The passive applies even
   // when there's no on-play effect on the card.
@@ -90702,6 +91177,7 @@ function placeLocation(card, pos) {
   // 🪞 Play-requirement gate (e.g. "need 3 of your units on the field").
   const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
   if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
+  if (_playerNegateAbort(card)) return;   // 🚫 location-hate negate triggers
   // ===== FIELD SPELL MODE (current model) =====
   // One location is active at a time. Playing a new one REPLACES the existing
   // active location — the old card stays in the graveyard, and the new one's
@@ -90829,6 +91305,7 @@ function placeTrap(card, pos) {
   // 🪞 Play-requirement gate.
   const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
   if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
+  if (_playerNegateAbort(card)) return;   // 🚫 trap-hate negate triggers
   const valid = getValidPlacementTiles(card, ph, s);
   if (!valid.some(p => p.x === pos.x && p.y === pos.y)) {
     const r = getCardRange(card);
@@ -90939,6 +91416,7 @@ function playWeather(card) {
   const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
   if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
   if (getEffectiveCardCost(card, s, 'player') > s.player.energy) { showToast('Not enough energy'); return; }
+  if (_playerNegateAbort(card)) return;   // 🚫 weather-hate negate triggers
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
   let duration = card.duration;
   // Weatherweaver from the hero OR any allied unit on the field extends duration.
@@ -90957,6 +91435,8 @@ function playWeather(card) {
   recordCardPlayed(card);
   App.ui.selectedCardId = null;
   if (typeof playSfx === 'function') playSfx('cardPlace');
+  // ⚡ cardPlayed triggers (weather). actorOwner = 'player'.
+  try { if (typeof _fireTriggers === 'function') App.state = _fireTriggers(App.state, 'cardPlayed', { actorOwner: 'player', card }); } catch (e) {}
   // 🎴 Weather called → cinematic over the whole board.
   playSpellActivationVfx(card, { label: 'WEATHER CALLED' });
   renderBattle();
@@ -90979,6 +91459,9 @@ function playSpell(card) {
     openFusionSelectionMode(card);
     return;
   }
+  // 🚫 NEGATE trigger — an opposing 'negate' trigger (e.g. an Archon that hates
+  // spells / counters) cancels + destroys this spell before it resolves.
+  if (_playerNegateAbort(card)) return;
   // 🛡 Re-entrancy guard — if a previous playSpell is still mid-chain,
   // ignore the new click. Without this, players who double-tap the play
   // button can fire two parallel chains and burn double the resources /
@@ -91072,6 +91555,9 @@ function _resolveSpellAfterChain(card) {
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
   const range = getCardRange(card);
   let ns = { ...s };
+  // ⚡ cardPlayed triggers (spell). actorOwner = 'player'. Fired before the local
+  // log snapshot so a responding unit's lines (e.g. "faction played → draw") survive.
+  try { if (typeof _fireTriggers === 'function') ns = _fireTriggers(ns, 'cardPlayed', { actorOwner: 'player', card }); } catch (e) {}
   const log = [...ns.log];
   // 🜂 Element modifiers authored on this spell become a timed field effect.
   if (card.customEffects && Array.isArray(card.customEffects.elemMods) && card.customEffects.elemMods.length) {

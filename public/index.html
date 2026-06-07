@@ -33053,9 +33053,17 @@ function _onColyseusFx(msg) {
       // Opponent cast a spell/location/trap/wall/weather — replay its activation
       // cinematic. _remote:true so playSpellActivationVfx doesn't relay it back.
       try {
-        const _sc = (typeof getCardById === 'function' && d.cardId) ? getCardById(d.cardId) : null;
         if (typeof playSpellActivationVfx === 'function') {
-          playSpellActivationVfx(_sc || { id: d.cardId, name: '' }, { label: d.label || 'ENEMY SPELL', _remote: true });
+          playSpellActivationVfx(d.card || { id: d.cardId, name: d.name || '' }, { label: d.label || 'ENEMY SPELL', _remote: true });
+        }
+      } catch (e) {}
+      break;
+    case 'onplay':
+      // Opponent deployed a unit with an on-play effect — replay the cinematic
+      // from the relayed unit + card (works for custom cards; _remote = no echo).
+      try {
+        if (d && d.card && d.unit && typeof playOnPlayCinematic === 'function') {
+          playOnPlayCinematic(d.unit, d.card, { _remote: true });
         }
       } catch (e) {}
       break;
@@ -87007,7 +87015,8 @@ function playSpellActivationVfx(card, opts) {
     if (!opts._remote && card && card.id
         && App.battlePrep && App.battlePrep.multiplayer && MatchBroadcast.myTurn
         && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP && typeof sendColyseusFx === 'function') {
-      sendColyseusFx('spell', { cardId: card.id, label: opts.label || '' });
+      const _slimCard = (typeof _slimHeroForMp === 'function') ? _slimHeroForMp(card) : { id: card.id, name: card.name };
+      sendColyseusFx('spell', { cardId: card.id, card: _slimCard, label: opts.label || '' });
     }
   } catch (e) {}
   if (typeof requestAnimationFrame === 'function') {
@@ -87688,10 +87697,23 @@ function _playSpellActivationVfxImpl(card, opts) {
 // ============================================================================
 const _ONPLAY_CINE_DURATION_MS = 2000;
 function playOnPlayCinematic(unit, card, opts) {
+  opts = opts || {};
+  // 📡 Relay the on-play cinematic to the opponent, carrying art-stripped unit +
+  // card so it works even for CUSTOM cards the opponent doesn't have (no catalog
+  // lookup needed — and the client has no getCardById anyway). Only the active
+  // caster relays; the watcher replays with _remote so it never echoes back.
+  try {
+    if (!opts._remote && card && card.onPlay && card.onPlay.type
+        && App.battlePrep && App.battlePrep.multiplayer && MatchBroadcast.myTurn
+        && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP
+        && typeof sendColyseusFx === 'function' && typeof _slimHeroForMp === 'function') {
+      sendColyseusFx('onplay', { unit: _slimHeroForMp(unit), card: _slimHeroForMp(card) });
+    }
+  } catch (e) {}
   if (typeof requestAnimationFrame === 'function') {
-    return requestAnimationFrame(() => _playOnPlayCinematicImpl(unit, card, opts || {}));
+    return requestAnimationFrame(() => _playOnPlayCinematicImpl(unit, card, opts));
   }
-  return _playOnPlayCinematicImpl(unit, card, opts || {});
+  return _playOnPlayCinematicImpl(unit, card, opts);
 }
 function _playOnPlayCinematicImpl(unit, card, opts) {
   try {
@@ -113470,23 +113492,16 @@ function _onRemoteStateArrived(payload) {
       });
     } catch (e) {}
   }
-  // 🌟 Drain the opponent deploy-FX queue: ON-PLAY cinematic (for cards with an
-  // onPlay effect) + ACE-summon slam (no-ops for non-ace units). Same juice the
-  // local engine plays when WE deploy — now shown for the opponent's deploys too.
+  // 🌟 Drain the opponent deploy-FX queue: ACE-summon slam for the opponent's
+  // deployed units. _playAceSlam reads unit.aceSlam (carried in the snapshot) so
+  // this is reliable off the unit alone — no card lookup needed. (The ON-PLAY
+  // cinematic is relayed separately over FX from the caster, which carries the
+  // card so it works for custom cards the opponent doesn't have.)
   if (App._mpSpawnFx && App._mpSpawnFx.length) {
     const _sp = App._mpSpawnFx; App._mpSpawnFx = null;
     try {
       requestAnimationFrame(() => {
-        for (const u of _sp) {
-          try {
-            const _card = (typeof getCardById === 'function' && (u.cardId || u.originalCardId))
-              ? getCardById(u.cardId || u.originalCardId) : null;
-            if (_card && _card.onPlay && _card.onPlay.type && typeof playOnPlayCinematic === 'function') {
-              playOnPlayCinematic(u, _card);
-            }
-            if (typeof _playAceSlam === 'function') _playAceSlam(u, false);
-          } catch (e) {}
-        }
+        for (const u of _sp) { try { if (typeof _playAceSlam === 'function') _playAceSlam(u, false); } catch (e) {} }
       });
     } catch (e) {}
   }

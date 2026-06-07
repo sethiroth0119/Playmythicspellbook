@@ -51973,8 +51973,10 @@ function getTombstoneImage(owner) {
   // 2. Admin's published default for all players
   if (Forge.tombstoneArt) return Forge.tombstoneArt;
   if (Catalog.tombstoneArt) return Catalog.tombstoneArt;
-  // 3. Built-in fallback — a simple stylized cross/marker drawn in CSS via class.
-  return null;
+  // 3. Built-in DEFAULT gravestone — bundled with the game so EVERY player sees
+  // a real tombstone on dying units (no more bare CSS emoji fallback), whether
+  // or not the admin has published a custom one or the player owns a cosmetic.
+  return 'assets/tombstone/Base%20Tombstone.png';
 }
 // Merge admin-local + published tombstone cosmetics (by id; local wins so an
 // admin sees edits before publishing). Used by the Vendor Market shop tab
@@ -86705,8 +86707,12 @@ function renderBoard() {
       if (ts) {
         const _canLoot = ts.lootable && !ts.looted && !ts.glowing;
         const cls = `tombstone ${ts.glowing ? 'tombstone-glowing' : ''} ${_canLoot ? 'tombstone-loot' : ''} ${ts.looted ? 'tombstone-looted' : ''} tombstone-${ts.owner}`;
-        const inner = ts.image
-          ? `<img src="${ts.image}" alt="${escapeHtml(ts.name || '')}" />`
+        // Re-resolve the image at render time — the MP snapshot strips `image`
+        // (a HEAVY_KEY), so fall back to the default gravestone so EVERY player
+        // (local + online watcher) always sees a real tombstone.
+        const _tsImg = ts.image || ((typeof getTombstoneImage === 'function') ? getTombstoneImage(ts.owner) : null);
+        const inner = _tsImg
+          ? `<img src="${_tsImg}" alt="${escapeHtml(ts.name || '')}" />`
           : `<div class="tombstone-fallback">🪦</div>`;
         const reviveHint = ts.glowing ? `<div class="tombstone-timer">${ts.turnsLeft || 0}</div>` : '';
         const _rm = (_canLoot && ts.risk && typeof RISK_META !== 'undefined') ? RISK_META[ts.risk] : null;

@@ -50402,6 +50402,9 @@ function _memSoftSweep() {
       document.querySelectorAll('.juice-float,.dmg-float,.status-pop,.kalon-local-fx,.bevt-chip.bevt-out')
         .forEach(el => { try { el.remove(); } catch (e) {} });
     } catch (e) {}
+    // Drop any half-assembled relayed-visual chunks (the in-flight reassembly
+    // buffer can hold a big asset's pieces); they'll re-stream if still needed.
+    try { App._mpVizBuf = {}; } catch (e) {}
   } catch (e) {}
 }
 function _memShedGraphics() {
@@ -73479,7 +73482,9 @@ function startBattleWithPrep(playerGoesFirst) {
   App._turnTimeoutStreak = 0;
   App._turnTimerFired = false;
   App._mpSummonSeen = {};   // 🜂 fresh opponent-summon-cinematic dedup per match
+  try { if (typeof _revokeMpViz === 'function') _revokeMpViz(); } catch (e) {}
   App._mpViz = { art: {}, sprites: {} };   // 🎨 fresh relayed-visual cache per match
+  App._mpVizBuf = {};                      // 🧹 drop any half-assembled chunks
   MatchBroadcast._vizSent = {};            // 🎨 re-relay my visuals for the new match
   MatchBroadcast._vizQueue = []; MatchBroadcast._vizPumping = false;   // 🚚 fresh paced sender
   MatchBroadcast._lastAtkFxKey = 0;        // ⚔️ fresh attack-cinematic dedupe per match
@@ -116564,7 +116569,8 @@ function leaveMatchChannel() {
   MatchBroadcast._vizSent = {};                 // 🎨 clear relayed-visual dedup
   MatchBroadcast._vizQueue = []; MatchBroadcast._vizPumping = false;   // 🚚 stop the paced sender
   try { if (App._mpVizRenderT) { clearTimeout(App._mpVizRenderT); App._mpVizRenderT = null; } } catch (e) {}
-  try { App._mpViz = { art: {}, sprites: {} }; } catch (e) {}
+  try { if (typeof _revokeMpViz === 'function') _revokeMpViz(); } catch (e) {}
+  try { App._mpViz = { art: {}, sprites: {} }; App._mpVizBuf = {}; } catch (e) {}
   // 🏁 Reset the server-authoritative game-end latches so the NEXT match
   // can submit its own verdict cleanly.
   MatchBroadcast._matchEndSubmitted = false;
@@ -117521,6 +117527,41 @@ function _sendFullSnapshot() {
 // ever pay for a card the first time it appears; size-capped per message so a
 // huge sprite set can never blow the channel (falls back to art-only, then to
 // nothing → emoji, the same as today).
+// 🧠 OFF-HEAP IMAGES — convert a base64 `data:` URL into a Blob OBJECT URL. The
+// binary then lives in the browser's blob store (huge limit, NOT counted against
+// the JS heap), and JS keeps only a tiny `blob:` string. This is the core "find a
+// place to put things" fix: relayed opponent art/sprites no longer pile base64
+// onto the heap. Falls back to the original string on any error.
+function _toBlobUrl(dataUrl) {
+  try {
+    if (typeof dataUrl !== 'string' || dataUrl.slice(0, 5) !== 'data:') return dataUrl;
+    const comma = dataUrl.indexOf(',');
+    if (comma < 0) return dataUrl;
+    const header = dataUrl.slice(5, comma);
+    const isB64 = /;base64/i.test(header);
+    const mime = header.split(';')[0] || 'image/png';
+    const body = dataUrl.slice(comma + 1);
+    let bytes;
+    if (isB64) {
+      const bin = atob(body);
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } else {
+      bytes = new TextEncoder().encode(decodeURIComponent(body));
+    }
+    return URL.createObjectURL(new Blob([bytes], { type: mime }));
+  } catch (e) { return dataUrl; }
+}
+// Revoke every blob: URL we minted for the MP visual cache so they don't leak
+// across matches (blob URLs live until revoked or the page unloads).
+function _revokeMpViz() {
+  try {
+    const v = App._mpViz; if (!v) return;
+    const rev = (u) => { try { if (typeof u === 'string' && u.slice(0, 5) === 'blob:') URL.revokeObjectURL(u); } catch (e) {} };
+    if (v.art) for (const k in v.art) rev(v.art[k]);
+    if (v.sprites) for (const sid in v.sprites) { const set = v.sprites[sid]; for (const an in set) { const arr = set[an]; if (Array.isArray(arr)) arr.forEach(rev); } }
+  } catch (e) {}
+}
 // 🚚 PACED chunk sender — Supabase Realtime rate-limits broadcasts, so blasting a
 // big sprite's dozens of chunk messages in one tight loop gets some DROPPED →
 // the watcher receives a PARTIAL frame set and the unit shows static art instead
@@ -117539,8 +117580,20 @@ function _mpVizPump() {
     if (!MatchBroadcast.channel || !MatchBroadcast._vizQueue || !MatchBroadcast._vizQueue.length) {
       MatchBroadcast._vizPumping = false; return;
     }
-    const p = MatchBroadcast._vizQueue.shift();
-    try { MatchBroadcast.channel.send({ type: 'broadcast', event: 'unitviz', payload: p }); } catch (e) {}
+    const it = MatchBroadcast._vizQueue.shift();
+    // 🧠 MEMORY: the queue holds lightweight DESCRIPTORS ({meta, src, ci, n}) that
+    // REFERENCE the source string — we slice the chunk only at SEND time, so the
+    // sender never duplicates a whole sprite set into the queue (which spiked RAM
+    // and could OOM the attacker mid-relay). One transient slice per send.
+    let payload = it;
+    try {
+      if (it && it.src != null && it.meta) {
+        const i = it.ci | 0;
+        payload = Object.assign({ from: MatchBroadcast.myUserId, t: 'chunk', i: i, n: it.n | 0,
+          s: String(it.src).slice(i * 153600, (i + 1) * 153600) }, it.meta);
+      }
+    } catch (e) { payload = it; }
+    try { MatchBroadcast.channel.send({ type: 'broadcast', event: 'unitviz', payload: payload }); } catch (e) {}
     setTimeout(step, 90);   // ~11 msgs/sec — safely under Realtime broadcast limits
   };
   step();
@@ -117566,10 +117619,10 @@ function _mpRelayUnitVisuals() {
     const sendStr = (meta, str) => {
       if (typeof str !== 'string' || !str) return;
       const n = Math.max(1, Math.ceil(str.length / CHUNK));
-      for (let i = 0; i < n; i++) {
-        const p = Object.assign({ from: me, t: 'chunk', i: i, n: n, s: str.slice(i * CHUNK, (i + 1) * CHUNK) }, meta);
-        _mpVizEnqueue(p);   // paced — never blast the channel (drops cause partial sprites)
-      }
+      // Enqueue lightweight DESCRIPTORS that reference `str` (the existing
+      // Forge.sprites/cardArt string — no copy). The pump slices the chunk only
+      // when it's actually sent, so the queue never duplicates a sprite set.
+      for (let i = 0; i < n; i++) _mpVizEnqueue({ meta: meta, src: str, ci: i, n: n });
     };
     for (const u of units) {
       if (!u || u.owner !== 'player') continue;        // only relay MY entities
@@ -117642,11 +117695,24 @@ function _onRemoteUnitViz(p) {
       if (rec.parts.length && rec.parts.every(x => x != null)) {
         const full = rec.parts.join('');
         delete buf[slot];
-        if (p.dst === 'art') { if (p.baseId) { App._mpViz.art[p.baseId] = full; touched = true; } }
-        else if (p.dst === 'fr' && p.spriteId && p.anim) {
-          const s = App._mpViz.sprites[p.spriteId] || (App._mpViz.sprites[p.spriteId] = {});
-          const arr = s[p.anim] || (s[p.anim] = new Array((p.fn | 0) || ((p.fi | 0) + 1)).fill(null));
-          arr[p.fi | 0] = full; touched = true;
+        // 🧠 MEMORY: (a) SKIP entirely if we already have this asset LOCALLY (the
+        //    resolvers check Forge first, so caching the opponent's identical copy
+        //    is pure waste — and doubles RAM when both players run the same deck,
+        //    the usual OOM trigger). (b) Otherwise store it as a Blob OBJECT URL so
+        //    the bytes live OFF the JS heap; only a short blob: URL stays in JS.
+        if (p.dst === 'art') {
+          if (p.baseId) {
+            const hasLocal = !!(typeof Forge !== 'undefined' && Forge.cardArt && Forge.cardArt[p.baseId]);
+            if (!hasLocal) { App._mpViz.art[p.baseId] = _toBlobUrl(full); touched = true; }
+          }
+        } else if (p.dst === 'fr' && p.spriteId && p.anim) {
+          const _ls = (typeof Forge !== 'undefined' && Forge.sprites) ? Forge.sprites[p.spriteId] : null;
+          const hasLocal = !!(_ls && Array.isArray(_ls[p.anim]) && _ls[p.anim].filter(Boolean).length);
+          if (!hasLocal) {
+            const s = App._mpViz.sprites[p.spriteId] || (App._mpViz.sprites[p.spriteId] = {});
+            const arr = s[p.anim] || (s[p.anim] = new Array((p.fn | 0) || ((p.fi | 0) + 1)).fill(null));
+            arr[p.fi | 0] = _toBlobUrl(full); touched = true;
+          }
         }
       }
     } else {

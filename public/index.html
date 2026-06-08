@@ -6249,6 +6249,52 @@
     100% { transform: translateX(-50%) scale(1); opacity: 1; letter-spacing: 0.18em; }
   }
 
+  /* 🜂 ARCHON SUMMON — Yu-Gi-Oh Master-Duel-style special summon: a pillar of
+     light erupts from the ritual circle, the Archon's SPRITE rises out of it,
+     then a white-gold flash on manifestation. Layered on top of the shared
+     poly-cine ritual rings so Polycreation is untouched. */
+  .poly-cine-kalon-portrait .sprite-stack,
+  .poly-cine-kalon-portrait img {
+    /* !important overrides renderIcon's inline 96px so the Archon reveals BIG. */
+    width: clamp(180px, 24vw, 300px) !important;
+    height: clamp(180px, 24vw, 300px) !important;
+    object-fit: contain;
+    filter: drop-shadow(0 0 28px rgba(255,210,110,0.95)) drop-shadow(0 0 70px rgba(255,180,80,0.6));
+  }
+  /* Vertical beam of light shooting up through the circle. */
+  .archon-cine-pillar {
+    position: absolute; left: 50%; top: 50%;
+    width: clamp(120px, 16vw, 200px); height: 150vh;
+    transform: translate(-50%, -62%);
+    background: linear-gradient(180deg,
+      transparent 0%, rgba(255,228,150,0.0) 6%, rgba(255,228,150,0.5) 42%,
+      rgba(255,245,200,0.92) 50%, rgba(255,228,150,0.5) 58%, transparent 94%);
+    filter: blur(7px);
+    mix-blend-mode: screen;
+    opacity: 0;
+    animation: archon-pillar 1.5s ease-out forwards;
+    pointer-events: none; z-index: 2;
+  }
+  @keyframes archon-pillar {
+    0%   { opacity: 0; transform: translate(-50%,-62%) scaleX(0.15); }
+    28%  { opacity: 1; transform: translate(-50%,-62%) scaleX(1.15); }
+    100% { opacity: 0.82; transform: translate(-50%,-62%) scaleX(1); }
+  }
+  /* White-gold manifestation flash. */
+  .archon-cine-flash {
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 50% 50%, rgba(255,250,236,0.96) 0%, rgba(255,224,150,0.6) 24%, rgba(255,200,90,0.18) 46%, transparent 64%);
+    mix-blend-mode: screen;
+    opacity: 0;
+    animation: archon-flash 1.25s ease-out forwards;
+    pointer-events: none; z-index: 3;
+  }
+  @keyframes archon-flash {
+    0%   { opacity: 0; }
+    10%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
   .counter-prompt-backdrop {
     position: fixed; inset: 0;
     background: rgba(8,5,14,0.75);
@@ -84824,7 +84870,9 @@ function bindArchonSummonOverlay() {
     renderBattle();
     try { if (typeof _muffleBattleAudioForUlt === 'function') _muffleBattleAudioForUlt(true); } catch (e) {}
     try { if (typeof playSfx === 'function') playSfx('unitSummon'); } catch (e) {}
-    const phaseDurs = [850, 950, 950];   // sum ≈ 2750ms
+    // 🎬 Grander, Master-Duel-style pacing: ritual build-up → offerings consumed
+    // → the Archon DESCENDS (beam + sprite reveal lingers) → manifested.
+    const phaseDurs = [1200, 1300, 1500];   // sum ≈ 4000ms (phases 2→3→4)
     let acc = 0;
     phaseDurs.forEach((d, i) => {
       acc += d;
@@ -84838,7 +84886,7 @@ function bindArchonSummonOverlay() {
       try { if (typeof _muffleBattleAudioForUlt === 'function') _muffleBattleAudioForUlt(false); } catch (e) {}
       App.ui.archonCine = null;
       try { _resolveArchonSummon(); } catch (e) { console.warn('[archon] resolve failed', e); App.ui.archonMode = null; renderBattle(); }
-    }, acc + 650);
+    }, acc + 900);   // let the manifested Archon linger before resolving (~4.9s total)
   };
 }
 
@@ -84873,9 +84921,29 @@ function renderArchonSummonCinematic() {
     const angle = (i * 360 / runes.length);
     return `<div class="poly-rune" style="transform: rotate(${angle}deg) translateY(-180px); animation-delay: ${i * 70}ms">${g}</div>`;
   }).join('');
+  // 🜂 Archon portrait — its real SUMMON SPRITE (animated summon frames first,
+  // then idle/attack, then uploaded card art, then the emoji glyph as a last
+  // resort) so the Archon rises out of the ritual instead of a flat emoji.
+  const _aSid = 'u_' + (cand.archonCardId || '');
+  const _archonPortrait = (() => {
+    try {
+      const _summonFr = (typeof getSpriteFrames === 'function') ? getSpriteFrames(_aSid, 'summon') : null;
+      const _idleFr   = (typeof getSpriteFrames === 'function') ? (getSpriteFrames(_aSid, 'idle') || getSpriteFrames(_aSid, 'attack')) : null;
+      if ((_summonFr && _summonFr.length) || (_idleFr && _idleFr.length)) {
+        const _anim = (_summonFr && _summonFr.length) ? 'summon' : 'idle';
+        return renderIcon(_aSid, cand.archonIcon || '🜂', 'xl', _anim);
+      }
+      let _art = null;
+      try { _art = (typeof getCardArt === 'function') ? getCardArt(cand.archonCardId) : null; } catch (e) {}
+      if (!_art && (cand.archonImg || cand.archonImage)) _art = cand.archonImg || cand.archonImage;
+      if (_art) return `<img src="${String(_art).replace(/"/g, '&quot;')}" alt="">`;
+    } catch (e) {}
+    return `<span>${escapeHtml(cand.archonIcon || '🜂')}</span>`;
+  })();
   return `
     <div class="poly-cine-backdrop poly-cine-phase-${phase}" aria-hidden="true" style="--archon-tint:#ffd86b">
       <div class="poly-cine-vignette"></div>
+      ${showName ? '<div class="archon-cine-pillar"></div>' : ''}
       <div class="poly-cine-stage">
         <div class="poly-cine-circle">
           <div class="poly-cine-ring poly-cine-ring-outer"></div>
@@ -84887,8 +84955,9 @@ function renderArchonSummonCinematic() {
         </div>
         <div class="poly-cine-ash">${ash}</div>
         <div class="poly-cine-tear"></div>
-        <div class="poly-cine-kalon-portrait">${escapeHtml(showName ? (cand.archonIcon || '🜂') : creatorGlyph)}</div>
+        <div class="poly-cine-kalon-portrait">${showName ? _archonPortrait : escapeHtml(creatorGlyph)}</div>
       </div>
+      ${phase === 3 ? '<div class="archon-cine-flash"></div>' : ''}
       <div class="poly-cine-label">${escapeHtml(phaseLabel)}</div>
       ${showName ? `<div class="poly-cine-kalon-name">${escapeHtml((cand.archonName || 'ARCHON').toUpperCase())}</div>` : ''}
     </div>

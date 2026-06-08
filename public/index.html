@@ -38777,6 +38777,10 @@ function resolveDeckCard(key) {
   if (kind === 'trap')     return TRAP_CARDS.find(c => c.id === id)     || _resolveFromCustomPool(id, 'trap');
   if (kind === 'location') return LOCATION_CARDS.find(c => c.id === id) || _resolveFromCustomPool(id, 'location');
   if (kind === 'weather')  return WEATHER_CARDS.find(c => c.id === id)  || _resolveFromCustomPool(id, 'weather');
+  // ⏱ Counter cards are custom-forged; resolve them through the custom pool so a
+  // 'counter:<id>' deck key (older saves) still loads its full card object with
+  // counterTriggers / counterEffect intact.
+  if (kind === 'counter')  return _resolveFromCustomPool(id, 'counter');
   // 'custom' kind explicitly resolves through local + Catalog (multiplayer-safe).
   if (kind === 'custom')   return (typeof lookupCustomCard === 'function') ? lookupCustomCard(id) : null;
   return null;
@@ -93425,16 +93429,42 @@ function doAIStep() {
   if (aiHero && aiHero.alive && !s.gameOver) {
     const ultPlan = _aiShouldFireUltimate(s, aiHero);
     if (ultPlan && ultPlan.fire) {
+      // Fire the AI ult — wrapped so a player COUNTER (trigger 'ultimate') can
+      // negate it first. Uses the same resolver + AI bypass when it goes through.
+      const _fireAiUlt = () => {
+        try {
+          setAIActor(aiHero.id, `⚡ ${aiHero.name} fires ULTIMATE`);
+          resolveHeroUltimate(aiHero.id, { aiBypass: true });
+          scheduleAIStep(AI_DELAYS.spell);
+        } catch (e) { console.warn('[AI] ultimate fire failed', e); scheduleAIStep(AI_DELAYS.spell); }
+      };
       try {
-        setAIActor(aiHero.id, `⚡ ${aiHero.name} fires ULTIMATE`);
-        // Use the player's resolver with the AI bypass — guarantees the
-        // exact same effects (volley AoE, rally buffs, summon, etc.) and
-        // the post-ult bookkeeping (charge reset, Inspired emotion).
-        resolveHeroUltimate(aiHero.id, { aiBypass: true });
-        // resolveHeroUltimate re-renders; schedule the next AI step.
-        scheduleAIStep(AI_DELAYS.spell);
+        tryPromptCounter(App.state, {
+          trigger: 'ultimate',
+          source: aiHero,
+          target: (App.state.units || []).find(u => u && u.owner === 'player' && u.isHero) || null,
+          label: `Enemy ${aiHero.name} unleashes its Ultimate`,
+        }).then((countered) => {
+          if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
+          if (countered) {
+            // Negated — drop the AI's ult charge below threshold so it can't
+            // immediately re-fire (mirrors the player-ult refund on counter).
+            try {
+              const u = App.state.heroUltimates && App.state.heroUltimates[aiHero.id];
+              if (u) u.charge = Math.max(0, (u.charge | 0) - 1);
+            } catch (e) {}
+            App.state.log = (App.state.log || []).concat([{ msg: `⏱ Counter negates Enemy ${aiHero.name}'s Ultimate!`, color: 'green' }]);
+            renderBattle();
+            scheduleAIStep(AI_DELAYS.spell);
+          } else {
+            _fireAiUlt();
+          }
+        }).catch(() => {
+          if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
+          _fireAiUlt();
+        });
         return;
-      } catch (e) { console.warn('[AI] ultimate fire failed', e); }
+      } catch (e) { _fireAiUlt(); return; }
     }
   }
 
@@ -93468,65 +93498,103 @@ function doAIStep() {
         }
         const target = aiPickBestPlacement(best, aiHero, s);
         if (target) {
-          const newUnit = { ...buildUnit(best, 'ai', target, aiHero.heroPassive), aiActed: false };
-          let next = {
-            ...s,
-            units: [...s.units, newUnit],
-            ai: {
-              ...s.ai,
-              hand: s.ai.hand.filter(c => c.instanceId !== best.instanceId),
-              graveyard: [...s.ai.graveyard, best],
-              energy: s.ai.energy - getEffectiveCardCost(best, s, 'ai'),
-            },
-            log: [...s.log, { msg: `Enemy plays ${best.name}`, color: 'red' }],
-          };
-          // Weather Summoner passive — same hook the player path uses.
-          next = maybeTriggerWeatherSummoner(next, newUnit);
-          // On-play ability — AI side runs the same effect engine the player uses.
-          if (best && best.onPlay && best.onPlay.type) {
-            // ⚡ AI auto-pays any on-play activation cost; if it can't afford it,
-            // the unit still enters but the on-play effect is skipped.
-            const _opCost = best.onPlay.cost;
-            let _opOk = true;
-            if (!_costIsEmpty(_opCost)) {
-              if (_costPayable(next, 'ai', newUnit, _opCost)) {
-                const _opPay = _applyCostPayment(next, 'ai', newUnit, _opCost, _aiPickCost(next, 'ai', newUnit, _opCost));
-                next = { ..._opPay.state, log: [...((_opPay.state && _opPay.state.log) || []), ...(_opPay.log || [])] };
-              } else { _opOk = false; }
-            }
-            if (_opOk) {
-              // 🌟 ON-PLAY CINEMATIC — same dramatic reveal for AI-deployed units
-              // so the player sees what the enemy unit's on-play just did.
-              try { if (typeof playOnPlayCinematic === 'function') playOnPlayCinematic(newUnit, best); } catch (e) {}
-              next = applyOnPlayEffect(next, newUnit, best);
-            }
-          }
-          // 🜂 FORCED KALON — 'onEnter' timing for AI-summoned units too.
-          try {
-            const _fc = (typeof _forcedKalonCfg === 'function') ? _forcedKalonCfg(newUnit) : null;
-            if (_fc && _fc.timing === 'onEnter' && typeof getKalonForm === 'function' && getKalonForm(newUnit)) {
-              const _b = next.units;
-              next = executeKalonTransform(next, newUnit, { forced: true, free: true });
-              if (next.units !== _b) {
-                next.units = next.units.map(x => x.id === newUnit.id ? { ...x, _forcedKalonDone: true } : x);
-                next.log = [...next.log, { msg: `🜂 ${newUnit.name} ascends as it enters the battlefield!`, color: 'red' }];
+          // 🛠 The actual deployment, wrapped so we can gate it behind a player
+          // COUNTER window first (trigger 'summon'). Uses `s` (unchanged unless
+          // the player counters, in which case we take the negate branch instead).
+          const _deployBestUnit = () => {
+            const newUnit = { ...buildUnit(best, 'ai', target, aiHero.heroPassive), aiActed: false };
+            let next = {
+              ...s,
+              units: [...s.units, newUnit],
+              ai: {
+                ...s.ai,
+                hand: s.ai.hand.filter(c => c.instanceId !== best.instanceId),
+                graveyard: [...s.ai.graveyard, best],
+                energy: s.ai.energy - getEffectiveCardCost(best, s, 'ai'),
+              },
+              log: [...s.log, { msg: `Enemy plays ${best.name}`, color: 'red' }],
+            };
+            // Weather Summoner passive — same hook the player path uses.
+            next = maybeTriggerWeatherSummoner(next, newUnit);
+            // On-play ability — AI side runs the same effect engine the player uses.
+            if (best && best.onPlay && best.onPlay.type) {
+              // ⚡ AI auto-pays any on-play activation cost; if it can't afford it,
+              // the unit still enters but the on-play effect is skipped.
+              const _opCost = best.onPlay.cost;
+              let _opOk = true;
+              if (!_costIsEmpty(_opCost)) {
+                if (_costPayable(next, 'ai', newUnit, _opCost)) {
+                  const _opPay = _applyCostPayment(next, 'ai', newUnit, _opCost, _aiPickCost(next, 'ai', newUnit, _opCost));
+                  next = { ..._opPay.state, log: [...((_opPay.state && _opPay.state.log) || []), ...(_opPay.log || [])] };
+                } else { _opOk = false; }
+              }
+              if (_opOk) {
+                // 🌟 ON-PLAY CINEMATIC — same dramatic reveal for AI-deployed units
+                // so the player sees what the enemy unit's on-play just did.
+                try { if (typeof playOnPlayCinematic === 'function') playOnPlayCinematic(newUnit, best); } catch (e) {}
+                next = applyOnPlayEffect(next, newUnit, best);
               }
             }
-          } catch (e) {}
-          // ⚡ Trigger abilities — the AI unit entered (summon) + a card was
-          // played (cardPlayed). actorOwner = 'ai', so player units with
-          // who:'enemy' triggers react to the AI's plays.
+            // 🜂 FORCED KALON — 'onEnter' timing for AI-summoned units too.
+            try {
+              const _fc = (typeof _forcedKalonCfg === 'function') ? _forcedKalonCfg(newUnit) : null;
+              if (_fc && _fc.timing === 'onEnter' && typeof getKalonForm === 'function' && getKalonForm(newUnit)) {
+                const _b = next.units;
+                next = executeKalonTransform(next, newUnit, { forced: true, free: true });
+                if (next.units !== _b) {
+                  next.units = next.units.map(x => x.id === newUnit.id ? { ...x, _forcedKalonDone: true } : x);
+                  next.log = [...next.log, { msg: `🜂 ${newUnit.name} ascends as it enters the battlefield!`, color: 'red' }];
+                }
+              }
+            } catch (e) {}
+            // ⚡ Trigger abilities — the AI unit entered (summon) + a card was
+            // played (cardPlayed). actorOwner = 'ai', so player units with
+            // who:'enemy' triggers react to the AI's plays.
+            try {
+              if (typeof _fireTriggers === 'function') {
+                next = _fireTriggers(next, 'summon', { actorOwner: 'ai', unit: newUnit });
+                next = _fireTriggers(next, 'cardPlayed', { actorOwner: 'ai', card: best, unit: newUnit });
+              }
+            } catch (e) {}
+            App.state = next;
+            try { _markSummonAnim(newUnit); } catch (e) {}
+            setAIActor(newUnit.id, `🃏 Enemy plays ${best.name}`);
+            renderBattle();
+            scheduleAIStep(AI_DELAYS.card);
+          };
+          // ⏱ COUNTER WINDOW — let the player negate the AI's unit deployment
+          // with a counter card whose triggers include 'summon'. Resolves false
+          // immediately when the player has no matching/affordable counter.
           try {
-            if (typeof _fireTriggers === 'function') {
-              next = _fireTriggers(next, 'summon', { actorOwner: 'ai', unit: newUnit });
-              next = _fireTriggers(next, 'cardPlayed', { actorOwner: 'ai', card: best, unit: newUnit });
-            }
-          } catch (e) {}
-          App.state = next;
-          try { _markSummonAnim(newUnit); } catch (e) {}
-          setAIActor(newUnit.id, `🃏 Enemy plays ${best.name}`);
-          renderBattle();
-          scheduleAIStep(AI_DELAYS.card);
+            tryPromptCounter(App.state, {
+              trigger: 'summon',
+              source: Object.assign({}, best, { owner: 'ai' }),
+              target: aiHero,
+              label: `Enemy summons ${best.name}`,
+            }).then((countered) => {
+              if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
+              if (countered) {
+                // Negated — the AI loses the card + energy (player paid the counter cost).
+                App.state = {
+                  ...App.state,
+                  ai: {
+                    ...App.state.ai,
+                    hand: (App.state.ai.hand || []).filter(c => c.instanceId !== best.instanceId),
+                    graveyard: [...(App.state.ai.graveyard || []), { ...best }],
+                    energy: Math.max(0, (App.state.ai.energy | 0) - getEffectiveCardCost(best, App.state, 'ai')),
+                  },
+                  log: [...(App.state.log || []), { msg: `⏱ Counter negates Enemy ${best.name}'s summon!`, color: 'green' }],
+                };
+                renderBattle();
+                scheduleAIStep(AI_DELAYS.card);
+              } else {
+                _deployBestUnit();
+              }
+            }).catch(() => {
+              if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
+              _deployBestUnit();
+            });
+          } catch (e) { _deployBestUnit(); }
           return;
         }
       }

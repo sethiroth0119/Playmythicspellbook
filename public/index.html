@@ -98474,6 +98474,104 @@ function _smugglerTrade(i) {
   } catch (e) { try { console.warn('[smuggler] trade failed', e); } catch (_) {} }
 }
 
+// ============================================================================
+// ⚗️ REFINERY / EXCHANGE — sell surplus resources for Cinder, or convert one
+// resource into another (the smuggler takes a cut). Makes every resource useful
+// so nothing is dead weight. Lives on the Black Market screen. Pure local —
+// uses the existing getRes/addRes/spendResources sinks + addCinders.
+// ============================================================================
+const RESOURCE_CINDER_VALUE = {
+  food: 2, water: 2, ammo: 3, supplies: 3, metal: 3, energyDrink: 4, fuel: 4, medicine: 5,
+  corruptedEssence: 8, memoryShards: 10, dna: 10,
+};
+const REFINERY_CONVERT_SPREAD = 0.6;   // 40% smuggler cut on resource→resource swaps
+function _resCinderValue(id) { return RESOURCE_CINDER_VALUE[id] || 3; }
+function _refineryList() { return (typeof RESOURCES !== 'undefined' ? RESOURCES : []).filter(r => r && r.id); }
+// How much of `toId` you get for `amt` of `fromId` (value-matched, minus the cut).
+function _refineryYield(fromId, toId, amt) {
+  if (!fromId || !toId || fromId === toId) return 0;
+  return Math.max(0, Math.floor((amt | 0) * _resCinderValue(fromId) / _resCinderValue(toId) * REFINERY_CONVERT_SPREAD));
+}
+function _renderRefinery() {
+  try {
+    const list = _refineryList();
+    if (!list.length) return '';
+    const ownedRows = list.map(r => {
+      const have = (typeof getRes === 'function') ? getRes(r.id) : 0;
+      if (have <= 0) return '';
+      const val = _resCinderValue(r.id);
+      return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.45rem 0.7rem;border-bottom:1px solid rgba(138,255,214,0.12)">
+        <span style="flex:1;color:#e8eef7">${r.icon} ${escapeHtml(r.name)} <span class="ink-dim">×${have}</span></span>
+        <span class="small-text" style="color:#ffd166"><span class="cinder-icon"></span> ${val} ea</span>
+        <button class="btn-mini" data-refsell="${r.id}" data-refamt="10" ${have < 10 ? 'disabled' : ''} style="border-color:#8affd644">Sell 10</button>
+        <button class="btn-mini" data-refsell="${r.id}" data-refamt="all" style="border-color:#8affd644">Sell all</button>
+      </div>`;
+    }).filter(Boolean).join('');
+    const sellSection = ownedRows
+      ? `<div style="background:rgba(8,14,12,0.5);border:1px solid rgba(138,255,214,0.2);border-radius:8px;overflow:hidden;margin-bottom:0.8rem">${ownedRows}</div>`
+      : `<div class="small-text ink-dim" style="padding:0.8rem;text-align:center">No resources to refine yet — run loot expeditions to stock up.</div>`;
+    const fromSel = App._refineryFrom || list[0].id;
+    const toSel = App._refineryTo || (list[1] ? list[1].id : list[0].id);
+    const opt = (sel) => list.map(r => `<option value="${r.id}" ${r.id === sel ? 'selected' : ''}>${r.icon} ${escapeHtml(r.name)}</option>`).join('');
+    return `
+      <div style="margin:0 0 1.4rem">
+        <div class="forge-section-header"><h3 style="color:#8affd6">⚗️ Refinery — surplus into Cinder or other resources</h3></div>
+        <div class="small-text ink-dim" style="margin:-0.3rem 0 0.7rem">Sell spare resources for <span class="cinder-icon"></span> Cinder, or convert one into another (the smuggler skims ${Math.round((1 - REFINERY_CONVERT_SPREAD) * 100)}%).</div>
+        ${sellSection}
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem;background:rgba(8,14,12,0.5);border:1px solid rgba(138,255,214,0.2);border-radius:8px;padding:0.6rem 0.8rem">
+          <select id="refinery-from" style="padding:0.35rem 0.5rem;background:rgba(10,16,14,0.8);border:1px solid rgba(138,255,214,0.3);border-radius:4px;color:#e8eef7">${opt(fromSel)}</select>
+          <input id="refinery-amt" type="number" min="1" value="${App._refineryAmt || 10}" style="width:74px;padding:0.35rem;background:rgba(10,16,14,0.8);border:1px solid rgba(138,255,214,0.3);border-radius:4px;color:#e8eef7">
+          <span style="color:#8affd6;font-weight:700">→</span>
+          <select id="refinery-to" style="padding:0.35rem 0.5rem;background:rgba(10,16,14,0.8);border:1px solid rgba(138,255,214,0.3);border-radius:4px;color:#e8eef7">${opt(toSel)}</select>
+          <span class="small-text" id="refinery-preview" style="color:#9fb4d8;flex:1;min-width:140px"></span>
+          <button class="btn-secondary btn-mini" id="refinery-convert-btn" style="border-color:#8affd666;color:#8affd6">Convert</button>
+        </div>
+      </div>`;
+  } catch (e) { return ''; }
+}
+function _refineryUpdatePreview() {
+  try {
+    const f = document.getElementById('refinery-from'), t = document.getElementById('refinery-to'), a = document.getElementById('refinery-amt'), p = document.getElementById('refinery-preview');
+    if (!f || !t || !a || !p) return;
+    const fromId = f.value, toId = t.value, amt = Math.max(0, parseInt(a.value, 10) || 0);
+    if (fromId === toId) { p.textContent = 'Pick two different resources.'; return; }
+    const out = _refineryYield(fromId, toId, amt);
+    const have = (typeof getRes === 'function') ? getRes(fromId) : 0;
+    p.textContent = '= ' + out + ' ' + _resMeta(toId).name + (amt > have ? ' (you have ' + have + ')' : '');
+  } catch (e) {}
+}
+function _refinerySellRes(id, amtSpec) {
+  try {
+    const have = (typeof getRes === 'function') ? getRes(id) : 0;
+    let amt = (amtSpec === 'all') ? have : Math.min(have, parseInt(amtSpec, 10) || 0);
+    if (amt <= 0) { showToast('Nothing to sell.'); return; }
+    spendResources({ [id]: amt });
+    const gross = amt * _resCinderValue(id);
+    const q = (typeof frApplyTax === 'function') ? frApplyTax(gross, { market: 'black', resource: id, quantity: amt }) : { net: gross, tax: 0, label: '' };
+    if (typeof addCinders === 'function') addCinders(q.net); else Profile.gems = (Profile.gems || 0) + q.net;
+    showToast('🔥 +' + q.net + ' Cinders — refined ' + amt + ' ' + _resMeta(id).name + (q.tax ? ' · −' + q.tax + ' tax' : '') + '.', 3000);
+    render();
+  } catch (e) { try { console.warn('[refinery] sell failed', e); } catch (_) {} }
+}
+function _refineryConvert() {
+  try {
+    const f = document.getElementById('refinery-from'), t = document.getElementById('refinery-to'), a = document.getElementById('refinery-amt');
+    if (!f || !t || !a) return;
+    const fromId = f.value, toId = t.value, amt = Math.max(0, parseInt(a.value, 10) || 0);
+    App._refineryFrom = fromId; App._refineryTo = toId; App._refineryAmt = amt;
+    if (fromId === toId) { showToast('Pick two different resources.'); return; }
+    if (amt <= 0) { showToast('Enter an amount to convert.'); return; }
+    const have = (typeof getRes === 'function') ? getRes(fromId) : 0;
+    if (amt > have) { showToast('You only have ' + have + ' ' + _resMeta(fromId).name + '.'); return; }
+    const out = _refineryYield(fromId, toId, amt);
+    if (out <= 0) { showToast('That yields nothing — try a larger amount or a cheaper target.'); return; }
+    spendResources({ [fromId]: amt });
+    addRes(toId, out);
+    showToast('⚗️ Converted ' + amt + ' ' + _resMeta(fromId).name + ' → ' + out + ' ' + _resMeta(toId).name + '.', 3200);
+    render();
+  } catch (e) { try { console.warn('[refinery] convert failed', e); } catch (_) {} }
+}
+
 function renderCamp() {
   // Entry gate — defense in depth. The title-hub portal is already locked
   // until CAMP_UNLOCK_LEVEL is reached, but if the player lands on the Camp
@@ -102409,6 +102507,8 @@ function renderBlackMarket() {
 
       ${(typeof _renderSmugglerBoard === 'function') ? _renderSmugglerBoard() : ''}
 
+      ${(typeof _renderRefinery === 'function') ? _renderRefinery() : ''}
+
       <div class="vendor-controls">
         <input type="text" id="vendor-search" placeholder="🔍 Search by name or rarity…" value="${escapeHtml(search)}" class="vendor-search-input">
         ${totalSellable > 0 ? `<button class="btn-secondary" id="btn-vendor-sell-dupes">⚡ Sell All Duplicates (<span class="cinder-icon"></span> ${totalValue})</button>` : ''}
@@ -102490,6 +102590,19 @@ function renderBlackMarket() {
   document.querySelectorAll('[data-smuggle]').forEach(el => {
     el.onclick = () => { const i = parseInt(el.dataset.smuggle, 10); if (!isNaN(i) && typeof _smugglerTrade === 'function') _smugglerTrade(i); };
   });
+  // ⚗️ Refinery — sell resources for Cinder + resource→resource conversion.
+  document.querySelectorAll('[data-refsell]').forEach(el => {
+    el.onclick = () => { if (!el.disabled && typeof _refinerySellRes === 'function') _refinerySellRes(el.dataset.refsell, el.dataset.refamt); };
+  });
+  (function () {
+    const _f = document.getElementById('refinery-from'), _t = document.getElementById('refinery-to'), _a = document.getElementById('refinery-amt'), _b = document.getElementById('refinery-convert-btn');
+    const _save = () => { if (_f) App._refineryFrom = _f.value; if (_t) App._refineryTo = _t.value; if (_a) App._refineryAmt = Math.max(1, parseInt(_a.value, 10) || 1); if (typeof _refineryUpdatePreview === 'function') _refineryUpdatePreview(); };
+    if (_f) _f.onchange = _save;
+    if (_t) _t.onchange = _save;
+    if (_a) _a.oninput = _save;
+    if (_b) _b.onclick = () => { if (typeof _refineryConvert === 'function') _refineryConvert(); };
+    if (typeof _refineryUpdatePreview === 'function') _refineryUpdatePreview();
+  })();
   // 🔍 Right-click any card row for a read-only detail card (view only).
   bindCardDetailContextMenus();
   bindCollectionCardModal();

@@ -98321,9 +98321,11 @@ function _resMeta(id) {
 }
 // How many deals the board offers — scales with the Black Market level.
 function _smugglerDealCount() {
-  const st = (typeof _campFacState === 'function') ? _campFacState('market') : null;
-  if (!st || !(st.level > 0)) return 0;
-  return 2 + st.level;   // Lv1 → 3 deals … Lv4 → 6 deals
+  // Baseline 3 deals so the Black Market screen always has a Smuggler's Board;
+  // upgrading the Camp's Black Market FACILITY adds more, up to 6 at Lv4.
+  let level = 0;
+  try { const st = (typeof _campFacState === 'function') ? _campFacState('market') : null; if (st) level = st.level || 0; } catch (e) {}
+  return 2 + Math.max(1, level);   // Lv0/Lv1 → 3 deals … Lv4 → 6 deals
 }
 // Pool of cards the smuggler can hand over as a reward (admin/custom UNIT cards).
 function _smugglerCardPool() {
@@ -98721,7 +98723,6 @@ function renderCamp() {
         <div class="small-text ink-dim" style="margin:-0.3rem 0 0.7rem">Build & upgrade facilities — each one strengthens your survivors. Construction continues in real time, even offline.</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.7rem">${facilityGridHtml}</div>
       </div>
-      ${(typeof _renderSmugglerBoard === 'function') ? _renderSmugglerBoard() : ''}
       <div class="camp-layout">
         <div>
           <div class="forge-section-header"><h3>Deploy Slots (${Camp.slots.length}/${_maxSlots})</h3></div>
@@ -102406,6 +102407,8 @@ function renderBlackMarket() {
         <div class="vendor-summary-stat"><div class="vendor-summary-num"><span class="cinder-icon"></span> ${totalValue}</div><div class="vendor-summary-label">Max payout</div></div>
       </div>
 
+      ${(typeof _renderSmugglerBoard === 'function') ? _renderSmugglerBoard() : ''}
+
       <div class="vendor-controls">
         <input type="text" id="vendor-search" placeholder="🔍 Search by name or rarity…" value="${escapeHtml(search)}" class="vendor-search-input">
         ${totalSellable > 0 ? `<button class="btn-secondary" id="btn-vendor-sell-dupes">⚡ Sell All Duplicates (<span class="cinder-icon"></span> ${totalValue})</button>` : ''}
@@ -102483,6 +102486,10 @@ function renderBlackMarket() {
       render();
     };
   }
+  // 💰 Smuggler's Board — rotating 12h trade deals.
+  document.querySelectorAll('[data-smuggle]').forEach(el => {
+    el.onclick = () => { const i = parseInt(el.dataset.smuggle, 10); if (!isNaN(i) && typeof _smugglerTrade === 'function') _smugglerTrade(i); };
+  });
   // 🔍 Right-click any card row for a read-only detail card (view only).
   bindCardDetailContextMenus();
   bindCollectionCardModal();

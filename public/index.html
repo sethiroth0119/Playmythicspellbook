@@ -73459,6 +73459,7 @@ function startBattleWithPrep(playerGoesFirst) {
   App._mpSummonSeen = {};   // 🜂 fresh opponent-summon-cinematic dedup per match
   App._mpViz = { art: {}, sprites: {} };   // 🎨 fresh relayed-visual cache per match
   MatchBroadcast._vizSent = {};            // 🎨 re-relay my visuals for the new match
+  MatchBroadcast._vizQueue = []; MatchBroadcast._vizPumping = false;   // 🚚 fresh paced sender
   try { if (App.ui) App.ui._logNotifyLen = undefined; } catch (e) {}   // 📣 prime log-notify fresh
   try { _clearCoinChoiceTimer(); } catch (e) {}
   App.screen = 'battle';
@@ -116538,6 +116539,7 @@ function leaveMatchChannel() {
   MatchBroadcast.dcDeclared = false;
   MatchBroadcast.awaitingResync = false;
   MatchBroadcast._vizSent = {};                 // 🎨 clear relayed-visual dedup
+  MatchBroadcast._vizQueue = []; MatchBroadcast._vizPumping = false;   // 🚚 stop the paced sender
   try { App._mpViz = { art: {}, sprites: {} }; } catch (e) {}
   // 🏁 Reset the server-authoritative game-end latches so the NEXT match
   // can submit its own verdict cleanly.
@@ -117493,6 +117495,30 @@ function _sendFullSnapshot() {
 // ever pay for a card the first time it appears; size-capped per message so a
 // huge sprite set can never blow the channel (falls back to art-only, then to
 // nothing → emoji, the same as today).
+// 🚚 PACED chunk sender — Supabase Realtime rate-limits broadcasts, so blasting a
+// big sprite's dozens of chunk messages in one tight loop gets some DROPPED →
+// the watcher receives a PARTIAL frame set and the unit shows static art instead
+// of animating (the "certain units don't animate" bug). We queue every chunk and
+// drain at a safe cadence so all of them land.
+function _mpVizEnqueue(p) {
+  MatchBroadcast._vizQueue = MatchBroadcast._vizQueue || [];
+  MatchBroadcast._vizQueue.push(p);
+  _mpVizPump();
+}
+function _mpVizPump() {
+  if (MatchBroadcast._vizPumping) return;
+  if (!MatchBroadcast.channel || !MatchBroadcast._vizQueue || !MatchBroadcast._vizQueue.length) return;
+  MatchBroadcast._vizPumping = true;
+  const step = () => {
+    if (!MatchBroadcast.channel || !MatchBroadcast._vizQueue || !MatchBroadcast._vizQueue.length) {
+      MatchBroadcast._vizPumping = false; return;
+    }
+    const p = MatchBroadcast._vizQueue.shift();
+    try { MatchBroadcast.channel.send({ type: 'broadcast', event: 'unitviz', payload: p }); } catch (e) {}
+    setTimeout(step, 90);   // ~11 msgs/sec — safely under Realtime broadcast limits
+  };
+  step();
+}
 function _mpRelayUnitVisuals() {
   try {
     if (!MatchBroadcast.channel) return;
@@ -117516,7 +117542,7 @@ function _mpRelayUnitVisuals() {
       const n = Math.max(1, Math.ceil(str.length / CHUNK));
       for (let i = 0; i < n; i++) {
         const p = Object.assign({ from: me, t: 'chunk', i: i, n: n, s: str.slice(i * CHUNK, (i + 1) * CHUNK) }, meta);
-        try { MatchBroadcast.channel.send({ type: 'broadcast', event: 'unitviz', payload: p }); } catch (e) {}
+        _mpVizEnqueue(p);   // paced — never blast the channel (drops cause partial sprites)
       }
     };
     for (const u of units) {
@@ -117543,7 +117569,9 @@ function _mpRelayUnitVisuals() {
       try { const _sid = (typeof getSpriteId === 'function') ? getSpriteId(u) : null; if (_sid) spriteIds.add(_sid); } catch (e) {}
       if (u.cardId) spriteIds.add('u_' + u.cardId);
       if (u.originalCardId) spriteIds.add('u_' + u.originalCardId);
+      if (u.originalCardId) spriteIds.add('k_' + u.originalCardId);   // kalon form slot
       if (u.isHero && u.heroId) spriteIds.add('h_' + u.heroId);
+      if (u.id) spriteIds.add('u_' + u.id);                          // summoned-token instance slot
       for (const sid of spriteIds) {
         const sk = 'spr:' + sid;
         if (MatchBroadcast._vizSent[sk]) continue;
@@ -117552,7 +117580,10 @@ function _mpRelayUnitVisuals() {
           const sib = sid.indexOf('h_') === 0 ? ('u_' + sid.slice(2)) : (sid.indexOf('u_') === 0 ? ('h_' + sid.slice(2)) : null);
           const set = Forge.sprites && (Forge.sprites[sid] || (sib && Forge.sprites[sib]));
           if (set) {
-            ['idle', 'attack', 'summon'].forEach(anim => {
+            // Relay EVERY animation the sprite has (idle/attack/summon/hurt/death/
+            // …), not just a fixed three — so board idle AND event animations play.
+            Object.keys(set).forEach(anim => {
+              if (anim === '__speed') return;   // metadata, not frames
               const fr = Array.isArray(set[anim]) ? set[anim].filter(Boolean) : null;
               if (!fr || !fr.length) return;
               const fn = fr.length;

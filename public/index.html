@@ -52334,6 +52334,11 @@ function processTombstoneDrops(state) {
   for (const u of state.units) {
     if (!u || u.alive) continue;
     if (u._tombstoned) continue;          // already dropped
+    // ↩ BOUNCED, NOT KILLED — a unit returned to hand is never a death. Don't
+    // fire kill triggers, drop a tombstone, or send its card to the graveyard.
+    // (Belt-and-suspenders: the bounce paths now remove the unit outright, but
+    // this guards any stray _bounced body that ever reaches this sweep.)
+    if (u._bounced) continue;
     // 🎯 Hero Ultimate + 😢 Emotion — fire kill-event triggers for this
     // fresh death. We don't always have the killer reference here (DoT /
     // status / counter paths), so `_battleOnUnitKilled` falls back to "any
@@ -60097,13 +60102,17 @@ function applyOnPlayEffect(state, unit, card) {
       log.push({ msg: `${unit.name} tries to banish ${target.name} — but heroes cannot be bounced.`, color: 'amber' });
       return { ...state, log };
     }
-    // Remove from board (kill alive flag so renderers skip it) AND restore to hand.
-    state.units = state.units.map(u => u.id === target.id ? { ...u, alive: false, _bounced: true } : u);
     const enemySide = target.owner;
     const sideLabel = enemySide === 'player' ? 'your' : 'enemy';
     // 🜂/✦ Archons return to the Archon Deck (never a hand); Kalon forms revert to
     // their original base card on the way back to hand.
     const ret = _unitReturnToHandCard(target);
+    // ↩ A BOUNCE IS NOT A DEATH. Remove the unit from the board ENTIRELY — do
+    // not just flag it alive:false. A lingering dead body would get caught by
+    // processTombstoneDrops (tombstone + kill trigger + graveyard) and by the MP
+    // death-feedback diff ("☠ fell"). Filtering it out leaves zero residue: the
+    // card simply goes back to its owner's hand.
+    state.units = state.units.filter(u => u.id !== target.id);
     if (ret.archon) {
       log.push({ msg: `🜂 ${unit.name} banishes ${target.name} — the Archon returns to ${sideLabel} Archon Deck!`, color: owner === 'player' ? 'green' : 'red' });
     } else if (ret.card) {
@@ -61686,8 +61695,10 @@ function _applyTriggerEffect(state, unit, trg, ctx) {
       if (enemies.length && unit.pos) {
         enemies.sort((a, b) => (Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y))) - (Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y))));
         const tgt = enemies[0];
-        s = { ...s, units: (s.units || []).map(u => u.id === tgt.id ? { ...u, alive: false, _bounced: true } : u) };
         const ret = (typeof _unitReturnToHandCard === 'function') ? _unitReturnToHandCard(tgt) : { card: null, archon: false };
+        // ↩ Bounce ≠ death — remove the body entirely so it leaves no tombstone,
+        // graveyard entry, kill credit, or "fell" feedback behind.
+        s = { ...s, units: (s.units || []).filter(u => u.id !== tgt.id) };
         if (ret.archon) log.push({ msg: `${tag} — banishes ${tgt.name} (returns to Archon Deck).`, color: col });
         else if (ret.card && s[tgt.owner]) { s = { ...s, [tgt.owner]: { ...s[tgt.owner], hand: [...(s[tgt.owner].hand || []), ret.card] } }; log.push({ msg: `${tag} — bounces ${tgt.name} to hand.`, color: col }); }
       }

@@ -72855,6 +72855,16 @@ function renderCoinFlip() {
         if (_mpFirst) {
           won = (_mpFirst === MatchBroadcast.myUserId);
           result = won ? call : (call === 'heads' ? 'tails' : 'heads');
+        } else if (bp.multiplayer) {
+          // 🛡️ SUPABASE PATH — the server seeds current_player = PLAYER 1 on the
+          // first join (mp_init_match, idempotent). Only P1 ever reaches this
+          // caller branch (P2's buttons are disabled + gated above), so P1 MUST
+          // win the toss and open. A RANDOM outcome here was the stall bug: ~50%
+          // of matches the coin said P2 goes first, so P2 played + ended turn,
+          // but the server still held current_player = P1 → mp_end_turn rejected
+          // 'not_your_turn' and the match froze. The coin face just visualizes it.
+          won = true;            // P1 (caller) always opens — matches the server
+          result = call;         // show the called face as the winning face
         } else {
           result = Math.random() < 0.5 ? 'heads' : 'tails';
           won = (result === call);
@@ -72886,6 +72896,22 @@ function renderCoinFlip() {
       // Legacy Supabase P2: disable + wait for P1's broadcast.
       if (_hb) { _hb.disabled = true; _hb.title = 'Player 1 is calling the toss…'; }
       if (_tb) { _tb.disabled = true; _tb.title = 'Player 1 is calling the toss…'; }
+      // 🛡️ BACKSTOP — P1 broadcasts the 'coin' result exactly once. If P2's
+      // channel subscribe races behind that single send, P2 would hang on this
+      // disabled pick screen forever. After 9s with no result, resolve
+      // deterministically to the SERVER's outcome (P1 opens → P2 second) so the
+      // match can never freeze on the toss. Armed once per coin session.
+      if (!bp._p2CoinBackstop) {
+        bp._p2CoinBackstop = true;
+        setTimeout(() => {
+          if (App.screen !== 'coinFlip' || !App.battlePrep) return;
+          if (App.battlePrep.coinResult) return;   // P1's broadcast already landed
+          App.battlePrep.coinCall      = App.battlePrep.coinCall || 'heads';
+          App.battlePrep.coinResult    = (App.battlePrep.coinCall === 'heads') ? 'tails' : 'heads';
+          App.battlePrep.playerWonFlip = false;     // P1 opens; P2 moves second
+          if (typeof render === 'function') render();
+        }, 9000);
+      }
     } else {
       if (_hb) _hb.onclick = () => onCall('heads');
       if (_tb) _tb.onclick = () => onCall('tails');
@@ -104549,6 +104575,17 @@ function onMultiplayerMatchFound(match) {
       || (typeof findCustomHeroCard === 'function' && findCustomHeroCard(MultiplayerMatch.opponentHeroId))
       || { id: MultiplayerMatch.opponentHeroId, name: MultiplayerMatch.opponentName, icon: '👤' };
     oppHeroData = Object.assign({}, _catalog, _oppProg ? { _mpProg: _oppProg } : {});
+  }
+  // 🛡️ NEVER NULL/NULL — if the foe is a CUSTOM hero we don't have in our
+  // catalog AND no full heroData survived the matchmaking write, the stub above
+  // carries no stats → buildHero produces undefined HP → "null/null" on the
+  // board. Give it a sane placeholder stat skeleton (correct keys) so the HP bar
+  // always shows a real number. The opponent's first broadcast snapshot replaces
+  // this with their actual hero, so it's only a pre-snapshot stand-in.
+  if (!oppHeroData.stats || oppHeroData.hp == null) {
+    if (!oppHeroData.stats) oppHeroData.stats = { atk: 14, def: 12, mag: 12, res: 12, spd: 1 };
+    if (oppHeroData.hp == null) oppHeroData.hp = 30;
+    if (!Array.isArray(oppHeroData.elements)) oppHeroData.elements = ['shadow'];
   }
   // App.battlePrep already has hero+deck from deckSelect — fill in the foe slot.
   if (!App.battlePrep) App.battlePrep = {};

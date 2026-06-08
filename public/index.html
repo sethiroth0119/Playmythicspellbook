@@ -65358,18 +65358,38 @@ function getSpriteId(obj) {
 function unitBoardVisual(occupant) {
   if (!occupant) return '';
   const sId = (typeof getSpriteId === 'function') ? getSpriteId(occupant) : null;
-  // 1) Animated sprite frames (richest).
+  // 🜂 A transformed Kalon unit keeps originalCardId (base) but swaps cardId to
+  //    the Kalon form. The visual resolver MUST prefer the Kalon form — the old
+  //    order listed originalCardId (base) BEFORE cardId (kalon), so a Kalon
+  //    WITHOUT its own sprite fell back to the BASE card's picture, making
+  //    transformed units (most visibly the AI's, whose cards often lack kalon
+  //    sprites) look like they had reverted to base form.
+  const _isKalon = !!(occupant.originalCardId && occupant.cardId && occupant.cardId !== occupant.originalCardId);
+  // 1) Animated sprite frames (richest). Try the kalon sprite slot ('k_'+base
+  //    via getSpriteId) first, then the kalon form's OWN unit slot ('u_'+kalon).
   try {
-    if (sId && typeof getSpriteFrames === 'function') {
-      const fr = getSpriteFrames(sId, 'idle') || getSpriteFrames(sId, 'attack');
-      if (fr && fr.length) return renderIcon(sId, occupant.icon, 'fill');
+    if (typeof getSpriteFrames === 'function') {
+      let useSid = sId;
+      let fr = sId ? (getSpriteFrames(sId, 'idle') || getSpriteFrames(sId, 'attack')) : null;
+      if ((!fr || !fr.length) && _isKalon && occupant.cardId) {
+        const altSid = 'u_' + occupant.cardId;
+        const altFr = getSpriteFrames(altSid, 'idle') || getSpriteFrames(altSid, 'attack');
+        if (altFr && altFr.length) { useSid = altSid; fr = altFr; }
+      }
+      if (fr && fr.length) return renderIcon(useSid, occupant.icon, 'fill');
     }
   } catch (e) {}
-  // Candidate ids (hero id / card id / kalon-origin / generic id).
+  // Candidate ids — for a transformed Kalon the KALON id (cardId) comes FIRST so
+  // its art/def wins over the base card's; otherwise base-first as before.
   const ids = [];
   if (occupant.heroId) ids.push(occupant.heroId);
-  if (occupant.originalCardId) ids.push(occupant.originalCardId);
-  if (occupant.cardId) ids.push(occupant.cardId);
+  if (_isKalon) {
+    if (occupant.cardId) ids.push(occupant.cardId);
+    if (occupant.originalCardId) ids.push(occupant.originalCardId);
+  } else {
+    if (occupant.originalCardId) ids.push(occupant.originalCardId);
+    if (occupant.cardId) ids.push(occupant.cardId);
+  }
   if (occupant.id) ids.push(occupant.id);
   // 2) Static card art (admin upload, synced to players via the catalog).
   let art = null;

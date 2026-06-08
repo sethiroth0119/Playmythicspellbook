@@ -50119,10 +50119,9 @@ function onSaveStatus(fn) {
   // give us before the tab actually dies, so flush NOW.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-      // Also write the local profile one more time, synchronously, to be
-      // double-sure the in-memory edits made it to disk. saveProfile is
-      // idempotent-safe.
-      try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+      // Flush the local profile synchronously (bypassing the save debounce) to
+      // be double-sure the in-memory edits made it to disk before we vanish.
+      try { if (typeof saveProfileNow === 'function') saveProfileNow(); } catch (e) {}
       _flushPending();
       // 📊 Flush the global Player Market usage-event buffer too — otherwise
       // the last 1.2s of plays before the tab hides would never reach the DB.
@@ -50136,8 +50135,9 @@ function onSaveStatus(fn) {
   // which is enough — the player must consciously confirm.
   window.addEventListener('beforeunload', (e) => {
     try {
-      // Always do a final synchronous localStorage flush. Free insurance.
-      if (typeof saveProfile === 'function') saveProfile();
+      // Always do a final synchronous localStorage flush (bypass the save
+      // debounce). Free insurance.
+      if (typeof saveProfileNow === 'function') saveProfileNow();
     } catch (err) {}
     if (!Profile.cloud || !Profile.cloud.signedIn) return;
     // Sync in flight OR scheduled-but-not-yet-fired? Both deserve a nag.
@@ -50164,7 +50164,7 @@ function onSaveStatus(fn) {
   // INSTEAD of beforeunload. Mirror the flush so iOS Safari refresh-with-
   // pending also kicks the request.
   window.addEventListener('pagehide', () => {
-    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+    try { if (typeof saveProfileNow === 'function') saveProfileNow(); } catch (e) {}
     _flushPending();
     try { if (typeof _flushUsageEventQueue === 'function') _flushUsageEventQueue(); } catch (e) {}
   });
@@ -50411,7 +50411,9 @@ function _flushCloudSyncNow() {
 // the signed-in user's id (RLS), so this only ever touches THAT player's
 // progression; it can never leak into or overwrite another player's account.
 function _persistProgressNow() {
-  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  // Critical path (earned a card, gem purchase, battle end) — flush the local
+  // write synchronously, bypassing the save debounce, before the cloud push.
+  try { if (typeof saveProfileNow === 'function') saveProfileNow(); else if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
   try {
     if (Profile && Profile.cloud && Profile.cloud.signedIn && Profile.cloud.autoSync !== false) {
       Profile.cloud.pendingChanges = true;
@@ -50686,12 +50688,65 @@ function _safeSaveAll(label) {
 }
 try { (window.__mg = window.__mg || {})._safeSaveAll = _safeSaveAll; } catch (e) {}
 
+// 💾 DEBOUNCED LOCAL SAVE — JSON.stringify(Profile) + localStorage.setItem is
+// 50–200ms on a big profile, and saveProfile() fires on basically every action
+// (resource gain, deck edit, market op, battle result — ~470 call sites). Doing
+// it synchronously every time janked the main thread. saveProfile() now just
+// marks dirty and coalesces the heavy write into a single ~500ms-debounced,
+// idle-scheduled flush (the stringify runs in requestIdleCallback, off the
+// click's critical path). Durability is preserved by:
+//   • saveProfileNow() — synchronous flush — used by every unload path
+//     (beforeunload / pagehide / visibilitychange→hidden) and the critical
+//     money/progress path (_persistProgressNow), so a tab close / refresh /
+//     app-switch always writes the latest Profile first.
+//   • The debounce fires ≤500ms after the FIRST pending edit (it does NOT reset
+//     on each call), so a continuous stream of actions still flushes about
+//     twice a second instead of starving.
+// Only a hard browser crash within that ≤500ms window can drop an edit — the
+// same exposure the existing 2s cloud-sync debounce already carried.
+var _profileSaveTimer = null;     // setTimeout handle for the debounce (var → hoisted, no TDZ if saveProfile fires early in boot)
+var _profileSaveIdle = null;      // requestIdleCallback handle for the deferred write
+var _profileSaveDirty = false;    // in-memory Profile has edits not yet on disk
+function _profileFlushDeferred() {
+  _profileSaveTimer = null;
+  _profileSaveIdle = null;
+  if (_profileSaveDirty) { try { _writeProfileNow(); } catch (e) {} }
+}
 function saveProfile() {
+  // 🪟 Multi-tab safety: reader tabs (not the elected writer) never schedule a
+  // write — they'd clobber the elected writer's shared localStorage row.
+  if (typeof MultiTab !== 'undefined' && MultiTab && MultiTab.amWriter === false) return false;
+  _profileSaveDirty = true;
+  // Schedule the (separately-debounced) cloud sync + update the save indicator
+  // immediately, even though the heavy local write is deferred to idle time.
+  try { _scheduleCloudSync(); } catch (e) {}
+  if (_profileSaveTimer || _profileSaveIdle) return true;   // a flush is already queued → coalesce
+  _profileSaveTimer = setTimeout(function () {
+    _profileSaveTimer = null;
+    if (typeof requestIdleCallback === 'function') {
+      _profileSaveIdle = requestIdleCallback(_profileFlushDeferred, { timeout: 250 });
+    } else {
+      _profileFlushDeferred();
+    }
+  }, 500);
+  return true;
+}
+// Synchronous flush — write the in-memory Profile to localStorage RIGHT NOW,
+// cancelling any pending debounce. Use on unload and after any money /
+// progression change that must survive an immediate refresh or crash.
+function saveProfileNow() {
+  if (_profileSaveTimer) { try { clearTimeout(_profileSaveTimer); } catch (e) {} _profileSaveTimer = null; }
+  if (_profileSaveIdle != null) { try { if (typeof cancelIdleCallback === 'function') cancelIdleCallback(_profileSaveIdle); } catch (e) {} _profileSaveIdle = null; }
+  return _writeProfileNow();
+}
+try { (window.__mg = window.__mg || {}).saveProfileNow = saveProfileNow; } catch (e) {}
+function _writeProfileNow() {
   // 🪟 Multi-tab safety: reader tabs (not the elected writer) must NOT
   // overwrite the shared localStorage row — they'd clobber edits the writer
   // tab made between our last read and this write. The visible "Active in
   // another tab" banner explains why interactions in this tab don't save.
   if (typeof MultiTab !== 'undefined' && MultiTab && MultiTab.amWriter === false) return;
+  _profileSaveDirty = false;   // we are about to serialize the current Profile state
   try {
     // ⏱ Stamp the moment of this local edit. cloudFetchProfile() compares
     // this against the cloud row's `updated_at` to decide whether the cloud

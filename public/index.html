@@ -117629,21 +117629,32 @@ function _onRemoteStateDeltaArrived(payload) {
     } catch (e) {}
     return;
   }
-  const merged = _applyStateDelta(MatchBroadcast.lastRecvSnapshot, payload.delta);
-  MatchBroadcast.lastRecvSnapshot = merged;
-  MatchBroadcast.awaitingResync = false;
-  MatchBroadcast.lastSeenTurn = payload.turn || MatchBroadcast.lastSeenTurn;
-  const swapped = swapBattlePerspective(merged);
-  App.state = swapped;
-  // Same transition guard as _onRemoteStateArrived above — Cue.yourTurn only
-  // fires when control flips FROM opponent TO us, not on every delta.
-  const _wasMyTurnDelta = !!MatchBroadcast.myTurn;
-  MatchBroadcast.myTurn = (swapped.currentTurn === 'player');
-  if (!_wasMyTurnDelta && MatchBroadcast.myTurn) {
-    try { if (typeof Cue !== 'undefined' && Cue.yourTurn) Cue.yourTurn(); } catch (e) {}
+  // Patch the delta onto our sender-perspective baseline to reconstruct the
+  // sender's FULL current state, then route it through the SAME handler the
+  // full-snapshot path uses. THIS is the fix for two MP-only bugs:
+  //   • "my hand goes blank during the opponent's turn" — the old delta path did
+  //     `App.state = swapped` RAW, overwriting my PRIVATE player block (hand /
+  //     deck / energy) with the opponent's stale, empty model of it.
+  //   • "the defender sees no combat — no damage, no animation" — the delta path
+  //     never called _surfaceOpponentDeltaFeedback or drained the FX queues.
+  // Per-action updates are usually deltas, so the watcher experienced BOTH every
+  // opponent turn. Delegating gives deltas identical treatment: private-block
+  // preservation, damage juice, summon/move/kalon cinematics, and log sync.
+  let merged;
+  try { merged = _applyStateDelta(MatchBroadcast.lastRecvSnapshot, payload.delta); }
+  catch (e) {
+    try { console.warn('[MP] delta apply failed — requesting resync', e); } catch (_) {}
+    try {
+      if (MatchBroadcast.channel) MatchBroadcast.channel.send({
+        type: 'broadcast', event: 'resync',
+        payload: { from: MatchBroadcast.myUserId, reason: 'delta-apply-failed' },
+      });
+    } catch (_e) {}
+    return;
   }
-  App.ui.aiBusy = !MatchBroadcast.myTurn;
-  if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
+  if (!merged) return;
+  MatchBroadcast.lastRecvSnapshot = merged;
+  _onRemoteStateArrived({ from: payload.from, turn: payload.turn, state: merged, newLog: payload.newLog || null });
 }
 
 // Handler — opponent shared their coin flip choice (used to keep coin flip

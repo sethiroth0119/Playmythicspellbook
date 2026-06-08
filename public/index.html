@@ -31020,8 +31020,19 @@ const DEFAULT_PACK_RARITY_WEIGHTS = {
 // Used by the hand-card renderer to paint the illustration in the upper window of
 // the gold frame — independent of the on-field battle sprite.
 function getCardArt(cardId) {
-  if (!cardId || !Forge.cardArt) return null;
-  return Forge.cardArt[cardId] || null;
+  if (!cardId) return null;
+  const local = Forge.cardArt && Forge.cardArt[cardId];
+  if (local) return local;
+  // 📡 MULTIPLAYER fallback — art the opponent RELAYED for their custom card
+  // (their visuals were stripped from the state snapshot, so without this the
+  // watcher renders their units as a bare emoji). Runtime-only cache, never
+  // persisted. See _onRemoteUnitViz / _mpRelayUnitVisuals.
+  try {
+    if (typeof App !== 'undefined' && App._mpViz && App._mpViz.art && App._mpViz.art[cardId]) {
+      return App._mpViz.art[cardId];
+    }
+  } catch (e) {}
+  return null;
 }
 // Returns the uploaded board-background image for a location card. Used by the
 // battle board renderer when a location with `coversBoard: true` is active.
@@ -65859,6 +65870,19 @@ function getSpriteFrames(spriteId, animation) {
       if (f.length > 0) return f;
     }
   }
+  // 📡 MULTIPLAYER fallback — sprite frames the opponent RELAYED for their custom
+  // unit (stripped from the state snapshot). Runtime-only cache, keyed by the
+  // same spriteId candidates. See _onRemoteUnitViz / _mpRelayUnitVisuals.
+  try {
+    if (typeof App !== 'undefined' && App._mpViz && App._mpViz.sprites) {
+      for (const id of candidates) {
+        const set = App._mpViz.sprites[id];
+        if (!set) continue;
+        if (set[anim] && set[anim].length) { const f = set[anim].filter(Boolean); if (f.length) return f; }
+        if (set.idle && set.idle.length)  { const f = set.idle.filter(Boolean);  if (f.length) return f; }
+      }
+    }
+  } catch (e) {}
   return null;
 }
 
@@ -73425,6 +73449,8 @@ function startBattleWithPrep(playerGoesFirst) {
   App._turnTimeoutStreak = 0;
   App._turnTimerFired = false;
   App._mpSummonSeen = {};   // 🜂 fresh opponent-summon-cinematic dedup per match
+  App._mpViz = { art: {}, sprites: {} };   // 🎨 fresh relayed-visual cache per match
+  MatchBroadcast._vizSent = {};            // 🎨 re-relay my visuals for the new match
   try { if (App.ui) App.ui._logNotifyLen = undefined; } catch (e) {}   // 📣 prime log-notify fresh
   try { _clearCoinChoiceTimer(); } catch (e) {}
   App.screen = 'battle';
@@ -116396,6 +116422,12 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
     .on('broadcast', { event: 'state-delta' }, (payload) => {
       _onRemoteStateDeltaArrived(payload.payload);
     })
+    // 🎨 Opponent relayed a unit's real sprite/art (their visuals are stripped
+    // from the state snapshot) — cache it so their units show the real summon
+    // sprite instead of an emoji.
+    .on('broadcast', { event: 'unitviz' }, (payload) => {
+      _onRemoteUnitViz(payload.payload);
+    })
     .on('broadcast', { event: 'coin' }, (payload) => {
       _onRemoteCoinArrived(payload.payload);
     })
@@ -116487,6 +116519,8 @@ function leaveMatchChannel() {
   MatchBroadcast.lastRecvSnapshot = null;
   MatchBroadcast.dcDeclared = false;
   MatchBroadcast.awaitingResync = false;
+  MatchBroadcast._vizSent = {};                 // 🎨 clear relayed-visual dedup
+  try { App._mpViz = { art: {}, sprites: {} }; } catch (e) {}
   // 🏁 Reset the server-authoritative game-end latches so the NEXT match
   // can submit its own verdict cleanly.
   MatchBroadcast._matchEndSubmitted = false;
@@ -117431,12 +117465,76 @@ function _sendFullSnapshot() {
     MatchBroadcast.lastSentSnapshot = { ...snapshot, _seq: 0 };
   } catch (e) { /* fire-and-forget */ }
 }
+// 📡🎨 UNIT-VISUAL RELAY — the state snapshot STRIPS all sprite frames + card
+// art (HEAVY_KEYS) to stay under the WebSocket frame limit, on the assumption
+// the opponent re-derives art from its own catalog by card id. That breaks for
+// CUSTOM cards the opponent doesn't have → the watcher renders them as a bare
+// emoji ("a card + emoji, not the real summon sprite"). So we relay each of MY
+// board entities' visuals ONCE, the watcher caches them (App._mpViz), and the
+// art/sprite resolvers fall back to that cache. Deduped by entity so we only
+// ever pay for a card the first time it appears; size-capped per message so a
+// huge sprite set can never blow the channel (falls back to art-only, then to
+// nothing → emoji, the same as today).
+function _mpRelayUnitVisuals() {
+  try {
+    if (!MatchBroadcast.channel) return;
+    if (!(App.battlePrep && App.battlePrep.multiplayer)) return;
+    if (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP) return; // Supabase path only
+    MatchBroadcast._vizSent = MatchBroadcast._vizSent || {};
+    const units = (App.state && App.state.units) || [];
+    const CAP = 700 * 1024;   // ~700KB per message — safe for one entity at a time
+    for (const u of units) {
+      if (!u || u.owner !== 'player') continue;        // only relay MY entities
+      const isHero = !!u.isHero;
+      const baseId = isHero ? (u.heroId || u.cardId || u.id) : (u.cardId || u.id);
+      if (!baseId) continue;
+      const key = (isHero ? 'h:' : 'u:') + baseId;
+      if (MatchBroadcast._vizSent[key]) continue;
+      const spriteId = (isHero ? 'h_' : 'u_') + baseId;
+      const art = (typeof getCardArt === 'function') ? getCardArt(baseId) : null;
+      let frames = null;
+      try {
+        const set = Forge.sprites && (Forge.sprites[spriteId] || Forge.sprites[(isHero ? 'u_' : 'h_') + baseId]);
+        if (set) {
+          const f = {};
+          ['idle', 'attack', 'summon'].forEach(a => { if (Array.isArray(set[a]) && set[a].length) f[a] = set[a].filter(Boolean); });
+          if (Object.keys(f).length) frames = f;
+        }
+      } catch (e) {}
+      if (!art && !frames) { MatchBroadcast._vizSent[key] = 1; continue; }  // shared card — nothing to relay
+      let payload = { from: MatchBroadcast.myUserId, baseId, spriteId, isHero, art: art || '', frames: frames };
+      let size = 1e9; try { size = JSON.stringify(payload).length; } catch (e) {}
+      if (size > CAP) {   // too big with frames → try art-only
+        payload = { from: MatchBroadcast.myUserId, baseId, spriteId, isHero, art: art || '', frames: null };
+        try { size = JSON.stringify(payload).length; } catch (e) { size = 1e9; }
+        if (size > CAP) { MatchBroadcast._vizSent[key] = 1; continue; }   // even art too big — leave as emoji
+      }
+      MatchBroadcast._vizSent[key] = 1;
+      try { MatchBroadcast.channel.send({ type: 'broadcast', event: 'unitviz', payload: payload }); } catch (e) {}
+    }
+  } catch (e) {}
+}
+// Watcher side — cache the relayed visuals, then re-render so the board (and any
+// open summon cinematic) immediately picks up the real sprite/art.
+function _onRemoteUnitViz(p) {
+  try {
+    if (!p || p.from === MatchBroadcast.myUserId) return;
+    App._mpViz = App._mpViz || { art: {}, sprites: {} };
+    if (p.baseId && p.art) App._mpViz.art[p.baseId] = p.art;
+    if (p.spriteId && p.frames && typeof p.frames === 'object') App._mpViz.sprites[p.spriteId] = p.frames;
+    if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
+  } catch (e) {}
+}
+
 function broadcastMyState() {
   if (!MatchBroadcast.channel) return;
   if (MatchBroadcast.awaitingResync) return; // don't clobber peer with stale/empty state pre-sync
   if (MatchBroadcast.outboundQueue) clearTimeout(MatchBroadcast.outboundQueue);
   MatchBroadcast.outboundQueue = setTimeout(() => {
     MatchBroadcast.outboundQueue = null;
+    // 🎨 Flush any new unit visuals FIRST (same channel preserves order, so the
+    // watcher caches the sprite/art before the state that references it lands).
+    try { _mpRelayUnitVisuals(); } catch (e) {}
     const snapshot = _serializeBattleStateForBroadcast(App.state);
     if (!snapshot) return;
     try {
@@ -117516,6 +117614,11 @@ function _onRemoteStateArrived(payload) {
   MatchBroadcast._lastSnapAt = Date.now();   // ⏱ for the stuck-turn watchdog
   MatchBroadcast._stuckResyncAt = 0;         // a fresh snapshot clears the stuck timer
   if (App._mpOpponentWasAbsent) { App._mpOpponentWasAbsent = false; }
+  // 🎨 Bidirectional visual exchange — receiving the opponent's state means the
+  // channel is live, so push MY entities' visuals too (deduped). This covers the
+  // SECOND player's hero, which would otherwise stay an emoji on the first
+  // player's screen until the second player's first turn-broadcast.
+  try { if (typeof _mpRelayUnitVisuals === 'function') _mpRelayUnitVisuals(); } catch (e) {}
   // 📢 Surface opponent action feedback by diffing current state vs incoming.
   try {
     if (App.state && typeof _surfaceOpponentDeltaFeedback === 'function') {

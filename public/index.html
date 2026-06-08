@@ -38028,7 +38028,14 @@ function _renderFriendChallengeOverlay() {
   let root = document.getElementById('friend-challenge-overlay');
   const inc = FriendChallenge.incoming;
   const out = FriendChallenge.outgoing;
-  if (!inc && !out) {
+  // 🛡 While the recipient is on the deck-select screen ANSWERING this challenge
+  // (they clicked Accept and are picking a deck), hide the incoming modal so it
+  // doesn't cover deckSelect — but KEEP FriendChallenge.incoming intact, because
+  // acceptFriendChallenge() still needs it once they pick. If they leave
+  // deckSelect, the modal returns so they can still accept or decline.
+  const _incInAcceptFlow = inc && App._challengeAcceptForUser && App.screen === 'deckSelect';
+  const showInc = inc && !_incInAcceptFlow;
+  if (!showInc && !out) {
     if (root) root.remove();
     return;
   }
@@ -38039,7 +38046,7 @@ function _renderFriendChallengeOverlay() {
     (document.body || document.documentElement).appendChild(root);
   }
   // INCOMING wins over OUTGOING (someone challenging me takes precedence).
-  if (inc) {
+  if (showInc) {
     const heroIcon = (inc.fromHero && inc.fromHero.icon) || '🦸';
     const heroName = (inc.fromHero && inc.fromHero.name) || 'Unknown Hero';
     root.innerHTML = `

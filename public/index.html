@@ -49208,6 +49208,13 @@ function loadForge() {
       if (Array.isArray(p.campMissing))                               Profile.campMissing     = p.campMissing;      // 🌫 MIA roster
       if (Array.isArray(p.memorial))                                  Profile.memorial        = p.memorial;         // 🕯 KIA memorial
       if (typeof p.campRaidLastTick === 'number')                     Profile.campRaidLastTick = p.campRaidLastTick; // ⏱ raid clock
+      // ⏱ Daily-upkeep clock + carry-fractions — without these the consumption
+      // tick reset its baseline on every reload (drain never accumulated, and
+      // offline catch-up did nothing). Restore so upkeep works across sessions.
+      if (typeof p.campLastTick === 'number')                         Profile.campLastTick    = p.campLastTick;     // 🍞 upkeep clock
+      if (p.campConsumeFrac && typeof p.campConsumeFrac === 'object') Profile.campConsumeFrac = p.campConsumeFrac;  // upkeep carry-debt
+      if (p.campTrickleFrac && typeof p.campTrickleFrac === 'object') Profile.campTrickleFrac = p.campTrickleFrac;  // containment faucet carry
+      if (typeof p.campRepairUntil === 'number')                      Profile.campRepairUntil = p.campRepairUntil;  // 🏚 repair half-upkeep window
       if (p.research        && typeof p.research        === 'object') Profile.research        = p.research;         // 🔬 research projects
       // 📈 CX share positions — per-resource { qty, avgCost } holding object.
       // Previously absent from the whitelist, so every refresh silently dropped
@@ -54629,6 +54636,39 @@ const _CAMP_SHORTAGE_FX = {
   medicine: 'Medical tents overwhelmed — wounded stack up',
   ammo:     'Defenses unmanned — raid risk rising',
 };
+// 🩸 SHORTAGE PENALTIES — when daily upkeep can't be covered, the shortage hits
+// the camp for real (not just a banner): Food/Water → morale down + fatigue up
+// on parked survivors; Medicine → trauma up (wounded fester); Ammo → raider
+// threat climbs. Deliberately GENTLE — every effect is capped per tick so a
+// returning player who was away with empty stores takes a bruise, not a wipe.
+function _applyCampShortagePenalties(shortfall) {
+  try {
+    if (!shortfall) return false;
+    const food = shortfall.food || 0, water = shortfall.water || 0, med = shortfall.medicine || 0, ammo = shortfall.ammo || 0;
+    let touched = false;
+    const parked = (typeof Camp !== 'undefined' && Camp && Array.isArray(Camp.slots)) ? Camp.slots : [];
+    const moraleHit = Math.min(20, (food + water) * 2);
+    const fatHit    = Math.min(15, (food + water) * 1.5);
+    const traumaHit = Math.min(15, med * 2.5);
+    if ((moraleHit || fatHit || traumaHit) && parked.length && typeof _campUnitProf === 'function') {
+      for (const slot of parked) {
+        if (!slot || !slot.refId) continue;
+        const prof = _campUnitProf(slot.refId);
+        if (!prof) continue;
+        if (moraleHit) prof.morale = Math.max(0, ((prof.morale != null) ? prof.morale : 80) - moraleHit);
+        if (fatHit)    prof.fatigue = Math.min(100, (prof.fatigue || 0) + fatHit);
+        if (traumaHit) prof.trauma  = Math.min(100, (prof.trauma  || 0) + traumaHit);
+        touched = true;
+      }
+    }
+    if (ammo > 0) {
+      try { const r = _campRival(); if (r) { r.threat = Math.min(100, (r.threat || 0) + Math.min(12, ammo * 2)); touched = true; } } catch (e) {}
+    }
+    // One concise heads-up (the persistent banner already lists what's OUT).
+    if (touched) { try { if (typeof showToast === 'function') showToast('⚠ Supplies ran short — morale slipping and raiders emboldened. Resupply soon.', 5000); } catch (e) {} }
+    return touched;
+  } catch (e) { return false; }
+}
 // Apply real-time consumption since the last tick. Time-based (not call-
 // count), so it's safe to call from render() — only persists when whole
 // units are actually consumed. Returns the integer amounts consumed.
@@ -54651,6 +54691,7 @@ function runCampConsumptionTick() {
     const _reactorStaffed = (typeof _campRoomStaffed === 'function') && !!_campRoomStaffed('RCT-01');
     const frac = (Profile.campConsumeFrac && typeof Profile.campConsumeFrac === 'object') ? Profile.campConsumeFrac : {};
     const consumed = {};
+    const shortfall = {};
     let changed = false;
     for (const k in CAMP_CONSUME_PER_DAY) {
       const km = (k === 'fuel' && _reactorStaffed) ? CAMP_REACTOR_FUEL_MUL : 1;
@@ -54663,10 +54704,16 @@ function runCampConsumptionTick() {
         if (take > 0) { Profile.salvage[k] = have - take; consumed[k] = take; changed = true; }
         // If we couldn't cover `whole` (shortage), don't bank negative debt —
         // a shortage is its own punishment; reset frac so it doesn't snowball.
-        if (whole > have) frac[k] = 0;
+        // Track the shortfall (units we couldn't cover) so it bites mechanically.
+        if (whole > have) { frac[k] = 0; shortfall[k] = whole - have; }
       }
     }
     Profile.campConsumeFrac = frac;
+    // 🩸 Shortages now BITE — drop morale / raise fatigue & trauma on parked
+    // survivors and embolden raiders, scaled (and capped) by how short we ran.
+    if (Object.keys(shortfall).length && typeof _applyCampShortagePenalties === 'function') {
+      try { if (_applyCampShortagePenalties(shortfall)) changed = true; } catch (e) {}
+    }
     // 🧪 Staffed Containment slowly produces deep-tier salvage (faucet).
     if ((typeof _campRoomStaffed === 'function') && _campRoomStaffed('CNT-01')) {
       const tf = (Profile.campTrickleFrac && typeof Profile.campTrickleFrac === 'object') ? Profile.campTrickleFrac : {};

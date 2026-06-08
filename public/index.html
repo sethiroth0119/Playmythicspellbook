@@ -48891,10 +48891,204 @@ async function loadHeavyForgeFromIdb() {
       }
     }
   }
+  // 🧊 Off-heap: convert any base64/Blob sprite & card-art values just loaded
+  // from IDB (or merged from localStorage) into blob: URLs so their bytes leave
+  // the JS heap. This is the load-time bulk of the OOM fix.
+  try { _normalizeArtToBlobUrls(); } catch (e) {}
   if (changed && typeof render === 'function') {
     try { render(); } catch (e) {}
   }
   return changed;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// 🧊 OFF-HEAP SPRITE / CARD-ART STORE  (the definitive "Out of Memory" fix)
+// ------------------------------------------------------------------------
+// Sprite frames + card art used to live in memory as base64 `data:` URL
+// STRINGS inside Forge.sprites / Forge.cardArt. A medium library is tens of
+// MB of base64 — all of it pinned on the JS heap, which is what blew the tab
+// up. Now:
+//   • IndexedDB stores the bytes as Blobs (structured-clone native, disk-
+//     backed, OFF the JS heap).
+//   • In memory we hold only short `blob:` URL strings. The image bytes those
+//     URLs point at are kept alive by the browser's blob store, NOT V8.
+//   • Every renderer already feeds these strings to <img src> / background
+//     url(), and `blob:` URLs are drop-in for `data:` URLs there — so the
+//     read path is unchanged.
+// _artBlobByUrl maps each minted blob URL back to its Blob so we can re-encode
+// to base64 on demand for the two paths that genuinely need the raw bytes:
+// the MP visual relay (streams them to the opponent) and JSON export.
+// ════════════════════════════════════════════════════════════════════════
+const _artBlobByUrl = (typeof Map !== 'undefined') ? new Map() : null;
+
+// Decode a data: URL to a Blob (no object URL). Returns null on non-data input.
+function _dataUrlToBlob(dataUrl) {
+  try {
+    if (typeof dataUrl !== 'string' || dataUrl.slice(0, 5) !== 'data:') return null;
+    const comma = dataUrl.indexOf(',');
+    if (comma < 0) return null;
+    const header = dataUrl.slice(5, comma);
+    const isB64 = /;base64/i.test(header);
+    const mime = header.split(';')[0] || 'image/png';
+    const body = dataUrl.slice(comma + 1);
+    let bytes;
+    if (isB64) {
+      const bin = atob(body);
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } else {
+      bytes = new TextEncoder().encode(decodeURIComponent(body));
+    }
+    return new Blob([bytes], { type: mime });
+  } catch (e) { return null; }
+}
+
+// Mint a tracked blob: URL for a Blob (kept in _artBlobByUrl for reverse lookup).
+function _mintArtBlobUrl(blob) {
+  try {
+    const u = URL.createObjectURL(blob);
+    if (_artBlobByUrl) _artBlobByUrl.set(u, blob);
+    return u;
+  } catch (e) { return null; }
+}
+
+// Convert one stored art value to an off-heap blob: URL string.
+//   • Blob  → mint a blob URL (IDB load path)
+//   • data: → decode to a Blob, mint a blob URL (legacy store / fresh edit)
+//   • blob: → already off-heap, leave as-is (idempotent)
+//   • other (http / asset path) → leave as-is
+function _artValueToBlobUrl(v) {
+  try {
+    if (!v) return v;
+    if (typeof Blob !== 'undefined' && v instanceof Blob) { const u = _mintArtBlobUrl(v); return u || v; }
+    if (typeof v === 'string') {
+      const head = v.slice(0, 5);
+      if (head === 'blob:') return v;
+      if (head === 'data:') { const b = _dataUrlToBlob(v); if (b) { const u = _mintArtBlobUrl(b); return u || v; } return v; }
+      return v;
+    }
+    return v;
+  } catch (e) { return v; }
+}
+
+// Walk Forge.sprites + Forge.cardArt in place, replacing every base64/Blob
+// value with an off-heap blob: URL. Idempotent — values already blob: URLs are
+// left untouched, so it's cheap to re-run and never double-mints.
+function _normalizeArtToBlobUrls() {
+  try {
+    const S = (typeof Forge !== 'undefined') ? Forge.sprites : null;
+    if (S && typeof S === 'object') {
+      for (const sid in S) {
+        const set = S[sid];
+        if (!set || typeof set !== 'object' || (typeof Blob !== 'undefined' && set instanceof Blob)) continue;
+        for (const anim in set) {
+          const arr = set[anim];
+          if (!Array.isArray(arr)) continue;          // skip metadata (frameMs / __speed)
+          for (let i = 0; i < arr.length; i++) arr[i] = _artValueToBlobUrl(arr[i]);
+        }
+      }
+    }
+    const C = (typeof Forge !== 'undefined') ? Forge.cardArt : null;
+    if (C && typeof C === 'object') {
+      for (const cid in C) C[cid] = _artValueToBlobUrl(C[cid]);
+    }
+  } catch (e) {}
+}
+
+// Resolve one stored art value to a Blob for persistence (blob: → its Blob via
+// the registry; data: → decode; passthrough otherwise). Used writing to IDB.
+function _artValueToBlobForIdb(v) {
+  try {
+    if (!v) return v;
+    if (typeof Blob !== 'undefined' && v instanceof Blob) return v;
+    if (typeof v === 'string') {
+      if (_artBlobByUrl && _artBlobByUrl.has(v)) return _artBlobByUrl.get(v);
+      if (v.slice(0, 5) === 'data:') { const b = _dataUrlToBlob(v); return b || v; }
+      return v;
+    }
+    return v;
+  } catch (e) { return v; }
+}
+
+// Build the IDB-persistable form of an art store: same shape, but every image
+// value is a Blob (off-heap, structured-clone friendly) rather than a blob: URL.
+// nested=true for Forge.sprites ({id:{anim:[frames]}}), false for Forge.cardArt
+// ({id:url}).
+function _serializeArtForIdb(store, nested) {
+  const out = {};
+  if (!store || typeof store !== 'object') return out;
+  for (const k in store) {
+    const v = store[k];
+    if (nested) {
+      if (!v || typeof v !== 'object' || (typeof Blob !== 'undefined' && v instanceof Blob)) { out[k] = v; continue; }
+      const o = out[k] = {};
+      for (const a in v) {
+        const arr = v[a];
+        if (Array.isArray(arr)) o[a] = arr.map(_artValueToBlobForIdb);
+        else o[a] = arr;                              // metadata passthrough
+      }
+    } else {
+      out[k] = _artValueToBlobForIdb(v);
+    }
+  }
+  return out;
+}
+
+// Resolve one stored art value to a base64 data: URL (async). blob: URLs are
+// re-encoded from their Blob (registry first, network fetch fallback). Used by
+// the MP relay + JSON export, which must ship the actual bytes, not a session-
+// local blob: handle.
+function _artValueToDataUrl(v) {
+  return new Promise(function (resolve) {
+    try {
+      if (typeof Blob !== 'undefined' && v instanceof Blob) {
+        const fr = new FileReader();
+        fr.onload = function () { resolve(fr.result); };
+        fr.onerror = function () { resolve(null); };
+        fr.readAsDataURL(v);
+        return;
+      }
+      if (typeof v !== 'string' || !v) { resolve(null); return; }
+      const head = v.slice(0, 5);
+      if (head === 'data:') { resolve(v); return; }
+      if (head === 'blob:') {
+        const readBlob = function (b) {
+          try { const fr = new FileReader(); fr.onload = function () { resolve(fr.result); }; fr.onerror = function () { resolve(null); }; fr.readAsDataURL(b); }
+          catch (e) { resolve(null); }
+        };
+        const cached = _artBlobByUrl && _artBlobByUrl.get(v);
+        if (cached) { readBlob(cached); return; }
+        fetch(v).then(function (r) { return r.blob(); }).then(readBlob).catch(function () { resolve(null); });
+        return;
+      }
+      resolve(v);                                     // http / asset path — ship as-is
+    } catch (e) { resolve(null); }
+  });
+}
+
+// Async deep-resolve an entire art store to base64 (for JSON export). Mirrors
+// the in-memory shape so a re-import is a straight assign.
+async function _resolveArtStoreToDataUrls(store, nested) {
+  const out = {};
+  if (!store || typeof store !== 'object') return out;
+  for (const k in store) {
+    const v = store[k];
+    if (nested) {
+      if (!v || typeof v !== 'object' || (typeof Blob !== 'undefined' && v instanceof Blob)) { out[k] = v; continue; }
+      const o = out[k] = {};
+      for (const a in v) {
+        const arr = v[a];
+        if (Array.isArray(arr)) {
+          const res = [];
+          for (let i = 0; i < arr.length; i++) res.push(await _artValueToDataUrl(arr[i]));
+          o[a] = res;
+        } else o[a] = arr;
+      }
+    } else {
+      out[k] = await _artValueToDataUrl(v);
+    }
+  }
+  return out;
 }
 
 // Restore the custom-CONTENT chunks (cards/moves/events/etc.) from
@@ -49566,8 +49760,12 @@ function saveForge() {
     // "images keep getting removed". Skip all IDB writes until the async
     // load has completed; localStorage fast-path below still runs.
     if (typeof idbSet === 'function' && (typeof App === 'undefined' || App._forgeIdbLoaded)) {
-      idbSet('forge_sprites',      Forge.sprites      || {});
-      idbSet('forge_cardArt',      Forge.cardArt      || {});
+      // 🧊 Off-heap: downgrade any freshly-edited base64 to blob: URLs, then
+      // persist the BYTES as Blobs (structured-clone) — never the session-local
+      // blob: URL strings, which would be dead handles on the next load.
+      try { _normalizeArtToBlobUrls(); } catch (e) {}
+      idbSet('forge_sprites',      _serializeArtForIdb(Forge.sprites || {}, true));
+      idbSet('forge_cardArt',      _serializeArtForIdb(Forge.cardArt || {}, false));
       idbSet('forge_locationArt',  Forge.locationArt  || {});
       idbSet('forge_weatherAudio', Forge.weatherAudio || {});
       idbSet('forge_campArt',      Forge.campArt      || {});
@@ -51395,13 +51593,15 @@ function checkAchievements(trigger, ctx) {
 // heroes/units/equipment/items/etc.) into a single JSON blob. Import does the reverse, replacing
 // the in-memory state and writing back to localStorage.
 const EXPORT_VERSION = 1;
-function buildExportPayload(opts) {
+async function buildExportPayload(opts) {
   opts = opts || {};
   const payload = { version: EXPORT_VERSION, exportedAt: new Date().toISOString() };
   if (opts.forge !== false) {
     payload.forge = {
-      sprites: Forge.sprites || {},
-      cardArt: Forge.cardArt || {},          // illustration images keyed by card id
+      // 🧊 Off-heap store holds blob: URLs in memory — re-encode the bytes back
+      // to base64 so the export JSON is self-contained and re-importable anywhere.
+      sprites: await _resolveArtStoreToDataUrls(Forge.sprites || {}, true),
+      cardArt: await _resolveArtStoreToDataUrls(Forge.cardArt || {}, false),   // illustration images keyed by card id
       customCards: Forge.customCards || [],
       customMoves: Forge.customMoves || {},
       customEvents: Forge.customEvents || [],
@@ -51450,6 +51650,9 @@ function applyImportPayload(payload, opts) {
     if (payload.forge.cardArt && typeof payload.forge.cardArt === 'object') {
       Forge.cardArt = opts.merge ? Object.assign({}, Forge.cardArt || {}, payload.forge.cardArt) : payload.forge.cardArt;
     }
+    // 🧊 Off-heap: imported sprites/cardArt arrive as base64 — convert to blob:
+    // URLs immediately so a big import doesn't pin all those bytes on the JS heap.
+    try { _normalizeArtToBlobUrls(); } catch (e) {}
     if (Array.isArray(payload.forge.customCards)) {
       if (opts.merge) {
         const byId = {};
@@ -117574,12 +117777,16 @@ function _mpRelayUnitVisuals() {
     // dst='art' (baseId) | 'fr' (spriteId/anim/frame index fi of fn). i/n = chunk
     // index/total of this particular string.
     const sendStr = (meta, str) => {
-      if (typeof str !== 'string' || !str) return;
-      const n = Math.max(1, Math.ceil(str.length / CHUNK));
-      // Enqueue lightweight DESCRIPTORS that reference `str` (the existing
-      // Forge.sprites/cardArt string — no copy). The pump slices the chunk only
-      // when it's actually sent, so the queue never duplicates a sprite set.
-      for (let i = 0; i < n; i++) _mpVizEnqueue({ meta: meta, src: str, ci: i, n: n });
+      if (!str) return;
+      // 🧊 Off-heap: Forge.sprites/cardArt now hold blob: URLs, which carry NO
+      // bytes — resolve to a base64 data: URL first so the opponent receives the
+      // actual image. data:/http strings pass straight through. The chunk is
+      // still sliced lazily at send time, so the queue never duplicates a set.
+      Promise.resolve(_artValueToDataUrl(str)).then(function (d) {
+        if (typeof d !== 'string' || !d) return;
+        const n = Math.max(1, Math.ceil(d.length / CHUNK));
+        for (let i = 0; i < n; i++) _mpVizEnqueue({ meta: meta, src: d, ci: i, n: n });
+      }).catch(function () {});
     };
     for (const u of units) {
       if (!u || u.owner !== 'player') continue;        // only relay MY entities
@@ -123128,8 +123335,8 @@ function renderDataPanel() {
   document.getElementById('btn-back-data').onclick = () => { App.screen = 'title'; render(); };
 
   // ===== Export =====
-  const doDownload = (opts, hint) => {
-    const payload = buildExportPayload(opts);
+  const doDownload = async (opts, hint) => {
+    const payload = await buildExportPayload(opts);
     if (downloadExportFile(payload, hint)) {
       showToast('✓ Export downloaded');
     } else {
@@ -123169,7 +123376,7 @@ function renderDataPanel() {
   if (_btnTraders) _btnTraders.onclick = () => _exportSlice('traders',     Forge.traders     || {},
     'gambit-traders-export', `${Object.keys(Forge.traders || {}).length} trader${Object.keys(Forge.traders || {}).length === 1 ? '' : 's'}`);
   document.getElementById('btn-copy-clipboard').onclick = async () => {
-    const payload = buildExportPayload({});
+    const payload = await buildExportPayload({});
     try {
       await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
       showToast('✓ Copied to clipboard');

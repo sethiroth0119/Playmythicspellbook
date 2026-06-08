@@ -47826,16 +47826,34 @@ function campActivityState(slot) {
   const rem = end - Date.now();
   return rem > 0 ? { phase: 'running', remainingMs: rem, end } : { phase: 'ready', end };
 }
+// ⛽ FUEL-POWERED EXPEDITIONS — deep/raid runs burn Fuel to launch (Scout is
+// free). 'deepRunPlus' is a fueled long-haul: it costs much more Fuel for a
+// richer haul + better survival. Fuel is the expedition currency.
+const CAMP_RUN_FUEL = { raid: 3, deepRun: 8 };
+const DEEP_PLUS_FUEL    = 22;    // long-haul deep run fuel cost
+const DEEP_PLUS_LOOT    = 1.7;   // loot multiplier on a fueled long-haul
+const DEEP_PLUS_SURVIVE = 10;    // survival bonus (more fuel = cleaner extraction)
 function campStartActivity(slotId, activity, tierKey) {
   const slot = Camp.slots.find(s => s.id === slotId);
   if (!slot) return false;
   const st = campActivityState(slot);
   if (st.phase === 'running') { showToast('Unit is already deployed.'); return false; }
   if (activity === 'loot') {
-    const tier = CAMP_LOOT_TIERS[tierKey] || CAMP_LOOT_TIERS.scout;
-    slot.activity = 'loot'; slot.tier = tierKey || 'scout';
+    // 🛻 Long-haul deep run is a deepRun with a bigger fuel burn + payoff.
+    const isPlus = (tierKey === 'deepRunPlus');
+    const realTier = isPlus ? 'deepRun' : (tierKey || 'scout');
+    const tier = CAMP_LOOT_TIERS[realTier] || CAMP_LOOT_TIERS.scout;
+    // ⛽ Fuel gate — burn fuel to launch the expedition (scout is free).
+    const fuelCost = isPlus ? DEEP_PLUS_FUEL : (CAMP_RUN_FUEL[realTier] || 0);
+    if (fuelCost > 0) {
+      const haveFuel = (typeof getRes === 'function') ? getRes('fuel') : 0;
+      if (haveFuel < fuelCost) { showToast(`⛽ Need ${fuelCost} Fuel to launch a ${tier.label}${isPlus ? '+' : ''} — you have ${haveFuel}.`, 3800); return false; }
+      if (typeof spendResources === 'function') spendResources({ fuel: fuelCost });
+    }
+    slot.activity = 'loot'; slot.tier = realTier;
+    slot.fuelTier = isPlus ? 'plus' : (fuelCost > 0 ? 'std' : null);
     slot.activityStart = Date.now(); slot.activityDur = tier.durMs;
-    showToast(`${tier.emoji} Deployed on a ${tier.label} — extraction in ${Math.round(tier.durMs / 3600000)}h.`, 3600);
+    showToast(`${tier.emoji} Deployed on a ${tier.label}${isPlus ? '+ (long-haul)' : ''}${fuelCost ? ` — burned ${fuelCost} ⛽ Fuel` : ''}. Extraction in ${Math.round(tier.durMs / 3600000)}h.`, 3800);
   } else if (activity === 'study') {
     slot.activity = 'study'; slot.tier = null;
     slot.activityStart = Date.now(); slot.activityDur = CAMP_STUDY_DUR_MS;
@@ -48066,8 +48084,10 @@ function _resolveCampSlot(slot) {
   entry.lines.push(ev.line);
   // Survival: veterans + bond + morale + Intel, dragged down by danger and the
   // unit's psychological state (trauma/fatigue) and the rolled event.
+  // ⛽ A fueled long-haul deep run extracts cleaner (better survival).
+  const _fuelSurvive = (slot.fuelTier === 'plus') ? DEEP_PLUS_SURVIVE : 0;
   const survive = 50 + lvl * 1.6 + bond * 0.5 + (morale - 50) * 0.3
-    - tier.danger + campBonus('lootSurvive') + (ev.surviveMod || 0)
+    - tier.danger + campBonus('lootSurvive') + (ev.surviveMod || 0) + _fuelSurvive
     - trauma * 0.35 - fatigue * 0.3;
   const roll = Math.random() * 100;
   prof.fatigue = Math.min(100, fatigue + (tierKey === 'deepRun' ? 16 : tierKey === 'raid' ? 9 : 4));
@@ -48118,7 +48138,9 @@ function _resolveCampSlot(slot) {
   // SURVIVED — loot. Infirmary shrinks the wounded window.
   const injuryWindow = 8 * Math.max(0, 1 - campBonus('injuryReduce'));
   const injured = roll > survive - injuryWindow;
-  const loot = _campGrantLoot(tierKey, ev.lootMul);
+  // ⛽ A fueled long-haul deep run hauls back a richer payday.
+  const _fuelLoot = (slot.fuelTier === 'plus') ? DEEP_PLUS_LOOT : 1;
+  const loot = _campGrantLoot(tierKey, (ev.lootMul || 1) * _fuelLoot);
   prof.xp = (prof.xp || 0) + (tierKey === 'deepRun' ? 70 : tierKey === 'raid' ? 40 : 18);
   prof.bond = Math.min(100, bond + (tierKey === 'deepRun' ? 4 : 2));
   // Rescue event — bring home a brand-new survivor (rare recruit).
@@ -98908,14 +98930,23 @@ function renderCamp() {
       // Idle / resting → passive XP + deployment menu.
       body = `<div class="camp-slot-bar"><div class="camp-slot-fill" style="width:${pct}%"></div></div>
               <div class="small-text">Resting · ${xp}/${CAMP_XP_CAP} XP · ${elapsedLabel} · ${CAMP_XP_PER_HOUR} XP/hr</div>`;
-      actions = `
+      actions = (() => {
+        // ⛽ Fuel gates on the expedition buttons.
+        const _fuel = (typeof getRes === 'function') ? getRes('fuel') : 0;
+        const _raidF = (typeof CAMP_RUN_FUEL === 'object') ? (CAMP_RUN_FUEL.raid || 0) : 3;
+        const _deepF = (typeof CAMP_RUN_FUEL === 'object') ? (CAMP_RUN_FUEL.deepRun || 0) : 8;
+        const _plusF = (typeof DEEP_PLUS_FUEL === 'number') ? DEEP_PLUS_FUEL : 22;
+        return `
         <div style="display:flex;flex-wrap:wrap;gap:0.3rem">
-          <button class="btn-mini" data-loot="scout:${slot.id}" title="1h · low danger">🥾 Scout</button>
-          <button class="btn-mini" data-loot="raid:${slot.id}" title="3h · medium danger">🎒 Raid</button>
-          <button class="btn-mini" data-loot="deepRun:${slot.id}" title="6h · high danger — permadeath risk">☣️ Deep</button>
+          <button class="btn-mini" data-loot="scout:${slot.id}" title="1h · low danger · free">🥾 Scout</button>
+          <button class="btn-mini" data-loot="raid:${slot.id}" ${_fuel < _raidF ? 'disabled' : ''} title="3h · medium danger · ${_raidF} ⛽ Fuel">🎒 Raid (${_raidF}⛽)</button>
+          <button class="btn-mini" data-loot="deepRun:${slot.id}" ${_fuel < _deepF ? 'disabled' : ''} title="6h · high danger — permadeath risk · ${_deepF} ⛽ Fuel">☣️ Deep (${_deepF}⛽)</button>
+          <button class="btn-mini" data-loot="deepRunPlus:${slot.id}" ${_fuel < _plusF ? 'disabled' : ''} title="6h · long-haul — burns ${_plusF} ⛽ Fuel for a ~70% richer haul + cleaner extraction" style="border-color:#ffcf6b55;color:${_fuel < _plusF ? '#5a6a82' : '#ffcf6b'}">🛻 Deep+ (${_plusF}⛽)</button>
           <button class="btn-mini" data-study="${slot.id}" title="12h · learn a move">📖 Study</button>
           <button class="btn-mini" data-strike="${slot.id}" title="6h · hit the rival faction — high risk, cuts their threat & builds your reputation" style="border-color:#e0556a55;color:#e0879a">⚔️ Strike</button>
-        </div>
+        </div>`;
+      })()
+        + `
         ${App._campRescueTarget ? `<button class="btn-mini" data-rescue="${slot.id}" style="margin-top:0.3rem;border-color:#d4af3766;color:#ffd166;width:100%">🆘 Send on Rescue (3h)</button>` : ''}
         ${(typeof _campTreatNeed === 'function' && _campTreatNeed(prof) > 0) ? `<button class="btn-mini" data-treat="${escapeHtml(slot.refId)}" title="Spend Medicine to clear trauma / corruption / fatigue and restore morale" style="margin-top:0.3rem;border-color:#ff8aa066;color:#ff9fb0;width:100%">🩺 Med-bay Treat (${_campTreatCost(prof)} 💊)</button>` : ''}
         <div style="display:flex;gap:0.4rem;margin-top:0.3rem">
@@ -99261,20 +99292,26 @@ function renderCamp() {
   document.querySelectorAll('[data-loot]').forEach(el => {
     el.onclick = async () => {
       const [tier, sid] = el.dataset.loot.split(':');
-      const tierLabel = (CAMP_LOOT_TIERS[tier] || {}).label || 'Loot Run';
-      const dangerWord = tier === 'deepRun' ? 'HIGH — permadeath risk' : tier === 'raid' ? 'medium' : 'low';
-      const dangerCol  = tier === 'deepRun' ? '#ff5050' : tier === 'raid' ? '#e8a13a' : '#5dca8c';
+      const isPlus = (tier === 'deepRunPlus');
+      const realTier = isPlus ? 'deepRun' : tier;
+      const tierLabel = ((CAMP_LOOT_TIERS[realTier] || {}).label || 'Loot Run') + (isPlus ? '+' : '');
+      const dangerWord = realTier === 'deepRun' ? 'HIGH — permadeath risk' : realTier === 'raid' ? 'medium' : 'low';
+      const dangerCol  = realTier === 'deepRun' ? '#ff5050' : realTier === 'raid' ? '#e8a13a' : '#5dca8c';
+      const _fuelCost = isPlus ? (typeof DEEP_PLUS_FUEL === 'number' ? DEEP_PLUS_FUEL : 22)
+                               : ((typeof CAMP_RUN_FUEL === 'object' && CAMP_RUN_FUEL[realTier]) || 0);
       const ok = await showGameConfirm({
         title: '🥾 Deploy on a ' + tierLabel + '?',
         bodyHtml:
           '<div style="font-size:1rem;margin-bottom:0.6rem">Send this unit out for a <b style="color:#d4a843">' + escapeHtml(tierLabel) + '</b>.</div>' +
           '<div style="background:rgba(20,16,14,0.6);border:1px solid #2a201c;border-radius:4px;padding:0.7rem 0.9rem;margin:0.6rem 0">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.2rem 0"><span style="color:#a89878">Danger</span><b style="color:' + dangerCol + ';text-transform:uppercase">' + dangerWord + '</b></div>' +
+            (_fuelCost ? '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.2rem 0"><span style="color:#a89878">Fuel cost</span><b style="color:#ffcf6b">' + _fuelCost + ' ⛽</b></div>' : '') +
+            (isPlus ? '<div style="font-size:0.82rem;color:#ffcf6b;margin-top:0.3rem">🛻 Long-haul: ~70% richer haul + cleaner extraction.</div>' : '') +
             '<div style="font-size:0.85rem;color:#a89878;font-style:italic;margin-top:0.4rem">They could come back with loot — or not come back at all.</div>' +
           '</div>',
         yesLabel: 'DEPLOY',
         noLabel: 'Cancel',
-        yesAccent: tier === 'deepRun' ? 'ember' : 'gold',
+        yesAccent: realTier === 'deepRun' ? 'ember' : 'gold',
       });
       if (!ok) return;
       if (campStartActivity(sid, 'loot', tier)) render();

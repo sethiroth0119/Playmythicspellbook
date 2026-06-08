@@ -32601,6 +32601,9 @@ const Profile = {
   // them never hits `undefined.cards`; persisted via the load whitelist +
   // forge JSONB cloud blob.
   sideDeck: { cards: [], gems: [] },
+  // 🜂 Archon Deck — global pool (like sideDeck); only Archons added here can be
+  // summoned in battle. Persisted via the load whitelist + forge JSONB cloud blob.
+  archonDeck: { cards: [] },
   socketedGems: {},
   // ===== The Ruin Exchange — dual currency =====
   // Profile.gems is the LEGACY data field that now powers 🔥 CINDERS, the earned currency.
@@ -34282,6 +34285,9 @@ async function cloudSyncProfile() {
       // devices / cloud restores, same as cardCollection above. Both were
       // localStorage-only AND missing from the load whitelist before v86u.
       __sideDeck__:        (Profile.sideDeck        && typeof Profile.sideDeck        === 'object') ? Profile.sideDeck        : { cards: [], gems: [] },
+      // 🜂 Archon Deck — piggyback the same JSONB so the player's Archon Deck
+      // survives cloud restores / new devices (was localStorage-only + missing here).
+      __archonDeck__:      (Profile.archonDeck      && typeof Profile.archonDeck      === 'object') ? Profile.archonDeck      : { cards: [] },
       __socketedGems__:    (Profile.socketedGems    && typeof Profile.socketedGems    === 'object') ? Profile.socketedGems    : {},
       // 🎒 HELD-ITEM INVENTORY + EQUIPPED GEAR — purchased medicine / relics /
       // weapons + per-hero equipment. These were localStorage-ONLY: a corrupt
@@ -35074,6 +35080,15 @@ async function cloudFetchProfile() {
             cards: Array.isArray(f.__sideDeck__.cards) ? f.__sideDeck__.cards.slice(0) : [],
             gems:  Array.isArray(f.__sideDeck__.gems)  ? f.__sideDeck__.gems.slice(0)  : [],
           };
+        }
+      }
+      // 🜂 ARCHON DECK restore — same policy as the side deck: cloud fills in ONLY
+      // when local has no Archon Deck yet, so a freshly-edited local one always
+      // wins over a stale cloud copy.
+      if (f.__archonDeck__ && typeof f.__archonDeck__ === 'object') {
+        const _localArchon = (Profile.archonDeck && Array.isArray(Profile.archonDeck.cards)) ? Profile.archonDeck.cards : [];
+        if (_localArchon.length === 0) {
+          Profile.archonDeck = { cards: Array.isArray(f.__archonDeck__.cards) ? f.__archonDeck__.cards.slice(0) : [] };
         }
       }
       // 💎 SOCKETED GEMS restore — same policy: cloud fills only when local has
@@ -48894,6 +48909,12 @@ function loadForge() {
           cards: Array.isArray(p.sideDeck.cards) ? p.sideDeck.cards.slice(0) : [],
           gems:  Array.isArray(p.sideDeck.gems)  ? p.sideDeck.gems.slice(0)  : [],
         };
+      }
+      // 🜂 ARCHON DECK — same whitelist bug as sideDeck: saveProfile() wrote it to
+      // localStorage but this loader never restored it, so every reload dropped
+      // the player's Archon Deck (added archons "didn't save"). Restore it here.
+      if (p.archonDeck && typeof p.archonDeck === 'object') {
+        Profile.archonDeck = { cards: Array.isArray(p.archonDeck.cards) ? p.archonDeck.cards.slice(0) : [] };
       }
       if (p.socketedGems && typeof p.socketedGems === 'object') Profile.socketedGems = p.socketedGems;
       // 🧰 CRITICAL SAVE FIX — saveProfile() stringifies the WHOLE Profile to

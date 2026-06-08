@@ -33445,6 +33445,9 @@ function _onColyseusFx(msg) {
       // Opponent deployed a unit with an on-play effect — replay the cinematic
       // from the relayed unit + card (works for custom cards; _remote = no echo).
       try {
+        // Mark the unit so the snapshot-driven fallback (which also plays the
+        // on-play off _mpOnPlay) doesn't double-fire this same reveal.
+        if (d && d.unit && d.unit.id) { App._mpSummonSeen = App._mpSummonSeen || {}; App._mpSummonSeen[d.unit.id] = 1; }
         if (d && d.card && d.unit && typeof playOnPlayCinematic === 'function') {
           playOnPlayCinematic(d.unit, d.card, { _remote: true });
         }
@@ -73029,6 +73032,7 @@ function startBattleWithPrep(playerGoesFirst) {
   // so neither a prior match's missed turns nor a stale coin deadline carries in.
   App._turnTimeoutStreak = 0;
   App._turnTimerFired = false;
+  App._mpSummonSeen = {};   // 🜂 fresh opponent-summon-cinematic dedup per match
   try { _clearCoinChoiceTimer(); } catch (e) {}
   App.screen = 'battle';
   render();
@@ -92225,6 +92229,16 @@ function placeUnit(card, pos) {
     // gets the dramatic name + description reveal first, then the actual
     // AOE / heal / buff / summon plays underneath the fading overlay.
     try { if (typeof playOnPlayCinematic === 'function') playOnPlayCinematic(unit, card); } catch (e) {}
+    // 📡 MP — stamp a light on-play descriptor onto the unit so the OPPONENT can
+    // replay the on-play cinematic off the reliable board snapshot (the separate
+    // FX relay is best-effort and can't be counted on through the WIP MP server).
+    try {
+      if (App.battlePrep && App.battlePrep.multiplayer) {
+        next = { ...next, units: (next.units || []).map(u => u.id === unit.id
+          ? { ...u, _mpOnPlay: { type: card.onPlay.type, amount: card.onPlay.amount || 0, name: card.name || u.name, icon: card.icon || u.icon } }
+          : u) };
+      }
+    } catch (e) {}
     next = applyOnPlayEffect(next, unit, card);
   }
   if (App.ui._suppressOnPlay === card.instanceId) App.ui._suppressOnPlay = null;
@@ -116354,6 +116368,21 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
     for (const u of killed)    { _q.push({ msg: '☠ ' + (u.name || 'A unit') + ' fell' + (u.isHero ? '!' : '.'), color: 'red' }); }
     if (_q.length) App._mpOppLogAppend = (App._mpOppLogAppend || []).concat(_q);
   } catch (e) {}
+  // 📣 EVENT-TICKER NOTIFICATIONS — reliable off the snapshot (so they fire even
+  // when the separate FX relay doesn't). Names the opponent's plays / ascensions
+  // / losses in the stacked battle feed.
+  try {
+    if (typeof Juice !== 'undefined' && Juice.eventChip) {
+      const _opp = (App.battlePrep && App.battlePrep.opponentName) || 'Opponent';
+      for (const u of newSpawns) {
+        if (!u || u.owner !== 'ai') continue;
+        const _isArch = !!(u.isArchon || u.summonSource === 'Archon Summon');
+        Juice.eventChip({ icon: _isArch ? '🜂' : '⚔', label: _opp + (_isArch ? ' summons ' : ' plays ') + (u.name || 'a unit'), kind: 'event' });
+      }
+      for (const u of transformed) { Juice.eventChip({ icon: '✦', label: (u.name || 'A unit') + ' ascends!', kind: 'buff' }); }
+      for (const u of killed) { Juice.eventChip({ icon: '☠', label: (u.name || 'A unit') + ' fell', kind: 'debuff' }); }
+    }
+  } catch (e) {}
   // Toasts — keep concise so the player isn't drowned in messages.
   if (newSpawns.length > 0) {
     const first = newSpawns[0];
@@ -116368,6 +116397,44 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
     for (const u of killed) {
       try { showToast('☠ ' + (u.name || 'Unit') + ' fell' + (u.isHero ? '!' : '.'), 2400); } catch (e) {}
     }
+  }
+}
+
+// 🜂 WATCHER-SIDE ARCHON SUMMON CINEMATIC — replays the full ritual overlay for
+// an OPPONENT'S freshly-summoned Archon, driven off the reliable board snapshot
+// (the separate FX relay can't be counted on through the WIP MP server). We
+// don't have the summoner's archonMode (their picker), so we synthesize a
+// minimal candidate from the spawned unit and reuse renderArchonSummonCinematic.
+// Auto-clears after ~4.5s. Fully guarded — never throws into the render loop.
+function _mpPlayWatcherArchonCine(unit) {
+  try {
+    if (!unit || !App.ui) return;
+    if (App.ui.archonCine || App.ui.archonMode) return;   // don't stomp an in-progress one (incl. our own)
+    App.ui.archonMode = { _watcher: true, confirmed: true, selectedIndex: 0, candidates: [{
+      archonCardId: unit.cardId || unit.originalCardId || '',
+      archonName:   unit.name || 'ARCHON',
+      archonIcon:   unit.icon || '🜂',
+      creator:      unit.creator || unit.archonCreator || '',
+    }] };
+    App.ui.archonCine = { phase: 1 };
+    try { if (typeof _muffleBattleAudioForUlt === 'function') _muffleBattleAudioForUlt(true); } catch (e) {}
+    try { if (typeof playSfx === 'function') playSfx('unitSummon'); } catch (e) {}
+    if (typeof renderBattle === 'function') renderBattle();
+    const durs = [1200, 1300, 1500];
+    let acc = 0;
+    durs.forEach((d, i) => {
+      acc += d;
+      setTimeout(() => {
+        if (App.ui && App.ui.archonCine) { App.ui.archonCine.phase = i + 2; if (typeof renderBattle === 'function') renderBattle(); }
+      }, acc);
+    });
+    setTimeout(() => {
+      try { if (typeof _muffleBattleAudioForUlt === 'function') _muffleBattleAudioForUlt(false); } catch (e) {}
+      if (App.ui) { App.ui.archonCine = null; if (App.ui.archonMode && App.ui.archonMode._watcher) App.ui.archonMode = null; }
+      if (typeof renderBattle === 'function') renderBattle();
+    }, acc + 900);
+  } catch (e) {
+    try { if (App.ui) { App.ui.archonCine = null; if (App.ui.archonMode && App.ui.archonMode._watcher) App.ui.archonMode = null; } } catch (_) {}
   }
 }
 
@@ -116639,9 +116706,27 @@ function _onRemoteStateArrived(payload) {
   // card so it works for custom cards the opponent doesn't have.)
   if (App._mpSpawnFx && App._mpSpawnFx.length) {
     const _sp = App._mpSpawnFx; App._mpSpawnFx = null;
+    App._mpSummonSeen = App._mpSummonSeen || {};
     try {
       requestAnimationFrame(() => {
-        for (const u of _sp) { try { if (typeof _playAceSlam === 'function') _playAceSlam(u, false); } catch (e) {} }
+        for (const u of _sp) {
+          try {
+            if (!u || !u.id) continue;
+            if (App._mpSummonSeen[u.id]) continue;   // each unit's summon cinematic fires once
+            App._mpSummonSeen[u.id] = 1;
+            // 🜂 Archons get the full ritual; 👑 Ace units get the slam; ordinary
+            // units already got their pop-in via _markSummonAnim above.
+            if (u.isArchon || u.summonSource === 'Archon Summon') {
+              if (typeof _mpPlayWatcherArchonCine === 'function') _mpPlayWatcherArchonCine(u);
+            } else {
+              if (typeof _playAceSlam === 'function') _playAceSlam(u, false);   // no-op unless the unit carries aceSlam
+              // 🌟 On-play reveal cinematic from the stamped descriptor (_remote = no echo).
+              if (u._mpOnPlay && u._mpOnPlay.type && typeof playOnPlayCinematic === 'function') {
+                try { playOnPlayCinematic(u, { onPlay: u._mpOnPlay, name: u._mpOnPlay.name || u.name, icon: u._mpOnPlay.icon || u.icon }, { _remote: true }); } catch (e) {}
+              }
+            }
+          } catch (e) {}
+        }
       });
     } catch (e) {}
   }

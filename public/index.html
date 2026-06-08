@@ -73505,6 +73505,7 @@ function startBattleWithPrep(playerGoesFirst) {
   MatchBroadcast._vizSent = {};            // 🎨 re-relay my visuals for the new match
   MatchBroadcast._vizQueue = []; MatchBroadcast._vizPumping = false;   // 🚚 fresh paced sender
   MatchBroadcast._lastAtkFxKey = 0;        // ⚔️ fresh attack-cinematic dedupe per match
+  MatchBroadcast._vizReqAttempts = {}; MatchBroadcast._lastVizReqAt = 0;   // 🔁 fresh viz re-request state
   try { if (App.ui) App.ui._logNotifyLen = undefined; } catch (e) {}   // 📣 prime log-notify fresh
   try { _clearCoinChoiceTimer(); } catch (e) {}
   App.screen = 'battle';
@@ -116492,6 +116493,17 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
         }
       } catch (e) {}
     })
+    // 🔁 Opponent is missing some of MY units' sprites — clear their dedup so the
+    // next relay pass RE-SENDS those keys (recovers any dropped chunk).
+    .on('broadcast', { event: 'vizreq' }, (payload) => {
+      try {
+        const pp = payload && payload.payload;
+        if (!pp || pp.from === MatchBroadcast.myUserId || !Array.isArray(pp.keys)) return;
+        MatchBroadcast._vizSent = MatchBroadcast._vizSent || {};
+        for (const k of pp.keys) { delete MatchBroadcast._vizSent['spr:' + k]; }
+        if (typeof _mpRelayUnitVisuals === 'function') _mpRelayUnitVisuals();
+      } catch (e) {}
+    })
     .on('broadcast', { event: 'coin' }, (payload) => {
       _onRemoteCoinArrived(payload.payload);
     })
@@ -117615,6 +117627,42 @@ function _mpVizPump() {
   };
   step();
 }
+// 🔁 RE-REQUEST missing visuals — a single dropped chunk leaves an opponent unit
+// with an incomplete frame set (looks static/terrible). The WATCHER periodically
+// scans opponent units that STILL resolve to no sprite frames (local or relayed)
+// and asks the sender to re-relay JUST those sprite keys. Capped per unit so an
+// art-only unit (genuinely no sprite) doesn't spam forever. This is what makes
+// "every animated unit eventually animates on the other side" reliable.
+function _mpRequestMissingViz() {
+  try {
+    if (!MatchBroadcast.channel) return;
+    if (!(App.battlePrep && App.battlePrep.multiplayer)) return;
+    if (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP) return;
+    const units = (App.state && App.state.units) || [];
+    MatchBroadcast._vizReqAttempts = MatchBroadcast._vizReqAttempts || {};
+    const wantKeys = new Set();
+    for (const u of units) {
+      if (!u || u.owner !== 'ai') continue;   // opponent units on MY board
+      let hasFrames = false;
+      try {
+        const sid = (typeof getSpriteId === 'function') ? getSpriteId(u) : null;
+        if (sid) { const fr = getSpriteFrames(sid, 'idle') || getSpriteFrames(sid, 'attack'); if (fr && fr.length) hasFrames = true; }
+      } catch (e) {}
+      if (hasFrames) continue;                 // already animating — nothing to ask for
+      const ukey = String(u.cardId || u.id || '');
+      const att = MatchBroadcast._vizReqAttempts[ukey] | 0;
+      if (att >= 5) continue;                   // gave up (probably genuinely art-only)
+      MatchBroadcast._vizReqAttempts[ukey] = att + 1;
+      try { const sid = getSpriteId(u); if (sid) wantKeys.add(sid); } catch (e) {}
+      if (u.cardId) wantKeys.add('u_' + u.cardId);
+      if (u.originalCardId) { wantKeys.add('u_' + u.originalCardId); wantKeys.add('k_' + u.originalCardId); }
+      if (u.heroId) wantKeys.add('h_' + u.heroId);
+    }
+    if (wantKeys.size) {
+      try { MatchBroadcast.channel.send({ type: 'broadcast', event: 'vizreq', payload: { from: MatchBroadcast.myUserId, keys: Array.from(wantKeys) } }); } catch (e) {}
+    }
+  } catch (e) {}
+}
 function _mpRelayUnitVisuals() {
   try {
     if (!MatchBroadcast.channel) return;
@@ -117851,6 +117899,16 @@ function _onRemoteStateArrived(payload) {
   // SECOND player's hero, which would otherwise stay an emoji on the first
   // player's screen until the second player's first turn-broadcast.
   try { if (typeof _mpRelayUnitVisuals === 'function') _mpRelayUnitVisuals(); } catch (e) {}
+  // 🔁 Throttled — after sprites have had a moment to stream in, ask the sender
+  // to re-relay any opponent unit that STILL has no animated sprite (recovers a
+  // dropped chunk). Runs at most every ~2.5s.
+  try {
+    const _now = Date.now();
+    if (!MatchBroadcast._lastVizReqAt || _now - MatchBroadcast._lastVizReqAt > 2500) {
+      MatchBroadcast._lastVizReqAt = _now;
+      setTimeout(() => { try { if (typeof _mpRequestMissingViz === 'function') _mpRequestMissingViz(); } catch (e) {} }, 800);
+    }
+  } catch (e) {}
   // 🏁 RESULT LOCK — once THIS client has a DECIDED game-over, the match is over
   // for us. Ignore further opponent STATE broadcasts so their continued play (if
   // they hadn't received our game-over yet) can't FLIP our result — the "I won,

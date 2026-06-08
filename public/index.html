@@ -83433,6 +83433,76 @@ function _flipPlayBattle() {
   } catch (e) { try { _flipPrevRects = null; } catch (e2) {} }
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// 🧩 PARTIAL BOARD RENDER (per-tile diff)
+// ------------------------------------------------------------------------
+// The full-screen rebuild (root.innerHTML = …) used to tear down and recreate
+// the ENTIRE board every action — every sprite <img> re-decoded (flash), every
+// ambient particle animation restarted, and weak devices chugged repainting 64
+// cells when usually only 1–2 changed. Now the live `.board` element is held
+// by reference across the innerHTML reset and re-attached into a `.board-mount`
+// placeholder; we then patch ONLY the tiles whose HTML string actually moved.
+// renderBoard() stashes a per-tile HTML map + a board-"look" signature on
+// App._boardRenderMeta for this. FLIP still animates moves (it matches units by
+// data-unit id, reading live DOM positions), and bindBattleEvents re-binds the
+// current tiles each render, so clicks keep working with no delegation rewrite.
+// ANY failure falls back to a full board rebuild, so the board is never missing.
+function _mountOrDiffBoard(root, persistBoard) {
+  if (typeof document === 'undefined' || !root) return;
+  // The Pixi renderer owns its own mount/sync — the template already emitted its
+  // canvas mount, so leave that path completely alone.
+  if (App.flags && App.flags.pixiBoard) return;
+  try {
+    const mount = root.querySelector('.board-mount');
+    if (!mount) return;                        // no DOM mount in the template — nothing to do
+    const html = renderBoard();                // builds the string AND fills App._boardRenderMeta
+    const meta = App._boardRenderMeta;
+    const lookKey = (meta && meta.lookKey) || '';
+    const tileCount = BOARD_W * BOARD_H;
+    const reusable = persistBoard && meta && meta.tiles
+      && persistBoard.getAttribute('data-board-look') === lookKey
+      && persistBoard.querySelectorAll('.tile').length === tileCount;
+    if (reusable) {
+      mount.replaceWith(persistBoard);         // slot the live board back where the mount was
+      if (!_diffBoardTiles(persistBoard, meta.tiles)) {
+        _freshBoardInto(persistBoard, html, lookKey, meta.tiles);   // structure moved → hard rebuild
+      }
+    } else {
+      _freshBoardInto(mount, html, lookKey, (meta && meta.tiles) || null);
+    }
+  } catch (e) {
+    // 🛟 Never leave the board missing — fall back to the classic full rebuild.
+    try { const m = root.querySelector('.board-mount'); if (m) m.outerHTML = renderBoard(); } catch (e2) {}
+  }
+}
+// Build a fresh .board from `html` and swap it in for `target` (the mount div or
+// a stale board). Seeds the per-tile cache so the next diff starts as a no-op.
+function _freshBoardInto(target, html, lookKey, tiles) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const fresh = tmp.firstElementChild;
+  if (!fresh) { try { target.outerHTML = html; } catch (e) {} return; }
+  fresh.setAttribute('data-board-look', lookKey || '');
+  fresh._tileHtmlCache = tiles ? Object.assign({}, tiles) : {};
+  target.replaceWith(fresh);
+}
+// Patch only the cells whose HTML changed. Returns false if a tile element is
+// missing (board structure no longer matches) so the caller can hard-rebuild.
+function _diffBoardTiles(boardEl, tiles) {
+  const cache = boardEl._tileHtmlCache || (boardEl._tileHtmlCache = {});
+  for (const tk in tiles) {
+    const nextHtml = tiles[tk];
+    if (cache[tk] === nextHtml) continue;      // identical → leave the DOM (and its <img>s) untouched
+    const ci = tk.indexOf(',');
+    const x = tk.slice(0, ci), y = tk.slice(ci + 1);
+    const old = boardEl.querySelector('.tile[data-x="' + x + '"][data-y="' + y + '"]');
+    if (!old) return false;
+    old.outerHTML = nextHtml;                   // replace just this one cell
+    cache[tk] = nextHtml;
+  }
+  return true;
+}
+
 // 🚀 PUBLIC ENTRY — every call site uses `renderBattle()`. To collapse the
 // 3–5 cascading paint cycles per game action (move → checkPostAction →
 // outer caller → animation tick) we now microtask-debounce them: the FIRST
@@ -84193,6 +84263,10 @@ function _renderBattleImmediateImpl() {
     return `<div class="tw-battle-banner" title="Victory conditions from the territory node"><strong>🎯 Objectives:</strong> ${items}</div>`;
   })();
 
+  // 🧩 Grab the live board BEFORE innerHTML wipes it — held by reference it
+  // survives the reset, so _mountOrDiffBoard can re-attach + tile-diff it
+  // instead of tearing the whole grid down (the last big in-battle flicker).
+  const _persistBoardEl = (function () { try { return (root && root.querySelector) ? root.querySelector('.board') : null; } catch (e) { return null; } })();
   _flipCaptureBattle();   // 🎞️ snapshot unit positions BEFORE the rebuild
   root.innerHTML = `
     <div class="battle-screen mtga-layout ${App.ui.aiBusy ? 'ai-busy' : ''} ${App.ui.heroUltCinematic ? 'ult-cine-active' : ''}" data-gfx="${(function(){try{return getSettings().gfxQuality||'high';}catch(e){return 'high';}})()}" data-board-skin="${(function(){try{return getSettings().boardSkin||'default';}catch(e){return 'default';}})()}">
@@ -84264,7 +84338,7 @@ function _renderBattleImmediateImpl() {
               <div class="be-creature alt" style="left:80%; animation-delay:-15s"></div>
               <div class="be-lightning"></div>
             </div>
-            ${renderBoard()}
+            ${(App.flags && App.flags.pixiBoard) ? renderBoard() : '<div class="board-mount"></div>'}
             ${renderWeatherFx()}
             ${renderPersistentSpells()}
           </div>
@@ -84387,6 +84461,12 @@ function _renderBattleImmediateImpl() {
     </div>
   `;
 
+  // 🧩 Re-attach + tile-diff the persistent board (or fresh-build it on first
+  // paint / board-look change). MUST run before bindBattleEvents (tiles must
+  // exist to bind clicks) and before _flipPlayBattle (units must sit at their
+  // new positions for the slide math). Self-healing: falls back to a full board
+  // rebuild on any error, so the battlefield is never left blank.
+  try { _mountOrDiffBoard(root, _persistBoardEl); } catch (e) {}
   if (!App.replayViewing) bindBattleEvents();
   bindBattlePiles();
   if (s.gameOver && !App.replayViewing) bindGameOverEvents();
@@ -88345,6 +88425,7 @@ function renderBoard() {
   const _attackSet = new Set((validAttacks    || []).map(p => _kOf(p.x, p.y)));
   const _placeSet  = new Set((validPlacement  || []).map(p => _kOf(p.x, p.y)));
   const _swapSet   = new Set((validSwaps      || []).map(p => _kOf(p.x, p.y)));
+  const _tileMap = {};   // 🧩 per-tile HTML, captured for the partial-render diff (_mountOrDiffBoard)
   let html = `<div class="board${boardClass}${isoClass}"${boardStyle}>${isoCanvas}`;
   for (let y = 0; y < BOARD_H; y++) {
     for (let x = 0; x < BOARD_W; x++) {
@@ -88625,13 +88706,27 @@ function renderBoard() {
       }
       // 🩸 Prepend bleeding overlay so the body shows under any occupant
       // or marker rendered above it.
-      html += `<div class="${tileClasses.join(' ')}${bleedingHere ? ' has-bleeding' : ''}" data-x="${x}" data-y="${y}"${surfTitle}>${surfHtml}${bleedOverlay}${cellInner}</div>`;
+      const _tileHtml = `<div class="${tileClasses.join(' ')}${bleedingHere ? ' has-bleeding' : ''}" data-x="${x}" data-y="${y}"${surfTitle}>${surfHtml}${bleedOverlay}${cellInner}</div>`;
+      _tileMap[_tk] = _tileHtml;
+      html += _tileHtml;
     }
   }
   // 🌌 Inject the living-battlefield ambient overlay — drifting ash + embers,
   // ground fog, glowing rune pulses, animated shadow drift, volumetric light
   // sweep, corner candle flickers. Sits above the tiles via z-index but below
   // unit markers so it never blocks clicks.
+  // 🧩 Stash the per-tile map + a board-"look" signature so _mountOrDiffBoard
+  // can patch only the cells that changed, and hard-rebuild only when the
+  // board-LEVEL look changes (active-location background, iso toggle, graphics
+  // quality — all of which alter the wrapper or ambient density, not just a
+  // single tile). The ambient overlay is deterministic, so when the board
+  // persists its particle animations keep running uninterrupted.
+  let _gfxKey = 'high'; try { _gfxKey = (getSettings().gfxQuality) || 'high'; } catch (e) {}
+  App._boardRenderMeta = {
+    className: 'board' + boardClass + isoClass,
+    lookKey: boardClass + '§' + isoClass + '§' + boardStyle + '§' + _gfxKey,
+    tiles: _tileMap,
+  };
   html += renderBoardAmbient();
   html += '</div>';
   return html;

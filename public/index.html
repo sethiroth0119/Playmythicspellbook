@@ -73075,6 +73075,7 @@ function startBattleWithPrep(playerGoesFirst) {
   App._turnTimeoutStreak = 0;
   App._turnTimerFired = false;
   App._mpSummonSeen = {};   // 🜂 fresh opponent-summon-cinematic dedup per match
+  try { if (App.ui) App.ui._logNotifyLen = undefined; } catch (e) {}   // 📣 prime log-notify fresh
   try { _clearCoinChoiceTimer(); } catch (e) {}
   App.screen = 'battle';
   render();
@@ -82978,6 +82979,51 @@ function _emitStatusVfx() {
   } catch (e) {}
 }
 
+// 📣 LOG-DRIVEN NOTIFICATIONS — the battle log is the single source of truth for
+// "what just happened", so we surface a ticker chip for every NEW log line. This
+// makes nearly every event (plays, attacks, KOs, weather, status, turn changes,
+// effects…) a visible notification — in SOLO and in PvP alike, because the
+// opponent's log lines sync into our log over the network. Coalesced + capped so
+// a busy turn doesn't flood the screen.
+function _logChipParts(msg) {
+  const m = String(msg == null ? '' : msg).trim();
+  let icon = null, label = m;
+  try {
+    // Pull a leading emoji (incl. ZWJ sequences / variation selectors) to use as
+    // the chip icon, leaving the rest as the label. Em-dashes etc. aren't emoji,
+    // so turn-divider lines keep their default icon.
+    const match = m.match(/^(\p{Extended_Pictographic}(?:️)?(?:‍\p{Extended_Pictographic}(?:️)?)*)\s*/u);
+    if (match) { icon = match[1]; const rest = m.slice(match[0].length).trim(); if (rest) label = rest; }
+  } catch (e) {}
+  return { icon, label };
+}
+function _emitLogNotifications() {
+  try {
+    if (typeof Juice === 'undefined' || !Juice.eventChip) return;
+    if (!App.state || !Array.isArray(App.state.log)) return;
+    App.ui = App.ui || {};
+    const log = App.state.log;
+    let last = App.ui._logNotifyLen;
+    // First sight of this battle (or after a log trim shrank it) → prime the
+    // baseline to the current length so we don't replay the whole history.
+    if (typeof last !== 'number' || last > log.length) { App.ui._logNotifyLen = log.length; return; }
+    if (last === log.length) return;
+    const fresh = log.slice(last);
+    App.ui._logNotifyLen = log.length;
+    // Cap chips per render so a multi-line burst (e.g. a whole AI turn arriving
+    // in one snapshot) doesn't flood — show the most recent few.
+    const toShow = fresh.slice(-4);
+    for (const e of toShow) {
+      if (!e || !e.msg) continue;
+      const { icon, label } = _logChipParts(e.msg);
+      if (!label) continue;
+      const kind = e.color === 'green' ? 'buff' : (e.color === 'red' ? 'debuff' : (e.color === 'amber' ? 'event' : 'neutral'));
+      const ic = icon || (kind === 'buff' ? '✨' : kind === 'debuff' ? '⚔️' : '📜');
+      Juice.eventChip({ icon: ic, label, kind, ms: 2400 });
+    }
+  } catch (e) {}
+}
+
 // ↩ BOUNCE NOTICE — icon + notification when a unit is returned to a hand. The
 // unit is removed from the board on a bounce (it's not a death), so the status
 // diff above can't surface it — the bounce sites call this directly. Shows a
@@ -82986,9 +83032,8 @@ function _emitStatusVfx() {
 function _battleBounceNotice(unit, sideLabel) {
   try {
     if (typeof Juice === 'undefined') return;
-    const nm = (unit && unit.name) || 'A unit';
-    const side = sideLabel || ((unit && unit.owner === 'player') ? 'your' : 'enemy');
-    if (Juice.eventChip) Juice.eventChip({ icon: '↩️', label: nm + ' bounced to ' + side + ' hand', kind: 'event' });
+    // (The text notification comes from the LOG-driven notifier — the bounce log
+    // line is already chipped there. Here we only play the floating ↩ icon.)
     if (typeof requestAnimationFrame === 'function' && unit && unit.pos && Juice.statusPop) {
       const px = unit.pos.x, py = unit.pos.y;
       requestAnimationFrame(() => {
@@ -83050,6 +83095,8 @@ function _renderBattleImmediateImpl() {
           MatchBroadcast._myLastBcastLogLen = Math.max(0, (MatchBroadcast._myLastBcastLogLen | 0) - _removed);
         }
       } catch (e) {}
+      // Keep the log-notification pointer aligned too (it indexes log by length).
+      try { if (App.ui && typeof App.ui._logNotifyLen === 'number') App.ui._logNotifyLen = Math.max(0, App.ui._logNotifyLen - _removed); } catch (e) {}
     }
   } catch (e) {}
   // 🌟 STATUS-EFFECT APPLY VFX — schedule a status diff for the NEXT frame so
@@ -83061,7 +83108,7 @@ function _renderBattleImmediateImpl() {
   try {
     if (!App._statusVfxQueued) {
       App._statusVfxQueued = true;
-      const _go = () => { App._statusVfxQueued = false; try { _emitStatusVfx(); } catch (e) {} try { _emitDrawVfx(); } catch (e) {} try { _emitDeathVfx(); } catch (e) {} try { _emitControlVfx(); } catch (e) {} };
+      const _go = () => { App._statusVfxQueued = false; try { _emitStatusVfx(); } catch (e) {} try { _emitDrawVfx(); } catch (e) {} try { _emitDeathVfx(); } catch (e) {} try { _emitControlVfx(); } catch (e) {} try { _emitLogNotifications(); } catch (e) {} };
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_go);
       else setTimeout(_go, 16);
     }
@@ -88396,11 +88443,15 @@ function renderLog() {
 function bindBattleEvents() {
   const s = App.state;
   // 📜 AUTO-SCROLL the battle log to the newest line after every render so the
-  // latest action is always visible without manual scrolling. Deferred a frame
-  // so layout is settled before we measure scrollHeight.
+  // latest action is ALWAYS visible without manual scrolling. Fired three ways
+  // for reliability: immediately (reading scrollHeight forces a reflow first),
+  // next frame (after paint), and after a short delay (after fonts/layout fully
+  // settle). Over-scrolls past the end so it can't land one line short.
   try {
-    const _scrollLog = () => { try { const _ll = document.querySelector('.log-list'); if (_ll) _ll.scrollTop = _ll.scrollHeight; } catch (e) {} };
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_scrollLog); else _scrollLog();
+    const _scrollLog = () => { try { const _ll = document.querySelector('.log-list'); if (_ll) _ll.scrollTop = _ll.scrollHeight + 99999; } catch (e) {} };
+    _scrollLog();
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_scrollLog);
+    setTimeout(_scrollLog, 60);
   } catch (e) {}
   // 🏳 CONCEDE — the player gives up. Counts as a real loss: same path as
   // taking a fatal hit on your hero. We set gameOver='ai' (AI wins) which
@@ -116458,21 +116509,10 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
     for (const u of killed)    { _q.push({ msg: '☠ ' + (u.name || 'A unit') + ' fell' + (u.isHero ? '!' : '.'), color: 'red' }); }
     if (_q.length) App._mpOppLogAppend = (App._mpOppLogAppend || []).concat(_q);
   } catch (e) {}
-  // 📣 EVENT-TICKER NOTIFICATIONS — reliable off the snapshot (so they fire even
-  // when the separate FX relay doesn't). Names the opponent's plays / ascensions
-  // / losses in the stacked battle feed.
-  try {
-    if (typeof Juice !== 'undefined' && Juice.eventChip) {
-      const _opp = (App.battlePrep && App.battlePrep.opponentName) || 'Opponent';
-      for (const u of newSpawns) {
-        if (!u || u.owner !== 'ai') continue;
-        const _isArch = !!(u.isArchon || u.summonSource === 'Archon Summon');
-        Juice.eventChip({ icon: _isArch ? '🜂' : '⚔', label: _opp + (_isArch ? ' summons ' : ' plays ') + (u.name || 'a unit'), kind: 'event' });
-      }
-      for (const u of transformed) { Juice.eventChip({ icon: '✦', label: (u.name || 'A unit') + ' ascends!', kind: 'buff' }); }
-      for (const u of killed) { Juice.eventChip({ icon: '☠', label: (u.name || 'A unit') + ' fell', kind: 'debuff' }); }
-    }
-  } catch (e) {}
+  // 📣 NOTE: the opponent's plays / ascensions / losses are surfaced as ticker
+  // chips by the LOG-driven notifier (_emitLogNotifications) — the opponent's log
+  // lines sync into our log over the network — so we DON'T emit duplicate chips
+  // here. This block stays focused on the VFX (cinematics, slides, juice).
   // Toasts — keep concise so the player isn't drowned in messages.
   if (newSpawns.length > 0) {
     const first = newSpawns[0];

@@ -51559,9 +51559,14 @@ const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0;
 // knownMoves store ids, so a republished move's new stats reach every unit.
 const lookupMove = (id) => {
   if (!id) return null;
-  if (MOVES[id]) return MOVES[id];
+  // 🛠 OVERRIDE PRECEDENCE — a Forge/Catalog entry under a BUILT-IN move's id is an
+  // intentional admin EDIT of that built-in, so it must WIN over the hard-coded
+  // MOVES catalog (the old order put MOVES first, so edits to built-ins silently
+  // did nothing in battle). Pure custom moves use 'cm_…' ids that never collide,
+  // so this only changes behaviour where an override was deliberately authored.
   if (typeof Forge !== 'undefined' && Forge.customMoves && Forge.customMoves[id]) return Forge.customMoves[id];
   if (typeof Catalog !== 'undefined' && Catalog.moves && Catalog.moves[id]) return Catalog.moves[id];
+  if (MOVES[id]) return MOVES[id];
   return null;
 };
 const allMovesArray = () => {
@@ -75136,7 +75141,7 @@ function renderForge() {
   if (App.forgeTab === 'relics') App.forgeTab = 'cards';
   const tabs = [
     { id: 'cards',      label: 'Cards',      count: Forge.customCards.length },
-    { id: 'moves',      label: 'Moves',      count: Object.keys(Forge.customMoves).length },
+    { id: 'moves',      label: 'Moves',      count: (typeof allMovesArray === 'function') ? allMovesArray().filter(m => m && m.id).length : Object.keys(Forge.customMoves).length },
     { id: 'events',     label: 'Events',     count: Forge.customEvents.length },
     { id: 'encounters', label: '🎲 Encounters', count: (Forge.customEncounters || []).length },
     { id: 'packs',      label: '📦 Packs',   count: (Forge.customPacks || []).length },
@@ -79458,54 +79463,104 @@ function saveCardFromInputs(commit) {
 
 // ============ FORGE: moves tab ============
 function renderForgeMoves() {
-  const moves = Object.values(Forge.customMoves);
-  const list = moves.length === 0
-    ? `<div class="empty-list-note">No custom moves yet. Forge one below to use in your card learnsets.</div>`
-    : moves.map(m => `
-        <div class="forge-list-row" data-id="${m.id}">
+  // 📚 EVERY move in the game — built-in catalog + admin-published + your custom
+  // ones — so you can edit ANY of them. Editing a built-in saves an OVERRIDE
+  // under its id (Forge.customMoves), which lookupMove() now prefers, so the edit
+  // takes effect everywhere. Sorted: your custom / edited first, then built-ins.
+  const _all = (typeof allMovesArray === 'function') ? allMovesArray() : Object.values(Forge.customMoves);
+  const _ovr = (id) => !!(Forge.customMoves && Forge.customMoves[id]);
+  const _isCustomId = (id) => typeof id === 'string' && id.indexOf('cm_') === 0;
+  const sorted = _all.filter(m => m && m.id).slice().sort((a, b) => {
+    const rank = (m) => _isCustomId(m.id) ? 0 : (_ovr(m.id) ? 1 : 2);
+    const ra = rank(a), rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    return String(a.name || a.id).localeCompare(String(b.name || b.id));
+  });
+  const list = sorted.length === 0
+    ? `<div class="empty-list-note">No moves found.</div>`
+    : sorted.map(m => {
+        const isCustom = _isCustomId(m.id);
+        const isEdited = !isCustom && _ovr(m.id);
+        const badge = isCustom
+          ? `<span class="egg-tag" style="background:rgba(120,220,160,0.18);color:#9be8b8">Custom</span>`
+          : (isEdited
+              ? `<span class="egg-tag" style="background:rgba(255,209,102,0.2);color:#ffd166">✎ Edited</span>`
+              : `<span class="egg-tag" style="background:rgba(160,160,200,0.15);color:#b8b8d8">Built-in</span>`);
+        const search = (String(m.name || '') + ' ' + String(m.id || '')).toLowerCase();
+        // Custom → delete; Edited built-in → reset (drop override); pure built-in → no destructive button.
+        const destructive = isCustom
+          ? `<button class="btn-mini btn-danger" data-act="delete-move" data-id="${m.id}" title="Delete this custom move">×</button>`
+          : (isEdited
+              ? `<button class="btn-mini" data-act="reset-move" data-id="${m.id}" title="Reset to the built-in default">↺</button>`
+              : '');
+        return `
+        <div class="forge-list-row" data-id="${m.id}" data-search="${escapeHtml(search)}">
           <div class="forge-row-icon">${m.kind === 'attack' ? '⚔️' : '✨'}</div>
           <div class="forge-row-info">
-            <div class="forge-row-name">${escapeHtml(m.name)} ${elementBadge(m.element, 'sm')}</div>
-            <div class="forge-row-meta">${m.kind} · cost ${m.cost} · range ${m.range}${m.power ? ` · power ${m.power}` : ''}${m.healAmount ? ` · heal ${m.healAmount}` : ''}</div>
+            <div class="forge-row-name">${escapeHtml(m.name || m.id)} ${elementBadge(m.element, 'sm')} ${badge}</div>
+            <div class="forge-row-meta">${m.kind || 'attack'} · cost ${m.cost != null ? m.cost : 0} · range ${m.range != null ? m.range : 0}${m.power ? ` · power ${m.power}` : ''}${m.healAmount ? ` · heal ${m.healAmount}` : ''}</div>
           </div>
           <div class="forge-row-actions">
-            ${renderObtToggles('move', m.id)}
+            ${(isCustom || isEdited) ? renderObtToggles('move', m.id) : ''}
             <button class="btn-mini" data-act="edit-move" data-id="${m.id}">Edit</button>
-            <button class="btn-mini btn-danger" data-act="delete-move" data-id="${m.id}">×</button>
+            ${destructive}
           </div>
-        </div>
-      `).join('');
+        </div>`;
+      }).join('');
   return `
     <div class="forge-section-header">
       <div>
-        <h3>Custom Moves</h3>
-        <div class="small-text">Custom moves can be added to any card's learnset.</div>
+        <h3>All Moves (${sorted.length})</h3>
+        <div class="small-text">Edit ANY move — built-in, published, or your own. Editing a built-in saves an override that takes effect everywhere.</div>
       </div>
       <button class="btn-primary" id="btn-new-move">+ Forge New Move</button>
     </div>
-    <div class="forge-list">${list}</div>
+    <div class="editor-field" style="margin:0 0 0.6rem"><input type="text" id="forge-move-search" placeholder="🔎 Filter moves by name or id…" style="width:100%;padding:0.5rem 0.7rem;background:rgba(15,8,30,0.65);border:1px solid rgba(184,136,255,0.3);border-radius:6px;color:#e8e0ff"></div>
+    <div class="forge-list" id="forge-moves-list">${list}</div>
   `;
 }
 
 function bindForgeMoves() {
-  document.getElementById('btn-new-move').onclick = () => { App.editingMoveId = 'NEW'; render(); };
+  const _nb = document.getElementById('btn-new-move'); if (_nb) _nb.onclick = () => { App.editingMoveId = 'NEW'; render(); };
   document.querySelectorAll('[data-act="edit-move"]').forEach(el => { el.onclick = () => { App.editingMoveId = el.dataset.id; render(); }; });
   document.querySelectorAll('[data-act="delete-move"]').forEach(el => {
     el.onclick = async () => {
-      if (!(await gcConfirm('Delete this move? Cards using it will fall back to the next available move.'))) return;
+      if (!(await gcConfirm('Delete this custom move? Cards using it will fall back to the next available move.'))) return;
       delete Forge.customMoves[el.dataset.id];
-      saveForge(); showToast('Move deleted'); render();
+      saveForge(); try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {} showToast('Move deleted'); render();
     };
   });
+  document.querySelectorAll('[data-act="reset-move"]').forEach(el => {
+    el.onclick = async () => {
+      if (!(await gcConfirm('Reset this move to its built-in default? Your override will be removed.'))) return;
+      delete Forge.customMoves[el.dataset.id];
+      saveForge(); try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {} showToast('Move reset to default'); render();
+    };
+  });
+  // 🔎 Client-side filter — hide non-matching rows without a re-render (keeps focus).
+  const _srch = document.getElementById('forge-move-search');
+  if (_srch) _srch.oninput = () => {
+    const q = String(_srch.value || '').toLowerCase().trim();
+    document.querySelectorAll('#forge-moves-list .forge-list-row').forEach(row => {
+      const s = row.getAttribute('data-search') || '';
+      row.style.display = (!q || s.indexOf(q) >= 0) ? '' : 'none';
+    });
+  };
 }
 
 // ============ FORGE: move editor ============
 function renderMoveEditor() {
   const isNew = App.editingMoveId === 'NEW';
+  // 🛠 Editing an existing move: prefer the saved override, else fall back to the
+  // built-in / published def (DEEP-COPIED so we never mutate the MOVES catalog).
+  // Saving writes Forge.customMoves[id] under the SAME id, creating the override.
   const move = isNew ? {
     id: 'cm_' + Date.now(), name: 'New Move', kind: 'attack', type: 'physical', element: 'nature',
     power: 20, range: 1, cost: 1, accuracy: 100, crit: 6, desc: '',
-  } : Forge.customMoves[App.editingMoveId];
+  } : (Forge.customMoves[App.editingMoveId] || (function () {
+        const _b = (typeof lookupMove === 'function') ? lookupMove(App.editingMoveId) : null;
+        try { return _b ? JSON.parse(JSON.stringify(_b)) : null; } catch (e) { return _b; }
+      })());
   if (!move) { App.editingMoveId = null; return renderForgeMoves(); }
   const isAttack = move.kind === 'attack';
   const elemOpts = ELEMENTS.map(e => `<option value="${e}" ${move.element === e ? 'selected' : ''}>${ELEMENT_DATA[e].icon} ${ELEMENT_DATA[e].name}</option>`).join('') + `<option value="neutral" ${move.element === 'neutral' ? 'selected' : ''}>— Neutral —</option>`;
@@ -79595,6 +79650,9 @@ function renderMoveEditor() {
         <div class="editor-field"><label>Element</label><select id="mv-element">${elemOpts}</select></div>
         <div class="editor-field"><label>Energy Cost (1-10)</label><input id="mv-cost" type="number" min="1" max="10" value="${move.cost}"></div>
         <div class="editor-field"><label>Range (0-4)</label><input id="mv-range" type="number" min="0" max="4" value="${move.range}"></div>
+        ${((typeof isAdmin === 'function') && isAdmin())
+          ? `<div class="editor-field"><label>🔥 Tutor Shop Price (Cinders)</label><input id="mv-tutor-price" type="number" min="0" max="99999" value="${(typeof getMoveGemPrice === 'function') ? getMoveGemPrice(move) : ''}" title="Admin: price players pay to learn this move in the Tutor Shop. Saves + publishes to all players. Leave at the cost-ladder default to keep auto-pricing."></div>`
+          : ''}
         <div class="editor-field" id="fld-power"><label>Power</label><input id="mv-power" type="number" min="0" max="100" value="${move.power || 0}"></div>
         <div class="editor-field" id="fld-acc"><label>Accuracy %</label><input id="mv-acc" type="number" min="50" max="100" value="${move.accuracy != null ? move.accuracy : 100}"></div>
         <div class="editor-field" id="fld-crit"><label>Crit %</label><input id="mv-crit" type="number" min="0" max="50" value="${move.crit != null ? move.crit : 6}"></div>
@@ -80137,6 +80195,23 @@ function bindMoveEditor() {
     }
     const wasNew = !Forge.customMoves[id];
     Forge.customMoves[id] = move;
+    // 🔥 Admin Tutor-price — same override the Tutor Shop edits
+    // (Forge.priceOverrides['move:<id>:cinders']). Setting it back to the
+    // cost-ladder default removes the override so auto-pricing resumes.
+    try {
+      const _tp = document.getElementById('mv-tutor-price');
+      if (_tp && (typeof isAdmin === 'function') && isAdmin()) {
+        const _raw = parseInt(_tp.value, 10);
+        if (!isNaN(_raw) && _raw >= 0) {
+          if (!Forge.priceOverrides) Forge.priceOverrides = {};
+          const _pk = 'move:' + id + ':cinders';
+          const _def = (typeof _moveBaseGemPrice === 'function') ? _moveBaseGemPrice(move) : NaN;
+          const _val = Math.max(0, Math.min(99999, _raw));
+          if (!isNaN(_def) && _val === _def) delete Forge.priceOverrides[_pk];
+          else Forge.priceOverrides[_pk] = _val;
+        }
+      }
+    } catch (e) {}
     // 🛟 IMMEDIATE cloud push — moves were silently lost on refresh when this
     // path only scheduled the 10s debounced cloud sync. _persistForgeNow()
     // writes localStorage + IDB synchronously AND kicks the cloud upsert

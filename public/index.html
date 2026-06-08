@@ -83783,7 +83783,26 @@ function _renderBattleImmediateImpl() {
         // releases the overlay after 2500ms so a network hiccup never
         // freezes the player on a blank result.
         const isMp = !!(App.battlePrep && App.battlePrep.multiplayer);
-        const resolved = !isMp || (typeof MatchBroadcast !== 'undefined' && MatchBroadcast.gameOverResolved);
+        let resolved = !isMp || (typeof MatchBroadcast !== 'undefined' && MatchBroadcast.gameOverResolved);
+        // ⚡ UNAMBIGUOUS ENDING → show the result NOW (no "Confirming result"
+        // wait). The server round-trip (mp_resolve_match Edge Function) can
+        // COLD-START for several seconds — that latency is only worth eating in
+        // the genuinely ambiguous case: a SIMULTANEOUS double-KO where the
+        // server must arbitrate who won. When exactly ONE side's hero is down,
+        // the winner is obvious and identical on both clients, so resolve
+        // locally and let submitMatchResult record it in the background.
+        if (isMp && !resolved) {
+          try {
+            const _units = (s && s.units) || [];
+            const _heroAlive = (owner) => _units.some(u => u && u.isHero && u.owner === owner
+              && u.alive !== false && (u.currentHp == null || u.currentHp > 0));
+            const _myHeroAlive  = _heroAlive('player');
+            const _foeHeroAlive = _heroAlive('ai');
+            // Exactly one hero down = unambiguous. Both down (or a weird state
+            // where neither is flagged dead) stays ambiguous → wait for server.
+            if (_myHeroAlive !== _foeHeroAlive) resolved = true;
+          } catch (e) {}
+        }
         if (isMp && !resolved) {
           // 🔁 SERVER POLL — instead of a hard fallback timer that blindly
           // releases the overlay, poll the matches row every 700ms until

@@ -88157,7 +88157,7 @@ function renderHandCard(c, opts) {
     else if (c.effect && c.effect.type === 'heal') defSlot = `${c.effect.amount || 0}`;
   }
   // Description text — short flavor for the parchment area. Defaults to type label if blank.
-  const descText = (c.desc && c.desc.trim()) || (c.type === 'unit' && c.stats ? `${c.stats.hp || 0} HP` : c.type.toUpperCase());
+  const descText = (c.desc && c.desc.trim()) || (c.type === 'unit' && c.stats ? `${c.stats.hp || 0} HP` : String(c.type || 'card').toUpperCase());
   // Card-art mode: when the player has uploaded card art, the IMAGE IS the entire card
   // (frame + illustration + plate + bottom-bar art baked into one PNG). We just overlay
   // the dynamic data (name, stats, cost, ATK, DEF) onto their respective regions of
@@ -88272,7 +88272,22 @@ function renderEmoteBubbles() {
 
 function renderHandStrip() {
   const s = App.state;
-  const cards = s.player.hand.map(c => renderHandCard(c, { large: false })).join('');
+  // 🛡️ Per-card isolation — a single malformed card (e.g. a custom Forge card
+  // missing its `type`/`stats`) must NEVER throw out of here, because that
+  // bubbles up through _renderBattleImmediateImpl and freezes the ENTIRE board
+  // ("nothing shows, can't move", with the turn still flipping server-side).
+  // Render each card defensively; a broken one shows a safe placeholder instead.
+  const cards = s.player.hand.map(c => {
+    try { return renderHandCard(c, { large: false }); }
+    catch (e) {
+      try { console.warn('[renderHandStrip] malformed hand card skipped:', c && c.id, e); } catch (_e) {}
+      const _nm = (c && c.name) ? escapeHtml(String(c.name)) : 'Unknown Card';
+      return `<div class="hand-card hand-card-broken" title="This card could not be rendered.">
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:0.4rem;text-align:center;color:#b59a66">
+          <div style="font-size:1.4rem">🃏</div><div style="font-size:0.7rem;margin-top:0.3rem">${_nm}</div>
+        </div></div>`;
+    }
+  }).join('');
   // End Turn button is rendered under the Battle Log in the left rail, not here.
   return `
     <div class="hand-strip">

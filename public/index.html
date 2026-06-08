@@ -95236,6 +95236,20 @@ function doAIStep() {
           let sc = 30 + threats * 18 + (s.player.kalonsRemaining || 0) * 5;
           if (!best || sc > best.score) best = { card, target: null, kind: 'kalonLock', score: sc };
         }
+      } else if (card.effect.type === 'purgeAscended') {
+        // 🌑 OBLIVION — destroys EVERY Kalon-transform + Archon on the board, BOTH
+        // sides (the AI's own included; heroes are immune). Only worth casting when
+        // the PLAYER's Ascended outweigh what the AI would sacrifice. Score the net
+        // swing (with a slight self-penalty so an even trade isn't tempting) and let
+        // the >=15 commit threshold gate it — so the AI never nukes its own board
+        // for a wash, but happily wipes a board the player has snowballed with
+        // transformed units / Archons.
+        const _ascU = (u) => !!(u && u.alive && ((typeof _isKalonUnit === 'function' && _isKalonUnit(u)) || (typeof _isArchonUnit === 'function' && _isArchonUnit(u))));
+        const _ascWt = (u) => 30 + Math.max((u.stats && u.stats.atk) || 0, (u.stats && u.stats.mag) || 0) + ((typeof _isArchonUnit === 'function' && _isArchonUnit(u)) ? 40 : 0) + (u.currentHp || 0) * 0.4;
+        const _foeAsc = s.units.filter(u => u.owner === 'player' && _ascU(u));
+        const _ownAsc = s.units.filter(u => u.owner === 'ai'     && _ascU(u));
+        let sc = _foeAsc.reduce((a, u) => a + _ascWt(u), 0) - _ownAsc.reduce((a, u) => a + _ascWt(u), 0) * 1.1;
+        if (_foeAsc.length > 0 && sc > 0 && (!best || sc > best.score)) best = { card, target: null, kind: 'purgeAscended', score: sc };
       } else if (card.persistent) {
         // ✨ Persistent enchantment — score based on how much value it generates over its lifetime.
         // A persistent spell that draws cards, buffs allies, damages enemies, or heals allies is
@@ -95360,6 +95374,18 @@ function doAIStep() {
             log: [...s.log, { msg: `🚫 Enemy ${card.name} — your Kalon awakenings sealed for ${dur} turn${dur === 1 ? '' : 's'}!`, color: 'red' }],
           };
           setAIActor(null, `🚫 Enemy seals Kalon awakenings`);
+        } else if (best.kind === 'purgeAscended') {
+          // 🌑 Destroy every Kalon + Archon on the board (both sides) through the
+          // SAME helper the player's spell uses, so on-death passives + Archon-deck
+          // returns still fire. Heroes are never Ascended, so gameOver is untouched.
+          const _ps = { ...s };
+          const _killed = (typeof _destroyAscended === 'function') ? _destroyAscended(_ps) : 0;
+          App.state = {
+            ..._ps,
+            ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) },
+            log: [...s.log, { msg: _killed ? `🌑 Enemy ${card.name} — Oblivion! ${_killed} Kalon/Archon destroyed.` : `🌑 Enemy ${card.name} — nothing to purge.`, color: 'red' }],
+          };
+          setAIActor(null, `🌑 Enemy purges the Ascended`);
         } else if (best.kind === 'persistent') {
           // ✨ AI plays a persistent enchantment — it stays on field.
           const _turnsLeft = Math.max(1, card.persistDuration || card.duration || 3);
@@ -95676,6 +95702,28 @@ function doAIStep() {
               if (_ds.type === 'fire') sc -= 45;
               else if (_ds.type === 'oil') sc -= 12;
               else if (_ds.type === 'water' && App.state.weather && App.state.weather.weatherType === 'lightningStorm') sc -= 22;
+            }
+          } catch (e) {}
+          // 🪤 TRAP AWARENESS — wary of walking a unit onto the PLAYER's trap.
+          // Scaled by how badly it'd hurt (a destroy / bounce trap is far worse
+          // than a surface paint) AND by difficulty danger-sense, but it stays a
+          // COST weighed against the attack reward — a lethal swing can still be
+          // worth springing a minor trap. Flying units that soar over ground
+          // traps (and aren't caught by an air trap) ignore them, mirroring moveUnit.
+          try {
+            const _trTile = App.state.board[dest.y] && App.state.board[dest.y][dest.x];
+            const _tr = _trTile && _trTile.trap;
+            if (_tr && _tr.owner === 'player' && _tr.card
+                && (!(typeof isEffectivelyFlying === 'function' && isEffectivelyFlying(unit)) || _tr.card.air)) {
+              const _te = _tr.card.effect || {};
+              let _pen = 30;   // baseline wariness of an unknown trap
+              if (_te.type === 'destroyUnit' && !unit.isHero)      _pen = 130 + (unit.currentHp || 0);
+              else if (_te.type === 'bounce' && !unit.isHero)      _pen = 110;
+              else if (_te.type === 'damage')                      _pen = 25 + (_te.amount || 0) * 1.5;
+              else if (_te.type === 'stun')                        _pen = 60;
+              else if (_te.type === 'status')                      _pen = 45;
+              else if (_te.type === 'summonGrave' || _te.type === 'draw' || _te.type === 'paintSurface') _pen = 35;
+              sc -= _pen * _ta;
             }
           } catch (e) {}
           if (sc > bestScore) { bestScore = sc; best = dest; }

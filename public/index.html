@@ -33046,7 +33046,13 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 // COLYSEUS_SERVER_URL is the WSS endpoint of the Fly app. Update after
 // `fly launch` picks a name — typically wss://<app>.fly.dev.
 // ============================================================================
-const USE_COLYSEUS_MP    = true;
+// ⚙️ Reverted to the PROVEN Supabase Realtime transport. The Colyseus game
+// server is a WIP and was dropping the real-time effect relay (and, in testing,
+// stranding turns / hiding moves). The Supabase alternating-authority path is
+// the mature one — every USE_COLYSEUS_MP branch has a Supabase fallback, so this
+// single flag cuts the live match transport back to it. Flip to true again only
+// once the Colyseus server reliably relays state + fx end-to-end.
+const USE_COLYSEUS_MP    = false;
 const COLYSEUS_SERVER_URL = 'wss://mythicspellbook.fly.dev';
 
 // ============================================================================
@@ -33337,17 +33343,23 @@ function _slimHeroForMp(hero) {
   // the SAME level / stats we actually have. Without it they build a level-1
   // stand-in, and the alternating-authority board adoption then drags OUR hero
   // down to level 1 too — "my hero level wasn't carried over". Tiny payload.
-  try {
-    const p = (out && hero.id && Profile.heroes) ? Profile.heroes[hero.id] : null;
-    if (p) {
-      out._mpProg = {
-        level: p.level || 1, xp: p.xp || 0,
-        statGains: p.statGains || null, evs: p.evs || null,
-        nature: p.nature || null, trait: p.trait || null,
-      };
-    }
-  } catch (e) {}
+  try { const pr = _heroProgForMp(hero.id); if (pr && out) out._mpProg = pr; } catch (e) {}
   return out;
+}
+// 📊 The player's hero progression for a multiplayer hero handoff — { level, xp,
+// statGains, evs, nature, trait }. Relayed in the deck payload (Supabase path)
+// and on _slimHeroForMp (Colyseus path) so the OPPONENT builds our hero at the
+// right level instead of a level-1 stand-in.
+function _heroProgForMp(heroId) {
+  try {
+    const p = (heroId && Profile.heroes) ? Profile.heroes[heroId] : null;
+    if (!p) return null;
+    return {
+      level: p.level || 1, xp: p.xp || 0,
+      statGains: p.statGains || null, evs: p.evs || null,
+      nature: p.nature || null, trait: p.trait || null,
+    };
+  } catch (e) { return null; }
 }
 
 /** 🔎 TEMP on-screen MP sync indicator — shows live whether THIS device is
@@ -37951,7 +37963,7 @@ async function sendFriendChallenge(opts) {
     from:    Profile.cloud.userId,
     fromName: myName,
     fromHero: { id: opts.hero.id, name: opts.hero.name, icon: opts.hero.icon },
-    fromDeck: { cards: opts.deck, heroEquipment: _heroEquipment, unitEquipment: _unitEquipment },
+    fromDeck: { cards: opts.deck, heroEquipment: _heroEquipment, unitEquipment: _unitEquipment, heroProg: (typeof _heroProgForMp === 'function') ? _heroProgForMp(opts.hero.id) : null },
     sentAt:  Date.now(),
   };
   const ok = await _lobbyBroadcast('challenge', payload);
@@ -38034,7 +38046,7 @@ async function _onChallengeAccepted(payload) {
       const eq = Profile.equipment && Profile.equipment[cardKey];
       if (eq && eq !== 'none') _unitEquipment[cardKey] = eq;
     }
-    const deck1 = { cards: out.deck, heroEquipment: _heroEquipment, unitEquipment: _unitEquipment };
+    const deck1 = { cards: out.deck, heroEquipment: _heroEquipment, unitEquipment: _unitEquipment, heroProg: (typeof _heroProgForMp === 'function') ? _heroProgForMp(out.hero.id) : null };
     const deck2 = payload.deck || { cards: [], heroEquipment: null, unitEquipment: {} };
     // Activate the match listener BEFORE the insert so the realtime
     // subscription is ready to deliver the row to us.
@@ -104503,9 +104515,15 @@ function onMultiplayerMatchFound(match) {
   // Hand off to the existing battle prep flow. battlePrep.hero is the player's
   // own hero (already chosen in deckSelect); battlePrep.opponent is set from
   // the opponent's hero id resolved via STARTER_HEROES or the catalog.
-  const oppHeroData = (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES.find(h => h.id === MultiplayerMatch.opponentHeroId))
+  let oppHeroData = (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES.find(h => h.id === MultiplayerMatch.opponentHeroId))
     || (typeof findCustomHeroCard === 'function' && findCustomHeroCard(MultiplayerMatch.opponentHeroId))
     || { id: MultiplayerMatch.opponentHeroId, name: MultiplayerMatch.opponentName, icon: '👤' };
+  // 📊 Build the opponent hero at THEIR real level/stats from the progression
+  // they relayed in their deck payload (else it's a level-1 stand-in — and the
+  // alternating-authority adoption then drags OUR hero to level 1 too). Clone so
+  // we never mutate the shared catalog hero object.
+  const _oppProg = (MultiplayerMatch.opponentDeck && MultiplayerMatch.opponentDeck.heroProg) || null;
+  oppHeroData = Object.assign({}, oppHeroData, _oppProg ? { _mpProg: _oppProg } : {});
   // App.battlePrep already has hero+deck from deckSelect — fill in the foe slot.
   if (!App.battlePrep) App.battlePrep = {};
   App.battlePrep.opponent       = oppHeroData;
@@ -113648,6 +113666,7 @@ async function startMatchmaking(opts) {
     cards: opts.deck,
     heroEquipment: _heroEquipment || null,
     unitEquipment: _unitEquipment,
+    heroProg: (typeof _heroProgForMp === 'function') ? _heroProgForMp((opts && opts.hero && opts.hero.id) || null) : null,
   } : {};
   const r = await cloudEnterMatchmaking({
     mode:      'ranked',

@@ -2165,6 +2165,14 @@
     filter: drop-shadow(0 1px 2px rgba(0,0,0,0.55));
   }
   .coin-result-note { text-align: center; color: var(--ink-dim); margin: 1rem 0; font-size: 1.05rem; }
+  /* ⏱ Coin-toss auto-start countdown — sits under the choice buttons. */
+  .coin-choice-timer {
+    text-align: center; margin-top: 1rem;
+    font-family: 'Cinzel', serif; font-size: 0.92rem; letter-spacing: 0.06em;
+    color: #9fb0c8; opacity: 0.85; min-height: 1.2em;
+    transition: color 0.2s ease;
+  }
+  .coin-choice-timer.low { color: #ff9a6b; opacity: 1; font-weight: 700; }
 
   /* On small screens, stack VS portraits vertically */
   @media (max-width: 760px) {
@@ -33574,6 +33582,7 @@ function _onColyseusMatchStart(data) {
     _bp.coinResult = null; _bp.coinCall = null; _bp.coinCaller = null;
     _bp._iAmCaller = false; _bp._coinSpinScheduled = false;
     _bp._coinAdvanceScheduled = false; _bp._coinPickBackstop = false;
+    _bp._coinChoiceDeadline = null;   // fresh 50s choice window for the new toss
   }
   MatchBroadcast.opponentId = data && Array.isArray(data.participants)
     ? data.participants.find(id => id !== myId) || null
@@ -72548,6 +72557,7 @@ function renderCoinFlip() {
         <div class="coin-buttons">
           <button class="btn-primary" id="btn-mp-first">Begin Battle →</button>
         </div>
+        <div class="coin-choice-timer" id="coin-choice-timer"></div>
       `;
     } else if (bp.playerWonFlip) {
       content = `
@@ -72558,6 +72568,7 @@ function renderCoinFlip() {
           <button class="btn-primary" id="btn-first-me">I go first</button>
           <button class="btn-secondary" id="btn-first-foe">Opponent goes first</button>
         </div>
+        <div class="coin-choice-timer" id="coin-choice-timer"></div>
       `;
     } else {
       // AI won — picks to go first (simple AI choice; reveal then start)
@@ -72569,6 +72580,7 @@ function renderCoinFlip() {
         <div class="coin-buttons">
           <button class="btn-primary" id="btn-start-battle">Begin Battle →</button>
         </div>
+        <div class="coin-choice-timer" id="coin-choice-timer"></div>
       `;
     }
   }
@@ -72638,25 +72650,58 @@ function renderCoinFlip() {
     if (bp.playerWonFlip && bp.multiplayer) {
       // Toss winner in MP — always first; opponent's client hardcodes second.
       const b = document.getElementById('btn-mp-first');
-      if (b) b.onclick = () => startBattleWithPrep(true);
+      if (b) b.onclick = () => { _clearCoinChoiceTimer(); startBattleWithPrep(true); };
     } else if (bp.playerWonFlip) {
-      document.getElementById('btn-first-me').onclick = () => startBattleWithPrep(true);
-      document.getElementById('btn-first-foe').onclick = () => startBattleWithPrep(false);
+      document.getElementById('btn-first-me').onclick = () => { _clearCoinChoiceTimer(); startBattleWithPrep(true); };
+      document.getElementById('btn-first-foe').onclick = () => { _clearCoinChoiceTimer(); startBattleWithPrep(false); };
     } else {
-      document.getElementById('btn-start-battle').onclick = () => startBattleWithPrep(false);
+      document.getElementById('btn-start-battle').onclick = () => { _clearCoinChoiceTimer(); startBattleWithPrep(false); };
     }
-    // 🪙 MP AUTO-ADVANCE — both clients enter the battle on their own timer after
-    // the reveal, so a player who never clicks "Begin Battle" can't strand the
-    // match on the coin screen (the root of the "stuck on enemy turn" hang).
-    // Guarded so it fires once; the manual button still works (whichever first —
-    // startBattleWithPrep flips App.screen so the timer no-ops if already in).
-    if (_mpCoin && !bp._coinAdvanceScheduled) {
-      bp._coinAdvanceScheduled = true;
-      setTimeout(() => {
-        if (App.screen === 'coinFlip' && App.battlePrep) startBattleWithPrep(!!App.battlePrep.playerWonFlip);
-      }, 2400);
-    }
+    // ⏱ 50-SECOND CHOICE WINDOW — give the player a generous, VISIBLE countdown
+    // to pick who goes first / hit Begin Battle. If they never click, the match
+    // auto-starts with the toss outcome (winner first), so a player who walks
+    // away can't strand the match on the coin screen. Each client runs its own
+    // timer with the same deterministic default, so multiplayer stays in sync.
+    _armCoinChoiceTimer();
   }
+}
+
+// ⏱ Coin-toss choice countdown. The deadline is set ONCE per coin-flip session
+// (stored on battlePrep) so re-renders don't reset it; the interval just paints
+// the remaining seconds and, at zero, auto-starts the battle with the toss
+// outcome (winner moves first). Fully guarded — never throws into the renderer.
+var _coinChoiceTimerId = null;
+const COIN_CHOICE_LIMIT_MS = 50000;
+function _clearCoinChoiceTimer() {
+  if (_coinChoiceTimerId) { try { clearInterval(_coinChoiceTimerId); } catch (e) {} _coinChoiceTimerId = null; }
+}
+function _armCoinChoiceTimer() {
+  const bp = App.battlePrep;
+  if (!bp) return;
+  if (!bp._coinChoiceDeadline) bp._coinChoiceDeadline = Date.now() + COIN_CHOICE_LIMIT_MS;
+  _clearCoinChoiceTimer();
+  const paint = () => {
+    try {
+      if (App.screen !== 'coinFlip' || !App.battlePrep) { _clearCoinChoiceTimer(); return; }
+      const remain = Math.max(0, Math.ceil((App.battlePrep._coinChoiceDeadline - Date.now()) / 1000));
+      const el = document.getElementById('coin-choice-timer');
+      if (el) {
+        el.textContent = remain > 0
+          ? ('⏱ Auto-starts in ' + remain + 's')
+          : '⏱ Starting…';
+        el.classList.toggle('low', remain <= 10);
+      }
+      if (remain <= 0) {
+        _clearCoinChoiceTimer();
+        if (App.screen === 'coinFlip' && App.battlePrep) {
+          // Deterministic default both clients agree on: the toss winner goes first.
+          startBattleWithPrep(!!App.battlePrep.playerWonFlip);
+        }
+      }
+    } catch (e) { _clearCoinChoiceTimer(); }
+  };
+  _coinChoiceTimerId = setInterval(paint, 250);
+  paint();
 }
 
 // 🪙 Colyseus caller picks heads/tails → relay to the opponent + advance both to
@@ -72980,6 +73025,11 @@ function startBattleWithPrep(playerGoesFirst) {
       }
     }
   } catch (e) { console.warn('[TW] pre-fight upgrade hook failed', e); }
+  // ⏱ Fresh match — clear the AFK turn-timer streak + the coin-screen countdown
+  // so neither a prior match's missed turns nor a stale coin deadline carries in.
+  App._turnTimeoutStreak = 0;
+  App._turnTimerFired = false;
+  try { _clearCoinChoiceTimer(); } catch (e) {}
   App.screen = 'battle';
   render();
   // If AI goes first, kick off the AI controller immediately
@@ -92921,6 +92971,37 @@ function onEndTurn() {
     showToast('🕓 Waiting for opponent…', 1500);
     return;
   }
+  // ⏱ TURN-TIMER FORFEIT — track consecutive 2:00 turn-timer misses. The timer
+  // sets App._turnTimerFired = true ONLY when it auto-ends the turn (the clock
+  // ran out). A "miss" is a genuinely IDLE turn — the player did nothing for the
+  // full 2 minutes — so we compare the board/hand signature against the snapshot
+  // taken at turn start. A player who acted but simply let the clock end their
+  // turn is NOT penalised; a manual end always resets the streak.
+  //   • timer-fired AND no action taken → MISS → bump the streak.
+  //   • acted, or manual end            → present → reset the streak.
+  // Two misses in a row = an AFK forfeit (handled like a concession).
+  try {
+    if (App._turnTimerFired) {
+      const _acted = (typeof _playerTurnActivitySig === 'function')
+        && _playerTurnActivitySig(App.state) !== App._turnStartSig;
+      // Don't punish a turn where the player literally had nothing to do (no
+      // affordable cards and no unit that can still move/attack).
+      const _couldNotAct = (typeof canPlayerAct === 'function') && !canPlayerAct(App.state);
+      if (_acted || _couldNotAct) {
+        App._turnTimeoutStreak = 0;
+      } else {
+        App._turnTimeoutStreak = (App._turnTimeoutStreak | 0) + 1;
+        if (App._turnTimeoutStreak >= 2 && App.state && !App.state.gameOver) {
+          _forfeitByTurnTimeout();
+          return;
+        }
+        // First idle miss — warn that one more in a row forfeits the match.
+        try { if (typeof showToast === 'function') showToast('⚠ Turn missed (1/2). Sit out one more turn in a row and you forfeit!', 4200); } catch (e) {}
+      }
+    } else {
+      App._turnTimeoutStreak = 0;
+    }
+  } catch (e) {}
   // 🌌 Safety net — if a Polycreation fusion is still waiting on a tile pick,
   // auto-place it at the first free hero-adjacent tile before the turn ends
   // so the consumed materials are never wasted.
@@ -93056,6 +93137,24 @@ function onEndTurn() {
 // re-render), and auto-ends the turn once at 0. Inert off the battle screen,
 // during the AI/opponent turn, on game-over, and while viewing a replay.
 const TURN_TIME_LIMIT_MS = 120000;
+// 🪪 Snapshot of the local player's turn activity — hand size, energy, unit count,
+// and how many of their units have moved/attacked. If this is identical at the
+// 2:00 timeout as it was at turn start, the player did NOTHING → an AFK miss.
+// Any card play, move, or attack changes it, so an active-but-slow player is safe.
+function _playerTurnActivitySig(s) {
+  try {
+    if (!s) return '';
+    const p = s.player || {};
+    let acted = 0, units = 0;
+    for (const u of (s.units || [])) {
+      if (!u || u.owner !== 'player') continue;
+      units++;
+      if (u.hasMoved) acted += 1;
+      if (u.hasAttacked) acted += 2;
+    }
+    return (p.hand || []).length + '|' + (p.energy | 0) + '|' + units + '|' + acted;
+  } catch (e) { return ''; }
+}
 function _turnTimerStep() {
   try {
     // ⏸ In-battle Settings round-trip — when the player is on the Settings
@@ -93090,6 +93189,9 @@ function _turnTimerStep() {
       App._turnTimerKey = key;
       App._turnTimerEnd = Date.now() + TURN_TIME_LIMIT_MS;
       App._turnTimerFired = false;
+      // 🪪 Snapshot the fresh-turn activity baseline so the timeout handler can
+      // tell whether the player actually did anything before the clock ran out.
+      App._turnStartSig = _playerTurnActivitySig(s);
       // 🔔 The LOCAL player's turn just began (the timer only ever arms on
       // their own turn) — play the start-turn cue and clear any stale alarm.
       stopClockRunningOut();
@@ -93116,10 +93218,40 @@ function _turnTimerStep() {
     else stopClockRunningOut();
     if (remain <= 0 && !App._turnTimerFired) {
       App._turnTimerFired = true;
-      try { if (typeof showToast === 'function') showToast('⏱ Time! Your turn ended automatically.', 2400); } catch (e) {}
+      try { if (typeof showToast === 'function') showToast('⏱ Time! Your turn ended automatically.', 2600); } catch (e) {}
+      // onEndTurn does the real miss-streak bookkeeping + forfeit + warning.
       try { onEndTurn(); } catch (e) {}
     }
   } catch (e) { /* never let the clock break the battle */ }
+}
+
+// ⏱ AFK FORFEIT — the local player let two turn timers run out back-to-back.
+// Close the match as a loss using the SAME path as a manual concession so all
+// the existing finalization (recordBattleProgress, game-over overlay, MP result
+// submit) runs unchanged. gameOver = 'ai' means the opponent is the winner.
+function _forfeitByTurnTimeout() {
+  try {
+    if (!App.state || App.state.gameOver) return;
+    App._turnTimeoutStreak = 0;          // consume the streak so it can't re-fire
+    App._turnTimerKey = null;
+    App._turnTimerFired = false;
+    try { stopClockRunningOut(); } catch (e) {}
+    App.state.concededByPlayer = true;   // tag the loss like a concession (analytics)
+    App.state._timeoutForfeit = true;
+    App.state.gameOver = 'ai';
+    App.state.log = (App.state.log || []).concat([
+      { msg: '⏱ Two turn timers missed in a row — you forfeit. Defeat recorded.', color: 'red' },
+    ]);
+    // 🌐 MULTIPLAYER — tell the opponent immediately so they get the win screen
+    // right away instead of waiting out a disconnect timer (mirrors Concede).
+    try {
+      if (App.battlePrep && App.battlePrep.multiplayer && typeof MatchBroadcast !== 'undefined' && MatchBroadcast.send) {
+        MatchBroadcast.send({ type: 'concede', winner: 'opponent' });
+      }
+    } catch (e) { try { console.warn('[timeout-forfeit] broadcast failed', e); } catch (_) {} }
+    try { if (typeof showToast === 'function') showToast('⏱ Defeated — two missed turn timers in a row.', 4600); } catch (e) {}
+    try { renderBattle(); } catch (e) {}
+  } catch (e) { try { console.warn('[timeout-forfeit] failed', e); } catch (_) {} }
 }
 
 // ============ STEP-BASED AI CONTROLLER ============

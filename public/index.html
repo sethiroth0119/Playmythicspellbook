@@ -27006,6 +27006,22 @@
   // tapping "Add to Home Screen" is the equivalent path there.
   // ============================================================================
   (function () {
+    // 🛡 GLOBAL CRASH GUARD — a single uncaught error or rejected promise (a
+    // stray async cloud/MP call, a timer callback, an event handler) used to be
+    // able to wedge the app or look like a "random crash". We log it for admins
+    // but otherwise swallow it so the game keeps running instead of dying. This
+    // does NOT reload or reset anything — it only stops one failure from
+    // cascading. (Render itself is separately wrapped; see render()/renderBattle.)
+    try {
+      window.addEventListener('error', function (ev) {
+        try { console.error('[crashguard] uncaught error:', (ev && (ev.error || ev.message)) || ev); } catch (_) {}
+        // Do not preventDefault — keep the native console trace for debugging.
+      });
+      window.addEventListener('unhandledrejection', function (ev) {
+        try { console.error('[crashguard] unhandled promise rejection:', ev && ev.reason); } catch (_) {}
+        try { ev.preventDefault(); } catch (_) {}   // swallow so it can't bubble into a hard failure
+      });
+    } catch (e) {}
     // ---------- Service Worker ----------
     if ('serviceWorker' in navigator) {
       // Defer registration until after first paint so the splash isn't
@@ -33652,13 +33668,25 @@ function initCloud() {
     // Subscribe to auth-state changes so the UI updates immediately on sign-in / out.
     Cloud.client.auth.onAuthStateChange((event, session) => {
       _applyAuthState(session, event);
+      // 🛑 RANDOM-REFRESH FIX — Supabase fires SIGNED_IN on every tab-focus and
+      // TOKEN_REFRESHED roughly hourly. We used to run a full render() on EVERY
+      // one of those, which rebuilt the current screen out from under the player
+      // (flicker / "random refresh" / wiped Forge input). Now we only repaint
+      // when the signed-in state ACTUALLY changes (login / logout / account
+      // switch). Cache refreshes below still run; they just don't force a repaint
+      // unless the auth state genuinely changed.
+      const _nowSignedIn = !!(session && session.user);
+      const _nowUid = (session && session.user && session.user.id) || null;
+      const _authChanged = (Cloud._lastAuthSignedIn !== _nowSignedIn) || (Cloud._lastAuthUid !== _nowUid);
+      Cloud._lastAuthSignedIn = _nowSignedIn;
+      Cloud._lastAuthUid = _nowUid;
       // 👥 Friends cache — refresh on sign-in so the Arcanum tile can show the
       // pending-request badge without forcing the player to open the panel.
       // Wrapped in a try/setTimeout so it never blocks the auth handler.
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         setTimeout(() => {
           try { if (typeof refreshFriendsCache === 'function') refreshFriendsCache().then(() => {
-            if (typeof render === 'function') { try { render(); } catch (e) {} }
+            if (_authChanged && typeof render === 'function') { try { render(); } catch (e) {} }
           }); } catch (e) {}
           // 🎁 Pull pending gifts and pop the claim modal so the player sees
           // "You got a gift" the moment they sign in. Only on real SIGNED_IN
@@ -33680,8 +33708,10 @@ function initCloud() {
         // different account) authoritatively restores again.
         App._forceRestoredForUser = null;
       }
-      // Re-render so the title pill / settings / coliseum reflect the new state.
-      if (typeof render === 'function') { try { render(); } catch (e) {} }
+      // Re-render so the title pill / settings / coliseum reflect the new state —
+      // but ONLY when the auth state actually changed (see RANDOM-REFRESH FIX),
+      // so an hourly token refresh / tab-focus no longer repaints the screen.
+      if (_authChanged && typeof render === 'function') { try { render(); } catch (e) {} }
       // Dispatch to subscribed listeners.
       Cloud.authListeners.forEach(fn => { try { fn(event, session); } catch (e) {} });
     });
@@ -33765,7 +33795,11 @@ function _applyAuthState(session, authEvent) {
       }
     }
     // On fresh sign-ins, pull the player's saved profile data from the cloud.
-    if (typeof cloudFetchProfile === 'function') {
+    // 🛑 Skip on TOKEN_REFRESHED — that's the automatic ~hourly token rotation,
+    // not a real login. Re-fetching the whole profile there caused a network +
+    // asset-fetch + render churn the player saw as a "random refresh". Sign-in,
+    // account-switch, and the initial persisted-session bootstrap still fetch.
+    if (authEvent !== 'TOKEN_REFRESHED' && typeof cloudFetchProfile === 'function') {
       // 🛟 Show a clearer message when the local profile is empty — this is
       // the "cleared cache / new device" recovery flow, where the cloud is
       // about to repopulate the entire account. Without this distinction
@@ -66170,7 +66204,14 @@ function smoothScreenTransition(targetScreen, opts) {
   }, duration);
 }
 
+// 🛡 Crash-guarded render — if any screen renderer throws, we log it and keep
+// the last good DOM on screen instead of white-screening / "restarting". The
+// next render() call retries cleanly. _renderImpl is the original body.
 function render() {
+  try { return _renderImpl.apply(this, arguments); }
+  catch (e) { try { console.error('[render] crashed — kept last good screen:', e); } catch (_) {} }
+}
+function _renderImpl() {
   // 💎 Splash retire — first render() means we're about to paint the real
   // UI. Fire BootSplash.done() so the loading panel fades out smoothly.
   // Idempotent: subsequent renders see the splash already gone.
@@ -82594,7 +82635,15 @@ function renderBattleNow() {
   App._renderBattlePending = false;
   _renderBattleImmediate();
 }
+// 🛡 Crash-guarded battle render — a throw here (especially via the microtask
+// debounce in renderBattle) would otherwise be an uncaught error that could
+// freeze the turn. Wrap it so the board keeps its last good frame and the next
+// render retries. _renderBattleImmediateImpl is the original body.
 function _renderBattleImmediate() {
+  try { return _renderBattleImmediateImpl(); }
+  catch (e) { try { console.error('[renderBattle] crashed — kept last good board:', e); } catch (_) {} }
+}
+function _renderBattleImmediateImpl() {
   const s = App.state;
   // 🌟 STATUS-EFFECT APPLY VFX — schedule a status diff for the NEXT frame so
   // it runs after this render's DOM has painted (accurate unit positions).

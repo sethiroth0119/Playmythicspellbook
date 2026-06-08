@@ -61919,12 +61919,25 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
     // from the CURRENT learnset — so swapping e.g. Slash → Magic Ball Shot
     // updates the move on all players' units instead of staying cached.
     _migrateTutorMoves(prof, cardData.learnset);
-    knownMoves = _mergeKnownWithTutor(cardData.learnset, level, prof.tutorMoves);
-    const _store = (owner === 'player') ? Profile.units : Profile.aiUnits;
-    _store[cardData.id] = _store[cardData.id] || prof;
-    if (!Array.isArray(prof.knownMoves) || prof.knownMoves.join('|') !== knownMoves.join('|')) {
-      _store[cardData.id].knownMoves = knownMoves.slice(0);
-      saveProfile();
+    // 🔒 If the player explicitly customised this unit's loadout — a Tutor
+    // purchase OR a level-up move swap, both of which set knownMovesAuto ===
+    // false — their saved knownMoves are the SOURCE OF TRUTH. Do NOT re-derive
+    // from the learnset (that silently wiped manual move swaps, which is the
+    // "my new move didn't save" bug). Move stats still update live because
+    // knownMoves stores ids that lookupMove() resolves against the catalog.
+    const _customLoadout = prof.knownMovesAuto === false
+      && Array.isArray(prof.knownMoves)
+      && prof.knownMoves.filter(id => id && lookupMove(id)).length > 0;
+    if (_customLoadout) {
+      knownMoves = prof.knownMoves.filter(id => id && lookupMove(id));
+    } else {
+      knownMoves = _mergeKnownWithTutor(cardData.learnset, level, prof.tutorMoves);
+      const _store = (owner === 'player') ? Profile.units : Profile.aiUnits;
+      _store[cardData.id] = _store[cardData.id] || prof;
+      if (!Array.isArray(prof.knownMoves) || prof.knownMoves.join('|') !== knownMoves.join('|')) {
+        _store[cardData.id].knownMoves = knownMoves.slice(0);
+        saveProfile();
+      }
     }
   } else {
     knownMoves = deriveDefaultKnownMoves(cardData.learnset, level);
@@ -62023,12 +62036,22 @@ const buildHero = (heroDataRaw, owner, pos, levelOverride, xpOverride) => {
     // 🔄 Same rule as units — admin learnset edits propagate to every
     // player's hero unless they've explicitly customised its moves.
     _migrateTutorMoves(prof, effectiveLearnset);
-    knownMoves = _mergeKnownWithTutor(effectiveLearnset, level, prof.tutorMoves);
-    const _store = (owner === 'player') ? Profile.heroes : Profile.aiHeroes;
-    _store[heroData.id] = _store[heroData.id] || prof;
-    if (!Array.isArray(prof.knownMoves) || prof.knownMoves.join('|') !== knownMoves.join('|')) {
-      _store[heroData.id].knownMoves = knownMoves.slice(0);
-      saveProfile();
+    // 🔒 Same rule as units — a player who explicitly customised this hero's
+    // moves (Tutor purchase or level-up swap → knownMovesAuto === false) keeps
+    // their saved loadout verbatim instead of having it re-derived/overwritten.
+    const _customLoadout = prof.knownMovesAuto === false
+      && Array.isArray(prof.knownMoves)
+      && prof.knownMoves.filter(id => id && lookupMove(id)).length > 0;
+    if (_customLoadout) {
+      knownMoves = prof.knownMoves.filter(id => id && lookupMove(id));
+    } else {
+      knownMoves = _mergeKnownWithTutor(effectiveLearnset, level, prof.tutorMoves);
+      const _store = (owner === 'player') ? Profile.heroes : Profile.aiHeroes;
+      _store[heroData.id] = _store[heroData.id] || prof;
+      if (!Array.isArray(prof.knownMoves) || prof.knownMoves.join('|') !== knownMoves.join('|')) {
+        _store[heroData.id].knownMoves = knownMoves.slice(0);
+        saveProfile();
+      }
     }
   } else {
     knownMoves = deriveDefaultKnownMoves(effectiveLearnset, level);
@@ -86442,8 +86465,11 @@ function resolvePendingLearn(pending, oldMoveId) {
     if (pending.isHero) {
       const ph = Profile.heroes[pending.profileId] = Profile.heroes[pending.profileId] || { level: 1, xp: 0, kills: 0, wins: 0, statGains: emptyGains(), evs: emptyEvs() };
       ph.knownMoves = next.slice(0);
-      // Only a TUTOR purchase is protected from future learnset changes;
-      // a normal level-up swap still defers to the admin's learnset.
+      // 🔒 The player made an EXPLICIT move choice (forgot one, learned another).
+      // Lock the loadout so the unit-build path keeps it verbatim instead of
+      // re-deriving from the learnset and wiping the swap. Applies to BOTH a
+      // level-up replace and a Tutor purchase — either way the player decided.
+      ph.knownMovesAuto = false;
       if (pending.isTutor) {
         ph.tutorMoves = Array.isArray(ph.tutorMoves) ? ph.tutorMoves : [];
         if (ph.tutorMoves.indexOf(pending.moveId) < 0) ph.tutorMoves.push(pending.moveId);
@@ -86451,6 +86477,7 @@ function resolvePendingLearn(pending, oldMoveId) {
     } else {
       const pu = Profile.units[pending.profileId] = Profile.units[pending.profileId] || { level: 1, xp: 0, kills: 0, fielded: 0, statGains: emptyGains(), evs: emptyEvs() };
       pu.knownMoves = next.slice(0);
+      pu.knownMovesAuto = false;   // 🔒 explicit player choice — keep it (see above)
       if (pending.isTutor) {
         pu.tutorMoves = Array.isArray(pu.tutorMoves) ? pu.tutorMoves : [];
         if (pu.tutorMoves.indexOf(pending.moveId) < 0) pu.tutorMoves.push(pending.moveId);

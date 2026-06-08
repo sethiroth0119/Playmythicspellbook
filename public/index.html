@@ -6329,6 +6329,32 @@
     10%  { opacity: 1; }
     100% { opacity: 0; }
   }
+  /* 🜂✦ ARCHON SUMMON GLYPH — a spinning arcane summoning circle. Scoped to the
+     Archon ritual only (.archon-cine) so Polycreation keeps its own rings. We
+     hide the plain poly rings + rune ring and let this detailed glyph carry the
+     visual. The outer assembly spins one way; the core sparkle counter-spins +
+     pulses for depth. */
+  .archon-cine .poly-cine-ring,
+  .archon-cine .poly-cine-rune-ring { display: none; }
+  .archon-glyph-svg {
+    position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+    overflow: visible; pointer-events: none;
+    filter: drop-shadow(0 0 22px rgba(150,90,240,0.65)) drop-shadow(0 0 9px rgba(210,180,255,0.85));
+  }
+  .archon-glyph-svg .ag-rot {
+    transform-box: fill-box; transform-origin: center;
+    animation: ag-spin 16s linear infinite;
+  }
+  .archon-glyph-svg .ag-core-rot {
+    transform-box: fill-box; transform-origin: center;
+    animation: ag-spin-rev 9s linear infinite, ag-core-pulse 2.6s ease-in-out infinite;
+  }
+  @keyframes ag-spin     { to { transform: rotate(360deg); } }
+  @keyframes ag-spin-rev { to { transform: rotate(-360deg); } }
+  @keyframes ag-core-pulse { 0%, 100% { opacity: 0.82; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .archon-glyph-svg .ag-rot, .archon-glyph-svg .ag-core-rot { animation: none; }
+  }
 
   .counter-prompt-backdrop {
     position: fixed; inset: 0;
@@ -85644,6 +85670,96 @@ function bindArchonSummonOverlay() {
 // 🜂 Archon summon cinematic — a sigil-ring burst with the Creator glyph and the
 // Archon's name. Driven by App.ui.archonCine.phase (1→4). Reuses the poly-cine
 // styles so it shares the Polycreation VFX polish.
+// 🜂✦ Spinning arcane summoning circle for the Archon ritual — a crisp inline
+// SVG (purple double ring + runic band, 8-point compass star, hexagram, node
+// circles, glowing starburst core). Vector so it stays sharp at any scale and
+// spins smoothly. The outer assembly + core counter-rotate (see .ag-rot /
+// .ag-core-rot CSS). Built once per render; geometry computed with trig.
+function _archonGlyphSvg() {
+  const cx = 110, cy = 110;
+  const P = (ang, r) => {
+    const a = (ang - 90) * Math.PI / 180;
+    return [+(cx + r * Math.cos(a)).toFixed(1), +(cy + r * Math.sin(a)).toFixed(1)];
+  };
+  // Runic glyph band, each rune rotated tangentially around the ring.
+  const _runes = ['☉','☽','✶','✦','⌬','☸','✧','⚛','✷','⌖','◈','✺','♆','⟁','✸','❂'];
+  let band = '';
+  for (let i = 0; i < _runes.length; i++) {
+    const ang = i * 360 / _runes.length;
+    const [x, y] = P(ang, 89);
+    band += `<text x="${x}" y="${y}" transform="rotate(${ang.toFixed(1)} ${x} ${y})" font-size="9.5" fill="#caa6ff" stroke="none" text-anchor="middle" dominant-baseline="middle" opacity="0.92">${_runes[i]}</text>`;
+  }
+  // Fine tick marks just inside the band.
+  let ticks = '';
+  for (let i = 0; i < 72; i++) {
+    const ang = i * 5;
+    const [x1, y1] = P(ang, 80), [x2, y2] = P(ang, 83.5);
+    ticks += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke-width="0.7" opacity="0.5"/>`;
+  }
+  // 8-point compass: 4 long diagonal rays, 4 cardinal kite-diamonds, spokes.
+  let star = '';
+  [45, 135, 225, 315].forEach(ang => {
+    const [x1, y1] = P(ang, 56), [x2, y2] = P(ang, 134);
+    star += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke-width="1" opacity="0.85"/>`;
+  });
+  [0, 90, 180, 270].forEach(ang => {
+    const t = P(ang, 80), b = P(ang, 50), l = P(ang - 7, 63), r = P(ang + 7, 63);
+    star += `<polygon points="${t[0]},${t[1]} ${r[0]},${r[1]} ${b[0]},${b[1]} ${l[0]},${l[1]}" stroke-width="1" fill="rgba(150,110,235,0.22)"/>`;
+    const [sx, sy] = P(ang, 0), [ex, ey] = P(ang, 80);
+    star += `<line x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" stroke-width="0.8" opacity="0.55"/>`;
+  });
+  // Hexagram (two interlocking triangles).
+  const tri = (a0) => {
+    const a = P(a0, 60), b = P(a0 + 120, 60), c = P(a0 + 240, 60);
+    return `<polygon points="${a[0]},${a[1]} ${b[0]},${b[1]} ${c[0]},${c[1]}" stroke-width="1" opacity="0.8"/>`;
+  };
+  const hex = tri(0) + tri(60);
+  // Six node circles on a hexagon.
+  let nodes = '';
+  for (let i = 0; i < 6; i++) {
+    const [x, y] = P(i * 60 + 30, 50);
+    nodes += `<circle cx="${x}" cy="${y}" r="6" stroke-width="1.4" fill="rgba(22,11,42,0.85)"/>`
+          +  `<circle cx="${x}" cy="${y}" r="2" stroke="none" fill="#dcc6ff"/>`;
+  }
+  // Center starburst (8 rays, long+short alternating).
+  let coreRays = '';
+  for (let i = 0; i < 8; i++) {
+    const [x, y] = P(i * 45, i % 2 === 0 ? 26 : 15);
+    coreRays += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="#f1e6ff" stroke-width="${i % 2 === 0 ? 2 : 1}" opacity="0.95"/>`;
+  }
+  return `
+    <svg class="archon-glyph-svg" viewBox="0 0 220 220" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <filter id="ag-glow" x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="2.1" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <radialGradient id="ag-core" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+          <stop offset="36%" stop-color="#caa6ff" stop-opacity="0.55"/>
+          <stop offset="100%" stop-color="#3a1d6e" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <g class="ag-rot" filter="url(#ag-glow)" stroke="#c6a2ff" fill="none">
+        <circle cx="110" cy="110" r="104" stroke-width="1.2"/>
+        <circle cx="110" cy="110" r="96" stroke-width="2.6" opacity="0.95"/>
+        <circle cx="110" cy="110" r="80" stroke-width="1"/>
+        ${ticks}
+        ${band}
+        ${star}
+        ${hex}
+        <circle cx="110" cy="110" r="60" stroke-width="0.9"/>
+        <circle cx="110" cy="110" r="44" stroke-width="0.9"/>
+        ${nodes}
+      </g>
+      <g class="ag-core-rot">
+        <circle cx="110" cy="110" r="34" fill="url(#ag-core)" stroke="none"/>
+        ${coreRays}
+        <circle cx="110" cy="110" r="3" fill="#ffffff" stroke="none"/>
+      </g>
+    </svg>`;
+}
+
 function renderArchonSummonCinematic() {
   const cine = App.ui && App.ui.archonCine;
   if (!cine) return '';
@@ -85692,7 +85808,7 @@ function renderArchonSummonCinematic() {
     return `<span>${escapeHtml(cand.archonIcon || '🜂')}</span>`;
   })();
   return `
-    <div class="poly-cine-backdrop poly-cine-phase-${phase}" aria-hidden="true" style="--archon-tint:#ffd86b">
+    <div class="poly-cine-backdrop archon-cine poly-cine-phase-${phase}" aria-hidden="true" style="--archon-tint:#ffd86b">
       <div class="poly-cine-vignette"></div>
       ${showName ? '<div class="archon-cine-pillar"></div>' : ''}
       <div class="poly-cine-stage">
@@ -85701,6 +85817,7 @@ function renderArchonSummonCinematic() {
           <div class="poly-cine-ring poly-cine-ring-mid"></div>
           <div class="poly-cine-ring poly-cine-ring-inner"></div>
           <div class="poly-cine-rune-ring">${runeRing}</div>
+          ${_archonGlyphSvg()}
           <div class="poly-cine-energy"></div>
           <div class="poly-cine-shockwave"></div>
         </div>

@@ -48383,6 +48383,32 @@ function campBrokerTruce() {
   showToast(`🤝 Truce brokered with ${r.name} (−${cost} 🔥). Raids paused 3 days; threat eased.`, 4200);
   return true;
 }
+// 🛡 RAID DEFENSE — Profile.campDefense (0..10) damps every raid (_executeRaid:
+// defMul = 1/(1+def*0.20), so Lv10 cuts ~67% of losses). Fortifying actively
+// spends Ammo + Metal to raise it, scaling per level, and shaves a little rival
+// threat. This is the Ammo/Metal sink that turns "Raider threat HIGH" into a
+// thing you actually invest against.
+const CAMP_DEFENSE_MAX = 10;
+function _campFortifyCost(level) {
+  const lv = Math.max(0, level | 0);
+  return { ammo: 30 + lv * 20, metal: 15 + lv * 12 };
+}
+function campFortify() {
+  const lv = Math.max(0, Profile.campDefense | 0);
+  if (lv >= CAMP_DEFENSE_MAX) { showToast('🛡 Defenses already at maximum (Lv ' + CAMP_DEFENSE_MAX + ').'); return false; }
+  const cost = _campFortifyCost(lv);
+  if (typeof canAffordResources === 'function' && !canAffordResources(cost)) {
+    showToast(`Need ${cost.ammo} 🔫 Ammo + ${cost.metal} ⛓ Metal to fortify.`, 3400);
+    return false;
+  }
+  if (typeof spendResources === 'function') spendResources(cost);
+  Profile.campDefense = Math.min(CAMP_DEFENSE_MAX, lv + 1);
+  // A harder camp looks less worth raiding — ease the rival's threat a touch.
+  try { const r = _campRival(); if (r) r.threat = Math.max(0, (r.threat || 0) - 4); } catch (e) {}
+  try { saveProfile(); saveCamp(); } catch (e) {}
+  showToast(`🔧 Defenses reinforced to Lv ${Profile.campDefense}/${CAMP_DEFENSE_MAX} — raiders will bleed for it.`, 3600);
+  return true;
+}
 // 🏴‍☠️ Phase-4 daily meta resolve (once per real day on Camp open):
 // rival-faction threat escalation, hidden camp invasions, and bonded
 // loyalty / grief events. Returns cinematic debrief entries.
@@ -98800,6 +98826,12 @@ function renderCamp() {
         const truced = (typeof _campTruceActive === 'function') && _campTruceActive();
         const truceLeft = truced ? Math.ceil(((rv.truceUntil || 0) - Date.now()) / 3600000) : 0;
         const tcost = Math.max(60, Math.min(600, Math.round(thr * 4)));
+        // 🛡 Raid defenses — current level + a Fortify button (Ammo + Metal sink).
+        const _def = Math.max(0, Profile.campDefense | 0);
+        const _defCap = (typeof CAMP_DEFENSE_MAX === 'number') ? CAMP_DEFENSE_MAX : 10;
+        const _dmgCut = Math.round((1 - 1 / (1 + _def * 0.20)) * 100);   // % of raid losses damped
+        const _fcost = (typeof _campFortifyCost === 'function') ? _campFortifyCost(_def) : { ammo: 30, metal: 15 };
+        const _fAff = (typeof canAffordResources !== 'function') || canAffordResources(_fcost);
         return `<div style="display:flex;flex-wrap:wrap;gap:0.6rem 1.4rem;align-items:center;background:linear-gradient(90deg,#0a0d13,#0e1118);border:1px solid #243042;border-left:4px solid ${truced ? '#5fae7a' : band};border-radius:6px;padding:0.7rem 1rem;margin-bottom:1.2rem;font-family:'Cinzel',serif">
           <span style="color:#7fd6ff;letter-spacing:0.12em;font-size:0.8rem">▣ CAMP STATUS</span>
           <span style="flex:1;min-width:220px">
@@ -98808,6 +98840,10 @@ function renderCamp() {
             <span style="color:${band};font-size:0.82rem">${thr}%</span>
           </span>
           <span style="color:#9ad17a;font-size:0.8rem" title="Notoriety — bloodying them slows their escalation">⚔️ Rep ${rep}</span>
+          <span style="color:#9fc4ff;font-size:0.8rem" title="Camp Defenses — each level damps raid losses (currently −${_dmgCut}% stolen)">🛡 Def ${_def}/${_defCap}</span>
+          ${_def < _defCap
+            ? `<button class="btn-mini" data-fortify="1" ${_fAff ? '' : 'disabled'} title="Spend ${_fcost.ammo} 🔫 Ammo + ${_fcost.metal} ⛓ Metal to reinforce defenses (cuts raid losses)" style="border-color:#7fb0ff55;color:${_fAff ? '#9fc4ff' : '#5a6a82'}">🔧 Fortify (${_fcost.ammo}🔫 ${_fcost.metal}⛓)</button>`
+            : `<span style="color:#8fd6ff;font-size:0.8rem">🛡 MAX</span>`}
           ${truced
             ? `<span style="color:#5fae7a;font-size:0.8rem">🤝 Truce — ${truceLeft}h left</span>`
             : `<button class="btn-mini" data-truce="1" title="Pay ${tcost} 🔥 — pause raids 3 days, ease threat" style="border-color:#5fae7a55;color:#9ad17a">🤝 Broker Truce (${tcost} 🔥)</button>`}
@@ -99058,6 +99094,10 @@ function renderCamp() {
   });
   document.querySelectorAll('[data-truce]').forEach(el => {
     el.onclick = () => { if (typeof campBrokerTruce === 'function' && campBrokerTruce()) render(); };
+  });
+  // 🛡 Fortify camp defenses (spend Ammo + Metal → +1 raid defense).
+  document.querySelectorAll('[data-fortify]').forEach(el => {
+    el.onclick = () => { if (!el.disabled && typeof campFortify === 'function' && campFortify()) render(); };
   });
   // 🖼️ Admin: per-facility backdrop image upload.
   document.querySelectorAll('[data-campart]').forEach(btn => {

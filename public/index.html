@@ -50330,6 +50330,105 @@ if (typeof window !== 'undefined') {
   window.addEventListener('online', () => { _cloudRetryAttempt = 0; _saveHeartbeat(); });
 }
 
+// ============================================================================
+// 🧠 MEMORY-PRESSURE WATCHDOG — prevent the browser "Out of Memory" tab crash.
+// ----------------------------------------------------------------------------
+// A long, art-heavy session (lots of base64 card art + sprites resident in
+// memory, plus per-action MP snapshot churn) can grow the JS heap until the
+// browser hard-kills the tab ("This page is having a problem · Out of Memory").
+// We can't always pin the exact leak, but we CAN watch heap usage (Chromium/
+// Edge expose performance.memory) and shed load BEFORE the crash:
+//   • >78% → soft sweep: trim battle log + transient FX nodes + dedupe maps.
+//   • >86% → shed graphics: drop to Low quality + stop the ambient iso canvas.
+//   • >93% → force-save + show a one-time "refresh to avoid a crash" banner.
+// Each tier fires once per escalation and re-arms only after memory recovers,
+// so it never spams. No-ops on browsers without performance.memory.
+function _memHeapRatio() {
+  try {
+    const m = (typeof performance !== 'undefined') && performance.memory;
+    if (!m || !m.jsHeapSizeLimit) return null;
+    return m.usedJSHeapSize / m.jsHeapSizeLimit;
+  } catch (e) { return null; }
+}
+function _memSoftSweep() {
+  try {
+    if (App && App.state && Array.isArray(App.state.log) && App.state.log.length > 160) {
+      App.state.log = App.state.log.slice(-160);
+    }
+    try { if (typeof Juice !== 'undefined') Juice._eventFeedKeys = {}; } catch (e) {}
+    try {
+      const feed = document.getElementById('battle-event-feed');
+      if (feed) while (feed.firstChild) feed.removeChild(feed.firstChild);
+    } catch (e) {}
+    // Sweep leftover transient FX nodes that should have auto-removed already.
+    try {
+      document.querySelectorAll('.juice-float,.dmg-float,.status-pop,.kalon-local-fx,.bevt-chip.bevt-out')
+        .forEach(el => { try { el.remove(); } catch (e) {} });
+    } catch (e) {}
+  } catch (e) {}
+}
+function _memShedGraphics() {
+  try {
+    const st = (typeof getSettings === 'function') ? getSettings() : (typeof Profile !== 'undefined' && Profile.settings);
+    if (st && st.gfxQuality !== 'low') {
+      st.gfxQuality = 'low';
+      try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+    }
+    try { if (App && App.ui) App.ui.isoBoard = false; } catch (e) {}
+    try { if (typeof _isoStop === 'function') _isoStop(); } catch (e) {}
+    try { if (App && App.screen === 'battle' && typeof renderBattle === 'function') renderBattle(); } catch (e) {}
+  } catch (e) {}
+}
+function _memCriticalBanner() {
+  try {
+    if (document.getElementById('mem-critical-banner')) return;
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+    try { if (typeof _flushCloudSyncNow === 'function') _flushCloudSyncNow(); } catch (e) {}
+    const bar = document.createElement('div');
+    bar.id = 'mem-critical-banner';
+    bar.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483647;'
+      + 'background:linear-gradient(180deg,#2a1410,#170a07);border:1px solid #cc2a3a;color:#ffd9b0;'
+      + 'padding:12px 16px;border-radius:12px;font-family:"Cinzel",serif;font-size:0.9rem;max-width:92vw;'
+      + 'box-shadow:0 10px 30px rgba(0,0,0,0.6),0 0 16px rgba(204,42,58,0.4);display:flex;gap:12px;align-items:center';
+    bar.innerHTML = '<span style="font-size:1.3rem">⚠</span>'
+      + '<span>This tab is low on memory. Your progress is saved — refresh to keep things running smoothly.</span>'
+      + '<button id="mem-refresh-btn" style="cursor:pointer;background:#cc2a3a;color:#fff;border:0;border-radius:8px;padding:7px 12px;font-weight:700">Refresh</button>'
+      + '<button id="mem-dismiss-btn" style="cursor:pointer;background:transparent;color:#ffd9b0;border:1px solid rgba(255,217,176,0.4);border-radius:8px;padding:7px 10px">Dismiss</button>';
+    document.body.appendChild(bar);
+    const rb = document.getElementById('mem-refresh-btn');
+    if (rb) rb.onclick = () => { try { location.reload(); } catch (e) {} };
+    const db = document.getElementById('mem-dismiss-btn');
+    if (db) db.onclick = () => { try { bar.remove(); } catch (e) {} };
+  } catch (e) {}
+}
+function _startMemoryWatchdog() {
+  if (typeof window === 'undefined' || window._memWatchdog) return;
+  if (_memHeapRatio() == null) return; // browser doesn't expose heap stats — nothing to watch
+  const tier = { soft: false, gfx: false, crit: false };
+  let ticks = 0;
+  window._memWatchdog = setInterval(() => {
+    const r = _memHeapRatio();
+    if (r == null) return;
+    // Heap trail every ~60s so a real leak can be confirmed from the numbers.
+    if ((ticks++ % 5) === 0) {
+      try {
+        const m = performance.memory;
+        console.log('[mem] heap ' + Math.round(m.usedJSHeapSize / 1048576) + 'MB / '
+          + Math.round(m.jsHeapSizeLimit / 1048576) + 'MB (' + Math.round(r * 100) + '%)');
+      } catch (e) {}
+    }
+    if (r > 0.78 && !tier.soft) { tier.soft = true; _memSoftSweep();    try { console.warn('[mem] soft sweep at ' + Math.round(r*100) + '%'); } catch (e) {} }
+    if (r > 0.86 && !tier.gfx)  { tier.gfx  = true; _memShedGraphics(); try { console.warn('[mem] shed graphics at ' + Math.round(r*100) + '%'); } catch (e) {} }
+    if (r > 0.93 && !tier.crit) { tier.crit = true; _memCriticalBanner();try { console.warn('[mem] CRITICAL at ' + Math.round(r*100) + '%'); } catch (e) {} }
+    // Re-arm tiers once memory recovers, so a transient spike doesn't disable
+    // a tier for the rest of the session.
+    if (r < 0.70) tier.soft = false;
+    if (r < 0.80) tier.gfx  = false;
+    if (r < 0.88) tier.crit = false;
+  }, 12000);
+}
+try { _startMemoryWatchdog(); } catch (e) {}
+
 // 💾 Convenience wrapper — `saveProfile() + saveForge()` with labeled warns.
 //    Replaces the boilerplate pattern that appears 60+ times in this codebase:
 //        try { saveProfile && saveProfile(); } catch (e) {}

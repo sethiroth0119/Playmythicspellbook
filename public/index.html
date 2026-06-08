@@ -33361,6 +33361,26 @@ function _heroProgForMp(heroId) {
     };
   } catch (e) { return null; }
 }
+// 🦸 Resolve the player's OWN full hero definition (with stats/hp) for a MP
+// handoff. The matchmaking row only stores a hero ID; a CUSTOM hero the opponent
+// doesn't have in their catalog would otherwise build with NO stats → null/null
+// HP and a desynced board. We relay the whole (art-stripped) def via the deck
+// payload so the opponent builds the REAL hero.
+function _ownHeroDefForMp(heroId) {
+  try {
+    if (App.battlePrep && App.battlePrep.hero && App.battlePrep.hero.id === heroId
+        && App.battlePrep.hero.stats) return App.battlePrep.hero;
+    return (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES.find(h => h && h.id === heroId))
+        || (typeof findCustomHeroCard === 'function' && findCustomHeroCard(heroId))
+        || null;
+  } catch (e) { return null; }
+}
+function _heroDataForMp(heroId) {
+  try {
+    const def = _ownHeroDefForMp(heroId);
+    return (def && typeof _slimHeroForMp === 'function') ? _slimHeroForMp(def) : null;
+  } catch (e) { return null; }
+}
 
 /** 🔎 TEMP on-screen MP sync indicator — shows live whether THIS device is
  *  sending board snapshots (↑) and receiving the opponent's (↓), so a single
@@ -37963,7 +37983,7 @@ async function sendFriendChallenge(opts) {
     from:    Profile.cloud.userId,
     fromName: myName,
     fromHero: { id: opts.hero.id, name: opts.hero.name, icon: opts.hero.icon },
-    fromDeck: { cards: opts.deck, heroEquipment: _heroEquipment, unitEquipment: _unitEquipment, heroProg: (typeof _heroProgForMp === 'function') ? _heroProgForMp(opts.hero.id) : null },
+    fromDeck: { cards: opts.deck, heroEquipment: _heroEquipment, unitEquipment: _unitEquipment, heroProg: (typeof _heroProgForMp === 'function') ? _heroProgForMp(opts.hero.id) : null, heroData: (typeof _heroDataForMp === 'function') ? _heroDataForMp(opts.hero.id) : null },
     sentAt:  Date.now(),
   };
   const ok = await _lobbyBroadcast('challenge', payload);
@@ -38046,7 +38066,7 @@ async function _onChallengeAccepted(payload) {
       const eq = Profile.equipment && Profile.equipment[cardKey];
       if (eq && eq !== 'none') _unitEquipment[cardKey] = eq;
     }
-    const deck1 = { cards: out.deck, heroEquipment: _heroEquipment, unitEquipment: _unitEquipment, heroProg: (typeof _heroProgForMp === 'function') ? _heroProgForMp(out.hero.id) : null };
+    const deck1 = { cards: out.deck, heroEquipment: _heroEquipment, unitEquipment: _unitEquipment, heroProg: (typeof _heroProgForMp === 'function') ? _heroProgForMp(out.hero.id) : null, heroData: (typeof _heroDataForMp === 'function') ? _heroDataForMp(out.hero.id) : null };
     const deck2 = payload.deck || { cards: [], heroEquipment: null, unitEquipment: {} };
     // Activate the match listener BEFORE the insert so the realtime
     // subscription is ready to deliver the row to us.
@@ -104515,15 +104535,21 @@ function onMultiplayerMatchFound(match) {
   // Hand off to the existing battle prep flow. battlePrep.hero is the player's
   // own hero (already chosen in deckSelect); battlePrep.opponent is set from
   // the opponent's hero id resolved via STARTER_HEROES or the catalog.
-  let oppHeroData = (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES.find(h => h.id === MultiplayerMatch.opponentHeroId))
-    || (typeof findCustomHeroCard === 'function' && findCustomHeroCard(MultiplayerMatch.opponentHeroId))
-    || { id: MultiplayerMatch.opponentHeroId, name: MultiplayerMatch.opponentName, icon: '👤' };
-  // 📊 Build the opponent hero at THEIR real level/stats from the progression
-  // they relayed in their deck payload (else it's a level-1 stand-in — and the
-  // alternating-authority adoption then drags OUR hero to level 1 too). Clone so
-  // we never mutate the shared catalog hero object.
+  // 🦸 PREFER the FULL hero definition the opponent relayed (stats + _mpProg) —
+  // this is what stops a CUSTOM opponent hero (not in our catalog) from building
+  // with null/null HP and desyncing the board. Fall back to our catalog by id,
+  // then to a stub, stamping the relayed progression if we only got the id.
+  const _relayedHero = (MultiplayerMatch.opponentDeck && MultiplayerMatch.opponentDeck.heroData) || null;
   const _oppProg = (MultiplayerMatch.opponentDeck && MultiplayerMatch.opponentDeck.heroProg) || null;
-  oppHeroData = Object.assign({}, oppHeroData, _oppProg ? { _mpProg: _oppProg } : {});
+  let oppHeroData;
+  if (_relayedHero && _relayedHero.stats) {
+    oppHeroData = Object.assign({}, _relayedHero, (_relayedHero._mpProg || _oppProg) ? { _mpProg: _relayedHero._mpProg || _oppProg } : {});
+  } else {
+    const _catalog = (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES.find(h => h.id === MultiplayerMatch.opponentHeroId))
+      || (typeof findCustomHeroCard === 'function' && findCustomHeroCard(MultiplayerMatch.opponentHeroId))
+      || { id: MultiplayerMatch.opponentHeroId, name: MultiplayerMatch.opponentName, icon: '👤' };
+    oppHeroData = Object.assign({}, _catalog, _oppProg ? { _mpProg: _oppProg } : {});
+  }
   // App.battlePrep already has hero+deck from deckSelect — fill in the foe slot.
   if (!App.battlePrep) App.battlePrep = {};
   App.battlePrep.opponent       = oppHeroData;
@@ -113667,6 +113693,7 @@ async function startMatchmaking(opts) {
     heroEquipment: _heroEquipment || null,
     unitEquipment: _unitEquipment,
     heroProg: (typeof _heroProgForMp === 'function') ? _heroProgForMp((opts && opts.hero && opts.hero.id) || null) : null,
+    heroData: (typeof _heroDataForMp === 'function') ? _heroDataForMp((opts && opts.hero && opts.hero.id) || null) : null,
   } : {};
   const r = await cloudEnterMatchmaking({
     mode:      'ranked',

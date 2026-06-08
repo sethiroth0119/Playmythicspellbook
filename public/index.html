@@ -51342,7 +51342,12 @@ function cloneStateLight(state) {
     gameOver: state.gameOver,
     mods: state.mods,
     comboHits: state.comboHits,
-    log: state.log,
+    // 🪶 Only a short log TAIL per snapshot. cloneStateLight is called for EVERY
+    // replay frame, and snapshots are sequential, so cloning the full (up to
+    // 400-entry) log into each of up to 400 snapshots stored the log ~400× over —
+    // a top replay-memory sink on marathon matches. The recent tail is all the
+    // replay viewer shows as "what just happened" context; log is display-only.
+    log: (Array.isArray(state.log) ? state.log.slice(-25) : state.log),
     // Just energy and counts for hands/decks — full card lists balloon storage.
     player: state.player ? {
       energy: state.player.energy, maxEnergy: state.player.maxEnergy,
@@ -116743,6 +116748,13 @@ function _serializeBattleStateForBroadcast(state) {
     };
     if (stripped) { _slimZones(stripped.player); _slimZones(stripped.ai); }
   } catch (e) { /* never let slimming break a broadcast */ }
+  // 🪶 LOG TAIL — the receiver rebuilds its battle log from the per-broadcast
+  // `newLog` delta (see _onRemoteStateArrived: it APPENDS newLog to its OWN log
+  // and never adopts the snapshot's log), so the snapshot only needs a short tail
+  // for an initial-join / resync view. Shipping the full up-to-400-entry log in
+  // EVERY broadcast was ~40–80KB of pure churn per action. Log is display-only —
+  // trimming it can never affect game sync.
+  try { if (stripped && Array.isArray(stripped.log) && stripped.log.length > 50) stripped.log = stripped.log.slice(-50); } catch (e) {}
   return stripped;
 }
 

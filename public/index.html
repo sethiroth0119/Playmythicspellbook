@@ -117619,6 +117619,15 @@ function _onRemoteStateArrived(payload) {
   // SECOND player's hero, which would otherwise stay an emoji on the first
   // player's screen until the second player's first turn-broadcast.
   try { if (typeof _mpRelayUnitVisuals === 'function') _mpRelayUnitVisuals(); } catch (e) {}
+  // 🏁 RESULT LOCK — once THIS client has a DECIDED game-over, the match is over
+  // for us. Ignore further opponent STATE broadcasts so their continued play (if
+  // they hadn't received our game-over yet) can't FLIP our result — the "I won,
+  // then it said she won" bug, where a late opponent snapshot was adopted
+  // wholesale (including its swapped gameOver) and overwrote our victory. The
+  // authoritative verdict still arrives via the dedicated 'gameover' event + the
+  // matches.winner_id postgres listener (both set the correct result directly),
+  // so a genuine server correction still applies.
+  if (App.state && App.state.gameOver) return;
   // 📢 Surface opponent action feedback by diffing current state vs incoming.
   try {
     if (App.state && typeof _surfaceOpponentDeltaFeedback === 'function') {
@@ -117652,6 +117661,27 @@ function _onRemoteStateArrived(payload) {
     if (Array.isArray(_myPrev.log)) swapped.log = _myPrev.log;
   }
   App.state = swapped;
+  // 🏁 FINALITY ON ADOPT — if the synced board shows a hero down, END the match
+  // locally so the loser can't keep playing past their loss (the other half of
+  // the "opponent kept playing then won" bug). Decide from the board when the
+  // sender's gameOver field didn't carry, then submit so BOTH clients lock the
+  // SAME server-authoritative winner_id (the single-writer guard makes the
+  // duplicate harmless).
+  try {
+    if (_isMp && App.state && Array.isArray(App.state.units)) {
+      const _heroDown = (own) => App.state.units.some(u => u && u.isHero && u.owner === own
+        && (u.alive === false || (u.currentHp != null && u.currentHp <= 0)));
+      if (!App.state.gameOver) {
+        if (_heroDown('player')) App.state.gameOver = 'ai';
+        else if (_heroDown('ai')) App.state.gameOver = 'player';
+      }
+      if (App.state.gameOver && !MatchBroadcast.gameOverResolved
+          && !(typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP)) {
+        const _wid = App.state.gameOver === 'player' ? MatchBroadcast.myUserId : (MatchBroadcast.opponentId || null);
+        if (_wid && typeof submitMatchResult === 'function') { try { submitMatchResult(_wid, App.state); } catch (e) {} }
+      }
+    }
+  } catch (e) {}
   // 📜 BATTLE LOG SYNC — prefer the sender's ACTUAL new log lines (the full
   // play-by-play: card flavor, effect lines, attack lines), re-worded for our
   // view, so the watcher sees EVERYTHING the active player did. Falls back to the

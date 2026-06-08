@@ -50457,7 +50457,13 @@ function getSettings() {
 // its strategy. "normal" preserves the current behavior; "easy" gives new
 // players a comfortable on-ramp; "hard" rewards veteran players.
 function getAIDifficulty() {
-  const d = (getSettings().aiDifficulty || 'normal').toLowerCase();
+  let d = (getSettings().aiDifficulty || 'normal').toLowerCase();
+  // The in-battle difficulty selector was retired — every player should face a
+  // sharp opponent. So we transparently PROMOTE the old default ('normal') and
+  // any unknown value to the strong 'hard' profile. 'easy' stays a gentle
+  // on-ramp (tutorials / low-risk campaign nodes that explicitly ask for it);
+  // 'brutal' is the ceiling for veteran / high-risk content.
+  if (d !== 'easy' && d !== 'brutal') d = 'hard';
   if (d === 'easy') return {
     name: 'easy',
     finishBlowMul: 0.55,    // less aggressive about KO'ing
@@ -50466,24 +50472,29 @@ function getAIDifficulty() {
     kalonReadiness: 0.30,   // hesitates to transform
     cardValueMul: 0.75,     // misvalues good cards more often
     randomness: 0.25,       // 25% chance to pick a slightly worse option
+    aggression: 0.7,        // hangs back more
   };
-  if (d === 'hard') return {
-    name: 'hard',
-    finishBlowMul: 1.25,
-    heroFocusMul: 1.35,
-    threatAwareness: 1.25,
-    kalonReadiness: 1.20,
-    cardValueMul: 1.10,
-    randomness: 0,           // never deliberately makes a worse choice
+  if (d === 'brutal') return {
+    name: 'brutal',
+    finishBlowMul: 1.7,     // pounces on every KO
+    heroFocusMul: 1.85,     // relentlessly hunts the player hero
+    threatAwareness: 1.75,  // near-perfect danger reads → great retreats/positioning
+    kalonReadiness: 2.0,    // ascends / summons Archons the instant it's worthwhile
+    cardValueMul: 1.25,     // squeezes maximum value out of its hand
+    randomness: 0,          // never deliberately makes a worse choice
+    aggression: 1.3,        // presses tempo hard
   };
+  // 'hard' — the live default everyone faces now. A noticeable step up from the
+  // old all-1.0 'normal' baseline across every wired heuristic.
   return {
-    name: 'normal',
-    finishBlowMul: 1.0,
-    heroFocusMul: 1.0,
-    threatAwareness: 1.0,
-    kalonReadiness: 1.0,
-    cardValueMul: 1.0,
-    randomness: 0.05,
+    name: 'hard',
+    finishBlowMul: 1.4,
+    heroFocusMul: 1.5,
+    threatAwareness: 1.4,
+    kalonReadiness: 1.55,
+    cardValueMul: 1.15,
+    randomness: 0,
+    aggression: 1.15,
   };
 }
 
@@ -93267,6 +93278,21 @@ function aiScoreAttack(attacker, target, move, state, playerProf) {
       if (target.id === playerUnits[0].id) score += 60;
     }
   }
+  // 🎯 THREAT-REMOVAL KILL PRIORITY — when this blow actually KOs a non-hero,
+  // value the kill by HOW DANGEROUS that unit is, not just that it dies. A
+  // veteran player kills the scariest thing on the board first: big attackers,
+  // fast units, transformed Kalons/Archons, and support pieces (buffers,
+  // healers, revivers) that snowball if left alive. Purely additive and only on
+  // a confirmed KO, so it never distorts non-lethal target choice.
+  if (!target.isHero && probe.damage >= target.currentHp) {
+    const _ts = target.stats || {};
+    const _off = Math.max(_ts.atk || 0, _ts.mag || 0);
+    score += 28 + _off * 1.6 + (_ts.spd || 0) * 1.5;
+    if (target.isArchon) score += 120;          // Archons are match-defining
+    else if (target.isKalon || target.kalonUsed) score += 55; // transformed forms
+    const _dangerPassives = ['inspire', 'inspireAtk', 'inspireDef', 'inspireMag', 'inspireRes', 'warlord', 'archmage', 'lifesteal', 'raiseFromDead', 'guardian', 'weatherSummoner'];
+    for (const pid of _dangerPassives) { if (typeof hasPassive === 'function' && hasPassive(target, pid)) { score += 28; } }
+  }
   if (probe.typeMul > 1) score += 60;                 // Super-effective
   if (probe.typeMul < 1 && probe.typeMul > 0) score -= 30;
   // Combo opportunity — if an ally already struck this target this turn, chaining onto it
@@ -93914,6 +93940,14 @@ function doAIStep() {
           let sc = card.effect.amount;
           if (card.effect.amount >= t.currentHp) sc += 600;   // lethal
           if (t.isHero) sc += 400;
+          // 🎯 Threat-weighted kill — if the spell finishes a non-hero, prefer
+          // burning the most dangerous one (big offense / transformed / Archon).
+          if (card.effect.amount >= t.currentHp && !t.isHero) {
+            const _o = Math.max((t.stats && t.stats.atk) || 0, (t.stats && t.stats.mag) || 0);
+            sc += 20 + _o * 1.2;
+            if (t.isArchon) sc += 100;
+            else if (t.isKalon || t.kalonUsed) sc += 40;
+          }
           // Don't burn a big nuke on a near-dead target — small spell is fine
           if (card.effect.amount > t.currentHp + 20) sc -= 10;
           // Save expensive spells for valuable targets
@@ -94220,7 +94254,13 @@ function doAIStep() {
       if (transformedForm) {
         const baseTotal = (unit.stats.hp||0) + (unit.stats.atk||0) + (unit.stats.mag||0);
         const kalonTotal = (transformedForm.stats.hp||0) + (transformedForm.stats.atk||0) + (transformedForm.stats.mag||0);
-        if (kalonTotal > baseTotal * 1.5) kalonScore += 20;
+        if (kalonTotal > baseTotal * 1.5) kalonScore += 28;
+        else if (kalonTotal > baseTotal * 1.25) kalonScore += 16;
+        // 📈 BOARD DEVELOPMENT — a sharp AI doesn't hoard Kalon charges waiting
+        // for a "perfect" moment; a meaningfully stronger body applies pressure
+        // NOW. Once past the opening, reward ascending a worthwhile form even
+        // with no immediate kill/death pressure on the table.
+        if ((App.state.turnNumber || 0) >= 3 && kalonTotal > baseTotal * 1.2) kalonScore += 22;
       }
       // 🪦 Raise From Dead synergy — if this unit will revive on death anyway,
       // be more willing to transform aggressively (we get a second chance).
@@ -94229,7 +94269,7 @@ function doAIStep() {
       }
       // Apply difficulty readiness — easy AI rarely meets the threshold
       kalonScore *= kalonReady;
-      if (kalonScore >= 50 && unit.pos.y >= 1) {
+      if (kalonScore >= 44 && unit.pos.y >= 1) {
         App.state = executeKalonTransform(App.state, unit);
         markAIUnitActed(unit.id);
         const transformed = App.state.units.find(u => u.id === unit.id);
@@ -94247,7 +94287,7 @@ function doAIStep() {
     // Gated by a readiness roll so it doesn't ALWAYS pop instantly.
     if (typeof _catalystRankOf === 'function' && _catalystRankOf(unit) > 0
         && App.state.ai && (App.state.ai.kalonsRemaining | 0) > 0
-        && Math.random() < 0.9) {
+        && Math.random() < Math.min(0.99, 0.85 * kalonReady + 0.05)) {
       if (_aiTryArchonSummon(unit)) {
         markAIUnitActed(unit.id);
         const arch = (App.state.units || []).filter(u => u && u.owner === 'ai' && u.isArchon);
@@ -94358,6 +94398,12 @@ function doAIStep() {
     if (!unit.hasMoved) {
       const validMoves = getValidMoves(unit, App.state.units, App.state.weather);
       if (validMoves.length > 0) {
+        // 🧠 Difficulty-scaled danger sense + aggression. threatAwareness sharpens
+        // how strongly the AI avoids tiles that get it killed; aggression decides
+        // how hard it presses toward the player hero. (These were declared on the
+        // difficulty profile but previously unwired — now they actually steer it.)
+        const _ta  = (diff && diff.threatAwareness) ? diff.threatAwareness : 1;
+        const _agg = (diff && diff.aggression)      ? diff.aggression      : 1;
         const lowHp = (unit.currentHp / Math.max(1, unit.maxHp)) < 0.3;
         let best = null, bestScore = -Infinity;
         for (const dest of validMoves) {
@@ -94368,15 +94414,24 @@ function doAIStep() {
           // Approximate incoming threat at this tile
           const threat = aiIncomingThreatAt({ ...unit, pos: dest }, dest, App.state);
           let sc = attackScore;
-          // Closer is better baseline (so units that can't attack still advance)
-          sc -= distToFoe * 3;
+          // Closer is better baseline (so units that can't attack still advance).
+          // Aggression amplifies the pull toward the foe.
+          sc -= distToFoe * 3 * _agg;
           // Avoid stepping into kill range when low HP
           if (lowHp) {
-            sc -= threat * 1.8;
+            sc -= threat * 1.8 * _ta;
             // Prefer tiles AWAY from the player hero when retreating
-            sc += distToFoe * 6;
+            sc += distToFoe * 6 * _ta;
           } else {
-            sc -= threat * 0.4;
+            sc -= threat * 0.4 * _ta;
+          }
+          // 🛑 SUICIDE GUARD — a smart AI doesn't walk a healthy unit onto a tile
+          // where it dies next turn for nothing. If the incoming threat there
+          // would KO us AND this move doesn't itself set up a KO/hero strike,
+          // punish the tile hard (scaled by danger sense). Veteran AI almost
+          // never trades a unit into a worse position.
+          if (!lowHp && threat >= unit.currentHp && attackScore < 700) {
+            sc -= (140 + threat) * _ta;
           }
           // 🌋 Surface awareness — don't stroll into a blaze; oil slows us, and
           // standing water is a death trap during a lightning storm.

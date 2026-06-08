@@ -9484,6 +9484,60 @@
   }
 
   /* ════════════════════════════════════════════════════════════════════
+     📣 BATTLE EVENT TICKER — stacked notification chips (icon + text) for
+     bounces, status applications, and other notable battle events. A
+     non-blocking feed near the top of the battle screen; each chip slides
+     in, holds, then fades. Spawned by Juice.eventChip().
+     ──────────────────────────────────────────────────────────────────── */
+  #battle-event-feed {
+    position: fixed;
+    top: 92px; left: 50%;
+    transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center;
+    gap: 6px;
+    pointer-events: none;
+    z-index: 2147481000;   /* above status pops, below modals */
+    width: max-content; max-width: 92vw;
+  }
+  .bevt-chip {
+    display: flex; align-items: center; gap: 9px;
+    padding: 6px 14px 6px 7px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(18,12,32,0.95), rgba(9,5,18,0.95));
+    border: 1px solid var(--bevt-color, rgba(150,180,255,0.6));
+    box-shadow: 0 0 14px var(--bevt-glow, rgba(120,160,255,0.32)), 0 6px 18px rgba(0,0,0,0.5);
+    color: #ece7f6;
+    font-family: 'Crimson Text', serif;
+    font-size: 0.94rem;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    will-change: transform, opacity;
+    animation: bevt-in 0.34s cubic-bezier(0.18,1.3,0.4,1) both;
+  }
+  .bevt-chip.bevt-out { animation: bevt-out 0.32s ease-in forwards; }
+  .bevt-chip-icon {
+    flex: 0 0 auto;
+    width: 27px; height: 27px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px; line-height: 1;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 38%, rgba(255,255,255,0.2), rgba(0,0,0,0.55) 78%);
+    border: 1px solid var(--bevt-color, rgba(150,180,255,0.6));
+    box-shadow: inset 0 0 6px rgba(0,0,0,0.5);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+  }
+  .bevt-chip-label b { color: var(--bevt-color, #cfe0ff); font-weight: 700; }
+  .bevt-buff    { --bevt-color: #74ec9d; --bevt-glow: rgba(110,231,155,0.4); }
+  .bevt-debuff  { --bevt-color: #ff7188; --bevt-glow: rgba(255,90,120,0.4); }
+  .bevt-neutral { --bevt-color: #8fd2ff; --bevt-glow: rgba(120,200,255,0.4); }
+  .bevt-event   { --bevt-color: #ffcf6b; --bevt-glow: rgba(255,200,100,0.4); }
+  @keyframes bevt-in  { 0% { opacity:0; transform: translateY(-10px) scale(0.92); } 100% { opacity:1; transform: translateY(0) scale(1); } }
+  @keyframes bevt-out { 0% { opacity:1; transform: translateY(0) scale(1); } 100% { opacity:0; transform: translateY(-8px) scale(0.96); } }
+  @media (prefers-reduced-motion: reduce) {
+    .bevt-chip, .bevt-chip.bevt-out { animation-duration: 0.01s; }
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
      👑 ACE SLAM — boss summon cinematic. A full-art portrait slams in from
      the side with a light streak + dark veil; the JS triggers a screen shake
      at the impact beat. Opt-in per card (card.aceSlam). ~0.9s, click-to-skip.
@@ -60115,6 +60169,7 @@ function applyOnPlayEffect(state, unit, card) {
     state.units = state.units.filter(u => u.id !== target.id);
     if (ret.archon) {
       log.push({ msg: `🜂 ${unit.name} banishes ${target.name} — the Archon returns to ${sideLabel} Archon Deck!`, color: owner === 'player' ? 'green' : 'red' });
+      try { if (typeof Juice !== 'undefined' && Juice.eventChip) Juice.eventChip({ icon: '🜂', label: `${target.name || 'An Archon'} returns to ${sideLabel} Archon Deck`, kind: 'event' }); } catch (e) {}
     } else if (ret.card) {
       state[enemySide] = {
         ...state[enemySide],
@@ -60122,6 +60177,7 @@ function applyOnPlayEffect(state, unit, card) {
       };
       const revertNote = ret.revertedKalon ? ` — reverts to ${ret.card.name}` : '';
       log.push({ msg: `↩ ${unit.name} banishes ${target.name}${revertNote}, returned to ${sideLabel} hand!`, color: owner === 'player' ? 'green' : 'red' });
+      try { _battleBounceNotice(target, sideLabel); } catch (e) {}
     }
     return { ...state, log };
   }
@@ -61695,12 +61751,19 @@ function _applyTriggerEffect(state, unit, trg, ctx) {
       if (enemies.length && unit.pos) {
         enemies.sort((a, b) => (Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y))) - (Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y))));
         const tgt = enemies[0];
+        const _tgtSide = tgt.owner === 'player' ? 'your' : 'enemy';
         const ret = (typeof _unitReturnToHandCard === 'function') ? _unitReturnToHandCard(tgt) : { card: null, archon: false };
         // ↩ Bounce ≠ death — remove the body entirely so it leaves no tombstone,
         // graveyard entry, kill credit, or "fell" feedback behind.
         s = { ...s, units: (s.units || []).filter(u => u.id !== tgt.id) };
-        if (ret.archon) log.push({ msg: `${tag} — banishes ${tgt.name} (returns to Archon Deck).`, color: col });
-        else if (ret.card && s[tgt.owner]) { s = { ...s, [tgt.owner]: { ...s[tgt.owner], hand: [...(s[tgt.owner].hand || []), ret.card] } }; log.push({ msg: `${tag} — bounces ${tgt.name} to hand.`, color: col }); }
+        if (ret.archon) {
+          log.push({ msg: `${tag} — banishes ${tgt.name} (returns to Archon Deck).`, color: col });
+          try { if (typeof Juice !== 'undefined' && Juice.eventChip) Juice.eventChip({ icon: '🜂', label: `${tgt.name || 'An Archon'} returns to ${_tgtSide} Archon Deck`, kind: 'event' }); } catch (e) {}
+        } else if (ret.card && s[tgt.owner]) {
+          s = { ...s, [tgt.owner]: { ...s[tgt.owner], hand: [...(s[tgt.owner].hand || []), ret.card] } };
+          log.push({ msg: `${tag} — bounces ${tgt.name} to hand.`, color: col });
+          try { _battleBounceNotice(tgt, _tgtSide); } catch (e) {}
+        }
       }
       break;
     }
@@ -67718,6 +67781,47 @@ const Juice = {
       void el.offsetWidth;
       el.classList.add('juice-pulse');
       setTimeout(() => { try { el.classList.remove('juice-pulse'); } catch (e) {} }, 360);
+    } catch (e) {}
+  },
+  // 📣 Battle event ticker — push a labeled notification chip (icon + text)
+  // into a stacked feed near the top of the screen. Used for bounces, status
+  // applications, and other notable battle events. Capped + self-cleaning so a
+  // busy turn can't flood the screen, and de-duped over a short window so the
+  // same event re-detected across renders only shows once.
+  // opts: { icon, label, kind: 'buff'|'debuff'|'neutral'|'event', ms }
+  _eventFeed: null,
+  _eventFeedKeys: null,
+  eventChip(opts) {
+    try {
+      if (Juice._level >= 2) return;           // fully muted (accessibility)
+      opts = opts || {};
+      const now = Date.now();
+      const key = (opts.icon || '') + '|' + (opts.label || '');
+      Juice._eventFeedKeys = Juice._eventFeedKeys || {};
+      if (Juice._eventFeedKeys[key] && (now - Juice._eventFeedKeys[key]) < 900) return;
+      Juice._eventFeedKeys[key] = now;
+      // Occasionally prune the de-dupe map so it can't grow unbounded.
+      const _keys = Object.keys(Juice._eventFeedKeys);
+      if (_keys.length > 64) { _keys.forEach(k => { if (now - Juice._eventFeedKeys[k] > 4000) delete Juice._eventFeedKeys[k]; }); }
+      let feed = Juice._eventFeed;
+      if (!feed || !feed.isConnected) {
+        feed = document.getElementById('battle-event-feed');
+        if (!feed) { feed = document.createElement('div'); feed.id = 'battle-event-feed'; document.body.appendChild(feed); }
+        Juice._eventFeed = feed;
+      }
+      const kind = ['buff', 'debuff', 'neutral', 'event'].indexOf(opts.kind) >= 0 ? opts.kind : 'neutral';
+      const chip = document.createElement('div');
+      chip.className = 'bevt-chip bevt-' + kind;
+      const lbl = (typeof escapeHtml === 'function') ? escapeHtml(String(opts.label || '')) : String(opts.label || '');
+      chip.innerHTML = '<span class="bevt-chip-icon">' + String(opts.icon || '✦') + '</span>' +
+                       '<span class="bevt-chip-label">' + lbl + '</span>';
+      if (feed.firstChild) feed.insertBefore(chip, feed.firstChild); else feed.appendChild(chip);  // newest on top
+      while (feed.children.length > 6) { try { feed.removeChild(feed.lastChild); } catch (e) { break; } }
+      const life = (typeof opts.ms === 'number') ? opts.ms : 2600;
+      setTimeout(() => {
+        try { chip.classList.add('bevt-out'); setTimeout(() => { try { chip.remove(); } catch (e) {} }, 340); } catch (e) {}
+      }, life);
+      return chip;
     } catch (e) {}
   },
 };
@@ -82733,17 +82837,52 @@ function _emitStatusVfx() {
       if (!r.width || r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) return;
       const cx = r.left + r.width / 2;
       const cy = r.top + r.height * 0.28;
+      // Who gained it — prefixes the notification so the player can tell whose
+      // unit was just afflicted / buffed at a glance.
+      const _who = u.isHero ? (u.name || 'Hero')
+                 : (u.owner === 'ai' ? ('Enemy ' + (u.name || 'unit')) : (u.name || 'Unit'));
       // Cap pops per unit per render so a big multi-status hit doesn't spam.
       fresh.slice(0, 3).forEach((t, i) => {
         const def = STATUS_EFFECTS[t];
         if (!def) return;
+        const _kind = _statusVfxKind(def);
+        // 🌟 Floating icon over the unit (existing behavior).
         Juice.statusPop({ x: cx, y: cy, icon: def.icon || '✦', name: def.name || t,
-                          kind: _statusVfxKind(def), index: i });
+                          kind: _kind, index: i });
+        // 📣 Matching text notification in the event ticker.
+        try { if (Juice.eventChip) Juice.eventChip({ icon: def.icon || '✦', label: _who + ' — ' + (def.name || t), kind: _kind }); } catch (e) {}
       });
     });
     // Prune units that are gone so a re-applied status (after death / cleanse
     // + re-affliction) pops again next time.
     Object.keys(seen).forEach(id => { if (!aliveIds.has(id)) delete seen[id]; });
+  } catch (e) {}
+}
+
+// ↩ BOUNCE NOTICE — icon + notification when a unit is returned to a hand. The
+// unit is removed from the board on a bounce (it's not a death), so the status
+// diff above can't surface it — the bounce sites call this directly. Shows a
+// ticker chip AND a floating ↩ icon anchored on the tile the unit left (deferred
+// a frame so it survives the re-render). Fully guarded — never breaks the engine.
+function _battleBounceNotice(unit, sideLabel) {
+  try {
+    if (typeof Juice === 'undefined') return;
+    const nm = (unit && unit.name) || 'A unit';
+    const side = sideLabel || ((unit && unit.owner === 'player') ? 'your' : 'enemy');
+    if (Juice.eventChip) Juice.eventChip({ icon: '↩️', label: nm + ' bounced to ' + side + ' hand', kind: 'event' });
+    if (typeof requestAnimationFrame === 'function' && unit && unit.pos && Juice.statusPop) {
+      const px = unit.pos.x, py = unit.pos.y;
+      requestAnimationFrame(() => {
+        try {
+          const el = document.querySelector('.tile[data-pos="' + px + ',' + py + '"]')
+                  || document.querySelector('[data-x="' + px + '"][data-y="' + py + '"]');
+          if (!el) return;
+          const r = el.getBoundingClientRect();
+          if (!r.width) return;
+          Juice.statusPop({ x: r.left + r.width / 2, y: r.top + r.height * 0.4, icon: '↩️', name: 'Bounced', kind: 'neutral' });
+        } catch (e) {}
+      });
+    }
   } catch (e) {}
 }
 

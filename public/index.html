@@ -33210,6 +33210,9 @@ async function joinColyseusMatch(matchId, authToken, opts) {
     // location). Pure VISUAL — the authoritative result already arrives via the
     // board snapshot; this just replays the animation on the watching screen.
     room.onMessage('fx', (data) => { try { _onColyseusFx(data); } catch (e) {} });
+    // 🔁 Opponent (or our own watchdog) asked for a resync — re-push our current
+    // board so a client stranded by a dropped packet catches back up.
+    room.onMessage('resync', () => { try { if (typeof sendColyseusSnapshot === 'function') sendColyseusSnapshot(); } catch (e) {} });
 
     // State-change observer — keeps ColyseusMP.state current.
     room.onStateChange(state => {
@@ -33329,7 +33332,22 @@ function _slimHeroForMp(hero) {
     if (typeof v === 'object') { for (const k in v) { if (!Object.prototype.hasOwnProperty.call(v, k)) continue; if (HEAVY[k] && typeof v[k] === 'string') { v[k] = ''; continue; } v[k] = strip(v[k]); } return v; }
     return v;
   };
-  return strip(copy);
+  const out = strip(copy);
+  // 📊 Attach the player's hero PROGRESSION so the opponent builds our hero at
+  // the SAME level / stats we actually have. Without it they build a level-1
+  // stand-in, and the alternating-authority board adoption then drags OUR hero
+  // down to level 1 too — "my hero level wasn't carried over". Tiny payload.
+  try {
+    const p = (out && hero.id && Profile.heroes) ? Profile.heroes[hero.id] : null;
+    if (p) {
+      out._mpProg = {
+        level: p.level || 1, xp: p.xp || 0,
+        statGains: p.statGains || null, evs: p.evs || null,
+        nature: p.nature || null, trait: p.trait || null,
+      };
+    }
+  } catch (e) {}
+  return out;
 }
 
 /** 🔎 TEMP on-screen MP sync indicator — shows live whether THIS device is
@@ -33373,6 +33391,19 @@ function sendColyseusForfeit() {
 function sendColyseusFx(kind, data) {
   if (!ColyseusMP.room) return;
   try { ColyseusMP.room.send('fx', { kind: kind, data: data || {} }); } catch (e) {}
+}
+// 🔁 Ask the opponent to re-push their authoritative board — used by the
+// stuck-turn watchdog when no snapshot has arrived for a while (a dropped relay
+// packet can otherwise strand a client on "waiting for opponent"). Routes over
+// whichever transport is live. Best-effort + fully guarded.
+function _mpRequestResync(reason) {
+  try {
+    if (typeof ColyseusMP !== 'undefined' && ColyseusMP && ColyseusMP.room) {
+      try { ColyseusMP.room.send('resync', { from: MatchBroadcast.myUserId, reason: reason || 'stuck' }); } catch (e) {}
+    } else if (MatchBroadcast && MatchBroadcast.channel) {
+      try { MatchBroadcast.channel.send({ type: 'broadcast', event: 'resync', payload: { from: MatchBroadcast.myUserId, reason: reason || 'stuck' } }); } catch (e) {}
+    }
+  } catch (e) {}
 }
 /** Play an opponent-relayed visual effect on THIS screen. Pure animation — never
  *  mutates game state (that comes from the snapshot), so a missing animator is a
@@ -62000,14 +62031,19 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
   };
 };
 
-const buildHero = (heroDataRaw, owner, pos, levelOverride, xpOverride) => {
+const buildHero = (heroDataRaw, owner, pos, levelOverride, xpOverride, profOverride) => {
   // Apply the chosen subclass's overrides (elements / factions / passives / icon /
   // kalonForm). Only for the player — AI heroes use their base data since the player's
   // subclass pick isn't theirs. Returns the original hero data unchanged when no
   // subclass is picked or the hero has none defined.
   const heroData = (owner === 'player') ? getEffectiveHeroData(heroDataRaw) : heroDataRaw;
   const item = owner === 'player' ? getEquipped('h_' + heroData.id) : null;
-  const prof = owner === 'player' ? getHeroProfile(heroData.id) : getAiHeroProfile(heroData.id);
+  // 📊 profOverride — a progression snapshot ({ level, xp, statGains, evs, nature,
+  // trait }) supplied for a MULTIPLAYER OPPONENT so we build their hero at the
+  // SAME level / stats they actually have, instead of falling back to a level-1
+  // AI profile. Without this, both clients build the OTHER hero at level 1 and
+  // the alternating-authority adoption then drags BOTH heroes down to level 1.
+  const prof = profOverride || (owner === 'player' ? getHeroProfile(heroData.id) : getAiHeroProfile(heroData.id));
   // AI heroes pull persisted level/xp from their profile when not overridden.
   const level = levelOverride != null ? levelOverride : (prof ? (prof.level || 1) : 1);
   const xp = xpOverride != null ? xpOverride : (prof ? (prof.xp || 0) : 0);
@@ -62159,7 +62195,13 @@ const initGame = (heroData, opponentHero, customCards, playerGoesFirst, chosenDe
     playerHero.maxHp = rMax;
     playerHero.currentHp = rCur;
   }
-  const aiHero = buildHero(opponentHero, 'ai', { x: Math.floor(BOARD_W / 2), y: 0 });
+  // 📡 MULTIPLAYER — build the opponent's hero at THEIR real level/stats from the
+  // progression they relayed (carried on the hero as _mpProg), so it isn't a
+  // level-1 stand-in. _mpProg is absent for solo/campaign, so those are unchanged.
+  const _oppProg = (App.battlePrep && App.battlePrep.multiplayer && opponentHero && opponentHero._mpProg) ? opponentHero._mpProg : null;
+  const aiHero = _oppProg
+    ? buildHero(opponentHero, 'ai', { x: Math.floor(BOARD_W / 2), y: 0 }, _oppProg.level || 1, _oppProg.xp || 0, _oppProg)
+    : buildHero(opponentHero, 'ai', { x: Math.floor(BOARD_W / 2), y: 0 });
   // 🗺️ Roguelite: optional per-node enemy HP override (guarded to RLC battles).
   if (App.battlePrep && App.battlePrep.rlc && App.battlePrep.rlcEnemyMaxHp) {
     const _em = Math.max(1, parseInt(App.battlePrep.rlcEnemyMaxHp, 10) || aiHero.maxHp);
@@ -88353,6 +88395,13 @@ function renderLog() {
 
 function bindBattleEvents() {
   const s = App.state;
+  // 📜 AUTO-SCROLL the battle log to the newest line after every render so the
+  // latest action is always visible without manual scrolling. Deferred a frame
+  // so layout is settled before we measure scrollHeight.
+  try {
+    const _scrollLog = () => { try { const _ll = document.querySelector('.log-list'); if (_ll) _ll.scrollTop = _ll.scrollHeight; } catch (e) {} };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_scrollLog); else _scrollLog();
+  } catch (e) {}
   // 🏳 CONCEDE — the player gives up. Counts as a real loss: same path as
   // taking a fatal hit on your hero. We set gameOver='ai' (AI wins) which
   // triggers recordBattleProgress() in the renderer (decrements rewards,
@@ -93170,6 +93219,37 @@ function _playerTurnActivitySig(s) {
   } catch (e) { return ''; }
 }
 function _turnTimerStep() {
+  // 🔁 MP SYNC WATCHDOG — keep both clients in lockstep even when the relay drops
+  // a packet (the cause of "stuck on a player's turn" + "couldn't see units
+  // move"). On MY turn, re-broadcast my authoritative board every few seconds so
+  // a dropped action/handoff self-heals on the opponent. While WAITING for the
+  // opponent, if no snapshot has arrived for a while, ask them to re-push. Runs
+  // before the turn-clock early-returns. Fully guarded — never breaks the clock.
+  try {
+    if (App.battlePrep && App.battlePrep.multiplayer && App.state && !App.state.gameOver
+        && App.screen === 'battle' && !App.replayViewing
+        && typeof MatchBroadcast !== 'undefined' && MatchBroadcast) {
+      const _now = Date.now();
+      if (MatchBroadcast.myTurn) {
+        MatchBroadcast._stuckResyncAt = 0;
+        if (_now - (MatchBroadcast._mpHeartbeatAt || 0) > 4000) {
+          MatchBroadcast._mpHeartbeatAt = _now;
+          try {
+            if (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP) { if (typeof sendColyseusSnapshot === 'function') sendColyseusSnapshot(); }
+            else if (typeof broadcastMyState === 'function') broadcastMyState();
+          } catch (e) {}
+        }
+      } else {
+        MatchBroadcast._mpHeartbeatAt = 0;
+        const _since = _now - (MatchBroadcast._lastSnapAt || _now);
+        if (_since > 9000 && (_now - (MatchBroadcast._stuckResyncAt || 0) > 7000)) {
+          MatchBroadcast._stuckResyncAt = _now;
+          try { _mpRequestResync('stuck-turn'); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast('🔄 Re-syncing with opponent…', 1400); } catch (e) {}
+        }
+      }
+    }
+  } catch (e) {}
   try {
     // ⏸ In-battle Settings round-trip — when the player is on the Settings
     // screen but came from the battle (App._settingsReturnScreen === 'battle'
@@ -116316,6 +116396,7 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
   const damaged = [];
   const killed = [];
   const transformed = [];
+  const moved = [];
   for (const u of next.units) {
     const old = prevById.get(u.id);
     if (!old) {
@@ -116329,7 +116410,16 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
     if (old.alive !== false && u.alive === false) killed.push(u);
     // ✦ Kalon transform — kalonUsed flips false→true when a unit ascends.
     if (u.alive !== false && !old.kalonUsed && u.kalonUsed) transformed.push(u);
+    // ↗ MOVEMENT — an opponent unit whose tile changed. The board re-renders it
+    // at the new tile (it teleports otherwise), so we play a slide cue so the
+    // watcher can SEE the move happen, like solo. Only the opponent's units.
+    if (u.owner === 'ai' && u.alive !== false && old.pos && u.pos
+        && (old.pos.x !== u.pos.x || old.pos.y !== u.pos.y)) {
+      moved.push({ id: u.id, from: { x: old.pos.x, y: old.pos.y }, to: { x: u.pos.x, y: u.pos.y } });
+    }
   }
+  // ↗ Queue opponent moves for a slide animation drained after the board paints.
+  if (moved.length) { try { App._mpMoveFx = (App._mpMoveFx || []).concat(moved); } catch (e) {} }
   // ✦ Replay the kalon ascension cinematic for the opponent's transforms. The
   // unit's new form already synced via the snapshot; this adds the cinematic.
   // Queued + fired after the board re-renders (playKalonTransformVfx anchors on
@@ -116398,6 +116488,34 @@ function _surfaceOpponentDeltaFeedback(prev, next) {
       try { showToast('☠ ' + (u.name || 'Unit') + ' fell' + (u.isHero ? '!' : '.'), 2400); } catch (e) {}
     }
   }
+}
+
+// ↗ Slide cue for an OPPONENT unit's move — a glowing orb streaks from the old
+// tile to the new one so the watcher SEES the movement instead of the unit just
+// teleporting. Anchored on tile rects (which persist across the board re-render).
+function _mpSlideMove(mv) {
+  try {
+    if (!mv || !mv.from || !mv.to) return;
+    const tileEl = (x, y) => document.querySelector('.tile[data-pos="' + x + ',' + y + '"]')
+                          || document.querySelector('[data-x="' + x + '"][data-y="' + y + '"]');
+    const a = tileEl(mv.from.x, mv.from.y), b = tileEl(mv.to.x, mv.to.y);
+    if (!a || !b) return;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    if (!ra.width || !rb.width) return;
+    const orb = document.createElement('div');
+    const sz = Math.max(16, ra.width * 0.6);
+    orb.style.cssText = 'position:fixed;z-index:1486;pointer-events:none;width:' + sz + 'px;height:' + sz + 'px;'
+      + 'left:' + (ra.left + (ra.width - sz) / 2) + 'px;top:' + (ra.top + (ra.height - sz) / 2) + 'px;'
+      + 'border-radius:50%;background:radial-gradient(circle,rgba(180,160,255,0.55),rgba(120,90,230,0.25) 60%,transparent 75%);'
+      + 'box-shadow:0 0 16px rgba(150,120,255,0.7);opacity:0.95;'
+      + 'transition:transform 0.42s cubic-bezier(0.34,0.2,0.2,1),opacity 0.42s ease';
+    document.body.appendChild(orb);
+    requestAnimationFrame(() => {
+      try { orb.style.transform = 'translate(' + (rb.left - ra.left) + 'px,' + (rb.top - ra.top) + 'px)'; } catch (e) {}
+    });
+    setTimeout(() => { try { orb.style.opacity = '0'; } catch (e) {} }, 380);
+    setTimeout(() => { try { orb.remove(); } catch (e) {} }, 560);
+  } catch (e) {}
 }
 
 // 🜂 WATCHER-SIDE ARCHON SUMMON CINEMATIC — replays the full ritual overlay for
@@ -116539,6 +116657,8 @@ function _onRemoteStateArrived(payload) {
   // was timing out 90s of silence even though state was sync'd the whole
   // time.
   MatchBroadcast.presenceLastSeen = Date.now();
+  MatchBroadcast._lastSnapAt = Date.now();   // ⏱ for the stuck-turn watchdog
+  MatchBroadcast._stuckResyncAt = 0;         // a fresh snapshot clears the stuck timer
   if (App._mpOpponentWasAbsent) { App._mpOpponentWasAbsent = false; }
   // 📢 Surface opponent action feedback by diffing current state vs incoming.
   try {
@@ -116729,6 +116849,11 @@ function _onRemoteStateArrived(payload) {
         }
       });
     } catch (e) {}
+  }
+  // ↗ Drain opponent-move slide cues AFTER the board paints (tile rects exist).
+  if (App._mpMoveFx && App._mpMoveFx.length) {
+    const _mv = App._mpMoveFx; App._mpMoveFx = null;
+    try { requestAnimationFrame(() => { for (const m of _mv) { try { if (typeof _mpSlideMove === 'function') _mpSlideMove(m); } catch (e) {} } }); } catch (e) {}
   }
 }
 

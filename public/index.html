@@ -48992,6 +48992,18 @@ function _normalizeArtToBlobUrls() {
     if (C && typeof C === 'object') {
       for (const cid in C) C[cid] = _artValueToBlobUrl(C[cid]);
     }
+    // 🧊 Other heavy media stores — weather/camp AUDIO, board backgrounds, item /
+    // oil-tower / Crash-Exchange photos. All IDB-only (never cloud-uploaded) and
+    // consumed purely as <img>/<audio> src, so a shape-agnostic deep walk to
+    // blob: URLs is a drop-in heap win. (campNpcArt / packArt / starterDeckArt /
+    // notes / tombstone* are EXCLUDED — they're cloud/catalog-synced or have
+    // string-manipulating consumers; handled separately.)
+    if (typeof Forge !== 'undefined') {
+      for (let _i = 0; _i < _OFFHEAP_MEDIA_STORES.length; _i++) {
+        const _k = _OFFHEAP_MEDIA_STORES[_i];
+        if (Forge[_k] && typeof Forge[_k] === 'object') _deepBlobUrlize(Forge[_k], 0);
+      }
+    }
   } catch (e) {}
 }
 
@@ -49032,6 +49044,39 @@ function _serializeArtForIdb(store, nested) {
     }
   }
   return out;
+}
+
+// 🧊 Shape-agnostic deep converters for the broader media stores (audio dicts,
+// {frames:[...]} camp art, flat image dicts). They ONLY touch data: URL strings
+// and Blobs — every other field is returned untouched, so they can't corrupt
+// non-media data. Depth-capped against pathological nesting / cycles.
+// _OFFHEAP_MEDIA_STORES: IDB-only stores that are pure <img>/<audio> src and are
+// NEVER part of any cloud / catalog upload, so blob: URLs can't leak off-device.
+const _OFFHEAP_MEDIA_STORES = ['weatherAudio', 'campAudio', 'locationArt', 'campArt', 'itemArt', 'oilTowerArt', 'opArt', 'reArt'];
+function _deepBlobUrlize(node, depth) {
+  depth = depth | 0;
+  if (node == null || depth > 6) return node;
+  if (typeof Blob !== 'undefined' && node instanceof Blob) { const u = _mintArtBlobUrl(node); return u || node; }
+  if (typeof node === 'string') {
+    if (node.slice(0, 5) === 'data:') { const b = _dataUrlToBlob(node); if (b) { const u = _mintArtBlobUrl(b); return u || node; } }
+    return node;
+  }
+  if (Array.isArray(node)) { for (let i = 0; i < node.length; i++) node[i] = _deepBlobUrlize(node[i], depth + 1); return node; }
+  if (typeof node === 'object') { for (const k in node) { if (Object.prototype.hasOwnProperty.call(node, k)) node[k] = _deepBlobUrlize(node[k], depth + 1); } return node; }
+  return node;
+}
+function _deepBlobifyForIdb(node, depth) {
+  depth = depth | 0;
+  if (node == null || depth > 6) return node;
+  if (typeof Blob !== 'undefined' && node instanceof Blob) return node;
+  if (typeof node === 'string') {
+    if (_artBlobByUrl && _artBlobByUrl.has(node)) return _artBlobByUrl.get(node);
+    if (node.slice(0, 5) === 'data:') { const b = _dataUrlToBlob(node); return b || node; }
+    return node;
+  }
+  if (Array.isArray(node)) return node.map(function (v) { return _deepBlobifyForIdb(v, depth + 1); });
+  if (typeof node === 'object') { const out = {}; for (const k in node) { if (Object.prototype.hasOwnProperty.call(node, k)) out[k] = _deepBlobifyForIdb(node[k], depth + 1); } return out; }
+  return node;
 }
 
 // Resolve one stored art value to a base64 data: URL (async). blob: URLs are
@@ -49766,12 +49811,12 @@ function saveForge() {
       try { _normalizeArtToBlobUrls(); } catch (e) {}
       idbSet('forge_sprites',      _serializeArtForIdb(Forge.sprites || {}, true));
       idbSet('forge_cardArt',      _serializeArtForIdb(Forge.cardArt || {}, false));
-      idbSet('forge_locationArt',  Forge.locationArt  || {});
-      idbSet('forge_weatherAudio', Forge.weatherAudio || {});
-      idbSet('forge_campArt',      Forge.campArt      || {});
+      idbSet('forge_locationArt',  _deepBlobifyForIdb(Forge.locationArt  || {}, 0));
+      idbSet('forge_weatherAudio', _deepBlobifyForIdb(Forge.weatherAudio || {}, 0));
+      idbSet('forge_campArt',      _deepBlobifyForIdb(Forge.campArt      || {}, 0));
       idbSet('forge_campNpcArt',   Forge.campNpcArt   || {});
       idbSet('forge_campSurvivors', Forge.campSurvivors || []);
-      idbSet('forge_campAudio',    Forge.campAudio    || {});
+      idbSet('forge_campAudio',    _deepBlobifyForIdb(Forge.campAudio    || {}, 0));
       // 🗺 Camp layout + wilderness zones carry inline container photos
       // (b.image data URLs uploaded via the map editor's prop panel). The
       // localStorage fast-path strips those URLs to keep under the 5MB cap;
@@ -49783,10 +49828,10 @@ function saveForge() {
       idbSet('forge_packArt',        Forge.packArt        || {});
       idbSet('forge_starterDeckArt', Forge.starterDeckArt || {});
       idbSet('forge_catalogMedia',   Forge.catalogMedia   || {});
-      idbSet('forge_itemArt',      Forge.itemArt      || {});
-      idbSet('forge_oilTowerArt',  Forge.oilTowerArt  || {});
-      idbSet('forge_opArt',        Forge.opArt        || {});
-      idbSet('forge_reArt',        Forge.reArt        || {});
+      idbSet('forge_itemArt',      _deepBlobifyForIdb(Forge.itemArt      || {}, 0));
+      idbSet('forge_oilTowerArt',  _deepBlobifyForIdb(Forge.oilTowerArt  || {}, 0));
+      idbSet('forge_opArt',        _deepBlobifyForIdb(Forge.opArt        || {}, 0));
+      idbSet('forge_reArt',        _deepBlobifyForIdb(Forge.reArt        || {}, 0));
       // 🗄️ ALSO mirror the custom-CONTENT chunks to IndexedDB. These used
       // to be localStorage-only, but customEvents now carries base64 sprite
       // frames (and cards can carry inline art), so they grew big enough to

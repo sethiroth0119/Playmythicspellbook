@@ -98142,6 +98142,191 @@ function renderMarketStock() {
 }
 
 // ============ CAMP (DAYCARE) SCREEN ============
+// ============================================================================
+// 💰 BLACK MARKET — SMUGGLER'S BOARD
+// A rotating set of one-shot trade deals hosted by the Black Market facility.
+// The smuggler WANTS resources / Cinder / a spare duplicate card, and PAYS in
+// Cinder / resources / a card. The board is deterministic per 12-hour window
+// (seeded by the window bucket, so it's stable within the window and changes
+// when it flips — no server needed) and each deal can be fulfilled ONCE per
+// window. Claim state lives under Camp.facilities.__smuggler so it persists with
+// the facilities whitelist and can't be reset by a reload.
+// ============================================================================
+const SMUGGLER_WINDOW_MS = 12 * 3600000;            // rotates every 12 hours
+const SMUGGLER_RES = ['food', 'ammo', 'water', 'medicine', 'energyDrink', 'supplies', 'metal', 'fuel', 'corruptedEssence', 'memoryShards', 'dna'];
+const SMUGGLER_WANT_RARITY = ['common', 'uncommon', 'rare'];
+function _smugglerWindow() { return Math.floor(Date.now() / SMUGGLER_WINDOW_MS); }
+// Deterministic PRNG (mulberry32) so a given (window,index) always yields the
+// same deal — the board is identical for the whole 12h window.
+function _smugRng(seed) {
+  let t = seed >>> 0;
+  return function () {
+    t = (t + 0x6D2B79F5) >>> 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) >>> 0;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function _smugInt(rng, lo, hi) { return lo + Math.floor(rng() * (hi - lo + 1)); }
+function _smugPick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
+function _resMeta(id) {
+  let m = (typeof RESOURCES !== 'undefined') ? RESOURCES.find(r => r && r.id === id) : null;
+  if (!m && typeof _SALVAGE_BY_ID !== 'undefined') m = _SALVAGE_BY_ID[id];
+  return m || { id, name: id, icon: '📦' };
+}
+// How many deals the board offers — scales with the Black Market level.
+function _smugglerDealCount() {
+  const st = (typeof _campFacState === 'function') ? _campFacState('market') : null;
+  if (!st || !(st.level > 0)) return 0;
+  return 2 + st.level;   // Lv1 → 3 deals … Lv4 → 6 deals
+}
+// Pool of cards the smuggler can hand over as a reward (admin/custom UNIT cards).
+function _smugglerCardPool() {
+  try { return (Forge.customCards || []).filter(c => c && c.id && (c.type || 'unit') === 'unit'); }
+  catch (e) { return []; }
+}
+// Build deal #i for the current window — fully deterministic.
+function _smugglerDeal(i) {
+  const win = _smugglerWindow();
+  const rng = _smugRng((((win & 0x7fffffff) * 2654435761) ^ (i * 40503 + 17)) >>> 0);
+  const value = _smugInt(rng, 45, 170);   // abstract deal size
+  // WANT side — mostly resources (the sink), sometimes Cinder or a spare card.
+  const wr = rng();
+  let want;
+  if (wr < 0.6) want = { kind: 'res', id: _smugPick(rng, SMUGGLER_RES), qty: _smugInt(rng, 8, 14) + Math.round(value / 6) };
+  else if (wr < 0.82) want = { kind: 'cinder', amount: Math.round(value * _smugInt(rng, 3, 6)) };
+  else want = { kind: 'cardDup', rarity: _smugPick(rng, SMUGGLER_WANT_RARITY) };
+  // GIVE side — pay in Cinder, resources, or (occasionally) a card.
+  const gr = rng();
+  let give;
+  if (want.kind === 'cardDup') {
+    if (gr < 0.5) give = { kind: 'cinder', amount: Math.round(value * _smugInt(rng, 6, 10)) };
+    else give = { kind: 'res', id: _smugPick(rng, SMUGGLER_RES), qty: Math.round(value / 3) + _smugInt(rng, 5, 15) };
+  } else if (gr < 0.4) {
+    give = { kind: 'cinder', amount: Math.round(value * _smugInt(rng, 4, 8)) };
+  } else if (gr < 0.8) {
+    let id = _smugPick(rng, SMUGGLER_RES);
+    if (want.kind === 'res' && id === want.id) id = _smugPick(rng, SMUGGLER_RES);
+    give = { kind: 'res', id, qty: Math.round(value / 4) + _smugInt(rng, 6, 18) };
+  } else {
+    const pool = _smugglerCardPool();
+    if (pool.length) give = { kind: 'card', cardId: pool[Math.floor(rng() * pool.length)].id };
+    else give = { kind: 'cinder', amount: Math.round(value * 6) };
+  }
+  return { idx: i, want, give };
+}
+// Per-window claim state (persisted under the facilities object).
+function _smugglerState() {
+  if (!Camp.facilities) Camp.facilities = {};
+  const win = _smugglerWindow();
+  let st = Camp.facilities.__smuggler;
+  if (!st || st.window !== win) st = Camp.facilities.__smuggler = { window: win, claimed: {} };
+  if (!st.claimed) st.claimed = {};
+  return st;
+}
+function _smugglerClaimed(i) { return !!_smugglerState().claimed[i]; }
+// Find a spare DUPLICATE card (owned count ≥ 2 so the player never loses their
+// only copy) matching the requested rarity — used to fulfill a 'cardDup' want.
+function _smugglerSpareCard(rarity) {
+  const coll = Profile.cardCollection || {};
+  for (const cid in coll) {
+    if ((coll[cid] | 0) < 2) continue;
+    let c = null;
+    try { c = (typeof lookupCustomCard === 'function') ? lookupCustomCard(cid) : null; } catch (e) {}
+    if (!c) continue;
+    if (String(c.rarity || 'common').toLowerCase() === rarity) return { id: cid, card: c };
+  }
+  return null;
+}
+function _smugglerCanFulfill(deal) {
+  const w = deal.want;
+  if (w.kind === 'res') return (typeof getRes === 'function' ? getRes(w.id) : 0) >= w.qty;
+  if (w.kind === 'cinder') return (Profile.gems || 0) >= w.amount;
+  if (w.kind === 'cardDup') {
+    if (typeof _totalOwnedCards === 'function' && typeof CAMP_MIN_COLLECTION === 'number'
+        && _totalOwnedCards() <= CAMP_MIN_COLLECTION) return false;
+    return !!_smugglerSpareCard(w.rarity);
+  }
+  return false;
+}
+function _smugglerSideHtml(side) {
+  if (!side) return '';
+  if (side.kind === 'res') { const m = _resMeta(side.id); return `${m.icon} <strong>${side.qty}</strong> ${escapeHtml(m.name)}`; }
+  if (side.kind === 'cinder') return `<span class="cinder-icon"></span> <strong>${side.amount}</strong> Cinder`;
+  if (side.kind === 'cardDup') return `🃏 a spare <strong>${escapeHtml(side.rarity)}</strong> card`;
+  if (side.kind === 'card') { const c = (typeof lookupCustomCard === 'function') ? lookupCustomCard(side.cardId) : null; return `🎴 <strong>${escapeHtml(c ? (c.name || 'a card') : 'a card')}</strong>`; }
+  return '';
+}
+function _smugglerDealHtml(deal, claimed, can) {
+  const btn = claimed
+    ? `<div class="small-text" style="color:#7d8aa0;text-align:center;margin-top:8px">✓ Traded — back next rotation</div>`
+    : `<button class="btn-mini" data-smuggle="${deal.idx}" ${can ? '' : 'disabled'} style="width:100%;margin-top:8px;border-color:#e0c06066;color:${can ? '#ffd166' : '#666'}">🤝 ${can ? 'Trade' : "Can't fulfill"}</button>`;
+  return `<div style="border:1px solid #e0c06044;border-radius:8px;background:linear-gradient(180deg,rgba(40,32,10,0.5),rgba(10,8,4,0.82));padding:10px 12px;${claimed ? 'opacity:0.55' : ''}">
+    <div class="small-text" style="color:#caa84a;letter-spacing:0.1em;font-family:'Cinzel',serif">WANTS</div>
+    <div style="font-size:0.98rem;color:#ffe6b0;margin:2px 0 7px">${_smugglerSideHtml(deal.want)}</div>
+    <div class="small-text" style="color:#7fd6a0;letter-spacing:0.1em;font-family:'Cinzel',serif">↓ PAYS YOU</div>
+    <div style="font-size:0.98rem;color:#c4ecce;margin:2px 0 0">${_smugglerSideHtml(deal.give)}</div>
+    ${btn}
+  </div>`;
+}
+function _renderSmugglerBoard() {
+  const n = _smugglerDealCount();
+  if (n <= 0) return '';   // facility not built yet
+  const winEnds = ((_smugglerWindow() + 1) * SMUGGLER_WINDOW_MS) - Date.now();
+  const remH = Math.floor(winEnds / 3600000), remM = Math.floor((winEnds % 3600000) / 60000);
+  const deals = [];
+  for (let i = 0; i < n; i++) {
+    const d = _smugglerDeal(i);
+    const claimed = _smugglerClaimed(i);
+    deals.push(_smugglerDealHtml(d, claimed, !claimed && _smugglerCanFulfill(d)));
+  }
+  return `<div style="margin:0 0 1.4rem">
+    <div class="forge-section-header"><h3 style="color:#e0c060">💰 Black Market — Smuggler's Board</h3></div>
+    <div class="small-text ink-dim" style="margin:-0.3rem 0 0.7rem">The smuggler wants specific goods and pays in Cinder, resources, or cards. Deals rotate every 12h — <strong>next batch in ${remH}h ${remM}m</strong>. Each deal can be taken once.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:0.7rem">${deals.join('')}</div>
+  </div>`;
+}
+// Execute deal #i: pay the WANT, receive the PAYS-YOU, mark it claimed.
+function _smugglerTrade(i) {
+  try {
+    if (_smugglerClaimed(i)) { showToast('Already traded — new deals next rotation.', 2400); return; }
+    const deal = _smugglerDeal(i);
+    if (!_smugglerCanFulfill(deal)) { showToast("You don't have what the smuggler wants.", 2600); return; }
+    const w = deal.want, g = deal.give;
+    let wantLabel = '';
+    // ---- pay the WANT ----
+    if (w.kind === 'res') { spendResources({ [w.id]: w.qty }); wantLabel = w.qty + ' ' + _resMeta(w.id).name; }
+    else if (w.kind === 'cinder') {
+      Profile.gems = Math.max(0, (Profile.gems || 0) - w.amount);
+      try { if (typeof _serverMirrorCharge === 'function') _serverMirrorCharge(w.amount, 'Black Market deal'); } catch (e) {}
+      wantLabel = w.amount + ' Cinder';
+    } else if (w.kind === 'cardDup') {
+      const spare = _smugglerSpareCard(w.rarity);
+      if (!spare) { showToast('No spare card to trade.', 2400); return; }
+      Profile.cardCollection[spare.id] = Math.max(0, (Profile.cardCollection[spare.id] | 0) - 1);
+      wantLabel = spare.card.name || 'a card';
+    }
+    // ---- grant the PAYS-YOU ----
+    let giveLabel = '';
+    if (g.kind === 'cinder') {
+      Profile.gems = (Profile.gems || 0) + g.amount;
+      try { if (typeof _serverMirrorCredit === 'function') _serverMirrorCredit(g.amount, 'Black Market deal'); } catch (e) {}
+      giveLabel = '+' + g.amount + ' Cinder';
+    } else if (g.kind === 'res') { addRes(g.id, g.qty); giveLabel = '+' + g.qty + ' ' + _resMeta(g.id).name; }
+    else if (g.kind === 'card') {
+      Profile.cardCollection = Profile.cardCollection || {};
+      Profile.cardCollection[g.cardId] = (Profile.cardCollection[g.cardId] | 0) + 1;
+      const c = (typeof lookupCustomCard === 'function') ? lookupCustomCard(g.cardId) : null;
+      giveLabel = '+' + (c ? (c.name || 'a card') : 'a card');
+    }
+    _smugglerState().claimed[i] = true;
+    try { saveProfile(); } catch (e) {}
+    try { saveCamp(); } catch (e) {}
+    showToast('🤝 Deal struck — gave ' + wantLabel + ', got ' + giveLabel + '.', 3400);
+    if (typeof render === 'function') render();
+  } catch (e) { try { console.warn('[smuggler] trade failed', e); } catch (_) {} }
+}
+
 function renderCamp() {
   // Entry gate — defense in depth. The title-hub portal is already locked
   // until CAMP_UNLOCK_LEVEL is reached, but if the player lands on the Camp
@@ -98336,6 +98521,7 @@ function renderCamp() {
           <button class="btn-secondary" id="btn-camp-resistance-ring" title="Send units on Covert Actions for offline rewards">🜂 Resistance Ring${(() => {
             try { const a = (typeof _covertActive === 'function') ? _covertActive() : []; const r = a.filter(m => m.endsAt <= Date.now()).length; return r > 0 ? ` <span style="background:#9be0c4;color:#0a1a14;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${r} READY</span>` : ''; } catch (e) { return ''; }
           })()}</button>
+          <button class="btn-secondary" id="btn-camp-trading-post" title="Trade cards & resources with other players (fixed price, auctions, barter)">💱 Trading Post</button>
           <button class="btn-secondary" id="btn-camp-vehicle-market" title="Buy or sell vehicles between players">🛒 Vehicle Market${(() => {
             try { const n = ((Forge.vehicleMarket && Forge.vehicleMarket.listings) || []).filter(l => l && l.sellerId !== ((Profile.cloud && Profile.cloud.userId) || Profile.userId || 'local')).length; return n > 0 ? ` <span style="background:#ffd166;color:#1a1020;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${n}</span>` : ''; } catch (e) { return ''; }
           })()}</button>
@@ -98390,6 +98576,7 @@ function renderCamp() {
         <div class="small-text ink-dim" style="margin:-0.3rem 0 0.7rem">Build & upgrade facilities — each one strengthens your survivors. Construction continues in real time, even offline.</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.7rem">${facilityGridHtml}</div>
       </div>
+      ${(typeof _renderSmugglerBoard === 'function') ? _renderSmugglerBoard() : ''}
       <div class="camp-layout">
         <div>
           <div class="forge-section-header"><h3>Deploy Slots (${Camp.slots.length}/${_maxSlots})</h3></div>
@@ -98597,6 +98784,14 @@ function renderCamp() {
   document.querySelectorAll('[data-build]').forEach(el => {
     el.onclick = () => { if (typeof campStartBuild === 'function' && campStartBuild(el.dataset.build)) render(); };
   });
+  // 💰 Black Market — Smuggler's Board one-shot trades.
+  document.querySelectorAll('[data-smuggle]').forEach(el => {
+    el.onclick = () => { const i = parseInt(el.dataset.smuggle, 10); if (!isNaN(i) && typeof _smugglerTrade === 'function') _smugglerTrade(i); };
+  });
+  // 🛒 Open the player-to-player Trading Post (cards + resources, fixed price /
+  // auctions / barter — the existing cloud Player Market).
+  const _tpBtn = document.getElementById('btn-camp-trading-post');
+  if (_tpBtn) _tpBtn.onclick = () => { App.screen = 'market'; App.marketTab = App.marketTab || 'browse'; render(); };
   document.querySelectorAll('[data-mia]').forEach(el => {
     el.onclick = () => {
       App._campRescueTarget = (App._campRescueTarget === el.dataset.mia) ? null : el.dataset.mia;

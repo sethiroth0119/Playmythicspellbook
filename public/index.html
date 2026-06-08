@@ -116563,6 +116563,7 @@ function leaveMatchChannel() {
   MatchBroadcast.awaitingResync = false;
   MatchBroadcast._vizSent = {};                 // 🎨 clear relayed-visual dedup
   MatchBroadcast._vizQueue = []; MatchBroadcast._vizPumping = false;   // 🚚 stop the paced sender
+  try { if (App._mpVizRenderT) { clearTimeout(App._mpVizRenderT); App._mpVizRenderT = null; } } catch (e) {}
   try { App._mpViz = { art: {}, sprites: {} }; } catch (e) {}
   // 🏁 Reset the server-authoritative game-end latches so the NEXT match
   // can submit its own verdict cleanly.
@@ -117660,10 +117661,16 @@ function _onRemoteUnitViz(p) {
         touched = true;
       }
     }
-    if (touched && !App._mpVizRenderQueued) {
-      App._mpVizRenderQueued = true;
-      const _go = () => { App._mpVizRenderQueued = false; if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle(); };
-      try { requestAnimationFrame(_go); } catch (e) { _go(); }
+    // 🛑 TRAILING DEBOUNCE — visual chunks stream in at ~11/sec; repainting the
+    // whole board on EACH one caused major flicker (and restarted any open
+    // cinematic/modal every frame). Coalesce into ONE repaint ~450ms after the
+    // LAST chunk settles, so streaming sprites appear without thrashing the DOM.
+    if (touched) {
+      if (App._mpVizRenderT) { try { clearTimeout(App._mpVizRenderT); } catch (e) {} }
+      App._mpVizRenderT = setTimeout(() => {
+        App._mpVizRenderT = null;
+        if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
+      }, 450);
     }
   } catch (e) {}
 }

@@ -26291,10 +26291,12 @@
     background: radial-gradient(circle at center, transparent 55%, rgba(80,0,20,0.20) 100%);
     pointer-events: none;
   }
-  /* Blood moon disc — massive crimson moon hanging in the sky. */
+  /* Blood moon disc — massive crimson moon hanging in the sky. Pinned to the
+     upper-LEFT so it sits in the empty dark area beside the board instead of
+     hanging over the playfield (where it blocked the top row of tiles). */
   .weather-fx.fx-blood .wfx-blood-moon {
     position: absolute;
-    top: 16%; left: 50%;
+    top: 15%; left: 13%;
     transform: translate(-50%, -50%);
     width: 200px; height: 200px;
     border-radius: 50%;

@@ -4938,6 +4938,33 @@
   .board.iso-mode .unit[data-y="4"] .unit-icon { transform: translate3d(0, -32%, 54px) scale(1.94); }
   .board.iso-mode .unit[data-y="5"] .unit-icon { transform: translate3d(0, -33%, 62px) scale(1.98); }
   .board.iso-mode .unit[data-y="6"] .unit-icon { transform: translate3d(0, -34%, 72px) scale(2.02); }
+  /* 🎯 UNIFORM UNIT SIZE — give every board unit-icon the SAME definite square
+     box. Without an explicit size the inner <img>/sprite "width:100%" resolved
+     against an indefinite box and fell back to each art's INTRINSIC pixel size,
+     so big-source art rendered as a giant figure (overflowing tiles) and small
+     art rendered tiny. A fixed square + contain makes every unit the same size
+     regardless of its source aspect ratio; the per-row standing scale above
+     still applies on top. */
+  .board.iso-mode .unit .unit-icon {
+    width: 74%;
+    aspect-ratio: 1 / 1;
+    height: auto;
+  }
+  .board.iso-mode .unit .unit-icon > img,
+  .board.iso-mode .unit .unit-icon .sprite-stack,
+  .board.iso-mode .unit .unit-icon .sprite-stack > img.sprite-img {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    object-fit: contain !important;      /* show the whole figure, no crop */
+    object-position: center bottom !important;
+  }
+  /* Emoji fallback units get a matching uniform glyph size (not a tiny 1.5rem). */
+  .board.iso-mode .unit .unit-icon > span:not(.sprite-stack) {
+    font-size: 2.4rem !important;
+    line-height: 1 !important;
+  }
   /* 🖼 HIGH-QUALITY UPSCALE — when sprites get scaled up the browser
      defaults to a fast but blurry bilinear filter. Force the BEST
      available scaler (Lanczos-class on Chromium / quality on WebKit) so

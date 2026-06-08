@@ -47581,8 +47581,9 @@ function getCampSlotXp(slot) {
   if (!slot) return 0;
   const elapsedMs = Date.now() - (slot.parkedAt || Date.now());
   const elapsedHours = elapsedMs / 3600000;
-  // Training Center multiplies passive Rest XP.
-  const mul = (typeof campBonus === 'function') ? Math.max(1, campBonus('restXpMul')) : 1;
+  // Training Center multiplies passive Rest XP; Research (Neural Uplink) stacks on top.
+  const mul = ((typeof campBonus === 'function') ? Math.max(1, campBonus('restXpMul')) : 1)
+            * ((typeof researchBonus === 'function') ? researchBonus('restXpMul') : 1);
   const fromTime = Math.floor(elapsedHours * CAMP_XP_PER_HOUR * mul);
   return Math.min(Math.round(CAMP_XP_CAP * mul), fromTime);
 }
@@ -47869,7 +47870,8 @@ function campRecall(slotId) {
 // Grant a loot reward into the existing economy. Returns a label string.
 function _campGrantLoot(tier, mul) {
   const out = [];
-  const lm = (typeof mul === 'number' && mul > 0) ? mul : 1;
+  // 🔬 Research (Essence Siphon) boosts every loot haul.
+  const lm = ((typeof mul === 'number' && mul > 0) ? mul : 1) * ((typeof researchBonus === 'function') ? researchBonus('lootMul') : 1);
   const t = CAMP_LOOT_TIERS[tier] || CAMP_LOOT_TIERS.scout;
   const qBonus = (typeof campBonus === 'function') ? campBonus('lootQuality') : 0; // Intel Center
   const gem = Math.floor((t.gem[0] + Math.random() * (t.gem[1] - t.gem[0])) * lm * (1 + qBonus));
@@ -48291,7 +48293,7 @@ function campBonus(key) {
   } catch (e) {}
   return total;
 }
-function campMaxSlots() { return 6 + campBonus('slots'); }
+function campMaxSlots() { return 6 + campBonus('slots') + ((typeof researchBonus === 'function') ? researchBonus('slots') : 0); }
 // Admin override for a facility's costs (Forge wins locally, else Catalog).
 function _campCostOverride(facId) {
   const fo = (typeof Forge !== 'undefined' && Forge.campCosts && Forge.campCosts[facId]) || null;
@@ -49197,6 +49199,16 @@ function loadForge() {
       // reload keeps them, and there's no transient-empty window that could
       // upload an empty blob over the good cloud copy.
       if (p.salvage         && typeof p.salvage         === 'object') Profile.salvage         = p.salvage;          // ⛏ resource ledger
+      // 🏕 Camp survival state — was MISSING from the whitelist, so every reload
+      // silently reset raid defenses (Fortify), the rival's threat, the MIA /
+      // Memorial rosters, the raid clock, AND research-project progress. Restore
+      // them so all of that actually persists across refreshes.
+      if (typeof p.campDefense === 'number')                          Profile.campDefense     = Math.max(0, p.campDefense | 0);   // 🛡 fortify level
+      if (p.campRival       && typeof p.campRival       === 'object') Profile.campRival       = p.campRival;        // 👹 rival threat / rep / truce
+      if (Array.isArray(p.campMissing))                               Profile.campMissing     = p.campMissing;      // 🌫 MIA roster
+      if (Array.isArray(p.memorial))                                  Profile.memorial        = p.memorial;         // 🕯 KIA memorial
+      if (typeof p.campRaidLastTick === 'number')                     Profile.campRaidLastTick = p.campRaidLastTick; // ⏱ raid clock
+      if (p.research        && typeof p.research        === 'object') Profile.research        = p.research;         // 🔬 research projects
       // 📈 CX share positions — per-resource { qty, avgCost } holding object.
       // Previously absent from the whitelist, so every refresh silently dropped
       // bought share positions even though they were in the localStorage blob.
@@ -55207,8 +55219,8 @@ function _executeRaid(risk) {
   const defendFrac = usedAmmo / strength;            // 0..1 of the raid blunted
   // 🎒 Concealment — Smuggler/SCP bags hide cargo so raiders find less.
   const conceal = (typeof _bagConcealMul === 'function') ? _bagConcealMul() : 1;
-  // 🔧 Camp Defenses (Workshop) — each level damps the raid.
-  const def = Math.max(0, Profile.campDefense | 0);
+  // 🔧 Camp Defenses (Fortify) + 🔬 Research (Bulwark Protocol) — each level damps the raid.
+  const def = Math.max(0, (Profile.campDefense | 0) + ((typeof researchBonus === 'function') ? researchBonus('defense') : 0));
   const defMul = 1 / (1 + def * 0.20);
   const stealFrac = (0.30 + (risk.level === 'high' ? 0.12 : risk.level === 'elevated' ? 0.06 : 0)) * (1 - defendFrac) * conceal * defMul;
   const stolen = {};
@@ -66770,6 +66782,7 @@ function _renderImpl() {
   if (App.screen === 'lab')        return renderLab();
   if (App.screen === 'tutor')      return renderTutor();
   if (App.screen === 'camp')       return renderCamp();
+  if (App.screen === 'research')   return renderResearch();
   if (App.screen === 'resistanceRing') return renderResistanceRing();
   if (App.screen === 'campOps')    return renderCamp();   // real camp ops, opened from the bunker
   if (App.screen === 'justBusiness') return renderJustBusiness();   // 💼 Corporation / player-economy app (iframe)
@@ -98626,6 +98639,144 @@ function _refineryConvert() {
   } catch (e) { try { console.warn('[refinery] convert failed', e); } catch (_) {} }
 }
 
+// ============================================================================
+// 🔬 RESEARCH PROJECTS — spend rare resources + REAL time for PERMANENT camp
+// buffs. The lab runs one project at a time; finishing it raises that project's
+// level (stacking, capped). Buffs are read by their integration points
+// (researchBonus): deploy slots, rest-XP rate, base raid defense. The big sink
+// for the rarer resources (DNA / Memory Shards / Corrupted Essence / Metal).
+// ============================================================================
+const RESEARCH_PROJECTS = [
+  { id: 'geneForge',    name: 'Gene Forge',       icon: '🧬', accent: '#86e08a',
+    desc: 'Splice hardier recruits — permanently opens another deploy slot.',
+    maxLevel: 3, effectLabel: (lv) => `+${lv} deploy slot${lv === 1 ? '' : 's'}`,
+    cost: (lv) => ({ dna: 8 + lv * 6 }), durH: (lv) => 4 + lv * 2 },
+  { id: 'neuralUplink', name: 'Neural Uplink',    icon: '🧠', accent: '#7fb8ff',
+    desc: 'A memory lattice wires survivors to bank Rest XP faster, forever.',
+    maxLevel: 5, effectLabel: (lv) => `+${lv * 12}% Camp Rest XP`,
+    cost: (lv) => ({ memoryShards: 6 + lv * 4 }), durH: (lv) => 2 + lv },
+  { id: 'bulwark',      name: 'Bulwark Protocol', icon: '🛡️', accent: '#9fc4ff',
+    desc: 'Permanent defensive engineering — a standing bonus to raid defense.',
+    maxLevel: 3, effectLabel: (lv) => `+${lv} base raid defense`,
+    cost: (lv) => ({ metal: 40 + lv * 30, scrapMetal: 10 + lv * 8 }), durH: (lv) => 3 + lv },
+  { id: 'essenceSiphon',name: 'Essence Siphon',   icon: '🟣', accent: '#b06bff',
+    desc: 'Refine corrupted essence into richer hauls from every loot run.',
+    maxLevel: 5, effectLabel: (lv) => `+${lv * 8}% loot yield`,
+    cost: (lv) => ({ corruptedEssence: 5 + lv * 3 }), durH: (lv) => 2 + lv },
+];
+function _ensureResearch() {
+  if (!Profile.research || typeof Profile.research !== 'object') Profile.research = { completed: {}, active: null };
+  if (!Profile.research.completed || typeof Profile.research.completed !== 'object') Profile.research.completed = {};
+  return Profile.research;
+}
+function _researchDef(id) { return RESEARCH_PROJECTS.find(p => p && p.id === id) || null; }
+function _researchLevel(id) { return (_ensureResearch().completed[id] | 0); }
+function _researchCost(def, level) { return (def && typeof def.cost === 'function') ? def.cost(level) : {}; }
+function _researchDurMs(def, level) { return (def && typeof def.durH === 'function') ? def.durH(level) * 3600000 : 3600000; }
+// Aggregate completed-research effect for an integration key.
+function researchBonus(key) {
+  try {
+    if (key === 'slots')      return _researchLevel('geneForge');
+    if (key === 'restXpMul')  return 1 + 0.12 * _researchLevel('neuralUplink');   // multiplicative
+    if (key === 'defense')    return _researchLevel('bulwark');
+    if (key === 'lootMul')    return 1 + 0.08 * _researchLevel('essenceSiphon');   // multiplicative
+  } catch (e) {}
+  return (key === 'restXpMul' || key === 'lootMul') ? 1 : 0;
+}
+// Lazy-resolve a finished project (offline-safe). Call from render(). Returns a
+// debrief object when one just completed, else null.
+function resolveResearch() {
+  try {
+    const r = _ensureResearch();
+    const a = r.active;
+    if (!a || !a.id) return null;
+    if ((a.startedAt || 0) + (a.durMs || 0) > Date.now()) return null;
+    r.completed[a.id] = (r.completed[a.id] | 0) + 1;
+    const def = _researchDef(a.id);
+    r.active = null;
+    try { saveProfile(); } catch (e) {}
+    return def ? { def, level: r.completed[a.id] } : null;
+  } catch (e) { return null; }
+}
+function startResearch(id) {
+  const r = _ensureResearch();
+  if (r.active && r.active.id) { showToast('🔬 The lab is already running a project.'); return false; }
+  const def = _researchDef(id);
+  if (!def) return false;
+  const lv = _researchLevel(id);
+  if (lv >= def.maxLevel) { showToast('🔬 ' + def.name + ' is fully researched.'); return false; }
+  const cost = _researchCost(def, lv);
+  if (typeof canAffordResources === 'function' && !canAffordResources(cost)) { showToast('Not enough resources for ' + def.name + '.', 3400); return false; }
+  if (typeof spendResources === 'function') spendResources(cost);
+  r.active = { id: id, startedAt: Date.now(), durMs: _researchDurMs(def, lv) };
+  try { saveProfile(); } catch (e) {}
+  showToast('🔬 Research started: ' + def.name + ' (Lv ' + (lv + 1) + '). It will finish in real time, even offline.', 4000);
+  return true;
+}
+function renderResearch() {
+  // Resolve a finished project on entry + queue its debrief toast.
+  try { const _done = resolveResearch(); if (_done) showToast('🔬 Research complete — ' + _done.def.name + ' Lv ' + _done.level + ': ' + _done.def.effectLabel(_done.level) + '!', 5000); } catch (e) {}
+  const r = _ensureResearch();
+  const a = r.active;
+  const usedRes = ['dna', 'memoryShards', 'corruptedEssence', 'metal', 'scrapMetal'];
+  const resPills = usedRes.map(id => { const m = (typeof _resMeta === 'function') ? _resMeta(id) : { icon: '📦', name: id }; const have = (typeof getRes === 'function') ? getRes(id) : 0; return `<span class="result-stat-pill" style="margin-left:0.4rem">${m.icon} ${have}</span>`; }).join('');
+  let activeHtml = '';
+  if (a && a.id) {
+    const def = _researchDef(a.id);
+    const remMs = Math.max(0, (a.startedAt || 0) + (a.durMs || 0) - Date.now());
+    const remH = Math.floor(remMs / 3600000), remM = Math.floor((remMs % 3600000) / 60000);
+    const totalMs = a.durMs || 1; const pct = Math.min(100, Math.round((1 - remMs / totalMs) * 100));
+    activeHtml = `<div style="background:linear-gradient(90deg,rgba(127,184,255,0.12),transparent);border:1px solid rgba(127,184,255,0.4);border-left:4px solid #7fb8ff;border-radius:8px;padding:0.8rem 1rem;margin-bottom:1.2rem">
+      <div style="font-family:'Cinzel',serif;color:#bcd4ff">🔬 Researching <strong>${def ? escapeHtml(def.name) : a.id}</strong> — <strong>${remH}h ${remM}m</strong> left</div>
+      <div style="height:7px;background:#1a2230;border-radius:4px;margin-top:6px;overflow:hidden"><span style="display:block;height:100%;width:${pct}%;background:linear-gradient(90deg,#7fb8ff,#bcd4ff)"></span></div>
+    </div>`;
+  }
+  const cards = RESEARCH_PROJECTS.map(def => {
+    const lv = _researchLevel(def.id);
+    const maxed = lv >= def.maxLevel;
+    const isActive = !!(a && a.id === def.id);
+    const cost = _researchCost(def, lv);
+    const dur = def.durH(lv);
+    const aff = (typeof canAffordResources !== 'function') || canAffordResources(cost);
+    const canStart = !(a && a.id) && !maxed && aff;
+    const costHtml = (typeof resourceCostHtml === 'function') ? resourceCostHtml(cost, { flagShort: true, withNames: true }) : Object.keys(cost).map(k => cost[k] + ' ' + k).join(' · ');
+    let btn;
+    if (maxed) btn = `<div class="small-text" style="color:${def.accent};margin-top:8px">★ FULLY RESEARCHED</div>`;
+    else if (isActive) btn = `<div class="small-text" style="color:#7fb8ff;margin-top:8px">⏳ In progress…</div>`;
+    else if (a && a.id) btn = `<div class="small-text ink-dim" style="margin-top:8px">Lab busy with another project</div>`;
+    else btn = `<button class="btn-mini" data-research="${def.id}" ${canStart ? '' : 'disabled'} style="margin-top:8px;width:100%;border-color:${def.accent}66;color:${canStart ? def.accent : '#5a6a82'}">🔬 Research Lv ${lv + 1} · ${dur}h</button>`;
+    return `<div style="border:1px solid ${def.accent}44;border-radius:8px;background:radial-gradient(ellipse at 30% 20%, ${def.accent}1a, transparent 60%), linear-gradient(180deg,#0c1118,#070a0f);padding:12px 14px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:1.5rem;filter:drop-shadow(0 0 6px ${def.accent}88)">${def.icon}</span>
+        <strong style="font-family:'Cinzel',serif;color:#e8eef7;flex:1">${escapeHtml(def.name)}</strong>
+        <span class="small-text" style="color:${def.accent}">Lv ${lv}/${def.maxLevel}</span>
+      </div>
+      <div class="small-text ink-dim" style="margin:5px 0;line-height:1.4">${escapeHtml(def.desc)}</div>
+      <div class="small-text" style="color:${def.accent}">Next: ${escapeHtml(def.effectLabel(lv + 1))}${lv > 0 ? ` <span class="ink-dim">(now: ${escapeHtml(def.effectLabel(lv))})</span>` : ''}</div>
+      ${maxed ? '' : `<div class="small-text" style="margin-top:5px">${costHtml}</div>`}
+      ${btn}
+    </div>`;
+  }).join('');
+  root.innerHTML = `
+    <div class="forge-page">
+      <div class="forge-header">
+        <h2 class="section-title">🔬 Research Lab</h2>
+        <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
+          ${resPills}
+          <button class="btn-secondary" id="btn-research-back">← Camp</button>
+        </div>
+      </div>
+      <div class="placement-hint" style="margin-bottom:1rem">Pour rare resources into long-term projects for <strong>permanent</strong> camp buffs. The lab runs one at a time and finishes in real time — even while you're away.</div>
+      ${activeHtml}
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:0.8rem">${cards}</div>
+    </div>`;
+  const back = document.getElementById('btn-research-back');
+  if (back) back.onclick = () => { App.screen = 'camp'; render(); };
+  document.querySelectorAll('[data-research]').forEach(el => {
+    el.onclick = () => { if (!el.disabled && typeof startResearch === 'function' && startResearch(el.dataset.research)) render(); };
+  });
+}
+
 function renderCamp() {
   // Entry gate — defense in depth. The title-hub portal is already locked
   // until CAMP_UNLOCK_LEVEL is reached, but if the player lands on the Camp
@@ -98650,6 +98801,11 @@ function renderCamp() {
     const _meta = (typeof resolveCampMeta === 'function') ? (resolveCampMeta() || []) : [];
     const _all = _bld.concat(_rep).concat(_meta);
     if (_all.length) App._campDebrief = (App._campDebrief || []).concat(_all);
+    // 🔬 Research — apply a finished project even if the player didn't open the lab.
+    try {
+      const _rDone = (typeof resolveResearch === 'function') ? resolveResearch() : null;
+      if (_rDone) showToast('🔬 Research complete — ' + _rDone.def.name + ' Lv ' + _rDone.level + ': ' + _rDone.def.effectLabel(_rDone.level) + '!', 5000);
+    } catch (e) {}
     // 💰 Black Market tithe — once per real day on Camp visit.
     if (typeof _campCollectTithe === 'function') {
       const _t = _campCollectTithe();
@@ -98822,6 +98978,7 @@ function renderCamp() {
             try { const a = (typeof _covertActive === 'function') ? _covertActive() : []; const r = a.filter(m => m.endsAt <= Date.now()).length; return r > 0 ? ` <span style="background:#9be0c4;color:#0a1a14;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${r} READY</span>` : ''; } catch (e) { return ''; }
           })()}</button>
           <button class="btn-secondary" id="btn-camp-trading-post" title="Trade cards & resources with other players (fixed price, auctions, barter)">💱 Trading Post</button>
+          <button class="btn-secondary" id="btn-camp-research" title="Spend rare resources on permanent camp buffs">🔬 Research${(() => { try { const r = (typeof _ensureResearch === 'function') ? _ensureResearch() : null; if (r && r.active && r.active.id && ((r.active.startedAt || 0) + (r.active.durMs || 0)) <= Date.now()) return ' <span style="background:#9be0c4;color:#0a1a14;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">DONE</span>'; } catch (e) {} return ''; })()}</button>
           <button class="btn-secondary" id="btn-camp-vehicle-market" title="Buy or sell vehicles between players">🛒 Vehicle Market${(() => {
             try { const n = ((Forge.vehicleMarket && Forge.vehicleMarket.listings) || []).filter(l => l && l.sellerId !== ((Profile.cloud && Profile.cloud.userId) || Profile.userId || 'local')).length; return n > 0 ? ` <span style="background:#ffd166;color:#1a1020;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${n}</span>` : ''; } catch (e) { return ''; }
           })()}</button>
@@ -98855,11 +99012,13 @@ function renderCamp() {
         const truced = (typeof _campTruceActive === 'function') && _campTruceActive();
         const truceLeft = truced ? Math.ceil(((rv.truceUntil || 0) - Date.now()) / 3600000) : 0;
         const tcost = Math.max(60, Math.min(600, Math.round(thr * 4)));
-        // 🛡 Raid defenses — current level + a Fortify button (Ammo + Metal sink).
-        const _def = Math.max(0, Profile.campDefense | 0);
+        // 🛡 Raid defenses — Fortify level (Ammo+Metal) + Research (Bulwark).
+        const _baseDef = Math.max(0, Profile.campDefense | 0);
+        const _resDef = (typeof researchBonus === 'function') ? researchBonus('defense') : 0;
+        const _def = _baseDef + _resDef;
         const _defCap = (typeof CAMP_DEFENSE_MAX === 'number') ? CAMP_DEFENSE_MAX : 10;
         const _dmgCut = Math.round((1 - 1 / (1 + _def * 0.20)) * 100);   // % of raid losses damped
-        const _fcost = (typeof _campFortifyCost === 'function') ? _campFortifyCost(_def) : { ammo: 30, metal: 15 };
+        const _fcost = (typeof _campFortifyCost === 'function') ? _campFortifyCost(_baseDef) : { ammo: 30, metal: 15 };
         const _fAff = (typeof canAffordResources !== 'function') || canAffordResources(_fcost);
         return `<div style="display:flex;flex-wrap:wrap;gap:0.6rem 1.4rem;align-items:center;background:linear-gradient(90deg,#0a0d13,#0e1118);border:1px solid #243042;border-left:4px solid ${truced ? '#5fae7a' : band};border-radius:6px;padding:0.7rem 1rem;margin-bottom:1.2rem;font-family:'Cinzel',serif">
           <span style="color:#7fd6ff;letter-spacing:0.12em;font-size:0.8rem">▣ CAMP STATUS</span>
@@ -98869,8 +99028,8 @@ function renderCamp() {
             <span style="color:${band};font-size:0.82rem">${thr}%</span>
           </span>
           <span style="color:#9ad17a;font-size:0.8rem" title="Notoriety — bloodying them slows their escalation">⚔️ Rep ${rep}</span>
-          <span style="color:#9fc4ff;font-size:0.8rem" title="Camp Defenses — each level damps raid losses (currently −${_dmgCut}% stolen)">🛡 Def ${_def}/${_defCap}</span>
-          ${_def < _defCap
+          <span style="color:#9fc4ff;font-size:0.8rem" title="Camp Defenses — each level damps raid losses (currently −${_dmgCut}% stolen)${_resDef ? ` · +${_resDef} from Research` : ''}">🛡 Def ${_def}${_resDef ? ` (${_baseDef}+${_resDef})` : '/' + _defCap}</span>
+          ${_baseDef < _defCap
             ? `<button class="btn-mini" data-fortify="1" ${_fAff ? '' : 'disabled'} title="Spend ${_fcost.ammo} 🔫 Ammo + ${_fcost.metal} ⛓ Metal to reinforce defenses (cuts raid losses)" style="border-color:#7fb0ff55;color:${_fAff ? '#9fc4ff' : '#5a6a82'}">🔧 Fortify (${_fcost.ammo}🔫 ${_fcost.metal}⛓)</button>`
             : `<span style="color:#8fd6ff;font-size:0.8rem">🛡 MAX</span>`}
           ${truced
@@ -99105,6 +99264,9 @@ function renderCamp() {
   // auctions / barter — the existing cloud Player Market).
   const _tpBtn = document.getElementById('btn-camp-trading-post');
   if (_tpBtn) _tpBtn.onclick = () => { App.screen = 'market'; App.marketTab = App.marketTab || 'browse'; render(); };
+  // 🔬 Research Lab — permanent camp buffs from rare resources.
+  const _rsBtn = document.getElementById('btn-camp-research');
+  if (_rsBtn) _rsBtn.onclick = () => { App.screen = 'research'; render(); };
   document.querySelectorAll('[data-mia]').forEach(el => {
     el.onclick = () => {
       App._campRescueTarget = (App._campRescueTarget === el.dataset.mia) ? null : el.dataset.mia;

@@ -94083,8 +94083,22 @@ function doAIStep() {
           // Guard: if the watchdog already ended the AI turn, bail out.
           if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
           if (countered) {
-            // Spell was intercepted — AI still loses the card and energy
-            // since the counter cost was already paid; skip spell effects.
+            // Spell was intercepted — CONSUME the AI's card + energy (the player
+            // already paid the counter cost) and SKIP its effect. Without
+            // removing the card it stayed in the AI's hand and got re-cast every
+            // step until the player ran out of counters — which looked like the
+            // counter "did nothing" and the spell resolved anyway.
+            const _cc = best.card;
+            App.state = {
+              ...App.state,
+              ai: {
+                ...App.state.ai,
+                hand: (App.state.ai.hand || []).filter(c => c.instanceId !== _cc.instanceId),
+                graveyard: [...(App.state.ai.graveyard || []), { ..._cc }],
+                energy: Math.max(0, (App.state.ai.energy | 0) - (aiCheapSpells ? 0 : getEffectiveCardCost(_cc, App.state, 'ai'))),
+              },
+              log: [...(App.state.log || []), { msg: `⏱ Counter negates Enemy ${_cc.name} — it fizzles to the graveyard.`, color: 'green' }],
+            };
             renderBattle();
             scheduleAIStep(AI_DELAYS.spell);
           } else {

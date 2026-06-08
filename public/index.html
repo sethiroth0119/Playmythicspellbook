@@ -67296,9 +67296,55 @@ function smoothScreenTransition(targetScreen, opts) {
 // 🛡 Crash-guarded render — if any screen renderer throws, we log it and keep
 // the last good DOM on screen instead of white-screening / "restarting". The
 // next render() call retries cleanly. _renderImpl is the original body.
+// 🛟 RENDER-CRASH RECOVERY — render() / renderBattle() already swallow a thrown
+// frame and keep the last good paint, but if the UNDERLYING state is wedged so
+// that EVERY render throws, the player is frozen on a dead screen with no way
+// out — which reads as a hard crash. Track a consecutive-failure streak: a
+// one-off hiccup self-heals on the next good frame; a genuine wedge (streak ≥ 3)
+// surfaces a raw-DOM "Recover / Reload" banner that saves first, then drops to
+// the title screen. The banner is built without touching the broken render path.
+var _renderFailStreak = 0;
+function _renderRecoverOk() {
+  if (_renderFailStreak) {
+    _renderFailStreak = 0;
+    try { const b = document.getElementById('render-recovery-banner'); if (b) b.remove(); } catch (e) {}
+  }
+}
+function _onRenderCrash(scope) {
+  _renderFailStreak++;
+  if (_renderFailStreak >= 3) { try { _showRenderRecovery(scope); } catch (e) {} }
+}
+function _showRenderRecovery(scope) {
+  if (typeof document === 'undefined' || document.getElementById('render-recovery-banner')) return;
+  const bar = document.createElement('div');
+  bar.id = 'render-recovery-banner';
+  bar.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483647;'
+    + 'background:linear-gradient(180deg,#2a1410,#170a07);border:1px solid #cc2a3a;color:#ffd9b0;'
+    + 'padding:12px 16px;border-radius:12px;font-family:"Cinzel",serif;font-size:0.9rem;max-width:92vw;'
+    + 'box-shadow:0 10px 30px rgba(0,0,0,0.6),0 0 16px rgba(204,42,58,0.4);display:flex;gap:12px;align-items:center';
+  bar.innerHTML = '<span style="font-size:1.3rem">⚠</span>'
+    + '<span>The view hit a snag. Recover without losing progress, or reload.</span>'
+    + '<button id="rrb-recover" style="cursor:pointer;background:#cc2a3a;color:#fff;border:0;border-radius:8px;padding:7px 12px;font-weight:700">Recover</button>'
+    + '<button id="rrb-reload" style="cursor:pointer;background:transparent;color:#ffd9b0;border:1px solid rgba(255,217,176,0.4);border-radius:8px;padding:7px 10px">Reload</button>';
+  try { document.body.appendChild(bar); } catch (e) { return; }
+  const rec = document.getElementById('rrb-recover');
+  if (rec) rec.onclick = function () {
+    try {
+      _renderFailStreak = 0;
+      try { if (typeof saveProfileNow === 'function') saveProfileNow(); } catch (e) {}
+      try { if (scope === 'battle' && typeof leaveMatchChannel === 'function') leaveMatchChannel(); } catch (e) {}
+      try { App.battlePrep = null; } catch (e) {}
+      try { App.screen = 'title'; } catch (e) {}
+      try { bar.remove(); } catch (e) {}
+      try { if (typeof render === 'function') render(); } catch (e) {}
+    } catch (e) { try { location.reload(); } catch (e2) {} }
+  };
+  const rel = document.getElementById('rrb-reload');
+  if (rel) rel.onclick = function () { try { if (typeof saveProfileNow === 'function') saveProfileNow(); } catch (e) {} try { location.reload(); } catch (e2) {} };
+}
 function render() {
-  try { return _renderImpl.apply(this, arguments); }
-  catch (e) { try { console.error('[render] crashed — kept last good screen:', e); } catch (_) {} }
+  try { const _r = _renderImpl.apply(this, arguments); _renderRecoverOk(); return _r; }
+  catch (e) { try { console.error('[render] crashed — kept last good screen:', e); } catch (_) {} try { _onRenderCrash('screen'); } catch (_) {} }
 }
 function _renderImpl() {
   // 💎 Splash retire — first render() means we're about to paint the real
@@ -69723,6 +69769,17 @@ function renderTitle() {
   const _dMin = !!_hubMin.discord, _sMin = !!_hubMin.socials, _nMin = !!_hubMin.news;
   const sidePanels = isMain ? `
     <aside class="hub-side-panels">
+      <div class="hub-discord-wrap hub-msg-wrap">
+        <a class="hub-discord-panel hub-msg-panel" id="hub-msg-btn" href="#" role="button">
+          <div class="discord-glow"></div>
+          <div class="discord-icon">💬</div>
+          <div class="discord-body">
+            <div class="discord-title">Messages</div>
+            <div class="discord-sub">World chat · message friends · DMs</div>
+          </div>
+          <div class="discord-cta">→</div>
+        </a>
+      </div>
       <div class="hub-discord-wrap${_dMin ? ' is-min' : ''}">
         <a class="hub-discord-panel" href="${escapeHtml(DISCORD_INVITE_URL || '#')}" target="_blank" rel="noopener noreferrer">
           <div class="discord-glow"></div>
@@ -69963,6 +70020,20 @@ function renderTitle() {
       render();
     };
   });
+
+  // 💬 Messages panel — opens the world-chat / DM overlay (the same chat the
+  // floating 💬 FAB opens). Requires sign-in; when signed out it nudges the
+  // auth modal via the cloud pill instead of silently doing nothing.
+  const _hubMsgBtn = document.getElementById('hub-msg-btn');
+  if (_hubMsgBtn) _hubMsgBtn.onclick = (e) => {
+    try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+    if (Profile.cloud && Profile.cloud.signedIn) {
+      try { if (typeof chatOpen === 'function') chatOpen(); } catch (err) {}
+    } else {
+      try { if (typeof showToast === 'function') showToast('💬 Sign in to use Messages — world chat & friends.', 2600); } catch (err) {}
+      try { const _p = document.getElementById('hub-cloud-pill'); if (_p) _p.click(); } catch (err) {}
+    }
+  };
 
   // 🏆 Rank pill — jumps to the Colosseum hub when present.
   const rankPill = document.getElementById('hub-rank-pill');
@@ -84089,8 +84160,8 @@ function renderBattleNow() {
 // freeze the turn. Wrap it so the board keeps its last good frame and the next
 // render retries. _renderBattleImmediateImpl is the original body.
 function _renderBattleImmediate() {
-  try { return _renderBattleImmediateImpl(); }
-  catch (e) { try { console.error('[renderBattle] crashed — kept last good board:', e); } catch (_) {} }
+  try { const _r = _renderBattleImmediateImpl(); _renderRecoverOk(); return _r; }
+  catch (e) { try { console.error('[renderBattle] crashed — kept last good board:', e); } catch (_) {} try { _onRenderCrash('battle'); } catch (_) {} }
 }
 function _renderBattleImmediateImpl() {
   const s = App.state;

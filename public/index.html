@@ -63057,10 +63057,18 @@ function queueBattleAnim(opts) {
   // wrongly block the relay if myTurn lagged. The watcher replays via
   // _playRemoteBattleAnim. The snap is fully serializable (ids/names/owners/nums).
   try {
-    if (App.battlePrep && App.battlePrep.multiplayer
-        && typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP
-        && typeof sendColyseusFx === 'function') {
-      sendColyseusFx('attack', { snap: snap });
+    if (App.battlePrep && App.battlePrep.multiplayer) {
+      if (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP) {
+        if (typeof sendColyseusFx === 'function') sendColyseusFx('attack', { snap: snap });
+      } else if (MatchBroadcast && MatchBroadcast.channel) {
+        // 📡 Supabase path — relay the attack cinematic over the match channel so
+        // the DEFENDER sees the lunge/clash, not just the damage number. The snap
+        // is small + fully serializable (ids/names/owners/nums, no media).
+        MatchBroadcast.channel.send({
+          type: 'broadcast', event: 'attackfx',
+          payload: { from: MatchBroadcast.myUserId, snap: snap },
+        });
+      }
     }
   } catch (e) {}
   setTimeout(() => {
@@ -116428,6 +116436,16 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
     .on('broadcast', { event: 'unitviz' }, (payload) => {
       _onRemoteUnitViz(payload.payload);
     })
+    // ⚔️ Opponent attacked — replay their attack cinematic (lunge/clash + hit
+    // reaction) on OUR board so the defender sees the combat, not just damage.
+    .on('broadcast', { event: 'attackfx' }, (payload) => {
+      try {
+        const pp = payload && payload.payload;
+        if (pp && pp.from !== MatchBroadcast.myUserId && typeof _playRemoteBattleAnim === 'function') {
+          _playRemoteBattleAnim(pp.snap);
+        }
+      } catch (e) {}
+    })
     .on('broadcast', { event: 'coin' }, (payload) => {
       _onRemoteCoinArrived(payload.payload);
     })
@@ -117503,30 +117521,46 @@ function _mpRelayUnitVisuals() {
     };
     for (const u of units) {
       if (!u || u.owner !== 'player') continue;        // only relay MY entities
-      const isHero = !!u.isHero;
-      const baseId = isHero ? (u.heroId || u.cardId || u.id) : (u.cardId || u.id);
-      if (!baseId) continue;
-      const key = (isHero ? 'h:' : 'u:') + baseId;
-      if (MatchBroadcast._vizSent[key]) continue;
-      MatchBroadcast._vizSent[key] = 1;
-      const spriteId = (isHero ? 'h_' : 'u_') + baseId;
-      // 1) Card art (chunked).
-      try {
-        const art = (typeof getCardArt === 'function') ? getCardArt(baseId) : null;
-        if (art) sendStr({ dst: 'art', baseId: baseId }, art);
-      } catch (e) {}
-      // 2) Each sprite frame (chunked), index-tagged so order is preserved.
-      try {
-        const set = Forge.sprites && (Forge.sprites[spriteId] || Forge.sprites[(isHero ? 'u_' : 'h_') + baseId]);
-        if (set) {
-          ['idle', 'attack', 'summon'].forEach(anim => {
-            const fr = Array.isArray(set[anim]) ? set[anim].filter(Boolean) : null;
-            if (!fr || !fr.length) return;
-            const fn = fr.length;
-            for (let fi = 0; fi < fn; fi++) sendStr({ dst: 'fr', spriteId: spriteId, anim: anim, fi: fi, fn: fn }, fr[fi]);
-          });
-        }
-      } catch (e) {}
+      // 🆔 ART keys — the displayed card art can come from cardId OR originalCardId
+      //    (and heroId for heroes), so relay all of them, deduped.
+      const artIds = [];
+      if (u.cardId) artIds.push(u.cardId);
+      if (u.originalCardId && u.originalCardId !== u.cardId) artIds.push(u.originalCardId);
+      if (u.isHero && u.heroId) artIds.push(u.heroId);
+      if (!u.isHero && !u.cardId && u.id) artIds.push(u.id);
+      for (const aid of artIds) {
+        const ak = 'art:' + aid;
+        if (MatchBroadcast._vizSent[ak]) continue;
+        MatchBroadcast._vizSent[ak] = 1;
+        try { const art = (typeof getCardArt === 'function') ? getCardArt(aid) : null; if (art) sendStr({ dst: 'art', baseId: aid }, art); } catch (e) {}
+      }
+      // 🆔 SPRITE keys — the watcher resolves sprites via getSpriteId(), which
+      //    keys on heroId ('h_'), kalon originalCardId ('k_'), or
+      //    originalCardId||cardId ('u_'). Relay under EVERY key the unit could be
+      //    looked up by (canonical getSpriteId + the kalon 'u_'+cardId alt that
+      //    unitBoardVisual also tries), so no unit falls back to a flat emoji.
+      const spriteIds = new Set();
+      try { const _sid = (typeof getSpriteId === 'function') ? getSpriteId(u) : null; if (_sid) spriteIds.add(_sid); } catch (e) {}
+      if (u.cardId) spriteIds.add('u_' + u.cardId);
+      if (u.originalCardId) spriteIds.add('u_' + u.originalCardId);
+      if (u.isHero && u.heroId) spriteIds.add('h_' + u.heroId);
+      for (const sid of spriteIds) {
+        const sk = 'spr:' + sid;
+        if (MatchBroadcast._vizSent[sk]) continue;
+        MatchBroadcast._vizSent[sk] = 1;
+        try {
+          const sib = sid.indexOf('h_') === 0 ? ('u_' + sid.slice(2)) : (sid.indexOf('u_') === 0 ? ('h_' + sid.slice(2)) : null);
+          const set = Forge.sprites && (Forge.sprites[sid] || (sib && Forge.sprites[sib]));
+          if (set) {
+            ['idle', 'attack', 'summon'].forEach(anim => {
+              const fr = Array.isArray(set[anim]) ? set[anim].filter(Boolean) : null;
+              if (!fr || !fr.length) return;
+              const fn = fr.length;
+              for (let fi = 0; fi < fn; fi++) sendStr({ dst: 'fr', spriteId: sid, anim: anim, fi: fi, fn: fn }, fr[fi]);
+            });
+          }
+        } catch (e) {}
+      }
     }
   } catch (e) {}
 }

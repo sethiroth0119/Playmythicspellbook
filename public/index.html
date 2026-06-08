@@ -53240,6 +53240,12 @@ function _resolveSurfaceForMove(state, attacker, target, move, log) {
   if (move.paintSurface && move.paintSurface.type) {
     _paintSurface(state, tx, ty, move.paintSurface.type, move.paintSurface.radius | 0, move.paintSurface.turns || 4);
   }
+  // 🌑 PURGE ASCENDED — the move also destroys every Kalon + Archon on the board
+  // (both sides). Heroes are immune. Fires after the move's own hit resolves.
+  if (move.purgeAscended) {
+    const _k = (typeof _destroyAscended === 'function') ? _destroyAscended(state) : 0;
+    try { log.push({ msg: _k ? `🌑 ${move.name} — Oblivion! ${_k} Kalon/Archon destroyed.` : `🌑 ${move.name} — no Ascended to purge.`, color: 'amber' }); } catch (e) {}
+  }
   return state;
 }
 
@@ -59372,6 +59378,7 @@ const ONPLAY_TYPES = [
   // The summoner is never killed by its own wipe. wipeSpareHero (default ON)
   // also leaves both heroes alive so a wipe can't accidentally end the game.
   { id: 'boardWipe',     label: '💥 Board Wipe (destroy units globally)', needs: ['wipeTarget','wipeSpareHero'] },
+  { id: 'purgeAscended', label: '🌑 Purge Ascended (destroy ALL Kalons + Archons, both sides)', needs: [] },
   // ✨ Apply Buff / Debuff — unified target picker (self / allies / enemies /
   // all units in radius) + any status + duration. Subsumes intimidate /
   // buffSelf / buffAllies / aoeStatus with one consistent authoring path.
@@ -60217,6 +60224,16 @@ function applyOnPlayEffect(state, unit, card) {
         }
       });
     } catch (e) {}
+    return { ...state, log };
+  }
+  // 🌑 PURGE ASCENDED — destroy every Kalon-transformed unit + Archon on the
+  // board, both sides (the summoner's own included). Heroes are immune (never
+  // Kalon/Archon). Same death sweep as boardWipe.
+  if (eff.type === 'purgeAscended') {
+    const killed = (typeof _destroyAscended === 'function') ? _destroyAscended(state) : 0;
+    log.push(killed
+      ? { msg: `🌑 ${unit.name} — Oblivion! ${killed} Kalon/Archon destroyed.`, color: owner === 'player' ? 'green' : 'red' }
+      : { msg: `🌑 ${unit.name} — no Kalons or Archons to purge.`, color: 'amber' });
     return { ...state, log };
   }
   // ✨ APPLY BUFF / DEBUFF — generic target-group wrapper. eff.buffTarget:
@@ -64721,6 +64738,43 @@ function getMovePath(unit, units, weather, target) {
 
 // Apply a trap's effect to a unit. Mutates and returns a new state.
 // Removes the trap from the board, applies damage / status / stun, and logs everything.
+// 🌑 ASCENDED PURGE — identify + destroy Kalon-transformed units and Archons.
+// Used by the 'purgeAscended' spell / move / on-play effect. Heroes are never
+// Kalon or Archon, so they're inherently safe. Hits BOTH sides.
+function _isKalonUnit(u) {
+  return !!(u && (u.kalonUsed || (u.originalCardId && u.cardId && u.cardId !== u.originalCardId)));
+}
+function _isArchonUnit(u) {
+  return !!(u && (u.isArchon || u.summonSource === 'Archon Summon'));
+}
+// Destroys every Kalon + Archon on the board (both owners) in-place on `state`.
+// Mirrors boardWipe's death-trigger sweep so on-death passives + Archon-deck
+// returns still fire. Returns the kill count.
+function _destroyAscended(state) {
+  if (!state || !Array.isArray(state.units)) return 0;
+  let killed = 0;
+  state.units = state.units.map(u => {
+    if (!u || !u.alive || u.isHero) return u;
+    if (!(_isKalonUnit(u) || _isArchonUnit(u))) return u;
+    killed++;
+    return { ...u, currentHp: 0, alive: false };
+  });
+  if (killed) {
+    try {
+      state.units.forEach(u => {
+        if (!u.alive && !u._wipeDeathHandled) {
+          u._wipeDeathHandled = true;
+          if (typeof _battleOnUnitKilled === 'function') {
+            const ph = (state.units || []).find(h => h && h.owner === (u.owner === 'player' ? 'ai' : 'player') && h.isHero);
+            try { _battleOnUnitKilled(state, ph || null, u); } catch (e) {}
+          }
+        }
+      });
+    } catch (e) {}
+  }
+  return killed;
+}
+
 function applyTrapToUnit(s, unit, trap) {
   // Pull the trap off the board the moment it fires — single-use by design.
   s = { ...s, board: s.board.map(row => row.map(t => (t.trap === trap) ? { ...t, trap: null } : t)) };
@@ -64775,7 +64829,68 @@ function applyTrapToUnit(s, unit, trap) {
     didSomething = true;
   }
 
-  // Commit the target back into the units list.
+  // --- 🎴 DRAW — the TRAP OWNER draws card(s) when their trap is sprung ---
+  if (effect.type === 'draw') {
+    const n = Math.max(1, effect.amount || 1);
+    const side = trap.owner || 'player';
+    if (s[side] && typeof drawCards === 'function') {
+      s = { ...s, [side]: drawCards(s[side], n, side === 'player') };
+      s.log = [...s.log, { msg: `🎴 ${trap.card.name} — ${side === 'player' ? 'you draw' : 'enemy draws'} ${n}!`, color: side === 'player' ? 'green' : 'red' }];
+    }
+    didSomething = true;
+  }
+
+  // --- ↩️ BOUNCE — the triggering unit is returned to ITS OWNER's hand. Heroes
+  //     can't be bounced; Archons go to the Archon Deck. Marked _bounced so the
+  //     tombstone/death sweep treats it as a return, not a kill. ---
+  if (effect.type === 'bounce' && target.alive && !target.isHero) {
+    const ret = (typeof _unitReturnToHandCard === 'function') ? _unitReturnToHandCard(target) : { card: null, archon: false };
+    s = { ...s, units: s.units.filter(u => u.id !== target.id) };
+    if (ret.archon) {
+      s.log = [...s.log, { msg: `↩️ ${trap.card.name} banishes ${unit.name} back to its Archon Deck!`, color: 'amber' }];
+    } else if (ret.card && s[unit.owner]) {
+      s = { ...s, [unit.owner]: { ...s[unit.owner], hand: [...((s[unit.owner].hand) || []), ret.card] } };
+      s.log = [...s.log, { msg: `↩️ ${trap.card.name} sends ${unit.name} back to hand!`, color: 'amber' }];
+    }
+    target = { ...target, _bounced: true, alive: true };
+    didSomething = true;
+  }
+
+  // --- 💀 DESTROY — outright destroys the triggering unit. NEVER heroes. ---
+  if (effect.type === 'destroyUnit' && target.alive && !target.isHero) {
+    target = { ...target, currentHp: 0, alive: false };
+    s.log = [...s.log, { msg: `💀 ${trap.card.name} DESTROYS ${unit.name}!`, color: 'amber' }];
+    didSomething = true;
+  }
+
+  // --- 🌋 PAINT SURFACE — floods a hazard disc centred on the triggering tile ---
+  if (effect.type === 'paintSurface' && effect.surfaceType && target.pos
+      && typeof _paintSurface === 'function' && typeof SURFACE_TYPES !== 'undefined' && SURFACE_TYPES[effect.surfaceType]) {
+    try { _paintSurface(s, target.pos.x, target.pos.y, effect.surfaceType, Math.max(0, effect.radius | 0), effect.duration || 6); } catch (e) {}
+    const _sn = (SURFACE_TYPES[effect.surfaceType] || {}).name || effect.surfaceType;
+    s.log = [...s.log, { msg: `🌋 ${trap.card.name} floods the ground with ${_sn}!`, color: 'amber' }];
+    didSomething = true;
+  }
+
+  // --- 🪦 SUMMON FROM GRAVE — the trap OWNER revives their most recent corpse ---
+  if (effect.type === 'summonGrave') {
+    const side = trap.owner || 'player';
+    const grave = (s[side] && Array.isArray(s[side].graveyard)) ? s[side].graveyard : [];
+    const gcard = grave[grave.length - 1];
+    const hero = (s.units || []).find(u => u.owner === side && u.isHero);
+    if (gcard && gcard.id && hero && typeof _battleSpawnSummonByCardId === 'function') {
+      try {
+        const res = _battleSpawnSummonByCardId(s, hero, gcard.id, 1);
+        s = { ...s, units: res.units, [side]: { ...s[side], graveyard: grave.slice(0, -1) } };
+        s.log = [...s.log, { msg: `🪦 ${trap.card.name} raises ${gcard.name || 'a fallen unit'} from the grave!`, color: side === 'player' ? 'green' : 'red' }];
+      } catch (e) {}
+    } else {
+      s.log = [...s.log, { msg: `🪦 ${trap.card.name} — the grave is empty.`, color: 'amber' }];
+    }
+    didSomething = true;
+  }
+
+  // Commit the target back into the units list (no-op if bounce already removed it).
   s.units = s.units.map(u => u.id === unit.id ? target : u);
 
   // Death check — heroes ending the match.
@@ -76457,6 +76572,7 @@ function renderCardEditor() {
     { id: 'restoreKalon', label: '🌟 Restore Kalon Uses' },
     { id: 'kalonLock',    label: '🚫 Seal Enemy Kalon (turns)' },
     { id: 'summon',       label: '🌀 Summon (spawn a summon card)' },
+    { id: 'purgeAscended',label: '🌑 Purge Ascended (destroy ALL Kalons + Archons, both sides)' },
   ].map(o => `<option value="${o.id}" ${eff.type === o.id ? 'selected' : ''}>${o.label}</option>`).join('');
   const targetOpts = ['enemy','ally','self'].map(t => `<option value="${t}" ${(card.target || 'enemy') === t ? 'selected' : ''}>${t}</option>`).join('');
   const statusList = ['','strong','weak','poison','burn','bleed','stun','slow','frozen','sleep','confusion','paralysis','dispel','stumble','assisted'];
@@ -76581,12 +76697,22 @@ function renderCardEditor() {
   // Trap block
   const trapEff = card.effect || { type: 'damage', amount: 15 };
   const trapEffectOpts = [
-    { id: 'damage', label: 'Damage' }, { id: 'stun', label: 'Stun' },
+    { id: 'damage',       label: '💥 Damage' },
+    { id: 'stun',         label: '💫 Stun' },
+    { id: 'draw',         label: '🎴 Owner Draws (Amount = #)' },
+    { id: 'bounce',       label: '↩️ Bounce stepping unit to its hand' },
+    { id: 'destroyUnit',  label: '💀 Destroy stepping unit (not heroes)' },
+    { id: 'paintSurface', label: '🌋 Paint Surface on the tile' },
+    { id: 'summonGrave',  label: '🪦 Summon from Owner\'s Graveyard' },
   ].map(o => `<option value="${o.id}" ${trapEff.type === o.id ? 'selected' : ''}>${o.label}</option>`).join('');
   const trapStatusOpts = statusList.map(s => `<option value="${s}" ${(trapEff.status || '') === s ? 'selected' : ''}>${s || '— None —'}</option>`).join('');
+  const trapSurfaceOpts = ['', ...((typeof SURFACE_TYPES !== 'undefined') ? Object.keys(SURFACE_TYPES) : [])]
+    .map(k => `<option value="${k}" ${(trapEff.surfaceType || '') === k ? 'selected' : ''}>${k ? ((SURFACE_TYPES[k] && SURFACE_TYPES[k].icon || '') + ' ' + (SURFACE_TYPES[k] && SURFACE_TYPES[k].name || k)) : '— pick a surface —'}</option>`).join('');
   const trapBlock = (type === 'trap') ? `
     <div class="editor-field"><label>Effect Type</label><select id="ed-trap-effect">${trapEffectOpts}</select></div>
-    <div class="editor-field"><label>Damage Amount</label><input id="ed-trap-amount" type="number" min="0" max="100" value="${trapEff.amount || 0}"></div>
+    <div class="editor-field"><label>Amount (damage, or # cards for Draw)</label><input id="ed-trap-amount" type="number" min="0" max="100" value="${trapEff.amount || 0}"></div>
+    <div class="editor-field"><label>🌋 Surface (for Paint Surface)</label><select id="ed-trap-surface">${trapSurfaceOpts}</select></div>
+    <div class="editor-field"><label>Surface Radius (0-3, for Paint Surface)</label><input id="ed-trap-surface-radius" type="number" min="0" max="3" value="${trapEff.radius | 0}"></div>
     <div class="editor-field"><label>Apply Status</label><select id="ed-trap-status">${trapStatusOpts}</select></div>
     <div class="editor-field"><label>Place range from hero (default ${DEFAULT_TRAP_RANGE})</label><input id="ed-trap-range" type="number" min="1" max="6" value="${typeof card.range === 'number' ? card.range : DEFAULT_TRAP_RANGE}"></div>
     <div class="editor-field full">
@@ -79197,6 +79323,9 @@ function captureEditorIntoCard(card) {
       amount: num('ed-trap-amount', 0, 100, 0),
     };
     if (status) card.effect.status = status;
+    // 🌋 Paint-Surface trap config — surface type + radius.
+    const _surf = v('ed-trap-surface');
+    if (_surf) { card.effect.surfaceType = _surf; card.effect.radius = num('ed-trap-surface-radius', 0, 3, 0); }
   }
 }
 
@@ -79508,6 +79637,7 @@ function renderMoveEditor() {
         })()}
         <div class="editor-field"><label>Recoil % of dmg dealt (0-50)</label><input id="mv-recoil" type="number" min="0" max="50" value="${Math.round((move.recoil || 0) * 100)}"></div>
         <div class="editor-field"><label>Recoil Fixed (flat HP cost)</label><input id="mv-recoil-fixed" type="number" min="0" max="40" value="${move.recoilFixed || 0}"></div>
+        <div class="editor-field full"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer"><input type="checkbox" id="mv-purge-ascended" ${move.purgeAscended ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer"><span>🌑 Purge Ascended — also destroy ALL Kalons + Archons on the board (both sides; heroes immune)</span></label></div>
         <div class="editor-field"><label>👑 Take-Control Chance % (0 = off)</label><input id="mv-control-chance" type="number" min="0" max="100" value="${(move.takeControl && move.takeControl.chance) || 0}"></div>
         <div class="editor-field"><label>👑 Control Duration (turns, 0 = permanent)</label><input id="mv-control-dur" type="number" min="0" max="9" value="${(move.takeControl && move.takeControl.duration) || 0}"></div>
         <div class="editor-field full"><div class="small-text ink-dim">👑 Take-Control: set a chance above 0 to make this a mind-control move. Saving forces Kind → Ability and target → one enemy; on use it rolls the % to seize that enemy unit (heroes/walls/spellshielded immune). Duration 0 = keep it permanently.</div></div>
@@ -79856,6 +79986,9 @@ function bindMoveEditor() {
     if (stageStat && stageDelta) move.stageMods = [{ stat: stageStat, delta: stageDelta }];
     if (recoilPct > 0)  move.recoil = recoilPct / 100;
     if (recoilFixed > 0) move.recoilFixed = recoilFixed;
+    // 🌑 Purge Ascended toggle
+    if (document.getElementById('mv-purge-ascended') && document.getElementById('mv-purge-ascended').checked) move.purgeAscended = true;
+    else delete move.purgeAscended;
     // Multi-hit — dualHit takes precedence; multiHit only saves when both min/max are ≥ 2
     if (isDualHit) {
       move.dualHit = true;
@@ -93530,6 +93663,13 @@ function _resolveSpellAfterChain(card) {
       if (result.count > 0) log.push({ msg: `🌀 ${card.name} summons ${result.count} ${result.label}.`, color: 'green' });
       else log.push({ msg: `🌀 ${card.name} fizzles — no open tiles.`, color: 'amber' });
     }
+  } else if (card.effect.type === 'purgeAscended') {
+    // 🌑 OBLIVION — destroy EVERY Kalon-transformed unit and Archon on the board,
+    // both sides (yours included). Heroes are never Kalon/Archon, so they survive.
+    const killed = (typeof _destroyAscended === 'function') ? _destroyAscended(ns) : 0;
+    log.push(killed
+      ? { msg: `🌑 ${card.name} — ${killed} Kalon/Archon obliterated!`, color: 'green' }
+      : { msg: `🌑 ${card.name} finds no Kalons or Archons to purge.`, color: 'amber' });
   }
   // 🪦 Consume-graveyard extra cost — remove N cards from the graveyard BEFORE
   // this spell is committed to it, so the card never pays for itself. The

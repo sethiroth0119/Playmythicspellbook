@@ -63051,6 +63051,12 @@ function queueBattleAnim(opts) {
     startedAt: Date.now(),
   };
   App.ui.battleAnim = snap;
+  // 🏷 Stamp the attack onto the STATE so the cinematic also rides the reliable
+  // state broadcast. The standalone 'attackfx' event below is the fast path but
+  // can be dropped (channel rate-limits during a sprite stream, or an
+  // un-refreshed peer with no handler); the state ALWAYS arrives. Both carry the
+  // same snap.startedAt, so the watcher dedupes and plays it exactly once.
+  try { if (App.battlePrep && App.battlePrep.multiplayer && App.state) App.state._atkFx = snap; } catch (e) {}
   // 📡 Relay the attack cinematic so it ALSO plays on the opponent's screen.
   // queueBattleAnim only ever fires on the ACTOR (the watcher adopts snapshots,
   // it never runs executeMove), so no myTurn gate is needed — gating on it could
@@ -63118,6 +63124,22 @@ function _playRemoteBattleAnim(snap) {
       try { requestAnimationFrame(() => _fireBattleJuice(s)); } catch (e) {}
     }
   }, BATTLE_ANIM_DURATION);
+}
+
+// 📡 Play an opponent's attack cinematic exactly ONCE, whether it arrived via the
+// fast 'attackfx' event OR rode in on the state snapshot (App.state._atkFx). Both
+// carry the same snap.startedAt; we dedupe on it (monotonic Date.now()) so the
+// two delivery paths can't double-play. This is the reliability fix for "no
+// combat cinematic when I'm the defender" — if the fast event is dropped, the
+// state path still triggers it.
+function _mpMaybePlayAtkFx(snap) {
+  try {
+    if (!snap || typeof snap !== 'object') return;
+    const key = snap.startedAt || 0;
+    if (key && key <= (MatchBroadcast._lastAtkFxKey || 0)) return;   // already played
+    MatchBroadcast._lastAtkFxKey = key || (MatchBroadcast._lastAtkFxKey || 0);
+    if (typeof _playRemoteBattleAnim === 'function') _playRemoteBattleAnim(snap);
+  } catch (e) {}
 }
 
 // 🧃 Apply screen-shake + defender flash + floating damage / MISS / CRIT
@@ -73460,6 +73482,7 @@ function startBattleWithPrep(playerGoesFirst) {
   App._mpViz = { art: {}, sprites: {} };   // 🎨 fresh relayed-visual cache per match
   MatchBroadcast._vizSent = {};            // 🎨 re-relay my visuals for the new match
   MatchBroadcast._vizQueue = []; MatchBroadcast._vizPumping = false;   // 🚚 fresh paced sender
+  MatchBroadcast._lastAtkFxKey = 0;        // ⚔️ fresh attack-cinematic dedupe per match
   try { if (App.ui) App.ui._logNotifyLen = undefined; } catch (e) {}   // 📣 prime log-notify fresh
   try { _clearCoinChoiceTimer(); } catch (e) {}
   App.screen = 'battle';
@@ -116442,8 +116465,8 @@ function joinMatchChannel(matchId, amIPlayer1, opponentId) {
     .on('broadcast', { event: 'attackfx' }, (payload) => {
       try {
         const pp = payload && payload.payload;
-        if (pp && pp.from !== MatchBroadcast.myUserId && typeof _playRemoteBattleAnim === 'function') {
-          _playRemoteBattleAnim(pp.snap);
+        if (pp && pp.from !== MatchBroadcast.myUserId) {
+          _mpMaybePlayAtkFx(pp.snap);
         }
       } catch (e) {}
     })
@@ -117270,8 +117293,10 @@ function _computeStateDelta(prev, next) {
     if (anyChange) unitChanges.push({ id: nu.id, ...diff });
   }
   if (unitChanges.length > 0) delta.unitChanges = unitChanges;
-  // Top-level fields likely to change per action.
-  for (const k of ['turnNumber', 'currentTurn', 'turn', 'turn_who', 'log', 'weather', 'activeLocation', 'comboHits']) {
+  // Top-level fields likely to change per action. _atkFx carries the attack
+  // cinematic descriptor so the defender's combat animation rides the reliable
+  // state channel (not just the droppable 'attackfx' event).
+  for (const k of ['turnNumber', 'currentTurn', 'turn', 'turn_who', 'log', 'weather', 'activeLocation', 'comboHits', '_atkFx']) {
     if (JSON.stringify(prev[k]) !== JSON.stringify(next[k])) delta[k] = next[k];
   }
   // Side blocks (hand / deck / energy) — diff each as a whole object since
@@ -117778,6 +117803,11 @@ function _onRemoteStateArrived(payload) {
     if (Array.isArray(_myPrev.log)) swapped.log = _myPrev.log;
   }
   App.state = swapped;
+  // ⚔️ Reliable combat-cinematic trigger — the attacker stamped the attack onto
+  // the state (_atkFx); play it here if the fast 'attackfx' event didn't already
+  // (deduped by snap.startedAt). This is what guarantees the DEFENDER sees the
+  // combat, even if the standalone event was dropped or the peer is on an old build.
+  try { if (App.state && App.state._atkFx) _mpMaybePlayAtkFx(App.state._atkFx); } catch (e) {}
   // 🏁 FINALITY ON ADOPT — if the synced board shows a hero down, END the match
   // locally so the loser can't keep playing past their loss (the other half of
   // the "opponent kept playing then won" bug). Decide from the board when the

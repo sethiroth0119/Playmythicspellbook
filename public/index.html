@@ -50672,6 +50672,13 @@ function recordReplaySnapshot(label) {
     label: label || (log.length > rep._lastLogLen ? (log[log.length - 1] && log[log.length - 1].msg) || '' : ''),
     t: Date.now() - (rep.startedAt || Date.now()),
   });
+  // 🧹 MEMORY GUARD — each snapshot is a full clone of the board/units/hand, taken
+  // on every render. With no cap a long match accumulated hundreds of clones and
+  // could OOM the tab mid-battle. Keep a rolling window of the most recent ~1200
+  // (a generous replay length); drop the oldest beyond that.
+  if (rep.snapshots.length > 1200) {
+    rep.snapshots.splice(0, rep.snapshots.length - 1200);
+  }
   rep._lastLogLen = log.length;
 }
 
@@ -82745,6 +82752,26 @@ function _renderBattleImmediate() {
 }
 function _renderBattleImmediateImpl() {
   const s = App.state;
+  // 🧹 MEMORY GUARD — cap the battle log. It's pushed on EVERY action and was
+  // never trimmed; over a long match (or a long session) it grew to thousands of
+  // entries. Worse, the whole log array is deep-cloned into every replay snapshot
+  // AND every multiplayer broadcast, so an unbounded log multiplies memory N-fold
+  // and was a top cause of the "Out of Memory" tab crash. The panel only shows
+  // the last 15 anyway, so keeping the most recent ~400 loses nothing visible.
+  try {
+    if (s && Array.isArray(s.log) && s.log.length > 400) {
+      const _removed = s.log.length - 400;
+      s.log = s.log.slice(-400);
+      // Keep the multiplayer newLog diff aligned — it indexes into state.log by
+      // absolute position, so shift the saved index down by however many entries
+      // we trimmed (otherwise the opponent stops receiving new log lines).
+      try {
+        if (typeof MatchBroadcast !== 'undefined' && MatchBroadcast) {
+          MatchBroadcast._myLastBcastLogLen = Math.max(0, (MatchBroadcast._myLastBcastLogLen | 0) - _removed);
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
   // 🌟 STATUS-EFFECT APPLY VFX — schedule a status diff for the NEXT frame so
   // it runs after this render's DOM has painted (accurate unit positions).
   // Placed here because EVERY board-render path funnels through this function

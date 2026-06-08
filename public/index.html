@@ -65987,11 +65987,28 @@ function unitBoardVisual(occupant) {
     if (def) break;
   }
   if (!art && def && (def.art || def.image)) art = def.art || def.image;
-  if (art) return `<img src="${art}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:6px" loading="lazy">`;
+  if (art) return `<img src="${_imgSrc(art)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:6px" loading="lazy">`;
   // 4) Last resort — sprite-or-emoji via the live def's icon if we have one.
   return renderIcon(sId, (def && def.icon) || occupant.icon, 'fill');
 }
 
+// 🧠 OFF-HEAP RENDER — serve an image via a Blob OBJECT URL instead of inlining
+// its base64 `data:` URL into the DOM. The browser then keeps ONE decoded bitmap
+// per blob URL (off-heap) and the live DOM stops carrying duplicate megabytes of
+// base64 across every stacked sprite frame on the board — a big memory win during
+// battle with no change to how sprites are stored/saved. Cached so each unique
+// data URL converts once; the Map key is the SAME string already in Forge, so it
+// adds no real heap. Non-data URLs (http / blob / relative) pass through.
+const _imgUrlCache = (typeof Map !== 'undefined') ? new Map() : null;
+function _imgSrc(url) {
+  try {
+    if (typeof url !== 'string' || url.slice(0, 5) !== 'data:') return url;
+    if (_imgUrlCache && _imgUrlCache.has(url)) return _imgUrlCache.get(url);
+    const b = (typeof _toBlobUrl === 'function') ? _toBlobUrl(url) : url;
+    if (_imgUrlCache && b && b !== url) _imgUrlCache.set(url, b);
+    return b;
+  } catch (e) { return url; }
+}
 function renderIcon(spriteId, fallbackEmoji, size, animOverride) {
   const sizeMap = { sm: 24, md: 40, lg: 64, xl: 96 };
   const isFill = size === 'fill';
@@ -66015,7 +66032,7 @@ function renderIcon(spriteId, fallbackEmoji, size, animOverride) {
     // each frame to its own aspect ratio. All frames are sized to fill the
     // wrapper identically, so figures stay locked at one visible size.
     const frameImgs = frames.map((url, i) => (
-      `<img class="sprite-img sprite-frame${i === 0 ? ' is-on' : ''}" src="${url}" alt="" draggable="false" decoding="async" loading="eager">`
+      `<img class="sprite-img sprite-frame${i === 0 ? ' is-on' : ''}" src="${_imgSrc(url)}" alt="" draggable="false" decoding="async" loading="eager">`
     )).join('');
     const _cfm = (typeof _spriteCustomFrameMs === 'function') ? _spriteCustomFrameMs(spriteId, chosenAnim) : null;
     return `<span class="sprite-stack" data-sprite-id="${spriteId}" data-sprite-anim="${chosenAnim}"${_cfm ? ` data-sprite-frame-ms="${_cfm}"` : ''} style="${sizeStyle}">${frameImgs}</span>`;
@@ -88469,7 +88486,7 @@ function renderHandCard(c, opts) {
     const fullCardClass = `hand-card has-full-art type-${c.type} ${isSel ? 'selected' : ''} ${sizeClass}`;
     return `
       <button class="${fullCardClass}" data-card="${c.instanceId}" ${enabled ? '' : 'disabled'}>
-        <img class="hand-card-full-img" src="${escapeHtml(cardArtUrl)}" alt="${escapeHtml(c.name)}">
+        <img class="hand-card-full-img" src="${escapeHtml(_imgSrc(cardArtUrl))}" alt="${escapeHtml(c.name)}">
         ${levelBadge}
         <div class="hcfa-name"><span class="hcfa-name-inner">${escapeHtml(c.name)}</span></div>
         <div class="hcfa-plate">

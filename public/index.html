@@ -47768,6 +47768,34 @@ function _campUnitProf(refId) {
   if (typeof p.fatigue  !== 'number') p.fatigue = 0;    // back-to-back deploys → lowers survival
   return p;
 }
+// 🩺 MED-BAY — spend Medicine to instantly clear a survivor's trauma /
+// corruption / fatigue and restore morale, instead of waiting it off. The
+// Medicine sink for the resource economy. Cost scales with how hurt they are.
+function _campTreatNeed(prof) {
+  if (!prof) return 0;
+  const tr = Math.round(prof.trauma || 0), co = Math.round(prof.corruption || 0), fa = Math.round(prof.fatigue || 0);
+  const mor = (prof.morale != null) ? prof.morale : 80;
+  return tr + co + fa + Math.max(0, 80 - mor);
+}
+function _campTreatCost(prof) {
+  const need = _campTreatNeed(prof);
+  return need <= 0 ? 0 : Math.max(3, Math.ceil(need / 12));   // Medicine
+}
+function campTreatUnit(refId) {
+  const prof = _campUnitProf(refId);
+  if (!prof) return false;
+  if (_campTreatNeed(prof) <= 0) { showToast('That survivor is already in good shape.'); return false; }
+  const cost = _campTreatCost(prof);
+  const have = (typeof getRes === 'function') ? getRes('medicine') : 0;
+  if (have < cost) { showToast(`🩺 Med-bay needs ${cost} 💊 Medicine — you have ${have}.`, 3400); return false; }
+  if (typeof spendResources === 'function') spendResources({ medicine: cost });
+  prof.trauma = 0; prof.corruption = 0; prof.fatigue = 0;
+  prof.morale = Math.max((prof.morale != null) ? prof.morale : 80, 90);
+  try { saveProfile(); } catch (e) {}
+  const meta = (UNIT_CARDS.find(u => u.id === refId) || (Forge.customCards || []).find(c => c.id === refId) || { name: 'The survivor' });
+  showToast(`🩺 ${meta.name} treated at the Med-bay (−${cost} 💊). Trauma, corruption & fatigue cleared; morale restored.`, 4200);
+  return true;
+}
 function _campMissing() { if (!Array.isArray(Profile.campMissing)) Profile.campMissing = []; return Profile.campMissing; }
 // 🎲 Dynamic loot-run event. Returns { name, line, surviveMod, lootMul,
 //   trauma, corruption } applied on top of the base resolution.
@@ -98686,6 +98714,7 @@ function renderCamp() {
           <button class="btn-mini" data-strike="${slot.id}" title="6h · hit the rival faction — high risk, cuts their threat & builds your reputation" style="border-color:#e0556a55;color:#e0879a">⚔️ Strike</button>
         </div>
         ${App._campRescueTarget ? `<button class="btn-mini" data-rescue="${slot.id}" style="margin-top:0.3rem;border-color:#d4af3766;color:#ffd166;width:100%">🆘 Send on Rescue (3h)</button>` : ''}
+        ${(typeof _campTreatNeed === 'function' && _campTreatNeed(prof) > 0) ? `<button class="btn-mini" data-treat="${escapeHtml(slot.refId)}" title="Spend Medicine to clear trauma / corruption / fatigue and restore morale" style="margin-top:0.3rem;border-color:#ff8aa066;color:#ff9fb0;width:100%">🩺 Med-bay Treat (${_campTreatCost(prof)} 💊)</button>` : ''}
         <div style="display:flex;gap:0.4rem;margin-top:0.3rem">
           <button class="btn-primary" data-act="collect" data-slot="${slot.id}" ${xp <= 0 ? 'disabled' : ''}>Collect XP</button>
           <button class="btn-mini btn-danger" data-act="eject" data-slot="${slot.id}" title="Remove without applying XP">×</button>
@@ -99047,6 +99076,10 @@ function renderCamp() {
   });
   document.querySelectorAll('[data-study]').forEach(el => {
     el.onclick = () => { if (campStartActivity(el.dataset.study, 'study')) render(); };
+  });
+  // 🩺 Med-bay — spend Medicine to clear a survivor's afflictions.
+  document.querySelectorAll('[data-treat]').forEach(el => {
+    el.onclick = () => { if (typeof campTreatUnit === 'function' && campTreatUnit(el.dataset.treat)) render(); };
   });
   document.querySelectorAll('[data-act="recall"]').forEach(el => {
     el.onclick = async () => {

@@ -117482,7 +117482,25 @@ function _mpRelayUnitVisuals() {
     if (typeof USE_COLYSEUS_MP !== 'undefined' && USE_COLYSEUS_MP) return; // Supabase path only
     MatchBroadcast._vizSent = MatchBroadcast._vizSent || {};
     const units = (App.state && App.state.units) || [];
-    const CAP = 700 * 1024;   // ~700KB per message — safe for one entity at a time
+    // 🧩 CHUNKED-STRING RELAY — instead of ONE capped message per unit (which
+    // dropped big art / multi-frame sprites to art-only/emoji), we split EVERY
+    // asset string (card art + each sprite frame) into ≤150KB pieces and stream
+    // them. Every message is tiny + well under the channel frame limit, so the
+    // TOTAL visual data is effectively unbounded — a huge sprite just sends more
+    // small packets. The watcher reassembles each slot from its chunks. Each
+    // entity is still relayed only ONCE (deduped) — a finite one-time cost.
+    const me = MatchBroadcast.myUserId;
+    const CHUNK = 150 * 1024;   // chars per message (~150KB)
+    // dst='art' (baseId) | 'fr' (spriteId/anim/frame index fi of fn). i/n = chunk
+    // index/total of this particular string.
+    const sendStr = (meta, str) => {
+      if (typeof str !== 'string' || !str) return;
+      const n = Math.max(1, Math.ceil(str.length / CHUNK));
+      for (let i = 0; i < n; i++) {
+        const p = Object.assign({ from: me, t: 'chunk', i: i, n: n, s: str.slice(i * CHUNK, (i + 1) * CHUNK) }, meta);
+        try { MatchBroadcast.channel.send({ type: 'broadcast', event: 'unitviz', payload: p }); } catch (e) {}
+      }
+    };
     for (const u of units) {
       if (!u || u.owner !== 'player') continue;        // only relay MY entities
       const isHero = !!u.isHero;
@@ -117490,39 +117508,73 @@ function _mpRelayUnitVisuals() {
       if (!baseId) continue;
       const key = (isHero ? 'h:' : 'u:') + baseId;
       if (MatchBroadcast._vizSent[key]) continue;
+      MatchBroadcast._vizSent[key] = 1;
       const spriteId = (isHero ? 'h_' : 'u_') + baseId;
-      const art = (typeof getCardArt === 'function') ? getCardArt(baseId) : null;
-      let frames = null;
+      // 1) Card art (chunked).
+      try {
+        const art = (typeof getCardArt === 'function') ? getCardArt(baseId) : null;
+        if (art) sendStr({ dst: 'art', baseId: baseId }, art);
+      } catch (e) {}
+      // 2) Each sprite frame (chunked), index-tagged so order is preserved.
       try {
         const set = Forge.sprites && (Forge.sprites[spriteId] || Forge.sprites[(isHero ? 'u_' : 'h_') + baseId]);
         if (set) {
-          const f = {};
-          ['idle', 'attack', 'summon'].forEach(a => { if (Array.isArray(set[a]) && set[a].length) f[a] = set[a].filter(Boolean); });
-          if (Object.keys(f).length) frames = f;
+          ['idle', 'attack', 'summon'].forEach(anim => {
+            const fr = Array.isArray(set[anim]) ? set[anim].filter(Boolean) : null;
+            if (!fr || !fr.length) return;
+            const fn = fr.length;
+            for (let fi = 0; fi < fn; fi++) sendStr({ dst: 'fr', spriteId: spriteId, anim: anim, fi: fi, fn: fn }, fr[fi]);
+          });
         }
       } catch (e) {}
-      if (!art && !frames) { MatchBroadcast._vizSent[key] = 1; continue; }  // shared card — nothing to relay
-      let payload = { from: MatchBroadcast.myUserId, baseId, spriteId, isHero, art: art || '', frames: frames };
-      let size = 1e9; try { size = JSON.stringify(payload).length; } catch (e) {}
-      if (size > CAP) {   // too big with frames → try art-only
-        payload = { from: MatchBroadcast.myUserId, baseId, spriteId, isHero, art: art || '', frames: null };
-        try { size = JSON.stringify(payload).length; } catch (e) { size = 1e9; }
-        if (size > CAP) { MatchBroadcast._vizSent[key] = 1; continue; }   // even art too big — leave as emoji
-      }
-      MatchBroadcast._vizSent[key] = 1;
-      try { MatchBroadcast.channel.send({ type: 'broadcast', event: 'unitviz', payload: payload }); } catch (e) {}
     }
   } catch (e) {}
 }
-// Watcher side — cache the relayed visuals, then re-render so the board (and any
-// open summon cinematic) immediately picks up the real sprite/art.
+// Watcher side — reassemble each asset string from its chunks (they arrive across
+// many messages, possibly out of order), store it, then repaint (debounced) so
+// the board + any open summon cinematic pick up the real sprite/art as it streams.
 function _onRemoteUnitViz(p) {
   try {
     if (!p || p.from === MatchBroadcast.myUserId) return;
     App._mpViz = App._mpViz || { art: {}, sprites: {} };
-    if (p.baseId && p.art) App._mpViz.art[p.baseId] = p.art;
-    if (p.spriteId && p.frames && typeof p.frames === 'object') App._mpViz.sprites[p.spriteId] = p.frames;
-    if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
+    let touched = false;
+    if (p.t === 'chunk' && p.dst && typeof p.s === 'string') {
+      // Per-slot reassembly buffer (separator can't appear in ids).
+      const SEP = '';
+      const _sp = String.fromCharCode(1);
+      const slot = (p.dst === 'art')
+        ? ('art' + _sp + p.baseId)
+        : ('fr' + _sp + p.spriteId + _sp + p.anim + _sp + (p.fi | 0));
+      const buf = App._mpVizBuf || (App._mpVizBuf = {});
+      const rec = buf[slot] || (buf[slot] = { n: p.n | 0, parts: new Array(p.n | 0).fill(null) });
+      rec.parts[p.i | 0] = p.s;
+      if (rec.parts.length && rec.parts.every(x => x != null)) {
+        const full = rec.parts.join('');
+        delete buf[slot];
+        if (p.dst === 'art') { if (p.baseId) { App._mpViz.art[p.baseId] = full; touched = true; } }
+        else if (p.dst === 'fr' && p.spriteId && p.anim) {
+          const s = App._mpViz.sprites[p.spriteId] || (App._mpViz.sprites[p.spriteId] = {});
+          const arr = s[p.anim] || (s[p.anim] = new Array((p.fn | 0) || ((p.fi | 0) + 1)).fill(null));
+          arr[p.fi | 0] = full; touched = true;
+        }
+      }
+    } else {
+      // 🔁 Back-compat with older builds: single-message { baseId, art } /
+      //    { spriteId, frames:{idle:[...],...} } or { t:'fr', frames:[...] }.
+      if (p.baseId && p.art) { App._mpViz.art[p.baseId] = p.art; touched = true; }
+      if (p.spriteId && p.frames && typeof p.frames === 'object' && !Array.isArray(p.frames)) { App._mpViz.sprites[p.spriteId] = p.frames; touched = true; }
+      if (p.t === 'fr' && p.spriteId && p.anim && Array.isArray(p.frames)) {
+        const s = App._mpViz.sprites[p.spriteId] || (App._mpViz.sprites[p.spriteId] = {});
+        const arr = s[p.anim] || (s[p.anim] = new Array((p.n | 0) || p.frames.length).fill(null));
+        const start = p.i | 0; for (let k = 0; k < p.frames.length; k++) arr[start + k] = p.frames[k];
+        touched = true;
+      }
+    }
+    if (touched && !App._mpVizRenderQueued) {
+      App._mpVizRenderQueued = true;
+      const _go = () => { App._mpVizRenderQueued = false; if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle(); };
+      try { requestAnimationFrame(_go); } catch (e) { _go(); }
+    }
   } catch (e) {}
 }
 

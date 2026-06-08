@@ -51077,12 +51077,12 @@ function recordReplaySnapshot(label) {
     label: label || (log.length > rep._lastLogLen ? (log[log.length - 1] && log[log.length - 1].msg) || '' : ''),
     t: Date.now() - (rep.startedAt || Date.now()),
   });
-  // 🧹 MEMORY GUARD — each snapshot is a full clone of the board/units/hand, taken
-  // on every render. With no cap a long match accumulated hundreds of clones and
-  // could OOM the tab mid-battle. Keep a rolling window of the most recent ~1200
-  // (a generous replay length); drop the oldest beyond that.
-  if (rep.snapshots.length > 1200) {
-    rep.snapshots.splice(0, rep.snapshots.length - 1200);
+  // 🧹 MEMORY GUARD — each snapshot is a full clone of the board/units/hand.
+  // With no cap a long match accumulated hundreds of clones and could OOM the
+  // tab mid-battle. Keep a rolling window of the most recent 400 (still a long
+  // replay) — lowered from 1200 to cut peak heap during marathon matches.
+  if (rep.snapshots.length > 400) {
+    rep.snapshots.splice(0, rep.snapshots.length - 400);
   }
   rep._lastLogLen = log.length;
 }
@@ -73613,6 +73613,7 @@ function startBattleWithPrep(playerGoesFirst) {
   // so neither a prior match's missed turns nor a stale coin deadline carries in.
   App._turnTimeoutStreak = 0;
   App._turnTimerFired = false;
+  App._eventSpriteState = {};   // 🧹 drop stale per-tile sprite-frame timers (grew across matches)
   App._mpSummonSeen = {};   // 🜂 fresh opponent-summon-cinematic dedup per match
   try { if (typeof _revokeMpViz === 'function') _revokeMpViz(); } catch (e) {}
   App._mpViz = { art: {}, sprites: {} };   // 🎨 fresh relayed-visual cache per match
@@ -83030,10 +83031,14 @@ function _eventSpriteTickerStep() {
   // 🎯 Skip when we're not on the battle screen either — same logic, just
   // applied to in-app navigation (e.g. opening Camp / Forge mid-match).
   if (typeof App !== 'undefined' && App.screen !== 'battle') return;
+  // ⚡ Fast bail — most boards have NO animated event tiles, so skip the 80ms
+  // querySelectorAll DOM scan entirely unless at least one stack exists.
+  const _stacks = document.getElementsByClassName('event-sprite-stack');
+  if (!_stacks || !_stacks.length) return;
   const now = performance.now();
   if (!App._eventSpriteState) App._eventSpriteState = {};
   const st = App._eventSpriteState;
-  document.querySelectorAll('.event-sprite-stack').forEach(stack => {
+  Array.prototype.forEach.call(_stacks, stack => {
     const count = parseInt(stack.dataset.frameCount || '0', 10);
     if (count < 2) return;                       // single-frame = static, nothing to cycle
     const ms  = parseInt(stack.dataset.frameMs || '600', 10);
@@ -84080,7 +84085,7 @@ function _renderBattleImmediateImpl() {
                 if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
                 return;
               }
-              setTimeout(poll, 700);
+              setTimeout(poll, 2000);
             };
             setTimeout(poll, 600);  // first poll after submitMatchResult has had time to land
           }
@@ -88044,21 +88049,40 @@ function renderBoard() {
   // No attack-line — the .attack-target tile glow communicates valid
   // targets more clearly (and works for ally support moves the same
   // way as enemy attacks).
+  // ⚡ PERF — pre-index everything the tile loop looks up per-tile, so the board
+  // render is O(units + board) instead of O(board × units × targets). Behaviour-
+  // preserving: Maps keep the FIRST match (same as the old Array.find), Sets are
+  // membership tests (same as Array.some).
+  const _kOf = (px, py) => px + ',' + py;
+  const _unitAt = new Map(), _bleedAt = new Map(), _consumAt = new Map(), _tombAt = new Map();
+  for (const u of (s.units || [])) {
+    if (!u || !u.pos) continue;
+    const _uk = _kOf(u.pos.x, u.pos.y);
+    if (u.alive) { if (!_unitAt.has(_uk)) _unitAt.set(_uk, u); }
+    else if (u._bleeding) { if (!_bleedAt.has(_uk)) _bleedAt.set(_uk, u); }
+  }
+  for (const p of (consumableTargets || [])) { if (!p) continue; const _ck = _kOf(p.x, p.y); if (!_consumAt.has(_ck)) _consumAt.set(_ck, p); }
+  if (Array.isArray(s.tombstones)) for (const t of s.tombstones) { if (!t) continue; const _tk = _kOf(t.x, t.y); if (!_tombAt.has(_tk)) _tombAt.set(_tk, t); }
+  const _moveSet   = new Set((validMoves      || []).map(p => _kOf(p.x, p.y)));
+  const _attackSet = new Set((validAttacks    || []).map(p => _kOf(p.x, p.y)));
+  const _placeSet  = new Set((validPlacement  || []).map(p => _kOf(p.x, p.y)));
+  const _swapSet   = new Set((validSwaps      || []).map(p => _kOf(p.x, p.y)));
   let html = `<div class="board${boardClass}${isoClass}"${boardStyle}>${isoCanvas}`;
   for (let y = 0; y < BOARD_H; y++) {
     for (let x = 0; x < BOARD_W; x++) {
+      const _tk = x + ',' + y;
       const tile = s.board[y][x];
-      const occupant = s.units.find(u => u.alive && u.pos.x === x && u.pos.y === y);
+      const occupant = _unitAt.get(_tk);
       // 🩸 Bleeding unit may share a tile with an active unit walking over
       // them. Picked separately so render can show a faint downed marker
       // even when someone's standing on the same tile.
-      const bleedingHere = s.units.find(u => u && u._bleeding && !u.alive && u.pos && u.pos.x === x && u.pos.y === y);
-      const isMoveTile = validMoves.some(p => p.x === x && p.y === y);
-      const isAttackTile = validAttacks.some(p => p.x === x && p.y === y);
-      const isPlacement = validPlacement.some(p => p.x === x && p.y === y);
+      const bleedingHere = _bleedAt.get(_tk);
+      const isMoveTile = _moveSet.has(_tk);
+      const isAttackTile = _attackSet.has(_tk);
+      const isPlacement = _placeSet.has(_tk);
       const isSel = sel && sel.pos.x === x && sel.pos.y === y;
-      const isSwapTile = validSwaps.some(p => p.x === x && p.y === y);
-      const cTarget = consumableTargets.find(p => p.x === x && p.y === y);
+      const isSwapTile = _swapSet.has(_tk);
+      const cTarget = _consumAt.get(_tk);
       const tileClasses = ['tile'];
       if ((x + y) % 2 === 0) tileClasses.push('even');
       if (isMoveTile) tileClasses.push('move-target');
@@ -88297,9 +88321,7 @@ function renderBoard() {
       // 🪦 Render any tombstone on this tile (always sits over decorations).
       // Glowing tombstones get the glow class for the CSS halo animation +
       // the block hint so players know they can't path through here.
-      const ts = Array.isArray(s.tombstones)
-        ? s.tombstones.find(t => t.x === x && t.y === y)
-        : null;
+      const ts = _tombAt.get(_tk) || null;
       if (ts) {
         const _canLoot = ts.lootable && !ts.looted && !ts.glowing;
         const cls = `tombstone ${ts.glowing ? 'tombstone-glowing' : ''} ${_canLoot ? 'tombstone-loot' : ''} ${ts.looted ? 'tombstone-looted' : ''} tombstone-${ts.owner}`;
@@ -92284,371 +92306,6 @@ function playKalonCinematic(unit, opts) {
   } catch (e) { go(); }
 }
 
-function playKalonTransformVfx_legacy_UNUSED(unit, opts) {
-  opts = opts || {};
-
-  // SFX hook — cosmic-stinger plays the instant the transform fires.
-  try { if (typeof playSfx === 'function') playSfx('kalonTransform'); } catch (e) {}
-
-  // ── De-dupe + stale-overlay sweep ────────────────────────────────────
-  // Don't stack bursts on a rapid re-trigger. Anything older than 4s is an
-  // orphan whose cleanup got lost to a mid-animation re-render / navigation
-  // — purge it so a single stale VFX can never soft-lock future transforms.
-  const existing = document.querySelectorAll('.kalon-local-fx');
-  if (existing.length) {
-    const now = Date.now();
-    let activeStillPlaying = false;
-    existing.forEach(el => {
-      const born = parseInt(el.dataset.bornAt || '0', 10);
-      if (!born || (now - born) > 4000) {
-        try { el.remove(); } catch (e) {}
-      } else {
-        activeStillPlaying = true;
-      }
-    });
-    if (activeStillPlaying) return;
-  }
-
-  // 🧹 Scrub any legacy board "camera lock" an older build may have left
-  // stamped on the board element. The REBUILT board is geometrically
-  // stable on its own — a center-pivot projection that's mathematically
-  // guaranteed to fit — so this VFX never reads or writes the board. There
-  // is nothing to lock and nothing that can get stuck.
-  try {
-    const lockedBoard = document.querySelector('.board.kalon-locked');
-    if (lockedBoard) {
-      lockedBoard.classList.remove('kalon-locked');
-      lockedBoard.style.removeProperty('--kalon-locked-w');
-      lockedBoard.style.removeProperty('--kalon-locked-h');
-    }
-  } catch (e) {}
-
-  // The VFX is a pure body-anchored overlay (position:fixed, pointer-
-  // events:none, its own contain + isolation context). It is physically
-  // incapable of reflowing/resizing/repainting the board, so there is
-  // intentionally NO board camera-lock anymore. `boardEl` stays null;
-  // the hardened cleanup below tolerates that.
-  const boardEl = null;
-
-  // Body-anchored overlay host (matches playMythicSummonVfx et al.). The
-  // ORIGINAL bug that silently broke this effect: `host.appendChild(fx)`
-  // was called but `host` was never declared in this function — a
-  // ReferenceError that aborted the whole VFX. Declaring it here, the
-  // same way every sibling VFX does, is the actual restore.
-  const host = document.body;
-  if (!host) return;
-
-  // ---- Anchor: the transforming unit's tile center (in screen pixels) ----
-  // getBoundingClientRect returns SCREEN-space coordinates, so it already
-  // accounts for the board's 32° 3D tilt — the burst lands on the visually
-  // correct tile position.
-  let anchorX, anchorY;
-  try {
-    const u = unit || {};
-    if (u.pos && typeof u.pos.x === 'number' && typeof u.pos.y === 'number') {
-      const tileEl = document.querySelector(`[data-x="${u.pos.x}"][data-y="${u.pos.y}"]`);
-      if (tileEl) {
-        const r = tileEl.getBoundingClientRect();
-        anchorX = r.left + r.width / 2;
-        anchorY = r.top  + r.height / 2;
-      }
-    }
-    if (anchorX == null) {
-      const boardEl = document.querySelector('.board');
-      if (boardEl) {
-        const r = boardEl.getBoundingClientRect();
-        anchorX = r.left + r.width / 2;
-        anchorY = r.top  + r.height / 2;
-      } else {
-        anchorX = window.innerWidth / 2;
-        anchorY = window.innerHeight / 2;
-      }
-    }
-  } catch (e) {
-    anchorX = window.innerWidth / 2;
-    anchorY = window.innerHeight / 2;
-  }
-
-  // ---- Resolve base + evolved form for the silhouette swap ----
-  const evolvedUnit = unit || {};
-  const baseUnit    = opts.from || evolvedUnit;
-  const baseName    = (baseUnit && baseUnit.name)    || '';
-  const evolvedName = (evolvedUnit && evolvedUnit.name) || '';
-  const baseSpriteId    = (typeof getSpriteId === 'function') ? getSpriteId(baseUnit)    : null;
-  const evolvedSpriteId = (typeof getSpriteId === 'function') ? getSpriteId(evolvedUnit) : null;
-  const baseFrames    = baseSpriteId    && (typeof getSpriteFrames === 'function') ? getSpriteFrames(baseSpriteId,    'idle') : null;
-  const evolvedFrames = evolvedSpriteId && (typeof getSpriteFrames === 'function') ? getSpriteFrames(evolvedSpriteId, 'idle') : null;
-  const baseFrame    = baseFrames    && baseFrames[0]    ? baseFrames[0]    : null;
-  const evolvedFrame = evolvedFrames && evolvedFrames[0] ? evolvedFrames[0] : null;
-  const baseEmoji    = (baseUnit    && baseUnit.icon)    || '✦';
-  const evolvedEmoji = (evolvedUnit && evolvedUnit.icon) || '✦';
-
-  // ---- Palette: based on the evolved form's primary element ----
-  const elements = (typeof getElementsOf === 'function') ? getElementsOf(evolvedUnit) : (evolvedUnit.elements || []);
-  const primaryElement = (elements && elements[0]) || null;
-  const palettes = {
-    fire:      { primary: '#ff8a3c', secondary: '#ffd166' },
-    water:     { primary: '#4ec8ff', secondary: '#a8e3ff' },
-    earth:     { primary: '#c89a52', secondary: '#f0d088' },
-    air:       { primary: '#e8f4ff', secondary: '#b0d8ff' },
-    light:     { primary: '#fff2a8', secondary: '#ffffff' },
-    shadow:    { primary: '#b070ff', secondary: '#5a2c9e' },
-    void:      { primary: '#c060ff', secondary: '#6020a8' },
-    arcane:    { primary: '#a888ff', secondary: '#ffd166' },
-    blood:     { primary: '#ff4a4a', secondary: '#8a1a1a' },
-    poison:    { primary: '#8aff60', secondary: '#3a8a1a' },
-    corruption:{ primary: '#9a40d0', secondary: '#4a0a70' },
-    nature:    { primary: '#80e060', secondary: '#3aa050' },
-    ice:       { primary: '#a0e0ff', secondary: '#ffffff' },
-    lightning: { primary: '#ffe070', secondary: '#a8d8ff' },
-    metal:     { primary: '#c8d0e0', secondary: '#f0f0ff' },
-    gravity:   { primary: '#7060a0', secondary: '#1a0a40' },
-    psychic:   { primary: '#ff80e0', secondary: '#a040c0' },
-  };
-  const palette = palettes[primaryElement] || { primary: '#ffd166', secondary: '#b070ff' };
-
-  // ---- Figure markup: prefer real sprite, fall back to emoji ----
-  const figureHtml = (kind, frameUrl, emoji) => {
-    if (frameUrl) {
-      return `<img class="klf-figure ${kind}" src="${frameUrl}" alt="" />`;
-    }
-    return `<div class="klf-figure ${kind}" style="display:flex;align-items:flex-end;justify-content:center;font-size:90px;line-height:1;text-shadow:0 0 14px ${palette.primary},0 0 24px ${palette.secondary};">${emoji}</div>`;
-  };
-
-  // ---- 12 spark particles, max radius 90px (stays well inside the 480×480 box) ----
-  const sparks = Array.from({ length: 12 }, (_, i) => {
-    const ang = (i / 12) * Math.PI * 2 + ((i * 31) % 7) * 0.08;
-    const dist = 60 + ((i * 11) % 30);
-    const dx = Math.cos(ang) * dist;
-    const dy = Math.sin(ang) * dist;
-    const delay = ((i * 13) % 30) / 100;
-    return `<span class="klf-spark" style="--dx:${dx.toFixed(0)}px;--dy:${dy.toFixed(0)}px;animation-delay:${delay.toFixed(2)}s"></span>`;
-  }).join('');
-
-  // ============================================================
-  // 🔥 ELEMENT-SPECIFIC LAYER BUILDER
-  // ----------------------------------------------------------------
-  // Map the unit's primary element to one of six visual families,
-  // then build the matching layer of HTML. Every element-specific
-  // element stays within the 480×480 FX box (radii capped) so the
-  // mega-evolution drama stays localized to the unit's tile area.
-  // ============================================================
-  const elementCategoryMap = {
-    fire: 'fire', lava: 'fire', blood: 'fire',
-    ice: 'ice', water: 'ice', frost: 'ice',
-    lightning: 'storm', air: 'storm', storm: 'storm',
-    nature: 'nature', earth: 'nature', wood: 'nature', poison: 'nature',
-    metal: 'metal', steel: 'metal',
-    void: 'void', shadow: 'void', arcane: 'void', corruption: 'void',
-    gravity: 'void', psychic: 'void', eldritch: 'void',
-  };
-  const elemCat = elementCategoryMap[primaryElement] || 'fire';
-
-  const buildElementLayer = (cat) => {
-    if (cat === 'fire') {
-      // 8 flame tongues across the bottom + 6 molten rocks flying up
-      const flames = Array.from({ length: 8 }, (_, i) => {
-        const left = 30 + (i * 6);
-        const scale = 0.7 + ((i * 17) % 50) / 100;
-        const delay = ((i * 11) % 30) / 100;
-        return `<span class="klf-flame" style="left:${left}%;transform:scale(${scale.toFixed(2)});animation-delay:${delay.toFixed(2)}s"></span>`;
-      }).join('');
-      const rocks = Array.from({ length: 6 }, (_, i) => {
-        const ang = (i / 6) * Math.PI * 2 + ((i * 13) % 5) * 0.1;
-        const dist = 50 + ((i * 17) % 40);
-        const dx = Math.cos(ang) * dist;
-        const delay = (0.2 + ((i * 7) % 30) / 100).toFixed(2);
-        return `<span class="klf-rock" style="--dx:${dx.toFixed(0)}px;animation-delay:${delay}s"></span>`;
-      }).join('');
-      return flames + rocks;
-    }
-    if (cat === 'ice') {
-      // 7 crystal shards erupting + frost mist swirl
-      const crystals = Array.from({ length: 7 }, (_, i) => {
-        const dx = -90 + (i * 30);
-        const scale = 0.8 + ((i * 19) % 50) / 100;
-        const delay = ((i * 13) % 35) / 100;
-        return `<span class="klf-crystal" style="--dx:${dx}px;transform-origin:50% 100%;transform:translate(calc(-50% + ${dx}px), 0) scaleY(${scale.toFixed(2)});animation-delay:${delay.toFixed(2)}s"></span>`;
-      }).join('');
-      return crystals + `<span class="klf-mist"></span>`;
-    }
-    if (cat === 'storm') {
-      // 6 lightning bolts striking + 5 electric arcs across the area
-      const bolts = Array.from({ length: 6 }, (_, i) => {
-        const xPct = 15 + ((i * 17) % 70);
-        const rot = ((i * 11) % 14) - 7;
-        const delay = (0.3 + i * 0.06).toFixed(2);
-        return `<span class="klf-bolt" style="left:${xPct}%;transform:rotate(${rot}deg) scaleY(0);animation-delay:${delay}s"></span>`;
-      }).join('');
-      const arcs = Array.from({ length: 5 }, (_, i) => {
-        const rot = (i / 5) * 360 + ((i * 11) % 30);
-        const delay = (0.45 + i * 0.04).toFixed(2);
-        return `<span class="klf-arc" style="transform:rotate(${rot}deg) scaleX(0);animation-delay:${delay}s"></span>`;
-      }).join('');
-      return bolts + arcs;
-    }
-    if (cat === 'nature') {
-      // 7 vines bursting from ground (radial) + 10 floating leaves
-      const vines = Array.from({ length: 7 }, (_, i) => {
-        const dx = -90 + (i * 30);
-        const rot = ((i * 13) % 20) - 10;
-        const delay = ((i * 11) % 25) / 100;
-        return `<span class="klf-vine" style="--dx:${dx}px;--rot:${rot}deg;animation-delay:${delay.toFixed(2)}s"></span>`;
-      }).join('');
-      const leaves = Array.from({ length: 10 }, (_, i) => {
-        const x0 = ((i * 31) % 240) - 120;
-        const y0 = ((i * 17) % 80);
-        const x1 = x0 + ((i * 13) % 60) - 30;
-        const y1 = y0 - (100 + ((i * 19) % 80));
-        const delay = ((i * 23) % 50) / 100;
-        return `<span class="klf-leaf" style="left:50%;top:50%;--x0:${x0}px;--y0:${y0}px;--x1:${x1}px;--y1:${y1}px;animation-delay:${delay.toFixed(2)}s"></span>`;
-      }).join('');
-      return vines + leaves;
-    }
-    if (cat === 'metal') {
-      // 8 orbiting shards at varied orbits + magnetic dashed ring
-      const shards = Array.from({ length: 8 }, (_, i) => {
-        const delay = ((i * 7) % 40) / 100;
-        const startAng = (i / 8) * 360;
-        return `<span class="klf-shard" style="animation-delay:${delay.toFixed(2)}s;transform:translate(-50%, -50%) rotate(${startAng}deg) translateX(80px)"></span>`;
-      }).join('');
-      return shards + `<span class="klf-magnetic"></span>`;
-    }
-    if (cat === 'void') {
-      // 7 cosmic tendrils + 5 reality rifts radiating from center
-      const tendrils = Array.from({ length: 7 }, (_, i) => {
-        const dx = -90 + (i * 30);
-        const rot = ((i * 17) % 24) - 12;
-        const delay = ((i * 11) % 30) / 100;
-        return `<span class="klf-tendril" style="--dx:${dx}px;--rot:${rot}deg;animation-delay:${delay.toFixed(2)}s"></span>`;
-      }).join('');
-      const rifts = Array.from({ length: 5 }, (_, i) => {
-        const rot = (i / 5) * 360 + ((i * 7) % 20);
-        const delay = (0.35 + i * 0.05).toFixed(2);
-        return `<span class="klf-rift" style="--rot:${rot}deg;animation-delay:${delay}s"></span>`;
-      }).join('');
-      return tendrils + rifts;
-    }
-    return '';
-  };
-  const elementLayer = buildElementLayer(elemCat);
-
-  // ============================================================
-  // 🌌 MYTHIC RARITY DETECTION + MYTHIC OVERLAY BUILD
-  // ----------------------------------------------------------------
-  // Look up the evolved Kalon's card def to read rarity. Mythic
-  // Kalons get an ADDITIONAL cosmic-lightning layer on top of the
-  // element-specific layer. Lookup paths (same as the unit-render
-  // rarity resolver): STARTER_HEROES → UNIT_CARDS → Forge.customCards.
-  // ============================================================
-  let mythicCard = null;
-  try {
-    if (evolvedUnit.isHero) {
-      mythicCard = (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES.find && STARTER_HEROES.find(h => h.id === evolvedUnit.heroId))
-                || (typeof findCustomHeroCard === 'function' ? findCustomHeroCard(evolvedUnit.heroId) : null);
-    }
-    if (!mythicCard && evolvedUnit.cardId) {
-      mythicCard = (typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS.find && UNIT_CARDS.find(c => c.id === evolvedUnit.cardId))
-                || (typeof Forge !== 'undefined' && Forge.customCards && Forge.customCards.find && Forge.customCards.find(c => c.id === evolvedUnit.cardId));
-    }
-  } catch (e) { /* fall through to non-mythic */ }
-  const evolvedRarity = (mythicCard && mythicCard.rarity) || evolvedUnit.rarity || 'common';
-  const isMythic = evolvedRarity === 'mythic';
-
-  // Mythic layer markup — only included if rarity is mythic
-  let mythicLayer = '';
-  if (isMythic) {
-    // 5 cosmic lightning bolts crashing down from the vortex
-    const mythBolts = Array.from({ length: 5 }, (_, i) => {
-      const xPct = 20 + ((i * 17) % 60);
-      const rot = ((i * 11) % 14) - 7;
-      const delay = (0.25 + i * 0.07).toFixed(2);
-      return `<span class="klf-myth-bolt" style="left:${xPct}%;transform:rotate(${rot}deg) scaleY(0);animation-delay:${delay}s"></span>`;
-    }).join('');
-    // 3 expanding ripples
-    const mythRipples = Array.from({ length: 3 }, (_, i) => {
-      const delay = (0.4 + i * 0.18).toFixed(2);
-      return `<span class="klf-myth-ripple" style="animation-delay:${delay}s"></span>`;
-    }).join('');
-    // 14 anti-gravity debris orbiting at varied distances
-    const mythDebris = Array.from({ length: 14 }, (_, i) => {
-      const ang0 = (i / 14) * Math.PI * 2;
-      const r0 = 30 + ((i * 11) % 30);
-      const x0 = Math.cos(ang0) * r0;
-      const y0 = Math.sin(ang0) * r0 + 40; // start slightly low so they "rise"
-      const ang1 = ang0 + 0.6;
-      const r1 = 80 + ((i * 17) % 40);
-      const x1 = Math.cos(ang1) * r1;
-      const y1 = Math.sin(ang1) * r1 - 20; // float up by end
-      const delay = ((i * 19) % 40) / 100;
-      return `<span class="klf-myth-debris" style="left:50%;top:50%;--x0:${x0.toFixed(0)}px;--y0:${y0.toFixed(0)}px;--x1:${x1.toFixed(0)}px;--y1:${y1.toFixed(0)}px;animation-delay:${delay.toFixed(2)}s"></span>`;
-    }).join('');
-    mythicLayer = `
-      <span class="klf-myth-vortex"></span>
-      ${mythBolts}
-      <span class="klf-myth-plasma p1"></span>
-      <span class="klf-myth-plasma p2"></span>
-      ${mythRipples}
-      ${mythDebris}
-    `;
-  }
-
-  // ---- Build the overlay ----
-  const fx = document.createElement('div');
-  fx.className = 'kalon-local-fx';
-  fx.setAttribute('data-element', elemCat);
-  fx.dataset.bornAt = String(Date.now());  // age-stamp for the de-dupe sweep above
-  if (isMythic) fx.setAttribute('data-mythic', '1');
-  fx.style.left = anchorX + 'px';
-  fx.style.top  = anchorY + 'px';
-  fx.style.setProperty('--klf-primary',   palette.primary);
-  fx.style.setProperty('--klf-secondary', palette.secondary);
-  fx.style.setProperty('--klf-accent',    '#ffffff');
-  // Wrap everything in a .klf-shake container so the camera-shake animation
-  // jitters the WHOLE composition (frame + figures + effects) without ever
-  // touching the board. The board lock outside guarantees the board itself
-  // can't move; the shake is purely a VFX-layer wobble.
-  fx.innerHTML = `
-    <div class="klf-shake">
-      <span class="klf-vignette"></span>
-      <span class="klf-frame"></span>
-      <span class="klf-ring r1"></span>
-      <span class="klf-ring r2"></span>
-      <span class="klf-pillar"></span>
-      <span class="klf-sigil"></span>
-      ${elementLayer}
-      ${mythicLayer}
-      ${figureHtml('klf-from', baseFrame,    baseEmoji)}
-      ${figureHtml('klf-to',   evolvedFrame, evolvedEmoji)}
-      <span class="klf-flash"></span>
-      <span class="klf-shockwave"></span>
-      ${sparks}
-      <div class="klf-banner">
-        ${escapeHtml(baseName)} <span style="opacity:0.7">→</span> <strong>${escapeHtml(evolvedName)}</strong>
-      </div>
-    </div>
-  `;
-  host.appendChild(fx);
-  // (SFX already fired at the top of this function — not re-played here so
-  // the cosmic stinger doesn't double up.)
-
-  // 🧹 Hardened cleanup — removes the VFX after the animation completes
-  // (1.6s + safety pad). Also sweeps any OTHER `.kalon-local-fx` overlays
-  // that might be left over from a previous transform whose cleanup got
-  // lost to a mid-animation re-render or navigation. Belt-and-suspenders so
-  // a single stale VFX can't soft-lock the board with stuck rings.
-  setTimeout(() => {
-    // Wipe ALL kalon-local-fx elements (including any orphans), not just
-    // the one we just created — defensive against double-fire scenarios.
-    try { document.querySelectorAll('.kalon-local-fx').forEach(el => el.remove()); } catch (e) {}
-    if (boardEl) {
-      boardEl.classList.remove('kalon-locked');
-      boardEl.style.removeProperty('--kalon-locked-w');
-      boardEl.style.removeProperty('--kalon-locked-h');
-    }
-  }, 2300);  /* matches the 2.0s cinematic + a safety pad so the full
-                ascension plays out before the node is swept */
-}
 
 // Returns the element-specific decoration HTML for the Kalon transform VFX.
 // Each branch picks a thematic accent that matches the prompt brief — fire

@@ -47581,9 +47581,11 @@ function getCampSlotXp(slot) {
   if (!slot) return 0;
   const elapsedMs = Date.now() - (slot.parkedAt || Date.now());
   const elapsedHours = elapsedMs / 3600000;
-  // Training Center multiplies passive Rest XP; Research (Neural Uplink) stacks on top.
+  // Training Center multiplies passive Rest XP; Research (Neural Uplink) and a
+  // ⚡ powered/overclocked camp stack on top.
   const mul = ((typeof campBonus === 'function') ? Math.max(1, campBonus('restXpMul')) : 1)
-            * ((typeof researchBonus === 'function') ? researchBonus('restXpMul') : 1);
+            * ((typeof researchBonus === 'function') ? researchBonus('restXpMul') : 1)
+            * ((typeof _campPowerMul === 'function') ? _campPowerMul() : 1);
   const fromTime = Math.floor(elapsedHours * CAMP_XP_PER_HOUR * mul);
   return Math.min(Math.round(CAMP_XP_CAP * mul), fromTime);
 }
@@ -47888,8 +47890,10 @@ function campRecall(slotId) {
 // Grant a loot reward into the existing economy. Returns a label string.
 function _campGrantLoot(tier, mul) {
   const out = [];
-  // 🔬 Research (Essence Siphon) boosts every loot haul.
-  const lm = ((typeof mul === 'number' && mul > 0) ? mul : 1) * ((typeof researchBonus === 'function') ? researchBonus('lootMul') : 1);
+  // 🔬 Research (Essence Siphon) + ⚡ a powered camp boost every loot haul.
+  const lm = ((typeof mul === 'number' && mul > 0) ? mul : 1)
+           * ((typeof researchBonus === 'function') ? researchBonus('lootMul') : 1)
+           * ((typeof _campPowerMul === 'function') ? _campPowerMul() : 1);
   const t = CAMP_LOOT_TIERS[tier] || CAMP_LOOT_TIERS.scout;
   const qBonus = (typeof campBonus === 'function') ? campBonus('lootQuality') : 0; // Intel Center
   const gem = Math.floor((t.gem[0] + Math.random() * (t.gem[1] - t.gem[0])) * lm * (1 + qBonus));
@@ -48355,7 +48359,8 @@ function _campResCost(f, targetLevel) {
 function _campBuildMs(f, targetLevel) {
   const baseH = (f.buildH && f.buildH[targetLevel - 1]) || 1;
   const _reactor = (typeof _campRoomStaffed === 'function' && _campRoomStaffed('RCT-01')) ? CAMP_REACTOR_BUILD_BONUS : 0;
-  const speed = Math.min(0.6, campBonus('buildSpeed') + _reactor); // workshop + staffed reactor, capped
+  const _power = (typeof _campPowered === 'function' && _campPowered()) ? CAMP_OVERCLOCK_BUILD : 0;   // ⚡ overclock
+  const speed = Math.min(0.7, campBonus('buildSpeed') + _reactor + _power); // workshop + staffed reactor + power, capped
   return Math.max(60000, Math.round(baseH * 3600000 * (1 - speed)));
 }
 function campStartBuild(facId) {
@@ -48459,6 +48464,31 @@ function campFortify() {
   try { const r = _campRival(); if (r) r.threat = Math.max(0, (r.threat || 0) - 4); } catch (e) {}
   try { saveProfile(); saveCamp(); } catch (e) {}
   showToast(`🔧 Defenses reinforced to Lv ${Profile.campDefense}/${CAMP_DEFENSE_MAX} — raiders will bleed for it.`, 3600);
+  return true;
+}
+// ⚡ CAMP POWER / FACILITY MAINTENANCE — pay Fuel + Metal to OVERCLOCK the whole
+// base for a window: while powered, every facility runs hot (+Rest XP, +loot,
+// +build speed). The bonus DECAYS — when the window lapses, the camp drops back
+// to baseline until you power it again. The recurring Fuel/Metal upkeep that
+// keeps your facilities at their best.
+const CAMP_OVERCLOCK_HOURS = 24;
+const CAMP_OVERCLOCK_MUL   = 1.25;   // +25% Rest XP & loot while powered
+const CAMP_OVERCLOCK_BUILD = 0.20;   // +20% build speed while powered
+function _campOverclockCost() { return { fuel: 15, metal: 30 }; }
+function _campPowered() { return (Profile.campPoweredUntil || 0) > Date.now(); }
+function _campPowerMul() { return _campPowered() ? CAMP_OVERCLOCK_MUL : 1; }
+function campOverclock() {
+  const cost = _campOverclockCost();
+  if (typeof canAffordResources === 'function' && !canAffordResources(cost)) {
+    showToast(`⚡ Overclock needs ${cost.fuel} ⛽ Fuel + ${cost.metal} ⛓ Metal.`, 3600);
+    return false;
+  }
+  if (typeof spendResources === 'function') spendResources(cost);
+  // Extend from the current power-out time if still powered (top-up), else now.
+  const base = Math.max(Date.now(), Profile.campPoweredUntil || 0);
+  Profile.campPoweredUntil = base + CAMP_OVERCLOCK_HOURS * 3600000;
+  try { saveProfile(); } catch (e) {}
+  showToast(`⚡ Camp overclocked for ${CAMP_OVERCLOCK_HOURS}h — +${Math.round((CAMP_OVERCLOCK_MUL - 1) * 100)}% Rest XP & loot, +${Math.round(CAMP_OVERCLOCK_BUILD * 100)}% build speed.`, 4400);
   return true;
 }
 // 🏴‍☠️ Phase-4 daily meta resolve (once per real day on Camp open):
@@ -49237,6 +49267,7 @@ function loadForge() {
       if (p.campConsumeFrac && typeof p.campConsumeFrac === 'object') Profile.campConsumeFrac = p.campConsumeFrac;  // upkeep carry-debt
       if (p.campTrickleFrac && typeof p.campTrickleFrac === 'object') Profile.campTrickleFrac = p.campTrickleFrac;  // containment faucet carry
       if (typeof p.campRepairUntil === 'number')                      Profile.campRepairUntil = p.campRepairUntil;  // 🏚 repair half-upkeep window
+      if (typeof p.campPoweredUntil === 'number')                     Profile.campPoweredUntil = p.campPoweredUntil; // ⚡ overclock window
       if (p.research        && typeof p.research        === 'object') Profile.research        = p.research;         // 🔬 research projects
       // 📈 CX share positions — per-resource { qty, avgCost } holding object.
       // Previously absent from the whitelist, so every refresh silently dropped
@@ -99098,6 +99129,11 @@ function renderCamp() {
         const _dmgCut = Math.round((1 - 1 / (1 + _def * 0.20)) * 100);   // % of raid losses damped
         const _fcost = (typeof _campFortifyCost === 'function') ? _campFortifyCost(_baseDef) : { ammo: 30, metal: 15 };
         const _fAff = (typeof canAffordResources !== 'function') || canAffordResources(_fcost);
+        // ⚡ Camp power / facility maintenance.
+        const _powered = (typeof _campPowered === 'function') && _campPowered();
+        const _powLeftH = _powered ? Math.ceil(((Profile.campPoweredUntil || 0) - Date.now()) / 3600000) : 0;
+        const _ocCost = (typeof _campOverclockCost === 'function') ? _campOverclockCost() : { fuel: 15, metal: 30 };
+        const _ocAff = (typeof canAffordResources !== 'function') || canAffordResources(_ocCost);
         return `<div style="display:flex;flex-wrap:wrap;gap:0.6rem 1.4rem;align-items:center;background:linear-gradient(90deg,#0a0d13,#0e1118);border:1px solid #243042;border-left:4px solid ${truced ? '#5fae7a' : band};border-radius:6px;padding:0.7rem 1rem;margin-bottom:1.2rem;font-family:'Cinzel',serif">
           <span style="color:#7fd6ff;letter-spacing:0.12em;font-size:0.8rem">▣ CAMP STATUS</span>
           <span style="flex:1;min-width:220px">
@@ -99110,6 +99146,10 @@ function renderCamp() {
           ${_baseDef < _defCap
             ? `<button class="btn-mini" data-fortify="1" ${_fAff ? '' : 'disabled'} title="Spend ${_fcost.ammo} 🔫 Ammo + ${_fcost.metal} ⛓ Metal to reinforce defenses (cuts raid losses)" style="border-color:#7fb0ff55;color:${_fAff ? '#9fc4ff' : '#5a6a82'}">🔧 Fortify (${_fcost.ammo}🔫 ${_fcost.metal}⛓)</button>`
             : `<span style="color:#8fd6ff;font-size:0.8rem">🛡 MAX</span>`}
+          ${_powered
+            ? `<span style="color:#ffe08a;font-size:0.8rem" title="Camp overclocked — +${Math.round((CAMP_OVERCLOCK_MUL - 1) * 100)}% Rest XP & loot, +${Math.round(CAMP_OVERCLOCK_BUILD * 100)}% build speed">⚡ Powered ${_powLeftH}h</span>
+               <button class="btn-mini" data-overclock="1" ${_ocAff ? '' : 'disabled'} title="Top up power +${CAMP_OVERCLOCK_HOURS}h — ${_ocCost.fuel} ⛽ Fuel + ${_ocCost.metal} ⛓ Metal" style="border-color:#ffe08a55;color:${_ocAff ? '#ffe08a' : '#5a6a82'}">⚡ Top up (${_ocCost.fuel}⛽ ${_ocCost.metal}⛓)</button>`
+            : `<button class="btn-mini" data-overclock="1" ${_ocAff ? '' : 'disabled'} title="Overclock the whole camp for ${CAMP_OVERCLOCK_HOURS}h: +${Math.round((CAMP_OVERCLOCK_MUL - 1) * 100)}% Rest XP & loot, +${Math.round(CAMP_OVERCLOCK_BUILD * 100)}% build speed — ${_ocCost.fuel} ⛽ Fuel + ${_ocCost.metal} ⛓ Metal" style="border-color:#ffe08a55;color:${_ocAff ? '#ffe08a' : '#5a6a82'}">⚡ Overclock (${_ocCost.fuel}⛽ ${_ocCost.metal}⛓)</button>`}
           ${truced
             ? `<span style="color:#5fae7a;font-size:0.8rem">🤝 Truce — ${truceLeft}h left</span>`
             : `<button class="btn-mini" data-truce="1" title="Pay ${tcost} 🔥 — pause raids 3 days, ease threat" style="border-color:#5fae7a55;color:#9ad17a">🤝 Broker Truce (${tcost} 🔥)</button>`}
@@ -99377,6 +99417,10 @@ function renderCamp() {
   // 🛡 Fortify camp defenses (spend Ammo + Metal → +1 raid defense).
   document.querySelectorAll('[data-fortify]').forEach(el => {
     el.onclick = () => { if (!el.disabled && typeof campFortify === 'function' && campFortify()) render(); };
+  });
+  // ⚡ Overclock the camp (spend Fuel + Metal → powered for 24h).
+  document.querySelectorAll('[data-overclock]').forEach(el => {
+    el.onclick = () => { if (!el.disabled && typeof campOverclock === 'function' && campOverclock()) render(); };
   });
   // 🖼️ Admin: per-facility backdrop image upload.
   document.querySelectorAll('[data-campart]').forEach(btn => {

@@ -62802,6 +62802,12 @@ const executeMove = (state, attacker, target, move) => {
     s.units = result.units;
     if (result.count > 0) log.push({ msg: `🌀 ${attacker.name} casts ${move.name} → summons ${result.count} ${result.label}.`, color: attacker.owner === 'player' ? 'green' : 'red' });
     else log.push({ msg: `🌀 ${attacker.name}'s ${move.name} fizzles — no open tiles adjacent.`, color: 'amber' });
+    // 🛑 A summon move is NOT an attack — mark the caster acted and END here so it
+    // never falls through to the damage path (calculateDamage with a null target).
+    // Energy was already deducted above. This is what makes a "Summon" move
+    // actually spawn the picked summon instead of demanding a board target.
+    s.units = s.units.map(u => u.id === attacker.id ? markAttackerActed(u) : u);
+    s.log = log; return s;
   }
 
   if (move.kind === 'ability') {
@@ -88088,9 +88094,8 @@ function bindBattleEvents() {
         App.ui.selectedMoveId = null; App.ui.actionMode = null; renderBattle(); return;
       }
       const sel = App.state.units.find(u => u.id === App.ui.selectedUnitId);
-      const isNoTarget = move.kind === 'ability'
-        && (move.target === 'self' || move.target === 'allAllies' || move.target === 'allEnemies' || !move.target);
-      // Original activation path: no-target abilities fire immediately;
+      const isNoTarget = _moveIsNoTarget(move);
+      // Original activation path: no-target abilities / summons fire immediately;
       // everything else arms the move for targeting.
       const proceed = () => {
         if (isNoTarget && sel && sel.owner === 'player') {
@@ -88307,11 +88312,11 @@ function bindBattleEvents() {
         e.stopPropagation();
         if (el.disabled) return;
         const move = lookupMove(el.dataset.move);
-        // No-target moves (self / allAllies / allEnemies) fire immediately when picked —
-        // there's nothing for the player to click on the board, so requiring a tile click
-        // softlocked the move (e.g. Rallying Cry, Sword Dance, Meditate, weather summons).
-        if (move && move.kind === 'ability'
-            && (move.target === 'self' || move.target === 'allAllies' || move.target === 'allEnemies' || !move.target)) {
+        // No-target moves (self / allAllies / allEnemies / 🌀 summon) fire
+        // immediately when picked — there's nothing to click on the board, so
+        // requiring a tile click softlocked the move (e.g. Rallying Cry, Sword
+        // Dance, Meditate, and summon moves that spawn next to the caster).
+        if (move && _moveIsNoTarget(move)) {
           const sel = App.state.units.find(u => u.id === App.ui.modalUnitId);
           if (sel && sel.owner === 'player') {
             App.ui.selectedMoveId = null;
@@ -88329,6 +88334,18 @@ function bindBattleEvents() {
       };
     });
   }
+}
+
+// 🎯 A move that needs NO board target — it resolves immediately on the caster.
+// • Summon moves (kind:'summon') spawn the picked summon adjacent to the caster.
+// • Self / all-allies / all-enemies abilities have nothing to click.
+// Without this, a summon move armed targeting mode and (wrongly) asked the
+// player to click a target on the board.
+function _moveIsNoTarget(move) {
+  if (!move) return false;
+  if (move.kind === 'summon') return true;
+  return move.kind === 'ability'
+    && (move.target === 'self' || move.target === 'allAllies' || move.target === 'allEnemies' || !move.target);
 }
 
 function onUnitClick(unitId) {

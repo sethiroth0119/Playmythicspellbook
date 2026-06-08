@@ -32335,7 +32335,7 @@ const SFX = {
   buttonHover:    { src: 'assets/Audio/button%20highlight%20sound.mp3', volume: 0.55 },
   mainMenuButton: { src: 'assets/Audio/main%20menu%20button.wav', volume: 0.9 },
   // ===== Battle SFX =====
-  turnStart:      { src: 'assets/Audio/Start%20turn%20sound.mp3', volume: 0.9 },
+  turnStart:      { src: 'assets/Audio/Start%20turn%20sound%20effect.wav', volume: 0.9 },
   endTurn:        { src: 'assets/Audio/end%20turn.wav',         volume: 0.9 },
   cardPlace:      { src: 'assets/Audio/card%20place.wav',       volume: 0.9, also: [{ src: 'assets/Audio/card%20placement.wav', volume: 0.95 }] },
   cardDraw:       { src: 'assets/Audio/card%20draw.wav',        volume: 0.85 },
@@ -117773,6 +117773,31 @@ function _mpVizPump() {
 // and asks the sender to re-relay JUST those sprite keys. Capped per unit so an
 // art-only unit (genuinely no sprite) doesn't spam forever. This is what makes
 // "every animated unit eventually animates on the other side" reliable.
+// Is this opponent unit's sprite INCOMPLETE on my screen? True when it has no
+// usable frames OR the relayed frame set has holes (a dropped chunk left a null),
+// which is why a unit can "show but not move" — it only animates when every frame
+// of an anim has fully arrived. A locally-owned sprite is always complete.
+function _mpUnitVizIncomplete(u) {
+  try {
+    const sid = (typeof getSpriteId === 'function') ? getSpriteId(u) : null;
+    if (!sid) return false;   // no sprite identity — nothing to fetch
+    const sib = sid.indexOf('h_') === 0 ? ('u_' + sid.slice(2)) : (sid.indexOf('u_') === 0 ? ('h_' + sid.slice(2)) : null);
+    // Local copy (dev / shared catalog) is always complete.
+    const local = (typeof Forge !== 'undefined' && Forge.sprites) ? (Forge.sprites[sid] || (sib && Forge.sprites[sib])) : null;
+    if (local) { for (const an in local) { if (Array.isArray(local[an]) && local[an].filter(Boolean).length) return false; } }
+    // Inspect the relayed cache.
+    const mp = (typeof App !== 'undefined' && App._mpViz && App._mpViz.sprites) ? (App._mpViz.sprites[sid] || (sib && App._mpViz.sprites[sib])) : null;
+    if (!mp) return true;     // nothing relayed yet → need it
+    let anyFrame = false, anyGap = false;
+    for (const an in mp) {
+      const arr = mp[an];
+      if (!Array.isArray(arr)) continue;
+      if (arr.some(x => x == null)) anyGap = true;   // a chunk for some frame never arrived
+      if (arr.some(Boolean)) anyFrame = true;
+    }
+    return (!anyFrame || anyGap);
+  } catch (e) { return false; }
+}
 function _mpRequestMissingViz() {
   try {
     if (!MatchBroadcast.channel) return;
@@ -117783,15 +117808,10 @@ function _mpRequestMissingViz() {
     const wantKeys = new Set();
     for (const u of units) {
       if (!u || u.owner !== 'ai') continue;   // opponent units on MY board
-      let hasFrames = false;
-      try {
-        const sid = (typeof getSpriteId === 'function') ? getSpriteId(u) : null;
-        if (sid) { const fr = getSpriteFrames(sid, 'idle') || getSpriteFrames(sid, 'attack'); if (fr && fr.length) hasFrames = true; }
-      } catch (e) {}
-      if (hasFrames) continue;                 // already animating — nothing to ask for
+      if (!_mpUnitVizIncomplete(u)) continue;  // already FULLY animating — nothing to ask for
       const ukey = String(u.cardId || u.id || '');
       const att = MatchBroadcast._vizReqAttempts[ukey] | 0;
-      if (att >= 5) continue;                   // gave up (probably genuinely art-only)
+      if (att >= 10) continue;                  // gave up (probably genuinely art-only)
       MatchBroadcast._vizReqAttempts[ukey] = att + 1;
       try { const sid = getSpriteId(u); if (sid) wantKeys.add(sid); } catch (e) {}
       if (u.cardId) wantKeys.add('u_' + u.cardId);

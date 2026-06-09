@@ -31022,15 +31022,7 @@ const DEFAULT_PACK_RARITY_WEIGHTS = {
 function getCardArt(cardId) {
   if (!cardId) return null;
   const local = Forge.cardArt && Forge.cardArt[cardId];
-  if (local) {
-    if (_lazyAssetsOn) { try { _lazyTouch(_lazyCarLRU, cardId, _LAZY_CARDART_CAP, Forge.cardArt); } catch (e) {} }
-    return local;
-  }
-  // 🧊 Lazy: stream missing card art in from per-key IDB (LRU-cached) if the id is
-  // in the index. Returns null/MP-fallback now; re-renders when the art lands.
-  if (_lazyAssetsOn) {
-    try { if (Forge._cardArtIds && Forge._cardArtIds.has(cardId)) _lazyLoadCardArt(cardId); } catch (e) {}
-  }
+  if (local) return local;
   // 📡 MULTIPLAYER fallback — art the opponent RELAYED for their custom card
   // (their visuals were stripped from the state snapshot, so without this the
   // watcher renders their units as a bare emoji). Runtime-only cache, never
@@ -36829,11 +36821,7 @@ async function cloudPublishCatalogArt() {
   const results = [];
   for (const [forgeKey, filename] of categories) {
     try {
-      // 🔄 Off-heap stores hold blob: URLs in memory — re-encode to base64 so the
-      // shared catalog ships REAL bytes, not session-local blob: handles that are
-      // dead on every other device. (Was a latent bug once sprites/cardArt/etc.
-      // moved off-heap.) data:/http values pass straight through.
-      const blob = await _deepResolveToDataUrls(Forge[forgeKey] || {}, 0);
+      const blob = Forge[forgeKey] || {};
       const base = filename.replace(/\.json$/, '');
       // Empty category → just (re)write a 0-shard index so the fetcher merges
       // nothing. Tiny + fast; never times out.
@@ -36886,24 +36874,14 @@ async function cloudPublishCatalogArt() {
 // every caller after the first reuses the same result.
 let _catalogArtFetchPromise = null;
 let _catalogArtFetchedAt = 0;
-const _CATALOG_ART_TTL_MS = 60 * 60 * 1000; // 60min — refetch only after 60min staleness
+const _CATALOG_ART_TTL_MS = 5 * 60 * 1000; // 5min — refetch only after 5min staleness
 async function cloudFetchCatalogArt() {
   if (!initCloud()) return { ok: false };
   // Dedup: in-flight call → return existing promise.
   if (_catalogArtFetchPromise) return _catalogArtFetchPromise;
-  // Cached success → skip entirely. A re-fetch re-downloads the ENTIRE published
-  // art library as base64 (hundreds of MB on a content-heavy catalog) — a transient
-  // spike that, repeated over a long session, was a real "Out of Memory" / whole-
-  // browser-crash contributor. So:
-  //   • ADMINS skip EVERY re-fetch after the first — they ARE the source of the
-  //     catalog (local Forge.* is always richer and the merge is local-wins), so a
-  //     re-fetch gains them nothing but the memory spike.
-  //   • Players use a 60-min TTL (was 5) so the spike fires ~12× less often. A page
-  //     refresh always forces a fresh pull when the admin ships an update.
-  if (_catalogArtFetchedAt && (
-        (typeof isAdmin === 'function' && isAdmin()) ||
-        (Date.now() - _catalogArtFetchedAt < _CATALOG_ART_TTL_MS)
-      )) {
+  // Cached success within TTL → skip entirely. Returns immediately; no
+  // network traffic, no shard fetching, no memory pressure.
+  if (_catalogArtFetchedAt && Date.now() - _catalogArtFetchedAt < _CATALOG_ART_TTL_MS) {
     return { ok: true, cached: true };
   }
   _catalogArtFetchPromise = _cloudFetchCatalogArtImpl().finally(() => {
@@ -37018,30 +36996,6 @@ async function _cloudFetchCatalogArtImpl() {
             ' nodeImgs=' + nodeImgs + ' | adopted=' + _adopt +
             ' (incScore=' + incScore + ' curScore=' + curScore + ')');
         } catch (e) {}
-      } else if ((forgeKey === 'sprites' || forgeKey === 'cardArt') &&
-                 (_lazyAssetsOn || Object.keys(merged).length > 1200)) {
-        // 🧊 CRASH DOOR #2 — the downloaded catalog art for sprites/cardArt is the
-        // admin's own ~15k-entry library. The old `Forge[forgeKey] = {...merged}`
-        // path + saveForge() would mint a blob: URL for EVERY entry (blobReg=15036)
-        // and OOM the whole browser, completely bypassing the lazy IDB loader.
-        // Instead stream it to per-key storage + the lazy index so it loads on
-        // demand, and force lazy mode ON for the rest of this session.
-        _lazyAssetsOn = true;
-        try { Forge._lazyAssets = true; } catch (e) {}
-        if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
-        if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
-        const _pref = forgeKey === 'sprites' ? 'spr:' : 'car:';
-        const _idx = forgeKey === 'sprites' ? 'forge_sprites_idx' : 'forge_cardArt_idx';
-        const _setName = forgeKey === 'sprites' ? '_spriteIds' : '_cardArtIds';
-        // Mark the per-key store authoritative so the next boot takes the lazy
-        // branch instead of re-downloading + re-minting the whole library.
-        _lazyAbsorbDownloaded(merged, _pref, _idx, _setName)
-          .then(function (n) {
-            try { idbSet('forge_assets_perkey_v2', true); } catch (e) {}
-            try { if (typeof _lazyScheduleRender === 'function') _lazyScheduleRender(); } catch (e) {}
-            try { console.info('🧊 absorbed ' + n + ' ' + forgeKey + ' from catalog → per-key (no mint)'); } catch (e) {}
-          })
-          .catch(function () {});
       } else {
         // Local-only assets win on id collision so a player's personal uploads
         // aren't stomped by the public catalog merge.
@@ -48889,22 +48843,6 @@ async function idbSet(key, value) {
     });
   } catch (e) { console.warn('idbSet failed', key, e); return false; }
 }
-// Batch put — writes many [key, value] pairs in ONE transaction. Migrating a 15k
-// asset library as 15k separate idbSet transactions was far too slow to ever
-// finish before a refresh/crash; batching turns it into a few dozen transactions.
-async function idbSetMany(entries) {
-  if (!entries || !entries.length) return true;
-  try {
-    const db = await _openIdb();
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(HG_IDB_STORE, 'readwrite');
-      const store = tx.objectStore(HG_IDB_STORE);
-      for (let i = 0; i < entries.length; i++) { try { store.put(entries[i][1], entries[i][0]); } catch (e) {} }
-      tx.oncomplete = () => resolve(true);
-      tx.onerror    = () => reject(tx.error);
-    });
-  } catch (e) { console.warn('idbSetMany failed', e); return false; }
-}
 async function idbGet(key) {
   try {
     const db = await _openIdb();
@@ -48928,601 +48866,35 @@ async function idbDel(key) {
   } catch (e) { return false; }
 }
 
-// ════════════════════════════════════════════════════════════════════════
-// 🧊 LAZY ASSET LOADING — the huge-library "whole browser crashes" fix.
-// ------------------------------------------------------------------------
-// A library with thousands of custom sprites/card-art was loaded ENTIRELY into
-// memory at boot (the admin's recorder showed blobReg=15036), which exhausted
-// memory and crashed startup. Lazy mode keeps the library on DISK as per-asset
-// IndexedDB keys (spr:<id> / car:<id>) plus a small index, and holds only the
-// assets currently on screen in memory (an LRU of a few hundred), loading the
-// rest on demand and revoking evicted ones so the browser frees their bytes.
-//   • GATED: only turns on AFTER a one-time, non-destructive migration that a
-//     LARGE library triggers. Small libraries never migrate, so normal players
-//     keep the proven eager path untouched (zero blast radius for them).
-//   • NON-DESTRUCTIVE: the original giant forge_sprites/forge_cardArt keys are
-//     KEPT as a backup — the migration only ADDS per-key copies + an index.
-// ════════════════════════════════════════════════════════════════════════
-const _LAZY_SPRITE_CAP  = 600;    // max sprites cached in memory at once
-const _LAZY_CARDART_CAP = 1500;   // max card-art entries cached at once
-let _lazyAssetsOn = false;
-const _lazyLoadingSet = (typeof Set !== 'undefined') ? new Set() : null;
-const _lazySprLRU = [];
-const _lazyCarLRU = [];
-function _lazyRevokeVal(val) {
-  const rev = (u) => { try { if (typeof u === 'string' && u.slice(0, 5) === 'blob:') { URL.revokeObjectURL(u); if (_artBlobByUrl) _artBlobByUrl.delete(u); } } catch (e) {} };
-  if (typeof val === 'string') rev(val);
-  else if (val && typeof val === 'object') { for (const a in val) { const arr = val[a]; if (Array.isArray(arr)) arr.forEach(rev); } }
-}
-function _lazyTouch(lru, id, cap, store) {
-  const i = lru.indexOf(id);
-  if (i >= 0) lru.splice(i, 1);
-  lru.push(id);
-  while (lru.length > cap) {
-    const ev = lru.shift();
-    if (ev === id) continue;
-    try { if (store && store[ev] !== undefined) { _lazyRevokeVal(store[ev]); delete store[ev]; } } catch (e) {}
-  }
-}
-let _lazyRenderTimer = null;
-function _lazyScheduleRender() {
-  if (_lazyRenderTimer) return;
-  _lazyRenderTimer = setTimeout(function () {
-    _lazyRenderTimer = null;
-    try { if (typeof App !== 'undefined' && App.screen === 'battle' && typeof renderBattle === 'function') renderBattle(); else if (typeof render === 'function') render(); } catch (e) {}
-  }, 70);
-}
-async function _lazyLoadSprite(id) {
-  if (!id || !_lazyAssetsOn || !Forge.sprites || Forge.sprites[id]) return;
-  const k = 's:' + id;
-  if (_lazyLoadingSet) { if (_lazyLoadingSet.has(k)) return; _lazyLoadingSet.add(k); }
-  try {
-    const data = await idbGet('spr:' + id);
-    if (data && typeof data === 'object' && !Forge.sprites[id]) {
-      try { _deepBlobUrlize(data, 0); } catch (e) {}
-      Forge.sprites[id] = data;
-      _lazyTouch(_lazySprLRU, id, _LAZY_SPRITE_CAP, Forge.sprites);
-      _lazyScheduleRender();
-    }
-  } catch (e) {}
-  if (_lazyLoadingSet) _lazyLoadingSet.delete(k);
-}
-async function _lazyLoadCardArt(id) {
-  if (!id || !_lazyAssetsOn || !Forge.cardArt || Forge.cardArt[id]) return;
-  const k = 'c:' + id;
-  if (_lazyLoadingSet) { if (_lazyLoadingSet.has(k)) return; _lazyLoadingSet.add(k); }
-  try {
-    const data = await idbGet('car:' + id);
-    if ((data || data === '') && !Forge.cardArt[id]) {
-      let v = data;
-      try {
-        if (typeof Blob !== 'undefined' && data instanceof Blob) v = _mintArtBlobUrl(data) || data;
-        else if (typeof data === 'string' && data.slice(0, 5) === 'data:') { const b = _dataUrlToBlob(data); v = b ? (_mintArtBlobUrl(b) || data) : data; }
-      } catch (e) {}
-      if (v) { Forge.cardArt[id] = v; _lazyTouch(_lazyCarLRU, id, _LAZY_CARDART_CAP, Forge.cardArt); _lazyScheduleRender(); }
-    }
-  } catch (e) {}
-  if (_lazyLoadingSet) _lazyLoadingSet.delete(k);
-}
-// One-time, non-destructive migration: split the ALREADY-IN-MEMORY Forge.sprites
-// / Forge.cardArt into per-asset IDB keys + an index. Reuses the loaded data (no
-// new big load → no extra memory spike), runs chunked in idle, and KEEPS the
-// original giant keys. After it completes, the NEXT boot loads lazily + light.
-let _assetMigrationRunning = false;
-async function _ensureAssetMigrationV2() {
-  if (_assetMigrationRunning) return false;
-  _assetMigrationRunning = true;
-  try {
-    if (await idbGet('forge_assets_perkey_v2')) { _assetMigrationRunning = false; return true; }
-    try { if (typeof showToast === 'function') showToast('🧊 Optimizing your library (one time)… keep this tab open.', 9000); } catch (e) {}
-    const BATCH = 250;
-    const sids = (Forge.sprites && typeof Forge.sprites === 'object') ? Object.keys(Forge.sprites).filter(k => k && k.indexOf('__') !== 0) : [];
-    for (let i = 0; i < sids.length; i += BATCH) {
-      const chunk = [];
-      for (let j = i; j < Math.min(i + BATCH, sids.length); j++) { try { chunk.push(['spr:' + sids[j], _deepBlobifyForIdb(Forge.sprites[sids[j]], 0)]); } catch (e) {} }
-      await idbSetMany(chunk);
-      await new Promise(r => setTimeout(r, 0));
-    }
-    try { await idbSet('forge_sprites_idx', sids); } catch (e) {}
-    const cids = (Forge.cardArt && typeof Forge.cardArt === 'object') ? Object.keys(Forge.cardArt) : [];
-    for (let i = 0; i < cids.length; i += BATCH) {
-      const chunk = [];
-      for (let j = i; j < Math.min(i + BATCH, cids.length); j++) { try { chunk.push(['car:' + cids[j], _artValueToBlobForIdb(Forge.cardArt[cids[j]])]); } catch (e) {} }
-      await idbSetMany(chunk);
-      await new Promise(r => setTimeout(r, 0));
-    }
-    try { await idbSet('forge_cardArt_idx', cids); } catch (e) {}
-    await idbSet('forge_assets_perkey_v2', true);
-    try { console.info('🧊 Lazy-asset migration complete — ' + sids.length + ' sprites + ' + cids.length + ' card-art split to per-key storage.'); } catch (e) {}
-    // ♻️ Auto-reload INTO lazy mode so the heavy eager copy is dropped immediately
-    // (don't make the user keep playing in the crash-prone eager state). Only when
-    // not mid-battle; otherwise prompt a refresh.
-    _assetMigrationRunning = false;
-    try {
-      if (typeof App !== 'undefined' && App.screen === 'battle') {
-        if (typeof showToast === 'function') showToast('🧊 Storage optimized! Refresh when you finish this battle to apply it.', 9000);
-      } else {
-        if (typeof showToast === 'function') showToast('🧊 Storage optimized! Reloading to finish…', 3500);
-        setTimeout(function () { try { location.reload(); } catch (e) {} }, 2500);
-      }
-    } catch (e) {}
-    return true;
-  } catch (e) { try { console.warn('lazy-asset migration failed', e); } catch (e2) {} _assetMigrationRunning = false; return false; }
-}
-// 🛠 Manual escape hatches (console): __mg.optimizeAssets() forces the per-key
-// migration from a booted state; __mg.lazyReset() reverts to the eager path (clears
-// the flag) in case the lazy path ever misbehaves — the original giant keys are
-// kept, so this is always safe.
-// Split a RAW IDB store object ({id: value}) straight into per-key entries +
-// an index, WITHOUT minting blob URLs or loading it into Forge.*. The raw values
-// (disk-backed Blobs, or legacy base64) are copied as-is; the lazy loader
-// normalizes each on read. Batched so a 15k library writes in a few dozen
-// transactions instead of 15k. This is the crash-proof migration path — it never
-// materializes the whole library at once.
-async function _migrateRawToPerKey(raw, prefix, idxKey) {
-  if (!raw || typeof raw !== 'object') { try { await idbSet(idxKey, []); } catch (e) {} return 0; }
-  const ids = Object.keys(raw).filter(k => k && k.indexOf('__') !== 0);
-  // Small batches + a real yield between them: copying a Blob to a new key
-  // materializes its bytes transiently, so we keep each batch tiny and give the
-  // GC a window so the migration itself can never spike memory.
-  const BATCH = 40;
-  for (let i = 0; i < ids.length; i += BATCH) {
-    const chunk = [];
-    for (let j = i; j < Math.min(i + BATCH, ids.length); j++) { try { chunk.push([prefix + ids[j], raw[ids[j]]]); } catch (e) {} }
-    try { await idbSetMany(chunk); } catch (e) {}
-    await new Promise(r => setTimeout(r, 12));
-  }
-  try { await idbSet(idxKey, ids); } catch (e) {}
-  return ids.length;
-}
-
-// 🧊 Absorb a freshly-DOWNLOADED sprite/cardArt bundle (from the shared catalog
-// art shards) into per-key IDB + the lazy index — WITHOUT ever placing it on
-// Forge.sprites/cardArt. This is the second crash door: cloudFetchCatalogArt()
-// downloads the admin's own published library (~15k entries) and the old code
-// did `Forge.sprites = {...merged}` then saveForge(), which mints a blob: URL
-// for every single entry → blobReg=15036 → whole-browser OOM, no matter what
-// the IDB boot loader did. Here we stream the bytes to spr:/car: keys and add
-// the ids to the index so they load on demand, and we turn lazy mode ON for the
-// rest of the session so the renderer never tries to hold them all at once.
-async function _lazyAbsorbDownloaded(merged, prefix, idxKey, idSetName) {
-  if (!merged || typeof merged !== 'object') return 0;
-  const ids = Object.keys(merged).filter(k => k && k.indexOf('__') !== 0);
-  if (!ids.length) return 0;
-  // Make sure the in-memory id Set exists (it may not if we never went through
-  // the lazy boot branch this session — e.g. the fetch beat the IDB loader).
-  let idSet = Forge[idSetName];
-  if (!(idSet instanceof Set)) {
-    try { const ex = await idbGet(idxKey); idSet = new Set(Array.isArray(ex) ? ex : []); }
-    catch (e) { idSet = new Set(); }
-    Forge[idSetName] = idSet;
-  }
-  const BATCH = 40;
-  for (let i = 0; i < ids.length; i += BATCH) {
-    const chunk = [];
-    for (let j = i; j < Math.min(i + BATCH, ids.length); j++) {
-      try { chunk.push([prefix + ids[j], merged[ids[j]]]); idSet.add(ids[j]); } catch (e) {}
-    }
-    try { await idbSetMany(chunk); } catch (e) {}
-    await new Promise(r => setTimeout(r, 10));
-  }
-  try { await idbSet(idxKey, Array.from(idSet)); } catch (e) {}
-  return ids.length;
-}
-
-try {
-  window.__mg = window.__mg || {};
-  window.__mg.optimizeAssets = function () { return _ensureAssetMigrationV2(); };
-  window.__mg.lazyReset = async function () { try { await idbSet('forge_assets_perkey_v2', false); } catch (e) {} console.info('🧊 Lazy mode reset — refresh to load the full library eagerly again.'); };
-} catch (e) {}
-
 // Async-load the heavy Forge chunks (sprites, cardArt, locationArt, weatherAudio)
 // from IndexedDB. Called once at boot AFTER the synchronous loadForge() so the
 // game starts immediately with text+stats, and sprites pop in as soon as IDB
 // resolves (sub-second on modern devices). Triggers a render once data lands.
 async function loadHeavyForgeFromIdb() {
-  // 🆘 LITE MODE — emergency escape for a library so large that loading EVERY
-  // custom asset at boot exhausts memory and crashes startup (the 15k-asset
-  // admin case). Turn ON by visiting the game with ?litemode in the URL (it
-  // sticks via localStorage); turn OFF with ?litemode=off. When active, the
-  // heavy custom-art stores are NOT loaded — the game boots fast with the
-  // built-in placeholder/emoji art so you can get in and play. The real fix is
-  // on-demand asset loading; this is just the un-stick valve.
-  try {
-    const _m = (typeof location !== 'undefined' && location.search) ? location.search.match(/[?&]litemode(?:=([^&]*))?/i) : null;
-    if (_m) {
-      const _v = (_m[1] || '').toLowerCase();
-      try {
-        if (_v === 'off' || _v === '0' || _v === 'false') localStorage.removeItem('hg_litemode');
-        else localStorage.setItem('hg_litemode', '1');
-      } catch (e) {}
-    }
-    let _lite = false;
-    try { _lite = localStorage.getItem('hg_litemode') === '1'; } catch (e) {}
-    if (_lite) {
-      try { console.warn('🆘 LITE MODE — skipping heavy custom-art load (sprites / cardArt / media) to prevent the boot crash. Placeholder art only. Visit ?litemode=off to restore.'); } catch (e) {}
-      try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🆘 Lite mode ON — custom art skipped to prevent the crash. Add ?litemode=off to the URL to restore.', 6000); } catch (e) {} }, 1500); } catch (e) {}
-      return false;
-    }
-  } catch (e) {}
-
-  // 🧊 LAZY ASSET MODE — once the one-time per-key migration is done, load ONLY
-  // the index of sprite / card-art ids; the assets themselves stream in on demand
-  // (LRU-capped). This is what stops a huge library from loading all-at-once and
-  // crashing the browser. The other (small) heavy stores still load eagerly.
-  try {
-    if (await idbGet('forge_assets_perkey_v2')) {
-      _lazyAssetsOn = true;
-      try { Forge._lazyAssets = true; } catch (e) {}
-      try { const si = await idbGet('forge_sprites_idx'); Forge._spriteIds = new Set(Array.isArray(si) ? si : []); } catch (e) { Forge._spriteIds = new Set(); }
-      try { const ci = await idbGet('forge_cardArt_idx'); Forge._cardArtIds = new Set(Array.isArray(ci) ? ci : []); } catch (e) { Forge._cardArtIds = new Set(); }
-      if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
-      if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
-      const liteKeys = ['locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
-      for (const k of liteKeys) {
-        try {
-          const v = await idbGet('forge_' + k);
-          if (v && typeof v === 'object' && Object.keys(v).length > 0) {
-            if (!Forge[k] || Object.keys(Forge[k]).length === 0) Forge[k] = v;
-            else Forge[k] = { ...Forge[k], ...v };
-          }
-        } catch (e) {}
-      }
-      try { _normalizeArtToBlobUrls(); } catch (e) {}
-      try { console.info('🧊 Lazy asset mode ON — sprites=' + Forge._spriteIds.size + ', cardArt=' + Forge._cardArtIds.size + ' (streamed on demand, ~' + _LAZY_SPRITE_CAP + ' in memory).'); } catch (e) {}
-      try { if (typeof render === 'function') render(); } catch (e) {}
-      return true;
-    }
-  } catch (e) {}
-
-  // 🧊 NOT migrated yet. PEEK the raw sprite/card-art stores first. IndexedDB
-  // returns Blobs DISK-BACKED (handles, not bytes), so reading the container is
-  // cheap and — crucially — mints / materializes NOTHING. We size the library
-  // from these handles before deciding how to load.
-  let _rawSpr = null, _rawCar = null;
-  try { _rawSpr = await idbGet('forge_sprites'); } catch (e) {}
-  try { _rawCar = await idbGet('forge_cardArt'); } catch (e) {}
-  const _sprN = (_rawSpr && typeof _rawSpr === 'object') ? Object.keys(_rawSpr).filter(k => k && k.indexOf('__') !== 0).length : 0;
-  const _carN = (_rawCar && typeof _rawCar === 'object') ? Object.keys(_rawCar).length : 0;
-
-  // 🧊 LARGE LIBRARY → migrate to per-key storage WITHOUT minting the thousands of
-  // blob URLs or loading them into Forge.sprites. The recorder proved there is NO
-  // JS leak — the crash is the NATIVE bytes of ~15k live blobs, and minting them
-  // all is what kills the boot in seconds. So we split the RAW values straight to
-  // per-key keys + an index, set the flag, and reload into lazy mode (only ~600
-  // ever resident). The original giant keys are KEPT as a backup.
-  if (_sprN + _carN > 1500) {
-    // 🧊 Boot LIGHT immediately in lazy mode — NEVER load/mint the 15k blobs on the
-    // boot path (that hangs the splash / crashes). Build the per-key index in the
-    // BACKGROUND from the raw stores; custom sprites show the emoji fallback until
-    // the index lands, then stream in on demand. No reload, no boot block.
-    try { console.info('🧊 Large library (' + (_sprN + _carN) + ' assets) — booting LIGHT (lazy), optimizing storage in the background…'); } catch (e) {}
-    _lazyAssetsOn = true;
-    try { Forge._lazyAssets = true; } catch (e) {}
-    Forge.sprites = {}; Forge.cardArt = {};
-    try { const si = await idbGet('forge_sprites_idx'); Forge._spriteIds = new Set(Array.isArray(si) ? si : []); } catch (e) { Forge._spriteIds = new Set(); }
-    try { const ci = await idbGet('forge_cardArt_idx'); Forge._cardArtIds = new Set(Array.isArray(ci) ? ci : []); } catch (e) { Forge._cardArtIds = new Set(); }
-    const _liteKeys = ['locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
-    for (const k of _liteKeys) {
-      try {
-        const v = await idbGet('forge_' + k);
-        if (v && typeof v === 'object' && Object.keys(v).length > 0) {
-          if (!Forge[k] || Object.keys(Forge[k]).length === 0) Forge[k] = v;
-          else Forge[k] = { ...Forge[k], ...v };
-        }
-      } catch (e) {}
-    }
-    try { _normalizeArtToBlobUrls(); } catch (e) {}
-    try { if (typeof render === 'function') render(); } catch (e) {}
-    // 🛠 Background migration — does NOT block boot. Splits the peeked raw stores to
-    // per-key keys + index, sets the flag, then refreshes the index + re-renders so
-    // custom art pops in. Idempotent + resumable across refreshes.
-    setTimeout(function () {
-      (async function () {
-        try {
-          if (await idbGet('forge_assets_perkey_v2')) { _rawSpr = null; _rawCar = null; return; }
-          try { if (typeof showToast === 'function') showToast('🧊 Loading your art library in the background (one time)…', 8000); } catch (e) {}
-          const _sN = await _migrateRawToPerKey(_rawSpr, 'spr:', 'forge_sprites_idx'); _rawSpr = null;
-          const _cN = await _migrateRawToPerKey(_rawCar, 'car:', 'forge_cardArt_idx'); _rawCar = null;
-          try { await idbSet('forge_assets_perkey_v2', true); } catch (e) {}
-          try { const si2 = await idbGet('forge_sprites_idx'); Forge._spriteIds = new Set(Array.isArray(si2) ? si2 : []); } catch (e) {}
-          try { const ci2 = await idbGet('forge_cardArt_idx'); Forge._cardArtIds = new Set(Array.isArray(ci2) ? ci2 : []); } catch (e) {}
-          try { console.info('🧊 Background optimization complete — ' + _sN + ' sprites + ' + _cN + ' card-art now stream on demand.'); } catch (e) {}
-          try { if (typeof showToast === 'function') showToast('🧊 Art library ready — custom art now loads on demand.', 5000); } catch (e) {}
-          try { if (typeof render === 'function') render(); } catch (e) {}
-        } catch (e) { try { console.warn('background migration failed', e); } catch (e2) {} }
-      })();
-    }, 1200);
-    return true;
-  }
-
-  // SMALL LIBRARY → the proven eager path. Reuse the raw stores we already peeked
-  // (no second idbGet), then load the OTHER heavy keys and mint everything.
+  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
   let changed = false;
-  if (_rawSpr && typeof _rawSpr === 'object' && Object.keys(_rawSpr).length && (!Forge.sprites || !Object.keys(Forge.sprites).length)) { Forge.sprites = _rawSpr; changed = true; }
-  if (_rawCar && typeof _rawCar === 'object' && Object.keys(_rawCar).length && (!Forge.cardArt || !Object.keys(Forge.cardArt).length)) { Forge.cardArt = _rawCar; changed = true; }
-  const keys = ['locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
   for (const k of keys) {
     const v = await idbGet('forge_' + k);
     if (v && typeof v === 'object' && Object.keys(v).length > 0) {
-      if (!Forge[k] || Object.keys(Forge[k]).length === 0) { Forge[k] = v; changed = true; }
-      else {
+      // Don't overwrite if loadForge already populated this from localStorage
+      // (only happens for legacy users with small libraries).
+      if (!Forge[k] || Object.keys(Forge[k]).length === 0) {
+        Forge[k] = v;
+        changed = true;
+      } else {
+        // Merge — IDB wins on collision since it's the canonical heavy store.
         const merged = { ...Forge[k], ...v };
-        if (Object.keys(merged).length !== Object.keys(Forge[k]).length) { Forge[k] = merged; changed = true; }
+        if (Object.keys(merged).length !== Object.keys(Forge[k]).length) {
+          Forge[k] = merged;
+          changed = true;
+        }
       }
     }
   }
-  // 🧊 Off-heap: convert any base64/Blob sprite & card-art values into blob: URLs
-  // so their bytes leave the JS heap. (Small library only — large ones went lazy.)
-  try { _normalizeArtToBlobUrls(); } catch (e) {}
   if (changed && typeof render === 'function') {
     try { render(); } catch (e) {}
   }
   return changed;
-}
-
-// ════════════════════════════════════════════════════════════════════════
-// 🧊 OFF-HEAP SPRITE / CARD-ART STORE  (the definitive "Out of Memory" fix)
-// ------------------------------------------------------------------------
-// Sprite frames + card art used to live in memory as base64 `data:` URL
-// STRINGS inside Forge.sprites / Forge.cardArt. A medium library is tens of
-// MB of base64 — all of it pinned on the JS heap, which is what blew the tab
-// up. Now:
-//   • IndexedDB stores the bytes as Blobs (structured-clone native, disk-
-//     backed, OFF the JS heap).
-//   • In memory we hold only short `blob:` URL strings. The image bytes those
-//     URLs point at are kept alive by the browser's blob store, NOT V8.
-//   • Every renderer already feeds these strings to <img src> / background
-//     url(), and `blob:` URLs are drop-in for `data:` URLs there — so the
-//     read path is unchanged.
-// _artBlobByUrl maps each minted blob URL back to its Blob so we can re-encode
-// to base64 on demand for the two paths that genuinely need the raw bytes:
-// the MP visual relay (streams them to the opponent) and JSON export.
-// ════════════════════════════════════════════════════════════════════════
-const _artBlobByUrl = (typeof Map !== 'undefined') ? new Map() : null;
-
-// Decode a data: URL to a Blob (no object URL). Returns null on non-data input.
-function _dataUrlToBlob(dataUrl) {
-  try {
-    if (typeof dataUrl !== 'string' || dataUrl.slice(0, 5) !== 'data:') return null;
-    const comma = dataUrl.indexOf(',');
-    if (comma < 0) return null;
-    const header = dataUrl.slice(5, comma);
-    const isB64 = /;base64/i.test(header);
-    const mime = header.split(';')[0] || 'image/png';
-    const body = dataUrl.slice(comma + 1);
-    let bytes;
-    if (isB64) {
-      const bin = atob(body);
-      bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    } else {
-      bytes = new TextEncoder().encode(decodeURIComponent(body));
-    }
-    return new Blob([bytes], { type: mime });
-  } catch (e) { return null; }
-}
-
-// Mint a tracked blob: URL for a Blob (kept in _artBlobByUrl for reverse lookup).
-function _mintArtBlobUrl(blob) {
-  try {
-    const u = URL.createObjectURL(blob);
-    if (_artBlobByUrl) _artBlobByUrl.set(u, blob);
-    return u;
-  } catch (e) { return null; }
-}
-
-// Convert one stored art value to an off-heap blob: URL string.
-//   • Blob  → mint a blob URL (IDB load path)
-//   • data: → decode to a Blob, mint a blob URL (legacy store / fresh edit)
-//   • blob: → already off-heap, leave as-is (idempotent)
-//   • other (http / asset path) → leave as-is
-function _artValueToBlobUrl(v) {
-  try {
-    if (!v) return v;
-    if (typeof Blob !== 'undefined' && v instanceof Blob) { const u = _mintArtBlobUrl(v); return u || v; }
-    if (typeof v === 'string') {
-      const head = v.slice(0, 5);
-      if (head === 'blob:') return v;
-      if (head === 'data:') { const b = _dataUrlToBlob(v); if (b) { const u = _mintArtBlobUrl(b); return u || v; } return v; }
-      return v;
-    }
-    return v;
-  } catch (e) { return v; }
-}
-
-// Walk Forge.sprites + Forge.cardArt in place, replacing every base64/Blob
-// value with an off-heap blob: URL. Idempotent — values already blob: URLs are
-// left untouched, so it's cheap to re-run and never double-mints.
-function _normalizeArtToBlobUrls() {
-  try {
-    const S = (typeof Forge !== 'undefined') ? Forge.sprites : null;
-    if (S && typeof S === 'object') {
-      for (const sid in S) {
-        const set = S[sid];
-        if (!set || typeof set !== 'object' || (typeof Blob !== 'undefined' && set instanceof Blob)) continue;
-        for (const anim in set) {
-          const arr = set[anim];
-          if (!Array.isArray(arr)) continue;          // skip metadata (frameMs / __speed)
-          for (let i = 0; i < arr.length; i++) arr[i] = _artValueToBlobUrl(arr[i]);
-        }
-      }
-    }
-    const C = (typeof Forge !== 'undefined') ? Forge.cardArt : null;
-    if (C && typeof C === 'object') {
-      for (const cid in C) C[cid] = _artValueToBlobUrl(C[cid]);
-    }
-    // 🧊 Other heavy media stores — weather/camp AUDIO, board backgrounds, item /
-    // oil-tower / Crash-Exchange photos. All IDB-only (never cloud-uploaded) and
-    // consumed purely as <img>/<audio> src, so a shape-agnostic deep walk to
-    // blob: URLs is a drop-in heap win. (campNpcArt / packArt / starterDeckArt /
-    // notes / tombstone* are EXCLUDED — they're cloud/catalog-synced or have
-    // string-manipulating consumers; handled separately.)
-    if (typeof Forge !== 'undefined') {
-      for (let _i = 0; _i < _OFFHEAP_MEDIA_STORES.length; _i++) {
-        const _k = _OFFHEAP_MEDIA_STORES[_i];
-        if (Forge[_k] && typeof Forge[_k] === 'object') _deepBlobUrlize(Forge[_k], 0);
-      }
-      // NOTE: catalogMedia is deliberately NOT off-heaped here. It shares object
-      // refs with Catalog.* (via _preferRicher), and _persistCatalog() persists
-      // the whole Catalog object to the 'catalog_v1' IDB cache — so converting it
-      // to blob: URLs would poison that cache with session-local handles that are
-      // dead on the next boot. Off-heaping it safely also requires Blobifying the
-      // catalog_v1 cache on persist + converting back on load (a larger change —
-      // see docs/off-heap-media-refactor.md).
-    }
-  } catch (e) {}
-}
-
-// Resolve one stored art value to a Blob for persistence (blob: → its Blob via
-// the registry; data: → decode; passthrough otherwise). Used writing to IDB.
-function _artValueToBlobForIdb(v) {
-  try {
-    if (!v) return v;
-    if (typeof Blob !== 'undefined' && v instanceof Blob) return v;
-    if (typeof v === 'string') {
-      if (_artBlobByUrl && _artBlobByUrl.has(v)) return _artBlobByUrl.get(v);
-      if (v.slice(0, 5) === 'data:') { const b = _dataUrlToBlob(v); return b || v; }
-      return v;
-    }
-    return v;
-  } catch (e) { return v; }
-}
-
-// Build the IDB-persistable form of an art store: same shape, but every image
-// value is a Blob (off-heap, structured-clone friendly) rather than a blob: URL.
-// nested=true for Forge.sprites ({id:{anim:[frames]}}), false for Forge.cardArt
-// ({id:url}).
-function _serializeArtForIdb(store, nested) {
-  const out = {};
-  if (!store || typeof store !== 'object') return out;
-  for (const k in store) {
-    const v = store[k];
-    if (nested) {
-      if (!v || typeof v !== 'object' || (typeof Blob !== 'undefined' && v instanceof Blob)) { out[k] = v; continue; }
-      const o = out[k] = {};
-      for (const a in v) {
-        const arr = v[a];
-        if (Array.isArray(arr)) o[a] = arr.map(_artValueToBlobForIdb);
-        else o[a] = arr;                              // metadata passthrough
-      }
-    } else {
-      out[k] = _artValueToBlobForIdb(v);
-    }
-  }
-  return out;
-}
-
-// 🧊 Shape-agnostic deep converters for the broader media stores (audio dicts,
-// {frames:[...]} camp art, flat image dicts). They ONLY touch data: URL strings
-// and Blobs — every other field is returned untouched, so they can't corrupt
-// non-media data. Depth-capped against pathological nesting / cycles.
-// _OFFHEAP_MEDIA_STORES: IDB-only stores that are pure <img>/<audio> src and are
-// NEVER part of any cloud / catalog upload, so blob: URLs can't leak off-device.
-const _OFFHEAP_MEDIA_STORES = ['weatherAudio', 'campAudio', 'locationArt', 'campArt', 'itemArt', 'oilTowerArt', 'opArt', 'reArt'];
-function _deepBlobUrlize(node, depth) {
-  depth = depth | 0;
-  if (node == null || depth > 12) return node;
-  if (typeof Blob !== 'undefined' && node instanceof Blob) { const u = _mintArtBlobUrl(node); return u || node; }
-  if (typeof node === 'string') {
-    if (node.slice(0, 5) === 'data:') { const b = _dataUrlToBlob(node); if (b) { const u = _mintArtBlobUrl(b); return u || node; } }
-    return node;
-  }
-  if (Array.isArray(node)) { for (let i = 0; i < node.length; i++) node[i] = _deepBlobUrlize(node[i], depth + 1); return node; }
-  if (typeof node === 'object') { for (const k in node) { if (Object.prototype.hasOwnProperty.call(node, k)) node[k] = _deepBlobUrlize(node[k], depth + 1); } return node; }
-  return node;
-}
-function _deepBlobifyForIdb(node, depth) {
-  depth = depth | 0;
-  if (node == null || depth > 12) return node;
-  if (typeof Blob !== 'undefined' && node instanceof Blob) return node;
-  if (typeof node === 'string') {
-    if (_artBlobByUrl && _artBlobByUrl.has(node)) return _artBlobByUrl.get(node);
-    if (node.slice(0, 5) === 'data:') { const b = _dataUrlToBlob(node); return b || node; }
-    return node;
-  }
-  if (Array.isArray(node)) return node.map(function (v) { return _deepBlobifyForIdb(v, depth + 1); });
-  if (typeof node === 'object') { const out = {}; for (const k in node) { if (Object.prototype.hasOwnProperty.call(node, k)) out[k] = _deepBlobifyForIdb(node[k], depth + 1); } return out; }
-  return node;
-}
-
-// 🔄 Deep async re-encode: blob: URL strings (+ Blobs) → base64 data: URLs,
-// walking ANY structure, returning a NEW copy. The off-heap stores hold blob:
-// URLs in memory, but the catalog-art PUBLISH (cloudPublishCatalogArt, which
-// uploads sprites / cardArt / locationArt / weatherAudio / campArt / campAudio /
-// itemArt / catalogMedia to shared Storage) must ship REAL bytes — a blob: URL
-// is a session-local handle that's DEAD on every other device. Uses the SAME
-// depth cap as _deepBlobUrlize, so anything that was off-heaped is guaranteed
-// resolvable here (deeper-than-cap media was never converted, so it's already
-// base64). data:/http strings pass through untouched.
-async function _deepResolveToDataUrls(node, depth) {
-  depth = depth | 0;
-  if (node == null || depth > 12) return node;
-  if (typeof Blob !== 'undefined' && node instanceof Blob) { const d = await _artValueToDataUrl(node); return (typeof d === 'string' && d) ? d : node; }
-  if (typeof node === 'string') {
-    if (node.slice(0, 5) === 'blob:') { const d = await _artValueToDataUrl(node); return (typeof d === 'string' && d) ? d : node; }
-    return node;
-  }
-  if (Array.isArray(node)) { const out = new Array(node.length); for (let i = 0; i < node.length; i++) out[i] = await _deepResolveToDataUrls(node[i], depth + 1); return out; }
-  if (typeof node === 'object') { const out = {}; for (const k in node) { if (Object.prototype.hasOwnProperty.call(node, k)) out[k] = await _deepResolveToDataUrls(node[k], depth + 1); } return out; }
-  return node;
-}
-
-// Resolve one stored art value to a base64 data: URL (async). blob: URLs are
-// re-encoded from their Blob (registry first, network fetch fallback). Used by
-// the MP relay + JSON export, which must ship the actual bytes, not a session-
-// local blob: handle.
-function _artValueToDataUrl(v) {
-  return new Promise(function (resolve) {
-    try {
-      if (typeof Blob !== 'undefined' && v instanceof Blob) {
-        const fr = new FileReader();
-        fr.onload = function () { resolve(fr.result); };
-        fr.onerror = function () { resolve(null); };
-        fr.readAsDataURL(v);
-        return;
-      }
-      if (typeof v !== 'string' || !v) { resolve(null); return; }
-      const head = v.slice(0, 5);
-      if (head === 'data:') { resolve(v); return; }
-      if (head === 'blob:') {
-        const readBlob = function (b) {
-          try { const fr = new FileReader(); fr.onload = function () { resolve(fr.result); }; fr.onerror = function () { resolve(null); }; fr.readAsDataURL(b); }
-          catch (e) { resolve(null); }
-        };
-        const cached = _artBlobByUrl && _artBlobByUrl.get(v);
-        if (cached) { readBlob(cached); return; }
-        fetch(v).then(function (r) { return r.blob(); }).then(readBlob).catch(function () { resolve(null); });
-        return;
-      }
-      resolve(v);                                     // http / asset path — ship as-is
-    } catch (e) { resolve(null); }
-  });
-}
-
-// Async deep-resolve an entire art store to base64 (for JSON export). Mirrors
-// the in-memory shape so a re-import is a straight assign.
-async function _resolveArtStoreToDataUrls(store, nested) {
-  const out = {};
-  if (!store || typeof store !== 'object') return out;
-  for (const k in store) {
-    const v = store[k];
-    if (nested) {
-      if (!v || typeof v !== 'object' || (typeof Blob !== 'undefined' && v instanceof Blob)) { out[k] = v; continue; }
-      const o = out[k] = {};
-      for (const a in v) {
-        const arr = v[a];
-        if (Array.isArray(arr)) {
-          const res = [];
-          for (let i = 0; i < arr.length; i++) res.push(await _artValueToDataUrl(arr[i]));
-          o[a] = res;
-        } else o[a] = arr;
-      }
-    } else {
-      out[k] = await _artValueToDataUrl(v);
-    }
-  }
-  return out;
 }
 
 // Restore the custom-CONTENT chunks (cards/moves/events/etc.) from
@@ -50194,34 +49566,14 @@ function saveForge() {
     // "images keep getting removed". Skip all IDB writes until the async
     // load has completed; localStorage fast-path below still runs.
     if (typeof idbSet === 'function' && (typeof App === 'undefined' || App._forgeIdbLoaded)) {
-      // 🧊 Off-heap: downgrade any freshly-edited base64 to blob: URLs, then
-      // persist the BYTES as Blobs (structured-clone) — never the session-local
-      // blob: URL strings, which would be dead handles on the next load.
-      try { _normalizeArtToBlobUrls(); } catch (e) {}
-      if (_lazyAssetsOn) {
-        // 🧊 Lazy mode: persist the in-memory (edited / just-streamed) assets to
-        // their per-key slots and keep the index in sync. CRITICAL: do NOT rewrite
-        // the giant forge_sprites / forge_cardArt keys — Forge.sprites holds only
-        // the small LRU subset here, so writing them would TRUNCATE the on-disk
-        // library. (Fire-and-forget async writes; they don't block the save.)
-        try {
-          const _sids = Forge.sprites ? Object.keys(Forge.sprites).filter(k => k && k.indexOf('__') !== 0) : [];
-          for (const _id of _sids) { try { idbSet('spr:' + _id, _deepBlobifyForIdb(Forge.sprites[_id], 0)); } catch (e) {} if (Forge._spriteIds) Forge._spriteIds.add(_id); }
-          if (Forge._spriteIds) idbSet('forge_sprites_idx', Array.from(Forge._spriteIds));
-          const _cids = Forge.cardArt ? Object.keys(Forge.cardArt) : [];
-          for (const _id of _cids) { try { idbSet('car:' + _id, _artValueToBlobForIdb(Forge.cardArt[_id])); } catch (e) {} if (Forge._cardArtIds) Forge._cardArtIds.add(_id); }
-          if (Forge._cardArtIds) idbSet('forge_cardArt_idx', Array.from(Forge._cardArtIds));
-        } catch (e) {}
-      } else {
-        idbSet('forge_sprites',      _serializeArtForIdb(Forge.sprites || {}, true));
-        idbSet('forge_cardArt',      _serializeArtForIdb(Forge.cardArt || {}, false));
-      }
-      idbSet('forge_locationArt',  _deepBlobifyForIdb(Forge.locationArt  || {}, 0));
-      idbSet('forge_weatherAudio', _deepBlobifyForIdb(Forge.weatherAudio || {}, 0));
-      idbSet('forge_campArt',      _deepBlobifyForIdb(Forge.campArt      || {}, 0));
+      idbSet('forge_sprites',      Forge.sprites      || {});
+      idbSet('forge_cardArt',      Forge.cardArt      || {});
+      idbSet('forge_locationArt',  Forge.locationArt  || {});
+      idbSet('forge_weatherAudio', Forge.weatherAudio || {});
+      idbSet('forge_campArt',      Forge.campArt      || {});
       idbSet('forge_campNpcArt',   Forge.campNpcArt   || {});
       idbSet('forge_campSurvivors', Forge.campSurvivors || []);
-      idbSet('forge_campAudio',    _deepBlobifyForIdb(Forge.campAudio    || {}, 0));
+      idbSet('forge_campAudio',    Forge.campAudio    || {});
       // 🗺 Camp layout + wilderness zones carry inline container photos
       // (b.image data URLs uploaded via the map editor's prop panel). The
       // localStorage fast-path strips those URLs to keep under the 5MB cap;
@@ -50233,10 +49585,10 @@ function saveForge() {
       idbSet('forge_packArt',        Forge.packArt        || {});
       idbSet('forge_starterDeckArt', Forge.starterDeckArt || {});
       idbSet('forge_catalogMedia',   Forge.catalogMedia   || {});
-      idbSet('forge_itemArt',      _deepBlobifyForIdb(Forge.itemArt      || {}, 0));
-      idbSet('forge_oilTowerArt',  _deepBlobifyForIdb(Forge.oilTowerArt  || {}, 0));
-      idbSet('forge_opArt',        _deepBlobifyForIdb(Forge.opArt        || {}, 0));
-      idbSet('forge_reArt',        _deepBlobifyForIdb(Forge.reArt        || {}, 0));
+      idbSet('forge_itemArt',      Forge.itemArt      || {});
+      idbSet('forge_oilTowerArt',  Forge.oilTowerArt  || {});
+      idbSet('forge_opArt',        Forge.opArt        || {});
+      idbSet('forge_reArt',        Forge.reArt        || {});
       // 🗄️ ALSO mirror the custom-CONTENT chunks to IndexedDB. These used
       // to be localStorage-only, but customEvents now carries base64 sprite
       // frames (and cards can carry inline art), so they grew big enough to
@@ -50569,9 +49921,10 @@ function onSaveStatus(fn) {
   // give us before the tab actually dies, so flush NOW.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-      // Flush the local profile synchronously (bypassing the save debounce) to
-      // be double-sure the in-memory edits made it to disk before we vanish.
-      try { if (typeof saveProfileNow === 'function') saveProfileNow(); } catch (e) {}
+      // Also write the local profile one more time, synchronously, to be
+      // double-sure the in-memory edits made it to disk. saveProfile is
+      // idempotent-safe.
+      try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
       _flushPending();
       // 📊 Flush the global Player Market usage-event buffer too — otherwise
       // the last 1.2s of plays before the tab hides would never reach the DB.
@@ -50585,9 +49938,8 @@ function onSaveStatus(fn) {
   // which is enough — the player must consciously confirm.
   window.addEventListener('beforeunload', (e) => {
     try {
-      // Always do a final synchronous localStorage flush (bypass the save
-      // debounce). Free insurance.
-      if (typeof saveProfileNow === 'function') saveProfileNow();
+      // Always do a final synchronous localStorage flush. Free insurance.
+      if (typeof saveProfile === 'function') saveProfile();
     } catch (err) {}
     if (!Profile.cloud || !Profile.cloud.signedIn) return;
     // Sync in flight OR scheduled-but-not-yet-fired? Both deserve a nag.
@@ -50614,7 +49966,7 @@ function onSaveStatus(fn) {
   // INSTEAD of beforeunload. Mirror the flush so iOS Safari refresh-with-
   // pending also kicks the request.
   window.addEventListener('pagehide', () => {
-    try { if (typeof saveProfileNow === 'function') saveProfileNow(); } catch (e) {}
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
     _flushPending();
     try { if (typeof _flushUsageEventQueue === 'function') _flushUsageEventQueue(); } catch (e) {}
   });
@@ -50861,9 +50213,7 @@ function _flushCloudSyncNow() {
 // the signed-in user's id (RLS), so this only ever touches THAT player's
 // progression; it can never leak into or overwrite another player's account.
 function _persistProgressNow() {
-  // Critical path (earned a card, gem purchase, battle end) — flush the local
-  // write synchronously, bypassing the save debounce, before the cloud push.
-  try { if (typeof saveProfileNow === 'function') saveProfileNow(); else if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
   try {
     if (Profile && Profile.cloud && Profile.cloud.signedIn && Profile.cloud.autoSync !== false) {
       Profile.cloud.pendingChanges = true;
@@ -51119,72 +50469,6 @@ function _startMemoryWatchdog() {
 }
 try { _startMemoryWatchdog(); } catch (e) {}
 
-// 🩺 BLACK-BOX MEMORY RECORDER — the "whole browser crashes after a while" report
-// can't be reproduced here, and a renderer/GPU crash wipes the live console. So
-// sample the key growth metrics every 10s into a localStorage ring buffer that
-// SURVIVES the crash. After it dies, reopen the game and run __mg.memdiag() in the
-// console (F12) — the DELTA line shows EXACTLY which metric exploded (heap = JS
-// leak, dom/img/cv = DOM/GPU-layer leak, blobReg = off-heap blob leak), turning an
-// unreproducible crash into a precise one-line fix. Pure logging — no behaviour change.
-function _memDiagSample() {
-  try {
-    var pm = (typeof performance !== 'undefined' && performance.memory) ? performance.memory : null;
-    var s = {
-      t: Date.now(),
-      scr: (typeof App !== 'undefined' && App.screen) ? App.screen : '?',
-      heap: pm ? Math.round(pm.usedJSHeapSize / 1048576) : -1,
-      lim:  pm ? Math.round(pm.jsHeapSizeLimit / 1048576) : -1,
-      dom: document.getElementsByTagName('*').length,
-      img: document.getElementsByTagName('img').length,
-      cv:  document.getElementsByTagName('canvas').length,
-      stk: document.getElementsByClassName('sprite-stack').length,
-      breg: (typeof _artBlobByUrl !== 'undefined' && _artBlobByUrl) ? _artBlobByUrl.size : -1,
-      ic:  (typeof _imgUrlCache !== 'undefined' && _imgUrlCache) ? _imgUrlCache.size : -1,
-      rep: (typeof App !== 'undefined' && App.replay && Array.isArray(App.replay.snapshots)) ? App.replay.snapshots.length : 0,
-    };
-    var buf = [];
-    try { buf = JSON.parse(localStorage.getItem('hg_memdiag') || '[]'); } catch (e) {}
-    if (!Array.isArray(buf)) buf = [];
-    buf.push(s);
-    if (buf.length > 60) buf = buf.slice(-60);
-    try { localStorage.setItem('hg_memdiag', JSON.stringify(buf)); } catch (e) {}
-    try { console.log('[memdiag] scr=' + s.scr + ' heap=' + s.heap + '/' + s.lim + 'MB dom=' + s.dom + ' img=' + s.img + ' cv=' + s.cv + ' stk=' + s.stk + ' blobReg=' + s.breg + ' imgCache=' + s.ic + ' rep=' + s.rep); } catch (e) {}
-  } catch (e) {}
-}
-// ⏪ Auto-dump the PREVIOUS session's trail at boot. The ring buffer survives a
-// crash, so this prints the growth right up to the last crash WITHOUT the user
-// needing to run any command — a plain console copy now includes the pre-crash
-// trend. Then clear so this session records fresh.
-try {
-  const _prev = JSON.parse(localStorage.getItem('hg_memdiag') || '[]');
-  if (Array.isArray(_prev) && _prev.length > 1) {
-    try { console.log('%c[memdiag] ⏪ PREVIOUS SESSION (survived the crash) — ' + _prev.length + ' samples, oldest→newest:', 'color:#e0556a;font-weight:700'); } catch (e) {}
-    const _p0 = _prev[0].t;
-    _prev.forEach(function (s) { try { console.log('  ⏪ +' + Math.round((s.t - _p0) / 1000) + 's scr=' + s.scr + ' heap=' + s.heap + 'MB dom=' + s.dom + ' img=' + s.img + ' cv=' + s.cv + ' stk=' + s.stk + ' blobReg=' + s.breg + ' rep=' + s.rep); } catch (e) {} });
-    const _pf = _prev[0], _pl = _prev[_prev.length - 1];
-    try { console.log('%c[memdiag] ⏪ PREV DELTA over ' + Math.round((_pl.t - _pf.t) / 1000) + 's:  heap ' + _pf.heap + '→' + _pl.heap + 'MB   dom ' + _pf.dom + '→' + _pl.dom + '   img ' + _pf.img + '→' + _pl.img + '   cv ' + _pf.cv + '→' + _pl.cv + '   blobReg ' + _pf.breg + '→' + _pl.breg + '   rep ' + _pf.rep + '→' + _pl.rep, 'color:#e0556a;font-weight:700'); } catch (e) {}
-  }
-  try { localStorage.setItem('hg_memdiag', '[]'); } catch (e) {}
-} catch (e) {}
-try { setTimeout(_memDiagSample, 3000); } catch (e) {}
-try { setInterval(_memDiagSample, 10000); } catch (e) {}
-try {
-  (window.__mg = window.__mg || {}).memdiag = function () {
-    try {
-      var buf = JSON.parse(localStorage.getItem('hg_memdiag') || '[]');
-      if (!Array.isArray(buf) || !buf.length) { console.log('[memdiag] no samples recorded yet — play for ~30s first.'); return; }
-      var t0 = buf[0].t;
-      console.log('[memdiag] ' + buf.length + ' samples (oldest→newest):');
-      buf.forEach(function (s) {
-        console.log('  +' + Math.round((s.t - t0) / 1000) + 's  scr=' + s.scr + '  heap=' + s.heap + 'MB  dom=' + s.dom + '  img=' + s.img + '  cv=' + s.cv + '  stk=' + s.stk + '  blobReg=' + s.breg + '  imgCache=' + s.ic + '  rep=' + s.rep);
-      });
-      var f = buf[0], l = buf[buf.length - 1];
-      console.log('[memdiag] DELTA over ' + Math.round((l.t - f.t) / 1000) + 's:  heap ' + f.heap + '→' + l.heap + 'MB  dom ' + f.dom + '→' + l.dom + '  img ' + f.img + '→' + l.img + '  cv ' + f.cv + '→' + l.cv + '  stk ' + f.stk + '→' + l.stk + '  blobReg ' + f.breg + '→' + l.breg + '  imgCache ' + f.ic + '→' + l.ic + '  rep ' + f.rep + '→' + l.rep);
-      return buf;
-    } catch (e) { console.warn('[memdiag] dump failed', e); }
-  };
-} catch (e) {}
-
 // 💾 Convenience wrapper — `saveProfile() + saveForge()` with labeled warns.
 //    Replaces the boilerplate pattern that appears 60+ times in this codebase:
 //        try { saveProfile && saveProfile(); } catch (e) {}
@@ -51204,65 +50488,12 @@ function _safeSaveAll(label) {
 }
 try { (window.__mg = window.__mg || {})._safeSaveAll = _safeSaveAll; } catch (e) {}
 
-// 💾 DEBOUNCED LOCAL SAVE — JSON.stringify(Profile) + localStorage.setItem is
-// 50–200ms on a big profile, and saveProfile() fires on basically every action
-// (resource gain, deck edit, market op, battle result — ~470 call sites). Doing
-// it synchronously every time janked the main thread. saveProfile() now just
-// marks dirty and coalesces the heavy write into a single ~500ms-debounced,
-// idle-scheduled flush (the stringify runs in requestIdleCallback, off the
-// click's critical path). Durability is preserved by:
-//   • saveProfileNow() — synchronous flush — used by every unload path
-//     (beforeunload / pagehide / visibilitychange→hidden) and the critical
-//     money/progress path (_persistProgressNow), so a tab close / refresh /
-//     app-switch always writes the latest Profile first.
-//   • The debounce fires ≤500ms after the FIRST pending edit (it does NOT reset
-//     on each call), so a continuous stream of actions still flushes about
-//     twice a second instead of starving.
-// Only a hard browser crash within that ≤500ms window can drop an edit — the
-// same exposure the existing 2s cloud-sync debounce already carried.
-var _profileSaveTimer = null;     // setTimeout handle for the debounce (var → hoisted, no TDZ if saveProfile fires early in boot)
-var _profileSaveIdle = null;      // requestIdleCallback handle for the deferred write
-var _profileSaveDirty = false;    // in-memory Profile has edits not yet on disk
-function _profileFlushDeferred() {
-  _profileSaveTimer = null;
-  _profileSaveIdle = null;
-  if (_profileSaveDirty) { try { _writeProfileNow(); } catch (e) {} }
-}
 function saveProfile() {
-  // 🪟 Multi-tab safety: reader tabs (not the elected writer) never schedule a
-  // write — they'd clobber the elected writer's shared localStorage row.
-  if (typeof MultiTab !== 'undefined' && MultiTab && MultiTab.amWriter === false) return false;
-  _profileSaveDirty = true;
-  // Schedule the (separately-debounced) cloud sync + update the save indicator
-  // immediately, even though the heavy local write is deferred to idle time.
-  try { _scheduleCloudSync(); } catch (e) {}
-  if (_profileSaveTimer || _profileSaveIdle) return true;   // a flush is already queued → coalesce
-  _profileSaveTimer = setTimeout(function () {
-    _profileSaveTimer = null;
-    if (typeof requestIdleCallback === 'function') {
-      _profileSaveIdle = requestIdleCallback(_profileFlushDeferred, { timeout: 250 });
-    } else {
-      _profileFlushDeferred();
-    }
-  }, 500);
-  return true;
-}
-// Synchronous flush — write the in-memory Profile to localStorage RIGHT NOW,
-// cancelling any pending debounce. Use on unload and after any money /
-// progression change that must survive an immediate refresh or crash.
-function saveProfileNow() {
-  if (_profileSaveTimer) { try { clearTimeout(_profileSaveTimer); } catch (e) {} _profileSaveTimer = null; }
-  if (_profileSaveIdle != null) { try { if (typeof cancelIdleCallback === 'function') cancelIdleCallback(_profileSaveIdle); } catch (e) {} _profileSaveIdle = null; }
-  return _writeProfileNow();
-}
-try { (window.__mg = window.__mg || {}).saveProfileNow = saveProfileNow; } catch (e) {}
-function _writeProfileNow() {
   // 🪟 Multi-tab safety: reader tabs (not the elected writer) must NOT
   // overwrite the shared localStorage row — they'd clobber edits the writer
   // tab made between our last read and this write. The visible "Active in
   // another tab" banner explains why interactions in this tab don't save.
   if (typeof MultiTab !== 'undefined' && MultiTab && MultiTab.amWriter === false) return;
-  _profileSaveDirty = false;   // we are about to serialize the current Profile state
   try {
     // ⏱ Stamp the moment of this local edit. cloudFetchProfile() compares
     // this against the cloud row's `updated_at` to decide whether the cloud
@@ -51813,12 +51044,7 @@ function cloneStateLight(state) {
     gameOver: state.gameOver,
     mods: state.mods,
     comboHits: state.comboHits,
-    // 🪶 Only a short log TAIL per snapshot. cloneStateLight is called for EVERY
-    // replay frame, and snapshots are sequential, so cloning the full (up to
-    // 400-entry) log into each of up to 400 snapshots stored the log ~400× over —
-    // a top replay-memory sink on marathon matches. The recent tail is all the
-    // replay viewer shows as "what just happened" context; log is display-only.
-    log: (Array.isArray(state.log) ? state.log.slice(-25) : state.log),
+    log: state.log,
     // Just energy and counts for hands/decks — full card lists balloon storage.
     player: state.player ? {
       energy: state.player.energy, maxEnergy: state.player.maxEnergy,
@@ -51851,12 +51077,12 @@ function recordReplaySnapshot(label) {
     label: label || (log.length > rep._lastLogLen ? (log[log.length - 1] && log[log.length - 1].msg) || '' : ''),
     t: Date.now() - (rep.startedAt || Date.now()),
   });
-  // 🧹 MEMORY GUARD — each snapshot is a full clone of the board/units/hand.
-  // With no cap a long match accumulated hundreds of clones and could OOM the
-  // tab mid-battle. Keep a rolling window of the most recent 400 (still a long
-  // replay) — lowered from 1200 to cut peak heap during marathon matches.
-  if (rep.snapshots.length > 400) {
-    rep.snapshots.splice(0, rep.snapshots.length - 400);
+  // 🧹 MEMORY GUARD — each snapshot is a full clone of the board/units/hand, taken
+  // on every render. With no cap a long match accumulated hundreds of clones and
+  // could OOM the tab mid-battle. Keep a rolling window of the most recent ~1200
+  // (a generous replay length); drop the oldest beyond that.
+  if (rep.snapshots.length > 1200) {
+    rep.snapshots.splice(0, rep.snapshots.length - 1200);
   }
   rep._lastLogLen = log.length;
 }
@@ -52169,15 +51395,13 @@ function checkAchievements(trigger, ctx) {
 // heroes/units/equipment/items/etc.) into a single JSON blob. Import does the reverse, replacing
 // the in-memory state and writing back to localStorage.
 const EXPORT_VERSION = 1;
-async function buildExportPayload(opts) {
+function buildExportPayload(opts) {
   opts = opts || {};
   const payload = { version: EXPORT_VERSION, exportedAt: new Date().toISOString() };
   if (opts.forge !== false) {
     payload.forge = {
-      // 🧊 Off-heap store holds blob: URLs in memory — re-encode the bytes back
-      // to base64 so the export JSON is self-contained and re-importable anywhere.
-      sprites: await _resolveArtStoreToDataUrls(Forge.sprites || {}, true),
-      cardArt: await _resolveArtStoreToDataUrls(Forge.cardArt || {}, false),   // illustration images keyed by card id
+      sprites: Forge.sprites || {},
+      cardArt: Forge.cardArt || {},          // illustration images keyed by card id
       customCards: Forge.customCards || [],
       customMoves: Forge.customMoves || {},
       customEvents: Forge.customEvents || [],
@@ -52226,9 +51450,6 @@ function applyImportPayload(payload, opts) {
     if (payload.forge.cardArt && typeof payload.forge.cardArt === 'object') {
       Forge.cardArt = opts.merge ? Object.assign({}, Forge.cardArt || {}, payload.forge.cardArt) : payload.forge.cardArt;
     }
-    // 🧊 Off-heap: imported sprites/cardArt arrive as base64 — convert to blob:
-    // URLs immediately so a big import doesn't pin all those bytes on the JS heap.
-    try { _normalizeArtToBlobUrls(); } catch (e) {}
     if (Array.isArray(payload.forge.customCards)) {
       if (opts.merge) {
         const byId = {};
@@ -52338,14 +51559,9 @@ const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0;
 // knownMoves store ids, so a republished move's new stats reach every unit.
 const lookupMove = (id) => {
   if (!id) return null;
-  // 🛠 OVERRIDE PRECEDENCE — a Forge/Catalog entry under a BUILT-IN move's id is an
-  // intentional admin EDIT of that built-in, so it must WIN over the hard-coded
-  // MOVES catalog (the old order put MOVES first, so edits to built-ins silently
-  // did nothing in battle). Pure custom moves use 'cm_…' ids that never collide,
-  // so this only changes behaviour where an override was deliberately authored.
+  if (MOVES[id]) return MOVES[id];
   if (typeof Forge !== 'undefined' && Forge.customMoves && Forge.customMoves[id]) return Forge.customMoves[id];
   if (typeof Catalog !== 'undefined' && Catalog.moves && Catalog.moves[id]) return Catalog.moves[id];
-  if (MOVES[id]) return MOVES[id];
   return null;
 };
 const allMovesArray = () => {
@@ -66785,18 +66001,6 @@ function getSpriteFrames(spriteId, animation) {
   const candidates = [spriteId];
   if (spriteId.startsWith('h_')) candidates.push('u_' + spriteId.slice(2));
   else if (spriteId.startsWith('u_')) candidates.push('h_' + spriteId.slice(2));
-  // 🧊 Lazy: stream a missing sprite in from per-key IDB (LRU-cached). If a
-  // candidate exists in the index but isn't resident, kick an async load and let
-  // this paint fall to the emoji/MP fallback — the load re-renders when it lands.
-  // A cache hit is touched so it stays resident (and isn't evicted while visible).
-  if (_lazyAssetsOn) {
-    try {
-      for (const id of candidates) {
-        if (Forge.sprites[id]) _lazyTouch(_lazySprLRU, id, _LAZY_SPRITE_CAP, Forge.sprites);
-        else if (Forge._spriteIds && Forge._spriteIds.has(id)) _lazyLoadSprite(id);
-      }
-    } catch (e) {}
-  }
   // 🎞️ Strip null / empty cells. Sliced grid sheets store `null` for blank
   // grid cells; if those reach the ticker the sprite blinks to nothing on
   // that frame — exactly the "animation skipping" the user saw. Filtering
@@ -66913,9 +66117,6 @@ function unitBoardVisual(occupant) {
 const _imgUrlCache = (typeof Map !== 'undefined') ? new Map() : null;
 function _imgSrc(url) {
   try {
-    // 🧯 A raw Blob must NEVER reach an <img src> — it stringifies to
-    // "[object Blob]" and 404s. Mint a blob: URL for it (or '' so it falls back).
-    if (typeof Blob !== 'undefined' && url instanceof Blob) { try { return _mintArtBlobUrl(url) || ''; } catch (e) { return ''; } }
     if (typeof url !== 'string' || url.slice(0, 5) !== 'data:') return url;
     if (_imgUrlCache && _imgUrlCache.has(url)) return _imgUrlCache.get(url);
     const b = (typeof _toBlobUrl === 'function') ? _toBlobUrl(url) : url;
@@ -67787,55 +66988,9 @@ function smoothScreenTransition(targetScreen, opts) {
 // 🛡 Crash-guarded render — if any screen renderer throws, we log it and keep
 // the last good DOM on screen instead of white-screening / "restarting". The
 // next render() call retries cleanly. _renderImpl is the original body.
-// 🛟 RENDER-CRASH RECOVERY — render() / renderBattle() already swallow a thrown
-// frame and keep the last good paint, but if the UNDERLYING state is wedged so
-// that EVERY render throws, the player is frozen on a dead screen with no way
-// out — which reads as a hard crash. Track a consecutive-failure streak: a
-// one-off hiccup self-heals on the next good frame; a genuine wedge (streak ≥ 3)
-// surfaces a raw-DOM "Recover / Reload" banner that saves first, then drops to
-// the title screen. The banner is built without touching the broken render path.
-var _renderFailStreak = 0;
-function _renderRecoverOk() {
-  if (_renderFailStreak) {
-    _renderFailStreak = 0;
-    try { const b = document.getElementById('render-recovery-banner'); if (b) b.remove(); } catch (e) {}
-  }
-}
-function _onRenderCrash(scope) {
-  _renderFailStreak++;
-  if (_renderFailStreak >= 3) { try { _showRenderRecovery(scope); } catch (e) {} }
-}
-function _showRenderRecovery(scope) {
-  if (typeof document === 'undefined' || document.getElementById('render-recovery-banner')) return;
-  const bar = document.createElement('div');
-  bar.id = 'render-recovery-banner';
-  bar.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483647;'
-    + 'background:linear-gradient(180deg,#2a1410,#170a07);border:1px solid #cc2a3a;color:#ffd9b0;'
-    + 'padding:12px 16px;border-radius:12px;font-family:"Cinzel",serif;font-size:0.9rem;max-width:92vw;'
-    + 'box-shadow:0 10px 30px rgba(0,0,0,0.6),0 0 16px rgba(204,42,58,0.4);display:flex;gap:12px;align-items:center';
-  bar.innerHTML = '<span style="font-size:1.3rem">⚠</span>'
-    + '<span>The view hit a snag. Recover without losing progress, or reload.</span>'
-    + '<button id="rrb-recover" style="cursor:pointer;background:#cc2a3a;color:#fff;border:0;border-radius:8px;padding:7px 12px;font-weight:700">Recover</button>'
-    + '<button id="rrb-reload" style="cursor:pointer;background:transparent;color:#ffd9b0;border:1px solid rgba(255,217,176,0.4);border-radius:8px;padding:7px 10px">Reload</button>';
-  try { document.body.appendChild(bar); } catch (e) { return; }
-  const rec = document.getElementById('rrb-recover');
-  if (rec) rec.onclick = function () {
-    try {
-      _renderFailStreak = 0;
-      try { if (typeof saveProfileNow === 'function') saveProfileNow(); } catch (e) {}
-      try { if (scope === 'battle' && typeof leaveMatchChannel === 'function') leaveMatchChannel(); } catch (e) {}
-      try { App.battlePrep = null; } catch (e) {}
-      try { App.screen = 'title'; } catch (e) {}
-      try { bar.remove(); } catch (e) {}
-      try { if (typeof render === 'function') render(); } catch (e) {}
-    } catch (e) { try { location.reload(); } catch (e2) {} }
-  };
-  const rel = document.getElementById('rrb-reload');
-  if (rel) rel.onclick = function () { try { if (typeof saveProfileNow === 'function') saveProfileNow(); } catch (e) {} try { location.reload(); } catch (e2) {} };
-}
 function render() {
-  try { const _r = _renderImpl.apply(this, arguments); _renderRecoverOk(); return _r; }
-  catch (e) { try { console.error('[render] crashed — kept last good screen:', e); } catch (_) {} try { _onRenderCrash('screen'); } catch (_) {} }
+  try { return _renderImpl.apply(this, arguments); }
+  catch (e) { try { console.error('[render] crashed — kept last good screen:', e); } catch (_) {} }
 }
 function _renderImpl() {
   // 💎 Splash retire — first render() means we're about to paint the real
@@ -69667,7 +68822,7 @@ function renderTitle() {
   // ----- Stats / badge data -----
   const customCount  = Forge.customCards.length;
   const movesCount   = Object.keys(Forge.customMoves).length;
-  const spriteCount  = (_lazyAssetsOn && Forge._spriteIds) ? Forge._spriteIds.size : Object.keys(Forge.sprites).filter(k => k.indexOf('__') !== 0).length;
+  const spriteCount  = Object.keys(Forge.sprites).filter(k => k.indexOf('__') !== 0).length;
   const wins         = Profile.records.wins, losses = Profile.records.losses;
   const labReady     = Lab.cores.filter(c => !c.hatchedCardId && c.battlesUntilHatch <= 0).length;
   const labIncubating= Lab.cores.filter(c => !c.hatchedCardId && c.battlesUntilHatch > 0).length;
@@ -70260,17 +69415,6 @@ function renderTitle() {
   const _dMin = !!_hubMin.discord, _sMin = !!_hubMin.socials, _nMin = !!_hubMin.news;
   const sidePanels = isMain ? `
     <aside class="hub-side-panels">
-      <div class="hub-discord-wrap hub-msg-wrap">
-        <a class="hub-discord-panel hub-msg-panel" id="hub-msg-btn" href="#" role="button">
-          <div class="discord-glow"></div>
-          <div class="discord-icon">💬</div>
-          <div class="discord-body">
-            <div class="discord-title">Messages</div>
-            <div class="discord-sub">World chat · message friends · DMs</div>
-          </div>
-          <div class="discord-cta">→</div>
-        </a>
-      </div>
       <div class="hub-discord-wrap${_dMin ? ' is-min' : ''}">
         <a class="hub-discord-panel" href="${escapeHtml(DISCORD_INVITE_URL || '#')}" target="_blank" rel="noopener noreferrer">
           <div class="discord-glow"></div>
@@ -70511,20 +69655,6 @@ function renderTitle() {
       render();
     };
   });
-
-  // 💬 Messages panel — opens the world-chat / DM overlay (the same chat the
-  // floating 💬 FAB opens). Requires sign-in; when signed out it nudges the
-  // auth modal via the cloud pill instead of silently doing nothing.
-  const _hubMsgBtn = document.getElementById('hub-msg-btn');
-  if (_hubMsgBtn) _hubMsgBtn.onclick = (e) => {
-    try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-    if (Profile.cloud && Profile.cloud.signedIn) {
-      try { if (typeof chatOpen === 'function') chatOpen(); } catch (err) {}
-    } else {
-      try { if (typeof showToast === 'function') showToast('💬 Sign in to use Messages — world chat & friends.', 2600); } catch (err) {}
-      try { const _p = document.getElementById('hub-cloud-pill'); if (_p) _p.click(); } catch (err) {}
-    }
-  };
 
   // 🏆 Rank pill — jumps to the Colosseum hub when present.
   const rankPill = document.getElementById('hub-rank-pill');
@@ -74483,7 +73613,6 @@ function startBattleWithPrep(playerGoesFirst) {
   // so neither a prior match's missed turns nor a stale coin deadline carries in.
   App._turnTimeoutStreak = 0;
   App._turnTimerFired = false;
-  App._eventSpriteState = {};   // 🧹 drop stale per-tile sprite-frame timers (grew across matches)
   App._mpSummonSeen = {};   // 🜂 fresh opponent-summon-cinematic dedup per match
   try { if (typeof _revokeMpViz === 'function') _revokeMpViz(); } catch (e) {}
   App._mpViz = { art: {}, sprites: {} };   // 🎨 fresh relayed-visual cache per match
@@ -76006,7 +75135,7 @@ function renderForge() {
   if (App.forgeTab === 'relics') App.forgeTab = 'cards';
   const tabs = [
     { id: 'cards',      label: 'Cards',      count: Forge.customCards.length },
-    { id: 'moves',      label: 'Moves',      count: (typeof allMovesArray === 'function') ? allMovesArray().filter(m => m && m.id).length : Object.keys(Forge.customMoves).length },
+    { id: 'moves',      label: 'Moves',      count: Object.keys(Forge.customMoves).length },
     { id: 'events',     label: 'Events',     count: Forge.customEvents.length },
     { id: 'encounters', label: '🎲 Encounters', count: (Forge.customEncounters || []).length },
     { id: 'packs',      label: '📦 Packs',   count: (Forge.customPacks || []).length },
@@ -80328,104 +79457,54 @@ function saveCardFromInputs(commit) {
 
 // ============ FORGE: moves tab ============
 function renderForgeMoves() {
-  // 📚 EVERY move in the game — built-in catalog + admin-published + your custom
-  // ones — so you can edit ANY of them. Editing a built-in saves an OVERRIDE
-  // under its id (Forge.customMoves), which lookupMove() now prefers, so the edit
-  // takes effect everywhere. Sorted: your custom / edited first, then built-ins.
-  const _all = (typeof allMovesArray === 'function') ? allMovesArray() : Object.values(Forge.customMoves);
-  const _ovr = (id) => !!(Forge.customMoves && Forge.customMoves[id]);
-  const _isCustomId = (id) => typeof id === 'string' && id.indexOf('cm_') === 0;
-  const sorted = _all.filter(m => m && m.id).slice().sort((a, b) => {
-    const rank = (m) => _isCustomId(m.id) ? 0 : (_ovr(m.id) ? 1 : 2);
-    const ra = rank(a), rb = rank(b);
-    if (ra !== rb) return ra - rb;
-    return String(a.name || a.id).localeCompare(String(b.name || b.id));
-  });
-  const list = sorted.length === 0
-    ? `<div class="empty-list-note">No moves found.</div>`
-    : sorted.map(m => {
-        const isCustom = _isCustomId(m.id);
-        const isEdited = !isCustom && _ovr(m.id);
-        const badge = isCustom
-          ? `<span class="egg-tag" style="background:rgba(120,220,160,0.18);color:#9be8b8">Custom</span>`
-          : (isEdited
-              ? `<span class="egg-tag" style="background:rgba(255,209,102,0.2);color:#ffd166">✎ Edited</span>`
-              : `<span class="egg-tag" style="background:rgba(160,160,200,0.15);color:#b8b8d8">Built-in</span>`);
-        const search = (String(m.name || '') + ' ' + String(m.id || '')).toLowerCase();
-        // Custom → delete; Edited built-in → reset (drop override); pure built-in → no destructive button.
-        const destructive = isCustom
-          ? `<button class="btn-mini btn-danger" data-act="delete-move" data-id="${m.id}" title="Delete this custom move">×</button>`
-          : (isEdited
-              ? `<button class="btn-mini" data-act="reset-move" data-id="${m.id}" title="Reset to the built-in default">↺</button>`
-              : '');
-        return `
-        <div class="forge-list-row" data-id="${m.id}" data-search="${escapeHtml(search)}">
+  const moves = Object.values(Forge.customMoves);
+  const list = moves.length === 0
+    ? `<div class="empty-list-note">No custom moves yet. Forge one below to use in your card learnsets.</div>`
+    : moves.map(m => `
+        <div class="forge-list-row" data-id="${m.id}">
           <div class="forge-row-icon">${m.kind === 'attack' ? '⚔️' : '✨'}</div>
           <div class="forge-row-info">
-            <div class="forge-row-name">${escapeHtml(m.name || m.id)} ${elementBadge(m.element, 'sm')} ${badge}</div>
-            <div class="forge-row-meta">${m.kind || 'attack'} · cost ${m.cost != null ? m.cost : 0} · range ${m.range != null ? m.range : 0}${m.power ? ` · power ${m.power}` : ''}${m.healAmount ? ` · heal ${m.healAmount}` : ''}</div>
+            <div class="forge-row-name">${escapeHtml(m.name)} ${elementBadge(m.element, 'sm')}</div>
+            <div class="forge-row-meta">${m.kind} · cost ${m.cost} · range ${m.range}${m.power ? ` · power ${m.power}` : ''}${m.healAmount ? ` · heal ${m.healAmount}` : ''}</div>
           </div>
           <div class="forge-row-actions">
-            ${(isCustom || isEdited) ? renderObtToggles('move', m.id) : ''}
+            ${renderObtToggles('move', m.id)}
             <button class="btn-mini" data-act="edit-move" data-id="${m.id}">Edit</button>
-            ${destructive}
+            <button class="btn-mini btn-danger" data-act="delete-move" data-id="${m.id}">×</button>
           </div>
-        </div>`;
-      }).join('');
+        </div>
+      `).join('');
   return `
     <div class="forge-section-header">
       <div>
-        <h3>All Moves (${sorted.length})</h3>
-        <div class="small-text">Edit ANY move — built-in, published, or your own. Editing a built-in saves an override that takes effect everywhere.</div>
+        <h3>Custom Moves</h3>
+        <div class="small-text">Custom moves can be added to any card's learnset.</div>
       </div>
       <button class="btn-primary" id="btn-new-move">+ Forge New Move</button>
     </div>
-    <div class="editor-field" style="margin:0 0 0.6rem"><input type="text" id="forge-move-search" placeholder="🔎 Filter moves by name or id…" style="width:100%;padding:0.5rem 0.7rem;background:rgba(15,8,30,0.65);border:1px solid rgba(184,136,255,0.3);border-radius:6px;color:#e8e0ff"></div>
-    <div class="forge-list" id="forge-moves-list">${list}</div>
+    <div class="forge-list">${list}</div>
   `;
 }
 
 function bindForgeMoves() {
-  const _nb = document.getElementById('btn-new-move'); if (_nb) _nb.onclick = () => { App.editingMoveId = 'NEW'; render(); };
+  document.getElementById('btn-new-move').onclick = () => { App.editingMoveId = 'NEW'; render(); };
   document.querySelectorAll('[data-act="edit-move"]').forEach(el => { el.onclick = () => { App.editingMoveId = el.dataset.id; render(); }; });
   document.querySelectorAll('[data-act="delete-move"]').forEach(el => {
     el.onclick = async () => {
-      if (!(await gcConfirm('Delete this custom move? Cards using it will fall back to the next available move.'))) return;
+      if (!(await gcConfirm('Delete this move? Cards using it will fall back to the next available move.'))) return;
       delete Forge.customMoves[el.dataset.id];
-      saveForge(); try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {} showToast('Move deleted'); render();
+      saveForge(); showToast('Move deleted'); render();
     };
   });
-  document.querySelectorAll('[data-act="reset-move"]').forEach(el => {
-    el.onclick = async () => {
-      if (!(await gcConfirm('Reset this move to its built-in default? Your override will be removed.'))) return;
-      delete Forge.customMoves[el.dataset.id];
-      saveForge(); try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {} showToast('Move reset to default'); render();
-    };
-  });
-  // 🔎 Client-side filter — hide non-matching rows without a re-render (keeps focus).
-  const _srch = document.getElementById('forge-move-search');
-  if (_srch) _srch.oninput = () => {
-    const q = String(_srch.value || '').toLowerCase().trim();
-    document.querySelectorAll('#forge-moves-list .forge-list-row').forEach(row => {
-      const s = row.getAttribute('data-search') || '';
-      row.style.display = (!q || s.indexOf(q) >= 0) ? '' : 'none';
-    });
-  };
 }
 
 // ============ FORGE: move editor ============
 function renderMoveEditor() {
   const isNew = App.editingMoveId === 'NEW';
-  // 🛠 Editing an existing move: prefer the saved override, else fall back to the
-  // built-in / published def (DEEP-COPIED so we never mutate the MOVES catalog).
-  // Saving writes Forge.customMoves[id] under the SAME id, creating the override.
   const move = isNew ? {
     id: 'cm_' + Date.now(), name: 'New Move', kind: 'attack', type: 'physical', element: 'nature',
     power: 20, range: 1, cost: 1, accuracy: 100, crit: 6, desc: '',
-  } : (Forge.customMoves[App.editingMoveId] || (function () {
-        const _b = (typeof lookupMove === 'function') ? lookupMove(App.editingMoveId) : null;
-        try { return _b ? JSON.parse(JSON.stringify(_b)) : null; } catch (e) { return _b; }
-      })());
+  } : Forge.customMoves[App.editingMoveId];
   if (!move) { App.editingMoveId = null; return renderForgeMoves(); }
   const isAttack = move.kind === 'attack';
   const elemOpts = ELEMENTS.map(e => `<option value="${e}" ${move.element === e ? 'selected' : ''}>${ELEMENT_DATA[e].icon} ${ELEMENT_DATA[e].name}</option>`).join('') + `<option value="neutral" ${move.element === 'neutral' ? 'selected' : ''}>— Neutral —</option>`;
@@ -80515,9 +79594,6 @@ function renderMoveEditor() {
         <div class="editor-field"><label>Element</label><select id="mv-element">${elemOpts}</select></div>
         <div class="editor-field"><label>Energy Cost (1-10)</label><input id="mv-cost" type="number" min="1" max="10" value="${move.cost}"></div>
         <div class="editor-field"><label>Range (0-4)</label><input id="mv-range" type="number" min="0" max="4" value="${move.range}"></div>
-        ${((typeof isAdmin === 'function') && isAdmin())
-          ? `<div class="editor-field"><label>🔥 Tutor Shop Price (Cinders)</label><input id="mv-tutor-price" type="number" min="0" max="99999" value="${(typeof getMoveGemPrice === 'function') ? getMoveGemPrice(move) : ''}" title="Admin: price players pay to learn this move in the Tutor Shop. Saves + publishes to all players. Leave at the cost-ladder default to keep auto-pricing."></div>`
-          : ''}
         <div class="editor-field" id="fld-power"><label>Power</label><input id="mv-power" type="number" min="0" max="100" value="${move.power || 0}"></div>
         <div class="editor-field" id="fld-acc"><label>Accuracy %</label><input id="mv-acc" type="number" min="50" max="100" value="${move.accuracy != null ? move.accuracy : 100}"></div>
         <div class="editor-field" id="fld-crit"><label>Crit %</label><input id="mv-crit" type="number" min="0" max="50" value="${move.crit != null ? move.crit : 6}"></div>
@@ -81060,23 +80136,6 @@ function bindMoveEditor() {
     }
     const wasNew = !Forge.customMoves[id];
     Forge.customMoves[id] = move;
-    // 🔥 Admin Tutor-price — same override the Tutor Shop edits
-    // (Forge.priceOverrides['move:<id>:cinders']). Setting it back to the
-    // cost-ladder default removes the override so auto-pricing resumes.
-    try {
-      const _tp = document.getElementById('mv-tutor-price');
-      if (_tp && (typeof isAdmin === 'function') && isAdmin()) {
-        const _raw = parseInt(_tp.value, 10);
-        if (!isNaN(_raw) && _raw >= 0) {
-          if (!Forge.priceOverrides) Forge.priceOverrides = {};
-          const _pk = 'move:' + id + ':cinders';
-          const _def = (typeof _moveBaseGemPrice === 'function') ? _moveBaseGemPrice(move) : NaN;
-          const _val = Math.max(0, Math.min(99999, _raw));
-          if (!isNaN(_def) && _val === _def) delete Forge.priceOverrides[_pk];
-          else Forge.priceOverrides[_pk] = _val;
-        }
-      }
-    } catch (e) {}
     // 🛟 IMMEDIATE cloud push — moves were silently lost on refresh when this
     // path only scheduled the 10s debounced cloud sync. _persistForgeNow()
     // writes localStorage + IDB synchronously AND kicks the cloud upsert
@@ -83862,15 +82921,6 @@ function sliceSpriteSheet(file, cols, rows, maxSize = 128) {
 async function normalizeStoredSpriteFrames() {
   if (!Forge || !Forge.sprites) return;
   if (Forge._spritesNormalized) return; // Run once per session
-  // 🧊 SKIP for huge / lazy libraries. This pass loads EVERY frame into an Image
-  // to uniformize sizes — on a 15k-frame library that materializes thousands of
-  // blobs into decoded bitmaps at once and was a direct cause of the whole-browser
-  // crash. In lazy mode only a small subset is ever resident, and the cosmetic
-  // frame-pad isn't worth the memory blowup either way.
-  try {
-    if (_lazyAssetsOn) return;
-    if (Object.keys(Forge.sprites).filter(k => k && k.indexOf('__') !== 0).length > 1200) return;
-  } catch (e) {}
   let changed = false;
   for (const id of Object.keys(Forge.sprites)) {
     const set = Forge.sprites[id];
@@ -83980,14 +83030,10 @@ function _eventSpriteTickerStep() {
   // 🎯 Skip when we're not on the battle screen either — same logic, just
   // applied to in-app navigation (e.g. opening Camp / Forge mid-match).
   if (typeof App !== 'undefined' && App.screen !== 'battle') return;
-  // ⚡ Fast bail — most boards have NO animated event tiles, so skip the 80ms
-  // querySelectorAll DOM scan entirely unless at least one stack exists.
-  const _stacks = document.getElementsByClassName('event-sprite-stack');
-  if (!_stacks || !_stacks.length) return;
   const now = performance.now();
   if (!App._eventSpriteState) App._eventSpriteState = {};
   const st = App._eventSpriteState;
-  Array.prototype.forEach.call(_stacks, stack => {
+  document.querySelectorAll('.event-sprite-stack').forEach(stack => {
     const count = parseInt(stack.dataset.frameCount || '0', 10);
     if (count < 2) return;                       // single-frame = static, nothing to cycle
     const ms  = parseInt(stack.dataset.frameMs || '600', 10);
@@ -84102,76 +83148,6 @@ function _flipPlayBattle() {
       if (id) _seen.add(id);
     });
   } catch (e) { try { _flipPrevRects = null; } catch (e2) {} }
-}
-
-// ════════════════════════════════════════════════════════════════════════
-// 🧩 PARTIAL BOARD RENDER (per-tile diff)
-// ------------------------------------------------------------------------
-// The full-screen rebuild (root.innerHTML = …) used to tear down and recreate
-// the ENTIRE board every action — every sprite <img> re-decoded (flash), every
-// ambient particle animation restarted, and weak devices chugged repainting 64
-// cells when usually only 1–2 changed. Now the live `.board` element is held
-// by reference across the innerHTML reset and re-attached into a `.board-mount`
-// placeholder; we then patch ONLY the tiles whose HTML string actually moved.
-// renderBoard() stashes a per-tile HTML map + a board-"look" signature on
-// App._boardRenderMeta for this. FLIP still animates moves (it matches units by
-// data-unit id, reading live DOM positions), and bindBattleEvents re-binds the
-// current tiles each render, so clicks keep working with no delegation rewrite.
-// ANY failure falls back to a full board rebuild, so the board is never missing.
-function _mountOrDiffBoard(root, persistBoard) {
-  if (typeof document === 'undefined' || !root) return;
-  // The Pixi renderer owns its own mount/sync — the template already emitted its
-  // canvas mount, so leave that path completely alone.
-  if (App.flags && App.flags.pixiBoard) return;
-  try {
-    const mount = root.querySelector('.board-mount');
-    if (!mount) return;                        // no DOM mount in the template — nothing to do
-    const html = renderBoard();                // builds the string AND fills App._boardRenderMeta
-    const meta = App._boardRenderMeta;
-    const lookKey = (meta && meta.lookKey) || '';
-    const tileCount = BOARD_W * BOARD_H;
-    const reusable = persistBoard && meta && meta.tiles
-      && persistBoard.getAttribute('data-board-look') === lookKey
-      && persistBoard.querySelectorAll('.tile').length === tileCount;
-    if (reusable) {
-      mount.replaceWith(persistBoard);         // slot the live board back where the mount was
-      if (!_diffBoardTiles(persistBoard, meta.tiles)) {
-        _freshBoardInto(persistBoard, html, lookKey, meta.tiles);   // structure moved → hard rebuild
-      }
-    } else {
-      _freshBoardInto(mount, html, lookKey, (meta && meta.tiles) || null);
-    }
-  } catch (e) {
-    // 🛟 Never leave the board missing — fall back to the classic full rebuild.
-    try { const m = root.querySelector('.board-mount'); if (m) m.outerHTML = renderBoard(); } catch (e2) {}
-  }
-}
-// Build a fresh .board from `html` and swap it in for `target` (the mount div or
-// a stale board). Seeds the per-tile cache so the next diff starts as a no-op.
-function _freshBoardInto(target, html, lookKey, tiles) {
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html;
-  const fresh = tmp.firstElementChild;
-  if (!fresh) { try { target.outerHTML = html; } catch (e) {} return; }
-  fresh.setAttribute('data-board-look', lookKey || '');
-  fresh._tileHtmlCache = tiles ? Object.assign({}, tiles) : {};
-  target.replaceWith(fresh);
-}
-// Patch only the cells whose HTML changed. Returns false if a tile element is
-// missing (board structure no longer matches) so the caller can hard-rebuild.
-function _diffBoardTiles(boardEl, tiles) {
-  const cache = boardEl._tileHtmlCache || (boardEl._tileHtmlCache = {});
-  for (const tk in tiles) {
-    const nextHtml = tiles[tk];
-    if (cache[tk] === nextHtml) continue;      // identical → leave the DOM (and its <img>s) untouched
-    const ci = tk.indexOf(',');
-    const x = tk.slice(0, ci), y = tk.slice(ci + 1);
-    const old = boardEl.querySelector('.tile[data-x="' + x + '"][data-y="' + y + '"]');
-    if (!old) return false;
-    old.outerHTML = nextHtml;                   // replace just this one cell
-    cache[tk] = nextHtml;
-  }
-  return true;
 }
 
 // 🚀 PUBLIC ENTRY — every call site uses `renderBattle()`. To collapse the
@@ -84660,8 +83636,8 @@ function renderBattleNow() {
 // freeze the turn. Wrap it so the board keeps its last good frame and the next
 // render retries. _renderBattleImmediateImpl is the original body.
 function _renderBattleImmediate() {
-  try { const _r = _renderBattleImmediateImpl(); _renderRecoverOk(); return _r; }
-  catch (e) { try { console.error('[renderBattle] crashed — kept last good board:', e); } catch (_) {} try { _onRenderCrash('battle'); } catch (_) {} }
+  try { return _renderBattleImmediateImpl(); }
+  catch (e) { try { console.error('[renderBattle] crashed — kept last good board:', e); } catch (_) {} }
 }
 function _renderBattleImmediateImpl() {
   const s = App.state;
@@ -84934,10 +83910,6 @@ function _renderBattleImmediateImpl() {
     return `<div class="tw-battle-banner" title="Victory conditions from the territory node"><strong>🎯 Objectives:</strong> ${items}</div>`;
   })();
 
-  // 🧩 Grab the live board BEFORE innerHTML wipes it — held by reference it
-  // survives the reset, so _mountOrDiffBoard can re-attach + tile-diff it
-  // instead of tearing the whole grid down (the last big in-battle flicker).
-  const _persistBoardEl = (function () { try { return (root && root.querySelector) ? root.querySelector('.board') : null; } catch (e) { return null; } })();
   _flipCaptureBattle();   // 🎞️ snapshot unit positions BEFORE the rebuild
   root.innerHTML = `
     <div class="battle-screen mtga-layout ${App.ui.aiBusy ? 'ai-busy' : ''} ${App.ui.heroUltCinematic ? 'ult-cine-active' : ''}" data-gfx="${(function(){try{return getSettings().gfxQuality||'high';}catch(e){return 'high';}})()}" data-board-skin="${(function(){try{return getSettings().boardSkin||'default';}catch(e){return 'default';}})()}">
@@ -85009,7 +83981,7 @@ function _renderBattleImmediateImpl() {
               <div class="be-creature alt" style="left:80%; animation-delay:-15s"></div>
               <div class="be-lightning"></div>
             </div>
-            ${(App.flags && App.flags.pixiBoard) ? renderBoard() : '<div class="board-mount"></div>'}
+            ${renderBoard()}
             ${renderWeatherFx()}
             ${renderPersistentSpells()}
           </div>
@@ -85108,7 +84080,7 @@ function _renderBattleImmediateImpl() {
                 if (App.screen === 'battle' && typeof renderBattle === 'function') renderBattle();
                 return;
               }
-              setTimeout(poll, 2000);
+              setTimeout(poll, 700);
             };
             setTimeout(poll, 600);  // first poll after submitMatchResult has had time to land
           }
@@ -85132,12 +84104,6 @@ function _renderBattleImmediateImpl() {
     </div>
   `;
 
-  // 🧩 Re-attach + tile-diff the persistent board (or fresh-build it on first
-  // paint / board-look change). MUST run before bindBattleEvents (tiles must
-  // exist to bind clicks) and before _flipPlayBattle (units must sit at their
-  // new positions for the slide math). Self-healing: falls back to a full board
-  // rebuild on any error, so the battlefield is never left blank.
-  try { _mountOrDiffBoard(root, _persistBoardEl); } catch (e) {}
   if (!App.replayViewing) bindBattleEvents();
   bindBattlePiles();
   if (s.gameOver && !App.replayViewing) bindGameOverEvents();
@@ -89078,41 +88044,21 @@ function renderBoard() {
   // No attack-line — the .attack-target tile glow communicates valid
   // targets more clearly (and works for ally support moves the same
   // way as enemy attacks).
-  // ⚡ PERF — pre-index everything the tile loop looks up per-tile, so the board
-  // render is O(units + board) instead of O(board × units × targets). Behaviour-
-  // preserving: Maps keep the FIRST match (same as the old Array.find), Sets are
-  // membership tests (same as Array.some).
-  const _kOf = (px, py) => px + ',' + py;
-  const _unitAt = new Map(), _bleedAt = new Map(), _consumAt = new Map(), _tombAt = new Map();
-  for (const u of (s.units || [])) {
-    if (!u || !u.pos) continue;
-    const _uk = _kOf(u.pos.x, u.pos.y);
-    if (u.alive) { if (!_unitAt.has(_uk)) _unitAt.set(_uk, u); }
-    else if (u._bleeding) { if (!_bleedAt.has(_uk)) _bleedAt.set(_uk, u); }
-  }
-  for (const p of (consumableTargets || [])) { if (!p) continue; const _ck = _kOf(p.x, p.y); if (!_consumAt.has(_ck)) _consumAt.set(_ck, p); }
-  if (Array.isArray(s.tombstones)) for (const t of s.tombstones) { if (!t) continue; const _tk = _kOf(t.x, t.y); if (!_tombAt.has(_tk)) _tombAt.set(_tk, t); }
-  const _moveSet   = new Set((validMoves      || []).map(p => _kOf(p.x, p.y)));
-  const _attackSet = new Set((validAttacks    || []).map(p => _kOf(p.x, p.y)));
-  const _placeSet  = new Set((validPlacement  || []).map(p => _kOf(p.x, p.y)));
-  const _swapSet   = new Set((validSwaps      || []).map(p => _kOf(p.x, p.y)));
-  const _tileMap = {};   // 🧩 per-tile HTML, captured for the partial-render diff (_mountOrDiffBoard)
   let html = `<div class="board${boardClass}${isoClass}"${boardStyle}>${isoCanvas}`;
   for (let y = 0; y < BOARD_H; y++) {
     for (let x = 0; x < BOARD_W; x++) {
-      const _tk = x + ',' + y;
       const tile = s.board[y][x];
-      const occupant = _unitAt.get(_tk);
+      const occupant = s.units.find(u => u.alive && u.pos.x === x && u.pos.y === y);
       // 🩸 Bleeding unit may share a tile with an active unit walking over
       // them. Picked separately so render can show a faint downed marker
       // even when someone's standing on the same tile.
-      const bleedingHere = _bleedAt.get(_tk);
-      const isMoveTile = _moveSet.has(_tk);
-      const isAttackTile = _attackSet.has(_tk);
-      const isPlacement = _placeSet.has(_tk);
+      const bleedingHere = s.units.find(u => u && u._bleeding && !u.alive && u.pos && u.pos.x === x && u.pos.y === y);
+      const isMoveTile = validMoves.some(p => p.x === x && p.y === y);
+      const isAttackTile = validAttacks.some(p => p.x === x && p.y === y);
+      const isPlacement = validPlacement.some(p => p.x === x && p.y === y);
       const isSel = sel && sel.pos.x === x && sel.pos.y === y;
-      const isSwapTile = _swapSet.has(_tk);
-      const cTarget = _consumAt.get(_tk);
+      const isSwapTile = validSwaps.some(p => p.x === x && p.y === y);
+      const cTarget = consumableTargets.find(p => p.x === x && p.y === y);
       const tileClasses = ['tile'];
       if ((x + y) % 2 === 0) tileClasses.push('even');
       if (isMoveTile) tileClasses.push('move-target');
@@ -89351,7 +88297,9 @@ function renderBoard() {
       // 🪦 Render any tombstone on this tile (always sits over decorations).
       // Glowing tombstones get the glow class for the CSS halo animation +
       // the block hint so players know they can't path through here.
-      const ts = _tombAt.get(_tk) || null;
+      const ts = Array.isArray(s.tombstones)
+        ? s.tombstones.find(t => t.x === x && t.y === y)
+        : null;
       if (ts) {
         const _canLoot = ts.lootable && !ts.looted && !ts.glowing;
         const cls = `tombstone ${ts.glowing ? 'tombstone-glowing' : ''} ${_canLoot ? 'tombstone-loot' : ''} ${ts.looted ? 'tombstone-looted' : ''} tombstone-${ts.owner}`;
@@ -89377,27 +88325,13 @@ function renderBoard() {
       }
       // 🩸 Prepend bleeding overlay so the body shows under any occupant
       // or marker rendered above it.
-      const _tileHtml = `<div class="${tileClasses.join(' ')}${bleedingHere ? ' has-bleeding' : ''}" data-x="${x}" data-y="${y}"${surfTitle}>${surfHtml}${bleedOverlay}${cellInner}</div>`;
-      _tileMap[_tk] = _tileHtml;
-      html += _tileHtml;
+      html += `<div class="${tileClasses.join(' ')}${bleedingHere ? ' has-bleeding' : ''}" data-x="${x}" data-y="${y}"${surfTitle}>${surfHtml}${bleedOverlay}${cellInner}</div>`;
     }
   }
   // 🌌 Inject the living-battlefield ambient overlay — drifting ash + embers,
   // ground fog, glowing rune pulses, animated shadow drift, volumetric light
   // sweep, corner candle flickers. Sits above the tiles via z-index but below
   // unit markers so it never blocks clicks.
-  // 🧩 Stash the per-tile map + a board-"look" signature so _mountOrDiffBoard
-  // can patch only the cells that changed, and hard-rebuild only when the
-  // board-LEVEL look changes (active-location background, iso toggle, graphics
-  // quality — all of which alter the wrapper or ambient density, not just a
-  // single tile). The ambient overlay is deterministic, so when the board
-  // persists its particle animations keep running uninterrupted.
-  let _gfxKey = 'high'; try { _gfxKey = (getSettings().gfxQuality) || 'high'; } catch (e) {}
-  App._boardRenderMeta = {
-    className: 'board' + boardClass + isoClass,
-    lookKey: boardClass + '§' + isoClass + '§' + boardStyle + '§' + _gfxKey,
-    tiles: _tileMap,
-  };
   html += renderBoardAmbient();
   html += '</div>';
   return html;
@@ -93350,6 +92284,371 @@ function playKalonCinematic(unit, opts) {
   } catch (e) { go(); }
 }
 
+function playKalonTransformVfx_legacy_UNUSED(unit, opts) {
+  opts = opts || {};
+
+  // SFX hook — cosmic-stinger plays the instant the transform fires.
+  try { if (typeof playSfx === 'function') playSfx('kalonTransform'); } catch (e) {}
+
+  // ── De-dupe + stale-overlay sweep ────────────────────────────────────
+  // Don't stack bursts on a rapid re-trigger. Anything older than 4s is an
+  // orphan whose cleanup got lost to a mid-animation re-render / navigation
+  // — purge it so a single stale VFX can never soft-lock future transforms.
+  const existing = document.querySelectorAll('.kalon-local-fx');
+  if (existing.length) {
+    const now = Date.now();
+    let activeStillPlaying = false;
+    existing.forEach(el => {
+      const born = parseInt(el.dataset.bornAt || '0', 10);
+      if (!born || (now - born) > 4000) {
+        try { el.remove(); } catch (e) {}
+      } else {
+        activeStillPlaying = true;
+      }
+    });
+    if (activeStillPlaying) return;
+  }
+
+  // 🧹 Scrub any legacy board "camera lock" an older build may have left
+  // stamped on the board element. The REBUILT board is geometrically
+  // stable on its own — a center-pivot projection that's mathematically
+  // guaranteed to fit — so this VFX never reads or writes the board. There
+  // is nothing to lock and nothing that can get stuck.
+  try {
+    const lockedBoard = document.querySelector('.board.kalon-locked');
+    if (lockedBoard) {
+      lockedBoard.classList.remove('kalon-locked');
+      lockedBoard.style.removeProperty('--kalon-locked-w');
+      lockedBoard.style.removeProperty('--kalon-locked-h');
+    }
+  } catch (e) {}
+
+  // The VFX is a pure body-anchored overlay (position:fixed, pointer-
+  // events:none, its own contain + isolation context). It is physically
+  // incapable of reflowing/resizing/repainting the board, so there is
+  // intentionally NO board camera-lock anymore. `boardEl` stays null;
+  // the hardened cleanup below tolerates that.
+  const boardEl = null;
+
+  // Body-anchored overlay host (matches playMythicSummonVfx et al.). The
+  // ORIGINAL bug that silently broke this effect: `host.appendChild(fx)`
+  // was called but `host` was never declared in this function — a
+  // ReferenceError that aborted the whole VFX. Declaring it here, the
+  // same way every sibling VFX does, is the actual restore.
+  const host = document.body;
+  if (!host) return;
+
+  // ---- Anchor: the transforming unit's tile center (in screen pixels) ----
+  // getBoundingClientRect returns SCREEN-space coordinates, so it already
+  // accounts for the board's 32° 3D tilt — the burst lands on the visually
+  // correct tile position.
+  let anchorX, anchorY;
+  try {
+    const u = unit || {};
+    if (u.pos && typeof u.pos.x === 'number' && typeof u.pos.y === 'number') {
+      const tileEl = document.querySelector(`[data-x="${u.pos.x}"][data-y="${u.pos.y}"]`);
+      if (tileEl) {
+        const r = tileEl.getBoundingClientRect();
+        anchorX = r.left + r.width / 2;
+        anchorY = r.top  + r.height / 2;
+      }
+    }
+    if (anchorX == null) {
+      const boardEl = document.querySelector('.board');
+      if (boardEl) {
+        const r = boardEl.getBoundingClientRect();
+        anchorX = r.left + r.width / 2;
+        anchorY = r.top  + r.height / 2;
+      } else {
+        anchorX = window.innerWidth / 2;
+        anchorY = window.innerHeight / 2;
+      }
+    }
+  } catch (e) {
+    anchorX = window.innerWidth / 2;
+    anchorY = window.innerHeight / 2;
+  }
+
+  // ---- Resolve base + evolved form for the silhouette swap ----
+  const evolvedUnit = unit || {};
+  const baseUnit    = opts.from || evolvedUnit;
+  const baseName    = (baseUnit && baseUnit.name)    || '';
+  const evolvedName = (evolvedUnit && evolvedUnit.name) || '';
+  const baseSpriteId    = (typeof getSpriteId === 'function') ? getSpriteId(baseUnit)    : null;
+  const evolvedSpriteId = (typeof getSpriteId === 'function') ? getSpriteId(evolvedUnit) : null;
+  const baseFrames    = baseSpriteId    && (typeof getSpriteFrames === 'function') ? getSpriteFrames(baseSpriteId,    'idle') : null;
+  const evolvedFrames = evolvedSpriteId && (typeof getSpriteFrames === 'function') ? getSpriteFrames(evolvedSpriteId, 'idle') : null;
+  const baseFrame    = baseFrames    && baseFrames[0]    ? baseFrames[0]    : null;
+  const evolvedFrame = evolvedFrames && evolvedFrames[0] ? evolvedFrames[0] : null;
+  const baseEmoji    = (baseUnit    && baseUnit.icon)    || '✦';
+  const evolvedEmoji = (evolvedUnit && evolvedUnit.icon) || '✦';
+
+  // ---- Palette: based on the evolved form's primary element ----
+  const elements = (typeof getElementsOf === 'function') ? getElementsOf(evolvedUnit) : (evolvedUnit.elements || []);
+  const primaryElement = (elements && elements[0]) || null;
+  const palettes = {
+    fire:      { primary: '#ff8a3c', secondary: '#ffd166' },
+    water:     { primary: '#4ec8ff', secondary: '#a8e3ff' },
+    earth:     { primary: '#c89a52', secondary: '#f0d088' },
+    air:       { primary: '#e8f4ff', secondary: '#b0d8ff' },
+    light:     { primary: '#fff2a8', secondary: '#ffffff' },
+    shadow:    { primary: '#b070ff', secondary: '#5a2c9e' },
+    void:      { primary: '#c060ff', secondary: '#6020a8' },
+    arcane:    { primary: '#a888ff', secondary: '#ffd166' },
+    blood:     { primary: '#ff4a4a', secondary: '#8a1a1a' },
+    poison:    { primary: '#8aff60', secondary: '#3a8a1a' },
+    corruption:{ primary: '#9a40d0', secondary: '#4a0a70' },
+    nature:    { primary: '#80e060', secondary: '#3aa050' },
+    ice:       { primary: '#a0e0ff', secondary: '#ffffff' },
+    lightning: { primary: '#ffe070', secondary: '#a8d8ff' },
+    metal:     { primary: '#c8d0e0', secondary: '#f0f0ff' },
+    gravity:   { primary: '#7060a0', secondary: '#1a0a40' },
+    psychic:   { primary: '#ff80e0', secondary: '#a040c0' },
+  };
+  const palette = palettes[primaryElement] || { primary: '#ffd166', secondary: '#b070ff' };
+
+  // ---- Figure markup: prefer real sprite, fall back to emoji ----
+  const figureHtml = (kind, frameUrl, emoji) => {
+    if (frameUrl) {
+      return `<img class="klf-figure ${kind}" src="${frameUrl}" alt="" />`;
+    }
+    return `<div class="klf-figure ${kind}" style="display:flex;align-items:flex-end;justify-content:center;font-size:90px;line-height:1;text-shadow:0 0 14px ${palette.primary},0 0 24px ${palette.secondary};">${emoji}</div>`;
+  };
+
+  // ---- 12 spark particles, max radius 90px (stays well inside the 480×480 box) ----
+  const sparks = Array.from({ length: 12 }, (_, i) => {
+    const ang = (i / 12) * Math.PI * 2 + ((i * 31) % 7) * 0.08;
+    const dist = 60 + ((i * 11) % 30);
+    const dx = Math.cos(ang) * dist;
+    const dy = Math.sin(ang) * dist;
+    const delay = ((i * 13) % 30) / 100;
+    return `<span class="klf-spark" style="--dx:${dx.toFixed(0)}px;--dy:${dy.toFixed(0)}px;animation-delay:${delay.toFixed(2)}s"></span>`;
+  }).join('');
+
+  // ============================================================
+  // 🔥 ELEMENT-SPECIFIC LAYER BUILDER
+  // ----------------------------------------------------------------
+  // Map the unit's primary element to one of six visual families,
+  // then build the matching layer of HTML. Every element-specific
+  // element stays within the 480×480 FX box (radii capped) so the
+  // mega-evolution drama stays localized to the unit's tile area.
+  // ============================================================
+  const elementCategoryMap = {
+    fire: 'fire', lava: 'fire', blood: 'fire',
+    ice: 'ice', water: 'ice', frost: 'ice',
+    lightning: 'storm', air: 'storm', storm: 'storm',
+    nature: 'nature', earth: 'nature', wood: 'nature', poison: 'nature',
+    metal: 'metal', steel: 'metal',
+    void: 'void', shadow: 'void', arcane: 'void', corruption: 'void',
+    gravity: 'void', psychic: 'void', eldritch: 'void',
+  };
+  const elemCat = elementCategoryMap[primaryElement] || 'fire';
+
+  const buildElementLayer = (cat) => {
+    if (cat === 'fire') {
+      // 8 flame tongues across the bottom + 6 molten rocks flying up
+      const flames = Array.from({ length: 8 }, (_, i) => {
+        const left = 30 + (i * 6);
+        const scale = 0.7 + ((i * 17) % 50) / 100;
+        const delay = ((i * 11) % 30) / 100;
+        return `<span class="klf-flame" style="left:${left}%;transform:scale(${scale.toFixed(2)});animation-delay:${delay.toFixed(2)}s"></span>`;
+      }).join('');
+      const rocks = Array.from({ length: 6 }, (_, i) => {
+        const ang = (i / 6) * Math.PI * 2 + ((i * 13) % 5) * 0.1;
+        const dist = 50 + ((i * 17) % 40);
+        const dx = Math.cos(ang) * dist;
+        const delay = (0.2 + ((i * 7) % 30) / 100).toFixed(2);
+        return `<span class="klf-rock" style="--dx:${dx.toFixed(0)}px;animation-delay:${delay}s"></span>`;
+      }).join('');
+      return flames + rocks;
+    }
+    if (cat === 'ice') {
+      // 7 crystal shards erupting + frost mist swirl
+      const crystals = Array.from({ length: 7 }, (_, i) => {
+        const dx = -90 + (i * 30);
+        const scale = 0.8 + ((i * 19) % 50) / 100;
+        const delay = ((i * 13) % 35) / 100;
+        return `<span class="klf-crystal" style="--dx:${dx}px;transform-origin:50% 100%;transform:translate(calc(-50% + ${dx}px), 0) scaleY(${scale.toFixed(2)});animation-delay:${delay.toFixed(2)}s"></span>`;
+      }).join('');
+      return crystals + `<span class="klf-mist"></span>`;
+    }
+    if (cat === 'storm') {
+      // 6 lightning bolts striking + 5 electric arcs across the area
+      const bolts = Array.from({ length: 6 }, (_, i) => {
+        const xPct = 15 + ((i * 17) % 70);
+        const rot = ((i * 11) % 14) - 7;
+        const delay = (0.3 + i * 0.06).toFixed(2);
+        return `<span class="klf-bolt" style="left:${xPct}%;transform:rotate(${rot}deg) scaleY(0);animation-delay:${delay}s"></span>`;
+      }).join('');
+      const arcs = Array.from({ length: 5 }, (_, i) => {
+        const rot = (i / 5) * 360 + ((i * 11) % 30);
+        const delay = (0.45 + i * 0.04).toFixed(2);
+        return `<span class="klf-arc" style="transform:rotate(${rot}deg) scaleX(0);animation-delay:${delay}s"></span>`;
+      }).join('');
+      return bolts + arcs;
+    }
+    if (cat === 'nature') {
+      // 7 vines bursting from ground (radial) + 10 floating leaves
+      const vines = Array.from({ length: 7 }, (_, i) => {
+        const dx = -90 + (i * 30);
+        const rot = ((i * 13) % 20) - 10;
+        const delay = ((i * 11) % 25) / 100;
+        return `<span class="klf-vine" style="--dx:${dx}px;--rot:${rot}deg;animation-delay:${delay.toFixed(2)}s"></span>`;
+      }).join('');
+      const leaves = Array.from({ length: 10 }, (_, i) => {
+        const x0 = ((i * 31) % 240) - 120;
+        const y0 = ((i * 17) % 80);
+        const x1 = x0 + ((i * 13) % 60) - 30;
+        const y1 = y0 - (100 + ((i * 19) % 80));
+        const delay = ((i * 23) % 50) / 100;
+        return `<span class="klf-leaf" style="left:50%;top:50%;--x0:${x0}px;--y0:${y0}px;--x1:${x1}px;--y1:${y1}px;animation-delay:${delay.toFixed(2)}s"></span>`;
+      }).join('');
+      return vines + leaves;
+    }
+    if (cat === 'metal') {
+      // 8 orbiting shards at varied orbits + magnetic dashed ring
+      const shards = Array.from({ length: 8 }, (_, i) => {
+        const delay = ((i * 7) % 40) / 100;
+        const startAng = (i / 8) * 360;
+        return `<span class="klf-shard" style="animation-delay:${delay.toFixed(2)}s;transform:translate(-50%, -50%) rotate(${startAng}deg) translateX(80px)"></span>`;
+      }).join('');
+      return shards + `<span class="klf-magnetic"></span>`;
+    }
+    if (cat === 'void') {
+      // 7 cosmic tendrils + 5 reality rifts radiating from center
+      const tendrils = Array.from({ length: 7 }, (_, i) => {
+        const dx = -90 + (i * 30);
+        const rot = ((i * 17) % 24) - 12;
+        const delay = ((i * 11) % 30) / 100;
+        return `<span class="klf-tendril" style="--dx:${dx}px;--rot:${rot}deg;animation-delay:${delay.toFixed(2)}s"></span>`;
+      }).join('');
+      const rifts = Array.from({ length: 5 }, (_, i) => {
+        const rot = (i / 5) * 360 + ((i * 7) % 20);
+        const delay = (0.35 + i * 0.05).toFixed(2);
+        return `<span class="klf-rift" style="--rot:${rot}deg;animation-delay:${delay}s"></span>`;
+      }).join('');
+      return tendrils + rifts;
+    }
+    return '';
+  };
+  const elementLayer = buildElementLayer(elemCat);
+
+  // ============================================================
+  // 🌌 MYTHIC RARITY DETECTION + MYTHIC OVERLAY BUILD
+  // ----------------------------------------------------------------
+  // Look up the evolved Kalon's card def to read rarity. Mythic
+  // Kalons get an ADDITIONAL cosmic-lightning layer on top of the
+  // element-specific layer. Lookup paths (same as the unit-render
+  // rarity resolver): STARTER_HEROES → UNIT_CARDS → Forge.customCards.
+  // ============================================================
+  let mythicCard = null;
+  try {
+    if (evolvedUnit.isHero) {
+      mythicCard = (typeof STARTER_HEROES !== 'undefined' && STARTER_HEROES.find && STARTER_HEROES.find(h => h.id === evolvedUnit.heroId))
+                || (typeof findCustomHeroCard === 'function' ? findCustomHeroCard(evolvedUnit.heroId) : null);
+    }
+    if (!mythicCard && evolvedUnit.cardId) {
+      mythicCard = (typeof UNIT_CARDS !== 'undefined' && UNIT_CARDS.find && UNIT_CARDS.find(c => c.id === evolvedUnit.cardId))
+                || (typeof Forge !== 'undefined' && Forge.customCards && Forge.customCards.find && Forge.customCards.find(c => c.id === evolvedUnit.cardId));
+    }
+  } catch (e) { /* fall through to non-mythic */ }
+  const evolvedRarity = (mythicCard && mythicCard.rarity) || evolvedUnit.rarity || 'common';
+  const isMythic = evolvedRarity === 'mythic';
+
+  // Mythic layer markup — only included if rarity is mythic
+  let mythicLayer = '';
+  if (isMythic) {
+    // 5 cosmic lightning bolts crashing down from the vortex
+    const mythBolts = Array.from({ length: 5 }, (_, i) => {
+      const xPct = 20 + ((i * 17) % 60);
+      const rot = ((i * 11) % 14) - 7;
+      const delay = (0.25 + i * 0.07).toFixed(2);
+      return `<span class="klf-myth-bolt" style="left:${xPct}%;transform:rotate(${rot}deg) scaleY(0);animation-delay:${delay}s"></span>`;
+    }).join('');
+    // 3 expanding ripples
+    const mythRipples = Array.from({ length: 3 }, (_, i) => {
+      const delay = (0.4 + i * 0.18).toFixed(2);
+      return `<span class="klf-myth-ripple" style="animation-delay:${delay}s"></span>`;
+    }).join('');
+    // 14 anti-gravity debris orbiting at varied distances
+    const mythDebris = Array.from({ length: 14 }, (_, i) => {
+      const ang0 = (i / 14) * Math.PI * 2;
+      const r0 = 30 + ((i * 11) % 30);
+      const x0 = Math.cos(ang0) * r0;
+      const y0 = Math.sin(ang0) * r0 + 40; // start slightly low so they "rise"
+      const ang1 = ang0 + 0.6;
+      const r1 = 80 + ((i * 17) % 40);
+      const x1 = Math.cos(ang1) * r1;
+      const y1 = Math.sin(ang1) * r1 - 20; // float up by end
+      const delay = ((i * 19) % 40) / 100;
+      return `<span class="klf-myth-debris" style="left:50%;top:50%;--x0:${x0.toFixed(0)}px;--y0:${y0.toFixed(0)}px;--x1:${x1.toFixed(0)}px;--y1:${y1.toFixed(0)}px;animation-delay:${delay.toFixed(2)}s"></span>`;
+    }).join('');
+    mythicLayer = `
+      <span class="klf-myth-vortex"></span>
+      ${mythBolts}
+      <span class="klf-myth-plasma p1"></span>
+      <span class="klf-myth-plasma p2"></span>
+      ${mythRipples}
+      ${mythDebris}
+    `;
+  }
+
+  // ---- Build the overlay ----
+  const fx = document.createElement('div');
+  fx.className = 'kalon-local-fx';
+  fx.setAttribute('data-element', elemCat);
+  fx.dataset.bornAt = String(Date.now());  // age-stamp for the de-dupe sweep above
+  if (isMythic) fx.setAttribute('data-mythic', '1');
+  fx.style.left = anchorX + 'px';
+  fx.style.top  = anchorY + 'px';
+  fx.style.setProperty('--klf-primary',   palette.primary);
+  fx.style.setProperty('--klf-secondary', palette.secondary);
+  fx.style.setProperty('--klf-accent',    '#ffffff');
+  // Wrap everything in a .klf-shake container so the camera-shake animation
+  // jitters the WHOLE composition (frame + figures + effects) without ever
+  // touching the board. The board lock outside guarantees the board itself
+  // can't move; the shake is purely a VFX-layer wobble.
+  fx.innerHTML = `
+    <div class="klf-shake">
+      <span class="klf-vignette"></span>
+      <span class="klf-frame"></span>
+      <span class="klf-ring r1"></span>
+      <span class="klf-ring r2"></span>
+      <span class="klf-pillar"></span>
+      <span class="klf-sigil"></span>
+      ${elementLayer}
+      ${mythicLayer}
+      ${figureHtml('klf-from', baseFrame,    baseEmoji)}
+      ${figureHtml('klf-to',   evolvedFrame, evolvedEmoji)}
+      <span class="klf-flash"></span>
+      <span class="klf-shockwave"></span>
+      ${sparks}
+      <div class="klf-banner">
+        ${escapeHtml(baseName)} <span style="opacity:0.7">→</span> <strong>${escapeHtml(evolvedName)}</strong>
+      </div>
+    </div>
+  `;
+  host.appendChild(fx);
+  // (SFX already fired at the top of this function — not re-played here so
+  // the cosmic stinger doesn't double up.)
+
+  // 🧹 Hardened cleanup — removes the VFX after the animation completes
+  // (1.6s + safety pad). Also sweeps any OTHER `.kalon-local-fx` overlays
+  // that might be left over from a previous transform whose cleanup got
+  // lost to a mid-animation re-render or navigation. Belt-and-suspenders so
+  // a single stale VFX can't soft-lock the board with stuck rings.
+  setTimeout(() => {
+    // Wipe ALL kalon-local-fx elements (including any orphans), not just
+    // the one we just created — defensive against double-fire scenarios.
+    try { document.querySelectorAll('.kalon-local-fx').forEach(el => el.remove()); } catch (e) {}
+    if (boardEl) {
+      boardEl.classList.remove('kalon-locked');
+      boardEl.style.removeProperty('--kalon-locked-w');
+      boardEl.style.removeProperty('--kalon-locked-h');
+    }
+  }, 2300);  /* matches the 2.0s cinematic + a safety pad so the full
+                ascension plays out before the node is swept */
+}
 
 // Returns the element-specific decoration HTML for the Kalon transform VFX.
 // Each branch picks a thematic accent that matches the prompt brief — fire
@@ -95852,20 +95151,6 @@ function doAIStep() {
           let sc = 30 + threats * 18 + (s.player.kalonsRemaining || 0) * 5;
           if (!best || sc > best.score) best = { card, target: null, kind: 'kalonLock', score: sc };
         }
-      } else if (card.effect.type === 'purgeAscended') {
-        // 🌑 OBLIVION — destroys EVERY Kalon-transform + Archon on the board, BOTH
-        // sides (the AI's own included; heroes are immune). Only worth casting when
-        // the PLAYER's Ascended outweigh what the AI would sacrifice. Score the net
-        // swing (with a slight self-penalty so an even trade isn't tempting) and let
-        // the >=15 commit threshold gate it — so the AI never nukes its own board
-        // for a wash, but happily wipes a board the player has snowballed with
-        // transformed units / Archons.
-        const _ascU = (u) => !!(u && u.alive && ((typeof _isKalonUnit === 'function' && _isKalonUnit(u)) || (typeof _isArchonUnit === 'function' && _isArchonUnit(u))));
-        const _ascWt = (u) => 30 + Math.max((u.stats && u.stats.atk) || 0, (u.stats && u.stats.mag) || 0) + ((typeof _isArchonUnit === 'function' && _isArchonUnit(u)) ? 40 : 0) + (u.currentHp || 0) * 0.4;
-        const _foeAsc = s.units.filter(u => u.owner === 'player' && _ascU(u));
-        const _ownAsc = s.units.filter(u => u.owner === 'ai'     && _ascU(u));
-        let sc = _foeAsc.reduce((a, u) => a + _ascWt(u), 0) - _ownAsc.reduce((a, u) => a + _ascWt(u), 0) * 1.1;
-        if (_foeAsc.length > 0 && sc > 0 && (!best || sc > best.score)) best = { card, target: null, kind: 'purgeAscended', score: sc };
       } else if (card.persistent) {
         // ✨ Persistent enchantment — score based on how much value it generates over its lifetime.
         // A persistent spell that draws cards, buffs allies, damages enemies, or heals allies is
@@ -95990,18 +95275,6 @@ function doAIStep() {
             log: [...s.log, { msg: `🚫 Enemy ${card.name} — your Kalon awakenings sealed for ${dur} turn${dur === 1 ? '' : 's'}!`, color: 'red' }],
           };
           setAIActor(null, `🚫 Enemy seals Kalon awakenings`);
-        } else if (best.kind === 'purgeAscended') {
-          // 🌑 Destroy every Kalon + Archon on the board (both sides) through the
-          // SAME helper the player's spell uses, so on-death passives + Archon-deck
-          // returns still fire. Heroes are never Ascended, so gameOver is untouched.
-          const _ps = { ...s };
-          const _killed = (typeof _destroyAscended === 'function') ? _destroyAscended(_ps) : 0;
-          App.state = {
-            ..._ps,
-            ai: { ...s.ai, hand: s.ai.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.ai.graveyard, card], energy: s.ai.energy - (aiCheapSpells ? 0 : getEffectiveCardCost(card, s, 'ai')) },
-            log: [...s.log, { msg: _killed ? `🌑 Enemy ${card.name} — Oblivion! ${_killed} Kalon/Archon destroyed.` : `🌑 Enemy ${card.name} — nothing to purge.`, color: 'red' }],
-          };
-          setAIActor(null, `🌑 Enemy purges the Ascended`);
         } else if (best.kind === 'persistent') {
           // ✨ AI plays a persistent enchantment — it stays on field.
           const _turnsLeft = Math.max(1, card.persistDuration || card.duration || 3);
@@ -96318,28 +95591,6 @@ function doAIStep() {
               if (_ds.type === 'fire') sc -= 45;
               else if (_ds.type === 'oil') sc -= 12;
               else if (_ds.type === 'water' && App.state.weather && App.state.weather.weatherType === 'lightningStorm') sc -= 22;
-            }
-          } catch (e) {}
-          // 🪤 TRAP AWARENESS — wary of walking a unit onto the PLAYER's trap.
-          // Scaled by how badly it'd hurt (a destroy / bounce trap is far worse
-          // than a surface paint) AND by difficulty danger-sense, but it stays a
-          // COST weighed against the attack reward — a lethal swing can still be
-          // worth springing a minor trap. Flying units that soar over ground
-          // traps (and aren't caught by an air trap) ignore them, mirroring moveUnit.
-          try {
-            const _trTile = App.state.board[dest.y] && App.state.board[dest.y][dest.x];
-            const _tr = _trTile && _trTile.trap;
-            if (_tr && _tr.owner === 'player' && _tr.card
-                && (!(typeof isEffectivelyFlying === 'function' && isEffectivelyFlying(unit)) || _tr.card.air)) {
-              const _te = _tr.card.effect || {};
-              let _pen = 30;   // baseline wariness of an unknown trap
-              if (_te.type === 'destroyUnit' && !unit.isHero)      _pen = 130 + (unit.currentHp || 0);
-              else if (_te.type === 'bounce' && !unit.isHero)      _pen = 110;
-              else if (_te.type === 'damage')                      _pen = 25 + (_te.amount || 0) * 1.5;
-              else if (_te.type === 'stun')                        _pen = 60;
-              else if (_te.type === 'status')                      _pen = 45;
-              else if (_te.type === 'summonGrave' || _te.type === 'draw' || _te.type === 'paintSurface') _pen = 35;
-              sc -= _pen * _ta;
             }
           } catch (e) {}
           if (sc > bestScore) { bestScore = sc; best = dest; }
@@ -117243,13 +116494,6 @@ function _serializeBattleStateForBroadcast(state) {
     };
     if (stripped) { _slimZones(stripped.player); _slimZones(stripped.ai); }
   } catch (e) { /* never let slimming break a broadcast */ }
-  // 🪶 LOG TAIL — the receiver rebuilds its battle log from the per-broadcast
-  // `newLog` delta (see _onRemoteStateArrived: it APPENDS newLog to its OWN log
-  // and never adopts the snapshot's log), so the snapshot only needs a short tail
-  // for an initial-join / resync view. Shipping the full up-to-400-entry log in
-  // EVERY broadcast was ~40–80KB of pure churn per action. Log is display-only —
-  // trimming it can never affect game sync.
-  try { if (stripped && Array.isArray(stripped.log) && stripped.log.length > 50) stripped.log = stripped.log.slice(-50); } catch (e) {}
   return stripped;
 }
 
@@ -118598,16 +117842,12 @@ function _mpRelayUnitVisuals() {
     // dst='art' (baseId) | 'fr' (spriteId/anim/frame index fi of fn). i/n = chunk
     // index/total of this particular string.
     const sendStr = (meta, str) => {
-      if (!str) return;
-      // 🧊 Off-heap: Forge.sprites/cardArt now hold blob: URLs, which carry NO
-      // bytes — resolve to a base64 data: URL first so the opponent receives the
-      // actual image. data:/http strings pass straight through. The chunk is
-      // still sliced lazily at send time, so the queue never duplicates a set.
-      Promise.resolve(_artValueToDataUrl(str)).then(function (d) {
-        if (typeof d !== 'string' || !d) return;
-        const n = Math.max(1, Math.ceil(d.length / CHUNK));
-        for (let i = 0; i < n; i++) _mpVizEnqueue({ meta: meta, src: d, ci: i, n: n });
-      }).catch(function () {});
+      if (typeof str !== 'string' || !str) return;
+      const n = Math.max(1, Math.ceil(str.length / CHUNK));
+      // Enqueue lightweight DESCRIPTORS that reference `str` (the existing
+      // Forge.sprites/cardArt string — no copy). The pump slices the chunk only
+      // when it's actually sent, so the queue never duplicates a sprite set.
+      for (let i = 0; i < n; i++) _mpVizEnqueue({ meta: meta, src: str, ci: i, n: n });
     };
     for (const u of units) {
       if (!u || u.owner !== 'player') continue;        // only relay MY entities
@@ -124062,7 +123302,7 @@ function renderDataPanel() {
     cards: (Forge.customCards || []).length,
     moves: Object.keys(Forge.customMoves || {}).length,
     events: (Forge.customEvents || []).length,
-    sprites: (_lazyAssetsOn && Forge._spriteIds) ? Forge._spriteIds.size : Object.keys(Forge.sprites || {}).filter(k => k.indexOf('__') !== 0).length,
+    sprites: Object.keys(Forge.sprites || {}).filter(k => k.indexOf('__') !== 0).length,
     decks: (Profile.decks || []).length,
     heroes: Object.keys(Profile.heroes || {}).length,
     units: Object.keys(Profile.units || {}).length,
@@ -124156,8 +123396,8 @@ function renderDataPanel() {
   document.getElementById('btn-back-data').onclick = () => { App.screen = 'title'; render(); };
 
   // ===== Export =====
-  const doDownload = async (opts, hint) => {
-    const payload = await buildExportPayload(opts);
+  const doDownload = (opts, hint) => {
+    const payload = buildExportPayload(opts);
     if (downloadExportFile(payload, hint)) {
       showToast('✓ Export downloaded');
     } else {
@@ -124197,7 +123437,7 @@ function renderDataPanel() {
   if (_btnTraders) _btnTraders.onclick = () => _exportSlice('traders',     Forge.traders     || {},
     'gambit-traders-export', `${Object.keys(Forge.traders || {}).length} trader${Object.keys(Forge.traders || {}).length === 1 ? '' : 's'}`);
   document.getElementById('btn-copy-clipboard').onclick = async () => {
-    const payload = await buildExportPayload({});
+    const payload = buildExportPayload({});
     try {
       await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
       showToast('✓ Copied to clipboard');

@@ -50757,6 +50757,57 @@ function _startMemoryWatchdog() {
 }
 try { _startMemoryWatchdog(); } catch (e) {}
 
+// 🩺 BLACK-BOX MEMORY RECORDER — the "whole browser crashes after a while" report
+// can't be reproduced here, and a renderer/GPU crash wipes the live console. So
+// sample the key growth metrics every 10s into a localStorage ring buffer that
+// SURVIVES the crash. After it dies, reopen the game and run __mg.memdiag() in the
+// console (F12) — the DELTA line shows EXACTLY which metric exploded (heap = JS
+// leak, dom/img/cv = DOM/GPU-layer leak, blobReg = off-heap blob leak), turning an
+// unreproducible crash into a precise one-line fix. Pure logging — no behaviour change.
+function _memDiagSample() {
+  try {
+    var pm = (typeof performance !== 'undefined' && performance.memory) ? performance.memory : null;
+    var s = {
+      t: Date.now(),
+      scr: (typeof App !== 'undefined' && App.screen) ? App.screen : '?',
+      heap: pm ? Math.round(pm.usedJSHeapSize / 1048576) : -1,
+      lim:  pm ? Math.round(pm.jsHeapSizeLimit / 1048576) : -1,
+      dom: document.getElementsByTagName('*').length,
+      img: document.getElementsByTagName('img').length,
+      cv:  document.getElementsByTagName('canvas').length,
+      stk: document.getElementsByClassName('sprite-stack').length,
+      breg: (typeof _artBlobByUrl !== 'undefined' && _artBlobByUrl) ? _artBlobByUrl.size : -1,
+      ic:  (typeof _imgUrlCache !== 'undefined' && _imgUrlCache) ? _imgUrlCache.size : -1,
+      rep: (typeof App !== 'undefined' && App.replay && Array.isArray(App.replay.snapshots)) ? App.replay.snapshots.length : 0,
+    };
+    var buf = [];
+    try { buf = JSON.parse(localStorage.getItem('hg_memdiag') || '[]'); } catch (e) {}
+    if (!Array.isArray(buf)) buf = [];
+    buf.push(s);
+    if (buf.length > 60) buf = buf.slice(-60);
+    try { localStorage.setItem('hg_memdiag', JSON.stringify(buf)); } catch (e) {}
+    try { console.log('[memdiag] scr=' + s.scr + ' heap=' + s.heap + '/' + s.lim + 'MB dom=' + s.dom + ' img=' + s.img + ' cv=' + s.cv + ' stk=' + s.stk + ' blobReg=' + s.breg + ' imgCache=' + s.ic + ' rep=' + s.rep); } catch (e) {}
+  } catch (e) {}
+}
+try { setTimeout(_memDiagSample, 3000); } catch (e) {}
+try { setInterval(_memDiagSample, 10000); } catch (e) {}
+try {
+  (window.__mg = window.__mg || {}).memdiag = function () {
+    try {
+      var buf = JSON.parse(localStorage.getItem('hg_memdiag') || '[]');
+      if (!Array.isArray(buf) || !buf.length) { console.log('[memdiag] no samples recorded yet — play for ~30s first.'); return; }
+      var t0 = buf[0].t;
+      console.log('[memdiag] ' + buf.length + ' samples (oldest→newest):');
+      buf.forEach(function (s) {
+        console.log('  +' + Math.round((s.t - t0) / 1000) + 's  scr=' + s.scr + '  heap=' + s.heap + 'MB  dom=' + s.dom + '  img=' + s.img + '  cv=' + s.cv + '  stk=' + s.stk + '  blobReg=' + s.breg + '  imgCache=' + s.ic + '  rep=' + s.rep);
+      });
+      var f = buf[0], l = buf[buf.length - 1];
+      console.log('[memdiag] DELTA over ' + Math.round((l.t - f.t) / 1000) + 's:  heap ' + f.heap + '→' + l.heap + 'MB  dom ' + f.dom + '→' + l.dom + '  img ' + f.img + '→' + l.img + '  cv ' + f.cv + '→' + l.cv + '  stk ' + f.stk + '→' + l.stk + '  blobReg ' + f.breg + '→' + l.breg + '  imgCache ' + f.ic + '→' + l.ic + '  rep ' + f.rep + '→' + l.rep);
+      return buf;
+    } catch (e) { console.warn('[memdiag] dump failed', e); }
+  };
+} catch (e) {}
+
 // 💾 Convenience wrapper — `saveProfile() + saveForge()` with labeled warns.
 //    Replaces the boilerplate pattern that appears 60+ times in this codebase:
 //        try { saveProfile && saveProfile(); } catch (e) {}

@@ -49007,6 +49007,13 @@ function _normalizeArtToBlobUrls() {
         const _k = _OFFHEAP_MEDIA_STORES[_i];
         if (Forge[_k] && typeof Forge[_k] === 'object') _deepBlobUrlize(Forge[_k], 0);
       }
+      // NOTE: catalogMedia is deliberately NOT off-heaped here. It shares object
+      // refs with Catalog.* (via _preferRicher), and _persistCatalog() persists
+      // the whole Catalog object to the 'catalog_v1' IDB cache — so converting it
+      // to blob: URLs would poison that cache with session-local handles that are
+      // dead on the next boot. Off-heaping it safely also requires Blobifying the
+      // catalog_v1 cache on persist + converting back on load (a larger change —
+      // see docs/off-heap-media-refactor.md).
     }
   } catch (e) {}
 }

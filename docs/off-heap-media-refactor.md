@@ -1,12 +1,43 @@
 # Off-Heap Media Refactor — implementation plan (deep media)
 
-Status: **PLANNED / not started.** This is the safe way to finish moving the last
+Status: **PARTIALLY DONE.** See "Progress (v96e)" below. This is the safe way to finish moving the last
 big base64 stores off the JS heap. It is intentionally NOT a quick edit — a wrong
 move corrupts the **shared catalog for every player**. Do it as its own pass with
 adversarial review.
 
 All line numbers are approximate (the single `public/index.html` shifts as edits
 land) — re-grep the named functions before editing.
+
+---
+
+## Progress (v96e) — what's DONE and what's still BLOCKED
+
+**DONE — the critical correctness fix (shipped v96e):**
+- Discovered a LATENT BUG: `STORAGE_CATEGORIES` (what `cloudPublishCatalogArt()`
+  ships to the shared catalog Storage) includes `sprites`, `cardArt`, `locationArt`,
+  `weatherAudio`, `campArt`, `campAudio`, `itemArt` — all off-heaped to `blob:` URLs
+  by v95y/v96b. The publish read `Forge[forgeKey]` verbatim → a manual "Publish
+  Catalog Art" would upload DEAD blob: handles → broken art for every player.
+- Fixed with `_deepResolveToDataUrls()` (deep async `blob:`/Blob → base64), called
+  in `cloudPublishCatalogArt()` before sharding each category. Depth caps unified at
+  12 across `_deepBlobUrlize` / `_deepBlobifyForIdb` / `_deepResolveToDataUrls`.
+- **This means Phase 2 step (1) of the plan below is effectively ALREADY DONE** —
+  the publish always ships real base64 now, regardless of in-memory blob: URLs.
+  Re-use `_deepResolveToDataUrls` for any future off-heap-publish path.
+
+**BLOCKED — why `catalogMedia` in-place off-heap was reverted:**
+- `_persistCatalog()` (~L35988) does `idbSet('catalog_v1', Catalog)` — it persists
+  the WHOLE `Catalog` object to IDB. `Catalog.campaigns`/`pageGuides` SHARE object
+  refs with `Forge.catalogMedia` (via `_preferRicher`, which returns the array by
+  reference). So off-heaping `Forge.catalogMedia` to `blob:` URLs in place ALSO
+  mutates `Catalog.*`, and the next `_persistCatalog()` writes those dead `blob:`
+  URL strings into the `catalog_v1` cache → broken campaign/guide art on next boot.
+- To unblock: `_persistCatalog()` must `_deepBlobifyForIdb(Catalog)` before persist,
+  AND `_applyCatalogSnapshot()` / `_loadCatalogFromIdb()` must `_deepBlobUrlize` the
+  loaded snapshot back to URLs. That deep-walks the ENTIRE catalog (thousands of
+  cards with art) — a larger blast radius that needs its own careful pass + review.
+  Only after that is it safe to off-heap `Forge.catalogMedia` (the player-side
+  audio/image heap win).
 
 ---
 

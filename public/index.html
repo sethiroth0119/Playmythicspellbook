@@ -37018,6 +37018,30 @@ async function _cloudFetchCatalogArtImpl() {
             ' nodeImgs=' + nodeImgs + ' | adopted=' + _adopt +
             ' (incScore=' + incScore + ' curScore=' + curScore + ')');
         } catch (e) {}
+      } else if ((forgeKey === 'sprites' || forgeKey === 'cardArt') &&
+                 (_lazyAssetsOn || Object.keys(merged).length > 1200)) {
+        // 🧊 CRASH DOOR #2 — the downloaded catalog art for sprites/cardArt is the
+        // admin's own ~15k-entry library. The old `Forge[forgeKey] = {...merged}`
+        // path + saveForge() would mint a blob: URL for EVERY entry (blobReg=15036)
+        // and OOM the whole browser, completely bypassing the lazy IDB loader.
+        // Instead stream it to per-key storage + the lazy index so it loads on
+        // demand, and force lazy mode ON for the rest of this session.
+        _lazyAssetsOn = true;
+        try { Forge._lazyAssets = true; } catch (e) {}
+        if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
+        if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
+        const _pref = forgeKey === 'sprites' ? 'spr:' : 'car:';
+        const _idx = forgeKey === 'sprites' ? 'forge_sprites_idx' : 'forge_cardArt_idx';
+        const _setName = forgeKey === 'sprites' ? '_spriteIds' : '_cardArtIds';
+        // Mark the per-key store authoritative so the next boot takes the lazy
+        // branch instead of re-downloading + re-minting the whole library.
+        _lazyAbsorbDownloaded(merged, _pref, _idx, _setName)
+          .then(function (n) {
+            try { idbSet('forge_assets_perkey_v2', true); } catch (e) {}
+            try { if (typeof _lazyScheduleRender === 'function') _lazyScheduleRender(); } catch (e) {}
+            try { console.info('🧊 absorbed ' + n + ' ' + forgeKey + ' from catalog → per-key (no mint)'); } catch (e) {}
+          })
+          .catch(function () {});
       } else {
         // Local-only assets win on id collision so a player's personal uploads
         // aren't stomped by the public catalog merge.
@@ -49051,6 +49075,41 @@ async function _migrateRawToPerKey(raw, prefix, idxKey) {
   try { await idbSet(idxKey, ids); } catch (e) {}
   return ids.length;
 }
+
+// 🧊 Absorb a freshly-DOWNLOADED sprite/cardArt bundle (from the shared catalog
+// art shards) into per-key IDB + the lazy index — WITHOUT ever placing it on
+// Forge.sprites/cardArt. This is the second crash door: cloudFetchCatalogArt()
+// downloads the admin's own published library (~15k entries) and the old code
+// did `Forge.sprites = {...merged}` then saveForge(), which mints a blob: URL
+// for every single entry → blobReg=15036 → whole-browser OOM, no matter what
+// the IDB boot loader did. Here we stream the bytes to spr:/car: keys and add
+// the ids to the index so they load on demand, and we turn lazy mode ON for the
+// rest of the session so the renderer never tries to hold them all at once.
+async function _lazyAbsorbDownloaded(merged, prefix, idxKey, idSetName) {
+  if (!merged || typeof merged !== 'object') return 0;
+  const ids = Object.keys(merged).filter(k => k && k.indexOf('__') !== 0);
+  if (!ids.length) return 0;
+  // Make sure the in-memory id Set exists (it may not if we never went through
+  // the lazy boot branch this session — e.g. the fetch beat the IDB loader).
+  let idSet = Forge[idSetName];
+  if (!(idSet instanceof Set)) {
+    try { const ex = await idbGet(idxKey); idSet = new Set(Array.isArray(ex) ? ex : []); }
+    catch (e) { idSet = new Set(); }
+    Forge[idSetName] = idSet;
+  }
+  const BATCH = 40;
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const chunk = [];
+    for (let j = i; j < Math.min(i + BATCH, ids.length); j++) {
+      try { chunk.push([prefix + ids[j], merged[ids[j]]]); idSet.add(ids[j]); } catch (e) {}
+    }
+    try { await idbSetMany(chunk); } catch (e) {}
+    await new Promise(r => setTimeout(r, 10));
+  }
+  try { await idbSet(idxKey, Array.from(idSet)); } catch (e) {}
+  return ids.length;
+}
+
 try {
   window.__mg = window.__mg || {};
   window.__mg.optimizeAssets = function () { return _ensureAssetMigrationV2(); };

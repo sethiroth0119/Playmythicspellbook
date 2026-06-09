@@ -49124,9 +49124,11 @@ async function loadHeavyForgeFromIdb() {
   try {
     const _cnt = (Forge.sprites ? Object.keys(Forge.sprites).length : 0) + (Forge.cardArt ? Object.keys(Forge.cardArt).length : 0);
     if (_cnt > 1500 && !_lazyAssetsOn) {
-      const _runMig = function () { try { _ensureAssetMigrationV2(); } catch (e) {} };
-      if (typeof requestIdleCallback === 'function') requestIdleCallback(_runMig, { timeout: 5000 });
-      else setTimeout(_runMig, 3000);
+      // ⚠ Use setTimeout, NOT requestIdleCallback — a backgrounded tab never gets
+      // idle callbacks, so the migration would never run (exactly what stranded
+      // the admin in heavy eager mode). setTimeout still fires in the background.
+      try { console.info('🧊 Large library (' + _cnt + ' assets) — scheduling one-time storage optimization to enable lazy loading…'); } catch (e) {}
+      setTimeout(function () { try { _ensureAssetMigrationV2(); } catch (e) {} }, 1500);
     }
   } catch (e) {}
   if (changed && typeof render === 'function') {
@@ -66787,6 +66789,9 @@ function unitBoardVisual(occupant) {
 const _imgUrlCache = (typeof Map !== 'undefined') ? new Map() : null;
 function _imgSrc(url) {
   try {
+    // 🧯 A raw Blob must NEVER reach an <img src> — it stringifies to
+    // "[object Blob]" and 404s. Mint a blob: URL for it (or '' so it falls back).
+    if (typeof Blob !== 'undefined' && url instanceof Blob) { try { return _mintArtBlobUrl(url) || ''; } catch (e) { return ''; } }
     if (typeof url !== 'string' || url.slice(0, 5) !== 'data:') return url;
     if (_imgUrlCache && _imgUrlCache.has(url)) return _imgUrlCache.get(url);
     const b = (typeof _toBlobUrl === 'function') ? _toBlobUrl(url) : url;

@@ -48865,6 +48865,22 @@ async function idbSet(key, value) {
     });
   } catch (e) { console.warn('idbSet failed', key, e); return false; }
 }
+// Batch put — writes many [key, value] pairs in ONE transaction. Migrating a 15k
+// asset library as 15k separate idbSet transactions was far too slow to ever
+// finish before a refresh/crash; batching turns it into a few dozen transactions.
+async function idbSetMany(entries) {
+  if (!entries || !entries.length) return true;
+  try {
+    const db = await _openIdb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(HG_IDB_STORE, 'readwrite');
+      const store = tx.objectStore(HG_IDB_STORE);
+      for (let i = 0; i < entries.length; i++) { try { store.put(entries[i][1], entries[i][0]); } catch (e) {} }
+      tx.oncomplete = () => resolve(true);
+      tx.onerror    = () => reject(tx.error);
+    });
+  } catch (e) { console.warn('idbSetMany failed', e); return false; }
+}
 async function idbGet(key) {
   try {
     const db = await _openIdb();
@@ -48968,26 +48984,46 @@ async function _lazyLoadCardArt(id) {
 // / Forge.cardArt into per-asset IDB keys + an index. Reuses the loaded data (no
 // new big load → no extra memory spike), runs chunked in idle, and KEEPS the
 // original giant keys. After it completes, the NEXT boot loads lazily + light.
+let _assetMigrationRunning = false;
 async function _ensureAssetMigrationV2() {
+  if (_assetMigrationRunning) return false;
+  _assetMigrationRunning = true;
   try {
-    if (await idbGet('forge_assets_perkey_v2')) return true;
+    if (await idbGet('forge_assets_perkey_v2')) { _assetMigrationRunning = false; return true; }
+    try { if (typeof showToast === 'function') showToast('🧊 Optimizing your library (one time)… keep this tab open.', 9000); } catch (e) {}
+    const BATCH = 250;
     const sids = (Forge.sprites && typeof Forge.sprites === 'object') ? Object.keys(Forge.sprites).filter(k => k && k.indexOf('__') !== 0) : [];
-    for (let i = 0; i < sids.length; i++) {
-      try { await idbSet('spr:' + sids[i], _deepBlobifyForIdb(Forge.sprites[sids[i]], 0)); } catch (e) {}
-      if ((i & 31) === 0) await new Promise(r => setTimeout(r, 0));
+    for (let i = 0; i < sids.length; i += BATCH) {
+      const chunk = [];
+      for (let j = i; j < Math.min(i + BATCH, sids.length); j++) { try { chunk.push(['spr:' + sids[j], _deepBlobifyForIdb(Forge.sprites[sids[j]], 0)]); } catch (e) {} }
+      await idbSetMany(chunk);
+      await new Promise(r => setTimeout(r, 0));
     }
     try { await idbSet('forge_sprites_idx', sids); } catch (e) {}
     const cids = (Forge.cardArt && typeof Forge.cardArt === 'object') ? Object.keys(Forge.cardArt) : [];
-    for (let i = 0; i < cids.length; i++) {
-      try { await idbSet('car:' + cids[i], _artValueToBlobForIdb(Forge.cardArt[cids[i]])); } catch (e) {}
-      if ((i & 31) === 0) await new Promise(r => setTimeout(r, 0));
+    for (let i = 0; i < cids.length; i += BATCH) {
+      const chunk = [];
+      for (let j = i; j < Math.min(i + BATCH, cids.length); j++) { try { chunk.push(['car:' + cids[j], _artValueToBlobForIdb(Forge.cardArt[cids[j]])]); } catch (e) {} }
+      await idbSetMany(chunk);
+      await new Promise(r => setTimeout(r, 0));
     }
     try { await idbSet('forge_cardArt_idx', cids); } catch (e) {}
     await idbSet('forge_assets_perkey_v2', true);
-    try { console.info('🧊 Lazy-asset migration complete — ' + sids.length + ' sprites + ' + cids.length + ' card-art split to per-key storage. Refresh ONCE for a light, crash-free boot.'); } catch (e) {}
-    try { if (typeof showToast === 'function') showToast('🧊 Storage optimized — refresh once to finish. Crashes should stop.', 7000); } catch (e) {}
+    try { console.info('🧊 Lazy-asset migration complete — ' + sids.length + ' sprites + ' + cids.length + ' card-art split to per-key storage.'); } catch (e) {}
+    // ♻️ Auto-reload INTO lazy mode so the heavy eager copy is dropped immediately
+    // (don't make the user keep playing in the crash-prone eager state). Only when
+    // not mid-battle; otherwise prompt a refresh.
+    _assetMigrationRunning = false;
+    try {
+      if (typeof App !== 'undefined' && App.screen === 'battle') {
+        if (typeof showToast === 'function') showToast('🧊 Storage optimized! Refresh when you finish this battle to apply it.', 9000);
+      } else {
+        if (typeof showToast === 'function') showToast('🧊 Storage optimized! Reloading to finish…', 3500);
+        setTimeout(function () { try { location.reload(); } catch (e) {} }, 2500);
+      }
+    } catch (e) {}
     return true;
-  } catch (e) { try { console.warn('lazy-asset migration failed', e); } catch (e2) {} return false; }
+  } catch (e) { try { console.warn('lazy-asset migration failed', e); } catch (e2) {} _assetMigrationRunning = false; return false; }
 }
 // 🛠 Manual escape hatches (console): __mg.optimizeAssets() forces the per-key
 // migration from a booted state; __mg.lazyReset() reverts to the eager path (clears
@@ -50989,6 +51025,21 @@ function _memDiagSample() {
     try { console.log('[memdiag] scr=' + s.scr + ' heap=' + s.heap + '/' + s.lim + 'MB dom=' + s.dom + ' img=' + s.img + ' cv=' + s.cv + ' stk=' + s.stk + ' blobReg=' + s.breg + ' imgCache=' + s.ic + ' rep=' + s.rep); } catch (e) {}
   } catch (e) {}
 }
+// ⏪ Auto-dump the PREVIOUS session's trail at boot. The ring buffer survives a
+// crash, so this prints the growth right up to the last crash WITHOUT the user
+// needing to run any command — a plain console copy now includes the pre-crash
+// trend. Then clear so this session records fresh.
+try {
+  const _prev = JSON.parse(localStorage.getItem('hg_memdiag') || '[]');
+  if (Array.isArray(_prev) && _prev.length > 1) {
+    try { console.log('%c[memdiag] ⏪ PREVIOUS SESSION (survived the crash) — ' + _prev.length + ' samples, oldest→newest:', 'color:#e0556a;font-weight:700'); } catch (e) {}
+    const _p0 = _prev[0].t;
+    _prev.forEach(function (s) { try { console.log('  ⏪ +' + Math.round((s.t - _p0) / 1000) + 's scr=' + s.scr + ' heap=' + s.heap + 'MB dom=' + s.dom + ' img=' + s.img + ' cv=' + s.cv + ' stk=' + s.stk + ' blobReg=' + s.breg + ' rep=' + s.rep); } catch (e) {} });
+    const _pf = _prev[0], _pl = _prev[_prev.length - 1];
+    try { console.log('%c[memdiag] ⏪ PREV DELTA over ' + Math.round((_pl.t - _pf.t) / 1000) + 's:  heap ' + _pf.heap + '→' + _pl.heap + 'MB   dom ' + _pf.dom + '→' + _pl.dom + '   img ' + _pf.img + '→' + _pl.img + '   cv ' + _pf.cv + '→' + _pl.cv + '   blobReg ' + _pf.breg + '→' + _pl.breg + '   rep ' + _pf.rep + '→' + _pl.rep, 'color:#e0556a;font-weight:700'); } catch (e) {}
+  }
+  try { localStorage.setItem('hg_memdiag', '[]'); } catch (e) {}
+} catch (e) {}
 try { setTimeout(_memDiagSample, 3000); } catch (e) {}
 try { setInterval(_memDiagSample, 10000); } catch (e) {}
 try {

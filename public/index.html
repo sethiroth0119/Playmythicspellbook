@@ -31022,7 +31022,15 @@ const DEFAULT_PACK_RARITY_WEIGHTS = {
 function getCardArt(cardId) {
   if (!cardId) return null;
   const local = Forge.cardArt && Forge.cardArt[cardId];
-  if (local) return local;
+  if (local) {
+    if (_lazyAssetsOn) { try { _lazyTouch(_lazyCarLRU, cardId, _LAZY_CARDART_CAP, Forge.cardArt); } catch (e) {} }
+    return local;
+  }
+  // 🧊 Lazy: stream missing card art in from per-key IDB (LRU-cached) if the id is
+  // in the index. Returns null/MP-fallback now; re-renders when the art lands.
+  if (_lazyAssetsOn) {
+    try { if (Forge._cardArtIds && Forge._cardArtIds.has(cardId)) _lazyLoadCardArt(cardId); } catch (e) {}
+  }
   // 📡 MULTIPLAYER fallback — art the opponent RELAYED for their custom card
   // (their visuals were stripped from the state snapshot, so without this the
   // watcher renders their units as a bare emoji). Runtime-only cache, never
@@ -48880,6 +48888,117 @@ async function idbDel(key) {
   } catch (e) { return false; }
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// 🧊 LAZY ASSET LOADING — the huge-library "whole browser crashes" fix.
+// ------------------------------------------------------------------------
+// A library with thousands of custom sprites/card-art was loaded ENTIRELY into
+// memory at boot (the admin's recorder showed blobReg=15036), which exhausted
+// memory and crashed startup. Lazy mode keeps the library on DISK as per-asset
+// IndexedDB keys (spr:<id> / car:<id>) plus a small index, and holds only the
+// assets currently on screen in memory (an LRU of a few hundred), loading the
+// rest on demand and revoking evicted ones so the browser frees their bytes.
+//   • GATED: only turns on AFTER a one-time, non-destructive migration that a
+//     LARGE library triggers. Small libraries never migrate, so normal players
+//     keep the proven eager path untouched (zero blast radius for them).
+//   • NON-DESTRUCTIVE: the original giant forge_sprites/forge_cardArt keys are
+//     KEPT as a backup — the migration only ADDS per-key copies + an index.
+// ════════════════════════════════════════════════════════════════════════
+const _LAZY_SPRITE_CAP  = 600;    // max sprites cached in memory at once
+const _LAZY_CARDART_CAP = 1500;   // max card-art entries cached at once
+let _lazyAssetsOn = false;
+const _lazyLoadingSet = (typeof Set !== 'undefined') ? new Set() : null;
+const _lazySprLRU = [];
+const _lazyCarLRU = [];
+function _lazyRevokeVal(val) {
+  const rev = (u) => { try { if (typeof u === 'string' && u.slice(0, 5) === 'blob:') { URL.revokeObjectURL(u); if (_artBlobByUrl) _artBlobByUrl.delete(u); } } catch (e) {} };
+  if (typeof val === 'string') rev(val);
+  else if (val && typeof val === 'object') { for (const a in val) { const arr = val[a]; if (Array.isArray(arr)) arr.forEach(rev); } }
+}
+function _lazyTouch(lru, id, cap, store) {
+  const i = lru.indexOf(id);
+  if (i >= 0) lru.splice(i, 1);
+  lru.push(id);
+  while (lru.length > cap) {
+    const ev = lru.shift();
+    if (ev === id) continue;
+    try { if (store && store[ev] !== undefined) { _lazyRevokeVal(store[ev]); delete store[ev]; } } catch (e) {}
+  }
+}
+let _lazyRenderTimer = null;
+function _lazyScheduleRender() {
+  if (_lazyRenderTimer) return;
+  _lazyRenderTimer = setTimeout(function () {
+    _lazyRenderTimer = null;
+    try { if (typeof App !== 'undefined' && App.screen === 'battle' && typeof renderBattle === 'function') renderBattle(); else if (typeof render === 'function') render(); } catch (e) {}
+  }, 70);
+}
+async function _lazyLoadSprite(id) {
+  if (!id || !_lazyAssetsOn || !Forge.sprites || Forge.sprites[id]) return;
+  const k = 's:' + id;
+  if (_lazyLoadingSet) { if (_lazyLoadingSet.has(k)) return; _lazyLoadingSet.add(k); }
+  try {
+    const data = await idbGet('spr:' + id);
+    if (data && typeof data === 'object' && !Forge.sprites[id]) {
+      try { _deepBlobUrlize(data, 0); } catch (e) {}
+      Forge.sprites[id] = data;
+      _lazyTouch(_lazySprLRU, id, _LAZY_SPRITE_CAP, Forge.sprites);
+      _lazyScheduleRender();
+    }
+  } catch (e) {}
+  if (_lazyLoadingSet) _lazyLoadingSet.delete(k);
+}
+async function _lazyLoadCardArt(id) {
+  if (!id || !_lazyAssetsOn || !Forge.cardArt || Forge.cardArt[id]) return;
+  const k = 'c:' + id;
+  if (_lazyLoadingSet) { if (_lazyLoadingSet.has(k)) return; _lazyLoadingSet.add(k); }
+  try {
+    const data = await idbGet('car:' + id);
+    if ((data || data === '') && !Forge.cardArt[id]) {
+      let v = data;
+      try {
+        if (typeof Blob !== 'undefined' && data instanceof Blob) v = _mintArtBlobUrl(data) || data;
+        else if (typeof data === 'string' && data.slice(0, 5) === 'data:') { const b = _dataUrlToBlob(data); v = b ? (_mintArtBlobUrl(b) || data) : data; }
+      } catch (e) {}
+      if (v) { Forge.cardArt[id] = v; _lazyTouch(_lazyCarLRU, id, _LAZY_CARDART_CAP, Forge.cardArt); _lazyScheduleRender(); }
+    }
+  } catch (e) {}
+  if (_lazyLoadingSet) _lazyLoadingSet.delete(k);
+}
+// One-time, non-destructive migration: split the ALREADY-IN-MEMORY Forge.sprites
+// / Forge.cardArt into per-asset IDB keys + an index. Reuses the loaded data (no
+// new big load → no extra memory spike), runs chunked in idle, and KEEPS the
+// original giant keys. After it completes, the NEXT boot loads lazily + light.
+async function _ensureAssetMigrationV2() {
+  try {
+    if (await idbGet('forge_assets_perkey_v2')) return true;
+    const sids = (Forge.sprites && typeof Forge.sprites === 'object') ? Object.keys(Forge.sprites).filter(k => k && k.indexOf('__') !== 0) : [];
+    for (let i = 0; i < sids.length; i++) {
+      try { await idbSet('spr:' + sids[i], _deepBlobifyForIdb(Forge.sprites[sids[i]], 0)); } catch (e) {}
+      if ((i & 31) === 0) await new Promise(r => setTimeout(r, 0));
+    }
+    try { await idbSet('forge_sprites_idx', sids); } catch (e) {}
+    const cids = (Forge.cardArt && typeof Forge.cardArt === 'object') ? Object.keys(Forge.cardArt) : [];
+    for (let i = 0; i < cids.length; i++) {
+      try { await idbSet('car:' + cids[i], _artValueToBlobForIdb(Forge.cardArt[cids[i]])); } catch (e) {}
+      if ((i & 31) === 0) await new Promise(r => setTimeout(r, 0));
+    }
+    try { await idbSet('forge_cardArt_idx', cids); } catch (e) {}
+    await idbSet('forge_assets_perkey_v2', true);
+    try { console.info('🧊 Lazy-asset migration complete — ' + sids.length + ' sprites + ' + cids.length + ' card-art split to per-key storage. Refresh ONCE for a light, crash-free boot.'); } catch (e) {}
+    try { if (typeof showToast === 'function') showToast('🧊 Storage optimized — refresh once to finish. Crashes should stop.', 7000); } catch (e) {}
+    return true;
+  } catch (e) { try { console.warn('lazy-asset migration failed', e); } catch (e2) {} return false; }
+}
+// 🛠 Manual escape hatches (console): __mg.optimizeAssets() forces the per-key
+// migration from a booted state; __mg.lazyReset() reverts to the eager path (clears
+// the flag) in case the lazy path ever misbehaves — the original giant keys are
+// kept, so this is always safe.
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.optimizeAssets = function () { return _ensureAssetMigrationV2(); };
+  window.__mg.lazyReset = async function () { try { await idbSet('forge_assets_perkey_v2', false); } catch (e) {} console.info('🧊 Lazy mode reset — refresh to load the full library eagerly again.'); };
+} catch (e) {}
+
 // Async-load the heavy Forge chunks (sprites, cardArt, locationArt, weatherAudio)
 // from IndexedDB. Called once at boot AFTER the synchronous loadForge() so the
 // game starts immediately with text+stats, and sprites pop in as soon as IDB
@@ -48909,6 +49028,36 @@ async function loadHeavyForgeFromIdb() {
       return false;
     }
   } catch (e) {}
+
+  // 🧊 LAZY ASSET MODE — once the one-time per-key migration is done, load ONLY
+  // the index of sprite / card-art ids; the assets themselves stream in on demand
+  // (LRU-capped). This is what stops a huge library from loading all-at-once and
+  // crashing the browser. The other (small) heavy stores still load eagerly.
+  try {
+    if (await idbGet('forge_assets_perkey_v2')) {
+      _lazyAssetsOn = true;
+      try { Forge._lazyAssets = true; } catch (e) {}
+      try { const si = await idbGet('forge_sprites_idx'); Forge._spriteIds = new Set(Array.isArray(si) ? si : []); } catch (e) { Forge._spriteIds = new Set(); }
+      try { const ci = await idbGet('forge_cardArt_idx'); Forge._cardArtIds = new Set(Array.isArray(ci) ? ci : []); } catch (e) { Forge._cardArtIds = new Set(); }
+      if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
+      if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
+      const liteKeys = ['locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
+      for (const k of liteKeys) {
+        try {
+          const v = await idbGet('forge_' + k);
+          if (v && typeof v === 'object' && Object.keys(v).length > 0) {
+            if (!Forge[k] || Object.keys(Forge[k]).length === 0) Forge[k] = v;
+            else Forge[k] = { ...Forge[k], ...v };
+          }
+        } catch (e) {}
+      }
+      try { _normalizeArtToBlobUrls(); } catch (e) {}
+      try { console.info('🧊 Lazy asset mode ON — sprites=' + Forge._spriteIds.size + ', cardArt=' + Forge._cardArtIds.size + ' (streamed on demand, ~' + _LAZY_SPRITE_CAP + ' in memory).'); } catch (e) {}
+      try { if (typeof render === 'function') render(); } catch (e) {}
+      return true;
+    }
+  } catch (e) {}
+
   const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
   let changed = false;
   for (const k of keys) {
@@ -48933,6 +49082,17 @@ async function loadHeavyForgeFromIdb() {
   // from IDB (or merged from localStorage) into blob: URLs so their bytes leave
   // the JS heap. This is the load-time bulk of the OOM fix.
   try { _normalizeArtToBlobUrls(); } catch (e) {}
+  // 🧊 LARGE LIBRARY → schedule the one-time per-key migration in idle, REUSING the
+  // data we just loaded (no extra memory spike), so the NEXT boot is lazy + light.
+  // Small libraries never cross the threshold, so they stay on the eager path.
+  try {
+    const _cnt = (Forge.sprites ? Object.keys(Forge.sprites).length : 0) + (Forge.cardArt ? Object.keys(Forge.cardArt).length : 0);
+    if (_cnt > 1500 && !_lazyAssetsOn) {
+      const _runMig = function () { try { _ensureAssetMigrationV2(); } catch (e) {} };
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(_runMig, { timeout: 5000 });
+      else setTimeout(_runMig, 3000);
+    }
+  } catch (e) {}
   if (changed && typeof render === 'function') {
     try { render(); } catch (e) {}
   }
@@ -49876,8 +50036,24 @@ function saveForge() {
       // persist the BYTES as Blobs (structured-clone) — never the session-local
       // blob: URL strings, which would be dead handles on the next load.
       try { _normalizeArtToBlobUrls(); } catch (e) {}
-      idbSet('forge_sprites',      _serializeArtForIdb(Forge.sprites || {}, true));
-      idbSet('forge_cardArt',      _serializeArtForIdb(Forge.cardArt || {}, false));
+      if (_lazyAssetsOn) {
+        // 🧊 Lazy mode: persist the in-memory (edited / just-streamed) assets to
+        // their per-key slots and keep the index in sync. CRITICAL: do NOT rewrite
+        // the giant forge_sprites / forge_cardArt keys — Forge.sprites holds only
+        // the small LRU subset here, so writing them would TRUNCATE the on-disk
+        // library. (Fire-and-forget async writes; they don't block the save.)
+        try {
+          const _sids = Forge.sprites ? Object.keys(Forge.sprites).filter(k => k && k.indexOf('__') !== 0) : [];
+          for (const _id of _sids) { try { idbSet('spr:' + _id, _deepBlobifyForIdb(Forge.sprites[_id], 0)); } catch (e) {} if (Forge._spriteIds) Forge._spriteIds.add(_id); }
+          if (Forge._spriteIds) idbSet('forge_sprites_idx', Array.from(Forge._spriteIds));
+          const _cids = Forge.cardArt ? Object.keys(Forge.cardArt) : [];
+          for (const _id of _cids) { try { idbSet('car:' + _id, _artValueToBlobForIdb(Forge.cardArt[_id])); } catch (e) {} if (Forge._cardArtIds) Forge._cardArtIds.add(_id); }
+          if (Forge._cardArtIds) idbSet('forge_cardArt_idx', Array.from(Forge._cardArtIds));
+        } catch (e) {}
+      } else {
+        idbSet('forge_sprites',      _serializeArtForIdb(Forge.sprites || {}, true));
+        idbSet('forge_cardArt',      _serializeArtForIdb(Forge.cardArt || {}, false));
+      }
       idbSet('forge_locationArt',  _deepBlobifyForIdb(Forge.locationArt  || {}, 0));
       idbSet('forge_weatherAudio', _deepBlobifyForIdb(Forge.weatherAudio || {}, 0));
       idbSet('forge_campArt',      _deepBlobifyForIdb(Forge.campArt      || {}, 0));
@@ -66432,6 +66608,18 @@ function getSpriteFrames(spriteId, animation) {
   const candidates = [spriteId];
   if (spriteId.startsWith('h_')) candidates.push('u_' + spriteId.slice(2));
   else if (spriteId.startsWith('u_')) candidates.push('h_' + spriteId.slice(2));
+  // 🧊 Lazy: stream a missing sprite in from per-key IDB (LRU-cached). If a
+  // candidate exists in the index but isn't resident, kick an async load and let
+  // this paint fall to the emoji/MP fallback — the load re-renders when it lands.
+  // A cache hit is touched so it stays resident (and isn't evicted while visible).
+  if (_lazyAssetsOn) {
+    try {
+      for (const id of candidates) {
+        if (Forge.sprites[id]) _lazyTouch(_lazySprLRU, id, _LAZY_SPRITE_CAP, Forge.sprites);
+        else if (Forge._spriteIds && Forge._spriteIds.has(id)) _lazyLoadSprite(id);
+      }
+    } catch (e) {}
+  }
   // 🎞️ Strip null / empty cells. Sliced grid sheets store `null` for blank
   // grid cells; if those reach the ticker the sprite blinks to nothing on
   // that frame — exactly the "animation skipping" the user saw. Filtering
@@ -69299,7 +69487,7 @@ function renderTitle() {
   // ----- Stats / badge data -----
   const customCount  = Forge.customCards.length;
   const movesCount   = Object.keys(Forge.customMoves).length;
-  const spriteCount  = Object.keys(Forge.sprites).filter(k => k.indexOf('__') !== 0).length;
+  const spriteCount  = (_lazyAssetsOn && Forge._spriteIds) ? Forge._spriteIds.size : Object.keys(Forge.sprites).filter(k => k.indexOf('__') !== 0).length;
   const wins         = Profile.records.wins, losses = Profile.records.losses;
   const labReady     = Lab.cores.filter(c => !c.hatchedCardId && c.battlesUntilHatch <= 0).length;
   const labIncubating= Lab.cores.filter(c => !c.hatchedCardId && c.battlesUntilHatch > 0).length;
@@ -83494,6 +83682,15 @@ function sliceSpriteSheet(file, cols, rows, maxSize = 128) {
 async function normalizeStoredSpriteFrames() {
   if (!Forge || !Forge.sprites) return;
   if (Forge._spritesNormalized) return; // Run once per session
+  // 🧊 SKIP for huge / lazy libraries. This pass loads EVERY frame into an Image
+  // to uniformize sizes — on a 15k-frame library that materializes thousands of
+  // blobs into decoded bitmaps at once and was a direct cause of the whole-browser
+  // crash. In lazy mode only a small subset is ever resident, and the cosmetic
+  // frame-pad isn't worth the memory blowup either way.
+  try {
+    if (_lazyAssetsOn) return;
+    if (Object.keys(Forge.sprites).filter(k => k && k.indexOf('__') !== 0).length > 1200) return;
+  } catch (e) {}
   let changed = false;
   for (const id of Object.keys(Forge.sprites)) {
     const set = Forge.sprites[id];
@@ -123685,7 +123882,7 @@ function renderDataPanel() {
     cards: (Forge.customCards || []).length,
     moves: Object.keys(Forge.customMoves || {}).length,
     events: (Forge.customEvents || []).length,
-    sprites: Object.keys(Forge.sprites || {}).filter(k => k.indexOf('__') !== 0).length,
+    sprites: (_lazyAssetsOn && Forge._spriteIds) ? Forge._spriteIds.size : Object.keys(Forge.sprites || {}).filter(k => k.indexOf('__') !== 0).length,
     decks: (Profile.decks || []).length,
     heroes: Object.keys(Profile.heroes || {}).length,
     units: Object.keys(Profile.units || {}).length,

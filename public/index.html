@@ -49029,6 +49029,28 @@ async function _ensureAssetMigrationV2() {
 // migration from a booted state; __mg.lazyReset() reverts to the eager path (clears
 // the flag) in case the lazy path ever misbehaves — the original giant keys are
 // kept, so this is always safe.
+// Split a RAW IDB store object ({id: value}) straight into per-key entries +
+// an index, WITHOUT minting blob URLs or loading it into Forge.*. The raw values
+// (disk-backed Blobs, or legacy base64) are copied as-is; the lazy loader
+// normalizes each on read. Batched so a 15k library writes in a few dozen
+// transactions instead of 15k. This is the crash-proof migration path — it never
+// materializes the whole library at once.
+async function _migrateRawToPerKey(raw, prefix, idxKey) {
+  if (!raw || typeof raw !== 'object') { try { await idbSet(idxKey, []); } catch (e) {} return 0; }
+  const ids = Object.keys(raw).filter(k => k && k.indexOf('__') !== 0);
+  // Small batches + a real yield between them: copying a Blob to a new key
+  // materializes its bytes transiently, so we keep each batch tiny and give the
+  // GC a window so the migration itself can never spike memory.
+  const BATCH = 40;
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const chunk = [];
+    for (let j = i; j < Math.min(i + BATCH, ids.length); j++) { try { chunk.push([prefix + ids[j], raw[ids[j]]]); } catch (e) {} }
+    try { await idbSetMany(chunk); } catch (e) {}
+    await new Promise(r => setTimeout(r, 12));
+  }
+  try { await idbSet(idxKey, ids); } catch (e) {}
+  return ids.length;
+}
 try {
   window.__mg = window.__mg || {};
   window.__mg.optimizeAssets = function () { return _ensureAssetMigrationV2(); };
@@ -49094,43 +49116,55 @@ async function loadHeavyForgeFromIdb() {
     }
   } catch (e) {}
 
-  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
+  // 🧊 NOT migrated yet. PEEK the raw sprite/card-art stores first. IndexedDB
+  // returns Blobs DISK-BACKED (handles, not bytes), so reading the container is
+  // cheap and — crucially — mints / materializes NOTHING. We size the library
+  // from these handles before deciding how to load.
+  let _rawSpr = null, _rawCar = null;
+  try { _rawSpr = await idbGet('forge_sprites'); } catch (e) {}
+  try { _rawCar = await idbGet('forge_cardArt'); } catch (e) {}
+  const _sprN = (_rawSpr && typeof _rawSpr === 'object') ? Object.keys(_rawSpr).filter(k => k && k.indexOf('__') !== 0).length : 0;
+  const _carN = (_rawCar && typeof _rawCar === 'object') ? Object.keys(_rawCar).length : 0;
+
+  // 🧊 LARGE LIBRARY → migrate to per-key storage WITHOUT minting the thousands of
+  // blob URLs or loading them into Forge.sprites. The recorder proved there is NO
+  // JS leak — the crash is the NATIVE bytes of ~15k live blobs, and minting them
+  // all is what kills the boot in seconds. So we split the RAW values straight to
+  // per-key keys + an index, set the flag, and reload into lazy mode (only ~600
+  // ever resident). The original giant keys are KEPT as a backup.
+  if (_sprN + _carN > 1500) {
+    try { console.info('🧊 Large library (' + (_sprN + _carN) + ' assets) — optimizing to lazy storage WITHOUT the heavy mint…'); } catch (e) {}
+    try { if (typeof showToast === 'function') showToast('🧊 Optimizing your large library (one time) — reloading shortly. Keep this tab open.', 14000); } catch (e) {}
+    try { await _migrateRawToPerKey(_rawSpr, 'spr:', 'forge_sprites_idx'); } catch (e) {}
+    _rawSpr = null;
+    try { await _migrateRawToPerKey(_rawCar, 'car:', 'forge_cardArt_idx'); } catch (e) {}
+    _rawCar = null;
+    try { await idbSet('forge_assets_perkey_v2', true); } catch (e) {}
+    try { Forge.sprites = {}; Forge.cardArt = {}; } catch (e) {}
+    try { console.info('🧊 Optimization complete — reloading into lazy mode now.'); } catch (e) {}
+    setTimeout(function () { try { location.reload(); } catch (e) {} }, 1800);
+    return true;
+  }
+
+  // SMALL LIBRARY → the proven eager path. Reuse the raw stores we already peeked
+  // (no second idbGet), then load the OTHER heavy keys and mint everything.
   let changed = false;
+  if (_rawSpr && typeof _rawSpr === 'object' && Object.keys(_rawSpr).length && (!Forge.sprites || !Object.keys(Forge.sprites).length)) { Forge.sprites = _rawSpr; changed = true; }
+  if (_rawCar && typeof _rawCar === 'object' && Object.keys(_rawCar).length && (!Forge.cardArt || !Object.keys(Forge.cardArt).length)) { Forge.cardArt = _rawCar; changed = true; }
+  const keys = ['locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
   for (const k of keys) {
     const v = await idbGet('forge_' + k);
     if (v && typeof v === 'object' && Object.keys(v).length > 0) {
-      // Don't overwrite if loadForge already populated this from localStorage
-      // (only happens for legacy users with small libraries).
-      if (!Forge[k] || Object.keys(Forge[k]).length === 0) {
-        Forge[k] = v;
-        changed = true;
-      } else {
-        // Merge — IDB wins on collision since it's the canonical heavy store.
+      if (!Forge[k] || Object.keys(Forge[k]).length === 0) { Forge[k] = v; changed = true; }
+      else {
         const merged = { ...Forge[k], ...v };
-        if (Object.keys(merged).length !== Object.keys(Forge[k]).length) {
-          Forge[k] = merged;
-          changed = true;
-        }
+        if (Object.keys(merged).length !== Object.keys(Forge[k]).length) { Forge[k] = merged; changed = true; }
       }
     }
   }
-  // 🧊 Off-heap: convert any base64/Blob sprite & card-art values just loaded
-  // from IDB (or merged from localStorage) into blob: URLs so their bytes leave
-  // the JS heap. This is the load-time bulk of the OOM fix.
+  // 🧊 Off-heap: convert any base64/Blob sprite & card-art values into blob: URLs
+  // so their bytes leave the JS heap. (Small library only — large ones went lazy.)
   try { _normalizeArtToBlobUrls(); } catch (e) {}
-  // 🧊 LARGE LIBRARY → schedule the one-time per-key migration in idle, REUSING the
-  // data we just loaded (no extra memory spike), so the NEXT boot is lazy + light.
-  // Small libraries never cross the threshold, so they stay on the eager path.
-  try {
-    const _cnt = (Forge.sprites ? Object.keys(Forge.sprites).length : 0) + (Forge.cardArt ? Object.keys(Forge.cardArt).length : 0);
-    if (_cnt > 1500 && !_lazyAssetsOn) {
-      // ⚠ Use setTimeout, NOT requestIdleCallback — a backgrounded tab never gets
-      // idle callbacks, so the migration would never run (exactly what stranded
-      // the admin in heavy eager mode). setTimeout still fires in the background.
-      try { console.info('🧊 Large library (' + _cnt + ' assets) — scheduling one-time storage optimization to enable lazy loading…'); } catch (e) {}
-      setTimeout(function () { try { _ensureAssetMigrationV2(); } catch (e) {} }, 1500);
-    }
-  } catch (e) {}
   if (changed && typeof render === 'function') {
     try { render(); } catch (e) {}
   }

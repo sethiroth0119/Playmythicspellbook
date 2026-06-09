@@ -36927,7 +36927,17 @@ async function _cloudFetchCatalogArtImpl() {
     } catch (e) { return null; }
   };
   let changed = false;
+  await _ensureBigLibFlag();
   for (const [forgeKey, filename] of STORAGE_CATEGORIES) {
+    // 🆘 Big-library guard: never DOWNLOAD the giant sprite/cardArt sets into
+    // memory. Building the merged shard object is itself gigabytes and crashes
+    // the tab before it could ever be discarded — this is the second way the
+    // 15k library re-entered memory. Whatever art is already in IDB stays
+    // untouched; the renderer falls back to placeholder art.
+    if (_bigLibrarySkip && (forgeKey === 'sprites' || forgeKey === 'cardArt')) {
+      try { console.warn('🆘 Skipped downloading the catalog ' + forgeKey + ' set (large-library guard) — no out-of-memory risk.'); } catch (e) {}
+      continue;
+    }
     try {
       const base = filename.replace(/\.json$/, '');
       let merged = {};
@@ -48866,14 +48876,60 @@ async function idbDel(key) {
   } catch (e) { return false; }
 }
 
+// 🆘 BIG-LIBRARY MEMORY GUARD ===============================================
+// A custom art library with thousands of sprite/card-art frames is several
+// GIGABYTES of base64. Loading it all into memory at boot (or downloading the
+// whole published set from the catalog) is what crashes the entire browser tab
+// — the measured failure was ~15,000 live images. There is no per-asset/lazy
+// store on this build, so the only safe move is: when the install is clearly
+// carrying a huge library, DON'T load the giant sprite/cardArt stores at all.
+// The game boots with placeholder/emoji art and physically cannot run out of
+// memory.
+//
+// Detection is cheap and loads NO data: navigator.storage.estimate() reports
+// total origin storage. A normal install is a few MB; a full-library install
+// is multiple GB, so a ~700MB line cleanly separates them. Manual overrides:
+//   localStorage.hg_skipart = '1'  → always skip (force placeholders)
+//   localStorage.hg_skipart = '0'  → never skip (force-load the art back)
+let _bigLibrarySkip = false;
+let _bigLibFlagDone = false;
+async function _ensureBigLibFlag() {
+  if (_bigLibFlagDone) return _bigLibrarySkip;
+  _bigLibFlagDone = true;
+  try {
+    let _ov = null;
+    try { _ov = localStorage.getItem('hg_skipart'); } catch (e) {}
+    if (_ov === '1') { _bigLibrarySkip = true; return true; }
+    if (_ov === '0') { _bigLibrarySkip = false; return false; }
+    if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      const usedMB = (est && est.usage) ? Math.round(est.usage / 1048576) : 0;
+      if (usedMB > 700) {
+        _bigLibrarySkip = true;
+        try { console.warn('🆘 Large stored library (~' + usedMB + 'MB) — custom sprite/card art will NOT be loaded, to prevent the out-of-memory crash. Placeholder art only. Set localStorage.hg_skipart="0" then refresh to force-load it back.'); } catch (e) {}
+      }
+    }
+  } catch (e) {}
+  return _bigLibrarySkip;
+}
+
 // Async-load the heavy Forge chunks (sprites, cardArt, locationArt, weatherAudio)
 // from IndexedDB. Called once at boot AFTER the synchronous loadForge() so the
 // game starts immediately with text+stats, and sprites pop in as soon as IDB
 // resolves (sub-second on modern devices). Triggers a render once data lands.
 async function loadHeavyForgeFromIdb() {
+  await _ensureBigLibFlag();
+  if (_bigLibrarySkip) {
+    try { console.warn('🆘 Skipping custom sprite/card-art load at boot (large library) — game boots with placeholder art and will not crash.'); } catch (e) {}
+    try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🆘 Large art library — showing placeholder art so the game does not run out of memory. Your art is safe in storage; it just is not loaded.', 6500); } catch (e) {} }, 1500); } catch (e) {}
+  }
   const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
   let changed = false;
   for (const k of keys) {
+    // The two giant stores are the proven OOM culprit (~15k frames). When the
+    // guard trips, skip them entirely — never even idbGet() them, since pulling
+    // the multi-GB record into memory is itself the crash.
+    if (_bigLibrarySkip && (k === 'sprites' || k === 'cardArt')) continue;
     const v = await idbGet('forge_' + k);
     if (v && typeof v === 'object' && Object.keys(v).length > 0) {
       // Don't overwrite if loadForge already populated this from localStorage
@@ -49566,8 +49622,16 @@ function saveForge() {
     // "images keep getting removed". Skip all IDB writes until the async
     // load has completed; localStorage fast-path below still runs.
     if (typeof idbSet === 'function' && (typeof App === 'undefined' || App._forgeIdbLoaded)) {
-      idbSet('forge_sprites',      Forge.sprites      || {});
-      idbSet('forge_cardArt',      Forge.cardArt      || {});
+      // 🆘 DATA-SAFETY GUARD — when the big-library guard skipped loading the
+      // sprite/cardArt stores, Forge.sprites / Forge.cardArt are intentionally
+      // EMPTY (placeholder mode). Writing them here would overwrite the real
+      // multi-GB library on disk with {} and permanently destroy the user's
+      // art. Leave those two IDB keys untouched in skip mode; everything else
+      // still persists normally.
+      if (!_bigLibrarySkip) {
+        idbSet('forge_sprites',      Forge.sprites      || {});
+        idbSet('forge_cardArt',      Forge.cardArt      || {});
+      }
       idbSet('forge_locationArt',  Forge.locationArt  || {});
       idbSet('forge_weatherAudio', Forge.weatherAudio || {});
       idbSet('forge_campArt',      Forge.campArt      || {});

@@ -36821,7 +36821,11 @@ async function cloudPublishCatalogArt() {
   const results = [];
   for (const [forgeKey, filename] of categories) {
     try {
-      const blob = Forge[forgeKey] || {};
+      // 🔄 Off-heap stores hold blob: URLs in memory — re-encode to base64 so the
+      // shared catalog ships REAL bytes, not session-local blob: handles that are
+      // dead on every other device. (Was a latent bug once sprites/cardArt/etc.
+      // moved off-heap.) data:/http values pass straight through.
+      const blob = await _deepResolveToDataUrls(Forge[forgeKey] || {}, 0);
       const base = filename.replace(/\.json$/, '');
       // Empty category → just (re)write a 0-shard index so the fetcher merges
       // nothing. Tiny + fast; never times out.
@@ -49055,7 +49059,7 @@ function _serializeArtForIdb(store, nested) {
 const _OFFHEAP_MEDIA_STORES = ['weatherAudio', 'campAudio', 'locationArt', 'campArt', 'itemArt', 'oilTowerArt', 'opArt', 'reArt'];
 function _deepBlobUrlize(node, depth) {
   depth = depth | 0;
-  if (node == null || depth > 6) return node;
+  if (node == null || depth > 12) return node;
   if (typeof Blob !== 'undefined' && node instanceof Blob) { const u = _mintArtBlobUrl(node); return u || node; }
   if (typeof node === 'string') {
     if (node.slice(0, 5) === 'data:') { const b = _dataUrlToBlob(node); if (b) { const u = _mintArtBlobUrl(b); return u || node; } }
@@ -49067,7 +49071,7 @@ function _deepBlobUrlize(node, depth) {
 }
 function _deepBlobifyForIdb(node, depth) {
   depth = depth | 0;
-  if (node == null || depth > 6) return node;
+  if (node == null || depth > 12) return node;
   if (typeof Blob !== 'undefined' && node instanceof Blob) return node;
   if (typeof node === 'string') {
     if (_artBlobByUrl && _artBlobByUrl.has(node)) return _artBlobByUrl.get(node);
@@ -49076,6 +49080,28 @@ function _deepBlobifyForIdb(node, depth) {
   }
   if (Array.isArray(node)) return node.map(function (v) { return _deepBlobifyForIdb(v, depth + 1); });
   if (typeof node === 'object') { const out = {}; for (const k in node) { if (Object.prototype.hasOwnProperty.call(node, k)) out[k] = _deepBlobifyForIdb(node[k], depth + 1); } return out; }
+  return node;
+}
+
+// 🔄 Deep async re-encode: blob: URL strings (+ Blobs) → base64 data: URLs,
+// walking ANY structure, returning a NEW copy. The off-heap stores hold blob:
+// URLs in memory, but the catalog-art PUBLISH (cloudPublishCatalogArt, which
+// uploads sprites / cardArt / locationArt / weatherAudio / campArt / campAudio /
+// itemArt / catalogMedia to shared Storage) must ship REAL bytes — a blob: URL
+// is a session-local handle that's DEAD on every other device. Uses the SAME
+// depth cap as _deepBlobUrlize, so anything that was off-heaped is guaranteed
+// resolvable here (deeper-than-cap media was never converted, so it's already
+// base64). data:/http strings pass through untouched.
+async function _deepResolveToDataUrls(node, depth) {
+  depth = depth | 0;
+  if (node == null || depth > 12) return node;
+  if (typeof Blob !== 'undefined' && node instanceof Blob) { const d = await _artValueToDataUrl(node); return (typeof d === 'string' && d) ? d : node; }
+  if (typeof node === 'string') {
+    if (node.slice(0, 5) === 'blob:') { const d = await _artValueToDataUrl(node); return (typeof d === 'string' && d) ? d : node; }
+    return node;
+  }
+  if (Array.isArray(node)) { const out = new Array(node.length); for (let i = 0; i < node.length; i++) out[i] = await _deepResolveToDataUrls(node[i], depth + 1); return out; }
+  if (typeof node === 'object') { const out = {}; for (const k in node) { if (Object.prototype.hasOwnProperty.call(node, k)) out[k] = await _deepResolveToDataUrls(node[k], depth + 1); } return out; }
   return node;
 }
 

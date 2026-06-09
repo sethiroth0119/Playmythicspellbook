@@ -48885,6 +48885,30 @@ async function idbDel(key) {
 // game starts immediately with text+stats, and sprites pop in as soon as IDB
 // resolves (sub-second on modern devices). Triggers a render once data lands.
 async function loadHeavyForgeFromIdb() {
+  // 🆘 LITE MODE — emergency escape for a library so large that loading EVERY
+  // custom asset at boot exhausts memory and crashes startup (the 15k-asset
+  // admin case). Turn ON by visiting the game with ?litemode in the URL (it
+  // sticks via localStorage); turn OFF with ?litemode=off. When active, the
+  // heavy custom-art stores are NOT loaded — the game boots fast with the
+  // built-in placeholder/emoji art so you can get in and play. The real fix is
+  // on-demand asset loading; this is just the un-stick valve.
+  try {
+    const _m = (typeof location !== 'undefined' && location.search) ? location.search.match(/[?&]litemode(?:=([^&]*))?/i) : null;
+    if (_m) {
+      const _v = (_m[1] || '').toLowerCase();
+      try {
+        if (_v === 'off' || _v === '0' || _v === 'false') localStorage.removeItem('hg_litemode');
+        else localStorage.setItem('hg_litemode', '1');
+      } catch (e) {}
+    }
+    let _lite = false;
+    try { _lite = localStorage.getItem('hg_litemode') === '1'; } catch (e) {}
+    if (_lite) {
+      try { console.warn('🆘 LITE MODE — skipping heavy custom-art load (sprites / cardArt / media) to prevent the boot crash. Placeholder art only. Visit ?litemode=off to restore.'); } catch (e) {}
+      try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🆘 Lite mode ON — custom art skipped to prevent the crash. Add ?litemode=off to the URL to restore.', 6000); } catch (e) {} }, 1500); } catch (e) {}
+      return false;
+    }
+  } catch (e) {}
   const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
   let changed = false;
   for (const k of keys) {

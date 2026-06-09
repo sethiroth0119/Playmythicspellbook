@@ -49133,16 +49133,47 @@ async function loadHeavyForgeFromIdb() {
   // per-key keys + an index, set the flag, and reload into lazy mode (only ~600
   // ever resident). The original giant keys are KEPT as a backup.
   if (_sprN + _carN > 1500) {
-    try { console.info('🧊 Large library (' + (_sprN + _carN) + ' assets) — optimizing to lazy storage WITHOUT the heavy mint…'); } catch (e) {}
-    try { if (typeof showToast === 'function') showToast('🧊 Optimizing your large library (one time) — reloading shortly. Keep this tab open.', 14000); } catch (e) {}
-    try { await _migrateRawToPerKey(_rawSpr, 'spr:', 'forge_sprites_idx'); } catch (e) {}
-    _rawSpr = null;
-    try { await _migrateRawToPerKey(_rawCar, 'car:', 'forge_cardArt_idx'); } catch (e) {}
-    _rawCar = null;
-    try { await idbSet('forge_assets_perkey_v2', true); } catch (e) {}
-    try { Forge.sprites = {}; Forge.cardArt = {}; } catch (e) {}
-    try { console.info('🧊 Optimization complete — reloading into lazy mode now.'); } catch (e) {}
-    setTimeout(function () { try { location.reload(); } catch (e) {} }, 1800);
+    // 🧊 Boot LIGHT immediately in lazy mode — NEVER load/mint the 15k blobs on the
+    // boot path (that hangs the splash / crashes). Build the per-key index in the
+    // BACKGROUND from the raw stores; custom sprites show the emoji fallback until
+    // the index lands, then stream in on demand. No reload, no boot block.
+    try { console.info('🧊 Large library (' + (_sprN + _carN) + ' assets) — booting LIGHT (lazy), optimizing storage in the background…'); } catch (e) {}
+    _lazyAssetsOn = true;
+    try { Forge._lazyAssets = true; } catch (e) {}
+    Forge.sprites = {}; Forge.cardArt = {};
+    try { const si = await idbGet('forge_sprites_idx'); Forge._spriteIds = new Set(Array.isArray(si) ? si : []); } catch (e) { Forge._spriteIds = new Set(); }
+    try { const ci = await idbGet('forge_cardArt_idx'); Forge._cardArtIds = new Set(Array.isArray(ci) ? ci : []); } catch (e) { Forge._cardArtIds = new Set(); }
+    const _liteKeys = ['locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
+    for (const k of _liteKeys) {
+      try {
+        const v = await idbGet('forge_' + k);
+        if (v && typeof v === 'object' && Object.keys(v).length > 0) {
+          if (!Forge[k] || Object.keys(Forge[k]).length === 0) Forge[k] = v;
+          else Forge[k] = { ...Forge[k], ...v };
+        }
+      } catch (e) {}
+    }
+    try { _normalizeArtToBlobUrls(); } catch (e) {}
+    try { if (typeof render === 'function') render(); } catch (e) {}
+    // 🛠 Background migration — does NOT block boot. Splits the peeked raw stores to
+    // per-key keys + index, sets the flag, then refreshes the index + re-renders so
+    // custom art pops in. Idempotent + resumable across refreshes.
+    setTimeout(function () {
+      (async function () {
+        try {
+          if (await idbGet('forge_assets_perkey_v2')) { _rawSpr = null; _rawCar = null; return; }
+          try { if (typeof showToast === 'function') showToast('🧊 Loading your art library in the background (one time)…', 8000); } catch (e) {}
+          const _sN = await _migrateRawToPerKey(_rawSpr, 'spr:', 'forge_sprites_idx'); _rawSpr = null;
+          const _cN = await _migrateRawToPerKey(_rawCar, 'car:', 'forge_cardArt_idx'); _rawCar = null;
+          try { await idbSet('forge_assets_perkey_v2', true); } catch (e) {}
+          try { const si2 = await idbGet('forge_sprites_idx'); Forge._spriteIds = new Set(Array.isArray(si2) ? si2 : []); } catch (e) {}
+          try { const ci2 = await idbGet('forge_cardArt_idx'); Forge._cardArtIds = new Set(Array.isArray(ci2) ? ci2 : []); } catch (e) {}
+          try { console.info('🧊 Background optimization complete — ' + _sN + ' sprites + ' + _cN + ' card-art now stream on demand.'); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast('🧊 Art library ready — custom art now loads on demand.', 5000); } catch (e) {}
+          try { if (typeof render === 'function') render(); } catch (e) {}
+        } catch (e) { try { console.warn('background migration failed', e); } catch (e2) {} }
+      })();
+    }, 1200);
     return true;
   }
 

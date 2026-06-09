@@ -36878,14 +36878,24 @@ async function cloudPublishCatalogArt() {
 // every caller after the first reuses the same result.
 let _catalogArtFetchPromise = null;
 let _catalogArtFetchedAt = 0;
-const _CATALOG_ART_TTL_MS = 5 * 60 * 1000; // 5min — refetch only after 5min staleness
+const _CATALOG_ART_TTL_MS = 60 * 60 * 1000; // 60min — refetch only after 60min staleness
 async function cloudFetchCatalogArt() {
   if (!initCloud()) return { ok: false };
   // Dedup: in-flight call → return existing promise.
   if (_catalogArtFetchPromise) return _catalogArtFetchPromise;
-  // Cached success within TTL → skip entirely. Returns immediately; no
-  // network traffic, no shard fetching, no memory pressure.
-  if (_catalogArtFetchedAt && Date.now() - _catalogArtFetchedAt < _CATALOG_ART_TTL_MS) {
+  // Cached success → skip entirely. A re-fetch re-downloads the ENTIRE published
+  // art library as base64 (hundreds of MB on a content-heavy catalog) — a transient
+  // spike that, repeated over a long session, was a real "Out of Memory" / whole-
+  // browser-crash contributor. So:
+  //   • ADMINS skip EVERY re-fetch after the first — they ARE the source of the
+  //     catalog (local Forge.* is always richer and the merge is local-wins), so a
+  //     re-fetch gains them nothing but the memory spike.
+  //   • Players use a 60-min TTL (was 5) so the spike fires ~12× less often. A page
+  //     refresh always forces a fresh pull when the admin ships an update.
+  if (_catalogArtFetchedAt && (
+        (typeof isAdmin === 'function' && isAdmin()) ||
+        (Date.now() - _catalogArtFetchedAt < _CATALOG_ART_TTL_MS)
+      )) {
     return { ok: true, cached: true };
   }
   _catalogArtFetchPromise = _cloudFetchCatalogArtImpl().finally(() => {

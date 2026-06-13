@@ -49033,7 +49033,106 @@ function _lazyLoadCardArt(id) {
     finally { _carPending.delete(id); }
   })();
 }
-try { window.__mg = window.__mg || {}; window.__mg.artStats = function () { return { on: _lazyArtOn, sprites: Forge._sprIds ? Forge._sprIds.size : 0, cardArt: Forge._carIds ? Forge._carIds.size : 0, residentSpr: _sprLRU.length, residentCar: _carLRU.length }; }; } catch (e) {}
+try { window.__mg = window.__mg || {}; window.__mg.artStats = function () { return { on: _lazyArtOn, budget: _decodeBudgetOn, sprites: Forge._sprIds ? Forge._sprIds.size : 0, cardArt: Forge._carIds ? Forge._carIds.size : 0, residentSpr: _sprLRU.length, residentCar: _carLRU.length, decodedImgs: _residentArtEls.length, decodeInFlight: _decodeInFlight }; }; } catch (e) {}
+
+// 🎨 DECODE BUDGET + VISIBILITY GATE =========================================
+// The whole-browser crash is from too many DECODED images on screen at once
+// (GPU/native memory), independent of how many records sit in JS heap — which is
+// why a record-count cap alone still crashed. This caps how many <img> hold a
+// live, decoding src at any instant, and only grants a src to images actually ON
+// SCREEN (IntersectionObserver). Art <img> are emitted WITHOUT a src (just
+// data-art-src); the gate assigns the real src when visible and strips it when
+// scrolled away — so decoded-pixel memory stays bounded no matter how large the
+// library or how many cards a screen lists. Only active in streaming mode; small
+// installs keep the classic eager path untouched.
+let _decodeBudgetOn = false;
+const _MAX_RESIDENT_ART = 160;        // <img> holding a live src at once
+const _MAX_CONCURRENT_DECODES = 16;   // simultaneous in-flight decode() calls
+let _decodeInFlight = 0;
+const _residentArtEls = [];           // live-src <img>, oldest → newest
+const _pendingDecode = [];            // queued {el,url} awaiting a slot
+
+// Strip the src to free the decoded bitmap. Does NOT revoke the URL — the
+// underlying Blob/blob: URL is owned by the per-record LRU (which revokes on its
+// own eviction); the budget layer only governs DECODES, not the byte lifecycle.
+function _clearArtSrc(el) { try { if (el && el.removeAttribute) el.removeAttribute('src'); } catch (e) {} }
+function _releaseArtEl(el) {
+  const i = _residentArtEls.indexOf(el);
+  if (i !== -1) _residentArtEls.splice(i, 1);
+  _clearArtSrc(el);
+}
+function _drainPending() {
+  while (_pendingDecode.length && _decodeInFlight < _MAX_CONCURRENT_DECODES) {
+    const job = _pendingDecode.shift();
+    if (job && job.el && job.el.isConnected && !(job.el.getAttribute && job.el.getAttribute('src'))) _grantDecode(job.el, job.url);
+  }
+}
+function _grantDecode(el, url) {
+  if (!el || !url) return;
+  if (el.getAttribute && el.getAttribute('src')) return;     // already decoding
+  // Evict oldest residents (off-screen first by virtue of the observer) until
+  // under the cap — the hard ceiling on simultaneously-decoded images.
+  while (_residentArtEls.length >= _MAX_RESIDENT_ART && _residentArtEls[0] !== el) {
+    _clearArtSrc(_residentArtEls.shift());
+  }
+  if (_decodeInFlight >= _MAX_CONCURRENT_DECODES) { _pendingDecode.push({ el: el, url: url }); return; }
+  _decodeInFlight++;
+  let settled = false;
+  const done = function () { if (settled) return; settled = true; _decodeInFlight = Math.max(0, _decodeInFlight - 1); _drainPending(); };
+  try {
+    el.src = url;
+    _residentArtEls.push(el);
+    if (el.decode) el.decode().then(done).catch(done); else done();
+    setTimeout(done, 4000);   // a decode() on a detached/hidden el can hang — free the slot
+  } catch (e) { done(); }
+}
+
+let _artIO = null;
+function _ensureArtIO() {
+  if (_artIO || typeof IntersectionObserver === 'undefined') return;
+  _artIO = new IntersectionObserver(function (entries) {
+    for (const en of entries) {
+      const el = en.target;
+      const url = (el && el.dataset) ? el.dataset.artSrc : null;
+      if (en.isIntersecting) { if (url) _grantDecode(el, url); }
+      else { _releaseArtEl(el); }
+    }
+  }, { rootMargin: '300px' });
+}
+function _scanArtImgs() {
+  if (!_artIO || typeof document === 'undefined') return;
+  try {
+    const list = document.querySelectorAll('img.art-deferred[data-art-src]:not([data-art-obs])');
+    for (let i = 0; i < list.length; i++) { list[i].setAttribute('data-art-obs', '1'); _artIO.observe(list[i]); }
+  } catch (e) {}
+}
+let _scanTimer = null;
+function _scheduleArtScan() {
+  if (_scanTimer) return;
+  _scanTimer = setTimeout(function () { _scanTimer = null; _scanArtImgs(); }, 80);
+}
+// Turn the budget on once (streaming mode only). A MutationObserver keeps newly
+// rendered art images registered no matter which screen drew them, so we don't
+// have to hook every render path.
+function _initDecodeBudget() {
+  if (_decodeBudgetOn) return;
+  if (typeof IntersectionObserver === 'undefined' || typeof MutationObserver === 'undefined' || typeof document === 'undefined') return;
+  _decodeBudgetOn = true;
+  _ensureArtIO();
+  try { new MutationObserver(function () { _scheduleArtScan(); }).observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
+  _scheduleArtScan();
+}
+// Deferred <img> for STATIC (non-animated) art — used by card-art emit sites.
+// When the budget is off (small-library installs) it falls back to the classic
+// eager <img> so their behavior is unchanged.
+function _deferImg(url, styleStr, clsStr) {
+  if (!url) return '';
+  const st = styleStr ? ` style="${styleStr}"` : '';
+  if (_lazyArtOn && _decodeBudgetOn) {
+    return `<img class="art-deferred${clsStr ? ' ' + clsStr : ''}" data-art-src="${url}" alt="" decoding="async"${st}>`;
+  }
+  return `<img${clsStr ? ` class="${clsStr}"` : ''} src="${_imgSrc(url)}" alt="" decoding="async" loading="lazy"${st}>`;
+}
 
 // Async-load the heavy Forge chunks (sprites, cardArt, locationArt, weatherAudio)
 // from IndexedDB. Called once at boot AFTER the synchronous loadForge() so the
@@ -49058,6 +49157,7 @@ async function loadHeavyForgeFromIdb() {
     try { _streamOptIn = localStorage.getItem('hg_artstream') === '1'; } catch (e) {}
     if ((haveSpr || haveCar) && _streamOptIn) {
       _lazyArtOn = true;
+      try { _initDecodeBudget(); } catch (e) {}
       Forge._sprIds = new Set(haveSpr ? sIdx : []);
       Forge._carIds = new Set(haveCar ? cIdx : []);
       if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
@@ -66315,7 +66415,7 @@ function unitBoardVisual(occupant) {
         const altFr = getSpriteFrames(altSid, 'idle') || getSpriteFrames(altSid, 'attack');
         if (altFr && altFr.length) { useSid = altSid; fr = altFr; }
       }
-      if (fr && fr.length) return renderIcon(useSid, occupant.icon, 'fill');
+      if (fr && fr.length) return renderIcon(useSid, occupant.icon, 'fill', null, { animated: true });
     }
   } catch (e) {}
   // Candidate ids — for a transformed Kalon the KALON id (cardId) comes FIRST so
@@ -66343,9 +66443,9 @@ function unitBoardVisual(occupant) {
     if (def) break;
   }
   if (!art && def && (def.art || def.image)) art = def.art || def.image;
-  if (art) return `<img src="${_imgSrc(art)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:6px" loading="lazy">`;
+  if (art) return _deferImg(art, 'width:100%;height:100%;object-fit:cover;border-radius:6px') || `<img src="${_imgSrc(art)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:6px" loading="lazy">`;
   // 4) Last resort — sprite-or-emoji via the live def's icon if we have one.
-  return renderIcon(sId, (def && def.icon) || occupant.icon, 'fill');
+  return renderIcon(sId, (def && def.icon) || occupant.icon, 'fill', null, { animated: true });
 }
 
 // 🧠 OFF-HEAP RENDER — serve an image via a Blob OBJECT URL instead of inlining
@@ -66365,7 +66465,9 @@ function _imgSrc(url) {
     return b;
   } catch (e) { return url; }
 }
-function renderIcon(spriteId, fallbackEmoji, size, animOverride) {
+function renderIcon(spriteId, fallbackEmoji, size, animOverride, opts) {
+  opts = opts || {};
+  const animated = !!opts.animated;   // only the battle board passes animated:true
   const sizeMap = { sm: 24, md: 40, lg: 64, xl: 96 };
   const isFill = size === 'fill';
   const px = isFill ? 64 : ((typeof size === 'number') ? size : (sizeMap[size] || 40));
@@ -66381,12 +66483,22 @@ function renderIcon(spriteId, fallbackEmoji, size, animOverride) {
     const sizeStyle = isFill
       ? 'width:100%;height:100%;'
       : `width:${px}px;height:${px}px;`;
-    // Render ALL frames upfront as stacked <img> elements inside a sprite-stack
-    // wrapper. The ticker just toggles which one has the .is-on class — there's
-    // no `src` swap and no decode lag between frames, eliminating the "skip"
-    // stutter AND the size pulse that came from object-fit:contain rescaling
-    // each frame to its own aspect ratio. All frames are sized to fill the
-    // wrapper identically, so figures stay locked at one visible size.
+    // 🎨 STREAMING MODE — emit DEFERRED <img> (no src; data-art-src instead) so
+    // the decode budget + visibility gate decide what actually decodes. Off-board
+    // surfaces show ONE static frame and carry NO data-sprite-id (invisible to
+    // the animation ticker); only the board passes animated:true and keeps the
+    // full frame stack. This is what keeps a 240-card screen from decoding
+    // hundreds of full-res bitmaps at once.
+    if (_lazyArtOn && _decodeBudgetOn) {
+      const useFrames = animated ? frames : [frames[0]];
+      const frameImgs = useFrames.map((url, i) => (
+        `<img class="sprite-img sprite-frame${i === 0 ? ' is-on' : ''} art-deferred" data-art-src="${url}" alt="" draggable="false" decoding="async">`
+      )).join('');
+      const _cfm = animated && (typeof _spriteCustomFrameMs === 'function') ? _spriteCustomFrameMs(spriteId, chosenAnim) : null;
+      const idAttr = animated ? ` data-sprite-id="${spriteId}" data-sprite-anim="${chosenAnim}"` : '';
+      return `<span class="sprite-stack"${idAttr}${_cfm ? ` data-sprite-frame-ms="${_cfm}"` : ''} style="${sizeStyle}">${frameImgs}</span>`;
+    }
+    // Legacy eager path (small-library installs, streaming off) — unchanged.
     const frameImgs = frames.map((url, i) => (
       `<img class="sprite-img sprite-frame${i === 0 ? ' is-on' : ''}" src="${_imgSrc(url)}" alt="" draggable="false" decoding="async" loading="eager">`
     )).join('');
@@ -122316,7 +122428,7 @@ function renderRlcReward() {
     let c = null; try { c = resolveDeckCard(key); } catch (e) {}
     const nm = c ? (c.name || key) : key;
     const art = (c && typeof getCardArt === 'function' && getCardArt(c.id))
-      ? `<img src="${getCardArt(c.id)}" style="width:100%;height:150px;object-fit:cover">`
+      ? _deferImg(getCardArt(c.id), 'width:100%;height:150px;object-fit:cover')
       : `<div style="height:150px;display:flex;align-items:center;justify-content:center;font-size:3rem;background:radial-gradient(ellipse,rgba(170,60,255,0.22),transparent)">${c ? (c.icon || '🃏') : '🃏'}</div>`;
     return `<button type="button" class="rlcrw-card" data-rlc-flip="${idx}" data-key="${escapeHtml(String(key))}" aria-label="Reveal hidden reward">
         <div class="rlcrw-inner">
@@ -122463,7 +122575,7 @@ function renderRlcDraft() {
   const cardTile = (key) => {
     let c = null; try { c = resolveDeckCard(key); } catch (e) {}
     const nm = c ? (c.name || key) : key;
-    const art = (c && typeof getCardArt === 'function' && getCardArt(c.id)) ? `<img src="${getCardArt(c.id)}" style="width:100%;height:120px;object-fit:cover;border-radius:8px 8px 0 0">` : `<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:2.4rem;background:radial-gradient(ellipse,rgba(170,60,255,0.2),transparent)">${c ? (c.icon || '🃏') : '🃏'}</div>`;
+    const art = (c && typeof getCardArt === 'function' && getCardArt(c.id)) ? _deferImg(getCardArt(c.id), 'width:100%;height:120px;object-fit:cover;border-radius:8px 8px 0 0') : `<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:2.4rem;background:radial-gradient(ellipse,rgba(170,60,255,0.2),transparent)">${c ? (c.icon || '🃏') : '🃏'}</div>`;
     return `<div style="width:170px;background:rgba(18,10,32,0.85);border:1px solid rgba(212,175,55,0.4);border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
         ${art}
         <div style="padding:10px;display:flex;flex-direction:column;gap:6px;flex:1">
@@ -139720,7 +139832,7 @@ function renderDeckCardContextModal() {
             if (_spriteable) {
               const _sid = 'u_' + card.id;
               try { const _fr = (typeof getSpriteFrames === 'function') ? (getSpriteFrames(_sid, 'idle') || getSpriteFrames(_sid, 'attack')) : null; if (_fr && _fr.length) return renderIcon(_sid, card.icon, 'lg'); } catch (e) {}
-              try { const _a = (typeof getCardArt === 'function') ? getCardArt(card.id) : null; if (_a) return `<img src="${String(_a).replace(/"/g, '&quot;')}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:8px">`; } catch (e) {}
+              try { const _a = (typeof getCardArt === 'function') ? getCardArt(card.id) : null; if (_a) return _deferImg(_a, 'width:100%;height:100%;object-fit:cover;border-radius:8px'); } catch (e) {}
               return renderIcon(_sid, card.icon, 'lg');
             }
             return `<span style="font-size:2.4rem">${card.icon || '🃏'}</span>`;

@@ -31022,7 +31022,7 @@ const DEFAULT_PACK_RARITY_WEIGHTS = {
 function getCardArt(cardId) {
   if (!cardId) return null;
   const local = Forge.cardArt && Forge.cardArt[cardId];
-  if (local) { if (_lazyArtOn) { try { _lazyTouch('car', cardId); } catch (e) {} } return local; }
+  if (local) { if (_lazyArtOn) { try { _lazyTouch('car', cardId); } catch (e) {} } return _frameUrl(local); }
   // 🎨 On-demand: not resident — stream this card's art from its own record.
   // Returns null now (caller shows a placeholder); a repaint follows once it
   // lands. _lazyLoadCardArt no-ops when streaming is off.
@@ -48941,6 +48941,24 @@ function _artBlobToUrl(v) {
   try { if (typeof Blob !== 'undefined' && v instanceof Blob) return URL.createObjectURL(v); } catch (e) {}
   return v;
 }
+// Belt-and-suspenders: convert ANY frame value to a usable image URL at read
+// time — a raw Blob → a CACHED object URL (so the same Blob never mints a new
+// URL each render), strings pass through untouched. This guarantees the renderer
+// (and the legacy Image-materializers) never receive a raw Blob, which would
+// stringify to "[object Blob]" → a broken image and a 404 storm.
+const _blobUrlCache = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+function _frameUrl(v) {
+  if (typeof v === 'string') return v;
+  if (typeof Blob !== 'undefined' && v instanceof Blob) {
+    if (_blobUrlCache) {
+      let u = _blobUrlCache.get(v);
+      if (!u) { try { u = URL.createObjectURL(v); } catch (e) { u = ''; } _blobUrlCache.set(v, u); }
+      return u;
+    }
+    try { return URL.createObjectURL(v); } catch (e) { return ''; }
+  }
+  return v;
+}
 function _normalizeSpriteBlobs(rec) {
   if (!rec || typeof rec !== 'object') return rec;
   for (const k in rec) {
@@ -66347,11 +66365,11 @@ function getSpriteFrames(spriteId, animation) {
     const set = Forge.sprites[id];
     if (!set) continue;
     if (set[anim] && set[anim].length > 0) {
-      const f = set[anim].filter(Boolean);
+      const f = set[anim].filter(Boolean).map(_frameUrl);
       if (f.length > 0) { if (_lazyArtOn) { try { _lazyTouch('spr', id); } catch (e) {} } return f; }
     }
     if (set.idle && set.idle.length > 0) {
-      const f = set.idle.filter(Boolean);
+      const f = set.idle.filter(Boolean).map(_frameUrl);
       if (f.length > 0) { if (_lazyArtOn) { try { _lazyTouch('spr', id); } catch (e) {} } return f; }
     }
   }
@@ -66367,8 +66385,8 @@ function getSpriteFrames(spriteId, animation) {
       for (const id of candidates) {
         const set = App._mpViz.sprites[id];
         if (!set) continue;
-        if (set[anim] && set[anim].length) { const f = set[anim].filter(Boolean); if (f.length) return f; }
-        if (set.idle && set.idle.length)  { const f = set.idle.filter(Boolean);  if (f.length) return f; }
+        if (set[anim] && set[anim].length) { const f = set[anim].filter(Boolean).map(_frameUrl); if (f.length) return f; }
+        if (set.idle && set.idle.length)  { const f = set.idle.filter(Boolean).map(_frameUrl);  if (f.length) return f; }
       }
     }
   } catch (e) {}
@@ -83274,6 +83292,15 @@ function sliceSpriteSheet(file, cols, rows, maxSize = 128) {
 async function normalizeStoredSpriteFrames() {
   if (!Forge || !Forge.sprites) return;
   if (Forge._spritesNormalized) return; // Run once per session
+  Forge._spritesNormalized = true;      // claim it up front so it can never re-run
+  // 🆘 CRASH VECTOR — this loads EVERY frame of EVERY sprite into an Image() to
+  // re-canvas them to a uniform size. On a large / streaming library that's
+  // thousands of simultaneous decodes + network requests (and raw-Blob frames
+  // become "[object Blob]" 404s) → it takes the whole browser down. Skip it
+  // entirely in streaming mode or for a big library; streamed frames render
+  // fine without the uniform-size pass.
+  if (_lazyArtOn) return;
+  try { if (Object.keys(Forge.sprites).length > 800) return; } catch (e) { return; }
   let changed = false;
   for (const id of Object.keys(Forge.sprites)) {
     const set = Forge.sprites[id];

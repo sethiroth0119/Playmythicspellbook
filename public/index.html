@@ -49050,17 +49050,24 @@ async function loadHeavyForgeFromIdb() {
     try { cIdx = await idbGet('forge_cardArt_idx'); } catch (e) {}
     const haveSpr = Array.isArray(sIdx) && sIdx.length > 0;
     const haveCar = Array.isArray(cIdx) && cIdx.length > 0;
-    if (haveSpr || haveCar) {
+    // 🛑 Streaming is OPT-IN. Decoding even a capped set of high-res, multi-frame
+    // sprites can still exhaust GPU memory and crash the whole browser, so the
+    // SAFE DEFAULT is placeholder mode (no art decode → no crash, the stable
+    // build). Enable streaming for testing with localStorage.hg_artstream='1'.
+    let _streamOptIn = false;
+    try { _streamOptIn = localStorage.getItem('hg_artstream') === '1'; } catch (e) {}
+    if ((haveSpr || haveCar) && _streamOptIn) {
       _lazyArtOn = true;
       Forge._sprIds = new Set(haveSpr ? sIdx : []);
       Forge._carIds = new Set(haveCar ? cIdx : []);
       if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
       if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
-      try { console.info('🎨 On-demand art ON — ' + Forge._sprIds.size + ' sprites / ' + Forge._carIds.size + ' card-art stream in as needed (capped, no crash).'); } catch (e) {}
-      try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🎨 Art library ready — your sprites & card art now stream in as you play.', 5000); } catch (e) {} }, 1500); } catch (e) {}
+      try { console.info('🎨 On-demand art streaming ON (experimental) — ' + Forge._sprIds.size + ' sprites / ' + Forge._carIds.size + ' card-art. Disable with localStorage.removeItem("hg_artstream").'); } catch (e) {}
+      try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🎨 Art streaming ON (experimental). If it gets unstable, run localStorage.removeItem("hg_artstream") and refresh.', 6000); } catch (e) {} }, 1500); } catch (e) {}
     } else {
-      try { console.warn('🆘 Large library but NO per-asset records found — staying in placeholder mode. Art needs a one-time conversion to stream.'); } catch (e) {}
-      try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🆘 Large art library — placeholder art for now (needs a one-time conversion to stream). Your art is safe.', 6500); } catch (e) {} }, 1500); } catch (e) {}
+      // Stable default: placeholder art, no decode, no crash.
+      try { console.info('🆘 Stable mode — custom sprite/card art shown as placeholders to keep the browser from running out of memory. Your art is safe in storage (' + (haveSpr ? sIdx.length : 0) + ' sprites / ' + (haveCar ? cIdx.length : 0) + ' card-art on disk). Streaming is being tuned.'); } catch (e) {}
+      try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🆘 Stable mode — placeholder art so the game does not crash. Your art is safe.', 5000); } catch (e) {} }, 1500); } catch (e) {}
     }
   }
   const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];

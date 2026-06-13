@@ -31022,7 +31022,11 @@ const DEFAULT_PACK_RARITY_WEIGHTS = {
 function getCardArt(cardId) {
   if (!cardId) return null;
   const local = Forge.cardArt && Forge.cardArt[cardId];
-  if (local) return local;
+  if (local) { if (_lazyArtOn) { try { _lazyTouch('car', cardId); } catch (e) {} } return local; }
+  // 🎨 On-demand: not resident — stream this card's art from its own record.
+  // Returns null now (caller shows a placeholder); a repaint follows once it
+  // lands. _lazyLoadCardArt no-ops when streaming is off.
+  if (_lazyArtOn) { try { _lazyLoadCardArt(cardId); } catch (e) {} }
   // 📡 MULTIPLAYER fallback — art the opponent RELAYED for their custom card
   // (their visuals were stripped from the state snapshot, so without this the
   // watcher renders their units as a bare emoji). Runtime-only cache, never
@@ -48913,6 +48917,124 @@ async function _ensureBigLibFlag() {
   return _bigLibrarySkip;
 }
 
+// 🎨 ON-DEMAND ART STREAMING ===============================================
+// When the library is too big to hold in memory, we DON'T load it all. The
+// full library stays on disk as per-asset records (spr:<id> / car:<id>); only
+// the art currently on screen is pulled in, capped by an LRU so memory stays
+// bounded no matter how huge the library is. This is what lets the game show
+// real art for a 15k-asset library without the out-of-memory crash.
+let _lazyArtOn = false;
+const _LAZY_SPR_CAP = 140;       // resident animated sprites (each = N frames)
+const _LAZY_CAR_CAP = 500;       // resident card-art images (single image each)
+const _sprLRU = [];              // sprite ids, oldest → newest
+const _carLRU = [];              // cardArt ids, oldest → newest
+const _sprPending = new Set();   // in-flight sprite loads (dedupe)
+const _carPending = new Set();   // in-flight cardArt loads (dedupe)
+const _sprMissing = new Set();   // ids confirmed absent on disk (don't retry)
+const _carMissing = new Set();
+
+// Stored per-asset records may hold raw Blobs (from the earlier off-heap
+// storage) OR data:/blob:/http URL strings. The renderer needs a STRING src,
+// so convert any Blob to an object URL on the way in. We revoke those object
+// URLs on eviction so memory stays bounded no matter how much you scroll.
+function _artBlobToUrl(v) {
+  try { if (typeof Blob !== 'undefined' && v instanceof Blob) return URL.createObjectURL(v); } catch (e) {}
+  return v;
+}
+function _normalizeSpriteBlobs(rec) {
+  if (!rec || typeof rec !== 'object') return rec;
+  for (const k in rec) {
+    const v = rec[k];
+    if (Array.isArray(v)) { for (let i = 0; i < v.length; i++) v[i] = _artBlobToUrl(v[i]); }
+    else if (typeof Blob !== 'undefined' && v instanceof Blob) rec[k] = _artBlobToUrl(v);
+  }
+  return rec;
+}
+function _revokeUrl(u) { try { if (typeof u === 'string' && u.slice(0, 5) === 'blob:') URL.revokeObjectURL(u); } catch (e) {} }
+function _revokeSpriteUrls(rec) {
+  if (!rec || typeof rec !== 'object') return;
+  for (const k in rec) { const v = rec[k]; if (Array.isArray(v)) v.forEach(_revokeUrl); else _revokeUrl(v); }
+}
+
+// Mark id most-recently-used and evict the in-memory copies past the cap (disk
+// keeps them). Revokes any object URLs we minted so they don't accumulate.
+// Never evicts an id that isn't on disk yet (an unsaved upload).
+function _lazyTouch(kind, id) {
+  const lru = kind === 'spr' ? _sprLRU : _carLRU;
+  const cap = kind === 'spr' ? _LAZY_SPR_CAP : _LAZY_CAR_CAP;
+  const store = kind === 'spr' ? Forge.sprites : Forge.cardArt;
+  const idx = kind === 'spr' ? Forge._sprIds : Forge._carIds;
+  const i = lru.indexOf(id);
+  if (i !== -1) lru.splice(i, 1);
+  lru.push(id);
+  let guard = lru.length + 4;
+  while (lru.length > cap && guard-- > 0) {
+    const old = lru.shift();
+    if (old === id) { lru.push(old); break; }
+    if (idx && !idx.has(old)) { lru.push(old); continue; }   // unsaved upload — keep
+    if (store && store[old]) {
+      try { if (kind === 'spr') _revokeSpriteUrls(store[old]); else _revokeUrl(store[old]); } catch (e) {}
+      try { delete store[old]; } catch (e) {}
+    }
+  }
+}
+
+let _lazyRenderTimer = null;
+function _lazyScheduleRender() {
+  if (_lazyRenderTimer) return;
+  _lazyRenderTimer = setTimeout(function () {
+    _lazyRenderTimer = null;
+    try { if (typeof render === 'function') render(); } catch (e) {}
+  }, 90);   // coalesce a burst of loads into one repaint
+}
+
+// Stream one sprite's frames in from its own IDB record, then repaint.
+function _lazyLoadSprite(id) {
+  if (!_lazyArtOn || !id) return;
+  if (_sprPending.has(id) || _sprMissing.has(id)) return;
+  if (Forge.sprites && Forge.sprites[id]) { _lazyTouch('spr', id); return; }
+  if (Forge._sprIds && !Forge._sprIds.has(id)) { _sprMissing.add(id); return; }
+  _sprPending.add(id);
+  (async function () {
+    try {
+      const v = await idbGet('spr:' + id);
+      if (v && typeof v === 'object') {
+        if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
+        Forge.sprites[id] = _normalizeSpriteBlobs(v);
+        _lazyTouch('spr', id);
+        _lazyScheduleRender();
+      } else { _sprMissing.add(id); }
+    } catch (e) { /* transient — a later render retries */ }
+    finally { _sprPending.delete(id); }
+  })();
+}
+
+// Stream one card's art in from its own IDB record, then repaint.
+function _lazyLoadCardArt(id) {
+  if (!_lazyArtOn || !id) return;
+  if (_carPending.has(id) || _carMissing.has(id)) return;
+  if (Forge.cardArt && Forge.cardArt[id]) { _lazyTouch('car', id); return; }
+  if (Forge._carIds && !Forge._carIds.has(id)) { _carMissing.add(id); return; }
+  _carPending.add(id);
+  (async function () {
+    try {
+      let v = await idbGet('car:' + id);
+      if (v != null && v !== '') {
+        if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
+        // Card art may be a Blob, a bare string, or a wrapper object {url|data}.
+        if (v && typeof v === 'object' && !(typeof Blob !== 'undefined' && v instanceof Blob)) {
+          v = v.url || v.data || v.src || v.image || v;
+        }
+        Forge.cardArt[id] = _artBlobToUrl(v);
+        _lazyTouch('car', id);
+        _lazyScheduleRender();
+      } else { _carMissing.add(id); }
+    } catch (e) {}
+    finally { _carPending.delete(id); }
+  })();
+}
+try { window.__mg = window.__mg || {}; window.__mg.artStats = function () { return { on: _lazyArtOn, sprites: Forge._sprIds ? Forge._sprIds.size : 0, cardArt: Forge._carIds ? Forge._carIds.size : 0, residentSpr: _sprLRU.length, residentCar: _carLRU.length }; }; } catch (e) {}
+
 // Async-load the heavy Forge chunks (sprites, cardArt, locationArt, weatherAudio)
 // from IndexedDB. Called once at boot AFTER the synchronous loadForge() so the
 // game starts immediately with text+stats, and sprites pop in as soon as IDB
@@ -48920,8 +49042,26 @@ async function _ensureBigLibFlag() {
 async function loadHeavyForgeFromIdb() {
   await _ensureBigLibFlag();
   if (_bigLibrarySkip) {
-    try { console.warn('🆘 Skipping custom sprite/card-art load at boot (large library) — game boots with placeholder art and will not crash.'); } catch (e) {}
-    try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🆘 Large art library — showing placeholder art so the game does not run out of memory. Your art is safe in storage; it just is not loaded.', 6500); } catch (e) {} }, 1500); } catch (e) {}
+    // Big library: instead of a blanket skip, try to STREAM the art on demand
+    // from per-asset records. If those records exist, the game shows real art
+    // with a memory cap; if not, fall back to safe placeholder mode.
+    let sIdx = null, cIdx = null;
+    try { sIdx = await idbGet('forge_sprites_idx'); } catch (e) {}
+    try { cIdx = await idbGet('forge_cardArt_idx'); } catch (e) {}
+    const haveSpr = Array.isArray(sIdx) && sIdx.length > 0;
+    const haveCar = Array.isArray(cIdx) && cIdx.length > 0;
+    if (haveSpr || haveCar) {
+      _lazyArtOn = true;
+      Forge._sprIds = new Set(haveSpr ? sIdx : []);
+      Forge._carIds = new Set(haveCar ? cIdx : []);
+      if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
+      if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
+      try { console.info('🎨 On-demand art ON — ' + Forge._sprIds.size + ' sprites / ' + Forge._carIds.size + ' card-art stream in as needed (capped, no crash).'); } catch (e) {}
+      try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🎨 Art library ready — your sprites & card art now stream in as you play.', 5000); } catch (e) {} }, 1500); } catch (e) {}
+    } else {
+      try { console.warn('🆘 Large library but NO per-asset records found — staying in placeholder mode. Art needs a one-time conversion to stream.'); } catch (e) {}
+      try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🆘 Large art library — placeholder art for now (needs a one-time conversion to stream). Your art is safe.', 6500); } catch (e) {} }, 1500); } catch (e) {}
+    }
   }
   const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt'];
   let changed = false;
@@ -49631,6 +49771,32 @@ function saveForge() {
       if (!_bigLibrarySkip) {
         idbSet('forge_sprites',      Forge.sprites      || {});
         idbSet('forge_cardArt',      Forge.cardArt      || {});
+      } else if (_lazyArtOn) {
+        // 🎨 Streaming mode: the giant monolithic stores are NOT rewritten
+        // (Forge.sprites/cardArt only hold the small resident working set, so
+        // writing them would truncate the on-disk library). Instead, persist
+        // any NEWLY-AUTHORED asset to its OWN per-key record + the index, so a
+        // freshly uploaded sprite/card survives a refresh. Ids already in the
+        // index were streamed FROM disk unchanged, so they're skipped — this
+        // only writes the handful of genuinely new ids, never the whole library.
+        try {
+          if (Forge.sprites && Forge._sprIds) {
+            let added = false;
+            for (const _id in Forge.sprites) {
+              if (!_id || _id.indexOf('__') === 0) continue;
+              if (!Forge._sprIds.has(_id)) { idbSet('spr:' + _id, Forge.sprites[_id]); Forge._sprIds.add(_id); added = true; }
+            }
+            if (added) idbSet('forge_sprites_idx', Array.from(Forge._sprIds));
+          }
+          if (Forge.cardArt && Forge._carIds) {
+            let addedC = false;
+            for (const _id in Forge.cardArt) {
+              if (!_id || _id.indexOf('__') === 0) continue;
+              if (!Forge._carIds.has(_id)) { idbSet('car:' + _id, Forge.cardArt[_id]); Forge._carIds.add(_id); addedC = true; }
+            }
+            if (addedC) idbSet('forge_cardArt_idx', Array.from(Forge._carIds));
+          }
+        } catch (e) {}
       }
       idbSet('forge_locationArt',  Forge.locationArt  || {});
       idbSet('forge_weatherAudio', Forge.weatherAudio || {});
@@ -66075,13 +66241,17 @@ function getSpriteFrames(spriteId, animation) {
     if (!set) continue;
     if (set[anim] && set[anim].length > 0) {
       const f = set[anim].filter(Boolean);
-      if (f.length > 0) return f;
+      if (f.length > 0) { if (_lazyArtOn) { try { _lazyTouch('spr', id); } catch (e) {} } return f; }
     }
     if (set.idle && set.idle.length > 0) {
       const f = set.idle.filter(Boolean);
-      if (f.length > 0) return f;
+      if (f.length > 0) { if (_lazyArtOn) { try { _lazyTouch('spr', id); } catch (e) {} } return f; }
     }
   }
+  // 🎨 On-demand: none of the candidate sprites are resident — stream them in
+  // from their own records. Returns null now (caller shows the card art or an
+  // emoji); a repaint follows once frames land. No-ops when streaming is off.
+  if (_lazyArtOn) { for (const id of candidates) { try { _lazyLoadSprite(id); } catch (e) {} } }
   // 📡 MULTIPLAYER fallback — sprite frames the opponent RELAYED for their custom
   // unit (stripped from the state snapshot). Runtime-only cache, keyed by the
   // same spriteId candidates. See _onRemoteUnitViz / _mpRelayUnitVisuals.

@@ -8,7 +8,7 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "parity": "node test/catalog-parity.mjs",
-    "test": "tsc && node test/catalog-parity.mjs",
+    "test": "tsc && node test/catalog-parity.mjs && node test/damage-golden.mjs",
     "loadtest": "colyseus-loadtest loadtest/example.ts --room battle --numClients 10"
   },
   "engines": {

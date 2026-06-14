@@ -1,0 +1,4077 @@
+{
+ "STATUS_EFFECTS": {
+  "poison": {
+   "id": "poison",
+   "name": "Poison",
+   "icon": "☠️",
+   "dmgMin": 1,
+   "dmgMax": 5,
+   "when": "turnStart",
+   "desc": "Takes 1-5 dmg/turn"
+  },
+  "burn": {
+   "id": "burn",
+   "name": "Burn",
+   "icon": "🔥",
+   "dmgMin": 3,
+   "dmgMax": 3,
+   "when": "turnStart",
+   "desc": "Takes 3 dmg/turn"
+  },
+  "bleed": {
+   "id": "bleed",
+   "name": "Bleed",
+   "icon": "🩸",
+   "dmgMin": 2,
+   "dmgMax": 4,
+   "when": "turnStart",
+   "desc": "Takes 2-4 dmg/turn"
+  },
+  "siphoned": {
+   "id": "siphoned",
+   "name": "Siphoned",
+   "icon": "🌿",
+   "dmgMin": 3,
+   "dmgMax": 6,
+   "when": "turnStart",
+   "desc": "Tendrils drain 3-6 HP/turn"
+  },
+  "stun": {
+   "id": "stun",
+   "name": "Stunned",
+   "icon": "💫",
+   "skipTurn": true,
+   "desc": "Cannot act"
+  },
+  "panicked": {
+   "id": "panicked",
+   "name": "Panicked",
+   "icon": "😱",
+   "defMod": -3,
+   "accMod": -25,
+   "desc": "Shaken after a nearby ally fell — -3 DEF and -25% accuracy for 2 turns."
+  },
+  "slow": {
+   "id": "slow",
+   "name": "Slow",
+   "icon": "🐌",
+   "spdMod": -1,
+   "desc": "-1 movement, -1 attack range, -15% accuracy"
+  },
+  "haste": {
+   "id": "haste",
+   "name": "Haste",
+   "icon": "💨",
+   "spdMod": 1,
+   "desc": "+1 movement"
+  },
+  "weak": {
+   "id": "weak",
+   "name": "Weak",
+   "icon": "💔",
+   "atkMod": -3,
+   "desc": "-3 attack"
+  },
+  "vulnerable": {
+   "id": "vulnerable",
+   "name": "Vulnerable",
+   "icon": "🪓",
+   "defMod": -5,
+   "resMod": -5,
+   "desc": "-5 DEF & RES — armor and wards shattered."
+  },
+  "strong": {
+   "id": "strong",
+   "name": "Strong",
+   "icon": "💪",
+   "atkMod": 4,
+   "desc": "+4 attack"
+  },
+  "shielded": {
+   "id": "shielded",
+   "name": "Shielded",
+   "icon": "🛡️",
+   "defMod": 5,
+   "resMod": 5,
+   "desc": "+5 def & res"
+  },
+  "focused": {
+   "id": "focused",
+   "name": "Focused",
+   "icon": "🎯",
+   "magMod": 4,
+   "desc": "+4 magic"
+  },
+  "frozen": {
+   "id": "frozen",
+   "name": "Frozen",
+   "icon": "🧊",
+   "skipTurn": true,
+   "desc": "Cannot act"
+  },
+  "sleep": {
+   "id": "sleep",
+   "name": "Asleep",
+   "icon": "💤",
+   "skipTurn": true,
+   "wakeChance": 0.35,
+   "desc": "Skips turn; 35% chance to wake each turn"
+  },
+  "confusion": {
+   "id": "confusion",
+   "name": "Confused",
+   "icon": "❓",
+   "selfHitChance": 0.33,
+   "desc": "33% chance to hit self when attacking"
+  },
+  "paralysis": {
+   "id": "paralysis",
+   "name": "Paralyzed",
+   "icon": "⚡",
+   "spdMod": -1,
+   "skipChance": 0.25,
+   "desc": "-1 SPD (movement / attack range / accuracy); 25% chance to skip each action"
+  },
+  "dispel": {
+   "id": "dispel",
+   "name": "Dispelled",
+   "icon": "🚫",
+   "silencesCostMoves": true,
+   "desc": "Cannot use moves that cost energy"
+  },
+  "assisted": {
+   "id": "assisted",
+   "name": "Assisted",
+   "icon": "🤝",
+   "atkMod": 6,
+   "magMod": 6,
+   "desc": "+6 ATK and +6 MAG for the next strike"
+  },
+  "spectralHaze": {
+   "id": "spectralHaze",
+   "name": "Spectral Haze",
+   "icon": "👻",
+   "forceMiss": true,
+   "desc": "👻 Haunted by ghostly fog — every attack this unit makes MISSES until it clears."
+  },
+  "stumble": {
+   "id": "stumble",
+   "name": "Stumbling",
+   "icon": "💫",
+   "skipTurn": true,
+   "desc": "Tripped — skips their next turn"
+  },
+  "protected": {
+   "id": "protected",
+   "name": "Protected",
+   "icon": "🛡️",
+   "blocksAll": true,
+   "desc": "Immune to all damage and effects until next turn"
+  },
+  "countering": {
+   "id": "countering",
+   "name": "Countering",
+   "icon": "↩️",
+   "countersAttack": true,
+   "desc": "Blocks the next enemy attack and counters back"
+  },
+  "ambushGuard1": {
+   "id": "ambushGuard1",
+   "name": "Ambush Guard",
+   "icon": "🎯",
+   "desc": "Watching (range 1) — reaction-strikes the first enemy that moves adjacent this enemy turn."
+  },
+  "ambushGuard3": {
+   "id": "ambushGuard3",
+   "name": "Ambush Guard",
+   "icon": "🎯",
+   "desc": "Watching (range 3) — reaction-strikes the first enemy that moves within 3 tiles this enemy turn."
+  },
+  "rage": {
+   "id": "rage",
+   "name": "Raged",
+   "icon": "😡",
+   "forceAttackNearest": true,
+   "atkMod": 3,
+   "defMod": -2,
+   "desc": "Must attack the nearest enemy; can only use attack moves (+3 ATK, -2 DEF)"
+  },
+  "infected": {
+   "id": "infected",
+   "name": "Infected",
+   "icon": "🧬",
+   "statMult": 0.5,
+   "desc": "All stats reduced by 50% — ATK / MAG / DEF / RES / SPD halved"
+  },
+  "happy": {
+   "id": "happy",
+   "name": "Happy",
+   "icon": "😊",
+   "tracksSource": true,
+   "desc": "Cannot attack the unit that applied this status (3 turns by default)"
+  },
+  "followLead": {
+   "id": "followLead",
+   "name": "Following",
+   "icon": "🐑",
+   "tracksSource": true,
+   "desc": "Can only move toward the unit that applied this status. Cannot attack anyone (1-3 turns)"
+  },
+  "blessed": {
+   "id": "blessed",
+   "name": "Blessed",
+   "icon": "🙏",
+   "atkMod": 3,
+   "magMod": 3,
+   "defMod": 3,
+   "resMod": 3,
+   "desc": "+3 ATK / MAG / DEF / RES while blessed."
+  },
+  "cursed": {
+   "id": "cursed",
+   "name": "Cursed",
+   "icon": "💀",
+   "atkMod": -3,
+   "magMod": -3,
+   "defMod": -3,
+   "resMod": -3,
+   "desc": "-3 ATK / MAG / DEF / RES while cursed."
+  },
+  "mirror": {
+   "id": "mirror",
+   "name": "Phantom Veil",
+   "icon": "👻",
+   "dodgeChance": 0.5,
+   "desc": "Illusory duplicates flicker around the unit — 50% chance to dodge any incoming attack."
+  },
+  "toxic": {
+   "id": "toxic",
+   "name": "Necrotic Bloom",
+   "icon": "☢️",
+   "dmgMin": 3,
+   "dmgMax": 3,
+   "when": "turnStart",
+   "escalating": true,
+   "desc": "A necrotic infection that worsens — 3 dmg/turn × turns active (3, 6, 9, 12…). Cleanse to stop the spiral."
+  },
+  "doom": {
+   "id": "doom",
+   "name": "Mortal Sentence",
+   "icon": "🪦",
+   "koOnExpire": true,
+   "desc": "A death sentence with a countdown — when the timer expires, this unit dies. Cleanse to dispel."
+  },
+  "reraise": {
+   "id": "reraise",
+   "name": "Soul Anchor",
+   "icon": "✨",
+   "revivesOnKO": true,
+   "reviveAtPct": 0.5,
+   "desc": "A tether to the living world — revives at 50% max HP the first time this unit would be KO'd."
+  },
+  "moxie": {
+   "id": "moxie",
+   "name": "Killer Instinct",
+   "icon": "⚔️",
+   "stackable": true,
+   "desc": "Each stack grants +2 ATK. Stacks build on KO; capped at 5 stacks (+10 ATK)."
+  },
+  "knockdown": {
+   "id": "knockdown",
+   "name": "Knocked Down",
+   "icon": "💥",
+   "skipTurn": true,
+   "desc": "Shoved off balance and knocked prone — skips their next turn."
+  },
+  "offBalance": {
+   "id": "offBalance",
+   "name": "Off-Balance",
+   "icon": "🌀",
+   "spdMod": -2,
+   "defMod": -2,
+   "desc": "Stumbling from the impact — -2 movement/range and -2 DEF."
+  },
+  "knockback": {
+   "id": "knockback",
+   "name": "Knockback",
+   "icon": "💨",
+   "displacement": "away",
+   "desc": "Shoves the hit target AWAY from the attacker. Status Duration = tiles pushed (1-4); Status Chance = proc %."
+  },
+  "grappleHook": {
+   "id": "grappleHook",
+   "name": "Grappling Hook",
+   "icon": "🪝",
+   "displacement": "toward",
+   "desc": "Yanks the hit target TOWARD the attacker. Status Duration = tiles pulled (1-4); Status Chance = proc %."
+  },
+  "frostbite": {
+   "id": "frostbite",
+   "name": "Frostbite",
+   "icon": "❄️",
+   "dmgMin": 1,
+   "dmgMax": 3,
+   "when": "turnStart",
+   "spdMod": -1,
+   "desc": "Freezing rot — 1-3 dmg/turn and -1 movement."
+  },
+  "scorched": {
+   "id": "scorched",
+   "name": "Scorched",
+   "icon": "🔥",
+   "dmgMin": 2,
+   "dmgMax": 2,
+   "when": "turnStart",
+   "defMod": -3,
+   "desc": "Charred plating — 2 dmg/turn and -3 DEF."
+  },
+  "hemorrhage": {
+   "id": "hemorrhage",
+   "name": "Hemorrhage",
+   "icon": "🩹",
+   "dmgMin": 2,
+   "dmgMax": 2,
+   "when": "turnStart",
+   "escalating": true,
+   "desc": "A worsening wound — 2 dmg/turn × turns active (2, 4, 6…). Cleanse to stop it."
+  },
+  "electrified": {
+   "id": "electrified",
+   "name": "Electrified",
+   "icon": "⚡",
+   "dmgMin": 1,
+   "dmgMax": 3,
+   "when": "turnStart",
+   "skipChance": 0.3,
+   "desc": "Crackling current — 1-3 dmg/turn and 30% chance to fumble each action."
+  },
+  "empowered": {
+   "id": "empowered",
+   "name": "Empowered",
+   "icon": "✊",
+   "atkMod": 4,
+   "magMod": 4,
+   "desc": "+4 ATK and +4 MAG while empowered."
+  },
+  "swift": {
+   "id": "swift",
+   "name": "Swift",
+   "icon": "🪶",
+   "spdMod": 2,
+   "desc": "+2 movement / attack range."
+  },
+  "petrified": {
+   "id": "petrified",
+   "name": "Petrified",
+   "icon": "🗿",
+   "skipTurn": true,
+   "defMod": 8,
+   "resMod": 8,
+   "desc": "Encased in stone — cannot act, but +8 DEF & RES."
+  },
+  "disarmed": {
+   "id": "disarmed",
+   "name": "Disarmed",
+   "icon": "🗡️",
+   "atkMod": -7,
+   "desc": "-7 ATK — weapon knocked away."
+  },
+  "blinded": {
+   "id": "blinded",
+   "name": "Blinded",
+   "icon": "🌫️",
+   "skipChance": 0.4,
+   "atkMod": -2,
+   "desc": "Cannot see — 40% chance to fumble each action and -2 ATK."
+  },
+  "hexed": {
+   "id": "hexed",
+   "name": "Hexed",
+   "icon": "🔮",
+   "magMod": -6,
+   "resMod": -3,
+   "desc": "-6 MAG and -3 RES — arcane channels fouled."
+  },
+  "berserk": {
+   "id": "berserk",
+   "name": "Berserk",
+   "icon": "😤",
+   "forceAttackNearest": true,
+   "atkMod": 6,
+   "defMod": -5,
+   "desc": "Blind fury — must attack the nearest enemy; +6 ATK, -5 DEF."
+  },
+  "entangled": {
+   "id": "entangled",
+   "name": "Entangled",
+   "icon": "🌿",
+   "skipTurn": true,
+   "desc": "Bound by roots/webbing — cannot act until it breaks."
+  },
+  "dazed": {
+   "id": "dazed",
+   "name": "Dazed",
+   "icon": "😵",
+   "skipChance": 0.3,
+   "spdMod": -1,
+   "desc": "Head ringing — 30% chance to fumble each action and -1 movement."
+  },
+  "lucky": {
+   "id": "lucky",
+   "name": "Lucky",
+   "icon": "🍀",
+   "dodgeChance": 0.3,
+   "desc": "Fortune shields the unit — 30% chance to dodge any incoming attack."
+  },
+  "reborn": {
+   "id": "reborn",
+   "name": "Reborn",
+   "icon": "🜁",
+   "desc": "Recently returned to the battlefield from death."
+  },
+  "burningRes": {
+   "id": "burningRes",
+   "name": "Burning Resurrection",
+   "icon": "🔥",
+   "atkMod": 4,
+   "magMod": 4,
+   "desc": "Risen in flame — +4 ATK & +4 MAG while it burns."
+  },
+  "soulFlame": {
+   "id": "soulFlame",
+   "name": "Soul Flame",
+   "icon": "🕯️",
+   "defMod": 4,
+   "resMod": 4,
+   "desc": "Wreathed in soul-fire — +4 DEF & +4 RES while it lasts."
+  },
+  "frostForm": {
+   "id": "frostForm",
+   "name": "Frost Form",
+   "icon": "❄️",
+   "defMod": 4,
+   "resMod": 3,
+   "spdMod": -1,
+   "desc": "Encased in frost: +4 DEF, +3 RES, -1 SPD. Fades after a few turns."
+  }
+ },
+ "PASSIVES": {
+  "none": {
+   "id": "none",
+   "name": "None",
+   "desc": "No passive ability"
+  },
+  "regeneration": {
+   "id": "regeneration",
+   "name": "Regeneration",
+   "desc": "Heal 2 HP at start of your turn"
+  },
+  "catalyst": {
+   "id": "catalyst",
+   "name": "Catalyst (Lesser)",
+   "desc": "🜂 Holds Primordial Energy — can initiate an Archon Summon, summoning Lesser Archons."
+  },
+  "catalystAscended": {
+   "id": "catalystAscended",
+   "name": "Ascended Catalyst",
+   "desc": "🜂 Can initiate an Archon Summon, summoning up to Greater Archons."
+  },
+  "catalystDivine": {
+   "id": "catalystDivine",
+   "name": "Divine Catalyst",
+   "desc": "🜂 Can initiate an Archon Summon, summoning up to Divine Archons."
+  },
+  "catalystPrimordial": {
+   "id": "catalystPrimordial",
+   "name": "Primordial Catalyst",
+   "desc": "🜂 Can initiate an Archon Summon, summoning up to Creator Avatars & Primordial-class entities."
+  },
+  "kalonSuppress": {
+   "id": "kalonSuppress",
+   "name": "Null Awakening",
+   "desc": "🚫 While this unit lives, NEITHER player can Kalon Transform."
+  },
+  "archonSuppress": {
+   "id": "archonSuppress",
+   "name": "Seal the Source",
+   "desc": "🚫 While this unit lives, NEITHER player can perform an Archon Summon."
+  },
+  "raiseFromDead": {
+   "id": "raiseFromDead",
+   "name": "Raise From Dead",
+   "desc": "On death: leave a glowing tombstone for 2 turns. If the tile stays clear, the unit rises at 60% HP. (1-3 charges per unit.)"
+  },
+  "forcedAscension": {
+   "id": "forcedAscension",
+   "name": "Forced Ascension",
+   "desc": "🜂 Automatically Kalon-transforms at the configured timing (start of its own turn by default) — no charge spent. Configure in the Forge."
+  },
+  "rebirthShift": {
+   "id": "rebirthShift",
+   "name": "Rebirth Shift",
+   "desc": "🜁 When this unit dies, at the start of its owner's next turn it returns as a unit from its admin-defined Rebirth Pool (summoning sick, no inherited buffs unless allowed)."
+  },
+  "phoenixRebirth": {
+   "id": "phoenixRebirth",
+   "name": "Phoenix Rebirth Aura",
+   "desc": "🔥 When an allied unit dies within this unit's aura, a % chance (default 30%) to revive it at a % HP (default 25%). Configure range / chance / limits in the Forge."
+  },
+  "thorns": {
+   "id": "thorns",
+   "name": "Thorns",
+   "desc": "Reflect 25% damage taken"
+  },
+  "lifesteal": {
+   "id": "lifesteal",
+   "name": "Lifesteal",
+   "desc": "Heal 30% of damage dealt"
+  },
+  "swift": {
+   "id": "swift",
+   "name": "Swift",
+   "desc": "+1 movement range"
+  },
+  "tough": {
+   "id": "tough",
+   "name": "Tough",
+   "desc": "+3 Defense"
+  },
+  "magicWard": {
+   "id": "magicWard",
+   "name": "Magic Ward",
+   "desc": "+3 Magic Resist"
+  },
+  "warlord": {
+   "id": "warlord",
+   "name": "Warlord",
+   "desc": "Your units gain +2 Attack"
+  },
+  "archmage": {
+   "id": "archmage",
+   "name": "Archmage",
+   "desc": "Spells cost 1 less energy"
+  },
+  "guardian": {
+   "id": "guardian",
+   "name": "Guardian",
+   "desc": "Once per match, redirects the first incoming attack on any ally within 2 tiles to this unit instead. Consumed after use."
+  },
+  "inspire": {
+   "id": "inspire",
+   "name": "Inspire",
+   "desc": "When an allied unit enters play whose cost ≥ this unit's cost, that unit gains the configured Inspire Effect (Swift / stat buff / buff-all-stats / draw / energy). Buff All Stats requires the new unit to cost strictly MORE."
+  },
+  "venomous": {
+   "id": "venomous",
+   "name": "Venomous",
+   "desc": "Attacks have 30% chance to poison"
+  },
+  "bloodthirst": {
+   "id": "bloodthirst",
+   "name": "Bloodthirst",
+   "desc": "Heal 5 HP after killing a unit"
+  },
+  "sunbather": {
+   "id": "sunbather",
+   "name": "Sunbather",
+   "desc": "Heal 4 HP at start of turn during ☀️ Sunny weather"
+  },
+  "rainmaker": {
+   "id": "rainmaker",
+   "name": "Rainmaker",
+   "desc": "+5 Magic during 🌧️ Rainstorm"
+  },
+  "dustcloak": {
+   "id": "dustcloak",
+   "name": "Dustcloak",
+   "desc": "Immune to 🏜️ Sandstorm; +1 SPD in Sandstorm"
+  },
+  "stormborn": {
+   "id": "stormborn",
+   "name": "Stormborn",
+   "desc": "Damage +25% during any active weather"
+  },
+  "weatherweaver": {
+   "id": "weatherweaver",
+   "name": "Weatherweaver",
+   "desc": "Your weather cards last 2 extra turns"
+  },
+  "weatherSummoner": {
+   "id": "weatherSummoner",
+   "name": "Weather Summoner",
+   "desc": "When summoned from hand, calls weather matching this unit's primary element (4 turns)."
+  },
+  "energySpring": {
+   "id": "energySpring",
+   "name": "Energy Spring",
+   "desc": "+1 energy at the start of your turn while this unit is on the field."
+  },
+  "kalonChannel": {
+   "id": "kalonChannel",
+   "name": "Kalon Channel",
+   "desc": "When this unit KOs an enemy, refunds 1 Kalon use to your pool (cap 3)."
+  },
+  "taunt": {
+   "id": "taunt",
+   "name": "Taunt",
+   "desc": "Enemies in range must attack this unit before any other target."
+  },
+  "frostForm": {
+   "id": "frostForm",
+   "name": "Frost Form",
+   "desc": "Once per battle: when this unit would be KO'd by non-ice damage, survive at 1 HP and gain Frost Form status for 3 turns (more DEF/RES, less SPD)."
+  },
+  "consume": {
+   "id": "consume",
+   "name": "Consume",
+   "desc": "When this unit KOs an enemy, absorb their ATK and DEF (+1 each per kill, capped at +5 total stacks)."
+  },
+  "speed": {
+   "id": "speed",
+   "name": "Speed",
+   "desc": "Enters play with no summoning sickness — can move and attack immediately on the turn it is deployed."
+  },
+  "swiftstrike": {
+   "id": "swiftstrike",
+   "name": "Swiftstrike",
+   "desc": "Attacks land before the target can counter. Strips the Countering stance on hit. If the target is killed, Lethal Retribution is also silenced."
+  },
+  "crush": {
+   "id": "crush",
+   "name": "Crush",
+   "desc": "Excess damage from a killing blow carries over to the enemy hero. If this unit kills with 4 overkill, the hero takes 4 damage."
+  },
+  "steadfast": {
+   "id": "steadfast",
+   "name": "Steadfast",
+   "desc": "Does not exhaust on its first attack each turn — can attack a second time. The bonus resets every turn."
+  },
+  "spellshield": {
+   "id": "spellshield",
+   "name": "Spellshield",
+   "desc": "Cannot be targeted by opponent on-play AoE effects or consumables. Board-wipes and direct attacks still resolve normally."
+  },
+  "lethal": {
+   "id": "lethal",
+   "name": "Lethal",
+   "desc": "Any damage this unit deals to a non-hero unit is instantly fatal, regardless of remaining HP."
+  },
+  "defender": {
+   "id": "defender",
+   "name": "Defender",
+   "desc": "This unit cannot attack. It holds the line as a defensive blocker and cannot be directed to strike."
+  },
+  "unblockable": {
+   "id": "unblockable",
+   "name": "Unblockable",
+   "desc": "Ignores Bodyguard and Guardian intercepts. Can hit flying units without needing aerial reach."
+  },
+  "attackRage": {
+   "id": "attackRage",
+   "name": "Attack Rage",
+   "desc": "Each time this unit attacks, it permanently gains +1 ATK (or +N if rageN is set on the card). Stacks every swing."
+  },
+  "mobilize": {
+   "id": "mobilize",
+   "name": "Mobilize",
+   "desc": "Costs 2 less energy to play when at least 1 allied non-hero unit is already on the battlefield."
+  },
+  "prophecy": {
+   "id": "prophecy",
+   "name": "Prophecy",
+   "desc": "When this unit enters play, your next deployed unit gains +2 ATK and +2 DEF."
+  },
+  "lifedrain": {
+   "id": "lifedrain",
+   "name": "Lifedrain",
+   "desc": "Heals this unit for HP equal to all combat damage it deals — full 1:1 drain (stronger than the 30% Lifesteal passive)."
+  },
+  "skyguard": {
+   "id": "skyguard",
+   "name": "Skyguard",
+   "desc": "This unit can target and hit flying units with any attack, regardless of move type or range. Anti-air specialist."
+  },
+  "invincible": {
+   "id": "invincible",
+   "name": "Invincible",
+   "desc": "Cannot be destroyed by damage. Every attack, spell, or DoT that would reduce HP to 0 stops at 1 HP instead. Removal effects still work."
+  },
+  "bodyguard": {
+   "id": "bodyguard",
+   "name": "Bodyguard",
+   "desc": "Steps in front of attacks targeting allies within 1 tile. Redirects enemy hits to this unit instead. No use limit."
+  },
+  "physicalImmortal": {
+   "id": "physicalImmortal",
+   "name": "Unbreakable Body",
+   "desc": "🛡️ Cannot die from PHYSICAL damage — drops to 1 HP instead. Magical damage kills normally."
+  },
+  "magicalImmortal": {
+   "id": "magicalImmortal",
+   "name": "Soul Shield",
+   "desc": "🔮 Cannot die from MAGICAL damage — drops to 1 HP instead. Physical damage kills normally."
+  },
+  "physicalRetribution": {
+   "id": "physicalRetribution",
+   "name": "Spiked Carapace",
+   "desc": "☠️ When hit by a PHYSICAL attack, the attacker is instantly slain. Enemy heroes are immune."
+  },
+  "magicalRetribution": {
+   "id": "magicalRetribution",
+   "name": "Mana Feedback",
+   "desc": "☠️ When hit by a MAGICAL attack, the attacker is instantly slain. Enemy heroes are immune."
+  },
+  "predatorsEye": {
+   "id": "predatorsEye",
+   "name": "Predator's Eye",
+   "desc": "👁 Reaction: when an enemy moves within 2 tiles, strike them for free. Once per enemy turn."
+  },
+  "hairTrigger": {
+   "id": "hairTrigger",
+   "name": "Hair Trigger",
+   "desc": "🎯 Overwatch + Ambush reactions can crit (default reactions cannot)."
+  },
+  "coolUnderPressure": {
+   "id": "coolUnderPressure",
+   "name": "Cool Under Pressure",
+   "desc": "🧊 Overwatch + Ambush reactions ignore the 25% damage penalty — full-power reaction shots."
+  },
+  "stabilize": {
+   "id": "stabilize",
+   "name": "Stabilize",
+   "desc": "🩸 Bleed-Out — When this non-hero unit hits 0 HP, they enter Bleeding for 3 turns instead of dying. Any adjacent ally can Stabilize them (revive to 1 HP). Combat Medkit consumable also revives. Unstabilized after 3 turns → PERMADEATH (removed from your collection)."
+  },
+  "squadSight": {
+   "id": "squadSight",
+   "name": "Squad Sight",
+   "desc": "🔭 Attack range extends to any tile a teammate can see (radius 3 around any ally)."
+  },
+  "ironWill": {
+   "id": "ironWill",
+   "name": "Iron Will",
+   "desc": "🛡 Immune to Panic. Other panic-resist sources stack into this."
+  },
+  "outnumbered": {
+   "id": "outnumbered",
+   "name": "Underdog",
+   "desc": "🆘 While the enemy controls MORE alive units than you do, THIS card costs 0 energy to play from your hand. Only this card — other cards in your hand keep their normal cost. The discount turns off the instant unit counts equalize."
+  },
+  "sturdy": {
+   "id": "sturdy",
+   "name": "Bedrock",
+   "desc": "🪨 If at full HP, any attack that would KO this unit leaves it at 1 HP instead. Once per battle."
+  },
+  "moxie": {
+   "id": "moxie",
+   "name": "Killer Instinct",
+   "desc": "⚔️ Each KO this unit lands grants +2 ATK permanently (max 5 stacks / +10 ATK)."
+  },
+  "divineSmite": {
+   "id": "divineSmite",
+   "name": "Daybreaker",
+   "desc": "✨ The FIRST attack each turn deals +25% damage. Resets each turn-start."
+  },
+  "adaptability": {
+   "id": "adaptability",
+   "name": "Elemental Affinity",
+   "desc": "🔄 Matching-element attacks (STAB) deal +75% damage instead of the normal +50%."
+  },
+  "sneakAttack": {
+   "id": "sneakAttack",
+   "name": "Flanker",
+   "desc": "🗡️ +30% damage on attacks when at least one ALLY is adjacent to the target."
+  },
+  "warriorOath": {
+   "id": "warriorOath",
+   "name": "Warrior's Oath",
+   "faction": "warrior",
+   "desc": "+1 ATK per other ally Warrior on the field (max +5)"
+  },
+  "arcaneBond": {
+   "id": "arcaneBond",
+   "name": "Arcane Bond",
+   "faction": "mage",
+   "desc": "+1 MAG per other ally Mage on the field (max +5)"
+  },
+  "packTactics": {
+   "id": "packTactics",
+   "name": "Pack Tactics",
+   "faction": "rogue",
+   "desc": "+5% crit per other ally Rogue (max +20%)"
+  },
+  "packLeader": {
+   "id": "packLeader",
+   "name": "Pack Leader",
+   "faction": "beast",
+   "desc": "+1 SPD if any other ally Beast is on the field"
+  },
+  "flockFlight": {
+   "id": "flockFlight",
+   "name": "Flock Flight",
+   "faction": "bird",
+   "desc": "Becomes Flying while another ally Bird is alive"
+  },
+  "swarmInstinct": {
+   "id": "swarmInstinct",
+   "name": "Swarm Instinct",
+   "faction": "bug",
+   "desc": "+10% poison-on-hit chance per other ally Bug (max +30%)"
+  },
+  "mobTactics": {
+   "id": "mobTactics",
+   "name": "Mob Tactics",
+   "faction": "goblinoid",
+   "desc": "+1 ATK per other ally Goblinoid (max +5)"
+  },
+  "hellbound": {
+   "id": "hellbound",
+   "name": "Hellbound",
+   "faction": "demon",
+   "desc": "+1 ATK and +1 MAG per other ally Demon (max +4 each)"
+  },
+  "deathlyVigil": {
+   "id": "deathlyVigil",
+   "name": "Deathly Vigil",
+   "faction": "undead",
+   "desc": "Heal 2 HP at start of turn per other ally Undead (max 6)"
+  },
+  "elementBond": {
+   "id": "elementBond",
+   "name": "Element Bond",
+   "faction": "elemental",
+   "desc": "+1 MAG per other ally Elemental (max +4)"
+  },
+  "faewish": {
+   "id": "faewish",
+   "name": "Faewish",
+   "faction": "fairy",
+   "desc": "10% dodge chance per other ally Fairy (max 30%)"
+  },
+  "dragonsBoon": {
+   "id": "dragonsBoon",
+   "name": "Dragon's Boon",
+   "faction": "dragonkin",
+   "desc": "+2 ATK and +2 MAG per other ally Dragonkin (max +6 each)"
+  },
+  "constructed": {
+   "id": "constructed",
+   "name": "Constructed",
+   "faction": "construct",
+   "desc": "Immune to poison, burn, bleed, and infected"
+  },
+  "holyAura": {
+   "id": "holyAura",
+   "name": "Holy Aura",
+   "faction": "celestial",
+   "desc": "Heal 1 HP at start of turn per other ally Celestial (max 4)"
+  },
+  "rootsOfLife": {
+   "id": "rootsOfLife",
+   "name": "Roots of Life",
+   "faction": "plant",
+   "desc": "Heal 3 HP at start of every turn"
+  },
+  "coldScales": {
+   "id": "coldScales",
+   "name": "Cold Scales",
+   "faction": "reptile",
+   "desc": "+2 DEF and +2 RES per other ally Reptile (max +6 each); immune to slow and frozen"
+  },
+  "xenoBond": {
+   "id": "xenoBond",
+   "name": "Xeno Bond",
+   "faction": "alien",
+   "desc": "Immune to Infected; 25% chance to Infect targets on hit (3t)"
+  },
+  "geomancer": {
+   "id": "geomancer",
+   "name": "Geomancer",
+   "desc": "20% chance/turn to destroy the opponent's active Location field"
+  },
+  "trapHunter": {
+   "id": "trapHunter",
+   "name": "Trap Hunter",
+   "desc": "🪤 +2 ATK and +1 SPD while ANY trap is on the field (yours OR theirs). The unit thrives when the board is dangerous."
+  },
+  "trapDog": {
+   "id": "trapDog",
+   "name": "Trap Dog",
+   "desc": "🐕 On entering play: reveals every enemy trap on the board for the rest of the match."
+  },
+  "trapBreaker": {
+   "id": "trapBreaker",
+   "name": "Trap Breaker",
+   "desc": "🔧 At the start of your turn: disarms one adjacent enemy trap (random pick from those in Chebyshev radius 1)."
+  },
+  "wallBreaker": {
+   "id": "wallBreaker",
+   "name": "Wall Breaker",
+   "desc": "🧱 +50% damage to walls/structures (any wall tile attacked)."
+  },
+  "surfaceWalker": {
+   "id": "surfaceWalker",
+   "name": "Surface Walker",
+   "desc": "🧹 Immune to surface hazards. When this unit moves onto a tile with a surface, that surface is cleared (oil / fire / water / glass / mud)."
+  },
+  "weatherWarden": {
+   "id": "weatherWarden",
+   "name": "Weather Warden",
+   "desc": "🌤 Active weather ends 1 turn sooner each round this unit is on the field. Clears calm weather windows."
+  },
+  "xrayVision": {
+   "id": "xrayVision",
+   "name": "X-Ray Vision",
+   "desc": "👁 While this unit is alive: ALL enemy units + heroes are auto-scanned. Their type, faction, element, passives, moves, and full stats are visible."
+  },
+  "fireWard": {
+   "id": "fireWard",
+   "name": "Fire Ward",
+   "wardElement": "fire",
+   "desc": "🛡️🔥 Immune to all fire-element damage."
+  },
+  "waterWard": {
+   "id": "waterWard",
+   "name": "Water Ward",
+   "wardElement": "water",
+   "desc": "🛡️💧 Immune to all water-element damage."
+  },
+  "earthWard": {
+   "id": "earthWard",
+   "name": "Earth Ward",
+   "wardElement": "earth",
+   "desc": "🛡️🪨 Immune to all earth-element damage."
+  },
+  "windWard": {
+   "id": "windWard",
+   "name": "Wind Ward",
+   "wardElement": "wind",
+   "desc": "🛡️🌪️ Immune to all wind-element damage."
+  },
+  "lightWard": {
+   "id": "lightWard",
+   "name": "Light Ward",
+   "wardElement": "light",
+   "desc": "🛡️✨ Immune to all light-element damage."
+  },
+  "shadowWard": {
+   "id": "shadowWard",
+   "name": "Shadow Ward",
+   "wardElement": "shadow",
+   "desc": "🛡️🌑 Immune to all shadow-element damage."
+  },
+  "natureWard": {
+   "id": "natureWard",
+   "name": "Nature Ward",
+   "wardElement": "nature",
+   "desc": "🛡️🌿 Immune to all nature-element damage."
+  },
+  "stormWard": {
+   "id": "stormWard",
+   "name": "Storm Ward",
+   "wardElement": "storm",
+   "desc": "🛡️⚡ Immune to all storm-element damage."
+  },
+  "iceWard": {
+   "id": "iceWard",
+   "name": "Ice Ward",
+   "wardElement": "ice",
+   "desc": "🛡️❄️ Immune to all ice-element damage."
+  },
+  "arcaneWard": {
+   "id": "arcaneWard",
+   "name": "Arcane Ward",
+   "wardElement": "arcane",
+   "desc": "🛡️🔮 Immune to all arcane-element damage."
+  },
+  "voidWard": {
+   "id": "voidWard",
+   "name": "Void Ward",
+   "wardElement": "void",
+   "desc": "🛡️🕳️ Immune to all void-element damage."
+  },
+  "bloodWard": {
+   "id": "bloodWard",
+   "name": "Blood Ward",
+   "wardElement": "blood",
+   "desc": "🛡️🩸 Immune to all blood-element damage."
+  },
+  "wardVsWarrior": {
+   "id": "wardVsWarrior",
+   "name": "Champion's Bane",
+   "wardFaction": "warrior",
+   "desc": "🛡️⚔️ Immune to damage from Warrior attackers."
+  },
+  "wardVsMage": {
+   "id": "wardVsMage",
+   "name": "Spellbreaker",
+   "wardFaction": "mage",
+   "desc": "🛡️🔮 Immune to damage from Mage attackers."
+  },
+  "wardVsRogue": {
+   "id": "wardVsRogue",
+   "name": "Eagle Eye",
+   "wardFaction": "rogue",
+   "desc": "🛡️🗡️ Immune to damage from Rogue attackers."
+  },
+  "wardVsBeast": {
+   "id": "wardVsBeast",
+   "name": "Hunter's Mark",
+   "wardFaction": "beast",
+   "desc": "🛡️🐺 Immune to damage from Beast attackers."
+  },
+  "wardVsBird": {
+   "id": "wardVsBird",
+   "name": "Falconer's Net",
+   "wardFaction": "bird",
+   "desc": "🛡️🦅 Immune to damage from Bird attackers."
+  },
+  "wardVsBug": {
+   "id": "wardVsBug",
+   "name": "Exterminator",
+   "wardFaction": "bug",
+   "desc": "🛡️🐛 Immune to damage from Bug attackers."
+  },
+  "wardVsDemon": {
+   "id": "wardVsDemon",
+   "name": "Sanctified",
+   "wardFaction": "demon",
+   "desc": "🛡️😈 Immune to damage from Demon attackers."
+  },
+  "wardVsUndead": {
+   "id": "wardVsUndead",
+   "name": "Hallowed Flesh",
+   "wardFaction": "undead",
+   "desc": "🛡️💀 Immune to damage from Undead attackers."
+  },
+  "wardVsDragon": {
+   "id": "wardVsDragon",
+   "name": "Dragon Slayer",
+   "wardFaction": "dragonkin",
+   "desc": "🛡️🐉 Immune to damage from Dragonkin attackers."
+  },
+  "wardVsConstruct": {
+   "id": "wardVsConstruct",
+   "name": "Rust Touch",
+   "wardFaction": "construct",
+   "desc": "🛡️🤖 Immune to damage from Construct attackers."
+  },
+  "wardVsCelestial": {
+   "id": "wardVsCelestial",
+   "name": "Heretic's Armor",
+   "wardFaction": "celestial",
+   "desc": "🛡️😇 Immune to damage from Celestial attackers."
+  },
+  "wardVsGoblinoid": {
+   "id": "wardVsGoblinoid",
+   "name": "Tribal Defense",
+   "wardFaction": "goblinoid",
+   "desc": "🛡️👺 Immune to damage from Goblinoid attackers."
+  },
+  "wardVsFairy": {
+   "id": "wardVsFairy",
+   "name": "Cold Iron",
+   "wardFaction": "fairy",
+   "desc": "🛡️🧚 Immune to damage from Fairy attackers."
+  },
+  "solarFlare": {
+   "id": "solarFlare",
+   "name": "Solar Flare",
+   "desc": "☀️ Sun: this unit may attack TWICE per turn (first attack each turn is free)."
+  },
+  "radiantAegis": {
+   "id": "radiantAegis",
+   "name": "Radiant Aegis",
+   "desc": "☀️ Sun: adjacent allies take 25% less damage (aura)."
+  },
+  "sunforged": {
+   "id": "sunforged",
+   "name": "Sunforged",
+   "desc": "☀️ Sun: immune to elemental weakness — super-effective hits are capped at 1× damage."
+  },
+  "monsoonMight": {
+   "id": "monsoonMight",
+   "name": "Monsoon Might",
+   "desc": "🌧️ Rain: +3 ATK and +3 MAG."
+  },
+  "tideHealer": {
+   "id": "tideHealer",
+   "name": "Tide Healer",
+   "desc": "🌧️ Rain: heal ALL allied units 2 HP at the start of your turn."
+  },
+  "stormChannel": {
+   "id": "stormChannel",
+   "name": "Storm Channel",
+   "desc": "🌧️ Rain: gain +1 energy at the start of your turn (stacks with other channelers)."
+  },
+  "sandShroud": {
+   "id": "sandShroud",
+   "name": "Sand Shroud",
+   "desc": "🏜️ Sandstorm: enemies have +30% miss chance when attacking this unit."
+  },
+  "dustForged": {
+   "id": "dustForged",
+   "name": "Dust Forged",
+   "desc": "🏜️ Sandstorm: +4 DEF and +4 RES."
+  },
+  "mistDancer": {
+   "id": "mistDancer",
+   "name": "Mist Dancer",
+   "desc": "🌫️ Mist: your attacks cannot miss, and crit chance +20%."
+  },
+  "ambushSoul": {
+   "id": "ambushSoul",
+   "name": "Ambush Soul",
+   "desc": "🌫️ Mist: the FIRST attack you make each turn deals +50% damage."
+  },
+  "eclipseLord": {
+   "id": "eclipseLord",
+   "name": "Eclipse Lord",
+   "desc": "🌑 Eclipse: +30% damage; attacks ignore 50% of target DEF / RES."
+  },
+  "shadowMeld": {
+   "id": "shadowMeld",
+   "name": "Shadow Meld",
+   "desc": "🌑 Eclipse: ranged attacks (range > 1) automatically miss this unit."
+  },
+  "bloodLord": {
+   "id": "bloodLord",
+   "name": "Blood Lord",
+   "desc": "🩸 Bloodmoon: lifesteal 50% of damage dealt (replaces normal lifesteal in bloodmoon)."
+  },
+  "crimsonCovenant": {
+   "id": "crimsonCovenant",
+   "name": "Crimson Covenant",
+   "desc": "🩸 Bloodmoon: adjacent allies gain +2 ATK and +2 MAG (aura)."
+  },
+  "lucidThinker": {
+   "id": "lucidThinker",
+   "name": "Lucid Thinker",
+   "desc": "🧠 Mind Realm: your moves cost 1 less energy (min 0)."
+  },
+  "paradoxGuard": {
+   "id": "paradoxGuard",
+   "name": "Paradox Guard",
+   "desc": "🌍 Parallel World: your SPD inversion is canceled — keep your normal speed."
+  },
+  "tempestSoul": {
+   "id": "tempestSoul",
+   "name": "Tempest Soul",
+   "desc": "🌪️ Any weather: +2 SPD, +1 ATK, +1 MAG, +1 DEF, +1 RES."
+  },
+  "weatherWalker": {
+   "id": "weatherWalker",
+   "name": "Weather Walker",
+   "desc": "🌪️ Any weather: +1 movement; immune to sandstorm damage and weather-applied status effects."
+  },
+  "weatherborn": {
+   "id": "weatherborn",
+   "name": "Weatherborn",
+   "desc": "🌪️ Any weather: this card costs 0 energy to play (free while any sky is active)."
+  },
+  "weatherbornRain": {
+   "id": "weatherbornRain",
+   "name": "Weatherborn — Rain",
+   "desc": "🌧️ Rain only: this card costs 0 energy to play while it is raining."
+  },
+  "weatherbornSun": {
+   "id": "weatherbornSun",
+   "name": "Weatherborn — Sun",
+   "desc": "☀️ Sun only: this card costs 0 energy to play while the sun is out."
+  },
+  "weatherbornSand": {
+   "id": "weatherbornSand",
+   "name": "Weatherborn — Sandstorm",
+   "desc": "🏜️ Sandstorm only: this card costs 0 energy to play during a sandstorm."
+  },
+  "weatherbornStorm": {
+   "id": "weatherbornStorm",
+   "name": "Weatherborn — Storm",
+   "desc": "⚡ Lightning Storm only: this card costs 0 energy to play during a storm."
+  },
+  "weatherbornMist": {
+   "id": "weatherbornMist",
+   "name": "Weatherborn — Mist",
+   "desc": "🌫️ Mist only: this card costs 0 energy to play while mist is up."
+  },
+  "weatherbornEclipse": {
+   "id": "weatherbornEclipse",
+   "name": "Weatherborn — Eclipse",
+   "desc": "🌑 Eclipse only: this card costs 0 energy to play during an eclipse."
+  },
+  "weatherbornBloodmoon": {
+   "id": "weatherbornBloodmoon",
+   "name": "Weatherborn — Bloodmoon",
+   "desc": "🌕 Bloodmoon only: this card costs 0 energy to play under a bloodmoon."
+  },
+  "weatherbornMind": {
+   "id": "weatherbornMind",
+   "name": "Weatherborn — Mind Realm",
+   "desc": "🧠 Mind Realm only: this card costs 0 energy to play in the Mind Realm."
+  },
+  "weatherbornParallel": {
+   "id": "weatherbornParallel",
+   "name": "Weatherborn — Parallel World",
+   "desc": "🔮 Parallel World only: this card costs 0 energy to play in a Parallel World."
+  },
+  "inspireAtk": {
+   "id": "inspireAtk",
+   "name": "Inspire ATK",
+   "desc": "✨ When an allied unit that costs STRICTLY MORE than this unit enters play, that ally gains +1 ATK."
+  },
+  "inspireDef": {
+   "id": "inspireDef",
+   "name": "Inspire DEF",
+   "desc": "✨ When an allied unit that costs STRICTLY MORE than this unit enters play, that ally gains +1 DEF."
+  },
+  "inspireMag": {
+   "id": "inspireMag",
+   "name": "Inspire MAG",
+   "desc": "✨ When an allied unit that costs STRICTLY MORE than this unit enters play, that ally gains +1 MAG."
+  },
+  "inspireRes": {
+   "id": "inspireRes",
+   "name": "Inspire RES",
+   "desc": "✨ When an allied unit that costs STRICTLY MORE than this unit enters play, that ally gains +1 RES."
+  },
+  "inspireDrawTimer": {
+   "id": "inspireDrawTimer",
+   "name": "Arcane Tempo",
+   "desc": "✨ While this unit is alive, you draw 1 extra card at the start of every 3rd turn."
+  }
+ },
+ "WEATHERBORN_PASSIVES": {
+  "weatherborn": null,
+  "weatherbornRain": "rain",
+  "weatherbornSun": "sun",
+  "weatherbornSand": "sand",
+  "weatherbornStorm": "lightningStorm",
+  "weatherbornMist": "mist",
+  "weatherbornEclipse": "eclipse",
+  "weatherbornBloodmoon": "bloodmoon",
+  "weatherbornMind": "mindRealm",
+  "weatherbornParallel": "parallelWorld"
+ },
+ "ELEMENTS": [
+  "fire",
+  "water",
+  "earth",
+  "wind",
+  "light",
+  "shadow",
+  "nature",
+  "storm",
+  "ice",
+  "metal",
+  "poison",
+  "psychic",
+  "arcane",
+  "void",
+  "blood",
+  "crystal",
+  "corruption",
+  "spirit",
+  "lava",
+  "sound",
+  "gravity"
+ ],
+ "STRONG_VS": {
+  "fire": [
+   "nature",
+   "wind",
+   "ice",
+   "metal"
+  ],
+  "water": [
+   "fire",
+   "earth",
+   "blood"
+  ],
+  "earth": [
+   "fire",
+   "storm",
+   "poison"
+  ],
+  "wind": [
+   "earth",
+   "nature",
+   "poison"
+  ],
+  "nature": [
+   "water",
+   "shadow",
+   "crystal"
+  ],
+  "shadow": [
+   "light",
+   "nature",
+   "psychic"
+  ],
+  "light": [
+   "shadow",
+   "storm",
+   "void"
+  ],
+  "storm": [
+   "water",
+   "wind",
+   "metal"
+  ],
+  "ice": [
+   "nature",
+   "water",
+   "blood"
+  ],
+  "metal": [
+   "earth",
+   "ice",
+   "crystal"
+  ],
+  "poison": [
+   "nature",
+   "water",
+   "light"
+  ],
+  "psychic": [
+   "poison",
+   "fire",
+   "void"
+  ],
+  "arcane": [
+   "shadow",
+   "ice",
+   "metal"
+  ],
+  "void": [
+   "psychic",
+   "arcane",
+   "crystal"
+  ],
+  "blood": [
+   "light",
+   "ice",
+   "nature"
+  ],
+  "crystal": [
+   "storm",
+   "fire",
+   "arcane"
+  ],
+  "corruption": [
+   "nature",
+   "light",
+   "water"
+  ],
+  "spirit": [
+   "metal",
+   "shadow",
+   "psychic"
+  ],
+  "lava": [
+   "ice",
+   "metal",
+   "nature"
+  ],
+  "sound": [
+   "crystal",
+   "ice",
+   "psychic"
+  ],
+  "gravity": [
+   "wind",
+   "fire",
+   "spirit"
+  ]
+ },
+ "TYPE_CHART": {
+  "fire": {
+   "fire": 1,
+   "water": 0.5,
+   "earth": 0.5,
+   "wind": 2,
+   "light": 1,
+   "shadow": 1,
+   "nature": 2,
+   "storm": 1,
+   "ice": 2,
+   "metal": 2,
+   "poison": 1,
+   "psychic": 0.5,
+   "arcane": 1,
+   "void": 1,
+   "blood": 1,
+   "crystal": 0.5,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 0.5
+  },
+  "water": {
+   "fire": 2,
+   "water": 1,
+   "earth": 2,
+   "wind": 1,
+   "light": 1,
+   "shadow": 1,
+   "nature": 0.5,
+   "storm": 0.5,
+   "ice": 0.5,
+   "metal": 1,
+   "poison": 0.5,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 1,
+   "blood": 2,
+   "crystal": 1,
+   "corruption": 0.5,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "earth": {
+   "fire": 2,
+   "water": 0.5,
+   "earth": 1,
+   "wind": 0.5,
+   "light": 1,
+   "shadow": 1,
+   "nature": 1,
+   "storm": 2,
+   "ice": 1,
+   "metal": 0.5,
+   "poison": 2,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 1,
+   "blood": 1,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "wind": {
+   "fire": 0.5,
+   "water": 1,
+   "earth": 2,
+   "wind": 1,
+   "light": 1,
+   "shadow": 1,
+   "nature": 2,
+   "storm": 0.5,
+   "ice": 1,
+   "metal": 1,
+   "poison": 2,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 1,
+   "blood": 1,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 0.5
+  },
+  "light": {
+   "fire": 1,
+   "water": 1,
+   "earth": 1,
+   "wind": 1,
+   "light": 1,
+   "shadow": 2,
+   "nature": 1,
+   "storm": 2,
+   "ice": 1,
+   "metal": 1,
+   "poison": 0.5,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 2,
+   "blood": 0.5,
+   "crystal": 1,
+   "corruption": 0.5,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "shadow": {
+   "fire": 1,
+   "water": 1,
+   "earth": 1,
+   "wind": 1,
+   "light": 2,
+   "shadow": 1,
+   "nature": 2,
+   "storm": 1,
+   "ice": 1,
+   "metal": 1,
+   "poison": 1,
+   "psychic": 2,
+   "arcane": 0.5,
+   "void": 1,
+   "blood": 1,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 0.5,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "nature": {
+   "fire": 0.5,
+   "water": 2,
+   "earth": 1,
+   "wind": 0.5,
+   "light": 1,
+   "shadow": 2,
+   "nature": 1,
+   "storm": 1,
+   "ice": 0.5,
+   "metal": 1,
+   "poison": 0.5,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 1,
+   "blood": 0.5,
+   "crystal": 2,
+   "corruption": 0.5,
+   "spirit": 1,
+   "lava": 0.5,
+   "sound": 1,
+   "gravity": 1
+  },
+  "storm": {
+   "fire": 1,
+   "water": 2,
+   "earth": 0.5,
+   "wind": 2,
+   "light": 0.5,
+   "shadow": 1,
+   "nature": 1,
+   "storm": 1,
+   "ice": 1,
+   "metal": 2,
+   "poison": 1,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 1,
+   "blood": 1,
+   "crystal": 0.5,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "ice": {
+   "fire": 0.5,
+   "water": 2,
+   "earth": 1,
+   "wind": 1,
+   "light": 1,
+   "shadow": 1,
+   "nature": 2,
+   "storm": 1,
+   "ice": 1,
+   "metal": 0.5,
+   "poison": 1,
+   "psychic": 1,
+   "arcane": 0.5,
+   "void": 1,
+   "blood": 2,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 0.5,
+   "sound": 0.5,
+   "gravity": 1
+  },
+  "metal": {
+   "fire": 0.5,
+   "water": 1,
+   "earth": 2,
+   "wind": 1,
+   "light": 1,
+   "shadow": 1,
+   "nature": 1,
+   "storm": 0.5,
+   "ice": 2,
+   "metal": 1,
+   "poison": 1,
+   "psychic": 1,
+   "arcane": 0.5,
+   "void": 1,
+   "blood": 1,
+   "crystal": 2,
+   "corruption": 1,
+   "spirit": 0.5,
+   "lava": 0.5,
+   "sound": 1,
+   "gravity": 1
+  },
+  "poison": {
+   "fire": 1,
+   "water": 2,
+   "earth": 0.5,
+   "wind": 0.5,
+   "light": 2,
+   "shadow": 1,
+   "nature": 2,
+   "storm": 1,
+   "ice": 1,
+   "metal": 1,
+   "poison": 1,
+   "psychic": 0.5,
+   "arcane": 1,
+   "void": 1,
+   "blood": 1,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "psychic": {
+   "fire": 2,
+   "water": 1,
+   "earth": 1,
+   "wind": 1,
+   "light": 1,
+   "shadow": 0.5,
+   "nature": 1,
+   "storm": 1,
+   "ice": 1,
+   "metal": 1,
+   "poison": 2,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 2,
+   "blood": 1,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 0.5,
+   "lava": 1,
+   "sound": 0.5,
+   "gravity": 1
+  },
+  "arcane": {
+   "fire": 1,
+   "water": 1,
+   "earth": 1,
+   "wind": 1,
+   "light": 1,
+   "shadow": 2,
+   "nature": 1,
+   "storm": 1,
+   "ice": 2,
+   "metal": 2,
+   "poison": 1,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 0.5,
+   "blood": 1,
+   "crystal": 0.5,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "void": {
+   "fire": 1,
+   "water": 1,
+   "earth": 1,
+   "wind": 1,
+   "light": 0.5,
+   "shadow": 1,
+   "nature": 1,
+   "storm": 1,
+   "ice": 1,
+   "metal": 1,
+   "poison": 1,
+   "psychic": 2,
+   "arcane": 2,
+   "void": 1,
+   "blood": 1,
+   "crystal": 2,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "blood": {
+   "fire": 1,
+   "water": 0.5,
+   "earth": 1,
+   "wind": 1,
+   "light": 2,
+   "shadow": 1,
+   "nature": 2,
+   "storm": 1,
+   "ice": 2,
+   "metal": 1,
+   "poison": 1,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 1,
+   "blood": 1,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "crystal": {
+   "fire": 2,
+   "water": 1,
+   "earth": 1,
+   "wind": 1,
+   "light": 1,
+   "shadow": 1,
+   "nature": 0.5,
+   "storm": 2,
+   "ice": 1,
+   "metal": 0.5,
+   "poison": 1,
+   "psychic": 1,
+   "arcane": 2,
+   "void": 0.5,
+   "blood": 1,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 0.5,
+   "gravity": 1
+  },
+  "corruption": {
+   "fire": 1,
+   "water": 2,
+   "earth": 1,
+   "wind": 1,
+   "light": 2,
+   "shadow": 1,
+   "nature": 2,
+   "storm": 1,
+   "ice": 1,
+   "metal": 1,
+   "poison": 1,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 1,
+   "blood": 1,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "spirit": {
+   "fire": 1,
+   "water": 1,
+   "earth": 1,
+   "wind": 1,
+   "light": 1,
+   "shadow": 2,
+   "nature": 1,
+   "storm": 1,
+   "ice": 1,
+   "metal": 2,
+   "poison": 1,
+   "psychic": 2,
+   "arcane": 1,
+   "void": 1,
+   "blood": 1,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 0.5
+  },
+  "lava": {
+   "fire": 1,
+   "water": 1,
+   "earth": 1,
+   "wind": 1,
+   "light": 1,
+   "shadow": 1,
+   "nature": 2,
+   "storm": 1,
+   "ice": 2,
+   "metal": 2,
+   "poison": 1,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 1,
+   "blood": 1,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "sound": {
+   "fire": 1,
+   "water": 1,
+   "earth": 1,
+   "wind": 1,
+   "light": 1,
+   "shadow": 1,
+   "nature": 1,
+   "storm": 1,
+   "ice": 2,
+   "metal": 1,
+   "poison": 1,
+   "psychic": 2,
+   "arcane": 1,
+   "void": 1,
+   "blood": 1,
+   "crystal": 2,
+   "corruption": 1,
+   "spirit": 1,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  },
+  "gravity": {
+   "fire": 2,
+   "water": 1,
+   "earth": 1,
+   "wind": 2,
+   "light": 1,
+   "shadow": 1,
+   "nature": 1,
+   "storm": 1,
+   "ice": 1,
+   "metal": 1,
+   "poison": 1,
+   "psychic": 1,
+   "arcane": 1,
+   "void": 1,
+   "blood": 1,
+   "crystal": 1,
+   "corruption": 1,
+   "spirit": 2,
+   "lava": 1,
+   "sound": 1,
+   "gravity": 1
+  }
+ },
+ "MOVES": {
+  "slash": {
+   "id": "slash",
+   "name": "Slash",
+   "kind": "attack",
+   "type": "physical",
+   "power": 22,
+   "range": 1,
+   "cost": 0,
+   "element": "nature",
+   "basic": true,
+   "desc": "Basic strike (free)"
+  },
+  "heavyStrike": {
+   "id": "heavyStrike",
+   "name": "Heavy Strike",
+   "kind": "attack",
+   "type": "physical",
+   "power": 42,
+   "range": 1,
+   "cost": 1,
+   "element": "earth",
+   "accuracy": 90,
+   "desc": "Devastating blow"
+  },
+  "pierce": {
+   "id": "pierce",
+   "name": "Pierce",
+   "kind": "attack",
+   "type": "physical",
+   "power": 32,
+   "range": 1,
+   "cost": 1,
+   "element": "wind",
+   "desc": "Ignores 50% defense",
+   "effect": "pierce"
+  },
+  "fireball": {
+   "id": "fireball",
+   "name": "Fireball",
+   "kind": "attack",
+   "type": "magic",
+   "power": 36,
+   "range": 2,
+   "cost": 1,
+   "element": "fire",
+   "desc": "Ball of fire",
+   "applyStatus": {
+    "id": "burn",
+    "chance": 30,
+    "duration": 2
+   }
+  },
+  "lightning": {
+   "id": "lightning",
+   "name": "Lightning",
+   "kind": "attack",
+   "type": "magic",
+   "power": 48,
+   "range": 3,
+   "cost": 2,
+   "element": "storm",
+   "accuracy": 85,
+   "desc": "Strike from afar"
+  },
+  "quickJab": {
+   "id": "quickJab",
+   "name": "Quick Jab",
+   "kind": "attack",
+   "type": "physical",
+   "power": 14,
+   "range": 1,
+   "cost": 0,
+   "element": "nature",
+   "basic": true,
+   "crit": 12,
+   "desc": "Swift basic attack (free)"
+  },
+  "arcaneBlast": {
+   "id": "arcaneBlast",
+   "name": "Arcane Blast",
+   "kind": "attack",
+   "type": "magic",
+   "power": 28,
+   "range": 2,
+   "cost": 1,
+   "element": "light",
+   "desc": "Pure magic damage"
+  },
+  "bite": {
+   "id": "bite",
+   "name": "Savage Maul",
+   "kind": "attack",
+   "type": "physical",
+   "power": 18,
+   "range": 1,
+   "cost": 0,
+   "element": "nature",
+   "basic": true,
+   "desc": "Tear into the target with bared teeth (free)"
+  },
+  "bash": {
+   "id": "bash",
+   "name": "Shield Bash",
+   "kind": "attack",
+   "type": "physical",
+   "power": 20,
+   "range": 1,
+   "cost": 1,
+   "element": "earth",
+   "desc": "Stuns target",
+   "applyStatus": {
+    "id": "stun",
+    "chance": 60,
+    "duration": 1
+   }
+  },
+  "poisonSting": {
+   "id": "poisonSting",
+   "name": "Venom Lash",
+   "kind": "attack",
+   "type": "magic",
+   "power": 12,
+   "range": 1,
+   "cost": 1,
+   "element": "nature",
+   "desc": "A venom-tipped strike — afflicts the target with Poison.",
+   "applyStatus": {
+    "id": "poison",
+    "chance": 100,
+    "duration": 3
+   }
+  },
+  "smash": {
+   "id": "smash",
+   "name": "Smash",
+   "kind": "attack",
+   "type": "physical",
+   "power": 56,
+   "range": 1,
+   "cost": 2,
+   "element": "earth",
+   "accuracy": 85,
+   "desc": "Massive blow"
+  },
+  "shadowBolt": {
+   "id": "shadowBolt",
+   "name": "Shadow Bolt",
+   "kind": "attack",
+   "type": "magic",
+   "power": 32,
+   "range": 2,
+   "cost": 1,
+   "element": "shadow",
+   "desc": "Dark magic"
+  },
+  "drainLife": {
+   "id": "drainLife",
+   "name": "Drain Life",
+   "kind": "attack",
+   "type": "magic",
+   "power": 22,
+   "range": 1,
+   "cost": 1,
+   "element": "shadow",
+   "desc": "Heals attacker",
+   "effect": "drain"
+  },
+  "cleave": {
+   "id": "cleave",
+   "name": "Cleave",
+   "kind": "attack",
+   "type": "physical",
+   "power": 26,
+   "range": 1,
+   "cost": 2,
+   "element": "nature",
+   "desc": "Hits adjacent units (friend + foe) for 75% damage",
+   "effect": "aoe",
+   "aoeRadius": 1,
+   "splashDamagePct": 0.75
+  },
+  "whirlwindSlash": {
+   "id": "whirlwindSlash",
+   "name": "Whirlwind Slash",
+   "kind": "attack",
+   "type": "physical",
+   "power": 22,
+   "range": 1,
+   "cost": 2,
+   "element": "wind",
+   "aoeRadius": 1,
+   "splashDamagePct": 0.7,
+   "desc": "Full spin — strike the target and every unit (friend or foe) in the 8 tiles around you (70% splash)."
+  },
+  "frostNova": {
+   "id": "frostNova",
+   "name": "Frost Nova",
+   "kind": "attack",
+   "type": "magic",
+   "power": 18,
+   "range": 1,
+   "cost": 2,
+   "element": "water",
+   "aoeRadius": 1,
+   "splashDamagePct": 0.8,
+   "applyStatus": {
+    "id": "slow",
+    "chance": 80,
+    "duration": 2
+   },
+   "desc": "Erupts in a frost ring — 80% splash to all adjacent units, 80% chance to Slow each."
+  },
+  "earthquake": {
+   "id": "earthquake",
+   "name": "Earthquake",
+   "kind": "attack",
+   "type": "physical",
+   "power": 16,
+   "range": 0,
+   "cost": 3,
+   "element": "earth",
+   "aoeRadius": 2,
+   "splashDamagePct": 0.6,
+   "accuracy": 90,
+   "desc": "Massive ground slam — every unit (friend + foe) within 2 tiles takes 60% damage."
+  },
+  "pierceLance": {
+   "id": "pierceLance",
+   "name": "Pierce Lance",
+   "kind": "attack",
+   "type": "physical",
+   "power": 24,
+   "range": 1,
+   "cost": 2,
+   "element": "wind",
+   "laneDepth": 2,
+   "splashDamagePct": 0.85,
+   "desc": "Drive the lance forward — hits the front 2 rows in the same column, friend or foe."
+  },
+  "frontalSweep": {
+   "id": "frontalSweep",
+   "name": "Frontal Sweep",
+   "kind": "attack",
+   "type": "physical",
+   "power": 22,
+   "range": 1,
+   "cost": 3,
+   "element": "earth",
+   "laneDepth": 3,
+   "splashDamagePct": 0.7,
+   "desc": "A sweeping advance — 3 rows of lane damage in front, hitting any unit (or hero) in the path."
+  },
+  "dragonsBreath": {
+   "id": "dragonsBreath",
+   "name": "Dragon's Breath",
+   "kind": "attack",
+   "type": "magic",
+   "power": 26,
+   "range": 1,
+   "cost": 3,
+   "element": "fire",
+   "laneDepth": 3,
+   "splashDamagePct": 0.75,
+   "applyStatus": {
+    "id": "burn",
+    "chance": 50,
+    "duration": 2
+   },
+   "desc": "Cone of dragonfire — burns 3 rows ahead, 50% Burn chance per victim."
+  },
+  "iceShard": {
+   "id": "iceShard",
+   "name": "Frost Splinter",
+   "kind": "attack",
+   "type": "magic",
+   "power": 24,
+   "range": 2,
+   "cost": 1,
+   "element": "water",
+   "desc": "Hurls a sliver of ice — chills the target (Slow).",
+   "applyStatus": {
+    "id": "slow",
+    "chance": 80,
+    "duration": 2
+   }
+  },
+  "siphonGrasp": {
+   "id": "siphonGrasp",
+   "name": "Siphon Grasp",
+   "kind": "attack",
+   "type": "magic",
+   "power": 10,
+   "range": 2,
+   "cost": 2,
+   "element": "nature",
+   "accuracy": 90,
+   "applyStatus": {
+    "id": "siphoned",
+    "chance": 100,
+    "duration": 4
+   },
+   "applyStatuses": [
+    {
+     "id": "stun",
+     "chance": 50,
+     "duration": 1
+    }
+   ],
+   "desc": "Parasitic tendrils sap 3-6 HP/turn for 4 turns; 50% chance to stun on contact."
+  },
+  "blizzard": {
+   "id": "blizzard",
+   "name": "Blizzard",
+   "kind": "attack",
+   "type": "magic",
+   "power": 22,
+   "range": 2,
+   "cost": 3,
+   "element": "water",
+   "accuracy": 80,
+   "aoeRadius": 2,
+   "splashDamagePct": 0.7,
+   "applyStatus": {
+    "id": "frozen",
+    "chance": 35,
+    "duration": 2
+   },
+   "desc": "A howling icestorm — 22 dmg in a 2-tile ring (70% splash). 35% chance per victim to be Frozen (skips turn)."
+  },
+  "iceCoffin": {
+   "id": "iceCoffin",
+   "name": "Ice Coffin",
+   "kind": "attack",
+   "type": "magic",
+   "power": 14,
+   "range": 1,
+   "cost": 2,
+   "element": "water",
+   "accuracy": 90,
+   "applyStatus": {
+    "id": "frozen",
+    "chance": 80,
+    "duration": 2
+   },
+   "desc": "Encases the target in ice — 80% chance to Freeze for 2 turns."
+  },
+  "frostNail": {
+   "id": "frostNail",
+   "name": "Frost Nail",
+   "kind": "attack",
+   "type": "magic",
+   "power": 18,
+   "range": 2,
+   "cost": 1,
+   "element": "water",
+   "accuracy": 85,
+   "applyStatus": {
+    "id": "frozen",
+    "chance": 25,
+    "duration": 1
+   },
+   "applyStatuses": [
+    {
+     "id": "slow",
+     "chance": 70,
+     "duration": 2
+    }
+   ],
+   "desc": "A frigid bolt — 25% Freeze, 70% Slow. Cheap pressure tool."
+  },
+  "deathStrike": {
+   "id": "deathStrike",
+   "name": "Death Strike",
+   "kind": "attack",
+   "type": "physical",
+   "power": 0,
+   "range": 1,
+   "cost": 4,
+   "element": "shadow",
+   "accuracy": 30,
+   "effect": "ohko",
+   "crit": 0,
+   "desc": "🪦 A killing blow — 30% accuracy, but if it lands, the target is instantly slain."
+  },
+  "graveSong": {
+   "id": "graveSong",
+   "name": "Grave Song",
+   "kind": "attack",
+   "type": "magic",
+   "power": 0,
+   "range": 3,
+   "cost": 4,
+   "element": "shadow",
+   "accuracy": 25,
+   "effect": "ohko",
+   "crit": 0,
+   "desc": "🪦 A ranged dirge that severs the soul — 25% accuracy, instant KO on hit."
+  },
+  "harvestSoul": {
+   "id": "harvestSoul",
+   "name": "Harvest Soul",
+   "kind": "attack",
+   "type": "magic",
+   "power": 0,
+   "range": 1,
+   "cost": 5,
+   "element": "shadow",
+   "accuracy": 20,
+   "effect": "ohko",
+   "crit": 0,
+   "gainEnergy": 1,
+   "desc": "🪦 Rip the soul straight out — 20% accuracy, instant KO + you regain 1 energy. The rarest finisher."
+  },
+  "voidPiercer": {
+   "id": "voidPiercer",
+   "name": "Void Piercer",
+   "kind": "attack",
+   "type": "magic",
+   "power": 0,
+   "range": 4,
+   "cost": 4,
+   "element": "void",
+   "accuracy": 35,
+   "effect": "ohko",
+   "crit": 0,
+   "desc": "🪦 A void-lance from across the field — 35% accuracy, instant KO. Cannot crit (already lethal)."
+  },
+  "crippleStrike": {
+   "id": "crippleStrike",
+   "name": "Cripple",
+   "kind": "attack",
+   "type": "physical",
+   "power": 18,
+   "range": 1,
+   "cost": 1,
+   "element": "shadow",
+   "desc": "Weakens target",
+   "applyStatus": {
+    "id": "weak",
+    "chance": 100,
+    "duration": 2
+   }
+  },
+  "bleedSlash": {
+   "id": "bleedSlash",
+   "name": "Rending Slash",
+   "kind": "attack",
+   "type": "physical",
+   "power": 20,
+   "range": 1,
+   "cost": 1,
+   "element": "nature",
+   "desc": "Causes bleeding",
+   "applyStatus": {
+    "id": "bleed",
+    "chance": 100,
+    "duration": 2
+   }
+  },
+  "meditate": {
+   "id": "meditate",
+   "name": "Inner Reverie",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "light",
+   "target": "self",
+   "healAmount": 12,
+   "desc": "A moment of stillness — restore 12 HP."
+  },
+  "heal": {
+   "id": "heal",
+   "name": "Heal",
+   "kind": "ability",
+   "range": 1,
+   "cost": 2,
+   "element": "light",
+   "target": "ally",
+   "healAmount": 18,
+   "desc": "Heal ally 18 HP"
+  },
+  "rallyingCry": {
+   "id": "rallyingCry",
+   "name": "Rallying Cry",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "light",
+   "target": "allAllies",
+   "applyStatus": {
+    "id": "strong",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "Allies +4 ATK 2t"
+  },
+  "gustingWinds": {
+   "id": "gustingWinds",
+   "name": "Gusting Winds",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "wind",
+   "target": "allAllies",
+   "applyStatus": {
+    "id": "haste",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "Allies +1 move 2t"
+  },
+  "divineShield": {
+   "id": "divineShield",
+   "name": "Divine Shield",
+   "kind": "ability",
+   "range": 1,
+   "cost": 2,
+   "element": "light",
+   "target": "ally",
+   "applyStatus": {
+    "id": "shielded",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "Shield ally"
+  },
+  "focus": {
+   "id": "focus",
+   "name": "Focus",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "light",
+   "target": "self",
+   "applyStatus": {
+    "id": "focused",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "+4 Magic 2t"
+  },
+  "cleanse": {
+   "id": "cleanse",
+   "name": "Cleanse",
+   "kind": "ability",
+   "range": 1,
+   "cost": 1,
+   "element": "light",
+   "target": "ally",
+   "cleanse": true,
+   "desc": "Remove status"
+  },
+  "intimidate": {
+   "id": "intimidate",
+   "name": "Intimidate",
+   "kind": "ability",
+   "range": 1,
+   "cost": 1,
+   "element": "shadow",
+   "target": "enemy",
+   "applyStatus": {
+    "id": "weak",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "Weaken enemy"
+  },
+  "battlePrep": {
+   "id": "battlePrep",
+   "name": "Battle Prep",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "earth",
+   "target": "self",
+   "applyStatus": {
+    "id": "strong",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "+4 ATK 2t"
+  },
+  "teleport": {
+   "id": "teleport",
+   "name": "Teleport",
+   "kind": "movement",
+   "range": 99,
+   "cost": 2,
+   "element": "arcane",
+   "target": "tile",
+   "accuracy": 100,
+   "teleport": true,
+   "desc": "Vanish in a flash of arcane light and reappear on any empty tile on the battlefield."
+  },
+  "selfDetonate": {
+   "id": "selfDetonate",
+   "name": "Self Detonate",
+   "kind": "attack",
+   "type": "magic",
+   "power": 0,
+   "range": 1,
+   "cost": 2,
+   "element": "fire",
+   "selfDetonate": true,
+   "accuracy": 100,
+   "desc": "Detonate yourself — 99% max HP damage (100% if hurt). User is KO'd."
+  },
+  "hamstring": {
+   "id": "hamstring",
+   "name": "Hamstring",
+   "kind": "attack",
+   "type": "physical",
+   "power": 14,
+   "range": 1,
+   "cost": 1,
+   "element": "shadow",
+   "applyStatus": {
+    "id": "slow",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "A crippling strike — guaranteed Slow (2t)."
+  },
+  "webShot": {
+   "id": "webShot",
+   "name": "Web Shot",
+   "kind": "attack",
+   "type": "physical",
+   "power": 8,
+   "range": 2,
+   "cost": 1,
+   "element": "nature",
+   "applyStatus": {
+    "id": "slow",
+    "chance": 100,
+    "duration": 3
+   },
+   "desc": "Sticky ranged web — locks the target down with Slow (3t)."
+  },
+  "miredCurse": {
+   "id": "miredCurse",
+   "name": "Mired Curse",
+   "kind": "ability",
+   "range": 2,
+   "cost": 1,
+   "element": "shadow",
+   "target": "enemy",
+   "applyStatus": {
+    "id": "slow",
+    "chance": 100,
+    "duration": 3
+   },
+   "stageMods": [
+    {
+     "stat": "spd",
+     "delta": -1
+    }
+   ],
+   "desc": "Curse drags the target down — Slow (3t) AND SPD -1 stage."
+  },
+  "helpingHand": {
+   "id": "helpingHand",
+   "name": "Lend Aid",
+   "kind": "ability",
+   "range": 1,
+   "cost": 0,
+   "element": "nature",
+   "target": "ally",
+   "applyStatus": {
+    "id": "assisted",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "Brace an ally — their next strike is +6 ATK / +6 MAG."
+  },
+  "rallyingCheer": {
+   "id": "rallyingCheer",
+   "name": "Rallying Cheer",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "light",
+   "target": "allAllies",
+   "applyStatus": {
+    "id": "assisted",
+    "chance": 100,
+    "duration": 1
+   },
+   "desc": "All allies +6 ATK / +6 MAG next strike."
+  },
+  "sharpen": {
+   "id": "sharpen",
+   "name": "Hone Edge",
+   "kind": "ability",
+   "range": 1,
+   "cost": 1,
+   "element": "wind",
+   "target": "ally",
+   "applyStatus": {
+    "id": "assisted",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "Sharpen an ally's blade — +6 ATK / +6 MAG for next strike."
+  },
+  "tripStrike": {
+   "id": "tripStrike",
+   "name": "Trip Strike",
+   "kind": "attack",
+   "type": "physical",
+   "power": 14,
+   "range": 1,
+   "cost": 1,
+   "element": "earth",
+   "applyStatus": {
+    "id": "stumble",
+    "chance": 50,
+    "duration": 1
+   },
+   "desc": "Sweep their legs — 50% chance to stumble (skip their next turn)."
+  },
+  "thunderclap": {
+   "id": "thunderclap",
+   "name": "Thunderclap",
+   "kind": "attack",
+   "type": "magic",
+   "power": 12,
+   "range": 2,
+   "cost": 1,
+   "element": "storm",
+   "accuracy": 100,
+   "applyStatus": {
+    "id": "stumble",
+    "chance": 40,
+    "duration": 1
+   },
+   "desc": "A deafening crack — 40% chance to stumble."
+  },
+  "shoulderCharge": {
+   "id": "shoulderCharge",
+   "name": "Shoulder Charge",
+   "kind": "attack",
+   "type": "physical",
+   "power": 20,
+   "range": 1,
+   "cost": 1,
+   "element": "earth",
+   "applyStatus": {
+    "id": "stumble",
+    "chance": 30,
+    "duration": 1
+   },
+   "desc": "Plow forward — 30% chance to stumble the target."
+  },
+  "solarBeam": {
+   "id": "solarBeam",
+   "name": "Sunfire Lance",
+   "kind": "attack",
+   "type": "magic",
+   "power": 90,
+   "range": 3,
+   "cost": 2,
+   "element": "light",
+   "chargeTurns": 1,
+   "sunCharge": true,
+   "desc": "Gather solar fire for a turn, then unleash a lancing pillar of flame. Fires instantly under ☀️ Sun."
+  },
+  "meteorCharge": {
+   "id": "meteorCharge",
+   "name": "Meteor Charge",
+   "kind": "attack",
+   "type": "magic",
+   "power": 80,
+   "range": 2,
+   "cost": 2,
+   "element": "fire",
+   "chargeTurns": 1,
+   "desc": "Gather cosmic fire — releases next turn for huge damage."
+  },
+  "shadowPulse": {
+   "id": "shadowPulse",
+   "name": "Umbral Lance",
+   "kind": "attack",
+   "type": "magic",
+   "power": 75,
+   "range": 3,
+   "cost": 2,
+   "element": "shadow",
+   "chargeTurns": 1,
+   "desc": "Tether a strand of darkness, then loose it at range."
+  },
+  "flyStrike": {
+   "id": "flyStrike",
+   "name": "Sky Dive",
+   "kind": "attack",
+   "type": "physical",
+   "power": 78,
+   "range": 3,
+   "cost": 2,
+   "element": "wind",
+   "air": true,
+   "chargeTurns": 1,
+   "vanish": true,
+   "vanishKind": "fly",
+   "icon": "🪶",
+   "desc": "Soar out of reach for a turn — untargetable while aloft — then dive-bomb the target."
+  },
+  "flyStorm": {
+   "id": "flyStorm",
+   "name": "Storm Wing",
+   "kind": "attack",
+   "type": "magic",
+   "power": 80,
+   "range": 3,
+   "cost": 2,
+   "element": "storm",
+   "air": true,
+   "chargeTurns": 1,
+   "vanish": true,
+   "vanishKind": "fly",
+   "icon": "🌪️",
+   "desc": "Ride the gale skyward (untargetable), then call down a thunderous dive."
+  },
+  "digStrike": {
+   "id": "digStrike",
+   "name": "Burrow Fang",
+   "kind": "attack",
+   "type": "physical",
+   "power": 80,
+   "range": 2,
+   "cost": 2,
+   "element": "earth",
+   "chargeTurns": 1,
+   "vanish": true,
+   "vanishKind": "dig",
+   "icon": "⛏️",
+   "desc": "Burrow underground for a turn — untargetable — then erupt beneath the target."
+  },
+  "digQuake": {
+   "id": "digQuake",
+   "name": "Geomancy",
+   "kind": "attack",
+   "type": "magic",
+   "power": 82,
+   "range": 2,
+   "cost": 2,
+   "element": "earth",
+   "chargeTurns": 1,
+   "vanish": true,
+   "vanishKind": "dig",
+   "icon": "🌋",
+   "desc": "Sink into the stone (untargetable), then rupture the earth under the target."
+  },
+  "realmStrike": {
+   "id": "realmStrike",
+   "name": "Rift Step",
+   "kind": "attack",
+   "type": "physical",
+   "power": 84,
+   "range": 3,
+   "cost": 3,
+   "element": "void",
+   "air": true,
+   "chargeTurns": 1,
+   "vanish": true,
+   "vanishKind": "realm",
+   "icon": "🌌",
+   "desc": "Phase into the rift between realms (untargetable), then tear back into reality on the target."
+  },
+  "realmWarp": {
+   "id": "realmWarp",
+   "name": "Void Lance",
+   "kind": "attack",
+   "type": "magic",
+   "power": 86,
+   "range": 3,
+   "cost": 3,
+   "element": "arcane",
+   "air": true,
+   "chargeTurns": 1,
+   "vanish": true,
+   "vanishKind": "realm",
+   "icon": "🔮",
+   "desc": "Slip into the void (untargetable), then lance back through with arcane force."
+  },
+  "recover": {
+   "id": "recover",
+   "name": "Recover",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "light",
+   "target": "self",
+   "healPercent": 0.5,
+   "desc": "Restore 50% of max HP."
+  },
+  "softBoil": {
+   "id": "softBoil",
+   "name": "Soft-Boil",
+   "kind": "ability",
+   "range": 1,
+   "cost": 2,
+   "element": "water",
+   "target": "ally",
+   "healPercent": 0.5,
+   "desc": "Heal an ally for 50% of their max HP."
+  },
+  "synthesis": {
+   "id": "synthesis",
+   "name": "Synthesis",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "nature",
+   "target": "self",
+   "healPercent": 0.25,
+   "sunBoost": true,
+   "desc": "Heal 25% max HP. Doubled under ☀️ Sun."
+  },
+  "roost": {
+   "id": "roost",
+   "name": "Roost",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "wind",
+   "target": "self",
+   "healPercent": 0.4,
+   "desc": "Land and recover — heal 40% max HP."
+  },
+  "setSnare": {
+   "id": "setSnare",
+   "name": "Set Snare",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "nature",
+   "target": "self",
+   "setsTrap": {
+    "cardId": "snare",
+    "placement": "self"
+   },
+   "desc": "Lay a Snare trap on your tile."
+  },
+  "laySpikes": {
+   "id": "laySpikes",
+   "name": "Lay Spikes",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "earth",
+   "target": "self",
+   "setsTrap": {
+    "cardId": "spikes",
+    "placement": "self"
+   },
+   "desc": "Plant a Spike Trap (15 dmg) on your tile."
+  },
+  "layInferno": {
+   "id": "layInferno",
+   "name": "Inferno Mine",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "fire",
+   "target": "self",
+   "setsTrap": {
+    "cardId": "flameBurst",
+    "placement": "self"
+   },
+   "desc": "Plant a Flame Burst trap (25 dmg + burn) on your tile."
+  },
+  "protect": {
+   "id": "protect",
+   "name": "Bulwark Stance",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "light",
+   "target": "self",
+   "applyStatus": {
+    "id": "protected",
+    "chance": 100,
+    "duration": 1
+   },
+   "desc": "Brace behind an unbreakable guard — immune to all damage and effects until your next turn."
+  },
+  "tailWhip": {
+   "id": "tailWhip",
+   "name": "Sweeping Lash",
+   "kind": "ability",
+   "range": 1,
+   "cost": 0,
+   "element": "neutral",
+   "target": "enemy",
+   "stageMods": [
+    {
+     "stat": "def",
+     "delta": -1
+    }
+   ],
+   "desc": "A low sweeping strike rattles the target's guard — DEF -1 stage."
+  },
+  "leer": {
+   "id": "leer",
+   "name": "Withering Gaze",
+   "kind": "ability",
+   "range": 2,
+   "cost": 0,
+   "element": "shadow",
+   "target": "enemy",
+   "stageMods": [
+    {
+     "stat": "def",
+     "delta": -1
+    }
+   ],
+   "desc": "A cold stare cracks their resolve — DEF -1 stage from range."
+  },
+  "growl": {
+   "id": "growl",
+   "name": "Wolf's Snarl",
+   "kind": "ability",
+   "range": 1,
+   "cost": 0,
+   "element": "nature",
+   "target": "enemy",
+   "stageMods": [
+    {
+     "stat": "atk",
+     "delta": -1
+    }
+   ],
+   "desc": "A primal snarl shakes the target's nerve — ATK -1 stage."
+  },
+  "scaryFace": {
+   "id": "scaryFace",
+   "name": "Dread Visage",
+   "kind": "ability",
+   "range": 1,
+   "cost": 1,
+   "element": "shadow",
+   "target": "enemy",
+   "stageMods": [
+    {
+     "stat": "spd",
+     "delta": -1
+    }
+   ],
+   "applyStatus": {
+    "id": "slow",
+    "chance": 60,
+    "duration": 2
+   },
+   "desc": "Terror unmasked — SPD -1 stage and 60% chance to Slow."
+  },
+  "swordDance": {
+   "id": "swordDance",
+   "name": "Whirlwind Drill",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "wind",
+   "target": "self",
+   "stageMods": [
+    {
+     "stat": "atk",
+     "delta": 2
+    }
+   ],
+   "desc": "A practiced blade routine builds momentum — ATK +2 stages."
+  },
+  "ironDefense": {
+   "id": "ironDefense",
+   "name": "Iron Vow",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "metal",
+   "target": "self",
+   "stageMods": [
+    {
+     "stat": "def",
+     "delta": 2
+    }
+   ],
+   "desc": "Steel the body with an unbreakable oath — DEF +2 stages."
+  },
+  "calmMind": {
+   "id": "calmMind",
+   "name": "Inner Sanctum",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "psychic",
+   "target": "self",
+   "stageMods": [
+    {
+     "stat": "mag",
+     "delta": 1
+    },
+    {
+     "stat": "res",
+     "delta": 1
+    }
+   ],
+   "desc": "Retreat into the mind's sanctum — MAG and RES +1 stage each."
+  },
+  "agility": {
+   "id": "agility",
+   "name": "Quicken Step",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "wind",
+   "target": "self",
+   "stageMods": [
+    {
+     "stat": "spd",
+     "delta": 1
+    }
+   ],
+   "applyStatus": {
+    "id": "haste",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "Sharpen your footwork — SPD +1 stage and grants Haste."
+  },
+  "gust": {
+   "id": "gust",
+   "name": "Cyclone Push",
+   "kind": "attack",
+   "type": "magic",
+   "power": 18,
+   "range": 2,
+   "cost": 1,
+   "element": "wind",
+   "knockback": 2,
+   "desc": "A spiraling column of wind — 18 dmg and hurls the target 2 tiles back."
+  },
+  "airSlash": {
+   "id": "airSlash",
+   "name": "Razor Wind",
+   "kind": "attack",
+   "type": "physical",
+   "power": 24,
+   "range": 2,
+   "cost": 1,
+   "element": "wind",
+   "knockback": 1,
+   "applyStatus": {
+    "id": "stumble",
+    "chance": 25,
+    "duration": 1
+   },
+   "desc": "A scything blade of compressed air — 24 dmg, knocks 1 back, 25% Stumble."
+  },
+  "shockwave": {
+   "id": "shockwave",
+   "name": "Quake Stomp",
+   "kind": "attack",
+   "type": "physical",
+   "power": 22,
+   "range": 1,
+   "cost": 1,
+   "element": "earth",
+   "knockback": 2,
+   "desc": "Slam the earth — 22 dmg and the shockwave throws the target 2 tiles back."
+  },
+  "hydroJet": {
+   "id": "hydroJet",
+   "name": "Tidal Spear",
+   "kind": "attack",
+   "type": "magic",
+   "power": 26,
+   "range": 3,
+   "cost": 2,
+   "element": "water",
+   "knockback": 1,
+   "desc": "A lance of pressurized water — 26 dmg, drives 1 tile back."
+  },
+  "harpoonYank": {
+   "id": "harpoonYank",
+   "name": "Harpoon Yank",
+   "kind": "attack",
+   "type": "physical",
+   "power": 22,
+   "range": 3,
+   "cost": 1,
+   "element": "metal",
+   "pull": 2,
+   "desc": "Fire a barbed harpoon — 22 dmg and reels the target 2 tiles toward you."
+  },
+  "gravityWell": {
+   "id": "gravityWell",
+   "name": "Gravity Well",
+   "kind": "attack",
+   "type": "magic",
+   "power": 15,
+   "range": 3,
+   "cost": 2,
+   "element": "void",
+   "pull": 3,
+   "applyStatus": {
+    "id": "slow",
+    "chance": 60,
+    "duration": 2
+   },
+   "desc": "Collapse space around the foe — 15 dmg, drags them 3 tiles closer, 60% Slow."
+  },
+  "vineSnare": {
+   "id": "vineSnare",
+   "name": "Vine Snare",
+   "kind": "attack",
+   "type": "physical",
+   "power": 16,
+   "range": 2,
+   "cost": 1,
+   "element": "nature",
+   "pull": 1,
+   "applyStatus": {
+    "id": "stumble",
+    "chance": 50,
+    "duration": 1
+   },
+   "desc": "Lash out with a creeping vine — 16 dmg, yanks the target 1 tile in, 50% Stumble."
+  },
+  "oilSlick": {
+   "id": "oilSlick",
+   "name": "Oil Slick",
+   "kind": "attack",
+   "type": "physical",
+   "power": 8,
+   "range": 3,
+   "cost": 1,
+   "element": "metal",
+   "paintSurface": {
+    "type": "oil",
+    "radius": 1,
+    "turns": 6
+   },
+   "desc": "Hurl a burst flask — 8 dmg and coats a 3×3 area in flammable Oil (Slows units; ignites under fire)."
+  },
+  "emberToss": {
+   "id": "emberToss",
+   "name": "Ember Toss",
+   "kind": "attack",
+   "type": "magic",
+   "power": 16,
+   "range": 3,
+   "cost": 1,
+   "element": "fire",
+   "paintSurface": {
+    "type": "fire",
+    "radius": 0,
+    "turns": 4
+   },
+   "desc": "Lob a burning coal — 16 dmg and leaves Fire on the tile. Ignites any Oil it lands on."
+  },
+  "tidePool": {
+   "id": "tidePool",
+   "name": "Tide Pool",
+   "kind": "attack",
+   "type": "magic",
+   "power": 12,
+   "range": 3,
+   "cost": 1,
+   "element": "water",
+   "paintSurface": {
+    "type": "water",
+    "radius": 1,
+    "turns": 6
+   },
+   "desc": "Splash a 3×3 area with conductive Water — 12 dmg. A storm attack electrifies the whole pool."
+  },
+  "hypnosis": {
+   "id": "hypnosis",
+   "name": "Dreamspell",
+   "kind": "ability",
+   "range": 2,
+   "cost": 2,
+   "element": "psychic",
+   "target": "enemy",
+   "applyStatus": {
+    "id": "sleep",
+    "chance": 70,
+    "duration": 3
+   },
+   "accuracy": 70,
+   "desc": "Weave a sleeping enchantment — 70% chance to plunge the target into slumber for 3 turns."
+  },
+  "lullaby": {
+   "id": "lullaby",
+   "name": "Dirge of Slumber",
+   "kind": "ability",
+   "range": 2,
+   "cost": 2,
+   "element": "sound",
+   "target": "allEnemies",
+   "applyStatus": {
+    "id": "sleep",
+    "chance": 40,
+    "duration": 2
+   },
+   "desc": "A haunting melody — 40% chance to lull every enemy in range into sleep."
+  },
+  "confuseRay": {
+   "id": "confuseRay",
+   "name": "Mind Splinter",
+   "kind": "ability",
+   "range": 2,
+   "cost": 1,
+   "element": "shadow",
+   "target": "enemy",
+   "applyStatus": {
+    "id": "confusion",
+    "chance": 100,
+    "duration": 3
+   },
+   "desc": "Drive a shard of madness into their thoughts — Confuses the target."
+  },
+  "counterStance": {
+   "id": "counterStance",
+   "name": "Parry Guard",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "neutral",
+   "target": "self",
+   "applyStatus": {
+    "id": "countering",
+    "chance": 100,
+    "duration": 1
+   },
+   "desc": "Settle into a parry stance — blocks the next enemy attack and ripostes for 80% of your offense."
+  },
+  "riposte": {
+   "id": "riposte",
+   "name": "Iron Riposte",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "metal",
+   "target": "self",
+   "applyStatus": {
+    "id": "countering",
+    "chance": 100,
+    "duration": 2
+   },
+   "stageMods": [
+    {
+     "stat": "def",
+     "delta": 1
+    }
+   ],
+   "desc": "A disciplined defensive stance — counter for 2 turns and DEF +1 stage."
+  },
+  "ambushGuardShort": {
+   "id": "ambushGuardShort",
+   "name": "Ambush Guard I",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "neutral",
+   "target": "self",
+   "applyStatus": {
+    "id": "ambushGuard1",
+    "chance": 100,
+    "duration": 99
+   },
+   "desc": "🎯 Ready a close watch — the first enemy to move ADJACENT (1 tile) on the enemy turn eats a free reaction strike. Once per enemy turn; re-cast after it fires."
+  },
+  "ambushGuardLong": {
+   "id": "ambushGuardLong",
+   "name": "Ambush Guard III",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "neutral",
+   "target": "self",
+   "applyStatus": {
+    "id": "ambushGuard3",
+    "chance": 100,
+    "duration": 99
+   },
+   "desc": "🎯 Ready a long watch — the first enemy to move within 3 tiles on the enemy turn eats a free reaction strike. Once per enemy turn; re-cast after it fires."
+  },
+  "grapplingHook": {
+   "id": "grapplingHook",
+   "name": "Grappling Hook",
+   "kind": "movement",
+   "range": 4,
+   "cost": 1,
+   "element": "neutral",
+   "target": "tile",
+   "teleport": true,
+   "freeAction": true,
+   "desc": "🪝 Teleport up to 4 tiles to an empty space. Free action — does not consume your move. Pairs with high ground."
+  },
+  "rainDance": {
+   "id": "rainDance",
+   "name": "Stormcaller's Chant",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "water",
+   "target": "self",
+   "setsWeather": {
+    "weatherType": "rain",
+    "duration": 4,
+    "name": "Rainstorm"
+   },
+   "desc": "Sing the clouds down — a 🌧 Rainstorm rolls in for 4 turns. Water +50%, Fire -50%."
+  },
+  "sunnyDay": {
+   "id": "sunnyDay",
+   "name": "Solar Hymn",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "fire",
+   "target": "self",
+   "setsWeather": {
+    "weatherType": "sun",
+    "duration": 4,
+    "name": "Sunny Day"
+   },
+   "desc": "Lift a hymn to the sun — the sky clears for 4 turns. Fire +50%, Water -50%."
+  },
+  "sandstormCall": {
+   "id": "sandstormCall",
+   "name": "Dust Tempest",
+   "kind": "ability",
+   "range": 0,
+   "cost": 3,
+   "element": "earth",
+   "target": "self",
+   "setsWeather": {
+    "weatherType": "sand",
+    "duration": 4,
+    "name": "Sandstorm"
+   },
+   "desc": "Stir the desert into fury — a 🏜 Dust Tempest scours all but Earth/Storm for 3 dmg/turn."
+  },
+  "mistmaker": {
+   "id": "mistmaker",
+   "name": "Veil of Fog",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "water",
+   "target": "self",
+   "setsWeather": {
+    "weatherType": "mist",
+    "duration": 4,
+    "name": "Mistveil"
+   },
+   "desc": "Draw a thick 🌫 fog across the field for 4 turns. All attacks +25% miss."
+  },
+  "eclipseRite": {
+   "id": "eclipseRite",
+   "name": "Eclipse Rite",
+   "kind": "ability",
+   "range": 0,
+   "cost": 3,
+   "element": "shadow",
+   "target": "self",
+   "setsWeather": {
+    "weatherType": "eclipse",
+    "duration": 4,
+    "name": "Eclipse"
+   },
+   "desc": "Call a 🌑 Eclipse — Shadow +50%, Light -50% for 4 turns."
+  },
+  "bloodmoonRite": {
+   "id": "bloodmoonRite",
+   "name": "Bloodmoon Rite",
+   "kind": "ability",
+   "range": 0,
+   "cost": 3,
+   "element": "blood",
+   "target": "self",
+   "setsWeather": {
+    "weatherType": "bloodmoon",
+    "duration": 4,
+    "name": "Bloodmoon"
+   },
+   "desc": "Summon the 🌕 Bloodmoon — attackers heal 20% of damage dealt for 4 turns."
+  },
+  "mindWarp": {
+   "id": "mindWarp",
+   "name": "Mind Warp",
+   "kind": "ability",
+   "range": 0,
+   "cost": 3,
+   "element": "psychic",
+   "target": "self",
+   "setsWeather": {
+    "weatherType": "mindRealm",
+    "duration": 4,
+    "name": "Mind Realm"
+   },
+   "desc": "Bend reality into the 🧠 Mind Realm — Magic +30%, status effects fail."
+  },
+  "enrage": {
+   "id": "enrage",
+   "name": "Enrage",
+   "kind": "ability",
+   "range": 2,
+   "cost": 1,
+   "element": "shadow",
+   "target": "enemy",
+   "applyStatus": {
+    "id": "rage",
+    "chance": 100,
+    "duration": 3
+   },
+   "desc": "Provoke the target — they must attack the nearest enemy and can only use attack moves (+3 ATK / -2 DEF, 3 turns)."
+  },
+  "taunt": {
+   "id": "taunt",
+   "name": "Goading Slight",
+   "kind": "ability",
+   "range": 2,
+   "cost": 1,
+   "element": "nature",
+   "target": "enemy",
+   "applyStatus": {
+    "id": "rage",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "A cutting insult — the target locks into Rage (must attack the nearest enemy) for 2 turns."
+  },
+  "outrage": {
+   "id": "outrage",
+   "name": "Berserker's Frenzy",
+   "kind": "attack",
+   "type": "physical",
+   "power": 38,
+   "range": 1,
+   "cost": 2,
+   "element": "fire",
+   "applyStatus": {
+    "id": "rage",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "A frenzied strike — 38 dmg. Locks YOU into Rage for 2 turns (can only attack closest enemy)."
+  },
+  "berserkerRoar": {
+   "id": "berserkerRoar",
+   "name": "Berserker Roar",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "blood",
+   "target": "self",
+   "applyStatus": {
+    "id": "rage",
+    "chance": 100,
+    "duration": 3
+   },
+   "stageMods": [
+    {
+     "stat": "atk",
+     "delta": 1
+    }
+   ],
+   "desc": "Embrace the frenzy — +1 ATK stage and 3 turns of Rage (must attack the nearest enemy)."
+  },
+  "erosion": {
+   "id": "erosion",
+   "name": "Erosion",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "earth",
+   "target": "self",
+   "destroysLocation": true,
+   "desc": "Shatters the active field — destroys whichever Location is on the board."
+  },
+  "dispelField": {
+   "id": "dispelField",
+   "name": "Dispel Field",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "wind",
+   "target": "self",
+   "destroysLocation": true,
+   "desc": "Cheaper field-spell removal — costs 1⚡ but provides no other benefit."
+  },
+  "severAwakening": {
+   "id": "severAwakening",
+   "name": "Sever Awakening",
+   "kind": "ability",
+   "range": 2,
+   "cost": 3,
+   "element": "light",
+   "target": "enemy",
+   "revertKalon": true,
+   "desc": "If target has Kalon Mode: revert their transformation (if active) and seal them — they can never awaken again this match. Only works on Kalon-capable units / heroes."
+  },
+  "happyDance": {
+   "id": "happyDance",
+   "name": "Happy Dance",
+   "kind": "ability",
+   "range": 2,
+   "cost": 1,
+   "element": "light",
+   "target": "enemy",
+   "applyStatus": {
+    "id": "happy",
+    "chance": 100,
+    "duration": 3
+   },
+   "desc": "Target becomes Happy — cannot attack you for 3 turns (still attacks other allies normally)."
+  },
+  "cheerfulCharm": {
+   "id": "cheerfulCharm",
+   "name": "Cheerful Charm",
+   "kind": "ability",
+   "range": 1,
+   "cost": 2,
+   "element": "light",
+   "target": "enemy",
+   "applyStatus": {
+    "id": "happy",
+    "chance": 100,
+    "duration": 4
+   },
+   "desc": "Single-target Happy for 4 turns — longer melee version."
+  },
+  "followMyLead": {
+   "id": "followMyLead",
+   "name": "Follow My Lead",
+   "kind": "ability",
+   "range": 2,
+   "cost": 2,
+   "element": "wind",
+   "target": "enemy",
+   "applyStatus": {
+    "id": "followLead",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "Target can only move TOWARD you and cannot attack anyone for 2 turns."
+  },
+  "pacifyingHymn": {
+   "id": "pacifyingHymn",
+   "name": "Pacifying Hymn",
+   "kind": "ability",
+   "range": 1,
+   "cost": 3,
+   "element": "light",
+   "target": "enemy",
+   "applyStatus": {
+    "id": "followLead",
+    "chance": 100,
+    "duration": 3
+   },
+   "desc": "Stronger Follow My Lead — locks the target onto you for 3 turns."
+  },
+  "xenobite": {
+   "id": "xenobite",
+   "name": "Xenobite",
+   "kind": "attack",
+   "type": "physical",
+   "power": 26,
+   "range": 1,
+   "cost": 1,
+   "element": "shadow",
+   "applyStatus": {
+    "id": "infected",
+    "chance": 70,
+    "duration": 3
+   },
+   "desc": "A parasitic bite — 70% chance to Infect for 3 turns."
+  },
+  "acidSpray": {
+   "id": "acidSpray",
+   "name": "Acid Spray",
+   "kind": "attack",
+   "type": "magic",
+   "power": 22,
+   "range": 2,
+   "cost": 1,
+   "element": "nature",
+   "applyStatus": {
+    "id": "infected",
+    "chance": 50,
+    "duration": 2
+   },
+   "applyStatuses": [
+    {
+     "id": "bleed",
+     "chance": 40,
+     "duration": 2
+    }
+   ],
+   "desc": "Caustic xeno-fluid — 50% Infect, 40% Bleed."
+  },
+  "hivecall": {
+   "id": "hivecall",
+   "name": "Hive Call",
+   "kind": "attack",
+   "type": "magic",
+   "power": 34,
+   "range": 3,
+   "cost": 2,
+   "element": "shadow",
+   "applyStatus": {
+    "id": "infected",
+    "chance": 60,
+    "duration": 3
+   },
+   "desc": "A psychic shriek — 34 dmg + 60% Infect (3t)."
+  },
+  "sporeCloud": {
+   "id": "sporeCloud",
+   "name": "Spore Cloud",
+   "kind": "ability",
+   "range": 1,
+   "cost": 2,
+   "element": "nature",
+   "target": "enemy",
+   "applyStatus": {
+    "id": "infected",
+    "chance": 100,
+    "duration": 4
+   },
+   "desc": "A guaranteed 4-turn Infection — no damage, but halves their stats hard."
+  },
+  "bless": {
+   "id": "bless",
+   "name": "Sanctify",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "light",
+   "target": "allAllies",
+   "applyStatus": {
+    "id": "blessed",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "Pour divine favor on every ally — +3 ATK / MAG / DEF / RES for 2 turns."
+  },
+  "bane": {
+   "id": "bane",
+   "name": "Hex of Withering",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "shadow",
+   "target": "allEnemies",
+   "applyStatus": {
+    "id": "cursed",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "Curse every enemy on the field — -3 ATK / MAG / DEF / RES for 2 turns."
+  },
+  "wish": {
+   "id": "wish",
+   "name": "Restoration",
+   "kind": "ability",
+   "range": 1,
+   "cost": 3,
+   "element": "light",
+   "target": "ally",
+   "healAmount": 35,
+   "desc": "Channel a tide of pure life — restore 35 HP to one ally."
+  },
+  "healingWord": {
+   "id": "healingWord",
+   "name": "Mending Whisper",
+   "kind": "ability",
+   "range": 3,
+   "cost": 0,
+   "element": "light",
+   "target": "ally",
+   "healAmount": 10,
+   "desc": "A whispered prayer — free 10 HP heal at long range."
+  },
+  "bellyDrum": {
+   "id": "bellyDrum",
+   "name": "Bloodfury Pact",
+   "kind": "ability",
+   "range": 0,
+   "cost": 0,
+   "element": "fire",
+   "target": "self",
+   "selfDamagePct": 0.5,
+   "applyStatus": {
+    "id": "strong",
+    "chance": 100,
+    "duration": 4
+   },
+   "desc": "Pay 50% of your current HP to enter a battle frenzy — +4 ATK for 4 turns."
+  },
+  "substitute": {
+   "id": "substitute",
+   "name": "Mirage Decoy",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "nature",
+   "target": "self",
+   "selfDamagePct": 0.25,
+   "applyStatus": {
+    "id": "protected",
+    "chance": 100,
+    "duration": 1
+   },
+   "desc": "Trade 25% HP for a shimmering decoy — fully immune to damage and status next turn cycle."
+  },
+  "sneakAttack": {
+   "id": "sneakAttack",
+   "name": "Flanking Strike",
+   "kind": "attack",
+   "type": "physical",
+   "power": 26,
+   "range": 1,
+   "cost": 1,
+   "element": "shadow",
+   "crit": 12,
+   "bonusIfAllyAdjacent": 0.5,
+   "desc": "A precise stab from the side — +50% damage when a friendly unit is adjacent to the target."
+  },
+  "doomMove": {
+   "id": "doomMove",
+   "name": "Mortal Sentence",
+   "kind": "ability",
+   "range": 2,
+   "cost": 4,
+   "element": "shadow",
+   "target": "enemy",
+   "accuracy": 90,
+   "applyStatus": {
+    "id": "doom",
+    "chance": 100,
+    "duration": 3
+   },
+   "desc": "⌛ Mark a target for death — they die when the 3-turn timer expires unless cleansed."
+  },
+  "toxicMove": {
+   "id": "toxicMove",
+   "name": "Necrotic Bloom",
+   "kind": "ability",
+   "range": 2,
+   "cost": 2,
+   "element": "poison",
+   "target": "enemy",
+   "accuracy": 90,
+   "applyStatus": {
+    "id": "toxic",
+    "chance": 100,
+    "duration": 4
+   },
+   "desc": "☢️ Plant a necrotic seed — damage RAMPS each turn (3, 6, 9, 12 HP)."
+  },
+  "mirrorImage": {
+   "id": "mirrorImage",
+   "name": "Phantom Veil",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "arcane",
+   "target": "self",
+   "applyStatus": {
+    "id": "mirror",
+    "chance": 100,
+    "duration": 2
+   },
+   "desc": "🪞 Conjure illusory duplicates — 50% dodge chance for 2 turns."
+  },
+  "reraiseMove": {
+   "id": "reraiseMove",
+   "name": "Soul Anchor",
+   "kind": "ability",
+   "range": 1,
+   "cost": 3,
+   "element": "light",
+   "target": "ally",
+   "applyStatus": {
+    "id": "reraise",
+    "chance": 100,
+    "duration": 5
+   },
+   "desc": "✨ Tether an ally's soul to the living world — first KO within 5 turns revives them at 50% HP."
+  },
+  "holdMonster": {
+   "id": "holdMonster",
+   "name": "Binding Sigil",
+   "kind": "ability",
+   "range": 3,
+   "cost": 3,
+   "element": "arcane",
+   "target": "enemy",
+   "accuracy": 90,
+   "applyStatus": {
+    "id": "stun",
+    "chance": 90,
+    "duration": 2
+   },
+   "desc": "🪡 Inscribe a binding rune in the air — 90% chance to Stun the target for 2 turns."
+  },
+  "tailwind": {
+   "id": "tailwind",
+   "name": "Stormwake",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "wind",
+   "target": "allAllies",
+   "applyStatus": {
+    "id": "haste",
+    "chance": 100,
+    "duration": 4
+   },
+   "desc": "🌬️ Summon a favorable gale — every ally gains Haste for 4 turns."
+  },
+  "spectralHaze": {
+   "id": "spectralHaze",
+   "name": "Spectral Haze",
+   "kind": "ability",
+   "range": 3,
+   "cost": 2,
+   "element": "shadow",
+   "target": "enemy",
+   "accuracy": 100,
+   "applyStatus": {
+    "id": "spectralHaze",
+    "chance": 100,
+    "duration": 3
+   },
+   "desc": "👻 Wreathe the target in haunted fog — for 3 turns EVERY attack it makes misses 100% of the time."
+  },
+  "disperse": {
+   "id": "disperse",
+   "name": "Disperse",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "wind",
+   "target": "self",
+   "accuracy": 100,
+   "clearsWeather": true,
+   "desc": "🌤 Slash through the sky — instantly ends any active weather card. Cheap counter to weather-control decks."
+  },
+  "disarmSweep": {
+   "id": "disarmSweep",
+   "name": "Disarm Sweep",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "metal",
+   "target": "self",
+   "accuracy": 100,
+   "clearsTraps": true,
+   "clearsTrapsRadius": 2,
+   "desc": "🪤 Sweep the dirt — disarms every enemy trap within 2 tiles. One of the few answers to a hand full of traps."
+  },
+  "greatPurge": {
+   "id": "greatPurge",
+   "name": "Great Purge",
+   "kind": "ability",
+   "range": 0,
+   "cost": 4,
+   "element": "light",
+   "target": "self",
+   "accuracy": 100,
+   "clearsTraps": true,
+   "clearsTrapsRadius": 0,
+   "desc": "☀ Holy detonation — disarms EVERY enemy trap on the board (whole field). Expensive, but resets a trap-locked match."
+  },
+  "reconPulse": {
+   "id": "reconPulse",
+   "name": "Recon Pulse",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "storm",
+   "target": "self",
+   "accuracy": 100,
+   "revealsTraps": true,
+   "desc": "🔍 Send out a ping — reveals every enemy trap on the board face-up for the rest of the match. Doesn't disarm; just lets you route around them."
+  },
+  "wreckingSwing": {
+   "id": "wreckingSwing",
+   "name": "Wrecking Swing",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "earth",
+   "target": "self",
+   "accuracy": 100,
+   "smashesWalls": true,
+   "smashesWallsRadius": 1,
+   "desc": "🧱 Mighty swing — destroys every enemy wall within 1 tile. The straightforward answer to wall-spam decks."
+  },
+  "shatterStrike": {
+   "id": "shatterStrike",
+   "name": "Shatter Strike",
+   "kind": "ability",
+   "range": 0,
+   "cost": 3,
+   "element": "earth",
+   "target": "self",
+   "accuracy": 100,
+   "smashesWalls": true,
+   "smashesWallsRadius": 2,
+   "desc": "🧱💥 Devastating ground slam — destroys every enemy wall within 2 tiles. Crushes deep wall stacks in one cast."
+  },
+  "cleansingStomp": {
+   "id": "cleansingStomp",
+   "name": "Cleansing Stomp",
+   "kind": "ability",
+   "range": 0,
+   "cost": 1,
+   "element": "nature",
+   "target": "self",
+   "accuracy": 100,
+   "clearsSurfaces": true,
+   "clearsSurfacesRadius": 1,
+   "desc": "🧹 Stomp the ground clean — wipes oil / fire / water / glass / mud within 1 tile. Walks your team through a surface stack safely."
+  },
+  "purifyingRing": {
+   "id": "purifyingRing",
+   "name": "Purifying Ring",
+   "kind": "ability",
+   "range": 0,
+   "cost": 3,
+   "element": "water",
+   "target": "self",
+   "accuracy": 100,
+   "clearsSurfaces": true,
+   "clearsSurfacesRadius": 3,
+   "desc": "🧹💧 Cascading wave — wipes every surface hazard within 3 tiles. Big AoE counter to surface-paint specialists."
+  },
+  "scanShot": {
+   "id": "scanShot",
+   "name": "Scan Shot",
+   "kind": "ability",
+   "range": 4,
+   "cost": 1,
+   "element": "storm",
+   "target": "enemy",
+   "accuracy": 100,
+   "scansTarget": true,
+   "desc": "🔍 Pulse-mark one enemy at range 4 — instantly reveals their type, faction, element, passives, moves, and full stats. Stays scanned for the whole match."
+  },
+  "reconWave": {
+   "id": "reconWave",
+   "name": "Recon Wave",
+   "kind": "ability",
+   "range": 0,
+   "cost": 2,
+   "element": "storm",
+   "target": "self",
+   "accuracy": 100,
+   "scansAllEnemies": true,
+   "scansRadius": 3,
+   "desc": "🔍 Send out a 3-tile recon wave — every enemy within is fully revealed for the rest of the match. Synergizes with weak-point comps."
+  },
+  "totalSurveillance": {
+   "id": "totalSurveillance",
+   "name": "Total Surveillance",
+   "kind": "ability",
+   "range": 0,
+   "cost": 3,
+   "element": "arcane",
+   "target": "self",
+   "accuracy": 100,
+   "scansAllEnemies": true,
+   "scansRadius": 0,
+   "desc": "🛰 Deploy a satellite ping — scans EVERY enemy unit + hero on the board. The ultimate intel move."
+  },
+  "dualSlice": {
+   "id": "dualSlice",
+   "name": "Dual Slice",
+   "kind": "attack",
+   "type": "physical",
+   "element": "none",
+   "cost": 2,
+   "range": 1,
+   "power": 55,
+   "accuracy": 95,
+   "crit": 10,
+   "dualHit": true,
+   "desc": "⚔️⚔️ Two arcing blade swings delivered in one fluid motion. Always strikes exactly twice — each hit rolls crits independently."
+  },
+  "doubleKick": {
+   "id": "doubleKick",
+   "name": "Double Kick",
+   "kind": "attack",
+   "type": "physical",
+   "element": "none",
+   "cost": 1,
+   "range": 1,
+   "power": 45,
+   "accuracy": 100,
+   "crit": 5,
+   "dualHit": true,
+   "desc": "🦵🦵 A swift two-kick combo that never misses. Guaranteed 2 hits — great for reliable chip damage."
+  },
+  "twinStrike": {
+   "id": "twinStrike",
+   "name": "Twin Strike",
+   "kind": "attack",
+   "type": "physical",
+   "element": "none",
+   "cost": 2,
+   "range": 2,
+   "power": 50,
+   "accuracy": 95,
+   "crit": 12,
+   "dualHit": true,
+   "desc": "⚡⚡ Two rapid strikes at mid-range, both rolls fully independent. Higher crit chance than Dual Slice."
+  },
+  "furySwipes": {
+   "id": "furySwipes",
+   "name": "Fury Swipes",
+   "kind": "attack",
+   "type": "physical",
+   "element": "none",
+   "cost": 2,
+   "range": 1,
+   "power": 30,
+   "accuracy": 85,
+   "crit": 5,
+   "multiHit": {
+    "min": 2,
+    "max": 5
+   },
+   "desc": "🐾 Relentless clawing frenzy — 2 to 5 hits per use, each rolled independently. Low power per claw, but 5-hit rolls are brutal."
+  },
+  "bulletSeed": {
+   "id": "bulletSeed",
+   "name": "Bullet Seed",
+   "kind": "attack",
+   "type": "physical",
+   "element": "nature",
+   "cost": 2,
+   "range": 3,
+   "power": 30,
+   "accuracy": 100,
+   "crit": 5,
+   "multiHit": {
+    "min": 2,
+    "max": 5
+   },
+   "desc": "🌱💥 Fires 2 to 5 nature seeds at range 3. Never misses — each seed deals damage independently."
+  },
+  "pinMissile": {
+   "id": "pinMissile",
+   "name": "Pin Missile",
+   "kind": "attack",
+   "type": "physical",
+   "element": "storm",
+   "cost": 2,
+   "range": 4,
+   "power": 28,
+   "accuracy": 90,
+   "crit": 8,
+   "multiHit": {
+    "min": 2,
+    "max": 5
+   },
+   "desc": "📌 A volley of razor-sharp needles fired at long range — 2 to 5 hits. Each spike rolls crits independently."
+  },
+  "doubleDragon": {
+   "id": "doubleDragon",
+   "name": "Double Dragon",
+   "kind": "attack",
+   "type": "magic",
+   "element": "arcane",
+   "cost": 3,
+   "range": 3,
+   "power": 65,
+   "accuracy": 90,
+   "crit": 15,
+   "dualHit": true,
+   "desc": "🐉🐉 Conjure twin dragon maws that snap twice in sequence. Both hits are magical; each can crit. Best magic dual-hit in the catalog."
+  },
+  "rockBlast": {
+   "id": "rockBlast",
+   "name": "Rock Blast",
+   "kind": "attack",
+   "type": "physical",
+   "element": "earth",
+   "cost": 2,
+   "range": 3,
+   "power": 32,
+   "accuracy": 90,
+   "crit": 5,
+   "multiHit": {
+    "min": 2,
+    "max": 5
+   },
+   "desc": "🪨 Hurls 2 to 5 jagged boulders in rapid succession. Breaks through barriers — each boulder is an independent earth hit."
+  }
+ }
+}

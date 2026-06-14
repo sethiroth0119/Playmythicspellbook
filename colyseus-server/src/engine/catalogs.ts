@@ -113,8 +113,8 @@ export const STATUS_EFFECTS: Record<string, StatusEffectDef> = {
   doom:       { id: 'doom',       name: 'Mortal Sentence', icon: '🪦', koOnExpire: true, desc: 'Dies on timer expire' },
   reraise:    { id: 'reraise',    name: 'Soul Anchor',  icon: '✨',  revivesOnKO: true, reviveAtPct: 0.5, desc: 'Revives at 50% on KO' },
   moxie:      { id: 'moxie',      name: 'Killer Instinct', icon: '⚔️', stackable: true, desc: '+2 ATK per stack' },
-  ambushGuard1: { id: 'ambushGuard1', name: 'Ambush Guard I', icon: '🎯', desc: 'Watch radius 1' },
-  ambushGuard3: { id: 'ambushGuard3', name: 'Ambush Guard III', icon: '🎯', desc: 'Watch radius 3' },
+  ambushGuard1: { id: 'ambushGuard1', name: 'Ambush Guard', icon: '🎯', desc: 'Watch radius 1' },
+  ambushGuard3: { id: 'ambushGuard3', name: 'Ambush Guard', icon: '🎯', desc: 'Watch radius 3' },
 
   // ───── Aggression ─────
   rage:       { id: 'rage',       name: 'Raged',        icon: '😡',  forceAttackNearest: true, atkMod: 3, defMod: -2, desc: 'Attack nearest, +3 ATK/-2 DEF' },

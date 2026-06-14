@@ -15,13 +15,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const SRC = join(ROOT, 'public', 'index.html');
 const OUT_DIR = join(ROOT, 'engine');
 const OUT = join(OUT_DIR, 'catalogs.gen.js');
+// Evaluated JSON copies for consumers that can't import the ESM module directly:
+// the CommonJS Colyseus server (bundled into its own src/ so it ships in the
+// fly.io image) and a general engine/ copy.
+const OUT_JSON = join(OUT_DIR, 'catalogs.gen.json');
+const OUT_JSON_SERVER = join(ROOT, 'colyseus-server', 'src', 'engine', 'catalogs.gen.json');
 
 // Pure-data catalogs the battle engine reads. All are top-level consts.
 // Order matters — a definition must precede anything that references it
@@ -70,3 +75,20 @@ const blocks = TARGETS.map((name) => {
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(OUT, header + blocks.join('\n\n') + '\n', 'utf8');
 console.log('→ wrote ' + OUT);
+
+// Evaluate the generated module and emit JSON for non-ESM consumers (the CJS
+// server). TYPE_CHART is an IIFE, so we eval rather than parse — the result is
+// pure data and JSON-serializable.
+const mod = await import(pathToFileURL(OUT).href + '?t=' + Date.now());
+const data = {};
+for (const name of TARGETS) data[name] = mod[name];
+const json = JSON.stringify(data, null, 1);
+writeFileSync(OUT_JSON, json, 'utf8');
+console.log('→ wrote ' + OUT_JSON);
+try {
+  mkdirSync(dirname(OUT_JSON_SERVER), { recursive: true });
+  writeFileSync(OUT_JSON_SERVER, json, 'utf8');
+  console.log('→ wrote ' + OUT_JSON_SERVER + '  (bundled into the server build)');
+} catch (e) {
+  console.warn('  (skipped server JSON copy: ' + e.message + ')');
+}

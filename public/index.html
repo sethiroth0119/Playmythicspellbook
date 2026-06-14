@@ -20550,6 +20550,10 @@
   #camp-node-picker-host .cnp-tag { font-size:0.6rem; letter-spacing:0.1em; text-transform:uppercase; color:#9bb265; border:1px solid rgba(155,178,101,0.5); border-radius:4px; padding:1px 5px; }
   #camp-node-picker-host .cnp-meta { font-size:0.7rem; color:#8a96a8; font-family:'JetBrains Mono','Consolas',monospace; }
   #camp-node-picker-host .cnp-card button { margin-top:auto; }
+  #camp-node-picker-host .cnp-input { width:100%; box-sizing:border-box; padding:0.6rem 0.8rem; border-radius:8px; border:1px solid rgba(212,175,55,0.5); background:rgba(8,5,16,0.6); color:#ffe9c0; font-family:'Cinzel',serif; font-size:1.05rem; letter-spacing:0.02em; }
+  #camp-node-picker-host .cnp-input:focus { outline:none; border-color:var(--gold-bright,#f5d76e); box-shadow:0 0 0 2px rgba(212,175,55,0.25); }
+  .recon-rename-btn { background:rgba(120,150,200,0.14); border:1px solid rgba(120,150,200,0.4); color:#bcd0ea; border-radius:6px; cursor:pointer; font-size:0.78rem; line-height:1; padding:2px 7px; vertical-align:middle; margin-left:4px; transition:border-color 0.12s, background 0.12s; }
+  .recon-rename-btn:hover { border-color:var(--gold-bright,#f5d76e); color:#ffe6a0; background:rgba(212,175,55,0.15); }
   #camp-node-picker-host .cnp-emp-stat { font-size:0.82rem; color:#cbd6e6; background:rgba(74,222,128,0.1); border:1px solid rgba(74,222,128,0.35); border-radius:8px; padding:0.5rem 0.7rem; margin-bottom:0.7rem; }
   #camp-node-picker-host .cnp-emp-stat b { color:#9be0c4; }
   /* Trade route line on the camp banner */
@@ -34994,6 +34998,7 @@ async function cloudSyncProfile() {
       __campSurvivorId__:    (typeof Profile.campSurvivorId === 'string') ? Profile.campSurvivorId : null,
       // 🏳 District Node the camp is registered to (Reconstruction Network).
       __campNodeId__:        (typeof Profile.campNodeId === 'string') ? Profile.campNodeId : null,
+      __campName__:          (typeof Profile.campName === 'string') ? Profile.campName : null,
       __campContrib__:       (typeof Profile.campContrib === 'number') ? Profile.campContrib : 0,
       __campPrestige__:      (typeof Profile.campPrestige === 'number') ? Profile.campPrestige : 0,
       __campWorkforce__:     (Profile.campWorkforce && typeof Profile.campWorkforce === 'object') ? Profile.campWorkforce : {},
@@ -35883,6 +35888,7 @@ async function cloudFetchProfile() {
       if (typeof f.__campSurvivorId__ === 'string') Profile.campSurvivorId = f.__campSurvivorId__;
       // 🏳 Camp's registered District Node + Reconstruction Network state.
       if (typeof f.__campNodeId__ === 'string') Profile.campNodeId = f.__campNodeId__;
+      if (typeof f.__campName__ === 'string' && f.__campName__) Profile.campName = f.__campName__;
       if (typeof f.__campContrib__ === 'number') Profile.campContrib = f.__campContrib__;
       if (typeof f.__campPrestige__ === 'number') Profile.campPrestige = f.__campPrestige__;
       if (f.__campWorkforce__ && typeof f.__campWorkforce__ === 'object') Profile.campWorkforce = f.__campWorkforce__;
@@ -56683,14 +56689,10 @@ function _baseThreat() {
   } catch (e) { return 0; }
 }
 function _baseAlerts() {
-  // Real alerts: world event → camp shortages → raider threat.
+  // Real camp alerts: shortages → raider threat. (World events intentionally
+  // omitted here — they're hidden on the camp / settlement screens.)
   try {
     const out = [];
-    const w = (typeof currentWorldEvent === 'function') ? currentWorldEvent() : null;
-    if (w && w.ev) {
-      out.push({ sev: w.sev >= 4 ? 'crit' : (w.sev >= 3 ? 'warn' : 'info'), time: 'EVENT',
-        body: '🌐 <em>' + (w.ev.name || 'World Event') + '</em> — ' + (w.ev.begin || '') });
-    }
     const cst = (typeof campStatus === 'function') ? campStatus() : { out: [], low: [] };
     cst.out.forEach(k => out.push({ sev: 'crit', time: 'CAMP',
       body: '☠ Out of <em>' + ((_SALVAGE_BY_ID[k] || {}).name || k) + '</em> — ' + ((typeof _CAMP_SHORTAGE_FX !== 'undefined' && _CAMP_SHORTAGE_FX[k]) || 'shortage') }));
@@ -58863,8 +58865,9 @@ function mountWorldEventBanner() {
   try {
     const ID = 'world-event-banner';
     let el = document.getElementById(ID);
-    // Hide on battle + territory wars (War Map has its own HUD).
-    if (typeof App !== 'undefined' && (App.screen === 'battle' || App.screen === 'territoryWars')) { if (el) el.remove(); return; }
+    // Hide on battle + territory wars (own HUD) + the camp / settlement screens
+    // (the Reconstruction Settlement + bunker have their own situation systems).
+    if (typeof App !== 'undefined' && (App.screen === 'battle' || App.screen === 'territoryWars' || App.screen === 'camp' || App.screen === 'campOps' || App.screen === 'reconstruction')) { if (el) el.remove(); return; }
     // Admin can force-pin an event via App._weForceId (set by weForce()).
     let w = currentWorldEvent();
     if ((typeof App !== 'undefined' && App._weForceId) && (typeof WORLD_EVENTS !== 'undefined')) {
@@ -144139,6 +144142,38 @@ function openCampNodePicker() {
     </div></div></div>`;
 }
 function closeCampNodePicker() { const h = document.getElementById('camp-node-picker-host'); if (h) h.innerHTML = ''; }
+// 🏷 Name your settlement — saved on Profile.campName, cloud-synced cross-device,
+// and pushed to the global tw_camp_registrations row so every player sees it on
+// the District Nodes map + Civilization Network.
+function openCampRename() {
+  let host = document.getElementById('camp-node-picker-host');
+  if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
+  const cur = (Profile.campName && String(Profile.campName).trim()) ? String(Profile.campName) : (typeof _campRegName === 'function' ? _campRegName() : 'Camp Phoenix');
+  host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog" style="width:min(440px,96vw)">
+    <div class="cnp-modal-head"><h3>Name Your Settlement</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
+    <div class="cnp-modal-body">
+      <div class="hint" style="margin-bottom:10px">What do the survivors call this place? This name shows on the District Nodes map + Civilization Network for <b>every player</b>.</div>
+      <input id="camp-rename-input" class="cnp-input" maxlength="28" value="${escapeHtml(cur)}" placeholder="Settlement name">
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn-primary" style="flex:1" data-act="camp-rename-save">Rename</button>
+        <button class="btn-mini" data-act="camp-picker-close">Cancel</button>
+      </div>
+    </div></div></div>`;
+  setTimeout(() => { const i = document.getElementById('camp-rename-input'); if (i) { try { i.focus(); i.select(); } catch (e) {} i.addEventListener('keydown', (e) => { if (e.key === 'Enter') renameCampSettlement(); }); } }, 30);
+}
+function renameCampSettlement() {
+  const i = document.getElementById('camp-rename-input');
+  const v = i ? String(i.value || '').trim().slice(0, 28) : '';
+  if (!v) { try { showToast('Enter a name for your settlement.'); } catch (e) {} return; }
+  Profile.campName = v;
+  try { saveProfile(); } catch (e) {}
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
+  try { tw_cloudUpsertCampReg(); } catch (e) {}                       // push the new name to the global row
+  try { App._twNodeCamps = {}; App._twAllCamps = null; } catch (e) {} // bust caches so the new name shows everywhere
+  try { showToast(`🏷 Settlement renamed to “${v}”.`, 2600); } catch (e) {}
+  closeCampNodePicker();
+  try { render(); } catch (e) {}
+}
 // One-time delegated handler for every camp↔node control (installed once → no leak).
 try {
   if (!window.__campNodeWired) {
@@ -144149,6 +144184,8 @@ try {
       switch (t.getAttribute('data-act')) {
         case 'camp-connect-node':
         case 'camp-change-node': openCampNodePicker(); break;
+        case 'camp-rename': openCampRename(); break;
+        case 'camp-rename-save': renameCampSettlement(); break;
         case 'camp-picker-close': if (e.target === t || (t.classList && t.classList.contains('cnp-x'))) closeCampNodePicker(); break;
         case 'camp-register': { const nid = t.getAttribute('data-node'); if (nid && registerCampToNode(nid)) { closeCampNodePicker(); try { render(); } catch (err) {} } break; }
         case 'camp-unregister': unregisterCamp(); closeCampNodePicker(); try { render(); } catch (err) {} break;
@@ -144619,7 +144656,7 @@ function renderReconstruction() {
   root.innerHTML = `<div class="recon-page">
     <div class="recon-topbar">
       <div class="recon-id">
-        <div class="recon-name">${escapeHtml(_campRegName())}</div>
+        <div class="recon-name">${escapeHtml(_campRegName())} <button class="recon-rename-btn" data-act="camp-rename" title="Name your settlement">✎</button></div>
         <div class="recon-sub"><span class="recon-dot ${node ? 'ok' : 'bad'}"></span> ${node ? `REGISTERED · ${escapeHtml(node.name)}` : `<span data-act="camp-connect-node" style="color:#cf5a3a;cursor:pointer;text-decoration:underline">⚠ CONNECT TO A NODE</span>`}</div>
       </div>
       <div class="recon-toggle"><button class="recon-tab ${_netView ? '' : 'is-active'}" data-act="recon-console">CAMP CONSOLE</button><button class="recon-tab ${_netView ? 'is-active' : ''}" data-act="recon-network">NETWORK</button></div>

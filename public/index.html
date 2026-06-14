@@ -20567,6 +20567,11 @@
   .esn-bb-reward { display:inline-block; margin-top:7px; font-size:0.7rem; color:#9be0c4; background:rgba(74,222,128,0.12); border:1px solid rgba(74,222,128,0.45); border-radius:999px; padding:2px 9px; }
   .esn-bb-cta { display:block; width:100%; margin-top:10px; padding:0.55rem; border-radius:9px; border:1px solid var(--gold,#d4af37); background:linear-gradient(180deg,#caa23e,#7a5a18); color:#1a1206; font-weight:800; font-family:'Cinzel',serif; letter-spacing:0.04em; cursor:pointer; }
   .esn-bb-cta:hover { filter:brightness(1.08); }
+  /* live ad pinned to the front of the node drawer (above the tabs) */
+  .tw-drawer-frontad { border-bottom:1px solid rgba(120,150,200,0.12); }
+  .tw-drawer-frontad .esn-billboard { margin-top:0.55rem; }
+  .esn-live-note { margin:0.55rem 0.75rem; padding:0.5rem 0.7rem; border-radius:9px; border:1px solid rgba(74,222,128,0.35); background:rgba(74,222,128,0.08); color:#9be0c4; font-size:0.78rem; line-height:1.4; }
+  .esn-live-note b { color:#ffe6b0; }
   .esn-mng-split { font-size:0.62rem; color:#9bb265; padding:0 0.75rem 0.4rem; letter-spacing:0.04em; }
   .esn-mng-list { display:flex; flex-direction:column; gap:0.4rem; padding:0 0.75rem; }
   .esn-mng-row { background:rgba(20,28,48,0.5); border:1px solid rgba(120,150,200,0.2); border-radius:8px; padding:0.5rem 0.6rem; }
@@ -144726,6 +144731,25 @@ function _esnMyCorpId() { try { const c = _twPlayerCorp(); return c ? c.id : nul
 function _esnNodeOwnerCorp(nodeId) { try { const o = _twState().ownedNodes[nodeId]; return (o && o.ownerCorpId) || null; } catch (e) { return null; } }
 function _esnCanManageNode(nodeId) { const oc = _esnNodeOwnerCorp(nodeId); const mine = _esnMyCorpId(); return _esnAdmin() || !!(oc && mine && oc === mine); }
 function _esnSafeUrl(u) { try { const x = new URL(String(u)); return (x.protocol === 'http:' || x.protocol === 'https:') ? x.href : ''; } catch (e) { return ''; } }
+// Best-effort: turn a known image-host SHARE PAGE url into a DIRECT image url,
+// and flag share-page urls we can't convert (those serve HTML, so the
+// billboard <img> would 404 and show nothing). note: '' ok · 'converted' ·
+// 'imgbb-page' (block — user must paste the i.ibb.co direct link instead).
+function _esnNormalizeMedia(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return { url: '', note: '' };
+  let u; try { u = new URL(s); } catch (e) { return { url: s, note: '' }; }
+  const host = u.hostname.replace(/^www\./, '');
+  const seg = u.pathname.split('/').filter(Boolean);
+  // imgur single-image page (imgur.com/AbCdE) → direct image (i.imgur.com/AbCdE.png)
+  if (host === 'imgur.com' && seg.length === 1 && !/^(a|gallery|t|user)$/i.test(seg[0])) {
+    return { url: 'https://i.imgur.com/' + seg[0].replace(/\.[a-z0-9]+$/i, '') + '.png', note: 'converted' };
+  }
+  // imgbb SHARE page (ibb.co/<id>) is HTML — the direct link lives on i.ibb.co
+  // and its hash isn't derivable from the page slug, so we can't convert it.
+  if (host === 'ibb.co') return { url: s, note: 'imgbb-page' };
+  return { url: s, note: '' };
+}
 function _esnPrice(ad) { const c = (ad && ad.price_cents) | 0; return '$' + (c / 100).toFixed(2); }
 // ── cloud (mirrors the tw_* graceful pattern; silent no-op if table absent) ──
 async function tw_cloudFetchNodeAd(nodeId) {
@@ -144740,7 +144764,7 @@ async function tw_cloudFetchNodeAd(nodeId) {
     if (error) return null;
     App._twNodeAd = App._twNodeAd || {};
     App._twNodeAd[nodeId] = { at: Date.now(), ad: (data && data[0]) || null };
-    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId && App._twNodeTab === 'sponsor') { try { render(); } catch (e) {} }
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { try { render(); } catch (e) {} }
     return data;
   } catch (e) { return null; }
 }
@@ -144789,6 +144813,38 @@ function _esnTrackView(adId) {
   App._esnViewed[adId] = 1;
   try { tw_cloudTrackAd(adId, 'view'); } catch (e) {}
 }
+// ── the live sponsor billboard for a node (active ad only; '' if none).
+// Rendered at the FRONT of the node drawer so every visitor sees it. A broken
+// media url hides the <img> and reveals a branded placeholder, so the ad's
+// text/CTA always show even when the image won't load.
+function _esnBillboardHtml(node) {
+  const nodeId = node && node.id;
+  const ad = (nodeId && App._twNodeAd && App._twNodeAd[nodeId] && App._twNodeAd[nodeId].ad) || null;
+  if (!ad) return '';
+  try { _esnTrackView(ad.id); } catch (e) {}
+  const safe = _esnSafeUrl(ad.media_url);
+  const nm = escapeHtml((ad.sponsor_name || 'AD').toUpperCase());
+  const onerr = "this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';";
+  let media;
+  if (ad.ad_type === 'video' && safe) {
+    media = `<video class="esn-bb-media" src="${escapeHtml(safe)}" autoplay muted loop playsinline onerror="${onerr}"></video><div class="esn-bb-media esn-bb-ph" style="display:none">SPONSOR // ${nm}</div>`;
+  } else if (safe) {
+    media = `<img class="esn-bb-media" src="${escapeHtml(safe)}" alt="${escapeHtml(ad.sponsor_name || 'Sponsor')}" loading="lazy" decoding="async" onerror="${onerr}"><div class="esn-bb-media esn-bb-ph" style="display:none">SPONSOR // ${nm}</div>`;
+  } else {
+    media = `<div class="esn-bb-media esn-bb-ph">SPONSOR // ${nm}</div>`;
+  }
+  const cta = escapeHtml(ad.cta_label || 'Visit Sponsor');
+  return `<div class="esn-billboard">
+    <div class="esn-bb-tag">SPONSORED</div>
+    ${media}
+    <div class="esn-bb-body">
+      <div class="esn-bb-sponsor">${escapeHtml(ad.sponsor_name || 'Sponsor')}</div>
+      <div class="esn-bb-caption">${escapeHtml(ad.caption || '')}</div>
+      ${ad.reward_tag ? `<div class="esn-bb-reward">🎁 ${escapeHtml(ad.reward_tag)}</div>` : ''}
+      ${_esnSafeUrl(ad.target_link) ? `<button class="esn-bb-cta" data-act="esn-visit" data-ad="${escapeHtml(ad.id)}">${cta} ↗</button>` : ''}
+    </div>
+  </div>`;
+}
 // ── billboard + management UI (returned for the node drawer SPONSOR tab) ──
 function _esnSponsorHtml(node) {
   const nodeId = node.id;
@@ -144813,21 +144869,9 @@ function _esnSponsorHtml(node) {
   const ad = (App._twNodeAd && App._twNodeAd[nodeId] && App._twNodeAd[nodeId].ad) || null;
   let billboard;
   if (ad) {
-    _esnTrackView(ad.id);
-    const media = ad.ad_type === 'video' && _esnSafeUrl(ad.media_url)
-      ? `<video class="esn-bb-media" src="${escapeHtml(_esnSafeUrl(ad.media_url))}" autoplay muted loop playsinline></video>`
-      : (_esnSafeUrl(ad.media_url) ? `<img class="esn-bb-media" src="${escapeHtml(_esnSafeUrl(ad.media_url))}" alt="${escapeHtml(ad.sponsor_name || 'Sponsor')}" loading="lazy" decoding="async">` : `<div class="esn-bb-media esn-bb-ph">SPONSOR // ${escapeHtml((ad.sponsor_name || 'AD').toUpperCase())}</div>`);
-    const cta = escapeHtml(ad.cta_label || 'Visit Sponsor');
-    billboard = `<div class="esn-billboard">
-      <div class="esn-bb-tag">SPONSORED</div>
-      ${media}
-      <div class="esn-bb-body">
-        <div class="esn-bb-sponsor">${escapeHtml(ad.sponsor_name || 'Sponsor')}</div>
-        <div class="esn-bb-caption">${escapeHtml(ad.caption || '')}</div>
-        ${ad.reward_tag ? `<div class="esn-bb-reward">🎁 ${escapeHtml(ad.reward_tag)}</div>` : ''}
-        ${_esnSafeUrl(ad.target_link) ? `<button class="esn-bb-cta" data-act="esn-visit" data-ad="${escapeHtml(ad.id)}">${cta} ↗</button>` : ''}
-      </div>
-    </div>`;
+    // The live billboard renders at the TOP of the node drawer (front of the
+    // modal). Here we just confirm it's live so this tab stays management-only.
+    billboard = `<div class="esn-live-note">✓ <b>${escapeHtml(ad.sponsor_name || 'Sponsor')}</b> is live — shown at the top of this node.</div>`;
   } else {
     billboard = `<div class="esn-billboard empty"><div class="esn-bb-ph">AD SPACE AVAILABLE</div>
       <div class="esn-bb-body"><div class="esn-bb-caption">No sponsor for ${escapeHtml(node.name)} yet.${canManage ? ' List this slot below.' : ''}</div></div></div>`;
@@ -144896,10 +144940,17 @@ function saveAdDraft() {
   const nodeId = g('esn-f-node'); if (!nodeId) return;
   const sponsor = g('esn-f-sponsor').trim();
   const link = _esnSafeUrl(g('esn-f-link'));
-  const media = g('esn-f-media').trim();
+  let media = g('esn-f-media').trim();
   if (!sponsor) { showToast('Sponsor name is required.'); return; }
   if (!link) { showToast('A valid https:// sponsor link is required.'); return; }
   if (!media) { showToast('An image or video URL is required.'); return; }
+  // Catch share-page urls that aren't the actual image (they'd render blank).
+  const _nm = _esnNormalizeMedia(media);
+  if (_nm.note === 'imgbb-page') {
+    showToast('⚠ That imgbb link is the share PAGE, not the image. Open it → right-click the picture → "Copy image address" (starts with i.ibb.co/…) and paste THAT.', 6500);
+    return;
+  }
+  if (_nm.note === 'converted') { media = _nm.url; showToast('🔗 Converted to a direct image link.', 2200); }
   const ad = {
     id: g('esn-f-id') || undefined,
     node_id: nodeId,
@@ -146473,7 +146524,10 @@ function renderTerritoryWars() {
     `;
 
     // 📢 Sponsor tab — Ethos Sponsor Network billboard + owner/admin management.
+    // (Calling _esnSponsorHtml also kicks off the active-ad + manage fetches.)
     const sponsorHtml = (typeof _esnSponsorHtml === 'function') ? _esnSponsorHtml(selNode) : '';
+    // The live sponsor renders on the FRONT of the modal, above the tabs.
+    const frontBillboard = (typeof _esnBillboardHtml === 'function') ? _esnBillboardHtml(selNode) : '';
 
     // Admin tab — map-editing controls are admin-only (players get the map +
     // attack/capture, never the New Node / delete / publish tools).
@@ -146541,6 +146595,7 @@ function renderTerritoryWars() {
           <div class="tw-drawer-node-coords">${escapeHtml(selNode.id)} · ${_dSector ? escapeHtml(_dSector.id) : '??'}</div>
           <div class="tw-drawer-node-sub">${escapeHtml(selNode.purpose||selNode.type||'PRN')} — ${yieldEntries.map(([k])=>k).join(', ')||'multi-resource'} production · <span style="color:${stability>=80?'#4d9e68':stability>=50?'#c89428':'#b84e2c'}">${_statusStr}</span></div>
         </div>
+        ${frontBillboard ? `<div class="tw-drawer-frontad">${frontBillboard}</div>` : ''}
         <div class="tw-drawer-tabs">
           <button class="tw-drawer-tab ${_ndtab==='overview'?'is-active':''}" data-ndtab="overview">OVERVIEW</button>
           <button class="tw-drawer-tab ${_ndtab==='campaigns'?'is-active':''}" data-ndtab="campaigns">CAMPAIGNS${_ah.length?` <span class="tw-drawer-tab-badge">${_ah.length}</span>`:''}</button>

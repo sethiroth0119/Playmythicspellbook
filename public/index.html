@@ -20569,6 +20569,71 @@
   #camp-node-picker-host .convoy-result { text-align:center; font-family:'Cinzel',serif; font-size:1.5rem; font-weight:800; letter-spacing:0.08em; padding:0.6rem; }
   #camp-node-picker-host .convoy-result.win { color:#9be0c4; }
   #camp-node-picker-host .convoy-result.lose { color:#ffb8a0; }
+  /* 🏗 RECONSTRUCTION SETTLEMENT — Camp Console screen */
+  .recon-page { min-height:100vh; background:radial-gradient(ellipse at 50% -10%, rgba(40,52,84,0.4), transparent 60%), #080b14; color:#cdd6e6; font-family:'JetBrains Mono','Consolas',monospace; padding:0; }
+  .recon-topbar { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; padding:0.7rem 1.1rem; border-bottom:1px solid rgba(120,150,200,0.18); background:linear-gradient(180deg,rgba(22,30,50,0.7),rgba(10,14,24,0.5)); }
+  .recon-name { font-family:'Cinzel',serif; font-weight:800; font-size:1.25rem; color:#f0e6d0; letter-spacing:0.04em; }
+  .recon-sub { font-size:0.66rem; letter-spacing:0.12em; color:#7d8aa0; margin-top:2px; }
+  .recon-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+  .recon-dot.ok { background:#9bb265; box-shadow:0 0 7px #9bb265; } .recon-dot.bad { background:#cf5a3a; box-shadow:0 0 7px #cf5a3a; }
+  .recon-toggle { display:flex; border:1px solid rgba(120,150,200,0.3); border-radius:8px; overflow:hidden; }
+  .recon-tab { background:transparent; border:0; color:#8a96a8; font-family:inherit; font-size:0.7rem; font-weight:700; letter-spacing:0.1em; padding:0.45rem 0.9rem; cursor:pointer; }
+  .recon-tab.is-active { background:linear-gradient(180deg,#caa23e,#7a5a18); color:#1a1206; }
+  .recon-resbar { display:flex; gap:0.4rem; flex-wrap:wrap; }
+  .recon-res { background:rgba(20,28,48,0.6); border:1px solid rgba(120,150,200,0.2); border-radius:7px; padding:0.3rem 0.6rem; min-width:62px; text-align:center; }
+  .recon-res .rr-k { display:block; font-size:0.54rem; letter-spacing:0.12em; color:#6b7790; }
+  .recon-res .rr-v { display:block; font-weight:800; font-size:0.95rem; color:#e8eef7; }
+  .recon-res .rr-v.warn { color:#ffb86b; }
+  .recon-meta { display:flex; gap:0.9rem; } .recon-meta .rm-k { font-size:0.54rem; letter-spacing:0.12em; color:#6b7790; } .recon-meta .rm-v { font-weight:800; font-size:1.05rem; color:#caa23e; font-family:'Cinzel',serif; }
+  .recon-body { display:grid; grid-template-columns:280px 1fr 300px; gap:0.8rem; padding:0.9rem; align-items:start; }
+  @media (max-width:1200px){ .recon-body { grid-template-columns:1fr; } }
+  .recon-panel, .recon-center, .recon-right { background:rgba(16,22,38,0.55); border:1px solid rgba(120,150,200,0.16); border-radius:12px; margin-bottom:0.8rem; overflow:hidden; }
+  .recon-ph { display:flex; align-items:center; justify-content:space-between; padding:0.6rem 0.9rem; border-bottom:1px solid rgba(120,150,200,0.14); }
+  .recon-ph h2 { margin:0; font-family:'Cinzel',serif; font-size:0.92rem; color:#e6dcc0; letter-spacing:0.06em; text-transform:uppercase; }
+  .recon-tag { font-size:0.56rem; letter-spacing:0.14em; color:#6b7790; }
+  .recon-vitals { padding:0.7rem 0.9rem; display:flex; flex-direction:column; gap:0.7rem; }
+  .recon-vital { border-left:3px solid var(--c); padding-left:0.6rem; }
+  .recon-vital .rv-top { display:flex; align-items:center; justify-content:space-between; }
+  .recon-vital .rv-code { font-size:0.54rem; letter-spacing:0.16em; color:var(--c); }
+  .recon-vital .rv-name { font-weight:800; font-size:0.9rem; color:#e8eef7; }
+  .recon-vital .rv-num { font-family:'Cinzel',serif; font-weight:800; font-size:1.3rem; color:var(--c); }
+  .recon-meter { display:flex; gap:2px; margin:5px 0 3px; }
+  .recon-seg { flex:1; height:8px; border-radius:1px; background:rgba(120,150,200,0.12); }
+  .recon-seg.on { background:var(--c); box-shadow:0 0 4px var(--c); }
+  .recon-meter.crit .recon-seg.on { animation:cnb-pulse 1s ease-in-out infinite; }
+  .recon-vital .rv-state { font-size:0.54rem; letter-spacing:0.1em; color:#6b7790; }
+  .recon-pops { padding:0.6rem 0.9rem; display:grid; grid-template-columns:1fr 1fr; gap:0.45rem 0.8rem; }
+  .recon-popbar .rp-row { display:flex; justify-content:space-between; font-size:0.68rem; color:#aeb8c8; } .recon-popbar .rp-row b { color:#e8eef7; }
+  .recon-popbar .rp-t { height:4px; background:rgba(120,150,200,0.12); border-radius:999px; margin-top:2px; overflow:hidden; } .recon-popbar .rp-t i { display:block; height:100%; background:#7d9cb6; }
+  .recon-center { display:flex; flex-direction:column; }
+  .recon-stage { padding:0.9rem; }
+  .recon-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0.6rem; }
+  .recon-room { position:relative; min-height:118px; border-radius:8px; border:1px solid color-mix(in srgb, var(--glow) 40%, transparent); background:rgba(10,14,24,0.6); overflow:hidden; display:flex; align-items:center; justify-content:center; }
+  .recon-room .rr-int { position:absolute; inset:0; background:repeating-linear-gradient(135deg, rgba(120,150,200,0.04) 0 8px, transparent 8px 16px); }
+  .recon-room.rock { cursor:pointer; border-style:dashed; transition:transform 0.12s, box-shadow 0.12s, border-color 0.12s; }
+  .recon-room.rock:hover { transform:translateY(-2px); border-color:var(--glow); box-shadow:0 0 16px color-mix(in srgb, var(--glow) 45%, transparent); }
+  .recon-room .rr-rocklabel { position:relative; text-align:center; color:#7d8aa0; font-size:0.62rem; letter-spacing:0.06em; line-height:1.7; }
+  .recon-room .rr-rocklabel b { display:block; color:var(--glow); font-size:0.78rem; letter-spacing:0.16em; }
+  .recon-room.built { border-style:solid; box-shadow:inset 0 0 26px color-mix(in srgb, var(--glow) 18%, transparent); }
+  .recon-room.built .rr-cap { position:absolute; left:0; right:0; bottom:0; padding:0.45rem 0.6rem; background:linear-gradient(0deg, rgba(8,11,20,0.92), transparent); }
+  .recon-room.built .rr-cap .nm { font-weight:800; color:#e8eef7; font-size:0.8rem; }
+  .recon-room.built .rr-cap .fn { font-size:0.58rem; color:var(--glow); letter-spacing:0.04em; }
+  .recon-onboard { background:rgba(40,32,12,0.32); border:1px solid rgba(212,175,55,0.35); border-radius:10px; padding:0.8rem 1rem; margin-bottom:0.9rem; }
+  .recon-obtitle { font-family:'Cinzel',serif; font-weight:800; color:#ffe6b0; letter-spacing:0.08em; text-transform:uppercase; font-size:0.9rem; margin-bottom:0.5rem; }
+  .recon-obsteps { display:flex; gap:1.2rem; flex-wrap:wrap; }
+  .recon-obstep { font-size:0.74rem; color:#7d8aa0; display:flex; align-items:center; gap:0.4rem; }
+  .recon-obstep.now { color:#ffe6b0; } .recon-obstep.done { color:#9bb265; }
+  .recon-obn { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; border:1px solid currentColor; font-size:0.62rem; font-weight:800; }
+  .recon-obstep.done .recon-obn { background:#9bb265; color:#0a1a0a; border-color:#9bb265; }
+  .recon-soon { padding:1rem; color:#7d8aa0; font-size:0.78rem; line-height:1.6; }
+  /* reclaim modal extras (reuse the cnp host) */
+  #camp-node-picker-host .recon-reclaim-hero { background:repeating-linear-gradient(135deg, rgba(120,150,200,0.06) 0 10px, transparent 10px 20px); border:1px solid rgba(120,150,200,0.25); border-radius:8px; padding:1.4rem; text-align:center; color:#8a96a8; font-size:0.7rem; letter-spacing:0.12em; }
+  #camp-node-picker-host .recon-reclaim-title { font-family:'Cinzel',serif; font-weight:800; color:#e8eef7; font-size:1.05rem; margin-top:10px; }
+  #camp-node-picker-host .recon-label { font-size:0.58rem; letter-spacing:0.14em; color:#6b7790; text-transform:uppercase; margin-bottom:4px; }
+  #camp-node-picker-host .recon-reqs { display:flex; gap:0.4rem; flex-wrap:wrap; }
+  #camp-node-picker-host .recon-req { font-size:0.7rem; padding:2px 8px; border-radius:6px; border:1px solid; }
+  #camp-node-picker-host .recon-req.met { color:#9be0c4; border-color:rgba(74,222,128,0.5); background:rgba(74,222,128,0.1); }
+  #camp-node-picker-host .recon-req.short { color:#ffb8a0; border-color:rgba(232,93,60,0.5); background:rgba(232,93,60,0.1); }
   .tw-nd-actions { padding:0.5rem 1rem 0.8rem; display:flex; flex-direction:column; gap:0.4rem; }
   .tw-nd-action-row { display:flex; gap:0.4rem; }
   /* Bottom status bar */
@@ -34881,6 +34946,7 @@ async function cloudSyncProfile() {
       __campPrestige__:      (typeof Profile.campPrestige === 'number') ? Profile.campPrestige : 0,
       __campWorkforce__:     (Profile.campWorkforce && typeof Profile.campWorkforce === 'object') ? Profile.campWorkforce : {},
       __campNodeHire__:      (Profile.campNodeHire && typeof Profile.campNodeHire === 'object') ? Profile.campNodeHire : {},
+      __recon__:             (Profile.recon && typeof Profile.recon === 'object') ? Profile.recon : null,
       // 🧬 Camp traits copied off the chosen survivor at pick time. Travels
       // with the account so admin-side trait edits don't retroactively change
       // an existing player's character creation.
@@ -35769,6 +35835,7 @@ async function cloudFetchProfile() {
       if (typeof f.__campPrestige__ === 'number') Profile.campPrestige = f.__campPrestige__;
       if (f.__campWorkforce__ && typeof f.__campWorkforce__ === 'object') Profile.campWorkforce = f.__campWorkforce__;
       if (f.__campNodeHire__ && typeof f.__campNodeHire__ === 'object') Profile.campNodeHire = f.__campNodeHire__;
+      if (f.__recon__ && typeof f.__recon__ === 'object') Profile.recon = f.__recon__;
       if (Array.isArray(f.__campTraits__))         Profile.campTraits     = f.__campTraits__.slice();
       // 🍞 / 💧 Satiation bars (separate from inventory counts).
       if (typeof f.__hunger__ === 'number') Profile.hunger = Math.max(0, Math.min(100, f.__hunger__));
@@ -68202,6 +68269,7 @@ function _renderImpl() {
   if (App.screen === 'lab')        return renderLab();
   if (App.screen === 'tutor')      return renderTutor();
   if (App.screen === 'camp')       return renderCamp();
+  if (App.screen === 'reconstruction') return renderReconstruction();   // 🏗 Reconstruction Settlement (Camp Console)
   if (App.screen === 'research')   return renderResearch();
   if (App.screen === 'resistanceRing') return renderResistanceRing();
   if (App.screen === 'campOps')    return renderCamp();   // real camp ops, opened from the bunker
@@ -100611,6 +100679,7 @@ function renderCamp() {
           <button class="btn-secondary" id="btn-camp-vehicle-market" title="Buy or sell vehicles between players">🛒 Vehicle Market${(() => {
             try { const n = ((Forge.vehicleMarket && Forge.vehicleMarket.listings) || []).filter(l => l && l.sellerId !== ((Profile.cloud && Profile.cloud.userId) || Profile.userId || 'local')).length; return n > 0 ? ` <span style="background:#ffd166;color:#1a1020;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${n}</span>` : ''; } catch (e) { return ''; }
           })()}</button>
+          <button class="btn-secondary" data-act="recon-open" title="Open the Reconstruction Settlement — Camp Console + reclaim the ruins">🏗 Reconstruction</button>
           <button class="btn-secondary" id="btn-back-camp">${App._campReturnsToBunker ? '← Camp' : '← Back to Menu'}</button>
         </div>
       </div>
@@ -144036,12 +144105,176 @@ try {
         case 'camp-hire': { const role = t.getAttribute('data-role'); if (role) hireCampWorker(role); break; }
         case 'camp-defend-convoy': openConvoyDefense(); break;
         case 'convoy-launch': launchConvoyDefense(); break;
+        case 'recon-open': App.screen = 'reconstruction'; try { render(); } catch (err) {} break;
+        case 'recon-back': App.screen = 'camp'; try { render(); } catch (err) {} break;
+        case 'recon-reclaim': { const s = t.getAttribute('data-site'); if (s) openReconReclaim(s); break; }
+        case 'recon-reclaim-confirm': { const s = t.getAttribute('data-site'); if (s) reconReclaim(s); break; }
+        case 'recon-network': goToDistrictNode(getCampNodeId() || null); if (!getCampNodeId()) { App.screen = 'territoryWars'; try { render(); } catch (err) {} } break;
         case 'camp-view-node': goToDistrictNode(getCampNodeId()); break;
         default: return;
       }
     });
   }
 } catch (e) {}
+// ═══════════════════════════════════════════════════════════════════════════
+// 🏗 RECONSTRUCTION SETTLEMENT — faithful "Camp Console" screen (Rebuild from
+// the rubble). A dedicated dark-tech screen: Camp Vitals + Population + a
+// Settlement sublevel reclaim grid where ruined sites are reclaimed into working
+// buildings with crews (workforce) + resources. Reuses the Phase 1-4 state
+// (campWorkforce / campContrib / campPrestige / campNodeId). Resources beyond
+// cinder (Profile.gems) live in Profile.recon to stay separate from the survival
+// ledger. App.screen === 'reconstruction'.
+// ═══════════════════════════════════════════════════════════════════════════
+const RECON_SITES = [
+  { id:'cityhall',   name:'Ruined Town Hall',   into:'City Hall',        glow:'cyan',   cost:{ cinder:300 },             needs:{ Builder:1 },               gives:'settlement command' },
+  { id:'apartments', name:'Gutted Apartments',  into:'Apartment Block',  glow:'amber',  cost:{ cinder:350, wood:80 },    needs:{ Builder:2 },               gives:'houses survivors' },
+  { id:'greenhouse', name:'Overgrown Lot',      into:'Greenhouse',       glow:'amber',  cost:{ cinder:350, wood:60 },    needs:{ Builder:1, Farmer:1 },     gives:'food production' },
+  { id:'radio',      name:'Wrecked Radio Mast', into:'Radio Station',    glow:'cyan',   cost:{ cinder:300 },             needs:{ Engineer:1 },              gives:'long-range contact' },
+  { id:'watch',      name:'Crumbled Gatehouse', into:'Watch Post',       glow:'red',    cost:{ cinder:400, steel:80 },   needs:{ Builder:1, Guard:1 },      gives:'+Security' },
+  { id:'power',      name:'Dead Substation',    into:'Power Station',    glow:'purple', cost:{ cinder:600, steel:150 },  needs:{ Engineer:1, Mechanic:1 },  gives:'city power' },
+  { id:'workshop',   name:'Collapsed Garage',   into:'Workshop',         glow:'cyan',   cost:{ cinder:450, wood:100 },   needs:{ Builder:1, Mechanic:1 },   gives:'builds & repairs' },
+  { id:'clinic',     name:'Old Pharmacy',       into:'Clinic',           glow:'cyan',   cost:{ cinder:450, steel:60 },   needs:{ Builder:1, Doctor:1 },     gives:'+Medicine' },
+  { id:'store',      name:'Caved-in Depot',     into:'Storehouse',       glow:'amber',  cost:{ cinder:250 },             needs:{ Builder:1 },               gives:'+Storage' },
+  { id:'hospital',   name:'Old Hospital',       into:'City Hospital',    glow:'cyan',   cost:{ cinder:800, steel:200 },  needs:{ Builder:2, Doctor:1 },     gives:'+Medicine and +Health' },
+  { id:'aptruin',    name:'Ruined Apartments',  into:'Apartment Tower',  glow:'amber',  cost:{ cinder:700, wood:160 },   needs:{ Builder:2 },               gives:'more housing' },
+  { id:'market',     name:'Collapsed Market',   into:'Marketplace',      glow:'amber',  cost:{ cinder:500, steel:80 },   needs:{ Builder:1, Merchant:1 },   gives:'+Trade income' },
+  { id:'school',     name:'Old Schoolhouse',    into:'Schoolhouse',      glow:'purple', cost:{ cinder:550, wood:120 },   needs:{ Builder:1, Researcher:1 }, gives:'+Hope and +Recruits' },
+];
+function _reconState() {
+  if (!Profile.recon || typeof Profile.recon !== 'object') Profile.recon = {};
+  const r = Profile.recon;
+  if (!r.vitals || typeof r.vitals !== 'object') r.vitals = { morale: 50, food: 50, security: 30, hope: 50 };
+  if (!r.resources || typeof r.resources !== 'object') r.resources = { food: 120, steel: 100, wood: 80, medicine: 10, fuel: 10 };
+  if (!r.sites || typeof r.sites !== 'object') r.sites = {};
+  if (typeof r.day !== 'number') r.day = 0;
+  return r;
+}
+function _reconCanAfford(cost) {
+  const r = _reconState();
+  for (const k in cost) {
+    const have = (k === 'cinder') ? (Profile.gems || 0) : (r.resources[k] | 0);
+    if (have < cost[k]) return false;
+  }
+  return true;
+}
+function _reconCanStaff(needs) { const pop = _campWorkforce(); for (const t in needs) if ((pop[t] | 0) < needs[t]) return false; return true; }
+function _reconApplyGive(site) {
+  const v = _reconState().vitals;
+  const bump = (k, n) => { v[k] = Math.max(0, Math.min(100, (v[k] || 0) + n)); };
+  if (/Security/i.test(site.gives)) bump('security', 12);
+  if (/Hope|Recruits/i.test(site.gives)) bump('hope', 8);
+  if (/food/i.test(site.gives)) bump('food', 12);
+  if (/Health|Medicine/i.test(site.gives)) bump('morale', 6);
+  bump('morale', 3); bump('hope', 2);
+}
+function openReconReclaim(siteId) {
+  const site = RECON_SITES.find(s => s.id === siteId); if (!site) return;
+  if (_reconState().sites[siteId]) { try { showToast(`${site.into} is already built.`); } catch (e) {} return; }
+  let host = document.getElementById('camp-node-picker-host');
+  if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
+  const okRes = _reconCanAfford(site.cost), okStaff = _reconCanStaff(site.needs), ok = okRes && okStaff;
+  const costRow = Object.entries(site.cost).map(([k, vv]) => { const have = k === 'cinder' ? (Profile.gems || 0) : (_reconState().resources[k] | 0); return `<span class="recon-req ${have >= vv ? 'met' : 'short'}">${k.charAt(0).toUpperCase() + k.slice(1)} ${vv}</span>`; }).join('');
+  const needRow = Object.entries(site.needs).map(([t, vv]) => { const have = (_campWorkforce()[t] | 0); return `<span class="recon-req ${have >= vv ? 'met' : 'short'}">${vv} ${t}${vv > 1 ? 's' : ''}</span>`; }).join('') || '<span class="recon-req met">no specialists required</span>';
+  host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog">
+    <div class="cnp-modal-head"><h3>Reclaim Ruins</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
+    <div class="cnp-modal-body">
+      <div class="recon-reclaim-hero">RECLAMATION // ${escapeHtml((site.into || 'NEW BUILDING').toUpperCase())}</div>
+      <div class="recon-reclaim-title">${escapeHtml(site.name)} → ${escapeHtml(site.into)}</div>
+      <div class="hint" style="margin:6px 0 10px">Clear the rubble and restore this ruin into a working building.${site.gives ? ` Yields ${escapeHtml(site.gives)}.` : ''}</div>
+      <div class="recon-label">Resource Cost</div><div class="recon-reqs">${costRow}</div>
+      <div class="recon-label" style="margin-top:8px">Workers Needed (on your roster)</div><div class="recon-reqs">${needRow}</div>
+      <button class="btn-primary" style="width:100%;margin-top:14px" data-act="recon-reclaim-confirm" data-site="${escapeHtml(site.id)}" ${ok ? '' : 'disabled'}>${ok ? 'Reclaim &amp; Restore' : (!okStaff ? 'Need Skilled Workers' : 'Insufficient Resources')}</button>
+      ${!okStaff ? '<div class="hint" style="margin-top:6px;color:#ffb8a0">Hire the required specialists from the Employment Board first.</div>' : ''}
+    </div></div></div>`;
+}
+function reconReclaim(siteId) {
+  const site = RECON_SITES.find(s => s.id === siteId); if (!site) return;
+  const r = _reconState();
+  if (r.sites[siteId]) return;
+  if (!_reconCanAfford(site.cost)) { try { showToast('Insufficient resources.'); } catch (e) {} return; }
+  if (!_reconCanStaff(site.needs)) { try { showToast('Hire the required specialists from the Employment Board first.'); } catch (e) {} return; }
+  for (const k in site.cost) {
+    if (k === 'cinder') Profile.gems = Math.max(0, (Profile.gems || 0) - site.cost[k]);
+    else r.resources[k] = Math.max(0, (r.resources[k] | 0) - site.cost[k]);
+  }
+  r.sites[siteId] = 'built';
+  _reconApplyGive(site);
+  Profile.campContrib = Math.min(100, _campContrib() + 2);
+  try { saveProfile(); } catch (e) {}
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
+  try { tw_cloudUpsertCampReg(); } catch (e) {}
+  try { _twLog('settlement', `<b>${escapeHtml(_campRegName())}</b> reclaimed ${escapeHtml(site.into)}.`); } catch (e) {}
+  try { showToast(`🏗 ${site.into} restored to the settlement.`, 2600); } catch (e) {}
+  closeCampNodePicker();
+  try { render(); } catch (e) {}
+}
+function renderReconstruction() {
+  const r = _reconState();
+  const node = getCampNode();
+  const pop = _campWorkforce();
+  const popTotal = _campWorkforceTotal();
+  const vit = r.vitals;
+  const VIT = [
+    { k: 'morale', code: 'MOR', name: 'Morale', color: '#caa23e' },
+    { k: 'food', code: 'FOO', name: 'Food', color: '#cf5a3a' },
+    { k: 'security', code: 'SEC', name: 'Security', color: '#7d9cb6' },
+    { k: 'hope', code: 'HOP', name: 'Hope', color: '#9bb265' },
+  ];
+  const vitalsHtml = VIT.map(m => {
+    const v = Math.round(vit[m.k] || 0), SEG = 14, on = Math.round((v / 100) * SEG);
+    let segs = ''; for (let i = 0; i < SEG; i++) segs += `<div class="recon-seg ${i < on ? 'on' : ''}"></div>`;
+    const state = v >= 75 ? 'thriving' : v >= 50 ? 'steady' : v >= 25 ? 'strained' : 'critical';
+    return `<div class="recon-vital" style="--c:${m.color}">
+      <div class="rv-top"><div><div class="rv-code">${m.code}</div><div class="rv-name">${m.name}</div></div><div class="rv-num">${v}</div></div>
+      <div class="recon-meter ${v < 25 ? 'crit' : ''}">${segs}</div>
+      <div class="rv-state">STATUS // ${state.toUpperCase()}</div></div>`;
+  }).join('');
+  const POP_ORDER = ['Guard', 'Builder', 'Farmer', 'Doctor', 'Engineer', 'Mechanic', 'Researcher', 'Merchant', 'Civilian'];
+  const popMax = Math.max(1, ...POP_ORDER.map(j => pop[j] | 0));
+  const popHtml = POP_ORDER.map(j => { const v = pop[j] | 0; return `<div class="recon-popbar"><div class="rp-row"><span>${j}${v === 1 ? '' : 's'}</span><b>${v}</b></div><div class="rp-t"><i style="width:${(v / popMax) * 100}%"></i></div></div>`; }).join('');
+  const RES = [['Cinder', Profile.gems || 0, ''], ['Food', r.resources.food | 0, ''], ['Steel', r.resources.steel | 0, ''], ['Wood', r.resources.wood | 0, ''], ['Medicine', r.resources.medicine | 0, (r.resources.medicine | 0) < 30 ? 'warn' : ''], ['Fuel', r.resources.fuel | 0, '']];
+  const resHtml = RES.map(([k, v, w]) => `<div class="recon-res"><span class="rr-k">${k}</span><span class="rr-v ${w}">${v}</span></div>`).join('');
+  const GLOW = { cyan: '#7d9cb6', amber: '#dca844', red: '#cf5a3a', purple: '#8f7db6' };
+  const cells = RECON_SITES.map(s => {
+    const built = !!r.sites[s.id]; const glow = GLOW[s.glow] || '#7d9cb6';
+    if (!built) return `<div class="recon-room rock" style="--glow:${glow}" data-act="recon-reclaim" data-site="${s.id}"><div class="rr-int"></div><div class="rr-rocklabel"><b>+ RECLAIM</b>${escapeHtml(s.name)}</div></div>`;
+    return `<div class="recon-room built" style="--glow:${glow}"><div class="rr-int"></div><div class="rr-cap"><div class="nm">${escapeHtml(s.into)}</div><div class="fn">${escapeHtml(s.gives || '')}</div></div></div>`;
+  }).join('');
+  const onboard = (() => {
+    if (node && popTotal > 0) return '';
+    const step = (n, label, st) => `<div class="recon-obstep ${st}"><span class="recon-obn">${n}</span> ${label}</div>`;
+    return `<div class="recon-onboard"><div class="recon-obtitle">Rebuild from the rubble</div>
+      <div class="recon-obsteps">${step(1, 'Connect to a node', node ? 'done' : 'now')}${step(2, 'Hire civilians', node ? (popTotal > 0 ? 'done' : 'now') : '')}${step(3, 'Reclaim ruins with crews + resources', '')}</div>
+      ${!node ? '<button class="btn-mini btn-primary" data-act="camp-connect-node" style="margin-top:10px">Connect to a Node ▸</button>' : (popTotal === 0 ? '<button class="btn-mini btn-primary" data-act="camp-employment" style="margin-top:10px">Open Employment Board ▸</button>' : '')}</div>`;
+  })();
+  const builtCount = Object.keys(r.sites).filter(k => r.sites[k]).length;
+  root.innerHTML = `<div class="recon-page">
+    <div class="recon-topbar">
+      <div class="recon-id">
+        <div class="recon-name">${escapeHtml(_campRegName())}</div>
+        <div class="recon-sub"><span class="recon-dot ${node ? 'ok' : 'bad'}"></span> ${node ? `REGISTERED · ${escapeHtml(node.name)}` : `<span data-act="camp-connect-node" style="color:#cf5a3a;cursor:pointer;text-decoration:underline">⚠ CONNECT TO A NODE</span>`}</div>
+      </div>
+      <div class="recon-toggle"><button class="recon-tab is-active">CAMP CONSOLE</button><button class="recon-tab" data-act="recon-network">NETWORK</button></div>
+      <div class="recon-resbar">${resHtml}</div>
+      <div class="recon-meta"><div><div class="rm-k">PRESTIGE</div><div class="rm-v">${_campPrestige()}</div></div><div><div class="rm-k">BUILT</div><div class="rm-v">${builtCount}/${RECON_SITES.length}</div></div></div>
+      <button class="btn-secondary btn-mini" data-act="recon-back">← Camp</button>
+    </div>
+    <div class="recon-body">
+      <div class="recon-left">
+        <div class="recon-panel"><div class="recon-ph"><h2>Camp Vitals</h2><span class="recon-tag">LIVE</span></div><div class="recon-vitals">${vitalsHtml}</div></div>
+        <div class="recon-panel"><div class="recon-ph"><h2>Population</h2><span class="recon-tag">${popTotal} SOULS</span></div><div class="recon-pops">${popHtml}</div><div style="padding:10px"><button class="btn-mini" data-act="camp-employment" style="width:100%">👷 Employment Board</button></div></div>
+      </div>
+      <div class="recon-center">
+        <div class="recon-ph"><h2>Settlement · Sublevel View</h2><span class="recon-tag">CROSS-SECTION</span></div>
+        <div class="recon-stage">${onboard}<div class="recon-grid">${cells}</div></div>
+      </div>
+      <div class="recon-right">
+        <div class="recon-ph"><h2>Situation Board</h2><span class="recon-tag">SOON</span></div>
+        <div class="recon-soon">Citizen events, quests + emergencies arrive here in the next update — make choices, some become missions.</div>
+      </div>
+    </div>
+  </div>`;
+}
 async function tw_cloudUpsertOwnership(nodeId) {
   try {
     if (!Cloud || !Cloud.ready || !Cloud.client) return null;

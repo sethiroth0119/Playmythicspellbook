@@ -20065,6 +20065,15 @@
     stroke: #ffcf5a; stroke-dasharray: 7 3; stroke-width: 1.5; opacity: 1; stroke-linecap: round;
     animation: tw-energy-flow 1.8s linear infinite, tw-frontier-glow 2.5s ease-in-out infinite;
   }
+  /* admin-lit supply lines — glow BLUE (distinct from gameplay frontier gold) */
+  @keyframes tw-lit-glow {
+    0%,100% { stroke: #4ea8ff; filter: drop-shadow(0 0 1px rgba(78,168,255,0.55)); }
+    50%     { stroke: #9fd6ff; filter: drop-shadow(0 0 4px rgba(78,168,255,1)) drop-shadow(0 0 9px rgba(0,120,255,0.85)); }
+  }
+  .tw-map-routes path.lit {
+    stroke: #5ab0ff; stroke-dasharray: 7 3; stroke-width: 1.7; opacity: 1; stroke-linecap: round;
+    animation: tw-energy-flow 1.8s linear infinite, tw-lit-glow 2.4s ease-in-out infinite;
+  }
   .tw-map-routes path.broken  { stroke: #5a3030; stroke-dasharray: 2 8;   opacity: 0.50; }
 
   /* Floating region labels — large, map-grade typography */
@@ -144788,6 +144797,13 @@ function _esnMyCorpId() { try { const c = _twPlayerCorp(); return c ? c.id : nul
 function _esnNodeOwnerCorp(nodeId) { try { const o = _twState().ownedNodes[nodeId]; return (o && o.ownerCorpId) || null; } catch (e) { return null; } }
 function _esnCanManageNode(nodeId) { const oc = _esnNodeOwnerCorp(nodeId); const mine = _esnMyCorpId(); return _esnAdmin() || !!(oc && mine && oc === mine); }
 function _esnSafeUrl(u) { try { const x = new URL(String(u)); return (x.protocol === 'http:' || x.protocol === 'https:') ? x.href : ''; } catch (e) { return ''; } }
+// Like _esnSafeUrl but also accepts embedded (uploaded) base64 image data URLs —
+// used ONLY for ad media (never the external target link).
+function _esnSafeMediaUrl(u) {
+  const s = String(u || '').trim();
+  if (/^data:image\/(png|jpe?g|gif|webp|avif);base64,/i.test(s)) return s;
+  return _esnSafeUrl(s);
+}
 // Best-effort: turn a known image-host SHARE PAGE url into a DIRECT image url,
 // and flag share-page urls we can't convert (those serve HTML, so the
 // billboard <img> would 404 and show nothing). note: '' ok · 'converted' ·
@@ -144879,7 +144895,7 @@ function _esnBillboardHtml(node) {
   const ad = (nodeId && App._twNodeAd && App._twNodeAd[nodeId] && App._twNodeAd[nodeId].ad) || null;
   if (!ad) return '';
   try { _esnTrackView(ad.id); } catch (e) {}
-  const safe = _esnSafeUrl(ad.media_url);
+  const safe = _esnSafeMediaUrl(ad.media_url);
   const nm = escapeHtml((ad.sponsor_name || 'AD').toUpperCase());
   const onerr = "this.style.display='none';var n=this.nextElementSibling;if(n)n.style.display='flex';";
   let media;
@@ -144976,7 +144992,13 @@ function openAdAuthor(nodeId, adId) {
       <input type="hidden" id="esn-f-id" value="${escapeHtml(v.id || '')}"><input type="hidden" id="esn-f-node" value="${escapeHtml(nodeId)}">
       <label class="esn-fl">Sponsor name</label><input class="cnp-input" id="esn-f-sponsor" maxlength="48" value="${escapeHtml(v.sponsor_name || '')}" placeholder="Woods Fishing Co.">
       <label class="esn-fl">Ad caption</label><input class="cnp-input" id="esn-f-caption" maxlength="120" value="${escapeHtml(v.caption || '')}" placeholder="Helping rebuild this district's food supply.">
-      <label class="esn-fl">Media URL (image or video)</label><input class="cnp-input" id="esn-f-media" value="${escapeHtml(v.media_url || '')}" placeholder="https://…/billboard.png">
+      <label class="esn-fl">Image / video</label>
+      <div style="display:flex;gap:6px;align-items:stretch">
+        <input class="cnp-input" id="esn-f-media" style="flex:1;min-width:0" value="${escapeHtml(v.media_url || '')}" placeholder="Upload → or paste a DIRECT image link (i.ibb.co/…)">
+        <button class="btn-mini" type="button" data-act="esn-upload" style="white-space:nowrap">📁 Upload</button>
+      </div>
+      <div class="hint" style="margin:4px 0 2px;color:#7a8a9a">Easiest: <b>Upload</b> a file (embedded — can't break). Or paste a <b>direct</b> image link — a share page like <code>ibb.co/abc</code> won't show; use the <code>i.ibb.co/…</code> link.</div>
+      <img id="esn-f-media-preview" alt="" onerror="this.style.display='none'" style="display:${_esnSafeMediaUrl(v.media_url) ? 'block' : 'none'};max-width:100%;max-height:130px;border-radius:8px;border:1px solid rgba(120,150,200,0.25);margin:2px 0 6px;object-fit:cover" src="${escapeHtml(_esnSafeMediaUrl(v.media_url) || '')}">
       <div class="esn-frow"><div style="flex:1"><label class="esn-fl">Type</label><select class="cnp-input" id="esn-f-type"><option value="image"${v.ad_type !== 'video' ? ' selected' : ''}>Image</option><option value="video"${v.ad_type === 'video' ? ' selected' : ''}>Video</option></select></div>
         <div style="flex:1"><label class="esn-fl">Button</label><select class="cnp-input" id="esn-f-cta">${ESN_CTA_LABELS.map(l => `<option${(v.cta_label || 'Visit Sponsor') === l ? ' selected' : ''}>${l}</option>`).join('')}</select></div></div>
       <label class="esn-fl">Sponsor link (https://…)</label><input class="cnp-input" id="esn-f-link" value="${escapeHtml(v.target_link || '')}" placeholder="https://woodsfishing.co">
@@ -144991,6 +145013,47 @@ function openAdAuthor(nodeId, adId) {
         <button class="btn-mini" data-act="camp-picker-close">Cancel</button>
       </div>
     </div></div></div>`;
+}
+// 📁 Upload a local image for the billboard: downscale to ≤800px and embed it
+// as a base64 data URL right in the media field — no imgbb / external host, so
+// the image can never 404. Kept small enough to live in the ad row.
+function esnPickAdImage() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = () => {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    if (!/^image\//.test(f.type || '')) { showToast('Please choose an image file.'); return; }
+    if (f.size > 12 * 1024 * 1024) { showToast('Image too large (max 12MB).'); return; }
+    const fr = new FileReader();
+    fr.onerror = () => showToast('Could not read that file.');
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => showToast('Could not read that image file.');
+      img.onload = () => {
+        const maxW = 800;
+        const scale = Math.min(1, maxW / (img.width || maxW));
+        const w = Math.max(1, Math.round((img.width || maxW) * scale));
+        const h = Math.max(1, Math.round((img.height || maxW) * scale));
+        let dataUrl = '';
+        try {
+          const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+          cv.getContext('2d').drawImage(img, 0, 0, w, h);
+          let q = 0.82;
+          dataUrl = cv.toDataURL('image/jpeg', q);
+          while (dataUrl.length > 600 * 1024 && q > 0.4) { q -= 0.12; dataUrl = cv.toDataURL('image/jpeg', q); }
+        } catch (e) { dataUrl = String(fr.result || ''); }
+        if (!dataUrl) { showToast('Could not process that image.'); return; }
+        const mediaEl = document.getElementById('esn-f-media'); if (mediaEl) mediaEl.value = dataUrl;
+        const typeEl = document.getElementById('esn-f-type'); if (typeEl) typeEl.value = 'image';
+        const prev = document.getElementById('esn-f-media-preview');
+        if (prev) { prev.src = dataUrl; prev.style.display = 'block'; }
+        showToast('🖼 Image embedded (' + Math.round(dataUrl.length / 1024) + ' KB). Save to publish.', 3000);
+      };
+      img.src = String(fr.result || '');
+    };
+    fr.readAsDataURL(f);
+  };
+  inp.click();
 }
 function saveAdDraft() {
   const g = (id) => { const e = document.getElementById(id); return e ? e.value : ''; };
@@ -145096,6 +145159,7 @@ try {
       switch (a) {
         case 'esn-create': openAdAuthor(nodeId); break;
         case 'esn-edit': openAdAuthor(nodeId, adId); break;
+        case 'esn-upload': esnPickAdImage(); break;
         case 'esn-save': saveAdDraft(); break;
         case 'esn-approve': _esnSetStatus(adId, 'active'); break;
         case 'esn-reject': _esnSetStatus(adId, 'rejected'); break;
@@ -146089,7 +146153,7 @@ function renderTerritoryWars() {
       const ownB = st.ownedNodes[cid];
       let cls = '';
       if (_litRouteSet.has(key)) {
-        cls = 'frontier'; // admin-forced glow
+        cls = 'lit'; // admin-forced glow (blue)
       } else if (ownA && ownB) {
         const same = ownA.ownerCorpId === ownB.ownerCorpId;
         if (same && myCorp && ownA.ownerCorpId === myCorp.id) cls = 'allied';
@@ -146102,7 +146166,7 @@ function renderTerritoryWars() {
       // Normalise path direction: always left→right so rotate="auto" never
       // produces a θ > 90° tangent that would flip the truck upside-down.
       let idAttr = '';
-      if ((cls === 'frontier' || cls === 'allied') && _truckRoutes.length < _MAX_TRUCKS) {
+      if ((cls === 'frontier' || cls === 'allied' || cls === 'lit') && _truckRoutes.length < _MAX_TRUCKS) {
         // Left-to-right normalisation: swap endpoints so truck travels toward +X.
         const [sP, eP] = pA.x <= pB.x ? [pA, pB] : [pB, pA];
         const nMidX = ((sP.x + eP.x) / 2 + 1.5).toFixed(2);

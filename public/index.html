@@ -3836,20 +3836,36 @@
   .turn-display {
     font-family: 'Cinzel', serif;
     font-weight: 700;
-    letter-spacing: 0.15em;
+    letter-spacing: 0.18em;
     text-transform: uppercase;
-    font-size: 0.85rem;
-    padding: 0.5rem 1rem;
-    border-radius: 4px;
+    font-size: 1.1rem;
+    padding: 0.6rem 1.25rem;
+    border-radius: 9px;
     border: 1px solid;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
     box-shadow: 0 0 0 1px rgba(0,0,0,0.5) inset;
     transition: all 0.25s;
   }
+  /* 🎯 Phase chip — a clean gold "Main 1" pill inside the turn badge, reading
+     like a real TCG turn/phase indicator. Cosmetic label, no engine state. */
+  .turn-display .td-phase {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    padding: 0.14rem 0.6rem;
+    border-radius: 999px;
+    background: rgba(212,175,55,0.16);
+    border: 1px solid rgba(212,175,55,0.55);
+    color: var(--gold-bright, #f5d77a);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+  }
   .turn-display.player {
-    color: #92c5f7;
-    background: rgba(74,143,212,0.18);
+    color: #cfe6ff;
+    background: linear-gradient(180deg, rgba(74,143,212,0.28), rgba(74,143,212,0.12));
     border-color: var(--azure);
-    box-shadow: 0 0 14px rgba(74,143,212,0.3), 0 0 0 1px rgba(0,0,0,0.5) inset;
+    box-shadow: 0 5px 18px rgba(0,0,0,0.5), 0 0 22px rgba(74,143,212,0.4), 0 0 0 1px rgba(0,0,0,0.5) inset;
   }
   /* ⏱ 120s turn clock — sits inside the player turn-display pill */
   .turn-timer {
@@ -3874,10 +3890,10 @@
     50%      { box-shadow: 0 0 10px 2px rgba(232,93,60,0.55); }
   }
   .turn-display.ai {
-    color: #ffa088;
-    background: rgba(232,93,60,0.18);
+    color: #ffd6c8;
+    background: linear-gradient(180deg, rgba(232,93,60,0.28), rgba(232,93,60,0.12));
     border-color: var(--ember);
-    box-shadow: 0 0 14px rgba(232,93,60,0.3), 0 0 0 1px rgba(0,0,0,0.5) inset;
+    box-shadow: 0 5px 18px rgba(0,0,0,0.5), 0 0 22px rgba(232,93,60,0.4), 0 0 0 1px rgba(0,0,0,0.5) inset;
   }
 
   .battle-screen {
@@ -84496,7 +84512,8 @@ function _renderBattleImmediateImpl() {
             <button class="btn-secondary btn-mini" id="btn-concede" title="Concede this battle (counts as a loss)">🏳 Concede</button>
             <button class="btn-secondary btn-mini" id="btn-battle-settings" title="Settings (animation speed, audio, log filters, etc.)">⚙ Settings</button>
             <div class="turn-display ${s.turn === 'player' ? 'player' : 'ai'}">
-              ${s.turn === 'player' ? `Your Turn ${s.turnNumber}` : 'Enemy Turn'}
+              <span class="td-label">${s.turn === 'player' ? `Turn ${s.turnNumber}` : `Enemy Turn ${s.turnNumber}`}</span>
+              ${s.turn === 'player' ? `<span class="td-phase">Main 1</span>` : ''}
               ${s.turn === 'player' && !s.gameOver ? `<span id="turn-timer" class="turn-timer">2:00</span>` : ''}
             </div>
           </div>

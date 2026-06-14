@@ -20529,6 +20529,11 @@
   .camp-node-banner .cnb-title { font-family:'Cinzel',serif; font-weight:800; color:#ffe6b0; font-size:1rem; }
   .camp-node-banner.unregistered .cnb-title { color:#ffb8a0; }
   .camp-node-banner .cnb-sub { color:#b6a88f; font-size:0.8rem; line-height:1.4; margin-top:2px; }
+  .camp-node-banner .cnb-sub b { color:#ffe6b0; }
+  .camp-node-banner .cnb-bonus { font-size:0.72rem; font-weight:800; letter-spacing:0.04em; color:#9be0c4; background:rgba(74,222,128,0.14); border:1px solid rgba(74,222,128,0.5); border-radius:999px; padding:1px 8px; margin-left:6px; vertical-align:middle; }
+  .camp-node-banner .cnb-contrib { margin-top:6px; max-width:340px; }
+  .camp-node-banner .cnb-contrib-bar { height:7px; border-radius:999px; background:rgba(0,0,0,0.45); overflow:hidden; border:1px solid rgba(212,175,55,0.3); }
+  .camp-node-banner .cnb-contrib-bar i { display:block; height:100%; background:linear-gradient(90deg,#caa23e,#f5d76e); border-radius:999px; transition:width 0.4s ease; }
   .camp-node-banner .cnb-actions { display:flex; gap:0.4rem; flex-wrap:wrap; }
   /* Node picker modal */
   #camp-node-picker-host .cnp-scrim { position:fixed; inset:0; z-index:5000; background:rgba(6,4,12,0.74); backdrop-filter:blur(3px); display:flex; align-items:center; justify-content:center; padding:1rem; }
@@ -47953,7 +47958,8 @@ function getCampSlotXp(slot) {
   // ⚡ powered/overclocked camp stack on top.
   const mul = ((typeof campBonus === 'function') ? Math.max(1, campBonus('restXpMul')) : 1)
             * ((typeof researchBonus === 'function') ? researchBonus('restXpMul') : 1)
-            * ((typeof _campPowerMul === 'function') ? _campPowerMul() : 1);
+            * ((typeof _campPowerMul === 'function') ? _campPowerMul() : 1)
+            * ((typeof _campNodeXpMul === 'function') ? _campNodeXpMul() : 1);  // 🏳 District-Node bonus
   const fromTime = Math.floor(elapsedHours * CAMP_XP_PER_HOUR * mul);
   return Math.min(Math.round(CAMP_XP_CAP * mul), fromTime);
 }
@@ -143721,18 +143727,58 @@ async function tw_cloudFetchCampsForNode(nodeId) {
     return data;
   } catch (e) { return null; }
 }
+// ── Phase 2: node bonus (scales with contribution) + contribution/prestige ──
+const CAMP_CONTRIB_COST = 250;   // 🔥 per "send supplies" contribution push
+function _campContrib()  { return Math.max(0, Math.min(100, (Profile.campContrib  | 0) || 0)); }
+function _campPrestige()  { return Math.max(0, (Profile.campPrestige | 0) || 0); }
+// The registered node grants a Camp-XP bonus: a flat +15% for being on the
+// network, scaling up to +50% as your contribution to that node climbs — so
+// out-contributing rival settlements earns a bigger share of the node's output.
+function getCampNodeBonus() {
+  const node = getCampNode();
+  if (!node) return null;
+  const contrib = _campContrib();
+  const xpPct = Math.round(15 + contrib * 0.35);
+  let res = '';
+  try { res = Object.keys(node.resourceYield || {})[0] || ''; } catch (e) {}
+  const label = res ? (res.charAt(0) + res.slice(1).toLowerCase() + ' District') : (node.purpose || node.type || 'District');
+  return { node, xpPct, xpMul: 1 + xpPct / 100, label, resource: res, contrib };
+}
+function _campNodeXpMul() { const b = getCampNodeBonus(); return b ? b.xpMul : 1; }
+function contributeCampToNode() {
+  const node = getCampNode();
+  if (!node) { try { showToast('⚠ Register your camp to a District Node first.'); } catch (e) {} return; }
+  if ((Profile.gems || 0) < CAMP_CONTRIB_COST) { try { showToast(`Need ${CAMP_CONTRIB_COST} 🔥 to send supplies.`); } catch (e) {} return; }
+  Profile.gems = (Profile.gems || 0) - CAMP_CONTRIB_COST;
+  const before = _campContrib();
+  Profile.campContrib = Math.min(100, before + 4);
+  // Prestige ticks every 10% contribution crossed.
+  if (Math.floor(Profile.campContrib / 10) > Math.floor(before / 10)) Profile.campPrestige = _campPrestige() + 1;
+  try { saveProfile(); } catch (e) {}
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
+  try { tw_cloudUpsertCampReg(); } catch (e) {}
+  try { App._twNodeCamps = App._twNodeCamps || {}; delete App._twNodeCamps[node.id]; } catch (e) {}
+  try { _twLog('settlement', `<b>${escapeHtml(_campRegName())}</b> sent supplies to ${escapeHtml(node.name)} — contribution ${Profile.campContrib}%.`); } catch (e) {}
+  try { showToast(`🤝 Contributed to ${node.name} — contribution now ${Profile.campContrib}%.`, 2600); } catch (e) {}
+  try { render(); } catch (e) {}
+}
 // Camp-screen banner: connect / registered state.
 function _campNodeBannerHtml() {
   const node = getCampNode();
   if (node) {
+    const b = getCampNodeBonus();
+    const contrib = _campContrib();
+    const pres = _campPrestige();
     return `<div class="camp-node-banner registered">
       <div class="cnb-left"><span class="cnb-dot ok"></span><div class="cnb-txt">
-        <div class="cnb-title">🏳 Registered · ${escapeHtml(node.name)}</div>
-        <div class="cnb-sub">Your settlement is on the Reconstruction Network — it shows on the District Nodes map for every player.</div>
+        <div class="cnb-title">🏳 Registered · ${escapeHtml(node.name)} <span class="cnb-bonus">+${b ? b.xpPct : 15}% Camp XP</span></div>
+        <div class="cnb-sub">${escapeHtml(b ? b.label : 'District')} · Reconstruction Network · Contribution <b>${contrib}%</b>${pres ? ` · Prestige <b>${pres}</b>` : ''}.</div>
+        <div class="cnb-contrib"><div class="cnb-contrib-bar"><i style="width:${contrib}%"></i></div></div>
       </div></div>
       <div class="cnb-actions">
+        <button class="btn-primary btn-mini" data-act="camp-contribute" title="Send ${CAMP_CONTRIB_COST} 🔥 to raise your contribution + node bonus">🤝 Contribute (${CAMP_CONTRIB_COST} 🔥)</button>
         <button class="btn-mini" data-act="camp-view-node">View on Map ▸</button>
-        <button class="btn-mini" data-act="camp-change-node">Change Node</button>
+        <button class="btn-mini" data-act="camp-change-node">Change</button>
       </div>
     </div>`;
   }
@@ -143781,6 +143827,7 @@ try {
         case 'camp-picker-close': if (e.target === t || (t.classList && t.classList.contains('cnp-x'))) closeCampNodePicker(); break;
         case 'camp-register': { const nid = t.getAttribute('data-node'); if (nid && registerCampToNode(nid)) { closeCampNodePicker(); try { render(); } catch (err) {} } break; }
         case 'camp-unregister': unregisterCamp(); closeCampNodePicker(); try { render(); } catch (err) {} break;
+        case 'camp-contribute': contributeCampToNode(); break;
         case 'camp-view-node': goToDistrictNode(getCampNodeId()); break;
         default: return;
       }

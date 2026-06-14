@@ -9185,6 +9185,24 @@
   }
   .unit.hero.player .hero-board-marker { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.85)) drop-shadow(0 0 6px rgba(74, 143, 212, 0.75)); }
   .unit.hero.ai .hero-board-marker     { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.85)) drop-shadow(0 0 6px rgba(232, 93, 60, 0.75)); }
+  /* 🏛 ISO-BOARD DEPTH FIX — on the tilted 2.5D board the hero SPRITE is pushed
+     toward the camera (translateZ up to ~72px) inside a preserve-3d context, so
+     a flat marker at z=0 gets painted BEHIND the sprite by 3D depth-sorting and
+     is never seen (raising plain z-index can't beat 3D depth). Push the crowned-
+     skull marker FORWARD past the sprite and enlarge it so it reads clearly as a
+     pedestal at the hero's feet. The bob keyframes keep the same translateZ so
+     the animation can't drop it back behind the sprite. */
+  .board.iso-mode .unit.hero .hero-board-marker {
+    width: 40px;
+    bottom: -6px;
+    z-index: 16 !important;
+    transform: translateX(-50%) translateZ(92px);
+    animation: hero-marker-bob-iso 2.6s ease-in-out infinite;
+  }
+  @keyframes hero-marker-bob-iso {
+    0%, 100% { transform: translateX(-50%) translateZ(92px) translateY(0); }
+    50%      { transform: translateX(-50%) translateZ(92px) translateY(-3px); }
+  }
   @keyframes hero-marker-bob {
     0%, 100% { transform: translateX(-50%) translateY(0); }
     50%      { transform: translateX(-50%) translateY(-2px); }
@@ -88295,6 +88313,7 @@ function renderUnitModal() {
               ${escapeHtml(u.name)}
               <span class="modal-owner-tag ${u.owner}">${isPlayer ? 'YOUR ' + (isHero ? 'HERO' : 'UNIT') : 'ENEMY ' + (isHero ? 'HERO' : 'UNIT')}</span>
             </div>
+            ${isHero ? `<div class="hd-hero-mark" style="margin:3px 0 4px"><img src="assets/artwork/gameicons/hero-board-icon.png" alt="Hero"><span>Hero — your throne piece. Keep it alive to win.</span></div>` : ''}
             <div class="modal-subtitle">
               <span class="lvl-tag-inline">${getLevelIcon('1.5em')}${u.level}</span>
               ${enemyHidden

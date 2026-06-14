@@ -20694,8 +20694,10 @@
   .recon-net-stage .rnet-spoke { stroke:rgba(120,150,200,0.22); stroke-width:1; stroke-dasharray:3 4; }
   .recon-net-stage .rnet-route { stroke:rgba(124,156,182,0.55); stroke-width:1.5; }
   .recon-net-stage .rnet-route.ambushed { stroke:#cf5a3a; stroke-width:2; stroke-dasharray:4 3; animation:cnb-pulse 1s ease-in-out infinite; }
-  .rnet-chip { position:absolute; transform:translate(-50%,-50%); display:flex; flex-direction:column; align-items:center; gap:2px; pointer-events:none; }
-  .rnet-disc { display:flex; align-items:center; justify-content:center; border-radius:50%; font-weight:800; font-family:'Cinzel',serif; background:rgba(14,18,30,0.92); }
+  .rnet-chip { position:absolute; transform:translate(-50%,-50%); display:flex; flex-direction:column; align-items:center; gap:2px; pointer-events:auto; cursor:pointer; }
+  .rnet-disc { display:flex; align-items:center; justify-content:center; border-radius:50%; font-weight:800; font-family:'Cinzel',serif; background:rgba(14,18,30,0.92); transition:transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease; }
+  .rnet-chip:hover .rnet-disc { transform:scale(1.1); filter:brightness(1.2); box-shadow:0 0 16px rgba(140,180,230,0.55); }
+  .rnet-chip:hover .rnet-nlabel { color:#fff; }
   .rnet-disc.fr { width:62px; height:62px; font-size:1.1rem; color:#9bb265; border:2px solid #9bb265; box-shadow:0 0 22px rgba(155,178,101,0.5); }
   .rnet-disc.nodc { width:46px; height:46px; font-size:0.9rem; color:#bcd0ea; border:2px solid #7d9cb6; }
   .rnet-disc.campc { width:30px; height:30px; font-size:0.78rem; color:#cbd6e6; border:1.5px solid rgba(120,150,200,0.6); }
@@ -144300,6 +144302,14 @@ try {
         case 'recon-mission-launch': { const i = +t.getAttribute('data-idx'), ci = +t.getAttribute('data-cidx'); reconMissionLaunch(i, ci); break; }
         case 'recon-console': App._reconView = 'console'; try { render(); } catch (err) {} break;
         case 'recon-network': App._reconView = 'network'; try { render(); } catch (err) {} break;
+        case 'recon-net-node': { const nid = t.getAttribute('data-node'); if (nid && typeof goToDistrictNode === 'function') goToDistrictNode(nid); break; }
+        case 'recon-net-camp': {
+          const you = t.getAttribute('data-you') === '1';
+          if (you) { App._reconView = 'console'; try { render(); } catch (err) {} }
+          else { const nm = t.getAttribute('data-camp') || 'Settlement', cb = t.getAttribute('data-contrib') || '0'; showToast('🏳 ' + nm + ' · ' + cb + '% node contribution', 3200); }
+          break;
+        }
+        case 'recon-net-foundation': showToast('🏛 Foundation Reserve — the shared Cinder pool every settlement feeds. Rebuild sites + run convoys to raise your contribution.', 4800); break;
         case 'camp-view-node': goToDistrictNode(getCampNodeId()); break;
         default: return;
       }
@@ -144649,16 +144659,16 @@ function _reconNetworkBodyHtml() {
   });
   const pct = (x, tot) => (x / tot * 100).toFixed(2);
   let lines = '', chips = '';
-  chips += `<div class="rnet-chip foundation" style="left:${pct(CX, 940)}%;top:${pct(CY, 660)}%"><div class="rnet-disc fr">FR</div><div class="rnet-nlabel">Foundation</div></div>`;
+  chips += `<div class="rnet-chip foundation" data-act="recon-net-foundation" title="Foundation Reserve" style="left:${pct(CX, 940)}%;top:${pct(CY, 660)}%"><div class="rnet-disc fr">FR</div><div class="rnet-nlabel">Foundation</div></div>`;
   nodeData.forEach(nd => {
     const p = posN[nd.node.id];
     lines += `<line class="rnet-spoke" x1="${CX}" y1="${CY}" x2="${p.x}" y2="${p.y}"/>`;
     const initials = (nd.node.name || 'N').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-    chips += `<div class="rnet-chip node" style="left:${pct(p.x, 940)}%;top:${pct(p.y, 660)}%"><div class="rnet-disc nodc">${escapeHtml(initials)}</div><div class="rnet-nlabel">${escapeHtml(nd.node.name)}</div></div>`;
+    chips += `<div class="rnet-chip node" data-act="recon-net-node" data-node="${escapeHtml(nd.node.id)}" title="Open ${escapeHtml(nd.node.name)} on the District Nodes map" style="left:${pct(p.x, 940)}%;top:${pct(p.y, 660)}%"><div class="rnet-disc nodc">${escapeHtml(initials)}</div><div class="rnet-nlabel">${escapeHtml(nd.node.name)}</div></div>`;
     nd.camps.forEach(c => {
       lines += `<line class="rnet-route ${c._ambushed ? 'ambushed' : ''}" x1="${p.x}" y1="${p.y}" x2="${c._x}" y2="${c._y}"/>`;
       const ci = ((c.name || 'C').replace(/^camp\s+/i, '').trim().charAt(0) || 'C').toUpperCase();
-      chips += `<div class="rnet-chip camp ${c.you ? 'you' : ''}" style="left:${pct(c._x, 940)}%;top:${pct(c._y, 660)}%"><div class="rnet-disc campc">${escapeHtml(ci)}</div><div class="rnet-nlabel">${escapeHtml(c.name)}</div></div>`;
+      chips += `<div class="rnet-chip camp ${c.you ? 'you' : ''}" data-act="recon-net-camp" data-camp="${escapeHtml(c.name)}" data-contrib="${c.contrib | 0}" data-you="${c.you ? 1 : 0}" title="${escapeHtml(c.name)}${c.you ? ' (you)' : ''}" style="left:${pct(c._x, 940)}%;top:${pct(c._y, 660)}%"><div class="rnet-disc campc">${escapeHtml(ci)}</div><div class="rnet-nlabel">${escapeHtml(c.name)}</div></div>`;
     });
   });
   // ── dossier rail ──

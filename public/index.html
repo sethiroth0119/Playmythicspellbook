@@ -20626,6 +20626,21 @@
   .recon-obn { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; border:1px solid currentColor; font-size:0.62rem; font-weight:800; }
   .recon-obstep.done .recon-obn { background:#9bb265; color:#0a1a0a; border-color:#9bb265; }
   .recon-soon { padding:1rem; color:#7d8aa0; font-size:0.78rem; line-height:1.6; }
+  /* Situation Board */
+  .recon-situations { padding:0.7rem 0.8rem; display:flex; flex-direction:column; gap:0.7rem; }
+  .recon-ev { border:1px solid color-mix(in srgb, var(--sev) 45%, transparent); border-left-width:3px; border-radius:9px; background:rgba(14,18,30,0.6); padding:0.6rem 0.7rem; }
+  .recon-ev-head { display:flex; align-items:center; justify-content:space-between; gap:0.5rem; margin-bottom:5px; }
+  .recon-ev-kind { font-size:0.6rem; letter-spacing:0.12em; text-transform:uppercase; color:var(--sev); font-weight:700; }
+  .recon-ev-mtag { font-size:0.5rem; letter-spacing:0.1em; color:#caa23e; border:1px solid rgba(202,162,62,0.6); border-radius:4px; padding:1px 5px; }
+  .recon-ev-text { font-size:0.78rem; color:#dbe3f0; line-height:1.45; margin-bottom:8px; }
+  .recon-ev-text b { color:#fff; }
+  .recon-ev-choices { display:flex; flex-direction:column; gap:0.35rem; }
+  .recon-ev-choice { display:flex; align-items:center; gap:0.5rem; width:100%; text-align:left; background:rgba(20,28,48,0.6); border:1px solid rgba(120,150,200,0.2); border-radius:7px; padding:0.4rem 0.55rem; color:#e8eef7; cursor:pointer; font-family:inherit; transition:border-color 0.12s, background 0.12s; }
+  .recon-ev-choice:hover:not(:disabled) { border-color:var(--sev); background:rgba(30,40,64,0.7); }
+  .recon-ev-choice:disabled { opacity:0.45; cursor:not-allowed; }
+  .recon-ev-choice .rec-ci { flex:0 0 18px; width:18px; height:18px; border-radius:4px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:0.66rem; background:rgba(120,150,200,0.16); border:1px solid rgba(120,150,200,0.4); color:#bcd0ea; }
+  .recon-ev-choice .rec-cl { flex:1; font-size:0.75rem; font-weight:700; }
+  .recon-ev-choice .rec-cd { font-size:0.6rem; color:#8a96a8; letter-spacing:0.04em; white-space:nowrap; }
   /* reclaim modal extras (reuse the cnp host) */
   #camp-node-picker-host .recon-reclaim-hero { background:repeating-linear-gradient(135deg, rgba(120,150,200,0.06) 0 10px, transparent 10px 20px); border:1px solid rgba(120,150,200,0.25); border-radius:8px; padding:1.4rem; text-align:center; color:#8a96a8; font-size:0.7rem; letter-spacing:0.12em; }
   #camp-node-picker-host .recon-reclaim-title { font-family:'Cinzel',serif; font-weight:800; color:#e8eef7; font-size:1.05rem; margin-top:10px; }
@@ -144109,6 +144124,8 @@ try {
         case 'recon-back': App.screen = 'camp'; try { render(); } catch (err) {} break;
         case 'recon-reclaim': { const s = t.getAttribute('data-site'); if (s) openReconReclaim(s); break; }
         case 'recon-reclaim-confirm': { const s = t.getAttribute('data-site'); if (s) reconReclaim(s); break; }
+        case 'recon-ev-choice': { const i = +t.getAttribute('data-idx'), ci = +t.getAttribute('data-cidx'); reconEventChoice(i, ci); break; }
+        case 'recon-mission-launch': { const i = +t.getAttribute('data-idx'), ci = +t.getAttribute('data-cidx'); reconMissionLaunch(i, ci); break; }
         case 'recon-network': goToDistrictNode(getCampNodeId() || null); if (!getCampNodeId()) { App.screen = 'territoryWars'; try { render(); } catch (err) {} } break;
         case 'camp-view-node': goToDistrictNode(getCampNodeId()); break;
         default: return;
@@ -144208,8 +144225,204 @@ function reconReclaim(siteId) {
   closeCampNodePicker();
   try { render(); } catch (e) {}
 }
+// ── Situation Board — citizen events / quests / emergencies (ported faithfully)
+// Effects map to: vitals (morale/food/security/hope, 0-100), recon resources
+// (steel/wood/medicine/fuel), cinder (Profile.gems), pop (campWorkforce),
+// prestige, contrib. Some choices launch an odds-based mission.
+const RECON_EVENTS = [
+  { id:'kidnap', kind:'Survivor Event', sev:'warn',
+    text:'A survivor left the camp searching for supplies and never returned.',
+    choices:[
+      { label:'Ignore', desc:'morale risk', effects:{ morale:-6, hope:-4 } },
+      { label:'Send Rescue Team', desc:'mission', mission:{ name:'Rescue Operation', win:0.62, onWin:{ morale:8, hope:6 }, onLose:{ morale:-10, security:-5 } } },
+      { label:'Lead Rescue Personally', desc:'risky mission', mission:{ name:'Rescue Operation', win:0.78, onWin:{ morale:12, hope:10, prestige:4 }, onLose:{ morale:-14, security:-8 } } },
+    ] },
+  { id:'child', kind:'Survivor Event', sev:'warn',
+    text:'A child wandered beyond the walls and has not come back.',
+    choices:[
+      { label:'Send Scouts', desc:'mission', mission:{ name:'Search the Perimeter', win:0.7, onWin:{ morale:7, hope:8 }, onLose:{ morale:-9, hope:-8 } } },
+      { label:'Send a Hero', desc:'high success', mission:{ name:'Search the Perimeter', win:0.9, onWin:{ morale:9, hope:10, prestige:3 }, onLose:{ morale:-6, hope:-5 } } },
+      { label:'Ignore', desc:'morale risk', effects:{ morale:-8, hope:-10 } },
+    ] },
+  { id:'dispute', kind:'Camp Dispute', sev:'warn',
+    text:'Two families are fighting over living space in the east quarter.',
+    choices:[
+      { label:'Mediate', desc:'balanced', effects:{ morale:4, hope:2 } },
+      { label:'Evict one family', desc:'−population', effects:{ security:3, morale:-7, pop:{ Civilian:-4 } } },
+      { label:'Ignore', desc:'festers', effects:{ morale:-5, security:-3 } },
+    ] },
+  { id:'romance', kind:'Camp Romance', sev:'good',
+    text:'Two survivors wish to be married beneath the watchtower.',
+    choices:[
+      { label:'Approve the ceremony', desc:'+morale +hope', effects:{ morale:8, hope:6 } },
+      { label:'Refuse', desc:'−morale', effects:{ morale:-5 } },
+    ] },
+  { id:'doctor', kind:'Civilian Quest', sev:'info',
+    text:'<b>Medical Request</b> — "We are out of medicine. People are getting sick."',
+    choices:[
+      { label:'Send 30 Medicine', desc:'−30 med', require:{ medicine:30 }, effects:{ medicine:-30, morale:6, contrib:1 } },
+      { label:'Decline', desc:'−morale', effects:{ morale:-6, hope:-3 } },
+    ] },
+  { id:'farmer', kind:'Civilian Quest', sev:'warn',
+    text:'<b>Farmer Request</b> — "The crops are dying. We need fuel for the irrigation pumps."',
+    choices:[
+      { label:'Send 25 Fuel', desc:'−25 fuel', require:{ fuel:25 }, effects:{ fuel:-25, food:14, hope:3, contrib:1 } },
+      { label:'Decline', desc:'−food', effects:{ food:-12, morale:-4 } },
+    ] },
+  { id:'engineer', kind:'Civilian Quest', sev:'good',
+    text:'<b>Engineer Request</b> — "I found a working power station two clicks north."',
+    choices:[
+      { label:'Authorize expedition', desc:'mission', mission:{ name:'Secure the Power Station', win:0.66, onWin:{ fuel:80, hope:8, prestige:4 }, onLose:{ security:-6 } } },
+      { label:'Too risky — decline', desc:'no effect', effects:{} },
+    ] },
+  { id:'horde', kind:'Emergency', sev:'crit',
+    text:'<b>A massive monster horde approaches from the dunes.</b>',
+    choices:[
+      { label:'Defend the walls', desc:'battle', mission:{ name:'Defense of the Settlement', win:0.6, onWin:{ security:6, morale:10, prestige:6 }, onLose:{ morale:-16, security:-12, pop:{ Civilian:-10, Guard:-6 } } } },
+      { label:'Hire Mercenaries', desc:'−800 🔥', require:{ cinder:800 }, effects:{ cinder:-800, security:4, morale:3 } },
+      { label:'Evacuate the outer ring', desc:'−population', effects:{ morale:-8, hope:-6, pop:{ Civilian:-8 } } },
+    ] },
+  { id:'disease', kind:'Emergency', sev:'crit',
+    text:'<b>An unknown sickness is spreading through the bunkhouses.</b>',
+    choices:[
+      { label:'Quarantine the quarter', desc:'contains', effects:{ morale:-6, security:2, hope:-2 } },
+      { label:'Spend 50 Medicine', desc:'−50 med', require:{ medicine:50 }, effects:{ medicine:-50, morale:5, hope:4 } },
+      { label:'Ignore', desc:'spreads', effects:{ morale:-10, pop:{ Civilian:-6 }, hope:-8 } },
+    ] },
+  { id:'fire', kind:'Emergency', sev:'crit',
+    text:'<b>A warehouse has caught fire near the granary.</b>',
+    choices:[
+      { label:'Send workers', desc:'mission', mission:{ name:'Contain the Fire', win:0.72, onWin:{ morale:4 }, onLose:{ steel:-120, wood:-80, morale:-6 } } },
+      { label:'Send a Hero', desc:'high success', mission:{ name:'Contain the Fire', win:0.9, onWin:{ morale:6, prestige:2 }, onLose:{ steel:-60, morale:-3 } } },
+      { label:'Let it burn', desc:'lose resources', effects:{ steel:-150, wood:-120, morale:-8 } },
+    ] },
+  { id:'migration', kind:'Migration', sev:'good', needMorale:65,
+    text:'Families from a neighbouring district wish to relocate to your settlement.',
+    choices:[
+      { label:'Welcome them', desc:'+population', effects:{ pop:{ Civilian:9 }, morale:2, hope:3 } },
+      { label:'Turn them away', desc:'no effect', effects:{} },
+    ] },
+  { id:'merchant', kind:'Legendary', sev:'good', rare:true,
+    text:'<b>A traveling merchant</b> has arrived with rare salvage and unusual wares.',
+    choices:[
+      { label:'Trade 600 🔥 for supplies', desc:'−600 🔥', require:{ cinder:600 }, effects:{ cinder:-600, steel:200, medicine:60, fuel:50, morale:3 } },
+      { label:'Send them on their way', desc:'no effect', effects:{} },
+    ] },
+  { id:'lostreturn', kind:'Legendary', sev:'good', rare:true,
+    text:'<b>A survivor missing for months</b> has walked back through the gate, carrying salvage.',
+    choices:[
+      { label:'Welcome them home', desc:'+engineer +resources', effects:{ steel:120, medicine:40, hope:8, morale:6, prestige:5, pop:{ Engineer:1 } } },
+    ] },
+  { id:'convoy', kind:'Trade Route', sev:'crit',
+    text:'A supply convoy from your node has been <b>ambushed by scum forces</b>.',
+    choices:[
+      { label:'Launch escort mission', desc:'battle', mission:{ name:'Convoy Rescue', win:0.64, onWin:{ steel:150, food:14, prestige:3, contrib:2 }, onLose:{ security:-6, morale:-5 } } },
+      { label:'Write off the shipment', desc:'lose goods', effects:{ steel:-100, food:-10, morale:-4 } },
+    ] },
+];
+const RECON_EVENT_INTERVAL_MS = 18 * 60 * 1000;   // a new situation roughly every ~18 min real-time, + on visit
+function _reconHasRequire(req) {
+  if (!req) return true;
+  const r = _reconState();
+  for (const k in req) {
+    if (k === 'cinder') { if ((Profile.gems || 0) < req[k]) return false; }
+    else if (k === 'morale' || k === 'food' || k === 'security' || k === 'hope') { if ((r.vitals[k] || 0) < req[k]) return false; }
+    else { if ((r.resources[k] | 0) < req[k]) return false; }
+  }
+  return true;
+}
+function _reconApplyEffects(eff) {
+  if (!eff) return;
+  const r = _reconState();
+  for (const k in eff) {
+    if (k === 'pop') { if (!Profile.campWorkforce || typeof Profile.campWorkforce !== 'object') Profile.campWorkforce = {}; for (const role in eff.pop) Profile.campWorkforce[role] = Math.max(0, (Profile.campWorkforce[role] | 0) + eff.pop[role]); continue; }
+    if (k === 'cinder') { Profile.gems = Math.max(0, (Profile.gems || 0) + eff.cinder); continue; }
+    if (k === 'prestige') { Profile.campPrestige = Math.max(0, _campPrestige() + eff.prestige); continue; }
+    if (k === 'contrib') { Profile.campContrib = Math.max(0, Math.min(100, _campContrib() + eff.contrib)); continue; }
+    if (k === 'morale' || k === 'food' || k === 'security' || k === 'hope') { r.vitals[k] = Math.max(0, Math.min(100, (r.vitals[k] || 0) + eff[k])); continue; }
+    if (k === 'steel' || k === 'wood' || k === 'medicine' || k === 'fuel') { r.resources[k] = Math.max(0, (r.resources[k] | 0) + eff[k]); continue; }
+  }
+}
+function _reconEffectSummary(eff) {
+  if (!eff) return 'No change.';
+  const parts = [];
+  for (const k in eff) { if (k === 'pop') { for (const role in eff.pop) parts.push(`${eff.pop[role] > 0 ? '+' : ''}${eff.pop[role]} ${role}`); } else parts.push(`${eff[k] > 0 ? '+' : ''}${eff[k]} ${k}`); }
+  return parts.join(' · ') || 'No change.';
+}
+function _reconSpawnEvents() {
+  const r = _reconState();
+  if (!Array.isArray(r.events)) r.events = [];
+  if (typeof r.lastEventAt !== 'number') r.lastEventAt = 0;
+  if (!getCampNode()) return;   // no situations until the camp is on the network
+  let toSpawn = Math.min(3 - r.events.length, Math.floor((Date.now() - r.lastEventAt) / RECON_EVENT_INTERVAL_MS));
+  if (r.events.length === 0 && toSpawn <= 0) toSpawn = 1;
+  if (toSpawn <= 0) return;
+  const morale = (r.vitals.morale | 0);
+  for (let i = 0; i < toSpawn && r.events.length < 3; i++) {
+    const active = new Set(r.events.map(e => e.id));
+    const pool = RECON_EVENTS.filter(e => !active.has(e.id) && (!e.needMorale || morale >= e.needMorale) && (!e.rare || Math.random() < 0.25));
+    if (!pool.length) break;
+    const def = pool[Math.floor(Math.random() * pool.length)];
+    r.events.push({ id: def.id, at: Date.now() });
+  }
+  r.lastEventAt = Date.now();
+  try { saveProfile(); } catch (e) {}
+}
+function reconEventChoice(instIdx, choiceIdx) {
+  const r = _reconState();
+  const inst = (r.events || [])[instIdx]; if (!inst) return;
+  const def = RECON_EVENTS.find(e => e.id === inst.id); if (!def) return;
+  const choice = def.choices[choiceIdx]; if (!choice) return;
+  if (choice.require && !_reconHasRequire(choice.require)) { try { showToast('You don\'t have the resources for that.'); } catch (e) {} return; }
+  if (choice.mission) { _reconRunMission(instIdx, def, choiceIdx); return; }
+  _reconApplyEffects(choice.effects);
+  r.events.splice(instIdx, 1);
+  try { saveProfile(); } catch (e) {}
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
+  try { tw_cloudUpsertCampReg(); } catch (e) {}
+  try { showToast(`✓ ${def.kind} resolved.`, 1800); } catch (e) {}
+  try { render(); } catch (e) {}
+}
+function _reconRunMission(instIdx, def, choiceIdx) {
+  const choice = def.choices[choiceIdx]; const m = choice.mission;
+  let host = document.getElementById('camp-node-picker-host');
+  if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
+  const win = Math.round(m.win * 100);
+  host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog">
+    <div class="cnp-modal-head"><h3>${escapeHtml(m.name)}</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
+    <div class="cnp-modal-body" id="recon-mission-body">
+      <div class="hint" style="margin-bottom:12px">${def.text}</div>
+      <div class="cnp-odds"><div class="cnp-o win"><div class="k">Success</div><div class="v">${win}%</div></div><div class="cnp-o lose"><div class="k">Failure</div><div class="v">${100 - win}%</div></div></div>
+      <button class="btn-primary" style="width:100%;margin-top:12px" data-act="recon-mission-launch" data-idx="${instIdx}" data-cidx="${choiceIdx}">Launch Mission</button>
+    </div></div></div>`;
+}
+function reconMissionLaunch(instIdx, choiceIdx) {
+  const r = _reconState();
+  const inst = (r.events || [])[instIdx]; if (!inst) return;
+  const def = RECON_EVENTS.find(e => e.id === inst.id); if (!def) return;
+  const choice = def.choices[choiceIdx]; if (!choice || !choice.mission) return;
+  const m = choice.mission;
+  const body = document.getElementById('recon-mission-body');
+  if (body) body.innerHTML = `<div class="convoy-engaging">DEPLOYING…</div>`;
+  const won = Math.random() < m.win;
+  setTimeout(() => {
+    _reconApplyEffects(won ? m.onWin : m.onLose);
+    const list = _reconState().events || [];
+    const idx = list.indexOf(inst);
+    if (idx >= 0) list.splice(idx, 1);
+    try { saveProfile(); } catch (e) {}
+    try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
+    try { tw_cloudUpsertCampReg(); } catch (e) {}
+    const b2 = document.getElementById('recon-mission-body');
+    if (b2) b2.innerHTML = `<div class="convoy-result ${won ? 'win' : 'lose'}">${won ? 'MISSION SUCCESS' : 'MISSION FAILED'}</div>
+      <div class="hint" style="margin-top:8px">${escapeHtml(_reconEffectSummary(won ? m.onWin : m.onLose))}</div>
+      <button class="btn-primary" style="width:100%;margin-top:14px" data-act="camp-picker-close">Return</button>`;
+    try { render(); } catch (e) {}
+  }, 1100);
+}
 function renderReconstruction() {
   const r = _reconState();
+  try { _reconSpawnEvents(); } catch (e) {}
   const node = getCampNode();
   const pop = _campWorkforce();
   const popTotal = _campWorkforceTotal();
@@ -144248,6 +144461,21 @@ function renderReconstruction() {
       ${!node ? '<button class="btn-mini btn-primary" data-act="camp-connect-node" style="margin-top:10px">Connect to a Node ▸</button>' : (popTotal === 0 ? '<button class="btn-mini btn-primary" data-act="camp-employment" style="margin-top:10px">Open Employment Board ▸</button>' : '')}</div>`;
   })();
   const builtCount = Object.keys(r.sites).filter(k => r.sites[k]).length;
+  const SEVCOL = { good: '#9bb265', info: '#7d9cb6', warn: '#dca844', crit: '#cf5a3a' };
+  const evs = Array.isArray(r.events) ? r.events : [];
+  const situationHtml = evs.length ? evs.map((inst, i) => {
+    const def = RECON_EVENTS.find(e => e.id === inst.id); if (!def) return '';
+    const col = SEVCOL[def.sev] || '#7d9cb6';
+    const choices = def.choices.map((c, ci) => {
+      const blocked = c.require && !_reconHasRequire(c.require);
+      return `<button class="recon-ev-choice" data-act="recon-ev-choice" data-idx="${i}" data-cidx="${ci}" ${blocked ? 'disabled' : ''}><span class="rec-ci">${String.fromCharCode(65 + ci)}</span><span class="rec-cl">${escapeHtml(c.label)}</span><span class="rec-cd">${c.mission ? '⚔ mission' : escapeHtml(c.desc || '')}</span></button>`;
+    }).join('');
+    return `<div class="recon-ev" style="--sev:${col}">
+      <div class="recon-ev-head"><span class="recon-ev-kind">◆ ${escapeHtml(def.kind)}</span>${def.choices.some(c => c.mission) ? '<span class="recon-ev-mtag">CAN BECOME MISSION</span>' : ''}</div>
+      <div class="recon-ev-text">${def.text}</div>
+      <div class="recon-ev-choices">${choices}</div>
+    </div>`;
+  }).join('') : `<div class="recon-soon">// NO ACTIVE SITUATIONS //<br>${node ? 'Citizens are quiet for now — emergencies, quests and trade troubles will surface here.' : 'Connect your camp to a District Node to start receiving situations.'}</div>`;
   root.innerHTML = `<div class="recon-page">
     <div class="recon-topbar">
       <div class="recon-id">
@@ -144269,8 +144497,8 @@ function renderReconstruction() {
         <div class="recon-stage">${onboard}<div class="recon-grid">${cells}</div></div>
       </div>
       <div class="recon-right">
-        <div class="recon-ph"><h2>Situation Board</h2><span class="recon-tag">SOON</span></div>
-        <div class="recon-soon">Citizen events, quests + emergencies arrive here in the next update — make choices, some become missions.</div>
+        <div class="recon-ph"><h2>Situation Board</h2><span class="recon-tag">${evs.length} ACTIVE</span></div>
+        <div class="recon-situations">${situationHtml}</div>
       </div>
     </div>
   </div>`;

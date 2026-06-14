@@ -83,6 +83,25 @@
     --ink-dim: #a89888;
     --border: #3a2f5c;
     --border-bright: #6b5499;
+    /* 🎛 DESIGN TOKENS (battle-UI roadmap #5) — one shared elevation / radius /
+       spacing / accent language so the new HUD pieces (turn badge, hero bars,
+       corner HUD, floating action menu, end-turn button) read as one cohesive
+       system. Adopted by the NEW rules only; legacy rules are left untouched to
+       avoid wide visual regressions across the 7M-char sheet. */
+    --shadow-sm: 0 2px 6px rgba(0,0,0,0.45);
+    --shadow-md: 0 8px 22px rgba(0,0,0,0.55);
+    --shadow-lg: 0 16px 38px rgba(0,0,0,0.62);
+    --shadow-glow: 0 0 22px rgba(212,175,55,0.35);
+    --ring-gold: 0 0 0 1px rgba(212,175,55,0.45);
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-pill: 999px;
+    --space-xs: 0.25rem;
+    --space-sm: 0.5rem;
+    --space-md: 0.75rem;
+    --space-lg: 1.25rem;
+    --space-xl: 2rem;
   }
 
   html, body {
@@ -5274,9 +5293,25 @@
     font-family: 'Cinzel', serif;
     text-transform: uppercase;
     width: 100%;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 18px rgba(212,175,55,0.25);
+    box-shadow: var(--shadow-md, 0 8px 22px rgba(0,0,0,0.55)), var(--shadow-glow, 0 0 18px rgba(212,175,55,0.25));
+    /* 🔚 End-turn polish (battle-UI roadmap #6) — a touch of motion + a stronger
+       glow on hover/press so the primary action of the turn feels tactile. */
+    transition: transform 0.12s ease, box-shadow 0.18s ease, filter 0.18s ease;
+    will-change: transform;
   }
-  .end-turn-rail:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.08); }
+  .end-turn-rail:not(:disabled):hover {
+    transform: translateY(-2px) scale(1.025);
+    filter: brightness(1.1);
+    box-shadow: var(--shadow-lg, 0 16px 38px rgba(0,0,0,0.6)), 0 0 26px rgba(212,175,55,0.5);
+  }
+  .end-turn-rail:not(:disabled):active { transform: translateY(0) scale(0.99); filter: brightness(1.02); }
+  /* Gentle idle pulse so the eye is drawn to End Turn once the player has acted
+     (no actions left). Class is added in renderBattle when the turn is spent. */
+  .end-turn-rail.ready-pulse:not(:disabled) { animation: end-turn-pulse 1.8s ease-in-out infinite; }
+  @keyframes end-turn-pulse {
+    0%, 100% { box-shadow: var(--shadow-md, 0 8px 22px rgba(0,0,0,0.55)), 0 0 14px rgba(212,175,55,0.28); }
+    50%      { box-shadow: var(--shadow-md, 0 8px 22px rgba(0,0,0,0.55)), 0 0 26px rgba(212,175,55,0.6); }
+  }
 
   /* Card frame PNGs live in assets/Frames/ — separate folder from the HTML.
      Files: "unit card.png" · "Spell card.png" · "Trap card.png" · "Location card.png"
@@ -10684,6 +10719,43 @@
     justify-content: flex-end;
   }
   .quick-act { font-weight: 600; }
+  /* 🎯 FLOATING UNIT ACTION MENU (battle-UI roadmap #4, opt-in via
+     body.float-actions). A small menu that hovers just above the SELECTED
+     unit's tile and mirrors the rail's action buttons (each is a proxy that
+     clicks the real rail button — see _syncUnitFloatMenu). Positioned in JS
+     (fixed coords); these are purely the looks. When float mode is ON we hide
+     the rail's own action row so the buttons live in exactly one place. */
+  #unit-float-menu {
+    position: fixed;
+    z-index: 70;
+    display: none;
+    gap: var(--space-xs, 0.3rem);
+    padding: 0.32rem 0.36rem;
+    background: rgba(12, 9, 22, 0.88);
+    border: 1px solid rgba(212, 175, 55, 0.45);
+    border-radius: var(--radius-md, 10px);
+    box-shadow: var(--shadow-lg, 0 16px 38px rgba(0,0,0,0.62)), inset 0 0 0 1px rgba(0,0,0,0.5);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    white-space: nowrap;
+    pointer-events: auto;
+  }
+  #unit-float-menu.show { display: flex; animation: ufm-pop 0.13s ease-out; }
+  #unit-float-menu .ufm-btn { margin: 0; }
+  @keyframes ufm-pop { from { opacity: 0; transform: translateY(5px) scale(0.96); } to { opacity: 1; transform: none; } }
+  /* When the floating menu is active, the rail's action row is redundant —
+     collapse it so actions read from one spot. The rest of the rail panel
+     (portrait, name, HP line, tip) stays as the always-visible source of truth
+     and keeps the proxy targets alive in the DOM (visually hidden, not removed). */
+  body.float-actions .action-panel.quick .quick-actions {
+    position: absolute;
+    width: 1px; height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    opacity: 0;
+    pointer-events: none;
+    margin: 0;
+  }
   .quick-act#btn-quick-move {
     border-color: var(--emerald);
     color: #b6f0c8;
@@ -51163,6 +51235,89 @@ try {
   try { if (localStorage.getItem('hg_cornerhud') === '1' && document.body) document.body.classList.add('corner-hud'); } catch (e) {}
 } catch (e) {}
 
+// 🎯 FLOATING UNIT ACTION MENU (battle-UI roadmap #4) — opt-in via
+// body.float-actions. Mirrors the rail's action buttons into a small menu that
+// hovers just above the SELECTED unit's tile (modern-TCG feel). It re-implements
+// NO action logic: each floating button is a thin PROXY that .click()s the real
+// (still-present, visually-hidden) rail button by id, so every existing handler
+// runs unchanged. Rebuilt + repositioned each battle render via _syncUnitFloatMenu;
+// hidden whenever we're off the battle screen or nothing is selected. The click
+// delegation + the resize listener are installed EXACTLY ONCE (guarded), and no
+// per-render listeners are added — so this can never accumulate / leak.
+let _ufmEl = null, _ufmWired = false;
+function _ensureUnitFloatMenu() {
+  if (_ufmEl && document.body && document.body.contains(_ufmEl)) return _ufmEl;
+  let el = document.getElementById('unit-float-menu');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'unit-float-menu';
+    el.setAttribute('role', 'toolbar');
+    if (document.body) document.body.appendChild(el);
+  }
+  _ufmEl = el;
+  if (!_ufmWired) {
+    _ufmWired = true;
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest && e.target.closest('[data-proxy]');
+      if (!b) return;
+      e.preventDefault();
+      const target = document.getElementById(b.getAttribute('data-proxy'));
+      if (target) { try { target.click(); } catch (err) {} }
+    });
+    try { window.addEventListener('resize', () => { try { _syncUnitFloatMenu(); } catch (err) {} }, { passive: true }); } catch (err) {}
+  }
+  return el;
+}
+function _hideUnitFloatMenu() {
+  const el = _ufmEl || document.getElementById('unit-float-menu');
+  if (el) { el.classList.remove('show'); el.style.display = 'none'; }
+}
+function _syncUnitFloatMenu() {
+  try {
+    if (!document.body || !document.body.classList.contains('float-actions') ||
+        (typeof App === 'undefined') || App.screen !== 'battle') { _hideUnitFloatMenu(); return; }
+    const tile = document.querySelector('.board .tile.selected');
+    const rail = document.querySelector('.action-panel.quick .quick-actions');
+    const btns = rail ? rail.querySelectorAll('button[id]') : [];
+    if (!tile || !btns.length) { _hideUnitFloatMenu(); return; }
+    const el = _ensureUnitFloatMenu();
+    // (Re)build proxies — only a handful of buttons, cheap to recreate.
+    el.innerHTML = '';
+    btns.forEach((b) => {
+      const fb = document.createElement('button');
+      fb.className = b.className + ' ufm-btn';
+      fb.innerHTML = b.innerHTML;
+      fb.setAttribute('data-proxy', b.id);
+      if (b.disabled) fb.disabled = true;
+      el.appendChild(fb);
+    });
+    // Position centered above the selected tile. fixed coords == what
+    // getBoundingClientRect returns, so it tracks the iso-projected tile.
+    el.style.display = 'flex';
+    const r = tile.getBoundingClientRect();
+    const mw = el.offsetWidth, mh = el.offsetHeight;
+    let left = r.left + r.width / 2 - mw / 2;
+    let top  = r.top - mh - 8;
+    left = Math.max(6, Math.min(left, (window.innerWidth || mw) - mw - 6));
+    if (top < 6) top = r.bottom + 8;   // flip below the tile if no room above
+    el.style.left = Math.round(left) + 'px';
+    el.style.top  = Math.round(top) + 'px';
+    el.classList.add('show');
+  } catch (e) { _hideUnitFloatMenu(); }
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.floatActions = function (on) {
+    const v = (on === undefined) ? !document.body.classList.contains('float-actions') : !!on;
+    document.body.classList.toggle('float-actions', v);
+    try { localStorage.setItem('hg_floatactions', v ? '1' : '0'); } catch (e) {}
+    try { _syncUnitFloatMenu(); } catch (e) {}
+    console.info('🎯 Floating action buttons ' + (v ? 'ON' : 'OFF') + ' — run __mg.floatActions() to toggle.');
+    return v;
+  };
+  try { if (localStorage.getItem('hg_floatactions') === '1' && document.body) document.body.classList.add('float-actions'); } catch (e) {}
+} catch (e) {}
+
 // 💾 Convenience wrapper — `saveProfile() + saveForge()` with labeled warns.
 //    Replaces the boilerplate pattern that appears 60+ times in this codebase:
 //        try { saveProfile && saveProfile(); } catch (e) {}
@@ -67746,6 +67901,11 @@ function _renderImpl() {
   // own DOM node appended directly to <body> — it survives root.innerHTML
   // replacements that happen inside the screen renderers below.
   try { if (typeof _renderFriendChallengeOverlay === 'function') _renderFriendChallengeOverlay(); } catch (e) {}
+  // 🎯 Floating action menu lives at <body> level (like the overlays above) so
+  // it survives screen innerHTML swaps. Hide it the moment we render anything
+  // that isn't the battle screen; the battle render re-positions it via
+  // bindBattleEvents → _syncUnitFloatMenu.
+  try { if (App.screen !== 'battle' && typeof _hideUnitFloatMenu === 'function') _hideUnitFloatMenu(); } catch (e) {}
   // 🎬 Premium page transitions — soft 200ms crossfade between screens.
   // Only triggers when the SCREEN actually changes (re-renders of the same
   // screen, e.g. timer ticks on the matchmaking page, do not fade — that
@@ -84659,7 +84819,7 @@ function _renderBattleImmediateImpl() {
           ${renderActionPanel()}
           ${renderLog()}
           ${s.turn === 'player'
-            ? `<button class="btn-primary end-turn-rail" id="btn-end-turn">⚔ End Turn</button>`
+            ? `<button class="btn-primary end-turn-rail${(function(){try{return (s.units||[]).filter(u=>u&&u.owner==='player'&&u.alive&&(!u.hasMoved||!u.hasAttacked)).length===0 ? ' ready-pulse' : '';}catch(e){return '';}})()}" id="btn-end-turn">⚔ End Turn</button>`
             : `<button class="btn-secondary end-turn-rail" disabled>Enemy Acting…</button>`}
           <!-- Hero bars moved BELOW End Turn — bigger, clearer, easier to read
                during play. The .big modifier adds extra sizing and spacing.
@@ -90309,6 +90469,9 @@ function bindBattleEvents() {
       };
     });
   }
+  // 🎯 Reposition the floating unit-action menu (opt-in) now that the battle DOM
+  // + rail buttons exist. No-op unless body.float-actions is set.
+  try { if (typeof _syncUnitFloatMenu === 'function') _syncUnitFloatMenu(); } catch (e) {}
 }
 
 // 🎯 A move that needs NO board target — it resolves immediately on the caster.
@@ -104675,6 +104838,17 @@ function renderSettings() {
             ${cornerHudOn ? '👑 <strong>Corner HUD</strong> — hero vitals float in the screen corners (enemy top-right, you bottom-left).' : '📊 <strong>Classic Rail</strong> — hero vitals stay stacked in the battle side panel.'}
           </div>`;
         })()}
+        <div class="settings-section-desc" style="margin-top:1rem">🎯 <strong>Floating Action Buttons</strong> — show Move / Swap / Details and other actions in a little menu that hovers right above the unit you select, instead of in the side rail. Faster to reach; reads like a modern tactics game.</div>
+        ${(() => {
+          let floatOn = false; try { floatOn = (localStorage.getItem('hg_floatactions') === '1'); } catch (e) {}
+          return `<div class="settings-presets" style="margin-top:0.6rem">
+            <button class="btn-mini ${floatOn ? '' : 'btn-primary'}" data-float-actions="off">📑 In Side Rail</button>
+            <button class="btn-mini ${floatOn ? 'btn-primary' : ''}" data-float-actions="on">🎯 Float at Unit</button>
+          </div>
+          <div class="small-text ink-dim" style="margin-top:0.5rem">
+            ${floatOn ? '🎯 <strong>Float at Unit</strong> — action buttons appear above the selected unit.' : '📑 <strong>In Side Rail</strong> — action buttons stay in the left action panel.'}
+          </div>`;
+        })()}
       </div>
 
       <div class="settings-section">
@@ -105033,6 +105207,20 @@ function renderSettings() {
       if (typeof showToast === 'function') {
         showToast(on ? '👑 Battle HUD: Corner layout — vitals float to the corners.'
                      : '📊 Battle HUD: Classic rail layout.', 2000);
+      }
+      render();
+    };
+  });
+
+  // 🎯 Floating-action-buttons toggle — flips body.float-actions via the
+  // __mg.floatActions helper (persists + repositions the menu).
+  document.querySelectorAll('[data-float-actions]').forEach(el => {
+    el.onclick = () => {
+      const on = el.dataset.floatActions === 'on';
+      try { if (window.__mg && typeof window.__mg.floatActions === 'function') window.__mg.floatActions(on); } catch (e) {}
+      if (typeof showToast === 'function') {
+        showToast(on ? '🎯 Action buttons now float above the selected unit.'
+                     : '📑 Action buttons return to the side rail.', 2000);
       }
       render();
     };

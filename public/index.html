@@ -49164,9 +49164,12 @@ function getThumb(id) {
 function _downscaleToThumb(srcUrl) {
   return new Promise(function (resolve) {
     let done = false;
-    const finish = (v) => { if (done) return; done = true; resolve(v || null); };
+    const img = new Image();
+    // ABORT a stuck/huge decode on finish so the build never overlaps decodes
+    // (the main-menu vector): without this, a slow source could let the loop
+    // advance while the previous full-res decode is still in flight, stacking up.
+    const finish = (v) => { if (done) return; done = true; try { img.onload = null; img.onerror = null; if (!v) img.src = ''; } catch (e) {} resolve(v || null); };
     try {
-      const img = new Image();
       img.onload = function () {
         try {
           const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
@@ -66706,34 +66709,24 @@ function renderIcon(spriteId, fallbackEmoji, size, animOverride, opts) {
     const sizeStyle = isFill
       ? 'width:100%;height:100%;'
       : `width:${px}px;height:${px}px;`;
-    // 🎨 STREAMING MODE — emit DEFERRED <img> (no src; data-art-src instead) so
-    // the decode budget + visibility gate decide what actually decodes. Off-board
-    // surfaces show ONE static frame and carry NO data-sprite-id (invisible to
-    // the animation ticker); only the board passes animated:true and keeps the
-    // full frame stack. This is what keeps a 240-card screen from decoding
-    // hundreds of full-res bitmaps at once.
+    // 🆘 STREAMING / BIG LIBRARY — use the tiny thumbnail for BOTH the board and
+    // off-board, and NEVER decode full-res sprite frames. Budget-capping the
+    // COUNT was not enough: high-res frames × even a capped count can still OOM on
+    // a battle board. A sprite now decodes at most a ~160px thumbnail; until its
+    // thumb is built it shows an emoji placeholder. Board animation is traded away
+    // on huge libraries to guarantee the game can't run out of memory. Small
+    // libraries (streaming off) keep the full eager animation below.
     if (_lazyArtOn && _decodeBudgetOn) {
-      // 🖼 Off-board: a tiny thumbnail decodes cheaply, so serve it eagerly (no
-      // budget needed). Falls through to the budget-gated full frame only while
-      // the thumbnail is still building.
-      if (!animated) {
-        const _th = getThumb(spriteId);
-        if (_th) return `<span class="sprite-stack" style="${sizeStyle}"><img class="sprite-img is-on" src="${_th}" alt="" draggable="false" decoding="async"></span>`;
-      }
-      const useFrames = animated ? frames : [frames[0]];
-      const frameImgs = useFrames.map((url, i) => (
-        `<img class="sprite-img sprite-frame${i === 0 ? ' is-on' : ''} art-deferred" data-art-src="${url}" alt="" draggable="false" decoding="async">`
+      const _th = getThumb(spriteId);
+      if (_th) return `<span class="sprite-stack" style="${sizeStyle}"><img class="sprite-img is-on" src="${_th}" alt="" draggable="false" decoding="async"></span>`;
+      // no thumbnail yet → fall through to the emoji placeholder (no full-res decode).
+    } else {
+      const frameImgs = frames.map((url, i) => (
+        `<img class="sprite-img sprite-frame${i === 0 ? ' is-on' : ''}" src="${_imgSrc(url)}" alt="" draggable="false" decoding="async" loading="eager">`
       )).join('');
-      const _cfm = animated && (typeof _spriteCustomFrameMs === 'function') ? _spriteCustomFrameMs(spriteId, chosenAnim) : null;
-      const idAttr = animated ? ` data-sprite-id="${spriteId}" data-sprite-anim="${chosenAnim}"` : '';
-      return `<span class="sprite-stack"${idAttr}${_cfm ? ` data-sprite-frame-ms="${_cfm}"` : ''} style="${sizeStyle}">${frameImgs}</span>`;
+      const _cfm = (typeof _spriteCustomFrameMs === 'function') ? _spriteCustomFrameMs(spriteId, chosenAnim) : null;
+      return `<span class="sprite-stack" data-sprite-id="${spriteId}" data-sprite-anim="${chosenAnim}"${_cfm ? ` data-sprite-frame-ms="${_cfm}"` : ''} style="${sizeStyle}">${frameImgs}</span>`;
     }
-    // Legacy eager path (small-library installs, streaming off) — unchanged.
-    const frameImgs = frames.map((url, i) => (
-      `<img class="sprite-img sprite-frame${i === 0 ? ' is-on' : ''}" src="${_imgSrc(url)}" alt="" draggable="false" decoding="async" loading="eager">`
-    )).join('');
-    const _cfm = (typeof _spriteCustomFrameMs === 'function') ? _spriteCustomFrameMs(spriteId, chosenAnim) : null;
-    return `<span class="sprite-stack" data-sprite-id="${spriteId}" data-sprite-anim="${chosenAnim}"${_cfm ? ` data-sprite-frame-ms="${_cfm}"` : ''} style="${sizeStyle}">${frameImgs}</span>`;
   }
   const fontSize = isFill ? '2.2rem' : `${Math.floor(px*0.85)}px`;
   return `<span style="font-size:${fontSize};line-height:1">${fallbackEmoji || '?'}</span>`;

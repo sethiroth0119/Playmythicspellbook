@@ -35003,6 +35003,7 @@ async function cloudSyncProfile() {
       __campPrestige__:      (typeof Profile.campPrestige === 'number') ? Profile.campPrestige : 0,
       __campWorkforce__:     (Profile.campWorkforce && typeof Profile.campWorkforce === 'object') ? Profile.campWorkforce : {},
       __campNodeHire__:      (Profile.campNodeHire && typeof Profile.campNodeHire === 'object') ? Profile.campNodeHire : {},
+      __campRoute__:         (Profile.campRoute && typeof Profile.campRoute === 'object') ? Profile.campRoute : null,
       __recon__:             (Profile.recon && typeof Profile.recon === 'object') ? Profile.recon : null,
       // 🧬 Camp traits copied off the chosen survivor at pick time. Travels
       // with the account so admin-side trait edits don't retroactively change
@@ -35893,6 +35894,7 @@ async function cloudFetchProfile() {
       if (typeof f.__campPrestige__ === 'number') Profile.campPrestige = f.__campPrestige__;
       if (f.__campWorkforce__ && typeof f.__campWorkforce__ === 'object') Profile.campWorkforce = f.__campWorkforce__;
       if (f.__campNodeHire__ && typeof f.__campNodeHire__ === 'object') Profile.campNodeHire = f.__campNodeHire__;
+      if (f.__campRoute__ && typeof f.__campRoute__ === 'object') Profile.campRoute = f.__campRoute__;
       if (f.__recon__ && typeof f.__recon__ === 'object') Profile.recon = f.__recon__;
       if (Array.isArray(f.__campTraits__))         Profile.campTraits     = f.__campTraits__.slice();
       // 🍞 / 💧 Satiation bars (separate from inventory counts).
@@ -144219,18 +144221,18 @@ try {
 // ═══════════════════════════════════════════════════════════════════════════
 const RECON_SITES = [
   { id:'cityhall',   name:'Ruined Town Hall',   into:'City Hall',        glow:'cyan',   cost:{ cinder:300 },             needs:{ Builder:1 },               gives:'settlement command' },
-  { id:'apartments', name:'Gutted Apartments',  into:'Apartment Block',  glow:'amber',  cost:{ cinder:350, wood:80 },    needs:{ Builder:2 },               gives:'houses survivors' },
-  { id:'greenhouse', name:'Overgrown Lot',      into:'Greenhouse',       glow:'amber',  cost:{ cinder:350, wood:60 },    needs:{ Builder:1, Farmer:1 },     gives:'food production' },
+  { id:'apartments', name:'Gutted Apartments',  into:'Apartment Block',  glow:'amber',  cost:{ cinder:350, supplies:80 },    needs:{ Builder:2 },               gives:'houses survivors' },
+  { id:'greenhouse', name:'Overgrown Lot',      into:'Greenhouse',       glow:'amber',  cost:{ cinder:350, supplies:60 },    needs:{ Builder:1, Farmer:1 },     gives:'food production' },
   { id:'radio',      name:'Wrecked Radio Mast', into:'Radio Station',    glow:'cyan',   cost:{ cinder:300 },             needs:{ Engineer:1 },              gives:'long-range contact' },
   { id:'watch',      name:'Crumbled Gatehouse', into:'Watch Post',       glow:'red',    cost:{ cinder:400, metal:80 },   needs:{ Builder:1, Guard:1 },      gives:'+Security' },
   { id:'power',      name:'Dead Substation',    into:'Power Station',    glow:'purple', cost:{ cinder:600, metal:150 },  needs:{ Engineer:1, Mechanic:1 },  gives:'city power' },
-  { id:'workshop',   name:'Collapsed Garage',   into:'Workshop',         glow:'cyan',   cost:{ cinder:450, wood:100 },   needs:{ Builder:1, Mechanic:1 },   gives:'builds & repairs' },
+  { id:'workshop',   name:'Collapsed Garage',   into:'Workshop',         glow:'cyan',   cost:{ cinder:450, supplies:100 },   needs:{ Builder:1, Mechanic:1 },   gives:'builds & repairs' },
   { id:'clinic',     name:'Old Pharmacy',       into:'Clinic',           glow:'cyan',   cost:{ cinder:450, metal:60 },   needs:{ Builder:1, Doctor:1 },     gives:'+Medicine' },
   { id:'store',      name:'Caved-in Depot',     into:'Storehouse',       glow:'amber',  cost:{ cinder:250 },             needs:{ Builder:1 },               gives:'+Storage' },
   { id:'hospital',   name:'Old Hospital',       into:'City Hospital',    glow:'cyan',   cost:{ cinder:800, metal:200 },  needs:{ Builder:2, Doctor:1 },     gives:'+Medicine and +Health' },
-  { id:'aptruin',    name:'Ruined Apartments',  into:'Apartment Tower',  glow:'amber',  cost:{ cinder:700, wood:160 },   needs:{ Builder:2 },               gives:'more housing' },
+  { id:'aptruin',    name:'Ruined Apartments',  into:'Apartment Tower',  glow:'amber',  cost:{ cinder:700, supplies:160 },   needs:{ Builder:2 },               gives:'more housing' },
   { id:'market',     name:'Collapsed Market',   into:'Marketplace',      glow:'amber',  cost:{ cinder:500, metal:80 },   needs:{ Builder:1, Merchant:1 },   gives:'+Trade income' },
-  { id:'school',     name:'Old Schoolhouse',    into:'Schoolhouse',      glow:'purple', cost:{ cinder:550, wood:120 },   needs:{ Builder:1, Researcher:1 }, gives:'+Hope and +Recruits' },
+  { id:'school',     name:'Old Schoolhouse',    into:'Schoolhouse',      glow:'purple', cost:{ cinder:550, supplies:120 },   needs:{ Builder:1, Researcher:1 }, gives:'+Hope and +Recruits' },
 ];
 function _reconState() {
   if (!Profile.recon || typeof Profile.recon !== 'object') Profile.recon = {};
@@ -144407,7 +144409,7 @@ function _reconHasRequire(req) {
   for (const k in req) {
     if (k === 'cinder') { if ((Profile.gems || 0) < req[k]) return false; }
     else if (k === 'morale' || k === 'security' || k === 'hope') { if ((r.vitals[k] || 0) < req[k]) return false; }
-    else { if (((typeof getRes === 'function') ? getRes(k === 'steel' ? 'metal' : k) : 0) < req[k]) return false; }
+    else { if (((typeof getRes === 'function') ? getRes(k === 'steel' ? 'metal' : (k === 'wood' ? 'supplies' : k)) : 0) < req[k]) return false; }
   }
   return true;
 }
@@ -144420,8 +144422,8 @@ function _reconApplyEffects(eff) {
     if (k === 'prestige') { Profile.campPrestige = Math.max(0, _campPrestige() + eff.prestige); continue; }
     if (k === 'contrib') { Profile.campContrib = Math.max(0, Math.min(100, _campContrib() + eff.contrib)); continue; }
     if (k === 'morale' || k === 'security' || k === 'hope') { r.vitals[k] = Math.max(0, Math.min(100, (r.vitals[k] || 0) + eff[k])); continue; }
-    // Real survival-ledger resources (food/metal/wood/supplies/medicine/fuel…) via addRes; 'steel' aliases to 'metal'.
-    if (typeof addRes === 'function' && (k === 'food' || k === 'steel' || k === 'metal' || k === 'wood' || k === 'supplies' || k === 'medicine' || k === 'fuel' || k === 'ammo' || k === 'water')) { addRes(k === 'steel' ? 'metal' : k, eff[k]); continue; }
+    // Real survival-ledger resources via addRes; 'steel'→'metal', 'wood'→'supplies'.
+    if (typeof addRes === 'function' && (k === 'food' || k === 'steel' || k === 'metal' || k === 'wood' || k === 'supplies' || k === 'medicine' || k === 'fuel' || k === 'ammo' || k === 'water')) { addRes(k === 'steel' ? 'metal' : (k === 'wood' ? 'supplies' : k), eff[k]); continue; }
   }
 }
 function _reconEffectSummary(eff) {
@@ -144457,7 +144459,7 @@ function reconEventChoice(instIdx, choiceIdx) {
   if (choice.require && !_reconHasRequire(choice.require)) { try { showToast('You don\'t have the resources for that.'); } catch (e) {} return; }
   if (choice.mission) { _reconRunMission(instIdx, def, choiceIdx); return; }
   _reconApplyEffects(choice.effects);
-  r.events.splice(instIdx, 1);
+  const _ix = r.events.indexOf(inst); if (_ix >= 0) r.events.splice(_ix, 1);   // splice by identity, not stale index
   try { saveProfile(); } catch (e) {}
   try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
   try { tw_cloudUpsertCampReg(); } catch (e) {}
@@ -144597,6 +144599,7 @@ function _reconNetworkBodyHtml() {
 function renderReconstruction() {
   const r = _reconState();
   try { _reconSpawnEvents(); } catch (e) {}
+  try { const _rt = (typeof _campRouteResolve === 'function') ? _campRouteResolve() : null; if (_rt) showToast(_rt, 3400); } catch (e) {}
   const node = getCampNode();
   const pop = _campWorkforce();
   const popTotal = _campWorkforceTotal();
@@ -144621,7 +144624,7 @@ function renderReconstruction() {
   const POP_ORDER = ['Guard', 'Builder', 'Farmer', 'Doctor', 'Engineer', 'Mechanic', 'Researcher', 'Merchant', 'Civilian'];
   const popMax = Math.max(1, ...POP_ORDER.map(j => pop[j] | 0));
   const popHtml = POP_ORDER.map(j => { const v = pop[j] | 0; return `<div class="recon-popbar"><div class="rp-row"><span>${j}${v === 1 ? '' : 's'}</span><b>${v}</b></div><div class="rp-t"><i style="width:${(v / popMax) * 100}%"></i></div></div>`; }).join('');
-  const RES = [['Cinder', Profile.gems || 0, ''], ['Food', _gr('food'), ''], ['Metal', _gr('metal'), ''], ['Wood', _gr('wood'), ''], ['Medicine', _gr('medicine'), _gr('medicine') < 30 ? 'warn' : ''], ['Fuel', _gr('fuel'), '']];
+  const RES = [['Cinder', Profile.gems || 0, ''], ['Food', _gr('food'), ''], ['Metal', _gr('metal'), ''], ['Supplies', _gr('supplies'), ''], ['Medicine', _gr('medicine'), _gr('medicine') < 30 ? 'warn' : ''], ['Fuel', _gr('fuel'), '']];
   const resHtml = RES.map(([k, v, w]) => `<div class="recon-res"><span class="rr-k">${k}</span><span class="rr-v ${w}">${v}</span></div>`).join('');
   const GLOW = { cyan: '#7d9cb6', amber: '#dca844', red: '#cf5a3a', purple: '#8f7db6' };
   const cells = RECON_SITES.map(s => {

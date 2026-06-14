@@ -9053,6 +9053,27 @@
   .unit.hero { box-shadow: inset 0 0 0 2px var(--gold), 0 0 8px rgba(212, 175, 55, 0.45); }
   .unit.hero.player { box-shadow: inset 0 0 0 2px var(--gold), 0 0 10px rgba(74, 143, 212, 0.55); }
   .unit.hero.ai { box-shadow: inset 0 0 0 2px var(--ember), 0 0 10px rgba(232, 93, 60, 0.55); }
+  /* 👑 Hero board marker — a crowned-skull pedestal under each hero so players
+     instantly know which piece is the hero (lose yours = lose the match). */
+  .hero-board-marker {
+    position: absolute;
+    bottom: -7px;
+    left: 50%;
+    width: 26px;
+    height: auto;
+    transform: translateX(-50%);
+    z-index: 7;
+    pointer-events: none;
+    object-fit: contain;
+    filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.85)) drop-shadow(0 0 5px rgba(120, 255, 140, 0.5));
+    animation: hero-marker-bob 2.6s ease-in-out infinite;
+  }
+  .unit.hero.player .hero-board-marker { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.85)) drop-shadow(0 0 6px rgba(74, 143, 212, 0.75)); }
+  .unit.hero.ai .hero-board-marker     { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.85)) drop-shadow(0 0 6px rgba(232, 93, 60, 0.75)); }
+  @keyframes hero-marker-bob {
+    0%, 100% { transform: translateX(-50%) translateY(0); }
+    50%      { transform: translateX(-50%) translateY(-2px); }
+  }
   .unit.selected {
     box-shadow: 0 0 0 2px var(--gold-bright), 0 0 14px var(--gold);
     animation: glow 1.4s ease-in-out infinite;
@@ -20560,6 +20581,10 @@
     overflow: hidden;
   }
   .hd-portrait img.sprite-img { width: 100% !important; height: 100% !important; object-fit: contain; }
+  /* 👑 Hero emblem in the detail panel — same crowned-skull marker as the board. */
+  .hd-hero-mark { display: flex; align-items: center; gap: 0.45rem; margin: 0.05rem 0; }
+  .hd-hero-mark img { width: 28px; height: auto; object-fit: contain; flex: none; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.75)) drop-shadow(0 0 5px rgba(120,255,140,0.5)); }
+  .hd-hero-mark span { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--gold-bright); }
   .hd-info { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
   .hd-name { font-family: 'Cinzel', serif; font-size: 1.4rem; color: var(--gold-bright); font-weight: 700; line-height: 1.1; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
   .hd-lvl-tag {
@@ -88736,6 +88761,7 @@ function renderBoard() {
         }
         cellInner = `
           <div class="unit ${occupant.owner}${occupant.isHero ? ' hero' : ''}${occupant._decoyOf ? ' decoy' : ''}${isSel ? ' selected' : ''}${occupant.flying ? ' flying' : ''}${isAIActor ? ' ai-actor' : ''} rarity-${rarity}${polyClass}" data-unit="${occupant.id}" data-y="${y}" data-rarity="${rarity}">
+            ${occupant.isHero ? `<img class="hero-board-marker" src="assets/artwork/gameicons/hero-board-icon.png" alt="Hero" title="Hero — your match depends on keeping yours alive" draggable="false" loading="lazy">` : ''}
             <div class="unit-icon">${unitBoardVisual(occupant)}</div>
             <div class="unit-hp"><div class="unit-hp-fill${hpPct <= 25 ? ' hp-low' : ''}" style="width:${hpPct}%"></div></div>
             <div class="unit-info">
@@ -140336,6 +140362,7 @@ function renderDeckBuilderDeckList() {
         <div class="hd-portrait">${renderIcon('h_' + hero.id, hero.icon, 'fill')}</div>
         <div class="hd-info">
           <div class="hd-name">${escapeHtml(hero.name)} <span class="hd-lvl-tag">Lv ${prof.level || 1}</span></div>
+          <div class="hd-hero-mark"><img src="assets/artwork/gameicons/hero-board-icon.png" alt="Hero"><span>Hero — your throne piece. Keep it alive to win.</span></div>
           <div class="hd-elems-row">${elementBadge(getElementsOf(hero), 'sm')}${factionBadges}</div>
           <div class="hd-desc">${escapeHtml(hero.desc || '')}</div>
           <div class="hd-xp">

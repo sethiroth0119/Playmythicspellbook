@@ -20065,15 +20065,6 @@
     stroke: #ffcf5a; stroke-dasharray: 7 3; stroke-width: 1.5; opacity: 1; stroke-linecap: round;
     animation: tw-energy-flow 1.8s linear infinite, tw-frontier-glow 2.5s ease-in-out infinite;
   }
-  /* admin-lit supply lines — glow BLUE (distinct from gameplay frontier gold) */
-  @keyframes tw-lit-glow {
-    0%,100% { stroke: #4ea8ff; filter: drop-shadow(0 0 1px rgba(78,168,255,0.55)); }
-    50%     { stroke: #9fd6ff; filter: drop-shadow(0 0 4px rgba(78,168,255,1)) drop-shadow(0 0 9px rgba(0,120,255,0.85)); }
-  }
-  .tw-map-routes path.lit {
-    stroke: #5ab0ff; stroke-dasharray: 7 3; stroke-width: 1.7; opacity: 1; stroke-linecap: round;
-    animation: tw-energy-flow 1.8s linear infinite, tw-lit-glow 2.4s ease-in-out infinite;
-  }
   .tw-map-routes path.broken  { stroke: #5a3030; stroke-dasharray: 2 8;   opacity: 0.50; }
 
   /* Floating region labels — large, map-grade typography */
@@ -20115,45 +20106,45 @@
     position: relative; flex-shrink: 0;
     width: 24px; height: 24px;
   }
-  /* Outer wireframe ring */
+  /* Outer wireframe ring — YELLOW diamond for every node */
   .tw-node-diamond::before {
     content: '';
     position: absolute; top: 50%; left: 50%;
     width: 22px; height: 22px;
-    border: 1.5px solid var(--node-color, #6cd4ff);
+    border: 1.5px solid #ffcf5a;
     border-radius: 3px;
     transform: translate(-50%,-50%) rotate(45deg);
-    box-shadow: 0 0 10px var(--node-color, #6cd4ff),
+    box-shadow: 0 0 10px #ffcf5a,
                 inset 0 0 8px rgba(0,0,0,0.6);
     background: rgba(0,0,0,0.35);
     transition: all 0.15s ease;
   }
-  /* Inner filled core */
+  /* Inner filled core — BLUE icon for every node */
   .tw-node-diamond::after {
     content: '';
     position: absolute; top: 50%; left: 50%;
     width: 7px; height: 7px;
-    background: var(--node-color, #6cd4ff);
+    background: #4ea8ff;
     border-radius: 1px;
     transform: translate(-50%,-50%) rotate(45deg);
-    box-shadow: 0 0 8px var(--node-color, #6cd4ff),
-                0 0 16px var(--node-color, #6cd4ff);
+    box-shadow: 0 0 8px #4ea8ff,
+                0 0 16px #4ea8ff;
     transition: all 0.15s ease;
   }
   /* Hover / selected — expand both rings */
   .tw-node-marker:hover .tw-node-diamond::before,
   .tw-node-marker.is-selected .tw-node-diamond::before {
     width: 30px; height: 30px;
-    box-shadow: 0 0 20px var(--node-color, #6cd4ff),
-                0 0 40px var(--node-color, #6cd4ff),
+    box-shadow: 0 0 20px #ffcf5a,
+                0 0 40px #ffcf5a,
                 inset 0 0 12px rgba(0,0,0,0.4);
     background: rgba(0,0,0,0.15);
   }
   .tw-node-marker:hover .tw-node-diamond::after,
   .tw-node-marker.is-selected .tw-node-diamond::after {
     width: 10px; height: 10px;
-    box-shadow: 0 0 12px var(--node-color, #6cd4ff),
-                0 0 24px var(--node-color, #6cd4ff);
+    box-shadow: 0 0 12px #4ea8ff,
+                0 0 24px #4ea8ff;
   }
 
   /* Node label below the diamond — pointer-events auto so the full button
@@ -146153,7 +146144,7 @@ function renderTerritoryWars() {
       const ownB = st.ownedNodes[cid];
       let cls = '';
       if (_litRouteSet.has(key)) {
-        cls = 'lit'; // admin-forced glow (blue)
+        cls = 'frontier'; // admin-forced glow (gold)
       } else if (ownA && ownB) {
         const same = ownA.ownerCorpId === ownB.ownerCorpId;
         if (same && myCorp && ownA.ownerCorpId === myCorp.id) cls = 'allied';
@@ -146166,7 +146157,7 @@ function renderTerritoryWars() {
       // Normalise path direction: always left→right so rotate="auto" never
       // produces a θ > 90° tangent that would flip the truck upside-down.
       let idAttr = '';
-      if ((cls === 'frontier' || cls === 'allied' || cls === 'lit') && _truckRoutes.length < _MAX_TRUCKS) {
+      if ((cls === 'frontier' || cls === 'allied') && _truckRoutes.length < _MAX_TRUCKS) {
         // Left-to-right normalisation: swap endpoints so truck travels toward +X.
         const [sP, eP] = pA.x <= pB.x ? [pA, pB] : [pB, pA];
         const nMidX = ((sP.x + eP.x) / 2 + 1.5).toFixed(2);

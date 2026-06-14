@@ -20509,6 +20509,42 @@
   .tw-nd-hist-actor { font-size:0.68rem; color:#d6dee6; flex:1; }
   .tw-nd-hist-age { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.5rem; color:#5b6772; }
   .tw-nd-empty { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.6rem; color:#5b6772; padding:0.6rem 1rem; font-style:italic; }
+  /* 🏳 CAMP ↔ DISTRICT NODE — Reconstruction Network (Phase 1) */
+  .tw-nd-camp-list { display:flex; flex-direction:column; gap:0.3rem; padding:0.3rem 0.75rem 0.2rem; }
+  .tw-nd-camp-row { display:flex; align-items:center; gap:0.55rem; padding:0.45rem 0.6rem; background:rgba(20,28,48,0.5); border:1px solid rgba(78,126,168,0.22); border-radius:7px; }
+  .tw-nd-camp-row.is-you { border-color:rgba(212,175,55,0.6); background:rgba(60,46,14,0.32); box-shadow:0 0 0 1px rgba(212,175,55,0.2); }
+  .tw-nd-camp-badge { flex:0 0 26px; width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:0.8rem; background:rgba(78,126,168,0.18); border:1px solid rgba(78,126,168,0.55); color:#bcd6ef; }
+  .tw-nd-camp-row.is-you .tw-nd-camp-badge { background:rgba(212,175,55,0.18); border-color:rgba(212,175,55,0.7); color:#ffe6a0; }
+  .tw-nd-camp-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#e8eef7; font-weight:700; font-size:0.82rem; }
+  .tw-nd-camp-you { color:#ffd166; font-weight:700; font-size:0.72rem; }
+  .tw-nd-camp-contrib { flex:0 0 auto; color:#9bb265; font-family:'JetBrains Mono','Consolas',monospace; font-size:0.78rem; }
+  /* Camp-screen banner */
+  .camp-node-banner { display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; padding:0.7rem 1rem; border-radius:12px; border:1px solid rgba(212,175,55,0.35); background:linear-gradient(135deg,rgba(40,32,60,0.6),rgba(18,12,30,0.7)); }
+  .camp-node-banner.unregistered { border-color:rgba(232,93,60,0.55); background:linear-gradient(135deg,rgba(60,26,20,0.5),rgba(20,12,18,0.7)); }
+  .camp-node-banner .cnb-left { display:flex; align-items:flex-start; gap:0.6rem; flex:1; min-width:240px; }
+  .camp-node-banner .cnb-dot { flex:0 0 10px; width:10px; height:10px; border-radius:50%; margin-top:5px; }
+  .camp-node-banner .cnb-dot.ok { background:#5fae7a; box-shadow:0 0 8px rgba(95,174,122,0.8); }
+  .camp-node-banner .cnb-dot.bad { background:#e85d3c; box-shadow:0 0 8px rgba(232,93,60,0.8); animation:cnb-pulse 1.6s ease-in-out infinite; }
+  @keyframes cnb-pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+  .camp-node-banner .cnb-title { font-family:'Cinzel',serif; font-weight:800; color:#ffe6b0; font-size:1rem; }
+  .camp-node-banner.unregistered .cnb-title { color:#ffb8a0; }
+  .camp-node-banner .cnb-sub { color:#b6a88f; font-size:0.8rem; line-height:1.4; margin-top:2px; }
+  .camp-node-banner .cnb-actions { display:flex; gap:0.4rem; flex-wrap:wrap; }
+  /* Node picker modal */
+  #camp-node-picker-host .cnp-scrim { position:fixed; inset:0; z-index:5000; background:rgba(6,4,12,0.74); backdrop-filter:blur(3px); display:flex; align-items:center; justify-content:center; padding:1rem; }
+  #camp-node-picker-host .cnp-modal { width:min(720px,96vw); max-height:88vh; overflow:auto; background:linear-gradient(160deg,#1c1538,#0c0610); border:1px solid rgba(212,175,55,0.4); border-radius:14px; box-shadow:0 20px 50px rgba(0,0,0,0.7); }
+  #camp-node-picker-host .cnp-modal-head { display:flex; align-items:center; justify-content:space-between; padding:0.9rem 1.1rem; border-bottom:1px solid rgba(212,175,55,0.22); }
+  #camp-node-picker-host .cnp-modal-head h3 { margin:0; font-family:'Cinzel',serif; color:#ffe6b0; font-size:1.1rem; }
+  #camp-node-picker-host .cnp-x { background:none; border:1px solid rgba(255,255,255,0.2); color:#cdb6ff; border-radius:8px; cursor:pointer; padding:2px 9px; font-size:1rem; }
+  #camp-node-picker-host .cnp-modal-body { padding:1rem 1.1rem 1.2rem; }
+  #camp-node-picker-host .cnp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:0.6rem; }
+  #camp-node-picker-host .cnp-card { border:1px solid rgba(120,150,200,0.3); border-radius:10px; padding:0.65rem 0.7rem; background:rgba(20,28,48,0.5); display:flex; flex-direction:column; gap:0.4rem; }
+  #camp-node-picker-host .cnp-card.is-current { border-color:rgba(212,175,55,0.65); background:rgba(60,46,14,0.3); }
+  #camp-node-picker-host .cnp-head { display:flex; align-items:center; justify-content:space-between; gap:0.4rem; }
+  #camp-node-picker-host .cnp-head strong { color:#e8eef7; font-size:0.95rem; }
+  #camp-node-picker-host .cnp-tag { font-size:0.6rem; letter-spacing:0.1em; text-transform:uppercase; color:#9bb265; border:1px solid rgba(155,178,101,0.5); border-radius:4px; padding:1px 5px; }
+  #camp-node-picker-host .cnp-meta { font-size:0.7rem; color:#8a96a8; font-family:'JetBrains Mono','Consolas',monospace; }
+  #camp-node-picker-host .cnp-card button { margin-top:auto; }
   .tw-nd-actions { padding:0.5rem 1rem 0.8rem; display:flex; flex-direction:column; gap:0.4rem; }
   .tw-nd-action-row { display:flex; gap:0.4rem; }
   /* Bottom status bar */
@@ -34815,6 +34851,8 @@ async function cloudSyncProfile() {
       __equippedTombstone__: (typeof Profile.equippedTombstone === 'string') ? Profile.equippedTombstone : null,
       // 🦸 Chosen Camp Heights survivor id (set once on first entry; sticks).
       __campSurvivorId__:    (typeof Profile.campSurvivorId === 'string') ? Profile.campSurvivorId : null,
+      // 🏳 District Node the camp is registered to (Reconstruction Network).
+      __campNodeId__:        (typeof Profile.campNodeId === 'string') ? Profile.campNodeId : null,
       // 🧬 Camp traits copied off the chosen survivor at pick time. Travels
       // with the account so admin-side trait edits don't retroactively change
       // an existing player's character creation.
@@ -35697,6 +35735,8 @@ async function cloudFetchProfile() {
       if (typeof f.__equippedTombstone__ === 'string') Profile.equippedTombstone = f.__equippedTombstone__;
       // 🦸 Camp Heights survivor pick — restored last-writer-wins.
       if (typeof f.__campSurvivorId__ === 'string') Profile.campSurvivorId = f.__campSurvivorId__;
+      // 🏳 Camp's registered District Node — restored last-writer-wins.
+      if (typeof f.__campNodeId__ === 'string') Profile.campNodeId = f.__campNodeId__;
       if (Array.isArray(f.__campTraits__))         Profile.campTraits     = f.__campTraits__.slice();
       // 🍞 / 💧 Satiation bars (separate from inventory counts).
       if (typeof f.__hunger__ === 'number') Profile.hunger = Math.max(0, Math.min(100, f.__hunger__));
@@ -100538,6 +100578,7 @@ function renderCamp() {
           <button class="btn-secondary" id="btn-back-camp">${App._campReturnsToBunker ? '← Camp' : '← Back to Menu'}</button>
         </div>
       </div>
+      ${(typeof _campNodeBannerHtml === 'function') ? _campNodeBannerHtml() : ''}
       <div class="placement-hint" style="margin-bottom:1rem">
         Park unused units to gain <strong>${CAMP_XP_PER_HOUR} XP/hour</strong> (capped at ${CAMP_XP_CAP} XP per slot).
         Parking costs <strong><span class="cinder-icon"></span> ${CAMP_PARK_COST}</strong> per unit · heroes stay with you.
@@ -143592,6 +143633,160 @@ async function tw_cloudPostFeed(kind, msg) {
     }
   } catch (e) { /* table missing → no-op */ }
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// 🏳 CAMP ↔ DISTRICT NODE REGISTRATION — "Reconstruction Network" (Phase 1).
+// A camp registers to exactly ONE District Node. The choice lives on
+// Profile.campNodeId (cloud-synced with the profile) AND is mirrored to the
+// cross-player `tw_camp_registrations` table so EVERY player's camp shows under
+// that node on the District Nodes map. All cloud calls degrade gracefully — if
+// Supabase isn't ready or the table doesn't exist yet they're silent no-ops and
+// the local camp keeps working unchanged.
+// ═══════════════════════════════════════════════════════════════════════════
+function _campRegName() {
+  try {
+    if (Profile.campName && String(Profile.campName).trim()) return String(Profile.campName).trim();
+    const h = (Profile.handle || Profile.displayName || (Profile.cloud && (Profile.cloud.handle || Profile.cloud.displayName)) || '').trim();
+    if (h && h !== 'You') return h + "'s Camp";
+  } catch (e) {}
+  return 'Camp Phoenix';
+}
+function getCampNodeId() { try { return (Profile && Profile.campNodeId) || null; } catch (e) { return null; } }
+function getCampNode() {
+  const id = getCampNodeId(); if (!id) return null;
+  try { const t = _twForge(); return (t.nodes || []).find(n => n && n.id === id) || null; } catch (e) { return null; }
+}
+function registerCampToNode(nodeId) {
+  let node = null;
+  try { const t = _twForge(); node = (t.nodes || []).find(n => n && n.id === nodeId) || null; } catch (e) {}
+  if (!node) { try { showToast('⚠ District Node not found.'); } catch (e) {} return false; }
+  Profile.campNodeId = nodeId;
+  try { saveProfile(); } catch (e) {}
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
+  try { tw_cloudUpsertCampReg(); } catch (e) {}
+  try { App._twNodeCamps = App._twNodeCamps || {}; delete App._twNodeCamps[nodeId]; } catch (e) {}
+  try { _twLog('settlement', `<b>${escapeHtml(_campRegName())}</b> registered its settlement to ${escapeHtml(node.name)}.`); } catch (e) {}
+  try { showToast(`🏳 Camp registered to ${node.name}.`, 2600); } catch (e) {}
+  return true;
+}
+function unregisterCamp() {
+  Profile.campNodeId = null;
+  try { saveProfile(); } catch (e) {}
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
+  try { tw_cloudRemoveCampReg(); } catch (e) {}
+  try { showToast('Camp unregistered from its District Node.', 2200); } catch (e) {}
+}
+function goToDistrictNode(nodeId) {
+  if (!nodeId) return;
+  App.screen = 'territoryWars';
+  App._twSelectedNode = nodeId;
+  App._twNodeTab = 'settlements';
+  try { render(); } catch (e) {}
+}
+async function tw_cloudUpsertCampReg() {
+  try {
+    if (!Cloud || !Cloud.ready || !Cloud.client) return null;
+    const userId = (Profile.cloud && Profile.cloud.userId) || null;
+    const nodeId = getCampNodeId();
+    if (!userId || !nodeId) return null;
+    const corp = _twPlayerCorp();
+    await Cloud.client.from('tw_camp_registrations').upsert({
+      user_id: userId,
+      node_id: nodeId,
+      camp_name: _campRegName(),
+      prestige: (Profile.campPrestige | 0) || 0,
+      contrib: (Profile.campContrib | 0) || 0,
+      corp_id: corp ? corp.id : null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id' });
+  } catch (e) { /* table missing or no perms → no-op */ }
+}
+async function tw_cloudRemoveCampReg() {
+  try {
+    if (!Cloud || !Cloud.ready || !Cloud.client) return null;
+    const userId = (Profile.cloud && Profile.cloud.userId) || null;
+    if (!userId) return null;
+    await Cloud.client.from('tw_camp_registrations').delete().eq('user_id', userId);
+  } catch (e) {}
+}
+async function tw_cloudFetchCampsForNode(nodeId) {
+  try {
+    if (!nodeId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.from('tw_camp_registrations')
+      .select('user_id, node_id, camp_name, prestige, contrib, corp_id')
+      .eq('node_id', nodeId).limit(100);
+    if (error) return null;
+    App._twNodeCamps = App._twNodeCamps || {};
+    App._twNodeCamps[nodeId] = { at: Date.now(), rows: data || [] };
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { try { render(); } catch (e) {} }
+    return data;
+  } catch (e) { return null; }
+}
+// Camp-screen banner: connect / registered state.
+function _campNodeBannerHtml() {
+  const node = getCampNode();
+  if (node) {
+    return `<div class="camp-node-banner registered">
+      <div class="cnb-left"><span class="cnb-dot ok"></span><div class="cnb-txt">
+        <div class="cnb-title">🏳 Registered · ${escapeHtml(node.name)}</div>
+        <div class="cnb-sub">Your settlement is on the Reconstruction Network — it shows on the District Nodes map for every player.</div>
+      </div></div>
+      <div class="cnb-actions">
+        <button class="btn-mini" data-act="camp-view-node">View on Map ▸</button>
+        <button class="btn-mini" data-act="camp-change-node">Change Node</button>
+      </div>
+    </div>`;
+  }
+  return `<div class="camp-node-banner unregistered">
+    <div class="cnb-left"><span class="cnb-dot bad"></span><div class="cnb-txt">
+      <div class="cnb-title">⚠ Connect to a District Node</div>
+      <div class="cnb-sub">Register your camp with a District Node to join the Reconstruction Network — it places your settlement on the map for every player and unlocks node bonuses, employment and trade routes.</div>
+    </div></div>
+    <div class="cnb-actions"><button class="btn-primary btn-mini" data-act="camp-connect-node">Connect to a Node ▸</button></div>
+  </div>`;
+}
+function openCampNodePicker() {
+  let host = document.getElementById('camp-node-picker-host');
+  if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
+  let nodes = [];
+  try { nodes = (_twForge().nodes || []).slice(); } catch (e) {}
+  const cur = getCampNodeId();
+  const cards = nodes.map(n => {
+    const isCur = n.id === cur;
+    const yields = (n.resourceYield && Object.keys(n.resourceYield).length) ? Object.keys(n.resourceYield).join(' · ') : 'multi-resource';
+    return `<div class="cnp-card${isCur ? ' is-current' : ''}">
+      <div class="cnp-head"><strong>${escapeHtml(n.name)}</strong><span class="cnp-tag">${escapeHtml(n.purpose || n.type || 'PRN')}</span></div>
+      <div class="cnp-meta">${escapeHtml(n.id)} · ${escapeHtml(n.difficulty || 'T1')} · ${escapeHtml(yields)}</div>
+      <button class="btn-mini ${isCur ? '' : 'btn-primary'}" data-act="camp-register" data-node="${escapeHtml(n.id)}" ${isCur ? 'disabled' : ''}>${isCur ? '✓ Current Node' : 'Register Camp Here'}</button>
+    </div>`;
+  }).join('') || '<div class="hint">No District Nodes are defined yet.</div>';
+  host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog">
+    <div class="cnp-modal-head"><h3>Connect to a District Node</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
+    <div class="cnp-modal-body">
+      <div class="hint" style="margin-bottom:12px">Pick your home District Node. Your camp appears on that node for every player, and the node's specialty grants bonuses to your settlement. You can change nodes any time.</div>
+      <div class="cnp-grid">${cards}</div>
+      ${cur ? `<button class="btn-mini btn-danger" data-act="camp-unregister" style="margin-top:14px">Unregister from current node</button>` : ''}
+    </div></div></div>`;
+}
+function closeCampNodePicker() { const h = document.getElementById('camp-node-picker-host'); if (h) h.innerHTML = ''; }
+// One-time delegated handler for every camp↔node control (installed once → no leak).
+try {
+  if (!window.__campNodeWired) {
+    window.__campNodeWired = true;
+    document.addEventListener('click', (e) => {
+      const t = e.target.closest && e.target.closest('[data-act]');
+      if (!t) return;
+      switch (t.getAttribute('data-act')) {
+        case 'camp-connect-node':
+        case 'camp-change-node': openCampNodePicker(); break;
+        case 'camp-picker-close': if (e.target === t || (t.classList && t.classList.contains('cnp-x'))) closeCampNodePicker(); break;
+        case 'camp-register': { const nid = t.getAttribute('data-node'); if (nid && registerCampToNode(nid)) { closeCampNodePicker(); try { render(); } catch (err) {} } break; }
+        case 'camp-unregister': unregisterCamp(); closeCampNodePicker(); try { render(); } catch (err) {} break;
+        case 'camp-view-node': goToDistrictNode(getCampNodeId()); break;
+        default: return;
+      }
+    });
+  }
+} catch (e) {}
 async function tw_cloudUpsertOwnership(nodeId) {
   try {
     if (!Cloud || !Cloud.ready || !Cloud.client) return null;
@@ -145029,6 +145224,39 @@ function renderTerritoryWars() {
       ${objList.length ? `<div class="tw-nd-history-list">${objList.map(id=>{const def=TW_NODE_OBJECTIVES.find(o=>o.id===id);return `<div class="tw-nd-hist-row"><span class="tw-nd-hist-actor">${escapeHtml(def?`${def.icon} ${def.name}`:id)}</span></div>`;}).join('')}</div>` : '<div class="tw-nd-empty">Standard capture conditions.</div>'}
     `;
 
+    // --- Settlements tab — camps registered to this node (cross-player) ---
+    const _myUid = (Profile.cloud && Profile.cloud.userId) || null;
+    const _campHere = (typeof getCampNodeId === 'function' && getCampNodeId() === selNode.id);
+    try {
+      App._twNodeCamps = App._twNodeCamps || {};
+      const _cc = App._twNodeCamps[selNode.id];
+      if ((!_cc || (Date.now() - _cc.at) > 30000) && App._twNodeCampsFetching !== selNode.id && typeof tw_cloudFetchCampsForNode === 'function') {
+        App._twNodeCampsFetching = selNode.id;
+        Promise.resolve(tw_cloudFetchCampsForNode(selNode.id)).catch(() => {}).then(() => { if (App._twNodeCampsFetching === selNode.id) App._twNodeCampsFetching = null; });
+      }
+    } catch (e) {}
+    let _campRows = ((App._twNodeCamps && App._twNodeCamps[selNode.id] && App._twNodeCamps[selNode.id].rows) || []).slice();
+    if (_campHere && !_campRows.some(r => r.user_id && r.user_id === _myUid)) {
+      _campRows.unshift({ user_id: _myUid, camp_name: (typeof _campRegName === 'function' ? _campRegName() : 'Your Camp'), contrib: (Profile.campContrib | 0) || 0, prestige: (Profile.campPrestige | 0) || 0 });
+    }
+    _campRows.sort((a, b) => ((b.contrib | 0) - (a.contrib | 0)));
+    const settlementsHtml = `
+      <div class="tw-nd-section-hdr">— REGISTERED SETTLEMENTS${_campRows.length ? ` (${_campRows.length})` : ''}</div>
+      ${_campRows.length ? `<div class="tw-nd-camp-list">${_campRows.map(r => {
+        const mine = r.user_id && r.user_id === _myUid;
+        const nm = r.camp_name || 'Settlement';
+        const initial = (nm.replace(/^camp\s+/i, '').trim().charAt(0) || 'C').toUpperCase();
+        return `<div class="tw-nd-camp-row${mine ? ' is-you' : ''}">
+          <span class="tw-nd-camp-badge">${escapeHtml(initial)}</span>
+          <span class="tw-nd-camp-name">${escapeHtml(nm)}${mine ? ' <span class="tw-nd-camp-you">· you</span>' : ''}</span>
+          <span class="tw-nd-camp-contrib">${(r.contrib | 0)}%</span>
+        </div>`;
+      }).join('')}</div>` : `<div class="tw-nd-empty">No settlements registered to this node yet.</div>`}
+      ${_campHere
+        ? `<div class="hint" style="padding:8px 0.75rem">★ Your camp is registered here. Manage it on the Camp screen.</div>`
+        : `<button class="btn-mini btn-primary" data-act="camp-register" data-node="${escapeHtml(selNode.id)}" style="margin:10px 0.75rem">🏳 Register My Camp Here</button>`}
+    `;
+
     // Admin tab — map-editing controls are admin-only (players get the map +
     // attack/capture, never the New Node / delete / publish tools).
     const _isAdm = (typeof isAdmin === 'function') && isAdmin();
@@ -145101,6 +145329,7 @@ function renderTerritoryWars() {
           <button class="tw-drawer-tab ${_ndtab==='events'?'is-active':''}" data-ndtab="events">EVENTS${_eventsCount?` <span class="tw-drawer-tab-badge">${_eventsCount}</span>`:''}</button>
           <button class="tw-drawer-tab ${_ndtab==='resources'?'is-active':''}" data-ndtab="resources">RESOURCES</button>
           <button class="tw-drawer-tab ${_ndtab==='charter'?'is-active':''}" data-ndtab="charter">CHARTER</button>
+          <button class="tw-drawer-tab ${_ndtab==='settlements'?'is-active':''}" data-ndtab="settlements">SETTLEMENTS${_campRows.length?` <span class="tw-drawer-tab-badge">${_campRows.length}</span>`:''}</button>
           ${_isAdm ? `<button class="tw-drawer-tab ${_ndtab==='admin'?'is-active':''}" data-ndtab="admin">ADMIN</button>` : ''}
         </div>
         <div class="tw-nd-tab-panel ${_ndtab==='overview'?'is-active':''}" id="tw-nd-overview">${overviewHtml}</div>
@@ -145108,6 +145337,7 @@ function renderTerritoryWars() {
         <div class="tw-nd-tab-panel ${_ndtab==='events'?'is-active':''}" id="tw-nd-events">${eventsHtml}</div>
         <div class="tw-nd-tab-panel ${_ndtab==='resources'?'is-active':''}" id="tw-nd-resources">${resourcesHtml}</div>
         <div class="tw-nd-tab-panel ${_ndtab==='charter'?'is-active':''}" id="tw-nd-charter">${charterHtml}</div>
+        <div class="tw-nd-tab-panel ${_ndtab==='settlements'?'is-active':''}" id="tw-nd-settlements">${settlementsHtml}</div>
         ${_isAdm ? `<div class="tw-nd-tab-panel ${_ndtab==='admin'?'is-active':''}" id="tw-nd-admin">${adminHtml}</div>` : ''}
       </div>`;
   })() : '';

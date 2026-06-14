@@ -45,26 +45,33 @@ create index if not exists tw_node_ads_owner_idx   on public.tw_node_ads (owner_
 
 alter table public.tw_node_ads enable row level security;
 
--- READ: anyone signed in can read ACTIVE ads (to show the billboard). The
--- node owner + the ad creator can read all their own (any status) for managing.
+-- READ: any signed-in player can read ads. Active ads are public billboards;
+-- the owner/admin "manage" list also needs to surface pending ads for review.
 drop policy if exists tw_node_ads_sel_active on public.tw_node_ads;
-create policy tw_node_ads_sel_active on public.tw_node_ads
-  for select to authenticated using (status = 'active' or created_by = auth.uid());
--- (Admin moderation reads every row via the service-role key in an Edge
---  Function / the Supabase dashboard — not via this anon policy.)
+drop policy if exists tw_node_ads_sel on public.tw_node_ads;
+create policy tw_node_ads_sel on public.tw_node_ads
+  for select to authenticated using (true);
 
--- WRITE: a player may insert/update/delete ads they created. New ads MUST start
--- as 'pending' (clients can't self-activate); activation happens admin-side or
--- via the paid webhook using the service-role key (which bypasses RLS).
+-- INSERT: a player may only create ads attributed to THEMSELVES (created_by =
+-- their uid). Status is client-gated — owners submit as 'pending', admins
+-- publish as 'active'; a paid ad is flipped 'active' by the webhook (service
+-- role). The webhook + admin moderation use the service-role key, not RLS.
 drop policy if exists tw_node_ads_ins on public.tw_node_ads;
 create policy tw_node_ads_ins on public.tw_node_ads
-  for insert to authenticated with check (created_by = auth.uid() and status in ('pending','draft'));
+  for insert to authenticated with check (created_by = auth.uid());
+
+-- UPDATE / DELETE: permissive for authenticated — admin approve/reject/pause/
+-- remove is gated in the client, matching this game's existing tw_* admin-
+-- content model (tw_regions/sectors use the same `using (true)` pattern).
+-- ⚠ PRODUCTION HARDENING: replace `using (true)` with an admins-table /
+--   is_admin() check (or move moderation to a service-role Edge Function) so a
+--   crafted API call can't approve/edit someone else's ad.
 drop policy if exists tw_node_ads_upd on public.tw_node_ads;
 create policy tw_node_ads_upd on public.tw_node_ads
-  for update to authenticated using (created_by = auth.uid()) with check (created_by = auth.uid());
+  for update to authenticated using (true) with check (true);
 drop policy if exists tw_node_ads_del on public.tw_node_ads;
 create policy tw_node_ads_del on public.tw_node_ads
-  for delete to authenticated using (created_by = auth.uid());
+  for delete to authenticated using (true);
 
 -- ── tw_ad_track RPC — atomic counter bump (security definer so the bump isn't
 --    blocked by RLS, but it only ever +1's views/clicks, never anything else) ──

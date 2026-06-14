@@ -72,17 +72,36 @@ const blocks = TARGETS.map((name) => {
   return text;
 });
 
+// Evaluate the extracted blocks in-process (no file write needed). They're
+// dependency-ordered, so a single function scope resolves TYPE_CHART's IIFE.
+function evalData(blks) {
+  const src = blks.map((b) => b.replace(/^export const /, 'const ')).join('\n');
+  // eslint-disable-next-line no-new-func
+  return new Function(src + '\nreturn {' + TARGETS.join(', ') + '};')();
+}
+
+const data = evalData(blocks);
+const json = JSON.stringify(data, null, 1);
+
+// --check : verify the committed generated catalogs are current with index.html.
+// This is the real drift guard now that the server SOURCES from the generated
+// data — it fails loudly if someone edits a catalog in index.html without
+// regenerating. Writes nothing.
+if (process.argv.includes('--check')) {
+  let committed = null;
+  try { committed = JSON.parse(readFileSync(OUT_JSON_SERVER, 'utf8')); } catch (e) {}
+  if (JSON.stringify(committed) !== JSON.stringify(data)) {
+    console.error('\n✗ STALE: the committed engine catalogs are OUT OF DATE with public/index.html.');
+    console.error('  Run:  node tools/extract-engine-data.mjs   (then commit the regenerated files)\n');
+    process.exit(1);
+  }
+  console.log('✓ Generated engine catalogs are current with index.html.');
+  process.exit(0);
+}
+
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(OUT, header + blocks.join('\n\n') + '\n', 'utf8');
 console.log('→ wrote ' + OUT);
-
-// Evaluate the generated module and emit JSON for non-ESM consumers (the CJS
-// server). TYPE_CHART is an IIFE, so we eval rather than parse — the result is
-// pure data and JSON-serializable.
-const mod = await import(pathToFileURL(OUT).href + '?t=' + Date.now());
-const data = {};
-for (const name of TARGETS) data[name] = mod[name];
-const json = JSON.stringify(data, null, 1);
 writeFileSync(OUT_JSON, json, 'utf8');
 console.log('→ wrote ' + OUT_JSON);
 try {

@@ -36004,14 +36004,41 @@ const CATALOG_CACHE_KEY = 'hg_card_catalog_v1';
 // full one and players saw emoji nodes. Rule: the copy with MORE serialized
 // data (i.e. the one carrying the inline images) always wins, regardless of
 // arrival order. Order-independent and idempotent.
+// 🧮 CHEAP DATA-SIZE ESTIMATE — sums string lengths by WALKING the value, with
+// no allocation. Replaces `JSON.stringify(x).length`, which on base64-image-
+// heavy catalog/forge arrays allocated a 100–200MB transient string JUST to
+// compare sizes — a measurable title-screen boot memory spike that helped crash
+// the tab. This walker is O(size) with O(depth) extra memory and preserves the
+// only thing the callers need: "which copy carries more data (images) wins".
+// Depth-capped so an accidental cycle can't loop forever (plain JSON data has
+// none). The absolute number differs from a JSON length (no quotes/commas), but
+// the >/< COMPARISON outcome is the same for the stripped-vs-full decisions.
+function _approxDataWeight(v, depth) {
+  if (v == null) return 0;
+  const t = typeof v;
+  if (t === 'string') return v.length;
+  if (t === 'number') return 8;
+  if (t === 'boolean') return 4;
+  if (t !== 'object') return 0;
+  if ((depth || 0) > 6) return 0;
+  let w = 0;
+  if (Array.isArray(v)) {
+    for (let i = 0; i < v.length; i++) w += _approxDataWeight(v[i], (depth || 0) + 1);
+    return w;
+  }
+  for (const k in v) {
+    if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+    w += k.length + _approxDataWeight(v[k], (depth || 0) + 1);
+  }
+  return w;
+}
 function _preferRicher(incoming, current) {
   const inA  = Array.isArray(incoming) ? incoming : null;
   const curA = Array.isArray(current)  ? current  : null;
   if (!inA) return curA != null ? curA : incoming;
   if (!curA || !curA.length) return inA;
-  let il = 0, cl = 0;
-  try { il = JSON.stringify(inA).length; } catch (e) {}
-  try { cl = JSON.stringify(curA).length; } catch (e) {}
+  const il = _approxDataWeight(inA, 0);
+  const cl = _approxDataWeight(curA, 0);
   return cl > il ? curA : inA;   // keep current only if it carries more (images)
 }
 // ─────────────────────────────────────────────────────────────────────────
@@ -36025,9 +36052,11 @@ function _preferRicher(incoming, current) {
 // for image-bearing collections so a stripped copy can't downgrade a full
 // one); otherwise the LOCAL copy wins the collision (it's the freshest edit).
 function _forgeRicher(a, b) {
-  let la = 0, lb = 0;
-  try { la = JSON.stringify(a).length; } catch (e) {}
-  try { lb = JSON.stringify(b).length; } catch (e) {}
+  // Cheap walk instead of JSON.stringify — this runs PER id-collision inside the
+  // cloud-merge loops, so stringifying base64-bearing card/art entries here was
+  // a repeated multi-MB allocation during boot. Same "more data wins" result.
+  const la = _approxDataWeight(a, 0);
+  const lb = _approxDataWeight(b, 0);
   return lb > la ? b : a;
 }
 function _mergeForgeArr(localArr, cloudArr, richer) {
@@ -36063,9 +36092,8 @@ function _mergeForgeObj(localObj, cloudObj, richer) {
 function _preferRicherObj(incoming, current) {
   if (!incoming || typeof incoming !== 'object') return (current && typeof current === 'object') ? current : incoming;
   if (!current || typeof current !== 'object' || !Object.keys(current).length) return incoming;
-  let il = 0, cl = 0;
-  try { il = JSON.stringify(incoming).length; } catch (e) {}
-  try { cl = JSON.stringify(current).length; } catch (e) {}
+  const il = _approxDataWeight(incoming, 0);
+  const cl = _approxDataWeight(current, 0);
   return cl > il ? current : incoming;
 }
 function _applyCatalogSnapshot(c) {
@@ -36627,9 +36655,10 @@ async function cloudPublishCatalog(opts) {
         try { if (typeof idbGet === 'function') idb = await idbGet('forge_' + idbKey); } catch (e) {}
         const memA = Array.isArray(mem) ? mem : [];
         if (!Array.isArray(idb) || !idb.length) return memA;
-        let il = 0, ml = 0;
-        try { il = JSON.stringify(idb).length; } catch (e) {}
-        try { ml = JSON.stringify(memA).length; } catch (e) {}
+        // Cheap walk instead of JSON.stringify (these arrays carry inline
+        // base64 art — stringifying both just to size-compare was a big spike).
+        const il = _approxDataWeight(idb, 0);
+        const ml = _approxDataWeight(memA, 0);
         return il >= ml ? idb : memA;   // larger = has the inline images
       };
       const _fullStr = async (idbKey, mem) => {

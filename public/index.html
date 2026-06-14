@@ -4528,21 +4528,21 @@
      the eye as the "this is YOUR vitals" focal point. ===== */
   .hero-bars-stack.big { gap: 0.7rem; margin-top: 0.8rem; }
   .hero-bars-stack.big .hero-bar {
-    grid-template-columns: 88px 1fr;
+    grid-template-columns: 112px 1fr;
     gap: 0.9rem;
     padding: 0.85rem 1.1rem;
     background: linear-gradient(180deg, rgba(15,20,30,0.92), rgba(0,0,0,0.65));
     border-width: 2px;
-    border-radius: 10px;
-    box-shadow: 0 8px 22px rgba(0,0,0,0.6), inset 0 0 24px rgba(0,0,0,0.45);
+    border-radius: 12px;
+    box-shadow: 0 0 0 1px rgba(212,175,55,0.28), 0 12px 32px rgba(0,0,0,0.65), inset 0 0 24px rgba(0,0,0,0.45);
     /* Let the bars fill the entire rail width — no 320px cap. */
     max-width: none;
     width: 100%;
   }
-  .hero-bars-stack.big .hero-bar.player { box-shadow: 0 8px 22px rgba(0,0,0,0.6), 0 0 24px rgba(74,143,212,0.3),  inset 0 0 24px rgba(0,0,0,0.45); }
-  .hero-bars-stack.big .hero-bar.ai     { box-shadow: 0 8px 22px rgba(0,0,0,0.6), 0 0 24px rgba(232,93,60,0.3),   inset 0 0 24px rgba(0,0,0,0.45); }
+  .hero-bars-stack.big .hero-bar.player { box-shadow: 0 0 0 1px rgba(212,175,55,0.28), 0 12px 32px rgba(0,0,0,0.65), 0 0 28px rgba(74,143,212,0.5), inset 0 0 24px rgba(0,0,0,0.45); }
+  .hero-bars-stack.big .hero-bar.ai     { box-shadow: 0 0 0 1px rgba(212,175,55,0.28), 0 12px 32px rgba(0,0,0,0.65), 0 0 28px rgba(232,93,60,0.5),  inset 0 0 24px rgba(0,0,0,0.45); }
   .hero-bars-stack.big .hero-bar-icon {
-    width: 88px; height: 88px;
+    width: 112px; height: 112px;
     border-radius: 8px;
     border-width: 2px;
   }
@@ -4575,6 +4575,30 @@
     font-size: 1.05rem;
     min-width: 84px;
     font-weight: 800;
+  }
+  /* 👑 CORNER PLAYER HUD — opt-in A/B (toggle with __mg.cornerHud()). Floats the
+     hero vitals into the corners like a real TCG: enemy top-right, you bottom-
+     left. Reuses the EXACT .hero-side-stack / heroHpBar markup, just repositioned
+     via fixed panels — no markup change, fully reversible. Default OFF so it
+     never disturbs the current layout unless enabled. */
+  body.corner-hud .hero-bars-stack.big { display: contents; }
+  body.corner-hud .hero-bars-stack.big .hero-side-stack {
+    position: fixed;
+    width: min(340px, 33vw);
+    z-index: 55;
+    padding: 0.55rem 0.6rem;
+    background: rgba(10, 8, 20, 0.74);
+    border: 1.5px solid rgba(212, 175, 55, 0.45);
+    border-radius: 14px;
+    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.62), inset 0 0 0 1px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+  }
+  body.corner-hud .hero-bars-stack.big .hero-side-stack:nth-child(1) { top: 14px;     right: 16px; }  /* enemy */
+  body.corner-hud .hero-bars-stack.big .hero-side-stack:nth-child(2) { bottom: 206px; left: 16px;  }  /* you — sits above the hand strip */
+  @media (max-width: 1000px) {
+    body.corner-hud .hero-bars-stack.big .hero-side-stack { width: min(300px, 48vw); }
+    body.corner-hud .hero-bars-stack.big .hero-side-stack:nth-child(2) { bottom: 172px; }
   }
   .battle-left::-webkit-scrollbar { width: 6px; }
   .battle-left::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -51070,6 +51094,23 @@ try {
     } catch (e) {}
   }, 3000);
   try { window.__mg = window.__mg || {}; window.__mg.crumbs = function () { try { return JSON.parse(localStorage.getItem('hg_crumbs') || '[]'); } catch (e) { return []; } }; } catch (e) {}
+} catch (e) {}
+
+// 👑 CORNER PLAYER HUD toggle — opt-in A/B for the "real TCG" framing. Adds/removes
+// `body.corner-hud`, which floats the hero vitals into the screen corners (enemy
+// top-right, you bottom-left) via CSS only (see the .hero-side-stack corner rules).
+// Default OFF; choice persists in localStorage. Run `__mg.cornerHud()` to flip it.
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.cornerHud = function (on) {
+    const v = (on === undefined) ? !document.body.classList.contains('corner-hud') : !!on;
+    document.body.classList.toggle('corner-hud', v);
+    try { localStorage.setItem('hg_cornerhud', v ? '1' : '0'); } catch (e) {}
+    console.info('👑 Corner HUD ' + (v ? 'ON' : 'OFF') + ' — run __mg.cornerHud() to toggle.');
+    return v;
+  };
+  // Re-apply the saved choice on boot.
+  try { if (localStorage.getItem('hg_cornerhud') === '1' && document.body) document.body.classList.add('corner-hud'); } catch (e) {}
 } catch (e) {}
 
 // 💾 Convenience wrapper — `saveProfile() + saveForge()` with labeled warns.
@@ -104572,6 +104613,21 @@ function renderSettings() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">👑 Battle HUD Layout</div>
+        <div class="settings-section-desc">Where your hero vitals sit during battle. <strong>Corner HUD</strong> floats them into the screen corners like a modern TCG — your hero bottom-left, the enemy top-right — for a cleaner, more cinematic board. <strong>Classic Rail</strong> keeps them stacked in the side panel. Purely cosmetic; switch any time.</div>
+        ${(() => {
+          let cornerHudOn = false; try { cornerHudOn = (localStorage.getItem('hg_cornerhud') === '1'); } catch (e) {}
+          return `<div class="settings-presets" style="margin-top:0.6rem">
+            <button class="btn-mini ${cornerHudOn ? '' : 'btn-primary'}" data-corner-hud="off">📊 Classic Rail</button>
+            <button class="btn-mini ${cornerHudOn ? 'btn-primary' : ''}" data-corner-hud="on">👑 Corner HUD</button>
+          </div>
+          <div class="small-text ink-dim" style="margin-top:0.5rem">
+            ${cornerHudOn ? '👑 <strong>Corner HUD</strong> — hero vitals float in the screen corners (enemy top-right, you bottom-left).' : '📊 <strong>Classic Rail</strong> — hero vitals stay stacked in the battle side panel.'}
+          </div>`;
+        })()}
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🎨 Board Theme</div>
         <div class="settings-section-desc">Re-tints the whole battlefield atmosphere and frame — the drifting embers, fog, glow and border all shift to the chosen palette. Purely cosmetic; gameplay is unchanged. Applies to every battle (single-player and online).</div>
         ${(() => {
@@ -104913,6 +104969,22 @@ function renderSettings() {
         }
         render();
       }
+    };
+  });
+
+  // 👑 Battle HUD layout — flips body.corner-hud (floats hero vitals to the
+  // screen corners) via the __mg.cornerHud toggle, which persists the choice in
+  // localStorage and applies the CSS-only repositioning. Re-render so the active
+  // chip + helper line update.
+  document.querySelectorAll('[data-corner-hud]').forEach(el => {
+    el.onclick = () => {
+      const on = el.dataset.cornerHud === 'on';
+      try { if (window.__mg && typeof window.__mg.cornerHud === 'function') window.__mg.cornerHud(on); } catch (e) {}
+      if (typeof showToast === 'function') {
+        showToast(on ? '👑 Battle HUD: Corner layout — vitals float to the corners.'
+                     : '📊 Battle HUD: Classic rail layout.', 2000);
+      }
+      render();
     };
   });
 

@@ -144147,29 +144147,27 @@ const RECON_SITES = [
   { id:'apartments', name:'Gutted Apartments',  into:'Apartment Block',  glow:'amber',  cost:{ cinder:350, wood:80 },    needs:{ Builder:2 },               gives:'houses survivors' },
   { id:'greenhouse', name:'Overgrown Lot',      into:'Greenhouse',       glow:'amber',  cost:{ cinder:350, wood:60 },    needs:{ Builder:1, Farmer:1 },     gives:'food production' },
   { id:'radio',      name:'Wrecked Radio Mast', into:'Radio Station',    glow:'cyan',   cost:{ cinder:300 },             needs:{ Engineer:1 },              gives:'long-range contact' },
-  { id:'watch',      name:'Crumbled Gatehouse', into:'Watch Post',       glow:'red',    cost:{ cinder:400, steel:80 },   needs:{ Builder:1, Guard:1 },      gives:'+Security' },
-  { id:'power',      name:'Dead Substation',    into:'Power Station',    glow:'purple', cost:{ cinder:600, steel:150 },  needs:{ Engineer:1, Mechanic:1 },  gives:'city power' },
+  { id:'watch',      name:'Crumbled Gatehouse', into:'Watch Post',       glow:'red',    cost:{ cinder:400, metal:80 },   needs:{ Builder:1, Guard:1 },      gives:'+Security' },
+  { id:'power',      name:'Dead Substation',    into:'Power Station',    glow:'purple', cost:{ cinder:600, metal:150 },  needs:{ Engineer:1, Mechanic:1 },  gives:'city power' },
   { id:'workshop',   name:'Collapsed Garage',   into:'Workshop',         glow:'cyan',   cost:{ cinder:450, wood:100 },   needs:{ Builder:1, Mechanic:1 },   gives:'builds & repairs' },
-  { id:'clinic',     name:'Old Pharmacy',       into:'Clinic',           glow:'cyan',   cost:{ cinder:450, steel:60 },   needs:{ Builder:1, Doctor:1 },     gives:'+Medicine' },
+  { id:'clinic',     name:'Old Pharmacy',       into:'Clinic',           glow:'cyan',   cost:{ cinder:450, metal:60 },   needs:{ Builder:1, Doctor:1 },     gives:'+Medicine' },
   { id:'store',      name:'Caved-in Depot',     into:'Storehouse',       glow:'amber',  cost:{ cinder:250 },             needs:{ Builder:1 },               gives:'+Storage' },
-  { id:'hospital',   name:'Old Hospital',       into:'City Hospital',    glow:'cyan',   cost:{ cinder:800, steel:200 },  needs:{ Builder:2, Doctor:1 },     gives:'+Medicine and +Health' },
+  { id:'hospital',   name:'Old Hospital',       into:'City Hospital',    glow:'cyan',   cost:{ cinder:800, metal:200 },  needs:{ Builder:2, Doctor:1 },     gives:'+Medicine and +Health' },
   { id:'aptruin',    name:'Ruined Apartments',  into:'Apartment Tower',  glow:'amber',  cost:{ cinder:700, wood:160 },   needs:{ Builder:2 },               gives:'more housing' },
-  { id:'market',     name:'Collapsed Market',   into:'Marketplace',      glow:'amber',  cost:{ cinder:500, steel:80 },   needs:{ Builder:1, Merchant:1 },   gives:'+Trade income' },
+  { id:'market',     name:'Collapsed Market',   into:'Marketplace',      glow:'amber',  cost:{ cinder:500, metal:80 },   needs:{ Builder:1, Merchant:1 },   gives:'+Trade income' },
   { id:'school',     name:'Old Schoolhouse',    into:'Schoolhouse',      glow:'purple', cost:{ cinder:550, wood:120 },   needs:{ Builder:1, Researcher:1 }, gives:'+Hope and +Recruits' },
 ];
 function _reconState() {
   if (!Profile.recon || typeof Profile.recon !== 'object') Profile.recon = {};
   const r = Profile.recon;
-  if (!r.vitals || typeof r.vitals !== 'object') r.vitals = { morale: 50, food: 50, security: 30, hope: 50 };
-  if (!r.resources || typeof r.resources !== 'object') r.resources = { food: 120, steel: 100, wood: 80, medicine: 10, fuel: 10 };
+  if (!r.vitals || typeof r.vitals !== 'object') r.vitals = { morale: 50, security: 30, hope: 50 };  // FOOD vital is derived live from the real food stock
   if (!r.sites || typeof r.sites !== 'object') r.sites = {};
   if (typeof r.day !== 'number') r.day = 0;
   return r;
 }
 function _reconCanAfford(cost) {
-  const r = _reconState();
   for (const k in cost) {
-    const have = (k === 'cinder') ? (Profile.gems || 0) : (r.resources[k] | 0);
+    const have = (k === 'cinder') ? (Profile.gems || 0) : ((typeof getRes === 'function') ? getRes(k) : 0);
     if (have < cost[k]) return false;
   }
   return true;
@@ -144180,8 +144178,13 @@ function _reconApplyGive(site) {
   const bump = (k, n) => { v[k] = Math.max(0, Math.min(100, (v[k] || 0) + n)); };
   if (/Security/i.test(site.gives)) bump('security', 12);
   if (/Hope|Recruits/i.test(site.gives)) bump('hope', 8);
-  if (/food/i.test(site.gives)) bump('food', 12);
   if (/Health|Medicine/i.test(site.gives)) bump('morale', 6);
+  // Themed REAL-resource yields from the finished building.
+  if (typeof addRes === 'function') {
+    if (/food production/i.test(site.gives)) addRes('food', 80);
+    if (/\+Medicine/i.test(site.gives)) addRes('medicine', 25);
+    if (/Storage|Trade/i.test(site.gives)) addRes('supplies', 40);
+  }
   bump('morale', 3); bump('hope', 2);
 }
 function openReconReclaim(siteId) {
@@ -144190,7 +144193,7 @@ function openReconReclaim(siteId) {
   let host = document.getElementById('camp-node-picker-host');
   if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
   const okRes = _reconCanAfford(site.cost), okStaff = _reconCanStaff(site.needs), ok = okRes && okStaff;
-  const costRow = Object.entries(site.cost).map(([k, vv]) => { const have = k === 'cinder' ? (Profile.gems || 0) : (_reconState().resources[k] | 0); return `<span class="recon-req ${have >= vv ? 'met' : 'short'}">${k.charAt(0).toUpperCase() + k.slice(1)} ${vv}</span>`; }).join('');
+  const costRow = Object.entries(site.cost).map(([k, vv]) => { const have = k === 'cinder' ? (Profile.gems || 0) : ((typeof getRes === 'function') ? getRes(k) : 0); return `<span class="recon-req ${have >= vv ? 'met' : 'short'}">${k.charAt(0).toUpperCase() + k.slice(1)} ${vv}</span>`; }).join('');
   const needRow = Object.entries(site.needs).map(([t, vv]) => { const have = (_campWorkforce()[t] | 0); return `<span class="recon-req ${have >= vv ? 'met' : 'short'}">${vv} ${t}${vv > 1 ? 's' : ''}</span>`; }).join('') || '<span class="recon-req met">no specialists required</span>';
   host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog">
     <div class="cnp-modal-head"><h3>Reclaim Ruins</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
@@ -144210,10 +144213,12 @@ function reconReclaim(siteId) {
   if (r.sites[siteId]) return;
   if (!_reconCanAfford(site.cost)) { try { showToast('Insufficient resources.'); } catch (e) {} return; }
   if (!_reconCanStaff(site.needs)) { try { showToast('Hire the required specialists from the Employment Board first.'); } catch (e) {} return; }
+  const _realCost = {};
   for (const k in site.cost) {
     if (k === 'cinder') Profile.gems = Math.max(0, (Profile.gems || 0) - site.cost[k]);
-    else r.resources[k] = Math.max(0, (r.resources[k] | 0) - site.cost[k]);
+    else _realCost[k] = site.cost[k];
   }
+  if (Object.keys(_realCost).length && typeof spendResources === 'function') spendResources(_realCost);
   r.sites[siteId] = 'built';
   _reconApplyGive(site);
   Profile.campContrib = Math.min(100, _campContrib() + 2);
@@ -144326,8 +144331,8 @@ function _reconHasRequire(req) {
   const r = _reconState();
   for (const k in req) {
     if (k === 'cinder') { if ((Profile.gems || 0) < req[k]) return false; }
-    else if (k === 'morale' || k === 'food' || k === 'security' || k === 'hope') { if ((r.vitals[k] || 0) < req[k]) return false; }
-    else { if ((r.resources[k] | 0) < req[k]) return false; }
+    else if (k === 'morale' || k === 'security' || k === 'hope') { if ((r.vitals[k] || 0) < req[k]) return false; }
+    else { if (((typeof getRes === 'function') ? getRes(k === 'steel' ? 'metal' : k) : 0) < req[k]) return false; }
   }
   return true;
 }
@@ -144339,8 +144344,9 @@ function _reconApplyEffects(eff) {
     if (k === 'cinder') { Profile.gems = Math.max(0, (Profile.gems || 0) + eff.cinder); continue; }
     if (k === 'prestige') { Profile.campPrestige = Math.max(0, _campPrestige() + eff.prestige); continue; }
     if (k === 'contrib') { Profile.campContrib = Math.max(0, Math.min(100, _campContrib() + eff.contrib)); continue; }
-    if (k === 'morale' || k === 'food' || k === 'security' || k === 'hope') { r.vitals[k] = Math.max(0, Math.min(100, (r.vitals[k] || 0) + eff[k])); continue; }
-    if (k === 'steel' || k === 'wood' || k === 'medicine' || k === 'fuel') { r.resources[k] = Math.max(0, (r.resources[k] | 0) + eff[k]); continue; }
+    if (k === 'morale' || k === 'security' || k === 'hope') { r.vitals[k] = Math.max(0, Math.min(100, (r.vitals[k] || 0) + eff[k])); continue; }
+    // Real survival-ledger resources (food/metal/wood/supplies/medicine/fuel…) via addRes; 'steel' aliases to 'metal'.
+    if (typeof addRes === 'function' && (k === 'food' || k === 'steel' || k === 'metal' || k === 'wood' || k === 'supplies' || k === 'medicine' || k === 'fuel' || k === 'ammo' || k === 'water')) { addRes(k === 'steel' ? 'metal' : k, eff[k]); continue; }
   }
 }
 function _reconEffectSummary(eff) {
@@ -144427,6 +144433,8 @@ function renderReconstruction() {
   const pop = _campWorkforce();
   const popTotal = _campWorkforceTotal();
   const vit = r.vitals;
+  const _gr = (id) => (typeof getRes === 'function') ? getRes(id) : 0;
+  const _foodVital = Math.max(0, Math.min(100, Math.round(_gr('food') / 2)));   // live FOOD rating derived from real food stock
   const VIT = [
     { k: 'morale', code: 'MOR', name: 'Morale', color: '#caa23e' },
     { k: 'food', code: 'FOO', name: 'Food', color: '#cf5a3a' },
@@ -144434,7 +144442,7 @@ function renderReconstruction() {
     { k: 'hope', code: 'HOP', name: 'Hope', color: '#9bb265' },
   ];
   const vitalsHtml = VIT.map(m => {
-    const v = Math.round(vit[m.k] || 0), SEG = 14, on = Math.round((v / 100) * SEG);
+    const v = (m.k === 'food') ? _foodVital : Math.round(vit[m.k] || 0); const SEG = 14, on = Math.round((v / 100) * SEG);
     let segs = ''; for (let i = 0; i < SEG; i++) segs += `<div class="recon-seg ${i < on ? 'on' : ''}"></div>`;
     const state = v >= 75 ? 'thriving' : v >= 50 ? 'steady' : v >= 25 ? 'strained' : 'critical';
     return `<div class="recon-vital" style="--c:${m.color}">
@@ -144445,7 +144453,7 @@ function renderReconstruction() {
   const POP_ORDER = ['Guard', 'Builder', 'Farmer', 'Doctor', 'Engineer', 'Mechanic', 'Researcher', 'Merchant', 'Civilian'];
   const popMax = Math.max(1, ...POP_ORDER.map(j => pop[j] | 0));
   const popHtml = POP_ORDER.map(j => { const v = pop[j] | 0; return `<div class="recon-popbar"><div class="rp-row"><span>${j}${v === 1 ? '' : 's'}</span><b>${v}</b></div><div class="rp-t"><i style="width:${(v / popMax) * 100}%"></i></div></div>`; }).join('');
-  const RES = [['Cinder', Profile.gems || 0, ''], ['Food', r.resources.food | 0, ''], ['Steel', r.resources.steel | 0, ''], ['Wood', r.resources.wood | 0, ''], ['Medicine', r.resources.medicine | 0, (r.resources.medicine | 0) < 30 ? 'warn' : ''], ['Fuel', r.resources.fuel | 0, '']];
+  const RES = [['Cinder', Profile.gems || 0, ''], ['Food', _gr('food'), ''], ['Metal', _gr('metal'), ''], ['Wood', _gr('wood'), ''], ['Medicine', _gr('medicine'), _gr('medicine') < 30 ? 'warn' : ''], ['Fuel', _gr('fuel'), '']];
   const resHtml = RES.map(([k, v, w]) => `<div class="recon-res"><span class="rr-k">${k}</span><span class="rr-v ${w}">${v}</span></div>`).join('');
   const GLOW = { cyan: '#7d9cb6', amber: '#dca844', red: '#cf5a3a', purple: '#8f7db6' };
   const cells = RECON_SITES.map(s => {

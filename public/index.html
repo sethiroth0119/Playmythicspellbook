@@ -20554,6 +20554,32 @@
   #camp-node-picker-host .cnp-input:focus { outline:none; border-color:var(--gold-bright,#f5d76e); box-shadow:0 0 0 2px rgba(212,175,55,0.25); }
   .recon-rename-btn { background:rgba(120,150,200,0.14); border:1px solid rgba(120,150,200,0.4); color:#bcd0ea; border-radius:6px; cursor:pointer; font-size:0.78rem; line-height:1; padding:2px 7px; vertical-align:middle; margin-left:4px; transition:border-color 0.12s, background 0.12s; }
   .recon-rename-btn:hover { border-color:var(--gold-bright,#f5d76e); color:#ffe6a0; background:rgba(212,175,55,0.15); }
+  /* 📢 Ethos Sponsor Network — node billboard + author form */
+  .esn-sponsor-tab { display:flex; flex-direction:column; }
+  .esn-billboard { position:relative; margin:0.7rem 0.75rem; border-radius:12px; overflow:hidden; border:1px solid rgba(212,175,55,0.4); background:rgba(10,14,24,0.6); box-shadow:0 10px 26px rgba(0,0,0,0.5); }
+  .esn-billboard.empty { border-style:dashed; border-color:rgba(120,150,200,0.3); }
+  .esn-bb-tag { position:absolute; top:8px; left:8px; z-index:2; font-size:0.5rem; letter-spacing:0.16em; font-weight:800; color:#0a0d16; background:rgba(212,175,55,0.92); border-radius:4px; padding:2px 6px; }
+  .esn-bb-media { display:block; width:100%; max-height:200px; object-fit:cover; background:#0a0d16; }
+  .esn-bb-ph { display:flex; align-items:center; justify-content:center; min-height:120px; font-family:'JetBrains Mono','Consolas',monospace; font-size:0.7rem; letter-spacing:0.14em; color:#5b6772; background:repeating-linear-gradient(135deg, rgba(120,150,200,0.05) 0 10px, transparent 10px 20px); }
+  .esn-bb-body { padding:0.7rem 0.85rem; }
+  .esn-bb-sponsor { font-family:'Cinzel',serif; font-weight:800; color:#ffe6b0; font-size:1.02rem; }
+  .esn-bb-caption { color:#c8d2e0; font-size:0.82rem; line-height:1.45; margin-top:3px; }
+  .esn-bb-reward { display:inline-block; margin-top:7px; font-size:0.7rem; color:#9be0c4; background:rgba(74,222,128,0.12); border:1px solid rgba(74,222,128,0.45); border-radius:999px; padding:2px 9px; }
+  .esn-bb-cta { display:block; width:100%; margin-top:10px; padding:0.55rem; border-radius:9px; border:1px solid var(--gold,#d4af37); background:linear-gradient(180deg,#caa23e,#7a5a18); color:#1a1206; font-weight:800; font-family:'Cinzel',serif; letter-spacing:0.04em; cursor:pointer; }
+  .esn-bb-cta:hover { filter:brightness(1.08); }
+  .esn-mng-split { font-size:0.62rem; color:#9bb265; padding:0 0.75rem 0.4rem; letter-spacing:0.04em; }
+  .esn-mng-list { display:flex; flex-direction:column; gap:0.4rem; padding:0 0.75rem; }
+  .esn-mng-row { background:rgba(20,28,48,0.5); border:1px solid rgba(120,150,200,0.2); border-radius:8px; padding:0.5rem 0.6rem; }
+  .esn-mng-main { display:flex; align-items:center; justify-content:space-between; gap:0.5rem; }
+  .esn-mng-name { font-weight:700; color:#e8eef7; font-size:0.82rem; }
+  .esn-mng-st { font-size:0.56rem; letter-spacing:0.1em; font-weight:800; }
+  .esn-mng-meta { font-size:0.62rem; color:#8a96a8; font-family:'JetBrains Mono','Consolas',monospace; margin:3px 0 6px; }
+  .esn-mng-acts { display:flex; gap:0.3rem; flex-wrap:wrap; }
+  .esn-mng-btns { display:flex; gap:0.4rem; flex-wrap:wrap; padding:0.7rem 0.75rem 0.3rem; }
+  .esn-fl { display:block; font-size:0.58rem; letter-spacing:0.12em; text-transform:uppercase; color:#6b7790; margin:8px 0 3px; }
+  .esn-frow { display:flex; gap:8px; }
+  #camp-node-picker-host select.cnp-input { font-family:'Crimson Text',serif; font-size:0.95rem; }
+  .esn-warn-url { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.72rem; color:#9bb6d8; background:rgba(8,5,16,0.6); border:1px solid rgba(120,150,200,0.3); border-radius:7px; padding:0.5rem 0.6rem; word-break:break-all; }
   #camp-node-picker-host .cnp-emp-stat { font-size:0.82rem; color:#cbd6e6; background:rgba(74,222,128,0.1); border:1px solid rgba(74,222,128,0.35); border-radius:8px; padding:0.5rem 0.7rem; margin-bottom:0.7rem; }
   #camp-node-picker-host .cnp-emp-stat b { color:#9be0c4; }
   /* Trade route line on the camp banner */
@@ -144683,6 +144709,299 @@ function renderReconstruction() {
     </div>`}
   </div>`;
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// 📢 ETHOS SPONSOR NETWORK — in-world sponsor billboards on District Nodes.
+// A node's owner-corp (or a studio admin) sells ad space; when a player opens a
+// node, the SPONSOR tab shows the active sponsor as an in-world billboard with a
+// "Visit Sponsor" link (external-leave warning). Ads live in the cross-player
+// `tw_node_ads` table; views/clicks tracked via an RPC. Real-money purchase +
+// payouts run through Stripe Connect server-side (Supabase Edge Functions) — the
+// client only kicks off Checkout / onboarding; the secret key never ships here.
+// Split: node owner 70% · studio 20% · Foundation Reserve 10%.
+// ═══════════════════════════════════════════════════════════════════════════
+const ESN_SPLIT = { owner: 0.70, studio: 0.20, foundation: 0.10 };
+const ESN_CTA_LABELS = ['Visit Sponsor', 'Learn More', 'Shop Now', 'Join Campaign', 'Claim Offer'];
+function _esnAdmin() { try { return (typeof isAdmin === 'function') && isAdmin(); } catch (e) { return false; } }
+function _esnMyCorpId() { try { const c = _twPlayerCorp(); return c ? c.id : null; } catch (e) { return null; } }
+function _esnNodeOwnerCorp(nodeId) { try { const o = _twState().ownedNodes[nodeId]; return (o && o.ownerCorpId) || null; } catch (e) { return null; } }
+function _esnCanManageNode(nodeId) { const oc = _esnNodeOwnerCorp(nodeId); const mine = _esnMyCorpId(); return _esnAdmin() || !!(oc && mine && oc === mine); }
+function _esnSafeUrl(u) { try { const x = new URL(String(u)); return (x.protocol === 'http:' || x.protocol === 'https:') ? x.href : ''; } catch (e) { return ''; } }
+function _esnPrice(ad) { const c = (ad && ad.price_cents) | 0; return '$' + (c / 100).toFixed(2); }
+// ── cloud (mirrors the tw_* graceful pattern; silent no-op if table absent) ──
+async function tw_cloudFetchNodeAd(nodeId) {
+  try {
+    if (!nodeId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const nowIso = new Date().toISOString();
+    const { data, error } = await Cloud.client.from('tw_node_ads')
+      .select('id, node_id, sponsor_name, caption, ad_type, media_url, target_link, cta_label, reward_tag, status, seller, owner_corp_id, price_cents, currency, starts_at, ends_at, views, clicks')
+      .eq('node_id', nodeId).eq('status', 'active')
+      .lte('starts_at', nowIso).gte('ends_at', nowIso)
+      .order('price_cents', { ascending: false }).limit(1);
+    if (error) return null;
+    App._twNodeAd = App._twNodeAd || {};
+    App._twNodeAd[nodeId] = { at: Date.now(), ad: (data && data[0]) || null };
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId && App._twNodeTab === 'sponsor') { try { render(); } catch (e) {} }
+    return data;
+  } catch (e) { return null; }
+}
+async function tw_cloudFetchNodeAdsForManage(nodeId) {
+  try {
+    if (!nodeId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.from('tw_node_ads')
+      .select('id, node_id, sponsor_name, caption, ad_type, media_url, target_link, cta_label, reward_tag, status, seller, owner_corp_id, price_cents, currency, starts_at, ends_at, views, clicks, created_by')
+      .eq('node_id', nodeId).order('created_at', { ascending: false }).limit(50);
+    if (error) return null;
+    App._twNodeAdsMng = App._twNodeAdsMng || {};
+    App._twNodeAdsMng[nodeId] = { at: Date.now(), rows: data || [] };
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId && App._twNodeTab === 'sponsor') { try { render(); } catch (e) {} }
+    return data;
+  } catch (e) { return null; }
+}
+async function tw_cloudUpsertNodeAd(ad) {
+  try {
+    if (!Cloud || !Cloud.ready || !Cloud.client) { showToast('☁ Sign in to save sponsor ads.'); return null; }
+    const userId = (Profile.cloud && Profile.cloud.userId) || null;
+    const row = Object.assign({}, ad, { created_by: userId, updated_at: new Date().toISOString() });
+    const { data, error } = await Cloud.client.from('tw_node_ads').upsert(row).select('id').limit(1);
+    if (error) { showToast('⚠ Ad save failed: ' + (error.message || 'cloud error')); return null; }
+    return data;
+  } catch (e) { return null; }
+}
+async function tw_cloudSetAdStatus(adId, status) {
+  try {
+    if (!adId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    await Cloud.client.from('tw_node_ads').update({ status, updated_at: new Date().toISOString() }).eq('id', adId);
+  } catch (e) {}
+}
+async function tw_cloudDeleteAd(adId) {
+  try { if (!adId || !Cloud || !Cloud.ready || !Cloud.client) return null; await Cloud.client.from('tw_node_ads').delete().eq('id', adId); } catch (e) {}
+}
+async function tw_cloudTrackAd(adId, kind) {
+  try {
+    if (!adId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    await Cloud.client.rpc('tw_ad_track', { p_ad_id: adId, p_kind: kind });   // atomic +1 view/click
+  } catch (e) { /* RPC missing → no-op */ }
+}
+function _esnTrackView(adId) {
+  if (!adId) return;
+  App._esnViewed = App._esnViewed || {};
+  if (App._esnViewed[adId]) return;
+  App._esnViewed[adId] = 1;
+  try { tw_cloudTrackAd(adId, 'view'); } catch (e) {}
+}
+// ── billboard + management UI (returned for the node drawer SPONSOR tab) ──
+function _esnSponsorHtml(node) {
+  const nodeId = node.id;
+  const canManage = _esnCanManageNode(nodeId);
+  // refresh the active ad (cached ~45s)
+  try {
+    App._twNodeAd = App._twNodeAd || {};
+    const c = App._twNodeAd[nodeId];
+    if ((!c || (Date.now() - c.at) > 45000) && App._esnAdFetching !== nodeId) {
+      App._esnAdFetching = nodeId;
+      Promise.resolve(tw_cloudFetchNodeAd(nodeId)).catch(() => {}).then(() => { if (App._esnAdFetching === nodeId) App._esnAdFetching = null; });
+    }
+    if (canManage) {
+      App._twNodeAdsMng = App._twNodeAdsMng || {};
+      const m = App._twNodeAdsMng[nodeId];
+      if ((!m || (Date.now() - m.at) > 45000) && App._esnMngFetching !== nodeId) {
+        App._esnMngFetching = nodeId;
+        Promise.resolve(tw_cloudFetchNodeAdsForManage(nodeId)).catch(() => {}).then(() => { if (App._esnMngFetching === nodeId) App._esnMngFetching = null; });
+      }
+    }
+  } catch (e) {}
+  const ad = (App._twNodeAd && App._twNodeAd[nodeId] && App._twNodeAd[nodeId].ad) || null;
+  let billboard;
+  if (ad) {
+    _esnTrackView(ad.id);
+    const media = ad.ad_type === 'video' && _esnSafeUrl(ad.media_url)
+      ? `<video class="esn-bb-media" src="${escapeHtml(_esnSafeUrl(ad.media_url))}" autoplay muted loop playsinline></video>`
+      : (_esnSafeUrl(ad.media_url) ? `<img class="esn-bb-media" src="${escapeHtml(_esnSafeUrl(ad.media_url))}" alt="${escapeHtml(ad.sponsor_name || 'Sponsor')}" loading="lazy" decoding="async">` : `<div class="esn-bb-media esn-bb-ph">SPONSOR // ${escapeHtml((ad.sponsor_name || 'AD').toUpperCase())}</div>`);
+    const cta = escapeHtml(ad.cta_label || 'Visit Sponsor');
+    billboard = `<div class="esn-billboard">
+      <div class="esn-bb-tag">SPONSORED</div>
+      ${media}
+      <div class="esn-bb-body">
+        <div class="esn-bb-sponsor">${escapeHtml(ad.sponsor_name || 'Sponsor')}</div>
+        <div class="esn-bb-caption">${escapeHtml(ad.caption || '')}</div>
+        ${ad.reward_tag ? `<div class="esn-bb-reward">🎁 ${escapeHtml(ad.reward_tag)}</div>` : ''}
+        ${_esnSafeUrl(ad.target_link) ? `<button class="esn-bb-cta" data-act="esn-visit" data-ad="${escapeHtml(ad.id)}">${cta} ↗</button>` : ''}
+      </div>
+    </div>`;
+  } else {
+    billboard = `<div class="esn-billboard empty"><div class="esn-bb-ph">AD SPACE AVAILABLE</div>
+      <div class="esn-bb-body"><div class="esn-bb-caption">No sponsor for ${escapeHtml(node.name)} yet.${canManage ? ' List this slot below.' : ''}</div></div></div>`;
+  }
+  let manage = '';
+  if (canManage) {
+    const rows = ((App._twNodeAdsMng && App._twNodeAdsMng[nodeId] && App._twNodeAdsMng[nodeId].rows) || []);
+    const isAdm = _esnAdmin();
+    const list = rows.length ? rows.map(r => {
+      const stCol = r.status === 'active' ? '#4d9e68' : r.status === 'pending' ? '#c89428' : r.status === 'rejected' ? '#b84e2c' : '#5b6772';
+      return `<div class="esn-mng-row">
+        <div class="esn-mng-main"><span class="esn-mng-name">${escapeHtml(r.sponsor_name || 'Ad')}</span><span class="esn-mng-st" style="color:${stCol}">${escapeHtml((r.status || '').toUpperCase())}</span></div>
+        <div class="esn-mng-meta">${_esnPrice(r)} · ${escapeHtml(r.price_model || 'flat')} · 👁 ${r.views | 0} · 🖱 ${r.clicks | 0}${(r.clicks && r.views) ? ' · ' + ((r.clicks / r.views) * 100).toFixed(1) + '% CTR' : ''}</div>
+        <div class="esn-mng-acts">
+          ${isAdm && r.status === 'pending' ? `<button class="btn-mini btn-primary" data-act="esn-approve" data-ad="${escapeHtml(r.id)}">Approve</button><button class="btn-mini" data-act="esn-reject" data-ad="${escapeHtml(r.id)}">Reject</button>` : ''}
+          ${r.status === 'active' ? `<button class="btn-mini" data-act="esn-pause" data-ad="${escapeHtml(r.id)}">Pause</button>` : ''}
+          <button class="btn-mini" data-act="esn-edit" data-ad="${escapeHtml(r.id)}" data-node="${escapeHtml(nodeId)}">Edit</button>
+          <button class="btn-mini btn-danger" data-act="esn-delete" data-ad="${escapeHtml(r.id)}">✕</button>
+        </div></div>`;
+    }).join('') : '<div class="tw-nd-empty">No ads on this node yet.</div>';
+    manage = `
+      <div class="tw-nd-section-hdr">— ${isAdm ? 'ADMIN' : 'NODE OWNER'} · AD MANAGEMENT</div>
+      <div class="esn-mng-split">Revenue split — Owner ${Math.round(ESN_SPLIT.owner*100)}% · Studio ${Math.round(ESN_SPLIT.studio*100)}% · Foundation ${Math.round(ESN_SPLIT.foundation*100)}%</div>
+      <div class="esn-mng-list">${list}</div>
+      <div class="esn-mng-btns">
+        <button class="btn-mini btn-primary" data-act="esn-create" data-node="${escapeHtml(nodeId)}">＋ List a Sponsor Ad</button>
+        ${!isAdm ? `<button class="btn-mini" data-act="esn-onboard" title="Set up Stripe payouts to get paid for ad sales">💳 Payout Setup</button>` : ''}
+      </div>`;
+  }
+  return `<div class="esn-sponsor-tab">${billboard}${manage}
+    <div class="hint" style="padding:8px 0.75rem;color:#5b6772">Ethos Sponsor Network — real businesses help rebuild the world. ${canManage ? '' : 'Own this node (via your corp) to sell its ad space.'}</div></div>`;
+}
+// ── ad author / edit modal (reuses the camp-node host) ──
+function openAdAuthor(nodeId, adId) {
+  let host = document.getElementById('camp-node-picker-host');
+  if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
+  let ex = null;
+  try { const rows = (App._twNodeAdsMng && App._twNodeAdsMng[nodeId] && App._twNodeAdsMng[nodeId].rows) || []; ex = adId ? rows.find(r => r.id === adId) : null; } catch (e) {}
+  const v = ex || {};
+  const _today = new Date().toISOString().slice(0, 10);
+  host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog">
+    <div class="cnp-modal-head"><h3>${ex ? 'Edit' : 'List'} Sponsor Ad</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
+    <div class="cnp-modal-body">
+      <div class="hint" style="margin-bottom:10px">All ads are reviewed by the studio before going live. No scams, gambling, adult content, or phishing. Required: sponsor name, link, image/video, dates.</div>
+      <input type="hidden" id="esn-f-id" value="${escapeHtml(v.id || '')}"><input type="hidden" id="esn-f-node" value="${escapeHtml(nodeId)}">
+      <label class="esn-fl">Sponsor name</label><input class="cnp-input" id="esn-f-sponsor" maxlength="48" value="${escapeHtml(v.sponsor_name || '')}" placeholder="Woods Fishing Co.">
+      <label class="esn-fl">Ad caption</label><input class="cnp-input" id="esn-f-caption" maxlength="120" value="${escapeHtml(v.caption || '')}" placeholder="Helping rebuild this district's food supply.">
+      <label class="esn-fl">Media URL (image or video)</label><input class="cnp-input" id="esn-f-media" value="${escapeHtml(v.media_url || '')}" placeholder="https://…/billboard.png">
+      <div class="esn-frow"><div style="flex:1"><label class="esn-fl">Type</label><select class="cnp-input" id="esn-f-type"><option value="image"${v.ad_type !== 'video' ? ' selected' : ''}>Image</option><option value="video"${v.ad_type === 'video' ? ' selected' : ''}>Video</option></select></div>
+        <div style="flex:1"><label class="esn-fl">Button</label><select class="cnp-input" id="esn-f-cta">${ESN_CTA_LABELS.map(l => `<option${(v.cta_label || 'Visit Sponsor') === l ? ' selected' : ''}>${l}</option>`).join('')}</select></div></div>
+      <label class="esn-fl">Sponsor link (https://…)</label><input class="cnp-input" id="esn-f-link" value="${escapeHtml(v.target_link || '')}" placeholder="https://woodsfishing.co">
+      <label class="esn-fl">Reward tag (optional)</label><input class="cnp-input" id="esn-f-reward" maxlength="48" value="${escapeHtml(v.reward_tag || '')}" placeholder="+50 Cinder for watching">
+      <div class="esn-frow"><div style="flex:1"><label class="esn-fl">Price (USD)</label><input class="cnp-input" id="esn-f-price" type="number" min="0" step="1" value="${v.price_cents ? (v.price_cents / 100) : ''}" placeholder="100"></div>
+        <div style="flex:1"><label class="esn-fl">Model</label><select class="cnp-input" id="esn-f-model">${['flat', 'ppc', 'ppv'].map(m => `<option value="${m}"${(v.price_model || 'flat') === m ? ' selected' : ''}>${m === 'flat' ? 'Flat rate' : m === 'ppc' ? 'Per click' : 'Per 1k views'}</option>`).join('')}</select></div></div>
+      <div class="esn-frow"><div style="flex:1"><label class="esn-fl">Start</label><input class="cnp-input" id="esn-f-start" type="date" value="${(v.starts_at || '').slice(0, 10) || _today}"></div>
+        <div style="flex:1"><label class="esn-fl">End</label><input class="cnp-input" id="esn-f-end" type="date" value="${(v.ends_at || '').slice(0, 10)}"></div></div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn-primary" style="flex:1" data-act="esn-save">${_esnAdmin() ? 'Save' : 'Submit for review'}</button>
+        ${(!_esnAdmin() && v.price_cents) ? `<button class="btn-mini" data-act="esn-checkout" data-ad="${escapeHtml(v.id || '')}">💳 Pay ${_esnPrice(v)}</button>` : ''}
+        <button class="btn-mini" data-act="camp-picker-close">Cancel</button>
+      </div>
+    </div></div></div>`;
+}
+function saveAdDraft() {
+  const g = (id) => { const e = document.getElementById(id); return e ? e.value : ''; };
+  const nodeId = g('esn-f-node'); if (!nodeId) return;
+  const sponsor = g('esn-f-sponsor').trim();
+  const link = _esnSafeUrl(g('esn-f-link'));
+  const media = g('esn-f-media').trim();
+  if (!sponsor) { showToast('Sponsor name is required.'); return; }
+  if (!link) { showToast('A valid https:// sponsor link is required.'); return; }
+  if (!media) { showToast('An image or video URL is required.'); return; }
+  const ad = {
+    id: g('esn-f-id') || undefined,
+    node_id: nodeId,
+    sponsor_name: sponsor.slice(0, 48),
+    caption: g('esn-f-caption').trim().slice(0, 120),
+    ad_type: g('esn-f-type') === 'video' ? 'video' : 'image',
+    media_url: media,
+    target_link: link,
+    cta_label: g('esn-f-cta') || 'Visit Sponsor',
+    reward_tag: g('esn-f-reward').trim().slice(0, 48) || null,
+    price_model: g('esn-f-model') || 'flat',
+    price_cents: Math.max(0, Math.round((parseFloat(g('esn-f-price')) || 0) * 100)),
+    currency: 'usd',
+    starts_at: g('esn-f-start') ? new Date(g('esn-f-start')).toISOString() : new Date().toISOString(),
+    ends_at: g('esn-f-end') ? new Date(g('esn-f-end')).toISOString() : null,
+    seller: _esnAdmin() ? 'studio' : 'owner',
+    owner_corp_id: _esnNodeOwnerCorp(nodeId),
+    status: _esnAdmin() ? 'active' : 'pending',   // admins publish directly; owners go to review
+  };
+  Promise.resolve(tw_cloudUpsertNodeAd(ad)).then((res) => {
+    if (res) {
+      showToast(_esnAdmin() ? '✅ Sponsor ad published.' : '📨 Ad submitted for studio review.', 2800);
+      try { App._twNodeAdsMng = App._twNodeAdsMng || {}; delete App._twNodeAdsMng[nodeId]; delete (App._twNodeAd || {})[nodeId]; } catch (e) {}
+      closeCampNodePicker();
+      try { render(); } catch (e) {}
+    }
+  });
+}
+function _esnSetStatus(adId, status, nodeId) {
+  Promise.resolve(tw_cloudSetAdStatus(adId, status)).then(() => {
+    showToast('Ad ' + status + '.', 1800);
+    try { delete (App._twNodeAdsMng || {})[nodeId || App._twSelectedNode]; delete (App._twNodeAd || {})[nodeId || App._twSelectedNode]; } catch (e) {}
+    try { render(); } catch (e) {}
+  });
+}
+// external-leave warning before opening any sponsor link
+function openExternalLinkWarn(adId) {
+  let ad = null;
+  try { const nid = App._twSelectedNode; ad = (App._twNodeAd && App._twNodeAd[nid] && App._twNodeAd[nid].ad); } catch (e) {}
+  if (!ad || ad.id !== adId) { try { const mng = (App._twNodeAdsMng && App._twNodeAdsMng[App._twSelectedNode] && App._twNodeAdsMng[App._twSelectedNode].rows) || []; ad = mng.find(r => r.id === adId) || ad; } catch (e) {} }
+  const url = _esnSafeUrl(ad && ad.target_link);
+  if (!url) return;
+  try { tw_cloudTrackAd(adId, 'click'); } catch (e) {}
+  let host = document.getElementById('camp-node-picker-host');
+  if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
+  host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog" style="width:min(440px,96vw)">
+    <div class="cnp-modal-head"><h3>Leaving Mythic Spellbook</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
+    <div class="cnp-modal-body">
+      <div class="hint" style="margin-bottom:10px">You're opening an external sponsor link from <b>${escapeHtml((ad && ad.sponsor_name) || 'a sponsor')}</b>. Mythic Spellbook isn't responsible for external sites — only continue if you trust it.</div>
+      <div class="esn-warn-url">${escapeHtml(url)}</div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn-primary" style="flex:1" data-act="esn-visit-go" data-url="${escapeHtml(url)}">Continue ↗</button>
+        <button class="btn-mini" data-act="camp-picker-close">Stay</button>
+      </div>
+    </div></div></div>`;
+}
+// Stripe client hooks — call the (server-side) Supabase Edge Functions. Graceful
+// until the studio configures Stripe + deploys the functions.
+async function startAdCheckout(adId) {
+  try {
+    if (!Cloud || !Cloud.ready || !Cloud.client) { showToast('☁ Sign in to purchase ad space.'); return; }
+    showToast('Opening secure checkout…', 1800);
+    const { data, error } = await Cloud.client.functions.invoke('ads-checkout', { body: { ad_id: adId } });
+    if (error || !data || !data.url) { showToast('💳 Payments aren\'t configured yet — the studio is still wiring Stripe.', 3600); return; }
+    window.location.href = data.url;
+  } catch (e) { showToast('💳 Checkout unavailable right now.', 3000); }
+}
+async function startAdSellerOnboard() {
+  try {
+    if (!Cloud || !Cloud.ready || !Cloud.client) { showToast('☁ Sign in first.'); return; }
+    const corpId = _esnMyCorpId();
+    if (!corpId) { showToast('Join or form a corp first — payouts go to the corp that owns the node.', 3600); return; }
+    showToast('Opening payout setup…', 1800);
+    const { data, error } = await Cloud.client.functions.invoke('ads-connect-onboard', { body: { corp_id: corpId } });
+    if (error || !data || !data.url) { showToast('💳 Payout setup isn\'t available yet — Stripe Connect not configured.', 3600); return; }
+    window.location.href = data.url;
+  } catch (e) { showToast('Payout setup unavailable.', 3000); }
+}
+// one-time delegated handler for all Ethos Sponsor Network controls
+try {
+  if (!window.__esnWired) {
+    window.__esnWired = true;
+    document.addEventListener('click', (e) => {
+      const t = e.target.closest && e.target.closest('[data-act]'); if (!t) return;
+      const a = t.getAttribute('data-act'), adId = t.getAttribute('data-ad'), nodeId = t.getAttribute('data-node');
+      switch (a) {
+        case 'esn-create': openAdAuthor(nodeId); break;
+        case 'esn-edit': openAdAuthor(nodeId, adId); break;
+        case 'esn-save': saveAdDraft(); break;
+        case 'esn-approve': _esnSetStatus(adId, 'active'); break;
+        case 'esn-reject': _esnSetStatus(adId, 'rejected'); break;
+        case 'esn-pause': _esnSetStatus(adId, 'paused'); break;
+        case 'esn-delete': if (confirm('Delete this sponsor ad?')) { Promise.resolve(tw_cloudDeleteAd(adId)).then(() => { try { delete (App._twNodeAdsMng || {})[App._twSelectedNode]; delete (App._twNodeAd || {})[App._twSelectedNode]; } catch (er) {} try { render(); } catch (er) {} }); } break;
+        case 'esn-visit': openExternalLinkWarn(adId); break;
+        case 'esn-visit-go': { const u = _esnSafeUrl(t.getAttribute('data-url')); closeCampNodePicker(); if (u) window.open(u, '_blank', 'noopener,noreferrer'); break; }
+        case 'esn-checkout': startAdCheckout(adId); break;
+        case 'esn-onboard': startAdSellerOnboard(); break;
+        default: return;
+      }
+    });
+  }
+} catch (e) {}
 async function tw_cloudUpsertOwnership(nodeId) {
   try {
     if (!Cloud || !Cloud.ready || !Cloud.client) return null;
@@ -146153,6 +146472,9 @@ function renderTerritoryWars() {
         : `<button class="btn-mini btn-primary" data-act="camp-register" data-node="${escapeHtml(selNode.id)}" style="margin:10px 0.75rem">🏳 Register My Camp Here</button>`}
     `;
 
+    // 📢 Sponsor tab — Ethos Sponsor Network billboard + owner/admin management.
+    const sponsorHtml = (typeof _esnSponsorHtml === 'function') ? _esnSponsorHtml(selNode) : '';
+
     // Admin tab — map-editing controls are admin-only (players get the map +
     // attack/capture, never the New Node / delete / publish tools).
     const _isAdm = (typeof isAdmin === 'function') && isAdmin();
@@ -146226,6 +146548,7 @@ function renderTerritoryWars() {
           <button class="tw-drawer-tab ${_ndtab==='resources'?'is-active':''}" data-ndtab="resources">RESOURCES</button>
           <button class="tw-drawer-tab ${_ndtab==='charter'?'is-active':''}" data-ndtab="charter">CHARTER</button>
           <button class="tw-drawer-tab ${_ndtab==='settlements'?'is-active':''}" data-ndtab="settlements">SETTLEMENTS${_campRows.length?` <span class="tw-drawer-tab-badge">${_campRows.length}</span>`:''}</button>
+          <button class="tw-drawer-tab ${_ndtab==='sponsor'?'is-active':''}" data-ndtab="sponsor">SPONSOR${(App._twNodeAd&&App._twNodeAd[selNode.id]&&App._twNodeAd[selNode.id].ad)?' <span class="tw-drawer-tab-badge" style="background:rgba(74,222,128,0.25);color:#4d9e68">●</span>':''}</button>
           ${_isAdm ? `<button class="tw-drawer-tab ${_ndtab==='admin'?'is-active':''}" data-ndtab="admin">ADMIN</button>` : ''}
         </div>
         <div class="tw-nd-tab-panel ${_ndtab==='overview'?'is-active':''}" id="tw-nd-overview">${overviewHtml}</div>
@@ -146234,6 +146557,7 @@ function renderTerritoryWars() {
         <div class="tw-nd-tab-panel ${_ndtab==='resources'?'is-active':''}" id="tw-nd-resources">${resourcesHtml}</div>
         <div class="tw-nd-tab-panel ${_ndtab==='charter'?'is-active':''}" id="tw-nd-charter">${charterHtml}</div>
         <div class="tw-nd-tab-panel ${_ndtab==='settlements'?'is-active':''}" id="tw-nd-settlements">${settlementsHtml}</div>
+        <div class="tw-nd-tab-panel ${_ndtab==='sponsor'?'is-active':''}" id="tw-nd-sponsor">${sponsorHtml}</div>
         ${_isAdm ? `<div class="tw-nd-tab-panel ${_ndtab==='admin'?'is-active':''}" id="tw-nd-admin">${adminHtml}</div>` : ''}
       </div>`;
   })() : '';

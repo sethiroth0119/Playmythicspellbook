@@ -14812,23 +14812,38 @@
     bottom: 0.45rem;
     left: 0.5rem;
     z-index: 3;
-    width: 30px; height: 30px;
+    width: 42px; height: 42px;
     border-radius: 50%;
-    border: 1px solid #88e8a8;
-    background: rgba(0,0,0,0.7);
+    border: 2px solid #88e8a8;
+    background: rgba(0,0,0,0.72);
     color: #88e8a8;
     cursor: pointer;
-    font-size: 0.95rem;
-    line-height: 1;
+    padding: 0;
+    overflow: hidden;
     display: flex; align-items: center; justify-content: center;
-    transition: transform 0.15s, background 0.15s, border-color 0.15s, opacity 0.15s;
-    opacity: 0;
+    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+    /* 👑 ALWAYS VISIBLE (was opacity:0 / hover-only) so players know the hero
+       loadout is one click away. A soft pulsing ring keeps drawing the eye. */
+    opacity: 1;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.6), 0 0 10px rgba(136,232,168,0.5);
+    animation: hp-loadout-hint 2.4s ease-in-out infinite;
+  }
+  .hp-loadout-btn img {
+    width: 100%; height: 100%;
+    object-fit: cover; object-position: center;
+    border-radius: 50%;
+    pointer-events: none;
+    display: block;
+  }
+  @keyframes hp-loadout-hint {
+    0%, 100% { box-shadow: 0 2px 8px rgba(0,0,0,0.6), 0 0 8px rgba(136,232,168,0.45); }
+    50%      { box-shadow: 0 2px 8px rgba(0,0,0,0.6), 0 0 17px rgba(136,232,168,0.9); }
   }
   .hero-pick-card:hover .hp-loadout-btn { opacity: 1; }
   .hp-loadout-btn:hover {
-    transform: scale(1.1);
-    background: #88e8a8;
-    color: #0a1a0a;
+    transform: scale(1.12);
+    border-color: var(--gold-bright, #f5d76e);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.7), 0 0 18px rgba(136,232,168,1);
   }
   .hp-image-btn:hover {
     transform: scale(1.1);
@@ -140550,7 +140565,7 @@ function renderDeckBuilderHeroPick() {
           ${statusBadge}
           <button class="hp-image-btn" data-upload-hero="${h.id}" title="Upload portrait" aria-label="Upload portrait">📷</button>
           <input type="file" class="hp-image-input" data-upload-input="${h.id}" accept="image/*" style="display:none">
-          <button class="hp-loadout-btn" data-hero-loadout="${h.id}" title="Hero Loadout — equipment + consumables" aria-label="Hero loadout">🪖</button>
+          <button class="hp-loadout-btn" data-hero-loadout="${h.id}" title="Hero Loadout — equipment + consumables" aria-label="Hero loadout"><img src="assets/artwork/gameicons/Loadout.png" alt="Loadout" draggable="false"></button>
         </div>
         <div class="hp-info">
           <div class="hp-name">${escapeHtml(h.name)}</div>

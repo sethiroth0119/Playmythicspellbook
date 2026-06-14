@@ -20049,11 +20049,11 @@
   @keyframes tw-energy-flow   { to { stroke-dashoffset: -22; } }
   @keyframes tw-frontier-glow {
     0%,100% { stroke: #ffcf5a; filter: drop-shadow(0 0 1px rgba(255,210,80,0.5)); }
-    50%     { stroke: #ffe880; filter: drop-shadow(0 0 4px rgba(255,215,60,1)) drop-shadow(0 0 9px rgba(255,165,0,0.75)); }
+    50%     { stroke: #ffe880; filter: drop-shadow(0 0 5px rgba(255,190,50,0.9)); }
   }
   @keyframes tw-allied-glow {
     0%,100% { stroke: #6cd4ff; filter: drop-shadow(0 0 1px rgba(108,212,255,0.5)); }
-    50%     { stroke: #a8eeff; filter: drop-shadow(0 0 4px rgba(108,212,255,1)) drop-shadow(0 0 9px rgba(0,185,255,0.75)); }
+    50%     { stroke: #a8eeff; filter: drop-shadow(0 0 5px rgba(72,200,255,0.9)); }
   }
   .tw-map-routes path.allied  {
     stroke: #6cd4ff; stroke-dasharray: 8 3; stroke-width: 1.8; opacity: 1; stroke-linecap: round;
@@ -20064,6 +20064,14 @@
   .tw-map-routes path.frontier{
     stroke: #ffcf5a; stroke-dasharray: 7 3; stroke-width: 1.5; opacity: 1; stroke-linecap: round;
     animation: tw-energy-flow 1.8s linear infinite, tw-frontier-glow 2.5s ease-in-out infinite;
+  }
+  /* GPU budget: only the first N lit roads get the animated drop-shadow glow.
+     The rest still flow (cheap dash animation) but carry NO per-frame blur —
+     this caps the native/GPU memory cost on maps with many lit supply lines. */
+  .tw-map-routes path.cheaproute {
+    filter: none !important;
+    animation: tw-energy-flow 2.2s linear infinite !important;
+    stroke: #ffcf5a; stroke-width: 1.4; opacity: 0.92;
   }
   .tw-map-routes path.broken  { stroke: #5a3030; stroke-dasharray: 2 8;   opacity: 0.50; }
 
@@ -146127,6 +146135,14 @@ function renderTerritoryWars() {
   let _litRouteIdx = 0;
   const _truckRoutes = []; // up to 4 lit routes that get convoy trucks
   const _MAX_TRUCKS = 4;
+  // 🩹 GPU budget: animated drop-shadow glow is expensive (re-blurred every
+  // frame). Only the first _MAX_GLOW lit/allied roads keep the full glow; the
+  // rest flow without blur. Without this, a fully-lit map (e.g. after Connect
+  // Roads) stacks dozens of animated blur layers → native/GPU-memory crash.
+  let _glowBudget = 0;
+  let _gfxQ = 'high';
+  try { const _s = (typeof getSettings === 'function') ? getSettings() : (typeof Profile !== 'undefined' && Profile.settings); if (_s && _s.gfxQuality) _gfxQ = _s.gfxQuality; } catch (e) {}
+  const _MAX_GLOW = _gfxQ === 'low' ? 0 : (_gfxQ === 'med' ? 6 : 10);
   for (const n of t.nodes) {
     const conns = Array.isArray(n.connections) ? n.connections : [];
     const pA = n.position || { x: 5, y: 5 };
@@ -146170,7 +146186,14 @@ function renderTerritoryWars() {
       }
       // NOTE: idAttr intentionally NOT applied to visible route — truck guide paths
       // (hidden, below) carry the IDs so there are no duplicate-ID conflicts.
-      _routePaths += `<path d="M ${pA.x} ${pA.y} Q ${midX} ${midY} ${pB.x} ${pB.y}"${cls ? ` class="${cls}"` : ''}/>`;
+      // Cap the GPU-expensive animated glow: past the budget, the road still
+      // flows but drops its per-frame blur (see .cheaproute).
+      let _cls2 = cls;
+      if (cls === 'frontier' || cls === 'allied') {
+        if (_glowBudget < _MAX_GLOW) _glowBudget++;
+        else _cls2 = cls + ' cheaproute';
+      }
+      _routePaths += `<path d="M ${pA.x} ${pA.y} Q ${midX} ${midY} ${pB.x} ${pB.y}"${_cls2 ? ` class="${_cls2}"` : ''}/>`;
     }
   }
   // Hidden left-to-right guide paths that trucks follow via <mpath>.

@@ -20552,6 +20552,23 @@
   #camp-node-picker-host .cnp-card button { margin-top:auto; }
   #camp-node-picker-host .cnp-emp-stat { font-size:0.82rem; color:#cbd6e6; background:rgba(74,222,128,0.1); border:1px solid rgba(74,222,128,0.35); border-radius:8px; padding:0.5rem 0.7rem; margin-bottom:0.7rem; }
   #camp-node-picker-host .cnp-emp-stat b { color:#9be0c4; }
+  /* Trade route line on the camp banner */
+  .camp-node-banner .cnb-route { margin-top:6px; font-size:0.76rem; color:#9bb6d8; }
+  .camp-node-banner .cnb-route.ambushed { color:#ffb8a0; font-weight:700; }
+  .camp-node-banner .cnb-route-btn { background:linear-gradient(180deg,#caa23e,#7a5a18); color:#1a1206; border:1px solid #d4af37; border-radius:6px; font-weight:800; font-size:0.72rem; padding:2px 9px; cursor:pointer; margin-left:4px; }
+  /* Convoy-defense mission modal */
+  #camp-node-picker-host .cnp-odds { display:flex; gap:0.6rem; }
+  #camp-node-picker-host .cnp-o { flex:1; text-align:center; border-radius:10px; padding:0.6rem; border:1px solid rgba(255,255,255,0.12); }
+  #camp-node-picker-host .cnp-o.win { background:rgba(74,222,128,0.12); border-color:rgba(74,222,128,0.45); }
+  #camp-node-picker-host .cnp-o.lose { background:rgba(232,93,60,0.12); border-color:rgba(232,93,60,0.45); }
+  #camp-node-picker-host .cnp-o .k { font-size:0.66rem; letter-spacing:0.1em; text-transform:uppercase; color:#9aa6b6; }
+  #camp-node-picker-host .cnp-o .v { font-size:1.5rem; font-weight:800; font-family:'Cinzel',serif; }
+  #camp-node-picker-host .cnp-o.win .v { color:#9be0c4; }
+  #camp-node-picker-host .cnp-o.lose .v { color:#ffb8a0; }
+  #camp-node-picker-host .convoy-engaging { text-align:center; padding:1.4rem; color:#cbd6e6; font-family:'Cinzel',serif; letter-spacing:0.25em; animation:cnb-pulse 0.9s ease-in-out infinite; }
+  #camp-node-picker-host .convoy-result { text-align:center; font-family:'Cinzel',serif; font-size:1.5rem; font-weight:800; letter-spacing:0.08em; padding:0.6rem; }
+  #camp-node-picker-host .convoy-result.win { color:#9be0c4; }
+  #camp-node-picker-host .convoy-result.lose { color:#ffb8a0; }
   .tw-nd-actions { padding:0.5rem 1rem 0.8rem; display:flex; flex-direction:column; gap:0.4rem; }
   .tw-nd-action-row { display:flex; gap:0.4rem; }
   /* Bottom status bar */
@@ -100413,6 +100430,8 @@ function renderCamp() {
       if (_t > 0) showToast(`💰 Black Market tithe: +${_t} 🔥`, 2600);
     }
     if (typeof _campRecoveryTick === 'function') _campRecoveryTick();
+    // 🚚 Reconstruction Network trade route — deliver pending convoys (offline-aware).
+    try { const _rt = (typeof _campRouteResolve === 'function') ? _campRouteResolve() : null; if (_rt) showToast(_rt, 3400); } catch (e) {}
   } catch (e) {}
 
   // Only units the player actually OWNS, and only created/custom cards (no
@@ -143677,6 +143696,7 @@ function registerCampToNode(nodeId) {
   try { const t = _twForge(); node = (t.nodes || []).find(n => n && n.id === nodeId) || null; } catch (e) {}
   if (!node) { try { showToast('⚠ District Node not found.'); } catch (e) {} return false; }
   Profile.campNodeId = nodeId;
+  Profile.campRoute = { lastDeliveryAt: Date.now(), status: 'active' };   // fresh trade route to the new node
   try { saveProfile(); } catch (e) {}
   try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
   try { tw_cloudUpsertCampReg(); } catch (e) {}
@@ -143687,6 +143707,7 @@ function registerCampToNode(nodeId) {
 }
 function unregisterCamp() {
   Profile.campNodeId = null;
+  Profile.campRoute = null;
   try { saveProfile(); } catch (e) {}
   try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
   try { tw_cloudRemoveCampReg(); } catch (e) {}
@@ -143850,6 +143871,93 @@ function hireCampWorker(role) {
   openEmploymentBoard();
   try { if (App.screen === 'camp') render(); } catch (e) {}
 }
+// ── Phase 4: node→camp trade route + convoy-defense missions ──
+const CAMP_ROUTE_INTERVAL_MS = 4 * 3600 * 1000;  // a convoy every ~4h while active
+const CAMP_ROUTE_MAX_BACKLOG = 6;                 // cap stockpiled offline convoys
+function _campRoute() {
+  if (!Profile.campRoute || typeof Profile.campRoute !== 'object') Profile.campRoute = { lastDeliveryAt: Date.now(), status: 'active' };
+  return Profile.campRoute;
+}
+function _campRouteNextMs() { const r = _campRoute(); if (r.status !== 'active') return 0; return Math.max(0, (r.lastDeliveryAt || Date.now()) + CAMP_ROUTE_INTERVAL_MS - Date.now()); }
+function _campRouteGuardBonus() { try { return Math.min(0.22, ((_campWorkforce().Guard | 0)) * 0.015); } catch (e) { return 0; } }
+function _campRouteWinChance() { return Math.min(0.92, 0.6 + _campRouteGuardBonus() + _campPrestige() * 0.004); }
+// Resolve pending convoy deliveries; the first ambush pauses the route. Returns
+// a short summary for a toast, or null. Called on camp visit (offline-aware).
+function _campRouteResolve() {
+  const node = getCampNode();
+  if (!node) return null;
+  const r = _campRoute();
+  if (r.status === 'ambushed') return null;   // paused until defended
+  const now = Date.now();
+  const elapsed = now - (r.lastDeliveryAt || now);
+  if (elapsed < CAMP_ROUTE_INTERVAL_MS) return null;
+  const convoys = Math.min(CAMP_ROUTE_MAX_BACKLOG, Math.floor(elapsed / CAMP_ROUTE_INTERVAL_MS));
+  const tier = _nodeTierMul(node);
+  const contribMul = 1 + _campContrib() / 100;
+  let cinder = 0, delivered = 0, ambushed = false;
+  for (let i = 0; i < convoys; i++) {
+    if (Math.random() < 0.3) { ambushed = true; break; }
+    cinder += Math.round(120 * tier * contribMul);
+    delivered++;
+  }
+  r.lastDeliveryAt = Math.min(now, (r.lastDeliveryAt || now) + (delivered + (ambushed ? 1 : 0)) * CAMP_ROUTE_INTERVAL_MS);
+  if (cinder > 0) Profile.gems = (Profile.gems || 0) + cinder;
+  if (ambushed) { r.status = 'ambushed'; r.ambushAt = now; }
+  try { saveProfile(); } catch (e) {}
+  if (delivered || ambushed) { try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {} }
+  if (ambushed) {
+    try { _twLog('route', `Convoy from <b>${escapeHtml(node.name)}</b> to ${escapeHtml(_campRegName())} was ambushed.`); } catch (e) {}
+    return `🚨 Your ${node.name} convoy was ambushed!${delivered ? ` (${delivered} earlier convoy${delivered > 1 ? 's' : ''} still delivered +${cinder} 🔥)` : ''} Defend it from the Camp banner.`;
+  }
+  if (delivered) return `🚚 ${delivered} convoy${delivered > 1 ? 's' : ''} from ${node.name} delivered +${cinder} 🔥.`;
+  return null;
+}
+function openConvoyDefense() {
+  const node = getCampNode();
+  if (!node) return;
+  const r = _campRoute();
+  if (r.status !== 'ambushed') { try { showToast('No convoy under attack.'); } catch (e) {} return; }
+  let host = document.getElementById('camp-node-picker-host');
+  if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
+  const win = Math.round(_campRouteWinChance() * 100);
+  host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog">
+    <div class="cnp-modal-head"><h3>Convoy Defense · ${escapeHtml(node.name)}</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
+    <div class="cnp-modal-body" id="convoy-body">
+      <div class="hint" style="margin-bottom:12px">Scum forces ambushed the ${escapeHtml(node.name)} → ${escapeHtml(_campRegName())} convoy. Escort it through or lose the shipment. Hired <b>Guards</b> + camp <b>Prestige</b> raise your odds.</div>
+      <div class="cnp-odds"><div class="cnp-o win"><div class="k">Success</div><div class="v">${win}%</div></div><div class="cnp-o lose"><div class="k">Failure</div><div class="v">${100 - win}%</div></div></div>
+      <button class="btn-primary" style="width:100%;margin-top:12px" data-act="convoy-launch">Launch Escort Mission</button>
+    </div></div></div>`;
+}
+function launchConvoyDefense() {
+  const node = getCampNode(); if (!node) return;
+  const r = _campRoute(); if (r.status !== 'ambushed') return;
+  const body = document.getElementById('convoy-body');
+  if (body) body.innerHTML = `<div class="convoy-engaging">ESCORTING…</div>`;
+  const won = Math.random() < _campRouteWinChance();
+  const tier = _nodeTierMul(node);
+  setTimeout(() => {
+    r.status = 'active'; r.lastDeliveryAt = Date.now();
+    let cinder = 0;
+    if (won) {
+      cinder = Math.round(220 * tier * (1 + _campContrib() / 100));
+      Profile.gems = (Profile.gems || 0) + cinder;
+      Profile.campContrib = Math.min(100, _campContrib() + 2);
+      try { _twLog('route', `<b>${escapeHtml(_campRegName())}</b> secured its ${escapeHtml(node.name)} convoy (+${cinder} 🔥).`); } catch (e) {}
+    } else {
+      try { _twLog('route', `<b>${escapeHtml(_campRegName())}</b> lost its ${escapeHtml(node.name)} convoy to ambush.`); } catch (e) {}
+    }
+    try { saveProfile(); } catch (e) {}
+    try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
+    try { tw_cloudUpsertCampReg(); } catch (e) {}
+    const b2 = document.getElementById('convoy-body');
+    if (b2) {
+      b2.innerHTML = `<div class="convoy-result ${won ? 'win' : 'lose'}">${won ? 'ROUTE SECURED' : 'CONVOY LOST'}</div>
+        <div class="hint" style="margin-top:8px">${won ? `Rewards delivered to your camp: +${cinder} 🔥, +2% contribution.` : 'The shipment was lost. The route is open again — your next convoy arrives on schedule.'}</div>
+        <button class="btn-primary" style="width:100%;margin-top:14px" data-act="camp-picker-close">Return</button>`;
+    }
+    try { if (App.screen === 'camp') render(); } catch (e) {}
+  }, 1100);
+}
 // Camp-screen banner: connect / registered state.
 function _campNodeBannerHtml() {
   const node = getCampNode();
@@ -143863,6 +143971,12 @@ function _campNodeBannerHtml() {
         <div class="cnb-title">🏳 Registered · ${escapeHtml(node.name)} <span class="cnb-bonus">+${b ? b.xpPct : 15}% Camp XP</span></div>
         <div class="cnb-sub">${escapeHtml(b ? b.label : 'District')} · Contribution <b>${contrib}%</b>${pres ? ` · Prestige <b>${pres}</b>` : ''}${pop ? ` · Pop <b>${pop}</b>` : ''}.</div>
         <div class="cnb-contrib"><div class="cnb-contrib-bar"><i style="width:${contrib}%"></i></div></div>
+        ${(function () {
+          const r = _campRoute();
+          if (r.status === 'ambushed') return `<div class="cnb-route ambushed">🚨 Convoy ambushed — <button class="cnb-route-btn" data-act="camp-defend-convoy">Defend Convoy ▸</button></div>`;
+          const ms = _campRouteNextMs(); const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+          return `<div class="cnb-route">🚚 Trade route active · next convoy ${ms <= 0 ? 'arriving on next visit' : `in ${h > 0 ? h + 'h ' : ''}${m}m`}</div>`;
+        })()}
       </div></div>
       <div class="cnb-actions">
         <button class="btn-primary btn-mini" data-act="camp-contribute" title="Send ${CAMP_CONTRIB_COST} 🔥 to raise your contribution + node bonus">🤝 Contribute (${CAMP_CONTRIB_COST} 🔥)</button>
@@ -143920,6 +144034,8 @@ try {
         case 'camp-contribute': contributeCampToNode(); break;
         case 'camp-employment': openEmploymentBoard(); break;
         case 'camp-hire': { const role = t.getAttribute('data-role'); if (role) hireCampWorker(role); break; }
+        case 'camp-defend-convoy': openConvoyDefense(); break;
+        case 'convoy-launch': launchConvoyDefense(); break;
         case 'camp-view-node': goToDistrictNode(getCampNodeId()); break;
         default: return;
       }

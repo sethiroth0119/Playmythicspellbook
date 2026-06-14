@@ -4652,19 +4652,22 @@
     transform: perspective(1600px) rotateX(38deg) scale(1.08);
     transform-origin: center 62%;
     transform-style: preserve-3d;
-    /* 🔓 TOP-EDGE BREATHING ROOM — the base .board clips to its frame
-       (overflow:hidden + contain:paint), which CHOPS the heads off top-row
-       units: in iso-mode those figures STAND UP above the board's top edge.
-       We WANT them to hang off the top (reads more 3D), so drop the box clip
-       + paint-containment here and re-clip with a clip-path that's open
-       240px ABOVE the frame yet still flush on the sides + bottom. Result:
-       standing units rise cleanly past the top gold border, while nothing
-       spills out the sides/bottom or escapes the frame. Board size stays
-       explicit (height/width calc), so dropping paint-containment can't
-       reintroduce the old content-resizes-the-board glitch. */
-    overflow: visible;
-    contain: layout style;
-    clip-path: inset(-240px 0px 0px 0px round 10px);
+    /* 🩹 IN-FRAME HEADROOM (crash-safe) — give the board extra TOP padding so
+       top-row units, which STAND UP above their tiles, have room to show the
+       whole head/torso WITHOUT the board dropping its overflow:hidden +
+       paint-containment.
+       ⚠ DO NOT reopen the clip here. A prior attempt used
+       `overflow:visible; contain:layout style; clip-path:inset(-240px …)` to
+       let figures hang off the top edge — but on this perspective-PROJECTED
+       iso board, removing paint-containment forces the browser to re-rasterize
+       the ENTIRE projected board layer on every sprite-animation frame, which
+       blows up GPU/CPU memory and crashes the tab. Keeping the base clip +
+       paint-containment means the board stays on its cached layer (busy
+       sprites composite on their own layers on top). The whole figure still
+       shows — it just sits inside the frame instead of hanging past it. The
+       board box stays the same size; only the inner grid shifts down to make
+       the headroom. */
+    padding-top: 84px;
   }
   /* 🌅 BACK-ROW STAGE LIGHT — soft warm-amber wash that lifts the top of
      the board (which the ruined-city photo paints almost black) without

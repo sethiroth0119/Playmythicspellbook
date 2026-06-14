@@ -49372,13 +49372,14 @@ async function loadHeavyForgeFromIdb() {
     try { cIdx = await idbGet('forge_cardArt_idx'); } catch (e) {}
     const haveSpr = Array.isArray(sIdx) && sIdx.length > 0;
     const haveCar = Array.isArray(cIdx) && cIdx.length > 0;
-    // 🎨 Streaming is now the DEFAULT for big libraries — validated to show real
-    // art without the crash thanks to the decode budget + visibility gate +
-    // the normalizeStoredSpriteFrames gate. The escape hatch remains: set
-    // localStorage.hg_artstream='0' to force the stable placeholder mode.
-    let _streamOff = false;
-    try { _streamOff = localStorage.getItem('hg_artstream') === '0'; } catch (e) {}
-    if ((haveSpr || haveCar) && !_streamOff) {
+    // 🛑 Streaming is OPT-IN again. Custom art (streaming + thumbnail build) has
+    // crashed across multiple screens on the huge admin library, so the SAFE
+    // DEFAULT is the stable placeholder mode (no art load, no decode, no build —
+    // the build verified-stable mode). Turn art on ONLY with hg_artstream='1';
+    // the crash recorder below then watches it.
+    let _streamOn = false;
+    try { _streamOn = localStorage.getItem('hg_artstream') === '1'; } catch (e) {}
+    if ((haveSpr || haveCar) && _streamOn) {
       _lazyArtOn = true;
       try { _initDecodeBudget(); } catch (e) {}
       Forge._sprIds = new Set(haveSpr ? sIdx : []);
@@ -51031,6 +51032,45 @@ function _startMemoryWatchdog() {
   }, 12000);
 }
 try { _startMemoryWatchdog(); } catch (e) {}
+
+// 🩸 CRASH BREADCRUMB RECORDER — a hard browser crash kills the console before we
+// can read anything, so persist a tiny trail to localStorage every 3s. At the
+// next boot we DUMP the previous session's trail, which shows exactly where (which
+// screen) and how heavy (heap MB) things were in the seconds before it died — the
+// only reliable way to diagnose a whole-browser crash. Always on, any art mode.
+try {
+  try {
+    const prev = JSON.parse(localStorage.getItem('hg_crumbs') || '[]');
+    if (prev && prev.length) {
+      console.warn('🩸 PREVIOUS SESSION crash trail (oldest → newest) — last moments before it died:');
+      prev.forEach(function (c) {
+        console.warn('   +' + c.t + 's  screen=' + c.scr + '  heap=' + (c.mb != null ? c.mb + 'MB' : '?') + (c.pct != null ? ' (' + c.pct + '%)' : '') + (c.art ? '  art=' + c.art : ''));
+      });
+      console.warn('🩸 (if heap climbs toward the limit % on a particular screen, that screen is the leak; if it dies with FLAT heap, the crash is GPU/native memory — decoded images.)');
+    }
+  } catch (e) {}
+  try { localStorage.setItem('hg_crumbs', '[]'); } catch (e) {}
+  let _crumbT = 0;
+  setInterval(function () {
+    _crumbT += 3;
+    try {
+      const m = (typeof performance !== 'undefined') && performance.memory;
+      const art = (function () { try { return _lazyArtOn ? ('on/thumbs:' + (Forge._thumbIds ? Forge._thumbIds.size : 0)) : 'off'; } catch (e) { return '?'; } })();
+      const c = {
+        t: _crumbT,
+        scr: (typeof App !== 'undefined' && App.screen) || '?',
+        mb: m ? Math.round(m.usedJSHeapSize / 1048576) : null,
+        pct: m ? Math.round(m.usedJSHeapSize / m.jsHeapSizeLimit * 100) : null,
+        art: art,
+      };
+      const arr = JSON.parse(localStorage.getItem('hg_crumbs') || '[]');
+      arr.push(c);
+      while (arr.length > 40) arr.shift();
+      localStorage.setItem('hg_crumbs', JSON.stringify(arr));
+    } catch (e) {}
+  }, 3000);
+  try { window.__mg = window.__mg || {}; window.__mg.crumbs = function () { try { return JSON.parse(localStorage.getItem('hg_crumbs') || '[]'); } catch (e) { return []; } }; } catch (e) {}
+} catch (e) {}
 
 // 💾 Convenience wrapper — `saveProfile() + saveForge()` with labeled warns.
 //    Replaces the boilerplate pattern that appears 60+ times in this codebase:

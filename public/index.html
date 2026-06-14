@@ -20641,6 +20641,43 @@
   .recon-ev-choice .rec-ci { flex:0 0 18px; width:18px; height:18px; border-radius:4px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:0.66rem; background:rgba(120,150,200,0.16); border:1px solid rgba(120,150,200,0.4); color:#bcd0ea; }
   .recon-ev-choice .rec-cl { flex:1; font-size:0.75rem; font-weight:700; }
   .recon-ev-choice .rec-cd { font-size:0.6rem; color:#8a96a8; letter-spacing:0.04em; white-space:nowrap; }
+  /* 🌐 Civilization Network — radial graph + dossier */
+  .recon-net { display:grid; grid-template-columns:1fr 320px; gap:0.8rem; padding:0.9rem; align-items:start; }
+  @media (max-width:1100px){ .recon-net { grid-template-columns:1fr; } }
+  .recon-net-stage { position:relative; aspect-ratio:940/660; background:radial-gradient(ellipse at 50% 48%, rgba(40,52,84,0.35), transparent 60%), rgba(12,16,28,0.55); border:1px solid rgba(120,150,200,0.16); border-radius:14px; overflow:hidden; }
+  .recon-net-stage svg { position:absolute; inset:0; width:100%; height:100%; }
+  .recon-net-stage .rnet-spoke { stroke:rgba(120,150,200,0.22); stroke-width:1; stroke-dasharray:3 4; }
+  .recon-net-stage .rnet-route { stroke:rgba(124,156,182,0.55); stroke-width:1.5; }
+  .recon-net-stage .rnet-route.ambushed { stroke:#cf5a3a; stroke-width:2; stroke-dasharray:4 3; animation:cnb-pulse 1s ease-in-out infinite; }
+  .rnet-chip { position:absolute; transform:translate(-50%,-50%); display:flex; flex-direction:column; align-items:center; gap:2px; pointer-events:none; }
+  .rnet-disc { display:flex; align-items:center; justify-content:center; border-radius:50%; font-weight:800; font-family:'Cinzel',serif; background:rgba(14,18,30,0.92); }
+  .rnet-disc.fr { width:62px; height:62px; font-size:1.1rem; color:#9bb265; border:2px solid #9bb265; box-shadow:0 0 22px rgba(155,178,101,0.5); }
+  .rnet-disc.nodc { width:46px; height:46px; font-size:0.9rem; color:#bcd0ea; border:2px solid #7d9cb6; }
+  .rnet-disc.campc { width:30px; height:30px; font-size:0.78rem; color:#cbd6e6; border:1.5px solid rgba(120,150,200,0.6); }
+  .rnet-chip.camp.you .rnet-disc { color:#ffe6a0; border-color:#caa23e; box-shadow:0 0 12px rgba(202,162,62,0.6); }
+  .rnet-nlabel { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.56rem; letter-spacing:0.05em; color:#aeb8c8; white-space:nowrap; text-shadow:0 1px 3px #000; max-width:96px; overflow:hidden; text-overflow:ellipsis; }
+  .rnet-chip.camp.you .rnet-nlabel { color:#ffd166; }
+  .recon-net-legend { position:absolute; left:12px; bottom:10px; display:flex; flex-direction:column; gap:3px; font-size:0.56rem; color:#7d8aa0; font-family:'JetBrains Mono',monospace; }
+  .recon-net-legend i.lg { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+  .recon-net-legend i.fr { background:#9bb265; } .recon-net-legend i.nd { background:#7d9cb6; } .recon-net-legend i.camp { background:#caa23e; } .recon-net-legend i.amb { background:#cf5a3a; }
+  .recon-net-rail { background:rgba(16,22,38,0.55); border:1px solid rgba(120,150,200,0.16); border-radius:12px; overflow:hidden; }
+  .recon-net-rail-body { padding:0.4rem 0.2rem 0.6rem; }
+  .recon-net-sec { padding:0.6rem 0.9rem; border-top:1px solid rgba(120,150,200,0.1); }
+  .recon-net-sec:first-child { border-top:0; }
+  .rns-label { font-size:0.56rem; letter-spacing:0.14em; text-transform:uppercase; color:#6b7790; margin-bottom:5px; }
+  .rns-big { font-family:'Cinzel',serif; font-weight:800; font-size:1.8rem; color:#9bb265; line-height:1; }
+  .rns-sub { font-size:0.66rem; color:#8a96a8; margin-top:3px; }
+  .rns-bar { height:7px; border-radius:999px; background:rgba(0,0,0,0.4); overflow:hidden; border:1px solid rgba(155,178,101,0.3); }
+  .rns-bar i { display:block; height:100%; background:linear-gradient(90deg,#6aa84f,#9bb265); }
+  .rns-crow { margin-bottom:6px; } .rns-crow.you .rns-ctop span { color:#ffd166; }
+  .rns-ctop { display:flex; justify-content:space-between; font-size:0.72rem; color:#cbd6e6; } .rns-ctop b { color:#e8eef7; }
+  .rns-t { height:4px; border-radius:999px; background:rgba(120,150,200,0.12); margin-top:2px; overflow:hidden; } .rns-t i { display:block; height:100%; background:#7d9cb6; }
+  .rns-crow.you .rns-t i { background:#caa23e; }
+  .rns-route { display:flex; align-items:center; gap:0.45rem; font-size:0.72rem; color:#cbd6e6; }
+  .rns-route .rns-rdot { width:7px; height:7px; border-radius:50%; background:#9bb265; flex:0 0 7px; }
+  .rns-route.ambushed .rns-rdot { background:#cf5a3a; } .rns-route.ambushed .rns-rs { color:#ffb8a0; }
+  .rns-route .rns-rt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .rns-route .rns-rs { font-size:0.6rem; letter-spacing:0.08em; text-transform:uppercase; color:#8a96a8; }
   /* reclaim modal extras (reuse the cnp host) */
   #camp-node-picker-host .recon-reclaim-hero { background:repeating-linear-gradient(135deg, rgba(120,150,200,0.06) 0 10px, transparent 10px 20px); border:1px solid rgba(120,150,200,0.25); border-radius:8px; padding:1.4rem; text-align:center; color:#8a96a8; font-size:0.7rem; letter-spacing:0.12em; }
   #camp-node-picker-host .recon-reclaim-title { font-family:'Cinzel',serif; font-weight:800; color:#e8eef7; font-size:1.05rem; margin-top:10px; }
@@ -144126,7 +144163,8 @@ try {
         case 'recon-reclaim-confirm': { const s = t.getAttribute('data-site'); if (s) reconReclaim(s); break; }
         case 'recon-ev-choice': { const i = +t.getAttribute('data-idx'), ci = +t.getAttribute('data-cidx'); reconEventChoice(i, ci); break; }
         case 'recon-mission-launch': { const i = +t.getAttribute('data-idx'), ci = +t.getAttribute('data-cidx'); reconMissionLaunch(i, ci); break; }
-        case 'recon-network': goToDistrictNode(getCampNodeId() || null); if (!getCampNodeId()) { App.screen = 'territoryWars'; try { render(); } catch (err) {} } break;
+        case 'recon-console': App._reconView = 'console'; try { render(); } catch (err) {} break;
+        case 'recon-network': App._reconView = 'network'; try { render(); } catch (err) {} break;
         case 'camp-view-node': goToDistrictNode(getCampNodeId()); break;
         default: return;
       }
@@ -144426,6 +144464,99 @@ function reconMissionLaunch(instIdx, choiceIdx) {
     try { render(); } catch (e) {}
   }, 1100);
 }
+// ── Civilization Network — radial Foundation → Nodes → Camps graph ──
+// One cloud query pulls every camp registration; grouped by node for the graph.
+async function tw_cloudFetchAllCampRegs() {
+  try {
+    if (!Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.from('tw_camp_registrations')
+      .select('user_id, node_id, camp_name, prestige, contrib').limit(500);
+    if (error) return null;
+    const byNode = {};
+    (data || []).forEach(row => { if (!byNode[row.node_id]) byNode[row.node_id] = []; byNode[row.node_id].push(row); });
+    App._twAllCamps = { at: Date.now(), byNode, rows: data || [] };
+    if (App.screen === 'reconstruction' && App._reconView === 'network') { try { render(); } catch (e) {} }
+    return data;
+  } catch (e) { return null; }
+}
+function _reconNetworkBodyHtml() {
+  try {
+    if ((!App._twAllCamps || (Date.now() - App._twAllCamps.at) > 45000) && !App._twAllCampsFetching && typeof tw_cloudFetchAllCampRegs === 'function') {
+      App._twAllCampsFetching = true;
+      Promise.resolve(tw_cloudFetchAllCampRegs()).catch(() => {}).then(() => { App._twAllCampsFetching = false; });
+    }
+  } catch (e) {}
+  const byNode = (App._twAllCamps && App._twAllCamps.byNode) || {};
+  const myUid = (Profile.cloud && Profile.cloud.userId) || null;
+  const myNodeId = getCampNodeId();
+  const route = (typeof _campRoute === 'function' && myNodeId) ? _campRoute() : null;
+  let allNodes = []; try { allNodes = (_twForge().nodes || []); } catch (e) {}
+  const withCamps = new Set(Object.keys(byNode).filter(id => (byNode[id] || []).length));
+  if (myNodeId) withCamps.add(myNodeId);
+  let showNodes = allNodes.filter(n => withCamps.has(n.id));
+  if (!showNodes.length) showNodes = allNodes.slice(0, 4);
+  showNodes = showNodes.slice(0, 6);
+  const nodeData = showNodes.map(n => {
+    let camps = (byNode[n.id] || []).map(c => ({ name: c.camp_name || 'Settlement', contrib: c.contrib | 0, you: !!(c.user_id && c.user_id === myUid) }));
+    if (myNodeId === n.id && !camps.some(c => c.you)) camps.unshift({ name: (typeof _campRegName === 'function' ? _campRegName() : 'Your Camp'), contrib: _campContrib(), you: true });
+    camps.forEach(c => { if (c.you && route && route.status === 'ambushed') c._ambushed = true; });
+    return { node: n, camps: camps.slice(0, 5) };
+  });
+  // ── radial layout (viewBox 940×660, SVG stretches to the stage) ──
+  const CX = 470, CY = 320, R1 = 188, D2R = Math.PI / 180;
+  const N = Math.max(1, nodeData.length);
+  const posN = {};
+  nodeData.forEach((nd, i) => {
+    const ang = (-90 + i * (360 / N)) * D2R, ox = Math.cos(ang), oy = Math.sin(ang);
+    const nx = CX + R1 * ox, ny = CY + R1 * oy; posN[nd.node.id] = { x: nx, y: ny };
+    const px = -oy, py = ox, k = nd.camps.length;
+    nd.camps.forEach((c, ci) => { const t = ci - (k - 1) / 2; c._x = nx + ox * 74 + px * (t * 60); c._y = ny + oy * 74 + py * (t * 60); });
+  });
+  const pct = (x, tot) => (x / tot * 100).toFixed(2);
+  let lines = '', chips = '';
+  chips += `<div class="rnet-chip foundation" style="left:${pct(CX, 940)}%;top:${pct(CY, 660)}%"><div class="rnet-disc fr">FR</div><div class="rnet-nlabel">Foundation</div></div>`;
+  nodeData.forEach(nd => {
+    const p = posN[nd.node.id];
+    lines += `<line class="rnet-spoke" x1="${CX}" y1="${CY}" x2="${p.x}" y2="${p.y}"/>`;
+    const initials = (nd.node.name || 'N').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+    chips += `<div class="rnet-chip node" style="left:${pct(p.x, 940)}%;top:${pct(p.y, 660)}%"><div class="rnet-disc nodc">${escapeHtml(initials)}</div><div class="rnet-nlabel">${escapeHtml(nd.node.name)}</div></div>`;
+    nd.camps.forEach(c => {
+      lines += `<line class="rnet-route ${c._ambushed ? 'ambushed' : ''}" x1="${p.x}" y1="${p.y}" x2="${c._x}" y2="${c._y}"/>`;
+      const ci = ((c.name || 'C').replace(/^camp\s+/i, '').trim().charAt(0) || 'C').toUpperCase();
+      chips += `<div class="rnet-chip camp ${c.you ? 'you' : ''}" style="left:${pct(c._x, 940)}%;top:${pct(c._y, 660)}%"><div class="rnet-disc campc">${escapeHtml(ci)}</div><div class="rnet-nlabel">${escapeHtml(c.name)}</div></div>`;
+    });
+  });
+  // ── dossier rail ──
+  const allCamps = nodeData.flatMap(nd => nd.camps.map(c => ({ name: c.name, contrib: c.contrib, you: c.you })));
+  const totalCamps = allCamps.length;
+  const topCamps = allCamps.slice().sort((a, b) => (b.contrib | 0) - (a.contrib | 0)).slice(0, 5);
+  const builtCount = Object.keys(_reconState().sites).filter(k => _reconState().sites[k]).length;
+  const builtPct = (builtCount / RECON_SITES.length) * 100;
+  let routesHtml = '';
+  if (myNodeId) {
+    const mn = (allNodes.find(n => n.id === myNodeId) || {}).name || myNodeId;
+    const st = route ? route.status : 'active';
+    routesHtml = `<div class="rns-route ${st === 'ambushed' ? 'ambushed' : ''}"><span class="rns-rdot"></span><span class="rns-rt">${escapeHtml(mn)} → ${escapeHtml(_campRegName())}</span><span class="rns-rs">${st}</span></div>`;
+    if (st === 'ambushed') routesHtml += `<div class="hint" style="margin-top:6px">Your convoy is under attack — defend it from the Camp Console.</div>`;
+  } else {
+    routesHtml = '<div class="recon-soon" style="padding:0.5rem 0">Register your camp to a node to open a trade route.</div>';
+  }
+  const railHtml = `
+    <div class="recon-ph"><h2>Network Overview</h2><span class="recon-tag">DOSSIER</span></div>
+    <div class="recon-net-rail-body">
+      <div class="recon-net-sec"><div class="rns-label">Settlements on the Network</div><div class="rns-big">${totalCamps}</div><div class="rns-sub">across ${nodeData.length} District Node${nodeData.length !== 1 ? 's' : ''}</div></div>
+      <div class="recon-net-sec"><div class="rns-label">Your Reconstruction</div><div class="rns-bar"><i style="width:${Math.round(builtPct)}%"></i></div><div class="rns-sub">${builtCount}/${RECON_SITES.length} sites rebuilt · ${_campContrib()}% node contribution</div></div>
+      <div class="recon-net-sec"><div class="rns-label">Top Contributing Settlements</div>
+        ${topCamps.length ? topCamps.map(c => `<div class="rns-crow ${c.you ? 'you' : ''}"><div class="rns-ctop"><span>${escapeHtml(c.name)}${c.you ? ' · you' : ''}</span><b>${c.contrib | 0}%</b></div><div class="rns-t"><i style="width:${Math.min(100, c.contrib | 0)}%"></i></div></div>`).join('') : '<div class="recon-soon" style="padding:0.4rem 0">No settlements yet.</div>'}</div>
+      <div class="recon-net-sec"><div class="rns-label">Active Trade Routes</div>${routesHtml}</div>
+    </div>`;
+  return `<div class="recon-net">
+    <div class="recon-net-stage"><svg viewBox="0 0 940 660" preserveAspectRatio="none">${lines}</svg>${chips}
+      <div class="recon-net-legend"><span><i class="lg fr"></i> Foundation</span><span><i class="lg nd"></i> District Node</span><span><i class="lg camp"></i> Settlement</span><span><i class="lg amb"></i> Route under attack</span></div>
+    </div>
+    <div class="recon-net-rail">${railHtml}</div>
+  </div>`;
+}
 function renderReconstruction() {
   const r = _reconState();
   try { _reconSpawnEvents(); } catch (e) {}
@@ -144484,18 +144615,19 @@ function renderReconstruction() {
       <div class="recon-ev-choices">${choices}</div>
     </div>`;
   }).join('') : `<div class="recon-soon">// NO ACTIVE SITUATIONS //<br>${node ? 'Citizens are quiet for now — emergencies, quests and trade troubles will surface here.' : 'Connect your camp to a District Node to start receiving situations.'}</div>`;
+  const _netView = App._reconView === 'network';
   root.innerHTML = `<div class="recon-page">
     <div class="recon-topbar">
       <div class="recon-id">
         <div class="recon-name">${escapeHtml(_campRegName())}</div>
         <div class="recon-sub"><span class="recon-dot ${node ? 'ok' : 'bad'}"></span> ${node ? `REGISTERED · ${escapeHtml(node.name)}` : `<span data-act="camp-connect-node" style="color:#cf5a3a;cursor:pointer;text-decoration:underline">⚠ CONNECT TO A NODE</span>`}</div>
       </div>
-      <div class="recon-toggle"><button class="recon-tab is-active">CAMP CONSOLE</button><button class="recon-tab" data-act="recon-network">NETWORK</button></div>
+      <div class="recon-toggle"><button class="recon-tab ${_netView ? '' : 'is-active'}" data-act="recon-console">CAMP CONSOLE</button><button class="recon-tab ${_netView ? 'is-active' : ''}" data-act="recon-network">NETWORK</button></div>
       <div class="recon-resbar">${resHtml}</div>
       <div class="recon-meta"><div><div class="rm-k">PRESTIGE</div><div class="rm-v">${_campPrestige()}</div></div><div><div class="rm-k">BUILT</div><div class="rm-v">${builtCount}/${RECON_SITES.length}</div></div></div>
       <button class="btn-secondary btn-mini" data-act="recon-back">← Camp</button>
     </div>
-    <div class="recon-body">
+    ${_netView ? _reconNetworkBodyHtml() : `<div class="recon-body">
       <div class="recon-left">
         <div class="recon-panel"><div class="recon-ph"><h2>Camp Vitals</h2><span class="recon-tag">LIVE</span></div><div class="recon-vitals">${vitalsHtml}</div></div>
         <div class="recon-panel"><div class="recon-ph"><h2>Population</h2><span class="recon-tag">${popTotal} SOULS</span></div><div class="recon-pops">${popHtml}</div><div style="padding:10px"><button class="btn-mini" data-act="camp-employment" style="width:100%">👷 Employment Board</button></div></div>
@@ -144508,7 +144640,7 @@ function renderReconstruction() {
         <div class="recon-ph"><h2>Situation Board</h2><span class="recon-tag">${evs.length} ACTIVE</span></div>
         <div class="recon-situations">${situationHtml}</div>
       </div>
-    </div>
+    </div>`}
   </div>`;
 }
 async function tw_cloudUpsertOwnership(nodeId) {

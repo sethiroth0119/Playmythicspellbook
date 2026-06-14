@@ -4059,8 +4059,13 @@
        viewport-locked .battle-screen above it. */
     overflow: hidden;
   }
-  .left-top { display: flex; justify-content: space-between; align-items: center; gap: 0.45rem; }
-  .left-top .turn-display { flex: 1; text-align: center; padding: 0.4rem 0.5rem; }
+  .left-top { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 0.45rem; }
+  /* 🎯 Turn/phase badge gets its OWN full-width row beneath the Concede /
+     Settings buttons (flex-basis:100% forces the wrap) so the
+     "Turn N · Main 1 · 2:00" content always has room — it was being squeezed
+     into a shared cell and clipping the phase pill. Centered + a touch more
+     padding so it reads as a proper TCG turn banner. */
+  .left-top .turn-display { flex: 1 1 100%; justify-content: center; text-align: center; padding: 0.5rem 0.8rem; }
   .hero-bars-stack { display: flex; flex-direction: column; gap: 0.4rem; }
   /* 🎯 Per-hero stack — HP / ultimate / emotion live together so the player
      reads them as one status block. Tiny gap so they hug the HP bar. */
@@ -4647,6 +4652,19 @@
     transform: perspective(1600px) rotateX(38deg) scale(1.08);
     transform-origin: center 62%;
     transform-style: preserve-3d;
+    /* 🔓 TOP-EDGE BREATHING ROOM — the base .board clips to its frame
+       (overflow:hidden + contain:paint), which CHOPS the heads off top-row
+       units: in iso-mode those figures STAND UP above the board's top edge.
+       We WANT them to hang off the top (reads more 3D), so drop the box clip
+       + paint-containment here and re-clip with a clip-path that's open
+       240px ABOVE the frame yet still flush on the sides + bottom. Result:
+       standing units rise cleanly past the top gold border, while nothing
+       spills out the sides/bottom or escapes the frame. Board size stays
+       explicit (height/width calc), so dropping paint-containment can't
+       reintroduce the old content-resizes-the-board glitch. */
+    overflow: visible;
+    contain: layout style;
+    clip-path: inset(-240px 0px 0px 0px round 10px);
   }
   /* 🌅 BACK-ROW STAGE LIGHT — soft warm-amber wash that lifts the top of
      the board (which the ruined-city photo paints almost black) without

@@ -20550,6 +20550,8 @@
   #camp-node-picker-host .cnp-tag { font-size:0.6rem; letter-spacing:0.1em; text-transform:uppercase; color:#9bb265; border:1px solid rgba(155,178,101,0.5); border-radius:4px; padding:1px 5px; }
   #camp-node-picker-host .cnp-meta { font-size:0.7rem; color:#8a96a8; font-family:'JetBrains Mono','Consolas',monospace; }
   #camp-node-picker-host .cnp-card button { margin-top:auto; }
+  #camp-node-picker-host .cnp-emp-stat { font-size:0.82rem; color:#cbd6e6; background:rgba(74,222,128,0.1); border:1px solid rgba(74,222,128,0.35); border-radius:8px; padding:0.5rem 0.7rem; margin-bottom:0.7rem; }
+  #camp-node-picker-host .cnp-emp-stat b { color:#9be0c4; }
   .tw-nd-actions { padding:0.5rem 1rem 0.8rem; display:flex; flex-direction:column; gap:0.4rem; }
   .tw-nd-action-row { display:flex; gap:0.4rem; }
   /* Bottom status bar */
@@ -34858,6 +34860,10 @@ async function cloudSyncProfile() {
       __campSurvivorId__:    (typeof Profile.campSurvivorId === 'string') ? Profile.campSurvivorId : null,
       // 🏳 District Node the camp is registered to (Reconstruction Network).
       __campNodeId__:        (typeof Profile.campNodeId === 'string') ? Profile.campNodeId : null,
+      __campContrib__:       (typeof Profile.campContrib === 'number') ? Profile.campContrib : 0,
+      __campPrestige__:      (typeof Profile.campPrestige === 'number') ? Profile.campPrestige : 0,
+      __campWorkforce__:     (Profile.campWorkforce && typeof Profile.campWorkforce === 'object') ? Profile.campWorkforce : {},
+      __campNodeHire__:      (Profile.campNodeHire && typeof Profile.campNodeHire === 'object') ? Profile.campNodeHire : {},
       // 🧬 Camp traits copied off the chosen survivor at pick time. Travels
       // with the account so admin-side trait edits don't retroactively change
       // an existing player's character creation.
@@ -35740,8 +35746,12 @@ async function cloudFetchProfile() {
       if (typeof f.__equippedTombstone__ === 'string') Profile.equippedTombstone = f.__equippedTombstone__;
       // 🦸 Camp Heights survivor pick — restored last-writer-wins.
       if (typeof f.__campSurvivorId__ === 'string') Profile.campSurvivorId = f.__campSurvivorId__;
-      // 🏳 Camp's registered District Node — restored last-writer-wins.
+      // 🏳 Camp's registered District Node + Reconstruction Network state.
       if (typeof f.__campNodeId__ === 'string') Profile.campNodeId = f.__campNodeId__;
+      if (typeof f.__campContrib__ === 'number') Profile.campContrib = f.__campContrib__;
+      if (typeof f.__campPrestige__ === 'number') Profile.campPrestige = f.__campPrestige__;
+      if (f.__campWorkforce__ && typeof f.__campWorkforce__ === 'object') Profile.campWorkforce = f.__campWorkforce__;
+      if (f.__campNodeHire__ && typeof f.__campNodeHire__ === 'object') Profile.campNodeHire = f.__campNodeHire__;
       if (Array.isArray(f.__campTraits__))         Profile.campTraits     = f.__campTraits__.slice();
       // 🍞 / 💧 Satiation bars (separate from inventory counts).
       if (typeof f.__hunger__ === 'number') Profile.hunger = Math.max(0, Math.min(100, f.__hunger__));
@@ -47959,7 +47969,8 @@ function getCampSlotXp(slot) {
   const mul = ((typeof campBonus === 'function') ? Math.max(1, campBonus('restXpMul')) : 1)
             * ((typeof researchBonus === 'function') ? researchBonus('restXpMul') : 1)
             * ((typeof _campPowerMul === 'function') ? _campPowerMul() : 1)
-            * ((typeof _campNodeXpMul === 'function') ? _campNodeXpMul() : 1);  // 🏳 District-Node bonus
+            * ((typeof _campNodeXpMul === 'function') ? _campNodeXpMul() : 1)        // 🏳 District-Node bonus
+            * ((typeof _campWorkforceXpMul === 'function') ? _campWorkforceXpMul() : 1);  // 👷 workforce/population bonus
   const fromTime = Math.floor(elapsedHours * CAMP_XP_PER_HOUR * mul);
   return Math.min(Math.round(CAMP_XP_CAP * mul), fromTime);
 }
@@ -143762,6 +143773,83 @@ function contributeCampToNode() {
   try { showToast(`🤝 Contributed to ${node.name} — contribution now ${Profile.campContrib}%.`, 2600); } catch (e) {}
   try { render(); } catch (e) {}
 }
+// ── Phase 3: Employment Board — hire civilians from your registered node ──
+// Hired workers join the camp as POPULATION; a bigger workforce trains parked
+// units faster (+camp XP). Hiring drains the node's local labour pool.
+const CAMP_WORKER_ROLES = [
+  { id: 'Builder',    icon: '🔨', wage: 18 },
+  { id: 'Guard',      icon: '🛡', wage: 22 },
+  { id: 'Farmer',     icon: '🌾', wage: 14 },
+  { id: 'Doctor',     icon: '⚕', wage: 38 },
+  { id: 'Engineer',   icon: '⚙', wage: 40 },
+  { id: 'Mechanic',   icon: '🔧', wage: 26 },
+  { id: 'Researcher', icon: '🔬', wage: 44 },
+  { id: 'Merchant',   icon: '💰', wage: 24 },
+  { id: 'Civilian',   icon: '🧑', wage: 9 },
+];
+function _campWorkforce() { return (Profile.campWorkforce && typeof Profile.campWorkforce === 'object') ? Profile.campWorkforce : {}; }
+function _campWorkforceTotal() { const w = _campWorkforce(); let n = 0; for (const k in w) n += Math.max(0, w[k] | 0); return n; }
+function _campWorkforceXpPct() { return Math.min(30, Math.floor(_campWorkforceTotal() / 10) * 2); }  // +2% per 10, cap +30%
+function _campWorkforceXpMul() { return 1 + _campWorkforceXpPct() / 100; }
+function _nodeTierMul(node) { const tier = parseInt(String(node && node.difficulty || 'T1').replace(/[^0-9]/g, ''), 10) || 1; return 1 + (tier - 1) * 0.25; }
+function _nodePrimeRole(node) {
+  let res = ''; try { res = Object.keys((node && node.resourceYield) || {})[0] || ''; } catch (e) {}
+  const map = { FOOD: 'Farmer', STEEL: 'Builder', METAL: 'Mechanic', WOOD: 'Builder', MEDICINE: 'Doctor', FUEL: 'Engineer', RESEARCH: 'Researcher', GOLD: 'Merchant' };
+  return map[String(res).toUpperCase()] || 'Civilian';
+}
+function _campRolePool(node, role) { return Math.round((_nodePrimeRole(node) === role ? 180 : 50) * _nodeTierMul(node)); }
+function _campRoleHired(nodeId, role) { try { return (Profile.campNodeHire && Profile.campNodeHire[nodeId] && (Profile.campNodeHire[nodeId][role] | 0)) || 0; } catch (e) { return 0; } }
+function _campHireCost(node, role) {
+  const r = CAMP_WORKER_ROLES.find(x => x.id === role); const wage = r ? r.wage : 12;
+  return Math.round(wage * 5 * _nodeTierMul(node) * (_nodePrimeRole(node) === role ? 0.7 : 1));  // 5-day advance, prime role discounted
+}
+function openEmploymentBoard() {
+  const node = getCampNode();
+  if (!node) { try { showToast('⚠ Register your camp to a District Node first.'); } catch (e) {} return; }
+  let host = document.getElementById('camp-node-picker-host');
+  if (!host) { host = document.createElement('div'); host.id = 'camp-node-picker-host'; document.body.appendChild(host); }
+  const wf = _campWorkforce();
+  const prime = _nodePrimeRole(node);
+  const rows = CAMP_WORKER_ROLES.map(r => {
+    const avail = Math.max(0, _campRolePool(node, r.id) - _campRoleHired(node.id, r.id));
+    const cost = _campHireCost(node, r.id);
+    const have = wf[r.id] | 0;
+    const isPrime = r.id === prime;
+    const aff = (Profile.gems || 0) >= cost && avail > 0;
+    return `<div class="cnp-card${isPrime ? ' is-current' : ''}">
+      <div class="cnp-head"><strong>${r.icon} ${r.id}${isPrime ? ' ★' : ''}</strong><span class="cnp-tag">${avail} avail</span></div>
+      <div class="cnp-meta">In camp: ${have} · Wage ${cost} 🔥${isPrime ? ' · plentiful here' : ''}</div>
+      <button class="btn-mini ${aff ? 'btn-primary' : ''}" data-act="camp-hire" data-role="${escapeHtml(r.id)}" ${aff ? '' : 'disabled'}>${avail > 0 ? `Hire (${cost} 🔥)` : 'Depleted'}</button>
+    </div>`;
+  }).join('');
+  host.innerHTML = `<div class="cnp-scrim" data-act="camp-picker-close"><div class="cnp-modal" role="dialog">
+    <div class="cnp-modal-head"><h3>Employment Board · ${escapeHtml(node.name)}</h3><button class="cnp-x" data-act="camp-picker-close">✕</button></div>
+    <div class="cnp-modal-body">
+      <div class="hint" style="margin-bottom:10px">Hire civilians from ${escapeHtml(node.name)} to grow your settlement. They travel to your camp and join its population — a bigger workforce trains your parked units faster. Hiring drains the node's local labour pool (★ = plentiful here, cheaper).</div>
+      <div class="cnp-emp-stat">Camp population: <b>${_campWorkforceTotal()}</b> · Workforce bonus: <b>+${_campWorkforceXpPct()}% Camp XP</b></div>
+      <div class="cnp-grid">${rows}</div>
+    </div></div></div>`;
+}
+function hireCampWorker(role) {
+  const node = getCampNode();
+  if (!node) return;
+  const r = CAMP_WORKER_ROLES.find(x => x.id === role); if (!r) return;
+  if (_campRolePool(node, role) - _campRoleHired(node.id, role) <= 0) { try { showToast('Labour pool depleted for this role.'); } catch (e) {} return; }
+  const cost = _campHireCost(node, role);
+  if ((Profile.gems || 0) < cost) { try { showToast(`Need ${cost} 🔥 to hire a ${role}.`); } catch (e) {} return; }
+  Profile.gems = (Profile.gems || 0) - cost;
+  if (!Profile.campWorkforce || typeof Profile.campWorkforce !== 'object') Profile.campWorkforce = {};
+  Profile.campWorkforce[role] = (Profile.campWorkforce[role] | 0) + 1;
+  if (!Profile.campNodeHire || typeof Profile.campNodeHire !== 'object') Profile.campNodeHire = {};
+  if (!Profile.campNodeHire[node.id]) Profile.campNodeHire[node.id] = {};
+  Profile.campNodeHire[node.id][role] = (Profile.campNodeHire[node.id][role] | 0) + 1;
+  try { saveProfile(); } catch (e) {}
+  try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
+  try { _twLog('settlement', `<b>${escapeHtml(_campRegName())}</b> hired a ${role} from ${escapeHtml(node.name)}.`); } catch (e) {}
+  try { showToast(`👷 Hired a ${role}. Camp population: ${_campWorkforceTotal()}.`, 2200); } catch (e) {}
+  openEmploymentBoard();
+  try { if (App.screen === 'camp') render(); } catch (e) {}
+}
 // Camp-screen banner: connect / registered state.
 function _campNodeBannerHtml() {
   const node = getCampNode();
@@ -143769,14 +143857,16 @@ function _campNodeBannerHtml() {
     const b = getCampNodeBonus();
     const contrib = _campContrib();
     const pres = _campPrestige();
+    const pop = _campWorkforceTotal();
     return `<div class="camp-node-banner registered">
       <div class="cnb-left"><span class="cnb-dot ok"></span><div class="cnb-txt">
         <div class="cnb-title">🏳 Registered · ${escapeHtml(node.name)} <span class="cnb-bonus">+${b ? b.xpPct : 15}% Camp XP</span></div>
-        <div class="cnb-sub">${escapeHtml(b ? b.label : 'District')} · Reconstruction Network · Contribution <b>${contrib}%</b>${pres ? ` · Prestige <b>${pres}</b>` : ''}.</div>
+        <div class="cnb-sub">${escapeHtml(b ? b.label : 'District')} · Contribution <b>${contrib}%</b>${pres ? ` · Prestige <b>${pres}</b>` : ''}${pop ? ` · Pop <b>${pop}</b>` : ''}.</div>
         <div class="cnb-contrib"><div class="cnb-contrib-bar"><i style="width:${contrib}%"></i></div></div>
       </div></div>
       <div class="cnb-actions">
         <button class="btn-primary btn-mini" data-act="camp-contribute" title="Send ${CAMP_CONTRIB_COST} 🔥 to raise your contribution + node bonus">🤝 Contribute (${CAMP_CONTRIB_COST} 🔥)</button>
+        <button class="btn-mini" data-act="camp-employment" title="Hire civilians from your node">👷 Employment</button>
         <button class="btn-mini" data-act="camp-view-node">View on Map ▸</button>
         <button class="btn-mini" data-act="camp-change-node">Change</button>
       </div>
@@ -143828,6 +143918,8 @@ try {
         case 'camp-register': { const nid = t.getAttribute('data-node'); if (nid && registerCampToNode(nid)) { closeCampNodePicker(); try { render(); } catch (err) {} } break; }
         case 'camp-unregister': unregisterCamp(); closeCampNodePicker(); try { render(); } catch (err) {} break;
         case 'camp-contribute': contributeCampToNode(); break;
+        case 'camp-employment': openEmploymentBoard(); break;
+        case 'camp-hire': { const role = t.getAttribute('data-role'); if (role) hireCampWorker(role); break; }
         case 'camp-view-node': goToDistrictNode(getCampNodeId()); break;
         default: return;
       }

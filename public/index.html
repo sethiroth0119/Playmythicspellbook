@@ -31021,16 +31021,22 @@ const DEFAULT_PACK_RARITY_WEIGHTS = {
 // the gold frame — independent of the on-field battle sprite.
 function getCardArt(cardId) {
   if (!cardId) return null;
+  // 🖼 BULLETPROOF: in streaming mode, ONLY ever return a tiny thumbnail (safe to
+  // decode eagerly in any quantity) — NEVER full-res card art, so no card-heavy
+  // screen can OOM even on a spot the decode budget doesn't cover, and even while
+  // thumbnails are still building (placeholder until the thumb exists). The full-
+  // res original stays in IDB for the build + any future crisp-zoom path.
+  if (_lazyArtOn) {
+    const _th = getThumb(cardId);
+    if (_th) return _th;
+    try {
+      if (typeof App !== 'undefined' && App._mpViz && App._mpViz.art && App._mpViz.art[cardId]) return App._mpViz.art[cardId];
+    } catch (e) {}
+    return null;   // no thumb yet → placeholder, never a heavy decode
+  }
+  // Non-streaming (small library): original full-res behavior, unchanged.
   const local = Forge.cardArt && Forge.cardArt[cardId];
-  if (local) { if (_lazyArtOn) { try { _lazyTouch('car', cardId); } catch (e) {} } return _frameUrl(local); }
-  // 🎨 On-demand: not resident — stream this card's art from its own record.
-  // Returns null now (caller shows a placeholder); a repaint follows once it
-  // lands. _lazyLoadCardArt no-ops when streaming is off.
-  if (_lazyArtOn) { try { _lazyLoadCardArt(cardId); } catch (e) {} }
-  // 📡 MULTIPLAYER fallback — art the opponent RELAYED for their custom card
-  // (their visuals were stripped from the state snapshot, so without this the
-  // watcher renders their units as a bare emoji). Runtime-only cache, never
-  // persisted. See _onRemoteUnitViz / _mpRelayUnitVisuals.
+  if (local) return _frameUrl(local);
   try {
     if (typeof App !== 'undefined' && App._mpViz && App._mpViz.art && App._mpViz.art[cardId]) {
       return App._mpViz.art[cardId];
@@ -49051,7 +49057,143 @@ function _lazyLoadCardArt(id) {
     finally { _carPending.delete(id); }
   })();
 }
-try { window.__mg = window.__mg || {}; window.__mg.artStats = function () { return { on: _lazyArtOn, budget: _decodeBudgetOn, sprites: Forge._sprIds ? Forge._sprIds.size : 0, cardArt: Forge._carIds ? Forge._carIds.size : 0, residentSpr: _sprLRU.length, residentCar: _carLRU.length, decodedImgs: _residentArtEls.length, decodeInFlight: _decodeInFlight }; }; } catch (e) {}
+try { window.__mg = window.__mg || {}; window.__mg.artStats = function () { return { on: _lazyArtOn, budget: _decodeBudgetOn, sprites: Forge._sprIds ? Forge._sprIds.size : 0, cardArt: Forge._carIds ? Forge._carIds.size : 0, thumbs: (Forge._thumbIds ? Forge._thumbIds.size : 0), residentSpr: _sprLRU.length, residentCar: _carLRU.length, residentThumb: _thumbLRU.length, decodedImgs: _residentArtEls.length, decodeInFlight: _decodeInFlight }; }; } catch (e) {}
+
+// 🖼 THUMBNAIL TIER ==========================================================
+// Tiny display copies so off-board art is SMALL everywhere — this bounds memory
+// by image SIZE instead of by wiring up each screen, so no card-heavy screen can
+// crash no matter how many images it shows. Built once, lazily, ONE asset at a
+// time (so the build itself can never spike memory), into a separate keyspace
+// (thumb:<id>) that leaves the originals untouched and is fully regenerable.
+const _THUMB_PX = 160;             // max dimension of a thumbnail
+const _LAZY_THUMB_CAP = 2000;      // resident thumbs (each ~10-30KB decoded → tiny)
+const _thumbLRU = [];
+const _thumbPending = new Set();
+const _thumbMissing = new Set();
+try { Forge.thumbs = Forge.thumbs || {}; } catch (e) {}
+
+function _thumbTouch(id) {
+  const i = _thumbLRU.indexOf(id); if (i !== -1) _thumbLRU.splice(i, 1);
+  _thumbLRU.push(id);
+  while (_thumbLRU.length > _LAZY_THUMB_CAP) {
+    const old = _thumbLRU.shift();
+    if (old !== id && Forge.thumbs[old]) { try { delete Forge.thumbs[old]; } catch (e) {} }
+  }
+}
+// Return the resident thumbnail for an id, or kick a lazy load of it. Returns a
+// tiny data: URL (safe to decode eagerly in any quantity) or null.
+function getThumb(id) {
+  if (!id || !_lazyArtOn) return null;
+  const t = Forge.thumbs[id];
+  if (t) { _thumbTouch(id); return t; }
+  if (Forge._thumbIds && Forge._thumbIds.has(id) && !_thumbPending.has(id) && !_thumbMissing.has(id)) {
+    _thumbPending.add(id);
+    (async function () {
+      try {
+        const v = await idbGet('thumb:' + id);
+        if (v) { Forge.thumbs[id] = v; _thumbTouch(id); if (typeof _lazyScheduleRender === 'function') _lazyScheduleRender(); }
+        else { _thumbMissing.add(id); }
+      } catch (e) {} finally { _thumbPending.delete(id); }
+    })();
+  }
+  return null;
+}
+
+// Downscale any image URL to a small data: URL on an offscreen canvas. Never
+// hangs (8s cap), never throws.
+function _downscaleToThumb(srcUrl) {
+  return new Promise(function (resolve) {
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; resolve(v || null); };
+    try {
+      const img = new Image();
+      img.onload = function () {
+        try {
+          const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+          if (!w || !h) return finish(null);
+          const scale = Math.min(1, _THUMB_PX / Math.max(w, h));
+          const tw = Math.max(1, Math.round(w * scale)), th = Math.max(1, Math.round(h * scale));
+          const c = document.createElement('canvas'); c.width = tw; c.height = th;
+          c.getContext('2d').drawImage(img, 0, 0, tw, th);
+          let out = null;
+          try { out = c.toDataURL('image/webp', 0.82); } catch (e) {}
+          if (!out || out.length < 40) { try { out = c.toDataURL('image/png'); } catch (e) {} }
+          finish(out);
+        } catch (e) { finish(null); }
+      };
+      img.onerror = function () { finish(null); };
+      img.decoding = 'async';
+      img.src = srcUrl;
+      setTimeout(function () { finish(null); }, 8000);
+    } catch (e) { finish(null); }
+  });
+}
+// Pull a renderable source URL out of a stored record. Returns {url, temp}; temp
+// object URLs must be revoked by the caller right after use (so the build never
+// accumulates blob URLs).
+function _thumbSrcOf(v, kind) {
+  try {
+    if (kind === 'spr') {
+      if (!v || typeof v !== 'object') return null;
+      const arr = v.idle || v.attack || Object.values(v).find(x => Array.isArray(x));
+      v = (Array.isArray(arr) && arr.length) ? arr[0] : null;
+    } else {
+      if (v != null && typeof v === 'object' && !(typeof Blob !== 'undefined' && v instanceof Blob)) v = v.url || v.data || v.src || v.image || null;
+    }
+    if (v == null || v === '') return null;
+    if (typeof Blob !== 'undefined' && v instanceof Blob) return { url: URL.createObjectURL(v), temp: true };
+    if (typeof v === 'string') return { url: v, temp: false };
+  } catch (e) {}
+  return null;
+}
+
+// One-time background build. Walks card-art + sprite ids that don't yet have a
+// thumbnail, builds one per tick. Yields while the tab is hidden or a battle is
+// active; resumable via a persisted index so a refresh never restarts from zero.
+let _thumbBuildRunning = false;
+async function _buildThumbsOnce() {
+  if (_thumbBuildRunning || !_lazyArtOn) return;
+  _thumbBuildRunning = true;
+  try {
+    if (!Forge._thumbIds) {
+      try { const idx = await idbGet('forge_thumbs_idx'); Forge._thumbIds = new Set(Array.isArray(idx) ? idx : []); }
+      catch (e) { Forge._thumbIds = new Set(); }
+    }
+    const work = [];
+    if (Forge._carIds) for (const id of Forge._carIds) if (!Forge._thumbIds.has(id)) work.push({ id: id, kind: 'car' });
+    if (Forge._sprIds) for (const id of Forge._sprIds) if (!Forge._thumbIds.has(id)) work.push({ id: id, kind: 'spr' });
+    if (!work.length) { try { await idbSet('forge_thumbs_done_v1', true); } catch (e) {} return; }
+    try { console.info('🖼 Building ' + work.length + ' art thumbnails in the background (one at a time)…'); } catch (e) {}
+    try { if (typeof showToast === 'function') showToast('🖼 Optimizing art in the background — your full library, made light. You can keep playing.', 5000); } catch (e) {}
+    let built = 0, sinceIdx = 0;
+    for (const item of work) {
+      // Never compete with active play — wait it out.
+      let guard = 0;
+      while (((typeof document !== 'undefined' && document.hidden) || (typeof App !== 'undefined' && App.screen === 'battle')) && guard++ < 1200) {
+        await new Promise(r => setTimeout(r, 1500));
+      }
+      try {
+        const rec = await idbGet((item.kind === 'spr' ? 'spr:' : 'car:') + item.id);
+        const src = _thumbSrcOf(rec, item.kind);
+        if (src && src.url) {
+          const thumb = await _downscaleToThumb(src.url);
+          if (src.temp) { try { URL.revokeObjectURL(src.url); } catch (e) {} }
+          if (thumb) {
+            try { await idbSet('thumb:' + item.id, thumb); Forge._thumbIds.add(item.id); built++; sinceIdx++; } catch (e) {}
+          } else { Forge._thumbIds.add(item.id); /* mark attempted so we don't loop on a bad asset */ }
+        } else { Forge._thumbIds.add(item.id); }
+      } catch (e) {}
+      if (sinceIdx >= 40) { sinceIdx = 0; try { await idbSet('forge_thumbs_idx', Array.from(Forge._thumbIds)); } catch (e) {} if (typeof _lazyScheduleRender === 'function') _lazyScheduleRender(); }
+      await new Promise(r => setTimeout(r, 25));   // paced; one decode at a time
+    }
+    try { await idbSet('forge_thumbs_idx', Array.from(Forge._thumbIds)); } catch (e) {}
+    try { await idbSet('forge_thumbs_done_v1', true); } catch (e) {}
+    try { console.info('🖼 Thumbnail build complete — ' + built + ' new thumbnails. Art is now light on every screen.'); } catch (e) {}
+    try { if (typeof showToast === 'function') showToast('🖼 Art optimized — your full library now loads light everywhere.', 5000); } catch (e) {}
+    if (typeof _lazyScheduleRender === 'function') _lazyScheduleRender();
+  } catch (e) {} finally { _thumbBuildRunning = false; }
+}
+try { window.__mg = window.__mg || {}; window.__mg.buildThumbs = function () { return _buildThumbsOnce(); }; window.__mg.thumbReset = async function () { try { await idbSet('forge_thumbs_done_v1', false); } catch (e) {} console.info('🖼 Thumb build flag reset — refresh to rebuild missing thumbnails.'); }; } catch (e) {}
 
 // 🎨 DECODE BUDGET + VISIBILITY GATE =========================================
 // The whole-browser crash is from too many DECODED images on screen at once
@@ -49180,8 +49322,12 @@ async function loadHeavyForgeFromIdb() {
       Forge._carIds = new Set(haveCar ? cIdx : []);
       if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
       if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
-      try { console.info('🎨 On-demand art streaming ON — ' + Forge._sprIds.size + ' sprites / ' + Forge._carIds.size + ' card-art (decode-budget capped). Force placeholders with localStorage.hg_artstream="0".'); } catch (e) {}
+      try { console.info('🎨 On-demand art streaming ON — ' + Forge._sprIds.size + ' sprites / ' + Forge._carIds.size + ' card-art (thumbnail-bounded). Force placeholders with localStorage.hg_artstream="0".'); } catch (e) {}
       try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🎨 Art library ready — sprites & card art stream in as you play.', 4000); } catch (e) {} }, 1500); } catch (e) {}
+      // 🖼 Kick the one-time thumbnail build in the background (idle, one asset at
+      // a time). Until a card's thumb exists it shows a placeholder, so there is
+      // NO heavy-decode window — the build can't crash and neither can any screen.
+      try { setTimeout(function () { try { _buildThumbsOnce(); } catch (e) {} }, 6000); } catch (e) {}
     } else {
       // Forced placeholder mode (hg_artstream='0') or no per-asset records.
       try { console.info('🆘 Placeholder mode — custom art not loaded (' + (haveSpr ? sIdx.length : 0) + ' sprites / ' + (haveCar ? cIdx.length : 0) + ' on disk). Remove localStorage.hg_artstream to re-enable streaming.'); } catch (e) {}
@@ -66507,6 +66653,13 @@ function renderIcon(spriteId, fallbackEmoji, size, animOverride, opts) {
     // full frame stack. This is what keeps a 240-card screen from decoding
     // hundreds of full-res bitmaps at once.
     if (_lazyArtOn && _decodeBudgetOn) {
+      // 🖼 Off-board: a tiny thumbnail decodes cheaply, so serve it eagerly (no
+      // budget needed). Falls through to the budget-gated full frame only while
+      // the thumbnail is still building.
+      if (!animated) {
+        const _th = getThumb(spriteId);
+        if (_th) return `<span class="sprite-stack" style="${sizeStyle}"><img class="sprite-img is-on" src="${_th}" alt="" draggable="false" decoding="async"></span>`;
+      }
       const useFrames = animated ? frames : [frames[0]];
       const frameImgs = useFrames.map((url, i) => (
         `<img class="sprite-img sprite-frame${i === 0 ? ' is-on' : ''} art-deferred" data-art-src="${url}" alt="" draggable="false" decoding="async">`

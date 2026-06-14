@@ -1867,6 +1867,70 @@
    "gravity": 1
   }
  },
+ "TYPE_IMMUNITIES": {
+  "fire": [
+   "burn"
+  ],
+  "earth": [
+   "bleed"
+  ],
+  "wind": [
+   "slow"
+  ],
+  "nature": [
+   "poison"
+  ],
+  "storm": [
+   "stun"
+  ],
+  "ice": [
+   "slow",
+   "frozen"
+  ],
+  "metal": [
+   "bleed",
+   "poison"
+  ],
+  "poison": [
+   "poison"
+  ],
+  "psychic": [
+   "confusion",
+   "sleep"
+  ],
+  "void": [
+   "dispel",
+   "bleed"
+  ],
+  "blood": [
+   "bleed"
+  ],
+  "crystal": [
+   "stun",
+   "frozen"
+  ],
+  "arcane": [
+   "dispel"
+  ],
+  "corruption": [
+   "poison",
+   "burn"
+  ],
+  "spirit": [
+   "bleed",
+   "stun"
+  ],
+  "lava": [
+   "burn",
+   "slow"
+  ],
+  "sound": [
+   "confusion"
+  ],
+  "gravity": [
+   "frozen"
+  ]
+ },
  "MOVES": {
   "slash": {
    "id": "slash",

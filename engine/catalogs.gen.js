@@ -550,6 +550,29 @@ export const TYPE_CHART = (() => {
   return chart;
 })();
 
+export const TYPE_IMMUNITIES = {
+  fire:    ['burn'],
+  earth:   ['bleed'],
+  wind:    ['slow'],
+  nature:  ['poison'],
+  storm:   ['stun'],
+  // ===== New element immunities =====
+  ice:     ['slow', 'frozen'],            // already cold — slows and freezing don't stack
+  metal:   ['bleed', 'poison'],           // no flesh to bleed or be poisoned
+  poison:  ['poison'],                    // toxin-immune
+  psychic: ['confusion', 'sleep'],        // mind-resistant
+  void:       ['dispel', 'bleed'],           // immaterial
+  blood:      ['bleed'],                     // already bleeding
+  crystal:    ['stun', 'frozen'],            // already solid; can't stagger or freeze further
+  arcane:     ['dispel'],                    // anchored magic
+  // ===== Newest element immunities =====
+  corruption: ['poison', 'burn'],            // already rotten — toxin and fire just speed decay
+  spirit:     ['bleed', 'stun'],             // incorporeal — can't be cut or staggered
+  lava:       ['burn', 'slow'],              // molten — heat is home, can't be slowed
+  sound:      ['confusion'],                 // sonic minds resist mental confusion
+  gravity:    ['frozen'],                    // gravitational pull keeps motion no matter what
+};
+
 export const MOVES = {
   slash:        { id: 'slash',        name: 'Slash',        kind: 'attack',  type: 'physical', power: 22, range: 1, cost: 0, element: 'nature', basic: true, desc: 'Basic strike (free)' },
   heavyStrike:  { id: 'heavyStrike',  name: 'Heavy Strike', kind: 'attack',  type: 'physical', power: 42, range: 1, cost: 1, element: 'earth', accuracy: 90, desc: 'Devastating blow' },

@@ -31,7 +31,7 @@ const OUT_JSON_SERVER = join(ROOT, 'colyseus-server', 'src', 'engine', 'catalogs
 // Pure-data catalogs the battle engine reads. All are top-level consts.
 // Order matters — a definition must precede anything that references it
 // (TYPE_CHART's IIFE reads ELEMENTS), so list dependencies first.
-const TARGETS = ['STATUS_EFFECTS', 'PASSIVES', 'WEATHERBORN_PASSIVES', 'ELEMENTS', 'STRONG_VS', 'TYPE_CHART', 'MOVES'];
+const TARGETS = ['STATUS_EFFECTS', 'PASSIVES', 'WEATHERBORN_PASSIVES', 'ELEMENTS', 'STRONG_VS', 'TYPE_CHART', 'TYPE_IMMUNITIES', 'MOVES'];
 
 const html = readFileSync(SRC, 'utf8');
 const lines = html.split('\n');

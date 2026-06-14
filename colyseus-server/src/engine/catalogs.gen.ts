@@ -16,6 +16,7 @@ export const WEATHERBORN_PASSIVES = gen.WEATHERBORN_PASSIVES as Record<string, a
 export const ELEMENTS = gen.ELEMENTS as string[];
 export const STRONG_VS = gen.STRONG_VS as Record<string, string[]>;
 export const TYPE_CHART = gen.TYPE_CHART as Record<string, Record<string, number>>;
+export const TYPE_IMMUNITIES = (gen as any).TYPE_IMMUNITIES as Record<string, string[]>;
 export const MOVES = gen.MOVES as Record<string, any>;
 
 export default gen;

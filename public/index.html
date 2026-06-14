@@ -20363,7 +20363,8 @@
   .tw-map-coords .row { position: absolute; left: 5px; transform: translateY(-50%); }
   /* Node drawer — slides in from right over the map */
   .tw-node-drawer {
-    position: absolute; right: 0; top: 0; bottom: 0; width: 400px;
+    position: absolute; right: 0; top: 0; bottom: 0;
+    width: min(92vw, clamp(440px, 34vw, 560px));
     background: rgba(13,17,22,0.97);
     border-left: 1px solid rgba(35,44,54,0.9);
     z-index: 20; display: flex; flex-direction: column;
@@ -20470,10 +20471,11 @@
   .tw-drawer-tab:hover { color:#a89878; }
   .tw-drawer-tab.is-active { color:#ffe9a8; border-bottom-color:#c89428; }
   .tw-drawer-tab-badge { display:inline-block; background:rgba(78,126,168,0.25); color:#4e7ea8; border-radius:3px; padding:0 4px; font-size:0.5rem; margin-left:2px; vertical-align:middle; }
-  .tw-nd-tab-panel { display:none; flex:1; overflow-y:auto; flex-direction:column; }
+  .tw-nd-tab-panel { display:none; flex:1; overflow-y:auto; flex-direction:column; padding-bottom:0.8rem; }
   .tw-nd-tab-panel.is-active { display:flex; }
-  .tw-nd-section-hdr { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.54rem; font-weight:700; letter-spacing:0.2em; text-transform:uppercase; color:#5b6772; padding:0.55rem 1rem 0.3rem; border-top:1px solid rgba(35,44,54,0.5); flex-shrink:0; }
-  .tw-nd-vitals { display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; padding:0 1rem 0.5rem; }
+  .tw-nd-section-hdr { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.56rem; font-weight:700; letter-spacing:0.2em; text-transform:uppercase; color:#5b6772; padding:0.8rem 1.1rem 0.4rem; border-top:1px solid rgba(35,44,54,0.5); flex-shrink:0; }
+  .tw-nd-tab-panel > .tw-nd-section-hdr:first-child { border-top:none; }
+  .tw-nd-vitals { display:grid; grid-template-columns:1fr 1fr; gap:0.55rem; padding:0 1.1rem 0.65rem; }
   .tw-nd-vital-card { background:rgba(22,28,35,0.6); border:1px solid rgba(35,44,54,0.7); padding:0.55rem 0.65rem; }
   .tw-nd-vital-label { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.5rem; letter-spacing:0.16em; text-transform:uppercase; color:#5b6772; margin-bottom:0.18rem; }
   .tw-nd-vital-value { font-family:'JetBrains Mono','Consolas',monospace; font-size:1.1rem; font-weight:700; color:#d6dee6; line-height:1.1; }
@@ -143773,6 +143775,61 @@ function _twFindEmptyNodePos(nodes) {
   }
   return best;
 }
+// 🛣 Road auto-wiring — connect nodes that have no supply lines to their
+// nearest neighbours so every node joins the map network (and can be lit).
+function _twNodePos(n) { const p = n && n.position; return (p && typeof p.x === 'number' && typeof p.y === 'number') ? p : null; }
+function _twNearestNodeIds(node, nodes, k) {
+  const p0 = _twNodePos(node); if (!p0) return [];
+  return (Array.isArray(nodes) ? nodes : [])
+    .filter(n => n && n.id !== node.id && _twNodePos(n))
+    .map(n => { const p = _twNodePos(n); const dx = p.x - p0.x, dy = p.y - p0.y; return { id: n.id, d: dx * dx + dy * dy }; })
+    .sort((a, b) => a.d - b.d)
+    .slice(0, Math.max(1, k | 0))
+    .map(x => x.id);
+}
+// Link two nodes bidirectionally. Returns the sorted "a|b" route key if a new
+// connection was actually added, else null.
+function _twLinkNodes(t, aId, bId) {
+  if (!aId || !bId || aId === bId) return null;
+  const a = t.nodes.find(n => n.id === aId), b = t.nodes.find(n => n.id === bId);
+  if (!a || !b) return null;
+  if (!Array.isArray(a.connections)) a.connections = [];
+  if (!Array.isArray(b.connections)) b.connections = [];
+  let changed = false;
+  if (!a.connections.includes(bId)) { a.connections.push(bId); changed = true; }
+  if (!b.connections.includes(aId)) { b.connections.push(aId); changed = true; }
+  return changed ? [aId, bId].sort().join('|') : null;
+}
+// Connect a single node to its k nearest neighbours. Returns the new route keys.
+function _twAutoConnectNode(t, node, k) {
+  const keys = [];
+  for (const nid of _twNearestNodeIds(node, t.nodes, k || 2)) {
+    const key = _twLinkNodes(t, node.id, nid);
+    if (key) keys.push(key);
+  }
+  return keys;
+}
+// Connect every roadless node to its nearest neighbours. opts.light also lights
+// (glows) the new supply lines. Persists + returns { connected, routes }.
+function _twConnectOrphanRoads(opts) {
+  opts = opts || {};
+  const t = _twForge();
+  if (!Array.isArray(t.nodes) || t.nodes.length < 2) return { connected: 0, routes: 0 };
+  const orphans = t.nodes.filter(n => !Array.isArray(n.connections) || n.connections.length === 0);
+  const newKeys = [];
+  for (const node of orphans) {
+    for (const key of _twAutoConnectNode(t, node, opts.k || 2)) {
+      if (newKeys.indexOf(key) < 0) newKeys.push(key);
+    }
+  }
+  if (opts.light && newKeys.length) {
+    if (!Array.isArray(t.litRoutes)) t.litRoutes = [];
+    for (const key of newKeys) if (t.litRoutes.indexOf(key) < 0) t.litRoutes.push(key);
+    try { localStorage.setItem('hg_tw_litRoutes', JSON.stringify(t.litRoutes)); } catch (e) {}
+  }
+  if (orphans.length) { try { saveForge(); } catch (e) {} }
+  return { connected: orphans.length, routes: newKeys.length };
+}
 function _twState() {
   if (!Profile.tw_state || typeof Profile.tw_state !== 'object') {
     Profile.tw_state = { ownedNodes: {}, vault: {}, capturedSectors: {}, lastDecayCheck: 0 };
@@ -146632,6 +146689,7 @@ function renderTerritoryWars() {
         </div>
         <div class="tw-top-bar-corp" style="display:flex;align-items:center;gap:0.6rem">
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-new-node">＋ New Node</button>` : ''}
+          ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-connect-roads" title="Connect every roadless node to its nearest neighbours and light the new supply lines">🛣 Connect Roads</button>` : ''}
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-publish-map" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.55);color:#d4af37" title="Immediately push current node/route data to the website and all players">🌐 Publish Map</button>` : ''}
           ${myCorp ? `🏢 ${escapeHtml(myCorp.name)}` : '<span style="color:#5b6772">No corporation — view only</span>'}
         </div>
@@ -146840,6 +146898,21 @@ function renderTerritoryWars() {
     };
   });
 
+  // ── Admin: Connect Roads — wire every roadless node into the network ──
+  const _connectBtn = document.getElementById('tw-admin-connect-roads');
+  if (_connectBtn) {
+    _connectBtn.onclick = () => {
+      const res = _twConnectOrphanRoads({ light: true, k: 2 });
+      if (res.connected) {
+        showToast(`🛣 Connected ${res.connected} node${res.connected === 1 ? '' : 's'} · lit ${res.routes} new route${res.routes === 1 ? '' : 's'}. Pushing live…`, 4500);
+        try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {}
+      } else {
+        showToast('✓ Every node already has roads.', 2500);
+      }
+      render();
+    };
+  }
+
   // ── Admin: Publish Map NOW (bypass the 45s debounce) ──
   const _pubMapBtn = document.getElementById('tw-admin-publish-map');
   if (_pubMapBtn) {
@@ -146889,10 +146962,21 @@ function renderTerritoryWars() {
         runModifiers: [],
         position: _newPos
       });
+      // 🛣 Wire the new node into the road network (2 nearest neighbours) and
+      // light those supply lines so it shows up connected immediately.
+      try {
+        const _newNode = tf.nodes[tf.nodes.length - 1];
+        const _keys = _twAutoConnectNode(tf, _newNode, 2);
+        if (_keys.length) {
+          if (!Array.isArray(tf.litRoutes)) tf.litRoutes = [];
+          for (const k of _keys) if (tf.litRoutes.indexOf(k) < 0) tf.litRoutes.push(k);
+          try { localStorage.setItem('hg_tw_litRoutes', JSON.stringify(tf.litRoutes)); } catch (e) {}
+        }
+      } catch (e) {}
       App._twSelectedNode = newId;
       App._twNodeTab = 'admin';
       try { saveForge(); } catch (e) {}
-      showToast(`✨ Created ${newId} — rename + position it in the ADMIN tab`, 3500);
+      showToast(`✨ Created ${newId} — roads auto-linked. Rename + position it in the ADMIN tab`, 3500);
       render();
     };
   }

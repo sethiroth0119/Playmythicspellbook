@@ -67945,7 +67945,7 @@ function _renderImpl() {
   if (App.screen === 'battle')           return renderBattle();
   // ⚠ Fallback: TW router normally intercepts this before we get here.
   // NEVER reset App.screen to 'title' on a TW crash — just log + toast (v86p).
-  if (App.screen === 'territoryWars') { try { renderTerritoryWars(); } catch(e) { console.warn('[TW fallback]', e); try { if (typeof showToast === 'function') showToast('⚠ War Map error — check console', 3000); } catch(_){} } return; }
+  if (App.screen === 'territoryWars') { try { renderTerritoryWars(); } catch(e) { console.warn('[TW fallback]', e); try { if (typeof showToast === 'function') showToast('⚠ District Nodes error — check console', 3000); } catch(_){} } return; }
 }
 
 let toastTimer = null;
@@ -69687,7 +69687,7 @@ function renderTitle() {
         onclick: () => { App.screen = 'daily'; render(); } },
       // 🗺 War Map — Territory Wars (corp control, node battles, guards,
       // node-shop upgrades). Visible to all players.
-      { id: 'btn-warmap', icon: '🗺', name: 'War Map', sub: 'Corp territory · capture nodes · defend with guards', accent: '#6cd4ff',
+      { id: 'btn-warmap', icon: '🗺', name: 'District Nodes', sub: 'Corp territory · capture nodes · defend with guards', accent: '#6cd4ff',
           badge: (() => {
             try {
               const t = (Forge.territoryWars || {});
@@ -69709,7 +69709,7 @@ function renderTitle() {
               renderTerritoryWars();
             } catch(e) {
               console.error('[WarMap button]', e);
-              try { if (typeof showToast === 'function') showToast('⚠ War Map error: ' + String(e && e.message || e).slice(0, 80), 4000); } catch(_) {}
+              try { if (typeof showToast === 'function') showToast('⚠ District Nodes error: ' + String(e && e.message || e).slice(0, 80), 4000); } catch(_) {}
             }
           } },
     ],
@@ -74671,7 +74671,7 @@ function renderPricingAdmin() {
           <button class="btn-primary btn-mini" id="btn-open-tw-admin">🗺 Territory Wars Builder (${((Forge.territoryWars||{}).nodes||[]).length} nodes)</button>
         </div>
         <div class="small-text ink-dim" style="margin-top:0.4rem">
-          🗺 <strong>Territory Wars</strong> — a corporation-driven world map with sectors, nodes, guard decks, node-shop defenses, and 5h30m resource cycles. Players access it from <strong>Battle Hall → War Map</strong>.
+          🗺 <strong>Territory Wars</strong> — a corporation-driven world map with sectors, nodes, guard decks, node-shop defenses, and 5h30m resource cycles. Players access it from <strong>Battle Hall → District Nodes</strong>.
         </div>
       </div>
 
@@ -122037,7 +122037,7 @@ function renderRlcAdmin() {
         <label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">📍 Where this campaign appears</span><br><select data-rlc-path="placement" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px">
           <option value="roguelite" ${(!ed.placement || ed.placement === 'roguelite') ? 'selected' : ''}>🗺️ Roguelite Campaigns page (default)</option>
           <option value="worldMap" ${ed.placement === 'worldMap' ? 'selected' : ''}>🌍 World Map node — kept OFF the Roguelite list</option>
-          <option value="warMap"   ${ed.placement === 'warMap'   ? 'selected' : ''}>⚔️ War Map node — kept OFF the Roguelite list</option>
+          <option value="warMap"   ${ed.placement === 'warMap'   ? 'selected' : ''}>⚔️ District Node — kept OFF the Roguelite list</option>
           <option value="hidden"   ${ed.placement === 'hidden'   ? 'selected' : ''}>🚫 Hidden — reachable only via a dedicated button</option>
           <optgroup label="⛽ Black River — Mission Select (Deploy buttons)">
             <option value="br_oil"    ${ed.placement === 'br_oil'    ? 'selected' : ''}>🛢 Black River → Oil Extraction Run</option>
@@ -144742,7 +144742,7 @@ function renderTerritoryWars() {
     return `
       <div class="tw-node-drawer" data-node-id="${escapeHtml(selNode.id)}">
         <div class="tw-drawer-crumb-bar">
-          <span class="tw-drawer-crumb-text">WAR MAP · ${escapeHtml(_dRegion.toUpperCase())} · NODE CONTROL</span>
+          <span class="tw-drawer-crumb-text">DISTRICT NODES · ${escapeHtml(_dRegion.toUpperCase())}</span>
           <span class="tw-drawer-barcode">||||||||||||||||</span>
           <button class="tw-drawer-close" id="tw-drawer-close">✕</button>
         </div>
@@ -144775,7 +144775,7 @@ function renderTerritoryWars() {
       ${renderTerritoryPickerModal()}
       <div class="tw-top-bar">
         <button class="btn-secondary btn-mini" id="tw-back">← Battle Hall</button>
-        <span class="tw-top-bar-title">War Map · Territory Wars</span>
+        <span class="tw-top-bar-title">District Nodes · Territory Wars</span>
         <div class="tw-top-view-strip">
           ${['ownership','resources','conflict','heat','economic','weather','defense','guard'].map(v =>
             `<button class="tw-top-view-btn ${view===v?'is-active':''}" data-tw-view="${v}">${v[0].toUpperCase()+v.slice(1)}</button>`
@@ -146201,7 +146201,7 @@ function _twBindNodeEditor(t) {
     if (App && App.screen === 'territoryWars') {
       try { renderTerritoryWars(); } catch (e) {
         console.warn('[TW] renderTerritoryWars error', e);
-        try { if (typeof showToast === 'function') showToast('⚠ War Map error — ' + String(e && e.message || e).slice(0, 80), 3500); } catch (_) {}
+        try { if (typeof showToast === 'function') showToast('⚠ District Nodes error — ' + String(e && e.message || e).slice(0, 80), 3500); } catch (_) {}
       }
       return; // ALWAYS return — never let _origRender reset the screen
     }

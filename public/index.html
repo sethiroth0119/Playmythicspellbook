@@ -23834,6 +23834,12 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     transition: border-color 0.15s, background 0.15s;
+    /* 🩹 GPU crash fix: a huge library renders hundreds of rows, each with a card
+       image. content-visibility skips rendering + DECODING any row that is not on
+       screen, so only the ~visible dozen ever hit the GPU — the rest cost nothing
+       until scrolled into view. contain-intrinsic-size keeps the scrollbar correct. */
+    content-visibility: auto;
+    contain-intrinsic-size: 0 76px;
   }
   .forge-list-row:hover { border-color: var(--gold); background: rgba(212,175,55,0.04); }
   .forge-row-icon {

@@ -61900,6 +61900,54 @@ function _processMilledCards(state, who, milled) {
   }
   return s;
 }
+// 🃏 SUBTERFUGE FLIP — reveal a face-down trap unit and resolve its Flip Effect.
+// `reason`: short string for the log ('manual' | 'enemyAdjacent' | 'damaged').
+// Idempotent — a unit that's already face-up (or dead/missing) is returned untouched.
+// The flip plays the unit's SUMMON sprite animation on the board (Master-Duel style),
+// then fires the stored flipEffect through the standard on-play dispatcher, so every
+// existing effect type (aoeDamage, heal, summon, buff, status…) just works for free.
+function _flipSubterfuge(state, unit, reason) {
+  if (!state || !unit || !unit.isFaceDown || !unit.alive) return state;
+  let next = { ...state, units: (state.units || []).map(u => u.id === unit.id ? { ...u, isFaceDown: false } : u) };
+  const flipped = next.units.find(u => u.id === unit.id);
+  if (!flipped) return next;
+  const why = reason === 'enemyAdjacent' ? 'an enemy crept too close'
+            : reason === 'damaged' ? 'it was struck'
+            : 'the trap springs';
+  next = { ...next, log: [...(next.log || []), { msg: `🃏 ${flipped.name} flips up — ${why}!`, color: flipped.owner === 'player' ? 'green' : 'amber' }] };
+  // 🎬 Board summon-sprite reveal + stinger (visual only, never blocks the flip).
+  try { if (typeof _boardSpriteCine === 'function') _boardSpriteCine(flipped.id, 'summon', 1100); } catch (e) {}
+  try { if (typeof playSfx === 'function') playSfx('onPlay'); } catch (e) {}
+  // ⚡ Resolve the Flip Effect through the normal on-play dispatcher. We synthesise a
+  // tiny card-like wrapper so applyOnPlayEffect reads `.onPlay` = the flip effect.
+  const fe = flipped.flipEffect;
+  if (fe && fe.type) {
+    try { if (typeof playOnPlayCinematic === 'function') playOnPlayCinematic(flipped, { onPlay: fe, name: flipped.name, icon: flipped.icon }); } catch (e) {}
+    try { next = applyOnPlayEffect(next, flipped, { onPlay: fe }); } catch (e) {}
+  }
+  return next;
+}
+try { window.__mg = window.__mg || {}; window.__mg.flipSubterfuge = _flipSubterfuge; } catch (e) {}
+
+// 🃏 When a unit finishes (or is stopped) on a tile, spring any ENEMY face-down
+// Subterfuge unit now within striking distance (Chebyshev ≤ 1). Each adjacent trap
+// flips and resolves its Flip Effect — a reactive ambush. Re-fetches the live unit
+// each iteration since an earlier flip may have changed the board (kills, summons…).
+function _flipAdjacentFaceDown(state, mover) {
+  if (!state || !mover || !mover.pos) return state;
+  let next = state;
+  const mp = mover.pos;
+  const ids = (next.units || [])
+    .filter(u => u && u.alive && u.isFaceDown && u.owner !== mover.owner && u.pos
+      && Math.max(Math.abs(u.pos.x - mp.x), Math.abs(u.pos.y - mp.y)) <= 1)
+    .map(u => u.id);
+  for (const id of ids) {
+    const live = (next.units || []).find(u => u.id === id);
+    if (live && live.isFaceDown && live.alive) next = _flipSubterfuge(next, live, 'enemyAdjacent');
+  }
+  return next;
+}
+
 function applyOnPlayEffect(state, unit, card) {
   const eff = card && card.onPlay;
   if (!state || !unit || !eff || !eff.type) return state;
@@ -64402,6 +64450,13 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
     // transform, since executeKalonTransform spreads ...unit, and Archons via the
     // summon pipeline) can respond to battle events.
     triggers: Array.isArray(cardData.triggers) ? cardData.triggers.map(t => ({ ...t })) : [],
+    // 🃏 SUBTERFUGE — a face-down trap unit. isSubterfuge + flipEffect carry from the
+    // card; isFaceDown / placedThisTurn are set when it is PLACED face down (placeUnit),
+    // NOT here — buildUnit also makes summons / AI units / walls that must never auto-hide.
+    isSubterfuge: !!cardData.isSubterfuge,
+    flipEffect: (cardData.flipEffect && typeof cardData.flipEffect === 'object') ? cardData.flipEffect : null,
+    isFaceDown: false,
+    placedThisTurn: false,
   };
 };
 
@@ -65275,6 +65330,23 @@ const executeMove = (state, attacker, target, move) => {
         target = intercept.interceptor;
       }
     }
+  }
+
+  // 🃏 SUBTERFUGE — attacking a face-down unit FLIPS it FIRST: its Flip Effect
+  // resolves before the blow lands, so a defensive trap can punish the attacker
+  // (or even kill it / move out of range). Runs on the post-intercept target so a
+  // Bodyguard redirect is respected. Flip-effect log lines are merged into our
+  // working `log` so they survive the later `s.log = log` writes.
+  if (move && move.kind === 'attack' && target && target.isFaceDown && attacker && target.owner !== attacker.owner && typeof _flipSubterfuge === 'function') {
+    try {
+      const _preLen = s.log.length;
+      s = _flipSubterfuge(s, target, 'damaged');
+      for (let _i = _preLen; _i < s.log.length; _i++) log.push(s.log[_i]);
+      target = (s.units || []).find(u => u.id === target.id) || target;
+      attacker = (s.units || []).find(u => u.id === attacker.id) || attacker;
+      // The flip may have killed the target or the attacker — bail cleanly if either fell.
+      if (!target || !target.alive || !attacker || !attacker.alive) { s.log = log; return s; }
+    } catch (e) { /* a flip glitch must never freeze the attack — fall through face-up-or-not */ }
   }
 
   // Player-study: track move types/elements the player uses + when they first attack
@@ -67290,6 +67362,8 @@ const moveUnit = (state, unit, newPos) => {
       s = applyTrapToUnit(s, unit, trap);
       // 🎯 Overwatch reaction at the interrupted tile.
       s = _ambushReactToMove(s, (s.units || []).find(u => u && u.id === unit.id) || unit, finalPos);
+      // 🃏 Spring any enemy face-down Subterfuge unit adjacent to where it stopped.
+      try { s = _flipAdjacentFaceDown(s, (s.units || []).find(u => u && u.id === unit.id) || unit); } catch (e) {}
       return s;
     }
   }
@@ -67304,6 +67378,8 @@ const moveUnit = (state, unit, newPos) => {
   // gets one free strike (single-writer, once per enemy turn; safe no-op
   // when nothing is watching).
   s = _ambushReactToMove(s, (s.units || []).find(u => u && u.id === unit.id) || unit, newPos);
+  // 🃏 Spring any enemy face-down Subterfuge unit now adjacent to the mover.
+  try { s = _flipAdjacentFaceDown(s, (s.units || []).find(u => u && u.id === unit.id) || unit); } catch (e) {}
   return s;
 };
 
@@ -67497,6 +67573,9 @@ const startTurn = (state, who) => {
     for (let i = 0; i < s.units.length; i++) {
       const u = s.units[i];
       if (u && u.owner === who && u._fastReloadUses) s.units[i] = { ...u, _fastReloadUses: 0 };
+      // 🃏 SUBTERFUGE — clear the placement lock so a face-down unit set last
+      // turn can now be manually flipped on its owner's turn.
+      if (u && u.owner === who && u.placedThisTurn) s.units[i] = { ...s.units[i], placedThisTurn: false };
     }
   }
   // 🜂 FORCED KALON TRANSFORM — units whose card.forcedKalon (or the
@@ -68204,8 +68283,23 @@ function _boardSpriteCine(unitId, anim, durationMs) {
 }
 try { window.__mg = window.__mg || {}; window.__mg.boardCine = _boardSpriteCine; } catch (e) {}
 
-function unitBoardVisual(occupant) {
+// 🃏 SUBTERFUGE — a face-down trap token (mystic card-back). Shown on the board for
+// BOTH sides so a set trap keeps its identity hidden; the owner re-reveals the real
+// art inside their own unit modal (unitBoardVisual called with {reveal:true}).
+function _subterfugeTokenHtml() {
+  return '<div class="sub-facedown" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:6px;'
+    + 'background:radial-gradient(circle at 50% 32%,#2c1a54 0%,#160b2c 72%);border:1px solid rgba(158,118,230,0.6);'
+    + 'box-shadow:inset 0 0 14px rgba(126,84,206,0.45),0 0 8px rgba(90,60,160,0.4);position:relative;overflow:hidden">'
+    + '<span style="font-size:1.55em;line-height:1;filter:drop-shadow(0 0 7px rgba(178,128,255,0.85))">🃏</span>'
+    + '<span style="position:absolute;inset:0;background:repeating-linear-gradient(45deg,rgba(150,110,220,0.08) 0 6px,transparent 6px 12px);pointer-events:none"></span>'
+    + '</div>';
+}
+
+function unitBoardVisual(occupant, opts) {
   if (!occupant) return '';
+  // 🃏 SUBTERFUGE — render a face-down trap as a card-back token (hidden identity),
+  // unless the caller explicitly reveals it (the owner's own unit modal).
+  if (occupant.isFaceDown && !(opts && opts.reveal)) return _subterfugeTokenHtml();
   // 🎞 Big-library/placeholder mode: show the unit's custom sprite via the bounded
   // single-img animator FIRST — so it (a) renders the sprite instead of the card
   // art, and (b) never builds the heavy full-frame stack that crashes. Small
@@ -79247,6 +79341,14 @@ function renderCardEditor() {
       <label style="font-weight:700;color:#ffd166">🎴 On-Play Ability (fires the instant this ${_onPlayWhen})</label>
       <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Optional. ${_isFieldCard ? 'Field cards have no board token — positional effects (AOE/heal/etc.) center on your hero; card effects (search / draw / mill / salvage / banish / negate-graveyard / 🌌 polycreate / discard) just work.' : _isWallCard ? 'Walls have no unit token — positional effects (AOE / take-control / heal / etc.) center on the wall\'s tile.' : 'Affects enemies / allies / self depending on the type picked.'}</div>
     </div>
+    ${isUnitLike ? `
+    <div class="editor-field full" style="background:linear-gradient(90deg,rgba(126,84,206,0.14),rgba(20,12,40,0.3));border:1px solid rgba(158,118,230,0.4);border-radius:8px;padding:0.6rem 0.8rem;margin:0.2rem 0 0.4rem">
+      <label style="display:flex;align-items:center;gap:0.5rem;font-weight:700;color:#c8a8ff;cursor:pointer">
+        <input type="checkbox" id="ed-is-subterfuge" ${card.isSubterfuge ? 'checked' : ''}>
+        🃏 Subterfuge — play this unit FACE-DOWN (hidden trap)
+      </label>
+      <div class="small-text ink-dim" style="margin-top:0.35rem">When ON, this unit enters play face-down — its identity hidden from the enemy — and does <strong>not</strong> fire its On-Play on summon. Instead the <strong>On-Play Ability below becomes its FLIP EFFECT</strong>, triggering when the trap is revealed: manually on a later turn, when an enemy moves adjacent, or when it takes damage. A face-down unit can't move or attack until it flips.</div>
+    </div>` : ''}
     <div class="editor-field"><label>Effect Type</label><select id="ed-onplay-type">${onPlayTypeOpts}</select></div>
     <div class="editor-field"><label>Radius (tiles around ${_isFieldCard ? 'your hero' : _isWallCard ? 'the wall' : 'the unit'})</label><input id="ed-onplay-radius" type="number" min="0" max="4" value="${onPlay.radius || 1}"></div>
     <div class="editor-field"><label>Amount (damage / heal / energy / mill / draw)</label><input id="ed-onplay-amount" type="number" min="0" max="200" value="${onPlay.amount || 0}"></div>
@@ -81456,6 +81558,14 @@ function captureEditorIntoCard(card) {
     } else {
       delete card.onPlay;
     }
+  }
+  // 🃏 SUBTERFUGE — units only. When checked, the unit is played face-down and the
+  // On-Play editor above doubles as its FLIP EFFECT (mirrored into card.flipEffect so
+  // the engine reads it on reveal, while card.onPlay is skipped on summon by placeUnit).
+  if (document.getElementById('ed-is-subterfuge')) {
+    card.isSubterfuge = !!document.getElementById('ed-is-subterfuge').checked;
+    if (card.isSubterfuge) card.flipEffect = card.onPlay ? { ...card.onPlay } : null;
+    else delete card.flipEffect;
   }
   // ⚡ Activation cost for spell / trap / counter cards (Yu-Gi-Oh-style pay-to-
   // activate). Stored on card.activationCost; the play paths (playSpell /
@@ -90090,14 +90200,18 @@ function renderUnitModal() {
   // already blocks movement tiles for these; this also disables the attack
   // buttons (previously a stunned unit could still attack).
   const _incapacitated = (u.statusEffects || []).some(e => STATUS_EFFECTS[e.type] && STATUS_EFFECTS[e.type].skipTurn);
-  const canMove = isPlayer && !u.hasMoved && s.turn === 'player' && !_incapacitated;
-  const canAct = isPlayer && !u.hasAttacked && s.turn === 'player' && !_incapacitated;
+  // 🃏 A face-down Subterfuge unit can't move or attack until it's flipped face-up.
+  const canMove = isPlayer && !u.hasMoved && s.turn === 'player' && !_incapacitated && !u.isFaceDown;
+  const canAct = isPlayer && !u.hasAttacked && s.turn === 'player' && !_incapacitated && !u.isFaceDown;
   const canKalon = isPlayer && hasKalonForm(u) && !u.kalonUsed && s.player.kalonsRemaining > 0 && s.turn === 'player' && (s.player.kalonsThisTurn || 0) < 1 && !(typeof anyUnitHasPassive === 'function' && anyUnitHasPassive(s, 'kalonSuppress'));
   // 🜂 Archon Summon — available when this is the player's Catalyst unit and a
   // legal Archon ritual is ready (rank + offerings in range + Kalon Source).
   const _archonGate = (isPlayer && s.turn === 'player' && typeof canActivateArchonSummon === 'function' && _catalystRankOf(u) > 0)
     ? canActivateArchonSummon(s, u) : { ok: false };
   const canArchon = !!(_archonGate && _archonGate.ok);
+  // 🃏 SUBTERFUGE — your own face-down trap can be MANUALLY sprung on your turn,
+  // but not the turn it was set (placedThisTurn lock, cleared at your next turn start).
+  const canFlip = isPlayer && u.isFaceDown && !u.placedThisTurn && s.turn === 'player';
 
   const isDispelled = (u.statusEffects || []).some(e => e.type === 'dispel');
   const movesHtml = enemyHidden
@@ -90144,7 +90258,7 @@ function renderUnitModal() {
       <div class="unit-modal ${u.owner}${isHero ? ' is-hero' : ''}" role="dialog" style="max-width:min(760px,96vw)">
         <button class="modal-close" id="modal-close" aria-label="Close">×</button>
         <div class="modal-header">
-          <div class="modal-portrait">${unitBoardVisual(u)}</div>
+          <div class="modal-portrait">${unitBoardVisual(u, { reveal: isPlayer })}</div>
           <div class="modal-title-block">
             <div class="modal-title">
               ${escapeHtml(u.name)}
@@ -90406,6 +90520,7 @@ function renderUnitModal() {
           })() : ''}
           ${canKalon ? `<button class="btn-primary kalon-btn" id="modal-btn-kalon">${getKalonIcon('1.6em')} KALON FORM (${s.player.kalonsRemaining} left)</button>` : ''}
           ${canArchon ? `<button class="btn-primary kalon-btn" id="modal-btn-archon" title="Sacrifice nearby Offerings + pay Kalon Source to summon ${escapeHtml((_archonGate.archon && _archonGate.archon.name) || 'an Archon')}">🜂 ARCHON SUMMON</button>` : ''}
+          ${canFlip ? `<button class="btn-primary modal-btn-flip" id="modal-btn-flip" title="Reveal this face-down unit and trigger its Flip Effect.">🃏 FLIP UP</button>` : ''}
           <button class="btn-secondary" id="modal-btn-close">Close</button>
         </div>
       </div>
@@ -92296,6 +92411,20 @@ function bindBattleEvents() {
       App.ui.selectedMoveId = null;
       App.ui.actionMode = null;
       if (typeof openArchonSummonMode === 'function') openArchonSummonMode(sel);
+    };
+
+    // 🃏 Subterfuge — manually spring your own face-down trap. Mirrors the Kalon
+    // handler: flip on App.state, then broadcast (MP) / re-render (single-player).
+    const modalFlip = document.getElementById('modal-btn-flip');
+    if (modalFlip) modalFlip.onclick = (e) => {
+      e.stopPropagation();
+      const sel = App.state.units.find(u => u.id === App.ui.modalUnitId);
+      if (!sel || !sel.isFaceDown || sel.placedThisTurn) return;
+      App.state = _flipSubterfuge(App.state, sel, 'manual');
+      App.ui.selectedMoveId = null;
+      App.ui.actionMode = null;
+      App.ui.modalUnitId = null;
+      if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
     };
 
     document.querySelectorAll('.modal-move[data-move]').forEach(el => {
@@ -95665,6 +95794,18 @@ function placeUnit(card, pos) {
   }
   const prof = getUnitProfile(card.id);
   const unit = buildUnit(card, 'player', pos, ph.heroPassive, prof.level, prof.xp);
+  // 🃏 SUBTERFUGE — set the unit FACE DOWN (a hidden trap). Its Flip Effect fires
+  // LATER when revealed (manual flip on a later turn, an enemy moving adjacent, or
+  // taking damage), NOT on placement. Falls back to the card's on-play effect as the
+  // flip effect if no dedicated flipEffect was authored. A face-down unit can't act.
+  if (card.isSubterfuge) {
+    unit.isFaceDown = true;
+    unit.placedThisTurn = true;
+    if (!unit.flipEffect || !unit.flipEffect.type) {
+      unit.flipEffect = (card.flipEffect && card.flipEffect.type) ? card.flipEffect : ((card.onPlay && card.onPlay.type) ? card.onPlay : null);
+    }
+    unit.hasMoved = true; unit.hasAttacked = true;
+  }
   // 🔮 PROPHECY buff — apply any pending prophecy bonus to this unit before it enters play.
   if (s.player._prophecyBuff) {
     unit.atk = (unit.atk || 0) + (s.player._prophecyBuff.atk || 0);
@@ -95728,7 +95869,7 @@ function placeUnit(card, pos) {
     // board this card is NOT counted as a banishable graveyard card (it only
     // becomes a real grave card once the unit dies / is looted).
     player: { ...s.player, hand: s.player.hand.filter(c => c.instanceId !== card.instanceId), graveyard: [...s.player.graveyard, { ...card, _summonedUnitId: unit.id }], energy: s.player.energy - getEffectiveCardCost(card, s, 'player') },
-    log: [...s.log, { msg: `You play ${card.name} (Lv ${prof.level})`, color: 'green' }],
+    log: [...s.log, { msg: card.isSubterfuge ? `🃏 You set a unit face-down.` : `You play ${card.name} (Lv ${prof.level})`, color: 'green' }],
   };
   // 🔮 Clear consumed prophecy buff so it only applies to the NEXT single deployment.
   if (s.player._prophecyBuff) {
@@ -95753,7 +95894,7 @@ function placeUnit(card, pos) {
   // the new unit has its sky already in place when the AOE / heal / buff resolves.
   // ⚡ _suppressOnPlay (set by the cost gate when an on-play cost was unpaid /
   // cancelled) skips the EFFECT while still letting the unit enter the board.
-  if (card && card.onPlay && card.onPlay.type && App.ui._suppressOnPlay !== card.instanceId) {
+  if (card && card.onPlay && card.onPlay.type && !card.isSubterfuge && App.ui._suppressOnPlay !== card.instanceId) {
     // 🌟 ON-PLAY CINEMATIC — fires BEFORE the effect resolves so the player
     // gets the dramatic name + description reveal first, then the actual
     // AOE / heal / buff / summon plays underneath the fading overlay.

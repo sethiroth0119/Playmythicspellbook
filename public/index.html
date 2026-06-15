@@ -68105,9 +68105,39 @@ function _boardSpriteHtml(occupant) {
     if (!useId) return null;
     let first = null;
     try { const fr = getSpriteFrames(useId, 'idle') || getSpriteFrames(useId, 'attack'); if (fr && fr.length) first = fr[0]; } catch (e) {}
-    return '<img class="bsprite" data-bsid="' + useId + '" data-bsanim="idle" src="' + (first || _PIXEL) + '" alt="" draggable="false" decoding="async" style="width:100%;height:100%;object-fit:contain;image-rendering:auto">';
+    // Use the SAME .sprite-stack / .sprite-img structure as the eager animated path
+    // so all the existing containment + sizing CSS applies (a bare <img> overflowed
+    // its card frame — that was the "sloppy" look). Only the animation MECHANISM
+    // differs (single-img src-swap via the board ticker, bounded memory).
+    return '<span class="sprite-stack" style="width:100%;height:100%"><img class="sprite-img is-on bsprite" data-bsid="' + useId + '" data-bsanim="idle" src="' + (first || _PIXEL) + '" alt="" draggable="false" decoding="async"></span>';
   } catch (e) { return null; }
 }
+
+// 🎬 Play a one-shot CINEMATIC (summon / attack / hurt / death) on a unit's bounded
+// board sprite: switch its data-bsanim so the board ticker loops that animation's
+// frames, then settle back to idle. Force-loads the animation on demand. This is
+// how cinematics play in big-library mode without the heavy full-frame stack.
+function _boardSpriteCine(unitId, anim, durationMs) {
+  try {
+    if (!unitId || !anim) return;
+    const root = document.querySelector('.unit[data-unit="' + unitId + '"]');
+    const img = root && root.querySelector('img.bsprite[data-bsid]');
+    if (!img) return;
+    const sid = img.dataset.bsid;
+    const dur = durationMs || 800;
+    const go = () => { try { img.dataset.bsanim = anim; setTimeout(() => { try { img.dataset.bsanim = 'idle'; } catch (e) {} }, dur); } catch (e) {} };
+    let has = false;
+    try { const f = getSpriteFrames(sid, anim); has = !!(f && f.length > 1); } catch (e) {}
+    if (has) { go(); return; }
+    // Frames for this anim not resident yet — force-load, then play if it has them.
+    try {
+      Promise.resolve(_lazyLoadSprite(sid, true)).then(() => {
+        try { const f2 = getSpriteFrames(sid, anim); if (f2 && f2.length > 1) go(); } catch (e) {}
+      }).catch(() => {});
+    } catch (e) {}
+  } catch (e) {}
+}
+try { window.__mg = window.__mg || {}; window.__mg.boardCine = _boardSpriteCine; } catch (e) {}
 
 function unitBoardVisual(occupant) {
   if (!occupant) return '';
@@ -68359,6 +68389,16 @@ function _playSummonAnim(unitId, el) {
   // The CSS rise-and-pop (.unit[data-anim="summon"]) plays on ANY visual —
   // sprite frames, static art, or emoji — so every unit gets a summon beat.
   el.dataset.anim = 'summon';
+  // 🎬 Big-library mode renders the unit via the bounded single-img board sprite, so
+  // play the SUMMON cinematic through it. The heavy stacked-frame rebuild below would
+  // decode every HD frame at once and crash, so route around it here.
+  try {
+    if (typeof _bigLibrarySkip !== 'undefined' && _bigLibrarySkip) {
+      _boardSpriteCine(unitId, 'summon', 1100);
+      setTimeout(() => { try { const se = document.querySelector('.unit[data-unit="' + unitId + '"]'); if (se && se.dataset.anim === 'summon') se.dataset.anim = ''; } catch (e) {} }, 720);
+      return;
+    }
+  } catch (e) {}
   let unit = null;
   try { unit = App.state && App.state.units && App.state.units.find(u => u && u.id === unitId); } catch (e) {}
   // Authored SUMMON frames (Forge → SUMMON tab) → play ONCE, then settle to idle.

@@ -36509,6 +36509,82 @@ async function migrateSpritesToCloud() {
 }
 try { window.__mg = window.__mg || {}; window.__mg.migrateSprites = migrateSpritesToCloud; } catch (e) {}
 
+// 🔐 Robust persist of ONE sprite record to disk, shared by BOTH upload paths
+// (the Sprite Atelier AND the card-editor Battle Sprite). Awaits + verifies the
+// write so a quota-exceeded failure can't be hidden behind a fake success toast;
+// when the local disk is full and the user is signed in, it falls back to the
+// cloud bucket (uploads the frames, swaps in URLs, retries the small write).
+// Returns { saved, cloud, frames, error }.
+async function _persistSpriteRecord(id, opts) {
+  opts = opts || {};
+  let saved = false, cloud = false, frames = 0, error = null;
+  if (!id || !Forge.sprites || !Forge.sprites[id]) return { saved: true, cloud, frames, error };
+  if (typeof idbSet !== 'function') return { saved: false, cloud, frames, error: 'no idb' };
+  try {
+    saved = await idbSet('spr:' + id, Forge.sprites[id]);
+    if (saved) { try { const v = await idbGet('spr:' + id); saved = !!(v && typeof v === 'object'); } catch (e) {} }
+  } catch (e) { saved = false; error = e; }
+  if (!saved && opts.cloud !== false
+      && typeof Profile !== 'undefined' && Profile.cloud && Profile.cloud.signedIn
+      && typeof cloudUploadAssetFile === 'function' && typeof _artValueToDataUrl === 'function') {
+    try {
+      const rec = Forge.sprites[id]; const safeId = String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+      for (const k in rec) {
+        const arr = rec[k]; if (!Array.isArray(arr)) continue;
+        for (let i = 0; i < arr.length; i++) {
+          const fr = arr[i];
+          if (typeof fr === 'string' && /^https?:\/\//i.test(fr)) continue;
+          const dataUrl = await _artValueToDataUrl(fr); if (!dataUrl) continue;
+          const up = await cloudUploadAssetFile('sprites/' + safeId + '/' + k + '_' + i, dataUrl);
+          if (up && up.ok && up.url) { arr[i] = up.url; frames++; }
+        }
+      }
+      saved = await idbSet('spr:' + id, Forge.sprites[id]);
+      if (saved) cloud = true;
+    } catch (e) { error = e; }
+  }
+  if (saved) {
+    try { if (!Forge._sprIds) Forge._sprIds = new Set(); Forge._sprIds.add(id); await idbSet('forge_sprites_idx', Array.from(Forge._sprIds)); } catch (e) {}
+    try { if (typeof _sprMissing !== 'undefined' && _sprMissing) _sprMissing.delete(id); } catch (e) {}
+  }
+  return { saved, cloud, frames, error };
+}
+
+// 🔍 One-click storage diagnostic — ends the guesswork about why a save fails.
+// Reports real used/quota, a live test write, mode flags, and (if a subject is
+// open in the Atelier) whether it is indexed + on disk. Shown via alert so it
+// can't be missed.
+async function _diagnoseSpriteSave() {
+  const L = [];
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      const u = Math.round((est.usage || 0) / 1048576), q = Math.round((est.quota || 0) / 1048576);
+      const pct = q ? Math.round(u / q * 100) : 0;
+      L.push('STORAGE: ' + u + ' MB used of ' + q + ' MB (' + pct + '%)');
+      if (q && u / q > 0.9) L.push('  ⚠ NEARLY FULL — this is almost certainly why saves fail.');
+    } else L.push('STORAGE: estimate unavailable');
+  } catch (e) { L.push('STORAGE: error'); }
+  try {
+    const ok = await idbSet('__savetest', 'x'.repeat(2 * 1024 * 1024)); // 2 MB
+    L.push('LIVE 2MB TEST WRITE: ' + (ok ? 'OK ✅' : 'FAILED 🛑 (disk is full)'));
+    try { await idbDel('__savetest'); } catch (e) {}
+  } catch (e) { L.push('LIVE TEST WRITE: ERROR 🛑'); }
+  L.push('MODE: ' + (typeof _bigLibrarySkip !== 'undefined' && _bigLibrarySkip ? 'big-library' : 'normal')
+    + ' · streaming=' + (typeof _lazyArtOn !== 'undefined' && _lazyArtOn ? 'ON' : 'OFF'));
+  L.push('SIGNED IN (cloud fallback): ' + (typeof Profile !== 'undefined' && Profile.cloud && Profile.cloud.signedIn ? 'YES' : 'NO — sign in so full-disk saves go to the cloud'));
+  L.push('SPRITES ON DISK (index): ' + (Forge._sprIds ? Forge._sprIds.size : 'n/a'));
+  try {
+    const id = App && App.spriteSubjectId;
+    if (id) {
+      let onDisk = false; try { const v = await idbGet('spr:' + id); onDisk = !!(v && typeof v === 'object'); } catch (e) {}
+      L.push('CURRENT SUBJECT "' + id + '": indexed=' + !!(Forge._sprIds && Forge._sprIds.has(id)) + ' · onDisk=' + onDisk);
+    }
+  } catch (e) {}
+  return L.join('\n');
+}
+try { window.__mg = window.__mg || {}; window.__mg.diagnose = _diagnoseSpriteSave; } catch (e) {}
+
 // Pull asset chunks from Storage into Forge.* — called automatically after a
 // successful profile fetch on sign-in. If a chunk is missing (404), we leave
 // the local Forge state alone (player hasn't uploaded yet).
@@ -79390,6 +79466,7 @@ function renderCardEditor() {
               <button class="btn-mini" id="btn-migrate-cardart" style="font-size:0.62rem" title="Upload your card art + location/pack/item/deck art to Supabase and clear the local copies — frees storage. (Sprites are migrated separately.)">☁ Move ALL my art to the cloud</button>
               <button class="btn-mini" id="btn-migrate-sprites" style="font-size:0.62rem" title="Upload EVERY frame of EVERY sprite animation to Supabase and clear the local copies — the big space win. Can take several minutes; you can leave it running.">🎞 Move sprite animations to cloud</button>
               <button class="btn-mini" id="btn-toggle-artstream" style="font-size:0.62rem" title="Render your custom sprites + art IN THE GAME instead of placeholder emoji. Best AFTER moving sprites to the cloud (URL frames are cheap). If the game becomes unstable, turn it back OFF.">🎮 Custom art in-game</button>
+              <button class="btn-mini" id="btn-storage-diag" style="font-size:0.62rem" title="Check exactly why a save might be failing — storage used/quota, a live test write, and whether your sprites are on disk.">🔍 Why won't it save?</button>
             </div>
           </div>
         </div>
@@ -79890,13 +79967,34 @@ function bindCardEditor() {
     const primary = (t && t.type === 'hero') ? `h_${id}` : `u_${id}`;
     if (!Forge.sprites[primary]) Forge.sprites[primary] = {};
     Forge.sprites[primary].idle = [urlOrDataUrl];
+    let mirror = null;
     if (t && t.type === 'hero') {
-      const mirror = `u_${id}`;
+      mirror = `u_${id}`;
       if (!Forge.sprites[mirror]) Forge.sprites[mirror] = {};
       Forge.sprites[mirror].idle = [urlOrDataUrl];
     }
-    saveForge();
-    showToast('Image updated');
+    // 🔐 Robust persist + truthful result. The old path fired saveForge() and
+    // always toasted "Image updated" even when the write failed on a full disk —
+    // that silent failure is the "battle sprite won't save" bug. Now: await +
+    // verify, fall back to the cloud when the disk is full, and report reality.
+    const r = await _persistSpriteRecord(primary, { cloud: true });
+    if (mirror) { try { await _persistSpriteRecord(mirror, { cloud: true }); } catch (e) {} }
+    try { saveForge(); } catch (e) {}
+    if (r.saved) {
+      showToast(r.cloud ? '☁ Battle sprite saved to the cloud (local disk was full).' : '✅ Battle sprite saved.');
+    } else {
+      let usedMsg = '';
+      try {
+        if (navigator.storage && navigator.storage.estimate) {
+          const est = await navigator.storage.estimate();
+          usedMsg = ' — ~' + Math.round((est.usage || 0) / 1048576) + 'MB of ~' + Math.round((est.quota || 0) / 1048576) + 'MB used';
+        }
+      } catch (e) {}
+      const hint = (typeof Profile !== 'undefined' && Profile.cloud && Profile.cloud.signedIn)
+        ? ' Run “🎞 Move sprite animations to cloud” to free space, then retry.'
+        : ' Sign in so it can save to the cloud, or free device storage, then retry.';
+      showToast('🛑 Could NOT save the battle sprite — device storage is full' + usedMsg + '.' + hint, 14000);
+    }
     captureAndRender();
   };
 
@@ -80084,6 +80182,19 @@ function bindCardEditor() {
         ? '🎮 Custom art OFF (safe placeholder mode) — reloading…'
         : '🎮 Custom art ON — reloading. If the game gets slow or unstable, open the Forge and turn this back OFF.', 4500);
       setTimeout(() => { try { location.reload(); } catch (e2) {} }, 1000);
+    };
+  }
+  // 🔍 Storage diagnostic — shows the real reason a save is or isn't working.
+  const diagBtn = document.getElementById('btn-storage-diag');
+  if (diagBtn) {
+    diagBtn.onclick = async (e) => {
+      e.preventDefault();
+      diagBtn.disabled = true; const _t = diagBtn.textContent; diagBtn.textContent = '🔍 Checking…';
+      let report = 'Diagnostic unavailable.';
+      try { if (typeof _diagnoseSpriteSave === 'function') report = await _diagnoseSpriteSave(); } catch (err) { report = 'Error: ' + ((err && err.message) || err); }
+      try { console.log('=== SAVE DIAGNOSTIC ===\n' + report); } catch (e2) {}
+      try { alert('SAVE DIAGNOSTIC\n\n' + report); } catch (e2) { showToast(report.replace(/\n/g, ' · '), 15000); }
+      try { diagBtn.disabled = false; diagBtn.textContent = _t; } catch (e2) {}
     };
   }
 

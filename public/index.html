@@ -72889,7 +72889,7 @@ function renderDeckChooserModal() {
       <div class="ds-modal" style="max-width:480px;padding:24px">
         <button class="modal-close" id="dchooser-close" aria-label="Close">×</button>
         <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
-          <div style="width:56px;height:56px;flex:0 0 56px">${renderIcon('h_' + h.id, h.icon, 'lg')}</div>
+          <div style="width:56px;height:56px;flex:0 0 56px">${_heroPortraitHtml(h)}</div>
           <div>
             <div style="font-size:1.25rem;font-weight:700;color:#f6d97a">${escapeHtml(h.name)}</div>
             <div style="font-size:0.85rem;color:#bfae87">You have ${decks.length} decks for this hero — pick one to take into battle.</div>
@@ -73811,6 +73811,30 @@ function renderStarterPick() {
   if (spBack) spBack.onclick = () => { App.screen = 'title'; App.titleHub = 'forge'; if (typeof render === 'function') render(); };
 }
 
+// 🦸 Hero portrait for the deck-select tiles. The old direct renderIcon('h_'+id)
+// showed the emoji (unicorn) for any hero whose sprite wasn't resident in memory
+// (placeholder mode) — so heroes flickered between art and unicorn depending on
+// what a recent battle happened to load. This resolves a consistent visual:
+//   1) authored card art (cloud URL — light, always available once published)
+//   2) the custom battle sprite via the bounded animator (force-loads on demand)
+//   3) the emoji icon (only when the hero truly has no art/sprite).
+function _heroPortraitHtml(h) {
+  if (!h || !h.id) return '<span style="font-size:2rem">🦸</span>';
+  try {
+    if (typeof getCardArt === 'function') {
+      const art = getCardArt(h.id) || getCardArt('h_' + h.id);
+      if (art && typeof art === 'string') return '<img src="' + art + '" alt="" class="sprite-img is-on" style="width:100%;height:100%;object-fit:contain" decoding="async" loading="lazy">';
+    }
+  } catch (e) {}
+  try {
+    if (typeof _boardSpriteHtml === 'function') {
+      const bs = _boardSpriteHtml({ heroId: h.id, icon: h.icon });
+      if (bs) { try { if (typeof _ensureBoardSpriteAnim === 'function') _ensureBoardSpriteAnim(); } catch (e) {} return bs; }
+    }
+  } catch (e) {}
+  return renderIcon('h_' + h.id, h.icon, 'lg');
+}
+
 function renderDeckSelect() {
   const customNote = Forge.customCards.length > 0
     ? `<div class="placement-hint" style="max-width:600px;margin:0 auto 1.5rem">You have <strong>${Forge.customCards.length} custom card${Forge.customCards.length > 1 ? 's' : ''}</strong> from the Forge.</div>`
@@ -73829,7 +73853,7 @@ function renderDeckSelect() {
     return `
       <div class="hero-card ds-hero-card ds-compact ${sel}" data-deck-tile="${escapeHtml(tileKey)}" role="button" tabindex="0" title="Click for full preview">
         <div class="lvl-tag">Lv ${prof.level}</div>
-        <div class="hero-icon">${renderIcon('h_' + h.id, h.icon, 'lg')}</div>
+        <div class="hero-icon">${_heroPortraitHtml(h)}</div>
         <div class="hero-name">${escapeHtml(h.name)} ${elementBadge(getElementsOf(h), 'sm')}</div>
         <div class="ds-compact-deck-line">
           <span class="ds-compact-deck-name">${escapeHtml(deckName)}</span>
@@ -73906,7 +73930,7 @@ function renderDeckSelect() {
       <div class="hero-card ds-hero-card ds-compact ${sel}" data-hero-tile="${escapeHtml(h.id)}" role="button" tabindex="0" title="Click to choose this hero">
         ${decks.length > 1 ? `<span class="lvl-tag" style="left:8px;right:auto;background:rgba(212,175,55,0.85);color:#1a1206">${decks.length} decks</span>` : ''}
         <div class="lvl-tag">Lv ${prof.level}</div>
-        <div class="hero-icon">${renderIcon('h_' + h.id, h.icon, 'lg')}</div>
+        <div class="hero-icon">${_heroPortraitHtml(h)}</div>
         <div class="hero-name">${escapeHtml(h.name)} ${elementBadge(getElementsOf(h), 'sm')}</div>
         <div class="ds-compact-deck-line">
           <span class="ds-compact-deck-name">${deckLabel}</span>

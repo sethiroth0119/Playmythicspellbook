@@ -68056,10 +68056,11 @@ function _ensureBoardSpriteAnim() {
   if (_boardSpriteTimer) return;
   try { _boardSpriteTimer = setInterval(_tickBoardSprites, 90); } catch (e) {}
 }
+function _stopBoardSpriteAnim() { if (_boardSpriteTimer) { try { clearInterval(_boardSpriteTimer); } catch (e) {} _boardSpriteTimer = null; } }
 function _tickBoardSprites() {
   let els;
   try { els = document.querySelectorAll('img.bsprite[data-bsid]'); } catch (e) { return; }
-  if (!els || !els.length) return;
+  if (!els || !els.length) { _stopBoardSpriteAnim(); return; } // off the board — stop the timer
   _boardSpriteTick++;
   for (let n = 0; n < els.length; n++) {
     const el = els[n];
@@ -68077,7 +68078,12 @@ function _tickBoardSprites() {
       continue;
     }
     const i = frames.length > 1 ? (_boardSpriteTick % frames.length) : 0;
-    let next; try { next = _imgSrc(frames[i]); } catch (e) { next = frames[i]; }
+    // ⚠ Use the RAW frame URL — do NOT route through _imgSrc(): its _imgUrlCache
+    // keeps ONE persistent blob URL per unique frame forever, so cycling a big HD
+    // library's frames accumulates hundreds of MB of native blob memory that never
+    // frees (the title-screen 269MB crash). Single-img src-swap on the data: URL
+    // decodes ~1 frame at a time and the browser frees the previous one.
+    const next = frames[i];
     if (next && el.getAttribute('src') !== next) el.src = next;
   }
 }
@@ -68098,7 +68104,7 @@ function _boardSpriteHtml(occupant) {
     for (const id of cand) { if (id && (resident(id) || indexed(id))) { useId = id; break; } }
     if (!useId) return null;
     let first = null;
-    try { const fr = getSpriteFrames(useId, 'idle') || getSpriteFrames(useId, 'attack'); if (fr && fr.length) first = _imgSrc(fr[0]); } catch (e) {}
+    try { const fr = getSpriteFrames(useId, 'idle') || getSpriteFrames(useId, 'attack'); if (fr && fr.length) first = fr[0]; } catch (e) {}
     return '<img class="bsprite" data-bsid="' + useId + '" data-bsanim="idle" src="' + (first || _PIXEL) + '" alt="" draggable="false" decoding="async" style="width:100%;height:100%;object-fit:contain;image-rendering:auto">';
   } catch (e) { return null; }
 }

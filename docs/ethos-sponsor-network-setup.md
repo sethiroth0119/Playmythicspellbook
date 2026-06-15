@@ -18,11 +18,19 @@ In the Supabase SQL editor, run:
 
 ```
 supabase/migrations/20260614010000_ethos_sponsor_network.sql
+supabase/migrations/20260614020000_tw_node_owners.sql
 ```
 
-Creates `tw_node_ads`, `tw_ad_sellers`, `tw_ad_orders`, the `tw_ad_track(ad_id,
-kind)` RPC, and RLS. Idempotent. Until this runs, the SPONSOR tab shows "ad space
-available" and saving an ad will toast a cloud error.
+The first creates `tw_node_ads`, `tw_ad_sellers`, `tw_ad_orders`, the
+`tw_ad_track(ad_id, kind)` RPC, and RLS. Until it runs, the SPONSOR tab shows "ad
+space available" and saving an ad will toast a cloud error.
+
+The second creates `tw_node_owners` — the **admin → player node-ownership** map.
+An admin opens a District Node's **ADMIN tab → NODE OWNERSHIP**, searches a
+player by settlement name, and assigns them. That player (plus studio admins) is
+then the only one who can publish sponsor ads on the node. Until it runs, only
+admins can publish, and assigning an owner will toast a cloud error. Both
+migrations are idempotent / safe to re-run.
 
 ## 2. Stripe — keys & secrets
 

@@ -20403,6 +20403,16 @@
   .tw-admin-del-btn:hover { background:rgba(184,78,44,0.35); }
   .tw-new-node-btn { background:rgba(108,212,255,0.10); border:1px solid rgba(108,212,255,0.28); color:#6cd4ff; padding:3px 10px; border-radius:3px; cursor:pointer; font-size:0.60rem; letter-spacing:0.10em; font-family:'JetBrains Mono',monospace; }
   .tw-new-node-btn:hover { background:rgba(108,212,255,0.22); }
+  /* 👑 Node → player ownership (admin) */
+  .tw-owner-box { padding:0 0.75rem 0.5rem; }
+  .tw-owner-cur { font-size:0.66rem; color:#8a96a3; margin-bottom:7px; display:flex; align-items:center; gap:8px; }
+  .tw-owner-cur b { color:#ffe9a8; }
+  .tw-owner-box .tw-admin-input { width:100%; box-sizing:border-box; }
+  .tw-owner-results { display:flex; flex-direction:column; gap:3px; margin-top:6px; max-height:190px; overflow-y:auto; }
+  .tw-owner-result { text-align:left; background:rgba(20,25,32,0.85); border:1px solid rgba(35,44,54,0.9); color:#cbd6e6; font-size:0.7rem; padding:5px 9px; border-radius:4px; cursor:pointer; font-family:'JetBrains Mono',monospace; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .tw-owner-result:hover { border-color:#c89428; color:#ffe9a8; background:rgba(200,148,40,0.10); }
+  .tw-owner-result .tw-owner-sub { color:#5b6772; font-size:0.56rem; white-space:nowrap; }
+  .tw-owner-hint { font-size:0.55rem; color:#5b6772; margin-top:6px; line-height:1.4; }
   .tw-admin-lit-btn { flex:0 0 auto; padding:3px 10px; border-radius:3px; cursor:pointer; font-size:0.68rem; font-family:'JetBrains Mono',monospace; background:rgba(60,60,60,0.3); border:1px solid rgba(90,90,90,0.5); color:#7a8a9a; transition:all 0.15s; }
   .tw-admin-lit-btn:hover { background:rgba(255,207,90,0.12); border-color:rgba(255,207,90,0.4); color:#ffcf5a; }
   .tw-admin-lit-btn.is-lit { background:rgba(255,207,90,0.18); border-color:rgba(255,207,90,0.6); color:#ffe880; }
@@ -144624,6 +144634,54 @@ async function tw_cloudFetchAllCampRegs() {
     return data;
   } catch (e) { return null; }
 }
+// ── 👑 Node → Player ownership (admin assigns; owner can publish ads) ─────────
+async function tw_cloudFetchNodeOwners() {
+  try {
+    if (!Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.from('tw_node_owners').select('node_id, user_id, display_name').limit(1000);
+    if (error) return null;
+    const byNode = {};
+    (data || []).forEach(r => { if (r.node_id) byNode[r.node_id] = { user_id: r.user_id, display_name: r.display_name }; });
+    App._twNodeOwners = { at: Date.now(), byNode };
+    if (App.screen === 'territoryWars') { try { render(); } catch (e) {} }
+    return data;
+  } catch (e) { return null; }
+}
+async function tw_cloudSetNodeOwner(nodeId, userId, displayName) {
+  try {
+    if (!nodeId || !userId) return null;
+    if (!Cloud || !Cloud.ready || !Cloud.client) { showToast('☁ Sign in to assign node owners.'); return null; }
+    const me = (Profile.cloud && Profile.cloud.userId) || null;
+    const { error } = await Cloud.client.from('tw_node_owners').upsert({ node_id: nodeId, user_id: userId, display_name: displayName || null, assigned_by: me, updated_at: new Date().toISOString() });
+    if (error) { showToast('⚠ Assign failed: ' + (error.message || 'cloud error')); return null; }
+    try { delete App._twNodeOwners; } catch (e) {}
+    return true;
+  } catch (e) { return null; }
+}
+async function tw_cloudClearNodeOwner(nodeId) {
+  try {
+    if (!nodeId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { error } = await Cloud.client.from('tw_node_owners').delete().eq('node_id', nodeId);
+    if (error) { showToast('⚠ Remove failed: ' + (error.message || 'cloud error')); return null; }
+    try { delete App._twNodeOwners; } catch (e) {}
+    return true;
+  } catch (e) { return null; }
+}
+// Search the player directory (settlements registered to nodes) by name.
+async function tw_cloudSearchPlayers(query) {
+  try {
+    const q = String(query || '').trim().replace(/[%_,]/g, '');
+    if (!q || !Cloud || !Cloud.ready || !Cloud.client) return [];
+    const { data, error } = await Cloud.client.from('tw_camp_registrations')
+      .select('user_id, camp_name, node_id').ilike('camp_name', '%' + q + '%').limit(25);
+    if (error) return [];
+    const seen = new Set(), out = [];
+    (data || []).forEach(r => { if (r.user_id && !seen.has(r.user_id)) { seen.add(r.user_id); out.push({ user_id: r.user_id, name: r.camp_name || 'Settlement', node_id: r.node_id || '' }); } });
+    return out;
+  } catch (e) { return []; }
+}
+function _twNodeOwnerUser(nodeId) { try { return (App._twNodeOwners && App._twNodeOwners.byNode && App._twNodeOwners.byNode[nodeId]) || null; } catch (e) { return null; } }
+function _twIsNodePlayerOwner(nodeId) { try { const o = _twNodeOwnerUser(nodeId); const me = (Profile.cloud && Profile.cloud.userId) || null; return !!(o && me && o.user_id && o.user_id === me); } catch (e) { return false; } }
 function _reconNetworkBodyHtml() {
   try {
     if ((!App._twAllCamps || (Date.now() - App._twAllCamps.at) > 45000) && !App._twAllCampsFetching && typeof tw_cloudFetchAllCampRegs === 'function') {
@@ -144804,7 +144862,14 @@ const ESN_CTA_LABELS = ['Visit Sponsor', 'Learn More', 'Shop Now', 'Join Campaig
 function _esnAdmin() { try { return (typeof isAdmin === 'function') && isAdmin(); } catch (e) { return false; } }
 function _esnMyCorpId() { try { const c = _twPlayerCorp(); return c ? c.id : null; } catch (e) { return null; } }
 function _esnNodeOwnerCorp(nodeId) { try { const o = _twState().ownedNodes[nodeId]; return (o && o.ownerCorpId) || null; } catch (e) { return null; } }
-function _esnCanManageNode(nodeId) { const oc = _esnNodeOwnerCorp(nodeId); const mine = _esnMyCorpId(); return _esnAdmin() || !!(oc && mine && oc === mine); }
+function _esnCanManageNode(nodeId) {
+  if (_esnAdmin()) return true;
+  // admin-assigned player owner of this node
+  if (typeof _twIsNodePlayerOwner === 'function' && _twIsNodePlayerOwner(nodeId)) return true;
+  // legacy corp ownership (captured via gameplay)
+  const oc = _esnNodeOwnerCorp(nodeId); const mine = _esnMyCorpId();
+  return !!(oc && mine && oc === mine);
+}
 function _esnSafeUrl(u) { try { const x = new URL(String(u)); return (x.protocol === 'http:' || x.protocol === 'https:') ? x.href : ''; } catch (e) { return ''; } }
 // Like _esnSafeUrl but also accepts embedded (uploaded) base64 image data URLs —
 // used ONLY for ad media (never the external target link).
@@ -146674,10 +146739,27 @@ function renderTerritoryWars() {
     // The live sponsor renders on the FRONT of the modal, above the tabs.
     const frontBillboard = (typeof _esnBillboardHtml === 'function') ? _esnBillboardHtml(selNode) : '';
 
+    // 👑 Keep the node→player ownership map fresh (drives ad-publish permission).
+    try {
+      if ((!App._twNodeOwners || (Date.now() - App._twNodeOwners.at) > 60000) && !App._twNodeOwnersFetching && typeof tw_cloudFetchNodeOwners === 'function') {
+        App._twNodeOwnersFetching = true;
+        Promise.resolve(tw_cloudFetchNodeOwners()).catch(() => {}).then(() => { App._twNodeOwnersFetching = false; });
+      }
+    } catch (e) {}
+    const _nodeOwner = (typeof _twNodeOwnerUser === 'function') ? _twNodeOwnerUser(selNode.id) : null;
+    const _nodeOwnerName = _nodeOwner ? (_nodeOwner.display_name || 'Assigned player') : '';
+
     // Admin tab — map-editing controls are admin-only (players get the map +
     // attack/capture, never the New Node / delete / publish tools).
     const _isAdm = (typeof isAdmin === 'function') && isAdmin();
     const adminHtml = _isAdm ? `
+      <div class="tw-nd-section-hdr">— NODE OWNERSHIP (PLAYER)</div>
+      <div class="tw-owner-box">
+        <div class="tw-owner-cur">Owner: <b>${_nodeOwnerName ? escapeHtml(_nodeOwnerName) : 'Unclaimed'}</b>${_nodeOwnerName ? `<button class="btn-mini btn-danger" id="tw-owner-clear">Remove</button>` : ''}</div>
+        <input class="tw-admin-input" id="tw-owner-search" placeholder="🔍 Search players by settlement name…" autocomplete="off">
+        <div id="tw-owner-results" class="tw-owner-results"></div>
+        <div class="tw-owner-hint">Assigning a player gives them ownership of this node — they (and admins) can publish sponsor ads on it.</div>
+      </div>
       <div class="tw-nd-section-hdr">— NODE IDENTITY</div>
       <div class="tw-admin-field-row">
         <label class="tw-admin-label">Name</label>
@@ -146998,6 +147080,46 @@ function renderTerritoryWars() {
         showToast('✓ Every node already has roads.', 2500);
       }
       render();
+    };
+  }
+
+  // ── 👑 Admin: assign a District Node to a PLAYER (search + click) ──
+  const _ownerSearchEl = document.getElementById('tw-owner-search');
+  if (_ownerSearchEl) {
+    const _selId = App._twSelectedNode;
+    const _selName = (() => { try { return (_twForge().nodes.find(n => n.id === _selId) || {}).name || _selId; } catch (e) { return _selId; } })();
+    _ownerSearchEl.oninput = () => {
+      const q = _ownerSearchEl.value.trim();
+      clearTimeout(App._twOwnerSearchT);
+      const box = document.getElementById('tw-owner-results');
+      if (!q) { if (box) box.innerHTML = ''; return; }
+      App._twOwnerSearchT = setTimeout(() => {
+        if (box) box.innerHTML = '<div class="tw-nd-empty" style="padding:0.4rem 0.2rem">Searching…</div>';
+        Promise.resolve(tw_cloudSearchPlayers(q)).then(rows => {
+          const box2 = document.getElementById('tw-owner-results'); if (!box2) return;
+          if (!rows || !rows.length) { box2.innerHTML = '<div class="tw-nd-empty" style="padding:0.4rem 0.2rem">No players found. Players appear here once they register a settlement to a node.</div>'; return; }
+          box2.innerHTML = rows.map(r => `<button class="tw-owner-result" data-uid="${escapeHtml(r.user_id)}" data-name="${escapeHtml(r.name)}"><span>${escapeHtml(r.name)}</span><span class="tw-owner-sub">${escapeHtml(r.node_id || '—')}</span></button>`).join('');
+          box2.querySelectorAll('.tw-owner-result').forEach(b => b.onclick = () => {
+            const uid = b.dataset.uid, name = b.dataset.name;
+            Promise.resolve(tw_cloudSetNodeOwner(_selId, uid, name)).then(ok => {
+              if (ok) {
+                showToast('✅ ' + name + ' now owns ' + _selName + ' — they can publish sponsor ads on it.', 4200);
+                try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {}
+                render();
+              }
+            });
+          });
+        });
+      }, 280);
+    };
+  }
+  const _ownerClearEl = document.getElementById('tw-owner-clear');
+  if (_ownerClearEl) {
+    _ownerClearEl.onclick = () => {
+      const _selId = App._twSelectedNode;
+      Promise.resolve(tw_cloudClearNodeOwner(_selId)).then(ok => {
+        if (ok) { showToast('Owner removed from this node.', 2400); try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {} render(); }
+      });
     };
   }
 

@@ -49829,23 +49829,34 @@ function _lazyScheduleRender() {
 }
 
 // Stream one sprite's frames in from its own IDB record, then repaint.
-function _lazyLoadSprite(id) {
-  if (!_lazyArtOn || !id) return;
-  if (_sprPending.has(id) || _sprMissing.has(id)) return;
-  if (Forge.sprites && Forge.sprites[id]) { _lazyTouch('spr', id); return; }
-  if (Forge._sprIds && !Forge._sprIds.has(id)) { _sprMissing.add(id); return; }
+// `force` loads a SINGLE sprite even in placeholder mode (no bulk decode) — used
+// by the Sprite Atelier so freshly-saved frames show when you reopen the subject.
+// Without this, big-library placeholder mode never re-hydrated Forge.sprites, so
+// every saved sprite looked GONE on reload even though it was safely on disk.
+// Returns a promise resolving true once the record is hydrated, so the Atelier
+// can await it and re-render the editor.
+function _lazyLoadSprite(id, force) {
+  if ((!_lazyArtOn && !force) || !id) return Promise.resolve(false);
+  if (_sprPending.has(id)) return Promise.resolve(false);
+  if (!force && _sprMissing.has(id)) return Promise.resolve(false);
+  if (Forge.sprites && Forge.sprites[id] && Object.keys(Forge.sprites[id]).length) { _lazyTouch('spr', id); return Promise.resolve(false); }
+  if (Forge._sprIds && !Forge._sprIds.has(id)) { _sprMissing.add(id); return Promise.resolve(false); }
   _sprPending.add(id);
-  (async function () {
+  return (async function () {
+    let loaded = false;
     try {
       const v = await idbGet('spr:' + id);
       if (v && typeof v === 'object') {
         if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
         Forge.sprites[id] = _normalizeSpriteBlobs(v);
+        _sprMissing.delete(id);
         _lazyTouch('spr', id);
-        _lazyScheduleRender();
+        loaded = true;
+        if (!force) _lazyScheduleRender();
       } else { _sprMissing.add(id); }
     } catch (e) { /* transient — a later render retries */ }
     finally { _sprPending.delete(id); }
+    return loaded;
   })();
 }
 
@@ -84359,13 +84370,20 @@ function renderSprites() {
       ${items.map(s => {
         const set = Forge.sprites[s.id];
         const totalFrames = set ? Object.values(set).reduce((acc, arr) => acc + (arr ? arr.length : 0), 0) : 0;
+        // In big-library placeholder mode the frames aren't held in memory, so
+        // totalFrames is 0 even though they're safely on disk — show a "saved"
+        // badge from the on-disk id index so the admin knows nothing was lost.
+        const onDisk = !!(Forge._sprIds && Forge._sprIds.has(s.id));
+        const badge = totalFrames > 0
+          ? ` · ${totalFrames} frame${totalFrames > 1 ? 's' : ''}`
+          : (onDisk ? ' · 💾 saved' : '');
         const isActive = App.spriteSubjectId === s.id;
         return `
           <button class="creator-item ${isActive ? 'active' : ''}" data-subject="${s.id}">
             <div class="creator-item-icon">${_spriteListThumb(s.id, s.icon)}</div>
             <div class="creator-item-meta">
               <div class="creator-item-name">${escapeHtml(s.name)}</div>
-              <div class="creator-item-sub">${s.sub}${totalFrames > 0 ? ` · ${totalFrames} frame${totalFrames > 1 ? 's' : ''}` : ''}</div>
+              <div class="creator-item-sub">${s.sub}${badge}</div>
             </div>
           </button>
         `;
@@ -84399,12 +84417,23 @@ function renderSprites() {
   `;
 
   document.getElementById('btn-sprites-back').onclick = () => { App.screen = 'title'; render(); };
-  document.querySelectorAll('[data-subject]').forEach(el => el.onclick = () => {
-    App.spriteSubjectId = el.dataset.subject;
+  document.querySelectorAll('[data-subject]').forEach(el => el.onclick = async () => {
+    const sid = el.dataset.subject;
+    App.spriteSubjectId = sid;
     App.spriteActiveAnim = 'idle';
+    // 🔑 Hydrate this subject's saved frames from IDB even in placeholder mode,
+    // so a sprite saved on a previous session actually shows up when reopened.
+    try { await _lazyLoadSprite(sid, true); } catch (e) {}
     // Soft update preserves scroll — full re-render snapped to top.
     _softUpdateSpriteEditor();
   });
+  // If a subject was already selected (re-render / returning to the screen),
+  // make sure its saved frames are pulled back in from disk too.
+  if (App.spriteSubjectId) {
+    Promise.resolve(_lazyLoadSprite(App.spriteSubjectId, true))
+      .then(loaded => { if (loaded) { try { _softUpdateSpriteEditor(); } catch (e) {} } })
+      .catch(() => {});
+  }
   attachSpriteEditorHandlers();
   // 📜 Restore scroll position now that the DOM is painted. Using two
   // rAFs guarantees the browser has laid out the new content before
@@ -84744,6 +84773,19 @@ async function uploadSpriteFiles(files) {
     }
   }
   saveForge();
+  // 🔐 Belt-and-suspenders for big-library mode: persist THIS subject's record
+  // immediately to its own per-key store + index, so the upload survives a
+  // refresh regardless of saveForge's branch conditions, and clear any stale
+  // "missing" marker so the force-load reads the fresh record.
+  try {
+    if (_bigLibrarySkip && typeof idbSet === 'function' && Forge.sprites[id]) {
+      idbSet('spr:' + id, Forge.sprites[id]);
+      if (!Forge._sprIds) Forge._sprIds = new Set();
+      if (!Forge._sprIds.has(id)) Forge._sprIds.add(id);
+      idbSet('forge_sprites_idx', Array.from(Forge._sprIds));
+    }
+  } catch (e) {}
+  try { if (typeof _sprMissing !== 'undefined' && _sprMissing) _sprMissing.delete(id); } catch (e) {}
   if (failCount > 0) showToast(`⚠ ${okCount} added, ${failCount} failed`);
   else showToast(`✓ ${okCount} frame${okCount === 1 ? '' : 's'} added`);
   // 📦 HD save-size guard — 512px frames are ~10–20× a 128px one, so warn once

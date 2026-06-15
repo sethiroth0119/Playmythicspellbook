@@ -49911,7 +49911,11 @@ async function _ensureBigLibFlag() {
 // bounded no matter how huge the library is. This is what lets the game show
 // real art for a 15k-asset library without the out-of-memory crash.
 let _lazyArtOn = false;
-const _LAZY_SPR_CAP = 140;       // resident animated sprites (each = N frames)
+const _LAZY_SPR_CAP = 48;        // resident animated sprites (each = N frames). Lowered
+                                 // from 140: a 100-305 frame HD sprite is heavy, so a
+                                 // high cap held a lot of base64 + (on eviction) revokes
+                                 // its blob URLs to free native memory. 48 is well above
+                                 // any single screen's visible sprite count → no flicker.
 const _LAZY_CAR_CAP = 500;       // resident card-art images (single image each)
 const _sprLRU = [];              // sprite ids, oldest → newest
 const _carLRU = [];              // cardArt ids, oldest → newest
@@ -68272,12 +68276,31 @@ function unitBoardVisual(occupant) {
 // data URL converts once; the Map key is the SAME string already in Forge, so it
 // adds no real heap. Non-data URLs (http / blob / relative) pass through.
 const _imgUrlCache = (typeof Map !== 'undefined') ? new Map() : null;
+// 🧯 BOUNDED data:→blob: cache. Every data: URL routed through here used to mint a
+// blob: URL that was cached FOREVER (never revoked) — each one pins its decoded
+// bitmap in native/GPU memory for the page lifetime, the single clearest unbounded
+// memory leak. Now it's an LRU: the oldest blob URLs are revoked + dropped once the
+// cache exceeds the cap (kept well above the max simultaneously-visible art).
+const _imgUrlOrder = [];
+const _IMG_URL_CACHE_MAX = 200;
 function _imgSrc(url) {
   try {
     if (typeof url !== 'string' || url.slice(0, 5) !== 'data:') return url;
-    if (_imgUrlCache && _imgUrlCache.has(url)) return _imgUrlCache.get(url);
+    if (_imgUrlCache && _imgUrlCache.has(url)) {
+      const i = _imgUrlOrder.indexOf(url); if (i !== -1) _imgUrlOrder.splice(i, 1); _imgUrlOrder.push(url);
+      return _imgUrlCache.get(url);
+    }
     const b = (typeof _toBlobUrl === 'function') ? _toBlobUrl(url) : url;
-    if (_imgUrlCache && b && b !== url) _imgUrlCache.set(url, b);
+    if (_imgUrlCache && b && b !== url) {
+      _imgUrlCache.set(url, b);
+      _imgUrlOrder.push(url);
+      while (_imgUrlOrder.length > _IMG_URL_CACHE_MAX) {
+        const old = _imgUrlOrder.shift();
+        const v = _imgUrlCache.get(old);
+        if (typeof v === 'string' && v.slice(0, 5) === 'blob:') { try { URL.revokeObjectURL(v); } catch (e) {} }
+        _imgUrlCache.delete(old);
+      }
+    }
     return b;
   } catch (e) { return url; }
 }
@@ -68353,10 +68376,20 @@ const DEFAULT_SPRITE_FRAME_MS = 62; // ~16 fps default (was 80ms/12.5fps). Per-a
 // images stay in the browser cache + bitmap memory, so subsequent `el.src =`
 // swaps are instant (no decode lag → no flicker).
 const _spritePreloadCache = new Set();
+const _PRELOAD_CACHE_MAX = 240;   // 🧯 bound how many warmed frame decodes we hold
 function preloadSpriteFrames(frames) {
   if (!frames || frames.length <= 1) return;
   for (const url of frames) {
     if (!url || _spritePreloadCache.has(url)) continue;
+    // Evict oldest warmed frames so this never decodes the WHOLE library and pins
+    // thousands of 512px bitmaps in native memory forever (a Set kept insertion
+    // order, so values().next() is the oldest). A re-decode later is just a one-
+    // frame hitch, never a crash or data loss.
+    while (_spritePreloadCache.size >= _PRELOAD_CACHE_MAX) {
+      const it = _spritePreloadCache.values().next();
+      if (it.done) break;
+      _spritePreloadCache.delete(it.value);
+    }
     _spritePreloadCache.add(url);
     const img = new Image();
     img.decoding = 'async';
@@ -91321,7 +91354,7 @@ function renderHandCard(c, opts) {
     const fullCardClass = `hand-card has-full-art type-${c.type} ${isSel ? 'selected' : ''} ${sizeClass}`;
     return `
       <button class="${fullCardClass}" data-card="${c.instanceId}" ${enabled ? '' : 'disabled'}>
-        <img class="hand-card-full-img" src="${escapeHtml(_imgSrc(cardArtUrl))}" alt="${escapeHtml(c.name)}">
+        <img class="hand-card-full-img" src="${escapeHtml(_imgSrc(cardArtUrl))}" alt="${escapeHtml(c.name)}" loading="lazy" decoding="async">
         ${levelBadge}
         <div class="hcfa-name"><span class="hcfa-name-inner">${escapeHtml(c.name)}</span></div>
         <div class="hcfa-plate">
@@ -126865,7 +126898,7 @@ function renderCollectionCardModal(active) {
   // (getCardArt) → card.img/image → fall back to a framed sprite/emoji tile.
   const _art = (typeof getCardArt === 'function') ? (getCardArt(c.id) || c.img || c.image || null) : (c.img || c.image || null);
   const artPanel = _art
-    ? `<img src="${String(_art).replace(/"/g, '&quot;')}" alt="${escapeHtml(c.name || '')}" style="width:100%;border-radius:10px;border:2px solid ${r.color};box-shadow:0 8px 26px rgba(0,0,0,0.6);object-fit:contain;background:rgba(8,4,20,0.45)">`
+    ? `<img src="${String(_art).replace(/"/g, '&quot;')}" alt="${escapeHtml(c.name || '')}" loading="lazy" decoding="async" style="width:100%;border-radius:10px;border:2px solid ${r.color};box-shadow:0 8px 26px rgba(0,0,0,0.6);object-fit:contain;background:rgba(8,4,20,0.45)">`
     : `<div style="width:100%;aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;font-size:4.4rem;border:2px solid ${r.color};border-radius:10px;background:radial-gradient(ellipse at center,${r.color}22,rgba(8,4,20,0.7))">${(typeof renderIcon === 'function') ? renderIcon(spriteKey, c.icon, 'lg') : (c.icon || '🃏')}</div>`;
 
   return `

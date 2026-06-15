@@ -67978,6 +67978,11 @@ function renderIcon(spriteId, fallbackEmoji, size, animOverride, opts) {
     frames = getSpriteFrames(spriteId, 'idle');
     chosenAnim = 'idle';
   }
+  // 🧯 Frame cap — callers that render OFF-board previews (the Sprite Atelier)
+  // pass opts.maxFrames so a single subject with a huge animation (e.g. 100
+  // HD frames) can't decode its entire reel into native/GPU memory at once.
+  // The saved sprite is untouched; this only bounds what gets DECODED for show.
+  if (opts.maxFrames && frames && frames.length > opts.maxFrames) frames = frames.slice(0, opts.maxFrames);
   if (frames && frames.length > 0) {
     const sizeStyle = isFill
       ? 'width:100%;height:100%;'
@@ -84281,6 +84286,29 @@ function bindForgeLoadouts() {
     };
   });
 }
+// 🖼 Static, single-frame, lazily-decoded list icon for the Sprite Atelier.
+// The left list must NEVER animate every subject: dozens of animated multi-frame
+// stacks at full resolution is exactly the native/GPU-memory crash the admin hit.
+// This shows ONE frame (a streamed thumbnail when streaming, else the first idle
+// frame), decoded lazily, with no data-sprite-id so the sprite ticker ignores it.
+function _spriteListThumb(spriteId, fallbackEmoji) {
+  const emoji = `<span style="font-size:30px;line-height:1">${fallbackEmoji || '?'}</span>`;
+  try {
+    // Streaming mode already builds tiny thumbnails — use them, never decode full frames.
+    if (_lazyArtOn && _decodeBudgetOn) {
+      const th = (typeof getThumb === 'function') ? getThumb(spriteId) : null;
+      return th ? `<img class="sprite-list-thumb" src="${th}" alt="" draggable="false" decoding="async" loading="lazy" style="width:40px;height:40px;object-fit:contain">` : emoji;
+    }
+    let frames = getSpriteFrames(spriteId, 'idle');
+    if (!frames || !frames.length) {
+      const set = Forge.sprites && Forge.sprites[spriteId];
+      if (set) { for (const k in set) { if (Array.isArray(set[k]) && set[k].filter(Boolean).length) { frames = getSpriteFrames(spriteId, k); break; } } }
+    }
+    if (frames && frames.length) return `<img class="sprite-list-thumb" src="${_imgSrc(frames[0])}" alt="" draggable="false" decoding="async" loading="lazy" style="width:40px;height:40px;object-fit:contain">`;
+  } catch (e) {}
+  return emoji;
+}
+
 function renderSprites() {
   // 👑 Admin gate — non-admins get redirected to the title with a toast.
   if (typeof isAdmin === 'function' && !isAdmin()) {
@@ -84334,7 +84362,7 @@ function renderSprites() {
         const isActive = App.spriteSubjectId === s.id;
         return `
           <button class="creator-item ${isActive ? 'active' : ''}" data-subject="${s.id}">
-            <div class="creator-item-icon">${renderIcon(s.id, s.icon, 'md')}</div>
+            <div class="creator-item-icon">${_spriteListThumb(s.id, s.icon)}</div>
             <div class="creator-item-meta">
               <div class="creator-item-name">${escapeHtml(s.name)}</div>
               <div class="creator-item-sub">${s.sub}${totalFrames > 0 ? ` · ${totalFrames} frame${totalFrames > 1 ? 's' : ''}` : ''}</div>
@@ -84425,11 +84453,14 @@ function renderSpriteEditor() {
   const activeAnim = App.spriteActiveAnim;
   const frames = set[activeAnim] || [];
 
+  // 🧯 content-visibility:auto + loading=lazy → off-screen frame thumbnails are
+  // NOT decoded, so a 100-frame subject costs the memory of only the visible row
+  // or two instead of decoding the whole reel at once (the Atelier crash).
   const frameThumbs = frames.map((src, i) => `
-    <div class="frame-thumb">
+    <div class="frame-thumb" style="content-visibility:auto;contain-intrinsic-size:84px 96px">
       <span class="frame-num">${i + 1}</span>
       <button class="remove-btn" data-remove-frame="${i}" title="Remove">✕</button>
-      <img src="${src}" alt="frame ${i + 1}">
+      <img src="${src}" alt="frame ${i + 1}" loading="lazy" decoding="async">
     </div>
   `).join('');
 
@@ -84457,7 +84488,7 @@ function renderSpriteEditor() {
     <div class="editor-section-title">${escapeHtml(displayName)}</div>
 
     <div class="preview-anim-row">
-      <div class="preview-box">${renderIcon(id, fallbackEmoji, 'xl', activeAnim)}</div>
+      <div class="preview-box">${renderIcon(id, fallbackEmoji, 'xl', activeAnim, { maxFrames: 48 })}</div>
       <div class="preview-meta">
         <h4>Live Preview <span style="opacity:0.55;font-weight:400;font-size:0.8em">· ${escapeHtml(activeAnim)}</span></h4>
         <p>${previewBlurb}</p>

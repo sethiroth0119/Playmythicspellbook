@@ -31533,23 +31533,26 @@ function getCardArt(cardId) {
 // Returns the uploaded board-background image for a location card. Used by the
 // battle board renderer when a location with `coversBoard: true` is active.
 function getLocationBoardImage(cardId) {
-  if (!cardId || !Forge.locationArt) return null;
-  return Forge.locationArt[cardId] || null;
+  if (!cardId) return null;
+  if (Forge.locationArtUrl && Forge.locationArtUrl[cardId]) return Forge.locationArtUrl[cardId];
+  return (Forge.locationArt && Forge.locationArt[cardId]) || null;
 }
 
 // Returns the uploaded cover-art image for a custom pack. Used by the Vendor
 // Market shop tile renderer so each pack can show a unique illustration above
 // its name / cost. Stored on Forge.packArt[packId] (mirrors cardArt pattern).
 function getPackImage(packId) {
-  if (!packId || !Forge.packArt) return null;
-  return Forge.packArt[packId] || null;
+  if (!packId) return null;
+  if (Forge.packArtUrl && Forge.packArtUrl[packId]) return Forge.packArtUrl[packId];
+  return (Forge.packArt && Forge.packArt[packId]) || null;
 }
 // Returns the uploaded cover-art image for a starter deck. Same IDB/Storage
 // lifecycle as packArt — stored in Forge.starterDeckArt[deckId] to survive
 // the _stripDataUrls() pass that wipes d.img on every localStorage cycle.
 function getStarterDeckImage(deckId) {
-  if (!deckId || !Forge.starterDeckArt) return null;
-  return Forge.starterDeckArt[deckId] || null;
+  if (!deckId) return null;
+  if (Forge.starterDeckArtUrl && Forge.starterDeckArtUrl[deckId]) return Forge.starterDeckArtUrl[deckId];
+  return (Forge.starterDeckArt && Forge.starterDeckArt[deckId]) || null;
 }
 
 // 📦 PACK INVENTORY HELPERS
@@ -31891,8 +31894,9 @@ function openAllPacksFromInventory(groupId) {
 // Stored on Forge.itemArt[itemId] so a single resolver works regardless of where
 // the item definition lives. Falls back to null so callers can render the emoji.
 function getItemImage(itemId) {
-  if (!itemId || !Forge.itemArt) return null;
-  return Forge.itemArt[itemId] || null;
+  if (!itemId) return null;
+  if (Forge.itemArtUrl && Forge.itemArtUrl[itemId]) return Forge.itemArtUrl[itemId];
+  return (Forge.itemArt && Forge.itemArt[itemId]) || null;
 }
 
 // Unified item lookup — checks Forge custom items first, then falls back to the
@@ -36361,6 +36365,77 @@ async function migrateCardArtToCloud() {
   return { ok: true, migrated: ok, failed: fail, skipped: skip };
 }
 try { window.__mg = window.__mg || {}; window.__mg.migrateArtToCloud = migrateCardArtToCloud; } catch (e) {}
+
+// ☁ General asset uploader — any image at <userId>/<baseName>.<ext> in the public
+// card-art bucket. No per-upload verification (the bucket is already proven by the
+// card-art path); used for the other image categories below.
+async function cloudUploadAssetFile(baseName, dataUrl) {
+  try {
+    if (!baseName || !dataUrl) return { ok: false, error: 'missing' };
+    if (!initCloud() || !Profile.cloud.signedIn) return { ok: false, error: 'Sign in.' };
+    if (!/^data:image\//i.test(dataUrl)) return { ok: false, error: 'not an image' };
+    await _ensureCardArtBucket();
+    const blob = await (await fetch(dataUrl)).blob();
+    const m = /^data:image\/(\w+)/i.exec(dataUrl);
+    const ext = m ? (m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase()) : 'png';
+    const path = Profile.cloud.userId + '/' + String(baseName).replace(/[^a-zA-Z0-9_\-/]/g, '_') + '.' + ext;
+    const { error } = await Cloud.client.storage.from(CARD_ART_BUCKET).upload(path, blob, { upsert: true, contentType: blob.type || ('image/' + ext) });
+    if (error) return { ok: false, error: error.message };
+    const { data } = Cloud.client.storage.from(CARD_ART_BUCKET).getPublicUrl(path);
+    let url = data && data.publicUrl;
+    if (!url) return { ok: false, error: 'no public url' };
+    return { ok: true, url: url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + Date.now().toString(36) };
+  } catch (e) { return { ok: false, error: (e && e.message) || 'upload failed' }; }
+}
+
+// Migrate ONE single-image Forge category (locationArt / packArt / itemArt /
+// starterDeckArt) to the cloud: upload each image, store the URL in
+// Forge.<urlMapKey>, then drop the local base64 (resident + monolith). It only
+// deletes a local copy AFTER its upload succeeds, so nothing is ever lost.
+async function _migrateImageCategory(forgeKey, urlMapKey) {
+  let okN = 0, failN = 0;
+  let mono = null; try { mono = await idbGet('forge_' + forgeKey); } catch (e) {}
+  if (!mono || typeof mono !== 'object') mono = {};
+  const ids = new Set();
+  try { if (Forge[forgeKey]) for (const id in Forge[forgeKey]) { if (id && id.indexOf('__') !== 0) ids.add(id); } } catch (e) {}
+  for (const id in mono) { if (id && id.indexOf('__') !== 0) ids.add(id); }
+  if (!Forge[urlMapKey]) Forge[urlMapKey] = {};
+  let monoTrim = false;
+  for (const id of ids) {
+    if (Forge[urlMapKey][id]) continue;
+    try {
+      const v = (Forge[forgeKey] && Forge[forgeKey][id]) || mono[id] || null;
+      const dataUrl = await _artValueToDataUrl(v);
+      if (!dataUrl) continue;
+      const up = await cloudUploadAssetFile(forgeKey + '/' + id, dataUrl);
+      if (up.ok && up.url) {
+        Forge[urlMapKey][id] = up.url;
+        try { if (Forge[forgeKey]) delete Forge[forgeKey][id]; } catch (e) {}
+        if (mono[id]) { delete mono[id]; monoTrim = true; }
+        okN++;
+      } else { failN++; if (/bucket not found|not found|row-level|policy|403|404|unauthor/i.test(up.error || '')) return { ok: okN, fail: failN, abort: true, error: up.error }; }
+    } catch (e) { failN++; }
+    await new Promise(r => setTimeout(r, 15));
+  }
+  if (monoTrim) { try { await idbSet('forge_' + forgeKey, mono); } catch (e) {} }
+  return { ok: okN, fail: failN };
+}
+
+// ☁ Move ALL single-image assets (card art + location / pack / item / deck art) to
+// the cloud. Sprites (animated, multi-frame) are a separate, tested migration.
+async function migrateAllAssetsToCloud() {
+  if (!Profile.cloud || !Profile.cloud.signedIn) { if (typeof showToast === 'function') showToast('☁ Sign in first.'); return { ok: false }; }
+  let total = 0, fails = 0;
+  if (typeof showToast === 'function') showToast('☁ Moving card art…', 4000);
+  try { const ca = await migrateCardArtToCloud(); if (ca && ca.ok === false && ca.error) return { ok: false }; if (ca) { total += (ca.migrated || 0); fails += (ca.failed || 0); } } catch (e) {}
+  for (const pair of [['locationArt', 'locationArtUrl'], ['packArt', 'packArtUrl'], ['itemArt', 'itemArtUrl'], ['starterDeckArt', 'starterDeckArtUrl']]) {
+    try { const r = await _migrateImageCategory(pair[0], pair[1]); total += (r.ok || 0); fails += (r.fail || 0); if (r.abort) { if (typeof showToast === 'function') showToast('⚠ Stopped — bucket issue: ' + (r.error || '?'), 8000); break; } } catch (e) {}
+  }
+  try { saveForge(); } catch (e) {}
+  if (typeof showToast === 'function') showToast('✅ Moved ' + total + ' images to the cloud' + (fails ? (' · ' + fails + ' failed') : '') + '. (Sprites are the next step.) Refresh to confirm.', 9000);
+  return { ok: true, migrated: total, failed: fails };
+}
+try { window.__mg = window.__mg || {}; window.__mg.migrateAllAssets = migrateAllAssetsToCloud; } catch (e) {}
 
 // Pull asset chunks from Storage into Forge.* — called automatically after a
 // successful profile fetch on sign-in. If a chunk is missing (404), we leave
@@ -79207,7 +79282,7 @@ function renderCardEditor() {
               ${hasCardArt ? `<button class="btn-mini btn-danger" id="btn-clear-cardart">Clear</button>` : ''}
             </div>
             <div style="margin-top:0.55rem">
-              <button class="btn-mini" id="btn-migrate-cardart" style="font-size:0.62rem" title="Upload your whole existing card-art library to Supabase and clear the local copies — frees memory and stops the crashes">☁ Move ALL my card art to the cloud</button>
+              <button class="btn-mini" id="btn-migrate-cardart" style="font-size:0.62rem" title="Upload your card art + location/pack/item/deck art to Supabase and clear the local copies — frees storage. (Sprites are migrated separately.)">☁ Move ALL my art to the cloud</button>
             </div>
           </div>
         </div>
@@ -79870,10 +79945,10 @@ function bindCardEditor() {
   if (artMigrateBtn) {
     artMigrateBtn.onclick = async (e) => {
       e.preventDefault();
-      if (typeof migrateCardArtToCloud !== 'function') { showToast('Migration unavailable.'); return; }
+      if (typeof migrateAllAssetsToCloud !== 'function') { showToast('Migration unavailable.'); return; }
       const _orig = artMigrateBtn.textContent;
       artMigrateBtn.disabled = true; artMigrateBtn.textContent = '☁ Migrating… (watch the toasts)';
-      try { await migrateCardArtToCloud(); } catch (err) { showToast('⚠ Migration error: ' + ((err && err.message) || '?'), 6000); }
+      try { await migrateAllAssetsToCloud(); } catch (err) { showToast('⚠ Migration error: ' + ((err && err.message) || '?'), 6000); }
       try { artMigrateBtn.disabled = false; artMigrateBtn.textContent = _orig; } catch (e2) {}
     };
   }

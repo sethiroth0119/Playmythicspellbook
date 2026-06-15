@@ -117054,8 +117054,32 @@ function mountChatButton() {
       document.body.appendChild(b);
     }
     _chatUpdateFab();
+    _chatPositionFab();
+    try { requestAnimationFrame(_chatPositionFab); } catch (e) {}
+    if (!window.__chatFabResizeWired) {
+      window.__chatFabResizeWired = true;
+      window.addEventListener('resize', () => { try { _chatPositionFab(); } catch (e) {} });
+    }
     // Keep the overlay alive across screen re-renders if it was open.
     if (Chat.open && !document.getElementById('chat-overlay')) _chatRenderOverlay();
+  } catch (e) {}
+}
+// Float the chat bubble just ABOVE the bottom-right social dock (the Join-our-
+// Discord / Follow-Us / Updates stack) when it's on screen, so the two don't
+// overlap. Falls back to the bottom-right corner on screens without the dock.
+function _chatPositionFab() {
+  try {
+    const fab = document.getElementById('chat-fab');
+    if (!fab) return;
+    const dock = document.querySelector('.hub-side-panels');
+    if (dock && dock.offsetParent !== null) {
+      const r = dock.getBoundingClientRect();
+      if (r && r.height > 0 && r.top > 0) {
+        fab.style.bottom = Math.round(window.innerHeight - r.top + 12) + 'px';
+        return;
+      }
+    }
+    fab.style.bottom = '24px';
   } catch (e) {}
 }
 function _chatUpdateFab() {

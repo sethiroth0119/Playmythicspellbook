@@ -36256,6 +36256,13 @@ async function cloudUploadCardArtFile(cardId, dataUrl) {
     if (!url) return { ok: false, error: 'no public url (is the bucket public?)' };
     // Cache-bust so a re-upload to the same path refreshes past the CDN cache.
     url += (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + Date.now().toString(36);
+    // ⚠ getPublicUrl returns a URL even for a PRIVATE bucket — but reading it
+    // 400/403s, which is why the art shows as a broken image. Verify it actually
+    // serves so we fail loudly with a fixable message instead of a dead URL.
+    try {
+      const chk = await fetch(url, { method: 'GET', cache: 'no-store' });
+      if (!chk.ok) return { ok: false, error: 'uploaded OK, but the card-art bucket is NOT public (read ' + chk.status + '). In Supabase → Storage → card-art → Settings, turn Public ON.' };
+    } catch (e) { /* network blip — let the <img> try anyway */ }
     return { ok: true, url };
   } catch (e) { return { ok: false, error: (e && e.message) || 'upload failed' }; }
 }
@@ -77754,7 +77761,7 @@ function renderCardEditor() {
   const cardArtUrl = _cloudArt || (Forge.cardArt && Forge.cardArt[card.id]) || '';
   const hasCardArt = !!cardArtUrl;
   const cardArtPreview = hasCardArt
-    ? `<div class="image-preview"><img src="${escapeHtml(cardArtUrl)}" alt="card art" style="width:96px;height:96px;object-fit:cover;border-radius:3px"></div>`
+    ? `<div class="image-preview"><img src="${escapeHtml(cardArtUrl)}" alt="card art" onerror="this.onerror=null;this.style.display='none';if(this.parentNode)this.parentNode.insertAdjacentHTML('beforeend','<span style=&quot;font-size:0.62rem;color:#cc6666;text-align:center;display:block;padding:10px&quot;>⚠ art URL not loading — is the card-art bucket set to Public?</span>')" style="width:96px;height:96px;object-fit:cover;border-radius:3px"></div>`
     : `<div class="image-preview empty"><span style="font-size:3rem;opacity:0.4">🎨</span></div>`;
 
   // ----- Type-specific blocks -----

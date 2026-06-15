@@ -145958,7 +145958,12 @@ function NodeBoostButtons(node) {
 function renderNodeLevelProgressSection(node, iOwn) {
   if (!node) return '';
   ensureNodeProgress(node);
-  const ownerLabel = node.nodeOwnerId ? node.nodeOwnerId : (iOwn ? 'You' : 'Unclaimed');
+  let ownerLabel = node.nodeOwnerId ? node.nodeOwnerId : (iOwn ? 'You' : 'Unclaimed');
+  // An admin-assigned player owner (tw_node_owners) takes display priority.
+  try {
+    const _po = (typeof _twNodeOwnerUser === 'function') ? _twNodeOwnerUser(node.id) : null;
+    if (_po && _po.display_name) ownerLabel = _po.display_name;
+  } catch (e) {}
   return `
     <div class="tw-nd-section-hdr">— NODE POWER &amp; CINDER LEVEL</div>
     <div class="node-power-panel" id="node-power-panel" data-node-id="${escapeHtml(node.id)}">

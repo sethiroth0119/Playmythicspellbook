@@ -20074,6 +20074,19 @@
     stroke: #ffcf5a; stroke-width: 1.4; opacity: 0.92;
   }
   .tw-map-routes path.broken  { stroke: #5a3030; stroke-dasharray: 2 8;   opacity: 0.50; }
+  /* 🩹 Heavy-map low-FX (auto when a map has many lit roads / below High gfx):
+     static gold lines — no per-frame blur, flow, trucks, pulses or flicker —
+     and a much dimmer node glow. Kills the continuous GPU compositing that
+     crashes the tab on a fully-connected map. The network still reads clearly. */
+  .tw-map-routes.tw-lowfx path { animation: none !important; filter: none !important; }
+  .tw-map-routes.tw-lowfx path.frontier,
+  .tw-map-routes.tw-lowfx path.allied,
+  .tw-map-routes.tw-lowfx path.cheaproute { stroke: #ffcf5a; stroke-width: 1.5; opacity: 0.92; }
+  .tw-map-canvas.tw-lowfx .tw-node-marker-pulse { display: none !important; }
+  .tw-map-canvas.tw-lowfx .tw-node-diamond::before { box-shadow: 0 0 4px rgba(255,207,90,0.5); }
+  .tw-map-canvas.tw-lowfx .tw-node-diamond::after  { box-shadow: 0 0 4px #4ea8ff; }
+  .tw-map-canvas.tw-lowfx .tw-node-marker[data-tw-state="collapsing"] .tw-node-diamond::before,
+  .tw-map-canvas.tw-lowfx .tw-node-marker[data-tw-state="collapsing"] .tw-node-diamond::after { animation: none !important; }
 
   /* Floating region labels — large, map-grade typography */
   .tw-map-region-label {
@@ -146332,7 +146345,12 @@ function renderTerritoryWars() {
     </animateMotion>
   </g>`;
 
-  const _twCanvasRoutes = `<svg class="tw-map-routes" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}${_truckGuidePaths}${_truckRoutes.map(r => _truckSVG(r.id, r.dur)).join('')}</svg>`;
+  // 🩹 Auto low-FX for heavy maps: a fully-connected map animates dozens of
+  // roads + convoy trucks every frame — enough continuous GPU compositing to
+  // crash the tab. Past 24 roads (or below High graphics) drop the road
+  // animations / blur / trucks; the network still renders as static gold lines.
+  const _lowFx = (_seenRoutes.size > 24) || (_gfxQ !== 'high');
+  const _twCanvasRoutes = `<svg class="tw-map-routes${_lowFx ? ' tw-lowfx' : ''}" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}${_lowFx ? '' : (_truckGuidePaths + _truckRoutes.map(r => _truckSVG(r.id, r.dur)).join(''))}</svg>`;
 
   // Node markers — absolutely positioned diamonds.
   const _twCanvasMarkers = t.nodes.filter(filtered).map(n => {
@@ -146913,7 +146931,7 @@ function renderTerritoryWars() {
           <div class="tw-wm-stamp tl" aria-hidden="true">THEATER 7 · NORTH WORKS</div>
           <div class="tw-wm-stamp tr" aria-hidden="true">CHART REV-04 · ${_twDateStr}</div>
           <div class="tw-wm-stamp br" aria-hidden="true">FOUNDATION RESERVE // CLASSIFIED</div>
-          <div class="tw-map-canvas" id="tw-map-canvas">
+          <div class="tw-map-canvas${_lowFx ? ' tw-lowfx' : ''}" id="tw-map-canvas">
             ${_twCanvasContent}
           </div>
         </div>

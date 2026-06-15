@@ -1668,7 +1668,8 @@
     border-color: var(--gold-bright);
     box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.3), 0 12px 40px rgba(0,0,0,0.5);
   }
-  .hero-icon { display: flex; justify-content: center; align-items: center; height: 72px; font-size: 4rem; line-height: 1; margin-bottom: 0.5rem; }
+  .hero-icon { display: flex; justify-content: center; align-items: center; height: 72px; font-size: 4rem; line-height: 1; margin-bottom: 0.5rem; overflow: hidden; }
+  .hero-icon .sprite-stack, .hero-icon .sprite-img, .hero-icon > img { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; }
   .hero-name { font-family: 'Cinzel', serif; font-size: 1.15rem; font-weight: 700; color: var(--gold-bright); margin-bottom: 0.4rem; }
   .hero-desc { font-style: italic; color: var(--ink-dim); font-size: 0.85rem; margin-bottom: 0.75rem; }
   /* Stat block on hero cards — bumped font 0.75 → 0.92rem and gap/padding
@@ -68154,7 +68155,7 @@ function _boardSpriteHtml(occupant) {
     // so all the existing containment + sizing CSS applies (a bare <img> overflowed
     // its card frame — that was the "sloppy" look). Only the animation MECHANISM
     // differs (single-img src-swap via the board ticker, bounded memory).
-    return '<span class="sprite-stack" style="width:100%;height:100%"><img class="sprite-img is-on bsprite" data-bsid="' + useId + '" data-bsanim="idle" src="' + (first || _PIXEL) + '" alt="" draggable="false" decoding="async"></span>';
+    return '<span class="sprite-stack" style="width:100%;height:100%;overflow:hidden"><img class="sprite-img is-on bsprite" data-bsid="' + useId + '" data-bsanim="idle" src="' + (first || _PIXEL) + '" alt="" draggable="false" decoding="async" style="width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain"></span>';
   } catch (e) { return null; }
 }
 
@@ -85787,6 +85788,46 @@ function _flipPlayBattle() {
 // the board. Opt-in per card via card.aceSlam (Forge → unit editor → Ace Slam).
 // Respects Graphics Quality (skipped on Low) + reduced-motion, and is
 // click-to-skip so it never slows a fast player. Fully guarded.
+// 🎬 Play a unit's SPRITE (summon → idle frames) inside a cinematic container, like
+// Master Duel. Force-loads the sprite on demand (big-library mode), animates via a
+// single-img frame swap (bounded memory), and falls back to board art / emoji only
+// if the unit has no sprite at all. Used by the Ace + on-play cinematics so they
+// show the animated sprite IN FRONT instead of a static card.
+function _cinematicSpriteRun(unit, container) {
+  if (!unit || !container) return;
+  const sId = (typeof getSpriteId === 'function') ? getSpriteId(unit) : null;
+  const fallback = () => {
+    let h = '';
+    try { h = (typeof unitBoardVisual === 'function') ? (unitBoardVisual(unit) || '') : ''; } catch (e) {}
+    if (!h) h = '<span style="font-size:9rem;line-height:1">' + ((unit && unit.icon) || '👑') + '</span>';
+    container.innerHTML = h;
+  };
+  const framesFor = () => {
+    try { return (sId && (getSpriteFrames(sId, 'summon') || getSpriteFrames(sId, 'idle') || getSpriteFrames(sId, 'attack'))) || null; } catch (e) { return null; }
+  };
+  const play = () => {
+    const frames = framesFor();
+    if (!frames || !frames.length) { fallback(); return; }
+    container.innerHTML = '<img class="cine-sprite" src="' + frames[0] + '" alt="" draggable="false" decoding="async" style="width:100%;height:100%;object-fit:contain">';
+    if (frames.length < 2) return;
+    let i = 0;
+    let _fps = 0; try { _fps = (typeof getSpriteAnimFps === 'function' && getSpriteAnimFps(sId, 'summon')) || 0; } catch (e) {}
+    const fps = _fps || Math.round(1000 / (typeof DEFAULT_SPRITE_FRAME_MS !== 'undefined' ? DEFAULT_SPRITE_FRAME_MS : 62));
+    const ms = Math.max(45, Math.round(1000 / fps));
+    const timer = setInterval(() => {
+      const el = container.querySelector('img.cine-sprite');
+      if (!el || !document.body.contains(el)) { clearInterval(timer); return; } // overlay gone — stop
+      i = (i + 1) % frames.length;
+      el.src = frames[i];
+    }, ms);
+  };
+  if (framesFor()) { play(); return; }                 // already resident → play now
+  fallback();                                           // show something immediately…
+  if (sId && typeof _lazyLoadSprite === 'function') {   // …then force-load + upgrade to the sprite
+    try { Promise.resolve(_lazyLoadSprite(sId, true)).then(() => { try { play(); } catch (e) {} }).catch(() => {}); } catch (e) {}
+  }
+}
+
 let _aceSlamBusy = false;
 function _playAceSlam(unit, fromAI) {
   try {
@@ -85799,19 +85840,11 @@ function _playAceSlam(unit, fromAI) {
     // Master-Duel style: the unit rises from a central pillar of light (no side
     // slam, no frame), so `fromAI` no longer affects layout — kept for callers.
     void fromAI;
-    // 🖼 "Picture of the unit" — play the unit's SUMMON animation (authored
-    //    summon frames if present, else idle), so the ace literally performs its
-    //    summon animation during the cinematic. Falls back to board art / emoji.
-    let pic = '';
-    try {
-      const _sId = (typeof getSpriteId === 'function') ? getSpriteId(unit) : null;
-      if (_sId && typeof renderIcon === 'function' && typeof getSpriteFrames === 'function'
-          && (getSpriteFrames(_sId, 'summon') || getSpriteFrames(_sId, 'idle'))) {
-        pic = renderIcon(_sId, unit.icon, 'fill', 'summon');
-      }
-    } catch (e) {}
-    if (!pic) { try { pic = (typeof unitBoardVisual === 'function') ? (unitBoardVisual(unit) || '') : ''; } catch (e) {} }
-    if (!pic) pic = '<span style="font-size:9rem;line-height:1">' + (unit.icon || '👑') + '</span>';
+    // 🖼 "Picture of the unit" — the ace literally performs its SUMMON animation in
+    //    front (Master-Duel style). We render an emoji placeholder, then upgrade it
+    //    to the force-loaded, animated sprite via _cinematicSpriteRun once the
+    //    overlay is mounted (below). Card art / emoji only if it has no sprite.
+    let pic = '<span style="font-size:9rem;line-height:1">' + ((unit && unit.icon) || '👑') + '</span>';
     // 💠 Cost + 🌟 on-play effect — the built unit doesn't carry cost/onPlay, so
     //    resolve them from the published card def (fall back to the unit itself).
     let _def = null;
@@ -85848,6 +85881,8 @@ function _playAceSlam(unit, fromAI) {
         _onPlayHtml +
       '</div>';
     document.body.appendChild(host);
+    // 🎬 Upgrade the placeholder to the unit's animated SUMMON sprite (force-loads on demand).
+    try { _cinematicSpriteRun(unit, host.querySelector('.ace-slam-art')); } catch (e) {}
     // Bass-y shake at the REVEAL beat — when the unit bursts out of the light (~1.1s).
     setTimeout(() => { try { if (typeof Juice !== 'undefined' && Juice.shake) Juice.shake(document.querySelector('.battle-screen') || document.body); } catch (e) {} }, 1100);
     // 👑 Slow, ~5s cinematic (rise → hold with name/cost/on-play → fade), click-to-skip.
@@ -93819,6 +93854,7 @@ function _playOnPlayCinematicImpl(unit, card, opts) {
     overlay.innerHTML = `
       <div class="onplay-cine-headline">⚡ ON-PLAY ACTIVATED ⚡</div>
       <div class="onplay-cine-unitname">${escapeHtml((unit && unit.name) || (card && card.name) || 'Unit')}</div>
+      <div class="onplay-cine-fig" id="onplay-cine-fig" style="position:absolute;left:50%;top:33%;transform:translate(-50%,-50%);width:min(36vh,300px);height:min(36vh,300px);display:flex;align-items:center;justify-content:center;filter:drop-shadow(0 12px 30px rgba(0,0,0,0.75));z-index:3;pointer-events:none"></div>
       <div class="onplay-cine-ring" style="left:${anchorX}px;top:${anchorY}px"></div>
       <div class="onplay-cine-ring2" style="left:${anchorX}px;top:${anchorY}px"></div>
       <div class="onplay-cine-rune" style="left:${anchorX}px;top:${anchorY}px"></div>
@@ -93832,6 +93868,8 @@ function _playOnPlayCinematicImpl(unit, card, opts) {
     `;
     overlay.onclick = (e) => { try { e.stopPropagation(); e.preventDefault(); } catch (_) {} };  /* 🔒 no skip — cinematic plays in full */
     document.body.appendChild(overlay);
+    // 🎬 Show the unit performing its SUMMON animation in front (force-loaded on demand).
+    try { if (typeof _cinematicSpriteRun === 'function') _cinematicSpriteRun(unit, document.getElementById('onplay-cine-fig')); } catch (e) {}
     // 📺 Rare+ gets a quick screen shake during the surge.
     if (wantsShake && !opts.skipShake) {
       setTimeout(() => {

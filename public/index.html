@@ -68044,8 +68044,77 @@ function getSpriteId(obj) {
 // from Forge.cardArt which players receive via the catalog) → live custom-card
 // art/icon → emoji ONLY as an absolute last resort. Stops board tokens from
 // falling back to ⚔️/emoji whenever a sprite simply hasn't loaded.
+// 🎞 BOUNDED BOARD SPRITE ANIMATOR — shows + animates a unit's custom sprite on the
+// battlefield in big-library/placeholder mode WITHOUT the full-frame stack that
+// OOM-crashes on HD libraries. One <img> per unit; a single shared timer swaps its
+// src one frame at a time (≈1-2 decodes per unit, regardless of frame count), and
+// force-loads each sprite from disk on demand. This is why custom sprites now
+// appear on the board instead of falling back to the card art.
+const _PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+let _boardSpriteTimer = null, _boardSpriteTick = 0;
+function _ensureBoardSpriteAnim() {
+  if (_boardSpriteTimer) return;
+  try { _boardSpriteTimer = setInterval(_tickBoardSprites, 90); } catch (e) {}
+}
+function _tickBoardSprites() {
+  let els;
+  try { els = document.querySelectorAll('img.bsprite[data-bsid]'); } catch (e) { return; }
+  if (!els || !els.length) return;
+  _boardSpriteTick++;
+  for (let n = 0; n < els.length; n++) {
+    const el = els[n];
+    const sid = el.dataset.bsid;
+    const anim = el.dataset.bsanim || 'idle';
+    let frames = null;
+    try { frames = getSpriteFrames(sid, anim) || getSpriteFrames(sid, 'idle'); } catch (e) {}
+    if (!frames || !frames.length) {
+      // Not loaded yet — force-load this one sprite from disk (once).
+      if (!el.dataset.bsl) {
+        el.dataset.bsl = '1';
+        try { Promise.resolve(_lazyLoadSprite(sid, true)).then(() => { el.dataset.bsl = ''; }).catch(() => { el.dataset.bsl = ''; }); }
+        catch (e) { el.dataset.bsl = ''; }
+      }
+      continue;
+    }
+    const i = frames.length > 1 ? (_boardSpriteTick % frames.length) : 0;
+    let next; try { next = _imgSrc(frames[i]); } catch (e) { next = frames[i]; }
+    if (next && el.getAttribute('src') !== next) el.src = next;
+  }
+}
+// Returns the single-img board sprite for a unit that HAS a custom sprite (resident
+// or on disk), or null if none — so the caller can fall back to card art/emoji.
+function _boardSpriteHtml(occupant) {
+  try {
+    if (!occupant) return null;
+    const sId = (typeof getSpriteId === 'function') ? getSpriteId(occupant) : null;
+    if (!sId) return null;
+    const cand = [sId];
+    if (sId.indexOf('u_') === 0) cand.push('h_' + sId.slice(2));
+    else if (sId.indexOf('h_') === 0) cand.push('u_' + sId.slice(2));
+    if (occupant.cardId) cand.push('u_' + occupant.cardId);
+    const resident = (id) => { try { const s = Forge.sprites && Forge.sprites[id]; return !!(s && Object.keys(s).some(k => Array.isArray(s[k]) && s[k].filter(Boolean).length)); } catch (e) { return false; } };
+    const indexed = (id) => !!(Forge._sprIds && Forge._sprIds.has(id));
+    let useId = null;
+    for (const id of cand) { if (id && (resident(id) || indexed(id))) { useId = id; break; } }
+    if (!useId) return null;
+    let first = null;
+    try { const fr = getSpriteFrames(useId, 'idle') || getSpriteFrames(useId, 'attack'); if (fr && fr.length) first = _imgSrc(fr[0]); } catch (e) {}
+    return '<img class="bsprite" data-bsid="' + useId + '" data-bsanim="idle" src="' + (first || _PIXEL) + '" alt="" draggable="false" decoding="async" style="width:100%;height:100%;object-fit:contain;image-rendering:auto">';
+  } catch (e) { return null; }
+}
+
 function unitBoardVisual(occupant) {
   if (!occupant) return '';
+  // 🎞 Big-library/placeholder mode: show the unit's custom sprite via the bounded
+  // single-img animator FIRST — so it (a) renders the sprite instead of the card
+  // art, and (b) never builds the heavy full-frame stack that crashes. Small
+  // libraries fall through to the original eager-animation path below.
+  try {
+    if (typeof _bigLibrarySkip !== 'undefined' && _bigLibrarySkip) {
+      const _bs = _boardSpriteHtml(occupant);
+      if (_bs) { _ensureBoardSpriteAnim(); return _bs; }
+    }
+  } catch (e) {}
   const sId = (typeof getSpriteId === 'function') ? getSpriteId(occupant) : null;
   // 🜂 A transformed Kalon unit keeps originalCardId (base) but swaps cardId to
   //    the Kalon form. The visual resolver MUST prefer the Kalon form — the old

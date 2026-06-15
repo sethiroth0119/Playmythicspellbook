@@ -36509,6 +36509,27 @@ async function migrateSpritesToCloud() {
 }
 try { window.__mg = window.__mg || {}; window.__mg.migrateSprites = migrateSpritesToCloud; } catch (e) {}
 
+// 🩹 Self-heal the sprite id index. The save paths add the current id and rewrite
+// forge_sprites_idx; if Forge._sprIds was null/empty (a reset, an early save before
+// the boot load finished, etc.) that rewrite TRUNCATES the on-disk index to one id,
+// orphaning every other sprite from the index. Loading the real index from disk and
+// unioning it in BEFORE any write makes the index monotonic — it can only grow.
+async function _ensureSprIdx() {
+  try {
+    if (!(Forge._sprIds instanceof Set)) Forge._sprIds = new Set();
+    // Authoritative: every spr:<id> record that actually exists on disk.
+    try {
+      const keys = await idbKeys('spr:');
+      for (const k of keys) { const id = k.slice(4); if (id) Forge._sprIds.add(id); }
+    } catch (e) {}
+    // Belt + suspenders: union any stored index too.
+    let idx = null; try { idx = await idbGet('forge_sprites_idx'); } catch (e) {}
+    if (Array.isArray(idx)) for (const x of idx) Forge._sprIds.add(x);
+  } catch (e) { if (!(Forge._sprIds instanceof Set)) Forge._sprIds = new Set(); }
+  return Forge._sprIds;
+}
+try { window.__mg = window.__mg || {}; window.__mg.ensureSprIdx = _ensureSprIdx; } catch (e) {}
+
 // 🔐 Robust persist of ONE sprite record to disk, shared by BOTH upload paths
 // (the Sprite Atelier AND the card-editor Battle Sprite). Awaits + verifies the
 // write so a quota-exceeded failure can't be hidden behind a fake success toast;
@@ -36544,7 +36565,7 @@ async function _persistSpriteRecord(id, opts) {
     } catch (e) { error = e; }
   }
   if (saved) {
-    try { if (!Forge._sprIds) Forge._sprIds = new Set(); Forge._sprIds.add(id); await idbSet('forge_sprites_idx', Array.from(Forge._sprIds)); } catch (e) {}
+    try { await _ensureSprIdx(); Forge._sprIds.add(id); await idbSet('forge_sprites_idx', Array.from(Forge._sprIds)); } catch (e) {}
     try { if (typeof _sprMissing !== 'undefined' && _sprMissing) _sprMissing.delete(id); } catch (e) {}
   }
   return { saved, cloud, frames, error };
@@ -36573,7 +36594,8 @@ async function _diagnoseSpriteSave() {
   L.push('MODE: ' + (typeof _bigLibrarySkip !== 'undefined' && _bigLibrarySkip ? 'big-library' : 'normal')
     + ' · streaming=' + (typeof _lazyArtOn !== 'undefined' && _lazyArtOn ? 'ON' : 'OFF'));
   L.push('SIGNED IN (cloud fallback): ' + (typeof Profile !== 'undefined' && Profile.cloud && Profile.cloud.signedIn ? 'YES' : 'NO — sign in so full-disk saves go to the cloud'));
-  L.push('SPRITES ON DISK (index): ' + (Forge._sprIds ? Forge._sprIds.size : 'n/a'));
+  L.push('SPRITE INDEX (in memory): ' + (Forge._sprIds ? Forge._sprIds.size : 'n/a'));
+  try { const sk = await idbKeys('spr:'); L.push('ACTUAL spr: RECORDS ON DISK: ' + sk.length); } catch (e) { L.push('ACTUAL spr: RECORDS ON DISK: ?'); }
   try {
     const id = App && App.spriteSubjectId;
     if (id) {
@@ -49781,6 +49803,25 @@ async function idbDel(key) {
     });
   } catch (e) { return false; }
 }
+// List all stored keys (optionally filtered by prefix). Used to rebuild the
+// sprite/card-art id indexes from the ACTUAL on-disk records — the authoritative
+// source of truth when a stored index has been truncated/corrupted.
+async function idbKeys(prefix) {
+  try {
+    const db = await _openIdb();
+    return await new Promise((resolve, reject) => {
+      const out = [];
+      const tx = db.transaction(HG_IDB_STORE, 'readonly');
+      const req = tx.objectStore(HG_IDB_STORE).openKeyCursor();
+      req.onsuccess = () => {
+        const c = req.result;
+        if (c) { const k = String(c.key); if (!prefix || k.indexOf(prefix) === 0) out.push(k); c.continue(); }
+        else resolve(out);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { return []; }
+}
 
 // 🆘 BIG-LIBRARY MEMORY GUARD ===============================================
 // A custom art library with thousands of sprite/card-art frames is several
@@ -49920,7 +49961,10 @@ function _lazyLoadSprite(id, force) {
   if (_sprPending.has(id)) return Promise.resolve(false);
   if (!force && _sprMissing.has(id)) return Promise.resolve(false);
   if (Forge.sprites && Forge.sprites[id] && Object.keys(Forge.sprites[id]).length) { _lazyTouch('spr', id); return Promise.resolve(false); }
-  if (Forge._sprIds && !Forge._sprIds.has(id)) { _sprMissing.add(id); return Promise.resolve(false); }
+  // ⚠ A forced load (Atelier opening a subject) must read the disk record DIRECTLY,
+  // ignoring the index — the on-disk index can be stale/corrupted, and refusing to
+  // load a record that is actually present is the "saved sprite shows 0 frames" bug.
+  if (!force && Forge._sprIds && !Forge._sprIds.has(id)) { _sprMissing.add(id); return Promise.resolve(false); }
   _sprPending.add(id);
   return (async function () {
     let loaded = false;
@@ -84950,7 +84994,7 @@ async function uploadSpriteFiles(files) {
     if (typeof idbSet === 'function' && Forge.sprites[id]) {
       _saved = await idbSet('spr:' + id, Forge.sprites[id]);
       if (_saved) {
-        if (!Forge._sprIds) Forge._sprIds = new Set();
+        await _ensureSprIdx();   // load the real index first so we never truncate it
         Forge._sprIds.add(id);
         await idbSet('forge_sprites_idx', Array.from(Forge._sprIds));
         // Read it straight back to be CERTAIN it landed on disk.
@@ -84988,7 +85032,7 @@ async function uploadSpriteFiles(files) {
         // The record is now mostly tiny URLs — the local write should fit.
         _saved = await idbSet('spr:' + id, Forge.sprites[id]);
         if (_saved) {
-          if (!Forge._sprIds) Forge._sprIds = new Set();
+          await _ensureSprIdx();
           Forge._sprIds.add(id);
           await idbSet('forge_sprites_idx', Array.from(Forge._sprIds));
           if (typeof _sprMissing !== 'undefined' && _sprMissing) _sprMissing.delete(id);
@@ -143046,6 +143090,19 @@ setTimeout(() => {
     if (typeof loadHeavyForgeFromIdb === 'function') {
       await loadHeavyForgeFromIdb();
     }
+    // 🩹 Repair the sprite index from the ACTUAL on-disk spr:<id> records. Earlier
+    // saves that ran with a null index truncated forge_sprites_idx, which hid every
+    // other saved sprite (the loader refused to read records not in the index).
+    // Rebuilding from real records + persisting once makes saved sprites reappear.
+    try {
+      if (typeof _ensureSprIdx === 'function') {
+        const _before = (Forge._sprIds && Forge._sprIds.size) || 0;
+        await _ensureSprIdx();
+        const _after = (Forge._sprIds && Forge._sprIds.size) || 0;
+        if (_after !== _before && typeof idbSet === 'function') { await idbSet('forge_sprites_idx', Array.from(Forge._sprIds)); }
+        if (_after !== _before && typeof render === 'function') { try { render(); } catch (e) {} }
+      }
+    } catch (e) {}
     // Restore custom content (cards/moves/events/...) from IDB if the
     // localStorage fast-path was empty (purged by quota recovery, cleared
     // browser data, or a fresh device). Keeps custom content bulletproof.

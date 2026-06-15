@@ -84772,22 +84772,88 @@ async function uploadSpriteFiles(files) {
       console.warn('Failed to load', file.name, err);
     }
   }
-  saveForge();
-  // 🔐 Belt-and-suspenders for big-library mode: persist THIS subject's record
-  // immediately to its own per-key store + index, so the upload survives a
-  // refresh regardless of saveForge's branch conditions, and clear any stale
-  // "missing" marker so the force-load reads the fresh record.
+  // 💾 Persist THIS subject's record and surface the REAL result. The old path
+  // fired idbSet() without awaiting it and idbSet swallows QuotaExceededError
+  // (returns false), so on a near-full device the write FAILED but the upload
+  // still toasted "✓ added" — that is the "it's not saving" bug. Await the write
+  // and verify it, so a storage-full failure is reported instead of hidden.
+  let _saved = false, _saveErr = null;
   try {
-    if (_bigLibrarySkip && typeof idbSet === 'function' && Forge.sprites[id]) {
-      idbSet('spr:' + id, Forge.sprites[id]);
-      if (!Forge._sprIds) Forge._sprIds = new Set();
-      if (!Forge._sprIds.has(id)) Forge._sprIds.add(id);
-      idbSet('forge_sprites_idx', Array.from(Forge._sprIds));
+    if (typeof idbSet === 'function' && Forge.sprites[id]) {
+      _saved = await idbSet('spr:' + id, Forge.sprites[id]);
+      if (_saved) {
+        if (!Forge._sprIds) Forge._sprIds = new Set();
+        Forge._sprIds.add(id);
+        await idbSet('forge_sprites_idx', Array.from(Forge._sprIds));
+        // Read it straight back to be CERTAIN it landed on disk.
+        try { const _vchk = await idbGet('spr:' + id); _saved = !!(_vchk && typeof _vchk === 'object'); } catch (e) {}
+        if (typeof _sprMissing !== 'undefined' && _sprMissing) _sprMissing.delete(id);
+      }
+    } else { _saved = true; /* nothing to persist (no frames) */ }
+  } catch (e) { _saved = false; _saveErr = e; }
+  // Keep the rest of Forge (speeds, cloud sync, etc.) flowing regardless.
+  try { saveForge(); } catch (e) {}
+
+  if (!_saved) {
+    // 🟢 Local disk is full. Rather than just failing, save to the CLOUD: upload
+    // this subject's fresh frames to the bucket and keep only their tiny URLs
+    // locally (which fits). This saves the sprite AND advances the cloud move.
+    let cloudOk = false, cloudUp = 0;
+    const _signedIn = !!(typeof Profile !== 'undefined' && Profile.cloud && Profile.cloud.signedIn);
+    if (_signedIn && typeof cloudUploadAssetFile === 'function' && typeof _artValueToDataUrl === 'function') {
+      try {
+        showToast('💽 Local storage is full — saving this sprite to the cloud instead…', 7000);
+        const rec = Forge.sprites[id] || {};
+        const safeId = String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+        for (const k in rec) {
+          const arr = rec[k];
+          if (!Array.isArray(arr)) continue;
+          for (let i = 0; i < arr.length; i++) {
+            const fr = arr[i];
+            if (typeof fr === 'string' && /^https?:\/\//i.test(fr)) continue; // already a URL
+            const dataUrl = await _artValueToDataUrl(fr);
+            if (!dataUrl) continue;
+            const up = await cloudUploadAssetFile('sprites/' + safeId + '/' + k + '_' + i, dataUrl);
+            if (up && up.ok && up.url) { arr[i] = up.url; cloudUp++; }
+          }
+        }
+        // The record is now mostly tiny URLs — the local write should fit.
+        _saved = await idbSet('spr:' + id, Forge.sprites[id]);
+        if (_saved) {
+          if (!Forge._sprIds) Forge._sprIds = new Set();
+          Forge._sprIds.add(id);
+          await idbSet('forge_sprites_idx', Array.from(Forge._sprIds));
+          if (typeof _sprMissing !== 'undefined' && _sprMissing) _sprMissing.delete(id);
+          cloudOk = true;
+        }
+      } catch (e) { try { console.error('cloud-fallback sprite save failed', e); } catch (e2) {} }
     }
-  } catch (e) {}
-  try { if (typeof _sprMissing !== 'undefined' && _sprMissing) _sprMissing.delete(id); } catch (e) {}
+    try { saveForge(); } catch (e) {}
+    if (cloudOk) {
+      showToast('☁ Saved to the cloud (' + cloudUp + ' frame' + (cloudUp === 1 ? '' : 's') + ') — local disk was full. This sprite now streams from the bucket.', 10000);
+      _softUpdateSpriteEditor();
+      return;
+    }
+    // Couldn't save locally OR to the cloud — report the true reason + room left.
+    let usedMsg = '';
+    try {
+      if (navigator.storage && navigator.storage.estimate) {
+        const est = await navigator.storage.estimate();
+        const usedMB = Math.round((est.usage || 0) / 1048576);
+        const quotaMB = Math.round((est.quota || 0) / 1048576);
+        usedMsg = ` — ~${usedMB}MB of ~${quotaMB}MB used`;
+      }
+    } catch (e) {}
+    try { console.error('🛑 sprite save failed', id, _saveErr); } catch (e) {}
+    const _hint = _signedIn
+      ? ' Open the Card Forge → “🎞 Move sprite animations to cloud” to free space, then re-upload.'
+      : ' Sign in to the cloud so it can save there, or free up device storage, then re-upload.';
+    showToast('🛑 Could NOT save this sprite — device storage is full' + usedMsg + '.' + _hint, 15000);
+    _softUpdateSpriteEditor();
+    return;
+  }
   if (failCount > 0) showToast(`⚠ ${okCount} added, ${failCount} failed`);
-  else showToast(`✓ ${okCount} frame${okCount === 1 ? '' : 's'} added`);
+  else showToast(`✅ ${okCount} frame${okCount === 1 ? '' : 's'} saved to disk`);
   // 📦 HD save-size guard — 512px frames are ~10–20× a 128px one, so warn once
   // a subject's set gets heavy and suggest dialing the upload size back.
   try {

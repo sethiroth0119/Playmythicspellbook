@@ -60595,6 +60595,20 @@ const ONPLAY_TYPES = [
   // most common on the enemy's board. `callLockMode` ('either'|'element'|'faction')
   // restricts what can be called. The seal lifts the moment the caller leaves play.
   { id: 'callLock',     label: '🔒 Call Seal (lock an element/faction from hands)',        needs: ['callLockMode'] },
+  // 🃏 ===== EXTENDED TCG PACK — Yu-Gi-Oh / Hex / Magic-inspired =====
+  { id: 'banishUnit',      label: '🚫 Remove from Play (banish enemy unit to the Void)',     needs: ['radius','amount'] },
+  { id: 'millEnemy',       label: '🗜 Mill Enemy (top N of enemy deck → their graveyard)',   needs: ['amount'] },
+  { id: 'surveil',         label: '👁 Surveil (top N of YOUR deck → your graveyard)',         needs: ['amount'] },
+  { id: 'banishDeck',      label: '🌑 Deck Banish (top N of enemy deck → the Void)',          needs: ['amount'] },
+  { id: 'banishHand',      label: '✋ Hand Banish (N random enemy hand cards → the Void)',    needs: ['amount'] },
+  { id: 'damageFromGrave', label: '🔥 Grave Burn (enemy-hero dmg = your graveyard × N)',      needs: ['amount'] },
+  { id: 'drawFromVoid',    label: '📜 Void Draw (draw = your Void size ÷ N)',                 needs: ['amount'] },
+  { id: 'recycleVoid',     label: '♻ Reclaim Void (N cards Void → graveyard)',               needs: ['amount'] },
+  { id: 'voidFromGrave',   label: '🗃 Banish-for-Burn (N of your grave → Void, deal 3×N)',    needs: ['amount'] },
+  { id: 'fight',           label: '🥊 Fight (your nearest unit & nearest enemy trade ATK)',   needs: [] },
+  { id: 'proliferate',     label: '🌿 Proliferate (every active status lasts +1 turn)',       needs: [] },
+  { id: 'scry',            label: '🔮 Scry (peek top N of your deck, bottom the priciest)',   needs: ['amount'] },
+  { id: 'inspire',         label: '🃏 Inspire (buff every unit-card in your deck +N/+N)',     needs: ['amount'] },
 ];
 
 // ============================================================================
@@ -61282,6 +61296,46 @@ function _cardPlayLockReason(card, state) {
   return null;
 }
 
+// 🪦 MILLED-TO-GRAVE TRIGGER (Yu-Gi-Oh) — when a card is sent from a DECK to the
+// graveyard (by mill / surveil), any `card.onMilled` effect on it fires:
+//   onMilled.type: 'voidSelf'  — this card goes graveyard → Void
+//                  'handSelf'  — this card returns graveyard → hand
+//                  'burn'      — deal onMilled.amount to the enemy hero
+// `milled` is the array of card OBJECTS just pushed to state[who].graveyard.
+function _processMilledCards(state, who, milled) {
+  if (!state || !Array.isArray(milled) || !milled.length) return state;
+  let s = state;
+  const opp = who === 'player' ? 'ai' : 'player';
+  for (const c of milled) {
+    const om = c && c.onMilled;
+    if (!om || !om.type) continue;
+    const side = s[who];
+    if (om.type === 'voidSelf' || om.type === 'handSelf') {
+      if (!side || !Array.isArray(side.graveyard)) continue;
+      const gi = side.graveyard.indexOf(c);
+      if (gi < 0) continue;
+      const grave = side.graveyard.slice(); grave.splice(gi, 1);
+      if (om.type === 'voidSelf') {
+        s = { ...s, [who]: { ...side, graveyard: grave, void: [...(side.void || []), c] } };
+        s.log = [...(s.log || []), { msg: `🌌 ${c.name || 'A card'} is sent from the graveyard to the Void.`, color: who === 'player' ? 'green' : 'red' }];
+      } else {
+        const card = Object.assign({}, c, { instanceId: (typeof uid === 'function' ? uid() : ('g' + Math.floor(Math.random() * 1e9))) });
+        s = { ...s, [who]: { ...side, graveyard: grave, hand: [...(side.hand || []), card] } };
+        s.log = [...(s.log || []), { msg: `↩ ${c.name || 'A card'} claws back from the graveyard to ${who === 'player' ? 'your' : 'the enemy'} hand.`, color: who === 'player' ? 'green' : 'red' }];
+      }
+    } else if (om.type === 'burn') {
+      const dmg = Math.max(1, Math.min(20, om.amount || 3));
+      const hero = (s.units || []).find(u => u.alive && u.owner === opp && u.isHero);
+      if (hero) {
+        const nh = (hero.currentHp | 0) - dmg;
+        s = { ...s, units: s.units.map(u => u.id === hero.id ? { ...u, currentHp: nh, alive: nh > 0 } : u) };
+        if (nh <= 0) s.gameOver = who;
+        s.log = [...(s.log || []), { msg: `🔥 ${c.name || 'A card'}, sent to the graveyard, scorches the enemy hero for ${dmg}.`, color: who === 'player' ? 'green' : 'red' }];
+      }
+    }
+  }
+  return s;
+}
 function applyOnPlayEffect(state, unit, card) {
   const eff = card && card.onPlay;
   if (!state || !unit || !eff || !eff.type) return state;
@@ -61644,9 +61698,12 @@ function applyOnPlayEffect(state, unit, card) {
       const deck = side.deck.slice();
       const grave = (side.graveyard || []).slice();
       const milled = [];
-      for (let i = 0; i < n && deck.length; i++) { const c = deck.shift(); grave.push(c); milled.push((c && c.name) || 'a card'); }
+      for (let i = 0; i < n && deck.length; i++) { const c = deck.shift(); grave.push(c); milled.push(c); }
       state[owner] = { ...side, deck, graveyard: grave };
-      if (milled.length) log.push({ msg: `⚰️ ${unit.name} mills ${milled.length} card${milled.length === 1 ? '' : 's'} to the graveyard — ${milled.join(', ')}.`, color: owner === 'player' ? 'green' : 'red' });
+      if (milled.length) log.push({ msg: `⚰️ ${unit.name} mills ${milled.length} card${milled.length === 1 ? '' : 's'} to the graveyard — ${milled.map(c => (c && c.name) || 'a card').join(', ')}.`, color: owner === 'player' ? 'green' : 'red' });
+      state = { ...state, log };
+      try { state = _processMilledCards(state, owner, milled); } catch (e) {}
+      log = [...(state.log || [])];
     } else {
       log.push({ msg: `⚰️ ${unit.name}'s mill fizzles — the deck is empty.`, color: 'amber' });
     }
@@ -61705,6 +61762,213 @@ function applyOnPlayEffect(state, unit, card) {
     if (scope === 'both' || scope === 'enemy') lock[opp]   = Math.max(lock[opp]   | 0, turns);
     state = { ...state, graveLock: lock };
     log.push({ msg: `🔒 ${unit.name} seals ${scope === 'both' ? 'every graveyard' : scope === 'self' ? 'your graveyard' : 'the enemy graveyard'} for ${turns} turn${turns === 1 ? '' : 's'} — no rising, recursion, or graveyard effects.`, color: owner === 'player' ? 'green' : 'red' });
+    return { ...state, log };
+  }
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🃏 EXTENDED TCG PACK — Yu-Gi-Oh / Hex / Magic-inspired zone & recursion
+  // effects. All immutable state transforms; safe across units / heroes /
+  // locations / counters / summon (anything that resolves an onPlay block).
+  // ══════════════════════════════════════════════════════════════════════════
+  const _opp = owner === 'player' ? 'ai' : 'player';
+  // 🚫 REMOVE FROM PLAY (YGO banish) — nearest enemy unit(s) in radius are pulled
+  // straight to the Void: no graveyard, no death trigger, no resurrection.
+  if (eff.type === 'banishUnit') {
+    const enemies = state.units.filter(u => isEnemy(u) && inRadius(u) && !u.isHero);
+    if (enemies.length) {
+      enemies.sort((a, b) => (Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y))) - (Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y))));
+      const victims = enemies.slice(0, Math.max(1, Math.min(3, eff.amount || 1)));
+      const vids = new Set(victims.map(v => v.id));
+      victims.forEach(v => {
+        const ret = (typeof _unitReturnToHandCard === 'function') ? _unitReturnToHandCard(v) : { card: null };
+        if (ret && ret.card && state[v.owner]) state[v.owner] = { ...state[v.owner], void: [...(state[v.owner].void || []), ret.card] };
+      });
+      state = { ...state, units: state.units.filter(u => !vids.has(u.id)) };
+      log.push({ msg: `🚫 ${unit.name} removes ${victims.map(v => v.name).join(', ')} from play — banished to the Void.`, color: owner === 'player' ? 'green' : 'red' });
+    } else log.push({ msg: `🚫 ${unit.name}'s banish finds no target.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 🗜 MILL ENEMY — top N of the ENEMY deck → their graveyard (fires onMilled).
+  if (eff.type === 'millEnemy') {
+    const n = Math.max(1, Math.min(10, eff.amount || 1));
+    const side = state[_opp];
+    if (side && Array.isArray(side.deck) && side.deck.length) {
+      const deck = side.deck.slice(); const grave = (side.graveyard || []).slice(); const milled = [];
+      for (let i = 0; i < n && deck.length; i++) { const c = deck.shift(); grave.push(c); milled.push(c); }
+      state[_opp] = { ...side, deck, graveyard: grave };
+      log.push({ msg: `🗜 ${unit.name} mills ${milled.length} from the enemy deck to their graveyard.`, color: owner === 'player' ? 'green' : 'red' });
+      state = { ...state, log };
+      try { state = _processMilledCards(state, _opp, milled); } catch (e) {}
+      log = [...(state.log || [])];
+    } else log.push({ msg: `🗜 ${unit.name}'s mill fizzles — the enemy deck is empty.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 👁 SURVEIL (MTG) — top N of YOUR deck → your graveyard (fires onMilled).
+  if (eff.type === 'surveil') {
+    const n = Math.max(1, Math.min(10, eff.amount || 1));
+    const side = state[owner];
+    if (side && Array.isArray(side.deck) && side.deck.length) {
+      const deck = side.deck.slice(); const grave = (side.graveyard || []).slice(); const milled = [];
+      for (let i = 0; i < n && deck.length; i++) { const c = deck.shift(); grave.push(c); milled.push(c); }
+      state[owner] = { ...side, deck, graveyard: grave };
+      log.push({ msg: `👁 ${unit.name} surveils ${milled.length} — sent to your graveyard.`, color: owner === 'player' ? 'green' : 'red' });
+      state = { ...state, log };
+      try { state = _processMilledCards(state, owner, milled); } catch (e) {}
+      log = [...(state.log || [])];
+    } else log.push({ msg: `👁 ${unit.name}'s surveil fizzles — your deck is empty.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 🌑 DECK BANISH (deck-out) — top N of the ENEMY deck → enemy Void.
+  if (eff.type === 'banishDeck') {
+    const n = Math.max(1, Math.min(10, eff.amount || 1));
+    const side = state[_opp];
+    if (side && Array.isArray(side.deck) && side.deck.length) {
+      const deck = side.deck.slice(); const vd = (side.void || []).slice(); let b = 0;
+      for (let i = 0; i < n && deck.length; i++) { vd.push(deck.shift()); b++; }
+      state[_opp] = { ...side, deck, void: vd };
+      log.push({ msg: `🌑 ${unit.name} banishes ${b} card${b === 1 ? '' : 's'} off the top of the enemy deck.`, color: owner === 'player' ? 'green' : 'red' });
+    } else log.push({ msg: `🌑 ${unit.name}'s deck-banish finds an empty deck.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // ✋ HAND BANISH — N random cards from the enemy hand → enemy Void.
+  if (eff.type === 'banishHand') {
+    const n = Math.max(1, Math.min(5, eff.amount || 1));
+    const side = state[_opp];
+    if (side && Array.isArray(side.hand) && side.hand.length) {
+      const hand = side.hand.slice(); const vd = (side.void || []).slice(); let b = 0;
+      for (let i = 0; i < n && hand.length; i++) { vd.push(hand.splice(Math.floor(Math.random() * hand.length), 1)[0]); b++; }
+      state[_opp] = { ...side, hand, void: vd };
+      log.push({ msg: `✋ ${unit.name} banishes ${b} card${b === 1 ? '' : 's'} from the enemy hand to the Void.`, color: owner === 'player' ? 'green' : 'red' });
+    } else log.push({ msg: `✋ ${unit.name}'s hand-banish finds nothing.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 🔥 GRAVE BURN (YGO) — enemy hero damage = (your graveyard count) × amount.
+  if (eff.type === 'damageFromGrave') {
+    const per = Math.max(1, Math.min(20, eff.amount || 1));
+    const cnt = (state[owner] && state[owner].graveyard) ? state[owner].graveyard.length : 0;
+    const dmg = per * cnt;
+    if (dmg > 0) {
+      const hero = state.units.find(u => u.alive && u.owner === _opp && u.isHero);
+      if (hero) {
+        const nh = (hero.currentHp | 0) - dmg;
+        state = { ...state, units: state.units.map(u => u.id === hero.id ? { ...u, currentHp: nh, alive: nh > 0 } : u) };
+        if (nh <= 0) state.gameOver = owner;
+        log.push({ msg: `🔥 ${unit.name} burns the enemy hero for ${dmg} (graveyard ${cnt} × ${per}).`, color: owner === 'player' ? 'green' : 'red' });
+      }
+    } else log.push({ msg: `🔥 ${unit.name}'s grave-burn finds an empty graveyard.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 📜 VOID DRAW — draw cards equal to floor(your Void size ÷ amount).
+  if (eff.type === 'drawFromVoid') {
+    const per = Math.max(1, Math.min(10, eff.amount || 3));
+    const vlen = (state[owner] && state[owner].void) ? state[owner].void.length : 0;
+    const cards = Math.max(0, Math.floor(vlen / per));
+    if (cards > 0 && typeof drawCards === 'function' && state[owner]) {
+      state[owner] = drawCards(state[owner], cards, owner === 'player');
+      log.push({ msg: `📜 ${unit.name} draws ${cards} from the power of the Void (${vlen} banished).`, color: owner === 'player' ? 'green' : 'red' });
+    } else log.push({ msg: `📜 ${unit.name}'s Void draw yields nothing yet.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // ♻ RECLAIM VOID — return N cards from your Void back to your graveyard.
+  if (eff.type === 'recycleVoid') {
+    const n = Math.max(1, Math.min(10, eff.amount || 1));
+    const side = state[owner];
+    if (side && Array.isArray(side.void) && side.void.length) {
+      const vd = side.void.slice(); const grave = (side.graveyard || []).slice(); let m = 0;
+      for (let i = 0; i < n && vd.length; i++) { grave.push(vd.pop()); m++; }
+      state[owner] = { ...side, void: vd, graveyard: grave };
+      log.push({ msg: `♻ ${unit.name} reclaims ${m} card${m === 1 ? '' : 's'} from the Void to the graveyard.`, color: owner === 'player' ? 'green' : 'red' });
+    } else log.push({ msg: `♻ ${unit.name} finds the Void empty.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 🗃 BANISH-FOR-BURN — banish N from YOUR graveyard to the Void, deal 3×N to
+  // the enemy hero (Yu-Gi-Oh banish-cost payoff; powers Void-draw decks too).
+  if (eff.type === 'voidFromGrave') {
+    const n = Math.max(1, Math.min(10, eff.amount || 1));
+    const side = state[owner];
+    if (side && Array.isArray(side.graveyard) && side.graveyard.length) {
+      const grave = side.graveyard.slice(); const vd = (side.void || []).slice(); let b = 0;
+      for (let i = 0; i < n && grave.length; i++) { vd.push(grave.pop()); b++; }
+      state[owner] = { ...side, graveyard: grave, void: vd };
+      const dmg = b * 3;
+      const hero = state.units.find(u => u.alive && u.owner === _opp && u.isHero);
+      if (hero && dmg > 0) {
+        const nh = (hero.currentHp | 0) - dmg;
+        state = { ...state, units: state.units.map(u => u.id === hero.id ? { ...u, currentHp: nh, alive: nh > 0 } : u) };
+        if (nh <= 0) state.gameOver = owner;
+      }
+      log.push({ msg: `🗃 ${unit.name} banishes ${b} from your graveyard to the Void, blasting the enemy hero for ${dmg}.`, color: owner === 'player' ? 'green' : 'red' });
+    } else log.push({ msg: `🗃 ${unit.name} has an empty graveyard to banish.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 🥊 FIGHT (MTG) — your nearest unit and the nearest enemy each deal their ATK
+  // to one another simultaneously.
+  if (eff.type === 'fight') {
+    const allies = state.units.filter(u => isAlly(u) && !u.isHero && u.pos);
+    const enemies = state.units.filter(u => isEnemy(u) && u.pos);
+    if (allies.length && enemies.length) {
+      const near = (arr) => { arr.sort((a, b) => (Math.max(Math.abs(a.pos.x - unit.pos.x), Math.abs(a.pos.y - unit.pos.y))) - (Math.max(Math.abs(b.pos.x - unit.pos.x), Math.abs(b.pos.y - unit.pos.y)))); return arr[0]; };
+      const A = near(allies.slice()); const E = near(enemies.slice());
+      const aAtk = (A.stats && A.stats.atk) || A.atk || 5;
+      const eAtk = (E.stats && E.stats.atk) || E.atk || 5;
+      state = { ...state, units: state.units.map(u => {
+        if (u.id === E.id) { const nh = (u.currentHp | 0) - aAtk; return { ...u, currentHp: nh, alive: nh > 0 }; }
+        if (u.id === A.id) { const nh = (u.currentHp | 0) - eAtk; return { ...u, currentHp: nh, alive: nh > 0 }; }
+        return u;
+      }) };
+      state.units.forEach(u => { if (!u.alive && u.isHero) state.gameOver = u.owner === 'player' ? 'ai' : 'player'; });
+      log.push({ msg: `🥊 ${unit.name} forces ${A.name} (${aAtk}) and ${E.name} (${eAtk}) to fight!`, color: owner === 'player' ? 'green' : 'red' });
+    } else log.push({ msg: `🥊 ${unit.name}'s fight has no valid pair.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 🌿 PROLIFERATE (MTG) — extend every active status on EVERY unit by +1 turn.
+  if (eff.type === 'proliferate') {
+    let bumped = 0;
+    state = { ...state, units: state.units.map(u => {
+      if (!u || !u.status || typeof u.status !== 'object') return u;
+      const st = {}; let touched = false;
+      for (const k in u.status) {
+        const v = u.status[k];
+        if (v && typeof v === 'object' && typeof v.turnsLeft === 'number') { st[k] = { ...v, turnsLeft: v.turnsLeft + 1 }; touched = true; bumped++; }
+        else st[k] = v;
+      }
+      return touched ? { ...u, status: st } : u;
+    }) };
+    log.push({ msg: `🌿 ${unit.name} proliferates — ${bumped} ongoing effect${bumped === 1 ? '' : 's'} last 1 turn longer.`, color: owner === 'player' ? 'green' : 'red' });
+    return { ...state, log };
+  }
+  // 🔮 SCRY (MTG) — peek the top N of YOUR deck; keep the cheaper cards on top and
+  // bottom the priciest so your next draws are stronger (auto-resolved).
+  if (eff.type === 'scry') {
+    const n = Math.max(1, Math.min(5, eff.amount || 2));
+    const side = state[owner];
+    if (side && Array.isArray(side.deck) && side.deck.length > 1) {
+      const deck = side.deck.slice();
+      const top = deck.splice(0, Math.min(n, deck.length));
+      top.sort((a, b) => ((a && a.cost) || 0) - ((b && b.cost) || 0));
+      const keep = top.slice(0, Math.ceil(top.length / 2));
+      const bottom = top.slice(Math.ceil(top.length / 2));
+      state[owner] = { ...side, deck: keep.concat(deck, bottom) };
+      log.push({ msg: `🔮 ${unit.name} scrys ${top.length} — ${bottom.length} sent to the bottom.`, color: owner === 'player' ? 'green' : 'red' });
+    } else log.push({ msg: `🔮 ${unit.name} scrys, but the deck is too thin.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 🃏 INSPIRE (Hex TCG) — permanently buff your DECK: every unit-card still in it
+  // gains +amount ATK / +amount HP, so it arrives already empowered.
+  if (eff.type === 'inspire') {
+    const amt = Math.max(1, Math.min(20, eff.amount || 2));
+    const side = state[owner];
+    if (side && Array.isArray(side.deck) && side.deck.length) {
+      let buffed = 0;
+      const deck = side.deck.map(c => {
+        if (!c || (c.type && c.type !== 'unit' && c.type !== 'hero')) return c;
+        const stats = Object.assign({}, c.stats || {});
+        stats.atk = (stats.atk || 0) + amt; stats.hp = (stats.hp || 0) + amt;
+        buffed++;
+        return Object.assign({}, c, { stats });
+      });
+      state[owner] = { ...side, deck };
+      log.push({ msg: `🃏 ${unit.name} inspires your deck — ${buffed} card${buffed === 1 ? '' : 's'} gain +${amt}/+${amt}.`, color: owner === 'player' ? 'green' : 'red' });
+    } else log.push({ msg: `🃏 ${unit.name}'s inspiration finds an empty deck.`, color: 'amber' });
     return { ...state, log };
   }
   // 🌋 PAINT SURFACE — the unit's arrival coats the tiles around it with a

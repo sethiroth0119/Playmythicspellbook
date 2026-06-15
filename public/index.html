@@ -50302,13 +50302,32 @@ async function loadHeavyForgeFromIdb() {
     try { cIdx = await idbGet('forge_cardArt_idx'); } catch (e) {}
     const haveSpr = Array.isArray(sIdx) && sIdx.length > 0;
     const haveCar = Array.isArray(cIdx) && cIdx.length > 0;
-    // 🛑 Streaming is OPT-IN again. Custom art (streaming + thumbnail build) has
-    // crashed across multiple screens on the huge admin library, so the SAFE
-    // DEFAULT is the stable placeholder mode (no art load, no decode, no build —
-    // the build verified-stable mode). Turn art on ONLY with hg_artstream='1';
-    // the crash recorder below then watches it.
-    let _streamOn = false;
-    try { _streamOn = localStorage.getItem('hg_artstream') === '1'; } catch (e) {}
+    // 🎨 SHOW CUSTOM ART BY DEFAULT. The admin asked not to be auto-dropped into
+    // placeholder mode — so a big library now DEFAULTS to on-demand streaming, and
+    // the ONLY way into placeholder is an explicit hg_artstream='0' (the "Custom
+    // art in-game: OFF" toggle). A crash-loop guard pauses streaming for ONE boot
+    // if the previous art-on session didn't exit cleanly, so even a memory-starved
+    // device can always get back in to toggle it off.
+    let _streamOn = true;
+    try {
+      const _ov = localStorage.getItem('hg_artstream');
+      if (_ov === '0') {
+        _streamOn = false;                                  // admin explicitly chose placeholder
+      } else {
+        _streamOn = true;                                   // default: show art
+        if (_ov !== '1' && localStorage.getItem('hg_stream_pending') === '1') {
+          // Last art-on boot never cleared its sentinel → it likely crashed. Pause
+          // for this boot only (unless the admin FORCED art on with '1').
+          _streamOn = false;
+          try { localStorage.removeItem('hg_stream_pending'); } catch (e) {}
+          // Stick to placeholder until the admin explicitly re-enables it, so we
+          // don't bounce crash→recover→crash every other reload.
+          try { localStorage.setItem('hg_artstream', '0'); } catch (e) {}
+          try { console.warn('🛟 Custom art auto-paused — the previous art-on session did not exit cleanly. Re-enable via Settings → Custom art in-game.'); } catch (e) {}
+          try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🛟 Custom art was auto-paused after an unclean exit. Turn it back on in Settings → Custom art in-game.', 6500); } catch (e) {} }, 2200); } catch (e) {}
+        }
+      }
+    } catch (e) {}
     // 🔑 ALWAYS track the on-disk asset index + keep the resident maps as objects,
     // even in placeholder mode. Without this _carIds / _sprIds were undefined, so
     // saveForge could not persist NEWLY-uploaded art → card art silently never
@@ -50320,6 +50339,11 @@ async function loadHeavyForgeFromIdb() {
     if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
     if ((haveSpr || haveCar) && _streamOn) {
       _lazyArtOn = true;
+      // 🛟 Crash-loop sentinel — set BEFORE the risky decode/build window; cleared
+      // ~20s later once we've clearly survived. If we never get there (a crash), the
+      // next boot sees it still set and pauses art so the admin can get in.
+      try { localStorage.setItem('hg_stream_pending', '1'); } catch (e) {}
+      try { setTimeout(function () { try { localStorage.removeItem('hg_stream_pending'); } catch (e) {} }, 20000); } catch (e) {}
       try { _initDecodeBudget(); } catch (e) {}
       try { console.info('🎨 On-demand art streaming ON — ' + Forge._sprIds.size + ' sprites / ' + Forge._carIds.size + ' card-art (thumbnail-bounded). Force placeholders with localStorage.hg_artstream="0".'); } catch (e) {}
       try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🎨 Art library ready — sprites & card art stream in as you play.', 4000); } catch (e) {} }, 1500); } catch (e) {}
@@ -80484,11 +80508,11 @@ function bindCardEditor() {
   // 🎮 Toggle: render custom sprites/art in-game (streaming) vs placeholder emoji.
   const artStreamBtn = document.getElementById('btn-toggle-artstream');
   if (artStreamBtn) {
-    const _streamNow = (function () { try { return localStorage.getItem('hg_artstream') === '1'; } catch (e) { return false; } })();
+    const _streamNow = (function () { try { return localStorage.getItem('hg_artstream') !== '0'; } catch (e) { return false; } })();
     artStreamBtn.textContent = '🎮 Custom art in-game: ' + (_streamNow ? 'ON' : 'OFF');
     artStreamBtn.onclick = (e) => {
       e.preventDefault();
-      let now; try { now = localStorage.getItem('hg_artstream') === '1'; } catch (e2) { now = false; }
+      let now; try { now = localStorage.getItem('hg_artstream') !== '0'; } catch (e2) { now = false; }
       try { localStorage.setItem('hg_artstream', now ? '0' : '1'); } catch (e2) {}
       showToast(now
         ? '🎮 Custom art OFF (safe placeholder mode) — reloading…'
@@ -84899,11 +84923,11 @@ function renderSprites() {
   };
   const _artB = document.getElementById('btn-atelier-artstream');
   if (_artB) {
-    const _on = (function () { try { return localStorage.getItem('hg_artstream') === '1'; } catch (e) { return false; } })();
+    const _on = (function () { try { return localStorage.getItem('hg_artstream') !== '0'; } catch (e) { return false; } })();
     _artB.textContent = '🎮 Custom art in-game: ' + (_on ? 'ON' : 'OFF');
     _artB.onclick = (e) => {
       e.preventDefault();
-      let now; try { now = localStorage.getItem('hg_artstream') === '1'; } catch (e2) { now = false; }
+      let now; try { now = localStorage.getItem('hg_artstream') !== '0'; } catch (e2) { now = false; }
       try { localStorage.setItem('hg_artstream', now ? '0' : '1'); } catch (e2) {}
       showToast(now ? '🎮 Custom art OFF (safe placeholder) — reloading…' : '🎮 Custom art ON — reloading. If unstable, turn it back OFF.', 4500);
       setTimeout(() => { try { location.reload(); } catch (e2) {} }, 1000);

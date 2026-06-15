@@ -36246,17 +36246,32 @@ async function cloudSyncSprites() {
 //         and (storage.foldername(name))[1] = auth.uid()::text);
 //   (Reads are public — a public bucket needs no read policy.)
 const CARD_ART_BUCKET = 'card-art';
+let _cardArtBucketReady = false;
+// Best-effort: create the PUBLIC card-art bucket if it's missing. Many projects
+// don't allow bucket creation from the authenticated key — if so this no-ops and
+// the upload surfaces a clear "create the bucket" message.
+async function _ensureCardArtBucket() {
+  if (_cardArtBucketReady) return;
+  try {
+    const { error } = await Cloud.client.storage.createBucket(CARD_ART_BUCKET, { public: true });
+    if (!error || /exist/i.test(error.message || '')) _cardArtBucketReady = true;
+  } catch (e) {}
+}
 async function cloudUploadCardArtFile(cardId, dataUrl) {
   try {
     if (!cardId || !dataUrl) return { ok: false, error: 'missing data' };
     if (!initCloud() || !Profile.cloud.signedIn) return { ok: false, error: 'Sign in to host card art in the cloud.' };
     if (!/^data:image\//i.test(dataUrl)) return { ok: false, error: 'not an image' };
+    await _ensureCardArtBucket();
     const blob = await (await fetch(dataUrl)).blob();
     const m = /^data:image\/(\w+)/i.exec(dataUrl);
     const ext = m ? (m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase()) : 'png';
     const path = `${Profile.cloud.userId}/${String(cardId).replace(/[^a-zA-Z0-9_-]/g, '_')}.${ext}`;
     const { error } = await Cloud.client.storage.from(CARD_ART_BUCKET).upload(path, blob, { upsert: true, contentType: blob.type || ('image/' + ext) });
-    if (error) return { ok: false, error: error.message };
+    if (error) {
+      if (/bucket not found|not found/i.test(error.message || '')) return { ok: false, error: 'No bucket named exactly "card-art". In Supabase → Storage → New bucket → name it card-art (lowercase) → Public ON.' };
+      return { ok: false, error: error.message };
+    }
     const { data } = Cloud.client.storage.from(CARD_ART_BUCKET).getPublicUrl(path);
     let url = data && data.publicUrl;
     if (!url) return { ok: false, error: 'no public url (is the bucket public?)' };

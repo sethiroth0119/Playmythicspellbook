@@ -72941,6 +72941,27 @@ function bindDeckChooserModal() {
   });
 }
 
+// 🃏 Consistent card face: card art (light) → custom sprite (force-loaded, bounded)
+// → emoji. Fixes card rows/tiles that showed the unicorn emoji for a sprite-only
+// card just because its sprite was not resident in memory (placeholder/streaming).
+function _cardFaceArt(card, fit) {
+  if (!card) return '🃏';
+  const cover = (fit === 'cover');
+  try {
+    const id = card.id;
+    const isHero = card.type === 'hero';
+    const spriteKey = isHero ? ('h_' + id) : ('u_' + id);
+    const art = (typeof getCardArt === 'function') ? (getCardArt(id) || getCardArt(spriteKey)) : null;
+    if (art && typeof art === 'string') return '<img src="' + art + '" alt="" style="width:100%;height:100%;object-fit:' + (cover ? 'cover' : 'contain') + ';border-radius:3px" decoding="async" loading="lazy">';
+    if (typeof _boardSpriteHtml === 'function') {
+      const occ = isHero ? { heroId: id, icon: card.icon } : { cardId: id, id: id, type: 'unit', icon: card.icon };
+      const bs = _boardSpriteHtml(occ);
+      if (bs) { try { if (typeof _ensureBoardSpriteAnim === 'function') _ensureBoardSpriteAnim(); } catch (e) {} return bs; }
+    }
+  } catch (e) {}
+  return (card.icon || '🃏');
+}
+
 function renderDeckSelectModal(deckOptions) {
   if (!App.deckSelectModalKey) return '';
   const opts = (deckOptions || []).find(o => o.key === App.deckSelectModalKey);
@@ -72986,16 +73007,7 @@ function renderDeckSelectModal(deckOptions) {
     if (!card) return '';
     const isHero = card.type === 'hero';
     const spriteKey = isHero ? ('h_' + card.id) : ('u_' + card.id);
-    const frames = (typeof getSpriteFrames === 'function') ? getSpriteFrames(spriteKey, 'idle') : null;
-    const cardArt = (typeof getCardArt === 'function') ? getCardArt(card.id) : null;
-    let iconHtml;
-    if (frames && frames.length > 0 && typeof renderIcon === 'function') {
-      iconHtml = renderIcon(spriteKey, card.icon || '🃏', 'sm');
-    } else if (cardArt) {
-      iconHtml = `<img src="${cardArt}" alt="${escapeHtml(card.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:3px">`;
-    } else {
-      iconHtml = card.icon || '🃏';
-    }
+    const iconHtml = _cardFaceArt(card, 'cover');
     return `<div class="ds-deck-row"><span class="ds-deck-icon">${iconHtml}</span><span class="ds-deck-name">${escapeHtml(card.name)}</span><span class="ds-deck-qty">×${counts[k]}</span></div>`;
   }).join('');
   const factionBadges = (typeof getFactionsOf === 'function')
@@ -84979,7 +84991,14 @@ function _atelierPreviewFrames(id, anim) {
     if (!set) return [];
     let arr = Array.isArray(set[anim]) ? set[anim].filter(Boolean) : [];
     if (!arr.length && Array.isArray(set.idle)) arr = set.idle.filter(Boolean);
-    return arr.map(_imgSrc);
+    // 🧯 Cap the looping preview so a 100-200 frame sprite doesn't churn that many
+    // 512px decodes forever (native-memory creep on a constrained device).
+    if (arr.length > 60) arr = arr.slice(0, 60);
+    // ⚠ Use _frameUrl, NOT _imgSrc: _imgSrc caches a PERMANENT blob URL per unique
+    // frame in _imgUrlCache (never freed), so cycling the preview for minutes piled
+    // up hundreds of blob URLs = the Atelier native-memory crash. _frameUrl passes
+    // data: URLs through untouched and only blob-caches actual Blob objects.
+    return arr.map(function (v) { try { return (typeof _frameUrl === 'function') ? _frameUrl(v) : v; } catch (e) { return v; } });
   } catch (e) { return []; }
 }
 function _atelierPreviewHtml(id, fallbackEmoji, anim) {

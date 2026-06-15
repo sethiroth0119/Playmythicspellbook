@@ -49556,8 +49556,10 @@ function _lazyLoadSprite(id) {
 }
 
 // Stream one card's art in from its own IDB record, then repaint.
-function _lazyLoadCardArt(id) {
-  if (!_lazyArtOn || !id) return;
+// `force` loads a SINGLE card's art even in placeholder mode (no bulk decode) —
+// used by the Forge editor so freshly-saved art shows when you reopen the card.
+function _lazyLoadCardArt(id, force) {
+  if ((!_lazyArtOn && !force) || !id) return;
   if (_carPending.has(id) || _carMissing.has(id)) return;
   if (Forge.cardArt && Forge.cardArt[id]) { _lazyTouch('car', id); return; }
   if (Forge._carIds && !Forge._carIds.has(id)) { _carMissing.add(id); return; }
@@ -49841,13 +49843,18 @@ async function loadHeavyForgeFromIdb() {
     // the crash recorder below then watches it.
     let _streamOn = false;
     try { _streamOn = localStorage.getItem('hg_artstream') === '1'; } catch (e) {}
+    // 🔑 ALWAYS track the on-disk asset index + keep the resident maps as objects,
+    // even in placeholder mode. Without this _carIds / _sprIds were undefined, so
+    // saveForge could not persist NEWLY-uploaded art → card art silently never
+    // saved on a big library. Loading the index is just the id LIST (no art
+    // decode), so it stays crash-safe.
+    Forge._sprIds = new Set(haveSpr ? sIdx : []);
+    Forge._carIds = new Set(haveCar ? cIdx : []);
+    if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
+    if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
     if ((haveSpr || haveCar) && _streamOn) {
       _lazyArtOn = true;
       try { _initDecodeBudget(); } catch (e) {}
-      Forge._sprIds = new Set(haveSpr ? sIdx : []);
-      Forge._carIds = new Set(haveCar ? cIdx : []);
-      if (!Forge.sprites || typeof Forge.sprites !== 'object') Forge.sprites = {};
-      if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
       try { console.info('🎨 On-demand art streaming ON — ' + Forge._sprIds.size + ' sprites / ' + Forge._carIds.size + ' card-art (thumbnail-bounded). Force placeholders with localStorage.hg_artstream="0".'); } catch (e) {}
       try { if (typeof showToast === 'function') setTimeout(function () { try { showToast('🎨 Art library ready — sprites & card art stream in as you play.', 4000); } catch (e) {} }, 1500); } catch (e) {}
       // 🖼 Kick the one-time thumbnail build in the background (idle, one asset at
@@ -50567,20 +50574,22 @@ function saveForge() {
       if (!_bigLibrarySkip) {
         idbSet('forge_sprites',      Forge.sprites      || {});
         idbSet('forge_cardArt',      Forge.cardArt      || {});
-      } else if (_lazyArtOn) {
-        // 🎨 Streaming mode: the giant monolithic stores are NOT rewritten
-        // (Forge.sprites/cardArt only hold the small resident working set, so
-        // writing them would truncate the on-disk library). Instead, persist
-        // any NEWLY-AUTHORED asset to its OWN per-key record + the index, so a
-        // freshly uploaded sprite/card survives a refresh. Ids already in the
-        // index were streamed FROM disk unchanged, so they're skipped — this
-        // only writes the handful of genuinely new ids, never the whole library.
+      } else {
+        // 🎨 Big-library mode (streaming OR placeholder): NEVER rewrite the
+        // monolithic forge_sprites/forge_cardArt stores — that would truncate the
+        // multi-GB on-disk library down to the small resident working set. Instead
+        // persist any FRESHLY-AUTHORED asset (a data:/http(s) url the user just
+        // uploaded or pasted — anything that is NOT a streamed blob: url) to its
+        // OWN per-key record + index, so uploads/edits survive a refresh even in
+        // placeholder mode. (This is the fix for "card art never saves".)
+        const _persistable = (v) => typeof v === 'string' && v.indexOf('blob:') !== 0;
         try {
           if (Forge.sprites && Forge._sprIds) {
             let added = false;
             for (const _id in Forge.sprites) {
               if (!_id || _id.indexOf('__') === 0) continue;
-              if (!Forge._sprIds.has(_id)) { idbSet('spr:' + _id, Forge.sprites[_id]); Forge._sprIds.add(_id); added = true; }
+              const v = Forge.sprites[_id];
+              if (_persistable(v)) { idbSet('spr:' + _id, v); if (!Forge._sprIds.has(_id)) { Forge._sprIds.add(_id); added = true; } }
             }
             if (added) idbSet('forge_sprites_idx', Array.from(Forge._sprIds));
           }
@@ -50588,7 +50597,8 @@ function saveForge() {
             let addedC = false;
             for (const _id in Forge.cardArt) {
               if (!_id || _id.indexOf('__') === 0) continue;
-              if (!Forge._carIds.has(_id)) { idbSet('car:' + _id, Forge.cardArt[_id]); Forge._carIds.add(_id); addedC = true; }
+              const v = Forge.cardArt[_id];
+              if (_persistable(v)) { idbSet('car:' + _id, v); if (!Forge._carIds.has(_id)) { Forge._carIds.add(_id); addedC = true; } }
             }
             if (addedC) idbSet('forge_cardArt_idx', Array.from(Forge._carIds));
           }
@@ -77617,6 +77627,12 @@ function renderCardEditor() {
   // Card art — the illustration shown in the upper window of the hand-card frame.
   // Separate from the battle sprite so the art on the card AND the pixel sprite on
   // the field can be set independently.
+  // In placeholder mode the resident map may not hold this card's art yet — if it
+  // exists on disk (in the index), force-load just THIS one card's art so the
+  // editor shows the saved illustration (single-asset load, no bulk decode).
+  if ((!Forge.cardArt || !Forge.cardArt[card.id]) && Forge._carIds && Forge._carIds.has(card.id) && typeof _lazyLoadCardArt === 'function') {
+    try { _lazyLoadCardArt(card.id, true); } catch (e) {}
+  }
   const cardArtUrl = (Forge.cardArt && Forge.cardArt[card.id]) || '';
   const hasCardArt = !!cardArtUrl;
   const cardArtPreview = hasCardArt

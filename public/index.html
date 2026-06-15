@@ -37172,6 +37172,7 @@ function _applyCatalogRow(data) {
   if (Array.isArray(rawMoves.__crafting_recipes__))  Catalog.craftingRecipes  = rawMoves.__crafting_recipes__;
   if (rawMoves.__obtainability__     && typeof rawMoves.__obtainability__     === 'object') Catalog.obtainability    = rawMoves.__obtainability__;
   if (rawMoves.__onboarding__        && typeof rawMoves.__onboarding__        === 'object') Catalog.onboarding       = rawMoves.__onboarding__;
+  if (rawMoves.__maintenance__       && typeof rawMoves.__maintenance__       === 'object') Catalog.maintenance      = rawMoves.__maintenance__;
   if (rawMoves.__territory_wars__    && typeof rawMoves.__territory_wars__    === 'object') Catalog.territoryWars    = rawMoves.__territory_wars__;
   if (rawMoves.__dark_events__ !== undefined)        Catalog.darkEvents       = rawMoves.__dark_events__;
   if (Array.isArray(rawMoves.__vip_pool__))          Catalog.vipPool          = rawMoves.__vip_pool__;
@@ -37557,6 +37558,14 @@ async function cloudPublishCatalog(opts) {
         if (typeof s.narrationAudio === 'string' && s.narrationAudio.slice(0, 5) === 'data:') s.narrationAudio = '';
         return s;
       })(),
+      // 🛠 GLOBAL MAINTENANCE LOCK — when enabled, every non-admin player is held on
+      // a "down for maintenance" screen. Tiny flag, rides the catalog so all clients
+      // see it on their next fetch.
+      __maintenance__: (Forge.maintenance && typeof Forge.maintenance === 'object') ? {
+        enabled: !!Forge.maintenance.enabled,
+        message: (typeof Forge.maintenance.message === 'string') ? Forge.maintenance.message : '',
+        title:   (typeof Forge.maintenance.title   === 'string') ? Forge.maintenance.title   : '',
+      } : null,
       // 🗺 Territory Wars — admin's world map, ALL players must see the same
       // regions/sectors/nodes/guard decks. (Excluding worldFeed which is
       // append-only chatter; it cloud-syncs via the live realtime channel.)
@@ -69120,6 +69129,41 @@ function smoothScreenTransition(targetScreen, opts) {
 // 🛡 Crash-guarded render — if any screen renderer throws, we log it and keep
 // the last good DOM on screen instead of white-screening / "restarting". The
 // next render() call retries cleanly. _renderImpl is the original body.
+// 🛠 MAINTENANCE MODE — global admin lock. Players read the PUBLISHED flag from the
+// catalog; the admin edits their own Forge.maintenance copy (live, before publish).
+function _maintenanceCfg() {
+  const c = (typeof Catalog === 'object' && Catalog && Catalog.maintenance && typeof Catalog.maintenance === 'object') ? Catalog.maintenance : null;
+  const f = (typeof Forge === 'object' && Forge && Forge.maintenance && typeof Forge.maintenance === 'object') ? Forge.maintenance : null;
+  const isAdm = (typeof isAdmin === 'function') && isAdmin();
+  const s = isAdm ? (f || c || {}) : (c || {});   // admin sees their own toggle live
+  return {
+    enabled: !!s.enabled,
+    title:   (typeof s.title === 'string' && s.title.trim())     ? s.title   : 'DOWN FOR MAINTENANCE',
+    message: (typeof s.message === 'string' && s.message.trim()) ? s.message : 'Ethos Heights is briefly offline for updates. We will be back shortly — thanks for your patience, survivor.',
+  };
+}
+function _maintenanceOn() { try { return !!_maintenanceCfg().enabled; } catch (e) { return false; } }
+function renderMaintenance() {
+  const cfg = _maintenanceCfg();
+  const root = document.getElementById('app');
+  if (!root) return;
+  try { if (typeof stopMenuMusic === 'function') stopMenuMusic(); } catch (e) {}
+  const esc = (typeof escapeHtml === 'function') ? escapeHtml : (x) => x;
+  root.innerHTML = `
+    <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:1.5rem;background:radial-gradient(ellipse at 50% 30%, #1c1230 0%, #0b0814 70%);z-index:5">
+      <div style="max-width:560px;text-align:center;border:1px solid rgba(212,175,55,0.35);background:rgba(20,14,34,0.92);border-radius:14px;padding:2.4rem 2rem;box-shadow:0 24px 60px rgba(0,0,0,0.6)">
+        <div style="font-size:4.2rem;line-height:1;margin-bottom:0.6rem">🛠️</div>
+        <h1 style="font-family:'Cinzel',serif;letter-spacing:0.08em;color:#f4d06a;font-size:1.7rem;margin:0 0 0.8rem">${esc(cfg.title)}</h1>
+        <p style="color:#d8d2e6;line-height:1.6;font-size:1.02rem;margin:0 0 1.4rem">${esc(cfg.message)}</p>
+        <button id="maint-recheck" style="font-family:'Cinzel',serif;letter-spacing:0.05em;background:linear-gradient(180deg,#caa64a,#9c7a26);color:#1a1206;border:none;border-radius:8px;padding:0.7rem 1.6rem;font-weight:700;cursor:pointer">↻ Check again</button>
+        <div style="margin-top:1.1rem;font-size:0.78rem;color:#8a82a0">You will be let back in automatically once maintenance ends.</div>
+      </div>
+    </div>
+  `;
+  const b = document.getElementById('maint-recheck');
+  if (b) b.onclick = () => { try { location.reload(); } catch (e) {} };
+}
+
 function render() {
   try { return _renderImpl.apply(this, arguments); }
   catch (e) { try { console.error('[render] crashed — kept last good screen:', e); } catch (_) {} }
@@ -69327,6 +69371,18 @@ function _renderImpl() {
   // non-battle screen — INCLUDING the Deck Builder / pre-battle loadout, which a
   // normal must-pick player is otherwise allowed to sit on. (They were landing on
   // an empty Deck Builder with "you don't own any heroes yet" and no way out.)
+  // 🛠 MAINTENANCE GATE — when the admin has flipped maintenance ON, every NON-admin
+  // (signed in or offline) is locked to the maintenance screen so they cannot play
+  // or navigate while things are being fixed. Admins pass straight through so they
+  // can keep working + toggle it off. The auth gate is left alone so an admin can
+  // still sign in. Takes priority over onboarding.
+  try {
+    if (typeof _maintenanceOn === 'function' && _maintenanceOn()
+        && !(typeof isAdmin === 'function' && isAdmin())) {
+      const _cc = Profile.cloud || {};
+      if (_cc.signedIn || _cc.offlineMode) return renderMaintenance();
+    }
+  } catch (e) {}
   // 🎓 NEW-PLAYER ONBOARDING GATE — intercept brand-new players into the
   // cinematic onboarding (welcome → starter pick → tutorial → menu tour) instead
   // of the bare starter picker. Only hijacks menu screens (title / starterPick),
@@ -106711,6 +106767,21 @@ function renderSettings() {
         })()}
       </div>
 
+      ${(typeof isAdmin === 'function' && isAdmin()) ? `
+      <div class="settings-section" style="border:1px solid rgba(232,93,60,0.4);background:rgba(160,40,40,0.06)">
+        <div class="settings-section-title">🛠 Maintenance Mode <span class="ink-dim small-text">— admin only</span></div>
+        <div class="settings-section-desc">Lock every non-admin player out behind a “down for maintenance” screen while you fix things. You and other admins can still play normally. Toggling this publishes to all players.</div>
+        <label class="settings-toggle" style="margin-bottom:0.8rem">
+          <input type="checkbox" id="set-maintenance" ${(Forge.maintenance && Forge.maintenance.enabled) ? 'checked' : ''}>
+          <span class="settings-toggle-slider"></span>
+          <span class="settings-toggle-label">${(Forge.maintenance && Forge.maintenance.enabled) ? '🔴 ON — players are locked out' : '🟢 OFF — players can play'}</span>
+        </label>
+        <div class="settings-section-desc" style="margin-top:0.3rem">Message shown to locked-out players</div>
+        <textarea id="set-maintenance-msg" class="editor-textarea" rows="2" maxlength="300" placeholder="Ethos Heights is briefly offline for updates — back shortly!">${escapeHtml((Forge.maintenance && Forge.maintenance.message) || '')}</textarea>
+        <div class="small-text ink-dim" id="set-maintenance-status" style="margin-top:0.45rem">${(Forge.maintenance && Forge.maintenance.enabled) ? '🔴 Maintenance is LIVE — players are locked out.' : '🟢 Maintenance is OFF.'}</div>
+      </div>
+      ` : ''}
+
       <div class="settings-section">
         <div class="settings-section-title">🎵 Music</div>
         <div class="settings-section-desc">Background music plays on the main menu (and looped). Mute or lower the volume here. Track selection swaps the menu theme — additional tracks can be added by dropping MP3 files into <code>assets/Audio/</code> and listing them in <code>MENU_MUSIC_TRACKS</code>.</div>
@@ -107043,6 +107114,28 @@ function renderSettings() {
   const bSync    = document.getElementById('btn-cloud-sync');
   const bFetch   = document.getElementById('btn-cloud-fetch');
   const bAuto    = document.getElementById('set-cloud-autosync');
+  // 🛠 Maintenance toggle (admin only) — write Forge.maintenance + publish to every player.
+  const bMaint = document.getElementById('set-maintenance');
+  const bMaintMsg = document.getElementById('set-maintenance-msg');
+  const _maintStatusEl = document.getElementById('set-maintenance-status');
+  const _commitMaintenance = async (announce) => {
+    if (!Forge.maintenance || typeof Forge.maintenance !== 'object') Forge.maintenance = {};
+    Forge.maintenance.enabled = !!(bMaint && bMaint.checked);
+    if (bMaintMsg) Forge.maintenance.message = bMaintMsg.value.trim();
+    // Mirror into the admin's own Catalog copy so state stays consistent locally.
+    try { if (!Catalog.maintenance || typeof Catalog.maintenance !== 'object') Catalog.maintenance = {}; Catalog.maintenance.enabled = Forge.maintenance.enabled; Catalog.maintenance.message = Forge.maintenance.message || ''; } catch (e) {}
+    try { saveForge(); } catch (e) {}
+    try { const lbl = bMaint && bMaint.parentElement && bMaint.parentElement.querySelector('.settings-toggle-label'); if (lbl) lbl.textContent = Forge.maintenance.enabled ? '🔴 ON — players are locked out' : '🟢 OFF — players can play'; } catch (e) {}
+    if (_maintStatusEl) _maintStatusEl.textContent = '⏳ Publishing to all players…';
+    let ok = false;
+    try { if (typeof cloudPublishCatalog === 'function') { const r = await cloudPublishCatalog(); ok = !r || r.ok !== false; } } catch (e) {}
+    if (_maintStatusEl) _maintStatusEl.textContent = Forge.maintenance.enabled
+      ? (ok ? '🔴 Maintenance is LIVE — players are locked out.' : '🔴 ON locally, but PUBLISH FAILED — players may still get in. Toggle again to retry.')
+      : (ok ? '🟢 Maintenance is OFF — players can play.' : '🟢 OFF locally, but publish failed — toggle again to retry.');
+    if (announce && typeof showToast === 'function') showToast(Forge.maintenance.enabled ? '🛠 Maintenance ON — players are locked out.' : '✅ Maintenance OFF — players can play.', 5000);
+  };
+  if (bMaint)    bMaint.onchange    = () => _commitMaintenance(true);
+  if (bMaintMsg) bMaintMsg.onblur   = () => _commitMaintenance(false);
   if (bSignIn)  bSignIn.onclick  = () => openAuthModal('signin');
   if (bSignUp)  bSignUp.onclick  = () => openAuthModal('signup');
   if (bSignOut) bSignOut.onclick = async () => {

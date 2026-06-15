@@ -36260,6 +36260,75 @@ async function cloudUploadCardArtFile(cardId, dataUrl) {
   } catch (e) { return { ok: false, error: (e && e.message) || 'upload failed' }; }
 }
 
+// Convert any stored art value (Blob / data: url / blob: url / wrapper object) to
+// a data URL we can re-upload. http(s) urls are already remote → null (nothing to do).
+async function _artValueToDataUrl(v) {
+  try {
+    if (!v) return null;
+    if (typeof v === 'object' && !(typeof Blob !== 'undefined' && v instanceof Blob)) v = v.url || v.data || v.src || v.image || null;
+    if (typeof Blob !== 'undefined' && v instanceof Blob) {
+      return await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => res(null); r.readAsDataURL(v); });
+    }
+    if (typeof v === 'string') {
+      if (v.indexOf('data:image/') === 0) return v;
+      if (v.indexOf('blob:') === 0) { const b = await (await fetch(v)).blob(); return await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => res(null); r.readAsDataURL(b); }); }
+      return null;
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+// ☁ ONE-SHOT MIGRATION — push the ENTIRE existing local card-art library (IDB +
+// resident base64) to the public card-art bucket, stamp each card's artUrl, and
+// delete the local copies. THIS is what frees the client bloat that crashes.
+// Run from the console:  __mg.migrateArtToCloud()
+async function migrateCardArtToCloud() {
+  if (!Profile.cloud || !Profile.cloud.signedIn) { console.warn('☁ Sign in first.'); if (typeof showToast === 'function') showToast('☁ Sign in first to migrate art.'); return { ok: false }; }
+  const ids = new Set();
+  try { if (Forge._carIds) for (const id of Forge._carIds) ids.add(id); } catch (e) {}
+  try { if (Forge.cardArt) for (const id in Forge.cardArt) { if (id && id.indexOf('__') !== 0) ids.add(id); } } catch (e) {}
+  const all = Array.from(ids).filter(id => !(Forge.cardArtUrl && Forge.cardArtUrl[id]));
+  if (!all.length) { console.info('☁ Nothing to migrate — no local card art found.'); if (typeof showToast === 'function') showToast('No local card art to migrate.'); return { ok: true, migrated: 0 }; }
+  console.info('☁ Migrating ' + all.length + ' card-art image(s) to the cloud…');
+  if (typeof showToast === 'function') showToast('☁ Migrating ' + all.length + ' card art images…', 5000);
+  let ok = 0, fail = 0, skip = 0;
+  for (let i = 0; i < all.length; i++) {
+    const id = all[i];
+    try {
+      let v = (Forge.cardArt && Forge.cardArt[id]) || null;
+      if (!v) { try { v = await idbGet('car:' + id); } catch (e) {} }
+      const dataUrl = await _artValueToDataUrl(v);
+      if (!dataUrl) { skip++; continue; }
+      const up = await cloudUploadCardArtFile(id, dataUrl);
+      if (up.ok && up.url) {
+        const card = (Forge.customCards || []).find(c => c && c.id === id);
+        if (card) card.artUrl = up.url;
+        (Forge.cardArtUrl = Forge.cardArtUrl || {})[id] = up.url;
+        try { if (Forge.cardArt) delete Forge.cardArt[id]; } catch (e) {}
+        try { await idbDel('car:' + id); if (Forge._carIds) Forge._carIds.delete(id); } catch (e) {}
+        ok++;
+      } else {
+        fail++;
+        // Abort on the FIRST failure if it smells like a bucket/policy problem —
+        // don't grind through the whole library on a misconfigured bucket.
+        if (fail === 1 && /bucket|not found|policy|public url|unauthor|403|404|row-level/i.test(up.error || '')) {
+          console.warn('☁ Aborted — bucket looks misconfigured: ' + up.error);
+          if (typeof showToast === 'function') showToast('⚠ Migration stopped — bucket issue: ' + (up.error || '?'), 8000);
+          return { ok: false, error: up.error, migrated: ok };
+        }
+      }
+    } catch (e) { fail++; }
+    if (i % 5 === 0) console.info('  ' + (i + 1) + '/' + all.length + ' — ' + ok + ' ok · ' + fail + ' fail · ' + skip + ' skip');
+    await new Promise(r => setTimeout(r, 25));
+  }
+  try { if (Forge._carIds) idbSet('forge_cardArt_idx', Array.from(Forge._carIds)); } catch (e) {}
+  try { saveForge(); } catch (e) {}
+  console.info('✅ Migration complete: ' + ok + ' uploaded · ' + fail + ' failed · ' + skip + ' skipped. Refresh to confirm.');
+  if (typeof showToast === 'function') showToast('✅ ' + ok + ' card art moved to the cloud' + (fail ? (' · ' + fail + ' failed') : '') + '. Refresh to confirm.', 8000);
+  return { ok: true, migrated: ok, failed: fail, skipped: skip };
+}
+try { window.__mg = window.__mg || {}; window.__mg.migrateArtToCloud = migrateCardArtToCloud; } catch (e) {}
+
 // Pull asset chunks from Storage into Forge.* — called automatically after a
 // successful profile fetch on sign-in. If a chunk is missing (404), we leave
 // the local Forge state alone (player hasn't uploaded yet).
@@ -79097,6 +79166,9 @@ function renderCardEditor() {
               <button class="btn-mini" id="btn-url-cardart">Use URL</button>
               ${hasCardArt ? `<button class="btn-mini btn-danger" id="btn-clear-cardart">Clear</button>` : ''}
             </div>
+            <div style="margin-top:0.55rem">
+              <button class="btn-mini" id="btn-migrate-cardart" style="font-size:0.62rem" title="Upload your whole existing card-art library to Supabase and clear the local copies — frees memory and stops the crashes">☁ Move ALL my card art to the cloud</button>
+            </div>
           </div>
         </div>
 
@@ -79751,6 +79823,18 @@ function bindCardEditor() {
       saveForge();
       showToast('Card art cleared');
       captureAndRender();
+    };
+  }
+  // ☁ One-click: migrate the WHOLE existing local art library to the cloud bucket.
+  const artMigrateBtn = document.getElementById('btn-migrate-cardart');
+  if (artMigrateBtn) {
+    artMigrateBtn.onclick = async (e) => {
+      e.preventDefault();
+      if (typeof migrateCardArtToCloud !== 'function') { showToast('Migration unavailable.'); return; }
+      const _orig = artMigrateBtn.textContent;
+      artMigrateBtn.disabled = true; artMigrateBtn.textContent = '☁ Migrating… (watch the toasts)';
+      try { await migrateCardArtToCloud(); } catch (err) { showToast('⚠ Migration error: ' + ((err && err.message) || '?'), 6000); }
+      try { artMigrateBtn.disabled = false; artMigrateBtn.textContent = _orig; } catch (e2) {}
     };
   }
 

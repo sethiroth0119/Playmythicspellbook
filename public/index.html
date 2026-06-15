@@ -36493,6 +36493,22 @@ async function _migrateSpritesToCloud(progressCb) {
 }
 async function migrateSpritesToCloud() {
   if (!Profile.cloud || !Profile.cloud.signedIn) { if (typeof showToast === 'function') showToast('☁ Sign in first.'); return { ok: false }; }
+  // 🛡 This is a HEAVY operation (it reads + uploads every HD frame). On a big
+  // library it can strain memory and crash. It is ONLY worth doing to free disk —
+  // so if storage is nowhere near full, warn the admin off it.
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      const pct = est.quota ? (est.usage / est.quota) : 0;
+      if (pct < 0.6) {
+        const usedMB = Math.round((est.usage || 0) / 1048576), quotaMB = Math.round((est.quota || 0) / 1048576);
+        const go = (typeof gcConfirm === 'function')
+          ? await gcConfirm('You have plenty of storage free (' + usedMB + ' MB of ' + quotaMB + ' MB used). Moving sprites to the cloud is NOT needed for space and is heavy on a large HD library — it can be slow or crash. Run it anyway?')
+          : true;
+        if (!go) { if (typeof showToast === 'function') showToast('👍 Skipped — your storage is fine, no migration needed.', 5000); return { ok: false, skipped: true }; }
+      }
+    }
+  } catch (e) {}
   if (typeof showToast === 'function') showToast('🎞 Moving sprite animations — many frames, this can take several minutes. You can leave it running.', 7000);
   let res;
   try { res = await _migrateSpritesToCloud((done, total, frames) => { if (done % 3 === 0 && typeof showToast === 'function') showToast('🎞 Sprites ' + done + '/' + total + ' · ' + frames + ' frames moved', 2500); }); } catch (e) { res = { fail: 1 }; }
@@ -84504,6 +84520,18 @@ function renderSprites() {
     setTimeout(render, 0);
     return;
   }
+  // 🛑 Skip redundant BACKGROUND rebuilds (cloud-sync ticks, heartbeat, periodic
+  // render() calls) that would wipe + restart the live preview — that is the
+  // "animation plays, disappears, then replays" the admin saw. If the Atelier is
+  // already painted for the same subject + anim, leave the DOM and the running
+  // preview loop intact. The sig is refreshed in attachSpriteEditorHandlers, which
+  // runs after every full OR soft editor update, so real changes still repaint.
+  try {
+    const _sig = String(App.spriteSubjectId) + '|' + String(App.spriteActiveAnim);
+    if (App._spritesSig === _sig && document.querySelector('.creator-screen') && document.getElementById('sprite-editor')) {
+      return;
+    }
+  } catch (e) {}
   // 📜 Scroll preservation — capture scrollY BEFORE wiping innerHTML so
   // background re-renders (cloud-sync retries, heartbeat, etc.) can't
   // snap the admin back to the top of the page mid-edit. Restored on
@@ -84659,6 +84687,44 @@ function renderSprites() {
   }
 }
 
+// 🎞 Lightweight Atelier preview animator. The old preview stacked EVERY frame as
+// a decoded <img> and preloaded them all — at 512px × dozens of frames that is the
+// native/GPU-memory crash, and under memory pressure the browser dropped the
+// decoded frames so the animation "played, vanished, replayed". This uses ONE
+// <img> and swaps its src on a timer: the browser keeps the current frame visible
+// until the next decodes, so the loop is seamless and only ~1 frame is decoded at
+// a time. Memory-bounded regardless of frame count.
+let _atelierPrevTimer = null;
+function _stopAtelierPreviewAnim() { if (_atelierPrevTimer) { clearInterval(_atelierPrevTimer); _atelierPrevTimer = null; } }
+function _atelierPreviewFrames(id, anim) {
+  try {
+    const set = Forge.sprites && Forge.sprites[id];
+    if (!set) return [];
+    let arr = Array.isArray(set[anim]) ? set[anim].filter(Boolean) : [];
+    if (!arr.length && Array.isArray(set.idle)) arr = set.idle.filter(Boolean);
+    return arr.map(_imgSrc);
+  } catch (e) { return []; }
+}
+function _atelierPreviewHtml(id, fallbackEmoji, anim) {
+  const f = _atelierPreviewFrames(id, anim);
+  if (!f.length) return `<span style="font-size:3rem;line-height:1">${fallbackEmoji || '🎨'}</span>`;
+  return `<img id="atelier-preview-img" src="${f[0]}" alt="" draggable="false" decoding="async" style="width:96px;height:96px;object-fit:contain;image-rendering:auto">`;
+}
+function _startAtelierPreviewAnim(id, anim) {
+  _stopAtelierPreviewAnim();
+  const f = _atelierPreviewFrames(id, anim);
+  if (f.length <= 1) return; // single frame or none — nothing to animate
+  const fps = (typeof getSpriteAnimFps === 'function' && getSpriteAnimFps(id, anim)) || Math.round(1000 / DEFAULT_SPRITE_FRAME_MS);
+  const ms = Math.max(45, Math.round(1000 / fps));
+  let i = 0;
+  _atelierPrevTimer = setInterval(() => {
+    const el = document.getElementById('atelier-preview-img');
+    if (!el) { _stopAtelierPreviewAnim(); return; }   // editor gone — stop the timer
+    i = (i + 1) % f.length;
+    el.src = f[i];
+  }, ms);
+}
+
 function renderSpriteEditor() {
   if (!App.spriteSubjectId) {
     return `<div class="editor-empty"><div style="font-size:3rem">🎨</div><p>Select a hero, unit, or custom card on the left to upload sprites for it.</p></div>`;
@@ -84729,7 +84795,7 @@ function renderSpriteEditor() {
     <div class="editor-section-title">${escapeHtml(displayName)}</div>
 
     <div class="preview-anim-row">
-      <div class="preview-box">${renderIcon(id, fallbackEmoji, 'xl', activeAnim, { maxFrames: 48 })}</div>
+      <div class="preview-box">${_atelierPreviewHtml(id, fallbackEmoji, activeAnim)}</div>
       <div class="preview-meta">
         <h4>Live Preview <span style="opacity:0.55;font-weight:400;font-size:0.8em">· ${escapeHtml(activeAnim)}</span></h4>
         <p>${previewBlurb}</p>
@@ -84944,6 +85010,10 @@ function attachSpriteEditorHandlers() {
       sheetInput.value = '';
     };
   }
+  // ▶ Start the memory-light live preview loop for the current subject/anim, and
+  // refresh the render signature so background render() calls leave us alone.
+  try { _startAtelierPreviewAnim(App.spriteSubjectId, App.spriteActiveAnim); } catch (e) {}
+  try { App._spritesSig = String(App.spriteSubjectId) + '|' + String(App.spriteActiveAnim); } catch (e) {}
 }
 
 // Approx KB on disk for one subject's whole sprite set (base64 → bytes).

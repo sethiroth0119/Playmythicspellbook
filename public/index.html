@@ -144667,27 +144667,40 @@ async function tw_cloudClearNodeOwner(nodeId) {
     return true;
   } catch (e) { return null; }
 }
-// Search the player directory by gamertag/handle (the api_players table — the
-// same directory the admin user-management search uses). Falls back to settlement
-// names only if the handle directory returns nothing.
+// Search players by gamertag/handle, using the SAME directory the admin User
+// Management screen uses: the full /api/admin/users account list (AdmUM.all),
+// then the multi-table public search (api_players / reserve / corp_members),
+// then settlement names as a last resort. Returns [{user_id, name, sub}].
 async function tw_cloudSearchPlayers(query) {
   try {
-    const q = String(query || '').trim().replace(/[%_,]/g, '');
-    if (!q || !Cloud || !Cloud.ready || !Cloud.client) return [];
+    const q = String(query || '').trim();
+    if (!q) return [];
+    const ql = q.toLowerCase();
     const seen = new Set(), out = [];
+    const add = (uid, nm, sub) => { nm = (nm || '').trim(); if (!uid || seen.has(uid)) return; seen.add(uid); out.push({ user_id: uid, name: nm || 'Player', sub: sub || '' }); };
+    // 1) Full admin account directory (the 48 accounts you see in User Management).
     try {
-      const { data } = await Cloud.client.from('api_players')
-        .select('user_id, handle').ilike('handle', '%' + q + '%').limit(25);
-      (data || []).forEach(r => { if (r.user_id && !seen.has(r.user_id)) { seen.add(r.user_id); out.push({ user_id: r.user_id, name: r.handle || 'Player', sub: '' }); } });
+      if (typeof AdmUM !== 'undefined') {
+        if (!AdmUM.adminFetched && !AdmUM._loadingAll && typeof _admFetchAll === 'function') { await _admFetchAll(); }
+        if (Array.isArray(AdmUM.all) && AdmUM.all.length) {
+          AdmUM.all.filter(u => u && u.user_id && (((u.handle || '').toLowerCase().indexOf(ql) >= 0) || ((u.email || '').toLowerCase().indexOf(ql) >= 0)))
+            .slice(0, 25).forEach(u => add(u.user_id, u.handle || u.email || 'Player'));
+        }
+      }
     } catch (e) {}
-    if (!out.length) {
+    // 2) Public multi-table player search (api_players / reserve_contributions / corp_members).
+    if (out.length < 8 && typeof _admUserSearch === 'function') {
+      try { (await _admUserSearch(q)).forEach(r => add(r.user_id, r.handle)); } catch (e) {}
+    }
+    // 3) Last resort: settlement names.
+    if (!out.length && Cloud && Cloud.ready && Cloud.client) {
       try {
-        const { data } = await Cloud.client.from('tw_camp_registrations')
-          .select('user_id, camp_name, node_id').ilike('camp_name', '%' + q + '%').limit(25);
-        (data || []).forEach(r => { if (r.user_id && !seen.has(r.user_id)) { seen.add(r.user_id); out.push({ user_id: r.user_id, name: r.camp_name || 'Settlement', sub: r.node_id || '' }); } });
+        const qx = q.replace(/[%_,]/g, '');
+        const { data } = await Cloud.client.from('tw_camp_registrations').select('user_id, camp_name, node_id').ilike('camp_name', '%' + qx + '%').limit(25);
+        (data || []).forEach(r => add(r.user_id, r.camp_name, r.node_id));
       } catch (e) {}
     }
-    return out;
+    return out.slice(0, 25);
   } catch (e) { return []; }
 }
 function _twNodeOwnerUser(nodeId) { try { return (App._twNodeOwners && App._twNodeOwners.byNode && App._twNodeOwners.byNode[nodeId]) || null; } catch (e) { return null; } }
@@ -147101,6 +147114,8 @@ function renderTerritoryWars() {
   // ── 👑 Admin: assign a District Node to a PLAYER (search + click) ──
   const _ownerSearchEl = document.getElementById('tw-owner-search');
   if (_ownerSearchEl) {
+    // Warm the admin account directory so the first search is instant.
+    try { if (typeof AdmUM !== 'undefined' && !AdmUM.adminFetched && !AdmUM._loadingAll && typeof _admFetchAll === 'function') _admFetchAll(); } catch (e) {}
     const _selId = App._twSelectedNode;
     const _selName = (() => { try { return (_twForge().nodes.find(n => n.id === _selId) || {}).name || _selId; } catch (e) { return _selId; } })();
     _ownerSearchEl.oninput = () => {

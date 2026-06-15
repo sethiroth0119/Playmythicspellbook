@@ -71976,9 +71976,17 @@ function _onbCfg() {
 function _ensureOnboardingState() {
   if (!Profile.onboarding || typeof Profile.onboarding !== 'object') Profile.onboarding = {};
   if (typeof Profile.onboarding.complete === 'undefined') {
-    // Grandfather established players (already picked a starter) so first-run
-    // onboarding never interrupts someone who has been playing.
-    const established = (typeof hasPickedStarter === 'function') && hasPickedStarter();
+    // Grandfather only players with REAL progress (they've actually BATTLED), so
+    // first-run onboarding never interrupts a returning player — but a brand-new
+    // account that was handed a default deck still gets the welcome → starter-pick
+    // flow. (The old check used hasPickedStarter(), which is true for ANY deck, so
+    // a new player with a default deck was wrongly marked "done" and skipped
+    // straight to the main menu — the bug.)
+    let established = false;
+    try {
+      const r = Profile.records || {};
+      established = (r.battles || 0) > 0 || (r.wins || 0) > 0 || (r.losses || 0) > 0;
+    } catch (e) {}
     Profile.onboarding.complete = !!established;
     try { saveProfile && saveProfile(); } catch (e) {}
   }
@@ -71999,7 +72007,12 @@ function shouldRunOnboarding() {
     _ensureOnboardingState();
     if (Profile.onboarding.complete) return false;
     if (Onboarding.step) return true;                          // already mid-flow
-    return (typeof hasPickedStarter === 'function') ? !hasPickedStarter() : true;
+    // Not complete + not mid-flow → run onboarding for anyone who hasn't actually
+    // BATTLED yet. (A brand-new account handed a default deck must still onboard —
+    // keying off hasPickedStarter() here was skipping new players to the menu.)
+    let _played = false;
+    try { const r = Profile.records || {}; _played = (r.battles || 0) > 0 || (r.wins || 0) > 0 || (r.losses || 0) > 0; } catch (e) {}
+    return !_played;
   } catch (e) { return false; }
 }
 
@@ -72011,6 +72024,30 @@ function startOnboarding() {
   }
   App.screen = 'onboarding';
 }
+
+// 🎓 BRAND-NEW ACCOUNT → force the onboarding flow from the very top, no matter
+// what stale flags say. Called the moment a freshly-created account signs in (the
+// "Continue to Game" button + email-code confirmation only ever appear right after
+// signup), because the heuristic gate can be silently skipped when a synced deck
+// or a restored onboarding-complete flag makes the player look "established".
+// This is THE guarantee that a new player always lands on the welcome → starter-
+// pick onboarding instead of the bare main menu. Non-admins only.
+function _forceNewPlayerOnboarding() {
+  try {
+    if (typeof isAdmin === 'function' && isAdmin()) return false;       // admins skip onboarding
+    if (!(Profile.cloud && Profile.cloud.signedIn)) return false;       // sign-in must have succeeded
+    if (!Profile.onboarding || typeof Profile.onboarding !== 'object') Profile.onboarding = {};
+    Profile.onboarding.complete = false;       // override any stale/synced "already done" flag
+    Profile.onboarding.step = 'welcome';
+    try { if (typeof Onboarding === 'object' && Onboarding) Onboarding.step = 'welcome'; } catch (e) {}
+    try { saveProfile && saveProfile(); } catch (e) {}
+    if (typeof startOnboarding === 'function') startOnboarding(); else App.screen = 'onboarding';
+    try { if (typeof closeAuthModal === 'function') closeAuthModal(); } catch (e) {}
+    try { if (typeof render === 'function') render(); } catch (e) {}
+    return true;
+  } catch (e) { return false; }
+}
+try { window.__mg = window.__mg || {}; window.__mg.forceOnboarding = _forceNewPlayerOnboarding; } catch (e) {}
 
 function _onbAdvance(step) {
   Onboarding.step = step;
@@ -121417,11 +121454,18 @@ function renderAuthModal() {
   if (continueBtn) continueBtn.onclick = async () => {
     // Account was created with no confirmation required → sign in directly.
     await tryQuickSignIn();
+    // 🎓 This button ONLY appears right after a brand-new account is created, so
+    // force the new-player onboarding (welcome → starter pick) the instant sign-in
+    // succeeds — never drop a new player straight onto the main menu.
+    try { if (typeof _forceNewPlayerOnboarding === 'function') _forceNewPlayerOnboarding(); } catch (e) {}
   };
+  // These "try signing in now" buttons only appear in the post-signup / confirm
+  // screens, so a successful sign-in here is a brand-new account → force onboarding.
+  const _trySignInThenOnboard = async () => { await tryQuickSignIn(); try { if (typeof _forceNewPlayerOnboarding === 'function') _forceNewPlayerOnboarding(); } catch (e) {} };
   const trySigninBtn = document.getElementById('auth-try-signin');
-  if (trySigninBtn) trySigninBtn.onclick = tryQuickSignIn;
+  if (trySigninBtn) trySigninBtn.onclick = _trySignInThenOnboard;
   const trySigninConfirmBtn = document.getElementById('auth-try-signin-confirm');
-  if (trySigninConfirmBtn) trySigninConfirmBtn.onclick = tryQuickSignIn;
+  if (trySigninConfirmBtn) trySigninConfirmBtn.onclick = _trySignInThenOnboard;
   const toConfirmBtn = document.getElementById('auth-to-confirm');
   if (toConfirmBtn) toConfirmBtn.onclick = () => {
     App.authModal.mode  = 'confirm';
@@ -121450,6 +121494,8 @@ function renderAuthModal() {
         showToast('✨ Email confirmed — welcome!', 2500);
         closeAuthModal();
         if (App.screen === 'authGate') { App.screen = 'title'; render(); }
+        // 🎓 Email confirmation only happens for a brand-new signup → force onboarding.
+        try { if (typeof _forceNewPlayerOnboarding === 'function') _forceNewPlayerOnboarding(); } catch (e) {}
       } else {
         App.authModal.error = (v && v.error) || 'Code verification failed (no error returned).';
         App.authModal.info = null;

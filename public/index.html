@@ -31494,6 +31494,18 @@ const DEFAULT_PACK_RARITY_WEIGHTS = {
 // the gold frame — independent of the on-field battle sprite.
 function getCardArt(cardId) {
   if (!cardId) return null;
+  // ☁ CLOUD-HOSTED PER-IMAGE ART (Supabase Storage public URL) — the library
+  // lives in Supabase; the client holds only this URL string. The browser + CDN
+  // load and cache each image ON DEMAND, so there is NO IndexedDB/memory bloat and
+  // no decode budget needed (unlike base64 art). Highest priority; legacy local
+  // base64/IDB art is the fallback below. The URL travels with the card (artUrl)
+  // so it publishes to every player for free — hydrate the render cache from it.
+  try {
+    if (Forge.cardArtUrl && Forge.cardArtUrl[cardId]) return Forge.cardArtUrl[cardId];
+    let _c = (Forge.customCards && Forge.customCards.find) ? Forge.customCards.find(x => x && x.id === cardId && x.artUrl) : null;
+    if (!_c && typeof Catalog !== 'undefined' && Array.isArray(Catalog.cards)) _c = Catalog.cards.find(x => x && x.id === cardId && x.artUrl);
+    if (_c && _c.artUrl) { (Forge.cardArtUrl = Forge.cardArtUrl || {})[cardId] = _c.artUrl; return _c.artUrl; }
+  } catch (e) {}
   // 🖼 BULLETPROOF: in streaming mode, ONLY ever return a tiny thumbnail (safe to
   // decode eagerly in any quantity) — NEVER full-res card art, so no card-heavy
   // screen can OOM even on a spot the decode budget doesn't cover, and even while
@@ -36209,6 +36221,43 @@ async function cloudSyncSprites() {
     return { ok: false, error: 'Some uploads failed: ' + fails.map(f => f.key).join(', ') + '. Check storage bucket policy.' };
   }
   return { ok: true, count: results.length };
+}
+
+// ---------- ☁ PER-IMAGE CARD ART (public Supabase Storage — the real library host)
+// Each card art is uploaded as its OWN image file to the PUBLIC `card-art` bucket
+// at `${userId}/${cardId}.<ext>`, and the card stores just the public CDN URL
+// (card.artUrl). The browser + CDN load/cache each image on demand, so the client
+// never holds the library in memory/IDB — no bloat, no placeholder mode, no crash.
+//
+// SETUP (one-time, Supabase Dashboard → Storage → New bucket):
+//   • Name: card-art   • Public bucket: ON
+//   • Write policy (so users can only write their own folder) — SQL:
+//       create policy "card-art write own" on storage.objects for insert
+//         to authenticated with check (bucket_id='card-art'
+//         and (storage.foldername(name))[1] = auth.uid()::text);
+//       create policy "card-art update own" on storage.objects for update
+//         to authenticated using (bucket_id='card-art'
+//         and (storage.foldername(name))[1] = auth.uid()::text);
+//   (Reads are public — a public bucket needs no read policy.)
+const CARD_ART_BUCKET = 'card-art';
+async function cloudUploadCardArtFile(cardId, dataUrl) {
+  try {
+    if (!cardId || !dataUrl) return { ok: false, error: 'missing data' };
+    if (!initCloud() || !Profile.cloud.signedIn) return { ok: false, error: 'Sign in to host card art in the cloud.' };
+    if (!/^data:image\//i.test(dataUrl)) return { ok: false, error: 'not an image' };
+    const blob = await (await fetch(dataUrl)).blob();
+    const m = /^data:image\/(\w+)/i.exec(dataUrl);
+    const ext = m ? (m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase()) : 'png';
+    const path = `${Profile.cloud.userId}/${String(cardId).replace(/[^a-zA-Z0-9_-]/g, '_')}.${ext}`;
+    const { error } = await Cloud.client.storage.from(CARD_ART_BUCKET).upload(path, blob, { upsert: true, contentType: blob.type || ('image/' + ext) });
+    if (error) return { ok: false, error: error.message };
+    const { data } = Cloud.client.storage.from(CARD_ART_BUCKET).getPublicUrl(path);
+    let url = data && data.publicUrl;
+    if (!url) return { ok: false, error: 'no public url (is the bucket public?)' };
+    // Cache-bust so a re-upload to the same path refreshes past the CDN cache.
+    url += (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + Date.now().toString(36);
+    return { ok: true, url };
+  } catch (e) { return { ok: false, error: (e && e.message) || 'upload failed' }; }
 }
 
 // Pull asset chunks from Storage into Forge.* — called automatically after a
@@ -77627,13 +77676,13 @@ function renderCardEditor() {
   // Card art — the illustration shown in the upper window of the hand-card frame.
   // Separate from the battle sprite so the art on the card AND the pixel sprite on
   // the field can be set independently.
-  // In placeholder mode the resident map may not hold this card's art yet — if it
-  // exists on disk (in the index), force-load just THIS one card's art so the
-  // editor shows the saved illustration (single-asset load, no bulk decode).
-  if ((!Forge.cardArt || !Forge.cardArt[card.id]) && Forge._carIds && Forge._carIds.has(card.id) && typeof _lazyLoadCardArt === 'function') {
+  // ☁ Prefer the cloud-hosted URL (card.artUrl / Forge.cardArtUrl). Only fall back
+  // to force-loading legacy IDB art when there is no cloud URL.
+  const _cloudArt = (Forge.cardArtUrl && Forge.cardArtUrl[card.id]) || card.artUrl || '';
+  if (!_cloudArt && (!Forge.cardArt || !Forge.cardArt[card.id]) && Forge._carIds && Forge._carIds.has(card.id) && typeof _lazyLoadCardArt === 'function') {
     try { _lazyLoadCardArt(card.id, true); } catch (e) {}
   }
-  const cardArtUrl = (Forge.cardArt && Forge.cardArt[card.id]) || '';
+  const cardArtUrl = _cloudArt || (Forge.cardArt && Forge.cardArt[card.id]) || '';
   const hasCardArt = !!cardArtUrl;
   const cardArtPreview = hasCardArt
     ? `<div class="image-preview"><img src="${escapeHtml(cardArtUrl)}" alt="card art" style="width:96px;height:96px;object-fit:cover;border-radius:3px"></div>`
@@ -79635,47 +79684,70 @@ function bindCardEditor() {
   const artUrlBtn     = document.getElementById('btn-url-cardart');
   const artUrlInput   = document.getElementById('cardart-url-input');
   const artClearBtn   = document.getElementById('btn-clear-cardart');
-  const setCardArt = (urlOrDataUrl) => {
+  // ☁ Cloud-first: the card's art is uploaded as its OWN public Supabase image
+  // and the card stores just the URL (card.artUrl) — the client never holds the
+  // bytes. Legacy local base64 (Forge.cardArt) is only a fallback if the cloud
+  // upload can't run (signed out / bucket missing).
+  const setCardArtUrl = (id, url) => {
+    const t = targetCard();
+    if (!t || !id || !url) return;
+    t.artUrl = url;
+    if (!Forge.cardArtUrl) Forge.cardArtUrl = {};
+    Forge.cardArtUrl[id] = url;
+    try { if (Forge.cardArt && Forge.cardArt[id]) delete Forge.cardArt[id]; } catch (e) {}  // drop legacy local copy
+    saveForge();
+    captureAndRender();
+  };
+  const setCardArt = (urlOrDataUrl) => {   // legacy local fallback
     const t = targetCard();
     const id = t ? t.id : null;
     if (!id) { showToast('No card to attach art to'); return; }
     if (!Forge.cardArt) Forge.cardArt = {};
     Forge.cardArt[id] = urlOrDataUrl;
     saveForge();
-    showToast('Card art updated');
     captureAndRender();
+  };
+  const uploadArtToCloud = async (id, dataUrl) => {
+    showToast('☁ Uploading card art…');
+    const up = (typeof cloudUploadCardArtFile === 'function') ? await cloudUploadCardArtFile(id, dataUrl) : { ok: false, error: 'cloud unavailable' };
+    if (up.ok && up.url) { setCardArtUrl(id, up.url); showToast('✅ Card art saved to the cloud'); }
+    else { setCardArt(dataUrl); showToast('⚠ Cloud upload failed (' + (up.error || '?') + ') — saved locally instead.', 5000); }
   };
   if (artUploadBtn && artFileInput) {
     artUploadBtn.onclick = (e) => { e.preventDefault(); artFileInput.click(); };
     artFileInput.onchange = async (e) => {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
+      const t = targetCard(); const id = t ? t.id : null;
+      if (!id) { showToast('No card to attach art to'); artFileInput.value = ''; return; }
       try {
-        // Card art is bigger than sprites — use 512 max so the upper card window has
-        // enough resolution. Still resized down to keep localStorage budget reasonable.
+        // 512px max — enough resolution for the upper card window, small upload.
         const dataUrl = await resizeImage(file, 512);
-        setCardArt(dataUrl);
-      } catch (err) {
-        showToast('⚠ Failed to load card art');
-      }
+        await uploadArtToCloud(id, dataUrl);
+      } catch (err) { showToast('⚠ Failed to load card art'); }
       artFileInput.value = '';
     };
   }
   if (artUrlBtn && artUrlInput) {
-    artUrlBtn.onclick = (e) => {
+    artUrlBtn.onclick = async (e) => {
       e.preventDefault();
       const url = artUrlInput.value.trim();
+      const t = targetCard(); const id = t ? t.id : null;
+      if (!id) { showToast('No card to attach art to'); return; }
       if (!url) { showToast('Paste an image URL first'); return; }
-      if (!/^https?:\/\//i.test(url) && !/^data:/i.test(url)) { showToast('URL must start with http(s):// or data:'); return; }
-      setCardArt(url);
+      if (/^https?:\/\//i.test(url)) { setCardArtUrl(id, url); showToast('Card art set from URL'); }       // external host — store directly
+      else if (/^data:image\//i.test(url)) { await uploadArtToCloud(id, url); }                            // data url — host it for them
+      else { showToast('URL must start with http(s):// or be an image data: URL'); }
     };
   }
   if (artClearBtn) {
     artClearBtn.onclick = () => {
       const t = targetCard();
       const id = t ? t.id : null;
-      if (!id || !Forge.cardArt || !Forge.cardArt[id]) return;
-      delete Forge.cardArt[id];
+      if (!id) return;
+      if (t) delete t.artUrl;
+      try { if (Forge.cardArtUrl) delete Forge.cardArtUrl[id]; } catch (e) {}
+      try { if (Forge.cardArt) delete Forge.cardArt[id]; } catch (e) {}
       saveForge();
       showToast('Card art cleared');
       captureAndRender();

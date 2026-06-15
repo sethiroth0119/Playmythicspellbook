@@ -73872,19 +73872,29 @@ function renderStarterPick() {
 //   3) the emoji icon (only when the hero truly has no art/sprite).
 function _heroPortraitHtml(h) {
   if (!h || !h.id) return '<span style="font-size:2rem">🦸</span>';
+  const id = h.id;
+  // 1) Card art — show it if loaded; otherwise FORCE-LOAD it on demand so it appears
+  //    even in placeholder/streaming mode (the loader re-renders when it lands).
   try {
-    if (typeof getCardArt === 'function') {
-      const art = getCardArt(h.id) || getCardArt('h_' + h.id);
-      if (art && typeof art === 'string') return '<img src="' + art + '" alt="" class="sprite-img is-on" style="width:100%;height:100%;object-fit:contain" decoding="async" loading="lazy">';
-    }
+    const art = (typeof getCardArt === 'function') ? (getCardArt(id) || getCardArt('h_' + id)) : null;
+    if (art && typeof art === 'string') return '<img src="' + art + '" alt="" class="sprite-img is-on" style="width:100%;height:100%;object-fit:contain" decoding="async" loading="lazy">';
+    if (typeof _lazyLoadCardArt === 'function') { try { _lazyLoadCardArt(id, true); } catch (e) {} try { _lazyLoadCardArt('h_' + id, true); } catch (e) {} }
   } catch (e) {}
+  // 2) Custom sprite via the bounded animator (force-loads on demand).
   try {
     if (typeof _boardSpriteHtml === 'function') {
-      const bs = _boardSpriteHtml({ heroId: h.id, icon: h.icon });
+      const bs = _boardSpriteHtml({ heroId: id, icon: h.icon });
       if (bs) { try { if (typeof _ensureBoardSpriteAnim === 'function') _ensureBoardSpriteAnim(); } catch (e) {} return bs; }
     }
+    // Not indexed/resident yet — force-load the sprite record directly (skip ids
+    // already known-missing so we don't thrash) so it shows on a later render.
+    if (typeof _lazyLoadSprite === 'function') {
+      const _miss = (typeof _sprMissing !== 'undefined' && _sprMissing) ? _sprMissing : null;
+      if (!_miss || !_miss.has('h_' + id)) { try { _lazyLoadSprite('h_' + id, true); } catch (e) {} }
+      if (!_miss || !_miss.has('u_' + id)) { try { _lazyLoadSprite('u_' + id, true); } catch (e) {} }
+    }
   } catch (e) {}
-  return renderIcon('h_' + h.id, h.icon, 'lg');
+  return renderIcon('h_' + id, h.icon, 'lg');
 }
 
 function renderDeckSelect() {

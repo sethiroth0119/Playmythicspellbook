@@ -50809,13 +50809,30 @@ function saveForge() {
         // OWN per-key record + index, so uploads/edits survive a refresh even in
         // placeholder mode. (This is the fix for "card art never saves".)
         const _persistable = (v) => typeof v === 'string' && v.indexOf('blob:') !== 0;
+        // 🐛 Sprites are OBJECTS ({ idle:[frame…], frameMs }), NOT strings — the
+        // string check above never matched them, so freshly-uploaded sprite frames
+        // silently never saved on a big library. A sprite is persistable when ANY
+        // frame is a FRESH asset (a Blob or a data: url); streamed sprites only have
+        // blob: url frames, which we leave alone.
+        const _spritePersistable = (rec) => {
+          if (!rec || typeof rec !== 'object') return false;
+          for (const k in rec) {
+            const arr = rec[k];
+            if (!Array.isArray(arr)) continue;
+            for (const f of arr) {
+              if (f && typeof Blob !== 'undefined' && f instanceof Blob) return true;
+              if (typeof f === 'string' && f.indexOf('data:') === 0) return true;
+            }
+          }
+          return false;
+        };
         try {
           if (Forge.sprites && Forge._sprIds) {
             let added = false;
             for (const _id in Forge.sprites) {
               if (!_id || _id.indexOf('__') === 0) continue;
               const v = Forge.sprites[_id];
-              if (_persistable(v)) { idbSet('spr:' + _id, v); if (!Forge._sprIds.has(_id)) { Forge._sprIds.add(_id); added = true; } }
+              if (_spritePersistable(v)) { idbSet('spr:' + _id, v); if (!Forge._sprIds.has(_id)) { Forge._sprIds.add(_id); added = true; } }
             }
             if (added) idbSet('forge_sprites_idx', Array.from(Forge._sprIds));
           }

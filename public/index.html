@@ -36437,6 +36437,74 @@ async function migrateAllAssetsToCloud() {
 }
 try { window.__mg = window.__mg || {}; window.__mg.migrateAllAssets = migrateAllAssetsToCloud; } catch (e) {}
 
+// ☁ Migrate every SPRITE ANIMATION to the cloud. A sprite is { idle:[frame…],
+// attack:[…], frameMs… }; we upload each frame and replace it with a cloud URL,
+// leaving the small URL-record in place (the renderer plays URL frames natively).
+// Non-destructive + resumable: a frame is only replaced after its upload succeeds,
+// already-uploaded http frames are skipped, and a sprite with no fresh frames is
+// left untouched.
+async function _migrateSpritesToCloud(progressCb) {
+  let okSpr = 0, failSpr = 0, framesUp = 0;
+  let mono = null; try { mono = await idbGet('forge_sprites'); } catch (e) {}
+  if (!mono || typeof mono !== 'object') mono = {};
+  const ids = new Set();
+  try { if (Forge._sprIds) for (const id of Forge._sprIds) ids.add(id); } catch (e) {}
+  try { if (Forge.sprites) for (const id in Forge.sprites) { if (id && id.indexOf('__') !== 0) ids.add(id); } } catch (e) {}
+  for (const id in mono) { if (id && id.indexOf('__') !== 0) ids.add(id); }
+  const all = Array.from(ids);
+  let monoTrim = false;
+  for (let s = 0; s < all.length; s++) {
+    const id = all[s];
+    try {
+      let rec = (Forge.sprites && Forge.sprites[id]) || mono[id] || null;
+      if (!rec) { try { rec = await idbGet('spr:' + id); } catch (e) {} }
+      if (!rec || typeof rec !== 'object') continue;
+      const newRec = {}; let changed = false, anyFail = false;
+      for (const k in rec) {
+        const arr = rec[k];
+        if (!Array.isArray(arr)) { newRec[k] = arr; continue; }
+        const out = [];
+        for (let i = 0; i < arr.length; i++) {
+          const fr = arr[i];
+          if (fr == null) { out.push(fr); continue; }
+          if (typeof fr === 'string' && /^https?:\/\//i.test(fr)) { out.push(fr); continue; } // already cloud
+          const dataUrl = await _artValueToDataUrl(fr);
+          if (!dataUrl) { out.push(fr); continue; } // unconvertible — keep original (no loss)
+          const up = await cloudUploadAssetFile('sprites/' + String(id).replace(/[^a-zA-Z0-9_-]/g, '_') + '/' + k + '_' + i, dataUrl);
+          if (up.ok && up.url) { out.push(up.url); framesUp++; changed = true; }
+          else {
+            out.push(fr); anyFail = true;
+            if (/bucket not found|not found|row-level|policy|403|404|unauthor/i.test(up.error || '')) return { ok: okSpr, fail: failSpr, frames: framesUp, abort: true, error: up.error };
+          }
+          if (framesUp % 4 === 0) await new Promise(r => setTimeout(r, 10));
+        }
+        newRec[k] = out;
+      }
+      if (!changed) continue; // nothing fresh on this sprite
+      try { if (!Forge.sprites) Forge.sprites = {}; Forge.sprites[id] = newRec; } catch (e) {}
+      try { await idbSet('spr:' + id, newRec); if (Forge._sprIds) Forge._sprIds.add(id); } catch (e) {}
+      if (mono[id]) { delete mono[id]; monoTrim = true; }
+      if (anyFail) failSpr++; else okSpr++;
+    } catch (e) { failSpr++; }
+    if (progressCb) { try { progressCb(s + 1, all.length, framesUp); } catch (e) {} }
+    await new Promise(r => setTimeout(r, 8));
+  }
+  try { if (Forge._sprIds) idbSet('forge_sprites_idx', Array.from(Forge._sprIds)); } catch (e) {}
+  if (monoTrim) { try { await idbSet('forge_sprites', mono); } catch (e) {} }
+  return { ok: okSpr, fail: failSpr, frames: framesUp };
+}
+async function migrateSpritesToCloud() {
+  if (!Profile.cloud || !Profile.cloud.signedIn) { if (typeof showToast === 'function') showToast('☁ Sign in first.'); return { ok: false }; }
+  if (typeof showToast === 'function') showToast('🎞 Moving sprite animations — many frames, this can take several minutes. You can leave it running.', 7000);
+  let res;
+  try { res = await _migrateSpritesToCloud((done, total, frames) => { if (done % 3 === 0 && typeof showToast === 'function') showToast('🎞 Sprites ' + done + '/' + total + ' · ' + frames + ' frames moved', 2500); }); } catch (e) { res = { fail: 1 }; }
+  try { saveForge(); } catch (e) {}
+  if (res && res.abort) { if (typeof showToast === 'function') showToast('⚠ Sprite migration stopped — ' + (res.error || 'bucket issue'), 8000); return { ok: false }; }
+  if (typeof showToast === 'function') showToast('✅ Moved ' + ((res && res.frames) || 0) + ' sprite frames to the cloud' + ((res && res.fail) ? (' · ' + res.fail + ' sprites had failures') : '') + '. Refresh to confirm.', 9000);
+  return { ok: true };
+}
+try { window.__mg = window.__mg || {}; window.__mg.migrateSprites = migrateSpritesToCloud; } catch (e) {}
+
 // Pull asset chunks from Storage into Forge.* — called automatically after a
 // successful profile fetch on sign-in. If a chunk is missing (404), we leave
 // the local Forge state alone (player hasn't uploaded yet).
@@ -79298,8 +79366,9 @@ function renderCardEditor() {
               <button class="btn-mini" id="btn-url-cardart">Use URL</button>
               ${hasCardArt ? `<button class="btn-mini btn-danger" id="btn-clear-cardart">Clear</button>` : ''}
             </div>
-            <div style="margin-top:0.55rem">
+            <div style="margin-top:0.55rem;display:flex;flex-wrap:wrap;gap:6px">
               <button class="btn-mini" id="btn-migrate-cardart" style="font-size:0.62rem" title="Upload your card art + location/pack/item/deck art to Supabase and clear the local copies — frees storage. (Sprites are migrated separately.)">☁ Move ALL my art to the cloud</button>
+              <button class="btn-mini" id="btn-migrate-sprites" style="font-size:0.62rem" title="Upload EVERY frame of EVERY sprite animation to Supabase and clear the local copies — the big space win. Can take several minutes; you can leave it running.">🎞 Move sprite animations to cloud</button>
             </div>
           </div>
         </div>
@@ -79967,6 +80036,18 @@ function bindCardEditor() {
       artMigrateBtn.disabled = true; artMigrateBtn.textContent = '☁ Migrating… (watch the toasts)';
       try { await migrateAllAssetsToCloud(); } catch (err) { showToast('⚠ Migration error: ' + ((err && err.message) || '?'), 6000); }
       try { artMigrateBtn.disabled = false; artMigrateBtn.textContent = _orig; } catch (e2) {}
+    };
+  }
+  // 🎞 One-click: migrate every sprite animation frame to the cloud bucket.
+  const sprMigrateBtn = document.getElementById('btn-migrate-sprites');
+  if (sprMigrateBtn) {
+    sprMigrateBtn.onclick = async (e) => {
+      e.preventDefault();
+      if (typeof migrateSpritesToCloud !== 'function') { showToast('Sprite migration unavailable.'); return; }
+      const _o = sprMigrateBtn.textContent;
+      sprMigrateBtn.disabled = true; sprMigrateBtn.textContent = '🎞 Migrating sprites… (watch the toasts)';
+      try { await migrateSpritesToCloud(); } catch (err) { showToast('⚠ Sprite migration error: ' + ((err && err.message) || '?'), 6000); }
+      try { sprMigrateBtn.disabled = false; sprMigrateBtn.textContent = _o; } catch (e2) {}
     };
   }
 

@@ -28045,6 +28045,14 @@ const PASSIVES = {
   // ===== HEX TCG KEYWORD PASSIVES (v86g) =====
   // ☠️ LETHAL — any damage dealt instantly kills a non-hero target (Hex TCG: Lethal).
   lethal:       { id: 'lethal',       name: 'Lethal',       desc: 'Any damage this unit deals to a non-hero unit is instantly fatal, regardless of remaining HP.' },
+
+  // ===== ✦ MYTHIC COMBAT PASSIVES — original keywords (v105c) =====
+  sunder:       { id: 'sunder',       name: 'Sunder',       desc: 'Its strikes cleave through armor — attacks ignore half the target DEF / RES.' },
+  wrathborn:    { id: 'wrathborn',    name: 'Wrathborn',    desc: 'Fights harder as it bleeds — deals up to +50% more damage the lower its HP.' },
+  ashveil:      { id: 'ashveil',      name: 'Ashveil',      desc: 'Shrouded in ash — no single blow can remove more than 40% of its max HP.' },
+  bloodtithe:   { id: 'bloodtithe',   name: 'Bloodtithe',   desc: 'Half the attack damage this unit deals is tithed to your hero as healing.' },
+  cull:         { id: 'cull',         name: 'Cull',         desc: 'Executes any wounded non-hero foe (at or below 30% HP) the instant it strikes.' },
+  mirrorskin:   { id: 'mirrorskin',   name: 'Mirrorskin',   desc: 'Reflects 30% of any magic damage it takes back at the caster.' },
   // ⚔️ DEFENDER — cannot attack; holds the line as a defensive blocker (Hex TCG: Defender).
   defender:     { id: 'defender',     name: 'Defender',     desc: 'This unit cannot attack. It holds the line as a defensive blocker and cannot be directed to strike.' },
   // 🌀 UNBLOCKABLE — bypasses Bodyguard/Guardian intercepts and can hit flying units (Hex TCG: Unblockable).
@@ -60088,6 +60096,8 @@ const calculateDamage = (move, attacker, defender, weather) => {
   if (move.effect === 'pierce') defStat = Math.floor(defStat / 2);
   // 🌑 Eclipse Lord — attacker ignores 50% of target DEF / RES in eclipse
   if (wType === 'eclipse' && hasPassive(attacker, 'eclipseLord')) defStat = Math.floor(defStat / 2);
+  // ✦ SUNDER — attacks cleave through armor, ignoring half the target DEF / RES.
+  if (hasPassive(attacker, 'sunder')) defStat = Math.max(1, Math.floor(defStat / 2));
   let dmg = Math.max(1, Math.floor((move.power * atkStat) / (Math.max(1, defStat) * 4)) + 2);
 
   // Type chart: multiply across each defender element (Pokemon-style)
@@ -60333,6 +60343,15 @@ const calculateDamage = (move, attacker, defender, weather) => {
   // wall structure. Designed counter-play vs wall-spam decks.
   if (defender && defender.isWall && hasPassive(attacker, 'wallBreaker')) {
     dmg = Math.floor(dmg * 1.5);
+  }
+  // ✦ WRATHBORN — the more wounded the attacker, the harder it hits (up to +50%).
+  if (hasPassive(attacker, 'wrathborn') && attacker.maxHp) {
+    const miss = Math.max(0, Math.min(1, 1 - (attacker.currentHp | 0) / attacker.maxHp));
+    if (miss > 0) dmg = Math.floor(dmg * (1 + 0.5 * miss));
+  }
+  // ✦ ASHVEIL — no single blow can carve away more than 40% of the target max HP.
+  if (defender && dmg > 0 && defender.maxHp && hasPassive(defender, 'ashveil')) {
+    dmg = Math.min(dmg, Math.max(1, Math.ceil(defender.maxHp * 0.40)));
   }
 
   // 🛡 ARMOR DAMAGE REDUCTION — flat percentage of incoming damage that's
@@ -65666,6 +65685,38 @@ const executeMove = (state, attacker, target, move) => {
   if (move.effect === 'drain' && _totalDmgDealt > 0) {
     s.units = s.units.map(u => u.id === attacker.id ? { ...u, currentHp: Math.min(u.maxHp, u.currentHp + _totalDmgDealt) } : u);
     log.push({ msg: `${attacker.name} drains ${_totalDmgDealt}`, color: attacker.owner === 'player' ? 'green' : 'red' });
+  }
+
+  // ════════ ✦ MYTHIC COMBAT PASSIVES — on-hit resolution ✦ ════════
+  if (_totalDmgDealt > 0 && move.kind === 'attack') {
+    const _lt = s.units.find(u => u.id === target.id);
+    // 🩸 BLOODTITHE — half the attack damage this unit deals mends YOUR hero.
+    if (hasPassive(attacker, 'bloodtithe')) {
+      const heal = Math.max(1, Math.floor(_totalDmgDealt / 2));
+      const hero = s.units.find(u => u.alive && u.owner === attacker.owner && u.isHero);
+      if (hero) {
+        s.units = s.units.map(u => u.id === hero.id ? { ...u, currentHp: Math.min(u.maxHp, (u.currentHp | 0) + heal) } : u);
+        log.push({ msg: `🩸 ${attacker.name}'s Bloodtithe mends your hero ${heal} HP.`, color: attacker.owner === 'player' ? 'green' : 'red' });
+      }
+    }
+    // ☠ CULL — slays a wounded non-hero foe (≤30% HP) outright on contact.
+    if (hasPassive(attacker, 'cull') && _lt && _lt.alive && !_lt.isHero && !_lt.isWall
+        && (_lt.currentHp | 0) > 0 && (_lt.currentHp <= 0.30 * (_lt.maxHp || 1))) {
+      s.units = s.units.map(u => u.id === _lt.id ? { ...u, currentHp: 0, alive: false } : u);
+      log.push({ msg: `☠ ${attacker.name}'s Cull executes the wounded ${_lt.name}!`, color: attacker.owner === 'player' ? 'green' : 'red' });
+    }
+    // 🪞 MIRRORSKIN — the struck unit reflects 30% of MAGIC damage at the caster.
+    if (move.type === 'magic' && _lt && hasPassive(_lt, 'mirrorskin')) {
+      const refl = Math.max(1, Math.floor(_totalDmgDealt * 0.30));
+      s.units = s.units.map(u => {
+        if (u.id !== attacker.id) return u;
+        const nh = (u.currentHp | 0) - refl;
+        return { ...u, currentHp: nh, alive: nh > 0 ? u.alive : false };
+      });
+      log.push({ msg: `🪞 ${_lt.name}'s Mirrorskin reflects ${refl} magic damage.`, color: _lt.owner === 'player' ? 'green' : 'red' });
+      const al = s.units.find(u => u.id === attacker.id);
+      if (al && !al.alive && al.isHero) s.gameOver = al.owner === 'player' ? 'ai' : 'player';
+    }
   }
 
   // ===== Splash + Lane AOE =====

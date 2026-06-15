@@ -51484,7 +51484,45 @@ try { _startMemoryWatchdog(); } catch (e) {}
 // next boot we DUMP the previous session's trail, which shows exactly where (which
 // screen) and how heavy (heap MB) things were in the seconds before it died — the
 // only reliable way to diagnose a whole-browser crash. Always on, any art mode.
+// 🩸 On-screen crash report — a hard crash kills DevTools, so surface the trail
+// as a dismissible banner (with a Copy button) the next time the app loads, so a
+// non-technical player can just screenshot where/why it died. No game deps.
+function _showCrashTrailBanner(trail) {
+  try {
+    if (!Array.isArray(trail) || !trail.length || typeof document === 'undefined') return;
+    const run = function () {
+      try {
+        if (!document.body || document.getElementById('crash-trail-banner')) return;
+        const lastScr = (trail[trail.length - 1] || {}).scr || '?';
+        const pcts = trail.map(function (c) { return c.pct; }).filter(function (p) { return typeof p === 'number'; });
+        const climb = pcts.length >= 2 ? (pcts[pcts.length - 1] - pcts[0]) : 0;
+        const peak = pcts.length ? Math.max.apply(null, pcts) : 0;
+        const diag = (peak >= 88 || climb >= 20)
+          ? 'Likely a JavaScript memory leak (heap climbed to ' + peak + '%) on screen "' + lastScr + '".'
+          : 'Likely GPU / graphics memory (heap stayed low/flat, peak ' + peak + '%) on screen "' + lastScr + '".';
+        const esc = function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); };
+        const rowsTxt = trail.map(function (c) { return '+' + c.t + 's ' + (c.scr || '?') + ' ' + (c.mb != null ? c.mb + 'MB' : '?') + (c.pct != null ? ' ' + c.pct + '%' : ''); }).join('\n');
+        const copyTxt = 'CRASH TRAIL (oldest→newest)\n' + rowsTxt + '\n\n' + diag;
+        const bar = document.createElement('div');
+        bar.id = 'crash-trail-banner';
+        bar.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:2147483647;max-width:min(640px,95vw);background:linear-gradient(180deg,#2a1410,#150a07);border:1px solid #cc2a3a;border-radius:12px;color:#ffd9b0;font-family:system-ui,sans-serif;font-size:0.82rem;box-shadow:0 12px 36px rgba(0,0,0,0.7)';
+        bar.innerHTML = '<div style="padding:11px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(204,42,58,0.4)"><span style="font-size:1.2rem">🩸</span><b style="flex:1">Last session ended in a crash</b><button id="ctb-copy" style="cursor:pointer;background:#cc2a3a;color:#fff;border:0;border-radius:7px;padding:5px 10px;font-weight:700">Copy</button><button id="ctb-x" style="cursor:pointer;background:transparent;color:#ffd9b0;border:1px solid rgba(255,217,176,0.4);border-radius:7px;padding:5px 9px">Dismiss</button></div>'
+          + '<div style="padding:10px 14px;color:#ffcf9a">' + esc(diag) + '</div>'
+          + '<pre style="margin:0;padding:0 14px 12px;max-height:210px;overflow:auto;font-size:0.72rem;color:#cbb89a;white-space:pre-wrap">' + esc(rowsTxt) + '</pre>';
+        document.body.appendChild(bar);
+        const cp = document.getElementById('ctb-copy');
+        if (cp) cp.onclick = function () { try { navigator.clipboard.writeText(copyTxt); cp.textContent = 'Copied ✓'; } catch (e) {} };
+        const xb = document.getElementById('ctb-x');
+        if (xb) xb.onclick = function () { try { bar.remove(); } catch (e) {} };
+      } catch (e) {}
+    };
+    setTimeout(run, 1600);
+  } catch (e) {}
+}
 try {
+  // A clean exit (reload/close) sets hg_clean_exit='1'. If it's still '0' at the
+  // next boot, the session died abruptly → a crash → show the on-screen report.
+  const _wasCrash = (localStorage.getItem('hg_clean_exit') === '0');
   try {
     const prev = JSON.parse(localStorage.getItem('hg_crumbs') || '[]');
     if (prev && prev.length) {
@@ -51493,9 +51531,17 @@ try {
         console.warn('   +' + c.t + 's  screen=' + c.scr + '  heap=' + (c.mb != null ? c.mb + 'MB' : '?') + (c.pct != null ? ' (' + c.pct + '%)' : '') + (c.art ? '  art=' + c.art : ''));
       });
       console.warn('🩸 (if heap climbs toward the limit % on a particular screen, that screen is the leak; if it dies with FLAT heap, the crash is GPU/native memory — decoded images.)');
+      if (_wasCrash) { try { _showCrashTrailBanner(prev); } catch (e) {} }
     }
   } catch (e) {}
   try { localStorage.setItem('hg_crumbs', '[]'); } catch (e) {}
+  // Mark this session "running"; only a real unload flips it to clean.
+  try { localStorage.setItem('hg_clean_exit', '0'); } catch (e) {}
+  try {
+    var _markClean = function () { try { localStorage.setItem('hg_clean_exit', '1'); } catch (e) {} };
+    window.addEventListener('pagehide', _markClean);
+    window.addEventListener('beforeunload', _markClean);
+  } catch (e) {}
   let _crumbT = 0;
   setInterval(function () {
     _crumbT += 3;

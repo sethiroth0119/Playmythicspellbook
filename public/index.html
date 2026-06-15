@@ -36628,8 +36628,14 @@ async function _diagnoseSpriteSave() {
   try {
     const id = App && App.spriteSubjectId;
     if (id) {
-      let onDisk = false; try { const v = await idbGet('spr:' + id); onDisk = !!(v && typeof v === 'object'); } catch (e) {}
-      L.push('CURRENT SUBJECT "' + id + '": indexed=' + !!(Forge._sprIds && Forge._sprIds.has(id)) + ' · onDisk=' + onDisk);
+      let onDisk = false, diskFrames = 0, anims = '';
+      try {
+        const v = await idbGet('spr:' + id);
+        onDisk = !!(v && typeof v === 'object');
+        if (onDisk) { const parts = []; for (const k in v) { const a = v[k]; if (Array.isArray(a)) { const n = a.filter(Boolean).length; diskFrames += n; if (n) parts.push(k + ':' + n); } } anims = parts.join(' '); }
+      } catch (e) {}
+      let memFrames = 0; try { const r = Forge.sprites && Forge.sprites[id]; if (r) for (const k in r) { if (Array.isArray(r[k])) memFrames += r[k].filter(Boolean).length; } } catch (e) {}
+      L.push('CURRENT "' + id + '": indexed=' + !!(Forge._sprIds && Forge._sprIds.has(id)) + ' · onDisk=' + onDisk + ' · DISK FRAMES=' + diskFrames + (anims ? ' (' + anims + ')' : '') + ' · inMemory=' + memFrames);
     }
   } catch (e) {}
   return L.join('\n');
@@ -49998,7 +50004,16 @@ function _lazyLoadSprite(id, force) {
   if ((!_lazyArtOn && !force) || !id) return Promise.resolve(false);
   if (_sprPending.has(id)) return Promise.resolve(false);
   if (!force && _sprMissing.has(id)) return Promise.resolve(false);
-  if (Forge.sprites && Forge.sprites[id] && Object.keys(Forge.sprites[id]).length) { _lazyTouch('spr', id); return Promise.resolve(false); }
+  // ⚠ "Already resident?" must count ACTUAL FRAMES, not animation keys. An empty
+  // stub like { idle: [] } (left by an interrupted upload) has a key but no frames —
+  // counting keys made the loader think it was loaded and SKIP reading the real
+  // frames from disk, so a saved sprite showed 0 frames. Count frames instead.
+  const _hasResidentFrames = (rec) => {
+    if (!rec || typeof rec !== 'object') return false;
+    for (const k in rec) { const a = rec[k]; if (Array.isArray(a) && a.filter(Boolean).length > 0) return true; }
+    return false;
+  };
+  if (Forge.sprites && _hasResidentFrames(Forge.sprites[id])) { _lazyTouch('spr', id); return Promise.resolve(false); }
   // ⚠ A forced load (Atelier opening a subject) must read the disk record DIRECTLY,
   // ignoring the index — the on-disk index can be stale/corrupted, and refusing to
   // load a record that is actually present is the "saved sprite shows 0 frames" bug.

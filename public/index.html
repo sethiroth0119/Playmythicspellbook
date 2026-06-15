@@ -84528,10 +84528,15 @@ function renderSprites() {
         <h2 class="section-title" style="text-align:left;margin-bottom:0">🎨 Sprite Atelier</h2>
         <button class="btn-secondary" id="btn-sprites-back">← Main Menu</button>
       </div>
-      <div class="placement-hint" style="text-align:left;background:rgba(139,92,246,0.08);border-color:var(--violet);margin-bottom:1.5rem">
+      <div class="placement-hint" style="text-align:left;background:rgba(139,92,246,0.08);border-color:var(--violet);margin-bottom:1rem">
         Upload PNG/JPG/GIF frames for any hero, unit, or custom card. Multiple frames in <strong>idle</strong>
         will animate at ~4fps. Each image gets resized to 128px max with pixelated rendering.
         <strong style="color:var(--gold-bright)">Use transparent PNG for best results.</strong>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:1.2rem">
+        <button class="btn-mini" id="btn-atelier-diag" style="font-size:0.68rem" title="Check exactly why a save might fail — storage used/quota + a live test write.">🔍 Why won't it save?</button>
+        <button class="btn-mini" id="btn-atelier-migrate" style="font-size:0.68rem" title="Upload every sprite frame to the cloud and clear the local base64 — frees device storage so new uploads can save. Memory-safe; can take a few minutes.">🎞 Move sprites to cloud (free space)</button>
+        <button class="btn-mini" id="btn-atelier-artstream" style="font-size:0.68rem" title="Render your custom sprites IN THE GAME instead of placeholder emoji. Best after moving sprites to the cloud.">🎮 Custom art in-game</button>
       </div>
       <div class="creator-grid">
         <div class="creator-list">
@@ -84548,6 +84553,38 @@ function renderSprites() {
   `;
 
   document.getElementById('btn-sprites-back').onclick = () => { App.screen = 'title'; render(); };
+  // 🔧 Atelier toolbar — diagnostic + free-space migration + in-game toggle, right
+  // where sprites are authored (the same tools also live in the Card Forge).
+  const _diagB = document.getElementById('btn-atelier-diag');
+  if (_diagB) _diagB.onclick = async (e) => {
+    e.preventDefault();
+    _diagB.disabled = true; const _t = _diagB.textContent; _diagB.textContent = '🔍 Checking…';
+    let report = 'Diagnostic unavailable.';
+    try { if (typeof _diagnoseSpriteSave === 'function') report = await _diagnoseSpriteSave(); } catch (err) { report = 'Error: ' + ((err && err.message) || err); }
+    try { console.log('=== SAVE DIAGNOSTIC ===\n' + report); } catch (e2) {}
+    try { alert('SAVE DIAGNOSTIC\n\n' + report); } catch (e2) { showToast(report.replace(/\n/g, ' · '), 15000); }
+    try { _diagB.disabled = false; _diagB.textContent = _t; } catch (e2) {}
+  };
+  const _migB = document.getElementById('btn-atelier-migrate');
+  if (_migB) _migB.onclick = async (e) => {
+    e.preventDefault();
+    if (typeof migrateSpritesToCloud !== 'function') { showToast('Migration unavailable.'); return; }
+    _migB.disabled = true; const _t = _migB.textContent; _migB.textContent = '🎞 Moving… (watch toasts)';
+    try { await migrateSpritesToCloud(); } catch (err) { showToast('⚠ Migration error: ' + ((err && err.message) || '?'), 6000); }
+    try { _migB.disabled = false; _migB.textContent = _t; } catch (e2) {}
+  };
+  const _artB = document.getElementById('btn-atelier-artstream');
+  if (_artB) {
+    const _on = (function () { try { return localStorage.getItem('hg_artstream') === '1'; } catch (e) { return false; } })();
+    _artB.textContent = '🎮 Custom art in-game: ' + (_on ? 'ON' : 'OFF');
+    _artB.onclick = (e) => {
+      e.preventDefault();
+      let now; try { now = localStorage.getItem('hg_artstream') === '1'; } catch (e2) { now = false; }
+      try { localStorage.setItem('hg_artstream', now ? '0' : '1'); } catch (e2) {}
+      showToast(now ? '🎮 Custom art OFF (safe placeholder) — reloading…' : '🎮 Custom art ON — reloading. If unstable, turn it back OFF.', 4500);
+      setTimeout(() => { try { location.reload(); } catch (e2) {} }, 1000);
+    };
+  }
   document.querySelectorAll('[data-subject]').forEach(el => el.onclick = async () => {
     const sid = el.dataset.subject;
     App.spriteSubjectId = sid;

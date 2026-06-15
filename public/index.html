@@ -144667,16 +144667,26 @@ async function tw_cloudClearNodeOwner(nodeId) {
     return true;
   } catch (e) { return null; }
 }
-// Search the player directory (settlements registered to nodes) by name.
+// Search the player directory by gamertag/handle (the api_players table — the
+// same directory the admin user-management search uses). Falls back to settlement
+// names only if the handle directory returns nothing.
 async function tw_cloudSearchPlayers(query) {
   try {
     const q = String(query || '').trim().replace(/[%_,]/g, '');
     if (!q || !Cloud || !Cloud.ready || !Cloud.client) return [];
-    const { data, error } = await Cloud.client.from('tw_camp_registrations')
-      .select('user_id, camp_name, node_id').ilike('camp_name', '%' + q + '%').limit(25);
-    if (error) return [];
     const seen = new Set(), out = [];
-    (data || []).forEach(r => { if (r.user_id && !seen.has(r.user_id)) { seen.add(r.user_id); out.push({ user_id: r.user_id, name: r.camp_name || 'Settlement', node_id: r.node_id || '' }); } });
+    try {
+      const { data } = await Cloud.client.from('api_players')
+        .select('user_id, handle').ilike('handle', '%' + q + '%').limit(25);
+      (data || []).forEach(r => { if (r.user_id && !seen.has(r.user_id)) { seen.add(r.user_id); out.push({ user_id: r.user_id, name: r.handle || 'Player', sub: '' }); } });
+    } catch (e) {}
+    if (!out.length) {
+      try {
+        const { data } = await Cloud.client.from('tw_camp_registrations')
+          .select('user_id, camp_name, node_id').ilike('camp_name', '%' + q + '%').limit(25);
+        (data || []).forEach(r => { if (r.user_id && !seen.has(r.user_id)) { seen.add(r.user_id); out.push({ user_id: r.user_id, name: r.camp_name || 'Settlement', sub: r.node_id || '' }); } });
+      } catch (e) {}
+    }
     return out;
   } catch (e) { return []; }
 }
@@ -146761,7 +146771,7 @@ function renderTerritoryWars() {
       <div class="tw-nd-section-hdr">— NODE OWNERSHIP (PLAYER)</div>
       <div class="tw-owner-box">
         <div class="tw-owner-cur">Owner: <b>${_nodeOwnerName ? escapeHtml(_nodeOwnerName) : 'Unclaimed'}</b>${_nodeOwnerName ? `<button class="btn-mini btn-danger" id="tw-owner-clear">Remove</button>` : ''}</div>
-        <input class="tw-admin-input" id="tw-owner-search" placeholder="🔍 Search players by settlement name…" autocomplete="off">
+        <input class="tw-admin-input" id="tw-owner-search" placeholder="🔍 Search players by name…" autocomplete="off">
         <div id="tw-owner-results" class="tw-owner-results"></div>
         <div class="tw-owner-hint">Assigning a player gives them ownership of this node — they (and admins) can publish sponsor ads on it.</div>
       </div>
@@ -147102,8 +147112,8 @@ function renderTerritoryWars() {
         if (box) box.innerHTML = '<div class="tw-nd-empty" style="padding:0.4rem 0.2rem">Searching…</div>';
         Promise.resolve(tw_cloudSearchPlayers(q)).then(rows => {
           const box2 = document.getElementById('tw-owner-results'); if (!box2) return;
-          if (!rows || !rows.length) { box2.innerHTML = '<div class="tw-nd-empty" style="padding:0.4rem 0.2rem">No players found. Players appear here once they register a settlement to a node.</div>'; return; }
-          box2.innerHTML = rows.map(r => `<button class="tw-owner-result" data-uid="${escapeHtml(r.user_id)}" data-name="${escapeHtml(r.name)}"><span>${escapeHtml(r.name)}</span><span class="tw-owner-sub">${escapeHtml(r.node_id || '—')}</span></button>`).join('');
+          if (!rows || !rows.length) { box2.innerHTML = '<div class="tw-nd-empty" style="padding:0.4rem 0.2rem">No players found by that name.</div>'; return; }
+          box2.innerHTML = rows.map(r => `<button class="tw-owner-result" data-uid="${escapeHtml(r.user_id)}" data-name="${escapeHtml(r.name)}"><span>${escapeHtml(r.name)}</span>${r.sub ? `<span class="tw-owner-sub">${escapeHtml(r.sub)}</span>` : ''}</button>`).join('');
           box2.querySelectorAll('.tw-owner-result').forEach(b => b.onclick = () => {
             const uid = b.dataset.uid, name = b.dataset.name;
             Promise.resolve(tw_cloudSetNodeOwner(_selId, uid, name)).then(ok => {

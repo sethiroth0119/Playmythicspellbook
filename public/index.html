@@ -72003,6 +72003,12 @@ function shouldRunOnboarding() {
     if (typeof isAdmin === 'function' && isAdmin()) return false;
     const cc = Profile.cloud || {};
     if (!cc.signedIn && !cc.offlineMode) return false;         // still at the auth gate
+    // 🆕 Brand-new signup → ALWAYS onboard, overriding stale complete/records/cloud
+    // flags. Set the instant an account is created (esp. important when an admin
+    // makes a test account on a profile that already carries progress). Cleared by
+    // _onbFinish when onboarding actually completes.
+    if ((typeof Onboarding === 'object' && Onboarding && Onboarding._forceNew) ||
+        (Profile.onboarding && Profile.onboarding.forceNew)) return true;
     if (!_onbCfg().enabled) return false;                      // admin-disabled
     _ensureOnboardingState();
     if (Profile.onboarding.complete) return false;
@@ -72070,7 +72076,9 @@ function _onbFinish() {
   try {
     _ensureOnboardingState();
     Profile.onboarding.complete = true;
+    Profile.onboarding.forceNew = false;   // brand-new flow is done — stop forcing it
     Profile.onboarding.step = 'complete';
+    try { if (typeof Onboarding === 'object' && Onboarding) Onboarding._forceNew = false; } catch (e) {}
     saveProfile && saveProfile();
     if (typeof saveProgressCloud === 'function') { saveProgressCloud().catch(() => {}); }
   } catch (e) {}
@@ -121574,6 +121582,20 @@ function renderAuthModal() {
         // Stash email + password so the celebration screen's "Try Sign In"
         // shortcut can do an instant attempt without re-prompting.
         App.authModal.mode             = 'signupSuccess';
+        // 🎓 ARM ONBOARDING NOW — the instant a brand-new account is created, force
+        // the new-player flow (welcome → starter pick → tutorial offer → menu tour)
+        // regardless of any stale local progress / onboarding-complete flag. The
+        // render gate (shouldRunOnboarding) honors _forceNew above everything, so no
+        // matter which button the player taps next (or if they refresh), they land
+        // on onboarding instead of the main menu. Cleared on _onbFinish.
+        try {
+          if (!Profile.onboarding || typeof Profile.onboarding !== 'object') Profile.onboarding = {};
+          Profile.onboarding.forceNew = true;
+          Profile.onboarding.complete = false;
+          Profile.onboarding.step = 'welcome';
+          if (typeof Onboarding === 'object' && Onboarding) { Onboarding._forceNew = true; Onboarding.step = 'welcome'; }
+          try { saveProfile && saveProfile(); } catch (e) {}
+        } catch (e) {}
         App.authModal.email            = email;
         App.authModal.password         = pass;       // memory only — never persisted
         App.authModal.displayName      = name || (email && email.split('@')[0]) || '';

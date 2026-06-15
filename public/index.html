@@ -88685,22 +88685,16 @@ function renderArchonSummonCinematic() {
   // 🜂 Archon portrait — its real SUMMON SPRITE (animated summon frames first,
   // then idle/attack, then uploaded card art, then the emoji glyph as a last
   // resort) so the Archon rises out of the ritual instead of a flat emoji.
-  const _aSid = 'u_' + (cand.archonCardId || '');
-  const _archonPortrait = (() => {
-    try {
-      const _summonFr = (typeof getSpriteFrames === 'function') ? getSpriteFrames(_aSid, 'summon') : null;
-      const _idleFr   = (typeof getSpriteFrames === 'function') ? (getSpriteFrames(_aSid, 'idle') || getSpriteFrames(_aSid, 'attack')) : null;
-      if ((_summonFr && _summonFr.length) || (_idleFr && _idleFr.length)) {
-        const _anim = (_summonFr && _summonFr.length) ? 'summon' : 'idle';
-        return renderIcon(_aSid, cand.archonIcon || '🜂', 'xl', _anim);
-      }
-      let _art = null;
-      try { _art = (typeof getCardArt === 'function') ? getCardArt(cand.archonCardId) : null; } catch (e) {}
-      if (!_art && (cand.archonImg || cand.archonImage)) _art = cand.archonImg || cand.archonImage;
-      if (_art) return `<img src="${String(_art).replace(/"/g, '&quot;')}" alt="">`;
-    } catch (e) {}
-    return `<span>${escapeHtml(cand.archonIcon || '🜂')}</span>`;
-  })();
+  // 🜂 Archon portrait — its real SUMMON SPRITE animation (force-loaded on demand,
+  // bounded single-img), Master-Duel style, instead of a flat card. Rendered into a
+  // container that _cinematicSpriteRun fills once the cinematic has painted; it
+  // force-loads the sprite, plays summon→idle, and falls back to card art / emoji
+  // only if the Archon genuinely has no sprite.
+  const _archonUnit = { cardId: cand.archonCardId, id: cand.archonCardId, type: 'unit', icon: cand.archonIcon || '🜂', name: cand.archonName, art: cand.archonImg || cand.archonImage };
+  const _archonPortrait = '<div class="poly-cine-archon-fig" id="poly-cine-archon-fig" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center"></div>';
+  if (showName) {
+    try { setTimeout(function () { try { const _el = document.getElementById('poly-cine-archon-fig'); if (_el && typeof _cinematicSpriteRun === 'function') _cinematicSpriteRun(_archonUnit, _el); } catch (e) {} }, 30); } catch (e) {}
+  }
   return `
     <div class="poly-cine-backdrop archon-cine poly-cine-phase-${phase}" aria-hidden="true" style="--archon-tint:#ffd86b">
       <div class="poly-cine-vignette"></div>
@@ -106877,13 +106871,13 @@ function renderSettings() {
         <div class="settings-section-title">🛠 Maintenance Mode <span class="ink-dim small-text">— admin only</span></div>
         <div class="settings-section-desc">Lock every non-admin player out behind a “down for maintenance” screen while you fix things. You and other admins can still play normally. Toggling this publishes to all players.</div>
         <label class="settings-toggle" style="margin-bottom:0.8rem">
-          <input type="checkbox" id="set-maintenance" ${(Forge.maintenance && Forge.maintenance.enabled) ? 'checked' : ''}>
+          <input type="checkbox" id="set-maintenance" ${(typeof _maintenanceCfg === 'function' && _maintenanceCfg().enabled) ? 'checked' : ''}>
           <span class="settings-toggle-slider"></span>
-          <span class="settings-toggle-label">${(Forge.maintenance && Forge.maintenance.enabled) ? '🔴 ON — players are locked out' : '🟢 OFF — players can play'}</span>
+          <span class="settings-toggle-label">${(typeof _maintenanceCfg === 'function' && _maintenanceCfg().enabled) ? '🔴 ON — players are locked out' : '🟢 OFF — players can play'}</span>
         </label>
         <div class="settings-section-desc" style="margin-top:0.3rem">Message shown to locked-out players</div>
-        <textarea id="set-maintenance-msg" class="editor-textarea" rows="2" maxlength="300" placeholder="Ethos Heights is briefly offline for updates — back shortly!">${escapeHtml((Forge.maintenance && Forge.maintenance.message) || '')}</textarea>
-        <div class="small-text ink-dim" id="set-maintenance-status" style="margin-top:0.45rem">${(Forge.maintenance && Forge.maintenance.enabled) ? '🔴 Maintenance is LIVE — players are locked out.' : '🟢 Maintenance is OFF.'}</div>
+        <textarea id="set-maintenance-msg" class="editor-textarea" rows="2" maxlength="300" placeholder="Ethos Heights is briefly offline for updates — back shortly!">${escapeHtml((Forge.maintenance && Forge.maintenance.message) || (Catalog.maintenance && Catalog.maintenance.message) || '')}</textarea>
+        <div class="small-text ink-dim" id="set-maintenance-status" style="margin-top:0.45rem">${(typeof _maintenanceCfg === 'function' && _maintenanceCfg().enabled) ? '🔴 Maintenance is LIVE — players are locked out.' : '🟢 Maintenance is OFF.'}</div>
       </div>
       ` : ''}
 

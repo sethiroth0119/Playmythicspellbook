@@ -36445,18 +36445,18 @@ try { window.__mg = window.__mg || {}; window.__mg.migrateAllAssets = migrateAll
 // left untouched.
 async function _migrateSpritesToCloud(progressCb) {
   let okSpr = 0, failSpr = 0, framesUp = 0;
-  let mono = null; try { mono = await idbGet('forge_sprites'); } catch (e) {}
-  if (!mono || typeof mono !== 'object') mono = {};
+  // 🛟 MEMORY-SAFE: never pull the (possibly multi-GB) forge_sprites monolith into
+  // memory — that single read is itself the OOM crash. Iterate the per-key id
+  // index + whatever is resident, and read each sprite's OWN small record on
+  // demand, one at a time. Per-key records are where uploaded sprites live.
   const ids = new Set();
   try { if (Forge._sprIds) for (const id of Forge._sprIds) ids.add(id); } catch (e) {}
   try { if (Forge.sprites) for (const id in Forge.sprites) { if (id && id.indexOf('__') !== 0) ids.add(id); } } catch (e) {}
-  for (const id in mono) { if (id && id.indexOf('__') !== 0) ids.add(id); }
   const all = Array.from(ids);
-  let monoTrim = false;
   for (let s = 0; s < all.length; s++) {
     const id = all[s];
     try {
-      let rec = (Forge.sprites && Forge.sprites[id]) || mono[id] || null;
+      let rec = (Forge.sprites && Forge.sprites[id] && Object.keys(Forge.sprites[id]).length) ? Forge.sprites[id] : null;
       if (!rec) { try { rec = await idbGet('spr:' + id); } catch (e) {} }
       if (!rec || typeof rec !== 'object') continue;
       const newRec = {}; let changed = false, anyFail = false;
@@ -36482,15 +36482,13 @@ async function _migrateSpritesToCloud(progressCb) {
       }
       if (!changed) continue; // nothing fresh on this sprite
       try { if (!Forge.sprites) Forge.sprites = {}; Forge.sprites[id] = newRec; } catch (e) {}
-      try { await idbSet('spr:' + id, newRec); if (Forge._sprIds) Forge._sprIds.add(id); } catch (e) {}
-      if (mono[id]) { delete mono[id]; monoTrim = true; }
+      try { await idbSet('spr:' + id, newRec); if (!Forge._sprIds) Forge._sprIds = new Set(); Forge._sprIds.add(id); } catch (e) {}
       if (anyFail) failSpr++; else okSpr++;
     } catch (e) { failSpr++; }
     if (progressCb) { try { progressCb(s + 1, all.length, framesUp); } catch (e) {} }
     await new Promise(r => setTimeout(r, 8));
   }
   try { if (Forge._sprIds) idbSet('forge_sprites_idx', Array.from(Forge._sprIds)); } catch (e) {}
-  if (monoTrim) { try { await idbSet('forge_sprites', mono); } catch (e) {} }
   return { ok: okSpr, fail: failSpr, frames: framesUp };
 }
 async function migrateSpritesToCloud() {
@@ -36500,7 +36498,13 @@ async function migrateSpritesToCloud() {
   try { res = await _migrateSpritesToCloud((done, total, frames) => { if (done % 3 === 0 && typeof showToast === 'function') showToast('🎞 Sprites ' + done + '/' + total + ' · ' + frames + ' frames moved', 2500); }); } catch (e) { res = { fail: 1 }; }
   try { saveForge(); } catch (e) {}
   if (res && res.abort) { if (typeof showToast === 'function') showToast('⚠ Sprite migration stopped — ' + (res.error || 'bucket issue'), 8000); return { ok: false }; }
-  if (typeof showToast === 'function') showToast('✅ Moved ' + ((res && res.frames) || 0) + ' sprite frames to the cloud' + ((res && res.fail) ? (' · ' + res.fail + ' sprites had failures') : '') + '. Refresh to confirm.', 9000);
+  // 🎮 The frames are now tiny cloud URLs, so turn ON art streaming — this is what
+  // makes the sprites render IN THE GAME (placeholder mode draws emoji on the
+  // board). Streaming URL frames is cheap + memory-budget-capped, unlike the old
+  // base64 streaming that crashed. Only flip it when frames actually moved.
+  let streamOn = false;
+  if (res && res.frames > 0) { try { localStorage.setItem('hg_artstream', '1'); streamOn = true; } catch (e) {} }
+  if (typeof showToast === 'function') showToast('✅ Moved ' + ((res && res.frames) || 0) + ' sprite frames to the cloud' + ((res && res.fail) ? (' · ' + res.fail + ' had issues') : '') + '.' + (streamOn ? ' Refresh — your sprites will now appear in the game.' : ' Refresh to confirm.'), 11000);
   return { ok: true };
 }
 try { window.__mg = window.__mg || {}; window.__mg.migrateSprites = migrateSpritesToCloud; } catch (e) {}
@@ -79385,6 +79389,7 @@ function renderCardEditor() {
             <div style="margin-top:0.55rem;display:flex;flex-wrap:wrap;gap:6px">
               <button class="btn-mini" id="btn-migrate-cardart" style="font-size:0.62rem" title="Upload your card art + location/pack/item/deck art to Supabase and clear the local copies — frees storage. (Sprites are migrated separately.)">☁ Move ALL my art to the cloud</button>
               <button class="btn-mini" id="btn-migrate-sprites" style="font-size:0.62rem" title="Upload EVERY frame of EVERY sprite animation to Supabase and clear the local copies — the big space win. Can take several minutes; you can leave it running.">🎞 Move sprite animations to cloud</button>
+              <button class="btn-mini" id="btn-toggle-artstream" style="font-size:0.62rem" title="Render your custom sprites + art IN THE GAME instead of placeholder emoji. Best AFTER moving sprites to the cloud (URL frames are cheap). If the game becomes unstable, turn it back OFF.">🎮 Custom art in-game</button>
             </div>
           </div>
         </div>
@@ -80064,6 +80069,21 @@ function bindCardEditor() {
       sprMigrateBtn.disabled = true; sprMigrateBtn.textContent = '🎞 Migrating sprites… (watch the toasts)';
       try { await migrateSpritesToCloud(); } catch (err) { showToast('⚠ Sprite migration error: ' + ((err && err.message) || '?'), 6000); }
       try { sprMigrateBtn.disabled = false; sprMigrateBtn.textContent = _o; } catch (e2) {}
+    };
+  }
+  // 🎮 Toggle: render custom sprites/art in-game (streaming) vs placeholder emoji.
+  const artStreamBtn = document.getElementById('btn-toggle-artstream');
+  if (artStreamBtn) {
+    const _streamNow = (function () { try { return localStorage.getItem('hg_artstream') === '1'; } catch (e) { return false; } })();
+    artStreamBtn.textContent = '🎮 Custom art in-game: ' + (_streamNow ? 'ON' : 'OFF');
+    artStreamBtn.onclick = (e) => {
+      e.preventDefault();
+      let now; try { now = localStorage.getItem('hg_artstream') === '1'; } catch (e2) { now = false; }
+      try { localStorage.setItem('hg_artstream', now ? '0' : '1'); } catch (e2) {}
+      showToast(now
+        ? '🎮 Custom art OFF (safe placeholder mode) — reloading…'
+        : '🎮 Custom art ON — reloading. If the game gets slow or unstable, open the Forge and turn this back OFF.', 4500);
+      setTimeout(() => { try { location.reload(); } catch (e2) {} }, 1000);
     };
   }
 

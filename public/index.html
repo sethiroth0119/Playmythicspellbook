@@ -36307,18 +36307,25 @@ async function _artValueToDataUrl(v) {
 // Run from the console:  __mg.migrateArtToCloud()
 async function migrateCardArtToCloud() {
   if (!Profile.cloud || !Profile.cloud.signedIn) { console.warn('☁ Sign in first.'); if (typeof showToast === 'function') showToast('☁ Sign in first to migrate art.'); return { ok: false }; }
+  // 🗄 Pull the legacy MONOLITHIC store too. In big-library mode it is NEVER loaded
+  // into memory, so it holds the BULK of an existing library that the per-key /
+  // resident scan below would otherwise miss entirely ("nothing to migrate").
+  let _mono = null;
+  try { _mono = await idbGet('forge_cardArt'); } catch (e) {}
+  if (!_mono || typeof _mono !== 'object') _mono = {};
   const ids = new Set();
   try { if (Forge._carIds) for (const id of Forge._carIds) ids.add(id); } catch (e) {}
   try { if (Forge.cardArt) for (const id in Forge.cardArt) { if (id && id.indexOf('__') !== 0) ids.add(id); } } catch (e) {}
+  for (const id in _mono) { if (id && id.indexOf('__') !== 0) ids.add(id); }
   const all = Array.from(ids).filter(id => !(Forge.cardArtUrl && Forge.cardArtUrl[id]));
   if (!all.length) { console.info('☁ Nothing to migrate — no local card art found.'); if (typeof showToast === 'function') showToast('No local card art to migrate.'); return { ok: true, migrated: 0 }; }
   console.info('☁ Migrating ' + all.length + ' card-art image(s) to the cloud…');
   if (typeof showToast === 'function') showToast('☁ Migrating ' + all.length + ' card art images…', 5000);
-  let ok = 0, fail = 0, skip = 0;
+  let ok = 0, fail = 0, skip = 0, _monoTrimmed = false;
   for (let i = 0; i < all.length; i++) {
     const id = all[i];
     try {
-      let v = (Forge.cardArt && Forge.cardArt[id]) || null;
+      let v = (Forge.cardArt && Forge.cardArt[id]) || _mono[id] || null;
       if (!v) { try { v = await idbGet('car:' + id); } catch (e) {} }
       const dataUrl = await _artValueToDataUrl(v);
       if (!dataUrl) { skip++; continue; }
@@ -36328,6 +36335,7 @@ async function migrateCardArtToCloud() {
         if (card) card.artUrl = up.url;
         (Forge.cardArtUrl = Forge.cardArtUrl || {})[id] = up.url;
         try { if (Forge.cardArt) delete Forge.cardArt[id]; } catch (e) {}
+        if (_mono[id]) { delete _mono[id]; _monoTrimmed = true; }
         try { await idbDel('car:' + id); if (Forge._carIds) Forge._carIds.delete(id); } catch (e) {}
         ok++;
       } else {
@@ -36345,6 +36353,8 @@ async function migrateCardArtToCloud() {
     await new Promise(r => setTimeout(r, 25));
   }
   try { if (Forge._carIds) idbSet('forge_cardArt_idx', Array.from(Forge._carIds)); } catch (e) {}
+  // Persist the trimmed monolith so the migrated base64 is GONE from IDB (frees disk).
+  if (_monoTrimmed) { try { await idbSet('forge_cardArt', _mono); } catch (e) {} }
   try { saveForge(); } catch (e) {}
   console.info('✅ Migration complete: ' + ok + ' uploaded · ' + fail + ' failed · ' + skip + ' skipped. Refresh to confirm.');
   if (typeof showToast === 'function') showToast('✅ ' + ok + ' card art moved to the cloud' + (fail ? (' · ' + fail + ' failed') : '') + '. Refresh to confirm.', 8000);

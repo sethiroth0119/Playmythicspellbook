@@ -20429,10 +20429,13 @@
     background: rgba(13,17,22,0.97);
     border-left: 1px solid rgba(35,44,54,0.9);
     z-index: 20; display: flex; flex-direction: column;
-    animation: tw-drawer-in 0.28s cubic-bezier(.2,.7,.2,1);
     box-shadow: -10px 0 36px rgba(0,0,0,0.7);
     overflow-y: auto;
   }
+  /* Entrance animation ONLY on the first open of a node — background cloud
+     fetches re-render the drawer in a burst, and replaying this every time was
+     the cause of the open-flicker/ghosting. Applied via .tw-drawer-anim. */
+  .tw-node-drawer.tw-drawer-anim { animation: tw-drawer-in 0.28s cubic-bezier(.2,.7,.2,1); }
   .tw-node-drawer::-webkit-scrollbar { width: 4px; }
   .tw-node-drawer::-webkit-scrollbar-thumb { background: rgba(35,44,54,0.8); }
   @keyframes tw-drawer-in {
@@ -150248,8 +150251,14 @@ function renderTerritoryWars() {
       </div>
     ` : '';
 
+    // Only animate the drawer's entrance the FIRST render for this node — the
+    // background cloud fetches re-render it several times right after open, and
+    // replaying the slide-in each time was the flicker/ghosting. Track which node
+    // we've already animated for; a different node (or a reopen after close) animates.
+    const _drawerAnim = (App._twDrawerAnimedFor !== selNode.id) ? ' tw-drawer-anim' : '';
+    App._twDrawerAnimedFor = selNode.id;
     return `
-      <div class="tw-node-drawer" data-node-id="${escapeHtml(selNode.id)}">
+      <div class="tw-node-drawer${_drawerAnim}" data-node-id="${escapeHtml(selNode.id)}">
         <div class="tw-drawer-crumb-bar">
           <span class="tw-drawer-crumb-text">DISTRICT NODES · ${escapeHtml(_dRegion.toUpperCase())}</span>
           <span class="tw-drawer-barcode">||||||||||||||||</span>
@@ -150382,7 +150391,7 @@ function renderTerritoryWars() {
   if (_nlBtn) _nlBtn.onclick = () => { try { _twOpenNodeListModal(); } catch (e) {} };
   // v37: Drawer close — clicking ✕ deselects the node and closes the drawer.
   const _drawerClose = document.getElementById('tw-drawer-close');
-  if (_drawerClose) _drawerClose.onclick = () => { App._twSelectedNode = null; App._twNodeTab = 'overview'; render(); };
+  if (_drawerClose) _drawerClose.onclick = () => { App._twSelectedNode = null; App._twNodeTab = 'overview'; App._twDrawerAnimedFor = null; render(); };
   // Node detail tabs
   document.querySelectorAll('[data-ndtab]').forEach(b => b.onclick = () => {
     App._twNodeTab = b.dataset.ndtab;

@@ -50449,7 +50449,20 @@ async function loadForgeContentFromIdb() {
       // is restored.
       const byId = {};
       cur.forEach(e => { if (e && e.id != null) byId[e.id] = e; });
-      v.forEach(e => { if (e && e.id != null) byId[e.id] = e; });
+      v.forEach(e => {
+        if (!e || e.id == null) return;
+        const existing = byId[e.id];
+        // 🕒 EDIT-RECENCY GUARD — by default the IDB copy wins (it's written first
+        // and carries inline media the stripped localStorage copy lacks). BUT if the
+        // in-memory/localStorage copy carries a STRICTLY NEWER _editedAt, it's a fresh
+        // edit that never reached IDB (boot-race / pre-load crash) — keep it, or we'd
+        // silently revert the admin's change ("the Forge keeps removing what I add").
+        if (existing && typeof existing._editedAt === 'number' &&
+            (typeof e._editedAt !== 'number' || existing._editedAt > e._editedAt)) {
+          return; // keep the fresher in-memory edit
+        }
+        byId[e.id] = e;
+      });
       const merged = Object.values(byId);
       let differs = merged.length !== cur.length;
       if (!differs) { try { differs = JSON.stringify(merged) !== JSON.stringify(cur); } catch (e) { differs = true; } }
@@ -73238,6 +73251,54 @@ function _cardFaceArt(card, fit) {
   return (card.icon || '🃏');
 }
 
+// Debounced re-render so sprites/art force-loaded on demand paint into the Forge
+// list once they finish loading (single render for a whole burst of loads).
+let _forgeThumbRenderT = null;
+function _forgeThumbScheduleRender() {
+  if (_forgeThumbRenderT) return;
+  _forgeThumbRenderT = setTimeout(() => {
+    _forgeThumbRenderT = null;
+    try { if (typeof render === 'function') render(); } catch (e) {}
+  }, 260);
+}
+
+// 🃏 Card-Forge list-row thumbnail. Prefers the unit's IDLE SPRITE ANIMATION (via the
+// bounded single-img board ticker), then static card art, and only falls back to the
+// emoji 🦄 when NOTHING is uploaded. Force-loads a streamed/placeholder asset on demand
+// (bounded by the sprite LRU) so the list shows the real art instead of a unicorn even
+// in big-library streaming mode — the reason every row looked like a unicorn before.
+function _forgeRowThumb(card) {
+  if (!card) return '🃏';
+  const id = card.id;
+  const isHero = card.type === 'hero';
+  const spriteKey = isHero ? ('h_' + id) : ('u_' + id);
+  // 1) Idle sprite animation (preferred). _boardSpriteHtml returns non-null when the
+  //    sprite is resident OR indexed on disk; if only indexed, force-load so it plays.
+  try {
+    const occ = isHero ? { heroId: id, icon: card.icon } : { cardId: id, id: id, type: 'unit', icon: card.icon };
+    const bs = (typeof _boardSpriteHtml === 'function') ? _boardSpriteHtml(occ) : null;
+    if (bs) {
+      let resident = false;
+      try { resident = !!(typeof getSpriteFrames === 'function' && (getSpriteFrames(spriteKey, 'idle') || []).length > 1); } catch (e) {}
+      if (!resident && typeof _lazyLoadSprite === 'function') {
+        try { Promise.resolve(_lazyLoadSprite(spriteKey, true)).then(ok => { if (ok) _forgeThumbScheduleRender(); }).catch(() => {}); } catch (e) {}
+      }
+      try { if (typeof _ensureBoardSpriteAnim === 'function') _ensureBoardSpriteAnim(); } catch (e) {}
+      return bs;
+    }
+  } catch (e) {}
+  // 2) Static card art — resident, thumbnail, or force-loaded on demand.
+  try {
+    const art = (typeof getCardArt === 'function') ? (getCardArt(id) || getCardArt(spriteKey)) : null;
+    if (art && typeof art === 'string') return '<img src="' + art + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:3px" decoding="async" loading="lazy">';
+    if (Forge._carIds && Forge._carIds.has(id) && typeof _lazyLoadCardArt === 'function') {
+      try { Promise.resolve(_lazyLoadCardArt(id, true)).then(ok => { if (ok) _forgeThumbScheduleRender(); }).catch(() => {}); } catch (e) {}
+    }
+  } catch (e) {}
+  // 3) Only NOW the emoji — genuinely no sprite and no art uploaded.
+  return (card.icon || '🃏');
+}
+
 function renderDeckSelectModal(deckOptions) {
   if (!App.deckSelectModalKey) return '';
   const opts = (deckOptions || []).find(o => o.key === App.deckSelectModalKey);
@@ -77931,7 +77992,7 @@ function renderForgeCards() {
         const r = getRarity(c);
         return `
           <div class="forge-list-row" data-id="${c.id}">
-            <div class="forge-row-icon">${renderIcon('u_' + c.id, c.icon, 'md')}</div>
+            <div class="forge-row-icon">${_forgeRowThumb(c)}</div>
             <div class="forge-row-info">
               <div class="forge-row-name">${escapeHtml(c.name)} <span class="rarity-badge" style="color:${r.color};border-color:${r.color}">${r.name}</span> ${elementBadge(getElementsOf(c), 'sm')} ${getFactionsOf(c).slice(0,3).map(fid => { const f = getFaction(fid); return f ? `<span class="faction-badge tiny" style="border-color:${f.color};color:${f.color}">${getFactionIcon(fid, '1.9em')}</span>` : ''; }).join('')}</div>
               <div class="forge-row-meta">${cardMeta(c)}</div>
@@ -78018,7 +78079,7 @@ function _forgeRebuildListInPlace() {
       const r = (typeof getRarity === 'function') ? getRarity(c) : { name: '', color: '#9aa0a6' };
       return `
         <div class="forge-list-row" data-id="${c.id}">
-          <div class="forge-row-icon">${renderIcon('u_' + c.id, c.icon, 'md')}</div>
+          <div class="forge-row-icon">${_forgeRowThumb(c)}</div>
           <div class="forge-row-info">
             <div class="forge-row-name">${escapeHtml(c.name)} <span class="rarity-badge" style="color:${r.color};border-color:${r.color}">${r.name}</span> ${elementBadge(getElementsOf(c), 'sm')} ${getFactionsOf(c).slice(0,3).map(fid => { const f = getFaction(fid); return f ? `<span class="faction-badge tiny" style="border-color:${f.color};color:${f.color}">${getFactionIcon(fid, '1.9em')}</span>` : ''; }).join('')}</div>
             <div class="forge-row-meta">${cardMeta(c)}</div>
@@ -81363,6 +81424,13 @@ function bindCardEditor() {
 
 // Read whatever inputs are currently in the DOM and merge them into the card object
 function captureEditorIntoCard(card) {
+  // 🕒 Stamp the edit time so the boot-time IDB↔localStorage merge keeps THIS fresh
+  // edit instead of reverting it to a staler IndexedDB copy. This is the fix for
+  // "the Forge keeps removing what I add": loadForgeContentFromIdb() lets the IDB
+  // copy win same-id, so an edit that didn't reach IDB (boot-race guard / a crash
+  // before _forgeIdbLoaded flips) got silently rolled back. The merge now prefers
+  // whichever copy carries the newer _editedAt.
+  try { card._editedAt = Date.now(); } catch (e) {}
   const v = (id) => { const el = document.getElementById(id); return el ? el.value : null; };
   const num = (id, min, max, fb) => { const x = parseInt(v(id), 10); if (isNaN(x)) return fb; return Math.max(min, Math.min(max, x)); };
 

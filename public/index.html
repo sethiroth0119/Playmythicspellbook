@@ -147334,6 +147334,20 @@ async function tw_cloudResetNodeRecon(nodeId, totals) {
     return true;
   } catch (e) { return null; }
 }
+// Fire the AUTHORITATIVE 24h tick (server advances corruption/population for every
+// node by the days elapsed, using the real registered-player count), then pull the
+// fresh rows. Lazy + throttled — the first player on the map after midnight pays it.
+// forceDays > 0 forces N days (admin Advance Day). Returns the rpc result or null.
+async function tw_cloudSyncNodeSim(forceDays) {
+  try {
+    if (!Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.rpc('tw_node_sim_sync', { p_force_days: (forceDays | 0) });
+    if (error) return null;
+    App._twSimSyncAt = Date.now();
+    try { await tw_cloudFetchAllNodeRecon(); } catch (e) {}
+    return data;
+  } catch (e) { /* RPC missing → local fallback sim still runs */ return null; }
+}
 // ── 👑 Node → Player ownership (admin assigns; owner can publish ads) ─────────
 async function tw_cloudFetchNodeOwners() {
   try {
@@ -148800,10 +148814,10 @@ function _twNodeRecon(node) {
     restored:       !!(r && r.restored),
     shared:         false,
   };
-  // Overlay the SHARED cloud row (truth) for the contribution-driven counters.
-  // Population/corruption stay local-sim for now (Stage 2 makes the daily tick
-  // cloud-authoritative). Take the MAX so a player's un-synced local progress is
-  // never hidden by a slightly-stale cloud fetch.
+  // Overlay the SHARED cloud row (truth). Contribution counters take the MAX so a
+  // player's un-synced local progress is never hidden by a slightly-stale fetch.
+  // population/corruption/lastTick are AUTHORITATIVE from the cloud (Stage 2 — the
+  // 24h drift is computed once server-side from the real registered-player count).
   try {
     const cr = (typeof _twNodeReconCloudRow === 'function') ? _twNodeReconCloudRow(node && node.id) : null;
     if (cr) {
@@ -148814,6 +148828,9 @@ function _twNodeRecon(node) {
       out.buildingsRestored = Math.min(out.buildingsTotal, Math.max(out.buildingsRestored, cr.buildings_restored | 0));
       out.civiliansSaved    = Math.min(out.civiliansTotal, Math.max(out.civiliansSaved, cr.civilians_saved | 0));
       out.campaignsRun      = Math.max(out.campaignsRun, cr.campaigns_run | 0);
+      if (typeof cr.population === 'number') out.population = Math.max(0, cr.population | 0);
+      if (typeof cr.corruption === 'number') out.corruption = Math.max(0, Math.min(100, cr.corruption | 0));
+      if (cr.last_tick_at) { const _t = Date.parse(cr.last_tick_at); if (!isNaN(_t)) out.lastTickAt = _t; }
       if (cr.restored) out.restored = true;
       out.shared = true;
     }
@@ -148897,25 +148914,35 @@ function _twNodeTradeStability(node) {
   const roads = r.roadsTotal > 0 ? (r.roadsRepaired / r.roadsTotal) : 0;
   return Math.max(0, Math.min(100, Math.round(civ * 0.62 + roads * 30 - r.corruption * 0.12)));
 }
-// PROTECTION — corruption is held down by registered players + their employed civilians.
-// Local proxy (this player's camp + any cloud-known camps registered to the node).
+// PROTECTION — corruption is held down by the players registered to the node.
+// This MIRRORS the server formula (tw_node_sim_sync): protection = min(12,
+// registeredPlayers * 1.5). We count the cloud camp rows when we have them (the
+// per-node Settlements fetch caches App._twNodeCamps[id].rows), making sure this
+// player's own camp is counted even before the fetch lands; when there's no cloud
+// data we fall back to a local proxy so an offline node still drifts sensibly.
 function _twNodeProtection(nodeId) {
-  let p = 0;
   try {
-    if (Profile && Profile.campNodeId === nodeId) {
-      p += 3;
-      let workers = 0;
-      try { const wf = (typeof _campWorkforce === 'function') ? _campWorkforce() : {}; for (const k in wf) workers += (wf[k] | 0); } catch (e) {}
-      p += Math.min(9, workers * 0.6);
+    let count = 0, counted = false;
+    const cc = App._twNodeCamps && App._twNodeCamps[nodeId];
+    const rows = cc && Array.isArray(cc.rows) ? cc.rows : (Array.isArray(cc) ? cc : null);
+    if (rows) {
+      counted = true;
+      count = rows.length;
+      const myUid = (Profile.cloud && Profile.cloud.userId) || null;
+      if (Profile && Profile.campNodeId === nodeId && (!myUid || !rows.some(r => r && r.user_id === myUid))) count += 1;
+    } else if (Profile && Profile.campNodeId === nodeId) {
+      count = 1; // local proxy: at least this player's camp
     }
-    const camps = (App._twNodeCamps && App._twNodeCamps[nodeId]) || null;
-    if (Array.isArray(camps)) p += Math.min(12, camps.length * 2);
-  } catch (e) {}
-  return p;
+    return Math.min(12, count * 1.5);
+  } catch (e) { return 0; }
 }
 // Advance ONE node's 24h clock by however many full days have elapsed (capped).
+// When the node has a SHARED cloud row, the daily drift is owned by the server
+// (tw_node_sim_sync) — the local tick becomes a no-op so it can't fight the cloud.
+// Without a cloud row (offline / signed-out) this runs as the local fallback.
 function _twNodeSimTick(node, now, forceDays) {
   if (!node) return false;
+  try { if (node.id && typeof _twNodeReconCloudRow === 'function' && _twNodeReconCloudRow(node.id)) return false; } catch (e) {}
   const r = _twNodeReconEnsure(node);
   now = now || Date.now();
   if (!r.lastTickAt) { r.lastTickAt = now; return false; }
@@ -149096,6 +149123,15 @@ function renderTerritoryWars() {
     if (typeof tw_cloudFetchAllNodeRecon === 'function' && (!App._twNodeReconAllAt || (Date.now() - App._twNodeReconAllAt) > 45000) && !App._twNodeReconFetching) {
       App._twNodeReconFetching = true;
       Promise.resolve(tw_cloudFetchAllNodeRecon()).catch(() => {}).then(() => { App._twNodeReconFetching = false; });
+    }
+  } catch (e) {}
+  // 🕛 SHARED 24h clock — fire the AUTHORITATIVE tick (server advances every node's
+  // corruption/population by the elapsed days from the real registered-player count).
+  // Throttled ~90s; the rpc itself is a no-op until a whole day has elapsed.
+  try {
+    if (typeof tw_cloudSyncNodeSim === 'function' && (!App._twSimSyncAt || (Date.now() - App._twSimSyncAt) > 90000) && !App._twSimSyncing) {
+      App._twSimSyncing = true; App._twSimSyncAt = Date.now();
+      Promise.resolve(tw_cloudSyncNodeSim(0)).catch(() => {}).then(() => { App._twSimSyncing = false; });
     }
   } catch (e) {}
   // 🌐 Cross-corp pull — first render fetches the latest ownership rows
@@ -149712,7 +149748,7 @@ function renderTerritoryWars() {
         }).join('');
         return header + meter + `<div style="display:flex;gap:0.4rem">${chips}</div>`;
       })()}
-      <div class="tw-nd-section-hdr">— NODE ECONOMY · 24-HOUR CYCLE</div>
+      <div class="tw-nd-section-hdr">— NODE ECONOMY · 24-HOUR CYCLE${_rc.shared ? ' <span style="color:#7fb0ff;font-weight:700;font-size:0.7em" title="The daily corruption/population drift is computed server-side from the real registered-player count — every player sees the same numbers.">· ☁ LIVE</span>' : ''}</div>
       ${(() => {
         const _now = Date.now();
         const _lt = _rc.lastTickAt || 0;
@@ -150355,9 +150391,12 @@ function renderTerritoryWars() {
   if (_admDayBtn) {
     _admDayBtn.onclick = () => {
       let res = { gained: 0 };
+      // Force a day on the SHARED cloud clock (corruption/population for everyone),
+      // then re-render once the fresh rows land. Local yield still accrues locally.
+      try { if (typeof tw_cloudSyncNodeSim === 'function') Promise.resolve(tw_cloudSyncNodeSim(1)).catch(() => {}).then(() => { try { render(); } catch (e) {} }); } catch (e) {}
       try { res = _twWorldTick(1) || { gained: 0 }; } catch (e) {}
       try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {}
-      try { showToast('⏩ Advanced 1 day — corruption bled the nodes' + (res.gained > 0 ? `, your node delivered +${res.gained} resources` : '') + '.', 4200); } catch (e) {}
+      try { showToast('⏩ Advanced 1 day (shared) — corruption bled the nodes' + (res.gained > 0 ? `, your node delivered +${res.gained} resources` : '') + '.', 4200); } catch (e) {}
       render();
     };
   }

@@ -146912,6 +146912,7 @@ try {
         }
         case 'recon-net-foundation': showToast('🏛 Foundation Reserve — the shared Cinder pool every settlement feeds. Rebuild sites + run convoys to raise your contribution.', 4800); break;
         case 'camp-view-node': goToDistrictNode(getCampNodeId()); break;
+        case 'node-upgrade': { const nid = t.getAttribute('data-node'), kind = t.getAttribute('data-kind'); if (nid && kind && typeof _twBuyNodeUpgrade === 'function') _twBuyNodeUpgrade(nid, kind); break; }
         default: return;
       }
     });
@@ -147360,6 +147361,20 @@ async function tw_cloudClaimMilestone(nodeId, pct) {
   try {
     if (!nodeId || !Cloud || !Cloud.ready || !Cloud.client) return null;
     const { data, error } = await Cloud.client.rpc('tw_node_claim_milestone', { p_node_id: nodeId, p_pct: (pct | 0) });
+    if (error) return null;
+    return data;
+  } catch (e) { return null; }
+}
+// Buy a SHARED node upgrade (atomic +1 level, capped). Client pays the resource
+// cost before calling; returns the fresh recon row (with the new level) or null.
+async function tw_cloudBuyUpgrade(nodeId, kind, maxLevel, totals) {
+  try {
+    if (!nodeId || !kind || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const t = totals || {};
+    const { data, error } = await Cloud.client.rpc('tw_node_buy_upgrade', {
+      p_node_id: nodeId, p_kind: kind, p_max: (maxLevel | 0) || 5,
+      p_roads_total: (t.roadsTotal | 0) || 60, p_buildings_total: (t.buildingsTotal | 0) || 48, p_civ_total: (t.civiliansTotal | 0) || 200000,
+    });
     if (error) return null;
     return data;
   } catch (e) { return null; }
@@ -148829,6 +148844,9 @@ function _twNodeRecon(node) {
     lastTickAt:     (r && (r.lastTickAt | 0)) || 0,
     restored:       !!(r && r.restored),
     milestones:     (r && Array.isArray(r.milestones)) ? r.milestones.slice() : [],
+    garrison:       (r && (r.garrison | 0)) || 0,
+    refinery:       (r && (r.refinery | 0)) || 0,
+    civic:          (r && (r.civic | 0)) || 0,
     shared:         false,
   };
   // Overlay the SHARED cloud row (truth). Contribution counters take the MAX so a
@@ -148849,6 +148867,9 @@ function _twNodeRecon(node) {
       if (typeof cr.corruption === 'number') out.corruption = Math.max(0, Math.min(100, cr.corruption | 0));
       if (cr.last_tick_at) { const _t = Date.parse(cr.last_tick_at); if (!isNaN(_t)) out.lastTickAt = _t; }
       if (Array.isArray(cr.milestones)) out.milestones = cr.milestones.slice();
+      if (typeof cr.garrison === 'number') out.garrison = cr.garrison | 0;
+      if (typeof cr.refinery === 'number') out.refinery = cr.refinery | 0;
+      if (typeof cr.civic === 'number') out.civic = cr.civic | 0;
       if (cr.restored) out.restored = true;
       out.shared = true;
     }
@@ -148964,7 +148985,7 @@ function _twNodeCivilization(node) {
   const r = _twNodeRecon(node);
   const popFrac = r.civiliansTotal > 0 ? (r.population / r.civiliansTotal) : 0;
   const built = r.buildingsTotal > 0 ? (r.buildingsRestored / r.buildingsTotal) : 0;
-  return Math.max(0, Math.min(100, Math.round(popFrac * 82 + built * 18)));
+  return Math.max(0, Math.min(100, Math.round(popFrac * 82 + built * 18 + (r.civic | 0) * 5)));  // 🏛 Civic Hall upgrade
 }
 // Derived TRADE STABILITY (0-100) — driven by civilization + repaired roads, dragged by corruption.
 function _twNodeTradeStability(node) {
@@ -148992,7 +149013,9 @@ function _twNodeProtection(nodeId) {
     } else if (Profile && Profile.campNodeId === nodeId) {
       count = 1; // local proxy: at least this player's camp
     }
-    return Math.min(12, count * 1.5);
+    let garrison = 0; // 🛡 Garrison upgrade — shared, from the cloud recon row
+    try { const _cr = (typeof _twNodeReconCloudRow === 'function') ? _twNodeReconCloudRow(nodeId) : null; if (_cr) garrison = _cr.garrison | 0; } catch (e) {}
+    return Math.min(18, count * 1.5 + garrison * 1.5);
   } catch (e) { return 0; }
 }
 // Advance ONE node's 24h clock by however many full days have elapsed (capped).
@@ -149031,7 +149054,8 @@ function _twNodeAccrueYield(node, now, forceDays) {
   if (!resKey) { r.lastYieldAt = (forceDays ? now : r.lastYieldAt + days * _TW_DAY_MS); return 0; }
   const base = (node.resourceYield[resKey] | 0) || 5;
   const trade = _twNodeTradeStability(node);
-  const amount = Math.max(0, Math.round(base * (trade / 100) * 3 * days));
+  const refine = 1 + ((_twNodeRecon(node).refinery | 0) * 0.2);  // ⚙ Refinery upgrade: +20% / level
+  const amount = Math.max(0, Math.round(base * (trade / 100) * 3 * days * refine));
   if (amount > 0) {
     const map = { FOOD: 'food', FUEL: 'fuel', MED: 'medicine', METAL: 'metal' };
     const rid = map[resKey] || String(resKey).toLowerCase();
@@ -149065,6 +149089,50 @@ function _twResetNodeRecon(node, randomizeRes) {
     node.resourceYield = { [r]: 5 + Math.floor(Math.random() * 16) }; // 5–20 / cycle
   }
   node.recon = _twNodeReconDefaults();
+}
+// 🏗 NODE UPGRADES (sinks) — registered players spend the node's own resource on
+// SHARED, persistent upgrades that benefit everyone at the node. Levels live on the
+// cloud recon row (garrison/refinery/civic); effects are wired into protection,
+// resource yield, and civilization. Cost scales with the next level.
+const _TW_NODE_UPGRADES = [
+  { kind: 'garrison', icon: '🛡', name: 'Garrison',   max: 5, base: 40, fx: '+1.5 protection / lvl',     tip: 'Holds corruption down — fewer civilians lost each day.' },
+  { kind: 'refinery', icon: '⚙', name: 'Refinery',   max: 5, base: 30, fx: '+20% resource yield / lvl', tip: 'Registered players collect more of the node\'s resource.' },
+  { kind: 'civic',    icon: '🏛', name: 'Civic Hall', max: 5, base: 50, fx: '+5 civilization / lvl',     tip: 'Raises civilization → trade stability → yield.' },
+];
+const _TW_RES_ID_MAP = { FOOD: 'food', FUEL: 'fuel', MED: 'medicine', METAL: 'metal' };
+function _twNodeResId(node) {
+  try { const k = (node && node.resourceYield) ? Object.keys(node.resourceYield)[0] : ''; if (!k) return ''; return _TW_RES_ID_MAP[k] || String(k).toLowerCase(); } catch (e) { return ''; }
+}
+function _twUpgradeCost(u, level, node) { const id = _twNodeResId(node); if (!id) return null; return { [id]: (level + 1) * u.base }; }
+// Buy one level of a node upgrade: gate (registered + online + not maxed + afford),
+// optimistically spend the resource, push the shared +1 level, refund on failure.
+async function _twBuyNodeUpgrade(nodeId, kind) {
+  try {
+    const node = (_twForge().nodes || []).find(n => n && n.id === nodeId);
+    if (!node) return;
+    const u = _TW_NODE_UPGRADES.find(x => x.kind === kind);
+    if (!u) return;
+    if (!(Profile && Profile.campNodeId === nodeId)) { showToast('🏳 Register your camp to this node first to invest in it.', 3600); return; }
+    if (!(typeof Cloud !== 'undefined' && Cloud && Cloud.ready)) { showToast('☁ Sign in to invest in shared node upgrades.', 3600); return; }
+    const r = _twNodeRecon(node);
+    const level = (r[kind] | 0) || 0;
+    if (level >= u.max) { showToast(`${u.icon} ${u.name} is already at max level.`, 3000); return; }
+    const cost = _twUpgradeCost(u, level, node);
+    if (!cost) { showToast('This node produces no resource to reinvest.', 3200); return; }
+    const cid = Object.keys(cost)[0];
+    if (!canAffordResources(cost)) { showToast(`Not enough ${_meta(cid).name} — need ${cost[cid]} ${_meta(cid).icon}.`, 3600); return; }
+    spendResources(cost); // optimistic
+    const res = await tw_cloudBuyUpgrade(nodeId, kind, u.max, { roadsTotal: r.roadsTotal, buildingsTotal: r.buildingsTotal, civiliansTotal: r.civiliansTotal });
+    if (res && res.node_id) {
+      _twStashCloudReconRow(res);
+      showToast(`${u.icon} ${u.name} → Lv ${res[kind] | 0} · ${u.fx}`, 4000);
+      try { _twLog('settlement', `<b>${escapeHtml(node.name || 'A node')}</b> upgraded its ${escapeHtml(u.name)} to <b>Lv ${res[kind] | 0}</b>.`); } catch (e) {}
+    } else {
+      Object.keys(cost).forEach(id => addRes(id, cost[id])); // refund
+      showToast('⚠ Upgrade failed — resources refunded.', 3600);
+    }
+    try { render(); } catch (e) {}
+  } catch (e) {}
 }
 
 // 📋 NODE LIST MODAL — a searchable directory of every District Node so players can
@@ -149815,7 +149883,7 @@ function renderTerritoryWars() {
         const _h = Math.floor(_nextMs / 3600000), _m = Math.floor((_nextMs % 3600000) / 60000);
         const _resKey = (selNode.resourceYield) ? Object.keys(selNode.resourceYield)[0] : '';
         const _base = _resKey ? ((selNode.resourceYield[_resKey] | 0) || 5) : 0;
-        const _dailyYield = Math.round(_base * (_trade / 100) * 3);
+        const _dailyYield = Math.round(_base * (_trade / 100) * 3 * (1 + (_rc.refinery | 0) * 0.2));  // incl. ⚙ Refinery
         const _registered = !!(Profile && Profile.campNodeId === selNode.id);
         const row = (lbl, val, col) => `<div class="tw-nd-progress-row"><div class="tw-nd-prog-label">${lbl}</div><div class="tw-nd-prog-val" style="min-width:auto;color:${col || '#e4ecf3'}">${val}</div></div>`;
         return '<div class="tw-nd-progress-list">'
@@ -149824,6 +149892,34 @@ function renderTerritoryWars() {
           + row('CORRUPTION / DAY', (_corrDelta <= 0 ? '▼ ' : '▲ ') + Math.abs(_corrDelta).toFixed(1) + (_prot > 0 ? '  (' + _prot.toFixed(1) + ' protection)' : ''), _corrDelta <= 0 ? '#4d9e68' : '#cf5a3a')
           + row('RESOURCE YIELD', _resKey ? (escapeHtml(_resKey) + '  +' + _dailyYield + ' / day' + (_registered ? '' : '  · register to earn')) : '—', _registered ? '#9bb265' : '#8a96a3')
           + '</div>';
+      })()}
+      <div class="tw-nd-section-hdr">— NODE UPGRADES${_rc.shared ? ' <span style="color:#7fb0ff;font-weight:700;font-size:0.7em" title="Shared across all players — paid for with this node\'s resource.">· ☁ SHARED</span>' : ''}</div>
+      ${(() => {
+        const _reg = !!(Profile && Profile.campNodeId === selNode.id);
+        const _online = !!(typeof Cloud !== 'undefined' && Cloud && Cloud.ready);
+        const list = (typeof _TW_NODE_UPGRADES !== 'undefined' ? _TW_NODE_UPGRADES : []).map(u => {
+          const lvl = (_rc[u.kind] | 0) || 0;
+          const pips = Array.from({ length: u.max }, (_, i) => i < lvl ? '●' : '○').join('');
+          const maxed = lvl >= u.max;
+          const cost = maxed ? null : (typeof _twUpgradeCost === 'function' ? _twUpgradeCost(u, lvl, selNode) : null);
+          const cid = cost ? Object.keys(cost)[0] : '';
+          const afford = cost ? canAffordResources(cost) : false;
+          const costHtml = cost ? resourceCostHtml(cost, { flagShort: true }) : '';
+          let ctrl;
+          if (maxed) ctrl = `<span style="font-size:0.66rem;font-weight:700;color:#9bb265;padding:3px 8px">★ MAX</span>`;
+          else if (!_reg) ctrl = `<span style="font-size:0.62rem;color:#8a96a3;padding:3px 6px" title="Register your camp to this node to invest.">🔒 register</span>`;
+          else if (!_online) ctrl = `<span style="font-size:0.62rem;color:#8a96a3;padding:3px 6px">☁ sign in</span>`;
+          else ctrl = `<button class="btn-mini ${afford ? 'btn-primary' : ''}" data-act="node-upgrade" data-kind="${u.kind}" data-node="${escapeHtml(selNode.id)}" ${afford ? '' : 'disabled'} style="white-space:nowrap" title="${escapeHtml(u.tip)}">${costHtml} ▸</button>`;
+          return `<div class="tw-nd-progress-row" style="align-items:center;gap:8px">
+            <div class="tw-nd-prog-label" style="min-width:auto;flex:1">
+              <span style="font-size:1.05em">${u.icon}</span> <b>${u.name}</b> <span style="font-family:monospace;color:#7fb0ff;letter-spacing:1px">${pips}</span>
+              <span style="display:block;font-size:0.62rem;color:#8a96a3">${u.fx}</span>
+            </div>
+            <div style="flex:0 0 auto">${ctrl}</div>
+          </div>`;
+        }).join('');
+        return `<div class="tw-nd-progress-list">${list}</div>`
+          + (!_reg ? `<div style="padding:4px 0.75rem 2px;font-size:0.62rem;color:#7a8694">Register your camp to this node to reinvest its resource into upgrades that help everyone here.</div>` : '');
       })()}
       <div class="tw-nd-section-hdr">— FOUNDATION RESERVE CONTRIBUTION</div>
       <div class="tw-nd-cinder-box">

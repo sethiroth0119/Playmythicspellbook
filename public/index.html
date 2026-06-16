@@ -65452,6 +65452,8 @@ const applyStatusEffect = (unit, statusId, duration, sourceUnitId) => {
 // Player UI uses this to show a toast; AI uses it to skip targets in selection.
 function canAttackTarget(attacker, target) {
   if (!attacker || !target) return { ok: true };
+  // 🔒 Lockdown — this side was hit by a lock-attacks counter; no strikes the rest of the turn.
+  if (attacker.owner && typeof _battleIsLocked === 'function' && _battleIsLocked(App.state, attacker.owner, 'attack')) return { ok: false, reason: 'locked' };
   for (const e of (attacker.statusEffects || [])) {
     // Follow My Lead — total attack lockout for the duration. The unit can
     // shuffle toward the source but cannot strike anyone (including the source).
@@ -68277,6 +68279,10 @@ const startTurn = (state, who) => {
   // against a living target, which propagated up through endAITurn and froze
   // the turn on "Enemy Acting…".
   let s = { ...state }; let log = [...s.log];
+  // 🔒 Lockdown counters last "the rest of the turn" — clear the side-of-turn's
+  // locks as their new turn begins (attack/move locks ride hasMoved/hasAttacked,
+  // which reset below; this clears deploy/spell/counter).
+  if (s[who] && s[who]._locks) s[who] = { ...s[who], _locks: {} };
   // ⚰ In-Grave tick — every card in `who`'s graveyard with an inGrave block
   // tagged `turnStart` rolls its chance + cooldown and fires. Runs FIRST so
   // a zombie that rises gets full visibility on the rest of the turn's
@@ -80755,6 +80761,11 @@ function renderCardEditor() {
           { id: 'root',    label: 'Root — instead of negating, root the actor for 2 turns' },
           { id: 'silence', label: 'Silence — actor loses its passive for 3 turns' },
           { id: 'killUnit',label: 'Execute — negate AND instantly kill the attacking unit (heroes immune)' },
+          { id: 'lockAttacks', label: '🔒 Lockdown: Attacks — negate, then the whole enemy side (units + hero) can\'t attack for the rest of their turn' },
+          { id: 'lockUnits',   label: '🔒 Lockdown: Units — negate, then they can\'t play / deploy units for the rest of their turn' },
+          { id: 'lockMoves',   label: '🔒 Lockdown: Movement — negate, then their units & hero can\'t move for the rest of their turn' },
+          { id: 'lockSpells',  label: '🔒 Lockdown: Spells — negate, then they can\'t cast spells for the rest of their turn' },
+          { id: 'lockCounters',label: '🔒 Lockdown: Counters — negate, then they can\'t play counters until their next turn' },
         ].map(o => `<option value="${o.id}" ${(card.counterEffect || 'negate') === o.id ? 'selected' : ''}>${o.label}</option>`).join('')}
       </select>
     </div>
@@ -88311,12 +88322,39 @@ function _runCounterChain(state, action, depth) {
 // activates a counter (action is then negated by the caller). Returns
 // false on decline, timeout, or no matching counter in hand.
 // Idempotent — only one prompt at a time; queued calls await prior.
+// 🔒 LOCKDOWN counter effects — when a counter with a lock* effect fires, the
+// SIDE whose action was countered loses that whole action category for the rest
+// of their turn. attack/move reuse the per-unit hasAttacked/hasMoved gates the
+// engine already respects (so both player AND AI obey instantly); deploy/spell/
+// counter ride a per-side `_locks` flag checked at each play site. Cleared in
+// startTurn. Fail-open everywhere — any oddity skips the lock, never breaks play.
+const COUNTER_LOCK_CATEGORY = { lockAttacks: 'attack', lockUnits: 'deploy', lockMoves: 'move', lockSpells: 'spell', lockCounters: 'counter' };
+function _battleIsLocked(state, side, cat) {
+  try { return !!(state && state[side] && state[side]._locks && state[side]._locks[cat]); } catch (e) { return false; }
+}
+function _battleApplyCounterLock(state, card, lockedSide) {
+  try {
+    const cat = COUNTER_LOCK_CATEGORY[card && card.counterEffect];
+    if (!cat || !state || !lockedSide || !state[lockedSide]) return;
+    state[lockedSide]._locks = Object.assign({}, state[lockedSide]._locks, { [cat]: true });
+    // Instant enforcement for attack/move — flip the gates every code path checks.
+    if (cat === 'attack' || cat === 'move') {
+      state.units = (state.units || []).map(u => (u && u.owner === lockedSide && u.alive)
+        ? (cat === 'attack' ? { ...u, hasAttacked: true } : { ...u, hasMoved: true })
+        : u);
+    }
+    const who = (lockedSide === 'player') ? 'You' : 'The opponent';
+    const verb = { attack: 'attack', deploy: 'play units', move: 'move units or the hero', spell: 'cast spells', counter: 'play counters' }[cat];
+    state.log = (state.log || []).concat([{ msg: `🔒 ${(card && card.name) || 'Counter'} — ${who} cannot ${verb} for the rest of the turn!`, color: 'amber' }]);
+  } catch (e) {}
+}
 // ============================================================================
 // 🤖 AI-side counter — auto-fires when the AI has a matching counter
 // card in hand AND can afford it. Probabilistic so the AI doesn't burn
 // every counter on every trigger. Mutates state directly + logs.
 function _aiAutoCounter(state, opts) {
   if (!opts || !opts.trigger || !state || !state.ai) return false;
+  if (_battleIsLocked(state, 'ai', 'counter')) return false;   // 🔒 AI is locked out of playing counters
   const hand = state.ai.hand || [];
   // ⏱ Counter candidates include BOTH pure Counter cards AND hybrid Counter
   // Units (type === 'unit' && isCounterUnit). Both expose the same fields
@@ -88344,6 +88382,8 @@ function _aiAutoCounter(state, opts) {
     unitEffect: 45, location: 45, weather: 45, attack: 30, move: 20,
   })[opts.trigger] || 35;
   if (Math.random() * 100 >= FIRE_PCT) return false;
+  // 🔒 Lockdown counter — shut the action's SOURCE side out of that category for the rest of their turn.
+  try { _battleApplyCounterLock(state, cheapest, (opts.source && opts.source.owner) || 'player'); } catch (e) {}
   // Apply effect.
   const sourceName = (opts.source && opts.source.name) || 'Player';
   const log = state.log || (state.log = []);
@@ -88461,6 +88501,7 @@ let _battleCounterPromptBusy = false;
 const _COUNTER_BUSY_WAIT_MAX_MS = 2000;
 async function tryPromptCounter(state, opts) {
   if (!opts || !opts.trigger || !state) return false;
+  if (_battleIsLocked(state, 'player', 'counter')) return false;   // 🔒 you're locked out of playing counters
   // Find matching counters in the player's hand. A counter matches when
   // its counterTriggers array contains the current trigger string.
   const hand = (state.player && state.player.hand) || [];
@@ -88702,6 +88743,9 @@ function _battleActivateCounter(cardInstanceId) {
       }
     }
   }
+  // 🔒 Lockdown counter — you played this against the opponent's action, so lock
+  // THEIR side out of that category for the rest of their turn.
+  try { _battleApplyCounterLock(s, card, (cp && cp._sourceOwner) || 'ai'); } catch (e) {}
   // Clear the prompt + resolve TRUE so the caller knows to negate.
   if (cp && cp.resolve) {
     try { clearTimeout(cp._timer); } catch (e) {}
@@ -92769,6 +92813,11 @@ function renderCardDetailModal() {
     root:     '🌿 Root — root the actor for 2 turns',
     silence:  '🔇 Silence — actor loses its passive for 3 turns',
     killUnit: '☠️ Execute — negate AND kill the attacker (heroes immune)',
+    lockAttacks:  '🔒 Lockdown: Attacks — no attacks the rest of their turn',
+    lockUnits:    '🔒 Lockdown: Units — no deploys the rest of their turn',
+    lockMoves:    '🔒 Lockdown: Movement — no movement the rest of their turn',
+    lockSpells:   '🔒 Lockdown: Spells — no spells the rest of their turn',
+    lockCounters: '🔒 Lockdown: Counters — no counters until their next turn',
   };
   // 📖 Concrete "what happens in plain English" for each counter effect.
   // Shown UNDER the short label so a brand-new player sees both the
@@ -92780,6 +92829,11 @@ function renderCardDetailModal() {
     root:     "The actor cannot move for 2 turns. They can still attack from where they stand, but no repositioning.",
     silence:  "The actor's passive ability stops working for 3 turns — Thorns, Lifesteal, auras, etc. all go dark.",
     killUnit: "The action is cancelled AND the attacking unit dies on the spot. Heroes are immune (they can't be one-shot).",
+    lockAttacks:  "Negates the action, then shuts down the WHOLE attacking side — none of their units OR their hero can attack again for the rest of that turn.",
+    lockUnits:    "Negates the action, then the attacking side cannot play or deploy any more unit cards for the rest of their turn.",
+    lockMoves:    "Negates the action, then none of the attacking side's units (or their hero) can move again for the rest of their turn.",
+    lockSpells:   "Negates the action, then the attacking side cannot cast any more spell cards for the rest of their turn.",
+    lockCounters: "Negates the action, then the attacking side cannot activate counter cards until their next turn begins.",
   };
   const counterTriggers = Array.isArray(card.counterTriggers) ? card.counterTriggers
                          : (card.counterTrigger ? [card.counterTrigger] : []);
@@ -96732,6 +96786,11 @@ function placeUnit(card, pos) {
   let s = App.state;
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
   if (!ph) return;
+  // 🔒 Lockdown — a lock-units counter shut you out of deploying for the rest of the turn.
+  if (typeof _battleIsLocked === 'function' && _battleIsLocked(s, 'player', 'deploy')) {
+    try { showToast('🔒 Locked — you can\'t play units for the rest of this turn.'); } catch (e) {}
+    return;
+  }
   // 🪞 Play-requirement gate — fires BEFORE the placement-tile check so the
   // player gets the right error message ('need 3 units' vs 'tile too far').
   const _reqFail = _checkPlayRequirement(card, s, 'player');
@@ -97373,6 +97432,11 @@ function playWeather(card) {
 
 function playSpell(card) {
   const s = App.state;
+  // 🔒 Lockdown — a lock-spells counter shut you out of casting for the rest of the turn.
+  if (typeof _battleIsLocked === 'function' && _battleIsLocked(s, 'player', 'spell')) {
+    try { showToast('🔒 Locked — you can\'t cast spells for the rest of this turn.'); } catch (e) {}
+    return;
+  }
   // 🪞 Play-requirement gate — fires before EVERYTHING else (polycreation,
   // chain, energy) so the player gets the right rejection message.
   const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
@@ -98676,7 +98740,7 @@ function doAIStep() {
   // ---- Phase -1: POLYCREATION — if the AI hero has a Polycreation
   // spell in hand AND legal materials are nearby, fuse them into a
   // Fusion Kalon. Highest priority since a big Kalon swings the match.
-  if (aiHero && aiHero.alive && !s.gameOver && typeof canActivatePolycreation === 'function') {
+  if (aiHero && aiHero.alive && !s.gameOver && !_battleIsLocked(s, 'ai', 'spell') && typeof canActivatePolycreation === 'function') {
     try {
       const polySpell = (s.ai.hand || []).find(c => c && typeof isPolycreationSpell === 'function' && isPolycreationSpell(c));
       if (polySpell) {
@@ -98756,7 +98820,7 @@ function doAIStep() {
 
   // ---- Phase 1: play the BEST unit card we can afford ----
   // Score by (raw stat density + anti-player tilt) / cost, accounting for placement safety.
-  if (aiHero && aiHero.alive) {
+  if (aiHero && aiHero.alive && !_battleIsLocked(s, 'ai', 'deploy')) {   // 🔒 lock-units counter shut deploys
     const playable = s.ai.hand.filter(c => c.type === 'unit' && c.cost <= s.ai.energy
       && !(typeof _cardPlayLockReason === 'function' && _cardPlayLockReason(c, s)));   // 🔒 skip sealed elements/factions
     if (playable.length > 0) {
@@ -99006,7 +99070,7 @@ function doAIStep() {
   // ---- Phase 3: spells — score every (spell, target) pair, prefer lethal/big tempo ----
   // "Spendthrift" daily modifier zeroes out spell costs — the AI gets the same discount
   const aiCheapSpells = !!(s.mods && s.mods.cheapSpells);
-  const spellable = s.ai.hand.filter(c => c.type === 'spell'
+  const spellable = _battleIsLocked(s, 'ai', 'spell') ? [] : s.ai.hand.filter(c => c.type === 'spell'   // 🔒 lock-spells counter
     && ((aiCheapSpells ? 0 : c.cost) <= s.ai.energy)
     // ⚡ Skip spells whose Yu-Gi-Oh-style activation cost the AI can't pay.
     && (typeof _costPayable !== 'function' || _costPayable(s, 'ai', null, c.activationCost)));

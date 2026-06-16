@@ -146478,6 +146478,9 @@ function _twAddNodeContribution(nodeId, buildings, roads, civ) {
     c[nodeId].roads = (c[nodeId].roads | 0) + (roads | 0);
     c[nodeId].civ = (c[nodeId].civ | 0) + (civ | 0);
     try { _twNodeCheckMilestones(node); } catch (e) {}
+    // SHARED: push this contribution to the cloud so every player sees it (atomic,
+    // capped server-side). Local node.recon above is the optimistic cache.
+    try { if (typeof tw_cloudContributeNode === 'function') tw_cloudContributeNode(nodeId, buildings, roads, civ, { roadsTotal: r.roadsTotal, buildingsTotal: r.buildingsTotal, civiliansTotal: r.civiliansTotal }); } catch (e) {}
     try { saveForge(); } catch (e) {}
     try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
   } catch (e) {}
@@ -147245,6 +147248,90 @@ async function tw_cloudFetchAllCampRegs() {
     App._twAllCamps = { at: Date.now(), byNode, rows: data || [] };
     if (App.screen === 'reconstruction' && App._reconView === 'network') { try { render(); } catch (e) {} }
     return data;
+  } catch (e) { return null; }
+}
+// ── 🏗 Shared node reconstruction (tw_node_recon) ────────────────────────────
+// Local node.recon stays an optimistic cache; the CLOUD row is the shared truth
+// for the rebuild counters (roads/buildings/civilians/campaigns). _twNodeRecon()
+// overlays the cloud row when it's present, so every player sees the same totals.
+function _twNodeReconCloudRow(nodeId) {
+  try { const c = App._twNodeReconCloud && App._twNodeReconCloud[nodeId]; return (c && c.row) || null; } catch (e) { return null; }
+}
+function _twStashCloudReconRow(row) {
+  if (!row || !row.node_id) return;
+  App._twNodeReconCloud = App._twNodeReconCloud || {};
+  App._twNodeReconCloud[row.node_id] = { at: Date.now(), row };
+}
+// Fire the ATOMIC contribute RPC (capped server-side) + cache the fresh row.
+async function tw_cloudContributeNode(nodeId, buildings, roads, civ, totals) {
+  try {
+    if (!nodeId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const t = totals || {};
+    const { data, error } = await Cloud.client.rpc('tw_node_contribute', {
+      p_node_id: nodeId,
+      p_buildings: (buildings | 0),
+      p_roads: (roads | 0),
+      p_civ: (civ | 0),
+      p_roads_total: (t.roadsTotal | 0) || 60,
+      p_buildings_total: (t.buildingsTotal | 0) || 48,
+      p_civ_total: (t.civiliansTotal | 0) || 200000,
+      p_camp_name: (typeof _campRegName === 'function' ? _campRegName() : null),
+    });
+    if (error) return null;
+    if (data) { _twStashCloudReconRow(data); try { delete (App._twNodeContrib || {})[nodeId]; } catch (e) {} }
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { try { render(); } catch (e) {} }
+    return data;
+  } catch (e) { /* RPC missing → no-op, local rebuild still works */ return null; }
+}
+async function tw_cloudFetchNodeRecon(nodeId) {
+  try {
+    if (!nodeId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.from('tw_node_recon').select('*').eq('node_id', nodeId).limit(1);
+    if (error) return null;
+    if (data && data[0]) _twStashCloudReconRow(data[0]);
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { try { render(); } catch (e) {} }
+    return (data && data[0]) || null;
+  } catch (e) { return null; }
+}
+async function tw_cloudFetchAllNodeRecon() {
+  try {
+    if (!Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.from('tw_node_recon').select('*').limit(1000);
+    if (error) return null;
+    App._twNodeReconCloud = App._twNodeReconCloud || {};
+    (data || []).forEach(row => { if (row && row.node_id) App._twNodeReconCloud[row.node_id] = { at: Date.now(), row }; });
+    App._twNodeReconAllAt = Date.now();
+    if (App.screen === 'territoryWars') { try { render(); } catch (e) {} }
+    return data;
+  } catch (e) { return null; }
+}
+async function tw_cloudFetchNodeContrib(nodeId) {
+  try {
+    if (!nodeId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.from('tw_node_contrib')
+      .select('user_id, node_id, buildings, roads, civ, camp_name')
+      .eq('node_id', nodeId).order('buildings', { ascending: false }).limit(100);
+    if (error) return null;
+    App._twNodeContrib = App._twNodeContrib || {};
+    App._twNodeContrib[nodeId] = { at: Date.now(), rows: data || [] };
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { try { render(); } catch (e) {} }
+    return data;
+  } catch (e) { return null; }
+}
+// Admin: reset the SHARED rebuild state to baseline (client-gated to admins).
+async function tw_cloudResetNodeRecon(nodeId, totals) {
+  try {
+    if (!nodeId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const t = totals || {};
+    await Cloud.client.rpc('tw_node_recon_reset', {
+      p_node_id: nodeId,
+      p_roads_total: (t.roadsTotal | 0) || 60,
+      p_buildings_total: (t.buildingsTotal | 0) || 48,
+      p_civ_total: (t.civiliansTotal | 0) || 200000,
+    });
+    try { delete (App._twNodeReconCloud || {})[nodeId]; } catch (e) {}
+    try { delete (App._twNodeContrib || {})[nodeId]; } catch (e) {}
+    return true;
   } catch (e) { return null; }
 }
 // ── 👑 Node → Player ownership (admin assigns; owner can publish ads) ─────────
@@ -148699,7 +148786,7 @@ function _twNodeReconDefaults() {
 function _twNodeRecon(node) {
   const r = (node && node.recon && typeof node.recon === 'object') ? node.recon : null;
   const total = (r && (r.civiliansTotal | 0)) || 200000;
-  return {
+  const out = {
     civiliansTotal: total,
     civiliansSaved: (r && (r.civiliansSaved | 0)) || 0,
     roadsRepaired:  (r && (r.roadsRepaired | 0)) || 0,
@@ -148710,7 +148797,28 @@ function _twNodeRecon(node) {
     population:     (r && (typeof r.population === 'number')) ? Math.max(0, r.population | 0) : total,
     corruption:     (r && (typeof r.corruption === 'number')) ? Math.max(0, Math.min(100, Math.round(r.corruption))) : 30,
     lastTickAt:     (r && (r.lastTickAt | 0)) || 0,
+    restored:       !!(r && r.restored),
+    shared:         false,
   };
+  // Overlay the SHARED cloud row (truth) for the contribution-driven counters.
+  // Population/corruption stay local-sim for now (Stage 2 makes the daily tick
+  // cloud-authoritative). Take the MAX so a player's un-synced local progress is
+  // never hidden by a slightly-stale cloud fetch.
+  try {
+    const cr = (typeof _twNodeReconCloudRow === 'function') ? _twNodeReconCloudRow(node && node.id) : null;
+    if (cr) {
+      out.civiliansTotal    = (cr.civilians_total | 0) || out.civiliansTotal;
+      out.roadsTotal        = (cr.roads_total | 0) || out.roadsTotal;
+      out.buildingsTotal    = (cr.buildings_total | 0) || out.buildingsTotal;
+      out.roadsRepaired     = Math.min(out.roadsTotal, Math.max(out.roadsRepaired, cr.roads_repaired | 0));
+      out.buildingsRestored = Math.min(out.buildingsTotal, Math.max(out.buildingsRestored, cr.buildings_restored | 0));
+      out.civiliansSaved    = Math.min(out.civiliansTotal, Math.max(out.civiliansSaved, cr.civilians_saved | 0));
+      out.campaignsRun      = Math.max(out.campaignsRun, cr.campaigns_run | 0);
+      if (cr.restored) out.restored = true;
+      out.shared = true;
+    }
+  } catch (e) {}
+  return out;
 }
 // Ensure node.recon exists (baseline-fill missing fields) and return the LIVE object for mutation.
 function _twNodeReconEnsure(node) {
@@ -148981,6 +149089,15 @@ function renderTerritoryWars() {
   // 🕛 NODE 24-HOUR SIM — corruption bleeds population; registered players earn the
   // node's resource (scaled by trade stability). Cheap until a full day elapses.
   try { const _wt = _twWorldTick(); if (_wt && _wt.gained > 0 && typeof showToast === 'function') showToast('📦 Your registered node delivered +' + _wt.gained + ' resources.', 3600); } catch (e) {}
+  // 🏗 SHARED rebuild — pull every node's cloud reconstruction row (cached ~45s)
+  // so the progress bars/milestones reflect what ALL players have rebuilt, not
+  // just this client. Degrades to a no-op until the tw_node_recon table exists.
+  try {
+    if (typeof tw_cloudFetchAllNodeRecon === 'function' && (!App._twNodeReconAllAt || (Date.now() - App._twNodeReconAllAt) > 45000) && !App._twNodeReconFetching) {
+      App._twNodeReconFetching = true;
+      Promise.resolve(tw_cloudFetchAllNodeRecon()).catch(() => {}).then(() => { App._twNodeReconFetching = false; });
+    }
+  } catch (e) {}
   // 🌐 Cross-corp pull — first render fetches the latest ownership rows
   // and world feed from Supabase, then subscribes to live broadcasts so
   // captures by other players land on the map without a refresh.
@@ -149556,7 +149673,7 @@ function renderTerritoryWars() {
           <div class="tw-nd-vital-delta">${_tradeRoutes} ROUTES ACTIVE</div>
         </div>
       </div>
-      <div class="tw-nd-section-hdr">— RECONSTRUCTION PROGRESS</div>
+      <div class="tw-nd-section-hdr">— RECONSTRUCTION PROGRESS${_rc.shared ? ' <span style="color:#7fb0ff;font-weight:700;font-size:0.7em" title="These totals are shared across all players in real time.">· ☁ SHARED</span>' : ''}</div>
       <div class="tw-nd-progress-list">
         <div class="tw-nd-progress-row"><div class="tw-nd-prog-label">ROADS REPAIRED</div><div class="tw-nd-prog-bar"><div style="width:${(_roads/_roadsMax*100).toFixed(0)}%;background:#4d9e68"></div></div><div class="tw-nd-prog-val">${_roads} / ${_roadsMax}</div></div>
         <div class="tw-nd-progress-row"><div class="tw-nd-prog-label">BUILDINGS RESTORED</div><div class="tw-nd-prog-bar"><div style="width:${Math.min(100,(_buildings/(_buildingsMax||1))*100).toFixed(0)}%;background:#4d9e68"></div></div><div class="tw-nd-prog-val">${_buildings} / ${_buildingsMax}</div></div>
@@ -149707,6 +149824,15 @@ function renderTerritoryWars() {
       if ((!_cc || (Date.now() - _cc.at) > 30000) && App._twNodeCampsFetching !== selNode.id && typeof tw_cloudFetchCampsForNode === 'function') {
         App._twNodeCampsFetching = selNode.id;
         Promise.resolve(tw_cloudFetchCampsForNode(selNode.id)).catch(() => {}).then(() => { if (App._twNodeCampsFetching === selNode.id) App._twNodeCampsFetching = null; });
+      }
+    } catch (e) {}
+    // Fresh per-node SHARED rebuild read on drawer open (immediacy on top of the
+    // ~45s bulk pull) so an open node shows another player's contributions fast.
+    try {
+      const _crCache = App._twNodeReconCloud && App._twNodeReconCloud[selNode.id];
+      if ((!_crCache || (Date.now() - _crCache.at) > 20000) && App._twNodeReconFetchingOne !== selNode.id && typeof tw_cloudFetchNodeRecon === 'function') {
+        App._twNodeReconFetchingOne = selNode.id;
+        Promise.resolve(tw_cloudFetchNodeRecon(selNode.id)).catch(() => {}).then(() => { if (App._twNodeReconFetchingOne === selNode.id) App._twNodeReconFetchingOne = null; });
       }
     } catch (e) {}
     let _campRows = ((App._twNodeCamps && App._twNodeCamps[selNode.id] && App._twNodeCamps[selNode.id].rows) || []).slice();
@@ -150209,10 +150335,17 @@ function renderTerritoryWars() {
       if (!ok) return;
       const tf = _twForge();
       let n = 0;
-      for (const nd of (tf.nodes || [])) { try { _twResetNodeRecon(nd, true); n++; } catch (e) {} }
+      for (const nd of (tf.nodes || [])) {
+        try {
+          _twResetNodeRecon(nd, true); n++;
+          // Also reset the SHARED cloud row so every player's rebuild starts fresh.
+          if (typeof tw_cloudResetNodeRecon === 'function') { const rr = (nd.recon || {}); tw_cloudResetNodeRecon(nd.id, { roadsTotal: rr.roadsTotal, buildingsTotal: rr.buildingsTotal, civiliansTotal: rr.civiliansTotal }); }
+        } catch (e) {}
+      }
+      try { App._twNodeReconCloud = {}; App._twNodeReconAllAt = 0; App._twNodeContrib = {}; } catch (e) {}
       try { saveForge(); } catch (e) {}
       try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {}
-      try { showToast('🎲 Reset ' + n + ' node' + (n === 1 ? '' : 's') + ' — resources randomized, reconstruction back to baseline.', 4200); } catch (e) {}
+      try { showToast('🎲 Reset ' + n + ' node' + (n === 1 ? '' : 's') + ' — resources randomized, reconstruction back to baseline (shared).', 4200); } catch (e) {}
       render();
     };
   }

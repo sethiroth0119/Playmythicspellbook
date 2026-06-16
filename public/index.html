@@ -61159,6 +61159,10 @@ const ONPLAY_TYPES = [
   // `amount` controls how many cards drop. `chance` (0-100, default 100) gates
   // each individual drop so admins can dial it down for soft variants.
   { id: 'discardCards',  label: '🗑 Discard (force opponent to drop hand cards)', needs: ['amount', 'chance'] },
+  // 👁 ===== HAND DISRUPTION — look at the enemy hand, optionally strip a card =====
+  { id: 'peekHand',      label: '👁 Reveal Enemy Hand (look at their cards)',           needs: [] },
+  { id: 'peekDiscard',   label: '👁🗑 Reveal + Discard (look, then send 1 to graveyard)', needs: [] },
+  { id: 'peekBanish',    label: '👁🌌 Reveal + Banish (look, then void 1 from hand)',     needs: [] },
   // 🪦 ===== GRAVEYARD / RECURSION EFFECTS (Yu-Gi-Oh / MTG flavor) =====
   { id: 'millSelf',        label: '⚰️ Mill Self (top N of your deck → graveyard)',        needs: ['amount'] },
   { id: 'graveToHand',     label: '♻️ Salvage (return N from your graveyard → hand)',     needs: ['amount'] },
@@ -62262,6 +62266,58 @@ function _resolveAmbushReaction(state, trap, reactant, reason) {
   return out;
 }
 
+// 👁 HAND DISRUPTION — a unit/hero looks at the ENEMY hand. `mode`: 'peek' (just look),
+// 'discard' (look + send 1 chosen card to the graveyard), 'banish' (look + void 1 card).
+// PLAYER side opens an interactive reveal modal (App.ui.handReveal) and the discard/banish
+// resolves when the player clicks a card; the AI side auto-resolves (strips the costliest
+// card). Mutates `state` + pushes to the working `log` array (matches applyOnPlayEffect).
+function _applyHandDisrupt(state, unit, mode, log) {
+  try {
+    log = log || [];
+    const owner = unit.owner;
+    const foe = owner === 'player' ? 'ai' : 'player';
+    const target = state[foe];
+    const hand = (target && Array.isArray(target.hand)) ? target.hand : [];
+    if (!hand.length) {
+      log.push({ msg: `👁 ${unit.name} peers at the ${foe === 'ai' ? 'enemy' : 'your'} hand — it's empty.`, color: owner === 'player' ? 'green' : 'red' });
+      return;
+    }
+    if (owner === 'player') {
+      // Interactive reveal — the modal resolves any discard/banish on click.
+      try {
+        App.ui.handReveal = {
+          mode: mode, side: foe, sourceName: unit.name || 'Your unit',
+          cards: hand.map(c => ({ id: c.id, instanceId: c.instanceId, name: c.name, icon: c.icon, type: c.type, cost: c.cost || 0 })),
+        };
+      } catch (e) {}
+      const verb = mode === 'peek' ? 'reveals the enemy hand'
+        : mode === 'discard' ? 'exposes the enemy hand — choose a card to discard'
+        : 'exposes the enemy hand — choose a card to banish';
+      log.push({ msg: `👁 ${unit.name} ${verb}.`, color: 'green' });
+      return;
+    }
+    // AI side — auto-resolve against the PLAYER hand.
+    if (mode === 'peek') {
+      log.push({ msg: `👁 ${unit.name} scouts your hand.`, color: 'red' });
+      return;
+    }
+    let ix = 0, best = -Infinity;
+    for (let i = 0; i < hand.length; i++) { const v = (hand[i] && hand[i].cost) || 0; if (v > best) { best = v; ix = i; } }
+    const card = hand[ix];
+    const newHand = hand.filter((_, j) => j !== ix);
+    const nm = (card && card.name) || 'a card';
+    if (mode === 'discard') {
+      state[foe] = { ...target, hand: newHand, graveyard: (target.graveyard || []).concat([card]) };
+      log.push({ msg: `🗑 ${unit.name} saw your hand and discarded ${nm}.`, color: 'red' });
+      try { if (typeof showToast === 'function') showToast(`🗑 ${unit.name} discarded ${nm} from your hand!`, 4000); } catch (e) {}
+    } else {
+      state[foe] = { ...target, hand: newHand, void: (target.void || []).concat([card]) };
+      log.push({ msg: `🌌 ${unit.name} saw your hand and banished ${nm} to the Void.`, color: 'red' });
+      try { if (typeof showToast === 'function') showToast(`🌌 ${unit.name} banished ${nm} from your hand!`, 4000); } catch (e) {}
+    }
+  } catch (e) { try { console.warn('[handDisrupt]', e); } catch (_) {} }
+}
+
 function applyOnPlayEffect(state, unit, card) {
   const eff = card && card.onPlay;
   if (!state || !unit || !eff || !eff.type) return state;
@@ -62575,6 +62631,12 @@ function applyOnPlayEffect(state, unit, card) {
         }
       }
     }
+    return { ...state, log };
+  }
+  // 👁 HAND DISRUPTION — peek the enemy hand; optionally strip 1 card to grave / void.
+  if (eff.type === 'peekHand' || eff.type === 'peekDiscard' || eff.type === 'peekBanish') {
+    const mode = eff.type === 'peekHand' ? 'peek' : (eff.type === 'peekDiscard' ? 'discard' : 'banish');
+    try { if (typeof _applyHandDisrupt === 'function') _applyHandDisrupt(state, unit, mode, log); } catch (e) {}
     return { ...state, log };
   }
   // 🃏 DRAW CARDS — fire drawCards() on the summoner's side. The helper logs the
@@ -65917,6 +65979,13 @@ const executeMove = (state, attacker, target, move) => {
         log.push({ msg: `🔍 Enemy ${attacker.name}'s ${move.name} searches their deck.`, color: 'red' });
       }
     }
+  }
+
+  // 👁 HAND-DISRUPTION MOVE — peek the enemy hand (and optionally strip 1 card to the
+  // graveyard / Void). Player side opens the interactive reveal modal; AI auto-resolves.
+  if (move.peekHand || move.peekDiscard || move.peekBanish) {
+    const _hmode = move.peekBanish ? 'banish' : (move.peekDiscard ? 'discard' : 'peek');
+    try { if (typeof _applyHandDisrupt === 'function') _applyHandDisrupt(s, attacker, _hmode, log); } catch (e) {}
   }
 
   // 🌀 Summon-kind move — spawn the picked summon adjacent to the caster.
@@ -82651,6 +82720,18 @@ function renderMoveEditor() {
           </label>
         </div>
         <div class="editor-field full">
+          <label style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+            <span style="font-weight:600">👁 Hand Disruption</span>
+            <select id="mv-handdisrupt" style="flex:1;min-width:220px">
+              <option value="">— None —</option>
+              <option value="peek"    ${(move.peekHand && !move.peekDiscard && !move.peekBanish) ? 'selected' : ''}>👁 Reveal enemy hand (look only)</option>
+              <option value="discard" ${move.peekDiscard ? 'selected' : ''}>👁🗑 Reveal + discard 1 chosen card</option>
+              <option value="banish"  ${move.peekBanish ? 'selected' : ''}>👁🌌 Reveal + banish 1 chosen card</option>
+            </select>
+          </label>
+          <div class="small-text ink-dim" style="margin-top:0.3rem">On use, you see the enemy's hand; Discard/Banish then lets you pick one card to strip (the AI auto-picks the costliest).</div>
+        </div>
+        <div class="editor-field full">
           <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
             <input type="checkbox" id="mv-defense-offense" ${move.useDefenseAsOffense ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
             <span>🛡️➡️⚔️ Body Press — damage is computed from the user's <strong>DEFENSE</strong> (for a Physical move) or <strong>RESISTANCE</strong> (for a Magic move) instead of ATK / MAG. Great for tanky / high-armor units.</span>
@@ -83013,6 +83094,17 @@ function bindMoveEditor() {
     // Combo status — only saved if non-empty and not a duplicate of the primary.
     if (status2 && status2 !== status) _saveMoveStatus(status2, status2Chance, status2Dur);
     if (isOhko) move.effect = 'ohko';
+    // 👁 Hand disruption (mutually exclusive — clear all three, then set the chosen one).
+    {
+      const _hdEl = document.getElementById('mv-handdisrupt');
+      const _hd = _hdEl ? (_hdEl.value || '') : null;
+      if (_hd != null) {
+        delete move.peekHand; delete move.peekDiscard; delete move.peekBanish;
+        if (_hd === 'peek') move.peekHand = true;
+        else if (_hd === 'discard') move.peekDiscard = true;
+        else if (_hd === 'banish') move.peekBanish = true;
+      }
+    }
     // 🛡️➡️⚔️ Body Press — damage scales off DEF (physical) / RES (magic).
     if (document.getElementById('mv-defense-offense') && document.getElementById('mv-defense-offense').checked) move.useDefenseAsOffense = true;
     else delete move.useDefenseAsOffense;
@@ -87298,6 +87390,7 @@ function _renderBattleImmediateImpl() {
       ${App.replayViewing ? '' : renderAssaultPrompt()}
       ${App.replayViewing ? '' : renderSacrificePrompt()}
       ${App.replayViewing ? '' : renderVerdictPrompt()}
+      ${App.replayViewing ? '' : (typeof renderHandRevealModal === 'function' ? renderHandRevealModal() : '')}
       ${App.replayViewing ? '' : (typeof renderCallLockBanner === 'function' ? renderCallLockBanner() : '')}
       ${App.replayViewing ? '' : (typeof renderCallLockPrompt === 'function' ? renderCallLockPrompt() : '')}
       ${App.replayViewing ? '' : renderDeckSearchModal()}
@@ -87417,6 +87510,7 @@ function _renderBattleImmediateImpl() {
   if (typeof bindAssaultPrompt === 'function') bindAssaultPrompt();
   if (typeof bindSacrificePrompt === 'function') bindSacrificePrompt();
   if (typeof bindVerdictPrompt === 'function') bindVerdictPrompt();
+  if (typeof bindHandRevealModal === 'function') bindHandRevealModal();
   if (typeof bindCallLockPrompt === 'function') bindCallLockPrompt();
   if (typeof bindGameModeSummary === 'function') bindGameModeSummary();
   // Auto-shrink hand-card name text so long names (Bounty Collator, Bahamut King of
@@ -88593,6 +88687,70 @@ function bindVerdictPrompt() {
   const btnB = document.getElementById('verdict-b-btn');
   if (btnA) btnA.onclick = () => _executeVerdict('a');
   if (btnB) btnB.onclick = () => _executeVerdict('b');
+}
+
+// 👁 ===== HAND-REVEAL MODAL — shows the enemy hand the player just peeked. In
+// 'discard'/'banish' mode each card is clickable to strip it; 'peek' is view-only. =====
+function renderHandRevealModal() {
+  const hr = App.ui && App.ui.handReveal;
+  if (!hr) return '';
+  const cards = Array.isArray(hr.cards) ? hr.cards : [];
+  const pickable = (hr.mode === 'discard' || hr.mode === 'banish');
+  const accent = hr.mode === 'banish' ? '#b58bff' : (hr.mode === 'discard' ? '#ff8a5c' : '#7fd0ff');
+  const title = hr.mode === 'discard' ? 'Choose a card to DISCARD' : hr.mode === 'banish' ? 'Choose a card to BANISH' : 'Enemy Hand Revealed';
+  const sub = hr.mode === 'peek'
+    ? ('Scouted by ' + escapeHtml(hr.sourceName || 'your unit') + ' — for your eyes only.')
+    : ('Click a card to ' + (hr.mode === 'banish' ? 'banish it to the Void' : 'send it to the graveyard') + '.');
+  const cardsHtml = cards.length ? cards.map((c, i) =>
+    '<div class="hr-card" data-hr-idx="' + i + '" style="width:92px;cursor:' + (pickable ? 'pointer' : 'default') + ';background:rgba(20,14,40,0.92);border:1px solid ' + accent + '66;border-radius:8px;padding:6px;text-align:center">'
+      + '<div style="width:100%;height:70px;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:5px">'
+        + (typeof renderIcon === 'function' ? renderIcon('u_' + c.id, c.icon, 'md') : (c.icon || '🃏')) + '</div>'
+      + '<div style="font-size:0.72rem;color:#f0e6ff;margin-top:4px;line-height:1.2;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(c.name || 'Card') + '</div>'
+      + '<div style="font-size:0.63rem;color:#bba9e0;margin-top:2px">' + (c.cost != null ? ('⚡' + c.cost) : '') + ' · ' + escapeHtml(c.type || 'unit') + '</div>'
+    + '</div>'
+  ).join('') : '<div style="opacity:0.75;padding:1rem;color:#cbb8f0">The hand is empty.</div>';
+  return ''
+    + '<div class="modal-backdrop" id="hr-backdrop" style="z-index:2147483400;display:flex;align-items:center;justify-content:center">'
+      + '<div role="dialog" style="background:linear-gradient(160deg,#1a1230,#0d0820);border:1px solid ' + accent + '99;border-radius:14px;padding:18px 20px;max-width:min(680px,94vw);box-shadow:0 18px 50px rgba(0,0,0,0.72)">'
+        + '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:' + accent + ';font-size:1.05rem;letter-spacing:0.04em;text-align:center">👁 ' + escapeHtml(title) + '</div>'
+        + '<div style="font-size:0.78rem;color:#cbb8f0;text-align:center;margin:4px 0 12px">' + sub + '</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;max-height:48vh;overflow:auto">' + cardsHtml + '</div>'
+        + '<div style="text-align:center;margin-top:14px"><button class="btn-secondary" id="hr-close">' + (pickable ? 'Skip' : 'Close') + '</button></div>'
+      + '</div>'
+    + '</div>';
+}
+function bindHandRevealModal() {
+  const hr = App.ui && App.ui.handReveal;
+  if (!hr) return;
+  const close = () => { try { App.ui.handReveal = null; } catch (e) {} try { renderBattle(); } catch (e) {} };
+  const cl = document.getElementById('hr-close'); if (cl) cl.onclick = close;
+  const bd = document.getElementById('hr-backdrop');
+  if (bd && hr.mode === 'peek') bd.onclick = (e) => { if (e.target === bd) close(); };
+  if (hr.mode !== 'discard' && hr.mode !== 'banish') return;
+  document.querySelectorAll('.hr-card[data-hr-idx]').forEach(el => {
+    el.onclick = () => {
+      const idx = parseInt(el.dataset.hrIdx, 10);
+      const pick = hr.cards[idx];
+      const side = hr.side;
+      const st = App.state;
+      try {
+        if (pick && st && st[side] && Array.isArray(st[side].hand)) {
+          const h = st[side].hand;
+          let ri = pick.instanceId ? h.findIndex(c => c && c.instanceId === pick.instanceId) : -1;
+          if (ri < 0) ri = h.findIndex(c => c && c.id === pick.id);
+          if (ri >= 0) {
+            const card = h[ri];
+            const newHand = h.filter((_, j) => j !== ri);
+            if (hr.mode === 'banish') st[side] = { ...st[side], hand: newHand, void: (st[side].void || []).concat([card]) };
+            else st[side] = { ...st[side], hand: newHand, graveyard: (st[side].graveyard || []).concat([card]) };
+            st.log = [...(st.log || []), { msg: `${hr.mode === 'banish' ? '🌌' : '🗑'} You ${hr.mode === 'banish' ? 'banished' : 'discarded'} ${pick.name || 'a card'} from the enemy hand.`, color: 'green' }];
+          }
+        }
+      } catch (e) {}
+      App.ui.handReveal = null;
+      try { renderBattle(); } catch (e) {}
+    };
+  });
 }
 
 // 🔒 ===== CALL SEAL UI — element/faction picker + active-seal banner =====
@@ -142794,6 +142952,9 @@ function _describeOnPlayEffectBody(eff) {
     case 'clearSurfaces': return `Wipes surface hazards (oil/fire/water/etc.) within ${r} tile${r === 1 ? '' : 's'}.`;
     case 'scanAllEnemies': return 'Scans every enemy unit + hero — type, faction, element, passives, moves, and stats are all revealed for the rest of the match.';
     case 'scanAllTurn':    return '⏱ Flash-scans every enemy unit + hero for THIS TURN ONLY. Intel goes dark again at end of turn.';
+    case 'peekHand':       return '👁 Reveals the enemy hand — you see every card they are holding.';
+    case 'peekDiscard':    return '👁🗑 Reveals the enemy hand, then you choose one card to send to their graveyard.';
+    case 'peekBanish':     return '👁🌌 Reveals the enemy hand, then you choose one card to banish to the Void.';
     default: return '';
   }
 }

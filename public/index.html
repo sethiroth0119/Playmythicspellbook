@@ -5165,6 +5165,14 @@
     transform-origin: 50% 100% !important;
     overflow: visible !important;
   }
+  /* 🃏 A FACE-DOWN (Subterfuge) unit is a set card lying on the tile — NOT a standing
+     character. Skip the big 1.66–2.02× unit "pop-up" scale so the card-back fits the
+     tile like a set trap instead of looming huge over it. */
+  .board.iso-mode .unit.facedown .unit-icon {
+    transform: translate3d(0, -4%, 8px) scale(0.94) !important;
+    transform-origin: 50% 100% !important;
+  }
+  .unit.facedown .unit-icon { transform: scale(0.94); transform-origin: 50% 100%; }
   .board.iso-mode .wall-marker .wall-icon {
     transform: translate3d(0, -22%, 30px) scale(1.42);
     transform-origin: 50% 100%;
@@ -91457,7 +91465,7 @@ function renderBoard() {
           else if (occupant.owner === 'player' && !occupant.isHero) polyClass = ' poly-not-material';
         }
         cellInner = `
-          <div class="unit ${occupant.owner}${occupant.isHero ? ' hero' : ''}${occupant._decoyOf ? ' decoy' : ''}${isSel ? ' selected' : ''}${occupant.flying ? ' flying' : ''}${isAIActor ? ' ai-actor' : ''} rarity-${rarity}${polyClass}" data-unit="${occupant.id}" data-y="${y}" data-rarity="${rarity}">
+          <div class="unit ${occupant.owner}${occupant.isHero ? ' hero' : ''}${occupant._decoyOf ? ' decoy' : ''}${occupant.isFaceDown ? ' facedown' : ''}${isSel ? ' selected' : ''}${occupant.flying ? ' flying' : ''}${isAIActor ? ' ai-actor' : ''} rarity-${rarity}${polyClass}" data-unit="${occupant.id}" data-y="${y}" data-rarity="${rarity}">
             ${occupant.isHero ? `<img class="hero-board-marker" src="assets/artwork/gameicons/hero-board-icon.png" alt="Hero" title="Hero — your match depends on keeping yours alive" draggable="false" loading="lazy">` : ''}
             <div class="unit-icon">${unitBoardVisual(occupant)}</div>
             <div class="unit-hp"><div class="unit-hp-fill${hpPct <= 25 ? ' hp-low' : ''}" style="width:${hpPct}%"></div></div>

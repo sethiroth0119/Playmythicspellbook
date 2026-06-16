@@ -147278,7 +147278,12 @@ async function tw_cloudContributeNode(nodeId, buildings, roads, civ, totals) {
       p_camp_name: (typeof _campRegName === 'function' ? _campRegName() : null),
     });
     if (error) return null;
-    if (data) { _twStashCloudReconRow(data); try { delete (App._twNodeContrib || {})[nodeId]; } catch (e) {} }
+    if (data) {
+      _twStashCloudReconRow(data);
+      try { delete (App._twNodeContrib || {})[nodeId]; } catch (e) {}
+      // Server has now recorded any newly-crossed milestone on the row → claim my reward.
+      try { const _n = (_twForge().nodes || []).find(x => x && x.id === nodeId); if (_n && typeof _twNodeClaimSharedMilestones === 'function') _twNodeClaimSharedMilestones(_n); } catch (e) {}
+    }
     if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { try { render(); } catch (e) {} }
     return data;
   } catch (e) { /* RPC missing → no-op, local rebuild still works */ return null; }
@@ -147347,6 +147352,17 @@ async function tw_cloudSyncNodeSim(forceDays) {
     try { await tw_cloudFetchAllNodeRecon(); } catch (e) {}
     return data;
   } catch (e) { /* RPC missing → local fallback sim still runs */ return null; }
+}
+// Claim THIS player's reward for a milestone the node has actually reached (the
+// server verifies node-reached + contribution + not-already-claimed). Returns
+// {granted, cinder, prestige, label, restored} or {granted:false, reason}.
+async function tw_cloudClaimMilestone(nodeId, pct) {
+  try {
+    if (!nodeId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.rpc('tw_node_claim_milestone', { p_node_id: nodeId, p_pct: (pct | 0) });
+    if (error) return null;
+    return data;
+  } catch (e) { return null; }
 }
 // ── 👑 Node → Player ownership (admin assigns; owner can publish ads) ─────────
 async function tw_cloudFetchNodeOwners() {
@@ -148812,6 +148828,7 @@ function _twNodeRecon(node) {
     corruption:     (r && (typeof r.corruption === 'number')) ? Math.max(0, Math.min(100, Math.round(r.corruption))) : 30,
     lastTickAt:     (r && (r.lastTickAt | 0)) || 0,
     restored:       !!(r && r.restored),
+    milestones:     (r && Array.isArray(r.milestones)) ? r.milestones.slice() : [],
     shared:         false,
   };
   // Overlay the SHARED cloud row (truth). Contribution counters take the MAX so a
@@ -148831,6 +148848,7 @@ function _twNodeRecon(node) {
       if (typeof cr.population === 'number') out.population = Math.max(0, cr.population | 0);
       if (typeof cr.corruption === 'number') out.corruption = Math.max(0, Math.min(100, cr.corruption | 0));
       if (cr.last_tick_at) { const _t = Date.parse(cr.last_tick_at); if (!isNaN(_t)) out.lastTickAt = _t; }
+      if (Array.isArray(cr.milestones)) out.milestones = cr.milestones.slice();
       if (cr.restored) out.restored = true;
       out.shared = true;
     }
@@ -148871,10 +148889,51 @@ function _twNodeRebuiltPct(node) {
   const bld = r.buildingsTotal > 0 ? Math.min(1, r.buildingsRestored / r.buildingsTotal) : 0;
   return Math.round((roads * 0.5 + bld * 0.5) * 100);
 }
+// Per-player record of which node milestones THIS client has already claimed the
+// reward for (the cloud claims table is the real dedup; this just avoids re-calling).
+function _twMilestoneClaims(nodeId) {
+  if (!Profile.campMilestoneClaims || typeof Profile.campMilestoneClaims !== 'object') Profile.campMilestoneClaims = {};
+  if (!Array.isArray(Profile.campMilestoneClaims[nodeId])) Profile.campMilestoneClaims[nodeId] = [];
+  return Profile.campMilestoneClaims[nodeId];
+}
+// SHARED milestone reward claim. The node-level heal + reached set are owned by the
+// server (tw_node_contribute); here each contributor claims their cinder/prestige
+// once per threshold the node has actually reached (server-verified + dedup'd).
+function _twNodeClaimSharedMilestones(node) {
+  if (!node || !node.id || typeof tw_cloudClaimMilestone !== 'function') return;
+  let pct = 0; try { pct = _twNodeRebuiltPct(node); } catch (e) { return; }
+  const claimed = _twMilestoneClaims(node.id);
+  for (const ms of _TW_RECON_MILESTONES) {
+    if (pct < ms.pct || claimed.indexOf(ms.pct) >= 0) continue;
+    claimed.push(ms.pct); // optimistic mark; unmarked below if the node hasn't actually recorded it yet
+    try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+    (function (milestone) {
+      Promise.resolve(tw_cloudClaimMilestone(node.id, milestone.pct)).then((res) => {
+        if (res && res.granted) {
+          try { Profile.gems = (Profile.gems | 0) + (res.cinder | 0); } catch (e) {}
+          try { Profile.campPrestige = (Profile.campPrestige | 0) + (res.prestige | 0); } catch (e) {}
+          try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+          try { if (typeof showToast === 'function') showToast(`🎖 ${(node.name || 'Node')} hit ${milestone.pct}% — ${res.label || milestone.label}! +${res.cinder | 0} 🔥 +${res.prestige | 0} prestige` + (res.restored ? ' · NODE RESTORED' : ''), 5000); } catch (e) {}
+          try { _twLog('settlement', `<b>${escapeHtml(node.name || 'A node')}</b> reconstruction reached <b>${milestone.pct}%</b> — ${escapeHtml(res.label || milestone.label)}.`); } catch (e) {}
+          try { render(); } catch (e) {}
+        } else if (res && res.reason === 'not_reached') {
+          // node hasn't recorded it server-side yet (race) → unmark so we retry next check
+          const ix = claimed.indexOf(milestone.pct); if (ix >= 0) { claimed.splice(ix, 1); try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {} }
+        }
+        // already_claimed / no_contribution → keep the mark (no reward, no retry)
+      }).catch(() => {});
+    })(ms);
+  }
+}
 // Award any newly-crossed milestones for `node` to the current player + heal the node.
 // Returns the number of milestones granted (caller may want to re-render / publish).
 function _twNodeCheckMilestones(node) {
   if (!node) return 0;
+  // ONLINE → milestones are SERVER-authoritative (the heal + reached set live on the
+  // cloud row; the reward is claimed per-player via _twNodeClaimSharedMilestones,
+  // driven by tw_cloudContributeNode success + drawer open). Skip the local grant so
+  // it can't double with the server claim. The block below is the offline fallback.
+  try { if (typeof Cloud !== 'undefined' && Cloud && Cloud.ready) return 0; } catch (e) {}
   const r = _twNodeReconEnsure(node);
   if (!Array.isArray(r.milestones)) r.milestones = [];
   const pct = _twNodeRebuiltPct(node);
@@ -149871,6 +149930,9 @@ function renderTerritoryWars() {
         Promise.resolve(tw_cloudFetchNodeRecon(selNode.id)).catch(() => {}).then(() => { if (App._twNodeReconFetchingOne === selNode.id) App._twNodeReconFetchingOne = null; });
       }
     } catch (e) {}
+    // Claim any milestone reward this node reached (incl. via OTHER players' rebuilds)
+    // that I've contributed to but not yet collected. Self-guards on a local claimed set.
+    try { if (typeof _twNodeClaimSharedMilestones === 'function') _twNodeClaimSharedMilestones(selNode); } catch (e) {}
     let _campRows = ((App._twNodeCamps && App._twNodeCamps[selNode.id] && App._twNodeCamps[selNode.id].rows) || []).slice();
     if (_campHere && !_campRows.some(r => r.user_id && r.user_id === _myUid)) {
       _campRows.unshift({ user_id: _myUid, camp_name: (typeof _campRegName === 'function' ? _campRegName() : 'Your Camp'), contrib: (Profile.campContrib | 0) || 0, prestige: (Profile.campPrestige | 0) || 0 });

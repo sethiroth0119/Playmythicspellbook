@@ -61952,7 +61952,7 @@ function playSubterfugeFlipFx(unitId, opts) {
             '.sub-flip-card{position:absolute;inset:0;transform-style:preserve-3d;animation:subFlipSpin 600ms cubic-bezier(0.4,0,0.2,1) forwards}' +
             '@keyframes subFlipSpin{0%{transform:rotateY(0deg) scale(1)}52%{transform:rotateY(90deg) scale(1.14)}100%{transform:rotateY(180deg) scale(1)}}' +
             '.sub-flip-face{position:absolute;inset:0;backface-visibility:hidden;border-radius:8px;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,0.6)}' +
-            '.sub-flip-back{background:radial-gradient(circle at 50% 32%,#2c1a54 0%,#160b2c 72%);border:1px solid rgba(158,118,230,0.7);display:flex;align-items:center;justify-content:center;font-size:1.55em}' +
+            ".sub-flip-back{background:#050505 url('assets/Frames/Settrap.png?v=4') center/100% 100% no-repeat;border:1px solid rgba(160,150,140,0.3)}" +
             '.sub-flip-front{transform:rotateY(180deg);background:radial-gradient(circle at 50% 35%,#3a2a16,#160f06 78%);border:1px solid rgba(212,168,67,0.9);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 18px rgba(212,168,67,0.5)}' +
             '.sub-flip-front>*{width:100%;height:100%}.sub-flip-front img{width:100%;height:100%;object-fit:contain}' +
             '.sub-flip-glint{position:absolute;inset:0;border-radius:8px;overflow:hidden;pointer-events:none}' +
@@ -61972,7 +61972,7 @@ function playSubterfugeFlipFx(unitId, opts) {
         const faceHtml = opts.faceHtml || ('<span style="font-size:1.5em">' + (opts.icon || '🎴') + '</span>');
         wrap.innerHTML =
           '<div class="sub-flip-card">' +
-            '<div class="sub-flip-face sub-flip-back">🃏</div>' +
+            '<div class="sub-flip-face sub-flip-back"></div>' +
             '<div class="sub-flip-face sub-flip-front">' + faceHtml + '</div>' +
           '</div>' +
           '<div class="sub-flip-glint"></div>' +
@@ -68497,23 +68497,26 @@ function _boardSpriteCine(unitId, anim, durationMs) {
 }
 try { window.__mg = window.__mg || {}; window.__mg.boardCine = _boardSpriteCine; } catch (e) {}
 
-// 🃏 SUBTERFUGE — a face-down trap token (mystic card-back). Shown on the board for
-// BOTH sides so a set trap keeps its identity hidden; the owner re-reveals the real
-// art inside their own unit modal (unitBoardVisual called with {reveal:true}).
-function _subterfugeTokenHtml() {
-  return '<div class="sub-facedown" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:6px;'
-    + 'background:radial-gradient(circle at 50% 32%,#2c1a54 0%,#160b2c 72%);border:1px solid rgba(158,118,230,0.6);'
-    + 'box-shadow:inset 0 0 14px rgba(126,84,206,0.45),0 0 8px rgba(90,60,160,0.4);position:relative;overflow:hidden">'
-    + '<span style="font-size:1.55em;line-height:1;filter:drop-shadow(0 0 7px rgba(178,128,255,0.85))">🃏</span>'
-    + '<span style="position:absolute;inset:0;background:repeating-linear-gradient(45deg,rgba(150,110,220,0.08) 0 6px,transparent 6px 12px);pointer-events:none"></span>'
-    + '</div>';
+// 🃏 SUBTERFUGE — a face-down unit token. Uses the EXACT same card-back as a set trap
+// (the `.trap-card-back` class → assets/Frames/Settrap.png), so placing a unit face-down
+// looks identical to setting a face-down trap. The OWNER sees the unit's name on the
+// card (like a set trap they can read); an enemy face-down unit stays nameless (hidden).
+// The owner re-reveals the real art inside their own unit modal ({reveal:true}).
+function _subterfugeTokenHtml(occupant) {
+  const isOwn = !!(occupant && occupant.owner === 'player');
+  const nm = (occupant && occupant.name) || 'Unit';
+  const label = isOwn ? '<div class="tcb-label">' + escapeHtml(nm) + '</div>' : '';
+  const title = isOwn
+    ? escapeHtml(nm) + ' — your face-down unit (hidden to the enemy)'
+    : 'Face-down — a hidden enemy trap';
+  return '<div class="trap-card-back subterfuge-facedown" style="width:100%;height:100%" title="' + title + '">' + label + '</div>';
 }
 
 function unitBoardVisual(occupant, opts) {
   if (!occupant) return '';
-  // 🃏 SUBTERFUGE — render a face-down trap as a card-back token (hidden identity),
+  // 🃏 SUBTERFUGE — render a face-down unit with the set-trap card-back (hidden identity),
   // unless the caller explicitly reveals it (the owner's own unit modal).
-  if (occupant.isFaceDown && !(opts && opts.reveal)) return _subterfugeTokenHtml();
+  if (occupant.isFaceDown && !(opts && opts.reveal)) return _subterfugeTokenHtml(occupant);
   // 🎞 Big-library/placeholder mode: show the unit's custom sprite via the bounded
   // single-img animator FIRST — so it (a) renders the sprite instead of the card
   // art, and (b) never builds the heavy full-frame stack that crashes. Small

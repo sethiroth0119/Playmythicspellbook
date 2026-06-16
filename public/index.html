@@ -69800,6 +69800,9 @@ function _renderImpl() {
   // (see syncDvsModal). If we're no longer on the Market screen, tear it down so
   // a left-open valuation overlay can never linger on top of another screen.
   try { if (App.screen !== 'market') { const _dvh = document.getElementById('dvs-modal-host'); if (_dvh) _dvh.remove(); App.dvsAssetId = null; App.dvsListingId = null; } } catch (e) {}
+  // 🏬 Card Shop 3D store cleanup — dispose the WebGL scene (raf + window listeners)
+  // whenever we render any screen that ISN'T the Card Shop, so it never leaks.
+  try { if (App.screen !== 'cardShop' && typeof _cs3DDispose !== 'undefined' && _cs3DDispose) { _cs3DDispose(); _cs3DDispose = null; App._csPanel = null; } } catch (e) {}
   // 🎴 STARTER DECK RESTORE — admin removed players' starter decks during the
   // global reset; this one-time pass grants every player ALL 3 (or however
   // many the catalog defines) starter decks if they're missing. Gated by a
@@ -104943,7 +104946,7 @@ async function cardShopFetchMine() {
     ]);
     let earn = 0; (salesRes.data || []).forEach(s => earn += (s.amount | 0));
     CardShop.mine = { at: Date.now(), shop: (shopRes.data && shopRes.data[0]) || null, listings: lstRes.data || [], earnings: earn, salesCount: (salesRes.data || []).length };
-    if (App.screen === 'cardShop') { try { render(); } catch (e) {} }
+    _csRender();
     return CardShop.mine;
   } catch (e) { return null; }
 }
@@ -104959,7 +104962,7 @@ async function cardShopBrowse() {
       (lst || []).forEach(l => { counts[l.owner_id] = (counts[l.owner_id] | 0) + (l.qty | 0); });
     }
     CardShop.browse = { at: Date.now(), shops: (shops || []).map(s => ({ ...s, items: counts[s.owner_id] | 0 })).filter(s => s.items > 0) };
-    if (App.screen === 'cardShop') { try { render(); } catch (e) {} }
+    _csRender();
     return CardShop.browse;
   } catch (e) { return null; }
 }
@@ -104971,7 +104974,7 @@ async function cardShopFetchShop(ownerId) {
       Cloud.client.from('card_shop_listings').select('*').eq('owner_id', ownerId).gt('qty', 0).order('price', { ascending: true }).limit(200),
     ]);
     CardShop.shopOf[ownerId] = { at: Date.now(), shop: (shopRes.data && shopRes.data[0]) || null, listings: lstRes.data || [] };
-    if (App.screen === 'cardShop' && App._csViewOwner === ownerId) { try { render(); } catch (e) {} }
+    _csRender();
     return CardShop.shopOf[ownerId];
   } catch (e) { return null; }
 }
@@ -105047,7 +105050,7 @@ async function cardShopBuy(listingId, price, ownerId) {
     _csGrantPurchase(data);
     showToast('✅ Bought ' + (data.item_name || (data.kind === 'pack' ? 'pack' : 'card')) + ' for ' + price + ' 🔥 — added to your ' + (data.kind === 'pack' ? 'packs.' : 'collection.'), 4600);
     if (ownerId) { CardShop.shopOf[ownerId] = null; await cardShopFetchShop(ownerId); }
-    try { render(); } catch (e) {}
+    _csRender();
     return true;
   } catch (e) { return null; }
 }
@@ -105113,18 +105116,24 @@ try {
       const t = e.target.closest && e.target.closest('[data-cs]'); if (!t) return;
       const a = t.getAttribute('data-cs');
       switch (a) {
-        case 'cs-back': App._csViewOwner = null; App.screen = App._cardShopReturn || 'title'; render(); break;
+        case 'cs-back': App._csViewOwner = null; App._csPanel = null; if (_cs3DDispose) { try { _cs3DDispose(); } catch (er) {} _cs3DDispose = null; } App.screen = App._cardShopReturn || 'title'; render(); break;
+        case 'cs-3d-toggle':
+          if (!App._cs3D) { _csLoadThree((ok) => { if (!ok) { showToast('⚠ 3D store failed to load — check your connection.', 4200); return; } App._cs3D = true; App._csPanel = null; render(); }); }
+          else { App._cs3D = false; App._csPanel = null; if (_cs3DDispose) { try { _cs3DDispose(); } catch (er) {} _cs3DDispose = null; } render(); }
+          break;
+        case 'cs-panel-close': _csClosePanel(); break;
+        case 'cs-open-pack': { const pid = t.getAttribute('data-pack'); if (pid) _csOpenOnePack(pid); break; }
         case 'cs-tab': App._csTab = t.getAttribute('data-tab'); App._csViewOwner = null; render(); break;
         case 'cs-refresh': CardShop.browse = null; cardShopBrowse(); break;
-        case 'cs-enter': App._csViewOwner = t.getAttribute('data-owner'); render(); break;
-        case 'cs-exit-shop': App._csViewOwner = null; render(); break;
+        case 'cs-enter': App._csViewOwner = t.getAttribute('data-owner'); _csRender(); break;
+        case 'cs-exit-shop': App._csViewOwner = null; _csRender(); break;
         case 'cs-buy': cardShopBuy(t.getAttribute('data-id'), +t.getAttribute('data-price'), t.getAttribute('data-owner')); break;
         case 'cs-open-shop': { const n = (document.getElementById('cs-f-name') || {}).value || ''; const tg = (document.getElementById('cs-f-tag') || {}).value || ''; cardShopOpen(n, tg, App._csTheme || 'bunker'); break; }
-        case 'cs-theme': App._csTheme = t.getAttribute('data-theme'); render(); break;
+        case 'cs-theme': App._csTheme = t.getAttribute('data-theme'); _csRender(); break;
         case 'cs-toggle-open': cardShopSetOpen(t.getAttribute('data-open') === '1'); break;
-        case 'cs-pick': App._csPick = t.getAttribute('data-card'); render(); break;
+        case 'cs-pick': App._csPick = t.getAttribute('data-card'); _csRender(); break;
         case 'cs-list': { const p = parseInt((document.getElementById('cs-f-price') || {}).value, 10); if (App._csPick) cardShopListCard(App._csPick, p || 0); else showToast('Pick a card to list first.', 3000); break; }
-        case 'cs-pick-pack': App._csPickPack = t.getAttribute('data-pack'); render(); break;
+        case 'cs-pick-pack': App._csPickPack = t.getAttribute('data-pack'); _csRender(); break;
         case 'cs-list-pack': { const pid = App._csPickPack; const p = parseInt((document.getElementById('cs-f-packprice') || {}).value, 10); if (pid) { const entry = (Profile.unopenedPacks || []).find(x => x && x.packId === pid); if (entry) cardShopListPack(entry.id, p || 0); else showToast('That pack is no longer in your inventory.', 3000); } else showToast('Pick a pack to list first.', 3000); break; }
         case 'cs-buy-packs': App.vendorMarketTab = 'packs'; App.screen = 'vendorMarket'; render(); break;
         case 'cs-unlist': cardShopUnlist(t.getAttribute('data-id'), t.getAttribute('data-card'), t.getAttribute('data-kind')); break;
@@ -105138,37 +105147,62 @@ try {
 function renderCardShop() {
   _ensureCardShopStyle();
   const signedIn = _csReady();
+  const is3D = !!(signedIn && App._cs3D);
+  if (is3D) _ensureCardShop3DStyle();
   const cinders = _csCinders();
   const tab = App._csTab || 'browse';
-  // trigger background fetches (cached)
+  // trigger background fetches (cached). In 3D mode the browse data feeds the
+  // Player Shops station panel, so fetch it regardless of the (hidden) tab.
   if (signedIn) {
     try {
       if ((!CardShop.mine || (Date.now() - CardShop.mine.at) > 60000) && !CardShop._fMine) { CardShop._fMine = true; Promise.resolve(cardShopFetchMine()).catch(() => {}).then(() => { CardShop._fMine = false; }); }
-      if (tab === 'browse' && !App._csViewOwner && (!CardShop.browse || (Date.now() - CardShop.browse.at) > 45000) && !CardShop._fBrowse) { CardShop._fBrowse = true; Promise.resolve(cardShopBrowse()).catch(() => {}).then(() => { CardShop._fBrowse = false; }); }
-      if (tab === 'browse' && App._csViewOwner) { const c = CardShop.shopOf[App._csViewOwner]; if ((!c || (Date.now() - c.at) > 30000) && CardShop._fShop !== App._csViewOwner) { CardShop._fShop = App._csViewOwner; Promise.resolve(cardShopFetchShop(App._csViewOwner)).catch(() => {}).then(() => { CardShop._fShop = null; }); } }
+      if ((is3D || tab === 'browse') && !App._csViewOwner && (!CardShop.browse || (Date.now() - CardShop.browse.at) > 45000) && !CardShop._fBrowse) { CardShop._fBrowse = true; Promise.resolve(cardShopBrowse()).catch(() => {}).then(() => { CardShop._fBrowse = false; }); }
+      if (App._csViewOwner) { const c = CardShop.shopOf[App._csViewOwner]; if ((!c || (Date.now() - c.at) > 30000) && CardShop._fShop !== App._csViewOwner) { CardShop._fShop = App._csViewOwner; Promise.resolve(cardShopFetchShop(App._csViewOwner)).catch(() => {}).then(() => { CardShop._fShop = null; }); } }
     } catch (e) {}
   }
+  const mount3d = `<div id="cs-3d-mount" class="cs-3d-mount">
+      <div class="cs3d-hint">Drag to look · WASD / arrows / pad to move · walk to a station + press <b>E</b></div>
+      <div class="cs3d-reticle"></div>
+      <div class="cs3d-pad">
+        <button class="pf" data-cs3d-move="f">▲</button><button class="pb" data-cs3d-move="b">▼</button>
+        <button class="pl" data-cs3d-move="l">◀</button><button class="pr" data-cs3d-move="r">▶</button>
+      </div>
+      <div class="cs3d-prompt"></div>
+    </div>`;
+  const tabbed = `<div class="cs-tabs">
+        <div class="cs-tab ${tab === 'browse' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="browse">🏪 Player Shops</div>
+        <div class="cs-tab ${tab === 'mine' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="mine">🔨 My Shop</div>
+      </div>
+      ${tab === 'mine' ? _csMyShopBody() : _csBrowseBody()}`;
   const body = !signedIn
     ? `<div class="cs-empty" style="margin-top:1.5rem">☁ Sign in (cloud account) to open a shop and visit other players' shops.</div>`
-    : (tab === 'mine' ? _csMyShopBody() : _csBrowseBody());
+    : (is3D ? mount3d : tabbed);
   root.innerHTML = `
     <div class="campaign-page">
       <div class="campaign-header">
         <div>
           <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🛒 Card Shop</h2>
-          <div class="small-text ink-dim">Run your own storefront — or visit shops other players own and buy their cards for Cinder.</div>
+          <div class="small-text ink-dim">${is3D ? 'Walk your store · open packs · stock your binder · visit other shops.' : 'Run your own storefront — or visit shops other players own and buy their cards for Cinder.'}</div>
         </div>
         <div class="shop-balance-stack"><div class="shop-gems-pill"><span class="shop-gems-num">${cinders.toLocaleString()}</span> <span class="cinder-icon cinder-icon-lg"></span><div class="small-text ink-dim">Cinders</div></div></div>
+        ${signedIn ? `<button class="btn-secondary btn-mini" data-cs="cs-3d-toggle" style="margin-right:6px">${App._cs3D ? '☰ Menu' : '🏬 3D Store'}</button>` : ''}
         <button class="btn-secondary btn-mini" data-cs="cs-back">← Menu</button>
       </div>
-      <div class="cs-page">
-        <div class="cs-tabs">
-          <div class="cs-tab ${tab === 'browse' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="browse">🏪 Player Shops</div>
-          <div class="cs-tab ${tab === 'mine' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="mine">🔨 My Shop</div>
-        </div>
-        ${body}
-      </div>
+      ${is3D ? body : `<div class="cs-page">${body}</div>`}
     </div>`;
+  // Boot the WebGL store after the mount exists. render() rebuilds the screen, so
+  // dispose any prior scene first; re-open the active station panel over it.
+  if (is3D) {
+    setTimeout(() => {
+      try {
+        if (App.screen !== 'cardShop' || !App._cs3D) return;
+        const mount = document.getElementById('cs-3d-mount'); if (!mount) return;
+        if (_cs3DDispose) { try { _cs3DDispose(); } catch (e) {} _cs3DDispose = null; }
+        _cs3DDispose = _csMount3D(mount);
+        if (App._csPanel) _csOpenPanel(App._csPanel);
+      } catch (e) {}
+    }, 0);
+  }
 }
 // Player Shops tab — browse owned shops, or the listings inside the entered shop.
 function _csBrowseBody() {
@@ -105248,6 +105282,195 @@ function _csMyShopBody() {
       : `<div class="cs-empty" style="display:flex;flex-direction:column;gap:0.6rem;align-items:center">No sealed packs to resell yet.<button class="btn-mini btn-primary" data-cs="cs-buy-packs">🛍 Buy packs from the Vendor Market (Aza Coin) →</button></div>`}
     <div class="cs-section">On your shelves (${(m.listings || []).length})</div>
     ${shelves ? `<div class="cs-grid">${shelves}</div>` : `<div class="cs-empty">Nothing listed yet. Pick a card or pack above and set a price.</div>`}`;
+}
+// ═══════════════════════════════════════════════════════════════════════════
+// 🏬 3D WALKABLE STORE (Phase 2) — first-person room (Three.js, lazy-loaded from
+// a CDN, opt-in, disposed on exit). Walk up to a station and press E / tap the
+// prompt to open that station's panel (reuses the 2D panel bodies). Ported from
+// the mythic-spellbook-sim prototype's <World/>.
+// ═══════════════════════════════════════════════════════════════════════════
+const CS_STATIONS = [
+  { view: 'myshop', label: 'MY SHOP',        color: 0x3fa34d, x: 0,    z: -6.5, r: 2.3, kind: 'counter' },
+  { view: 'binder', label: 'BINDER',         color: 0x38bdf8, x: 6.4,  z: -1,   r: 1.7, kind: 'shelf'   },
+  { view: 'open',   label: 'OPEN PACKS',     color: 0xff2d95, x: -6.4, z: -1,   r: 1.7, kind: 'shelf'   },
+  { view: 'browse', label: 'PLAYER SHOPS',   color: 0x22b8cf, x: 5,    z: 5,    r: 1.7, kind: 'board'   },
+  { view: 'vendor', label: 'BUY PACKS · AZA', color: 0xd4af37, x: -5,  z: 5,    r: 1.7, kind: 'counter' },
+];
+function _csLoadThree(cb) {
+  if (window.THREE) { cb(true); return; }
+  App._csThreeCbs = App._csThreeCbs || []; App._csThreeCbs.push(cb);
+  if (App._csThreeLoading) return;
+  App._csThreeLoading = true;
+  const done = (ok) => { App._csThreeLoading = false; const cbs = App._csThreeCbs || []; App._csThreeCbs = []; cbs.forEach(f => { try { f(ok); } catch (e) {} }); };
+  const s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+  s.onload = () => done(!!window.THREE); s.onerror = () => done(false);
+  document.head.appendChild(s);
+}
+function _ensureCardShop3DStyle() {
+  if (document.getElementById('card-shop-3d-style')) return;
+  const s = document.createElement('style'); s.id = 'card-shop-3d-style';
+  s.textContent = `
+  .cs-3d-mount{position:relative;width:100%;height:calc(100dvh - 150px);min-height:360px;background:#07070b;border-radius:10px;overflow:hidden;touch-action:none}
+  .cs3d-reticle{position:absolute;left:50%;top:50%;width:6px;height:6px;border-radius:99px;background:rgba(212,175,55,.9);box-shadow:0 0 6px #d4af37;transform:translate(-50%,-50%);pointer-events:none}
+  .cs3d-hint{position:absolute;left:50%;top:8px;transform:translateX(-50%);font-size:11px;color:#7a8694;pointer-events:none;text-align:center;width:90%}
+  .cs3d-prompt{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);display:none;padding:0.6rem 1.1rem;border-radius:11px;background:#d4af37;color:#0b0b0f;font-weight:800;box-shadow:0 8px 30px rgba(0,0,0,.5);cursor:pointer;z-index:3}
+  .cs3d-pad{position:absolute;left:12px;bottom:14px;width:150px;height:150px;z-index:3}
+  .cs3d-pad button{position:absolute;width:46px;height:46px;border-radius:10px;background:rgba(21,21,31,.82);border:1px solid #3a3a48;color:#d4af37;display:flex;align-items:center;justify-content:center;font-size:20px;touch-action:none}
+  .cs3d-pad .pf{left:52px;top:0}.cs3d-pad .pb{left:52px;bottom:0}.cs3d-pad .pl{left:0;top:52px}.cs3d-pad .pr{right:0;top:52px}
+  .cs-panel-overlay{position:absolute;inset:0;background:rgba(6,6,10,.97);z-index:5;display:flex;flex-direction:column}
+  .cs-panel-head{display:flex;align-items:center;justify-content:space-between;padding:0.6rem 0.9rem;border-bottom:1px solid #1c1c26;font-weight:800;letter-spacing:.04em;color:#ffe9a8}
+  .cs-panel-body{flex:1;overflow-y:auto;padding:0.6rem 0.8rem 1.4rem}
+  `;
+  document.head.appendChild(s);
+}
+let _cs3DDispose = null;
+function _csMount3D(mount) {
+  try {
+    if (!window.THREE || !mount) return null;
+    const T = window.THREE;
+    let W = mount.clientWidth || 800, H = mount.clientHeight || 460;
+    const scene = new T.Scene(); scene.background = new T.Color(0x07070b); scene.fog = new T.Fog(0x07070b, 7, 30);
+    const camera = new T.PerspectiveCamera(72, W / H, 0.1, 100); camera.rotation.order = 'YXZ'; camera.position.set(0, 1.6, 6);
+    const renderer = new T.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.setSize(W, H);
+    renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;cursor:grab'; mount.insertBefore(renderer.domElement, mount.firstChild);
+    scene.add(new T.AmbientLight(0x4a3d2c, 0.85));
+    const lamp = (x, z, c, i) => { const l = new T.PointLight(c, i || 1, 20); l.position.set(x, 3.4, z); scene.add(l); };
+    lamp(0, -2, 0xffb066, 1.1); lamp(-5, 3, 0xffd28a, 0.7); lamp(5, 3, 0x88c4ff, 0.6);
+    const R = { w: 16, d: 16, h: 4.2 };
+    const floor = new T.Mesh(new T.PlaneGeometry(R.w, R.d), new T.MeshStandardMaterial({ color: 0x171410, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor);
+    const ceil = new T.Mesh(new T.PlaneGeometry(R.w, R.d), new T.MeshStandardMaterial({ color: 0x0c0a08 })); ceil.rotation.x = Math.PI / 2; ceil.position.y = R.h; scene.add(ceil);
+    const wm = new T.MeshStandardMaterial({ color: 0x241f17, roughness: 1 });
+    const wall = (w, x, y, z, ry) => { const m = new T.Mesh(new T.PlaneGeometry(w, R.h), wm); m.position.set(x, y, z); m.rotation.y = ry; scene.add(m); };
+    wall(R.w, 0, R.h / 2, -R.d / 2, 0); wall(R.w, 0, R.h / 2, R.d / 2, Math.PI); wall(R.d, -R.w / 2, R.h / 2, 0, Math.PI / 2); wall(R.d, R.w / 2, R.h / 2, 0, -Math.PI / 2);
+    const box = (w, h, d, color, em, ei) => new T.Mesh(new T.BoxGeometry(w, h, d), new T.MeshStandardMaterial({ color: color, emissive: em || 0, emissiveIntensity: em ? (ei || 0.7) : 0, roughness: 0.85 }));
+    const hex = n => '#' + n.toString(16).padStart(6, '0');
+    const label = (text, hexc) => { const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128; const x = cv.getContext('2d'); x.fillStyle = 'rgba(10,10,15,0.82)'; x.fillRect(0, 30, 512, 68); x.fillStyle = hexc; x.fillRect(0, 30, 8, 68); x.font = 'bold 46px sans-serif'; x.fillStyle = '#f4f4f5'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, 262, 64); const t = new T.CanvasTexture(cv); t.minFilter = T.LinearFilter; const sp = new T.Sprite(new T.SpriteMaterial({ map: t, transparent: true, depthWrite: false })); sp.scale.set(2.6, 0.65, 1); return sp; };
+    const stations = [];
+    for (const d of CS_STATIONS) {
+      const g = new T.Group(); g.position.set(d.x, 0, d.z); const c = d.color;
+      if (d.kind === 'counter') { const b = box(3.6, 1.0, 1.3, 0x14110d); b.position.y = 0.5; g.add(b); const top = box(3.8, 0.14, 1.5, 0x000000, c); top.position.y = 1.07; g.add(top); }
+      else if (d.kind === 'shelf') { const b = box(0.7, 2.8, 2.6, 0x14110d); b.position.y = 1.4; g.add(b); for (let i = 0; i < 3; i++) { const sh = box(0.74, 0.08, 2.7, 0x000000, c, 0.4); sh.position.set(0, 0.7 + i * 0.8, 0); g.add(sh); } }
+      else { const p = box(2.6, 1.9, 0.18, 0x14110d); p.position.y = 2.1; g.add(p); const fr = box(2.85, 0.14, 0.22, 0x000000, c); fr.position.y = 3.1; g.add(fr); }
+      const lab = label(d.label, hex(c)); lab.position.set(0, d.kind === 'shelf' ? 3.1 : (d.kind === 'board' ? 3.5 : 2.05), 0); g.add(lab);
+      const glow = new T.PointLight(c, 0.5, 4); glow.position.set(0, 1.4, 0); g.add(glow);
+      scene.add(g); stations.push({ view: d.view, label: d.label, gx: d.x, gz: d.z, r: d.r });
+    }
+    const npc = new T.Group();
+    { const cloak = box(0.74, 1.25, 0.5, 0x1a1712, 0xd4af37, 0.06); cloak.position.y = 1.0; npc.add(cloak); const head = new T.Mesh(new T.SphereGeometry(0.25, 16, 16), new T.MeshStandardMaterial({ color: 0x2a2520, roughness: 1 })); head.position.y = 1.86; npc.add(head); const visor = box(0.3, 0.06, 0.06, 0x000000, 0xffcf66, 1.3); visor.position.set(0, 1.85, 0.23); npc.add(visor); const lab = label('THE VENDOR', '#d4af37'); lab.scale.set(2.0, 0.5, 1); lab.position.set(0, 2.55, 0); npc.add(lab); npc.position.set(0, 0, -7.8); scene.add(npc); }
+    const St = { yaw: 0, pitch: 0, cyaw: undefined, cpitch: 0, keys: new Set(), move: { f: 0, b: 0, l: 0, r: 0 }, drag: false, lx: 0, ly: 0 };
+    const clock = new T.Clock(); let raf = 0, nearView = null;
+    const promptEl = mount.querySelector('.cs3d-prompt');
+    function tick() {
+      raf = requestAnimationFrame(tick);
+      const dt = Math.min(0.05, clock.getDelta());
+      if (St.cyaw === undefined) { St.cyaw = St.yaw; St.cpitch = St.pitch; }
+      const k = 1 - Math.exp(-dt * 14); St.cyaw += (St.yaw - St.cyaw) * k; St.cpitch += (St.pitch - St.cpitch) * k;
+      camera.rotation.y = St.cyaw; camera.rotation.x = St.cpitch;
+      const fwd = new T.Vector3(-Math.sin(St.cyaw), 0, -Math.cos(St.cyaw)); const right = new T.Vector3(Math.cos(St.cyaw), 0, -Math.sin(St.cyaw)); const dir = new T.Vector3();
+      if (St.keys.has('w') || St.keys.has('arrowup') || St.move.f) dir.add(fwd);
+      if (St.keys.has('s') || St.keys.has('arrowdown') || St.move.b) dir.sub(fwd);
+      if (St.keys.has('a') || St.keys.has('arrowleft') || St.move.l) dir.sub(right);
+      if (St.keys.has('d') || St.keys.has('arrowright') || St.move.r) dir.add(right);
+      if (dir.lengthSq() > 0) {
+        dir.normalize().multiplyScalar(3.4 * dt);
+        const blocked = (x, z) => { for (const st of stations) { const dx = x - st.gx, dz = z - st.gz; if (dx * dx + dz * dz < st.r * st.r) return true; } return false; };
+        const cl = v => Math.max(-7.2, Math.min(7.2, v)); const nx = cl(camera.position.x + dir.x), nz = cl(camera.position.z + dir.z);
+        if (!blocked(nx, nz)) { camera.position.x = nx; camera.position.z = nz; } else { if (!blocked(nx, camera.position.z)) camera.position.x = nx; if (!blocked(camera.position.x, nz)) camera.position.z = nz; }
+      }
+      let near = null, best = 3.1; for (const st of stations) { const dx = camera.position.x - st.gx, dz = camera.position.z - st.gz; const d2 = Math.hypot(dx, dz); if (d2 < best) { best = d2; near = st; } }
+      const nv = near ? near.view : null;
+      if (nv !== nearView) { nearView = nv; if (promptEl) { if (near) { promptEl.textContent = '⏎ Enter ' + near.label; promptEl.style.display = 'block'; } else { promptEl.style.display = 'none'; } } }
+      if (npc) { const tt = clock.elapsedTime; npc.position.y = Math.sin(tt * 1.6) * 0.04; npc.rotation.y = Math.atan2(camera.position.x - npc.position.x, camera.position.z - npc.position.z); }
+      renderer.render(scene, camera);
+    }
+    tick();
+    const el = renderer.domElement;
+    const getPt = e => (e.touches && e.touches[0]) ? e.touches[0] : e;
+    const lookStart = e => { const p = getPt(e); St.drag = true; St.lx = p.clientX; St.ly = p.clientY; el.style.cursor = 'grabbing'; };
+    const lookMove = e => { if (!St.drag) return; const p = getPt(e); const dx = p.clientX - St.lx, dy = p.clientY - St.ly; St.lx = p.clientX; St.ly = p.clientY; St.yaw -= dx * 0.005; St.pitch = Math.max(-1.1, Math.min(1.1, St.pitch - dy * 0.005)); };
+    const lookEnd = () => { St.drag = false; el.style.cursor = 'grab'; };
+    el.addEventListener('mousedown', lookStart); window.addEventListener('mousemove', lookMove); window.addEventListener('mouseup', lookEnd);
+    el.addEventListener('touchstart', lookStart, { passive: true }); window.addEventListener('touchmove', lookMove, { passive: true }); window.addEventListener('touchend', lookEnd);
+    const kd = e => { const key = (e.key || '').toLowerCase(); St.keys.add(key); if (key === 'e' && nearView) _csEnterStation(nearView); };
+    const ku = e => St.keys.delete((e.key || '').toLowerCase());
+    window.addEventListener('keydown', kd); window.addEventListener('keyup', ku);
+    const onResize = () => { W = mount.clientWidth || W; H = mount.clientHeight || H; camera.aspect = W / H; camera.updateProjectionMatrix(); renderer.setSize(W, H); };
+    window.addEventListener('resize', onResize);
+    mount.querySelectorAll('[data-cs3d-move]').forEach(b => { const mk = b.getAttribute('data-cs3d-move'); const on = e => { e.preventDefault(); St.move[mk] = 1; }; const off = e => { e.preventDefault(); St.move[mk] = 0; }; b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off); b.addEventListener('pointerleave', off); });
+    if (promptEl) promptEl.addEventListener('click', () => { if (nearView) _csEnterStation(nearView); });
+    return () => {
+      try { cancelAnimationFrame(raf); } catch (e) {}
+      window.removeEventListener('mousemove', lookMove); window.removeEventListener('mouseup', lookEnd); window.removeEventListener('touchmove', lookMove); window.removeEventListener('touchend', lookEnd);
+      window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); window.removeEventListener('resize', onResize);
+      try { renderer.dispose(); } catch (e) {} try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {}
+    };
+  } catch (e) { return null; }
+}
+// ── station panel overlay (over the 3D canvas; doesn't tear down the scene) ──
+function _csPanelTitle(v) { return ({ myshop: 'MY SHOP', binder: 'BINDER · YOUR SINGLES', open: 'OPEN PACKS', browse: 'PLAYER SHOPS' })[v] || ''; }
+function _csPanelBody(v) { if (v === 'myshop') return _csMyShopBody(); if (v === 'binder') return _csBinderBody(); if (v === 'open') return _csOpenPacksBody(); if (v === 'browse') { App._csViewOwner = App._csViewOwner || null; return _csBrowseBody(); } return ''; }
+function _csEnterStation(view) {
+  if (view === 'vendor') { App.vendorMarketTab = 'packs'; App.screen = 'vendorMarket'; render(); return; }
+  _csOpenPanel(view);
+}
+function _csOpenPanel(view) {
+  App._csPanel = view;
+  const mount = document.getElementById('cs-3d-mount'); if (!mount) return;
+  let ov = document.getElementById('cs-panel-overlay');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'cs-panel-overlay'; ov.className = 'cs-panel-overlay'; mount.appendChild(ov); }
+  ov.innerHTML = `<div class="cs-panel-head"><span>${_csPanelTitle(view)}</span><button class="btn-mini" data-cs="cs-panel-close">✕ Close</button></div><div class="cs-panel-body">${_csPanelBody(view)}</div>`;
+}
+function _csClosePanel() { App._csPanel = null; const ov = document.getElementById('cs-panel-overlay'); if (ov) ov.remove(); }
+function _csRefreshPanel() { if (App._csPanel && document.getElementById('cs-panel-overlay')) _csOpenPanel(App._csPanel); }
+// 3D-aware re-render: refresh just the open panel in 3D mode (so the WebGL scene
+// is never torn down by a background cloud fetch); full render() in 2D mode.
+function _csRender() { try { if (App.screen !== 'cardShop') return; if (App._cs3D) _csRefreshPanel(); else render(); } catch (e) {} }
+// ── OPEN PACKS panel — open held packs (reuses the game's reveal cinematic) ──
+function _csOpenPacksBody() {
+  const heldPacks = {};
+  (Profile.unopenedPacks || []).forEach(p => { if (!p || !p.packId) return; if (!heldPacks[p.packId]) heldPacks[p.packId] = { packId: p.packId, name: p.name, icon: p.icon, art: p.art, count: 0 }; heldPacks[p.packId].count++; });
+  const list = Object.values(heldPacks);
+  if (!list.length) return `<div class="cs-empty" style="display:flex;flex-direction:column;gap:0.6rem;align-items:center">No sealed packs to open.<button class="btn-mini btn-primary" data-cs="cs-buy-packs">🛍 Buy packs (Aza Coin) →</button></div>`;
+  const tiles = list.map(p => `<div class="cs-card">${_csPackTile(p.packId, p)}<div class="cs-card-foot"><span class="cs-card-price" style="color:#8a96a3;font-weight:600">×${p.count}</span><button class="btn-mini btn-primary" data-cs="cs-open-pack" data-pack="${escapeHtml(p.packId)}">Open</button></div></div>`).join('');
+  return `<div style="margin-bottom:0.5rem;font-size:0.74rem;color:#8a96a3">Open packs you own — the cards drop into your collection, ready to list in your <b>Binder</b>.</div><div class="cs-grid">${tiles}</div>`;
+}
+// Open ONE held pack IN-STORE (no screen change). Reuses the engine's openPack()
+// which credits the cards to the collection; we just toast + refresh (the screen-
+// bound reveal cinematic lives on the Pack Opening screen, not over the 3D store).
+function _csOpenOnePack(packId) {
+  try {
+    const entry = (Profile.unopenedPacks || []).find(p => p && p.packId === packId);
+    if (!entry) { showToast('No pack of that type left.', 3000); return; }
+    let def = (typeof PACK_DEFINITIONS !== 'undefined') ? PACK_DEFINITIONS.find(p => p && p.id === packId) : null;
+    if (!def) { const custom = ((typeof getAllCustomPacks === 'function') ? getAllCustomPacks() : []).find(p => p && p.id === packId); if (custom && typeof toEnginePackDef === 'function') def = toEnginePackDef(custom); }
+    if (!def) def = { id: packId, name: entry.name, icon: entry.icon, cost: 0, sovCost: 0 };
+    let drawn = []; try { drawn = (typeof openPack === 'function') ? (openPack(def) || []) : []; } catch (e) {}
+    if (!drawn.length) { showToast('⚠ Pack draw failed — pack kept.', 3200); return; }
+    if (typeof removeUnopenedPack === 'function') removeUnopenedPack(entry.id);
+    const names = drawn.map(d => { const c = (d && d.card) || d; const cid = c && (c.id || c.cardId || c.card_id); const cd = cid && (typeof lookupCustomCard === 'function' ? lookupCustomCard(cid) : null); return (cd && cd.name) || (c && c.name) || 'a card'; });
+    showToast('📦 Opened ' + (def.name || 'pack') + ' — pulled ' + names.slice(0, 6).join(', ') + (names.length > 6 ? '…' : '') + '! Cards added to your collection — list them in your Binder.', 6500);
+    try { saveProfile(); } catch (e) {}
+    _csRender();
+  } catch (e) {}
+}
+// ── BINDER panel — list singles from your collection; this is your sale shelf ──
+function _csBinderBody() {
+  const m = CardShop.mine;
+  if (!m) return `<div class="cs-empty">Loading…</div>`;
+  if (!m.shop) return `<div class="cs-empty">Open your shop first (MY SHOP station) before stocking your binder.</div>`;
+  const accent = (CARD_SHOP_THEMES[m.shop.theme || 'bunker'] || {}).accent || '#d4af37';
+  const owned = Object.keys(Profile.cardCollection || {}).filter(id => (Profile.cardCollection[id] | 0) > 0);
+  const pick = App._csPick && (Profile.cardCollection[App._csPick] | 0) > 0 ? App._csPick : null;
+  const ownedTiles = owned.slice(0, 60).map(id => `<button class="cs-card" data-cs="cs-pick" data-card="${escapeHtml(id)}" style="cursor:pointer;${pick === id ? 'outline:2px solid ' + accent : ''}">${_csCardTile(id)}<div class="cs-card-foot"><span class="cs-card-price" style="color:#8a96a3;font-weight:600">own ${Profile.cardCollection[id] | 0}</span></div></button>`).join('');
+  const singles = (m.listings || []).filter(l => l.kind !== 'pack');
+  const shelves = singles.map(l => `<div class="cs-card">${_csCardTile(l.card_id, l.card_json)}<div class="cs-card-foot"><span class="cs-card-price">${(l.price | 0).toLocaleString()} 🔥</span><button class="btn-mini btn-danger" data-cs="cs-unlist" data-id="${escapeHtml(l.id)}" data-card="${escapeHtml(l.card_id)}" data-kind="card">✕</button></div></div>`).join('');
+  return `<div style="font-size:0.74rem;color:#8a96a3;margin-bottom:0.4rem">The cards you list here are the <b>singles other players buy</b> when they visit your shop.</div>
+    <div class="cs-section">List a card from your collection</div>
+    ${owned.length ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
+      <div class="cs-grid">${ownedTiles}</div>` : `<div class="cs-empty">No spare cards — open packs at the OPEN PACKS station first.</div>`}
+    <div class="cs-section">In your binder · for sale (${singles.length})</div>
+    ${shelves ? `<div class="cs-grid">${shelves}</div>` : `<div class="cs-empty">Your binder is empty. Pick a card above and set a Cinder price.</div>`}`;
 }
 function renderVendorMarket() {
   const tab = (App.vendorMarketTab === 'sovereigns') ? 'sovereigns'

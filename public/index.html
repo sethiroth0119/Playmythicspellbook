@@ -104917,6 +104917,20 @@ function _csGrantCard(cardId, cardJson) {
     try { saveProfile(); } catch (e) {}
   } catch (e) {}
 }
+function _csPackDef(packId, snap) {
+  try { const def = (typeof getAllCustomPacks === 'function') ? (getAllCustomPacks() || []).find(p => p && p.id === packId) : null; if (def) return def; } catch (e) {}
+  return { id: packId, name: (snap && snap.name) || 'Mystery Pack', icon: (snap && snap.icon) || '📦' };
+}
+// Grant a bought SEALED pack into the buyer's unopened-pack inventory.
+function _csGrantPack(packId, snap) {
+  try { if (packId && typeof addUnopenedPack === 'function') addUnopenedPack(_csPackDef(packId, snap), 'shop'); } catch (e) {}
+}
+// Dispatch a purchase (card or pack) into the buyer's inventory.
+function _csGrantPurchase(data) {
+  if (!data) return;
+  if (data.kind === 'pack') _csGrantPack(data.card_id, data.card_json);
+  else _csGrantCard(data.card_id, data.card_json);
+}
 // ── cloud (mirrors the card-market graceful pattern; no-op until tables exist) ──
 async function cardShopFetchMine() {
   try {
@@ -104990,13 +105004,29 @@ async function cardShopListCard(cardId, price) {
     App._csPick = null; CardShop.mine = null; await cardShopFetchMine(); return true;
   } catch (e) { return null; }
 }
-async function cardShopUnlist(listingId, cardId) {
+// List a SEALED pack (held in Profile.unopenedPacks) for Cinder. Owners buy packs
+// from the Vendor Market with Aza Coin, then resell here for Cinder.
+async function cardShopListPack(entryId, price) {
+  try {
+    if (!_csReady()) { showToast('☁ Sign in to list packs.', 3600); return null; }
+    const entry = (Profile.unopenedPacks || []).find(p => p && p.id === entryId);
+    if (!entry) { showToast('That pack is no longer in your inventory.', 3000); return null; }
+    price = Math.max(0, Math.floor(price || 0));
+    const snap = { id: entry.packId, name: entry.name || 'Mystery Pack', icon: entry.icon || '📦' };
+    if (typeof removeUnopenedPack === 'function') removeUnopenedPack(entryId);  // escrow out
+    const { error } = await Cloud.client.from('card_shop_listings').insert({ owner_id: _csUid(), kind: 'pack', card_id: entry.packId, card_json: snap, price: price, qty: 1 });
+    if (error) { try { if (typeof addUnopenedPack === 'function') addUnopenedPack(_csPackDef(entry.packId, snap), 'shop'); } catch (e) {} showToast('⚠ Could not list pack: ' + (error.message || 'cloud error'), 4200); return null; }
+    showToast('🏷 Pack listed for ' + price + ' 🔥.', 3000);
+    App._csPickPack = null; CardShop.mine = null; await cardShopFetchMine(); return true;
+  } catch (e) { return null; }
+}
+async function cardShopUnlist(listingId, cardId, kind) {
   try {
     if (!_csReady() || !listingId) return null;
     const { error } = await Cloud.client.from('card_shop_listings').delete().eq('id', listingId).eq('owner_id', _csUid());
     if (error) { showToast('⚠ Could not unlist.', 3000); return null; }
-    if (cardId) { if (!Profile.cardCollection) Profile.cardCollection = {}; Profile.cardCollection[cardId] = ((Profile.cardCollection[cardId] | 0)) + 1; try { saveProfile(); } catch (e) {} }
-    showToast('↩ Card returned to your collection.', 3000);
+    if (kind === 'pack') { _csGrantPack(cardId, null); showToast('↩ Pack returned to your inventory.', 3000); }
+    else { if (cardId) { if (!Profile.cardCollection) Profile.cardCollection = {}; Profile.cardCollection[cardId] = ((Profile.cardCollection[cardId] | 0)) + 1; try { saveProfile(); } catch (e) {} } showToast('↩ Card returned to your collection.', 3000); }
     CardShop.mine = null; await cardShopFetchMine(); return true;
   } catch (e) { return null; }
 }
@@ -105014,8 +105044,8 @@ async function cardShopBuy(listingId, price, ownerId) {
       return null;
     }
     spendCinders(price);
-    _csGrantCard(data.card_id, data.card_json);
-    showToast('✅ Bought ' + (data.item_name || 'card') + ' for ' + price + ' 🔥 — added to your collection.', 4600);
+    _csGrantPurchase(data);
+    showToast('✅ Bought ' + (data.item_name || (data.kind === 'pack' ? 'pack' : 'card')) + ' for ' + price + ' 🔥 — added to your ' + (data.kind === 'pack' ? 'packs.' : 'collection.'), 4600);
     if (ownerId) { CardShop.shopOf[ownerId] = null; await cardShopFetchShop(ownerId); }
     try { render(); } catch (e) {}
     return true;
@@ -105039,6 +105069,13 @@ function _csCardTile(cardId, cardJson) {
   const rar = card.rarity ? String(card.rarity) : '';
   return `<div class="cs-card-art">${art}</div><div class="cs-card-name">${escapeHtml(card.name || cardId)}</div>${rar ? `<div class="cs-card-rar">${escapeHtml(rar)}</div>` : ''}`;
 }
+function _csPackTile(packId, snap) {
+  const def = _csPackDef(packId, snap);
+  const art = def.art || (snap && snap.art) || '';
+  const inner = art ? `<img src="${escapeHtml(art)}" alt="" style="width:100%;height:100%;object-fit:cover">` : `<span style="font-size:2.4rem">${escapeHtml(def.icon || '📦')}</span>`;
+  return `<div class="cs-card-art">${inner}</div><div class="cs-card-name">${escapeHtml(def.name || 'Pack')}</div><div class="cs-card-rar" style="color:#7fb0ff">📦 sealed pack</div>`;
+}
+function _csListingTile(l) { return (l && l.kind === 'pack') ? _csPackTile(l.card_id, l.card_json) : _csCardTile(l.card_id, l.card_json); }
 function _ensureCardShopStyle() {
   if (document.getElementById('card-shop-style')) return;
   const s = document.createElement('style'); s.id = 'card-shop-style';
@@ -105087,7 +105124,10 @@ try {
         case 'cs-toggle-open': cardShopSetOpen(t.getAttribute('data-open') === '1'); break;
         case 'cs-pick': App._csPick = t.getAttribute('data-card'); render(); break;
         case 'cs-list': { const p = parseInt((document.getElementById('cs-f-price') || {}).value, 10); if (App._csPick) cardShopListCard(App._csPick, p || 0); else showToast('Pick a card to list first.', 3000); break; }
-        case 'cs-unlist': cardShopUnlist(t.getAttribute('data-id'), t.getAttribute('data-card')); break;
+        case 'cs-pick-pack': App._csPickPack = t.getAttribute('data-pack'); render(); break;
+        case 'cs-list-pack': { const pid = App._csPickPack; const p = parseInt((document.getElementById('cs-f-packprice') || {}).value, 10); if (pid) { const entry = (Profile.unopenedPacks || []).find(x => x && x.packId === pid); if (entry) cardShopListPack(entry.id, p || 0); else showToast('That pack is no longer in your inventory.', 3000); } else showToast('Pick a pack to list first.', 3000); break; }
+        case 'cs-buy-packs': App.vendorMarketTab = 'packs'; App.screen = 'vendorMarket'; render(); break;
+        case 'cs-unlist': cardShopUnlist(t.getAttribute('data-id'), t.getAttribute('data-card'), t.getAttribute('data-kind')); break;
         case 'cs-collect': cardShopCollect(); break;
         default: return;
       }
@@ -105137,7 +105177,7 @@ function _csBrowseBody() {
     if (!c) return `<div class="cs-empty">Opening shop…</div>`;
     const shop = c.shop; const accent = (CARD_SHOP_THEMES[(shop && shop.theme) || 'bunker'] || {}).accent || '#d4af37';
     const rows = (c.listings || []).map(l => `<div class="cs-card">
-        ${_csCardTile(l.card_id, l.card_json)}
+        ${_csListingTile(l)}
         <div class="cs-card-foot"><span class="cs-card-price">${(l.price | 0).toLocaleString()} 🔥</span>
           <button class="btn-mini ${_csCinders() >= (l.price | 0) ? 'btn-primary' : ''}" data-cs="cs-buy" data-id="${escapeHtml(l.id)}" data-price="${l.price | 0}" data-owner="${escapeHtml(App._csViewOwner)}" ${_csCinders() >= (l.price | 0) ? '' : 'disabled'}>Buy</button>
         </div></div>`).join('');
@@ -105155,7 +105195,7 @@ function _csBrowseBody() {
     return `<button class="cs-shop-row" data-cs="cs-enter" data-owner="${escapeHtml(s.owner_id)}">
       <div class="cs-shop-badge" style="background:${accent}22;border:1px solid ${accent}">🛒</div>
       <div style="flex:1"><div class="cs-shop-name" style="color:${accent}">${escapeHtml(s.shop_name || 'Shop')}</div><div class="cs-shop-tag">${escapeHtml(s.tagline || '')} · ${escapeHtml(s.owner_name || '')}</div></div>
-      <div style="text-align:right"><div style="font-weight:800;color:#e4ecf3">${s.items | 0}</div><div class="cs-shop-tag">cards</div></div>
+      <div style="text-align:right"><div style="font-weight:800;color:#e4ecf3">${s.items | 0}</div><div class="cs-shop-tag">items</div></div>
     </button>`; }).join('');
   return `<div style="display:flex;justify-content:flex-end;margin-bottom:0.4rem"><button class="btn-mini" data-cs="cs-refresh">↻ Refresh</button></div><div class="cs-shoplist">${rows}</div>`;
 }
@@ -105181,7 +105221,13 @@ function _csMyShopBody() {
   const owned = Object.keys(Profile.cardCollection || {}).filter(id => (Profile.cardCollection[id] | 0) > 0);
   const pick = App._csPick && (Profile.cardCollection[App._csPick] | 0) > 0 ? App._csPick : null;
   const ownedTiles = owned.slice(0, 60).map(id => `<button class="cs-card" data-cs="cs-pick" data-card="${escapeHtml(id)}" style="cursor:pointer;${pick === id ? 'outline:2px solid ' + accent : ''}">${_csCardTile(id)}<div class="cs-card-foot"><span class="cs-card-price" style="color:#8a96a3;font-weight:600">own ${Profile.cardCollection[id] | 0}</span></div></button>`).join('');
-  const shelves = (m.listings || []).map(l => `<div class="cs-card">${_csCardTile(l.card_id, l.card_json)}<div class="cs-card-foot"><span class="cs-card-price">${(l.price | 0).toLocaleString()} 🔥</span><button class="btn-mini btn-danger" data-cs="cs-unlist" data-id="${escapeHtml(l.id)}" data-card="${escapeHtml(l.card_id)}">✕</button></div></div>`).join('');
+  // held sealed packs, grouped by packId (the resale picker)
+  const heldPacks = {};
+  (Profile.unopenedPacks || []).forEach(p => { if (!p || !p.packId) return; if (!heldPacks[p.packId]) heldPacks[p.packId] = { packId: p.packId, name: p.name, icon: p.icon, art: p.art, count: 0 }; heldPacks[p.packId].count++; });
+  const heldPackList = Object.values(heldPacks);
+  const pickPack = App._csPickPack && heldPacks[App._csPickPack] ? App._csPickPack : null;
+  const packTiles = heldPackList.slice(0, 40).map(p => `<button class="cs-card" data-cs="cs-pick-pack" data-pack="${escapeHtml(p.packId)}" style="cursor:pointer;${pickPack === p.packId ? 'outline:2px solid ' + accent : ''}">${_csPackTile(p.packId, p)}<div class="cs-card-foot"><span class="cs-card-price" style="color:#8a96a3;font-weight:600">have ${p.count}</span></div></button>`).join('');
+  const shelves = (m.listings || []).map(l => `<div class="cs-card">${_csListingTile(l)}<div class="cs-card-foot"><span class="cs-card-price">${(l.price | 0).toLocaleString()} 🔥</span><button class="btn-mini btn-danger" data-cs="cs-unlist" data-id="${escapeHtml(l.id)}" data-card="${escapeHtml(l.card_id)}" data-kind="${escapeHtml(l.kind || 'card')}">✕</button></div></div>`).join('');
   return `
     <div class="cs-shop-row" style="cursor:default;border-color:${accent}66">
       <div class="cs-shop-badge" style="background:${accent}22;border:1px solid ${accent}">🛒</div>
@@ -105195,8 +105241,13 @@ function _csMyShopBody() {
     <div class="cs-section">List a card from your collection</div>
     ${owned.length ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
       <div class="cs-grid">${ownedTiles}</div>` : `<div class="cs-empty">No spare cards to list — open packs or win cards first.</div>`}
+    <div class="cs-section">Resell sealed packs <span style="text-transform:none;letter-spacing:0;color:#7a8694">· buy packs with <span class="aza-icon"></span> Aza Coin, sell them for 🔥 Cinder</span></div>
+    ${heldPackList.length
+      ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-packprice" type="number" min="0" value="80" style="width:110px"><button class="btn-mini ${pickPack ? 'btn-primary' : ''}" data-cs="cs-list-pack" ${pickPack ? '' : 'disabled'}>🏷 List${pickPack ? ' selected pack' : ' — pick a pack'}</button><button class="btn-mini" data-cs="cs-buy-packs">🛍 Buy more (Aza) →</button></div>
+        <div class="cs-grid">${packTiles}</div>`
+      : `<div class="cs-empty" style="display:flex;flex-direction:column;gap:0.6rem;align-items:center">No sealed packs to resell yet.<button class="btn-mini btn-primary" data-cs="cs-buy-packs">🛍 Buy packs from the Vendor Market (Aza Coin) →</button></div>`}
     <div class="cs-section">On your shelves (${(m.listings || []).length})</div>
-    ${shelves ? `<div class="cs-grid">${shelves}</div>` : `<div class="cs-empty">Nothing listed yet. Pick a card above and set a price.</div>`}`;
+    ${shelves ? `<div class="cs-grid">${shelves}</div>` : `<div class="cs-empty">Nothing listed yet. Pick a card or pack above and set a price.</div>`}`;
 }
 function renderVendorMarket() {
   const tab = (App.vendorMarketTab === 'sovereigns') ? 'sovereigns'

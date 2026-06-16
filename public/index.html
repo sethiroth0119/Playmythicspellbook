@@ -148597,6 +148597,39 @@ const NodeLevelUpAnimation = {
   }
 };
 
+// 📋 NODE LIST MODAL — a searchable directory of every District Node so players can
+// find one by name instead of hunting the map. Clicking a name opens that node's drawer
+// (sets App._twSelectedNode). Pure read of t.nodes — never reseeds / mutates node data.
+function renderTwNodeListModal(t) {
+  if (!App._twNodeListOpen) return '';
+  const nodes = (t && Array.isArray(t.nodes)) ? t.nodes.slice() : [];
+  nodes.sort((a, b) => String((a && a.name) || '').localeCompare(String((b && b.name) || '')));
+  let st = null; try { st = (typeof _twGetState === 'function') ? _twGetState() : null; } catch (e) {}
+  const rows = nodes.length ? nodes.map(n => {
+    const res = (n.resourceYield && typeof n.resourceYield === 'object') ? Object.keys(n.resourceYield)[0] : '';
+    const own = (st && st.ownedNodes && st.ownedNodes[n.id]) ? st.ownedNodes[n.id] : null;
+    const meta = escapeHtml(n.id || '') + (res ? (' · ' + escapeHtml(String(res))) : '') + (own ? ' · ◈ held' : '');
+    const nm = (n.name || n.id || '').toString();
+    return '<button class="tw-nl-row" data-tw-nl="' + escapeHtml(n.id) + '" data-nlname="' + escapeHtml(nm.toLowerCase()) + '" '
+      + 'style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 11px;background:rgba(28,24,16,0.6);border:1px solid rgba(212,175,55,0.22);border-radius:7px;color:#f0e6d0;cursor:pointer">'
+      + '<span style="color:#7fb0ff;font-size:0.9rem;flex:0 0 auto">◈</span>'
+      + '<span style="flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(nm) + '</span>'
+      + '<span style="font-size:0.68rem;color:#9aa0a6;flex:0 0 auto">' + meta + '</span>'
+      + '</button>';
+  }).join('') : '<div style="opacity:0.7;padding:1rem;text-align:center;color:#cbb8a0">No nodes yet.</div>';
+  return ''
+    + '<div class="modal-backdrop" id="tw-nl-backdrop" style="z-index:2147483300;display:flex;align-items:center;justify-content:center">'
+      + '<div class="tw-nl-modal" role="dialog" style="background:linear-gradient(160deg,#12161f,#0a0d14);border:1px solid rgba(212,175,55,0.5);border-radius:12px;width:min(540px,94vw);max-height:84vh;display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(0,0,0,0.72)">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid rgba(212,175,55,0.25)">'
+          + '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:#e8c766;letter-spacing:0.04em">📋 District Nodes <span style="opacity:0.55;font-weight:400;font-size:0.85rem">(' + nodes.length + ')</span></div>'
+          + '<button class="btn-secondary btn-mini" id="tw-nl-close">✕ Close</button>'
+        + '</div>'
+        + '<div style="padding:10px 16px 6px"><input type="search" id="tw-nl-search" placeholder="🔍 Search nodes by name…" autocomplete="off" style="width:100%;padding:0.5rem 0.7rem;background:#0c1018;color:#e8e0d0;border:1px solid rgba(212,175,55,0.4);border-radius:7px;font-size:0.92rem"></div>'
+        + '<div class="tw-nl-list" style="overflow:auto;padding:6px 14px 14px;display:flex;flex-direction:column;gap:5px">' + rows + '</div>'
+      + '</div>'
+    + '</div>';
+}
+
 // ===== WAR MAP SCREEN =====
 function renderTerritoryWars() {
   // ⚠️ _isAdm must be function-scoped — it is used both inside the
@@ -148764,8 +148797,8 @@ function renderTerritoryWars() {
   const _seenRoutes = new Set();
   let _routePaths = '';
   let _litRouteIdx = 0;
-  const _truckRoutes = []; // up to 4 lit routes that get convoy trucks
-  const _MAX_TRUCKS = 4;
+  const _truckRoutes = []; // roads that get a moving convoy truck
+  const _MAX_TRUCKS = 7;
   // 🩹 GPU budget: animated drop-shadow glow is expensive (re-blurred every
   // frame). Only the first _MAX_GLOW lit/allied roads keep the full glow; the
   // rest flow without blur. Without this, a fully-lit map (e.g. after Connect
@@ -148804,7 +148837,10 @@ function renderTerritoryWars() {
       // Normalise path direction: always left→right so rotate="auto" never
       // produces a θ > 90° tangent that would flip the truck upside-down.
       let idAttr = '';
-      if ((cls === 'frontier' || cls === 'allied') && _truckRoutes.length < _MAX_TRUCKS) {
+      // 🚚 Spawn a moving convoy truck on roads — on ANY road (not just owned/lit ones)
+      // so the network always reads as ALIVE with traffic, even on a fresh theater with
+      // nothing captured yet. Capped at _MAX_TRUCKS; spread across the first roads found.
+      if (_truckRoutes.length < _MAX_TRUCKS) {
         // Left-to-right normalisation: swap endpoints so truck travels toward +X.
         const [sP, eP] = pA.x <= pB.x ? [pA, pB] : [pB, pA];
         const nMidX = ((sP.x + eP.x) / 2 + 1.5).toFixed(2);
@@ -148865,7 +148901,12 @@ function renderTerritoryWars() {
   // crash the tab. Past 24 roads (or below High graphics) drop the road
   // animations / blur / trucks; the network still renders as static gold lines.
   const _lowFx = (_seenRoutes.size > 24) || (_gfxQ !== 'high');
-  const _twCanvasRoutes = `<svg class="tw-map-routes${_lowFx ? ' tw-lowfx' : ''}" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}${_lowFx ? '' : (_truckGuidePaths + _truckRoutes.map(r => _truckSVG(r.id, r.dur)).join(''))}</svg>`;
+  // 🚚 Convoy trucks are a handful of light SVG motion groups (cheap) — keep them
+  // running even when _lowFx drops the EXPENSIVE animated road glow on a big map, so
+  // the network still shows moving traffic. Only fully off on Low graphics.
+  const _showTrucks = (_gfxQ !== 'low') && _truckRoutes.length > 0;
+  const _truckSvgHtml = _showTrucks ? (_truckGuidePaths + _truckRoutes.map(r => _truckSVG(r.id, r.dur)).join('')) : '';
+  const _twCanvasRoutes = `<svg class="tw-map-routes${_lowFx ? ' tw-lowfx' : ''}" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}${_truckSvgHtml}</svg>`;
 
   // Node markers — absolutely positioned diamonds.
   const _twCanvasMarkers = t.nodes.filter(filtered).map(n => {
@@ -149410,6 +149451,7 @@ function renderTerritoryWars() {
     <div class="territory-wars-page">
       ${_twFoundationBar}
       ${renderTerritoryPickerModal()}
+      ${(typeof renderTwNodeListModal === 'function') ? renderTwNodeListModal(t) : ''}
       <div class="tw-top-bar">
         <button class="btn-secondary btn-mini" id="tw-back">← Battle Hall</button>
         <span class="tw-top-bar-title">District Nodes · Territory Wars</span>
@@ -149419,6 +149461,7 @@ function renderTerritoryWars() {
           ).join('')}
         </div>
         <div class="tw-top-bar-corp" style="display:flex;align-items:center;gap:0.6rem">
+          <button class="tw-new-node-btn" id="tw-node-list-btn" title="Browse every district node by name and jump straight to it">📋 Node List</button>
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-new-node">＋ New Node</button>` : ''}
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-connect-roads" title="Connect every roadless node to its nearest neighbours and light the new supply lines">🛣 Connect Roads</button>` : ''}
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-publish-map" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.55);color:#d4af37" title="Immediately push current node/route data to the website and all players">🌐 Publish Map</button>` : ''}
@@ -149495,6 +149538,28 @@ function renderTerritoryWars() {
   // is not reached (e.g. when the ::before pseudo-element catches the click).
   document.querySelectorAll('[data-tw-node]').forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); App._twSelectedNode = b.dataset.twNode; render(); };
+  });
+  // 📋 Node List modal — open/close + live name filter (DOM-only, no full re-render) +
+  // click a name to jump to that node's drawer.
+  const _nlBtn = document.getElementById('tw-node-list-btn');
+  if (_nlBtn) _nlBtn.onclick = () => { App._twNodeListOpen = true; render(); };
+  const _nlClose = document.getElementById('tw-nl-close');
+  if (_nlClose) _nlClose.onclick = () => { App._twNodeListOpen = false; render(); };
+  const _nlBackdrop = document.getElementById('tw-nl-backdrop');
+  if (_nlBackdrop) _nlBackdrop.onclick = (e) => { if (e.target === _nlBackdrop) { App._twNodeListOpen = false; render(); } };
+  const _nlSearch = document.getElementById('tw-nl-search');
+  if (_nlSearch) {
+    _nlSearch.oninput = () => {
+      const q = (_nlSearch.value || '').toLowerCase();
+      document.querySelectorAll('#tw-nl-backdrop [data-tw-nl]').forEach(row => {
+        const nm = row.getAttribute('data-nlname') || '';
+        row.style.display = (!q || nm.indexOf(q) >= 0) ? '' : 'none';
+      });
+    };
+    try { _nlSearch.focus(); } catch (e) {}
+  }
+  document.querySelectorAll('#tw-nl-backdrop [data-tw-nl]').forEach(row => {
+    row.onclick = () => { App._twSelectedNode = row.dataset.twNl; App._twNodeListOpen = false; render(); };
   });
   // v37: Drawer close — clicking ✕ deselects the node and closes the drawer.
   const _drawerClose = document.getElementById('tw-drawer-close');

@@ -146477,6 +146477,7 @@ function _twAddNodeContribution(nodeId, buildings, roads, civ) {
     c[nodeId].buildings = (c[nodeId].buildings | 0) + (buildings | 0);
     c[nodeId].roads = (c[nodeId].roads | 0) + (roads | 0);
     c[nodeId].civ = (c[nodeId].civ | 0) + (civ | 0);
+    try { _twNodeCheckMilestones(node); } catch (e) {}
     try { saveForge(); } catch (e) {}
     try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
   } catch (e) {}
@@ -148729,6 +148730,45 @@ function _twNodeReconEnsure(node) {
   if (typeof r.lastYieldAt !== 'number') r.lastYieldAt = 0;
   return r;
 }
+// 🎖 RECONSTRUCTION MILESTONES — rebuilding pays off. Overall rebuild % = roads + buildings
+// (the two player-driven counters). Crossing 25/50/75/100% rewards the contributor (cinder +
+// prestige) and HEALS the node (drops corruption); 100% marks it RESTORED (corruption floored,
+// population recovers). Reached thresholds are recorded on node.recon.milestones so each pays once.
+const _TW_RECON_MILESTONES = [
+  { pct: 25,  cinder: 250,  corrDrop: 5,  prestige: 10, label: 'Foothold' },
+  { pct: 50,  cinder: 500,  corrDrop: 8,  prestige: 15, label: 'Stabilized' },
+  { pct: 75,  cinder: 900,  corrDrop: 10, prestige: 25, label: 'Thriving' },
+  { pct: 100, cinder: 2000, corrDrop: 25, prestige: 50, label: 'RESTORED', restored: true },
+];
+function _twNodeRebuiltPct(node) {
+  const r = _twNodeRecon(node);
+  const roads = r.roadsTotal > 0 ? Math.min(1, r.roadsRepaired / r.roadsTotal) : 0;
+  const bld = r.buildingsTotal > 0 ? Math.min(1, r.buildingsRestored / r.buildingsTotal) : 0;
+  return Math.round((roads * 0.5 + bld * 0.5) * 100);
+}
+// Award any newly-crossed milestones for `node` to the current player + heal the node.
+// Returns the number of milestones granted (caller may want to re-render / publish).
+function _twNodeCheckMilestones(node) {
+  if (!node) return 0;
+  const r = _twNodeReconEnsure(node);
+  if (!Array.isArray(r.milestones)) r.milestones = [];
+  const pct = _twNodeRebuiltPct(node);
+  let granted = 0;
+  for (const ms of _TW_RECON_MILESTONES) {
+    if (pct >= ms.pct && r.milestones.indexOf(ms.pct) < 0) {
+      r.milestones.push(ms.pct);
+      r.corruption = Math.max(ms.restored ? 8 : 0, Math.round((r.corruption | 0) - ms.corrDrop));
+      if (ms.restored) { r.restored = true; r.population = r.civiliansTotal; }
+      try { Profile.gems = (Profile.gems | 0) + ms.cinder; } catch (e) {}
+      try { Profile.campPrestige = (Profile.campPrestige | 0) + ms.prestige; } catch (e) {}
+      try { if (typeof showToast === 'function') showToast(`🎖 ${(node.name || 'Node')} hit ${ms.pct}% rebuilt — ${ms.label}! +${ms.cinder} 🔥 +${ms.prestige} prestige` + (ms.restored ? ' · NODE RESTORED' : ''), 5000); } catch (e) {}
+      try { _twLog('settlement', `<b>${escapeHtml(node.name || 'A node')}</b> reconstruction reached <b>${ms.pct}%</b> — ${escapeHtml(ms.label)}.`); } catch (e) {}
+      granted++;
+    }
+  }
+  return granted;
+}
+
 // ===== 🕛 NODE 24-HOUR SIMULATION =====
 // Each day: corruption drifts UP, pushed DOWN by registered players + their employment.
 // Corruption bleeds the NPC population. Lower population → lower CIVILIZATION → lower TRADE
@@ -149523,6 +149563,38 @@ function renderTerritoryWars() {
         <div class="tw-nd-progress-row"><div class="tw-nd-prog-label">CIVILIANS SAVED</div><div class="tw-nd-prog-bar"><div style="width:${Math.min(100,(_civSaved/(_popMax||200000))*100).toFixed(0)}%;background:#4d9e68"></div></div><div class="tw-nd-prog-val">${_fmtN(_civSaved)} / ${_fmtN(_popMax)}</div></div>
         <div class="tw-nd-progress-row"><div class="tw-nd-prog-label">CAMPAIGNS RUN</div><div class="tw-nd-prog-bar"><div style="width:${Math.min(100,(_campaigns/800)*100).toFixed(0)}%;background:#c89428"></div></div><div class="tw-nd-prog-val">${_campaigns}</div></div>
       </div>
+      <div class="tw-nd-section-hdr">— REBUILD MILESTONES${_rc.restored ? ' <span style="color:#7fe0a0;font-weight:700">· NODE RESTORED ✦</span>' : ''}</div>
+      ${(() => {
+        const _rebuilt = (typeof _twNodeRebuiltPct === 'function') ? _twNodeRebuiltPct(selNode) : 0;
+        const _reached = Array.isArray(_rc.milestones) ? _rc.milestones : [];
+        const _stops = (typeof _TW_RECON_MILESTONES !== 'undefined') ? _TW_RECON_MILESTONES : [];
+        const _next = _stops.find(m => _rebuilt < m.pct);
+        // Overall rebuild meter with milestone ticks
+        const ticks = _stops.map(m => {
+          const hit = _reached.indexOf(m.pct) >= 0;
+          return `<div style="position:absolute;left:${m.pct}%;top:-3px;bottom:-3px;width:2px;transform:translateX(-1px);background:${hit ? '#7fe0a0' : 'rgba(255,255,255,.28)'};"></div>`;
+        }).join('');
+        const meter = `<div style="position:relative;height:14px;border-radius:7px;background:#1a2330;border:1px solid rgba(255,255,255,.12);overflow:visible;margin:0.1rem 0 0.55rem">
+            <div style="position:absolute;inset:0;border-radius:7px;overflow:hidden"><div style="height:100%;width:${_rebuilt}%;background:linear-gradient(90deg,#3f7d56,#7fe0a0)"></div></div>
+            ${ticks}
+          </div>`;
+        const header = `<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:0.82rem;margin-bottom:0.15rem">
+            <span style="color:#9bb265;font-weight:700">${_rebuilt}% REBUILT</span>
+            <span style="color:#8a96a3">${_next ? ('next reward at ' + _next.pct + '% · ' + escapeHtml(_next.label)) : 'all milestones claimed'}</span>
+          </div>`;
+        // Milestone reward chips
+        const chips = _stops.map(m => {
+          const hit = _reached.indexOf(m.pct) >= 0;
+          return `<div style="flex:1 1 0;min-width:0;text-align:center;padding:0.4rem 0.25rem;border-radius:8px;border:1px solid ${hit ? 'rgba(127,224,160,.5)' : 'rgba(255,255,255,.1)'};background:${hit ? 'rgba(63,125,86,.22)' : 'rgba(255,255,255,.03)'};${hit ? '' : 'opacity:.62'}">
+              <div style="font-size:0.72rem;font-weight:700;letter-spacing:.04em;color:${hit ? '#7fe0a0' : '#c2cbd6'}">${m.pct}%</div>
+              <div style="font-size:0.66rem;color:${hit ? '#bfe8cd' : '#8a96a3'};margin:0.1rem 0 0.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(m.label)}</div>
+              <div style="font-size:0.66rem;color:#d8b24a">+${m.cinder}🔥</div>
+              <div style="font-size:0.62rem;color:#8fa0b3">+${m.prestige} prestige</div>
+              <div style="font-size:0.64rem;margin-top:0.15rem;color:${hit ? '#7fe0a0' : '#6b7682'}">${hit ? '✓ CLAIMED' : '🔒'}</div>
+            </div>`;
+        }).join('');
+        return header + meter + `<div style="display:flex;gap:0.4rem">${chips}</div>`;
+      })()}
       <div class="tw-nd-section-hdr">— NODE ECONOMY · 24-HOUR CYCLE</div>
       ${(() => {
         const _now = Date.now();

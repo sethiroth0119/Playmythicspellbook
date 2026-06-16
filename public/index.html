@@ -105545,21 +105545,40 @@ function _csMyShopBody() {
 // the mythic-spellbook-sim prototype's <World/>.
 // ═══════════════════════════════════════════════════════════════════════════
 const CS_STATIONS = [
-  { view: 'myshop', label: 'MY SHOP',        color: 0x3fa34d, x: 0,    z: -6.5, r: 2.3, kind: 'counter' },
-  { view: 'binder', label: 'BINDER',         color: 0x38bdf8, x: 6.4,  z: -1,   r: 1.7, kind: 'shelf'   },
-  { view: 'open',   label: 'OPEN PACKS',     color: 0xff2d95, x: -6.4, z: -1,   r: 1.7, kind: 'shelf'   },
-  { view: 'browse', label: 'PLAYER SHOPS',   color: 0x22b8cf, x: 5,    z: 5,    r: 1.7, kind: 'board'   },
-  { view: 'vendor', label: 'BUY PACKS · AZA', color: 0xd4af37, x: -5,  z: 5,    r: 1.7, kind: 'counter' },
+  { view: 'myshop', label: 'MY SHOP',        color: 0x3fa34d, x: 0,    z: -6.5, r: 2.3, kind: 'counter', model: '/models/my_shop.glb',        ry: 0,            scale: 1 },
+  { view: 'binder', label: 'BINDER',         color: 0x38bdf8, x: 6.4,  z: -1,   r: 1.7, kind: 'shelf',   model: '/models/binder_table.glb',   ry: -Math.PI / 2, scale: 1 },
+  { view: 'open',   label: 'OPEN PACKS',     color: 0xff2d95, x: -6.4, z: -1,   r: 1.7, kind: 'shelf',   model: '/models/pack_shelf.glb',     ry: Math.PI / 2,  scale: 1 },
+  { view: 'browse', label: 'PLAYER SHOPS',   color: 0x22b8cf, x: 5,    z: 5,    r: 1.7, kind: 'board',   model: '/models/notice_board.glb',   ry: Math.PI,      scale: 1 },
+  { view: 'vendor', label: 'BUY PACKS · AZA', color: 0xd4af37, x: -5,  z: 5,    r: 1.7, kind: 'counter', model: '/models/vendor_counter.glb', ry: Math.PI,      scale: 1 },
 ];
+// 🏬 Model pipeline — each station/NPC/room can be a real .glb dropped into
+// public/models/ (served at /models/...). Missing/failed models fall back to the
+// built-in procedural geometry, so the shop never breaks while you swap assets in
+// one at a time. Tune ry (facing) + scale per model once it's in.
+const CS_ROOM_MODEL = '/models/shop_room.glb';
+const CS_NPC_MODEL  = { url: '/models/shopkeeper.glb', x: 0, z: -7.8, ry: 0, scale: 1 };
 function _csLoadThree(cb) {
-  if (window.THREE) { cb(true); return; }
+  const ready = () => !!(window.THREE);
+  if (ready() && (window.THREE.GLTFLoader || App._csGltfTried)) { cb(true); return; }
   App._csThreeCbs = App._csThreeCbs || []; App._csThreeCbs.push(cb);
   if (App._csThreeLoading) return;
   App._csThreeLoading = true;
   const done = (ok) => { App._csThreeLoading = false; const cbs = App._csThreeCbs || []; App._csThreeCbs = []; cbs.forEach(f => { try { f(ok); } catch (e) {} }); };
+  // Load GLTFLoader (r128 legacy global build → attaches THREE.GLTFLoader).
+  // OPTIONAL — proceed even if it fails; the scene falls back to procedural geometry.
+  const loadGltf = () => {
+    App._csGltfTried = true;
+    if (!window.THREE) { done(false); return; }
+    if (window.THREE.GLTFLoader) { done(true); return; }
+    const g = document.createElement('script');
+    g.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js';
+    g.onload = () => done(true); g.onerror = () => done(true);
+    document.head.appendChild(g);
+  };
+  if (window.THREE) { loadGltf(); return; }
   const s = document.createElement('script');
   s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-  s.onload = () => done(!!window.THREE); s.onerror = () => done(false);
+  s.onload = loadGltf; s.onerror = () => done(false);
   document.head.appendChild(s);
 }
 function _ensureCardShop3DStyle() {
@@ -105596,27 +105615,38 @@ function _csMount3D(mount) {
     scene.add(new T.AmbientLight(0x4a3d2c, 0.85));
     const lamp = (x, z, c, i) => { const l = new T.PointLight(c, i || 1, 20); l.position.set(x, 3.4, z); scene.add(l); };
     lamp(0, -2, 0xffb066, 1.1); lamp(-5, 3, 0xffd28a, 0.7); lamp(5, 3, 0x88c4ff, 0.6);
+    // 🏬 GLTF model loader (optional) — each piece falls back to procedural geometry.
+    const loader = (T.GLTFLoader) ? new T.GLTFLoader() : null;
+    const _csTryModel = (url, onLoad) => { if (!loader || !url) return; try { loader.load(url, (gltf) => { try { onLoad(gltf.scene || gltf.scenes[0]); } catch (e) {} }, undefined, () => {}); } catch (e) {} };
     const R = { w: 16, d: 16, h: 4.2 };
-    const floor = new T.Mesh(new T.PlaneGeometry(R.w, R.d), new T.MeshStandardMaterial({ color: 0x171410, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor);
-    const ceil = new T.Mesh(new T.PlaneGeometry(R.w, R.d), new T.MeshStandardMaterial({ color: 0x0c0a08 })); ceil.rotation.x = Math.PI / 2; ceil.position.y = R.h; scene.add(ceil);
+    const roomMeshes = [];
+    const floor = new T.Mesh(new T.PlaneGeometry(R.w, R.d), new T.MeshStandardMaterial({ color: 0x171410, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor); roomMeshes.push(floor);
+    const ceil = new T.Mesh(new T.PlaneGeometry(R.w, R.d), new T.MeshStandardMaterial({ color: 0x0c0a08 })); ceil.rotation.x = Math.PI / 2; ceil.position.y = R.h; scene.add(ceil); roomMeshes.push(ceil);
     const wm = new T.MeshStandardMaterial({ color: 0x241f17, roughness: 1 });
-    const wall = (w, x, y, z, ry) => { const m = new T.Mesh(new T.PlaneGeometry(w, R.h), wm); m.position.set(x, y, z); m.rotation.y = ry; scene.add(m); };
+    const wall = (w, x, y, z, ry) => { const m = new T.Mesh(new T.PlaneGeometry(w, R.h), wm); m.position.set(x, y, z); m.rotation.y = ry; scene.add(m); roomMeshes.push(m); };
     wall(R.w, 0, R.h / 2, -R.d / 2, 0); wall(R.w, 0, R.h / 2, R.d / 2, Math.PI); wall(R.d, -R.w / 2, R.h / 2, 0, Math.PI / 2); wall(R.d, R.w / 2, R.h / 2, 0, -Math.PI / 2);
+    // Real room model → hide the procedural shell.
+    _csTryModel(typeof CS_ROOM_MODEL !== 'undefined' ? CS_ROOM_MODEL : '', (m) => { roomMeshes.forEach(x => { x.visible = false; }); scene.add(m); });
     const box = (w, h, d, color, em, ei) => new T.Mesh(new T.BoxGeometry(w, h, d), new T.MeshStandardMaterial({ color: color, emissive: em || 0, emissiveIntensity: em ? (ei || 0.7) : 0, roughness: 0.85 }));
     const hex = n => '#' + n.toString(16).padStart(6, '0');
     const label = (text, hexc) => { const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128; const x = cv.getContext('2d'); x.fillStyle = 'rgba(10,10,15,0.82)'; x.fillRect(0, 30, 512, 68); x.fillStyle = hexc; x.fillRect(0, 30, 8, 68); x.font = 'bold 46px sans-serif'; x.fillStyle = '#f4f4f5'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, 262, 64); const t = new T.CanvasTexture(cv); t.minFilter = T.LinearFilter; const sp = new T.Sprite(new T.SpriteMaterial({ map: t, transparent: true, depthWrite: false })); sp.scale.set(2.6, 0.65, 1); return sp; };
     const stations = [];
     for (const d of CS_STATIONS) {
       const g = new T.Group(); g.position.set(d.x, 0, d.z); const c = d.color;
-      if (d.kind === 'counter') { const b = box(3.6, 1.0, 1.3, 0x14110d); b.position.y = 0.5; g.add(b); const top = box(3.8, 0.14, 1.5, 0x000000, c); top.position.y = 1.07; g.add(top); }
-      else if (d.kind === 'shelf') { const b = box(0.7, 2.8, 2.6, 0x14110d); b.position.y = 1.4; g.add(b); for (let i = 0; i < 3; i++) { const sh = box(0.74, 0.08, 2.7, 0x000000, c, 0.4); sh.position.set(0, 0.7 + i * 0.8, 0); g.add(sh); } }
-      else { const p = box(2.6, 1.9, 0.18, 0x14110d); p.position.y = 2.1; g.add(p); const fr = box(2.85, 0.14, 0.22, 0x000000, c); fr.position.y = 3.1; g.add(fr); }
+      const geo = new T.Group();  // procedural geometry — swapped out if a model loads
+      if (d.kind === 'counter') { const b = box(3.6, 1.0, 1.3, 0x14110d); b.position.y = 0.5; geo.add(b); const top = box(3.8, 0.14, 1.5, 0x000000, c); top.position.y = 1.07; geo.add(top); }
+      else if (d.kind === 'shelf') { const b = box(0.7, 2.8, 2.6, 0x14110d); b.position.y = 1.4; geo.add(b); for (let i = 0; i < 3; i++) { const sh = box(0.74, 0.08, 2.7, 0x000000, c, 0.4); sh.position.set(0, 0.7 + i * 0.8, 0); geo.add(sh); } }
+      else { const p = box(2.6, 1.9, 0.18, 0x14110d); p.position.y = 2.1; geo.add(p); const fr = box(2.85, 0.14, 0.22, 0x000000, c); fr.position.y = 3.1; geo.add(fr); }
+      g.add(geo);
       const lab = label(d.label, hex(c)); lab.position.set(0, d.kind === 'shelf' ? 3.1 : (d.kind === 'board' ? 3.5 : 2.05), 0); g.add(lab);
       const glow = new T.PointLight(c, 0.5, 4); glow.position.set(0, 1.4, 0); g.add(glow);
       scene.add(g); stations.push({ view: d.view, label: d.label, gx: d.x, gz: d.z, r: d.r });
+      // Upgrade to a real .glb when present (label + glow stay; only the geometry swaps).
+      _csTryModel(d.model, (m) => { try { g.remove(geo); m.rotation.y = d.ry || 0; if (d.scale) m.scale.setScalar(d.scale); g.add(m); } catch (e) {} });
     }
     const npc = new T.Group();
-    { const cloak = box(0.74, 1.25, 0.5, 0x1a1712, 0xd4af37, 0.06); cloak.position.y = 1.0; npc.add(cloak); const head = new T.Mesh(new T.SphereGeometry(0.25, 16, 16), new T.MeshStandardMaterial({ color: 0x2a2520, roughness: 1 })); head.position.y = 1.86; npc.add(head); const visor = box(0.3, 0.06, 0.06, 0x000000, 0xffcf66, 1.3); visor.position.set(0, 1.85, 0.23); npc.add(visor); const lab = label('THE VENDOR', '#d4af37'); lab.scale.set(2.0, 0.5, 1); lab.position.set(0, 2.55, 0); npc.add(lab); npc.position.set(0, 0, -7.8); scene.add(npc); }
+    const npcGeo = new T.Group();
+    { const cloak = box(0.74, 1.25, 0.5, 0x1a1712, 0xd4af37, 0.06); cloak.position.y = 1.0; npcGeo.add(cloak); const head = new T.Mesh(new T.SphereGeometry(0.25, 16, 16), new T.MeshStandardMaterial({ color: 0x2a2520, roughness: 1 })); head.position.y = 1.86; npcGeo.add(head); const visor = box(0.3, 0.06, 0.06, 0x000000, 0xffcf66, 1.3); visor.position.set(0, 1.85, 0.23); npcGeo.add(visor); npc.add(npcGeo); const lab = label('THE VENDOR', '#d4af37'); lab.scale.set(2.0, 0.5, 1); lab.position.set(0, 2.55, 0); npc.add(lab); const _nm = (typeof CS_NPC_MODEL !== 'undefined') ? CS_NPC_MODEL : {}; npc.position.set(_nm.x != null ? _nm.x : 0, 0, _nm.z != null ? _nm.z : -7.8); scene.add(npc); _csTryModel(_nm.url, (m) => { try { npc.remove(npcGeo); m.rotation.y = _nm.ry || 0; if (_nm.scale) m.scale.setScalar(_nm.scale); npc.add(m); } catch (e) {} }); }
     const St = { yaw: 0, pitch: 0, cyaw: undefined, cpitch: 0, keys: new Set(), move: { f: 0, b: 0, l: 0, r: 0 }, drag: false, lx: 0, ly: 0 };
     const clock = new T.Clock(); let raf = 0, nearView = null;
     const promptEl = mount.querySelector('.cs3d-prompt');

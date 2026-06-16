@@ -31880,7 +31880,7 @@ function _ensurePtcStyle() {
   .ptc-rays{position:absolute;left:50%;top:42%;width:200vmax;height:200vmax;transform:translate(-50%,-50%);background:repeating-conic-gradient(from 0deg,rgba(255,224,150,.055) 0deg 4deg,transparent 4deg 11deg);-webkit-mask:radial-gradient(circle,#000 6%,rgba(0,0,0,.45) 30%,transparent 62%);mask:radial-gradient(circle,#000 6%,rgba(0,0,0,.45) 30%,transparent 62%);animation:ptcSpin 64s linear infinite;pointer-events:none;opacity:.5;transition:opacity .6s,filter .6s}
   @keyframes ptcSpin{to{transform:translate(-50%,-50%) rotate(360deg)}}
   .ptc-glowcore{position:absolute;left:50%;top:42%;width:62vmin;height:62vmin;transform:translate(-50%,-50%);background:radial-gradient(circle,rgba(255,228,170,.16),transparent 60%);pointer-events:none;transition:background .5s,opacity .5s;opacity:.7}
-  .ptc-stage{position:relative;width:min(94vw,440px);height:min(72vh,580px);display:flex;align-items:center;justify-content:center;perspective:1200px;z-index:1}
+  .ptc-stage{position:relative;width:min(96vw,560px);height:min(82vh,700px);display:flex;align-items:center;justify-content:center;perspective:1400px;z-index:1}
   .ptc-pack{position:relative;width:252px;height:366px;transform-style:preserve-3d;animation:ptcFloat 4.2s ease-in-out infinite;cursor:grab;will-change:transform}
   .ptc-pack:active{cursor:grabbing}
   @keyframes ptcFloat{0%,100%{transform:translateY(0) rotateY(-10deg) rotateX(3deg)}50%{transform:translateY(-12px) rotateY(10deg) rotateX(-2deg)}}
@@ -31899,10 +31899,10 @@ function _ensurePtcStyle() {
   .ptc-pack.ptc-grab .ptc-holdwrap{opacity:1}
   .ptc-holdbar{position:absolute;inset:0;transform-origin:left;transform:scaleX(0);background:linear-gradient(90deg,#ffe082,#ff9b3d)}
   .ptc-cards{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;perspective:1400px}
-  .ptc-card{position:absolute;width:208px;height:300px;transform-style:preserve-3d;will-change:transform;transition:transform .52s cubic-bezier(.22,.66,.2,1),opacity .45s}
+  .ptc-card{position:absolute;width:min(86vw,330px);height:calc(min(86vw,330px) * 1.4);transform-style:preserve-3d;will-change:transform;transition:transform .52s cubic-bezier(.22,.66,.2,1),opacity .45s}
   .ptc-face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;border-radius:13px;overflow:hidden}
-  .ptc-back{background:linear-gradient(160deg,#2a1f4a,#0c0a16);display:flex;align-items:center;justify-content:center;box-shadow:0 18px 44px rgba(0,0,0,.6),inset 0 0 0 2px rgba(180,150,255,.2)}
-  .ptc-back .ptc-bk-emblem{font-size:2.8rem;filter:drop-shadow(0 0 12px rgba(190,160,255,.7))}
+  .ptc-back{background:#0c0a16;box-shadow:0 18px 44px rgba(0,0,0,.6)}
+  .ptc-back img{width:100%;height:100%;object-fit:cover;display:block}
   .ptc-cardface{position:absolute;inset:0;transform:rotateY(180deg);backface-visibility:hidden;-webkit-backface-visibility:hidden;border-radius:13px;overflow:hidden;background:#0b0b10;box-shadow:0 18px 46px rgba(0,0,0,.6),0 0 0 2px var(--rar,#9aa0a6),0 0 26px -2px var(--rar,#9aa0a6)}
   .ptc-cf-art{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
   .ptc-cf-art img{width:100%;height:100%;object-fit:cover}
@@ -32018,7 +32018,7 @@ function _packTearCinematic(opts) {
     function buildStack() {
       phase = 'reveal'; idx = 0; revealed = drawn.map(() => false);
       pack.style.display = 'none';
-      cardsWrap.innerHTML = drawn.map((e, i) => `<div class="ptc-card" data-i="${i}"><div class="ptc-face ptc-back"><div class="ptc-bk-emblem">🜲</div></div>${_ptcCardFrontHtml(e)}</div>`).join('');
+      cardsWrap.innerHTML = drawn.map((e, i) => `<div class="ptc-card" data-i="${i}"><div class="ptc-face ptc-back"><img src="assets/artwork/cardback.png?v=2" alt="" draggable="false"></div>${_ptcCardFrontHtml(e)}</div>`).join('');
       tap.style.display = 'block';   // visual click-catcher; clicks handled by the overlay listener
       layout(true);
       hint.textContent = `Tap to reveal  ·  1 / ${drawn.length}`;

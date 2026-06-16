@@ -105030,9 +105030,11 @@ function _binderItemsFor(kind) {
     let c = null;
     try { c = (typeof lookupCustomCard === 'function') ? lookupCustomCard(id) : null; } catch (e) {}
     if (!c) continue;
-    // Heroes and summons are NOT cards — keep them out of the collection/inventory binder.
-    const t = String(c.type || '').toLowerCase();
-    if (t === 'hero' || t === 'summon') continue;
+    // Heroes and summons are NOT cards — keep them out of the collection/inventory
+    // binder. Trim + lower-case so stray whitespace/casing in the type can't slip through,
+    // and honor explicit isHero/isSummon flags too.
+    const t = String(c.type || '').trim().toLowerCase();
+    if (t === 'hero' || t === 'summon' || t === 'summons' || c.isHero || c.isSummon) continue;
     items.push({ id, card: c, count: coll[id] | 0, rar: String(c.rarity || 'common').toLowerCase(), selected: (kind === 'shop' && App._csPick === id) });
   }
   items.sort((a, b) => (rarOrder[b.rar] || 0) - (rarOrder[a.rar] || 0) || String((a.card && a.card.name) || '').localeCompare(String((b.card && b.card.name) || '')));

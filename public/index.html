@@ -31957,7 +31957,7 @@ function _packTearCinematic(opts) {
         <div class="ptc-cards" id="ptc-cards"></div>
         <div class="ptc-tap" id="ptc-tap" style="display:none"></div>
       </div>
-      <div class="ptc-hint" id="ptc-hint"><b>Press &amp; hold</b> the pack to tear it open</div>`;
+      <div class="ptc-hint" id="ptc-hint"><b>Click</b> the pack to tear it open</div>`;
     document.body.appendChild(ov);
     const $ = id => ov.querySelector('#' + id);
     const pack = $('ptc-pack'), lid = $('ptc-lid'), holdbar = $('ptc-holdbar'), cardsWrap = $('ptc-cards'), tap = $('ptc-tap'), hint = $('ptc-hint'), stage = $('ptc-stage'), rays = $('ptc-rays'), glow = $('ptc-glow');
@@ -31979,20 +31979,23 @@ function _packTearCinematic(opts) {
     function holdTick() {
       raf = requestAnimationFrame(holdTick);
       const target = holding ? 1 : 0;
-      tear += (target - tear) * 0.11;
+      tear += (target - tear) * 0.18;
       if (holding && tear > 0.99) { tear = 1; cancelAnimationFrame(raf); raf = null; completeTear(); return; }
       if (!holding && tear < 0.004) { tear = 0; cancelAnimationFrame(raf); raf = null; lid.style.opacity = '1'; }
       applyTear(tear);
     }
     function startHold() { if (phase !== 'sealed') return; holding = true; pack.classList.add('ptc-grab'); if (!raf) raf = requestAnimationFrame(holdTick); }
     function endHold() { holding = false; if (phase === 'sealed') pack.classList.remove('ptc-grab'); }
-    // LEFT-click (or touch) and HOLD to tear. Mouse/touch events are used (not
-    // pointer events) and the pack art has pointer-events:none + draggable=false
-    // so a native image-drag can't swallow the hold.
-    pack.addEventListener('mousedown', (e) => { if (e.button !== 0) return; e.preventDefault(); startHold(); });
+    // Open on a plain LEFT-CLICK (bullet-proof — a click can't fail the way a
+    // timed hold can), and ALSO support press-&-hold for the satisfying tear.
+    // Mouse/touch events (not pointer) + the art is pointer-events:none /
+    // draggable=false so a native image-drag can't swallow the press.
+    let _ptcDownAt = 0;
+    pack.addEventListener('mousedown', (e) => { if (e.button !== 0) return; e.preventDefault(); _ptcDownAt = (typeof performance !== 'undefined' ? performance.now() : 0); startHold(); });
     pack.addEventListener('touchstart', (e) => { e.preventDefault(); startHold(); }, { passive: false });
+    pack.addEventListener('click', (e) => { e.preventDefault(); if (phase === 'sealed') completeTear(); });
     window.addEventListener('mouseup', endHold);
-    window.addEventListener('touchend', endHold);
+    window.addEventListener('touchend', (e) => { endHold(); if (phase === 'sealed') { try { e.preventDefault(); } catch (er) {} completeTear(); } });
     window.addEventListener('touchcancel', endHold);
 
     function completeTear() {

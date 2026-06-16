@@ -149876,7 +149876,46 @@ function renderTerritoryWars() {
       _campRows.unshift({ user_id: _myUid, camp_name: (typeof _campRegName === 'function' ? _campRegName() : 'Your Camp'), contrib: (Profile.campContrib | 0) || 0, prestige: (Profile.campPrestige | 0) || 0 });
     }
     _campRows.sort((a, b) => ((b.contrib | 0) - (a.contrib | 0)));
+    // 🏗 Reconstruction CONTRIBUTORS — who rebuilt what, from the shared tw_node_contrib
+    // ledger. Distinct from the camp "contrib %": these are real roads/buildings/civ rebuilt.
+    try {
+      App._twNodeContrib = App._twNodeContrib || {};
+      const _ct = App._twNodeContrib[selNode.id];
+      if ((!_ct || (Date.now() - _ct.at) > 30000) && App._twNodeContribFetching !== selNode.id && typeof tw_cloudFetchNodeContrib === 'function') {
+        App._twNodeContribFetching = selNode.id;
+        Promise.resolve(tw_cloudFetchNodeContrib(selNode.id)).catch(() => {}).then(() => { if (App._twNodeContribFetching === selNode.id) App._twNodeContribFetching = null; });
+      }
+    } catch (e) {}
+    let _contribRows = ((App._twNodeContrib && App._twNodeContrib[selNode.id] && App._twNodeContrib[selNode.id].rows) || []).map(r => ({
+      user_id: r.user_id, name: r.camp_name || 'Settlement', buildings: r.buildings | 0, roads: r.roads | 0, civ: r.civ | 0,
+    }));
+    // Fold in my OWN local contribution so it shows instantly (before the fetch lands / when un-synced).
+    try {
+      const _myc = (Profile.campNodeContrib && Profile.campNodeContrib[selNode.id]) || null;
+      if (_myc && ((_myc.buildings | 0) || (_myc.roads | 0) || (_myc.civ | 0))) {
+        let _mine = _contribRows.find(r => r.user_id && r.user_id === _myUid);
+        if (!_mine) { _mine = { user_id: _myUid, name: (typeof _campRegName === 'function' ? _campRegName() : 'Your Camp'), buildings: 0, roads: 0, civ: 0 }; _contribRows.push(_mine); }
+        _mine.buildings = Math.max(_mine.buildings, _myc.buildings | 0);
+        _mine.roads = Math.max(_mine.roads, _myc.roads | 0);
+        _mine.civ = Math.max(_mine.civ, _myc.civ | 0);
+      }
+    } catch (e) {}
+    _contribRows.forEach(r => { r.score = (r.buildings | 0) + (r.roads | 0); });
+    _contribRows.sort((a, b) => ((b.score - a.score) || (b.civ - a.civ)));
+    const _contribTot = _contribRows.reduce((s, r) => ({ b: s.b + (r.buildings | 0), r: s.r + (r.roads | 0), c: s.c + (r.civ | 0) }), { b: 0, r: 0, c: 0 });
     const settlementsHtml = `
+      <div class="tw-nd-section-hdr">— RECONSTRUCTION CONTRIBUTORS${_rc.shared ? ' <span style="color:#7fb0ff;font-weight:700;font-size:0.7em" title="Live across all players.">· ☁ SHARED</span>' : ''}${_contribRows.length ? ` (${_contribRows.length})` : ''}</div>
+      ${_contribRows.length ? `<div class="tw-nd-camp-list">${_contribRows.slice(0, 20).map((r, i) => {
+        const mine = r.user_id && r.user_id === _myUid;
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : ('#' + (i + 1));
+        return `<div class="tw-nd-camp-row${mine ? ' is-you' : ''}">
+          <span class="tw-nd-camp-badge"${i > 2 ? ' style="font-size:0.62rem"' : ''}>${medal}</span>
+          <span class="tw-nd-camp-name">${escapeHtml(r.name)}${mine ? ' <span class="tw-nd-camp-you">· you</span>' : ''}<span style="display:block;font-size:0.62rem;color:#8a96a3;margin-top:1px">🏛 ${r.buildings | 0} · 🛣 ${r.roads | 0} · 👥 ${_fmtN(r.civ | 0)}</span></span>
+          <span class="tw-nd-camp-contrib" title="Total rebuild actions (buildings + roads)">${r.score | 0}</span>
+        </div>`;
+      }).join('')}</div>
+      <div style="padding:6px 0.75rem 2px;font-size:0.62rem;color:#7a8694;border-top:1px solid rgba(255,255,255,.06)">Rebuilt here in total: <b style="color:#9bb265">🏛 ${_contribTot.b} · 🛣 ${_contribTot.r} · 👥 ${_fmtN(_contribTot.c)}</b></div>`
+        : `<div class="tw-nd-empty">No reconstruction yet — repair a road or restore a building in <b>Rebuild from the Rubble</b> to put your camp on the board.</div>`}
       <div class="tw-nd-section-hdr">— REGISTERED SETTLEMENTS${_campRows.length ? ` (${_campRows.length})` : ''}</div>
       ${_campRows.length ? `<div class="tw-nd-camp-list">${_campRows.map(r => {
         const mine = r.user_id && r.user_id === _myUid;
@@ -149989,7 +150028,7 @@ function renderTerritoryWars() {
           <button class="tw-drawer-tab ${_ndtab==='events'?'is-active':''}" data-ndtab="events">EVENTS${_eventsCount?` <span class="tw-drawer-tab-badge">${_eventsCount}</span>`:''}</button>
           <button class="tw-drawer-tab ${_ndtab==='resources'?'is-active':''}" data-ndtab="resources">RESOURCES</button>
           <button class="tw-drawer-tab ${_ndtab==='charter'?'is-active':''}" data-ndtab="charter">CHARTER</button>
-          <button class="tw-drawer-tab ${_ndtab==='settlements'?'is-active':''}" data-ndtab="settlements">SETTLEMENTS${_campRows.length?` <span class="tw-drawer-tab-badge">${_campRows.length}</span>`:''}</button>
+          <button class="tw-drawer-tab ${_ndtab==='settlements'?'is-active':''}" data-ndtab="settlements">REBUILDERS${(_contribRows.length||_campRows.length)?` <span class="tw-drawer-tab-badge">${Math.max(_contribRows.length,_campRows.length)}</span>`:''}</button>
           <button class="tw-drawer-tab ${_ndtab==='sponsor'?'is-active':''}" data-ndtab="sponsor">SPONSOR${(App._twNodeAd&&App._twNodeAd[selNode.id]&&App._twNodeAd[selNode.id].ad)?' <span class="tw-drawer-tab-badge" style="background:rgba(74,222,128,0.25);color:#4d9e68">●</span>':''}</button>
           ${_isAdm ? `<button class="tw-drawer-tab ${_ndtab==='admin'?'is-active':''}" data-ndtab="admin">ADMIN</button>` : ''}
         </div>

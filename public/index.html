@@ -105791,6 +105791,7 @@ try {
           if (!App._cs3D) { _csLoadThree((ok) => { if (!ok) { showToast('⚠ 3D store failed to load — check your connection.', 4200); return; } App._cs3D = true; App._csPanel = null; render(); }); }
           else { App._cs3D = false; App._csPanel = null; if (_cs3DDispose) { try { _cs3DDispose(); } catch (er) {} _cs3DDispose = null; } render(); }
           break;
+        case 'cs-shop-edit': _csShopEditOpen(); break;
         case 'cs-panel-close': _csClosePanel(); break;
         case 'cs-open-pack': { const pid = t.getAttribute('data-pack'); if (pid) _csOpenOnePack(pid); break; }
         case 'cs-tab': App._csTab = t.getAttribute('data-tab'); App._csViewOwner = null; render(); break;
@@ -105852,6 +105853,7 @@ function renderCardShop() {
         <div class="cs-3d-topbar">
           <div class="cs-3d-title">🛒 Card Shop · ${cinders.toLocaleString()} <span class="cinder-icon"></span></div>
           <div style="display:flex;gap:6px">
+            ${(typeof isAdmin === 'function' && isAdmin()) ? `<button class="btn-secondary btn-mini" data-cs="cs-shop-edit">🛠 Edit Shop</button>` : ''}
             <button class="btn-secondary btn-mini" data-cs="cs-3d-toggle">☰ Menu</button>
             <button class="btn-secondary btn-mini" data-cs="cs-back">← Exit</button>
           </div>
@@ -105885,6 +105887,17 @@ function renderCardShop() {
         if (_cs3DDispose) { try { _cs3DDispose(); } catch (e) {} _cs3DDispose = null; }
         _cs3DDispose = _csMount3D(mount);
         if (App._csPanel) _csOpenPanel(App._csPanel);
+        // First entry: pull the data-driven layout, then re-mount if it's customized.
+        if (_csShopObjects === null && typeof _csShopFetchObjects === 'function') {
+          _csShopFetchObjects().then((rows) => {
+            if (!rows || !rows.length) return;
+            if (App.screen !== 'cardShop' || !App._cs3D) return;
+            const m2 = document.getElementById('cs-3d-mount'); if (!m2) return;
+            if (_cs3DDispose) { try { _cs3DDispose(); } catch (e) {} _cs3DDispose = null; }
+            _cs3DDispose = _csMount3D(m2);
+            if (App._csPanel) _csOpenPanel(App._csPanel);
+          }).catch(() => {});
+        }
       } catch (e) {}
     }, 0);
   }
@@ -105989,6 +106002,98 @@ const CS_STATIONS = [
 // one at a time. Tune ry (facing) + scale per model once it's in.
 const CS_ROOM_MODEL = '/models/shop_room.glb';
 const CS_NPC_MODEL  = { url: '/models/shopkeeper.glb', x: 0, z: -7.8, ry: 0, scale: 1 };
+// ════════════════════════════════════════════════════════════════════════════
+// 🏬 DATA-DRIVEN SHOP LAYOUT — the walkable shop renders from a `shop_objects`
+// cloud table when present, falling back to the built-in defaults above. Admins
+// upload a .glb (CS_MODELS_BUCKET) + save a row → the shop changes live for every
+// player, no redeploy. _csShopObjects caches the fetched rows. Everything is
+// fail-open: if the cloud is offline or a row is malformed, the default shop shows.
+// ════════════════════════════════════════════════════════════════════════════
+const CS_SHOP_ID = 'global';
+const CS_MODELS_BUCKET = 'models';
+let _csShopObjects = null;   // cached shop_objects rows (null = not fetched)
+function _csDefaultConfig() {
+  return {
+    room: CS_ROOM_MODEL,
+    npc: { url: CS_NPC_MODEL.url, x: CS_NPC_MODEL.x, y: 0, z: CS_NPC_MODEL.z, ry: CS_NPC_MODEL.ry, scale: CS_NPC_MODEL.scale, label: 'THE VENDOR' },
+    stations: CS_STATIONS.map(s => ({ view: s.view, label: s.label, model: s.model, color: s.color, kind: s.kind, x: s.x, z: s.z, ry: s.ry, scale: s.scale, blockR: s.r, interactR: 3.0 })),
+    props: [],
+  };
+}
+// Build the live render config: DB rows override defaults per-kind; missing kinds
+// keep the built-in default so the shop is never empty.
+function _csBuildConfig() {
+  const def = _csDefaultConfig();
+  const rows = Array.isArray(_csShopObjects) ? _csShopObjects : null;
+  if (!rows || !rows.length) return def;
+  const byKind = k => rows.filter(r => r && r.kind === k).sort((a, b) => (a.sort | 0) - (b.sort | 0));
+  const num = (v, d) => { const n = parseFloat(v); return isFinite(n) ? n : d; };
+  const vd = {}; CS_STATIONS.forEach(s => { vd[s.view] = s; });
+  const roomRow = byKind('room')[0], npcRow = byKind('npc')[0];
+  const stRows = byKind('station'), propRows = byKind('prop');
+  return {
+    room: roomRow ? (roomRow.model_url || '') : def.room,
+    npc: npcRow
+      ? { url: npcRow.model_url || '', x: num(npcRow.x, 0), y: num(npcRow.y, 0), z: num(npcRow.z, -7.8), ry: num(npcRow.rotation_y, 0), scale: num(npcRow.scale, 1), label: npcRow.label || 'THE VENDOR' }
+      : def.npc,
+    // Stations MERGE by view: a DB row overrides the matching default station
+    // (so admins can reposition "My Shop" without losing Binder/Browse/etc.),
+    // and a row with a brand-new view is appended as an extra station.
+    stations: (() => {
+      if (!stRows.length) return def.stations;
+      const map = new Map();
+      def.stations.forEach(s => map.set(s.view, s));
+      stRows.forEach(r => {
+        const d = vd[r.view] || {};
+        const base = map.get(r.view) || {};
+        const key = r.view || ('id:' + (r.id || base.label || ''));
+        map.set(key, {
+          view: r.view,
+          label: r.label || base.label || d.label || String(r.view || '').toUpperCase(),
+          model: r.model_url || base.model || d.model || '',
+          color: (d.color != null ? d.color : (base.color != null ? base.color : 0xd4af37)),
+          kind: d.kind || base.kind || 'counter',
+          x: num(r.x, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: num(r.scale, 1),
+          blockR: num(r.block_r, base.blockR != null ? base.blockR : 1.6),
+          interactR: num(r.interact_r, base.interactR != null ? base.interactR : 3.0),
+        });
+      });
+      return Array.from(map.values());
+    })(),
+    props: propRows.map(r => ({ url: r.model_url || '', x: num(r.x, 0), y: num(r.y, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: num(r.scale, 1) })),
+  };
+}
+async function _csShopFetchObjects() {
+  try {
+    if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.from('shop_objects').select('*').eq('shop_id', CS_SHOP_ID).order('sort', { ascending: true });
+    if (error) { console.warn('[shop_objects fetch]', error.message || error); return null; }
+    _csShopObjects = Array.isArray(data) ? data : [];
+    return _csShopObjects;
+  } catch (e) { console.warn('[shop_objects fetch]', e); return null; }
+}
+async function _csShopSaveObject(row) {
+  if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline — sign in to edit the shop.');
+  const payload = Object.assign({ shop_id: CS_SHOP_ID, updated_at: new Date().toISOString() }, row);
+  const { data, error } = await Cloud.client.from('shop_objects').upsert(payload).select().single();
+  if (error) throw error;
+  return data;
+}
+async function _csShopDeleteObject(id) {
+  if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline.');
+  const { error } = await Cloud.client.from('shop_objects').delete().eq('id', id);
+  if (error) throw error;
+}
+async function _csShopUploadModel(file) {
+  if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline.');
+  try { await Cloud.client.storage.createBucket(CS_MODELS_BUCKET, { public: true }); } catch (e) {}
+  const safe = String(file.name || 'model.glb').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = CS_SHOP_ID + '/' + Date.now().toString(36) + '_' + safe;
+  const { error } = await Cloud.client.storage.from(CS_MODELS_BUCKET).upload(path, file, { upsert: true, contentType: 'model/gltf-binary' });
+  if (error) throw error;
+  const { data } = Cloud.client.storage.from(CS_MODELS_BUCKET).getPublicUrl(path);
+  return data && data.publicUrl;
+}
 function _csLoadThree(cb) {
   const ready = () => !!(window.THREE);
   if (ready() && (window.THREE.GLTFLoader || App._csGltfTried)) { cb(true); return; }
@@ -106039,6 +106144,7 @@ function _csMount3D(mount) {
   try {
     if (!window.THREE || !mount) return null;
     const T = window.THREE;
+    const cfg = (typeof _csBuildConfig === 'function') ? _csBuildConfig() : { room: (typeof CS_ROOM_MODEL !== 'undefined' ? CS_ROOM_MODEL : ''), npc: CS_NPC_MODEL, stations: CS_STATIONS.map(s => ({ ...s, blockR: s.r, interactR: 3.0 })), props: [] };
     let W = mount.clientWidth || 800, H = mount.clientHeight || 460;
     const scene = new T.Scene(); scene.background = new T.Color(0x07070b); scene.fog = new T.Fog(0x07070b, 7, 30);
     const camera = new T.PerspectiveCamera(72, W / H, 0.1, 100); camera.rotation.order = 'YXZ'; camera.position.set(0, 1.6, 6);
@@ -106058,12 +106164,12 @@ function _csMount3D(mount) {
     const wall = (w, x, y, z, ry) => { const m = new T.Mesh(new T.PlaneGeometry(w, R.h), wm); m.position.set(x, y, z); m.rotation.y = ry; scene.add(m); roomMeshes.push(m); };
     wall(R.w, 0, R.h / 2, -R.d / 2, 0); wall(R.w, 0, R.h / 2, R.d / 2, Math.PI); wall(R.d, -R.w / 2, R.h / 2, 0, Math.PI / 2); wall(R.d, R.w / 2, R.h / 2, 0, -Math.PI / 2);
     // Real room model → hide the procedural shell.
-    _csTryModel(typeof CS_ROOM_MODEL !== 'undefined' ? CS_ROOM_MODEL : '', (m) => { roomMeshes.forEach(x => { x.visible = false; }); scene.add(m); });
+    _csTryModel(cfg.room, (m) => { roomMeshes.forEach(x => { x.visible = false; }); scene.add(m); });
     const box = (w, h, d, color, em, ei) => new T.Mesh(new T.BoxGeometry(w, h, d), new T.MeshStandardMaterial({ color: color, emissive: em || 0, emissiveIntensity: em ? (ei || 0.7) : 0, roughness: 0.85 }));
     const hex = n => '#' + n.toString(16).padStart(6, '0');
     const label = (text, hexc) => { const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128; const x = cv.getContext('2d'); x.fillStyle = 'rgba(10,10,15,0.82)'; x.fillRect(0, 30, 512, 68); x.fillStyle = hexc; x.fillRect(0, 30, 8, 68); x.font = 'bold 46px sans-serif'; x.fillStyle = '#f4f4f5'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, 262, 64); const t = new T.CanvasTexture(cv); t.minFilter = T.LinearFilter; const sp = new T.Sprite(new T.SpriteMaterial({ map: t, transparent: true, depthWrite: false })); sp.scale.set(2.6, 0.65, 1); return sp; };
     const stations = [];
-    for (const d of CS_STATIONS) {
+    for (const d of (cfg.stations || [])) {
       const g = new T.Group(); g.position.set(d.x, 0, d.z); const c = d.color;
       const geo = new T.Group();  // procedural geometry — swapped out if a model loads
       if (d.kind === 'counter') { const b = box(3.6, 1.0, 1.3, 0x14110d); b.position.y = 0.5; geo.add(b); const top = box(3.8, 0.14, 1.5, 0x000000, c); top.position.y = 1.07; geo.add(top); }
@@ -106072,13 +106178,19 @@ function _csMount3D(mount) {
       g.add(geo);
       const lab = label(d.label, hex(c)); lab.position.set(0, d.kind === 'shelf' ? 3.1 : (d.kind === 'board' ? 3.5 : 2.05), 0); g.add(lab);
       const glow = new T.PointLight(c, 0.5, 4); glow.position.set(0, 1.4, 0); g.add(glow);
-      scene.add(g); stations.push({ view: d.view, label: d.label, gx: d.x, gz: d.z, r: d.r });
+      scene.add(g); stations.push({ view: d.view, label: d.label, gx: d.x, gz: d.z, r: (d.blockR != null ? d.blockR : d.r), ir: (d.interactR != null ? d.interactR : 3.0) });
       // Upgrade to a real .glb when present (label + glow stay; only the geometry swaps).
       _csTryModel(d.model, (m) => { try { g.remove(geo); m.rotation.y = d.ry || 0; if (d.scale) m.scale.setScalar(d.scale); g.add(m); } catch (e) {} });
     }
     const npc = new T.Group();
     const npcGeo = new T.Group();
-    { const cloak = box(0.74, 1.25, 0.5, 0x1a1712, 0xd4af37, 0.06); cloak.position.y = 1.0; npcGeo.add(cloak); const head = new T.Mesh(new T.SphereGeometry(0.25, 16, 16), new T.MeshStandardMaterial({ color: 0x2a2520, roughness: 1 })); head.position.y = 1.86; npcGeo.add(head); const visor = box(0.3, 0.06, 0.06, 0x000000, 0xffcf66, 1.3); visor.position.set(0, 1.85, 0.23); npcGeo.add(visor); npc.add(npcGeo); const lab = label('THE VENDOR', '#d4af37'); lab.scale.set(2.0, 0.5, 1); lab.position.set(0, 2.55, 0); npc.add(lab); const _nm = (typeof CS_NPC_MODEL !== 'undefined') ? CS_NPC_MODEL : {}; npc.position.set(_nm.x != null ? _nm.x : 0, 0, _nm.z != null ? _nm.z : -7.8); scene.add(npc); _csTryModel(_nm.url, (m) => { try { npc.remove(npcGeo); m.rotation.y = _nm.ry || 0; if (_nm.scale) m.scale.setScalar(_nm.scale); npc.add(m); } catch (e) {} }); }
+    { const cloak = box(0.74, 1.25, 0.5, 0x1a1712, 0xd4af37, 0.06); cloak.position.y = 1.0; npcGeo.add(cloak); const head = new T.Mesh(new T.SphereGeometry(0.25, 16, 16), new T.MeshStandardMaterial({ color: 0x2a2520, roughness: 1 })); head.position.y = 1.86; npcGeo.add(head); const visor = box(0.3, 0.06, 0.06, 0x000000, 0xffcf66, 1.3); visor.position.set(0, 1.85, 0.23); npcGeo.add(visor); npc.add(npcGeo); const _nm = cfg.npc || {}; const lab = label(_nm.label || 'THE VENDOR', '#d4af37'); lab.scale.set(2.0, 0.5, 1); lab.position.set(0, 2.55, 0); npc.add(lab); npc.position.set(_nm.x != null ? _nm.x : 0, _nm.y || 0, _nm.z != null ? _nm.z : -7.8); npc.rotation.y = _nm.ry || 0; scene.add(npc); _csTryModel(_nm.url, (m) => { try { npc.remove(npcGeo); if (_nm.scale) m.scale.setScalar(_nm.scale); npc.add(m); } catch (e) {} }); }
+    // Decorative props — pure .glb models, no collision/interaction (room dressing).
+    for (const p of (cfg.props || [])) {
+      if (!p || !p.url) continue;
+      const pg = new T.Group(); pg.position.set(p.x || 0, p.y || 0, p.z || 0); pg.rotation.y = p.ry || 0; scene.add(pg);
+      _csTryModel(p.url, (m) => { try { if (p.scale) m.scale.setScalar(p.scale); pg.add(m); } catch (e) {} });
+    }
     const St = { yaw: 0, pitch: 0, cyaw: undefined, cpitch: 0, keys: new Set(), move: { f: 0, b: 0, l: 0, r: 0 }, drag: false, lx: 0, ly: 0 };
     const clock = new T.Clock(); let raf = 0, nearView = null;
     const promptEl = mount.querySelector('.cs3d-prompt');
@@ -106099,7 +106211,7 @@ function _csMount3D(mount) {
         const cl = v => Math.max(-7.2, Math.min(7.2, v)); const nx = cl(camera.position.x + dir.x), nz = cl(camera.position.z + dir.z);
         if (!blocked(nx, nz)) { camera.position.x = nx; camera.position.z = nz; } else { if (!blocked(nx, camera.position.z)) camera.position.x = nx; if (!blocked(camera.position.x, nz)) camera.position.z = nz; }
       }
-      let near = null, best = 3.1; for (const st of stations) { const dx = camera.position.x - st.gx, dz = camera.position.z - st.gz; const d2 = Math.hypot(dx, dz); if (d2 < best) { best = d2; near = st; } }
+      let near = null, best = Infinity; for (const st of stations) { const dx = camera.position.x - st.gx, dz = camera.position.z - st.gz; const d2 = Math.hypot(dx, dz); const thr = (st.ir != null ? st.ir : 3.1); if (d2 < thr && d2 < best) { best = d2; near = st; } }
       const nv = near ? near.view : null;
       if (nv !== nearView) { nearView = nv; if (promptEl) { if (near) { promptEl.textContent = '⏎ Enter ' + near.label; promptEl.style.display = 'block'; } else { promptEl.style.display = 'none'; } } }
       if (npc) { const tt = clock.elapsedTime; npc.position.y = Math.sin(tt * 1.6) * 0.04; npc.rotation.y = Math.atan2(camera.position.x - npc.position.x, camera.position.z - npc.position.z); }
@@ -106147,6 +106259,180 @@ function _csRefreshPanel() { if (App._csPanel && document.getElementById('cs-pan
 // 3D-aware re-render: refresh just the open panel in 3D mode (so the WebGL scene
 // is never torn down by a background cloud fetch); full render() in 2D mode.
 function _csRender() { try { if (App.screen !== 'cardShop') return; if (App._cs3D) _csRefreshPanel(); else render(); } catch (e) {} }
+// ════════════════════════════════════════════════════════════════════════════
+// 🛠 ADMIN SHOP EDITOR — admin-only overlay to author the data-driven shop layout
+// (shop_objects rows + .glb uploads). Numeric transform fields + per-row save /
+// delete + add + "Apply & Reload 3D" (re-fetch + re-mount the scene). Self-wired
+// overlay (not the delegated render system) so editing never tears the WebGL scene.
+// ════════════════════════════════════════════════════════════════════════════
+const CS_EDIT_KINDS = ['station', 'prop', 'npc', 'room'];
+function _ensureCsEditStyle() {
+  if (document.getElementById('cs-edit-style')) return;
+  const s = document.createElement('style'); s.id = 'cs-edit-style';
+  s.textContent = `
+  .cse-backdrop{position:fixed;inset:0;z-index:2147483646;background:rgba(6,8,12,0.78);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:3vh 2vw;overflow:auto}
+  .cse-modal{width:100%;max-width:760px;background:linear-gradient(180deg,#15110b,#0d0b08);border:1px solid #3a2f1c;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,0.7);color:#e9e1cf;font-size:13px}
+  .cse-top{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #2a2316}
+  .cse-title{font-weight:800;letter-spacing:0.3px;color:#f3d27a}
+  .cse-sub{font-weight:500;color:#8a7f64;font-size:11px;margin-left:6px}
+  .cse-help{padding:9px 14px;color:#a99f86;font-size:11.5px;line-height:1.5;border-bottom:1px solid #221c12;background:rgba(0,0,0,0.18)}
+  .cse-help b{color:#d8c690} .cse-help i{color:#c9b785;font-style:normal;text-decoration:underline}
+  .cse-list{padding:10px 12px;display:flex;flex-direction:column;gap:10px;max-height:58vh;overflow:auto}
+  .cse-empty{padding:18px;text-align:center;color:#8a7f64}
+  .cse-row{border:1px solid #2c2415;border-radius:10px;padding:9px;background:rgba(255,255,255,0.015)}
+  .cse-row-head{display:flex;gap:6px;align-items:center;margin-bottom:7px}
+  .cse-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px 8px;margin-bottom:7px}
+  .cse-grid label{display:flex;flex-direction:column;font-size:10px;color:#8f846a;gap:2px}
+  .cse-model{display:flex;gap:6px;align-items:center}
+  .cse-row input,.cse-row select{background:#0c0a07;border:1px solid #3a2f1c;border-radius:6px;color:#ece3cf;padding:4px 6px;font-size:12px;min-width:0}
+  .cse-row input[type=number]{width:100%}
+  .cse-upload{display:inline-flex;align-items:center;gap:4px;background:#241d10;border:1px solid #3a2f1c;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;white-space:nowrap}
+  .cse-add{display:flex;gap:8px;justify-content:space-between;padding:11px 14px;border-top:1px solid #2a2316}
+  .cse-row .btn-mini{padding:4px 8px;font-size:11px}
+  `;
+  document.head.appendChild(s);
+}
+function _csEditRowHtml(r, i) {
+  r = r || {};
+  const v = (k, d) => escapeHtml(String((r[k] != null && r[k] !== '') ? r[k] : d));
+  const id = escapeHtml(String(r.id || ''));
+  const num = (f, label, d, step) => `<label>${label}<input data-f="${f}" type="number" step="${step}" value="${v(f, d)}"></label>`;
+  return `<div class="cse-row" data-cse-row="${i}" data-id="${id}">
+    <div class="cse-row-head">
+      <select data-f="kind">${CS_EDIT_KINDS.map(k => `<option value="${k}" ${r.kind === k ? 'selected' : ''}>${k}</option>`).join('')}</select>
+      <input data-f="view" placeholder="view (station)" value="${v('view', '')}" style="width:110px">
+      <input data-f="label" placeholder="label" value="${v('label', '')}" style="flex:1">
+      <button class="btn-mini" data-cse="del" title="Delete">🗑</button>
+    </div>
+    <div class="cse-grid">
+      ${num('x', 'x', 0, '0.1')}${num('y', 'y', 0, '0.1')}${num('z', 'z', 0, '0.1')}${num('rotation_y', 'rotY', 0, '0.1')}
+      ${num('scale', 'scale', 1, '0.05')}${num('sort', 'sort', 0, '1')}${num('interact_r', 'interactR', 3, '0.1')}${num('block_r', 'blockR', 1.6, '0.1')}
+    </div>
+    <div class="cse-model">
+      <input data-f="model_url" placeholder=".glb public URL — blank = built-in geometry" value="${v('model_url', '')}" style="flex:1">
+      <label class="cse-upload">⬆ .glb<input type="file" accept=".glb,.gltf,model/gltf-binary" data-cse="upload" style="display:none"></label>
+      <button class="btn-mini" data-cse="save">💾 Save</button>
+    </div>
+  </div>`;
+}
+function _csShopEditListHtml() {
+  const rows = Array.isArray(_csShopObjects) ? _csShopObjects : [];
+  return rows.length ? rows.map((r, i) => _csEditRowHtml(r, i)).join('')
+    : `<div class="cse-empty">No custom objects yet — the shop shows the built-in defaults. Add one below.</div>`;
+}
+function _csShopEditOpen() {
+  if (typeof isAdmin !== 'function' || !isAdmin()) { showToast('Admins only.', 2000); return; }
+  if (document.getElementById('cs-edit-backdrop')) return;
+  _ensureCsEditStyle();
+  // Ensure we have the latest rows to edit (fail-open if cloud is offline).
+  const build = () => {
+    const el = document.createElement('div');
+    el.innerHTML = `<div id="cs-edit-backdrop" class="cse-backdrop">
+      <div class="cse-modal" role="dialog" aria-label="Shop Editor">
+        <div class="cse-top">
+          <div class="cse-title">🛠 Shop Editor <span class="cse-sub">data-driven · shop "${escapeHtml(CS_SHOP_ID)}"</span></div>
+          <button class="btn-mini" data-cse="close">✕</button>
+        </div>
+        <div class="cse-help">Objects override the built-in shop. Kinds: <b>station</b> (interactive — set a <i>view</i>: myshop / binder / open / browse / vendor), <b>prop</b> (decor), <b>npc</b> (vendor), <b>room</b> (shell). Blank model URL = default geometry. Upload a .glb or paste a public URL, then <b>Save</b> the row and <b>Apply &amp; Reload</b>.</div>
+        <div class="cse-list">${_csShopEditListHtml()}</div>
+        <div class="cse-add">
+          <button class="btn-secondary btn-mini" data-cse="add">➕ Add object</button>
+          <button class="btn-primary btn-mini" data-cse="reload">🔄 Apply &amp; Reload 3D</button>
+        </div>
+      </div>
+    </div>`;
+    const node = el.firstElementChild;
+    (document.querySelector('.cs-3d-fullscreen') || document.body).appendChild(node);
+    _csWireShopEdit(node);
+  };
+  if (_csShopObjects === null && typeof _csShopFetchObjects === 'function') {
+    _csShopFetchObjects().catch(() => {}).then(build);
+  } else build();
+}
+function _csReadEditRow(rowEl) {
+  const g = (f) => { const n = rowEl.querySelector(`[data-f="${f}"]`); return n ? n.value : ''; };
+  const numf = (f, d) => { const n = parseFloat(g(f)); return isFinite(n) ? n : d; };
+  const kind = g('kind') || 'station';
+  const row = {
+    kind,
+    view: kind === 'station' ? (g('view') || null) : null,
+    label: g('label') || null,
+    model_url: g('model_url') || null,
+    x: numf('x', 0), y: numf('y', 0), z: numf('z', 0),
+    rotation_y: numf('rotation_y', 0), scale: numf('scale', 1),
+    interact_r: numf('interact_r', 3), block_r: numf('block_r', 1.6),
+    sort: Math.round(numf('sort', 0)),
+  };
+  const id = rowEl.getAttribute('data-id'); if (id) row.id = id;
+  return row;
+}
+function _csWireShopEdit(el) {
+  const close = () => { try { el.remove(); } catch (e) {} };
+  el.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-cse="close"]')) { close(); return; }
+    const saveBtn = e.target.closest('[data-cse="save"]');
+    if (saveBtn) {
+      const rowEl = saveBtn.closest('.cse-row'); if (!rowEl) return;
+      saveBtn.disabled = true; const orig = saveBtn.textContent; saveBtn.textContent = '…';
+      try {
+        const saved = await _csShopSaveObject(_csReadEditRow(rowEl));
+        if (saved && saved.id) {
+          rowEl.setAttribute('data-id', saved.id);
+          if (!Array.isArray(_csShopObjects)) _csShopObjects = [];
+          const ix = _csShopObjects.findIndex(r => r.id === saved.id);
+          if (ix >= 0) _csShopObjects[ix] = saved; else _csShopObjects.push(saved);
+        }
+        showToast('💾 Saved — Apply & Reload to see it.', 1900);
+      } catch (err) { showToast('⚠ Save failed: ' + ((err && err.message) || err), 4600); }
+      saveBtn.disabled = false; saveBtn.textContent = orig;
+      return;
+    }
+    const delBtn = e.target.closest('[data-cse="del"]');
+    if (delBtn) {
+      const rowEl = delBtn.closest('.cse-row'); if (!rowEl) return;
+      const id = rowEl.getAttribute('data-id');
+      if (id) {
+        try { await _csShopDeleteObject(id); if (Array.isArray(_csShopObjects)) _csShopObjects = _csShopObjects.filter(r => r.id !== id); showToast('🗑 Deleted.', 1500); }
+        catch (err) { showToast('⚠ Delete failed: ' + ((err && err.message) || err), 4600); return; }
+      }
+      rowEl.remove();
+      return;
+    }
+    if (e.target.closest('[data-cse="add"]')) {
+      const list = el.querySelector('.cse-list'); if (!list) return;
+      const empty = list.querySelector('.cse-empty'); if (empty) empty.remove();
+      const i = list.querySelectorAll('.cse-row').length;
+      list.insertAdjacentHTML('beforeend', _csEditRowHtml({ kind: 'station', scale: 1, interact_r: 3, block_r: 1.6 }, i));
+      list.scrollTop = list.scrollHeight;
+      return;
+    }
+    const reloadBtn = e.target.closest('[data-cse="reload"]');
+    if (reloadBtn) {
+      reloadBtn.disabled = true; const orig = reloadBtn.textContent; reloadBtn.textContent = '…';
+      try {
+        _csShopObjects = null;
+        await _csShopFetchObjects();
+        const mount = document.getElementById('cs-3d-mount');
+        if (mount) { if (_cs3DDispose) { try { _cs3DDispose(); } catch (er) {} _cs3DDispose = null; } _cs3DDispose = _csMount3D(mount); if (App._csPanel) _csOpenPanel(App._csPanel); }
+        const list = el.querySelector('.cse-list'); if (list) list.innerHTML = _csShopEditListHtml();
+        showToast('🔄 Shop reloaded.', 1700);
+      } catch (err) { showToast('⚠ Reload failed.', 3400); }
+      reloadBtn.disabled = false; reloadBtn.textContent = orig;
+      return;
+    }
+  });
+  el.addEventListener('change', async (e) => {
+    const up = e.target.closest('[data-cse="upload"]');
+    if (up && up.files && up.files[0]) {
+      const file = up.files[0];
+      const rowEl = up.closest('.cse-row'); const urlInput = rowEl && rowEl.querySelector('[data-f="model_url"]');
+      showToast('⬆ Uploading ' + file.name + '…', 2400);
+      try { const url = await _csShopUploadModel(file); if (urlInput && url) urlInput.value = url; showToast('✓ Uploaded — Save the row, then Reload.', 3000); }
+      catch (err) { showToast('⚠ Upload failed: ' + ((err && err.message) || err), 4600); }
+      up.value = '';
+    }
+  });
+}
 // ── OPEN PACKS panel — open held packs (reuses the game's reveal cinematic) ──
 function _csOpenPacksBody() {
   const heldPacks = {};

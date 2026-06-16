@@ -146936,6 +146936,11 @@ const RECON_SITES = [
   { id:'aptruin',    name:'Ruined Apartments',  into:'Apartment Tower',  glow:'amber',  cost:{ cinder:700, supplies:160 },   needs:{ Builder:2 },               gives:'more housing' },
   { id:'market',     name:'Collapsed Market',   into:'Marketplace',      glow:'amber',  cost:{ cinder:500, metal:80 },   needs:{ Builder:1, Merchant:1 },   gives:'+Trade income' },
   { id:'school',     name:'Old Schoolhouse',    into:'Schoolhouse',      glow:'purple', cost:{ cinder:550, supplies:120 },   needs:{ Builder:1, Researcher:1 }, gives:'+Hope and +Recruits' },
+  // 🛣 ROAD REPAIR — REPEATABLE (roads accumulate toward the node's road total). Each
+  // reclaim spends resources and adds `roads` to the player's assigned District Node.
+  { id:'road_rubble', name:'Rubble-Choked Road',   into:'Cleared Road',      glow:'amber', cost:{ supplies:60 },                needs:{ Builder:1 },             gives:'evacuation routes',     kind:'road', roads:3, repeatable:true },
+  { id:'road_bridge', name:'Collapsed Bridge',     into:'Repaired Bridge',   glow:'cyan',  cost:{ metal:120 },                 needs:{ Builder:1, Engineer:1 }, gives:'+Trade access',         kind:'road', roads:5, repeatable:true },
+  { id:'road_main',   name:'Cratered Main Street', into:'Paved Main Street', glow:'amber', cost:{ cinder:300, supplies:100 },  needs:{ Builder:2 },             gives:'+Trade and +Security',  kind:'road', roads:8, repeatable:true },
 ];
 function _reconState() {
   if (!Profile.recon || typeof Profile.recon !== 'object') Profile.recon = {};
@@ -146990,7 +146995,17 @@ function openReconReclaim(siteId) {
 function reconReclaim(siteId) {
   const site = RECON_SITES.find(s => s.id === siteId); if (!site) return;
   const r = _reconState();
-  if (r.sites[siteId]) return;
+  // 🛣 Road repair is REPEATABLE (roads accumulate over time toward the node total);
+  // buildings are one-time. Only one-time sites block on "already built".
+  if (!site.repeatable && r.sites[siteId]) return;
+  // Roads cap at the assigned node's road total — don't charge once they're all repaired.
+  if (site.kind === 'road' && Profile.campNodeId) {
+    try {
+      const _t = _twForge();
+      const _nd = (_t.nodes || []).find(n => n && n.id === Profile.campNodeId);
+      if (_nd) { const _rc = _twNodeRecon(_nd); if ((_rc.roadsRepaired | 0) >= (_rc.roadsTotal | 0)) { try { showToast('🛣 The roads here are already fully repaired.'); } catch (e) {} return; } }
+    } catch (e) {}
+  }
   if (!_reconCanAfford(site.cost)) { try { showToast('Insufficient resources.'); } catch (e) {} return; }
   if (!_reconCanStaff(site.needs)) { try { showToast('Hire the required specialists from the Employment Board first.'); } catch (e) {} return; }
   const _realCost = {};
@@ -146999,18 +147014,24 @@ function reconReclaim(siteId) {
     else _realCost[k] = site.cost[k];
   }
   if (Object.keys(_realCost).length && typeof spendResources === 'function') spendResources(_realCost);
-  r.sites[siteId] = 'built';
+  if (!site.repeatable) r.sites[siteId] = 'built';
   _reconApplyGive(site);
   Profile.campContrib = Math.min(100, _campContrib() + 2);
-  // 🏗 Feed the assigned District Node's reconstruction: +1 building restored, a couple
-  // of roads repaired, and ~3,000 civilians sheltered per reclaimed site. Tracked per
+  // 🏗 Feed the assigned District Node's reconstruction. ROAD sites add roads (no
+  // building); BUILDING sites add +1 building + ~3,000 civilians sheltered. Tracked per
   // player so it's removed if they leave the node.
-  try { if (Profile.campNodeId && typeof _twAddNodeContribution === 'function') _twAddNodeContribution(Profile.campNodeId, 1, 2, 3000); } catch (e) {}
+  const _isRoad = site.kind === 'road';
+  try {
+    if (Profile.campNodeId && typeof _twAddNodeContribution === 'function') {
+      if (_isRoad) _twAddNodeContribution(Profile.campNodeId, 0, site.roads | 0, 800);
+      else _twAddNodeContribution(Profile.campNodeId, 1, 0, 3000);
+    }
+  } catch (e) {}
   try { saveProfile(); } catch (e) {}
   try { if (typeof saveProgressCloud === 'function') saveProgressCloud(); } catch (e) {}
   try { tw_cloudUpsertCampReg(); } catch (e) {}
-  try { _twLog('settlement', `<b>${escapeHtml(_campRegName())}</b> reclaimed ${escapeHtml(site.into)}.${Profile.campNodeId ? ' (contributed to the node rebuild)' : ''}`); } catch (e) {}
-  try { showToast(`🏗 ${site.into} restored to the settlement.`, 2600); } catch (e) {}
+  try { _twLog('settlement', `<b>${escapeHtml(_campRegName())}</b> ${_isRoad ? ('repaired ' + (site.roads | 0) + ' roads') : ('reclaimed ' + escapeHtml(site.into))}.${Profile.campNodeId ? ' (node rebuild)' : ''}`); } catch (e) {}
+  try { showToast(_isRoad ? `🛣 +${site.roads | 0} roads repaired${Profile.campNodeId ? ' for the node' : ''}.` : `🏗 ${site.into} restored to the settlement.`, 2600); } catch (e) {}
   closeCampNodePicker();
   try { render(); } catch (e) {}
 }
@@ -147406,10 +147427,16 @@ function renderReconstruction() {
   const resHtml = RES.map(([k, v, w]) => `<div class="recon-res"><span class="rr-k">${k}</span><span class="rr-v ${w}">${v}</span></div>`).join('');
   const GLOW = { cyan: '#7d9cb6', amber: '#dca844', red: '#cf5a3a', purple: '#8f7db6' };
   const cells = RECON_SITES.map(s => {
-    const built = !!r.sites[s.id]; const glow = GLOW[s.glow] || '#7d9cb6';
+    const glow = GLOW[s.glow] || '#7d9cb6';
+    // 🛣 Road repair is repeatable — always shows as a reclaim cell (never "built").
+    if (s.kind === 'road') {
+      return `<div class="recon-room rock recon-road" style="--glow:${glow}" data-act="recon-reclaim" data-site="${s.id}"><div class="rr-int"></div><div class="rr-rocklabel"><b>🛣 REPAIR +${s.roads | 0} ROADS</b>${escapeHtml(s.name)}</div></div>`;
+    }
+    const built = !!r.sites[s.id];
     if (!built) return `<div class="recon-room rock" style="--glow:${glow}" data-act="recon-reclaim" data-site="${s.id}"><div class="rr-int"></div><div class="rr-rocklabel"><b>+ RECLAIM</b>${escapeHtml(s.name)}</div></div>`;
     return `<div class="recon-room built" style="--glow:${glow}"><div class="rr-int"></div><div class="rr-cap"><div class="nm">${escapeHtml(s.into)}</div><div class="fn">${escapeHtml(s.gives || '')}</div></div></div>`;
   }).join('');
+  const _buildSiteCount = RECON_SITES.filter(s => s.kind !== 'road').length;
   const onboard = (() => {
     if (node && popTotal > 0) return '';
     const step = (n, label, st) => `<div class="recon-obstep ${st}"><span class="recon-obn">${n}</span> ${label}</div>`;
@@ -147442,7 +147469,7 @@ function renderReconstruction() {
       </div>
       <div class="recon-toggle"><button class="recon-tab ${_netView ? '' : 'is-active'}" data-act="recon-console">CAMP CONSOLE</button><button class="recon-tab ${_netView ? 'is-active' : ''}" data-act="recon-network">NETWORK</button></div>
       <div class="recon-resbar">${resHtml}</div>
-      <div class="recon-meta"><div><div class="rm-k">PRESTIGE</div><div class="rm-v">${_campPrestige()}</div></div><div><div class="rm-k">BUILT</div><div class="rm-v">${builtCount}/${RECON_SITES.length}</div></div></div>
+      <div class="recon-meta"><div><div class="rm-k">PRESTIGE</div><div class="rm-v">${_campPrestige()}</div></div><div><div class="rm-k">BUILT</div><div class="rm-v">${builtCount}/${_buildSiteCount}</div></div></div>
       <button class="btn-secondary btn-mini" data-act="recon-back">← Camp</button>
     </div>
     ${_netView ? _reconNetworkBodyHtml() : `<div class="recon-body">

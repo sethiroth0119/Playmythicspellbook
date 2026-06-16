@@ -31885,12 +31885,12 @@ function _ensurePtcStyle() {
   .ptc-pack:active{cursor:grabbing}
   @keyframes ptcFloat{0%,100%{transform:translateY(0) rotateY(-10deg) rotateX(3deg)}50%{transform:translateY(-12px) rotateY(10deg) rotateX(-2deg)}}
   .ptc-pack.ptc-grab{animation:none;transform:translateY(-4px) rotateY(0deg) rotateX(0deg) scale(1.03);transition:transform .25s}
-  .ptc-wrap{position:absolute;inset:0;border-radius:10px;overflow:hidden;box-shadow:0 32px 72px rgba(0,0,0,.74),0 12px 28px rgba(0,0,0,.55)}
+  .ptc-wrap{position:absolute;inset:0;filter:drop-shadow(0 22px 30px rgba(0,0,0,.62))}
   .ptc-wrap img{width:100%;height:100%;object-fit:cover;pointer-events:none;user-select:none;-webkit-user-drag:none}
   .ptc-wrap-ph{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#cdbff5;background:linear-gradient(150deg,#3a2f5e,#181428 60%)}
   .ptc-sheen{position:absolute;inset:0;background:linear-gradient(115deg,transparent 32%,rgba(255,255,255,.32) 50%,transparent 68%);transform:translateX(-60%);animation:ptcSheen 2.8s linear infinite;pointer-events:none;mix-blend-mode:screen}
   @keyframes ptcSheen{to{transform:translateX(60%)}}
-  .ptc-lid{position:absolute;left:0;right:0;top:0;height:25%;transform-origin:50% 100%;will-change:transform,opacity;z-index:3;overflow:hidden;border-radius:10px 10px 0 0}
+  .ptc-lid{position:absolute;left:0;right:0;top:0;height:25%;transform-origin:50% 100%;will-change:transform,opacity;z-index:3;overflow:hidden}
   .ptc-lid img,.ptc-lid .ptc-wrap-ph{width:252px;height:366px;object-fit:cover;pointer-events:none;user-select:none;-webkit-user-drag:none}
   .ptc-lid::after{content:'';position:absolute;left:0;right:0;bottom:0;height:8px;background:repeating-linear-gradient(90deg,transparent 0 6px,#0a0810 6px 12px)}
   .ptc-rip{position:absolute;left:0;right:0;top:0;height:25%;z-index:4;display:flex;align-items:center;justify-content:center;pointer-events:none}
@@ -31949,9 +31949,9 @@ function _packTearCinematic(opts) {
       <button class="ptc-close-x" id="ptc-x" title="Skip / close">✕</button>
       <div class="ptc-stage" id="ptc-stage">
         <div class="ptc-pack" id="ptc-pack">
-          <div class="ptc-wrap">${wrapInner}<div class="ptc-sheen"></div></div>
+          <div class="ptc-wrap">${wrapInner}</div>
           <div class="ptc-lid" id="ptc-lid">${wrapInner}</div>
-          <div class="ptc-rip"><span class="ptc-riptab">HOLD TO TEAR</span></div>
+          <div class="ptc-rip"><span class="ptc-riptab">CLICK TO OPEN</span></div>
           <div class="ptc-holdwrap"><div class="ptc-holdbar" id="ptc-holdbar"></div></div>
         </div>
         <div class="ptc-cards" id="ptc-cards"></div>
@@ -31990,13 +31990,20 @@ function _packTearCinematic(opts) {
     // timed hold can), and ALSO support press-&-hold for the satisfying tear.
     // Mouse/touch events (not pointer) + the art is pointer-events:none /
     // draggable=false so a native image-drag can't swallow the press.
-    let _ptcDownAt = 0;
-    pack.addEventListener('mousedown', (e) => { if (e.button !== 0) return; e.preventDefault(); _ptcDownAt = (typeof performance !== 'undefined' ? performance.now() : 0); startHold(); });
-    pack.addEventListener('touchstart', (e) => { e.preventDefault(); startHold(); }, { passive: false });
-    pack.addEventListener('click', (e) => { e.preventDefault(); if (phase === 'sealed') completeTear(); });
+    pack.addEventListener('mousedown', (e) => { if (e.button !== 0) return; e.preventDefault(); startHold(); });
+    pack.addEventListener('touchstart', () => { startHold(); }, { passive: true });
     window.addEventListener('mouseup', endHold);
-    window.addEventListener('touchend', (e) => { endHold(); if (phase === 'sealed') { try { e.preventDefault(); } catch (er) {} completeTear(); } });
+    window.addEventListener('touchend', endHold);
     window.addEventListener('touchcancel', endHold);
+    // PRIMARY opener — a click ANYWHERE in the overlay (except the close X and the
+    // end-screen buttons) tears the sealed pack / advances the reveal. This is
+    // robust against the floating 3D pack's hit-testing, which was eating the
+    // direct on-pack click (the pack moved between mousedown and mouseup).
+    ov.addEventListener('click', (e) => {
+      if (e.target && e.target.closest && (e.target.closest('#ptc-x') || e.target.closest('#ptc-collect') || e.target.closest('#ptc-another'))) return;
+      if (phase === 'sealed') completeTear();
+      else if (phase === 'reveal') step();
+    });
 
     function completeTear() {
       if (phase !== 'sealed') return; phase = 'cards';
@@ -32012,7 +32019,7 @@ function _packTearCinematic(opts) {
       phase = 'reveal'; idx = 0; revealed = drawn.map(() => false);
       pack.style.display = 'none';
       cardsWrap.innerHTML = drawn.map((e, i) => `<div class="ptc-card" data-i="${i}"><div class="ptc-face ptc-back"><div class="ptc-bk-emblem">🜲</div></div>${_ptcCardFrontHtml(e)}</div>`).join('');
-      tap.style.display = 'block'; tap.onclick = step;
+      tap.style.display = 'block';   // visual click-catcher; clicks handled by the overlay listener
       layout(true);
       hint.textContent = `Tap to reveal  ·  1 / ${drawn.length}`;
     }

@@ -23,9 +23,13 @@ create table if not exists public.shop_objects (
   scale real not null default 1,
   interact_r real not null default 3,       -- stations: distance the Enter prompt appears
   block_r real not null default 1.6,        -- no-walk collision radius
+  anim jsonb,                               -- animation: { clip, timeScale, loop, route:{points,speed,loop,faceTravel} }
   sort int not null default 0,
   updated_at timestamptz not null default now()
 );
+
+-- Idempotent guard: if the table already existed without the animation column.
+alter table public.shop_objects add column if not exists anim jsonb;
 
 create index if not exists shop_objects_shop_idx on public.shop_objects (shop_id, sort);
 

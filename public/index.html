@@ -106028,13 +106028,16 @@ function _csBuildConfig() {
   if (!rows || !rows.length) return def;
   const byKind = k => rows.filter(r => r && r.kind === k).sort((a, b) => (a.sort | 0) - (b.sort | 0));
   const num = (v, d) => { const n = parseFloat(v); return isFinite(n) ? n : d; };
+  // Animation block (clip/timeScale/loop/route) lives in the jsonb `anim` column.
+  const animOf = r => { let a = r && r.anim; if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { a = null; } } return (a && typeof a === 'object') ? a : {}; };
+  const withAnim = (obj, r) => { const a = animOf(r); if (a.clip != null) obj.clip = a.clip; if (a.timeScale != null) obj.timeScale = a.timeScale; if (a.loop != null) obj.loop = a.loop; if (a.route) obj.route = a.route; return obj; };
   const vd = {}; CS_STATIONS.forEach(s => { vd[s.view] = s; });
   const roomRow = byKind('room')[0], npcRow = byKind('npc')[0];
   const stRows = byKind('station'), propRows = byKind('prop');
   return {
     room: roomRow ? (roomRow.model_url || '') : def.room,
     npc: npcRow
-      ? { url: npcRow.model_url || '', x: num(npcRow.x, 0), y: num(npcRow.y, 0), z: num(npcRow.z, -7.8), ry: num(npcRow.rotation_y, 0), scale: num(npcRow.scale, 1), label: npcRow.label || 'THE VENDOR' }
+      ? withAnim({ url: npcRow.model_url || '', x: num(npcRow.x, 0), y: num(npcRow.y, 0), z: num(npcRow.z, -7.8), ry: num(npcRow.rotation_y, 0), scale: num(npcRow.scale, 1), label: npcRow.label || 'THE VENDOR' }, npcRow)
       : def.npc,
     // Stations MERGE by view: a DB row overrides the matching default station
     // (so admins can reposition "My Shop" without losing Binder/Browse/etc.),
@@ -106047,7 +106050,7 @@ function _csBuildConfig() {
         const d = vd[r.view] || {};
         const base = map.get(r.view) || {};
         const key = r.view || ('id:' + (r.id || base.label || ''));
-        map.set(key, {
+        map.set(key, withAnim({
           view: r.view,
           label: r.label || base.label || d.label || String(r.view || '').toUpperCase(),
           model: r.model_url || base.model || d.model || '',
@@ -106056,11 +106059,11 @@ function _csBuildConfig() {
           x: num(r.x, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: num(r.scale, 1),
           blockR: num(r.block_r, base.blockR != null ? base.blockR : 1.6),
           interactR: num(r.interact_r, base.interactR != null ? base.interactR : 3.0),
-        });
+        }, r));
       });
       return Array.from(map.values());
     })(),
-    props: propRows.map(r => ({ url: r.model_url || '', x: num(r.x, 0), y: num(r.y, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: num(r.scale, 1) })),
+    props: propRows.map(r => withAnim({ url: r.model_url || '', x: num(r.x, 0), y: num(r.y, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: num(r.scale, 1) }, r)),
   };
 }
 async function _csShopFetchObjects() {
@@ -106155,7 +106158,44 @@ function _csMount3D(mount) {
     lamp(0, -2, 0xffb066, 1.1); lamp(-5, 3, 0xffd28a, 0.7); lamp(5, 3, 0x88c4ff, 0.6);
     // 🏬 GLTF model loader (optional) — each piece falls back to procedural geometry.
     const loader = (T.GLTFLoader) ? new T.GLTFLoader() : null;
-    const _csTryModel = (url, onLoad) => { if (!loader || !url) return; try { loader.load(url, (gltf) => { try { onLoad(gltf.scene || gltf.scenes[0]); } catch (e) {} }, undefined, () => {}); } catch (e) {} };
+    const _csTryModel = (url, onLoad) => { if (!loader || !url) return; try { loader.load(url, (gltf) => { try { onLoad(gltf.scene || gltf.scenes[0], gltf); } catch (e) {} }, undefined, () => {}); } catch (e) {} };
+    // 🎞️ Animation registries — baked .glb clips (mixers) + waypoint walk routes (movers).
+    const mixers = [], movers = [];
+    // Play a model's baked clips and/or register a patrol route. node = the model
+    // (mixer target); routeNode = the world-positioned group the route drives.
+    function _csAnimate(node, c, gltf, routeNode) {
+      try {
+        c = c || {};
+        if (gltf && gltf.animations && gltf.animations.length) {
+          const mixer = new T.AnimationMixer(node);
+          let clips = gltf.animations;
+          if (c.clip != null && c.clip !== '') {
+            const found = (typeof c.clip === 'number') ? clips[c.clip] : clips.find(cl => cl.name === c.clip);
+            clips = found ? [found] : [clips[0]];
+          }
+          clips.forEach(cl => { const a = mixer.clipAction(cl); a.setLoop(c.loop === false ? T.LoopOnce : T.LoopRepeat); a.clampWhenFinished = true; a.timeScale = c.timeScale || 1; a.play(); });
+          mixers.push(mixer);
+        }
+        if (c.route && Array.isArray(c.route.points) && c.route.points.length > 1) {
+          movers.push({ node: routeNode || node, pts: c.route.points.map(p => new T.Vector3(p[0], c.y || 0, p[1])), speed: c.route.speed || 1, loop: c.route.loop !== false, face: c.route.faceTravel !== false, i: 0, t: 0 });
+        }
+      } catch (e) {}
+    }
+    // Advance a model one frame along its waypoint loop, facing the way it travels.
+    function _csStepRoute(mv, dt) {
+      const A = mv.pts[mv.i], B = mv.pts[(mv.i + 1) % mv.pts.length];
+      const len = B.distanceTo(A) || 1;
+      mv.t += (mv.speed * dt) / len;
+      while (mv.t >= 1) {
+        mv.t -= 1; mv.i += 1;
+        if (!mv.loop && mv.i >= mv.pts.length - 1) { mv.i = mv.pts.length - 1; mv.t = 0; break; }
+        if (mv.loop) mv.i %= mv.pts.length;
+      }
+      const a = mv.pts[mv.i], b = mv.pts[(mv.i + 1) % mv.pts.length];
+      const pos = a.clone().lerp(b, Math.min(1, mv.t));
+      mv.node.position.x = pos.x; mv.node.position.z = pos.z;
+      if (mv.face) { const d = b.clone().sub(a); if (d.lengthSq() > 1e-4) mv.node.rotation.y = Math.atan2(d.x, d.z); }
+    }
     const R = { w: 16, d: 16, h: 4.2 };
     const roomMeshes = [];
     const floor = new T.Mesh(new T.PlaneGeometry(R.w, R.d), new T.MeshStandardMaterial({ color: 0x171410, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor); roomMeshes.push(floor);
@@ -106164,7 +106204,7 @@ function _csMount3D(mount) {
     const wall = (w, x, y, z, ry) => { const m = new T.Mesh(new T.PlaneGeometry(w, R.h), wm); m.position.set(x, y, z); m.rotation.y = ry; scene.add(m); roomMeshes.push(m); };
     wall(R.w, 0, R.h / 2, -R.d / 2, 0); wall(R.w, 0, R.h / 2, R.d / 2, Math.PI); wall(R.d, -R.w / 2, R.h / 2, 0, Math.PI / 2); wall(R.d, R.w / 2, R.h / 2, 0, -Math.PI / 2);
     // Real room model → hide the procedural shell.
-    _csTryModel(cfg.room, (m) => { roomMeshes.forEach(x => { x.visible = false; }); scene.add(m); });
+    _csTryModel(cfg.room, (m, gltf) => { roomMeshes.forEach(x => { x.visible = false; }); scene.add(m); _csAnimate(m, {}, gltf); });
     const box = (w, h, d, color, em, ei) => new T.Mesh(new T.BoxGeometry(w, h, d), new T.MeshStandardMaterial({ color: color, emissive: em || 0, emissiveIntensity: em ? (ei || 0.7) : 0, roughness: 0.85 }));
     const hex = n => '#' + n.toString(16).padStart(6, '0');
     const label = (text, hexc) => { const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128; const x = cv.getContext('2d'); x.fillStyle = 'rgba(10,10,15,0.82)'; x.fillRect(0, 30, 512, 68); x.fillStyle = hexc; x.fillRect(0, 30, 8, 68); x.font = 'bold 46px sans-serif'; x.fillStyle = '#f4f4f5'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, 262, 64); const t = new T.CanvasTexture(cv); t.minFilter = T.LinearFilter; const sp = new T.Sprite(new T.SpriteMaterial({ map: t, transparent: true, depthWrite: false })); sp.scale.set(2.6, 0.65, 1); return sp; };
@@ -106180,16 +106220,17 @@ function _csMount3D(mount) {
       const glow = new T.PointLight(c, 0.5, 4); glow.position.set(0, 1.4, 0); g.add(glow);
       scene.add(g); stations.push({ view: d.view, label: d.label, gx: d.x, gz: d.z, r: (d.blockR != null ? d.blockR : d.r), ir: (d.interactR != null ? d.interactR : 3.0) });
       // Upgrade to a real .glb when present (label + glow stay; only the geometry swaps).
-      _csTryModel(d.model, (m) => { try { g.remove(geo); m.rotation.y = d.ry || 0; if (d.scale) m.scale.setScalar(d.scale); g.add(m); } catch (e) {} });
+      _csTryModel(d.model, (m, gltf) => { try { g.remove(geo); m.rotation.y = d.ry || 0; if (d.scale) m.scale.setScalar(d.scale); g.add(m); _csAnimate(m, d, gltf, g); } catch (e) {} });
     }
     const npc = new T.Group();
     const npcGeo = new T.Group();
-    { const cloak = box(0.74, 1.25, 0.5, 0x1a1712, 0xd4af37, 0.06); cloak.position.y = 1.0; npcGeo.add(cloak); const head = new T.Mesh(new T.SphereGeometry(0.25, 16, 16), new T.MeshStandardMaterial({ color: 0x2a2520, roughness: 1 })); head.position.y = 1.86; npcGeo.add(head); const visor = box(0.3, 0.06, 0.06, 0x000000, 0xffcf66, 1.3); visor.position.set(0, 1.85, 0.23); npcGeo.add(visor); npc.add(npcGeo); const _nm = cfg.npc || {}; const lab = label(_nm.label || 'THE VENDOR', '#d4af37'); lab.scale.set(2.0, 0.5, 1); lab.position.set(0, 2.55, 0); npc.add(lab); npc.position.set(_nm.x != null ? _nm.x : 0, _nm.y || 0, _nm.z != null ? _nm.z : -7.8); npc.rotation.y = _nm.ry || 0; scene.add(npc); _csTryModel(_nm.url, (m) => { try { npc.remove(npcGeo); if (_nm.scale) m.scale.setScalar(_nm.scale); npc.add(m); } catch (e) {} }); }
+    { const cloak = box(0.74, 1.25, 0.5, 0x1a1712, 0xd4af37, 0.06); cloak.position.y = 1.0; npcGeo.add(cloak); const head = new T.Mesh(new T.SphereGeometry(0.25, 16, 16), new T.MeshStandardMaterial({ color: 0x2a2520, roughness: 1 })); head.position.y = 1.86; npcGeo.add(head); const visor = box(0.3, 0.06, 0.06, 0x000000, 0xffcf66, 1.3); visor.position.set(0, 1.85, 0.23); npcGeo.add(visor); npc.add(npcGeo); const _nm = cfg.npc || {}; const lab = label(_nm.label || 'THE VENDOR', '#d4af37'); lab.scale.set(2.0, 0.5, 1); lab.position.set(0, 2.55, 0); npc.add(lab); npc.position.set(_nm.x != null ? _nm.x : 0, _nm.y || 0, _nm.z != null ? _nm.z : -7.8); npc.rotation.y = _nm.ry || 0; scene.add(npc); _csTryModel(_nm.url, (m, gltf) => { try { npc.remove(npcGeo); if (_nm.scale) m.scale.setScalar(_nm.scale); npc.add(m); _csAnimate(m, _nm, gltf, npc); } catch (e) {} }); }
+    const npcHasRoute = !!(cfg.npc && cfg.npc.route && Array.isArray(cfg.npc.route.points) && cfg.npc.route.points.length > 1);
     // Decorative props — pure .glb models, no collision/interaction (room dressing).
     for (const p of (cfg.props || [])) {
       if (!p || !p.url) continue;
       const pg = new T.Group(); pg.position.set(p.x || 0, p.y || 0, p.z || 0); pg.rotation.y = p.ry || 0; scene.add(pg);
-      _csTryModel(p.url, (m) => { try { if (p.scale) m.scale.setScalar(p.scale); pg.add(m); } catch (e) {} });
+      _csTryModel(p.url, (m, gltf) => { try { if (p.scale) m.scale.setScalar(p.scale); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
     }
     const St = { yaw: 0, pitch: 0, cyaw: undefined, cpitch: 0, keys: new Set(), move: { f: 0, b: 0, l: 0, r: 0 }, drag: false, lx: 0, ly: 0 };
     const clock = new T.Clock(); let raf = 0, nearView = null;
@@ -106197,6 +106238,8 @@ function _csMount3D(mount) {
     function tick() {
       raf = requestAnimationFrame(tick);
       const dt = Math.min(0.05, clock.getDelta());
+      for (let i = 0; i < mixers.length; i++) mixers[i].update(dt);   // baked .glb clips
+      for (let i = 0; i < movers.length; i++) _csStepRoute(movers[i], dt); // walk routes
       if (St.cyaw === undefined) { St.cyaw = St.yaw; St.cpitch = St.pitch; }
       const k = 1 - Math.exp(-dt * 14); St.cyaw += (St.yaw - St.cyaw) * k; St.cpitch += (St.pitch - St.cpitch) * k;
       camera.rotation.y = St.cyaw; camera.rotation.x = St.cpitch;
@@ -106214,7 +106257,7 @@ function _csMount3D(mount) {
       let near = null, best = Infinity; for (const st of stations) { const dx = camera.position.x - st.gx, dz = camera.position.z - st.gz; const d2 = Math.hypot(dx, dz); const thr = (st.ir != null ? st.ir : 3.1); if (d2 < thr && d2 < best) { best = d2; near = st; } }
       const nv = near ? near.view : null;
       if (nv !== nearView) { nearView = nv; if (promptEl) { if (near) { promptEl.textContent = '⏎ Enter ' + near.label; promptEl.style.display = 'block'; } else { promptEl.style.display = 'none'; } } }
-      if (npc) { const tt = clock.elapsedTime; npc.position.y = Math.sin(tt * 1.6) * 0.04; npc.rotation.y = Math.atan2(camera.position.x - npc.position.x, camera.position.z - npc.position.z); }
+      if (npc && !npcHasRoute) { const tt = clock.elapsedTime; npc.position.y = Math.sin(tt * 1.6) * 0.04; npc.rotation.y = Math.atan2(camera.position.x - npc.position.x, camera.position.z - npc.position.z); }
       renderer.render(scene, camera);
     }
     tick();
@@ -106236,6 +106279,7 @@ function _csMount3D(mount) {
       try { cancelAnimationFrame(raf); } catch (e) {}
       window.removeEventListener('mousemove', lookMove); window.removeEventListener('mouseup', lookEnd); window.removeEventListener('touchmove', lookMove); window.removeEventListener('touchend', lookEnd);
       window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); window.removeEventListener('resize', onResize);
+      try { mixers.forEach(m => { try { m.stopAllAction(); } catch (e) {} }); } catch (e) {}
       try { renderer.dispose(); } catch (e) {} try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {}
     };
   } catch (e) { return null; }
@@ -106287,6 +106331,8 @@ function _ensureCsEditStyle() {
   .cse-row input,.cse-row select{background:#0c0a07;border:1px solid #3a2f1c;border-radius:6px;color:#ece3cf;padding:4px 6px;font-size:12px;min-width:0}
   .cse-row input[type=number]{width:100%}
   .cse-upload{display:inline-flex;align-items:center;gap:4px;background:#241d10;border:1px solid #3a2f1c;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;white-space:nowrap}
+  .cse-anim{width:100%;margin-top:6px;background:#0c0a07;border:1px solid #34291a;border-radius:6px;color:#cde3c9;padding:5px 7px;font-size:11px;font-family:ui-monospace,Menlo,Consolas,monospace;resize:vertical;line-height:1.45}
+  .cse-anim::placeholder{color:#5f5740}
   .cse-add{display:flex;gap:8px;justify-content:space-between;padding:11px 14px;border-top:1px solid #2a2316}
   .cse-row .btn-mini{padding:4px 8px;font-size:11px}
   `;
@@ -106313,6 +106359,7 @@ function _csEditRowHtml(r, i) {
       <label class="cse-upload">⬆ .glb<input type="file" accept=".glb,.gltf,model/gltf-binary" data-cse="upload" style="display:none"></label>
       <button class="btn-mini" data-cse="save">💾 Save</button>
     </div>
+    <textarea data-f="anim" class="cse-anim" rows="2" placeholder='Animation JSON (optional) — e.g. {"clip":"Walk","timeScale":1,"loop":true,"route":{"points":[[-3,-5],[3,-5],[3,-2],[-3,-2]],"speed":1.2,"faceTravel":true}}'>${r.anim ? escapeHtml(JSON.stringify(r.anim)) : ''}</textarea>
   </div>`;
 }
 function _csShopEditListHtml() {
@@ -106333,7 +106380,7 @@ function _csShopEditOpen() {
           <div class="cse-title">🛠 Shop Editor <span class="cse-sub">data-driven · shop "${escapeHtml(CS_SHOP_ID)}"</span></div>
           <button class="btn-mini" data-cse="close">✕</button>
         </div>
-        <div class="cse-help">Objects override the built-in shop. Kinds: <b>station</b> (interactive — set a <i>view</i>: myshop / binder / open / browse / vendor), <b>prop</b> (decor), <b>npc</b> (vendor), <b>room</b> (shell). Blank model URL = default geometry. Upload a .glb or paste a public URL, then <b>Save</b> the row and <b>Apply &amp; Reload</b>.</div>
+        <div class="cse-help">Objects override the built-in shop. Kinds: <b>station</b> (interactive — set a <i>view</i>: myshop / binder / open / browse / vendor), <b>prop</b> (decor), <b>npc</b> (vendor), <b>room</b> (shell). Blank model URL = default geometry. Upload a .glb or paste a public URL, then <b>Save</b> the row and <b>Apply &amp; Reload</b>. <b>Animation</b>: baked .glb clips play automatically; the <i>anim</i> box can set <code>clip</code>/<code>timeScale</code>/<code>loop</code> and a walking <code>route</code> (waypoints) for a patrolling NPC.</div>
         <div class="cse-list">${_csShopEditListHtml()}</div>
         <div class="cse-add">
           <button class="btn-secondary btn-mini" data-cse="add">➕ Add object</button>
@@ -106363,6 +106410,11 @@ function _csReadEditRow(rowEl) {
     interact_r: numf('interact_r', 3), block_r: numf('block_r', 1.6),
     sort: Math.round(numf('sort', 0)),
   };
+  const animRaw = g('anim');
+  if (animRaw && animRaw.trim()) {
+    try { row.anim = JSON.parse(animRaw); }
+    catch (e) { throw new Error('Animation JSON is invalid — fix the syntax (or clear the field).'); }
+  } else { row.anim = null; }
   const id = rowEl.getAttribute('data-id'); if (id) row.id = id;
   return row;
 }

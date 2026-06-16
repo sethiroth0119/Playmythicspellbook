@@ -146610,7 +146610,7 @@ async function tw_cloudFetchCampsForNode(nodeId) {
     if (error) return null;
     App._twNodeCamps = App._twNodeCamps || {};
     App._twNodeCamps[nodeId] = { at: Date.now(), rows: data || [] };
-    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { try { render(); } catch (e) {} }
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { _twBgRender(); }
     return data;
   } catch (e) { return null; }
 }
@@ -147315,7 +147315,7 @@ async function tw_cloudContributeNode(nodeId, buildings, roads, civ, totals) {
       // Server has now recorded any newly-crossed milestone on the row → claim my reward.
       try { const _n = (_twForge().nodes || []).find(x => x && x.id === nodeId); if (_n && typeof _twNodeClaimSharedMilestones === 'function') _twNodeClaimSharedMilestones(_n); } catch (e) {}
     }
-    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { try { render(); } catch (e) {} }
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { _twBgRender(); }
     return data;
   } catch (e) { /* RPC missing → no-op, local rebuild still works */ return null; }
 }
@@ -147325,7 +147325,7 @@ async function tw_cloudFetchNodeRecon(nodeId) {
     const { data, error } = await Cloud.client.from('tw_node_recon').select('*').eq('node_id', nodeId).limit(1);
     if (error) return null;
     if (data && data[0]) _twStashCloudReconRow(data[0]);
-    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { try { render(); } catch (e) {} }
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { _twBgRender(); }
     return (data && data[0]) || null;
   } catch (e) { return null; }
 }
@@ -147337,7 +147337,7 @@ async function tw_cloudFetchAllNodeRecon() {
     App._twNodeReconCloud = App._twNodeReconCloud || {};
     (data || []).forEach(row => { if (row && row.node_id) App._twNodeReconCloud[row.node_id] = { at: Date.now(), row }; });
     App._twNodeReconAllAt = Date.now();
-    if (App.screen === 'territoryWars') { try { render(); } catch (e) {} }
+    if (App.screen === 'territoryWars') { _twBgRender(); }
     return data;
   } catch (e) { return null; }
 }
@@ -147350,7 +147350,7 @@ async function tw_cloudFetchNodeContrib(nodeId) {
     if (error) return null;
     App._twNodeContrib = App._twNodeContrib || {};
     App._twNodeContrib[nodeId] = { at: Date.now(), rows: data || [] };
-    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { try { render(); } catch (e) {} }
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { _twBgRender(); }
     return data;
   } catch (e) { return null; }
 }
@@ -147418,7 +147418,7 @@ async function tw_cloudFetchNodeOwners() {
     const byNode = {};
     (data || []).forEach(r => { if (r.node_id) byNode[r.node_id] = { user_id: r.user_id, display_name: r.display_name }; });
     App._twNodeOwners = { at: Date.now(), byNode };
-    if (App.screen === 'territoryWars') { try { render(); } catch (e) {} }
+    if (App.screen === 'territoryWars') { _twBgRender(); }
     return data;
   } catch (e) { return null; }
 }
@@ -147715,7 +147715,7 @@ async function tw_cloudFetchNodeAd(nodeId) {
     if (error) return null;
     App._twNodeAd = App._twNodeAd || {};
     App._twNodeAd[nodeId] = { at: Date.now(), ad: (data && data[0]) || null };
-    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { try { render(); } catch (e) {} }
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId) { _twBgRender(); }
     return data;
   } catch (e) { return null; }
 }
@@ -147728,7 +147728,7 @@ async function tw_cloudFetchNodeAdsForManage(nodeId) {
     if (error) return null;
     App._twNodeAdsMng = App._twNodeAdsMng || {};
     App._twNodeAdsMng[nodeId] = { at: Date.now(), rows: data || [] };
-    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId && App._twNodeTab === 'sponsor') { try { render(); } catch (e) {} }
+    if (App.screen === 'territoryWars' && App._twSelectedNode === nodeId && App._twNodeTab === 'sponsor') { _twBgRender(); }
     return data;
   } catch (e) { return null; }
 }
@@ -147741,7 +147741,7 @@ async function tw_cloudFetchAdSeller(corpId) {
       .select('payouts_enabled, details_submitted, stripe_account_id').eq('corp_id', corpId).limit(1);
     if (error) return null;
     App._esnSeller = { at: Date.now(), corp: corpId, row: (data && data[0]) || null };
-    if (App.screen === 'territoryWars' && App._twNodeTab === 'sponsor') { try { render(); } catch (e) {} }
+    if (App.screen === 'territoryWars' && App._twNodeTab === 'sponsor') { _twBgRender(); }
     return data;
   } catch (e) { return null; }
 }
@@ -147756,7 +147756,7 @@ async function tw_cloudFetchMyAdEarnings(corpId) {
     let cents = 0, n = 0;
     (data || []).forEach(o => { if (o.status === 'paid') { cents += (o.owner_share_cents | 0); n++; } });
     App._esnEarnings = { at: Date.now(), corp: corpId, cents, count: n };
-    if (App.screen === 'territoryWars' && App._twNodeTab === 'sponsor') { try { render(); } catch (e) {} }
+    if (App.screen === 'territoryWars' && App._twNodeTab === 'sponsor') { _twBgRender(); }
     return data;
   } catch (e) { return null; }
 }
@@ -147828,18 +147828,19 @@ function _esnBillboardHtml(node) {
 function _esnSponsorHtml(node) {
   const nodeId = node.id;
   const canManage = _esnCanManageNode(nodeId);
-  // refresh the active ad (cached ~45s)
+  // refresh the active ad (cached — long TTL so a held-open drawer doesn't keep
+  // re-rendering the map and flickering the convoy trucks; user actions bust it).
   try {
     App._twNodeAd = App._twNodeAd || {};
     const c = App._twNodeAd[nodeId];
-    if ((!c || (Date.now() - c.at) > 45000) && App._esnAdFetching !== nodeId) {
+    if ((!c || (Date.now() - c.at) > 300000) && App._esnAdFetching !== nodeId) {
       App._esnAdFetching = nodeId;
       Promise.resolve(tw_cloudFetchNodeAd(nodeId)).catch(() => {}).then(() => { if (App._esnAdFetching === nodeId) App._esnAdFetching = null; });
     }
     if (canManage) {
       App._twNodeAdsMng = App._twNodeAdsMng || {};
       const m = App._twNodeAdsMng[nodeId];
-      if ((!m || (Date.now() - m.at) > 45000) && App._esnMngFetching !== nodeId) {
+      if ((!m || (Date.now() - m.at) > 300000) && App._esnMngFetching !== nodeId) {
         App._esnMngFetching = nodeId;
         Promise.resolve(tw_cloudFetchNodeAdsForManage(nodeId)).catch(() => {}).then(() => { if (App._esnMngFetching === nodeId) App._esnMngFetching = null; });
       }
@@ -147865,11 +147866,11 @@ function _esnSponsorHtml(node) {
       const myCorp = _esnMyCorpId();
       if (myCorp) {
         try {
-          if ((!App._esnSeller || App._esnSeller.corp !== myCorp || (Date.now() - App._esnSeller.at) > 60000) && App._esnSellerFetching !== myCorp && typeof tw_cloudFetchAdSeller === 'function') {
+          if ((!App._esnSeller || App._esnSeller.corp !== myCorp || (Date.now() - App._esnSeller.at) > 300000) && App._esnSellerFetching !== myCorp && typeof tw_cloudFetchAdSeller === 'function') {
             App._esnSellerFetching = myCorp;
             Promise.resolve(tw_cloudFetchAdSeller(myCorp)).catch(() => {}).then(() => { if (App._esnSellerFetching === myCorp) App._esnSellerFetching = null; });
           }
-          if ((!App._esnEarnings || App._esnEarnings.corp !== myCorp || (Date.now() - App._esnEarnings.at) > 60000) && App._esnEarnFetching !== myCorp && typeof tw_cloudFetchMyAdEarnings === 'function') {
+          if ((!App._esnEarnings || App._esnEarnings.corp !== myCorp || (Date.now() - App._esnEarnings.at) > 300000) && App._esnEarnFetching !== myCorp && typeof tw_cloudFetchMyAdEarnings === 'function') {
             App._esnEarnFetching = myCorp;
             Promise.resolve(tw_cloudFetchMyAdEarnings(myCorp)).catch(() => {}).then(() => { if (App._esnEarnFetching === myCorp) App._esnEarnFetching = null; });
           }
@@ -149306,6 +149307,22 @@ function _twBindNodeListModal() {
   });
 }
 
+// 🚚 Coalesced re-render for BACKGROUND cloud fetches on the War Map. A full
+// render() rebuilds the map's convoy-truck SVG, and SMIL <animateMotion> restarts
+// on every rebuild → a visible truck flicker. Several node-economy fetches finish
+// in a burst right after a node opens, so instead of each calling render(), they
+// call this — which debounces them into ONE render. User-initiated actions still
+// call render() directly for immediacy.
+function _twBgRender() {
+  try {
+    if (App.screen !== 'territoryWars') return;
+    if (App._twBgRenderTimer) return;
+    App._twBgRenderTimer = setTimeout(() => {
+      App._twBgRenderTimer = null;
+      try { if (App.screen === 'territoryWars') render(); } catch (e) {}
+    }, 450);
+  } catch (e) {}
+}
 // ===== WAR MAP SCREEN =====
 function renderTerritoryWars() {
   // ⚠️ _isAdm must be function-scoped — it is used both inside the
@@ -149330,17 +149347,21 @@ function renderTerritoryWars() {
   // 🏗 SHARED rebuild — pull every node's cloud reconstruction row (cached ~45s)
   // so the progress bars/milestones reflect what ALL players have rebuilt, not
   // just this client. Degrades to a no-op until the tw_node_recon table exists.
+  // ⚠ PAUSE the map-level pulls while a node drawer is open: they re-render the
+  // whole screen (rebuilding the convoy-truck SVG → flicker), and the drawer is
+  // the focus then anyway. They resume the moment the drawer closes.
   try {
-    if (typeof tw_cloudFetchAllNodeRecon === 'function' && (!App._twNodeReconAllAt || (Date.now() - App._twNodeReconAllAt) > 45000) && !App._twNodeReconFetching) {
+    if (!App._twSelectedNode && typeof tw_cloudFetchAllNodeRecon === 'function' && (!App._twNodeReconAllAt || (Date.now() - App._twNodeReconAllAt) > 45000) && !App._twNodeReconFetching) {
       App._twNodeReconFetching = true;
       Promise.resolve(tw_cloudFetchAllNodeRecon()).catch(() => {}).then(() => { App._twNodeReconFetching = false; });
     }
   } catch (e) {}
   // 🕛 SHARED 24h clock — fire the AUTHORITATIVE tick (server advances every node's
   // corruption/population by the elapsed days from the real registered-player count).
-  // Throttled ~90s; the rpc itself is a no-op until a whole day has elapsed.
+  // Throttled ~90s; the rpc itself is a no-op until a whole day has elapsed. Also
+  // paused while a drawer is open (it re-renders on completion → truck flicker).
   try {
-    if (typeof tw_cloudSyncNodeSim === 'function' && (!App._twSimSyncAt || (Date.now() - App._twSimSyncAt) > 90000) && !App._twSimSyncing) {
+    if (!App._twSelectedNode && typeof tw_cloudSyncNodeSim === 'function' && (!App._twSimSyncAt || (Date.now() - App._twSimSyncAt) > 90000) && !App._twSimSyncing) {
       App._twSimSyncing = true; App._twSimSyncAt = Date.now();
       Promise.resolve(tw_cloudSyncNodeSim(0)).catch(() => {}).then(() => { App._twSimSyncing = false; });
     }
@@ -150096,7 +150117,7 @@ function renderTerritoryWars() {
     try {
       App._twNodeCamps = App._twNodeCamps || {};
       const _cc = App._twNodeCamps[selNode.id];
-      if ((!_cc || (Date.now() - _cc.at) > 30000) && App._twNodeCampsFetching !== selNode.id && typeof tw_cloudFetchCampsForNode === 'function') {
+      if ((!_cc || (Date.now() - _cc.at) > 300000) && App._twNodeCampsFetching !== selNode.id && typeof tw_cloudFetchCampsForNode === 'function') {
         App._twNodeCampsFetching = selNode.id;
         Promise.resolve(tw_cloudFetchCampsForNode(selNode.id)).catch(() => {}).then(() => { if (App._twNodeCampsFetching === selNode.id) App._twNodeCampsFetching = null; });
       }
@@ -150105,7 +150126,7 @@ function renderTerritoryWars() {
     // ~45s bulk pull) so an open node shows another player's contributions fast.
     try {
       const _crCache = App._twNodeReconCloud && App._twNodeReconCloud[selNode.id];
-      if ((!_crCache || (Date.now() - _crCache.at) > 20000) && App._twNodeReconFetchingOne !== selNode.id && typeof tw_cloudFetchNodeRecon === 'function') {
+      if ((!_crCache || (Date.now() - _crCache.at) > 300000) && App._twNodeReconFetchingOne !== selNode.id && typeof tw_cloudFetchNodeRecon === 'function') {
         App._twNodeReconFetchingOne = selNode.id;
         Promise.resolve(tw_cloudFetchNodeRecon(selNode.id)).catch(() => {}).then(() => { if (App._twNodeReconFetchingOne === selNode.id) App._twNodeReconFetchingOne = null; });
       }
@@ -150123,7 +150144,7 @@ function renderTerritoryWars() {
     try {
       App._twNodeContrib = App._twNodeContrib || {};
       const _ct = App._twNodeContrib[selNode.id];
-      if ((!_ct || (Date.now() - _ct.at) > 30000) && App._twNodeContribFetching !== selNode.id && typeof tw_cloudFetchNodeContrib === 'function') {
+      if ((!_ct || (Date.now() - _ct.at) > 300000) && App._twNodeContribFetching !== selNode.id && typeof tw_cloudFetchNodeContrib === 'function') {
         App._twNodeContribFetching = selNode.id;
         Promise.resolve(tw_cloudFetchNodeContrib(selNode.id)).catch(() => {}).then(() => { if (App._twNodeContribFetching === selNode.id) App._twNodeContribFetching = null; });
       }
@@ -150182,7 +150203,7 @@ function renderTerritoryWars() {
 
     // 👑 Keep the node→player ownership map fresh (drives ad-publish permission).
     try {
-      if ((!App._twNodeOwners || (Date.now() - App._twNodeOwners.at) > 60000) && !App._twNodeOwnersFetching && typeof tw_cloudFetchNodeOwners === 'function') {
+      if ((!App._twNodeOwners || (Date.now() - App._twNodeOwners.at) > 300000) && !App._twNodeOwnersFetching && typeof tw_cloudFetchNodeOwners === 'function') {
         App._twNodeOwnersFetching = true;
         Promise.resolve(tw_cloudFetchNodeOwners()).catch(() => {}).then(() => { App._twNodeOwnersFetching = false; });
       }

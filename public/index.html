@@ -37598,11 +37598,18 @@ async function cloudPublishCatalog(opts) {
       // 🛠 GLOBAL MAINTENANCE LOCK — when enabled, every non-admin player is held on
       // a "down for maintenance" screen. Tiny flag, rides the catalog so all clients
       // see it on their next fetch.
-      __maintenance__: (Forge.maintenance && typeof Forge.maintenance === 'object') ? {
-        enabled: !!Forge.maintenance.enabled,
-        message: (typeof Forge.maintenance.message === 'string') ? Forge.maintenance.message : '',
-        title:   (typeof Forge.maintenance.title   === 'string') ? Forge.maintenance.title   : '',
-      } : null,
+      // 🔒 Source from the DURABLE admin choice (localStorage) so a constant
+      // background catalog re-publish can never flip maintenance off from a stale
+      // Forge copy. Falls back to Forge.maintenance when nothing's been toggled yet.
+      __maintenance__: (function () {
+        var dur = (typeof _maintGetDurable === 'function') ? _maintGetDurable() : null;
+        var src = dur || ((Forge.maintenance && typeof Forge.maintenance === 'object') ? Forge.maintenance : null);
+        return src ? {
+          enabled: !!src.enabled,
+          message: (typeof src.message === 'string') ? src.message : '',
+          title:   (typeof src.title   === 'string') ? src.title   : '',
+        } : null;
+      })(),
       // 🗺 Territory Wars — admin's world map, ALL players must see the same
       // regions/sectors/nodes/guard decks. (Excluding worldFeed which is
       // append-only chatter; it cloud-syncs via the live realtime channel.)
@@ -69738,11 +69745,24 @@ function smoothScreenTransition(targetScreen, opts) {
 // next render() call retries cleanly. _renderImpl is the original body.
 // 🛠 MAINTENANCE MODE — global admin lock. Players read the PUBLISHED flag from the
 // catalog; the admin edits their own Forge.maintenance copy (live, before publish).
+// 🔒 Durable maintenance state — the admin's last explicit toggle is the SOURCE
+// OF TRUTH, kept in localStorage so it can NEVER be silently flipped by a stale
+// Forge/catalog reload or a background catalog re-publish (the flag rides the
+// catalog, which we auto-publish constantly). Once set, it stays until the admin
+// toggles again.
+function _maintGetDurable() {
+  try { const raw = localStorage.getItem('hg_maintenance'); if (raw) { const o = JSON.parse(raw); if (o && typeof o === 'object') return { enabled: !!o.enabled, message: (typeof o.message === 'string') ? o.message : '', title: (typeof o.title === 'string') ? o.title : '' }; } } catch (e) {}
+  return null;
+}
+function _maintSetDurable(cfg) { try { localStorage.setItem('hg_maintenance', JSON.stringify({ enabled: !!(cfg && cfg.enabled), message: (cfg && cfg.message) || '', title: (cfg && cfg.title) || '' })); } catch (e) {} }
 function _maintenanceCfg() {
   const c = (typeof Catalog === 'object' && Catalog && Catalog.maintenance && typeof Catalog.maintenance === 'object') ? Catalog.maintenance : null;
   const f = (typeof Forge === 'object' && Forge && Forge.maintenance && typeof Forge.maintenance === 'object') ? Forge.maintenance : null;
   const isAdm = (typeof isAdmin === 'function') && isAdmin();
-  const s = isAdm ? (f || c || {}) : (c || {});   // admin sees their own toggle live
+  const dur = _maintGetDurable();
+  // Admin: the DURABLE value wins (it survives Forge reloads); then live Forge, then catalog.
+  // Players: the published catalog. (The admin's publishes always carry the durable value.)
+  const s = isAdm ? (dur || f || c || {}) : (c || {});
   return {
     enabled: !!s.enabled,
     title:   (typeof s.title === 'string' && s.title.trim())     ? s.title   : 'DOWN FOR MAINTENANCE',
@@ -108417,7 +108437,7 @@ function renderSettings() {
           <span class="settings-toggle-label">${(typeof _maintenanceCfg === 'function' && _maintenanceCfg().enabled) ? '🔴 ON — players are locked out' : '🟢 OFF — players can play'}</span>
         </label>
         <div class="settings-section-desc" style="margin-top:0.3rem">Message shown to locked-out players</div>
-        <textarea id="set-maintenance-msg" class="editor-textarea" rows="2" maxlength="300" placeholder="Ethos Heights is briefly offline for updates — back shortly!">${escapeHtml((Forge.maintenance && Forge.maintenance.message) || (Catalog.maintenance && Catalog.maintenance.message) || '')}</textarea>
+        <textarea id="set-maintenance-msg" class="editor-textarea" rows="2" maxlength="300" placeholder="Ethos Heights is briefly offline for updates — back shortly!">${escapeHtml(((typeof _maintGetDurable === 'function' && _maintGetDurable()) || {}).message || (Forge.maintenance && Forge.maintenance.message) || (Catalog.maintenance && Catalog.maintenance.message) || '')}</textarea>
         <div class="small-text ink-dim" id="set-maintenance-status" style="margin-top:0.45rem">${(typeof _maintenanceCfg === 'function' && _maintenanceCfg().enabled) ? '🔴 Maintenance is LIVE — players are locked out.' : '🟢 Maintenance is OFF.'}</div>
       </div>
       ` : ''}
@@ -108762,6 +108782,9 @@ function renderSettings() {
     if (!Forge.maintenance || typeof Forge.maintenance !== 'object') Forge.maintenance = {};
     Forge.maintenance.enabled = !!(bMaint && bMaint.checked);
     if (bMaintMsg) Forge.maintenance.message = bMaintMsg.value.trim();
+    // 🔒 DURABLE source of truth — persist the admin's explicit choice so no stale
+    // Forge/catalog reload or background re-publish can ever silently flip it.
+    try { if (typeof _maintSetDurable === 'function') _maintSetDurable(Forge.maintenance); } catch (e) {}
     // Mirror into the admin's own Catalog copy so state stays consistent locally.
     try { if (!Catalog.maintenance || typeof Catalog.maintenance !== 'object') Catalog.maintenance = {}; Catalog.maintenance.enabled = Forge.maintenance.enabled; Catalog.maintenance.message = Forge.maintenance.message || ''; } catch (e) {}
     try { saveForge(); } catch (e) {}

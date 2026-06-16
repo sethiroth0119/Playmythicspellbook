@@ -31788,7 +31788,227 @@ function openOnePackFromInventory(groupId) {
   // player's collection inside openPack(), so nothing is lost if they close
   // the reveal modal mid-flow.
   removeUnopenedPack(entry.id);
-  _displayPackReveal(def, entry, drawn);
+  if (typeof _packTearCinematic === 'function') _packTearCinematic({ def: def, entry: entry, drawn: drawn });
+  else _displayPackReveal(def, entry, drawn);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 📦 TEAR-OPEN PACK CINEMATIC — a realistic foil pack you rotate, then drag
+// across the top to RIP open; the cards slide out and you flip/swipe through
+// them with rarity-scaled foil shimmer. Pure CSS-3D (no WebGL) + pointer drag.
+// Cards are already granted by openPack(); this is display only.
+// ═══════════════════════════════════════════════════════════════════════════
+function _ptcRarityOf(entry) {
+  try {
+    if (entry && entry.kind === 'item') return { id: 'item', name: 'Item', color: '#7fb0ff' };
+    const r = (entry && entry.rarity && typeof entry.rarity === 'object') ? entry.rarity
+            : ((typeof getRarity === 'function' && entry) ? getRarity(entry.card) : null);
+    return r || { id: 'common', name: 'Common', color: '#9aa0a6' };
+  } catch (e) { return { id: 'common', name: 'Common', color: '#9aa0a6' }; }
+}
+function _ptcTier(r) { return ({ common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4, mythic: 5 })[r && r.id] | 0; }
+function _ptcCardFrontHtml(entry) {
+  const r = _ptcRarityOf(entry);
+  let art, name;
+  if (entry && entry.kind === 'item') {
+    const it = entry.item || {}; const meta = (typeof _meta === 'function') ? _meta(it.id) : null;
+    name = (meta && meta.name) || it.id || 'Item';
+    art = `<span style="font-size:3.4rem">${(meta && meta.icon) || '🎁'}</span>`;
+  } else {
+    const card = (entry && entry.card) || {}; name = card.name || 'Card';
+    art = (typeof _cardFaceArt === 'function') ? _cardFaceArt(card, 'cover') : '🃏';
+  }
+  const tier = _ptcTier(r);
+  return `<div class="ptc-cardface ptc-front" style="--rar:${r.color}">
+      <div class="ptc-cf-art">${art}</div>
+      ${tier >= 2 ? '<div class="ptc-foil"></div>' : ''}
+      <div class="ptc-cf-name">${escapeHtml(name)}</div>
+      <div class="ptc-cf-rar" style="background:${r.color};color:${tier >= 3 ? '#0b0b0f' : '#fff'}">${escapeHtml((r.name || r.id || '').toUpperCase())}</div>
+    </div>`;
+}
+function _ensurePtcStyle() {
+  if (document.getElementById('ptc-style')) return;
+  const s = document.createElement('style'); s.id = 'ptc-style';
+  s.textContent = `
+  .ptc-ov{position:fixed;inset:0;z-index:6000;background:radial-gradient(circle at 50% 38%,#1a1726,#070709 70%);display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+  .ptc-stage{position:relative;width:min(94vw,420px);height:min(70vh,560px);display:flex;align-items:center;justify-content:center;perspective:1100px}
+  .ptc-pack{position:relative;width:200px;height:300px;transform-style:preserve-3d;will-change:transform;cursor:grab}
+  .ptc-wrap{position:absolute;inset:0;border-radius:12px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.7),inset 0 0 0 2px rgba(255,255,255,.08);background:linear-gradient(150deg,#3a2f5e,#181428 60%)}
+  .ptc-wrap img{width:100%;height:100%;object-fit:cover}
+  .ptc-wrap .ptc-wrap-ph{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#cdbff5}
+  .ptc-sheen{position:absolute;inset:0;background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,.28) 48%,transparent 66%);transform:translateX(-60%);animation:ptcSheen 3.2s linear infinite;pointer-events:none;mix-blend-mode:screen}
+  @keyframes ptcSheen{to{transform:translateX(60%)}}
+  .ptc-lid{position:absolute;left:0;right:0;top:0;height:26%;transform-origin:50% 100%;will-change:transform,opacity;z-index:3}
+  .ptc-lid::after{content:'';position:absolute;left:0;right:0;bottom:-7px;height:9px;background:repeating-linear-gradient(90deg,transparent 0 7px,#0a0810 7px 13px);filter:drop-shadow(0 2px 1px rgba(0,0,0,.6))}
+  .ptc-lid img,.ptc-lid .ptc-wrap-ph{width:200px;height:300px;object-fit:cover}
+  .ptc-rip{position:absolute;left:0;right:0;top:0;height:26%;z-index:4;display:flex;align-items:center;justify-content:center;cursor:ew-resize}
+  .ptc-rip .ptc-riptab{font-size:0.6rem;letter-spacing:.12em;color:#0b0b0f;background:rgba(255,224,130,.92);padding:3px 8px;border-radius:10px;font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,.5)}
+  .ptc-rip-line{position:absolute;left:6%;right:6%;bottom:0;height:2px;background:repeating-linear-gradient(90deg,#ffe082 0 6px,transparent 6px 12px);opacity:.85}
+  .ptc-cards{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+  .ptc-card{position:absolute;width:200px;height:300px;transform-style:preserve-3d;will-change:transform;transition:transform .45s cubic-bezier(.2,.7,.2,1),opacity .4s}
+  .ptc-card.ptc-top{pointer-events:auto;cursor:pointer}
+  .ptc-face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;border-radius:12px;overflow:hidden}
+  .ptc-back{background:linear-gradient(160deg,#241a3e,#0c0a16);display:flex;align-items:center;justify-content:center;box-shadow:0 18px 44px rgba(0,0,0,.6),inset 0 0 0 2px rgba(180,150,255,.18)}
+  .ptc-back .ptc-bk-emblem{font-size:2.6rem;filter:drop-shadow(0 0 10px rgba(180,150,255,.6))}
+  .ptc-cardface{position:absolute;inset:0;transform:rotateY(180deg);border-radius:12px;overflow:hidden;background:#0b0b10;box-shadow:0 18px 44px rgba(0,0,0,.6),0 0 0 2px var(--rar,#9aa0a6),0 0 22px -4px var(--rar,#9aa0a6)}
+  .ptc-cf-art{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+  .ptc-cf-art img{width:100%;height:100%;object-fit:cover}
+  .ptc-foil{position:absolute;inset:0;background:linear-gradient(115deg,transparent 36%,rgba(255,255,255,.45) 50%,transparent 64%),repeating-linear-gradient(60deg,rgba(255,0,128,.10) 0 8px,rgba(0,200,255,.10) 8px 16px);mix-blend-mode:screen;transform:translateX(-60%);animation:ptcSheen 1.8s linear infinite;pointer-events:none}
+  .ptc-cf-name{position:absolute;left:0;right:0;bottom:26px;text-align:center;font-weight:800;font-size:0.82rem;color:#fff;text-shadow:0 2px 5px #000;padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ptc-cf-rar{position:absolute;left:0;right:0;bottom:0;text-align:center;font-size:0.6rem;font-weight:800;letter-spacing:.12em;padding:4px}
+  .ptc-rare-pop{animation:ptcRarePop .6s ease-out}
+  @keyframes ptcRarePop{0%{transform:rotateY(180deg) scale(.9)}55%{transform:rotateY(180deg) scale(1.06)}100%{transform:rotateY(180deg) scale(1)}}
+  .ptc-burst{position:absolute;left:50%;top:50%;width:10px;height:10px;border-radius:99px;background:#fff;transform:translate(-50%,-50%);box-shadow:0 0 0 0 rgba(255,240,200,.9);animation:ptcBurst .6s ease-out forwards;pointer-events:none;z-index:5}
+  @keyframes ptcBurst{to{box-shadow:0 0 0 340px rgba(255,240,200,0);width:10px;height:10px;opacity:0}}
+  .ptc-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:5;animation:ptcFlash .5s ease-out}
+  @keyframes ptcFlash{0%{opacity:.0}18%{opacity:.85}100%{opacity:0}}
+  .ptc-hint{margin-top:18px;font-size:0.78rem;color:#aab3c2;text-shadow:0 1px 3px #000;text-align:center;max-width:90%;min-height:1.2em}
+  .ptc-count{position:absolute;top:14px;left:50%;transform:translateX(-50%);font-size:0.7rem;color:#9aa6b3;letter-spacing:.06em}
+  .ptc-bottom{position:absolute;bottom:22px;left:0;right:0;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;padding:0 12px}
+  .ptc-summary{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:18px;overflow:auto}
+  .ptc-sum-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;width:min(94vw,460px)}
+  .ptc-sum-card{position:relative;border-radius:8px;overflow:hidden;aspect-ratio:3/4.2;background:#0b0b10;box-shadow:0 0 0 1.5px var(--rar,#9aa0a6)}
+  .ptc-sum-card .ptc-cf-art{position:absolute;inset:0}
+  .ptc-sum-card .ptc-cf-name{bottom:0;font-size:0.56rem;background:linear-gradient(transparent,rgba(0,0,0,.85));padding:8px 3px 3px}
+  .ptc-close-x{position:absolute;top:12px;right:14px;z-index:6;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.18);color:#e4ecf3;width:34px;height:34px;border-radius:8px;font-size:1rem;cursor:pointer}
+  `;
+  document.head.appendChild(s);
+}
+function _packTearCinematic(opts) {
+  try {
+    opts = opts || {};
+    const def = opts.def || {}, entry = opts.entry || {}, drawn = (opts.drawn || []).filter(Boolean);
+    if (!drawn.length) return;
+    _ensurePtcStyle();
+    // top rarity → for the tear flash colour + summary headline
+    const best = drawn.reduce((b, e) => (_ptcTier(_ptcRarityOf(e)) > _ptcTier(_ptcRarityOf(b)) ? e : b), drawn[0]);
+    const bestR = _ptcRarityOf(best);
+    const packArt = entry.art || (typeof getPackImage === 'function' ? getPackImage(def.id) : null) || null;
+    const packPh = `<div class="ptc-wrap-ph"><div style="font-size:2.8rem">${(def.icon || entry.icon || '📦')}</div><div style="font-size:0.7rem;letter-spacing:.1em">${escapeHtml((def.name || entry.name || 'PACK').toUpperCase())}</div></div>`;
+    const wrapInner = packArt ? `<img src="${String(packArt).replace(/"/g, '&quot;')}" alt="">` : packPh;
+
+    const ov = document.createElement('div'); ov.className = 'ptc-ov';
+    ov.innerHTML = `
+      <button class="ptc-close-x" id="ptc-x" title="Skip / close">✕</button>
+      <div class="ptc-count" id="ptc-count">${escapeHtml(def.name || entry.name || 'Pack')}</div>
+      <div class="ptc-stage" id="ptc-stage">
+        <div class="ptc-pack" id="ptc-pack">
+          <div class="ptc-wrap">${wrapInner}<div class="ptc-sheen"></div></div>
+          <div class="ptc-lid" id="ptc-lid">${wrapInner}</div>
+          <div class="ptc-rip" id="ptc-rip"><span class="ptc-riptab">▸ DRAG TO TEAR ◂</span><div class="ptc-rip-line"></div></div>
+        </div>
+        <div class="ptc-cards" id="ptc-cards"></div>
+      </div>
+      <div class="ptc-hint" id="ptc-hint">Drag the pack to rotate · <b>drag across the top</b> to rip it open</div>
+      <div class="ptc-bottom" id="ptc-bottom"></div>`;
+    document.body.appendChild(ov);
+
+    const $ = id => ov.querySelector('#' + id);
+    const pack = $('ptc-pack'), lid = $('ptc-lid'), rip = $('ptc-rip'), cardsWrap = $('ptc-cards'), hint = $('ptc-hint'), bottom = $('ptc-bottom'), count = $('ptc-count');
+    let phase = 'sealed';
+    let rotX = -6, rotY = -14, tear = 0;
+    let drag = null;          // {mode:'rotate'|'tear', x, y, bRX, bRY}
+    let idx = 0;              // current reveal index
+    let topRevealed = false;
+    let cardDrag = null;
+
+    const applyPack = () => { pack.style.transform = `translateZ(0) rotateX(${rotX}deg) rotateY(${rotY}deg)`; };
+    const applyTear = () => { lid.style.transform = `rotateX(${-tear * 135}deg)`; lid.style.opacity = String(1 - tear * 0.35); rip.style.opacity = String(1 - tear); };
+    applyPack();
+
+    function close(done) {
+      try { ov.remove(); } catch (e) {}
+      window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
+      try { render(); } catch (e) {}
+    }
+    $('ptc-x').onclick = () => close(true);
+
+    function completeTear() {
+      phase = 'cards'; rip.style.display = 'none';
+      lid.style.transition = 'transform .5s ease-in, opacity .5s'; lid.style.transform = 'rotateX(-150deg) translateY(-120px)'; lid.style.opacity = '0';
+      try { playSfx && playSfx('coinFlip'); } catch (e) {}
+      const burst = document.createElement('div'); burst.className = 'ptc-burst'; $('ptc-stage').appendChild(burst); setTimeout(() => burst.remove(), 650);
+      if (_ptcTier(bestR) >= 3) { const fl = document.createElement('div'); fl.className = 'ptc-flash'; fl.style.background = bestR.color; $('ptc-stage').appendChild(fl); setTimeout(() => fl.remove(), 520); }
+      setTimeout(() => { pack.style.transition = 'transform .5s, opacity .5s'; pack.style.transform += ' translateY(40px)'; pack.style.opacity = '0'; }, 220);
+      setTimeout(buildStack, 460);
+    }
+    function snapTear() { tear = 0; lid.style.transition = 'transform .3s, opacity .3s'; applyTear(); setTimeout(() => { lid.style.transition = ''; }, 320); }
+
+    function buildStack() {
+      phase = 'reveal'; idx = 0; topRevealed = false;
+      cardsWrap.innerHTML = drawn.map((e, i) => `<div class="ptc-card" data-i="${i}" style="transform:translateY(${(drawn.length - 1 - i) * -3}px) scale(${1 - (drawn.length - 1 - i) * 0.012});z-index:${100 - i}">
+          <div class="ptc-face ptc-back"><div class="ptc-bk-emblem">🜲</div></div>
+          ${_ptcCardFrontHtml(e)}
+        </div>`).join('');
+      hint.textContent = `Tap the card to reveal · swipe it away for the next  (1 / ${drawn.length})`;
+      bindTop();
+    }
+    function topEl() { return cardsWrap.querySelector(`.ptc-card[data-i="${idx}"]`); }
+    function bindTop() {
+      cardsWrap.querySelectorAll('.ptc-card').forEach(c => c.classList.remove('ptc-top'));
+      const t = topEl(); if (!t) return finishAll();
+      t.classList.add('ptc-top');
+      t.onpointerdown = (e) => { cardDrag = { x: e.clientX, moved: 0 }; };
+    }
+    function flipTop() {
+      const t = topEl(); if (!t) return; topRevealed = true;
+      t.style.transform = (t.style.transform.replace(/rotateY\([^)]*\)/, '')) + ' rotateY(180deg)';
+      const e = drawn[idx]; const r = _ptcRarityOf(e);
+      if (_ptcTier(r) >= 2) { const cf = t.querySelector('.ptc-cardface'); if (cf) cf.classList.add('ptc-rare-pop'); }
+      hint.textContent = `${(r.name || '').toUpperCase()} · swipe away or tap for the next  (${idx + 1} / ${drawn.length})`;
+    }
+    function nextTop() {
+      const t = topEl(); if (t) { t.style.transition = 'transform .4s ease-in, opacity .4s'; t.style.transform += ' translateX(420px) rotateZ(18deg)'; t.style.opacity = '0'; setTimeout(() => { try { t.remove(); } catch (er) {} }, 380); }
+      idx++; topRevealed = false;
+      if (idx >= drawn.length) { setTimeout(finishAll, 260); return; }
+      hint.textContent = `Tap the card to reveal  (${idx + 1} / ${drawn.length})`;
+      bindTop();
+    }
+    function finishAll() {
+      phase = 'done';
+      const sum = drawn.map(e => `<div class="ptc-sum-card" style="--rar:${_ptcRarityOf(e).color}"><div class="ptc-cf-art">${(e.kind === 'item') ? `<span style="font-size:1.8rem;display:flex;align-items:center;justify-content:center;height:100%">${((typeof _meta === 'function' && _meta((e.item || {}).id)) || {}).icon || '🎁'}</span>` : ((typeof _cardFaceArt === 'function') ? _cardFaceArt(e.card || {}, 'cover') : '🃏')}</div><div class="ptc-cf-name">${escapeHtml((e.kind === 'item') ? (((typeof _meta === 'function' && _meta((e.item || {}).id)) || {}).name || 'Item') : ((e.card || {}).name || 'Card'))}</div></div>`).join('');
+      const more = (Profile.unopenedPacks || []).some(p => p && p.packId === def.id);
+      const ov2 = document.createElement('div'); ov2.className = 'ptc-summary';
+      ov2.innerHTML = `<div style="font-weight:900;letter-spacing:.08em;color:${bestR.color};text-shadow:0 2px 8px #000">PACK OPENED</div>
+        <div class="ptc-sum-grid">${sum}</div>
+        <div class="ptc-bottom" style="position:static;margin-top:6px">
+          <button class="btn-primary" id="ptc-collect">✓ Collect</button>
+          ${more ? `<button class="btn-secondary" id="ptc-another">📦 Open Another</button>` : ''}
+        </div>`;
+      $('ptc-stage').style.display = 'none'; hint.style.display = 'none'; bottom.style.display = 'none'; count.style.display = 'none';
+      ov.appendChild(ov2);
+      ov2.querySelector('#ptc-collect').onclick = () => close(true);
+      const an = ov2.querySelector('#ptc-another'); if (an) an.onclick = () => { close(true); setTimeout(() => { try { openOnePackFromInventory(def.id); } catch (e) {} }, 60); };
+    }
+
+    function onMove(e) {
+      if (phase === 'sealed' && drag) {
+        if (drag.mode === 'rotate') { rotY = drag.bRY + (e.clientX - drag.x) * 0.4; rotX = Math.max(-40, Math.min(40, drag.bRX - (e.clientY - drag.y) * 0.4)); applyPack(); }
+        else if (drag.mode === 'tear') { tear = Math.max(0, Math.min(1, (e.clientX - drag.x) / 150)); applyTear(); }
+      } else if (phase === 'reveal' && cardDrag) {
+        cardDrag.moved = e.clientX - cardDrag.x;
+        const t = topEl(); if (t && topRevealed) { t.style.transition = 'none'; t.style.transform = t.style.transform.replace(/translateX\([^)]*\)/, '') + ` translateX(${cardDrag.moved}px)`; }
+      }
+    }
+    function onUp() {
+      if (phase === 'sealed' && drag) {
+        if (drag.mode === 'tear') { if (tear > 0.55) completeTear(); else snapTear(); }
+        drag = null;
+      } else if (phase === 'reveal' && cardDrag) {
+        const moved = cardDrag.moved; cardDrag = null;
+        if (!topRevealed) flipTop();
+        else if (Math.abs(moved) > 70) nextTop();
+        else { const t = topEl(); if (t) { t.style.transition = 'transform .3s'; t.style.transform = t.style.transform.replace(/translateX\([^)]*\)/, ''); } }
+      }
+    }
+    pack.addEventListener('pointerdown', (e) => {
+      if (phase !== 'sealed') return;
+      const onRip = e.target.closest('#ptc-rip');
+      drag = onRip ? { mode: 'tear', x: e.clientX } : { mode: 'rotate', x: e.clientX, y: e.clientY, bRX: rotX, bRY: rotY };
+    });
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  } catch (e) { try { _displayPackReveal(opts.def, opts.entry, opts.drawn); } catch (er) {} }
 }
 
 // Shared pack-reveal display — Hidden Cache modal + full-pull grid, then the

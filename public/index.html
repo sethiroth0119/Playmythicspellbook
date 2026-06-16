@@ -105620,13 +105620,16 @@ async function cardShopCollect() {
 // ── card tile + style ──
 function _csCardTile(cardId, cardJson) {
   const card = (typeof lookupCustomCard === 'function' && lookupCustomCard(cardId)) || cardJson || { id: cardId, name: cardId };
-  const art = (typeof _cardFaceArt === 'function') ? _cardFaceArt(card, 'cover') : '🃏';
+  // Real card artwork (uploaded card image / artUrl) — NOT the animated unicorn
+  // placeholder sprite. Falls back to a clean glyph only when there's truly no art.
+  const art = (typeof _binderArt === 'function') ? _binderArt(card) : ((typeof _cardFaceArt === 'function') ? _cardFaceArt(card, 'cover') : '🃏');
   const rar = card.rarity ? String(card.rarity) : '';
   return `<div class="cs-card-art">${art}</div><div class="cs-card-name">${escapeHtml(card.name || cardId)}</div>${rar ? `<div class="cs-card-rar">${escapeHtml(rar)}</div>` : ''}`;
 }
 function _csPackTile(packId, snap) {
   const def = _csPackDef(packId, snap);
-  const art = def.art || (snap && snap.art) || '';
+  // Real booster-pack cover art (admin upload) first, then any snapshot art.
+  const art = (typeof getPackImage === 'function' ? getPackImage(packId) : null) || def.art || (snap && snap.art) || '';
   const inner = art ? `<img src="${escapeHtml(art)}" alt="" style="width:100%;height:100%;object-fit:cover">` : `<span style="font-size:2.4rem">${escapeHtml(def.icon || '📦')}</span>`;
   return `<div class="cs-card-art">${inner}</div><div class="cs-card-name">${escapeHtml(def.name || 'Pack')}</div><div class="cs-card-rar" style="color:#7fb0ff">📦 sealed pack</div>`;
 }
@@ -105648,7 +105651,7 @@ function _ensureCardShopStyle() {
   .cs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:0.6rem;margin-top:0.6rem}
   .cs-card{border-radius:9px;background:rgba(13,13,18,.7);border:1px solid rgba(255,255,255,.12);overflow:hidden;display:flex;flex-direction:column}
   .cs-card-art{aspect-ratio:3/4;background:#0b0b10;display:flex;align-items:center;justify-content:center;font-size:2rem;overflow:hidden}
-  .cs-card-art img{width:100%;height:100%;object-fit:cover}
+  .cs-card-art img{width:100%;height:100%;object-fit:contain}
   .cs-card-name{font-size:0.68rem;font-weight:700;color:#e4ecf3;padding:3px 5px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cs-card-rar{font-size:0.58rem;color:#8a96a3;padding:0 5px 2px;text-transform:uppercase;letter-spacing:.04em}
   .cs-card-foot{display:flex;align-items:center;gap:4px;padding:4px 5px;border-top:1px solid rgba(255,255,255,.08)}
@@ -105819,9 +105822,11 @@ function _csMyShopBody() {
   }
   const shop = m.shop; const accent = (CARD_SHOP_THEMES[shop.theme || 'bunker'] || {}).accent || '#d4af37';
   // listing picker from real collection (cards you own + can spare)
-  const owned = Object.keys(Profile.cardCollection || {}).filter(id => (Profile.cardCollection[id] | 0) > 0);
+  // Only the player's OWN real cards — custom/admin cards with real art, no built-in
+  // mockups, heroes or summons (same filter as the binder).
+  const shopItems = (typeof _binderItemsFor === 'function') ? _binderItemsFor('shop') : [];
   const pick = App._csPick && (Profile.cardCollection[App._csPick] | 0) > 0 ? App._csPick : null;
-  const ownedTiles = owned.slice(0, 60).map(id => `<button class="cs-card" data-cs="cs-pick" data-card="${escapeHtml(id)}" style="cursor:pointer;${pick === id ? 'outline:2px solid ' + accent : ''}">${_csCardTile(id)}<div class="cs-card-foot"><span class="cs-card-price" style="color:#8a96a3;font-weight:600">own ${Profile.cardCollection[id] | 0}</span></div></button>`).join('');
+  const ownedTiles = shopItems.slice(0, 120).map(it => `<button class="cs-card" data-cs="cs-pick" data-card="${escapeHtml(it.id)}" style="cursor:pointer;${pick === it.id ? 'outline:2px solid ' + accent : ''}">${_csCardTile(it.id, it.card)}<div class="cs-card-foot"><span class="cs-card-price" style="color:#8a96a3;font-weight:600">own ${it.count}</span></div></button>`).join('');
   // held sealed packs, grouped by packId (the resale picker)
   const heldPacks = {};
   (Profile.unopenedPacks || []).forEach(p => { if (!p || !p.packId) return; if (!heldPacks[p.packId]) heldPacks[p.packId] = { packId: p.packId, name: p.name, icon: p.icon, art: p.art, count: 0 }; heldPacks[p.packId].count++; });
@@ -105840,8 +105845,8 @@ function _csMyShopBody() {
       <button class="btn-mini ${(m.earnings | 0) > 0 ? 'btn-primary' : ''}" data-cs="cs-collect" ${(m.earnings | 0) > 0 ? '' : 'disabled'}>💰 Collect</button>
     </div>
     <div class="cs-section">List a card from your collection</div>
-    ${owned.length ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
-      <div class="cs-grid">${ownedTiles}</div>` : `<div class="cs-empty">No spare cards to list — open packs or win cards first.</div>`}
+    ${shopItems.length ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
+      <div class="cs-grid">${ownedTiles}</div>` : `<div class="cs-empty">No cards to list yet — open packs to collect cards you created.</div>`}
     <div class="cs-section">Resell sealed packs <span style="text-transform:none;letter-spacing:0;color:#7a8694">· buy packs with <span class="aza-icon"></span> Aza Coin, sell them for 🔥 Cinder</span></div>
     ${heldPackList.length
       ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-packprice" type="number" min="0" value="80" style="width:110px"><button class="btn-mini ${pickPack ? 'btn-primary' : ''}" data-cs="cs-list-pack" ${pickPack ? '' : 'disabled'}>🏷 List${pickPack ? ' selected pack' : ' — pick a pack'}</button><button class="btn-mini" data-cs="cs-buy-packs">🛍 Buy more (Aza) →</button></div>

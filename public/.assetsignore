@@ -11,14 +11,17 @@ assets/Exports/
 # Backgrounds folder. 36 MB, unused by the game, and over the 25 MiB cap.
 assets/background/Backgrounds/websitefloodvideo.mp4
 
-# Oversized 3D source model (32.9 MiB > 25 MiB cap). Big .glb models for the
-# walkable Card Shop belong in the Supabase `models` Storage bucket (upload via
-# the in-shop "🛠 Edit Shop" admin panel), NOT in the Pages bundle — Cloudflare
-# can't serve a file this large anyway. Stays on disk locally.
-assets/3d models/Battletable.glb
+# `assets/3d models/` is the raw-model STAGING folder — .glb sources keep getting
+# dropped here (Battletable 32.9 MiB, Vendor market cash register 53.4 MiB, …) and
+# any one over 25 MiB aborts the whole deploy. Big .glb models for the walkable
+# Card Shop belong in the Supabase `models` Storage bucket (upload via the in-shop
+# "🛠 Edit Shop" / "🏗️ Build" admin panels), NOT the Pages bundle — Cloudflare
+# can't serve a file this large anyway. Ignore EVERY .glb in this folder; the PNG
+# textures next to them (under the cap) still deploy normally. Files stay on disk.
+assets/3d models/*.glb
 
-# Safety net: any other oversized .glb dropped into assets (keep them in Storage).
-# (The PNG gameboard texture under the cap still deploys normally.)
+# Belt-and-suspenders: any other oversized model formats that land in assets.
+*.glb.zip
 
 # Safety net: raw editor zips / source bundles sometimes land in assets.
 *.zip

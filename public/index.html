@@ -105792,6 +105792,7 @@ try {
           else { App._cs3D = false; App._csPanel = null; if (_cs3DDispose) { try { _cs3DDispose(); } catch (er) {} _cs3DDispose = null; } render(); }
           break;
         case 'cs-shop-edit': _csShopEditOpen(); break;
+        case 'cs-shop-build': _csOpenLayoutBuilder(); break;
         case 'cs-panel-close': _csClosePanel(); break;
         case 'cs-open-pack': { const pid = t.getAttribute('data-pack'); if (pid) _csOpenOnePack(pid); break; }
         case 'cs-tab': App._csTab = t.getAttribute('data-tab'); App._csViewOwner = null; render(); break;
@@ -105853,7 +105854,7 @@ function renderCardShop() {
         <div class="cs-3d-topbar">
           <div class="cs-3d-title">🛒 Card Shop · ${cinders.toLocaleString()} <span class="cinder-icon"></span></div>
           <div style="display:flex;gap:6px">
-            ${(typeof isAdmin === 'function' && isAdmin()) ? `<button class="btn-secondary btn-mini" data-cs="cs-shop-edit">🛠 Edit Shop</button>` : ''}
+            ${(typeof isAdmin === 'function' && isAdmin()) ? `<button class="btn-secondary btn-mini" data-cs="cs-shop-build">🏗️ Build</button><button class="btn-secondary btn-mini" data-cs="cs-shop-edit">🛠 Edit Shop</button>` : ''}
             <button class="btn-secondary btn-mini" data-cs="cs-3d-toggle">☰ Menu</button>
             <button class="btn-secondary btn-mini" data-cs="cs-back">← Exit</button>
           </div>
@@ -106484,6 +106485,233 @@ function _csWireShopEdit(el) {
       up.value = '';
     }
   });
+}
+// ════════════════════════════════════════════════════════════════════════════
+// 🏗️ SHOP LAYOUT BUILDER — admin grid build-mode (orbit camera). Pick furniture
+// → click a grid cell to place it; R rotates; Select mode to move/Delete; Save
+// writes kind:'prop' rows into shop_objects, which the walkable shop then renders.
+// Adapted from the user's ShopLayoutBuilder.jsx into vanilla three (r128). Missing
+// .glb models show a colored placeholder box, so it works before art exists.
+// ════════════════════════════════════════════════════════════════════════════
+const CS_BUILD_GRID = 16, CS_BUILD_HALF = 8, CS_BUILD_CELL = 1;
+const CS_LAYOUT_CATALOG = [
+  { id: 'shelf', name: 'Card Shelf', url: '/models/furniture/shelf.glb', w: 1, d: 2, h: 2.4, color: 0xd4af37 },
+  { id: 'table', name: 'Play Table', url: '/models/furniture/table.glb', w: 2, d: 2, h: 0.9, color: 0x38bdf8 },
+  { id: 'counter', name: 'Counter', url: '/models/furniture/counter.glb', w: 3, d: 1, h: 1.0, color: 0xf59e0b },
+  { id: 'display', name: 'Glass Display', url: '/models/furniture/display.glb', w: 2, d: 1, h: 1.2, color: 0x8b5cf6 },
+  { id: 'plant', name: 'Planter', url: '/models/furniture/plant.glb', w: 1, d: 1, h: 1.0, color: 0x3fa34d },
+  { id: 'lamp', name: 'Floor Lamp', url: '/models/furniture/lamp.glb', w: 1, d: 1, h: 1.7, color: 0xffcf66 },
+  { id: 'rug', name: 'Rug', url: '/models/furniture/rug.glb', w: 2, d: 3, h: 0.05, color: 0xe2582b },
+  { id: 'poster', name: 'Wall Poster', url: '/models/furniture/poster.glb', w: 1, d: 1, h: 1.2, color: 0x22b8cf },
+];
+const _csCatMap = {}; CS_LAYOUT_CATALOG.forEach(c => { _csCatMap[c.id] = c; });
+let _csLayoutDispose = null;
+function _csNewId() { try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return 'p_' + Date.now().toString(36) + Math.floor(Math.random() * 1e9).toString(36); }
+function _ensureCsBuildStyle() {
+  if (document.getElementById('cs-build-style')) return;
+  const s = document.createElement('style'); s.id = 'cs-build-style';
+  s.textContent = `
+  .csb-backdrop{position:fixed;inset:0;z-index:2147483646;background:#0a0a0f;color:#e4e4e7;display:flex;gap:12px;padding:12px;box-sizing:border-box;font-family:ui-sans-serif,system-ui,sans-serif}
+  .csb-side{width:230px;flex-shrink:0;display:flex;flex-direction:column;gap:9px;overflow-y:auto}
+  .csb-title{font-weight:900;letter-spacing:1px;display:flex;align-items:center;justify-content:space-between}
+  .csb-title button{background:#15151f;border:1px solid #2a2a38;color:#a1a1aa;border-radius:8px;padding:4px 9px;cursor:pointer;font-size:12px;font-weight:700}
+  .csb-tbtn{background:#15151f;color:#a1a1aa;border:none;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer;font-size:12px;width:100%}
+  .csb-tbtn.is-active{background:#d4af37;color:#0b0b0f}
+  .csb-sec{font-size:10px;color:#71717a;text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+  .csb-cat{display:flex;align-items:center;gap:8px;text-align:left;padding:8px 10px;border-radius:8px;cursor:pointer;background:#15151f;border:1px solid #2a2a38;color:#e4e4e7;width:100%}
+  .csb-cat.is-active{background:#241f10;border-color:#d4af37}
+  .csb-cat .sw{width:12px;height:12px;border-radius:3px;flex:0 0 auto}
+  .csb-cat .nm{font-size:13px}
+  .csb-cat .fp{margin-left:auto;font-size:10px;color:#71717a}
+  .csb-help{font-size:11px;color:#71717a;line-height:1.5;margin-top:2px}
+  .csb-help b{color:#cbb682}
+  .csb-foot{display:flex;justify-content:space-between;align-items:center;margin-top:auto;gap:8px}
+  .csb-status{font-size:11px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .csb-save{background:#d4af37;color:#0b0b0f;border:none;border-radius:8px;padding:8px 14px;font-weight:800;cursor:pointer;font-size:12px}
+  .csb-save:disabled{background:#23232e;color:#52525b;cursor:default}
+  .csb-count{font-size:11px;color:#a1a1aa}
+  .csb-stage{flex:1;position:relative;min-width:0}
+  .csb-mount{width:100%;height:100%;min-height:520px;border-radius:12px;overflow:hidden;background:#07070b;touch-action:none}
+  .csb-hint{position:absolute;top:10px;left:12px;color:#71717a;font-size:11px;pointer-events:none}
+  @media (max-width:720px){ .csb-backdrop{flex-direction:column} .csb-side{width:auto;max-height:40vh} }
+  `;
+  document.head.appendChild(s);
+}
+function _csBuildSidebarCats(catId) {
+  return CS_LAYOUT_CATALOG.map(c => `<button class="csb-cat ${catId === c.id ? 'is-active' : ''}" data-build-cat="${c.id}">
+    <span class="sw" style="background:#${c.color.toString(16).padStart(6, '0')}"></span>
+    <span class="nm">${escapeHtml(c.name)}</span><span class="fp">${c.w}×${c.d}</span>
+  </button>`).join('');
+}
+function _csBuildOverlayHtml() {
+  return `<div id="cs-build-backdrop" class="csb-backdrop">
+    <div class="csb-side">
+      <div class="csb-title">🏗️ DESIGN STORE <button data-build="close">✕ Done</button></div>
+      <button class="csb-tbtn is-active" data-build="select">Select / Move</button>
+      <div class="csb-sec">Furniture</div>
+      <div class="csb-catlist">${_csBuildSidebarCats(null)}</div>
+      <div class="csb-help">Pick an item → click a cell to place. <b>R</b> rotates. In Select mode, click an item then click a cell to move it; <b>Delete</b> removes. Drag to orbit, scroll to zoom.</div>
+      <div class="csb-foot">
+        <span class="csb-status" style="color:#3fa34d"></span>
+        <button class="csb-save" data-build="save">Save</button>
+      </div>
+      <div class="csb-count">0 items placed</div>
+    </div>
+    <div class="csb-stage">
+      <div class="csb-mount"></div>
+      <div class="csb-hint">Click an item to select · drag to orbit · scroll to zoom</div>
+    </div>
+  </div>`;
+}
+function _csOpenLayoutBuilder() {
+  if (typeof isAdmin !== 'function' || !isAdmin()) { showToast('Admins only.', 2000); return; }
+  if (document.getElementById('cs-build-backdrop')) return;
+  _csLoadThree((ok) => {
+    if (!ok || !window.THREE) { showToast('⚠ 3D failed to load — check your connection.', 4200); return; }
+    _ensureCsBuildStyle();
+    // Dispose the walkable scene so it doesn't fight the builder for input/GPU.
+    if (_cs3DDispose) { try { _cs3DDispose(); } catch (e) {} _cs3DDispose = null; }
+    const wrap = document.createElement('div'); wrap.innerHTML = _csBuildOverlayHtml();
+    const node = wrap.firstElementChild;
+    (document.querySelector('.cs-3d-fullscreen') || document.body).appendChild(node);
+    _csMountLayoutBuilder(node);
+  });
+}
+function _csMountLayoutBuilder(root) {
+  const T = window.THREE; if (!T) return;
+  const mount = root.querySelector('.csb-mount'); if (!mount) return;
+  const GRID = CS_BUILD_GRID, HALF = CS_BUILD_HALF, CELL = CS_BUILD_CELL;
+  const snap = v => Math.max(-HALF + 0.5, Math.min(HALF - 0.5, Math.floor(v) + 0.5));
+  const B = { placed: [], deleted: [], tool: 'select', catId: null, selectedId: null, map: new Map(),
+    cam: { az: 0.9, pol: 0.75, rad: 18, tx: 0, ty: 0, tz: 0 }, drag: false, moved: 0, lx: 0, ly: 0, hover: { x: 0.5, z: 0.5 }, ghostRot: 0, ghost: null, selHelper: null };
+  let W = mount.clientWidth || 700, Hh = mount.clientHeight || 500;
+  const scene = new T.Scene(); scene.background = new T.Color(0x07070b); scene.fog = new T.Fog(0x07070b, 18, 48);
+  const camera = new T.PerspectiveCamera(55, W / Hh, 0.1, 200);
+  const renderer = new T.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.setSize(W, Hh);
+  if ('outputColorSpace' in renderer) renderer.outputColorSpace = T.SRGBColorSpace;
+  renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;cursor:crosshair';
+  mount.appendChild(renderer.domElement);
+  scene.add(new T.AmbientLight(0x6a5a3c, 1.0));
+  const dl = new T.DirectionalLight(0xffe2b0, 0.8); dl.position.set(6, 12, 4); scene.add(dl);
+  const floor = new T.Mesh(new T.PlaneGeometry(GRID, GRID), new T.MeshStandardMaterial({ color: 0x14110d, roughness: 1 })); floor.rotation.x = -Math.PI / 2; scene.add(floor);
+  scene.add(new T.GridHelper(GRID, GRID, 0x4a4020, 0x241f14));
+  const cellHi = new T.Mesh(new T.PlaneGeometry(CELL * 0.96, CELL * 0.96), new T.MeshBasicMaterial({ color: 0xd4af37, transparent: true, opacity: 0.18 })); cellHi.rotation.x = -Math.PI / 2; cellHi.position.y = 0.02; cellHi.visible = false; scene.add(cellHi);
+  const loader = (T.GLTFLoader) ? new T.GLTFLoader() : null;
+  const phBox = (cat, ghost) => { const m = new T.Mesh(new T.BoxGeometry(cat.w * CELL * 0.9, cat.h, cat.d * CELL * 0.9), new T.MeshStandardMaterial({ color: 0x14110d, emissive: cat.color, emissiveIntensity: ghost ? 0.5 : 0.35, roughness: 0.8, transparent: !!ghost, opacity: ghost ? 0.5 : 1 })); m.position.y = cat.h / 2; const g = new T.Group(); g.add(m); return g; };
+  const applyT = (n, it) => { n.position.x = it.x; n.position.z = it.z; n.rotation.y = it.rotationY || 0; if (it.scale) n.scale.setScalar(it.scale); };
+  const addNode = (it) => {
+    const cat = _csCatMap[it.catId] || CS_LAYOUT_CATALOG[0];
+    const ph = phBox(cat, false); ph.userData.pid = it.id; scene.add(ph); applyT(ph, it); B.map.set(it.id, { node: ph, url: it.url || '' });
+    if (it.url && loader) loader.load(it.url, (g) => { if (!B.map.has(it.id)) return; const c = B.map.get(it.id); scene.remove(c.node); const node = g.scene || g.scenes[0]; node.userData.pid = it.id; scene.add(node); applyT(node, it); B.map.set(it.id, { node, url: it.url }); }, undefined, () => {});
+  };
+  const refreshSel = (id) => { if (B.selHelper) { scene.remove(B.selHelper); B.selHelper = null; } const rec = id && B.map.get(id); if (rec) { B.selHelper = new T.BoxHelper(rec.node, 0xffd24a); scene.add(B.selHelper); } };
+  const setGhost = () => { if (B.ghost) { scene.remove(B.ghost); B.ghost = null; } const cat = (B.tool === 'place' && B.catId) ? _csCatMap[B.catId] : null; if (cat) { B.ghost = phBox(cat, true); B.ghost.rotation.y = B.ghostRot; B.ghost.position.set(B.hover.x, 0, B.hover.z); scene.add(B.ghost); } cellHi.visible = (B.tool === 'place'); };
+  const syncScene = () => {
+    const present = new Set(B.placed.map(p => p.id));
+    for (const [id, rec] of B.map) if (!present.has(id)) { scene.remove(rec.node); B.map.delete(id); }
+    for (const it of B.placed) { const rec = B.map.get(it.id); if (!rec) addNode(it); else applyT(rec.node, it); }
+    refreshSel(B.selectedId);
+  };
+  // sidebar painting (no full re-render — toggle classes + text)
+  const sideStatus = root.querySelector('.csb-status'), sideCount = root.querySelector('.csb-count'), saveBtn = root.querySelector('.csb-save'), selBtn = root.querySelector('[data-build="select"]'), catList = root.querySelector('.csb-catlist');
+  const setStatus = (msg, ok) => { if (sideStatus) { sideStatus.textContent = msg || ''; sideStatus.style.color = ok === false ? '#e2582b' : '#3fa34d'; } };
+  const paint = () => {
+    if (selBtn) selBtn.classList.toggle('is-active', B.tool === 'select');
+    if (catList) catList.querySelectorAll('[data-build-cat]').forEach(b => b.classList.toggle('is-active', b.getAttribute('data-build-cat') === B.catId));
+    if (sideCount) sideCount.textContent = `${B.placed.length} item${B.placed.length === 1 ? '' : 's'} placed`;
+    const hint = root.querySelector('.csb-hint'); if (hint) hint.textContent = (B.tool === 'place') ? 'Click a cell to place · R to rotate · drag to orbit' : 'Click an item to select · drag to orbit · scroll to zoom';
+  };
+  // raycasting + interaction
+  const el = renderer.domElement; const ray = new T.Raycaster(), v2 = new T.Vector2();
+  const toCell = (cx, cy) => { const r = el.getBoundingClientRect(); v2.x = ((cx - r.left) / r.width) * 2 - 1; v2.y = -((cy - r.top) / r.height) * 2 + 1; ray.setFromCamera(v2, camera); const hit = ray.intersectObject(floor)[0]; return hit ? { x: snap(hit.point.x), z: snap(hit.point.z) } : null; };
+  const hover = (e) => { const p = e.touches ? e.touches[0] : e; const c = toCell(p.clientX, p.clientY); if (c) { B.hover = c; cellHi.position.x = c.x; cellHi.position.z = c.z; if (B.ghost) { B.ghost.position.x = c.x; B.ghost.position.z = c.z; } } };
+  const pickNode = (e) => { const p = e.changedTouches ? e.changedTouches[0] : e; const r = el.getBoundingClientRect(); v2.x = ((p.clientX - r.left) / r.width) * 2 - 1; v2.y = -((p.clientY - r.top) / r.height) * 2 + 1; ray.setFromCamera(v2, camera); const hits = ray.intersectObjects([...B.map.values()].map(v => v.node), true); for (const h of hits) { let o = h.object; while (o && o.userData.pid == null) o = o.parent; if (o) return o.userData.pid; } return null; };
+  const click = (e) => {
+    if (B.tool === 'place' && B.catId) {
+      const cat = _csCatMap[B.catId];
+      B.placed.push({ id: _csNewId(), catId: cat.id, name: cat.name, url: cat.url, x: B.hover.x, z: B.hover.z, rotationY: B.ghostRot, scale: 1 });
+      syncScene(); paint(); return;
+    }
+    const pid = pickNode(e);
+    if (pid) { B.selectedId = pid; refreshSel(pid); }
+    else if (B.selectedId) { const it = B.placed.find(p => p.id === B.selectedId); if (it) { it.x = B.hover.x; it.z = B.hover.z; syncScene(); } }
+  };
+  const start = (e) => { const p = e.touches ? e.touches[0] : e; B.drag = true; B.moved = 0; B.lx = p.clientX; B.ly = p.clientY; };
+  const move = (e) => { hover(e); if (!B.drag) return; const p = e.touches ? e.touches[0] : e; const dx = p.clientX - B.lx, dy = p.clientY - B.ly; B.lx = p.clientX; B.ly = p.clientY; B.moved += Math.abs(dx) + Math.abs(dy); if (B.moved > 4) { B.cam.az -= dx * 0.006; B.cam.pol = Math.max(0.2, Math.min(1.35, B.cam.pol - dy * 0.006)); } };
+  const end = (e) => { const wasDrag = B.moved > 6; B.drag = false; if (!wasDrag) click(e); };
+  const wheel = (e) => { e.preventDefault(); B.cam.rad = Math.max(6, Math.min(34, B.cam.rad + Math.sign(e.deltaY) * 1.2)); };
+  const key = (e) => {
+    const k = (e.key || '').toLowerCase();
+    if (k === 'r') { B.ghostRot = (B.ghostRot + Math.PI / 2) % (Math.PI * 2); if (B.ghost) B.ghost.rotation.y = B.ghostRot; if (B.selectedId) { const it = B.placed.find(p => p.id === B.selectedId); if (it) { it.rotationY = ((it.rotationY || 0) + Math.PI / 2) % (Math.PI * 2); syncScene(); } } }
+    else if ((k === 'delete' || k === 'backspace') && B.selectedId) { e.preventDefault(); B.placed = B.placed.filter(p => p.id !== B.selectedId); B.deleted.push(B.selectedId); B.selectedId = null; syncScene(); paint(); }
+    else if (k === 'escape') { _csCloseLayoutBuilder(); }
+  };
+  el.addEventListener('mousedown', start); window.addEventListener('mousemove', move); window.addEventListener('mouseup', end);
+  el.addEventListener('touchstart', start, { passive: true }); window.addEventListener('touchmove', move, { passive: true }); window.addEventListener('touchend', end);
+  el.addEventListener('wheel', wheel, { passive: false }); window.addEventListener('keydown', key);
+  // sidebar clicks (delegated)
+  const sideClick = (e) => {
+    const cat = e.target.closest('[data-build-cat]'); if (cat) { B.catId = cat.getAttribute('data-build-cat'); B.tool = 'place'; B.selectedId = null; refreshSel(null); setGhost(); paint(); return; }
+    const act = e.target.closest('[data-build]'); if (!act) return; const a = act.getAttribute('data-build');
+    if (a === 'select') { B.tool = 'select'; B.catId = null; setGhost(); paint(); }
+    else if (a === 'close') { _csCloseLayoutBuilder(); }
+    else if (a === 'save') { _csLayoutSave(); }
+  };
+  root.querySelector('.csb-side').addEventListener('click', sideClick);
+  // render loop
+  let raf = 0;
+  function tick() {
+    raf = requestAnimationFrame(tick);
+    const c = B.cam;
+    camera.position.set(c.tx + c.rad * Math.sin(c.pol) * Math.sin(c.az), c.ty + c.rad * Math.cos(c.pol), c.tz + c.rad * Math.sin(c.pol) * Math.cos(c.az));
+    camera.lookAt(c.tx, c.ty, c.tz);
+    if (B.selHelper) B.selHelper.update();
+    renderer.render(scene, camera);
+  }
+  tick();
+  const onResize = () => { W = mount.clientWidth || W; Hh = mount.clientHeight || Hh; camera.aspect = W / Hh; camera.updateProjectionMatrix(); renderer.setSize(W, Hh); };
+  window.addEventListener('resize', onResize); let ro = null; try { ro = new ResizeObserver(onResize); ro.observe(mount); } catch (e) {}
+  // load existing furniture (kind:'prop') for this shop
+  async function loadExisting() {
+    try {
+      if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) { setStatus('Cloud offline — placing locally.', false); return; }
+      const { data, error } = await Cloud.client.from('shop_objects').select('*').eq('shop_id', CS_SHOP_ID).eq('kind', 'prop');
+      if (error) { setStatus(error.message, false); return; }
+      B.placed = (data || []).map(r => ({ id: r.id, catId: (_csCatMap[r.label] ? r.label : 'shelf'), name: (_csCatMap[r.label] || {}).name || 'Item', url: r.model_url || (_csCatMap[r.label] || {}).url || '', x: +r.x || 0, z: +r.z || 0, rotationY: +r.rotation_y || 0, scale: +r.scale || 1 }));
+      B.deleted = []; syncScene(); paint(); setStatus(`Loaded ${B.placed.length} item${B.placed.length === 1 ? '' : 's'}.`, true);
+    } catch (e) { setStatus('Load failed.', false); }
+  }
+  async function _csLayoutSave() {
+    if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) { setStatus('Cloud offline — cannot save.', false); return; }
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '…'; }
+    try {
+      if (B.deleted.length) { const { error } = await Cloud.client.from('shop_objects').delete().in('id', B.deleted); if (error) throw error; }
+      if (B.placed.length) {
+        const rows = B.placed.map((it, i) => ({ id: it.id, shop_id: CS_SHOP_ID, kind: 'prop', label: it.catId, model_url: it.url || '', x: it.x, y: 0, z: it.z, rotation_y: it.rotationY || 0, scale: it.scale || 1, sort: i, updated_at: new Date().toISOString() }));
+        const { error } = await Cloud.client.from('shop_objects').upsert(rows); if (error) throw error;
+      }
+      B.deleted = [];
+      _csShopObjects = null;  // force the walkable shop to re-fetch the new layout on next mount
+      setStatus('Layout saved ✓', true);
+    } catch (e) { setStatus('Save failed: ' + ((e && e.message) || e), false); }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+  }
+  loadExisting();
+  // expose dispose + save for the close handler / Escape / Save button
+  _csLayoutDispose = () => {
+    try { cancelAnimationFrame(raf); } catch (e) {}
+    try { if (ro) ro.disconnect(); } catch (e) {}
+    window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', end); window.removeEventListener('touchmove', move); window.removeEventListener('touchend', end);
+    window.removeEventListener('keydown', key); window.removeEventListener('resize', onResize);
+    try { renderer.dispose(); } catch (e) {} try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {}
+  };
+  root._csLayoutSave = _csLayoutSave;
+}
+function _csCloseLayoutBuilder() {
+  try { if (_csLayoutDispose) { _csLayoutDispose(); _csLayoutDispose = null; } } catch (e) {}
+  const bd = document.getElementById('cs-build-backdrop'); if (bd) bd.remove();
+  // Re-render the shop screen → re-mounts the walkable scene with the saved layout.
+  try { if (App.screen === 'cardShop' && App._cs3D) render(); } catch (e) {}
 }
 // ── OPEN PACKS panel — open held packs (reuses the game's reveal cinematic) ──
 function _csOpenPacksBody() {

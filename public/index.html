@@ -34505,6 +34505,8 @@ function initCloud() {
         }, 1200);
         // 🪙 Credit any Aza coin bought via Stripe Checkout (return redirect).
         setTimeout(() => { try { if (typeof azaConfirmReturn === 'function') azaConfirmReturn(); } catch (e) {} }, 1400);
+        // 📢 Acknowledge any Ethos Sponsor Network checkout / payout-onboarding return.
+        setTimeout(() => { try { if (typeof esnConfirmReturn === 'function') esnConfirmReturn(); } catch (e) {} }, 1500);
       }
     });
     return true;
@@ -106631,6 +106633,31 @@ async function azaCheckout(pkgId) {
   } catch (e) { showToast('⚠ Checkout failed — try again.', 4000); }
   finally { AzaBuy._busy = false; }
 }
+// On return from a Stripe ad Checkout / Connect onboarding redirect, acknowledge
+// the outcome. Fulfillment (flip ad active + write the split ledger) is done by
+// the stripe-webhook with the service-role key — the client just confirms + busts
+// the ad caches so the now-active ad shows. URL params: esn_paid / esn_cancel /
+// esn_payout=done|refresh (set by the Edge Functions' success/return urls).
+function esnConfirmReturn() {
+  try {
+    const sp = new URLSearchParams(location.search || '');
+    const paid = sp.get('esn_paid'), cancel = sp.get('esn_cancel'), payout = sp.get('esn_payout');
+    if (!paid && !cancel && !payout) return;
+    try { history.replaceState(null, '', location.pathname); } catch (e) {} // so a refresh can't re-toast
+    if (paid) {
+      showToast('✅ Payment received — your sponsor ad is going live. It can take a few seconds for Stripe to confirm.', 6500);
+      try { App._twNodeAd = {}; App._twNodeAdsMng = {}; App._esnEarnings = null; } catch (e) {} // show the now-active ad + fresh earnings
+    } else if (cancel) {
+      showToast('Checkout cancelled — no charge was made.', 4000);
+    } else if (payout === 'done') {
+      showToast('💳 Payout setup submitted. Stripe is verifying your details — ad payouts unlock once it approves.', 6500);
+      try { App._esnSeller = null; } catch (e) {}
+    } else if (payout === 'refresh') {
+      showToast('Payout setup didn\'t finish — reopen “Payout Setup” on a node you manage to continue.', 5500);
+    }
+    try { if (typeof render === 'function') render(); } catch (e) {}
+  } catch (e) {}
+}
 // On return from Stripe Checkout (?aza=ok&sid=…): verify the session with
 // the Worker, then credit exactly once via the UNIQUE aza_purchases row.
 async function azaConfirmReturn() {
@@ -147702,6 +147729,34 @@ async function tw_cloudFetchNodeAdsForManage(nodeId) {
     return data;
   } catch (e) { return null; }
 }
+// Payout readiness for a corp (the owner's Stripe Connect status). Self-row only
+// per RLS (tw_ad_sellers select policy = user_id = auth.uid()).
+async function tw_cloudFetchAdSeller(corpId) {
+  try {
+    if (!corpId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.from('tw_ad_sellers')
+      .select('payouts_enabled, details_submitted, stripe_account_id').eq('corp_id', corpId).limit(1);
+    if (error) return null;
+    App._esnSeller = { at: Date.now(), corp: corpId, row: (data && data[0]) || null };
+    if (App.screen === 'territoryWars' && App._twNodeTab === 'sponsor') { try { render(); } catch (e) {} }
+    return data;
+  } catch (e) { return null; }
+}
+// The owner's ad-revenue total (their 70% share) — needs the owner-read RLS policy
+// (20260616040000_tw_ad_owner_earnings.sql); silent no-op without it.
+async function tw_cloudFetchMyAdEarnings(corpId) {
+  try {
+    if (!corpId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.from('tw_ad_orders')
+      .select('owner_share_cents, status').eq('owner_corp_id', corpId).limit(500);
+    if (error) return null;
+    let cents = 0, n = 0;
+    (data || []).forEach(o => { if (o.status === 'paid') { cents += (o.owner_share_cents | 0); n++; } });
+    App._esnEarnings = { at: Date.now(), corp: corpId, cents, count: n };
+    if (App.screen === 'territoryWars' && App._twNodeTab === 'sponsor') { try { render(); } catch (e) {} }
+    return data;
+  } catch (e) { return null; }
+}
 async function tw_cloudUpsertNodeAd(ad) {
   try {
     if (!Cloud || !Cloud.ready || !Cloud.client) { showToast('☁ Sign in to save sponsor ads.'); return null; }
@@ -147801,6 +147856,31 @@ function _esnSponsorHtml(node) {
   if (canManage) {
     const rows = ((App._twNodeAdsMng && App._twNodeAdsMng[nodeId] && App._twNodeAdsMng[nodeId].rows) || []);
     const isAdm = _esnAdmin();
+    // 💰 Owner earnings + payout readiness (non-admin owners). Cached ~60s.
+    let earnLine = '';
+    if (!isAdm) {
+      const myCorp = _esnMyCorpId();
+      if (myCorp) {
+        try {
+          if ((!App._esnSeller || App._esnSeller.corp !== myCorp || (Date.now() - App._esnSeller.at) > 60000) && App._esnSellerFetching !== myCorp && typeof tw_cloudFetchAdSeller === 'function') {
+            App._esnSellerFetching = myCorp;
+            Promise.resolve(tw_cloudFetchAdSeller(myCorp)).catch(() => {}).then(() => { if (App._esnSellerFetching === myCorp) App._esnSellerFetching = null; });
+          }
+          if ((!App._esnEarnings || App._esnEarnings.corp !== myCorp || (Date.now() - App._esnEarnings.at) > 60000) && App._esnEarnFetching !== myCorp && typeof tw_cloudFetchMyAdEarnings === 'function') {
+            App._esnEarnFetching = myCorp;
+            Promise.resolve(tw_cloudFetchMyAdEarnings(myCorp)).catch(() => {}).then(() => { if (App._esnEarnFetching === myCorp) App._esnEarnFetching = null; });
+          }
+        } catch (e) {}
+        const _sel = App._esnSeller && App._esnSeller.corp === myCorp ? App._esnSeller.row : null;
+        const _payOk = !!(_sel && _sel.payouts_enabled);
+        const _ear = App._esnEarnings && App._esnEarnings.corp === myCorp ? App._esnEarnings : null;
+        const _earned = _ear ? ('$' + (_ear.cents / 100).toFixed(2) + ' · ' + _ear.count + ' order' + (_ear.count === 1 ? '' : 's')) : '—';
+        earnLine = `<div class="esn-mng-split" style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
+          <span>💰 Your earnings: <b style="color:#9bb265">${_earned}</b> <span style="color:#5b6772">(70% share)</span></span>
+          <span>${_payOk ? '<span style="color:#4d9e68;font-weight:700">✓ Payouts on</span>' : '<span style="color:#c89428">⚠ Payouts not set up</span>'}</span>
+        </div>`;
+      }
+    }
     const list = rows.length ? rows.map(r => {
       const stCol = r.status === 'active' ? '#4d9e68' : r.status === 'pending' ? '#c89428' : r.status === 'rejected' ? '#b84e2c' : '#5b6772';
       return `<div class="esn-mng-row">
@@ -147816,6 +147896,7 @@ function _esnSponsorHtml(node) {
     manage = `
       <div class="tw-nd-section-hdr">— ${isAdm ? 'ADMIN' : 'NODE OWNER'} · AD MANAGEMENT</div>
       <div class="esn-mng-split">Revenue split — Owner ${Math.round(ESN_SPLIT.owner*100)}% · Studio ${Math.round(ESN_SPLIT.studio*100)}% · Foundation ${Math.round(ESN_SPLIT.foundation*100)}%</div>
+      ${earnLine}
       <div class="esn-mng-list">${list}</div>
       <div class="esn-mng-btns">
         <button class="btn-mini btn-primary" data-act="esn-create" data-node="${escapeHtml(nodeId)}">＋ List a Sponsor Ad</button>

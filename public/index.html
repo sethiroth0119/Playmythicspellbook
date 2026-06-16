@@ -148206,7 +148206,7 @@ function tw_cloudSubscribeFeed() {
         const t = _twForge();
         t.worldFeed.unshift({ at: p.at || Date.now(), kind: p.kind, msg: p.msg });
         if (t.worldFeed.length > TW_FEED_CAP) t.worldFeed.length = TW_FEED_CAP;
-        if (App.screen === 'territoryWars') { try { render(); } catch (e) {} }
+        if (App.screen === 'territoryWars') { _twBgRender(); }
       } catch (e) {}
     });
     ch.subscribe((status) => {
@@ -149021,7 +149021,7 @@ function _twNodeClaimSharedMilestones(node) {
           try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
           try { if (typeof showToast === 'function') showToast(`🎖 ${(node.name || 'Node')} hit ${milestone.pct}% — ${res.label || milestone.label}! +${res.cinder | 0} 🔥 +${res.prestige | 0} prestige` + (res.restored ? ' · NODE RESTORED' : ''), 5000); } catch (e) {}
           try { _twLog('settlement', `<b>${escapeHtml(node.name || 'A node')}</b> reconstruction reached <b>${milestone.pct}%</b> — ${escapeHtml(res.label || milestone.label)}.`); } catch (e) {}
-          try { render(); } catch (e) {}
+          try { _twBgRender(); } catch (e) {}
         } else if (res && res.reason === 'not_reached') {
           // node hasn't recorded it server-side yet (race) → unmark so we retry next check
           const ix = claimed.indexOf(milestone.pct); if (ix >= 0) { claimed.splice(ix, 1); try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {} }
@@ -149630,7 +149630,10 @@ function renderTerritoryWars() {
   // 🚚 Convoy trucks are a handful of light SVG motion groups (cheap) — keep them
   // running even when _lowFx drops the EXPENSIVE animated road glow on a big map, so
   // the network still shows moving traffic. Only fully off on Low graphics.
-  const _showTrucks = (_gfxQ !== 'low') && _truckRoutes.length > 0;
+  // 🚚 Trucks OFF while a node drawer is open: the drawer covers most of the map,
+  // and any re-render rebuilds the truck SVG (SMIL restarts → flicker). Killing
+  // them behind the modal removes the flicker entirely and frees up compositing.
+  const _showTrucks = (_gfxQ !== 'low') && _truckRoutes.length > 0 && !App._twSelectedNode;
   const _truckSvgHtml = _showTrucks ? (_truckGuidePaths + _truckRoutes.map(r => _truckSVG(r.id, r.dur)).join('')) : '';
   const _twCanvasRoutes = `<svg class="tw-map-routes${_lowFx ? ' tw-lowfx' : ''}" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}${_truckSvgHtml}</svg>`;
 
@@ -150313,6 +150316,15 @@ function renderTerritoryWars() {
   })() : '';
   // ──────────────────────────────────────────────────────────────────────────
 
+  // 💾 Preserve drawer scroll across this rebuild — background refreshes re-render
+  // the whole screen, and without this the open node modal would snap back to the
+  // top every time (so the player "can't scroll down"). Captured from the OLD DOM
+  // here (still present), restored to the NEW DOM in the binding section below.
+  let _twDrawerScrollSave = 0, _twPanelScrollSave = 0;
+  try {
+    const _od = document.querySelector('.tw-node-drawer'); if (_od) _twDrawerScrollSave = _od.scrollTop;
+    const _op = document.querySelector('.tw-nd-tab-panel.is-active'); if (_op) _twPanelScrollSave = _op.scrollTop;
+  } catch (e) {}
   root.innerHTML = `
     <div class="territory-wars-page">
       ${_twFoundationBar}
@@ -150382,6 +150394,12 @@ function renderTerritoryWars() {
   // use DOM-bounding-rect approach, but not called here.
   // 🪟 Bind picker-modal handlers when one is active.
   bindTerritoryPickerModal();
+  // 💾 Restore the drawer scroll captured before the rebuild (see above) so a
+  // background re-render never yanks the open node modal back to the top.
+  try {
+    if (_twDrawerScrollSave) { const _nd = document.querySelector('.tw-node-drawer'); if (_nd) _nd.scrollTop = _twDrawerScrollSave; }
+    if (_twPanelScrollSave) { const _np = document.querySelector('.tw-nd-tab-panel.is-active'); if (_np) _np.scrollTop = _twPanelScrollSave; }
+  } catch (e) {}
 
   document.getElementById('tw-back').onclick = () => {
     App._twSelectedNode = null;

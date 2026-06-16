@@ -104850,39 +104850,249 @@ function settleWagerMatch(matchId, winner) {
 // Clicking OPEN runs the booster cinematic + reveal modal flow, then removes
 // just that one pack from the inventory.
 // ============================================================================
-// 📜 My Cards — a full list/grid of every card the player owns (from packs,
-// crafting, events). Reads Profile.cardCollection { cardId: count }. Opened
-// from the Pack Opening header; closes via the × / backdrop.
+// ════════════════════════════════════════════════════════════════════════
+// 📔 CARD BINDER — a real two-page album: leather covers, ring spine, 3×3 card
+// pockets per page, neat FULL card faces (art shown uncropped, nothing cut off),
+// rarity foil, and a physical page-turn flip. Shared by the "My Card Collection"
+// modal AND the 3D shop's binder panel. Renders the CURRENT spread inline (so the
+// first paint needs no JS); a one-time delegated handler drives the page flips and
+// pocket clicks, repainting just the spread (never a full render → never tears the
+// 3D WebGL scene). Page index lives in App._myCardsPage / App._csBinderPage.
+// ════════════════════════════════════════════════════════════════════════
+const BINDER_PER_PAGE = 9;     // 3×3 pockets
+const BINDER_PER_SPREAD = 18;  // two facing pages
+function _binderRarColor(r) {
+  return ({ mythic: '#ff4d5f', legendary: '#f4c45a', epic: '#b06bff', rare: '#4aa3f7', uncommon: '#5fd17a', common: '#c7c9d1' })[String(r || 'common').toLowerCase()] || '#c7c9d1';
+}
+function _binderRarTier(r) { return ({ common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4, mythic: 5 })[String(r || 'common').toLowerCase()] || 0; }
+// Predictable, neat card art: uploaded card image (shown CONTAIN, never cropped)
+// or a clean centered glyph for placeholder cards. Avoids the animated board
+// sprite on purpose so pockets always look tidy.
+function _binderArt(card) {
+  try {
+    const id = card && card.id;
+    const key = (card && card.type === 'hero') ? ('h_' + id) : ('u_' + id);
+    const art = (typeof getCardArt === 'function') ? (getCardArt(id) || getCardArt(key)) : null;
+    if (art && typeof art === 'string') return `<img src="${String(art).replace(/"/g, '&quot;')}" alt="" loading="lazy" decoding="async">`;
+  } catch (e) {}
+  return `<span class="bnd-card-glyph">${escapeHtml((card && card.icon) || '🃏')}</span>`;
+}
+function _binderCardFaceHtml(card) {
+  card = card || {};
+  const r = String(card.rarity || 'common').toLowerCase();
+  const col = _binderRarColor(r);
+  const type = String(card.type || 'card');
+  let stat = '';
+  const st = card.stats;
+  if (type === 'unit' && st) stat = `<span>♥${st.hp || 0}</span><span>⚔${st.atk || 0}</span><span>🛡${st.def || 0}</span>`;
+  else if ((type === 'spell' || type === 'trap') && card.effect) {
+    const e = card.effect;
+    if (e.type === 'damage') stat = `<span>${e.amount || 0} DMG</span>`;
+    else if (e.type === 'heal') stat = `<span>${e.amount || 0} HEAL</span>`;
+    else if (e.type) stat = `<span>${escapeHtml(String(e.type).toUpperCase())}</span>`;
+  }
+  return `<div class="bnd-card" style="--rar:${col}">
+    ${_binderRarTier(r) >= 2 ? '<div class="bnd-foil"></div>' : ''}
+    <div class="bnd-card-name">${escapeHtml(card.name || card.id || 'Card')}</div>
+    <div class="bnd-card-art">${_binderArt(card)}</div>
+    <div class="bnd-card-strip"><span class="bnd-card-type">${escapeHtml(type)}</span>${stat ? `<span class="bnd-card-stats">${stat}</span>` : ''}</div>
+  </div>`;
+}
+function _binderPocketHtml(item, kind) {
+  if (!item) return `<div class="bnd-pocket bnd-empty"></div>`;
+  const sel = item.selected ? ' is-picked' : '';
+  // Shop pockets PICK a card to list (reuses the existing [data-cs="cs-pick"]
+  // delegated handler); collection pockets open the rich detail view.
+  const attr = (kind === 'shop')
+    ? `data-cs="cs-pick" data-card="${escapeHtml(item.id)}"`
+    : `data-binder-card="${escapeHtml(item.id)}"`;
+  const badge = (item.count > 1) ? `<div class="bnd-count" style="--rar:${_binderRarColor((item.card || {}).rarity)}">×${item.count}</div>` : '';
+  return `<div class="bnd-pocket${sel}" ${attr} title="${escapeHtml((item.card && item.card.name) || item.id)}">${_binderCardFaceHtml(item.card)}${badge}</div>`;
+}
+function _binderItemsFor(kind) {
+  const coll = (Profile.cardCollection && typeof Profile.cardCollection === 'object') ? Profile.cardCollection : {};
+  const ids = Object.keys(coll).filter(id => (coll[id] | 0) > 0);
+  const rarOrder = { mythic: 5, legendary: 4, epic: 3, rare: 2, uncommon: 1, common: 0 };
+  const resolve = (id) => {
+    try { if (typeof _resolveAnyCardById === 'function') { const r = _resolveAnyCardById(id); if (r) return r; } } catch (e) {}
+    try { if (typeof lookupCustomCard === 'function') { const r = lookupCustomCard(id); if (r) return r; } } catch (e) {}
+    return { id, name: id, type: 'card', rarity: 'common', icon: '🃏' };
+  };
+  const items = ids.map(id => {
+    const c = resolve(id) || { id, name: id, rarity: 'common' };
+    return { id, card: c, count: coll[id] | 0, rar: String(c.rarity || 'common').toLowerCase(), selected: (kind === 'shop' && App._csPick === id) };
+  });
+  items.sort((a, b) => (rarOrder[b.rar] || 0) - (rarOrder[a.rar] || 0) || String((a.card && a.card.name) || '').localeCompare(String((b.card && b.card.name) || '')));
+  return items;
+}
+function _binderPageHtml(items, pageIndex, kind) {
+  const start = pageIndex * BINDER_PER_PAGE;
+  let cells = '';
+  for (let i = 0; i < BINDER_PER_PAGE; i++) cells += _binderPocketHtml(items[start + i], kind);
+  return `<div class="bnd-pockets">${cells}</div><div class="bnd-pageno">${pageIndex + 1}</div>`;
+}
+function _binderSpreadCount(kind) { return Math.max(1, Math.ceil(_binderItemsFor(kind).length / BINDER_PER_SPREAD)); }
+function _binderHtml(kind) {
+  _ensureBinderStyle();
+  _wireBinder();
+  const items = _binderItemsFor(kind);
+  const pageKey = (kind === 'shop') ? '_csBinderPage' : '_myCardsPage';
+  const totalSpreads = Math.max(1, Math.ceil(items.length / BINDER_PER_SPREAD));
+  let spread = Math.min(Math.max(0, App[pageKey] | 0), totalSpreads - 1); App[pageKey] = spread;
+  return `<div class="binder-root" data-binder-kind="${kind}">
+    <div class="binder-album">
+      <div class="binder-spread">
+        <div class="binder-page binder-left">${_binderPageHtml(items, spread * 2, kind)}</div>
+        <div class="binder-ring"></div>
+        <div class="binder-page binder-right">${_binderPageHtml(items, spread * 2 + 1, kind)}</div>
+        ${items.length ? '' : '<div class="bnd-emptymsg">No cards yet — open packs to fill your binder!</div>'}
+      </div>
+    </div>
+    <div class="binder-nav">
+      <button class="binder-btn" data-binder-nav="-1" ${spread <= 0 ? 'disabled' : ''}>◀ Prev</button>
+      <div class="binder-pageind">Pages ${spread * 2 + 1}–${spread * 2 + 2} <span class="ink-dim">/ ${totalSpreads * 2}</span></div>
+      <button class="binder-btn" data-binder-nav="1" ${spread >= totalSpreads - 1 ? 'disabled' : ''}>Next ▶</button>
+    </div>
+  </div>`;
+}
+function _binderRepaint(rootEl) {
+  if (!rootEl) return;
+  const kind = rootEl.dataset.binderKind || 'collection';
+  const items = _binderItemsFor(kind);
+  const pageKey = (kind === 'shop') ? '_csBinderPage' : '_myCardsPage';
+  const totalSpreads = Math.max(1, Math.ceil(items.length / BINDER_PER_SPREAD));
+  const spread = Math.min(Math.max(0, App[pageKey] | 0), totalSpreads - 1);
+  const leftEl = rootEl.querySelector('.binder-left'); const rightEl = rootEl.querySelector('.binder-right');
+  if (leftEl) leftEl.innerHTML = _binderPageHtml(items, spread * 2, kind);
+  if (rightEl) rightEl.innerHTML = _binderPageHtml(items, spread * 2 + 1, kind);
+  const ind = rootEl.querySelector('.binder-pageind');
+  if (ind) ind.innerHTML = `Pages ${spread * 2 + 1}–${spread * 2 + 2} <span class="ink-dim">/ ${totalSpreads * 2}</span>`;
+  const prev = rootEl.querySelector('[data-binder-nav="-1"]'); if (prev) prev.disabled = spread <= 0;
+  const next = rootEl.querySelector('[data-binder-nav="1"]'); if (next) next.disabled = spread >= totalSpreads - 1;
+}
+// Physical leaf turn: front of the turning leaf is the page you're leaving, its
+// back is the page you're turning to; the destination page is revealed underneath
+// as the leaf lifts. preserve-3d + backface-hidden (no will-change:opacity → it
+// would force the element to flatten and kill the flip).
+function _binderFlip(rootEl, dir) {
+  if (!rootEl || rootEl._binderFlipping) return;
+  const kind = rootEl.dataset.binderKind || 'collection';
+  const pageKey = (kind === 'shop') ? '_csBinderPage' : '_myCardsPage';
+  const items = _binderItemsFor(kind);
+  const total = Math.max(1, Math.ceil(items.length / BINDER_PER_SPREAD));
+  const cur = Math.min(Math.max(0, App[pageKey] | 0), total - 1);
+  const target = cur + (dir > 0 ? 1 : -1);
+  if (target < 0 || target >= total) return;
+  rootEl._binderFlipping = true;
+  const spreadEl = rootEl.querySelector('.binder-spread');
+  const leftEl = rootEl.querySelector('.binder-left');
+  const rightEl = rootEl.querySelector('.binder-right');
+  const curLeft = _binderPageHtml(items, cur * 2, kind);
+  const curRight = _binderPageHtml(items, cur * 2 + 1, kind);
+  const tgtLeft = _binderPageHtml(items, target * 2, kind);
+  const tgtRight = _binderPageHtml(items, target * 2 + 1, kind);
+  const flip = document.createElement('div');
+  flip.className = 'binder-flip ' + (dir > 0 ? 'fwd' : 'bwd');
+  if (dir > 0) {
+    if (rightEl) rightEl.innerHTML = tgtRight;          // reveal destination under the leaf
+    flip.innerHTML = `<div class="binder-flip-inner"><div class="binder-flip-face binder-flip-front">${curRight}</div><div class="binder-flip-face binder-flip-back">${tgtLeft}</div></div>`;
+  } else {
+    if (leftEl) leftEl.innerHTML = tgtLeft;
+    flip.innerHTML = `<div class="binder-flip-inner"><div class="binder-flip-face binder-flip-front">${curLeft}</div><div class="binder-flip-face binder-flip-back">${tgtRight}</div></div>`;
+  }
+  spreadEl.appendChild(flip);
+  void flip.offsetWidth;                                 // commit start state
+  flip.classList.add('go');
+  const inner = flip.querySelector('.binder-flip-inner');
+  let done = false;
+  const finish = () => {
+    if (done) return; done = true;
+    App[pageKey] = target;
+    _binderRepaint(rootEl);
+    try { flip.remove(); } catch (e) {}
+    rootEl._binderFlipping = false;
+  };
+  if (inner) inner.addEventListener('transitionend', finish, { once: true });
+  setTimeout(finish, 820);                               // safety net
+}
+function _wireBinder() {
+  if (window.__binderWired) return; window.__binderWired = true;
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    const nav = t.closest('[data-binder-nav]');
+    if (nav) { const root = nav.closest('.binder-root'); if (root) { e.preventDefault(); _binderFlip(root, parseInt(nav.getAttribute('data-binder-nav'), 10) || 0); } return; }
+    const pocket = t.closest('[data-binder-card]');
+    if (pocket) {
+      const id = pocket.getAttribute('data-binder-card');
+      let c = null;
+      try { c = (typeof _resolveAnyCardById === 'function') ? _resolveAnyCardById(id) : null; } catch (err) {}
+      if (c && typeof openCardDetailView === 'function') openCardDetailView(c, c.type || 'unit');
+      return;
+    }
+  }, false);
+}
+function _ensureBinderStyle() {
+  if (document.getElementById('binder-style')) return;
+  const s = document.createElement('style'); s.id = 'binder-style';
+  s.textContent = `
+  .binder-root{width:100%;max-width:960px;margin:0 auto}
+  .binder-album{position:relative;background:linear-gradient(135deg,#5d4427,#3a2a16 55%,#241910);border-radius:16px;padding:16px;box-shadow:0 22px 56px rgba(0,0,0,.6),inset 0 0 0 2px rgba(255,225,170,.06),inset 0 0 46px rgba(0,0,0,.55)}
+  .binder-album::before{content:'';position:absolute;inset:7px;border-radius:11px;border:1px solid rgba(255,225,170,.10);pointer-events:none}
+  .binder-spread{position:relative;display:flex;gap:0;perspective:2800px}
+  .binder-page{flex:1 1 0;min-width:0;position:relative;background:linear-gradient(160deg,#171522,#0d0b15);padding:14px}
+  .binder-left{border-radius:9px 0 0 9px;box-shadow:inset -18px 0 30px -18px rgba(0,0,0,.9)}
+  .binder-right{border-radius:0 9px 9px 0;box-shadow:inset 18px 0 30px -18px rgba(0,0,0,.9)}
+  .binder-ring{position:absolute;left:50%;top:10px;bottom:10px;width:16px;transform:translateX(-50%);z-index:22;pointer-events:none;background:linear-gradient(90deg,rgba(0,0,0,.5),rgba(0,0,0,.15),rgba(0,0,0,.5))}
+  .binder-ring::before{content:'';position:absolute;left:50%;top:0;bottom:0;width:9px;transform:translateX(-50%);background:repeating-linear-gradient(to bottom,transparent 0 7px,#c9ccd6 7px 9px,#8b8f9c 9px 20px,transparent 20px 27px);border-radius:6px;box-shadow:0 0 3px rgba(0,0,0,.6)}
+  .bnd-pockets{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .bnd-pageno{position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:.56rem;letter-spacing:.18em;color:rgba(255,255,255,.22)}
+  .bnd-pocket{position:relative;aspect-ratio:2.5/3.5;border-radius:8px;background:rgba(255,255,255,.022);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),inset 0 3px 10px rgba(0,0,0,.45);padding:5px;display:flex;cursor:pointer;transition:transform .13s ease,box-shadow .13s ease}
+  .bnd-pocket:hover{transform:translateY(-3px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),0 8px 18px rgba(0,0,0,.5)}
+  .bnd-pocket.bnd-empty{cursor:default;background:rgba(0,0,0,.18);box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)}
+  .bnd-pocket.bnd-empty:hover{transform:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)}
+  .bnd-pocket.is-picked{box-shadow:inset 0 0 0 2px #ffe082,0 0 16px rgba(255,224,130,.45)}
+  .bnd-count{position:absolute;top:6px;right:7px;z-index:6;background:rgba(0,0,0,.84);border:1px solid var(--rar,#c7c9d1);color:#fff;font-size:.6rem;font-weight:800;border-radius:9px;padding:0 6px;line-height:1.45}
+  .bnd-card{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;border-radius:7px;overflow:hidden;background:linear-gradient(160deg,#262232,#121019);box-shadow:0 0 0 1.5px var(--rar,#c7c9d1),0 0 12px -3px var(--rar,#c7c9d1)}
+  .bnd-foil{position:absolute;inset:0;z-index:4;background:linear-gradient(115deg,transparent 38%,rgba(255,255,255,.32) 50%,transparent 62%),repeating-linear-gradient(60deg,rgba(255,0,150,.10) 0 9px,rgba(0,200,255,.10) 9px 18px);mix-blend-mode:screen;pointer-events:none;opacity:.7}
+  .bnd-card-name{flex:0 0 auto;font-size:.6rem;font-weight:800;color:#fff;background:linear-gradient(180deg,var(--rar,#c7c9d1),rgba(0,0,0,.25));padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,.75)}
+  .bnd-card-art{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;padding:5px;background:radial-gradient(ellipse at 50% 36%,rgba(255,255,255,.07),rgba(0,0,0,.28));overflow:hidden;font-size:2.1rem}
+  .bnd-card-art img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;border-radius:3px}
+  .bnd-card-art > *{max-width:100%;max-height:100%}
+  .bnd-card-glyph{filter:drop-shadow(0 2px 5px rgba(0,0,0,.55))}
+  .bnd-card-strip{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:5px;padding:2px 6px 3px;font-size:.52rem;background:rgba(0,0,0,.55)}
+  .bnd-card-type{text-transform:uppercase;letter-spacing:.05em;color:var(--rar,#c7c9d1);font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bnd-card-stats{display:flex;gap:5px;color:#dbe1ea;font-weight:700;white-space:nowrap;flex:0 0 auto}
+  .bnd-emptymsg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:#c9bfae;font-size:.9rem;padding:1rem;z-index:25;pointer-events:none}
+  .binder-nav{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:13px}
+  .binder-btn{background:rgba(212,175,55,.16);border:1px solid rgba(212,175,55,.5);color:#ffe9a8;padding:.5rem 1.15rem;border-radius:9px;font-weight:800;cursor:pointer;font-size:.84rem;font-family:inherit}
+  .binder-btn:hover:not(:disabled){background:rgba(212,175,55,.3)}
+  .binder-btn:disabled{opacity:.32;cursor:default}
+  .binder-pageind{font-size:.8rem;color:#cdbb8c;letter-spacing:.03em}
+  .binder-flip{position:absolute;top:0;bottom:0;width:50%;z-index:30;pointer-events:none}
+  .binder-flip.fwd{right:0}
+  .binder-flip.bwd{left:0}
+  .binder-flip-inner{position:relative;width:100%;height:100%;transform-style:preserve-3d;transition:transform .6s cubic-bezier(.43,.08,.27,1);will-change:transform}
+  .binder-flip.fwd .binder-flip-inner{transform-origin:left center}
+  .binder-flip.bwd .binder-flip-inner{transform-origin:right center}
+  .binder-flip.fwd.go .binder-flip-inner{transform:rotateY(-180deg)}
+  .binder-flip.bwd.go .binder-flip-inner{transform:rotateY(180deg)}
+  .binder-flip-face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;overflow:hidden;background:linear-gradient(160deg,#171522,#0d0b15);padding:14px;box-shadow:0 0 30px rgba(0,0,0,.5)}
+  .binder-flip-back{transform:rotateY(180deg)}
+  @media (max-width:560px){ .binder-album{padding:9px} .binder-page{padding:8px} .bnd-pockets{gap:6px} .bnd-card-name{font-size:.52rem} }
+  `;
+  document.head.appendChild(s);
+}
+
+// 📜 My Cards — the full collection, shown as a real card BINDER (see binder
+// system above). Reads Profile.cardCollection { cardId: count }. Opened from the
+// Pack Opening header; closes via the × / backdrop.
 function renderMyCardsModal() {
   if (!App._showMyCards) return '';
   const coll = (Profile.cardCollection && typeof Profile.cardCollection === 'object') ? Profile.cardCollection : {};
   const ids = Object.keys(coll).filter(id => (coll[id] | 0) > 0);
-  const resolve = (id) => {
-    try { if (typeof _resolveAnyCardById === 'function') { const r = _resolveAnyCardById(id); if (r) return r; } } catch (e) {}
-    try { if (typeof resolveDeckCard === 'function') return resolveDeckCard('custom:' + id) || resolveDeckCard('unit:' + id) || null; } catch (e) {}
-    return null;
-  };
-  const rarOrder = { mythic: 5, legendary: 4, epic: 3, rare: 2, uncommon: 1, common: 0 };
-  const rarColor = (r) => ({ mythic: '#ff4d5f', legendary: '#f4c45a', epic: '#b06bff', rare: '#4aa3f7', uncommon: '#5fd17a', common: '#c7c9d1' })[r] || '#c7c9d1';
-  const entries = ids.map(id => {
-    const c = resolve(id) || { id, name: id, type: 'card', rarity: 'common', icon: '🃏' };
-    return { id, count: coll[id] | 0, c, rar: String(c.rarity || 'common').toLowerCase() };
-  }).sort((a, b) => (rarOrder[b.rar] || 0) - (rarOrder[a.rar] || 0) || String(a.c.name || '').localeCompare(String(b.c.name || '')));
-  const totalUnique = entries.length;
-  const totalCards = entries.reduce((s, e) => s + e.count, 0);
-  const tiles = entries.length ? entries.map(e => {
-    const art = (typeof getCardArt === 'function') ? (getCardArt(e.id) || (e.c.img || e.c.image) || null) : ((e.c.img || e.c.image) || null);
-    const col = rarColor(e.rar);
-    const img = art
-      ? `<img src="${String(art).replace(/"/g, '&quot;')}" alt="" style="width:100%;height:100%;object-fit:contain">`
-      : `<span style="font-size:2.2rem">${escapeHtml(e.c.icon || '🃏')}</span>`;
-    return `<div data-mycard="${escapeHtml(e.id)}" title="${escapeHtml(e.c.name || e.id)} — click for full details" style="display:flex;flex-direction:column;border:1.5px solid ${col};border-radius:8px;overflow:hidden;background:rgba(8,4,20,0.6);cursor:pointer">
-      <div style="aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,${col}22,rgba(6,3,16,0.7));position:relative">${img}
-        <div style="position:absolute;bottom:3px;right:4px;background:rgba(0,0,0,0.8);border:1px solid ${col};border-radius:9px;padding:0 6px;font-size:0.72rem;color:#fff;font-weight:800">×${e.count}</div></div>
-      <div style="padding:4px 5px 1px;text-align:center;font-family:'Cinzel',serif;font-size:0.72rem;color:#efe9f5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(e.c.name || e.id)}</div>
-      <div style="padding:0 4px 5px;text-align:center;font-size:0.56rem;letter-spacing:0.1em;text-transform:uppercase;color:${col}">${escapeHtml(String(e.c.type || 'card'))} · ${escapeHtml(e.rar)}</div>
-    </div>`;
-  }).join('') : `<div class="ink-dim" style="grid-column:1/-1;text-align:center;padding:2.5rem">No cards yet — open some packs to start your collection!</div>`;
+  const totalUnique = ids.length;
+  const totalCards = ids.reduce((s, id) => s + (coll[id] | 0), 0);
   return `
     <div id="my-cards-backdrop" style="position:fixed;inset:0;z-index:9750;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.86);backdrop-filter:blur(4px);animation:shopFadeIn 0.2s ease-out">
       <div style="position:relative;width:94%;max-width:1100px;max-height:90vh;display:flex;flex-direction:column;background:linear-gradient(180deg,#2a1f4a 0%,#14102a 100%);border:1px solid #d4af37;border-radius:10px;padding:1.2rem;box-shadow:0 14px 50px rgba(0,0,0,0.8)">
@@ -104893,7 +105103,7 @@ function renderMyCardsModal() {
           </div>
           <button class="btn-secondary btn-mini" id="my-cards-close">✕ Close</button>
         </div>
-        <div style="flex:1 1 auto;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:0.6rem;padding:0.2rem">${tiles}</div>
+        <div style="flex:1 1 auto;min-height:0;overflow-y:auto;padding:0.5rem 0.2rem">${_binderHtml('collection')}</div>
       </div>
     </div>`;
 }
@@ -105740,13 +105950,12 @@ function _csBinderBody() {
   const accent = (CARD_SHOP_THEMES[m.shop.theme || 'bunker'] || {}).accent || '#d4af37';
   const owned = Object.keys(Profile.cardCollection || {}).filter(id => (Profile.cardCollection[id] | 0) > 0);
   const pick = App._csPick && (Profile.cardCollection[App._csPick] | 0) > 0 ? App._csPick : null;
-  const ownedTiles = owned.slice(0, 60).map(id => `<button class="cs-card" data-cs="cs-pick" data-card="${escapeHtml(id)}" style="cursor:pointer;${pick === id ? 'outline:2px solid ' + accent : ''}">${_csCardTile(id)}<div class="cs-card-foot"><span class="cs-card-price" style="color:#8a96a3;font-weight:600">own ${Profile.cardCollection[id] | 0}</span></div></button>`).join('');
   const singles = (m.listings || []).filter(l => l.kind !== 'pack');
   const shelves = singles.map(l => `<div class="cs-card">${_csCardTile(l.card_id, l.card_json)}<div class="cs-card-foot"><span class="cs-card-price">${(l.price | 0).toLocaleString()} 🔥</span><button class="btn-mini btn-danger" data-cs="cs-unlist" data-id="${escapeHtml(l.id)}" data-card="${escapeHtml(l.card_id)}" data-kind="card">✕</button></div></div>`).join('');
   return `<div style="font-size:0.74rem;color:#8a96a3;margin-bottom:0.4rem">The cards you list here are the <b>singles other players buy</b> when they visit your shop.</div>
     <div class="cs-section">List a card from your collection</div>
     ${owned.length ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
-      <div class="cs-grid">${ownedTiles}</div>` : `<div class="cs-empty">No spare cards — open packs at the OPEN PACKS station first.</div>`}
+      ${_binderHtml('shop')}` : `<div class="cs-empty">No spare cards — open packs at the OPEN PACKS station first.</div>`}
     <div class="cs-section">In your binder · for sale (${singles.length})</div>
     ${shelves ? `<div class="cs-grid">${shelves}</div>` : `<div class="cs-empty">Your binder is empty. Pick a card above and set a Cinder price.</div>`}`;
 }

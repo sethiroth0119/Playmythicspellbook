@@ -148601,33 +148601,87 @@ const NodeLevelUpAnimation = {
 // find one by name instead of hunting the map. Clicking a name opens that node's drawer
 // (sets App._twSelectedNode). Pure read of t.nodes — never reseeds / mutates node data.
 function renderTwNodeListModal(t) {
-  if (!App._twNodeListOpen) return '';
   const nodes = (t && Array.isArray(t.nodes)) ? t.nodes.slice() : [];
   nodes.sort((a, b) => String((a && a.name) || '').localeCompare(String((b && b.name) || '')));
   let st = null; try { st = (typeof _twGetState === 'function') ? _twGetState() : null; } catch (e) {}
-  const rows = nodes.length ? nodes.map(n => {
+  const resColor = (r) => ({ FOOD:'#7ec46a', FUEL:'#e0913c', METAL:'#9fb0c4', CRYSTAL:'#7fd0ff', WOOD:'#b88a4a', MED:'#ff7f9e', ELEC:'#ffd24a', BIO:'#7be0a0', ETHER:'#c89bff', RELIC:'#e8c766' }[String(r || '').toUpperCase()] || '#9aa0a6');
+  const chips = nodes.length ? nodes.map(n => {
     const res = (n.resourceYield && typeof n.resourceYield === 'object') ? Object.keys(n.resourceYield)[0] : '';
     const own = (st && st.ownedNodes && st.ownedNodes[n.id]) ? st.ownedNodes[n.id] : null;
-    const meta = escapeHtml(n.id || '') + (res ? (' · ' + escapeHtml(String(res))) : '') + (own ? ' · ◈ held' : '');
     const nm = (n.name || n.id || '').toString();
-    return '<button class="tw-nl-row" data-tw-nl="' + escapeHtml(n.id) + '" data-nlname="' + escapeHtml(nm.toLowerCase()) + '" '
-      + 'style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 11px;background:rgba(28,24,16,0.6);border:1px solid rgba(212,175,55,0.22);border-radius:7px;color:#f0e6d0;cursor:pointer">'
-      + '<span style="color:#7fb0ff;font-size:0.9rem;flex:0 0 auto">◈</span>'
-      + '<span style="flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(nm) + '</span>'
-      + '<span style="font-size:0.68rem;color:#9aa0a6;flex:0 0 auto">' + meta + '</span>'
+    const rc = resColor(res);
+    return '<button class="tw-nl-chip" data-tw-nl="' + escapeHtml(n.id) + '" data-nlname="' + escapeHtml(nm.toLowerCase()) + '">'
+      + '<span class="tw-nl-dia">◈</span>'
+      + '<span class="tw-nl-nm">' + escapeHtml(nm) + (own ? ' <span class="tw-nl-held" title="Held by a corporation">◈</span>' : '') + '</span>'
+      + '<span class="tw-nl-id">' + escapeHtml(n.id || '') + '</span>'
+      + (res ? '<span class="tw-nl-res" style="color:' + rc + ';border-color:' + rc + '55">' + escapeHtml(String(res)) + '</span>' : '')
       + '</button>';
-  }).join('') : '<div style="opacity:0.7;padding:1rem;text-align:center;color:#cbb8a0">No nodes yet.</div>';
+  }).join('') : '<div class="tw-nl-empty">No nodes yet.</div>';
   return ''
-    + '<div class="modal-backdrop" id="tw-nl-backdrop" style="z-index:2147483300;display:flex;align-items:center;justify-content:center">'
-      + '<div class="tw-nl-modal" role="dialog" style="background:linear-gradient(160deg,#12161f,#0a0d14);border:1px solid rgba(212,175,55,0.5);border-radius:12px;width:min(540px,94vw);max-height:84vh;display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(0,0,0,0.72)">'
-        + '<div style="display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid rgba(212,175,55,0.25)">'
-          + '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:#e8c766;letter-spacing:0.04em">📋 District Nodes <span style="opacity:0.55;font-weight:400;font-size:0.85rem">(' + nodes.length + ')</span></div>'
-          + '<button class="btn-secondary btn-mini" id="tw-nl-close">✕ Close</button>'
-        + '</div>'
-        + '<div style="padding:10px 16px 6px"><input type="search" id="tw-nl-search" placeholder="🔍 Search nodes by name…" autocomplete="off" style="width:100%;padding:0.5rem 0.7rem;background:#0c1018;color:#e8e0d0;border:1px solid rgba(212,175,55,0.4);border-radius:7px;font-size:0.92rem"></div>'
-        + '<div class="tw-nl-list" style="overflow:auto;padding:6px 14px 14px;display:flex;flex-direction:column;gap:5px">' + rows + '</div>'
+    + '<div class="modal-backdrop" id="tw-nl-backdrop">'
+      + '<style>'
+        + '#tw-nl-backdrop{position:fixed;inset:0;z-index:2147483300;display:flex;align-items:center;justify-content:center;background:rgba(4,6,10,0.62);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:twnlFade 140ms ease-out}'
+        + '@keyframes twnlFade{from{opacity:0}to{opacity:1}}'
+        + '#tw-nl-backdrop .tw-nl-modal{background:linear-gradient(165deg,#141a24,#0a0e15);border:1px solid rgba(212,175,55,0.5);border-radius:14px;width:min(700px,94vw);max-height:82vh;display:flex;flex-direction:column;box-shadow:0 22px 60px rgba(0,0,0,0.75);animation:twnlPop 170ms cubic-bezier(0.2,1,0.4,1)}'
+        + '@keyframes twnlPop{from{transform:translateY(12px) scale(0.98);opacity:0}to{transform:none;opacity:1}}'
+        + '#tw-nl-backdrop .tw-nl-hd{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(212,175,55,0.22)}'
+        + '#tw-nl-backdrop .tw-nl-ttl{font-family:\'Cinzel\',serif;font-weight:800;color:#e8c766;letter-spacing:0.05em;font-size:1.02rem}'
+        + '#tw-nl-backdrop .tw-nl-ct{opacity:0.55;font-weight:400;font-size:0.85rem;margin-left:5px}'
+        + '#tw-nl-backdrop .tw-nl-search{margin:12px 18px 4px;padding:0.55rem 0.8rem;background:#0b0f17;color:#e8e0d0;border:1px solid rgba(212,175,55,0.4);border-radius:9px;font-size:0.95rem;outline:none}'
+        + '#tw-nl-backdrop .tw-nl-search:focus{border-color:rgba(212,175,55,0.85);box-shadow:0 0 0 2px rgba(212,175,55,0.18)}'
+        + '#tw-nl-backdrop .tw-nl-grid{overflow:auto;padding:10px 16px 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}'
+        + '#tw-nl-backdrop .tw-nl-chip{display:flex;align-items:center;gap:8px;text-align:left;padding:9px 11px;background:rgba(26,22,14,0.55);border:1px solid rgba(212,175,55,0.2);border-radius:9px;color:#f0e6d0;cursor:pointer;transition:transform 0.08s,border-color 0.1s,background 0.1s}'
+        + '#tw-nl-backdrop .tw-nl-chip:hover{transform:translateY(-2px);border-color:rgba(212,175,55,0.72);background:rgba(42,35,18,0.78)}'
+        + '#tw-nl-backdrop .tw-nl-dia{color:#7fb0ff;font-size:0.85rem;flex:0 0 auto}'
+        + '#tw-nl-backdrop .tw-nl-nm{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.86rem}'
+        + '#tw-nl-backdrop .tw-nl-held{color:#e8c766;font-size:0.7rem}'
+        + '#tw-nl-backdrop .tw-nl-id{font-size:0.62rem;color:#7a818a;flex:0 0 auto}'
+        + '#tw-nl-backdrop .tw-nl-res{font-size:0.57rem;font-weight:700;letter-spacing:0.04em;border:1px solid;border-radius:4px;padding:1px 5px;flex:0 0 auto}'
+        + '#tw-nl-backdrop .tw-nl-empty{padding:1.4rem;text-align:center;color:#cbb8a0;grid-column:1/-1}'
+      + '</style>'
+      + '<div class="tw-nl-modal" role="dialog">'
+        + '<div class="tw-nl-hd"><div class="tw-nl-ttl">📋 District Nodes<span class="tw-nl-ct">(' + nodes.length + ')</span></div><button class="btn-secondary btn-mini" id="tw-nl-close">✕ Close</button></div>'
+        + '<input type="search" class="tw-nl-search" id="tw-nl-search" placeholder="🔍 Search nodes by name…" autocomplete="off">'
+        + '<div class="tw-nl-grid">' + chips + '</div>'
       + '</div>'
     + '</div>';
+}
+// 📋 Open/close the Node List as a BODY-LEVEL overlay (outside the territory page root)
+// so it appears INSTANTLY without a full render() — which keeps the convoy trucks (and
+// everything else) from re-rendering. Robust against page re-renders since it lives on
+// document.body, not inside the page that render() rebuilds.
+function _twOpenNodeListModal() {
+  try {
+    if (document.getElementById('tw-nl-backdrop')) return;
+    const t = (typeof _twForge === 'function') ? _twForge() : (Forge.territoryWars || {});
+    const holder = document.createElement('div');
+    holder.innerHTML = renderTwNodeListModal(t);
+    const el = holder.firstElementChild;
+    if (!el) return;
+    document.body.appendChild(el);
+    _twBindNodeListModal();
+  } catch (e) {}
+}
+function _twCloseNodeListModal() { try { const el = document.getElementById('tw-nl-backdrop'); if (el) el.remove(); } catch (e) {} }
+function _twBindNodeListModal() {
+  const close = document.getElementById('tw-nl-close');
+  if (close) close.onclick = _twCloseNodeListModal;
+  const bd = document.getElementById('tw-nl-backdrop');
+  if (bd) bd.onclick = (e) => { if (e.target === bd) _twCloseNodeListModal(); };
+  const search = document.getElementById('tw-nl-search');
+  if (search) {
+    search.oninput = () => {
+      const q = (search.value || '').toLowerCase();
+      document.querySelectorAll('#tw-nl-backdrop [data-tw-nl]').forEach(r => {
+        const nm = r.getAttribute('data-nlname') || '';
+        r.style.display = (!q || nm.indexOf(q) >= 0) ? '' : 'none';
+      });
+    };
+    try { search.focus(); } catch (e) {}
+  }
+  document.querySelectorAll('#tw-nl-backdrop [data-tw-nl]').forEach(r => {
+    r.onclick = () => { const id = r.dataset.twNl; _twCloseNodeListModal(); App._twSelectedNode = id; render(); };
+  });
 }
 
 // ===== WAR MAP SCREEN =====
@@ -148876,7 +148930,14 @@ function renderTerritoryWars() {
   // The path definition normalises direction so trucks always travel left-to-right,
   // keeping the tangent angle < 90° so LOCAL+Y points down = wheels at screen-bottom.
   // A soft fade-out near the end masks the teleport back to the start of the route.
-  const _truckSVG = (rid, dur) => `<g>
+  const _truckSVG = (rid, dur) => {
+    // 🔄 SEAMLESS ACROSS RE-RENDERS — the whole map SVG is rebuilt on every render() (any
+    // button click), which would normally snap SMIL animations back to t=0 → the trucks
+    // "jump to the start". SMIL supports a NEGATIVE `begin` offset that starts an
+    // animation mid-cycle; phasing it to wall-clock time `(now % dur)` makes a freshly
+    // rebuilt truck RESUME exactly where the old one was, so trucks never restart.
+    const _ph = ((Date.now() / 1000) % dur).toFixed(2);
+    return `<g>
     <rect x="-1.5" y="-0.52" width="3.0" height="1.12" rx="0.22" fill="#3a4e1e" stroke="#19280d" stroke-width="0.1"/>
     <rect x="0.22" y="-0.52" width="1.28" height="1.12" rx="0.2"  fill="#4a6028" stroke="#19280d" stroke-width="0.1"/>
     <rect x="0.32" y="-0.42" width="0.66" height="0.5"  rx="0.07" fill="#6aafc4" opacity="0.82"/>
@@ -148888,13 +148949,14 @@ function renderTerritoryWars() {
     <ellipse cx="0.88"  cy="0.63" rx="0.27" ry="0.21" fill="#111" stroke="#444" stroke-width="0.06"/>
     <circle cx="-1.52" cy="-0.3" r="0.09" fill="#aaa" opacity="0.6"/>
     <circle cx="-1.68" cy="-0.45" r="0.07" fill="#999" opacity="0.35"/>
-    <animate attributeName="opacity" dur="${dur}s" repeatCount="indefinite"
+    <animate attributeName="opacity" begin="-${_ph}s" dur="${dur}s" repeatCount="indefinite"
       values="0;1;1;0;0" keyTimes="0;0.05;0.88;0.96;1" calcMode="spline"
       keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"/>
-    <animateMotion dur="${dur}s" repeatCount="indefinite" rotate="auto">
+    <animateMotion begin="-${_ph}s" dur="${dur}s" repeatCount="indefinite" rotate="auto">
       <mpath href="#${rid}"/>
     </animateMotion>
   </g>`;
+  };
 
   // 🩹 Auto low-FX for heavy maps: a fully-connected map animates dozens of
   // roads + convoy trucks every frame — enough continuous GPU compositing to
@@ -149451,7 +149513,6 @@ function renderTerritoryWars() {
     <div class="territory-wars-page">
       ${_twFoundationBar}
       ${renderTerritoryPickerModal()}
-      ${(typeof renderTwNodeListModal === 'function') ? renderTwNodeListModal(t) : ''}
       <div class="tw-top-bar">
         <button class="btn-secondary btn-mini" id="tw-back">← Battle Hall</button>
         <span class="tw-top-bar-title">District Nodes · Territory Wars</span>
@@ -149460,8 +149521,8 @@ function renderTerritoryWars() {
             `<button class="tw-top-view-btn ${view===v?'is-active':''}" data-tw-view="${v}">${v[0].toUpperCase()+v.slice(1)}</button>`
           ).join('')}
         </div>
+        <button class="tw-new-node-btn" id="tw-node-list-btn" style="background:rgba(80,140,220,0.16);border-color:rgba(120,170,235,0.5);color:#bcd8ff" title="Browse every district node by name and jump straight to it — open to all players">📋 Node List</button>
         <div class="tw-top-bar-corp" style="display:flex;align-items:center;gap:0.6rem">
-          <button class="tw-new-node-btn" id="tw-node-list-btn" title="Browse every district node by name and jump straight to it">📋 Node List</button>
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-new-node">＋ New Node</button>` : ''}
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-connect-roads" title="Connect every roadless node to its nearest neighbours and light the new supply lines">🛣 Connect Roads</button>` : ''}
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-publish-map" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.55);color:#d4af37" title="Immediately push current node/route data to the website and all players">🌐 Publish Map</button>` : ''}
@@ -149539,28 +149600,10 @@ function renderTerritoryWars() {
   document.querySelectorAll('[data-tw-node]').forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); App._twSelectedNode = b.dataset.twNode; render(); };
   });
-  // 📋 Node List modal — open/close + live name filter (DOM-only, no full re-render) +
-  // click a name to jump to that node's drawer.
+  // 📋 Node List — opens a BODY-LEVEL overlay (no page render) so the map + trucks
+  // never re-render. The overlay's own close/search/row handlers bind on injection.
   const _nlBtn = document.getElementById('tw-node-list-btn');
-  if (_nlBtn) _nlBtn.onclick = () => { App._twNodeListOpen = true; render(); };
-  const _nlClose = document.getElementById('tw-nl-close');
-  if (_nlClose) _nlClose.onclick = () => { App._twNodeListOpen = false; render(); };
-  const _nlBackdrop = document.getElementById('tw-nl-backdrop');
-  if (_nlBackdrop) _nlBackdrop.onclick = (e) => { if (e.target === _nlBackdrop) { App._twNodeListOpen = false; render(); } };
-  const _nlSearch = document.getElementById('tw-nl-search');
-  if (_nlSearch) {
-    _nlSearch.oninput = () => {
-      const q = (_nlSearch.value || '').toLowerCase();
-      document.querySelectorAll('#tw-nl-backdrop [data-tw-nl]').forEach(row => {
-        const nm = row.getAttribute('data-nlname') || '';
-        row.style.display = (!q || nm.indexOf(q) >= 0) ? '' : 'none';
-      });
-    };
-    try { _nlSearch.focus(); } catch (e) {}
-  }
-  document.querySelectorAll('#tw-nl-backdrop [data-tw-nl]').forEach(row => {
-    row.onclick = () => { App._twSelectedNode = row.dataset.twNl; App._twNodeListOpen = false; render(); };
-  });
+  if (_nlBtn) _nlBtn.onclick = () => { try { _twOpenNodeListModal(); } catch (e) {} };
   // v37: Drawer close — clicking ✕ deselects the node and closes the drawer.
   const _drawerClose = document.getElementById('tw-drawer-close');
   if (_drawerClose) _drawerClose.onclick = () => { App._twSelectedNode = null; App._twNodeTab = 'overview'; render(); };

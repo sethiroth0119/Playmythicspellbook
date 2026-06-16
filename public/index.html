@@ -68572,6 +68572,24 @@ function _tickBoardSprites() {
     // decodes ~1 frame at a time and the browser frees the previous one.
     const next = frames[i];
     if (next && el.getAttribute('src') !== next) el.src = next;
+    // 🔄 SEAMLESS LOOP — pre-decode the UPCOMING frame (incl. the wrap back to frame 0)
+    // so next tick's src-swap paints instantly instead of stalling on a cold decode.
+    // That cold decode at the loop boundary is exactly what made the animation "skip"
+    // when it restarted. We hold ONLY ONE warm Image per sprite (replaced each tick), so
+    // this stays memory-bounded — it never accumulates frames the way _imgUrlCache did.
+    if (frames.length > 1) {
+      try {
+        const nf = frames[(i + 1) % frames.length];
+        if (nf && el._bspre !== nf) {
+          const im = new Image();
+          im.decoding = 'async';
+          im.src = nf;
+          if (im.decode) { im.decode().catch(function () {}); }
+          el._bspre = nf;       // which frame we've warmed
+          el._bspreImg = im;    // keep ONE reference alive so the decode stays warm
+        }
+      } catch (e) {}
+    }
   }
 }
 // Returns the single-img board sprite for a unit that HAS a custom sprite (resident

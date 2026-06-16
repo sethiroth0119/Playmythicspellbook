@@ -4560,7 +4560,7 @@
      the eye as the "this is YOUR vitals" focal point. ===== */
   .hero-bars-stack.big { gap: 0.7rem; margin-top: 0.8rem; }
   .hero-bars-stack.big .hero-bar {
-    grid-template-columns: 112px 1fr;
+    grid-template-columns: 132px 1fr;
     gap: 0.9rem;
     padding: 0.85rem 1.1rem;
     background: linear-gradient(180deg, rgba(15,20,30,0.92), rgba(0,0,0,0.65));
@@ -4574,10 +4574,15 @@
   .hero-bars-stack.big .hero-bar.player { box-shadow: 0 0 0 1px rgba(212,175,55,0.28), 0 12px 32px rgba(0,0,0,0.65), 0 0 28px rgba(74,143,212,0.5), inset 0 0 24px rgba(0,0,0,0.45); }
   .hero-bars-stack.big .hero-bar.ai     { box-shadow: 0 0 0 1px rgba(212,175,55,0.28), 0 12px 32px rgba(0,0,0,0.65), 0 0 28px rgba(232,93,60,0.5),  inset 0 0 24px rgba(0,0,0,0.45); }
   .hero-bars-stack.big .hero-bar-icon {
-    width: 112px; height: 112px;
+    width: 132px; height: 132px;
     border-radius: 8px;
     border-width: 2px;
   }
+  /* The hero avatar SPRITE now fills its frame (renderIcon 'fill') — the whole
+     character shows, big and centered, upscaled smoothly (not the pixelated board
+     look) instead of a tiny dot floating in a big empty box. */
+  .hero-bars-stack.big .hero-bar-icon .sprite-stack { width: 100% !important; height: 100% !important; display: flex; align-items: flex-end; justify-content: center; }
+  .hero-bars-stack.big .hero-bar-icon img { width: 100%; height: 100%; object-fit: contain; object-position: bottom center; image-rendering: auto; }
   .hero-bars-stack.big .hero-bar-name {
     font-size: 1.15rem;
     margin-bottom: 0.45rem;
@@ -91629,7 +91634,7 @@ function heroHpBar(hero, side) {
   const sId = 'h_' + hero.heroId;
   return `
     <div class="hero-bar ${side}">
-      <div class="hero-bar-icon">${renderIcon(sId, hero.icon, 'sm')}</div>
+      <div class="hero-bar-icon">${renderIcon(sId, hero.icon, 'fill')}</div>
       <div class="hero-bar-info">
         <div class="hero-bar-name">${escapeHtml(hero.name)} <span class="lvl-tag-inline">${getLevelIcon('1.5em')}${hero.level}</span> ${elementBadge(getElementsOf(hero), 'sm')}</div>
         <!-- Pokemon-style modern stat bars: HP shifts green→yellow→red as it

@@ -28201,7 +28201,8 @@ const PASSIVES = {
   // The engine checks these flags wherever it makes sense; the modal shows
   // them as proper effects so admins can attach them to specific cards.
   trapHunter:    { id: 'trapHunter',    name: 'Trap Hunter',    desc: '🪤 +2 ATK and +1 SPD while ANY trap is on the field (yours OR theirs). The unit thrives when the board is dangerous.' },
-  trapDog:       { id: 'trapDog',       name: 'Trap Dog',       desc: '🐕 On entering play: reveals every enemy trap on the board for the rest of the match.' },
+  trapDog:       { id: 'trapDog',       name: 'Trap Dog',       desc: '🐕 On entering play: reveals every enemy trap on the board for the rest of the match, and springs every enemy face-down (Subterfuge) unit.' },
+  detection:     { id: 'detection',     name: 'Detection',      desc: '🔍 On entering play and after it moves: springs every ADJACENT enemy face-down (Subterfuge) trap — forcing the ambush on YOUR terms before it can surprise you.' },
   trapBreaker:   { id: 'trapBreaker',   name: 'Trap Breaker',   desc: '🔧 At the start of your turn: disarms one adjacent enemy trap (random pick from those in Chebyshev radius 1).' },
   wallBreaker:   { id: 'wallBreaker',   name: 'Wall Breaker',   desc: '🧱 +50% damage to walls/structures (any wall tile attacked).' },
   surfaceWalker: { id: 'surfaceWalker', name: 'Surface Walker', desc: '🧹 Immune to surface hazards. When this unit moves onto a tile with a surface, that surface is cleared (oil / fire / water / glass / mud).' },
@@ -54779,6 +54780,8 @@ function tickSurfaces(state) {
   // 2) Standing effects — units that END their turn on a hazard. Driven by
   // each surface's `standDamage` / `standStatus` config.
   if (Array.isArray(state.units)) {
+    // 🃏 Track face-down units a hazard exposes this tick (flipped after the map).
+    const _exposedFaceDown = [];
     state.units = state.units.map(u => {
       if (!u || !u.alive || !u.pos) return u;
       const surf = _surfaceAt(state, u.pos.x, u.pos.y);
@@ -54814,12 +54817,24 @@ function tickSurfaces(state) {
         (trig.log || []).forEach(l => state.log.push(l));
         try { console.info('[damage:surface]', { name: nu.name, surface: cfg.name || 'surface', hpBefore: _hpBefore, dmg: cfg.standDamage, hpAfter: nu.currentHp, alive: nu.alive }); } catch (err) {}
         state.log.push({ msg: `${cfg.icon} ${u.name} takes ${cfg.standDamage} damage standing in the ${cfg.name}.`, color: u.owner === 'player' ? 'red' : 'green' });
+        // 🃏 A face-down trap caught in a hazard is exposed — queue it to flip up.
+        if (nu && nu.isFaceDown && nu.alive) _exposedFaceDown.push(nu.id);
       }
       if (cfg.standStatus && cfg.standStatus.id && typeof applyStatusEffect === 'function') {
         nu = applyStatusEffect(nu, cfg.standStatus.id, cfg.standStatus.dur || 1);
       }
       return nu;
     });
+    // 🃏 SUBTERFUGE — flip up every face-down trap a hazard exposed this tick. Done
+    // AFTER the map (so the standing-damage pass is complete) and BEFORE the hero-KO
+    // sweep below, so a flip-effect kill still ends the game. _flipSubterfuge returns
+    // a NEW state, so we reassign the param `state` (which this function returns).
+    for (const _fid of _exposedFaceDown) {
+      const live = (state.units || []).find(u => u.id === _fid);
+      if (live && live.isFaceDown && live.alive && typeof _flipSubterfuge === 'function') {
+        try { state = _flipSubterfuge(state, live, 'surface'); } catch (e) {}
+      }
+    }
     // Hero KO sweep — a surface can end the game.
     state.units.forEach(u => { if (u && !u.alive && u.isHero) state.gameOver = u.owner === 'player' ? 'ai' : 'player'; });
   }
@@ -61913,6 +61928,8 @@ function _flipSubterfuge(state, unit, reason) {
   if (!flipped) return next;
   const why = reason === 'enemyAdjacent' ? 'an enemy crept too close'
             : reason === 'damaged' ? 'it was struck'
+            : reason === 'detection' ? 'it was detected'
+            : reason === 'surface' ? 'the hazard exposed it'
             : 'the trap springs';
   next = { ...next, log: [...(next.log || []), { msg: `🃏 ${flipped.name} flips up — ${why}!`, color: flipped.owner === 'player' ? 'green' : 'amber' }] };
   // 🎬 Board summon-sprite reveal + stinger (visual only, never blocks the flip).
@@ -61944,6 +61961,26 @@ function _flipAdjacentFaceDown(state, mover) {
   for (const id of ids) {
     const live = (next.units || []).find(u => u.id === id);
     if (live && live.isFaceDown && live.alive) next = _flipSubterfuge(next, live, 'enemyAdjacent');
+  }
+  return next;
+}
+
+// 🔍 DETECTION — a unit with the `detection` passive force-flips every ENEMY face-down
+// Subterfuge unit within `radius` tiles (Chebyshev). radius <= 0 / omitted = board-wide.
+// Springs the trap on the DETECTOR's terms (denying the ambush timing). Re-fetches the
+// live unit each pass since an earlier flip can change the board.
+function _battleDetectionFlip(state, unit, radius) {
+  if (!state || !unit || !unit.pos) return state;
+  let next = state;
+  const within = (u) => (radius == null || radius <= 0)
+    ? true
+    : Math.max(Math.abs(u.pos.x - unit.pos.x), Math.abs(u.pos.y - unit.pos.y)) <= radius;
+  const ids = (next.units || [])
+    .filter(u => u && u.alive && u.isFaceDown && u.owner !== unit.owner && u.pos && within(u))
+    .map(u => u.id);
+  for (const id of ids) {
+    const live = (next.units || []).find(u => u.id === id);
+    if (live && live.isFaceDown && live.alive) next = _flipSubterfuge(next, live, 'detection');
   }
   return next;
 }
@@ -63017,9 +63054,14 @@ function _battleTrapDogReveal(state, unit) {
     }
     return t;
   }));
-  if (n === 0) return state;
-  const log = [...(state.log || []), { msg: `🐕 ${unit.name} sniffs out ${n} enemy trap${n === 1 ? '' : 's'}!`, color: owner === 'player' ? 'green' : 'red' }];
-  return { ...state, board, log };
+  let next = state;
+  if (n > 0) {
+    const log = [...(state.log || []), { msg: `🐕 ${unit.name} sniffs out ${n} enemy trap${n === 1 ? '' : 's'}!`, color: owner === 'player' ? 'green' : 'red' }];
+    next = { ...state, board, log };
+  }
+  // 🃏 Trap Dog also springs every enemy face-down (Subterfuge) unit board-wide.
+  try { if (typeof _battleDetectionFlip === 'function') next = _battleDetectionFlip(next, unit, 0); } catch (e) {}
+  return next;
 }
 
 // 🌌 Hero-adjacent free tiles — the empty board tiles in Chebyshev radius 1
@@ -67364,6 +67406,8 @@ const moveUnit = (state, unit, newPos) => {
       s = _ambushReactToMove(s, (s.units || []).find(u => u && u.id === unit.id) || unit, finalPos);
       // 🃏 Spring any enemy face-down Subterfuge unit adjacent to where it stopped.
       try { s = _flipAdjacentFaceDown(s, (s.units || []).find(u => u && u.id === unit.id) || unit); } catch (e) {}
+      // 🔍 Detection mover sweeps a wider radius (2) than the normal adjacency spring.
+      try { const _mv = (s.units || []).find(u => u && u.id === unit.id) || unit; if (typeof hasPassive === 'function' && hasPassive(_mv, 'detection')) s = _battleDetectionFlip(s, _mv, 2); } catch (e) {}
       return s;
     }
   }
@@ -67380,6 +67424,8 @@ const moveUnit = (state, unit, newPos) => {
   s = _ambushReactToMove(s, (s.units || []).find(u => u && u.id === unit.id) || unit, newPos);
   // 🃏 Spring any enemy face-down Subterfuge unit now adjacent to the mover.
   try { s = _flipAdjacentFaceDown(s, (s.units || []).find(u => u && u.id === unit.id) || unit); } catch (e) {}
+  // 🔍 Detection mover sweeps a wider radius (2) than the normal adjacency spring.
+  try { const _mv = (s.units || []).find(u => u && u.id === unit.id) || unit; if (typeof hasPassive === 'function' && hasPassive(_mv, 'detection')) s = _battleDetectionFlip(s, _mv, 2); } catch (e) {}
   return s;
 };
 
@@ -95928,6 +95974,12 @@ function placeUnit(card, pos) {
       next = _battleTrapDogReveal(next, unit);
     }
   } catch (e) {}
+  // 🔍 PASSIVE: Detection — on entering play, spring adjacent enemy face-down traps.
+  try {
+    if (typeof hasPassive === 'function' && hasPassive(unit, 'detection') && typeof _battleDetectionFlip === 'function') {
+      next = _battleDetectionFlip(next, unit, 1);
+    }
+  } catch (e) {}
   // 🜂 FORCED KALON — 'onEnter' timing: ascend the instant it's summoned.
   try {
     const _fc = (typeof _forcedKalonCfg === 'function') ? _forcedKalonCfg(unit) : null;
@@ -97441,6 +97493,18 @@ function aiScoreUnitCard(card, state, playerProf) {
     score += 18 + charges * 6;
   }
 
+  // 🃏 SUBTERFUGE — a face-down set can't act the turn it lands (a tempo cost), but
+  // it's a hidden surprise + a body that blocks a tile. Keep it competitive: shave the
+  // immediate-tempo value, add a flat trap value (so even a no-effect "false trap" gets
+  // set), and bias UP when the AI hero is pressured (a defensive set buys time).
+  if (card.isSubterfuge) {
+    score = score * 0.85 + 12;
+    try {
+      const aiH = (state && state.units || []).find(u => u && u.owner === 'ai' && u.isHero);
+      if (aiH && aiH.maxHp && (aiH.currentHp / aiH.maxHp) < 0.5) score += 18;
+    } catch (e) {}
+  }
+
   // Apply difficulty multiplier — easy AI undervalues good cards, hard AI overvalues them
   const diff = (typeof getAIDifficulty === 'function') ? getAIDifficulty() : null;
   if (diff) score *= diff.cardValueMul;
@@ -97761,6 +97825,17 @@ function doAIStep() {
           // the player counters, in which case we take the negate branch instead).
           const _deployBestUnit = () => {
             const newUnit = { ...buildUnit(best, 'ai', target, aiHero.heroPassive), aiActed: false };
+            // 🃏 SUBTERFUGE — the AI sets its trap FACE DOWN: identity hidden, no
+            // on-play on summon (its Flip Effect fires later when the player springs
+            // it). Falls back to the card's on-play as the flip effect.
+            if (best.isSubterfuge) {
+              newUnit.isFaceDown = true;
+              newUnit.placedThisTurn = true;
+              if (!newUnit.flipEffect || !newUnit.flipEffect.type) {
+                newUnit.flipEffect = (best.flipEffect && best.flipEffect.type) ? best.flipEffect : ((best.onPlay && best.onPlay.type) ? best.onPlay : null);
+              }
+              newUnit.hasMoved = true; newUnit.hasAttacked = true;
+            }
             let next = {
               ...s,
               units: [...s.units, newUnit],
@@ -97770,12 +97845,13 @@ function doAIStep() {
                 graveyard: [...s.ai.graveyard, best],
                 energy: s.ai.energy - getEffectiveCardCost(best, s, 'ai'),
               },
-              log: [...s.log, { msg: `Enemy plays ${best.name}`, color: 'red' }],
+              log: [...s.log, { msg: best.isSubterfuge ? `🃏 Enemy sets a unit face-down.` : `Enemy plays ${best.name}`, color: 'red' }],
             };
             // Weather Summoner passive — same hook the player path uses.
             next = maybeTriggerWeatherSummoner(next, newUnit);
             // On-play ability — AI side runs the same effect engine the player uses.
-            if (best && best.onPlay && best.onPlay.type) {
+            // 🃏 Skipped for a face-down Subterfuge set (the effect becomes its Flip Effect).
+            if (best && best.onPlay && best.onPlay.type && !best.isSubterfuge) {
               // ⚡ AI auto-pays any on-play activation cost; if it can't afford it,
               // the unit still enters but the on-play effect is skipped.
               const _opCost = best.onPlay.cost;
@@ -97814,12 +97890,22 @@ function doAIStep() {
                 next = _fireTriggers(next, 'cardPlayed', { actorOwner: 'ai', card: best, unit: newUnit });
               }
             } catch (e) {}
+            // 🐕/🔍 Trap Dog + Detection — an AI unit with these passives reveals/springs
+            // the player's traps the same way the player path does.
+            try {
+              if (typeof hasPassive === 'function' && hasPassive(newUnit, 'trapDog') && typeof _battleTrapDogReveal === 'function') next = _battleTrapDogReveal(next, newUnit);
+              if (typeof hasPassive === 'function' && hasPassive(newUnit, 'detection') && typeof _battleDetectionFlip === 'function') next = _battleDetectionFlip(next, newUnit, 1);
+            } catch (e) {}
             App.state = next;
-            try { _markSummonAnim(newUnit); } catch (e) {}
-            setAIActor(newUnit.id, `🃏 Enemy plays ${best.name}`);
+            // 🃏 No summon-sprite reveal for a face-down set — keep its identity hidden.
+            try { if (!best.isSubterfuge) _markSummonAnim(newUnit); } catch (e) {}
+            setAIActor(newUnit.id, best.isSubterfuge ? `🃏 Enemy sets a face-down unit` : `🃏 Enemy plays ${best.name}`);
             renderBattle();
             scheduleAIStep(AI_DELAYS.card);
           };
+          // 🃏 A face-down Subterfuge SET is not an open summon — skip the player
+          // counter window (which would also leak the trap's name) and deploy hidden.
+          if (best.isSubterfuge) { _deployBestUnit(); return; }
           // ⏱ COUNTER WINDOW — let the player negate the AI's unit deployment
           // with a counter card whose triggers include 'summon'. Resolves false
           // immediately when the player has no matching/affordable counter.
@@ -98244,10 +98330,12 @@ function doAIStep() {
   const playerHero = s.units.find(u => u.owner === 'player' && u.isHero);
   if (!playerHero || !playerHero.alive) { finishAIPhase(); return; }
 
-  const aiUnits = s.units.filter(u => u.owner === 'ai' && u.alive && !u.aiActed);
+  // 🃏 Face-down Subterfuge units stay set as ambushes — the AI never moves/attacks
+  // with its own hidden traps (they spring when the player triggers them).
+  const aiUnits = s.units.filter(u => u.owner === 'ai' && u.alive && !u.aiActed && !u.isFaceDown);
   for (const protoUnit of aiUnits) {
     let unit = App.state.units.find(u => u.id === protoUnit.id);
-    if (!unit || !unit.alive || unit.aiActed) continue;
+    if (!unit || !unit.alive || unit.aiActed || unit.isFaceDown) continue;
 
     const isFrozen = (unit.statusEffects || []).some(e => STATUS_EFFECTS[e.type] && STATUS_EFFECTS[e.type].skipTurn);
     if (isFrozen) { markAIUnitActed(unit.id); continue; }

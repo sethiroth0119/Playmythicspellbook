@@ -9080,6 +9080,22 @@
   .unit-token.hero.ai { box-shadow: inset 0 0 0 2px var(--ember), 0 0 10px rgba(232, 93, 60, 0.5); }
   .unit-token.dim { opacity: 0.55; }
   .unit-icon { font-size: 1.5rem; line-height: 1; display: flex; align-items: center; justify-content: center; }
+  /* 🃏 YU-GI-OH-STYLE FIELD CARD — every board unit sits on a flat "card frame" lying on
+     its tile (unit card.png), with the sprite standing UP over it (the .unit-icon pop-up).
+     The frame anchors each figure to its OWN tile so units read as occupying a card slot
+     instead of floating on the ground. Sits behind the sprite (z-index) and never eats
+     clicks (the parent .unit handles those). */
+  .unit-frame {
+    position: absolute;
+    left: 6%; right: 6%; bottom: 5%; top: 13%;
+    background: url('assets/Frames/unit card.png') center / 100% 100% no-repeat;
+    border-radius: 6px;
+    z-index: 0;
+    pointer-events: none;
+    box-shadow: 0 2px 7px rgba(0,0,0,0.5);
+  }
+  .unit .unit-icon { position: relative; z-index: 2; }
+  .unit .unit-hp, .unit .unit-info { position: relative; z-index: 3; }
   /* Units use painterly illustration art (not pixel art) — render it smooth +
      high-quality so scaled-up figures look crisp instead of blocky. */
   .unit-icon img { object-fit: contain; image-rendering: -webkit-optimize-contrast; image-rendering: high-quality; image-rendering: smooth; }
@@ -91467,6 +91483,7 @@ function renderBoard() {
         cellInner = `
           <div class="unit ${occupant.owner}${occupant.isHero ? ' hero' : ''}${occupant._decoyOf ? ' decoy' : ''}${occupant.isFaceDown ? ' facedown' : ''}${isSel ? ' selected' : ''}${occupant.flying ? ' flying' : ''}${isAIActor ? ' ai-actor' : ''} rarity-${rarity}${polyClass}" data-unit="${occupant.id}" data-y="${y}" data-rarity="${rarity}">
             ${occupant.isHero ? `<img class="hero-board-marker" src="assets/artwork/gameicons/hero-board-icon.png" alt="Hero" title="Hero — your match depends on keeping yours alive" draggable="false" loading="lazy">` : ''}
+            ${occupant.isFaceDown ? '' : '<div class="unit-frame"></div>'}
             <div class="unit-icon">${unitBoardVisual(occupant)}</div>
             <div class="unit-hp"><div class="unit-hp-fill${hpPct <= 25 ? ' hp-low' : ''}" style="width:${hpPct}%"></div></div>
             <div class="unit-info">

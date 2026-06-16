@@ -61960,7 +61960,15 @@ function _flipAdjacentFaceDown(state, mover) {
     .map(u => u.id);
   for (const id of ids) {
     const live = (next.units || []).find(u => u.id === id);
-    if (live && live.isFaceDown && live.alive) next = _flipSubterfuge(next, live, 'enemyAdjacent');
+    if (live && live.isFaceDown && live.alive) {
+      next = _flipSubterfuge(next, live, 'enemyAdjacent');
+      // 🎯 The trap lashes out at the unit that crept onto it (cancel is irrelevant
+      // here — it's a move, not an attack).
+      const flipped = (next.units || []).find(u => u.id === id);
+      if (flipped && flipped.ambushEffect && flipped.ambushEffect.type && typeof _resolveAmbushReaction === 'function') {
+        try { next = _resolveAmbushReaction(next, flipped, mover, 'enemyAdjacent').state; } catch (e) {}
+      }
+    }
   }
   return next;
 }
@@ -61983,6 +61991,66 @@ function _battleDetectionFlip(state, unit, radius) {
     if (live && live.isFaceDown && live.alive) next = _flipSubterfuge(next, live, 'detection');
   }
   return next;
+}
+
+// 🎯 SUBTERFUGE AMBUSH REACTION — when a face-down trap flips because an ENEMY sprang
+// it directly (it was attacked → reason 'damaged', or an enemy crept onto it → reason
+// 'enemyAdjacent'), its optional `ambushEffect` strikes back at THAT specific enemy
+// (the reactant), not the whole board. Returns the new state + `cancelAttack` (true =
+// the triggering attack is stopped before it lands). Detection / manual / surface flips
+// do NOT fire this — only an enemy that walked into / struck the trap gets ambushed.
+//   negate  — cancel the attack (no damage to either side)
+//   riposte — counter `amount` damage to the attacker; the original blow STILL lands
+//   repel   — cancel the attack + stun the attacker for `amount` turns
+//   mirror  — cancel the attack + reflect `amount`% of the attacker's power back at it
+function _resolveAmbushReaction(state, trap, reactant, reason) {
+  const out = { state, cancelAttack: false };
+  if (!state || !trap || !reactant) return out;
+  const eff = trap.ambushEffect;
+  if (!eff || !eff.type) return out;
+  let next = state;
+  const col = trap.owner === 'player' ? 'green' : 'red';
+  const liveReactant = () => (next.units || []).find(u => u.id === reactant.id);
+  const dealDamage = (dmg, type) => {
+    const r = liveReactant();
+    if (!r || !r.alive || !(dmg > 0)) return;
+    let trig;
+    try { trig = applyDamageTriggers(r, dmg, type || 'magic'); } catch (e) { return; }
+    const nu = trig.unit;
+    next = { ...next, units: (next.units || []).map(u => u.id === r.id ? nu : u), log: [...(next.log || []), ...((trig.log) || [])] };
+    if (!nu.alive) {
+      next = { ...next, log: [...next.log, { msg: `🎯 ${trap.name}'s ambush strikes down ${nu.name}!`, color: col }] };
+      if (nu.isHero) next = { ...next, gameOver: nu.owner === 'player' ? 'ai' : 'player' };
+    }
+  };
+  const push = (msg) => { next = { ...next, log: [...(next.log || []), { msg, color: col }] }; };
+  if (eff.type === 'negate') {
+    out.cancelAttack = true;
+    push(`🛡 ${trap.name} negates ${reactant.name}'s attack!`);
+  } else if (eff.type === 'riposte') {
+    const amt = Math.max(0, eff.amount || 0);
+    push(`⚔ ${trap.name} ripostes ${reactant.name} for ${amt}!`);
+    dealDamage(amt, 'physical'); // does NOT cancel — the original blow still lands on the trap
+  } else if (eff.type === 'repel') {
+    out.cancelAttack = true;
+    const dur = Math.max(1, eff.amount || 1);
+    const r = liveReactant();
+    if (r && typeof applyStatusEffect === 'function') {
+      next = { ...next, units: (next.units || []).map(u => u.id === r.id ? applyStatusEffect(u, 'stun', dur) : u) };
+      push(`💫 ${trap.name} repels ${reactant.name} — stunned ${dur}t!`);
+    }
+  } else if (eff.type === 'mirror') {
+    out.cancelAttack = true;
+    const r = liveReactant();
+    const _atk = (r && r.stats && r.stats.atk) || (r && r.atk) || 0;
+    const _mag = (r && r.stats && r.stats.mag) || (r && r.mag) || 0;
+    const pct = (eff.amount > 0) ? eff.amount : 50;
+    const refl = Math.round(Math.max(_atk, _mag) * pct / 100);
+    push(`🪞 ${trap.name} mirrors ${reactant.name}'s strike — ${refl} reflected!`);
+    dealDamage(refl, 'magic');
+  }
+  out.state = next;
+  return out;
 }
 
 function applyOnPlayEffect(state, unit, card) {
@@ -64497,6 +64565,8 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
     // NOT here — buildUnit also makes summons / AI units / walls that must never auto-hide.
     isSubterfuge: !!cardData.isSubterfuge,
     flipEffect: (cardData.flipEffect && typeof cardData.flipEffect === 'object') ? cardData.flipEffect : null,
+    // 🎯 Reactive ambush ({type,amount}) — strikes the enemy that springs the trap.
+    ambushEffect: (cardData.ambushEffect && typeof cardData.ambushEffect === 'object') ? cardData.ambushEffect : null,
     isFaceDown: false,
     placedThisTurn: false,
   };
@@ -65386,7 +65456,25 @@ const executeMove = (state, attacker, target, move) => {
       for (let _i = _preLen; _i < s.log.length; _i++) log.push(s.log[_i]);
       target = (s.units || []).find(u => u.id === target.id) || target;
       attacker = (s.units || []).find(u => u.id === attacker.id) || attacker;
-      // The flip may have killed the target or the attacker — bail cleanly if either fell.
+      // 🎯 REACTIVE AMBUSH — the freshly-flipped trap strikes back at THIS attacker
+      // (negate / riposte / repel / mirror). negate/repel/mirror CANCEL the attack: the
+      // attacker's action is still spent, but the blow never lands.
+      if (target && target.alive && attacker && attacker.alive && target.ambushEffect && target.ambushEffect.type && typeof _resolveAmbushReaction === 'function') {
+        const _preR = s.log.length;
+        const _react = _resolveAmbushReaction(s, target, attacker, 'damaged');
+        s = _react.state || s;
+        for (let _i = _preR; _i < s.log.length; _i++) log.push(s.log[_i]);
+        target = (s.units || []).find(u => u.id === target.id) || target;
+        attacker = (s.units || []).find(u => u.id === attacker.id) || attacker;
+        if (_react.cancelAttack) {
+          // Spend the attacker's action (markAttackerActed isn't defined yet here, so set
+          // the flags inline) and end the move before any damage is dealt.
+          if (attacker) s = { ...s, units: (s.units || []).map(u => u.id === attacker.id ? { ...u, hasAttacked: true, usedPriority: move.priority ? true : u.usedPriority } : u) };
+          s.log = log;
+          return s;
+        }
+      }
+      // The flip / ambush may have killed the target or the attacker — bail cleanly if either fell.
       if (!target || !target.alive || !attacker || !attacker.alive) { s.log = log; return s; }
     } catch (e) { /* a flip glitch must never freeze the attack — fall through face-up-or-not */ }
   }
@@ -79373,6 +79461,15 @@ function renderCardEditor() {
   ).join('');
   const onPlayStatusOpts = ['weak','strong','poison','burn','bleed','siphoned','stun','slow','frozen','sleep','confusion','paralysis','shielded','focused','haste','assisted','stumble','rage']
     .map(s => `<option value="${s}" ${onPlay.status === s ? 'selected' : ''}>${s}</option>`).join('');
+  // 🎯 Subterfuge reactive-ambush picker — strikes the enemy that springs the trap.
+  const ambush = (card.ambushEffect && typeof card.ambushEffect === 'object') ? card.ambushEffect : {};
+  const ambushTypeOpts = [
+    ['', '— None —'],
+    ['negate',  '🛡 Negate — cancel the attack'],
+    ['riposte', '⚔ Riposte — counter N damage (still takes the hit)'],
+    ['repel',   '💫 Repel — cancel + stun the attacker N turns'],
+    ['mirror',  '🪞 Mirror — cancel + reflect N% of the attacker\'s power'],
+  ].map(([v, l]) => `<option value="${v}" ${(ambush.type || '') === v ? 'selected' : ''}>${l}</option>`).join('');
   // On-play effects are available to units/heroes/summons AND to field cards
   // (locations + weather) — locations/weather fire their on-play through the
   // same engine via a hero-anchored synthetic caster.
@@ -79394,6 +79491,17 @@ function renderCardEditor() {
         🃏 Subterfuge — play this unit FACE-DOWN (hidden trap)
       </label>
       <div class="small-text ink-dim" style="margin-top:0.35rem">When ON, this unit enters play face-down — its identity hidden from the enemy — and does <strong>not</strong> fire its On-Play on summon. Instead the <strong>On-Play Ability below becomes its FLIP EFFECT</strong>, triggering when the trap is revealed: manually on a later turn, when an enemy moves adjacent, or when it takes damage. A face-down unit can't move or attack until it flips.</div>
+      <div style="margin-top:0.6rem;display:grid;grid-template-columns:1fr 130px;gap:0.5rem">
+        <div>
+          <label style="font-weight:700;color:#ffb3b3;font-size:0.82rem">🎯 Ambush Reaction <span class="ink-dim" style="font-weight:400">(strikes the enemy that springs it)</span></label>
+          <select id="ed-ambush-type" style="width:100%;margin-top:0.25rem">${ambushTypeOpts}</select>
+        </div>
+        <div>
+          <label style="font-weight:700;color:#ffb3b3;font-size:0.82rem">Amount</label>
+          <input id="ed-ambush-amount" type="number" min="0" max="200" value="${ambush.amount != null ? ambush.amount : ''}" placeholder="dmg / turns / %" style="width:100%;margin-top:0.25rem">
+        </div>
+      </div>
+      <div class="small-text ink-dim" style="margin-top:0.3rem">Fires only when an enemy <strong>attacks</strong> the trap or <strong>moves onto</strong> it — Amount is damage (Riposte), stun turns (Repel), or reflect % of the attacker's power (Mirror). This is on top of the Flip Effect below.</div>
     </div>` : ''}
     <div class="editor-field"><label>Effect Type</label><select id="ed-onplay-type">${onPlayTypeOpts}</select></div>
     <div class="editor-field"><label>Radius (tiles around ${_isFieldCard ? 'your hero' : _isWallCard ? 'the wall' : 'the unit'})</label><input id="ed-onplay-radius" type="number" min="0" max="4" value="${onPlay.radius || 1}"></div>
@@ -81612,6 +81720,15 @@ function captureEditorIntoCard(card) {
     card.isSubterfuge = !!document.getElementById('ed-is-subterfuge').checked;
     if (card.isSubterfuge) card.flipEffect = card.onPlay ? { ...card.onPlay } : null;
     else delete card.flipEffect;
+    // 🎯 Reactive ambush — only meaningful on a face-down trap. Default amount scales to
+    // the reaction type (mirror = %, repel = turns, riposte = flat damage).
+    if (card.isSubterfuge && document.getElementById('ed-ambush-type')) {
+      const _amt = (v('ed-ambush-type') || '').trim();
+      if (_amt) card.ambushEffect = { type: _amt, amount: num('ed-ambush-amount', 0, 200, _amt === 'mirror' ? 50 : (_amt === 'repel' ? 1 : 6)) };
+      else delete card.ambushEffect;
+    } else {
+      delete card.ambushEffect;
+    }
   }
   // ⚡ Activation cost for spell / trap / counter cards (Yu-Gi-Oh-style pay-to-
   // activate). Stored on card.activationCost; the play paths (playSpell /
@@ -97499,6 +97616,8 @@ function aiScoreUnitCard(card, state, playerProf) {
   // set), and bias UP when the AI hero is pressured (a defensive set buys time).
   if (card.isSubterfuge) {
     score = score * 0.85 + 12;
+    // A reactive ambush (negate / riposte / repel / mirror) makes a set far scarier.
+    if (card.ambushEffect && card.ambushEffect.type) score += 14;
     try {
       const aiH = (state && state.units || []).find(u => u && u.owner === 'ai' && u.isHero);
       if (aiH && aiH.maxHp && (aiH.currentHp / aiH.maxHp) < 0.5) score += 18;

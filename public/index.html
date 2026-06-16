@@ -146943,6 +146943,7 @@ try {
         case 'recon-net-foundation': showToast('🏛 Foundation Reserve — the shared Cinder pool every settlement feeds. Rebuild sites + run convoys to raise your contribution.', 4800); break;
         case 'camp-view-node': goToDistrictNode(getCampNodeId()); break;
         case 'node-upgrade': { const nid = t.getAttribute('data-node'), kind = t.getAttribute('data-kind'); if (nid && kind && typeof _twBuyNodeUpgrade === 'function') _twBuyNodeUpgrade(nid, kind); break; }
+        case 'node-collect-bank': { const nid = t.getAttribute('data-node'); if (nid && typeof _twCollectNodeBank === 'function') _twCollectNodeBank(nid); break; }
         default: return;
       }
     });
@@ -147405,6 +147406,15 @@ async function tw_cloudBuyUpgrade(nodeId, kind, maxLevel, totals) {
       p_node_id: nodeId, p_kind: kind, p_max: (maxLevel | 0) || 5,
       p_roads_total: (t.roadsTotal | 0) || 60, p_buildings_total: (t.buildingsTotal | 0) || 48, p_civ_total: (t.civiliansTotal | 0) || 200000,
     });
+    if (error) return null;
+    return data;
+  } catch (e) { return null; }
+}
+// Owner withdraws the node's accrued cinder bank. Returns {ok, amount} or {ok:false}.
+async function tw_cloudCollectNodeBank(nodeId) {
+  try {
+    if (!nodeId || !Cloud || !Cloud.ready || !Cloud.client) return null;
+    const { data, error } = await Cloud.client.rpc('tw_node_collect_bank', { p_node_id: nodeId });
     if (error) return null;
     return data;
   } catch (e) { return null; }
@@ -148932,6 +148942,8 @@ function _twNodeRecon(node) {
     garrison:       (r && (r.garrison | 0)) || 0,
     refinery:       (r && (r.refinery | 0)) || 0,
     civic:          (r && (r.civic | 0)) || 0,
+    cinderTotal:    (r && Math.max(0, Math.round(r.cinderTotal || 0))) || 0,
+    cinderBank:     (r && Math.max(0, Math.round(r.cinderBank || 0))) || 0,
     shared:         false,
   };
   // Overlay the SHARED cloud row (truth). Contribution counters take the MAX so a
@@ -148955,6 +148967,8 @@ function _twNodeRecon(node) {
       if (typeof cr.garrison === 'number') out.garrison = cr.garrison | 0;
       if (typeof cr.refinery === 'number') out.refinery = cr.refinery | 0;
       if (typeof cr.civic === 'number') out.civic = cr.civic | 0;
+      if (cr.cinder_total != null) out.cinderTotal = Math.max(0, Math.round(Number(cr.cinder_total) || 0));
+      if (cr.cinder_bank != null) out.cinderBank = Math.max(0, Math.round(Number(cr.cinder_bank) || 0));
       if (cr.restored) out.restored = true;
       out.shared = true;
     }
@@ -149103,6 +149117,34 @@ function _twNodeProtection(nodeId) {
     return Math.min(18, count * 1.5 + garrison * 1.5);
   } catch (e) { return 0; }
 }
+// How many players are REGISTERED to / CONTRIBUTING at a node (cloud-cached counts,
+// + this player's own camp). Drives the cinder-generation display.
+function _twNodeRegisteredCount(nodeId) {
+  try {
+    let n = 0; const myUid = (Profile.cloud && Profile.cloud.userId) || null;
+    const cc = App._twNodeCamps && App._twNodeCamps[nodeId];
+    const rows = cc && Array.isArray(cc.rows) ? cc.rows : null;
+    if (rows) { n = rows.length; if (Profile && Profile.campNodeId === nodeId && (!myUid || !rows.some(r => r && r.user_id === myUid))) n += 1; }
+    else if (Profile && Profile.campNodeId === nodeId) n = 1;
+    return n;
+  } catch (e) { return 0; }
+}
+function _twNodeContributorCount(nodeId) {
+  try { const c = App._twNodeContrib && App._twNodeContrib[nodeId]; return (c && Array.isArray(c.rows)) ? c.rows.length : 0; } catch (e) { return 0; }
+}
+// 🔥 Cinder GENERATED per 24h — mirrors the server formula (tw_node_sim_sync). A node
+// with nobody registered earns nothing; otherwise it scales with registered players,
+// contributors, and node health (trade stability + civilization + % rebuilt).
+function _twNodeDailyCinder(node) {
+  if (!node) return 0;
+  const R = _twNodeRegisteredCount(node.id);
+  if (R <= 0) return 0;
+  const C = _twNodeContributorCount(node.id);
+  const trade = (typeof _twNodeTradeStability === 'function') ? _twNodeTradeStability(node) : 0;
+  const civ = (typeof _twNodeCivilization === 'function') ? _twNodeCivilization(node) : 0;
+  const rebuilt = (typeof _twNodeRebuiltPct === 'function') ? _twNodeRebuiltPct(node) : 0;
+  return Math.max(0, Math.round(R * 30 + C * 50 + trade * 4 + civ * 3 + rebuilt * 6));
+}
 // Advance ONE node's 24h clock by however many full days have elapsed (capped).
 // When the node has a SHARED cloud row, the daily drift is owned by the server
 // (tw_node_sim_sync) — the local tick becomes a no-op so it can't fight the cloud.
@@ -149215,6 +149257,29 @@ async function _twBuyNodeUpgrade(nodeId, kind) {
     } else {
       Object.keys(cost).forEach(id => addRes(id, cost[id])); // refund
       showToast('⚠ Upgrade failed — resources refunded.', 3600);
+    }
+    try { render(); } catch (e) {}
+  } catch (e) {}
+}
+// 🔥 Node OWNER collects the accrued cinder bank into their wallet (server zeroes
+// the bank + returns the amount; only the assigned owner may collect).
+async function _twCollectNodeBank(nodeId) {
+  try {
+    if (!nodeId) return;
+    if (!(typeof Cloud !== 'undefined' && Cloud && Cloud.ready)) { showToast('☁ Sign in to collect node payouts.', 3600); return; }
+    const res = await tw_cloudCollectNodeBank(nodeId);
+    if (res && res.ok && (res.amount | 0) > 0) {
+      try { Profile.gems = (Profile.gems | 0) + (res.amount | 0); } catch (e) {}
+      try { if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+      try { delete (App._twNodeReconCloud || {})[nodeId]; } catch (e) {}  // force a fresh bank read
+      try { if (typeof tw_cloudFetchNodeRecon === 'function') tw_cloudFetchNodeRecon(nodeId); } catch (e) {}
+      showToast(`🔥 Collected ${(res.amount | 0).toLocaleString()} Cinder from the node bank.`, 4200);
+    } else if (res && res.reason === 'not_owner') {
+      showToast('Only the node owner can collect this bank.', 3600);
+    } else if (res && res.reason === 'empty') {
+      showToast('The node bank is empty — it fills as the node generates cinder each day.', 4200);
+    } else {
+      showToast('⚠ Could not collect right now.', 3000);
     }
     try { render(); } catch (e) {}
   } catch (e) {}
@@ -149904,9 +149969,17 @@ function renderTerritoryWars() {
     const _civSaved = _rc.civiliansSaved | 0;
     const _ah = (selOwn && selOwn.attackHistory) || [];
     const _campaigns = (_rc.campaignsRun | 0) + _ah.length;
+    // 🔥 REAL lifetime cinder this node has generated (server-accrued, scales with
+    // registered players + contributors + node health). Admin override wins; the old
+    // synthetic value is only a fallback when there's no shared cloud row yet.
     const _cinderTotal = (selOwn && selOwn.cinderOverride > 0)
       ? selOwn.cinderOverride
-      : Math.round(_sh(selNode.id + 'ci') % 35000 + 8000 + upgrades.length * 1500);
+      : (_rc.shared ? (_rc.cinderTotal | 0)
+                    : Math.round(_sh(selNode.id + 'ci') % 35000 + 8000 + upgrades.length * 1500));
+    const _cinderBank = (_rc.cinderBank | 0);
+    const _cinderPerDay = (typeof _twNodeDailyCinder === 'function') ? _twNodeDailyCinder(selNode) : 0;
+    const _canManageBank = (typeof _esnCanManageNode === 'function') && _esnCanManageNode(selNode.id);
+    const _isNodeOwner = (typeof _twIsNodePlayerOwner === 'function') && _twIsNodePlayerOwner(selNode.id);
     const _statusStr = stability >= 80 ? 'STABLE' : stability >= 60 ? 'STRAINED' : stability >= 30 ? 'FAILING' : 'COLLAPSING';
     const _fmtPop = (v) => v >= 1000000 ? (v/1000000).toFixed(1)+'M' : v >= 1000 ? (v/1000).toFixed(0)+','+('000'+Math.round(v%1000)).slice(-3) : String(v);
     const _fmtN = (v) => v >= 1000 ? (v/1000).toFixed(1)+'K' : String(v);
@@ -150029,25 +150102,30 @@ function renderTerritoryWars() {
         return `<div class="tw-nd-progress-list">${list}</div>`
           + (!_reg ? `<div style="padding:4px 0.75rem 2px;font-size:0.62rem;color:#7a8694">Register your camp to this node to reinvest its resource into upgrades that help everyone here.</div>` : '');
       })()}
-      <div class="tw-nd-section-hdr">— FOUNDATION RESERVE CONTRIBUTION</div>
+      <div class="tw-nd-section-hdr">— FOUNDATION RESERVE CONTRIBUTION${_rc.shared ? ' <span style="color:#7fb0ff;font-weight:700;font-size:0.7em">· ☁ LIVE</span>' : ''}</div>
       <div class="tw-nd-cinder-box">
         <div class="tw-nd-cinder-hdr"><div class="tw-nd-cinder-label">TOTAL CINDER GENERATED</div><div class="tw-nd-node-level">NODE LV ${_nodeLevel}</div></div>
         <div class="tw-nd-cinder-value">${_fmtN(_cinderTotal)} <span class="tw-nd-cinder-unit">CINDER</span></div>
-        <div class="tw-nd-cinder-bar-stacked">
-          <div style="width:32%;background:#4e8a9a" title="CAMPAIGNS 32%"></div>
-          <div style="width:22%;background:#c89428" title="RESOURCES 22%"></div>
-          <div style="width:18%;background:#4d9e68" title="CIV REPAIR 18%"></div>
-          <div style="width:14%;background:#9055b4" title="ANOMALY 14%"></div>
-          <div style="width:14%;background:#b84e2c" title="COMBAT 14%"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.66rem;margin:2px 0 6px">
+          <span style="color:#8a96a3">GENERATION RATE</span>
+          <span style="color:${_cinderPerDay > 0 ? '#d8b24a' : '#6b7682'};font-weight:700">${_cinderPerDay > 0 ? ('+' + _cinderPerDay.toLocaleString() + ' 🔥 / day') : 'idle — register players to earn'}</span>
         </div>
-        <div class="tw-nd-cinder-legend">
-          <span><i style="background:#4e8a9a"></i> CAMPAIGNS 32%</span>
-          <span><i style="background:#c89428"></i> RESOURCES 22%</span>
-          <span><i style="background:#4d9e68"></i> CIV REPAIR 18%</span>
-          <span><i style="background:#9055b4"></i> ANOMALY 14%</span>
-          <span><i style="background:#b84e2c"></i> COMBAT 14%</span>
-        </div>
+        <div style="font-size:0.6rem;color:#7a8694;line-height:1.5">Driven by <b>${_twNodeRegisteredCount(selNode.id)}</b> registered · <b>${_twNodeContributorCount(selNode.id)}</b> contributing · trade ${_trade}% · civ ${_civ}% · ${_twNodeRebuiltPct(selNode)}% rebuilt.</div>
       </div>
+      ${_canManageBank ? `
+      <div class="tw-nd-section-hdr">— NODE BANK${_isNodeOwner ? ' <span style="color:#7fe0a0;font-weight:700;font-size:0.7em">· YOURS</span>' : ' <span style="color:#8a96a3;font-weight:700;font-size:0.7em">· ADMIN VIEW</span>'}</div>
+      <div class="tw-nd-cinder-box" style="border-color:rgba(216,178,74,.35)">
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:8px">
+          <div>
+            <div class="tw-nd-cinder-label">UNCOLLECTED PAYOUT</div>
+            <div class="tw-nd-cinder-value" style="color:#d8b24a">${_cinderBank.toLocaleString()} <span class="tw-nd-cinder-unit">CINDER</span></div>
+          </div>
+          ${_isNodeOwner
+            ? `<button class="btn-mini ${_cinderBank > 0 ? 'btn-primary' : ''}" data-act="node-collect-bank" data-node="${escapeHtml(selNode.id)}" ${_cinderBank > 0 ? '' : 'disabled'} style="white-space:nowrap">💰 Collect</button>`
+            : `<span style="font-size:0.6rem;color:#8a96a3;text-align:right;max-width:120px">Only the node owner can collect.</span>`}
+        </div>
+        <div style="font-size:0.62rem;color:#7a8694;margin-top:6px;line-height:1.5">A payout of <b style="color:#d8b24a">+${_cinderPerDay.toLocaleString()} 🔥</b> lands here every 24-hour cycle while the node is healthy and staffed. ${_isNodeOwner ? 'Collect it into your wallet anytime.' : ''}</div>
+      </div>` : ''}
       ${renderNodeLevelProgressSection(selNode, iOwn)}
       <div class="tw-nd-section-hdr">— ACTIONS</div>
       <div class="tw-nd-actions">

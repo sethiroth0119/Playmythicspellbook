@@ -70117,6 +70117,7 @@ function _renderImpl() {
   if (App.screen === 'coliseum')     return renderColiseum();
   if (App.screen === 'wagerHall')    return renderWagerHall();
   if (App.screen === 'vendorMarket') return renderVendorMarket();
+  if (App.screen === 'cardShop')     return renderCardShop();
   if (App.screen === 'packOpening')  return renderPackOpening();
   // Legacy aliases — old saved-state / deep links land on the unified Vendor Market.
   if (App.screen === 'shop')         { App.vendorMarketTab = 'packs';      return renderVendorMarket(); }
@@ -71670,18 +71671,14 @@ function renderTitle() {
   // Each portal: { id, icon, name, sub, accent, badge?, alertBadge?, onclick }
   const PORTALS = {
     main: [
-      // 🏚 Walk Camp Heights — admin-only for now. Still in active dev so
-      // hiding it from regular players until the social/exploration loop is
-      // production-ready. Returns null when the player isn't admin and the
-      // null entry is filtered out below before the tile grid renders.
-      ((typeof isAdmin === 'function') && isAdmin())
-        ? { id: 'p-walk', icon: '🏚', name: 'Walk Camp Heights',
-            sub: 'Explore the camp · talk to survivors · daily quests',
-            accent: '#c9a24a',
-            badge: 'ADMIN',
-            alertBadge: true,
-            onclick: () => { App.screen = 'campView'; render(); } }
-        : null,
+      // 🛒 Card Shop — replaced the old "Walk Camp Heights" explore portal. Open to
+      // ALL players: run your own storefront and visit shops other players OWN to buy
+      // their cards for Cinder. (The card-shop economy is cross-player via Supabase.)
+      { id: 'p-cardshop', icon: '🛒', name: 'Card Shop',
+        sub: 'Run your own shop · visit player-owned shops',
+        accent: '#d4af37',
+        badge: null,
+        onclick: () => { App._cardShopReturn = App.screen; App.screen = 'cardShop'; render(); } },
       { id: 'p-battle',   icon: '<img src="assets/artwork/gameicons/Battle%20icon.png" alt="Battle Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'Battle Hall',    sub: 'Fight, climb, win the day',          accent: '#ff7755',
         badge: streak > 1 ? `<span class="cinder-icon"></span> ${streak} streak` : (campTotal.done > 0 ? `${campTotal.done}/${campTotal.total} chapters` : null),
         alertBadge: streak > 4,
@@ -104893,6 +104890,314 @@ function _bindPackOpeningRevealHandlers() {
 // into one tabbed screen. Both tabs share a single header showing both balances.
 // Tab state lives on App.vendorMarketTab ('packs' | 'sovereigns'); defaults to 'packs'.
 // ============================================================================
+// ═══════════════════════════════════════════════════════════════════════════
+// 🛒 CARD SHOP — player-owned storefronts (replaces "Walk Camp Heights").
+// A player opens ONE shop and lists cards from their REAL collection for Cinder;
+// other players visit OPEN (owned) shops and buy. Reuses Profile.cardCollection,
+// Profile.gems (Cinder), lookupCustomCard + _cardFaceArt. Cross-player via the
+// card_shops / card_shop_listings / card_shop_sales tables + card_shop_buy RPC.
+// ═══════════════════════════════════════════════════════════════════════════
+const CardShop = { mine: null, browse: null, shopOf: {}, _fMine: false, _fBrowse: false, _fShop: null };
+function _csUid() { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } }
+function _csReady() { try { return !!(typeof Cloud !== 'undefined' && Cloud && Cloud.ready && Cloud.client && _csUid()); } catch (e) { return false; } }
+function _csMyName() { try { return ((Profile.cloud && (Profile.cloud.handle || Profile.cloud.name)) || Profile.name || 'Vendor'); } catch (e) { return 'Vendor'; } }
+function _csCinders() { try { return (typeof getCinders === 'function') ? getCinders() : (Profile.gems | 0); } catch (e) { return 0; } }
+const CARD_SHOP_THEMES = { bunker: { name: 'Concrete Bunker', accent: '#f59e0b' }, blackmarket: { name: 'Black Market', accent: '#3fa34d' }, outpost: { name: 'Sparta Outpost', accent: '#d4af37' }, neon: { name: 'Neon Bazaar', accent: '#ff2d95' } };
+// Grant a bought card into the buyer's collection (stash a custom snapshot so it
+// still renders if it isn't a published/catalog card).
+function _csGrantCard(cardId, cardJson) {
+  try {
+    if (!cardId) return;
+    if (!Profile.cardCollection) Profile.cardCollection = {};
+    const known = (typeof lookupCustomCard === 'function') && lookupCustomCard(cardId);
+    if (!known && cardJson && cardJson.id) {
+      try { if (typeof Forge !== 'undefined') { Forge.customCards = Forge.customCards || []; if (!Forge.customCards.some(c => c && c.id === cardJson.id)) Forge.customCards.push(cardJson); } } catch (e) {}
+    }
+    Profile.cardCollection[cardId] = (Profile.cardCollection[cardId] | 0) + 1;
+    try { saveProfile(); } catch (e) {}
+  } catch (e) {}
+}
+// ── cloud (mirrors the card-market graceful pattern; no-op until tables exist) ──
+async function cardShopFetchMine() {
+  try {
+    if (!_csReady()) return null;
+    const uid = _csUid();
+    const [shopRes, lstRes, salesRes] = await Promise.all([
+      Cloud.client.from('card_shops').select('*').eq('owner_id', uid).limit(1),
+      Cloud.client.from('card_shop_listings').select('*').eq('owner_id', uid).order('created_at', { ascending: false }).limit(200),
+      Cloud.client.from('card_shop_sales').select('amount, collected').eq('owner_id', uid).eq('collected', false).limit(500),
+    ]);
+    let earn = 0; (salesRes.data || []).forEach(s => earn += (s.amount | 0));
+    CardShop.mine = { at: Date.now(), shop: (shopRes.data && shopRes.data[0]) || null, listings: lstRes.data || [], earnings: earn, salesCount: (salesRes.data || []).length };
+    if (App.screen === 'cardShop') { try { render(); } catch (e) {} }
+    return CardShop.mine;
+  } catch (e) { return null; }
+}
+async function cardShopBrowse() {
+  try {
+    if (!_csReady()) return null;
+    const uid = _csUid();
+    const { data: shops } = await Cloud.client.from('card_shops').select('owner_id, owner_name, shop_name, tagline, theme').eq('open', true).neq('owner_id', uid).limit(100);
+    const owners = (shops || []).map(s => s.owner_id);
+    const counts = {};
+    if (owners.length) {
+      const { data: lst } = await Cloud.client.from('card_shop_listings').select('owner_id, qty').in('owner_id', owners).limit(2000);
+      (lst || []).forEach(l => { counts[l.owner_id] = (counts[l.owner_id] | 0) + (l.qty | 0); });
+    }
+    CardShop.browse = { at: Date.now(), shops: (shops || []).map(s => ({ ...s, items: counts[s.owner_id] | 0 })).filter(s => s.items > 0) };
+    if (App.screen === 'cardShop') { try { render(); } catch (e) {} }
+    return CardShop.browse;
+  } catch (e) { return null; }
+}
+async function cardShopFetchShop(ownerId) {
+  try {
+    if (!_csReady() || !ownerId) return null;
+    const [shopRes, lstRes] = await Promise.all([
+      Cloud.client.from('card_shops').select('*').eq('owner_id', ownerId).limit(1),
+      Cloud.client.from('card_shop_listings').select('*').eq('owner_id', ownerId).gt('qty', 0).order('price', { ascending: true }).limit(200),
+    ]);
+    CardShop.shopOf[ownerId] = { at: Date.now(), shop: (shopRes.data && shopRes.data[0]) || null, listings: lstRes.data || [] };
+    if (App.screen === 'cardShop' && App._csViewOwner === ownerId) { try { render(); } catch (e) {} }
+    return CardShop.shopOf[ownerId];
+  } catch (e) { return null; }
+}
+async function cardShopOpen(name, tagline, theme) {
+  try {
+    if (!_csReady()) { showToast('☁ Sign in to open a shop.', 3600); return null; }
+    const row = { owner_id: _csUid(), owner_name: (_csMyName() || 'Vendor').slice(0, 28), shop_name: ((name || '').trim() || 'Outpost').slice(0, 28), tagline: (tagline || '').trim().slice(0, 80), theme: theme || 'bunker', open: true, updated_at: new Date().toISOString() };
+    const { error } = await Cloud.client.from('card_shops').upsert(row);
+    if (error) { showToast('⚠ Could not open shop: ' + (error.message || 'cloud error'), 4200); return null; }
+    showToast('🛒 Shop opened — now visible to all players.', 3600);
+    CardShop.mine = null; await cardShopFetchMine(); return true;
+  } catch (e) { return null; }
+}
+async function cardShopSetOpen(isOpen) {
+  try { if (!_csReady()) return null; await Cloud.client.from('card_shops').update({ open: !!isOpen, updated_at: new Date().toISOString() }).eq('owner_id', _csUid()); showToast(isOpen ? '🛒 Shop is open to visitors.' : '🚪 Shop closed to visitors.', 3000); CardShop.mine = null; await cardShopFetchMine(); } catch (e) {}
+}
+async function cardShopListCard(cardId, price) {
+  try {
+    if (!_csReady()) { showToast('☁ Sign in to list cards.', 3600); return null; }
+    const have = (Profile.cardCollection && Profile.cardCollection[cardId]) || 0;
+    if (have <= 0) { showToast('You don\'t own that card.', 3000); return null; }
+    price = Math.max(0, Math.floor(price || 0));
+    const card = (typeof lookupCustomCard === 'function' && lookupCustomCard(cardId)) || null;
+    const snap = card ? { id: card.id, name: card.name, rarity: card.rarity, type: card.type, icon: card.icon } : { id: cardId, name: cardId };
+    Profile.cardCollection[cardId] = have - 1; if (Profile.cardCollection[cardId] <= 0) delete Profile.cardCollection[cardId];
+    try { saveProfile(); } catch (e) {}
+    const { error } = await Cloud.client.from('card_shop_listings').insert({ owner_id: _csUid(), kind: 'card', card_id: cardId, card_json: snap, price: price, qty: 1 });
+    if (error) { Profile.cardCollection[cardId] = ((Profile.cardCollection[cardId] | 0)) + 1; try { saveProfile(); } catch (e) {} showToast('⚠ Could not list: ' + (error.message || 'cloud error'), 4200); return null; }
+    showToast('🏷 Listed for ' + price + ' 🔥.', 3000);
+    App._csPick = null; CardShop.mine = null; await cardShopFetchMine(); return true;
+  } catch (e) { return null; }
+}
+async function cardShopUnlist(listingId, cardId) {
+  try {
+    if (!_csReady() || !listingId) return null;
+    const { error } = await Cloud.client.from('card_shop_listings').delete().eq('id', listingId).eq('owner_id', _csUid());
+    if (error) { showToast('⚠ Could not unlist.', 3000); return null; }
+    if (cardId) { if (!Profile.cardCollection) Profile.cardCollection = {}; Profile.cardCollection[cardId] = ((Profile.cardCollection[cardId] | 0)) + 1; try { saveProfile(); } catch (e) {} }
+    showToast('↩ Card returned to your collection.', 3000);
+    CardShop.mine = null; await cardShopFetchMine(); return true;
+  } catch (e) { return null; }
+}
+async function cardShopBuy(listingId, price, ownerId) {
+  try {
+    if (!_csReady()) { showToast('☁ Sign in to buy.', 3600); return null; }
+    price = Math.max(0, Math.floor(price || 0));
+    if (_csCinders() < price) { showToast('Not enough Cinder — need ' + price + ' 🔥.', 3600); return null; }
+    const { data, error } = await Cloud.client.rpc('card_shop_buy', { p_listing_id: listingId, p_expected_price: price });
+    if (error) { showToast('⚠ Purchase failed.', 3000); return null; }
+    if (!data || !data.ok) {
+      const r = data && data.reason;
+      showToast(r === 'soldout' || r === 'gone' ? 'That card just sold.' : r === 'own' ? 'That\'s your own listing.' : r === 'price_changed' ? 'Price changed — re-opening shop.' : '⚠ Could not buy.', 3600);
+      if (ownerId) { CardShop.shopOf[ownerId] = null; cardShopFetchShop(ownerId); }
+      return null;
+    }
+    spendCinders(price);
+    _csGrantCard(data.card_id, data.card_json);
+    showToast('✅ Bought ' + (data.item_name || 'card') + ' for ' + price + ' 🔥 — added to your collection.', 4600);
+    if (ownerId) { CardShop.shopOf[ownerId] = null; await cardShopFetchShop(ownerId); }
+    try { render(); } catch (e) {}
+    return true;
+  } catch (e) { return null; }
+}
+async function cardShopCollect() {
+  try {
+    if (!_csReady()) return null;
+    const { data, error } = await Cloud.client.rpc('card_shop_collect');
+    if (error || !data || !data.ok) { showToast('⚠ Could not collect earnings.', 3000); return null; }
+    const amt = data.amount | 0;
+    if (amt > 0) { addCinders(amt); showToast('💰 Collected ' + amt.toLocaleString() + ' 🔥 from ' + (data.count | 0) + ' sale' + ((data.count | 0) === 1 ? '' : 's') + '.', 4600); }
+    else showToast('No uncollected sales yet.', 3000);
+    CardShop.mine = null; await cardShopFetchMine(); return true;
+  } catch (e) { return null; }
+}
+// ── card tile + style ──
+function _csCardTile(cardId, cardJson) {
+  const card = (typeof lookupCustomCard === 'function' && lookupCustomCard(cardId)) || cardJson || { id: cardId, name: cardId };
+  const art = (typeof _cardFaceArt === 'function') ? _cardFaceArt(card, 'cover') : '🃏';
+  const rar = card.rarity ? String(card.rarity) : '';
+  return `<div class="cs-card-art">${art}</div><div class="cs-card-name">${escapeHtml(card.name || cardId)}</div>${rar ? `<div class="cs-card-rar">${escapeHtml(rar)}</div>` : ''}`;
+}
+function _ensureCardShopStyle() {
+  if (document.getElementById('card-shop-style')) return;
+  const s = document.createElement('style'); s.id = 'card-shop-style';
+  s.textContent = `
+  .cs-page{max-width:880px;margin:0 auto;padding:0.4rem 0.7rem 2rem}
+  .cs-tabs{display:flex;gap:0.5rem;margin:0.6rem 0 1rem}
+  .cs-tab{flex:1;padding:0.6rem;border-radius:8px;font-weight:700;letter-spacing:.04em;font-size:0.82rem;cursor:pointer;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);color:#c2cbd6;text-align:center}
+  .cs-tab.is-active{background:rgba(212,175,55,.18);border-color:rgba(212,175,55,.6);color:#ffe9a8}
+  .cs-shoplist{display:grid;gap:0.55rem}
+  .cs-shop-row{display:flex;align-items:center;gap:0.7rem;padding:0.7rem;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);cursor:pointer;text-align:left}
+  .cs-shop-row:hover{border-color:rgba(212,175,55,.5);background:rgba(212,175,55,.07)}
+  .cs-shop-badge{width:42px;height:42px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;flex:0 0 auto}
+  .cs-shop-name{font-weight:800;color:#ffe9a8}
+  .cs-shop-tag{font-size:0.7rem;color:#8a96a3}
+  .cs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:0.6rem;margin-top:0.6rem}
+  .cs-card{border-radius:9px;background:rgba(13,13,18,.7);border:1px solid rgba(255,255,255,.12);overflow:hidden;display:flex;flex-direction:column}
+  .cs-card-art{aspect-ratio:3/4;background:#0b0b10;display:flex;align-items:center;justify-content:center;font-size:2rem;overflow:hidden}
+  .cs-card-art img{width:100%;height:100%;object-fit:cover}
+  .cs-card-name{font-size:0.68rem;font-weight:700;color:#e4ecf3;padding:3px 5px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cs-card-rar{font-size:0.58rem;color:#8a96a3;padding:0 5px 2px;text-transform:uppercase;letter-spacing:.04em}
+  .cs-card-foot{display:flex;align-items:center;gap:4px;padding:4px 5px;border-top:1px solid rgba(255,255,255,.08)}
+  .cs-card-price{font-weight:800;color:#d8b24a;font-size:0.74rem;flex:1}
+  .cs-empty{padding:1.4rem;text-align:center;color:#7a8694;font-size:0.82rem;border:1px dashed rgba(255,255,255,.14);border-radius:10px}
+  .cs-section{font-size:0.66rem;letter-spacing:.12em;color:#8a96a3;text-transform:uppercase;margin:1rem 0 0.4rem;border-top:1px solid rgba(255,255,255,.07);padding-top:0.6rem}
+  .cs-pickrow{display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin:0.5rem 0}
+  .cs-input{padding:0.45rem 0.6rem;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.16);border-radius:6px;color:#ffe6b0;font-size:0.84rem}
+  `;
+  document.head.appendChild(s);
+}
+// ── one-time delegated handler for every Card Shop control ──
+try {
+  if (!window.__cardShopWired) {
+    window.__cardShopWired = true;
+    document.addEventListener('click', (e) => {
+      const t = e.target.closest && e.target.closest('[data-cs]'); if (!t) return;
+      const a = t.getAttribute('data-cs');
+      switch (a) {
+        case 'cs-back': App._csViewOwner = null; App.screen = App._cardShopReturn || 'title'; render(); break;
+        case 'cs-tab': App._csTab = t.getAttribute('data-tab'); App._csViewOwner = null; render(); break;
+        case 'cs-refresh': CardShop.browse = null; cardShopBrowse(); break;
+        case 'cs-enter': App._csViewOwner = t.getAttribute('data-owner'); render(); break;
+        case 'cs-exit-shop': App._csViewOwner = null; render(); break;
+        case 'cs-buy': cardShopBuy(t.getAttribute('data-id'), +t.getAttribute('data-price'), t.getAttribute('data-owner')); break;
+        case 'cs-open-shop': { const n = (document.getElementById('cs-f-name') || {}).value || ''; const tg = (document.getElementById('cs-f-tag') || {}).value || ''; cardShopOpen(n, tg, App._csTheme || 'bunker'); break; }
+        case 'cs-theme': App._csTheme = t.getAttribute('data-theme'); render(); break;
+        case 'cs-toggle-open': cardShopSetOpen(t.getAttribute('data-open') === '1'); break;
+        case 'cs-pick': App._csPick = t.getAttribute('data-card'); render(); break;
+        case 'cs-list': { const p = parseInt((document.getElementById('cs-f-price') || {}).value, 10); if (App._csPick) cardShopListCard(App._csPick, p || 0); else showToast('Pick a card to list first.', 3000); break; }
+        case 'cs-unlist': cardShopUnlist(t.getAttribute('data-id'), t.getAttribute('data-card')); break;
+        case 'cs-collect': cardShopCollect(); break;
+        default: return;
+      }
+    });
+  }
+} catch (e) {}
+// ── the Card Shop screen ──
+function renderCardShop() {
+  _ensureCardShopStyle();
+  const signedIn = _csReady();
+  const cinders = _csCinders();
+  const tab = App._csTab || 'browse';
+  // trigger background fetches (cached)
+  if (signedIn) {
+    try {
+      if ((!CardShop.mine || (Date.now() - CardShop.mine.at) > 60000) && !CardShop._fMine) { CardShop._fMine = true; Promise.resolve(cardShopFetchMine()).catch(() => {}).then(() => { CardShop._fMine = false; }); }
+      if (tab === 'browse' && !App._csViewOwner && (!CardShop.browse || (Date.now() - CardShop.browse.at) > 45000) && !CardShop._fBrowse) { CardShop._fBrowse = true; Promise.resolve(cardShopBrowse()).catch(() => {}).then(() => { CardShop._fBrowse = false; }); }
+      if (tab === 'browse' && App._csViewOwner) { const c = CardShop.shopOf[App._csViewOwner]; if ((!c || (Date.now() - c.at) > 30000) && CardShop._fShop !== App._csViewOwner) { CardShop._fShop = App._csViewOwner; Promise.resolve(cardShopFetchShop(App._csViewOwner)).catch(() => {}).then(() => { CardShop._fShop = null; }); } }
+    } catch (e) {}
+  }
+  const body = !signedIn
+    ? `<div class="cs-empty" style="margin-top:1.5rem">☁ Sign in (cloud account) to open a shop and visit other players' shops.</div>`
+    : (tab === 'mine' ? _csMyShopBody() : _csBrowseBody());
+  root.innerHTML = `
+    <div class="campaign-page">
+      <div class="campaign-header">
+        <div>
+          <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🛒 Card Shop</h2>
+          <div class="small-text ink-dim">Run your own storefront — or visit shops other players own and buy their cards for Cinder.</div>
+        </div>
+        <div class="shop-balance-stack"><div class="shop-gems-pill"><span class="shop-gems-num">${cinders.toLocaleString()}</span> <span class="cinder-icon cinder-icon-lg"></span><div class="small-text ink-dim">Cinders</div></div></div>
+        <button class="btn-secondary btn-mini" data-cs="cs-back">← Menu</button>
+      </div>
+      <div class="cs-page">
+        <div class="cs-tabs">
+          <div class="cs-tab ${tab === 'browse' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="browse">🏪 Player Shops</div>
+          <div class="cs-tab ${tab === 'mine' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="mine">🔨 My Shop</div>
+        </div>
+        ${body}
+      </div>
+    </div>`;
+}
+// Player Shops tab — browse owned shops, or the listings inside the entered shop.
+function _csBrowseBody() {
+  if (App._csViewOwner) {
+    const c = CardShop.shopOf[App._csViewOwner];
+    if (!c) return `<div class="cs-empty">Opening shop…</div>`;
+    const shop = c.shop; const accent = (CARD_SHOP_THEMES[(shop && shop.theme) || 'bunker'] || {}).accent || '#d4af37';
+    const rows = (c.listings || []).map(l => `<div class="cs-card">
+        ${_csCardTile(l.card_id, l.card_json)}
+        <div class="cs-card-foot"><span class="cs-card-price">${(l.price | 0).toLocaleString()} 🔥</span>
+          <button class="btn-mini ${_csCinders() >= (l.price | 0) ? 'btn-primary' : ''}" data-cs="cs-buy" data-id="${escapeHtml(l.id)}" data-price="${l.price | 0}" data-owner="${escapeHtml(App._csViewOwner)}" ${_csCinders() >= (l.price | 0) ? '' : 'disabled'}>Buy</button>
+        </div></div>`).join('');
+    return `<button class="btn-secondary btn-mini" data-cs="cs-exit-shop" style="margin-bottom:0.7rem">← All shops</button>
+      <div class="cs-shop-row" style="cursor:default;border-color:${accent}66">
+        <div class="cs-shop-badge" style="background:${accent}22;border:1px solid ${accent}">🛒</div>
+        <div style="flex:1"><div class="cs-shop-name" style="color:${accent}">${escapeHtml((shop && shop.shop_name) || 'Shop')}</div><div class="cs-shop-tag">${escapeHtml((shop && shop.tagline) || '')} · vendor ${escapeHtml((shop && shop.owner_name) || '')}</div></div>
+      </div>
+      ${rows ? `<div class="cs-grid">${rows}</div>` : `<div class="cs-empty" style="margin-top:0.7rem">This vendor's shelves are empty right now.</div>`}`;
+  }
+  const b = CardShop.browse;
+  if (!b) return `<div class="cs-empty">Scanning the network…</div>`;
+  if (!b.shops.length) return `<div class="cs-empty">No player shops are stocked yet. Open yours in <b>My Shop</b> and be the first vendor.</div>`;
+  const rows = b.shops.map(s => { const accent = (CARD_SHOP_THEMES[s.theme || 'bunker'] || {}).accent || '#d4af37';
+    return `<button class="cs-shop-row" data-cs="cs-enter" data-owner="${escapeHtml(s.owner_id)}">
+      <div class="cs-shop-badge" style="background:${accent}22;border:1px solid ${accent}">🛒</div>
+      <div style="flex:1"><div class="cs-shop-name" style="color:${accent}">${escapeHtml(s.shop_name || 'Shop')}</div><div class="cs-shop-tag">${escapeHtml(s.tagline || '')} · ${escapeHtml(s.owner_name || '')}</div></div>
+      <div style="text-align:right"><div style="font-weight:800;color:#e4ecf3">${s.items | 0}</div><div class="cs-shop-tag">cards</div></div>
+    </button>`; }).join('');
+  return `<div style="display:flex;justify-content:flex-end;margin-bottom:0.4rem"><button class="btn-mini" data-cs="cs-refresh">↻ Refresh</button></div><div class="cs-shoplist">${rows}</div>`;
+}
+// My Shop tab — open a shop, or stock it from your collection + collect earnings.
+function _csMyShopBody() {
+  const m = CardShop.mine;
+  if (!m) return `<div class="cs-empty">Loading your shop…</div>`;
+  if (!m.shop) {
+    const theme = App._csTheme || 'bunker';
+    const themeBtns = Object.entries(CARD_SHOP_THEMES).map(([id, th]) => `<button class="cs-tab ${theme === id ? 'is-active' : ''}" data-cs="cs-theme" data-theme="${id}" style="flex:0 0 auto;padding:0.4rem 0.7rem">${escapeHtml(th.name)}</button>`).join('');
+    return `<div class="cs-empty" style="text-align:left;border-style:solid">
+      <div style="font-weight:800;color:#ffe9a8;margin-bottom:0.3rem">🔨 Open your shop</div>
+      <div style="font-size:0.76rem;color:#8a96a3;margin-bottom:0.7rem">Your shop is listed publicly so other players can visit and buy. Cards you list are held from your collection until they sell or you unlist them.</div>
+      <div style="display:grid;gap:0.5rem">
+        <input class="cs-input" id="cs-f-name" maxlength="28" placeholder="Shop name (e.g. ${escapeHtml(_csMyName())}'s Outpost)" value="${escapeHtml(_csMyName())}'s Outpost">
+        <input class="cs-input" id="cs-f-tag" maxlength="80" placeholder="Tagline — e.g. Cards salvaged from the ruins.">
+        <div style="display:flex;gap:0.4rem;flex-wrap:wrap">${themeBtns}</div>
+        <button class="btn-primary" data-cs="cs-open-shop" style="margin-top:0.3rem">Open Shop</button>
+      </div></div>`;
+  }
+  const shop = m.shop; const accent = (CARD_SHOP_THEMES[shop.theme || 'bunker'] || {}).accent || '#d4af37';
+  // listing picker from real collection (cards you own + can spare)
+  const owned = Object.keys(Profile.cardCollection || {}).filter(id => (Profile.cardCollection[id] | 0) > 0);
+  const pick = App._csPick && (Profile.cardCollection[App._csPick] | 0) > 0 ? App._csPick : null;
+  const ownedTiles = owned.slice(0, 60).map(id => `<button class="cs-card" data-cs="cs-pick" data-card="${escapeHtml(id)}" style="cursor:pointer;${pick === id ? 'outline:2px solid ' + accent : ''}">${_csCardTile(id)}<div class="cs-card-foot"><span class="cs-card-price" style="color:#8a96a3;font-weight:600">own ${Profile.cardCollection[id] | 0}</span></div></button>`).join('');
+  const shelves = (m.listings || []).map(l => `<div class="cs-card">${_csCardTile(l.card_id, l.card_json)}<div class="cs-card-foot"><span class="cs-card-price">${(l.price | 0).toLocaleString()} 🔥</span><button class="btn-mini btn-danger" data-cs="cs-unlist" data-id="${escapeHtml(l.id)}" data-card="${escapeHtml(l.card_id)}">✕</button></div></div>`).join('');
+  return `
+    <div class="cs-shop-row" style="cursor:default;border-color:${accent}66">
+      <div class="cs-shop-badge" style="background:${accent}22;border:1px solid ${accent}">🛒</div>
+      <div style="flex:1"><div class="cs-shop-name" style="color:${accent}">${escapeHtml(shop.shop_name)}</div><div class="cs-shop-tag">${escapeHtml(shop.tagline || '')} · ${shop.open ? '<span style="color:#4d9e68">live to all players</span>' : '<span style="color:#c89428">closed to visitors</span>'}</div></div>
+      <button class="btn-mini" data-cs="cs-toggle-open" data-open="${shop.open ? '0' : '1'}">${shop.open ? 'Close' : 'Open'}</button>
+    </div>
+    <div class="cs-shop-row" style="cursor:default;justify-content:space-between">
+      <div><div class="cs-shop-tag">UNCOLLECTED EARNINGS</div><div style="font-weight:800;color:#d8b24a;font-size:1.1rem">${(m.earnings | 0).toLocaleString()} 🔥 <span style="font-size:0.7rem;color:#8a96a3;font-weight:600">· ${m.salesCount | 0} sale${(m.salesCount | 0) === 1 ? '' : 's'}</span></div></div>
+      <button class="btn-mini ${(m.earnings | 0) > 0 ? 'btn-primary' : ''}" data-cs="cs-collect" ${(m.earnings | 0) > 0 ? '' : 'disabled'}>💰 Collect</button>
+    </div>
+    <div class="cs-section">List a card from your collection</div>
+    ${owned.length ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
+      <div class="cs-grid">${ownedTiles}</div>` : `<div class="cs-empty">No spare cards to list — open packs or win cards first.</div>`}
+    <div class="cs-section">On your shelves (${(m.listings || []).length})</div>
+    ${shelves ? `<div class="cs-grid">${shelves}</div>` : `<div class="cs-empty">Nothing listed yet. Pick a card above and set a price.</div>`}`;
+}
 function renderVendorMarket() {
   const tab = (App.vendorMarketTab === 'sovereigns') ? 'sovereigns'
             : (App.vendorMarketTab === 'starter')    ? 'starter'

@@ -61928,64 +61928,166 @@ function _processMilledCards(state, who, milled) {
   }
   return s;
 }
-// 🃏 SUBTERFUGE FLIP CINEMATIC — a quick card-back→face 3D flip flourish over the
-// trap's tile when it springs (rotateY spin + glint sweep + shockwave ring). Purely
-// cosmetic + self-contained (no engine state), so it's safe to call from _flipSubterfuge
-// for EVERY reveal, with or without a flip effect. Bails silently when the board element
-// isn't found or the player chose Low graphics. `faceHtml` is the revealed unit visual.
+// 🃏 SUBTERFUGE FX — one-time stylesheet for the flip reveal + the per-reaction ambush
+// effects. All keyframes are scoped under `.sub-*`. Screen shake uses the `translate`
+// CSS property (NOT `transform`) so it composes with the board's iso `transform` rather
+// than clobbering it.
+function _ensureSubFxStyle() {
+  if (document.getElementById('sub-flip-style')) return;
+  const st = document.createElement('style');
+  st.id = 'sub-flip-style';
+  st.textContent = `
+    .sub-flip-wrap{position:fixed;z-index:2147483250;pointer-events:none;perspective:640px}
+    .sub-flip-card{position:absolute;inset:0;transform-style:preserve-3d;animation:subFlipSlam 620ms cubic-bezier(0.34,0.9,0.4,1) forwards}
+    @keyframes subFlipSlam{0%{transform:translateY(0) rotateY(0deg) scale(1)}16%{transform:translateY(-16%) rotateY(0deg) scale(1.07)}54%{transform:translateY(-20%) rotateY(90deg) scale(1.2)}82%{transform:translateY(3%) rotateY(180deg) scale(1.04)}100%{transform:translateY(0) rotateY(180deg) scale(1)}}
+    .sub-flip-face{position:absolute;inset:0;backface-visibility:hidden;border-radius:8px;overflow:hidden;box-shadow:0 6px 22px rgba(0,0,0,0.65)}
+    .sub-flip-back{background:#050505 url('assets/Frames/Settrap.png?v=4') center/100% 100% no-repeat;border:1px solid rgba(160,150,140,0.3)}
+    .sub-flip-front{transform:rotateY(180deg);background:radial-gradient(circle at 50% 35%,#3a2a16,#160f06 78%);border:1px solid var(--sub-accent,#d4a843);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 18px rgba(212,168,67,0.42)}
+    .sub-flip-front>*{width:100%;height:100%}.sub-flip-front img{width:100%;height:100%;object-fit:contain}
+    .sub-flip-flash{position:absolute;inset:-12%;border-radius:12px;pointer-events:none;opacity:0;background:radial-gradient(circle,rgba(255,255,255,0.95) 0%,rgba(255,245,220,0.4) 42%,transparent 72%);animation:subFlash 620ms ease-out forwards}
+    @keyframes subFlash{0%,46%{opacity:0}60%{opacity:0.92}100%{opacity:0}}
+    .sub-flip-glint{position:absolute;inset:0;border-radius:8px;overflow:hidden;pointer-events:none}
+    .sub-flip-glint::before{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 36%,rgba(255,250,230,0.9) 50%,transparent 64%);transform:translateX(-130%);animation:subFlipGlint 560ms ease-out 260ms forwards}
+    @keyframes subFlipGlint{to{transform:translateX(130%)}}
+    .sub-flip-ring{position:absolute;left:50%;top:50%;width:32px;height:32px;margin:-16px 0 0 -16px;border-radius:50%;border:2px solid var(--sub-accent,#d4a843);opacity:0;animation:subFlipRing 720ms ease-out 240ms forwards;pointer-events:none}
+    @keyframes subFlipRing{0%{opacity:0;transform:scale(0.3)}28%{opacity:0.85}100%{opacity:0;transform:scale(3.6)}}
+    .sub-flip-sparks{position:absolute;left:50%;top:50%;width:0;height:0;pointer-events:none}
+    .sub-flip-sparks i{position:absolute;left:-2px;top:-2px;width:4px;height:4px;border-radius:50%;background:var(--sub-accent,#d4a843);box-shadow:0 0 7px var(--sub-accent,#d4a843);opacity:0;transform:rotate(var(--a)) translateX(0) scale(1);animation:subSpark 560ms ease-out 250ms forwards}
+    @keyframes subSpark{0%{opacity:0;transform:rotate(var(--a)) translateX(0) scale(1)}25%{opacity:1}100%{opacity:0;transform:rotate(var(--a)) translateX(44px) scale(0.3)}}
+    .sub-flip-scan{position:absolute;left:0;right:0;height:42%;pointer-events:none;mix-blend-mode:screen;background:linear-gradient(180deg,transparent,rgba(79,208,224,0.6),transparent);animation:subScan 660ms linear forwards}
+    @keyframes subScan{0%{transform:translateY(-130%)}100%{transform:translateY(320%)}}
+    .sub-flip-wrap.fade{transition:opacity 200ms ease-out;opacity:0}
+    .sub-r-manual  .sub-flip-card{animation-duration:760ms;animation-timing-function:cubic-bezier(0.34,1.18,0.5,1)}
+    .sub-r-damaged .sub-flip-card{animation-duration:470ms;animation-timing-function:cubic-bezier(0.7,0,0.3,1)}
+    .sub-r-lunge   .sub-flip-card{animation-duration:430ms;animation-timing-function:cubic-bezier(0.8,0,0.4,1)}
+    .sub-r-scan    .sub-flip-card{animation-duration:660ms}
+    .sub-r-surface .sub-flip-card{animation-duration:560ms}
+    .sub-low .sub-flip-sparks,.sub-low .sub-flip-flash{display:none}
+    .subfx-shake{animation:subfxShake 340ms ease-in-out}
+    @keyframes subfxShake{0%,100%{translate:0 0}15%{translate:-4px 2px}30%{translate:4px -3px}45%{translate:-3px -2px}60%{translate:3px 2px}75%{translate:-2px 1px}}
+    .subfx-knock{animation:subfxKnock 300ms ease-out}
+    @keyframes subfxKnock{0%{translate:0 0}35%{translate:0 -7px}100%{translate:0 0}}
+    .sub-react-wrap{position:fixed;z-index:2147483251;pointer-events:none}
+    .sr-shield{position:absolute;inset:-15%;border-radius:50%;border:3px solid rgba(120,200,255,0.95);box-shadow:0 0 18px rgba(120,200,255,0.8),inset 0 0 18px rgba(120,200,255,0.5);opacity:0;animation:srShield 520ms ease-out forwards}
+    @keyframes srShield{0%{opacity:0;transform:scale(0.5)}30%{opacity:1;transform:scale(1.05)}70%{opacity:0.9;transform:scale(1)}100%{opacity:0;transform:scale(1.12)}}
+    .sr-flash{position:absolute;inset:0;border-radius:8px;background:radial-gradient(circle,rgba(180,225,255,0.9),transparent 70%);opacity:0;animation:srFlash 360ms ease-out forwards}
+    @keyframes srFlash{0%{opacity:0}20%{opacity:0.9}100%{opacity:0}}
+    .sr-slash{position:absolute;left:-10%;top:calc(50% - 2px);width:120%;height:4px;background:linear-gradient(90deg,transparent,#fff,transparent);box-shadow:0 0 10px #ffd27a;opacity:0;transform:rotate(var(--ang,-35deg)) translateX(-60%) scaleX(0.2);animation:srSlash 360ms ease-out forwards}
+    .sr-slash2{--ang:35deg;animation-delay:110ms}
+    @keyframes srSlash{0%{opacity:0;transform:rotate(var(--ang,-35deg)) translateX(-60%) scaleX(0.2)}40%{opacity:1}100%{opacity:0;transform:rotate(var(--ang,-35deg)) translateX(60%) scaleX(1)}}
+    .sr-ring{position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;border:3px solid rgba(255,170,80,0.95);opacity:0;animation:srRing 520ms ease-out forwards}
+    .sr-ring2{border-color:rgba(255,120,60,0.8);animation-delay:120ms}
+    @keyframes srRing{0%{opacity:0;transform:scale(0.3)}25%{opacity:0.95}100%{opacity:0;transform:scale(3)}}
+    .sr-shimmer{position:absolute;inset:0;border-radius:8px;overflow:hidden;opacity:0;animation:srShimFade 560ms ease-out forwards}
+    .sr-shimmer::before{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 30%,rgba(200,230,255,0.85) 50%,transparent 70%);transform:translateX(-130%);animation:srShimmer 560ms ease-out forwards}
+    @keyframes srShimmer{to{transform:translateX(130%)}}
+    @keyframes srShimFade{0%{opacity:0}20%{opacity:1;box-shadow:inset 0 0 16px rgba(160,210,255,0.8)}100%{opacity:0}}
+  `;
+  document.head.appendChild(st);
+}
+// Brief screen shake on the board (translate property → composes with iso transform).
+function _subFxShake() {
+  try {
+    const b = document.querySelector('.board') || document.querySelector('.battle-screen');
+    if (!b) return;
+    b.classList.remove('subfx-shake'); void b.offsetWidth; b.classList.add('subfx-shake');
+    setTimeout(() => { try { b.classList.remove('subfx-shake'); } catch (e) {} }, 360);
+  } catch (e) {}
+}
+
+// 🃏 SUBTERFUGE FLIP CINEMATIC — a dramatic card-back→face reveal over the trap's tile:
+// the card LIFTS off the board, spins, and SLAMS down with a flash, a spark burst, and a
+// shockwave ring. `reason` flavors the reveal (manual = calm gold, damaged = sharp red +
+// shake, enemyAdjacent = fast orange lunge, detection = cyan scan-line, surface = ember).
+// Purely cosmetic + self-contained; bails silently when the board element isn't found.
 function playSubterfugeFlipFx(unitId, opts) {
   try {
     if (!unitId) return;
     opts = opts || {};
-    try { if (typeof getSettings === 'function' && getSettings().gfxQuality === 'low') return; } catch (e) {}
+    const reason = opts.reason || 'manual';
+    let low = false;
+    try { low = (typeof getSettings === 'function' && getSettings().gfxQuality === 'low'); } catch (e) {}
+    const FLAVOR = {
+      manual:        { cls: 'sub-r-manual',  accent: '#d4a843', shake: false },
+      damaged:       { cls: 'sub-r-damaged', accent: '#ff5a5a', shake: true },
+      enemyAdjacent: { cls: 'sub-r-lunge',   accent: '#ff9a3c', shake: true },
+      detection:     { cls: 'sub-r-scan',    accent: '#4fd0e0', shake: false },
+      surface:       { cls: 'sub-r-surface', accent: '#ff7a2c', shake: true },
+    };
+    const flavor = FLAVOR[reason] || FLAVOR.manual;
     const run = () => {
       try {
         const el = document.querySelector('.unit[data-unit="' + unitId + '"]');
         if (!el) return;
         const r = el.getBoundingClientRect();
         if (!r || (!r.width && !r.height)) return;
-        if (!document.getElementById('sub-flip-style')) {
-          const st = document.createElement('style');
-          st.id = 'sub-flip-style';
-          st.textContent =
-            '.sub-flip-wrap{position:fixed;z-index:2147483250;pointer-events:none;perspective:620px}' +
-            '.sub-flip-card{position:absolute;inset:0;transform-style:preserve-3d;animation:subFlipSpin 600ms cubic-bezier(0.4,0,0.2,1) forwards}' +
-            '@keyframes subFlipSpin{0%{transform:rotateY(0deg) scale(1)}52%{transform:rotateY(90deg) scale(1.14)}100%{transform:rotateY(180deg) scale(1)}}' +
-            '.sub-flip-face{position:absolute;inset:0;backface-visibility:hidden;border-radius:8px;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,0.6)}' +
-            ".sub-flip-back{background:#050505 url('assets/Frames/Settrap.png?v=4') center/100% 100% no-repeat;border:1px solid rgba(160,150,140,0.3)}" +
-            '.sub-flip-front{transform:rotateY(180deg);background:radial-gradient(circle at 50% 35%,#3a2a16,#160f06 78%);border:1px solid rgba(212,168,67,0.9);display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 18px rgba(212,168,67,0.5)}' +
-            '.sub-flip-front>*{width:100%;height:100%}.sub-flip-front img{width:100%;height:100%;object-fit:contain}' +
-            '.sub-flip-glint{position:absolute;inset:0;border-radius:8px;overflow:hidden;pointer-events:none}' +
-            '.sub-flip-glint::before{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 36%,rgba(255,250,230,0.9) 50%,transparent 64%);transform:translateX(-130%);animation:subFlipGlint 560ms ease-out 250ms forwards}' +
-            '@keyframes subFlipGlint{to{transform:translateX(130%)}}' +
-            '.sub-flip-ring{position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;border:2px solid rgba(212,168,67,0.9);opacity:0;animation:subFlipRing 700ms ease-out 250ms forwards;pointer-events:none}' +
-            '@keyframes subFlipRing{0%{opacity:0;transform:scale(0.3)}30%{opacity:0.85}100%{opacity:0;transform:scale(3.4)}}' +
-            '.sub-flip-wrap.fade{transition:opacity 200ms ease-out;opacity:0}';
-          document.head.appendChild(st);
-        }
+        _ensureSubFxStyle();
         const wrap = document.createElement('div');
-        wrap.className = 'sub-flip-wrap';
+        wrap.className = 'sub-flip-wrap ' + flavor.cls + (low ? ' sub-low' : '');
         wrap.style.left = r.left + 'px';
         wrap.style.top = r.top + 'px';
         wrap.style.width = r.width + 'px';
         wrap.style.height = r.height + 'px';
+        wrap.style.setProperty('--sub-accent', flavor.accent);
         const faceHtml = opts.faceHtml || ('<span style="font-size:1.5em">' + (opts.icon || '🎴') + '</span>');
+        const scan = reason === 'detection' ? '<div class="sub-flip-scan"></div>' : '';
+        const sparks = low ? '' : ('<div class="sub-flip-sparks">' + [0,45,90,135,180,225,270,315].map(a => '<i style="--a:' + a + 'deg"></i>').join('') + '</div>');
         wrap.innerHTML =
           '<div class="sub-flip-card">' +
             '<div class="sub-flip-face sub-flip-back"></div>' +
-            '<div class="sub-flip-face sub-flip-front">' + faceHtml + '</div>' +
+            '<div class="sub-flip-face sub-flip-front">' + faceHtml + scan + '</div>' +
           '</div>' +
+          '<div class="sub-flip-flash"></div>' +
           '<div class="sub-flip-glint"></div>' +
-          '<div class="sub-flip-ring"></div>';
+          '<div class="sub-flip-ring"></div>' +
+          sparks;
         document.body.appendChild(wrap);
-        setTimeout(() => { try { wrap.classList.add('fade'); } catch (e) {} }, 660);
-        setTimeout(() => { try { wrap.remove(); } catch (e) {} }, 920);
+        if (flavor.shake && !low) _subFxShake();
+        setTimeout(() => { try { wrap.classList.add('fade'); } catch (e) {} }, 740);
+        setTimeout(() => { try { wrap.remove(); } catch (e) {} }, 1000);
       } catch (e) {}
     };
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run); else run();
   } catch (e) {}
 }
-try { window.__mg = window.__mg || {}; window.__mg.flipFx = playSubterfugeFlipFx; } catch (e) {}
+
+// 🎯 AMBUSH REACTION FX — a signature flourish AT the enemy a sprung trap strikes back at:
+//   negate → blue shield dome + clang flash · riposte → crossing blade slashes ·
+//   repel → orange shockwave rings + a knockback nudge · mirror → reflective shimmer.
+// Called from _resolveAmbushReaction (which knows the reactant). Visual only.
+function playAmbushReactionFx(reactantId, type) {
+  try {
+    if (!reactantId || !type) return;
+    try { if (typeof getSettings === 'function' && getSettings().gfxQuality === 'low') return; } catch (e) {}
+    const run = () => {
+      try {
+        const el = document.querySelector('.unit[data-unit="' + reactantId + '"]');
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        if (!r || (!r.width && !r.height)) return;
+        _ensureSubFxStyle();
+        const wrap = document.createElement('div');
+        wrap.className = 'sub-react-wrap sub-react-' + type;
+        wrap.style.left = r.left + 'px';
+        wrap.style.top = r.top + 'px';
+        wrap.style.width = r.width + 'px';
+        wrap.style.height = r.height + 'px';
+        let inner = '';
+        if (type === 'negate')       inner = '<div class="sr-shield"></div><div class="sr-flash"></div>';
+        else if (type === 'riposte') inner = '<div class="sr-slash"></div><div class="sr-slash sr-slash2"></div>';
+        else if (type === 'repel')   inner = '<div class="sr-ring"></div><div class="sr-ring sr-ring2"></div>';
+        else if (type === 'mirror')  inner = '<div class="sr-shimmer"></div>';
+        else return;
+        wrap.innerHTML = inner;
+        document.body.appendChild(wrap);
+        if (type === 'repel') { try { el.classList.add('subfx-knock'); setTimeout(() => { try { el.classList.remove('subfx-knock'); } catch (e) {} }, 320); } catch (e) {} }
+        setTimeout(() => { try { wrap.remove(); } catch (e) {} }, 720);
+      } catch (e) {}
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run); else run();
+  } catch (e) {}
+}
+try { window.__mg = window.__mg || {}; window.__mg.flipFx = playSubterfugeFlipFx; window.__mg.reactFx = playAmbushReactionFx; } catch (e) {}
 
 // 🃏 SUBTERFUGE FLIP — reveal a face-down trap unit and resolve its Flip Effect.
 // `reason`: short string for the log ('manual' | 'enemyAdjacent' | 'damaged').
@@ -62009,7 +62111,7 @@ function _flipSubterfuge(state, unit, reason) {
   try {
     if (typeof playSubterfugeFlipFx === 'function') {
       const _face = (typeof unitBoardVisual === 'function') ? unitBoardVisual(flipped, { reveal: true }) : null;
-      playSubterfugeFlipFx(flipped.id, { faceHtml: _face, icon: flipped.icon });
+      playSubterfugeFlipFx(flipped.id, { faceHtml: _face, icon: flipped.icon, reason: reason });
     }
   } catch (e) {}
   // 🎬 Board summon-sprite reveal + stinger (visual only, never blocks the flip).
@@ -62089,6 +62191,9 @@ function _resolveAmbushReaction(state, trap, reactant, reason) {
   const eff = trap.ambushEffect;
   if (!eff || !eff.type) return out;
   let next = state;
+  // 🎯 Signature reaction flourish AT the enemy that sprung the trap (slightly delayed so
+  // it lands after the card-flip reveal, not on top of it). Visual only.
+  try { if (typeof playAmbushReactionFx === 'function') setTimeout(() => { try { playAmbushReactionFx(reactant.id, eff.type); } catch (e) {} }, 420); } catch (e) {}
   const col = trap.owner === 'player' ? 'green' : 'red';
   const liveReactant = () => (next.units || []).find(u => u.id === reactant.id);
   const dealDamage = (dmg, type) => {

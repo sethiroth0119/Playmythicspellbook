@@ -89083,20 +89083,28 @@ function renderHandRevealModal() {
   const sub = hr.mode === 'peek'
     ? ('Scouted by ' + escapeHtml(hr.sourceName || 'your unit') + ' — for your eyes only.')
     : ('Click a card to ' + (hr.mode === 'banish' ? 'banish it to the Void' : 'send it to the graveyard') + '.');
-  const cardsHtml = cards.length ? cards.map((c, i) =>
-    '<div class="hr-card" data-hr-idx="' + i + '" style="width:92px;cursor:' + (pickable ? 'pointer' : 'default') + ';background:rgba(20,14,40,0.92);border:1px solid ' + accent + '66;border-radius:8px;padding:6px;text-align:center">'
-      + '<div style="width:100%;height:70px;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:5px">'
-        + (typeof renderIcon === 'function' ? renderIcon('u_' + c.id, c.icon, 'md') : (c.icon || '🃏')) + '</div>'
-      + '<div style="font-size:0.72rem;color:#f0e6ff;margin-top:4px;line-height:1.2;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(c.name || 'Card') + '</div>'
-      + '<div style="font-size:0.63rem;color:#bba9e0;margin-top:2px">' + (c.cost != null ? ('⚡' + c.cost) : '') + ' · ' + escapeHtml(c.type || 'unit') + '</div>'
-    + '</div>'
-  ).join('') : '<div style="opacity:0.75;padding:1rem;color:#cbb8f0">The hand is empty.</div>';
+  const cardsHtml = cards.length ? cards.map((c, i) => {
+    let col = accent;
+    try { if (typeof _binderRarColor === 'function' && c.rarity) col = _binderRarColor(c.rarity); } catch (e) {}
+    let art = null;
+    try { art = (typeof getCardArt === 'function') ? (getCardArt(c.id) || getCardArt('u_' + c.id)) : null; } catch (e) {}
+    const inner = (art && typeof art === 'string')
+      ? '<img src="' + String(art).replace(/"/g, '&quot;') + '" alt="" draggable="false" loading="lazy" style="width:100%;height:100%;object-fit:contain">'
+      : '<span style="font-size:2.8rem">' + escapeHtml(c.icon || '🃏') + '</span>';
+    return '<div class="hr-card" data-hr-idx="' + i + '" data-hr-cardid="' + escapeHtml(c.id || '') + '" title="Right-click for full details" '
+      + 'style="width:clamp(122px,15vw,170px);cursor:' + (pickable ? 'pointer' : 'context-menu') + ';background:rgba(20,14,40,0.92);border:2px solid ' + col + ';border-radius:12px;padding:7px;text-align:center;box-shadow:0 0 16px -5px ' + col + ';transition:transform .12s ease">'
+      + '<div style="width:100%;aspect-ratio:2.5/3.5;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:8px;background:radial-gradient(ellipse at 50% 38%,' + col + '24,rgba(8,4,20,0.55))">' + inner + '</div>'
+      + '<div style="font-size:0.82rem;color:#f0e6ff;margin-top:6px;line-height:1.2;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(c.name || 'Card') + '</div>'
+      + '<div style="font-size:0.66rem;color:' + col + ';margin-top:2px;text-transform:uppercase;letter-spacing:0.04em">' + (c.cost != null ? ('⚡' + c.cost + ' · ') : '') + escapeHtml(c.type || 'unit') + '</div>'
+    + '</div>';
+  }).join('') : '<div style="opacity:0.75;padding:1rem;color:#cbb8f0">The hand is empty.</div>';
   return ''
     + '<div class="modal-backdrop" id="hr-backdrop" style="z-index:2147483400;display:flex;align-items:center;justify-content:center">'
-      + '<div role="dialog" style="background:linear-gradient(160deg,#1a1230,#0d0820);border:1px solid ' + accent + '99;border-radius:14px;padding:18px 20px;max-width:min(680px,94vw);box-shadow:0 18px 50px rgba(0,0,0,0.72)">'
-        + '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:' + accent + ';font-size:1.05rem;letter-spacing:0.04em;text-align:center">👁 ' + escapeHtml(title) + '</div>'
-        + '<div style="font-size:0.78rem;color:#cbb8f0;text-align:center;margin:4px 0 12px">' + sub + '</div>'
-        + '<div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;max-height:48vh;overflow:auto">' + cardsHtml + '</div>'
+      + '<div role="dialog" style="background:linear-gradient(160deg,#1a1230,#0d0820);border:1px solid ' + accent + '99;border-radius:14px;padding:20px 22px;max-width:min(1040px,96vw);box-shadow:0 18px 50px rgba(0,0,0,0.72)">'
+        + '<style>.hr-card:hover{transform:translateY(-4px)}</style>'
+        + '<div style="font-family:\'Cinzel\',serif;font-weight:800;color:' + accent + ';font-size:1.1rem;letter-spacing:0.04em;text-align:center">👁 ' + escapeHtml(title) + '</div>'
+        + '<div style="font-size:0.8rem;color:#cbb8f0;text-align:center;margin:5px 0 14px">' + sub + ' <span style="opacity:0.7">· right-click a card for details</span></div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center;max-height:62vh;overflow:auto">' + cardsHtml + '</div>'
         + '<div style="text-align:center;margin-top:14px"><button class="btn-secondary" id="hr-close">' + (pickable ? 'Skip' : 'Close') + '</button></div>'
       + '</div>'
     + '</div>';
@@ -89104,10 +89112,22 @@ function renderHandRevealModal() {
 function bindHandRevealModal() {
   const hr = App.ui && App.ui.handReveal;
   if (!hr) return;
-  const close = () => { try { App.ui.handReveal = null; } catch (e) {} try { renderBattle(); } catch (e) {} };
+  const close = () => { try { const dh = document.getElementById('hr-detail-host'); if (dh) dh.remove(); App.collectionDetailCard = null; } catch (e) {} try { App.ui.handReveal = null; } catch (e) {} try { renderBattle(); } catch (e) {} };
   const cl = document.getElementById('hr-close'); if (cl) cl.onclick = close;
   const bd = document.getElementById('hr-backdrop');
   if (bd && hr.mode === 'peek') bd.onclick = (e) => { if (e.target === bd) close(); };
+  // 🔍 Right-click ANY revealed card (peek / discard / banish) → full card details.
+  document.querySelectorAll('.hr-card[data-hr-idx]').forEach(el => {
+    el.oncontextmenu = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const idx = parseInt(el.dataset.hrIdx, 10);
+      const id = el.getAttribute('data-hr-cardid');
+      let c = null;
+      try { c = (typeof _resolveAnyCardById === 'function') ? _resolveAnyCardById(id) : null; } catch (er) {}
+      if (!c) c = hr.cards[idx];
+      if (c) _hrShowCardDetail(c);
+    };
+  });
   if (hr.mode !== 'discard' && hr.mode !== 'banish') return;
   document.querySelectorAll('.hr-card[data-hr-idx]').forEach(el => {
     el.onclick = () => {
@@ -89133,6 +89153,30 @@ function bindHandRevealModal() {
       try { renderBattle(); } catch (e) {}
     };
   });
+}
+// 🔍 Full card-detail overlay for a revealed enemy-hand card. Self-contained
+// (renders the shared detail modal into a body-level host at max z-index) so it
+// sits above the hand-reveal modal and never calls render() mid-battle.
+function _hrShowCardDetail(card) {
+  try {
+    if (!card) return;
+    // Resolve to the full card def (stats / traits / moveset) when possible.
+    let full = card;
+    try { if (card.id && typeof _resolveAnyCardById === 'function') full = _resolveAnyCardById(card.id) || card; } catch (e) {}
+    if (typeof renderCollectionCardModal !== 'function') { if (typeof openCardDetailView === 'function') openCardDetailView(full, full.type || 'unit'); return; }
+    App.collectionDetailCard = { card: full, kind: full.type || 'unit', hideMoves: false };
+    let host = document.getElementById('hr-detail-host'); if (host) host.remove();
+    host = document.createElement('div'); host.id = 'hr-detail-host';
+    host.innerHTML = renderCollectionCardModal() || '';
+    document.body.appendChild(host);
+    let escH;
+    const closeDetail = () => { App.collectionDetailCard = null; try { host.remove(); } catch (e) {} if (escH) document.removeEventListener('keydown', escH); };
+    const back = host.querySelector('#ccm-backdrop'); if (back) back.addEventListener('click', (ev) => { if (ev.target === back) closeDetail(); });
+    const x = host.querySelector('#ccm-close'); if (x) x.onclick = closeDetail;
+    const d = host.querySelector('#ccm-done'); if (d) d.onclick = closeDetail;
+    escH = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); closeDetail(); } };
+    document.addEventListener('keydown', escH);
+  } catch (e) {}
 }
 
 // 🔒 ===== CALL SEAL UI — element/faction picker + active-seal banner =====

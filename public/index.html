@@ -64411,7 +64411,9 @@ function _fireTriggers(state, event, ctx) {
   ctx = ctx || {};
   let s = state;
   // Snapshot the responder ids first; effects can mutate the unit list.
-  const ids = s.units.filter(u => u && u.alive && _unitTriggers(u).length).map(u => u.id);
+  // 🃏 A face-down (Subterfuge) unit is a hidden trap — its trigger abilities stay
+  // DORMANT until it's flipped face up. Triggers only fire while face up.
+  const ids = s.units.filter(u => u && u.alive && !u.isFaceDown && _unitTriggers(u).length).map(u => u.id);
   for (const uid0 of ids) {
     const live = (s.units || []).find(x => x && x.id === uid0 && x.alive);
     if (!live) continue;
@@ -90893,6 +90895,10 @@ function renderUnitModal() {
           if (!source && Forge.customCards) source = Forge.customCards.find(c => c.id === lookupId);
           const op = source && source.onPlay;
           if (!op || !op.type) return '';
+          // 🃏 A face-down (Subterfuge) trap does NOT fire its on-play on summon — that
+          // effect becomes its Flip Effect, shown in the Trigger & Special Abilities
+          // section below. Skip the misleading "On-Play (summon)" row here.
+          if (u.isSubterfuge) return '';
           // Convert raw fields into a single human-readable description line.
           const statusName = (sid) => (STATUS_EFFECTS[sid] && STATUS_EFFECTS[sid].name) || sid;
           const radiusTxt = op.radius != null ? `within ${op.radius} tile${op.radius === 1 ? '' : 's'}` : '';
@@ -90934,6 +90940,10 @@ function renderUnitModal() {
             icon  = '⚡';
             summary = `Grants <strong>+${op.amount || 1}</strong> energy on summon.`;
           }
+          // Fall back to the full effect describer for any on-play type the quick
+          // table above doesn't special-case (newer effects: takeControl, summon,
+          // searchDeck, banishGrave, paintSurface, etc.) so EVERY on-play shows.
+          if (!summary && typeof describeOnPlayEffect === 'function') summary = describeOnPlayEffect(op);
           if (!summary) return '';
           return `
             <div class="modal-section">
@@ -90955,6 +90965,59 @@ function renderUnitModal() {
           <div class="modal-section-title">Moves & Attacks</div>
           <div class="modal-moves">${movesHtml}</div>
         </div>
+
+        ${(() => {
+          // ===== Trigger abilities + Subterfuge (Flip Effect / Ambush Reaction).
+          // Trigger abilities are read off the LIVE unit; for a face-down trap they're
+          // DORMANT until it flips face up (the engine skips face-down units in
+          // _fireTriggers). Hidden for un-scanned enemies, like moves/passives. =====
+          if (enemyHidden) return '';
+          const rows = [];
+          const isSub = !!u.isSubterfuge;
+          if (isSub) {
+            const fe = (u.flipEffect && u.flipEffect.type) ? u.flipEffect : null;
+            const feTxt = fe ? (((typeof describeOnPlayEffect === 'function' && describeOnPlayEffect(fe)) || '') || 'Resolves when this trap is revealed.') : 'No effect — a hidden surprise blocker (False Trap).';
+            rows.push({ icon: '🃏', tag: 'FLIP', name: 'Flip Effect (on reveal)', desc: feTxt });
+            const amb = (u.ambushEffect && u.ambushEffect.type) ? u.ambushEffect : null;
+            if (amb) {
+              const a = amb.amount;
+              const txt = amb.type === 'mirror' ? `Reflect ${a || 50}% of the attacker's power back at it.`
+                        : amb.type === 'repel' ? `Cancel the attack and stun the attacker ${a || 1} turn${(a || 1) === 1 ? '' : 's'}.`
+                        : amb.type === 'riposte' ? `Counter ${a || 0} damage to the attacker (the trap still takes the hit).`
+                        : 'Cancel the attacking move entirely.';
+              rows.push({ icon: '🎯', tag: 'AMBUSH', name: 'Ambush Reaction — ' + amb.type, desc: 'When an enemy springs this trap: ' + txt });
+            }
+          }
+          const trigs = Array.isArray(u.triggers) ? u.triggers : [];
+          for (const t of trigs) {
+            if (!t || !t.event) continue;
+            const ev = ((typeof TRIGGER_EVENTS !== 'undefined' && TRIGGER_EVENTS.find(e => e.id === t.event)) || {}).label || t.event;
+            let ef = ((typeof TRIGGER_EFFECTS !== 'undefined' && TRIGGER_EFFECTS.find(e => e.id === t.effect)) || {}).label || t.effect || '';
+            if (t.amount != null) ef = ef.replace(/\bN\b/g, t.amount);
+            const who = t.who === 'owner' ? ' · your side only' : t.who === 'enemy' ? ' · enemy side only' : '';
+            const ch = (t.chance != null && t.chance < 100) ? ` · ${t.chance}%` : '';
+            const lim = t.limitPerTurn ? ` · ${t.limitPerTurn}/turn` : (t.limitPerMatch ? ` · ${t.limitPerMatch}/match` : '');
+            const note = isSub ? ' <span class="ink-dim">— dormant until flipped face up</span>' : '';
+            rows.push({ icon: '⚡', tag: 'TRIGGER', name: escapeHtml(t.name || 'Trigger Ability'), desc: `${escapeHtml(ev)}${who}${ch}${lim} → ${escapeHtml(ef)}.${note}` });
+          }
+          if (!rows.length) return '';
+          return `
+            <div class="modal-section">
+              <div class="modal-section-title">Trigger &amp; Special Abilities</div>
+              <div class="modal-passives">
+                ${rows.map(r => `
+                  <div class="modal-passive-row" style="--passive-accent:#b58bff">
+                    <div class="modal-passive-head">
+                      <span class="modal-passive-name">${r.icon} ${r.name}</span>
+                      <span class="modal-passive-faction" style="color:#b58bff">${r.tag}</span>
+                    </div>
+                    <div class="modal-passive-desc">${r.desc}</div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        })()}
 
         <div class="modal-actions">
           ${(typeof _unitCanLoot === 'function' && _unitCanLoot(u)) ? `<button class="btn-primary modal-btn-loot" id="modal-btn-loot" title="Harvest the body on this tile. Forfeits this unit's move & attack for the turn. Rarer units find more.">🪦 Loot Body</button>` : ''}

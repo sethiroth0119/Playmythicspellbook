@@ -105174,22 +105174,37 @@ function renderCardShop() {
         <div class="cs-tab ${tab === 'mine' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="mine">🔨 My Shop</div>
       </div>
       ${tab === 'mine' ? _csMyShopBody() : _csBrowseBody()}`;
-  const body = !signedIn
-    ? `<div class="cs-empty" style="margin-top:1.5rem">☁ Sign in (cloud account) to open a shop and visit other players' shops.</div>`
-    : (is3D ? mount3d : tabbed);
-  root.innerHTML = `
-    <div class="campaign-page">
-      <div class="campaign-header">
-        <div>
-          <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🛒 Card Shop</h2>
-          <div class="small-text ink-dim">${is3D ? 'Walk your store · open packs · stock your binder · visit other shops.' : 'Run your own storefront — or visit shops other players own and buy their cards for Cinder.'}</div>
+  if (is3D) {
+    // Full-screen first-person store: fixed layer + floating controls over the canvas.
+    root.innerHTML = `
+      <div class="cs-3d-fullscreen">
+        ${mount3d}
+        <div class="cs-3d-topbar">
+          <div class="cs-3d-title">🛒 Card Shop · ${cinders.toLocaleString()} <span class="cinder-icon"></span></div>
+          <div style="display:flex;gap:6px">
+            <button class="btn-secondary btn-mini" data-cs="cs-3d-toggle">☰ Menu</button>
+            <button class="btn-secondary btn-mini" data-cs="cs-back">← Exit</button>
+          </div>
         </div>
-        <div class="shop-balance-stack"><div class="shop-gems-pill"><span class="shop-gems-num">${cinders.toLocaleString()}</span> <span class="cinder-icon cinder-icon-lg"></span><div class="small-text ink-dim">Cinders</div></div></div>
-        ${signedIn ? `<button class="btn-secondary btn-mini" data-cs="cs-3d-toggle" style="margin-right:6px">${App._cs3D ? '☰ Menu' : '🏬 3D Store'}</button>` : ''}
-        <button class="btn-secondary btn-mini" data-cs="cs-back">← Menu</button>
-      </div>
-      ${is3D ? body : `<div class="cs-page">${body}</div>`}
-    </div>`;
+      </div>`;
+  } else {
+    const body = !signedIn
+      ? `<div class="cs-empty" style="margin-top:1.5rem">☁ Sign in (cloud account) to open a shop and visit other players' shops.</div>`
+      : tabbed;
+    root.innerHTML = `
+      <div class="campaign-page">
+        <div class="campaign-header">
+          <div>
+            <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem">🛒 Card Shop</h2>
+            <div class="small-text ink-dim">Run your own storefront — or visit shops other players own and buy their cards for Cinder.</div>
+          </div>
+          <div class="shop-balance-stack"><div class="shop-gems-pill"><span class="shop-gems-num">${cinders.toLocaleString()}</span> <span class="cinder-icon cinder-icon-lg"></span><div class="small-text ink-dim">Cinders</div></div></div>
+          ${signedIn ? `<button class="btn-secondary btn-mini" data-cs="cs-3d-toggle" style="margin-right:6px">🏬 3D Store</button>` : ''}
+          <button class="btn-secondary btn-mini" data-cs="cs-back">← Menu</button>
+        </div>
+        <div class="cs-page">${body}</div>
+      </div>`;
+  }
   // Boot the WebGL store after the mount exists. render() rebuilds the screen, so
   // dispose any prior scene first; re-open the active station panel over it.
   if (is3D) {
@@ -105311,9 +105326,13 @@ function _ensureCardShop3DStyle() {
   if (document.getElementById('card-shop-3d-style')) return;
   const s = document.createElement('style'); s.id = 'card-shop-3d-style';
   s.textContent = `
-  .cs-3d-mount{position:relative;width:100%;height:calc(100dvh - 150px);min-height:360px;background:#07070b;border-radius:10px;overflow:hidden;touch-action:none}
+  .cs-3d-fullscreen{position:fixed;inset:0;z-index:45;background:#07070b}
+  .cs-3d-mount{position:relative;width:100%;height:100dvh;background:#07070b;overflow:hidden;touch-action:none}
+  .cs-3d-topbar{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px;z-index:4;background:linear-gradient(180deg,rgba(7,7,11,.72),transparent);pointer-events:none}
+  .cs-3d-topbar > *{pointer-events:auto}
+  .cs-3d-title{color:#ffe9a8;font-weight:700;font-size:0.92rem;text-shadow:0 1px 4px #000;display:flex;align-items:center;gap:6px}
   .cs3d-reticle{position:absolute;left:50%;top:50%;width:6px;height:6px;border-radius:99px;background:rgba(212,175,55,.9);box-shadow:0 0 6px #d4af37;transform:translate(-50%,-50%);pointer-events:none}
-  .cs3d-hint{position:absolute;left:50%;top:8px;transform:translateX(-50%);font-size:11px;color:#7a8694;pointer-events:none;text-align:center;width:90%}
+  .cs3d-hint{position:absolute;left:50%;top:44px;transform:translateX(-50%);font-size:11px;color:#9aa6b3;pointer-events:none;text-align:center;width:90%;text-shadow:0 1px 3px #000}
   .cs3d-prompt{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);display:none;padding:0.6rem 1.1rem;border-radius:11px;background:#d4af37;color:#0b0b0f;font-weight:800;box-shadow:0 8px 30px rgba(0,0,0,.5);cursor:pointer;z-index:3}
   .cs3d-pad{position:absolute;left:12px;bottom:14px;width:150px;height:150px;z-index:3}
   .cs3d-pad button{position:absolute;width:46px;height:46px;border-radius:10px;background:rgba(21,21,31,.82);border:1px solid #3a3a48;color:#d4af37;display:flex;align-items:center;justify-content:center;font-size:20px;touch-action:none}

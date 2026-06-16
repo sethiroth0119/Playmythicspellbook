@@ -31970,6 +31970,8 @@ function _packTearCinematic(opts) {
       window.removeEventListener('mouseup', endHold);
       window.removeEventListener('touchend', endHold);
       window.removeEventListener('touchcancel', endHold);
+      // tidy up a lingering right-click detail overlay, if any
+      try { const dh = document.getElementById('ptc-detail-host'); if (dh) dh.remove(); App.collectionDetailCard = null; } catch (e) {}
       try { ov.remove(); } catch (e) {}
       try { if (App.screen === 'cardShop' && typeof _csRender === 'function') _csRender(); else if (typeof render === 'function') render(); } catch (e) {}
     }
@@ -32004,6 +32006,44 @@ function _packTearCinematic(opts) {
       if (phase === 'sealed') completeTear();
       else if (phase === 'reveal') step();
     });
+    // RIGHT-CLICK a revealed card to inspect its full details (art, stats, traits,
+    // moveset) before advancing to the next one. Works in reveal AND on the final
+    // summary grid (cards there carry data-ptc-detail).
+    ov.addEventListener('contextmenu', (e) => {
+      let entry = null;
+      const sum = e.target && e.target.closest && e.target.closest('[data-ptc-detail]');
+      if (sum) entry = drawn[parseInt(sum.getAttribute('data-ptc-detail'), 10) | 0];
+      else if (phase === 'reveal' && revealed[idx]) entry = drawn[idx];
+      if (!entry) return;          // nothing face-up here → let the native menu through
+      e.preventDefault();
+      _ptcShowDetail(entry);
+    });
+    // Self-contained card-detail overlay (max z-index, above the cinematic). Uses
+    // the shared renderCollectionCardModal but does NOT call render(), so it never
+    // tears down the 3D-shop WebGL scene the cinematic is sitting over.
+    function _ptcShowDetail(entry) {
+      try {
+        if (!entry || entry.kind === 'item' || !entry.card) return;
+        let resolved = null;
+        try { resolved = (typeof _resolveAnyCardById === 'function') ? _resolveAnyCardById(entry.card.id) : null; } catch (er) {}
+        resolved = resolved || entry.card;
+        if (typeof renderCollectionCardModal !== 'function') { if (typeof openCardDetailView === 'function') openCardDetailView(resolved, resolved.type || 'unit'); return; }
+        App.collectionDetailCard = { card: resolved, kind: resolved.type || 'unit', hideMoves: false };
+        let host = document.getElementById('ptc-detail-host');
+        if (host) host.remove();
+        host = document.createElement('div'); host.id = 'ptc-detail-host';
+        host.innerHTML = renderCollectionCardModal() || '';
+        document.body.appendChild(host);
+        let escH;
+        const closeDetail = () => { App.collectionDetailCard = null; try { host.remove(); } catch (er) {} if (escH) document.removeEventListener('keydown', escH); };
+        const back = host.querySelector('#ccm-backdrop');
+        if (back) back.addEventListener('click', (ev) => { if (ev.target === back) closeDetail(); });
+        const x = host.querySelector('#ccm-close'); if (x) x.onclick = closeDetail;
+        const d = host.querySelector('#ccm-done'); if (d) d.onclick = closeDetail;
+        escH = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); closeDetail(); } };
+        document.addEventListener('keydown', escH);
+      } catch (er) {}
+    }
 
     function completeTear() {
       if (phase !== 'sealed') return; phase = 'cards';
@@ -32042,7 +32082,8 @@ function _packTearCinematic(opts) {
         revealed[idx] = true; layout();
         const r = _ptcRarityOf(drawn[idx]); const c = cardEl(idx);
         if (c && _ptcTier(r) >= 2) { const cf = c.querySelector('.ptc-cardface'); if (cf) { cf.classList.remove('ptc-rare-pop'); void cf.offsetWidth; cf.classList.add('ptc-rare-pop'); } }
-        hint.textContent = `${(r.name || '').toUpperCase()}  ·  tap to set aside  (${idx + 1} / ${drawn.length})`;
+        const _isCard = drawn[idx] && drawn[idx].kind !== 'item';
+        hint.innerHTML = `${escapeHtml((r.name || '').toUpperCase())}  ·  tap to set aside${_isCard ? '  ·  <b>right-click</b> for details' : ''}  (${idx + 1} / ${drawn.length})`;
       } else {
         idx++;
         if (idx >= drawn.length) { layout(); setTimeout(finishAll, 340); return; }
@@ -32052,7 +32093,7 @@ function _packTearCinematic(opts) {
     }
     function finishAll() {
       phase = 'done'; tap.style.display = 'none'; cardsWrap.style.display = 'none'; hint.style.display = 'none';
-      const sum = drawn.map(e => `<div class="ptc-sum-card" style="--rar:${_ptcRarityOf(e).color}"><div class="ptc-cf-art">${(e.kind === 'item') ? `<span style="font-size:1.8rem;display:flex;align-items:center;justify-content:center;height:100%">${((typeof _meta === 'function' && _meta((e.item || {}).id)) || {}).icon || '🎁'}</span>` : ((typeof _cardFaceArt === 'function') ? _cardFaceArt(e.card || {}, 'cover') : '🃏')}</div><div class="ptc-cf-name">${escapeHtml((e.kind === 'item') ? (((typeof _meta === 'function' && _meta((e.item || {}).id)) || {}).name || 'Item') : ((e.card || {}).name || 'Card'))}</div></div>`).join('');
+      const sum = drawn.map((e, i) => `<div class="ptc-sum-card" data-ptc-detail="${i}" title="Right-click for full details" style="--rar:${_ptcRarityOf(e).color};${e.kind === 'item' ? '' : 'cursor:context-menu'}"><div class="ptc-cf-art">${(e.kind === 'item') ? `<span style="font-size:1.8rem;display:flex;align-items:center;justify-content:center;height:100%">${((typeof _meta === 'function' && _meta((e.item || {}).id)) || {}).icon || '🎁'}</span>` : ((typeof _cardFaceArt === 'function') ? _cardFaceArt(e.card || {}, 'cover') : '🃏')}</div><div class="ptc-cf-name">${escapeHtml((e.kind === 'item') ? (((typeof _meta === 'function' && _meta((e.item || {}).id)) || {}).name || 'Item') : ((e.card || {}).name || 'Card'))}</div></div>`).join('');
       const more = (Profile.unopenedPacks || []).some(p => p && p.packId === def.id);
       const sm = document.createElement('div'); sm.className = 'ptc-summary';
       sm.innerHTML = `<div style="font-weight:900;letter-spacing:.1em;font-size:1.1rem;color:${bestR.color};text-shadow:0 2px 10px #000">PACK OPENED</div><div class="ptc-sum-grid">${sum}</div><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><button class="btn-primary" id="ptc-collect">✓ Collect</button>${more ? '<button class="btn-secondary" id="ptc-another">📦 Open Another</button>' : ''}</div>`;

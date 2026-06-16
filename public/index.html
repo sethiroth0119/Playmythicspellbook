@@ -148693,18 +148693,22 @@ const NodeLevelUpAnimation = {
 // (node.recon) so the whole theater shares the progress; the getter defaults to the
 // baseline so an un-reset node reads as "fresh" instead of stale mock numbers.
 function _twNodeReconDefaults() {
-  return { civiliansTotal: 200000, civiliansSaved: 0, roadsRepaired: 0, roadsTotal: 60, buildingsRestored: 0, buildingsTotal: 30 + Math.floor(Math.random() * 50), campaignsRun: 0 };
+  return { civiliansTotal: 200000, civiliansSaved: 0, roadsRepaired: 0, roadsTotal: 60, buildingsRestored: 0, buildingsTotal: 30 + Math.floor(Math.random() * 50), campaignsRun: 0, population: 200000, corruption: 30, lastTickAt: 0, lastYieldAt: 0 };
 }
 function _twNodeRecon(node) {
   const r = (node && node.recon && typeof node.recon === 'object') ? node.recon : null;
+  const total = (r && (r.civiliansTotal | 0)) || 200000;
   return {
-    civiliansTotal: (r && (r.civiliansTotal | 0)) || 200000,
+    civiliansTotal: total,
     civiliansSaved: (r && (r.civiliansSaved | 0)) || 0,
     roadsRepaired:  (r && (r.roadsRepaired | 0)) || 0,
     roadsTotal:     (r && (r.roadsTotal | 0)) || 60,
     buildingsRestored: (r && (r.buildingsRestored | 0)) || 0,
     buildingsTotal: (r && (r.buildingsTotal | 0)) || 48,
     campaignsRun:   (r && (r.campaignsRun | 0)) || 0,
+    population:     (r && (typeof r.population === 'number')) ? Math.max(0, r.population | 0) : total,
+    corruption:     (r && (typeof r.corruption === 'number')) ? Math.max(0, Math.min(100, Math.round(r.corruption))) : 30,
+    lastTickAt:     (r && (r.lastTickAt | 0)) || 0,
   };
 }
 // Ensure node.recon exists (baseline-fill missing fields) and return the LIVE object for mutation.
@@ -148719,7 +148723,104 @@ function _twNodeReconEnsure(node) {
   if (typeof r.buildingsRestored !== 'number') r.buildingsRestored = 0;
   if (typeof r.buildingsTotal !== 'number') r.buildingsTotal = 48;
   if (typeof r.campaignsRun !== 'number') r.campaignsRun = 0;
+  if (typeof r.population !== 'number') r.population = r.civiliansTotal || 200000;
+  if (typeof r.corruption !== 'number') r.corruption = 30;
+  if (typeof r.lastTickAt !== 'number') r.lastTickAt = 0;
+  if (typeof r.lastYieldAt !== 'number') r.lastYieldAt = 0;
   return r;
+}
+// ===== 🕛 NODE 24-HOUR SIMULATION =====
+// Each day: corruption drifts UP, pushed DOWN by registered players + their employment.
+// Corruption bleeds the NPC population. Lower population → lower CIVILIZATION → lower TRADE
+// STABILITY. Higher trade stability → more of the node's resource produced for registered
+// players. (Runs locally on node.recon; true cross-player aggregation needs the cloud.)
+const _TW_DAY_MS = 24 * 60 * 60 * 1000;
+// Derived CIVILIZATION (0-100) — driven by population fraction + how much is rebuilt.
+function _twNodeCivilization(node) {
+  const r = _twNodeRecon(node);
+  const popFrac = r.civiliansTotal > 0 ? (r.population / r.civiliansTotal) : 0;
+  const built = r.buildingsTotal > 0 ? (r.buildingsRestored / r.buildingsTotal) : 0;
+  return Math.max(0, Math.min(100, Math.round(popFrac * 82 + built * 18)));
+}
+// Derived TRADE STABILITY (0-100) — driven by civilization + repaired roads, dragged by corruption.
+function _twNodeTradeStability(node) {
+  const r = _twNodeRecon(node);
+  const civ = _twNodeCivilization(node);
+  const roads = r.roadsTotal > 0 ? (r.roadsRepaired / r.roadsTotal) : 0;
+  return Math.max(0, Math.min(100, Math.round(civ * 0.62 + roads * 30 - r.corruption * 0.12)));
+}
+// PROTECTION — corruption is held down by registered players + their employed civilians.
+// Local proxy (this player's camp + any cloud-known camps registered to the node).
+function _twNodeProtection(nodeId) {
+  let p = 0;
+  try {
+    if (Profile && Profile.campNodeId === nodeId) {
+      p += 3;
+      let workers = 0;
+      try { const wf = (typeof _campWorkforce === 'function') ? _campWorkforce() : {}; for (const k in wf) workers += (wf[k] | 0); } catch (e) {}
+      p += Math.min(9, workers * 0.6);
+    }
+    const camps = (App._twNodeCamps && App._twNodeCamps[nodeId]) || null;
+    if (Array.isArray(camps)) p += Math.min(12, camps.length * 2);
+  } catch (e) {}
+  return p;
+}
+// Advance ONE node's 24h clock by however many full days have elapsed (capped).
+function _twNodeSimTick(node, now, forceDays) {
+  if (!node) return false;
+  const r = _twNodeReconEnsure(node);
+  now = now || Date.now();
+  if (!r.lastTickAt) { r.lastTickAt = now; return false; }
+  let days = (forceDays | 0) || Math.floor((now - r.lastTickAt) / _TW_DAY_MS);
+  if (days <= 0) return false;
+  days = Math.min(days, 14); // a long absence won't nuke the node to zero
+  const prot = _twNodeProtection(node.id);
+  for (let d = 0; d < days; d++) {
+    r.corruption = Math.max(0, Math.min(100, r.corruption + 2 - prot));
+    const loss = Math.round(r.population * (r.corruption / 100) * 0.03);
+    r.population = Math.max(0, r.population - loss);
+  }
+  if (forceDays) r.lastTickAt = now; else r.lastTickAt = r.lastTickAt + days * _TW_DAY_MS;
+  return true;
+}
+// Resource production — a registered player collects the node's resource each day,
+// scaled by TRADE STABILITY. Returns the amount granted (0 if none).
+function _twNodeAccrueYield(node, now, forceDays) {
+  if (!node || !Profile || Profile.campNodeId !== node.id) return 0;
+  const r = _twNodeReconEnsure(node);
+  now = now || Date.now();
+  if (!r.lastYieldAt) { r.lastYieldAt = now; return 0; }
+  let days = (forceDays | 0) || Math.floor((now - r.lastYieldAt) / _TW_DAY_MS);
+  if (days <= 0) return 0;
+  days = Math.min(days, 14);
+  const resKey = (node.resourceYield && typeof node.resourceYield === 'object') ? Object.keys(node.resourceYield)[0] : null;
+  if (!resKey) { r.lastYieldAt = (forceDays ? now : r.lastYieldAt + days * _TW_DAY_MS); return 0; }
+  const base = (node.resourceYield[resKey] | 0) || 5;
+  const trade = _twNodeTradeStability(node);
+  const amount = Math.max(0, Math.round(base * (trade / 100) * 3 * days));
+  if (amount > 0) {
+    const map = { FOOD: 'food', FUEL: 'fuel', MED: 'medicine', METAL: 'metal' };
+    const rid = map[resKey] || String(resKey).toLowerCase();
+    try { if (typeof addRes === 'function') addRes(rid, amount); } catch (e) {}
+  }
+  r.lastYieldAt = (forceDays ? now : r.lastYieldAt + days * _TW_DAY_MS);
+  return amount;
+}
+// World tick — runs every node's clock + accrues the player's registered-node yield.
+// Cheap when no full day has elapsed (each sim/yield bails immediately). Saves only on change.
+function _twWorldTick(forceDays) {
+  let changed = false, gained = 0;
+  try {
+    const t = _twForge();
+    const now = Date.now();
+    for (const n of (t.nodes || [])) {
+      if (_twNodeSimTick(n, now, forceDays)) changed = true;
+      const g = _twNodeAccrueYield(n, now, forceDays);
+      if (g > 0) { gained += g; changed = true; }
+    }
+    if (changed) { try { saveForge(); } catch (e) {} }
+  } catch (e) {}
+  return { changed: changed, gained: gained };
 }
 const _TW_RES_KEYS = ['FOOD', 'FUEL', 'MED', 'METAL', 'CRYSTAL', 'RELIC', 'ETHER', 'WOOD', 'BIO', 'ELEC'];
 // Reset a node to the fresh reconstruction baseline + (optionally) a RANDOM resource.
@@ -148837,6 +148938,9 @@ function renderTerritoryWars() {
   // 🜏 Dark Events tick — rolls daily, ticks AVATAR every 4h, sweeps
   // expired entries. Safe to call every render (idempotent on time).
   try { tw_darkEventsTick(); } catch (e) { console.warn('[darkEvents tick]', e); }
+  // 🕛 NODE 24-HOUR SIM — corruption bleeds population; registered players earn the
+  // node's resource (scaled by trade stability). Cheap until a full day elapses.
+  try { const _wt = _twWorldTick(); if (_wt && _wt.gained > 0 && typeof showToast === 'function') showToast('📦 Your registered node delivered +' + _wt.gained + ' resources.', 3600); } catch (e) {}
   // 🌐 Cross-corp pull — first render fetches the latest ownership rows
   // and world feed from Supabase, then subscribes to live broadcasts so
   // captures by other players land on the map without a refresh.
@@ -149355,14 +149459,16 @@ function renderTerritoryWars() {
     // grows from player camp contributions). Un-reset nodes default to the baseline.
     const _rc = (typeof _twNodeRecon === 'function') ? _twNodeRecon(selNode) : { civiliansTotal:200000, civiliansSaved:0, roadsRepaired:0, roadsTotal:60, buildingsRestored:0, buildingsTotal:48, campaignsRun:0 };
     const _popMax = _rc.civiliansTotal || 200000;
-    const _pop = _popMax;  // NPC population = the node's civilian count (starts at 200,000)
-    const _popDelta = stability > 55 ? ((_ns % 12) + 1) : -((_ns % 18) + 2);
-    const _corruption = Math.max(5, Math.min(92, Math.round((100 - stability) * 0.75 + (_ns % 12))));
-    const _corrDelta = stability > 60 ? -1.8 : 2.2;
-    const _civ = Math.max(15, Math.min(90, Math.round(stability * 0.68 + upgrades.length * 2.5 + (_ns % 14))));
-    const _civDelta = stability > 50 ? 1.9 : -1.4;
-    const _trade = Math.max(10, Math.min(96, Math.round(stability * 0.5 + ((selOwn&&selOwn.guards)||[]).length * 7 + (_ns % 18))));
-    const _tradeRoutes = Math.max(1, Math.round(_trade / 6) + ((selOwn&&selOwn.guards)||[]).length);
+    const _pop = _rc.population | 0;                   // REAL NPC population — bled by corruption each day
+    const _popLossPerDay = Math.round(_pop * ((_rc.corruption | 0) / 100) * 0.03);
+    const _popDelta = -_popLossPerDay;
+    const _corruption = _rc.corruption | 0;            // REAL corruption — held down by registered players
+    const _prot = (typeof _twNodeProtection === 'function') ? _twNodeProtection(selNode.id) : 0;
+    const _corrDelta = Math.round((2 - _prot) * 10) / 10;  // per-day drift (negative = corruption falling)
+    const _civ = (typeof _twNodeCivilization === 'function') ? _twNodeCivilization(selNode) : 0;  // derived from population + rebuild
+    const _civDelta = _civ >= 50 ? 1.5 : -1.5;
+    const _trade = (typeof _twNodeTradeStability === 'function') ? _twNodeTradeStability(selNode) : 0;  // derived from civ + roads − corruption
+    const _tradeRoutes = Math.max(0, Math.round(_trade / 8) + ((Profile && Profile.campNodeId === selNode.id) ? 1 : 0));
     const _roads = _rc.roadsRepaired | 0;
     const _roadsMax = _rc.roadsTotal || 60;
     const _buildings = _rc.buildingsRestored | 0;
@@ -149417,6 +149523,24 @@ function renderTerritoryWars() {
         <div class="tw-nd-progress-row"><div class="tw-nd-prog-label">CIVILIANS SAVED</div><div class="tw-nd-prog-bar"><div style="width:${Math.min(100,(_civSaved/(_popMax||200000))*100).toFixed(0)}%;background:#4d9e68"></div></div><div class="tw-nd-prog-val">${_fmtN(_civSaved)} / ${_fmtN(_popMax)}</div></div>
         <div class="tw-nd-progress-row"><div class="tw-nd-prog-label">CAMPAIGNS RUN</div><div class="tw-nd-prog-bar"><div style="width:${Math.min(100,(_campaigns/800)*100).toFixed(0)}%;background:#c89428"></div></div><div class="tw-nd-prog-val">${_campaigns}</div></div>
       </div>
+      <div class="tw-nd-section-hdr">— NODE ECONOMY · 24-HOUR CYCLE</div>
+      ${(() => {
+        const _now = Date.now();
+        const _lt = _rc.lastTickAt || 0;
+        const _nextMs = _lt ? Math.max(0, (_lt + _TW_DAY_MS) - _now) : _TW_DAY_MS;
+        const _h = Math.floor(_nextMs / 3600000), _m = Math.floor((_nextMs % 3600000) / 60000);
+        const _resKey = (selNode.resourceYield) ? Object.keys(selNode.resourceYield)[0] : '';
+        const _base = _resKey ? ((selNode.resourceYield[_resKey] | 0) || 5) : 0;
+        const _dailyYield = Math.round(_base * (_trade / 100) * 3);
+        const _registered = !!(Profile && Profile.campNodeId === selNode.id);
+        const row = (lbl, val, col) => `<div class="tw-nd-progress-row"><div class="tw-nd-prog-label">${lbl}</div><div class="tw-nd-prog-val" style="min-width:auto;color:${col || '#e4ecf3'}">${val}</div></div>`;
+        return '<div class="tw-nd-progress-list">'
+          + row('NEXT CYCLE', _lt ? (_h + 'h ' + _m + 'm') : 'starting…', '#7fb0ff')
+          + row('POPULATION / DAY', '−' + _fmtN(_popLossPerDay), _popLossPerDay > 0 ? '#cf5a3a' : '#4d9e68')
+          + row('CORRUPTION / DAY', (_corrDelta <= 0 ? '▼ ' : '▲ ') + Math.abs(_corrDelta).toFixed(1) + (_prot > 0 ? '  (' + _prot.toFixed(1) + ' protection)' : ''), _corrDelta <= 0 ? '#4d9e68' : '#cf5a3a')
+          + row('RESOURCE YIELD', _resKey ? (escapeHtml(_resKey) + '  +' + _dailyYield + ' / day' + (_registered ? '' : '  · register to earn')) : '—', _registered ? '#9bb265' : '#8a96a3')
+          + '</div>';
+      })()}
       <div class="tw-nd-section-hdr">— FOUNDATION RESERVE CONTRIBUTION</div>
       <div class="tw-nd-cinder-box">
         <div class="tw-nd-cinder-hdr"><div class="tw-nd-cinder-label">TOTAL CINDER GENERATED</div><div class="tw-nd-node-level">NODE LV ${_nodeLevel}</div></div>
@@ -149663,6 +149787,7 @@ function renderTerritoryWars() {
         <div class="tw-top-bar-corp" style="display:flex;align-items:center;gap:0.6rem">
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-new-node">＋ New Node</button>` : ''}
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-reset-nodes" title="Reset EVERY node to a fresh reconstruction baseline (200,000 civilians, 0 roads/buildings) and randomize each node's resource. Keeps names, positions and roads.">🎲 Reset Nodes</button>` : ''}
+          ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-advance-day" title="Advance the 24-hour clock by ONE day on every node (corruption bleeds population, registered players earn resources). For testing the node economy.">⏩ Advance Day</button>` : ''}
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-connect-roads" title="Connect every roadless node to its nearest neighbours and light the new supply lines">🛣 Connect Roads</button>` : ''}
           ${_isAdm ? `<button class="tw-new-node-btn" id="tw-admin-publish-map" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.55);color:#d4af37" title="Immediately push current node/route data to the website and all players">🌐 Publish Map</button>` : ''}
           ${myCorp ? `🏢 ${escapeHtml(myCorp.name)}` : '<span style="color:#5b6772">No corporation — view only</span>'}
@@ -150016,6 +150141,18 @@ function renderTerritoryWars() {
       try { saveForge(); } catch (e) {}
       try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {}
       try { showToast('🎲 Reset ' + n + ' node' + (n === 1 ? '' : 's') + ' — resources randomized, reconstruction back to baseline.', 4200); } catch (e) {}
+      render();
+    };
+  }
+  // ⏩ Advance Day — push the 24h node clock forward one day on every node (for testing
+  // the economy: corruption bleeds population, registered players collect resources).
+  const _admDayBtn = document.getElementById('tw-admin-advance-day');
+  if (_admDayBtn) {
+    _admDayBtn.onclick = () => {
+      let res = { gained: 0 };
+      try { res = _twWorldTick(1) || { gained: 0 }; } catch (e) {}
+      try { if (typeof _adminAutoPublish === 'function') _adminAutoPublish(0); } catch (e) {}
+      try { showToast('⏩ Advanced 1 day — corruption bled the nodes' + (res.gained > 0 ? `, your node delivered +${res.gained} resources` : '') + '.', 4200); } catch (e) {}
       render();
     };
   }

@@ -104977,7 +104977,10 @@ function _binderArt(card) {
   try {
     const id = card && card.id;
     const key = (card && card.type === 'hero') ? ('h_' + id) : ('u_' + id);
-    const art = (typeof getCardArt === 'function') ? (getCardArt(id) || getCardArt(key)) : null;
+    // Prefer the resolved card's own cloud art URL (always present on custom cards),
+    // then the render cache — so real art shows even in streaming/placeholder mode.
+    const direct = card && (card.artUrl || card.img || card.image);
+    const art = ((typeof getCardArt === 'function') ? (getCardArt(id) || getCardArt(key)) : null) || direct;
     if (art && typeof art === 'string') return `<img src="${String(art).replace(/"/g, '&quot;')}" alt="" loading="lazy" decoding="async">`;
   } catch (e) {}
   return `<span class="bnd-card-glyph">${escapeHtml((card && card.icon) || '🃏')}</span>`;
@@ -105018,15 +105021,17 @@ function _binderItemsFor(kind) {
   const coll = (Profile.cardCollection && typeof Profile.cardCollection === 'object') ? Profile.cardCollection : {};
   const ids = Object.keys(coll).filter(id => (coll[id] | 0) > 0);
   const rarOrder = { mythic: 5, legendary: 4, epic: 3, rare: 2, uncommon: 1, common: 0 };
-  const resolve = (id) => {
-    try { if (typeof _resolveAnyCardById === 'function') { const r = _resolveAnyCardById(id); if (r) return r; } } catch (e) {}
-    try { if (typeof lookupCustomCard === 'function') { const r = lookupCustomCard(id); if (r) return r; } } catch (e) {}
-    return { id, name: id, type: 'card', rarity: 'common', icon: '🃏' };
-  };
-  const items = ids.map(id => {
-    const c = resolve(id) || { id, name: id, rarity: 'common' };
-    return { id, card: c, count: coll[id] | 0, rar: String(c.rarity || 'common').toLowerCase(), selected: (kind === 'shop' && App._csPick === id) };
-  });
+  // ONLY show cards the admin (you) actually created — i.e. cards that live in
+  // Forge.customCards or the published Catalog (lookupCustomCard finds those).
+  // Built-in mockup pool cards (cedric, goblin, orc, …) resolve to null here and
+  // are skipped, so the binder shows only real custom cards with real art.
+  const items = [];
+  for (const id of ids) {
+    let c = null;
+    try { c = (typeof lookupCustomCard === 'function') ? lookupCustomCard(id) : null; } catch (e) {}
+    if (!c) continue;
+    items.push({ id, card: c, count: coll[id] | 0, rar: String(c.rarity || 'common').toLowerCase(), selected: (kind === 'shop' && App._csPick === id) });
+  }
   items.sort((a, b) => (rarOrder[b.rar] || 0) - (rarOrder[a.rar] || 0) || String((a.card && a.card.name) || '').localeCompare(String((b.card && b.card.name) || '')));
   return items;
 }
@@ -105141,18 +105146,18 @@ function _ensureBinderStyle() {
   if (document.getElementById('binder-style')) return;
   const s = document.createElement('style'); s.id = 'binder-style';
   s.textContent = `
-  .binder-root{width:100%;max-width:960px;margin:0 auto}
-  .binder-album{position:relative;background:linear-gradient(135deg,#5d4427,#3a2a16 55%,#241910);border-radius:16px;padding:16px;box-shadow:0 22px 56px rgba(0,0,0,.6),inset 0 0 0 2px rgba(255,225,170,.06),inset 0 0 46px rgba(0,0,0,.55)}
+  .binder-root{width:100%;max-width:min(1340px,96vw);margin:0 auto}
+  .binder-album{position:relative;width:fit-content;max-width:100%;margin:0 auto;background:linear-gradient(135deg,#5d4427,#3a2a16 55%,#241910);border-radius:16px;padding:16px;box-shadow:0 22px 56px rgba(0,0,0,.6),inset 0 0 0 2px rgba(255,225,170,.06),inset 0 0 46px rgba(0,0,0,.55)}
   .binder-album::before{content:'';position:absolute;inset:7px;border-radius:11px;border:1px solid rgba(255,225,170,.10);pointer-events:none}
   .binder-spread{position:relative;display:flex;gap:0;perspective:2800px}
-  .binder-page{flex:1 1 0;min-width:0;position:relative;background:linear-gradient(160deg,#171522,#0d0b15);padding:14px}
+  .binder-page{flex:0 0 auto;position:relative;background:linear-gradient(160deg,#171522,#0d0b15);padding:14px}
   .binder-left{border-radius:9px 0 0 9px;box-shadow:inset -18px 0 30px -18px rgba(0,0,0,.9)}
   .binder-right{border-radius:0 9px 9px 0;box-shadow:inset 18px 0 30px -18px rgba(0,0,0,.9)}
   .binder-ring{position:absolute;left:50%;top:10px;bottom:10px;width:16px;transform:translateX(-50%);z-index:22;pointer-events:none;background:linear-gradient(90deg,rgba(0,0,0,.5),rgba(0,0,0,.15),rgba(0,0,0,.5))}
   .binder-ring::before{content:'';position:absolute;left:50%;top:0;bottom:0;width:9px;transform:translateX(-50%);background:repeating-linear-gradient(to bottom,transparent 0 7px,#c9ccd6 7px 9px,#8b8f9c 9px 20px,transparent 20px 27px);border-radius:6px;box-shadow:0 0 3px rgba(0,0,0,.6)}
-  .bnd-pockets{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .bnd-pockets{display:grid;grid-template-columns:repeat(3,auto);gap:clamp(6px,0.95vh,11px)}
   .bnd-pageno{position:absolute;bottom:2px;left:0;right:0;text-align:center;font-size:.56rem;letter-spacing:.18em;color:rgba(255,255,255,.22)}
-  .bnd-pocket{position:relative;aspect-ratio:2.5/3.5;border-radius:8px;background:rgba(255,255,255,.022);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),inset 0 3px 10px rgba(0,0,0,.45);padding:5px;display:flex;cursor:pointer;transition:transform .13s ease,box-shadow .13s ease}
+  .bnd-pocket{position:relative;height:clamp(150px,21.5vh,278px);aspect-ratio:2.5/3.5;border-radius:8px;background:rgba(255,255,255,.022);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),inset 0 3px 10px rgba(0,0,0,.45);padding:4px;display:flex;cursor:pointer;transition:transform .13s ease,box-shadow .13s ease}
   .bnd-pocket:hover{transform:translateY(-3px);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),0 8px 18px rgba(0,0,0,.5)}
   .bnd-pocket.bnd-empty{cursor:default;background:rgba(0,0,0,.18);box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)}
   .bnd-pocket.bnd-empty:hover{transform:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.035)}
@@ -105195,12 +105200,13 @@ function _ensureBinderStyle() {
 function renderMyCardsModal() {
   if (!App._showMyCards) return '';
   const coll = (Profile.cardCollection && typeof Profile.cardCollection === 'object') ? Profile.cardCollection : {};
-  const ids = Object.keys(coll).filter(id => (coll[id] | 0) > 0);
-  const totalUnique = ids.length;
-  const totalCards = ids.reduce((s, id) => s + (coll[id] | 0), 0);
+  // Counts reflect only the custom/admin cards the binder actually shows.
+  const _binderItems = (typeof _binderItemsFor === 'function') ? _binderItemsFor('collection') : [];
+  const totalUnique = _binderItems.length;
+  const totalCards = _binderItems.reduce((s, it) => s + (it.count | 0), 0);
   return `
     <div id="my-cards-backdrop" style="position:fixed;inset:0;z-index:9750;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.86);backdrop-filter:blur(4px);animation:shopFadeIn 0.2s ease-out">
-      <div style="position:relative;width:94%;max-width:1100px;max-height:90vh;display:flex;flex-direction:column;background:linear-gradient(180deg,#2a1f4a 0%,#14102a 100%);border:1px solid #d4af37;border-radius:10px;padding:1.2rem;box-shadow:0 14px 50px rgba(0,0,0,0.8)">
+      <div style="position:relative;width:97%;max-width:1440px;max-height:95vh;display:flex;flex-direction:column;background:linear-gradient(180deg,#2a1f4a 0%,#14102a 100%);border:1px solid #d4af37;border-radius:10px;padding:1.2rem;box-shadow:0 14px 50px rgba(0,0,0,0.8)">
         <div style="flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem">
           <div>
             <div style="font-family:'Cinzel',serif;font-size:1.3rem;color:#ffd166">📜 My Card Collection</div>
@@ -106053,14 +106059,15 @@ function _csBinderBody() {
   if (!m) return `<div class="cs-empty">Loading…</div>`;
   if (!m.shop) return `<div class="cs-empty">Open your shop first (MY SHOP station) before stocking your binder.</div>`;
   const accent = (CARD_SHOP_THEMES[m.shop.theme || 'bunker'] || {}).accent || '#d4af37';
-  const owned = Object.keys(Profile.cardCollection || {}).filter(id => (Profile.cardCollection[id] | 0) > 0);
+  // Only count the custom/admin cards the binder will actually show.
+  const customOwnedCount = (typeof _binderItemsFor === 'function') ? _binderItemsFor('shop').length : 0;
   const pick = App._csPick && (Profile.cardCollection[App._csPick] | 0) > 0 ? App._csPick : null;
   const singles = (m.listings || []).filter(l => l.kind !== 'pack');
   const shelves = singles.map(l => `<div class="cs-card">${_csCardTile(l.card_id, l.card_json)}<div class="cs-card-foot"><span class="cs-card-price">${(l.price | 0).toLocaleString()} 🔥</span><button class="btn-mini btn-danger" data-cs="cs-unlist" data-id="${escapeHtml(l.id)}" data-card="${escapeHtml(l.card_id)}" data-kind="card">✕</button></div></div>`).join('');
   return `<div style="font-size:0.74rem;color:#8a96a3;margin-bottom:0.4rem">The cards you list here are the <b>singles other players buy</b> when they visit your shop.</div>
     <div class="cs-section">List a card from your collection</div>
-    ${owned.length ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
-      ${_binderHtml('shop')}` : `<div class="cs-empty">No spare cards — open packs at the OPEN PACKS station first.</div>`}
+    ${customOwnedCount ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
+      ${_binderHtml('shop')}` : `<div class="cs-empty">No custom cards to list yet — open packs at the OPEN PACKS station to collect cards.</div>`}
     <div class="cs-section">In your binder · for sale (${singles.length})</div>
     ${shelves ? `<div class="cs-grid">${shelves}</div>` : `<div class="cs-empty">Your binder is empty. Pick a card above and set a Cinder price.</div>`}`;
 }

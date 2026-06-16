@@ -27499,6 +27499,51 @@
   .node-levelup-card .nlu-sub { font-family:'JetBrains Mono','Consolas',monospace; font-size:0.6rem; letter-spacing:0.1em; color:#ffb347; margin-top:0.25rem; }
   @keyframes node-levelup-flash { 0%{opacity:0;} 15%{opacity:1;} 75%{opacity:1;} 100%{opacity:0;} }
   @keyframes node-levelup-pop { 0%{transform:scale(0.4); opacity:0;} 20%{transform:scale(1.15); opacity:1;} 40%{transform:scale(1);} 80%{transform:scale(1); opacity:1;} 100%{transform:scale(1.05); opacity:0;} }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     ✨ UI POLISH (v109k) — cosmetic-only refinements, layered at the END of
+     the base sheet so they win specificity ties. NO padding / size / margin
+     changes → zero layout shift; purely radius, shadow, gradient, transition,
+     focus and scrollbar work on the SHARED primitives, so every screen (deck
+     editor, title hub, battle UI, shops) lifts together. Safe, targeted polish.
+     ══════════════════════════════════════════════════════════════════════ */
+  .btn-primary, .btn-secondary, .btn-danger, .btn-mini {
+    border-radius: 9px;
+    transition: transform .14s ease, box-shadow .18s ease, border-color .18s ease, color .18s ease, background .18s ease, filter .18s ease;
+  }
+  .btn-mini { border-radius: 7px; }
+  .btn-primary {
+    background: linear-gradient(180deg, #7c4a28 0%, #5a3318 46%, #341d0d 100%);
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.55), inset 0 1px 0 rgba(245,215,110,0.34), inset 0 -2px 8px rgba(0,0,0,0.4), 0 6px 22px rgba(0,0,0,0.55);
+  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.06); }
+  .btn-primary:active:not(:disabled),
+  .btn-secondary:active:not(:disabled),
+  .btn-danger:active:not(:disabled),
+  .btn-mini:active:not(:disabled) { transform: translateY(1px); }
+  .btn-secondary:hover:not(:disabled) {
+    background: rgba(212,175,55,0.10);
+    box-shadow: 0 5px 16px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+  .btn-danger:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+  .btn-primary:focus-visible, .btn-secondary:focus-visible, .btn-danger:focus-visible, .btn-mini:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg-deep, #0b0814), 0 0 0 4px rgba(212,175,55,0.65), 0 6px 22px rgba(0,0,0,0.5);
+  }
+  /* Inputs — rounder + a clear gold focus ring (matches the buttons) */
+  input, select, textarea { border-radius: 7px; transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease; }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: rgba(212,175,55,0.7);
+    box-shadow: 0 0 0 3px rgba(212,175,55,0.16);
+  }
+  /* Themed scrollbars game-wide — replaces the stark default OS bars */
+  * { scrollbar-width: thin; scrollbar-color: rgba(139,92,246,0.5) rgba(16,12,24,0.5); }
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: rgba(12,9,18,0.5); border-radius: 10px; }
+  ::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(120,90,185,0.55), rgba(78,58,128,0.62)); border-radius: 10px; border: 2px solid rgba(12,9,18,0.45); }
+  ::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, rgba(212,175,55,0.72), rgba(150,112,40,0.72)); }
+  ::-webkit-scrollbar-corner { background: transparent; }
 </style>
 </head>
 <body>

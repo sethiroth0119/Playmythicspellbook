@@ -106466,6 +106466,9 @@ function _csMount3D(mount) {
     // Real room model → hide the procedural shell.
     _csTryModel(cfg.room, (m, gltf) => { roomMeshes.forEach(x => { x.visible = false; }); scene.add(m); _csAnimate(m, {}, gltf); });
     const box = (w, h, d, color, em, ei) => new T.Mesh(new T.BoxGeometry(w, h, d), new T.MeshStandardMaterial({ color: color, emissive: em || 0, emissiveIntensity: em ? (ei || 0.7) : 0, roughness: 0.85 }));
+    // Seat a loaded .glb so its BASE rests on the floor (origin at center → it sinks
+    // half-underground otherwise). Measure after scale; rotation-Y doesn't change height.
+    const _csSeatModel = (m) => { try { m.updateMatrixWorld(true); const bb = new T.Box3().setFromObject(m); if (isFinite(bb.min.y)) m.position.y -= bb.min.y; } catch (e) {} };
     const hex = n => '#' + n.toString(16).padStart(6, '0');
     const label = (text, hexc) => { const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128; const x = cv.getContext('2d'); x.fillStyle = 'rgba(10,10,15,0.82)'; x.fillRect(0, 30, 512, 68); x.fillStyle = hexc; x.fillRect(0, 30, 8, 68); x.font = 'bold 46px sans-serif'; x.fillStyle = '#f4f4f5'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, 262, 64); const t = new T.CanvasTexture(cv); t.minFilter = T.LinearFilter; const sp = new T.Sprite(new T.SpriteMaterial({ map: t, transparent: true, depthWrite: false })); sp.scale.set(2.6, 0.65, 1); return sp; };
     const stations = [];
@@ -106480,7 +106483,7 @@ function _csMount3D(mount) {
       const glow = new T.PointLight(c, 0.5, 4); glow.position.set(0, 1.4, 0); g.add(glow);
       scene.add(g); stations.push({ view: d.view, label: d.label, gx: d.x, gz: d.z, r: (d.blockR != null ? d.blockR : d.r), ir: (d.interactR != null ? d.interactR : 3.0) });
       // Upgrade to a real .glb when present (label + glow stay; only the geometry swaps).
-      _csTryModel(d.model, (m, gltf) => { try { g.remove(geo); m.rotation.y = d.ry || 0; if (d.scale) m.scale.setScalar(d.scale); g.add(m); _csAnimate(m, d, gltf, g); } catch (e) {} });
+      _csTryModel(d.model, (m, gltf) => { try { g.remove(geo); m.rotation.y = d.ry || 0; if (d.scale) m.scale.setScalar(d.scale); _csSeatModel(m); g.add(m); _csAnimate(m, d, gltf, g); } catch (e) {} });
     }
     let npc = null;
     if (cfg.npc) {
@@ -106501,7 +106504,7 @@ function _csMount3D(mount) {
         const col = (cat && cat.color != null) ? cat.color : 0xd4af37;
         ph = box(w, h, d, 0x14110d, col, 0.32); ph.position.y = h / 2; pg.add(ph);
       } catch (e) {}
-      if (p.url) _csTryModel(p.url, (m, gltf) => { try { if (ph) pg.remove(ph); if (p.scale) m.scale.setScalar(p.scale); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
+      if (p.url) _csTryModel(p.url, (m, gltf) => { try { if (ph) pg.remove(ph); if (p.scale) m.scale.setScalar(p.scale); _csSeatModel(m); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
     }
     const St = { yaw: 0, pitch: 0, cyaw: undefined, cpitch: 0, keys: new Set(), move: { f: 0, b: 0, l: 0, r: 0 }, drag: false, lx: 0, ly: 0 };
     const clock = new T.Clock(); let raf = 0, nearView = null;

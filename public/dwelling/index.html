@@ -7,13 +7,17 @@
 <style>#brand{display:none !important}</style>
 <script>
 /* Host storage shim — the Dwelling app persists through window.storage.{get,set,delete}.
-   Standalone uses localStorage; the parent may override window.storage before load. */
+   Backed by IndexedDB (large quota) so imported .glb models + layouts SAVE durably;
+   falls back to localStorage if IDB is unavailable. */
 (function(){
   if (window.storage) return;
+  var DB='mythic_dwelling', STORE='kv', dbp=null;
+  function db(){ if(dbp) return dbp; dbp=new Promise(function(res,rej){ try{ var r=indexedDB.open(DB,1); r.onupgradeneeded=function(){ try{ r.result.createObjectStore(STORE); }catch(e){} }; r.onsuccess=function(){ res(r.result); }; r.onerror=function(){ rej(r.error); }; }catch(e){ rej(e); } }); return dbp; }
+  function store(mode){ return db().then(function(d){ return d.transaction(STORE,mode).objectStore(STORE); }); }
   window.storage = {
-    async get(k){ try { const v = localStorage.getItem(k); return v == null ? null : { value: v }; } catch(e){ return null; } },
-    async set(k, v){ try { localStorage.setItem(k, v); return true; } catch(e){ return false; } },
-    async delete(k){ try { localStorage.removeItem(k); } catch(e){} }
+    get: function(k){ return store('readonly').then(function(s){ return new Promise(function(res){ var r=s.get(k); r.onsuccess=function(){ res(r.result==null?null:{value:r.result}); }; r.onerror=function(){ res(null); }; }); }).catch(function(){ try{ var v=localStorage.getItem(k); return v==null?null:{value:v}; }catch(e){ return null; } }); },
+    set: function(k,v){ return store('readwrite').then(function(s){ return new Promise(function(res){ var r=s.put(v,k); r.onsuccess=function(){ res(true); }; r.onerror=function(){ res(false); }; }); }).catch(function(){ try{ localStorage.setItem(k,v); return true; }catch(e){ return false; } }); },
+    delete: function(k){ return store('readwrite').then(function(s){ s.delete(k); }).catch(function(){ try{ localStorage.removeItem(k); }catch(e){} }); }
   };
 })();
 /* MYTHIC economy bridge — when embedded in the game, the Vendor Market spends the
@@ -219,7 +223,7 @@ window.MYTHIC = (function(){
 <script>
 (function(){
   const SAVE_KEY='mythic_house_layout_v1', MODELS_KEY='mythic_custom_models_v1', GLB_PREFIX='mythic_glb_';
-  const ROOM=8, WALL_H=4, GRID=0.5, EYE=1.6, LOOK=0.005, MAX_GLB=4700000, PAINT_COST=5;
+  const ROOM=8, WALL_H=4, GRID=0.5, EYE=1.6, LOOK=0.005, MAX_GLB=60000000, PAINT_COST=5;
   const COL={ wood:0x6b4a2b, dark:0x42301c, navy:0x1a2440, stone:0x4a4e5c, gold:0xd4af37, fabric:0x6b2326, leaf:0x3f7d4a, metal:0x7d8290, crystal:0x6fd6e8, white:0xe8e4d6, terra:0x9c5a3c };
   function mat(c,o={}){ return new THREE.MeshStandardMaterial({color:c, roughness:o.r??0.85, metalness:o.m??0.05, emissive:o.e??0x000000, emissiveIntensity:o.ei??1}); }
 

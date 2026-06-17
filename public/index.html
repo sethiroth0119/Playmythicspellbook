@@ -41730,11 +41730,33 @@ function _cmGrantPurchase(r) {
   try { if (Array.isArray(Forge.customCards)) { Forge.customCards.push(copy); saveForge(); } } catch (e) {}
   if (!Profile.cardCollection) Profile.cardCollection = {};
   Profile.cardCollection[copy.id] = (Profile.cardCollection[copy.id] || 0) + 1;
-  // 🪖 Carry the seller's unit instance (level/trait/nature) onto the new copy.
+  // 🪖💗 Carry the seller's unit instance onto the new copy + apply the Bond transfer
+  // rules (§6): XP/level retained, bound items convey, loyalty drops EXACTLY one tier
+  // (floored at Wary) — UNLESS the original owner is re-buying this exact instance, in
+  // which case the unit remembers them and loyalty restores. Anti-flip: each sale past
+  // the 3rd lowers the reachable bond ceiling (floored at Steady); buyers can't reach
+  // Sworn (reserved for first-owner bonds) per BOND_SWORN_FIRST_OWNER_ONLY.
   try {
     if (r.unit_json && Profile.units && typeof Profile.units === 'object' && !Profile.units[copy.id]) {
       const ui = r.unit_json;
-      Profile.units[copy.id] = { level: ui.level || 1, xp: ui.xp || 0, nature: ui.nature || null, trait: ui.traitId || null, kills: 0, fielded: 0 };
+      const me = (Profile.cloud && Profile.cloud.userId) || null;
+      const sellerBond = Math.max(0, Math.min(BOND_MAX, ui.bond || 0));
+      const isOrigin = !!(me && ui.originalOwner && me === ui.originalOwner && typeof ui.originalBond === 'number');
+      const entry = {
+        level: ui.level || 1, xp: ui.xp || 0, nature: ui.nature || null, trait: ui.traitId || null,
+        kills: 0, fielded: 0,
+        bond: isOrigin ? Math.max(0, Math.min(BOND_MAX, ui.originalBond)) : bondDropOneTier(sellerBond),
+        bondScaled: true,
+        boundItems: Array.isArray(ui.boundItems) ? ui.boundItems.slice(0) : [],
+        // Original owner reclaiming → the unit is home: wipe the merc/sale history so it
+        // can be raised back to Sworn (it remembers you). Others: count the sale (anti-flip).
+        saleCount: isOrigin ? 0 : (ui.saleCount | 0) + 1,
+        everSold: isOrigin ? false : true,
+        originalOwner: ui.originalOwner || null,
+        originalBond: (typeof ui.originalBond === 'number') ? ui.originalBond : null,
+      };
+      entry.bond = Math.max(0, Math.min(bondCeilingFor(entry), entry.bond));   // anti-flip + Sworn-cap clamp
+      Profile.units[copy.id] = entry;
     }
   } catch (e) {}
 }
@@ -52642,6 +52664,7 @@ function _safeSaveAll(label) {
 try { (window.__mg = window.__mg || {})._safeSaveAll = _safeSaveAll; } catch (e) {}
 
 function saveProfile() {
+  try { _migrateBondScale(); } catch (e) {}   // one-time 0–100 → 0–1200 loyalty rescale (flag-gated)
   // 🪟 Multi-tab safety: reader tabs (not the elected writer) must NOT
   // overwrite the shared localStorage row — they'd clobber edits the writer
   // tab made between our last read and this write. The visible "Active in
@@ -54012,7 +54035,7 @@ const emptyGains = () => ({ hp: 0, atk: 0, def: 0, mag: 0, res: 0, spd: 0 });
 const emptyEvs   = () => ({ hp: 0, atk: 0, def: 0, mag: 0, res: 0, spd: 0 });
 const EV_CAP_PER_STAT = 31;     // max EVs per stat (≈ +7 stat / +15 maxHp)
 const EV_TOTAL_CAP    = 120;    // max total EVs across stats
-const BOND_MAX = 100;           // per-unit/per-hero friendship cap
+const BOND_MAX = 1200;          // companion loyalty cap (0–1200, Wary→Sworn)
 
 // ===== Natures (Pokemon-style personality) =====
 // Each nature gives +10% to one stat (`plus`) and -10% to another (`minus`).
@@ -54145,32 +54168,73 @@ function ensureUnitTrait(cardId, card, isAi) {
   return p.trait;
 }
 
+// 💗 Companion Loyalty — 0–1200, six tiers that get progressively harder to reach.
+// A fresh card opens at Neutral (100). Each tier carries its XP-gain multiplier (§2).
 const BOND_TIERS = [
-  { min: 0,   max: 19,  name: 'Stranger',  color: '#9aa0a6' },
-  { min: 20,  max: 39,  name: 'Familiar',  color: '#5eb37a' },
-  { min: 40,  max: 59,  name: 'Friend',    color: '#5a9bd4' },
-  { min: 60,  max: 79,  name: 'Trusted',   color: '#a070d9' },
-  { min: 80,  max: 99,  name: 'Bonded',    color: '#d4af37' },
-  { min: 100, max: 100, name: 'Soulbound', color: '#ff8a6b' },
+  { min: 0,    max: 49,   name: 'Wary',    color: '#9aa0a6', xpMul: 0.5 },
+  { min: 50,   max: 149,  name: 'Neutral', color: '#5eb37a', xpMul: 1.0 },
+  { min: 150,  max: 349,  name: 'Steady',  color: '#5a9bd4', xpMul: 1.1 },
+  { min: 350,  max: 699,  name: 'Trusted', color: '#a070d9', xpMul: 1.25 },
+  { min: 700,  max: 1149, name: 'Devoted', color: '#d4af37', xpMul: 1.5 },
+  { min: 1150, max: 1200, name: 'Sworn',   color: '#ff8a6b', xpMul: 2.0 },
 ];
+const BOND_NEW = 100;                 // a fresh card opens at Neutral
+const TRUSTED_TIER_IDX = 3;           // Trusted+ = "bonded companion" threshold (§5)
 const getBondTier = (b) => {
   const v = Math.max(0, Math.min(BOND_MAX, b || 0));
   return BOND_TIERS.find(t => v >= t.min && v <= t.max) || BOND_TIERS[0];
 };
+const bondTierIndex = (b) => BOND_TIERS.indexOf(getBondTier(b));
+const bondPct = (b) => Math.max(0, Math.min(1, (b || 0) / BOND_MAX));   // 0..1
+const bond100 = (b) => Math.round(bondPct(b) * 100);                    // legacy 0..100 view for old formulas
+const loyaltyXpMult = (b) => getBondTier(b).xpMul || 1;                 // XP gain × by tier (§2/§7)
+// Drop EXACTLY one tier (marketplace transfer + betrayal penalties). Floored at Wary.
+const bondDropOneTier = (b) => { const i = bondTierIndex(b); if (i <= 0) return Math.max(0, Math.min(BOND_MAX, b || 0)); return Math.min(b || 0, BOND_TIERS[i - 1].max); };
+// A unit's reachable loyalty ceiling: anti-flip lowers it one tier per sale after the
+// 3rd, floored at Steady; buyers may also be capped (Sworn reserved for first-owner, §9).
+const bondCeilingFor = (e) => {
+  if (!e || typeof e !== 'object') return BOND_MAX;
+  let capIdx = BOND_TIERS.length - 1;
+  const sales = e.saleCount | 0;
+  if (sales > 3) capIdx = Math.max(2 /* Steady */, capIdx - (sales - 3));
+  if (BOND_SWORN_FIRST_OWNER_ONLY && e.everSold) capIdx = Math.min(capIdx, 4 /* Devoted */);
+  return BOND_TIERS[capIdx].max;
+};
+const BOND_SWORN_FIRST_OWNER_ONLY = true;  // §9 default: Sworn is non-purchasable (first-owner bonds only)
 const adjustBond = (profileEntry, delta) => {
   if (!profileEntry) return;
   const cur = profileEntry.bond || 0;
-  profileEntry.bond = Math.max(0, Math.min(BOND_MAX, cur + delta));
+  const cap = bondCeilingFor(profileEntry);
+  profileEntry.bond = Math.max(0, Math.min(cap, cur + delta));
 };
+// 🔁 One-time-per-entry rescale of legacy 0–100 bonds onto the 0–1200 scale.
+// Per-entry flag (bondScaled) so it's timing-safe: new instances are created already
+// flagged, so a maxed old companion (100) never gets confused with a fresh Neutral (100).
+function _migrateBondEntry(e) {
+  if (!e || typeof e !== 'object' || e.bondScaled) return e;
+  if (typeof e.bond === 'number' && e.bond <= 100) e.bond = Math.round(100 + e.bond * 11); // 0→100(Neutral), 100→1200(Sworn)
+  e.bondScaled = true;
+  return e;
+}
+function _migrateBondScale() {
+  try {
+    if (Profile._bondScale === BOND_MAX) return;
+    if (Profile.units)  for (const k in Profile.units)  _migrateBondEntry(Profile.units[k]);
+    if (Profile.heroes) for (const k in Profile.heroes) _migrateBondEntry(Profile.heroes[k]);
+    Profile._bondScale = BOND_MAX;
+  } catch (e) {}
+}
 
 const getHeroProfile = (heroId) => {
   const p = Profile.heroes[heroId] || { level: 1, xp: 0, kills: 0, wins: 0 };
+  _migrateBondEntry(p); if (p.bond == null) { p.bond = BOND_NEW; p.bondScaled = true; }
   if (!p.statGains) p.statGains = emptyGains();
   if (!p.evs) p.evs = emptyEvs();
   return p;
 };
 const getUnitProfile = (cardId) => {
   const p = Profile.units[cardId] || { level: 1, xp: 0, kills: 0, fielded: 0 };
+  _migrateBondEntry(p); if (p.bond == null) { p.bond = BOND_NEW; p.bondScaled = true; }
   if (!p.statGains) p.statGains = emptyGains();
   if (!p.evs) p.evs = emptyEvs();
   return p;
@@ -61361,8 +61425,8 @@ const calculateDamage = (move, attacker, defender, weather) => {
   }
   // 🌫️ Mist Dancer: +20% crit in mist (stacks with everything else).
   if (wType === 'mist' && hasPassive(attacker, 'mistDancer')) critChance += 20;
-  // Friendship: +1% crit per 10 bond points (max +10% at 100 bond)
-  if (attacker.bond) critChance += Math.floor((attacker.bond || 0) / 10);
+  // Loyalty: +1% crit per 10% of max loyalty (max +10% at Sworn)
+  if (attacker.bond) critChance += Math.floor(bond100(attacker.bond) / 10);
   // "Crit Storm" daily modifier — global +25% crit chance for both sides
   if (App.state && App.state.mods && App.state.mods.critBoost) critChance += App.state.mods.critBoost;
   // 🏯 Active Location crit aura — Forge Anvil (+15 to allies).
@@ -91602,7 +91666,7 @@ function renderUnitModal() {
                   <span class="ink-dim small-text" style="margin-left:auto">BOND</span>
                 </div>
                 <div style="height:6px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden;margin-top:6px"><div style="height:100%;width:${pct}%;background:${t.color}"></div></div>
-                <div class="small-text" style="color:#bfae87;margin-top:4px">+${Math.floor((u.bond || 0) / 10)}% crit chance from friendship.</div>
+                <div class="small-text" style="color:#bfae87;margin-top:4px">+${Math.floor(bond100(u.bond) / 10)}% crit · ×${(getBondTier(u.bond).xpMul || 1)} XP gain from loyalty.</div>
               </div>`;
             })() : ''}
           </div>
@@ -100615,12 +100679,11 @@ function recordBattleProgress() {
     }
     if (!cur.statGains) cur.statGains = emptyGains();
     if (!cur.evs) cur.evs = emptyEvs();
-    if (cur.bond == null) cur.bond = 0;
+    _migrateBondEntry(cur); if (cur.bond == null) { cur.bond = BOND_NEW; cur.bondScaled = true; }
     if (!cur.nature) cur.nature = hero.nature || rollNature();
-    // Bond: hero gets +5 on win, -3 on faint, -1 on loss
+    // 💗 Loyalty (§3): survived +3, won +2, kill/MVP +5; died despite effort -3 (grief, not blame)
     if (!hero.alive) adjustBond(cur, -3);
-    else if (won) adjustBond(cur, 5);
-    else adjustBond(cur, -1);
+    else { adjustBond(cur, 3); if (won) adjustBond(cur, 2); if ((hero.battleKills || 0) > 0) adjustBond(cur, 5); }
     Profile.heroes[hero.heroId] = cur;
   }
 
@@ -100655,12 +100718,13 @@ function recordBattleProgress() {
     }
     if (!cur.statGains) cur.statGains = emptyGains();
     if (!cur.evs) cur.evs = emptyEvs();
-    if (cur.bond == null) cur.bond = 0;
+    _migrateBondEntry(cur); if (cur.bond == null) { cur.bond = BOND_NEW; cur.bondScaled = true; }
     if (!cur.nature) cur.nature = rollNature();
-    // Bond per unit type: +3 if any survived a win, -2 per fainted instance, -1 on loss
-    if (won && aliveByCard[id]) adjustBond(cur, 3);
-    if (faintedByCard[id]) adjustBond(cur, -2 * faintedByCard[id]);
-    if (!won && !faintedByCard[id] && aliveByCard[id]) adjustBond(cur, -1);
+    // 💗 Loyalty (§3): survived +3, kill/MVP +5, won-while-deployed +2; died despite effort -3 (grief)
+    if (aliveByCard[id]) adjustBond(cur, 3);
+    if (killsPerCard[id]) adjustBond(cur, 5);
+    if (won && (aliveByCard[id] || killsPerCard[id])) adjustBond(cur, 2);
+    if (faintedByCard[id]) adjustBond(cur, -3 * faintedByCard[id]);
     Profile.units[id] = cur;
   }
 
@@ -102423,6 +102487,11 @@ function unitInstanceSnapshot(card) {
   const moves = (u && Array.isArray(u.knownMoves) && u.knownMoves.length)
     ? u.knownMoves.slice(0, 6)
     : (Array.isArray(card.learnset) ? card.learnset.map(l => l && l.m).filter(Boolean).slice(0, 4) : []);
+  // 💗 Loyalty / Bond layer (§6) — rides the card instance so a buyer sees the relationship.
+  const _me = (Profile.cloud && Profile.cloud.userId) || null;
+  const _curBond = Math.max(0, Math.min(BOND_MAX, (prof && prof.bond) || 0));
+  const _origin = (prof && prof.originalOwner) || _me;          // first owner (default: current owner)
+  const _sellerIsOrigin = !!(_me && _origin === _me);
   return {
     level:   (u && u.level) || (prof && prof.level) || 1,
     xp:      (u && u.xp)    || (prof && prof.xp)    || 0,
@@ -102433,6 +102502,14 @@ function unitInstanceSnapshot(card) {
     stats:   (u && u.stats) ? { ...u.stats } : (card.stats ? { ...card.stats } : null),
     maxHp:   (u && u.maxHp) || (card.stats && card.stats.hp) || 0,
     elements: (u && Array.isArray(u.elements)) ? u.elements.slice(0) : [],
+    bond: _curBond,
+    bondTier: getBondTier(_curBond).name,
+    boundItems: (prof && Array.isArray(prof.boundItems)) ? prof.boundItems.slice(0) : [],
+    saleCount: (prof && prof.saleCount | 0) || 0,
+    everSold: !!(prof && prof.everSold),
+    battlesFought: Math.max(0, (prof && prof.fielded | 0) || 0),
+    originalOwner: _origin,
+    originalBond: _sellerIsOrigin ? _curBond : ((prof && typeof prof.originalBond === 'number') ? prof.originalBond : null),
   };
 }
 

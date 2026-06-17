@@ -136589,6 +136589,7 @@ function _ppaFreshCar(car) {
   s.log = [{ t: '▶ A ' + car.rarity.key + ' ' + car.name + ' rolls onto the block.', k: 'sys' }].concat(s.log || []).slice(0, 24);
   s.athena = _ppaPick(PPA_ATHENA_IN);
   if (s.gl && s.gl.setCar) s.gl.setCar(car);
+  _ppaPlaySfx('open');
 }
 // ───────────── procedural 3D car (fallback when no .glb model) ─────────────
 function _ppaBuildCar(car) {
@@ -136665,14 +136666,16 @@ function _ppaTick() {
   if (s.status === 'incoming') { s.timer -= dt; if (s.timer <= 0) { s.status = 'live'; s.timer = 8000; s.log = [{ t: 'Bidding is LIVE.', k: 'sys' }].concat(s.log).slice(0, 24); changed = true; } _ppaRepaint(); return; }
   let placed = false;
   const eligible = s.npcs.filter(n => n.id !== s.highBidder && now >= s.npcNext[n.id]).sort((x, y) => y.agg - x.agg);
-  for (const n of eligible) { const step = _ppaStep(s.currentBid), nb = s.currentBid + step; if (nb <= s.npcMax[n.id] && Math.random() < 0.42 + n.agg * 0.4) { s.currentBid = nb; s.highBidder = n.id; s.status = 'live'; s.timer = _ppaRand(5200, 7200); s.lastBid = now; s.hype = Math.min(100, s.hype + 6 * PPA_HYPE_MULT[idx]); s.contesters[n.id] = true; s.npcNext[n.id] = now + _ppaRand(1600, 3600); s.log = [{ t: n.name + ' bids ¢' + _ppaFmt(nb) + '.', k: 'npc', accent: n.accent }].concat(s.log).slice(0, 24); placed = true; if (Math.random() < 0.5) s.athena = n.name + ': "' + _ppaPick(PPA_TAUNTS) + '"'; break; } else s.npcNext[n.id] = now + _ppaRand(800, 1800); }
+  for (const n of eligible) { const step = _ppaStep(s.currentBid), nb = s.currentBid + step; if (nb <= s.npcMax[n.id] && Math.random() < 0.42 + n.agg * 0.4) { s.currentBid = nb; s.highBidder = n.id; s.status = 'live'; s.timer = _ppaRand(5200, 7200); s.lastBid = now; s.hype = Math.min(100, s.hype + 6 * PPA_HYPE_MULT[idx]); s.contesters[n.id] = true; s.npcNext[n.id] = now + _ppaRand(1600, 3600); s.log = [{ t: n.name + ' bids ¢' + _ppaFmt(nb) + '.', k: 'npc', accent: n.accent }].concat(s.log).slice(0, 24); placed = true; _ppaPlaySfx('bid'); if (Math.random() < 0.5) s.athena = n.name + ': "' + _ppaPick(PPA_TAUNTS) + '"'; break; } else s.npcNext[n.id] = now + _ppaRand(800, 1800); }
+  // 🔊 Rising countdown tick — accelerates as crowd hype climbs (subtle, synth-only).
+  if (!placed && _ppaSoundIsOn() && (now - (s._tickAt || 0)) > Math.max(230, 720 - s.hype * 4.2)) { s._tickAt = now; _ppaPlaySfx('tick'); }
   if (!placed) { s.timer -= dt; if (s.timer <= 0) {
-    if (s.status === 'live') { s.status = 'going1'; s.timer = 2600; s.log = [{ t: 'Going once…', k: 'call' }].concat(s.log).slice(0, 24); }
-    else if (s.status === 'going1') { s.status = 'going2'; s.timer = 2600; s.log = [{ t: 'Going twice…', k: 'call' }].concat(s.log).slice(0, 24); }
+    if (s.status === 'live') { s.status = 'going1'; s.timer = 2600; _ppaPlaySfx('going'); s.log = [{ t: 'Going once…', k: 'call' }].concat(s.log).slice(0, 24); }
+    else if (s.status === 'going1') { s.status = 'going2'; s.timer = 2600; _ppaPlaySfx('going'); s.log = [{ t: 'Going twice…', k: 'call' }].concat(s.log).slice(0, 24); }
     else if (s.status === 'going2') { const met = s.currentBid >= s.car.reserve;
       if (s.highBidder === 'YOU' && met) { _ppaWin(s.car, s.currentBid, 'bid'); }
-      else if (s.highBidder && met) { const w = s.npcs.find(n => n.id === s.highBidder); s.status = 'lost'; s.soldPrice = s.currentBid; s.athena = 'Gone to ' + (w ? w.name : 'the floor') + ' for ¢' + _ppaFmt(s.currentBid) + '.'; s.log = [{ t: 'SOLD to ' + (w ? w.name : 'a rival') + ' for ¢' + _ppaFmt(s.currentBid) + '.', k: 'lose', accent: w && w.accent }].concat(s.log).slice(0, 24); }
-      else { s.status = 'nosale'; s.soldPrice = s.currentBid; s.athena = 'No sale — reserve held. The lot walks.'; s.log = [{ t: s.highBidder ? 'NO SALE — reserve not met.' : 'No bids — lot pulled.', k: 'call' }].concat(s.log).slice(0, 24); }
+      else if (s.highBidder && met) { const w = s.npcs.find(n => n.id === s.highBidder); s.status = 'lost'; s.soldPrice = s.currentBid; _ppaPlaySfx('sold'); s.athena = 'Gone to ' + (w ? w.name : 'the floor') + ' for ¢' + _ppaFmt(s.currentBid) + '.'; s.log = [{ t: 'SOLD to ' + (w ? w.name : 'a rival') + ' for ¢' + _ppaFmt(s.currentBid) + '.', k: 'lose', accent: w && w.accent }].concat(s.log).slice(0, 24); }
+      else { s.status = 'nosale'; s.soldPrice = s.currentBid; _ppaPlaySfx('sold'); s.athena = 'No sale — reserve held. The lot walks.'; s.log = [{ t: s.highBidder ? 'NO SALE — reserve not met.' : 'No bids — lot pulled.', k: 'call' }].concat(s.log).slice(0, 24); }
     } }
   }
   _ppaRepaint();
@@ -136682,7 +136685,7 @@ function _ppaPlayerBid(amount) {
   const nb = s.currentBid + amount; if (nb > (typeof getCinders === 'function' ? getCinders() : (Profile.gems | 0))) { showToast('⚠ Not enough Cinder to raise.', 2400); return; }
   const now = Date.now(), idx = s.car.rarity.idx; s.npcs.forEach(n => { s.npcNext[n.id] = now + _ppaRand(700, 2400); });
   s.currentBid = nb; s.highBidder = 'YOU'; s.status = 'live'; s.timer = 7500; s.lastBid = now; s.hype = Math.min(100, s.hype + 8 * PPA_HYPE_MULT[idx]);
-  s.athena = 'The house bidder fires back — ¢' + _ppaFmt(nb) + '!'; s.log = [{ t: 'You bid ¢' + _ppaFmt(nb) + '.', k: 'you' }].concat(s.log).slice(0, 24); _ppaRepaint();
+  s.athena = 'The house bidder fires back — ¢' + _ppaFmt(nb) + '!'; _ppaPlaySfx('bid'); s.log = [{ t: 'You bid ¢' + _ppaFmt(nb) + '.', k: 'you' }].concat(s.log).slice(0, 24); _ppaRepaint();
 }
 function _ppaBuyNow() {
   const s = _ppaS; if (!s || !['incoming', 'live', 'going1', 'going2'].includes(s.status)) return;
@@ -136712,6 +136715,7 @@ function _ppaWin(car, price, via) {
   try { _ppLog && _ppLog('event', 'Auction WIN: ' + car.rarity.key + ' ' + car.name + ' for ¢' + price.toLocaleString() + (via === 'buynow' ? ' (Buy It Now)' : '') + '.'); } catch (e) {}
   try { saveProfile && saveProfile(); } catch (e) {}
   Object.assign(s, { status: 'sold', wonVia: via, soldPrice: price });
+  _ppaPlaySfx(via === 'buynow' ? 'buynow' : 'win');
   s.won = (s.won || 0) + 1;
   s.athena = via === 'buynow' ? 'Buy It Now — ¢' + _ppaFmt(price) + '. Bold. It\'s yours.' : 'Sold to you for ¢' + _ppaFmt(price) + '!';
   s.log = [{ t: (via === 'buynow' ? '⚡ BUY IT NOW' : 'SOLD to YOU') + ' — ¢' + _ppaFmt(price) + '! Added to your lot.', k: 'win' }].concat(s.log).slice(0, 24);
@@ -136728,10 +136732,13 @@ function _ppaOpen() {
   _ppaS = { open: true, round: 1, lotsTotal: 8, npcs: PPA_NPCS.map(n => ({ ...n })), log: [], won: 0, car: null, status: 'incoming', hype: 0, athena: 'Athena is opening the Prince Portfolios block…', gl: null };
   _ppaEnsureStyle();
   const wrap = document.createElement('div'); wrap.id = 'ppa-overlay'; wrap.className = 'ppa-overlay';
-  wrap.innerHTML = '<div class="ppa-card"><div class="ppa-top"><div class="ppa-brand">⚡ PRINCE PORTFOLIOS <span>LIVE AUCTION</span></div><button class="ppa-x" data-ppa="close">✕ EXIT</button></div>' +
+  wrap.innerHTML = '<div class="ppa-card"><div class="ppa-top"><div class="ppa-brand">⚡ PRINCE PORTFOLIOS <span>LIVE AUCTION</span></div><div style="display:flex;gap:6px"><button class="ppa-x" data-ppa="sound" id="ppa-sound-btn" title="Toggle auction sound">' + (_ppaSoundIsOn() ? '🔊' : '🔇') + '</button><button class="ppa-x" data-ppa="close">✕ EXIT</button></div></div>' +
     '<div class="ppa-stage" id="ppa-stage"></div><div class="ppa-panel" id="ppa-panel"></div></div>';
   document.body.appendChild(wrap);
-  wrap.addEventListener('click', (e) => { if (e.target.closest('[data-ppa="close"]') || e.target === wrap) _ppaClose(); });
+  wrap.addEventListener('click', (e) => {
+    if (e.target.closest('[data-ppa="sound"]')) { const on = _ppaSoundToggle(); const b = document.getElementById('ppa-sound-btn'); if (b) b.textContent = on ? '🔊' : '🔇'; try { showToast(on ? '🔊 Auction sound on.' : '🔇 Sound muted.', 1500); } catch (er) {} return; }
+    if (e.target.closest('[data-ppa="close"]') || e.target === wrap) _ppaClose();
+  });
   const stage = document.getElementById('ppa-stage');
   _csLoadThree((ok) => { if (!ok || !window.THREE) { stage.innerHTML = '<div class="ppa-noteln">3D needs to be online — showing the bidding panel only.</div>'; return; } if (!_ppaS || !_ppaS.open) return; _ppaS.gl = _ppaMount3D(stage); if (_ppaS.car && _ppaS.gl) _ppaS.gl.setCar(_ppaS.car); });
   _ppaFreshCar(_ppaGenCar());
@@ -136913,6 +136920,98 @@ function _ppaBindAdminModels() {
   }; });
   document.querySelectorAll('[data-ppa-del]').forEach(b => b.onclick = () => { const [rk, i] = b.dataset.ppaDel.split(':'); const list = Forge.princePortfolios && Forge.princePortfolios.auctionModels && Forge.princePortfolios.auctionModels[rk]; if (Array.isArray(list)) { list.splice(+i, 1); try { saveForge && saveForge(); } catch (e) {} if (typeof render === 'function') render(); } });
   document.querySelectorAll('[data-ppa-view]').forEach(b => b.onclick = () => { const [rk, i] = b.dataset.ppaView.split(':'); const m = Forge.princePortfolios && Forge.princePortfolios.auctionModels && Forge.princePortfolios.auctionModels[rk] && Forge.princePortfolios.auctionModels[rk][+i]; if (m) _ppaViewModel(m.url, rk + ' model', m.scale, m.rotY); });
+}
+// ════════════════ AUCTION SOUND (WebAudio — synth defaults + custom uploads) ═══════════════
+// Default SFX are synthesized live (no audio files / no Tone.js). Admins can
+// upload their OWN audio per event (Supabase Storage → Forge.princePortfolios
+// .auctionSounds, cloud-synced) to replace any default.
+const PPA_SOUND_EVENTS = [
+  { key: 'open',   label: '🚗 New lot rolls in' },
+  { key: 'bid',    label: '🔨 Bid placed' },
+  { key: 'going',  label: '⏳ Going once / twice' },
+  { key: 'sold',   label: '🏁 Gavel · sold/closed' },
+  { key: 'win',    label: '🏆 You win the lot' },
+  { key: 'buynow', label: '⚡ Buy It Now' },
+];
+let _ppaAudio = null;
+function _ppaSoundInit() {
+  if (_ppaAudio) return _ppaAudio;
+  try { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; const ctx = new AC(); const master = ctx.createGain(); master.gain.value = 0.5; master.connect(ctx.destination); _ppaAudio = { ctx, master, on: false, buffers: {} }; } catch (e) { _ppaAudio = null; }
+  return _ppaAudio;
+}
+function _ppaSoundsCfg() { try { return (Forge.princePortfolios && Forge.princePortfolios.auctionSounds) || {}; } catch (e) { return {}; } }
+function _ppaSoundEnable() { const a = _ppaSoundInit(); if (!a) return false; try { if (a.ctx.state === 'suspended') a.ctx.resume(); } catch (e) {} a.on = true; _ppaLoadCustomSounds(); return true; }
+function _ppaSoundToggle() { const a = _ppaSoundInit(); if (!a) { showToast('Audio not supported here.', 2400); return false; } if (a.on) a.on = false; else _ppaSoundEnable(); return !!a.on; }
+function _ppaSoundIsOn() { return !!(_ppaAudio && _ppaAudio.on); }
+async function _ppaLoadCustomSounds() {
+  const a = _ppaAudio; if (!a) return; const cfg = _ppaSoundsCfg();
+  for (const ev of PPA_SOUND_EVENTS) {
+    const url = cfg[ev.key];
+    if (!url) { delete a.buffers[ev.key]; continue; }                 // cleared → revert to synth default
+    if (a.buffers[ev.key] !== undefined || a.buffers['L_' + ev.key]) continue;  // already loaded/loading
+    a.buffers['L_' + ev.key] = 1;
+    try { const res = await fetch(url); const ab = await res.arrayBuffer(); a.ctx.decodeAudioData(ab, (buf) => { a.buffers[ev.key] = buf; delete a.buffers['L_' + ev.key]; }, () => { delete a.buffers['L_' + ev.key]; }); }
+    catch (e) { delete a.buffers['L_' + ev.key]; }
+  }
+}
+function _ppaPlaySfx(key) {
+  const a = _ppaAudio; if (!a || !a.on) return;
+  try { if (a.ctx.state === 'suspended') a.ctx.resume(); } catch (e) {}
+  const buf = a.buffers[key];
+  if (buf) { try { const src = a.ctx.createBufferSource(); src.buffer = buf; src.connect(a.master); src.start(); return; } catch (e) {} }
+  _ppaSynthSfx(key);
+}
+// Procedural fallback voices — small oscillator/noise envelopes per event.
+function _ppaSynthSfx(key) {
+  const a = _ppaAudio; if (!a) return; const ctx = a.ctx, t = ctx.currentTime, master = a.master;
+  const tone = (freq, dur, type, gain, ramp, t0) => { const tt = t0 || t; const o = ctx.createOscillator(), g = ctx.createGain(); o.type = type || 'sine'; o.frequency.setValueAtTime(freq, tt); if (ramp) o.frequency.exponentialRampToValueAtTime(ramp, tt + dur); g.gain.setValueAtTime(0.0001, tt); g.gain.exponentialRampToValueAtTime(gain || 0.3, tt + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, tt + dur); o.connect(g); g.connect(master); o.start(tt); o.stop(tt + dur + 0.03); };
+  const noise = (dur, gain) => { const len = Math.max(1, Math.floor(ctx.sampleRate * dur)); const b = ctx.createBuffer(1, len, ctx.sampleRate), d = b.getChannelData(0); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len); const n = ctx.createBufferSource(); n.buffer = b; const g = ctx.createGain(); g.gain.value = gain || 0.2; n.connect(g); g.connect(master); n.start(t); };
+  if (key === 'bid') tone(660, 0.12, 'square', 0.22);
+  else if (key === 'tick') tone(900, 0.05, 'triangle', 0.10);
+  else if (key === 'going') tone(440, 0.2, 'sawtooth', 0.24);
+  else if (key === 'sold') { tone(200, 0.3, 'sine', 0.42, 60); noise(0.16, 0.24); }
+  else if (key === 'buynow') tone(300, 0.32, 'sawtooth', 0.3, 1300);
+  else if (key === 'win') [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.26, 'triangle', 0.28, null, t + i * 0.09));
+  else if (key === 'open') tone(330, 0.22, 'sine', 0.2, 540);
+  else tone(520, 0.1, 'sine', 0.2);
+}
+// Upload a custom auction SFX file → Supabase Storage (public). Returns its URL.
+async function _ppaUploadSound(file) {
+  if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline — sign in to upload.');
+  try { await Cloud.client.storage.createBucket(CS_MODELS_BUCKET, { public: true, fileSizeLimit: 26214400 }); } catch (e) {}
+  const safe = String(file.name || 'sfx').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = 'auction-sfx/' + Date.now().toString(36) + '_' + safe;
+  const { error } = await Cloud.client.storage.from(CS_MODELS_BUCKET).upload(path, file, { upsert: true, contentType: file.type || 'audio/mpeg' });
+  if (error) { const m = String((error && error.message) || error || ''); if (/exceeded the maximum|maximum allowed size|payload too large|413/i.test(m)) throw new Error('That file is too large — keep auction SFX under ~25 MB.'); throw error; }
+  const { data } = Cloud.client.storage.from(CS_MODELS_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+// 🔊 Admin: per-event SFX upload/preview/reset in the dealership Admin tab.
+function _ppaAdminSoundsHtml() {
+  const cfg = _ppaSoundsCfg();
+  return '<div class="wfa-panel-header" style="margin-top:1rem">🔊 LIVE AUCTION · SOUND <span class="wfa-panel-crumb">Default sounds are built-in — upload your own audio (mp3/wav/ogg) to replace any event (admin · shared)</span></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.6rem">' +
+    PPA_SOUND_EVENTS.map(ev => { const url = cfg[ev.key];
+      return '<div style="background:#11131a;border:1px solid #2a2330;border-radius:10px;padding:0.7rem">' +
+        '<div style="font-weight:700;color:#e7e7ea;font-size:0.82rem">' + ev.label + '</div>' +
+        '<div style="font-size:0.66rem;color:' + (url ? '#9fe6a0' : '#71717a') + ';margin:3px 0 6px">' + (url ? '✓ custom sound set' : 'built-in default') + '</div>' +
+        '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
+          '<button class="wfa-mini-btn" data-ppa-sfx-play="' + ev.key + '" style="padding:3px 8px;font-size:0.66rem">▶ Preview</button>' +
+          '<label class="wfa-mini-btn" style="padding:3px 8px;font-size:0.66rem;cursor:pointer">⬆ Upload<input type="file" accept="audio/*" data-ppa-sfx-up="' + ev.key + '" style="display:none"></label>' +
+          (url ? '<button class="wfa-mini-btn warn" data-ppa-sfx-del="' + ev.key + '" style="padding:3px 8px;font-size:0.66rem">Reset</button>' : '') +
+        '</div></div>';
+    }).join('') + '</div>';
+}
+function _ppaBindAdminSounds() {
+  document.querySelectorAll('[data-ppa-sfx-play]').forEach(b => b.onclick = () => { if (!_ppaSoundIsOn()) _ppaSoundEnable(); setTimeout(() => _ppaPlaySfx(b.dataset.ppaSfxPlay), 60); });
+  document.querySelectorAll('[data-ppa-sfx-del]').forEach(b => b.onclick = () => { const k = b.dataset.ppaSfxDel; if (Forge.princePortfolios && Forge.princePortfolios.auctionSounds) { delete Forge.princePortfolios.auctionSounds[k]; } if (_ppaAudio) delete _ppaAudio.buffers[k]; try { saveForge && saveForge(); } catch (e) {} if (typeof render === 'function') render(); });
+  document.querySelectorAll('[data-ppa-sfx-up]').forEach(inp => { inp.onchange = async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return; const k = inp.dataset.ppaSfxUp;
+    showToast('⬆ Uploading ' + f.name + '…', 2600);
+    try { const url = await _ppaUploadSound(f); if (!Forge.princePortfolios) Forge.princePortfolios = {}; if (!Forge.princePortfolios.auctionSounds) Forge.princePortfolios.auctionSounds = {}; Forge.princePortfolios.auctionSounds[k] = url; if (_ppaAudio) delete _ppaAudio.buffers[k]; try { saveForge && saveForge(); } catch (er) {} showToast('✓ Sound set for ' + k + '.', 3000); if (typeof render === 'function') render(); }
+    catch (err) { showToast('⚠ Upload failed: ' + ((err && err.message) || err), 4600); }
+    inp.value = '';
+  }; });
 }
 function _ppRenderAuction(p) {
   return _ppaFloorBody(p);
@@ -137534,10 +137633,12 @@ function _ppRenderAdmin(p) {
       '<div class="wfa-admin-grid">' + archetypeCards + '</div>' +
     '</div>' +
     '<div class="wfa-panel" style="margin-top:0.8rem">' + _ppaAdminModelsHtml() + '</div>' +
+    '<div class="wfa-panel" style="margin-top:0.8rem">' + _ppaAdminSoundsHtml() + '</div>' +
   '</div>';
 }
 function _ppBindAdmin() {
   try { _ppaBindAdminModels(); } catch (e) {}
+  try { _ppaBindAdminSounds(); } catch (e) {}
   document.querySelectorAll('[data-pp-up-listing]').forEach(inp => { inp.onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) ppHandlePhotoUpload('listing', inp.dataset.ppUpListing, f); }; });
   document.querySelectorAll('[data-pp-up-lot]').forEach(inp => { inp.onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) ppHandlePhotoUpload('lot', inp.dataset.ppUpLot, f); }; });
   document.querySelectorAll('[data-pp-up-customer]').forEach(inp => { inp.onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) ppHandlePhotoUpload('customer', inp.dataset.ppUpCustomer, f); }; });

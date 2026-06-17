@@ -136452,11 +136452,13 @@ function renderPrincePortfolios() {
   else if (tab === 'log')     _ppBindLog();
   else if (tab === 'admin')   _ppBindAdmin();
 
-  // RNG tick + buyer expiry every 5s
+  // RNG tick + buyer expiry every 5s. Self-terminates once the player leaves the
+  // dealership so it doesn't run forever in the background after navigating away.
   if (!App._ppTickHandle) {
     App._ppTickHandle = setInterval(() => {
+      if (App.screen !== 'princePortfolios') { try { clearInterval(App._ppTickHandle); } catch (e) {} App._ppTickHandle = null; return; }
       ppTick();
-      if (App.screen === 'princePortfolios') render();
+      render();
     }, 5000);
   }
 }
@@ -136885,7 +136887,14 @@ function _ppaViewModel(url, name, scale, rotY) {
 // 🖼 3D SNAPSHOT THUMBNAILS — render each .glb ONCE to a cached PNG dataURL so the
 // parking lot / detail cards can SHOW the actual 3D car as an image, without a
 // live WebGL context per card. One shared offscreen renderer serves every thumb.
-let _ppaThumbGL = null; const _ppaThumbCache = {}; const _ppaThumbQ = []; let _ppaThumbBusy = false;
+let _ppaThumbGL = null; const _ppaThumbCache = {}; const _ppaThumbQ = []; let _ppaThumbBusy = false; let _ppaThumbDisposeT = null;
+// Free the offscreen thumbnail WebGL context a few seconds after the last render
+// so it doesn't hold a GPU context while you sit on the lot / market. The dataURL
+// cache persists, so already-rendered thumbnails never need to re-render.
+function _ppaThumbIdleDispose() {
+  if (_ppaThumbDisposeT) clearTimeout(_ppaThumbDisposeT);
+  _ppaThumbDisposeT = setTimeout(() => { _ppaThumbDisposeT = null; if (_ppaThumbBusy || _ppaThumbQ.length || !_ppaThumbGL) return; try { _ppaThumbGL.renderer.dispose(); } catch (e) {} try { _ppaThumbGL.renderer.forceContextLoss(); } catch (e) {} _ppaThumbGL = null; }, 4000);
+}
 function _ppaMakeThumb(url, scale, rotY, cb) {
   if (!url) { cb(null); return; }
   if (_ppaThumbCache[url] !== undefined) { cb(_ppaThumbCache[url] || null); return; }
@@ -136904,7 +136913,7 @@ function _ppaThumbPump() {
       _ppaThumbGL = { renderer, scene, camera, loader: new T.GLTFLoader() };
     }
     _ppaThumbBusy = true; const job = _ppaThumbQ.shift(), G = _ppaThumbGL;
-    const done = (data) => { _ppaThumbBusy = false; _ppaThumbCache[job.url] = data || ''; try { job.cb(data || null); } catch (e) {} _ppaThumbPump(); };
+    const done = (data) => { _ppaThumbBusy = false; _ppaThumbCache[job.url] = data || ''; try { job.cb(data || null); } catch (e) {} if (_ppaThumbQ.length) _ppaThumbPump(); else _ppaThumbIdleDispose(); };
     try {
       G.loader.load(job.url, (g) => {
         try {

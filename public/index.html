@@ -61996,9 +61996,10 @@ function _applySelfSacrifice(state, side, sourceUnit) {
   return { state: s, log };
 }
 // AI auto-pay — cheapest hand cards, oldest graveyard cards, weakest other units.
-function _aiPickCost(state, side, sourceUnit, cost) {
+function _aiPickCost(state, side, sourceUnit, cost, excludeCardId) {
   const ss = state[side] || {};
-  const hand = (ss.hand || []).slice().sort((a, b) => ((a.cost | 0) - (b.cost | 0)));
+  // The activating card itself can never be discarded to pay its own cost.
+  const hand = (ss.hand || []).filter(c => !excludeCardId || c.instanceId !== excludeCardId).slice().sort((a, b) => ((a.cost | 0) - (b.cost | 0)));
   const grave = ss.graveyard || [];
   const others = (state.units || []).filter(u => u && u.alive && u.owner === side && !u.isHero
     && (!sourceUnit || u.id !== sourceUnit.id)).sort((a, b) => (a.currentHp || 0) - (b.currentHp || 0));
@@ -62159,12 +62160,12 @@ function _gateOnPlayThenPlace(card, placeFn) {
     if (_costIsEmpty(cost)) { placeFn(); return; }
     // 💡 The on-play cost is MANDATORY to play this card. If it can't be paid the
     // card can NOT be played — it stays in hand, no energy spent, nothing summoned.
-    if (!_costPayable(App.state, 'player', null, cost)) {
+    if (!_costPayable(App.state, 'player', null, cost, card.instanceId)) {
       try { showToast('🚫 ' + (card.name || 'This card') + ' needs ' + _costShortLabel(cost) + ' to play — you can\'t pay it.'); } catch (e) {}
       try { renderBattle(); } catch (e) {}
       return; // do NOT summon
     }
-    _promptCostPayment(App.state, 'player', null, cost, card.name).then(res => {
+    _promptCostPayment(App.state, 'player', null, cost, card.name, card.instanceId).then(res => {
       // ❌ Cancel = cancel the whole play. The card is NOT summoned, NO card is
       // discarded, and no energy is spent — it simply stays in your hand.
       if (!res) {
@@ -98956,8 +98957,8 @@ function doAIStep() {
               const _opCost = best.onPlay.cost;
               let _opOk = true;
               if (!_costIsEmpty(_opCost)) {
-                if (_costPayable(next, 'ai', newUnit, _opCost)) {
-                  const _opPay = _applyCostPayment(next, 'ai', newUnit, _opCost, _aiPickCost(next, 'ai', newUnit, _opCost));
+                if (_costPayable(next, 'ai', newUnit, _opCost, best && best.instanceId)) {
+                  const _opPay = _applyCostPayment(next, 'ai', newUnit, _opCost, _aiPickCost(next, 'ai', newUnit, _opCost, best && best.instanceId));
                   next = { ..._opPay.state, log: [...((_opPay.state && _opPay.state.log) || []), ...(_opPay.log || [])] };
                 } else { _opOk = false; }
               }
@@ -99367,8 +99368,8 @@ function doAIStep() {
         // is already in the graveyard here, so the discard cost picks OTHERS.
         try {
           if (card.activationCost && typeof _costIsEmpty === 'function' && !_costIsEmpty(card.activationCost)
-              && typeof _applyCostPayment === 'function' && _costPayable(App.state, 'ai', null, card.activationCost)) {
-            const _pay = _applyCostPayment(App.state, 'ai', null, card.activationCost, _aiPickCost(App.state, 'ai', null, card.activationCost));
+              && typeof _applyCostPayment === 'function' && _costPayable(App.state, 'ai', null, card.activationCost, card.instanceId)) {
+            const _pay = _applyCostPayment(App.state, 'ai', null, card.activationCost, _aiPickCost(App.state, 'ai', null, card.activationCost, card.instanceId));
             App.state = { ...(_pay.state), log: [...((_pay.state && _pay.state.log) || []), ...(_pay.log || [])] };
           }
         } catch (e) {}
@@ -150108,6 +150109,8 @@ function _twNodeRecon(node) {
       if (typeof cr.civic === 'number') out.civic = cr.civic | 0;
       if (cr.cinder_total != null) out.cinderTotal = Math.max(0, Math.round(Number(cr.cinder_total) || 0));
       if (cr.cinder_bank != null) out.cinderBank = Math.max(0, Math.round(Number(cr.cinder_bank) || 0));
+      if (cr.commerce != null) out.commerce = Math.max(0, Math.min(100, cr.commerce | 0));
+      if (cr.shops_registered != null) out.shopsRegistered = Math.max(0, cr.shops_registered | 0);
       if (cr.restored) out.restored = true;
       out.shared = true;
     }
@@ -151211,6 +151214,8 @@ function renderTerritoryWars() {
           + row('POPULATION / DAY', '−' + _fmtN(_popLossPerDay), _popLossPerDay > 0 ? '#cf5a3a' : '#4d9e68')
           + row('CORRUPTION / DAY', (_corrDelta <= 0 ? '▼ ' : '▲ ') + Math.abs(_corrDelta).toFixed(1) + (_prot > 0 ? '  (' + _prot.toFixed(1) + ' protection)' : ''), _corrDelta <= 0 ? '#4d9e68' : '#cf5a3a')
           + row('RESOURCE YIELD', _resKey ? (escapeHtml(_resKey) + '  +' + _dailyYield + ' / day' + (_registered ? '' : '  · register to earn')) : '—', _registered ? '#9bb265' : '#8a96a3')
+          + row('COMMERCE', `<span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end">${(_rc.commerce | 0)}<span style="display:inline-block;width:62px;height:6px;border-radius:3px;background:#222720;overflow:hidden"><span style="display:block;height:100%;border-radius:3px;width:${Math.max(0, Math.min(100, _rc.commerce | 0))}%;background:linear-gradient(90deg,#9bb265,#d8b24a)"></span></span></span>`, '#d8b24a')
+          + ((_rc.shopsRegistered | 0) > 0 ? row('CARD SHOPS', '🛒 ' + (_rc.shopsRegistered | 0) + ' boosting this district', '#9bb265') : row('CARD SHOPS', 'none — register one for +order & commerce', '#7a8694'))
           + '</div>';
       })()}
       <div class="tw-nd-section-hdr">— NODE UPGRADES${_rc.shared ? ' <span style="color:#7fb0ff;font-weight:700;font-size:0.7em" title="Shared across all players — paid for with this node\'s resource.">· ☁ SHARED</span>' : ''}</div>
@@ -151249,7 +151254,7 @@ function renderTerritoryWars() {
           <span style="color:#8a96a3">GENERATION RATE</span>
           <span style="color:${_cinderPerDay > 0 ? '#d8b24a' : '#6b7682'};font-weight:700">${_cinderPerDay > 0 ? ('+' + _cinderPerDay.toLocaleString() + ' 🔥 / day') : 'idle — register players to earn'}</span>
         </div>
-        <div style="font-size:0.6rem;color:#7a8694;line-height:1.5">Driven by <b>${_twNodeRegisteredCount(selNode.id)}</b> registered · <b>${_twNodeContributorCount(selNode.id)}</b> contributing · trade ${_trade}% · civ ${_civ}% · ${_twNodeRebuiltPct(selNode)}% rebuilt.</div>
+        <div style="font-size:0.6rem;color:#7a8694;line-height:1.5">Driven by <b>${_twNodeRegisteredCount(selNode.id)}</b> registered · <b>${_twNodeContributorCount(selNode.id)}</b> contributing · <b>${_rc.shopsRegistered | 0}</b> card shop${(_rc.shopsRegistered | 0) === 1 ? '' : 's'} · trade ${_trade}% · commerce ${_rc.commerce | 0}% · civ ${_civ}% · ${_twNodeRebuiltPct(selNode)}% rebuilt.</div>
       </div>
       ${_canManageBank ? `
       <div class="tw-nd-section-hdr">— NODE BANK${_isNodeOwner ? ' <span style="color:#7fe0a0;font-weight:700;font-size:0.7em">· YOURS</span>' : ' <span style="color:#8a96a3;font-weight:700;font-size:0.7em">· ADMIN VIEW</span>'}</div>

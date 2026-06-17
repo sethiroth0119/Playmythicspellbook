@@ -1,13 +1,13 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mythic Spellbook — Dwelling</title>
+<style>#brand{display:none !important}</style>
 <script>
-/* Host storage shim. The Dwelling app persists through window.storage.{get,set,delete}.
-   Standalone (house) mode uses localStorage; the parent game can override window.storage
-   BEFORE this app loads (e.g. cloud-backed shop mode) by setting it on the iframe window. */
+/* Host storage shim — the Dwelling app persists through window.storage.{get,set,delete}.
+   Standalone uses localStorage; the parent may override window.storage before load. */
 (function(){
   if (window.storage) return;
   window.storage = {
@@ -16,15 +16,36 @@
     async delete(k){ try { localStorage.removeItem(k); } catch(e){} }
   };
 })();
+/* MYTHIC economy bridge — when embedded in the game, the Vendor Market spends the
+   player's REAL Cinder (🔥) + Aza Coin (🪙). The parent posts the live wallet in and
+   runs every purchase against the real economy. Standalone (no parent) → not bridged. */
+window.MYTHIC = (function(){
+  var cinder = null, aza = null, ready = false, seq = 0, pending = {}, waiters = [];
+  function post(m){ try { if (parent && parent !== window) parent.postMessage(m, '*'); } catch(e){} }
+  window.addEventListener('message', function(e){
+    var d = e && e.data; if (!d || typeof d !== 'object') return;
+    if (d.type === 'dw:econ'){ cinder = d.cinder|0; aza = d.aza|0; ready = true; waiters.splice(0).forEach(function(fn){ try{ fn(); }catch(_){} }); try{ window.dispatchEvent(new Event('mythicEcon')); }catch(_){} }
+    else if (d.type === 'dw:spendResult'){ var p = pending[d.reqId]; if (p){ delete pending[d.reqId]; if (d.ok){ cinder = d.cinder|0; aza = d.aza|0; try{ window.dispatchEvent(new Event('mythicEcon')); }catch(_){} } p(!!d.ok); } }
+  });
+  post({ type: 'dw:ready' });
+  return {
+    bridged: function(){ return ready; },
+    cinder: function(){ return cinder|0; },
+    aza: function(){ return aza|0; },
+    onReady: function(fn){ if (ready) fn(); else waiters.push(fn); },
+    spend: function(c, a){ return new Promise(function(res){ if (!ready){ res(false); return; } var id = ++seq; pending[id] = res; post({ type:'dw:spend', reqId:id, cinder: c|0, aza: a|0 }); setTimeout(function(){ if (pending[id]){ delete pending[id]; res(false); } }, 8000); }); }
+  };
+})();
 </script>
 </head>
-<body><!-- Mythic Spellbook Housing System v1.7 -->
+<body>
+<!-- Mythic Spellbook Housing System v1.7 -->
 <div id="app">
   <div id="topbar">
-    <span id="brand">MYTHIC <span class="gold">SPELLBOOK</span> Â· Dwelling</span>
+    <span id="brand">MYTHIC <span class="gold">SPELLBOOK</span> · Dwelling</span>
     <div class="spacer"></div>
     <span id="wallet" class="wallet"></span>
-    <button id="adminBtn" class="btn">ðŸ›  Admin</button>
+    <button id="adminBtn" class="btn">🛠 Admin</button>
     <button id="modeBtn" class="btn primary">Walk</button>
     <button id="saveBtn" class="btn">Save</button>
     <button id="loadBtn" class="btn">Load</button>
@@ -32,11 +53,11 @@
   </div>
 
   <div id="catalog">
-    <button id="openMktBtn" class="btn market-btn">ðŸª Vendor Market</button>
-    <button id="openPaintBtn" class="btn market-btn paint-btn">ðŸŽ¨ Paint Walls</button>
+    <button id="openMktBtn" class="btn market-btn">🏪 Vendor Market</button>
+    <button id="openPaintBtn" class="btn market-btn paint-btn">🎨 Paint Walls</button>
     <div class="panel-title">Furnishings Portal</div>
     <div id="items"></div>
-    <div id="portalEmpty" class="empty-note">Your portal is empty â€” visit the Vendor Market to buy furnishings.</div>
+    <div id="portalEmpty" class="empty-note">Your portal is empty — visit the Vendor Market to buy furnishings.</div>
     <div class="panel-title sel-title" style="display:none">Selected</div>
     <div id="selPanel" style="display:none">
       <div id="selName" class="sel-name"></div>
@@ -48,18 +69,18 @@
   </div>
 
   <div id="admin">
-    <h3>ðŸ›  Admin Model Studio</h3>
+    <h3>🛠 Admin Model Studio</h3>
     <div class="fld"><label>Name</label><input id="aName" class="in" placeholder="Arcane Console"></div>
-    <div class="fld"><label>Icon</label><input id="aIco" class="in sm" placeholder="ðŸ–¥ï¸"><label>Radius</label><input id="aR" class="in sm" type="number" step="0.1" value="0.6"></div>
-    <div class="fld"><label>Price</label><input id="aAza" class="in sm" type="number" value="20"><span class="cur">ðŸª™</span><input id="aCin" class="in sm" type="number" value="15"><span class="cur">ðŸ”¥</span></div>
+    <div class="fld"><label>Icon</label><input id="aIco" class="in sm" placeholder="🖥️"><label>Radius</label><input id="aR" class="in sm" type="number" step="0.1" value="0.6"></div>
+    <div class="fld"><label>Price</label><input id="aAza" class="in sm" type="number" value="20"><span class="cur">🪙</span><input id="aCin" class="in sm" type="number" value="15"><span class="cur">🔥</span></div>
     <div class="sub-h">Import 3D Model (.glb)</div>
     <input id="glbFile" type="file" accept=".glb,.gltf" class="in">
     <div id="glbInfo" style="display:none">
-      <div class="cust-item"><span class="gold">â—</span><span id="glbName"></span><button id="glbRemove" class="mini-del">Remove</button></div>
+      <div class="cust-item"><span class="gold">●</span><span id="glbName"></span><button id="glbRemove" class="mini-del">Remove</button></div>
       <div class="fld"><label>Scale</label><input id="glbScale" class="in sm" type="number" step="0.05" value="1"><button id="glbFit" class="btn small">Auto-fit</button></div>
-      <div class="empty-note">GLB loaded â€” fill in name/price above and Save Model.</div>
+      <div class="empty-note">GLB loaded — fill in name/price above and Save Model.</div>
     </div>
-    <div class="sub-h">â€¦or Build from Parts</div>
+    <div class="sub-h">…or Build from Parts</div>
     <div id="partsBox"></div>
     <button id="addPart" class="btn small full">+ Add Part</button>
     <div class="admin-actions"><button id="saveModel" class="btn primary grow">Save Model</button><button id="closeAdmin" class="btn">Close</button></div>
@@ -73,28 +94,28 @@
 
   <div id="storage" class="modal">
     <div class="store-box">
-      <div class="store-head"><span>â›¨ Storage Chest</span><span id="capLbl" class="cap"></span><div class="spacer"></div><button id="closeStore" class="btn small">Close</button></div>
+      <div class="store-head"><span>⛨ Storage Chest</span><span id="capLbl" class="cap"></span><div class="spacer"></div><button id="closeStore" class="btn small">Close</button></div>
       <div class="store-cols">
         <div class="store-col"><div class="col-h">Your Pack</div><div id="packList" class="res-list"></div></div>
         <div class="store-col"><div class="col-h">Chest</div><div id="chestList" class="res-list"></div></div>
       </div>
-      <div class="store-foot">Click a row to move 1 Â· Shift-click to move 10 Â· left = deposit, right = withdraw</div>
+      <div class="store-foot">Click a row to move 1 · Shift-click to move 10 · left = deposit, right = withdraw</div>
     </div>
   </div>
 
   <div id="market" class="modal">
     <div class="store-box">
-      <div class="store-head"><span>ðŸª Vendor Market</span><div class="spacer"></div><span id="mktWallet" class="cap"></span><button id="closeMkt" class="btn small">Close</button></div>
+      <div class="store-head"><span>🏪 Vendor Market</span><div class="spacer"></div><span id="mktWallet" class="cap"></span><button id="closeMkt" class="btn small">Close</button></div>
       <div id="marketList" class="mkt-list"></div>
-      <div class="store-foot">Spend AZA &amp; Cinder Â· purchases land in your Furnishings Portal</div>
+      <div class="store-foot">Spend AZA &amp; Cinder · purchases land in your Furnishings Portal</div>
     </div>
   </div>
 
   <div id="paint" class="modal">
     <div class="store-box paint-box">
-      <div class="store-head"><span>ðŸŽ¨ Paint Walls</span><div class="spacer"></div><span id="paintHave" class="cap"></span><button id="closePaint" class="btn small">Close</button></div>
+      <div class="store-head"><span>🎨 Paint Walls</span><div class="spacer"></div><span id="paintHave" class="cap"></span><button id="closePaint" class="btn small">Close</button></div>
       <div class="paint-row"><input id="paintColor" type="color" value="#1a2238"><div id="swatches" class="swatches"></div></div>
-      <button id="applyPaint" class="btn primary full">Apply â€” 5 ðŸŽ¨</button>
+      <button id="applyPaint" class="btn primary full">Apply — 5 🎨</button>
       <div class="store-foot">Repainting all walls costs 5 paint.</div>
     </div>
   </div>
@@ -239,19 +260,19 @@
   };
 
   const BUILTIN=[
-    {type:'chair',name:'Chair',ico:'ðŸª‘',r:0.5,price:{aza:6}},
-    {type:'table',name:'Table',ico:'ðŸªµ',r:1.2,price:{aza:14}},
-    {type:'rug',name:'Rug',ico:'ðŸŸ¥',r:0,price:{cinder:10}},
-    {type:'plant',name:'Plant',ico:'ðŸª´',r:0.5,price:{cinder:8}},
-    {type:'bookshelf',name:'Shelf',ico:'ðŸ“š',r:0.9,price:{aza:18}},
-    {type:'brazier',name:'Brazier',ico:'ðŸ”¥',r:0.5,price:{cinder:30}},
-    {type:'bed',name:'Bed',ico:'ðŸ›ï¸',r:1.6,price:{aza:22,cinder:12}},
-    {type:'chest',name:'Storage',ico:'ðŸ§°',r:0.75,cap:200,price:{aza:35,cinder:25}},
-    {type:'altar',name:'Altar',ico:'ðŸ“–',r:0.95,price:{aza:45,cinder:35}},
-    {type:'crystal',name:'Crystal',ico:'ðŸ”®',r:0.6,price:{aza:40,cinder:45}},
-    {type:'computer',name:'Computer',ico:'ðŸ–¥ï¸',r:1.1,price:{aza:30,cinder:20}},
-    {type:'poster',name:'Poster',ico:'ðŸ–¼ï¸',r:0,wall:true,price:{aza:8}},
-    {type:'tv',name:'Wall TV',ico:'ðŸ“º',r:0,wall:true,price:{aza:28,cinder:15}},
+    {type:'chair',name:'Chair',ico:'🪑',r:0.5,price:{aza:6}},
+    {type:'table',name:'Table',ico:'🪵',r:1.2,price:{aza:14}},
+    {type:'rug',name:'Rug',ico:'🟥',r:0,price:{cinder:10}},
+    {type:'plant',name:'Plant',ico:'🪴',r:0.5,price:{cinder:8}},
+    {type:'bookshelf',name:'Shelf',ico:'📚',r:0.9,price:{aza:18}},
+    {type:'brazier',name:'Brazier',ico:'🔥',r:0.5,price:{cinder:30}},
+    {type:'bed',name:'Bed',ico:'🛏️',r:1.6,price:{aza:22,cinder:12}},
+    {type:'chest',name:'Storage',ico:'🧰',r:0.75,cap:200,price:{aza:35,cinder:25}},
+    {type:'altar',name:'Altar',ico:'📖',r:0.95,price:{aza:45,cinder:35}},
+    {type:'crystal',name:'Crystal',ico:'🔮',r:0.6,price:{aza:40,cinder:45}},
+    {type:'computer',name:'Computer',ico:'🖥️',r:1.1,price:{aza:30,cinder:20}},
+    {type:'poster',name:'Poster',ico:'🖼️',r:0,wall:true,price:{aza:8}},
+    {type:'tv',name:'Wall TV',ico:'📺',r:0,wall:true,price:{aza:28,cinder:15}},
   ];
   let customModels=[]; const glbCache={};
   function fullCatalog(){ return BUILTIN.concat(customModels.map(m=>({type:m.id,name:m.name,ico:m.ico,r:m.r,price:m.price,parts:m.parts,kind:m.kind,custom:true}))); }
@@ -303,10 +324,16 @@
   function glbToTemplate(buf,scale){ const {json,bin}=parseModel(buf); return normalizeModel(buildGLTFScene(json,bin),scale); }
   function maxDimOf(buf){ const {json,bin}=parseModel(buf); const g=buildGLTFScene(json,bin); g.updateMatrixWorld(true); const s=new THREE.Box3().setFromObject(g).getSize(new THREE.Vector3()); return Math.max(s.x,s.y,s.z)||1; }
 
-  const RESOURCES=[ {id:'cinder',name:'Cinder',ico:'ðŸ”¥'},{id:'aza',name:'Aza Coin',ico:'ðŸª™'},{id:'paint',name:'Paint',ico:'ðŸŽ¨'},{id:'timber',name:'Timber',ico:'ðŸªµ'},{id:'scrap',name:'Scrap',ico:'âš™ï¸'},{id:'crystal',name:'Crystal Shard',ico:'ðŸ”®'},{id:'essence',name:'Essence',ico:'âœ¨'},{id:'ration',name:'Ration',ico:'ðŸ¥«'} ];
+  const RESOURCES=[ {id:'cinder',name:'Cinder',ico:'🔥'},{id:'aza',name:'Aza Coin',ico:'🪙'},{id:'paint',name:'Paint',ico:'🎨'},{id:'timber',name:'Timber',ico:'🪵'},{id:'scrap',name:'Scrap',ico:'⚙️'},{id:'crystal',name:'Crystal Shard',ico:'🔮'},{id:'essence',name:'Essence',ico:'✨'},{id:'ration',name:'Ration',ico:'🥫'} ];
   const DEFAULT_PACK={cinder:300,aza:150,paint:60,timber:60,scrap:35,crystal:12,essence:8,ration:25};
   const DEFAULT_OWNED={bed:1,chest:1,rug:1,chair:2};
   let pack={...DEFAULT_PACK}, owned={...DEFAULT_OWNED};
+  // 🔗 When embedded in the game, mirror the player's REAL Cinder (🔥) + Aza (🪙)
+  //    into the wallet so the Vendor Market spends the real economy.
+  try {
+    window.addEventListener('mythicEcon', function(){ try { pack.cinder=window.MYTHIC.cinder(); pack.aza=window.MYTHIC.aza(); updateWallet(); if (marketEl && marketEl.style.display==='flex') renderMarket(); } catch(e){} });
+    if (window.MYTHIC) window.MYTHIC.onReady(function(){ try { pack.cinder=window.MYTHIC.cinder(); pack.aza=window.MYTHIC.aza(); updateWallet(); } catch(e){} });
+  } catch(e){}
 
   function partMat(p){ return new THREE.MeshStandardMaterial({ color:p.c||'#888888', emissive:p.e||'#000000', emissiveIntensity:1.5, metalness:p.m??0.1, roughness:p.rough??0.8 }); }
   function buildParts(g,parts){ parts.forEach(p=>{ let geo; if(p.shape==='cyl') geo=new THREE.CylinderGeometry(p.rt??0.3,p.rb??0.3,p.h??0.6,16); else if(p.shape==='sph') geo=new THREE.SphereGeometry(p.r??0.3,16,12); else if(p.shape==='cone') geo=new THREE.ConeGeometry(p.r??0.3,p.h??0.6,12); else geo=new THREE.BoxGeometry(p.w??0.5,p.h??0.5,p.d??0.5);
@@ -337,7 +364,7 @@
   function isWall(type){ return META[type]&&META[type].wall; }
 
   const walletEl=document.getElementById('wallet');
-  function updateWallet(){ walletEl.innerHTML=`<span>ðŸª™ <span class="gold">${pack.aza||0}</span></span><span>ðŸ”¥ <span class="gold">${pack.cinder||0}</span></span>`; }
+  function updateWallet(){ walletEl.innerHTML=`<span>🪙 <span class="gold">${pack.aza||0}</span></span><span>🔥 <span class="gold">${pack.cinder||0}</span></span>`; }
 
   const itemsEl=document.getElementById('items'), portalEmpty=document.getElementById('portalEmpty');
   function renderPortal(){ itemsEl.innerHTML=''; const have=fullCatalog().filter(c=>(owned[c.type]||0)>0); portalEmpty.style.display=have.length?'none':'block';
@@ -346,12 +373,12 @@
     if(ghost){ scene.remove(ghost); ghost=null; } placingType=type; placingRot=0; ghost=buildFurniture(type); if(!ghost){ placingType=null; flash('Model unavailable'); return; }
     ghost.traverse(o=>{ if(o.material){ o.material=o.material.clone(); o.material.transparent=true; o.material.opacity=0.5; o.castShadow=false; } if(o.isLight) o.visible=false; });
     if(isWall(type)) ghost.visible=false;
-    scene.add(ghost); setHint(isWall(type)?'Hover a wall to place Â· drag to orbit Â· Esc to cancel':'Click to place Â· drag to orbit Â· R to rotate Â· Esc to cancel'); renderPortal(); }
+    scene.add(ghost); setHint(isWall(type)?'Hover a wall to place · drag to orbit · Esc to cancel':'Click to place · drag to orbit · R to rotate · Esc to cancel'); renderPortal(); }
   function cancelPlacing(){ if(ghost){ scene.remove(ghost); ghost=null; } placingType=null; renderPortal(); if(mode==='decorate'&&!adminOpen) setHint(defaultHint()); }
   function placeGhost(){ if(!ghost||ghost.visible===false) return; const t=placingType; const g=buildFurniture(t); g.position.copy(ghost.position); g.rotation.y=ghost.rotation.y; scene.add(g); placed.push(g); owned[t]=(owned[t]||0)-1; renderPortal(); if((owned[t]||0)<=0) cancelPlacing(); else if(isWall(t)) ghost.visible=false; }
 
   const selPanel=document.getElementById('selPanel'), selTitle=document.querySelector('.sel-title'), selName=document.getElementById('selName'), rotBtn=document.getElementById('rotBtn');
-  function selectItem(g){ clearSelection(); selected=g; selHelper=new THREE.BoxHelper(g,0xd4af37); scene.add(selHelper); selName.textContent=(META[g.userData.type]?META[g.userData.type].name:'Piece')+(g.userData.storage?' Â· stores resources':g.userData.wall?' Â· wall-mounted':''); rotBtn.style.display=g.userData.wall?'none':'inline-block'; selPanel.style.display='block'; selTitle.style.display='block'; }
+  function selectItem(g){ clearSelection(); selected=g; selHelper=new THREE.BoxHelper(g,0xd4af37); scene.add(selHelper); selName.textContent=(META[g.userData.type]?META[g.userData.type].name:'Piece')+(g.userData.storage?' · stores resources':g.userData.wall?' · wall-mounted':''); rotBtn.style.display=g.userData.wall?'none':'inline-block'; selPanel.style.display='block'; selTitle.style.display='block'; }
   function clearSelection(){ if(selHelper){ scene.remove(selHelper); selHelper=null; } selected=null; selPanel.style.display='none'; selTitle.style.display='none'; }
   function returnSelected(){ if(!selected) return; const t=selected.userData.type; owned[t]=(owned[t]||0)+1; scene.remove(selected); placed.splice(placed.indexOf(selected),1); clearSelection(); renderPortal(); }
   rotBtn.onclick=()=>{ if(selected&&!selected.userData.wall){ selected.rotation.y+=Math.PI/2; selHelper.update(); } };
@@ -359,13 +386,15 @@
 
   // ===== market =====
   const marketEl=document.getElementById('market'), marketList=document.getElementById('marketList'), mktWallet=document.getElementById('mktWallet');
-  function priceStr(p){ const a=[]; if(p.aza) a.push(`ðŸª™ ${p.aza}`); if(p.cinder) a.push(`ðŸ”¥ ${p.cinder}`); return a.length?a.join('  Â·  '):'Free'; }
+  function priceStr(p){ const a=[]; if(p.aza) a.push(`🪙 ${p.aza}`); if(p.cinder) a.push(`🔥 ${p.cinder}`); return a.length?a.join('  ·  '):'Free'; }
   function canAfford(p){ return (pack.aza||0)>=(p.aza||0) && (pack.cinder||0)>=(p.cinder||0); }
-  function renderMarket(){ mktWallet.textContent=`ðŸª™ ${pack.aza||0}   ðŸ”¥ ${pack.cinder||0}`; marketList.innerHTML='';
+  function renderMarket(){ mktWallet.textContent=`🪙 ${pack.aza||0}   🔥 ${pack.cinder||0}`; marketList.innerHTML='';
     fullCatalog().forEach(c=>{ const aff=canAfford(c.price), own=owned[c.type]||0; const row=document.createElement('div'); row.className='mkt-row';
       row.innerHTML=`<span class="m-ico">${c.ico}</span><span class="m-name">${c.name}<span class="m-own">owned ${own}</span></span><span class="m-price">${priceStr(c.price)}</span>`;
       const b=document.createElement('button'); b.className='buy-btn'; b.textContent='Buy'; b.disabled=!aff; b.onclick=()=>buy(c.type); row.appendChild(b); marketList.appendChild(row); }); }
-  function buy(type){ const p=META[type].price; if(!canAfford(p)) return; pack.aza=(pack.aza||0)-(p.aza||0); pack.cinder=(pack.cinder||0)-(p.cinder||0); owned[type]=(owned[type]||0)+1; renderMarket(); renderPortal(); updateWallet(); save(true); flash(`Bought ${META[type].name}`); }
+  function buy(type){ const p=META[type].price; if(!canAfford(p)) return;
+    if(window.MYTHIC && window.MYTHIC.bridged()){ window.MYTHIC.spend(p.cinder||0, p.aza||0).then(function(ok){ if(!ok){ flash('Not enough Cinder / Aza'); renderMarket(); return; } owned[type]=(owned[type]||0)+1; pack.cinder=window.MYTHIC.cinder(); pack.aza=window.MYTHIC.aza(); renderMarket(); renderPortal(); updateWallet(); save(true); flash(`Bought ${META[type].name}`); }); return; }
+    pack.aza=(pack.aza||0)-(p.aza||0); pack.cinder=(pack.cinder||0)-(p.cinder||0); owned[type]=(owned[type]||0)+1; renderMarket(); renderPortal(); updateWallet(); save(true); flash(`Bought ${META[type].name}`); }
   function openMarket(){ uiOpen=true; lookDrag=false; renderMarket(); marketEl.style.display='flex'; }
   function closeMarket(){ uiOpen=false; marketEl.style.display='none'; }
   document.getElementById('openMktBtn').onclick=openMarket;
@@ -377,7 +406,7 @@
   function previewWall(c){ paintColor.value=c; wallMat.color.set(c); renderPaint(); }
   ['#1a2238','#3a3f4b','#5a2a2a','#2a3f2e','#4a3a5a','#6b5a2a','#1c1c22','#7d7066','#26384f','#3c2230'].forEach(c=>{ const s=document.createElement('div'); s.className='sw'; s.style.background=c; s.onclick=()=>previewWall(c); swatchesEl.appendChild(s); });
   paintColor.oninput=()=>{ wallMat.color.set(paintColor.value); renderPaint(); };
-  function renderPaint(){ paintHave.textContent=`ðŸŽ¨ ${pack.paint||0}`; const same=paintColor.value.toLowerCase()===wallColor.toLowerCase(); applyPaintBtn.disabled=(pack.paint||0)<PAINT_COST||same; applyPaintBtn.textContent=same?'Current color':`Apply â€” ${PAINT_COST} ðŸŽ¨`; }
+  function renderPaint(){ paintHave.textContent=`🎨 ${pack.paint||0}`; const same=paintColor.value.toLowerCase()===wallColor.toLowerCase(); applyPaintBtn.disabled=(pack.paint||0)<PAINT_COST||same; applyPaintBtn.textContent=same?'Current color':`Apply — ${PAINT_COST} 🎨`; }
   function openPaint(){ uiOpen=true; lookDrag=false; paintColor.value=wallColor; renderPaint(); paintEl.style.display='flex'; }
   function closePaint(){ uiOpen=false; paintEl.style.display='none'; wallMat.color.set(wallColor); }
   function applyPaint(){ if((pack.paint||0)<PAINT_COST){ flash('Not enough paint'); return; } if(paintColor.value.toLowerCase()===wallColor.toLowerCase()){ flash('Already that color'); return; } pack.paint-=PAINT_COST; wallColor=paintColor.value; wallMat.color.set(wallColor); renderPaint(); save(true); flash('Walls painted'); }
@@ -398,14 +427,14 @@
       const sh=document.createElement('select'); sh.className='in'; [['box','Box'],['cyl','Cylinder'],['sph','Sphere'],['cone','Cone']].forEach(([v,t])=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; if(p.shape===v)o.selected=true; sh.appendChild(o); }); sh.onchange=()=>{ p.shape=sh.value; renderParts(); refreshPreview(); }; l1.appendChild(sh);
       const col=document.createElement('input'); col.type='color'; col.className='in'; col.value=p.c||'#888888'; col.oninput=()=>{ p.c=col.value; refreshPreview(); }; l1.appendChild(col);
       const gw=document.createElement('span'); gw.className='glow-wrap'; const gl=document.createElement('input'); gl.type='checkbox'; gl.checked=!!p.e; const ec=document.createElement('input'); ec.type='color'; ec.className='in'; ec.value=p.e||'#3aa0c0'; ec.disabled=!p.e; ec.oninput=()=>{ p.e=ec.value; refreshPreview(); }; gl.onchange=()=>{ p.e=gl.checked?(ec.value||'#3aa0c0'):''; ec.disabled=!gl.checked; refreshPreview(); }; gw.appendChild(gl); gw.appendChild(document.createTextNode('glow')); l1.appendChild(gw); l1.appendChild(ec);
-      const rm=document.createElement('button'); rm.className='part-rm'; rm.textContent='âœ•'; rm.onclick=()=>{ editParts.splice(i,1); if(!editParts.length) editParts.push(defaultPart()); renderParts(); refreshPreview(); }; l1.appendChild(rm); row.appendChild(l1);
+      const rm=document.createElement('button'); rm.className='part-rm'; rm.textContent='✕'; rm.onclick=()=>{ editParts.splice(i,1); if(!editParts.length) editParts.push(defaultPart()); renderParts(); refreshPreview(); }; l1.appendChild(rm); row.appendChild(l1);
       const l2=document.createElement('div'); l2.className='part-line';
       if(p.shape==='box'){ l2.appendChild(num('W',p.w,v=>{p.w=v;refreshPreview();})); l2.appendChild(num('H',p.h,v=>{p.h=v;refreshPreview();})); l2.appendChild(num('D',p.d,v=>{p.d=v;refreshPreview();})); }
       else if(p.shape==='cyl'){ l2.appendChild(num('R-top',p.rt,v=>{p.rt=v;refreshPreview();})); l2.appendChild(num('R-bot',p.rb,v=>{p.rb=v;refreshPreview();})); l2.appendChild(num('H',p.h,v=>{p.h=v;refreshPreview();})); }
       else if(p.shape==='sph'){ l2.appendChild(num('Radius',p.r,v=>{p.r=v;refreshPreview();})); }
       else { l2.appendChild(num('Radius',p.r,v=>{p.r=v;refreshPreview();})); l2.appendChild(num('H',p.h,v=>{p.h=v;refreshPreview();})); }
       row.appendChild(l2);
-      const l3=document.createElement('div'); l3.className='part-line'; l3.appendChild(num('X',p.x,v=>{p.x=v;refreshPreview();})); l3.appendChild(num('Y',p.y,v=>{p.y=v;refreshPreview();})); l3.appendChild(num('Z',p.z,v=>{p.z=v;refreshPreview();})); l3.appendChild(num('RotÂ°',p.ry,v=>{p.ry=v;refreshPreview();})); row.appendChild(l3);
+      const l3=document.createElement('div'); l3.className='part-line'; l3.appendChild(num('X',p.x,v=>{p.x=v;refreshPreview();})); l3.appendChild(num('Y',p.y,v=>{p.y=v;refreshPreview();})); l3.appendChild(num('Z',p.z,v=>{p.z=v;refreshPreview();})); l3.appendChild(num('Rot°',p.ry,v=>{p.ry=v;refreshPreview();})); row.appendChild(l3);
       partsBox.appendChild(row); }); }
   function refreshPreview(){ if(previewGroup){ scene.remove(previewGroup); previewGroup=null; } if(!adminOpen) return; if(pendingGLB){ previewGroup=pendingGLB.template.clone(true); } else { previewGroup=new THREE.Group(); buildParts(previewGroup,editParts); } scene.add(previewGroup); }
   function renderImportState(){ glbInfo.style.display=pendingGLB?'block':'none'; partsBox.style.opacity=pendingGLB?0.4:1; if(pendingGLB) glbName.textContent=pendingGLB.name; }
@@ -414,19 +443,19 @@
   glbFile.onchange=async e=>{ const f=e.target.files[0]; if(!f) return;
     try{ const buf=await f.arrayBuffer(); let scale=parseFloat(glbScale.value)||1; const md=maxDimOf(buf); if(md>3||md<0.3){ scale=+(1.6/md).toFixed(3); glbScale.value=scale; }
       pendingGLB={ name:f.name, b64:abToB64(buf), rawBuf:buf, template:glbToTemplate(buf,scale), scale, big:f.size>MAX_GLB };
-      if(!aName.value) aName.value=f.name.replace(/\.(glb|gltf)$/i,''); renderImportState(); refreshPreview(); flash(pendingGLB.big?'Loaded (large â€” may not save permanently)':'GLB loaded â€” preview in room');
+      if(!aName.value) aName.value=f.name.replace(/\.(glb|gltf)$/i,''); renderImportState(); refreshPreview(); flash(pendingGLB.big?'Loaded (large — may not save permanently)':'GLB loaded — preview in room');
     }catch(err){ flash('Could not read model: '+err.message); console.error(err); } };
   glbScale.oninput=()=>{ if(!pendingGLB) return; const s=parseFloat(glbScale.value)||1; pendingGLB.scale=s; pendingGLB.template=glbToTemplate(pendingGLB.rawBuf,s); refreshPreview(); };
   document.getElementById('glbFit').onclick=()=>{ if(!pendingGLB) return; const s=+(1.6/maxDimOf(pendingGLB.rawBuf)).toFixed(3); glbScale.value=s; pendingGLB.scale=s; pendingGLB.template=glbToTemplate(pendingGLB.rawBuf,s); refreshPreview(); };
   document.getElementById('glbRemove').onclick=()=>{ pendingGLB=null; glbFile.value=''; renderImportState(); refreshPreview(); };
-  async function saveModel(){ const name=(aName.value||'').trim()||'Custom Piece'; const ico=(aIco.value||'').trim()||(pendingGLB?'ðŸ“¦':'â”'); const r=parseFloat(aR.value)||0; const aza=parseInt(aAza.value)||0, cinder=parseInt(aCin.value)||0; const id='m_'+Date.now();
+  async function saveModel(){ const name=(aName.value||'').trim()||'Custom Piece'; const ico=(aIco.value||'').trim()||(pendingGLB?'📦':'❔'); const r=parseFloat(aR.value)||0; const aza=parseInt(aAza.value)||0, cinder=parseInt(aCin.value)||0; const id='m_'+Date.now();
     if(pendingGLB){ customModels.push({id,name,ico,r,price:{aza,cinder},kind:'glb',scale:pendingGLB.scale||1}); glbCache[id]=pendingGLB.template; persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket();
       try{ if(pendingGLB.big) throw new Error('big'); await window.storage.set(GLB_PREFIX+id, pendingGLB.b64, false); flash(`Model "${name}" added to market`); }catch(err){ flash(`"${name}" added for this session (too large to save permanently)`); }
       pendingGLB=null; glbFile.value=''; renderImportState(); }
     else { if(!editParts.length){ flash('Add a part or import a model'); return; } customModels.push({id,name,ico,r,price:{aza,cinder},kind:'parts',parts:editParts.map(p=>({...p}))}); persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash(`Model "${name}" added to market`); editParts=[defaultPart()]; renderParts(); }
     aName.value=''; refreshPreview(); }
   function deleteModel(id){ customModels=customModels.filter(m=>m.id!==id); delete glbCache[id]; try{ window.storage.delete(GLB_PREFIX+id); }catch(e){} persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash('Model deleted'); }
-  function openAdmin(){ adminOpen=true; if(mode==='walk') setMode('decorate'); adminEl.style.display='block'; if(!editParts.length) editParts=[defaultPart()]; renderParts(); renderImportState(); renderCustomList(); refreshPreview(); setHint('Build from parts or import a .glb â€” preview shows in the room'); }
+  function openAdmin(){ adminOpen=true; if(mode==='walk') setMode('decorate'); adminEl.style.display='block'; if(!editParts.length) editParts=[defaultPart()]; renderParts(); renderImportState(); renderCustomList(); refreshPreview(); setHint('Build from parts or import a .glb — preview shows in the room'); }
   function closeAdmin(){ adminOpen=false; adminEl.style.display='none'; if(previewGroup){ scene.remove(previewGroup); previewGroup=null; } setHint(defaultHint()); }
   function persistModels(){ try{ window.storage.set(MODELS_KEY, JSON.stringify(customModels), false); }catch(e){} }
   async function loadModels(){ try{ const r=await window.storage.get(MODELS_KEY); if(r&&r.value) customModels=JSON.parse(r.value)||[]; }catch(e){}
@@ -439,7 +468,7 @@
   // ===== mode =====
   const modeBtn=document.getElementById('modeBtn'), catalog=document.getElementById('catalog'), crosshair=document.getElementById('crosshair'), interactEl=document.getElementById('interact');
   function setMode(m){ mode=m;
-    if(m==='walk'){ if(adminOpen) closeAdmin(); cancelPlacing(); clearSelection(); catalog.style.display='none'; grid.visible=false; crosshair.style.display='block'; canvas.style.cursor='grab'; modeBtn.textContent='Exit'; modeBtn.classList.remove('primary'); yaw=Math.PI; pitch=0; player.x=0; player.z=ROOM-1.2; setHint('Drag to look Â· WASD to move Â· E to interact'); }
+    if(m==='walk'){ if(adminOpen) closeAdmin(); cancelPlacing(); clearSelection(); catalog.style.display='none'; grid.visible=false; crosshair.style.display='block'; canvas.style.cursor='grab'; modeBtn.textContent='Exit'; modeBtn.classList.remove('primary'); yaw=Math.PI; pitch=0; player.x=0; player.z=ROOM-1.2; setHint('Drag to look · WASD to move · E to interact'); }
     else { catalog.style.display='block'; grid.visible=true; crosshair.style.display='none'; interactEl.style.display='none'; canvas.style.cursor='default'; modeBtn.textContent='Walk'; modeBtn.classList.add('primary'); setHint(defaultHint()); } }
   modeBtn.onclick=()=>setMode(mode==='decorate'?'walk':'decorate');
 
@@ -486,13 +515,13 @@
   async function load(silent){ try{ const r=await window.storage.get(SAVE_KEY); if(r&&r.value){ const data=JSON.parse(r.value); if(Array.isArray(data)){ rebuild(data); } else { rebuild(data.items||[]); if(data.pack) pack={...DEFAULT_PACK,...data.pack}; if(data.owned) owned={...data.owned}; if(data.wall){ wallColor=data.wall; wallMat.color.set(wallColor); } } if(!silent) flash('Loaded'); } else if(!silent) flash('No saved house'); } catch(err){ if(!silent) flash('Nothing to load'); } renderPortal(); updateWallet(); }
   document.getElementById('saveBtn').onclick=()=>save(false);
   document.getElementById('loadBtn').onclick=()=>load(false);
-  document.getElementById('clearBtn').onclick=()=>{ placed.forEach(g=>{ owned[g.userData.type]=(owned[g.userData.type]||0)+1; scene.remove(g); }); placed.length=0; clearSelection(); renderPortal(); flash('House cleared â€” items returned to portal'); };
+  document.getElementById('clearBtn').onclick=()=>{ placed.forEach(g=>{ owned[g.userData.type]=(owned[g.userData.type]||0)+1; scene.remove(g); }); placed.length=0; clearSelection(); renderPortal(); flash('House cleared — items returned to portal'); };
 
   // ===== hint =====
   const hintEl=document.getElementById('hint');
-  function defaultHint(){ return 'Drag empty space to orbit Â· scroll to zoom Â· click+drag items to move Â· R rotate Â· Return to portal'; }
+  function defaultHint(){ return 'Drag empty space to orbit · scroll to zoom · click+drag items to move · R rotate · Return to portal'; }
   function setHint(t){ hintEl.textContent=t; }
-  let flashT; function flash(t){ setHint(t); clearTimeout(flashT); flashT=setTimeout(()=>setHint(mode==='walk'?'Drag to look Â· WASD to move Â· E to interact':defaultHint()),1700); }
+  let flashT; function flash(t){ setHint(t); clearTimeout(flashT); flashT=setTimeout(()=>setHint(mode==='walk'?'Drag to look · WASD to move · E to interact':defaultHint()),1700); }
 
   // ===== loop =====
   function tryMove(nx,nz,axis){ for(const g of placed){ const rad=g.userData.radius; if(rad<=0) continue; if(Math.hypot(nx-g.position.x,nz-g.position.z)<rad+0.3) return; } if(axis==='x') player.x=nx; else player.z=nz; }
@@ -514,4 +543,3 @@
 </script>
 </body>
 </html>
-

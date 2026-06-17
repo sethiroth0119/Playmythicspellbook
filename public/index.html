@@ -58873,7 +58873,20 @@ function _jbLeave() {
 // system). Overlaid full-screen above whatever opened it (Just Business iframe or
 // the Card Shop). mode 'house' = standalone localStorage dwelling; mode 'shop'
 // (with shopId) = the card-shop build that persists to the cloud shop layout.
-let _dwFrame = null;
+let _dwFrame = null, _dwMsgHandler = null;
+// Real wallet for the Dwelling bridge: Cinder = getCinders()/Profile.gems, Aza = Profile.sovereigns.
+function _dwWallet() { return { cinder: (typeof getCinders === 'function' ? getCinders() : (Profile.gems | 0)), aza: (Profile.sovereigns | 0) }; }
+function _dwSpend(cinder, aza) {
+  cinder = cinder | 0; aza = aza | 0;
+  const w = _dwWallet();
+  if (w.cinder < cinder || w.aza < aza) return { ok: false };
+  try {
+    if (cinder > 0) { if (typeof spendCinders === 'function') { if (!spendCinders(cinder)) return { ok: false }; } else { Profile.gems = (Profile.gems | 0) - cinder; } }
+    if (aza > 0) Profile.sovereigns = (Profile.sovereigns | 0) - aza;
+    try { saveProfile && saveProfile(); } catch (e) {}
+  } catch (e) { return { ok: false }; }
+  return Object.assign({ ok: true }, _dwWallet());
+}
 function _dwellingOpen(mode, shopId) {
   if (document.getElementById('dw-overlay')) return;
   const ov = document.createElement('div');
@@ -58894,8 +58907,22 @@ function _dwellingOpen(mode, shopId) {
   ov.appendChild(bar); ov.appendChild(fr);
   document.body.appendChild(ov);
   _dwFrame = fr;
+  // Economy bridge: answer the iframe's wallet request + run its purchases against
+  // the real Cinder/Aza economy. Same-origin, so '*' target is fine.
+  _dwMsgHandler = function (e) {
+    try {
+      const d = e && e.data; if (!d || typeof d !== 'object') return;
+      const cw = (_dwFrame && _dwFrame.contentWindow); if (!cw) return;
+      if (d.type === 'dw:ready') { const w = _dwWallet(); cw.postMessage({ type: 'dw:econ', cinder: w.cinder, aza: w.aza }, '*'); }
+      else if (d.type === 'dw:spend') { const r = _dwSpend(d.cinder, d.aza); const w = _dwWallet(); cw.postMessage({ type: 'dw:spendResult', reqId: d.reqId, ok: !!r.ok, cinder: r.ok ? r.cinder : w.cinder, aza: r.ok ? r.aza : w.aza }, '*'); }
+    } catch (er) {}
+  };
+  window.addEventListener('message', _dwMsgHandler);
+  // Belt-and-suspenders: also push the wallet once the iframe finishes loading.
+  fr.onload = function () { try { const w = _dwWallet(); fr.contentWindow.postMessage({ type: 'dw:econ', cinder: w.cinder, aza: w.aza }, '*'); } catch (e) {} };
 }
 function _dwellingClose() {
+  try { if (_dwMsgHandler) { window.removeEventListener('message', _dwMsgHandler); _dwMsgHandler = null; } } catch (e) {}
   const ov = document.getElementById('dw-overlay'); if (ov) ov.remove(); _dwFrame = null;
   // If the shop builder was open, re-render the shop so the walkable scene reflects saves.
   try { if (App.screen === 'cardShop') { _csShopObjects = null; _csShopObjectsShopId = null; if (typeof render === 'function') render(); } } catch (e) {}

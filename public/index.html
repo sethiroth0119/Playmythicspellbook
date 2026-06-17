@@ -107115,6 +107115,8 @@ function _ensureCsBuildStyle() {
   .csb-title button{background:#15151f;border:1px solid #2a2a38;color:#a1a1aa;border-radius:8px;padding:4px 9px;cursor:pointer;font-size:12px;font-weight:700}
   .csb-tbtn{background:#15151f;color:#a1a1aa;border:none;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer;font-size:12px;width:100%}
   .csb-tbtn.is-active{background:#d4af37;color:#0b0b0f}
+  .csb-del{background:#1f1212;color:#e6a3a3;border:1px solid #5a2424;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer;font-size:12px;width:100%}
+  .csb-del:hover{background:#3a1818;color:#ffd0d0}
   .csb-sec{font-size:10px;color:#71717a;text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
   .csb-cat{display:flex;align-items:center;gap:8px;text-align:left;padding:8px 10px;border-radius:8px;cursor:pointer;background:#15151f;border:1px solid #2a2a38;color:#e4e4e7;width:100%}
   .csb-cat.is-active{background:#241f10;border-color:#d4af37}
@@ -107157,9 +107159,10 @@ function _csBuildOverlayHtml() {
     <div class="csb-side">
       <div class="csb-title">🏗️ DESIGN STORE <button data-build="close">✕ Done</button></div>
       <button class="csb-tbtn is-active" data-build="select">Select / Move</button>
+      <button class="csb-del" data-build="del">🗑 Remove selected</button>
       <div class="csb-sec">Furniture</div>
       <div class="csb-catlist">${_csBuildSidebarCats(null)}</div>
-      <div class="csb-help">Pick an item → click a cell to place. <b>R</b> rotates. In Select mode, click an item then click a cell to move it; <b>Delete</b> removes. Green = fits, red = blocked. Drag to orbit, scroll to zoom.</div>
+      <div class="csb-help">Pick an item → click a cell to place. <b>R</b> rotates. In Select mode, click an item to select it, then click a cell to move it or tap <b>🗑 Remove selected</b> (or press <b>Delete</b>) to take it out. <b>Save</b> to keep your changes. Green = fits, red = blocked. Drag to orbit, scroll to zoom.</div>
       <button class="csb-walk" data-build="walk">🚶 Walk &amp; Test</button>
       <div class="csb-foot">
         <span class="csb-status" style="color:#3fa34d"></span>
@@ -107286,10 +107289,19 @@ function _csMountLayoutBuilder(root) {
   // false, so we ignore its release here.
   const end = (e) => { if (!B.drag) return; const wasDrag = B.moved > 6; B.drag = false; if (!wasDrag) click(e); };
   const wheel = (e) => { e.preventDefault(); B.cam.rad = Math.max(6, Math.min(34, B.cam.rad + Math.sign(e.deltaY) * 1.2)); };
+  // 🗑 Remove the selected piece (button + Delete/Backspace key). Tracks the id in
+  // B.deleted so the next Save prunes it from the cloud/local layout for good.
+  const removeSelected = () => {
+    if (!B.selectedId) { setStatus('Click an item to select it first, then Remove.', false); return; }
+    const id = B.selectedId;
+    B.placed = B.placed.filter(p => p.id !== id); B.deleted.push(id); B.selectedId = null;
+    syncScene(); paint();
+    setStatus('Removed — tap Save or Walk & Test to keep it gone.', true);
+  };
   const key = (e) => {
     const k = (e.key || '').toLowerCase();
     if (k === 'r') { B.ghostRot = (B.ghostRot + Math.PI / 2) % (Math.PI * 2); if (B.ghost) B.ghost.rotation.y = B.ghostRot; if (B.selectedId) { const it = B.placed.find(p => p.id === B.selectedId); if (it) { it.rotationY = ((it.rotationY || 0) + Math.PI / 2) % (Math.PI * 2); syncScene(); } } }
-    else if ((k === 'delete' || k === 'backspace') && B.selectedId) { e.preventDefault(); B.placed = B.placed.filter(p => p.id !== B.selectedId); B.deleted.push(B.selectedId); B.selectedId = null; syncScene(); paint(); }
+    else if ((k === 'delete' || k === 'backspace') && B.selectedId) { e.preventDefault(); removeSelected(); }
     else if (k === 'escape') { _csCloseLayoutBuilder(); }
   };
   el.addEventListener('mousedown', start); window.addEventListener('mousemove', move); window.addEventListener('mouseup', end);
@@ -107300,6 +107312,7 @@ function _csMountLayoutBuilder(root) {
     const cat = e.target.closest('[data-build-cat]'); if (cat) { B.catId = cat.getAttribute('data-build-cat'); B.tool = 'place'; B.selectedId = null; refreshSel(null); setGhost(); paint(); return; }
     const act = e.target.closest('[data-build]'); if (!act) return; const a = act.getAttribute('data-build');
     if (a === 'select') { B.tool = 'select'; B.catId = null; setGhost(); paint(); }
+    else if (a === 'del') { removeSelected(); }
     else if (a === 'close') { _csCloseLayoutBuilder(); }
     else if (a === 'save') { _csLayoutSave(); }
     else if (a === 'walk') { setStatus('Saving & dropping you into your shop…', true); Promise.resolve(_csLayoutSave()).catch(() => {}).then(() => { _csCloseLayoutBuilder(); }); }
@@ -107322,12 +107335,12 @@ function _csMountLayoutBuilder(root) {
   // load existing furniture (kind:'prop') for this shop
   async function loadExisting() {
     const myShop = _csMyShopId();
-    let rows = null;
+    let rows = null; B.cloudLoaded = false;
     try {
       if (typeof Cloud !== 'undefined' && Cloud.ready && Cloud.client) {
         const { data, error } = await Cloud.client.from('shop_objects').select('*').eq('shop_id', myShop).eq('kind', 'prop');
         if (error) { if (_csTableMissing(error)) { _csTableKnownMissing = true; setStatus('⚠ shop_objects table not found — placing locally. Run the migration in Supabase to sync to the cloud.', false); } else setStatus(error.message, false); }
-        else rows = data || [];
+        else { rows = data || []; B.cloudLoaded = true; }   // we now hold the FULL cloud prop set → safe to reconcile on save
       }
     } catch (e) {}
     if (!rows || !rows.length) { const local = _csLoadLocalLayout(myShop); rows = (local || []).filter(r => r && r.kind === 'prop'); if (rows.length && !_csTableKnownMissing) setStatus(`Loaded ${rows.length} item${rows.length === 1 ? '' : 's'} (local).`, true); }
@@ -107347,12 +107360,26 @@ function _csMountLayoutBuilder(root) {
     let cloudOk = false, cloudErr = null;
     try {
       if (typeof Cloud !== 'undefined' && Cloud.ready && Cloud.client) {
-        if (B.deleted.length) { const { error } = await Cloud.client.from('shop_objects').delete().in('id', B.deleted); if (error) throw error; }
+        // 🧹 RECONCILE — the layout we're saving is the source of truth for PROP rows.
+        // Delete every prop row for this shop that ISN'T in it: covers B.deleted AND
+        // orphans left by an earlier failed/partial delete (a piece "removed from build"
+        // that stayed stuck in the 3D shop). Pruning the full cloud set is only safe
+        // when we actually loaded it (B.cloudLoaded) — otherwise a transient load
+        // failure could wipe rows we never saw, so fall back to B.deleted only.
+        const keepIds = new Set(propRows.map(r => r.id));
+        let toDelete = B.deleted.slice();
+        if (B.cloudLoaded) {
+          try { const { data: ex } = await Cloud.client.from('shop_objects').select('id').eq('shop_id', myShop).eq('kind', 'prop'); (ex || []).forEach(r => { if (r && r.id) toDelete.push(r.id); }); } catch (e) {}
+        }
+        toDelete = Array.from(new Set(toDelete)).filter(id => !keepIds.has(id));
+        if (toDelete.length) { const { error } = await Cloud.client.from('shop_objects').delete().in('id', toDelete); if (error) throw error; }
         if (propRows.length) { const { error } = await Cloud.client.from('shop_objects').upsert(propRows); if (error) throw error; }
         cloudOk = true;
       }
     } catch (e) { cloudErr = e; if (_csTableMissing(e)) _csTableKnownMissing = true; }
-    B.deleted = [];
+    // Clear the pending-delete list only once it's actually been applied (cloud OK,
+    // or local-only mode). A cloud error keeps it so the next Save can retry.
+    if (cloudOk || !(typeof Cloud !== 'undefined' && Cloud.ready && Cloud.client) || (cloudErr && _csTableMissing(cloudErr))) B.deleted = [];
     _csShopObjects = null; _csShopObjectsShopId = null;  // walkable shop re-fetches (cloud or local)
     if (cloudOk) setStatus('Layout saved to the cloud ✓', true);
     else if (cloudErr && _csTableMissing(cloudErr)) setStatus('Saved locally ✓ — run the shop_objects migration in Supabase so it syncs to the cloud & visitors can see it.', false);

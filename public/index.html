@@ -136906,10 +136906,11 @@ function _ppaBindAdminModels() {
 function _ppRenderAuction(p) {
   if (p.listings.length === 0) {
     return _ppaLaunchBanner() +
-      '<div class="wfa-empty-row" style="padding:3rem;display:flex;flex-direction:column;gap:0.8rem;align-items:center">' +
-      '<div>— No static listings active. RNG refresh runs every 3 min. Auto-heal kicks when below 6.</div>' +
-      '<button class="wfa-mini-btn warn" id="pp-force-refresh" style="padding:0.5rem 1rem">🔄 FORCE REFRESH NOW</button>' +
-    '</div>';
+      '<details class="pp-classic-auc"><summary style="cursor:pointer;list-style:none;padding:0.55rem 0.8rem;background:#13161d;border:1px solid #2a2330;border-radius:9px;font-size:0.74rem;color:#9aa0ac;letter-spacing:0.04em">▸ CLASSIC INSTANT-BUY LISTINGS <span style="color:#6a7280">(empty — RNG refills these)</span></summary>' +
+      '<div class="wfa-empty-row" style="padding:2rem;display:flex;flex-direction:column;gap:0.8rem;align-items:center;margin-top:0.6rem">' +
+        '<div>— No static listings active. RNG refresh runs every 3 min. Auto-heal kicks when below 6.</div>' +
+        '<button class="wfa-mini-btn warn" id="pp-force-refresh" style="padding:0.5rem 1rem">🔄 FORCE REFRESH NOW</button>' +
+      '</div></details>';
   }
   const cap = ppLotCap();
   const full = p.lot.length >= cap;
@@ -136941,16 +136942,29 @@ function _ppRenderAuction(p) {
   }).join('');
   return '<div>' +
     _ppaLaunchBanner() +
+    '<details class="pp-classic-auc"><summary style="cursor:pointer;list-style:none;padding:0.55rem 0.8rem;background:#13161d;border:1px solid #2a2330;border-radius:9px;font-size:0.74rem;color:#9aa0ac;letter-spacing:0.04em">▸ CLASSIC INSTANT-BUY LISTINGS <span style="color:#6a7280">(' + p.listings.length + ' · fixed-price quick buys, no live block)</span></summary>' +
+    '<div style="margin-top:0.6rem">' +
     '<div class="wfa-panel-header">AUCTION FLOOR  <span class="wfa-panel-crumb">Click a card for full details · RNG refresh every 3 min · auto-heal under 6</span><span class="wfa-panel-right">' + p.listings.length + ' listings <button class="wfa-mini-btn warn" id="pp-force-refresh-auc" style="margin-left:0.5rem;padding:0.25rem 0.7rem;font-size:0.65rem">🔄 REFRESH</button></span></div>' +
     '<div class="wfa-supply-grid">' + cards + '</div>' +
+    '</div></details>' +
   '</div>';
 }
-// The "⚡ ENTER LIVE AUCTION" banner shown atop the Auction tab.
+// The ⚡ LIVE AUCTION hero shown atop the Auction tab — now the primary auction.
 function _ppaLaunchBanner() {
-  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.8rem;flex-wrap:wrap;background:linear-gradient(90deg,#1a1407,#0d0b08);border:1px solid #5a3a12;border-radius:10px;padding:0.7rem 0.9rem;margin-bottom:0.8rem">' +
-    '<div><div style="font-weight:900;color:#fb923c;letter-spacing:0.5px">⚡ LIVE AUCTION BLOCK</div><div style="font-size:0.7rem;color:#9a8f7a">Real-time bidding against the floor · 3D cars on a lit stage · winners park on your lot (Cinder taxed on win)</div></div>' +
-    '<button class="wfa-supply-buy" id="pp-live-auction" style="max-width:220px;margin:0">⚡ ENTER LIVE AUCTION</button>' +
-  '</div>';
+  const cin = (typeof getCinders === 'function') ? getCinders() : (Profile.gems | 0);
+  const tiers = PPA_RARITIES.map(r => '<span style="color:' + r.hex + ';font-weight:800;font-size:0.62rem;letter-spacing:0.5px">' + r.key.toUpperCase() + '</span>').join('<span style="color:#4a4030">·</span> ');
+  return '<div style="background:linear-gradient(120deg,#1f1608,#0d0b08 60%);border:1px solid #6a4313;border-radius:12px;padding:1rem 1.1rem;margin-bottom:0.9rem;box-shadow:0 0 24px rgba(251,146,60,0.12)">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap">' +
+      '<div style="min-width:240px;flex:1">' +
+        '<div style="font-weight:900;font-size:1.15rem;letter-spacing:0.5px;background:linear-gradient(90deg,#fde68a,#fb923c);-webkit-background-clip:text;background-clip:text;color:transparent">⚡ THE LIVE AUCTION BLOCK</div>' +
+        '<div style="font-size:0.74rem;color:#bda77a;margin-top:2px;line-height:1.45">Real-time bidding against the floor on a lit 3D stage. Outbid the rivals, slam <b style="color:#fde047">Buy It Now</b>, and winners drive straight onto your lot. Cinder is taxed only when you win.</div>' +
+        '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">' + tiers + '</div>' +
+      '</div>' +
+      '<div style="text-align:right;min-width:160px">' +
+        '<button class="wfa-supply-buy" id="pp-live-auction" style="margin:0;font-size:0.95rem;padding:0.7rem 1rem">⚡ ENTER LIVE AUCTION</button>' +
+        '<div style="font-size:0.66rem;color:#8a8f9a;margin-top:5px">Your Cinder: <b style="color:#fde047">¢' + cin.toLocaleString() + '</b></div>' +
+      '</div>' +
+    '</div></div>';
 }
 function _ppBindAuction() {
   const la = document.getElementById('pp-live-auction');

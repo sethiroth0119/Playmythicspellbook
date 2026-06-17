@@ -107220,7 +107220,12 @@ function _csMountLayoutBuilder(root) {
   };
   const start = (e) => { const p = e.touches ? e.touches[0] : e; B.drag = true; B.moved = 0; B.lx = p.clientX; B.ly = p.clientY; };
   const move = (e) => { hover(e); if (!B.drag) return; const p = e.touches ? e.touches[0] : e; const dx = p.clientX - B.lx, dy = p.clientY - B.ly; B.lx = p.clientX; B.ly = p.clientY; B.moved += Math.abs(dx) + Math.abs(dy); if (B.moved > 4) { B.cam.az -= dx * 0.006; B.cam.pol = Math.max(0.2, Math.min(1.35, B.cam.pol - dy * 0.006)); } };
-  const end = (e) => { const wasDrag = B.moved > 6; B.drag = false; if (!wasDrag) click(e); };
+  // Only act on gestures that STARTED on the canvas (start → B.drag). Without this
+  // guard, a window mouseup anywhere — releasing over the sidebar, the Furniture
+  // Market modal, or off-canvas — fired click() and teleported/placed an object
+  // ("the object moves by itself"). A press that began off-canvas leaves B.drag
+  // false, so we ignore its release here.
+  const end = (e) => { if (!B.drag) return; const wasDrag = B.moved > 6; B.drag = false; if (!wasDrag) click(e); };
   const wheel = (e) => { e.preventDefault(); B.cam.rad = Math.max(6, Math.min(34, B.cam.rad + Math.sign(e.deltaY) * 1.2)); };
   const key = (e) => {
     const k = (e.key || '').toLowerCase();

@@ -88040,6 +88040,38 @@ function renderBattlePiles(s) {
   // to show up there.) A revived unit flips back to alive and drops off.
   const deadOf = (owner) => (Array.isArray(s.units) ? s.units : [])
     .filter(u => u && !u.isHero && u.owner === owner && (!u.alive || (typeof u.currentHp === 'number' && u.currentHp <= 0)));
+  // The graveyard PILE = spent cards (discards, mills, tributes, sacrificed/dead
+  // unit cards). Killed board units (deadOf) that aren't already stamped into the
+  // pile are folded in too, so the graveyard view shows EVERY fallen/discarded card.
+  const graveCards = (owner) => {
+    const pile = (s[owner] && Array.isArray(s[owner].graveyard)) ? s[owner].graveyard : [];
+    const pileUnitIds = new Set(pile.map(c => c && c._summonedUnitId).filter(Boolean));
+    const out = pile.map(c => Object.assign({}, c, { _gKind: (c && c.type === 'unit') ? 'fallen' : 'discarded' }));
+    deadOf(owner).forEach(u => {
+      if (pileUnitIds.has(u.id)) return;
+      out.push({ id: u.cardId || u.originalCardId || u.id, name: u.name, icon: u.icon, type: 'unit', level: u.level, _gKind: 'fallen' });
+    });
+    return out;
+  };
+  // A small card-FRAME tile for the graveyard view (art + name bar + a tiny
+  // fallen/discarded tag). Falls back to the sprite/emoji when there's no art.
+  const graveTile = (c) => {
+    const id = c.id || c.cardId || c.originalCardId || '';
+    let art = null; try { art = (typeof getCardArt === 'function' && id) ? getCardArt(id) : null; } catch (e) {}
+    const face = art
+      ? `<img src="${escapeHtml(art)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">`
+      : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:1.7rem;background:radial-gradient(circle at 50% 32%,#241d2e,#0c0a14)">${(typeof renderIcon === 'function' && id) ? renderIcon('u_' + id, c.icon || '💀', 'lg') : escapeHtml(c.icon || '💀')}</div>`;
+    const lvl = c.level ? ` <span style="opacity:0.7">Lv ${c.level}</span>` : '';
+    const disc = c._gKind === 'discarded';
+    const tag = disc
+      ? `<span style="position:absolute;top:3px;right:3px;font-size:8px;font-weight:800;color:#0b0b0f;background:#d4af37;border-radius:4px;padding:0 4px;z-index:2">🗑</span>`
+      : `<span style="position:absolute;top:3px;right:3px;font-size:8px;font-weight:800;color:#fff;background:rgba(0,0,0,0.55);border-radius:4px;padding:0 4px;z-index:2">💀</span>`;
+    return `<div style="position:relative;border:1px solid ${disc ? 'rgba(212,175,55,0.5)' : 'rgba(184,136,255,0.5)'};border-radius:7px;overflow:hidden;background:#0c0a14">
+      ${tag}
+      <div style="aspect-ratio:0.72">${face}</div>
+      <div style="position:absolute;left:0;right:0;bottom:0;font-size:9px;line-height:1.25;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,0.92));padding:10px 3px 2px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(c.name || 'Card')}${lvl}</div>
+    </div>`;
+  };
 
   const tier = (typeof getCurrentTier === 'function') ? getCurrentTier() : null;
   const myName = escapeHtml(String((Profile.account && Profile.account.displayName) || 'You').slice(0, 22));
@@ -88072,7 +88104,7 @@ function renderBattlePiles(s) {
   const oppGrp = `<div class="bp-col">
       ${idBlock(foeName, foeRank, '#ff9a8a')}
       ${deckPile('Foe Deck', len(s.ai.deck))}
-      ${gravePile('ai', 'Foe Grave', deadOf('ai').length)}
+      ${gravePile('ai', 'Foe Grave', graveCards('ai').length)}
       ${kalon(s.ai.kalonsRemaining)}
     </div>`;
   const _tunneled = Array.isArray(s.player.tunneled) ? s.player.tunneled : [];
@@ -88086,7 +88118,7 @@ function renderBattlePiles(s) {
   const meGrp = `<div class="bp-col">
       ${kalon(s.player.kalonsRemaining)}
       ${tunneledPanel}
-      ${gravePile('player', 'Graveyard', deadOf('player').length)}
+      ${gravePile('player', 'Graveyard', graveCards('player').length)}
       ${deckPile('Your Deck', len(s.player.deck))}
       ${idBlock(myName, myRank, myRankCol)}
     </div>`;
@@ -88094,21 +88126,22 @@ function renderBattlePiles(s) {
   let modal = '';
   if (App._pileView === 'player' || App._pileView === 'ai') {
     const owner = App._pileView;
-    const dead = deadOf(owner);
-    const rows = dead.length
-      ? dead.map(u => `<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;background:rgba(255,255,255,0.04);border:1px solid rgba(184,136,255,0.2);border-radius:5px">
-          <span style="font-size:1.05rem">💀</span>
-          <span style="flex:1;color:#f0e6ff;font-size:0.88rem">${escapeHtml(u.name || 'Unit')}${u.level ? ` <span class="small-text ink-dim">Lv ${u.level}</span>` : ''}</span>
-          <span class="small-text ink-dim">fallen</span>
-        </div>`).join('')
-      : '<div class="ink-dim" style="text-align:center;padding:18px">No fallen units yet — nothing has been killed.</div>';
+    const cards = graveCards(owner);
+    const nDisc = cards.filter(c => c._gKind === 'discarded').length;
+    const nFall = cards.length - nDisc;
+    const subtitle = cards.length
+      ? `(${cards.length} card${cards.length === 1 ? '' : 's'}${nFall ? ` · ${nFall} fallen` : ''}${nDisc ? ` · ${nDisc} discarded` : ''})`
+      : '(empty)';
+    const grid = cards.length
+      ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:7px;align-content:start">${cards.map(graveTile).join('')}</div>`
+      : '<div class="ink-dim" style="text-align:center;padding:22px">Graveyard is empty — nothing has fallen or been discarded yet.</div>';
     modal = `<div class="modal-backdrop" id="bp-modal-bd" style="z-index:1400">
-        <div class="ds-modal" style="max-width:420px;max-height:74vh;display:flex;flex-direction:column;padding:18px">
+        <div class="ds-modal" style="max-width:520px;max-height:78vh;display:flex;flex-direction:column;padding:18px">
           <div style="display:flex;align-items:center;margin-bottom:10px;gap:8px">
-            <div style="font-family:'Cinzel',serif;font-size:1.1rem;color:#f6d97a;flex:1">⚰️ ${owner === 'player' ? 'Your' : "Opponent's"} Graveyard <span class="small-text ink-dim">(${dead.length} fallen)</span></div>
+            <div style="font-family:'Cinzel',serif;font-size:1.1rem;color:#f6d97a;flex:1">⚰️ ${owner === 'player' ? 'Your' : "Opponent's"} Graveyard <span class="small-text ink-dim">${subtitle}</span></div>
             <button class="btn-mini" id="bp-modal-x">✖ Close</button>
           </div>
-          <div style="overflow:auto;display:flex;flex-direction:column;gap:5px">${rows}</div>
+          <div style="overflow:auto;padding-right:4px">${grid}</div>
         </div>
       </div>`;
   }

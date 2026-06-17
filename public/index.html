@@ -36158,7 +36158,18 @@ async function cloudFetchProfile() {
       if (f.blackRiver && typeof f.blackRiver === 'object') Forge.blackRiver = f.blackRiver;
       // ⛽ Black River Petroleum state — richer-wins so just-hired crew, a
       // newly-leased rig, hull repairs, oil futures etc. survive a refresh.
-      if (f.__blackRiver__ && typeof f.__blackRiver__ === 'object') Profile.blackRiver = _preferRicherObj(f.__blackRiver__, Profile.blackRiver);
+      if (f.__blackRiver__ && typeof f.__blackRiver__ === 'object') {
+        const _localBR = Profile.blackRiver;
+        Profile.blackRiver = _preferRicherObj(f.__blackRiver__, _localBR);
+        // ⛏ Extraction Field is a single coherent idle snapshot — richer-wins is
+        // dominated by truck/crew, so reconcile `extraction` by LATEST save
+        // (lastTick) so a stale cloud copy can't rewind a more-recent field on
+        // another device (cross-device / multiplayer-safe).
+        try {
+          const le = _localBR && _localBR.extraction, ce = f.__blackRiver__ && f.__blackRiver__.extraction;
+          const merged = _osimMergeExtraction(le, ce); if (merged) Profile.blackRiver.extraction = merged;
+        } catch (e) {}
+      }
       // ⛽ Ethos Fuel Command — gas station chain.
       if (f.fuelCommand && typeof f.fuelCommand === 'object') Forge.fuelCommand = f.fuelCommand;
       // ⛽ Ethos Fuel Command station — richer-wins so upgrades, workers,
@@ -139778,6 +139789,15 @@ function _osimEsc(s) { return String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', 
 // 💰 Sell skim — protects the economy from the idle Cinder faucet (admin-tunable).
 function _osimSellSkim() { try { const a = Forge.blackRiver && Forge.blackRiver.extraction; if (a && typeof a.sellSkim === 'number') return Math.max(0, Math.min(0.9, a.sellSkim)); } catch (e) {} return 0.15; }
 function _osimOfflineCapMs() { try { const a = Forge.blackRiver && Forge.blackRiver.extraction; if (a && typeof a.offlineCapHours === 'number') return Math.max(1, a.offlineCapHours) * 3600000; } catch (e) {} return 24 * 3600000; }
+// 📅 EST day key (YYYY-MM-DD in America/New_York) — daily resets roll over at
+// midnight EST, same 24h cadence as the rest of the game's daily systems.
+function _osimEstDayKey() { try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); } catch (e) { return new Date().toISOString().slice(0, 10); } }
+// Roll the trading day if the EST date changed since last save: fresh PRN node
+// contracts + gas-station prices reset to base. Returns true if it rolled.
+function _osimDailyRollover() { if (!_osimState) return false; const today = _osimEstDayKey(); if (_osimState.dayKey === today) return false; const first = !_osimState.dayKey; _osimState.dayKey = today; if (first) return false; _osimSeedPRN(); (_osimState.stations || []).forEach(s => { s.price = s.base || s.price; }); _osimState.priceEvent = null; if (_osimOpenFlag) { _osimToast('📅 New trading day (EST) — PRN contracts refreshed, prices reset.', 'good'); _osimRenderEventBar(); if (_osimCurrentPanel === 'network' && _O('modal').classList.contains('on')) _osimRenderNetwork(); if (_osimCurrentPanel === 'sell' && _O('modal').classList.contains('on')) _osimRenderSell(); } return true; }
+// Reconcile two Extraction snapshots (local vs cloud) — newest save wins so a
+// stale cloud copy can't rewind a field saved more recently on another device.
+function _osimMergeExtraction(a, b) { if (!a || typeof a !== 'object') return (b && typeof b === 'object') ? b : null; if (!b || typeof b !== 'object') return a; return ((b.lastTick | 0) > (a.lastTick | 0)) ? b : a; }
 
 // ── REGISTRIES (mutable: admin can add keys via Forge config) ───────────────
 const OSIM_PARTS = { pipe: { name: 'Steel Pipe', cost: 18, ic: '🔧' }, motor: { name: 'Motor', cost: 38, ic: '⚙️' }, valve: { name: 'Valve', cost: 26, ic: '🎚️' }, drillbit: { name: 'Drill Bit', cost: 48, ic: '🔩' } };
@@ -139818,7 +139838,7 @@ let _osimState = null, _osimGainLog = [], _osimWorthHistory = [];
 function _osimFreshState() {
   const bm = {}; for (const k in OSIM_MACHINES) bm[k] = 0;
   const pp = {}; for (const k in OSIM_PARTS) pp[k] = 0;
-  const st = { inv: { oil: 0, ore: 0, fuel: 0 }, parts: pp, builtMachines: bm, blueprints: { tier2: false, tier3: false, deepcore: false }, research: { supply: 0, hardened: 0, automation: 0, market: 0, tuning: 0 }, placed: [], buildType: null, moveRef: null, stations: [{ name: 'Ridgeline Fuel Co.', price: 18 }, { name: 'Cinder Pumps #7', price: 20 }, { name: 'Aza Coast Station', price: 16 }], prn: [], prestige: 0, core: { phase: 0, done: false, contributed: {} }, priceEvent: null, emergency: null, muted: false, stats: { produced: { oil: 0, ore: 0, fuel: 0 }, earned: 0 }, lastTick: Date.now() };
+  const st = { inv: { oil: 0, ore: 0, fuel: 0 }, parts: pp, builtMachines: bm, blueprints: { tier2: false, tier3: false, deepcore: false }, research: { supply: 0, hardened: 0, automation: 0, market: 0, tuning: 0 }, placed: [], buildType: null, moveRef: null, stations: [{ name: 'Ridgeline Fuel Co.', price: 18, base: 18 }, { name: 'Cinder Pumps #7', price: 20, base: 20 }, { name: 'Aza Coast Station', price: 16, base: 16 }], prn: [], prestige: 0, core: { phase: 0, done: false, contributed: {} }, priceEvent: null, emergency: null, muted: false, stats: { produced: { oil: 0, ore: 0, fuel: 0 }, earned: 0 }, lastTick: Date.now(), dayKey: _osimEstDayKey() };
   // 💰 cash / aza are LIVE VIEWS of the real wallet — every spend/earn in the
   //    ported code hits Profile.gems / Profile.sovereigns (and the Foundation Tax).
   Object.defineProperty(st, 'cash', { configurable: true, get: () => (typeof getCinders === 'function' ? getCinders() : (Profile.gems | 0)), set: v => { Profile.gems = Math.max(0, Math.round(v)); } });
@@ -139957,9 +139977,9 @@ function _osimAnimate() { _osimRaf = requestAnimationFrame(_osimAnimate); let dt
 function _osimRefreshTop() { const c = _O('v-cash'); if (c) c.textContent = '₵' + _osimState.cash.toLocaleString(); const a = _O('v-aza'); if (a) a.textContent = '◈' + _osimState.aza; const o = _O('v-oil'); if (o) o.textContent = _osimState.inv.oil; const r = _O('v-ore'); if (r) r.textContent = _osimState.inv.ore; const f = _O('v-fuel'); if (f) f.textContent = _osimState.inv.fuel; }
 
 // ── Persistence (Profile.blackRiver.extraction) + REAL-TIME accrual ─────────
-function _osimSnapshot() { return { inv: _osimState.inv, parts: _osimState.parts, builtMachines: _osimState.builtMachines, blueprints: _osimState.blueprints, research: _osimState.research, stations: _osimState.stations, prn: _osimState.prn, prestige: _osimState.prestige, core: _osimState.core, muted: _osimState.muted, stats: _osimState.stats, lastTick: Date.now(), placed: _osimState.placed.map(m => ({ type: m.type, tier: m.tier, condition: m.condition, buffer: m.buffer, gx: m.gx, gz: m.gz })) }; }
+function _osimSnapshot() { return { inv: _osimState.inv, parts: _osimState.parts, builtMachines: _osimState.builtMachines, blueprints: _osimState.blueprints, research: _osimState.research, stations: _osimState.stations, prn: _osimState.prn, prestige: _osimState.prestige, core: _osimState.core, muted: _osimState.muted, stats: _osimState.stats, lastTick: Date.now(), dayKey: _osimState.dayKey, placed: _osimState.placed.map(m => ({ type: m.type, tier: m.tier, condition: m.condition, buffer: m.buffer, gx: m.gx, gz: m.gz })) }; }
 function _osimSave() { try { ensureBlackRiver(); Profile.blackRiver.extraction = _osimSnapshot(); saveProfile && saveProfile(); } catch (e) {} }
-function _osimApplySnapshot(d) { _osimState.placed.forEach(m => { _osimScene.remove(m.group); m.label.remove(); }); _osimTiles.forEach(t => t.userData.occupied = false); _osimState.inv = { ..._osimState.inv, ...(d.inv || {}) }; _osimState.parts = { ..._osimState.parts, ...(d.parts || {}) }; _osimState.builtMachines = { ..._osimState.builtMachines, ...(d.builtMachines || {}) }; _osimState.blueprints = { ..._osimState.blueprints, ...(d.blueprints || {}) }; _osimState.research = { ..._osimState.research, ...(d.research || {}) }; _osimState.stations = d.stations || _osimState.stations; _osimState.prn = (d.prn && d.prn.length) ? d.prn : _osimState.prn; _osimState.prestige = d.prestige || 0; _osimState.core = d.core || { phase: 0, done: false, contributed: {} }; _osimState.muted = !!d.muted; if (d.stats) _osimState.stats = d.stats; _osimState.lastTick = d.lastTick || Date.now(); _osimState.placed = []; _osimEnsureKeys(); (d.placed || []).forEach(s => { if (!OSIM_MACHINES[s.type]) return; const tile = _osimTiles.find(t => t.userData.gx === s.gx && t.userData.gz === s.gz); if (tile && !tile.userData.occupied) _osimSpawnMachine(s.type, tile, s); }); _osimSetCoreVisual(); _osimRefreshTop(); }
+function _osimApplySnapshot(d) { _osimState.placed.forEach(m => { _osimScene.remove(m.group); m.label.remove(); }); _osimTiles.forEach(t => t.userData.occupied = false); _osimState.inv = { ..._osimState.inv, ...(d.inv || {}) }; _osimState.parts = { ..._osimState.parts, ...(d.parts || {}) }; _osimState.builtMachines = { ..._osimState.builtMachines, ...(d.builtMachines || {}) }; _osimState.blueprints = { ..._osimState.blueprints, ...(d.blueprints || {}) }; _osimState.research = { ..._osimState.research, ...(d.research || {}) }; _osimState.stations = d.stations || _osimState.stations; _osimState.prn = (d.prn && d.prn.length) ? d.prn : _osimState.prn; _osimState.prestige = d.prestige || 0; _osimState.core = d.core || { phase: 0, done: false, contributed: {} }; _osimState.muted = !!d.muted; if (d.stats) _osimState.stats = d.stats; _osimState.lastTick = d.lastTick || Date.now(); _osimState.dayKey = d.dayKey || _osimEstDayKey(); _osimState.placed = []; _osimEnsureKeys(); (d.placed || []).forEach(s => { if (!OSIM_MACHINES[s.type]) return; const tile = _osimTiles.find(t => t.userData.gx === s.gx && t.userData.gz === s.gz); if (tile && !tile.userData.occupied) _osimSpawnMachine(s.type, tile, s); }); _osimSetCoreVisual(); _osimRefreshTop(); }
 function _osimLoadFromProfile() { try { const d = (Profile.blackRiver && Profile.blackRiver.extraction); if (d && typeof d === 'object' && (d.placed || d.parts)) { _osimApplySnapshot(d); return true; } } catch (e) {} return false; }
 // Catch up production for the wall-clock time the field was closed (capped).
 function _osimOfflineCatchUp() { try { const last = _osimState.lastTick || Date.now(); let elapsed = Date.now() - last; if (elapsed < 5000) { _osimState.lastTick = Date.now(); return; } elapsed = Math.min(elapsed, _osimOfflineCapMs()); const secs = elapsed / 1000; let any = 0; for (const m of _osimState.placed) any += _osimStepMachine(m, secs); _osimState.lastTick = Date.now(); if (any > 0) _osimToast('⛏ While you were away: +' + any + ' units produced', 'good'); } catch (e) {} }
@@ -140082,6 +140102,7 @@ function _osimOpen() {
   _osimLoadFromProfile();
   try { _osimLoadModels(); } catch (e) {}
   _osimOfflineCatchUp();
+  _osimDailyRollover();
   _osimSetCoreVisual(); _osimRefreshTop(); _osimRenderEventBar();
   _osimOpenFlag = true;
   _osimBindOverlay();
@@ -140090,6 +140111,7 @@ function _osimOpen() {
   _osimIv(() => { let changed = false; if (_osimState.priceEvent && Date.now() >= _osimState.priceEvent.until) { _osimState.priceEvent = null; changed = true; } if (_osimState.emergency && Date.now() >= _osimState.emergency.until) { _osimState.emergency = null; changed = true; } _osimRenderEventBar(); if (changed && _osimCurrentPanel === 'network' && _O('modal').classList.contains('on')) _osimRenderNetwork(); }, 1000);
   _osimIv(() => { _osimState.stations.forEach(s => { s.price = Math.max(11, Math.min(26, s.price + Math.round((Math.random() - 0.4) * 3))); }); if (_osimCurrentPanel === 'sell' && _osimSellTab === 'stations' && _O('modal').classList.contains('on')) _osimRenderSell(); }, 7000);
   _osimIv(() => { _osimWorthHistory.push(_osimNetWorth()); if (_osimWorthHistory.length > 80) _osimWorthHistory.shift(); if (_osimCurrentPanel === 'system' && _osimSysTab === 'stats' && _O('modal').classList.contains('on')) _osimRenderSystem(); }, 3000);
+  _osimIv(() => { if (_osimDailyRollover()) _osimRefreshTop(); }, 60000);
   _osimIv(() => _osimSave(), 15000);
   _osimAnimate();
   let tutDone = false; try { tutDone = localStorage.getItem('osim_tut_done'); } catch (e) {}
@@ -140159,11 +140181,27 @@ function _osimRenderAdmin() {
 function _osimSaveCustom() { try { if (!Forge.blackRiver) Forge.blackRiver = {}; if (!Forge.blackRiver.extraction) Forge.blackRiver.extraction = {}; Forge.blackRiver.extraction.custom = { parts: _osimCustomParts, blueprints: _osimCustomBlueprints, machines: _osimCustomMachines }; saveForge && saveForge(); } catch (e) {} }
 
 // ── Model upload (.glb → device-local via IDB) ──────────────────────────────
-function _osimHandleUpload(slot, file) { file.arrayBuffer().then(ab => { try { const root = _osimParseGLB(ab); if (slot === 'core') { _osimApplyCoreModel(root); _osimPersistModel('core', ab); } else if (slot === 'node') { _osimApplyNodeModel(root); _osimPersistModel('node', ab); } else if (slot === 'machine' && _osimPendingMachineKey) { const key = _osimPendingMachineKey; _osimCustomMachineMeshes[key] = _osimNormalizeModel(root, 5); _osimRebuildPlacedOfType(key); _osimPersistModel('cm_' + key, ab); _osimPendingMachineKey = null; } _osimSfx('aza'); _osimToast('Model loaded', 'good'); if (_osimCurrentPanel === 'system') _osimRenderSystem(); } catch (e) { _osimToast('Could not load model: ' + e, 'bad'); } }); }
+function _osimSetModelUrl(mkey, url) { try { if (!Forge.blackRiver) Forge.blackRiver = {}; if (!Forge.blackRiver.extraction) Forge.blackRiver.extraction = {}; const E = Forge.blackRiver.extraction; if (!E.models) E.models = {}; if (mkey === 'core') E.models.core = url; else if (mkey === 'node') E.models.node = url; else if (mkey.indexOf('cm_') === 0) { if (!E.models.machines) E.models.machines = {}; E.models.machines[mkey.slice(3)] = url; } saveForge && saveForge(); } catch (e) {} }
+function _osimDelModelUrl(mkey) { try { const E = Forge.blackRiver && Forge.blackRiver.extraction; if (!E || !E.models) return; if (mkey === 'core') delete E.models.core; else if (mkey === 'node') delete E.models.node; else if (mkey.indexOf('cm_') === 0 && E.models.machines) delete E.models.machines[mkey.slice(3)]; saveForge && saveForge(); } catch (e) {} }
+function _osimHandleUpload(slot, file) { file.arrayBuffer().then(async ab => { try { const root = _osimParseGLB(ab); let mkey = slot; if (slot === 'core') _osimApplyCoreModel(root); else if (slot === 'node') _osimApplyNodeModel(root); else if (slot === 'machine' && _osimPendingMachineKey) { const key = _osimPendingMachineKey; _osimCustomMachineMeshes[key] = _osimNormalizeModel(root, 5); _osimRebuildPlacedOfType(key); mkey = 'cm_' + key; _osimPendingMachineKey = null; } _osimSfx('aza'); _osimToast('Model loaded', 'good');
+  // ☁ Prefer the shared models bucket so ALL players see the admin's model;
+  //    fall back to device-local IDB when the bucket is unreachable.
+  let cloudOk = false; if (typeof _csShopUploadModel === 'function') { try { const url = await _csShopUploadModel(file); if (url) { _osimSetModelUrl(mkey, url); cloudOk = true; _osimToast('☁ Model shared to all players.', 'good'); } } catch (e) {} }
+  if (!cloudOk) { _osimPersistModel(mkey, ab); _osimToast('Model saved on this device (cloud offline).', 'aza'); }
+  if (_osimCurrentPanel === 'system') _osimRenderSystem(); } catch (e) { _osimToast('Could not load model: ' + e, 'bad'); } }); }
+async function _osimLoadModelUrl(slot, url) { try { const res = await fetch(url); const ab = await res.arrayBuffer(); const root = _osimParseGLB(ab); if (slot === 'core') _osimApplyCoreModel(root); else if (slot === 'node') _osimApplyNodeModel(root); else if (slot.indexOf('cm_') === 0) { const k = slot.slice(3); _osimCustomMachineMeshes[k] = _osimNormalizeModel(root, 5); _osimRebuildPlacedOfType(k); } } catch (e) {} }
 function _osimAbToB64(ab) { let bin = ''; const bytes = new Uint8Array(ab), chunk = 0x8000; for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk)); return btoa(bin); }
 function _osimB64ToAb(b64) { const bin = atob(b64), len = bin.length, bytes = new Uint8Array(len); for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i); return bytes.buffer; }
 function _osimPersistModel(slot, ab) { try { if (typeof idbSet !== 'function') return; const b64 = _osimAbToB64(ab); idbSet('osim_model_' + slot, b64); } catch (e) {} }
-async function _osimLoadModels() { try { if (typeof idbGet !== 'function') return; for (const slot of ['core', 'node']) { try { const v = await idbGet('osim_model_' + slot); if (v) { const root = _osimParseGLB(_osimB64ToAb(v)); if (slot === 'core') _osimApplyCoreModel(root); else _osimApplyNodeModel(root); } } catch (e) {} } for (const k in _osimCustomMachines) { try { const v = await idbGet('osim_model_cm_' + k); if (v) { _osimCustomMachineMeshes[k] = _osimNormalizeModel(_osimParseGLB(_osimB64ToAb(v)), 5); _osimRebuildPlacedOfType(k); } } catch (e) {} } } catch (e) {} }
+async function _osimLoadModels() {
+  // 1) ☁ Cloud-shared admin models (Forge URLs) — so every player sees them.
+  const M = (Forge.blackRiver && Forge.blackRiver.extraction && Forge.blackRiver.extraction.models) || {};
+  try { if (M.core) await _osimLoadModelUrl('core', M.core); } catch (e) {}
+  try { if (M.node) await _osimLoadModelUrl('node', M.node); } catch (e) {}
+  try { if (M.machines) for (const k in M.machines) { if (_osimCustomMachines[k]) await _osimLoadModelUrl('cm_' + k, M.machines[k]); } } catch (e) {}
+  // 2) Device-local IDB fallback for anything not shared to the cloud.
+  try { if (typeof idbGet === 'function') { for (const slot of ['core', 'node']) { if (M[slot]) continue; try { const v = await idbGet('osim_model_' + slot); if (v) { const root = _osimParseGLB(_osimB64ToAb(v)); if (slot === 'core') _osimApplyCoreModel(root); else _osimApplyNodeModel(root); } } catch (e) {} } for (const k in _osimCustomMachines) { if (M.machines && M.machines[k]) continue; try { const v = await idbGet('osim_model_cm_' + k); if (v) { _osimCustomMachineMeshes[k] = _osimNormalizeModel(_osimParseGLB(_osimB64ToAb(v)), 5); _osimRebuildPlacedOfType(k); } } catch (e) {} } } } catch (e) {}
+}
 
 // ── Bindings + global handler object ────────────────────────────────────────
 function _osimBindOverlay() {
@@ -140207,8 +140245,8 @@ window._OSIM = {
   moveMachine: () => { _osimState.moveRef = _osimInspectRef; _osimState.buildType = null; _O('modal').classList.remove('on'); _O('buildtext').textContent = '↔️ Moving ' + OSIM_MACHINES[_osimInspectRef.type].name + ' — click an empty tile'; _O('buildbanner').classList.add('on'); },
   sellBackMachine: () => { const m = _osimInspectRef; if (_osimCollectOne(m)) _osimRefreshTop(); const refund = Math.round(OSIM_MACHINES[m.type].craft * 0.5); _osimState.cash += refund; m.tile.userData.occupied = false; _osimScene.remove(m.group); m.label.remove(); _osimState.placed = _osimState.placed.filter(p => p !== m); _osimSfx('sell'); _osimRefreshTop(); _O('modal').classList.remove('on'); _osimToast('Decommissioned ' + OSIM_MACHINES[m.type].name + ' → +₵' + refund, 'good'); },
   pickModel: slot => { _O('file' + (slot === 'core' ? 'Core' : 'Node')).click(); },
-  clearCoreModel: () => { _osimResetCoreModel(); try { if (typeof idbDel === 'function') idbDel('osim_model_core'); } catch (e) {} _osimToast('Core reset', 'good'); if (_osimCurrentPanel === 'system') _osimRenderSystem(); },
-  clearNodeModel: () => { _osimResetNodeModel(); try { if (typeof idbDel === 'function') idbDel('osim_model_node'); } catch (e) {} _osimToast('Nodes reset', 'good'); if (_osimCurrentPanel === 'system') _osimRenderSystem(); },
+  clearCoreModel: () => { _osimResetCoreModel(); try { if (typeof idbDel === 'function') idbDel('osim_model_core'); } catch (e) {} _osimDelModelUrl('core'); _osimToast('Core reset', 'good'); if (_osimCurrentPanel === 'system') _osimRenderSystem(); },
+  clearNodeModel: () => { _osimResetNodeModel(); try { if (typeof idbDel === 'function') idbDel('osim_model_node'); } catch (e) {} _osimDelModelUrl('node'); _osimToast('Nodes reset', 'good'); if (_osimCurrentPanel === 'system') _osimRenderSystem(); },
   manualSave: () => { _osimSave(); _osimToast('Progress saved', 'good'); },
   showTutorial: () => _osimShowTutorial(),
   armReset: () => { if (!_osimResetArm) { _osimResetArm = true; _osimRenderSystem(); } else _osimResetProgress(); },
@@ -140221,7 +140259,7 @@ window._OSIM = {
   adminAddMachine: () => { const name = (_O('am_name').value || '').trim(); if (!name) return _osimToast('Name required', 'bad'); const ic = (_O('am_ic').value || '🏭').trim() || '🏭'; const kind = _O('am_kind').value; const rate = Math.max(0.3, parseFloat(_O('am_rate').value) || 3); const cap = Math.max(1, parseInt(_O('am_cap').value) || 20); const craft = Math.max(0, parseInt(_O('am_craft').value) || 60); const shape = _O('am_shape').value; const color = parseInt((_O('am_color').value || '#8893a3').slice(1), 16); const bp = _O('am_bp').value; const parts = {}; for (const pk in OSIM_PARTS) { const el = _O('rp_' + pk); const v = parseInt((el || { value: 0 }).value) || 0; if (v > 0) parts[pk] = v; } const def = { name, ic, kind, rate, cap, craft, shape, color, parts, desc: 'Custom ' + (kind === 'generator' ? 'income building' : kind) + '.' }; if (kind === 'generator') { def.produces = 'cinder'; def.amount = Math.max(1, parseInt(_O('am_amount').value) || 3); } else if (kind === 'converter') { def.produces = _O('am_produces').value; def.consumes = _O('am_consumes').value; def.ratio = Math.max(1, parseInt(_O('am_ratio').value) || 2); } else { def.produces = _O('am_produces').value; } if (bp) def.bpKey = bp; const key = 'cm_' + _osimSlug(name) + '_' + Math.random().toString(36).slice(2, 5); _osimCustomMachines[key] = def; OSIM_MACHINES[key] = def; _osimState.builtMachines[key] = 0; _osimSaveCustom(); _osimSfx('build'); _osimToast('Added machine: ' + name, 'good'); _osimRenderSystem(); },
   adminDelMachine: k => { if (_osimState.placed.some(p => p.type === k)) return _osimToast('Decommission all units first', 'bad'); delete _osimCustomMachines[k]; delete OSIM_MACHINES[k]; delete _osimCustomMachineMeshes[k]; delete _osimState.builtMachines[k]; try { if (typeof idbDel === 'function') idbDel('osim_model_cm_' + k); } catch (e) {} _osimSaveCustom(); _osimToast('Machine deleted', 'bad'); _osimRenderSystem(); },
   adminUploadMachineModel: k => { _osimPendingMachineKey = k; _O('fileMachine').click(); },
-  adminClearMachineModel: k => { delete _osimCustomMachineMeshes[k]; try { if (typeof idbDel === 'function') idbDel('osim_model_cm_' + k); } catch (e) {} _osimRebuildPlacedOfType(k); _osimToast('Model cleared', 'good'); _osimRenderSystem(); },
+  adminClearMachineModel: k => { delete _osimCustomMachineMeshes[k]; try { if (typeof idbDel === 'function') idbDel('osim_model_cm_' + k); } catch (e) {} _osimDelModelUrl('cm_' + k); _osimRebuildPlacedOfType(k); _osimToast('Model cleared', 'good'); _osimRenderSystem(); },
 };
 function _osimPrestige() { const lvl = _osimState.prestige + 1; const keepBP = { ..._osimState.blueprints }, keepR = { ..._osimState.research }, keepMute = _osimState.muted, keepStats = { produced: { ..._osimState.stats.produced }, earned: _osimState.stats.earned }; _osimState.placed.forEach(m => { _osimScene.remove(m.group); m.label.remove(); }); _osimTiles.forEach(t => t.userData.occupied = false); const fresh = _osimFreshState(); fresh.prestige = lvl; fresh.blueprints = keepBP; fresh.research = keepR; fresh.muted = keepMute; fresh.stats = keepStats; _osimState = fresh; _osimEnsureKeys(); _osimSeedPRN(); _osimSetCoreVisual(); _O('modal').classList.remove('on'); _osimRefreshTop(); _osimRenderEventBar(); _osimSfx('ignite'); _osimToast('🔥 Reconstruction Cycle ' + lvl + ' begins', 'ember'); _osimSave(); }
 function _osimResetProgress() { _osimState.placed.forEach(m => { _osimScene.remove(m.group); m.label.remove(); }); _osimTiles.forEach(t => t.userData.occupied = false); const fresh = _osimFreshState(); _osimState = fresh; _osimEnsureKeys(); _osimSeedPRN(); _osimSetCoreVisual(); _osimRefreshTop(); _osimRenderEventBar(); _O('modal').classList.remove('on'); _osimResetArm = false; _osimSave(); _osimToast('Progress reset', 'bad'); }

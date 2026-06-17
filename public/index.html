@@ -58972,6 +58972,8 @@ function _dwellingOpen(mode, shopId) {
       if (d.type === 'dw:ready') { const w = _dwWallet(); cw.postMessage({ type: 'dw:econ', cinder: w.cinder, aza: w.aza, admin: _dwIsAdmin() }, '*'); _dwPostCatalog(cw); }
       else if (d.type === 'dw:spend') { const r = _dwSpend(d.cinder, d.aza); const w = _dwWallet(); cw.postMessage({ type: 'dw:spendResult', reqId: d.reqId, ok: !!r.ok, cinder: r.ok ? r.cinder : w.cinder, aza: r.ok ? r.aza : w.aza }, '*'); }
       else if (d.type === 'dw:bed') { try { if (typeof openHeroRestPanel === 'function') openHeroRestPanel({ bed: { name: d.name || 'Bed', details: d.details || '' } }); } catch (er) {} }
+      else if (d.type === 'dw:vendor') { try { _dwellingClose(); App.vendorMarketTab = 'packs'; App.screen = 'vendorMarket'; if (typeof render === 'function') render(); } catch (er) {} }
+      else if (d.type === 'dw:battle') { try { _dwellingClose(); App.screen = 'deckSelect'; if (typeof render === 'function') render(); } catch (er) {} }
     } catch (er) {}
   };
   window.addEventListener('message', _dwMsgHandler);
@@ -105927,12 +105929,27 @@ function _csNodeMeta(nodeId) {
   return { name: name || nodeId, resource };
 }
 function _csResName(id) { try { return (typeof _meta === 'function' && _meta(id) && _meta(id).name) || id; } catch (e) { return id; } }
-// All known District Nodes (cloud recon rows), each tagged with name + resource.
+// All registerable District Nodes. Lists the FULL TW node catalog
+// (Forge.territoryWars.nodes) — NOT just nodes that already have a cloud recon
+// row — so a shop can register to ANY node even before it has been reconned.
+// Cloud recon stats (commerce, corruption, …) ride along when available.
 function _csNodeList() {
   const out = [];
   try {
     const cloud = (App && App._twNodeReconCloud) || {};
-    for (const id in cloud) { const row = cloud[id] && cloud[id].row; if (!row) continue; const m = _csNodeMeta(id); out.push({ id, name: m.name, resource: m.resource, row }); }
+    const t = (typeof Forge !== 'undefined' && Forge.territoryWars) ? Forge.territoryWars : null;
+    const nodes = (t && Array.isArray(t.nodes)) ? t.nodes : [];
+    if (nodes.length) {
+      for (const n of nodes) {
+        if (!n || !n.id) continue;
+        const m = _csNodeMeta(n.id);
+        const row = (cloud[n.id] && cloud[n.id].row) || {};
+        out.push({ id: n.id, name: m.name, resource: m.resource, row });
+      }
+    } else {
+      // Fallback (catalog not loaded yet): at least the recon-row nodes.
+      for (const id in cloud) { const row = cloud[id] && cloud[id].row; if (!row) continue; const m = _csNodeMeta(id); out.push({ id, name: m.name, resource: m.resource, row }); }
+    }
   } catch (e) {}
   out.sort((a, b) => (b.row.commerce | 0) - (a.row.commerce | 0) || String(a.name).localeCompare(String(b.name)));
   return out;
@@ -106634,7 +106651,7 @@ function _csMount3D(mount) {
         const fr = Math.max(cat ? cat.w || 1 : 1, cat ? cat.d || 1 : 1) * 0.5 * (p.scale || 1);
         if (!cat || (cat.h == null) || cat.h > 0.25) propColliders.push({ gx: p.x || 0, gz: p.z || 0, r: Math.max(0.35, fr) });
         // 🛠 Functional fixture: walk up + E uses it (bed/storage/counter/binder/open).
-        if (p.func) { const FL = { bed: '🛏️ Rest', storage: '🧰 Storage', counter: 'THE BINDER', binder: 'THE BINDER', open: 'OPEN PACKS', browse: 'PLAYER SHOPS' }; stations.push({ view: p.func, label: FL[p.func] || String(p.func).toUpperCase(), name: (cat && cat.name) || '', details: (cat && cat.details) || '', gx: p.x || 0, gz: p.z || 0, r: Math.max(0.6, fr), ir: 3.0 }); }
+        if (p.func) { const FL = { bed: '🛏️ Rest', storage: '🧰 Storage', counter: 'THE BINDER', binder: 'THE BINDER', open: 'OPEN PACKS', browse: 'PLAYER SHOPS', vendor: 'VENDOR MARKET', battle: 'BATTLE TABLE' }; stations.push({ view: p.func, label: FL[p.func] || String(p.func).toUpperCase(), name: (cat && cat.name) || '', details: (cat && cat.details) || '', gx: p.x || 0, gz: p.z || 0, r: Math.max(0.6, fr), ir: 3.0 }); }
       } catch (e) {}
       if (p.url) _csTryModel(p.url, (m, gltf) => { try { if (ph) pg.remove(ph); if (p.scale) m.scale.setScalar(p.scale); _csSeatModel(m); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
     }
@@ -106735,6 +106752,13 @@ function _csEnterShop3D(owner) {
 }
 function _csEnterStation(view) {
   if (view === 'vendor') { App.vendorMarketTab = 'packs'; App.screen = 'vendorMarket'; render(); return; }
+  if (view === 'battle') {
+    // 🃏 Battle table — drop into Deck Select, which offers BOTH ⚔ solo vs AI
+    // AND 🌐 Find Match (online matchmaking against a real player).
+    App.screen = 'deckSelect';
+    render();
+    return;
+  }
   if (view === 'bed') { const st = App._csNearStation || {}; openHeroRestPanel({ bed: { name: st.name || 'Bed', details: st.details || '' } }); return; }
   if (view === 'storage') {
     // Storage chests in the shop are a decorative fixture for now (the
@@ -107425,7 +107449,7 @@ function _csFurnitureCardHtml(r) {
   const cur = isAza ? '🪙' : '🔥';
   const bal = isAza ? (Profile.sovereigns | 0) : (typeof getCinders === 'function' ? getCinders() : 0);
   const afford = bal >= price;
-  const funcLabels = { bed: '🛏️ Bed', storage: '🧰 Storage', counter: '🛒 Counter', binder: '📒 Binder', open: '🎴 Open packs' };
+  const funcLabels = { bed: '🛏️ Bed', storage: '🧰 Storage', counter: '📒 Binder', binder: '📒 Binder', open: '🎴 Open packs', vendor: '🛒 Vendor', battle: '⚔️ Battle' };
   const funcTag = (r.func && funcLabels[r.func]) ? `<span style="color:#9ec5ff"> · ${funcLabels[r.func]}</span>` : '';
   return `<div class="csm-card">
     <div class="csm-top2">${_csFurnitureIconHtml(r)}
@@ -107541,7 +107565,7 @@ function _csOpenFurnitureMarket(onClose) {
     </div>
     <div class="csm-grid2" style="grid-template-columns:1fr 1fr 1fr">
       <select data-csm="mount" title="Placement type"><option value="floor">🪑 Floor furniture</option><option value="wall">🖼️ Wall-mounted</option><option value="flat">🟥 Flat / rug</option><option value="ceiling">💡 Ceiling / hanging</option></select>
-      <select data-csm="func" title="Function — walk up + E to use"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="counter">🛒 Shop counter (buy)</option><option value="binder">📒 Binder</option><option value="open">🎴 Open packs</option></select>
+      <select data-csm="func" title="Function — walk up + E to use"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="binder">📒 Binder / Counter (storefront)</option><option value="open">🎴 Open packs</option><option value="vendor">🛒 Vendor Market (buy packs)</option><option value="battle">⚔️ Battle Table (AI / online match)</option></select>
       <select data-csm="currency" title="Currency players pay in"><option value="cinder">🔥 Cinder (taxed)</option><option value="aza">🪙 Aza Coin</option></select>
     </div>
     <input data-csm="icon" placeholder="Icon — emoji (🛏️ 🖼️ 🔮) or an image URL" style="width:100%">

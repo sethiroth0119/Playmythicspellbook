@@ -82,7 +82,7 @@ window.MYTHIC = (function(){
     <div class="fld"><label>Icon</label><input id="aIco" class="in sm" placeholder="🖥️"><label>Radius</label><input id="aR" class="in sm" type="number" step="0.1" value="0.6"></div>
     <div class="fld"><label>Price</label><input id="aAza" class="in sm" type="number" value="20"><span class="cur">🪙</span><input id="aCin" class="in sm" type="number" value="15"><span class="cur">🔥</span></div>
     <div class="fld"><label>Type</label><select id="aMount" class="in"><option value="floor">🪑 Floor furniture</option><option value="wall">🖼️ Wall-mounted</option><option value="flat">🟥 Flat / rug</option><option value="ceiling">💡 Ceiling / hanging</option></select></div>
-    <div class="fld"><label>Function</label><select id="aFunc" class="in"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="counter">🛒 Shop counter</option><option value="binder">📒 Binder</option><option value="open">🎴 Open packs</option></select></div>
+    <div class="fld"><label>Function</label><select id="aFunc" class="in"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="binder">📒 Binder / Counter</option><option value="open">🎴 Open packs</option><option value="vendor">🛒 Vendor Market</option><option value="battle">⚔️ Battle Table</option></select></div>
     <div class="fld"><label>Details</label><input id="aDetails" class="in" placeholder='What it does — blank → "a normal ..."'></div>
     <div class="sub-h">Import 3D Model (.glb)</div>
     <input id="glbFile" type="file" accept=".glb,.gltf" class="in">
@@ -550,10 +550,12 @@ window.MYTHIC = (function(){
     if(k==='escape'){ if(marketEl.style.display==='flex') closeMarket(); else if(paintEl.style.display==='flex') closePaint(); else if(uiOpen) closeStorage(); else if(adminOpen) closeAdmin(); else if(placingType) cancelPlacing(); else if(selected) clearSelection(); }
     if(k==='r'){ if(placingType&&!isWall(placingType)) placingRot+=Math.PI/2; else if(selected&&!selected.userData.wall){ selected.rotation.y+=Math.PI/2; selHelper.update(); } }
     if((k==='delete'||k==='backspace')&&selected&&mode==='decorate'&&document.activeElement.tagName!=='INPUT'){ e.preventDefault(); returnSelected(); }
-    if(k==='e'&&mode==='walk'&&interactable&&!uiOpen){ var _ud=interactable.userData||{}; if(_ud.func==='bed'){ dwInteractBed(interactable); } else if(_ud.storage){ openStorage(interactable); } } });
+    if(k==='e'&&mode==='walk'&&interactable&&!uiOpen){ var _ud=interactable.userData||{}; if(_ud.func==='bed'){ dwInteractBed(interactable); } else if(_ud.func==='vendor'){ dwBridge('dw:vendor','🛒 Opening Vendor Market…'); } else if(_ud.func==='battle'){ dwBridge('dw:battle','⚔️ Opening battle…'); } else if(_ud.storage){ openStorage(interactable); } } });
   // 🛏️ Bed → ask the host game to open its hero-rest modal (heroes + energy live
   // in the parent). Posts the bed's name/details so the modal can show them.
   function dwInteractBed(g){ try{ var meta=META[g.userData.type]||{}; var name=meta.name||'Bed'; var details=(meta.details||'').toString(); if(window.MYTHIC && window.MYTHIC.bridged()){ if(parent&&parent!==window) parent.postMessage({type:'dw:bed',name:name,details:details},'*'); flash('🛏️ Resting heroes…'); } else { flash('🛏️ Rest is available in-game.'); } }catch(e){} }
+  // 🛒/⚔️ Vendor + Battle fixtures → ask the host game to open the matching screen.
+  function dwBridge(type,msg){ try{ if(window.MYTHIC && window.MYTHIC.bridged()){ if(parent&&parent!==window) parent.postMessage({type:type},'*'); flash(msg); } else { flash('Available in-game.'); } }catch(e){} }
   window.addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
 
   // ===== storage =====
@@ -591,7 +593,7 @@ window.MYTHIC = (function(){
     const b=ROOM-0.35; player.x=Math.max(-b,Math.min(b,player.x)); player.z=Math.max(-b,Math.min(b,player.z)); camera.position.set(player.x,EYE,player.z);
     const dir=new THREE.Vector3(Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch)); camera.lookAt(camera.position.x+dir.x,camera.position.y+dir.y,camera.position.z+dir.z);
     let near=null,best=2.0; for(const g of placed){ if(!g.userData.storage && !g.userData.func) continue; const d=Math.hypot(player.x-g.position.x,player.z-g.position.z); if(d<best){ best=d; near=g; } } interactable=near;
-    if(!uiOpen){ interactEl.style.display=near?'block':'none'; if(near){ var _f=near.userData.func; var _k=(_f==='bed')?'bed':(near.userData.storage?'store':'int'); if(interactEl._k!==_k){ interactEl._k=_k; interactEl.innerHTML=(_k==='bed')?'<b>E</b>&nbsp; Rest Heroes':(_k==='store'?'<b>E</b>&nbsp; Open Storage':'<b>E</b>&nbsp; Interact'); } } else interactEl._k=null; } }
+    if(!uiOpen){ interactEl.style.display=near?'block':'none'; if(near){ var _f=near.userData.func; var _k=(_f==='bed')?'bed':(_f==='vendor')?'vendor':(_f==='battle')?'battle':(near.userData.storage?'store':'int'); if(interactEl._k!==_k){ interactEl._k=_k; var _lbl={bed:'Rest Heroes',vendor:'Vendor Market',battle:'Battle Table',store:'Open Storage',int:'Interact'}; interactEl.innerHTML='<b>E</b>&nbsp; '+(_lbl[_k]||'Interact'); } } else interactEl._k=null; } }
   function updateOrbit(){ camera.position.set(target.x+orbitR*Math.sin(phi)*Math.sin(theta), target.y+orbitR*Math.cos(phi), target.z+orbitR*Math.sin(phi)*Math.cos(theta)); camera.lookAt(target); }
   function loop(){ const dt=Math.min(clock.getDelta(),0.05); if(mode==='walk'){ if(!uiOpen) updateWalk(dt); } else updateOrbit(); renderer.render(scene,camera); requestAnimationFrame(loop); }
 

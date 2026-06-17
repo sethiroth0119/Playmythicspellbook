@@ -106489,9 +106489,27 @@ async function _csShopSaveObject(row) {
   return data;
 }
 async function _csShopDeleteObject(id) {
-  if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline.');
-  const { error } = await Cloud.client.from('shop_objects').delete().eq('id', id);
-  if (error) throw error;
+  let cloudErr = null;
+  if (typeof Cloud !== 'undefined' && Cloud.ready && Cloud.client) {
+    try { const { error } = await Cloud.client.from('shop_objects').delete().eq('id', id); if (error) cloudErr = error; }
+    catch (e) { cloudErr = e; }
+  }
+  // 🛟 ALSO strip it from the local-layout fallback. The walkable shop renders from
+  // localStorage whenever the cloud is offline or the shop_objects table is missing,
+  // so a cloud-only delete left the object stuck ("no way to remove it"). Now the
+  // per-row 🗑 clears both copies.
+  try {
+    const sid = _csMyShopId();
+    if (typeof _csLoadLocalLayout === 'function' && typeof _csSaveLocalLayout === 'function') {
+      const local = _csLoadLocalLayout(sid) || [];
+      const next = local.filter(r => r && String(r.id) !== String(id));
+      if (next.length !== local.length) _csSaveLocalLayout(sid, next);
+    }
+  } catch (e) {}
+  _csShopObjects = null; _csShopObjectsShopId = null;   // force a clean re-fetch on next render
+  // Surface a hard error only if the cloud delete genuinely failed (not just a
+  // missing table — the local delete already handled the fallback copy).
+  if (cloudErr && !(typeof _csTableMissing === 'function' && _csTableMissing(cloudErr))) throw cloudErr;
 }
 // 🧹 Wipe EVERY object from this player's shop (cloud rows + local fallback) so a
 // stuck station/prop that won't delete individually can always be cleared. The

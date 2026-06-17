@@ -135657,6 +135657,65 @@ function _vmCreditSeller(sellerId, amount) {
   // TODO: Supabase RPC for true cross-player credit.
 }
 
+// 🚗 Click-through DETAIL modal for a marketplace listing — mirrors the
+// dealership lot modal: 3D model snapshot (click → orbit room), full specs,
+// and a MAKE OFFER · BUY action (or UNLIST for your own listing).
+function _vmOpenListingModal(listingId) {
+  const m = _vmState();
+  const l = (m.listings || []).find(x => x && x.id === listingId);
+  if (!l) { showToast('⚠ Listing no longer available.'); return; }
+  const v = l.vehicle || {};
+  const isMine = l.sellerId === _vmMyId();
+  const photo = (typeof ppPhotoLot === 'function') ? ppPhotoLot(v.name) : null;
+  const cin = (Profile.gems | 0), price = (l.price | 0), afford = cin >= price;
+  const riskCol = v.riskLevel === 'Unknown' ? '#cf6868' : v.riskLevel === 'High' ? '#e6b660' : v.riskLevel === 'Medium' ? '#e6b660' : '#a3d977';
+  if (typeof _ppCloseAnyModal === 'function') _ppCloseAnyModal();
+  const wrap = document.createElement('div'); wrap.id = 'pp-modal'; wrap.className = 'pp-modal-back';
+  wrap.innerHTML =
+    '<div class="pp-modal-card">' +
+      '<div class="pp-modal-h"><h3>// ' + escapeHtml((v.name || 'VEHICLE').toUpperCase()) + ' //</h3><button class="pp-modal-x" id="pp-modal-x">✕</button></div>' +
+      '<div class="pp-modal-body">' +
+        '<div class="pp-modal-left">' +
+          '<div class="pp-modal-photo">' +
+            (v.modelUrl
+              ? '<div id="pp-modal-3d" data-ppa-thumb="' + escapeHtml(v.modelUrl) + '" data-ppa-scale="' + (v.modelScale || 1) + '" data-ppa-roty="' + (v.modelRotY || 0) + '" style="width:100%;height:100%;position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0e1620,#0a0604)"><div class="ppa-thumb-ph" style="text-align:center;color:#9fe0ff"><div style="font-size:2.6rem">🧊</div><div style="font-size:0.65rem">rendering 3D…</div></div><span style="position:absolute;bottom:6px;right:8px;font-size:0.62rem;color:#9fe0ff;background:rgba(8,20,28,0.82);border:1px solid #2a4658;border-radius:4px;padding:2px 6px">🧊 click → orbit · zoom</span></div>'
+              : (photo ? '<img src="' + escapeHtml(photo) + '" alt="">' : '<div class="pp-modal-photo-empty">[VEHICLE PHOTO]</div>')) +
+          '</div>' +
+          '<div class="pp-modal-specs">' +
+            '<div class="pp-modal-specs-h">SPECIFICATION</div>' +
+            _ppSpecRow('TYPE', escapeHtml(v.type || '—')) +
+            _ppSpecRow('COLOR', escapeHtml(v.color || '—')) +
+            _ppSpecRow('CONDITION', '<span class="pp-pill ' + String(v.condition || '').toLowerCase() + '">' + escapeHtml(v.condition || '—') + '</span>') +
+            _ppSpecRow('MILEAGE', (v.mileage | 0).toLocaleString() + ' mi') +
+            _ppSpecRow('RISK LEVEL', '<span style="color:' + riskCol + '">' + escapeHtml(v.riskLevel || '—') + '</span>') +
+            _ppSpecRow('EST. PART VALUE', '<span style="color:#e6b660">🔥 ' + ((v.estPartValue | 0) / 1000).toFixed(0) + 'k</span>') +
+          '</div>' +
+        '</div>' +
+        '<div class="pp-modal-right">' +
+          '<div class="pp-modal-card-h">ASKING PRICE</div>' +
+          '<div class="pp-modal-price"><div class="pp-modal-price-coin">🔥</div><div class="pp-modal-price-val">' + (price / 1000).toFixed(0) + 'k</div></div>' +
+          '<div class="pp-modal-balance">SELLER: ' + escapeHtml(l.sellerName || 'Unknown') + (isMine ? ' (YOU)' : '') + '</div>' +
+          '<div class="pp-modal-balance">YOUR BALANCE: 🔥 ' + Math.round(cin / 1000) + 'k</div>' +
+          '<div class="pp-modal-card-h" style="margin-top:1rem">ACTIONS</div>' +
+          '<div class="pp-actions">' +
+            (isMine
+              ? '<button class="pp-action danger" id="vm-modal-unlist"><span class="pp-action-ico">↩</span><span class="pp-action-lbl">UNLIST</span></button>'
+              : '<button class="pp-action highlight" id="vm-modal-buy" ' + (afford ? '' : 'disabled') + '><span class="pp-action-ico">🚗</span><span class="pp-action-lbl">' + (afford ? 'MAKE OFFER · BUY' : 'NEED MORE CINDER') + '</span><span class="pp-action-key">↵</span></button>') +
+            (v.modelUrl ? '<button class="pp-action" id="vm-modal-orbit"><span class="pp-action-ico">🧊</span><span class="pp-action-lbl">OPEN 3D ORBIT ROOM</span></button>' : '') +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(wrap);
+  document.getElementById('pp-modal-x').onclick = _ppCloseAnyModal;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) _ppCloseAnyModal(); });
+  const orbit = () => { try { _ppaViewModel(v.modelUrl, v.name, v.modelScale, v.modelRotY); } catch (e) {} };
+  const m3d = document.getElementById('pp-modal-3d'); if (m3d) m3d.onclick = orbit;
+  const ob = document.getElementById('vm-modal-orbit'); if (ob) ob.onclick = orbit;
+  const buy = document.getElementById('vm-modal-buy'); if (buy) buy.onclick = () => { if (vmBuyListing(listingId)) { _ppCloseAnyModal(); render(); } };
+  const un = document.getElementById('vm-modal-unlist'); if (un) un.onclick = () => { if (vmCancelListing(listingId)) { _ppCloseAnyModal(); render(); } };
+  try { _ppaFillThumbs(wrap); } catch (e) {}
+}
 // 🛒 Vehicle marketplace screen — lists every active listing with photo,
 // seller, condition, type, and price. Buy button on each.
 function renderVehicleMarket() {
@@ -135669,11 +135728,13 @@ function renderVehicleMarket() {
     const v = l.vehicle || {};
     const isMine = l.sellerId === myId;
     const photo = (typeof ppPhotoLot === 'function') ? ppPhotoLot(v.name) : null;
+    const thumbAttr = (v.modelUrl && !photo) ? ` data-ppa-thumb="${escapeHtml(v.modelUrl)}" data-ppa-scale="${v.modelScale || 1}" data-ppa-roty="${v.modelRotY || 0}"` : '';
     return `
-      <div class="vm-card ${isMine ? 'is-mine' : ''}">
-        <div class="vm-photo">
-          ${photo ? `<img src="${escapeHtml(photo)}" alt="">` : `<div class="vm-photo-placeholder">🚗</div>`}
+      <div class="vm-card ${isMine ? 'is-mine' : ''}" data-vm-detail="${escapeHtml(l.id)}" style="cursor:pointer">
+        <div class="vm-photo" style="position:relative"${thumbAttr}>
+          ${photo ? `<img src="${escapeHtml(photo)}" alt="">` : `<div class="vm-photo-placeholder ppa-thumb-ph">${v.modelUrl ? '🧊' : '🚗'}</div>`}
           <div class="vm-cond">${escapeHtml(v.condition || '—')}</div>
+          ${v.modelUrl ? '<span style="position:absolute;top:4px;left:4px;font-size:8px;font-weight:800;color:#7dd3fc;background:rgba(8,20,28,0.85);border:1px solid #0e7490;border-radius:3px;padding:0 4px">🧊 3D</span>' : ''}
         </div>
         <div class="vm-body">
           <div class="vm-name">${escapeHtml(v.name || 'Vehicle')}</div>
@@ -135682,7 +135743,7 @@ function renderVehicleMarket() {
           <div class="vm-price">¢${(l.price | 0).toLocaleString()}</div>
           ${isMine
             ? `<button class="btn-mini btn-danger" data-vm-cancel="${escapeHtml(l.id)}">↩ Unlist</button>`
-            : `<button class="btn-primary btn-mini" data-vm-buy="${escapeHtml(l.id)}">🚗 Buy</button>`}
+            : `<button class="btn-primary btn-mini" data-vm-buy="${escapeHtml(l.id)}">🚗 View · Buy</button>`}
         </div>
       </div>
     `;
@@ -135714,8 +135775,10 @@ function renderVehicleMarket() {
       render();
     }
   };
-  document.querySelectorAll('[data-vm-buy]').forEach(b => b.onclick = () => { if (vmBuyListing(b.dataset.vmBuy)) render(); });
-  document.querySelectorAll('[data-vm-cancel]').forEach(b => b.onclick = () => { if (vmCancelListing(b.dataset.vmCancel)) render(); });
+  // Click a listing → the dealership-style detail modal (3D model + orbit + buy).
+  document.querySelectorAll('[data-vm-detail]').forEach(c => c.onclick = (e) => { if (e.target.closest('[data-vm-cancel]')) return; _vmOpenListingModal(c.dataset.vmDetail); });
+  document.querySelectorAll('[data-vm-cancel]').forEach(b => b.onclick = (e) => { e.stopPropagation(); if (vmCancelListing(b.dataset.vmCancel)) render(); });
+  try { _ppaFillThumbs(document); } catch (e) {}   // render 3D snapshots onto market cards
 }
 
 function _ppRand(n)   { return Math.floor(Math.random() * n); }

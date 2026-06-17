@@ -106281,7 +106281,7 @@ let _csShopObjectsShopId = null;  // which shop the cache currently belongs to
 // 🛎️ The ONE always-present working counter. Visitors browse + buy the owner's
 // listed cards here (binder 2D opens from it); the owner manages their shop here.
 // Everything else in the room is player-placed decor — a new shop starts empty.
-const CS_COUNTER_STATION = { view: 'counter', label: 'THE COUNTER', kind: 'counter', color: 0xd4af37, x: 0, z: -6, ry: 0, scale: 1, blockR: 2.3, interactR: 3.2 };
+const CS_COUNTER_STATION = { view: 'counter', label: 'THE BINDER', kind: 'counter', color: 0xd4af37, x: 0, z: -6, ry: 0, scale: 1, blockR: 2.3, interactR: 3.2 };
 function _csDefaultConfig() {
   return {
     room: '',          // empty procedural room (floor / walls / ceiling) — no dressing
@@ -106306,6 +106306,13 @@ function _csBuildConfig() {
   const vd = {}; [CS_COUNTER_STATION].concat(CS_STATIONS).forEach(s => { vd[s.view] = s; });
   const roomRow = byKind('room')[0], npcRow = byKind('npc')[0];
   const stRows = byKind('station'), propRows = byKind('prop');
+  // 🛒 The storefront is admin-replaceable: the moment the owner places their OWN
+  // counter/binder fixture (a prop with func 'counter' or 'binder', or a station
+  // row of that view), drop the built-in procedural counter so only their model
+  // remains. A shop with no storefront fixture keeps the default so it can sell.
+  const hasStorefront = propRows.some(r => r && (r.view === 'counter' || r.view === 'binder'))
+    || stRows.some(r => r && (r.view === 'counter' || r.view === 'binder'));
+  const baseStations = hasStorefront ? def.stations.filter(s => s.view !== 'counter') : def.stations;
   return {
     room: roomRow ? (roomRow.model_url || '') : def.room,
     npc: npcRow
@@ -106315,9 +106322,9 @@ function _csBuildConfig() {
     // (so admins can reposition "My Shop" without losing Binder/Browse/etc.),
     // and a row with a brand-new view is appended as an extra station.
     stations: (() => {
-      if (!stRows.length) return def.stations;
+      if (!stRows.length) return baseStations;
       const map = new Map();
-      def.stations.forEach(s => map.set(s.view, s));
+      baseStations.forEach(s => map.set(s.view, s));
       stRows.forEach(r => {
         const d = vd[r.view] || {};
         const base = map.get(r.view) || {};
@@ -106557,7 +106564,7 @@ function _csMount3D(mount) {
         const fr = Math.max(cat ? cat.w || 1 : 1, cat ? cat.d || 1 : 1) * 0.5 * (p.scale || 1);
         if (!cat || (cat.h == null) || cat.h > 0.25) propColliders.push({ gx: p.x || 0, gz: p.z || 0, r: Math.max(0.35, fr) });
         // 🛠 Functional fixture: walk up + E uses it (bed/storage/counter/binder/open).
-        if (p.func) { const FL = { bed: '🛏️ Rest', storage: '🧰 Storage', counter: 'THE COUNTER', binder: 'BINDER', open: 'OPEN PACKS', browse: 'PLAYER SHOPS' }; stations.push({ view: p.func, label: FL[p.func] || String(p.func).toUpperCase(), name: (cat && cat.name) || '', details: (cat && cat.details) || '', gx: p.x || 0, gz: p.z || 0, r: Math.max(0.6, fr), ir: 3.0 }); }
+        if (p.func) { const FL = { bed: '🛏️ Rest', storage: '🧰 Storage', counter: 'THE BINDER', binder: 'THE BINDER', open: 'OPEN PACKS', browse: 'PLAYER SHOPS' }; stations.push({ view: p.func, label: FL[p.func] || String(p.func).toUpperCase(), name: (cat && cat.name) || '', details: (cat && cat.details) || '', gx: p.x || 0, gz: p.z || 0, r: Math.max(0.6, fr), ir: 3.0 }); }
       } catch (e) {}
       if (p.url) _csTryModel(p.url, (m, gltf) => { try { if (ph) pg.remove(ph); if (p.scale) m.scale.setScalar(p.scale); _csSeatModel(m); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
     }
@@ -106628,14 +106635,14 @@ function _csMount3D(mount) {
 // True when walking ANOTHER player's shop (not your own).
 function _csCounterIsVisiting() { try { return !!(App._csShopOwner && App._csShopOwner !== _csMyShopId()); } catch (e) { return false; } }
 function _csPanelTitle(v) {
-  if (v === 'counter') return _csCounterIsVisiting() ? 'THE COUNTER · BUY CARDS' : 'YOUR COUNTER · MANAGE SHOP';
-  return ({ myshop: 'MY SHOP', binder: 'BINDER · YOUR SINGLES', open: 'OPEN PACKS', browse: 'PLAYER SHOPS' })[v] || '';
+  // The binder fixture IS the storefront/counter — same panel as the counter.
+  if (v === 'counter' || v === 'binder') return _csCounterIsVisiting() ? 'THE BINDER · BUY CARDS' : 'YOUR BINDER · MANAGE SHOP';
+  return ({ myshop: 'MY SHOP', open: 'OPEN PACKS', browse: 'PLAYER SHOPS' })[v] || '';
 }
 function _csPanelBody(v) {
   // The single counter: visitors buy the owner's cards; the owner manages their shop.
-  if (v === 'counter') return _csCounterIsVisiting() ? _csBrowseBody() : _csMyShopBody();
+  if (v === 'counter' || v === 'binder') return _csCounterIsVisiting() ? _csBrowseBody() : _csMyShopBody();
   if (v === 'myshop') return _csMyShopBody();
-  if (v === 'binder') return _csBinderBody();
   if (v === 'open') return _csOpenPacksBody();
   if (v === 'browse') { App._csViewOwner = App._csViewOwner || null; return _csBrowseBody(); }
   return '';
@@ -106666,7 +106673,7 @@ function _csEnterStation(view) {
     showToast('🧰 Storage chest — coming soon to the Card Shop.', 2600);
     return;
   }
-  if (view === 'counter' && _csCounterIsVisiting()) {
+  if ((view === 'counter' || view === 'binder') && _csCounterIsVisiting()) {
     // Visiting another player's shop: point the browse body at THEIR storefront,
     // load its listings if needed, then refresh the panel when they arrive.
     App._csViewOwner = App._csShopOwner;

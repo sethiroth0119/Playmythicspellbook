@@ -35373,6 +35373,11 @@ async function cloudSyncProfile() {
       fuelCommand: (Forge.fuelCommand && typeof Forge.fuelCommand === 'object') ? Forge.fuelCommand : { stationPhotos: {}, directory: { listings: [], pendingPayouts: [] }, enabled: true },
       // ⛽ Per-player gas-station state (fuel, pump, upgrades, loan, hedge, public listing, log).
       __fuelCommand__: (Profile.fuelCommand && typeof Profile.fuelCommand === 'object') ? Profile.fuelCommand : {},
+      // 🛋️ Card Shop furniture INVENTORY — the .glb pieces the player bought
+      // from the Furniture Market (catalogId → qty owned). Was localStorage-only,
+      // so a fresh login / cache clear / new device showed an EMPTY Build sidebar
+      // and the player "lost" what they paid Cinder/Aza for. Cloud-sync it.
+      __furnitureOwned__: (Profile.furnitureOwned && typeof Profile.furnitureOwned === 'object') ? Profile.furnitureOwned : {},
       // 🔧 Profile.decks (the user's actual deck list) piggybacks on the
       // forge JSONB column. The dedicated `decks` column historically held
       // the legacy `deckByHero` map and changing its shape can violate
@@ -36180,6 +36185,17 @@ async function cloudFetchProfile() {
       // fuel inventory, loans and trade positions can't be blanked by a
       // stale cloud row arriving after a fast refresh.
       if (f.__fuelCommand__ && typeof f.__fuelCommand__ === 'object') Profile.fuelCommand = _preferRicherObj(f.__fuelCommand__, Profile.fuelCommand);
+      // 🛋️ Card Shop furniture INVENTORY (catalogId → qty bought). Counts only
+      // ever grow (no sell path; placing in Build mode doesn't consume them), so
+      // MERGE by max-per-key: a stale cloud row can never erase a just-bought
+      // piece, and the cloud copy RESTORES purchases on a fresh device / after a
+      // cache clear. This is the fix for "logged in → my bought furniture was gone."
+      if (f.__furnitureOwned__ && typeof f.__furnitureOwned__ === 'object') {
+        const _locFO = (Profile.furnitureOwned && typeof Profile.furnitureOwned === 'object') ? Profile.furnitureOwned : {};
+        const _mFO = Object.assign({}, f.__furnitureOwned__);
+        for (const k in _locFO) { if (Object.prototype.hasOwnProperty.call(_locFO, k)) _mFO[k] = Math.max(_mFO[k] | 0, _locFO[k] | 0); }
+        Profile.furnitureOwned = _mFO;
+      }
       // 💰 Claim any pending P2P fuel-sale payouts that landed while we were offline.
       try { if (typeof fcClaimPendingPayouts === 'function') setTimeout(fcClaimPendingPayouts, 600); } catch (e) {}
       // 🔧 Profile.decks (user's deck list) lives inside forge.userDecks

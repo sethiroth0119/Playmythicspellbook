@@ -58876,6 +58876,37 @@ function _jbLeave() {
 let _dwFrame = null, _dwMsgHandler = null;
 // Real wallet for the Dwelling bridge: Cinder = getCinders()/Profile.gems, Aza = Profile.sovereigns.
 function _dwWallet() { return { cinder: (typeof getCinders === 'function' ? getCinders() : (Profile.gems | 0)), aza: (Profile.sovereigns | 0) }; }
+function _dwIsAdmin() { return !!((typeof isAdmin === 'function') && isAdmin()); }
+// Build the compact furniture-catalog payload the Dwelling buys from. Only
+// admin-uploaded models with a real .glb URL are shippable (the dwelling loads
+// them straight from the public bucket URL). func/mount/details/currency ride along.
+function _dwCatalogRows() {
+  const out = [];
+  try {
+    for (const r of (_csFurnitureCatalog || [])) {
+      if (!r || !r.model_url) continue;  // need a real model to load remotely
+      const fIco = { bed: '🛏️', storage: '🧰', counter: '🛒', binder: '📒', open: '🎴' };
+      const mIco = { wall: '🖼️', flat: '🟥', ceiling: '💡', floor: '🪑' };
+      out.push({
+        id: 'fc_' + r.id, name: r.name || 'Furniture',
+        ico: fIco[r.func] || mIco[r.mount] || '🛋️',
+        url: r.model_url, price: r.price | 0,
+        currency: (r.currency === 'aza' ? 'aza' : 'cinder'),
+        details: r.details || '', category: r.category || 'decor',
+        func: r.func || '', mount: r.mount || 'floor',
+        w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1,
+      });
+    }
+  } catch (e) {}
+  return out;
+}
+function _dwPostCatalog(cw) {
+  try {
+    Promise.resolve((typeof _csFetchFurnitureCatalog === 'function') ? _csFetchFurnitureCatalog() : null)
+      .catch(() => {})
+      .then(() => { try { cw.postMessage({ type: 'dw:catalog', rows: _dwCatalogRows() }, '*'); } catch (e) {} });
+  } catch (e) {}
+}
 function _dwSpend(cinder, aza) {
   cinder = cinder | 0; aza = aza | 0;
   const w = _dwWallet();
@@ -58913,13 +58944,13 @@ function _dwellingOpen(mode, shopId) {
     try {
       const d = e && e.data; if (!d || typeof d !== 'object') return;
       const cw = (_dwFrame && _dwFrame.contentWindow); if (!cw) return;
-      if (d.type === 'dw:ready') { const w = _dwWallet(); cw.postMessage({ type: 'dw:econ', cinder: w.cinder, aza: w.aza }, '*'); }
+      if (d.type === 'dw:ready') { const w = _dwWallet(); cw.postMessage({ type: 'dw:econ', cinder: w.cinder, aza: w.aza, admin: _dwIsAdmin() }, '*'); _dwPostCatalog(cw); }
       else if (d.type === 'dw:spend') { const r = _dwSpend(d.cinder, d.aza); const w = _dwWallet(); cw.postMessage({ type: 'dw:spendResult', reqId: d.reqId, ok: !!r.ok, cinder: r.ok ? r.cinder : w.cinder, aza: r.ok ? r.aza : w.aza }, '*'); }
     } catch (er) {}
   };
   window.addEventListener('message', _dwMsgHandler);
-  // Belt-and-suspenders: also push the wallet once the iframe finishes loading.
-  fr.onload = function () { try { const w = _dwWallet(); fr.contentWindow.postMessage({ type: 'dw:econ', cinder: w.cinder, aza: w.aza }, '*'); } catch (e) {} };
+  // Belt-and-suspenders: also push the wallet + catalog once the iframe finishes loading.
+  fr.onload = function () { try { const cw = fr.contentWindow; const w = _dwWallet(); cw.postMessage({ type: 'dw:econ', cinder: w.cinder, aza: w.aza, admin: _dwIsAdmin() }, '*'); _dwPostCatalog(cw); } catch (e) {} };
 }
 function _dwellingClose() {
   try { if (_dwMsgHandler) { window.removeEventListener('message', _dwMsgHandler); _dwMsgHandler = null; } } catch (e) {}
@@ -106021,7 +106052,7 @@ function renderCardShop() {
         <div class="cs-3d-topbar">
           <div class="cs-3d-title">🛒 ${_csCounterIsVisiting() ? escapeHtml(((CardShop.shopOf[App._csShopOwner] || {}).shop || {}).shop_name || 'A Player Shop') : 'My Card Shop'} · ${cinders.toLocaleString()} <span class="cinder-icon"></span></div>
           <div style="display:flex;gap:6px">
-            ${_csCounterIsVisiting() ? `<button class="btn-secondary btn-mini" data-cs="cs-go-home">🏠 My Shop</button>` : ((typeof isAdmin === 'function' && isAdmin()) || _csOwnsLicense()) ? `<button class="btn-secondary btn-mini" data-cs="cs-furniture">🛋️ Furniture</button><button class="btn-secondary btn-mini" data-cs="cs-shop-build">🏗️ Build</button><button class="btn-secondary btn-mini" data-cs="cs-shop-edit">🛠 Edit</button>` : ''}
+            ${_csCounterIsVisiting() ? `<button class="btn-secondary btn-mini" data-cs="cs-go-home">🏠 My Shop</button>` : ((typeof isAdmin === 'function' && isAdmin()) || _csOwnsLicense()) ? `<button class="btn-secondary btn-mini" data-cs="cs-furniture">🛋️ Furniture</button><button class="btn-secondary btn-mini" data-cs="cs-shop-build">🏗️ Build</button>${((typeof isAdmin === 'function') && isAdmin()) ? `<button class="btn-secondary btn-mini" data-cs="cs-shop-edit">🛠 Edit</button>` : ''}` : ''}
             <button class="btn-secondary btn-mini" data-cs="cs-visit-shops">🏪 Shops</button>
             <button class="btn-secondary btn-mini" data-cs="cs-3d-toggle">☰ Menu</button>
             <button class="btn-secondary btn-mini" data-cs="cs-back">← Exit</button>
@@ -106743,7 +106774,8 @@ function _csShopEditListHtml() {
 }
 function _csShopEditOpen() {
   if (_csCounterIsVisiting()) { showToast('You can only edit your OWN shop.', 2600); return; }
-  if (!((typeof isAdmin === 'function' && isAdmin()) || _csOwnsLicense())) { showToast('Acquire a Card Shop business first.', 2600); return; }
+  // 🔒 Raw model URL / .glb upload is an admin-curation tool — only admins.
+  if (!((typeof isAdmin === 'function') && isAdmin())) { showToast('👑 Uploading 3D models is admin-only. Buy + place furniture from 🛋️ Furniture and 🏗️ Build.', 3600); return; }
   if (document.getElementById('cs-edit-backdrop')) return;
   _ensureCsEditStyle();
   // Ensure we have the latest rows to edit (fail-open if cloud is offline).
@@ -107168,7 +107200,7 @@ async function _csFetchFurnitureCatalog(force) {
   _csFurnitureCatalog = rows;
   // Merge into _csCatMap so the builder resolves custom furniture by its 'fc:' id.
   for (const r of rows) {
-    _csCatMap['fc:' + r.id] = { id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', _custom: true, _catalogId: r.id };
+    _csCatMap['fc:' + r.id] = { id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', category: r.category || 'decor', details: r.details || '', currency: (r.currency === 'aza' ? 'aza' : 'cinder'), _custom: true, _catalogId: r.id };
   }
   return rows;
 }
@@ -107176,15 +107208,33 @@ function _csOwnedFurniture() { try { return (Profile && Profile.furnitureOwned) 
 function _csOwnedQty(catalogId) { return (_csOwnedFurniture()[catalogId]) | 0; }
 function _csBuyFurniture(item) {
   const price = item.price | 0;
+  const isAza = (item.currency === 'aza');
   try {
-    if (typeof getCinders === 'function' && getCinders() < price) { showToast('⚠ Not enough Cinder — need 🔥 ' + price.toLocaleString() + '.', 3400); return false; }
-    if (typeof spendCinders === 'function') { if (!spendCinders(price)) { showToast('⚠ Not enough Cinder.', 3000); return false; } }
+    if (isAza) {
+      // 🪙 Aza Coin (premium) — debited straight off the sovereign balance, untaxed.
+      if ((Profile.sovereigns | 0) < price) { showToast('⚠ Not enough Aza Coin — need 🪙 ' + price.toLocaleString() + '.', 3400); return false; }
+      Profile.sovereigns = (Profile.sovereigns | 0) - price;
+    } else {
+      // 🔥 Cinder — spendCinders is watched by the Foundation Tax tick, so this
+      // spend is automatically taxed (2%) into the shared reserve.
+      if (typeof getCinders === 'function' && getCinders() < price) { showToast('⚠ Not enough Cinder — need 🔥 ' + price.toLocaleString() + '.', 3400); return false; }
+      if (typeof spendCinders === 'function') { if (!spendCinders(price)) { showToast('⚠ Not enough Cinder.', 3000); return false; } }
+    }
     if (!Profile.furnitureOwned) Profile.furnitureOwned = {};
     Profile.furnitureOwned[item._catalogId] = (Profile.furnitureOwned[item._catalogId] | 0) + 1;
     try { saveProfile && saveProfile(); } catch (e) {}
     showToast('🛋️ Bought ' + (item.name || 'furniture') + '.', 2200);
     return true;
   } catch (e) { showToast('Purchase failed.', 3000); return false; }
+}
+// "What it does" blurb for a furniture row. Admin-authored `details` wins; else a
+// plain fallback keyed off its category — "A normal poster", "A normal planet"…
+function _csFurnitureDetails(r) {
+  const d = (r && (r.details || '')).toString().trim();
+  if (d) return d;
+  const cat = ((r && (r.category || r.func)) || 'decor').toString().trim().toLowerCase();
+  const noun = (cat === 'decor' || !cat) ? 'decoration' : cat;
+  return 'A normal ' + noun + '.';
 }
 // Builder catalog = built-in basics (free, unlimited) + custom furniture you OWN.
 function _csBuilderCatalog() {
@@ -107193,7 +107243,7 @@ function _csBuilderCatalog() {
   const custom = [];
   for (const r of (_csFurnitureCatalog || [])) {
     const q = owned[r.id] | 0; if (q <= 0) continue;
-    custom.push({ id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', _qty: q, _custom: true, _catalogId: r.id });
+    custom.push({ id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', category: r.category || 'decor', details: r.details || '', currency: (r.currency === 'aza' ? 'aza' : 'cinder'), _qty: q, _custom: true, _catalogId: r.id });
   }
   return base.concat(custom);
 }
@@ -107215,6 +107265,7 @@ function _ensureCsMarketStyle() {
   .csm-sw{width:34px;height:34px;border-radius:8px;flex:0 0 auto}
   .csm-name{font-weight:700;font-size:13px;color:#ece3cf}
   .csm-sub{font-size:11px;color:#8f846a}
+  .csm-detail{font-size:11px;color:#c6bda6;line-height:1.35;font-style:italic;border-left:2px solid #3a2f1c;padding-left:7px;margin:1px 0}
   .csm-own{font-size:11px;color:#a99f86}
   .csm-buy{border:none;border-radius:8px;padding:8px;font-weight:800;cursor:pointer;background:#23232e;color:#52525b}
   .csm-buy.is-afford{background:#d4af37;color:#0b0b0f}
@@ -107231,14 +107282,20 @@ function _ensureCsMarketStyle() {
 }
 function _csFurnitureCardHtml(r) {
   const owned = _csOwnedQty(r.id), price = r.price | 0;
-  const afford = (typeof getCinders === 'function' ? getCinders() : 0) >= price;
+  const isAza = (r.currency === 'aza');
+  const cur = isAza ? '🪙' : '🔥';
+  const bal = isAza ? (Profile.sovereigns | 0) : (typeof getCinders === 'function' ? getCinders() : 0);
+  const afford = bal >= price;
   const col = '#' + (((r.color | 0) || 0xd4af37) >>> 0).toString(16).padStart(6, '0').slice(-6);
+  const funcLabels = { bed: '🛏️ Bed', storage: '🧰 Storage', counter: '🛒 Counter', binder: '📒 Binder', open: '🎴 Open packs' };
+  const funcTag = (r.func && funcLabels[r.func]) ? `<span style="color:#9ec5ff"> · ${funcLabels[r.func]}</span>` : '';
   return `<div class="csm-card">
     <div class="csm-top2"><span class="csm-sw" style="background:${col}33;border:1px solid ${col}"></span>
       <div><div class="csm-name">${escapeHtml(r.name || 'Furniture')}${r.anim ? ' <span style="color:#9fe6a0">▶</span>' : ''}</div>
-      <div class="csm-sub">${(r.w | 0) || 1}×${(r.d | 0) || 1} · ${escapeHtml(r.category || 'decor')}${r.model_url ? '' : ' · placeholder'}</div></div></div>
+      <div class="csm-sub">${(r.w | 0) || 1}×${(r.d | 0) || 1} · ${escapeHtml(r.category || 'decor')}${funcTag}${r.model_url ? '' : ' · placeholder'}</div></div></div>
+    <div class="csm-detail">${escapeHtml(_csFurnitureDetails(r))}</div>
     <div class="csm-own">Owned: ${owned}</div>
-    <button class="csm-buy ${afford ? 'is-afford' : ''}" data-csm-buy="${escapeHtml(r.id)}" ${afford ? '' : 'disabled'}>Buy · ${price.toLocaleString()} 🔥</button>
+    <button class="csm-buy ${afford ? 'is-afford' : ''}" data-csm-buy="${escapeHtml(r.id)}" ${afford ? '' : 'disabled'}>Buy · ${price.toLocaleString()} ${cur}</button>
   </div>`;
 }
 async function _csMarketAdd(node) {
@@ -107246,7 +107303,7 @@ async function _csMarketAdd(node) {
   const numf = (f, d) => { const n = parseFloat(g(f)); return isFinite(n) ? n : d; };
   const name = (g('name') || '').trim(); if (!name) { showToast('Furniture needs a name.', 2400); throw new Error('name'); }
   let anim = null; const ar = g('anim'); if (ar && ar.trim()) { try { anim = JSON.parse(ar); } catch (e) { showToast('⚠ Animation JSON is invalid.', 3600); throw e; } }
-  const row = { name, model_url: g('model_url') || null, price: Math.max(0, Math.round(numf('price', 100))), w: Math.max(1, Math.round(numf('w', 1))), d: Math.max(1, Math.round(numf('d', 1))), h: numf('h', 1), category: g('category') || 'decor', func: g('func') || null, mount: g('mount') || 'floor', anim, color: 0xd4af37, sort: (_csFurnitureCatalog || []).length };
+  const row = { name, model_url: g('model_url') || null, price: Math.max(0, Math.round(numf('price', 100))), currency: (g('currency') === 'aza' ? 'aza' : 'cinder'), details: (g('details') || '').trim() || null, w: Math.max(1, Math.round(numf('w', 1))), d: Math.max(1, Math.round(numf('d', 1))), h: numf('h', 1), category: g('category') || 'decor', func: g('func') || null, mount: g('mount') || 'floor', anim, color: 0xd4af37, sort: (_csFurnitureCatalog || []).length };
   if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) { showToast('Cloud offline.', 3000); throw new Error('cloud'); }
   const { error } = await Cloud.client.from('furniture_catalog').insert(row);
   if (error) { if (_csTableMissing(error)) showToast('⚠ furniture_catalog table missing — run the migration in Supabase.', 5200); else showToast('Add failed: ' + (error.message || error), 4200); throw error; }
@@ -107265,10 +107322,12 @@ function _csOpenFurnitureMarket(onClose) {
       <input data-csm="w" type="number" placeholder="W" value="1"><input data-csm="d" type="number" placeholder="D" value="1"><input data-csm="h" type="number" step="0.1" placeholder="H" value="1">
       <input data-csm="category" placeholder="Category" value="decor">
     </div>
-    <div class="csm-grid2" style="grid-template-columns:1fr 1fr">
+    <div class="csm-grid2" style="grid-template-columns:1fr 1fr 1fr">
       <select data-csm="mount" title="Placement type"><option value="floor">🪑 Floor furniture</option><option value="wall">🖼️ Wall-mounted</option><option value="flat">🟥 Flat / rug</option><option value="ceiling">💡 Ceiling / hanging</option></select>
       <select data-csm="func" title="Function — walk up + E to use"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="counter">🛒 Shop counter (buy)</option><option value="binder">📒 Binder</option><option value="open">🎴 Open packs</option></select>
+      <select data-csm="currency" title="Currency players pay in"><option value="cinder">🔥 Cinder (taxed)</option><option value="aza">🪙 Aza Coin</option></select>
     </div>
+    <textarea data-csm="details" rows="2" placeholder='Details — what it does (shown to buyers). Leave blank → "A normal &lt;category&gt;."'></textarea>
     <input data-csm="model_url" placeholder=".glb public URL — or upload one →" style="width:100%">
     <textarea data-csm="anim" rows="2" placeholder='Animation JSON (optional) — e.g. {"clip":"Idle"} or {"clip":"Spin","timeScale":1,"loop":true}'></textarea>
     <div class="csm-admin-foot"><label class="csm-upload">⬆ Upload .glb<input type="file" accept=".glb,.gltf,model/gltf-binary" data-csm="upload" style="display:none"></label><button class="csm-add" data-csm="add">Add to market</button></div>
@@ -107276,7 +107335,7 @@ function _csOpenFurnitureMarket(onClose) {
   const wrap = document.createElement('div');
   wrap.innerHTML = `<div id="cs-market-backdrop" class="csm-backdrop"><div class="csm-modal">
     <div class="csm-top-bar"><div class="csm-title">🛋️ Furniture Market <span class="csm-cinders"></span></div><button class="csm-x" data-csm="close">✕</button></div>
-    <div class="csm-help">Buy furniture with Cinder, then place it in 🏗️ Build mode. Animated pieces (▶) play in your shop.${isAdm ? ' As admin you curate the catalog below.' : ''}</div>
+    <div class="csm-help">Buy furniture with 🔥 Cinder or 🪙 Aza Coin, then place it in 🏗️ Build mode. Animated pieces (▶) play in your shop.${isAdm ? ' As admin you curate the catalog below — set each piece\'s function, details & price.' : ''}</div>
     <div class="csm-list"></div>${adminPanel}
   </div></div>`;
   const node = wrap.firstElementChild;
@@ -107285,7 +107344,7 @@ function _csOpenFurnitureMarket(onClose) {
   const repaint = () => {
     const rows = (_csFurnitureCatalog || []);
     listEl.innerHTML = rows.length ? rows.map(_csFurnitureCardHtml).join('') : `<div class="csm-empty">No furniture in the market yet${isAdm ? ' — add some below.' : '.'}</div>`;
-    if (cinEl) cinEl.textContent = '🔥 ' + ((typeof getCinders === 'function' ? getCinders() : 0)).toLocaleString();
+    if (cinEl) cinEl.textContent = '🔥 ' + ((typeof getCinders === 'function' ? getCinders() : 0)).toLocaleString() + '   🪙 ' + ((Profile.sovereigns | 0)).toLocaleString();
   };
   repaint();
   if (!_csFurnitureCatalog) _csFetchFurnitureCatalog().catch(() => {}).then(repaint);

@@ -24,19 +24,23 @@
    player's REAL Cinder (🔥) + Aza Coin (🪙). The parent posts the live wallet in and
    runs every purchase against the real economy. Standalone (no parent) → not bridged. */
 window.MYTHIC = (function(){
-  var cinder = null, aza = null, ready = false, seq = 0, pending = {}, waiters = [];
+  var cinder = null, aza = null, ready = false, admin = false, catalog = [], seq = 0, pending = {}, waiters = [];
   function post(m){ try { if (parent && parent !== window) parent.postMessage(m, '*'); } catch(e){} }
   window.addEventListener('message', function(e){
     var d = e && e.data; if (!d || typeof d !== 'object') return;
-    if (d.type === 'dw:econ'){ cinder = d.cinder|0; aza = d.aza|0; ready = true; waiters.splice(0).forEach(function(fn){ try{ fn(); }catch(_){} }); try{ window.dispatchEvent(new Event('mythicEcon')); }catch(_){} }
+    if (d.type === 'dw:econ'){ cinder = d.cinder|0; aza = d.aza|0; admin = !!d.admin; ready = true; waiters.splice(0).forEach(function(fn){ try{ fn(); }catch(_){} }); try{ window.dispatchEvent(new Event('mythicEcon')); }catch(_){} }
+    else if (d.type === 'dw:catalog'){ catalog = Array.isArray(d.rows) ? d.rows : []; try{ window.dispatchEvent(new Event('mythicCatalog')); }catch(_){} }
     else if (d.type === 'dw:spendResult'){ var p = pending[d.reqId]; if (p){ delete pending[d.reqId]; if (d.ok){ cinder = d.cinder|0; aza = d.aza|0; try{ window.dispatchEvent(new Event('mythicEcon')); }catch(_){} } p(!!d.ok); } }
   });
   post({ type: 'dw:ready' });
   return {
     bridged: function(){ return ready; },
+    isAdmin: function(){ return !!admin; },
     cinder: function(){ return cinder|0; },
     aza: function(){ return aza|0; },
+    catalog: function(){ return catalog.slice(); },
     onReady: function(fn){ if (ready) fn(); else waiters.push(fn); },
+    onCatalog: function(fn){ window.addEventListener('mythicCatalog', fn); if (catalog.length) { try{ fn(); }catch(_){} } },
     spend: function(c, a){ return new Promise(function(res){ if (!ready){ res(false); return; } var id = ++seq; pending[id] = res; post({ type:'dw:spend', reqId:id, cinder: c|0, aza: a|0 }); setTimeout(function(){ if (pending[id]){ delete pending[id]; res(false); } }, 8000); }); }
   };
 })();
@@ -49,7 +53,7 @@ window.MYTHIC = (function(){
     <span id="brand">MYTHIC <span class="gold">SPELLBOOK</span> · Dwelling</span>
     <div class="spacer"></div>
     <span id="wallet" class="wallet"></span>
-    <button id="adminBtn" class="btn">🛠 Admin</button>
+    <button id="adminBtn" class="btn" style="display:none">🛠 Admin</button>
     <button id="modeBtn" class="btn primary">Walk</button>
     <button id="saveBtn" class="btn">Save</button>
     <button id="loadBtn" class="btn">Load</button>
@@ -79,6 +83,7 @@ window.MYTHIC = (function(){
     <div class="fld"><label>Price</label><input id="aAza" class="in sm" type="number" value="20"><span class="cur">🪙</span><input id="aCin" class="in sm" type="number" value="15"><span class="cur">🔥</span></div>
     <div class="fld"><label>Type</label><select id="aMount" class="in"><option value="floor">🪑 Floor furniture</option><option value="wall">🖼️ Wall-mounted</option><option value="flat">🟥 Flat / rug</option><option value="ceiling">💡 Ceiling / hanging</option></select></div>
     <div class="fld"><label>Function</label><select id="aFunc" class="in"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="counter">🛒 Shop counter</option><option value="binder">📒 Binder</option><option value="open">🎴 Open packs</option></select></div>
+    <div class="fld"><label>Details</label><input id="aDetails" class="in" placeholder='What it does — blank → "a normal ..."'></div>
     <div class="sub-h">Import 3D Model (.glb)</div>
     <input id="glbFile" type="file" accept=".glb,.gltf" class="in">
     <div id="glbInfo" style="display:none">
@@ -212,6 +217,7 @@ window.MYTHIC = (function(){
   .mkt-row { display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:8px; background:#18213a; border:1px solid rgba(255,255,255,.05); }
   .mkt-row .m-ico { font-size:20px; }
   .mkt-row .m-name { flex:1; font-size:13px; font-weight:600; }
+  .mkt-row .m-det { display:block; font-size:11px; color:#b9b08f; font-style:italic; font-weight:400; margin-top:1px; }
   .mkt-row .m-own { font-size:11px; color:#8b93ab; font-weight:500; margin-left:5px; }
   .mkt-row .m-price { font-size:12.5px; min-width:96px; text-align:right; font-variant-numeric:tabular-nums; }
   .buy-btn { background:#d4af37; color:#1a1300; border:none; border-radius:6px; padding:6px 14px; font-size:12px; font-weight:700; cursor:pointer; transition:.13s; }
@@ -281,7 +287,13 @@ window.MYTHIC = (function(){
     {type:'tv',name:'Wall TV',ico:'📺',r:0,wall:true,price:{aza:28,cinder:15}},
   ];
   let customModels=[]; const glbCache={};
-  function fullCatalog(){ return BUILTIN.concat(customModels.map(m=>({type:m.id,name:m.name,ico:m.ico,r:m.r,price:m.price,parts:m.parts,kind:m.kind,custom:true,mount:m.mount||'floor',func:m.func||'',wall:!!m.wall||m.mount==='wall',storage:!!m.storage||m.func==='storage'}))); }
+  // 🛋️ Admin-uploaded furniture pushed in from the host game (furniture_catalog).
+  // These are the models regular players BUY here — local users can't upload, so
+  // this shared catalog is their entire custom-furniture supply. Loaded by URL.
+  let sharedModels=[]; let lastLayoutItems=[];
+  function fullCatalog(){ return BUILTIN
+    .concat(customModels.map(m=>({type:m.id,name:m.name,ico:m.ico,r:m.r,price:m.price,parts:m.parts,kind:m.kind,custom:true,mount:m.mount||'floor',func:m.func||'',details:m.details||'',wall:!!m.wall||m.mount==='wall',storage:!!m.storage||m.func==='storage'})))
+    .concat(sharedModels.map(m=>({type:m.id,name:m.name,ico:m.ico,r:m.r||0,price:m.price,kind:'glb',shared:true,custom:true,mount:m.mount||'floor',func:m.func||'',details:m.details||'',category:m.category||'decor',srcUrl:m.url,wall:m.mount==='wall',storage:m.func==='storage'}))); }
   let META={}; function rebuildMeta(){ META={}; fullCatalog().forEach(c=>META[c.type]=c); }
   rebuildMeta();
 
@@ -395,9 +407,14 @@ window.MYTHIC = (function(){
   const marketEl=document.getElementById('market'), marketList=document.getElementById('marketList'), mktWallet=document.getElementById('mktWallet');
   function priceStr(p){ const a=[]; if(p.aza) a.push(`🪙 ${p.aza}`); if(p.cinder) a.push(`🔥 ${p.cinder}`); return a.length?a.join('  ·  '):'Free'; }
   function canAfford(p){ return (pack.aza||0)>=(p.aza||0) && (pack.cinder||0)>=(p.cinder||0); }
+  // "What it does" blurb — admin-authored details win; else a plain fallback
+  // keyed off category/function ("A normal poster", "A normal planet"…).
+  function dwDetails(c){ var d=(c.details||'').toString().trim(); if(d) return d; var cat=((c.category||c.func)||'').toString().trim().toLowerCase(); if(!cat&&c.wall) cat='wall decoration'; var noun=(!cat||cat==='decor')?'decoration':cat; return 'A normal '+noun+'.'; }
+  function dwEsc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch];}); }
   function renderMarket(){ mktWallet.textContent=`🪙 ${pack.aza||0}   🔥 ${pack.cinder||0}`; marketList.innerHTML='';
     fullCatalog().forEach(c=>{ const aff=canAfford(c.price), own=owned[c.type]||0; const row=document.createElement('div'); row.className='mkt-row';
-      row.innerHTML=`<span class="m-ico">${c.ico}</span><span class="m-name">${c.name}<span class="m-own">owned ${own}</span></span><span class="m-price">${priceStr(c.price)}</span>`;
+      const det=(c.custom||c.shared)?`<span class="m-det">${dwEsc(dwDetails(c))}</span>`:'';
+      row.innerHTML=`<span class="m-ico">${c.ico}</span><span class="m-name">${dwEsc(c.name)}${det}<span class="m-own">owned ${own}</span></span><span class="m-price">${priceStr(c.price)}</span>`;
       const b=document.createElement('button'); b.className='buy-btn'; b.textContent='Buy'; b.disabled=!aff; b.onclick=()=>buy(c.type); row.appendChild(b); marketList.appendChild(row); }); }
   function buy(type){ const p=META[type].price; if(!canAfford(p)) return;
     if(window.MYTHIC && window.MYTHIC.bridged()){ window.MYTHIC.spend(p.cinder||0, p.aza||0).then(function(ok){ if(!ok){ flash('Not enough Cinder / Aza'); renderMarket(); return; } owned[type]=(owned[type]||0)+1; pack.cinder=window.MYTHIC.cinder(); pack.aza=window.MYTHIC.aza(); renderMarket(); renderPortal(); updateWallet(); save(true); flash(`Bought ${META[type].name}`); }); return; }
@@ -461,11 +478,13 @@ window.MYTHIC = (function(){
     // are stored so the piece keeps its role and the card-shop side can mirror it.
     const mount=(document.getElementById('aMount')||{}).value||'floor';
     const func=(document.getElementById('aFunc')||{}).value||'';
+    const details=((document.getElementById('aDetails')||{}).value||'').trim();
     const wall=(mount==='wall'); const storage=(func==='storage');
-    if(pendingGLB){ customModels.push({id,name,ico,r,price:{aza,cinder},kind:'glb',scale:pendingGLB.scale||1,mount,func,wall,storage}); glbCache[id]=pendingGLB.template; persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket();
+    if(pendingGLB){ customModels.push({id,name,ico,r,price:{aza,cinder},kind:'glb',scale:pendingGLB.scale||1,mount,func,details,wall,storage}); glbCache[id]=pendingGLB.template; persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket();
       try{ if(pendingGLB.big) throw new Error('big'); await window.storage.set(GLB_PREFIX+id, pendingGLB.b64, false); flash(`Model "${name}" added to market`); }catch(err){ flash(`"${name}" added for this session (too large to save permanently)`); }
       pendingGLB=null; glbFile.value=''; renderImportState(); }
-    else { if(!editParts.length){ flash('Add a part or import a model'); return; } customModels.push({id,name,ico,r,price:{aza,cinder},kind:'parts',parts:editParts.map(p=>({...p})),mount,func,wall,storage}); persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash(`Model "${name}" added to market`); editParts=[defaultPart()]; renderParts(); }
+    else { if(!editParts.length){ flash('Add a part or import a model'); return; } customModels.push({id,name,ico,r,price:{aza,cinder},kind:'parts',parts:editParts.map(p=>({...p})),mount,func,details,wall,storage}); persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash(`Model "${name}" added to market`); editParts=[defaultPart()]; renderParts(); }
+    var ad=document.getElementById('aDetails'); if(ad) ad.value='';
     aName.value=''; refreshPreview(); }
   function deleteModel(id){ customModels=customModels.filter(m=>m.id!==id); delete glbCache[id]; try{ window.storage.delete(GLB_PREFIX+id); }catch(e){} persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash('Model deleted'); }
   function openAdmin(){ adminOpen=true; if(mode==='walk') setMode('decorate'); adminEl.style.display='block'; if(!editParts.length) editParts=[defaultPart()]; renderParts(); renderImportState(); renderCustomList(); refreshPreview(); setHint('Build from parts or import a .glb — preview shows in the room'); }
@@ -473,6 +492,31 @@ window.MYTHIC = (function(){
   function persistModels(){ try{ window.storage.set(MODELS_KEY, JSON.stringify(customModels), false); }catch(e){} }
   async function loadModels(){ try{ const r=await window.storage.get(MODELS_KEY); if(r&&r.value) customModels=JSON.parse(r.value)||[]; }catch(e){}
     for(const m of customModels){ if(m.kind==='glb'){ try{ const g=await window.storage.get(GLB_PREFIX+m.id); if(g&&g.value) glbCache[m.id]=glbToTemplate(b64ToAb(g.value), m.scale||1); }catch(e){ console.error('glb load',e); } } } rebuildMeta(); }
+  // 🛋️ Receive the host's admin-curated furniture catalog → make it buyable here.
+  // Each row's .glb is fetched once from its public URL into glbCache so the piece
+  // can be placed; currency picks which wallet a purchase debits (via MYTHIC.spend).
+  function applySharedCatalog(rows){
+    sharedModels = (rows||[]).map(function(r){
+      var price = (r.currency==='aza') ? {aza:r.price|0} : {cinder:r.price|0};
+      return { id:r.id, name:r.name||'Furniture', ico:r.ico||'🛋️', r:0, price:price, currency:r.currency||'cinder', details:r.details||'', category:r.category||'decor', func:r.func||'', mount:r.mount||'floor', url:r.url, scale:1 };
+    });
+    rebuildMeta(); renderMarket(); renderPortal();
+    // Lazy-fetch every model that isn't cached yet.
+    sharedModels.forEach(function(m){
+      if(glbCache[m.id] || !m.url) return;
+      fetch(m.url).then(function(res){ return res.arrayBuffer(); }).then(function(ab){
+        try{ glbCache[m.id]=glbToTemplate(ab, m.scale||1); rebuildMeta();
+          // If a saved layout referenced this piece but it couldn't build before the
+          // GLB arrived, rebuild now so it reappears in the room.
+          if(lastLayoutItems.some(function(d){return d&&d.t===m.id;}) && !placed.some(function(g){return g.userData.type===m.id;})) rebuild(lastLayoutItems);
+          renderPortal();
+        }catch(e){ console.error('shared glb parse',e); }
+      }).catch(function(e){ console.error('shared glb fetch',e); });
+    });
+  }
+  // 🔒 Only admins see the upload studio. Standalone (no host) keeps it for testing.
+  function applyAdminGate(){ try{ var b=document.getElementById('adminBtn'); if(!b) return; var ok = !(window.MYTHIC && window.MYTHIC.bridged()) || (window.MYTHIC && window.MYTHIC.isAdmin()); b.style.display = ok ? '' : 'none'; if(!ok && adminOpen) closeAdmin(); }catch(e){} }
+  try{ if(window.MYTHIC){ window.MYTHIC.onReady(applyAdminGate); window.addEventListener('mythicEcon', applyAdminGate); window.MYTHIC.onCatalog(function(){ applySharedCatalog(window.MYTHIC.catalog()); }); } applyAdminGate(); }catch(e){}
   document.getElementById('adminBtn').onclick=()=>{ adminOpen?closeAdmin():openAdmin(); };
   document.getElementById('addPart').onclick=()=>{ if(pendingGLB){ flash('Remove the GLB import to build from parts'); return; } editParts.push(defaultPart()); renderParts(); refreshPreview(); };
   document.getElementById('saveModel').onclick=saveModel;
@@ -524,7 +568,7 @@ window.MYTHIC = (function(){
   // ===== persistence =====
   async function save(silent){ const items=placed.map(g=>{ const o={t:g.userData.type,x:+g.position.x.toFixed(3),y:+g.position.y.toFixed(3),z:+g.position.z.toFixed(3),ry:+g.rotation.y.toFixed(4)}; if(g.userData.storage) o.inv=g.userData.inv; return o; });
     try{ await window.storage.set(SAVE_KEY, JSON.stringify({items,pack,owned,wall:wallColor}), false); if(!silent) flash('Saved'); } catch(err){ if(!silent) flash('Save failed'); console.error(err); } }
-  function rebuild(items){ placed.forEach(g=>scene.remove(g)); placed.length=0; clearSelection(); items.forEach(d=>{ const g=buildFurniture(d.t); if(!g) return; g.position.set(d.x, g.userData.wall?(d.y||1.4):0, d.z); g.rotation.y=d.ry; if(g.userData.storage&&d.inv) g.userData.inv={...d.inv}; scene.add(g); placed.push(g); }); }
+  function rebuild(items){ lastLayoutItems=items||[]; placed.forEach(g=>scene.remove(g)); placed.length=0; clearSelection(); (items||[]).forEach(d=>{ const g=buildFurniture(d.t); if(!g) return; g.position.set(d.x, g.userData.wall?(d.y||1.4):0, d.z); g.rotation.y=d.ry; if(g.userData.storage&&d.inv) g.userData.inv={...d.inv}; scene.add(g); placed.push(g); }); }
   async function load(silent){ try{ const r=await window.storage.get(SAVE_KEY); if(r&&r.value){ const data=JSON.parse(r.value); if(Array.isArray(data)){ rebuild(data); } else { rebuild(data.items||[]); if(data.pack) pack={...DEFAULT_PACK,...data.pack}; if(data.owned) owned={...data.owned}; if(data.wall){ wallColor=data.wall; wallMat.color.set(wallColor); } } if(!silent) flash('Loaded'); } else if(!silent) flash('No saved house'); } catch(err){ if(!silent) flash('Nothing to load'); } renderPortal(); updateWallet(); }
   document.getElementById('saveBtn').onclick=()=>save(false);
   document.getElementById('loadBtn').onclick=()=>load(false);

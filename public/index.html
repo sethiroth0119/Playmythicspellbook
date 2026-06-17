@@ -58352,6 +58352,7 @@ const OPS_ECON = {
   gas:          { startup: 350000, ratePerWorkerHr: 850,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { fuel: 2.2 } },
   cars:         { startup: 450000, ratePerWorkerHr: 1100, salaryPerWorkerHr: 280, maxWorkers: 10, yields: { metal: 1.8 } },
   fishing:      { startup: 300000, ratePerWorkerHr: 750,  salaryPerWorkerHr: 180, maxWorkers: 14, yields: { food: 2.4 } },
+  cardshop:     { startup: 200000, ratePerWorkerHr: 500,  salaryPerWorkerHr: 120, maxWorkers: 6,  yields: {} },
 };
 function _opEcon(t) { return OPS_ECON[t] || null; }
 const Operations = { list: [], _fetched: 0 };
@@ -58444,6 +58445,27 @@ function _opAfterFound(opId) {
       }
     } catch (_) {}
   }
+  // 🃏 Card Shop → grants the per-player LICENSE to open a card storefront. The
+  // shop itself stays personal (keyed by the player's account, not the corp);
+  // this op is the gate that unlocks "Open Shop" in the Card Shop screen.
+  if (opId === 'cardshop') {
+    try {
+      if (!Profile.cardShopUnlocked) {
+        Profile.cardShopUnlocked = true;
+        try { saveProfile && saveProfile(); } catch (_) {}
+        showToast('🃏 CARD SHOP licensed! Open your storefront in Card Shop → My Card Shop.', 7200);
+      }
+    } catch (_) {}
+  }
+}
+// True once the player has founded the Card Shop operation (or is admin).
+function _csOwnsLicense() {
+  try {
+    if (typeof isAdmin === 'function' && isAdmin()) return true;
+    if (Profile && Profile.cardShopUnlocked) return true;
+    if (typeof Operations !== 'undefined' && Operations.list && Operations.list.some(x => x && x.op_type === 'cardshop')) return true;
+  } catch (e) {}
+  return false;
 }
 function _opLaborUsed(exceptId) {
   return (Operations.list || []).reduce(function (s, x) { return s + (x.id === exceptId ? 0 : (x.workers | 0)); }, 0);
@@ -59237,7 +59259,7 @@ function _jbHandleAction(a) {
             mining: 'Mining Company', oil: 'Oil Company', construction: 'Construction Co.',
             medical: 'Medical Corporation', agri: 'Agricultural Op.', research: 'Research Facility',
             smuggling: 'Smuggling Network', salvage: 'Salvage Operation', gas: 'Gas Station Chain',
-            cars: 'Car Dealership', fishing: 'Fishing Company',
+            cars: 'Car Dealership', fishing: 'Fishing Company', cardshop: 'Card Shop',
           })[a.op] || (a.op.charAt(0).toUpperCase() + a.op.slice(1));
           const haveCR = (Profile.gems | 0);
           const ok2 = await showGameConfirm({
@@ -105793,12 +105815,15 @@ try {
           break;
         case 'cs-shop-edit': _csShopEditOpen(); break;
         case 'cs-shop-build': _csOpenLayoutBuilder(); break;
+        case 'cs-goto-business': { App._cardShopReturn = App._cardShopReturn || 'title'; App.screen = 'justBusiness'; render(); break; }
         case 'cs-panel-close': _csClosePanel(); break;
         case 'cs-open-pack': { const pid = t.getAttribute('data-pack'); if (pid) _csOpenOnePack(pid); break; }
         case 'cs-tab': App._csTab = t.getAttribute('data-tab'); App._csViewOwner = null; render(); break;
         case 'cs-refresh': CardShop.browse = null; cardShopBrowse(); break;
-        case 'cs-enter': App._csViewOwner = t.getAttribute('data-owner'); _csRender(); break;
-        case 'cs-exit-shop': App._csViewOwner = null; _csRender(); break;
+        case 'cs-enter': { const owner = t.getAttribute('data-owner'); if (App._cs3D) { _csEnterShop3D(owner); } else { App._csViewOwner = owner; _csRender(); } break; }
+        case 'cs-exit-shop': if (App._cs3D) { _csEnterShop3D(null); } else { App._csViewOwner = null; _csRender(); } break;
+        case 'cs-visit-shops': { App._csViewOwner = null; if (!CardShop.browse && typeof cardShopBrowse === 'function') { Promise.resolve(cardShopBrowse()).catch(() => {}).then(() => _csRefreshPanel()); } _csOpenPanel('browse'); break; }
+        case 'cs-go-home': _csEnterShop3D(null); break;
         case 'cs-buy': cardShopBuy(t.getAttribute('data-id'), +t.getAttribute('data-price'), t.getAttribute('data-owner')); break;
         case 'cs-open-shop': { const n = (document.getElementById('cs-f-name') || {}).value || ''; const tg = (document.getElementById('cs-f-tag') || {}).value || ''; cardShopOpen(n, tg, App._csTheme || 'bunker'); break; }
         case 'cs-theme': App._csTheme = t.getAttribute('data-theme'); _csRender(); break;
@@ -105819,10 +105844,14 @@ try {
 function renderCardShop() {
   _ensureCardShopStyle();
   const signedIn = _csReady();
+  // 3D walkable view is the DEFAULT for any shop (your own or another player's);
+  // the 2D card lists only appear inside the counter/binder panel. Players can
+  // still drop to the classic 2D screen with the ☰ Menu toggle.
+  if (signedIn && App._cs3D === undefined) App._cs3D = true;
   const is3D = !!(signedIn && App._cs3D);
   if (is3D) _ensureCardShop3DStyle();
   const cinders = _csCinders();
-  const tab = App._csTab || 'browse';
+  const tab = App._csTab || 'mine';
   // trigger background fetches (cached). In 3D mode the browse data feeds the
   // Player Shops station panel, so fetch it regardless of the (hidden) tab.
   if (signedIn) {
@@ -105842,19 +105871,20 @@ function renderCardShop() {
       <div class="cs3d-prompt"></div>
     </div>`;
   const tabbed = `<div class="cs-tabs">
+        <div class="cs-tab ${tab === 'mine' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="mine">🃏 My Card Shop</div>
         <div class="cs-tab ${tab === 'browse' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="browse">🏪 Player Shops</div>
-        <div class="cs-tab ${tab === 'mine' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="mine">🔨 My Shop</div>
       </div>
-      ${tab === 'mine' ? _csMyShopBody() : _csBrowseBody()}`;
+      ${tab === 'browse' ? _csBrowseBody() : _csMyShopBody()}`;
   if (is3D) {
     // Full-screen first-person store: fixed layer + floating controls over the canvas.
     root.innerHTML = `
       <div class="cs-3d-fullscreen">
         ${mount3d}
         <div class="cs-3d-topbar">
-          <div class="cs-3d-title">🛒 Card Shop · ${cinders.toLocaleString()} <span class="cinder-icon"></span></div>
+          <div class="cs-3d-title">🛒 ${_csCounterIsVisiting() ? escapeHtml(((CardShop.shopOf[App._csShopOwner] || {}).shop || {}).shop_name || 'A Player Shop') : 'My Card Shop'} · ${cinders.toLocaleString()} <span class="cinder-icon"></span></div>
           <div style="display:flex;gap:6px">
-            ${(typeof isAdmin === 'function' && isAdmin()) ? `<button class="btn-secondary btn-mini" data-cs="cs-shop-build">🏗️ Build</button><button class="btn-secondary btn-mini" data-cs="cs-shop-edit">🛠 Edit Shop</button>` : ''}
+            ${_csCounterIsVisiting() ? `<button class="btn-secondary btn-mini" data-cs="cs-go-home">🏠 My Shop</button>` : ((typeof isAdmin === 'function' && isAdmin()) || _csOwnsLicense()) ? `<button class="btn-secondary btn-mini" data-cs="cs-shop-build">🏗️ Build</button><button class="btn-secondary btn-mini" data-cs="cs-shop-edit">🛠 Edit</button>` : ''}
+            <button class="btn-secondary btn-mini" data-cs="cs-visit-shops">🏪 Shops</button>
             <button class="btn-secondary btn-mini" data-cs="cs-3d-toggle">☰ Menu</button>
             <button class="btn-secondary btn-mini" data-cs="cs-back">← Exit</button>
           </div>
@@ -105881,18 +105911,22 @@ function renderCardShop() {
   // Boot the WebGL store after the mount exists. render() rebuilds the screen, so
   // dispose any prior scene first; re-open the active station panel over it.
   if (is3D) {
-    setTimeout(() => {
+    // 3D is the default, so Three.js may not be loaded yet on first entry — pull
+    // it from the CDN, then mount. If it can't load (offline), drop to 2D.
+    const boot = () => {
       try {
         if (App.screen !== 'cardShop' || !App._cs3D) return;
         const mount = document.getElementById('cs-3d-mount'); if (!mount) return;
         if (_cs3DDispose) { try { _cs3DDispose(); } catch (e) {} _cs3DDispose = null; }
         _cs3DDispose = _csMount3D(mount);
         if (App._csPanel) _csOpenPanel(App._csPanel);
-        // First entry: pull the data-driven layout, then re-mount if it's customized.
-        if (_csShopObjects === null && typeof _csShopFetchObjects === 'function') {
-          _csShopFetchObjects().then((rows) => {
-            if (!rows || !rows.length) return;
+        // Pull the active shop's layout (own or visited), then re-mount with it.
+        // Re-fetches whenever the cache isn't already for the shop being walked.
+        const sid = _csActiveShopId();
+        if (_csShopObjectsShopId !== sid && typeof _csShopFetchObjects === 'function') {
+          _csShopFetchObjects(sid).then((rows) => {
             if (App.screen !== 'cardShop' || !App._cs3D) return;
+            if (_csActiveShopId() !== sid) return;  // user moved to another shop meanwhile
             const m2 = document.getElementById('cs-3d-mount'); if (!m2) return;
             if (_cs3DDispose) { try { _cs3DDispose(); } catch (e) {} _cs3DDispose = null; }
             _cs3DDispose = _csMount3D(m2);
@@ -105900,6 +105934,13 @@ function renderCardShop() {
           }).catch(() => {});
         }
       } catch (e) {}
+    };
+    setTimeout(() => {
+      if (window.THREE) { boot(); return; }
+      _csLoadThree((ok) => {
+        if (ok && window.THREE) { boot(); }
+        else { App._cs3D = false; if (App.screen === 'cardShop') render(); }  // offline → 2D fallback
+      });
     }, 0);
   }
 }
@@ -105937,11 +105978,21 @@ function _csMyShopBody() {
   const m = CardShop.mine;
   if (!m) return `<div class="cs-empty">Loading your shop…</div>`;
   if (!m.shop) {
+    // 🃏 Ownership gate: a player can only open a storefront after founding the
+    // "Card Shop" business in Just Business → Operations (the license).
+    if (!_csOwnsLicense()) {
+      return `<div class="cs-empty" style="text-align:left;border-style:solid">
+        <div style="font-weight:800;color:#ffe9a8;margin-bottom:0.3rem">🃏 You don't own a Card Shop yet</div>
+        <div style="font-size:0.8rem;color:#cdb37a;margin-bottom:0.5rem">Card shops are a <b>business</b>. Acquire the <b>Card Shop</b> operation in <b>Just Business → Operations</b> (funded from your corp Treasury), then come back here to open and decorate your own storefront.</div>
+        <div style="font-size:0.74rem;color:#8a96a3;margin-bottom:0.8rem">Once licensed you get an empty shop you build out yourself — every player's shop looks different.</div>
+        <button class="btn-primary" data-cs="cs-goto-business" style="margin-top:0.2rem">💼 Go to Just Business → Operations</button>
+      </div>`;
+    }
     const theme = App._csTheme || 'bunker';
     const themeBtns = Object.entries(CARD_SHOP_THEMES).map(([id, th]) => `<button class="cs-tab ${theme === id ? 'is-active' : ''}" data-cs="cs-theme" data-theme="${id}" style="flex:0 0 auto;padding:0.4rem 0.7rem">${escapeHtml(th.name)}</button>`).join('');
     return `<div class="cs-empty" style="text-align:left;border-style:solid">
-      <div style="font-weight:800;color:#ffe9a8;margin-bottom:0.3rem">🔨 Open your shop</div>
-      <div style="font-size:0.76rem;color:#8a96a3;margin-bottom:0.7rem">Your shop is listed publicly so other players can visit and buy. Cards you list are held from your collection until they sell or you unlist them.</div>
+      <div style="font-weight:800;color:#ffe9a8;margin-bottom:0.3rem">🔨 Open your card shop</div>
+      <div style="font-size:0.76rem;color:#8a96a3;margin-bottom:0.7rem">✅ Card Shop licensed. Your shop is listed publicly so other players can walk in and buy. Cards you list are held from your collection until they sell or you unlist them. Your shop starts empty — decorate it from inside with <b>🏗️ Build</b>.</div>
       <div style="display:grid;gap:0.5rem">
         <input class="cs-input" id="cs-f-name" maxlength="28" placeholder="Shop name (e.g. ${escapeHtml(_csMyName())}'s Outpost)" value="${escapeHtml(_csMyName())}'s Outpost">
         <input class="cs-input" id="cs-f-tag" maxlength="80" placeholder="Tagline — e.g. Cards salvaged from the ruins.">
@@ -106010,14 +106061,24 @@ const CS_NPC_MODEL  = { url: '/models/shopkeeper.glb', x: 0, z: -7.8, ry: 0, sca
 // player, no redeploy. _csShopObjects caches the fetched rows. Everything is
 // fail-open: if the cloud is offline or a row is malformed, the default shop shows.
 // ════════════════════════════════════════════════════════════════════════════
-const CS_SHOP_ID = 'global';
+const CS_SHOP_ID = 'global';                 // fallback shop id (signed-out / no account)
 const CS_MODELS_BUCKET = 'models';
-let _csShopObjects = null;   // cached shop_objects rows (null = not fetched)
+// 🏬 PER-PLAYER SHOPS — every player's shop is its OWN layout, keyed by their
+// account id. Your own shop = _csMyShopId(); walking another player's shop uses
+// App._csShopOwner. _csActiveShopId() is whichever shop is currently being walked.
+function _csMyShopId() { try { return (typeof _csUid === 'function' && _csUid()) || CS_SHOP_ID; } catch (e) { return CS_SHOP_ID; } }
+function _csActiveShopId() { try { return (App && App._csShopOwner) || _csMyShopId(); } catch (e) { return _csMyShopId(); } }
+let _csShopObjects = null;        // cached shop_objects rows for _csShopObjectsShopId
+let _csShopObjectsShopId = null;  // which shop the cache currently belongs to
+// 🛎️ The ONE always-present working counter. Visitors browse + buy the owner's
+// listed cards here (binder 2D opens from it); the owner manages their shop here.
+// Everything else in the room is player-placed decor — a new shop starts empty.
+const CS_COUNTER_STATION = { view: 'counter', label: 'THE COUNTER', kind: 'counter', color: 0xd4af37, x: 0, z: -6, ry: 0, scale: 1, blockR: 2.3, interactR: 3.2 };
 function _csDefaultConfig() {
   return {
-    room: CS_ROOM_MODEL,
-    npc: { url: CS_NPC_MODEL.url, x: CS_NPC_MODEL.x, y: 0, z: CS_NPC_MODEL.z, ry: CS_NPC_MODEL.ry, scale: CS_NPC_MODEL.scale, label: 'THE VENDOR' },
-    stations: CS_STATIONS.map(s => ({ view: s.view, label: s.label, model: s.model, color: s.color, kind: s.kind, x: s.x, z: s.z, ry: s.ry, scale: s.scale, blockR: s.r, interactR: 3.0 })),
+    room: '',          // empty procedural room (floor / walls / ceiling) — no dressing
+    npc: null,         // no default vendor — the owner decorates the shop themselves
+    stations: [Object.assign({}, CS_COUNTER_STATION)],
     props: [],
   };
 }
@@ -106025,14 +106086,16 @@ function _csDefaultConfig() {
 // keep the built-in default so the shop is never empty.
 function _csBuildConfig() {
   const def = _csDefaultConfig();
-  const rows = Array.isArray(_csShopObjects) ? _csShopObjects : null;
+  // Only use the cache if it belongs to the shop we're actually rendering (so
+  // one player's props never bleed into another player's shop).
+  const rows = (_csShopObjectsShopId === _csActiveShopId() && Array.isArray(_csShopObjects)) ? _csShopObjects : null;
   if (!rows || !rows.length) return def;
   const byKind = k => rows.filter(r => r && r.kind === k).sort((a, b) => (a.sort | 0) - (b.sort | 0));
   const num = (v, d) => { const n = parseFloat(v); return isFinite(n) ? n : d; };
   // Animation block (clip/timeScale/loop/route) lives in the jsonb `anim` column.
   const animOf = r => { let a = r && r.anim; if (typeof a === 'string') { try { a = JSON.parse(a); } catch (e) { a = null; } } return (a && typeof a === 'object') ? a : {}; };
   const withAnim = (obj, r) => { const a = animOf(r); if (a.clip != null) obj.clip = a.clip; if (a.timeScale != null) obj.timeScale = a.timeScale; if (a.loop != null) obj.loop = a.loop; if (a.route) obj.route = a.route; return obj; };
-  const vd = {}; CS_STATIONS.forEach(s => { vd[s.view] = s; });
+  const vd = {}; [CS_COUNTER_STATION].concat(CS_STATIONS).forEach(s => { vd[s.view] = s; });
   const roomRow = byKind('room')[0], npcRow = byKind('npc')[0];
   const stRows = byKind('station'), propRows = byKind('prop');
   return {
@@ -106067,18 +106130,20 @@ function _csBuildConfig() {
     props: propRows.map(r => withAnim({ url: r.model_url || '', x: num(r.x, 0), y: num(r.y, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: num(r.scale, 1) }, r)),
   };
 }
-async function _csShopFetchObjects() {
+async function _csShopFetchObjects(shopId) {
   try {
+    shopId = shopId || _csActiveShopId();
     if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) return null;
-    const { data, error } = await Cloud.client.from('shop_objects').select('*').eq('shop_id', CS_SHOP_ID).order('sort', { ascending: true });
+    const { data, error } = await Cloud.client.from('shop_objects').select('*').eq('shop_id', shopId).order('sort', { ascending: true });
     if (error) { console.warn('[shop_objects fetch]', error.message || error); return null; }
     _csShopObjects = Array.isArray(data) ? data : [];
+    _csShopObjectsShopId = shopId;
     return _csShopObjects;
   } catch (e) { console.warn('[shop_objects fetch]', e); return null; }
 }
 async function _csShopSaveObject(row) {
   if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline — sign in to edit the shop.');
-  const payload = Object.assign({ shop_id: CS_SHOP_ID, updated_at: new Date().toISOString() }, row);
+  const payload = Object.assign({ shop_id: _csMyShopId(), updated_at: new Date().toISOString() }, row);
   const { data, error } = await Cloud.client.from('shop_objects').upsert(payload).select().single();
   if (error) throw error;
   return data;
@@ -106092,7 +106157,7 @@ async function _csShopUploadModel(file) {
   if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline.');
   try { await Cloud.client.storage.createBucket(CS_MODELS_BUCKET, { public: true }); } catch (e) {}
   const safe = String(file.name || 'model.glb').replace(/[^a-zA-Z0-9._-]/g, '_');
-  const path = CS_SHOP_ID + '/' + Date.now().toString(36) + '_' + safe;
+  const path = _csMyShopId() + '/' + Date.now().toString(36) + '_' + safe;
   const { error } = await Cloud.client.storage.from(CS_MODELS_BUCKET).upload(path, file, { upsert: true, contentType: 'model/gltf-binary' });
   if (error) throw error;
   const { data } = Cloud.client.storage.from(CS_MODELS_BUCKET).getPublicUrl(path);
@@ -106223,9 +106288,11 @@ function _csMount3D(mount) {
       // Upgrade to a real .glb when present (label + glow stay; only the geometry swaps).
       _csTryModel(d.model, (m, gltf) => { try { g.remove(geo); m.rotation.y = d.ry || 0; if (d.scale) m.scale.setScalar(d.scale); g.add(m); _csAnimate(m, d, gltf, g); } catch (e) {} });
     }
-    const npc = new T.Group();
+    let npc = null;
+    if (cfg.npc) {
+    npc = new T.Group();
     const npcGeo = new T.Group();
-    { const cloak = box(0.74, 1.25, 0.5, 0x1a1712, 0xd4af37, 0.06); cloak.position.y = 1.0; npcGeo.add(cloak); const head = new T.Mesh(new T.SphereGeometry(0.25, 16, 16), new T.MeshStandardMaterial({ color: 0x2a2520, roughness: 1 })); head.position.y = 1.86; npcGeo.add(head); const visor = box(0.3, 0.06, 0.06, 0x000000, 0xffcf66, 1.3); visor.position.set(0, 1.85, 0.23); npcGeo.add(visor); npc.add(npcGeo); const _nm = cfg.npc || {}; const lab = label(_nm.label || 'THE VENDOR', '#d4af37'); lab.scale.set(2.0, 0.5, 1); lab.position.set(0, 2.55, 0); npc.add(lab); npc.position.set(_nm.x != null ? _nm.x : 0, _nm.y || 0, _nm.z != null ? _nm.z : -7.8); npc.rotation.y = _nm.ry || 0; scene.add(npc); _csTryModel(_nm.url, (m, gltf) => { try { npc.remove(npcGeo); if (_nm.scale) m.scale.setScalar(_nm.scale); npc.add(m); _csAnimate(m, _nm, gltf, npc); } catch (e) {} }); }
+    const cloak = box(0.74, 1.25, 0.5, 0x1a1712, 0xd4af37, 0.06); cloak.position.y = 1.0; npcGeo.add(cloak); const head = new T.Mesh(new T.SphereGeometry(0.25, 16, 16), new T.MeshStandardMaterial({ color: 0x2a2520, roughness: 1 })); head.position.y = 1.86; npcGeo.add(head); const visor = box(0.3, 0.06, 0.06, 0x000000, 0xffcf66, 1.3); visor.position.set(0, 1.85, 0.23); npcGeo.add(visor); npc.add(npcGeo); const _nm = cfg.npc || {}; const lab = label(_nm.label || 'THE VENDOR', '#d4af37'); lab.scale.set(2.0, 0.5, 1); lab.position.set(0, 2.55, 0); npc.add(lab); npc.position.set(_nm.x != null ? _nm.x : 0, _nm.y || 0, _nm.z != null ? _nm.z : -7.8); npc.rotation.y = _nm.ry || 0; scene.add(npc); _csTryModel(_nm.url, (m, gltf) => { try { npc.remove(npcGeo); if (_nm.scale) m.scale.setScalar(_nm.scale); npc.add(m); _csAnimate(m, _nm, gltf, npc); } catch (e) {} }); }
     const npcHasRoute = !!(cfg.npc && cfg.npc.route && Array.isArray(cfg.npc.route.points) && cfg.npc.route.points.length > 1);
     // Decorative props — pure .glb models, no collision/interaction (room dressing).
     for (const p of (cfg.props || [])) {
@@ -106286,10 +106353,45 @@ function _csMount3D(mount) {
   } catch (e) { return null; }
 }
 // ── station panel overlay (over the 3D canvas; doesn't tear down the scene) ──
-function _csPanelTitle(v) { return ({ myshop: 'MY SHOP', binder: 'BINDER · YOUR SINGLES', open: 'OPEN PACKS', browse: 'PLAYER SHOPS' })[v] || ''; }
-function _csPanelBody(v) { if (v === 'myshop') return _csMyShopBody(); if (v === 'binder') return _csBinderBody(); if (v === 'open') return _csOpenPacksBody(); if (v === 'browse') { App._csViewOwner = App._csViewOwner || null; return _csBrowseBody(); } return ''; }
+// True when walking ANOTHER player's shop (not your own).
+function _csCounterIsVisiting() { try { return !!(App._csShopOwner && App._csShopOwner !== _csMyShopId()); } catch (e) { return false; } }
+function _csPanelTitle(v) {
+  if (v === 'counter') return _csCounterIsVisiting() ? 'THE COUNTER · BUY CARDS' : 'YOUR COUNTER · MANAGE SHOP';
+  return ({ myshop: 'MY SHOP', binder: 'BINDER · YOUR SINGLES', open: 'OPEN PACKS', browse: 'PLAYER SHOPS' })[v] || '';
+}
+function _csPanelBody(v) {
+  // The single counter: visitors buy the owner's cards; the owner manages their shop.
+  if (v === 'counter') return _csCounterIsVisiting() ? _csBrowseBody() : _csMyShopBody();
+  if (v === 'myshop') return _csMyShopBody();
+  if (v === 'binder') return _csBinderBody();
+  if (v === 'open') return _csOpenPacksBody();
+  if (v === 'browse') { App._csViewOwner = App._csViewOwner || null; return _csBrowseBody(); }
+  return '';
+}
+// Walk into a shop's 3D layout: owner=null → your own shop; owner=id → visit theirs.
+// Re-mounts the WebGL scene for that shop, then pulls its saved layout and re-mounts.
+function _csEnterShop3D(owner) {
+  App._csShopOwner = owner || null;
+  App._csViewOwner = owner || null;
+  App._csPanel = null;
+  _csClosePanel();
+  const remount = () => { if (_cs3DDispose) { try { _cs3DDispose(); } catch (e) {} _cs3DDispose = null; } const m = document.getElementById('cs-3d-mount'); if (m) _cs3DDispose = _csMount3D(m); };
+  if (!document.getElementById('cs-3d-mount')) { render(); return; }
+  remount();
+  const sid = _csActiveShopId();
+  if (_csShopObjectsShopId !== sid && typeof _csShopFetchObjects === 'function') {
+    _csShopFetchObjects(sid).catch(() => {}).then(() => { if (App.screen === 'cardShop' && App._cs3D && _csActiveShopId() === sid) remount(); });
+  }
+}
 function _csEnterStation(view) {
   if (view === 'vendor') { App.vendorMarketTab = 'packs'; App.screen = 'vendorMarket'; render(); return; }
+  if (view === 'counter' && _csCounterIsVisiting()) {
+    // Visiting another player's shop: point the browse body at THEIR storefront,
+    // load its listings if needed, then refresh the panel when they arrive.
+    App._csViewOwner = App._csShopOwner;
+    const c = CardShop.shopOf[App._csViewOwner];
+    if (!c && typeof cardShopFetchShop === 'function') { Promise.resolve(cardShopFetchShop(App._csViewOwner)).catch(() => {}).then(() => _csRefreshPanel()); }
+  }
   _csOpenPanel(view);
 }
 function _csOpenPanel(view) {
@@ -106369,7 +106471,8 @@ function _csShopEditListHtml() {
     : `<div class="cse-empty">No custom objects yet — the shop shows the built-in defaults. Add one below.</div>`;
 }
 function _csShopEditOpen() {
-  if (typeof isAdmin !== 'function' || !isAdmin()) { showToast('Admins only.', 2000); return; }
+  if (_csCounterIsVisiting()) { showToast('You can only edit your OWN shop.', 2600); return; }
+  if (!((typeof isAdmin === 'function' && isAdmin()) || _csOwnsLicense())) { showToast('Acquire a Card Shop business first.', 2600); return; }
   if (document.getElementById('cs-edit-backdrop')) return;
   _ensureCsEditStyle();
   // Ensure we have the latest rows to edit (fail-open if cloud is offline).
@@ -106378,7 +106481,7 @@ function _csShopEditOpen() {
     el.innerHTML = `<div id="cs-edit-backdrop" class="cse-backdrop">
       <div class="cse-modal" role="dialog" aria-label="Shop Editor">
         <div class="cse-top">
-          <div class="cse-title">🛠 Shop Editor <span class="cse-sub">data-driven · shop "${escapeHtml(CS_SHOP_ID)}"</span></div>
+          <div class="cse-title">🛠 Shop Editor <span class="cse-sub">your card shop · per-player layout</span></div>
           <button class="btn-mini" data-cse="close">✕</button>
         </div>
         <div class="cse-help">Objects override the built-in shop. Kinds: <b>station</b> (interactive — set a <i>view</i>: myshop / binder / open / browse / vendor), <b>prop</b> (decor), <b>npc</b> (vendor), <b>room</b> (shell). Blank model URL = default geometry. Upload a .glb or paste a public URL, then <b>Save</b> the row and <b>Apply &amp; Reload</b>. <b>Animation</b>: baked .glb clips play automatically; the <i>anim</i> box can set <code>clip</code>/<code>timeScale</code>/<code>loop</code> and a walking <code>route</code> (waypoints) for a patrolling NPC.</div>
@@ -106393,8 +106496,8 @@ function _csShopEditOpen() {
     (document.querySelector('.cs-3d-fullscreen') || document.body).appendChild(node);
     _csWireShopEdit(node);
   };
-  if (_csShopObjects === null && typeof _csShopFetchObjects === 'function') {
-    _csShopFetchObjects().catch(() => {}).then(build);
+  if (_csShopObjectsShopId !== _csMyShopId() && typeof _csShopFetchObjects === 'function') {
+    _csShopFetchObjects(_csMyShopId()).catch(() => {}).then(build);
   } else build();
 }
 function _csReadEditRow(rowEl) {
@@ -106463,8 +106566,8 @@ function _csWireShopEdit(el) {
     if (reloadBtn) {
       reloadBtn.disabled = true; const orig = reloadBtn.textContent; reloadBtn.textContent = '…';
       try {
-        _csShopObjects = null;
-        await _csShopFetchObjects();
+        _csShopObjects = null; _csShopObjectsShopId = null;
+        await _csShopFetchObjects(_csMyShopId());
         const mount = document.getElementById('cs-3d-mount');
         if (mount) { if (_cs3DDispose) { try { _cs3DDispose(); } catch (er) {} _cs3DDispose = null; } _cs3DDispose = _csMount3D(mount); if (App._csPanel) _csOpenPanel(App._csPanel); }
         const list = el.querySelector('.cse-list'); if (list) list.innerHTML = _csShopEditListHtml();
@@ -106564,7 +106667,8 @@ function _csBuildOverlayHtml() {
   </div>`;
 }
 function _csOpenLayoutBuilder() {
-  if (typeof isAdmin !== 'function' || !isAdmin()) { showToast('Admins only.', 2000); return; }
+  if (_csCounterIsVisiting()) { showToast('You can only build your OWN shop.', 2600); return; }
+  if (!((typeof isAdmin === 'function' && isAdmin()) || _csOwnsLicense())) { showToast('Acquire a Card Shop business first.', 2600); return; }
   if (document.getElementById('cs-build-backdrop')) return;
   _csLoadThree((ok) => {
     if (!ok || !window.THREE) { showToast('⚠ 3D failed to load — check your connection.', 4200); return; }
@@ -106675,7 +106779,7 @@ function _csMountLayoutBuilder(root) {
   async function loadExisting() {
     try {
       if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) { setStatus('Cloud offline — placing locally.', false); return; }
-      const { data, error } = await Cloud.client.from('shop_objects').select('*').eq('shop_id', CS_SHOP_ID).eq('kind', 'prop');
+      const { data, error } = await Cloud.client.from('shop_objects').select('*').eq('shop_id', _csMyShopId()).eq('kind', 'prop');
       if (error) { setStatus(error.message, false); return; }
       B.placed = (data || []).map(r => ({ id: r.id, catId: (_csCatMap[r.label] ? r.label : 'shelf'), name: (_csCatMap[r.label] || {}).name || 'Item', url: r.model_url || (_csCatMap[r.label] || {}).url || '', x: +r.x || 0, z: +r.z || 0, rotationY: +r.rotation_y || 0, scale: +r.scale || 1 }));
       B.deleted = []; syncScene(); paint(); setStatus(`Loaded ${B.placed.length} item${B.placed.length === 1 ? '' : 's'}.`, true);
@@ -106687,11 +106791,11 @@ function _csMountLayoutBuilder(root) {
     try {
       if (B.deleted.length) { const { error } = await Cloud.client.from('shop_objects').delete().in('id', B.deleted); if (error) throw error; }
       if (B.placed.length) {
-        const rows = B.placed.map((it, i) => ({ id: it.id, shop_id: CS_SHOP_ID, kind: 'prop', label: it.catId, model_url: it.url || '', x: it.x, y: 0, z: it.z, rotation_y: it.rotationY || 0, scale: it.scale || 1, sort: i, updated_at: new Date().toISOString() }));
+        const rows = B.placed.map((it, i) => ({ id: it.id, shop_id: _csMyShopId(), kind: 'prop', label: it.catId, model_url: it.url || '', x: it.x, y: 0, z: it.z, rotation_y: it.rotationY || 0, scale: it.scale || 1, sort: i, updated_at: new Date().toISOString() }));
         const { error } = await Cloud.client.from('shop_objects').upsert(rows); if (error) throw error;
       }
       B.deleted = [];
-      _csShopObjects = null;  // force the walkable shop to re-fetch the new layout on next mount
+      _csShopObjects = null; _csShopObjectsShopId = null;  // force the walkable shop to re-fetch the new layout on next mount
       setStatus('Layout saved ✓', true);
     } catch (e) { setStatus('Save failed: ' + ((e && e.message) || e), false); }
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }

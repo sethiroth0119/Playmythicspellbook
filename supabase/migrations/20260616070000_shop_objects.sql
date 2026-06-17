@@ -40,14 +40,21 @@ drop policy if exists shop_objects_read on public.shop_objects;
 create policy shop_objects_read on public.shop_objects
   for select using (true);
 
--- Only admins can WRITE. Admin is encoded in the JWT app_metadata.role claim
--- (set per the project's admin convention). Adjust the claim path if your
--- project marks admins differently.
+-- WRITE: a player can edit ONLY their OWN shop (shop_id = their account id), and
+-- admins can edit any shop (incl. the shared 'global' template). Each player's
+-- card shop is keyed by their auth.uid(), so they build/decorate just their own.
 drop policy if exists shop_objects_admin_write on public.shop_objects;
-create policy shop_objects_admin_write on public.shop_objects
+drop policy if exists shop_objects_owner_write on public.shop_objects;
+create policy shop_objects_owner_write on public.shop_objects
   for all
-  using (coalesce(auth.jwt() -> 'app_metadata' ->> 'role', auth.jwt() ->> 'role') = 'admin')
-  with check (coalesce(auth.jwt() -> 'app_metadata' ->> 'role', auth.jwt() ->> 'role') = 'admin');
+  using (
+    shop_id = auth.uid()::text
+    or coalesce(auth.jwt() -> 'app_metadata' ->> 'role', auth.jwt() ->> 'role') = 'admin'
+  )
+  with check (
+    shop_id = auth.uid()::text
+    or coalesce(auth.jwt() -> 'app_metadata' ->> 'role', auth.jwt() ->> 'role') = 'admin'
+  );
 
 -- ----------------------------------------------------------------------------
 -- 🪣 Storage bucket for the .glb models. Run once (safe to re-run). Public so
@@ -63,9 +70,22 @@ drop policy if exists models_public_read on storage.objects;
 create policy models_public_read on storage.objects
   for select using (bucket_id = 'models');
 
--- Admin-only write/update/delete in the models bucket.
+-- Write/update/delete in the models bucket: a player may write only into their
+-- OWN folder ({uid}/…, which is how the client uploads shop models), and admins
+-- anywhere. Models are public-read so every visitor's shop can load them.
 drop policy if exists models_admin_write on storage.objects;
-create policy models_admin_write on storage.objects
+drop policy if exists models_owner_write on storage.objects;
+create policy models_owner_write on storage.objects
   for all
-  using (bucket_id = 'models' and coalesce(auth.jwt() -> 'app_metadata' ->> 'role', auth.jwt() ->> 'role') = 'admin')
-  with check (bucket_id = 'models' and coalesce(auth.jwt() -> 'app_metadata' ->> 'role', auth.jwt() ->> 'role') = 'admin');
+  using (
+    bucket_id = 'models' and (
+      (storage.foldername(name))[1] = auth.uid()::text
+      or coalesce(auth.jwt() -> 'app_metadata' ->> 'role', auth.jwt() ->> 'role') = 'admin'
+    )
+  )
+  with check (
+    bucket_id = 'models' and (
+      (storage.foldername(name))[1] = auth.uid()::text
+      or coalesce(auth.jwt() -> 'app_metadata' ->> 'role', auth.jwt() ->> 'role') = 'admin'
+    )
+  );

@@ -975,8 +975,9 @@ const OPERATIONS = [
   { id: 'gas',          name: 'Gas Station Chain',   cat: 'Energy',    icon: '⛽', focus: 'Fuel retail & distribution', produces: ['Fuel', 'Convenience'],                startup: '350,000 Cinder · 3k Fuel',                           maint: 'Fuel 160/d · Supplies 140/d',  risk: 'Low' },
   { id: 'cars',         name: 'Car Dealership',      cat: 'Logistics', icon: '🚗', focus: 'Vehicles & spare parts',     produces: ['Parts', 'Vehicles'],                  startup: '450,000 Cinder · 4k Metal',                          maint: 'Metal 200/d · Fuel 120/d',     risk: 'Low' },
   { id: 'fishing',      name: 'Fishing Company',     cat: 'Medical',   icon: '🎣', focus: 'Seafood & provisions',       produces: ['Fish', 'Food'],                       startup: '300,000 Cinder · 2k Supplies',                       maint: 'Fuel 140/d · Water 180/d',     risk: 'Low' },
+  { id: 'cardshop',     name: 'Card Shop',           cat: 'Retail',    icon: '🃏', focus: 'Open your own card storefront', produces: ['Storefront', 'Card sales'],          startup: '200,000 Cinder',                                     maint: 'Upkeep 80/d',                  risk: 'Low' },
 ];
-const OP_CATS = ['All', 'Industry', 'Energy', 'Medical', 'Research', 'Logistics', 'Illicit'];
+const OP_CATS = ['All', 'Industry', 'Energy', 'Medical', 'Research', 'Logistics', 'Retail', 'Illicit'];
 
 function OperationsScreen({ econ }) {
   const [q, setQ] = useState('');

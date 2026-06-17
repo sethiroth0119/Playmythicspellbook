@@ -29988,38 +29988,32 @@ const RESOURCES = [
 const CONSUMABLE_RESOURCES = {
   food: {
     label: 'Eat',
-    blurb: '+25 Fed (satiation). Also −10 fatigue across the squad.',
+    blurb: '−10 fatigue across the squad.',
     apply: () => {
-      if (typeof _ensureSatiation === 'function') _ensureSatiation();
-      Profile.hunger = Math.min(100, (Profile.hunger || 0) + 25);
       const he = Profile.heroEnergy || {};
       Object.keys(he).forEach(id => {
         if (!he[id]) return;
         he[id].fatigue = Math.max(0, (he[id].fatigue || 0) - 10);
       });
-      try { showToast('🥫 Ate a meal — Fed +25.', 2200); } catch (e) {}
+      try { showToast('🥫 Ate a meal — the squad rests easier (−10 fatigue).', 2200); } catch (e) {}
     },
   },
   water: {
     label: 'Drink',
-    blurb: '+30 Hydrated. Also −10 stress across the squad.',
+    blurb: '−10 stress across the squad.',
     apply: () => {
-      if (typeof _ensureSatiation === 'function') _ensureSatiation();
-      Profile.thirst = Math.min(100, (Profile.thirst || 0) + 30);
       const he = Profile.heroEnergy || {};
       Object.keys(he).forEach(id => {
         if (!he[id]) return;
         he[id].stress = Math.max(0, (he[id].stress || 0) - 10);
       });
-      try { showToast('💧 Drank water — Hydrated +30.', 2000); } catch (e) {}
+      try { showToast('💧 Drank water — the squad steadies (−10 stress).', 2000); } catch (e) {}
     },
   },
   energyDrink: {
     label: 'Chug',
-    blurb: '+30 Energy across all heroes. Also +10 Hydrated.',
+    blurb: '+30 Energy across all heroes.',
     apply: () => {
-      if (typeof _ensureSatiation === 'function') _ensureSatiation();
-      Profile.thirst = Math.min(100, (Profile.thirst || 0) + 10);
       const he = Profile.heroEnergy || {};
       Object.keys(he).forEach(id => {
         if (!he[id]) return;
@@ -30040,31 +30034,10 @@ const CONSUMABLE_RESOURCES = {
   },
 };
 
-// ⏱ Satiation decay — drains Hunger + Thirst over real time. Catches up to
-// the elapsed wall-clock interval (so offline players don't get punished
-// disproportionately; the cap absorbs a long break). Runs once per render +
-// once every 5 minutes via setInterval.
-function _tickSatiation() {
-  try {
-    _ensureSatiation();
-    const last = Profile._satiationLastTick || 0;
-    const now = Date.now();
-    if (!last) { Profile._satiationLastTick = now; return; }
-    const elapsedMin = (now - last) / 60000;
-    if (elapsedMin < 1) return;
-    // Cap at 8 hours offline so AFK doesn't bottom you out instantly.
-    const drainMin = Math.min(elapsedMin, 8 * 60);
-    // -2 per 5 min for hunger, -2 per 4 min for thirst (water drains faster).
-    const dh = drainMin * (2 / 5);
-    const dt = drainMin * (2 / 4);
-    Profile.hunger = Math.max(0, Profile.hunger - dh);
-    Profile.thirst = Math.max(0, Profile.thirst - dt);
-    Profile._satiationLastTick = now;
-  } catch (e) {}
-}
-if (typeof window !== 'undefined' && !window._satiationInterval) {
-  window._satiationInterval = setInterval(_tickSatiation, 5 * 60 * 1000);  // every 5 min
-}
+// ⏱ Satiation decay — REMOVED. The hunger/thirst/energy survival system (and
+// its moodle HUD) was retired with the walk-around camp mode. This is now a
+// no-op stub so any lingering caller is harmless; no ticker is registered.
+function _tickSatiation() { /* survival needs removed — no-op */ }
 const RESOURCE_IDS = RESOURCES.map(r => r.id);
 // Resources ARE the salvage ledger. _ensureResources aliases Profile.salvage
 // and one-time-folds any legacy Profile.resources into it so no progress is
@@ -35495,10 +35468,6 @@ async function cloudSyncProfile() {
       // with the account so admin-side trait edits don't retroactively change
       // an existing player's character creation.
       __campTraits__:        Array.isArray(Profile.campTraits) ? Profile.campTraits : [],
-      // 🍞 / 💧 Survival satiation bars — independent of inventory counts.
-      __hunger__:            (typeof Profile.hunger === 'number') ? Profile.hunger : 80,
-      __thirst__:            (typeof Profile.thirst === 'number') ? Profile.thirst : 80,
-      __satiationLastTick__: (typeof Profile._satiationLastTick === 'number') ? Profile._satiationLastTick : 0,
       // 🕒 Container loot cooldowns (per-player). Both maps cloud-sync so a
       // player who looted on phone can't refresh on desktop and re-loot.
       __containerCooldowns__:      (Profile.containerCooldowns      && typeof Profile.containerCooldowns      === 'object') ? Profile.containerCooldowns      : {},
@@ -36405,10 +36374,6 @@ async function cloudFetchProfile() {
       if (f.__campRoute__ && typeof f.__campRoute__ === 'object') Profile.campRoute = f.__campRoute__;
       if (f.__recon__ && typeof f.__recon__ === 'object') Profile.recon = f.__recon__;
       if (Array.isArray(f.__campTraits__))         Profile.campTraits     = f.__campTraits__.slice();
-      // 🍞 / 💧 Satiation bars (separate from inventory counts).
-      if (typeof f.__hunger__ === 'number') Profile.hunger = Math.max(0, Math.min(100, f.__hunger__));
-      if (typeof f.__thirst__ === 'number') Profile.thirst = Math.max(0, Math.min(100, f.__thirst__));
-      if (typeof f.__satiationLastTick__ === 'number') Profile._satiationLastTick = f.__satiationLastTick__;
       // 🕒 Container cooldown maps — MERGE the higher (later) expiry per id so
       // a stale cloud copy never resets a fresh local cooldown back to 0.
       if (f.__containerCooldowns__ && typeof f.__containerCooldowns__ === 'object') {
@@ -51321,11 +51286,6 @@ function loadForge() {
       // survives later admin edits to the survivor template.
       if (typeof p.campSurvivorId === 'string') Profile.campSurvivorId = p.campSurvivorId;
       if (Array.isArray(p.campTraits)) Profile.campTraits = p.campTraits.filter(x => typeof x === 'string');
-      // 🍞 / 💧 Satiation bars — same whitelist-fix as above. Without these
-      // every refresh reset hunger / thirst to defaults, so a hungry player
-      // who logged out and came back found themselves magically full.
-      if (typeof p.hunger === 'number') Profile.hunger = Math.max(0, Math.min(100, p.hunger));
-      if (typeof p.thirst === 'number') Profile.thirst = Math.max(0, Math.min(100, p.thirst));
       // 🏘 Owned houses — every house the player has bought (with stash +
       // interior decoration). Same whitelist gap: every refresh wiped them
       // until cloud-sync arrived seconds later (and meanwhile the player
@@ -70437,10 +70397,9 @@ function _renderImpl() {
   // when offline-mode is active; pip only shows when signed-in.
   try { if (typeof mountOfflineBanner === 'function') mountOfflineBanner(); } catch (e) {}
   try { if (typeof mountCloudStatusPip === 'function') mountCloudStatusPip(); } catch (e) {}
-  // 🩸 Survival-Pass moodles HUD — top-right status pips, same idempotent
-  // body-mount pattern as the chat FAB. Decay-tick fires first so the pips
-  // reflect drained satiation if the player has been afk.
-  try { if (typeof _tickSatiation === 'function') _tickSatiation(); } catch (e) {}
+  // 🩸 Survival needs HUD (hunger/thirst/energy moodles) RETIRED with the
+  // walk-around camp mode. Still call mountMoodleHud once so it tears down any
+  // stale #moodle-hud node left over from a cached build, then it no-ops.
   try { if (typeof mountMoodleHud === 'function') mountMoodleHud(); } catch (e) {}
   // 🎒 Camp inventory FAB — only mounts on campView (any zone).
   try { if (typeof mountCampInventoryButton === 'function') mountCampInventoryButton(); } catch (e) {}
@@ -114160,21 +114119,10 @@ function _campOpenHouseDecorator(houseId, opts) {
       try { _campOpenHouseStash(houseId); } catch (e) { showToast('📦 Stash unavailable.', 2000); }
       return;
     }
-    // 🔥 Fireplace → small warmth toast + minor energy refund (tied to
-    // satiation tick: refunds 5 hunger as if you ate a hot meal). Cooldown
-    // 5 min via App._fireplaceLastAt so it isn't spammable.
+    // 🔥 Fireplace → cozy flavor toast (the old satiation refund was retired
+    // with the hunger/thirst survival system).
     if (piece.type === 'fireplace') {
-      const last = App._fireplaceLastAt | 0;
-      const now = Date.now();
-      if (now - last < 5 * 60 * 1000) {
-        showToast('🔥 The fireplace is still warm. Come back in a bit.', 2400);
-      } else {
-        App._fireplaceLastAt = now;
-        Profile.hunger   = Math.max(0, Math.min(100, (Profile.hunger || 0) + 5));
-        Profile.thirst   = Math.max(0, Math.min(100, (Profile.thirst || 0) - 2));  // fire dries you out
-        try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); } catch (e) {}
-        showToast('🔥 The fire is cozy — +5 satiation, slightly thirsty.', 3200);
-      }
+      showToast('🔥 The fire crackles warm. A quiet moment by the hearth.', 3000);
       return;
     }
     // 📺 TV → flavor toast (random news headline)
@@ -121058,78 +121006,12 @@ function _moodleTier(value, kind) {
   }
   return 0;
 }
+// 🚫 RETIRED — the hunger/thirst/energy survival "moodle" HUD was removed along
+// with the walk-around camp mode. This stub only tears down any stale #moodle-hud
+// node left in the DOM by a cached build, then does nothing. The hero battle-
+// energy system (Profile.heroEnergy) is unaffected — only this overlay is gone.
 function mountMoodleHud() {
-  try {
-    if (typeof document === 'undefined') return;
-    const ex = document.getElementById('moodle-hud');
-    // 🛡 Hide on EVERY big-screen / battle-adjacent screen — the dark glass
-    // pip was sitting on top of AI units in the top-right corner of the
-    // board. Whitelisting the world hub screens instead of blacklisting is
-    // easier to reason about.
-    const showOn = ['camp', 'vendorMarket', 'justBusiness',
-                    'crashExchange', 'cinderShop', 'crafting', 'lab',
-                    'seasonPass', 'leaderboard', 'profile', 'rlcList',
-                    'woodsFishing', 'blackRiver', 'fuelCommand', 'princePortfolios'];
-    if (!Profile.cloud || !Profile.cloud.signedIn || showOn.indexOf(App.screen) < 0) {
-      if (ex) ex.remove();
-      return;
-    }
-    let host = ex;
-    if (!host) {
-      host = document.createElement('div');
-      host.id = 'moodle-hud';
-      // 📐 Position: TOP-LEFT — moved here per player feedback so the
-      // hunger/thirst/energy pips share the same screen real estate as the
-      // World Event banner (top edge). The HUD floats on the LEFT now so
-      // the World Event banner can keep its top-right slot without overlap.
-      // Pushed down 60px so it clears every screen-header back button.
-      host.style.cssText = [
-        'position:fixed','top:62px','left:14px','z-index:2147483250',
-        'display:flex','flex-wrap:wrap','gap:6px','align-items:center',
-        'max-width:260px','justify-content:flex-start',
-        'padding:0.35rem 0.55rem',
-        'background:rgba(10,8,18,0.62)',
-        'border:1px solid rgba(212,175,55,0.22)',
-        'border-radius:14px',
-        'box-shadow:0 4px 14px rgba(0,0,0,0.5)',
-        'backdrop-filter:blur(4px)',
-        'font-family:\'Inter\',sans-serif',
-        'pointer-events:auto',
-      ].join(';');
-      document.body.appendChild(host);
-    }
-    const s = _moodleSnapshot();
-    const PIPS = [
-      { key: 'energy',  icon: '⚡', label: 'Energy',  value: s.energy,  tier: _moodleTier(s.energy,  'energy'),  unit: '%' },
-      { key: 'fatigue', icon: '😴', label: 'Tired',   value: s.fatigue, tier: _moodleTier(s.fatigue, 'fatigue'), unit: '%' },
-      { key: 'stress',  icon: '😰', label: 'Stress',  value: s.stress,  tier: _moodleTier(s.stress,  'stress'),  unit: '%' },
-      { key: 'will',    icon: '🧠', label: 'Will',    value: s.will,    tier: _moodleTier(s.will,    'will'),    unit: '%' },
-      // 🍞 / 💧 — satiation bars now (high = good, low = critical). Eating
-      // food / drinking water raises these; they slowly drain over time.
-      { key: 'hunger',  icon: '🍞', label: 'Fed',     value: s.hunger,  tier: _moodleTier(s.hunger,  'hunger'),  unit: '%' },
-      { key: 'thirst',  icon: '💧', label: 'Hydrated',value: s.thirst,  tier: _moodleTier(s.thirst,  'thirst'),  unit: '%' },
-      { key: 'bleed',   icon: '🩸', label: 'Bleeding',value: s.bleed ? 'BLEEDING' : '', tier: s.bleed ? 3 : 0, unit: '' },
-    ];
-    const tierColor = ['transparent', '#ffd166', '#ff944d', '#e0556a'];
-    const tierGlow  = ['none',
-                       '0 0 0 1px rgba(255,209,102,0.5)',
-                       '0 0 0 1px rgba(255,148,77,0.65), 0 0 10px rgba(255,148,77,0.4)',
-                       '0 0 0 1px rgba(224,85,106,0.85), 0 0 14px rgba(224,85,106,0.65)'];
-    host.innerHTML = PIPS.filter(p => p.tier > 0 || p.key === 'energy').map(p => `
-      <div class="moodle-pip ${p.tier === 3 ? 'is-critical' : ''}"
-           title="${escapeHtml(p.label)}: ${escapeHtml(String(p.value))}${escapeHtml(p.unit)}"
-           style="display:flex;align-items:center;gap:4px;padding:2px 7px;
-                  background:rgba(0,0,0,0.45);
-                  border-radius:999px;
-                  box-shadow:${tierGlow[p.tier]};
-                  color:${p.tier > 0 ? tierColor[p.tier] : '#e8e0d0'};
-                  font-size:0.78rem;font-weight:600;
-                  line-height:1;">
-        <span style="font-size:0.95rem;line-height:1">${p.icon}</span>
-        <span>${typeof p.value === 'number' ? p.value : p.value}${p.unit && typeof p.value === 'number' ? p.unit : ''}</span>
-      </div>
-    `).join('');
-  } catch (e) {}
+  try { const ex = (typeof document !== 'undefined') && document.getElementById('moodle-hud'); if (ex) ex.remove(); } catch (e) {}
 }
 // Inject the once-only CSS (pulse on critical tier).
 (function _installMoodleCss() {
@@ -134480,6 +134362,7 @@ function _wf3XpForLevel(lvl) { return 40 + lvl * 20; }
 // ⛽ Fuel economy — a trip costs fuel to launch and gives a tank of casts.
 const WF3_TRIP_FUEL = 5;     // ⛽ spent from Profile.salvage.fuel to set sail
 const WF3_TRIP_CASTS = 14;   // casts per tank before you must refuel / return
+const WF3_MIN_BOAT_CONDITION = 15; // a hull below this is too battered to sail
 
 const WF3_POLES = [
   { id: 'driftwood',  name: 'Driftwood Rod',   emoji: '🎣', cost: 0,   reelRate: 38, tensionCap: 100, castMax: 22, luck: 0.00, desc: 'A salvaged starter rod. Gets the job done.' },
@@ -134571,6 +134454,16 @@ function _wf3SpendCinder(n) { n = Math.round(n); if (_wf3GetCinder() < n) return
 function _wf3AddCinder(n) { n = Math.round(n); if (typeof addCinders === 'function') addCinders(n); else Profile.gems = (Profile.gems | 0) + n; _wf3RenderHud(); }
 function _wf3AddFood(n) { if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {}; Profile.salvage.food = (Profile.salvage.food | 0) + (n | 0); }
 function _wf3Fuel() { return (Profile.salvage && Profile.salvage.fuel) | 0; }
+// 🚤 A vessel that's docked AND seaworthy enough to take out on a live trip.
+// (status 'expedition' = at sea, 'damaged' = needs the drydock.) Returns the
+// best-condition docked boat, or null if the player has none ready.
+function _wf3PickBoat() {
+  const f = ensureFishingCorp();
+  const ready = (f.boats || []).filter(b => b && b.status === 'docked' && (b.condition | 0) >= WF3_MIN_BOAT_CONDITION);
+  if (!ready.length) return null;
+  ready.sort((a, b) => (b.condition | 0) - (a.condition | 0));
+  return ready[0];
+}
 
 // ── DOM helpers ─────────────────────────────────────────────────────────────
 function _wf3$(suffix) { return document.getElementById('wf3-' + suffix); }
@@ -135099,6 +134992,20 @@ function _wf3OverlayHtml() {
 }
 function _wf3Open() {
   if (document.getElementById('wf3-overlay')) return;
+  // 🚤 Boat gate — a fishing trip needs a docked, seaworthy vessel, not just fuel.
+  const boat = _wf3PickBoat();
+  if (!boat) {
+    const f = ensureFishingCorp();
+    const hasAny = (f.boats || []).length > 0;
+    const atSea = (f.boats || []).some(b => b && b.status === 'expedition');
+    const damaged = (f.boats || []).some(b => b && (b.status === 'damaged' || (b.condition | 0) < WF3_MIN_BOAT_CONDITION));
+    showToast(!hasAny
+      ? '🚤 You need a boat to fish — buy one in the SUPPLY tab first.'
+      : atSea ? '🚤 Your boat is out at sea — recall it before a live trip.'
+      : damaged ? '🛠 Your boat is too battered to sail — repair it at the DOCKS first.'
+      : '🚤 No docked, seaworthy boat available.', 4200);
+    return;
+  }
   // ⛽ Fuel gate.
   if (_wf3Fuel() < WF3_TRIP_FUEL) { showToast('⛽ Need ' + WF3_TRIP_FUEL + ' fuel to set sail. You have ' + _wf3Fuel() + '.', 3400); return; }
   if (!Profile.salvage) Profile.salvage = {};
@@ -135928,19 +135835,32 @@ function _wfRenderExp(f) {
 
   const dur = WF_DURATIONS.find(d => d.id === setup.durationId) || WF_DURATIONS[0];
 
-  // ⚓ LIVE 3D FISHING TRIP — fuel-gated interactive expedition (the ported mini-game).
+  // ⚓ LIVE 3D FISHING TRIP — needs a docked, seaworthy boat AND fuel (not fuel alone).
   const fuelHave = (Profile.salvage && Profile.salvage.fuel) | 0;
-  const canSail = fuelHave >= WF3_TRIP_FUEL;
+  const tripBoat = _wf3PickBoat();
+  const hasBoat = !!tripBoat;
+  const hasFuel = fuelHave >= WF3_TRIP_FUEL;
+  const canSail = hasFuel && hasBoat;
+  const boatLine = hasBoat
+    ? '🚤 <b style="color:#a3d977">' + escapeHtml(tripBoat.name) + '</b> · docked · ' + (tripBoat.condition | 0) + '%'
+    : (f.boats || []).some(b => b && b.status === 'expedition')
+      ? '🚤 <span style="color:#cf6868">Boat out at sea — recall it first</span>'
+      : (f.boats || []).length
+        ? '🛠 <span style="color:#cf6868">Boat too battered — repair at the docks</span>'
+        : '🚤 <span style="color:#cf6868">No boat — buy one in SUPPLY</span>';
+  const blockMsg = !hasBoat
+    ? ((f.boats || []).length ? 'Ready a docked, repaired boat to set sail.' : 'Buy a boat in the SUPPLY tab to set sail.')
+    : (!hasFuel ? 'Refine / buy ⛽ fuel to set sail.' : '');
   const live3d =
     '<div class="wfa-panel" style="margin-bottom:0.8rem;border-color:rgba(90,176,201,0.45);background:linear-gradient(160deg,rgba(18,40,48,0.55),rgba(8,11,18,0.6))">' +
       '<div class="wfa-panel-h"><h3>⚓ LIVE FISHING TRIP</h3><span style="color:#7fb9c9">3D · HANDS-ON</span></div>' +
       '<div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">' +
-        '<div style="flex:1;min-width:230px;font-size:0.82rem;color:#cdd3df;line-height:1.5">Take the helm yourself — cast into the <b style="color:#7fb9c9">luck ring</b>, set the hook, and reel without snapping the line. Land fish for <b style="color:#a3d977">camp food</b> + <b style="color:#e6b660">Cinder</b>, level your angler, and buy poles, bait &amp; deeper biomes on the water.</div>' +
+        '<div style="flex:1;min-width:230px;font-size:0.82rem;color:#cdd3df;line-height:1.5">Take the helm yourself — cast into the <b style="color:#7fb9c9">luck ring</b>, set the hook, and reel without snapping the line. Land fish for <b style="color:#a3d977">camp food</b> + <b style="color:#e6b660">Cinder</b>, level your angler, and buy poles, bait &amp; deeper biomes on the water.<div style="margin-top:0.5rem;font-size:0.8rem">' + boatLine + '</div></div>' +
         '<div style="text-align:right">' +
           '<div style="font-size:0.72rem;letter-spacing:0.14em;color:#9aa3b2;text-transform:uppercase;margin-bottom:2px">FUEL TO SAIL</div>' +
-          '<div style="font-size:1.1rem;font-weight:800;color:' + (canSail ? '#e6b660' : '#cf6868') + '">' + WF3_TRIP_FUEL + ' ⛽ <span style="font-size:0.75rem;color:#7d97a8;font-weight:600">/ ' + fuelHave + ' on hand</span></div>' +
+          '<div style="font-size:1.1rem;font-weight:800;color:' + (hasFuel ? '#e6b660' : '#cf6868') + '">' + WF3_TRIP_FUEL + ' ⛽ <span style="font-size:0.75rem;color:#7d97a8;font-weight:600">/ ' + fuelHave + ' on hand</span></div>' +
           '<button class="wfa-deploy ' + (canSail ? '' : 'is-disabled') + '" id="wf3-launch" ' + (canSail ? '' : 'disabled') + ' style="margin-top:0.55rem;width:auto;padding:0.6rem 1.4rem">► CAST OFF ( ' + WF3_TRIP_CASTS + ' CASTS )</button>' +
-          (canSail ? '' : '<div style="font-size:0.7rem;color:#cf6868;margin-top:0.35rem">Refine / buy ⛽ fuel to set sail.</div>') +
+          (blockMsg ? '<div style="font-size:0.7rem;color:#cf6868;margin-top:0.35rem">' + blockMsg + '</div>' : '') +
         '</div>' +
       '</div>' +
     '</div>';

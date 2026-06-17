@@ -75330,12 +75330,15 @@ function renderDeckSelect() {
       gymChallengeCore: (_gymBP && _gymBP.mode === 'challenge') ? _gymBP.coreId : null,
       // ⚔ Camp/World battle context (loot routed to camp on win).
       worldBattle:      (App._worldBattlePending && App._worldBattlePending.zoneId) ? App._worldBattlePending : null,
+      // 🎣 Woods Fishing encounter — bounty + fishing XP on win, return to woodsFishing.
+      fishingEncounter: App._fishingEncounterPending || null,
     };
     // 🟢 Live-defense: if this was a challenge vs an online leader, ping them
     // first. battlePrep above is the fully-prepared async fallback duel.
     const _liveCore = (_gymBP && _gymBP.mode === 'challenge' && _gymBP.tryLive) ? _gymBP.coreId : null;
     App._gymBattlePending = null; // consume — one-shot gym battle context
     App._worldBattlePending = null; // consume — one-shot world battle context
+    App._fishingEncounterPending = null; // consume — one-shot fishing encounter context
     App.battlePrepFlags = null; // consume — next battle starts fresh
 
     if (_liveCore && typeof gymTryLiveChallenge === 'function') {
@@ -77409,9 +77412,10 @@ function renderPricingAdmin() {
               return `
             <div class="ai-deck-row" data-deck-idx="${i}" style="display:flex;align-items:center;justify-content:space-between;gap:0.6rem;padding:0.55rem 0.8rem;background:rgba(20,12,40,0.5);border:1px solid rgba(184,136,255,0.25);border-radius:6px;margin-bottom:0.4rem">
               <div style="flex:1 1 auto;min-width:0">
-                <div style="font-family:'Cinzel',serif;color:#ffd166;font-weight:700">${escapeHtml(d.name || 'Untitled AI Deck')}</div>
+                <div style="font-family:'Cinzel',serif;color:#ffd166;font-weight:700">${escapeHtml(d.name || 'Untitled AI Deck')}${d.fishing ? ' <span style="color:#5ad0e0;font-size:0.7em">🎣 FISHING</span>' : ''}</div>
                 <div class="small-text ink-dim">${(d.cards || []).length} cards · hero: <strong>${escapeHtml(heroName)}</strong></div>
               </div>
+              <button class="btn-mini" data-act="ai-deck-fish" data-idx="${i}" title="Use this deck for Woods Fishing encounter battles" style="color:${d.fishing ? '#5ad0e0' : '#9aa3b2'}">🎣 ${d.fishing ? 'Fishing ✓' : 'Fishing'}</button>
               <button class="btn-primary btn-mini" data-act="ai-deck-edit" data-idx="${i}">✏️ Edit in Deck Builder</button>
               <button class="btn-mini" data-act="ai-deck-del"  data-idx="${i}" style="color:#ff8080">🗑 Delete</button>
             </div>`;
@@ -78078,6 +78082,19 @@ function renderPricingAdmin() {
       Forge.aiDecks.splice(idx, 1);
       _persistForgeNow();
       showToast('🗑 AI deck deleted.', 2000);
+      render();
+    };
+  });
+  // 🎣 Toggle a deck as a Woods Fishing encounter deck — these are the decks a
+  // fishing encounter battle draws from (a random tagged one is used).
+  document.querySelectorAll('[data-act="ai-deck-fish"]').forEach(el => {
+    el.onclick = () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      const deck = Forge.aiDecks[idx];
+      if (!deck) return;
+      deck.fishing = !deck.fishing;
+      _persistForgeNow();
+      showToast(deck.fishing ? '🎣 Tagged as a Fishing-encounter AI deck.' : 'Removed fishing-encounter tag.', 2600);
       render();
     };
   });
@@ -100153,6 +100170,7 @@ function bindGameOverEvents() {
   const wasRlc      = !!App._rlcPendingAfterBattle;
   const wasGym      = !!App._gymPendingAfterBattle;
   const wasWorld    = !!App._worldAfter;
+  const wasFishing  = !!App._fishingEncounterAfter;
   // 🌐 Was this a multiplayer match? Captured before App.state/battlePrep are
   // torn down so Play Again can fast-path back into matchmaking with the same
   // hero+deck. Picks up identity from battlePrep (the canonical pre-battle
@@ -100203,6 +100221,11 @@ function bindGameOverEvents() {
       if (typeof rlcAfterBattle === 'function') { rlcAfterBattle(); return; }
       App.screen = 'rlcMap'; render(); return;
     }
+    if (wasFishing) {
+      const fa = App._fishingEncounterAfter; App._fishingEncounterAfter = null;
+      try { showToast(fa && fa.won ? ('🎣 ' + fa.name + ' defeated — +' + (fa.bounty | 0) + ' 🔥 bounty!') : ('🎣 ' + ((fa && fa.name) || 'The beast') + ' slipped away…'), 3600); } catch (e) {}
+      App.screen = 'woodsFishing'; render(); return;
+    }
     if (wasDaily) {
       App.dailyVictory = null;
       App.screen = 'daily';
@@ -100222,6 +100245,7 @@ function bindGameOverEvents() {
     if (App.ui) App.ui.rankedResult = null;
     App.campaignVictory = null;
     App.dailyVictory = null;
+    App._fishingEncounterAfter = null;
     App.state = null;
     // 📡 Tear down any lingering multiplayer wiring when leaving — keeps a
     // stale realtime channel from chattering after the player exits to title.
@@ -100556,6 +100580,14 @@ function recordBattleProgress() {
       convoy: App.battlePrep.worldBattle.convoy || null,
       won: !!won,
     };
+  }
+
+  // 🎣 Woods Fishing encounter outcome — on a win, award the bounty (Cinder) +
+  // fishing XP; either way flag the return-to-woodsFishing path.
+  if (App.battlePrep && App.battlePrep.fishingEncounter) {
+    const fe = App.battlePrep.fishingEncounter;
+    if (won) { try { _wf3AwardFishingWin(fe); } catch (e) {} }
+    App._fishingEncounterAfter = { won: !!won, name: fe.enemyName || 'Encounter', bounty: won ? (fe.bounty | 0) : 0, xpRarity: fe.xpRarity };
   }
 
   const playerUnits = s.units.filter(u => u.owner === 'player');
@@ -134363,6 +134395,7 @@ function _wf3XpForLevel(lvl) { return 40 + lvl * 20; }
 const WF3_TRIP_FUEL = 5;     // ⛽ spent from Profile.salvage.fuel to set sail
 const WF3_TRIP_CASTS = 14;   // casts per tank before you must refuel / return
 const WF3_MIN_BOAT_CONDITION = 15; // a hull below this is too battered to sail
+const WF3_BARREL_CHANCE = 0.09;    // chance a (non-encounter) cast snags an oil barrel → ⛽ fuel
 
 const WF3_POLES = [
   { id: 'driftwood',  name: 'Driftwood Rod',   emoji: '🎣', cost: 0,   reelRate: 38, tensionCap: 100, castMax: 22, luck: 0.00, desc: 'A salvaged starter rod. Gets the job done.' },
@@ -134415,7 +134448,29 @@ function _wf3Live() {
   if (typeof L.currentBiome !== 'string') L.currentBiome = 'shallows';
   if (typeof L.level !== 'number') L.level = 1;
   if (typeof L.xp !== 'number') L.xp = 0;
+  // 🐟 Catch log — every species (and oil barrel) the player has ever landed:
+  // id → { id, name, rarity, count, biome, last }. Drives the CATCH LOG tab.
+  if (!L.catchLog || typeof L.catchLog !== 'object') L.catchLog = {};
   return L;
+}
+// 🐟 Every distinct catchable, derived from the biome loot tables (unique by id)
+// plus the special oil-barrel. Used by the CATCH LOG catalog + admin species models.
+const WF3_OIL_BARREL = { id: 'oil_barrel', name: 'Oil Barrel', rarity: 'Uncommon', special: 'fuel', emoji: '🛢' };
+function _wf3AllFish() {
+  const seen = {}, out = [];
+  WF3_BIOMES.forEach(b => (b.loot || []).forEach(f => {
+    if (!seen[f.id]) { seen[f.id] = { id: f.id, name: f.name, rarity: f.rarity, maxFood: f.food, biomes: [b.name] }; out.push(seen[f.id]); }
+    else { seen[f.id].maxFood = Math.max(seen[f.id].maxFood, f.food); if (seen[f.id].biomes.indexOf(b.name) < 0) seen[f.id].biomes.push(b.name); }
+  }));
+  out.push({ id: WF3_OIL_BARREL.id, name: WF3_OIL_BARREL.name, rarity: WF3_OIL_BARREL.rarity, maxFood: 0, biomes: ['All waters'], special: 'fuel' });
+  return out;
+}
+// Record a landed catch into the persistent log.
+function _wf3RecordCatch(id, name, rarity, biomeName) {
+  if (!id) return; const L = _wf3Live(); const e = L.catchLog[id] || { id, name, rarity, count: 0 };
+  e.count = (e.count | 0) + 1; e.name = name || e.name; e.rarity = rarity || e.rarity;
+  e.last = Date.now(); if (biomeName) e.biome = biomeName;
+  L.catchLog[id] = e;
 }
 function _wf3Pole() { const L = _wf3Live(); return WF3_POLES.find(p => p.id === L.equippedPole) || WF3_POLES[0]; }
 function _wf3Biome() { const L = _wf3Live(); return WF3_BIOMES.find(b => b.id === L.currentBiome) || WF3_BIOMES[0]; }
@@ -134626,18 +134681,31 @@ function _wf3LoadShipModel(G) {
     }, undefined, () => {});
   } catch (e) {}
 }
-// Breach a fish near the bobber on a successful catch.
-function _wf3SpawnFish(rarity) {
+// Breach a fish (or barrel) near the bobber on a successful catch. Prefers a
+// per-SPECIES admin .glb (models.species[fishId]), then a per-RARITY one
+// (models.fish[rarity]), then a procedural fallback so there's always a 3D model.
+function _wf3SpawnFish(rarity, fishId) {
   const s = _wf3S; if (!s || !s.G) return; const G = s.G, T = window.THREE;
   const at = G.bobber.position.clone();
-  const start = () => {
-    const m = _wf3AdminModels(); const list = (m.fish && Array.isArray(m.fish[rarity])) ? m.fish[rarity] : [];
-    if (list.length && G.loader) {
-      const spec = list[Math.floor(Math.random() * list.length)];
-      try { G.loader.load(spec.url, (gltf) => { if (!_wf3S || _wf3S.G !== G) { _ppaDisposeObj(gltf.scene); return; } const root = gltf.scene || gltf.scenes[0]; try { const box = new T.Box3().setFromObject(root), size = new T.Vector3(); box.getSize(size); const md = Math.max(size.x, size.y, size.z) || 1; root.scale.multiplyScalar((2.2 / md) * (spec.scale || 1)); } catch (e) {} _wf3LaunchFish(root, at); }, undefined, () => _wf3LaunchFish(_wf3BuildFishProc(T, rarity), at)); } catch (e) { _wf3LaunchFish(_wf3BuildFishProc(T, rarity), at); }
-    } else { _wf3LaunchFish(_wf3BuildFishProc(T, rarity), at); }
-  };
-  start();
+  const proc = () => (fishId === WF3_OIL_BARREL.id) ? _wf3BuildBarrelProc(T) : _wf3BuildFishProc(T, rarity);
+  const m = _wf3AdminModels();
+  const species = (fishId && m.species && Array.isArray(m.species[fishId])) ? m.species[fishId] : [];
+  const byRarity = (m.fish && Array.isArray(m.fish[rarity])) ? m.fish[rarity] : [];
+  const list = species.length ? species : byRarity;
+  if (list.length && G.loader) {
+    const spec = list[Math.floor(Math.random() * list.length)];
+    try { G.loader.load(spec.url, (gltf) => { if (!_wf3S || _wf3S.G !== G) { _ppaDisposeObj(gltf.scene); return; } const root = gltf.scene || gltf.scenes[0]; try { const box = new T.Box3().setFromObject(root), size = new T.Vector3(); box.getSize(size); const md = Math.max(size.x, size.y, size.z) || 1; root.scale.multiplyScalar((2.2 / md) * (spec.scale || 1)); } catch (e) {} _wf3LaunchFish(root, at); }, undefined, () => _wf3LaunchFish(proc(), at)); } catch (e) { _wf3LaunchFish(proc(), at); }
+  } else { _wf3LaunchFish(proc(), at); }
+}
+// Procedural oil barrel (fallback breach mesh).
+function _wf3BuildBarrelProc(T) {
+  const g = new T.Group();
+  const body = new T.Mesh(new T.CylinderGeometry(0.5, 0.5, 1.1, 18), new T.MeshPhongMaterial({ color: 0x2a2418, shininess: 30, specular: 0x554433 }));
+  g.add(body);
+  const bandMat = new T.MeshPhongMaterial({ color: 0x6b5236 });
+  [-0.34, 0, 0.34].forEach(y => { const ring = new T.Mesh(new T.TorusGeometry(0.51, 0.05, 8, 20), bandMat); ring.rotation.x = Math.PI / 2; ring.position.y = y; g.add(ring); });
+  const lid = new T.Mesh(new T.CircleGeometry(0.5, 18), new T.MeshPhongMaterial({ color: 0xe0623d })); lid.rotation.x = -Math.PI / 2; lid.position.y = 0.56; g.add(lid);
+  return g;
 }
 function _wf3LaunchFish(obj, at) {
   const s = _wf3S; if (!s || !s.G) { _ppaDisposeObj(obj); return; }
@@ -134711,6 +134779,8 @@ function _wf3RollCatch() {
   const s = _wf3S, b = _wf3Biome(), bait = _wf3Bait();
   const encChance = b.encounterChance + ((bait && bait.encounter) || 0) + s.castEncBonus;
   if (Math.random() < encChance) { const e = b.encounters[Math.floor(Math.random() * b.encounters.length)]; return { type: 'encounter', rarity: e.rarity, enemyId: e.enemyId, name: e.name }; }
+  // 🛢 Sometimes you snag a drifting oil barrel instead of a fish → ⛽ fuel.
+  if (Math.random() < WF3_BARREL_CHANCE) { return { type: 'barrel', rarity: WF3_OIL_BARREL.rarity, item: { id: WF3_OIL_BARREL.id, name: WF3_OIL_BARREL.name, rarity: WF3_OIL_BARREL.rarity }, amount: _wfRandInt(1, 3) }; }
   const f = _wf3WeightedPickLuck(b.loot, _wf3TotalLuck());
   return { type: 'food', rarity: f.rarity, item: { id: f.id, name: f.name, rarity: f.rarity }, amount: f.food + ((bait && bait.foodBonus) || 0) };
 }
@@ -134743,17 +134813,30 @@ function _wf3DrawReel(cap) {
 function _wf3ResolveCatch() { const s = _wf3S; s.state = 'RESOLVED'; _wf3OnCatch(s.pending); }
 function _wf3OnCatch(result) {
   const cin = WF3_RARITY_CINDER[result.rarity] || 4, xp = WF3_XP_GAIN[result.rarity] || 10;
+  const biomeName = _wf3Biome().name;
   if (result.type === 'food') {
     _wf3S.foodTrip = (_wf3S.foodTrip | 0) + result.amount; _wf3AddFood(result.amount); _wf3AddCinder(cin); _wf3GainXP(xp);
+    _wf3RecordCatch(result.item.id, result.item.name, result.rarity, biomeName);
     _wf3FlashLog('+' + result.amount + ' food · ' + result.item.name, result.rarity !== 'Common' ? 'rare' : '');
-    try { _wf3SpawnFish(result.rarity); } catch (e) {}
+    try { _wf3SpawnFish(result.rarity, result.item.id); } catch (e) {}
     _wf3ShowFoodCard(result, cin, xp);
+  } else if (result.type === 'barrel') {
+    // 🛢 Oil barrel → fuel resource (+ a little XP). Floods the local fuel market a touch.
+    if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {};
+    Profile.salvage.fuel = (Profile.salvage.fuel | 0) + result.amount;
+    _wf3S.fuelTrip = (_wf3S.fuelTrip | 0) + result.amount;
+    _wf3GainXP(Math.round(xp * 0.5));
+    _wf3RecordCatch(result.item.id, result.item.name, result.rarity, biomeName);
+    try { if (typeof bumpMarketPriceDown === 'function') bumpMarketPriceDown('fuel', result.amount, 'fishing'); } catch (e) {}
+    _wf3FlashLog('🛢 Oil Barrel · +' + result.amount + ' ⛽ fuel', 'buy');
+    try { _wf3SpawnFish(result.rarity, result.item.id); } catch (e) {}
+    _wf3ShowBarrelCard(result);
   } else {
     _wf3S.pendingBounty = cin * 2; _wf3S.pendingEncRarity = result.rarity;
     _wf3FlashLog('Encounter! ' + result.name, 'enc');
     _wf3ShowEncounterCard(result);
   }
-  _wf3RenderHud(); _wf3Save();
+  _wf3RenderHud(); _wf3RefreshFuelBar(); _wf3Save();
 }
 function _wf3ShowFoodCard(r, cin, xp) {
   const col = WF3_RARITY_COLOR[r.rarity]; const card = _wf3$('card'); if (!card) return;
@@ -134764,15 +134847,63 @@ function _wf3ShowFoodCard(r, cin, xp) {
   const ov = _wf3$('overlayCard'); if (ov) ov.style.display = 'flex';
   const cb = _wf3$('contBtn'); if (cb) cb.onclick = () => { if (ov) ov.style.display = 'none'; _wf3ResetToIdle(); };
 }
+function _wf3ShowBarrelCard(r) {
+  const card = _wf3$('card'); if (!card) return;
+  card.innerHTML = '<div class="wf3-icon">🛢</div><div class="wf3-rarity" style="color:#e6b660">Salvage</div>' +
+    '<h2>Oil Barrel</h2><p>A drifting barrel — hauled aboard and tapped for fuel.</p>' +
+    '<div class="wf3-reward">+' + r.amount + ' ⛽ Fuel</div>' +
+    '<button class="wf3-btn" id="wf3-contBtn">Cast Again</button>';
+  const ov = _wf3$('overlayCard'); if (ov) ov.style.display = 'flex';
+  const cb = _wf3$('contBtn'); if (cb) cb.onclick = () => { if (ov) ov.style.display = 'none'; _wf3ResetToIdle(); };
+}
 function _wf3ShowEncounterCard(r) {
   const col = WF3_RARITY_COLOR[r.rarity]; const card = _wf3$('card'); if (!card) return;
   card.innerHTML = '<div class="wf3-icon">⚔️</div><div class="wf3-rarity" style="color:' + col + '">' + r.rarity + ' · Encounter</div>' +
     '<h2>' + escapeHtml(r.name) + '</h2><p>The water churns — something rises to meet your hook.</p>' +
     '<button class="wf3-btn danger" id="wf3-fightBtn">Enter Battle</button>';
   const ov = _wf3$('overlayCard'); if (ov) ov.style.display = 'flex';
-  const fb = _wf3$('fightBtn'); if (fb) fb.onclick = () => { if (ov) ov.style.display = 'none'; _wf3StartEncounter(r); };
+  const fb = _wf3$('fightBtn'); if (fb) fb.onclick = () => { if (ov) ov.style.display = 'none'; _wf3GoToBattle(r); };
 }
+// (legacy self-contained skirmish panel — kept for the dead #wf3-battle node).
 function _wf3StartEncounter(r) { const bn = _wf3$('battleName'); if (bn) bn.textContent = r.name; const b = _wf3$('battle'); if (b) b.style.display = 'flex'; }
+// 🎣→⚔ A fishing encounter now starts a REAL AI battle: pick a fishing-tagged AI
+// deck (graceful fallback to the generic admin AI deck), stash the bounty/XP
+// reward + return target, then route through deck select like any PvE fight.
+function _wf3PickEncounterDeck() {
+  let decks = [];
+  try { if (Array.isArray(Forge.aiDecks)) decks = decks.concat(Forge.aiDecks.filter(d => d && d.fishing)); } catch (e) {}
+  try { if (typeof Catalog !== 'undefined' && Array.isArray(Catalog.aiDecks)) decks = decks.concat(Catalog.aiDecks.filter(d => d && d.fishing)); } catch (e) {}
+  const seen = {}; decks = decks.filter(d => d && d.id && !seen[d.id] && (seen[d.id] = 1));
+  return decks.length ? decks[Math.floor(Math.random() * decks.length)] : null;
+}
+function _wf3GoToBattle(r) {
+  const bounty = ((WF3_RARITY_CINDER[r.rarity] || 4) * 2);
+  const deck = _wf3PickEncounterDeck();
+  const enemyLevel = ({ Common: 8, Uncommon: 14, Rare: 22, Legendary: 32 })[r.rarity] || 12;
+  App._encounterChallenge = {
+    enemyHeroId: (deck && deck.heroId) || null,
+    enemyLevel: enemyLevel,
+    enemyDeck: (deck && Array.isArray(deck.cards) && deck.cards.length) ? deck.cards.slice(0) : null,
+  };
+  App._fishingEncounterPending = { bounty: bounty, xpRarity: r.rarity, enemyName: r.name, deckName: (deck && deck.name) || null };
+  try { _wf3Close(); } catch (e) {}
+  App.screen = 'deckSelect';
+  try { showToast('⚔ ' + r.name + ' rises to fight — pick your hero & deck!', 3200); } catch (e) {}
+  if (typeof render === 'function') render();
+}
+// Award a won fishing encounter: bounty Cinder + fishing XP (works without the
+// live-trip overlay open, so it's safe to call from recordBattleProgress).
+function _wf3AwardFishingXp(amt) {
+  const L = _wf3Live(); L.xp += amt;
+  while (L.level < WF3_MAX_LEVEL && L.xp >= _wf3XpForLevel(L.level)) { L.xp -= _wf3XpForLevel(L.level); L.level++; if (typeof Profile === 'object') Profile.gems = (Profile.gems | 0) + 15 * L.level; }
+  if (L.level >= WF3_MAX_LEVEL) L.xp = Math.min(L.xp, _wf3XpForLevel(L.level));
+}
+function _wf3AwardFishingWin(fe) {
+  if (!fe) return;
+  if (fe.bounty) Profile.gems = (Profile.gems | 0) + (fe.bounty | 0);
+  try { _wf3AwardFishingXp(WF3_XP_GAIN[fe.xpRarity] || 20); } catch (e) {}
+  try { saveProfile && saveProfile(); } catch (e) {}
+}
 function _wf3ResetToIdle() {
   const s = _wf3S; if (!s || !s.G) return; s.state = 'IDLE'; s.G.biteMark.visible = false; s.pending = null;
   s.castLuckBonus = 0; s.castEncBonus = 0; s.castWasLucky = false; s.G.predictor.visible = false;
@@ -135085,12 +135216,22 @@ function _wf3AdminModelsHtml() {
       list.map((mm, i) => '<div style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cbd5e1">' + escapeHtml(mm.label || ('model ' + (i + 1))) + '</span><button class="wfa-mini-btn" data-wf3-view="' + kind + ':' + tier + ':' + i + '" style="padding:2px 6px;font-size:10px">👁</button><button class="wfa-mini-btn danger" data-wf3-del="' + kind + ':' + tier + ':' + i + '" style="padding:2px 6px;font-size:10px">✕</button></div>').join('') +
       '<label class="wfa-mini-btn" style="display:block;margin-top:7px;text-align:center;cursor:pointer;padding:5px">⬆ Upload .glb<input type="file" accept=".glb,.gltf,model/gltf-binary" data-wf3-up="' + kind + ':' + tier + '" style="display:none"></label>' +
     '</div>';
+  const species = (m.species && typeof m.species === 'object') ? m.species : {};
+  const speciesCards = _wf3AllFish().map(sp => card('🐟 ' + sp.name.toUpperCase(), sp.rarity + (sp.special === 'fuel' ? ' · oil barrel' : ' · breaches + catch log'), Array.isArray(species[sp.id]) ? species[sp.id] : [], 'species', sp.id)).join('');
   return '<div class="wfa-panel" style="margin-top:0.8rem">' +
     '<div class="wfa-panel-h"><h3>🎣 LIVE FISHING · 3D MODELS</h3><span>SHARED ACROSS ALL PLAYERS</span></div>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.6rem">' +
       card('⛵ BOAT', 'Replaces the fishing skiff on the trip (a random one is used).', ship, 'ship', '_') +
-      WF3_FISH_TIERS.map(t => card('🐟 FISH · ' + t.toUpperCase(), 'Breaches when you land a ' + t + ' fish.', Array.isArray(fish[t]) ? fish[t] : [], 'fish', t)).join('') +
-    '</div></div>';
+      WF3_FISH_TIERS.map(t => card('🌊 ANY ' + t.toUpperCase(), 'Fallback breach for any ' + t + ' catch with no species model.', Array.isArray(fish[t]) ? fish[t] : [], 'fish', t)).join('') +
+    '</div>' +
+    '<div class="wfa-panel-h" style="margin-top:0.9rem"><h3>🐟 FISH SPECIES · 3D MODELS</h3><span>PER SPECIES · CATCH LOG + BREACH</span></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.6rem">' + speciesCards + '</div>' +
+  '</div>';
+}
+function _wf3AdminModelList(M, kind, tier) {
+  if (kind === 'ship') return M.ship;
+  if (kind === 'species') return M.species && M.species[tier];
+  return M.fish && M.fish[tier];
 }
 function _wf3BindAdminModels() {
   const ensure = () => { if (!Forge.woodsFishing) Forge.woodsFishing = {}; if (!Forge.woodsFishing.models) Forge.woodsFishing.models = {}; return Forge.woodsFishing.models; };
@@ -135102,6 +135243,7 @@ function _wf3BindAdminModels() {
       const url = await _csShopUploadModel(f); const M = ensure();
       const rec = { url, label: f.name.replace(/\.(glb|gltf)$/i, ''), scale: 1, rotY: 0 };
       if (kind === 'ship') { if (!Array.isArray(M.ship)) M.ship = []; M.ship.push(rec); }
+      else if (kind === 'species') { if (!M.species || typeof M.species !== 'object') M.species = {}; if (!Array.isArray(M.species[tier])) M.species[tier] = []; M.species[tier].push(rec); }
       else { if (!M.fish || typeof M.fish !== 'object') M.fish = {}; if (!Array.isArray(M.fish[tier])) M.fish[tier] = []; M.fish[tier].push(rec); }
       try { saveForge && saveForge(); } catch (er) {} showToast('✓ Model added.', 2800); if (typeof render === 'function') render();
     } catch (err) { showToast('⚠ Upload failed: ' + ((err && err.message) || err), 4600); }
@@ -135109,13 +135251,50 @@ function _wf3BindAdminModels() {
   }; });
   document.querySelectorAll('[data-wf3-del]').forEach(b => b.onclick = () => {
     const [kind, tier, i] = b.dataset.wf3Del.split(':'); const M = (Forge.woodsFishing && Forge.woodsFishing.models) || {};
-    const list = kind === 'ship' ? M.ship : (M.fish && M.fish[tier]);
+    const list = _wf3AdminModelList(M, kind, tier);
     if (Array.isArray(list)) { list.splice(+i, 1); try { saveForge && saveForge(); } catch (e) {} if (typeof render === 'function') render(); }
   });
   document.querySelectorAll('[data-wf3-view]').forEach(b => b.onclick = () => {
     const [kind, tier, i] = b.dataset.wf3View.split(':'); const M = (Forge.woodsFishing && Forge.woodsFishing.models) || {};
-    const list = kind === 'ship' ? M.ship : (M.fish && M.fish[tier]); const mm = Array.isArray(list) && list[+i];
-    if (mm && typeof _ppaViewModel === 'function') _ppaViewModel(mm.url, kind === 'ship' ? 'Boat model' : (tier + ' fish'), mm.scale, mm.rotY);
+    const list = _wf3AdminModelList(M, kind, tier); const mm = Array.isArray(list) && list[+i];
+    if (mm && typeof _ppaViewModel === 'function') _ppaViewModel(mm.url, kind === 'ship' ? 'Boat model' : (tier + (kind === 'species' ? '' : ' fish')), mm.scale, mm.rotY);
+  });
+}
+// ── CATCH LOG tab — every species the player has landed, with 3D model viewer ─
+function _wfRenderCatchLog(f) {
+  const L = _wf3Live(); const logMap = L.catchLog || {}; const models = _wf3AdminModels(); const species = (models.species && typeof models.species === 'object') ? models.species : {};
+  const all = _wf3AllFish();
+  const discovered = all.filter(sp => (logMap[sp.id] && (logMap[sp.id].count | 0) > 0)).length;
+  const totalCatches = Object.values(logMap).reduce((s, e) => s + (e && e.count | 0), 0);
+  const rcol = (r) => WF3_RARITY_COLOR[r] || '#9aa3b2';
+  const cards = all.map(sp => {
+    const e = logMap[sp.id]; const count = e ? (e.count | 0) : 0; const got = count > 0;
+    const hasModel = Array.isArray(species[sp.id]) && species[sp.id].length > 0;
+    const icon = sp.special === 'fuel' ? '🛢' : '🐟';
+    return '<div class="wfa-admin-card" style="' + (got ? '' : 'opacity:0.55;') + 'border-color:' + (got ? rcol(sp.rarity) + '66' : 'rgba(255,255,255,0.08)') + '">' +
+      '<div class="wfa-admin-img" style="font-size:2.2rem;color:' + rcol(sp.rarity) + '">' + (got ? icon : '🔒') + (hasModel && got ? '<span style="position:absolute;bottom:4px;right:6px;font-size:0.6rem;background:#11253099;color:#7fb9c9;padding:1px 4px;border-radius:4px">🧊 3D</span>' : '') + '</div>' +
+      '<div class="wfa-admin-name">' + escapeHtml(got ? sp.name : '???') + '</div>' +
+      '<div style="font-size:0.66rem;letter-spacing:0.1em;color:' + rcol(sp.rarity) + ';text-transform:uppercase;margin-top:1px">' + (got ? sp.rarity : 'undiscovered') + '</div>' +
+      '<div style="font-size:0.7rem;color:#9aa3b2;margin-top:3px">' + (got ? ('Caught ×' + count + (sp.special === 'fuel' ? '' : ' · ' + (sp.maxFood) + ' food')) : '— not yet caught —') + '</div>' +
+      (got ? '<div style="font-size:0.62rem;color:#7d97a8;margin-top:2px">' + escapeHtml((sp.biomes || []).join(' · ')) + '</div>' : '') +
+      (got && hasModel ? '<div class="wfa-admin-actions" style="margin-top:5px"><button class="wfa-mini-btn" data-wfcl-view="' + sp.id + '">👁 VIEW 3D</button></div>' : '') +
+    '</div>';
+  }).join('');
+  return '<div class="wfa-catchlog">' +
+    '<div class="wfa-panel-header">CATCH LOG  <span class="wfa-panel-crumb">' + discovered + ' / ' + all.length + ' SPECIES · ' + totalCatches.toLocaleString() + ' LANDED</span></div>' +
+    '<div class="wfa-panel">' +
+      '<div class="wfa-panel-h"><h3>SPECIES RECORD</h3><span>3D MODELS ' + (Object.keys(species).length ? 'LIVE' : 'COMING SOON') + '</span></div>' +
+      '<div class="wfa-admin-grid">' + cards + '</div>' +
+    '</div>' +
+  '</div>';
+}
+function _wfBindCatchLog() {
+  document.querySelectorAll('[data-wfcl-view]').forEach(b => b.onclick = () => {
+    const id = b.dataset.wfclView; const models = _wf3AdminModels();
+    const list = models.species && models.species[id]; const mm = Array.isArray(list) && list[0];
+    const sp = _wf3AllFish().find(x => x.id === id);
+    if (mm && typeof _ppaViewModel === 'function') _ppaViewModel(mm.url, (sp && sp.name) || 'Fish', mm.scale, mm.rotY);
+    else showToast('No 3D model uploaded for this species yet.', 2600);
   });
 }
 
@@ -135138,6 +135317,7 @@ function renderWoodsFishing() {
     expeditions: { title: 'EXPEDITIONS',    crumb: '// OPERATIONS' },
     manifest:    { title: 'CREW MANIFEST',  crumb: '// PERSONNEL' },
     storage:     { title: 'COLD STORAGE',   crumb: '// FOOD STOCKPILE' },
+    catchlog:    { title: 'CATCH LOG',      crumb: '// SPECIES · TROPHIES' },
     log:         { title: 'EVENT LOG',      crumb: '// CHRONOLOGICAL' },
     admin:       { title: 'ADMIN',          crumb: '// PHOTOS · CONFIG' },
   };
@@ -135150,6 +135330,7 @@ function renderWoodsFishing() {
   else if (tab === 'expeditions') body = _wfRenderExp(f);
   else if (tab === 'manifest')    body = _wfRenderManifest(f);
   else if (tab === 'storage')     body = _wfRenderStorage(f);
+  else if (tab === 'catchlog')    body = _wfRenderCatchLog(f);
   else if (tab === 'log')         body = _wfRenderEventLog(f);
   else if (tab === 'admin')       body = _wfRenderAdmin(f);
   else body = _wfRenderOverview(f);
@@ -135163,7 +135344,7 @@ function renderWoodsFishing() {
   const navItem = (id, label, count, group) => {
     const active = (tab === id);
     return '<button class="wfa-nav-btn' + (active ? ' is-active' : '') + '" data-wfa-tab="' + id + '">' +
-      '<span class="wfa-nav-ico">' + (id === 'overview' ? '◆' : id === 'supply' ? '+' : id === 'docks' ? '▲' : id === 'expeditions' ? '⛵' : id === 'manifest' ? '✚' : id === 'storage' ? '⊞' : id === 'log' ? '☰' : '👑') + '</span>' +
+      '<span class="wfa-nav-ico">' + (id === 'overview' ? '◆' : id === 'supply' ? '+' : id === 'docks' ? '▲' : id === 'expeditions' ? '⛵' : id === 'manifest' ? '✚' : id === 'storage' ? '⊞' : id === 'catchlog' ? '🐟' : id === 'log' ? '☰' : '👑') + '</span>' +
       '<span class="wfa-nav-label">' + label + '</span>' +
       (count != null ? '<span class="wfa-nav-count">' + count + '</span>' : '') +
     '</button>';
@@ -135178,6 +135359,7 @@ function renderWoodsFishing() {
     navItem('manifest',    'MANIFEST',    f.crew.length) +
     '<div class="wfa-nav-group">STOREHOUSE</div>' +
     navItem('storage',     'COLD STORAGE', null) +
+    navItem('catchlog',    'CATCH LOG',   Object.keys((f.live && f.live.catchLog) || {}).length) +
     navItem('log',         'EVENT LOG',   f.log.length) +
     (isAdminUser ? '<div class="wfa-nav-group">ADMIN</div>' + navItem('admin', 'PHOTOS', null) : '');
 
@@ -135239,6 +135421,7 @@ function renderWoodsFishing() {
   else if (tab === 'expeditions') _wfBindExp();
   else if (tab === 'manifest')    _wfBindManifest();
   else if (tab === 'storage')     _wfBindStorage();
+  else if (tab === 'catchlog')    _wfBindCatchLog();
   else if (tab === 'log')         _wfBindLog();
   else if (tab === 'admin')       _wfBindAdmin();
 
@@ -145906,6 +146089,7 @@ function renderDeckBuilder() {
         heroId: heroId || '',
         cards: ids,
         zoneId: zoneId || (prev && prev.zoneId) || '',
+        fishing: !!(prev && prev.fishing),   // 🎣 keep the Woods Fishing encounter tag across edits
       };
       if (idx != null && Forge.aiDecks[idx]) Forge.aiDecks[idx] = rec;
       else Forge.aiDecks.push(rec);

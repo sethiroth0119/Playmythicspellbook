@@ -106378,13 +106378,25 @@ async function _csShopDeleteObject(id) {
   const { error } = await Cloud.client.from('shop_objects').delete().eq('id', id);
   if (error) throw error;
 }
+const CS_MODEL_SIZE_LIMIT = 524288000; // 500 MB — matches the bucket migration.
 async function _csShopUploadModel(file) {
   if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline.');
-  try { await Cloud.client.storage.createBucket(CS_MODELS_BUCKET, { public: true }); } catch (e) {}
+  // Create the bucket with the big limit on fresh projects (no-op if it exists —
+  // existing buckets keep their limit, which the size migration raises).
+  try { await Cloud.client.storage.createBucket(CS_MODELS_BUCKET, { public: true, fileSizeLimit: CS_MODEL_SIZE_LIMIT }); } catch (e) {}
   const safe = String(file.name || 'model.glb').replace(/[^a-zA-Z0-9._-]/g, '_');
   const path = _csMyShopId() + '/' + Date.now().toString(36) + '_' + safe;
   const { error } = await Cloud.client.storage.from(CS_MODELS_BUCKET).upload(path, file, { upsert: true, contentType: 'model/gltf-binary' });
-  if (error) throw error;
+  if (error) {
+    // Make the size rejection actionable instead of a cryptic toast. We do NOT
+    // fall back to a data URL (a 50MB+ blob would bloat every shop fetch).
+    const msg = String((error && error.message) || error || '');
+    if (/exceeded the maximum|maximum allowed size|payload too large|413/i.test(msg)) {
+      const mb = (file.size / 1048576).toFixed(1);
+      throw new Error('That .glb is ' + mb + ' MB — over the Storage upload limit. Run the models-bucket size migration, raise Dashboard → Storage → Settings → "Upload file size limit", or compress the model.');
+    }
+    throw error;
+  }
   const { data } = Cloud.client.storage.from(CS_MODELS_BUCKET).getPublicUrl(path);
   return data && data.publicUrl;
 }
@@ -107227,6 +107239,19 @@ function _csBuyFurniture(item) {
     return true;
   } catch (e) { showToast('Purchase failed.', 3000); return false; }
 }
+// 🗑 Admin: remove a posted furniture model from the market. Deletes the
+// catalog row (the .glb stays in Storage — harmless, and other shops that
+// already placed it keep their copy). RLS already restricts this to admins.
+async function _csDeleteFurniture(id) {
+  if (!((typeof isAdmin === 'function') && isAdmin())) { showToast('👑 Admin only.', 2400); return false; }
+  if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) { showToast('Cloud offline.', 3000); return false; }
+  try {
+    const { error } = await Cloud.client.from('furniture_catalog').delete().eq('id', id);
+    if (error) { showToast('Delete failed: ' + (error.message || error), 4200); return false; }
+    showToast('🗑 Removed from the market.', 2200);
+    return true;
+  } catch (e) { showToast('Delete failed.', 3000); return false; }
+}
 // "What it does" blurb for a furniture row. Admin-authored `details` wins; else a
 // plain fallback keyed off its category — "A normal poster", "A normal planet"…
 function _csFurnitureDetails(r) {
@@ -107269,6 +107294,8 @@ function _ensureCsMarketStyle() {
   .csm-own{font-size:11px;color:#a99f86}
   .csm-buy{border:none;border-radius:8px;padding:8px;font-weight:800;cursor:pointer;background:#23232e;color:#52525b}
   .csm-buy.is-afford{background:#d4af37;color:#0b0b0f}
+  .csm-del{border:1px solid #5a2424;border-radius:8px;padding:6px;font-weight:700;cursor:pointer;background:#1f1212;color:#e6a3a3;font-size:11.5px}
+  .csm-del:hover{background:#3a1818;color:#ffd0d0}
   .csm-admin{border-top:1px solid #2a2316;padding:12px 14px;display:flex;flex-direction:column;gap:7px}
   .csm-admin-h{font-weight:800;color:#f3d27a;font-size:12px}
   .csm-grid2{display:grid;grid-template-columns:1.4fr .8fr .5fr .5fr .5fr 1fr;gap:6px}
@@ -107296,6 +107323,7 @@ function _csFurnitureCardHtml(r) {
     <div class="csm-detail">${escapeHtml(_csFurnitureDetails(r))}</div>
     <div class="csm-own">Owned: ${owned}</div>
     <button class="csm-buy ${afford ? 'is-afford' : ''}" data-csm-buy="${escapeHtml(r.id)}" ${afford ? '' : 'disabled'}>Buy · ${price.toLocaleString()} ${cur}</button>
+    ${((typeof isAdmin === 'function') && isAdmin()) ? `<button class="csm-del" data-csm-del="${escapeHtml(r.id)}" title="Remove this model from the market">🗑 Delete</button>` : ''}
   </div>`;
 }
 async function _csMarketAdd(node) {
@@ -107352,6 +107380,16 @@ function _csOpenFurnitureMarket(onClose) {
     if (e.target.closest('[data-csm="close"]')) { node.remove(); if (onClose) onClose(); return; }
     const buy = e.target.closest('[data-csm-buy]');
     if (buy) { const item = _csCatMap['fc:' + buy.getAttribute('data-csm-buy')]; if (item && _csBuyFurniture(item)) { repaint(); if (onClose) onClose(); } return; }
+    const del = e.target.closest('[data-csm-del]');
+    if (del) {
+      const id = del.getAttribute('data-csm-del');
+      const row = (_csFurnitureCatalog || []).find(r => r && r.id === id);
+      if (!confirm('Delete "' + ((row && row.name) || 'this model') + '" from the Furniture Market? Players will no longer be able to buy it.')) return;
+      del.disabled = true; del.textContent = '…';
+      if (await _csDeleteFurniture(id)) { await _csFetchFurnitureCatalog(true); repaint(); if (onClose) onClose(); }
+      else { del.disabled = false; del.textContent = '🗑 Delete'; }
+      return;
+    }
     const add = e.target.closest('[data-csm="add"]');
     if (add) { add.disabled = true; const o = add.textContent; add.textContent = '…'; try { await _csMarketAdd(node); await _csFetchFurnitureCatalog(true); repaint(); if (onClose) onClose(); } catch (err) {} add.disabled = false; add.textContent = o; return; }
   });

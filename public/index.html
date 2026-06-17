@@ -143218,6 +143218,135 @@ function renderCrashExchange() {
 }
 
 
+// ════════════════════════════════════════════════════════════════════════════
+// 🃏 DECK BUILDER v2 — 3-column console layout (card detail · deck · collection)
+// in the spirit of a modern TCG deck editor. Grid card-face thumbnails with a
+// rarity corner tag + count badge; click a card to load its full details into
+// the left panel (select-then-act), double-click (or the detail ＋/− buttons)
+// to add/remove. All existing data-attributes (data-add / data-remove-key /
+// data-move-to-side / …) are preserved so every handler keeps working.
+// ════════════════════════════════════════════════════════════════════════════
+function _ensureDb3Style() {
+  if (document.getElementById('db3-style')) return;
+  const s = document.createElement('style'); s.id = 'db3-style';
+  s.textContent = `
+  .db3-wrap{display:grid;grid-template-columns:290px minmax(0,1fr) 360px;gap:12px;align-items:start;margin-top:10px}
+  .db3-col{background:linear-gradient(180deg,#161208,#0d0b07);border:1px solid #2a2316;border-radius:12px;padding:11px;min-height:60vh}
+  .db3-colhead{font-weight:800;color:#f3d27a;font-size:0.92rem;margin:0 0 9px;display:flex;align-items:center;justify-content:space-between;gap:8px;letter-spacing:.3px}
+  .db3-colhead .db3-sub{font-weight:600;color:#a99f86;font-size:0.78rem}
+  .db3-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:7px;max-height:62vh;overflow:auto;padding:2px 4px 2px 2px;align-content:start}
+  .db3-thumb{position:relative;aspect-ratio:.72;border:1px solid #3a2f1c;border-radius:8px;overflow:hidden;background:#0c0a07;cursor:pointer;padding:0;display:block;transition:transform .08s}
+  .db3-thumb:hover{transform:translateY(-2px);border-color:#6b5a2e}
+  .db3-thumb.is-sel{outline:2px solid #ffd166;outline-offset:-1px;box-shadow:0 0 0 2px rgba(255,209,102,.35)}
+  .db3-thumb.is-dim{opacity:.42;filter:grayscale(.55)}
+  .db3-thumb-img{width:100%;height:100%;object-fit:cover;display:block}
+  .db3-thumb-icon{width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 35%,#241d12,#0c0a07)}
+  .db3-rar{position:absolute;top:3px;right:3px;font-size:8.5px;font-weight:900;color:#0b0b0f;padding:1px 4px;border-radius:4px;letter-spacing:.4px;line-height:1.25;z-index:2;box-shadow:0 1px 3px rgba(0,0,0,.6)}
+  .db3-nm{position:absolute;left:0;right:0;bottom:0;font-size:8.5px;font-weight:600;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.9));padding:9px 3px 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
+  .db3-cnt{position:absolute;bottom:3px;right:3px;background:#d4af37;color:#0b0b0f;font-size:9.5px;font-weight:900;border-radius:5px;padding:0 5px;z-index:2;box-shadow:0 1px 3px rgba(0,0,0,.6)}
+  .db3-cost{position:absolute;top:3px;left:3px;background:rgba(8,8,12,.78);color:#ffd166;font-size:9px;font-weight:900;border-radius:5px;min-width:14px;text-align:center;padding:0 3px;z-index:2}
+  .db3-empty{grid-column:1/-1;color:#8a7f64;text-align:center;padding:26px 8px;font-size:0.82rem}
+  .db3-detail-art{width:100%;border-radius:10px;border:1px solid #3a2f1c;display:block;aspect-ratio:.72;object-fit:cover;background:#0c0a07}
+  .db3-d-name{font-weight:800;color:#f3d27a;margin:10px 0 3px;font-size:1rem;line-height:1.25}
+  .db3-d-sub{font-size:0.78rem;color:#a99f86;margin-bottom:6px}
+  .db3-d-stats{display:flex;gap:9px;flex-wrap:wrap;margin:7px 0}
+  .db3-d-stat{font-size:0.82rem;color:#e9e1cf;background:rgba(255,255,255,.04);border:1px solid #2c2415;border-radius:6px;padding:2px 7px}
+  .db3-d-stat b{color:#fff}
+  .db3-d-own{font-size:0.78rem;color:#cdb37a;margin:4px 0 6px}
+  .db3-d-desc{font-size:0.8rem;color:#cdbf9c;line-height:1.5;white-space:pre-wrap;max-height:30vh;overflow:auto;border-top:1px solid #2a2316;padding-top:8px}
+  .db3-d-actions{display:flex;gap:6px;margin-top:11px;flex-wrap:wrap}
+  .db3-detail-empty{color:#8a7f64;text-align:center;padding:30px 10px;font-size:0.85rem;line-height:1.6}
+  .db3-tabs{display:flex;gap:2px;margin:6px 0 0;flex-wrap:wrap}
+  @media(max-width:1080px){.db3-wrap{grid-template-columns:1fr}.db3-col{min-height:auto}.db3-grid{max-height:46vh}}
+  `;
+  document.head.appendChild(s);
+}
+// Short rarity tag (abbrev + colour) for the corner badge.
+function _dbRarTag(card) {
+  const r = (typeof getRarity === 'function') ? getRarity(card) : { id: 'common', color: '#9aa0a6' };
+  const ab = ({ common: 'N', uncommon: 'U', rare: 'R', epic: 'SR', legendary: 'UR', mythic: 'MR' })[r.id] || 'N';
+  return { ab, color: r.color || '#9aa0a6' };
+}
+// A single card-face grid thumbnail. Carries select + right-click-detail hooks.
+// o = { key, card, zone, count, dimmed, spriteKey }
+function _dbCardThumb(o) {
+  const card = o.card; if (!card) return '';
+  const key = o.key;
+  const sel = (App._dbSel && App._dbSel.key === key && App._dbSel.zone === o.zone) ? ' is-sel' : '';
+  const dim = o.dimmed ? ' is-dim' : '';
+  const rt = _dbRarTag(card);
+  const spriteKey = o.spriteKey || ((card.type === 'hero' ? 'h_' : 'u_') + card.id);
+  let art = null; try { art = (typeof getCardArt === 'function') ? getCardArt(card.id) : null; } catch (e) {}
+  const face = art
+    ? `<img class="db3-thumb-img" src="${escapeHtml(art)}" alt="" loading="lazy">`
+    : `<div class="db3-thumb-icon">${renderIcon(spriteKey, card.icon, 'lg')}</div>`;
+  const cnt = (o.count | 0) > 1 ? `<span class="db3-cnt">×${o.count | 0}</span>` : ((o.count | 0) === 1 && o.zone !== 'collection' ? `<span class="db3-cnt">×1</span>` : '');
+  const costBadge = (card.type === 'hero') ? '' : `<span class="db3-cost">${card.cost || 0}</span>`;
+  return `<button type="button" class="db3-thumb${sel}${dim}" data-sel-key="${escapeHtml(key)}" data-sel-zone="${o.zone}" data-ctx-key="${escapeHtml(key)}" title="${escapeHtml(card.name)} — click to inspect, double-click to ${o.zone === 'collection' ? 'add' : 'remove'}">
+    ${costBadge}<span class="db3-rar" style="background:${rt.color}">${rt.ab}</span>
+    ${face}
+    <span class="db3-nm">${escapeHtml(card.name)}</span>
+    ${cnt}
+  </button>`;
+}
+// The left-column card-detail panel — reads the current selection (App._dbSel).
+function _dbDetailPanel() {
+  const sel = App._dbSel;
+  if (!sel || !sel.key) return `<div class="db3-detail-empty">👈 Click any card to inspect it.<br><span class="ink-dim" style="font-size:0.78rem">Double-click a card (or use the buttons here) to add / remove it.</span></div>`;
+  const key = sel.key;
+  const card = (typeof resolveDeckCard === 'function') ? resolveDeckCard(key) : null;
+  if (!card) return `<div class="db3-detail-empty">Card not found.</div>`;
+  const pk = (typeof parseCardKey === 'function') ? parseCardKey(key) : { kind: 'card' };
+  const kind = pk.kind;
+  const isHero = card.type === 'hero';
+  const kindLabel = (card.type || kind || 'card').toUpperCase();
+  const rt = _dbRarTag(card);
+  const spriteKey = (isHero ? 'h_' : 'u_') + card.id;
+  let art = null; try { art = (typeof getCardArt === 'function') ? getCardArt(card.id) : null; } catch (e) {}
+  const artHtml = art
+    ? `<img class="db3-detail-art" src="${escapeHtml(art)}" alt="">`
+    : `<div class="db3-detail-art" style="display:flex;align-items:center;justify-content:center">${renderIcon(spriteKey, card.icon, 110)}</div>`;
+  const st = card.stats || {};
+  const statBits = [];
+  if (isHero || card.type === 'unit' || kind === 'unit') {
+    const hp = (card.hp != null ? card.hp : st.hp);
+    if (st.atk != null) statBits.push(`<span class="db3-d-stat">⚔ ATK <b>${st.atk}</b></span>`);
+    if (st.def != null) statBits.push(`<span class="db3-d-stat">🛡 DEF <b>${st.def}</b></span>`);
+    if (hp != null) statBits.push(`<span class="db3-d-stat">❤ HP <b>${hp}</b></span>`);
+    if (st.mag) statBits.push(`<span class="db3-d-stat">✨ MAG <b>${st.mag}</b></span>`);
+    if (st.res) statBits.push(`<span class="db3-d-stat">🌀 RES <b>${st.res}</b></span>`);
+    if (st.spd != null) statBits.push(`<span class="db3-d-stat">👢 SPD <b>${st.spd}</b></span>`);
+  }
+  const elems = (typeof getElementsOf === 'function') ? (getElementsOf(card) || []) : [];
+  const elemHtml = elems.map(e => (typeof ELEMENT_DATA !== 'undefined' && ELEMENT_DATA[e]) ? getElemIcon(e, '1.4em') : '').join('');
+  const owned = (typeof deckKeyOwnedCount === 'function') ? deckKeyOwnedCount(key) : 1;
+  const inDeck = (App.deckEdit || []).filter(k => k === key).length;
+  const inSide = (Profile.sideDeck && Array.isArray(Profile.sideDeck.cards)) ? Profile.sideDeck.cards.filter(k => k === key).length : 0;
+  const ownedStr = isFinite(owned) ? owned : '∞';
+  const cap = isHero ? 1 : (typeof MAX_COPIES_PER_CARD === 'number' ? MAX_COPIES_PER_CARD : 3);
+  const ownCap = isFinite(owned) ? Math.min(cap, owned) : cap;
+  const onSideTab = App.deckPanelTab === 'side';
+  const deckFull = (App.deckEdit || []).length >= (typeof DECK_SIZE === 'number' ? DECK_SIZE : 40);
+  const canAdd = (owned > 0) && ((inDeck + inSide) < ownCap) && (onSideTab || !deckFull);
+  const addBtn = canAdd
+    ? `<button class="btn-primary btn-mini" data-add="${escapeHtml(key)}">＋ Add${onSideTab ? ' to Side' : ''}</button>`
+    : `<button class="btn-mini btn-disabled" disabled>${owned > 0 ? 'Maxed' : '🔒 Not owned'}</button>`;
+  const rmBtn = inDeck > 0 ? `<button class="btn-mini btn-danger" data-remove-key="${escapeHtml(key)}">− Remove</button>` : '';
+  const sideBtn = (!isHero && inDeck > 0) ? `<button class="btn-mini" data-move-to-side="${escapeHtml(key)}">→ Side</button>` : '';
+  // A card selected from the Side zone gets side-specific actions instead.
+  const actions = (sel.zone === 'side')
+    ? `<button class="btn-mini" data-mv-side-to-main="${escapeHtml(key)}">→ Main</button><button class="btn-mini btn-danger" data-rm-side="${escapeHtml(key)}">− Remove from Side</button>`
+    : `${addBtn}${rmBtn}${sideBtn}`;
+  return `
+    ${artHtml}
+    <div class="db3-d-name">${escapeHtml(card.name)} <span class="db3-rar" style="position:static;display:inline-block;vertical-align:middle;background:${rt.color}">${rt.ab}</span></div>
+    <div class="db3-d-sub">${escapeHtml(kindLabel)}${elemHtml ? ' · ' + elemHtml : ''} · Cost ${card.cost || 0} <span class="energy-orb"></span></div>
+    ${statBits.length ? `<div class="db3-d-stats">${statBits.join('')}</div>` : ''}
+    <div class="db3-d-own">Owned <b>${ownedStr}</b> · In deck <b>${inDeck}</b>${inSide ? ` · Side <b>${inSide}</b>` : ''} · Max <b>${ownCap}</b></div>
+    <div class="db3-d-desc">${escapeHtml(card.desc || card.text || 'No description.')}</div>
+    <div class="db3-d-actions">${actions}</div>
+  `;
+}
 function renderDeckBuilder() {
   // No hero picked yet? Force the "pick a hero first" intro screen.
   if (!App.deckBuilderHeroId) {
@@ -143499,17 +143628,9 @@ function renderDeckBuilder() {
         // Addable only when owned and not full. Non-addable rows carry no
         // data-add (so the click handler is a no-op) but DO carry data-ctx-key
         // so right-click → view details still works everywhere.
-        const canAdd = isOwned && !full;
-        return `
-          <button type="button" class="deck-collection-row ${full ? 'full' : ''}${heroLocked ? ' hero-locked' : ''}${!isOwned ? ' not-owned' : ''}" style="${!isOwned ? 'opacity:0.6;filter:grayscale(0.5)' : ''}" ${canAdd ? `data-add="${key}"` : ''} data-ctx-key="${key}" title="${canAdd ? 'Click to add · right-click for details' : 'Right-click for details'}">
-            <div class="deck-row-icon">${renderIcon(spriteKey, card.icon, 'md')}</div>
-            <div class="deck-row-info">
-              <div class="deck-row-name">${escapeHtml(card.name)} ${typeBadge}${customBadge}</div>
-              <div class="deck-row-meta">${metaLine}</div>
-            </div>
-            <div class="deck-row-count">${!isOwned ? '🔒' : (count + '/' + maxCopies)}</div>
-          </button>
-        `;
+        // v2 grid thumbnail — click to inspect (left panel), double-click to add.
+        // `dimmed` = not owned, or already at the copy cap / deck full.
+        return _dbCardThumb({ key, card, zone: 'collection', count, dimmed: (!isOwned || full), spriteKey });
       }).join('');
 
   // Current deck list — group by card key and show counts
@@ -143522,58 +143643,25 @@ function renderDeckBuilder() {
     return (ca.name || '').localeCompare(cb.name || '');
   });
   const deckListHtml = groupedKeys.length === 0
-    ? `<div class="empty-list-note">Deck is empty. Click a card to add it.</div>`
+    ? `<div class="db3-empty">Deck is empty. Click a card on the right, then double-click (or ＋ Add) to put it here.</div>`
     : groupedKeys.map(key => {
         const card = resolveDeckCard(key);
         if (!card) return '';
         const count = grouped[key];
-        const { kind } = parseCardKey(key);
-        // Show held-item indicator on unit rows (right-click → equip)
-        const isUnitLike = kind === 'unit' || (kind === 'custom' && card.type === 'unit');
-        const equipKey = isUnitLike ? ('u_' + card.id) : null;
-        const equipped = equipKey ? (Profile.equipment && Profile.equipment[equipKey]) : null;
-        // Resolve via getItemById so Forge custom items show their name + uploaded
-        // icon (renderItemIcon) instead of falling back to a generic emoji.
-        const equippedItem = (equipped && equipped !== 'none')
-          ? ((typeof getItemById === 'function') ? getItemById(equipped) : HELD_ITEMS[equipped])
-          : null;
-        const itemBadgeIcon = equippedItem
-          ? ((typeof renderItemIcon === 'function') ? renderItemIcon(equippedItem.id, equippedItem.icon || '🎒', 'sm') : (equippedItem.icon || '🎒'))
-          : '';
-        const itemBadge = equippedItem ? `<span class="deck-current-item" title="Holding: ${escapeHtml(equippedItem.name)}">${itemBadgeIcon}</span>` : '';
         const isHeroCard = card.type === 'hero';
         const spriteKey = isHeroCard ? ('h_' + card.id) : ('u_' + card.id);
-        const _canSide = !isHeroCard; // heroes stay in main
-        return `
-          <div class="deck-current-row" data-remove="${key}" data-ctx-key="${key}" title="Right-click for details${isUnitLike ? ' / equip item' : ''}">
-            <span class="deck-current-cost">${card.cost || 0}</span>
-            <span class="deck-current-icon">${renderIcon(spriteKey, card.icon, 'sm')}</span>
-            <span class="deck-current-name">${escapeHtml(card.name)} <span class="deck-kind-tag" style="background:${kindColors[kind]}22;color:${kindColors[kind]};border-color:${kindColors[kind]}55">${kind.toUpperCase()}</span>${itemBadge}</span>
-            <span class="deck-current-count">×${count}</span>
-            ${_canSide ? `<button class="btn-mini" data-move-to-side="${key}" title="Move one copy to Side Deck" style="font-size:0.68rem;padding:1px 5px">→ Side</button>` : ''}
-            <button class="btn-mini btn-danger" data-remove-key="${key}" title="Remove one">−</button>
-          </div>
-        `;
+        return _dbCardThumb({ key, card, zone: 'main', count, spriteKey });
       }).join('');
 
   // ── Side Deck list HTML ───────────────────────────────────────────────────
   const _sideDeckHtml = (() => {
-    if (!_sideCards.length) return `<div class="empty-list-note">Side deck is empty.<br><span class="ink-dim" style="font-size:0.8rem">Hit "→ Side" on any main deck card, or add cards here directly from Inventory.</span></div>`;
+    if (!_sideCards.length) return `<div class="db3-empty">Side deck is empty.<br><span class="ink-dim" style="font-size:0.8rem">Select a main-deck card and hit "→ Side", or add cards here directly while this tab is open.</span></div>`;
     const _sideGrouped = {};
     for (const k of _sideCards) _sideGrouped[k] = (_sideGrouped[k] || 0) + 1;
     return Object.entries(_sideGrouped).map(([key, cnt]) => {
       const c = resolveDeckCard(key);
       if (!c) return '';
-      const { kind } = parseCardKey(key);
-      const tc = kindColors[kind] || kindColors.custom;
-      return `<div class="deck-current-row" style="border-left-color:rgba(168,208,255,0.5)">
-        <span class="deck-current-cost">${c.cost || 0}</span>
-        <span class="deck-current-icon">${renderIcon((c.type==='hero'?'h_':'u_')+c.id, c.icon, 'sm')}</span>
-        <span class="deck-current-name">${escapeHtml(c.name)} <span class="deck-kind-tag" style="background:${tc}22;color:${tc};border-color:${tc}55">${kind.toUpperCase()}</span></span>
-        <span class="deck-current-count">×${cnt}</span>
-        <button class="btn-mini" data-mv-side-to-main="${escapeHtml(key)}" title="Move one copy back to Main Deck" style="font-size:0.68rem;padding:1px 5px">← Main</button>
-        <button class="btn-mini btn-danger" data-rm-side="${escapeHtml(key)}" title="Remove from Side Deck">−</button>
-      </div>`;
+      return _dbCardThumb({ key, card: c, zone: 'side', count: cnt, spriteKey: (c.type === 'hero' ? 'h_' : 'u_') + c.id });
     }).join('');
   })();
 
@@ -143792,47 +143880,54 @@ function renderDeckBuilder() {
         </div>
       </div>
 
-      <div class="deck-layout">
-        <div>
-          <div class="forge-section-header" style="display:flex;justify-content:space-between;align-items:center">
-            <h3>Inventory</h3>
-            <div style="display:flex;gap:0.2rem;flex-wrap:wrap">${filterButtons}</div>
-          </div>
-          ${filterRowHtml}
-          <div class="deck-collection-list">${collectionHtml}</div>
+      <!-- ════ 3-column console layout: card detail · deck · collection ════ -->
+      <div class="db3-wrap">
+        <!-- LEFT — selected card detail -->
+        <div class="db3-col db3-detail-col">
+          <div class="db3-colhead">🔎 Card Details</div>
+          <div id="db-detail">${_dbDetailPanel()}</div>
         </div>
-        <div>
-          <div class="forge-section-header">
-            <h3>${escapeHtml(App.deckEditName || (hero.name + "'s Deck"))}</h3>
-            <div class="small-text ink-dim">Hero: <strong>${escapeHtml(hero.name)}</strong> · Max ${MAX_COPIES_PER_CARD} copies of any card</div>
+
+        <!-- CENTER — the deck (Main / Side / Gems / Archon) -->
+        <div class="db3-col">
+          <div class="db3-colhead">
+            <span>${escapeHtml(App.deckEditName || (hero.name + "'s Deck"))}</span>
+            <span class="db3-sub ${isValid ? '' : 'loss'}">${deckSize} / ${DECK_SIZE}</span>
           </div>
-          <div class="deck-curve">${curveHtml}</div>
-          <!-- ── Panel tab bar: Main Deck / Side Deck / Gems ─────────────── -->
-          <div style="display:flex;gap:0;margin:0.5rem 0 0;border-bottom:2px solid rgba(255,255,255,0.08)">
+          <div class="deck-curve" style="margin-bottom:6px">${curveHtml}</div>
+          <div class="db3-tabs">
             <button class="forge-tab ${_pTab==='main'?'active':''}" data-db-ptab="main" style="border-radius:6px 6px 0 0;margin-right:2px">🃏 Main (${deckSize}/${DECK_SIZE})</button>
             <button class="forge-tab ${_pTab==='side'?'active':''}" data-db-ptab="side" style="border-radius:6px 6px 0 0;margin-right:2px">📋 Side (${_sideCount}/${SIDE_MAX})</button>
             <button class="forge-tab ${_pTab==='gems'?'active':''}" data-db-ptab="gems" style="border-radius:6px 6px 0 0">💎 Gems (${_totalGems}/${GEM_CAP})</button>
             ${_archonEnabled ? `<button class="forge-tab ${_pTab==='archon'?'active':''}" data-db-ptab="archon" style="border-radius:6px 6px 0 0;margin-left:2px">🜂 Archon (${_archonCount}/${ARCHON_DECK_MAX})</button>` : ''}
           </div>
-          <!-- Main deck panel -->
-          <div style="display:${_pTab==='main'?'block':'none'}">
-            <div class="deck-current-list">${deckListHtml}</div>
+          <!-- Main deck grid -->
+          <div style="display:${_pTab==='main'?'block':'none'};padding-top:8px">
+            <div class="db3-grid">${deckListHtml}</div>
           </div>
-          <!-- Side deck panel -->
-          <div style="display:${_pTab==='side'?'block':'none'}">
-            <div style="padding:0.4rem 0.2rem 0.2rem;font-size:0.78rem;color:#8899aa">Up to ${SIDE_MAX} cards you can swap in before a battle. Use "→ Side" on main deck cards, or add from Inventory.</div>
-            <div class="deck-current-list" id="db-side-list">${_sideDeckHtml}</div>
+          <!-- Side deck grid -->
+          <div style="display:${_pTab==='side'?'block':'none'};padding-top:8px">
+            <div style="padding:0 0.2rem 0.4rem;font-size:0.78rem;color:#8899aa">Up to ${SIDE_MAX} swap-in cards. While this tab is open, ＋ Add sends cards here.</div>
+            <div class="db3-grid" id="db-side-list">${_sideDeckHtml}</div>
           </div>
-          <!-- Gems panel -->
-          <div style="display:${_pTab==='gems'?'block':'none'}">
-            <div style="padding:0.4rem 0.2rem 0.2rem;font-size:0.78rem;color:#8899aa">Socket gems into unit cards. Gems apply passives, moves, and on-play effects when that unit enters battle.</div>
-            <div id="db-gems-list" style="padding-top:0.4rem">${_gemsHtml}</div>
+          <!-- Gems panel (config, not a grid) -->
+          <div style="display:${_pTab==='gems'?'block':'none'};padding-top:8px">
+            <div style="padding:0 0.2rem 0.4rem;font-size:0.78rem;color:#8899aa">Socket gems into unit cards. Gems apply passives, moves, and on-play effects when that unit enters battle.</div>
+            <div id="db-gems-list">${_gemsHtml}</div>
           </div>
-          <!-- Archon deck panel -->
-          ${_archonEnabled ? `<div style="display:${_pTab==='archon'?'block':'none'}">
-            <div style="padding:0.4rem 0.2rem 0.2rem;font-size:0.78rem;color:#8899aa">Up to ${ARCHON_DECK_MAX} Archons. In battle, a unit with a Catalyst passive can sacrifice nearby Offerings + pay Kalon Source to summon one of these.</div>
-            <div id="db-archon-list" style="padding-top:0.4rem">${_archonDeckHtml}</div>
+          <!-- Archon panel (config, not a grid) -->
+          ${_archonEnabled ? `<div style="display:${_pTab==='archon'?'block':'none'};padding-top:8px">
+            <div style="padding:0 0.2rem 0.4rem;font-size:0.78rem;color:#8899aa">Up to ${ARCHON_DECK_MAX} Archons. In battle, a unit with a Catalyst passive can sacrifice nearby Offerings + pay Kalon Source to summon one of these.</div>
+            <div id="db-archon-list">${_archonDeckHtml}</div>
           </div>` : ''}
+        </div>
+
+        <!-- RIGHT — collection / card list -->
+        <div class="db3-col">
+          <div class="db3-colhead"><span>📚 Card List</span><span class="db3-sub">${filterCountText}</span></div>
+          <div style="display:flex;gap:0.2rem;flex-wrap:wrap;margin-bottom:6px">${filterButtons}</div>
+          ${filterRowHtml}
+          <div class="db3-grid" style="margin-top:6px">${collectionHtml}</div>
         </div>
       </div>
       ${renderDeckCardContextModal()}
@@ -144297,6 +144392,57 @@ function renderDeckBuilder() {
   bindItemPickers();
   bindRelicPickers();
   bindDeckCardContextEvents();
+
+  // ── v2 grid: select-then-act (click a thumbnail → inspect; double-click →
+  // add/remove). Reuses the same closures as the per-element handlers above so
+  // behaviour is identical; full render() rebinds the detail-panel buttons,
+  // while a single-click does a snappy detail-only repaint + rebind. ──────────
+  _ensureDb3Style();
+  const _dbThumbAction = (key, zone) => {
+    if (!key) return;
+    if (zone === 'collection') {
+      withDeckScrollPreserved(() => {
+        if (_sideEnabled && App.deckPanelTab === 'side') _addToSide(key);
+        else App.deckEdit = addToDeck(App.deckEdit, key);
+        render();
+      });
+    } else if (zone === 'main') {
+      withDeckScrollPreserved(() => { App.deckEdit = removeFromDeck(App.deckEdit, key); render(); });
+    } else if (zone === 'side') {
+      // Side → Main (mirror of the old "← Main": only pull from side if main accepts it).
+      const before = App.deckEdit.length;
+      const next = addToDeck(App.deckEdit, key);
+      if (next.length === before) { try { showToast("Can't move to Main — deck full or copy limit reached."); } catch (_) {} return; }
+      const i = Profile.sideDeck.cards.indexOf(key); if (i >= 0) Profile.sideDeck.cards.splice(i, 1);
+      App.deckEdit = next; App.deckPanelTab = 'main';
+      try { saveProfile(); } catch (_) {}
+      render();
+    }
+  };
+  const _dbBindDetailActions = (scope) => {
+    const r = scope || document;
+    const a = r.querySelector('[data-add]'); if (a) a.onclick = () => _dbThumbAction(a.dataset.add, 'collection');
+    const rm = r.querySelector('[data-remove-key]'); if (rm) rm.onclick = () => _dbThumbAction(rm.dataset.removeKey, 'main');
+    const sd = r.querySelector('[data-move-to-side]'); if (sd) sd.onclick = () => {
+      if (_sideCards.length >= SIDE_MAX) { try { showToast(`⚠ Side deck is full (${SIDE_MAX} max)`); } catch (_) {} return; }
+      const k = sd.dataset.moveToSide; const i = App.deckEdit.indexOf(k); if (i === -1) return;
+      App.deckEdit.splice(i, 1); Profile.sideDeck.cards.push(k); try { saveProfile(); } catch (_) {} render();
+    };
+    const mm = r.querySelector('[data-mv-side-to-main]'); if (mm) mm.onclick = () => _dbThumbAction(mm.dataset.mvSideToMain, 'side');
+    const rs = r.querySelector('[data-rm-side]'); if (rs) rs.onclick = () => {
+      const k = rs.dataset.rmSide; const i = Profile.sideDeck.cards.indexOf(k); if (i >= 0) { Profile.sideDeck.cards.splice(i, 1); try { saveProfile(); } catch (_) {} render(); }
+    };
+  };
+  document.querySelectorAll('[data-sel-key]').forEach(t => {
+    t.onclick = () => {
+      App._dbSel = { key: t.dataset.selKey, zone: t.dataset.selZone };
+      const d = document.getElementById('db-detail');
+      if (d) { d.innerHTML = _dbDetailPanel(); _dbBindDetailActions(d); }
+      document.querySelectorAll('.db3-thumb.is-sel').forEach(x => x.classList.remove('is-sel'));
+      t.classList.add('is-sel');
+    };
+    t.ondblclick = () => _dbThumbAction(t.dataset.selKey, t.dataset.selZone);
+  });
 }
 
 // ============================================================================

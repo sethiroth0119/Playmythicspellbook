@@ -18,7 +18,15 @@ assets/background/Backgrounds/websitefloodvideo.mp4
 # "🛠 Edit Shop" / "🏗️ Build" admin panels), NOT the Pages bundle — Cloudflare
 # can't serve a file this large anyway. Ignore EVERY .glb in this folder; the PNG
 # textures next to them (under the cap) still deploy normally. Files stay on disk.
+# NOTE: also ignore .glb in SUBfolders (e.g. "3d models/posters/Birth Of Universe
+# 1.glb" — 41.9 MiB) — the single-* pattern only matches direct children, so a
+# model dropped into a subfolder slipped through and aborted the whole deploy.
 assets/3d models/*.glb
+assets/3d models/**/*.glb
+
+# Belt-and-suspenders: ANY .glb anywhere in the bundle. Runtime 3D models are
+# served from the Supabase `models` Storage bucket, never the Pages upload.
+**/*.glb
 
 # Belt-and-suspenders: any other oversized model formats that land in assets.
 *.glb.zip

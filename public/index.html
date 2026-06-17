@@ -105754,6 +105754,78 @@ async function cardShopCollect() {
     CardShop.mine = null; await cardShopFetchMine(); return true;
   } catch (e) { return null; }
 }
+// ════════════════════════════════════════════════════════════════════════════
+// 🏙️ NODE REGISTRATION — register a Card Shop to a District Node. An open shop
+// boosts the node (order / commerce / repopulation) in the shared 24h tick, and
+// the owner collects a dividend (Cinder + the node's resource) scaled by node
+// health and recent sales. Server-authoritative via RPCs (card_shop_node.sql).
+// ════════════════════════════════════════════════════════════════════════════
+// Node display name + its signature resource id (from the TW node catalog).
+function _csNodeMeta(nodeId) {
+  let name = nodeId || '', resource = '';
+  try {
+    const t = (typeof Forge !== 'undefined' && Forge.territoryWars) ? Forge.territoryWars : null;
+    const node = t && Array.isArray(t.nodes) ? t.nodes.find(n => n && n.id === nodeId) : null;
+    if (node) { name = node.name || nodeId; resource = Object.keys(node.resourceYield || {})[0] || ''; }
+  } catch (e) {}
+  return { name: name || nodeId, resource };
+}
+function _csResName(id) { try { return (typeof _meta === 'function' && _meta(id) && _meta(id).name) || id; } catch (e) { return id; } }
+// All known District Nodes (cloud recon rows), each tagged with name + resource.
+function _csNodeList() {
+  const out = [];
+  try {
+    const cloud = (App && App._twNodeReconCloud) || {};
+    for (const id in cloud) { const row = cloud[id] && cloud[id].row; if (!row) continue; const m = _csNodeMeta(id); out.push({ id, name: m.name, resource: m.resource, row }); }
+  } catch (e) {}
+  out.sort((a, b) => (b.row.commerce | 0) - (a.row.commerce | 0) || String(a.name).localeCompare(String(b.name)));
+  return out;
+}
+async function _csNodeRegister(nodeId) {
+  try {
+    if (!_csReady()) { showToast('☁ Sign in to register your shop.', 3600); return false; }
+    const meta = _csNodeMeta(nodeId);
+    const { data, error } = await Cloud.client.rpc('card_shop_register_node', { p_node_id: nodeId, p_resource: meta.resource || null });
+    if (error) { showToast(_csTableMissing(error) ? '⚠ Run the card_shop_node migration in Supabase first.' : ('⚠ ' + (error.message || 'Register failed')), 4600); return false; }
+    if (!data || !data.ok) { showToast(data && data.reason === 'no_shop' ? 'Open your shop first.' : '⚠ Could not register.', 3600); return false; }
+    showToast('🏙️ Registered to ' + escapeHtml(meta.name) + '. Your open shop now helps that district.', 5200);
+    CardShop.mine = null; await cardShopFetchMine();
+    try { if (typeof tw_cloudFetchAllNodeRecon === 'function') tw_cloudFetchAllNodeRecon(); } catch (e) {}
+    return true;
+  } catch (e) { return false; }
+}
+async function _csNodeUnregister() {
+  try {
+    if (!_csReady()) return false;
+    const { error } = await Cloud.client.rpc('card_shop_unregister_node');
+    if (error) { showToast('⚠ Could not leave the node.', 3600); return false; }
+    showToast('🚪 Left the district. (Any unclaimed dividend is forfeited.)', 4200);
+    CardShop.mine = null; await cardShopFetchMine();
+    return true;
+  } catch (e) { return false; }
+}
+async function _csNodeDividend() {
+  try {
+    if (!_csReady()) return false;
+    const { data, error } = await Cloud.client.rpc('card_shop_node_dividend');
+    if (error) { showToast(_csTableMissing(error) ? '⚠ Run the card_shop_node migration first.' : '⚠ Could not collect.', 4200); return false; }
+    if (!data || !data.ok) {
+      const reason = data && data.reason;
+      showToast(reason === 'not_registered' ? 'Register to a node first.' : reason === 'closed' ? 'Your shop must be OPEN to earn.' : reason === 'too_soon' ? 'Dividend is still accruing — check back later.' : '⚠ Nothing to collect.', 3600);
+      return false;
+    }
+    const cinder = data.cinder | 0, units = data.units | 0, resId = data.resource || '';
+    if (cinder > 0 && typeof addCinders === 'function') addCinders(cinder);
+    if (units > 0 && resId && typeof addRes === 'function') addRes(resId, units);
+    try { saveProfile && saveProfile(); } catch (e) {}
+    const parts = [];
+    if (cinder > 0) parts.push(cinder.toLocaleString() + ' 🔥');
+    if (units > 0 && resId) parts.push(units.toLocaleString() + '× ' + escapeHtml(_csResName(resId)));
+    showToast('🏙️ District dividend: ' + (parts.length ? parts.join(' + ') : 'nothing yet') + (data.mult > 1 ? ' (×' + data.mult + ' sales bonus)' : ''), 5600);
+    CardShop.mine = null; await cardShopFetchMine();
+    return true;
+  } catch (e) { return false; }
+}
 // ── card tile + style ──
 function _csCardTile(cardId, cardJson) {
   const card = (typeof lookupCustomCard === 'function' && lookupCustomCard(cardId)) || cardJson || { id: cardId, name: cardId };
@@ -105817,6 +105889,9 @@ try {
         case 'cs-shop-build': _csOpenLayoutBuilder(); break;
         case 'cs-furniture': _csFetchFurnitureCatalog().catch(() => {}).then(() => _csOpenFurnitureMarket()); break;
         case 'cs-goto-business': { App._cardShopReturn = App._cardShopReturn || 'title'; App.screen = 'justBusiness'; render(); break; }
+        case 'cs-node-register': { const sel = document.getElementById('cs-node-sel'); const nid = sel && sel.value; if (nid) Promise.resolve(_csNodeRegister(nid)).then(() => _csRender()); break; }
+        case 'cs-node-leave': Promise.resolve(_csNodeUnregister()).then(() => _csRender()); break;
+        case 'cs-node-collect': Promise.resolve(_csNodeDividend()).then(() => _csRender()); break;
         case 'cs-panel-close': _csClosePanel(); break;
         case 'cs-open-pack': { const pid = t.getAttribute('data-pack'); if (pid) _csOpenOnePack(pid); break; }
         case 'cs-tab': App._csTab = t.getAttribute('data-tab'); App._csViewOwner = null; render(); break;
@@ -106015,12 +106090,46 @@ function _csMyShopBody() {
   const pickPack = App._csPickPack && heldPacks[App._csPickPack] ? App._csPickPack : null;
   const packTiles = heldPackList.slice(0, 40).map(p => `<button class="cs-card" data-cs="cs-pick-pack" data-pack="${escapeHtml(p.packId)}" style="cursor:pointer;${pickPack === p.packId ? 'outline:2px solid ' + accent : ''}">${_csPackTile(p.packId, p)}<div class="cs-card-foot"><span class="cs-card-price" style="color:#8a96a3;font-weight:600">have ${p.count}</span></div></button>`).join('');
   const shelves = (m.listings || []).map(l => `<div class="cs-card">${_csListingTile(l)}<div class="cs-card-foot"><span class="cs-card-price">${(l.price | 0).toLocaleString()} 🔥</span><button class="btn-mini btn-danger" data-cs="cs-unlist" data-id="${escapeHtml(l.id)}" data-card="${escapeHtml(l.card_id)}" data-kind="${escapeHtml(l.kind || 'card')}">✕</button></div></div>`).join('');
+  // 🏙️ District Node registration — lazily pull the node list (populated when the
+  // War Map loads); if empty, kick a background fetch and repaint.
+  try { if (_csReady() && typeof tw_cloudFetchAllNodeRecon === 'function' && (!App._twNodeReconAllAt || (Date.now() - App._twNodeReconAllAt) > 60000) && !App._csNodeFetching) { App._csNodeFetching = true; Promise.resolve(tw_cloudFetchAllNodeRecon()).catch(() => {}).then(() => { App._csNodeFetching = false; _csRender(); }); } } catch (e) {}
+  let nodeSection = '';
+  if (shop.node_id) {
+    const meta = _csNodeMeta(shop.node_id);
+    const rec = (App._twNodeReconCloud && App._twNodeReconCloud[shop.node_id] && App._twNodeReconCloud[shop.node_id].row) || {};
+    const resName = meta.resource ? _csResName(meta.resource) : '—';
+    nodeSection = `<div class="cs-empty" style="text-align:left;border-style:solid;border-color:${accent}55;margin:0.6rem 0">
+      <div style="font-weight:800;color:#ffe9a8;margin-bottom:0.25rem">🏙️ District: ${escapeHtml(meta.name)}</div>
+      <div style="font-size:0.76rem;color:#8a96a3;margin-bottom:0.5rem">Your ${shop.open ? '<b style="color:#4d9e68">open</b>' : '<b style="color:#c89428">closed</b>'} shop boosts this district — <b>order</b> (less corruption), <b>commerce</b>, and faster <b>repopulation</b>. It pays you <b style="color:#ffcf66">${escapeHtml(resName)}</b> + Cinder, scaled by node health &amp; your recent sales. ${shop.open ? '' : '<span style="color:#c89428">Open your shop to earn &amp; help the node.</span>'}</div>
+      <div style="display:flex;gap:0.9rem;flex-wrap:wrap;font-size:0.72rem;color:#cdb37a;margin-bottom:0.6rem">
+        <span>Commerce <b style="color:#e4ecf3">${rec.commerce | 0}</b></span><span>Shops here <b style="color:#e4ecf3">${rec.shops_registered | 0}</b></span><span>Corruption <b style="color:#e4ecf3">${rec.corruption | 0}%</b></span><span>${rec.restored ? '<span style="color:#4d9e68">✔ restored</span>' : 'rebuilding'}</span>
+      </div>
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+        <button class="btn-primary btn-mini" data-cs="cs-node-collect">💰 Collect dividend</button>
+        <button class="btn-secondary btn-mini" data-cs="cs-node-leave">Leave district</button>
+      </div></div>`;
+  } else {
+    const nodes = _csNodeList();
+    if (!nodes.length) {
+      nodeSection = `<div class="cs-empty" style="text-align:left;border-style:dashed;margin:0.6rem 0;font-size:0.78rem;color:#8a96a3">🏙️ <b style="color:#ffe9a8">Register to a District Node</b> to earn its resources &amp; boost its stats. Open the <b>War Map</b> once to load the districts, then come back here.</div>`;
+    } else {
+      const opts = nodes.map(n => `<option value="${escapeHtml(n.id)}">${escapeHtml(n.name)}${n.resource ? (' — ' + escapeHtml(_csResName(n.resource))) : ''} · commerce ${n.row.commerce | 0}</option>`).join('');
+      nodeSection = `<div class="cs-empty" style="text-align:left;border-style:solid;margin:0.6rem 0">
+        <div style="font-weight:800;color:#ffe9a8;margin-bottom:0.25rem">🏙️ Register to a District Node</div>
+        <div style="font-size:0.76rem;color:#8a96a3;margin-bottom:0.5rem">An open shop helps the district (order · commerce · repopulation) and earns you that node's resource + Cinder, scaled by node health &amp; your sales. One node at a time — switching forfeits any unclaimed dividend.</div>
+        <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center">
+          <select id="cs-node-sel" class="cs-input" style="flex:1;min-width:180px">${opts}</select>
+          <button class="btn-primary btn-mini" data-cs="cs-node-register">Register</button>
+        </div></div>`;
+    }
+  }
   return `
     <div class="cs-shop-row" style="cursor:default;border-color:${accent}66">
       <div class="cs-shop-badge" style="background:${accent}22;border:1px solid ${accent}">🛒</div>
       <div style="flex:1"><div class="cs-shop-name" style="color:${accent}">${escapeHtml(shop.shop_name)}</div><div class="cs-shop-tag">${escapeHtml(shop.tagline || '')} · ${shop.open ? '<span style="color:#4d9e68">live to all players</span>' : '<span style="color:#c89428">closed to visitors</span>'}</div></div>
       <button class="btn-mini" data-cs="cs-toggle-open" data-open="${shop.open ? '0' : '1'}">${shop.open ? 'Close' : 'Open'}</button>
     </div>
+    ${nodeSection}
     <div class="cs-shop-row" style="cursor:default;justify-content:space-between">
       <div><div class="cs-shop-tag">UNCOLLECTED EARNINGS</div><div style="font-weight:800;color:#d8b24a;font-size:1.1rem">${(m.earnings | 0).toLocaleString()} 🔥 <span style="font-size:0.7rem;color:#8a96a3;font-weight:600">· ${m.salesCount | 0} sale${(m.salesCount | 0) === 1 ? '' : 's'}</span></div></div>
       <button class="btn-mini ${(m.earnings | 0) > 0 ? 'btn-primary' : ''}" data-cs="cs-collect" ${(m.earnings | 0) > 0 ? '' : 'disabled'}>💰 Collect</button>

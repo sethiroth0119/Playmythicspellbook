@@ -54417,6 +54417,60 @@ window._LQ = {
   close: () => _lqCloseDialog(),
 };
 
+// ⚰️ §3 — Deliberate sacrifice: spending a bonded board unit for value docks its loyalty.
+function _lqSacrificeHit(unit) {
+  try {
+    if (!unit || unit.owner !== 'player' || unit.isHero) return;
+    const id = unit.originalCardId || unit.cardId; if (!id) return;
+    const p = Profile.units[id]; if (!p) return;
+    _migrateBondEntry(p); adjustBond(p, -15);
+    try { if (typeof showToast === 'function') showToast('💔 ' + (unit.name || 'A companion') + ' — sacrificed. −15 loyalty.', 2400); } catch (e) {}
+  } catch (e) {}
+}
+// 🎭 §3 — Values / style: at a WIN, units react to HOW you won. card.values ∈
+// honorable (dislikes toxic methods) · protective (dislikes losing allies) · ruthless
+// (relishes toxic / decisive wins). 3+ violations slide a unit toward Wary.
+const LQ_VALUES = { honorable: '⚜ Honorable', protective: '🛡 Protective', ruthless: '🗡 Ruthless' };
+const LQ_DOT_STATUSES = { poison: 1, bleed: 1, burn: 1, acid: 1, frostbite: 1 };
+function _lqValuesEval(s, won, fieldedSet, lostAlly) {
+  try {
+    if (!won || !fieldedSet) return;
+    const toxin = !!(s && s._wmToxin);
+    for (const id of fieldedSet) {
+      const card = _lqCard(id); if (!card || !card.values || !LQ_VALUES[card.values]) continue;
+      const p = Profile.units[id]; if (!p) continue;
+      let delta = 0, opposed = false;
+      if (card.values === 'honorable') { if (toxin) { delta = -4; opposed = true; } else delta = 3; }
+      else if (card.values === 'protective') { if (lostAlly) { delta = -4; opposed = true; } else delta = 3; }
+      else if (card.values === 'ruthless') { if (toxin) delta = 3; }
+      if (!delta) continue;
+      _migrateBondEntry(p); adjustBond(p, delta);
+      if (opposed) { p.valueViolations = (p.valueViolations | 0) + 1; if (p.valueViolations >= 3) adjustBond(p, -10); }   // slides toward Wary
+      else p.valueViolations = 0;
+    }
+  } catch (e) {}
+}
+// 🕊 §5 — Release (disband) an owned companion forever. Permanent removal; a bonded
+// (Trusted+) release is WITNESSED by the rest of the roster (loyalty hit + confront).
+function _lqReleaseCompanion(cardId) {
+  try {
+    if (!cardId) return;
+    const card = _lqCard(cardId) || {};
+    const p = Profile.units ? Profile.units[cardId] : null;
+    const tierIdx = p ? bondTierIndex(p.bond || 0) : 0;
+    const nm = card.name || 'this companion';
+    const warn = tierIdx >= TRUSTED_TIER_IDX ? '\n\nThey are ' + getBondTier(p.bond || 0).name + ' — your other bonded companions will NOT forget this.' : '';
+    if (typeof confirm === 'function' && !confirm('Release ' + nm + ' forever?\nThis permanently removes the unit and its loyalty, level, and bound items.' + warn)) return;
+    if (tierIdx >= TRUSTED_TIER_IDX) _lqWitnessDeparture(nm, LQ_DISBAND_HIT, cardId);
+    if (typeof _resTakeOwned === 'function') _resTakeOwned('card', cardId);
+    if (Profile.units) delete Profile.units[cardId];
+    try { saveProfile(); } catch (e) {}
+    if (typeof showToast === 'function') showToast('🕊 Released ' + nm + '. The bond is ended.', 2800);
+    try { if (typeof App !== 'undefined') App.collectionDetailCard = null; } catch (e) {}   // close the detail modal
+    if (typeof render === 'function') render();
+  } catch (e) {}
+}
+
 const getHeroProfile = (heroId) => {
   const p = Profile.heroes[heroId] || { level: 1, xp: 0, kills: 0, wins: 0 };
   _migrateBondEntry(p); if (p.bond == null) { p.bond = BOND_NEW; p.bondScaled = true; }
@@ -62357,6 +62411,7 @@ function _applyCostPayment(state, side, sourceUnit, cost, picks) {
       if (dead.length) {
         const graveCards = dead.map(u => ({ id: u.cardId || u.originalCardId, name: u.name, icon: u.icon, type: 'unit', instanceId: 'tomb_' + u.id })).filter(c => c.id);
         s = { ...s, [side]: { ...s[side], graveyard: [...((s[side] && s[side].graveyard) || []), ...graveCards] } };
+        if (side === 'player') dead.forEach(u => { try { _lqSacrificeHit(u); } catch (e) {} });   // 💔 §3 deliberate sacrifice (tribute)
         log.push({ msg: `⚰️ Cost — tributed ${dead.map(u => u.name).join(', ')}.`, color: sideCol() });
         try {
           dead.forEach(u => {
@@ -62376,6 +62431,7 @@ function _applyCostPayment(state, side, sourceUnit, cost, picks) {
 function _applySelfSacrifice(state, side, sourceUnit) {
   if (!sourceUnit) return { state, log: [] };
   const log = [{ msg: `⚰️ Cost — ${sourceUnit.name} sacrifices itself.`, color: side === 'player' ? 'amber' : 'red' }];
+  if (side === 'player') { try { _lqSacrificeHit(sourceUnit); } catch (e) {} }   // 💔 §3 deliberate sacrifice
   const card = { id: sourceUnit.cardId || sourceUnit.originalCardId, name: sourceUnit.name, icon: sourceUnit.icon, type: 'unit', instanceId: 'tomb_' + sourceUnit.id };
   let s = { ...state, units: (state.units || []).map(u => u.id === sourceUnit.id ? { ...u, currentHp: 0, alive: false } : u) };
   if (card.id) s = { ...s, [side]: { ...s[side], graveyard: [...((s[side] && s[side].graveyard) || []), card] } };
@@ -65803,6 +65859,14 @@ const initGame = (heroData, opponentHero, customCards, playerGoesFirst, chosenDe
   // 💗 Benched-loyalty snapshot (§3): the unit cardIds you BROUGHT to this battle, so
   // post-battle we can dock the ones you never deployed (neglect, not log-off, decay).
   try { state._deckUnitIds = [...new Set((pd || []).filter(c => c && (c.type || 'unit') === 'unit' && c.id).map(c => c.id))]; } catch (e) { state._deckUnitIds = []; }
+  try { _aceSlamBusy = false; } catch (e) {}   // 👑 clear any stuck Ace-Slam lock so the cinematic always re-arms each battle
+  // 💗 §2 — Loyalty baseline mood: a Devoted+ hero opens Confident (Sworn → Inspired); a
+  // Wary hero opens Sad. A short starting nudge that ticks down normally. Player hero only.
+  try {
+    const _lt = bondTierIndex((playerProf && playerProf.bond) || 0);
+    const _emo = _lt >= 5 ? 'inspired' : (_lt >= 4 ? 'confident' : (_lt === 0 ? 'sad' : null));
+    if (_emo && HERO_EMOTION_DEFS[_emo] && playerHero && playerHero.id) state.heroEmotions[playerHero.id] = { emotion: _emo, duration: HERO_EMOTION_DEFS[_emo].durationDefault || 2 };
+  } catch (e) {}
   if (typeof _battleInitHeroes === 'function') _battleInitHeroes(state);
   // 🌋 Seed the battlefield's environmental surfaces (oil / water / ice / ember
   // patches) so some maps open with hazards already in play.
@@ -65856,6 +65920,9 @@ const isImmuneToStatus = (unit, statusId) => {
 };
 
 const applyStatusEffect = (unit, statusId, duration, sourceUnitId) => {
+  // 🎭 §3 win-method tag: the player applying a toxic DoT to an enemy flags a "toxic"
+  // victory style, which honorable companions disapprove of (and ruthless ones relish).
+  try { if (typeof LQ_DOT_STATUSES !== 'undefined' && LQ_DOT_STATUSES[statusId] && unit && unit.owner === 'ai' && App.state && App.state.turn === 'player') App.state._wmToxin = true; } catch (e) {}
   // Psychic Realm weather blocks all negative status applications (assisted/strong/shielded still pass through).
   if (App.state && App.state.weather && App.state.weather.weatherType === 'mindRealm' && App.state.weather.turnsLeft > 0) {
     const positives = ['assisted', 'strong', 'shielded', 'focused', 'haste'];
@@ -79994,7 +80061,18 @@ function renderCardEditor() {
         <input type="checkbox" id="ed-ace-slam-on" ${card.aceSlam ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer">
         <span>👑 <strong>Ace Slam</strong> — boss summon cinematic</span>
       </label>
-      <div class="small-text" style="margin-top:0.3rem;color:#ffe6a0">When this unit is summoned, a half-second full-art portrait <strong>slams in from the side</strong> with a screen shake before it lands — Master-Duel "ace monster" energy. Reserve it for bosses / legendaries so it stays special. Respects the player's Graphics Quality setting, honors reduced-motion, and is <strong>click-to-skip</strong>.</div>
+      <div class="small-text" style="margin-top:0.3rem;color:#ffe6a0">When this unit is summoned, a full-art portrait rises in a pillar of light with a screen shake before it lands — Master-Duel "ace monster" energy. Reserve it for bosses / legendaries so it stays special. Plays on <strong>every</strong> graphics setting, honors reduced-motion, and is <strong>click-to-skip</strong>.</div>
+    </div>` : ''}
+    ${type === 'unit' ? `
+    <div class="editor-field full" style="margin-top:0.4rem">
+      <label>💗 Companion Values — how this unit judges the WAY you win (Loyalty system)</label>
+      <select id="ed-values">
+        <option value="">— none —</option>
+        <option value="honorable" ${card.values === 'honorable' ? 'selected' : ''}>⚜ Honorable — opposes toxic methods (poison / bleed / burn)</option>
+        <option value="protective" ${card.values === 'protective' ? 'selected' : ''}>🛡 Protective — opposes winning while allies die</option>
+        <option value="ruthless" ${card.values === 'ruthless' ? 'selected' : ''}>🗡 Ruthless — relishes toxic / decisive wins</option>
+      </select>
+      <div class="small-text ink-dim" style="margin-top:0.3rem">After a WIN, units approve (+3) or oppose (−4) based on your style; 3+ violations slide a companion toward Wary.</div>
     </div>` : ''}
     ${(type === 'unit' || type === 'spell' || type === 'trap' || type === 'custom') ? `
     <div class="editor-field full" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.4rem;background:rgba(255,120,40,0.06);border:1px dashed rgba(255,140,60,0.4);border-radius:6px;padding:0.7rem 0.85rem">
@@ -82613,9 +82691,12 @@ function captureEditorIntoCard(card) {
   // 👑 Ace Slam — boss summon cinematic (unit cards only).
   const _aceSlamToggle = document.getElementById('ed-ace-slam-on');
   if (_aceSlamToggle) {
-    if (_aceSlamToggle.checked && card.type === 'unit') card.aceSlam = true;
+    if (_aceSlamToggle.checked && (card.type || 'unit') === 'unit') card.aceSlam = true;
     else delete card.aceSlam;
   }
+  // 💗 Companion Values (Loyalty §3 approve/oppose) — unit cards only.
+  const _valuesSel = document.getElementById('ed-values');
+  if (_valuesSel) { const _v = _valuesSel.value; if (_v && (card.type || 'unit') === 'unit') card.values = _v; else delete card.values; }
   // ⚔ Assault Effect config — a dedicated on-activation effect. Empty type =
   // inherit the card's own Effect Type (backward compatible).
   const _afxTypeEl = document.getElementById('ed-assault-fx-type');
@@ -87371,9 +87452,9 @@ let _aceSlamBusy = false;
 function _playAceSlam(unit, fromAI) {
   try {
     if (!unit || !unit.aceSlam || _aceSlamBusy) return;
-    let gfx = 'high';
-    try { gfx = (getSettings().gfxQuality) || 'high'; } catch (e) {}
-    if (gfx === 'low') return;
+    // 👑 The Ace Slam is an explicit per-card opt-in signature moment — it now fires on
+    // EVERY graphics setting (it was being silently suppressed on the "Low" quality
+    // slider). Reduced-motion is still respected for accessibility.
     if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const name = unit.name || 'Ace';
     // Master-Duel style: the unit rises from a central pillar of light (no side
@@ -89487,6 +89568,7 @@ function _executeSacrifice(st, victim) {
   const log = [...s.log];
   // Remove the victim.
   s = { ...s, units: s.units.map(u => u.id === victim.id ? { ...u, currentHp: 0, alive: false } : u) };
+  try { _lqSacrificeHit(victim); } catch (e) {}   // 💔 §3 deliberate sacrifice (sacrifice effect)
   log.push({ msg: `⚔ ${victim.name} is sacrificed for ${unit.name}!`, color: 'amber' });
   // Apply effect.
   const se = eff.sacrificeEffect || 'buffSelf';
@@ -100950,6 +101032,9 @@ function recordBattleProgress() {
     const _bench = (s && Array.isArray(s._deckUnitIds)) ? s._deckUnitIds : [];
     for (const _bid of _bench) { if (fieldedSet.has(_bid)) continue; const _bp = Profile.units[_bid]; if (!_bp) continue; _migrateBondEntry(_bp); adjustBond(_bp, -2); Profile.units[_bid] = _bp; }
   } catch (e) {}
+  // 💗 Values / style (§3) — at a WIN, deployed units react to HOW you won (toxic methods,
+  // losing allies). Honorable/Protective/Ruthless companions approve or oppose accordingly.
+  try { _lqValuesEval(s, won, fieldedSet, Object.keys(faintedByCard || {}).length > 0); } catch (e) {}
   // 💗 Arm a camp loyalty request — a unit that "did something" may speak up next visit.
   try { if (typeof App !== 'undefined') App._lqArmed = true; } catch (e) {}
 
@@ -129880,6 +129965,7 @@ function renderCollectionCardModal(active) {
           </div>
         </div>
         <div class="ccm-footer">
+          ${(c && c.id && (c.type || data.kind) === 'unit' && Profile.cardCollection && (Profile.cardCollection[c.id] | 0) > 0 && (typeof App === 'undefined' || App.screen !== 'battle')) ? `<button class="btn-danger" onclick="_lqReleaseCompanion('${c.id}')" title="Permanently release this companion (bonded ones are witnessed)">🕊 Release</button>` : ''}
           <button class="btn-secondary" id="ccm-done">Close</button>
         </div>
       </div>

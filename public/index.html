@@ -105942,7 +105942,7 @@ try {
       const t = e.target.closest && e.target.closest('[data-cs]'); if (!t) return;
       const a = t.getAttribute('data-cs');
       switch (a) {
-        case 'cs-back': App._csViewOwner = null; App._csPanel = null; if (_cs3DDispose) { try { _cs3DDispose(); } catch (er) {} _cs3DDispose = null; } App.screen = App._cardShopReturn || 'title'; render(); break;
+        case 'cs-back': App._csViewOwner = null; App._csPanel = null; App._csWalk = null; if (_cs3DDispose) { try { _cs3DDispose(); } catch (er) {} _cs3DDispose = null; } App.screen = App._cardShopReturn || 'title'; render(); break;
         case 'cs-3d-toggle':
           if (!App._cs3D) { _csLoadThree((ok) => { if (!ok) { showToast('⚠ 3D store failed to load — check your connection.', 4200); return; } App._cs3D = true; App._csPanel = null; render(); }); }
           else { App._cs3D = false; App._csPanel = null; if (_cs3DDispose) { try { _cs3DDispose(); } catch (er) {} _cs3DDispose = null; } render(); }
@@ -106494,6 +106494,7 @@ function _csMount3D(mount) {
     // Decorative props (placed furniture). ALWAYS show a procedural placeholder box
     // — sized/tinted from the furniture catalog — so furniture is visible even when
     // its .glb is missing or still loading; swap to the real model once it arrives.
+    const propColliders = [];  // furniture you can't walk through
     for (const p of (cfg.props || [])) {
       if (!p) continue;
       const pg = new T.Group(); pg.position.set(p.x || 0, p.y || 0, p.z || 0); pg.rotation.y = p.ry || 0; scene.add(pg);
@@ -106503,10 +106504,23 @@ function _csMount3D(mount) {
         const w = (cat && cat.w) ? cat.w * 0.9 : 0.9, d = (cat && cat.d) ? cat.d * 0.9 : 0.9, h = (cat && cat.h) ? cat.h : 1;
         const col = (cat && cat.color != null) ? cat.color : 0xd4af37;
         ph = box(w, h, d, 0x14110d, col, 0.32); ph.position.y = h / 2; pg.add(ph);
+        // Collision: a no-walk circle sized to the furniture's footprint (skip flat
+        // items like rugs/posters so you can stand on/near them).
+        const fr = Math.max(cat ? cat.w || 1 : 1, cat ? cat.d || 1 : 1) * 0.5 * (p.scale || 1);
+        if (!cat || (cat.h == null) || cat.h > 0.25) propColliders.push({ gx: p.x || 0, gz: p.z || 0, r: Math.max(0.35, fr) });
       } catch (e) {}
       if (p.url) _csTryModel(p.url, (m, gltf) => { try { if (ph) pg.remove(ph); if (p.scale) m.scale.setScalar(p.scale); _csSeatModel(m); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
     }
     const St = { yaw: 0, pitch: 0, cyaw: undefined, cpitch: 0, keys: new Set(), move: { f: 0, b: 0, l: 0, r: 0 }, drag: false, lx: 0, ly: 0 };
+    // 🚶 Restore where the player was standing, so a background re-render that
+    // re-mounts the scene doesn't snap them back to the entrance.
+    try {
+      const _w = App._csWalk;
+      if (_w && _w.shop === _csActiveShopId() && isFinite(_w.x) && isFinite(_w.z)) {
+        camera.position.x = _w.x; camera.position.z = _w.z;
+        St.yaw = St.cyaw = _w.yaw || 0; St.pitch = St.cpitch = _w.pitch || 0;
+      }
+    } catch (e) {}
     const clock = new T.Clock(); let raf = 0, nearView = null;
     const promptEl = mount.querySelector('.cs3d-prompt');
     function tick() {
@@ -106524,7 +106538,7 @@ function _csMount3D(mount) {
       if (St.keys.has('d') || St.keys.has('arrowright') || St.move.r) dir.add(right);
       if (dir.lengthSq() > 0) {
         dir.normalize().multiplyScalar(3.4 * dt);
-        const blocked = (x, z) => { for (const st of stations) { const dx = x - st.gx, dz = z - st.gz; if (dx * dx + dz * dz < st.r * st.r) return true; } return false; };
+        const blocked = (x, z) => { for (const st of stations) { const dx = x - st.gx, dz = z - st.gz; if (dx * dx + dz * dz < st.r * st.r) return true; } for (const pc of propColliders) { const dx = x - pc.gx, dz = z - pc.gz; if (dx * dx + dz * dz < pc.r * pc.r) return true; } return false; };
         const cl = v => Math.max(-7.2, Math.min(7.2, v)); const nx = cl(camera.position.x + dir.x), nz = cl(camera.position.z + dir.z);
         if (!blocked(nx, nz)) { camera.position.x = nx; camera.position.z = nz; } else { if (!blocked(nx, camera.position.z)) camera.position.x = nx; if (!blocked(camera.position.x, nz)) camera.position.z = nz; }
       }
@@ -106532,6 +106546,7 @@ function _csMount3D(mount) {
       const nv = near ? near.view : null;
       if (nv !== nearView) { nearView = nv; if (promptEl) { if (near) { promptEl.textContent = '⏎ Enter ' + near.label; promptEl.style.display = 'block'; } else { promptEl.style.display = 'none'; } } }
       if (npc && !npcHasRoute) { const tt = clock.elapsedTime; npc.position.y = Math.sin(tt * 1.6) * 0.04; npc.rotation.y = Math.atan2(camera.position.x - npc.position.x, camera.position.z - npc.position.z); }
+      try { App._csWalk = { shop: _csActiveShopId(), x: camera.position.x, z: camera.position.z, yaw: St.cyaw, pitch: St.cpitch }; } catch (e) {}
       renderer.render(scene, camera);
     }
     tick();
@@ -106580,6 +106595,7 @@ function _csEnterShop3D(owner) {
   App._csShopOwner = owner || null;
   App._csViewOwner = owner || null;
   App._csPanel = null;
+  App._csWalk = null;  // entering a (different) shop spawns fresh at the entrance
   _csClosePanel();
   const remount = () => { if (_cs3DDispose) { try { _cs3DDispose(); } catch (e) {} _cs3DDispose = null; } const m = document.getElementById('cs-3d-mount'); if (m) _cs3DDispose = _csMount3D(m); };
   if (!document.getElementById('cs-3d-mount')) { render(); return; }
@@ -150599,7 +150615,14 @@ function _twBgRender() {
     if (App._twBgRenderTimer) return;
     App._twBgRenderTimer = setTimeout(() => {
       App._twBgRenderTimer = null;
-      try { if (App.screen === 'territoryWars') render(); } catch (e) {}
+      try {
+        if (App.screen !== 'territoryWars') return;
+        // Don't blow away a field the admin is typing in — re-rendering the drawer
+        // would wipe the input + drop focus (the "can't type a node name" bug).
+        const ae = document.activeElement;
+        if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && ae.closest && ae.closest('.tw-node-drawer')) return;
+        render();
+      } catch (e) {}
     }, 450);
   } catch (e) {}
 }

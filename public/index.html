@@ -136516,10 +136516,349 @@ function _ppRenderOverview(p) {
 function _ppBindOverview() {}
 
 // ───────── AUCTION ─────────
+// ============================================================================
+// ⚡ PRINCE PORTFOLIOS — LIVE 3D AUCTION (overhaul, ported from car-auction-3d)
+// A real-time auction block: a 3D car rotates on a lit stage while NPC bidders
+// drive the price. Bids cost nothing until you WIN — winning (or BUY-IT-NOW)
+// spends our Cinder via spendCinders() (auto-taxed 2% Foundation Tax) and drops
+// the car onto the dealership LOT, carrying its .glb model URL. Admins upload
+// .glb models per rarity tier (Supabase Storage → Forge.princePortfolios
+// .auctionModels, cloud-synced) to control which cars roll onto the block.
+// ============================================================================
+const PPA_RARITIES = [
+  { key: 'Common',    idx: 0, w: 45, min: 6000,   max: 55000,   mult: 1.00, color: 0xa1a1aa, hex: '#a1a1aa', glow: false },
+  { key: 'Rare',      idx: 1, w: 28, min: 40000,  max: 130000,  mult: 1.15, color: 0x38bdf8, hex: '#38bdf8', glow: false },
+  { key: 'Epic',      idx: 2, w: 16, min: 110000, max: 300000,  mult: 1.30, color: 0xc084fc, hex: '#c084fc', glow: true },
+  { key: 'Legendary', idx: 3, w: 8,  min: 280000, max: 650000,  mult: 1.55, color: 0xfbbf24, hex: '#fbbf24', glow: true },
+  { key: 'Mythic',    idx: 4, w: 3,  min: 600000, max: 1500000, mult: 1.85, color: 0xfb923c, hex: '#fb923c', glow: true },
+];
+const PPA_HYPE_BASE = [6, 14, 26, 42, 62], PPA_HYPE_FLOOR = [3, 7, 13, 21, 31], PPA_HYPE_MULT = [1, 1.15, 1.3, 1.5, 1.8];
+const PPA_PALETTE = [0x141821, 0xb91c1c, 0x1e3a8a, 0xd1d5db, 0x0b0d12, 0x0f766e, 0x6d28d9, 0xea580c, 0x9ca3af, 0x064e3b, 0x7f1d1d, 0x374151];
+const PPA_NPCS = [
+  { id: 'n0', name: 'Warden Kael',  persona: 'hoards Cinder, never blinks first',  agg: 0.50, accent: '#34d399' },
+  { id: 'n1', name: 'The Broker',   persona: 'trades secrets for engines',         agg: 0.72, accent: '#38bdf8' },
+  { id: 'n2', name: 'Ash Syndicate', persona: 'buys low, betrays lower',           agg: 0.88, accent: '#f87171' },
+  { id: 'n3', name: 'Node Baron Vex', persona: 'owns three nodes and wants yours', agg: 0.42, accent: '#c084fc' },
+];
+const PPA_ATHENA_IN = [
+  "Fresh lot on the block — open your bids, survivors.",
+  "Drag it under the lights. Let's see who wants it.",
+  "Cinder talks. Everything else is just engine noise.",
+  "This one cleared the Reconstruction Network's checkpoint. Bid accordingly.",
+];
+const PPA_FLOOR_CHATTER = [
+  "Cinder's bleeding value this cycle — buy the metal, not the promise.",
+  "Heard the Reconstruction Network rerouted three nodes overnight.",
+  "Every faction wants wheels that outrun a bad night.",
+  "Buy. Build. Borrow. Never sell. The rest of you will learn that.",
+  "Cinder up front or no deal — promises don't survive the wasteland.",
+];
+const PPA_TAUNTS = ["Cute bid. Watch a professional work.", "Your Cinder's safer in my vault, rookie.", "Outbid by a ghost — welcome to the wasteland.", "Sit down. This lot was always mine.", "Blink again and I'll take the next one too."];
+const _ppaPick = (a) => a[Math.floor(Math.random() * a.length)];
+const _ppaRand = (a, b) => a + Math.random() * (b - a);
+const _ppaClamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const _ppaFmt = (n) => Math.round(n).toLocaleString();
+const _ppaR50 = (n) => Math.round(n / 50) * 50;
+const _ppaStep = (bid) => (bid < 20000 ? 1000 : bid < 80000 ? 2500 : bid < 250000 ? 5000 : 15000);
+function _ppaRollRarity() { const t = PPA_RARITIES.reduce((s, r) => s + r.w, 0); let x = Math.random() * t; for (const r of PPA_RARITIES) { if (x < r.w) return r; x -= r.w; } return PPA_RARITIES[0]; }
+// Admin-uploaded models for a rarity tier (cloud-synced via Forge.princePortfolios).
+function _ppaModelsFor(rk) { try { const f = (Forge.princePortfolios && Forge.princePortfolios.auctionModels) || {}; const list = f[rk]; return Array.isArray(list) ? list.filter(m => m && m.url) : []; } catch (e) { return []; } }
+function _ppaGenCar() {
+  const r = _ppaRollRarity();
+  const base = (typeof PP_VEHICLE_NAMES !== 'undefined') ? _ppaPick(PP_VEHICLE_NAMES) : { name: 'Cinder Reaver', type: 'Sports Car', baseValue: 80000 };
+  const color = (typeof PP_COLORS !== 'undefined') ? _ppaPick(PP_COLORS) : 'Rust Red';
+  const cond = (r.idx >= 3) ? 'Pristine' : (typeof PP_CONDITIONS !== 'undefined' ? _ppaPick(PP_CONDITIONS) : 'Clean');
+  const value = _ppaR50(_ppaRand(r.min, r.max));
+  const jit = () => Math.round(_ppaRand(-8, 8));
+  const stats = { spd: _ppaClamp(Math.round(58 * r.mult) + jit(), 20, 100), pow: _ppaClamp(Math.round(64 * r.mult) + jit(), 20, 100), hdl: _ppaClamp(Math.round(60 * r.mult) + jit(), 20, 100) };
+  const models = _ppaModelsFor(r.key); const m = models.length ? _ppaPick(models) : null;
+  return {
+    id: 'pac_' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
+    name: base.name, type: base.type || 'Vehicle', color, condition: cond, rarity: r,
+    mileage: Math.round(_ppaRand(1200, r.idx >= 3 ? 40000 : 220000)), value, baseValue: base.baseValue || value,
+    colorHex: _ppaPick(PPA_PALETTE), stats,
+    startBid: Math.max(500, _ppaR50(value * 0.22)), reserve: _ppaR50(value * 0.62), buyNow: _ppaR50(value * 1.4),
+    modelUrl: m ? m.url : '', modelScale: m ? (+m.scale || 1) : 1, modelRotY: m ? (+m.rotY || 0) : 0, modelLabel: m ? (m.label || '') : '',
+  };
+}
+let _ppaS = null;   // ephemeral live-auction session (won cars persist to the lot)
+function _ppaFreshCar(car) {
+  const s = _ppaS, now = Date.now(), npcMax = {}, npcNext = {};
+  s.npcs.forEach(n => { const m = Math.floor(car.value * (0.5 + n.agg * 0.6 + _ppaRand(-0.1, 0.22))); npcMax[n.id] = m; npcNext[n.id] = now + _ppaRand(1500, 4000); });
+  Object.assign(s, { car, currentBid: car.startBid, highBidder: null, status: 'incoming', timer: 1900, npcMax, npcNext, hype: PPA_HYPE_BASE[car.rarity.idx], lastBid: now, wonVia: null, soldPrice: 0, contesters: {} });
+  s.log = [{ t: '▶ A ' + car.rarity.key + ' ' + car.name + ' rolls onto the block.', k: 'sys' }].concat(s.log || []).slice(0, 24);
+  s.athena = _ppaPick(PPA_ATHENA_IN);
+  if (s.gl && s.gl.setCar) s.gl.setCar(car);
+}
+// ───────────── procedural 3D car (fallback when no .glb model) ─────────────
+function _ppaBuildCar(car) {
+  const T = window.THREE, g = new T.Group(), wheels = []; const glow = car.rarity.glow;
+  const B = { len: 4.5, bodyH: 0.6, width: 2.0, cabinLen: 1.8, cabinH: 0.62, cabinOff: -0.3, wheelR: 0.44 };
+  const bodyMat = new T.MeshStandardMaterial({ color: car.colorHex, metalness: 0.62, roughness: 0.34, emissive: glow ? new T.Color(car.rarity.color) : 0x000000, emissiveIntensity: glow ? 0.14 : 0 });
+  const body = new T.Mesh(new T.BoxGeometry(B.len, B.bodyH, B.width), bodyMat); body.position.y = B.wheelR + B.bodyH / 2; g.add(body);
+  const lip = new T.Mesh(new T.BoxGeometry(B.len * 0.96, B.bodyH * 0.5, B.width * 1.02), bodyMat); lip.position.y = B.wheelR + B.bodyH * 0.25; g.add(lip);
+  const cabin = new T.Mesh(new T.BoxGeometry(B.cabinLen, B.cabinH, B.width * 0.9), bodyMat); cabin.position.set(B.cabinOff, B.wheelR + B.bodyH + B.cabinH / 2, 0); g.add(cabin);
+  const glass = new T.Mesh(new T.BoxGeometry(B.cabinLen * 0.92, B.cabinH * 0.72, B.width * 0.93), new T.MeshStandardMaterial({ color: 0x0a0d12, metalness: 0.4, roughness: 0.08 })); glass.position.copy(cabin.position); glass.position.y += 0.02; g.add(glass);
+  const tireMat = new T.MeshStandardMaterial({ color: 0x0a0a0a, metalness: 0.2, roughness: 0.85 }), hubMat = new T.MeshStandardMaterial({ color: 0xcfcfcf, metalness: 0.95, roughness: 0.2 });
+  const tireGeo = new T.CylinderGeometry(B.wheelR, B.wheelR, B.width * 0.16, 20), hubGeo = new T.CylinderGeometry(B.wheelR * 0.5, B.wheelR * 0.5, B.width * 0.17, 12);
+  const wx = B.len * 0.33, wz = B.width / 2 + 0.02;
+  [[wx, wz], [wx, -wz], [-wx, wz], [-wx, -wz]].forEach(([x, z]) => { const grp = new T.Group(); grp.position.set(x, B.wheelR, z); grp.rotation.x = Math.PI / 2; grp.add(new T.Mesh(tireGeo, tireMat)); grp.add(new T.Mesh(hubGeo, hubMat)); g.add(grp); wheels.push(grp); });
+  const headMat = new T.MeshStandardMaterial({ color: 0xfff4d6, emissive: 0xfff0c0, emissiveIntensity: 1.4 }), tailMat = new T.MeshStandardMaterial({ color: 0xff2a2a, emissive: 0xff1010, emissiveIntensity: 1.1 });
+  [-(wz - 0.25), wz - 0.25].forEach((z) => { const h = new T.Mesh(new T.BoxGeometry(0.1, 0.22, 0.34), headMat); h.position.set(B.len / 2, B.wheelR + B.bodyH * 0.45, z); g.add(h); const t = new T.Mesh(new T.BoxGeometry(0.08, 0.18, 0.3), tailMat); t.position.set(-B.len / 2, B.wheelR + B.bodyH * 0.5, z); g.add(t); });
+  if (glow) { const ug = new T.Mesh(new T.PlaneGeometry(B.len * 1.5, B.width * 2.1), new T.MeshBasicMaterial({ color: car.rarity.color, transparent: true, opacity: 0.4 })); ug.rotation.x = -Math.PI / 2; ug.position.y = 0.015; g.add(ug); }
+  g.userData.wheels = wheels; return g;
+}
+function _ppaMount3D(mount) {
+  const T = window.THREE; if (!T || !mount) return null;
+  let W = mount.clientWidth || 600, H = mount.clientHeight || 360;
+  const scene = new T.Scene(); scene.background = new T.Color(0x07090d); scene.fog = new T.Fog(0x07090d, 14, 36);
+  const camera = new T.PerspectiveCamera(45, W / H, 0.1, 100);
+  const renderer = new T.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.setSize(W, H);
+  if ('outputColorSpace' in renderer) renderer.outputColorSpace = T.SRGBColorSpace; else if ('outputEncoding' in renderer) renderer.outputEncoding = 3001;
+  renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;cursor:grab;touch-action:none'; mount.appendChild(renderer.domElement);
+  scene.add(new T.HemisphereLight(0x9fb6d6, 0x100a06, 0.65)); scene.add(new T.AmbientLight(0xffffff, 0.25));
+  const keyL = new T.SpotLight(0xfff0d8, 2.6, 40, Math.PI / 5, 0.5, 1.2); keyL.position.set(6, 12, 6); scene.add(keyL, keyL.target);
+  const ember = new T.SpotLight(0xff7a2e, 1.6, 40, Math.PI / 4, 0.6, 1.2); ember.position.set(-8, 7, -3); scene.add(ember, ember.target);
+  const disc = new T.Mesh(new T.CircleGeometry(5.2, 56), new T.MeshStandardMaterial({ color: 0x10141c, metalness: 0.7, roughness: 0.35 })); disc.rotation.x = -Math.PI / 2; scene.add(disc);
+  const ring = new T.Mesh(new T.RingGeometry(5.0, 5.35, 56), new T.MeshBasicMaterial({ color: 0xff7a2e, transparent: true, opacity: 0.55, side: T.DoubleSide })); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.01; scene.add(ring);
+  const floor = new T.Mesh(new T.CircleGeometry(40, 40), new T.MeshStandardMaterial({ color: 0x05070a, metalness: 0.3, roughness: 0.9 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -0.02; scene.add(floor);
+  const pivot = new T.Group(); scene.add(pivot);
+  const cam = { r: 11.5, theta: -0.6, phi: 1.0 }; let drag = null, raf = 0, carMesh = null, targetR = 11.5, curR = 11.5, lookY = 1.1, curLook = 1.1, last = (window.performance ? performance.now() : 0);
+  const loader = (T.GLTFLoader) ? new T.GLTFLoader() : null;
+  const frame = (mesh) => { try { const box = new T.Box3().setFromObject(mesh), sph = box.getBoundingSphere(new T.Sphere()), fov = camera.fov * Math.PI / 180; targetR = _ppaClamp(sph.radius / Math.sin(fov / 2) * 1.15, 7.5, 16); lookY = _ppaClamp(box.getCenter(new T.Vector3()).y, 0.4, 3); } catch (e) {} };
+  const swap = (mesh) => { if (carMesh) { pivot.remove(carMesh); try { carMesh.traverse(c => { if (c.geometry) c.geometry.dispose(); }); } catch (e) {} } pivot.rotation.y = 0; pivot.add(mesh); carMesh = mesh; frame(mesh); };
+  const fitModel = (root, car) => { const box = new T.Box3().setFromObject(root), size = new T.Vector3(); box.getSize(size); const maxDim = Math.max(size.x, size.z) || 1; root.scale.multiplyScalar((4.6 / maxDim) * (car.modelScale || 1)); root.rotation.y = (car.modelRotY || 0) * Math.PI / 180; const b2 = new T.Box3().setFromObject(root), c = b2.getCenter(new T.Vector3()); root.position.x -= c.x; root.position.z -= c.z; root.position.y -= b2.min.y; const grp = new T.Group(); grp.add(root); grp.userData.wheels = []; return grp; };
+  const setCar = (car) => {
+    swap(_ppaBuildCar(car));
+    if (car.modelUrl && loader) { try { loader.load(car.modelUrl, (g) => { if (!_ppaS || !_ppaS.car || _ppaS.car.id !== car.id) return; try { swap(fitModel(g.scene || g.scenes[0], car)); } catch (e) {} }, undefined, () => {}); } catch (e) {} }
+  };
+  const dn = (e) => { const p = (e.touches && e.touches[0]) || e; drag = { x: p.clientX, y: p.clientY }; };
+  const mv = (e) => { if (!drag) return; const p = (e.touches && e.touches[0]) || e; cam.theta -= (p.clientX - drag.x) * 0.006; cam.phi = _ppaClamp(cam.phi - (p.clientY - drag.y) * 0.006, 0.3, 1.35); drag = { x: p.clientX, y: p.clientY }; };
+  const up = () => { drag = null; };
+  renderer.domElement.addEventListener('pointerdown', dn); window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+  const onResize = () => { W = mount.clientWidth || W; H = mount.clientHeight || H; renderer.setSize(W, H); camera.aspect = W / H; camera.updateProjectionMatrix(); };
+  let ro = null; try { ro = new ResizeObserver(onResize); ro.observe(mount); } catch (e) {}
+  const loop = () => { raf = requestAnimationFrame(loop); const now = (window.performance ? performance.now() : Date.now()), dt = Math.min((now - last) / 1000, 0.05); last = now; const h = _ppaClamp((_ppaS ? _ppaS.hype : 0) / 100, 0, 1);
+    if (carMesh) { pivot.rotation.y += dt * (0.25 + h * 0.5); (carMesh.userData.wheels || []).forEach(w => w.rotation.y -= dt * 2 * (0.5 + h)); }
+    ring.material.opacity = 0.35 + 0.5 * h * (0.6 + 0.4 * Math.sin(now * 0.006)); ember.intensity = 1.1 + 1.8 * h;
+    const ease = Math.min(1, dt * 2.5); curR += (targetR - curR) * ease; curLook += (lookY - curLook) * ease;
+    camera.position.set(curR * Math.sin(cam.phi) * Math.cos(cam.theta), curR * Math.cos(cam.phi) + curLook, curR * Math.sin(cam.phi) * Math.sin(cam.theta)); camera.lookAt(0, curLook, 0); renderer.render(scene, camera);
+  }; raf = requestAnimationFrame(loop);
+  return { setCar, dispose: () => { try { cancelAnimationFrame(raf); } catch (e) {} try { if (ro) ro.disconnect(); } catch (e) {} window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); try { renderer.dispose(); } catch (e) {} try { if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement); } catch (e) {} } };
+}
+// ───────────── engine ─────────────
+function _ppaTick() {
+  const s = _ppaS; if (!s || !s.open || !['incoming', 'live', 'going1', 'going2'].includes(s.status)) return;
+  const now = Date.now(), dt = 100, idx = s.car.rarity.idx; let changed = false;
+  s.hype = Math.max(PPA_HYPE_FLOOR[idx], s.hype - dt * 0.0012);
+  if (s.status === 'incoming') { s.timer -= dt; if (s.timer <= 0) { s.status = 'live'; s.timer = 8000; s.log = [{ t: 'Bidding is LIVE.', k: 'sys' }].concat(s.log).slice(0, 24); changed = true; } _ppaRepaint(); return; }
+  let placed = false;
+  const eligible = s.npcs.filter(n => n.id !== s.highBidder && now >= s.npcNext[n.id]).sort((x, y) => y.agg - x.agg);
+  for (const n of eligible) { const step = _ppaStep(s.currentBid), nb = s.currentBid + step; if (nb <= s.npcMax[n.id] && Math.random() < 0.42 + n.agg * 0.4) { s.currentBid = nb; s.highBidder = n.id; s.status = 'live'; s.timer = _ppaRand(5200, 7200); s.lastBid = now; s.hype = Math.min(100, s.hype + 6 * PPA_HYPE_MULT[idx]); s.contesters[n.id] = true; s.npcNext[n.id] = now + _ppaRand(1600, 3600); s.log = [{ t: n.name + ' bids ¢' + _ppaFmt(nb) + '.', k: 'npc', accent: n.accent }].concat(s.log).slice(0, 24); placed = true; if (Math.random() < 0.5) s.athena = n.name + ': "' + _ppaPick(PPA_TAUNTS) + '"'; break; } else s.npcNext[n.id] = now + _ppaRand(800, 1800); }
+  if (!placed) { s.timer -= dt; if (s.timer <= 0) {
+    if (s.status === 'live') { s.status = 'going1'; s.timer = 2600; s.log = [{ t: 'Going once…', k: 'call' }].concat(s.log).slice(0, 24); }
+    else if (s.status === 'going1') { s.status = 'going2'; s.timer = 2600; s.log = [{ t: 'Going twice…', k: 'call' }].concat(s.log).slice(0, 24); }
+    else if (s.status === 'going2') { const met = s.currentBid >= s.car.reserve;
+      if (s.highBidder === 'YOU' && met) { _ppaWin(s.car, s.currentBid, 'bid'); }
+      else if (s.highBidder && met) { const w = s.npcs.find(n => n.id === s.highBidder); s.status = 'lost'; s.soldPrice = s.currentBid; s.athena = 'Gone to ' + (w ? w.name : 'the floor') + ' for ¢' + _ppaFmt(s.currentBid) + '.'; s.log = [{ t: 'SOLD to ' + (w ? w.name : 'a rival') + ' for ¢' + _ppaFmt(s.currentBid) + '.', k: 'lose', accent: w && w.accent }].concat(s.log).slice(0, 24); }
+      else { s.status = 'nosale'; s.soldPrice = s.currentBid; s.athena = 'No sale — reserve held. The lot walks.'; s.log = [{ t: s.highBidder ? 'NO SALE — reserve not met.' : 'No bids — lot pulled.', k: 'call' }].concat(s.log).slice(0, 24); }
+    } }
+  }
+  _ppaRepaint();
+}
+function _ppaPlayerBid(amount) {
+  const s = _ppaS; if (!s || !['live', 'going1', 'going2'].includes(s.status) || s.highBidder === 'YOU') return;
+  const nb = s.currentBid + amount; if (nb > (typeof getCinders === 'function' ? getCinders() : (Profile.gems | 0))) { showToast('⚠ Not enough Cinder to raise.', 2400); return; }
+  const now = Date.now(), idx = s.car.rarity.idx; s.npcs.forEach(n => { s.npcNext[n.id] = now + _ppaRand(700, 2400); });
+  s.currentBid = nb; s.highBidder = 'YOU'; s.status = 'live'; s.timer = 7500; s.lastBid = now; s.hype = Math.min(100, s.hype + 8 * PPA_HYPE_MULT[idx]);
+  s.athena = 'The house bidder fires back — ¢' + _ppaFmt(nb) + '!'; s.log = [{ t: 'You bid ¢' + _ppaFmt(nb) + '.', k: 'you' }].concat(s.log).slice(0, 24); _ppaRepaint();
+}
+function _ppaBuyNow() {
+  const s = _ppaS; if (!s || !['incoming', 'live', 'going1', 'going2'].includes(s.status)) return;
+  if (s.car.buyNow > (typeof getCinders === 'function' ? getCinders() : (Profile.gems | 0))) { showToast('⚠ Not enough Cinder for Buy It Now.', 2600); return; }
+  _ppaWin(s.car, s.car.buyNow, 'buynow');
+}
+// WIN — spend taxed Cinder, drop the car on the dealership LOT, advance.
+function _ppaWin(car, price, via) {
+  const s = _ppaS; price = Math.round(price);
+  const cap = (typeof ppLotCap === 'function') ? ppLotCap() : 6;
+  const p = (typeof ensurePrincePortfolios === 'function') ? ensurePrincePortfolios() : Profile.princePortfolios;
+  if (p && Array.isArray(p.lot) && p.lot.length >= cap) { showToast('⚠ Lot is full — sell or upgrade before winning more.', 3600); s.status = 'nosale'; s.athena = 'Your lot is full — no room for this one.'; _ppaRepaint(); return; }
+  if (typeof spendCinders === 'function') { if (!spendCinders(price)) { showToast('⚠ Not enough Cinder.', 2600); s.status = 'live'; _ppaRepaint(); return; } }
+  else { Profile.gems = (Profile.gems | 0) - price; }
+  try { _serverMirrorCharge && _serverMirrorCharge(price, 'Prince Portfolios: Auction win (' + car.name + ')'); } catch (e) {}
+  // Build the LOT-shaped vehicle (mirrors ppBuyVehicle) + carry the .glb model URL.
+  const slot = (p && Array.isArray(p.lot)) ? p.lot.length : 0;
+  const onLot = {
+    id: 'v_' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
+    name: car.name, type: car.type, color: car.color, condition: car.condition, mileage: car.mileage,
+    riskLevel: 'Low', price: price, estPartValue: Math.round(car.value * 0.5), baseValue: car.baseValue,
+    sellerRating: 5, rarity: car.rarity.key.toLowerCase() === 'common' ? 'common' : 'rare',
+    boughtAt: Date.now(), fuelLevel: 0, listPrice: Math.round(price * 1.35), slot,
+    modelUrl: car.modelUrl || '', modelScale: car.modelScale || 1, modelRotY: car.modelRotY || 0,
+  };
+  if (p && Array.isArray(p.lot)) p.lot.push(onLot);
+  try { _ppLog && _ppLog('event', 'Auction WIN: ' + car.rarity.key + ' ' + car.name + ' for ¢' + price.toLocaleString() + (via === 'buynow' ? ' (Buy It Now)' : '') + '.'); } catch (e) {}
+  try { saveProfile && saveProfile(); } catch (e) {}
+  Object.assign(s, { status: 'sold', wonVia: via, soldPrice: price });
+  s.won = (s.won || 0) + 1;
+  s.athena = via === 'buynow' ? 'Buy It Now — ¢' + _ppaFmt(price) + '. Bold. It\'s yours.' : 'Sold to you for ¢' + _ppaFmt(price) + '!';
+  s.log = [{ t: (via === 'buynow' ? '⚡ BUY IT NOW' : 'SOLD to YOU') + ' — ¢' + _ppaFmt(price) + '! Added to your lot.', k: 'win' }].concat(s.log).slice(0, 24);
+  _ppaRepaint();
+}
+function _ppaNext() {
+  const s = _ppaS; if (!s) return; s.round = (s.round || 1) + 1;
+  if (s.round > s.lotsTotal) { s.status = 'session'; _ppaRepaint(); return; }
+  _ppaFreshCar(_ppaGenCar()); _ppaRepaint();
+}
+function _ppaOpen() {
+  if (document.getElementById('ppa-overlay')) return;
+  const p = (typeof ensurePrincePortfolios === 'function') ? ensurePrincePortfolios() : (Profile.princePortfolios || {});
+  _ppaS = { open: true, round: 1, lotsTotal: 8, npcs: PPA_NPCS.map(n => ({ ...n })), log: [], won: 0, car: null, status: 'incoming', hype: 0, athena: 'Athena is opening the Prince Portfolios block…', gl: null };
+  _ppaEnsureStyle();
+  const wrap = document.createElement('div'); wrap.id = 'ppa-overlay'; wrap.className = 'ppa-overlay';
+  wrap.innerHTML = '<div class="ppa-card"><div class="ppa-top"><div class="ppa-brand">⚡ PRINCE PORTFOLIOS <span>LIVE AUCTION</span></div><button class="ppa-x" data-ppa="close">✕ EXIT</button></div>' +
+    '<div class="ppa-stage" id="ppa-stage"></div><div class="ppa-panel" id="ppa-panel"></div></div>';
+  document.body.appendChild(wrap);
+  wrap.addEventListener('click', (e) => { if (e.target.closest('[data-ppa="close"]') || e.target === wrap) _ppaClose(); });
+  const stage = document.getElementById('ppa-stage');
+  _csLoadThree((ok) => { if (!ok || !window.THREE) { stage.innerHTML = '<div class="ppa-noteln">3D needs to be online — showing the bidding panel only.</div>'; return; } if (!_ppaS || !_ppaS.open) return; _ppaS.gl = _ppaMount3D(stage); if (_ppaS.car && _ppaS.gl) _ppaS.gl.setCar(_ppaS.car); });
+  _ppaFreshCar(_ppaGenCar());
+  if (_ppaS.tickIv) clearInterval(_ppaS.tickIv); _ppaS.tickIv = setInterval(_ppaTick, 100);
+  _ppaRepaint();
+}
+function _ppaClose() {
+  const s = _ppaS; if (!s) { const o = document.getElementById('ppa-overlay'); if (o) o.remove(); return; }
+  s.open = false; try { if (s.tickIv) clearInterval(s.tickIv); } catch (e) {} try { if (s.gl) s.gl.dispose(); } catch (e) {}
+  const o = document.getElementById('ppa-overlay'); if (o) o.remove();
+  const wonN = s.won | 0; _ppaS = null;
+  try { if (typeof render === 'function' && App.screen === 'princePortfolios') render(); } catch (e) {}
+  if (wonN > 0) try { showToast('🏁 Auction closed — ' + wonN + ' car' + (wonN === 1 ? '' : 's') + ' added to your lot.', 3600); } catch (e) {}
+}
+function _ppaPanelHtml() {
+  const s = _ppaS; if (!s) return '';
+  const car = s.car, live = ['live', 'going1', 'going2'].includes(s.status), youTop = s.highBidder === 'YOU', step = _ppaStep(s.currentBid);
+  const cin = (typeof getCinders === 'function') ? getCinders() : (Profile.gems | 0);
+  const statusLabel = { incoming: 'ROLLING IN', live: 'LIVE', going1: 'GOING ONCE', going2: 'GOING TWICE', sold: 'SOLD', lost: 'CLOSED', nosale: 'NO SALE', session: 'SESSION OVER' }[s.status] || '';
+  const highName = youTop ? 'YOU' : s.highBidder ? ((s.npcs.find(n => n.id === s.highBidder) || {}).name || '—') : '—';
+  const reserveMet = car && s.currentBid >= car.reserve;
+  const denom = s.status === 'incoming' ? 1900 : ['going1', 'going2'].includes(s.status) ? 2600 : 8000;
+  const timerPct = _ppaClamp((s.timer / denom) * 100, 0, 100);
+  const term = ['sold', 'lost', 'nosale'].includes(s.status);
+  if (s.status === 'session') {
+    return '<div class="ppa-summary"><div class="ppa-sum-h">SESSION CLEARED</div><div class="ppa-sum-sub">' + (s.won | 0) + ' car' + ((s.won | 0) === 1 ? '' : 's') + ' won and parked on your lot.</div>' +
+      '<button class="ppa-btn primary" data-ppa="restart">New Block ▸</button><button class="ppa-btn" data-ppa="close">Done</button></div>';
+  }
+  const bidOpts = [step, step * 3, step * 8].map((amt, i) => ({ amt, label: ['Raise', 'Push', 'Slam'][i] }));
+  const moodColor = s.hype > 85 ? '#ef4444' : s.hype > 60 ? '#fb923c' : s.hype > 32 ? '#fbbf24' : '#71717a';
+  const floor = s.npcs.map(n => { const isHigh = s.highBidder === n.id, out = s.npcMax[n.id] < s.currentBid + step;
+    return '<div class="ppa-bidder ' + (isHigh ? 'hi' : '') + '"><span class="dot" style="background:' + n.accent + '"></span><div class="bn"><div class="nm">' + escapeHtml(n.name) + '</div><div class="ps">' + escapeHtml(n.persona) + '</div></div><div class="st">' + (isHigh ? '<b style="color:#34d399">HIGH</b>' : (out && live ? '<span style="color:#6b7280">OUT</span>' : '<span style="color:#9ca3af">IN</span>')) + '</div></div>';
+  }).join('');
+  const log = s.log.map(l => '<div style="color:' + (l.accent || (l.k === 'win' ? '#34d399' : l.k === 'lose' ? '#f87171' : l.k === 'you' ? '#fb923c' : l.k === 'call' ? '#fca5a5' : '#a1a1aa')) + '">' + escapeHtml(l.t) + '</div>').join('');
+  return (car ? '<div class="ppa-lothead"><div><span class="ppa-rar" style="color:' + car.rarity.hex + ';border-color:' + car.rarity.hex + '">' + car.rarity.key.toUpperCase() + '</span>' + (car.modelUrl ? ' <span class="ppa-3d">🧊 3D</span>' : '') + '<div class="ppa-cname">' + escapeHtml(car.name) + '</div><div class="ppa-cmeta">' + escapeHtml(car.type) + ' · ' + escapeHtml(car.color) + ' · ' + escapeHtml(car.condition) + '</div></div><div class="ppa-est"><div class="k">EST. VALUE</div><div class="v">¢' + _ppaFmt(car.value) + '</div><div class="k" style="margin-top:3px">BUY NOW</div><div class="bn">¢' + _ppaFmt(car.buyNow) + '</div></div></div>' +
+    '<div class="ppa-stats">' + [['SPD', car.stats.spd], ['PWR', car.stats.pow], ['HDL', car.stats.hdl]].map(([k, v]) => '<span><b>' + k + '</b> ' + v + '</span>').join('') + '</div>' : '') +
+    '<div class="ppa-athena">🅰 <span>' + escapeHtml(s.athena || '') + '</span></div>' +
+    '<div class="ppa-hype"><div class="hb"><div class="hf" style="width:' + s.hype + '%"></div></div><span style="color:' + moodColor + '">HYPE ' + Math.round(s.hype) + '</span></div>' +
+    '<div class="ppa-bidrow"><div><div class="k">CURRENT BID</div><div class="ppa-bid">¢' + _ppaFmt(s.currentBid) + '</div><div class="ppa-high">High: <b style="color:' + (youTop ? '#34d399' : '#e4e4e7') + '">' + escapeHtml(highName) + '</b> · <span style="color:' + (reserveMet ? '#34d399' : '#71717a') + '">' + (reserveMet ? 'RESERVE MET' : 'RESERVE NOT MET') + '</span></div></div><div class="ppa-status ' + s.status + '">' + statusLabel + '</div></div>' +
+    '<div class="ppa-timer"><div style="width:' + ((live || s.status === 'incoming') ? timerPct : 0) + '%;background:' + (['going1', 'going2'].includes(s.status) ? '#ef4444' : '#fb923c') + '"></div></div>' +
+    '<div class="ppa-bids">' + bidOpts.map(o => { const next = s.currentBid + o.amt, dis = !live || youTop || next > cin; return '<button class="ppa-bid-btn" data-ppa="bid" data-amt="' + o.amt + '" ' + (dis ? 'disabled' : '') + '><div>' + o.label + '</div><div class="sub">+¢' + _ppaFmt(o.amt) + ' → ¢' + _ppaFmt(next) + '</div></button>'; }).join('') + '</div>' +
+    '<button class="ppa-buynow" data-ppa="buynow" ' + (car && ['incoming', 'live', 'going1', 'going2'].includes(s.status) && car.buyNow <= cin ? '' : 'disabled') + '>⚡ BUY IT NOW — ¢' + (car ? _ppaFmt(car.buyNow) : '—') + '</button>' +
+    '<div class="ppa-wallet">Your Cinder: <b>¢' + _ppaFmt(cin) + '</b> · Lot ' + ((p2 => p2 ? p2.lot.length : 0)((typeof ensurePrincePortfolios === 'function') ? ensurePrincePortfolios() : null)) + '/' + ((typeof ppLotCap === 'function') ? ppLotCap() : 6) + ' · Block ' + s.round + '/' + s.lotsTotal + '</div>' +
+    '<div class="ppa-floor"><div class="k">THE FLOOR</div>' + floor + '</div>' +
+    '<div class="ppa-log">' + log + '</div>' +
+    (term ? '<div class="ppa-term ' + s.status + '"><div class="tl">' + (s.status === 'sold' ? (s.wonVia === 'buynow' ? 'BOUGHT OUTRIGHT' : 'WON THE LOT') : s.status === 'lost' ? 'OUTBID' : 'NO SALE') + '</div><button class="ppa-btn primary" data-ppa="next">' + (s.round >= s.lotsTotal ? 'Finish' : 'Next Lot ▸') + '</button></div>' : '');
+}
+function _ppaRepaint() {
+  const panel = document.getElementById('ppa-panel'); if (!panel || !_ppaS) return;
+  panel.innerHTML = _ppaPanelHtml();
+  panel.querySelectorAll('[data-ppa="bid"]').forEach(b => b.onclick = () => _ppaPlayerBid(+b.dataset.amt));
+  const bn = panel.querySelector('[data-ppa="buynow"]'); if (bn) bn.onclick = () => _ppaBuyNow();
+  const nx = panel.querySelector('[data-ppa="next"]'); if (nx) nx.onclick = () => _ppaNext();
+  const rs = panel.querySelector('[data-ppa="restart"]'); if (rs) rs.onclick = () => { _ppaS.round = 0; _ppaS.won = 0; _ppaS.log = []; _ppaNext(); };
+  panel.querySelectorAll('[data-ppa="close"]').forEach(b => b.onclick = () => _ppaClose());
+}
+// 🧊 Reusable 3D car-model viewer (lot detail / auction detail). Orbit + zoom.
+function _ppaViewModel(url, name, scale, rotY) {
+  if (!url || document.getElementById('ppa-mv')) return;
+  _csLoadThree((ok) => {
+    if (!ok || !window.THREE || !window.THREE.GLTFLoader) { showToast('3D viewer needs to be online.', 2800); return; }
+    const T = window.THREE, wrap = document.createElement('div'); wrap.id = 'ppa-mv';
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(4,5,9,0.94);display:flex;flex-direction:column;align-items:center;justify-content:center';
+    wrap.innerHTML = '<div style="position:absolute;top:14px;left:0;right:0;text-align:center;color:#f3d27a;font-weight:800;pointer-events:none">' + escapeHtml(name || 'Vehicle') + '</div><canvas id="ppa-mv-c" style="width:92vw;height:74vh;max-width:900px;touch-action:none;cursor:grab"></canvas><div style="margin-top:8px;color:#8a8f9a;font-size:0.78rem">🖱 drag to orbit · scroll to zoom</div><button id="ppa-mv-x" style="position:absolute;top:12px;right:16px;background:#241d10;border:1px solid #3a2f1c;color:#e9e1cf;border-radius:8px;padding:8px 13px;cursor:pointer;font-weight:700">✕ Close</button>';
+    document.body.appendChild(wrap);
+    const canvas = wrap.querySelector('#ppa-mv-c'), W = canvas.clientWidth || 760, H = canvas.clientHeight || 480;
+    const renderer = new T.WebGLRenderer({ canvas, antialias: true, alpha: true }); renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.setSize(W, H, false);
+    const scene = new T.Scene(); scene.add(new T.AmbientLight(0xffffff, 0.9)); const dl = new T.DirectionalLight(0xffffff, 0.95); dl.position.set(4, 8, 5); scene.add(dl); const dl2 = new T.DirectionalLight(0x88aaff, 0.4); dl2.position.set(-5, 3, -4); scene.add(dl2);
+    const camera = new T.PerspectiveCamera(45, W / H, 0.05, 200); const pivot = new T.Group(); scene.add(pivot);
+    let yaw = 0.7, pitch = 0.3, dist = 6; const target = new T.Vector3(0, 0.7, 0);
+    const place = (obj) => { try { pivot.add(obj); const bb = new T.Box3().setFromObject(obj); if (isFinite(bb.min.y)) { const sz = bb.getSize(new T.Vector3()), c = bb.getCenter(new T.Vector3()); const md = Math.max(sz.x, sz.z) || 1; obj.scale.multiplyScalar((4.6 / md) * (scale || 1)); obj.rotation.y = (rotY || 0) * Math.PI / 180; const b2 = new T.Box3().setFromObject(obj), c2 = b2.getCenter(new T.Vector3()); obj.position.x -= c2.x; obj.position.z -= c2.z; obj.position.y -= b2.min.y; target.set(0, (b2.getSize(new T.Vector3()).y) / 2, 0); dist = Math.max(4, md * 1.9); } } catch (e) {} };
+    try { new T.GLTFLoader().load(url, (g) => { if (document.getElementById('ppa-mv')) place(g.scene || g.scenes[0]); }, undefined, () => showToast('Could not load that model.', 3000)); } catch (e) {}
+    let raf = 0; const upd = () => { pitch = _ppaClamp(pitch, -1.2, 1.4); camera.position.set(target.x + dist * Math.cos(pitch) * Math.sin(yaw), target.y + dist * Math.sin(pitch), target.z + dist * Math.cos(pitch) * Math.cos(yaw)); camera.lookAt(target); };
+    const loop = () => { raf = requestAnimationFrame(loop); upd(); renderer.render(scene, camera); }; loop();
+    let drag = false, lx = 0, ly = 0; const dn = (e) => { const pt = (e.touches && e.touches[0]) || e; drag = true; lx = pt.clientX; ly = pt.clientY; }; const mv = (e) => { if (!drag) return; const pt = (e.touches && e.touches[0]) || e; yaw -= (pt.clientX - lx) * 0.01; pitch += (pt.clientY - ly) * 0.01; lx = pt.clientX; ly = pt.clientY; }; const up = () => { drag = false; }; const wheel = (e) => { e.preventDefault(); dist = _ppaClamp(dist * (1 + (e.deltaY > 0 ? 0.12 : -0.12)), 2, 50); };
+    canvas.addEventListener('pointerdown', dn); window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); canvas.addEventListener('wheel', wheel, { passive: false });
+    const close = () => { try { cancelAnimationFrame(raf); } catch (e) {} window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); try { renderer.dispose(); } catch (e) {} const w = document.getElementById('ppa-mv'); if (w) w.remove(); };
+    wrap.querySelector('#ppa-mv-x').onclick = close; wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
+  });
+}
+function _ppaEnsureStyle() {
+  if (document.getElementById('ppa-style')) return;
+  const s = document.createElement('style'); s.id = 'ppa-style';
+  s.textContent = '.ppa-overlay{position:fixed;inset:0;z-index:2147483646;background:rgba(5,6,10,0.92);display:flex;align-items:center;justify-content:center;padding:2vh 2vw;font-family:ui-sans-serif,system-ui,sans-serif;color:#e7e7ea}' +
+    '.ppa-card{width:100%;max-width:1100px;height:94vh;background:#0b0d12;border:1px solid #2a2330;border-radius:14px;display:grid;grid-template-columns:1.35fr 1fr;grid-template-rows:auto 1fr;overflow:hidden}' +
+    '.ppa-top{grid-column:1/3;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #221c2a;background:linear-gradient(90deg,#0b0d12,#15110a)}' +
+    '.ppa-brand{font-weight:900;letter-spacing:1px;background:linear-gradient(90deg,#fde68a,#fb923c);-webkit-background-clip:text;background-clip:text;color:transparent}.ppa-brand span{font-size:10px;color:#71717a;-webkit-text-fill-color:#71717a;margin-left:6px}' +
+    '.ppa-x{background:#241d10;border:1px solid #3a2f1c;color:#e9e1cf;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700;font-size:12px}' +
+    '.ppa-stage{position:relative;min-height:0;background:#07090d}.ppa-noteln{padding:2rem;color:#8a8f9a;text-align:center}' +
+    '.ppa-panel{min-height:0;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:9px;background:#0b0d12}' +
+    '.ppa-lothead{display:flex;justify-content:space-between;gap:8px}.ppa-rar{font-size:10px;font-weight:800;letter-spacing:1px;border:1px solid;border-radius:4px;padding:1px 5px}.ppa-3d{font-size:10px;color:#7dd3fc;border:1px solid #0e7490;border-radius:4px;padding:1px 4px}' +
+    '.ppa-cname{font-size:18px;font-weight:800;margin-top:4px}.ppa-cmeta{font-size:11px;color:#8a8f9a}.ppa-est{text-align:right}.ppa-est .k{font-size:9px;color:#71717a;letter-spacing:1px}.ppa-est .v{font-size:15px;font-weight:800}.ppa-est .bn{font-size:13px;font-weight:800;color:#fde047}' +
+    '.ppa-stats{display:flex;gap:8px;font-size:11px}.ppa-stats span{background:#15151f;border-radius:6px;padding:2px 7px}.ppa-stats b{color:#71717a;font-weight:600}' +
+    '.ppa-athena{background:linear-gradient(90deg,#1a1407,#0d0b08);border:1px solid #4a3a1c;border-radius:9px;padding:8px 10px;font-size:13px;color:#fde9c0;line-height:1.4}.ppa-athena>span{color:#f5e2b8}' +
+    '.ppa-hype{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:700}.ppa-hype .hb{flex:1;height:7px;background:#1f1f29;border-radius:99px;overflow:hidden}.ppa-hype .hf{height:100%;background:linear-gradient(90deg,#fbbf24,#fb923c,#ef4444)}' +
+    '.ppa-bidrow{display:flex;justify-content:space-between;align-items:flex-end}.ppa-bidrow .k{font-size:9px;color:#71717a;letter-spacing:1px}.ppa-bid{font-size:30px;font-weight:900;color:#fb923c;line-height:1}.ppa-high{font-size:11px;margin-top:3px}.ppa-status{font-size:16px;font-weight:900}.ppa-status.going1,.ppa-status.going2{color:#ef4444}.ppa-status.sold{color:#34d399}.ppa-status.nosale,.ppa-status.lost{color:#fbbf24}.ppa-status.live{color:#fb923c}' +
+    '.ppa-timer{height:6px;background:#1f1f29;border-radius:99px;overflow:hidden}.ppa-timer>div{height:100%}' +
+    '.ppa-bids{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}.ppa-bid-btn{background:#ea580c;border:1px solid #fb923c;color:#fff;border-radius:8px;padding:8px 4px;font-weight:800;cursor:pointer;font-size:13px}.ppa-bid-btn .sub{font-size:10px;opacity:0.9;font-weight:600}.ppa-bid-btn:disabled{background:#17171f;border-color:#23232e;color:#52525b;cursor:default}' +
+    '.ppa-buynow{background:#eab308;border:1px solid #fde047;color:#0b0b0f;border-radius:8px;padding:9px;font-weight:800;cursor:pointer;font-size:13px}.ppa-buynow:disabled{background:#17171f;border-color:#23232e;color:#52525b;cursor:default}' +
+    '.ppa-wallet{font-size:11px;color:#9ca3af;text-align:center}.ppa-wallet b{color:#fde047}' +
+    '.ppa-floor .k{font-size:9px;color:#71717a;letter-spacing:1px;margin-bottom:4px}.ppa-bidder{display:flex;align-items:center;gap:8px;background:#13131b;border:1px solid #23232e;border-radius:8px;padding:5px 8px;margin-bottom:4px}.ppa-bidder.hi{border-color:#52525b}.ppa-bidder .dot{width:8px;height:8px;border-radius:99px;flex:0 0 auto}.ppa-bidder .bn{flex:1;min-width:0}.ppa-bidder .nm{font-size:12px;font-weight:700}.ppa-bidder .ps{font-size:10px;color:#71717a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ppa-bidder .st{font-size:10px;font-weight:700}' +
+    '.ppa-log{height:90px;overflow-y:auto;background:rgba(0,0,0,0.4);border:1px solid #23232e;border-radius:8px;padding:6px;font-size:11px;line-height:1.5}' +
+    '.ppa-term{display:flex;justify-content:space-between;align-items:center;border-radius:9px;padding:9px 11px;border:1px solid}.ppa-term.sold{border-color:#16a34a;background:rgba(22,101,52,0.25)}.ppa-term.lost{border-color:#b91c1c;background:rgba(127,29,29,0.2)}.ppa-term.nosale{border-color:#a16207;background:rgba(120,53,15,0.2)}.ppa-term .tl{font-weight:900}' +
+    '.ppa-btn{background:#15151f;border:1px solid #2a2a38;color:#e4e4e7;border-radius:8px;padding:7px 13px;font-weight:800;cursor:pointer;font-size:13px}.ppa-btn.primary{background:#ea580c;border-color:#fb923c;color:#fff}' +
+    '.ppa-summary{display:flex;flex-direction:column;gap:9px;align-items:center;justify-content:center;height:100%;text-align:center}.ppa-sum-h{font-size:22px;font-weight:900;color:#34d399}.ppa-sum-sub{font-size:13px;color:#9ca3af}' +
+    '@media(max-width:760px){.ppa-card{grid-template-columns:1fr;grid-template-rows:auto 38vh 1fr;height:96vh}.ppa-stage{min-height:0}}';
+  document.head.appendChild(s);
+}
+// 🛠 ADMIN: upload .glb models per rarity tier → Supabase Storage → cloud-synced.
+function _ppaAdminModelsHtml() {
+  const f = (Forge.princePortfolios && Forge.princePortfolios.auctionModels) || {};
+  return '<div class="wfa-panel-header" style="margin-top:1rem">⚡ LIVE AUCTION · 3D CAR MODELS <span class="wfa-panel-crumb">Upload a .glb per rarity tier — a random one is shown when a car of that tier rolls onto the block (admin)</span></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.6rem">' +
+    PPA_RARITIES.map(r => { const list = Array.isArray(f[r.key]) ? f[r.key] : [];
+      return '<div style="background:#11131a;border:1px solid #2a2330;border-radius:10px;padding:0.7rem">' +
+        '<div style="font-weight:800;color:' + r.hex + '">' + r.key + ' <span style="color:#71717a;font-weight:600">· ' + list.length + ' model' + (list.length === 1 ? '' : 's') + '</span></div>' +
+        list.map((m, i) => '<div style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cbd5e1">' + escapeHtml(m.label || 'model ' + (i + 1)) + '</span><button class="wfa-mini-btn" data-ppa-view="' + r.key + ':' + i + '" style="padding:2px 6px;font-size:10px">👁</button><button class="wfa-mini-btn warn" data-ppa-del="' + r.key + ':' + i + '" style="padding:2px 6px;font-size:10px">✕</button></div>').join('') +
+        '<label class="wfa-mini-btn" style="display:block;margin-top:7px;text-align:center;cursor:pointer;padding:5px">⬆ Upload .glb<input type="file" accept=".glb,.gltf,model/gltf-binary" data-ppa-up="' + r.key + '" style="display:none"></label>' +
+      '</div>';
+    }).join('') + '</div>';
+}
+function _ppaBindAdminModels() {
+  document.querySelectorAll('[data-ppa-up]').forEach(inp => { inp.onchange = async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return; const rk = inp.dataset.ppaUp;
+    if (typeof _csShopUploadModel !== 'function') { showToast('Model upload unavailable.', 3000); return; }
+    showToast('⬆ Uploading ' + f.name + '…', 2600);
+    try { const url = await _csShopUploadModel(f); if (!Forge.princePortfolios) Forge.princePortfolios = {}; if (!Forge.princePortfolios.auctionModels) Forge.princePortfolios.auctionModels = {}; if (!Array.isArray(Forge.princePortfolios.auctionModels[rk])) Forge.princePortfolios.auctionModels[rk] = []; Forge.princePortfolios.auctionModels[rk].push({ url, label: f.name.replace(/\.(glb|gltf)$/i, ''), scale: 1, rotY: 0 }); try { saveForge && saveForge(); } catch (er) {} showToast('✓ Added to ' + rk + ' auction pool.', 3000); if (typeof render === 'function') render(); }
+    catch (err) { showToast('⚠ Upload failed: ' + ((err && err.message) || err), 4600); }
+    inp.value = '';
+  }; });
+  document.querySelectorAll('[data-ppa-del]').forEach(b => b.onclick = () => { const [rk, i] = b.dataset.ppaDel.split(':'); const list = Forge.princePortfolios && Forge.princePortfolios.auctionModels && Forge.princePortfolios.auctionModels[rk]; if (Array.isArray(list)) { list.splice(+i, 1); try { saveForge && saveForge(); } catch (e) {} if (typeof render === 'function') render(); } });
+  document.querySelectorAll('[data-ppa-view]').forEach(b => b.onclick = () => { const [rk, i] = b.dataset.ppaView.split(':'); const m = Forge.princePortfolios && Forge.princePortfolios.auctionModels && Forge.princePortfolios.auctionModels[rk] && Forge.princePortfolios.auctionModels[rk][+i]; if (m) _ppaViewModel(m.url, rk + ' model', m.scale, m.rotY); });
+}
 function _ppRenderAuction(p) {
   if (p.listings.length === 0) {
-    return '<div class="wfa-empty-row" style="padding:3rem;display:flex;flex-direction:column;gap:0.8rem;align-items:center">' +
-      '<div>— No listings active. RNG refresh runs every 3 min. Auto-heal kicks when below 6.</div>' +
+    return _ppaLaunchBanner() +
+      '<div class="wfa-empty-row" style="padding:3rem;display:flex;flex-direction:column;gap:0.8rem;align-items:center">' +
+      '<div>— No static listings active. RNG refresh runs every 3 min. Auto-heal kicks when below 6.</div>' +
       '<button class="wfa-mini-btn warn" id="pp-force-refresh" style="padding:0.5rem 1rem">🔄 FORCE REFRESH NOW</button>' +
     '</div>';
   }
@@ -136552,11 +136891,21 @@ function _ppRenderAuction(p) {
     '</div>';
   }).join('');
   return '<div>' +
+    _ppaLaunchBanner() +
     '<div class="wfa-panel-header">AUCTION FLOOR  <span class="wfa-panel-crumb">Click a card for full details · RNG refresh every 3 min · auto-heal under 6</span><span class="wfa-panel-right">' + p.listings.length + ' listings <button class="wfa-mini-btn warn" id="pp-force-refresh-auc" style="margin-left:0.5rem;padding:0.25rem 0.7rem;font-size:0.65rem">🔄 REFRESH</button></span></div>' +
     '<div class="wfa-supply-grid">' + cards + '</div>' +
   '</div>';
 }
+// The "⚡ ENTER LIVE AUCTION" banner shown atop the Auction tab.
+function _ppaLaunchBanner() {
+  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.8rem;flex-wrap:wrap;background:linear-gradient(90deg,#1a1407,#0d0b08);border:1px solid #5a3a12;border-radius:10px;padding:0.7rem 0.9rem;margin-bottom:0.8rem">' +
+    '<div><div style="font-weight:900;color:#fb923c;letter-spacing:0.5px">⚡ LIVE AUCTION BLOCK</div><div style="font-size:0.7rem;color:#9a8f7a">Real-time bidding against the floor · 3D cars on a lit stage · winners park on your lot (Cinder taxed on win)</div></div>' +
+    '<button class="wfa-supply-buy" id="pp-live-auction" style="max-width:220px;margin:0">⚡ ENTER LIVE AUCTION</button>' +
+  '</div>';
+}
 function _ppBindAuction() {
+  const la = document.getElementById('pp-live-auction');
+  if (la) la.onclick = () => _ppaOpen();
   const fr = document.getElementById('pp-force-refresh');
   if (fr) fr.onclick = () => { if (ppForceRefresh()) render(); };
   const fr2 = document.getElementById('pp-force-refresh-auc');
@@ -136597,9 +136946,11 @@ function _ppOpenAuctionModal(listingId) {
       '<div class="pp-modal-body">' +
         '<div class="pp-modal-left">' +
           '<div class="pp-modal-photo">' +
-            (photo
-              ? '<img src="' + escapeHtml(photo) + '" alt="">'
-              : '<div class="pp-modal-photo-empty">[VEHICLE PHOTO · drop a 3/4 render]</div>') +
+            (v.modelUrl
+              ? '<button id="pp-modal-3d" style="width:100%;height:100%;background:linear-gradient(135deg,#0e1620,#0a0604);border:1px solid #2a4658;color:#9fe0ff;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px"><div style="font-size:2.6rem">🧊</div><div>VIEW 3D MODEL</div><div style="font-size:0.65rem;color:#6a8aa0">orbit · zoom</div></button>'
+              : (photo
+                ? '<img src="' + escapeHtml(photo) + '" alt="">'
+                : '<div class="pp-modal-photo-empty">[VEHICLE PHOTO · drop a 3/4 render]</div>')) +
           '</div>' +
           '<div class="pp-modal-specs">' +
             '<div class="pp-modal-specs-h">SPECIFICATION</div>' +
@@ -136721,7 +137072,7 @@ function _ppRenderLot(p) {
     slots.push(
       '<div class="wfa-slip docked" data-pp-detail="' + v.id + '" style="cursor:pointer">' +
         '<span class="wfa-slip-id">P-' + String(i + 1).padStart(2, '0') + '</span>' +
-        '<div class="wfa-slip-svg">' + (photo ? '<img src="' + escapeHtml(photo) + '">' : '<div style="font-size:1.6rem;color:#7fb9c9">🚗</div>') + '</div>' +
+        '<div class="wfa-slip-svg" style="position:relative">' + (photo ? '<img src="' + escapeHtml(photo) + '">' : '<div style="font-size:1.6rem;color:#7fb9c9">' + (v.modelUrl ? '🧊' : '🚗') + '</div>') + (v.modelUrl ? '<span style="position:absolute;top:0;right:0;font-size:7px;font-weight:800;color:#7dd3fc;background:rgba(8,20,28,0.85);border:1px solid #0e7490;border-radius:3px;padding:0 3px">3D</span>' : '') + '</div>' +
         '<div class="wfa-slip-name">' + escapeHtml(v.name) + '</div>' +
         '<div class="wfa-slip-class">' + escapeHtml(v.color) + ' · ' + v.condition + '</div>' +
         '<div class="wfa-slip-foot"><span style="font-size:0.7rem;color:#e6b660">¢' + (v.listPrice | 0).toLocaleString() + '</span>' +
@@ -136782,9 +137133,11 @@ function _ppOpenLotModal(vehicleId) {
       '<div class="pp-modal-body">' +
         '<div class="pp-modal-left">' +
           '<div class="pp-modal-photo">' +
-            (photo
-              ? '<img src="' + escapeHtml(photo) + '" alt="">'
-              : '<div class="pp-modal-photo-empty">[VEHICLE PHOTO · drop a 3/4 render]</div>') +
+            (v.modelUrl
+              ? '<button id="pp-modal-3d" style="width:100%;height:100%;background:linear-gradient(135deg,#0e1620,#0a0604);border:1px solid #2a4658;color:#9fe0ff;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px"><div style="font-size:2.6rem">🧊</div><div>VIEW 3D MODEL</div><div style="font-size:0.65rem;color:#6a8aa0">orbit · zoom</div></button>'
+              : (photo
+                ? '<img src="' + escapeHtml(photo) + '" alt="">'
+                : '<div class="pp-modal-photo-empty">[VEHICLE PHOTO · drop a 3/4 render]</div>')) +
           '</div>' +
           '<div class="pp-modal-specs">' +
             '<div class="pp-modal-specs-h">SPECIFICATION</div>' +
@@ -136820,6 +137173,7 @@ function _ppOpenLotModal(vehicleId) {
   document.body.appendChild(wrap);
   document.getElementById('pp-modal-x').onclick = _ppCloseAnyModal;
   wrap.addEventListener('click', (e) => { if (e.target === wrap) _ppCloseAnyModal(); });
+  const _m3d = document.getElementById('pp-modal-3d'); if (_m3d) _m3d.onclick = () => { try { _ppaViewModel(v.modelUrl, v.name, v.modelScale, v.modelRotY); } catch (e) {} };
   document.querySelectorAll('[data-pp-act]').forEach(b => b.onclick = async () => {
     const act = b.dataset.ppAct;
     if (act === 'fuel') {
@@ -137084,9 +137438,11 @@ function _ppRenderAdmin(p) {
       '<div class="wfa-panel-h"><h3>👤 CUSTOMER PHOTOS</h3><span>PER ARCHETYPE</span></div>' +
       '<div class="wfa-admin-grid">' + archetypeCards + '</div>' +
     '</div>' +
+    '<div class="wfa-panel" style="margin-top:0.8rem">' + _ppaAdminModelsHtml() + '</div>' +
   '</div>';
 }
 function _ppBindAdmin() {
+  try { _ppaBindAdminModels(); } catch (e) {}
   document.querySelectorAll('[data-pp-up-listing]').forEach(inp => { inp.onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) ppHandlePhotoUpload('listing', inp.dataset.ppUpListing, f); }; });
   document.querySelectorAll('[data-pp-up-lot]').forEach(inp => { inp.onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) ppHandlePhotoUpload('lot', inp.dataset.ppUpLot, f); }; });
   document.querySelectorAll('[data-pp-up-customer]').forEach(inp => { inp.onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) ppHandlePhotoUpload('customer', inp.dataset.ppUpCustomer, f); }; });

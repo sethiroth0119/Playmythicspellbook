@@ -77,6 +77,8 @@ window.MYTHIC = (function(){
     <div class="fld"><label>Name</label><input id="aName" class="in" placeholder="Arcane Console"></div>
     <div class="fld"><label>Icon</label><input id="aIco" class="in sm" placeholder="🖥️"><label>Radius</label><input id="aR" class="in sm" type="number" step="0.1" value="0.6"></div>
     <div class="fld"><label>Price</label><input id="aAza" class="in sm" type="number" value="20"><span class="cur">🪙</span><input id="aCin" class="in sm" type="number" value="15"><span class="cur">🔥</span></div>
+    <div class="fld"><label>Type</label><select id="aMount" class="in"><option value="floor">🪑 Floor furniture</option><option value="wall">🖼️ Wall-mounted</option><option value="flat">🟥 Flat / rug</option><option value="ceiling">💡 Ceiling / hanging</option></select></div>
+    <div class="fld"><label>Function</label><select id="aFunc" class="in"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="counter">🛒 Shop counter</option><option value="binder">📒 Binder</option><option value="open">🎴 Open packs</option></select></div>
     <div class="sub-h">Import 3D Model (.glb)</div>
     <input id="glbFile" type="file" accept=".glb,.gltf" class="in">
     <div id="glbInfo" style="display:none">
@@ -279,7 +281,7 @@ window.MYTHIC = (function(){
     {type:'tv',name:'Wall TV',ico:'📺',r:0,wall:true,price:{aza:28,cinder:15}},
   ];
   let customModels=[]; const glbCache={};
-  function fullCatalog(){ return BUILTIN.concat(customModels.map(m=>({type:m.id,name:m.name,ico:m.ico,r:m.r,price:m.price,parts:m.parts,kind:m.kind,custom:true}))); }
+  function fullCatalog(){ return BUILTIN.concat(customModels.map(m=>({type:m.id,name:m.name,ico:m.ico,r:m.r,price:m.price,parts:m.parts,kind:m.kind,custom:true,mount:m.mount||'floor',func:m.func||'',wall:!!m.wall||m.mount==='wall',storage:!!m.storage||m.func==='storage'}))); }
   let META={}; function rebuildMeta(){ META={}; fullCatalog().forEach(c=>META[c.type]=c); }
   rebuildMeta();
 
@@ -343,9 +345,10 @@ window.MYTHIC = (function(){
   function buildParts(g,parts){ parts.forEach(p=>{ let geo; if(p.shape==='cyl') geo=new THREE.CylinderGeometry(p.rt??0.3,p.rb??0.3,p.h??0.6,16); else if(p.shape==='sph') geo=new THREE.SphereGeometry(p.r??0.3,16,12); else if(p.shape==='cone') geo=new THREE.ConeGeometry(p.r??0.3,p.h??0.6,12); else geo=new THREE.BoxGeometry(p.w??0.5,p.h??0.5,p.d??0.5);
     const m=new THREE.Mesh(geo,partMat(p)); m.position.set(p.x??0,p.y??0.5,p.z??0); if(p.ry) m.rotation.y=(p.ry||0)*Math.PI/180; m.castShadow=true; m.receiveShadow=true; g.add(m); }); }
   function buildFurniture(type){ const meta=META[type]; if(!meta) return null;
-    if(meta.kind==='glb'){ const t=glbCache[type]; if(!t) return null; const g=t.clone(true); g.userData={type,radius:meta.r||0,storage:false,wall:false}; return g; }
+    const _stor=!!meta.storage||(type==='chest'), _wall=!!meta.wall, _func=meta.func||(_stor?'storage':''), _mount=meta.mount||(_wall?'wall':'floor');
+    if(meta.kind==='glb'){ const t=glbCache[type]; if(!t) return null; const g=t.clone(true); g.userData={type,radius:meta.r||0,storage:_stor,wall:_wall,func:_func,mount:_mount}; if(_stor){ g.userData.cap=meta.cap||200; g.userData.inv={}; } return g; }
     const g=new THREE.Group(); if(meta.parts) buildParts(g,meta.parts); else if(BUILD[type]) BUILD[type](g); else return null;
-    g.userData={type,radius:meta.r||0,storage:(type==='chest'),wall:!!meta.wall}; if(g.userData.storage){ g.userData.cap=meta.cap||200; g.userData.inv={}; } return g; }
+    g.userData={type,radius:meta.r||0,storage:_stor,wall:_wall,func:_func,mount:_mount}; if(g.userData.storage){ g.userData.cap=meta.cap||200; g.userData.inv={}; } return g; }
 
   // ===== state =====
   const placed=[]; let mode='decorate';
@@ -382,7 +385,7 @@ window.MYTHIC = (function(){
   function placeGhost(){ if(!ghost||ghost.visible===false) return; const t=placingType; const g=buildFurniture(t); g.position.copy(ghost.position); g.rotation.y=ghost.rotation.y; scene.add(g); placed.push(g); owned[t]=(owned[t]||0)-1; renderPortal(); if((owned[t]||0)<=0) cancelPlacing(); else if(isWall(t)) ghost.visible=false; }
 
   const selPanel=document.getElementById('selPanel'), selTitle=document.querySelector('.sel-title'), selName=document.getElementById('selName'), rotBtn=document.getElementById('rotBtn');
-  function selectItem(g){ clearSelection(); selected=g; selHelper=new THREE.BoxHelper(g,0xd4af37); scene.add(selHelper); selName.textContent=(META[g.userData.type]?META[g.userData.type].name:'Piece')+(g.userData.storage?' · stores resources':g.userData.wall?' · wall-mounted':''); rotBtn.style.display=g.userData.wall?'none':'inline-block'; selPanel.style.display='block'; selTitle.style.display='block'; }
+  function selectItem(g){ clearSelection(); selected=g; selHelper=new THREE.BoxHelper(g,0xd4af37); scene.add(selHelper); selName.textContent=(META[g.userData.type]?META[g.userData.type].name:'Piece')+(function(){var f=g.userData.func,L={bed:' · 🛏️ bed',storage:' · 🧰 stores resources',counter:' · 🛒 counter',binder:' · 📒 binder',open:' · 🎴 open packs'};return (f&&L[f])||(g.userData.wall?' · wall-mounted':'');})(); rotBtn.style.display=g.userData.wall?'none':'inline-block'; selPanel.style.display='block'; selTitle.style.display='block'; }
   function clearSelection(){ if(selHelper){ scene.remove(selHelper); selHelper=null; } selected=null; selPanel.style.display='none'; selTitle.style.display='none'; }
   function returnSelected(){ if(!selected) return; const t=selected.userData.type; owned[t]=(owned[t]||0)+1; scene.remove(selected); placed.splice(placed.indexOf(selected),1); clearSelection(); renderPortal(); }
   rotBtn.onclick=()=>{ if(selected&&!selected.userData.wall){ selected.rotation.y+=Math.PI/2; selHelper.update(); } };
@@ -453,10 +456,16 @@ window.MYTHIC = (function(){
   document.getElementById('glbFit').onclick=()=>{ if(!pendingGLB) return; const s=+(1.6/maxDimOf(pendingGLB.rawBuf)).toFixed(3); glbScale.value=s; pendingGLB.scale=s; pendingGLB.template=glbToTemplate(pendingGLB.rawBuf,s); refreshPreview(); };
   document.getElementById('glbRemove').onclick=()=>{ pendingGLB=null; glbFile.value=''; renderImportState(); refreshPreview(); };
   async function saveModel(){ const name=(aName.value||'').trim()||'Custom Piece'; const ico=(aIco.value||'').trim()||(pendingGLB?'📦':'❔'); const r=parseFloat(aR.value)||0; const aza=parseInt(aAza.value)||0, cinder=parseInt(aCin.value)||0; const id='m_'+Date.now();
-    if(pendingGLB){ customModels.push({id,name,ico,r,price:{aza,cinder},kind:'glb',scale:pendingGLB.scale||1}); glbCache[id]=pendingGLB.template; persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket();
+    // 🛋️ Placement TYPE + interaction FUNCTION chosen on upload. `wall` drives the
+    // wall-mount placement path; `storage` makes it an openable chest; `func`/`mount`
+    // are stored so the piece keeps its role and the card-shop side can mirror it.
+    const mount=(document.getElementById('aMount')||{}).value||'floor';
+    const func=(document.getElementById('aFunc')||{}).value||'';
+    const wall=(mount==='wall'); const storage=(func==='storage');
+    if(pendingGLB){ customModels.push({id,name,ico,r,price:{aza,cinder},kind:'glb',scale:pendingGLB.scale||1,mount,func,wall,storage}); glbCache[id]=pendingGLB.template; persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket();
       try{ if(pendingGLB.big) throw new Error('big'); await window.storage.set(GLB_PREFIX+id, pendingGLB.b64, false); flash(`Model "${name}" added to market`); }catch(err){ flash(`"${name}" added for this session (too large to save permanently)`); }
       pendingGLB=null; glbFile.value=''; renderImportState(); }
-    else { if(!editParts.length){ flash('Add a part or import a model'); return; } customModels.push({id,name,ico,r,price:{aza,cinder},kind:'parts',parts:editParts.map(p=>({...p}))}); persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash(`Model "${name}" added to market`); editParts=[defaultPart()]; renderParts(); }
+    else { if(!editParts.length){ flash('Add a part or import a model'); return; } customModels.push({id,name,ico,r,price:{aza,cinder},kind:'parts',parts:editParts.map(p=>({...p})),mount,func,wall,storage}); persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash(`Model "${name}" added to market`); editParts=[defaultPart()]; renderParts(); }
     aName.value=''; refreshPreview(); }
   function deleteModel(id){ customModels=customModels.filter(m=>m.id!==id); delete glbCache[id]; try{ window.storage.delete(GLB_PREFIX+id); }catch(e){} persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash('Model deleted'); }
   function openAdmin(){ adminOpen=true; if(mode==='walk') setMode('decorate'); adminEl.style.display='block'; if(!editParts.length) editParts=[defaultPart()]; renderParts(); renderImportState(); renderCustomList(); refreshPreview(); setHint('Build from parts or import a .glb — preview shows in the room'); }

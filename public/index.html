@@ -106299,7 +106299,7 @@ function _csBuildConfig() {
       });
       return Array.from(map.values());
     })(),
-    props: propRows.map(r => withAnim({ catId: r.label || '', url: r.model_url || '', x: num(r.x, 0), y: num(r.y, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: num(r.scale, 1) }, r)),
+    props: propRows.map(r => withAnim({ catId: r.label || '', func: r.view || '', url: r.model_url || '', x: num(r.x, 0), y: num(r.y, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: num(r.scale, 1) }, r)),
   };
 }
 // 💾 Local fallback so decorating WORKS before the shop_objects table exists (or
@@ -106508,6 +106508,8 @@ function _csMount3D(mount) {
         // items like rugs/posters so you can stand on/near them).
         const fr = Math.max(cat ? cat.w || 1 : 1, cat ? cat.d || 1 : 1) * 0.5 * (p.scale || 1);
         if (!cat || (cat.h == null) || cat.h > 0.25) propColliders.push({ gx: p.x || 0, gz: p.z || 0, r: Math.max(0.35, fr) });
+        // 🛠 Functional fixture: walk up + E uses it (bed/storage/counter/binder/open).
+        if (p.func) { const FL = { bed: '🛏️ Rest', storage: '🧰 Storage', counter: 'THE COUNTER', binder: 'BINDER', open: 'OPEN PACKS', browse: 'PLAYER SHOPS' }; stations.push({ view: p.func, label: FL[p.func] || String(p.func).toUpperCase(), gx: p.x || 0, gz: p.z || 0, r: Math.max(0.6, fr), ir: 3.0 }); }
       } catch (e) {}
       if (p.url) _csTryModel(p.url, (m, gltf) => { try { if (ph) pg.remove(ph); if (p.scale) m.scale.setScalar(p.scale); _csSeatModel(m); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
     }
@@ -106607,6 +106609,14 @@ function _csEnterShop3D(owner) {
 }
 function _csEnterStation(view) {
   if (view === 'vendor') { App.vendorMarketTab = 'packs'; App.screen = 'vendorMarket'; render(); return; }
+  if (view === 'bed') { _csBedRest(); return; }
+  if (view === 'storage') {
+    // Storage chests in the shop are a decorative fixture for now (the
+    // full inventory-chest system lives in the housing sim). Acknowledge
+    // the interaction so the prompt isn't a dead end.
+    showToast('🧰 Storage chest — coming soon to the Card Shop.', 2600);
+    return;
+  }
   if (view === 'counter' && _csCounterIsVisiting()) {
     // Visiting another player's shop: point the browse body at THEIR storefront,
     // load its listings if needed, then refresh the panel when they arrive.
@@ -106615,6 +106625,45 @@ function _csEnterStation(view) {
     if (!c && typeof cardShopFetchShop === 'function') { Promise.resolve(cardShopFetchShop(App._csViewOwner)).catch(() => {}).then(() => _csRefreshPanel()); }
   }
   _csOpenPanel(view);
+}
+// 🛏️ Bed fixture — walking up to a placed bed and pressing E rests the whole
+// owned roster: drops fatigue + stress and tops up each hero's battle pool.
+// Throttled so a bed isn't a free infinite-rest button (10-minute cooldown).
+function _csBedRest() {
+  const COOLDOWN = 10 * 60 * 1000;
+  const last = (Profile && Profile._csBedRestAt) || 0;
+  const wait = COOLDOWN - (Date.now() - last);
+  if (wait > 0) {
+    const mins = Math.ceil(wait / 60000);
+    showToast('🛏️ The beds need ' + mins + ' more min before the next rest.', 2600);
+    return;
+  }
+  if (!Profile.heroEnergy || typeof Profile.heroEnergy !== 'object') Profile.heroEnergy = {};
+  const ids = Object.keys(Profile.heroEnergy);
+  // Nothing tracked yet → seed from owned heroes so a brand-new player still
+  // gets a meaningful rest instead of a no-op.
+  if (!ids.length && Profile.heroes && typeof Profile.heroes === 'object') {
+    for (const hid of Object.keys(Profile.heroes)) { getHeroEnergy(hid); }
+    ids.push(...Object.keys(Profile.heroEnergy));
+  }
+  if (!ids.length) { showToast('🛏️ No heroes to rest yet.', 2400); return; }
+  let restored = 0, healed = 0;
+  for (const hid of ids) {
+    const e = getHeroEnergy(hid);           // settles regen + clamps first
+    const max = getHeroBattleMax(hid);
+    const before = e.energy | 0;
+    // Beds restore a big chunk of the battle pool (≈40% of cap, min 8)…
+    e.energy = Math.min(max, before + Math.max(8, Math.ceil(max * 0.40)));
+    e.lastRestAt = Date.now();
+    restored += (e.energy - before);
+    // …and meaningfully cut fatigue + stress.
+    if ((e.fatigue | 0) > 0) { healed += Math.min(e.fatigue | 0, 40); e.fatigue = Math.max(0, (e.fatigue | 0) - 40); }
+    if ((e.stress  | 0) > 0) { e.stress = Math.max(0, (e.stress | 0) - 40); }
+  }
+  Profile._csBedRestAt = Date.now();
+  try { saveProfile(); } catch (e) {}
+  showToast('🛏️ Rested ' + ids.length + ' hero' + (ids.length === 1 ? '' : 'es') +
+            ' — +' + restored + ' battles, eased fatigue & stress.', 3200);
 }
 function _csOpenPanel(view) {
   App._csPanel = view;
@@ -106992,7 +107041,7 @@ function _csMountLayoutBuilder(root) {
       if (_remaining(B.catId) <= 0) { setStatus("You don't own any more of those — buy more in the 🛋️ Furniture Market.", false); return; }
       const cand = { catId: B.catId, x: B.hover.x, z: B.hover.z, rotationY: B.ghostRot };
       if (!_fpValid(cand, null)) { setStatus("Can't place there — the space is taken or off the floor.", false); return; }
-      B.placed.push({ id: _csNewId(), catId: cat.id, name: cat.name, url: cat.url, anim: cat.anim || null, x: B.hover.x, z: B.hover.z, rotationY: B.ghostRot, scale: 1 });
+      B.placed.push({ id: _csNewId(), catId: cat.id, name: cat.name, url: cat.url, anim: cat.anim || null, func: cat.func || '', mount: cat.mount || 'floor', x: B.hover.x, z: B.hover.z, rotationY: B.ghostRot, scale: 1 });
       syncScene(); paint(); return;
     }
     const pid = pickNode(e);
@@ -107054,13 +107103,16 @@ function _csMountLayoutBuilder(root) {
     } catch (e) {}
     if (!rows || !rows.length) { const local = _csLoadLocalLayout(myShop); rows = (local || []).filter(r => r && r.kind === 'prop'); if (rows.length && !_csTableKnownMissing) setStatus(`Loaded ${rows.length} item${rows.length === 1 ? '' : 's'} (local).`, true); }
     else setStatus(`Loaded ${rows.length} item${rows.length === 1 ? '' : 's'}.`, true);
-    B.placed = rows.map(r => ({ id: r.id, catId: (_csCatMap[r.label] ? r.label : 'shelf'), name: (_csCatMap[r.label] || {}).name || 'Item', url: r.model_url || (_csCatMap[r.label] || {}).url || '', anim: r.anim || (_csCatMap[r.label] || {}).anim || null, x: +r.x || 0, z: +r.z || 0, rotationY: +r.rotation_y || 0, scale: +r.scale || 1 }));
+    const _mountOf = (y) => (y > 2.5 ? 'ceiling' : y > 1 ? 'wall' : y > 0.01 ? 'flat' : 'floor');
+    B.placed = rows.map(r => ({ id: r.id, catId: (_csCatMap[r.label] ? r.label : 'shelf'), name: (_csCatMap[r.label] || {}).name || 'Item', url: r.model_url || (_csCatMap[r.label] || {}).url || '', anim: r.anim || (_csCatMap[r.label] || {}).anim || null, func: r.view || (_csCatMap[r.label] || {}).func || '', mount: _mountOf(+r.y || 0), x: +r.x || 0, z: +r.z || 0, rotationY: +r.rotation_y || 0, scale: +r.scale || 1 }));
     B.deleted = []; syncScene(); paint();
   }
   async function _csLayoutSave() {
     const myShop = _csMyShopId();
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '…'; }
-    const propRows = B.placed.map((it, i) => ({ id: it.id, shop_id: myShop, kind: 'prop', label: it.catId, model_url: it.url || '', anim: it.anim || null, x: it.x, y: 0, z: it.z, rotation_y: it.rotationY || 0, scale: it.scale || 1, sort: i, updated_at: new Date().toISOString() }));
+    // func → stored in `view` (interactive fixture); mount → the placement height in `y`.
+    const _mountY = (m) => m === 'ceiling' ? 3.0 : m === 'wall' ? 1.4 : m === 'flat' ? 0.02 : 0;
+    const propRows = B.placed.map((it, i) => ({ id: it.id, shop_id: myShop, kind: 'prop', label: it.catId, model_url: it.url || '', anim: it.anim || null, view: it.func || null, x: it.x, y: _mountY(it.mount), z: it.z, rotation_y: it.rotationY || 0, scale: it.scale || 1, sort: i, updated_at: new Date().toISOString() }));
     // Always mirror to localStorage first (preserve any non-prop local rows; drop deleted) — so it persists even with no cloud table.
     try { const existing = _csLoadLocalLayout(myShop) || []; const delSet = new Set(B.deleted); const merged = existing.filter(r => r && r.kind !== 'prop' && !delSet.has(r.id)).concat(propRows); _csSaveLocalLayout(myShop, merged); } catch (e) {}
     let cloudOk = false, cloudErr = null;
@@ -107116,7 +107168,7 @@ async function _csFetchFurnitureCatalog(force) {
   _csFurnitureCatalog = rows;
   // Merge into _csCatMap so the builder resolves custom furniture by its 'fc:' id.
   for (const r of rows) {
-    _csCatMap['fc:' + r.id] = { id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, _custom: true, _catalogId: r.id };
+    _csCatMap['fc:' + r.id] = { id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', _custom: true, _catalogId: r.id };
   }
   return rows;
 }
@@ -107141,7 +107193,7 @@ function _csBuilderCatalog() {
   const custom = [];
   for (const r of (_csFurnitureCatalog || [])) {
     const q = owned[r.id] | 0; if (q <= 0) continue;
-    custom.push({ id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, _qty: q, _custom: true, _catalogId: r.id });
+    custom.push({ id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', _qty: q, _custom: true, _catalogId: r.id });
   }
   return base.concat(custom);
 }
@@ -107194,7 +107246,7 @@ async function _csMarketAdd(node) {
   const numf = (f, d) => { const n = parseFloat(g(f)); return isFinite(n) ? n : d; };
   const name = (g('name') || '').trim(); if (!name) { showToast('Furniture needs a name.', 2400); throw new Error('name'); }
   let anim = null; const ar = g('anim'); if (ar && ar.trim()) { try { anim = JSON.parse(ar); } catch (e) { showToast('⚠ Animation JSON is invalid.', 3600); throw e; } }
-  const row = { name, model_url: g('model_url') || null, price: Math.max(0, Math.round(numf('price', 100))), w: Math.max(1, Math.round(numf('w', 1))), d: Math.max(1, Math.round(numf('d', 1))), h: numf('h', 1), category: g('category') || 'decor', anim, color: 0xd4af37, sort: (_csFurnitureCatalog || []).length };
+  const row = { name, model_url: g('model_url') || null, price: Math.max(0, Math.round(numf('price', 100))), w: Math.max(1, Math.round(numf('w', 1))), d: Math.max(1, Math.round(numf('d', 1))), h: numf('h', 1), category: g('category') || 'decor', func: g('func') || null, mount: g('mount') || 'floor', anim, color: 0xd4af37, sort: (_csFurnitureCatalog || []).length };
   if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) { showToast('Cloud offline.', 3000); throw new Error('cloud'); }
   const { error } = await Cloud.client.from('furniture_catalog').insert(row);
   if (error) { if (_csTableMissing(error)) showToast('⚠ furniture_catalog table missing — run the migration in Supabase.', 5200); else showToast('Add failed: ' + (error.message || error), 4200); throw error; }
@@ -107212,6 +107264,10 @@ function _csOpenFurnitureMarket(onClose) {
       <input data-csm="name" placeholder="Name"><input data-csm="price" type="number" placeholder="Price 🔥" value="500">
       <input data-csm="w" type="number" placeholder="W" value="1"><input data-csm="d" type="number" placeholder="D" value="1"><input data-csm="h" type="number" step="0.1" placeholder="H" value="1">
       <input data-csm="category" placeholder="Category" value="decor">
+    </div>
+    <div class="csm-grid2" style="grid-template-columns:1fr 1fr">
+      <select data-csm="mount" title="Placement type"><option value="floor">🪑 Floor furniture</option><option value="wall">🖼️ Wall-mounted</option><option value="flat">🟥 Flat / rug</option><option value="ceiling">💡 Ceiling / hanging</option></select>
+      <select data-csm="func" title="Function — walk up + E to use"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="counter">🛒 Shop counter (buy)</option><option value="binder">📒 Binder</option><option value="open">🎴 Open packs</option></select>
     </div>
     <input data-csm="model_url" placeholder=".glb public URL — or upload one →" style="width:100%">
     <textarea data-csm="anim" rows="2" placeholder='Animation JSON (optional) — e.g. {"clip":"Idle"} or {"clip":"Spin","timeScale":1,"loop":true}'></textarea>

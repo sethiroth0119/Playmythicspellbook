@@ -143256,6 +143256,14 @@ function _ensureDb3Style() {
   .db3-d-desc{font-size:0.8rem;color:#cdbf9c;line-height:1.5;white-space:pre-wrap;max-height:30vh;overflow:auto;border-top:1px solid #2a2316;padding-top:8px}
   .db3-d-actions{display:flex;gap:6px;margin-top:11px;flex-wrap:wrap}
   .db3-detail-empty{color:#8a7f64;text-align:center;padding:30px 10px;font-size:0.85rem;line-height:1.6}
+  .db3-kit{margin-top:9px;display:flex;flex-direction:column;gap:9px}
+  .db3-kit-sec{border:1px solid #2c2415;border-radius:8px;background:rgba(255,255,255,.02);padding:7px 8px}
+  .db3-kit-h{font-weight:800;color:#e6c878;font-size:0.78rem;margin-bottom:5px;letter-spacing:.3px}
+  .db3-kit-row{padding:4px 0;border-top:1px solid #221c12}
+  .db3-kit-row:first-child{border-top:none;padding-top:0}
+  .db3-kit-name{font-size:0.8rem;color:#ece3cf;font-weight:600}
+  .db3-kit-meta{font-size:0.7rem;color:#8f846a;font-weight:500}
+  .db3-kit-desc{font-size:0.75rem;color:#bdb091;line-height:1.45;margin-top:2px}
   .db3-tabs{display:flex;gap:2px;margin:6px 0 0;flex-wrap:wrap}
   @media(max-width:1080px){.db3-wrap{grid-template-columns:1fr}.db3-col{min-height:auto}.db3-grid{max-height:46vh}}
   `;
@@ -143288,6 +143296,88 @@ function _dbCardThumb(o) {
     <span class="db3-nm">${escapeHtml(card.name)}</span>
     ${cnt}
   </button>`;
+}
+// Full card "kit" — passives, on-play, subterfuge flip/ambush, triggers, moves,
+// and spell/trap effect — rendered as compact sections. Reuses the same describe
+// helpers the right-click modal uses, so wording stays consistent.
+function _cardKitHtml(card) {
+  if (!card) return '';
+  const esc = (s) => escapeHtml(String(s == null ? '' : s));
+  const sections = [];
+  const sec = (title, body) => { if (body) sections.push(`<div class="db3-kit-sec"><div class="db3-kit-h">${title}</div>${body}</div>`); };
+  const row = (icon, name, desc) => `<div class="db3-kit-row"><div class="db3-kit-name">${icon ? icon + ' ' : ''}${esc(name)}</div>${desc ? `<div class="db3-kit-desc">${desc}</div>` : ''}</div>`;
+
+  // Passives (primary + secondary + array).
+  const passIds = [];
+  if (card.passive && card.passive !== 'none') passIds.push(card.passive);
+  if (card.passive2 && card.passive2 !== 'none' && !passIds.includes(card.passive2)) passIds.push(card.passive2);
+  if (Array.isArray(card.passives)) card.passives.forEach(p => { if (p && p !== 'none' && !passIds.includes(p)) passIds.push(p); });
+  if (passIds.length && typeof PASSIVES !== 'undefined') {
+    const body = passIds.map(id => { const p = PASSIVES[id]; return p ? row('🌀', p.name || id, esc(p.desc || '')) : ''; }).filter(Boolean).join('');
+    sec('Passives', body);
+  }
+
+  // On-play ability.
+  if (card.onPlay && card.onPlay.type) {
+    let txt = ''; try { txt = (typeof describeOnPlayEffect === 'function') ? (describeOnPlayEffect(card.onPlay) || '') : ''; } catch (e) {}
+    if (txt) sec('⚡ On Play', row('', 'When this unit enters the field', esc(txt)));
+  }
+
+  // Subterfuge flip + ambush.
+  if (card.isSubterfuge) {
+    let feTxt = ''; try { feTxt = (card.flipEffect && card.flipEffect.type && typeof describeOnPlayEffect === 'function') ? (describeOnPlayEffect(card.flipEffect) || '') : ''; } catch (e) {}
+    let body = row('🃏', 'Flip Effect (on reveal)', esc(feTxt || 'A hidden surprise blocker.'));
+    if (card.ambushEffect && card.ambushEffect.type) {
+      const a = card.ambushEffect, am = a.amount;
+      const t = a.type === 'mirror' ? `Reflect ${am || 50}% of the attacker's power back.`
+        : a.type === 'repel' ? `Cancel the attack and stun the attacker ${am || 1} turn${(am || 1) === 1 ? '' : 's'}.`
+        : a.type === 'riposte' ? `Counter ${am || 0} damage to the attacker.`
+        : 'Cancel the attacking move entirely.';
+      body += row('🎯', 'Ambush — ' + a.type, esc(t));
+    }
+    sec('🃏 Subterfuge', body);
+  }
+
+  // Trigger abilities.
+  if (Array.isArray(card.triggers) && card.triggers.length && typeof TRIGGER_EVENTS !== 'undefined') {
+    const body = card.triggers.map(t => {
+      if (!t || !t.event) return '';
+      const ev = ((TRIGGER_EVENTS.find(e => e.id === t.event)) || {}).label || t.event;
+      let ef = ((typeof TRIGGER_EFFECTS !== 'undefined' && TRIGGER_EFFECTS.find(e => e.id === t.effect)) || {}).label || t.effect || '';
+      if (t.amount != null) ef = String(ef).replace(/\bN\b/g, t.amount);
+      const who = t.who === 'owner' ? ' · your side' : t.who === 'enemy' ? ' · enemy side' : '';
+      const ch = (t.chance != null && t.chance < 100) ? ` · ${t.chance}%` : '';
+      const lim = t.limitPerTurn ? ` · ${t.limitPerTurn}/turn` : (t.limitPerMatch ? ` · ${t.limitPerMatch}/match` : '');
+      return row('⚡', t.name || 'Trigger Ability', `${esc(ev)}${who}${ch}${lim} → ${esc(ef)}`);
+    }).filter(Boolean).join('');
+    sec('Triggers', body);
+  }
+
+  // Moves / learnset.
+  if (Array.isArray(card.learnset) && card.learnset.length && typeof lookupMove === 'function') {
+    const body = card.learnset.slice().sort((a, b) => (a.lvl || 0) - (b.lvl || 0)).map(l => {
+      const mv = lookupMove(l.m); if (!mv) return '';
+      const meta = `${mv.kind || ''}${mv.power ? ' · Pwr ' + mv.power : ''}${mv.healAmount ? ' · Heal ' + mv.healAmount : ''}${mv.range ? ' · Rng ' + mv.range : ''}`;
+      let pills = ''; try { const ex = (typeof describeMoveExtras === 'function') ? describeMoveExtras(mv) : []; pills = (typeof _renderEffectPills === 'function') ? _renderEffectPills(ex) : ''; } catch (e) {}
+      return `<div class="db3-kit-row"><div class="db3-kit-name"><span style="color:#9fb6ff">Lv ${l.lvl | 0}</span> ${esc(mv.name)} <span class="db3-kit-meta">${esc(meta)}</span></div>${mv.desc ? `<div class="db3-kit-desc">${esc(mv.desc)}</div>` : ''}${pills}</div>`;
+    }).filter(Boolean).join('');
+    sec('🎯 Moves', body);
+  }
+
+  // Spell / trap effect.
+  if (card.effect && card.effect.type) {
+    const e = card.effect, parts = [];
+    if (e.type === 'damage') parts.push(`💥 ${e.amount || 0} damage`);
+    else if (e.type === 'heal') parts.push(`💚 Heal ${e.amount || 0}`);
+    else if (e.type === 'draw') parts.push(`📜 Draw ${e.amount || 0}`);
+    else if (e.type === 'buffAll') parts.push(`✨ ${e.status || 'buff'} (${e.duration || 1}t)`);
+    else if (e.type === 'stun') parts.push('🌀 Stun');
+    else parts.push(e.type);
+    if (e.status && e.type !== 'buffAll') parts.push(`Status: ${e.status}${e.duration ? ' (' + e.duration + 't)' : ''}`);
+    sec('✨ Effect', row('', parts.join(' · '), ''));
+  }
+
+  return sections.length ? `<div class="db3-kit">${sections.join('')}</div>` : '';
 }
 // The left-column card-detail panel — reads the current selection (App._dbSel).
 function _dbDetailPanel() {
@@ -143344,6 +143434,7 @@ function _dbDetailPanel() {
     ${statBits.length ? `<div class="db3-d-stats">${statBits.join('')}</div>` : ''}
     <div class="db3-d-own">Owned <b>${ownedStr}</b> · In deck <b>${inDeck}</b>${inSide ? ` · Side <b>${inSide}</b>` : ''} · Max <b>${ownCap}</b></div>
     <div class="db3-d-desc">${escapeHtml(card.desc || card.text || 'No description.')}</div>
+    ${_cardKitHtml(card)}
     <div class="db3-d-actions">${actions}</div>
   `;
 }

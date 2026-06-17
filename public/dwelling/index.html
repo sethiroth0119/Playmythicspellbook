@@ -356,11 +356,21 @@ window.MYTHIC = (function(){
   function partMat(p){ return new THREE.MeshStandardMaterial({ color:p.c||'#888888', emissive:p.e||'#000000', emissiveIntensity:1.5, metalness:p.m??0.1, roughness:p.rough??0.8 }); }
   function buildParts(g,parts){ parts.forEach(p=>{ let geo; if(p.shape==='cyl') geo=new THREE.CylinderGeometry(p.rt??0.3,p.rb??0.3,p.h??0.6,16); else if(p.shape==='sph') geo=new THREE.SphereGeometry(p.r??0.3,16,12); else if(p.shape==='cone') geo=new THREE.ConeGeometry(p.r??0.3,p.h??0.6,12); else geo=new THREE.BoxGeometry(p.w??0.5,p.h??0.5,p.d??0.5);
     const m=new THREE.Mesh(geo,partMat(p)); m.position.set(p.x??0,p.y??0.5,p.z??0); if(p.ry) m.rotation.y=(p.ry||0)*Math.PI/180; m.castShadow=true; m.receiveShadow=true; g.add(m); }); }
+  // 🚧 Collision radius for walk-through prevention. FLOOR furniture always blocks: use
+  // the declared radius if >0, else DERIVE a footprint radius from the model's bounding
+  // box (min 0.35) — this is what gives admin-uploaded .glb furniture (which ships with
+  // r:0) real collision. Wall / flat (rug) / ceiling items stay 0 so you can pass them.
+  function _collRadius(g,declared,mount){
+    if(mount!=='floor') return 0;
+    let r=+declared||0; if(r>0) return r;
+    try{ const bb=new THREE.Box3().setFromObject(g); const sz=bb.getSize(new THREE.Vector3()); r=Math.max(sz.x,sz.z)*0.42; }catch(e){}
+    return Math.max(0.35, r||0.45);
+  }
   function buildFurniture(type){ const meta=META[type]; if(!meta) return null;
     const _stor=!!meta.storage||(type==='chest'), _wall=!!meta.wall, _func=meta.func||(_stor?'storage':''), _mount=meta.mount||(_wall?'wall':'floor');
-    if(meta.kind==='glb'){ const t=glbCache[type]; if(!t) return null; const g=t.clone(true); g.userData={type,radius:meta.r||0,storage:_stor,wall:_wall,func:_func,mount:_mount}; if(_stor){ g.userData.cap=meta.cap||200; g.userData.inv={}; } return g; }
+    if(meta.kind==='glb'){ const t=glbCache[type]; if(!t) return null; const g=t.clone(true); g.userData={type,radius:_collRadius(g,meta.r,_mount),storage:_stor,wall:_wall,func:_func,mount:_mount}; if(_stor){ g.userData.cap=meta.cap||200; g.userData.inv={}; } return g; }
     const g=new THREE.Group(); if(meta.parts) buildParts(g,meta.parts); else if(BUILD[type]) BUILD[type](g); else return null;
-    g.userData={type,radius:meta.r||0,storage:_stor,wall:_wall,func:_func,mount:_mount}; if(g.userData.storage){ g.userData.cap=meta.cap||200; g.userData.inv={}; } return g; }
+    g.userData={type,radius:_collRadius(g,meta.r,_mount),storage:_stor,wall:_wall,func:_func,mount:_mount}; if(g.userData.storage){ g.userData.cap=meta.cap||200; g.userData.inv={}; } return g; }
 
   // ===== state =====
   const placed=[]; let mode='decorate';

@@ -54208,6 +54208,7 @@ const bondCeilingFor = (e) => {
   return BOND_TIERS[capIdx].max;
 };
 const BOND_SWORN_FIRST_OWNER_ONLY = true;  // §9 default: Sworn is non-purchasable (first-owner bonds only)
+const BOND_ARCHON_MIN_TIER = 4;            // §2: a player's Archon Catalyst must be Devoted+ (tier index 4)
 const adjustBond = (profileEntry, delta) => {
   if (!profileEntry) return;
   const cur = profileEntry.bond || 0;
@@ -54329,7 +54330,7 @@ function _lqShowNext() {
   ov.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(4,6,12,0.78);backdrop-filter:blur(3px)';
   ov.innerHTML = `<div style="max-width:440px;width:92%;background:linear-gradient(160deg,#1a1430,#120c22);border:1px solid ${tier.color}66;border-top:4px solid ${tier.color};border-radius:14px;padding:18px 20px;box-shadow:0 24px 60px rgba(0,0,0,0.6)">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-        <div style="font-size:2.4rem;line-height:1">${escapeHtml(card.icon || '🪖')}</div>
+        <div style="width:56px;height:56px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:2.4rem;line-height:1">${(typeof renderIcon === 'function') ? renderIcon('u_' + pend.id, card.icon || '🪖', 'lg') : escapeHtml(card.icon || '🪖')}</div>
         <div><div style="font-weight:800;font-size:1.15rem;color:#fff">${escapeHtml(card.name || 'Companion')}</div>
           <div class="small-text" style="color:${tier.color}">💗 ${tier.name} · ${pend.prof.bond | 0}/${BOND_MAX}</div></div>
       </div>${bodyHtml}</div>`;
@@ -64869,6 +64870,13 @@ function canActivateArchonSummon(state, catalyst) {
   const side = catalyst.owner;
   const rank = _catalystRankOf(catalyst);
   if (!rank) return { ok: false, reason: 'This unit has no Catalyst passive' };
+  // 💗 §2 — a PLAYER's Archon Catalyst must be DEVOTED+ in loyalty. Your single most
+  // powerful summon requires a relationship, not just owned pieces. (AI is exempt.)
+  if (side === 'player' && typeof bondTierIndex === 'function') {
+    let _cb = (typeof catalyst.bond === 'number') ? catalyst.bond : 0;
+    try { const _ce = Profile.units[catalyst.originalCardId || catalyst.cardId]; if (_ce && typeof _ce.bond === 'number') _cb = _ce.bond; } catch (e) {}
+    if (bondTierIndex(_cb) < BOND_ARCHON_MIN_TIER) return { ok: false, reason: catalyst.name + ' must be Devoted+ to channel an Archon — currently ' + getBondTier(_cb).name + '.' };
+  }
   // 🚫 SEAL THE SOURCE — a static suppression aura. While ANY living unit on
   // EITHER side carries archonSuppress, no Archon Summon can be performed.
   if (typeof anyUnitHasPassive === 'function' && anyUnitHasPassive(state, 'archonSuppress')) {
@@ -65784,6 +65792,9 @@ const initGame = (heroData, opponentHero, customCards, playerGoesFirst, chosenDe
     heroUltimates: {},
     heroEmotions: {},
   };
+  // 💗 Benched-loyalty snapshot (§3): the unit cardIds you BROUGHT to this battle, so
+  // post-battle we can dock the ones you never deployed (neglect, not log-off, decay).
+  try { state._deckUnitIds = [...new Set((pd || []).filter(c => c && (c.type || 'unit') === 'unit' && c.id).map(c => c.id))]; } catch (e) { state._deckUnitIds = []; }
   if (typeof _battleInitHeroes === 'function') _battleInitHeroes(state);
   // 🌋 Seed the battlefield's environmental surfaces (oil / water / ice / ember
   // patches) so some maps open with hazards already in play.
@@ -100925,6 +100936,12 @@ function recordBattleProgress() {
     if (faintedByCard[id]) adjustBond(cur, -3 * faintedByCard[id]);
     Profile.units[id] = cur;
   }
+  // 💗 Benched (§3) — units you BROUGHT but never deployed lose -2 loyalty. This IS the
+  // decay mechanic: you're punished for neglect WHILE PLAYING, never for logging off.
+  try {
+    const _bench = (s && Array.isArray(s._deckUnitIds)) ? s._deckUnitIds : [];
+    for (const _bid of _bench) { if (fieldedSet.has(_bid)) continue; const _bp = Profile.units[_bid]; if (!_bp) continue; _migrateBondEntry(_bp); adjustBond(_bp, -2); Profile.units[_bid] = _bp; }
+  } catch (e) {}
   // 💗 Arm a camp loyalty request — a unit that "did something" may speak up next visit.
   try { if (typeof App !== 'undefined') App._lqArmed = true; } catch (e) {}
 

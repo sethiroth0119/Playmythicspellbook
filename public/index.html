@@ -107422,6 +107422,12 @@ function _ensureCsMarketStyle() {
   .csm-buy.is-afford{background:#d4af37;color:#0b0b0f}
   .csm-del{border:1px solid #5a2424;border-radius:8px;padding:6px;font-weight:700;cursor:pointer;background:#1f1212;color:#e6a3a3;font-size:11.5px}
   .csm-del:hover{background:#3a1818;color:#ffd0d0}
+  .csm-edit{border:1px solid #4a5a2c;border-radius:8px;padding:6px;font-weight:700;cursor:pointer;background:#19200f;color:#c4e6a0;font-size:11.5px}
+  .csm-edit:hover{background:#26341a;color:#e2ffc0}
+  .csm-actions{display:flex;gap:6px}.csm-actions>button{flex:1}
+  .csm-edit-flag{margin-right:auto;color:#9ec5ff;font-weight:700;font-size:11.5px;align-self:center}
+  .csm-cancel-edit{background:#241d10;border:1px solid #3a2f1c;border-radius:6px;color:#cdbf9c;padding:6px 10px;font-size:11px;cursor:pointer}
+  .csm-cancel-edit:hover{background:#332a18;color:#ece3cf}
   .csm-view{border:1px solid #3a4a5c;border-radius:8px;padding:7px;font-weight:700;cursor:pointer;background:#14202c;color:#a8cdee;font-size:12px}
   .csm-view:hover{background:#1b2c3c;color:#d4ecff}
   .csm-sw{overflow:hidden}
@@ -107464,7 +107470,7 @@ function _csFurnitureCardHtml(r) {
     <div class="csm-own">Owned: ${owned}</div>
     <button class="csm-view" data-csm-view="${escapeHtml(r.id)}" title="Preview this model in 3D">👁 View</button>
     <button class="csm-buy ${afford ? 'is-afford' : ''}" data-csm-buy="${escapeHtml(r.id)}" ${afford ? '' : 'disabled'}>Buy · ${price.toLocaleString()} ${cur}</button>
-    ${((typeof isAdmin === 'function') && isAdmin()) ? `<button class="csm-del" data-csm-del="${escapeHtml(r.id)}" title="Remove this model from the market">🗑 Delete</button>` : ''}
+    ${((typeof isAdmin === 'function') && isAdmin()) ? `<div class="csm-actions"><button class="csm-edit" data-csm-edit="${escapeHtml(r.id)}" title="Edit this model — function, type, price, details…">✏ Edit</button><button class="csm-del" data-csm-del="${escapeHtml(r.id)}" title="Remove this model from the market">🗑 Delete</button></div>` : ''}
   </div>`;
 }
 // 👁 3D preview of a furniture model — drag to orbit, scroll to zoom. Loads the
@@ -107544,16 +107550,51 @@ function _csFurniturePreview(item) {
     wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
   });
 }
-async function _csMarketAdd(node) {
+// Read the admin furniture form → a furniture_catalog row (sans color/sort, which
+// the add/update callers own). Shared by _csMarketAdd (insert) and _csMarketUpdate.
+function _csReadMarketForm(node) {
   const g = (f) => { const n = node.querySelector(`[data-csm="${f}"]`); return n ? n.value : ''; };
   const numf = (f, d) => { const n = parseFloat(g(f)); return isFinite(n) ? n : d; };
   const name = (g('name') || '').trim(); if (!name) { showToast('Furniture needs a name.', 2400); throw new Error('name'); }
   let anim = null; const ar = g('anim'); if (ar && ar.trim()) { try { anim = JSON.parse(ar); } catch (e) { showToast('⚠ Animation JSON is invalid.', 3600); throw e; } }
-  const row = { name, model_url: g('model_url') || null, icon: (g('icon') || '').trim() || null, price: Math.max(0, Math.round(numf('price', 100))), currency: (g('currency') === 'aza' ? 'aza' : 'cinder'), details: (g('details') || '').trim() || null, w: Math.max(1, Math.round(numf('w', 1))), d: Math.max(1, Math.round(numf('d', 1))), h: numf('h', 1), category: g('category') || 'decor', func: g('func') || null, mount: g('mount') || 'floor', anim, color: 0xd4af37, sort: (_csFurnitureCatalog || []).length };
+  return { name, model_url: g('model_url') || null, icon: (g('icon') || '').trim() || null, price: Math.max(0, Math.round(numf('price', 100))), currency: (g('currency') === 'aza' ? 'aza' : 'cinder'), details: (g('details') || '').trim() || null, w: Math.max(1, Math.round(numf('w', 1))), d: Math.max(1, Math.round(numf('d', 1))), h: numf('h', 1), category: g('category') || 'decor', func: g('func') || null, mount: g('mount') || 'floor', anim };
+}
+// Pre-fill the admin form from an existing row (used when an admin clicks ✏ Edit).
+function _csFillMarketForm(node, row) {
+  const set = (f, v) => { const n = node.querySelector(`[data-csm="${f}"]`); if (n) n.value = (v == null ? '' : v); };
+  set('name', row.name || '');
+  set('price', row.price | 0);
+  set('w', (row.w | 0) || 1); set('d', (row.d | 0) || 1); set('h', row.h != null ? row.h : 1);
+  set('category', row.category || 'decor');
+  set('mount', row.mount || 'floor');
+  set('func', row.func === 'counter' ? 'binder' : (row.func || ''));   // legacy 'counter' → binder option
+  set('currency', row.currency === 'aza' ? 'aza' : 'cinder');
+  set('icon', row.icon || '');
+  set('details', row.details || '');
+  set('model_url', row.model_url || '');
+  set('anim', row.anim ? (typeof row.anim === 'string' ? row.anim : JSON.stringify(row.anim)) : '');
+}
+// Reset the admin form to its blank/default state (used after add + on Cancel edit).
+function _csClearMarketForm(node) {
+  _csFillMarketForm(node, { name: '', price: 500, w: 1, d: 1, h: 1, category: 'decor', mount: 'floor', func: '', currency: 'cinder', icon: '', details: '', model_url: '', anim: null });
+}
+async function _csMarketAdd(node) {
+  const row = _csReadMarketForm(node);
+  row.color = 0xd4af37; row.sort = (_csFurnitureCatalog || []).length;
   if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) { showToast('Cloud offline.', 3000); throw new Error('cloud'); }
   const { error } = await Cloud.client.from('furniture_catalog').insert(row);
   if (error) { if (_csTableMissing(error)) showToast('⚠ furniture_catalog table missing — run the migration in Supabase.', 5200); else showToast('Add failed: ' + (error.message || error), 4200); throw error; }
-  showToast('🛋️ Added "' + name + '" to the market.', 2600);
+  showToast('🛋️ Added "' + row.name + '" to the market.', 2600);
+}
+// Edit an existing furniture row in place — function, type, price, details, etc.
+// (color + sort are left untouched so its order/placeholder tint don't reset.)
+async function _csMarketUpdate(node, id) {
+  if (!((typeof isAdmin === 'function') && isAdmin())) { showToast('👑 Admin only.', 2400); throw new Error('admin'); }
+  const row = _csReadMarketForm(node);
+  if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) { showToast('Cloud offline.', 3000); throw new Error('cloud'); }
+  const { error } = await Cloud.client.from('furniture_catalog').update(row).eq('id', id);
+  if (error) { if (_csTableMissing(error)) showToast('⚠ furniture_catalog table missing — run the migration in Supabase.', 5200); else showToast('Save failed: ' + (error.message || error), 4200); throw error; }
+  showToast('💾 Saved changes to "' + row.name + '".', 2600);
 }
 // 🛋️ The buy overlay (and admin "add furniture"). onClose repaints the builder.
 function _csOpenFurnitureMarket(onClose) {
@@ -107577,7 +107618,7 @@ function _csOpenFurnitureMarket(onClose) {
     <textarea data-csm="details" rows="2" placeholder='Details — what it does (shown to buyers). Leave blank → "A normal &lt;category&gt;."'></textarea>
     <input data-csm="model_url" placeholder=".glb public URL — or upload one →" style="width:100%">
     <textarea data-csm="anim" rows="2" placeholder='Animation JSON (optional) — e.g. {"clip":"Idle"} or {"clip":"Spin","timeScale":1,"loop":true}'></textarea>
-    <div class="csm-admin-foot"><label class="csm-upload">⬆ Upload .glb<input type="file" accept=".glb,.gltf,model/gltf-binary" data-csm="upload" style="display:none"></label><button class="csm-add" data-csm="add">Add to market</button></div>
+    <div class="csm-admin-foot"><span class="csm-edit-flag" data-csm="editflag" style="display:none"></span><button class="csm-cancel-edit" data-csm="canceledit" style="display:none">Cancel edit</button><label class="csm-upload">⬆ Upload .glb<input type="file" accept=".glb,.gltf,model/gltf-binary" data-csm="upload" style="display:none"></label><button class="csm-add" data-csm="add">Add to market</button></div>
   </div>` : '';
   const wrap = document.createElement('div');
   wrap.innerHTML = `<div id="cs-market-backdrop" class="csm-backdrop"><div class="csm-modal">
@@ -107595,24 +107636,56 @@ function _csOpenFurnitureMarket(onClose) {
   };
   repaint();
   if (!_csFurnitureCatalog) _csFetchFurnitureCatalog().catch(() => {}).then(repaint);
+  // ✏ Edit state — when set, the admin form edits this catalog id instead of adding a new row.
+  let editingId = null;
+  const addBtn = node.querySelector('[data-csm="add"]'), editFlag = node.querySelector('[data-csm="editflag"]');
+  const cancelBtn = node.querySelector('[data-csm="canceledit"]'), adminH = node.querySelector('.csm-admin-h'), adminPane = node.querySelector('.csm-admin');
+  const setEditMode = (row) => {
+    editingId = row ? row.id : null;
+    if (row) {
+      _csFillMarketForm(node, row);
+      if (addBtn) addBtn.textContent = '💾 Save changes';
+      if (editFlag) { editFlag.style.display = ''; editFlag.textContent = '✏ Editing "' + (row.name || 'furniture') + '"'; }
+      if (cancelBtn) cancelBtn.style.display = '';
+      if (adminH) adminH.textContent = '✏ Edit furniture (admin) — change its function, type, price, details…';
+      if (adminPane && adminPane.scrollIntoView) adminPane.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else {
+      _csClearMarketForm(node);
+      if (addBtn) addBtn.textContent = 'Add to market';
+      if (editFlag) editFlag.style.display = 'none';
+      if (cancelBtn) cancelBtn.style.display = 'none';
+      if (adminH) adminH.textContent = '➕ Add furniture (admin) — sell your own .glb models, animated or not';
+    }
+  };
   node.addEventListener('click', async (e) => {
     if (e.target.closest('[data-csm="close"]')) { node.remove(); if (onClose) onClose(); return; }
     const view = e.target.closest('[data-csm-view]');
     if (view) { const item = _csCatMap['fc:' + view.getAttribute('data-csm-view')] || (_csFurnitureCatalog || []).find(r => r && r.id === view.getAttribute('data-csm-view')); if (item) _csFurniturePreview(item); return; }
     const buy = e.target.closest('[data-csm-buy]');
     if (buy) { const item = _csCatMap['fc:' + buy.getAttribute('data-csm-buy')]; if (item && _csBuyFurniture(item)) { repaint(); if (onClose) onClose(); } return; }
+    const edit = e.target.closest('[data-csm-edit]');
+    if (edit) { const row = (_csFurnitureCatalog || []).find(r => r && r.id === edit.getAttribute('data-csm-edit')); if (row) setEditMode(row); return; }
+    if (e.target.closest('[data-csm="canceledit"]')) { setEditMode(null); return; }
     const del = e.target.closest('[data-csm-del]');
     if (del) {
       const id = del.getAttribute('data-csm-del');
       const row = (_csFurnitureCatalog || []).find(r => r && r.id === id);
       if (!confirm('Delete "' + ((row && row.name) || 'this model') + '" from the Furniture Market? Players will no longer be able to buy it.')) return;
       del.disabled = true; del.textContent = '…';
-      if (await _csDeleteFurniture(id)) { await _csFetchFurnitureCatalog(true); repaint(); if (onClose) onClose(); }
+      if (await _csDeleteFurniture(id)) { if (editingId === id) setEditMode(null); await _csFetchFurnitureCatalog(true); repaint(); if (onClose) onClose(); }
       else { del.disabled = false; del.textContent = '🗑 Delete'; }
       return;
     }
     const add = e.target.closest('[data-csm="add"]');
-    if (add) { add.disabled = true; const o = add.textContent; add.textContent = '…'; try { await _csMarketAdd(node); await _csFetchFurnitureCatalog(true); repaint(); if (onClose) onClose(); } catch (err) {} add.disabled = false; add.textContent = o; return; }
+    if (add) {
+      add.disabled = true; add.textContent = '…';
+      try {
+        if (editingId) await _csMarketUpdate(node, editingId); else await _csMarketAdd(node);
+        await _csFetchFurnitureCatalog(true); setEditMode(null); repaint(); if (onClose) onClose();
+      } catch (err) {}
+      add.disabled = false; add.textContent = editingId ? '💾 Save changes' : 'Add to market';
+      return;
+    }
   });
   node.addEventListener('change', async (e) => {
     const up = e.target.closest('[data-csm="upload"]');

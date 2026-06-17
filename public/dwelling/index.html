@@ -94,7 +94,7 @@ window.MYTHIC = (function(){
     <div class="sub-h">…or Build from Parts</div>
     <div id="partsBox"></div>
     <button id="addPart" class="btn small full">+ Add Part</button>
-    <div class="admin-actions"><button id="saveModel" class="btn primary grow">Save Model</button><button id="closeAdmin" class="btn">Close</button></div>
+    <div class="admin-actions"><button id="saveModel" class="btn primary grow">Save Model</button><button id="cancelEdit" class="btn" style="display:none">Cancel Edit</button><button id="closeAdmin" class="btn">Close</button></div>
     <div class="sub-h">My Models</div>
     <div id="customList"></div>
   </div>
@@ -443,6 +443,11 @@ window.MYTHIC = (function(){
   const adminEl=document.getElementById('admin'), partsBox=document.getElementById('partsBox'), customList=document.getElementById('customList');
   const aName=document.getElementById('aName'), aIco=document.getElementById('aIco'), aR=document.getElementById('aR'), aAza=document.getElementById('aAza'), aCin=document.getElementById('aCin');
   const glbFile=document.getElementById('glbFile'), glbInfo=document.getElementById('glbInfo'), glbName=document.getElementById('glbName'), glbScale=document.getElementById('glbScale');
+  // ✏️ Edit state — when set, Save Model UPDATES this model in place instead of
+  // adding a new one. editPreviewTemplate shows an edited GLB's real mesh in the
+  // preview (glbCache holds the parsed template even without the raw bytes).
+  let editingId=null, editPreviewTemplate=null;
+  const saveBtn=document.getElementById('saveModel'), cancelEditBtn=document.getElementById('cancelEdit');
   function defaultPart(){ return {shape:'box',c:'#6b7a9c',e:'',w:0.6,h:0.6,d:0.6,rt:0.3,rb:0.3,r:0.3,x:0,y:0.4,z:0,ry:0}; }
   function num(label,val,on){ const w=document.createElement('label'); w.className='num'; const s=document.createElement('span'); s.textContent=label; const inp=document.createElement('input'); inp.type='number'; inp.step='0.05'; inp.value=val; inp.oninput=()=>on(parseFloat(inp.value)||0); w.appendChild(s); w.appendChild(inp); return w; }
   function renderParts(){ partsBox.innerHTML='';
@@ -460,10 +465,32 @@ window.MYTHIC = (function(){
       row.appendChild(l2);
       const l3=document.createElement('div'); l3.className='part-line'; l3.appendChild(num('X',p.x,v=>{p.x=v;refreshPreview();})); l3.appendChild(num('Y',p.y,v=>{p.y=v;refreshPreview();})); l3.appendChild(num('Z',p.z,v=>{p.z=v;refreshPreview();})); l3.appendChild(num('Rot°',p.ry,v=>{p.ry=v;refreshPreview();})); row.appendChild(l3);
       partsBox.appendChild(row); }); }
-  function refreshPreview(){ if(previewGroup){ scene.remove(previewGroup); previewGroup=null; } if(!adminOpen) return; if(pendingGLB){ previewGroup=pendingGLB.template.clone(true); } else { previewGroup=new THREE.Group(); buildParts(previewGroup,editParts); } scene.add(previewGroup); }
+  function refreshPreview(){ if(previewGroup){ scene.remove(previewGroup); previewGroup=null; } if(!adminOpen) return; if(pendingGLB){ previewGroup=pendingGLB.template.clone(true); } else if(editPreviewTemplate){ previewGroup=editPreviewTemplate.clone(true); } else { previewGroup=new THREE.Group(); buildParts(previewGroup,editParts); } scene.add(previewGroup); }
   function renderImportState(){ glbInfo.style.display=pendingGLB?'block':'none'; partsBox.style.opacity=pendingGLB?0.4:1; if(pendingGLB) glbName.textContent=pendingGLB.name; }
   function renderCustomList(){ customList.innerHTML=''; if(!customModels.length){ customList.innerHTML='<div class="empty-note">No custom models yet.</div>'; return; }
-    customModels.forEach(m=>{ const d=document.createElement('div'); d.className='cust-item'; d.innerHTML=`<span>${m.ico}</span><span>${m.name}</span><span class="empty-note" style="margin:0">${m.kind==='glb'?'glb':'parts'}</span>`; const del=document.createElement('button'); del.className='mini-del'; del.textContent='Delete'; del.onclick=()=>deleteModel(m.id); d.appendChild(del); customList.appendChild(d); }); }
+    customModels.forEach(m=>{ const d=document.createElement('div'); d.className='cust-item'; if(m.id===editingId) d.style.outline='1px solid #d8b24a'; d.innerHTML=`<span>${m.ico}</span><span>${m.name}</span><span class="empty-note" style="margin:0">${m.kind==='glb'?'glb':'parts'}</span>`;
+      const ed=document.createElement('button'); ed.className='btn small'; ed.textContent='Edit'; ed.onclick=()=>startEdit(m.id); d.appendChild(ed);
+      const del=document.createElement('button'); del.className='mini-del'; del.textContent='Delete'; del.onclick=()=>deleteModel(m.id); d.appendChild(del); customList.appendChild(d); }); }
+  // ✏️ Load a saved model back into the studio form for editing. Parts load into
+  // the editor; a GLB keeps its existing mesh (re-import only to swap it).
+  function loadModelIntoForm(m){
+    aName.value=m.name||''; aIco.value=m.ico||''; aR.value=(m.r!=null?m.r:0.6);
+    aAza.value=(m.price&&m.price.aza)||0; aCin.value=(m.price&&m.price.cinder)||0;
+    const am=document.getElementById('aMount'); if(am) am.value=m.mount||(m.wall?'wall':'floor');
+    const af=document.getElementById('aFunc'); if(af) af.value=m.func||(m.storage?'storage':'');
+    const ad=document.getElementById('aDetails'); if(ad) ad.value=m.details||'';
+    pendingGLB=null; glbFile.value='';
+    if(m.kind==='glb'){ editPreviewTemplate=glbCache[m.id]||null; editParts=[defaultPart()]; }
+    else { editPreviewTemplate=null; editParts=(Array.isArray(m.parts)&&m.parts.length)?m.parts.map(p=>({...p})):[defaultPart()]; }
+    renderParts(); renderImportState(); refreshPreview();
+  }
+  function startEdit(id){ const m=customModels.find(x=>x.id===id); if(!m) return; editingId=id; loadModelIntoForm(m);
+    if(saveBtn) saveBtn.textContent='💾 Save Changes'; if(cancelEditBtn) cancelEditBtn.style.display='';
+    renderCustomList(); try{ adminEl.scrollTop=0; }catch(e){}
+    flash('Editing "'+(m.name||'model')+'"'+(m.kind==='glb'?' — import a .glb only to swap the mesh.':' — adjust parts/details.'));
+  }
+  function clearEdit(){ editingId=null; editPreviewTemplate=null; if(saveBtn) saveBtn.textContent='Save Model'; if(cancelEditBtn) cancelEditBtn.style.display='none';
+    pendingGLB=null; glbFile.value=''; aName.value=''; aIco.value=''; const ad=document.getElementById('aDetails'); if(ad) ad.value=''; editParts=[defaultPart()]; renderParts(); renderImportState(); refreshPreview(); }
   glbFile.onchange=async e=>{ const f=e.target.files[0]; if(!f) return;
     try{ const buf=await f.arrayBuffer(); let scale=parseFloat(glbScale.value)||1; const md=maxDimOf(buf); if(md>3||md<0.3){ scale=+(1.6/md).toFixed(3); glbScale.value=scale; }
       pendingGLB={ name:f.name, b64:abToB64(buf), rawBuf:buf, template:glbToTemplate(buf,scale), scale, big:f.size>MAX_GLB };
@@ -472,7 +499,7 @@ window.MYTHIC = (function(){
   glbScale.oninput=()=>{ if(!pendingGLB) return; const s=parseFloat(glbScale.value)||1; pendingGLB.scale=s; pendingGLB.template=glbToTemplate(pendingGLB.rawBuf,s); refreshPreview(); };
   document.getElementById('glbFit').onclick=()=>{ if(!pendingGLB) return; const s=+(1.6/maxDimOf(pendingGLB.rawBuf)).toFixed(3); glbScale.value=s; pendingGLB.scale=s; pendingGLB.template=glbToTemplate(pendingGLB.rawBuf,s); refreshPreview(); };
   document.getElementById('glbRemove').onclick=()=>{ pendingGLB=null; glbFile.value=''; renderImportState(); refreshPreview(); };
-  async function saveModel(){ const name=(aName.value||'').trim()||'Custom Piece'; const ico=(aIco.value||'').trim()||(pendingGLB?'📦':'❔'); const r=parseFloat(aR.value)||0; const aza=parseInt(aAza.value)||0, cinder=parseInt(aCin.value)||0; const id='m_'+Date.now();
+  async function saveModel(){ const name=(aName.value||'').trim()||'Custom Piece'; const ico=(aIco.value||'').trim()||(pendingGLB?'📦':'❔'); const r=parseFloat(aR.value)||0; const aza=parseInt(aAza.value)||0, cinder=parseInt(aCin.value)||0;
     // 🛋️ Placement TYPE + interaction FUNCTION chosen on upload. `wall` drives the
     // wall-mount placement path; `storage` makes it an openable chest; `func`/`mount`
     // are stored so the piece keeps its role and the card-shop side can mirror it.
@@ -480,6 +507,24 @@ window.MYTHIC = (function(){
     const func=(document.getElementById('aFunc')||{}).value||'';
     const details=((document.getElementById('aDetails')||{}).value||'').trim();
     const wall=(mount==='wall'); const storage=(func==='storage');
+    // ✏️ EDIT MODE — update the existing model in place (keep its id) instead of
+    // adding a new one. A fresh GLB import swaps the mesh; otherwise a GLB keeps its
+    // existing mesh (metadata-only edit); a parts model re-takes the parts editor.
+    if(editingId){
+      const idx=customModels.findIndex(x=>x.id===editingId);
+      if(idx>=0){
+        const ex=customModels[idx];
+        const upd=Object.assign({},ex,{name,ico,r,price:{aza,cinder},mount,func,details,wall,storage});
+        if(pendingGLB){ upd.kind='glb'; upd.scale=pendingGLB.scale||1; delete upd.parts; glbCache[editingId]=pendingGLB.template;
+          try{ if(pendingGLB.big) throw new Error('big'); await window.storage.set(GLB_PREFIX+editingId, pendingGLB.b64, false); }catch(err){} }
+        else if(ex.kind==='glb'){ /* metadata-only — keep the existing mesh */ }
+        else { if(!editParts.length){ flash('Add a part or import a model'); return; } upd.kind='parts'; upd.parts=editParts.map(p=>({...p})); delete upd.scale; }
+        customModels[idx]=upd; persistModels(); rebuildMeta(); renderPortal(); renderMarket();
+        const nm=upd.name; clearEdit(); renderCustomList(); flash(`Saved changes to "${nm}".`); return;
+      }
+      editingId=null; // stale id — fall through to add a fresh model
+    }
+    const id='m_'+Date.now();
     if(pendingGLB){ customModels.push({id,name,ico,r,price:{aza,cinder},kind:'glb',scale:pendingGLB.scale||1,mount,func,details,wall,storage}); glbCache[id]=pendingGLB.template; persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket();
       try{ if(pendingGLB.big) throw new Error('big'); await window.storage.set(GLB_PREFIX+id, pendingGLB.b64, false); flash(`Model "${name}" added to market`); }catch(err){ flash(`"${name}" added for this session (too large to save permanently)`); }
       pendingGLB=null; glbFile.value=''; renderImportState(); }
@@ -488,7 +533,7 @@ window.MYTHIC = (function(){
     aName.value=''; refreshPreview(); }
   function deleteModel(id){ customModels=customModels.filter(m=>m.id!==id); delete glbCache[id]; try{ window.storage.delete(GLB_PREFIX+id); }catch(e){} persistModels(); rebuildMeta(); renderCustomList(); renderPortal(); renderMarket(); flash('Model deleted'); }
   function openAdmin(){ adminOpen=true; if(mode==='walk') setMode('decorate'); adminEl.style.display='block'; if(!editParts.length) editParts=[defaultPart()]; renderParts(); renderImportState(); renderCustomList(); refreshPreview(); setHint('Build from parts or import a .glb — preview shows in the room'); }
-  function closeAdmin(){ adminOpen=false; adminEl.style.display='none'; if(previewGroup){ scene.remove(previewGroup); previewGroup=null; } setHint(defaultHint()); }
+  function closeAdmin(){ adminOpen=false; adminEl.style.display='none'; if(editingId) clearEdit(); if(previewGroup){ scene.remove(previewGroup); previewGroup=null; } setHint(defaultHint()); }
   function persistModels(){ try{ window.storage.set(MODELS_KEY, JSON.stringify(customModels), false); }catch(e){} }
   async function loadModels(){ try{ const r=await window.storage.get(MODELS_KEY); if(r&&r.value) customModels=JSON.parse(r.value)||[]; }catch(e){}
     for(const m of customModels){ if(m.kind==='glb'){ try{ const g=await window.storage.get(GLB_PREFIX+m.id); if(g&&g.value) glbCache[m.id]=glbToTemplate(b64ToAb(g.value), m.scale||1); }catch(e){ console.error('glb load',e); } } } rebuildMeta(); }
@@ -520,6 +565,7 @@ window.MYTHIC = (function(){
   document.getElementById('adminBtn').onclick=()=>{ adminOpen?closeAdmin():openAdmin(); };
   document.getElementById('addPart').onclick=()=>{ if(pendingGLB){ flash('Remove the GLB import to build from parts'); return; } editParts.push(defaultPart()); renderParts(); refreshPreview(); };
   document.getElementById('saveModel').onclick=saveModel;
+  document.getElementById('cancelEdit').onclick=clearEdit;
   document.getElementById('closeAdmin').onclick=closeAdmin;
 
   // ===== mode =====

@@ -28,6 +28,11 @@ assets/3d models/**/*.glb
 # served from the Supabase `models` Storage bucket, never the Pages upload.
 **/*.glb
 
+# EXCEPTION: the default Card Shop binder model ships in the bundle (it's the
+# fixture EVERY shop gets, so it can't depend on a per-owner Storage upload).
+# 14.8 MiB — comfortably under Cloudflare's 25 MiB per-asset cap.
+!assets/3d models/Binder table.glb
+
 # Belt-and-suspenders: any other oversized model formats that land in assets.
 *.glb.zip
 

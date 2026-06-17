@@ -106339,7 +106339,7 @@ let _csShopObjectsShopId = null;  // which shop the cache currently belongs to
 // 🛎️ The ONE always-present working counter. Visitors browse + buy the owner's
 // listed cards here (binder 2D opens from it); the owner manages their shop here.
 // Everything else in the room is player-placed decor — a new shop starts empty.
-const CS_COUNTER_STATION = { view: 'counter', label: 'THE BINDER', kind: 'counter', color: 0xd4af37, x: 0, z: -6, ry: 0, scale: 1, blockR: 2.3, interactR: 3.2 };
+const CS_COUNTER_STATION = { view: 'counter', label: 'THE BINDER', kind: 'counter', color: 0xd4af37, model: '/assets/3d%20models/Binder%20table.glb', x: 0, z: -6, ry: 0, scale: 1, blockR: 2.3, interactR: 3.2 };
 function _csDefaultConfig() {
   return {
     room: '',          // empty procedural room (floor / walls / ceiling) — no dressing
@@ -106447,6 +106447,18 @@ async function _csShopDeleteObject(id) {
   if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) throw new Error('Cloud offline.');
   const { error } = await Cloud.client.from('shop_objects').delete().eq('id', id);
   if (error) throw error;
+}
+// 🧹 Wipe EVERY object from this player's shop (cloud rows + local fallback) so a
+// stuck station/prop that won't delete individually can always be cleared. The
+// shop then resets to the built-in default (just the binder).
+async function _csShopClearAll() {
+  const sid = _csMyShopId();
+  if (typeof Cloud !== 'undefined' && Cloud.ready && Cloud.client) {
+    const { error } = await Cloud.client.from('shop_objects').delete().eq('shop_id', sid);
+    if (error && !(typeof _csTableMissing === 'function' && _csTableMissing(error))) throw error;
+  }
+  try { if (typeof _csSaveLocalLayout === 'function') _csSaveLocalLayout(sid, []); } catch (e) {}
+  _csShopObjects = null; _csShopObjectsShopId = null;
 }
 const CS_MODEL_SIZE_LIMIT = 524288000; // 500 MB — matches the bucket migration.
 async function _csShopUploadModel(file) {
@@ -106877,6 +106889,7 @@ function _csShopEditOpen() {
         <div class="cse-list">${_csShopEditListHtml()}</div>
         <div class="cse-add">
           <button class="btn-secondary btn-mini" data-cse="add">➕ Add object</button>
+          <button class="btn-secondary btn-mini" data-cse="clearall" style="border-color:#5a2424;color:#e6a3a3" title="Remove EVERY object — use this if a fixture won't delete">🧹 Clear ALL</button>
           <button class="btn-primary btn-mini" data-cse="reload">🔄 Apply &amp; Reload 3D</button>
         </div>
       </div>
@@ -106930,6 +106943,16 @@ function _csWireShopEdit(el) {
         showToast('💾 Saved — Apply & Reload to see it.', 1900);
       } catch (err) { showToast('⚠ Save failed: ' + ((err && err.message) || err), 4600); }
       saveBtn.disabled = false; saveBtn.textContent = orig;
+      return;
+    }
+    if (e.target.closest('[data-cse="clearall"]')) {
+      if (!confirm('Remove EVERY object from your shop — stations, props, NPC, room?\n\nYour shop resets to the default binder. This cannot be undone.')) return;
+      try {
+        await _csShopClearAll();
+        showToast('🧹 Shop cleared — reloading.', 1800);
+        close();
+        if (App.screen === 'cardShop' && App._cs3D && typeof render === 'function') render();
+      } catch (err) { showToast('⚠ Clear failed: ' + ((err && err.message) || err), 4600); }
       return;
     }
     const delBtn = e.target.closest('[data-cse="del"]');

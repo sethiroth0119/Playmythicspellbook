@@ -58946,6 +58946,7 @@ function _dwellingOpen(mode, shopId) {
       const cw = (_dwFrame && _dwFrame.contentWindow); if (!cw) return;
       if (d.type === 'dw:ready') { const w = _dwWallet(); cw.postMessage({ type: 'dw:econ', cinder: w.cinder, aza: w.aza, admin: _dwIsAdmin() }, '*'); _dwPostCatalog(cw); }
       else if (d.type === 'dw:spend') { const r = _dwSpend(d.cinder, d.aza); const w = _dwWallet(); cw.postMessage({ type: 'dw:spendResult', reqId: d.reqId, ok: !!r.ok, cinder: r.ok ? r.cinder : w.cinder, aza: r.ok ? r.aza : w.aza }, '*'); }
+      else if (d.type === 'dw:bed') { try { if (typeof openHeroRestPanel === 'function') openHeroRestPanel({ bed: { name: d.name || 'Bed', details: d.details || '' } }); } catch (er) {} }
     } catch (er) {}
   };
   window.addEventListener('message', _dwMsgHandler);
@@ -106552,7 +106553,7 @@ function _csMount3D(mount) {
         const fr = Math.max(cat ? cat.w || 1 : 1, cat ? cat.d || 1 : 1) * 0.5 * (p.scale || 1);
         if (!cat || (cat.h == null) || cat.h > 0.25) propColliders.push({ gx: p.x || 0, gz: p.z || 0, r: Math.max(0.35, fr) });
         // 🛠 Functional fixture: walk up + E uses it (bed/storage/counter/binder/open).
-        if (p.func) { const FL = { bed: '🛏️ Rest', storage: '🧰 Storage', counter: 'THE COUNTER', binder: 'BINDER', open: 'OPEN PACKS', browse: 'PLAYER SHOPS' }; stations.push({ view: p.func, label: FL[p.func] || String(p.func).toUpperCase(), gx: p.x || 0, gz: p.z || 0, r: Math.max(0.6, fr), ir: 3.0 }); }
+        if (p.func) { const FL = { bed: '🛏️ Rest', storage: '🧰 Storage', counter: 'THE COUNTER', binder: 'BINDER', open: 'OPEN PACKS', browse: 'PLAYER SHOPS' }; stations.push({ view: p.func, label: FL[p.func] || String(p.func).toUpperCase(), name: (cat && cat.name) || '', details: (cat && cat.details) || '', gx: p.x || 0, gz: p.z || 0, r: Math.max(0.6, fr), ir: 3.0 }); }
       } catch (e) {}
       if (p.url) _csTryModel(p.url, (m, gltf) => { try { if (ph) pg.remove(ph); if (p.scale) m.scale.setScalar(p.scale); _csSeatModel(m); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
     }
@@ -106588,6 +106589,7 @@ function _csMount3D(mount) {
         if (!blocked(nx, nz)) { camera.position.x = nx; camera.position.z = nz; } else { if (!blocked(nx, camera.position.z)) camera.position.x = nx; if (!blocked(camera.position.x, nz)) camera.position.z = nz; }
       }
       let near = null, best = Infinity; for (const st of stations) { const dx = camera.position.x - st.gx, dz = camera.position.z - st.gz; const d2 = Math.hypot(dx, dz); const thr = (st.ir != null ? st.ir : 3.1); if (d2 < thr && d2 < best) { best = d2; near = st; } }
+      App._csNearStation = near;   // so _csEnterStation can read the fixture's name/details (bed)
       const nv = near ? near.view : null;
       if (nv !== nearView) { nearView = nv; if (promptEl) { if (near) { promptEl.textContent = '⏎ Enter ' + near.label; promptEl.style.display = 'block'; } else { promptEl.style.display = 'none'; } } }
       if (npc && !npcHasRoute) { const tt = clock.elapsedTime; npc.position.y = Math.sin(tt * 1.6) * 0.04; npc.rotation.y = Math.atan2(camera.position.x - npc.position.x, camera.position.z - npc.position.z); }
@@ -106652,7 +106654,7 @@ function _csEnterShop3D(owner) {
 }
 function _csEnterStation(view) {
   if (view === 'vendor') { App.vendorMarketTab = 'packs'; App.screen = 'vendorMarket'; render(); return; }
-  if (view === 'bed') { _csBedRest(); return; }
+  if (view === 'bed') { const st = App._csNearStation || {}; openHeroRestPanel({ bed: { name: st.name || 'Bed', details: st.details || '' } }); return; }
   if (view === 'storage') {
     // Storage chests in the shop are a decorative fixture for now (the
     // full inventory-chest system lives in the housing sim). Acknowledge
@@ -106669,44 +106671,47 @@ function _csEnterStation(view) {
   }
   _csOpenPanel(view);
 }
-// 🛏️ Bed fixture — walking up to a placed bed and pressing E rests the whole
-// owned roster: drops fatigue + stress and tops up each hero's battle pool.
-// Throttled so a bed isn't a free infinite-rest button (10-minute cooldown).
-function _csBedRest() {
-  const COOLDOWN = 10 * 60 * 1000;
-  const last = (Profile && Profile._csBedRestAt) || 0;
-  const wait = COOLDOWN - (Date.now() - last);
-  if (wait > 0) {
-    const mins = Math.ceil(wait / 60000);
-    showToast('🛏️ The beds need ' + mins + ' more min before the next rest.', 2600);
-    return;
-  }
+// 🛏️ Bed fixture — the rest a bed grants every owned hero. One source of truth
+// so the modal text and the apply logic always agree. Throttled (cooldown) so a
+// bed isn't a free infinite-rest button.
+const BED_REST_FX = { stress: 40, fatigue: 40, energyPct: 0.40, energyMin: 8, cooldownMs: 10 * 60 * 1000 };
+function _bedRestCooldownLeft() { return Math.max(0, BED_REST_FX.cooldownMs - (Date.now() - ((Profile && Profile._csBedRestAt) || 0))); }
+// Apply the bed rest to EVERY owned hero. Returns a result object the caller
+// turns into UI: { ok, restored, count } | { ok:false, waitMs } | { ok:false, empty:true }.
+function _applyBedRest() {
+  if (_bedRestCooldownLeft() > 0) return { ok: false, waitMs: _bedRestCooldownLeft() };
   if (!Profile.heroEnergy || typeof Profile.heroEnergy !== 'object') Profile.heroEnergy = {};
-  const ids = Object.keys(Profile.heroEnergy);
-  // Nothing tracked yet → seed from owned heroes so a brand-new player still
-  // gets a meaningful rest instead of a no-op.
+  let ids = Object.keys(Profile.heroEnergy);
+  // Nothing tracked yet → seed from owned heroes so a brand-new player still rests.
   if (!ids.length && Profile.heroes && typeof Profile.heroes === 'object') {
     for (const hid of Object.keys(Profile.heroes)) { getHeroEnergy(hid); }
-    ids.push(...Object.keys(Profile.heroEnergy));
+    ids = Object.keys(Profile.heroEnergy);
   }
-  if (!ids.length) { showToast('🛏️ No heroes to rest yet.', 2400); return; }
-  let restored = 0, healed = 0;
+  if (!ids.length) return { ok: false, empty: true };
+  let restored = 0;
   for (const hid of ids) {
     const e = getHeroEnergy(hid);           // settles regen + clamps first
     const max = getHeroBattleMax(hid);
     const before = e.energy | 0;
-    // Beds restore a big chunk of the battle pool (≈40% of cap, min 8)…
-    e.energy = Math.min(max, before + Math.max(8, Math.ceil(max * 0.40)));
+    e.energy = Math.min(max, before + Math.max(BED_REST_FX.energyMin, Math.ceil(max * BED_REST_FX.energyPct)));
     e.lastRestAt = Date.now();
     restored += (e.energy - before);
-    // …and meaningfully cut fatigue + stress.
-    if ((e.fatigue | 0) > 0) { healed += Math.min(e.fatigue | 0, 40); e.fatigue = Math.max(0, (e.fatigue | 0) - 40); }
-    if ((e.stress  | 0) > 0) { e.stress = Math.max(0, (e.stress | 0) - 40); }
+    if ((e.fatigue | 0) > 0) e.fatigue = Math.max(0, (e.fatigue | 0) - BED_REST_FX.fatigue);
+    if ((e.stress  | 0) > 0) e.stress  = Math.max(0, (e.stress  | 0) - BED_REST_FX.stress);
   }
   Profile._csBedRestAt = Date.now();
   try { saveProfile(); } catch (e) {}
-  showToast('🛏️ Rested ' + ids.length + ' hero' + (ids.length === 1 ? '' : 'es') +
-            ' — +' + restored + ' battles, eased fatigue & stress.', 3200);
+  return { ok: true, restored, count: ids.length };
+}
+// Legacy quick-rest (kept for any direct callers): apply + toast, no modal.
+function _csBedRest() {
+  const r = _applyBedRest();
+  if (!r.ok) {
+    if (r.waitMs) showToast('🛏️ The beds need ' + Math.ceil(r.waitMs / 60000) + ' more min before the next rest.', 2600);
+    else showToast('🛏️ No heroes to rest yet.', 2400);
+    return;
+  }
+  showToast('🛏️ Rested ' + r.count + ' hero' + (r.count === 1 ? '' : 'es') + ' — +' + r.restored + ' battles, eased fatigue & stress.', 3200);
 }
 function _csOpenPanel(view) {
   App._csPanel = view;
@@ -130761,8 +130766,9 @@ const HERO_CALM_CINDER      = 100;   // Cinder cost: single-hero calm session (�
 const HERO_CALM_AMT         = 30;    // Stress points removed per calm session
 const HERO_BONFIRE_CINDER   = 250;   // Cinder cost: all-heroes bonfire (−15 stress each)
 const HERO_BONFIRE_AMT      = 15;    // Stress points removed from every hero per bonfire
-function openHeroRestPanel() {
+function openHeroRestPanel(opts) {
   try {
+    const bed = opts && opts.bed;   // when opened from a 🛏️ bed fixture: { name, details }
     const ID = 'hero-rest-modal';
     const old = document.getElementById(ID); if (old) old.remove();
     const ov = document.createElement('div');
@@ -130787,6 +130793,29 @@ function openHeroRestPanel() {
     const bar = (val, max, color) => {
       const pct = Math.max(0, Math.min(100, Math.round((val / max) * 100)));
       return '<div style="height:8px;background:rgba(0,0,0,0.45);border-radius:4px;overflow:hidden;border:1px solid rgba(212,175,55,0.18)"><div style="height:100%;width:' + pct + '%;background:' + color + '"></div></div>';
+    };
+
+    // 🛏️ Bed banner — shown only when this modal was opened from a placed bed.
+    // Spells out exactly what resting here does + a FREE "Rest All" action
+    // (cooldown-gated; the live tick keeps the countdown current).
+    const bedBannerHtml = () => {
+      if (!bed) return '';
+      const wait = _bedRestCooldownLeft(); const ready = wait <= 0;
+      const detail = (bed.details && String(bed.details).trim()) || 'A normal bed.';
+      const pct = Math.round(BED_REST_FX.energyPct * 100);
+      const cd = Math.round(BED_REST_FX.cooldownMs / 60000);
+      return '<div style="margin:0 0 0.7rem;padding:0.75rem 0.9rem;border:1px solid rgba(212,175,55,0.40);border-radius:11px;background:linear-gradient(180deg,rgba(212,175,55,0.12),rgba(0,0,0,0.20))">'
+        + '<div style="font-weight:800;color:#f3d27a;font-size:1.02rem">🛏️ ' + esc(bed.name || 'Bed') + '</div>'
+        + '<div style="color:#cdbf9c;font-style:italic;font-size:0.84rem;margin:0.15rem 0 0.45rem">' + esc(detail) + '</div>'
+        + '<div style="color:#dfe7ff;font-size:0.84rem;line-height:1.5">Resting here gives <b>every hero</b> '
+          + '<b style="color:#ffd166">+' + pct + '% battles</b> (min ' + BED_REST_FX.energyMin + '), '
+          + '<b style="color:#9be29b">−' + BED_REST_FX.fatigue + ' fatigue</b> and '
+          + '<b style="color:#c9a8ff">−' + BED_REST_FX.stress + ' stress</b>. Cooldown ' + cd + ' min.</div>'
+        + '<button id="hr-bedrest" ' + (ready ? '' : 'disabled')
+          + ' style="margin-top:0.6rem;width:100%;padding:0.65rem;border:none;border-radius:9px;font-weight:800;font-size:0.95rem;cursor:' + (ready ? 'pointer' : 'not-allowed')
+          + ';background:' + (ready ? '#d4af37' : '#3a352a') + ';color:' + (ready ? '#0b0b0f' : '#7a7363') + '">'
+          + (ready ? '🛏️ Rest All Heroes (Free)' : '🛏️ Beds recharging · ' + _fmtRestTime(wait)) + '</button>'
+        + '</div>';
     };
 
     const heroCard = (h) => {
@@ -130849,8 +130878,9 @@ function openHeroRestPanel() {
       const _canBonfire  = _anyStressed && (Profile.gems | 0) >= HERO_BONFIRE_CINDER;
       host.innerHTML =
         '<div class="hr-modal-body">' +
+          bedBannerHtml() +
           '<div class="hr-modal-head">' +
-            '<div class="hr-modal-title">⚔ Hero Battle Stamina</div>' +
+            '<div class="hr-modal-title">' + (bed ? '🛏️ Rest at the Bed' : '⚔ Hero Battle Stamina') + '</div>' +
             '<div class="hr-modal-sub">Each fight costs 1 battle slot. Pool auto-regens <strong>+5 every 5 min</strong> (Lv 1 cap: 20; +2 per hero level). Or spend ' + HERO_REST_CINDER_COST + ' 🔥 for an instant 50% refill. Wallet: <strong>' + cinderWallet + ' 🔥</strong></div>' +
             '<button id="hr-close" class="hr-btn-close">✕</button>' +
           '</div>' +
@@ -130865,6 +130895,18 @@ function openHeroRestPanel() {
         '</div>';
       const x = document.getElementById('hr-close');   if (x) x.onclick = close;
       const x2 = document.getElementById('hr-close-2'); if (x2) x2.onclick = close;
+      // 🛏️ Free bed rest — applies BED_REST_FX to every owned hero (cooldown-gated).
+      const _bedBtn = document.getElementById('hr-bedrest');
+      if (_bedBtn) _bedBtn.onclick = () => {
+        const r = _applyBedRest();
+        if (!r.ok) {
+          if (r.empty) showToast('🛏️ No heroes to rest yet.', 2400);
+          else if (r.waitMs) showToast('🛏️ Beds recharging — ' + _fmtRestTime(r.waitMs) + ' left.', 2600);
+          render(); return;
+        }
+        showToast('🛏️ Rested ' + r.count + ' hero' + (r.count === 1 ? '' : 'es') + ' — +' + r.restored + ' battles, eased fatigue & stress.', 3400);
+        render();
+      };
       // 🔥 Restore — flat 500 Cinder for +50% of the hero's max battle pool.
       host.querySelectorAll('[data-hr-restore]').forEach(b => {
         b.onclick = () => {

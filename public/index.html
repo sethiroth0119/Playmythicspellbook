@@ -41719,6 +41719,13 @@ async function cardMarketPost(opts) {
   const { error } = await Cloud.client.from('card_market_listings').insert(row);
   if (error) { _cmMarkErr(error); showToast('⚠ Could not post listing.'); return false; }
   CardMarket._lastPostAt = Date.now();
+  // 💗 Witnessed sale (§5) — listing a Trusted+ companion docks the remaining Trusted+
+  // units' loyalty and queues one of them to confront you at the next camp visit.
+  try {
+    if (opts.kind !== 'item' && opts.unitJson && typeof bondTierIndex === 'function' && bondTierIndex(opts.unitJson.bond || 0) >= TRUSTED_TIER_IDX) {
+      _lqWitnessDeparture((opts.cardJson && opts.cardJson.name) || 'your companion', LQ_SELL_HIT, opts.cardId || (opts.cardJson && opts.cardJson.id));
+    }
+  } catch (e) {}
   await cardMarketFetch();
   return true;
 }
@@ -54225,6 +54232,182 @@ function _migrateBondScale() {
   } catch (e) {}
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 💗 COMPANION LOYALTY — camp Requests (§4) + witnessed-sale Confront (§5)
+// A bonded unit asks for a real equippable item (scaled to its tier). Equip → loyalty
+// + XP + the item BINDS (boundItems, conveys on sale). Decline (you HAD it) → big sting.
+// "I don't have it" → gentle, the request stays open and pays a memory bonus later.
+// Open requests ride Profile.units[cardId].request (auto cloud-synced). Selling a
+// Trusted+ companion docks the others and queues a confrontation via the same dialog.
+// ═══════════════════════════════════════════════════════════════════════════
+const LQ_DECLINE_PENALTY = -25, LQ_LACK_PENALTY = -2, LQ_MEMORY_BONUS = 30, LQ_REQ_CAP = 2;
+const LQ_SELL_HIT = -10, LQ_DISBAND_HIT = -15;   // §3 betrayal — per remaining Trusted+ unit
+const LQ_ITEM_POOL = {
+  Wary:    ['swiftBoots', 'healingBerry'],
+  Neutral: ['powerBand', 'sturdyShield', 'arcaneOrb', 'wardstone', 'swiftBoots'],
+  Steady:  ['powerBand', 'sturdyShield', 'arcaneOrb', 'wardstone', 'vitalCharm', 'healingBerry'],
+  Trusted: ['vitalCharm', 'focusSash', 'flameCloak', 'iceWard', 'toxinAmulet', 'ironHeart'],
+  Devoted: ['focusSash', 'stormShield', 'emberAegis', 'frostAegis', 'thornVest'],
+  Sworn:   ['stoneCarapace', 'voidMantle', 'mirrorVeil', 'thornVest', 'stormShield'],
+};
+const LQ_LINES_REQUEST = [
+  '"That last fight cost me. If you\'ve got {item}, I\'d fight twice as hard."',
+  '"I\'ve been thinking — {item} would change everything for me out there."',
+  '"You want me at my best? Get me {item}. Then watch."',
+  '"I earned this. {item}. I won\'t ask twice."',
+];
+function _lqCard(id) { try { return (Forge.customCards || []).find(c => c && c.id === id) || null; } catch (e) { return null; } }
+function _lqItemName(id) { const it = (typeof getItemById === 'function') ? getItemById(id) : (typeof HELD_ITEMS !== 'undefined' ? HELD_ITEMS[id] : null); return it ? ((it.icon ? it.icon + ' ' : '') + (it.name || id)) : id; }
+function _lqPickItem(tierName, exclude) { const pool = (LQ_ITEM_POOL[tierName] || LQ_ITEM_POOL.Neutral).filter(id => !exclude || !exclude.has(id)); if (!pool.length) return null; const seed = (((Profile.records && Profile.records.battles) | 0) + (exclude ? exclude.size : 0)); return pool[seed % pool.length]; }
+function _lqOpenCount() { let n = 0; if (Profile.units) for (const k in Profile.units) { if (Profile.units[k] && Profile.units[k].request) n++; } return n; }
+// Pick eligible owned units that don't already have an open request, weighted toward
+// recent performers (kills) and the conspicuously benched (low fielded).
+function _lqEligible() {
+  const out = [];
+  if (!Profile.units) return out;
+  for (const id in Profile.units) {
+    const p = Profile.units[id]; if (!p || p.request) continue;
+    if (!Profile.cardCollection || (Profile.cardCollection[id] | 0) <= 0) continue;
+    const card = _lqCard(id); if (!card || (card.type || 'unit') !== 'unit') continue;
+    const weight = 1 + (p.kills | 0) * 2 + Math.max(0, 6 - (p.fielded | 0));
+    out.push({ id, card, prof: p, weight });
+  }
+  out.sort((a, b) => b.weight - a.weight);
+  return out;
+}
+function _lqGenerate() {
+  try {
+    let open = _lqOpenCount();
+    if (open >= LQ_REQ_CAP) return;
+    const used = new Set();
+    if (Profile.units) for (const k in Profile.units) { const r = Profile.units[k] && Profile.units[k].request; if (r && r.item) used.add(r.item); }
+    const elig = _lqEligible();
+    for (const e of elig) {
+      if (open >= LQ_REQ_CAP) break;
+      const tier = getBondTier(e.prof.bond || 0).name;
+      const item = _lqPickItem(tier, used);                 // never two units want the same scarce item
+      if (!item) continue;
+      used.add(item);
+      e.prof.request = { item, opened: (Profile.records && Profile.records.battles) | 0, visits: 0, tier };
+      open++;
+    }
+    try { saveProfile(); } catch (e) {}
+  } catch (e) {}
+}
+// Find the next thing to surface: a queued confrontation first, then an open request.
+function _lqNextPending() {
+  if (!Profile.units) return null;
+  for (const k in Profile.units) { const p = Profile.units[k]; if (p && p._confront) return { kind: 'confront', id: k, prof: p }; }
+  for (const k in Profile.units) { const p = Profile.units[k]; if (p && p.request) return { kind: 'request', id: k, prof: p }; }
+  return null;
+}
+function _lqCloseDialog() { const el = document.getElementById('lq-overlay'); if (el) el.remove(); }
+function _lqShowNext() {
+  _lqCloseDialog();
+  const pend = _lqNextPending(); if (!pend) return;
+  const card = _lqCard(pend.id) || { name: 'Companion', icon: '🪖' };
+  const tier = getBondTier(pend.prof.bond || 0);
+  let bodyHtml;
+  if (pend.kind === 'confront') {
+    bodyHtml = `<div style="font-size:1.05rem;line-height:1.5;color:#f0d8d8">"You sold ${escapeHtml(pend.prof._confront.soldName || 'one of us')}. We bled together. Are we just inventory to you?"</div>
+      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+        <button class="btn-primary" onclick="_LQ.ackConfront('${pend.id}')">…I hear you</button></div>`;
+  } else {
+    const r = pend.prof.request; const have = (typeof _resOwnCount === 'function') ? _resOwnCount('item', r.item) : 0;
+    const line = LQ_LINES_REQUEST[(((Profile.records && Profile.records.battles) | 0) + (r.visits | 0)) % LQ_LINES_REQUEST.length].replace('{item}', _lqItemName(r.item));
+    const it = (typeof getItemById === 'function') ? getItemById(r.item) : HELD_ITEMS[r.item];
+    bodyHtml = `<div style="font-size:1.05rem;line-height:1.5;color:#e9e2d0">${escapeHtml(line)}</div>
+      <div class="ink-dim small-text" style="margin-top:8px">Wants: <b style="color:#d4af37">${_lqItemName(r.item)}</b>${it && it.desc ? ' — ' + escapeHtml(it.desc) : ''} · you have <b>${have}</b>${(r.visits | 0) >= 1 ? ' · <span style="color:#9fe0b0">long-open (+memory)</span>' : ''}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;justify-content:flex-end">
+        <button class="btn-primary" ${have > 0 ? '' : 'disabled style="opacity:.45"'} onclick="_LQ.equip('${pend.id}')">Equip ${escapeHtml(_lqItemName(r.item))}</button>
+        <button class="btn-mini" onclick="_LQ.lack('${pend.id}')">I don't have one yet</button>
+        <button class="btn-mini" style="border-color:#cf6868;color:#e89a9a" onclick="_LQ.decline('${pend.id}')">Not right now</button>
+      </div>`;
+  }
+  const ov = document.createElement('div');
+  ov.id = 'lq-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(4,6,12,0.78);backdrop-filter:blur(3px)';
+  ov.innerHTML = `<div style="max-width:440px;width:92%;background:linear-gradient(160deg,#1a1430,#120c22);border:1px solid ${tier.color}66;border-top:4px solid ${tier.color};border-radius:14px;padding:18px 20px;box-shadow:0 24px 60px rgba(0,0,0,0.6)">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+        <div style="font-size:2.4rem;line-height:1">${escapeHtml(card.icon || '🪖')}</div>
+        <div><div style="font-weight:800;font-size:1.15rem;color:#fff">${escapeHtml(card.name || 'Companion')}</div>
+          <div class="small-text" style="color:${tier.color}">💗 ${tier.name} · ${pend.prof.bond | 0}/${BOND_MAX}</div></div>
+      </div>${bodyHtml}</div>`;
+  document.body.appendChild(ov);
+}
+function _lqMaybeSurface() {
+  try {
+    if (typeof Profile === 'undefined' || !Profile.units) return;
+    if (document.getElementById('lq-overlay')) return;
+    const armed = !!(typeof App !== 'undefined' && App._lqArmed);
+    // Age open requests (for the memory bonus) once per armed camp arrival.
+    if (armed) { for (const k in Profile.units) { const r = Profile.units[k] && Profile.units[k].request; if (r) r.visits = (r.visits | 0) + 1; } _lqGenerate(); }
+    if (!_lqNextPending()) { if (typeof App !== 'undefined') App._lqArmed = false; return; }
+    if (!armed && !_lqNextPending()) return;
+    if (armed || _lqNextPending()) { _lqShowNext(); if (typeof App !== 'undefined') App._lqArmed = false; }
+  } catch (e) {}
+}
+// §5 — selling/disbanding a Trusted+ companion is witnessed.
+function _lqWitnessDeparture(soldName, hit, skipId) {
+  try {
+    if (!Profile.units) return;
+    let confronter = null, best = -1;
+    for (const k in Profile.units) {
+      if (k === skipId) continue;
+      const p = Profile.units[k]; if (!p) continue;
+      if (bondTierIndex(p.bond || 0) >= TRUSTED_TIER_IDX) {
+        adjustBond(p, hit);
+        const w = (p.bond | 0); if (w > best) { best = w; confronter = p; }
+      }
+    }
+    if (confronter) confronter._confront = { soldName: soldName || 'your companion' };
+    if (typeof App !== 'undefined') App._lqArmed = true;   // surface at next camp
+    try { saveProfile(); } catch (e) {}
+  } catch (e) {}
+}
+window._LQ = {
+  equip: (id) => {
+    const p = Profile.units[id]; if (!p || !p.request) { _lqCloseDialog(); return; }
+    const r = p.request, item = r.item;
+    if ((typeof _resOwnCount === 'function' ? _resOwnCount('item', item) : 0) <= 0) { if (typeof showToast === 'function') showToast("You don't have that item.", 2200); return; }
+    _resTakeOwned('item', item);
+    if (!Array.isArray(p.boundItems)) p.boundItems = [];
+    p.boundItems.push(item);
+    const ti = bondTierIndex(p.bond || 0);
+    let gain = 20 + ti * 4;                                 // +20 (Wary) → +40 (Sworn)
+    if ((r.visits | 0) >= 1) gain += LQ_MEMORY_BONUS;       // fulfilled a long-open request
+    adjustBond(p, gain);
+    p.xp = (p.xp | 0) + Math.round(25 * loyaltyXpMult(p.bond));  // genuine power investment too
+    delete p.request;
+    try { saveProfile(); } catch (e) {}
+    const card = _lqCard(id) || { name: 'Companion' };
+    if (typeof showToast === 'function') showToast(`💗 ${card.name}: +${gain} loyalty — ${getBondTier(p.bond).name}. The bond holds.`, 3200);
+    if (typeof _osimSfx !== 'function' && typeof playSfx === 'function') { try { playSfx('levelup'); } catch (e) {} }
+    _lqShowNext();
+  },
+  decline: (id) => {
+    const p = Profile.units[id]; if (!p || !p.request) { _lqCloseDialog(); return; }
+    adjustBond(p, LQ_DECLINE_PENALTY);
+    delete p.request;
+    try { saveProfile(); } catch (e) {}
+    const card = _lqCard(id) || { name: 'Companion' };
+    if (typeof showToast === 'function') showToast(`💔 ${card.name}: ${LQ_DECLINE_PENALTY} loyalty — they know you had it.`, 3200);
+    _lqShowNext();
+  },
+  lack: (id) => {
+    const p = Profile.units[id]; if (!p || !p.request) { _lqCloseDialog(); return; }
+    adjustBond(p, LQ_LACK_PENALTY);
+    try { saveProfile(); } catch (e) {}   // request stays open — remembered
+    _lqShowNext();
+  },
+  ackConfront: (id) => {
+    const p = Profile.units[id]; if (p) delete p._confront;
+    try { saveProfile(); } catch (e) {}
+    _lqShowNext();
+  },
+  close: () => _lqCloseDialog(),
+};
+
 const getHeroProfile = (heroId) => {
   const p = Profile.heroes[heroId] || { level: 1, xp: 0, kills: 0, wins: 0 };
   _migrateBondEntry(p); if (p.bond == null) { p.bond = BOND_NEW; p.bondScaled = true; }
@@ -65308,7 +65491,11 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
   const traitedBase = applyTrait(naturedBase, traitId, getFactionsOf(cardData));
   const scaled = applyLevelScaling(traitedBase, traitedBase.hp || cardData.stats.hp, level, statGains);
   const ev = applyEvBoosts(scaled.stats, scaled.maxHp, evs);
-  const withItem = applyHeldItem(ev.stats, ev.maxHp, item);
+  let withItem = applyHeldItem(ev.stats, ev.maxHp, item);
+  // 💗🎁 Bound items (from loyalty requests / conveyed on sale) permanently boost the unit.
+  if (owner === 'player' && prof && Array.isArray(prof.boundItems) && prof.boundItems.length) {
+    for (const _bid of prof.boundItems) { try { const _bit = (typeof getItemById === 'function') ? getItemById(_bid) : HELD_ITEMS[_bid]; if (_bit && _bit.stats) withItem = applyHeldItem(withItem.stats, withItem.maxHp, _bit); } catch (e) {} }
+  }
   const elements = getElementsOf(cardData);
   // Resolve known moves: both player and AI units now pull from their respective profiles so
   // learned moves persist across battles.
@@ -65987,6 +66174,14 @@ const applyDamageTriggers = (unit, incomingDmg, damageType) => {
   if (nu.currentHp <= 0 && !nu.isHero && typeof hasPassive === 'function' && hasPassive(nu, 'invincible')) {
     nu.currentHp = 1;
     log.push({ msg: `🌟 ${nu.name} is Invincible — damage cannot destroy it!`, color: 'amber' });
+  }
+  // 💗 LAST STAND — a Sworn companion survives ONE lethal hit per battle at 1 HP.
+  // The BG3 "impossible comeback": rare, earned, once per battle. Excludes heroes
+  // (their death must still be able to end the match).
+  if (nu.currentHp <= 0 && nu.owner === 'player' && !nu.isHero && !nu._lastStandUsed && typeof getBondTier === 'function' && getBondTier(nu.bond || 0).name === 'Sworn') {
+    nu.currentHp = 1;
+    nu._lastStandUsed = true;
+    log.push({ msg: `💗 ${nu.name} refuses to fall — LAST STAND! Held at 1 HP by your bond.`, color: 'amber' });
   }
   if (nu.currentHp <= 0) nu.alive = false;
 
@@ -67621,7 +67816,10 @@ const executeMove = (state, attacker, target, move) => {
     }
     s.units = s.units.map(u => {
       if (u.id !== attacker.id) return u;
-      let newXp = u.xp + xpGain; let newLevel = u.level;
+      // 💗 Loyalty multiplies XP gain (§2/§7): Wary ×0.5 → Sworn ×2.0 (player side only).
+      let _xpGain = xpGain;
+      try { if (u.owner === 'player' && typeof loyaltyXpMult === 'function') { const _bp = u.isHero ? getHeroProfile(u.heroId) : getUnitProfile(u.originalCardId || u.cardId); _xpGain = Math.round(xpGain * loyaltyXpMult(_bp.bond)); } } catch (e) {}
+      let newXp = u.xp + _xpGain; let newLevel = u.level;
       while (newXp >= xpForLevel(newLevel) && newLevel < MAX_LVL) { newXp -= xpForLevel(newLevel); newLevel++; }
       const leveledUp = newLevel > u.level;
       const newKills = (u.battleKills || 0) + 1;
@@ -100727,6 +100925,8 @@ function recordBattleProgress() {
     if (faintedByCard[id]) adjustBond(cur, -3 * faintedByCard[id]);
     Profile.units[id] = cur;
   }
+  // 💗 Arm a camp loyalty request — a unit that "did something" may speak up next visit.
+  try { if (typeof App !== 'undefined') App._lqArmed = true; } catch (e) {}
 
   // 📊 GLOBAL LIVE STATS — push per-card win/loss + kill events to the cloud so
   // the Player Market valuation shows REAL aggregated win rates + kills across
@@ -102574,6 +102774,10 @@ function _marketUnitInstanceHtml(inst, baseCinder, titleOverride) {
             ${inst.xp ? `<span class="dvs-row-sub">${inst.xp} XP</span>` : ''}
             <span class="dvs-stat-pill" style="border-color:rgba(255,120,90,0.5);color:#ff9c7a" title="Confirmed enemy knockouts this copy has scored — a blooded unit is worth more">⚔ ${inst.kills | 0} kill${(inst.kills | 0) === 1 ? '' : 's'}</span>
             ${traitHtml}${natureHtml}
+            ${inst.bondTier ? `<span class="nature-pill" style="border-color:${getBondTier(inst.bond || 0).color};color:${getBondTier(inst.bond || 0).color}" title="Companion loyalty — drops one tier when you buy (the unit is wary of a new owner); the original owner can restore it">💗 ${escapeHtml(inst.bondTier)}</span>` : ''}
+            ${(inst.battlesFought | 0) > 0 ? `<span class="dvs-row-sub" title="Battles this companion has fought">⚔ ${inst.battlesFought | 0} battle${(inst.battlesFought | 0) === 1 ? '' : 's'}</span>` : ''}
+            ${(Array.isArray(inst.boundItems) && inst.boundItems.length) ? `<span class="nature-pill" style="border-color:#7bc043;color:#9fe0b0" title="Bound items convey with the unit on sale">🎁 ${inst.boundItems.length} bound</span>` : ''}
+            ${(inst.saleCount | 0) >= 3 ? `<span class="nature-pill" style="border-color:#cf6868;color:#e89a9a" title="Sold 3+ times — its loyalty ceiling is permanently lowered (jaded mercenary)">📊 Much-traded</span>` : ''}
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 1rem">
             ${_kv('HP', inst.maxHp || st.hp)}
@@ -103757,6 +103961,9 @@ function renderResearch() {
 }
 
 function renderCamp() {
+  // 💗 Surface a companion's loyalty request / confrontation (deferred so it lands
+  // after the camp DOM is injected; the dialog is a body-level modal that persists).
+  try { setTimeout(() => { try { _lqMaybeSurface(); } catch (e) {} }, 80); } catch (e) {}
   // Entry gate — defense in depth. The title-hub portal is already locked
   // until CAMP_UNLOCK_LEVEL is reached, but if the player lands on the Camp
   // screen via state manipulation / stale App.screen, bounce them back to

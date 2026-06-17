@@ -134609,7 +134609,7 @@ function _wf3GainXP(amt) {
   if (L.level >= WF3_MAX_LEVEL) L.xp = Math.min(L.xp, _wf3XpForLevel(L.level));
   if (up) {
     _wf3ApplyLevel(); const rw = 15 * L.level; _wf3AddCinder(rw);
-    _wf3FlashLog('⬆ Fishing Level ' + L.level + '! +' + rw + ' ₵', 'buy');
+    _wf3FlashLog('⬆ Fishing Level ' + L.level + '! +' + rw + ' 🔥', 'buy');
     if (L.level % 3 === 0) { L.baitStock.grub = (L.baitStock.grub || 0) + 5; if (!L.equippedBait) L.equippedBait = 'grub'; _wf3FlashLog('Reward: +5 Grub Bunch bait', 'buy'); }
   }
   _wf3RenderHud(); _wf3Save();
@@ -134866,7 +134866,7 @@ function _wf3ShowFoodCard(r, cin, xp) {
   const col = WF3_RARITY_COLOR[r.rarity]; const card = _wf3$('card'); if (!card) return;
   card.innerHTML = '<div class="wf3-icon">🐟</div><div class="wf3-rarity" style="color:' + col + '">' + r.rarity + '</div>' +
     '<h2>' + escapeHtml(r.item.name) + '</h2><p>Hauled onto the ash-strewn shore — added to camp food.</p>' +
-    '<div class="wf3-reward">+' + r.amount + ' Food &nbsp;·&nbsp; <span class="wf3-cin">+' + cin + ' ₵</span> &nbsp;·&nbsp; <span class="wf3-xp">+' + xp + ' XP</span></div>' +
+    '<div class="wf3-reward">+' + r.amount + ' Food &nbsp;·&nbsp; <span class="wf3-cin">+' + cin + ' <span class="cinder-icon"></span></span> &nbsp;·&nbsp; <span class="wf3-xp">+' + xp + ' XP</span></div>' +
     '<button class="wf3-btn" id="wf3-contBtn">Cast Again</button>';
   const ov = _wf3$('overlayCard'); if (ov) ov.style.display = 'flex';
   const cb = _wf3$('contBtn'); if (cb) cb.onclick = () => { if (ov) ov.style.display = 'none'; _wf3ResetToIdle(); };
@@ -134897,13 +134897,13 @@ function _wf3RenderShop() {
       const have = L.baitStock[b.id] || 0, eq = L.equippedBait === b.id;
       const eqBtn = have > 0 ? (eq ? '<button class="wf3-ibtn owned">Active</button>' : '<button class="wf3-ibtn equip" data-wf3-equip-bait="' + b.id + '">Equip</button>') : '';
       const buyBtn = '<button class="wf3-ibtn" data-wf3-buy-bait="' + b.id + '" ' + (cin < b.cost ? 'disabled' : '') + '>Buy ×' + b.pack + '</button>';
-      return '<div class="wf3-item ' + (eq ? 'eq' : '') + '"><div class="wf3-emoji">' + b.emoji + '</div><div class="wf3-info"><h3>' + b.name + ' ' + (have ? '<span style="color:#7d97a8;font-size:12px">(' + have + ' left)</span>' : '') + '</h3><p>' + b.desc + '</p><div class="wf3-stats">Luck +' + ((b.luck * 100) | 0) + '% · Encounter +' + ((b.encounter * 100) | 0) + '% · Food +' + b.foodBonus + '</div></div><div class="wf3-act"><div class="wf3-price">' + b.cost + ' ₵</div>' + eqBtn + buyBtn + '</div></div>';
+      return '<div class="wf3-item ' + (eq ? 'eq' : '') + '"><div class="wf3-emoji">' + b.emoji + '</div><div class="wf3-info"><h3>' + b.name + ' ' + (have ? '<span style="color:#7d97a8;font-size:12px">(' + have + ' left)</span>' : '') + '</h3><p>' + b.desc + '</p><div class="wf3-stats">Luck +' + ((b.luck * 100) | 0) + '% · Encounter +' + ((b.encounter * 100) | 0) + '% · Food +' + b.foodBonus + '</div></div><div class="wf3-act"><div class="wf3-price">' + b.cost + ' <span class="cinder-icon"></span></div>' + eqBtn + buyBtn + '</div></div>';
     }).join('');
   } else {
     list.innerHTML = WF3_POLES.map(p => {
       const owned = _wf3OwnsPole(p.id), eq = L.equippedPole === p.id;
       const btn = eq ? '<button class="wf3-ibtn owned">Equipped</button>' : owned ? '<button class="wf3-ibtn equip" data-wf3-equip-pole="' + p.id + '">Equip</button>' : '<button class="wf3-ibtn" data-wf3-buy-pole="' + p.id + '" ' + (cin < p.cost ? 'disabled' : '') + '>Buy</button>';
-      const price = owned ? '<div class="wf3-price have">Owned</div>' : '<div class="wf3-price">' + p.cost + ' ₵</div>';
+      const price = owned ? '<div class="wf3-price have">Owned</div>' : '<div class="wf3-price">' + p.cost + ' <span class="cinder-icon"></span></div>';
       return '<div class="wf3-item ' + (eq ? 'eq' : '') + '"><div class="wf3-emoji">' + p.emoji + '</div><div class="wf3-info"><h3>' + p.name + '</h3><p>' + p.desc + '</p><div class="wf3-stats">Reel ' + p.reelRate + ' · Line ' + p.tensionCap + ' · Cast ' + p.castMax + ' · Luck +' + ((p.luck * 100) | 0) + '%</div></div><div class="wf3-act">' + price + btn + '</div></div>';
     }).join('');
   }
@@ -134919,7 +134919,7 @@ function _wf3RenderBoat() {
   const list = _wf3$('biomeList'); if (!list) return; const L = _wf3Live(), cin = _wf3GetCinder();
   list.innerHTML = WF3_BIOMES.map(b => {
     const here = L.currentBiome === b.id, unlocked = _wf3BiomeUnlocked(b.id);
-    const btn = here ? '<button class="wf3-ibtn owned">You\'re Here</button>' : unlocked ? '<button class="wf3-ibtn equip" data-wf3-travel="' + b.id + '">Sail Here</button>' : '<button class="wf3-ibtn" data-wf3-unlock="' + b.id + '" ' + (cin < b.unlockCost ? 'disabled' : '') + '>Unlock · ' + b.unlockCost + ' ₵</button>';
+    const btn = here ? '<button class="wf3-ibtn owned">You\'re Here</button>' : unlocked ? '<button class="wf3-ibtn equip" data-wf3-travel="' + b.id + '">Sail Here</button>' : '<button class="wf3-ibtn" data-wf3-unlock="' + b.id + '" ' + (cin < b.unlockCost ? 'disabled' : '') + '>Unlock · ' + b.unlockCost + ' <span class="cinder-icon"></span></button>';
     return '<div class="wf3-item ' + (here ? 'eq' : '') + '"><div class="wf3-emoji">' + b.emoji + '</div><div class="wf3-info"><h3>' + b.name + '</h3><p>' + b.desc + '</p><div class="wf3-stats"><span style="color:#e0623d">Encounters ' + ((b.encounterChance * 100) | 0) + '%</span></div></div><div class="wf3-act">' + btn + '</div></div>';
   }).join('');
   list.querySelectorAll('[data-wf3-travel]').forEach(el => el.onclick = () => _wf3SetBiome(el.dataset.wf3Travel));
@@ -134975,6 +134975,7 @@ function _wf3EnsureStyle() {
   st.textContent = `
   #wf3-overlay{position:fixed;inset:0;z-index:2147483600;background:#0a0d14;color:#e8e2d4;font-family:'Segoe UI',system-ui,sans-serif;overflow:hidden;touch-action:none}
   #wf3-overlay *{box-sizing:border-box}
+  #wf3-overlay .cinder-icon{width:1.05em;height:1.05em;vertical-align:-0.18em;margin:0 0.06em}
   #wf3-mount{position:absolute;inset:0;width:100%;height:100%}
   #wf3-overlay canvas{display:block;width:100%;height:100%}
   #wf3-overlay .wf3-hud{position:absolute;z-index:10}
@@ -135068,7 +135069,7 @@ function _wf3OverlayHtml() {
     '<div id="wf3-loading">SUMMONING THE WATERS…</div>' +
     '<div class="wf3-hud" id="wf3-topleft"><div class="wf3-panel">' +
       '<div class="wf3-brand">Woods Fishing · <span id="wf3-biomeName">Ashen Shallows</span></div>' +
-      '<div class="wf3-cinder"><span id="wf3-cinder">0</span> <small>₵ CINDER</small></div>' +
+      '<div class="wf3-cinder"><span id="wf3-cinder">0</span> <small><span class="cinder-icon"></span> CINDER</small></div>' +
       '<div class="wf3-stat">🎣 <b id="wf3-poleName">Driftwood Rod</b></div>' +
       '<div class="wf3-stat">🪱 Bait: <b id="wf3-baitName">None</b> <span id="wf3-baitCount"></span></div>' +
       '<div class="wf3-stat">🐟 Trip Haul: <b id="wf3-food">0</b> food</div>' +
@@ -135092,7 +135093,7 @@ function _wf3OverlayHtml() {
     '</div>' +
     '<div class="wf3-hud wf3-fuelbar" id="wf3-fuel"><span>⛽ Trip tank: <b id="wf3-casts2"></b></span><button class="wf3-refuel" id="wf3-refuelBtn">Refuel ' + WF3_TRIP_FUEL + '⛽</button></div>' +
     '<div id="wf3-overlayCard"><div class="wf3-card" id="wf3-card"></div></div>' +
-    '<div class="wf3-modal" id="wf3-shop"><div class="wf3-sheet"><span class="wf3-close" id="wf3-shopClose">✕</span><h1>Sparta Outfitter</h1><div class="wf3-sub">Spend Cinder on gear. Better poles fight harder fish; bait bends your luck.</div><div class="wf3-wallet-line">Balance: <span id="wf3-shopCinder">0</span> ₵</div><div class="wf3-tabs"><div class="wf3-tab on" id="wf3-tabPoles">Poles</div><div class="wf3-tab" id="wf3-tabBait">Bait</div></div><div id="wf3-shopList"></div></div></div>' +
+    '<div class="wf3-modal" id="wf3-shop"><div class="wf3-sheet"><span class="wf3-close" id="wf3-shopClose">✕</span><h1>Sparta Outfitter</h1><div class="wf3-sub">Spend Cinder on gear. Better poles fight harder fish; bait bends your luck.</div><div class="wf3-wallet-line">Balance: <span id="wf3-shopCinder">0</span> <span class="cinder-icon"></span></div><div class="wf3-tabs"><div class="wf3-tab on" id="wf3-tabPoles">Poles</div><div class="wf3-tab" id="wf3-tabBait">Bait</div></div><div id="wf3-shopList"></div></div></div>' +
     '<div class="wf3-modal" id="wf3-boat"><div class="wf3-sheet"><span class="wf3-close" id="wf3-boatClose">✕</span><h1>🚤 Set Sail</h1><div class="wf3-sub">Pilot the boat to a new biome. Deeper waters = rarer catches and fiercer fights.</div><div id="wf3-biomeList"></div></div></div>' +
     '<div id="wf3-battle"><div class="wf3-vs">A Wild Encounter</div><h1 id="wf3-battleName"></h1><button class="wf3-btn danger" id="wf3-battleBtn">Defeat it &amp; Return</button><div class="wf3-note">You wrestle the beast back into the deep and claim its bounty.</div></div>';
 }
@@ -135138,7 +135139,7 @@ function _wf3Open() {
     if (_wf3S.state === 'IDLE') _wf3ResetToIdle();
   };
   const battleBtn = wrap.querySelector('#wf3-battleBtn');
-  battleBtn.onclick = () => { const b = _wf3$('battle'); if (b) b.style.display = 'none'; const s = _wf3S; if (s.pendingBounty) { _wf3AddCinder(s.pendingBounty); _wf3FlashLog('Bounty +' + s.pendingBounty + ' ₵', 'buy'); s.pendingBounty = 0; } _wf3GainXP(WF3_XP_GAIN[s.pendingEncRarity] || 20); _wf3ResetToIdle(); };
+  battleBtn.onclick = () => { const b = _wf3$('battle'); if (b) b.style.display = 'none'; const s = _wf3S; if (s.pendingBounty) { _wf3AddCinder(s.pendingBounty); _wf3FlashLog('Bounty +' + s.pendingBounty + ' 🔥', 'buy'); s.pendingBounty = 0; } _wf3GainXP(WF3_XP_GAIN[s.pendingEncRarity] || 20); _wf3ResetToIdle(); };
   // pointer input (root-scoped → auto-cleans when overlay removed)
   wrap.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; _wf3Press(e); });
   wrap.addEventListener('pointerup', (e) => { _wf3Release(e); });

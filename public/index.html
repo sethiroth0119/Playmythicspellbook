@@ -136801,6 +136801,55 @@ function _ppaViewModel(url, name, scale, rotY) {
     wrap.querySelector('#ppa-mv-x').onclick = close; wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
   });
 }
+// 🖼 3D SNAPSHOT THUMBNAILS — render each .glb ONCE to a cached PNG dataURL so the
+// parking lot / detail cards can SHOW the actual 3D car as an image, without a
+// live WebGL context per card. One shared offscreen renderer serves every thumb.
+let _ppaThumbGL = null; const _ppaThumbCache = {}; const _ppaThumbQ = []; let _ppaThumbBusy = false;
+function _ppaMakeThumb(url, scale, rotY, cb) {
+  if (!url) { cb(null); return; }
+  if (_ppaThumbCache[url] !== undefined) { cb(_ppaThumbCache[url] || null); return; }
+  _ppaThumbQ.push({ url, scale, rotY, cb }); _ppaThumbPump();
+}
+function _ppaThumbPump() {
+  if (_ppaThumbBusy || !_ppaThumbQ.length) return;
+  _csLoadThree((ok) => {
+    const T = window.THREE;
+    if (!ok || !T || !T.GLTFLoader) { _ppaThumbQ.splice(0).forEach(j => { try { j.cb(null); } catch (e) {} }); return; }
+    if (!_ppaThumbGL) {
+      const SZ = 256, renderer = new T.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true }); renderer.setPixelRatio(1); renderer.setSize(SZ, SZ);
+      if ('outputColorSpace' in renderer) renderer.outputColorSpace = T.SRGBColorSpace;
+      const scene = new T.Scene(); scene.add(new T.AmbientLight(0xffffff, 0.95)); const d1 = new T.DirectionalLight(0xffffff, 1.0); d1.position.set(4, 8, 6); scene.add(d1); const d2 = new T.DirectionalLight(0x88aaff, 0.4); d2.position.set(-5, 3, -4); scene.add(d2);
+      const camera = new T.PerspectiveCamera(38, 1, 0.05, 200);
+      _ppaThumbGL = { renderer, scene, camera, loader: new T.GLTFLoader() };
+    }
+    _ppaThumbBusy = true; const job = _ppaThumbQ.shift(), G = _ppaThumbGL;
+    const done = (data) => { _ppaThumbBusy = false; _ppaThumbCache[job.url] = data || ''; try { job.cb(data || null); } catch (e) {} _ppaThumbPump(); };
+    try {
+      G.loader.load(job.url, (g) => {
+        try {
+          const o = g.scene || g.scenes[0]; const box = new T.Box3().setFromObject(o), sz = new T.Vector3(); box.getSize(sz); const md = Math.max(sz.x, sz.y, sz.z) || 1;
+          o.scale.multiplyScalar((3.2 / md) * (job.scale || 1)); o.rotation.y = (job.rotY || 0) * Math.PI / 180 + 0.7;
+          const b2 = new T.Box3().setFromObject(o), c = b2.getCenter(new T.Vector3()); o.position.sub(c);
+          G.scene.add(o); G.camera.position.set(2.6, 1.7, 3.4); G.camera.lookAt(0, 0, 0);
+          G.renderer.render(G.scene, G.camera); const data = G.renderer.domElement.toDataURL('image/png');
+          G.scene.remove(o); try { o.traverse(x => { if (x.geometry) x.geometry.dispose(); }); } catch (e) {}
+          done(data && data.length > 200 ? data : null);
+        } catch (e) { done(null); }
+      }, undefined, () => done(null));
+    } catch (e) { done(null); }
+  });
+}
+// Fill every [data-ppa-thumb] element with its rendered 3D snapshot (once).
+function _ppaFillThumbs(root) {
+  try { (root || document).querySelectorAll('[data-ppa-thumb]:not([data-ppa-thumb-done])').forEach(el => {
+    const url = el.getAttribute('data-ppa-thumb'); if (!url) return; el.setAttribute('data-ppa-thumb-done', '1');
+    _ppaMakeThumb(url, +el.getAttribute('data-ppa-scale') || 1, +el.getAttribute('data-ppa-roty') || 0, (data) => {
+      if (!data || !el.isConnected) return;
+      let img = el.querySelector('img.ppa-thumb-img'); if (!img) { img = document.createElement('img'); img.className = 'ppa-thumb-img'; img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block'; el.insertBefore(img, el.firstChild); }
+      const ph = el.querySelector('.ppa-thumb-ph'); if (ph) ph.style.display = 'none'; img.src = data;
+    });
+  }); } catch (e) {}
+}
 function _ppaEnsureStyle() {
   if (document.getElementById('ppa-style')) return;
   const s = document.createElement('style'); s.id = 'ppa-style';
@@ -136947,7 +136996,7 @@ function _ppOpenAuctionModal(listingId) {
         '<div class="pp-modal-left">' +
           '<div class="pp-modal-photo">' +
             (v.modelUrl
-              ? '<button id="pp-modal-3d" style="width:100%;height:100%;background:linear-gradient(135deg,#0e1620,#0a0604);border:1px solid #2a4658;color:#9fe0ff;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px"><div style="font-size:2.6rem">🧊</div><div>VIEW 3D MODEL</div><div style="font-size:0.65rem;color:#6a8aa0">orbit · zoom</div></button>'
+              ? '<div id="pp-modal-3d" data-ppa-thumb="' + escapeHtml(v.modelUrl) + '" data-ppa-scale="' + (v.modelScale || 1) + '" data-ppa-roty="' + (v.modelRotY || 0) + '" style="width:100%;height:100%;position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0e1620,#0a0604)"><div class="ppa-thumb-ph" style="text-align:center;color:#9fe0ff"><div style="font-size:2.6rem">🧊</div><div style="font-size:0.65rem">rendering 3D…</div></div><span style="position:absolute;bottom:6px;right:8px;font-size:0.62rem;color:#9fe0ff;background:rgba(8,20,28,0.82);border:1px solid #2a4658;border-radius:4px;padding:2px 6px">🧊 click → orbit · zoom</span></div>'
               : (photo
                 ? '<img src="' + escapeHtml(photo) + '" alt="">'
                 : '<div class="pp-modal-photo-empty">[VEHICLE PHOTO · drop a 3/4 render]</div>')) +
@@ -137072,7 +137121,7 @@ function _ppRenderLot(p) {
     slots.push(
       '<div class="wfa-slip docked" data-pp-detail="' + v.id + '" style="cursor:pointer">' +
         '<span class="wfa-slip-id">P-' + String(i + 1).padStart(2, '0') + '</span>' +
-        '<div class="wfa-slip-svg" style="position:relative">' + (photo ? '<img src="' + escapeHtml(photo) + '">' : '<div style="font-size:1.6rem;color:#7fb9c9">' + (v.modelUrl ? '🧊' : '🚗') + '</div>') + (v.modelUrl ? '<span style="position:absolute;top:0;right:0;font-size:7px;font-weight:800;color:#7dd3fc;background:rgba(8,20,28,0.85);border:1px solid #0e7490;border-radius:3px;padding:0 3px">3D</span>' : '') + '</div>' +
+        '<div class="wfa-slip-svg" style="position:relative"' + ((v.modelUrl && !photo) ? ' data-ppa-thumb="' + escapeHtml(v.modelUrl) + '" data-ppa-scale="' + (v.modelScale || 1) + '" data-ppa-roty="' + (v.modelRotY || 0) + '"' : '') + '>' + (photo ? '<img src="' + escapeHtml(photo) + '">' : '<div class="ppa-thumb-ph" style="font-size:1.6rem;color:#7fb9c9">' + (v.modelUrl ? '🧊' : '🚗') + '</div>') + (v.modelUrl ? '<span style="position:absolute;top:0;right:0;font-size:7px;font-weight:800;color:#7dd3fc;background:rgba(8,20,28,0.85);border:1px solid #0e7490;border-radius:3px;padding:0 3px">3D</span>' : '') + '</div>' +
         '<div class="wfa-slip-name">' + escapeHtml(v.name) + '</div>' +
         '<div class="wfa-slip-class">' + escapeHtml(v.color) + ' · ' + v.condition + '</div>' +
         '<div class="wfa-slip-foot"><span style="font-size:0.7rem;color:#e6b660">¢' + (v.listPrice | 0).toLocaleString() + '</span>' +
@@ -137109,6 +137158,7 @@ function _ppBindLot() {
   document.querySelectorAll('[data-pp-detail]').forEach(el => el.onclick = () => _ppOpenLotModal(el.dataset.ppDetail));
   const up = document.getElementById('pp-upgrade-lot');
   if (up) up.onclick = () => { if (ppUpgradeLot()) render(); };
+  try { _ppaFillThumbs(document); } catch (e) {}   // render 3D snapshots onto lot cards
 }
 
 // ─── LOT DETAIL MODAL ───
@@ -137134,7 +137184,7 @@ function _ppOpenLotModal(vehicleId) {
         '<div class="pp-modal-left">' +
           '<div class="pp-modal-photo">' +
             (v.modelUrl
-              ? '<button id="pp-modal-3d" style="width:100%;height:100%;background:linear-gradient(135deg,#0e1620,#0a0604);border:1px solid #2a4658;color:#9fe0ff;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px"><div style="font-size:2.6rem">🧊</div><div>VIEW 3D MODEL</div><div style="font-size:0.65rem;color:#6a8aa0">orbit · zoom</div></button>'
+              ? '<div id="pp-modal-3d" data-ppa-thumb="' + escapeHtml(v.modelUrl) + '" data-ppa-scale="' + (v.modelScale || 1) + '" data-ppa-roty="' + (v.modelRotY || 0) + '" style="width:100%;height:100%;position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0e1620,#0a0604)"><div class="ppa-thumb-ph" style="text-align:center;color:#9fe0ff"><div style="font-size:2.6rem">🧊</div><div style="font-size:0.65rem">rendering 3D…</div></div><span style="position:absolute;bottom:6px;right:8px;font-size:0.62rem;color:#9fe0ff;background:rgba(8,20,28,0.82);border:1px solid #2a4658;border-radius:4px;padding:2px 6px">🧊 click → orbit · zoom</span></div>'
               : (photo
                 ? '<img src="' + escapeHtml(photo) + '" alt="">'
                 : '<div class="pp-modal-photo-empty">[VEHICLE PHOTO · drop a 3/4 render]</div>')) +
@@ -137174,6 +137224,7 @@ function _ppOpenLotModal(vehicleId) {
   document.getElementById('pp-modal-x').onclick = _ppCloseAnyModal;
   wrap.addEventListener('click', (e) => { if (e.target === wrap) _ppCloseAnyModal(); });
   const _m3d = document.getElementById('pp-modal-3d'); if (_m3d) _m3d.onclick = () => { try { _ppaViewModel(v.modelUrl, v.name, v.modelScale, v.modelRotY); } catch (e) {} };
+  try { _ppaFillThumbs(wrap); } catch (e) {}
   document.querySelectorAll('[data-pp-act]').forEach(b => b.onclick = async () => {
     const act = b.dataset.ppAct;
     if (act === 'fuel') {

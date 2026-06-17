@@ -36493,7 +36493,25 @@ async function cloudFetchProfile() {
       if (f.__will__ && typeof f.__will__ === 'object') Profile.will = f.__will__;
       // 👁 Admin VIP pool + 🚗 vehicle market + 🌑 dark events.
       if (Array.isArray(f.vipPool))                   Forge.vipPool = _mergeForgeArr(Forge.vipPool, f.vipPool, true);
-      if (f.vehicleMarket && typeof f.vehicleMarket === 'object') Forge.vehicleMarket = f.vehicleMarket;
+      // 🚗 Vehicle market — MERGE, don't replace. A blind overwrite let a STALE
+      // cloud copy (fetched on load before the 4s debounced upload fired) wipe a
+      // player's just-listed car — and since listing removes it from the lot, the
+      // car was lost. Union listings + history by id; drop listings already SOLD
+      // (in history) or whose vehicle is back on the player's lot (unlisted), so
+      // nothing resurrects. (princePortfolios hydrates earlier, so the lot is set.)
+      if (f.vehicleMarket && typeof f.vehicleMarket === 'object') {
+        const _loc = (Forge.vehicleMarket && typeof Forge.vehicleMarket === 'object') ? Forge.vehicleMarket : { listings: [], history: [] };
+        const _cl = f.vehicleMarket;
+        const _hById = {};
+        [].concat(Array.isArray(_cl.history) ? _cl.history : [], Array.isArray(_loc.history) ? _loc.history : []).forEach(h => { if (h && h.id && !_hById[h.id]) _hById[h.id] = h; });
+        const _history = Object.values(_hById).sort((a, b) => (b.soldAt || 0) - (a.soldAt || 0)).slice(0, 60);
+        const _soldIds = new Set(_history.map(h => h && h.id).filter(Boolean));
+        const _lotIds = new Set();
+        try { const _pp = Profile.princePortfolios; if (_pp && Array.isArray(_pp.lot)) _pp.lot.forEach(v => { if (v && v.id) _lotIds.add(v.id); }); } catch (e) {}
+        const _lById = {};
+        [].concat(Array.isArray(_cl.listings) ? _cl.listings : [], Array.isArray(_loc.listings) ? _loc.listings : []).forEach(l => { if (l && l.id && !_soldIds.has(l.id) && !(l.vehicle && _lotIds.has(l.vehicle.id)) && !_lById[l.id]) _lById[l.id] = l; });
+        Forge.vehicleMarket = { listings: Object.values(_lById).sort((a, b) => (b.listedAt || 0) - (a.listedAt || 0)), history: _history };
+      }
       if (f.darkEvents !== undefined)                 Forge.darkEvents = f.darkEvents;
       if (typeof f.darkEventsLastRoll === 'number')   Forge.darkEventsLastRoll = f.darkEventsLastRoll;
       // ⚡ Custom hero ultimates + per-hero assignment.
@@ -136921,9 +136939,12 @@ function _ppaThumbPump() {
           o.scale.multiplyScalar((3.2 / md) * (job.scale || 1)); o.rotation.y = (job.rotY || 0) * Math.PI / 180 + 0.7;
           const b2 = new T.Box3().setFromObject(o), c = b2.getCenter(new T.Vector3()); o.position.sub(c);
           G.scene.add(o); G.camera.position.set(2.6, 1.7, 3.4); G.camera.lookAt(0, 0, 0);
-          G.renderer.render(G.scene, G.camera); const data = G.renderer.domElement.toDataURL('image/png');
-          G.scene.remove(o); _ppaDisposeObj(o);
-          done(data && data.length > 200 ? data : null);
+          G.renderer.render(G.scene, G.camera);
+          // 🖼 Cache a BLOB url (not a data: url). Browsers DON'T dedupe data:-url
+          // image decodes, so every re-render's fresh <img> re-uploaded a 256² GPU
+          // texture → a graphics-memory sawtooth on the 5s-re-rendering lot screen.
+          // blob: urls ARE cached/deduped, so re-rendered cards reuse one texture.
+          G.renderer.domElement.toBlob((blob) => { try { G.scene.remove(o); _ppaDisposeObj(o); } catch (e) {} done(blob ? URL.createObjectURL(blob) : null); }, 'image/png');
         } catch (e) { done(null); }
       }, undefined, () => done(null));
     } catch (e) { done(null); }

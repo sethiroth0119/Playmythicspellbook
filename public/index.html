@@ -139967,7 +139967,7 @@ function _osimInitScene() {
   const T = window.THREE, app = _O('app'); _osimLabelsEl = _O('labels'); _osimTiles = []; _osimBeacons = [];
   _osimScene = new T.Scene(); _osimScene.background = new T.Color(0x06101f); _osimScene.fog = new T.Fog(0x06101f, 70, 150);
   _osimCamera = new T.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 700);
-  _osimRenderer = new T.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true }); _osimRenderer.setSize(innerWidth, innerHeight); _osimRenderer.setPixelRatio(Math.min(devicePixelRatio, 2)); _osimRenderer.shadowMap.enabled = true; _osimRenderer.shadowMap.type = T.PCFSoftShadowMap; app.appendChild(_osimRenderer.domElement);
+  _osimRenderer = new T.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true }); _osimRenderer.setSize(innerWidth, innerHeight); _osimRenderer.setPixelRatio(Math.min(devicePixelRatio, 2)); _osimRenderer.shadowMap.enabled = true; _osimRenderer.shadowMap.type = T.PCFSoftShadowMap; if (T.sRGBEncoding != null) _osimRenderer.outputEncoding = T.sRGBEncoding; app.appendChild(_osimRenderer.domElement);
   _osimScene.add(new T.AmbientLight(0x4a5a78, 0.7));
   const sun = new T.DirectionalLight(0xffe9c0, 1.05); sun.position.set(30, 55, 20); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.camera.left = -60; sun.shadow.camera.right = 60; sun.shadow.camera.top = 60; sun.shadow.camera.bottom = -60; _osimScene.add(sun);
   const rim = new T.DirectionalLight(0xd4af37, 0.35); rim.position.set(-20, 15, -25); _osimScene.add(rim);
@@ -140275,13 +140275,37 @@ function _osimSavePricing(reg, sellSkim, extra) { try { if (!Forge.blackRiver) F
 // ── Model upload (.glb → device-local via IDB) ──────────────────────────────
 function _osimSetModelUrl(mkey, url) { try { if (!Forge.blackRiver) Forge.blackRiver = {}; if (!Forge.blackRiver.extraction) Forge.blackRiver.extraction = {}; const E = Forge.blackRiver.extraction; if (!E.models) E.models = {}; if (mkey === 'core') E.models.core = url; else if (mkey === 'node') E.models.node = url; else if (mkey.indexOf('cm_') === 0) { if (!E.models.machines) E.models.machines = {}; E.models.machines[mkey.slice(3)] = url; } saveForge && saveForge(); } catch (e) {} }
 function _osimDelModelUrl(mkey) { try { const E = Forge.blackRiver && Forge.blackRiver.extraction; if (!E || !E.models) return; if (mkey === 'core') delete E.models.core; else if (mkey === 'node') delete E.models.node; else if (mkey.indexOf('cm_') === 0 && E.models.machines) delete E.models.machines[mkey.slice(3)]; saveForge && saveForge(); } catch (e) {} }
-function _osimHandleUpload(slot, file) { file.arrayBuffer().then(async ab => { try { const root = _osimParseGLB(ab); let mkey = slot; if (slot === 'core') _osimApplyCoreModel(root); else if (slot === 'node') _osimApplyNodeModel(root); else if (slot === 'machine' && _osimPendingMachineKey) { const key = _osimPendingMachineKey; _osimCustomMachineMeshes[key] = _osimNormalizeModel(root, 5); _osimRebuildPlacedOfType(key); mkey = 'cm_' + key; _osimPendingMachineKey = null; } _osimSfx('aza'); _osimToast('Model loaded', 'good');
+function _osimHandleUpload(slot, file) { file.arrayBuffer().then(async ab => { try { const root = await _osimParseModel(ab); if (!root) return; let mkey = slot; if (slot === 'core') _osimApplyCoreModel(root); else if (slot === 'node') _osimApplyNodeModel(root); else if (slot === 'machine' && _osimPendingMachineKey) { const key = _osimPendingMachineKey; _osimCustomMachineMeshes[key] = _osimNormalizeModel(root, 5); _osimRebuildPlacedOfType(key); mkey = 'cm_' + key; _osimPendingMachineKey = null; } _osimSfx('aza'); _osimToast('Model loaded', 'good');
   // ☁ Prefer the shared models bucket so ALL players see the admin's model;
   //    fall back to device-local IDB when the bucket is unreachable.
   let cloudOk = false; if (typeof _csShopUploadModel === 'function') { try { const url = await _csShopUploadModel(file); if (url) { _osimSetModelUrl(mkey, url); cloudOk = true; _osimToast('☁ Model shared to all players.', 'good'); } } catch (e) {} }
   if (!cloudOk) { _osimPersistModel(mkey, ab); _osimToast('Model saved on this device (cloud offline).', 'aza'); }
   if (_osimCurrentPanel === 'system') _osimRenderSystem(); } catch (e) { _osimToast('Could not load model: ' + e, 'bad'); } }); }
-async function _osimLoadModelUrl(slot, url) { try { const res = await fetch(url); const ab = await res.arrayBuffer(); const root = _osimParseGLB(ab); if (slot === 'core') _osimApplyCoreModel(root); else if (slot === 'node') _osimApplyNodeModel(root); else if (slot.indexOf('cm_') === 0) { const k = slot.slice(3); _osimCustomMachineMeshes[k] = _osimNormalizeModel(root, 5); _osimRebuildPlacedOfType(k); } } catch (e) {} }
+// 🧩 Parse an uploaded .glb. Prefer THREE.GLTFLoader (already loaded by _csLoadThree)
+// — it fully supports embedded TEXTURES, PBR materials, vertex colors and KHR
+// extensions, so models show their real skins. Falls back to the self-contained
+// _osimParseGLB only when GLTFLoader isn't available.
+function _osimParseModel(ab) {
+  return new Promise(resolve => {
+    try {
+      const T = window.THREE;
+      if (T && T.GLTFLoader) {
+        let done = false; const fb = () => { if (done) return; done = true; try { resolve(_osimParseGLB(ab)); } catch (e) { resolve(null); } };
+        try {
+          new T.GLTFLoader().parse(ab, '', gltf => {
+            if (done) return; done = true;
+            const root = (gltf && (gltf.scene || (gltf.scenes && gltf.scenes[0]))) || null;
+            if (root) { try { root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material && o.material.map && T.sRGBEncoding != null) o.material.map.encoding = T.sRGBEncoding; } }); } catch (e) {} resolve(root); }
+            else { try { resolve(_osimParseGLB(ab)); } catch (e) { resolve(null); } }
+          }, fb);
+          return;
+        } catch (e) { fb(); return; }
+      }
+      resolve(_osimParseGLB(ab));
+    } catch (e) { try { resolve(_osimParseGLB(ab)); } catch (e2) { resolve(null); } }
+  });
+}
+async function _osimLoadModelUrl(slot, url) { try { const res = await fetch(url); const ab = await res.arrayBuffer(); const root = await _osimParseModel(ab); if (!root) return; if (slot === 'core') _osimApplyCoreModel(root); else if (slot === 'node') _osimApplyNodeModel(root); else if (slot.indexOf('cm_') === 0) { const k = slot.slice(3); _osimCustomMachineMeshes[k] = _osimNormalizeModel(root, 5); _osimRebuildPlacedOfType(k); } } catch (e) {} }
 function _osimAbToB64(ab) { let bin = ''; const bytes = new Uint8Array(ab), chunk = 0x8000; for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk)); return btoa(bin); }
 function _osimB64ToAb(b64) { const bin = atob(b64), len = bin.length, bytes = new Uint8Array(len); for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i); return bytes.buffer; }
 function _osimPersistModel(slot, ab) { try { if (typeof idbSet !== 'function') return; const b64 = _osimAbToB64(ab); idbSet('osim_model_' + slot, b64); } catch (e) {} }

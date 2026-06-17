@@ -390,6 +390,9 @@ function RealEstateScreen({ openDetail }) {
           <button className="btn icon ghost" title="Voice">⏵</button>
         </div>
 
+        <button className="btn primary" style={{ whiteSpace: 'nowrap' }} title="Walk & decorate your own dwelling"
+          onClick={() => { try { window.JB_action && window.JB_action({ kind: 'openDwelling' }); } catch (e) {} }}>🏠 My Dwelling</button>
+
         <FilterDD label={status === 'any' ? 'For sale' : status === 'sale' ? 'For sale' : status === 'auction' ? 'Auction' : 'Rent'}>
           {[{ v:'any', l:'Any status' }, { v:'sale', l:'For sale' }, { v:'auction', l:'Auction' }, { v:'rent', l:'For rent' }].map(o => (
             <DDItem key={o.v} active={status === o.v} onClick={() => setStatus(o.v)}>{o.l}</DDItem>

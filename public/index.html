@@ -58869,6 +58869,37 @@ function _jbLeave() {
     } catch (e) {}
   }, 560);
 }
+// 🏠 DWELLING — the housing build/walk sub-app (public/dwelling/, the exact build
+// system). Overlaid full-screen above whatever opened it (Just Business iframe or
+// the Card Shop). mode 'house' = standalone localStorage dwelling; mode 'shop'
+// (with shopId) = the card-shop build that persists to the cloud shop layout.
+let _dwFrame = null;
+function _dwellingOpen(mode, shopId) {
+  if (document.getElementById('dw-overlay')) return;
+  const ov = document.createElement('div');
+  ov.id = 'dw-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2147483400;background:#0c1018;display:flex;flex-direction:column';
+  const bar = document.createElement('div');
+  bar.style.cssText = 'height:42px;flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:0 12px;background:#0e1422;border-bottom:1px solid rgba(212,175,55,.35);color:#e7e9ef;font-weight:700;letter-spacing:.5px;font-size:13px';
+  bar.innerHTML = '<span>' + (mode === 'shop' ? '🏗️ Shop Builder' : '🏠 My Dwelling') + '</span><span style="flex:1"></span>';
+  const back = document.createElement('button');
+  back.textContent = '← Back';
+  back.style.cssText = 'background:#1b2540;color:#cdd3e3;border:1px solid rgba(212,175,55,.3);padding:6px 14px;border-radius:7px;cursor:pointer;font-weight:600';
+  back.onclick = _dwellingClose;
+  bar.appendChild(back);
+  const fr = document.createElement('iframe');
+  fr.id = 'dw-frame';
+  fr.src = 'dwelling/' + (mode === 'shop' ? ('?mode=shop&shop=' + encodeURIComponent(shopId || '')) : '');
+  fr.style.cssText = 'flex:1;width:100%;border:0;background:#0c1018';
+  ov.appendChild(bar); ov.appendChild(fr);
+  document.body.appendChild(ov);
+  _dwFrame = fr;
+}
+function _dwellingClose() {
+  const ov = document.getElementById('dw-overlay'); if (ov) ov.remove(); _dwFrame = null;
+  // If the shop builder was open, re-render the shop so the walkable scene reflects saves.
+  try { if (App.screen === 'cardShop') { _csShopObjects = null; _csShopObjectsShopId = null; if (typeof render === 'function') render(); } } catch (e) {}
+}
 // Run a real economy action posted by the app.
 function _jbHandleAction(a) {
   try {
@@ -58894,6 +58925,9 @@ function _jbHandleAction(a) {
       }, 360);
       return;
     }
+    // 🏠 Open the player's Dwelling (walk + decorate) — overlaid above the JB
+    //    iframe so closing it returns straight to Just Business → Real Estate.
+    if (a.kind === 'openDwelling') { _dwellingOpen('house'); return; }
     // ⛽ Ethos Fuel Command — fired by the sidebar "Gas Station Chain" entry.
     if (a.kind === 'openFuelCommand') {
       _jbLeaving = true;
@@ -106238,7 +106272,7 @@ function _csBuildConfig() {
       });
       return Array.from(map.values());
     })(),
-    props: propRows.map(r => withAnim({ url: r.model_url || '', x: num(r.x, 0), y: num(r.y, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: num(r.scale, 1) }, r)),
+    props: propRows.map(r => withAnim({ catId: r.label || '', url: r.model_url || '', x: num(r.x, 0), y: num(r.y, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: num(r.scale, 1) }, r)),
   };
 }
 // 💾 Local fallback so decorating WORKS before the shop_objects table exists (or
@@ -106427,11 +106461,20 @@ function _csMount3D(mount) {
     const npcGeo = new T.Group();
     const cloak = box(0.74, 1.25, 0.5, 0x1a1712, 0xd4af37, 0.06); cloak.position.y = 1.0; npcGeo.add(cloak); const head = new T.Mesh(new T.SphereGeometry(0.25, 16, 16), new T.MeshStandardMaterial({ color: 0x2a2520, roughness: 1 })); head.position.y = 1.86; npcGeo.add(head); const visor = box(0.3, 0.06, 0.06, 0x000000, 0xffcf66, 1.3); visor.position.set(0, 1.85, 0.23); npcGeo.add(visor); npc.add(npcGeo); const _nm = cfg.npc || {}; const lab = label(_nm.label || 'THE VENDOR', '#d4af37'); lab.scale.set(2.0, 0.5, 1); lab.position.set(0, 2.55, 0); npc.add(lab); npc.position.set(_nm.x != null ? _nm.x : 0, _nm.y || 0, _nm.z != null ? _nm.z : -7.8); npc.rotation.y = _nm.ry || 0; scene.add(npc); _csTryModel(_nm.url, (m, gltf) => { try { npc.remove(npcGeo); if (_nm.scale) m.scale.setScalar(_nm.scale); npc.add(m); _csAnimate(m, _nm, gltf, npc); } catch (e) {} }); }
     const npcHasRoute = !!(cfg.npc && cfg.npc.route && Array.isArray(cfg.npc.route.points) && cfg.npc.route.points.length > 1);
-    // Decorative props — pure .glb models, no collision/interaction (room dressing).
+    // Decorative props (placed furniture). ALWAYS show a procedural placeholder box
+    // — sized/tinted from the furniture catalog — so furniture is visible even when
+    // its .glb is missing or still loading; swap to the real model once it arrives.
     for (const p of (cfg.props || [])) {
-      if (!p || !p.url) continue;
+      if (!p) continue;
       const pg = new T.Group(); pg.position.set(p.x || 0, p.y || 0, p.z || 0); pg.rotation.y = p.ry || 0; scene.add(pg);
-      _csTryModel(p.url, (m, gltf) => { try { if (p.scale) m.scale.setScalar(p.scale); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
+      let ph = null;
+      try {
+        const cat = (typeof _csCatMap !== 'undefined' && p.catId) ? _csCatMap[p.catId] : null;
+        const w = (cat && cat.w) ? cat.w * 0.9 : 0.9, d = (cat && cat.d) ? cat.d * 0.9 : 0.9, h = (cat && cat.h) ? cat.h : 1;
+        const col = (cat && cat.color != null) ? cat.color : 0xd4af37;
+        ph = box(w, h, d, 0x14110d, col, 0.32); ph.position.y = h / 2; pg.add(ph);
+      } catch (e) {}
+      if (p.url) _csTryModel(p.url, (m, gltf) => { try { if (ph) pg.remove(ph); if (p.scale) m.scale.setScalar(p.scale); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
     }
     const St = { yaw: 0, pitch: 0, cyaw: undefined, cpitch: 0, keys: new Set(), move: { f: 0, b: 0, l: 0, r: 0 }, drag: false, lx: 0, ly: 0 };
     const clock = new T.Clock(); let raf = 0, nearView = null;

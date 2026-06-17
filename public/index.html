@@ -136608,6 +136608,17 @@ function _ppaBuildCar(car) {
   if (glow) { const ug = new T.Mesh(new T.PlaneGeometry(B.len * 1.5, B.width * 2.1), new T.MeshBasicMaterial({ color: car.rarity.color, transparent: true, opacity: 0.4 })); ug.rotation.x = -Math.PI / 2; ug.position.y = 0.015; g.add(ug); }
   g.userData.wheels = wheels; return g;
 }
+// Fully free a THREE object's GPU resources — geometry AND every material's
+// textures. (Disposing only geometry leaked materials/textures on every car
+// swap, growing GPU memory until the tab died on the dealership screen.)
+function _ppaDisposeObj(o) {
+  if (!o) return;
+  try { o.traverse(c => {
+    if (c.geometry && c.geometry.dispose) c.geometry.dispose();
+    const mats = c.material ? (Array.isArray(c.material) ? c.material : [c.material]) : [];
+    mats.forEach(m => { if (!m) return; for (const k in m) { const v = m[k]; if (v && v.isTexture && v.dispose) { try { v.dispose(); } catch (e) {} } } if (m.dispose) { try { m.dispose(); } catch (e) {} } });
+  }); } catch (e) {}
+}
 function _ppaMount3D(mount) {
   const T = window.THREE; if (!T || !mount) return null;
   let W = mount.clientWidth || 600, H = mount.clientHeight || 360;
@@ -136626,11 +136637,11 @@ function _ppaMount3D(mount) {
   const cam = { r: 11.5, theta: -0.6, phi: 1.0 }; let drag = null, raf = 0, carMesh = null, targetR = 11.5, curR = 11.5, lookY = 1.1, curLook = 1.1, last = (window.performance ? performance.now() : 0);
   const loader = (T.GLTFLoader) ? new T.GLTFLoader() : null;
   const frame = (mesh) => { try { const box = new T.Box3().setFromObject(mesh), sph = box.getBoundingSphere(new T.Sphere()), fov = camera.fov * Math.PI / 180; targetR = _ppaClamp(sph.radius / Math.sin(fov / 2) * 1.15, 7.5, 16); lookY = _ppaClamp(box.getCenter(new T.Vector3()).y, 0.4, 3); } catch (e) {} };
-  const swap = (mesh) => { if (carMesh) { pivot.remove(carMesh); try { carMesh.traverse(c => { if (c.geometry) c.geometry.dispose(); }); } catch (e) {} } pivot.rotation.y = 0; pivot.add(mesh); carMesh = mesh; frame(mesh); };
+  const swap = (mesh) => { if (carMesh) { pivot.remove(carMesh); _ppaDisposeObj(carMesh); } pivot.rotation.y = 0; pivot.add(mesh); carMesh = mesh; frame(mesh); };
   const fitModel = (root, car) => { const box = new T.Box3().setFromObject(root), size = new T.Vector3(); box.getSize(size); const maxDim = Math.max(size.x, size.z) || 1; root.scale.multiplyScalar((4.6 / maxDim) * (car.modelScale || 1)); root.rotation.y = (car.modelRotY || 0) * Math.PI / 180; const b2 = new T.Box3().setFromObject(root), c = b2.getCenter(new T.Vector3()); root.position.x -= c.x; root.position.z -= c.z; root.position.y -= b2.min.y; const grp = new T.Group(); grp.add(root); grp.userData.wheels = []; return grp; };
   const setCar = (car) => {
     swap(_ppaBuildCar(car));
-    if (car.modelUrl && loader) { try { loader.load(car.modelUrl, (g) => { if (!_ppaS || !_ppaS.car || _ppaS.car.id !== car.id) return; try { swap(fitModel(g.scene || g.scenes[0], car)); } catch (e) {} }, undefined, () => {}); } catch (e) {} }
+    if (car.modelUrl && loader) { try { loader.load(car.modelUrl, (g) => { const root = g.scene || g.scenes[0]; if (!_ppaS || !_ppaS.car || _ppaS.car.id !== car.id) { _ppaDisposeObj(root); return; } try { swap(fitModel(root, car)); } catch (e) { _ppaDisposeObj(root); } }, undefined, () => {}); } catch (e) {} }
   };
   const dn = (e) => { const p = (e.touches && e.touches[0]) || e; drag = { x: p.clientX, y: p.clientY }; };
   const mv = (e) => { if (!drag) return; const p = (e.touches && e.touches[0]) || e; cam.theta -= (p.clientX - drag.x) * 0.006; cam.phi = _ppaClamp(cam.phi - (p.clientY - drag.y) * 0.006, 0.3, 1.35); drag = { x: p.clientX, y: p.clientY }; };
@@ -136644,7 +136655,7 @@ function _ppaMount3D(mount) {
     const ease = Math.min(1, dt * 2.5); curR += (targetR - curR) * ease; curLook += (lookY - curLook) * ease;
     camera.position.set(curR * Math.sin(cam.phi) * Math.cos(cam.theta), curR * Math.cos(cam.phi) + curLook, curR * Math.sin(cam.phi) * Math.sin(cam.theta)); camera.lookAt(0, curLook, 0); renderer.render(scene, camera);
   }; raf = requestAnimationFrame(loop);
-  return { setCar, dispose: () => { try { cancelAnimationFrame(raf); } catch (e) {} try { if (ro) ro.disconnect(); } catch (e) {} window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); try { renderer.dispose(); } catch (e) {} try { if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement); } catch (e) {} } };
+  return { setCar, dispose: () => { try { cancelAnimationFrame(raf); } catch (e) {} try { if (ro) ro.disconnect(); } catch (e) {} window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); try { if (carMesh) _ppaDisposeObj(carMesh); } catch (e) {} try { scene.traverse(o => _ppaDisposeObj(o)); } catch (e) {} try { renderer.dispose(); } catch (e) {} try { renderer.forceContextLoss(); } catch (e) {} try { if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement); } catch (e) {} } };
 }
 // ───────────── engine ─────────────
 function _ppaTick() {
@@ -136797,7 +136808,7 @@ function _ppaViewModel(url, name, scale, rotY) {
     const loop = () => { raf = requestAnimationFrame(loop); upd(); renderer.render(scene, camera); }; loop();
     let drag = false, lx = 0, ly = 0; const dn = (e) => { const pt = (e.touches && e.touches[0]) || e; drag = true; lx = pt.clientX; ly = pt.clientY; }; const mv = (e) => { if (!drag) return; const pt = (e.touches && e.touches[0]) || e; yaw -= (pt.clientX - lx) * 0.01; pitch += (pt.clientY - ly) * 0.01; lx = pt.clientX; ly = pt.clientY; }; const up = () => { drag = false; }; const wheel = (e) => { e.preventDefault(); dist = _ppaClamp(dist * (1 + (e.deltaY > 0 ? 0.12 : -0.12)), 2, 50); };
     canvas.addEventListener('pointerdown', dn); window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); canvas.addEventListener('wheel', wheel, { passive: false });
-    const close = () => { try { cancelAnimationFrame(raf); } catch (e) {} window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); try { renderer.dispose(); } catch (e) {} const w = document.getElementById('ppa-mv'); if (w) w.remove(); };
+    const close = () => { try { cancelAnimationFrame(raf); } catch (e) {} window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); try { scene.traverse(o => _ppaDisposeObj(o)); } catch (e) {} try { renderer.dispose(); } catch (e) {} try { renderer.forceContextLoss(); } catch (e) {} const w = document.getElementById('ppa-mv'); if (w) w.remove(); };
     wrap.querySelector('#ppa-mv-x').onclick = close; wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
   });
 }
@@ -136832,7 +136843,7 @@ function _ppaThumbPump() {
           const b2 = new T.Box3().setFromObject(o), c = b2.getCenter(new T.Vector3()); o.position.sub(c);
           G.scene.add(o); G.camera.position.set(2.6, 1.7, 3.4); G.camera.lookAt(0, 0, 0);
           G.renderer.render(G.scene, G.camera); const data = G.renderer.domElement.toDataURL('image/png');
-          G.scene.remove(o); try { o.traverse(x => { if (x.geometry) x.geometry.dispose(); }); } catch (e) {}
+          G.scene.remove(o); _ppaDisposeObj(o);
           done(data && data.length > 200 ? data : null);
         } catch (e) { done(null); }
       }, undefined, () => done(null));
@@ -136904,6 +136915,11 @@ function _ppaBindAdminModels() {
   document.querySelectorAll('[data-ppa-view]').forEach(b => b.onclick = () => { const [rk, i] = b.dataset.ppaView.split(':'); const m = Forge.princePortfolios && Forge.princePortfolios.auctionModels && Forge.princePortfolios.auctionModels[rk] && Forge.princePortfolios.auctionModels[rk][+i]; if (m) _ppaViewModel(m.url, rk + ' model', m.scale, m.rotY); });
 }
 function _ppRenderAuction(p) {
+  return _ppaFloorBody(p);
+}
+// (Legacy static RNG floor renderer — retained but no longer shown; the Live
+// Auction is the auction now. _ppRenderAuctionClassic(p) renders the old grid.)
+function _ppRenderAuctionClassic(p) {
   if (p.listings.length === 0) {
     return _ppaLaunchBanner() +
       '<details class="pp-classic-auc"><summary style="cursor:pointer;list-style:none;padding:0.55rem 0.8rem;background:#13161d;border:1px solid #2a2330;border-radius:9px;font-size:0.74rem;color:#9aa0ac;letter-spacing:0.04em">▸ CLASSIC INSTANT-BUY LISTINGS <span style="color:#6a7280">(empty — RNG refills these)</span></summary>' +
@@ -136947,6 +136963,20 @@ function _ppRenderAuction(p) {
     '<div class="wfa-panel-header">AUCTION FLOOR  <span class="wfa-panel-crumb">Click a card for full details · RNG refresh every 3 min · auto-heal under 6</span><span class="wfa-panel-right">' + p.listings.length + ' listings <button class="wfa-mini-btn warn" id="pp-force-refresh-auc" style="margin-left:0.5rem;padding:0.25rem 0.7rem;font-size:0.65rem">🔄 REFRESH</button></span></div>' +
     '<div class="wfa-supply-grid">' + cards + '</div>' +
     '</div></details>' +
+  '</div>';
+}
+// The Auction tab body — the Live Auction IS the floor now (no static listings).
+function _ppaFloorBody(p) {
+  const cap = (typeof ppLotCap === 'function') ? ppLotCap() : 6;
+  const lotN = (p && p.lot ? p.lot.length : 0);
+  const hc = (icon, title, body) => '<div style="background:#11131a;border:1px solid #262030;border-radius:10px;padding:0.8rem"><div style="font-size:1.4rem">' + icon + '</div><div style="font-weight:800;color:#e7e7ea;margin:3px 0;font-size:0.86rem">' + title + '</div><div style="font-size:0.72rem;color:#9aa0ac;line-height:1.45">' + body + '</div></div>';
+  return '<div>' + _ppaLaunchBanner() +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.7rem;margin-top:0.3rem">' +
+      hc('🎙', 'Bidding goes LIVE', 'A 3D car rolls onto the lit stage and rivals bid in real time — outbid them or get priced out.') +
+      hc('⚡', 'Win or Buy It Now', 'Raise · Push · Slam to take the high bid, or slam Buy It Now to end it — Cinder is taxed only when you win.') +
+      hc('🏁', 'Drives onto your lot', 'Every car you win parks on your lot with its 3D model — fuel it, flip it to a buyer, or list it P2P.') +
+    '</div>' +
+    '<div style="margin-top:0.9rem;text-align:center;color:#8a8f9a;font-size:0.78rem">🅿️ Lot <b style="color:#cbd5e1">' + lotN + '/' + cap + '</b> occupied · ' + (lotN >= cap ? '<span style="color:#e6a3a3">lot full — sell or upgrade before you can win more</span>' : 'room to win <b style="color:#cbd5e1">' + (cap - lotN) + '</b> more') + '</div>' +
   '</div>';
 }
 // The ⚡ LIVE AUCTION hero shown atop the Auction tab — now the primary auction.

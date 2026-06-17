@@ -23981,6 +23981,19 @@
   }
   @media (max-width: 600px) { .editor-grid { grid-template-columns: 1fr; } }
 
+  /* 🧹 Card-editor tidy pass (scoped — other editors untouched): every field
+     fills its cell with box-sizing so inputs/selects/textarea line up flush and
+     never overflow the 2-col grid, rows top-align so a tall textarea doesn't
+     stretch its neighbour, and the top sections share one consistent rhythm. */
+  .card-editor .editor-grid { align-items: start; }
+  .card-editor .editor-field { min-width: 0; }
+  .card-editor .editor-field input,
+  .card-editor .editor-field select,
+  .card-editor .editor-field textarea { width: 100%; box-sizing: border-box; }
+  .card-editor .forge-obt-row,
+  .card-editor .image-section { margin-bottom: 1.2rem; }
+  .card-editor .image-slot { min-width: 0; }
+
   /* Event editor reward rows */
   .ev-reward-list { display: flex; flex-direction: column; gap: 0.5rem; }
   .ev-reward-row { display: flex; gap: 0.4rem; align-items: center; background: rgba(0,0,0,0.25); border: 1px solid var(--border-dim); border-radius: 6px; padding: 0.4rem 0.5rem; }
@@ -87847,13 +87860,13 @@ function _renderBattleImmediateImpl() {
             </div>
             ${renderBoard()}
             ${renderWeatherFx()}
-            ${renderPersistentSpells()}
           </div>
         </main>
       </div>
 
       <!-- BOTTOM: hand strip + End Turn button, fixed across the full width -->
       ${App.replayViewing ? '' : renderCancelCardBanner()}
+      ${renderPersistentSpells()}
       ${renderHandStrip()}
 
       ${App.replayViewing ? '' : renderUnitModal()}
@@ -91818,7 +91831,11 @@ function renderPersistentSpells() {
     </div>`;
   }).join('');
   if (!pills) return '';
-  return `<div class="persist-spell-strip" aria-label="Active enchantments" style="position:absolute;bottom:4px;left:50%;transform:translateX(-50%);display:flex;gap:0.35rem;flex-wrap:wrap;justify-content:center;pointer-events:none;z-index:8;max-width:90%">
+  // Flow banner (NOT absolutely positioned over the tilted board — that buried it
+  // behind units). Sits just above the hand strip so active enchantments are
+  // always clearly visible with their turns-left + effect tooltip.
+  return `<div class="persist-spell-strip" aria-label="Active enchantments" style="display:flex;gap:0.4rem;flex-wrap:wrap;justify-content:center;align-items:center;padding:4px 10px;margin:2px auto 0;max-width:96%;z-index:9">
+    <span style="font-size:0.7rem;color:#b89bff;font-weight:800;letter-spacing:.5px;text-transform:uppercase">✨ Enchantments</span>
     ${pills}
   </div>`;
 }
@@ -143775,7 +143792,11 @@ function renderDeckBuilder() {
       const tier = ({ lesser: 'Lesser', greater: 'Greater', divine: 'Divine', primordial: 'Primordial' })[sp.tier || 'lesser'] || 'Lesser';
       const has = _inArchonDeck(a.id);
       const full = _archonCount >= ARCHON_DECK_MAX;
-      const addDisabled = has || full;
+      // 🔒 Ownership gate — players can only deck Archons they actually OWN
+      // (admins own everything → Infinity). Unowned Archons show locked.
+      const _aOwned = (typeof deckKeyOwnedCount === 'function') ? deckKeyOwnedCount('custom:' + a.id) : 1;
+      const isOwned = _aOwned > 0;
+      const addDisabled = has || full || !isOwned;
       // 🖼 Real Archon visual — authored SPRITE first, then uploaded card art /
       // image, then the emoji glyph as a last resort. Players wanted the sprite.
       let iconHtml = '';
@@ -143795,12 +143816,12 @@ function renderDeckBuilder() {
       // data-ctx-key wires this row into the deck builder's shared right-click
       // detail panel (bindDeckCardContextEvents → renderDeckCardContextModal),
       // exactly like the main/side deck card rows.
-      return `<div class="pbl-gem-pool-row" data-ctx-key="custom:${escapeHtml(a.id)}" title="Right-click for full details" style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.5rem;border:1px solid rgba(255,200,80,0.25);border-radius:6px;background:${has ? 'rgba(255,200,80,0.1)' : 'rgba(255,255,255,0.02)'};cursor:context-menu">
+      return `<div class="pbl-gem-pool-row" data-ctx-key="custom:${escapeHtml(a.id)}" title="Right-click for full details" style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.5rem;border:1px solid rgba(255,200,80,0.25);border-radius:6px;background:${has ? 'rgba(255,200,80,0.1)' : 'rgba(255,255,255,0.02)'};cursor:context-menu${isOwned ? '' : ';opacity:0.55;filter:grayscale(0.5)'}">
         ${iconHtml}
         <span style="flex:1;font-size:0.82rem;color:#fff3da">${escapeHtml(a.name || a.id)} <span class="ink-dim" style="font-size:0.7rem">${escapeHtml(tier)} · 🌌${(sp.kalonCost | 0) || 1}</span></span>
-        ${has ? `<span style="font-size:0.72rem;color:#ffd86b">✓ in deck</span>` : ''}
+        ${has ? `<span style="font-size:0.72rem;color:#ffd86b">✓ in deck</span>` : (isOwned ? '' : `<span style="font-size:0.72rem;color:#9aa0a6">🔒 Not owned</span>`)}
         <button class="btn-mini ${has ? 'btn-danger' : 'btn-disabled'}" data-archonpool-rm="${escapeHtml(a.id)}" ${has ? '' : 'disabled'} title="Remove from Archon Deck" style="font-size:0.7rem;padding:1px 6px">−</button>
-        <button class="btn-mini ${addDisabled ? 'btn-disabled' : ''}" data-archonpool-add="${escapeHtml(a.id)}" ${addDisabled ? 'disabled' : ''} title="${full ? 'Archon Deck full' : 'Add to Archon Deck'}" style="font-size:0.7rem;padding:1px 6px">+</button>
+        <button class="btn-mini ${addDisabled ? 'btn-disabled' : ''}" data-archonpool-add="${escapeHtml(a.id)}" ${addDisabled ? 'disabled' : ''} title="${!isOwned ? "You don't own this Archon — obtain it first" : (full ? 'Archon Deck full' : 'Add to Archon Deck')}" style="font-size:0.7rem;padding:1px 6px">+</button>
       </div>`;
     }).join('');
     return infoBar + `<div style="display:flex;flex-direction:column;gap:0.3rem;max-height:340px;overflow-y:auto;padding-right:0.2rem">${rows}</div>`;
@@ -144393,6 +144414,10 @@ function renderDeckBuilder() {
     btn.onclick = () => {
       if (btn.disabled) return;
       const id = btn.dataset.archonpoolAdd;
+      // 🔒 Ownership gate (defense-in-depth — the button is already disabled for
+      // unowned Archons, but never trust the DOM): only deck Archons you own.
+      const _own = (typeof deckKeyOwnedCount === 'function') ? deckKeyOwnedCount('custom:' + id) : 1;
+      if (!(_own > 0)) { try { showToast("🔒 You don't own that Archon yet."); } catch (_) {} return; }
       if (!Profile.archonDeck || !Array.isArray(Profile.archonDeck.cards)) Profile.archonDeck = { cards: [] };
       if (Profile.archonDeck.cards.length >= ARCHON_DECK_MAX) { try { showToast(`⚠ Archon Deck is full (${ARCHON_DECK_MAX} max)`); } catch (_) {} return; }
       const already = Profile.archonDeck.cards.some(k => { try { const c = resolveDeckCard(k); return c && c.id === id; } catch (e) { return false; } });

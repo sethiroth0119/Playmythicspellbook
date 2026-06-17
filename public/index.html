@@ -20237,6 +20237,14 @@
     color: var(--node-color, #6cd4ff);
     opacity: 0.80;
   }
+  /* 👑 Node owner line — the assigned player / capturing corp. */
+  .tw-node-marker-label .owner {
+    font-family: 'JetBrains Mono','Consolas',monospace;
+    font-size: 0.47rem; font-weight: 700; letter-spacing: 0.04em;
+    color: #ffcf66; text-shadow: 0 1px 4px rgba(0,0,0,0.95);
+    max-width: 96px; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tw-node-marker-label .owner.unclaimed { color: rgba(150,160,172,0.7); font-weight: 600; }
   .tw-node-marker.is-selected .tw-node-marker-label { border-color: rgba(255,209,102,0.45); }
   .tw-node-marker.is-selected .tw-node-marker-label .name { color: #ffd166; }
 
@@ -151255,6 +151263,14 @@ function renderTerritoryWars() {
       Promise.resolve(tw_cloudFetchAllNodeRecon()).catch(() => {}).then(() => { App._twNodeReconFetching = false; });
     }
   } catch (e) {}
+  // 👑 Keep the node→player ownership map fresh so the MAP labels show each
+  // node's owner (not only when a node drawer is open).
+  try {
+    if (typeof tw_cloudFetchNodeOwners === 'function' && (!App._twNodeOwners || (Date.now() - App._twNodeOwners.at) > 300000) && !App._twNodeOwnersFetching) {
+      App._twNodeOwnersFetching = true;
+      Promise.resolve(tw_cloudFetchNodeOwners()).catch(() => {}).then(() => { App._twNodeOwnersFetching = false; });
+    }
+  } catch (e) {}
   // 🕛 SHARED 24h clock — fire the AUTHORITATIVE tick (server advances every node's
   // corruption/population by the elapsed days from the real registered-player count).
   // Throttled ~90s; the rpc itself is a no-op until a whole day has elapsed. Also
@@ -151537,9 +151553,23 @@ function renderTerritoryWars() {
   const _twCanvasRoutes = `<svg class="tw-map-routes${_lowFx ? ' tw-lowfx' : ''}" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}${_truckSvgHtml}</svg>`;
 
   // Node markers — absolutely positioned diamonds.
+  const _myCorp = (typeof _twPlayerCorp === 'function') ? _twPlayerCorp() : null;
+  // Resolve a node's OWNER label: an admin-assigned player owner (display_name)
+  // wins, else the capturing corp (your own corp shown by name), else Unclaimed.
+  const _nodeOwnerLabel = (n, own) => {
+    const po = (typeof _twNodeOwnerUser === 'function') ? _twNodeOwnerUser(n.id) : null;
+    if (po && po.display_name) return { name: po.display_name, icon: '👑', owned: true };
+    const cid = own && own.ownerCorpId;
+    if (cid && cid !== 'cloud' && cid !== 'neutral') {
+      if (_myCorp && _myCorp.id === cid) return { name: (_myCorp.name || 'Your corp') + ' (you)', icon: '🏴', owned: true };
+      return { name: 'Captured', icon: '🏴', owned: true };
+    }
+    return { name: 'Unclaimed', icon: '', owned: false };
+  };
   const _twCanvasMarkers = t.nodes.filter(filtered).map(n => {
     const pos = n.position || { x: 5, y: 5 };
     const own = st.ownedNodes[n.id];
+    const _owner = _nodeOwnerLabel(n, own);
     const paint = nodePaint(n);
     const selCls = selectedNodeId === n.id ? ' is-selected' : '';
     const _nAttackCls = (own && own.underAttack) ? ' is-attacking' : '';
@@ -151552,7 +151582,7 @@ function renderTerritoryWars() {
     const guards = own ? (own.guards || []).length : 0;
     const tip = [
       `${n.name} (${n.type || 'PRN'})`,
-      `Owner: ${(own && own.ownerCorpId) ? own.ownerCorpId : 'Neutral'}`,
+      `Owner: ${_owner.name}`,
       `Stability: ${own ? (own.stability | 0) : 100}`,
       `Guards: ${guards} / ${Math.max(1, (n.maxGuardSlots | 0) || 1)}`,
       `Clears req: ${_twClearsRequired(n, own)}`,
@@ -151568,6 +151598,7 @@ function renderTerritoryWars() {
       <div class="tw-node-marker-label">
         <span class="name">${escapeHtml(n.name)}</span>
         <span class="id">${escapeHtml(n.id)} · ${escapeHtml(yieldKeys[0] || '—')}</span>
+        <span class="owner${_owner.owned ? '' : ' unclaimed'}">${_owner.icon ? _owner.icon + ' ' : ''}${escapeHtml(_owner.name)}</span>
       </div>
       ${(own && own.eventActive) ? '<div class="tw-node-event-badge">!</div>' : ''}
     </button>`;

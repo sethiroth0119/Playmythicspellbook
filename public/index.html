@@ -54296,15 +54296,18 @@ function _lqGenerate() {
   } catch (e) {}
 }
 // Find the next thing to surface: a queued confrontation first, then an open request.
+let _lqSeen = {};   // cardIds dismissed THIS camp visit — don't re-pop them (cleared each armed arrival)
 function _lqNextPending() {
   if (!Profile.units) return null;
-  for (const k in Profile.units) { const p = Profile.units[k]; if (p && p._confront) return { kind: 'confront', id: k, prof: p }; }
-  for (const k in Profile.units) { const p = Profile.units[k]; if (p && p.request) return { kind: 'request', id: k, prof: p }; }
+  for (const k in Profile.units) { const p = Profile.units[k]; if (p && p._confront && !_lqSeen[k]) return { kind: 'confront', id: k, prof: p }; }
+  for (const k in Profile.units) { const p = Profile.units[k]; if (p && p.request && !_lqSeen[k]) return { kind: 'request', id: k, prof: p }; }
   return null;
 }
 function _lqCloseDialog() { const el = document.getElementById('lq-overlay'); if (el) el.remove(); }
 function _lqShowNext() {
   _lqCloseDialog();
+  // Never let this modal sit over a battle / other screen — it's a camp moment only.
+  if (typeof App !== 'undefined' && App.screen !== 'camp') return;
   const pend = _lqNextPending(); if (!pend) return;
   const card = _lqCard(pend.id) || { name: 'Companion', icon: '🪖' };
   const tier = getBondTier(pend.prof.bond || 0);
@@ -54334,15 +54337,19 @@ function _lqShowNext() {
         <div><div style="font-weight:800;font-size:1.15rem;color:#fff">${escapeHtml(card.name || 'Companion')}</div>
           <div class="small-text" style="color:${tier.color}">💗 ${tier.name} · ${pend.prof.bond | 0}/${BOND_MAX}</div></div>
       </div>${bodyHtml}</div>`;
+  // Click the dimmed backdrop (outside the card) to dismiss for now — no penalty.
+  ov.addEventListener('click', (e) => { if (e.target === ov) { _lqSeen[pend.id] = true; _lqCloseDialog(); } });
   document.body.appendChild(ov);
 }
 function _lqMaybeSurface() {
   try {
     if (typeof Profile === 'undefined' || !Profile.units) return;
+    if (typeof App !== 'undefined' && App.screen !== 'camp') return;   // camp-only
     if (document.getElementById('lq-overlay')) return;
     const armed = !!(typeof App !== 'undefined' && App._lqArmed);
-    // Age open requests (for the memory bonus) once per armed camp arrival.
-    if (armed) { for (const k in Profile.units) { const r = Profile.units[k] && Profile.units[k].request; if (r) r.visits = (r.visits | 0) + 1; } _lqGenerate(); }
+    // Age open requests (for the memory bonus) once per armed camp arrival, and let
+    // any request you "didn't have" last visit speak up again (fresh dismiss-set).
+    if (armed) { _lqSeen = {}; for (const k in Profile.units) { const r = Profile.units[k] && Profile.units[k].request; if (r) r.visits = (r.visits | 0) + 1; } _lqGenerate(); }
     if (!_lqNextPending()) { if (typeof App !== 'undefined') App._lqArmed = false; return; }
     if (!armed && !_lqNextPending()) return;
     if (armed || _lqNextPending()) { _lqShowNext(); if (typeof App !== 'undefined') App._lqArmed = false; }
@@ -54398,7 +54405,8 @@ window._LQ = {
   lack: (id) => {
     const p = Profile.units[id]; if (!p || !p.request) { _lqCloseDialog(); return; }
     adjustBond(p, LQ_LACK_PENALTY);
-    try { saveProfile(); } catch (e) {}   // request stays open — remembered
+    _lqSeen[id] = true;                     // don't re-pop this one again this visit (was looping)
+    try { saveProfile(); } catch (e) {}     // request stays OPEN in data — remembered, asks again next camp
     _lqShowNext();
   },
   ackConfront: (id) => {

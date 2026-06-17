@@ -106383,6 +106383,18 @@ function _csDefaultConfig() {
 }
 // Build the live render config: DB rows override defaults per-kind; missing kinds
 // keep the built-in default so the shop is never empty.
+// 📏 Effective DISPLAY scale for a placed piece. An explicit per-instance scale
+// (anything other than the legacy default of 1) wins; otherwise fall back to the
+// model's catalog `scale`, so an admin can shrink an already-placed oversized .glb
+// just by setting the model's scale — no need to delete and re-place it. Every
+// placement of that model then renders at the new size.
+function _csEffScale(rowScale, catId) {
+  const rs = (typeof rowScale === 'number' && isFinite(rowScale)) ? rowScale : (parseFloat(rowScale) || 1);
+  if (rs && rs !== 1) return rs;
+  const cat = (typeof _csCatMap !== 'undefined' && catId) ? _csCatMap[catId] : null;
+  const cs = cat ? +cat.scale : 0;
+  return (isFinite(cs) && cs > 0) ? cs : 1;
+}
 function _csBuildConfig() {
   const def = _csDefaultConfig();
   // Only use the cache if it belongs to the shop we're actually rendering (so
@@ -106433,7 +106445,7 @@ function _csBuildConfig() {
       });
       return Array.from(map.values());
     })(),
-    props: propRows.map(r => withAnim({ catId: r.label || '', func: r.view || '', url: r.model_url || '', x: num(r.x, 0), y: num(r.y, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: num(r.scale, 1) }, r)),
+    props: propRows.map(r => withAnim({ catId: r.label || '', func: r.view || '', url: r.model_url || '', x: num(r.x, 0), y: num(r.y, 0), z: num(r.z, 0), ry: num(r.rotation_y, 0), scale: _csEffScale(num(r.scale, 1), r.label) }, r)),
   };
 }
 // 💾 Local fallback so decorating WORKS before the shop_objects table exists (or
@@ -106565,6 +106577,10 @@ function _csMount3D(mount) {
   try {
     if (!window.THREE || !mount) return null;
     const T = window.THREE;
+    // 📏 Custom furniture's per-model display scale lives in the furniture_catalog
+    // (merged into _csCatMap). If it hasn't loaded yet, pull it once and re-mount so
+    // oversized .glb pieces snap to their correct size instead of rendering native.
+    try { if (!_csFurnitureCatalog && typeof _csFetchFurnitureCatalog === 'function' && !mount._csScaleFetch) { mount._csScaleFetch = true; _csFetchFurnitureCatalog().catch(() => {}).then(() => { if (document.body.contains(mount) && typeof _cs3DDispose !== 'undefined') { try { if (_cs3DDispose) { _cs3DDispose(); _cs3DDispose = null; } } catch (e) {} _cs3DDispose = _csMount3D(mount); } }); } } catch (e) {}
     const cfg = (typeof _csBuildConfig === 'function') ? _csBuildConfig() : { room: (typeof CS_ROOM_MODEL !== 'undefined' ? CS_ROOM_MODEL : ''), npc: CS_NPC_MODEL, stations: CS_STATIONS.map(s => ({ ...s, blockR: s.r, interactR: 3.0 })), props: [] };
     let W = mount.clientWidth || 800, H = mount.clientHeight || 460;
     const scene = new T.Scene(); scene.background = new T.Color(0x07070b); scene.fog = new T.Fog(0x07070b, 7, 30);
@@ -107201,7 +107217,7 @@ function _csMountLayoutBuilder(root) {
   const _updateFootprint = (it, valid) => { const o = _fpOrigin(it); cellHi.scale.set(o.w * 0.96, o.d * 0.96, 1); cellHi.position.x = o.x0 + o.w / 2; cellHi.position.z = o.z0 + o.d / 2; cellHi.material.color.setHex(valid ? 0x3fa34d : 0xe2582b); cellHi.visible = true; };
   const loader = (T.GLTFLoader) ? new T.GLTFLoader() : null;
   const phBox = (cat, ghost) => { const m = new T.Mesh(new T.BoxGeometry(cat.w * CELL * 0.9, cat.h, cat.d * CELL * 0.9), new T.MeshStandardMaterial({ color: 0x14110d, emissive: cat.color, emissiveIntensity: ghost ? 0.5 : 0.35, roughness: 0.8, transparent: !!ghost, opacity: ghost ? 0.5 : 1 })); m.position.y = cat.h / 2; const g = new T.Group(); g.add(m); return g; };
-  const applyT = (n, it) => { n.position.x = it.x; n.position.z = it.z; n.rotation.y = it.rotationY || 0; if (it.scale) n.scale.setScalar(it.scale); };
+  const applyT = (n, it) => { n.position.x = it.x; n.position.z = it.z; n.rotation.y = it.rotationY || 0; n.scale.setScalar(_csEffScale(it.scale || 1, it.catId)); };
   const addNode = (it) => {
     const cat = _csCatMap[it.catId] || CS_LAYOUT_CATALOG[0];
     const ph = phBox(cat, false); ph.userData.pid = it.id; scene.add(ph); applyT(ph, it); B.map.set(it.id, { node: ph, url: it.url || '' });
@@ -107381,7 +107397,7 @@ async function _csFetchFurnitureCatalog(force) {
   _csFurnitureCatalog = rows;
   // Merge into _csCatMap so the builder resolves custom furniture by its 'fc:' id.
   for (const r of rows) {
-    _csCatMap['fc:' + r.id] = { id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', category: r.category || 'decor', details: r.details || '', icon: r.icon || '', currency: (r.currency === 'aza' ? 'aza' : 'cinder'), _custom: true, _catalogId: r.id };
+    _csCatMap['fc:' + r.id] = { id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, scale: (+r.scale > 0 ? +r.scale : 1), color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', category: r.category || 'decor', details: r.details || '', icon: r.icon || '', currency: (r.currency === 'aza' ? 'aza' : 'cinder'), _custom: true, _catalogId: r.id };
   }
   return rows;
 }
@@ -107437,7 +107453,7 @@ function _csBuilderCatalog() {
   const custom = [];
   for (const r of (_csFurnitureCatalog || [])) {
     const q = owned[r.id] | 0; if (q <= 0) continue;
-    custom.push({ id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', category: r.category || 'decor', details: r.details || '', icon: r.icon || '', currency: (r.currency === 'aza' ? 'aza' : 'cinder'), _qty: q, _custom: true, _catalogId: r.id });
+    custom.push({ id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, scale: (+r.scale > 0 ? +r.scale : 1), color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', category: r.category || 'decor', details: r.details || '', icon: r.icon || '', currency: (r.currency === 'aza' ? 'aza' : 'cinder'), _qty: q, _custom: true, _catalogId: r.id });
   }
   return base.concat(custom);
 }
@@ -107600,7 +107616,7 @@ function _csReadMarketForm(node) {
   const numf = (f, d) => { const n = parseFloat(g(f)); return isFinite(n) ? n : d; };
   const name = (g('name') || '').trim(); if (!name) { showToast('Furniture needs a name.', 2400); throw new Error('name'); }
   let anim = null; const ar = g('anim'); if (ar && ar.trim()) { try { anim = JSON.parse(ar); } catch (e) { showToast('⚠ Animation JSON is invalid.', 3600); throw e; } }
-  return { name, model_url: g('model_url') || null, icon: (g('icon') || '').trim() || null, price: Math.max(0, Math.round(numf('price', 100))), currency: (g('currency') === 'aza' ? 'aza' : 'cinder'), details: (g('details') || '').trim() || null, w: Math.max(1, Math.round(numf('w', 1))), d: Math.max(1, Math.round(numf('d', 1))), h: numf('h', 1), category: g('category') || 'decor', func: g('func') || null, mount: g('mount') || 'floor', anim };
+  return { name, model_url: g('model_url') || null, icon: (g('icon') || '').trim() || null, price: Math.max(0, Math.round(numf('price', 100))), currency: (g('currency') === 'aza' ? 'aza' : 'cinder'), details: (g('details') || '').trim() || null, w: Math.max(1, Math.round(numf('w', 1))), d: Math.max(1, Math.round(numf('d', 1))), h: numf('h', 1), scale: Math.max(0.01, numf('scale', 1)), category: g('category') || 'decor', func: g('func') || null, mount: g('mount') || 'floor', anim };
 }
 // Pre-fill the admin form from an existing row (used when an admin clicks ✏ Edit).
 function _csFillMarketForm(node, row) {
@@ -107608,6 +107624,7 @@ function _csFillMarketForm(node, row) {
   set('name', row.name || '');
   set('price', row.price | 0);
   set('w', (row.w | 0) || 1); set('d', (row.d | 0) || 1); set('h', row.h != null ? row.h : 1);
+  set('scale', (row.scale != null && +row.scale > 0) ? +row.scale : 1);
   set('category', row.category || 'decor');
   set('mount', row.mount || 'floor');
   set('func', row.func === 'counter' ? 'binder' : (row.func || ''));   // legacy 'counter' → binder option
@@ -107619,15 +107636,24 @@ function _csFillMarketForm(node, row) {
 }
 // Reset the admin form to its blank/default state (used after add + on Cancel edit).
 function _csClearMarketForm(node) {
-  _csFillMarketForm(node, { name: '', price: 500, w: 1, d: 1, h: 1, category: 'decor', mount: 'floor', func: '', currency: 'cinder', icon: '', details: '', model_url: '', anim: null });
+  _csFillMarketForm(node, { name: '', price: 500, w: 1, d: 1, h: 1, scale: 1, category: 'decor', mount: 'floor', func: '', currency: 'cinder', icon: '', details: '', model_url: '', anim: null });
+}
+// True when a write failed ONLY because the `scale` column isn't in the schema yet
+// (i.e. the furniture_scale migration hasn't been run). Lets add/update retry
+// without scale instead of hard-failing every save.
+function _csMissingScaleCol(error) {
+  if (!error) return false;
+  const m = ((error.message || '') + ' ' + (error.details || '') + ' ' + (error.hint || '') + ' ' + (error.code || '')).toLowerCase();
+  return m.indexOf('scale') >= 0 && /(column|schema cache|pgrst204|42703|does not exist|could not find)/.test(m);
 }
 async function _csMarketAdd(node) {
   const row = _csReadMarketForm(node);
   row.color = 0xd4af37; row.sort = (_csFurnitureCatalog || []).length;
   if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) { showToast('Cloud offline.', 3000); throw new Error('cloud'); }
-  const { error } = await Cloud.client.from('furniture_catalog').insert(row);
+  let { error } = await Cloud.client.from('furniture_catalog').insert(row);
+  if (error && _csMissingScaleCol(error)) { const r2 = Object.assign({}, row); delete r2.scale; ({ error } = await Cloud.client.from('furniture_catalog').insert(r2)); if (!error) showToast('🛋️ Added — run the furniture_scale migration to enable model scaling.', 4600); }
   if (error) { if (_csTableMissing(error)) showToast('⚠ furniture_catalog table missing — run the migration in Supabase.', 5200); else showToast('Add failed: ' + (error.message || error), 4200); throw error; }
-  showToast('🛋️ Added "' + row.name + '" to the market.', 2600);
+  else showToast('🛋️ Added "' + row.name + '" to the market.', 2600);
 }
 // Edit an existing furniture row in place — function, type, price, details, etc.
 // (color + sort are left untouched so its order/placeholder tint don't reset.)
@@ -107635,9 +107661,10 @@ async function _csMarketUpdate(node, id) {
   if (!((typeof isAdmin === 'function') && isAdmin())) { showToast('👑 Admin only.', 2400); throw new Error('admin'); }
   const row = _csReadMarketForm(node);
   if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) { showToast('Cloud offline.', 3000); throw new Error('cloud'); }
-  const { error } = await Cloud.client.from('furniture_catalog').update(row).eq('id', id);
+  let { error } = await Cloud.client.from('furniture_catalog').update(row).eq('id', id);
+  if (error && _csMissingScaleCol(error)) { const r2 = Object.assign({}, row); delete r2.scale; ({ error } = await Cloud.client.from('furniture_catalog').update(r2).eq('id', id)); if (!error) showToast('💾 Saved — run the furniture_scale migration to enable model scaling.', 4600); }
   if (error) { if (_csTableMissing(error)) showToast('⚠ furniture_catalog table missing — run the migration in Supabase.', 5200); else showToast('Save failed: ' + (error.message || error), 4200); throw error; }
-  showToast('💾 Saved changes to "' + row.name + '".', 2600);
+  else showToast('💾 Saved changes to "' + row.name + '".', 2600);
 }
 // 🛋️ The buy overlay (and admin "add furniture"). onClose repaints the builder.
 function _csOpenFurnitureMarket(onClose) {
@@ -107656,6 +107683,10 @@ function _csOpenFurnitureMarket(onClose) {
       <select data-csm="mount" title="Placement type"><option value="floor">🪑 Floor furniture</option><option value="wall">🖼️ Wall-mounted</option><option value="flat">🟥 Flat / rug</option><option value="ceiling">💡 Ceiling / hanging</option></select>
       <select data-csm="func" title="Function — walk up + E to use"><optgroup label="— Storefront / commerce —"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="binder">📒 Binder / Counter (storefront)</option><option value="open">🎴 Open packs</option><option value="vendor">🛒 Vendor Market (buy packs)</option><option value="battle">⚔️ Battle Table (AI / online match)</option></optgroup><optgroup label="— Portals (walk up + E → go there) —"><option value="lab">🧪 The Lab (fusion)</option><option value="deckbuilder">🃏 Deck Builder table</option><option value="district">🏙️ District Nodes (shows your node)</option><option value="camp">🏚 Camp / Bunker</option><option value="market">🏪 The Market</option><option value="crafting">🔨 Crafting</option><option value="cinder">🔥 Cinder Shop</option><option value="crash">📈 Crash Exchange</option></optgroup></select>
       <select data-csm="currency" title="Currency players pay in"><option value="cinder">🔥 Cinder (taxed)</option><option value="aza">🪙 Aza Coin</option></select>
+    </div>
+    <div class="csm-grid2" style="grid-template-columns:auto 1fr">
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#cdbf9c;white-space:nowrap">📏 Model scale</label>
+      <input data-csm="scale" type="number" step="0.05" min="0.01" placeholder="Display scale — 1 = native, 0.5 = half, 0.2 = ⅕ size (shrink an oversized .glb)" value="1">
     </div>
     <input data-csm="icon" placeholder="Icon — emoji (🛏️ 🖼️ 🔮) or an image URL" style="width:100%">
     <textarea data-csm="details" rows="2" placeholder='Details — what it does (shown to buyers). Leave blank → "A normal &lt;category&gt;."'></textarea>

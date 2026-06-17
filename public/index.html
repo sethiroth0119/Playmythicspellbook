@@ -58887,9 +58887,13 @@ function _dwCatalogRows() {
       if (!r || !r.model_url) continue;  // need a real model to load remotely
       const fIco = { bed: '🛏️', storage: '🧰', counter: '🛒', binder: '📒', open: '🎴' };
       const mIco = { wall: '🖼️', flat: '🟥', ceiling: '💡', floor: '🪑' };
+      // Prefer the admin's emoji icon; an image-URL icon falls back to a glyph
+      // (the dwelling market renders ico as text, not an <img>).
+      const _ic = (r.icon || '').toString().trim();
+      const ico = (_ic && !/^(https?:|\/|data:)/i.test(_ic)) ? _ic : (fIco[r.func] || mIco[r.mount] || '🛋️');
       out.push({
         id: 'fc_' + r.id, name: r.name || 'Furniture',
-        ico: fIco[r.func] || mIco[r.mount] || '🛋️',
+        ico: ico,
         url: r.model_url, price: r.price | 0,
         currency: (r.currency === 'aza' ? 'aza' : 'cinder'),
         details: r.details || '', category: r.category || 'decor',
@@ -107217,7 +107221,7 @@ async function _csFetchFurnitureCatalog(force) {
   _csFurnitureCatalog = rows;
   // Merge into _csCatMap so the builder resolves custom furniture by its 'fc:' id.
   for (const r of rows) {
-    _csCatMap['fc:' + r.id] = { id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', category: r.category || 'decor', details: r.details || '', currency: (r.currency === 'aza' ? 'aza' : 'cinder'), _custom: true, _catalogId: r.id };
+    _csCatMap['fc:' + r.id] = { id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', category: r.category || 'decor', details: r.details || '', icon: r.icon || '', currency: (r.currency === 'aza' ? 'aza' : 'cinder'), _custom: true, _catalogId: r.id };
   }
   return rows;
 }
@@ -107273,7 +107277,7 @@ function _csBuilderCatalog() {
   const custom = [];
   for (const r of (_csFurnitureCatalog || [])) {
     const q = owned[r.id] | 0; if (q <= 0) continue;
-    custom.push({ id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', category: r.category || 'decor', details: r.details || '', currency: (r.currency === 'aza' ? 'aza' : 'cinder'), _qty: q, _custom: true, _catalogId: r.id });
+    custom.push({ id: 'fc:' + r.id, name: r.name || 'Furniture', url: r.model_url || '', w: (r.w | 0) || 1, d: (r.d | 0) || 1, h: +r.h || 1, color: (r.color | 0) || 0xd4af37, anim: r.anim || null, price: r.price | 0, func: r.func || '', mount: r.mount || 'floor', category: r.category || 'decor', details: r.details || '', icon: r.icon || '', currency: (r.currency === 'aza' ? 'aza' : 'cinder'), _qty: q, _custom: true, _catalogId: r.id });
   }
   return base.concat(custom);
 }
@@ -107301,6 +107305,9 @@ function _ensureCsMarketStyle() {
   .csm-buy.is-afford{background:#d4af37;color:#0b0b0f}
   .csm-del{border:1px solid #5a2424;border-radius:8px;padding:6px;font-weight:700;cursor:pointer;background:#1f1212;color:#e6a3a3;font-size:11.5px}
   .csm-del:hover{background:#3a1818;color:#ffd0d0}
+  .csm-view{border:1px solid #3a4a5c;border-radius:8px;padding:7px;font-weight:700;cursor:pointer;background:#14202c;color:#a8cdee;font-size:12px}
+  .csm-view:hover{background:#1b2c3c;color:#d4ecff}
+  .csm-sw{overflow:hidden}
   .csm-admin{border-top:1px solid #2a2316;padding:12px 14px;display:flex;flex-direction:column;gap:7px}
   .csm-admin-h{font-weight:800;color:#f3d27a;font-size:12px}
   .csm-grid2{display:grid;grid-template-columns:1.4fr .8fr .5fr .5fr .5fr 1fr;gap:6px}
@@ -107312,31 +107319,120 @@ function _ensureCsMarketStyle() {
   `;
   document.head.appendChild(s);
 }
+// The market-card swatch: an admin icon (image URL → <img>, else emoji/text),
+// falling back to the model's placeholder-colour chip when no icon is set.
+function _csFurnitureIconHtml(r) {
+  const ic = (r && (r.icon || '')).toString().trim();
+  const color = ((r && r.color) | 0) || 0xd4af37;
+  const col = '#' + (color >>> 0).toString(16).padStart(6, '0').slice(-6);
+  if (ic) {
+    if (/^(https?:|\/|data:)/i.test(ic)) return `<img class="csm-sw" src="${escapeHtml(ic)}" alt="" style="object-fit:cover;background:${col}22">`;
+    return `<span class="csm-sw" style="display:flex;align-items:center;justify-content:center;font-size:20px;background:${col}22;border:1px solid ${col}">${escapeHtml(ic)}</span>`;
+  }
+  return `<span class="csm-sw" style="background:${col}33;border:1px solid ${col}"></span>`;
+}
 function _csFurnitureCardHtml(r) {
   const owned = _csOwnedQty(r.id), price = r.price | 0;
   const isAza = (r.currency === 'aza');
   const cur = isAza ? '🪙' : '🔥';
   const bal = isAza ? (Profile.sovereigns | 0) : (typeof getCinders === 'function' ? getCinders() : 0);
   const afford = bal >= price;
-  const col = '#' + (((r.color | 0) || 0xd4af37) >>> 0).toString(16).padStart(6, '0').slice(-6);
   const funcLabels = { bed: '🛏️ Bed', storage: '🧰 Storage', counter: '🛒 Counter', binder: '📒 Binder', open: '🎴 Open packs' };
   const funcTag = (r.func && funcLabels[r.func]) ? `<span style="color:#9ec5ff"> · ${funcLabels[r.func]}</span>` : '';
   return `<div class="csm-card">
-    <div class="csm-top2"><span class="csm-sw" style="background:${col}33;border:1px solid ${col}"></span>
+    <div class="csm-top2">${_csFurnitureIconHtml(r)}
       <div><div class="csm-name">${escapeHtml(r.name || 'Furniture')}${r.anim ? ' <span style="color:#9fe6a0">▶</span>' : ''}</div>
       <div class="csm-sub">${(r.w | 0) || 1}×${(r.d | 0) || 1} · ${escapeHtml(r.category || 'decor')}${funcTag}${r.model_url ? '' : ' · placeholder'}</div></div></div>
     <div class="csm-detail">${escapeHtml(_csFurnitureDetails(r))}</div>
     <div class="csm-own">Owned: ${owned}</div>
+    <button class="csm-view" data-csm-view="${escapeHtml(r.id)}" title="Preview this model in 3D">👁 View</button>
     <button class="csm-buy ${afford ? 'is-afford' : ''}" data-csm-buy="${escapeHtml(r.id)}" ${afford ? '' : 'disabled'}>Buy · ${price.toLocaleString()} ${cur}</button>
     ${((typeof isAdmin === 'function') && isAdmin()) ? `<button class="csm-del" data-csm-del="${escapeHtml(r.id)}" title="Remove this model from the market">🗑 Delete</button>` : ''}
   </div>`;
+}
+// 👁 3D preview of a furniture model — drag to orbit, scroll to zoom. Loads the
+// .glb from its public URL (or shows a procedural placeholder box if none). Fully
+// self-contained: own GLTFLoader + Box3 framing + RAF loop, disposed on close.
+function _csFurniturePreview(item) {
+  if (!item) return;
+  if (document.getElementById('cs-preview-backdrop')) return;
+  const url = item.url || item.model_url || '';
+  _csLoadThree((ok) => {
+    if (!ok || !window.THREE) { showToast('3D preview needs Three.js (be online).', 3200); return; }
+    const T = window.THREE;
+    const wrap = document.createElement('div');
+    wrap.id = 'cs-preview-backdrop';
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(4,4,8,0.93);display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:ui-sans-serif,system-ui,sans-serif';
+    wrap.innerHTML =
+      '<div style="position:absolute;top:14px;left:0;right:0;text-align:center;color:#f3d27a;font-weight:800;font-size:1.05rem;pointer-events:none">' + escapeHtml(item.name || 'Furniture') + '</div>' +
+      '<div style="position:absolute;top:40px;left:0;right:0;text-align:center;color:#cdbf9c;font-size:0.82rem;font-style:italic;pointer-events:none;padding:0 14px">' + escapeHtml(_csFurnitureDetails(item)) + '</div>' +
+      '<canvas id="cs-preview-canvas" style="width:92vw;height:70vh;max-width:780px;border-radius:12px;touch-action:none;cursor:grab"></canvas>' +
+      '<div style="margin-top:10px;color:#8f846a;font-size:0.78rem">🖱️ Drag to rotate · scroll to zoom</div>' +
+      '<button id="cs-preview-close" style="position:absolute;top:12px;right:16px;background:#241d10;border:1px solid #3a2f1c;color:#e9e1cf;border-radius:8px;padding:8px 13px;cursor:pointer;font-weight:700">✕ Close</button>';
+    document.body.appendChild(wrap);
+    const canvas = wrap.querySelector('#cs-preview-canvas');
+    const W = canvas.clientWidth || 760, H = canvas.clientHeight || 480;
+    const renderer = new T.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.setSize(W, H, false);
+    const scene = new T.Scene();
+    scene.add(new T.AmbientLight(0xffffff, 0.9));
+    const dl = new T.DirectionalLight(0xffffff, 0.95); dl.position.set(4, 8, 5); scene.add(dl);
+    const dl2 = new T.DirectionalLight(0x88aaff, 0.4); dl2.position.set(-5, 3, -4); scene.add(dl2);
+    const camera = new T.PerspectiveCamera(45, W / H, 0.05, 200);
+    const pivot = new T.Group(); scene.add(pivot);
+    let yaw = 0.7, pitch = 0.32, dist = 4; const target = new T.Vector3(0, 0.6, 0);
+    const place = (obj) => {
+      try {
+        pivot.add(obj);
+        const bb = new T.Box3().setFromObject(obj);
+        if (isFinite(bb.min.y)) {
+          const size = bb.getSize(new T.Vector3()), ctr = bb.getCenter(new T.Vector3());
+          obj.position.x -= ctr.x; obj.position.z -= ctr.z; obj.position.y -= bb.min.y;  // seat on y=0, centred
+          target.set(0, size.y / 2, 0);
+          dist = Math.max(1.4, Math.max(size.x, size.y, size.z) * 1.9);
+        }
+      } catch (e) {}
+    };
+    const placeholder = () => {
+      const w = Math.max(0.6, (item.w | 0) || 1), d = Math.max(0.6, (item.d | 0) || 1), h = Math.max(0.4, +item.h || 1);
+      const col = ((item.color | 0) || 0xd4af37);
+      place(new T.Mesh(new T.BoxGeometry(w, h, d), new T.MeshStandardMaterial({ color: col, metalness: 0.1, roughness: 0.65 })));
+    };
+    let drewModel = false;
+    if (url && T.GLTFLoader) {
+      try { new T.GLTFLoader().load(url, (g) => { if (!document.getElementById('cs-preview-backdrop')) return; drewModel = true; place(g.scene || (g.scenes && g.scenes[0])); }, undefined, () => { if (!drewModel) placeholder(); }); }
+      catch (e) { placeholder(); }
+    } else placeholder();
+    const upd = () => {
+      pitch = Math.max(-1.2, Math.min(1.4, pitch));
+      camera.position.set(target.x + dist * Math.cos(pitch) * Math.sin(yaw), target.y + dist * Math.sin(pitch), target.z + dist * Math.cos(pitch) * Math.cos(yaw));
+      camera.lookAt(target);
+    };
+    let raf = 0; const loop = () => { raf = requestAnimationFrame(loop); upd(); renderer.render(scene, camera); }; loop();
+    let drag = false, lx = 0, ly = 0;
+    const dn = (e) => { const p = (e.touches && e.touches[0]) || e; drag = true; lx = p.clientX; ly = p.clientY; canvas.style.cursor = 'grabbing'; };
+    const mv = (e) => { if (!drag) return; const p = (e.touches && e.touches[0]) || e; yaw -= (p.clientX - lx) * 0.01; pitch += (p.clientY - ly) * 0.01; lx = p.clientX; ly = p.clientY; };
+    const up = () => { drag = false; canvas.style.cursor = 'grab'; };
+    const wheel = (e) => { e.preventDefault(); dist = Math.max(1.0, Math.min(40, dist * (1 + (e.deltaY > 0 ? 0.12 : -0.12)))); };
+    canvas.addEventListener('mousedown', dn); window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+    canvas.addEventListener('touchstart', dn, { passive: true }); window.addEventListener('touchmove', mv, { passive: true }); window.addEventListener('touchend', up);
+    canvas.addEventListener('wheel', wheel, { passive: false });
+    const close = () => {
+      try { cancelAnimationFrame(raf); } catch (e) {}
+      window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); window.removeEventListener('touchmove', mv); window.removeEventListener('touchend', up);
+      try { renderer.dispose(); } catch (e) {}
+      const w = document.getElementById('cs-preview-backdrop'); if (w) w.remove();
+    };
+    wrap.querySelector('#cs-preview-close').onclick = close;
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
+  });
 }
 async function _csMarketAdd(node) {
   const g = (f) => { const n = node.querySelector(`[data-csm="${f}"]`); return n ? n.value : ''; };
   const numf = (f, d) => { const n = parseFloat(g(f)); return isFinite(n) ? n : d; };
   const name = (g('name') || '').trim(); if (!name) { showToast('Furniture needs a name.', 2400); throw new Error('name'); }
   let anim = null; const ar = g('anim'); if (ar && ar.trim()) { try { anim = JSON.parse(ar); } catch (e) { showToast('⚠ Animation JSON is invalid.', 3600); throw e; } }
-  const row = { name, model_url: g('model_url') || null, price: Math.max(0, Math.round(numf('price', 100))), currency: (g('currency') === 'aza' ? 'aza' : 'cinder'), details: (g('details') || '').trim() || null, w: Math.max(1, Math.round(numf('w', 1))), d: Math.max(1, Math.round(numf('d', 1))), h: numf('h', 1), category: g('category') || 'decor', func: g('func') || null, mount: g('mount') || 'floor', anim, color: 0xd4af37, sort: (_csFurnitureCatalog || []).length };
+  const row = { name, model_url: g('model_url') || null, icon: (g('icon') || '').trim() || null, price: Math.max(0, Math.round(numf('price', 100))), currency: (g('currency') === 'aza' ? 'aza' : 'cinder'), details: (g('details') || '').trim() || null, w: Math.max(1, Math.round(numf('w', 1))), d: Math.max(1, Math.round(numf('d', 1))), h: numf('h', 1), category: g('category') || 'decor', func: g('func') || null, mount: g('mount') || 'floor', anim, color: 0xd4af37, sort: (_csFurnitureCatalog || []).length };
   if (typeof Cloud === 'undefined' || !Cloud.ready || !Cloud.client) { showToast('Cloud offline.', 3000); throw new Error('cloud'); }
   const { error } = await Cloud.client.from('furniture_catalog').insert(row);
   if (error) { if (_csTableMissing(error)) showToast('⚠ furniture_catalog table missing — run the migration in Supabase.', 5200); else showToast('Add failed: ' + (error.message || error), 4200); throw error; }
@@ -107360,6 +107456,7 @@ function _csOpenFurnitureMarket(onClose) {
       <select data-csm="func" title="Function — walk up + E to use"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="counter">🛒 Shop counter (buy)</option><option value="binder">📒 Binder</option><option value="open">🎴 Open packs</option></select>
       <select data-csm="currency" title="Currency players pay in"><option value="cinder">🔥 Cinder (taxed)</option><option value="aza">🪙 Aza Coin</option></select>
     </div>
+    <input data-csm="icon" placeholder="Icon — emoji (🛏️ 🖼️ 🔮) or an image URL" style="width:100%">
     <textarea data-csm="details" rows="2" placeholder='Details — what it does (shown to buyers). Leave blank → "A normal &lt;category&gt;."'></textarea>
     <input data-csm="model_url" placeholder=".glb public URL — or upload one →" style="width:100%">
     <textarea data-csm="anim" rows="2" placeholder='Animation JSON (optional) — e.g. {"clip":"Idle"} or {"clip":"Spin","timeScale":1,"loop":true}'></textarea>
@@ -107383,6 +107480,8 @@ function _csOpenFurnitureMarket(onClose) {
   if (!_csFurnitureCatalog) _csFetchFurnitureCatalog().catch(() => {}).then(repaint);
   node.addEventListener('click', async (e) => {
     if (e.target.closest('[data-csm="close"]')) { node.remove(); if (onClose) onClose(); return; }
+    const view = e.target.closest('[data-csm-view]');
+    if (view) { const item = _csCatMap['fc:' + view.getAttribute('data-csm-view')] || (_csFurnitureCatalog || []).find(r => r && r.id === view.getAttribute('data-csm-view')); if (item) _csFurniturePreview(item); return; }
     const buy = e.target.closest('[data-csm-buy]');
     if (buy) { const item = _csCatMap['fc:' + buy.getAttribute('data-csm-buy')]; if (item && _csBuyFurniture(item)) { repaint(); if (onClose) onClose(); } return; }
     const del = e.target.closest('[data-csm-del]');

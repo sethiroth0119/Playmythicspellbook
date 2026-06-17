@@ -106667,7 +106667,7 @@ function _csMount3D(mount) {
         const fr = Math.max(cat ? cat.w || 1 : 1, cat ? cat.d || 1 : 1) * 0.5 * (p.scale || 1);
         if (!cat || (cat.h == null) || cat.h > 0.25) propColliders.push({ gx: p.x || 0, gz: p.z || 0, r: Math.max(0.35, fr) });
         // 🛠 Functional fixture: walk up + E uses it (bed/storage/counter/binder/open).
-        if (p.func) { const FL = { bed: '🛏️ Rest', storage: '🧰 Storage', counter: 'THE BINDER', binder: 'THE BINDER', open: 'OPEN PACKS', browse: 'PLAYER SHOPS', vendor: 'VENDOR MARKET', battle: 'BATTLE TABLE' }; stations.push({ view: p.func, label: FL[p.func] || String(p.func).toUpperCase(), name: (cat && cat.name) || '', details: (cat && cat.details) || '', gx: p.x || 0, gz: p.z || 0, r: Math.max(0.6, fr), ir: 3.0 }); }
+        if (p.func) { const FL = { bed: '🛏️ Rest', storage: '🧰 Storage', counter: 'THE BINDER', binder: 'THE BINDER', open: 'OPEN PACKS', browse: 'PLAYER SHOPS', vendor: 'VENDOR MARKET', battle: 'BATTLE TABLE', lab: 'THE LAB', deckbuilder: 'DECK BUILDER', district: 'DISTRICT NODES', camp: 'CAMP', market: 'THE MARKET', crafting: 'CRAFTING', cinder: 'CINDER SHOP', crash: 'CRASH EXCHANGE' }; stations.push({ view: p.func, label: FL[p.func] || String(p.func).toUpperCase(), name: (cat && cat.name) || '', details: (cat && cat.details) || '', gx: p.x || 0, gz: p.z || 0, r: Math.max(0.6, fr), ir: 3.0 }); }
       } catch (e) {}
       if (p.url) _csTryModel(p.url, (m, gltf) => { try { if (ph) pg.remove(ph); if (p.scale) m.scale.setScalar(p.scale); _csSeatModel(m); pg.add(m); _csAnimate(m, p, gltf, pg); } catch (e) {} });
     }
@@ -106773,6 +106773,33 @@ function _csEnterStation(view) {
     // AND 🌐 Find Match (online matchmaking against a real player).
     App.screen = 'deckSelect';
     render();
+    return;
+  }
+  // 🚪 PORTAL furniture — walk-up + E warps the player to another screen, exactly
+  // like a title-hub button. (vendor/battle above are the commerce portals; these
+  // are the navigation ones the owner asked for: Lab, Deck Builder, Camp, …)
+  const _csPortal = {
+    lab:         () => { App.screen = 'lab'; App.labTab = 'fuse'; App.labParentA = null; App.labParentB = null; },
+    deckbuilder: () => { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; },
+    camp:        () => { App.screen = 'camp'; },
+    market:      () => { App.screen = 'market'; App.marketTab = 'browse'; App.marketFilter = 'all'; try { reseedNpcListingsIfStale(false); } catch (e) {} },
+    crafting:    () => { App.screen = 'crafting'; },
+    cinder:      () => { App.screen = 'cinderShop'; },
+    crash:       () => { App._cxReturnScreen = 'title'; App.screen = 'crashExchange'; },
+  };
+  if (_csPortal[view]) { try { _csPortal[view](); } catch (e) {} try { render(); } catch (e) {} return; }
+  if (view === 'district') {
+    // 🏙️ District Nodes — open the Territory Wars map AND tell the owner which
+    // District Node their shop is registered to (read off CardShop.mine.node_id).
+    // Mirrors the hub's direct renderTerritoryWars() call so a render fallback
+    // can't reset TW state.
+    try {
+      const nid = (typeof CardShop !== 'undefined' && CardShop.mine && CardShop.mine.node_id) || null;
+      if (nid) { const m = _csNodeMeta(nid); showToast('🏙️ Your shop is registered to ' + escapeHtml((m && m.name) || nid) + '.', 4200); }
+      else { showToast('🏙️ Your shop isn’t registered to a District Node yet — register it from My Card Shop.', 5200); }
+    } catch (e) {}
+    App.screen = 'territoryWars';
+    try { renderTerritoryWars(); } catch (e) { try { render(); } catch (_) {} }
     return;
   }
   if (view === 'bed') { const st = App._csNearStation || {}; openHeroRestPanel({ bed: { name: st.name || 'Bed', details: st.details || '' } }); return; }
@@ -107476,7 +107503,7 @@ function _csFurnitureCardHtml(r) {
   const cur = isAza ? '🪙' : '🔥';
   const bal = isAza ? (Profile.sovereigns | 0) : (typeof getCinders === 'function' ? getCinders() : 0);
   const afford = bal >= price;
-  const funcLabels = { bed: '🛏️ Bed', storage: '🧰 Storage', counter: '📒 Binder', binder: '📒 Binder', open: '🎴 Open packs', vendor: '🛒 Vendor', battle: '⚔️ Battle' };
+  const funcLabels = { bed: '🛏️ Bed', storage: '🧰 Storage', counter: '📒 Binder', binder: '📒 Binder', open: '🎴 Open packs', vendor: '🛒 Vendor', battle: '⚔️ Battle', lab: '🧪 Lab', deckbuilder: '🃏 Deck Builder', district: '🏙️ District Nodes', camp: '🏚 Camp', market: '🏪 Market', crafting: '🔨 Crafting', cinder: '🔥 Cinder Shop', crash: '📈 Crash Exchange' };
   const funcTag = (r.func && funcLabels[r.func]) ? `<span style="color:#9ec5ff"> · ${funcLabels[r.func]}</span>` : '';
   return `<div class="csm-card">
     <div class="csm-top2">${_csFurnitureIconHtml(r)}
@@ -107627,7 +107654,7 @@ function _csOpenFurnitureMarket(onClose) {
     </div>
     <div class="csm-grid2" style="grid-template-columns:1fr 1fr 1fr">
       <select data-csm="mount" title="Placement type"><option value="floor">🪑 Floor furniture</option><option value="wall">🖼️ Wall-mounted</option><option value="flat">🟥 Flat / rug</option><option value="ceiling">💡 Ceiling / hanging</option></select>
-      <select data-csm="func" title="Function — walk up + E to use"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="binder">📒 Binder / Counter (storefront)</option><option value="open">🎴 Open packs</option><option value="vendor">🛒 Vendor Market (buy packs)</option><option value="battle">⚔️ Battle Table (AI / online match)</option></select>
+      <select data-csm="func" title="Function — walk up + E to use"><optgroup label="— Storefront / commerce —"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="binder">📒 Binder / Counter (storefront)</option><option value="open">🎴 Open packs</option><option value="vendor">🛒 Vendor Market (buy packs)</option><option value="battle">⚔️ Battle Table (AI / online match)</option></optgroup><optgroup label="— Portals (walk up + E → go there) —"><option value="lab">🧪 The Lab (fusion)</option><option value="deckbuilder">🃏 Deck Builder table</option><option value="district">🏙️ District Nodes (shows your node)</option><option value="camp">🏚 Camp / Bunker</option><option value="market">🏪 The Market</option><option value="crafting">🔨 Crafting</option><option value="cinder">🔥 Cinder Shop</option><option value="crash">📈 Crash Exchange</option></optgroup></select>
       <select data-csm="currency" title="Currency players pay in"><option value="cinder">🔥 Cinder (taxed)</option><option value="aza">🪙 Aza Coin</option></select>
     </div>
     <input data-csm="icon" placeholder="Icon — emoji (🛏️ 🖼️ 🔮) or an image URL" style="width:100%">

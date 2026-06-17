@@ -36168,7 +36168,18 @@ async function cloudFetchProfile() {
       // 🎣 Woods Fishing fleet — keep whichever copy is richer so a stale cloud
       // row (within the 4s upload debounce) can NEVER blank a just-bought boat
       // / crew / dock upgrade. Same guarantee as the Forge content merge.
-      if (f.__fishingCorp__ && typeof f.__fishingCorp__ === 'object') Profile.fishingCorp = _preferRicherObj(f.__fishingCorp__, Profile.fishingCorp);
+      if (f.__fishingCorp__ && typeof f.__fishingCorp__ === 'object') {
+        const _localFC = Profile.fishingCorp;
+        Profile.fishingCorp = _preferRicherObj(f.__fishingCorp__, _localFC);
+        // 🎣 Live-fishing progression (level/xp/poles/bait/biomes) is small — the
+        // richer-wins weight above is dominated by boats/crew/log, so a stale
+        // cloud `live` could ride in and undo a freshly-leveled angler. Reconcile
+        // it explicitly: never lose a pole, biome, bait, or a level.
+        try {
+          const _lp = (_localFC && _localFC.live), _cp = (f.__fishingCorp__ && f.__fishingCorp__.live);
+          if (_lp || _cp) Profile.fishingCorp.live = _wf3MergeLive(_lp, _cp);
+        } catch (e) {}
+      }
       // 🚗 Prince Portfolios admin photos + per-player dealership state.
       if (f.princePortfolios && typeof f.princePortfolios === 'object') Forge.princePortfolios = f.princePortfolios;
       // 🚗 Prince Portfolios fleet — richer-wins so a stale cloud row can't
@@ -134441,6 +134452,765 @@ function wfHandlePhotoUpload(kind, id, file) {
 // ============================================================================
 // 🎣 WOODS FISHING — Screen renderer
 // ============================================================================
+// ============================================================================
+// 🎣 WOODS FISHING — LIVE 3D FISHING TRIP  (fuel-gated cast/reel mini-game)
+// ----------------------------------------------------------------------------
+// Full port of the standalone fishing-minigame.html into the EXPEDITIONS tab.
+// Cast → hit the luck ring → wait for a bite → set the hook → reel without
+// snapping the line → land the fish. Poles, bait, biomes (depth) and fishing
+// levels persist on Profile.fishingCorp.live (cloud-synced via __fishingCorp__).
+//
+// INTEGRATION vs the source file's HOOKs:
+//   WALLET  → getCinders / spendCinders (Foundation-taxed) / addCinders
+//   FOOD    → Profile.salvage.food  (camp food — same pile Cold Storage shows)
+//   FUEL    → trips cost ⛽ to launch + a per-trip cast tank; refuel mid-trip
+//   3D BOAT → Forge.woodsFishing.models.ship          (admin .glb upload)
+//   3D FISH → Forge.woodsFishing.models.fish[Rarity]  (admin .glb; procedural fallback)
+//   SAVE    → Profile.fishingCorp.live (level/xp/poles/bait/biomes/equips)
+// Everything is _wf3*/WF3_* so nothing collides with the rest of the bundle.
+// ============================================================================
+const WF3_RARITY_COLOR = { Common: '#9aa3b2', Uncommon: '#46c97e', Rare: '#c9a24d', Legendary: '#e0623d' };
+const WF3_RARITY_CINDER = { Common: 4, Uncommon: 14, Rare: 38, Legendary: 90 };
+const WF3_HOTSPOT_LUCK_MIN = 0.15, WF3_HOTSPOT_LUCK_MAX = 0.45, WF3_HOTSPOT_ENC_MAX = 0.12;
+const WF3_RING_BASE = 1.70, WF3_RING_SHRINK_PER_LVL = 0.08, WF3_RING_MIN = 0.70;
+const WF3_METER_SPEED_PER_LVL = 0.06, WF3_METER_MAX = 2.0;
+const WF3_XP_GAIN = { Common: 10, Uncommon: 20, Rare: 40, Legendary: 80 };
+const WF3_XP_LOSS_SNAP = 12, WF3_XP_LOSS_GETAWAY = 5, WF3_MAX_LEVEL = 20;
+function _wf3XpForLevel(lvl) { return 40 + lvl * 20; }
+// ⛽ Fuel economy — a trip costs fuel to launch and gives a tank of casts.
+const WF3_TRIP_FUEL = 5;     // ⛽ spent from Profile.salvage.fuel to set sail
+const WF3_TRIP_CASTS = 14;   // casts per tank before you must refuel / return
+
+const WF3_POLES = [
+  { id: 'driftwood',  name: 'Driftwood Rod',   emoji: '🎣', cost: 0,   reelRate: 38, tensionCap: 100, castMax: 22, luck: 0.00, desc: 'A salvaged starter rod. Gets the job done.' },
+  { id: 'bonehook',   name: 'Bone Hook Rod',   emoji: '🦴', cost: 120, reelRate: 48, tensionCap: 108, castMax: 24, luck: 0.10, desc: 'Carved from leviathan bone. Reels faster.' },
+  { id: 'cindercast', name: 'Cinder Caster',   emoji: '🔥', cost: 350, reelRate: 58, tensionCap: 122, castMax: 27, luck: 0.22, desc: 'Heat-forged line resists snapping under strain.' },
+  { id: 'spellrod',   name: 'Mythic Spellrod', emoji: '✨', cost: 900, reelRate: 70, tensionCap: 140, castMax: 30, luck: 0.40, desc: 'Enchanted to lure the rarest of the deep.' },
+];
+const WF3_BAITS = [
+  { id: 'grub',  name: 'Grub Bunch',  emoji: '🪱', cost: 30,  pack: 10, luck: 0.05, encounter: 0,    foodBonus: 1, desc: 'Cheap and reliable. +1 food per catch.' },
+  { id: 'glow',  name: 'Glowworm',    emoji: '🐛', cost: 80,  pack: 8,  luck: 0.28, encounter: 0,    foodBonus: 0, desc: 'Bioluminescent. Strongly favors rare fish.' },
+  { id: 'blood', name: 'Bloodbait',   emoji: '🩸', cost: 70,  pack: 8,  luck: 0.10, encounter: 0.28, foodBonus: 0, desc: 'Draws predators — big jump in encounters.' },
+  { id: 'lure',  name: 'Mythic Lure', emoji: '💎', cost: 220, pack: 5,  luck: 0.55, encounter: 0.10, foodBonus: 0, desc: 'Legendary bait. Massive rare-catch boost.' },
+];
+const WF3_BIOMES = [
+  { id: 'shallows', name: 'Ashen Shallows', emoji: '🏝️', unlockCost: 0,   water: 0x16323a, fog: 0x121620, encounterChance: 0.12, desc: 'Calm starter waters near the ruined dock.',
+    loot: [ { id: 'ash_minnow', name: 'Ashen Minnow', rarity: 'Common', food: 2, weight: 40 }, { id: 'rust_carp', name: 'Rust Carp', rarity: 'Common', food: 3, weight: 32 }, { id: 'glow_eel', name: 'Glowscale Eel', rarity: 'Uncommon', food: 5, weight: 16 }, { id: 'mythic_koi', name: 'Mythic Koi', rarity: 'Rare', food: 12, weight: 4 } ],
+    encounters: [ { enemyId: 'drowned_husk', name: 'Drowned Husk', rarity: 'Uncommon' } ] },
+  { id: 'mire', name: 'Drowned Mire', emoji: '🌿', unlockCost: 250, water: 0x1c2a16, fog: 0x10160e, encounterChance: 0.22, desc: 'A toxic swamp. More bites — and more teeth.',
+    loot: [ { id: 'rust_carp', name: 'Rust Carp', rarity: 'Common', food: 3, weight: 26 }, { id: 'glow_eel', name: 'Glowscale Eel', rarity: 'Uncommon', food: 5, weight: 30 }, { id: 'cinder_bass', name: 'Cinderfin Bass', rarity: 'Uncommon', food: 7, weight: 24 }, { id: 'mythic_koi', name: 'Mythic Koi', rarity: 'Rare', food: 13, weight: 9 } ],
+    encounters: [ { enemyId: 'mire_serpent', name: 'Mire Serpent', rarity: 'Uncommon' }, { enemyId: 'bog_lurker', name: 'Bog Lurker', rarity: 'Rare' } ] },
+  { id: 'depths', name: 'Cinder Depths', emoji: '🌋', unlockCost: 700, water: 0x2a1014, fog: 0x180609, encounterChance: 0.30, desc: 'Lava-fed abyss. The rarest hauls, the deadliest fights.',
+    loot: [ { id: 'cinder_bass', name: 'Cinderfin Bass', rarity: 'Uncommon', food: 7, weight: 28 }, { id: 'emberjaw', name: 'Emberjaw', rarity: 'Rare', food: 15, weight: 30 }, { id: 'mythic_koi', name: 'Mythic Koi', rarity: 'Rare', food: 14, weight: 18 }, { id: 'leviath_fry', name: 'Leviathan Fry', rarity: 'Legendary', food: 28, weight: 6 } ],
+    encounters: [ { enemyId: 'cinder_wyrm', name: 'Cinder Wyrm', rarity: 'Rare' }, { enemyId: 'ash_leviathan', name: 'Ash Leviathan', rarity: 'Legendary' } ] },
+];
+const WF3_FIGHT = {
+  Common: { str: 13, surge: 9, dots: '●○○○' }, Uncommon: { str: 19, surge: 13, dots: '●●○○' },
+  Rare: { str: 27, surge: 17, dots: '●●●○' }, Legendary: { str: 36, surge: 22, dots: '●●●●' },
+};
+const WF3_SWELL = {
+  shallows: { bob: 0.10, roll: 0.022, pitch: 0.014, wave: 1.00 },
+  mire:     { bob: 0.18, roll: 0.038, pitch: 0.022, wave: 1.18 },
+  depths:   { bob: 0.30, roll: 0.060, pitch: 0.034, wave: 1.45 },
+};
+
+// Runtime (transient) state for the open trip. Persistent progress lives on
+// Profile.fishingCorp.live (see _wf3Live). G = THREE graphics handle.
+let _wf3S = null;
+
+function _wf3Clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+// Per-player persistent fishing progress.
+function _wf3Live() {
+  const f = ensureFishingCorp();
+  if (!f.live || typeof f.live !== 'object') f.live = {};
+  const L = f.live;
+  if (!Array.isArray(L.poles) || !L.poles.length) L.poles = ['driftwood'];
+  if (typeof L.equippedPole !== 'string') L.equippedPole = 'driftwood';
+  if (!L.baitStock || typeof L.baitStock !== 'object') L.baitStock = {};
+  if (!('equippedBait' in L)) L.equippedBait = null;
+  if (!Array.isArray(L.biomes) || !L.biomes.length) L.biomes = ['shallows'];
+  if (typeof L.currentBiome !== 'string') L.currentBiome = 'shallows';
+  if (typeof L.level !== 'number') L.level = 1;
+  if (typeof L.xp !== 'number') L.xp = 0;
+  return L;
+}
+function _wf3Pole() { const L = _wf3Live(); return WF3_POLES.find(p => p.id === L.equippedPole) || WF3_POLES[0]; }
+function _wf3Biome() { const L = _wf3Live(); return WF3_BIOMES.find(b => b.id === L.currentBiome) || WF3_BIOMES[0]; }
+function _wf3Bait() { const L = _wf3Live(); return L.equippedBait ? WF3_BAITS.find(b => b.id === L.equippedBait) : null; }
+function _wf3OwnsPole(id) { const p = WF3_POLES.find(x => x.id === id); return !!p && (p.cost === 0 || _wf3Live().poles.includes(id)); }
+function _wf3BiomeUnlocked(id) { const b = WF3_BIOMES.find(x => x.id === id); return !!b && (b.unlockCost === 0 || _wf3Live().biomes.includes(id)); }
+function _wf3Save() { try { saveProfile && saveProfile(); } catch (e) {} }
+function _wf3AdminModels() { try { return (Forge.woodsFishing && Forge.woodsFishing.models) || {}; } catch (e) { return {}; } }
+// Progression-preserving merge of two `live` blobs (local vs cloud) — used by
+// cloudFetchProfile so a stale cloud row can never strip a pole/biome/level.
+function _wf3MergeLive(a, b) {
+  if (!a || typeof a !== 'object') a = null; if (!b || typeof b !== 'object') b = null;
+  if (!a) return b || {}; if (!b) return a;
+  const uniq = (x, y) => Array.from(new Set([].concat(Array.isArray(x) ? x : [], Array.isArray(y) ? y : [])));
+  const maxMap = (x, y) => { const o = {}; [x, y].forEach(src => { if (src && typeof src === 'object') for (const k in src) o[k] = Math.max(o[k] || 0, src[k] | 0); }); return o; };
+  const aLvl = a.level | 0, bLvl = b.level | 0;
+  const level = Math.max(aLvl, bLvl);
+  // xp comes from whichever side reached the higher level; tie → the larger xp.
+  const xp = aLvl > bLvl ? (a.xp || 0) : bLvl > aLvl ? (b.xp || 0) : Math.max(a.xp || 0, b.xp || 0);
+  // Equipped choices: prefer the more-progressed side's selection (or local `a`).
+  const lead = aLvl >= bLvl ? a : b;
+  return {
+    poles: uniq(a.poles, b.poles).length ? uniq(a.poles, b.poles) : ['driftwood'],
+    biomes: uniq(a.biomes, b.biomes).length ? uniq(a.biomes, b.biomes) : ['shallows'],
+    baitStock: maxMap(a.baitStock, b.baitStock),
+    equippedPole: lead.equippedPole || a.equippedPole || b.equippedPole || 'driftwood',
+    equippedBait: ('equippedBait' in lead) ? lead.equippedBait : (a.equippedBait != null ? a.equippedBait : b.equippedBait),
+    currentBiome: lead.currentBiome || a.currentBiome || b.currentBiome || 'shallows',
+    level, xp,
+  };
+}
+
+// ── Wallet / food hooks ────────────────────────────────────────────────────
+function _wf3GetCinder() { return (typeof getCinders === 'function') ? getCinders() : (Profile.gems | 0); }
+function _wf3SpendCinder(n) { n = Math.round(n); if (_wf3GetCinder() < n) return false; if (typeof spendCinders === 'function') { if (!spendCinders(n)) return false; } else { Profile.gems = (Profile.gems | 0) - n; } try { _serverMirrorCharge && _serverMirrorCharge(n, 'Woods Fishing trip'); } catch (e) {} _wf3RenderHud(); return true; }
+function _wf3AddCinder(n) { n = Math.round(n); if (typeof addCinders === 'function') addCinders(n); else Profile.gems = (Profile.gems | 0) + n; _wf3RenderHud(); }
+function _wf3AddFood(n) { if (!Profile.salvage || typeof Profile.salvage !== 'object') Profile.salvage = {}; Profile.salvage.food = (Profile.salvage.food | 0) + (n | 0); }
+function _wf3Fuel() { return (Profile.salvage && Profile.salvage.fuel) | 0; }
+
+// ── DOM helpers ─────────────────────────────────────────────────────────────
+function _wf3$(suffix) { return document.getElementById('wf3-' + suffix); }
+function _wf3SetPrompt(h) { const el = _wf3$('promptText'); if (el) el.innerHTML = h; }
+function _wf3FlashLog(msg, cls) { const log = _wf3$('log'); if (!log) return; const d = document.createElement('div'); d.textContent = msg; if (cls) d.className = cls; log.prepend(d); while (log.children.length > 4) log.lastChild.remove(); }
+function _wf3RenderHud() {
+  if (!document.getElementById('wf3-overlay')) return;
+  const L = _wf3Live(), s = _wf3S; if (!s) return;
+  const cin = _wf3$('cinder'); if (cin) cin.textContent = _wf3GetCinder().toLocaleString();
+  const sc = _wf3$('shopCinder'); if (sc) sc.textContent = _wf3GetCinder().toLocaleString();
+  const food = _wf3$('food'); if (food) food.textContent = (s.foodTrip | 0).toLocaleString();
+  const pn = _wf3$('poleName'); if (pn) pn.textContent = _wf3Pole().name;
+  const bn = _wf3$('biomeName'); if (bn) bn.textContent = _wf3Biome().name;
+  const lv = _wf3$('lvl'); if (lv) lv.textContent = L.level;
+  const need = _wf3XpForLevel(L.level);
+  const xf = _wf3$('xpFill'); if (xf) xf.style.width = _wf3Clamp(L.xp / need * 100, 0, 100) + '%';
+  const xt = _wf3$('xpText'); if (xt) xt.textContent = Math.floor(L.xp) + ' / ' + need + ' XP';
+  const b = _wf3Bait();
+  const ban = _wf3$('baitName'), bac = _wf3$('baitCount');
+  if (b) { if (ban) ban.textContent = b.name; if (bac) bac.textContent = '(' + (L.baitStock[b.id] || 0) + ')'; }
+  else { if (ban) ban.textContent = 'None'; if (bac) bac.textContent = ''; }
+  const cl = _wf3$('casts'); if (cl) cl.textContent = Math.max(0, s.castsLeft | 0);
+}
+
+// ── Progression ─────────────────────────────────────────────────────────────
+function _wf3ApplyLevel() {
+  const s = _wf3S; if (!s) return; const L = _wf3Live();
+  s.hotR = Math.max(WF3_RING_MIN, WF3_RING_BASE - (L.level - 1) * WF3_RING_SHRINK_PER_LVL);
+  s.powerRate = Math.min(WF3_METER_MAX, 0.9 + (L.level - 1) * WF3_METER_SPEED_PER_LVL);
+  s.ringScale = s.hotR / WF3_RING_BASE;
+  if (s.G && s.G.hotspot) s.G.hotspot.scale.set(s.ringScale, 1, s.ringScale);
+}
+function _wf3GainXP(amt) {
+  const L = _wf3Live(); L.xp += amt; let up = false;
+  while (L.level < WF3_MAX_LEVEL && L.xp >= _wf3XpForLevel(L.level)) { L.xp -= _wf3XpForLevel(L.level); L.level++; up = true; }
+  if (L.level >= WF3_MAX_LEVEL) L.xp = Math.min(L.xp, _wf3XpForLevel(L.level));
+  if (up) {
+    _wf3ApplyLevel(); const rw = 15 * L.level; _wf3AddCinder(rw);
+    _wf3FlashLog('⬆ Fishing Level ' + L.level + '! +' + rw + ' ₵', 'buy');
+    if (L.level % 3 === 0) { L.baitStock.grub = (L.baitStock.grub || 0) + 5; if (!L.equippedBait) L.equippedBait = 'grub'; _wf3FlashLog('Reward: +5 Grub Bunch bait', 'buy'); }
+  }
+  _wf3RenderHud(); _wf3Save();
+}
+function _wf3LoseXP(amt) {
+  const L = _wf3Live(); L.xp -= amt; let down = false;
+  while (L.xp < 0 && L.level > 1) { L.level--; L.xp += _wf3XpForLevel(L.level); down = true; }
+  if (L.xp < 0) L.xp = 0;
+  if (down) { _wf3ApplyLevel(); _wf3FlashLog('⬇ Fishing Level ' + L.level, 'enc'); }
+  _wf3RenderHud(); _wf3Save();
+}
+
+// ── THREE scene ─────────────────────────────────────────────────────────────
+const WF3_SHIP_BASE_Y = 1.0, WF3_WATER_SIZE = 80, WF3_WATER_SEG = 64;
+function _wf3MakeCyl(T, a, b, r, mat) { const dir = new T.Vector3().subVectors(b, a), len = dir.length(); const m = new T.Mesh(new T.CylinderGeometry(r, r, len, 8), mat); m.position.copy(a).add(b).multiplyScalar(0.5); m.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), dir.normalize()); return m; }
+function _wf3BuildShip(T) {
+  const g = new T.Group(); const proc = [];
+  const hullMat = new T.MeshPhongMaterial({ color: 0x4a3826, shininess: 18 });
+  const deckMat = new T.MeshPhongMaterial({ color: 0x6b5236, side: T.DoubleSide, shininess: 8 });
+  const railMat = new T.MeshPhongMaterial({ color: 0x5a4430 });
+  const hull = new T.Shape(); hull.moveTo(0, 5.5); hull.quadraticCurveTo(3.4, 3.2, 3.4, -1); hull.lineTo(3.4, -7); hull.lineTo(-3.4, -7); hull.lineTo(-3.4, -1); hull.quadraticCurveTo(-3.4, 3.2, 0, 5.5);
+  const hullGeo = new T.ExtrudeGeometry(hull, { depth: 2.4, bevelEnabled: true, bevelThickness: 0.5, bevelSize: 0.4, bevelSegments: 2 }); hullGeo.rotateX(-Math.PI / 2); const hullM = new T.Mesh(hullGeo, hullMat); g.add(hullM); proc.push(hullM);
+  const deck = new T.Shape(); deck.moveTo(0, 4.7); deck.quadraticCurveTo(2.7, 2.6, 2.7, -1); deck.lineTo(2.7, -7); deck.lineTo(-2.7, -7); deck.lineTo(-2.7, -1); deck.quadraticCurveTo(-2.7, 2.6, 0, 4.7);
+  const deckGeo = new T.ShapeGeometry(deck); deckGeo.rotateX(-Math.PI / 2); const deckM = new T.Mesh(deckGeo, deckMat); deckM.position.y = 2.5; g.add(deckM); proc.push(deckM);
+  const y = 2.7;
+  [[[0, y, -5.2], [3.2, y, -3.0]], [[3.2, y, -3.0], [3.2, y, 7.0]], [[0, y, -5.2], [-3.2, y, -3.0]], [[-3.2, y, -3.0], [-3.2, y, 7.0]]].forEach(pr => { const r = _wf3MakeCyl(T, new T.Vector3(...pr[0]), new T.Vector3(...pr[1]), 0.12, railMat); g.add(r); proc.push(r); });
+  g.userData.proc = proc;
+  return g;
+}
+function _wf3BuildRod(T, base, tip) {
+  const g = new T.Group();
+  g.add(_wf3MakeCyl(T, base, tip, 0.05, new T.MeshPhongMaterial({ color: 0x3a2c20 })));
+  const holder = new T.Mesh(new T.BoxGeometry(0.4, 0.7, 0.4), new T.MeshPhongMaterial({ color: 0x2a2018 })); holder.position.set(base.x, base.y - 0.2, base.z); g.add(holder);
+  const reel = new T.Mesh(new T.CylinderGeometry(0.17, 0.17, 0.16, 12), new T.MeshPhongMaterial({ color: 0x14181d })); reel.position.set(base.x + 0.12, base.y + 0.5, base.z - 0.25); reel.rotation.z = Math.PI / 2; g.add(reel);
+  return g;
+}
+// Procedural fish (fallback when no admin .glb for the rarity).
+function _wf3BuildFishProc(T, rarity) {
+  const col = new T.Color(WF3_RARITY_COLOR[rarity] || '#9aa3b2');
+  const g = new T.Group();
+  const body = new T.Mesh(new T.SphereGeometry(0.5, 16, 12), new T.MeshPhongMaterial({ color: col, emissive: col.clone().multiplyScalar(0.18), shininess: 70, specular: 0x223344 }));
+  body.scale.set(1.7, 0.8, 0.7); g.add(body);
+  const tail = new T.Mesh(new T.ConeGeometry(0.42, 0.7, 4), new T.MeshPhongMaterial({ color: col, shininess: 40 })); tail.rotation.z = Math.PI / 2; tail.position.x = -1.0; tail.scale.set(1, 1, 0.35); g.add(tail);
+  const fin = new T.Mesh(new T.ConeGeometry(0.3, 0.5, 4), new T.MeshPhongMaterial({ color: col, transparent: true, opacity: 0.85 })); fin.position.set(0.1, 0.45, 0); fin.scale.set(0.6, 1, 0.2); g.add(fin);
+  const eye = new T.Mesh(new T.SphereGeometry(0.09, 8, 8), new T.MeshBasicMaterial({ color: 0x0a0d14 })); eye.position.set(0.62, 0.12, 0.26); g.add(eye);
+  return g;
+}
+function _wf3MakeBiteSprite(T) { const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d'); x.fillStyle = '#e0623d'; x.font = 'bold 100px Segoe UI'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('!', 64, 68); const s = new T.Sprite(new T.SpriteMaterial({ map: new T.CanvasTexture(c), transparent: true })); s.scale.set(2, 2, 1); return s; }
+
+function _wf3InitScene(mount) {
+  const T = window.THREE; if (!T || !mount) return null;
+  const G = { raf: 0, fx: [] };
+  const bm = _wf3Biome();
+  const scene = new T.Scene(); scene.background = new T.Color(bm.fog); scene.fog = new T.Fog(bm.fog, 30, 95);
+  let W = mount.clientWidth || innerWidth, H = mount.clientHeight || innerHeight;
+  const camera = new T.PerspectiveCamera(55, W / H, 0.1, 400); camera.position.set(0, 8, 16.5); camera.lookAt(0, 1, -8);
+  const renderer = new T.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2)); renderer.setSize(W, H, false);
+  renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;touch-action:none'; mount.appendChild(renderer.domElement);
+  scene.add(new T.AmbientLight(0x4a5366, 0.9));
+  const sun = new T.DirectionalLight(0xc9a24d, 0.7); sun.position.set(-14, 18, -6); scene.add(sun);
+  const rim = new T.DirectionalLight(0xe0623d, 0.25); rim.position.set(10, 6, 14); scene.add(rim);
+  const geo = new T.PlaneGeometry(WF3_WATER_SIZE, WF3_WATER_SIZE, WF3_WATER_SEG, WF3_WATER_SEG); geo.rotateX(-Math.PI / 2);
+  const waterBase = geo.attributes.position.array.slice();
+  const water = new T.Mesh(geo, new T.MeshPhongMaterial({ color: bm.water, emissive: 0x081518, shininess: 90, specular: 0x3a6b6b, transparent: true, opacity: 0.94 })); water.position.z = -14; scene.add(water);
+  const floor = new T.Mesh(new T.PlaneGeometry(WF3_WATER_SIZE, WF3_WATER_SIZE), new T.MeshBasicMaterial({ color: 0x0a1418 })); floor.rotation.x = -Math.PI / 2; floor.position.set(0, -3, -14); scene.add(floor);
+  const shore = new T.Mesh(new T.BoxGeometry(WF3_WATER_SIZE, 1, 14), new T.MeshPhongMaterial({ color: 0x2a241c })); shore.position.set(0, -0.4, 22); scene.add(shore);
+  const shipModel = _wf3BuildShip(T); shipModel.position.set(0.4, WF3_SHIP_BASE_Y, 14); scene.add(shipModel);
+  const rodBaseLocal = new T.Vector3(0.6, 2.7, -1.4), rodTipLocal = new T.Vector3(1.3, 4.6, -5.6);
+  const fishingRod = _wf3BuildRod(T, rodBaseLocal, rodTipLocal); shipModel.add(fishingRod);
+  shipModel.updateMatrixWorld(true);
+  const rodTip = shipModel.localToWorld(rodTipLocal.clone());
+  const bob = new T.Group();
+  const top = new T.Mesh(new T.SphereGeometry(0.32, 16, 12), new T.MeshPhongMaterial({ color: 0xcc3322, emissive: 0x330800 }));
+  const bot = new T.Mesh(new T.SphereGeometry(0.30, 16, 12), new T.MeshPhongMaterial({ color: 0xf3ead2 })); bot.position.y = -0.34;
+  bob.add(top); bob.add(bot); const bobber = bob; bobber.position.copy(rodTip); scene.add(bobber);
+  const lineMesh = new T.Line(new T.BufferGeometry().setFromPoints([rodTip.clone(), bobber.position.clone()]), new T.LineBasicMaterial({ color: 0xd8d2c0, transparent: true, opacity: 0.6 })); scene.add(lineMesh);
+  const biteMark = _wf3MakeBiteSprite(T); biteMark.visible = false; scene.add(biteMark);
+  const hotspot = new T.Group();
+  const ring = new T.Mesh(new T.RingGeometry(WF3_RING_BASE - 0.4, WF3_RING_BASE, 40), new T.MeshBasicMaterial({ color: 0x5ad0e0, transparent: true, opacity: 0.7, side: T.DoubleSide, depthWrite: false })); ring.rotation.x = -Math.PI / 2;
+  const disc = new T.Mesh(new T.CircleGeometry(WF3_RING_BASE - 0.4, 32), new T.MeshBasicMaterial({ color: 0x5ad0e0, transparent: true, opacity: 0.12, side: T.DoubleSide, depthWrite: false })); disc.rotation.x = -Math.PI / 2;
+  const pip = new T.Mesh(new T.CircleGeometry(0.35, 20), new T.MeshBasicMaterial({ color: 0xf3ead2, transparent: true, opacity: 0.5, side: T.DoubleSide, depthWrite: false })); pip.rotation.x = -Math.PI / 2; pip.position.y = 0.01;
+  hotspot.add(ring); hotspot.add(disc); hotspot.add(pip); hotspot.visible = false; scene.add(hotspot);
+  const predictor = new T.Mesh(new T.RingGeometry(0.42, 0.62, 24), new T.MeshBasicMaterial({ color: 0xf3ead2, transparent: true, opacity: 0.85, side: T.DoubleSide, depthWrite: false })); predictor.rotation.x = -Math.PI / 2; predictor.visible = false; scene.add(predictor);
+  const clock = new T.Clock();
+  Object.assign(G, { renderer, scene, camera, water, waterBase, floor, shore, shipModel, fishingRod, rodTip, rodTipLocal, bobber, lineMesh, biteMark, hotspot, predictor, clock, loader: (T.GLTFLoader ? new T.GLTFLoader() : null) });
+  // Optional admin .glb boat — swap in over the procedural hull.
+  _wf3LoadShipModel(G);
+  const onResize = () => { const c = renderer.domElement, w = c.clientWidth || W, h = c.clientHeight || H; if (w === G._lw && h === G._lh) return; G._lw = w; G._lh = h; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); };
+  G.onResize = onResize; try { G.ro = new ResizeObserver(onResize); G.ro.observe(mount); } catch (e) {}
+  G.dispose = () => {
+    try { cancelAnimationFrame(G.raf); } catch (e) {}
+    try { if (G.ro) G.ro.disconnect(); } catch (e) {}
+    try { (G.fx || []).forEach(fx => { try { scene.remove(fx.obj); _ppaDisposeObj(fx.obj); } catch (e) {} }); } catch (e) {}
+    try { scene.traverse(o => _ppaDisposeObj(o)); } catch (e) {}
+    try { renderer.dispose(); } catch (e) {}
+    try { renderer.forceContextLoss(); } catch (e) {}
+    try { if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement); } catch (e) {}
+  };
+  G.fit = onResize;
+  return G;
+}
+function _wf3LoadShipModel(G) {
+  const m = _wf3AdminModels(); const list = Array.isArray(m.ship) ? m.ship : [];
+  if (!list.length || !G.loader) return;
+  const spec = list[Math.floor(Math.random() * list.length)]; if (!spec || !spec.url) return;
+  const T = window.THREE;
+  try {
+    G.loader.load(spec.url, (gltf) => {
+      if (!_wf3S || !_wf3S.G || _wf3S.G !== G) { _ppaDisposeObj(gltf.scene); return; }
+      const root = gltf.scene || gltf.scenes[0];
+      try {
+        const box = new T.Box3().setFromObject(root), size = new T.Vector3(); box.getSize(size);
+        const maxDim = Math.max(size.x, size.z) || 1; root.scale.multiplyScalar((9.0 / maxDim) * (spec.scale || 1));
+        root.rotation.y = (spec.rotY || 0) * Math.PI / 180;
+        const b2 = new T.Box3().setFromObject(root), c = b2.getCenter(new T.Vector3());
+        root.position.x -= c.x; root.position.z -= c.z; root.position.y -= b2.min.y;
+        // Hide procedural hull/deck/rails, keep the rod child.
+        (G.shipModel.userData.proc || []).forEach(p => { p.visible = false; });
+        G.shipModel.add(root); G.shipModel.userData.glb = root;
+      } catch (e) { _ppaDisposeObj(root); }
+    }, undefined, () => {});
+  } catch (e) {}
+}
+// Breach a fish near the bobber on a successful catch.
+function _wf3SpawnFish(rarity) {
+  const s = _wf3S; if (!s || !s.G) return; const G = s.G, T = window.THREE;
+  const at = G.bobber.position.clone();
+  const start = () => {
+    const m = _wf3AdminModels(); const list = (m.fish && Array.isArray(m.fish[rarity])) ? m.fish[rarity] : [];
+    if (list.length && G.loader) {
+      const spec = list[Math.floor(Math.random() * list.length)];
+      try { G.loader.load(spec.url, (gltf) => { if (!_wf3S || _wf3S.G !== G) { _ppaDisposeObj(gltf.scene); return; } const root = gltf.scene || gltf.scenes[0]; try { const box = new T.Box3().setFromObject(root), size = new T.Vector3(); box.getSize(size); const md = Math.max(size.x, size.y, size.z) || 1; root.scale.multiplyScalar((2.2 / md) * (spec.scale || 1)); } catch (e) {} _wf3LaunchFish(root, at); }, undefined, () => _wf3LaunchFish(_wf3BuildFishProc(T, rarity), at)); } catch (e) { _wf3LaunchFish(_wf3BuildFishProc(T, rarity), at); }
+    } else { _wf3LaunchFish(_wf3BuildFishProc(T, rarity), at); }
+  };
+  start();
+}
+function _wf3LaunchFish(obj, at) {
+  const s = _wf3S; if (!s || !s.G) { _ppaDisposeObj(obj); return; }
+  const G = s.G; obj.position.copy(at); obj.position.y = -0.6; G.scene.add(obj);
+  G.fx.push({ obj, t: 0, dur: 1.25, baseX: at.x, baseZ: at.z });
+}
+
+function _wf3WaveHeight(x, z, t, amp) { return (Math.sin(x * 0.25 + t * 1.4) * 0.45 + Math.cos((z + 14) * 0.3 + t * 1.1) * 0.4) * amp; }
+
+// ── Cast + hotspot ──────────────────────────────────────────────────────────
+function _wf3LandingZ(p) { return 11 - (6 + p * (_wf3Pole().castMax - 6)); }
+function _wf3PlaceHotspot() {
+  const s = _wf3S; if (!s || !s.G) return; const cm = _wf3Pole().castMax, minD = 8, maxD = cm - 2, dist = minD + Math.random() * (maxD - minD);
+  s.hotZ = 11 - dist; s.G.hotspot.position.set(0, 0.4, s.hotZ); s.G.hotspot.scale.set(s.ringScale, 1, s.ringScale); s.G.hotspot.visible = true;
+}
+function _wf3BeginCharge() {
+  const s = _wf3S; if (!s) return;
+  if (s.castsLeft <= 0) { _wf3SetPrompt('Tank\'s dry — <b>Refuel</b> or head back to <span class="wf3-hot">dock</span>.'); showToast('⛽ Out of trip fuel — refuel or return to dock.', 2600); return; }
+  s.state = 'CHARGING'; s.power = 0; s.powerDir = 1;
+  const pw = _wf3$('power'); if (pw) pw.style.display = 'block'; if (s.G) s.G.predictor.visible = true;
+  _wf3SetPrompt('Release to <b>cast</b> — hit the <span class="wf3-hot">ring</span>!');
+}
+function _wf3ReleaseCast() {
+  const s = _wf3S; if (!s || !s.G) return; const G = s.G, L = _wf3Live();
+  const pw = _wf3$('power'); if (pw) pw.style.display = 'none'; G.predictor.visible = false;
+  if (L.equippedBait && (L.baitStock[L.equippedBait] || 0) > 0) { L.baitStock[L.equippedBait]--; _wf3RenderHud(); }
+  s.castsLeft = Math.max(0, s.castsLeft - 1); _wf3RenderHud();
+  const z = _wf3LandingZ(s.power);
+  s.castFrom.copy(G.rodTip); s.castTo.set(0, 0, z); s.castT = 0; s.arcH = 4 + s.power * 5;
+  const d = Math.abs(z - s.hotZ);
+  if (d <= s.hotR) {
+    const precision = 1 - d / s.hotR;
+    s.castLuckBonus = WF3_HOTSPOT_LUCK_MIN + precision * (WF3_HOTSPOT_LUCK_MAX - WF3_HOTSPOT_LUCK_MIN);
+    s.castEncBonus = precision * WF3_HOTSPOT_ENC_MAX; s.castWasLucky = true;
+    const tier = precision > 0.7 ? '🎯 Bullseye!' : precision > 0.35 ? '🎯 Solid cast' : '🎯 Clipped the ring';
+    _wf3FlashLog(tier + ' +' + Math.round(s.castLuckBonus * 100) + '% luck', 'hot');
+  } else { s.castLuckBonus = 0; s.castEncBonus = 0; s.castWasLucky = false; }
+  G.hotspot.visible = false; s.state = 'CASTING'; _wf3SetPrompt('…');
+}
+function _wf3UpdateCharge(dt) {
+  const s = _wf3S; if (!s || !s.G) return; s.power += s.powerDir * dt * s.powerRate;
+  if (s.power >= 1) { s.power = 1; s.powerDir = -1; } if (s.power <= 0) { s.power = 0; s.powerDir = 1; }
+  const pf = _wf3$('powerFill'); if (pf) pf.style.width = (s.power * 100) + '%';
+  s.G.predictor.position.set(0, 0.36, _wf3LandingZ(s.power));
+}
+function _wf3UpdateCast(dt) {
+  const s = _wf3S; if (!s || !s.G) return; s.castT += dt / s.castDur;
+  if (s.castT >= 1) { s.castT = 1; s.bobAnchor.copy(s.castTo); s.state = 'WAITING'; _wf3ScheduleBite(); _wf3SetPrompt(s.castWasLucky ? 'Lucky waters… <span class="wf3-hot">wait for a bite</span>' : 'Wait for a bite…'); }
+  const p = s.castT; s.G.bobber.position.lerpVectors(s.castFrom, s.castTo, p); s.G.bobber.position.y += s.arcH * 4 * p * (1 - p);
+}
+
+// ── Bite / hook ─────────────────────────────────────────────────────────────
+function _wf3ScheduleBite() { _wf3S.biteTimer = 1.8 + Math.random() * 3.2; }
+function _wf3UpdateWaiting(dt, t) {
+  const s = _wf3S; if (!s || !s.G) return; s.G.bobber.position.y = _wf3WaveHeight(s.bobAnchor.x, s.bobAnchor.z, t, s.waveAmp) + 0.1;
+  s.biteTimer -= dt; if (s.biteTimer <= 0) { s.state = 'BITE'; s.hookTimer = 1.15; s.G.biteMark.visible = true; s.G.biteMark.position.set(s.bobAnchor.x, 2.2, s.bobAnchor.z); _wf3SetPrompt('<b>Bite!</b> Click to set the hook!'); }
+}
+function _wf3UpdateBite(dt, t) {
+  const s = _wf3S; if (!s || !s.G) return; s.G.bobber.position.y = _wf3WaveHeight(s.bobAnchor.x, s.bobAnchor.z, t, s.waveAmp) - 0.7 + Math.sin(t * 40) * 0.18;
+  s.G.biteMark.position.y = 2.2 + Math.sin(t * 12) * 0.15; s.hookTimer -= dt;
+  if (s.hookTimer <= 0) { s.G.biteMark.visible = false; _wf3FlashLog('It got away… −' + WF3_XP_LOSS_GETAWAY + ' XP', 'enc'); _wf3LoseXP(WF3_XP_LOSS_GETAWAY); _wf3ResetToIdle(); }
+}
+function _wf3AttemptHook() { const s = _wf3S; if (!s || !s.G) return; s.G.biteMark.visible = false; s.pending = _wf3RollCatch(); _wf3StartReel(); }
+function _wf3TotalLuck() { const b = _wf3Bait(); return _wf3Pole().luck + ((b && b.luck) || 0) + _wf3S.castLuckBonus; }
+function _wf3WeightedPickLuck(list, luck) {
+  const w = list.map(i => { let m = 1; if (i.rarity === 'Uncommon') m = 1 + luck; else if (i.rarity === 'Rare') m = 1 + luck * 2; else if (i.rarity === 'Legendary') m = 1 + luck * 3.2; return { i, w: i.weight * m }; });
+  const total = w.reduce((s, o) => s + o.w, 0); let r = Math.random() * total;
+  for (const o of w) { if ((r -= o.w) <= 0) return o.i; } return list[list.length - 1];
+}
+function _wf3RollCatch() {
+  const s = _wf3S, b = _wf3Biome(), bait = _wf3Bait();
+  const encChance = b.encounterChance + ((bait && bait.encounter) || 0) + s.castEncBonus;
+  if (Math.random() < encChance) { const e = b.encounters[Math.floor(Math.random() * b.encounters.length)]; return { type: 'encounter', rarity: e.rarity, enemyId: e.enemyId, name: e.name }; }
+  const f = _wf3WeightedPickLuck(b.loot, _wf3TotalLuck());
+  return { type: 'food', rarity: f.rarity, item: { id: f.id, name: f.name, rarity: f.rarity }, amount: f.food + ((bait && bait.foodBonus) || 0) };
+}
+
+// ── Reel mini-game ──────────────────────────────────────────────────────────
+function _wf3StartReel() {
+  const s = _wf3S; if (!s) return; s.state = 'REELING'; s.progress = 0; s.tension = 0; s.surgeTimer = 0;
+  const f = WF3_FIGHT[s.pending.rarity] || WF3_FIGHT.Common; s.fightStr = f.str; s.fightSurge = f.surge;
+  const fl = _wf3$('fightLvl'); if (fl) fl.innerHTML = 'Fight: <span style="color:' + WF3_RARITY_COLOR[s.pending.rarity] + '">' + f.dots + '</span> ' + s.pending.rarity;
+  const reel = _wf3$('reel'); if (reel) reel.style.display = 'block'; _wf3SetPrompt('<b>Reel it in!</b>'); _wf3DrawReel();
+}
+function _wf3UpdateReel(dt, t) {
+  const s = _wf3S; if (!s || !s.G) return; const cap = _wf3Pole().tensionCap, rate = _wf3Pole().reelRate;
+  s.tension += s.fightStr * dt; s.surgeTimer -= dt;
+  if (s.surgeTimer <= 0 && Math.random() < 0.9 * dt) { s.tension += s.fightSurge; s.surgeTimer = 0.6; }
+  if (s.holding) { s.progress += rate * dt; s.tension += 34 * dt; } else { s.progress -= 6 * dt; s.tension -= 46 * dt; }
+  s.progress = _wf3Clamp(s.progress, 0, 100); s.tension = _wf3Clamp(s.tension, 0, cap);
+  const p = s.progress / 100; s.G.bobber.position.lerpVectors(s.castTo, s.G.rodTip, p * 0.4); s.G.bobber.position.y = _wf3WaveHeight(s.G.bobber.position.x, s.G.bobber.position.z, t, s.waveAmp) - 0.5;
+  _wf3DrawReel(cap);
+  if (s.tension >= cap) { const reel = _wf3$('reel'); if (reel) reel.style.display = 'none'; _wf3FlashLog('The line snapped! −' + WF3_XP_LOSS_SNAP + ' XP', 'enc'); _wf3LoseXP(WF3_XP_LOSS_SNAP); _wf3ResetToIdle(); }
+  if (s.progress >= 100) { const reel = _wf3$('reel'); if (reel) reel.style.display = 'none'; _wf3ResolveCatch(); }
+}
+function _wf3DrawReel(cap) {
+  cap = cap || 100; const s = _wf3S; const pb = _wf3$('progBar'); if (pb) pb.style.width = s.progress + '%';
+  const pp = _wf3$('progPct'); if (pp) pp.textContent = Math.round(s.progress) + '%';
+  const tb = _wf3$('tensionBar'); if (tb) tb.style.width = (s.tension / cap * 100) + '%';
+}
+
+// ── Catch → cards ───────────────────────────────────────────────────────────
+function _wf3ResolveCatch() { const s = _wf3S; s.state = 'RESOLVED'; _wf3OnCatch(s.pending); }
+function _wf3OnCatch(result) {
+  const cin = WF3_RARITY_CINDER[result.rarity] || 4, xp = WF3_XP_GAIN[result.rarity] || 10;
+  if (result.type === 'food') {
+    _wf3S.foodTrip = (_wf3S.foodTrip | 0) + result.amount; _wf3AddFood(result.amount); _wf3AddCinder(cin); _wf3GainXP(xp);
+    _wf3FlashLog('+' + result.amount + ' food · ' + result.item.name, result.rarity !== 'Common' ? 'rare' : '');
+    try { _wf3SpawnFish(result.rarity); } catch (e) {}
+    _wf3ShowFoodCard(result, cin, xp);
+  } else {
+    _wf3S.pendingBounty = cin * 2; _wf3S.pendingEncRarity = result.rarity;
+    _wf3FlashLog('Encounter! ' + result.name, 'enc');
+    _wf3ShowEncounterCard(result);
+  }
+  _wf3RenderHud(); _wf3Save();
+}
+function _wf3ShowFoodCard(r, cin, xp) {
+  const col = WF3_RARITY_COLOR[r.rarity]; const card = _wf3$('card'); if (!card) return;
+  card.innerHTML = '<div class="wf3-icon">🐟</div><div class="wf3-rarity" style="color:' + col + '">' + r.rarity + '</div>' +
+    '<h2>' + escapeHtml(r.item.name) + '</h2><p>Hauled onto the ash-strewn shore — added to camp food.</p>' +
+    '<div class="wf3-reward">+' + r.amount + ' Food &nbsp;·&nbsp; <span class="wf3-cin">+' + cin + ' ₵</span> &nbsp;·&nbsp; <span class="wf3-xp">+' + xp + ' XP</span></div>' +
+    '<button class="wf3-btn" id="wf3-contBtn">Cast Again</button>';
+  const ov = _wf3$('overlayCard'); if (ov) ov.style.display = 'flex';
+  const cb = _wf3$('contBtn'); if (cb) cb.onclick = () => { if (ov) ov.style.display = 'none'; _wf3ResetToIdle(); };
+}
+function _wf3ShowEncounterCard(r) {
+  const col = WF3_RARITY_COLOR[r.rarity]; const card = _wf3$('card'); if (!card) return;
+  card.innerHTML = '<div class="wf3-icon">⚔️</div><div class="wf3-rarity" style="color:' + col + '">' + r.rarity + ' · Encounter</div>' +
+    '<h2>' + escapeHtml(r.name) + '</h2><p>The water churns — something rises to meet your hook.</p>' +
+    '<button class="wf3-btn danger" id="wf3-fightBtn">Enter Battle</button>';
+  const ov = _wf3$('overlayCard'); if (ov) ov.style.display = 'flex';
+  const fb = _wf3$('fightBtn'); if (fb) fb.onclick = () => { if (ov) ov.style.display = 'none'; _wf3StartEncounter(r); };
+}
+function _wf3StartEncounter(r) { const bn = _wf3$('battleName'); if (bn) bn.textContent = r.name; const b = _wf3$('battle'); if (b) b.style.display = 'flex'; }
+function _wf3ResetToIdle() {
+  const s = _wf3S; if (!s || !s.G) return; s.state = 'IDLE'; s.G.biteMark.visible = false; s.pending = null;
+  s.castLuckBonus = 0; s.castEncBonus = 0; s.castWasLucky = false; s.G.predictor.visible = false;
+  s.G.bobber.position.copy(s.G.rodTip); _wf3PlaceHotspot();
+  if (s.castsLeft <= 0) _wf3SetPrompt('Tank\'s dry — <b>Refuel</b> or head back to <span class="wf3-hot">dock</span>.');
+  else _wf3SetPrompt('Hold to <b>charge a cast</b> · land in the <span class="wf3-hot">ring</span> for luck');
+}
+
+// ── Shop / travel ───────────────────────────────────────────────────────────
+function _wf3OpenShop() { _wf3CancelCharge(); const sh = _wf3$('shop'); if (sh) sh.style.display = 'flex'; _wf3RenderHud(); _wf3RenderShop(); }
+function _wf3RenderShop() {
+  const list = _wf3$('shopList'); if (!list) return; const L = _wf3Live(), cin = _wf3GetCinder();
+  if (_wf3S.shopTab === 'bait') {
+    list.innerHTML = WF3_BAITS.map(b => {
+      const have = L.baitStock[b.id] || 0, eq = L.equippedBait === b.id;
+      const eqBtn = have > 0 ? (eq ? '<button class="wf3-ibtn owned">Active</button>' : '<button class="wf3-ibtn equip" data-wf3-equip-bait="' + b.id + '">Equip</button>') : '';
+      const buyBtn = '<button class="wf3-ibtn" data-wf3-buy-bait="' + b.id + '" ' + (cin < b.cost ? 'disabled' : '') + '>Buy ×' + b.pack + '</button>';
+      return '<div class="wf3-item ' + (eq ? 'eq' : '') + '"><div class="wf3-emoji">' + b.emoji + '</div><div class="wf3-info"><h3>' + b.name + ' ' + (have ? '<span style="color:#7d97a8;font-size:12px">(' + have + ' left)</span>' : '') + '</h3><p>' + b.desc + '</p><div class="wf3-stats">Luck +' + ((b.luck * 100) | 0) + '% · Encounter +' + ((b.encounter * 100) | 0) + '% · Food +' + b.foodBonus + '</div></div><div class="wf3-act"><div class="wf3-price">' + b.cost + ' ₵</div>' + eqBtn + buyBtn + '</div></div>';
+    }).join('');
+  } else {
+    list.innerHTML = WF3_POLES.map(p => {
+      const owned = _wf3OwnsPole(p.id), eq = L.equippedPole === p.id;
+      const btn = eq ? '<button class="wf3-ibtn owned">Equipped</button>' : owned ? '<button class="wf3-ibtn equip" data-wf3-equip-pole="' + p.id + '">Equip</button>' : '<button class="wf3-ibtn" data-wf3-buy-pole="' + p.id + '" ' + (cin < p.cost ? 'disabled' : '') + '>Buy</button>';
+      const price = owned ? '<div class="wf3-price have">Owned</div>' : '<div class="wf3-price">' + p.cost + ' ₵</div>';
+      return '<div class="wf3-item ' + (eq ? 'eq' : '') + '"><div class="wf3-emoji">' + p.emoji + '</div><div class="wf3-info"><h3>' + p.name + '</h3><p>' + p.desc + '</p><div class="wf3-stats">Reel ' + p.reelRate + ' · Line ' + p.tensionCap + ' · Cast ' + p.castMax + ' · Luck +' + ((p.luck * 100) | 0) + '%</div></div><div class="wf3-act">' + price + btn + '</div></div>';
+    }).join('');
+  }
+  list.querySelectorAll('[data-wf3-buy-pole]').forEach(el => el.onclick = () => _wf3BuyPole(el.dataset.wf3BuyPole));
+  list.querySelectorAll('[data-wf3-equip-pole]').forEach(el => el.onclick = () => { _wf3Live().equippedPole = el.dataset.wf3EquipPole; _wf3Save(); _wf3RenderHud(); _wf3RenderShop(); });
+  list.querySelectorAll('[data-wf3-buy-bait]').forEach(el => el.onclick = () => _wf3BuyBait(el.dataset.wf3BuyBait));
+  list.querySelectorAll('[data-wf3-equip-bait]').forEach(el => el.onclick = () => { _wf3Live().equippedBait = el.dataset.wf3EquipBait; _wf3Save(); _wf3RenderHud(); _wf3RenderShop(); });
+}
+function _wf3BuyPole(id) { const p = WF3_POLES.find(x => x.id === id), L = _wf3Live(); if (!p || _wf3OwnsPole(id) || !_wf3SpendCinder(p.cost)) return; L.poles.push(id); L.equippedPole = id; _wf3FlashLog('Bought ' + p.name, 'buy'); _wf3Save(); _wf3RenderHud(); _wf3RenderShop(); }
+function _wf3BuyBait(id) { const b = WF3_BAITS.find(x => x.id === id), L = _wf3Live(); if (!b || !_wf3SpendCinder(b.cost)) return; L.baitStock[id] = (L.baitStock[id] || 0) + b.pack; if (!L.equippedBait) L.equippedBait = id; _wf3FlashLog('Bought ' + b.name + ' ×' + b.pack, 'buy'); _wf3Save(); _wf3RenderHud(); _wf3RenderShop(); }
+function _wf3OpenBoat() { _wf3CancelCharge(); const bt = _wf3$('boat'); if (bt) bt.style.display = 'flex'; _wf3RenderBoat(); }
+function _wf3RenderBoat() {
+  const list = _wf3$('biomeList'); if (!list) return; const L = _wf3Live(), cin = _wf3GetCinder();
+  list.innerHTML = WF3_BIOMES.map(b => {
+    const here = L.currentBiome === b.id, unlocked = _wf3BiomeUnlocked(b.id);
+    const btn = here ? '<button class="wf3-ibtn owned">You\'re Here</button>' : unlocked ? '<button class="wf3-ibtn equip" data-wf3-travel="' + b.id + '">Sail Here</button>' : '<button class="wf3-ibtn" data-wf3-unlock="' + b.id + '" ' + (cin < b.unlockCost ? 'disabled' : '') + '>Unlock · ' + b.unlockCost + ' ₵</button>';
+    return '<div class="wf3-item ' + (here ? 'eq' : '') + '"><div class="wf3-emoji">' + b.emoji + '</div><div class="wf3-info"><h3>' + b.name + '</h3><p>' + b.desc + '</p><div class="wf3-stats"><span style="color:#e0623d">Encounters ' + ((b.encounterChance * 100) | 0) + '%</span></div></div><div class="wf3-act">' + btn + '</div></div>';
+  }).join('');
+  list.querySelectorAll('[data-wf3-travel]').forEach(el => el.onclick = () => _wf3SetBiome(el.dataset.wf3Travel));
+  list.querySelectorAll('[data-wf3-unlock]').forEach(el => el.onclick = () => { const b = WF3_BIOMES.find(x => x.id === el.dataset.wf3Unlock); if (b && _wf3SpendCinder(b.unlockCost)) { _wf3Live().biomes.push(b.id); _wf3FlashLog('Charted ' + b.name, 'buy'); _wf3Save(); _wf3RenderBoat(); } });
+}
+function _wf3SetBiome(id) {
+  const b = WF3_BIOMES.find(x => x.id === id); if (!b || !_wf3BiomeUnlocked(id)) return; const L = _wf3Live(); L.currentBiome = id; _wf3Save();
+  const s = _wf3S; if (s && s.G) { s.waveAmp = (WF3_SWELL[id] || WF3_SWELL.shallows).wave; s.G.scene.background.setHex(b.fog); s.G.scene.fog.color.setHex(b.fog); s.G.water.material.color.setHex(b.water); }
+  _wf3RenderHud(); _wf3RenderBoat(); _wf3FlashLog('Sailed to ' + b.name); const bt = _wf3$('boat'); if (bt) bt.style.display = 'none'; _wf3ResetToIdle();
+}
+
+// ── Input ───────────────────────────────────────────────────────────────────
+function _wf3ModalOpen() { const on = (id) => { const e = _wf3$(id); return e && e.style.display === 'flex'; }; return on('shop') || on('boat') || on('overlayCard') || on('battle'); }
+function _wf3IsUI(t) { return t && t.closest && t.closest('.wf3-navbtn,.wf3-modal,.wf3-card,#wf3-overlayCard,#wf3-battle,.wf3-fuelbar'); }
+function _wf3CancelCharge() { const s = _wf3S; if (!s) return; s.holding = false; if (s.state === 'CHARGING') { s.state = 'IDLE'; const pw = _wf3$('power'); if (pw) pw.style.display = 'none'; if (s.G) s.G.predictor.visible = false; _wf3ResetToIdle(); } }
+function _wf3Press(e) { const s = _wf3S; if (!s) return; if (_wf3ModalOpen() || _wf3IsUI(e.target)) return; s.holding = true; if (s.state === 'IDLE') _wf3BeginCharge(); else if (s.state === 'BITE') _wf3AttemptHook(); }
+function _wf3Release(e) { const s = _wf3S; if (!s) return; s.holding = false; if (_wf3ModalOpen() || _wf3IsUI(e.target)) { _wf3CancelCharge(); return; } if (s.state === 'CHARGING') _wf3ReleaseCast(); }
+
+// ── Main loop ───────────────────────────────────────────────────────────────
+function _wf3Animate() {
+  const s = _wf3S; if (!s || !s.G) return; const G = s.G, T = window.THREE; G.raf = requestAnimationFrame(_wf3Animate);
+  if (G.fit) G.fit();
+  const dt = Math.min(G.clock.getDelta(), 0.05), t = G.clock.elapsedTime;
+  // water
+  const pos = G.water.geometry.attributes.position.array;
+  for (let i = 0; i < pos.length; i += 3) { const x = G.waterBase[i], z = G.waterBase[i + 2]; pos[i + 1] = (Math.sin(x * 0.25 + t * 1.4) * 0.45 + Math.cos(z * 0.3 + t * 1.1) * 0.4) * s.waveAmp; }
+  G.water.geometry.attributes.position.needsUpdate = true;
+  // boat sway
+  const sw = WF3_SWELL[_wf3Live().currentBiome] || WF3_SWELL.shallows;
+  G.shipModel.position.y = WF3_SHIP_BASE_Y + Math.sin(t * 0.8) * sw.bob;
+  G.shipModel.rotation.z = Math.sin(t * 0.6) * sw.roll; G.shipModel.rotation.x = Math.sin(t * 0.5 + 1.0) * sw.pitch;
+  G.shipModel.updateMatrixWorld(true); G.rodTip.copy(G.shipModel.localToWorld(G.rodTipLocal.clone()));
+  if (s.state === 'IDLE' || s.state === 'CHARGING') G.bobber.position.copy(G.rodTip);
+  if (G.hotspot.visible) { const sc = s.ringScale * (1 + Math.sin(t * 3) * 0.07); G.hotspot.scale.set(sc, 1, sc); G.hotspot.position.y = 0.4 + Math.sin(t * 2) * 0.08; }
+  if (s.state === 'CHARGING') _wf3UpdateCharge(dt); else if (s.state === 'CASTING') _wf3UpdateCast(dt);
+  else if (s.state === 'WAITING') _wf3UpdateWaiting(dt, t); else if (s.state === 'BITE') _wf3UpdateBite(dt, t); else if (s.state === 'REELING') _wf3UpdateReel(dt, t);
+  // fish breach FX
+  if (G.fx && G.fx.length) {
+    for (let i = G.fx.length - 1; i >= 0; i--) { const fx = G.fx[i]; fx.t += dt; const k = fx.t / fx.dur;
+      if (k >= 1) { try { G.scene.remove(fx.obj); _ppaDisposeObj(fx.obj); } catch (e) {} G.fx.splice(i, 1); continue; }
+      fx.obj.position.y = -0.6 + Math.sin(k * Math.PI) * 2.6; fx.obj.rotation.z = k * Math.PI * 1.4; fx.obj.rotation.y = k * 2.2;
+      fx.obj.position.x = fx.baseX; fx.obj.position.z = fx.baseZ;
+    }
+  }
+  G.lineMesh.geometry.setFromPoints([G.rodTip, G.bobber.position.clone()]);
+  G.renderer.render(G.scene, G.camera);
+}
+
+// ── Overlay open / close ────────────────────────────────────────────────────
+function _wf3EnsureStyle() {
+  if (document.getElementById('wf3-style')) return;
+  const st = document.createElement('style'); st.id = 'wf3-style';
+  st.textContent = `
+  #wf3-overlay{position:fixed;inset:0;z-index:2147483600;background:#0a0d14;color:#e8e2d4;font-family:'Segoe UI',system-ui,sans-serif;overflow:hidden;touch-action:none}
+  #wf3-overlay *{box-sizing:border-box}
+  #wf3-mount{position:absolute;inset:0;width:100%;height:100%}
+  #wf3-overlay canvas{display:block;width:100%;height:100%}
+  #wf3-overlay .wf3-hud{position:absolute;z-index:10}
+  #wf3-overlay .wf3-panel{background:linear-gradient(160deg,rgba(12,16,26,.88),rgba(8,11,18,.88));border:1px solid rgba(201,162,77,.35);border-radius:10px;padding:10px 14px;box-shadow:0 6px 24px rgba(0,0,0,.5);backdrop-filter:blur(4px)}
+  #wf3-overlay .wf3-brand{font-size:11px;letter-spacing:2px;color:#c9a24d;text-transform:uppercase;font-weight:700;margin-bottom:6px}
+  #wf3-topleft{top:14px;left:14px;pointer-events:none;max-width:260px}
+  #wf3-overlay .wf3-stat{font-size:13px;color:#cdd3df;margin-top:3px}
+  #wf3-overlay .wf3-stat b{color:#f3ead2}
+  #wf3-overlay .wf3-cinder{font-size:24px;font-weight:800;color:#e0c178;line-height:1}
+  #wf3-overlay .wf3-cinder small{font-size:12px;color:#9aa3b2;font-weight:500;letter-spacing:1px}
+  #wf3-overlay .wf3-xpbar{margin-top:5px;width:210px;height:7px;background:rgba(255,255,255,.08);border:1px solid rgba(90,176,201,.4);border-radius:5px;overflow:hidden}
+  #wf3-overlay .wf3-xpfill{height:100%;width:0%;background:linear-gradient(90deg,#3a7d99,#5ad0e0);transition:width .35s ease}
+  #wf3-overlay .wf3-xptext{font-size:10px;color:#7d97a8;letter-spacing:1px;margin-top:2px}
+  #wf3-log{margin-top:8px;max-width:230px;font-size:12px;color:#a7afbd}
+  #wf3-log div{margin-top:3px;opacity:.85}
+  #wf3-log .rare{color:#c9a24d}#wf3-log .enc{color:#e0623d;font-weight:600}#wf3-log .buy{color:#46c97e}#wf3-log .hot{color:#5ad0e0}
+  #wf3-topright{top:14px;right:14px;display:flex;gap:8px;z-index:11}
+  #wf3-overlay .wf3-navbtn{pointer-events:auto;cursor:pointer;padding:10px 16px;border-radius:9px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#0a0d14;background:linear-gradient(90deg,#c9a24d,#e0c178);border:none;box-shadow:0 4px 16px rgba(0,0,0,.4);transition:transform .12s,filter .12s}
+  #wf3-overlay .wf3-navbtn.boat{background:linear-gradient(90deg,#3a7d99,#5ab0c9);color:#06121a}
+  #wf3-overlay .wf3-navbtn.exit{background:linear-gradient(90deg,#5a4636,#7a6650);color:#f3ead2}
+  #wf3-overlay .wf3-navbtn:hover{transform:translateY(-1px);filter:brightness(1.08)}
+  #wf3-overlay .wf3-center{left:50%;transform:translateX(-50%)}
+  #wf3-prompt{bottom:120px;text-align:center;pointer-events:none}
+  #wf3-prompt .wf3-panel{padding:8px 20px;font-size:15px}
+  #wf3-prompt b{color:#c9a24d}#wf3-prompt .wf3-hot{color:#5ad0e0}
+  #wf3-overlay .wf3-hot{color:#5ad0e0}
+  #wf3-power{bottom:46px;width:260px;display:none;pointer-events:none}
+  #wf3-power .wf3-lbl{text-align:center;font-size:11px;letter-spacing:2px;color:#9aa3b2;margin-bottom:5px;text-transform:uppercase}
+  #wf3-power .wf3-bar{height:14px;background:rgba(255,255,255,.08);border:1px solid rgba(201,162,77,.4);border-radius:8px;overflow:hidden}
+  #wf3-power .wf3-fill{height:100%;width:0%;background:linear-gradient(90deg,#3a7d44,#c9a24d,#e0623d)}
+  #wf3-reel{bottom:40px;width:300px;display:none;pointer-events:none}
+  #wf3-reel .wf3-row{margin-bottom:9px}
+  #wf3-reel .wf3-name{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#9aa3b2;margin-bottom:3px;display:flex;justify-content:space-between}
+  #wf3-reel .wf3-track{height:16px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);border-radius:8px;overflow:hidden;position:relative}
+  #wf3-reel .wf3-prog{height:100%;width:0%;background:linear-gradient(90deg,#2e7d52,#46c97e)}
+  #wf3-reel .wf3-tension{height:100%;width:0%;background:linear-gradient(90deg,#c9a24d,#e0623d,#cc3322)}
+  #wf3-reel .wf3-danger{position:absolute;right:0;top:0;height:100%;width:22%;background:repeating-linear-gradient(45deg,rgba(204,51,34,.25),rgba(204,51,34,.25) 6px,transparent 6px,transparent 12px)}
+  #wf3-reel .wf3-fight{text-align:center;font-size:11px;letter-spacing:1px;margin-top:4px;color:#e0623d}
+  #wf3-reel .wf3-hint{font-size:11px;color:#9aa3b2;text-align:center;margin-top:4px}
+  #wf3-fuel{bottom:40px;right:14px;pointer-events:auto}
+  #wf3-overlay .wf3-fuelbar{display:flex;align-items:center;gap:10px;font-size:12px;color:#cdd3df}
+  #wf3-overlay .wf3-fuelbar b{color:#e6b660;font-size:15px}
+  #wf3-overlay .wf3-refuel{cursor:pointer;padding:7px 12px;border-radius:8px;border:none;font-weight:700;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#06121a;background:linear-gradient(90deg,#3a7d99,#5ab0c9)}
+  #wf3-overlay .wf3-refuel:disabled{background:rgba(255,255,255,.08);color:#6b7280;cursor:not-allowed}
+  #wf3-overlayCard{position:absolute;inset:0;z-index:30;display:none;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,rgba(8,11,18,.55),rgba(4,6,10,.9))}
+  #wf3-overlay .wf3-card{width:340px;text-align:center;padding:26px 24px;background:linear-gradient(165deg,#11151f,#0a0d14);border:1px solid rgba(201,162,77,.45);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  #wf3-overlay .wf3-icon{font-size:46px;margin-bottom:8px}
+  #wf3-overlay .wf3-rarity{font-size:11px;letter-spacing:3px;text-transform:uppercase;font-weight:700}
+  #wf3-overlay .wf3-card h2{font-size:24px;margin:4px 0 6px;color:#f3ead2}
+  #wf3-overlay .wf3-card p{font-size:14px;color:#a7afbd;line-height:1.5}
+  #wf3-overlay .wf3-reward{margin:14px 0 4px;font-size:16px;color:#46c97e;font-weight:700}
+  #wf3-overlay .wf3-reward .wf3-cin{color:#e0c178}#wf3-overlay .wf3-reward .wf3-xp{color:#5ad0e0}
+  #wf3-overlay .wf3-btn{margin-top:18px;cursor:pointer;display:inline-block;padding:11px 28px;border-radius:8px;font-size:13px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#0a0d14;background:linear-gradient(90deg,#c9a24d,#e0c178);border:none}
+  #wf3-overlay .wf3-btn:hover{filter:brightness(1.08)}
+  #wf3-overlay .wf3-btn.danger{background:linear-gradient(90deg,#e0623d,#cc3322);color:#fff}
+  #wf3-overlay .wf3-modal{position:absolute;inset:0;z-index:35;display:none;align-items:center;justify-content:center;background:rgba(4,6,10,.82);backdrop-filter:blur(3px)}
+  #wf3-overlay .wf3-sheet{width:560px;max-width:94vw;max-height:86vh;overflow-y:auto;background:linear-gradient(165deg,#11151f,#0a0d14);border:1px solid rgba(201,162,77,.4);border-radius:16px;padding:22px 24px;box-shadow:0 24px 70px rgba(0,0,0,.7)}
+  #wf3-overlay .wf3-sheet h1{font-size:20px;color:#f3ead2;letter-spacing:1px}
+  #wf3-overlay .wf3-sheet .wf3-sub{font-size:12px;color:#9aa3b2;margin:2px 0 16px}
+  #wf3-overlay .wf3-tabs{display:flex;gap:8px;margin-bottom:16px}
+  #wf3-overlay .wf3-tab{cursor:pointer;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#9aa3b2;background:rgba(255,255,255,.05);border:1px solid transparent}
+  #wf3-overlay .wf3-tab.on{color:#0a0d14;background:linear-gradient(90deg,#c9a24d,#e0c178)}
+  #wf3-overlay .wf3-item{display:flex;align-items:center;gap:14px;padding:13px 14px;margin-bottom:10px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);border-radius:11px}
+  #wf3-overlay .wf3-item.eq{border-color:rgba(70,201,126,.5);background:rgba(70,201,126,.06)}
+  #wf3-overlay .wf3-emoji{font-size:30px;width:42px;text-align:center}
+  #wf3-overlay .wf3-info{flex:1}
+  #wf3-overlay .wf3-info h3{font-size:15px;color:#f3ead2}
+  #wf3-overlay .wf3-info p{font-size:12px;color:#9aa3b2;margin-top:2px;line-height:1.4}
+  #wf3-overlay .wf3-stats{font-size:11px;color:#7d97a8;margin-top:4px;letter-spacing:.5px}
+  #wf3-overlay .wf3-act{text-align:right}
+  #wf3-overlay .wf3-price{font-size:14px;font-weight:800;color:#e0c178;margin-bottom:6px}
+  #wf3-overlay .wf3-price.have{color:#7d97a8;font-weight:600}
+  #wf3-overlay .wf3-ibtn{cursor:pointer;padding:8px 16px;border-radius:7px;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;border:none;color:#0a0d14;background:linear-gradient(90deg,#c9a24d,#e0c178)}
+  #wf3-overlay .wf3-ibtn:hover{filter:brightness(1.08)}
+  #wf3-overlay .wf3-ibtn.equip{background:linear-gradient(90deg,#3a7d99,#5ab0c9)}
+  #wf3-overlay .wf3-ibtn.owned{background:rgba(70,201,126,.25);color:#9adfb8;cursor:default}
+  #wf3-overlay .wf3-ibtn:disabled{background:rgba(255,255,255,.08);color:#6b7280;cursor:not-allowed}
+  #wf3-overlay .wf3-close{float:right;cursor:pointer;color:#9aa3b2;font-size:22px;line-height:1;margin-top:-4px}
+  #wf3-overlay .wf3-close:hover{color:#f3ead2}
+  #wf3-overlay .wf3-wallet-line{font-size:13px;color:#e0c178;margin-bottom:14px;font-weight:700}
+  #wf3-battle{position:absolute;inset:0;z-index:40;display:none;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(180deg,#1a0e0a,#0a0605);text-align:center}
+  #wf3-battle .wf3-vs{font-size:13px;letter-spacing:6px;color:#e0623d;text-transform:uppercase;margin-bottom:10px}
+  #wf3-battle h1{font-size:34px;color:#f3ead2;margin-bottom:6px}
+  #wf3-battle .wf3-note{max-width:380px;font-size:13px;color:#8a8276;margin:16px auto 0;line-height:1.6;border-top:1px solid rgba(255,255,255,.1);padding-top:14px}
+  #wf3-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#c9a24d;letter-spacing:2px;font-size:13px;z-index:50;background:#0a0d14}
+  `;
+  document.head.appendChild(st);
+}
+function _wf3OverlayHtml() {
+  return '<div id="wf3-mount"></div>' +
+    '<div id="wf3-loading">SUMMONING THE WATERS…</div>' +
+    '<div class="wf3-hud" id="wf3-topleft"><div class="wf3-panel">' +
+      '<div class="wf3-brand">Woods Fishing · <span id="wf3-biomeName">Ashen Shallows</span></div>' +
+      '<div class="wf3-cinder"><span id="wf3-cinder">0</span> <small>₵ CINDER</small></div>' +
+      '<div class="wf3-stat">🎣 <b id="wf3-poleName">Driftwood Rod</b></div>' +
+      '<div class="wf3-stat">🪱 Bait: <b id="wf3-baitName">None</b> <span id="wf3-baitCount"></span></div>' +
+      '<div class="wf3-stat">🐟 Trip Haul: <b id="wf3-food">0</b> food</div>' +
+      '<div class="wf3-stat">⛽ Casts left: <b id="wf3-casts">0</b></div>' +
+      '<div class="wf3-stat">🎚️ Fishing Lvl: <b id="wf3-lvl">1</b></div>' +
+      '<div class="wf3-xpbar"><div class="wf3-xpfill" id="wf3-xpFill"></div></div>' +
+      '<div class="wf3-xptext" id="wf3-xpText">0 / 60 XP</div>' +
+      '<div id="wf3-log"></div>' +
+    '</div></div>' +
+    '<div class="wf3-hud" id="wf3-topright">' +
+      '<button class="wf3-navbtn boat" id="wf3-boatBtn">🚤 Travel</button>' +
+      '<button class="wf3-navbtn" id="wf3-shopBtn">⚓ Shop</button>' +
+      '<button class="wf3-navbtn exit" id="wf3-exitBtn">⛵ Dock</button>' +
+    '</div>' +
+    '<div class="wf3-hud wf3-center" id="wf3-prompt"><div class="wf3-panel" id="wf3-promptText"></div></div>' +
+    '<div class="wf3-hud wf3-center" id="wf3-power"><div class="wf3-lbl">Cast Power · aim for the <span style="color:#5ad0e0">ring</span></div><div class="wf3-bar"><div class="wf3-fill" id="wf3-powerFill"></div></div></div>' +
+    '<div class="wf3-hud wf3-center" id="wf3-reel">' +
+      '<div class="wf3-row"><div class="wf3-name"><span>Catch Progress</span><span id="wf3-progPct">0%</span></div><div class="wf3-track"><div class="wf3-prog" id="wf3-progBar"></div></div></div>' +
+      '<div class="wf3-row"><div class="wf3-name"><span>Line Tension</span><span style="color:#e0623d">DON\'T SNAP</span></div><div class="wf3-track"><div class="wf3-danger"></div><div class="wf3-tension" id="wf3-tensionBar"></div></div></div>' +
+      '<div class="wf3-fight" id="wf3-fightLvl"></div><div class="wf3-hint">HOLD to reel · RELEASE to ease tension</div>' +
+    '</div>' +
+    '<div class="wf3-hud wf3-fuelbar" id="wf3-fuel"><span>⛽ Trip tank: <b id="wf3-casts2"></b></span><button class="wf3-refuel" id="wf3-refuelBtn">Refuel ' + WF3_TRIP_FUEL + '⛽</button></div>' +
+    '<div id="wf3-overlayCard"><div class="wf3-card" id="wf3-card"></div></div>' +
+    '<div class="wf3-modal" id="wf3-shop"><div class="wf3-sheet"><span class="wf3-close" id="wf3-shopClose">✕</span><h1>Sparta Outfitter</h1><div class="wf3-sub">Spend Cinder on gear. Better poles fight harder fish; bait bends your luck.</div><div class="wf3-wallet-line">Balance: <span id="wf3-shopCinder">0</span> ₵</div><div class="wf3-tabs"><div class="wf3-tab on" id="wf3-tabPoles">Poles</div><div class="wf3-tab" id="wf3-tabBait">Bait</div></div><div id="wf3-shopList"></div></div></div>' +
+    '<div class="wf3-modal" id="wf3-boat"><div class="wf3-sheet"><span class="wf3-close" id="wf3-boatClose">✕</span><h1>🚤 Set Sail</h1><div class="wf3-sub">Pilot the boat to a new biome. Deeper waters = rarer catches and fiercer fights.</div><div id="wf3-biomeList"></div></div></div>' +
+    '<div id="wf3-battle"><div class="wf3-vs">A Wild Encounter</div><h1 id="wf3-battleName"></h1><button class="wf3-btn danger" id="wf3-battleBtn">Defeat it &amp; Return</button><div class="wf3-note">You wrestle the beast back into the deep and claim its bounty.</div></div>';
+}
+function _wf3Open() {
+  if (document.getElementById('wf3-overlay')) return;
+  // ⛽ Fuel gate.
+  if (_wf3Fuel() < WF3_TRIP_FUEL) { showToast('⛽ Need ' + WF3_TRIP_FUEL + ' fuel to set sail. You have ' + _wf3Fuel() + '.', 3400); return; }
+  if (!Profile.salvage) Profile.salvage = {};
+  Profile.salvage.fuel = Math.max(0, _wf3Fuel() - WF3_TRIP_FUEL);
+  try { if (typeof bumpMarketPriceUp === 'function') bumpMarketPriceUp('fuel', WF3_TRIP_FUEL, 'fishing'); } catch (e) {}
+  _wf3Save();
+  _wf3EnsureStyle();
+  const wrap = document.createElement('div'); wrap.id = 'wf3-overlay'; wrap.innerHTML = _wf3OverlayHtml();
+  document.body.appendChild(wrap);
+  const L = _wf3Live();
+  _wf3S = {
+    open: true, state: 'IDLE', holding: false, G: null, shopTab: 'poles',
+    power: 0, powerDir: 1, castT: 0, castDur: 0.85, arcH: 7, hotZ: 0,
+    castFrom: null, castTo: null, bobAnchor: null,
+    castLuckBonus: 0, castEncBonus: 0, castWasLucky: false,
+    biteTimer: 0, hookTimer: 0, pending: null,
+    progress: 0, tension: 0, surgeTimer: 0, fightStr: 14, fightSurge: 10,
+    pendingBounty: 0, pendingEncRarity: 'Uncommon',
+    hotR: WF3_RING_BASE, powerRate: 0.9, ringScale: 1,
+    waveAmp: (WF3_SWELL[L.currentBiome] || WF3_SWELL.shallows).wave,
+    castsLeft: WF3_TRIP_CASTS, foodTrip: 0,
+  };
+  // wire buttons
+  const onClose = () => _wf3Close();
+  wrap.querySelector('#wf3-exitBtn').onclick = onClose;
+  wrap.querySelector('#wf3-shopBtn').onclick = _wf3OpenShop;
+  wrap.querySelector('#wf3-boatBtn').onclick = _wf3OpenBoat;
+  wrap.querySelector('#wf3-shopClose').onclick = () => { const e = _wf3$('shop'); if (e) e.style.display = 'none'; };
+  wrap.querySelector('#wf3-boatClose').onclick = () => { const e = _wf3$('boat'); if (e) e.style.display = 'none'; };
+  wrap.querySelector('#wf3-tabPoles').onclick = () => { _wf3S.shopTab = 'poles'; _wf3$('tabPoles').classList.add('on'); _wf3$('tabBait').classList.remove('on'); _wf3RenderShop(); };
+  wrap.querySelector('#wf3-tabBait').onclick = () => { _wf3S.shopTab = 'bait'; _wf3$('tabBait').classList.add('on'); _wf3$('tabPoles').classList.remove('on'); _wf3RenderShop(); };
+  wrap.querySelector('#wf3-refuelBtn').onclick = () => {
+    if (_wf3Fuel() < WF3_TRIP_FUEL) { showToast('⛽ Not enough fuel to refuel (' + WF3_TRIP_FUEL + ' needed).', 2800); return; }
+    Profile.salvage.fuel = Math.max(0, _wf3Fuel() - WF3_TRIP_FUEL);
+    try { if (typeof bumpMarketPriceUp === 'function') bumpMarketPriceUp('fuel', WF3_TRIP_FUEL, 'fishing'); } catch (e) {}
+    _wf3S.castsLeft += WF3_TRIP_CASTS; _wf3Save(); _wf3RenderHud(); _wf3RefreshFuelBar();
+    _wf3FlashLog('⛽ Refueled +' + WF3_TRIP_CASTS + ' casts', 'buy');
+    if (_wf3S.state === 'IDLE') _wf3ResetToIdle();
+  };
+  const battleBtn = wrap.querySelector('#wf3-battleBtn');
+  battleBtn.onclick = () => { const b = _wf3$('battle'); if (b) b.style.display = 'none'; const s = _wf3S; if (s.pendingBounty) { _wf3AddCinder(s.pendingBounty); _wf3FlashLog('Bounty +' + s.pendingBounty + ' ₵', 'buy'); s.pendingBounty = 0; } _wf3GainXP(WF3_XP_GAIN[s.pendingEncRarity] || 20); _wf3ResetToIdle(); };
+  // pointer input (root-scoped → auto-cleans when overlay removed)
+  wrap.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; _wf3Press(e); });
+  wrap.addEventListener('pointerup', (e) => { _wf3Release(e); });
+  wrap.addEventListener('contextmenu', (e) => e.preventDefault());
+  // boot THREE
+  _csLoadThree((ok) => {
+    if (!ok || !window.THREE || !_wf3S || !_wf3S.open) { const l = _wf3$('loading'); if (l) l.textContent = '3D engine offline.'; return; }
+    const T = window.THREE; _wf3S.castFrom = new T.Vector3(); _wf3S.castTo = new T.Vector3(); _wf3S.bobAnchor = new T.Vector3();
+    const mount = _wf3$('mount'); _wf3S.G = _wf3InitScene(mount);
+    if (!_wf3S.G) { const l = _wf3$('loading'); if (l) l.textContent = '3D engine offline.'; return; }
+    _wf3ApplyLevel(); _wf3RenderHud(); _wf3RefreshFuelBar(); _wf3ResetToIdle();
+    const l = _wf3$('loading'); if (l) l.style.display = 'none';
+    _wf3S.G.raf = requestAnimationFrame(_wf3Animate);
+  });
+  _wf3RenderHud(); _wf3RefreshFuelBar();
+}
+function _wf3RefreshFuelBar() { const c = _wf3$('casts2'); if (c) c.textContent = Math.max(0, _wf3S ? (_wf3S.castsLeft | 0) : 0) + ' casts'; const rb = _wf3$('refuelBtn'); if (rb) rb.disabled = _wf3Fuel() < WF3_TRIP_FUEL; }
+function _wf3Close() {
+  const s = _wf3S;
+  try { if (s && s.G) s.G.dispose(); } catch (e) {}
+  const o = document.getElementById('wf3-overlay'); if (o) o.remove();
+  const haul = s ? (s.foodTrip | 0) : 0;
+  _wf3S = null; _wf3Save();
+  try { if (typeof render === 'function' && App.screen === 'woodsFishing') render(); } catch (e) {}
+  if (haul > 0) try { showToast('🐟 Trip banked — +' + haul + ' food to the camp stores.', 3400); } catch (e) {}
+}
+
+// ── Admin .glb models (boat + per-rarity fish) ──────────────────────────────
+const WF3_FISH_TIERS = ['Common', 'Uncommon', 'Rare', 'Legendary'];
+function _wf3AdminModelsHtml() {
+  const m = _wf3AdminModels(); const ship = Array.isArray(m.ship) ? m.ship : []; const fish = (m.fish && typeof m.fish === 'object') ? m.fish : {};
+  const card = (title, hint, list, kind, tier) =>
+    '<div style="background:#11131a;border:1px solid #2a2330;border-radius:10px;padding:0.7rem">' +
+      '<div style="font-weight:800;color:#7fb9c9">' + title + ' <span style="color:#71717a;font-weight:600">· ' + list.length + ' model' + (list.length === 1 ? '' : 's') + '</span></div>' +
+      '<div style="font-size:10px;color:#71717a;margin:2px 0 4px">' + hint + '</div>' +
+      list.map((mm, i) => '<div style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cbd5e1">' + escapeHtml(mm.label || ('model ' + (i + 1))) + '</span><button class="wfa-mini-btn" data-wf3-view="' + kind + ':' + tier + ':' + i + '" style="padding:2px 6px;font-size:10px">👁</button><button class="wfa-mini-btn danger" data-wf3-del="' + kind + ':' + tier + ':' + i + '" style="padding:2px 6px;font-size:10px">✕</button></div>').join('') +
+      '<label class="wfa-mini-btn" style="display:block;margin-top:7px;text-align:center;cursor:pointer;padding:5px">⬆ Upload .glb<input type="file" accept=".glb,.gltf,model/gltf-binary" data-wf3-up="' + kind + ':' + tier + '" style="display:none"></label>' +
+    '</div>';
+  return '<div class="wfa-panel" style="margin-top:0.8rem">' +
+    '<div class="wfa-panel-h"><h3>🎣 LIVE FISHING · 3D MODELS</h3><span>SHARED ACROSS ALL PLAYERS</span></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.6rem">' +
+      card('⛵ BOAT', 'Replaces the fishing skiff on the trip (a random one is used).', ship, 'ship', '_') +
+      WF3_FISH_TIERS.map(t => card('🐟 FISH · ' + t.toUpperCase(), 'Breaches when you land a ' + t + ' fish.', Array.isArray(fish[t]) ? fish[t] : [], 'fish', t)).join('') +
+    '</div></div>';
+}
+function _wf3BindAdminModels() {
+  const ensure = () => { if (!Forge.woodsFishing) Forge.woodsFishing = {}; if (!Forge.woodsFishing.models) Forge.woodsFishing.models = {}; return Forge.woodsFishing.models; };
+  document.querySelectorAll('[data-wf3-up]').forEach(inp => { inp.onchange = async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return; const [kind, tier] = inp.dataset.wf3Up.split(':');
+    if (typeof _csShopUploadModel !== 'function') { showToast('Model upload unavailable.', 3000); return; }
+    showToast('⬆ Uploading ' + f.name + '…', 2600);
+    try {
+      const url = await _csShopUploadModel(f); const M = ensure();
+      const rec = { url, label: f.name.replace(/\.(glb|gltf)$/i, ''), scale: 1, rotY: 0 };
+      if (kind === 'ship') { if (!Array.isArray(M.ship)) M.ship = []; M.ship.push(rec); }
+      else { if (!M.fish || typeof M.fish !== 'object') M.fish = {}; if (!Array.isArray(M.fish[tier])) M.fish[tier] = []; M.fish[tier].push(rec); }
+      try { saveForge && saveForge(); } catch (er) {} showToast('✓ Model added.', 2800); if (typeof render === 'function') render();
+    } catch (err) { showToast('⚠ Upload failed: ' + ((err && err.message) || err), 4600); }
+    inp.value = '';
+  }; });
+  document.querySelectorAll('[data-wf3-del]').forEach(b => b.onclick = () => {
+    const [kind, tier, i] = b.dataset.wf3Del.split(':'); const M = (Forge.woodsFishing && Forge.woodsFishing.models) || {};
+    const list = kind === 'ship' ? M.ship : (M.fish && M.fish[tier]);
+    if (Array.isArray(list)) { list.splice(+i, 1); try { saveForge && saveForge(); } catch (e) {} if (typeof render === 'function') render(); }
+  });
+  document.querySelectorAll('[data-wf3-view]').forEach(b => b.onclick = () => {
+    const [kind, tier, i] = b.dataset.wf3View.split(':'); const M = (Forge.woodsFishing && Forge.woodsFishing.models) || {};
+    const list = kind === 'ship' ? M.ship : (M.fish && M.fish[tier]); const mm = Array.isArray(list) && list[+i];
+    if (mm && typeof _ppaViewModel === 'function') _ppaViewModel(mm.url, kind === 'ship' ? 'Boat model' : (tier + ' fish'), mm.scale, mm.rotY);
+  });
+}
+
 function renderWoodsFishing() {
   // 🛑 Gate: must own the company (or be admin).
   ensureWoodsFishingAdmin();
@@ -135157,8 +135927,25 @@ function _wfRenderExp(f) {
 
   const dur = WF_DURATIONS.find(d => d.id === setup.durationId) || WF_DURATIONS[0];
 
+  // ⚓ LIVE 3D FISHING TRIP — fuel-gated interactive expedition (the ported mini-game).
+  const fuelHave = (Profile.salvage && Profile.salvage.fuel) | 0;
+  const canSail = fuelHave >= WF3_TRIP_FUEL;
+  const live3d =
+    '<div class="wfa-panel" style="margin-bottom:0.8rem;border-color:rgba(90,176,201,0.45);background:linear-gradient(160deg,rgba(18,40,48,0.55),rgba(8,11,18,0.6))">' +
+      '<div class="wfa-panel-h"><h3>⚓ LIVE FISHING TRIP</h3><span style="color:#7fb9c9">3D · HANDS-ON</span></div>' +
+      '<div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">' +
+        '<div style="flex:1;min-width:230px;font-size:0.82rem;color:#cdd3df;line-height:1.5">Take the helm yourself — cast into the <b style="color:#7fb9c9">luck ring</b>, set the hook, and reel without snapping the line. Land fish for <b style="color:#a3d977">camp food</b> + <b style="color:#e6b660">Cinder</b>, level your angler, and buy poles, bait &amp; deeper biomes on the water.</div>' +
+        '<div style="text-align:right">' +
+          '<div style="font-size:0.72rem;letter-spacing:0.14em;color:#9aa3b2;text-transform:uppercase;margin-bottom:2px">FUEL TO SAIL</div>' +
+          '<div style="font-size:1.1rem;font-weight:800;color:' + (canSail ? '#e6b660' : '#cf6868') + '">' + WF3_TRIP_FUEL + ' ⛽ <span style="font-size:0.75rem;color:#7d97a8;font-weight:600">/ ' + fuelHave + ' on hand</span></div>' +
+          '<button class="wfa-deploy ' + (canSail ? '' : 'is-disabled') + '" id="wf3-launch" ' + (canSail ? '' : 'disabled') + ' style="margin-top:0.55rem;width:auto;padding:0.6rem 1.4rem">► CAST OFF ( ' + WF3_TRIP_CASTS + ' CASTS )</button>' +
+          (canSail ? '' : '<div style="font-size:0.7rem;color:#cf6868;margin-top:0.35rem">Refine / buy ⛽ fuel to set sail.</div>') +
+        '</div>' +
+      '</div>' +
+    '</div>';
   return '<div class="wfa-exp">' +
     '<div class="wfa-panel-header">EXPEDITIONS  <span class="wfa-panel-crumb">LAUNCH / TRACK / DEBRIEF</span></div>' +
+    live3d +
     '<div class="wfa-grid-1-1">' +
       '<div class="wfa-panel">' +
         '<div class="wfa-panel-h"><h3>NEW EXPEDITION</h3><span>ASSIGN / OUTFIT / DEPLOY</span></div>' +
@@ -135209,6 +135996,8 @@ function _wfBindExp() {
   };
   document.querySelectorAll('[data-wfa-recall]').forEach(el => el.onclick = () => { wfRecallExpedition(el.dataset.wfaRecall); render(); });
   document.querySelectorAll('[data-wfa-skip]').forEach(el => el.onclick = () => { wfRecallExpedition(el.dataset.wfaSkip); render(); });
+  const launch = document.getElementById('wf3-launch');
+  if (launch) launch.onclick = () => { try { _wf3Open(); } catch (e) { console.warn('[wf3] launch', e); showToast('⚠ Could not launch the fishing trip — check console.', 3200); } };
 }
 
 // ───────────────────────── CREW MANIFEST ─────────────────────────
@@ -135386,6 +136175,7 @@ function _wfRenderAdmin(f) {
       '<div class="wfa-panel-h"><h3>👤 CREW PHOTOS</h3><span>PER FISHERMAN</span></div>' +
       '<div class="wfa-admin-grid">' + crewCards + '</div>' +
     '</div>' +
+    _wf3AdminModelsHtml() +
   '</div>';
 }
 function _wfBindAdmin() {
@@ -135393,6 +136183,7 @@ function _wfBindAdmin() {
   document.querySelectorAll('[data-wfa-up-crew]').forEach(inp => { inp.onchange = (e) => { const file = e.target.files && e.target.files[0]; if (file) wfHandlePhotoUpload('crew', inp.dataset.wfaUpCrew, file); }; });
   document.querySelectorAll('[data-wfa-cl-boat]').forEach(b => b.onclick = () => { wfClearPhoto('boat', b.dataset.wfaClBoat); render(); });
   document.querySelectorAll('[data-wfa-cl-crew]').forEach(b => b.onclick = () => { wfClearPhoto('crew', b.dataset.wfaClCrew); render(); });
+  try { _wf3BindAdminModels(); } catch (e) {}
 }
 
 // ============================================================================

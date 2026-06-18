@@ -80,6 +80,7 @@ window.MYTHIC = (function(){
     <h3>🛠 Admin Model Studio</h3>
     <div class="fld"><label>Name</label><input id="aName" class="in" placeholder="Arcane Console"></div>
     <div class="fld"><label>Icon</label><input id="aIco" class="in sm" placeholder="🖥️"><label>Radius</label><input id="aR" class="in sm" type="number" step="0.1" value="0.6"></div>
+    <div class="fld"><label>Icon image</label><label for="aIcoImg" class="btn small ico-up">🖼 Upload image…</label><input id="aIcoImg" type="file" accept="image/*" style="display:none"><span id="aIcoPrev" class="ico-prev" style="display:none"></span><button id="aIcoClear" class="mini-del" style="display:none">Clear</button></div>
     <div class="fld"><label>Price</label><input id="aAza" class="in sm" type="number" value="20"><span class="cur">🪙</span><input id="aCin" class="in sm" type="number" value="15"><span class="cur">🔥</span></div>
     <div class="fld"><label>Type</label><select id="aMount" class="in"><option value="floor">🪑 Floor furniture</option><option value="wall">🖼️ Wall-mounted</option><option value="flat">🟥 Flat / rug</option><option value="ceiling">💡 Ceiling / hanging</option></select></div>
     <div class="fld"><label>Function</label><select id="aFunc" class="in"><option value="">— No function (decor)</option><option value="bed">🛏️ Bed (rest heroes)</option><option value="storage">🧰 Storage chest</option><option value="binder">📒 Binder / Counter</option><option value="open">🎴 Open packs</option><option value="vendor">🛒 Vendor Market</option><option value="battle">⚔️ Battle Table</option></select></div>
@@ -115,10 +116,22 @@ window.MYTHIC = (function(){
   </div>
 
   <div id="market" class="modal">
+    <div class="store-box store-box-wide">
+      <div class="store-head"><span>🏪 Vendor Market</span><div class="spacer"></div><span id="mktWallet" class="cap"></span><button id="openCartBtn" class="btn small cart-btn">🛒 Cart <span id="cartCount" class="cart-badge" style="display:none">0</span></button><button id="closeMkt" class="btn small">Close</button></div>
+      <div id="marketList" class="store-grid"></div>
+      <div class="store-foot">Spend AZA &amp; Cinder · add to cart, then check out · purchases land in your Furnishings Portal</div>
+    </div>
+  </div>
+
+  <div id="cart" class="modal">
     <div class="store-box">
-      <div class="store-head"><span>🏪 Vendor Market</span><div class="spacer"></div><span id="mktWallet" class="cap"></span><button id="closeMkt" class="btn small">Close</button></div>
-      <div id="marketList" class="mkt-list"></div>
-      <div class="store-foot">Spend AZA &amp; Cinder · purchases land in your Furnishings Portal</div>
+      <div class="store-head"><span>🛒 Your Cart</span><div class="spacer"></div><span id="cartWallet" class="cap"></span><button id="closeCart" class="btn small">Back to shop</button></div>
+      <div id="cartList" class="cart-list"></div>
+      <div id="cartEmpty" class="empty-note" style="text-align:center;padding:24px 8px">Your cart is empty — add some furnishings from the shop.</div>
+      <div id="cartFoot" class="cart-foot">
+        <div class="cart-total-row"><span>Total</span><span id="cartTotal" class="cart-total">Free</span></div>
+        <button id="checkoutBtn" class="btn primary full">Checkout</button>
+      </div>
     </div>
   </div>
 
@@ -164,6 +177,8 @@ window.MYTHIC = (function(){
   .item:hover { background:#1f2c4d; border-color:rgba(212,175,55,.5); transform:translateY(-1px); }
   .item.active { background:#2a3a63; border-color:#d4af37; box-shadow:0 0 0 1px #d4af37 inset; }
   .item .ico { font-size:21px; display:block; line-height:1.2; }
+  .item .ico img { width:26px; height:26px; object-fit:cover; border-radius:5px; display:inline-block; }
+  .cust-item .ci-ico img { width:20px; height:20px; object-fit:cover; border-radius:4px; vertical-align:middle; }
   .item .lbl { font-size:10px; color:#aeb6cc; margin-top:3px; display:block; }
   .item .badge { position:absolute; top:4px; right:5px; background:#d4af37; color:#1a1300; font-size:10px; font-weight:800; border-radius:8px; padding:0 5px; line-height:16px; min-width:16px; }
   .empty-note { font-size:11px; color:#8b93ab; line-height:1.55; margin-top:4px; }
@@ -213,18 +228,44 @@ window.MYTHIC = (function(){
   .res-row.empty { opacity:.4; cursor:default; }
   .r-ico { font-size:16px; } .r-name { flex:1; font-size:13px; } .r-qty { font-weight:700; color:#fff; font-variant-numeric:tabular-nums; }
   .store-foot { margin-top:14px; font-size:11px; color:#8b93ab; text-align:center; }
-  .mkt-list { display:flex; flex-direction:column; gap:7px; max-height:56vh; overflow-y:auto; padding-right:3px; }
-  .mkt-row { display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:8px; background:#18213a; border:1px solid rgba(255,255,255,.05); }
-  .mkt-row .m-ico { font-size:20px; }
-  .mkt-row .m-name { flex:1; font-size:13px; font-weight:600; }
-  .mkt-row .m-det { display:block; font-size:11px; color:#b9b08f; font-style:italic; font-weight:400; margin-top:1px; }
-  .mkt-row .m-own { font-size:11px; color:#8b93ab; font-weight:500; margin-left:5px; }
-  .mkt-row .m-price { font-size:12.5px; min-width:96px; text-align:right; font-variant-numeric:tabular-nums; }
-  .buy-btn { background:#d4af37; color:#1a1300; border:none; border-radius:6px; padding:6px 14px; font-size:12px; font-weight:700; cursor:pointer; transition:.13s; }
-  .buy-btn:hover { background:#e6c34d; }
-  .buy-btn:disabled { background:#222c44; color:#5a627a; cursor:not-allowed; }
-  #catalog::-webkit-scrollbar, #admin::-webkit-scrollbar, .res-list::-webkit-scrollbar, .mkt-list::-webkit-scrollbar { width:7px; }
-  #catalog::-webkit-scrollbar-thumb, #admin::-webkit-scrollbar-thumb, .mkt-list::-webkit-scrollbar-thumb { background:rgba(212,175,55,.3); border-radius:4px; }
+  .store-box-wide { width:min(900px,95vw); }
+  /* 🏪 store-page grid of product cards */
+  .store-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:11px; max-height:58vh; overflow-y:auto; padding:2px 4px 2px 0; }
+  .store-card { display:flex; flex-direction:column; background:#141d33; border:1px solid rgba(255,255,255,.06); border-radius:11px; overflow:hidden; transition:.13s; }
+  .store-card:hover { border-color:rgba(212,175,55,.5); transform:translateY(-2px); box-shadow:0 8px 22px rgba(0,0,0,.4); }
+  .sc-thumb { position:relative; height:96px; display:flex; align-items:center; justify-content:center; font-size:46px; background:radial-gradient(circle at 50% 38%,#21304f,#0e1424); border-bottom:1px solid rgba(255,255,255,.05); }
+  .sc-thumb img { width:100%; height:100%; object-fit:cover; }
+  .sc-own { position:absolute; top:6px; right:7px; background:rgba(8,12,20,.82); color:#d4af37; font-size:10.5px; font-weight:800; border:1px solid rgba(212,175,55,.5); border-radius:7px; padding:1px 7px; }
+  .sc-body { display:flex; flex-direction:column; gap:5px; padding:9px 10px 11px; flex:1; }
+  .sc-name { font-size:13px; font-weight:700; color:#eef1f8; }
+  .sc-det { font-size:10.5px; color:#b9b08f; font-style:italic; line-height:1.3; }
+  .sc-price { font-size:12.5px; font-weight:700; color:#ffcf66; font-variant-numeric:tabular-nums; margin-top:auto; }
+  .sc-add { margin-top:7px; background:#d4af37; color:#1a1300; border:none; border-radius:7px; padding:7px; font-size:12px; font-weight:800; cursor:pointer; transition:.13s; }
+  .sc-add:hover { background:#e6c34d; }
+  .sc-qty { margin-top:7px; display:flex; align-items:center; gap:6px; }
+  .sc-qty button { flex:0 0 28px; height:28px; border:none; border-radius:7px; background:#2a3a63; color:#fff; font-size:15px; font-weight:800; cursor:pointer; }
+  .sc-qty button:hover { background:#33457a; }
+  .sc-qty .sc-q { flex:1; text-align:center; font-weight:800; font-size:13px; color:#d4af37; }
+  /* 🛒 cart */
+  .cart-btn { position:relative; background:#2a3a63; border-color:rgba(212,175,55,.5); }
+  .cart-badge { background:#d4af37; color:#1a1300; font-size:10px; font-weight:800; border-radius:9px; padding:0 6px; margin-left:4px; }
+  .cart-list { display:flex; flex-direction:column; gap:8px; max-height:52vh; overflow-y:auto; padding-right:3px; margin-bottom:12px; }
+  .cart-row { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:9px; background:#141d33; border:1px solid rgba(255,255,255,.05); }
+  .cart-row .cr-ico { width:38px; height:38px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; font-size:24px; border-radius:8px; background:#0e1424; overflow:hidden; }
+  .cart-row .cr-ico img { width:100%; height:100%; object-fit:cover; }
+  .cart-row .cr-name { flex:1; font-size:13px; font-weight:600; }
+  .cart-row .cr-line { font-size:12px; color:#ffcf66; font-variant-numeric:tabular-nums; min-width:90px; text-align:right; }
+  .cart-row .cr-qty { display:flex; align-items:center; gap:5px; }
+  .cart-row .cr-qty button { width:24px; height:24px; border:none; border-radius:6px; background:#2a3a63; color:#fff; font-weight:800; cursor:pointer; }
+  .cart-row .cr-qty .crq { min-width:18px; text-align:center; font-weight:800; font-size:12.5px; }
+  .cart-row .cr-rm { background:none; border:none; color:#e7a3a3; cursor:pointer; font-size:15px; }
+  .cart-foot { border-top:1px solid rgba(212,175,55,.22); padding-top:11px; display:flex; flex-direction:column; gap:9px; }
+  .cart-total-row { display:flex; justify-content:space-between; align-items:center; font-size:14px; font-weight:700; }
+  .cart-total { color:#ffcf66; font-variant-numeric:tabular-nums; }
+  .ico-up { display:inline-flex; align-items:center; }
+  .ico-prev { width:30px; height:30px; border-radius:6px; object-fit:cover; border:1px solid rgba(212,175,55,.5); display:inline-block; vertical-align:middle; }
+  #catalog::-webkit-scrollbar, #admin::-webkit-scrollbar, .res-list::-webkit-scrollbar, .store-grid::-webkit-scrollbar, .cart-list::-webkit-scrollbar { width:7px; }
+  #catalog::-webkit-scrollbar-thumb, #admin::-webkit-scrollbar-thumb, .store-grid::-webkit-scrollbar-thumb, .cart-list::-webkit-scrollbar-thumb { background:rgba(212,175,55,.3); border-radius:4px; }
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -397,7 +438,7 @@ window.MYTHIC = (function(){
 
   const itemsEl=document.getElementById('items'), portalEmpty=document.getElementById('portalEmpty');
   function renderPortal(){ itemsEl.innerHTML=''; const have=fullCatalog().filter(c=>(owned[c.type]||0)>0); portalEmpty.style.display=have.length?'none':'block';
-    have.forEach(c=>{ const d=document.createElement('div'); d.className='item'+(placingType===c.type?' active':''); d.innerHTML=`<span class="badge">${owned[c.type]}</span><span class="ico">${c.ico}</span><span class="lbl">${c.name}</span>`; d.onclick=()=>startPlacing(c.type); itemsEl.appendChild(d); }); }
+    have.forEach(c=>{ const d=document.createElement('div'); d.className='item'+(placingType===c.type?' active':''); d.innerHTML=`<span class="badge">${owned[c.type]}</span><span class="ico">${dwIcoHtml(c.ico)}</span><span class="lbl">${dwEsc(c.name)}</span>`; d.onclick=()=>startPlacing(c.type); itemsEl.appendChild(d); }); }
   function startPlacing(type){ if(placingType===type){ cancelPlacing(); return; } clearSelection(); if((owned[type]||0)<=0){ cancelPlacing(); return; }
     if(ghost){ scene.remove(ghost); ghost=null; } placingType=type; placingRot=0; ghost=buildFurniture(type); if(!ghost){ placingType=null; flash('Model unavailable'); return; }
     ghost.traverse(o=>{ if(o.material){ o.material=o.material.clone(); o.material.transparent=true; o.material.opacity=0.5; o.castShadow=false; } if(o.isLight) o.visible=false; });
@@ -421,19 +462,57 @@ window.MYTHIC = (function(){
   // keyed off category/function ("A normal poster", "A normal planet"…).
   function dwDetails(c){ var d=(c.details||'').toString().trim(); if(d) return d; var cat=((c.category||c.func)||'').toString().trim().toLowerCase(); if(!cat&&c.wall) cat='wall decoration'; var noun=(!cat||cat==='decor')?'decoration':cat; return 'A normal '+noun+'.'; }
   function dwEsc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch];}); }
-  function renderMarket(){ mktWallet.textContent=`🪙 ${pack.aza||0}   🔥 ${pack.cinder||0}`; marketList.innerHTML='';
-    fullCatalog().forEach(c=>{ const aff=canAfford(c.price), own=owned[c.type]||0; const row=document.createElement('div'); row.className='mkt-row';
-      const det=(c.custom||c.shared)?`<span class="m-det">${dwEsc(dwDetails(c))}</span>`:'';
-      row.innerHTML=`<span class="m-ico">${c.ico}</span><span class="m-name">${dwEsc(c.name)}${det}<span class="m-own">owned ${own}</span></span><span class="m-price">${priceStr(c.price)}</span>`;
-      const b=document.createElement('button'); b.className='buy-btn'; b.textContent='Buy'; b.disabled=!aff; b.onclick=()=>buy(c.type); row.appendChild(b); marketList.appendChild(row); }); }
-  function buy(type){ const p=META[type].price; if(!canAfford(p)) return;
-    if(window.MYTHIC && window.MYTHIC.bridged()){ window.MYTHIC.spend(p.cinder||0, p.aza||0).then(function(ok){ if(!ok){ flash('Not enough Cinder / Aza'); renderMarket(); return; } owned[type]=(owned[type]||0)+1; pack.cinder=window.MYTHIC.cinder(); pack.aza=window.MYTHIC.aza(); renderMarket(); renderPortal(); updateWallet(); save(true); flash(`Bought ${META[type].name}`); }); return; }
-    pack.aza=(pack.aza||0)-(p.aza||0); pack.cinder=(pack.cinder||0)-(p.cinder||0); owned[type]=(owned[type]||0)+1; renderMarket(); renderPortal(); updateWallet(); save(true); flash(`Bought ${META[type].name}`); }
+  // 🖼 Render a catalog icon — an admin-uploaded image (data:/http/blob) shows as
+  // an <img>; anything else is treated as an emoji/text glyph.
+  function dwIsImg(ico){ return typeof ico==='string' && /^(https?:|data:|blob:|\/)/i.test(ico.trim()); }
+  function dwIcoHtml(ico){ const v=(ico==null?'':String(ico)); return dwIsImg(v)?`<img src="${dwEsc(v)}" alt="">`:dwEsc(v||'🛋️'); }
+  // ===== cart =====
+  // Session-only shopping cart: type → qty. Add from the grid, review + check
+  // out from the cart modal (single spend for the whole basket).
+  const cartEl=document.getElementById('cart'), cartListEl=document.getElementById('cartList'), cartEmptyEl=document.getElementById('cartEmpty'), cartFootEl=document.getElementById('cartFoot'), cartTotalEl=document.getElementById('cartTotal'), cartCountEl=document.getElementById('cartCount'), cartWalletEl=document.getElementById('cartWallet'), checkoutBtn=document.getElementById('checkoutBtn');
+  let cart={};
+  function cartCount(){ let n=0; for(const k in cart) n+=cart[k]|0; return n; }
+  function cartTotals(){ let aza=0,cinder=0; for(const k in cart){ const m=META[k]; if(!m) continue; const q=cart[k]|0; aza+=(m.price.aza||0)*q; cinder+=(m.price.cinder||0)*q; } return {aza,cinder}; }
+  function cartAdd(type,delta){ const q=(cart[type]|0)+delta; if(q<=0) delete cart[type]; else cart[type]=Math.min(99,q); renderMarket(); if(cartEl.style.display==='flex') renderCart(); }
+  function updateCartBadge(){ const n=cartCount(); cartCountEl.textContent=n; cartCountEl.style.display=n>0?'inline-block':'none'; }
+  function renderMarket(){ mktWallet.textContent=`🪙 ${pack.aza||0}   🔥 ${pack.cinder||0}`; updateCartBadge(); marketList.innerHTML='';
+    fullCatalog().forEach(c=>{ const own=owned[c.type]||0, inCart=cart[c.type]|0; const card=document.createElement('div'); card.className='store-card';
+      const det=(c.custom||c.shared)?`<div class="sc-det">${dwEsc(dwDetails(c))}</div>`:'';
+      const ownBadge=own>0?`<span class="sc-own">owned ${own}</span>`:'';
+      card.innerHTML=`<div class="sc-thumb">${dwIcoHtml(c.ico)}${ownBadge}</div>`+
+        `<div class="sc-body"><div class="sc-name">${dwEsc(c.name)}</div>${det}<div class="sc-price">${priceStr(c.price)}</div>`+
+        (inCart>0
+          ? `<div class="sc-qty"><button data-m>–</button><span class="sc-q">${inCart} in cart</span><button data-p>+</button></div>`
+          : `<button class="sc-add">＋ Add to Cart</button>`)+
+        `</div>`;
+      if(inCart>0){ card.querySelector('[data-m]').onclick=()=>cartAdd(c.type,-1); card.querySelector('[data-p]').onclick=()=>cartAdd(c.type,1); }
+      else { card.querySelector('.sc-add').onclick=()=>cartAdd(c.type,1); }
+      marketList.appendChild(card); }); }
+  function renderCart(){ cartWalletEl.textContent=`🪙 ${pack.aza||0}   🔥 ${pack.cinder||0}`; const keys=Object.keys(cart); cartListEl.innerHTML='';
+    cartEmptyEl.style.display=keys.length?'none':'block'; cartFootEl.style.display=keys.length?'flex':'none';
+    keys.forEach(type=>{ const m=META[type]; if(!m) return; const q=cart[type]|0; const row=document.createElement('div'); row.className='cart-row';
+      const line=priceStr({aza:(m.price.aza||0)*q,cinder:(m.price.cinder||0)*q});
+      row.innerHTML=`<span class="cr-ico">${dwIcoHtml(m.ico)}</span><span class="cr-name">${dwEsc(m.name)}</span>`+
+        `<span class="cr-qty"><button data-m>–</button><span class="crq">${q}</span><button data-p>+</button></span>`+
+        `<span class="cr-line">${line}</span><button class="cr-rm" title="Remove">✕</button>`;
+      row.querySelector('[data-m]').onclick=()=>cartAdd(type,-1); row.querySelector('[data-p]').onclick=()=>cartAdd(type,1); row.querySelector('.cr-rm').onclick=()=>{ delete cart[type]; renderMarket(); renderCart(); };
+      cartListEl.appendChild(row); });
+    const t=cartTotals(); cartTotalEl.textContent=priceStr(t); const aff=canAfford(t); checkoutBtn.disabled=!aff||!keys.length; checkoutBtn.textContent=keys.length?(aff?`Checkout — ${priceStr(t)}`:'Not enough Cinder / Aza'):'Checkout'; }
+  function grantCart(){ for(const k in cart){ owned[k]=(owned[k]||0)+(cart[k]|0); } cart={}; }
+  function checkout(){ const keys=Object.keys(cart); if(!keys.length) return; const t=cartTotals(); if(!canAfford(t)){ flash('Not enough Cinder / Aza'); return; }
+    if(window.MYTHIC && window.MYTHIC.bridged()){ checkoutBtn.disabled=true; window.MYTHIC.spend(t.cinder||0, t.aza||0).then(function(ok){ if(!ok){ flash('Not enough Cinder / Aza'); renderCart(); return; } const n=cartCount(); grantCart(); pack.cinder=window.MYTHIC.cinder(); pack.aza=window.MYTHIC.aza(); renderMarket(); renderPortal(); updateWallet(); save(true); closeCart(); flash(`Bought ${n} item${n===1?'':'s'}`); }); return; }
+    const n=cartCount(); pack.aza=(pack.aza||0)-(t.aza||0); pack.cinder=(pack.cinder||0)-(t.cinder||0); grantCart(); renderMarket(); renderPortal(); updateWallet(); save(true); closeCart(); flash(`Bought ${n} item${n===1?'':'s'}`); }
   function openMarket(){ uiOpen=true; lookDrag=false; renderMarket(); marketEl.style.display='flex'; }
   function closeMarket(){ uiOpen=false; marketEl.style.display='none'; }
+  function openCart(){ renderCart(); cartEl.style.display='flex'; }
+  function closeCart(){ cartEl.style.display='none'; }
   document.getElementById('openMktBtn').onclick=openMarket;
   document.getElementById('closeMkt').onclick=closeMarket;
+  document.getElementById('openCartBtn').onclick=openCart;
+  document.getElementById('closeCart').onclick=closeCart;
+  checkoutBtn.onclick=checkout;
   marketEl.addEventListener('mousedown',e=>{ if(e.target===marketEl) closeMarket(); });
+  cartEl.addEventListener('mousedown',e=>{ if(e.target===cartEl) closeCart(); });
 
   // ===== paint =====
   const paintEl=document.getElementById('paint'), paintColor=document.getElementById('paintColor'), paintHave=document.getElementById('paintHave'), applyPaintBtn=document.getElementById('applyPaint'), swatchesEl=document.getElementById('swatches');
@@ -458,6 +537,14 @@ window.MYTHIC = (function(){
   // preview (glbCache holds the parsed template even without the raw bytes).
   let editingId=null, editPreviewTemplate=null;
   const saveBtn=document.getElementById('saveModel'), cancelEditBtn=document.getElementById('cancelEdit');
+  // 🖼 Admin icon IMAGE — when set, this data-URL is the catalog icon instead of
+  // the emoji text field, so the shop card / portal show a real picture. Stored
+  // small (downscaled to 96px) so it survives the per-model save.
+  const aIcoImg=document.getElementById('aIcoImg'), aIcoPrev=document.getElementById('aIcoPrev'), aIcoClear=document.getElementById('aIcoClear');
+  let adminIcoImg=null;
+  function setAdminIco(dataUrl){ adminIcoImg=dataUrl||null; if(adminIcoImg){ aIcoPrev.innerHTML=`<img src="${adminIcoImg}" style="width:100%;height:100%;object-fit:cover;border-radius:5px">`; aIcoPrev.style.display='inline-block'; aIcoClear.style.display='inline-block'; aIco.placeholder='using image'; } else { aIcoPrev.innerHTML=''; aIcoPrev.style.display='none'; aIcoClear.style.display='none'; aIco.placeholder='🖥️'; } }
+  if(aIcoImg) aIcoImg.onchange=e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; const fr=new FileReader(); fr.onload=()=>{ const img=new Image(); img.onload=()=>{ const cv=document.createElement('canvas'); const S=96; cv.width=S; cv.height=S; const cx=cv.getContext('2d'); const sc=Math.max(S/img.width,S/img.height); const w=img.width*sc,h=img.height*sc; cx.drawImage(img,(S-w)/2,(S-h)/2,w,h); try{ setAdminIco(cv.toDataURL('image/png')); flash('Icon image set'); }catch(_){ flash('Could not process image'); } }; img.onerror=()=>flash('Bad image'); img.src=fr.result; }; fr.readAsDataURL(f); aIcoImg.value=''; };
+  if(aIcoClear) aIcoClear.onclick=()=>{ setAdminIco(null); };
   function defaultPart(){ return {shape:'box',c:'#6b7a9c',e:'',w:0.6,h:0.6,d:0.6,rt:0.3,rb:0.3,r:0.3,x:0,y:0.4,z:0,ry:0}; }
   function num(label,val,on){ const w=document.createElement('label'); w.className='num'; const s=document.createElement('span'); s.textContent=label; const inp=document.createElement('input'); inp.type='number'; inp.step='0.05'; inp.value=val; inp.oninput=()=>on(parseFloat(inp.value)||0); w.appendChild(s); w.appendChild(inp); return w; }
   function renderParts(){ partsBox.innerHTML='';
@@ -478,13 +565,15 @@ window.MYTHIC = (function(){
   function refreshPreview(){ if(previewGroup){ scene.remove(previewGroup); previewGroup=null; } if(!adminOpen) return; if(pendingGLB){ previewGroup=pendingGLB.template.clone(true); } else if(editPreviewTemplate){ previewGroup=editPreviewTemplate.clone(true); } else { previewGroup=new THREE.Group(); buildParts(previewGroup,editParts); } scene.add(previewGroup); }
   function renderImportState(){ glbInfo.style.display=pendingGLB?'block':'none'; partsBox.style.opacity=pendingGLB?0.4:1; if(pendingGLB) glbName.textContent=pendingGLB.name; }
   function renderCustomList(){ customList.innerHTML=''; if(!customModels.length){ customList.innerHTML='<div class="empty-note">No custom models yet.</div>'; return; }
-    customModels.forEach(m=>{ const d=document.createElement('div'); d.className='cust-item'; if(m.id===editingId) d.style.outline='1px solid #d8b24a'; d.innerHTML=`<span>${m.ico}</span><span>${m.name}</span><span class="empty-note" style="margin:0">${m.kind==='glb'?'glb':'parts'}</span>`;
+    customModels.forEach(m=>{ const d=document.createElement('div'); d.className='cust-item'; if(m.id===editingId) d.style.outline='1px solid #d8b24a'; d.innerHTML=`<span class="ci-ico">${dwIcoHtml(m.ico)}</span><span>${dwEsc(m.name)}</span><span class="empty-note" style="margin:0">${m.kind==='glb'?'glb':'parts'}</span>`;
       const ed=document.createElement('button'); ed.className='btn small'; ed.textContent='Edit'; ed.onclick=()=>startEdit(m.id); d.appendChild(ed);
       const del=document.createElement('button'); del.className='mini-del'; del.textContent='Delete'; del.onclick=()=>deleteModel(m.id); d.appendChild(del); customList.appendChild(d); }); }
   // ✏️ Load a saved model back into the studio form for editing. Parts load into
   // the editor; a GLB keeps its existing mesh (re-import only to swap it).
   function loadModelIntoForm(m){
-    aName.value=m.name||''; aIco.value=m.ico||''; aR.value=(m.r!=null?m.r:0.6);
+    aName.value=m.name||''; aR.value=(m.r!=null?m.r:0.6);
+    // Image icon → preview + keep the text field clear; emoji → text field.
+    if(dwIsImg(m.ico)){ aIco.value=''; setAdminIco(m.ico); } else { aIco.value=m.ico||''; setAdminIco(null); }
     aAza.value=(m.price&&m.price.aza)||0; aCin.value=(m.price&&m.price.cinder)||0;
     const am=document.getElementById('aMount'); if(am) am.value=m.mount||(m.wall?'wall':'floor');
     const af=document.getElementById('aFunc'); if(af) af.value=m.func||(m.storage?'storage':'');
@@ -500,7 +589,7 @@ window.MYTHIC = (function(){
     flash('Editing "'+(m.name||'model')+'"'+(m.kind==='glb'?' — import a .glb only to swap the mesh.':' — adjust parts/details.'));
   }
   function clearEdit(){ editingId=null; editPreviewTemplate=null; if(saveBtn) saveBtn.textContent='Save Model'; if(cancelEditBtn) cancelEditBtn.style.display='none';
-    pendingGLB=null; glbFile.value=''; aName.value=''; aIco.value=''; const ad=document.getElementById('aDetails'); if(ad) ad.value=''; editParts=[defaultPart()]; renderParts(); renderImportState(); refreshPreview(); }
+    pendingGLB=null; glbFile.value=''; aName.value=''; aIco.value=''; setAdminIco(null); const ad=document.getElementById('aDetails'); if(ad) ad.value=''; editParts=[defaultPart()]; renderParts(); renderImportState(); refreshPreview(); }
   glbFile.onchange=async e=>{ const f=e.target.files[0]; if(!f) return;
     try{ const buf=await f.arrayBuffer(); let scale=parseFloat(glbScale.value)||1; const md=maxDimOf(buf); if(md>3||md<0.3){ scale=+(1.6/md).toFixed(3); glbScale.value=scale; }
       pendingGLB={ name:f.name, b64:abToB64(buf), rawBuf:buf, template:glbToTemplate(buf,scale), scale, big:f.size>MAX_GLB };
@@ -509,7 +598,7 @@ window.MYTHIC = (function(){
   glbScale.oninput=()=>{ if(!pendingGLB) return; const s=parseFloat(glbScale.value)||1; pendingGLB.scale=s; pendingGLB.template=glbToTemplate(pendingGLB.rawBuf,s); refreshPreview(); };
   document.getElementById('glbFit').onclick=()=>{ if(!pendingGLB) return; const s=+(1.6/maxDimOf(pendingGLB.rawBuf)).toFixed(3); glbScale.value=s; pendingGLB.scale=s; pendingGLB.template=glbToTemplate(pendingGLB.rawBuf,s); refreshPreview(); };
   document.getElementById('glbRemove').onclick=()=>{ pendingGLB=null; glbFile.value=''; renderImportState(); refreshPreview(); };
-  async function saveModel(){ const name=(aName.value||'').trim()||'Custom Piece'; const ico=(aIco.value||'').trim()||(pendingGLB?'📦':'❔'); const r=parseFloat(aR.value)||0; const aza=parseInt(aAza.value)||0, cinder=parseInt(aCin.value)||0;
+  async function saveModel(){ const name=(aName.value||'').trim()||'Custom Piece'; const ico=adminIcoImg||(aIco.value||'').trim()||(pendingGLB?'📦':'❔'); const r=parseFloat(aR.value)||0; const aza=parseInt(aAza.value)||0, cinder=parseInt(aCin.value)||0;
     // 🛋️ Placement TYPE + interaction FUNCTION chosen on upload. `wall` drives the
     // wall-mount placement path; `storage` makes it an openable chest; `func`/`mount`
     // are stored so the piece keeps its role and the card-shop side can mirror it.

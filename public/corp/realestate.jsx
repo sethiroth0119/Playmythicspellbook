@@ -456,9 +456,11 @@ function RealEstateScreen({ openDetail }) {
         </FilterDD>
 
         <div style={{ flex: 1 }} />
-        <button className="btn primary" onClick={() => setShowList(true)} title="List a property on the market for every survivor to buy or rent">
-          🏘 + List Property
-        </button>
+        {window.JB_isAdmin && window.JB_isAdmin() && (
+          <button className="btn primary" onClick={() => setShowList(true)} title="Admin: list a property to the cloud market — saved durably + visible to all players">
+            🏘 + List Property
+          </button>
+        )}
         <button className="btn primary">Save search</button>
       </div>
       {showList && <ListPropertyModal onClose={() => setShowList(false)} />}

@@ -581,12 +581,13 @@ window.MYTHIC = (function(){
   // ===== mode =====
   const modeBtn=document.getElementById('modeBtn'), catalog=document.getElementById('catalog'), crosshair=document.getElementById('crosshair'), interactEl=document.getElementById('interact');
   function setMode(m){ mode=m;
-    if(m==='walk'){ if(adminOpen) closeAdmin(); cancelPlacing(); clearSelection(); catalog.style.display='none'; grid.visible=false; crosshair.style.display='block'; canvas.style.cursor='grab'; modeBtn.textContent='Exit'; modeBtn.classList.remove('primary'); yaw=Math.PI; pitch=0; player.x=0; player.z=ROOM-1.2; setHint('Drag to look · WASD to move · E to interact'); }
+    if(m==='walk'){ if(adminOpen) closeAdmin(); cancelPlacing(); clearSelection(); catalog.style.display='none'; grid.visible=false; crosshair.style.display='block'; canvas.style.cursor='grab'; modeBtn.textContent='Exit'; modeBtn.classList.remove('primary'); yaw=Math.PI; pitch=0; player.x=0; player.z=ROOM-1.2; setHint('Drag to look · WASD to move · E to interact'); try{ window.focus(); }catch(_){} }
     else { catalog.style.display='block'; grid.visible=true; crosshair.style.display='none'; interactEl.style.display='none'; canvas.style.cursor='default'; modeBtn.textContent='Walk'; modeBtn.classList.add('primary'); setHint(defaultHint()); } }
   modeBtn.onclick=()=>setMode(mode==='decorate'?'walk':'decorate');
 
   // ===== input =====
   canvas.addEventListener('mousedown',e=>{ if(uiOpen) return;
+    try{ window.focus(); }catch(_){}   // 🎯 grab keyboard focus so WASD reaches THIS iframe (a <canvas> click alone won't)
     if(mode==='walk'){ if(e.button===0){ lookDrag=true; lastLX=e.clientX; lastLY=e.clientY; canvas.style.cursor='grabbing'; } return; }
     if(e.button===2){ orbiting=true; lastX=e.clientX; lastY=e.clientY; return; }
     if(e.button===0){ if(placingType){ placeDown=true; didDrag=false; orbiting=true; downX=lastX=e.clientX; downY=lastY=e.clientY; return; }

@@ -237,24 +237,22 @@ function ListPropertyModal({ onClose }) {
   const [district,setDistrict]= useState('lower');
   const [capacity,setCapacity]= useState(200);
   const [blurb,   setBlurb]   = useState('');
+  const [mode,    setMode]    = useState('sale');   // 'sale' | 'rent'
+  const [rent,    setRent]    = useState(2500);
+  const [rentDays,setRentDays]= useState(7);
   const submit = () => {
     if (!name.trim()) { alert('Please give the property a name.'); return; }
-    const id = 're_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    // Naive scatter for the map pin — picks a point inside the district's
-    // ellipse so the pin lands roughly in the right zone.
-    const dpos = {
-      foundry: [42, 22], ai: [42, 50], lower: [56, 36],
-      drowned: [36, 80], verge: [86, 38], anomaly: [92, 74],
-    }[district] || [50, 50];
-    const x = Math.max(4, Math.min(96, dpos[0] + (Math.random() - 0.5) * 18));
-    const y = Math.max(4, Math.min(96, dpos[1] + (Math.random() - 0.5) * 16));
+    if (mode === 'sale' && (price | 0) <= 0) { alert('Set a sale price above 0.'); return; }
+    if (mode === 'rent' && (rent | 0) <= 0) { alert('Set a rent above 0.'); return; }
     try {
+      // 🏷 Cloud market: the host saves this to realty_listings (visible to ALL
+      // players), randomly assigns a District Node, and drops a map dot for it.
       window.JB_action({
-        kind: 'realEstateList',
+        kind: 'realtyCreate',
         listing: {
-          id, name: name.trim(), address: address.trim(),
-          price: price | 0, tier, district, capacity: capacity | 0,
-          blurb: blurb.trim(), x, y, color: '#88c4ff',
+          kind: mode, name: name.trim(), address: address.trim(),
+          price: price | 0, rent: rent | 0, rentDays: rentDays | 0,
+          tier, district, capacity: capacity | 0, blurb: blurb.trim(), color: '#88c4ff',
         },
       });
     } catch (e) { alert('Listing failed: ' + (e.message || e)); return; }
@@ -274,10 +272,28 @@ function ListPropertyModal({ onClose }) {
           <Field label="Address (optional)">
             <input className="select" value={address} onChange={e => setAddress(e.target.value)} placeholder="14 Drowned Wharf" maxLength={60} />
           </Field>
+          <Field label="Listing type">
+            <div className="row" style={{ gap:8 }}>
+              <button className={'btn ' + (mode==='sale'?'primary':'ghost')} style={{ flex:1 }} onClick={() => setMode('sale')}>💎 For sale</button>
+              <button className={'btn ' + (mode==='rent'?'primary':'ghost')} style={{ flex:1 }} onClick={() => setMode('rent')}>🔑 For rent</button>
+            </div>
+          </Field>
           <div className="row" style={{ gap:10 }}>
-            <Field label="Price (Cinder)" style={{ flex:1 }}>
-              <input className="select" type="number" min={100} max={9999999} value={price} onChange={e => setPrice(Math.max(100, Number(e.target.value) || 0))} />
-            </Field>
+            {mode==='sale' && (
+              <Field label="Sale price (Cinder)" style={{ flex:1 }}>
+                <input className="select" type="number" min={100} max={9999999} value={price} onChange={e => setPrice(Math.max(0, Number(e.target.value) || 0))} />
+              </Field>
+            )}
+            {mode==='rent' && (
+              <Field label="Rent (Cinder)" style={{ flex:1 }}>
+                <input className="select" type="number" min={1} max={9999999} value={rent} onChange={e => setRent(Math.max(0, Number(e.target.value) || 0))} />
+              </Field>
+            )}
+            {mode==='rent' && (
+              <Field label="Term (days)" style={{ flex:1 }}>
+                <input className="select" type="number" min={1} max={90} value={rentDays} onChange={e => setRentDays(Math.max(1, Math.min(90, Number(e.target.value) || 7)))} />
+              </Field>
+            )}
             <Field label="Tier" style={{ flex:1 }}>
               <select className="select" value={tier} onChange={e => setTier(e.target.value)}>
                 {['T1','T2','T3','T4'].map(t => <option key={t} value={t}>Tier {t.slice(1)}</option>)}
@@ -287,7 +303,7 @@ function ListPropertyModal({ onClose }) {
               <input className="select" type="number" min={20} max={2000} value={capacity} onChange={e => setCapacity(Math.max(20, Number(e.target.value) || 0))} />
             </Field>
           </div>
-          <Field label="District">
+          <Field label="Preferred district (auto-stationed in a random District Node)">
             <select className="select" value={district} onChange={e => setDistrict(e.target.value)}>
               {Object.values(window.ECON.DISTRICTS).map(d => (
                 <option key={d.id} value={d.id}>{d.name} — {d.blurb}</option>
@@ -299,7 +315,7 @@ function ListPropertyModal({ onClose }) {
           </Field>
         </div>
         <div style={{ background:'rgba(199,93,212,0.06)', border:'1px dashed rgba(199,93,212,0.32)', borderRadius:6, padding:'8px 10px', marginTop:14, fontSize:12, color:'var(--muted, #9a93a8)' }}>
-          🔒 <b>Single-owner deed</b> — once a player buys this, no one else can. The house will auto-place on Camp Heights so the eventual owner can walk to it.
+          🌐 <b>Saved to the cloud market</b> — every survivor sees this listing and its dot on the map, and can {mode==='rent' ? 'rent it for the term you set' : 'buy the single-owner deed'}. It is stationed in a random District Node, whose residents bolster that district.
         </div>
         <div className="row" style={{ justifyContent:'flex-end', gap:8, marginTop:16 }}>
           <button className="btn ghost" onClick={onClose}>Cancel</button>
@@ -440,11 +456,9 @@ function RealEstateScreen({ openDetail }) {
         </FilterDD>
 
         <div style={{ flex: 1 }} />
-        {window.JB_isAdmin && window.JB_isAdmin() && (
-          <button className="btn primary" onClick={() => setShowList(true)} title="Admin: list a new property — auto-places on Camp Heights map">
-            🏘 + List Property
-          </button>
-        )}
+        <button className="btn primary" onClick={() => setShowList(true)} title="List a property on the market for every survivor to buy or rent">
+          🏘 + List Property
+        </button>
         <button className="btn primary">Save search</button>
       </div>
       {showList && <ListPropertyModal onClose={() => setShowList(false)} />}
@@ -722,31 +736,36 @@ function PropertyDetailScreen({ propertyId, onBack }) {
                   );
                 }
                 const myUid = econ.myUid || null;
+                const isRent = live.kind === 'rent';
+                const cost = isRent ? (live.rent | 0) : (live.price | 0);
                 const owned = !!live.ownedBy;
-                const mine  = owned && live.ownedBy === myUid;
-                const canBuy = !owned && (econ.cinders | 0) >= (live.price | 0);
+                const mine  = (owned && live.ownedBy === myUid) || !!live.mine;
+                const canBuy = !owned && (econ.cinders | 0) >= cost;
                 if (mine) {
                   return (
                     <>
-                      <div style={{ padding:'8px 10px', background:'rgba(124,232,168,0.10)', border:'1px solid rgba(124,232,168,0.4)', borderRadius:6, color:'rgb(124,232,168)', fontSize:13, textAlign:'center' }}>✓ Owned by you — walk to it in Camp Heights.</div>
-                      <button className="btn ghost" style={{ justifyContent: 'center' }} onClick={() => window.JB_back && window.JB_back()}>← Leave to Camp</button>
+                      <div style={{ padding:'8px 10px', background:'rgba(124,232,168,0.10)', border:'1px solid rgba(124,232,168,0.4)', borderRadius:6, color:'rgb(124,232,168)', fontSize:13, textAlign:'center' }}>{live._realty ? ('✓ Your listing — survivors can ' + (isRent ? 'rent' : 'buy') + ' it.') : '✓ Owned by you — walk to it in Camp Heights.'}</div>
+                      <button className="btn ghost" style={{ justifyContent: 'center' }} onClick={onBack}>← Back to listings</button>
                     </>
                   );
                 }
                 if (owned) {
                   return (
-                    <div style={{ padding:'8px 10px', background:'rgba(255,107,107,0.10)', border:'1px solid rgba(255,107,107,0.4)', borderRadius:6, color:'rgb(255,150,140)', fontSize:13, textAlign:'center' }}>🔒 Single-owner deed already claimed by another survivor.</div>
+                    <div style={{ padding:'8px 10px', background:'rgba(255,107,107,0.10)', border:'1px solid rgba(255,107,107,0.4)', borderRadius:6, color:'rgb(255,150,140)', fontSize:13, textAlign:'center' }}>🔒 {isRent ? 'Currently rented by another survivor.' : 'Single-owner deed already claimed by another survivor.'}</div>
                   );
                 }
                 return (
                   <>
                     <button className="btn primary" style={{ justifyContent: 'center' }} disabled={!canBuy}
                       onClick={() => {
-                        if (!confirm(`Buy "${live.name}" for ${(live.price|0).toLocaleString()} Cinder?\n\nThis is a single-owner deed — no other player can buy it after you.`)) return;
+                        const msg = isRent
+                          ? `Rent "${live.name}" for ${cost.toLocaleString()} Cinder (${live.rentDays|0} days)?\n\nYou get Dwelling access for the term.`
+                          : `Buy "${live.name}" for ${cost.toLocaleString()} Cinder?\n\nThis is a single-owner deed — no other player can buy it after you.`;
+                        if (!confirm(msg)) return;
                         try { window.JB_action({ kind: 'realEstateBuy', listingId: live.id }); } catch (e) {}
                         onBack && onBack();
                       }}>
-                      🔥 Buy for {(live.price|0).toLocaleString()} Cinder
+                      {isRent ? `🔑 Rent for ${cost.toLocaleString()} Cinder / ${live.rentDays|0}d` : `🔥 Buy for ${cost.toLocaleString()} Cinder`}
                     </button>
                     {!canBuy && <div style={{ fontSize:11, color:'rgb(255,150,140)', textAlign:'center' }}>Not enough Cinder.</div>}
                     <button className="btn ghost" style={{ justifyContent: 'center' }} onClick={onBack}>← Back to listings</button>

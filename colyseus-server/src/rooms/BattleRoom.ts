@@ -211,6 +211,34 @@ export class BattleRoom extends Room<BattleState> {
       this.broadcast('snapshot', { from: me, kind, payload: body }, { except: client });
     });
 
+    // 🔁 Resync request — a client stranded on "waiting for opponent" (its
+    // stuck-turn watchdog fired after a dropped relay packet) asks for the
+    // authoritative board to be re-pushed. WITHOUT this handler the request was
+    // silently dropped (Colyseus has no default 'resync' route), so the entire
+    // client-side recovery path — _mpRequestResync → room.send('resync') wired
+    // to the stuck-turn watchdog — did nothing and the client never recovered.
+    // We (a) answer INSTANTLY from the server's cached last-FULL snapshot of the
+    // opponent so recovery doesn't even need a round-trip, and (b) relay the
+    // request to the opponent so they also push a fresh authoritative board.
+    // Pure relay + cached replay — no state mutation, mirrors the reconnect
+    // resync in onJoin. Throttled client-side (≥7s), so no storm risk.
+    this.onMessage('resync', (client, payload) => {
+      const me = client.userData?.userId;
+      if (!me || !this.state.players.has(me) || this.state.winnerUserId) return;
+      const opp = this.opponentOf(me);
+      // (a) Instant answer from the server's cache of the opponent's last board.
+      const snap = opp ? this.lastSnapshotByUser[opp] : '';
+      if (snap) {
+        try { client.send('snapshot', { from: opp, kind: 'full', payload: JSON.parse(snap), resync: true }); } catch { /* no-op */ }
+      }
+      // (b) Ask the opponent to push a fresh authoritative board too.
+      this.broadcast('resync', {
+        from: me,
+        reason: String((payload && payload.reason) || 'stuck').slice(0, 24),
+      }, { except: client });
+      console.log('[battle] resync requested by ' + String(me).slice(0, 8) + (snap ? ' — answered from cache + relayed' : ' — relayed (no cache yet)'));
+    });
+
     // 🏁 Authoritative match result — the SINGLE writer. Either client may
     // report the outcome it observed on its synced board (typically the loser
     // reporting "my hero died"); the FIRST valid claim wins and is broadcast to

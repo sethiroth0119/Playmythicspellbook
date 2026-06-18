@@ -48,3 +48,7 @@ assets/3d models/**/*.glb
 assets/Audio/Heavy Machines - Factory Ambience.wav
 assets/Audio/auction chatter.wav
 assets/Audio/fishing.wav
+# 73 MiB main-menu music WAV dropped 2026-06-18 — not referenced by index.html and
+# over the cap. To use it in-game, compress to MP3/OGG well under 25 MiB and load
+# that instead. File stays on disk.
+assets/Audio/Main menu music.wav

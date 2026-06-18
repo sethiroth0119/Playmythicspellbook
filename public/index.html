@@ -113078,6 +113078,14 @@ function _reMyResidencies() {
       const listing = _findListing(h.listingId) || {};
       out.push({ nodeId, residents: _reListingResidents(listing), name: listing.name || 'Home', houseId: h.houseId });
     });
+    // 🔑 Active rentals also house me — they shield their stationed node too.
+    const rentals = (Profile && Profile.rentals) || {};
+    const now = Date.now();
+    Object.keys(rentals).forEach(k => {
+      const r = rentals[k];
+      if (!r || (r.until | 0) <= now || !r.nodeId) return;
+      out.push({ nodeId: r.nodeId, residents: r.residents | 0, name: r.name || 'Rental', houseId: 'rent_' + k });
+    });
   } catch (e) {}
   return out;
 }
@@ -113119,6 +113127,193 @@ function _reStationHouse(houseId, nodeId) {
   if (!h) return false;
   h.nodeId = nodeId || null;
   try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); else if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  return true;
+}
+
+// ============================================================================
+// 🏷 REALTY MARKET (Phase 2) — players list their OWN properties for SALE or
+// RENT; other players buy (ownership transfers) or rent (time-boxed Dwelling
+// access). Cloud-synced via the `realty_listings` table (mirrors the player
+// card market: atomic compare-and-set claims, seller payout on next fetch,
+// realtime refresh, self-serve setup SQL when the table is missing).
+//   • SALE  — the house is ESCROWED out of Profile.ownedHouses on listing
+//             (restored on cancel); on buy the buyer gains the deed.
+//   • RENT  — the owner KEEPS the deed; the renter gets Dwelling access until
+//             rent_until (Profile.rentals) + their residency shields the node.
+// ============================================================================
+const REALTY_MAX_ACTIVE    = 12;
+const REALTY_POST_COOLDOWN = 3000;
+const REALTY_MARKET_SQL = "create table if not exists public.realty_listings (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  seller_name text,\n  kind text not null default 'sale',\n  prop_id text,\n  prop_json jsonb,\n  node_id text,\n  residents integer not null default 0,\n  price integer not null default 0,\n  rent integer not null default 0,\n  rent_days integer not null default 7,\n  status text not null default 'open',\n  buyer_id uuid references auth.users(id),\n  buyer_name text,\n  rent_until timestamptz,\n  paid_out boolean not null default false,\n  created_at timestamptz default now()\n);\nalter table public.realty_listings enable row level security;\ndrop policy if exists rl_sel on public.realty_listings;\ncreate policy rl_sel on public.realty_listings for select to authenticated using (status = 'open' or seller_id = auth.uid() or buyer_id = auth.uid());\ndrop policy if exists rl_ins on public.realty_listings;\ncreate policy rl_ins on public.realty_listings for insert to authenticated with check (seller_id = auth.uid());\ndrop policy if exists rl_upd on public.realty_listings;\ncreate policy rl_upd on public.realty_listings for update to authenticated using (status = 'open' or seller_id = auth.uid() or buyer_id = auth.uid()) with check (true);\ndrop policy if exists rl_del on public.realty_listings;\ncreate policy rl_del on public.realty_listings for delete to authenticated using (seller_id = auth.uid() and status = 'open');\ndo $$ begin\n  if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and tablename='realty_listings') then\n    alter publication supabase_realtime add table public.realty_listings;\n  end if;\nend $$;";
+const RealtyMarket = { open: [], mine: [], loading: false, tableMissing: false, _err: '', _channel: null, _rt: false, _refetchT: null, lastFetch: 0, _lastPostAt: 0 };
+function _reMarketReady() { try { return !!(typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn && Cloud.client); } catch (e) { return false; } }
+function _reMarketErr(e) {
+  const msg = (e && (e.message || e.code || '')) + '';
+  if (/realty_listings|relation|does not exist|schema cache|PGRST205|42P01/i.test(msg)) RealtyMarket.tableMissing = true;
+  RealtyMarket._err = msg; return null;
+}
+function _reEnsureRentals() { if (!Profile.rentals || typeof Profile.rentals !== 'object') Profile.rentals = {}; return Profile.rentals; }
+// Map a cloud realty row → the shape the market UI renders.
+function _reRowToListing(r, me) {
+  const p = r.prop_json || {};
+  return {
+    id: r.id, mine: r.seller_id === me,
+    sellerId: r.seller_id, sellerName: r.seller_name || 'Survivor',
+    kind: r.kind || 'sale', propId: r.prop_id || null,
+    name: p.name || 'Property', address: p.address || '', icon: p.icon || '🏠',
+    color: p.color || '#88c4ff', image: p.image || null, capacity: p.capacity | 0,
+    blurb: p.blurb || '', nodeId: r.node_id || null, residents: r.residents | 0,
+    price: r.price | 0, rent: r.rent | 0, rentDays: r.rent_days | 0,
+    status: r.status || 'open', buyerId: r.buyer_id || null,
+    rentUntil: r.rent_until ? Date.parse(r.rent_until) : 0,
+    listedAt: r.created_at ? Date.parse(r.created_at) : Date.now(),
+  };
+}
+function realtyMarketSubscribe() {
+  if (RealtyMarket._channel || !_reMarketReady()) return;
+  try {
+    RealtyMarket._channel = Cloud.client.channel('realty-market')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'realty_listings' }, () => {
+        if (RealtyMarket._refetchT) clearTimeout(RealtyMarket._refetchT);
+        RealtyMarket._refetchT = setTimeout(() => {
+          realtyFetch().then(() => { const r = document.getElementById('camp-realestate'); if (r && App._reTab === 'market') { r.remove(); _campOpenRealEstate('market'); } });
+        }, 450);
+      })
+      .subscribe((st) => { if (st === 'SUBSCRIBED') RealtyMarket._rt = true; });
+  } catch (e) { RealtyMarket._channel = null; }
+}
+async function realtyFetch() {
+  if (!_reMarketReady()) { RealtyMarket._err = 'Sign in to trade property.'; return; }
+  if (RealtyMarket.loading) return;
+  RealtyMarket.loading = true;
+  try {
+    const me = Profile.cloud.userId;
+    const { data, error } = await Cloud.client.from('realty_listings').select('*').order('created_at', { ascending: false }).limit(300);
+    if (error) { _reMarketErr(error); RealtyMarket.loading = false; return; }
+    RealtyMarket.tableMissing = false;
+    const now = Date.now();
+    let changed = false;
+    // 💰 Seller payouts — collect Cinder for anything of mine that sold/rented.
+    for (const r of (data || [])) {
+      if (r.seller_id !== me || r.paid_out) continue;
+      if (r.status === 'sold' || r.status === 'rented') {
+        const upd = await Cloud.client.from('realty_listings').update({ paid_out: true }).eq('id', r.id).eq('paid_out', false).select('id');
+        if (!(upd && upd.data && upd.data.length)) continue;
+        const amt = r.status === 'sold' ? (r.price | 0) : (r.rent | 0);
+        Profile.gems = (Profile.gems | 0) + amt; changed = true;
+        try { showToast((r.status === 'sold' ? '🏠 Sold "' : '🔑 Rented out "') + ((r.prop_json && r.prop_json.name) || 'property') + '" — +' + amt.toLocaleString() + ' 🔥 collected.', 4600); } catch (e) {}
+      }
+    }
+    // ⌛ Expire rentals: my rented-out listings whose term elapsed reopen for re-rent.
+    for (const r of (data || [])) {
+      if (r.seller_id !== me || r.status !== 'rented') continue;
+      if (!(r.rent_until && Date.parse(r.rent_until) < now)) continue;
+      const upd = await Cloud.client.from('realty_listings').update({ status: 'open', buyer_id: null, buyer_name: null, rent_until: null, paid_out: false }).eq('id', r.id).eq('status', 'rented').select('id');
+      if (upd && upd.data && upd.data.length) changed = true;
+    }
+    // ⌛ Drop my OWN expired rentals (I no longer hold Dwelling access there).
+    const rentals = _reEnsureRentals();
+    Object.keys(rentals).forEach(k => { if (rentals[k] && (rentals[k].until | 0) <= now) { delete rentals[k]; changed = true; } });
+    if (changed) { try { saveProfile(); } catch (e) {} }
+    const rows = (data || []);
+    RealtyMarket.open = rows.filter(r => r.status === 'open' && r.seller_id !== me).map(r => _reRowToListing(r, me));
+    RealtyMarket.mine = rows.filter(r => r.seller_id === me && r.status !== 'sold').map(r => _reRowToListing(r, me));
+    RealtyMarket.lastFetch = now;
+  } catch (e) { _reMarketErr(e); }
+  RealtyMarket.loading = false;
+}
+// List one of MY owned houses. kind 'sale' escrows the deed out of ownedHouses;
+// 'rent' keeps it. Snapshots the property into prop_json so buyers see it.
+async function realtyPost(houseId, kind, opts) {
+  if (!_reMarketReady()) { showToast('☁ Sign in to list property.', 3600); return false; }
+  const since = Date.now() - (RealtyMarket._lastPostAt || 0);
+  if (since < REALTY_POST_COOLDOWN) { showToast('Slow down — wait ' + Math.ceil((REALTY_POST_COOLDOWN - since) / 1000) + 's.', 2400); return false; }
+  if ((RealtyMarket.mine || []).length >= REALTY_MAX_ACTIVE) { showToast('You already have ' + REALTY_MAX_ACTIVE + ' active listings.', 3200); return false; }
+  const owned = _ensureOwnedHouses();
+  const h = owned.find(x => x && x.houseId === houseId);
+  if (!h) { showToast('⚠ You no longer own that property.', 2800); return false; }
+  const listing = _findListing(h.listingId) || {};
+  const residents = _reListingResidents(listing);
+  const nodeId = (opts && opts.nodeId) || _reHouseNode(h);
+  const prop = { name: listing.name || 'Property', address: listing.address || '', icon: listing.icon || '🏠', color: listing.color || '#88c4ff', image: listing.image || null, capacity: listing.capacity | 0, blurb: listing.blurb || '', listingId: h.listingId };
+  const row = {
+    seller_id: Profile.cloud.userId,
+    seller_name: (Profile.cloud.displayName || (Profile.account && Profile.account.displayName) || 'Survivor').slice(0, 40),
+    kind: kind === 'rent' ? 'rent' : 'sale',
+    prop_id: h.listingId, prop_json: prop, node_id: nodeId || null, residents: residents,
+    price: kind === 'rent' ? 0 : Math.max(0, (opts && opts.price) | 0),
+    rent: kind === 'rent' ? Math.max(1, (opts && opts.rent) | 0) : 0,
+    rent_days: kind === 'rent' ? Math.max(1, Math.min(90, (opts && opts.rentDays) | 0)) : 0,
+    status: 'open',
+  };
+  const { error } = await Cloud.client.from('realty_listings').insert(row);
+  if (error) { _reMarketErr(error); showToast(RealtyMarket.tableMissing ? '⚠ Run the realty_listings migration in Supabase first.' : '⚠ Could not post listing.', 4200); return false; }
+  RealtyMarket._lastPostAt = Date.now();
+  // SALE escrows the deed out of my hands until it sells or I cancel.
+  if (kind !== 'rent') {
+    const idx = owned.findIndex(x => x && x.houseId === houseId);
+    if (idx >= 0) owned.splice(idx, 1);
+    try { saveProfile(); } catch (e) {}
+  }
+  await realtyFetch();
+  return true;
+}
+// Buy an open SALE listing — atomic claim, pay Cinder, gain the deed.
+async function realtyBuy(listing) {
+  if (!_reMarketReady()) { showToast('Sign in to trade.', 2600); return false; }
+  if (listing.mine) { showToast('You cannot buy your own listing.', 2600); return false; }
+  if ((Profile.gems | 0) < (listing.price | 0)) { showToast('💎 Need ' + listing.price.toLocaleString() + ' 🔥 — you have ' + (Profile.gems | 0).toLocaleString() + '.', 3200); return false; }
+  const { data, error } = await Cloud.client.from('realty_listings')
+    .update({ status: 'sold', buyer_id: Profile.cloud.userId, buyer_name: (Profile.cloud.displayName || 'Buyer').slice(0, 40) })
+    .eq('id', listing.id).eq('status', 'open').select('*');
+  if (error) { _reMarketErr(error); showToast('⚠ Purchase failed.', 3200); return false; }
+  if (!data || !data.length) { showToast('Too slow — someone already bought that.', 2800); await realtyFetch(); return false; }
+  Profile.gems = (Profile.gems | 0) - (listing.price | 0);
+  try { if (typeof _serverMirrorCharge === 'function') _serverMirrorCharge(listing.price | 0, 'Real Estate: buy ' + (listing.name || 'property')); } catch (e) {}
+  // Gain the deed (mirrors _purchaseHouse) + mint the home zone.
+  const owned = _ensureOwnedHouses();
+  const newOwn = { houseId: 'oh_' + Date.now().toString(36), listingId: listing.propId || ('re_' + Date.now().toString(36)), stash: {}, purchasedAt: Date.now(), nodeId: listing.nodeId || null };
+  owned.push(newOwn);
+  try { if (typeof _ensureHomeZone === 'function') _ensureHomeZone(newOwn.houseId); } catch (e) {}
+  try { saveProfile(); } catch (e) {}
+  showToast('🏠 Bought "' + (listing.name || 'property') + '" for ' + (listing.price | 0).toLocaleString() + ' 🔥 — visit it in the Suburbs.', 4600);
+  await realtyFetch();
+  return true;
+}
+// Rent an open RENT listing — atomic claim, pay Cinder, gain time-boxed access.
+async function realtyRent(listing) {
+  if (!_reMarketReady()) { showToast('Sign in to rent.', 2600); return false; }
+  if (listing.mine) { showToast('You cannot rent your own listing.', 2600); return false; }
+  if ((Profile.gems | 0) < (listing.rent | 0)) { showToast('💎 Need ' + listing.rent.toLocaleString() + ' 🔥 rent — you have ' + (Profile.gems | 0).toLocaleString() + '.', 3200); return false; }
+  const until = Date.now() + Math.max(1, listing.rentDays | 0) * 86400000;
+  const { data, error } = await Cloud.client.from('realty_listings')
+    .update({ status: 'rented', buyer_id: Profile.cloud.userId, buyer_name: (Profile.cloud.displayName || 'Tenant').slice(0, 40), rent_until: new Date(until).toISOString() })
+    .eq('id', listing.id).eq('status', 'open').select('*');
+  if (error) { _reMarketErr(error); showToast('⚠ Rental failed.', 3200); return false; }
+  if (!data || !data.length) { showToast('Too slow — already taken.', 2800); await realtyFetch(); return false; }
+  Profile.gems = (Profile.gems | 0) - (listing.rent | 0);
+  try { if (typeof _serverMirrorCharge === 'function') _serverMirrorCharge(listing.rent | 0, 'Real Estate: rent ' + (listing.name || 'property')); } catch (e) {}
+  const rentals = _reEnsureRentals();
+  rentals[listing.id] = { until, name: listing.name || 'Rental', nodeId: listing.nodeId || null, residents: listing.residents | 0, propId: listing.propId || null };
+  try { saveProfile(); } catch (e) {}
+  showToast('🔑 Rented "' + (listing.name || 'property') + '" for ' + (listing.rentDays | 0) + ' days — you can enter your Dwelling now.', 4800);
+  await realtyFetch();
+  return true;
+}
+// Pull my own OPEN listing. SALE restores the escrowed deed to me.
+async function realtyCancel(listing) {
+  if (!_reMarketReady()) return false;
+  const { data, error } = await Cloud.client.from('realty_listings').delete().eq('id', listing.id).eq('seller_id', Profile.cloud.userId).eq('status', 'open').select('*');
+  if (error) { _reMarketErr(error); showToast('⚠ Could not pull listing.', 3200); return false; }
+  if (data && data.length) {
+    const r = data[0];
+    if ((r.kind || 'sale') !== 'rent') {
+      const owned = _ensureOwnedHouses();
+      owned.push({ houseId: 'oh_' + Date.now().toString(36), listingId: r.prop_id || ('re_' + Date.now().toString(36)), stash: {}, purchasedAt: Date.now() });
+      try { saveProfile(); } catch (e) {}
+    }
+    showToast('↩ Listing pulled' + (((r.kind || 'sale') !== 'rent') ? ' — deed returned to you.' : '.'), 3200);
+  }
+  await realtyFetch();
   return true;
 }
 // 🏘 Build the dynamic Suburbs zone — each owned house becomes a walkable
@@ -113249,25 +113444,91 @@ function _reResidencyPanelHtml(owned) {
     <div style="display:flex;flex-direction:column;gap:0.4rem;max-height:208px;overflow-y:auto">${rows}</div>
   </div>`;
 }
-function _campOpenRealEstate() {
+// 🏷 Player Market body — Browse (others' sale/rent listings), My Listings, and
+// a "list a property I own" form. Cloud-synced via the realty_listings table.
+function _reMarketBodyHtml() {
+  if (RealtyMarket.tableMissing) {
+    return `<div style="padding:1.2rem 1.4rem">
+      <div style="background:rgba(224,85,106,0.08);border:1px solid rgba(224,85,106,0.35);border-radius:8px;padding:1rem 1.2rem">
+        <div style="font-family:'Cinzel',serif;color:#e0879a;font-size:1.02rem;margin-bottom:0.4rem">⚠ The Player Market needs a one-time setup</div>
+        <div style="color:#bfae87;font-size:0.8rem;margin-bottom:0.6rem">Run this once in your Supabase SQL editor, then reopen. Cross-player house sales &amp; rentals appear here as soon as the table exists.</div>
+        <textarea readonly id="rem-sql" style="width:100%;height:190px;background:#0a0d13;color:#cbd5e8;border:1px solid #243042;border-radius:6px;font-family:monospace;font-size:0.7rem;padding:0.6rem">${escapeHtml(REALTY_MARKET_SQL)}</textarea>
+        <div style="margin-top:0.5rem;display:flex;gap:0.5rem"><button id="rem-copy" class="btn-mini">📋 Copy SQL</button><button id="rem-retry" class="btn-mini">↻ Retry</button></div>
+      </div></div>`;
+  }
+  if (!_reMarketReady()) {
+    return `<div style="padding:2rem 1.4rem;text-align:center;color:#bfae87">☁ Sign in to buy, sell &amp; rent property with other survivors.</div>`;
+  }
+  const owned = _ensureOwnedHouses();
+  let nodes = []; try { nodes = _csNodeList(); } catch (e) {}
+  const nodeOpts = (cur) => ['<option value="">— My camp district —</option>'].concat(nodes.map(n => '<option value="' + escapeHtml(n.id) + '"' + (n.id === cur ? ' selected' : '') + '>' + escapeHtml(n.name) + '</option>')).join('');
+  // ── List-a-property form ──────────────────────────────────────────────────
+  const listForm = owned.length ? `
+    <div style="padding:0.7rem 0.9rem;background:rgba(124,232,168,0.06);border:1px solid rgba(124,232,168,0.3);border-radius:10px;margin-bottom:0.9rem">
+      <div style="font-family:'Cinzel',serif;color:#9be0c4;font-size:0.92rem;margin-bottom:0.5rem">🏷 List one of your properties</div>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+        <select id="rem-house" style="flex:2;min-width:160px;padding:0.4rem;background:#140e1c;color:#e2eaff;border:1px solid rgba(212,175,55,0.35);border-radius:6px">
+          ${owned.map(h => { const l = _findListing(h.listingId) || {}; return '<option value="' + escapeHtml(h.houseId) + '">' + escapeHtml((l.icon || '🏠') + ' ' + (l.name || 'Home')) + '</option>'; }).join('')}
+        </select>
+        <label style="display:flex;align-items:center;gap:0.3rem;color:#bfae87;font-size:0.8rem"><input type="radio" name="rem-kind" value="sale" checked> Sell</label>
+        <label style="display:flex;align-items:center;gap:0.3rem;color:#bfae87;font-size:0.8rem"><input type="radio" name="rem-kind" value="rent"> Rent out</label>
+      </div>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:0.5rem">
+        <label class="rem-sale-f" style="display:flex;align-items:center;gap:0.3rem;color:#bfae87;font-size:0.8rem">💎 Price <input id="rem-price" type="number" min="0" step="100" value="20000" style="width:110px;padding:0.4rem"></label>
+        <label class="rem-rent-f" style="display:none;align-items:center;gap:0.3rem;color:#bfae87;font-size:0.8rem">🔑 Rent <input id="rem-rent" type="number" min="1" step="50" value="2500" style="width:100px;padding:0.4rem"></label>
+        <label class="rem-rent-f" style="display:none;align-items:center;gap:0.3rem;color:#bfae87;font-size:0.8rem">for <input id="rem-days" type="number" min="1" max="90" value="7" style="width:60px;padding:0.4rem"> days</label>
+        <label style="display:flex;align-items:center;gap:0.3rem;color:#bfae87;font-size:0.8rem">📍 <select id="rem-node" style="padding:0.4rem;background:#140e1c;color:#e2eaff;border:1px solid rgba(212,175,55,0.35);border-radius:6px;max-width:180px">${nodeOpts(Profile.campNodeId || '')}</select></label>
+        <button id="rem-list" class="btn-primary btn-mini">＋ List property</button>
+      </div>
+      <div style="color:#8a7f66;font-size:0.68rem;margin-top:0.4rem">Selling escrows the deed (cancel anytime to get it back). Renting keeps your deed — the tenant gets Dwelling access for the term, and their residents help your district.</div>
+    </div>` : `<div style="padding:0.6rem 0.9rem;color:#bfae87;font-size:0.8rem;background:rgba(212,175,55,0.06);border:1px dashed rgba(212,175,55,0.3);border-radius:8px;margin-bottom:0.9rem">Buy a property (Office tab) before you can list one for sale or rent.</div>`;
+  // ── Card renderer ─────────────────────────────────────────────────────────
+  const nodeName = (id) => { if (!id) return null; try { return _csNodeMeta(id).name; } catch (e) { return null; } };
+  const card = (l, isMine) => {
+    const nm = nodeName(l.nodeId);
+    const isRent = l.kind === 'rent';
+    const afford = (Profile.gems | 0) >= (isRent ? l.rent : l.price);
+    const statusBadge = l.status === 'rented'
+      ? '<span style="color:#ffb86b">🔑 Rented' + (l.rentUntil ? ' · ' + Math.max(0, Math.ceil((l.rentUntil - Date.now()) / 86400000)) + 'd left' : '') + '</span>'
+      : '<span style="color:#7ce8a8">● Open</span>';
+    const action = isMine
+      ? (l.status === 'open' ? `<button class="rem-cancel" data-id="${escapeHtml(l.id)}" style="padding:0.45rem;width:100%;background:rgba(224,85,106,0.16);color:#e0879a;border:1px solid rgba(224,85,106,0.5);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.78rem">↩ Pull listing</button>` : `<div style="padding:0.45rem;text-align:center;color:#bfae87;font-size:0.74rem">${statusBadge}</div>`)
+      : `<button class="${isRent ? 'rem-rent' : 'rem-buy'}" data-id="${escapeHtml(l.id)}" ${afford ? '' : 'disabled'} style="padding:0.5rem;width:100%;background:${afford ? (isRent ? 'rgba(255,184,107,0.18)' : (l.color + '22')) : '#33333344'};color:${afford ? (isRent ? '#ffb86b' : l.color) : '#666'};border:1px solid ${afford ? (isRent ? '#ffb86b' : l.color) : '#444'};border-radius:7px;cursor:${afford ? 'pointer' : 'not-allowed'};font-family:'Cinzel',serif;font-size:0.82rem">${isRent ? (afford ? '🔑 RENT ' + (l.rent | 0).toLocaleString() + ' 🔥' : 'NOT ENOUGH') : (afford ? '💎 BUY ' + (l.price | 0).toLocaleString() + ' 🔥' : 'NOT ENOUGH CINDER')}</button>`;
+    return `<div style="padding:0.85rem;background:rgba(0,0,0,0.4);border:1px solid ${l.color}80;border-radius:12px;display:flex;flex-direction:column;gap:0.45rem">
+      ${l.image ? `<img src="${escapeHtml(l.image)}" alt="" style="width:100%;height:108px;object-fit:cover;border-radius:8px;border:1px solid ${l.color}60">` : ''}
+      <div style="display:flex;align-items:center;gap:0.5rem">
+        <span style="font-size:1.8rem;line-height:1">${l.icon}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-family:'Cinzel',serif;color:${l.color};font-size:0.96rem">${escapeHtml(l.name)} <span style="font-size:0.68rem;color:${isRent ? '#ffb86b' : '#7ce8a8'}">${isRent ? 'FOR RENT' : 'FOR SALE'}</span></div>
+          <div style="color:#bfae87;font-size:0.7rem">${escapeHtml(l.address || '')} · seller: ${escapeHtml(l.sellerName)}</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:#bfae87;font-family:'Roboto Mono',monospace">
+        <span>🧑‍🤝‍🧑 ${l.residents} residents${nm ? ' → ' + escapeHtml(nm) : ''}</span>
+        ${l.capacity ? '<span>📦 ' + l.capacity + '</span>' : ''}
+      </div>
+      ${action}
+    </div>`;
+  };
+  const browse = RealtyMarket.open.length
+    ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:0.7rem">${RealtyMarket.open.map(l => card(l, false)).join('')}</div>`
+    : `<div style="padding:1.4rem;text-align:center;color:#8a7f66;font-size:0.84rem">No properties on the market right now. List one of yours above!</div>`;
+  const mine = RealtyMarket.mine.length
+    ? `<div style="margin-top:1rem"><div style="font-family:'Cinzel',serif;color:#bfae87;font-size:0.86rem;margin-bottom:0.5rem">📋 My active listings</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:0.7rem">${RealtyMarket.mine.map(l => card(l, true)).join('')}</div></div>`
+    : '';
+  return `<div style="padding:1rem 1.4rem">${listForm}${browse}${mine}</div>`;
+}
+function _campOpenRealEstate(tab) {
   const old = document.getElementById('camp-realestate');
-  if (old) { old.remove(); return; }
+  if (old) { old.remove(); if (!tab) return; }
+  App._reTab = tab || App._reTab || 'office';
+  const T = App._reTab;
+  if (T === 'market') { try { realtyMarketSubscribe(); } catch (e) {} if (!RealtyMarket.lastFetch) { try { realtyFetch().then(() => { const r = document.getElementById('camp-realestate'); if (r && App._reTab === 'market') { r.remove(); _campOpenRealEstate('market'); } }); } catch (e) {} } }
   const listings = _getAllListings();
   const owned = _ensureOwnedHouses();
   const residencyPanel = owned.length ? _reResidencyPanelHtml(owned) : '';
-  const root = document.createElement('div');
-  root.id = 'camp-realestate';
-  root.style.cssText = 'position:fixed;inset:0;z-index:9445;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center, rgba(8,4,20,0.65) 0%, rgba(2,1,8,0.92) 100%);backdrop-filter:blur(4px);animation:helpFadeIn 0.22s ease-out';
-  root.innerHTML = `
-    <div style="max-width:860px;width:94vw;max-height:84vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(28,22,52,0.96),rgba(12,8,28,0.98));border:1px solid rgba(212,175,55,0.5);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,0.7);font-family:'Inter','Roboto',sans-serif">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:1.1rem 1.4rem 0.6rem;border-bottom:1px solid rgba(212,175,55,0.2)">
-        <div>
-          <h2 style="font-family:'Cinzel',serif;color:#ffd166;font-size:1.4rem;letter-spacing:0.06em;margin:0">🏘 Real Estate Office</h2>
-          <div style="color:#bfae87;font-size:0.82rem;margin-top:0.25rem">Your Cinder: <strong style="color:#ffd166">${(Profile.gems | 0).toLocaleString()}</strong> · You own <strong style="color:#7ce8a8">${owned.length}</strong> ${owned.length === 1 ? 'house' : 'houses'}.</div>
-        </div>
-        <button id="re-close" style="padding:0.4rem 0.85rem;background:rgba(255,255,255,0.06);color:#bfae87;border:1px solid rgba(212,175,55,0.3);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.78rem;letter-spacing:0.04em">✕ CLOSE</button>
-      </div>
-      <div style="overflow-y:auto;padding:1rem 1.4rem;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:0.8rem">
+  const officeBody = `
+      <div style="padding:1rem 1.4rem;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:0.8rem">
         ${listings.map(l => {
           const isOwned = _ownerHasHouse(l.id);
           const canAfford = (Profile.gems | 0) >= l.price;
@@ -113296,14 +113557,28 @@ function _campOpenRealEstate() {
       ${owned.length ? `
         <div style="padding:0.7rem 1.4rem;border-top:1px solid rgba(212,175,55,0.2);display:flex;justify-content:flex-end">
           <button id="re-suburbs" style="padding:0.5rem 1.1rem;background:rgba(196,168,255,0.22);color:#c4a8ff;border:1px solid rgba(196,168,255,0.55);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.85rem;letter-spacing:0.05em">🏘 Travel to Suburbs →</button>
-        </div>` : ''}
+        </div>` : ''}`;
+  const tabBtn = (id, label) => `<button class="re-tab" data-tab="${id}" style="padding:0.42rem 0.95rem;border-radius:8px 8px 0 0;border:1px solid rgba(212,175,55,${T === id ? '0.5' : '0.22'});border-bottom:none;cursor:pointer;font-family:'Cinzel',serif;font-size:0.82rem;letter-spacing:0.04em;background:${T === id ? 'rgba(212,175,55,0.18)' : 'rgba(255,255,255,0.03)'};color:${T === id ? '#ffd166' : '#bfae87'}">${label}</button>`;
+  const root = document.createElement('div');
+  root.id = 'camp-realestate';
+  root.style.cssText = 'position:fixed;inset:0;z-index:9445;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center, rgba(8,4,20,0.65) 0%, rgba(2,1,8,0.92) 100%);backdrop-filter:blur(4px);animation:helpFadeIn 0.22s ease-out';
+  root.innerHTML = `
+    <div style="max-width:880px;width:94vw;max-height:86vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(28,22,52,0.96),rgba(12,8,28,0.98));border:1px solid rgba(212,175,55,0.5);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,0.7);font-family:'Inter','Roboto',sans-serif">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:1.1rem 1.4rem 0.6rem">
+        <div>
+          <h2 style="font-family:'Cinzel',serif;color:#ffd166;font-size:1.4rem;letter-spacing:0.06em;margin:0">🏘 Real Estate Office</h2>
+          <div style="color:#bfae87;font-size:0.82rem;margin-top:0.25rem">Your Cinder: <strong style="color:#ffd166">${(Profile.gems | 0).toLocaleString()}</strong> · You own <strong style="color:#7ce8a8">${owned.length}</strong> ${owned.length === 1 ? 'property' : 'properties'}.</div>
+        </div>
+        <button id="re-close" style="padding:0.4rem 0.85rem;background:rgba(255,255,255,0.06);color:#bfae87;border:1px solid rgba(212,175,55,0.3);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.78rem;letter-spacing:0.04em">✕ CLOSE</button>
+      </div>
+      <div style="display:flex;gap:0.4rem;padding:0 1.4rem;border-bottom:1px solid rgba(212,175,55,0.2)">${tabBtn('office', '🏘 Office')}${tabBtn('market', '🏷 Player Market')}</div>
+      <div style="flex:1;overflow-y:auto;display:flex;flex-direction:column">${T === 'market' ? _reMarketBodyHtml() : officeBody}</div>
     </div>`;
   document.body.appendChild(root);
   root.querySelector('#re-close').onclick = () => root.remove();
   root.onclick = (ev) => { if (ev.target === root) root.remove(); };
-  root.querySelectorAll('.re-buy').forEach(b => b.onclick = () => {
-    if (_purchaseHouse(b.dataset.id)) { root.remove(); _campOpenRealEstate(); }
-  });
+  root.querySelectorAll('.re-tab').forEach(b => b.onclick = () => _campOpenRealEstate(b.dataset.tab));
+  root.querySelectorAll('.re-buy').forEach(b => b.onclick = () => { if (_purchaseHouse(b.dataset.id)) { root.remove(); _campOpenRealEstate('office'); } });
   const sub = root.querySelector('#re-suburbs');
   if (sub) sub.onclick = () => { root.remove(); _travelToZone('suburbs'); };
   // 🏠 Station an owned property in a District Node — residents shield it.
@@ -113312,8 +113587,38 @@ function _campOpenRealEstate() {
     const nm = (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].text) || 'your district';
     showToast('🏠 Property stationed — its residents now bolster ' + nm + '.', 3200);
     try { if (typeof tw_cloudFetchAllNodeRecon === 'function') tw_cloudFetchAllNodeRecon(); } catch (e) {}
-    root.remove(); _campOpenRealEstate();
+    root.remove(); _campOpenRealEstate('office');
   });
+  if (T === 'market') _reBindMarket(root);
+}
+// 🏷 Player Market event bindings (list / buy / rent / cancel / setup SQL).
+function _reBindMarket(root) {
+  const kindRadios = root.querySelectorAll('input[name="rem-kind"]');
+  const syncKind = () => {
+    let kind = 'sale'; kindRadios.forEach(r => { if (r.checked) kind = r.value; });
+    root.querySelectorAll('.rem-sale-f').forEach(e => e.style.display = (kind === 'sale') ? 'flex' : 'none');
+    root.querySelectorAll('.rem-rent-f').forEach(e => e.style.display = (kind === 'rent') ? 'flex' : 'none');
+  };
+  kindRadios.forEach(r => r.onchange = syncKind); syncKind();
+  const listBtn = root.querySelector('#rem-list');
+  if (listBtn) listBtn.onclick = async () => {
+    const houseId = (root.querySelector('#rem-house') || {}).value;
+    let kind = 'sale'; kindRadios.forEach(r => { if (r.checked) kind = r.value; });
+    const nodeId = (root.querySelector('#rem-node') || {}).value || null;
+    const price = parseInt((root.querySelector('#rem-price') || {}).value, 10) || 0;
+    const rent = parseInt((root.querySelector('#rem-rent') || {}).value, 10) || 0;
+    const rentDays = parseInt((root.querySelector('#rem-days') || {}).value, 10) || 7;
+    if (kind === 'sale' && price <= 0) { showToast('Set a sale price above 0.', 2400); return; }
+    if (kind === 'rent' && rent <= 0) { showToast('Set a rent above 0.', 2400); return; }
+    listBtn.disabled = true;
+    const ok = await realtyPost(houseId, kind, { price, rent, rentDays, nodeId });
+    if (ok) { root.remove(); _campOpenRealEstate('market'); } else { listBtn.disabled = false; }
+  };
+  root.querySelectorAll('.rem-buy').forEach(b => b.onclick = async () => { const l = RealtyMarket.open.find(x => x.id === b.dataset.id); if (l && await realtyBuy(l)) { root.remove(); _campOpenRealEstate('market'); } });
+  root.querySelectorAll('.rem-rent').forEach(b => b.onclick = async () => { const l = RealtyMarket.open.find(x => x.id === b.dataset.id); if (l && await realtyRent(l)) { root.remove(); _campOpenRealEstate('market'); } });
+  root.querySelectorAll('.rem-cancel').forEach(b => b.onclick = async () => { const l = RealtyMarket.mine.find(x => x.id === b.dataset.id); if (l && await realtyCancel(l)) { root.remove(); _campOpenRealEstate('market'); } });
+  const copy = root.querySelector('#rem-copy'); if (copy) copy.onclick = () => { try { navigator.clipboard.writeText(REALTY_MARKET_SQL); showToast('📋 SQL copied.', 1800); } catch (e) {} };
+  const retry = root.querySelector('#rem-retry'); if (retry) retry.onclick = () => { RealtyMarket.tableMissing = false; RealtyMarket.lastFetch = 0; root.remove(); _campOpenRealEstate('market'); };
 }
 
 // 🎁 _campLootContainer — player clicked an admin-placed loot container.

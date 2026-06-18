@@ -226,9 +226,9 @@ function PropertyCard({ p, onSelect, onHover }) {
   );
 }
 
-// ── List Property modal (admin only) ─────────────────────────────────────
-// Single form → posts `realEstateList` action up to the parent. Parent
-// places the house on Camp Heights and mirrors back via econ.
+// ── List Property modal (ADMIN only — primary supply, FOR SALE only) ──────
+// Admins seed brand-new houses onto the cloud market FOR SALE. Players buy
+// these, then re-list / rent their OWN deeds via ListMyHouseModal below.
 function ListPropertyModal({ onClose }) {
   const [name,    setName]    = useState('');
   const [address, setAddress] = useState('');
@@ -237,21 +237,18 @@ function ListPropertyModal({ onClose }) {
   const [district,setDistrict]= useState('lower');
   const [capacity,setCapacity]= useState(200);
   const [blurb,   setBlurb]   = useState('');
-  const [mode,    setMode]    = useState('sale');   // 'sale' | 'rent'
-  const [rent,    setRent]    = useState(2500);
-  const [rentDays,setRentDays]= useState(7);
   const submit = () => {
     if (!name.trim()) { alert('Please give the property a name.'); return; }
-    if (mode === 'sale' && (price | 0) <= 0) { alert('Set a sale price above 0.'); return; }
-    if (mode === 'rent' && (rent | 0) <= 0) { alert('Set a rent above 0.'); return; }
+    if ((price | 0) <= 0) { alert('Set a sale price above 0.'); return; }
     try {
       // 🏷 Cloud market: the host saves this to realty_listings (visible to ALL
       // players), randomly assigns a District Node, and drops a map dot for it.
+      // Admin primary listings are always FOR SALE.
       window.JB_action({
         kind: 'realtyCreate',
         listing: {
-          kind: mode, name: name.trim(), address: address.trim(),
-          price: price | 0, rent: rent | 0, rentDays: rentDays | 0,
+          kind: 'sale', name: name.trim(), address: address.trim(),
+          price: price | 0,
           tier, district, capacity: capacity | 0, blurb: blurb.trim(), color: '#88c4ff',
         },
       });
@@ -262,7 +259,7 @@ function ListPropertyModal({ onClose }) {
     <div style={{ position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(4px)' }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ width: 560, maxWidth: '92vw', background:'var(--bg-1, #14111a)', border:'1px solid var(--line-soft, #2a2330)', borderRadius:12, padding:'20px 22px', color:'var(--fg, #e8ddff)' }}>
         <div className="row" style={{ justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
-          <h3 style={{ margin:0, fontFamily:'var(--disp)', fontSize:18 }}>🏘 List New Property</h3>
+          <h3 style={{ margin:0, fontFamily:'var(--disp)', fontSize:18 }}>🏘 List New Property <span className="mono muted" style={{ fontSize:11 }}>· admin · for sale</span></h3>
           <button className="btn ghost sm" onClick={onClose}>✕</button>
         </div>
         <div style={{ display:'grid', gap:10 }}>
@@ -272,28 +269,10 @@ function ListPropertyModal({ onClose }) {
           <Field label="Address (optional)">
             <input className="select" value={address} onChange={e => setAddress(e.target.value)} placeholder="14 Drowned Wharf" maxLength={60} />
           </Field>
-          <Field label="Listing type">
-            <div className="row" style={{ gap:8 }}>
-              <button className={'btn ' + (mode==='sale'?'primary':'ghost')} style={{ flex:1 }} onClick={() => setMode('sale')}>💎 For sale</button>
-              <button className={'btn ' + (mode==='rent'?'primary':'ghost')} style={{ flex:1 }} onClick={() => setMode('rent')}>🔑 For rent</button>
-            </div>
-          </Field>
           <div className="row" style={{ gap:10 }}>
-            {mode==='sale' && (
-              <Field label="Sale price (Cinder)" style={{ flex:1 }}>
-                <input className="select" type="number" min={100} max={9999999} value={price} onChange={e => setPrice(Math.max(0, Number(e.target.value) || 0))} />
-              </Field>
-            )}
-            {mode==='rent' && (
-              <Field label="Rent (Cinder)" style={{ flex:1 }}>
-                <input className="select" type="number" min={1} max={9999999} value={rent} onChange={e => setRent(Math.max(0, Number(e.target.value) || 0))} />
-              </Field>
-            )}
-            {mode==='rent' && (
-              <Field label="Term (days)" style={{ flex:1 }}>
-                <input className="select" type="number" min={1} max={90} value={rentDays} onChange={e => setRentDays(Math.max(1, Math.min(90, Number(e.target.value) || 7)))} />
-              </Field>
-            )}
+            <Field label="Sale price (Cinder)" style={{ flex:1 }}>
+              <input className="select" type="number" min={100} max={9999999} value={price} onChange={e => setPrice(Math.max(0, Number(e.target.value) || 0))} />
+            </Field>
             <Field label="Tier" style={{ flex:1 }}>
               <select className="select" value={tier} onChange={e => setTier(e.target.value)}>
                 {['T1','T2','T3','T4'].map(t => <option key={t} value={t}>Tier {t.slice(1)}</option>)}
@@ -315,11 +294,93 @@ function ListPropertyModal({ onClose }) {
           </Field>
         </div>
         <div style={{ background:'rgba(199,93,212,0.06)', border:'1px dashed rgba(199,93,212,0.32)', borderRadius:6, padding:'8px 10px', marginTop:14, fontSize:12, color:'var(--muted, #9a93a8)' }}>
-          🌐 <b>Saved to the cloud market</b> — every survivor sees this listing and its dot on the map, and can {mode==='rent' ? 'rent it for the term you set' : 'buy the single-owner deed'}. It is stationed in a random District Node, whose residents bolster that district.
+          🌐 <b>Saved to the cloud market for sale</b> — every survivor sees this listing and its dot on the map, and can buy the single-owner deed. Once bought, the owner can re-list or rent it out themselves. It is stationed in a random District Node, whose residents bolster that district.
         </div>
         <div className="row" style={{ justifyContent:'flex-end', gap:8, marginTop:16 }}>
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" onClick={submit}>🏘 Publish Listing</button>
+          <button className="btn primary" onClick={submit}>🏘 Publish For Sale</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── List MY house modal (any PLAYER — secondary market) ───────────────────
+// A player re-lists or rents out a house they OWN (bought from an admin's
+// for-sale listing). Picks from econ.myOwnedHouses; the host's realtyPost
+// re-validates the deed is genuinely theirs before posting.
+function ListMyHouseModal({ houses, onClose }) {
+  const [houseId, setHouseId] = useState((houses[0] && houses[0].houseId) || '');
+  const [mode,    setMode]    = useState('sale');   // 'sale' | 'rent'
+  const [price,   setPrice]   = useState(12000);
+  const [rent,    setRent]    = useState(2000);
+  const [rentDays,setRentDays]= useState(7);
+  const submit = () => {
+    if (!houseId) { alert('Pick one of your houses.'); return; }
+    if (mode === 'sale' && (price | 0) <= 0) { alert('Set a sale price above 0.'); return; }
+    if (mode === 'rent' && (rent | 0) <= 0) { alert('Set a rent above 0.'); return; }
+    try {
+      window.JB_action({
+        kind: 'realtyRelistOwned',
+        houseId, listingKind: mode,
+        price: price | 0, rent: rent | 0, rentDays: rentDays | 0,
+      });
+    } catch (e) { alert('Listing failed: ' + (e.message || e)); return; }
+    onClose();
+  };
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(4px)' }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ width: 520, maxWidth: '92vw', background:'var(--bg-1, #14111a)', border:'1px solid var(--line-soft, #2a2330)', borderRadius:12, padding:'20px 22px', color:'var(--fg, #e8ddff)' }}>
+        <div className="row" style={{ justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+          <h3 style={{ margin:0, fontFamily:'var(--disp)', fontSize:18 }}>🏠 List My Property</h3>
+          <button className="btn ghost sm" onClick={onClose}>✕</button>
+        </div>
+        {houses.length === 0 ? (
+          <div style={{ padding:'18px 6px', color:'var(--muted, #9a93a8)', fontSize:13, lineHeight:1.5 }}>
+            You don't own any houses yet. Buy one from a <b>For-sale</b> listing above, then come back here to re-list or rent it out.
+          </div>
+        ) : (
+          <div style={{ display:'grid', gap:10 }}>
+            <Field label="Which house (you own these)">
+              <select className="select" value={houseId} onChange={e => setHouseId(e.target.value)}>
+                {houses.map(h => (
+                  <option key={h.houseId} value={h.houseId}>{h.name}{h.nodeName ? ' — ' + h.nodeName : ''} (Tier {String(h.tier||'T1').slice(1)})</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Listing type">
+              <div className="row" style={{ gap:8 }}>
+                <button className={'btn ' + (mode==='sale'?'primary':'ghost')} style={{ flex:1 }} onClick={() => setMode('sale')}>💎 Sell deed</button>
+                <button className={'btn ' + (mode==='rent'?'primary':'ghost')} style={{ flex:1 }} onClick={() => setMode('rent')}>🔑 Rent out</button>
+              </div>
+            </Field>
+            <div className="row" style={{ gap:10 }}>
+              {mode==='sale' && (
+                <Field label="Sale price (Cinder)" style={{ flex:1 }}>
+                  <input className="select" type="number" min={1} max={9999999} value={price} onChange={e => setPrice(Math.max(0, Number(e.target.value) || 0))} />
+                </Field>
+              )}
+              {mode==='rent' && (
+                <Field label="Rent (Cinder)" style={{ flex:1 }}>
+                  <input className="select" type="number" min={1} max={9999999} value={rent} onChange={e => setRent(Math.max(0, Number(e.target.value) || 0))} />
+                </Field>
+              )}
+              {mode==='rent' && (
+                <Field label="Term (days)" style={{ flex:1 }}>
+                  <input className="select" type="number" min={1} max={90} value={rentDays} onChange={e => setRentDays(Math.max(1, Math.min(90, Number(e.target.value) || 7)))} />
+                </Field>
+              )}
+            </div>
+            <div style={{ background:'rgba(93,199,140,0.06)', border:'1px dashed rgba(93,199,140,0.32)', borderRadius:6, padding:'8px 10px', fontSize:12, color:'var(--muted, #9a93a8)' }}>
+              {mode==='rent'
+                ? '🔑 You keep the deed — a tenant gets time-boxed access for the term you set, then it auto-returns to you.'
+                : '💎 Selling escrows the deed out of your hands until a buyer claims it (cancel anytime to get it back).'}
+            </div>
+          </div>
+        )}
+        <div className="row" style={{ justifyContent:'flex-end', gap:8, marginTop:16 }}>
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+          {houses.length > 0 && <button className="btn primary" onClick={submit}>{mode==='rent' ? '🔑 List For Rent' : '💎 List For Sale'}</button>}
         </div>
       </div>
     </div>
@@ -350,6 +411,26 @@ function useLiveProperties() {
   }, []);
   return props;
 }
+// 🏠 Houses the current player OWNS — surfaced by the host in econ.myOwnedHouses
+// so "List My Property" can offer only deeds they actually hold. Refreshes on
+// every jbdata push (after a buy / sale / rental the list changes).
+function useMyOwnedHouses() {
+  const [houses, setHouses] = useState(() => readMyOwnedHouses());
+  useEffect(() => {
+    const refresh = () => setHouses(readMyOwnedHouses());
+    refresh();
+    window.addEventListener('jbdata', refresh);
+    return () => window.removeEventListener('jbdata', refresh);
+  }, []);
+  return houses;
+}
+function readMyOwnedHouses() {
+  try {
+    const econ = window.__JB && window.__JB.econ;
+    const list = (econ && Array.isArray(econ.myOwnedHouses)) ? econ.myOwnedHouses : [];
+    return list.filter(h => h && h.houseId);
+  } catch (e) { return []; }
+}
 function buildPropsList() {
   try {
     const econ = window.__JB && window.__JB.econ;
@@ -373,8 +454,10 @@ function buildPropsList() {
 
 function RealEstateScreen({ openDetail }) {
   const PROPERTIES = useLiveProperties();
+  const myHouses = useMyOwnedHouses();
   const [q, setQ] = useState('');
   const [showList, setShowList] = useState(false);
+  const [showMine, setShowMine] = useState(false);
   const [status, setStatus] = useState('any');
   const [tier, setTier] = useState('any');
   const [district, setDistrict] = useState('any');
@@ -457,13 +540,18 @@ function RealEstateScreen({ openDetail }) {
 
         <div style={{ flex: 1 }} />
         {window.JB_isAdmin && window.JB_isAdmin() && (
-          <button className="btn primary" onClick={() => setShowList(true)} title="Admin: list a property to the cloud market — saved durably + visible to all players">
+          <button className="btn primary" onClick={() => setShowList(true)} title="Admin: list a brand-new property FOR SALE to the cloud market — saved durably + visible to all players">
             🏘 + List Property
           </button>
         )}
+        <button className="btn primary" onClick={() => setShowMine(true)}
+          title={myHouses.length ? 'List or rent out a house you own' : 'Buy a house from a For-sale listing first, then you can list or rent it'}>
+          🏠 List My Property{myHouses.length ? ` (${myHouses.length})` : ''}
+        </button>
         <button className="btn primary">Save search</button>
       </div>
       {showList && <ListPropertyModal onClose={() => setShowList(false)} />}
+      {showMine && <ListMyHouseModal houses={myHouses} onClose={() => setShowMine(false)} />}
 
       <div className="re-grid">
         <div className="re-map-wrap">

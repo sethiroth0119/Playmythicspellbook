@@ -568,7 +568,7 @@ function PropertyDetailScreen({ propertyId, onBack }) {
   const rePhoto = (window.JB_art && window.JB_art('re', p.id)) || '';
   const reAdm = !!(window.JB_isAdmin && window.JB_isAdmin());
   const agent = PLAYERS.find(x => x.id === p.agent);
-  const dist = DISTRICTS[p.district];
+  const dist = DISTRICTS[p.district] || { name: 'Unsorted', blurb: '', color: '#88c4ff' };
   const reviews = REVIEWS[agent?.id] || [];
   const [activeView, setActiveView] = useState('photos');
 

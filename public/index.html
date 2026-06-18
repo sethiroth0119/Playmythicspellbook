@@ -59281,6 +59281,13 @@ function _dwSpend(cinder, aza) {
 }
 function _dwellingOpen(mode, shopId) {
   if (document.getElementById('dw-overlay')) return;
+  // 🏠 Gate: the personal Dwelling is only walkable if you OWN a listed property
+  // (or hold an active rental). The Shop Builder ('shop' mode) is unaffected.
+  if (mode !== 'shop' && typeof _reCanEnterDwelling === 'function' && !_reCanEnterDwelling()) {
+    try { showToast('🏠 You need to own a listed property to enter your Dwelling — buy or rent one at the Real Estate Office.', 4800); } catch (e) {}
+    try { if (typeof _campOpenRealEstate === 'function') setTimeout(_campOpenRealEstate, 350); } catch (e) {}
+    return;
+  }
   const ov = document.createElement('div');
   ov.id = 'dw-overlay';
   ov.style.cssText = 'position:fixed;inset:0;z-index:2147483400;background:#0c1018;display:flex;flex-direction:column';
@@ -77934,6 +77941,7 @@ function renderPricingAdmin() {
                 <div style="display:flex;gap:0.45rem;flex-wrap:wrap;align-items:center">
                   <label class="small-text" style="display:flex;align-items:center;gap:0.3rem">Price <input class="re-edit" data-re-id="${escapeHtml(l.id)}" data-re-field="price"    type="number" min="0" step="100" value="${l.price || 0}" style="width:110px;padding:0.35rem"></label>
                   <label class="small-text" style="display:flex;align-items:center;gap:0.3rem">Capacity <input class="re-edit" data-re-id="${escapeHtml(l.id)}" data-re-field="capacity" type="number" min="1" max="9999" value="${l.capacity || 60}" style="width:80px;padding:0.35rem"></label>
+                  <label class="small-text" style="display:flex;align-items:center;gap:0.3rem" title="Residents this home houses in its District Node — raises that district's population & holds back corruption. Blank = auto from capacity.">Residents <input class="re-edit" data-re-id="${escapeHtml(l.id)}" data-re-field="residents" type="number" min="0" max="500" placeholder="auto" value="${typeof l.residents === 'number' ? l.residents : ''}" style="width:72px;padding:0.35rem"></label>
                   <button class="btn-mini re-upload-img" data-re-id="${escapeHtml(l.id)}">📁 Photo</button>
                   ${l.image ? `<button class="btn-mini re-clear-img" data-re-id="${escapeHtml(l.id)}" title="Remove photo">🗑 Photo</button>` : ''}
                   <button class="btn-mini btn-danger re-delete" data-re-id="${escapeHtml(l.id)}">✕ Delete</button>
@@ -77955,6 +77963,7 @@ function renderPricingAdmin() {
             <div style="display:flex;gap:0.45rem;flex-wrap:wrap;align-items:center">
               <label class="small-text" style="display:flex;align-items:center;gap:0.35rem">Price <input id="re-add-price" type="number" min="0" step="100" value="5000" style="width:110px;padding:0.45rem"></label>
               <label class="small-text" style="display:flex;align-items:center;gap:0.35rem">Capacity <input id="re-add-capacity" type="number" min="1" max="9999" value="100" style="width:80px;padding:0.45rem"></label>
+              <label class="small-text" style="display:flex;align-items:center;gap:0.35rem" title="Residents this home houses in its District Node. Blank = auto from capacity.">Residents <input id="re-add-residents" type="number" min="0" max="500" placeholder="auto" style="width:72px;padding:0.45rem"></label>
               <button class="btn-mini" id="btn-re-add-upload">📁 Upload photo</button>
               <input type="file" id="re-add-img-input" accept="image/*" style="display:none">
               <button class="btn-primary btn-mini" id="btn-re-add">+ Add listing</button>
@@ -78665,6 +78674,8 @@ function renderPricingAdmin() {
     const blurb    = v('re-add-blurb').trim();
     const price    = Math.max(0, (parseInt(v('re-add-price'), 10) || 0));
     const capacity = Math.max(1, Math.min(9999, (parseInt(v('re-add-capacity'), 10) || 60)));
+    const _resRaw  = v('re-add-residents').trim();
+    const residents = _resRaw === '' ? null : Math.max(0, Math.min(500, (parseInt(_resRaw, 10) || 0)));
     if (!name)    { showToast('⚠ Listing needs a name.', 2400); return; }
     if (!address) { showToast('⚠ Listing needs an address.', 2400); return; }
     Forge.realEstateListings = Array.isArray(Forge.realEstateListings) ? Forge.realEstateListings : [];
@@ -78678,6 +78689,7 @@ function renderPricingAdmin() {
     Forge.realEstateListings.push({
       id: 're_' + Date.now() + '_' + Math.floor(Math.random() * 1e6),
       name, address, icon, color, blurb, price, capacity,
+      ...(residents != null ? { residents } : {}),
       image: App._reDraft.image || null,
       // Default district + tier so the listing appears in JB right away.
       district: 'lower',
@@ -78706,7 +78718,13 @@ function renderPricingAdmin() {
       const row = Forge.realEstateListings.find(l => l && l.id === id);
       if (!row) return;
       let val = inp.value;
-      if (field === 'price' || field === 'capacity') val = Math.max(0, (parseInt(val, 10) || 0));
+      if (field === 'residents') {
+        // Blank → remove the override so residents auto-derive from capacity.
+        if (String(val).trim() === '') { delete row.residents; try { saveForge(); } catch (e) {} return; }
+        val = Math.max(0, Math.min(500, (parseInt(val, 10) || 0)));
+      } else if (field === 'price' || field === 'capacity') {
+        val = Math.max(0, (parseInt(val, 10) || 0));
+      }
       row[field] = val;
       try { saveForge(); } catch (e) {}
     };
@@ -113021,6 +113039,88 @@ function _purchaseHouse(listingId) {
   try { showToast('🏠 Welcome home! "' + listing.name + '" is yours.', 3400); } catch (e) {}
   return true;
 }
+// ============================================================================
+// 🏠 REAL-ESTATE RESIDENCY — owned properties house residents in a District
+// Node, boosting that node's POPULATION and pushing down CORRUPTION. The node a
+// house resides in defaults to the owner's aligned camp node, but the owner can
+// re-station it (Profile.ownedHouses[i].nodeId). Residents derive from the
+// listing's stash capacity unless an explicit `residents` is authored.
+//
+// Phase 1 is owner-authoritative: it boosts node PROTECTION everywhere (so the
+// recon UI reflects it) and, on offline/local nodes, actually settles
+// population in the sim. Cross-player aggregation + server-side population
+// settlement on SHARED (cloud) nodes lands with the realty migration (Phase 2).
+// Bonuses are capped so a few homes help without trivializing a node.
+// ============================================================================
+function _reListingResidents(listing) {
+  if (!listing) return 0;
+  if (typeof listing.residents === 'number' && listing.residents >= 0) return listing.residents | 0;
+  const cap = (listing.capacity | 0);
+  // 1 resident-household per ~50 stash slots, floored at 4, ceilinged at 80.
+  return Math.max(4, Math.min(80, Math.round(cap / 50) + 4));
+}
+// Resolve the District Node an owned house resides in: explicit per-house
+// override → the listing's authored nodeId → the owner's aligned camp node.
+function _reHouseNode(ownedHouse) {
+  if (ownedHouse && ownedHouse.nodeId) return ownedHouse.nodeId;
+  const listing = ownedHouse ? _findListing(ownedHouse.listingId) : null;
+  if (listing && listing.nodeId) return listing.nodeId;
+  return (Profile && Profile.campNodeId) || null;
+}
+// THIS player's residencies → [{ nodeId, residents, name, houseId }].
+function _reMyResidencies() {
+  const out = [];
+  try {
+    _ensureOwnedHouses().forEach(h => {
+      if (!h) return;
+      const nodeId = _reHouseNode(h);
+      if (!nodeId) return;
+      const listing = _findListing(h.listingId) || {};
+      out.push({ nodeId, residents: _reListingResidents(listing), name: listing.name || 'Home', houseId: h.houseId });
+    });
+  } catch (e) {}
+  return out;
+}
+// Residents stationed at a node (local view = my homes; cross-player aggregate
+// arrives on the recon row's `residents` field once the realty table exists).
+function _reNodeResidents(nodeId) {
+  if (!nodeId) return 0;
+  let mine = 0;
+  _reMyResidencies().forEach(r => { if (r.nodeId === nodeId) mine += r.residents; });
+  let cloud = 0;
+  try { const cr = (typeof _twNodeReconCloudRow === 'function') ? _twNodeReconCloudRow(nodeId) : null; if (cr && typeof cr.residents === 'number') cloud = cr.residents | 0; } catch (e) {}
+  // The cloud aggregate (when present) already includes my homes — take the max
+  // so we never double-count but still show my contribution before it syncs.
+  return Math.max(mine, cloud);
+}
+// Residency → extra PROTECTION (corruption suppression). ~1 per 20 residents,
+// capped at +6 so homes meaningfully shield a node without making it immortal.
+function _reNodeResidentProtection(nodeId) {
+  return Math.min(6, _reNodeResidents(nodeId) / 20);
+}
+// Does this player hold an ACTIVE rental (Phase 2 marketplace)? Time-boxed.
+function _reActiveRental() {
+  try {
+    const rs = Profile && Profile.rentals;
+    if (!rs || typeof rs !== 'object') return false;
+    const now = Date.now();
+    return Object.keys(rs).some(k => rs[k] && (rs[k].until | 0) > now);
+  } catch (e) { return false; }
+}
+// Gate for _dwellingOpen('house'): only owners (or active renters) may enter.
+function _reCanEnterDwelling() {
+  try { return _ensureOwnedHouses().length > 0 || _reActiveRental(); } catch (e) { return false; }
+}
+// 🏠 Re-station an owned house into a District Node (owner choice). Persists +
+// best-effort attributes the residents to the shared node so the boost syncs.
+function _reStationHouse(houseId, nodeId) {
+  const owned = _ensureOwnedHouses();
+  const h = owned.find(x => x && x.houseId === houseId);
+  if (!h) return false;
+  h.nodeId = nodeId || null;
+  try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); else if (typeof saveProfile === 'function') saveProfile(); } catch (e) {}
+  return true;
+}
 // 🏘 Build the dynamic Suburbs zone — each owned house becomes a walkable
 // building. Houses lay out in a row along y=8 with 1-tile gaps.
 function _getSuburbsBuildings() {
@@ -113110,11 +113210,51 @@ function _travelToZone(zoneId) {
 // building in the Suburbs zone with a private stash. Listings come from
 // DEFAULT_HOUSE_LISTINGS + any admin-added entries on Forge.realEstateListings.
 // ============================================================================
+// 🏠 Residency panel for the Real Estate Office — lists owned homes with a
+// District Node selector so the owner can station each property; shows how many
+// residents it houses + which district it shields.
+function _reResidencyPanelHtml(owned) {
+  let nodes = [];
+  try { nodes = (typeof _csNodeList === 'function') ? _csNodeList() : []; } catch (e) { nodes = []; }
+  const campNode = (Profile && Profile.campNodeId) || null;
+  const campName = (function () { try { return campNode ? _csNodeMeta(campNode).name : null; } catch (e) { return null; } })();
+  const resi = _reMyResidencies();
+  const totalResidents = resi.reduce((s, r) => s + (r.residents | 0), 0);
+  const nodeSet = {}; resi.forEach(r => { if (r.nodeId) nodeSet[r.nodeId] = 1; });
+  const nodeCount = Object.keys(nodeSet).length;
+  const rows = owned.map(h => {
+    const listing = _findListing(h.listingId) || {};
+    const residents = _reListingResidents(listing);
+    const cur = h.nodeId || '';
+    const effNode = _reHouseNode(h);
+    const effName = (function () { try { return effNode ? _csNodeMeta(effNode).name : null; } catch (e) { return null; } })();
+    const opts = ['<option value="">— ' + (campName ? 'My camp district: ' + escapeHtml(campName) : 'My camp district') + ' —</option>']
+      .concat(nodes.map(n => '<option value="' + escapeHtml(n.id) + '"' + (n.id === cur ? ' selected' : '') + '>' + escapeHtml(n.name) + '</option>')).join('');
+    return `<div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;padding:0.45rem 0.6rem;background:rgba(0,0,0,0.32);border:1px solid rgba(212,175,55,0.22);border-radius:8px">
+      <span style="font-size:1.4rem;line-height:1">${listing.icon || '🏠'}</span>
+      <div style="flex:1;min-width:130px">
+        <div style="color:${listing.color || '#88c4ff'};font-family:'Cinzel',serif;font-size:0.86rem">${escapeHtml(listing.name || 'Home')}</div>
+        <div style="color:#bfae87;font-size:0.68rem">🧑‍🤝‍🧑 Houses ${residents} residents${effName ? ' · shielding <span style="color:#9be0c4">' + escapeHtml(effName) + '</span>' : ''}</div>
+      </div>
+      <label style="display:flex;align-items:center;gap:0.35rem;color:#bfae87;font-size:0.72rem">📍 Station in
+        <select class="re-node-sel" data-house-id="${escapeHtml(h.houseId)}" style="padding:0.3rem 0.4rem;background:#140e1c;color:#e2eaff;border:1px solid rgba(212,175,55,0.35);border-radius:5px;font-size:0.74rem;max-width:210px">${opts}</select>
+      </label>
+    </div>`;
+  }).join('');
+  return `<div style="padding:0.5rem 1.4rem 0.2rem">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.45rem">
+      <div style="font-family:'Cinzel',serif;color:#9be0c4;font-size:0.98rem;letter-spacing:0.05em">🏠 Your Properties &amp; Residency</div>
+      <div style="color:#bfae87;font-size:0.73rem;text-align:right">Housing <strong style="color:#7ce8a8">${totalResidents.toLocaleString()}</strong> residents across <strong style="color:#7ce8a8">${nodeCount}</strong> ${nodeCount === 1 ? 'district' : 'districts'}.<br>Occupied homes raise their district's population &amp; hold back corruption.</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:0.4rem;max-height:208px;overflow-y:auto">${rows}</div>
+  </div>`;
+}
 function _campOpenRealEstate() {
   const old = document.getElementById('camp-realestate');
   if (old) { old.remove(); return; }
   const listings = _getAllListings();
   const owned = _ensureOwnedHouses();
+  const residencyPanel = owned.length ? _reResidencyPanelHtml(owned) : '';
   const root = document.createElement('div');
   root.id = 'camp-realestate';
   root.style.cssText = 'position:fixed;inset:0;z-index:9445;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center, rgba(8,4,20,0.65) 0%, rgba(2,1,8,0.92) 100%);backdrop-filter:blur(4px);animation:helpFadeIn 0.22s ease-out';
@@ -113152,6 +113292,7 @@ function _campOpenRealEstate() {
           </div>`;
         }).join('')}
       </div>
+      ${residencyPanel ? `<div style="border-top:1px solid rgba(212,175,55,0.2)">${residencyPanel}</div>` : ''}
       ${owned.length ? `
         <div style="padding:0.7rem 1.4rem;border-top:1px solid rgba(212,175,55,0.2);display:flex;justify-content:flex-end">
           <button id="re-suburbs" style="padding:0.5rem 1.1rem;background:rgba(196,168,255,0.22);color:#c4a8ff;border:1px solid rgba(196,168,255,0.55);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.85rem;letter-spacing:0.05em">🏘 Travel to Suburbs →</button>
@@ -113165,6 +113306,14 @@ function _campOpenRealEstate() {
   });
   const sub = root.querySelector('#re-suburbs');
   if (sub) sub.onclick = () => { root.remove(); _travelToZone('suburbs'); };
+  // 🏠 Station an owned property in a District Node — residents shield it.
+  root.querySelectorAll('.re-node-sel').forEach(sel => sel.onchange = () => {
+    _reStationHouse(sel.dataset.houseId, sel.value || null);
+    const nm = (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].text) || 'your district';
+    showToast('🏠 Property stationed — its residents now bolster ' + nm + '.', 3200);
+    try { if (typeof tw_cloudFetchAllNodeRecon === 'function') tw_cloudFetchAllNodeRecon(); } catch (e) {}
+    root.remove(); _campOpenRealEstate();
+  });
 }
 
 // 🎁 _campLootContainer — player clicked an admin-placed loot container.
@@ -153777,7 +153926,12 @@ function _twNodeProtection(nodeId) {
     }
     let garrison = 0; // 🛡 Garrison upgrade — shared, from the cloud recon row
     try { const _cr = (typeof _twNodeReconCloudRow === 'function') ? _twNodeReconCloudRow(nodeId) : null; if (_cr) garrison = _cr.garrison | 0; } catch (e) {}
-    return Math.min(18, count * 1.5 + garrison * 1.5);
+    const base = Math.min(18, count * 1.5 + garrison * 1.5);
+    // 🏠 Residents stationed here (owned homes) shield the node ON TOP of
+    // registered players + garrison — up to an extra +6 protection.
+    let residency = 0;
+    try { if (typeof _reNodeResidentProtection === 'function') residency = _reNodeResidentProtection(nodeId); } catch (e) {}
+    return base + residency;
   } catch (e) { return 0; }
 }
 // How many players are REGISTERED to / CONTRIBUTING at a node (cloud-cached counts,
@@ -153822,10 +153976,22 @@ function _twNodeSimTick(node, now, forceDays) {
   if (days <= 0) return false;
   days = Math.min(days, 14); // a long absence won't nuke the node to zero
   const prot = _twNodeProtection(node.id);
+  // 🏠 Residents stationed at this node (owned homes) settle population back in
+  // as corruption is held down. Computed once for the whole batch. Local/offline
+  // only — on SHARED cloud nodes this tick is a no-op (returned above) and the
+  // server formula owns settlement (ships with the realty migration).
+  let _resSettle = 0;
+  try { _resSettle = (typeof _reNodeResidents === 'function') ? (_reNodeResidents(node.id) | 0) : 0; } catch (e) {}
   for (let d = 0; d < days; d++) {
     r.corruption = Math.max(0, Math.min(100, r.corruption + 2 - prot));
     const loss = Math.round(r.population * (r.corruption / 100) * 0.03);
     r.population = Math.max(0, r.population - loss);
+    if (_resSettle > 0) {
+      // Each resident-household draws ~12 settlers/day, but only while there's
+      // room under the node's civilian baseline.
+      const room = Math.max(0, (r.civiliansTotal || 0) - r.population);
+      if (room > 0) r.population += Math.min(room, _resSettle * 12);
+    }
   }
   if (forceDays) r.lastTickAt = now; else r.lastTickAt = r.lastTickAt + days * _TW_DAY_MS;
   return true;

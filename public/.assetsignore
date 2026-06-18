@@ -38,3 +38,13 @@ assets/3d models/**/*.glb
 
 # Safety net: raw editor zips / source bundles sometimes land in assets.
 *.zip
+
+# Oversized source audio dropped into assets/Audio/ (added 2026-06-17, each
+# ~50-100 MiB — over the 25 MiB cap, and not referenced by the game). Cloudflare
+# can't serve a file this large anyway; if this ambience is wanted in-game,
+# compress it under 25 MiB or host it in the cloud bucket. Small served SFX in
+# this folder (button click.wav, card draw.wav, …) stay under the cap and deploy
+# normally, so exclude only the oversized ones by exact name. Files stay on disk.
+assets/Audio/Heavy Machines - Factory Ambience.wav
+assets/Audio/auction chatter.wav
+assets/Audio/fishing.wav

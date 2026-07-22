@@ -402,7 +402,7 @@
 //        → crash. Now uses Math.floor(/65536) (always ≥0) + positive-modulo
 //        normalize + empty-pool / undefined-entry guards. Crash/Exchange opens
 //        again. (v88g error-surface kept as a backstop.)
-const CACHE_VERSION = 'mythic-v118r-idb-backed-save-calm-' + Date.now().toString(36);
+const CACHE_VERSION = 'mythic-v118s-force-update-stale-tabs-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if
@@ -429,22 +429,37 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    // Reap any stale caches from previous versions.
+    // Reap any stale caches from previous versions. If we DELETE one, a prior
+    // version of the game ran on this machine — i.e. this is an UPDATE, not a
+    // first install, so any open tab is a fully-loaded RETURNING visitor.
     const names = await caches.keys();
-    await Promise.all(
-      names
-        .filter((n) => n.startsWith('mythic-static-') && n !== STATIC_CACHE)
-        .map((n) => caches.delete(n))
-    );
-    // Take control of open clients without waiting for a navigation.
-    // NOTE: We intentionally do NOT call _c.navigate() here. The fetch handler
-    // already passes navigation requests straight to the network (isNav → return),
-    // so every hard-reload fetches fresh HTML. Force-navigating from activate was
-    // causing the blank-black-screen bug: the SW activated mid page-load,
-    // _c.navigate() kicked the tab, and the interrupted boot produced an empty
-    // #app div. Removed in v84b — the opt-in "Reload now" toast in index.html
-    // is the only way a tab reloads after a SW update.
+    const stale = names.filter((n) => n.startsWith('mythic-static-') && n !== STATIC_CACHE);
+    await Promise.all(stale.map((n) => caches.delete(n)));
     await self.clients.claim();
+
+    // 🔁 AUTO-UPDATE STALE TABS. A returning visitor's page was served (cached) by
+    // the OLD service worker, so it is running OLD code — and if that old code
+    // predates the in-page "update ready" toast, nothing ever tells them to reload;
+    // they sit on stale code forever (this is the "other computers won't update"
+    // report). We now force those tabs onto fresh HTML from the SW itself.
+    //
+    // The blank-#app bug this was removed for in v84b came from navigating a tab
+    // MID-BOOT on FIRST install. Two guards prevent that here:
+    //   1. Only when `stale.length` (a prior version existed → this is an update,
+    //      and the tab has already finished booting the old code, not first-install).
+    //   2. A delay so a tab that happens to be mid-render finishes first.
+    // Navigating fetches fresh HTML because the fetch handler passes navigations
+    // straight through (isNav → return). One reload per deploy — no loop, because
+    // the same SW is already active after the reload so activate never re-fires.
+    if (stale.length > 0) {
+      await new Promise((r) => setTimeout(r, 3500));
+      try {
+        const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: false });
+        for (const c of clients) {
+          try { await c.navigate(c.url); } catch (e) { /* some browsers disallow; the toast still covers it */ }
+        }
+      } catch (e) {}
+    }
   })());
 });
 

@@ -402,7 +402,7 @@
 //        → crash. Now uses Math.floor(/65536) (always ≥0) + positive-modulo
 //        normalize + empty-pool / undefined-entry guards. Crash/Exchange opens
 //        again. (v88g error-surface kept as a backstop.)
-const CACHE_VERSION = 'mythic-v117t-vs-remove-tint-box-' + Date.now().toString(36);
+const CACHE_VERSION = 'mythic-v117u-presence-aura-protection-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

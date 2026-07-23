@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mythic Spellbook — Cloud Migration</title>
+<!-- Same Supabase client the game uses. NOTHING else loads: no game, no images, no 3D,
+     so this page cannot exhaust graphics memory the way the full game does. It shares this
+     origin's localStorage (your login) and IndexedDB (your sprites), converts every sprite
+     to a cloud URL, writes the tiny URL record back (freeing the huge local Blob), and
+     publishes the sprite shard so players get them. Safe to re-run — it resumes. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  html,body{margin:0;background:#0b0d16;color:#e8e6f2;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  #wrap{max-width:720px;margin:0 auto;padding:34px 20px 60px;text-align:center}
+  h1{font-size:24px;margin:8px 0 4px}
+  .sub{opacity:.6;font-size:13px;line-height:1.5;margin-bottom:22px}
+  #status{font-size:17px;font-weight:700;margin:18px 0 6px;min-height:22px}
+  #stats{opacity:.85;font-size:14px;margin-bottom:14px;min-height:18px}
+  #bar{height:10px;background:#1b2033;border-radius:6px;overflow:hidden;margin:14px 0}
+  #barfill{height:100%;width:0;background:linear-gradient(90deg,#3a6ff0,#6f9bff);transition:width .2s}
+  #log{text-align:left;background:#070911;border:1px solid #1b2033;border-radius:10px;padding:12px;height:180px;overflow:auto;font:12px/1.5 ui-monospace,monospace;color:#9fb3d8;white-space:pre-wrap;margin-top:16px}
+  button{font:700 15px/1 ui-sans-serif,system-ui;color:#fff;cursor:pointer;padding:12px 20px;margin:16px 6px 0;border-radius:10px;border:1px solid rgba(255,255,255,.25);background:linear-gradient(180deg,#3a6ff0,#2a4fd0)}
+  button.ghost{background:transparent;border-color:rgba(255,255,255,.2)}
+  a{color:#8fb0ff}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>☁ Cloud Migration</h1>
+  <div class="sub">Moves your sprites off this browser onto the cloud and frees local storage.<br>This page never draws the game, so it can't run out of graphics memory. Keep the tab open.</div>
+  <div id="status">Starting…</div>
+  <div id="stats"></div>
+  <div id="bar"><div id="barfill"></div></div>
+  <div id="actions"></div>
+  <div id="log"></div>
+</div>
+<script>
+(function () {
+  var SUPABASE_URL = 'https://ktsiasyjusesawtrwrjc.supabase.co';
+  var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt0c2lhc3lqdXNlc2F3dHJ3cmpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NDU5MjgsImV4cCI6MjA5NDIyMTkyOH0.fYpQFCs03ZE5AIv88S_GStqp7g71sTQe9yUxmXgyKQo';
+  var CARD_ART_BUCKET = 'card-art';
+  var PUBLIC_CATALOG_BUCKET = 'public-catalog';
+  var HG_IDB_NAME = 'hg_forge_assets', HG_IDB_STORE = 'kv', HG_IDB_VERSION = 1;
+  var SHARD_CAP = 4 * 1024 * 1024;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var setStatus = function (t) { $('status').textContent = t; };
+  var setStats = function (t) { $('stats').textContent = t; };
+  var setBar = function (frac) { $('barfill').style.width = Math.max(0, Math.min(100, frac * 100)) + '%'; };
+  var log = function (t) { var el = $('log'); el.textContent += t + '\n'; el.scrollTop = el.scrollHeight; };
+  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  var nowB36 = function () { return Date.now().toString(36); };
+  var addBtn = function (label, fn, ghost) { var b = document.createElement('button'); b.textContent = label; if (ghost) b.className = 'ghost'; b.onclick = fn; $('actions').appendChild(b); return b; };
+
+  // ---- IndexedDB (same DB the game uses) ----
+  function idbOpen() {
+    return new Promise(function (res, rej) {
+      var req = indexedDB.open(HG_IDB_NAME, HG_IDB_VERSION);
+      req.onupgradeneeded = function () { var db = req.result; if (!db.objectStoreNames.contains(HG_IDB_STORE)) db.createObjectStore(HG_IDB_STORE); };
+      req.onsuccess = function () { res(req.result); };
+      req.onerror = function () { rej(req.error); };
+    });
+  }
+  function idbGet(db, key) { return new Promise(function (res) { try { var r = db.transaction(HG_IDB_STORE, 'readonly').objectStore(HG_IDB_STORE).get(key); r.onsuccess = function () { res(r.result); }; r.onerror = function () { res(undefined); }; } catch (e) { res(undefined); } }); }
+  function idbSet(db, key, val) { return new Promise(function (res) { try { var t = db.transaction(HG_IDB_STORE, 'readwrite'); t.objectStore(HG_IDB_STORE).put(val, key); t.oncomplete = function () { res(true); }; t.onerror = function () { res(false); }; t.onabort = function () { res(false); }; } catch (e) { res(false); } }); }
+  function idbKeys(db) { return new Promise(function (res) { try { var r = db.transaction(HG_IDB_STORE, 'readonly').objectStore(HG_IDB_STORE).getAllKeys(); r.onsuccess = function () { res(r.result || []); }; r.onerror = function () { res([]); }; } catch (e) { res([]); } }); }
+
+  // ---- frame value → data URL (mirrors the game's _artValueToDataUrl) ----
+  function blobToDataUrl(b) { return new Promise(function (res) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = function () { res(null); }; try { r.readAsDataURL(b); } catch (e) { res(null); } }); }
+  async function toDataUrl(v) {
+    try {
+      if (!v) return null;
+      if (typeof v === 'object' && !(v instanceof Blob)) v = v.url || v.data || v.src || v.image || null;
+      if (v instanceof Blob) return await blobToDataUrl(v);
+      if (typeof v === 'string') {
+        if (v.indexOf('data:image/') === 0) return v;
+        if (v.indexOf('blob:') === 0) { try { var b = await (await fetch(v)).blob(); return await blobToDataUrl(b); } catch (e) { return null; } }
+        return null;
+      }
+      return null;
+    } catch (e) { return null; }
+  }
+
+  // ---- upload one image (mirrors cloudUploadAssetFile: same bucket + path + ?v=) ----
+  var supa, userId, bucketReady = false;
+  async function ensureBucket() { if (bucketReady) return; bucketReady = true; try { await supa.storage.createBucket(CARD_ART_BUCKET, { public: true }); } catch (e) {} }
+  async function uploadAsset(baseName, dataUrl) {
+    if (!/^data:image\//i.test(dataUrl)) return null;
+    await ensureBucket();
+    var blob = await (await fetch(dataUrl)).blob();
+    var m = /^data:image\/(\w+)/i.exec(dataUrl);
+    var ext = m ? (m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase()) : 'png';
+    var path = userId + '/' + String(baseName).replace(/[^a-zA-Z0-9_\-/]/g, '_') + '.' + ext;
+    var error = null;
+    for (var a = 0; a < 4; a++) {
+      var r = await supa.storage.from(CARD_ART_BUCKET).upload(path, blob, { upsert: true, contentType: blob.type || ('image/' + ext) });
+      error = r.error; if (!error) break;
+      if (!/rate|429|50\d|502|503|network|timeout|temporar|fetch/i.test(error.message || '')) break;
+      await sleep(300 * (a + 1));
+    }
+    if (error) return null;
+    var pub = supa.storage.from(CARD_ART_BUCKET).getPublicUrl(path);
+    var url = pub && pub.data && pub.data.publicUrl; if (!url) return null;
+    return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + nowB36();
+  }
+
+  var isHttp = function (v) { return typeof v === 'string' && /^https?:\/\//i.test(v); };
+  function allHttp(rec) {
+    if (rec == null) return false;
+    if (typeof rec === 'string') return isHttp(rec);
+    if (typeof rec !== 'object') return false;
+    var saw = false;
+    for (var k in rec) { var a = rec[k]; if (!Array.isArray(a)) continue; for (var i = 0; i < a.length; i++) { saw = true; if (!isHttp(a[i])) return false; } }
+    return saw;
+  }
+  // Convert one record to a portable all-URL record (mirrors _sanitizeArtRecordForPublish).
+  async function sanitize(rec, id, prefix) {
+    var safeId = String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+    var folder = (prefix === 'spr:') ? 'sprites/' : 'cardart/';
+    var toPortable = async function (v, path) { if (isHttp(v)) return v; var d = await toDataUrl(v); if (!d) return null; return await uploadAsset(path, d); };
+    if (rec == null) return null;
+    if (typeof rec === 'string') return await toPortable(rec, folder + safeId);
+    if (typeof rec !== 'object') return null;
+    var hasArr = false; for (var k0 in rec) { if (Array.isArray(rec[k0])) { hasArr = true; break; } }
+    if (!hasArr) return await toPortable(rec, folder + safeId);
+    var clean = {};
+    for (var anim in rec) {
+      var arr = rec[anim];
+      if (!Array.isArray(arr)) { clean[anim] = arr; continue; }
+      var frames = [];
+      for (var i = 0; i < arr.length; i++) { var u = await toPortable(arr[i], folder + safeId + '/' + anim + '_' + i); if (u) frames.push(u); }
+      clean[anim] = frames;
+    }
+    return clean;
+  }
+  function frameCount(rec) { if (rec == null) return 0; if (typeof rec === 'string') return rec ? 1 : 0; if (typeof rec !== 'object') return 0; var n = 0; for (var k in rec) { if (Array.isArray(rec[k])) n += rec[k].filter(Boolean).length; } return n; }
+
+  // ---- publish the sprite shard (mirrors cloudPublishCatalogArt's sprite path) ----
+  function splitShards(obj) {
+    var keys = Object.keys(obj), shards = [], cur = {}, size = 2;
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i]; var entry = JSON.stringify(k) + ':' + JSON.stringify(obj[k]) + ','; var sz = entry.length;
+      if (size + sz > SHARD_CAP && Object.keys(cur).length) { shards.push(cur); cur = {}; size = 2; }
+      cur[k] = obj[k]; size += sz;
+    }
+    if (Object.keys(cur).length) shards.push(cur);
+    return shards.length ? shards : [{}];
+  }
+  async function putCatalog(name, jsonStr) {
+    var blob = new Blob([jsonStr], { type: 'application/json' });
+    for (var a = 0; a < 4; a++) {
+      var r = await supa.storage.from(PUBLIC_CATALOG_BUCKET).upload(name, blob, { upsert: true, contentType: 'application/json' });
+      if (!r.error) return null;
+      if (!/rate|429|50\d|network|timeout|fetch/i.test(r.error.message || '')) return r.error.message;
+      await sleep(400 * (a + 1));
+    }
+    return 'upload failed';
+  }
+  async function publishSprites(spriteMap) {
+    var shards = splitShards(spriteMap);
+    var names = shards.map(function (_, i) { return 'sprites-' + i + '.json'; });
+    for (var i = 0; i < shards.length; i++) { var e = await putCatalog(names[i], JSON.stringify(shards[i])); if (e) return e; }
+    return await putCatalog('sprites.index.json', JSON.stringify({ shards: names, total: shards.length }));
+  }
+
+  // ---- main ----
+  async function main() {
+    if (!window.supabase || !window.supabase.createClient) { setStatus('Could not load the cloud library.'); log('supabase-js failed to load (offline / blocked?).'); return; }
+    setStatus('Signing in…'); log('Restoring your session…');
+    supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+    var sess = null;
+    try { sess = (await supa.auth.getSession()).data.session; } catch (e) {}
+    if (!sess) { await sleep(1200); try { sess = (await supa.auth.getSession()).data.session; } catch (e) {} }
+    if (!sess || !sess.user) {
+      setStatus('Not signed in on this browser.');
+      log('No saved session found. Open the game once, sign in, then reload this page.');
+      addBtn('↻ Retry', function () { location.reload(); });
+      addBtn('Open game', function () { location.href = location.origin + '/'; }, true);
+      return;
+    }
+    userId = sess.user.id;
+    log('Signed in as ' + (sess.user.email || userId));
+
+    setStatus('Reading local sprites…');
+    var db;
+    try { db = await idbOpen(); } catch (e) { setStatus('Could not open local storage.'); log('IndexedDB error: ' + (e && e.message)); return; }
+    var allKeys = await idbKeys(db);
+    var sprKeys = allKeys.filter(function (k) { return typeof k === 'string' && k.indexOf('spr:') === 0; });
+    var carKeys = allKeys.filter(function (k) { return typeof k === 'string' && k.indexOf('car:') === 0; });
+    log('Found ' + sprKeys.length + ' sprites, ' + carKeys.length + ' card-art records locally.');
+
+    var report = { sprFixed: 0, sprGood: 0, sprDead: 0, carFixed: 0, carDead: 0 };
+    var spriteMap = {};
+
+    // Sprites (the big one) — one at a time, convert → upload → write URL record back (frees the Blob).
+    for (var s = 0; s < sprKeys.length; s++) {
+      var key = sprKeys[s]; var id = key.slice(4);
+      setStats('Sprites ' + (s + 1) + ' / ' + sprKeys.length + '  ·  fixed ' + report.sprFixed + (report.sprDead ? ('  ·  ' + report.sprDead + ' unreadable') : ''));
+      setBar((s + 1) / (sprKeys.length + carKeys.length + 1));
+      var rec = null; try { rec = await idbGet(db, key); } catch (e) {}
+      if (rec == null) { report.sprDead++; continue; }
+      if (allHttp(rec)) { report.sprGood++; spriteMap[id] = rec; continue; }
+      var clean = null; try { clean = await sanitize(rec, id, 'spr:'); } catch (e) {}
+      if (clean && frameCount(clean) > 0) {
+        await idbSet(db, key, clean);
+        spriteMap[id] = clean;
+        if (allHttp(clean)) report.sprFixed++; else report.sprFixed++;
+        if ((report.sprFixed % 10) === 0) log('…' + report.sprFixed + ' sprites uploaded');
+      } else { report.sprDead++; log('⚠ ' + id + ': unreadable (skipped)'); }
+      await sleep(4);
+    }
+
+    // Card art — free the local Blob too (convert → upload → write URL record back).
+    for (var c = 0; c < carKeys.length; c++) {
+      var ckey = carKeys[c]; var cid = ckey.slice(4);
+      setStats('Card art ' + (c + 1) + ' / ' + carKeys.length + '  ·  fixed ' + report.carFixed);
+      setBar((sprKeys.length + c + 1) / (sprKeys.length + carKeys.length + 1));
+      var crec = null; try { crec = await idbGet(db, ckey); } catch (e) {}
+      if (crec == null) { report.carDead++; continue; }
+      if (allHttp(crec)) { report.carFixed++; continue; }
+      var cclean = null; try { cclean = await sanitize(crec, cid, 'car:'); } catch (e) {}
+      if (cclean && frameCount(cclean) > 0) { await idbSet(db, ckey, cclean); report.carFixed++; }
+      else { report.carDead++; }
+      await sleep(4);
+    }
+
+    setStatus('Publishing sprites to players…'); setBar(0.98);
+    var pubErr = await publishSprites(spriteMap);
+    if (pubErr) log('⚠ sprite publish: ' + pubErr);
+
+    setBar(1);
+    var total = sprKeys.length;
+    setStatus('✅ Done — ' + (report.sprFixed + report.sprGood) + '/' + total + ' sprites on the cloud'
+      + (pubErr ? ' (publish had an issue — re-run)' : ' & published')
+      + (report.sprDead ? ('  ·  ' + report.sprDead + ' unreadable') : ''));
+    setStats('Card art freed: ' + report.carFixed + '. Your browser storage is now much smaller — the game should load without crashing.');
+    log('DONE. sprites fixed=' + report.sprFixed + ' good=' + report.sprGood + ' dead=' + report.sprDead + ' | cardArt=' + report.carFixed + (pubErr ? (' | publishErr=' + pubErr) : ' | published'));
+    addBtn('↻ Open the game', function () { location.href = location.origin + '/'; });
+    addBtn('Re-run migration', function () { location.reload(); }, true);
+  }
+
+  window.addEventListener('load', function () { main().catch(function (e) { setStatus('Error: ' + ((e && e.message) || e)); log('FATAL: ' + ((e && e.stack) || e)); addBtn('↻ Retry (resumes)', function () { location.reload(); }); }); });
+})();
+</script>
+</body>
+</html>

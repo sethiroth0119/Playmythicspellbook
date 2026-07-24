@@ -26,10 +26,11 @@ body{
       repeating-linear-gradient(90deg, transparent 0 46px, rgba(120,160,200,0.05) 46px 47px); }
   /* 👑 Card art — RIGHT side (opposite the nameplate). Filled from ?art= at
      runtime (the summoning unit's card); demo default below. */
-  #cardframe{ position:absolute; right:0.5%; top:50%; transform:translateY(-50%); z-index:5;
-    height:48%; aspect-ratio:1024/1536; background:center/contain no-repeat;
+  #cardframe{ position:absolute; left:50%; top:48%; z-index:5;
+    height:74%; aspect-ratio:1024/1536; background:center/contain no-repeat;
     background-image:url("../Units/unit frames/New units/Mythic Spellbook units frames part 1/azathoth.png");
-    filter:drop-shadow(0 20px 52px rgba(0,0,0,0.72)); pointer-events:none; }
+    transform:translate(-50%,-50%) scale(0.82); opacity:0;
+    filter:drop-shadow(0 20px 52px rgba(0,0,0,0.72)); pointer-events:none; will-change:transform,opacity,filter; }
 #c{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:pointer}
 
 .plate{position:absolute;left:5.2%;bottom:9%;pointer-events:none;opacity:0;--np:0}
@@ -760,8 +761,8 @@ function render(t){
   ctx.setTransform(cv.width/W, 0, 0, cv.height/H, 0, 0);
   ctx.clearRect(0,0,W,H);
   ctx.save(); ctx.translate(sx,sy);
-  drawBg(t); drawSeals(t); drawCards(t); drawLink(t);
-  drawRift(t); drawUnit(t); drawShards(t); drawImpact(t);
+  drawBg(t); drawSeals(t); drawLink(t);
+  drawRift(t); drawImpact(t);   /* cosmic FX only — demo cards/silhouette/shards removed; the real card is the centered #cardframe DOM */
   ctx.restore();
 
   vctx.setTransform(1,0,0,1,0,0);
@@ -822,6 +823,7 @@ const CUES = {
 const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 let t = 0, amb = 0, playing = false, speed = 1, last = performance.now();
 const elPlate = document.getElementById('plate');
+const elCard = document.getElementById('cardframe');
 
 /* seek(0) is the trigger — call it from the game when the tribute resolves */
 function seek(v){
@@ -860,14 +862,52 @@ function frame(now){
   elPlate.style.opacity = (CFG.showName && np > 0) ? master : 0;
   elPlate.style.setProperty('--np', eOut(np).toFixed(3));
 
+  /* 👑 Real result card (DOM #cardframe): fade+scale IN -> hold+pulse -> BURST out,
+     timed to hand off to the game's sprite reveal (_playSummonSpriteReveal). */
+  if (elCard) {
+    const IN = 0.30, HOLD = 4.70, END = 6.20;
+    let op, sc, glow;
+    if (t < IN)        { op = 0; sc = 0.82; glow = 0; }
+    else if (t < HOLD) { const u = clamp((t - IN) / 0.6); op = u; sc = 0.82 + 0.18 * eOut(u); glow = 0.35 + 0.22 * Math.sin(amb * 3.2); }
+    else if (t < END)  { const b = clamp((t - HOLD) / (END - HOLD)); op = 1 - b * b; sc = 1 + 0.55 * eOut(b); glow = 0.55 + 0.45 * (1 - b); }
+    else               { op = 0; sc = 1.55; glow = 0; }
+    elCard.style.opacity = (op * master).toFixed(3);
+    elCard.style.transform = 'translate(-50%,-50%) scale(' + sc.toFixed(3) + ')';
+    elCard.style.filter = 'drop-shadow(0 18px 46px rgba(0,0,0,0.7)) drop-shadow(0 0 ' + Math.round(16 + glow * 64) + 'px rgba(124,63,228,' + (0.35 + glow * 0.5).toFixed(2) + '))';
+  }
+
   requestAnimationFrame(frame);
 }
 </script>
 <script>
-// In-game (iframe) drop the preview backdrop so the field shows through.
-try { if (window.self !== window.top) { const _pb = document.getElementById('previewbg'); if (_pb) _pb.remove(); } } catch (e) {}
+// In-game (iframe): drop the preview backdrop, CLEAR the demo card + nameplate so a
+// missing override never leaks the demo unit, hide the file's own plate (the game shows
+// its own toast), play once, and lay a dark cinematic scrim so the effect reads on any board.
+try {
+  if (window.self !== window.top) {
+    const _pb = document.getElementById('previewbg'); if (_pb) _pb.remove();
+    const _cf0 = document.getElementById('cardframe'); if (_cf0) _cf0.style.backgroundImage = 'none';
+    const _pn0 = document.getElementById('pName'); if (_pn0) _pn0.textContent = '';
+    const _pl0 = document.getElementById('plate'); if (_pl0) _pl0.style.display = 'none';
+    try { CFG.loop = false; } catch (e) {}
+    const _scrim = document.createElement('div');
+    _scrim.id = 'ingamebg';
+    _scrim.style.cssText = 'position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(ellipse at 50% 46%, rgba(6,8,15,0.86) 0%, rgba(6,8,15,0.66) 44%, rgba(6,8,15,0.32) 74%, rgba(6,8,15,0) 100%);';
+    document.body.appendChild(_scrim);
+  }
+} catch (e) {}
 // ?art=<url> fills the card; ?name=<text> overrides the nameplate (in-game the game passes the summoning unit's).
 try { const _q = new URLSearchParams(location.search); const _a = _q.get('art'); if (_a) { const _c = document.getElementById('cardframe'); if (_c) _c.style.backgroundImage = 'url("' + _a + '")'; } const _n = _q.get('name'); if (_n) { const _p = document.getElementById('pName'); if (_p) _p.textContent = _n; } } catch (e) {}
+// The game delivers the REAL card art + name (base64-safe) via postMessage — apply it.
+try {
+  window.addEventListener('message', function (ev) {
+    try {
+      const d = ev && ev.data; if (!d || d.type !== 'mvfx') return;
+      if (d.art) { const _c = document.getElementById('cardframe'); if (_c) _c.style.backgroundImage = 'url("' + String(d.art).replace(/"/g, '%22') + '")'; }
+      if (typeof d.name === 'string' && d.name) { const _p = document.getElementById('pName'); if (_p) _p.textContent = d.name; }
+    } catch (e) {}
+  }, false);
+} catch (e) {}
 </script>
 </body>
 </html>

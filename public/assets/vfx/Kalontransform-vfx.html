@@ -630,7 +630,10 @@ function drawImpact(t){
   }
 
   /* full-frame flash */
-  const fl = Math.pow(1 - seg(t, B.burst, B.burst+0.42), 2.2) * (t>=B.burst?1:0);
+  /* 🔆 Toned WAY down. This gradient's radius (700) covers the whole 1280x720
+     frame, so at full alpha it painted an ALL-WHITE SCREEN at the burst beat.
+     Keep it as a bloom around the card, not a white-out of the battlefield. */
+  const fl = Math.pow(1 - seg(t, B.burst, B.burst+0.42), 2.2) * (t>=B.burst?1:0) * 0.30;
   if(fl > 0.002){
     ctx.globalCompositeOperation = 'lighter';
     const FR = 700;

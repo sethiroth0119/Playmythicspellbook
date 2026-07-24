@@ -810,12 +810,11 @@ try {
     const _pb = document.getElementById('previewbg'); if (_pb) _pb.remove();
     const _cf0 = document.getElementById('cardframe'); if (_cf0) _cf0.style.backgroundImage = 'none';
     const _pn0 = document.getElementById('pName'); if (_pn0) _pn0.textContent = '';
-    const _pl0 = document.getElementById('plate'); if (_pl0) _pl0.style.display = 'none';   // the game shows its own KALON TRANSFORMATION toast
-    try { CFG.loop = false; } catch (e) {}   // play once in-game (the preview loop is for opening the file directly)
-    const _scrim = document.createElement('div');
-    _scrim.id = 'ingamebg';
-    _scrim.style.cssText = 'position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(ellipse at 50% 46%, rgba(6,8,15,0.86) 0%, rgba(6,8,15,0.66) 44%, rgba(6,8,15,0.32) 74%, rgba(6,8,15,0) 100%);';
-    document.body.appendChild(_scrim);
+    // Keep the file's NAMEPLATE (the game's own toast can be absent) — it fills with the
+    // real unit name via postMessage and animates in at the 'name' beat (~4.95s).
+    // NO backdrop at all — fully transparent so ONLY the card + FX show over the live
+    // field (user: "remove the background all together", no white / no dim scrim).
+    try { CFG.loop = false; } catch (e) {}   // play once in-game
   }
 } catch (e) {}
 // ?art=<url> fills the card; ?name=<text> overrides the nameplate (in-game the game passes the summoning unit's).

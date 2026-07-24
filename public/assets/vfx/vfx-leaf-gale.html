@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VFX · LEAF GALE</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:transparent;
+    font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; }
+
+  /* PREVIEW-ONLY backdrop — visible when you open this file directly; removed
+     in-game (iframe) so the board shows through. */
+  #previewbg { position:fixed; inset:0; z-index:-1;
+    background:
+      radial-gradient(ellipse at 50% 42%, #23303f 0%, #0d151d 68%, #060a0f 100%),
+      repeating-linear-gradient(0deg, transparent 0 46px, rgba(120,160,200,0.05) 46px 47px),
+      repeating-linear-gradient(90deg, transparent 0 46px, rgba(120,160,200,0.05) 46px 47px); }
+
+  #field { position:fixed; inset:0; display:grid; place-items:center; background:transparent; will-change:transform; }
+
+
+  #bar { position:fixed; bottom:0; left:0; right:0; padding:20px 24px;
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    background:linear-gradient(transparent, rgba(7,11,9,0.9)); }
+  button { appearance:none; cursor:pointer; font:inherit; font-size:11px;
+    letter-spacing:0.2em; text-transform:uppercase; padding:12px 22px; border-radius:2px;
+    color:#0d1a0e; background:#9fe08c; border:none; transition:transform .12s, box-shadow .12s; }
+  button:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(159,224,140,0.35); }
+  button:focus-visible { outline:2px solid #fff; outline-offset:3px; }
+  #tag { color:#7d9a80; font-size:10px; letter-spacing:0.22em; text-transform:uppercase; }
+  #tag b { color:#9fe08c; font-weight:600; }
+</style>
+</head>
+<body>
+
+<div id="previewbg"></div>
+<div id="field"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =====================================================================
+   LeafGaleVFX — one-shot nature burst for card effect resolution
+   ---------------------------------------------------------------------
+   const fx = new LeafGaleVFX({ origin: {x: 0, y: 0} });  // -1..1 screen space
+   fx.play();
+   ===================================================================== */
+class LeafGaleVFX {
+  constructor(opts = {}) {
+    this.duration = opts.duration || 2.8;
+    this.count = opts.count || 130;
+    this.origin = opts.origin || { x: 0, y: 0 };
+    this.onBurst = opts.onBurst || null;
+    this.onComplete = opts.onComplete || null;
+    this.zIndex = opts.zIndex != null ? opts.zIndex : 50;
+    this.reduced = window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    this._t = -1;
+    this._burst = false;
+    this._raf = null;
+    this._build();
+  }
+
+  // ---------------------------------------------------------------- setup
+  _build() {
+    const r = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    r.setPixelRatio(Math.min(devicePixelRatio, 2));
+    r.setSize(innerWidth, innerHeight);
+    r.setClearColor(0x000000, 0);
+    Object.assign(r.domElement.style, {
+      position: "fixed", inset: "0", pointerEvents: "none",
+      zIndex: String(this.zIndex), opacity: "0"
+    });
+    document.body.appendChild(r.domElement);
+    this.renderer = r;
+
+    this.scene = new THREE.Scene();
+    const a = innerWidth / innerHeight;
+    this.camera = new THREE.OrthographicCamera(-a, a, 1, -1, -10, 10);
+    this.camera.position.z = 5;
+
+    this._buildWind(a);
+    this._buildRing();
+    this._buildLeaves();
+    this._onResize = () => this._resize();
+    addEventListener("resize", this._onResize);
+  }
+
+  // faint streaked wind pass, sits under the leaves
+  _buildWind(aspect) {
+    this.windU = { uT: { value: 0 }, uTime: { value: 0 }, uAspect: { value: aspect } };
+    this.windMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: this.windU,
+      vertexShader: `varying vec2 vUv; void main(){ vUv=uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float uT, uTime, uAspect;
+        float hash21(vec2 p){ p=fract(p*vec2(234.34,435.345)); p+=dot(p,p+34.23); return fract(p.x*p.y); }
+        float vnoise(vec2 p){
+          vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.0-2.0*f);
+          return mix(mix(hash21(i),hash21(i+vec2(1,0)),u.x),
+                     mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),u.x),u.y);
+        }
+        void main(){
+          vec2 p = vec2(vUv.x*uAspect, vUv.y);
+          // long thin streaks stretched on x, scrolling fast
+          float s = vnoise(vec2(p.x*1.6 - uTime*3.2, p.y*46.0));
+          s = pow(smoothstep(0.62, 1.0, s), 2.0);
+          float envelope = smoothstep(0.05,0.22,uT) * (1.0 - smoothstep(0.55,0.95,uT));
+          float vign = smoothstep(0.0,0.25,vUv.y) * smoothstep(1.0,0.75,vUv.y);
+          float a = s * envelope * vign * 0.34;
+          if (a < 0.003) discard;
+          gl_FragColor = vec4(0.72, 0.95, 0.66, a);
+        }`
+    });
+    this.wind = new THREE.Mesh(new THREE.PlaneBufferGeometry(2 * aspect, 2), this.windMat);
+    this.wind.position.z = -1;
+    this.scene.add(this.wind);
+  }
+
+  // expanding jade shockwave at the origin
+  _buildRing() {
+    this.ringU = { uT: { value: 0 } };
+    this.ringMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: this.ringU,
+      vertexShader: `varying vec2 vUv; void main(){ vUv=uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float uT;
+        void main(){
+          float d = length(vUv - 0.5) * 2.0;
+          float grow = smoothstep(0.0, 0.30, uT);
+          float rad = grow * 0.95;
+          float ring = smoothstep(0.16, 0.0, abs(d - rad));
+          float fade = (1.0 - smoothstep(0.16, 0.42, uT));
+          float core = smoothstep(0.35, 0.0, d) * (1.0 - smoothstep(0.0, 0.18, uT));
+          float a = (ring * fade * 0.85 + core * 0.9);
+          if (a < 0.004) discard;
+          vec3 col = mix(vec3(0.45,0.95,0.50), vec3(0.92,1.0,0.72), core + ring*0.3);
+          gl_FragColor = vec4(col, a);
+        }`
+    });
+    this.ring = new THREE.Mesh(new THREE.PlaneBufferGeometry(2.4, 2.4), this.ringMat);
+    this.ring.position.set(this.origin.x, this.origin.y, -0.5);
+    this.scene.add(this.ring);
+  }
+
+  _leafTexture(fill, edge, vein) {
+    const cv = document.createElement("canvas"); cv.width = cv.height = 128;
+    const c = cv.getContext("2d");
+    c.translate(64, 64);
+    c.beginPath();
+    c.moveTo(-52, 0);
+    c.bezierCurveTo(-26, -40, 20, -34, 52, -3);
+    c.quadraticCurveTo(57, 0, 52, 3);
+    c.bezierCurveTo(20, 34, -26, 40, -52, 0);
+    c.closePath();
+    const g = c.createLinearGradient(-52, -34, 52, 34);
+    g.addColorStop(0, edge); g.addColorStop(0.45, fill); g.addColorStop(1, edge);
+    c.fillStyle = g; c.fill();
+    c.strokeStyle = vein; c.lineWidth = 2.4;
+    c.beginPath(); c.moveTo(-50, 0); c.lineTo(50, 0); c.stroke();
+    c.lineWidth = 1.4; c.globalAlpha = 0.55;
+    for (let i = -3; i <= 3; i++) {
+      if (!i) continue;
+      c.beginPath(); c.moveTo(i * 13, 0);
+      c.quadraticCurveTo(i * 13 + 8, i > 0 ? -12 : 12, i * 13 + 20, i > 0 ? -17 : 17);
+      c.stroke();
+    }
+    const t = new THREE.CanvasTexture(cv);
+    t.minFilter = THREE.LinearFilter;
+    return t;
+  }
+
+  _buildLeaves() {
+    const palettes = [
+      ["#4e9c3f", "#2c5c26", "#8fd07a"],   // deep leaf
+      ["#7fc35a", "#3f7a33", "#c3ea9a"],   // jade
+      ["#c9b944", "#7d6c1e", "#f0e39a"],   // turning gold
+      ["#3e7d5a", "#1f4433", "#79c39c"]    // shade green
+    ];
+    this.groups = [];
+    this.leaves = [];
+    this.dummy = new THREE.Object3D();
+    const per = Math.ceil(this.count / palettes.length);
+
+    palettes.forEach(pal => {
+      const tex = this._leafTexture(pal[0], pal[1], pal[2]);
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, alphaTest: 0.35,
+        side: THREE.DoubleSide, depthWrite: false
+      });
+      const inst = new THREE.InstancedMesh(new THREE.PlaneBufferGeometry(1, 1), mat, per);
+      inst.frustumCulled = false;
+      this.scene.add(inst);
+      this.groups.push(inst);
+      for (let i = 0; i < per; i++) this.leaves.push({ inst, index: i });
+    });
+    this._reset();
+  }
+
+  _reset() {
+    const a = this.camera.right;
+    for (const L of this.leaves) {
+      const ang = Math.random() * Math.PI * 2;
+      const pow = Math.pow(Math.random(), 0.55);
+      L.x = this.origin.x; L.y = this.origin.y;
+      // burst velocity, biased into a rightward gale
+      L.vx = Math.cos(ang) * pow * 2.5 + 0.7;
+      L.vy = Math.sin(ang) * pow * 1.9;
+      L.size = 0.045 + Math.random() * 0.065;
+      L.delay = Math.random() * 0.12;
+      L.rx = Math.random() * 6.28; L.ry = Math.random() * 6.28; L.rz = Math.random() * 6.28;
+      L.wrx = (Math.random() - 0.5) * 9; L.wry = (Math.random() - 0.5) * 11; L.wrz = (Math.random() - 0.5) * 7;
+      L.bob = 0.5 + Math.random() * 1.6;
+      L.phase = Math.random() * 6.28;
+      L.drag = 1.4 + Math.random() * 1.4;
+      L.spanX = a;
+      this.dummy.scale.setScalar(0);
+      this.dummy.updateMatrix();
+      L.inst.setMatrixAt(L.index, this.dummy.matrix);
+    }
+    this.groups.forEach(g => g.instanceMatrix.needsUpdate = true);
+  }
+
+  // ---------------------------------------------------------------- control
+  play() {
+    this._reset();
+    this._burst = false;
+    if (this._t < 0) {
+      this._t = 0;
+      this.renderer.domElement.style.opacity = "1";
+      this._clock = new THREE.Clock();
+      this._loop();
+    } else this._t = 0;
+    return this;
+  }
+
+  _loop() {
+    this._raf = requestAnimationFrame(() => this._loop());
+    const dt = Math.min(this._clock.getDelta(), 0.05);
+    const el = this._clock.elapsedTime;
+    if (this._t < 0) return;
+
+    this._t += dt / this.duration;
+    const T = Math.min(this._t, 1);
+    this.windU.uT.value = T; this.windU.uTime.value = el;
+    this.ringU.uT.value = T;
+
+    if (!this._burst && T >= 0.05) { this._burst = true; if (this.onBurst) this.onBurst(); }
+
+    // gale strengthens then eases — global wind field
+    const gale = (0.6 + 1.5 * Math.sin(Math.min(T, 1) * Math.PI)) * (this.reduced ? 0.4 : 1);
+    const gust = 1 + 0.45 * Math.sin(el * 4.2) + 0.2 * Math.sin(el * 9.1 + 1.3);
+    const fade = 1 - Math.pow(Math.max(0, (T - 0.72) / 0.28), 1.6);
+
+    for (const L of this.leaves) {
+      const lt = T - L.delay;
+      if (lt <= 0) continue;
+
+      // burst impulse decays into the ambient gale
+      L.vx += (gale * gust * 1.15 - L.vx) * L.drag * dt;
+      L.vy += (-0.25 + Math.sin(el * L.bob + L.phase) * 0.85 - L.vy) * L.drag * dt;
+
+      L.x += L.vx * dt;
+      L.y += L.vy * dt;
+      L.rx += L.wrx * dt; L.ry += L.wry * dt; L.rz += L.wrz * dt;
+
+      // wrap leaves that outrun the frame so the gale stays populated
+      if (L.x > L.spanX + 0.2) { L.x = -L.spanX - 0.2; L.y = (Math.random() * 2 - 1) * 0.95; }
+
+      const pop = Math.min(1, lt / 0.10);
+      const s = L.size * pop * Math.max(0, fade);
+      this.dummy.position.set(L.x, L.y, 0);
+      this.dummy.rotation.set(L.rx, L.ry, L.rz);
+      this.dummy.scale.setScalar(s);
+      this.dummy.updateMatrix();
+      L.inst.setMatrixAt(L.index, this.dummy.matrix);
+    }
+    this.groups.forEach(g => g.instanceMatrix.needsUpdate = true);
+
+    this.renderer.render(this.scene, this.camera);
+
+    if (this._t >= 1) {
+      this._t = -1;
+      cancelAnimationFrame(this._raf); this._raf = null;
+      this.renderer.domElement.style.opacity = "0";
+      this.renderer.clear();
+      if (this.onComplete) this.onComplete();
+    }
+  }
+
+  _resize() {
+    const a = innerWidth / innerHeight;
+    this.renderer.setSize(innerWidth, innerHeight);
+    this.camera.left = -a; this.camera.right = a;
+    this.camera.updateProjectionMatrix();
+    this.windU.uAspect.value = a;
+    this.wind.geometry.dispose();
+    this.wind.geometry = new THREE.PlaneBufferGeometry(2 * a, 2);
+    this.leaves.forEach(L => L.spanX = a);
+  }
+
+  destroy() {
+    cancelAnimationFrame(this._raf);
+    removeEventListener("resize", this._onResize);
+    this.scene.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+    });
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
+  }
+}
+
+/* ------------------------------- demo harness ------------------------- */
+const field = document.getElementById("field");
+const fx = new LeafGaleVFX({
+  onBurst() {
+    field.animate(
+      [{ transform: "scale(1)" }, { transform: "scale(1.012)" }, { transform: "scale(1)" }],
+      { duration: 260, easing: "ease-out" }
+    );
+  }
+});
+// In-game (iframe) drop the preview backdrop so the board shows through.
+try { if (window.self !== window.top) { const _pb = document.getElementById('previewbg'); if (_pb) _pb.remove(); } } catch (e) {}
+// Standalone preview: click anywhere to replay.
+document.addEventListener('click', () => { try { fx.play(); } catch (e) {} });
+fx.play();
+</script>
+</body>
+</html>

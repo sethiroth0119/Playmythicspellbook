@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VFX · TIDAL SURGE</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:transparent;
+    font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; }
+
+  /* PREVIEW-ONLY backdrop — visible when you open this file directly; removed
+     in-game (iframe) so the board shows through. */
+  #previewbg { position:fixed; inset:0; z-index:-1;
+    background:
+      radial-gradient(ellipse at 50% 42%, #23303f 0%, #0d151d 68%, #060a0f 100%),
+      repeating-linear-gradient(0deg, transparent 0 46px, rgba(120,160,200,0.05) 46px 47px),
+      repeating-linear-gradient(90deg, transparent 0 46px, rgba(120,160,200,0.05) 46px 47px); }
+
+  /* ---- mock duel field (replace with your real board) ---- */
+  #field { position:fixed; inset:0; display:grid; place-items:center; background:transparent; will-change:transform; }
+
+  #bar { position:fixed; bottom:0; left:0; right:0; padding:20px 24px;
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    background:linear-gradient(transparent, rgba(6,10,14,0.9)); }
+  button { appearance:none; cursor:pointer; font:inherit; font-size:11px;
+    letter-spacing:0.2em; text-transform:uppercase; padding:12px 22px; border-radius:2px;
+    color:#0b1a22; background:#7fd4ec; border:none; transition:transform .12s, box-shadow .12s; }
+  button:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(127,212,236,0.35); }
+  button:focus-visible { outline:2px solid #fff; outline-offset:3px; }
+  #tag { color:#6f93a5; font-size:10px; letter-spacing:0.22em; text-transform:uppercase; }
+  #tag b { color:#7fd4ec; font-weight:600; }
+</style>
+</head>
+<body>
+
+<div id="previewbg"></div>
+<div id="field"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =====================================================================
+   TidalSurgeVFX — one-shot water crash overlay for card effect resolution
+   ---------------------------------------------------------------------
+   const fx = new TidalSurgeVFX({ onImpact: () => shakeBoard() });
+   fx.play();          // fires once, self-idles when done
+   fx.destroy();       // tear down when leaving the duel scene
+   ===================================================================== */
+class TidalSurgeVFX {
+  constructor(opts = {}) {
+    this.duration = opts.duration || 2.6;
+    this.onImpact = opts.onImpact || null;
+    this.onComplete = opts.onComplete || null;
+    this.zIndex = opts.zIndex != null ? opts.zIndex : 50;
+    this.reduced = window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    this._t = -1;          // -1 = idle
+    this._impacted = false;
+    this._raf = null;
+    this._build();
+  }
+
+  // ---------------------------------------------------------------- setup
+  _build() {
+    const r = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    r.setPixelRatio(Math.min(devicePixelRatio, 2));
+    r.setSize(innerWidth, innerHeight);
+    r.setClearColor(0x000000, 0);
+    Object.assign(r.domElement.style, {
+      position: "fixed", inset: "0", pointerEvents: "none",
+      zIndex: String(this.zIndex), opacity: "0"
+    });
+    document.body.appendChild(r.domElement);
+    this.renderer = r;
+
+    this.scene = new THREE.Scene();
+    const a = innerWidth / innerHeight;
+    this.camera = new THREE.OrthographicCamera(-a, a, 1, -1, 0, 10);
+    this.camera.position.z = 5;
+
+    this._buildWater(a);
+    this._buildSpray();
+    this._onResize = () => this._resize();
+    addEventListener("resize", this._onResize);
+  }
+
+  _buildWater(aspect) {
+    const NOISE = `
+      float hash21(vec2 p){ p=fract(p*vec2(234.34,435.345)); p+=dot(p,p+34.23); return fract(p.x*p.y); }
+      float vnoise(vec2 p){
+        vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.0-2.0*f);
+        return mix(mix(hash21(i),hash21(i+vec2(1,0)),u.x),
+                   mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),u.x),u.y);
+      }
+      float fbm(vec2 p){ return 0.55*vnoise(p)+0.28*vnoise(p*2.11)+0.17*vnoise(p*4.3); }
+    `;
+
+    this.wUniforms = {
+      uT: { value: 0 }, uTime: { value: 0 }, uAspect: { value: aspect }
+    };
+
+    const mat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, uniforms: this.wUniforms,
+      vertexShader: `
+        varying vec2 vUv;
+        void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+      `,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float uT, uTime, uAspect;
+        ${NOISE}
+
+        void main(){
+          vec2 p = vec2(vUv.x * uAspect, vUv.y);
+          float T = uT;
+
+          // ---- timeline -------------------------------------------------
+          float sweep = smoothstep(0.06, 0.50, T);              // crest crosses screen
+          float crash = smoothstep(0.42, 0.60, T);              // lip collapses
+          float flood = smoothstep(0.34, 0.66, T);              // body fills
+          float drain = smoothstep(0.74, 1.00, T);              // pulls back out
+
+          float front = mix(-0.55, 1.75, sweep) * uAspect;
+          float d = p.x - front;
+
+          // ---- surface height -------------------------------------------
+          float body  = 0.66 * flood * (1.0 - drain);
+          float behind = smoothstep(0.0, 0.30, -d);              // 1 once front passed
+          float crest = exp(-d*d*2.6) * (0.62 - 0.34*crash) * smoothstep(0.03,0.20,T);
+          float level = body * behind + crest;
+          level += (fbm(vec2(p.x*3.2 - uTime*1.4, uTime*0.8)) - 0.5) * 0.075 * smoothstep(0.05,0.25,T);
+          level = max(level, 0.0);
+
+          float water = smoothstep(level + 0.006, level - 0.006, p.y);
+          float depth = clamp((level - p.y) / max(level, 0.02), 0.0, 1.0);
+
+          // ---- body colour ----------------------------------------------
+          vec3 shallow = vec3(0.42, 0.88, 0.94);
+          vec3 deep    = vec3(0.02, 0.20, 0.40);
+          vec3 col = mix(shallow, deep, pow(depth, 0.55));
+
+          // churning volume + light shafts through the face
+          float churn = fbm(p * vec2(3.0, 5.0) + vec2(-uTime*1.1, uTime*0.5));
+          col += vec3(0.10, 0.30, 0.34) * churn * (1.0 - depth) * 1.1;
+          col += vec3(0.30, 0.65, 0.72) * pow(max(sin(p.x*22.0 - uTime*3.0),0.0), 8.0) * 0.14 * (1.0-depth);
+
+          // ---- foam ------------------------------------------------------
+          float lace = fbm(p * 7.5 + vec2(-uTime*1.6, uTime*0.9));
+          float surf = abs(p.y - level);
+          float rim  = smoothstep(0.055, 0.0, surf) * (0.45 + smoothstep(0.30, 0.75, lace));
+          float lip  = exp(-d*d*8.0) * smoothstep(0.16, 0.0, surf) * 1.5 * smoothstep(0.05, 0.22, T);
+          float boil = smoothstep(0.55, 0.95, lace) * water * crash * (1.0 - drain) * 0.55;
+          float foam = clamp(rim + lip + boil, 0.0, 1.0);
+
+          col = mix(col, vec3(0.93, 0.98, 1.00), foam);
+
+          // ---- composite --------------------------------------------------
+          float alpha = water * mix(0.90, 0.70, depth);
+          alpha = max(alpha, foam * 0.95);
+          // spill: foam allowed a little above the waterline
+          alpha += smoothstep(0.04, 0.0, p.y - level) * lip * 0.5;
+          alpha *= 1.0 - smoothstep(0.92, 1.0, T);
+
+          if (alpha < 0.002) discard;
+          gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
+        }
+      `
+    });
+
+    this.waterMat = mat;
+    this.waterMesh = new THREE.Mesh(new THREE.PlaneBufferGeometry(2 * aspect, 2), mat);
+    this.scene.add(this.waterMesh);
+
+    // additive impact flash
+    this.flashMat = new THREE.MeshBasicMaterial({
+      color: 0xbdeaff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    this.flash = new THREE.Mesh(new THREE.PlaneBufferGeometry(2 * aspect, 2), this.flashMat);
+    this.flash.position.z = 0.2;
+    this.scene.add(this.flash);
+  }
+
+  _buildSpray() {
+    this.N = 520;
+    this.vel = new Float32Array(this.N * 3);
+    this.seed = new Float32Array(this.N);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(this.N * 3), 3));
+    g.setAttribute("aSize", new THREE.BufferAttribute(new Float32Array(this.N), 1));
+
+    const cv = document.createElement("canvas"); cv.width = cv.height = 64;
+    const c = cv.getContext("2d");
+    const gr = c.createRadialGradient(32, 32, 1, 32, 32, 31);
+    gr.addColorStop(0, "rgba(255,255,255,1)");
+    gr.addColorStop(0.45, "rgba(215,245,255,0.5)");
+    gr.addColorStop(1, "rgba(200,240,255,0)");
+    c.fillStyle = gr; c.fillRect(0, 0, 64, 64);
+
+    this.sprayMat = new THREE.PointsMaterial({
+      size: 0.032, map: new THREE.CanvasTexture(cv), transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending,
+      sizeAttenuation: false
+    });
+    this.spray = new THREE.Points(g, this.sprayMat);
+    this.spray.position.z = 0.1;
+    this.spray.visible = false;
+    this.scene.add(this.spray);
+  }
+
+  // ---------------------------------------------------------------- control
+  play() {
+    if (this._t >= 0) this._t = 0;     // retrigger
+    else {
+      this._t = 0;
+      this.renderer.domElement.style.opacity = "1";
+      this._clock = new THREE.Clock();
+      this._loop();
+    }
+    this._impacted = false;
+    this.spray.visible = false;
+    this.sprayMat.opacity = 0;
+    return this;
+  }
+
+  _fireSpray() {
+    const a = this.camera.right, pos = this.spray.geometry.attributes.position.array;
+    const sz = this.spray.geometry.attributes.aSize.array;
+    for (let i = 0; i < this.N; i++) {
+      const x = (Math.random() * 2 - 1) * a * 1.05;
+      pos[i*3]   = x;
+      pos[i*3+1] = -0.15 + Math.random() * 0.55;
+      pos[i*3+2] = 0;
+      // biased to the right — the surge is travelling that way
+      this.vel[i*3]   = 0.25 + Math.random() * 1.1;
+      this.vel[i*3+1] = 0.9 + Math.random() * 2.4;
+      this.vel[i*3+2] = 0;
+      sz[i] = 0.4 + Math.random();
+      this.seed[i] = Math.random() * 6.28;
+    }
+    this.spray.geometry.attributes.position.needsUpdate = true;
+    this.spray.visible = true;
+    this.sprayMat.opacity = 1;
+  }
+
+  _loop() {
+    this._raf = requestAnimationFrame(() => this._loop());
+    const dt = Math.min(this._clock.getDelta(), 0.05);
+    const el = this._clock.elapsedTime;
+    if (this._t < 0) return;
+
+    this._t += dt / this.duration;
+    const T = Math.min(this._t, 1);
+    this.wUniforms.uT.value = T;
+    this.wUniforms.uTime.value = el;
+
+    // impact beat
+    if (!this._impacted && T >= 0.47) {
+      this._impacted = true;
+      this._fireSpray();
+      this.flashMat.opacity = 0.55;
+      if (this.onImpact) this.onImpact();
+    }
+    if (this.flashMat.opacity > 0) this.flashMat.opacity = Math.max(0, this.flashMat.opacity - dt * 2.4);
+
+    // spray ballistics + drift
+    if (this.spray.visible) {
+      const pos = this.spray.geometry.attributes.position.array;
+      for (let i = 0; i < this.N; i++) {
+        this.vel[i*3+1] -= 3.6 * dt;
+        pos[i*3]   += (this.vel[i*3] + Math.sin(el * 3 + this.seed[i]) * 0.25) * dt;
+        pos[i*3+1] += this.vel[i*3+1] * dt;
+      }
+      this.spray.geometry.attributes.position.needsUpdate = true;
+      this.sprayMat.opacity = Math.max(0, 1 - (T - 0.47) / 0.42);
+      if (this.sprayMat.opacity <= 0.01) this.spray.visible = false;
+    }
+
+    // subtle overlay-only kick so spray reads as impacted
+    const kick = this._impacted && T < 0.60 ? (0.60 - T) * 0.06 : 0;
+    this.camera.position.y = this.reduced ? 0 : Math.sin(el * 60) * kick;
+    this.camera.updateProjectionMatrix();
+
+    this.renderer.render(this.scene, this.camera);
+
+    if (this._t >= 1) {
+      this._t = -1;
+      cancelAnimationFrame(this._raf); this._raf = null;
+      this.renderer.domElement.style.opacity = "0";
+      this.renderer.clear();
+      if (this.onComplete) this.onComplete();
+    }
+  }
+
+  _resize() {
+    const a = innerWidth / innerHeight;
+    this.renderer.setSize(innerWidth, innerHeight);
+    this.camera.left = -a; this.camera.right = a;
+    this.camera.updateProjectionMatrix();
+    this.wUniforms.uAspect.value = a;
+    this.waterMesh.geometry.dispose();
+    this.waterMesh.geometry = new THREE.PlaneBufferGeometry(2 * a, 2);
+    this.flash.geometry.dispose();
+    this.flash.geometry = new THREE.PlaneBufferGeometry(2 * a, 2);
+  }
+
+  destroy() {
+    cancelAnimationFrame(this._raf);
+    removeEventListener("resize", this._onResize);
+    this.scene.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+    });
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
+  }
+}
+
+/* ------------------------------- demo harness ------------------------- */
+const field = document.getElementById("field");
+const fx = new TidalSurgeVFX({
+  onImpact() {                       // your board shake hooks in here
+    field.animate(
+      [{ transform: "translate(0,0)" }, { transform: "translate(-7px,5px)" },
+       { transform: "translate(6px,-4px)" }, { transform: "translate(-3px,2px)" },
+       { transform: "translate(0,0)" }],
+      { duration: 320, easing: "ease-out" }
+    );
+  }
+});
+// In-game (iframe) drop the preview backdrop so the board shows through.
+try { if (window.self !== window.top) { const _pb = document.getElementById('previewbg'); if (_pb) _pb.remove(); } } catch (e) {}
+// Standalone preview: click anywhere to replay.
+document.addEventListener('click', () => { try { fx.play(); } catch (e) {} });
+fx.play();
+</script>
+</body>
+</html>

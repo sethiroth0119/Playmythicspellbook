@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VFX · GRAVE REACH</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:transparent;
+    font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; }
+
+  /* PREVIEW-ONLY backdrop — visible when you open this file directly; removed
+     in-game (iframe) so the board shows through. */
+  #previewbg { position:fixed; inset:0; z-index:-1;
+    background:
+      radial-gradient(ellipse at 50% 42%, #23303f 0%, #0d151d 68%, #060a0f 100%),
+      repeating-linear-gradient(0deg, transparent 0 46px, rgba(120,160,200,0.05) 46px 47px),
+      repeating-linear-gradient(90deg, transparent 0 46px, rgba(120,160,200,0.05) 46px 47px); }
+
+  #field { position:fixed; inset:0; display:grid; place-items:center; background:transparent; will-change:transform; }
+
+
+  #bar { position:fixed; bottom:0; left:0; right:0; padding:20px 24px;
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    background:linear-gradient(transparent, rgba(6,6,4,0.92)); }
+  button { appearance:none; cursor:pointer; font:inherit; font-size:11px;
+    letter-spacing:0.2em; text-transform:uppercase; padding:12px 22px; border-radius:2px;
+    color:#14170c; background:#b7cc78; border:none; transition:transform .12s, box-shadow .12s; }
+  button:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(183,204,120,0.35); }
+  button:focus-visible { outline:2px solid #fff; outline-offset:3px; }
+  #tag { color:#8d8f72; font-size:10px; letter-spacing:0.22em; text-transform:uppercase; }
+  #tag b { color:#b7cc78; font-weight:600; }
+</style>
+</head>
+<body>
+
+<div id="previewbg"></div>
+<div id="field"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =====================================================================
+   GraveReachVFX — one-shot zombie arm burst for effect resolution
+   ---------------------------------------------------------------------
+   const fx = new GraveReachVFX({ x: 0, groundY: -0.55 });   // screen space
+   fx.play();
+   ===================================================================== */
+class GraveReachVFX {
+  constructor(opts = {}) {
+    this.duration = opts.duration || 2.8;
+    this.x = opts.x != null ? opts.x : 0;
+    this.groundY = opts.groundY != null ? opts.groundY : -0.52;
+    this.onBurst = opts.onBurst || null;
+    this.onComplete = opts.onComplete || null;
+    this.zIndex = opts.zIndex != null ? opts.zIndex : 50;
+    this.reduced = window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    this._t = -1; this._burst = false; this._raf = null;
+    this._build();
+  }
+
+  _build() {
+    const r = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    r.setPixelRatio(Math.min(devicePixelRatio, 2));
+    r.setSize(innerWidth, innerHeight);
+    r.setClearColor(0x000000, 0);
+    Object.assign(r.domElement.style, {
+      position: "fixed", inset: "0", pointerEvents: "none",
+      zIndex: String(this.zIndex), opacity: "0"
+    });
+    document.body.appendChild(r.domElement);
+    this.renderer = r;
+
+    this.scene = new THREE.Scene();
+    const a = innerWidth / innerHeight;
+    this.camera = new THREE.OrthographicCamera(-a, a, 1, -1, -10, 10);
+    this.camera.position.z = 5;
+
+    this._buildCracks();
+    this._buildDust();
+    this._buildArm();
+    this._buildClods();
+    this._onResize = () => this._resize();
+    addEventListener("resize", this._onResize);
+  }
+
+  // ---- ground cracks, drawn on a foreshortened quad ---------------------
+  _buildCracks() {
+    this.ccv = document.createElement("canvas");
+    this.ccv.width = this.ccv.height = 512;
+    this.cctx = this.ccv.getContext("2d");
+    this.ctex = new THREE.CanvasTexture(this.ccv);
+    this.ctex.minFilter = THREE.LinearFilter;
+    this.crackMat = new THREE.MeshBasicMaterial({
+      map: this.ctex, transparent: true, depthWrite: false, opacity: 0
+    });
+    this.cracks = new THREE.Mesh(new THREE.PlaneBufferGeometry(1.5, 1.5), this.crackMat);
+    this.cracks.position.set(this.x, this.groundY, -0.5);
+    this.cracks.scale.set(1, 0.34, 1);           // squash = ground perspective
+    this.scene.add(this.cracks);
+    this._crackTree();
+  }
+
+  _crackTree() {
+    this.cracksSegs = [];
+    const self = this;
+    for (let i = 0; i < 9; i++) {
+      const ang = (i / 9) * Math.PI * 2 + Math.random() * 0.4;
+      (function b(x, y, an, len, w, d, t0) {
+        if (d > 3 || len < 8) return;
+        let px = x, py = y, a2 = an;
+        for (let k = 0; k < 3; k++) {
+          a2 += (Math.random() - 0.5) * 0.8;
+          const l = len / 3;
+          const nx = px + Math.cos(a2) * l, ny = py + Math.sin(a2) * l;
+          self.cracksSegs.push({ x1: px, y1: py, x2: nx, y2: ny, w, t: t0 + (k / 3) * 0.05 });
+          px = nx; py = ny;
+        }
+        if (Math.random() < 0.8) b(px, py, a2 + 0.75, len * 0.58, w * 0.6, d + 1, t0 + 0.04);
+        if (Math.random() < 0.8) b(px, py, a2 - 0.75, len * 0.58, w * 0.6, d + 1, t0 + 0.04);
+      })(256, 256, ang, 62 + Math.random() * 46, 7, 0, 0);
+    }
+  }
+
+  _drawCracks(T) {
+    const c = this.cctx;
+    c.clearRect(0, 0, 512, 512);
+    // heaved dirt mound around the opening
+    const g = c.createRadialGradient(256, 256, 10, 256, 256, 150);
+    g.addColorStop(0, "rgba(18,14,9,0.95)");
+    g.addColorStop(0.45, "rgba(52,40,25,0.65)");
+    g.addColorStop(1, "rgba(52,40,25,0)");
+    c.fillStyle = g;
+    c.beginPath(); c.arc(256, 256, 150 * Math.min(1, T / 0.22), 0, 6.283); c.fill();
+
+    c.lineCap = "round";
+    for (const s of this.cracksSegs) {
+      const p = Math.min(1, (T - s.t) / 0.06);
+      if (p <= 0) continue;
+      // lit lip on the upper edge, black fissure below
+      c.strokeStyle = "rgba(120,110,80,0.5)";
+      c.lineWidth = s.w * 1.5;
+      c.beginPath(); c.moveTo(s.x1, s.y1 - 1.5);
+      c.lineTo(s.x1 + (s.x2 - s.x1) * p, s.y1 + (s.y2 - s.y1) * p - 1.5); c.stroke();
+      c.strokeStyle = "rgba(8,7,5,0.92)";
+      c.lineWidth = s.w;
+      c.beginPath(); c.moveTo(s.x1, s.y1);
+      c.lineTo(s.x1 + (s.x2 - s.x1) * p, s.y1 + (s.y2 - s.y1) * p); c.stroke();
+    }
+    this.ctex.needsUpdate = true;
+  }
+
+  // ---- the arm ----------------------------------------------------------
+  _buildArm() {
+    this.acv = document.createElement("canvas");
+    this.acv.width = 512; this.acv.height = 768;
+    this.actx = this.acv.getContext("2d");
+    this.atex = new THREE.CanvasTexture(this.acv);
+    this.atex.minFilter = THREE.LinearFilter;
+    this.armMat = new THREE.MeshBasicMaterial({
+      map: this.atex, transparent: true, depthWrite: false, opacity: 0
+    });
+    // 512x768 canvas → keep the 2:3 ratio on the quad
+    this.arm = new THREE.Mesh(new THREE.PlaneBufferGeometry(0.9, 1.35), this.armMat);
+    this.arm.position.set(this.x, this.groundY, 0.2);
+    this.scene.add(this.arm);
+  }
+
+  /* pose params:
+     thrust 0..1  — how far out of the ground
+     curl  -0.2..1.2 — finger claw
+     twist  radians — wrist/forearm roll                              */
+  _drawArm(thrust, curl, twist, tremor) {
+    const c = this.actx, W = 512, H = 768;
+    c.clearRect(0, 0, W, H);
+    c.save();
+    c.translate(W / 2, H);                     // origin at the ground line
+    c.translate(Math.sin(tremor * 34) * 2.5, 0);
+    c.rotate(twist * 0.10);
+
+    const armLen = 300 * thrust;
+    const wristY = -30 - armLen;
+
+    // ---- pass helper: rim first (thick, sickly), then dark core --------
+    const passes = [
+      { stroke: "#8ea05c", fill: "#8ea05c", pad: 9, glow: 12 },
+      { stroke: "#191d12", fill: "#191d12", pad: 0, glow: 0 }
+    ];
+
+    for (const P of passes) {
+      c.save();
+      c.shadowColor = P.glow ? "rgba(150,180,90,0.55)" : "transparent";
+      c.shadowBlur = P.glow;
+      c.fillStyle = P.fill;
+      c.strokeStyle = P.stroke;
+      c.lineJoin = "round"; c.lineCap = "round";
+
+      // ---- forearm: tapered, torn at the base ------------------------
+      const bw = 40 + P.pad, ww = 30 + P.pad;
+      c.beginPath();
+      c.moveTo(-bw, 10);
+      c.bezierCurveTo(-bw - 6, -armLen * 0.35, -ww - 8, wristY + 60, -ww, wristY);
+      c.lineTo(ww, wristY);
+      c.bezierCurveTo(ww + 8, wristY + 60, bw + 6, -armLen * 0.35, bw, 10);
+      c.closePath(); c.fill();
+
+      // ragged strips of flesh hanging at the ground line
+      for (let i = -2; i <= 2; i++) {
+        c.beginPath();
+        c.moveTo(i * 15 - 6, 0);
+        c.quadraticCurveTo(i * 17, 26 + (i % 2) * 14, i * 15 + 5, 6);
+        c.closePath(); c.fill();
+      }
+
+      // ---- palm ------------------------------------------------------
+      c.save();
+      c.translate(0, wristY);
+      c.rotate(twist * 0.35);
+      c.beginPath();
+      c.ellipse(0, -26, 34 + P.pad, 40 + P.pad, 0, 0, 6.283);
+      c.fill();
+
+      // ---- fingers ---------------------------------------------------
+      const fingers = [
+        { ax: -30, ay: -50, ang: -0.62, seg: [40, 32, 24], w: 15 },
+        { ax: -12, ay: -60, ang: -0.20, seg: [48, 38, 27], w: 16 },
+        { ax:   8, ay: -60, ang:  0.10, seg: [46, 36, 26], w: 16 },
+        { ax:  26, ay: -52, ang:  0.48, seg: [38, 30, 22], w: 14 }
+      ];
+      for (const f of fingers) {
+        let ang = f.ang, px = f.ax, py = f.ay;
+        for (let s = 0; s < f.seg.length; s++) {
+          ang += curl * (0.42 + s * 0.36);
+          const nx = px + Math.sin(ang) * f.seg[s];
+          const ny = py - Math.cos(ang) * f.seg[s];
+          c.lineWidth = (f.w - s * 3) + P.pad;
+          c.beginPath(); c.moveTo(px, py); c.lineTo(nx, ny); c.stroke();
+          px = nx; py = ny;
+        }
+        // blackened nail
+        c.save();
+        c.translate(px, py); c.rotate(ang);
+        c.beginPath(); c.moveTo(-4 - P.pad * 0.3, 0);
+        c.lineTo(0, -13 - P.pad * 0.5); c.lineTo(4 + P.pad * 0.3, 0);
+        c.closePath(); c.fill();
+        c.restore();
+      }
+      // thumb
+      {
+        let ang = -1.28, px = -32, py = -22;
+        for (let s = 0; s < 2; s++) {
+          ang += curl * 0.55 + 0.28;
+          const nx = px + Math.sin(ang) * (42 - s * 8);
+          const ny = py - Math.cos(ang) * (42 - s * 8);
+          c.lineWidth = (17 - s * 4) + P.pad;
+          c.beginPath(); c.moveTo(px, py); c.lineTo(nx, ny); c.stroke();
+          px = nx; py = ny;
+        }
+        c.save(); c.translate(px, py); c.rotate(ang);
+        c.beginPath(); c.moveTo(-4, 0); c.lineTo(0, -12); c.lineTo(4, 0);
+        c.closePath(); c.fill(); c.restore();
+      }
+      c.restore();  // palm
+      c.restore();  // pass
+    }
+
+    // ---- exposed bone / sinew detail on the forearm --------------------
+    c.save();
+    c.globalAlpha = 0.55;
+    c.strokeStyle = "#6d7a48"; c.lineWidth = 3; c.lineCap = "round";
+    for (let i = 0; i < 3; i++) {
+      const off = -18 + i * 18;
+      c.beginPath();
+      c.moveTo(off, -20);
+      c.quadraticCurveTo(off + 6, -armLen * 0.5, off - 2, wristY + 24);
+      c.stroke();
+    }
+    c.restore();
+
+    c.restore();
+    this.atex.needsUpdate = true;
+  }
+
+  // ---- dust puff at the base --------------------------------------------
+  _buildDust() {
+    this.dustU = { uT: { value: 0 }, uTime: { value: 0 } };
+    this.dustMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, uniforms: this.dustU,
+      vertexShader: `varying vec2 vUv; void main(){ vUv=uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float uT, uTime;
+        float hash21(vec2 p){ p=fract(p*vec2(234.34,435.345)); p+=dot(p,p+34.23); return fract(p.x*p.y); }
+        float vnoise(vec2 p){
+          vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.0-2.0*f);
+          return mix(mix(hash21(i),hash21(i+vec2(1,0)),u.x),
+                     mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),u.x),u.y);
+        }
+        float fbm(vec2 p){ float v=0.0,a=0.5; for(int i=0;i<4;i++){ v+=a*vnoise(p); p*=2.05; a*=0.5; } return v; }
+        void main(){
+          vec2 p = vUv - 0.5;
+          float grow = smoothstep(0.0, 0.55, uT);
+          float d = length(p * vec2(1.0, 1.9)) / max(grow, 0.02);
+          float puff = smoothstep(0.5, 0.02, d);
+          float n = fbm(vUv * 6.0 + vec2(uTime * 0.35, -uTime * 0.55));
+          float a = puff * smoothstep(0.25, 0.75, n) * (1.0 - uT) * 0.85;
+          if (a < 0.004) discard;
+          vec3 col = mix(vec3(0.19,0.16,0.11), vec3(0.55,0.50,0.36), n);
+          gl_FragColor = vec4(col, a);
+        }`
+    });
+    this.dust = new THREE.Mesh(new THREE.PlaneBufferGeometry(1.7, 1.0), this.dustMat);
+    this.dust.position.set(this.x, this.groundY + 0.12, 0.4);
+    this.dust.visible = false;
+    this.scene.add(this.dust);
+  }
+
+  // ---- flying dirt clods -------------------------------------------------
+  _buildClods() {
+    this.N = 190;
+    this.vel = new Float32Array(this.N * 3);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(this.N * 3), 3));
+
+    const cv = document.createElement("canvas"); cv.width = cv.height = 32;
+    const c = cv.getContext("2d");
+    c.fillStyle = "#3b3122";
+    c.beginPath();
+    c.moveTo(16, 3); c.lineTo(27, 11); c.lineTo(24, 25);
+    c.lineTo(9, 27); c.lineTo(4, 13); c.closePath(); c.fill();
+    c.fillStyle = "#544835";
+    c.beginPath(); c.moveTo(16, 3); c.lineTo(27, 11); c.lineTo(15, 15); c.closePath(); c.fill();
+
+    this.clodMat = new THREE.PointsMaterial({
+      size: 0.026, map: new THREE.CanvasTexture(cv), transparent: true,
+      opacity: 0, depthWrite: false, sizeAttenuation: false
+    });
+    this.clods = new THREE.Points(g, this.clodMat);
+    this.clods.position.z = 0.6;
+    this.clods.visible = false;
+    this.scene.add(this.clods);
+  }
+
+  _fireClods() {
+    const pos = this.clods.geometry.attributes.position.array;
+    for (let i = 0; i < this.N; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      pos[i*3]   = this.x + Math.cos(ang) * 0.05;
+      pos[i*3+1] = this.groundY + Math.random() * 0.05;
+      pos[i*3+2] = 0;
+      const sp = 0.4 + Math.random() * 1.5;
+      this.vel[i*3]   = Math.cos(ang) * sp * 0.9;
+      this.vel[i*3+1] = Math.abs(Math.sin(ang)) * sp * 1.5 + 0.5;
+    }
+    this.clods.geometry.attributes.position.needsUpdate = true;
+    this.clods.visible = true;
+    this.clodMat.opacity = 1;
+    this.dust.visible = true;
+  }
+
+  // ---------------------------------------------------------------- control
+  play() {
+    this._burst = false;
+    this._crackTree();
+    this.clods.visible = false; this.clodMat.opacity = 0;
+    this.dust.visible = false;
+    this.armMat.opacity = 0;
+    if (this._t < 0) {
+      this._t = 0;
+      this.renderer.domElement.style.opacity = "1";
+      this._clock = new THREE.Clock();
+      this._loop();
+    } else this._t = 0;
+    return this;
+  }
+
+  _loop() {
+    this._raf = requestAnimationFrame(() => this._loop());
+    const dt = Math.min(this._clock.getDelta(), 0.05);
+    const el = this._clock.elapsedTime;
+    if (this._t < 0) return;
+
+    this._t += dt / this.duration;
+    const T = Math.min(this._t, 1);
+
+    // ---- cracks: appear during the pre-burst heave ----------------------
+    this._drawCracks(Math.min(1, T / 0.30));
+    this.crackMat.opacity = smooth(T, 0.02, 0.14) * (1 - smooth(T, 0.86, 1.0)) * 0.95;
+
+    // ---- burst beat -----------------------------------------------------
+    if (!this._burst && T >= 0.22) {
+      this._burst = true;
+      this._fireClods();
+      if (this.onBurst) this.onBurst();
+    }
+
+    // ---- arm: fast thrust with overshoot, then a slow searching claw ----
+    let thrust = 0, curl = -0.05, twist = 0;
+    if (T >= 0.22) {
+      const q = Math.min(1, (T - 0.22) / 0.20);
+      const over = 1 - Math.pow(1 - q, 3);
+      thrust = over * 1.10 - Math.max(0, (over - 0.82)) * 0.5;   // punch + settle
+      // grasping: fingers splay on the way up, then claw closed
+      const g = THREE.MathUtils.clamp((T - 0.40) / 0.34, 0, 1);
+      curl = -0.18 + Math.sin(g * Math.PI * 0.9) * 0.62 + g * 0.25;
+      twist = Math.sin((T - 0.22) * 7.0) * (1 - g) * 0.5 + Math.sin(el * 2.2) * 0.18;
+    }
+    if (thrust > 0) {
+      this._drawArm(THREE.MathUtils.clamp(thrust, 0, 1.1), curl, twist,
+                    this.reduced ? 0 : el * (T < 0.45 ? 1 : 0.35));
+      this.armMat.opacity = Math.min(1, (T - 0.22) * 9) * (1 - smooth(T, 0.88, 1.0));
+      // the quad itself rises a little so the hand clears the mound
+      this.arm.position.y = this.groundY + 0.62 + Math.min(thrust, 1) * 0.06;
+    }
+
+    // ---- dust + clods ----------------------------------------------------
+    if (this.dust.visible) {
+      const dt2 = THREE.MathUtils.clamp((T - 0.22) / 0.55, 0, 1);
+      this.dustU.uT.value = dt2;
+      this.dustU.uTime.value = el;
+      if (dt2 >= 1) this.dust.visible = false;
+    }
+    if (this.clods.visible) {
+      const pos = this.clods.geometry.attributes.position.array;
+      for (let i = 0; i < this.N; i++) {
+        this.vel[i*3+1] -= 3.2 * dt;
+        pos[i*3]   += this.vel[i*3] * dt;
+        pos[i*3+1] += this.vel[i*3+1] * dt;
+        if (pos[i*3+1] < this.groundY - 0.02) {      // land and stay put
+          pos[i*3+1] = this.groundY - 0.02;
+          this.vel[i*3] *= 0.4; this.vel[i*3+1] = 0;
+        }
+      }
+      this.clods.geometry.attributes.position.needsUpdate = true;
+      this.clodMat.opacity = 1 - smooth(T, 0.70, 0.95);
+      if (this.clodMat.opacity <= 0.01) this.clods.visible = false;
+    }
+
+    this.renderer.render(this.scene, this.camera);
+
+    if (this._t >= 1) {
+      this._t = -1;
+      cancelAnimationFrame(this._raf); this._raf = null;
+      this.renderer.domElement.style.opacity = "0";
+      this.renderer.clear();
+      if (this.onComplete) this.onComplete();
+    }
+
+    function smooth(v, e0, e1) {
+      const t = THREE.MathUtils.clamp((v - e0) / (e1 - e0), 0, 1);
+      return t * t * (3 - 2 * t);
+    }
+  }
+
+  _resize() {
+    const a = innerWidth / innerHeight;
+    this.renderer.setSize(innerWidth, innerHeight);
+    this.camera.left = -a; this.camera.right = a;
+    this.camera.updateProjectionMatrix();
+  }
+
+  destroy() {
+    cancelAnimationFrame(this._raf);
+    removeEventListener("resize", this._onResize);
+    this.scene.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+    });
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
+  }
+}
+
+/* ------------------------------- demo harness ------------------------- */
+const field = document.getElementById("field");
+const fx = new GraveReachVFX({
+  onBurst() {
+    field.animate(
+      [{ transform: "translate(0,0)" }, { transform: "translate(-6px,7px)" },
+       { transform: "translate(5px,-4px)" }, { transform: "translate(-2px,2px)" },
+       { transform: "translate(0,0)" }],
+      { duration: 340, easing: "ease-out" }
+    );
+  }
+});
+// In-game (iframe) drop the preview backdrop so the board shows through.
+try { if (window.self !== window.top) { const _pb = document.getElementById('previewbg'); if (_pb) _pb.remove(); } } catch (e) {}
+// Standalone preview: click anywhere to replay.
+document.addEventListener('click', () => { try { fx.play(); } catch (e) {} });
+fx.play();
+</script>
+</body>
+</html>

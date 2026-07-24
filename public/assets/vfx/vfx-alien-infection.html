@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VFX · ALIEN INFECTION</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:transparent;
+    font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; }
+
+  /* PREVIEW-ONLY backdrop — visible when you open this file directly; removed
+     in-game (iframe) so the board shows through. */
+  #previewbg { position:fixed; inset:0; z-index:-1;
+    background:
+      radial-gradient(ellipse at 50% 42%, #23303f 0%, #0d151d 68%, #060a0f 100%),
+      repeating-linear-gradient(0deg, transparent 0 46px, rgba(120,160,200,0.05) 46px 47px),
+      repeating-linear-gradient(90deg, transparent 0 46px, rgba(120,160,200,0.05) 46px 47px); }
+
+  #field { position:fixed; inset:0; display:grid; place-items:center; background:transparent; will-change:transform; }
+
+
+  #bar { position:fixed; bottom:0; left:0; right:0; padding:20px 24px;
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    background:linear-gradient(transparent, rgba(6,4,11,0.92)); }
+  button { appearance:none; cursor:pointer; font:inherit; font-size:11px;
+    letter-spacing:0.2em; text-transform:uppercase; padding:12px 22px; border-radius:2px;
+    color:#140b1f; background:#c98cff; border:none; transition:transform .12s, box-shadow .12s; }
+  button:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(201,140,255,0.35); }
+  button:focus-visible { outline:2px solid #fff; outline-offset:3px; }
+  #tag { color:#8b7aa0; font-size:10px; letter-spacing:0.22em; text-transform:uppercase; }
+  #tag b { color:#c98cff; font-weight:600; }
+</style>
+</head>
+<body>
+
+<div id="previewbg"></div>
+<div id="field"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =====================================================================
+   AlienInfectionVFX — one-shot spreading corruption for effect resolution
+   ---------------------------------------------------------------------
+   Veins are a real branching structure grown over time (not noise), so the
+   spread reads as something crawling outward from a point of contact.
+   const fx = new AlienInfectionVFX({ origin: {x:0, y:0} });
+   fx.play();
+   ===================================================================== */
+class AlienInfectionVFX {
+  constructor(opts = {}) {
+    this.duration = opts.duration || 3.2;
+    this.origin = opts.origin || { x: 0, y: 0 };
+    this.roots = opts.roots || 8;
+    this.onContact = opts.onContact || null;
+    this.onComplete = opts.onComplete || null;
+    this.zIndex = opts.zIndex != null ? opts.zIndex : 50;
+    this.reduced = window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    this._t = -1; this._contact = false; this._raf = null;
+    this._build();
+  }
+
+  _build() {
+    const r = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    r.setPixelRatio(Math.min(devicePixelRatio, 2));
+    r.setSize(innerWidth, innerHeight);
+    r.setClearColor(0x000000, 0);
+    Object.assign(r.domElement.style, {
+      position: "fixed", inset: "0", pointerEvents: "none",
+      zIndex: String(this.zIndex), opacity: "0"
+    });
+    document.body.appendChild(r.domElement);
+    this.renderer = r;
+
+    this.scene = new THREE.Scene();
+    const a = innerWidth / innerHeight;
+    this.camera = new THREE.OrthographicCamera(-a, a, 1, -1, -10, 10);
+    this.camera.position.z = 5;
+
+    this._buildMembrane(a);
+    this._buildVeins(a);
+    this._buildSpores();
+    this._growTree();
+    this._onResize = () => this._resize();
+    addEventListener("resize", this._onResize);
+  }
+
+  // ---- pulsing flesh membrane that fills in behind the veins -----------
+  _buildMembrane(aspect) {
+    this.memU = {
+      uT: { value: 0 }, uTime: { value: 0 }, uAspect: { value: aspect },
+      uOrigin: { value: new THREE.Vector2(this.origin.x, this.origin.y) }
+    };
+    this.memMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, uniforms: this.memU,
+      vertexShader: `varying vec2 vUv; void main(){ vUv=uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float uT, uTime, uAspect;
+        uniform vec2 uOrigin;
+
+        vec2 hash22(vec2 p){
+          p = vec2(dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3)));
+          return fract(sin(p)*43758.5453);
+        }
+        // cellular / worley — reads as biological tissue
+        float worley(vec2 p){
+          vec2 i = floor(p), f = fract(p);
+          float d = 1.0;
+          for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){
+            vec2 g = vec2(float(x), float(y));
+            vec2 o = hash22(i+g);
+            o = 0.5 + 0.4*sin(uTime*0.9 + 6.28*o);
+            d = min(d, length(g + o - f));
+          }
+          return d;
+        }
+
+        void main(){
+          vec2 p = vec2(vUv.x*uAspect, vUv.y);
+          float T = uT;
+          float dist = length(p - uOrigin);
+
+          // infection front expands outward, then recedes
+          float front = smoothstep(0.10, 0.72, T) * 2.4;
+          float recede = smoothstep(0.80, 1.0, T);
+          float reach = smoothstep(front, front - 0.65, dist) * (1.0 - recede);
+
+          float cells = worley(p * 7.0);
+          float tissue = smoothstep(0.55, 0.05, cells);      // cell bodies
+          float walls  = smoothstep(0.14, 0.0, cells);       // bright junctions
+
+          // slow peristaltic pulse travelling out from the origin
+          float pulse = 0.5 + 0.5 * sin(dist * 9.0 - uTime * 3.4);
+
+          vec3 col = mix(vec3(0.16, 0.03, 0.26), vec3(0.52, 0.14, 0.72), tissue);
+          col += vec3(0.45, 0.95, 0.85) * walls * (0.25 + pulse * 0.45);  // bioluminescent cyan
+
+          float a = reach * (tissue * 0.30 + walls * 0.42) * (0.7 + pulse * 0.3);
+          if (a < 0.004) discard;
+          gl_FragColor = vec4(col, a);
+        }`
+    });
+    this.membrane = new THREE.Mesh(new THREE.PlaneBufferGeometry(2 * aspect, 2), this.memMat);
+    this.membrane.position.z = -1;
+    this.scene.add(this.membrane);
+  }
+
+  // ---- vein canvas ------------------------------------------------------
+  _buildVeins(aspect) {
+    this.cv = document.createElement("canvas");
+    this._sizeCanvas(aspect);
+    this.ctx = this.cv.getContext("2d");
+    this.tex = new THREE.CanvasTexture(this.cv);
+    this.tex.minFilter = THREE.LinearFilter;
+    this.veinMat = new THREE.MeshBasicMaterial({
+      map: this.tex, transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, opacity: 1
+    });
+    this.veins = new THREE.Mesh(new THREE.PlaneBufferGeometry(2 * aspect, 2), this.veinMat);
+    this.scene.add(this.veins);
+  }
+
+  _sizeCanvas(aspect) {
+    this.cv.width = 1100;
+    this.cv.height = Math.max(360, Math.round(1100 / aspect));
+  }
+
+  // recursive branching, each segment stamped with the time it appears
+  _growTree() {
+    this.segs = [];
+    this.tips = [];
+    const self = this;
+    let maxT = 0;
+
+    function branch(x, y, ang, len, w, depth, t0) {
+      if (depth > 6 || len < 0.025) { self.tips.push({ x, y, t: t0, w }); return; }
+      const steps = 3;
+      let px = x, py = y, an = ang;
+      for (let i = 0; i < steps; i++) {
+        an += (Math.random() - 0.5) * 0.62;
+        const l = len / steps;
+        const nx = px + Math.cos(an) * l;
+        const ny = py + Math.sin(an) * l;
+        const t = t0 + ((i + 1) / steps) * 0.13;
+        maxT = Math.max(maxT, t);
+        self.segs.push({ x1: px, y1: py, x2: nx, y2: ny, w, t, d: depth });
+        px = nx; py = ny;
+      }
+      const n = Math.random() < 0.72 ? 2 : 3;
+      for (let k = 0; k < n; k++) {
+        branch(px, py, an + (Math.random() - 0.5) * 1.7,
+               len * (0.58 + Math.random() * 0.28), w * 0.66, depth + 1, t0 + 0.13);
+      }
+    }
+
+    for (let i = 0; i < this.roots; i++) {
+      const ang = (i / this.roots) * Math.PI * 2 + Math.random() * 0.5;
+      branch(this.origin.x, this.origin.y, ang, 0.40 + Math.random() * 0.14, 10, 0, 0.04);
+    }
+    // normalise growth so the whole tree lands inside the spread window
+    const scale = 0.62 / Math.max(maxT, 0.001);
+    this.segs.forEach(s => s.t = 0.04 + s.t * scale);
+    this.tips.forEach(s => s.t = 0.04 + s.t * scale);
+  }
+
+  _drawVeins(T, time) {
+    const c = this.ctx, W = this.cv.width, H = this.cv.height;
+    const a = this.camera.right;
+    c.clearRect(0, 0, W, H);
+    const px = (x) => (x / a * 0.5 + 0.5) * W;
+    const py = (y) => (1 - (y * 0.5 + 0.5)) * H;
+
+    const fade = 1 - Math.pow(Math.max(0, (T - 0.80) / 0.20), 1.4);
+    if (fade <= 0) { this.tex.needsUpdate = true; return; }
+
+    // ---- pass 1: soft violet bloom -----------------------------------
+    c.save();
+    c.filter = "blur(9px)";
+    c.lineCap = "round";
+    c.strokeStyle = "rgba(150,55,215,0.55)";
+    for (const s of this.segs) {
+      const g = Math.min(1, (T - s.t) / 0.05);
+      if (g <= 0) continue;
+      c.lineWidth = s.w * 1.9;
+      c.beginPath();
+      c.moveTo(px(s.x1), py(s.y1));
+      c.lineTo(px(s.x1 + (s.x2 - s.x1) * g), py(s.y1 + (s.y2 - s.y1) * g));
+      c.stroke();
+    }
+    c.restore();
+
+    // ---- pass 2: vein core, brightness pulses outward from the origin --
+    c.save();
+    c.lineCap = "round";
+    for (const s of this.segs) {
+      const g = Math.min(1, (T - s.t) / 0.05);
+      if (g <= 0) continue;
+      const pulse = 0.5 + 0.5 * Math.sin(s.d * 1.5 - time * 5.2);
+      const bright = 0.35 + pulse * 0.65;
+      c.strokeStyle = `rgba(${Math.round(150 + 90*bright)},${Math.round(60 + 170*bright)},255,${0.55 + 0.4*bright})`;
+      c.lineWidth = s.w * (0.45 + 0.12 * pulse);
+      c.beginPath();
+      c.moveTo(px(s.x1), py(s.y1));
+      c.lineTo(px(s.x1 + (s.x2 - s.x1) * g), py(s.y1 + (s.y2 - s.y1) * g));
+      c.stroke();
+    }
+    c.restore();
+
+    // ---- pass 3: pustules at the growth tips ---------------------------
+    c.save();
+    c.filter = "blur(2px)";
+    for (const tp of this.tips) {
+      const g = Math.min(1, (T - tp.t) / 0.12);
+      if (g <= 0) continue;
+      const throb = 0.7 + 0.3 * Math.sin(time * 6.0 + tp.x * 12.0);
+      const rad = tp.w * 0.9 * g * throb;
+      const grd = c.createRadialGradient(px(tp.x), py(tp.y), 0, px(tp.x), py(tp.y), rad * 3);
+      grd.addColorStop(0, "rgba(190,255,240,0.95)");
+      grd.addColorStop(0.35, "rgba(190,90,255,0.55)");
+      grd.addColorStop(1, "rgba(120,30,190,0)");
+      c.fillStyle = grd;
+      c.beginPath(); c.arc(px(tp.x), py(tp.y), rad * 3, 0, 6.283); c.fill();
+    }
+    c.restore();
+
+    // ---- point of contact: the original wound --------------------------
+    const flare = Math.max(0, 1 - T / 0.28);
+    if (flare > 0) {
+      const R = 90 * (0.4 + flare);
+      const grd = c.createRadialGradient(px(this.origin.x), py(this.origin.y), 0,
+                                         px(this.origin.x), py(this.origin.y), R);
+      grd.addColorStop(0, `rgba(230,255,250,${0.95 * flare})`);
+      grd.addColorStop(0.3, `rgba(200,110,255,${0.7 * flare})`);
+      grd.addColorStop(1, "rgba(120,30,190,0)");
+      c.fillStyle = grd;
+      c.beginPath(); c.arc(px(this.origin.x), py(this.origin.y), R, 0, 6.283); c.fill();
+    }
+
+    this.veinMat.opacity = fade;
+    this.tex.needsUpdate = true;
+  }
+
+  // ---- airborne spores --------------------------------------------------
+  _buildSpores() {
+    this.N = 200;
+    this.vel = new Float32Array(this.N * 3);
+    this.seed = new Float32Array(this.N);
+    this.birth = new Float32Array(this.N);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(this.N * 3), 3));
+
+    const cv = document.createElement("canvas"); cv.width = cv.height = 64;
+    const c = cv.getContext("2d");
+    const gr = c.createRadialGradient(32, 32, 1, 32, 32, 31);
+    gr.addColorStop(0, "rgba(225,255,250,1)");
+    gr.addColorStop(0.35, "rgba(190,110,255,0.5)");
+    gr.addColorStop(1, "rgba(120,30,190,0)");
+    c.fillStyle = gr; c.fillRect(0, 0, 64, 64);
+
+    this.sporeMat = new THREE.PointsMaterial({
+      size: 0.018, map: new THREE.CanvasTexture(cv), transparent: true,
+      opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending,
+      sizeAttenuation: false
+    });
+    this.spores = new THREE.Points(g, this.sporeMat);
+    this.spores.position.z = 0.5;
+    this.scene.add(this.spores);
+  }
+
+  _seedSpores() {
+    const pos = this.spores.geometry.attributes.position.array;
+    for (let i = 0; i < this.N; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const rad = Math.pow(Math.random(), 0.6) * 1.1;
+      pos[i*3]   = this.origin.x + Math.cos(ang) * rad;
+      pos[i*3+1] = this.origin.y + Math.sin(ang) * rad;
+      pos[i*3+2] = 0;
+      this.vel[i*3]   = Math.cos(ang) * 0.10 + (Math.random()-0.5) * 0.08;
+      this.vel[i*3+1] = 0.10 + Math.random() * 0.22;
+      this.seed[i] = Math.random() * 6.28;
+      this.birth[i] = 0.16 + rad * 0.35 + Math.random() * 0.1;   // release as the front reaches them
+    }
+    this.spores.geometry.attributes.position.needsUpdate = true;
+  }
+
+  // ---------------------------------------------------------------- control
+  play() {
+    this._contact = false;
+    this._growTree();       // fresh branching every activation
+    this._seedSpores();
+    if (this._t < 0) {
+      this._t = 0;
+      this.renderer.domElement.style.opacity = "1";
+      this._clock = new THREE.Clock();
+      this._loop();
+    } else this._t = 0;
+    return this;
+  }
+
+  _loop() {
+    this._raf = requestAnimationFrame(() => this._loop());
+    const dt = Math.min(this._clock.getDelta(), 0.05);
+    const el = this._clock.elapsedTime * (this.reduced ? 0.5 : 1);
+    if (this._t < 0) return;
+
+    this._t += dt / this.duration;
+    const T = Math.min(this._t, 1);
+    this.memU.uT.value = T;
+    this.memU.uTime.value = el;
+
+    if (!this._contact && T >= 0.02) { this._contact = true; if (this.onContact) this.onContact(); }
+
+    this._drawVeins(T, el);
+
+    // spores drift once released
+    const pos = this.spores.geometry.attributes.position.array;
+    let visible = 0;
+    for (let i = 0; i < this.N; i++) {
+      if (T < this.birth[i]) continue;
+      visible++;
+      pos[i*3]   += (this.vel[i*3] + Math.sin(el * 1.9 + this.seed[i]) * 0.10) * dt;
+      pos[i*3+1] += this.vel[i*3+1] * dt;
+    }
+    this.spores.geometry.attributes.position.needsUpdate = true;
+    this.sporeMat.opacity = visible ? Math.min(1, (T - 0.16) * 4) * (1 - Math.pow(Math.max(0,(T-0.72)/0.28), 1.3)) : 0;
+
+    this.renderer.render(this.scene, this.camera);
+
+    if (this._t >= 1) {
+      this._t = -1;
+      cancelAnimationFrame(this._raf); this._raf = null;
+      this.renderer.domElement.style.opacity = "0";
+      this.renderer.clear();
+      if (this.onComplete) this.onComplete();
+    }
+  }
+
+  _resize() {
+    const a = innerWidth / innerHeight;
+    this.renderer.setSize(innerWidth, innerHeight);
+    this.camera.left = -a; this.camera.right = a;
+    this.camera.updateProjectionMatrix();
+    this.memU.uAspect.value = a;
+    this._sizeCanvas(a);
+    for (const m of [this.membrane, this.veins]) {
+      m.geometry.dispose();
+      m.geometry = new THREE.PlaneBufferGeometry(2 * a, 2);
+    }
+  }
+
+  destroy() {
+    cancelAnimationFrame(this._raf);
+    removeEventListener("resize", this._onResize);
+    this.scene.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+    });
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
+  }
+}
+
+/* ------------------------------- demo harness ------------------------- */
+const field = document.getElementById("field");
+const fx = new AlienInfectionVFX({
+  onContact() {
+    field.animate(
+      [{ transform: "scale(1)", filter: "hue-rotate(0deg)" },
+       { transform: "scale(1.008)", filter: "hue-rotate(-14deg)" },
+       { transform: "scale(1)", filter: "hue-rotate(0deg)" }],
+      { duration: 2600, easing: "ease-in-out" }
+    );
+  }
+});
+// In-game (iframe) drop the preview backdrop so the board shows through.
+try { if (window.self !== window.top) { const _pb = document.getElementById('previewbg'); if (_pb) _pb.remove(); } } catch (e) {}
+// Standalone preview: click anywhere to replay.
+document.addEventListener('click', () => { try { fx.play(); } catch (e) {} });
+fx.play();
+</script>
+</body>
+</html>

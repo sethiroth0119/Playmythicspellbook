@@ -402,7 +402,7 @@
 //        → crash. Now uses Math.floor(/65536) (always ≥0) + positive-modulo
 //        normalize + empty-pool / undefined-entry guards. Crash/Exchange opens
 //        again. (v88g error-surface kept as a backstop.)
-const CACHE_VERSION = 'mythic-v118c4-no-auto-reload-' + Date.now().toString(36);
+const CACHE_VERSION = 'mythic-v118c5-no-auto-reload-' + Date.now().toString(36);
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if
@@ -437,29 +437,17 @@ self.addEventListener('activate', (event) => {
     await Promise.all(stale.map((n) => caches.delete(n)));
     await self.clients.claim();
 
-    // 🔁 AUTO-UPDATE STALE TABS. A returning visitor's page was served (cached) by
-    // the OLD service worker, so it is running OLD code — and if that old code
-    // predates the in-page "update ready" toast, nothing ever tells them to reload;
-    // they sit on stale code forever (this is the "other computers won't update"
-    // report). We now force those tabs onto fresh HTML from the SW itself.
-    //
-    // The blank-#app bug this was removed for in v84b came from navigating a tab
-    // MID-BOOT on FIRST install. Two guards prevent that here:
-    //   1. Only when `stale.length` (a prior version existed → this is an update,
-    //      and the tab has already finished booting the old code, not first-install).
-    //   2. A delay so a tab that happens to be mid-render finishes first.
-    // Navigating fetches fresh HTML because the fetch handler passes navigations
-    // straight through (isNav → return). One reload per deploy — no loop, because
-    // the same SW is already active after the reload so activate never re-fires.
-    if (stale.length > 0) {
-      await new Promise((r) => setTimeout(r, 3500));
-      try {
-        const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: false });
-        for (const c of clients) {
-          try { await c.navigate(c.url); } catch (e) { /* some browsers disallow; the toast still covers it */ }
-        }
-      } catch (e) {}
-    }
+    // 🛑 NO auto-navigate of open tabs (v118c4). Force-navigating every open tab on
+    // activate (`c.navigate(c.url)`) was the main cause of "the game randomly
+    // refreshes" — on EVERY deploy the freshly-activated SW reaped the old cache
+    // (stale.length > 0) and reloaded the player out of whatever they were doing
+    // (mid-battle, mid-Forge edit). Updates still reach everyone WITHOUT interruption:
+    //   • the fetch handler passes navigations straight through, so the player's NEXT
+    //     natural navigation already fetches fresh HTML;
+    //   • `clients.claim()` above fires `controllerchange` in each open tab, which the
+    //     page turns into a gentle, DISMISSIBLE "✨ update ready — Reload" toast the
+    //     player clicks when THEY choose.
+    // (Stale caches are still reaped above so nothing serves old assets.)
   })());
 });
 

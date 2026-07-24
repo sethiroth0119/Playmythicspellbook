@@ -52,3 +52,10 @@ assets/Audio/fishing.wav
 # over the cap. To use it in-game, compress to MP3/OGG well under 25 MiB and load
 # that instead. File stays on disk.
 assets/Audio/Main menu music.wav
+
+# Oversized animated unit frame dropped 2026-07-23 (113 MiB — 4.5× over the 25 MiB
+# cap; a single oversized file aborts the ENTIRE deploy). Animated-GIF unit frames
+# must be compressed/resized under 25 MiB (or converted to a sprite sheet) before
+# they can ship. Small GIFs under the cap still deploy normally, so exclude only
+# this one by exact name. File stays on disk.
+assets/Units/unit frames/New units/Grey Dragon Animate rare.gif

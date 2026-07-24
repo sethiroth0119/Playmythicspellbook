@@ -780,10 +780,33 @@ function frame(now){
 }
 </script>
 <script>
-// In-game (iframe) drop the preview backdrop so the field shows through.
-try { if (window.self !== window.top) { const _pb = document.getElementById('previewbg'); if (_pb) _pb.remove(); } } catch (e) {}
+// In-game (iframe): drop the preview backdrop, CLEAR the demo card + nameplate so a
+// missing override never leaks the "Cenregon" demo unit, and lay a dark cinematic
+// scrim so the transform reads dramatically instead of washing out on a light board.
+try {
+  if (window.self !== window.top) {
+    const _pb = document.getElementById('previewbg'); if (_pb) _pb.remove();
+    const _cf0 = document.getElementById('cardframe'); if (_cf0) _cf0.style.backgroundImage = 'none';
+    const _pn0 = document.getElementById('pName'); if (_pn0) _pn0.textContent = '';
+    const _scrim = document.createElement('div');
+    _scrim.id = 'ingamebg';
+    _scrim.style.cssText = 'position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(ellipse at 50% 46%, rgba(6,8,15,0.86) 0%, rgba(6,8,15,0.66) 44%, rgba(6,8,15,0.32) 74%, rgba(6,8,15,0) 100%);';
+    document.body.appendChild(_scrim);
+  }
+} catch (e) {}
 // ?art=<url> fills the card; ?name=<text> overrides the nameplate (in-game the game passes the summoning unit's).
 try { const _q = new URLSearchParams(location.search); const _a = _q.get('art'); if (_a) { const _c = document.getElementById('cardframe'); if (_c) _c.style.backgroundImage = 'url("' + _a + '")'; } const _n = _q.get('name'); if (_n) { const _p = document.getElementById('pName'); if (_p) _p.textContent = _n; } } catch (e) {}
+// The game delivers the REAL card art + name via postMessage (base64-safe, not limited
+// by iframe src length) once this frame loads — apply it so the correct unit shows.
+try {
+  window.addEventListener('message', function (ev) {
+    try {
+      const d = ev && ev.data; if (!d || d.type !== 'mvfx') return;
+      if (d.art) { const _c = document.getElementById('cardframe'); if (_c) _c.style.backgroundImage = 'url("' + String(d.art).replace(/"/g, '%22') + '")'; }
+      if (typeof d.name === 'string' && d.name) { const _p = document.getElementById('pName'); if (_p) _p.textContent = d.name; }
+    } catch (e) {}
+  }, false);
+} catch (e) {}
 </script>
 </body>
 </html>

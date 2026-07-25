@@ -5,28 +5,33 @@
    ============================================================ */
 
 :root {
-  /* palette */
-  --void:        #050308;
-  --rock-1:      #110813;
-  --rock-2:      #1c1124;
-  --rock-3:      #281634;
-  --rock-edge:   #3a2050;
-  --hull:        #0c0810;
-  --hull-2:      #18121e;
-  --panel:       #1a1322;
-  --panel-2:     #221830;
-  --line:        #3a2a4a;
-  --line-soft:   #2a1f38;
+  /* palette — v118f9 GOLD/ORNATE retheme (warm near-black + gold chrome).
+     Functional accents (red/amber/green/blue bars) kept legible. */
+  --void:        #060402;
+  --rock-1:      #120b05;
+  --rock-2:      #1d1408;
+  --rock-3:      #2a1d0c;
+  --rock-edge:   #4a3416;
+  --hull:        #0e0a05;
+  --hull-2:      #1a130a;
+  --panel:       #1c1509;
+  --panel-2:     #241a0c;
+  --line:        #4a3618;
+  --line-soft:   #2e2210;
 
-  --bronze:      #c08a3c;
-  --bronze-hi:   #e6b66a;
-  --bronze-dim:  #7a5520;
-  --purple:      #8b5cff;
-  --purple-hi:   #b48cff;
-  --purple-dim:  #4a2a8a;
-  --blue:        #4fa3ff;
-  --blue-hi:     #7ec0ff;
-  --blue-dim:    #1f5099;
+  --bronze:      #c9962e;
+  --bronze-hi:   #f5d488;
+  --bronze-dim:  #7a5a1e;
+  /* "purple" was the primary chrome accent → remapped to GOLD so every framed
+     panel, title, and glow reads warm/gold like the mockup. */
+  --purple:      #e6b455;
+  --purple-hi:   #ffe6a6;
+  --purple-dim:  #8a6520;
+  /* "blue" kept cool but pulled toward warm steel-gold so tech readouts still
+     contrast against the gold chrome without fighting it. */
+  --blue:        #6db0e0;
+  --blue-hi:     #a8d4f0;
+  --blue-dim:    #2a5a7a;
 
   --red:         #ff5a4a;
   --amber:       #f2a83a;
@@ -1002,8 +1007,8 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   padding-bottom: 0.4rem;
   border-bottom: 1px solid rgba(126, 192, 255, 0.25);
 }
-.beds-rack-icon { font-size: 1.1rem; color: #bcdcff; filter: drop-shadow(0 0 6px rgba(126, 192, 255, 0.6)); }
-.beds-rack-title { font-weight: 800; font-size: 0.78rem; letter-spacing: 0.14em; color: #bcdcff; flex: 1; }
+.beds-rack-icon { font-size: 1.1rem; color: #f5d488; filter: drop-shadow(0 0 6px rgba(230, 180, 90, 0.6)); }
+.beds-rack-title { font-weight: 800; font-size: 0.78rem; letter-spacing: 0.14em; color: #f5d488; flex: 1; }
 .beds-rack-count {
   background: rgba(126, 192, 255, 0.15);
   border: 1px solid rgba(126, 192, 255, 0.5);
@@ -1066,7 +1071,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   display: flex; justify-content: space-between; align-items: center;
   font-size: 0.62rem; letter-spacing: 0.06em;
 }
-.bed-val { color: #bcdcff; font-family: 'JetBrains Mono', monospace; }
+.bed-val { color: #dcc98a; font-family: 'JetBrains Mono', monospace; }
 .bed-state {
   padding: 0.05rem 0.4rem;
   border: 1px solid currentColor;
@@ -1078,9 +1083,9 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   width: 100%;
   cursor: pointer;
   padding: 0.45rem 0.6rem;
-  background: linear-gradient(180deg, #6cd4ff 0%, #2a8fd4 100%);
-  color: #04162a;
-  border: 1px solid #6cd4ff;
+  background: linear-gradient(180deg, #f5d488 0%, #c9962e 100%);
+  color: #2a1c06;
+  border: 1px solid #e6b455;
   border-radius: 6px;
   font-weight: 800;
   letter-spacing: 0.08em;

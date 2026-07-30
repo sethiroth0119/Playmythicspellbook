@@ -1,4 +1,4 @@
-<!--MIN-->﻿<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -33371,7 +33371,498 @@
   <div class="boot-splash-progress-wrap"><div id="boot-splash-bar" class="boot-splash-progress-bar"></div></div>
   <div id="boot-splash-step" class="boot-splash-step">Awakening the codex…</div>
 </div>
-<script>window.BUILD_VERSION="v119d0";try{console.info("%cMythic Spellbook "+window.BUILD_VERSION+"%c — build check: run  __mg.version","font-weight:700;color:#b48cff","color:#7d7499");window.__mg=window.__mg||{};window.__mg.version=window.BUILD_VERSION}catch(e){}!function(){try{if(location.search.indexOf("migrate=1")>=0)return;fetch("version.txt?cb="+Date.now(),{cache:"no-store"}).then(function(r){return r.ok?r.text():null}).then(function(txt){if(txt){var latest=String(txt).trim();var running=window.BUILD_VERSION;if(latest&&latest!==running){try{window.__mythicUpdateReady=!0}catch(e){}try{var already=null;try{already=localStorage.getItem("__forcedReloadFor")}catch(e){}if(already===latest){try{console.info("🔄 New version "+latest+" — already reloaded once; using the update ready toast.")}catch(e){}return}var _inBattle=!1,_typing=!1;try{_inBattle="undefined"!=typeof App&&App&&("battle"===App.screen||"battleImmediate"===App.screen)}catch(e){}try{var _ae=document.activeElement;_typing=!(!_ae||"INPUT"!==_ae.tagName&&"TEXTAREA"!==_ae.tagName&&!_ae.isContentEditable)}catch(e){}if(_inBattle||_typing){try{console.info("🔄 Update "+latest+" held — busy (battle/typing); will apply when idle or via the Reload toast.")}catch(e){}return}try{localStorage.setItem("__forcedReloadFor",latest)}catch(e){}try{console.info("🔄 Updating to "+latest+" (from "+running+")…")}catch(e){}setTimeout(function(){try{location.reload()}catch(e){}},500)}catch(e){}}}}).catch(function(){})}catch(e){}}();window.addEventListener("load",function(){try{if(document.getElementById("mythic-build-stamp"))return;var s=document.createElement("div");s.id="mythic-build-stamp";s.textContent=window.BUILD_VERSION;s.style.cssText="position:fixed;right:6px;bottom:5px;z-index:2147483000;pointer-events:none;font:600 10px/1 ui-monospace,monospace;letter-spacing:.04em;color:rgba(200,190,230,0.42);text-shadow:0 1px 2px rgba(0,0,0,0.6);user-select:none";document.body.appendChild(s)}catch(e){}});window.addEventListener("load",function(){function tryMount(){try{var _staleFab=document.getElementById("mythic-cloud-fab");if(_staleFab)try{_staleFab.remove()}catch(e){}return!0}catch(e){return!1}}if(!tryMount()){var tries=0;var iv=setInterval(function(){tries++;(tryMount()||tries>40)&&clearInterval(iv)},1500)}});try{location.search.indexOf("migrate=1")>=0&&(window.__cloudMigrating=!0)}catch(e){}window.addEventListener("load",function(){try{if(location.search.indexOf("migrate=1")<0)return}catch(e){return}window.__cloudMigrating=!0;try{document.title="Migrating to cloud…";document.body.innerHTML='<div style="position:fixed;inset:0;background:#0b0d16;color:#e8e6f2;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:ui-sans-serif,system-ui;z-index:2147483647;padding:24px;text-align:center"><div style="font-size:20px;font-weight:800;margin-bottom:14px">&#9729; Cloud migration</div><div id="cloudmig-line" style="font-size:15px;opacity:.9;max-width:640px;line-height:1.5">Preparing&#8230; (loading + signing in)</div><div style="font-size:12px;opacity:.55;margin-top:18px;max-width:600px;line-height:1.55">This page never draws the game, so it can\'t run out of graphics memory. Keep the tab open — 10&#8211;20 min, resumes if interrupted. A Reload button appears when it finishes.</div><div id="cloudmig-actions" style="margin-top:22px"></div></div>'}catch(e){}var setLine=function(t){try{var l=document.getElementById("cloudmig-line");l&&(l.textContent=t)}catch(e){}};var addReload=function(){try{var acts=document.getElementById("cloudmig-actions");if(!acts)return;var rb=document.createElement("button");rb.textContent="↻ Reload Game";rb.style.cssText="font:700 14px/1 ui-sans-serif,system-ui;color:#fff;cursor:pointer;padding:11px 18px;margin:4px;border-radius:10px;border:1px solid rgba(255,255,255,0.25);background:linear-gradient(180deg,#3a6ff0,#2a4fd0)";rb.onclick=function(){try{location.href=location.origin+location.pathname}catch(e){location.reload()}};acts.appendChild(rb)}catch(e){}};var started=!1,tries=0;var poll=setInterval(function(){if(!started){tries++;var signedIn="undefined"!=typeof Profile&&Profile.cloud&&Profile.cloud.signedIn;if("function"==typeof migrateEverythingToCloud&&signedIn){started=!0;clearInterval(poll);setLine("Starting…");migrateEverythingToCloud({onStep:function(m){setLine(m)},onSpriteProgress:function(done,total,r){setLine("Sprites "+done+"/"+total+"  ·  "+(r&&r.fixed||0)+" uploaded"+(r&&r.deadLocal?"  ·  "+r.deadLocal+" unreadable":""))}}).then(function(rep){setLine(rep&&rep.verdict||"Done.");addReload();try{console.info("[migrate]",rep)}catch(e){}}).catch(function(e){setLine("Error: "+(e&&e.message||e)+" — reload this link to resume where it left off.");addReload()})}else if(tries>80){started=!0;clearInterval(poll);setLine(signedIn?"Migration code did not load — hard-refresh (Ctrl+Shift+R), then reload this link.":"Not signed in automatically. Open the game normally once, sign in, then come back to this ?migrate=1 link.");addReload()}}},1500)});!function(){var bar=document.getElementById("boot-splash-bar");var step=document.getElementById("boot-splash-step");var splash=document.getElementById("boot-splash");var STEPS=["auth","profile","catalog","render"];var WEIGHTS={auth:.15,profile:.3,catalog:.35,render:.2};var progress={auth:0,profile:0,catalog:0,render:0};function applyBar(){var total=0;for(var i=0;i<STEPS.length;i++){var k=STEPS[i];total+=Math.max(0,Math.min(1,progress[k]))*WEIGHTS[k]}bar&&(bar.style.width=Math.round(100*total)+"%")}window.BootSplash={set:function(key,value,label){key in progress&&(progress[key]=value);label&&step&&(step.textContent=label);applyBar()},done:function(){for(var k in progress)progress[k]=1;applyBar();if(splash){splash.classList.add("fade-out");setTimeout(function(){try{splash.remove()}catch(e){}},520)}}};var safety=setTimeout(function(){try{splash&&!splash.classList.contains("fade-out")&&window.BootSplash.done()}catch(e){}},12e3);window.BootSplash._cancelSafety=function(){clearTimeout(safety)}}();!function(){try{window.addEventListener("error",function(ev){try{console.error("[crashguard] uncaught error:",ev&&(ev.error||ev.message)||ev)}catch(_){}});window.addEventListener("unhandledrejection",function(ev){try{console.error("[crashguard] unhandled promise rejection:",ev&&ev.reason)}catch(_){}try{ev.preventDefault()}catch(_){}})}catch(e){}"serviceWorker"in navigator&&window.addEventListener("load",function(){var _hadController=!!navigator.serviceWorker.controller;function _showUpdateToast(){try{if(document.getElementById("mythic-update-toast"))return;var bar=document.createElement("div");bar.id="mythic-update-toast";bar.style.cssText="position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:2147483000;display:flex;align-items:center;gap:12px;padding:12px 16px;max-width:92vw;background:linear-gradient(160deg,rgba(26,20,44,0.98),rgba(14,10,26,0.98));border:1px solid rgba(180,150,240,0.5);border-radius:12px;color:#f2ecff;box-shadow:0 14px 44px rgba(0,0,0,0.6),0 0 26px rgba(150,110,240,0.25);font-family:inherit;font-size:0.9rem;opacity:0;transition:opacity .3s,transform .3s;";bar.innerHTML='<span style="font-size:1.15rem">✨</span><span style="flex:1;min-width:0">A new version of Mythic Spellbook is ready.</span><button id="mythic-update-reload" style="cursor:pointer;background:linear-gradient(180deg,#7a52d6,#5a34b0);border:none;color:#fff;font-weight:700;padding:7px 14px;border-radius:8px;font-family:inherit">Reload</button><button id="mythic-update-dismiss" style="cursor:pointer;background:transparent;border:1px solid rgba(255,255,255,0.25);color:#cdbff0;width:26px;height:26px;border-radius:7px;line-height:1;padding:0">×</button>';document.body.appendChild(bar);requestAnimationFrame(function(){bar.style.opacity="1";bar.style.transform="translateX(-50%) translateY(-4px)"});document.getElementById("mythic-update-reload").onclick=function(){try{location.reload()}catch(e){}};document.getElementById("mythic-update-dismiss").onclick=function(){try{bar.remove()}catch(e){}}}catch(e){}}navigator.serviceWorker.addEventListener("controllerchange",function(){try{window.__mythicUpdateReady=!0}catch(e){}_hadController&&_showUpdateToast()});navigator.serviceWorker.register("/sw.js").then(function(reg){if(reg){_watch(reg.installing);reg.addEventListener("updatefound",function(){_watch(reg.installing)});try{reg.update()}catch(e){}try{setInterval(function(){try{reg.update()}catch(e){}},3e5)}catch(e){}}function _watch(sw){sw&&sw.addEventListener("statechange",function(){"installed"===sw.state&&navigator.serviceWorker.controller&&_showUpdateToast()})}}).catch(function(){})});window.PWA=window.PWA||{};window.PWA.installEvent=null;window.PWA.installed=!1;window.PWA._installListeners=[];window.PWA.onInstallStateChange=function(fn){if("function"!=typeof fn)return function(){};window.PWA._installListeners.push(fn);try{fn({available:!!window.PWA.installEvent,installed:!!window.PWA.installed})}catch(e){}return function(){var i=window.PWA._installListeners.indexOf(fn);i>=0&&window.PWA._installListeners.splice(i,1)}};function _pwaNotify(){var snap={available:!!window.PWA.installEvent,installed:!!window.PWA.installed};window.PWA._installListeners.forEach(function(fn){try{fn(snap)}catch(e){}})}window.PWA.installed=function(){try{if(window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches)return!0;if(window.matchMedia&&window.matchMedia("(display-mode: fullscreen)").matches)return!0;if(!0===window.navigator.standalone)return!0}catch(e){}return!1}();window.addEventListener("beforeinstallprompt",function(e){e.preventDefault();window.PWA.installEvent=e;_pwaNotify()});window.addEventListener("appinstalled",function(){window.PWA.installEvent=null;window.PWA.installed=!0;try{localStorage.setItem("hg_pwa_installed","1")}catch(e){}_pwaNotify()});window.PWA.prompt=function(){var e=window.PWA.installEvent;if(!e)return Promise.resolve("unavailable");try{e.prompt()}catch(err){return Promise.resolve("error")}return e.userChoice.then(function(choice){var outcome=choice&&choice.outcome||"dismissed";window.PWA.installEvent=null;"accepted"===outcome&&(window.PWA.installed=!0);_pwaNotify();return outcome})};window.PWA.isIOS=function(){var ua=navigator.userAgent||"";return/iPad|iPhone|iPod/.test(ua)&&!window.MSStream};window.FS=window.FS||{};window.FS._listeners=[];window.FS.onChange=function(fn){if("function"!=typeof fn)return function(){};window.FS._listeners.push(fn);try{fn({active:!!window.FS.isActive()})}catch(e){}return function(){var i=window.FS._listeners.indexOf(fn);i>=0&&window.FS._listeners.splice(i,1)}};function _fsNotify(){var snap={active:!!window.FS.isActive()};window.FS._listeners.forEach(function(fn){try{fn(snap)}catch(e){}})}window.FS.isActive=function(){return!!(document.fullscreenElement||document.webkitFullscreenElement||document.mozFullScreenElement||document.msFullscreenElement)};window.FS.isSupported=function(){var el=document.documentElement;return!!(el.requestFullscreen||el.webkitRequestFullscreen||el.mozRequestFullScreen||el.msRequestFullscreen)};window.FS.enter=function(){var el=document.documentElement;try{if(el.requestFullscreen)return el.requestFullscreen();if(el.webkitRequestFullscreen)return el.webkitRequestFullscreen();if(el.mozRequestFullScreen)return el.mozRequestFullScreen();if(el.msRequestFullscreen)return el.msRequestFullscreen()}catch(e){}return Promise.resolve()};window.FS.exit=function(){try{if(document.exitFullscreen)return document.exitFullscreen();if(document.webkitExitFullscreen)return document.webkitExitFullscreen();if(document.mozCancelFullScreen)return document.mozCancelFullScreen();if(document.msExitFullscreen)return document.msExitFullscreen()}catch(e){}return Promise.resolve()};window.FS.toggle=function(){return window.FS.isActive()?window.FS.exit():window.FS.enter()};["fullscreenchange","webkitfullscreenchange","mozfullscreenchange","MSFullscreenChange"].forEach(function(ev){document.addEventListener(ev,_fsNotify)});document.addEventListener("keydown",function(e){if(("f"===e.key||"F"===e.key)&&!(e.ctrlKey||e.metaKey||e.altKey)){var t=e.target;if(!t||"INPUT"!==t.tagName&&"TEXTAREA"!==t.tagName&&!t.isContentEditable){e.preventDefault();window.FS.toggle()}}})}();</script>
+<script>
+  // 🏷 BUILD VERSION — the ONE place to check what code a machine is running.
+  // Logged on boot, exposed on window.__mg.version, and shown as a tiny corner
+  // stamp so any player (or another computer) can be verified at a glance without
+  // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
+  // machines show different stamps, the older one is on stale code (hard-refresh);
+  // if they MATCH but content still differs, it is a DATA/publish issue, not code.
+  window.BUILD_VERSION = 'v119d4';
+  try {
+    console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
+      'font-weight:700;color:#b48cff', 'color:#7d7499');
+    window.__mg = window.__mg || {}; window.__mg.version = window.BUILD_VERSION;
+  } catch (e) {}
+
+  // 🔄 UPDATE CHECK (NO auto-reload — v118c4). We fetch the tiny UNCACHED version.txt to
+  // learn whether a newer build is deployed, but we DELIBERATELY DO NOT hard-reload or
+  // nuke caches on our own. Auto-reloading the instant a new version was seen yanked
+  // players/admin out of whatever they were doing (mid-battle, mid-Forge edit) and read
+  // as "the game randomly refreshes" — and a full-quota localStorage (the loop-guard
+  // setItem throwing) could even bounce it repeatedly. New code still reaches everyone
+  // WITHOUT interruption: the service worker serves fresh HTML on the player's next
+  // natural navigation, and the controllerchange "update ready" toast offers a one-click
+  // Reload when THEY choose. Here we only FLAG that an update exists.
+  (function () {
+    try {
+      if (location.search.indexOf('migrate=1') >= 0) return;
+      fetch('version.txt?cb=' + Date.now(), { cache: 'no-store' }).then(function (r) {
+        return r.ok ? r.text() : null;
+      }).then(function (txt) {
+        if (!txt) return;
+        var latest = String(txt).trim();
+        var running = window.BUILD_VERSION;
+        if (!latest || latest === running) return;
+        try { window.__mythicUpdateReady = true; } catch (e) {}
+        // 🔄 CONTROLLED one-time update (re-enabled v118e3, admin-approved). Reload ONCE
+        // when a newer build is live so publishes/fixes actually reach players — but only
+        // when SAFE (never mid-battle, never while typing in a field) and only ONCE per
+        // version (loop-guarded by __forcedReloadFor + the latest===running early-return
+        // that fires after the reload lands the new bundle). This is NOT the old "random
+        // refresh": that bug was a STUCK BUILD_VERSION that never matched version.txt so it
+        // reloaded on EVERY load — BUILD_VERSION is now bumped in lockstep every deploy.
+        try {
+          var already = null; try { already = localStorage.getItem('__forcedReloadFor'); } catch (e) {}
+          if (already === latest) { try { console.info('🔄 New version ' + latest + ' — already reloaded once; using the update ready toast.'); } catch (e) {} return; }
+          var _inBattle = false, _typing = false;
+          try { _inBattle = (typeof App !== 'undefined' && App && (App.screen === 'battle' || App.screen === 'battleImmediate')); } catch (e) {}
+          try { var _ae = document.activeElement; _typing = !!(_ae && (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA' || _ae.isContentEditable)); } catch (e) {}
+          if (_inBattle || _typing) { try { console.info('🔄 Update ' + latest + ' held — busy (battle/typing); will apply when idle or via the Reload toast.'); } catch (e) {} return; }
+          try { localStorage.setItem('__forcedReloadFor', latest); } catch (e) {}
+          try { console.info('🔄 Updating to ' + latest + ' (from ' + running + ')…'); } catch (e) {}
+          setTimeout(function () { try { location.reload(); } catch (e) {} }, 500);
+        } catch (e) {}
+      }).catch(function () {});
+    } catch (e) {}
+  })();
+
+  // Tiny, unobtrusive corner stamp. Fixed, click-through, always on top. Lets a
+  // non-technical player read off the exact version on any device.
+  window.addEventListener('load', function () {
+    try {
+      if (document.getElementById('mythic-build-stamp')) return;
+      var s = document.createElement('div');
+      s.id = 'mythic-build-stamp';
+      s.textContent = window.BUILD_VERSION;
+      s.style.cssText = 'position:fixed;right:6px;bottom:5px;z-index:2147483000;pointer-events:none;'
+        + 'font:600 10px/1 ui-monospace,monospace;letter-spacing:.04em;color:rgba(200,190,230,0.42);'
+        + 'text-shadow:0 1px 2px rgba(0,0,0,0.6);user-select:none';
+      document.body.appendChild(s);
+    } catch (e) {}
+  });
+
+  // ☁ FLOATING "Move Everything to Cloud" button — a fixed, lightweight FAB that runs the
+  // migration from ANY screen. This exists because the Pricing Admin panel (where the
+  // in-panel button lives) mounts heavy 3D editors and can crash on a huge library BEFORE
+  // you can click it. This FAB never renders images, so it can't crash — it's the safe way
+  // to escape the storage wall. Shown only to admins (polls until isAdmin resolves).
+  window.addEventListener('load', function () {
+    function tryMount() {
+      try {
+        // ☁ "Move to Cloud" FAB REMOVED (v118d1) — it cluttered the game UI.
+        // Cloud migration is still reachable from the Pricing Admin panel, the
+        // ?migrate=1 URL, and the standalone /cloud-migrate page.
+        var _staleFab = document.getElementById('mythic-cloud-fab'); if (_staleFab) { try { _staleFab.remove(); } catch (e) {} }
+        return true;   // never mount the FAB; also stops the retry poll
+        if (document.getElementById('mythic-cloud-fab')) return true;
+        if (typeof isAdmin !== 'function') return false;
+        if (!isAdmin()) return false;
+        var b = document.createElement('button');
+        b.id = 'mythic-cloud-fab';
+        b.type = 'button';
+        b.textContent = '☁ Move to Cloud';
+        b.title = 'Move ALL sprites/art off this browser onto the cloud, publish to players, and free local storage. Runs from any screen — no need to open the Pricing Admin panel (which can crash on a big library). Safe to re-run; keep the tab open.';
+        b.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:2147483600;'
+          + 'font:700 12px/1 ui-sans-serif,system-ui;color:#fff;cursor:pointer;'
+          + 'padding:9px 13px;border-radius:10px;border:1px solid rgba(255,255,255,0.25);'
+          + 'background:linear-gradient(180deg,#3a6ff0,#2a4fd0);box-shadow:0 4px 14px rgba(0,0,0,0.45)';
+        b.onclick = async function () {
+          if (typeof migrateEverythingToCloud !== 'function') { try { if (typeof showToast === 'function') showToast('Update to the latest build first (hard-refresh).'); } catch (e) {} return; }
+          var okGo = (typeof gcConfirm === 'function')
+            ? await gcConfirm('Move EVERYTHING to the cloud now?\n\nThe game screen will go to a blank progress page so it CANNOT run out of graphics memory (that is what has been crashing). It uploads all sprites + art as cloud URLs, publishes to players, then frees your local storage. 10–20 min. KEEP THIS TAB OPEN. Safe to re-run — it resumes.')
+            : window.confirm('Move everything to the cloud now? The screen goes blank on purpose. Keep this tab open (10–20 min).');
+          if (!okGo) return;
+          // 🧯 TEAR DOWN the game render → drop GPU/graphics memory to ~zero so a long
+          // migration cannot hit the decoded-image crash. The migration is pure data work
+          // (IDB read → upload → publish); it needs no on-screen game. We replace the whole
+          // page with a minimal, image-free progress screen. Functions stay defined in
+          // memory, so the migration keeps running; the user reloads when it's done.
+          try { window.__cloudMigrating = true; } catch (e) {}
+          try { if (typeof _memShedGraphics === 'function') _memShedGraphics(); } catch (e) {}
+          try {
+            document.title = 'Migrating to cloud…';
+            document.body.innerHTML = '<div style="position:fixed;inset:0;background:#0b0d16;color:#e8e6f2;'
+              + 'display:flex;flex-direction:column;align-items:center;justify-content:center;'
+              + "font-family:ui-sans-serif,system-ui;z-index:2147483647;padding:24px;text-align:center\">"
+              + '<div style="font-size:20px;font-weight:800;margin-bottom:14px">&#9729; Moving everything to the cloud&#8230;</div>'
+              + '<div id="cloudmig-line" style="font-size:15px;opacity:.9;max-width:640px;line-height:1.5">Starting&#8230;</div>'
+              + '<div style="font-size:12px;opacity:.55;margin-top:18px;max-width:600px;line-height:1.55">Keep this tab open. The game is hidden on purpose so it can\'t run out of graphics memory. This can take 10&#8211;20 minutes; it resumes if interrupted. A Reload button appears when it finishes.</div>'
+              + '<div id="cloudmig-actions" style="margin-top:22px"></div></div>';
+          } catch (e) {}
+          var line = document.getElementById('cloudmig-line');
+          var setLine = function (t) { try { if (line) line.textContent = t; } catch (e) {} };
+          var rep = null;
+          try {
+            rep = await migrateEverythingToCloud({
+              onStep: function (msg) { setLine(msg); },
+              onSpriteProgress: function (done, total, r) { setLine('Sprites ' + done + '/' + total + '  ·  ' + ((r && r.fixed) || 0) + ' uploaded' + (r && r.deadLocal ? ('  ·  ' + r.deadLocal + ' unreadable') : '')); },
+            });
+          } catch (e) { rep = { error: (e && e.message) || 'migration failed' }; }
+          setLine((rep && rep.verdict) || (rep && rep.error ? ('Error: ' + rep.error + ' (safe to re-run)') : 'Done.'));
+          try {
+            var acts = document.getElementById('cloudmig-actions');
+            if (acts) {
+              var rb = document.createElement('button');
+              rb.textContent = '↻ Reload Game';
+              rb.style.cssText = 'font:700 14px/1 ui-sans-serif,system-ui;color:#fff;cursor:pointer;padding:11px 18px;'
+                + 'border-radius:10px;border:1px solid rgba(255,255,255,0.25);background:linear-gradient(180deg,#3a6ff0,#2a4fd0)';
+              rb.onclick = function () { try { location.reload(); } catch (e) {} };
+              acts.appendChild(rb);
+            }
+          } catch (e) {}
+          try { console.info('[migrateEverythingToCloud]', rep); } catch (e) {}
+        };
+        document.body.appendChild(b);
+        return true;
+      } catch (e) { return false; }
+    }
+    if (tryMount()) return;
+    // isAdmin may not be ready at load — poll briefly, then give up (non-admins never see it).
+    var tries = 0;
+    var iv = setInterval(function () { tries++; if (tryMount() || tries > 40) clearInterval(iv); }, 1500);
+  });
+
+  // 🚑 CRASH-PROOF MIGRATION LINK. On a device that runs out of GRAPHICS memory just
+  // rendering the game (huge library → GPU crash on any screen), clicking an in-game button
+  // is fragile — the crash can pre-empt it. Loading the game with ?migrate=1 sets
+  // __cloudMigrating from the FIRST frame, so render() bails and the heavy title NEVER
+  // draws (no images decoded → GPU stays near zero). The game code still loads (functions
+  // defined, Supabase session restored) but nothing renders; we then auto-run the migration
+  // on a blank page. This is the reliable escape hatch. URL: <origin>/?migrate=1
+  try { if (location.search.indexOf('migrate=1') >= 0) window.__cloudMigrating = true; } catch (e) {}
+
+  window.addEventListener('load', function () {
+    try { if (location.search.indexOf('migrate=1') < 0) return; } catch (e) { return; }
+    window.__cloudMigrating = true;
+    try {
+      document.title = 'Migrating to cloud…';
+      document.body.innerHTML = '<div style="position:fixed;inset:0;background:#0b0d16;color:#e8e6f2;'
+        + 'display:flex;flex-direction:column;align-items:center;justify-content:center;'
+        + "font-family:ui-sans-serif,system-ui;z-index:2147483647;padding:24px;text-align:center\">"
+        + '<div style="font-size:20px;font-weight:800;margin-bottom:14px">&#9729; Cloud migration</div>'
+        + '<div id="cloudmig-line" style="font-size:15px;opacity:.9;max-width:640px;line-height:1.5">Preparing&#8230; (loading + signing in)</div>'
+        + '<div style="font-size:12px;opacity:.55;margin-top:18px;max-width:600px;line-height:1.55">This page never draws the game, so it can\'t run out of graphics memory. Keep the tab open — 10&#8211;20 min, resumes if interrupted. A Reload button appears when it finishes.</div>'
+        + '<div id="cloudmig-actions" style="margin-top:22px"></div></div>';
+    } catch (e) {}
+    var line = function () { return document.getElementById('cloudmig-line'); };
+    var setLine = function (t) { try { var l = line(); if (l) l.textContent = t; } catch (e) {} };
+    var addReload = function () {
+      try {
+        var acts = document.getElementById('cloudmig-actions'); if (!acts) return;
+        var rb = document.createElement('button'); rb.textContent = '↻ Reload Game';
+        rb.style.cssText = 'font:700 14px/1 ui-sans-serif,system-ui;color:#fff;cursor:pointer;padding:11px 18px;margin:4px;'
+          + 'border-radius:10px;border:1px solid rgba(255,255,255,0.25);background:linear-gradient(180deg,#3a6ff0,#2a4fd0)';
+        rb.onclick = function () { try { location.href = location.origin + location.pathname; } catch (e) { location.reload(); } };
+        acts.appendChild(rb);
+      } catch (e) {}
+    };
+    var started = false, tries = 0;
+    var poll = setInterval(function () {
+      if (started) return;
+      tries++;
+      var signedIn = (typeof Profile !== 'undefined') && Profile.cloud && Profile.cloud.signedIn;
+      var ready = (typeof migrateEverythingToCloud === 'function') && signedIn;
+      if (ready) {
+        started = true; clearInterval(poll);
+        setLine('Starting…');
+        migrateEverythingToCloud({
+          onStep: function (m) { setLine(m); },
+          onSpriteProgress: function (done, total, r) { setLine('Sprites ' + done + '/' + total + '  ·  ' + ((r && r.fixed) || 0) + ' uploaded' + (r && r.deadLocal ? ('  ·  ' + r.deadLocal + ' unreadable') : '')); },
+        }).then(function (rep) { setLine((rep && rep.verdict) || 'Done.'); addReload(); try { console.info('[migrate]', rep); } catch (e) {} })
+          .catch(function (e) { setLine('Error: ' + ((e && e.message) || e) + ' — reload this link to resume where it left off.'); addReload(); });
+      } else if (tries > 80) {
+        started = true; clearInterval(poll);
+        setLine(signedIn ? 'Migration code did not load — hard-refresh (Ctrl+Shift+R), then reload this link.'
+          : 'Not signed in automatically. Open the game normally once, sign in, then come back to this ?migrate=1 link.');
+        addReload();
+      }
+    }, 1500);
+  });
+
+  // 💎 Boot splash controller — a tiny self-contained mini-module that lives
+  // in window scope BEFORE the main game script runs. Game code can call
+  // BootSplash.set('catalog', 0.75, 'Loading card catalog…') to advance the
+  // progress bar; BootSplash.done() fades the splash out. We retire the
+  // whole thing on render() too (belt-and-suspenders).
+  (function () {
+    var bar = document.getElementById('boot-splash-bar');
+    var step = document.getElementById('boot-splash-step');
+    var splash = document.getElementById('boot-splash');
+    // Step weights — sum to 1.0. Each is a normalized 0..1 inside its slot.
+    var STEPS = ['auth', 'profile', 'catalog', 'render'];
+    var WEIGHTS = { auth: 0.15, profile: 0.30, catalog: 0.35, render: 0.20 };
+    var progress = { auth: 0, profile: 0, catalog: 0, render: 0 };
+    function applyBar() {
+      var total = 0;
+      for (var i = 0; i < STEPS.length; i++) {
+        var k = STEPS[i];
+        total += Math.max(0, Math.min(1, progress[k])) * WEIGHTS[k];
+      }
+      if (bar) bar.style.width = Math.round(total * 100) + '%';
+    }
+    window.BootSplash = {
+      set: function (key, value, label) {
+        if (key in progress) progress[key] = value;
+        if (label && step) step.textContent = label;
+        applyBar();
+      },
+      done: function () {
+        for (var k in progress) progress[k] = 1;
+        applyBar();
+        if (splash) {
+          splash.classList.add('fade-out');
+          setTimeout(function () { try { splash.remove(); } catch (e) {} }, 520);
+        }
+      },
+    };
+    // Safety net — if something goes sideways and BootSplash.done() is never
+    // called, force a fade-out after 12s so we never strand the player at the
+    // splash. Cancelled if .done() runs cleanly.
+    var safety = setTimeout(function () {
+      try { if (splash && !splash.classList.contains('fade-out')) window.BootSplash.done(); } catch (e) {}
+    }, 12000);
+    window.BootSplash._cancelSafety = function () { clearTimeout(safety); };
+  })();
+
+  // ============================================================================
+  // 📱 PWA INSTALL + 🖥 FULLSCREEN — tiny early-boot helpers
+  // ----------------------------------------------------------------------------
+  // The whole thing is window-scoped so the main game script (below) can ask
+  // "is install available?" / "are we fullscreen?" without re-implementing
+  // any of it. Three responsibilities:
+  //
+  //   1. Register the service worker (offline shell + faster cold loads).
+  //   2. Capture the deferred beforeinstallprompt event so a hub-tile can
+  //      fire it on click (Chrome/Edge/Brave behavior).
+  //   3. Expose Fullscreen API helpers + a fullscreenchange listener that
+  //      notifies subscribers when state flips.
+  //
+  // iOS Safari quirks: no install prompt event, no requestFullscreen on
+  // <body>. The manifest's apple-mobile-web-app-capable meta + the user
+  // tapping "Add to Home Screen" is the equivalent path there.
+  // ============================================================================
+  (function () {
+    // 🛡 GLOBAL CRASH GUARD — a single uncaught error or rejected promise (a
+    // stray async cloud/MP call, a timer callback, an event handler) used to be
+    // able to wedge the app or look like a "random crash". We log it for admins
+    // but otherwise swallow it so the game keeps running instead of dying. This
+    // does NOT reload or reset anything — it only stops one failure from
+    // cascading. (Render itself is separately wrapped; see render()/renderBattle.)
+    try {
+      window.addEventListener('error', function (ev) {
+        try { console.error('[crashguard] uncaught error:', (ev && (ev.error || ev.message)) || ev); } catch (_) {}
+        // Do not preventDefault — keep the native console trace for debugging.
+      });
+      window.addEventListener('unhandledrejection', function (ev) {
+        try { console.error('[crashguard] unhandled promise rejection:', ev && ev.reason); } catch (_) {}
+        try { ev.preventDefault(); } catch (_) {}   // swallow so it can't bubble into a hard failure
+      });
+    } catch (e) {}
+    // ---------- Service Worker ----------
+    if ('serviceWorker' in navigator) {
+      // Defer registration until after first paint so the splash isn't
+      // delayed by SW boot. Wrap in load event so it kicks off post-render.
+      window.addEventListener('load', function () {
+        // Auto-reload when the SW controller changes (new deploy activated).
+        // Guard flag prevents reload loops if the event fires multiple times.
+        // 🛑 DO NOT force-reload the page when a new SW activates. Auto-reloading
+        // the instant a deploy lands was yanking players out of whatever they
+        // were doing — mid-Forge edit, mid-battle — and wiping unsaved input
+        // (this is what made "nothing saves in the Forge" + "the game randomly
+        // refreshes / flickers"). New code now applies on the player's NEXT
+        // natural reload (or a manual refresh). We only flag that an update is
+        // ready so the UI could show a gentle, dismissible notice if desired.
+        // ✨ UPDATE-READY TOAST. The SW steps aside for HTML so every deploy is
+        // served fresh — but a player who KEEPS THE GAME OPEN never triggers a
+        // navigation, so they never see new code. We must not auto-reload (it wiped
+        // mid-Forge / mid-battle state), so instead we show a gentle, DISMISSIBLE
+        // toast the moment a new version takes control, with a one-click Reload.
+        // That is the bridge that actually gets every update onto every player.
+        var _hadController = !!navigator.serviceWorker.controller;
+        function _showUpdateToast() {
+          try {
+            if (document.getElementById('mythic-update-toast')) return;  // once
+            var bar = document.createElement('div');
+            bar.id = 'mythic-update-toast';
+            bar.style.cssText = 'position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:2147483000;'
+              + 'display:flex;align-items:center;gap:12px;padding:12px 16px;max-width:92vw;'
+              + 'background:linear-gradient(160deg,rgba(26,20,44,0.98),rgba(14,10,26,0.98));'
+              + 'border:1px solid rgba(180,150,240,0.5);border-radius:12px;color:#f2ecff;'
+              + 'box-shadow:0 14px 44px rgba(0,0,0,0.6),0 0 26px rgba(150,110,240,0.25);'
+              + "font-family:inherit;font-size:0.9rem;opacity:0;transition:opacity .3s,transform .3s;";
+            bar.innerHTML = '<span style="font-size:1.15rem">✨</span>'
+              + '<span style="flex:1;min-width:0">A new version of Mythic Spellbook is ready.</span>'
+              + '<button id="mythic-update-reload" style="cursor:pointer;background:linear-gradient(180deg,#7a52d6,#5a34b0);'
+              + 'border:none;color:#fff;font-weight:700;padding:7px 14px;border-radius:8px;font-family:inherit">Reload</button>'
+              + '<button id="mythic-update-dismiss" style="cursor:pointer;background:transparent;border:1px solid rgba(255,255,255,0.25);'
+              + 'color:#cdbff0;width:26px;height:26px;border-radius:7px;line-height:1;padding:0">×</button>';
+            document.body.appendChild(bar);
+            requestAnimationFrame(function () { bar.style.opacity = '1'; bar.style.transform = 'translateX(-50%) translateY(-4px)'; });
+            document.getElementById('mythic-update-reload').onclick = function () {
+              // A full reload fetches fresh HTML (the SW passes navigations through).
+              try { location.reload(); } catch (e) {}
+            };
+            document.getElementById('mythic-update-dismiss').onclick = function () {
+              try { bar.remove(); } catch (e) {}   // the update still applies on their next natural reload
+            };
+          } catch (e) {}
+        }
+        navigator.serviceWorker.addEventListener('controllerchange', function () {
+          try { window.__mythicUpdateReady = true; } catch (e) {}
+          // Only prompt on a real UPDATE — controllerchange also fires on the very
+          // first SW install, when there was no controller to begin with.
+          if (_hadController) _showUpdateToast();
+        });
+        navigator.serviceWorker.register('/sw.js').then(function (reg) {
+          if (!reg) return;
+          // Belt-and-braces: also catch a freshly-INSTALLED waiting worker directly,
+          // in case controllerchange is missed (e.g. skipWaiting races the load).
+          function _watch(sw) {
+            if (!sw) return;
+            sw.addEventListener('statechange', function () {
+              if (sw.state === 'installed' && navigator.serviceWorker.controller) _showUpdateToast();
+            });
+          }
+          _watch(reg.installing);
+          reg.addEventListener('updatefound', function () { _watch(reg.installing); });
+          // Nudge the browser to check for a new sw.js now, not just on navigation,
+          // so a long-open session learns about a deploy within a minute or two.
+          try { reg.update(); } catch (e) {}
+          try { setInterval(function () { try { reg.update(); } catch (e) {} }, 5 * 60 * 1000); } catch (e) {}
+        }).catch(function () { /* SW failures are non-fatal — game still runs */ });
+      });
+    }
+
+    // ---------- Install prompt capture ----------
+    // beforeinstallprompt fires once per visit on supported browsers and is
+    // prompt-able exactly once. We stash the event for the in-game tile to
+    // fire later on user click (you cannot call prompt() without a user
+    // gesture, so we must defer rather than fire immediately).
+    window.PWA = window.PWA || {};
+    window.PWA.installEvent = null;
+    window.PWA.installed = false;
+    window.PWA._installListeners = [];
+    window.PWA.onInstallStateChange = function (fn) {
+      if (typeof fn !== 'function') return function () {};
+      window.PWA._installListeners.push(fn);
+      try { fn({ available: !!window.PWA.installEvent, installed: !!window.PWA.installed }); } catch (e) {}
+      return function () {
+        var i = window.PWA._installListeners.indexOf(fn);
+        if (i >= 0) window.PWA._installListeners.splice(i, 1);
+      };
+    };
+    function _pwaNotify() {
+      var snap = { available: !!window.PWA.installEvent, installed: !!window.PWA.installed };
+      window.PWA._installListeners.forEach(function (fn) { try { fn(snap); } catch (e) {} });
+    }
+    // Detect if we're ALREADY running as an installed PWA (standalone mode).
+    function _isStandalone() {
+      try {
+        if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+        if (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches) return true;
+        if (window.navigator.standalone === true) return true;       // iOS
+      } catch (e) {}
+      return false;
+    }
+    window.PWA.installed = _isStandalone();
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      window.PWA.installEvent = e;
+      _pwaNotify();
+    });
+    // Fires AFTER the user accepts the install dialog. Clean up the deferred
+    // prompt and flag the app as installed so the tile flips to "Installed".
+    window.addEventListener('appinstalled', function () {
+      window.PWA.installEvent = null;
+      window.PWA.installed = true;
+      try { localStorage.setItem('hg_pwa_installed', '1'); } catch (e) {}
+      _pwaNotify();
+    });
+    window.PWA.prompt = function () {
+      // Returns a promise resolving to 'accepted' | 'dismissed' | 'unavailable'.
+      var e = window.PWA.installEvent;
+      if (!e) return Promise.resolve('unavailable');
+      try { e.prompt(); } catch (err) { return Promise.resolve('error'); }
+      return e.userChoice.then(function (choice) {
+        var outcome = (choice && choice.outcome) || 'dismissed';
+        // The event can only be prompted once — drop the reference.
+        window.PWA.installEvent = null;
+        if (outcome === 'accepted') window.PWA.installed = true;
+        _pwaNotify();
+        return outcome;
+      });
+    };
+    // iOS-specific helper — no install prompt event exists, so the UI shows
+    // an "Add to Home Screen" instruction sheet instead.
+    window.PWA.isIOS = function () {
+      var ua = navigator.userAgent || '';
+      return /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+    };
+
+    // ---------- Fullscreen API ----------
+    window.FS = window.FS || {};
+    window.FS._listeners = [];
+    window.FS.onChange = function (fn) {
+      if (typeof fn !== 'function') return function () {};
+      window.FS._listeners.push(fn);
+      try { fn({ active: !!window.FS.isActive() }); } catch (e) {}
+      return function () {
+        var i = window.FS._listeners.indexOf(fn);
+        if (i >= 0) window.FS._listeners.splice(i, 1);
+      };
+    };
+    function _fsNotify() {
+      var snap = { active: !!window.FS.isActive() };
+      window.FS._listeners.forEach(function (fn) { try { fn(snap); } catch (e) {} });
+    }
+    window.FS.isActive = function () {
+      return !!(document.fullscreenElement || document.webkitFullscreenElement
+             || document.mozFullScreenElement || document.msFullscreenElement);
+    };
+    window.FS.isSupported = function () {
+      var el = document.documentElement;
+      return !!(el.requestFullscreen || el.webkitRequestFullscreen
+             || el.mozRequestFullScreen || el.msRequestFullscreen);
+    };
+    window.FS.enter = function () {
+      var el = document.documentElement;
+      try {
+        if (el.requestFullscreen) return el.requestFullscreen();
+        if (el.webkitRequestFullscreen) return el.webkitRequestFullscreen();
+        if (el.mozRequestFullScreen) return el.mozRequestFullScreen();
+        if (el.msRequestFullscreen) return el.msRequestFullscreen();
+      } catch (e) {}
+      return Promise.resolve();
+    };
+    window.FS.exit = function () {
+      try {
+        if (document.exitFullscreen) return document.exitFullscreen();
+        if (document.webkitExitFullscreen) return document.webkitExitFullscreen();
+        if (document.mozCancelFullScreen) return document.mozCancelFullScreen();
+        if (document.msExitFullscreen) return document.msExitFullscreen();
+      } catch (e) {}
+      return Promise.resolve();
+    };
+    window.FS.toggle = function () {
+      return window.FS.isActive() ? window.FS.exit() : window.FS.enter();
+    };
+    ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'].forEach(function (ev) {
+      document.addEventListener(ev, _fsNotify);
+    });
+    // ⌨ Keyboard shortcut — `F` toggles fullscreen as long as no input is
+    // focused. Skip when an editable element has focus so typing in chat
+    // / deck name doesn't accidentally flip fullscreen.
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'f' && e.key !== 'F') return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      var t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      e.preventDefault();
+      window.FS.toggle();
+    });
+  })();
+</script>
 <div id="app" class="app"></div>
 <script>
   'use strict';
@@ -53115,8 +53606,116 @@ async function boeRefreshWallet() {
     BankEthos._wallet = (r && r.data) || null;
   } catch (e) { BankEthos._wallet = null; }
 }
+// Token & Blockchain Disclaimer (Hidn Studios) — shown once before the first
+// wallet interaction on this device; accepting continues straight into the
+// MetaMask flow. Built with createElement/textContent (no HTML injection).
+function boeShowMtDisclaimer() {
+  try {
+    const ID = 'boe-mt-disclaimer';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const SECTIONS = [
+      ['Our Position on Blockchain & Digital Assets',
+        'Hidn Studios is not a cryptocurrency project. We are a game studio building a long-term gaming ecosystem where blockchain technology is used only to provide players with verifiable ownership of certain in-game assets and to power gameplay features.',
+        "Our token exists to enhance the player experience, reward participation, and support the game's economy—not to encourage speculation or short-term trading."],
+      ['Our Philosophy', 'Our priority has always been simple:', { s: 'Build first. Deliver first. Earn trust first.' },
+        'We believe too many projects focus on marketing campaigns, token hype, and price speculation before delivering a real product. We refuse to build our community that way.',
+        'Instead, our development philosophy is:',
+        ['Build a great game.', 'Deliver meaningful updates.', 'Create long-term utility.', 'Reward players for participating.', 'Let value come from the strength of the ecosystem—not artificial hype.']],
+      ['Utility First', 'The Mythic Token is designed to support gameplay and ecosystem functionality, including features such as:',
+        ['Player rewards', 'Marketplace functionality', 'Guilds, businesses, land, and other in-game systems', 'Governance features where applicable', 'Future gameplay mechanics introduced by the development team'],
+        'The token is intended to serve as a utility within the Mythic Spellbook ecosystem.'],
+      ['Not an Investment Product',
+        'The Mythic Token is not intended to represent an investment, security, equity interest, ownership stake in the company, profit-sharing agreement, or financial instrument.',
+        'Purchasing, earning, or holding the token should not be interpreted as an expectation of profits or financial returns.',
+        "Users should participate because they enjoy the game and wish to engage with its ecosystem—not because they expect the token's market value to increase."],
+      ['No Price Promises', 'We make no promises or guarantees regarding:',
+        ['Token price', 'Appreciation in value', 'Liquidity', 'Secondary market availability', 'Future exchange listings', 'Financial returns'],
+        'Token prices, if traded on third-party platforms, are determined entirely by independent market participants, and not by Mythic Spellbook or its developers.'],
+      ['Sustainable Development Over Hype', 'Our resources will always prioritize:',
+        ['Game development', 'Server infrastructure', 'New content', 'Player experience', 'Security', 'Community support', 'Long-term ecosystem growth'],
+        'We will never sacrifice product quality simply to generate temporary excitement around a token.'],
+      ['Community Before Speculation',
+        'We believe blockchain should solve real problems inside games—not become the game itself.',
+        'Our goal is to create one of the best strategy card games in the world. If blockchain technology helps improve ownership, persistence, rewards, or player freedom, we will use it responsibly. If traditional technology provides a better solution, we will use that instead.',
+        { s: 'Technology is a tool—not our identity.' }],
+      ['Our Commitment',
+        'At Hidn Studios, we are building a gaming company first and a blockchain-enabled ecosystem second.',
+        ['Players come before token holders.', 'Gameplay comes before speculation.', 'Utility comes before hype.'],
+        'Our success will be measured by the quality of the worlds we build, the communities we create, and the experiences players enjoy—not by short-term market movements.'],
+    ];
+    const ov = document.createElement('div');
+    ov.id = ID;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483400;display:flex;align-items:center;justify-content:center;background:rgba(4,3,1,0.82);backdrop-filter:blur(4px);padding:16px;font-family:inherit';
+    const box = document.createElement('div');
+    box.style.cssText = 'width:min(640px,94vw);max-height:88vh;display:flex;flex-direction:column;background:linear-gradient(180deg,#161007,#0c0903);border:1px solid rgba(212,175,55,0.55);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,0.75);color:#ffe6b0';
+    const head = document.createElement('div');
+    head.style.cssText = 'padding:18px 22px 12px;border-bottom:1px solid rgba(212,175,55,0.25)';
+    const kicker = document.createElement('div');
+    kicker.textContent = 'HIDN STUDIOS · MYTHIC SPELLBOOK';
+    kicker.style.cssText = 'font-size:0.68rem;letter-spacing:0.16em;color:#d4af37;font-weight:800';
+    const title = document.createElement('div');
+    title.textContent = 'Token & Blockchain Disclaimer';
+    title.style.cssText = "font-family:'Cinzel',serif;font-weight:800;color:#ffcf5a;font-size:1.25rem;margin-top:3px";
+    const sub = document.createElement('div');
+    sub.textContent = 'Please read before connecting a wallet or interacting with the Mythic Token.';
+    sub.style.cssText = 'font-size:0.78rem;color:#caa46a;margin-top:3px';
+    head.appendChild(kicker); head.appendChild(title); head.appendChild(sub);
+    const body = document.createElement('div');
+    body.style.cssText = 'overflow-y:auto;padding:14px 22px;display:flex;flex-direction:column;gap:14px';
+    for (const sec of SECTIONS) {
+      const wrapS = document.createElement('div');
+      const h = document.createElement('div');
+      h.textContent = sec[0];
+      h.style.cssText = 'font-weight:800;color:#ff9a5a;font-size:0.9rem;margin-bottom:5px';
+      wrapS.appendChild(h);
+      for (let i = 1; i < sec.length; i++) {
+        const item = sec[i];
+        if (Array.isArray(item)) {
+          const ul = document.createElement('ul');
+          ul.style.cssText = 'margin:0 0 7px;padding-left:18px;display:flex;flex-direction:column;gap:3px';
+          for (const li of item) { const el = document.createElement('li'); el.textContent = li; el.style.cssText = 'font-size:0.8rem;color:#e8d4a8;line-height:1.55'; ul.appendChild(el); }
+          wrapS.appendChild(ul);
+        } else if (item && typeof item === 'object' && item.s) {
+          const p = document.createElement('p'); p.textContent = item.s;
+          p.style.cssText = 'font-size:0.86rem;color:#ffe6b0;font-weight:800;line-height:1.55;margin:0 0 7px';
+          wrapS.appendChild(p);
+        } else {
+          const p = document.createElement('p'); p.textContent = item;
+          p.style.cssText = 'font-size:0.8rem;color:#e8d4a8;line-height:1.6;margin:0 0 7px';
+          wrapS.appendChild(p);
+        }
+      }
+      body.appendChild(wrapS);
+    }
+    const foot = document.createElement('div');
+    foot.style.cssText = 'padding:12px 22px 16px;border-top:1px solid rgba(212,175,55,0.25);display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap';
+    const noBtn = document.createElement('button');
+    noBtn.textContent = 'Not now';
+    noBtn.style.cssText = 'cursor:pointer;border-radius:9px;padding:0.55rem 1rem;border:1px solid rgba(212,175,55,0.4);background:rgba(20,15,6,0.8);color:#caa46a;font-weight:800;font-family:inherit';
+    noBtn.onclick = () => { try { ov.remove(); } catch (e) {} };
+    const okBtn = document.createElement('button');
+    okBtn.textContent = 'I understand — continue';
+    okBtn.style.cssText = 'cursor:pointer;border-radius:9px;padding:0.55rem 1.2rem;border:1px solid #d4af37;background:linear-gradient(180deg,#caa23e,#7a5a18);color:#1a1206;font-weight:900;font-family:inherit';
+    okBtn.onclick = () => {
+      try { localStorage.setItem('ms_mt_disclaimer_v1', new Date().toISOString()); } catch (e) {}
+      try { ov.remove(); } catch (e) {}
+      // Seamless: continue straight into the wallet flow via the bar button so
+      // the normal handler (confirm/relink + repaint) runs.
+      try { const w = document.getElementById('boe-wallet'); if (w) w.click(); } catch (e) {}
+    };
+    foot.appendChild(noBtn); foot.appendChild(okBtn);
+    box.appendChild(head); box.appendChild(body); box.appendChild(foot);
+    ov.appendChild(box);
+    ov.addEventListener('mousedown', (e) => { if (e.target === ov) { try { ov.remove(); } catch (e2) {} } });
+    document.body.appendChild(ov);
+  } catch (e) {}
+}
 async function boeLinkWallet() {
   try {
+    // Disclaimer gate — first wallet interaction on this device.
+    let _mtDiscOk = false;
+    try { _mtDiscOk = !!localStorage.getItem('ms_mt_disclaimer_v1'); } catch (e) {}
+    if (!_mtDiscOk) { boeShowMtDisclaimer(); return false; }
     if (!window.ethereum) { showToast('🦊 MetaMask not detected. Install the extension — or link on mythicspellbook.xyz → Backing → Stake MT.', 7000); return false; }
     const accts = await window.ethereum.request({ method: 'eth_requestAccounts' });
     const addr = accts && accts[0];
@@ -69287,7 +69886,15 @@ function _baseCampRooms() {
       try { const f = (typeof _campFac === 'function') ? _campFac(fid) : null; if (f) { facMax = f.maxLevel | 0; facName = f.name || ''; } } catch (e) {}
       let fx = '';
       try { const sr = (typeof _campStaffRoom === 'function') ? _campStaffRoom(rid) : null; if (sr) fx = sr.fx || ''; } catch (e) {}
-      out[rid] = { level: lv, occ: [], facMax: facMax, facName: facName, fx: fx };
+      // 🖼 Uploaded room art (admin) — absolutised so it resolves inside the
+      // iframe, and blob: skipped (a blob URL is scoped to the parent document
+      // and cannot load in another one).
+      let art = '';
+      try {
+        const raw = (typeof Forge !== 'undefined' && Forge.campArt) ? Forge.campArt[rid] : '';
+        if (typeof raw === 'string' && raw && raw.slice(0, 5) !== 'blob:') art = _abs(raw);
+      } catch (e) {}
+      out[rid] = { level: lv, occ: [], facMax: facMax, facName: facName, fx: fx, art: art };
     });
     const slots = (typeof Camp !== 'undefined' && Array.isArray(Camp.slots)) ? Camp.slots : [];
     slots.forEach((s) => {
@@ -69566,6 +70173,8 @@ function _baseSendData() {
       bag: _baseFieldBag(),
       camprooms: _baseCampRooms(),
       heroBeds: _baseHeroBeds(),
+      // 👑 lets the bunker show the per-room 📷 upload slot to admins only
+      isAdmin: (typeof isAdmin === 'function') ? !!isAdmin() : false,
     }, window.location.origin);   // 🔒 same-origin iframe — never use '*'
   } catch (e) {}
 }
@@ -71432,7 +72041,10 @@ function mountBaseBuilder() {
     }
     if (!f) {
       f = document.createElement('iframe');
-      f.id = FID; f.src = 'base/index.html';
+      f.id = FID;
+      // Cache-bust the bunker shell with the build stamp — the inner .jsx/.css
+      // carry their own ?v=, but a stale shell would keep pointing at the old ones.
+      f.src = 'base/index.html?v=' + (window.BUILD_VERSION || '');
       // Start transparent over the dark game backdrop and ease IN once the
       // bunker's React tree has painted — no black flash / hard cut.
       f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0a0612;opacity:0;transition:opacity .5s ease';
@@ -71464,6 +72076,46 @@ function mountBaseBuilder() {
           else if (d.action === 'card' && d.id) {
             // A roster member was clicked — open the real read-only card view.
             if (typeof _baseOpenCard === 'function') _baseOpenCard(d.id);
+          }
+          else if (d.action === 'roomArt' && d.id) {
+            // 🖼 Per-room art upload. The picker + resize live in the PARENT
+            // (the iframe has no access to Forge or the save path); the bunker
+            // just asks. Stored in Forge.campArt[roomId] — same map, same
+            // persistence, same publish pipeline as facility art.
+            try {
+              if (typeof isAdmin !== 'function' || !isAdmin()) { showToast('👑 Admin only.'); return; }
+              const _rid = String(d.id);
+              const inp = document.createElement('input');
+              inp.type = 'file'; inp.accept = 'image/*';
+              inp.style.cssText = 'position:fixed;left:-9999px';
+              document.body.appendChild(inp);
+              inp.onchange = async () => {
+                try {
+                  const file = inp.files && inp.files[0];
+                  if (file) {
+                    const url = (typeof resizeImage === 'function') ? await resizeImage(file, 1024) : null;
+                    if (url) {
+                      if (!Forge.campArt || typeof Forge.campArt !== 'object') Forge.campArt = {};
+                      Forge.campArt[_rid] = url;
+                      try { saveForge(); } catch (e) {}
+                      showToast('🖼 Room art set for ' + _rid + ' — Publish Catalog Art to share it.');
+                      try { _baseSendData(); } catch (e) {}
+                    }
+                  }
+                } catch (e) { try { showToast('⚠ Could not load that image.'); } catch (_) {} }
+                try { inp.remove(); } catch (e) {}
+              };
+              inp.click();
+            } catch (e) {}
+          }
+          else if (d.action === 'roomArtClear' && d.id) {
+            try {
+              if (typeof isAdmin !== 'function' || !isAdmin()) return;
+              if (Forge.campArt) delete Forge.campArt[String(d.id)];
+              try { saveForge(); } catch (e) {}
+              showToast('🧹 Room art cleared.');
+              try { _baseSendData(); } catch (e) {}
+            } catch (e) {}
           }
           else if (d.action === 'workers') {
             // Hire NPC staff / station units to run the camp rooms.
@@ -183060,6 +183712,32 @@ function _describeOnPlayEffectBody(eff) {
     case 'discardCards': { const n = eff.amount || 1; const ch = (eff.chance == null) ? 100 : eff.chance; return `Forces opponent to discard ${n} card${n === 1 ? '' : 's'} from their hand${ch < 100 ? ` (${ch}% chance per card)` : ''}.`; }
     case 'kalonSource':  return `Grants ${eff.amount || 1} Kalon source (toward a transformation).`;
     case 'bounceUnit':   return `Bounces an enemy ${within} back to their hand.`;
+    // ── effects that previously fell through to the generic label ──────────
+    case 'selfToHand':   return `Returns this card from your graveyard to your hand.`;
+    case 'boardWipe':    { const t = eff.wipeTarget === 'all' ? 'EVERY unit on the board' : eff.wipeTarget === 'allies' ? 'your own units' : 'every enemy unit'; return `Destroys ${t}${eff.wipeSpareHero === false ? '' : ' (heroes are spared)'}.`; }
+    case 'purgeAscended':return `Destroys ALL Kalons and Archons on both sides.`;
+    case 'applyBuffDebuff': { const who = eff.buffTarget === 'self' ? 'itself' : eff.buffTarget === 'allies' ? `allies ${within}` : eff.buffTarget === 'all' ? `every unit ${within}` : `enemies ${within}`; return `Applies ${st ? st.icon + ' ' + st.name : 'a status'}${dur ? ` for ${dur}` : ''} to ${who}.`; }
+    case 'sacrifice':    return `You offer a friendly unit; in return this card ${eff.sacrificeEffect === 'draw' ? `draws ${eff.amount || 1}` : eff.sacrificeEffect === 'gainEnergy' ? `grants ${eff.amount || 1} energy` : eff.sacrificeEffect === 'healSelf' ? `heals itself ${eff.amount || 1}` : `gains ${st ? st.name : 'a buff'}`}.`;
+    case 'verdict':      return `Your opponent chooses which of this card's two effects resolves.`;
+    case 'destroyFrozen':return `Destroys every frozen unit ${within}.`;
+    case 'burnBurst':    return `Detonates burn stacks ${within} for extra damage.`;
+    case 'vanishTribe':  return `Banishes EVERY enemy unit matching the card filter to the Void.`;
+    case 'costSeal':     return `While this lives, the enemy cannot play cards costing ${eff.amount || 1} or more.`;
+    case 'bestow':       return `Grants its own passive to an ally ${within}.`;
+    case 'callLock':     return `Locks the enemy out of ${eff.callLockMode === 'either' ? 'summons and spells' : eff.callLockMode || 'those plays'} for the turn.`;
+    case 'banishUnit':   return `Removes ${eff.amount > 1 ? eff.amount + ' enemies' : 'an enemy'} ${within} from play entirely (to the Void).`;
+    case 'millEnemy':    return `Mills the top ${eff.amount || 1} card${(eff.amount || 1) === 1 ? '' : 's'} of the ENEMY deck into their graveyard.`;
+    case 'surveil':      return `Looks at the top ${eff.amount || 1} of your deck and buries ${(eff.amount || 1) === 1 ? 'it' : 'them'}.`;
+    case 'banishDeck':   return `Banishes the top ${eff.amount || 1} card${(eff.amount || 1) === 1 ? '' : 's'} of the enemy deck to the Void.`;
+    case 'banishHand':   return `Banishes ${eff.amount || 1} card${(eff.amount || 1) === 1 ? '' : 's'} from the enemy hand to the Void.`;
+    case 'damageFromGrave': return `Deals damage scaled by the cards in your graveyard.`;
+    case 'drawFromVoid': return `Draws ${eff.amount || 1} card${(eff.amount || 1) === 1 ? '' : 's'} out of the Void.`;
+    case 'recycleVoid':  return `Shuffles your Void back into your deck.`;
+    case 'voidFromGrave':return `Moves ${eff.amount || 1} card${(eff.amount || 1) === 1 ? '' : 's'} from your graveyard to the Void.`;
+    case 'fight':        return `Forces a fight between this unit and an enemy ${within}.`;
+    case 'proliferate':  return `Extends every status already on units ${within} by ${eff.amount || 1} turn${(eff.amount || 1) === 1 ? '' : 's'}.`;
+    case 'scry':         return `Looks at the top ${eff.amount || 1} of your deck and reorders ${(eff.amount || 1) === 1 ? 'it' : 'them'}.`;
+    case 'inspire':      return `Inspires allies ${within} — they gain ${st ? st.icon + ' ' + st.name : 'a boost'}${dur ? ` for ${dur}` : ''}.`;
     case 'singleKill':   return `${eff.chance || 0}% chance to execute the nearest enemy ${within}.`;
     case 'takeControl':  { const n = Math.max(1, eff.amount || 1); const cd = eff.controlDuration | 0; return `${eff.chance || 100}% chance to seize control of ${n > 1 ? `up to ${n} enemies` : 'an enemy'} ${within}${cd > 0 ? ` for ${cd} turn${cd === 1 ? '' : 's'}` : ' permanently'}.`; }
     case 'transformAlly':return `Transforms a nearby ally ${within} into a Kalon.`;

@@ -34597,7 +34597,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119n5';
+  window.BUILD_VERSION = 'v119n7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -55280,7 +55280,7 @@ async function _profReferralPaint() {
       '<button class="btn-secondary btn-mini" id="prof-ref-copy">📋 Copy code</button>' +
       '<button class="btn-secondary btn-mini" id="prof-ref-link">🔗 Copy invite link</button>' +
     '</div>' +
-    '<div class="small-text" style="color:#e8d4a8;line-height:1.55;margin-bottom:10px">Invite a friend to Mythic Spellbook and you\'ll <b style="color:#9fe8bd">both</b> be rewarded! Earn <b style="color:#ffcf5a">5,000 🔥 Cinder</b>, <b style="color:#cdb6ff">1 Birth of the Universe I Booster Pack</b>, and <b style="color:#9ab9c9">5 👑 Aza Coins</b> when your referral qualifies — delivered on your next sign-in.</div>' +
+    '<div class="small-text" style="color:#e8d4a8;line-height:1.55;margin-bottom:10px">Invite a friend to Mythic Spellbook and you\'ll <b style="color:#9fe8bd">both</b> be rewarded! Earn <b style="color:#ffcf5a">5,000 🔥 Cinder</b>, <b style="color:#cdb6ff">1 Birth of the Universe I Booster Pack</b>, and <b style="color:#9ab9c9">5 👑 Aza Coins</b> when your referral qualifies — a 🎁 Claim button appears in Rewards &amp; Gifts right on this page.</div>' +
     '<div style="background:rgba(0,0,0,0.35);border:1px solid rgba(120,90,200,0.35);border-radius:10px;padding:10px 12px;margin-bottom:10px">' +
       '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:0.72rem;letter-spacing:0.12em;color:#cdb6ff;font-weight:800;margin-bottom:6px"><span>Ⓜ MYTHIC TOKEN AIRDROP PROGRESS</span><span>' + (next ? refs + ' / ' + next[0] + ' → ' + next[1].toLocaleString() + ' Ⓜ' : 'All milestones reached!') + '</span></div>' +
       '<div style="height:8px;border-radius:99px;background:rgba(0,0,0,0.5);border:1px solid rgba(120,90,200,0.35);overflow:hidden;margin-bottom:8px"><div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#7C6BFF,#B9A8E8)"></div></div>' +
@@ -55316,18 +55316,10 @@ async function _profReferralPaint() {
           : res.error === 'bad_code' ? '⚠ That code doesn’t exist — check the spelling.'
           : '⚠ Redeem failed — try again.', 5200);
       } else {
-        showToast('🤝 Code accepted — you and ' + res.referrer_name + ' BOTH earned 5,000 🔥 Cinder, a Birth of the Universe I Booster Pack & 5 👑 Aza Coins!', 7000);
-        // The RPC credited this account server-side (+5000 gems / +5 aza / pack
-        // receipt). Mirror the SAME delta locally — the game's save sweep uploads
-        // local currency, so skipping this would clobber the server credit —
-        // then pull the receipt and open the pack right now instead of waiting
-        // for the next sign-in hydration.
-        try { Profile.gems = (Profile.gems | 0) + 5000; Profile.sovereigns = (Profile.sovereigns | 0) + 5; saveProfile(); } catch (e) {}
-        try {
-          const pr = await Cloud.client.from('user_profiles').select('forge').eq('user_id', Profile.cloud.userId).single();
-          const wp = pr && pr.data && pr.data.forge && Array.isArray(pr.data.forge.webPurchases) ? pr.data.forge.webPurchases : null;
-          if (wp && typeof redeemWebPurchases === 'function') redeemWebPurchases(wp);
-        } catch (e) {}
+        showToast('🤝 Code accepted — you and ' + res.referrer_name + ' BOTH earned 5,000 🔥 Cinder, a Birth of the Universe I Booster Pack & 5 👑 Aza Coins! Claim them in 🎁 Rewards & Gifts.', 7500);
+        // Rewards land as pending rows in the gifts inbox — refresh it so the
+        // claim buttons appear on this very profile page without a re-visit.
+        try { if (typeof refreshGiftsCache === 'function') await refreshGiftsCache(); } catch (e) {}
         try { if (typeof render === 'function') render(); } catch (e) {}
       }
     } catch (e) { showToast('⚠ Redeem failed — try again.', 4200); }
@@ -76205,8 +76197,8 @@ const ONPLAY_TYPES = [
   //   vanishGravePick   — the owner browses that graveyard and chooses
   //   vanishGraveUnit   — same picker, restricted to UNIT cards
   { id: 'vanishGraveRandom', label: '🌫 Vanish from Graveyard (random card → Void)',        needs: ['amount', 'graveSide'] },
-  { id: 'vanishGravePick',   label: '🌫🔍 Vanish Best Card (strongest in a graveyard → Void)', needs: ['amount', 'graveSide'] },
-  { id: 'vanishGraveUnit',   label: '🌫⚔ Vanish Best UNIT (strongest unit in a graveyard → Void)', needs: ['amount', 'graveSide'] },
+  { id: 'vanishGravePick',   label: '🌫🔍 Vanish — YOU choose from a graveyard (AI takes the strongest)', needs: ['amount', 'graveSide'] },
+  { id: 'vanishGraveUnit',   label: '🌫⚔ Vanish a UNIT — YOU choose (AI takes the strongest)', needs: ['amount', 'graveSide'] },
   { id: 'negateGraveyard', label: '🔒 Negate Graveyard (seal grave effects for N turns)', needs: ['graveSide', 'statusDuration'] },
   // 🪤 ===== COUNTER-PLAY REMOVAL EFFECTS =====
   // Wipe boardstate that the opponent set up. Each removal is symmetric
@@ -82629,12 +82621,24 @@ function _applyOnPlayOne(state, unit, card) {
       if (!idxs.length) continue;
       // Choose. The interactive picker is a follow-up for the PLAYER on their own
       // turn; anything else resolves immediately so the AI loop never blocks.
-      // ⚠ TARGETED-BY-COST, NOT PLAYER-PICKED (yet). _openDeckSearchModal is
-      // hardwired to the PLAYER's own piles, so pointing a picker at the ENEMY
-      // graveyard needs a `side` threaded through both its render and commit
-      // paths — a shared component several effects rely on. Until that lands,
-      // 'pick' deterministically takes the STRONGEST card so the effect always
-      // does something real rather than silently nothing.
+      // 🧿 PLAYER PICKS (v119n7). _openDeckSearchModal now takes a `side`, so the
+      // picker can browse the graveyard it is actually pointed at.
+      //
+      // ⚠ Only for the PLAYER, and only on their own turn. A modal opened inside
+      // the AI's step loop would block the turn waiting on a click that never
+      // comes — the same rule the response window and deck search follow. The AI
+      // keeps the deterministic strongest-card path below.
+      if (pick && owner === 'player' && state.turn === 'player'
+          && typeof _openDeckSearchModal === 'function' && !(App.ui && App.ui.aiBusy)) {
+        try {
+          const _ids = idxs.map(x => x.c && (x.c.id || x.c.cardId)).filter(Boolean);
+          _openDeckSearchModal('any', _ids, unit.name || 'Card', 'void',
+                               Math.min(n, idxs.length), 'grave', null, 0, t);
+          log.push({ msg: `🌫🔍 ${unit.name} reaches into ${t === owner ? 'your' : "the enemy's"} graveyard — choose what to banish.`,
+                     color: 'green' });
+          return { ...state, log };
+        } catch (e) { try { console.warn('[vanishGravePick]', e); } catch (_) {} }
+      }
       let chosen;
       if (pick) {
         chosen = idxs.slice().sort((a, b) => {
@@ -124859,7 +124863,10 @@ function renderDeckSearchModal() {
   // / Void). Everything downstream (detail view, tiles, selection) works off `deck`,
   // so resolving the source here is all it takes.
   const _zone = _summonZone(ds.source);
-  const deck = Array.isArray(s.player[_zone.key]) ? s.player[_zone.key] : [];
+  // 🧿 Read the pile belonging to `ds.side` — 'player' for everything except
+  // the graveyard-vanish picker, which browses the OPPONENT's grave.
+  const _dsSide = (ds.side === 'ai') ? 'ai' : 'player';
+  const deck = Array.isArray(s[_dsSide][_zone.key]) ? s[_dsSide][_zone.key] : [];
   const want = ds.searchType || 'any';
   // Optional specific-card allow-list — when present it overrides the type
   // filter so the player can only pull the cards the effect names.
@@ -125065,11 +125072,16 @@ function _deckSearchSelect(instanceId) {
   const ds = (App.ui && App.ui.deckSearch) || {};
   const toGrave = (ds.dest === 'grave');
   const toField = (ds.dest === 'field');       // 🌟 Summon deploys onto the board
+  const toVoid  = (ds.dest === 'void');        // 🌫 Vanish banishes it outright
   const fromGrave = (ds.source === 'grave');   // ♻️ Salvage reads the graveyard
-  const deck = Array.isArray(s.player.deck) ? s.player.deck.slice() : [];
-  const hand = Array.isArray(s.player.hand) ? s.player.hand.slice() : [];
-  const grave = Array.isArray(s.player.graveyard) ? s.player.graveyard.slice() : [];
-  const voidPile = Array.isArray(s.player.void) ? s.player.void.slice() : [];
+  // 🧿 Operate on `ds.side`'s piles. Defaults to 'player', so every existing
+  // caller behaves exactly as before.
+  const _dsSide = (ds.side === 'ai') ? 'ai' : 'player';
+  const _dsP = s[_dsSide] || s.player;
+  const deck = Array.isArray(_dsP.deck) ? _dsP.deck.slice() : [];
+  const hand = Array.isArray(_dsP.hand) ? _dsP.hand.slice() : [];
+  const grave = Array.isArray(_dsP.graveyard) ? _dsP.graveyard.slice() : [];
+  const voidPile = Array.isArray(_dsP.void) ? _dsP.void.slice() : [];
   // The pile the card is being taken OUT of — any of the four zones a summon may
   // reach into. Held by reference in `piles` so the commit below writes them all back.
   const piles = { deck: deck, hand: hand, graveyard: grave, void: voidPile };
@@ -125099,7 +125111,10 @@ function _deckSearchSelect(instanceId) {
       return;
     }
     srcPile.splice(idx, 1);
-    let ns = { ...s, units: res.units, player: { ...s.player, deck: deck, hand: hand, graveyard: grave, void: voidPile } };
+    // Keyed to _dsSide for the same reason as the commit below — the vanish picker
+    // never uses dest:'field', but leaving one branch hardcoded is how the two
+    // fall out of sync the first time someone authors an AI-side summon.
+    let ns = { ...s, units: res.units, [_dsSide]: { ...(s[_dsSide] || s.player), deck: deck, hand: hand, graveyard: grave, void: voidPile } };
     // 🌐 The summoned unit's own on-play / anywhere triggers fire, exactly as they
     // do for Grave Steal and every other spawn path.
     try { if (typeof _fireAnywhereForSummons === 'function') ns = _fireAnywhereForSummons(ns, res); } catch (e) {}
@@ -125132,7 +125147,12 @@ function _deckSearchSelect(instanceId) {
   // 💸 Cost discount on the fetched card (only when going to hand — a burial keeps its
   // printed cost). _applySearchCostDelta clones, so `card` above is never mutated.
   if (!toGrave && ds.costDelta && typeof _applySearchCostDelta === 'function') moved = _applySearchCostDelta(moved, ds.costDelta);
-  if (toGrave) grave.push(moved); else hand.push(moved);
+  // 🌫 `toVoid` is the vanish picker's destination — the card is banished, not
+  // salvaged. Checked FIRST because void and grave are mutually exclusive and a
+  // banished card must never also land in the graveyard.
+  if (toVoid) voidPile.push(moved);
+  else if (toGrave) grave.push(moved);
+  else hand.push(moved);
   // Fisher-Yates shuffle of the remaining DECK so a search doesn't leak deck order.
   // Only when the DECK was the pile browsed — the graveyard's order is meaningful
   // (Salvage and several grave effects work newest-first), and shuffling the hand or
@@ -125143,7 +125163,11 @@ function _deckSearchSelect(instanceId) {
       const t = deck[i]; deck[i] = deck[j]; deck[j] = t;
     }
   }
-  App.state = { ...s, player: { ...s.player, deck, hand, graveyard: grave, void: voidPile } };
+  // ⚠ WRITE BACK TO THE SIDE WE READ. This was hardcoded to `player:` — with the
+  // new `side` support that would have read the AI's graveyard and then written
+  // those piles onto the PLAYER, corrupting both. Keyed by _dsSide so read and
+  // write can never disagree.
+  App.state = { ...s, [_dsSide]: { ...(s[_dsSide] || s.player), deck, hand, graveyard: grave, void: voidPile } };
   try {
     if (Array.isArray(App.state.log)) {
       App.state.log.push(fromGrave
@@ -125510,17 +125534,21 @@ function _applySearchCostDelta(card, delta) {
   if (out.cost == null && out.energy == null) out.cost = 0;
   return out;
 }
-function _openDeckSearchModal(searchType, cardIds, sourceName, dest, remaining, source, filter, costDelta) {
+function _openDeckSearchModal(searchType, cardIds, sourceName, dest, remaining, source, filter, costDelta, side) {
   try {
     App.ui = App.ui || {};
     App.ui.deckSearch = {
+      // 🧿 WHOSE piles is this browsing? Defaults to the player, which is what
+      // every pre-existing caller means — only the graveyard-vanish picker points
+      // it at the opponent.
+      side: (side === 'ai') ? 'ai' : 'player',
       searchType: searchType || 'any',
       cardIds: (Array.isArray(cardIds) && cardIds.length) ? cardIds.slice() : null,
       filter: (filter && typeof filter === 'object') ? filter : null,
       costDelta: Math.max(0, costDelta | 0),
       detailId: null,
       unitName: sourceName || 'Unit',
-      dest: (dest === 'grave' || dest === 'field') ? dest : 'hand',
+      dest: (dest === 'grave' || dest === 'field' || dest === 'void') ? dest : 'hand',
       source: (source === 'grave' || source === 'hand' || source === 'void') ? source : 'deck',
       remaining: Math.max(1, Math.min(10, remaining | 0 || 1)),
     };
@@ -159240,6 +159268,7 @@ async function claimGift(g) {
     const mRes = cid.match(/^__res:(.+)__$/);
     const mItem = cid.match(/^__item:(.+)__$/);
     const mNode = cid.match(/^__node:(.+)__$/);
+    const mPack = cid.match(/^__pack:(.+)__$/);
     try {
       if (cid === '__cinder__') { if (typeof addGems === 'function') addGems(qty); }
       else if (cid === '__aza__') { if (typeof addSovereigns === 'function') addSovereigns(qty); }
@@ -159258,6 +159287,23 @@ async function claimGift(g) {
           return { error: 'PRN grant failed — ' + (((ins.error.message) || 'try again').slice(0, 80)) };
         }
         try { if (typeof nodeFetch === 'function') nodeFetch(); } catch (e) {}
+      }
+      else if (mPack) {
+        // 🎴 Booster-pack gift (referral rewards) — resolve the pack def the
+        // same way redeemWebPurchases does and open it free. If the catalog
+        // hasn't loaded the pack yet, un-claim so it stays in the inbox.
+        const pid = mPack[1];
+        const builtIn = (typeof PACK_DEFINITIONS !== 'undefined') ? PACK_DEFINITIONS.find(p => p.id === pid) : null;
+        const custom = ((typeof getAllCustomPacks === 'function') ? getAllCustomPacks() : (Forge.customPacks || [])).find(p => p.id === pid);
+        const packDef = builtIn || ((custom && typeof toEnginePackDef === 'function') ? toEnginePackDef(custom) : null);
+        if (!packDef || typeof openPack !== 'function') {
+          try { await Cloud.client.from('gifts').update({ status: 'pending', claimed_at: null }).eq('id', g.id); } catch (_) {}
+          return { error: 'That pack isn’t in your catalog yet — try again in a moment.' };
+        }
+        for (let i = 0; i < qty; i++) {
+          try { openPack(packDef, { free: true, source: 'gift' }); }
+          catch (e) { try { openPack(packDef); } catch (_) {} }
+        }
       }
       else if (cid === '__coupon__') {
         if (!Array.isArray(Profile.coupons)) Profile.coupons = [];
@@ -187640,7 +187686,7 @@ function _openNodeCity(nodeId) {
   if (document.getElementById('node-city-frame')) return;
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=119n4';
+  f.src = 'node-city/index.html?v=119n6';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);

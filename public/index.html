@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!--MIN-->﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -4187,6 +4187,97 @@
   .pbl-gem-slots { display:flex; gap:0.4rem; flex-wrap:wrap; }
   .pbl-hint { font-size:0.74rem; color:#7a6eac; font-style:italic; padding-top:0.5rem; border-top:1px solid rgba(255,255,255,0.06); font-family:sans-serif; }
   .pbl-empty { font-size:0.84rem; color:#6a5e8a; font-style:italic; padding:1rem 0; font-family:sans-serif; text-align:center; }
+  /* ⚙ SIDE DECK CONSOLE (v119n1) — the two-panel mockup: side pane left, cost-
+     grouped main deck right, lock-in state in the footer. */
+  .sdx { position:fixed; inset:0; display:flex; flex-direction:column; padding:14px 18px 0;
+         background:radial-gradient(120% 90% at 50% 0%, rgba(28,22,54,.9), rgba(6,5,14,.98));
+         font-family:'EB Garamond',Georgia,serif; }
+  .sdx-top { display:flex; align-items:center; gap:14px; margin-bottom:12px; }
+  .sdx-title { flex:1; display:flex; align-items:center; gap:11px;
+    font-family:'Cinzel',Georgia,serif; font-size:1.6rem; font-weight:800; letter-spacing:.08em;
+    text-transform:uppercase; color:#f0d68f; text-shadow:0 2px 14px rgba(212,175,55,.35); }
+  .sdx-clock { font-family:'Cinzel',serif; font-size:1.05rem; font-weight:800; letter-spacing:.1em;
+    padding:7px 16px; border-radius:9px; color:#f0d68f;
+    background:linear-gradient(180deg,rgba(212,175,55,.14),rgba(0,0,0,.3));
+    border:1px solid rgba(212,175,55,.5); min-width:88px; text-align:center; }
+  .sdx-clock.low { color:#ff8f7a; border-color:rgba(255,110,90,.7);
+    animation:sdxPulse 1s ease-in-out infinite; }
+  @keyframes sdxPulse { 0%,100%{opacity:.75} 50%{opacity:1} }
+  .sdx-tab { cursor:pointer; padding:9px 22px; border-radius:9px; font-family:'Cinzel',serif;
+    font-size:.78rem; letter-spacing:.14em; text-transform:uppercase; color:#c9bfa6;
+    background:rgba(255,255,255,.04); border:1px solid rgba(212,175,55,.32); }
+  .sdx-tab.active { color:#f6e2a8; border-color:rgba(212,175,55,.85);
+    background:linear-gradient(180deg,rgba(212,175,55,.2),rgba(212,175,55,.05));
+    box-shadow:0 0 18px rgba(212,175,55,.22) inset; }
+  .sdx-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(300px,.62fr) 1fr; gap:16px; }
+  .sdx-pane { display:flex; flex-direction:column; min-height:0; border-radius:12px;
+    background:linear-gradient(180deg,rgba(17,14,32,.96),rgba(8,7,17,.98));
+    border:1px solid rgba(212,175,55,.45); box-shadow:inset 0 0 60px rgba(212,175,55,.04); position:relative; }
+  .sdx-pane::before { content:""; position:absolute; inset:5px; border:1px solid rgba(212,175,55,.14);
+    border-radius:9px; pointer-events:none; }
+  .sdx-ph { display:flex; align-items:center; gap:10px; padding:13px 16px 9px; }
+  .sdx-ph h3 { margin:0; font-family:'Cinzel',Georgia,serif; font-size:1.15rem; font-weight:800;
+    letter-spacing:.1em; text-transform:uppercase; color:#f0d68f; }
+  .sdx-count { font-family:'Cinzel',serif; font-size:.82rem; font-weight:800; padding:4px 12px;
+    border-radius:999px; background:rgba(255,255,255,.05); border:1px solid rgba(212,175,55,.4); color:#e8dcc0; }
+  .sdx-count.ok { color:#8ce39a; border-color:rgba(140,227,154,.6); background:rgba(140,227,154,.09); }
+  .sdx-count.warn { color:#ffc46b; border-color:rgba(255,196,107,.5); }
+  .sdx-ready { font-family:'Cinzel',serif; font-size:.78rem; letter-spacing:.1em; color:#8ce39a; }
+  .sdx-sub { padding:0 16px 8px; font-size:.8rem; color:#8b93ad; }
+  .sdx-scroll { flex:1; min-height:0; overflow:auto; padding:0 12px 14px; }
+  .sdx-drop { margin:6px 12px 14px; flex:1; min-height:180px; border-radius:10px;
+    border:2px dashed rgba(212,175,55,.4); display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:9px; color:#6f6a58; }
+  .sdx-drop .g { font-size:3.2rem; opacity:.32; }
+  .sdx-costhdr { display:flex; align-items:center; gap:9px; margin:12px 4px 5px;
+    font-family:'Cinzel',serif; font-size:.72rem; letter-spacing:.2em; text-transform:uppercase; color:#c9a86a; }
+  .sdx-costhdr::after { content:""; flex:1; height:1px; background:linear-gradient(90deg,rgba(212,175,55,.4),transparent); }
+  .sdx-row { display:flex; align-items:center; gap:10px; padding:6px 9px; border-radius:7px;
+    margin-bottom:3px; background:rgba(255,255,255,.028); border:1px solid transparent; }
+  .sdx-row:hover { background:rgba(212,175,55,.09); border-color:rgba(212,175,55,.34); }
+  .sdx-cost { width:26px; height:26px; flex:0 0 26px; border-radius:50%; display:flex;
+    align-items:center; justify-content:center; font-family:'Cinzel',serif; font-size:.8rem;
+    font-weight:800; color:#f0d68f; background:rgba(212,175,55,.13); border:1px solid rgba(212,175,55,.55); }
+  .sdx-name { flex:1; min-width:0; font-family:'Cinzel',Georgia,serif; font-size:.95rem;
+    color:#e8dcc0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sdx-kind { font-size:.62rem; letter-spacing:.12em; text-transform:uppercase; padding:2px 8px;
+    border-radius:5px; border:1px solid rgba(255,255,255,.16); color:#a99e86; }
+  .sdx-qty { font-family:'Cinzel',serif; font-size:.78rem; color:#e8dcc0; padding:2px 9px;
+    border-radius:5px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.13); }
+  .sdx-move { cursor:pointer; font-family:'Cinzel',serif; font-size:.68rem; letter-spacing:.1em;
+    text-transform:uppercase; padding:4px 12px; border-radius:6px; color:#f0d68f;
+    background:linear-gradient(180deg,rgba(212,175,55,.16),rgba(0,0,0,.25));
+    border:1px solid rgba(212,175,55,.55); }
+  .sdx-move:hover { background:rgba(212,175,55,.3); color:#fff2c8; }
+  .sdx-foot { display:flex; align-items:center; gap:16px; padding:14px 4px 16px; }
+  .sdx-lock { flex:1; text-align:center; font-size:.86rem; color:#a99e86; }
+  .sdx-done { cursor:pointer; padding:13px 34px; border-radius:10px; font-family:'Cinzel',serif;
+    font-size:1rem; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color:#2e1f04;
+    background:linear-gradient(180deg,#f7d98a,#d9a441 58%,#b07c22);
+    border:1px solid #f0cf7a; box-shadow:0 6px 22px rgba(212,175,55,.35); }
+  .sdx-done[disabled] { opacity:.45; filter:grayscale(.4); cursor:not-allowed; box-shadow:none; }
+  .sdx-back { cursor:pointer; padding:12px 22px; border-radius:10px; font-family:'Cinzel',serif;
+    font-size:.82rem; letter-spacing:.1em; text-transform:uppercase; color:#c9bfa6;
+    background:rgba(255,255,255,.04); border:1px solid rgba(212,175,55,.34); }
+  @media (max-width:900px){ .sdx-body{grid-template-columns:1fr} }
+
+  /* ⚛ POLYCREATION SIGIL — the fusion cinematic's spinning core. Screen-blended
+     and semi-transparent so it frames the summon rather than covering it. */
+  .poly-cine-atom {
+    position: absolute; left: 50%; top: 50%; width: 300px; height: 300px;
+    transform: translate(-50%, -50%); object-fit: contain; pointer-events: none;
+    z-index: 2; opacity: 0.55; mix-blend-mode: screen;
+    filter: drop-shadow(0 0 22px rgba(255,180,60,0.85)) drop-shadow(0 0 46px rgba(80,160,255,0.6));
+    animation: polyAtomSpin 7s linear infinite, polyAtomBreathe 2.6s ease-in-out infinite;
+  }
+  @keyframes polyAtomSpin {
+    from { transform: translate(-50%, -50%) rotate(0deg); }
+    to   { transform: translate(-50%, -50%) rotate(360deg); }
+  }
+  @keyframes polyAtomBreathe { 0%,100% { opacity: 0.42; } 50% { opacity: 0.72; } }
+  /* The kalon's own icon must stay on top — it is the identity of the summon. */
+  .poly-cine-kalon-portrait { position: relative; z-index: 4; }
+
   .pbl-footer {
     display:flex; gap:0.7rem; align-items:center; justify-content:center;
     padding:0.9rem 1.5rem; border-top:1px solid rgba(184,136,255,0.18); flex-wrap:wrap; flex-shrink:0;
@@ -15260,6 +15351,28 @@
   .battle-screen.ai-busy #btn-end-turn { pointer-events: none; opacity: 0.6; }
 
   /* Flying unit marker on the board */
+  /* 🌟 FUSION MATERIAL — a soft pulsing sigil above a unit that is a listed
+     material for a Kalon in your Realm Deck. Pink to match the Polycreation
+     hover row, so the board hint and the menu action read as one thing. */
+  /* ⚛ POLYCREATION READY — shown ONLY while the fusion can actually be cast.
+     Two nested animations because one element cannot both orbit and bob from a
+     single transform: the wrapper bobs and pulses its glow, the inner icon spins. */
+  .fusion-marker {
+    position: absolute; top: -13px; left: 50%; transform: translateX(-50%);
+    width: 22px; height: 22px; line-height: 22px; text-align: center;
+    font-size: 0.95rem; pointer-events: none; z-index: 7; color: #ffca55;
+    animation: fusionBob 2.1s ease-in-out infinite;
+    filter: drop-shadow(0 0 5px rgba(255,180,60,0.95)) drop-shadow(0 0 13px rgba(90,170,255,0.65));
+  }
+  .fusion-marker img {
+    width: 100%; height: 100%; display: block; object-fit: contain;
+    animation: fusionSpin 3.6s linear infinite;
+  }
+  @keyframes fusionBob {
+    0%, 100% { transform: translateX(-50%) translateY(0)    scale(1);    opacity: 0.9; }
+    50%      { transform: translateX(-50%) translateY(-3px) scale(1.12); opacity: 1; }
+  }
+  @keyframes fusionSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .flying-marker {
     position: absolute;
     top: 2px;
@@ -34426,498 +34539,7 @@
   <div class="boot-splash-progress-wrap"><div id="boot-splash-bar" class="boot-splash-progress-bar"></div></div>
   <div id="boot-splash-step" class="boot-splash-step">Awakening the codex…</div>
 </div>
-<script>
-  // 🏷 BUILD VERSION — the ONE place to check what code a machine is running.
-  // Logged on boot, exposed on window.__mg.version, and shown as a tiny corner
-  // stamp so any player (or another computer) can be verified at a glance without
-  // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
-  // machines show different stamps, the older one is on stale code (hard-refresh);
-  // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119m2';
-  try {
-    console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
-      'font-weight:700;color:#b48cff', 'color:#7d7499');
-    window.__mg = window.__mg || {}; window.__mg.version = window.BUILD_VERSION;
-  } catch (e) {}
-
-  // 🔄 UPDATE CHECK (NO auto-reload — v118c4). We fetch the tiny UNCACHED version.txt to
-  // learn whether a newer build is deployed, but we DELIBERATELY DO NOT hard-reload or
-  // nuke caches on our own. Auto-reloading the instant a new version was seen yanked
-  // players/admin out of whatever they were doing (mid-battle, mid-Forge edit) and read
-  // as "the game randomly refreshes" — and a full-quota localStorage (the loop-guard
-  // setItem throwing) could even bounce it repeatedly. New code still reaches everyone
-  // WITHOUT interruption: the service worker serves fresh HTML on the player's next
-  // natural navigation, and the controllerchange "update ready" toast offers a one-click
-  // Reload when THEY choose. Here we only FLAG that an update exists.
-  (function () {
-    try {
-      if (location.search.indexOf('migrate=1') >= 0) return;
-      fetch('version.txt?cb=' + Date.now(), { cache: 'no-store' }).then(function (r) {
-        return r.ok ? r.text() : null;
-      }).then(function (txt) {
-        if (!txt) return;
-        var latest = String(txt).trim();
-        var running = window.BUILD_VERSION;
-        if (!latest || latest === running) return;
-        try { window.__mythicUpdateReady = true; } catch (e) {}
-        // 🔄 CONTROLLED one-time update (re-enabled v118e3, admin-approved). Reload ONCE
-        // when a newer build is live so publishes/fixes actually reach players — but only
-        // when SAFE (never mid-battle, never while typing in a field) and only ONCE per
-        // version (loop-guarded by __forcedReloadFor + the latest===running early-return
-        // that fires after the reload lands the new bundle). This is NOT the old "random
-        // refresh": that bug was a STUCK BUILD_VERSION that never matched version.txt so it
-        // reloaded on EVERY load — BUILD_VERSION is now bumped in lockstep every deploy.
-        try {
-          var already = null; try { already = localStorage.getItem('__forcedReloadFor'); } catch (e) {}
-          if (already === latest) { try { console.info('🔄 New version ' + latest + ' — already reloaded once; using the update ready toast.'); } catch (e) {} return; }
-          var _inBattle = false, _typing = false;
-          try { _inBattle = (typeof App !== 'undefined' && App && (App.screen === 'battle' || App.screen === 'battleImmediate')); } catch (e) {}
-          try { var _ae = document.activeElement; _typing = !!(_ae && (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA' || _ae.isContentEditable)); } catch (e) {}
-          if (_inBattle || _typing) { try { console.info('🔄 Update ' + latest + ' held — busy (battle/typing); will apply when idle or via the Reload toast.'); } catch (e) {} return; }
-          try { localStorage.setItem('__forcedReloadFor', latest); } catch (e) {}
-          try { console.info('🔄 Updating to ' + latest + ' (from ' + running + ')…'); } catch (e) {}
-          setTimeout(function () { try { location.reload(); } catch (e) {} }, 500);
-        } catch (e) {}
-      }).catch(function () {});
-    } catch (e) {}
-  })();
-
-  // Tiny, unobtrusive corner stamp. Fixed, click-through, always on top. Lets a
-  // non-technical player read off the exact version on any device.
-  window.addEventListener('load', function () {
-    try {
-      if (document.getElementById('mythic-build-stamp')) return;
-      var s = document.createElement('div');
-      s.id = 'mythic-build-stamp';
-      s.textContent = window.BUILD_VERSION;
-      s.style.cssText = 'position:fixed;right:6px;bottom:5px;z-index:2147483000;pointer-events:none;'
-        + 'font:600 10px/1 ui-monospace,monospace;letter-spacing:.04em;color:rgba(200,190,230,0.42);'
-        + 'text-shadow:0 1px 2px rgba(0,0,0,0.6);user-select:none';
-      document.body.appendChild(s);
-    } catch (e) {}
-  });
-
-  // ☁ FLOATING "Move Everything to Cloud" button — a fixed, lightweight FAB that runs the
-  // migration from ANY screen. This exists because the Pricing Admin panel (where the
-  // in-panel button lives) mounts heavy 3D editors and can crash on a huge library BEFORE
-  // you can click it. This FAB never renders images, so it can't crash — it's the safe way
-  // to escape the storage wall. Shown only to admins (polls until isAdmin resolves).
-  window.addEventListener('load', function () {
-    function tryMount() {
-      try {
-        // ☁ "Move to Cloud" FAB REMOVED (v118d1) — it cluttered the game UI.
-        // Cloud migration is still reachable from the Pricing Admin panel, the
-        // ?migrate=1 URL, and the standalone /cloud-migrate page.
-        var _staleFab = document.getElementById('mythic-cloud-fab'); if (_staleFab) { try { _staleFab.remove(); } catch (e) {} }
-        return true;   // never mount the FAB; also stops the retry poll
-        if (document.getElementById('mythic-cloud-fab')) return true;
-        if (typeof isAdmin !== 'function') return false;
-        if (!isAdmin()) return false;
-        var b = document.createElement('button');
-        b.id = 'mythic-cloud-fab';
-        b.type = 'button';
-        b.textContent = '☁ Move to Cloud';
-        b.title = 'Move ALL sprites/art off this browser onto the cloud, publish to players, and free local storage. Runs from any screen — no need to open the Pricing Admin panel (which can crash on a big library). Safe to re-run; keep the tab open.';
-        b.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:2147483600;'
-          + 'font:700 12px/1 ui-sans-serif,system-ui;color:#fff;cursor:pointer;'
-          + 'padding:9px 13px;border-radius:10px;border:1px solid rgba(255,255,255,0.25);'
-          + 'background:linear-gradient(180deg,#3a6ff0,#2a4fd0);box-shadow:0 4px 14px rgba(0,0,0,0.45)';
-        b.onclick = async function () {
-          if (typeof migrateEverythingToCloud !== 'function') { try { if (typeof showToast === 'function') showToast('Update to the latest build first (hard-refresh).'); } catch (e) {} return; }
-          var okGo = (typeof gcConfirm === 'function')
-            ? await gcConfirm('Move EVERYTHING to the cloud now?\n\nThe game screen will go to a blank progress page so it CANNOT run out of graphics memory (that is what has been crashing). It uploads all sprites + art as cloud URLs, publishes to players, then frees your local storage. 10–20 min. KEEP THIS TAB OPEN. Safe to re-run — it resumes.')
-            : window.confirm('Move everything to the cloud now? The screen goes blank on purpose. Keep this tab open (10–20 min).');
-          if (!okGo) return;
-          // 🧯 TEAR DOWN the game render → drop GPU/graphics memory to ~zero so a long
-          // migration cannot hit the decoded-image crash. The migration is pure data work
-          // (IDB read → upload → publish); it needs no on-screen game. We replace the whole
-          // page with a minimal, image-free progress screen. Functions stay defined in
-          // memory, so the migration keeps running; the user reloads when it's done.
-          try { window.__cloudMigrating = true; } catch (e) {}
-          try { if (typeof _memShedGraphics === 'function') _memShedGraphics(); } catch (e) {}
-          try {
-            document.title = 'Migrating to cloud…';
-            document.body.innerHTML = '<div style="position:fixed;inset:0;background:#0b0d16;color:#e8e6f2;'
-              + 'display:flex;flex-direction:column;align-items:center;justify-content:center;'
-              + "font-family:ui-sans-serif,system-ui;z-index:2147483647;padding:24px;text-align:center\">"
-              + '<div style="font-size:20px;font-weight:800;margin-bottom:14px">&#9729; Moving everything to the cloud&#8230;</div>'
-              + '<div id="cloudmig-line" style="font-size:15px;opacity:.9;max-width:640px;line-height:1.5">Starting&#8230;</div>'
-              + '<div style="font-size:12px;opacity:.55;margin-top:18px;max-width:600px;line-height:1.55">Keep this tab open. The game is hidden on purpose so it can\'t run out of graphics memory. This can take 10&#8211;20 minutes; it resumes if interrupted. A Reload button appears when it finishes.</div>'
-              + '<div id="cloudmig-actions" style="margin-top:22px"></div></div>';
-          } catch (e) {}
-          var line = document.getElementById('cloudmig-line');
-          var setLine = function (t) { try { if (line) line.textContent = t; } catch (e) {} };
-          var rep = null;
-          try {
-            rep = await migrateEverythingToCloud({
-              onStep: function (msg) { setLine(msg); },
-              onSpriteProgress: function (done, total, r) { setLine('Sprites ' + done + '/' + total + '  ·  ' + ((r && r.fixed) || 0) + ' uploaded' + (r && r.deadLocal ? ('  ·  ' + r.deadLocal + ' unreadable') : '')); },
-            });
-          } catch (e) { rep = { error: (e && e.message) || 'migration failed' }; }
-          setLine((rep && rep.verdict) || (rep && rep.error ? ('Error: ' + rep.error + ' (safe to re-run)') : 'Done.'));
-          try {
-            var acts = document.getElementById('cloudmig-actions');
-            if (acts) {
-              var rb = document.createElement('button');
-              rb.textContent = '↻ Reload Game';
-              rb.style.cssText = 'font:700 14px/1 ui-sans-serif,system-ui;color:#fff;cursor:pointer;padding:11px 18px;'
-                + 'border-radius:10px;border:1px solid rgba(255,255,255,0.25);background:linear-gradient(180deg,#3a6ff0,#2a4fd0)';
-              rb.onclick = function () { try { location.reload(); } catch (e) {} };
-              acts.appendChild(rb);
-            }
-          } catch (e) {}
-          try { console.info('[migrateEverythingToCloud]', rep); } catch (e) {}
-        };
-        document.body.appendChild(b);
-        return true;
-      } catch (e) { return false; }
-    }
-    if (tryMount()) return;
-    // isAdmin may not be ready at load — poll briefly, then give up (non-admins never see it).
-    var tries = 0;
-    var iv = setInterval(function () { tries++; if (tryMount() || tries > 40) clearInterval(iv); }, 1500);
-  });
-
-  // 🚑 CRASH-PROOF MIGRATION LINK. On a device that runs out of GRAPHICS memory just
-  // rendering the game (huge library → GPU crash on any screen), clicking an in-game button
-  // is fragile — the crash can pre-empt it. Loading the game with ?migrate=1 sets
-  // __cloudMigrating from the FIRST frame, so render() bails and the heavy title NEVER
-  // draws (no images decoded → GPU stays near zero). The game code still loads (functions
-  // defined, Supabase session restored) but nothing renders; we then auto-run the migration
-  // on a blank page. This is the reliable escape hatch. URL: <origin>/?migrate=1
-  try { if (location.search.indexOf('migrate=1') >= 0) window.__cloudMigrating = true; } catch (e) {}
-
-  window.addEventListener('load', function () {
-    try { if (location.search.indexOf('migrate=1') < 0) return; } catch (e) { return; }
-    window.__cloudMigrating = true;
-    try {
-      document.title = 'Migrating to cloud…';
-      document.body.innerHTML = '<div style="position:fixed;inset:0;background:#0b0d16;color:#e8e6f2;'
-        + 'display:flex;flex-direction:column;align-items:center;justify-content:center;'
-        + "font-family:ui-sans-serif,system-ui;z-index:2147483647;padding:24px;text-align:center\">"
-        + '<div style="font-size:20px;font-weight:800;margin-bottom:14px">&#9729; Cloud migration</div>'
-        + '<div id="cloudmig-line" style="font-size:15px;opacity:.9;max-width:640px;line-height:1.5">Preparing&#8230; (loading + signing in)</div>'
-        + '<div style="font-size:12px;opacity:.55;margin-top:18px;max-width:600px;line-height:1.55">This page never draws the game, so it can\'t run out of graphics memory. Keep the tab open — 10&#8211;20 min, resumes if interrupted. A Reload button appears when it finishes.</div>'
-        + '<div id="cloudmig-actions" style="margin-top:22px"></div></div>';
-    } catch (e) {}
-    var line = function () { return document.getElementById('cloudmig-line'); };
-    var setLine = function (t) { try { var l = line(); if (l) l.textContent = t; } catch (e) {} };
-    var addReload = function () {
-      try {
-        var acts = document.getElementById('cloudmig-actions'); if (!acts) return;
-        var rb = document.createElement('button'); rb.textContent = '↻ Reload Game';
-        rb.style.cssText = 'font:700 14px/1 ui-sans-serif,system-ui;color:#fff;cursor:pointer;padding:11px 18px;margin:4px;'
-          + 'border-radius:10px;border:1px solid rgba(255,255,255,0.25);background:linear-gradient(180deg,#3a6ff0,#2a4fd0)';
-        rb.onclick = function () { try { location.href = location.origin + location.pathname; } catch (e) { location.reload(); } };
-        acts.appendChild(rb);
-      } catch (e) {}
-    };
-    var started = false, tries = 0;
-    var poll = setInterval(function () {
-      if (started) return;
-      tries++;
-      var signedIn = (typeof Profile !== 'undefined') && Profile.cloud && Profile.cloud.signedIn;
-      var ready = (typeof migrateEverythingToCloud === 'function') && signedIn;
-      if (ready) {
-        started = true; clearInterval(poll);
-        setLine('Starting…');
-        migrateEverythingToCloud({
-          onStep: function (m) { setLine(m); },
-          onSpriteProgress: function (done, total, r) { setLine('Sprites ' + done + '/' + total + '  ·  ' + ((r && r.fixed) || 0) + ' uploaded' + (r && r.deadLocal ? ('  ·  ' + r.deadLocal + ' unreadable') : '')); },
-        }).then(function (rep) { setLine((rep && rep.verdict) || 'Done.'); addReload(); try { console.info('[migrate]', rep); } catch (e) {} })
-          .catch(function (e) { setLine('Error: ' + ((e && e.message) || e) + ' — reload this link to resume where it left off.'); addReload(); });
-      } else if (tries > 80) {
-        started = true; clearInterval(poll);
-        setLine(signedIn ? 'Migration code did not load — hard-refresh (Ctrl+Shift+R), then reload this link.'
-          : 'Not signed in automatically. Open the game normally once, sign in, then come back to this ?migrate=1 link.');
-        addReload();
-      }
-    }, 1500);
-  });
-
-  // 💎 Boot splash controller — a tiny self-contained mini-module that lives
-  // in window scope BEFORE the main game script runs. Game code can call
-  // BootSplash.set('catalog', 0.75, 'Loading card catalog…') to advance the
-  // progress bar; BootSplash.done() fades the splash out. We retire the
-  // whole thing on render() too (belt-and-suspenders).
-  (function () {
-    var bar = document.getElementById('boot-splash-bar');
-    var step = document.getElementById('boot-splash-step');
-    var splash = document.getElementById('boot-splash');
-    // Step weights — sum to 1.0. Each is a normalized 0..1 inside its slot.
-    var STEPS = ['auth', 'profile', 'catalog', 'render'];
-    var WEIGHTS = { auth: 0.15, profile: 0.30, catalog: 0.35, render: 0.20 };
-    var progress = { auth: 0, profile: 0, catalog: 0, render: 0 };
-    function applyBar() {
-      var total = 0;
-      for (var i = 0; i < STEPS.length; i++) {
-        var k = STEPS[i];
-        total += Math.max(0, Math.min(1, progress[k])) * WEIGHTS[k];
-      }
-      if (bar) bar.style.width = Math.round(total * 100) + '%';
-    }
-    window.BootSplash = {
-      set: function (key, value, label) {
-        if (key in progress) progress[key] = value;
-        if (label && step) step.textContent = label;
-        applyBar();
-      },
-      done: function () {
-        for (var k in progress) progress[k] = 1;
-        applyBar();
-        if (splash) {
-          splash.classList.add('fade-out');
-          setTimeout(function () { try { splash.remove(); } catch (e) {} }, 520);
-        }
-      },
-    };
-    // Safety net — if something goes sideways and BootSplash.done() is never
-    // called, force a fade-out after 12s so we never strand the player at the
-    // splash. Cancelled if .done() runs cleanly.
-    var safety = setTimeout(function () {
-      try { if (splash && !splash.classList.contains('fade-out')) window.BootSplash.done(); } catch (e) {}
-    }, 12000);
-    window.BootSplash._cancelSafety = function () { clearTimeout(safety); };
-  })();
-
-  // ============================================================================
-  // 📱 PWA INSTALL + 🖥 FULLSCREEN — tiny early-boot helpers
-  // ----------------------------------------------------------------------------
-  // The whole thing is window-scoped so the main game script (below) can ask
-  // "is install available?" / "are we fullscreen?" without re-implementing
-  // any of it. Three responsibilities:
-  //
-  //   1. Register the service worker (offline shell + faster cold loads).
-  //   2. Capture the deferred beforeinstallprompt event so a hub-tile can
-  //      fire it on click (Chrome/Edge/Brave behavior).
-  //   3. Expose Fullscreen API helpers + a fullscreenchange listener that
-  //      notifies subscribers when state flips.
-  //
-  // iOS Safari quirks: no install prompt event, no requestFullscreen on
-  // <body>. The manifest's apple-mobile-web-app-capable meta + the user
-  // tapping "Add to Home Screen" is the equivalent path there.
-  // ============================================================================
-  (function () {
-    // 🛡 GLOBAL CRASH GUARD — a single uncaught error or rejected promise (a
-    // stray async cloud/MP call, a timer callback, an event handler) used to be
-    // able to wedge the app or look like a "random crash". We log it for admins
-    // but otherwise swallow it so the game keeps running instead of dying. This
-    // does NOT reload or reset anything — it only stops one failure from
-    // cascading. (Render itself is separately wrapped; see render()/renderBattle.)
-    try {
-      window.addEventListener('error', function (ev) {
-        try { console.error('[crashguard] uncaught error:', (ev && (ev.error || ev.message)) || ev); } catch (_) {}
-        // Do not preventDefault — keep the native console trace for debugging.
-      });
-      window.addEventListener('unhandledrejection', function (ev) {
-        try { console.error('[crashguard] unhandled promise rejection:', ev && ev.reason); } catch (_) {}
-        try { ev.preventDefault(); } catch (_) {}   // swallow so it can't bubble into a hard failure
-      });
-    } catch (e) {}
-    // ---------- Service Worker ----------
-    if ('serviceWorker' in navigator) {
-      // Defer registration until after first paint so the splash isn't
-      // delayed by SW boot. Wrap in load event so it kicks off post-render.
-      window.addEventListener('load', function () {
-        // Auto-reload when the SW controller changes (new deploy activated).
-        // Guard flag prevents reload loops if the event fires multiple times.
-        // 🛑 DO NOT force-reload the page when a new SW activates. Auto-reloading
-        // the instant a deploy lands was yanking players out of whatever they
-        // were doing — mid-Forge edit, mid-battle — and wiping unsaved input
-        // (this is what made "nothing saves in the Forge" + "the game randomly
-        // refreshes / flickers"). New code now applies on the player's NEXT
-        // natural reload (or a manual refresh). We only flag that an update is
-        // ready so the UI could show a gentle, dismissible notice if desired.
-        // ✨ UPDATE-READY TOAST. The SW steps aside for HTML so every deploy is
-        // served fresh — but a player who KEEPS THE GAME OPEN never triggers a
-        // navigation, so they never see new code. We must not auto-reload (it wiped
-        // mid-Forge / mid-battle state), so instead we show a gentle, DISMISSIBLE
-        // toast the moment a new version takes control, with a one-click Reload.
-        // That is the bridge that actually gets every update onto every player.
-        var _hadController = !!navigator.serviceWorker.controller;
-        function _showUpdateToast() {
-          try {
-            if (document.getElementById('mythic-update-toast')) return;  // once
-            var bar = document.createElement('div');
-            bar.id = 'mythic-update-toast';
-            bar.style.cssText = 'position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:2147483000;'
-              + 'display:flex;align-items:center;gap:12px;padding:12px 16px;max-width:92vw;'
-              + 'background:linear-gradient(160deg,rgba(26,20,44,0.98),rgba(14,10,26,0.98));'
-              + 'border:1px solid rgba(180,150,240,0.5);border-radius:12px;color:#f2ecff;'
-              + 'box-shadow:0 14px 44px rgba(0,0,0,0.6),0 0 26px rgba(150,110,240,0.25);'
-              + "font-family:inherit;font-size:0.9rem;opacity:0;transition:opacity .3s,transform .3s;";
-            bar.innerHTML = '<span style="font-size:1.15rem">✨</span>'
-              + '<span style="flex:1;min-width:0">A new version of Mythic Spellbook is ready.</span>'
-              + '<button id="mythic-update-reload" style="cursor:pointer;background:linear-gradient(180deg,#7a52d6,#5a34b0);'
-              + 'border:none;color:#fff;font-weight:700;padding:7px 14px;border-radius:8px;font-family:inherit">Reload</button>'
-              + '<button id="mythic-update-dismiss" style="cursor:pointer;background:transparent;border:1px solid rgba(255,255,255,0.25);'
-              + 'color:#cdbff0;width:26px;height:26px;border-radius:7px;line-height:1;padding:0">×</button>';
-            document.body.appendChild(bar);
-            requestAnimationFrame(function () { bar.style.opacity = '1'; bar.style.transform = 'translateX(-50%) translateY(-4px)'; });
-            document.getElementById('mythic-update-reload').onclick = function () {
-              // A full reload fetches fresh HTML (the SW passes navigations through).
-              try { location.reload(); } catch (e) {}
-            };
-            document.getElementById('mythic-update-dismiss').onclick = function () {
-              try { bar.remove(); } catch (e) {}   // the update still applies on their next natural reload
-            };
-          } catch (e) {}
-        }
-        navigator.serviceWorker.addEventListener('controllerchange', function () {
-          try { window.__mythicUpdateReady = true; } catch (e) {}
-          // Only prompt on a real UPDATE — controllerchange also fires on the very
-          // first SW install, when there was no controller to begin with.
-          if (_hadController) _showUpdateToast();
-        });
-        navigator.serviceWorker.register('/sw.js').then(function (reg) {
-          if (!reg) return;
-          // Belt-and-braces: also catch a freshly-INSTALLED waiting worker directly,
-          // in case controllerchange is missed (e.g. skipWaiting races the load).
-          function _watch(sw) {
-            if (!sw) return;
-            sw.addEventListener('statechange', function () {
-              if (sw.state === 'installed' && navigator.serviceWorker.controller) _showUpdateToast();
-            });
-          }
-          _watch(reg.installing);
-          reg.addEventListener('updatefound', function () { _watch(reg.installing); });
-          // Nudge the browser to check for a new sw.js now, not just on navigation,
-          // so a long-open session learns about a deploy within a minute or two.
-          try { reg.update(); } catch (e) {}
-          try { setInterval(function () { try { reg.update(); } catch (e) {} }, 5 * 60 * 1000); } catch (e) {}
-        }).catch(function () { /* SW failures are non-fatal — game still runs */ });
-      });
-    }
-
-    // ---------- Install prompt capture ----------
-    // beforeinstallprompt fires once per visit on supported browsers and is
-    // prompt-able exactly once. We stash the event for the in-game tile to
-    // fire later on user click (you cannot call prompt() without a user
-    // gesture, so we must defer rather than fire immediately).
-    window.PWA = window.PWA || {};
-    window.PWA.installEvent = null;
-    window.PWA.installed = false;
-    window.PWA._installListeners = [];
-    window.PWA.onInstallStateChange = function (fn) {
-      if (typeof fn !== 'function') return function () {};
-      window.PWA._installListeners.push(fn);
-      try { fn({ available: !!window.PWA.installEvent, installed: !!window.PWA.installed }); } catch (e) {}
-      return function () {
-        var i = window.PWA._installListeners.indexOf(fn);
-        if (i >= 0) window.PWA._installListeners.splice(i, 1);
-      };
-    };
-    function _pwaNotify() {
-      var snap = { available: !!window.PWA.installEvent, installed: !!window.PWA.installed };
-      window.PWA._installListeners.forEach(function (fn) { try { fn(snap); } catch (e) {} });
-    }
-    // Detect if we're ALREADY running as an installed PWA (standalone mode).
-    function _isStandalone() {
-      try {
-        if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
-        if (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches) return true;
-        if (window.navigator.standalone === true) return true;       // iOS
-      } catch (e) {}
-      return false;
-    }
-    window.PWA.installed = _isStandalone();
-    window.addEventListener('beforeinstallprompt', function (e) {
-      e.preventDefault();
-      window.PWA.installEvent = e;
-      _pwaNotify();
-    });
-    // Fires AFTER the user accepts the install dialog. Clean up the deferred
-    // prompt and flag the app as installed so the tile flips to "Installed".
-    window.addEventListener('appinstalled', function () {
-      window.PWA.installEvent = null;
-      window.PWA.installed = true;
-      try { localStorage.setItem('hg_pwa_installed', '1'); } catch (e) {}
-      _pwaNotify();
-    });
-    window.PWA.prompt = function () {
-      // Returns a promise resolving to 'accepted' | 'dismissed' | 'unavailable'.
-      var e = window.PWA.installEvent;
-      if (!e) return Promise.resolve('unavailable');
-      try { e.prompt(); } catch (err) { return Promise.resolve('error'); }
-      return e.userChoice.then(function (choice) {
-        var outcome = (choice && choice.outcome) || 'dismissed';
-        // The event can only be prompted once — drop the reference.
-        window.PWA.installEvent = null;
-        if (outcome === 'accepted') window.PWA.installed = true;
-        _pwaNotify();
-        return outcome;
-      });
-    };
-    // iOS-specific helper — no install prompt event exists, so the UI shows
-    // an "Add to Home Screen" instruction sheet instead.
-    window.PWA.isIOS = function () {
-      var ua = navigator.userAgent || '';
-      return /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
-    };
-
-    // ---------- Fullscreen API ----------
-    window.FS = window.FS || {};
-    window.FS._listeners = [];
-    window.FS.onChange = function (fn) {
-      if (typeof fn !== 'function') return function () {};
-      window.FS._listeners.push(fn);
-      try { fn({ active: !!window.FS.isActive() }); } catch (e) {}
-      return function () {
-        var i = window.FS._listeners.indexOf(fn);
-        if (i >= 0) window.FS._listeners.splice(i, 1);
-      };
-    };
-    function _fsNotify() {
-      var snap = { active: !!window.FS.isActive() };
-      window.FS._listeners.forEach(function (fn) { try { fn(snap); } catch (e) {} });
-    }
-    window.FS.isActive = function () {
-      return !!(document.fullscreenElement || document.webkitFullscreenElement
-             || document.mozFullScreenElement || document.msFullscreenElement);
-    };
-    window.FS.isSupported = function () {
-      var el = document.documentElement;
-      return !!(el.requestFullscreen || el.webkitRequestFullscreen
-             || el.mozRequestFullScreen || el.msRequestFullscreen);
-    };
-    window.FS.enter = function () {
-      var el = document.documentElement;
-      try {
-        if (el.requestFullscreen) return el.requestFullscreen();
-        if (el.webkitRequestFullscreen) return el.webkitRequestFullscreen();
-        if (el.mozRequestFullScreen) return el.mozRequestFullScreen();
-        if (el.msRequestFullscreen) return el.msRequestFullscreen();
-      } catch (e) {}
-      return Promise.resolve();
-    };
-    window.FS.exit = function () {
-      try {
-        if (document.exitFullscreen) return document.exitFullscreen();
-        if (document.webkitExitFullscreen) return document.webkitExitFullscreen();
-        if (document.mozCancelFullScreen) return document.mozCancelFullScreen();
-        if (document.msExitFullscreen) return document.msExitFullscreen();
-      } catch (e) {}
-      return Promise.resolve();
-    };
-    window.FS.toggle = function () {
-      return window.FS.isActive() ? window.FS.exit() : window.FS.enter();
-    };
-    ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'].forEach(function (ev) {
-      document.addEventListener(ev, _fsNotify);
-    });
-    // ⌨ Keyboard shortcut — `F` toggles fullscreen as long as no input is
-    // focused. Skip when an editable element has focus so typing in chat
-    // / deck name doesn't accidentally flip fullscreen.
-    document.addEventListener('keydown', function (e) {
-      if (e.key !== 'f' && e.key !== 'F') return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      var t = e.target;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      e.preventDefault();
-      window.FS.toggle();
-    });
-  })();
-</script>
+<script>window.BUILD_VERSION="v119n3";try{console.info("%cMythic Spellbook "+window.BUILD_VERSION+"%c — build check: run  __mg.version","font-weight:700;color:#b48cff","color:#7d7499");window.__mg=window.__mg||{};window.__mg.version=window.BUILD_VERSION}catch(e){}!function(){try{if(location.search.indexOf("migrate=1")>=0)return;fetch("version.txt?cb="+Date.now(),{cache:"no-store"}).then(function(r){return r.ok?r.text():null}).then(function(txt){if(txt){var latest=String(txt).trim();var running=window.BUILD_VERSION;if(latest&&latest!==running){try{window.__mythicUpdateReady=!0}catch(e){}try{var already=null;try{already=localStorage.getItem("__forcedReloadFor")}catch(e){}if(already===latest){try{console.info("🔄 New version "+latest+" — already reloaded once; using the update ready toast.")}catch(e){}return}var _inBattle=!1,_typing=!1;try{_inBattle="undefined"!=typeof App&&App&&("battle"===App.screen||"battleImmediate"===App.screen)}catch(e){}try{var _ae=document.activeElement;_typing=!(!_ae||"INPUT"!==_ae.tagName&&"TEXTAREA"!==_ae.tagName&&!_ae.isContentEditable)}catch(e){}if(_inBattle||_typing){try{console.info("🔄 Update "+latest+" held — busy (battle/typing); will apply when idle or via the Reload toast.")}catch(e){}return}try{localStorage.setItem("__forcedReloadFor",latest)}catch(e){}try{console.info("🔄 Updating to "+latest+" (from "+running+")…")}catch(e){}setTimeout(function(){try{location.reload()}catch(e){}},500)}catch(e){}}}}).catch(function(){})}catch(e){}}();window.addEventListener("load",function(){try{if(document.getElementById("mythic-build-stamp"))return;var s=document.createElement("div");s.id="mythic-build-stamp";s.textContent=window.BUILD_VERSION;s.style.cssText="position:fixed;right:6px;bottom:5px;z-index:2147483000;pointer-events:none;font:600 10px/1 ui-monospace,monospace;letter-spacing:.04em;color:rgba(200,190,230,0.42);text-shadow:0 1px 2px rgba(0,0,0,0.6);user-select:none";document.body.appendChild(s)}catch(e){}});window.addEventListener("load",function(){function tryMount(){try{var _staleFab=document.getElementById("mythic-cloud-fab");if(_staleFab)try{_staleFab.remove()}catch(e){}return!0}catch(e){return!1}}if(!tryMount()){var tries=0;var iv=setInterval(function(){tries++;(tryMount()||tries>40)&&clearInterval(iv)},1500)}});try{location.search.indexOf("migrate=1")>=0&&(window.__cloudMigrating=!0)}catch(e){}window.addEventListener("load",function(){try{if(location.search.indexOf("migrate=1")<0)return}catch(e){return}window.__cloudMigrating=!0;try{document.title="Migrating to cloud…";document.body.innerHTML='<div style="position:fixed;inset:0;background:#0b0d16;color:#e8e6f2;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:ui-sans-serif,system-ui;z-index:2147483647;padding:24px;text-align:center"><div style="font-size:20px;font-weight:800;margin-bottom:14px">&#9729; Cloud migration</div><div id="cloudmig-line" style="font-size:15px;opacity:.9;max-width:640px;line-height:1.5">Preparing&#8230; (loading + signing in)</div><div style="font-size:12px;opacity:.55;margin-top:18px;max-width:600px;line-height:1.55">This page never draws the game, so it can\'t run out of graphics memory. Keep the tab open — 10&#8211;20 min, resumes if interrupted. A Reload button appears when it finishes.</div><div id="cloudmig-actions" style="margin-top:22px"></div></div>'}catch(e){}var setLine=function(t){try{var l=document.getElementById("cloudmig-line");l&&(l.textContent=t)}catch(e){}};var addReload=function(){try{var acts=document.getElementById("cloudmig-actions");if(!acts)return;var rb=document.createElement("button");rb.textContent="↻ Reload Game";rb.style.cssText="font:700 14px/1 ui-sans-serif,system-ui;color:#fff;cursor:pointer;padding:11px 18px;margin:4px;border-radius:10px;border:1px solid rgba(255,255,255,0.25);background:linear-gradient(180deg,#3a6ff0,#2a4fd0)";rb.onclick=function(){try{location.href=location.origin+location.pathname}catch(e){location.reload()}};acts.appendChild(rb)}catch(e){}};var started=!1,tries=0;var poll=setInterval(function(){if(!started){tries++;var signedIn="undefined"!=typeof Profile&&Profile.cloud&&Profile.cloud.signedIn;if("function"==typeof migrateEverythingToCloud&&signedIn){started=!0;clearInterval(poll);setLine("Starting…");migrateEverythingToCloud({onStep:function(m){setLine(m)},onSpriteProgress:function(done,total,r){setLine("Sprites "+done+"/"+total+"  ·  "+(r&&r.fixed||0)+" uploaded"+(r&&r.deadLocal?"  ·  "+r.deadLocal+" unreadable":""))}}).then(function(rep){setLine(rep&&rep.verdict||"Done.");addReload();try{console.info("[migrate]",rep)}catch(e){}}).catch(function(e){setLine("Error: "+(e&&e.message||e)+" — reload this link to resume where it left off.");addReload()})}else if(tries>80){started=!0;clearInterval(poll);setLine(signedIn?"Migration code did not load — hard-refresh (Ctrl+Shift+R), then reload this link.":"Not signed in automatically. Open the game normally once, sign in, then come back to this ?migrate=1 link.");addReload()}}},1500)});!function(){var bar=document.getElementById("boot-splash-bar");var step=document.getElementById("boot-splash-step");var splash=document.getElementById("boot-splash");var STEPS=["auth","profile","catalog","render"];var WEIGHTS={auth:.15,profile:.3,catalog:.35,render:.2};var progress={auth:0,profile:0,catalog:0,render:0};function applyBar(){var total=0;for(var i=0;i<STEPS.length;i++){var k=STEPS[i];total+=Math.max(0,Math.min(1,progress[k]))*WEIGHTS[k]}bar&&(bar.style.width=Math.round(100*total)+"%")}window.BootSplash={set:function(key,value,label){key in progress&&(progress[key]=value);label&&step&&(step.textContent=label);applyBar()},done:function(){for(var k in progress)progress[k]=1;applyBar();if(splash){splash.classList.add("fade-out");setTimeout(function(){try{splash.remove()}catch(e){}},520)}}};var safety=setTimeout(function(){try{splash&&!splash.classList.contains("fade-out")&&window.BootSplash.done()}catch(e){}},12e3);window.BootSplash._cancelSafety=function(){clearTimeout(safety)}}();!function(){try{window.addEventListener("error",function(ev){try{console.error("[crashguard] uncaught error:",ev&&(ev.error||ev.message)||ev)}catch(_){}});window.addEventListener("unhandledrejection",function(ev){try{console.error("[crashguard] unhandled promise rejection:",ev&&ev.reason)}catch(_){}try{ev.preventDefault()}catch(_){}})}catch(e){}"serviceWorker"in navigator&&window.addEventListener("load",function(){var _hadController=!!navigator.serviceWorker.controller;function _showUpdateToast(){try{if(document.getElementById("mythic-update-toast"))return;var bar=document.createElement("div");bar.id="mythic-update-toast";bar.style.cssText="position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:2147483000;display:flex;align-items:center;gap:12px;padding:12px 16px;max-width:92vw;background:linear-gradient(160deg,rgba(26,20,44,0.98),rgba(14,10,26,0.98));border:1px solid rgba(180,150,240,0.5);border-radius:12px;color:#f2ecff;box-shadow:0 14px 44px rgba(0,0,0,0.6),0 0 26px rgba(150,110,240,0.25);font-family:inherit;font-size:0.9rem;opacity:0;transition:opacity .3s,transform .3s;";bar.innerHTML='<span style="font-size:1.15rem">✨</span><span style="flex:1;min-width:0">A new version of Mythic Spellbook is ready.</span><button id="mythic-update-reload" style="cursor:pointer;background:linear-gradient(180deg,#7a52d6,#5a34b0);border:none;color:#fff;font-weight:700;padding:7px 14px;border-radius:8px;font-family:inherit">Reload</button><button id="mythic-update-dismiss" style="cursor:pointer;background:transparent;border:1px solid rgba(255,255,255,0.25);color:#cdbff0;width:26px;height:26px;border-radius:7px;line-height:1;padding:0">×</button>';document.body.appendChild(bar);requestAnimationFrame(function(){bar.style.opacity="1";bar.style.transform="translateX(-50%) translateY(-4px)"});document.getElementById("mythic-update-reload").onclick=function(){try{location.reload()}catch(e){}};document.getElementById("mythic-update-dismiss").onclick=function(){try{bar.remove()}catch(e){}}}catch(e){}}navigator.serviceWorker.addEventListener("controllerchange",function(){try{window.__mythicUpdateReady=!0}catch(e){}_hadController&&_showUpdateToast()});navigator.serviceWorker.register("/sw.js").then(function(reg){if(reg){_watch(reg.installing);reg.addEventListener("updatefound",function(){_watch(reg.installing)});try{reg.update()}catch(e){}try{setInterval(function(){try{reg.update()}catch(e){}},3e5)}catch(e){}}function _watch(sw){sw&&sw.addEventListener("statechange",function(){"installed"===sw.state&&navigator.serviceWorker.controller&&_showUpdateToast()})}}).catch(function(){})});window.PWA=window.PWA||{};window.PWA.installEvent=null;window.PWA.installed=!1;window.PWA._installListeners=[];window.PWA.onInstallStateChange=function(fn){if("function"!=typeof fn)return function(){};window.PWA._installListeners.push(fn);try{fn({available:!!window.PWA.installEvent,installed:!!window.PWA.installed})}catch(e){}return function(){var i=window.PWA._installListeners.indexOf(fn);i>=0&&window.PWA._installListeners.splice(i,1)}};function _pwaNotify(){var snap={available:!!window.PWA.installEvent,installed:!!window.PWA.installed};window.PWA._installListeners.forEach(function(fn){try{fn(snap)}catch(e){}})}window.PWA.installed=function(){try{if(window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches)return!0;if(window.matchMedia&&window.matchMedia("(display-mode: fullscreen)").matches)return!0;if(!0===window.navigator.standalone)return!0}catch(e){}return!1}();window.addEventListener("beforeinstallprompt",function(e){e.preventDefault();window.PWA.installEvent=e;_pwaNotify()});window.addEventListener("appinstalled",function(){window.PWA.installEvent=null;window.PWA.installed=!0;try{localStorage.setItem("hg_pwa_installed","1")}catch(e){}_pwaNotify()});window.PWA.prompt=function(){var e=window.PWA.installEvent;if(!e)return Promise.resolve("unavailable");try{e.prompt()}catch(err){return Promise.resolve("error")}return e.userChoice.then(function(choice){var outcome=choice&&choice.outcome||"dismissed";window.PWA.installEvent=null;"accepted"===outcome&&(window.PWA.installed=!0);_pwaNotify();return outcome})};window.PWA.isIOS=function(){var ua=navigator.userAgent||"";return/iPad|iPhone|iPod/.test(ua)&&!window.MSStream};window.FS=window.FS||{};window.FS._listeners=[];window.FS.onChange=function(fn){if("function"!=typeof fn)return function(){};window.FS._listeners.push(fn);try{fn({active:!!window.FS.isActive()})}catch(e){}return function(){var i=window.FS._listeners.indexOf(fn);i>=0&&window.FS._listeners.splice(i,1)}};function _fsNotify(){var snap={active:!!window.FS.isActive()};window.FS._listeners.forEach(function(fn){try{fn(snap)}catch(e){}})}window.FS.isActive=function(){return!!(document.fullscreenElement||document.webkitFullscreenElement||document.mozFullScreenElement||document.msFullscreenElement)};window.FS.isSupported=function(){var el=document.documentElement;return!!(el.requestFullscreen||el.webkitRequestFullscreen||el.mozRequestFullScreen||el.msRequestFullscreen)};window.FS.enter=function(){var el=document.documentElement;try{if(el.requestFullscreen)return el.requestFullscreen();if(el.webkitRequestFullscreen)return el.webkitRequestFullscreen();if(el.mozRequestFullScreen)return el.mozRequestFullScreen();if(el.msRequestFullscreen)return el.msRequestFullscreen()}catch(e){}return Promise.resolve()};window.FS.exit=function(){try{if(document.exitFullscreen)return document.exitFullscreen();if(document.webkitExitFullscreen)return document.webkitExitFullscreen();if(document.mozCancelFullScreen)return document.mozCancelFullScreen();if(document.msExitFullscreen)return document.msExitFullscreen()}catch(e){}return Promise.resolve()};window.FS.toggle=function(){return window.FS.isActive()?window.FS.exit():window.FS.enter()};["fullscreenchange","webkitfullscreenchange","mozfullscreenchange","MSFullscreenChange"].forEach(function(ev){document.addEventListener(ev,_fsNotify)});document.addEventListener("keydown",function(e){if(("f"===e.key||"F"===e.key)&&!(e.ctrlKey||e.metaKey||e.altKey)){var t=e.target;if(!t||"INPUT"!==t.tagName&&"TEXTAREA"!==t.tagName&&!t.isContentEditable){e.preventDefault();window.FS.toggle()}}})}();</script>
 <div id="app" class="app"></div>
 <script>
   'use strict';
@@ -55083,6 +54705,80 @@ async function boeLinkWallet() {
     return false;
   }
 }
+// ═══ REFERRALS — profile card painter ═══
+// Share your code: every redemption earns YOU 5,000 Cinder, 1 Birth Of
+// Universe One pack (via the webPurchases rail → opens on next sign-in),
+// and 5 Aza Coin. Milestones earn Mythic Token airdrops (thirdweb → linked
+// wallet). Server-authoritative: referral_me / referral_redeem RPCs.
+const _REF_MS = [[3, 50], [10, 200], [25, 600], [50, 1500], [100, 4000]];
+async function _profReferralPaint() {
+  const body = document.getElementById('prof-ref-body');
+  const chip = document.getElementById('prof-ref-count');
+  if (!body) return;
+  if (!(typeof Cloud !== 'undefined' && Cloud.ready && Cloud.client && Profile.cloud && Profile.cloud.signedIn)) {
+    body.innerHTML = '<div class="small-text ink-dim">☁ Sign in to get your referral code and start earning.</div>';
+    if (chip) chip.textContent = '—';
+    return;
+  }
+  let j = null;
+  try { const r = await Cloud.client.rpc('referral_me'); j = (r && r.data) || null; } catch (e) {}
+  if (!j || !j.ok) { body.innerHTML = '<div class="small-text" style="color:#ff9a6b">Could not load referrals — try again shortly.</div>'; return; }
+  const refs = j.referrals | 0;
+  if (chip) chip.textContent = refs + ' recruited';
+  const next = _REF_MS.find(m => refs < m[0]);
+  const pct = next ? Math.min(100, Math.round((refs / next[0]) * 100)) : 100;
+  const esc = (s) => (typeof escapeHtml === 'function') ? escapeHtml(String(s == null ? '' : s)) : String(s == null ? '' : s);
+  const msChips = _REF_MS.map(m =>
+    '<span style="font-size:0.72rem;font-weight:800;border-radius:99px;padding:3px 10px;border:1px solid ' +
+    (refs >= m[0] ? 'rgba(160,120,255,0.6);color:#cdb6ff;background:rgba(120,80,220,0.16)' : 'rgba(120,113,108,0.4);color:#807060;background:rgba(0,0,0,0.3)') +
+    '">' + (refs >= m[0] ? '✓ ' : '') + m[0] + ' refs · ' + m[1].toLocaleString() + ' Ⓜ</span>').join(' ');
+  body.innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">' +
+      '<span style="font-family:monospace;font-size:1.15rem;font-weight:800;letter-spacing:0.12em;color:#9fe8bd;background:rgba(10,24,16,0.7);border:1px solid rgba(95,191,136,0.5);border-radius:8px;padding:6px 14px">' + esc(j.code) + '</span>' +
+      '<button class="btn-secondary btn-mini" id="prof-ref-copy">📋 Copy code</button>' +
+      '<button class="btn-secondary btn-mini" id="prof-ref-link">🔗 Copy invite link</button>' +
+    '</div>' +
+    '<div class="small-text" style="color:#e8d4a8;line-height:1.55;margin-bottom:10px">Every player who redeems your code earns you <b style="color:#ffcf5a">5,000 🔥 Cinder</b>, <b style="color:#cdb6ff">1 Birth Of Universe One pack</b>, and <b style="color:#9ab9c9">5 👑 Aza Coin</b> — delivered on your next sign-in.</div>' +
+    '<div style="background:rgba(0,0,0,0.35);border:1px solid rgba(120,90,200,0.35);border-radius:10px;padding:10px 12px;margin-bottom:10px">' +
+      '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:0.72rem;letter-spacing:0.12em;color:#cdb6ff;font-weight:800;margin-bottom:6px"><span>Ⓜ MYTHIC TOKEN AIRDROP PROGRESS</span><span>' + (next ? refs + ' / ' + next[0] + ' → ' + next[1].toLocaleString() + ' Ⓜ' : 'All milestones reached!') + '</span></div>' +
+      '<div style="height:8px;border-radius:99px;background:rgba(0,0,0,0.5);border:1px solid rgba(120,90,200,0.35);overflow:hidden;margin-bottom:8px"><div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#7C6BFF,#B9A8E8)"></div></div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">' + msChips + '</div>' +
+      '<div class="profile-card-note" style="margin-top:6px">Milestone airdrops are delivered via thirdweb to your linked wallet (Bank of Ethos → 🦊 Link Wallet).</div>' +
+    '</div>' +
+    (j.redeemed
+      ? '<div class="small-text ink-dim">You redeemed <b style="color:#9fe8bd;font-family:monospace">' + esc(j.redeemed) + '</b> ✓</div>'
+      : '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+          '<input id="prof-ref-input" placeholder="Friend&#39;s code (MYTH-XXXXXX)" style="flex:1;min-width:190px;padding:0.5rem;border-radius:8px;border:1px solid rgba(95,191,136,0.4);background:rgba(8,16,10,0.7);color:#dff4e6;font-family:monospace;text-transform:uppercase">' +
+          '<button class="btn-primary btn-mini" id="prof-ref-redeem">🤝 Redeem</button>' +
+        '</div>');
+  const copyIt = (txt, label) => {
+    try { navigator.clipboard.writeText(txt); showToast('📋 ' + label + ' copied — share it!', 3200); }
+    catch (e) { showToast('Copy failed — ' + label + ': ' + txt, 5600); }
+  };
+  const bC = document.getElementById('prof-ref-copy'); if (bC) bC.onclick = () => copyIt(j.code, 'Referral code');
+  const bL = document.getElementById('prof-ref-link'); if (bL) bL.onclick = () => copyIt('https://mythicspellbook.xyz/?ref=' + j.code, 'Invite link');
+  const bR = document.getElementById('prof-ref-redeem');
+  if (bR) bR.onclick = async () => {
+    const inp = document.getElementById('prof-ref-input');
+    const code = ((inp && inp.value) || '').trim();
+    if (!code) { showToast('Enter a friend’s code first.'); return; }
+    bR.disabled = true;
+    try {
+      const r = await Cloud.client.rpc('referral_redeem', { p_code: code });
+      const res = (r && r.data) || {};
+      if (!res.ok) {
+        showToast(res.error === 'self_referral' ? '⚠ That’s your own code — share it instead!'
+          : res.error === 'already_redeemed' ? '⚠ This account already redeemed a code.'
+          : res.error === 'bad_code' ? '⚠ That code doesn’t exist — check the spelling.'
+          : '⚠ Redeem failed — try again.', 5200);
+      } else {
+        showToast('🤝 Code accepted — ' + res.referrer_name + ' earned their referral rewards!', 6000);
+      }
+    } catch (e) { showToast('⚠ Redeem failed — try again.', 4200); }
+    try { bR.disabled = false; } catch (e) {}
+    _profReferralPaint();
+  };
+}
 function openBankOfEthos() {
   try {
     const ID = 'be-frame-wrap';
@@ -64166,18 +63862,22 @@ function _hoverButtonsFor(u, s) {
                 iconHtml: (typeof getKalonIcon === 'function') ? getKalonIcon('42px') : null,
                 sub: kalonName ? ('Ascend to ' + kalonName) : 'Channel the arcane source' });
   }
-  // 🌌 POLYCREATION — offered over any unit that is currently a REQUIRED
-  // MATERIAL for a fusion the player could actually perform. findActivatableFusions
-  // already validates materials, hero radius and the pin; this only asks it.
+  // 🌌 POLYCREATION — offered over any unit that is a MATERIAL for a Fusion
+  // Kalon in the player's Realm Deck.
+  //
+  // ⚠ This used to ask findActivatableFusions() — "can this fusion happen RIGHT
+  // NOW" — which needs every material already gathered inside the hero's radius.
+  // The row therefore only appeared once the fusion was already completable,
+  // which is far too late to be useful. Asking whether the unit is a MATERIAL
+  // surfaces it while you are still assembling, and the Realm Deck check keeps
+  // it from ever advertising a fusion you do not own.
   try {
-    if (u.owner === 'player' && s.turn === 'player' && !u.isHero
-        && typeof findActivatableFusions === 'function') {
-      const opts = findActivatableFusions(s, 'player', { fusionTargetCardId: null }) || [];
-      const hit = opts.find(o => o && Array.isArray(o.materials) && o.materials.indexOf(u.id) >= 0);
-      if (hit && hit.kalon) {
+    if (u.owner === 'player' && s.turn === 'player' && !u.isHero) {
+      const k = _unitIsFusionMaterial(u, 'player');
+      if (k) {
         btns.push({ act: 'polycreate', lbl: 'Polycreation', c: '#ff7ae0', icon: 'orb',
-                    sub: 'Fuse into ' + (hit.kalon.name || 'a Kalon'),
-                    _kalonId: hit.kalon.id });
+                    sub: 'Material for ' + (k.name || 'a Kalon'),
+                    _kalonId: k.id });
       }
     }
   } catch (e) {}
@@ -83642,6 +83342,15 @@ function getFusionKalonForSpell(polySpellCard) {
 // Requirements support: { type: 'Unit'|'Hero', element, faction, cardId }
 // ✦ Sentinel for the "— Any summon —" row in the Fusion Requirements editor.
 // Stored in req.cardId, so it must be a value no real card id can collide with.
+/* 🗃 Where a fusion requirement's material may come from. 'field' is the
+   default and the historic behaviour — every existing card keeps working. */
+const FUSION_ZONES = [
+  { id: 'field', label: '🏳 Field — a unit near your hero (default)' },
+  { id: 'hand',  label: '🃏 Hand — a card in your hand' },
+  { id: 'deck',  label: '📚 Deck — a card from your deck' },
+  { id: 'grave', label: '⚰ Graveyard — a fallen card' },
+  { id: 'any',   label: '🌐 Anywhere — field, hand, graveyard, then deck' },
+];
 const FUSION_ANY_SUMMON = '__any_summon__';
 
 // Is this board unit a summoned token (rather than a deployed card)? True for
@@ -83656,6 +83365,72 @@ function _fusUnitIsSummon(unit) {
     if (src && ((src.type || '').toLowerCase() === 'summon' || src.isSummon)) return true;
   } catch (e) {}
   return false;
+}
+
+// 🌟 IS THIS UNIT A FUSION MATERIAL? — the single question behind both the
+// Polycreation hover row and the board glow.
+//
+// Deliberately NOT "can this fusion resolve right now". It asks only whether the
+// unit is a listed material for a Fusion Kalon the player actually has in their
+// Realm Deck, so the option shows up while you are still gathering the pieces.
+// Availability of the OTHER materials is checked later, by the real gate, when
+// you actually press it.
+//
+// Returns the matching kalon def, or null.
+function _unitIsFusionMaterial(u, side) {
+  try {
+    if (!u || !u.alive || u.isHero) return null;
+    side = side || u.owner;
+    // Memoised per render tick — the board asks this once for every unit and the
+    // pool scan is not free.
+    const tick = (typeof App !== 'undefined' && App.state) ? (App.state._fusMatTick || 0) : 0;
+    _unitIsFusionMaterial._c = _unitIsFusionMaterial._c || {};
+    const ck = side + '|' + tick;
+    let pool = _unitIsFusionMaterial._c[ck];
+    if (!pool) {
+      pool = (typeof getBattleFusionKalons === 'function') ? (getBattleFusionKalons(side) || []) : [];
+      _unitIsFusionMaterial._c = {};              // only ever cache the current tick
+      _unitIsFusionMaterial._c[ck] = pool;
+    }
+    for (const k of pool) {
+      const reqs = Array.isArray(k && k.fusionRequirements) ? k.fusionRequirements : [];
+      if (!reqs.length) continue;
+      if (reqs.some(r => { try { return matchFusionMaterial(u, r); } catch (e) { return false; } })) return k;
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+// ⚛ IS THIS UNIT PART OF A FUSION I CAN CAST RIGHT NOW?
+//
+// Stricter than _unitIsFusionMaterial: that one asks whether the unit COULD ever
+// be a material (which is right for the hover row, so the option surfaces while
+// you gather). This asks whether a fusion is legal THIS INSTANT and this unit is
+// one of the bodies it would consume — which is what the board icon promises.
+// Memoised per tick; the board asks once per unit.
+function _unitIsFusionReady(u, side) {
+  try {
+    if (!u || !u.alive || u.isHero) return null;
+    side = side || u.owner;
+    if (!App.state || App.state.turn !== side) return null;
+    const tick = App.state._fusRdyTick || App.state.turnNumber || 0;
+    const ck = side + '|' + tick + '|' + ((App.state.units || []).length);
+    _unitIsFusionReady._c = _unitIsFusionReady._c || {};
+    if (_unitIsFusionReady._k !== ck) {
+      _unitIsFusionReady._k = ck;
+      let map = Object.create(null);
+      try {
+        const opts = (typeof findActivatableFusions === 'function')
+          ? (findActivatableFusions(App.state, side, { fusionTargetCardId: null }) || []) : [];
+        for (const o of opts) {
+          if (!o || !Array.isArray(o.materials)) continue;
+          for (const id of o.materials) if (!map[id]) map[id] = o.kalon || null;
+        }
+      } catch (e) {}
+      _unitIsFusionReady._c = map;
+    }
+    return _unitIsFusionReady._c[u.id] || null;
+  } catch (e) { return null; }
 }
 
 function matchFusionMaterial(unit, req) {
@@ -83798,11 +83573,59 @@ function findLegalFusionMaterials(state, side, kalonCard) {
   );
   const used = new Set();
   const out = [];
+  /* 🗃 ZONE MATERIALS. A requirement may pull from somewhere other than the
+     board. Field entries stay bare unit-id STRINGS so every existing consumer is
+     untouched; zone entries are objects the consume step understands. */
+  const _sideSt = (state && state[side]) || {};
+  const _zonePiles = {
+    hand:  Array.isArray(_sideSt.hand) ? _sideSt.hand : [],
+    deck:  Array.isArray(_sideSt.deck) ? _sideSt.deck : [],
+    grave: Array.isArray(_sideSt.graveyard) ? _sideSt.graveyard : [],
+  };
+  const _usedCards = new Set();
+  // Pull one card matching `req` out of `zone`, or null. Never returns a card
+  // already claimed by an earlier requirement in this same fusion.
+  const _takeFromZone = (zone, req) => {
+    const pile = _zonePiles[zone];
+    if (!Array.isArray(pile)) return null;
+    for (let i = 0; i < pile.length; i++) {
+      const c = pile[i];
+      if (!c) continue;
+      const key = zone + '|' + (c.instanceId || (c.id + ':' + i));
+      if (_usedCards.has(key)) continue;
+      let ok = false;
+      try { ok = matchFusionMaterial(c, req); } catch (e) { ok = false; }
+      if (!ok) continue;
+      _usedCards.add(key);
+      return { zone, instanceId: c.instanceId || null, cardId: c.id || c.cardId || null,
+               name: c.name || 'Card', _idx: i };
+    }
+    return null;
+  };
   for (const req of reqs) {
     // 🔢 COUNT — "+ 2 Mage units" is one row that eats two bodies. Each is
     // assigned separately so no unit can satisfy the same row twice.
     const need = Math.max(1, Math.min(9, (req.count | 0) || 1));
     for (let k = 0; k < need; k++) {
+      // 🗃 WHERE does this requirement's material come from? Default 'field'
+      // keeps every existing card behaving exactly as before.
+      const zone = (req && req.zone) || 'field';
+      if (zone !== 'field') {
+        const zones = zone === 'any' ? ['field', 'hand', 'grave', 'deck'] : [zone];
+        let got = null;
+        for (const z of zones) {
+          if (z === 'field') {
+            const u2 = inRange.find(u => !used.has(u.id) && matchFusionMaterial(u, req));
+            if (u2) { used.add(u2.id); got = u2.id; break; }
+          } else {
+            const c2 = _takeFromZone(z, req);
+            if (c2) { got = c2; break; }
+          }
+        }
+        if (!got) return null;
+        out.push(got);
+        continue;
+      }
       const pick = inRange.find(u => !used.has(u.id) && matchFusionMaterial(u, req));
       if (!pick) return null;
       used.add(pick.id);
@@ -84025,7 +83848,11 @@ function _resolvePolycreationFusion() {
   if (!hero) { App.ui.fusionMode = null; renderBattle(); return; }
   let ns = { ...s };
   const log = [...ns.log];
-  const matIds = new Set(fm.materialUnitIds || []);
+  // 🗃 Split the material list: bare strings are BOARD units (as always),
+  // objects are cards drawn from hand / deck / graveyard.
+  const _allMats = fm.materialUnitIds || [];
+  const matIds = new Set(_allMats.filter(m => typeof m === 'string'));
+  const zoneMats = _allMats.filter(m => m && typeof m === 'object' && m.zone);
   const consumed = ns.units.filter(u => matIds.has(u.id));
   // 🜂 SUMMON CONDITION — pay the banish cost BEFORE the materials resolve.
   // These units go to the Void, not the graveyard, and are never the materials.
@@ -84043,6 +83870,47 @@ function _resolvePolycreationFusion() {
   } catch (e) {}
   const destination = (kalon.materialDestination || 'graveyard');
   // Route materials per destination.
+  // 🗃 Spend the zone materials — remove each from the pile it came from and
+  // send it to the graveyard. Matched by instanceId where the card has one so a
+  // duplicate elsewhere in the pile can never be eaten by mistake; the recorded
+  // index is only a fallback for cards with no instance identity.
+  try {
+    if (zoneMats.length) {
+      const KEY = { hand: 'hand', deck: 'deck', grave: 'graveyard' };
+      const side2 = 'player';
+      const st2 = { ...(ns[side2] || {}) };
+      // ⚠ Collect ADDITIONS separately. Snapshotting the graveyard up front and
+      // assigning it back at the end resurrected any material taken FROM the
+      // graveyard — the splice below had already removed it, and the stale
+      // snapshot put it right back.
+      const graveAdd = [];
+      const spent = [];
+      for (const m of zoneMats) {
+        const key = KEY[m.zone];
+        if (!key || !Array.isArray(st2[key])) continue;
+        const pile = st2[key].slice();
+        let idx = -1;
+        if (m.instanceId) idx = pile.findIndex(c => c && c.instanceId === m.instanceId);
+        if (idx < 0 && m.cardId) idx = pile.findIndex(c => c && (c.id === m.cardId || c.cardId === m.cardId));
+        if (idx < 0 && typeof m._idx === 'number' && pile[m._idx]) idx = m._idx;
+        if (idx < 0) continue;
+        const card = pile.splice(idx, 1)[0];
+        st2[key] = pile;
+        spent.push(card && card.name ? card.name : (m.name || 'a card'));
+        // The graveyard is the source pile for a 'grave' material, so a card
+        // taken from there must NOT be pushed straight back into it.
+        if (m.zone !== 'grave' && card) graveAdd.push(card);
+      }
+      // Append to the LIVE pile (post-splice), never to a pre-splice snapshot.
+      if (graveAdd.length) st2.graveyard = (Array.isArray(st2.graveyard) ? st2.graveyard : []).concat(graveAdd);
+      ns[side2] = st2;
+      if (spent.length) {
+        log.push({ msg: '🗃 Fusion materials taken from ' +
+          [...new Set(zoneMats.map(m => m.zone === 'grave' ? 'the graveyard' : 'your ' + m.zone))].join(' + ') +
+          ': ' + spent.join(', ') + '.', color: 'green' });
+      }
+    }
+  } catch (e) { try { console.warn('[fusion zoneMats]', e); } catch (_) {} }
   ns.units = ns.units.map(u => {
     if (!matIds.has(u.id)) return u;
     if (destination === 'destroy' || destination === 'void') {
@@ -84904,7 +84772,14 @@ function _fireTriggers(state, event, ctx) {
   // fire on the card play that ENTERS setup, not one action later.
   // ⚠ advancePhase fires its own 'phase' event back through here — without the
   // guard this recurses until the stack blows.
-  const _wantPhase = _PHASE_FOR_EVENT[event];
+  let _wantPhase = _PHASE_FOR_EVENT[event];
+  // 🕒 SYMMETRY: a card played DURING Combat moves you to Follow Up — the same
+  // step the player's _phaseAllows('play') makes. Without this the AI stayed in
+  // Combat after playing (because _phaseGoto refuses to go backward to 'setup')
+  // and could keep attacking all turn while the player could not.
+  try {
+    if (_wantPhase === 'setup' && _phaseOf(s) === 'combat') _wantPhase = 'followup';
+  } catch (e) {}
   if (_wantPhase && !_fireTriggers._phasing) {
     _fireTriggers._phasing = true;
     try { s = _phaseGoto(s, _wantPhase); } catch (e) {}
@@ -86004,13 +85879,19 @@ function canAttackTarget(attacker, target) {
   }
   // 🔒 Lockdown — this side was hit by a lock-attacks counter; no strikes the rest of the turn.
   if (attacker.owner && typeof _battleIsLocked === 'function' && _battleIsLocked(App.state, attacker.owner, 'attack')) return { ok: false, reason: 'locked' };
-  // 🕒 PHASE — the Battle Phase is over. Player-side only (the AI's step loop
-  // re-picks an action each tick and could spin on a move it may not make).
-  // ⚠ PURE: this function also feeds target highlighting, so it only ever says
-  // no — it must never advance the phase as a side effect.
-  if (attacker.owner === 'player' && typeof _phaseIndex === 'function' && typeof TURN_PHASE_IDS !== 'undefined') {
+  // 🕒 PHASE — the Battle Phase is over. Applies to BOTH sides now.
+  //
+  // ⚠ This was player-only because I thought gating the AI could hang its turn.
+  // It cannot: the AI calls this as a CANDIDATE FILTER while scoring targets
+  // (`if (!gate.ok) continue;`), so a blocked attack is never generated as an
+  // option and can never be re-picked. Combined with phases only moving forward,
+  // there is nothing here to spin on.
+  //
+  // ⚠ PURE: this also feeds target highlighting, so it only ever says no — it
+  // must never advance the phase as a side effect.
+  if (attacker.owner && typeof _phaseIndex === 'function' && typeof TURN_PHASE_IDS !== 'undefined') {
     try {
-      if (App.state && App.state.turn === 'player'
+      if (App.state && App.state.turn === attacker.owner
           && _phaseIndex(App.state) > TURN_PHASE_IDS.indexOf('combat')) {
         return { ok: false, reason: 'phase' };
       }
@@ -106390,6 +106271,49 @@ function renderVsScreen() {
   })();
 }
 
+/* ⏱ SIDE-DECK TIMER — 50 seconds to finish siding.
+   Armed once per visit to the screen (not per render, or every card you moved
+   would restart it). At zero it locks in AUTOMATICALLY, but only if the decks
+   are legal: forcing a player into a match with an illegal deck would be worse
+   than no timer at all, so an illegal board simply stops the clock and says so. */
+const SIDE_DECK_SECONDS = 50;
+function _sdxSecondsLeft() {
+  try {
+    const end = App._sdxEndAt || 0;
+    if (!end) return SIDE_DECK_SECONDS;
+    return Math.max(0, Math.ceil((end - Date.now()) / 1000));
+  } catch (e) { return SIDE_DECK_SECONDS; }
+}
+function _sdxArmTimer() {
+  try {
+    if (!App._sdxEndAt) App._sdxEndAt = Date.now() + SIDE_DECK_SECONDS * 1000;
+    if (App._sdxTick) return;                       // already ticking — a re-render must not restart it
+    App._sdxTick = setInterval(() => {
+      try {
+        // Left the screen — stop cleanly and forget the deadline so the next
+        // visit gets a fresh 50s rather than an expired one.
+        if (App.screen !== 'preBattleLoadout') { _sdxStopTimer(); return; }
+        const left = _sdxSecondsLeft();
+        const el = document.getElementById('sdx-clock');
+        if (el) {
+          el.textContent = '0:' + String(left).padStart(2, '0');
+          el.classList.toggle('low', left <= 10);
+        }
+        if (left <= 0) {
+          _sdxStopTimer();
+          const btn = document.getElementById('btn-pbl-done');
+          if (btn && !btn.disabled) { btn.click(); }
+          else { try { showToast('⏱ Time is up — fix your deck counts to enter the match.', 4000); } catch (e) {} }
+        }
+      } catch (e) {}
+    }, 1000);
+  } catch (e) {}
+}
+function _sdxStopTimer() {
+  try { if (App._sdxTick) clearInterval(App._sdxTick); } catch (e) {}
+  App._sdxTick = null; App._sdxEndAt = 0;
+}
+
 function renderPreBattleLoadout() {
   // NOTE: global `root` = document.getElementById('app').
   if (!root) return;
@@ -106646,7 +106570,63 @@ function renderPreBattleLoadout() {
         : `🔒 Lock-in needs exactly ${MAIN_SIZE} main + ${SIDE_SIZE} side · `
           + [`Main ${mainCount}/${MAIN_SIZE}`, `Side ${sideCount}/${SIDE_SIZE}`].join(' · ');
 
+  // ⏱ 50-SECOND SIDE TIMER. Armed once per visit; the tick lives in
+  // _sdxArmTimer so a re-render never restarts the countdown.
+  const _sdxLeft = _sdxSecondsLeft();
+  // ⚙ Cost-grouped MAIN list, matching the mockup.
+  const _byCost = {};
+  mainGroups.forEach(g => { const c = (g.cost === '' || g.cost == null) ? 0 : (g.cost | 0); (_byCost[c] = _byCost[c] || []).push(g); });
+  const _mainHtml = Object.keys(_byCost).map(Number).sort((a, b) => a - b).map(c => `
+    <div class="sdx-costhdr">Cost ${c}</div>
+    ${_byCost[c].map(g => `
+      <div class="sdx-row" data-ctx-key="${escapeHtml(g.key)}" title="Right-click for card details">
+        <span class="sdx-cost">${c}</span>
+        <span class="sdx-name">${escapeHtml(g.name)}</span>
+        <span class="sdx-kind" style="color:${_kindColor(g.kind)}">${escapeHtml(g.kindLbl)}</span>
+        <span class="sdx-qty">×${g.count}</span>
+        <button class="sdx-move" data-mv-to-side="${escapeHtml(g.key)}">Side →</button>
+      </div>`).join('')}`).join('');
+  const _sideHtml = sideGroups.length ? sideGroups.map(g => `
+      <div class="sdx-row" data-ctx-key="${escapeHtml(g.key)}" title="Right-click for card details">
+        <span class="sdx-cost">${g.cost !== '' ? g.cost : '—'}</span>
+        <span class="sdx-name">${escapeHtml(g.name)}</span>
+        <span class="sdx-kind" style="color:${_kindColor(g.kind)}">${escapeHtml(g.kindLbl)}</span>
+        <span class="sdx-qty">×${g.count}</span>
+        <button class="sdx-move" data-mv-to-main="${escapeHtml(g.key)}">← Main</button>
+      </div>`).join('') : '';
+
   root.innerHTML = `
+    <div class="sdx">
+      <div class="sdx-top">
+        <div class="sdx-title"><span>🃏</span> Side Deck &amp; Gem Setup</div>
+        <div class="sdx-clock ${_sdxLeft <= 10 ? 'low' : ''}" id="sdx-clock">${_sdxLeft > 0 ? ('0:' + String(_sdxLeft).padStart(2, '0')) : '—'}</div>
+        <button class="sdx-tab ${edit.activeTab === 'deck' ? 'active' : ''}" data-pbl-tab="deck">Deck Setup</button>
+        <button class="sdx-tab ${edit.activeTab === 'gems' ? 'active' : ''}" data-pbl-tab="gems">Gems: ${gemsOk ? 'On' : 'Off'}</button>
+      </div>
+      ${edit.activeTab === 'gems' ? `<div class="sdx-body" style="grid-template-columns:1fr"><div class="sdx-pane"><div class="sdx-scroll">${contentHtml}</div></div></div>` : `
+      <div class="sdx-body">
+        <div class="sdx-pane">
+          <div class="sdx-ph"><h3>Side Deck</h3><span class="sdx-count ${sideOk ? 'ok' : 'warn'}">${sideCount}/${SIDE_SIZE}</span></div>
+          <div class="sdx-sub">Move cards from Main →</div>
+          ${_sideHtml
+            ? `<div class="sdx-scroll">${_sideHtml}</div>`
+            : `<div class="sdx-drop"><span class="g">🃏</span><span>Send cards here from your Main Deck</span></div>`}
+        </div>
+        <div class="sdx-pane">
+          <div class="sdx-ph"><h3>Main Deck</h3><span class="sdx-count ${mainOk ? 'ok' : 'warn'}">${mainCount}/${MAIN_SIZE} ${mainOk ? '✓' : ''}</span>${mainOk && sideOk ? '<span class="sdx-ready">✓ Ready</span>' : ''}</div>
+          <div class="sdx-scroll">${_mainHtml}</div>
+        </div>
+      </div>`}
+      <div class="sdx-foot">
+        <button class="sdx-back" id="btn-pbl-back">← Back to Opponent</button>
+        <div class="sdx-lock">🔒 ${escapeHtml(hintText)}</div>
+        <button class="sdx-done" id="btn-pbl-done"${doneOk ? '' : ' disabled'}>✓ Done → Return to Match</button>
+      </div>
+    </div>
+    ${typeof renderDeckCardContextModal === 'function' ? renderDeckCardContextModal() : ''}`;
+  _sdxArmTimer();
+
+  if (false) root.innerHTML = `
     <div class="pbl-screen">
       <div class="pbl-header"><div class="pbl-title">⚙️ Side Deck &amp; Gem Setup</div></div>
       ${tabHtml}
@@ -106765,6 +106745,7 @@ function renderPreBattleLoadout() {
       renderPreBattleLoadout();  // re-render so the player sees the live counts and can keep adjusting
       return;
     }
+    try { _sdxStopTimer(); } catch (e) {}
     bp.deck = [...edit.mainDeck];
     if (!prof.sideDeck || typeof prof.sideDeck !== 'object') prof.sideDeck = { cards: [], gems: [] };
     // 📋 SIDE DECK IS A LOAN, NOT A TRADE.
@@ -112019,6 +112000,9 @@ function renderCardEditor() {
         <label class="small-text" style="color:#d8b8ff">×<input class="fr-count" data-fr-idx="${i}" type="number" min="1" max="9" value="${Math.max(1, (r.count | 0) || 1)}" style="width:52px;margin-left:3px"></label>
         <select class="fr-type" data-fr-idx="${i}" style="min-width:110px">${_fusTypeOpts(r.type)}</select>
         <select class="fr-card" data-fr-idx="${i}" style="min-width:210px">${_fusCardOpts(r.cardId)}</select>
+        <select class="fr-zone" data-fr-idx="${i}" style="min-width:190px" title="Where this material is taken FROM. Field is the classic behaviour — a unit standing near your hero.">${
+          FUSION_ZONES.map(z => `<option value="${z.id}" ${((r.zone || 'field') === z.id) ? 'selected' : ''}>${escapeHtml(z.label)}</option>`).join('')
+        }</select>
         <button class="btn-mini btn-danger" data-act="rm-fr" data-fr-idx="${i}" style="margin-left:auto">×</button>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px">
@@ -115655,7 +115639,12 @@ function captureEditorIntoCard(card) {
         if (fcs.length) req.factions = fcs;
         const n = cn ? Math.max(1, Math.min(9, parseInt(cn.value, 10) || 1)) : 1;
         if (n > 1) req.count = n;
-        if (req.type || req.cardId || req.elements || req.factions || req.count) rows.push(req);
+        // 🗃 Zone. 'field' is the engine default, so it is deliberately NOT
+        // written — a card that never touches this picker keeps exactly the shape
+        // it had before, and diffs stay clean.
+        const zn = r.querySelector('.fr-zone');
+        if (zn && zn.value && zn.value !== 'field') req.zone = zn.value;
+        if (req.type || req.cardId || req.elements || req.factions || req.count || req.zone) rows.push(req);
       });
       if (rows.length) card.fusionRequirements = rows;
       // 🜂 Summon condition capture. Written only when something is actually set,
@@ -123528,9 +123517,21 @@ function renderFusionSelectionOverlay() {
   // (findLegalFusionMaterials pushes in req order), so map ids → units directly.
   // Filtering s.units instead would reorder by board position and pair each
   // requirement row with the wrong material.
-  const materials = (fm.materialUnitIds || [])
-    .map(id => (s.units || []).find(u => u && u.id === id))
-    .filter(Boolean);
+  // 🗃 A material is EITHER a board unit id (string) or a zone card object
+  // {zone, name, ...}. Resolve each to something displayable.
+  //
+  // ⚠ NOTHING IS FILTERED. The old `.filter(Boolean)` dropped unresolvable
+  // entries, which SHIFTED every later material up a slot — so a hand material in
+  // row 1 made row 1 display row 2's unit and left a phantom "unfilled" at the
+  // end. Row i must always show material i, so a gap stays a gap.
+  const _zoneLabel = { hand: '🃏 Hand', deck: '📚 Deck', grave: '⚰ Graveyard' };
+  const materials = (fm.materialUnitIds || []).map(m => {
+    if (typeof m === 'string') return (s.units || []).find(u => u && u.id === m) || null;
+    if (m && typeof m === 'object' && m.zone) {
+      return { name: m.name || 'Card', icon: '🃏', _fromZone: _zoneLabel[m.zone] || m.zone };
+    }
+    return null;
+  });
   // Look up specific-card pins so the requirement row shows the real name.
   const _polyCardLookup = (cid) => {
     if (!cid) return null;
@@ -123564,7 +123565,10 @@ function renderFusionSelectionOverlay() {
     if (r.element) tags.push((ELEMENT_DATA[r.element] && ELEMENT_DATA[r.element].icon || '') + ' ' + (ELEMENT_DATA[r.element] && ELEMENT_DATA[r.element].name || r.element));
     if (r.faction) tags.push('Faction: ' + _factionLabel(r.faction));
     const filled = materials[i];
-    const fillTxt = filled ? `${escapeHtml(filled.icon || '🪖')} ${escapeHtml(filled.name || 'Unit')}` : '<span class="ink-dim">— unfilled —</span>';
+    const fillTxt = filled
+      ? `${escapeHtml(filled.icon || '🪖')} ${escapeHtml(filled.name || 'Unit')}`
+        + (filled._fromZone ? ` <span class="ink-dim" style="font-size:0.78em">· from ${escapeHtml(filled._fromZone)}</span>` : '')
+      : '<span class="ink-dim">— unfilled —</span>';
     return `<div class="poly-req-row"><span class="poly-req-tags">${tags.map(t => `<span class="poly-req-tag">${escapeHtml(t)}</span>`).join('')}</span><span class="poly-req-fill">${fillTxt}</span></div>`;
   }).join('');
   const cost = (s.mods && s.mods.cheapSpells) ? 0 : (card.cost | 0);
@@ -124068,6 +124072,11 @@ function renderPolycreationCinematic() {
           <div class="poly-cine-ring poly-cine-ring-mid"></div>
           <div class="poly-cine-ring poly-cine-ring-inner"></div>
           <div class="poly-cine-rune-ring">${runeRing}</div>
+          <!-- ⚛ The Polycreation sigil, spinning behind the portrait. Sits BELOW
+               the kalon icon in z-order so it frames the summon instead of
+               hiding what was summoned. -->
+          <img class="poly-cine-atom" src="assets/artwork/gameicons/polycreation.png" alt=""
+               onerror="this.style.display='none'">
           <div class="poly-cine-energy"></div>
           <div class="poly-cine-shockwave"></div>
         </div>
@@ -127724,6 +127733,23 @@ function renderBoard() {
               <span class="unit-meta">${getLevelIcon('1.5em')} ${occupant.level}</span>
             </div>
             ${occupant.flying ? `<div class="flying-marker" title="Flying — immune to ground attacks">🪶</div>` : ''}
+            ${(function () {
+              // 🌟 FUSION MATERIAL GLOW — same predicate as the hover row, so a
+              // glowing unit always has the Polycreation option behind it.
+              try {
+                if (occupant.owner !== 'player' || occupant.isFaceDown) return '';
+                // ⚛ STRICT GATE — only while polycreation is actually castable. The
+                // hover row keeps the looser "could be a material" test; this icon
+                // is the "you can do it NOW" signal and must not cry wolf.
+                const _fk = (typeof _unitIsFusionReady === 'function') ? _unitIsFusionReady(occupant, 'player') : null;
+                if (!_fk) return '';
+                const _t = escapeHtml('Polycreation ready — fuses into ' + (_fk.name || 'a Kalon'));
+                // The PNG upgrades the glyph when present; onerror keeps the ✦ so a
+                // missing asset degrades instead of leaving an empty box.
+                return `<div class="fusion-marker" title="${_t}"><img src="assets/artwork/gameicons/polycreation.png" alt="" `
+                  + `onerror="this.replaceWith(document.createTextNode('✦'))"><\/div>`;
+              } catch (e) { return ''; }
+            })()}
             ${statusIcons ? `<div class="unit-status">${statusIcons}</div>` : ''}
             ${realStar}
             ${overwatchBadge}
@@ -135190,6 +135216,25 @@ function _runAIStepWhenClear(waited) {
   try { doAIStep(); } catch (e) { try { console.warn('[ai] step threw', e); } catch (_) {} }
 }
 
+/* 🛑 AI STEP BUDGET — the explicit termination guard.
+   The phase gate cannot spin the AI (it filters candidates rather than refusing
+   picks) and an 8s watchdog already backstops a dead step. This is a fourth
+   layer: a hard ceiling on steps per AI turn. If the loop ever does churn, the
+   turn ends cleanly with a logged reason instead of freezing the match. */
+const AI_MAX_STEPS_PER_TURN = 120;
+function _aiStepBudgetOk() {
+  try {
+    const key = 'ai' + ((App.state && App.state.turnNumber) | 0);
+    if (App._aiStepKey !== key) { App._aiStepKey = key; App._aiStepN = 0; }
+    App._aiStepN = (App._aiStepN | 0) + 1;
+    if (App._aiStepN > AI_MAX_STEPS_PER_TURN) {
+      try { console.warn('[AI] step budget exhausted (' + App._aiStepN + ') — ending the turn.'); } catch (e) {}
+      return false;
+    }
+  } catch (e) {}
+  return true;
+}
+
 function scheduleAIStep(delay) {
   // 📡 In multiplayer the AI is OFF — the opponent's moves come from the
   // realtime channel, not from the local AI scoring loop. Skipping here
@@ -135789,6 +135834,8 @@ function _aiTryGraveAbility(s) {
 function doAIStep() {
   if (!App.state || !App.ui.aiBusy) return;
   if (App.state.gameOver) { finishAIPhase(); return; }
+  // 🛑 Hard ceiling on steps per AI turn — see _aiStepBudgetOk.
+  if (typeof _aiStepBudgetOk === 'function' && !_aiStepBudgetOk()) { finishAIPhase(); return; }
   // 🕒 Perf budget — measure how long this step takes. Slow steps warn so
   // future profiling has breadcrumbs. Hot-path optimization later targets
   // any function whose name shows up repeatedly in the warning bursts.
@@ -142042,6 +142089,14 @@ function renderProfile() {
             <div class="profile-card-note">Cinders, Aza, resources, items, cards, PRNs &amp; coupons granted to you appear here — claim to add them. PRNs need a corporation. Got a code? Tap <strong>🎁 Redeem Code</strong> above.</div>
           </div>
         </div>`;
+  // 🤝 Referral card — painted async by _profReferralPaint() (needs the cloud).
+  const referralCard = `
+        <div class="profile-card" style="grid-column:1/-1">
+          <div class="profile-card-header">🤝 Referrals <span class="profile-chip" id="prof-ref-count" style="margin-left:6px">…</span></div>
+          <div class="profile-card-body" id="prof-ref-body">
+            <div class="small-text ink-dim">${(Profile.cloud && Profile.cloud.signedIn) ? 'Loading your referral code…' : '☁ Sign in to get your referral code and start earning.'}</div>
+          </div>
+        </div>`;
 
   root.innerHTML = `
     <div class="profile-page">
@@ -142071,6 +142126,8 @@ function renderProfile() {
       </div>
 
       ${rewardsCard}
+
+      ${referralCard}
 
       <!-- ===== Two-column grid: Account / Stats ===== -->
       <div class="profile-grid">
@@ -142261,6 +142318,7 @@ function renderProfile() {
   `;
 
   // ----- Bindings -----
+  try { _profReferralPaint(); } catch (e) {}
   document.getElementById('btn-back-profile').onclick = () => {
     App.screen = 'title'; App.titleHub = 'arcanum'; render();
   };
@@ -187023,7 +187081,7 @@ function _openNodeCity(nodeId) {
   if (document.getElementById('node-city-frame')) return;
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=119m2';
+  f.src = 'node-city/index.html?v=119m5';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);

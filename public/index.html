@@ -14223,20 +14223,53 @@
   .stat-bar-fill.s-res { background: linear-gradient(90deg, #2c5b66, #5da7b8); }
   .stat-bar-fill.s-spd { background: linear-gradient(90deg, #8a7530, #d4af37); }
 
+  /* ✨ STAT PREVIEW — gilded to match the rest of the app (v119n5). */
   .stat-bars-panel {
-    background: rgba(0,0,0,0.25);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0.7rem 0.9rem;
+    position: relative;
+    background:
+      radial-gradient(120% 80% at 50% 0%, rgba(212,175,55,0.07), transparent 62%),
+      linear-gradient(180deg, rgba(22,18,40,0.9), rgba(8,7,18,0.95));
+    border: 1px solid rgba(212,175,55,0.42);
+    border-radius: 9px;
+    padding: 0.85rem 1rem 0.8rem;
+    box-shadow: inset 0 0 40px rgba(212,175,55,0.04);
+  }
+  .stat-bars-panel::before {
+    content: ""; position: absolute; inset: 4px;
+    border: 1px solid rgba(212,175,55,0.13);
+    border-radius: 6px; pointer-events: none;
   }
   .stat-bars-title {
-    font-family: 'Cinzel', serif;
-    font-size: 0.7rem;
-    letter-spacing: 0.12em;
+    display: flex; align-items: center; gap: 0.55rem;
+    font-family: 'Cinzel', Georgia, serif;
+    font-size: 0.72rem; font-weight: 800;
+    letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: var(--gold);
-    margin-bottom: 0.5rem;
+    color: #f0d68f;
+    margin-bottom: 0.6rem;
+    text-shadow: 0 1px 8px rgba(212,175,55,0.3);
   }
+  .stat-bars-title::before, .stat-bars-title::after {
+    content: ""; flex: 1; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(212,175,55,0.5), transparent);
+  }
+
+  /* 🧬 TRAIT POOL chips — the picker's options, tinted by rarity. */
+  #traitpool-backdrop .tp-opt {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.4rem 0.8rem; margin: 0 0.35rem 0.4rem 0;
+    border-radius: 999px; cursor: pointer; font-size: 0.82rem;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.12);
+    transition: 0.14s;
+  }
+  #traitpool-backdrop .tp-opt:hover { transform: translateY(-1px); background: rgba(255,255,255,0.08); }
+  #traitpool-backdrop .tp-opt.on {
+    background: rgba(212,175,55,0.14);
+    box-shadow: 0 0 14px rgba(212,175,55,0.2);
+    font-weight: 700;
+  }
+  #traitpool-backdrop .tp-opt input { display: none; }
 
   .moves-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 0.75rem; }
   .move-btn {
@@ -15417,28 +15450,46 @@
     line-height: 1.2;
     gap: 2px;
   }
+  /* 🛡 FACTIONS — a GRID of tiles, not a wrapping row of inline chips.
+     Icon over name so the picker reads by sight; the faction's own colour
+     becomes its ring and glow when chosen (set inline per-faction, which is why
+     the `.on` state here only supplies the lift and the wash). */
   .faction-picker {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 0.5rem;
   }
   .faction-chip {
-    display: inline-flex;
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.35rem 0.7rem;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    font-size: 0.78rem;
+    justify-content: center;
+    gap: 0.3rem;
+    padding: 0.7rem 0.4rem 0.6rem;
+    text-align: center;
+    background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 9px;
+    font-family: 'Cinzel', Georgia, serif;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    line-height: 1.25;
     cursor: pointer;
+    transition: 0.14s;
     color: var(--ink);
     transition: all 0.12s;
     user-select: none;
   }
   .faction-chip:hover { background: rgba(255,255,255,0.08); }
   .faction-chip input { display: none; }
+  .faction-chip:hover { transform: translateY(-2px); border-color: rgba(212,175,55,0.5); }
+  .faction-chip span { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
+  .faction-chip input { display: none; }
   .faction-chip.on {
+    background: linear-gradient(180deg, rgba(212,175,55,0.14), rgba(0,0,0,0.25));
+    box-shadow: 0 0 16px rgba(212,175,55,0.18), inset 0 0 22px rgba(255,255,255,0.04);
+    font-weight: 700;
     background: rgba(255,255,255,0.06);
     box-shadow: 0 0 0 1px currentColor inset;
     font-weight: 600;
@@ -34546,7 +34597,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119n4';
+  window.BUILD_VERSION = 'v119n5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -55260,6 +55311,8 @@ async function _profReferralPaint() {
       if (!res.ok) {
         showToast(res.error === 'self_referral' ? '⚠ That’s your own code — share it instead!'
           : res.error === 'already_redeemed' ? '⚠ This account already redeemed a code.'
+          : res.error === 'same_ip' ? '⚠ A referral was already redeemed from this network.'
+          : res.error === 'ip_limit' ? '⚠ This network hit its referral limit for today.'
           : res.error === 'bad_code' ? '⚠ That code doesn’t exist — check the spelling.'
           : '⚠ Redeem failed — try again.', 5200);
       } else {
@@ -113532,6 +113585,9 @@ function renderTraitPoolModal(card) {
         </span>
       </button>`;
   };
+  // 🧬 Rarity heading + a chip GRID beneath it (v119n5). The rows used to be
+  // plain stacked labels; chips make the four rarity bands scannable and let the
+  // rarity colour do the work.
   const section = (rk, label) => (groups[rk] && groups[rk].length)
     ? `<div style="margin:0 0 4px;color:${TRAIT_RARITY_COLOR[rk]};font-weight:700;font-family:'Cinzel',serif;font-size:0.95rem">${label}</div>${groups[rk].map(row).join('')}`
     : '';

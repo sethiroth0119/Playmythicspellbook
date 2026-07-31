@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bank of Ethos — Acquire Mythic Token</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,700&family=Spectral:wght@300;400;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#070B11; --slate:#111925; --slate-2:#18222F;
+    --arcane:#4FA8D8; --arcane-dim:#245068; --arcane-hot:#35C6FF;
+    --brass:#C9A227; --bone:#E8E3D6; --ash:#78838F; --alarm:#B4553F;
+    --rule:rgba(232,227,214,.13);
+    --f-display:"Fraunces",Georgia,serif;
+    --f-body:"Spectral",Georgia,serif;
+    --f-mono:"IBM Plex Mono",ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:transparent;font-family:var(--f-body);color:var(--bone);-webkit-font-smoothing:antialiased}
+
+  .scrim{
+    position:fixed; inset:0;
+    background:radial-gradient(60% 60% at 50% 45%,rgba(5,9,14,.78) 0%,rgba(3,5,8,.95) 100%);
+    display:grid; place-items:center; padding:24px; overflow:auto;
+  }
+
+  .ledger{
+    width:min(980px,100%);
+    background:linear-gradient(168deg,var(--slate-2) 0%,var(--slate) 58%,#0D141D 100%);
+    border:1px solid rgba(79,168,216,.26);
+    box-shadow:0 0 0 1px rgba(0,0,0,.6),0 40px 90px -30px rgba(0,0,0,.9),inset 0 1px 0 rgba(232,227,214,.06);
+    display:grid; grid-template-columns:minmax(0,0.86fr) minmax(0,1.14fr);
+    position:relative;
+  }
+  .ledger::before,.ledger::after{
+    content:""; position:absolute; width:18px; height:18px; border:1px solid var(--brass); opacity:.55;
+  }
+  .ledger::before{top:-1px;left:-1px;border-right:0;border-bottom:0}
+  .ledger::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
+
+  .vault{
+    position:relative; border-right:1px solid var(--rule);
+    min-height:460px; display:flex; flex-direction:column;
+    background:radial-gradient(70% 55% at 50% 40%,rgba(79,168,216,.13) 0%,transparent 72%);
+  }
+  #stage{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .vault-plate{
+    position:relative; margin-top:auto; padding:20px 24px 22px;
+    border-top:1px solid var(--rule);
+    background:linear-gradient(180deg,transparent,rgba(5,9,14,.6));
+  }
+  .eyebrow{font-family:var(--f-mono);font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--arcane)}
+  .assay{display:flex;justify-content:space-between;gap:12px;margin-top:10px;font-family:var(--f-mono);font-size:11px;color:var(--ash)}
+  .assay b{display:block;color:var(--bone);font-weight:500;font-size:13px;margin-top:3px;letter-spacing:.02em}
+
+  .form{padding:30px 34px 32px;min-width:0;position:relative}
+  .crest{display:flex;align-items:center;gap:12px;margin-bottom:4px}
+  .crest svg{width:26px;height:26px;flex:none}
+  .inst{font-family:var(--f-mono);font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:var(--arcane)}
+  h1{font-family:var(--f-display);font-optical-sizing:auto;font-weight:500;font-size:34px;line-height:1.05;margin:14px 0 6px;letter-spacing:-.015em}
+  .sub{margin:0 0 22px;color:var(--ash);font-size:14.5px;line-height:1.55;max-width:46ch;font-weight:300}
+
+  .x-close{
+    position:absolute;top:14px;right:16px;appearance:none;cursor:pointer;background:transparent;
+    border:1px solid var(--rule);color:var(--ash);font-family:var(--f-mono);font-size:12px;
+    padding:6px 11px;transition:color .18s,border-color .18s;
+  }
+  .x-close:hover{color:var(--bone);border-color:var(--ash)}
+
+  .node-card{
+    border:1px solid var(--rule); border-left:2px solid var(--arcane);
+    background:rgba(79,168,216,.06); padding:14px 16px; margin-bottom:18px;
+  }
+  .node-card .label{font-family:var(--f-mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--ash)}
+  .node-card .name{font-family:var(--f-display);font-size:20px;font-weight:500;margin:5px 0 0;letter-spacing:-.01em}
+  .node-card .name em{font-style:normal;font-family:var(--f-mono);font-size:12px;color:var(--arcane);letter-spacing:.08em;margin-left:9px}
+  .progress{margin-top:11px}
+  .progress .track{height:3px;background:rgba(232,227,214,.09);overflow:hidden}
+  .progress .track i{display:block;height:100%;background:linear-gradient(90deg,var(--arcane-dim),var(--arcane-hot));width:0;transition:width .8s cubic-bezier(.2,.8,.2,1)}
+  .progress .figures{display:flex;justify-content:space-between;margin-top:7px;font-family:var(--f-mono);font-size:10.5px;letter-spacing:.06em;color:var(--ash)}
+  .progress .figures b{color:var(--bone);font-weight:500}
+
+  .gain-chip{
+    display:inline-flex;align-items:center;gap:8px;margin:0 0 18px;
+    border:1px solid rgba(201,162,39,.4);background:rgba(201,162,39,.09);
+    font-family:var(--f-mono);font-size:11.5px;letter-spacing:.08em;color:var(--brass);
+    padding:8px 13px;
+  }
+
+  fieldset{border:0;margin:0 0 20px;padding:0}
+  legend{font-family:var(--f-mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--ash);padding:0 0 10px}
+  .denoms{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .denom{
+    appearance:none;cursor:pointer;background:rgba(232,227,214,.03);
+    border:1px solid var(--rule);color:var(--bone);
+    font-family:var(--f-mono);font-size:14px;font-weight:500;padding:13px 4px;text-align:center;
+    transition:border-color .18s,background .18s,color .18s;
+  }
+  .denom:hover{border-color:var(--arcane-dim);background:rgba(79,168,216,.08)}
+  .denom[aria-pressed="true"]{
+    border-color:var(--brass);color:var(--brass);background:rgba(201,162,39,.11);
+    box-shadow:inset 0 0 0 1px rgba(201,162,39,.24);
+  }
+  .denom:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+  .custom{margin-top:8px;display:flex;align-items:center;border:1px solid var(--rule);background:rgba(232,227,214,.03)}
+  .custom span{font-family:var(--f-mono);font-size:14px;color:var(--ash);padding:0 4px 0 13px}
+  .custom input{flex:1;background:transparent;border:0;color:var(--bone);font-family:var(--f-mono);font-size:14px;padding:12px 13px 12px 2px;width:100%}
+  .custom:focus-within{border-color:var(--arcane-dim)}
+
+  .slip{border:1px solid var(--rule);background:rgba(7,11,17,.5);padding:16px 18px;margin-bottom:18px}
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:7px 0;font-size:14px}
+  .row+.row{border-top:1px dashed rgba(232,227,214,.09)}
+  .row dt{color:var(--ash);font-weight:300}
+  .row dd{margin:0;font-family:var(--f-mono);font-size:14px;color:var(--bone)}
+  .row.total dd{font-size:20px;color:var(--brass);font-weight:500;letter-spacing:-.01em}
+  dl{margin:0}
+  .seal-timer{
+    display:flex;align-items:center;gap:9px;margin-top:13px;padding-top:12px;border-top:1px solid var(--rule);
+    font-family:var(--f-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ash);
+  }
+  .seal-timer .bar{flex:1;height:2px;background:rgba(232,227,214,.1);overflow:hidden}
+  .seal-timer .bar i{display:block;height:100%;background:var(--brass);width:100%;transform-origin:left}
+
+  .actions{display:flex;gap:10px;margin-top:6px}
+  .btn{
+    appearance:none;cursor:pointer;font-family:var(--f-mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    padding:15px 22px;border:1px solid var(--rule);background:transparent;color:var(--ash);
+    transition:color .18s,border-color .18s,background .18s;
+  }
+  .btn:hover{color:var(--bone);border-color:var(--ash)}
+  .btn-primary{flex:1;background:var(--brass);border-color:var(--brass);color:#17120A;font-weight:600}
+  .btn-primary:hover{background:#DDB63C;border-color:#DDB63C;color:#17120A}
+  .btn-primary[disabled]{opacity:.4;cursor:not-allowed}
+
+  .steps{list-style:none;margin:0 0 20px;padding:0;border:1px solid var(--rule);background:rgba(7,11,17,.5)}
+  .steps li{display:flex;align-items:center;gap:12px;padding:13px 18px;font-size:14px;color:var(--ash);font-weight:300}
+  .steps li+li{border-top:1px solid var(--rule)}
+  .steps .mark{width:16px;height:16px;flex:none;border:1px solid var(--arcane-dim);display:grid;place-items:center;font-family:var(--f-mono);font-size:9px;color:transparent}
+  .steps li[data-state="active"]{color:var(--bone)}
+  .steps li[data-state="active"] .mark{border-color:var(--brass);animation:pulse 1.4s ease-in-out infinite}
+  .steps li[data-state="done"]{color:var(--bone)}
+  .steps li[data-state="done"] .mark{border-color:var(--arcane);color:var(--arcane);background:rgba(79,168,216,.14)}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(201,162,39,.4)}50%{box-shadow:0 0 0 5px rgba(201,162,39,0)}}
+
+  .notice{border-left:2px solid var(--arcane);background:rgba(79,168,216,.07);padding:13px 16px;margin:0 0 18px;font-size:13.5px;line-height:1.55;color:var(--bone);font-weight:300}
+  .notice.warn{border-left-color:var(--alarm);background:rgba(180,85,63,.09)}
+  .notice.hold{border-left-color:var(--brass);background:rgba(201,162,39,.08)}
+  .notice b{font-weight:600;color:var(--brass)}
+
+  .receipt-figure{font-family:var(--f-display);font-size:44px;font-weight:500;letter-spacing:-.02em;color:var(--brass);margin:2px 0;line-height:1}
+  .receipt-figure small{font-family:var(--f-mono);font-size:14px;letter-spacing:.1em;color:var(--ash);margin-left:8px;font-weight:400}
+  .receipt-power{
+    border:1px solid rgba(79,168,216,.3);background:rgba(79,168,216,.07);
+    padding:12px 16px;margin:14px 0 18px;font-family:var(--f-mono);font-size:12.5px;letter-spacing:.05em;color:var(--bone);
+  }
+  .receipt-power b{color:var(--arcane-hot);font-weight:600}
+  .receipt-power .lvl-up{display:block;margin-top:6px;color:var(--brass)}
+
+  .fineprint{margin:20px 0 0;padding-top:16px;border-top:1px solid var(--rule);font-family:var(--f-mono);font-size:10.5px;line-height:1.7;letter-spacing:.03em;color:var(--ash)}
+  [hidden]{display:none !important}
+
+  @media (max-width:820px){
+    .ledger{grid-template-columns:1fr}
+    .vault{min-height:280px;border-right:0;border-bottom:1px solid var(--rule)}
+    .form{padding:26px 22px 28px}
+    h1{font-size:28px}
+    .denoms{grid-template-columns:repeat(2,1fr)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation-duration:.001ms !important;transition-duration:.001ms !important}
+  }
+</style>
+</head>
+<body>
+
+<div class="scrim" role="dialog" aria-modal="true" aria-labelledby="title">
+  <div class="ledger">
+
+    <!-- ── the token ── -->
+    <section class="vault" aria-hidden="true">
+      <canvas id="stage"></canvas>
+      <div class="vault-plate">
+        <p class="eyebrow">Struck on Base · Fixed issue</p>
+        <div class="assay">
+          <span>Denomination<b id="assayName">Mythic Token</b></span>
+          <span>Mark<b id="assaySymbol">MT</b></span>
+          <span>Issue<b>10,000,000</b></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── ledger form ── -->
+    <section class="form">
+      <button class="x-close" id="xClose" aria-label="Close">✕</button>
+      <div class="crest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#4FA8D8" stroke-width="1.2" aria-hidden="true">
+          <path d="M12 2.5 3.5 7v1.5h17V7L12 2.5Z"/><path d="M5.5 9v8M9.5 9v8M14.5 9v8M18.5 9v8"/>
+          <path d="M2.8 18.2h18.4v2.3H2.8z"/>
+        </svg>
+        <span class="inst">Bank of Ethos · Ownership Account</span>
+      </div>
+
+      <!-- STEP 1: compose -->
+      <div id="viewCompose">
+        <h1 id="title">Acquire Mythic Token</h1>
+        <p class="sub">Your purchase funds this Node's reconstruction. The Node earns Power toward its next level — you keep every token you buy.</p>
+
+        <div class="node-card">
+          <span class="label" id="buyingAs">Buying from</span>
+          <p class="name" id="nodeName">Node <em id="nodeLevel">LV 1</em></p>
+          <div class="progress">
+            <div class="track"><i id="nodeBar"></i></div>
+            <div class="figures">
+              <span><b id="nodePts">0</b> power</span>
+              <span><b id="nodeNext">500</b> to LV <span id="nodeNextLvl">2</span></span>
+            </div>
+          </div>
+        </div>
+
+        <span class="gain-chip" id="gainChip">⚡ Every completed checkout: +25 Node Power</span>
+
+        <fieldset>
+          <legend>Contribution</legend>
+          <div class="denoms" role="group" aria-label="Contribution amount">
+            <button class="denom" data-usd="10" aria-pressed="false">$10</button>
+            <button class="denom" data-usd="25" aria-pressed="true">$25</button>
+            <button class="denom" data-usd="100" aria-pressed="false">$100</button>
+            <button class="denom" data-usd="250" aria-pressed="false">$250</button>
+          </div>
+          <label class="custom">
+            <span>$</span>
+            <input id="customUsd" type="number" min="1" max="10000" step="1" placeholder="Other amount" aria-label="Custom contribution in dollars">
+          </label>
+        </fieldset>
+
+        <div class="actions">
+          <button class="btn btn-primary" id="toReview">Review purchase</button>
+        </div>
+      </div>
+
+      <!-- STEP 2: quote -->
+      <div id="viewQuote" hidden>
+        <h1>Confirm the terms</h1>
+        <p class="sub">This quote is held for two minutes. Nothing is charged until you confirm.</p>
+        <div class="slip">
+          <dl>
+            <div class="row"><dt>Contribution</dt><dd id="qUsd">$25.00</dd></div>
+            <div class="row"><dt>Rate</dt><dd id="qRate">$0.10 / MT</dd></div>
+            <div class="row"><dt>Supporting</dt><dd id="qNode">—</dd></div>
+            <div class="row"><dt>Node Power credited</dt><dd id="qPoints">+25</dd></div>
+            <div class="row total"><dt>You receive</dt><dd id="qTokens">250 MT</dd></div>
+          </dl>
+          <div class="seal-timer">
+            <span id="qClock">02:00</span>
+            <span class="bar"><i id="qBar"></i></span>
+            <span>Held</span>
+          </div>
+        </div>
+        <p class="notice" id="qNotice">Paid in real money on Base mainnet. Node Power is credited the moment the purchase settles.</p>
+        <p class="notice hold" id="qOffline" hidden><b>The payment rail is coming online.</b> Ⓜ MYTHIC checkout opens with the token launch — no charge can be made yet, and Node Power only ever comes from a completed purchase.</p>
+        <div class="actions">
+          <button class="btn" id="backToCompose">Back</button>
+          <button class="btn btn-primary" id="confirmBuy">Confirm purchase</button>
+        </div>
+      </div>
+
+      <!-- STEP 3: settling -->
+      <div id="viewProgress" hidden>
+        <h1>Settling</h1>
+        <p class="sub">Keep this open. It usually takes a few seconds.</p>
+        <ul class="steps" id="steps">
+          <li data-state="idle"><span class="mark">✓</span>Reserving your quote</li>
+          <li data-state="idle"><span class="mark">✓</span>Taking payment</li>
+          <li data-state="idle"><span class="mark">✓</span>Verifying with the bank</li>
+          <li data-state="idle"><span class="mark">✓</span>Delivering tokens</li>
+          <li data-state="idle"><span class="mark">✓</span>Crediting the Node</li>
+        </ul>
+      </div>
+
+      <!-- STEP 4: receipt -->
+      <div id="viewDone" hidden>
+        <h1>Tokens delivered</h1>
+        <p class="receipt-figure" id="rTokens">250<small>MT</small></p>
+        <p class="sub" id="rBalance">Your balance is now 250 MT.</p>
+        <div class="receipt-power" id="rPower"></div>
+        <div class="actions">
+          <button class="btn" id="buyAgain">Buy more</button>
+          <button class="btn btn-primary" id="closeModal">Return to the world</button>
+        </div>
+      </div>
+
+      <!-- error -->
+      <div id="viewError" hidden>
+        <h1>Purchase stopped</h1>
+        <p class="sub" id="errMsg">The quote expired before it was confirmed.</p>
+        <p class="notice warn" id="errNotice">Nothing was charged. Start again to get a fresh quote.</p>
+        <div class="actions">
+          <button class="btn" id="errClose">Close</button>
+          <button class="btn btn-primary" id="errRestart">Start again</button>
+        </div>
+      </div>
+
+      <p class="fineprint">
+        Mythic Token · Base · <span id="fpAddr">0x2915…6c76</span><br>
+        Token purchases are final once settled. Node Power is progress attribution — it is not currency, not transferable, and not redeemable for cash.
+      </p>
+    </section>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   GAME-INTEGRATED BUY MODAL — postMessage protocol
+   parent → ethos:data {live, apiBase, jwt, priceUsd, kind, gain,
+                        node {gameId, onchainId, name, level, power, into, need},
+                        token {name, symbol, address}, balanceMt}
+   modal  → ethos:ready · ethos:paid {intentId, tokens, usd}
+          · ethos:close
+   parent → ethos:result {ok, error, mt, balance, gained, power, level, leveled}
+   ═══════════════════════════════════════════════════════════════ */
+const CFG = {
+  live:false, apiBase:'', jwt:'', clientId:'', priceUsd:0.10, kind:'player', gain:25,
+  node:{ gameId:'', onchainId:'', name:'Node', level:1, power:0, into:0, need:500 },
+  token:{ name:'Mythic Token', symbol:'MT', address:'0x2915FdB0f04c4452c60a1B7f5174004513196c76' },
+  balanceMt:0,
+};
+const $ = id => document.getElementById(id);
+const fmt = n => Number(n).toLocaleString('en-US', {maximumFractionDigits:0});
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const post = (m) => { try { parent.postMessage(m, location.origin); } catch (e) {} };
+
+/* ── Three.js token (from the Bank of Ethos seal artwork) ── */
+(function token(){
+  if (typeof THREE === 'undefined') return;   // CDN blocked → static plate only
+  const canvas = $('stage');
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const scene  = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
+  camera.position.set(0, 0.5, 7.6); camera.lookAt(0, 0, 0);
+  const medal = new THREE.Group(); medal.rotation.x = -0.13; scene.add(medal);
+
+  const gold = new THREE.MeshStandardMaterial({color:0xC9A227, metalness:0.98, roughness:0.26, emissive:0x2A1F04, emissiveIntensity:0.42});
+  const goldDark = new THREE.MeshStandardMaterial({color:0x8A6E1B, metalness:0.95, roughness:0.42});
+  const stone = new THREE.MeshStandardMaterial({color:0x4A525E, metalness:0.55, roughness:0.82});
+  const stoneDeep = new THREE.MeshStandardMaterial({color:0x232B38, metalness:0.5, roughness:0.9});
+  const rune = new THREE.MeshStandardMaterial({color:0x8792A0, metalness:0.6, roughness:0.6, emissive:0x0E1620, emissiveIntensity:0.6});
+  const voidField = new THREE.MeshStandardMaterial({color:0x0B1D3E, metalness:0.35, roughness:0.62, emissive:0x0A2E63, emissiveIntensity:0.85});
+  const gem = new THREE.MeshStandardMaterial({color:0x35C6FF, metalness:0.35, roughness:0.08, emissive:0x1FA9F0, emissiveIntensity:2.4, transparent:true, opacity:0.94});
+  const appleMat = new THREE.MeshStandardMaterial({color:0x2F9BFF, metalness:0.25, roughness:0.18, emissive:0x2E8FFF, emissiveIntensity:2.0, transparent:true, opacity:0.93});
+  const appleHalo = new THREE.MeshBasicMaterial({color:0x63D2FF, transparent:true, opacity:0.16, side:THREE.BackSide, depthWrite:false});
+  const stemMat = new THREE.MeshStandardMaterial({color:0x1B3A5C, metalness:0.4, roughness:0.55});
+
+  const R = 2.35, T = 0.24;
+  const plateProfile = [
+    new THREE.Vector2(0, T), new THREE.Vector2(R*0.90, T),
+    new THREE.Vector2(R*0.985, T*0.62), new THREE.Vector2(R, T*0.10),
+    new THREE.Vector2(R, -T*0.10), new THREE.Vector2(R*0.985, -T*0.62),
+    new THREE.Vector2(R*0.90, -T), new THREE.Vector2(0, -T),
+  ];
+  const plate = new THREE.Mesh(new THREE.LatheGeometry(plateProfile, 128), stoneDeep);
+  plate.rotation.x = Math.PI/2; medal.add(plate);
+  medal.add(new THREE.Mesh(new THREE.TorusGeometry(R*0.995, 0.115, 20, 160), gold));
+  medal.add(new THREE.Mesh(new THREE.TorusGeometry(R*0.80, 0.155, 18, 150), stone));
+  [R*0.665, R*0.925].forEach(r=>{ medal.add(new THREE.Mesh(new THREE.TorusGeometry(r, 0.038, 14, 150), gold)); });
+  const runeShapes = [[0.10,0.030],[0.030,0.11],[0.075,0.075]];
+  for (let i=0;i<34;i++){
+    const a = (i/34)*Math.PI*2; const [w,h] = runeShapes[i % runeShapes.length];
+    [1,-1].forEach(side=>{
+      const g = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.035), rune);
+      g.position.set(Math.cos(a)*R*0.80, Math.sin(a)*R*0.80, side*0.155); g.rotation.z = a; medal.add(g);
+    });
+  }
+  const well = new THREE.Mesh(new THREE.CylinderGeometry(R*0.635, R*0.635, 0.30, 96), voidField);
+  well.rotation.x = Math.PI/2; medal.add(well);
+  const SN = 260, sPos = new Float32Array(SN*3);
+  for (let i=0;i<SN;i++){
+    const a = Math.random()*Math.PI*2, r = Math.sqrt(Math.random())*R*0.60;
+    sPos[i*3] = Math.cos(a)*r; sPos[i*3+1] = Math.sin(a)*r; sPos[i*3+2] = (Math.random()<0.5 ? 1 : -1) * 0.158;
+  }
+  const starGeo = new THREE.BufferGeometry();
+  starGeo.setAttribute('position', new THREE.BufferAttribute(sPos,3));
+  medal.add(new THREE.Points(starGeo, new THREE.PointsMaterial({color:0xBFE6FF, size:0.045, transparent:true, opacity:0.9, depthWrite:false})));
+
+  const apple = new THREE.Group();
+  const appleProfile = [];
+  for (let i=0;i<=44;i++){
+    const t = i/44, ang = t*Math.PI;
+    let r = Math.sin(ang)*0.62; r *= 1 + 0.14*Math.sin(ang*2);
+    const y = -Math.cos(ang)*0.60;
+    const dimple = 0.10*Math.pow(Math.max(0, Math.cos(ang)), 3);
+    appleProfile.push(new THREE.Vector2(Math.max(r,0.001), y - dimple + 0.05*Math.pow(t,4)));
+  }
+  const appleBody = new THREE.Mesh(new THREE.LatheGeometry(appleProfile, 72), appleMat);
+  apple.add(appleBody);
+  const halo = new THREE.Mesh(new THREE.LatheGeometry(appleProfile, 48), appleHalo);
+  halo.scale.set(1.22,1.20,1.22); apple.add(halo);
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.042, 0.34, 10), stemMat);
+  stem.position.set(0.015, 0.66, 0); stem.rotation.z = -0.16; apple.add(stem);
+  const leafShape = new THREE.Shape();
+  leafShape.moveTo(0,0); leafShape.quadraticCurveTo(0.20, 0.16, 0.44, 0.03); leafShape.quadraticCurveTo(0.20, -0.02, 0, 0);
+  const leaf = new THREE.Mesh(new THREE.ExtrudeGeometry(leafShape, {depth:0.02, bevelEnabled:false}), appleMat);
+  leaf.position.set(0.06, 0.74, -0.01); leaf.rotation.set(0.25, 0, 0.30); apple.add(leaf);
+  apple.scale.setScalar(1.06); medal.add(apple);
+  const core = new THREE.PointLight(0x49B6FF, 2.6, 6.5); medal.add(core);
+
+  const gems = [];
+  for (let i=0;i<4;i++){
+    const a = i*Math.PI/2 + Math.PI/2, g = new THREE.Group();
+    const setting = new THREE.Mesh(new THREE.OctahedronGeometry(0.40, 0), gold);
+    setting.scale.set(1, 1, 0.42); g.add(setting);
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.05, 10, 4), goldDark);
+    collar.rotation.z = Math.PI/4; g.add(collar);
+    const stoneGem = new THREE.Mesh(new THREE.OctahedronGeometry(0.185, 0), gem);
+    stoneGem.scale.set(1, 1, 0.75); g.add(stoneGem);
+    g.position.set(Math.cos(a)*R*1.02, Math.sin(a)*R*1.02, 0); g.rotation.z = a;
+    medal.add(g); gems.push(stoneGem);
+  }
+
+  scene.add(new THREE.AmbientLight(0x2A3644, 1.0));
+  const key  = new THREE.DirectionalLight(0xFFE7B8, 2.4); key.position.set(4,3.4,5); scene.add(key);
+  const rim  = new THREE.DirectionalLight(0x4FA8D8, 2.0); rim.position.set(-4.5,-1.2,2); scene.add(rim);
+  const back = new THREE.DirectionalLight(0x2E8FFF, 1.4); back.position.set(0,1,-5);  scene.add(back);
+
+  const MN = 150, mPos = new Float32Array(MN*3), drift = [];
+  for (let i=0;i<MN;i++){
+    mPos[i*3] = (Math.random()-0.5)*10; mPos[i*3+1] = (Math.random()-0.5)*8;
+    mPos[i*3+2] = (Math.random()-0.5)*4 - 1.2;
+    drift.push(0.0014 + Math.random()*0.0038);
+  }
+  const moteGeo = new THREE.BufferGeometry();
+  moteGeo.setAttribute('position', new THREE.BufferAttribute(mPos,3));
+  scene.add(new THREE.Points(moteGeo, new THREE.PointsMaterial({color:0x9FD8F5, size:0.03, transparent:true, opacity:0.3, depthWrite:false})));
+
+  function resize(){
+    const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
+    const pr = renderer.getPixelRatio();
+    if (canvas.width !== Math.floor(w*pr) || canvas.height !== Math.floor(h*pr)){
+      renderer.setSize(w,h,false);
+      camera.aspect = w/h; camera.updateProjectionMatrix();
+    }
+  }
+  let strike = 0;
+  window.__strikeCoin = () => { strike = 1; };
+  let t = 0;
+  (function loop(){
+    requestAnimationFrame(loop);
+    resize();
+    if (!reduced){
+      t += 0.01;
+      medal.rotation.y += 0.0075;
+      medal.rotation.x = -0.13 + Math.sin(t*0.55)*0.075;
+      apple.rotation.y -= 0.0075;
+      apple.position.y = Math.sin(t*0.9)*0.035;
+      appleMat.emissiveIntensity = 2.0 + Math.sin(t*1.7)*0.35;
+      gems.forEach((g,i)=>{ g.material.emissiveIntensity = 2.4 + Math.sin(t*2.1 + i)*0.7; });
+      core.intensity = 2.6 + Math.sin(t*1.7)*0.5;
+      const p = moteGeo.attributes.position.array;
+      for (let i=0;i<MN;i++){ p[i*3+1] += drift[i]; if (p[i*3+1] > 4) p[i*3+1] = -4; }
+      moteGeo.attributes.position.needsUpdate = true;
+    }
+    if (strike > 0){
+      strike = Math.max(0, strike - 0.02);
+      const e = strike*strike;
+      gold.emissiveIntensity = 0.42 + e*4.5;
+      appleMat.emissiveIntensity = 2.0 + e*6;
+      appleHalo.opacity = 0.16 + e*0.45;
+      key.intensity = 2.4 + e*4;
+      const s = 1 + e*0.07;
+      medal.scale.set(s,s,s);
+    }
+    renderer.render(scene, camera);
+  })();
+})();
+
+/* ═══════════════ purchase flow ═══════════════ */
+const views = {compose:$('viewCompose'), quote:$('viewQuote'), progress:$('viewProgress'), done:$('viewDone'), error:$('viewError')};
+const state = {usd:25, tokens:0, intentId:null, timer:null, settleWait:null};
+function show(name){ Object.entries(views).forEach(([k,el]) => el.hidden = (k !== name)); }
+function step(i, s){ document.querySelectorAll('#steps li')[i].dataset.state = s; }
+
+function paintNode(){
+  const n = CFG.node;
+  $('nodeName').firstChild.nodeValue = (n.name || 'Node') + ' ';
+  $('nodeLevel').textContent = 'LV ' + n.level;
+  $('nodePts').textContent = fmt(n.power);
+  $('nodeNext').textContent = fmt(Math.max(0, n.need - n.into));
+  $('nodeNextLvl').textContent = Math.min(10, n.level + 1);
+  $('qNode').textContent = n.name || 'Node';
+  $('buyingAs').textContent = CFG.kind === 'owner' ? 'Buying as the Node owner' : 'Buying from';
+  $('gainChip').textContent = (CFG.kind === 'owner' ? '👑' : '⚡') + ' +' + CFG.gain + ' Node Power per $10 spent' + (CFG.kind === 'owner' ? ' (owner rate)' : '');
+  $('qPoints').textContent = '+' + CFG.gain;
+  $('assayName').textContent = CFG.token.name;
+  $('assaySymbol').textContent = CFG.token.symbol;
+  $('fpAddr').textContent = String(CFG.token.address).slice(0,6) + '…' + String(CFG.token.address).slice(-4);
+  requestAnimationFrame(() => {
+    $('nodeBar').style.width = Math.min(100, (n.into / Math.max(1, n.need)) * 100) + '%';
+  });
+}
+
+document.querySelectorAll('.denom').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.denom').forEach(b => b.setAttribute('aria-pressed','false'));
+    btn.setAttribute('aria-pressed','true');
+    $('customUsd').value = '';
+    state.usd = Number(btn.dataset.usd);
+  });
+});
+$('customUsd').addEventListener('input', e => {
+  const v = Number(e.target.value);
+  if (v > 0){
+    document.querySelectorAll('.denom').forEach(b => b.setAttribute('aria-pressed','false'));
+    state.usd = v;
+  }
+});
+
+$('toReview').addEventListener('click', () => {
+  if (!(state.usd > 0)) { $('customUsd').focus(); return; }
+  state.tokens = state.usd / CFG.priceUsd;
+  // Power scales with the amount: +gain per $10, floor, min 1 — the exact
+  // formula the server settlement (mythic_power_from_purchase) applies.
+  state.power = Math.max(1, Math.floor(state.usd / 10 * CFG.gain));
+  $('qUsd').textContent    = '$' + state.usd.toFixed(2);
+  $('qRate').textContent   = '$' + CFG.priceUsd.toFixed(2) + ' / ' + CFG.token.symbol;
+  $('qPoints').textContent = '+' + fmt(state.power);
+  $('qTokens').textContent = fmt(state.tokens) + ' ' + CFG.token.symbol;
+  // Pre-launch: the quote is visible but confirming is impossible — the rail
+  // isn't live and Node Power only comes from a real settled purchase.
+  $('qOffline').hidden = !!CFG.live;
+  $('qNotice').hidden = !CFG.live;
+  $('confirmBuy').disabled = !CFG.live;
+  show('quote');
+  startHold();
+});
+
+function startHold(){
+  clearInterval(state.timer);
+  let left = 120;
+  const bar = $('qBar'), clock = $('qClock');
+  const tick = () => {
+    clock.textContent = String(Math.floor(left/60)).padStart(2,'0') + ':' + String(left % 60).padStart(2,'0');
+    bar.style.transform = 'scaleX(' + (left / 120) + ')';
+    if (left <= 0){
+      clearInterval(state.timer);
+      $('errMsg').textContent = 'The quote expired before it was confirmed. Quotes are held for two minutes so the rate stays honest.';
+      show('error');
+    }
+    left--;
+  };
+  tick();
+  state.timer = setInterval(tick, 1000);
+}
+
+$('backToCompose').addEventListener('click', () => { clearInterval(state.timer); show('compose'); });
+$('errRestart').addEventListener('click',  () => { clearInterval(state.timer); show('compose'); });
+$('buyAgain').addEventListener('click',    () => show('compose'));
+$('closeModal').addEventListener('click',  () => post({type:'ethos:close'}));
+$('errClose').addEventListener('click',    () => post({type:'ethos:close'}));
+$('xClose').addEventListener('click',      () => post({type:'ethos:close'}));
+addEventListener('keydown', (e) => { if (e.code === 'Escape') post({type:'ethos:close'}); });
+
+$('confirmBuy').addEventListener('click', async () => {
+  if (!CFG.live) return;
+  clearInterval(state.timer);
+  show('progress');
+  document.querySelectorAll('#steps li').forEach(li => li.dataset.state = 'idle');
+  try { window.__strikeCoin && window.__strikeCoin(); } catch (e) {}
+  try {
+    await runLive();
+    // Paid + delivered on-chain — hand the intent to the game so the SERVER
+    // credits Node Power against it (exactly once) and returns the receipt.
+    step(4,'active');
+    const result = await new Promise((resolve, reject) => {
+      state.settleWait = resolve;
+      setTimeout(() => reject(new Error('The Node credit is taking longer than expected — your tokens are safe; Power lands on the next check.')), 30000);
+      post({type:'ethos:paid', intentId: state.intentId, tokens: state.tokens, usd: state.usd,
+            nodeId: CFG.node.gameId, nodeName: CFG.node.name, kind: CFG.kind});
+    });
+    step(4,'done');
+    if (!result.ok) throw new Error(
+      result.error === 'owner_only'      ? 'Only this Node\'s owner can buy at the owner rate.' :
+      result.error === 'already_claimed' ? 'This purchase already credited the Node.' :
+      result.error === 'not_paid'        ? 'The payment has not settled yet — Power lands once it does.' :
+      'The Node credit could not be completed. Your tokens are delivered.');
+    $('rTokens').innerHTML   = fmt(result.mt || state.tokens) + '<small>' + CFG.token.symbol + '</small>';
+    $('rBalance').textContent = 'Your balance is now ' + fmt(result.balance || state.tokens) + ' ' + CFG.token.symbol + '.';
+    $('rPower').innerHTML = '<b>+' + result.gained + ' Power</b> credited to ' + (CFG.node.name || 'the Node')
+      + ' — now <b>' + fmt(result.power) + '</b> power · LV ' + result.level
+      + (result.leveled ? '<span class="lvl-up">🔮 NODE LEVEL UP — a Planetary Rush begins worldwide!</span>' : '');
+    try { window.__strikeCoin && window.__strikeCoin(); } catch (e) {}
+    show('done');
+  } catch (err) {
+    $('errMsg').textContent = err.message || 'The purchase could not be completed.';
+    show('error');
+  }
+});
+
+/* 🔑 THIRDWEB PAYMENT RAIL.
+   The x402 `/pay` call must be made with a fetch that can settle a payment from
+   the player's in-app wallet. thirdweb gives us that via wrapFetchWithPayment:
+       client  ← createThirdwebClient({ clientId })     (public id, this file)
+       wallet  ← inAppWallet(), connected with the player's Supabase JWT
+       payFetch← wrapFetchWithPayment(fetch, client, wallet)
+   Loaded from the ESM CDN on demand so the modal stays a plain HTML file.
+   Returns plain fetch when no clientId is configured — the server then answers
+   402 and we surface a clear "wallet could not authorize" error rather than
+   pretending a purchase happened. */
+let _payFetchPromise = null;
+async function getPayFetch(){
+  if (window.MYTHIC_PAY_FETCH) return window.MYTHIC_PAY_FETCH;   // host-provided override wins
+  if (!CFG.clientId) return null;
+  if (_payFetchPromise) return _payFetchPromise;
+  _payFetchPromise = (async () => {
+    const tw   = await import('https://esm.sh/thirdweb@5');
+    const x402 = await import('https://esm.sh/thirdweb@5/x402');
+    const wal  = await import('https://esm.sh/thirdweb@5/wallets');
+    const client = tw.createThirdwebClient({ clientId: CFG.clientId });
+    // The player's invisible wallet, derived from their existing game login —
+    // no MetaMask, no seed phrase (see docs/architecture.md).
+    const wallet = wal.inAppWallet();
+    await wallet.connect({ client, strategy: 'jwt', jwt: CFG.jwt });
+    const f = x402.wrapFetchWithPayment(fetch, client, wallet);
+    window.MYTHIC_PAY_FETCH = f;
+    return f;
+  })().catch((e) => { _payFetchPromise = null; throw new Error('Wallet unavailable: ' + (e && e.message ? e.message : 'could not reach the payment provider') + '. Nothing was charged.'); });
+  return _payFetchPromise;
+}
+
+/* The real endpoints from mythic-game-api (x402 on Base). */
+async function runLive(){
+  if (!CFG.jwt) throw new Error('You need to be signed in to buy tokens.');
+  const H = {'Content-Type':'application/json', 'Authorization':'Bearer ' + CFG.jwt};
+  if (!CFG.node.onchainId) throw new Error('This Node is not registered on-chain yet — it will be at token launch.');
+
+  step(0,'active');
+  const iRes = await fetch(CFG.apiBase + '/v1/token/purchase-intents', {
+    method:'POST', headers:H,
+    body: JSON.stringify({fiatAmountUsd: state.usd, nodeId: CFG.node.onchainId})
+  });
+  if (iRes.status === 412) throw new Error('Activate your Ownership Account first (Ownership Network → Activate).');
+  if (!iRes.ok) throw new Error('We could not hold a quote. Try again in a moment.');
+  const {intent} = await iRes.json();
+  state.intentId = intent.id;
+  state.tokens = Number(intent.estimatedMythic);
+  step(0,'done');
+
+  /* x402: first call returns 402 + instructions; thirdweb's wrapFetchWithPayment
+     pays from the player's in-app wallet and retries with the x-payment header. */
+  step(1,'active');
+  const payFetch = (await getPayFetch()) || fetch;
+  const pRes = await payFetch(CFG.apiBase + '/v1/token/purchase-intents/' + intent.id + '/pay', {headers:H});
+  if (pRes.status === 410) throw new Error('The quote expired. Start again for a fresh rate.');
+  if (pRes.status === 402) throw new Error('Your in-app wallet could not authorize the payment. Nothing was charged.');
+  if (!pRes.ok) throw new Error('The payment did not go through. Nothing was charged.');
+  step(1,'done'); step(2,'active');
+
+  for (let i=0;i<60;i++){
+    await wait(1500);
+    const sRes = await fetch(CFG.apiBase + '/v1/token/purchase-intents/' + intent.id, {headers:H});
+    if (!sRes.ok) continue;
+    const s = (await sRes.json()).intent;
+    if (s.status === 'verified'){ step(2,'done'); step(3,'active'); }
+    if (s.status === 'risk_pending' || s.status === 'finalized' || s.status === 'tokens_delivered'){
+      step(2,'done'); step(3,'done');
+      state.tokens = Number(s.token_amount != null ? s.token_amount : state.tokens);
+      return;
+    }
+    if (s.status === 'failed') throw new Error('Delivery failed after payment. Our team has been notified — contact support with this reference: ' + intent.id);
+  }
+  throw new Error('This is taking longer than expected. Your tokens will arrive — check your Bank of Ethos ledger shortly.');
+}
+
+/* ═══════════════ parent bridge ═══════════════ */
+addEventListener('message', (e) => {
+  const d = e && e.data;
+  if (!d || typeof d !== 'object') return;
+  if (d.type === 'ethos:data'){
+    if (d.live != null) CFG.live = !!d.live;
+    if (d.apiBase) CFG.apiBase = d.apiBase;
+    if (d.jwt) CFG.jwt = d.jwt;
+    if (d.clientId) CFG.clientId = d.clientId;
+    if (d.priceUsd > 0) CFG.priceUsd = Number(d.priceUsd);
+    if (d.kind) CFG.kind = d.kind === 'owner' ? 'owner' : 'player';
+    if (d.gain > 0) CFG.gain = Number(d.gain);
+    if (d.node && typeof d.node === 'object') Object.assign(CFG.node, d.node);
+    if (d.token && typeof d.token === 'object') Object.assign(CFG.token, d.token);
+    if (d.balanceMt != null) CFG.balanceMt = Number(d.balanceMt) || 0;
+    paintNode();
+  }
+  if (d.type === 'ethos:result' && typeof state.settleWait === 'function'){
+    const cb = state.settleWait; state.settleWait = null; cb(d);
+  }
+});
+post({type:'ethos:ready'});
+addEventListener('load', () => post({type:'ethos:ready'}));
+</script>
+</body>
+</html>

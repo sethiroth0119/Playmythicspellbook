@@ -55280,7 +55280,7 @@ async function _profReferralPaint() {
       '<button class="btn-secondary btn-mini" id="prof-ref-copy">📋 Copy code</button>' +
       '<button class="btn-secondary btn-mini" id="prof-ref-link">🔗 Copy invite link</button>' +
     '</div>' +
-    '<div class="small-text" style="color:#e8d4a8;line-height:1.55;margin-bottom:10px">Every player who redeems your code earns you <b style="color:#ffcf5a">5,000 🔥 Cinder</b>, <b style="color:#cdb6ff">1 Birth Of Universe One pack</b>, and <b style="color:#9ab9c9">5 👑 Aza Coin</b> — delivered on your next sign-in.</div>' +
+    '<div class="small-text" style="color:#e8d4a8;line-height:1.55;margin-bottom:10px">Invite a friend to Mythic Spellbook and you\'ll <b style="color:#9fe8bd">both</b> be rewarded! Earn <b style="color:#ffcf5a">5,000 🔥 Cinder</b>, <b style="color:#cdb6ff">1 Birth of the Universe I Booster Pack</b>, and <b style="color:#9ab9c9">5 👑 Aza Coins</b> when your referral qualifies — delivered on your next sign-in.</div>' +
     '<div style="background:rgba(0,0,0,0.35);border:1px solid rgba(120,90,200,0.35);border-radius:10px;padding:10px 12px;margin-bottom:10px">' +
       '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:0.72rem;letter-spacing:0.12em;color:#cdb6ff;font-weight:800;margin-bottom:6px"><span>Ⓜ MYTHIC TOKEN AIRDROP PROGRESS</span><span>' + (next ? refs + ' / ' + next[0] + ' → ' + next[1].toLocaleString() + ' Ⓜ' : 'All milestones reached!') + '</span></div>' +
       '<div style="height:8px;border-radius:99px;background:rgba(0,0,0,0.5);border:1px solid rgba(120,90,200,0.35);overflow:hidden;margin-bottom:8px"><div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#7C6BFF,#B9A8E8)"></div></div>' +
@@ -55316,7 +55316,19 @@ async function _profReferralPaint() {
           : res.error === 'bad_code' ? '⚠ That code doesn’t exist — check the spelling.'
           : '⚠ Redeem failed — try again.', 5200);
       } else {
-        showToast('🤝 Code accepted — ' + res.referrer_name + ' earned their referral rewards!', 6000);
+        showToast('🤝 Code accepted — you and ' + res.referrer_name + ' BOTH earned 5,000 🔥 Cinder, a Birth of the Universe I Booster Pack & 5 👑 Aza Coins!', 7000);
+        // The RPC credited this account server-side (+5000 gems / +5 aza / pack
+        // receipt). Mirror the SAME delta locally — the game's save sweep uploads
+        // local currency, so skipping this would clobber the server credit —
+        // then pull the receipt and open the pack right now instead of waiting
+        // for the next sign-in hydration.
+        try { Profile.gems = (Profile.gems | 0) + 5000; Profile.sovereigns = (Profile.sovereigns | 0) + 5; saveProfile(); } catch (e) {}
+        try {
+          const pr = await Cloud.client.from('user_profiles').select('forge').eq('user_id', Profile.cloud.userId).single();
+          const wp = pr && pr.data && pr.data.forge && Array.isArray(pr.data.forge.webPurchases) ? pr.data.forge.webPurchases : null;
+          if (wp && typeof redeemWebPurchases === 'function') redeemWebPurchases(wp);
+        } catch (e) {}
+        try { if (typeof render === 'function') render(); } catch (e) {}
       }
     } catch (e) { showToast('⚠ Redeem failed — try again.', 4200); }
     try { bR.disabled = false; } catch (e) {}

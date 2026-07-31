@@ -159290,20 +159290,20 @@ async function claimGift(g) {
       }
       else if (mPack) {
         // 🎴 Booster-pack gift (referral rewards) — resolve the pack def the
-        // same way redeemWebPurchases does and open it free. If the catalog
-        // hasn't loaded the pack yet, un-claim so it stays in the inbox.
+        // same way redeemWebPurchases does, then drop it SEALED into the
+        // Pack Opening inventory so the player gets the cinematic reveal.
+        // If the catalog hasn't loaded the pack yet, un-claim so it stays
+        // in the inbox.
         const pid = mPack[1];
         const builtIn = (typeof PACK_DEFINITIONS !== 'undefined') ? PACK_DEFINITIONS.find(p => p.id === pid) : null;
         const custom = ((typeof getAllCustomPacks === 'function') ? getAllCustomPacks() : (Forge.customPacks || [])).find(p => p.id === pid);
         const packDef = builtIn || ((custom && typeof toEnginePackDef === 'function') ? toEnginePackDef(custom) : null);
-        if (!packDef || typeof openPack !== 'function') {
+        if (!packDef || typeof addUnopenedPack !== 'function') {
           try { await Cloud.client.from('gifts').update({ status: 'pending', claimed_at: null }).eq('id', g.id); } catch (_) {}
           return { error: 'That pack isn’t in your catalog yet — try again in a moment.' };
         }
-        for (let i = 0; i < qty; i++) {
-          try { openPack(packDef, { free: true, source: 'gift' }); }
-          catch (e) { try { openPack(packDef); } catch (_) {} }
-        }
+        for (let i = 0; i < qty; i++) { try { addUnopenedPack(packDef, 'gift'); } catch (e) {} }
+        try { showToast('📦 ' + (packDef.name || 'Pack') + ' added to Pack Opening — crack it when you’re ready!', 4500); } catch (e) {}
       }
       else if (cid === '__coupon__') {
         if (!Array.isArray(Profile.coupons)) Profile.coupons = [];

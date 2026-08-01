@@ -362,6 +362,126 @@ async function handleBuy(request, env, u) {
 }
 
 /* ============================================================================
+ * 🛒 SHOP — Founder & Node packages (the market site's ex-"Pledge" page).
+ * Same shape as the Aza store above: prices are SERVER-AUTHORITATIVE, the
+ * hosted Stripe Checkout page collects payment, and crediting is spoof-proof
+ * WITHOUT a webhook — on return the site calls /confirm, we retrieve the
+ * session with the secret key and only accept it when payment_status==='paid'
+ * AND the session belongs to the signed-in user. The confirmed purchase is
+ * then written to pledge_purchases with the service-role key (UNIQUE on
+ * stripe_session_id ⇒ recording is idempotent; the client can't forge a row
+ * because RLS grants it no INSERT at all).
+ *
+ * Buyers arrive from mythicspellbook.xyz, so the return URLs must go back
+ * THERE, not to the game. The origin is taken from the request's Origin
+ * header but only if it is on SHOP_RETURN_ALLOW — never echo an arbitrary
+ * caller-supplied origin into a redirect (open-redirect / phishing rail).
+ * ========================================================================== */
+// 🚨 PRICING SOURCE OF TRUTH — must match PLEDGE_TIERS in the market site's
+// public/index.html (display-only there) and SHOP_STRIPE_TIERS (which tiers
+// show a Buy Now button). Dominion / Titan / Eternal Founder are deliberately
+// absent — those stay "Coming Soon" until the operator opens them.
+const SHOP_TIERS = {
+  'vault-key':              { cents: 1000,   name: 'Vault Key',              seats: 0 },
+  'scavenger':              { cents: 5000,   name: 'Scavenger Tier',         seats: 0 },
+  'starter-node':           { cents: 25000,  name: 'Starter Node License',   seats: 100 },
+  'outpost-operator':       { cents: 50000,  name: 'Outpost Operator',       seats: 49 },
+  'foundation-contributor': { cents: 200000, name: 'Foundation Contributor', seats: 25 },
+};
+const SHOP_RETURN_ALLOW = [
+  'https://mythicspellbook.xyz',
+  'https://www.mythicspellbook.xyz',
+  'https://playmythicspellbook.com',
+];
+function _shopReturnOrigin(request, env, u) {
+  const o = String(request.headers.get('origin') || '').replace(/\/+$/, '');
+  if (o && SHOP_RETURN_ALLOW.indexOf(o) >= 0) return o;
+  return SHOP_RETURN_ALLOW[0];
+}
+// Count confirmed purchases of one tier (seat caps). Needs the service key —
+// RLS hides other players' rows from any user token. No key ⇒ null (unknown),
+// and the caller treats unknown as "don't block the sale".
+async function _shopSoldCount(env, tierId) {
+  if (!env.SB_SERVICE) return null;
+  try {
+    const r = await fetch(String(env.SB_URL).replace(/\/+$/, '') +
+      '/rest/v1/pledge_purchases?select=id&status=eq.paid&tier_id=eq.' + encodeURIComponent(tierId),
+      { headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, accept: 'application/json' } });
+    if (!r.ok) return null;
+    const a = await r.json().catch(() => null);
+    return Array.isArray(a) ? a.length : null;
+  } catch (e) { return null; }
+}
+async function handleShop(request, env, u) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_RW });
+  const seg = u.pathname.replace(/^\/api\/shop\//, '').replace(/\/+$/, '');
+  const configured = !!env.STRIPE_SECRET_KEY;
+  if (seg === 'config' && request.method === 'GET') {
+    return cjson({ enabled: configured, tiers: Object.keys(SHOP_TIERS) });
+  }
+  if (!configured) return cjson({ error: 'stripe_not_configured', hint: 'Set the STRIPE_SECRET_KEY secret on this Worker (see STRIPE.md).' }, 503);
+  const user = await sbUser(env, request);
+  if (!user) return cjson({ error: 'unauthorized', hint: 'Send your Supabase access token as Authorization: Bearer.' }, 401);
+
+  if (seg === 'checkout' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const tierId = String((body && body.tier) || '');
+    const t = SHOP_TIERS[tierId];
+    if (!t) return cjson({ error: 'bad_tier' }, 400);
+    if (t.seats > 0) {
+      const sold = await _shopSoldCount(env, tierId);
+      if (sold != null && sold >= t.seats) return cjson({ error: 'sold_out' }, 409);
+    }
+    const origin = _shopReturnOrigin(request, env, u);
+    const s = await stripeApi(env, 'POST', '/v1/checkout/sessions', {
+      mode: 'payment',
+      'line_items[0][quantity]': 1,
+      'line_items[0][price_data][currency]': 'usd',
+      'line_items[0][price_data][unit_amount]': t.cents,
+      'line_items[0][price_data][product_data][name]': 'Mythic Spellbook — ' + t.name,
+      client_reference_id: user.id,
+      'metadata[user_id]': user.id,
+      'metadata[shop_tier]': tierId,
+      'metadata[shop_tier_name]': t.name,
+      success_url: origin + '/?pledge_paid=1&sid={CHECKOUT_SESSION_ID}',
+      cancel_url: origin + '/?pledge_cancel=1',
+    });
+    return cjson({ url: s && s.url });
+  }
+
+  if (seg === 'confirm' && request.method === 'GET') {
+    const sid = u.searchParams.get('sid') || '';
+    if (!sid) return cjson({ error: 'no_session' }, 400);
+    const s = await stripeApi(env, 'GET', '/v1/checkout/sessions/' + encodeURIComponent(sid), null);
+    const md = (s && s.metadata) || {};
+    if (!s || s.payment_status !== 'paid' || md.user_id !== user.id) return cjson({ ok: false });
+    const tierId = md.shop_tier || '';
+    const t = SHOP_TIERS[tierId] || { name: md.shop_tier_name || tierId, cents: s.amount_total || 0 };
+    // Record it — service role only, idempotent on the UNIQUE session id.
+    let recorded = false;
+    if (env.SB_SERVICE) {
+      try {
+        const r = await fetch(String(env.SB_URL).replace(/\/+$/, '') + '/rest/v1/pledge_purchases',
+          { method: 'POST',
+            headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE,
+              'content-type': 'application/json', prefer: 'resolution=merge-duplicates,return=minimal' },
+            body: JSON.stringify({
+              user_id: user.id, tier_id: tierId, tier_name: t.name,
+              amount_cents: s.amount_total || t.cents || 0, currency: s.currency || 'usd',
+              stripe_session_id: sid,
+              stripe_payment_intent: typeof s.payment_intent === 'string' ? s.payment_intent : null,
+              status: 'paid',
+            }) });
+        recorded = r.ok;
+      } catch (e) { recorded = false; }
+    }
+    return cjson({ ok: true, sid: sid, tier: tierId, tier_name: t.name, recorded: recorded });
+  }
+
+  return cjson({ error: 'not_found' }, 404);
+}
+
+/* ============================================================================
  * 🛡️ ADMIN — full account directory (Arcanum → User Management).
  * Lists EVERY user_profiles row with profile info + an "online" flag
  * (updated_at within 5 min). Reads the private user_profiles table with the
@@ -546,6 +666,11 @@ export default {
     if (u.pathname.startsWith('/api/buy/')) {
       try { return await handleBuy(request, env, u); }
       catch (e) { return cjson({ error: 'buy_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
+    }
+
+    if (u.pathname.startsWith('/api/shop/')) {
+      try { return await handleShop(request, env, u); }
+      catch (e) { return cjson({ error: 'shop_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
     }
 
     if (u.pathname === '/api' || u.pathname === '/api/') {

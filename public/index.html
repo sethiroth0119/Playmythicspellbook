@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119s7';
+  window.BUILD_VERSION = 'v119s8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -53245,7 +53245,7 @@ async function frRunConvoy() {
 // every taxed sale is logged to reserve_tax_log for the dashboard. Corp-
 // ready: pass { corpId, market:'corp' } when the Corporation feature lands.
 // ============================================================================
-const FR_TAX_RATE = 0.03;   // 3% Foundation Tax — the platform's cut on Cinder
+const FR_TAX_RATE = 0.02;   // 2% Foundation Tax (restored — the 3% change was not reviewed)
 // spending, marketplace sales and trades. This is the ONE rate: fr_tax() and
 // every fallback below read it, and each charge is written to reserve_tax_log
 // with the rate it was taken at, so historical rows stay accurate after a change.
@@ -53502,7 +53502,7 @@ function _frTaxCinderSpend(amount, kind) {
   try {
     amount = Math.max(0, Math.floor(amount || 0));
     if (amount <= 0) return;
-    const rate = (typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.03;
+    const rate = (typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.02;
     const tax = Math.floor(amount * rate);
     if (tax <= 0) return;
     const rk = kind || 'Cinder spending';
@@ -53718,7 +53718,7 @@ async function chargeCinderAtomic(amount, reason) {
     if ((Profile.gems | 0) < amount) return { ok: false, reason: 'insufficient' };
     Profile.gems = (Profile.gems | 0) - amount;     // poll watcher will tax this
     try { saveProfile(); } catch (e) {}
-    return { ok: true, newBalance: Profile.gems | 0, tax: Math.floor(amount * ((typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.03)), local: true };
+    return { ok: true, newBalance: Profile.gems | 0, tax: Math.floor(amount * ((typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.02)), local: true };
   }
   try {
     const res = await Cloud.client.rpc('wallet_charge', { p_amount: amount, p_reason: reason || 'Cinder spending' });
@@ -53774,7 +53774,7 @@ function _serverMirrorCharge(amount, reason) {
     //    Foundation Reserve figures reflect the spend instantly, on top of
     //    the cross-player global feed).
     try {
-      const rate = (typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.03;
+      const rate = (typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.02;
       const tax = Math.floor(amount * rate);
       if (tax > 0 && typeof _frTaxLedger === 'function') {
         const L = _frTaxLedger();

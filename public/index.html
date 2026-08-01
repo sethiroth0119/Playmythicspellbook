@@ -47569,6 +47569,24 @@ async function cloudPublishCatalog(opts) {
       __tombstone_art__: Forge.tombstoneArt || null,
       __tombstone_cosmetics__: Array.isArray(Forge.tombstoneCosmetics) ? Forge.tombstoneCosmetics : [],
       __deck_sleeves__: Array.isArray(Forge.deckSleeves) ? Forge.deckSleeves : [],
+      // 🃏 BUILT-IN card metadata (id/name/icon/type/cost only — no art, they
+      // don't have any). The published `cards` array carries Forge cards only,
+      // so without this the website can't name a starter-deck card at all: the
+      // Emergency Broadcast deck viewer would show raw ids like "unit:goblin".
+      // Tiny payload; art-bearing cards still resolve through cardArt/sprites.
+      __builtin_cards__: (() => {
+        try {
+          const pack = (arr) => (Array.isArray(arr) ? arr : []).map(c => ({
+            id: c.id, name: c.name, icon: c.icon, type: c.type, cost: c.cost,
+            elements: c.elements || [], factions: c.factions || [],
+          }));
+          return [].concat(
+            pack(typeof UNIT_CARDS !== 'undefined' ? UNIT_CARDS : []),
+            pack(typeof SPELL_CARDS !== 'undefined' ? SPELL_CARDS : []),
+            pack(typeof TRAP_CARDS !== 'undefined' ? TRAP_CARDS : [])
+          );
+        } catch (e) { return []; }
+      })(),
       // 🧰 Resource customization — NEW resources + name/icon/image skins. These
       // were only in cloudSyncProfile (the admin's OWN profile row), so players
       // never received them; they ride the shared catalog row now.

@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ascent Editor — roguelite map authoring</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Spectral:wght@300;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#07041a; --ink:#0d0824; --line:rgba(242,208,137,.22);
+    --gold:#f2d089; --bone:#cbb9ff; --arcane:#2ec5ff; --ember:#ffb547;
+    --ok:#7CFFB2; --warn:#ffc46b; --bad:#ff6b83;
+    --rail:264px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--void);color:var(--gold);
+    font-family:"Spectral",Georgia,serif;}
+  button,input,select,textarea{font-family:inherit;color:inherit}
+
+  #app{display:grid;grid-template-columns:var(--rail) 1fr var(--rail);height:100%;}
+
+  .rail{background:linear-gradient(180deg,#0e0826,#08041c);border-right:1px solid var(--line);
+    overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;}
+  .rail.right{border-right:none;border-left:1px solid var(--line);}
+  .rail::-webkit-scrollbar{width:8px}
+  .rail::-webkit-scrollbar-thumb{background:rgba(242,208,137,.16)}
+
+  .brand{padding:16px 18px 14px;border-bottom:1px solid var(--line);}
+  .brand h1{font-family:"Cinzel",serif;font-size:14px;font-weight:700;margin:0;letter-spacing:.2em;
+    text-transform:uppercase;color:#ffe6b0;text-shadow:0 0 16px rgba(255,181,71,.4);}
+  .brand p{margin:5px 0 0;font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:rgba(203,185,255,.5);}
+
+  section{padding:14px 18px;border-bottom:1px solid rgba(242,208,137,.12);}
+  section h2{font-family:"Cinzel",serif;font-size:9.5px;letter-spacing:.28em;text-transform:uppercase;
+    margin:0 0 10px;color:rgba(242,208,137,.7);font-weight:500;display:flex;align-items:center;gap:8px;}
+  section h2 .n{margin-left:auto;color:rgba(203,185,255,.4);letter-spacing:.08em;}
+
+  /* tools */
+  .tools{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+  .tool{display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer;
+    background:rgba(255,255,255,.02);border:1px solid rgba(242,208,137,.18);
+    font-size:11.5px;letter-spacing:.04em;transition:.15s;}
+  .tool:hover{border-color:rgba(242,208,137,.5);background:rgba(242,208,137,.07);}
+  .tool.on{background:rgba(46,197,255,.12);border-color:var(--arcane);color:#dff4ff;
+    box-shadow:inset 0 0 18px rgba(46,197,255,.14);}
+  .tool kbd{margin-left:auto;font:10px ui-monospace,monospace;color:rgba(203,185,255,.4);}
+
+  /* palette */
+  .pal{display:flex;flex-direction:column;gap:3px;}
+  .pt{display:flex;align-items:center;gap:9px;padding:6px 8px;cursor:pointer;font-size:12px;
+    color:rgba(235,224,255,.78);border:1px solid transparent;transition:.14s;}
+  .pt:hover{background:rgba(255,255,255,.04);color:#ffe6b0}
+  .pt.on{border-color:rgba(242,208,137,.45);background:rgba(242,208,137,.08);color:#ffe6b0}
+  .pt .sw{width:11px;height:11px;border-radius:50%;flex:0 0 11px;box-shadow:0 0 8px currentColor;background:currentColor}
+  .pt .ct{margin-left:auto;font-size:10px;color:rgba(203,185,255,.38);font-variant-numeric:tabular-nums}
+
+  /* generic form */
+  .row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+  .row label{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:rgba(203,185,255,.55);width:52px;flex:0 0 52px;}
+  .row input, .row select{
+    flex:1;min-width:0;background:rgba(4,2,14,.7);border:1px solid rgba(242,208,137,.2);
+    padding:6px 8px;font-size:12px;color:#ffe6b0;}
+  .row input:focus, .row select:focus{outline:none;border-color:var(--arcane);box-shadow:0 0 0 2px rgba(46,197,255,.18)}
+  .row input[type=number]{font-variant-numeric:tabular-nums}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+  .btn{width:100%;font-family:"Cinzel",serif;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;
+    background:transparent;border:1px solid rgba(242,208,137,.32);padding:9px;cursor:pointer;transition:.15s;color:var(--gold)}
+  .btn:hover{background:rgba(242,208,137,.12);border-color:rgba(242,208,137,.72)}
+  .btn:focus-visible{outline:2px solid var(--arcane);outline-offset:2px}
+  .btn.primary{border-color:rgba(124,255,178,.5);color:var(--ok)}
+  .btn.primary:hover{background:rgba(124,255,178,.12)}
+  .btn.danger{border-color:rgba(255,107,131,.4);color:var(--bad)}
+  .btn.danger:hover{background:rgba(255,107,131,.12)}
+  .btns{display:flex;gap:6px}
+
+  .hint{font-size:10.5px;line-height:1.6;color:rgba(203,185,255,.45);margin:9px 0 0}
+  .empty{font-size:11.5px;font-style:italic;color:rgba(203,185,255,.4);line-height:1.6}
+
+  /* validation */
+  .issue{display:flex;gap:8px;font-size:11.5px;line-height:1.5;padding:6px 0;color:rgba(235,224,255,.78);
+    border-bottom:1px solid rgba(242,208,137,.08);cursor:pointer}
+  .issue:last-child{border-bottom:none}
+  .issue:hover{color:#ffe6b0}
+  .issue .b{flex:0 0 4px;width:4px;border-radius:2px}
+  .issue.bad .b{background:var(--bad)} .issue.warn .b{background:var(--warn)} .issue.ok .b{background:var(--ok)}
+
+  /* models */
+  .slot{border:1px solid rgba(242,208,137,.12);margin-bottom:4px;transition:.14s}
+  .slot:hover{border-color:rgba(242,208,137,.3);background:rgba(255,255,255,.02)}
+  .slot.on{border-color:rgba(46,197,255,.55);background:rgba(46,197,255,.07)}
+  .sh{display:flex;align-items:center;gap:8px;padding:7px 9px;cursor:pointer;
+      font-size:11.5px;color:rgba(235,224,255,.8)}
+  .sh:hover{color:#ffe6b0}
+  .sh .pip{width:6px;height:6px;flex:0 0 6px;background:rgba(203,185,255,.2)}
+  .slot.has .sh .pip{background:var(--ok);box-shadow:0 0 7px var(--ok)}
+  .sh .tag{margin-left:auto;font-size:9px;letter-spacing:.14em;text-transform:uppercase;
+           color:rgba(203,185,255,.35)}
+  .slot.has .sh .tag{color:rgba(124,255,178,.85)}
+  .det{padding:2px 9px 10px;border-top:1px solid rgba(242,208,137,.1)}
+  .det input{width:100%;background:rgba(4,2,14,.7);border:1px solid rgba(242,208,137,.16);
+    padding:5px 7px;font-size:11px;color:#ffe6b0;margin-bottom:5px}
+  .det input:focus{outline:none;border-color:var(--arcane)}
+  .det .three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px}
+  .det .three input{margin:0;text-align:center}
+  .mini{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:rgba(203,185,255,.4);margin:6px 0 3px}
+  .facts{font-size:10.5px;line-height:1.65;color:rgba(203,185,255,.55);margin:8px 0 0;
+         font-variant-numeric:tabular-nums}
+  .facts b{color:var(--gold);font-weight:500}
+  .flag{display:flex;gap:6px;font-size:10.5px;line-height:1.5;margin-top:6px;color:rgba(235,224,255,.75)}
+  .flag i{flex:0 0 3px;width:3px;border-radius:2px;background:var(--warn)}
+  .flag.bad i{background:var(--bad)}
+
+  /* canvas */
+  #board{position:relative;background:
+    radial-gradient(1200px 700px at 50% 40%, #150b33 0%, #0a0520 60%, #06031a 100%);}
+  #cv{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+  #cv.pan{cursor:grabbing}
+  #cv.pick{cursor:pointer}
+
+  #hud{position:absolute;left:14px;bottom:14px;display:flex;gap:16px;pointer-events:none;
+    font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:rgba(203,185,255,.42)}
+  #hud b{color:rgba(242,208,137,.7);font-weight:500;font-variant-numeric:tabular-nums}
+  #keys{position:absolute;right:14px;bottom:14px;text-align:right;pointer-events:none;
+    font-size:10px;line-height:1.9;letter-spacing:.12em;text-transform:uppercase;color:rgba(203,185,255,.32)}
+  #keys b{color:rgba(242,208,137,.6);font-weight:500}
+
+  #toast{position:absolute;left:50%;top:18px;transform:translate(-50%,-12px);
+    font-family:"Cinzel",serif;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#ffe6b0;
+    background:rgba(14,8,38,.94);border:1px solid rgba(242,208,137,.3);padding:9px 20px;
+    opacity:0;transition:.25s;pointer-events:none}
+  #toast.on{opacity:1;transform:translate(-50%,0)}
+
+  /* sheet */
+  #sheet{position:fixed;inset:0;background:rgba(4,2,12,.75);display:none;place-content:center;z-index:40}
+  #sheet.on{display:grid}
+  #sheet .box{width:min(720px,90vw);background:linear-gradient(160deg,#120a30,#08041c);
+    border:1px solid var(--line);padding:20px 22px}
+  #sheet h2{font-family:"Cinzel",serif;font-size:12px;letter-spacing:.24em;text-transform:uppercase;margin:0 0 4px;color:#ffe6b0}
+  #sheet p{margin:0;font-size:11.5px;color:rgba(203,185,255,.5)}
+  #sheet textarea{width:100%;height:46vh;margin:12px 0;background:rgba(4,2,14,.8);
+    border:1px solid rgba(242,208,137,.18);color:#cfe8ff;padding:12px;resize:none;
+    font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+  #sheet textarea:focus{outline:none;border-color:var(--arcane)}
+
+  @media (max-width:1100px){ :root{--rail:220px} }
+  @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ LEFT RAIL ============ -->
+  <aside class="rail">
+    <div class="brand">
+      <h1>Ascent Editor</h1>
+      <p>Map authoring</p>
+    </div>
+
+    <section>
+      <h2>Tool</h2>
+      <div class="tools" id="tools">
+        <div class="tool on" data-tool="select"><span>Select</span><kbd>1</kbd></div>
+        <div class="tool" data-tool="place"><span>Place</span><kbd>2</kbd></div>
+        <div class="tool" data-tool="link"><span>Link</span><kbd>3</kbd></div>
+        <div class="tool" data-tool="erase"><span>Erase</span><kbd>4</kbd></div>
+      </div>
+      <p class="hint" id="toolHint">Drag a chamber to move it. Drag empty space to pan.</p>
+    </section>
+
+    <section>
+      <h2>Chamber type <span class="n" id="typeCount"></span></h2>
+      <div class="pal" id="palette"></div>
+    </section>
+
+    <section>
+      <h2>Link style</h2>
+      <div class="row">
+        <select id="linkStyle">
+          <option value="rope">Rope bridge</option>
+          <option value="stair">Stone stair</option>
+          <option value="arcane">Arcane conduit</option>
+        </select>
+      </div>
+      <p class="hint">Used for every new link, and applied to a selected link.</p>
+    </section>
+
+    <section>
+      <h2>Tiers</h2>
+      <div class="row">
+        <label>Count</label>
+        <input id="tierCount" type="number" min="2" max="20" value="7">
+      </div>
+      <div class="row">
+        <label>Rise</label>
+        <input id="tierHeight" type="number" min="1" max="80" value="15">
+      </div>
+      <button class="btn" id="autoTier">Assign tiers by depth</button>
+      <p class="hint">Tier drives height and which links count as forward progress.</p>
+    </section>
+  </aside>
+
+  <!-- ============ CANVAS ============ -->
+  <main id="board">
+    <canvas id="cv"></canvas>
+    <div id="hud">
+      <span>Chambers <b id="hNodes">0</b></span>
+      <span>Links <b id="hEdges">0</b></span>
+      <span>Cursor <b id="hPos">0, 0</b></span>
+      <span>Zoom <b id="hZoom">100%</b></span>
+    </div>
+    <div id="keys">
+      <div><b>1-4</b> tools &nbsp; <b>Del</b> remove &nbsp; <b>Ctrl+Z</b> undo</div>
+      <div><b>Middle/Right-drag</b> pan &nbsp; <b>Wheel</b> zoom &nbsp; <b>F</b> frame all</div>
+    </div>
+    <div id="toast"></div>
+  </main>
+
+  <!-- ============ RIGHT RAIL ============ -->
+  <aside class="rail right">
+    <section>
+      <h2>Inspector</h2>
+      <div id="inspector"><p class="empty">Nothing selected. Click a chamber or a link.</p></div>
+    </section>
+
+    <section>
+      <h2>Checks <span class="n" id="issueCount"></span></h2>
+      <div id="issues"></div>
+    </section>
+
+    <section>
+      <h2>Models <span class="n" id="slotCount"></span></h2>
+      <div id="slots"></div>
+      <div class="btns" style="margin-top:8px">
+        <button class="btn" id="glbBtn">Load GLB</button>
+        <button class="btn" id="clearSlot">Clear slot</button>
+      </div>
+      <p class="hint">Pick a slot, then load a .glb to inspect and bind it. Only the path is
+        written into map.json — keep the file where the runtime can fetch it.</p>
+    </section>
+
+    <section>
+      <h2>Map</h2>
+      <div class="row"><label>Name</label><input id="mapName" value="The Shattered Ascent"></div>
+      <div class="row"><label>Seed</label><input id="mapSeed" value="0x1A4F"></div>
+      <div id="hostBox" style="display:none;margin-bottom:8px">
+        <button class="btn primary" id="saveBtn">Save to campaign</button>
+        <button class="btn" id="closeBtn" style="margin-top:6px">Close editor</button>
+        <p class="hint" id="hostHint">Editing a live campaign. Saving writes the map back
+          (positions, types, names, links) and keeps every other node setting — enemies,
+          decks, rewards and dialogue are untouched.</p>
+      </div>
+      <div class="btns" style="margin-bottom:6px">
+        <button class="btn" id="newBtn">New</button>
+        <button class="btn" id="importBtn">Import</button>
+      </div>
+      <button class="btn primary" id="exportBtn">Export map.json</button>
+      <p class="hint">Drop a map.json anywhere on this page to load it.</p>
+    </section>
+  </aside>
+</div>
+
+<input id="fileIn" type="file" accept=".json,application/json" hidden>
+<input id="glbIn" type="file" accept=".glb,.gltf" multiple hidden>
+
+<div id="sheet">
+  <div class="box">
+    <h2 id="sheetTitle">map.json</h2>
+    <p id="sheetNote">Drop this file next to the runtime, or paste it into MAP_DATA.</p>
+    <textarea id="sheetText" spellcheck="false"></textarea>
+    <div class="btns">
+      <button class="btn primary" id="sheetOk">Copy</button>
+      <button class="btn" id="sheetDl">Download</button>
+      <button class="btn" id="sheetClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   ASCENT EDITOR
+   Authors the map.json that the runtime reads. Top-down view:
+   horizontal = world x, vertical = world z. Height comes from
+   tier, so depth and elevation stay independent.
+   ============================================================ */
+
+/* 🎯 THE REAL CAMPAIGN NODE TYPES (mirrors RLC_NODE_TYPES in the game).
+   The admin authors in GAME terms — "Medical Camp", "Convoy", "Card Forge" —
+   not the 8 shapes the 3D map happens to draw. The map view folds these down
+   to its own visual set at render time (ASCENT_TYPE_MAP, host side). */
+const TYPES = {
+  battle:       { label:"⚔️ Battle",         color:"#c0563b", r:20 },
+  elite:        { label:"🔥 Elite",          color:"#d4742a", r:23 },
+  boss:         { label:"👹 Boss",           color:"#a23bd4", r:29 },
+  finalBoss:    { label:"💀 Final Boss",     color:"#e23b6b", r:34 },
+  medical:      { label:"⛑️ Medical Camp",   color:"#3bbf7a", r:21 },
+  market:       { label:"🛒 Black Market",   color:"#8a6bff", r:21 },
+  treasure:     { label:"💰 Treasure",       color:"#d4af37", r:20 },
+  event:        { label:"📜 Story Event",    color:"#5b9bd4", r:21 },
+  randomEvent:  { label:"🎲 Random Event",   color:"#5bd4c0", r:20 },
+  mystery:      { label:"❓ Mystery",        color:"#b06bff", r:20 },
+  rest:         { label:"🔥 Rest Point",     color:"#c8923c", r:20 },
+  upgrade:      { label:"🔨 Card Forge",     color:"#c89b3c", r:21 },
+  convoy:       { label:"🚚 Convoy",         color:"#3c9bd4", r:21 },
+  oilExtraction:{ label:"🛢️ Oil Extraction", color:"#c8923c", r:22 },
+};
+const BOSS_TYPES = ['boss','finalBoss'];
+const STYLES = {
+  rope:   { color:"#c9a05a", label:"Rope"   },
+  stair:  { color:"#8d84a6", label:"Stair"  },
+  arcane: { color:"#a15bff", label:"Arcane" }
+};
+const SLOT_DEFAULTS = {
+  island:        { file:"", fit:0,  y:0,   ry:0, label:"Platform"      },
+  bridge_plank:  { file:"", fit:8,  y:0,   ry:0, label:"Bridge plank"  },
+  bridge_post:   { file:"", fit:9,  y:0,   ry:0, label:"Bridge post"   },
+  stair_step:    { file:"", fit:15, y:0,   ry:0, label:"Stair step"    },
+  torch:         { file:"", fit:10, y:0,   ry:0, label:"Torch"         },
+  banner:        { file:"", fit:15, y:0,   ry:0, label:"Banner"        },
+  icon_start:    { file:"", fit:18, y:2.4, ry:0, label:"Bonfire"       },
+  icon_camp:     { file:"", fit:16, y:2.4, ry:0, label:"Camp"          },
+  icon_battle:   { file:"", fit:20, y:2.4, ry:0, label:"Skirmish"      },
+  icon_shop:     { file:"", fit:18, y:2.4, ry:0, label:"Market"        },
+  icon_mystery:  { file:"", fit:20, y:2.4, ry:0, label:"Mystery"       },
+  icon_treasure: { file:"", fit:16, y:2.4, ry:0, label:"Vault"         },
+  icon_elite:    { file:"", fit:32, y:2.4, ry:0, label:"Bone gate"     },
+  icon_boss:     { file:"", fit:62, y:2.4, ry:0, label:"Castle (boss)" },
+  gib:           { file:"", fit:6,  y:0,   ry:0, label:"Gib set"       },
+  train:         { file:"train.glb", fit:24, y:0, ry:180, label:"Train" }
+};
+
+/* Shown only when the editor is opened standalone. In the game it is replaced
+   immediately by the campaign the admin clicked (ascent-ed:loadCampaign). */
+const DEFAULT_MAP = {
+  meta:{ name:"New Campaign", seed:"" },
+  tierHeight:15, tiers:4,
+  nodes:[
+    {id:"n1",x:-74,z:40,tier:0,type:"battle",  name:"First Contact"},
+    {id:"n2",x:74, z:40,tier:0,type:"battle",  name:"Flanking Route"},
+    {id:"n3",x:-40,z:6, tier:1,type:"medical", name:"Field Aid"},
+    {id:"n4",x:40, z:6, tier:1,type:"market",  name:"Fence"},
+    {id:"n5",x:0,  z:-30,tier:2,type:"treasure",name:"Cache"},
+    {id:"n6",x:0,  z:-66,tier:3,type:"finalBoss",name:"The Warlord"}
+  ],
+  edges:[
+    {from:"n1",to:"n3",style:"rope"},{from:"n2",to:"n4",style:"rope"},
+    {from:"n1",to:"n4",style:"rope"},{from:"n3",to:"n5",style:"stair"},
+    {from:"n4",to:"n5",style:"stair"},{from:"n5",to:"n6",style:"arcane"}
+  ]
+};
+
+/* ---------------- state ---------------- */
+let state, view, tool = 'select', placeType = 'battle', sel = null, hover = null;
+const undoStack = [];
+
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+function loadState(src){
+  state = clone(src);
+  state.models = Object.assign(clone(SLOT_DEFAULTS), state.models || {});
+  Object.keys(state.models).forEach(k=>{
+    state.models[k].label = (SLOT_DEFAULTS[k] || {}).label || k;
+  });
+  sel = null; selSlot = null;
+  syncMeta(); renderSlots(); renderPalette(); refresh();
+}
+function snapshot(){
+  undoStack.push(JSON.stringify({nodes:state.nodes, edges:state.edges}));
+  if(undoStack.length > 60) undoStack.shift();
+}
+function undo(){
+  if(!undoStack.length) return toast('Nothing to undo');
+  const s = JSON.parse(undoStack.pop());
+  state.nodes = s.nodes; state.edges = s.edges; sel = null; refresh();
+  toast('Undone');
+}
+function nodeById(id){ return state.nodes.find(n=>n.id===id); }
+function uniqueId(type){
+  let i = 1, id;
+  do { id = type + (i > 1 ? i : ''); i++; } while(nodeById(id));
+  return id;
+}
+
+/* ---------------- canvas ---------------- */
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+let W = 0, H = 0;
+function resize(){
+  const r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+  W = r.width; H = r.height;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  draw();
+}
+addEventListener('resize', resize);
+
+const sx = x => view.ox + x * view.zoom;
+const sy = z => view.oy + z * view.zoom;
+const wx = px => (px - view.ox) / view.zoom;
+const wz = py => (py - view.oy) / view.zoom;
+
+function frameAll(){
+  if(!state.nodes.length){ view = {ox:W/2, oy:H/2, zoom:2}; return draw(); }
+  const xs = state.nodes.map(n=>n.x), zs = state.nodes.map(n=>n.z);
+  const pad = 70;
+  const x0 = Math.min(...xs)-pad, x1 = Math.max(...xs)+pad;
+  const z0 = Math.min(...zs)-pad, z1 = Math.max(...zs)+pad;
+  view = {zoom: Math.min(W/(x1-x0), H/(z1-z0)), ox:0, oy:0};
+  view.ox = W/2 - ((x0+x1)/2)*view.zoom;
+  view.oy = H/2 - ((z0+z1)/2)*view.zoom;
+  draw();
+}
+
+function tierGuides(){
+  const map = {};
+  state.nodes.forEach(n=>{ (map[n.tier] = map[n.tier] || []).push(n.z); });
+  return Object.keys(map).map(t=>({
+    tier:+t, z: map[t].reduce((a,b)=>a+b,0)/map[t].length
+  })).sort((a,b)=>b.z-a.z);
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+
+  // grid
+  const step = 20 * view.zoom;
+  if(step > 6){
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(150,120,255,.07)';
+    ctx.beginPath();
+    for(let px = view.ox % step; px < W; px += step){ ctx.moveTo(px+.5,0); ctx.lineTo(px+.5,H); }
+    for(let py = view.oy % step; py < H; py += step){ ctx.moveTo(0,py+.5); ctx.lineTo(W,py+.5); }
+    ctx.stroke();
+  }
+  // centre line
+  ctx.strokeStyle = 'rgba(242,208,137,.13)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(sx(0)+.5,0); ctx.lineTo(sx(0)+.5,H); ctx.stroke();
+
+  // tier guides
+  ctx.setLineDash([3,7]);
+  ctx.font = '9px "Spectral", serif';
+  tierGuides().forEach(g=>{
+    const py = sy(g.z);
+    ctx.strokeStyle = 'rgba(203,185,255,.13)';
+    ctx.beginPath(); ctx.moveTo(0,py+.5); ctx.lineTo(W,py+.5); ctx.stroke();
+    ctx.fillStyle = 'rgba(203,185,255,.4)';
+    ctx.fillText('TIER ' + g.tier, 8, py - 5);
+  });
+  ctx.setLineDash([]);
+
+  // edges
+  state.edges.forEach((e,i)=>{
+    const a = nodeById(e.from), b = nodeById(e.to);
+    if(!a || !b) return;
+    const st = STYLES[e.style] || STYLES.rope;
+    const isSel = sel && sel.kind==='edge' && sel.i===i;
+    const isHov = hover && hover.kind==='edge' && hover.i===i;
+    ctx.lineWidth = isSel ? 4 : isHov ? 3 : 2;
+    ctx.strokeStyle = isSel ? '#ffe6b0' : st.color;
+    ctx.globalAlpha = isSel ? 1 : .78;
+    if(e.style === 'arcane') ctx.setLineDash([9,5]);
+    ctx.beginPath(); ctx.moveTo(sx(a.x),sy(a.z)); ctx.lineTo(sx(b.x),sy(b.z)); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // direction chevron toward the higher tier
+    const up = b.tier >= a.tier ? 1 : -1;
+    const mx = (sx(a.x)+sx(b.x))/2, my = (sy(a.z)+sy(b.z))/2;
+    const ang = Math.atan2(sy(b.z)-sy(a.z), sx(b.x)-sx(a.x)) + (up>0?0:Math.PI);
+    ctx.save(); ctx.translate(mx,my); ctx.rotate(ang);
+    ctx.beginPath(); ctx.moveTo(-4,-4); ctx.lineTo(4,0); ctx.lineTo(-4,4);
+    ctx.strokeStyle = isSel ? '#ffe6b0' : st.color; ctx.lineWidth = 2; ctx.stroke();
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  });
+
+  // link preview
+  if(drag && drag.mode === 'link'){
+    const a = nodeById(drag.from);
+    ctx.setLineDash([5,5]); ctx.strokeStyle = '#7CFFB2'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(sx(a.x),sy(a.z)); ctx.lineTo(drag.px,drag.py); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // nodes
+  state.nodes.forEach(n=>{
+    const T = TYPES[n.type] || TYPES.battle;
+    const px = sx(n.x), py = sy(n.z), r = Math.max(7, T.r * view.zoom);
+    const isSel = sel && sel.kind==='node' && sel.id===n.id;
+    const isHov = hover && hover.kind==='node' && hover.id===n.id;
+
+    const grd = ctx.createRadialGradient(px,py,0,px,py,r);
+    grd.addColorStop(0, T.color + 'cc');
+    grd.addColorStop(.6, T.color + '38');
+    grd.addColorStop(1, T.color + '08');
+    ctx.fillStyle = grd;
+    ctx.beginPath(); ctx.arc(px,py,r,0,6.284); ctx.fill();
+
+    ctx.strokeStyle = isSel ? '#ffffff' : isHov ? '#ffe6b0' : T.color;
+    ctx.lineWidth = isSel ? 3 : 1.6;
+    ctx.beginPath(); ctx.arc(px,py,r,0,6.284); ctx.stroke();
+
+    if(isSel){
+      ctx.setLineDash([4,4]); ctx.strokeStyle = 'rgba(46,197,255,.8)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(px,py,r+7,0,6.284); ctx.stroke(); ctx.setLineDash([]);
+    }
+
+    // tier number
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    ctx.font = '600 ' + Math.max(9, Math.min(15, r*.6)) + 'px "Cinzel", serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(n.tier, px, py);
+
+    // id
+    if(view.zoom > 0.75){
+      ctx.font = '10px "Spectral", serif';
+      ctx.fillStyle = isSel ? '#ffe6b0' : 'rgba(226,216,255,.62)';
+      ctx.textBaseline = 'top';
+      ctx.fillText(n.name || n.id, px, py + r + 4);
+    }
+  });
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+
+  document.getElementById('hZoom').textContent = Math.round(view.zoom*100) + '%';
+}
+
+/* ---------------- hit testing ---------------- */
+function hitNode(px,py){
+  for(let i=state.nodes.length-1;i>=0;i--){
+    const n = state.nodes[i], T = TYPES[n.type] || TYPES.battle;
+    const r = Math.max(9, T.r * view.zoom);
+    if(Math.hypot(px-sx(n.x), py-sy(n.z)) <= r) return n;
+  }
+  return null;
+}
+function hitEdge(px,py){
+  for(let i=0;i<state.edges.length;i++){
+    const e = state.edges[i], a = nodeById(e.from), b = nodeById(e.to);
+    if(!a || !b) continue;
+    const ax=sx(a.x), ay=sy(a.z), bx=sx(b.x), by=sy(b.z);
+    const dx=bx-ax, dy=by-ay, L=dx*dx+dy*dy;
+    let t = L ? ((px-ax)*dx + (py-ay)*dy)/L : 0;
+    t = Math.max(.12, Math.min(.88, t));
+    if(Math.hypot(px-(ax+dx*t), py-(ay+dy*t)) < 7) return {kind:'edge', i};
+  }
+  return null;
+}
+
+/* ---------------- pointer ---------------- */
+let drag = null;
+function localPt(e){
+  const r = cv.getBoundingClientRect();
+  return {px:e.clientX-r.left, py:e.clientY-r.top};
+}
+cv.addEventListener('contextmenu', e=>e.preventDefault());
+cv.addEventListener('pointerdown', e=>{
+  cv.setPointerCapture(e.pointerId);
+  const {px,py} = localPt(e);
+  const n = hitNode(px,py);
+
+  if(e.button === 1 || e.button === 2){
+    drag = {mode:'pan', px, py}; cv.classList.add('pan'); return;
+  }
+  if(tool === 'erase'){
+    if(n){ snapshot(); removeNode(n.id); }
+    else { const he = hitEdge(px,py); if(he){ snapshot(); state.edges.splice(he.i,1); sel=null; refresh(); } }
+    return;
+  }
+  if(tool === 'link'){
+    if(n) drag = {mode:'link', from:n.id, px, py};
+    else drag = {mode:'pan', px, py};
+    return;
+  }
+  if(tool === 'place'){
+    if(n){ sel = {kind:'node', id:n.id}; refresh(); return; }
+    snapshot();
+    const id = uniqueId(placeType);
+    const near = nearestTier(wz(py));
+    state.nodes.push({id, type:placeType, x:Math.round(wx(px)/2)*2, z:Math.round(wz(py)/2)*2, tier:near});
+    sel = {kind:'node', id};
+    refresh(); return;
+  }
+  // select
+  if(n){
+    sel = {kind:'node', id:n.id};
+    drag = {mode:'move', id:n.id, px, py, ox:n.x, oz:n.z};
+    refresh(); return;
+  }
+  const he = hitEdge(px,py);
+  if(he){ sel = he; refresh(); return; }
+  sel = null; drag = {mode:'pan', px, py}; cv.classList.add('pan'); refresh();
+});
+cv.addEventListener('pointermove', e=>{
+  const {px,py} = localPt(e);
+  document.getElementById('hPos').textContent = Math.round(wx(px)) + ', ' + Math.round(wz(py));
+
+  if(!drag){
+    const n = hitNode(px,py);
+    const nh = n ? {kind:'node', id:n.id} : hitEdge(px,py);
+    const changed = JSON.stringify(nh) !== JSON.stringify(hover);
+    hover = nh;
+    cv.classList.toggle('pick', !!nh);
+    if(changed) draw();
+    return;
+  }
+  if(drag.mode === 'pan'){
+    view.ox += px - drag.px; view.oy += py - drag.py;
+    drag.px = px; drag.py = py; draw(); return;
+  }
+  if(drag.mode === 'move'){
+    const n = nodeById(drag.id);
+    if(!drag.dirty){ snapshot(); drag.dirty = true; }
+    let nx = drag.ox + (px-drag.px)/view.zoom, nz = drag.oz + (py-drag.py)/view.zoom;
+    if(!e.shiftKey){ nx = Math.round(nx/2)*2; nz = Math.round(nz/2)*2; }
+    n.x = Math.round(nx); n.z = Math.round(nz);
+    renderInspector(); draw(); return;
+  }
+  if(drag.mode === 'link'){ drag.px = px; drag.py = py; draw(); }
+});
+addEventListener('pointerup', e=>{
+  if(drag && drag.mode === 'link'){
+    const {px,py} = localPt(e);
+    const n = hitNode(px,py);
+    if(n && n.id !== drag.from) addEdge(drag.from, n.id);
+  }
+  drag = null; cv.classList.remove('pan'); refresh();
+});
+cv.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const {px,py} = localPt(e);
+  const before = {x:wx(px), z:wz(py)};
+  view.zoom *= e.deltaY < 0 ? 1.12 : 1/1.12;
+  view.zoom = Math.max(0.25, Math.min(8, view.zoom));
+  view.ox = px - before.x*view.zoom;
+  view.oy = py - before.z*view.zoom;
+  draw();
+}, {passive:false});
+
+function nearestTier(z){
+  if(!state.nodes.length) return 0;
+  let best = state.nodes[0], bd = Infinity;
+  state.nodes.forEach(n=>{ const d = Math.abs(n.z - z); if(d < bd){ bd = d; best = n; } });
+  return best.tier;
+}
+function addEdge(from, to){
+  if(state.edges.some(e=>(e.from===from&&e.to===to)||(e.from===to&&e.to===from)))
+    return toast('Those are already linked');
+  const a = nodeById(from), b = nodeById(to);
+  snapshot();
+  const lo = a.tier <= b.tier ? from : to, hi = a.tier <= b.tier ? to : from;
+  state.edges.push({from:lo, to:hi, style:document.getElementById('linkStyle').value});
+  sel = {kind:'edge', i:state.edges.length-1};
+  toast('Linked ' + lo + ' → ' + hi);
+}
+function removeNode(id){
+  state.nodes = state.nodes.filter(n=>n.id !== id);
+  state.edges = state.edges.filter(e=>e.from !== id && e.to !== id);
+  sel = null; refresh();
+}
+
+/* ---------------- panels ---------------- */
+function toast(msg){
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('on');
+  clearTimeout(toast._t); toast._t = setTimeout(()=>el.classList.remove('on'), 2000);
+}
+
+function renderPalette(){
+  const counts = {};
+  state.nodes.forEach(n=> counts[n.type] = (counts[n.type]||0)+1);
+  document.getElementById('typeCount').textContent = state.nodes.length;
+  document.getElementById('palette').innerHTML = Object.keys(TYPES).map(k=>
+    `<div class="pt ${k===placeType?'on':''}" data-type="${k}">
+       <i class="sw" style="color:${TYPES[k].color}"></i>${TYPES[k].label}
+       <span class="ct">${counts[k]||0}</span></div>`).join('');
+  document.querySelectorAll('#palette .pt').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      placeType = el.dataset.type;
+      if(sel && sel.kind === 'node'){ snapshot(); nodeById(sel.id).type = placeType; }
+      else setTool('place');
+      refresh();
+    });
+  });
+}
+
+let lastSelKey = null;
+function renderInspector(){
+  const host = document.getElementById('inspector');
+  const key = JSON.stringify(sel);
+
+  if(key === lastSelKey && sel && sel.kind === 'node'){
+    const n = nodeById(sel.id);
+    if(n && host.querySelector('#fx')){
+      host.querySelector('#fx').value = n.x;
+      host.querySelector('#fz').value = n.z;
+      host.querySelector('#ft').value = n.tier;
+      return;
+    }
+  }
+  lastSelKey = key;
+
+  if(!sel){ host.innerHTML = '<p class="empty">Nothing selected. Click a chamber or a link.</p>'; return; }
+
+  if(sel.kind === 'node'){
+    const n = nodeById(sel.id);
+    if(!n){ sel = null; lastSelKey = null; return renderInspector(); }
+    host.innerHTML = `
+      <div class="row"><label>Id</label><input id="fid" value="${n.id}"></div>
+      <div class="row"><label>Name</label><input id="fnm" value="${(n.name||'').replace(/"/g,'&quot;')}" placeholder="Ambush at the Depot"></div>
+      <div class="row"><label>Story</label><input id="fst" value="${(n.story||'').replace(/"/g,'&quot;')}" placeholder="One line shown on the map"></div>
+      <div class="row"><label>Type</label><select id="fty">${
+        Object.keys(TYPES).map(k=>`<option value="${k}" ${k===n.type?'selected':''}>${TYPES[k].label}</option>`).join('')
+      }</select></div>
+      <div class="row"><label>Tier</label><input id="ft" type="number" value="${n.tier}" min="0"></div>
+      <div class="two" style="margin-bottom:8px">
+        <div class="row" style="margin:0"><label>X</label><input id="fx" type="number" value="${n.x}"></div>
+        <div class="row" style="margin:0"><label>Z</label><input id="fz" type="number" value="${n.z}"></div>
+      </div>
+      <div class="btns" style="margin-bottom:6px">
+        <button class="btn" id="bDup">Duplicate</button>
+        <button class="btn" id="bFocus">Centre</button>
+      </div>
+      <button class="btn danger" id="bDel">Remove chamber</button>`;
+
+    const commit = (fn)=>{ snapshot(); fn(); refresh(); };
+    host.querySelector('#fid').addEventListener('change', e=>{
+      const v = e.target.value.trim().replace(/\s+/g,'_');
+      if(!v || (v !== n.id && nodeById(v))){ toast('Id must be unique'); e.target.value = n.id; return; }
+      commit(()=>{
+        state.edges.forEach(ed=>{ if(ed.from===n.id) ed.from=v; if(ed.to===n.id) ed.to=v; });
+        n.id = v; sel = {kind:'node', id:v}; lastSelKey = null;
+      });
+    });
+    host.querySelector('#fnm').addEventListener('input', e=>{ n.name = e.target.value; draw(); markDirty(); });
+    host.querySelector('#fst').addEventListener('input', e=>{ n.story = e.target.value; markDirty(); });
+    host.querySelector('#fty').addEventListener('change', e=> commit(()=>{ n.type = e.target.value; }));
+    host.querySelector('#ft').addEventListener('input', e=> commit(()=>{ n.tier = Math.max(0, +e.target.value|0); }));
+    host.querySelector('#fx').addEventListener('input', e=> commit(()=>{ n.x = +e.target.value||0; }));
+    host.querySelector('#fz').addEventListener('input', e=> commit(()=>{ n.z = +e.target.value||0; }));
+    host.querySelector('#bDup').addEventListener('click', ()=> commit(()=>{
+      const id = uniqueId(n.type);
+      state.nodes.push({id, type:n.type, x:n.x+30, z:n.z, tier:n.tier});
+      sel = {kind:'node', id}; lastSelKey = null;
+    }));
+    host.querySelector('#bFocus').addEventListener('click', ()=>{
+      view.ox = W/2 - n.x*view.zoom; view.oy = H/2 - n.z*view.zoom; draw();
+    });
+    host.querySelector('#bDel').addEventListener('click', ()=>{ snapshot(); removeNode(n.id); });
+    return;
+  }
+
+  const e = state.edges[sel.i];
+  if(!e){ sel = null; lastSelKey = null; return renderInspector(); }
+  const a = nodeById(e.from), b = nodeById(e.to);
+  const same = a && b && a.tier === b.tier;
+  host.innerHTML = `
+    <div class="row"><label>From</label><input value="${e.from}" readonly></div>
+    <div class="row"><label>To</label><input value="${e.to}" readonly></div>
+    <div class="row"><label>Style</label><select id="est">${
+      Object.keys(STYLES).map(k=>`<option value="${k}" ${k===e.style?'selected':''}>${STYLES[k].label}</option>`).join('')
+    }</select></div>
+    ${same ? '<p class="hint" style="color:var(--warn)">Both ends sit on the same tier, so this link is not forward progress.</p>' : ''}
+    <div class="btns" style="margin:8px 0 6px"><button class="btn" id="eFlip">Flip direction</button></div>
+    <button class="btn danger" id="eDel">Remove link</button>`;
+  host.querySelector('#est').addEventListener('change', ev=>{ snapshot(); e.style = ev.target.value; refresh(); });
+  host.querySelector('#eFlip').addEventListener('click', ()=>{ snapshot(); const t=e.from; e.from=e.to; e.to=t; lastSelKey=null; refresh(); });
+  host.querySelector('#eDel').addEventListener('click', ()=>{ snapshot(); state.edges.splice(sel.i,1); sel=null; lastSelKey=null; refresh(); });
+}
+
+/* ---------------- validation ---------------- */
+function validate(){
+  const out = [], ids = state.nodes.map(n=>n.id);
+  /* 🎯 Game semantics: a START is any non-boss node with nothing pointing INTO
+     it (the run offers all of them as opening moves — mirrors _rlcStartNodes).
+     Multiple starts are legal here, unlike the stock editor. */
+  const incoming = new Set();
+  state.edges.forEach(e=>{ if(nodeById(e.to)) incoming.add(e.to); });
+  const starts = state.nodes.filter(n=> !incoming.has(n.id) && BOSS_TYPES.indexOf(n.type) < 0);
+  const bosses = state.nodes.filter(n=> BOSS_TYPES.indexOf(n.type) >= 0);
+
+  if(!starts.length)
+    out.push({lvl:'bad', msg:'No opening node — every node has something leading into it, so the run cannot begin.'});
+  if(!bosses.length) out.push({lvl:'warn', msg:'No Boss / Final Boss — the run has no ending node.'});
+
+  const dupes = ids.filter((v,i)=>ids.indexOf(v)!==i);
+  [...new Set(dupes)].forEach(d=> out.push({lvl:'bad', msg:'Duplicate id "'+d+'".', focus:d}));
+
+  state.edges.forEach((e,i)=>{
+    if(!nodeById(e.from) || !nodeById(e.to))
+      out.push({lvl:'bad', msg:'A link points at a chamber that no longer exists.', edge:i});
+  });
+
+  const adj = {}; ids.forEach(i=> adj[i]=[]);
+  state.edges.forEach(e=>{
+    const a = nodeById(e.from), b = nodeById(e.to);
+    if(!a || !b) return;
+    if(a.tier === b.tier) out.push({lvl:'warn', msg:'"'+a.id+'" and "'+b.id+'" share tier '+a.tier+'.', focus:a.id});
+    else if(b.tier > a.tier) adj[a.id].push(b.id);
+    else adj[b.id].push(a.id);
+  });
+
+  if(starts.length){
+    // Reachability seeds from EVERY opening node, not just the first.
+    const seen = new Set(starts.map(s=>s.id)), stack = starts.map(s=>s.id);
+    while(stack.length){
+      const cur = stack.pop();
+      (adj[cur]||[]).forEach(m=>{ if(!seen.has(m)){ seen.add(m); stack.push(m); } });
+    }
+    state.nodes.forEach(n=>{
+      if(!seen.has(n.id)) out.push({lvl:'bad', msg:'"'+n.id+'" cannot be reached from any opening node.', focus:n.id});
+    });
+  }
+
+  const top = Math.max(...state.nodes.map(n=>n.tier), 0);
+  state.nodes.forEach(n=>{
+    if(n.tier < top && !(adj[n.id]||[]).length)
+      out.push({lvl:'warn', msg:'"'+n.id+'" is a dead end.', focus:n.id});
+  });
+
+  for(let i=0;i<state.nodes.length;i++) for(let j=i+1;j<state.nodes.length;j++){
+    const a = state.nodes[i], b = state.nodes[j];
+    const need = ((TYPES[a.type]||TYPES.battle).r + (TYPES[b.type]||TYPES.battle).r) * 1.15;
+    if(Math.hypot(a.x-b.x, a.z-b.z) < need)
+      out.push({lvl:'warn', msg:'"'+a.id+'" and "'+b.id+'" overlap.', focus:a.id});
+  }
+  return out;
+}
+function renderIssues(){
+  const list = validate();
+  document.getElementById('issueCount').textContent = list.length || '';
+  const host = document.getElementById('issues');
+  if(!list.length){
+    host.innerHTML = '<div class="issue ok"><i class="b"></i>The map is valid and fully connected.</div>';
+    return;
+  }
+  host.innerHTML = list.slice(0,14).map((x,i)=>
+    `<div class="issue ${x.lvl}" data-i="${i}"><i class="b"></i>${x.msg}</div>`).join('');
+  host.querySelectorAll('.issue').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const it = list[+el.dataset.i];
+      if(it.focus && nodeById(it.focus)){
+        const n = nodeById(it.focus);
+        sel = {kind:'node', id:n.id}; lastSelKey = null;
+        view.ox = W/2 - n.x*view.zoom; view.oy = H/2 - n.z*view.zoom;
+        refresh();
+      } else if(it.edge !== undefined){ sel = {kind:'edge', i:it.edge}; lastSelKey = null; refresh(); }
+    });
+  });
+}
+
+/* ---------------- model slots ----------------
+   The editor never bundles a model, it records a path. But it does read
+   the .glb you point at, so a bad file, a heavy mesh or a model lying on
+   the wrong axis is caught here rather than in the runtime. */
+let selSlot = null;
+
+function fmt(n){
+  if(n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if(n >= 1e3) return Math.round(n/1e3) + 'k';
+  return String(n);
+}
+
+function readGlbInfo(buf, bytes){
+  try{
+    const dv = new DataView(buf);
+    if(dv.getUint32(0, true) !== 0x46546C67) return {ok:false, why:'Not a binary .glb file'};
+    let off = 12, json = null;
+    while(off + 8 <= buf.byteLength){
+      const len = dv.getUint32(off, true), type = dv.getUint32(off+4, true);
+      if(type === 0x4E4F534A)
+        json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, off+8, len)));
+      off += 8 + len;
+    }
+    if(!json) return {ok:false, why:'No JSON chunk in the file'};
+
+    let tris = 0, verts = 0;
+    const lo = [Infinity,Infinity,Infinity], hi = [-Infinity,-Infinity,-Infinity];
+    (json.meshes||[]).forEach(m => (m.primitives||[]).forEach(pr=>{
+      const ai = pr.attributes && pr.attributes.POSITION;
+      if(ai === undefined) return;
+      const pos = json.accessors[ai];
+      verts += pos.count;
+      tris  += (pr.indices !== undefined ? json.accessors[pr.indices].count : pos.count) / 3;
+      if(pos.min && pos.max) for(let i=0;i<3;i++){
+        lo[i] = Math.min(lo[i], pos.min[i]); hi[i] = Math.max(hi[i], pos.max[i]);
+      }
+    }));
+    const size = [hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]].map(v=> isFinite(v) ? v : 0);
+    const axis = ['X','Y','Z'][size.indexOf(Math.max(...size))];
+    return {ok:true, bytes, tris:Math.round(tris), verts, size, axis,
+            textures:(json.images||[]).length, anims:(json.animations||[]).length};
+  }catch(err){ return {ok:false, why:'Could not parse: ' + err.message}; }
+}
+
+function slotFlags(k, info){
+  const out = [];
+  if(!info) return out;
+  if(!info.ok) return [{lvl:'bad', msg:info.why}];
+  if(info.tris > 150000)
+    out.push({lvl:'bad', msg:fmt(info.tris)+' triangles is heavy for the web. Try: gltfpack -i in.glb -o out.glb -si 0.15 -cc'});
+  else if(info.tris > 60000)
+    out.push({lvl:'warn', msg:fmt(info.tris)+' triangles — fine for one, costly if it repeats.'});
+  if(info.bytes > 5e6)
+    out.push({lvl:'bad', msg:(info.bytes/1e6).toFixed(1)+' MB will stall the first load.'});
+  if(info.anims)
+    out.push({lvl:'warn', msg:info.anims+' animation(s) — the runtime does not play these yet.'});
+  if(k === 'train' && info.axis !== 'Z')
+    out.push({lvl:'warn', msg:'Longest axis is '+info.axis+'. The runtime turns it to face the track; press T there if it runs backwards.'});
+  return out;
+}
+
+function renderSlots(){
+  const host = document.getElementById('slots');
+  const bound = Object.values(state.models).filter(m=>m.file).length;
+  document.getElementById('slotCount').textContent = bound + '/' + Object.keys(state.models).length;
+
+  host.innerHTML = Object.keys(state.models).map(k=>{
+    const m = state.models[k], on = k === selSlot;
+    let det = '';
+    if(on){
+      const info = m._info;
+      let facts = '', flags = '';
+      if(info && info.ok){
+        facts = `<p class="facts"><b>${fmt(info.tris)}</b> tris · <b>${(info.bytes/1e6).toFixed(2)}</b> MB
+                 · ${info.textures} tex<br>source size
+                 ${info.size.map(v=>v.toFixed(2)).join(' × ')} · long axis <b>${info.axis}</b></p>`;
+      }
+      flags = slotFlags(k, info).map(f=>
+        `<div class="flag ${f.lvl==='bad'?'bad':''}"><i></i><span>${f.msg}</span></div>`).join('');
+      det = `<div class="det">
+        <div class="mini">path written into map.json</div>
+        <input data-f="file" placeholder="models/${k}.glb" value="${m.file||''}">
+        <div class="mini">fit / height / rotation</div>
+        <div class="three">
+          <input data-f="fit" type="number" value="${m.fit}">
+          <input data-f="y"   type="number" value="${m.y}">
+          <input data-f="ry"  type="number" value="${m.ry}">
+        </div>${facts}${flags}</div>`;
+    }
+    return `<div class="slot ${m.file?'has':''} ${on?'on':''}" data-k="${k}">
+      <div class="sh"><i class="pip"></i><span>${m.label}</span>
+        <span class="tag">${m.file ? 'glb' : 'stand-in'}</span></div>${det}</div>`;
+  }).join('');
+
+  host.querySelectorAll('.sh').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const k = el.parentElement.dataset.k;
+      selSlot = (selSlot === k) ? null : k;
+      renderSlots();
+    });
+  });
+  host.querySelectorAll('.det input').forEach(inp=>{
+    const k = inp.closest('.slot').dataset.k;
+    inp.addEventListener('input', ()=>{
+      const f = inp.dataset.f;
+      state.models[k][f] = f === 'file' ? inp.value.trim() : (+inp.value || 0);
+      if(f === 'file'){
+        inp.closest('.slot').classList.toggle('has', !!state.models[k].file);
+        inp.closest('.slot').querySelector('.tag').textContent = state.models[k].file ? 'glb' : 'stand-in';
+      }
+    });
+  });
+}
+
+/* ---- binding actual files ---- */
+function slotForFile(name){
+  const stem = name.replace(/\.(glb|gltf)$/i,'').toLowerCase();
+  if(state.models['icon_'+stem]) return 'icon_'+stem;
+  if(state.models[stem]) return stem;
+  return null;
+}
+function bindGlb(file){
+  const k = selSlot || slotForFile(file.name);
+  if(!k){ toast('Select a slot first, or name it e.g. boss.glb'); return; }
+  const fr = new FileReader();
+  fr.onload = ()=>{
+    const info = readGlbInfo(fr.result, file.size);
+    const m = state.models[k];
+    m.file = file.name; m._info = info;
+    selSlot = k;
+    renderSlots();
+    toast(info.ok ? file.name + ' → ' + m.label : 'Problem with ' + file.name);
+  };
+  fr.readAsArrayBuffer(file);
+}
+document.getElementById('glbBtn').addEventListener('click', ()=> document.getElementById('glbIn').click());
+document.getElementById('glbIn').addEventListener('change', e=>{
+  [...e.target.files].forEach(bindGlb); e.target.value = '';
+});
+document.getElementById('clearSlot').addEventListener('click', ()=>{
+  if(!selSlot) return toast('Pick a slot to clear');
+  const m = state.models[selSlot];
+  m.file = ''; delete m._info;
+  renderSlots(); toast(m.label + ' back to stand-in');
+});
+
+/* ---------------- tools + meta ---------------- */
+const HINTS = {
+  select:'Drag a chamber to move it. Drag empty space to pan. Hold Shift to place off-grid.',
+  place:'Click empty space to drop a chamber of the selected type.',
+  link:'Drag from one chamber to another to connect them.',
+  erase:'Click a chamber or a link to remove it.'
+};
+function setTool(t){
+  tool = t;
+  document.querySelectorAll('#tools .tool').forEach(el=> el.classList.toggle('on', el.dataset.tool===t));
+  document.getElementById('toolHint').textContent = HINTS[t];
+}
+document.querySelectorAll('#tools .tool').forEach(el=>
+  el.addEventListener('click', ()=> setTool(el.dataset.tool)));
+
+function syncMeta(){
+  document.getElementById('mapName').value = state.meta.name || '';
+  document.getElementById('mapSeed').value = state.meta.seed || '';
+  document.getElementById('tierHeight').value = state.tierHeight || 15;
+  document.getElementById('tierCount').value = state.tiers || 7;
+}
+document.getElementById('mapName').addEventListener('input', e=> state.meta.name = e.target.value);
+document.getElementById('mapSeed').addEventListener('input', e=> state.meta.seed = e.target.value);
+document.getElementById('tierHeight').addEventListener('input', e=> state.tierHeight = +e.target.value || 15);
+document.getElementById('tierCount').addEventListener('input', e=> state.tiers = Math.max(2, +e.target.value || 7));
+document.getElementById('autoTier').addEventListener('click', ()=>{
+  if(!state.nodes.length) return;
+  snapshot();
+  const zs = state.nodes.map(n=>n.z);
+  const zmax = Math.max(...zs), zmin = Math.min(...zs), span = (zmax - zmin) || 1;
+  const T = Math.max(2, state.tiers);
+  state.nodes.forEach(n=> n.tier = Math.round(((zmax - n.z)/span) * (T-1)));
+  refresh(); toast('Tiers assigned by depth');
+});
+
+/* ---------------- files ---------------- */
+function toManifest(){
+  return {
+    format:"roguelite-map/1",
+    meta: state.meta,
+    tierHeight: state.tierHeight,
+    models: Object.fromEntries(Object.entries(state.models).map(([k,v])=>
+      [k, {file: v.file || null, fit: v.fit, y: v.y, ry: v.ry}])),
+    nodes: state.nodes.map(n=>({id:n.id, type:n.type, x:n.x, z:n.z, tier:n.tier})),
+    edges: state.edges.map(e=>({from:e.from, to:e.to, style:e.style}))
+  };
+}
+function fromManifest(j){
+  const nodes = (j.nodes||[]).map(n=> Array.isArray(n)
+    ? {id:n[0], type:n[1], x:n[2], z:n[3], tier:n[4]} : n);
+  const edges = (j.edges||[]).map(e=> Array.isArray(e)
+    ? {from:e[0], to:e[1], style:e[2]||'rope'} : {from:e.from, to:e.to, style:e.style||'rope'});
+  const models = {};
+  Object.entries(j.models||{}).forEach(([k,v])=>{
+    models[k] = {file: v.file || '', fit: v.fit === undefined ? 0 : v.fit,
+                 y: v.y === undefined ? 0 : v.y, ry: v.ry === undefined ? 0 : v.ry};
+  });
+  return {
+    meta: j.meta || {name:'Untitled', seed:''},
+    tierHeight: j.tierHeight || 15,
+    tiers: Math.max(2, Math.max(...nodes.map(n=>n.tier||0), 1) + 1),
+    nodes, edges, models
+  };
+}
+
+const sheet = document.getElementById('sheet');
+function openSheet(title, note, text){
+  document.getElementById('sheetTitle').textContent = title;
+  document.getElementById('sheetNote').textContent = note;
+  document.getElementById('sheetText').value = text;
+  sheet.classList.add('on');
+}
+document.getElementById('sheetClose').addEventListener('click', ()=> sheet.classList.remove('on'));
+sheet.addEventListener('click', e=>{ if(e.target === sheet) sheet.classList.remove('on'); });
+
+document.getElementById('exportBtn').addEventListener('click', ()=>{
+  const blocking = validate().filter(i=>i.lvl==='bad').length;
+  openSheet('map.json',
+    blocking ? blocking + ' blocking problem(s) — see Checks. Exported anyway.'
+             : 'Drop this onto the runtime to play it, or ship it with your build.',
+    JSON.stringify(toManifest(), null, 2));
+});
+document.getElementById('sheetOk').addEventListener('click', ()=>{
+  const ta = document.getElementById('sheetText');
+  ta.select(); ta.setSelectionRange(0, 999999);
+  navigator.clipboard.writeText(ta.value).then(()=>toast('Copied'), ()=>toast('Select and copy manually'));
+});
+document.getElementById('sheetDl').addEventListener('click', ()=>{
+  const blob = new Blob([document.getElementById('sheetText').value], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (state.meta.name || 'map').toLowerCase().replace(/[^a-z0-9]+/g,'_') + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+});
+
+document.getElementById('importBtn').addEventListener('click', ()=> document.getElementById('fileIn').click());
+document.getElementById('fileIn').addEventListener('change', e=>{
+  const f = e.target.files[0]; if(f) readMap(f); e.target.value = '';
+});
+function readMap(file){
+  const fr = new FileReader();
+  fr.onload = ()=>{
+    try{
+      loadState(fromManifest(JSON.parse(fr.result)));
+      frameAll(); toast('Loaded ' + file.name);
+    }catch(err){ toast('That file is not a valid map'); console.error(err); }
+  };
+  fr.readAsText(file);
+}
+['dragover','drop'].forEach(t=> addEventListener(t, e=>{
+  e.preventDefault();
+  if(t !== 'drop') return;
+  const files = [...e.dataTransfer.files];
+  const map = files.find(x=>/\.json$/i.test(x.name));
+  if(map) return readMap(map);
+  const glbs = files.filter(x=>/\.(glb|gltf)$/i.test(x.name));
+  if(glbs.length) glbs.forEach(bindGlb);
+  else toast('Drop a map.json or a .glb');
+}));
+
+document.getElementById('newBtn').addEventListener('click', ()=>{
+  if(!confirm('Start a new map? Unsaved work is lost.')) return;
+  loadState({
+    meta:{name:'Untitled Ascent', seed:''}, tierHeight:15, tiers:4,
+    nodes:[{id:'start', type:'start', x:0, z:60, tier:0},
+           {id:'boss',  type:'boss',  x:0, z:-60, tier:3}],
+    edges:[]
+  });
+  frameAll(); toast('New map');
+});
+
+/* ---------------- keys ---------------- */
+addEventListener('keydown', e=>{
+  if(/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) return;
+  if(e.key === 'Escape'){ sheet.classList.remove('on'); sel = null; lastSelKey = null; refresh(); }
+  if(e.key === '1') setTool('select');
+  if(e.key === '2') setTool('place');
+  if(e.key === '3') setTool('link');
+  if(e.key === '4') setTool('erase');
+  if(e.key.toLowerCase() === 'f') frameAll();
+  if((e.key === 'Delete' || e.key === 'Backspace') && sel){
+    e.preventDefault(); snapshot();
+    if(sel.kind === 'node') removeNode(sel.id);
+    else { state.edges.splice(sel.i,1); sel = null; lastSelKey = null; refresh(); }
+  }
+  if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z'){ e.preventDefault(); undo(); }
+});
+
+/* ---------------- refresh + boot ---------------- */
+function refresh(){
+  document.getElementById('hNodes').textContent = state.nodes.length;
+  document.getElementById('hEdges').textContent = state.edges.length;
+  renderPalette(); renderInspector(); renderIssues(); draw();
+}
+/* ============================================================
+   🔌 GAME HOST BRIDGE
+   Opened from the in-game Campaign Builder as an iframe. The HOST converts a
+   campaign into editor state (one shared conversion, so the editor and the 3D
+   map can never disagree) and merges what we send back.
+
+   ⚠ We deliberately send back ONLY the map-shaped fields:
+        id · type · name · story · x · z · tier · col · connections
+      The host merges these into its existing node objects BY ID, so every
+      other setting an admin authored elsewhere — enemy hero/deck/level,
+      rewards, dialogueBeforeId, randomEvent pools, infectionZone — survives
+      a visual edit untouched. Never round-trip a whole node through here.
+
+   host → editor : ascent-ed:load  { campaignId, name, nodes, edges }
+   editor → host : ascent-ed:ready
+                   ascent-ed:save  { campaignId, nodes, edges }
+                   ascent-ed:close
+   ============================================================ */
+const ED_BUILD = 'ascent-ed-v1';
+const HOSTED = { on:false, campaignId:null, dirty:false };
+function hostPost(type, data){
+  try{ if(window.parent && window.parent !== window)
+    window.parent.postMessage(Object.assign({type, build:ED_BUILD}, data||{}), '*'); }catch(e){}
+}
+function markDirty(){
+  HOSTED.dirty = true;
+  const b = document.getElementById('saveBtn');
+  if(b) b.textContent = '● Save to campaign';
+}
+// Map-shaped payload only (see the warning above).
+function hostPayload(){
+  const out = state.nodes.map(n=>({
+    id:n.id, type:n.type, name:n.name||'', story:n.story||'',
+    x:Math.round(n.x)|0, z:Math.round(n.z)|0, tier:n.tier|0,
+    connections: state.edges.filter(e=>e.from===n.id).map(e=>e.to)
+  }));
+  // col keeps the CLASSIC 2D map readable: left-to-right order within a tier.
+  const byTier = {};
+  out.forEach(n=>{ (byTier[n.tier]=byTier[n.tier]||[]).push(n); });
+  Object.keys(byTier).forEach(t=>{
+    byTier[t].sort((a,b)=>a.x-b.x).forEach((n,i)=> n.col = i);
+  });
+  return { campaignId:HOSTED.campaignId, nodes:out,
+           edges: state.edges.map(e=>({from:e.from,to:e.to,style:e.style})) };
+}
+addEventListener('message', ev=>{
+  const d = ev.data;
+  if(!d || typeof d !== 'object' || typeof d.type !== 'string') return;
+  if(d.type !== 'ascent-ed:load') return;
+  HOSTED.on = true; HOSTED.campaignId = d.campaignId || null; HOSTED.dirty = false;
+  try{
+    loadState({
+      meta:{ name:d.name || 'Campaign', seed:d.campaignId || '' },
+      tierHeight:15,
+      tiers: Math.max(2, Math.max.apply(null,(d.nodes||[]).map(n=>n.tier|0).concat([1])) + 1),
+      nodes:(d.nodes||[]).map(n=>({...n})),
+      edges:(d.edges||[]).map(e=>({...e}))
+    });
+    frameAll();
+    document.getElementById('hostBox').style.display = 'block';
+    document.getElementById('saveBtn').textContent = 'Save to campaign';
+    toast('Editing “' + (d.name||'campaign') + '”');
+  }catch(err){ toast('Could not load that campaign'); console.error(err); }
+});
+document.getElementById('saveBtn').addEventListener('click', ()=>{
+  const blocking = validate().filter(i=>i.lvl==='bad').length;
+  if(blocking && !confirm(blocking + ' blocking problem(s) in Checks. Save anyway?')) return;
+  hostPost('ascent-ed:save', hostPayload());
+  HOSTED.dirty = false;
+  document.getElementById('saveBtn').textContent = 'Save to campaign';
+  toast('Saved to campaign');
+});
+document.getElementById('closeBtn').addEventListener('click', ()=>{
+  if(HOSTED.dirty && !confirm('Close without saving? Your map changes are lost.')) return;
+  hostPost('ascent-ed:close', {});
+});
+// Any structural change marks the map dirty.
+(function(){ const _s = snapshot; snapshot = function(){ markDirty(); return _s.apply(this, arguments); }; })();
+
+view = {ox:0, oy:0, zoom:2};
+loadState(DEFAULT_MAP);
+hostPost('ascent-ed:ready', {});
+setTool('select');
+resize();
+frameAll();
+</script>
+</body>
+</html>

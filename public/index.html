@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119r8';
+  window.BUILD_VERSION = 'v119r9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -100728,6 +100728,7 @@ function _renderImpl() {
   try { if (App._cosmicTree && App.screen !== 'heroSkillTree') _teardownCosmicTree(); } catch (e) {}
   try { if (_B3D && _B3D.on && App.screen !== 'battle') _b3dUnmount(); } catch (e) {}
   try { if (_WX && _WX.on && (App.screen !== 'battle' || !_wxEnabled())) _wxUnmount(); } catch (e) {}
+  try { if (_RLCA && _RLCA.host && App.screen !== 'rlcMap') _rlcAscentUnmount(); } catch (e) {}
   // ✨ Screen-transition whoosh — fire the same diagonal flash on EVERY change of
   // screen or title-hub, app-wide (menu items, back buttons, any navigation).
   try {
@@ -169205,10 +169206,19 @@ function renderRlcAdmin() {
           </optgroup>
         </select></label>
         <label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">🔒 Requires this campaign cleared first (chains acts / unlocks the next section)</span><br><select data-rlc-path="requiresCampaignId" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px"><option value="">— None (always available) —</option>${(Array.isArray(Forge.campaigns) ? Forge.campaigns : []).filter(c => c && c.id !== ed.id).map(c => `<option value="${escapeHtml(String(c.id))}" ${ed.requiresCampaignId === c.id ? 'selected' : ''}>${escapeHtml(c.name || c.id)}</option>`).join('')}</select></label>
+        <label style="display:block;margin:0 0 8px"><span class="small-text ink-dim">📖 Closing text — shown on the victory screen, leading into whatever comes next<br>(the <em>opening</em> is the “Intro text” field above)</span><br><textarea data-rlc-path="outroText" rows="2" style="width:100%;padding:0.4rem;background:#1a1030;color:#f0e6ff;border:1px solid rgba(184,136,255,0.35);border-radius:5px;resize:vertical" placeholder="The reservoir is ours — but the lights to the north are still on.">${escapeHtml(String(ed.outroText || ''))}</textarea></label>
+        <div class="small-text ink-dim">Chain campaigns by pointing the next one's <strong>🔒 Requires</strong> at this campaign — this closing text then hands straight over to it on the victory screen.</div>
       </div>
       <div class="settings-section">
         <div class="settings-section-title">Map Nodes (${(ed.nodes || []).length})</div>
         <div class="small-text ink-dim" style="margin-bottom:8px">Row 0 = start (bottom). Players move upward through connected nodes. A <strong>Final Boss</strong> node ends the campaign on victory.</div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.7rem">
+          <button class="btn-primary btn-mini" id="rlc-visual-map">🗺️ Visual Map Editor</button>
+          <label class="small-text" style="display:flex;align-items:center;gap:0.35rem;cursor:pointer;color:#cbb9ff">
+            <input type="checkbox" id="rlc-use-ascent" ${ed.useAscentMap ? 'checked' : ''}> 🏔 Play this campaign on the 3D map
+          </label>
+        </div>
+        <div class="small-text ink-dim" style="margin-bottom:8px">Drag nodes, link them and set types visually. It writes back positions, types, names, story lines and links — <strong>every other node setting (enemies, decks, rewards, dialogue) is kept</strong>.</div>
         ${(ed.nodes || []).map(nodeCard).join('')}
         <button class="btn-primary btn-mini" id="rlc-add-node">➕ Add Node</button>
       </div>
@@ -169230,6 +169240,12 @@ function renderRlcAdmin() {
   document.getElementById('rlc-ed-back').onclick = () => { ed.updatedAt = Date.now(); _persistForgeNow(); App.rlcEdit = null; render(); };
   document.getElementById('rlc-ed-save').onclick = () => { ed.updatedAt = Date.now(); _persistForgeNow(); showToast('💾 Campaign saved + synced. Mark Publish-ready + 📚 Publish to go live.', 3600); };
   document.getElementById('rlc-add-node').onclick = () => { ed.nodes = ed.nodes || []; ed.nodes.push(_rlcBlankNode()); reRender(); };
+  {
+    const _vm = document.getElementById('rlc-visual-map');
+    if (_vm) _vm.onclick = () => _rlcAscentEditorOpen(ed);
+    const _ua = document.getElementById('rlc-use-ascent');
+    if (_ua) _ua.onchange = (e) => { ed.useAscentMap = !!e.target.checked; ed.updatedAt = Date.now(); _persistForgeNow(); };
+  }
   const coverBtn = document.getElementById('rlc-cover-btn');
   if (coverBtn) coverBtn.onclick = () => document.getElementById('rlc-cover-file').click();
   const coverFile = document.getElementById('rlc-cover-file');
@@ -169730,12 +169746,320 @@ function renderRlcList() {
   });
 }
 
+// ============================================================================
+// 🗺️➡️🏔 ASCENT BRIDGE — campaign  →  map.json for public/ascent-map/
+// ----------------------------------------------------------------------------
+// The 3D map is a VIEW. Our campaign model stays authoritative (14 node types,
+// relics, currency, dialogue, decks, heat/haul). This converts a campaign into
+// the Ascent manifest, and is deliberately tolerant so EVERY existing campaign
+// renders without being re-authored:
+//   • position — authored x/z/tier win; otherwise derived from row/col.
+//   • tiers    — forced strictly increasing along every connection, because the
+//                Ascent runtime only lets you walk to a HIGHER tier. Without
+//                this, two connected same-row nodes are unreachable on the 3D map.
+//   • start    — a SYNTHETIC "departure" node is injected and wired to our real
+//                start nodes. Ascent auto-clears its start node, so converting a
+//                real (often battle) start would silently skip that encounter.
+// The real type rides along as `srcType` so the host can route the encounter and
+// the inspector can name it properly.
+// ============================================================================
+const ASCENT_START_ID = '__ascent_start__';
+// our 14 gameplay types → the 8 shapes the 3D map can draw
+const ASCENT_TYPE_MAP = {
+  battle:'battle', oilExtraction:'battle',
+  elite:'elite',
+  boss:'boss', finalBoss:'boss',
+  medical:'camp', rest:'camp',
+  market:'shop', upgrade:'shop',
+  treasure:'treasure', convoy:'treasure',
+  event:'mystery', randomEvent:'mystery', mystery:'mystery',
+};
+function _ascentEdgeStyle(toType) {
+  if (['boss','finalBoss','elite'].indexOf(toType) >= 0) return 'arcane';
+  if (['market','upgrade','medical'].indexOf(toType) >= 0) return 'stair';
+  return 'rope';
+}
+function _ascentMapFromCampaign(camp) {
+  const src = (camp && Array.isArray(camp.nodes)) ? camp.nodes.filter(Boolean) : [];
+  if (!src.length) return null;
+  const byId = {}; src.forEach(n => { byId[n.id] = n; });
+
+  // ---- tiers: authored tier, else row; then force strictly increasing ----
+  const tier = {};
+  src.forEach(n => { tier[n.id] = (n.tier != null) ? (parseInt(n.tier, 10) || 0) : (parseInt(n.row, 10) || 0); });
+  for (let pass = 0; pass < src.length + 2; pass++) {          // bounded relaxation
+    let moved = false;
+    src.forEach(n => {
+      (n.connections || []).forEach(cid => {
+        if (!byId[cid]) return;
+        if (tier[cid] <= tier[n.id]) { tier[cid] = tier[n.id] + 1; moved = true; }
+      });
+    });
+    if (!moved) break;
+  }
+
+  // ---- positions: authored x/z win, else spread each tier around centre ----
+  const ROW_GAP = 26, COL_GAP = 74, START_Z = 66;
+  const byTier = {};
+  src.forEach(n => { (byTier[tier[n.id]] = byTier[tier[n.id]] || []).push(n); });
+  Object.keys(byTier).forEach(t => {
+    byTier[t].sort((a, b) => (parseInt(a.col, 10) || 0) - (parseInt(b.col, 10) || 0));
+  });
+
+  const nodes = src.map(n => {
+    const t = tier[n.id];
+    const row = byTier[t], i = row.indexOf(n);
+    const def = (typeof RLC_NODE_TYPES === 'object' && RLC_NODE_TYPES[n.type]) || null;
+    return {
+      id: n.id,
+      type: ASCENT_TYPE_MAP[n.type] || 'battle',
+      srcType: n.type,                                   // the REAL type — host routes on this
+      x: (n.x != null) ? (+n.x || 0) : Math.round((i - (row.length - 1) / 2) * COL_GAP),
+      z: (n.z != null) ? (+n.z || 0) : Math.round(START_Z - (t + 1) * ROW_GAP),
+      tier: t + 1,                                       // +1 leaves tier 0 for the departure node
+      name: n.name || (def && def.name) || 'Waypoint',
+      kind: (def && def.name) || 'Waypoint',
+      story: n.story || n.desc || (def ? (def.icon + ' ' + def.name) : ''),
+    };
+  });
+
+  const edges = [];
+  src.forEach(n => (n.connections || []).forEach(cid => {
+    if (byId[cid]) edges.push({ from: n.id, to: cid, style: _ascentEdgeStyle(byId[cid].type) });
+  }));
+
+  // ---- synthetic departure node wired to every real start ----
+  const starts = (typeof _rlcStartNodes === 'function') ? _rlcStartNodes(camp) : [];
+  const startIds = (starts.length ? starts : [src[0]]).map(n => n.id).filter(id => byId[id]);
+  nodes.push({
+    id: ASCENT_START_ID, type: 'start', srcType: '__start__',
+    x: 0, z: START_Z, tier: 0,
+    name: (camp && camp.name) || 'Departure', kind: 'Departure',
+    // Reuses the campaign's EXISTING "Intro text" field (camp.intro) — the same
+    // copy the classic intro modal shows. One field, two surfaces.
+    story: (camp && camp.intro) || 'The route begins here. Choose your first move.',
+  });
+  startIds.forEach(id => edges.push({ from: ASCENT_START_ID, to: id, style: _ascentEdgeStyle(byId[id].type) }));
+
+  return {
+    format: 'roguelite-map/1',
+    meta: { name: (camp && camp.name) || 'Campaign', seed: (camp && camp.id) || '' },
+    tierHeight: 15,
+    nodes, edges,
+  };
+}
+// Run snapshot in the shape the Ascent view expects.
+function _ascentRunSnapshot(camp, run) {
+  if (!run) return null;
+  const cleared = (run.completed || []).slice(0);
+  cleared.push(ASCENT_START_ID);                        // departure is always behind us
+  return {
+    at: run.currentNodeId || ASCENT_START_ID,
+    cleared,
+    hp: Math.max(0, run.heroHP | 0), maxHp: Math.max(1, run.maxHP | 0),
+    gold: run.currency | 0,
+  };
+}
+
+// ============================================================================
+// 🏔 ASCENT HOST — mounts public/ascent-map/ as the run map and drives it.
+// ----------------------------------------------------------------------------
+// Body-level fixed host (never re-parented), exactly like the weather overlay:
+// render() replaces #app's innerHTML on every paint, so an iframe living inside
+// it would reload the whole 3D scene constantly.
+// The flow is deliberately simple because our own node screens already own it:
+//   click node → ascent:nodeEnter → rlcEnterNode() → (battle / shop / event …)
+//   → those screens navigate away and come back → we just re-push run state.
+// So there is no pause/resume plumbing: the campaign model stays authoritative.
+// ============================================================================
+const ASCENT_MAP_VER = 'v1';
+const _RLCA = { host: null, frame: null, campId: null, ready: false, onMsg: null };
+
+// ============================================================================
+// 🗺️ VISUAL CAMPAIGN BUILDER — public/ascent-editor/ as an admin surface.
+// ----------------------------------------------------------------------------
+// Editor state is derived from the SAME layout code the 3D map uses
+// (_ascentMapFromCampaign) so the two views can never disagree about where a
+// node sits or what tier it is on. The synthetic departure node is stripped —
+// it is generated for the map view and must never become a real campaign node.
+// ============================================================================
+const _RLCE = { host: null, frame: null, campId: null, onMsg: null };
+function _ascentEditorStateFromCampaign(camp) {
+  const m = _ascentMapFromCampaign(camp);
+  const base = { campaignId: camp.id, name: camp.name || 'Campaign', nodes: [], edges: [] };
+  if (!m) return base;
+  base.nodes = m.nodes.filter(n => n.id !== ASCENT_START_ID).map(n => ({
+    id: n.id, type: n.srcType || 'battle', name: n.name || '', story: n.story || '',
+    x: n.x | 0, z: n.z | 0,
+    tier: Math.max(0, (n.tier | 0) - 1),      // undo the +1 the map view adds for the departure rung
+  }));
+  base.edges = m.edges.filter(e => e.from !== ASCENT_START_ID && e.to !== ASCENT_START_ID);
+  return base;
+}
+// ⚠ MERGE, never replace. The editor only knows map-shaped fields; everything
+// else an admin authored (enemyHeroId/enemyDeckId/enemyLevel/enemy, reward,
+// dialogueBeforeId, randomEvent pools, infectionZone, …) is carried over from
+// the previous node object with the same id. Nodes absent from the payload were
+// deleted in the editor and are dropped on purpose.
+function _ascentApplyEditorSave(d) {
+  const camp = _rlcCampaign(d && d.campaignId);
+  if (!camp || !Array.isArray(d.nodes)) return false;
+  const prevById = {};
+  (camp.nodes || []).forEach(n => { if (n && n.id) prevById[n.id] = n; });
+  camp.nodes = d.nodes.map(n => {
+    const prev = prevById[n.id] || {};
+    return Object.assign({}, prev, {
+      id: n.id,
+      type: n.type || prev.type || 'battle',
+      name: (n.name != null && n.name !== '') ? n.name : (prev.name || ''),
+      story: (n.story != null) ? n.story : (prev.story || ''),
+      x: n.x | 0, z: n.z | 0, tier: n.tier | 0,
+      row: n.tier | 0,                       // keep the CLASSIC 2D map correct
+      col: n.col | 0,
+      connections: Array.isArray(n.connections) ? n.connections.slice(0) : [],
+    });
+  });
+  camp.updatedAt = Date.now();
+  try { _persistForgeNow(); } catch (e) {}
+  return true;
+}
+function _rlcAscentEditorClose() {
+  try { if (_RLCE.onMsg) window.removeEventListener('message', _RLCE.onMsg); } catch (e) {}
+  try { if (_RLCE.host && _RLCE.host.parentNode) _RLCE.host.parentNode.removeChild(_RLCE.host); } catch (e) {}
+  _RLCE.host = _RLCE.frame = _RLCE.onMsg = null; _RLCE.campId = null;
+}
+function _rlcAscentEditorOpen(camp) {
+  if (!camp) return;
+  _rlcAscentEditorClose();
+  const host = document.createElement('div');
+  host.id = 'rlce-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:60;background:#07041a';
+  const frame = document.createElement('iframe');
+  frame.src = 'ascent-editor/?v=' + encodeURIComponent(ASCENT_MAP_VER) + '&s=' + Date.now().toString(36);
+  frame.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;display:block';
+  host.appendChild(frame);
+  document.body.appendChild(host);
+  _RLCE.host = host; _RLCE.frame = frame; _RLCE.campId = camp.id;
+
+  const send = () => {
+    try {
+      frame.contentWindow.postMessage(
+        Object.assign({ type: 'ascent-ed:load' }, _ascentEditorStateFromCampaign(camp)), '*');
+    } catch (e) {}
+  };
+  _RLCE.onMsg = (ev) => {
+    const d = ev.data;
+    if (!d || typeof d !== 'object' || typeof d.type !== 'string') return;
+    if (!_RLCE.frame || ev.source !== _RLCE.frame.contentWindow) return;
+    if (d.type === 'ascent-ed:ready') { send(); return; }
+    if (d.type === 'ascent-ed:save') {
+      const ok = _ascentApplyEditorSave(d);
+      try { showToast(ok ? '🗺️ Map saved to “' + (camp.name || 'campaign') + '”.' : '⚠ Could not save that map.', 3200); } catch (e) {}
+      return;
+    }
+    if (d.type === 'ascent-ed:close') { _rlcAscentEditorClose(); render(); return; }
+  };
+  window.addEventListener('message', _RLCE.onMsg);
+  setTimeout(send, 900);   // belt-and-braces if the ready ping was missed
+}
+function _rlcAscentOn(camp) {
+  try {
+    const f = localStorage.getItem('hg_ascent_map');
+    if (f === '0') return false;                 // hard off (classic 2D map)
+    if (f === '1') return true;                  // hard on (dev/admin)
+    return !!(camp && camp.useAscentMap);        // per-campaign opt-in
+  } catch (e) { return false; }
+}
+function _rlcAscentUnmount() {
+  try { if (_RLCA.onMsg) window.removeEventListener('message', _RLCA.onMsg); } catch (e) {}
+  try { if (_RLCA.host && _RLCA.host.parentNode) _RLCA.host.parentNode.removeChild(_RLCA.host); } catch (e) {}
+  _RLCA.host = _RLCA.frame = _RLCA.onMsg = null; _RLCA.campId = null; _RLCA.ready = false;
+}
+function _rlcAscentPush() {
+  try {
+    const run = Profile.rlcRun; if (!run || !_RLCA.frame || !_RLCA.ready) return;
+    const camp = _rlcCampaign(run.campaignId); if (!camp) return;
+    _RLCA.frame.contentWindow.postMessage(
+      { type: 'ascent:setRun', run: _ascentRunSnapshot(camp, run) }, '*');
+  } catch (e) {}
+}
+function _rlcAscentMount(camp, run) {
+  // Already mounted for this campaign → just re-sync the run state.
+  if (_RLCA.host && _RLCA.campId === camp.id) { _rlcAscentPush(); return; }
+  _rlcAscentUnmount();
+  const host = document.createElement('div');
+  host.id = 'rlca-host';
+  host.style.cssText = 'position:fixed;inset:0;z-index:40;background:#07041a';
+  const frame = document.createElement('iframe');
+  frame.src = 'ascent-map/?v=' + encodeURIComponent(ASCENT_MAP_VER) + '&s=' + Date.now().toString(36);
+  frame.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;display:block';
+  frame.allow = 'autoplay';
+  host.appendChild(frame);
+  // Back / abandon rail over the 3D view (the iframe owns the whole viewport).
+  const bar = document.createElement('div');
+  bar.style.cssText = 'position:absolute;left:14px;top:14px;z-index:2;display:flex;gap:8px';
+  const mk = (label, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = "font-family:'Cinzel',serif;font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase;"
+      + 'background:rgba(14,8,38,0.9);color:#f2d089;border:1px solid rgba(242,208,137,0.45);'
+      + 'border-radius:6px;padding:0.5rem 0.9rem;cursor:pointer';
+    b.onclick = fn; return b;
+  };
+  bar.appendChild(mk('← Campaigns', () => { _rlcAscentUnmount(); App.screen = 'rlcList'; render(); }));
+  bar.appendChild(mk('🗺 Classic map', () => {
+    try { localStorage.setItem('hg_ascent_map', '0'); } catch (e) {}
+    _rlcAscentUnmount(); render();
+  }));
+  host.appendChild(bar);
+  document.body.appendChild(host);
+  _RLCA.host = host; _RLCA.frame = frame; _RLCA.campId = camp.id; _RLCA.ready = false;
+
+  _RLCA.onMsg = (ev) => {
+    const d = ev.data;
+    if (!d || typeof d !== 'object' || typeof d.type !== 'string') return;
+    if (!_RLCA.frame || ev.source !== _RLCA.frame.contentWindow) return;   // only our frame
+    const liveRun = Profile.rlcRun;
+    if (d.type === 'ascent:ready') {
+      _RLCA.ready = true;
+      const c = _rlcCampaign(liveRun && liveRun.campaignId) || camp;
+      try {
+        _RLCA.frame.contentWindow.postMessage({
+          type: 'ascent:loadMap',
+          map: _ascentMapFromCampaign(c),
+          run: _ascentRunSnapshot(c, liveRun),
+        }, '*');
+      } catch (e) {}
+      return;
+    }
+    if (d.type === 'ascent:nodeEnter') {
+      if (!liveRun) return;
+      // The synthetic departure node is scenery — nothing to resolve.
+      if (d.nodeId === ASCENT_START_ID) { _rlcAscentPush(); return; }
+      try {
+        rlcEnterNode(d.nodeId);                       // ← the real campaign pipeline
+      } catch (e) { try { console.warn('[ascent nodeEnter]', e); } catch (_) {} }
+      // Instant nodes (treasure / rest / convoy) resolve without leaving the map,
+      // so push the updated state back. Screens that navigate away re-sync on return.
+      setTimeout(() => { if (App.screen === 'rlcMap') _rlcAscentPush(); }, 60);
+      return;
+    }
+  };
+  window.addEventListener('message', _RLCA.onMsg);
+}
+
 function renderRlcMap() {
   const run = Profile.rlcRun;
   if (!run) { App.screen = 'rlcList'; return render(); }
   const camp = _rlcCampaign(run.campaignId);
   if (!camp) { _rlcClearRunArtifacts(); App.screen = 'rlcList'; return render(); }
   if (run.isComplete || run.isFailed) { App.screen = 'rlcResult'; return render(); }
+  // 🏔 3D Ascent map (opt-in per campaign, or forced with localStorage
+  // hg_ascent_map='1'/'0'). It mounts BODY-level and owns the viewport, so the
+  // normal screen body is left empty. The classic 2D map below is the fallback
+  // and still renders for every campaign that hasn't opted in.
+  if (_rlcAscentOn(camp)) { try { root.innerHTML = ''; } catch (e) {} _rlcAscentMount(camp, run); return; }
+  _rlcAscentUnmount();
   gymLoreToast(); // 📡 occasional Core Wars whisper connecting PvE ↔ live PvP
   try { if (typeof maybeShowPageGuide === 'function') maybeShowPageGuide(); } catch (e) {}
   const avail = new Set(_rlcAvailableNodeIds(camp, run));
@@ -170534,6 +170858,11 @@ function renderRlcResult() {
         <div class="small-text ink-dim" style="margin-top:6px">Reach a 🚚 Convoy node mid-run to bank loot safely — that's the only way to keep it if you fall.</div>
       </div>`;
       })()}
+      ${(won && camp && camp.outroText) ? `
+        <div style="max-width:520px;margin:0 auto 18px;padding:16px 18px;background:rgba(18,10,32,0.75);border:1px solid rgba(212,175,55,0.32);border-left:3px solid #d4af37;border-radius:10px;text-align:left">
+          <div style="color:#d4af37;font-family:'Cinzel',serif;font-size:0.78rem;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:6px">📖 The story continues</div>
+          <div style="color:#e8dcc4;line-height:1.6;font-style:italic">${escapeHtml(String(camp.outroText)).replace(/\n/g, '<br>')}</div>
+        </div>` : ''}
       ${_nextCamps.length ? `
         <div style="max-width:460px;margin:0 auto 20px;padding:16px;background:rgba(30,50,30,0.6);border:1px solid rgba(127,220,160,0.45);border-radius:12px">
           <div style="color:#9be8b8;font-family:'Cinzel',serif;font-weight:700;margin-bottom:8px">🔓 Next chapter unlocked!</div>

@@ -189,11 +189,21 @@ async function handleCashout(request, env, u) {
   }
   if (!configured) return cjson({ error: 'stripe_not_configured', hint: 'Set the STRIPE_SECRET_KEY secret (see STRIPE.md). The game runs in mock mode until then.' }, 503);
 
-  // Webhook — signature-verified; log/ack only, never moves funds here.
+  // Webhook — signature-verified; never moves funds here. Shop purchases are
+  // ALSO fulfilled from this endpoint: whichever webhook URL is registered in
+  // the Stripe dashboard (this one or /api/shop/webhook), a paid Shop session
+  // gets delivered. shop_fulfill is idempotent, so both firing is harmless.
   if (seg === 'webhook' && request.method === 'POST') {
     const raw = await request.text();
     const ok = await verifyStripeSig(env.STRIPE_WEBHOOK_SECRET, raw, request.headers.get('stripe-signature') || '');
     if (!ok) return cjson({ error: 'bad_signature' }, 400);
+    let evt = null; try { evt = JSON.parse(raw); } catch (e) {}
+    if (evt && evt.type === 'checkout.session.completed') {
+      const s = evt.data && evt.data.object;
+      if (s && s.metadata && s.metadata.shop_tier) {
+        try { await _shopFulfillSession(env, s); } catch (e) {}
+      }
+    }
     return cjson({ received: true });
   }
 
@@ -412,6 +422,32 @@ async function _shopSoldCount(env, tierId) {
     return Array.isArray(a) ? a.length : null;
   } catch (e) { return null; }
 }
+// Record + deliver a paid Shop session. shop_fulfill() is idempotent on the
+// Stripe session id, so the webhook and the buyer's return visit can both call
+// this for the same purchase and the benefits are granted exactly once.
+// Needs SB_SERVICE (service-role key) — the RPC is revoked from anon/authenticated
+// precisely so a player can't call it and mint themselves packs.
+async function _shopFulfillSession(env, s) {
+  const md = (s && s.metadata) || {};
+  if (!s || s.payment_status !== 'paid' || !md.user_id || !md.shop_tier) return null;
+  if (!env.SB_SERVICE) return { ok: false, error: 'sb_service_missing' };
+  try {
+    const r = await fetch(String(env.SB_URL).replace(/\/+$/, '') + '/rest/v1/rpc/shop_fulfill',
+      { method: 'POST',
+        headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          p_user: md.user_id,
+          p_tier: md.shop_tier,
+          p_tier_name: md.shop_tier_name || (SHOP_TIERS[md.shop_tier] && SHOP_TIERS[md.shop_tier].name) || md.shop_tier,
+          p_session: s.id,
+          p_amount: s.amount_total || 0,
+          p_currency: s.currency || 'usd',
+          p_intent: typeof s.payment_intent === 'string' ? s.payment_intent : null,
+        }) });
+    if (!r.ok) return { ok: false, error: 'rpc_' + r.status };
+    return await r.json().catch(() => null);
+  } catch (e) { return { ok: false, error: 'rpc_error' }; }
+}
 async function handleShop(request, env, u) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_RW });
   const seg = u.pathname.replace(/^\/api\/shop\//, '').replace(/\/+$/, '');
@@ -420,6 +456,21 @@ async function handleShop(request, env, u) {
     return cjson({ enabled: configured, tiers: Object.keys(SHOP_TIERS) });
   }
   if (!configured) return cjson({ error: 'stripe_not_configured', hint: 'Set the STRIPE_SECRET_KEY secret on this Worker (see STRIPE.md).' }, 503);
+
+  // 🪝 Webhook — Stripe calls this, NOT a signed-in user, so it must sit above
+  // the auth gate. The signature IS the authentication. This is what catches a
+  // buyer who pays and never returns to the site.
+  if (seg === 'webhook' && request.method === 'POST') {
+    const raw = await request.text();
+    const ok = await verifyStripeSig(env.STRIPE_WEBHOOK_SECRET, raw, request.headers.get('stripe-signature') || '');
+    if (!ok) return cjson({ error: 'bad_signature' }, 400);
+    let evt = null; try { evt = JSON.parse(raw); } catch (e) {}
+    if (evt && evt.type === 'checkout.session.completed') {
+      try { await _shopFulfillSession(env, evt.data && evt.data.object); } catch (e) {}
+    }
+    return cjson({ received: true });
+  }
+
   const user = await sbUser(env, request);
   if (!user) return cjson({ error: 'unauthorized', hint: 'Send your Supabase access token as Authorization: Bearer.' }, 401);
 
@@ -457,25 +508,14 @@ async function handleShop(request, env, u) {
     if (!s || s.payment_status !== 'paid' || md.user_id !== user.id) return cjson({ ok: false });
     const tierId = md.shop_tier || '';
     const t = SHOP_TIERS[tierId] || { name: md.shop_tier_name || tierId, cents: s.amount_total || 0 };
-    // Record it — service role only, idempotent on the UNIQUE session id.
-    let recorded = false;
-    if (env.SB_SERVICE) {
-      try {
-        const r = await fetch(String(env.SB_URL).replace(/\/+$/, '') + '/rest/v1/pledge_purchases',
-          { method: 'POST',
-            headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE,
-              'content-type': 'application/json', prefer: 'resolution=merge-duplicates,return=minimal' },
-            body: JSON.stringify({
-              user_id: user.id, tier_id: tierId, tier_name: t.name,
-              amount_cents: s.amount_total || t.cents || 0, currency: s.currency || 'usd',
-              stripe_session_id: sid,
-              stripe_payment_intent: typeof s.payment_intent === 'string' ? s.payment_intent : null,
-              status: 'paid',
-            }) });
-        recorded = r.ok;
-      } catch (e) { recorded = false; }
-    }
-    return cjson({ ok: true, sid: sid, tier: tierId, tier_name: t.name, recorded: recorded });
+    // Record + deliver (idempotent — the webhook may have already done it).
+    const f = await _shopFulfillSession(env, s);
+    return cjson({
+      ok: true, sid: sid, tier: tierId, tier_name: t.name,
+      amount_cents: s.amount_total || t.cents || 0,
+      recorded: !!(f && f.ok),
+      granted: (f && f.granted) || null,
+    });
   }
 
   return cjson({ error: 'not_found' }, 404);

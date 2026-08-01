@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119s0';
+  window.BUILD_VERSION = 'v119s1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -55833,6 +55833,67 @@ async function _fdropPaint() {
     try { await Cloud.client.from('tier_drops').update({ status: 'cancelled' }).eq('id', b.dataset.fdropCancel); } catch (e) {}
     _fdropPaint();
   });
+}
+/* ══════════════════════════════════════════════════════════════════════════
+ * 📡 SHARE TO BROADCAST — the post-match clip/brag flow.
+ * Posts to the web social feed (eb_posts) straight from the victory screen,
+ * with the real match summary pre-filled. A pasted video link (YouTube /
+ * Twitch / Streamable / anything) additionally becomes an eb_clips row, so it
+ * shows as a clip card on the feed and in the player's Clips tab.
+ * ════════════════════════════════════════════════════════════════════════ */
+function openShareToBroadcast(summary) {
+  const signedIn = !!(typeof Cloud !== 'undefined' && Cloud.client && Profile.cloud && Profile.cloud.signedIn && Profile.cloud.userId);
+  if (!signedIn) { showToast('☁ Sign in to share to Emergency Broadcast.', 4200); return; }
+  const ID = 'eb-share-wrap';
+  const old = document.getElementById(ID); if (old) old.remove();
+  const wrap = document.createElement('div');
+  wrap.id = ID;
+  wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483500;background:rgba(4,6,10,0.86);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:18px';
+  const esc = (t) => (typeof escapeHtml === 'function') ? escapeHtml(String(t || '')) : String(t || '');
+  wrap.innerHTML =
+    '<div style="width:100%;max-width:520px;background:#191C23;border:1px solid #262B34;border-radius:14px;padding:22px;font-family:inherit;color:#EDEFF3">' +
+      '<div style="font-family:\'Cinzel\',serif;font-size:1.25rem;font-weight:800;color:#ffd166;margin-bottom:4px">📡 Share to Emergency Broadcast</div>' +
+      '<div class="small-text" style="color:#9BA1AB;margin-bottom:12px">Posts to the network feed at mythicspellbook.xyz — everyone can see it.</div>' +
+      '<textarea id="eb-share-text" rows="3" style="width:100%;background:#0F1116;border:1px solid #262B34;border-radius:9px;color:#EDEFF3;padding:11px;font-size:0.95rem;font-family:inherit;resize:vertical">' + esc(summary) + '</textarea>' +
+      '<div class="small-text" style="color:#9BA1AB;margin:12px 0 5px">🎬 Clip link (optional) — YouTube, Twitch, Streamable…</div>' +
+      '<input id="eb-share-clip" placeholder="https://…" style="width:100%;background:#0F1116;border:1px solid #262B34;border-radius:9px;color:#EDEFF3;padding:10px 11px;font-size:0.9rem;font-family:inherit">' +
+      '<div id="eb-share-msg" class="small-text" style="color:#ff9a6b;margin-top:9px;min-height:1em"></div>' +
+      '<div style="display:flex;gap:9px;margin-top:14px">' +
+        '<button id="eb-share-go" class="btn-primary" style="flex:1">📡 Broadcast it</button>' +
+        '<button id="eb-share-cancel" class="btn-secondary" style="flex:1">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(wrap);
+  const close = () => { try { wrap.remove(); } catch (e) {} };
+  wrap.onclick = (e) => { if (e.target === wrap) close(); };
+  document.getElementById('eb-share-cancel').onclick = close;
+  document.getElementById('eb-share-go').onclick = async () => {
+    const btn = document.getElementById('eb-share-go');
+    const msgEl = document.getElementById('eb-share-msg');
+    const body = ((document.getElementById('eb-share-text') || {}).value || '').trim();
+    const clip = ((document.getElementById('eb-share-clip') || {}).value || '').trim();
+    if (!body) { msgEl.textContent = 'Write something first.'; return; }
+    if (clip && !/^https?:\/\/.+\..+/i.test(clip)) { msgEl.textContent = 'That clip link doesn\'t look like a URL.'; return; }
+    btn.disabled = true; btn.textContent = 'Broadcasting…';
+    try {
+      const uid = Profile.cloud.userId;
+      const r = await Cloud.client.from('eb_posts').insert({
+        user_id: uid, body: body.slice(0, 1000), kind: 'strategy', clip_url: clip || null,
+      });
+      if (r && r.error) throw new Error(r.error.message || 'post failed');
+      if (clip) {
+        // Also a first-class clip so it lands in the Clips tab + feed clip card.
+        await Cloud.client.from('eb_clips').insert({
+          user_id: uid, title: body.slice(0, 80), url: clip,
+        });
+      }
+      close();
+      showToast('📡 Broadcast sent — see it at mythicspellbook.xyz', 5200);
+    } catch (e) {
+      msgEl.textContent = 'Could not post — ' + String((e && e.message) || 'try again').slice(0, 90);
+      btn.disabled = false; btn.textContent = '📡 Broadcast it';
+    }
+  };
 }
 function openBankOfEthos() {
   try {
@@ -117437,6 +117498,8 @@ function captureEditorIntoCard(card) {
     const hType = v('ed-hand-type') || '';
     if (hType) {
       card.handActive = {
+        // ⏱ 'manual' | 'spellPlayed' | 'allyDeath' — see HAND_TRIGGERS.
+        trigger: v('ed-hand-trigger') || 'manual',
         energyCost: num('ed-hand-energy', 0, 20, 1),
         cost: v('ed-hand-cost') || 'discard',
         effect: {
@@ -140035,6 +140098,21 @@ function renderGameOverOverlay() {
 
         <div class="gameover-actions">
           <button class="btn-secondary gameover-btn" id="btn-view-field">👁 View Battlefield</button>
+          <button class="btn-secondary gameover-btn" id="btn-share-broadcast" data-summary="${(() => {
+            // Build the share text from what ACTUALLY happened this match, at
+            // render time (won/ph/kills/s are only in scope here). Carried on
+            // the button so bindGameOverEvents doesn't need the battle state.
+            try {
+              const foe = (App.battlePrep && App.battlePrep.opponentName) || 'the enemy';
+              const hero = (ph && ph.name) ? ph.name : 'My hero';
+              const t = (s.turnNumber || 1);
+              const k = kills | 0;
+              return escapeHtml(
+                (won ? '⚔ Victory over ' + foe : '💀 Fell to ' + foe) +
+                ' — ' + hero + ', ' + k + ' kill' + (k === 1 ? '' : 's') + ' in ' + t + ' turn' + (t === 1 ? '' : 's') + '.'
+              );
+            } catch (e) { return ''; }
+          })()}">📡 Share to Broadcast</button>
           <button class="btn-primary gameover-btn ${won ? 'glow-gold' : ''}" id="btn-play-again">${(App.battlePrep && App.battlePrep.multiplayer) ? '🌐 Find Another Match' : '⚔ Play Another Game'}</button>
           <button class="btn-secondary gameover-btn" id="btn-exit-game">⨯ Exit to Menu</button>
         </div>
@@ -140052,6 +140130,8 @@ function bindGameOverEvents() {
   const playMiniBtn = document.getElementById('btn-play-again-mini');
   const exitMiniBtn = document.getElementById('btn-exit-game-mini');
 
+  const shareBtn = document.getElementById('btn-share-broadcast');
+  if (shareBtn) shareBtn.onclick = () => openShareToBroadcast(shareBtn.dataset.summary || '');
   if (viewBtn) viewBtn.onclick = () => {
     App.ui._gameOverHidden = true;
     renderBattle();

@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119s6';
+  window.BUILD_VERSION = 'v119s7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -53245,7 +53245,10 @@ async function frRunConvoy() {
 // every taxed sale is logged to reserve_tax_log for the dashboard. Corp-
 // ready: pass { corpId, market:'corp' } when the Corporation feature lands.
 // ============================================================================
-const FR_TAX_RATE = 0.02;   // 2% default Foundation Tax
+const FR_TAX_RATE = 0.03;   // 3% Foundation Tax — the platform's cut on Cinder
+// spending, marketplace sales and trades. This is the ONE rate: fr_tax() and
+// every fallback below read it, and each charge is written to reserve_tax_log
+// with the rate it was taken at, so historical rows stay accurate after a change.
 // Market types: 'base' | 'black' | 'direct' | 'corp' | 'shipment' | 'vendor'
 function frTaxQuote(gross, opts) {
   opts = opts || {};
@@ -53499,7 +53502,7 @@ function _frTaxCinderSpend(amount, kind) {
   try {
     amount = Math.max(0, Math.floor(amount || 0));
     if (amount <= 0) return;
-    const rate = (typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.02;
+    const rate = (typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.03;
     const tax = Math.floor(amount * rate);
     if (tax <= 0) return;
     const rk = kind || 'Cinder spending';
@@ -53715,7 +53718,7 @@ async function chargeCinderAtomic(amount, reason) {
     if ((Profile.gems | 0) < amount) return { ok: false, reason: 'insufficient' };
     Profile.gems = (Profile.gems | 0) - amount;     // poll watcher will tax this
     try { saveProfile(); } catch (e) {}
-    return { ok: true, newBalance: Profile.gems | 0, tax: Math.floor(amount * 0.02), local: true };
+    return { ok: true, newBalance: Profile.gems | 0, tax: Math.floor(amount * ((typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.03)), local: true };
   }
   try {
     const res = await Cloud.client.rpc('wallet_charge', { p_amount: amount, p_reason: reason || 'Cinder spending' });
@@ -53771,7 +53774,7 @@ function _serverMirrorCharge(amount, reason) {
     //    Foundation Reserve figures reflect the spend instantly, on top of
     //    the cross-player global feed).
     try {
-      const rate = (typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.02;
+      const rate = (typeof FR_TAX_RATE === 'number') ? FR_TAX_RATE : 0.03;
       const tax = Math.floor(amount * rate);
       if (tax > 0 && typeof _frTaxLedger === 'function') {
         const L = _frTaxLedger();
@@ -104682,11 +104685,11 @@ function renderTitle() {
         accent: '#d4af37',
         badge: null,
         onclick: () => { App._cardShopReturn = App.screen; App.screen = 'cardShop'; render(); } },
-      { id: 'p-battle',   icon: '<img src="assets/artwork/gameicons/Battle%20icon.png" alt="Battle Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'Battle Hall',    sub: 'Fight, climb, win the day',          accent: '#ff7755',
+      { id: 'p-battle',   icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Battle%20icon.png" alt="Battle Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'Battle Hall',    sub: 'Fight, climb, win the day',          accent: '#ff7755',
         badge: streak > 1 ? `<span class="cinder-icon"></span> ${streak} streak` : (campTotal.done > 0 ? `${campTotal.done}/${campTotal.total} chapters` : null),
         alertBadge: streak > 4,
         onclick: () => { App.titleHub = 'battle'; render(); } },
-      { id: 'p-forge',    icon: '<img src="assets/artwork/gameicons/crating%20table%20icone.png" alt="Forge Sanctum" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'Forge Sanctum',  sub: 'Craft cards, moves, sprites, decks', accent: '#ffb344',
+      { id: 'p-forge',    icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/crating%20table%20icone.png" alt="Forge Sanctum" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'Forge Sanctum',  sub: 'Craft cards, moves, sprites, decks', accent: '#ffb344',
         // "X forged" leaks the admin's authored-content count to every player — gate
         // that piece of the badge behind isAdmin so non-admins only see the friendly
         // "ready to hatch" Lab signal (or nothing) on their Forge Sanctum tile.
@@ -104695,21 +104698,21 @@ function renderTitle() {
           : (labReady > 0 ? `${labReady} ready to hatch` : null),
         alertBadge: labReady > 0,
         onclick: () => { App.titleHub = 'forge'; render(); } },
-      { id: 'p-exchange', icon: '<img src="assets/artwork/gameicons/Azacoin.png" alt="Ruin Exchange" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'Ruin Exchange',  sub: 'Trade, sell, cash out',              accent: '#b888ff',
+      { id: 'p-exchange', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Azacoin.png" alt="Ruin Exchange" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'Ruin Exchange',  sub: 'Trade, sell, cash out',              accent: '#b888ff',
         badge: pendingPayout > 0 ? `$${pendingPayout.toFixed(2)} pending` : (marketListings > 0 ? `${marketListings} listings` : null),
         alertBadge: pendingPayout > 0,
         onclick: () => { App.titleHub = 'exchange'; render(); } },
-      { id: 'p-codex',    icon: '<img src="assets/artwork/gameicons/Codex%20book.png" alt="The Codex" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'The Codex',      sub: 'Inventory, bestiary, trophies',     accent: '#8be0c4',
+      { id: 'p-codex',    icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Codex%20book.png" alt="The Codex" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'The Codex',      sub: 'Inventory, bestiary, trophies',     accent: '#8be0c4',
         badge: achEarned > 0 ? `${achEarned}/${achTotal} trophies` : `${achTotal} to earn`,
         onclick: () => { App.titleHub = 'codex'; render(); } },
-      { id: 'p-field',    icon: '<img src="assets/artwork/gameicons/camp%20icon.png" alt="The Camp" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'The Camp',       sub: 'Roster, replays, leaders',           accent: '#c5b885',
+      { id: 'p-field',    icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/camp%20icon.png" alt="The Camp" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'The Camp',       sub: 'Roster, replays, leaders',           accent: '#c5b885',
         badge: campParked > 0 ? `${campParked}/${campMax} parked` : (replayCount > 0 ? `${replayCount} replays` : null),
         onclick: () => { App.titleHub = 'field'; render(); } },
-      { id: 'p-arcanum',  icon: '<img src="assets/artwork/gameicons/profile.png" alt="Arcanum" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'Arcanum',        sub: 'Settings & data',                    accent: '#a0c0e0',
+      { id: 'p-arcanum',  icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/profile.png" alt="Arcanum" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'Arcanum',        sub: 'Settings & data',                    accent: '#a0c0e0',
         onclick: () => { App.titleHub = 'arcanum'; render(); } },
     ],
     battle: [
-      { id: 'btn-start',    icon: '<img src="assets/artwork/gameicons/Battle%20icon.png" alt="Quick Battle" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Quick Battle',    sub: 'Pick a deck. Jump in.',          accent: '#ff7755',
+      { id: 'btn-start',    icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Battle%20icon.png" alt="Quick Battle" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Quick Battle',    sub: 'Pick a deck. Jump in.',          accent: '#ff7755',
         onclick: () => { App.screen = 'deckSelect'; App.selectedHero = App.selectedHero || (STARTER_HEROES[0] && STARTER_HEROES[0].id); render(); } },
       // 🌐 Play Online — flagship live-multiplayer entry. Used to be buried in
       // the deck-select modal; now prominently second on the Battle Hall hub
@@ -104829,7 +104832,7 @@ function renderTitle() {
       // 🏆 Colosseum — the full competitive system: Ranked, Open Cup, Faction
       // War, Season Pass. Always visible; first-time entry triggers the faction
       // picker if the player hasn't chosen one yet.
-      { id: 'btn-coliseum', icon: '<img src="assets/artwork/gameicons/thropy.png" alt="Colosseum" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Colosseum',        sub: (() => {
+      { id: 'btn-coliseum', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/thropy.png" alt="Colosseum" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Colosseum',        sub: (() => {
             const c = Profile.competitive || {};
             const tier = (typeof getCurrentTier === 'function') ? getCurrentTier() : null;
             return tier ? `${tier.name} · ${c.rr || 0} RR · ${c.ap || 0} AP` : 'Ranked play & tournaments';
@@ -104844,7 +104847,7 @@ function renderTitle() {
       // 🏛️ Gym Core Wars — the persistent online gym/territory system. Always
       // visible. PvE Core Trials collect 8 badges → unlock challenging the
       // live online Gym Leaders.
-      { id: 'btn-gymwars', icon: '<img src="assets/artwork/gameicons/Gym%20Icon.png" alt="Gym Core Wars" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Gym Core Wars', sub: (() => {
+      { id: 'btn-gymwars', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Gym%20Icon.png" alt="Gym Core Wars" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Gym Core Wars', sub: (() => {
             const my = (typeof myLedGym === 'function') ? myLedGym() : null;
             if (my) { const co = getGymCore(my.core_id); return `👑 You rule the ${co ? co.name : 'gym'} · 🛡 ${my.defense_streak || 0}`; }
             const n = gymBadgeCount();
@@ -104862,11 +104865,11 @@ function renderTitle() {
       // 🚧 Old chapter "Campaign" hidden from EVERYONE (incl. admin) for now —
       // it will be removed/replaced by the Roguelite system. Portal + screens
       // are gated below; the renderCampaign* code is left intact for later.
-      { id: 'btn-rlc', icon: '<img src="assets/artwork/gameicons/roguelitestory.png" alt="Roguelite" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Roguelite', sub: 'Branching runs · build a deck from rewards', accent: '#b86bff',
+      { id: 'btn-rlc', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/roguelitestory.png" alt="Roguelite" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Roguelite', sub: 'Branching runs · build a deck from rewards', accent: '#b86bff',
         badge: (Profile.rlcRun && !Profile.rlcRun.isComplete && !Profile.rlcRun.isFailed) ? '▶ Run in progress' : ((getPlayableCampaigns().length) ? `${getPlayableCampaigns().length} available` : null),
         alertBadge: !!(Profile.rlcRun && !Profile.rlcRun.isComplete && !Profile.rlcRun.isFailed),
         onclick: () => { App.screen = 'rlcList'; render(); } },
-      { id: 'btn-daily',    icon: '<img src="assets/artwork/gameicons/daily%20Challenge.png" alt="Daily Challenge" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Daily Challenge',  sub: dailyDone ? '✓ Today done' : (getTodayChallenge().name || 'New each day'), accent: '#ffb070',
+      { id: 'btn-daily',    icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/daily%20Challenge.png" alt="Daily Challenge" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Daily Challenge',  sub: dailyDone ? '✓ Today done' : (getTodayChallenge().name || 'New each day'), accent: '#ffb070',
         badge: dailyDone ? '✓ Cleared today' : 'Resets at midnight',
         alertBadge: !dailyDone,
         onclick: () => { App.screen = 'daily'; render(); } },
@@ -104888,18 +104891,18 @@ function renderTitle() {
       // bottom (admins only see them after their tooling, which makes sense
       // since they spend most of their time in the Forge/Sprite/Pack tools).
       const everyoneTiles = [
-        { id: 'btn-lab',     icon: '<img src="assets/artwork/gameicons/Incubator.png" alt="The Lab" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.6);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'The Lab',        sub: 'Fuse + incubate cores',          accent: '#88e8a8',
+        { id: 'btn-lab',     icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Incubator.png" alt="The Lab" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.6);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'The Lab',        sub: 'Fuse + incubate cores',          accent: '#88e8a8',
           badge: labReady > 0 ? `${labReady} ready!` : (labIncubating > 0 ? `${labIncubating} incubating` : null),
           alertBadge: labReady > 0,
           onclick: () => { if (typeof _labGate === 'function' && !_labGate()) return; App.screen = 'lab'; App.labTab = 'fuse'; App.labParentA = null; App.labParentB = null; render(); } },
-        { id: 'btn-deck',    icon: '<img src="assets/artwork/gameicons/deckIcons.png" alt="Deck Builder" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(3.4);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Deck Builder',   sub: 'Saved decks for every hero',     accent: '#a0d0ff',
+        { id: 'btn-deck',    icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/deckIcons.png" alt="Deck Builder" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(3.4);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Deck Builder',   sub: 'Saved decks for every hero',     accent: '#a0d0ff',
           badge: validDecks > 0 ? `${validDecks} valid` : null,
           onclick: () => { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; render(); } },
         // 📦 Pack Opening — INVENTORY of unopened packs the player owns.
         // Buying a pack no longer auto-opens; packs go to inventory + the
         // player opens them here (Hearthstone-style). Live badge shows the
         // count so packs waiting to be opened are obvious.
-        { id: 'btn-pack-opening', icon: '<img src="assets/artwork/gameicons/Cardpackitem.png" alt="Pack Opening" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(2.2);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Pack Opening',  sub: 'Crack your unopened packs · build the deck to survive Ethos City', accent: '#ffb070',
+        { id: 'btn-pack-opening', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Cardpackitem.png" alt="Pack Opening" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(2.2);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Pack Opening',  sub: 'Crack your unopened packs · build the deck to survive Ethos City', accent: '#ffb070',
           badge: (() => { const n = (typeof getUnopenedPackCount === 'function') ? getUnopenedPackCount() : 0; return n > 0 ? `📦 ${n} unopened` : null; })(),
           alertBadge: (() => { try { return ((typeof getUnopenedPackCount === 'function') ? getUnopenedPackCount() : 0) > 0; } catch (e) { return false; } })(),
           onclick: () => { App.screen = 'packOpening'; App._packReveal = null; render(); } },
@@ -104921,7 +104924,7 @@ function renderTitle() {
       // regular players never see The Forge / Sprite Atelier / Pack Creator /
       // Pricing Admin tiles at all (no dimmed lock state, no toast, just gone).
       const adminTiles = !_isAdmin ? [] : [
-        { id: 'btn-forge',   icon: '<img src="assets/artwork/gameicons/crating%20table%20icone.png" alt="The Forge" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'The Forge',      sub: 'Custom cards & moves',
+        { id: 'btn-forge',   icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/crating%20table%20icone.png" alt="The Forge" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">',  name: 'The Forge',      sub: 'Custom cards & moves',
           accent: '#ffb344',
           badge: (customCount + movesCount) > 0 ? `${customCount} cards · ${movesCount} moves` : null,
           onclick: adminClick(() => { App.screen = 'forge'; App.forgeTab = 'cards'; App.editingCardId = null; App.editingMoveId = null; render(); }, 'The Forge is admin-only.') },
@@ -104969,28 +104972,28 @@ function renderTitle() {
               try { if (typeof showToast === 'function') showToast('⚠ District Nodes error: ' + String(e && e.message || e).slice(0, 80), 4000); } catch(_) {}
             }
           } },
-      { id: 'btn-vendor-market', icon: '<img src="assets/artwork/gameicons/Azacoin.png" alt="Vendor Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Vendor Market', sub: 'Card packs + Aza coin Store',   accent: '#d8b8ff',
+      { id: 'btn-vendor-market', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Azacoin.png" alt="Vendor Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Vendor Market', sub: 'Card packs + Aza coin Store',   accent: '#d8b8ff',
         badge: `<span class="cinder-icon"></span> ${Profile.gems || 0} · <span class="aza-icon"></span> ${Profile.sovereigns || 0}`,
         onclick: () => { App.screen = 'vendorMarket'; App._packReveal = null; render(); } },
       // Foundation Reserve — world-scale manufacturing & resource sink. Players
       // pool resources globally; products only exist when the world supplies
       // enough. Opens a self-contained overlay (no screen nav).
-      { id: 'btn-foundation-reserve', icon: '<img src="assets/artwork/gameicons/SCP%20Foundation%20logo.png" alt="Foundation Reserve" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Foundation Reserve', sub: 'Supply the world · drive production', accent: '#7fb0ff',
+      { id: 'btn-foundation-reserve', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/SCP%20Foundation%20logo.png" alt="Foundation Reserve" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Foundation Reserve', sub: 'Supply the world · drive production', accent: '#7fb0ff',
         badge: (() => { try { const p = (typeof FoundationReserve !== 'undefined' && FoundationReserve.myPoints) || 0; return p > 0 ? (frRankFor(p).rank.icon + ' ' + frRankFor(p).rank.name) : '🎒 Contribute'; } catch (e) { return '🎒 Contribute'; } })(),
         onclick: () => { if (typeof openFoundationReserve === 'function') openFoundationReserve(); } },
       // 💼 Just Business — the player-economy / Corporation app (full-screen
       // iframe, like the bunker). Reached only from here.
-      { id: 'btn-just-business', icon: '<img src="assets/artwork/gameicons/Business%20icon.png" alt="Just Business" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Just Business', sub: 'Corporations · vault · operations · markets', accent: '#c89a4a',
+      { id: 'btn-just-business', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Business%20icon.png" alt="Just Business" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Just Business', sub: 'Corporations · vault · operations · markets', accent: '#c89a4a',
         badge: 'Player economy',
         onclick: () => { App.screen = 'justBusiness'; render(); } },
       // 🏛️ City Hall — survivor government: corp registry, law, licensing,
       // treasury. Opens a self-contained overlay (no screen nav).
-      { id: 'btn-city-hall', icon: '<img src="assets/artwork/gameicons/SCP%20City%20Hall.png" alt="City Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'City Hall', sub: 'Registry · law · licensing · treasury', accent: '#ffcf5a',
+      { id: 'btn-city-hall', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/SCP%20City%20Hall.png" alt="City Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'City Hall', sub: 'Registry · law · licensing · treasury', accent: '#ffcf5a',
         badge: 'Civic',
         onclick: () => { if (typeof openCityHall === 'function') openCityHall(); } },
       // 🏦 Bank of Ethos — Camp Heights treasury sub-app (iframe). Node /
       // Reserve / Aza wiring is the next pass.
-      { id: 'btn-bank-ethos', icon: '<img src="assets/artwork/gameicons/Bank%20of%20Ethos.png" alt="Bank of Ethos" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Bank of Ethos', sub: 'Camp Heights treasury · accounts', accent: '#c9a24a',
+      { id: 'btn-bank-ethos', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Bank%20of%20Ethos.png" alt="Bank of Ethos" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Bank of Ethos', sub: 'Camp Heights treasury · accounts', accent: '#c9a24a',
         badge: 'Banking',
         onclick: () => { if (typeof openBankOfEthos === 'function') openBankOfEthos(); } },
       // 📈 Crash/Exchange — global market terminal. Tracks every resource +
@@ -105000,7 +105003,7 @@ function renderTitle() {
         badge: '📈 Live market',
         onclick: () => { App._cxReturnScreen = 'title'; App.screen = 'crashExchange'; render(); } },
       // Sports-betting hub — wager Cinders on AI vs AI fixtures + future tournaments.
-      { id: 'btn-wager-hall', icon: '<img src="assets/artwork/gameicons/Blood%20dice%20Icon.png" alt="Wager Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(2.0);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Wager Hall', sub: 'Bet <span class="cinder-icon"></span> on AI matches · tournaments soon', accent: '#ff7755',
+      { id: 'btn-wager-hall', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Blood%20dice%20Icon.png" alt="Wager Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(2.0);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Wager Hall', sub: 'Bet <span class="cinder-icon"></span> on AI matches · tournaments soon', accent: '#ff7755',
         badge: (() => {
           const activeBets = (Profile.wagers && Profile.wagers.schedule || []).filter(m => m.bet).length;
           return activeBets > 0 ? `${activeBets} active bet${activeBets === 1 ? '' : 's'}` : null;
@@ -105010,7 +105013,7 @@ function renderTitle() {
           return activeBets > 0;
         })(),
         onclick: () => { App.screen = 'wagerHall'; App.wagerTab = 'live'; render(); } },
-      { id: 'btn-vendor',  icon: '<img src="assets/artwork/Blackmarket%20icon.png" alt="Black Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Black Market',
+      { id: 'btn-vendor',  icon: '<img decoding="async" loading="lazy" src="assets/artwork/Blackmarket%20icon.png" alt="Black Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Black Market',
         sub: (App._bmInHall) ? 'You\'re at The Hollow Bazaar — chat, trade, then travel home' : 'Survive the route to reach The Hollow Bazaar',
         badge: (App._bmInHall) ? '🖤 At the Bazaar' : '🗺 Run the route',
         accent: '#b070b0',
@@ -105023,7 +105026,7 @@ function renderTitle() {
       // Cashout Vault — gated behind hero progression. Encourages players to actually
       // play the game before the money-out feature unlocks.
       cashoutUnlocked
-        ? { id: 'btn-cashout', icon: '<img src="assets/artwork/gameicons/cashout%20vault.png" alt="Cashout Vault" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Cashout Vault', sub: '<span class="cinder-icon"></span> Cinders → real money (mock)', accent: '#a0e0a0',
+        ? { id: 'btn-cashout', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/cashout%20vault.png" alt="Cashout Vault" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Cashout Vault', sub: '<span class="cinder-icon"></span> Cinders → real money (mock)', accent: '#a0e0a0',
             badge: pendingPayout > 0 ? `$${pendingPayout.toFixed(2)} pending` : null,
             alertBadge: pendingPayout > 0,
             onclick: () => { App.screen = 'cashout'; render(); } }
@@ -105032,7 +105035,7 @@ function renderTitle() {
             onclick: () => { showToast(`🔒 Cashout Vault unlocks when a hero reaches Lv ${CASHOUT_UNLOCK_HERO_LEVEL} (your top: Lv ${topHeroLevel})`, 3500); } },
       // Tutor Shop — gated behind account level (long-term meta progression).
       tutorUnlocked
-        ? { id: 'btn-tutor', icon: '<img src="assets/artwork/gameicons/Tutor%20shop.png" alt="Tutor Shop" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Tutor Shop', sub: 'Teach moves to your roster', accent: '#ffd166',
+        ? { id: 'btn-tutor', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Tutor%20shop.png" alt="Tutor Shop" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Tutor Shop', sub: 'Teach moves to your roster', accent: '#ffd166',
             badge: `<span class="cinder-icon"></span> ${Profile.gems || 0}`,
             onclick: () => { App.screen = 'tutor'; App.tutorTargetKey = null; App.tutorFilter = 'all'; render(); } }
         : { id: 'btn-tutor', icon: '🔒', name: 'Tutor Shop', sub: `Reach Account Lv ${TUTOR_UNLOCK_ACCOUNT_LEVEL} to unlock`, accent: '#8a7a60',
@@ -105040,7 +105043,7 @@ function renderTitle() {
             onclick: () => { showToast(`🔒 Tutor Shop unlocks at Account Lv ${TUTOR_UNLOCK_ACCOUNT_LEVEL} (you are Lv ${acctLevel}). Earn XP from battles, dailies, and the Forge.`, 3500); } },
       // Player Market — gated behind hero progression (need 2 heroes at Lv 15+).
       marketUnlocked
-        ? { id: 'btn-market', icon: '<img src="assets/artwork/gameicons/player%20market.png" alt="Player Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Player Market', sub: 'Cards listed by other players', accent: '#88c8e0',
+        ? { id: 'btn-market', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/player%20market.png" alt="Player Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Player Market', sub: 'Cards listed by other players', accent: '#88c8e0',
             badge: marketListings > 0 ? `${marketListings} listings` : null,
             onclick: () => { App.screen = 'market'; App.marketTab = 'browse'; App.marketFilter = 'all'; reseedNpcListingsIfStale(false); render(); } }
         : { id: 'btn-market', icon: '🔒', name: 'Player Market', sub: `Train ${MARKET_UNLOCK_HERO_COUNT} heroes to Lv ${MARKET_UNLOCK_HERO_LEVEL} to unlock`, accent: '#607890',
@@ -105048,13 +105051,13 @@ function renderTitle() {
             onclick: () => { showToast(`🔒 Player Market unlocks when you have ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}+ (you have ${heroesAtMarketLv}).`, 3500); } },
     ],
     codex: [
-      { id: 'btn-collection',   icon: '<img src="assets/artwork/gameicons/Storage%20box.png" alt="Inventory" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Inventory',   sub: 'Every card you own',          accent: '#8be0c4',
+      { id: 'btn-collection',   icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Storage%20box.png" alt="Inventory" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Inventory',   sub: 'Every card you own',          accent: '#8be0c4',
         onclick: () => { App.screen = 'collection'; App.collectionTab = 'unit'; render(); } },
-      { id: 'btn-bestiary',     icon: '<img src="assets/artwork/gameicons/Card%20Data.png" alt="World Data" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'World Data',   sub: 'Catalog of all units',        accent: '#a0c8e0',
+      { id: 'btn-bestiary',     icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Card%20Data.png" alt="World Data" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'World Data',   sub: 'Catalog of all units',        accent: '#a0c8e0',
         onclick: () => { App.screen = 'bestiary'; render(); } },
-      { id: 'btn-book',         icon: '<img src="assets/artwork/gameicons/Book%20of%20knowledge.png" alt="Book of Knowledge" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Book of Knowledge', sub: 'Elements, factions, stats — the rules of the world', accent: '#d4af37',
+      { id: 'btn-book',         icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Book%20of%20knowledge.png" alt="Book of Knowledge" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Book of Knowledge', sub: 'Elements, factions, stats — the rules of the world', accent: '#d4af37',
         onclick: () => { App.screen = 'bookOfKnowledge'; App.bookTab = 'elements'; render(); } },
-      { id: 'btn-achievements', icon: '<img src="assets/artwork/gameicons/Achivements.png" alt="Achievements" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Achievements', sub: 'Trophies & <span class="cinder-icon"></span> bonuses',       accent: '#ffd166',
+      { id: 'btn-achievements', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Achivements.png" alt="Achievements" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Achievements', sub: 'Trophies & <span class="cinder-icon"></span> bonuses',       accent: '#ffd166',
         badge: `${achEarned}/${achTotal}`,
         onclick: () => { App.screen = 'achievements'; render(); } },
     ],
@@ -105064,7 +105067,7 @@ function renderTitle() {
       // understands the feature exists and what unlocks it, but the click just
       // shows a toast instead of routing into the Camp screen.
       campUnlocked
-        ? { id: 'btn-camp', icon: '<img src="assets/artwork/gameicons/camp%20icon.png" alt="Camp" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Camp', sub: 'Park spare units to gain XP', accent: '#c5b885',
+        ? { id: 'btn-camp', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/camp%20icon.png" alt="Camp" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Camp', sub: 'Park spare units to gain XP', accent: '#c5b885',
             badge: campParked > 0 ? `${campParked}/${campMax} parked` : null,
             onclick: () => { App.screen = 'camp'; render(); } }
         : { id: 'btn-camp', icon: '🔒', name: 'Camp', sub: `Reach Lv ${CAMP_UNLOCK_LEVEL} — or own a node`, accent: '#8a7a60',
@@ -105072,10 +105075,10 @@ function renderTitle() {
             alertBadge: false,
             locked: true,
             onclick: () => { showToast(`🔒 Camp unlocks at Hero Lv ${CAMP_UNLOCK_LEVEL} (current top: Lv ${topHeroLevel}) — node owners get in at any level.`, 3600); } },
-      { id: 'btn-replays',     icon: '<img src="assets/artwork/gameicons/Reply.png" alt="Replays" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Replays',     sub: 'Watch your saved games',      accent: '#a8b8d8',
+      { id: 'btn-replays',     icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Reply.png" alt="Replays" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Replays',     sub: 'Watch your saved games',      accent: '#a8b8d8',
         badge: replayCount > 0 ? `${replayCount} saved` : null,
         onclick: () => { App.screen = 'replays'; render(); } },
-      { id: 'btn-leaderboard', icon: '<img src="assets/artwork/gameicons/Leaderboard.png" alt="Leaderboard" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Leaderboard', sub: 'Single-player records',       accent: '#ffb070',
+      { id: 'btn-leaderboard', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/Leaderboard.png" alt="Leaderboard" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Leaderboard', sub: 'Single-player records',       accent: '#ffb070',
         badge: streak > 1 ? `<span class="cinder-icon"></span> ${streak} streak` : null,
         alertBadge: streak > 4,
         onclick: () => { App.screen = 'leaderboard'; render(); } },
@@ -105090,19 +105093,19 @@ function renderTitle() {
       const _arcPendingFriends = (typeof getPendingFriendRequestCount === 'function')
         ? getPendingFriendRequestCount() : 0;
       const tiles = [
-        { id: 'btn-profile',  icon: '<img src="assets/artwork/gameicons/profile.png" alt="Profile" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Profile',    sub: 'Identity, stats, match history', accent: '#8be0c4',
+        { id: 'btn-profile',  icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/profile.png" alt="Profile" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Profile',    sub: 'Identity, stats, match history', accent: '#8be0c4',
           badge: `${getLevelIcon('1.6em')} Lv ${acctLevel}`,
           onclick: () => { App.screen = 'profile'; render(); } },
         { id: 'btn-friends',  icon: '👥', name: 'Friends',     sub: 'Rivals, allies, invites',       accent: '#b8a0ff',
           badge: _arcPendingFriends > 0 ? `🔔 ${_arcPendingFriends} pending` : null,
           alertBadge: _arcPendingFriends > 0,
           onclick: () => { App.screen = 'friends'; render(); } },
-        { id: 'btn-settings', icon: '<img src="assets/artwork/gameicons/settings.png" alt="Settings" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Settings',   sub: 'QoL, accessibility, palette',  accent: '#a0c0e0',
+        { id: 'btn-settings', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/settings.png" alt="Settings" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Settings',   sub: 'QoL, accessibility, palette',  accent: '#a0c0e0',
           onclick: () => { App.screen = 'settings'; render(); } },
         // Website portal — opens the marketing/companion site in a new tab so
         // players can manage their account, shop, and see stats without
         // leaving the game session. Same account works both places.
-        { id: 'btn-website', icon: '<img src="assets/artwork/gameicons/website.png" alt="Website" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Website', sub: 'Shop, stats, dashboard — opens in new tab', accent: '#a0c8ff',
+        { id: 'btn-website', icon: '<img decoding="async" loading="lazy" src="assets/artwork/gameicons/website.png" alt="Website" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Website', sub: 'Shop, stats, dashboard — opens in new tab', accent: '#a0c8ff',
           onclick: () => { window.open('https://mythicspellbook.xyz/', '_blank', 'noopener'); } },
       ];
       if (_arcAdmin) {
@@ -105154,7 +105157,7 @@ function renderTitle() {
     return `
     <div class="hub-portal ${p.locked ? 'portal-locked' : ''}${_art ? ' has-art' : ''}" id="${p.id}" style="--portal-accent: ${p.accent || '#c8a060'}">
       <div class="hub-portal-art">
-        ${_art ? `<img class="hub-portal-photo" src="${escapeHtml(_art)}" alt="" loading="lazy" decoding="async" onerror="this.remove();var c=this.closest('.hub-portal');if(c)c.classList.remove('has-art')">` : ''}
+        ${_art ? `<img decoding="async" loading="lazy" class="hub-portal-photo" src="${escapeHtml(_art)}" alt="" loading="lazy" decoding="async" onerror="this.remove();var c=this.closest('.hub-portal');if(c)c.classList.remove('has-art')">` : ''}
         <div class="hub-portal-icon">${p.icon}</div>
       </div>
       <div class="hub-portal-name">${escapeHtml(p.name)}</div>
@@ -105300,7 +105303,7 @@ function renderTitle() {
   root.innerHTML = `
     <div class="spellbook-hub ${isMain ? 'is-main' : 'is-sub'}">
       <div class="spellbook-hub-bg">
-        <img class="hub-bg-img" src="assets/background/Backgrounds/CampHeights.png" alt="" draggable="false">
+        <img decoding="async" loading="lazy" class="hub-bg-img" src="assets/background/Backgrounds/CampHeights.png" alt="" draggable="false">
       </div>
       <div class="spellbook-smoke">${smokePuffs}</div>
       <div class="spellbook-embers">${embers}</div>

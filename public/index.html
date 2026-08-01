@@ -77009,7 +77009,7 @@ const ONPLAY_TYPES = [
   // unit itself is FREE to be one of the required materials (or just the
   // trigger). Radius is the search range (defaults to 1 — same as hero
   // radius rule). Fires only when ALL materials are within radius.
-  { id: 'polycreate',    label: '🌌 Polycreate (auto-fuse if materials nearby)', needs: ['radius','summonCard'] },
+  { id: 'polycreate',    label: '🌌 Polycreate (fuse into a Kalon — materials from field / enemy / hand / grave / deck)', needs: ['radius','summonCard','matSources','seizeTreatAs'] },
   // 🔍 Search Deck — when this unit enters play the owner browses their own
   // deck for a card (optionally filtered to a card type) and adds the
   // chosen one to their hand. Player gets an interactive picker modal;
@@ -77217,6 +77217,40 @@ function _onplayTypeOptgroups(selectedId) {
   const leftovers = ONPLAY_TYPES.filter(t => !emitted.has(t.id));
   if (leftovers.length) html += `<optgroup label="🔧 Other">` + leftovers.map(opt).join('') + `</optgroup>`;
   return html;
+}
+
+// 🌌⛓ Shared "Predation Fusion" field. The Kalon to summon reuses the existing
+// Summon/Kalon card-id input that every effect editor already has; this adds the
+// one thing that is new — what the stolen enemy unit is TREATED AS.
+const POLY_MAT_SOURCES = [
+  ['field', '🛡 Your field',      'units you control on the board (the classic rule)'],
+  ['enemy', '⛓ Steal from enemy', "tear a unit off the OPPONENT'S board and fuse it"],
+  ['hand',  '✋ Your hand',        'spend cards straight out of your hand'],
+  ['grave', '⚰️ Your graveyard',  'spend cards out of your graveyard'],
+  ['deck',  '🎴 Your deck',       'spend cards out of your deck'],
+];
+function _seizeFusionFieldHtml(prefix, eff) {
+  eff = eff || {};
+  const cur = Array.isArray(eff.matSources) && eff.matSources.length ? eff.matSources : ['field'];
+  const boxes = POLY_MAT_SOURCES.map(([id, label, hint]) =>
+    `<label class="small-text" style="display:flex;align-items:flex-start;gap:0.4rem;cursor:pointer;margin-bottom:0.2rem">`
+    + `<input type="checkbox" data-polysrc="${prefix}" value="${id}" ${cur.indexOf(id) >= 0 ? 'checked' : ''} style="margin-top:0.15rem">`
+    + `<span><strong style="color:#e8d9ff">${label}</strong> <span class="ink-dim">— ${hint}</span></span></label>`).join('');
+  return `<div class="editor-field full" style="background:rgba(190,110,220,0.08);border:1px dashed rgba(214,122,224,0.45);border-radius:6px;padding:0.5rem 0.7rem;margin-top:0.35rem">`
+    + `<label class="small-text" style="font-weight:700;color:#e2a8f0">🌌 Fusion materials — where they come from <span class="ink-dim" style="font-weight:400">(only for "Polycreate")</span></label>`
+    + `<div class="small-text ink-dim" style="margin:0.2rem 0 0.4rem">The <strong>Kalon</strong> (set in the Summon / Kalon Card id field above) decides <em>what</em> materials it needs — these decide <em>where</em> they may be taken from. This is how a <strong>trap</strong>, a graveyard ability or a hand ability can perform a fusion without having units of its own on the board.<br>Leaving only <em>Your field</em> ticked keeps the original behaviour (and the player's pick-a-fusion modal); ticking anything else resolves the fusion automatically.</div>`
+    + boxes
+    + `<label class="small-text" style="display:block;margin-top:0.4rem">🪞 A stolen enemy unit is treated as (material name)</label>`
+    + `<input id="${prefix}-seizeas" type="text" value="${escapeHtml(String(eff.seizeTreatAs || ''))}" placeholder="e.g. Brain Jelly — blank = it must genuinely match" style="width:100%">`
+    + `</div>`;
+}
+// Read the ticked material sources for a given editor prefix.
+function _readPolyMatSources(prefix) {
+  try {
+    const list = Array.from(document.querySelectorAll('[data-polysrc="' + prefix + '"]'))
+      .filter(cb => cb.checked).map(cb => cb.value);
+    return list.length ? list : ['field'];
+  } catch (e) { return ['field']; }
 }
 
 // 🌦 Shared weather / day-night config block for the compact effect editors
@@ -78860,16 +78894,77 @@ function _handAbilityOf(card) {
   }
   return (ha && ha.effect && ha.effect.type) ? ha : null;
 }
+// ✋⚡ A hand ability may declare a WINDOW instead of being manual-only:
+//   handActive.trigger = 'manual' | 'spellPlayed' | 'unitPlayed' | 'allyDeath'
+// Triggered ones are OFFERED the moment that window opens (see
+// _offerHandTriggers) rather than from the card modal on your turn.
+const HAND_TRIGGERS = [
+  ['manual',      '🖐 Manual — you activate it from the card, on your turn'],
+  ['spellPlayed', '✨ When YOU play a spell card'],
+  ['allyDeath',   '💀 When one of your units is sent to the graveyard'],
+];
+function _handTriggerOf(ha) { return (ha && ha.trigger) ? String(ha.trigger) : 'manual'; }
 // Can this hand card's ability fire right now? Returns {ok} or {ok:false, why}.
 function _canActivateHandAbility(state, card) {
   const ha = _handAbilityOf(card);
   if (!ha) return { ok: false, why: 'No hand ability.' };
-  if (!state || state.turn !== 'player') return { ok: false, why: 'Only on your turn.' };
-  if (App.ui && App.ui.aiBusy) return { ok: false, why: 'Wait for the enemy to finish.' };
+  const trig = _handTriggerOf(ha);
+  const viaTrigger = !!(App && App._handTrigBypass);
+  // A TRIGGERED ability answers its own window — it may resolve on either
+  // player's turn (e.g. your unit dies during the enemy's attack), so the
+  // your-turn-only gate applies to MANUAL abilities alone.
+  if (trig === 'manual' || !viaTrigger) {
+    if (!state || state.turn !== 'player') return { ok: false, why: 'Only on your turn.' };
+    if (App.ui && App.ui.aiBusy) return { ok: false, why: 'Wait for the enemy to finish.' };
+  }
+  // A manual-only ability can never be fired from a trigger window, and a
+  // triggered one is not offered as a manual button.
+  if (!viaTrigger && trig !== 'manual') return { ok: false, why: 'Fires on its own trigger, not manually.' };
   if (card._handUsed) return { ok: false, why: 'Already used this match.' };
-  const need = Math.max(0, ha.energyCost | 0);
+  // 💸 Triggered abilities are FREE — their cost is the card itself.
+  const need = (trig === 'manual') ? Math.max(0, ha.energyCost | 0) : 0;
   if (((state.player && state.player.energy) | 0) < need) return { ok: false, why: `Need ${need} ⚡.` };
   return { ok: true, cost: need, ha };
+}
+// Offer every hand ability waiting on this window. Nothing fires silently: the
+// usual cost is "send this card to the graveyard", so the player confirms.
+// Once per turn per card (on top of the ability's own useLimit).
+async function _offerHandTriggers(trigger) {
+  try {
+    const s = App.state;
+    if (!s || !s.player || !Array.isArray(s.player.hand)) return;
+    if (s.gameOver) return;
+    const turnNo = (s.turnNumber | 0) || 1;
+    const matches = s.player.hand.filter(c => {
+      const ha = _handAbilityOf(c);
+      if (!ha || _handTriggerOf(ha) !== trigger) return false;
+      if (c._handUsed) return false;
+      if (c._handTrigTurn === turnNo) return false;          // once per turn
+      try { return _effectCanResolve(s, 'player', ha.effect, c).ok; } catch (e) { return true; }
+    });
+    for (const card of matches) {
+      const ha = _handAbilityOf(card); if (!ha) continue;
+      const costTxt = (ha.cost === 'banish') ? 'Banish it to the Void'
+        : (ha.cost === 'none') ? 'Keep it in hand' : 'Send it to the graveyard';
+      const what = (typeof describeOnPlayEffect === 'function')
+        ? describeOnPlayEffect(ha.effect) : 'its effect';
+      let ok = true;
+      try {
+        ok = await showGameConfirm({
+          title: '✋ ' + (card.name || 'Hand Ability'),
+          bodyHtml: `<div>${costTxt} to activate:</div>`
+            + `<div style="margin-top:0.45rem;color:#c8a8ff">${escapeHtml(String(what))}</div>`,
+          yesLabel: 'Activate', noLabel: 'Pass', yesAccent: 'gold',
+        });
+      } catch (e) { ok = false; }
+      if (!ok) continue;
+      card._handTrigTurn = turnNo;
+      try {
+        App._handTrigBypass = true;
+        _activateHandAbility(card.instanceId);
+      } finally { App._handTrigBypass = false; }
+    }
+  } catch (e) { try { console.warn('[handTriggers]', e); } catch (_) {} }
 }
 function _activateHandAbility(instanceId) {
   try {
@@ -84421,6 +84516,16 @@ function _applyOnPlayOne(state, unit, card) {
   // radius rule). If all required materials are within radius (default
   // 1 tile), consumes them and spawns the Kalon adjacent to the unit.
   if (eff.type === 'polycreate') {
+    // 🌌📦 MATERIAL SOURCES. By default a fusion eats units standing on YOUR
+    // field, and the player gets the selection modal below. When the card names
+    // any other source (steal from the enemy board / hand / graveyard / deck),
+    // that modal cannot express it — it only ever scans the field — so those
+    // fusions resolve deterministically for BOTH sides instead.
+    // This is what makes "a TRAP that fuses by stealing a unit" work: the KALON
+    // still declares WHAT it needs, the CARD declares WHERE it comes from.
+    if (Array.isArray(eff.matSources) && eff.matSources.some(s => s && s !== 'field')) {
+      return _polyFuseFromSources(state, unit, eff, owner, log);
+    }
     // 🌌 THE PLAYER ALWAYS GETS THE CARD'S OWN FLOW. The private auto-fuse below
     // scans from the ACTING UNIT, which for a graveyard / hand ability is a
     // synthetic hero-anchored caster — that mismatch is why "it won't let me
@@ -85616,6 +85721,136 @@ function canActivatePolycreation(state, side, polySpellCard) {
     hero,
     alternatives: candidates.slice(1).map(c => ({ kalonId: c.kalon.id, kalonName: c.kalon.name })),
   };
+}
+
+// ============================================================================
+// 🌌📦 POLYCREATION FROM ANY SOURCE
+// ----------------------------------------------------------------------------
+// The Kalon's `fusionRequirements` say WHAT the fusion needs. The CARD's effect
+// (`eff.matSources`) says WHERE those materials may come from:
+//   'field' — units you control on the board (the classic rule)
+//   'enemy' — a unit the OPPONENT controls, torn off their board. `seizeTreatAs`
+//             lets it stand in for a material it is not (matchFusionMaterial
+//             already resolves treatAs against the pinned card's NAME).
+//   'hand' / 'grave' / 'deck' — cards in those piles are spent as materials.
+// This is what lets a TRAP (or a graveyard / hand ability) perform a fusion:
+// the trap has no board presence of its own, so it pays from wherever it says.
+// Resolves deterministically for BOTH sides — no placement prompt — because it
+// commonly fires on the OPPONENT'S turn where a prompt would stall the game.
+// ============================================================================
+const _POLY_SRC_LABEL = { field:'your field', enemy:"the enemy's field", hand:'your hand', grave:'your graveyard', deck:'your deck' };
+function _polyFuseFromSources(state, unit, eff, owner, log) {
+  const srcs = (Array.isArray(eff.matSources) && eff.matSources.length) ? eff.matSources : ['field'];
+  // --- resolve the pinned Kalon (same lookup order as the classic branch) ---
+  let kalon = null;
+  try {
+    if (eff.summonCardId) {
+      if (typeof getAllFusionKalons === 'function') kalon = (getAllFusionKalons() || []).find(k => k && k.id === eff.summonCardId);
+      if (!kalon && typeof Forge === 'object' && Forge && Array.isArray(Forge.customCards)) kalon = Forge.customCards.find(c => c && c.id === eff.summonCardId);
+      if (!kalon && typeof _cardDefById === 'function') kalon = _cardDefById(eff.summonCardId);
+    }
+  } catch (e) {}
+  if (!kalon || !Array.isArray(kalon.fusionRequirements) || !kalon.fusionRequirements.length) {
+    log.push({ msg: `🌌 ${unit.name}'s fusion collapses — no Fusion Kalon is set on this effect.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // 🜂 Realm Deck rule applies to the player exactly as it does to the spell.
+  try {
+    if (owner === 'player' && typeof _realmDeckAllows === 'function' && !_realmDeckAllows(kalon, 'player')) {
+      log.push({ msg: `🌌 ${kalon.name || 'That Kalon'} is not in your Realm Deck.`, color: 'amber' });
+      return { ...state, log };
+    }
+  } catch (e) {}
+
+  const anchor = (unit && unit.pos) ? unit : (state.units || []).find(u => u && u.owner === owner && u.isHero && u.alive);
+  if (!anchor || !anchor.pos) { log.push({ msg: `🌌 ${unit.name}'s fusion has no anchor on the field.`, color: 'amber' }); return { ...state, log }; }
+  const rad = Math.max(1, Math.min(8, eff.radius || 3));
+  const inR = (u) => u && u.pos && Math.max(Math.abs(u.pos.x - anchor.pos.x), Math.abs(u.pos.y - anchor.pos.y)) <= rad;
+  const foeSide = owner === 'player' ? 'ai' : 'player';
+  const alias = String(eff.seizeTreatAs || '').trim();
+  const side = state[owner] || {};
+
+  // --- gather candidates, in source priority order ---
+  const cands = [];
+  const pileCard = (entry) => {
+    try {
+      const c = (entry && typeof entry === 'object') ? entry : (typeof resolveDeckCard === 'function' ? resolveDeckCard(entry) : null);
+      if (!c) return null;
+      return { ...c, cardId: c.cardId || c.id, alive: true, isHero: false };
+    } catch (e) { return null; }
+  };
+  srcs.forEach(s => {
+    if (s === 'field') {
+      (state.units || []).forEach(u => {
+        if (u && u.alive && !u.isHero && u.owner === owner && u.id !== unit.id && inR(u)) cands.push({ src: s, kind: 'unit', unit: u, m: u });
+      });
+    } else if (s === 'enemy') {
+      (state.units || []).forEach(u => {
+        if (!u || !u.alive || u.isHero || u.owner !== foeSide || !inR(u)) return;
+        if (typeof _unitProtectedFrom === 'function' && (_unitProtectedFrom(u, 'target') || _unitProtectedFrom(u, 'destroy'))) return;
+        cands.push({ src: s, kind: 'unit', unit: u, m: alias ? { ...u, treatAs: alias } : u });
+      });
+    } else if (s === 'hand' || s === 'grave' || s === 'deck') {
+      const key = (s === 'grave') ? 'graveyard' : s;
+      const pile = Array.isArray(side[key]) ? side[key] : [];
+      pile.forEach((entry, idx) => {
+        const c = pileCard(entry);
+        if (!c) return;
+        if (typeof _isSummonableCard === 'function' && !_isSummonableCard(c)) return;
+        cands.push({ src: s, kind: 'card', pileKey: key, idx, m: c, name: c.name || 'a card' });
+      });
+    }
+  });
+  if (!cands.length) {
+    log.push({ msg: `🌌 ${unit.name} reaches for materials — none available in ${srcs.map(s => _POLY_SRC_LABEL[s] || s).join(' / ')}.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // --- greedy assignment: one candidate per requirement, none reused ---
+  const reqs = kalon.fusionRequirements;
+  const usedKeys = new Set();
+  const keyOf = (c) => c.kind === 'unit' ? ('u:' + c.unit.id) : ('c:' + c.pileKey + ':' + c.idx);
+  const chosen = [];
+  let ok = true;
+  for (const req of reqs) {
+    const hit = cands.find(c => !usedKeys.has(keyOf(c))
+      && (typeof matchFusionMaterial === 'function' ? matchFusionMaterial(c.m, req) : true));
+    if (!hit) { ok = false; break; }
+    usedKeys.add(keyOf(hit)); chosen.push(hit);
+  }
+  if (!ok) {
+    log.push({ msg: `🌌 ${unit.name} cannot complete ${kalon.name || 'the fusion'} — the materials are not all there.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // --- free tile beside YOUR hero, checked BEFORE anything is consumed ---
+  const hero = (state.units || []).find(u => u && u.owner === owner && u.isHero && u.alive);
+  const freeTiles = (hero && typeof _heroAdjacentFreeTiles === 'function') ? _heroAdjacentFreeTiles(state, hero) : [];
+  if (!hero || !freeTiles.length) {
+    log.push({ msg: `🌌 ${unit.name}'s fusion aborts — no open tile beside your hero.`, color: 'amber' });
+    return { ...state, log };
+  }
+  // --- consume ---
+  const destination = kalon.materialDestination || 'graveyard';
+  const unitIds = new Set(chosen.filter(c => c.kind === 'unit').map(c => c.unit.id));
+  const names = chosen.map(c => c.kind === 'unit' ? c.unit.name : c.name).filter(Boolean).join(' + ') || 'materials';
+  const stolen = chosen.filter(c => c.src === 'enemy').map(c => c.unit.name);
+  if (unitIds.size) {
+    state.units = state.units.map(u => unitIds.has(u.id)
+      ? { ...u, alive: false, currentHp: 0, _fusionConsumed: true, _voided: destination === 'void' } : u);
+  }
+  // Pile removals go highest-index-first so earlier indices stay valid.
+  chosen.filter(c => c.kind === 'card').sort((a, b) => b.idx - a.idx).forEach(c => {
+    try { if (Array.isArray(side[c.pileKey])) side[c.pileKey].splice(c.idx, 1); } catch (e) {}
+  });
+  // --- summon ---
+  try {
+    const spawn = _battleSpawnKalonAtTile(state.units, kalon, owner, freeTiles[0], !!kalon.canActImmediately);
+    state.units = spawn.units;
+  } catch (e) { try { console.warn('[polyFuseFromSources]', e); } catch (_) {} }
+  log.push({
+    msg: `🌌 ${unit.name} fuses ${names}${stolen.length ? ` — tearing ${stolen.join(' + ')} from the enemy line${alias ? ` (treated as ${alias})` : ''}` : ''} → ${kalon.name || 'Kalon'}!`,
+    color: owner === 'player' ? 'green' : 'red'
+  });
+  return { ...state, log };
 }
 
 // Picks a legal spawn tile near the hero — empty, in-bounds, prefers ring 1.
@@ -90714,6 +90949,14 @@ function _panicRollOnDeath(state, deadUnit) {
       state = _applyInGraveTick(state, deadUnit.owner, 'allyDeath');
     }
   } catch (e) { console.warn('[inGrave allyDeath]', e); }
+  // ✋💀 …and offer any HAND ability waiting on "one of your units died".
+  // Deferred so it opens against the committed state, and only for the player's
+  // own losses (the AI has no hand-ability prompt).
+  try {
+    if (deadUnit && deadUnit.owner === 'player') {
+      setTimeout(() => { try { _offerHandTriggers('allyDeath'); } catch (e) {} }, 80);
+    }
+  } catch (e) {}
   if (!state || !deadUnit || !deadUnit.pos) return state;
   const PANIC_RADIUS = 2;
   const PANIC_BASE_PCT = 30;
@@ -104251,6 +104494,19 @@ function renderTitle() {
           badge: (() => { const n = (typeof getUnopenedPackCount === 'function') ? getUnopenedPackCount() : 0; return n > 0 ? `📦 ${n} unopened` : null; })(),
           alertBadge: (() => { try { return ((typeof getUnopenedPackCount === 'function') ? getUnopenedPackCount() : 0) > 0; } catch (e) { return false; } })(),
           onclick: () => { App.screen = 'packOpening'; App._packReveal = null; render(); } },
+        // 📡 EMERGENCY BROADCAST — the door out to the web social hub. Deep
+        // links straight to the player's own public profile when they're
+        // signed in (so it opens on THEIR decks/cities/posts, not a stranger's
+        // feed); signed-out players land on the network feed instead.
+        { id: 'btn-broadcast', icon: '<span style="font-size:3rem;line-height:1;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">📡</span>', name: 'Emergency Broadcast', sub: 'Your public profile · the network feed · strategy posts & clips', accent: '#ff6a2b',
+          onclick: () => {
+            try {
+              const uid = (Profile.cloud && Profile.cloud.signedIn && Profile.cloud.userId) ? Profile.cloud.userId : '';
+              const url = 'https://mythicspellbook.xyz/?' + (uid ? 'u=' + encodeURIComponent(uid) : 'feed=1');
+              window.open(url, '_blank', 'noopener');
+              if (typeof showToast === 'function') showToast('📡 Emergency Broadcast opened in a new tab.', 3200);
+            } catch (e) {}
+          } },
       ];
       // Admin-only tools — appended only when the current user is an admin so
       // regular players never see The Forge / Sprite Atelier / Pack Creator /
@@ -112862,6 +113118,7 @@ function renderCardEditor() {
               <div class="editor-field"><label class="small-text">Radius (tiles, for area effects)</label><input id="ed-kalon-onx-radius" type="number" min="0" max="8" value="${(_ot.radius != null ? _ot.radius : 1)}"></div>
             </div>
             ${_weatherEffectFieldsHtml('ed-kalon-onx', _ot)}
+            ${_seizeFusionFieldHtml('ed-kalon-onx', _ot)}
             ${_cardFilterBlockHtml('ed-kalon-onx', _ot.filter, _ot.filterCardIds)}
           </div>`;
         })()}
@@ -113527,6 +113784,7 @@ function renderCardEditor() {
       <div class="editor-field"><label class="small-text">⏳ Weather duration (turns)</label><input id="ed-onplay-weather-dur" type="number" min="1" max="12" value="${onPlay.duration || 4}"></div>
       <div class="editor-field"><label class="small-text">🌙 Day / Night</label><select id="ed-onplay-timeofday">${todOnplayOpts}</select></div>
     </div>
+    ${_seizeFusionFieldHtml('ed-onplay', onPlay)}
     ${(() => {
       // 🔀 Shuffle-Into-Deck pickers — used only by the 'shuffleToDeck' effect.
       const zs = onPlay.shuffleZones || 'all', ss = onPlay.shuffleSide || 'owner', ds = onPlay.drawSide || 'none';
@@ -114517,6 +114775,7 @@ function renderCardEditor() {
         + `<div class="editor-field"><label class="small-text">🎇 Effect VFX</label><select id="ed-grave-vfx"><option value="none" ${(!gaEff.vfx || gaEff.vfx === 'none') ? 'selected' : ''}>— None —</option>${_effectVfxOptionsHtml(gaEff.vfx)}</select></div>`
         + `<div class="editor-field"><label class="small-text">🔁 Use Limit</label><select id="ed-grave-uselimit">${_useLimitOpts(gaEff.useLimit)}</select></div>`
         + _weatherEffectFieldsHtml('ed-grave', gaEff)
+        + _seizeFusionFieldHtml('ed-grave', gaEff)
         + (() => {
             // 🔍 Search Deck — type filter + specific-card allow-list (for a
             // 'searchDeck' graveyard ability). Same picker as the on-play editor.
@@ -114794,6 +115053,7 @@ function renderCardEditor() {
         + `<div class="editor-field"><label class="small-text">🌀 Summon / Kalon Card id (for 🌀 Summon / 🌌 Polycreate)</label><input id="ed-field-summoncard" value="${escapeHtml(fEff.summonCardId || '')}" placeholder="leave blank otherwise"></div>`
         + `<div class="editor-field"><label class="small-text">🎇 Effect VFX</label><select id="ed-field-vfx">${_fVfx}</select></div>`
         + _weatherEffectFieldsHtml('ed-field', fEff)
+        + _seizeFusionFieldHtml('ed-field', fEff)
         + `<div class="editor-field full" style="border-top:1px dashed rgba(214,122,224,0.4);margin-top:0.5rem;padding-top:0.5rem"><label class="small-text" style="font-weight:700;color:#e2a8f0">🎴 Card Filter — for filtered effects (Entomb / Salvage / Raise)</label>`
         + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.4rem;margin-top:0.35rem;min-width:0">`
         + `<div style="min-width:0"><label class="small-text">Name contains</label><input id="ed-field-filter-name" type="text" maxlength="24" placeholder="e.g. SCP" value="${escapeHtml((fEff.filter && fEff.filter.nameIncludes) || '')}" style="width:100%"></div>`
@@ -114842,6 +115102,9 @@ function renderCardEditor() {
       return `<div class="editor-field full" style="background:rgba(140,110,220,0.10);border:1px dashed rgba(180,140,255,0.5);border-radius:6px;padding:0.6rem 0.8rem;margin-top:0.4rem">`
         + `<label style="font-weight:700;color:#c8a8ff">✋ Hand Ability — activate from your HAND (your turn only)</label>`
         + `<div class="small-text ink-dim" style="margin-top:0.2rem">While this card is in your hand, on YOUR turn you can open it and hit <strong>✋ Activate</strong> to fire this effect for the cost below — <em>without</em> playing the card. Effects are anchored on your hero.</div>`
+        + `<div class="editor-field"><label class="small-text">⏱ When can it fire? (Trigger)</label><select id="ed-hand-trigger">`
+        + HAND_TRIGGERS.map(([v, l]) => `<option value="${v}" ${((ha.trigger || 'manual') === v) ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')
+        + `</select><div class="small-text ink-dim" style="margin-top:0.2rem">Anything other than Manual makes this a <strong>triggered</strong> ability: you are offered it the instant that window opens (even on the opponent's turn), and <strong>the energy cost is forced to 0</strong> — the card itself is the cost. Once per turn per card.</div></div>`
         + `<div class="editor-field"><label class="small-text">Ability Effect (Type)</label><select id="ed-hand-type">${_hType}</select></div>`
         + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem">`
         + `<div><label class="small-text">⚡ Energy Cost</label><input id="ed-hand-energy" type="number" min="0" max="20" value="${ha.energyCost != null ? (ha.energyCost | 0) : 1}"></div>`
@@ -116969,6 +117232,8 @@ function captureEditorIntoCard(card) {
           weatherType: v('ed-grave-weathertype') || 'rain',
           duration: num('ed-grave-weatherdur', 1, 12, 4),
           timeOfDay: v('ed-grave-timeofday') || 'night',
+          matSources: _readPolyMatSources('ed-grave'),
+          seizeTreatAs: (v('ed-grave-seizeas') || '').trim() || undefined,
           vfx: v('ed-grave-vfx') || 'none',
           useLimit: v('ed-grave-uselimit') || 'none',
           searchDeckType: v('ed-grave-searchtype') || 'any',
@@ -117136,6 +117401,8 @@ function captureEditorIntoCard(card) {
           weatherType: v('ed-field-weathertype') || 'rain',
           duration: num('ed-field-weatherdur', 1, 12, 4),
           timeOfDay: v('ed-field-timeofday') || 'night',
+          matSources: _readPolyMatSources('ed-field'),
+          seizeTreatAs: (v('ed-field-seizeas') || '').trim() || undefined,
           vfx: v('ed-field-vfx') || 'none',
           sendZone: v('ed-field-sendzone') || 'either',
           empowerHero: (v('ed-field-emphero') || 'yes') !== 'no',
@@ -117310,6 +117577,9 @@ function captureEditorIntoCard(card) {
         weatherType:    v('ed-onplay-weathertype') || 'rain',
         duration:       num('ed-onplay-weather-dur', 1, 12, 4),
         timeOfDay:      v('ed-onplay-timeofday') || 'night',
+        // 🌌 Polycreate material sources + the stolen-unit alias.
+        matSources:     _readPolyMatSources('ed-onplay'),
+        seizeTreatAs:   (v('ed-onplay-seizeas') || '').trim() || undefined,
         status:         v('ed-onplay-status') || 'weak',
         statusDuration: num('ed-onplay-status-dur', 1, 6, 2),
         // 👑 Take-Control duration — 0 = permanent, > 0 reverts after N turns.
@@ -117550,6 +117820,11 @@ function captureEditorIntoCard(card) {
             e.weatherType = v('ed-kalon-onx-weathertype') || 'rain';
             e.duration = num('ed-kalon-onx-weatherdur', 1, 12, 4);
             e.timeOfDay = v('ed-kalon-onx-timeofday') || 'night';
+          }
+          if (t === 'polycreate') {
+            e.matSources = _readPolyMatSources('ed-kalon-onx');
+            const _sa = (v('ed-kalon-onx-seizeas') || '').trim();
+            if (_sa) e.seizeTreatAs = _sa;
           }
           try {
             if (typeof _readCardFilterFrom === 'function') {
@@ -137183,6 +137458,9 @@ function _resolveSpellAfterChain(card) {
   } catch (e) {}
   playSpellActivationVfx(card, { label: 'SPELL ACTIVATED', targetPos: _spellTarget });
   checkPostAction();
+  // ✋⚡ "When you play a spell card…" — offer any hand ability waiting on that
+  // window. Deferred a tick so it opens against the COMMITTED post-spell state.
+  try { setTimeout(() => { try { _offerHandTriggers('spellPlayed'); } catch (e) {} }, 60); } catch (e) {}
 }
 
 function checkPostAction() {
@@ -192850,6 +193128,11 @@ function _describeOnPlayEffectBody(eff) {
     case 'drainLife':     { const a=Math.max(1,eff.amount||3); return `🩸 Deals ${a} damage to every enemy within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'} and heals this unit for the total dealt.`; }
     case 'setWeather':    { const wt=eff.weatherType||'rain'; const meta=(typeof WEATHER_CARDS!=='undefined'?WEATHER_CARDS.find(w=>w&&w.weatherType===wt):null); const wn=(meta&&meta.name)||wt; const wi=(meta&&meta.icon)||'🌦'; const d=Math.max(1,Math.min(12,eff.duration||4)); return `${wi} Changes the weather to ${wn} for ${d} turn${d===1?'':'s'}.`; }
     case 'setTimeOfDay':  { const w=eff.timeOfDay||'night'; return w==='toggle'?'🌗 Flips the battlefield between day and night.':(w==='day'?'☀️ Turns the battlefield to day — Light empowered.':'🌙 Turns the battlefield to night — Shadow empowered.'); }
+    case 'polycreate':    { let kn='a Fusion Kalon'; try{ const k=eff.summonCardId&&typeof _cardDefById==='function'?_cardDefById(eff.summonCardId):null; if(k&&k.name) kn=k.name; }catch(e){}
+                            const srcs=(Array.isArray(eff.matSources)&&eff.matSources.length)?eff.matSources:['field'];
+                            const L={field:'your field',enemy:"the enemy's field",hand:'your hand',grave:'your graveyard',deck:'your deck'};
+                            const al=String(eff.seizeTreatAs||'').trim(); const r=eff.radius|0;
+                            return `🌌 Fuses materials from ${srcs.map(s=>L[s]||s).join(' / ')} within ${r||3} tile${(r||3)===1?'':'s'}${(srcs.indexOf('enemy')>=0&&al)?` (a stolen unit counts as ${escapeHtml(al)})`:''} and summons ${escapeHtml(kn)} beside your hero.`; }
     case 'readyAllies':   return `🔄 Allies within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'} may move and attack AGAIN this turn.`;
     case 'damagePerCard': { const a=Math.max(1,eff.amount||1); const z=eff.countZone||'hand'; const zl={hand:'cards in hand',grave:'cards in the graveyard',void:'cards in the Void',deck:'cards in the deck',field:'units on the field'}[z]||'cards'; const cs=eff.countSide||'owner'; const sl=cs==='both'?"both players'":(cs==='enemy'?"the enemy's":'your'); return `📚 Deals ${a} damage per card to enemies within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'}, counting ${sl} ${zl}.`; }
     case 'stealStatus':   return `🪄 Strips every beneficial status from enemies within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'} and moves them onto this unit.`;

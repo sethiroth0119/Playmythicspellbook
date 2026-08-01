@@ -68031,6 +68031,18 @@ function _deckSleeveById(id) {
 function getDeckSleeveImage() {
   return (typeof Profile.equippedSleeve === 'string' && Profile.equippedSleeve) ? Profile.equippedSleeve : null;
 }
+// Built-in card back — the art every pile falls back to.
+const CARDBACK_DEFAULT_IMG = 'assets/artwork/cardback.png?v=2';
+// Resolve the back to draw on a pile. Mirrors getTombstoneImage(owner): only
+// the PLAYER's own piles wear their sleeve; the opponent keeps the default so
+// a sleeve can never be mistaken for the other side's cards.
+function getCardBackImage(owner) {
+  if (owner !== 'ai') {
+    const s = getDeckSleeveImage();
+    if (s) return s;
+  }
+  return CARDBACK_DEFAULT_IMG;
+}
 
 // 🜁 REBIRTH SHIFT helpers ----------------------------------------------------
 function _rebirthResolveCard(idOrName) {
@@ -123480,7 +123492,10 @@ function _ensureFcaStyle() {
 function renderBattlePiles(s) {
   try { _ensureFcaStyle(); } catch (e) {}
   if (!s || !s.player || !s.ai || s.gameOver) return '';
-  const CARDBACK = 'assets/artwork/cardback.png?v=2';
+  // 🎴 The player's equipped deck sleeve skins THEIR piles; the opponent's
+  // piles always keep the default back.
+  const CARDBACK = (typeof getCardBackImage === 'function') ? getCardBackImage('player') : 'assets/artwork/cardback.png?v=2';
+  const CARDBACK_FOE = (typeof CARDBACK_DEFAULT_IMG === 'string') ? CARDBACK_DEFAULT_IMG : 'assets/artwork/cardback.png?v=2';
   const len = (a) => Array.isArray(a) ? a.length : 0;
   // Killed units only — dead, non-hero units still sitting in s.units. (The
   // `graveyard` array is spent CARDS, not kills — that's why live units used
@@ -123609,7 +123624,7 @@ function renderBattlePiles(s) {
         <div class="cardslot${n <= 0 ? ' empty' : ''}"${open ? ` data-bp-realm="${who}" role="button" tabindex="0"` : ''}${live ? ' data-live="1"' : ''}
              style="${open ? 'cursor:pointer;' : 'cursor:default;'}box-shadow:0 0 10px rgba(163,92,255,0.35);border-color:rgba(163,92,255,0.55)"
              title="${open ? 'Your Realm Deck: ' + n + ' card' + (n === 1 ? '' : 's') + ' — click to view' : "Opponent's Realm Deck — hidden"}">
-          <img class="cbk" src="${CARDBACK}" alt="" draggable="false">
+          <img class="cbk" src="${who === 'player' ? CARDBACK : CARDBACK_FOE}" alt="" draggable="false">
           <span class="count"><i>${open ? n : '?'}</i></span>
         </div>
       </div>`;
@@ -123650,7 +123665,7 @@ function renderBattlePiles(s) {
       <div class="stack">
         <div class="cardslot${n <= 0 ? ' empty' : ''}" id="${id}" ${extra || ''} role="button" tabindex="0"
              title="${escapeHtml(label)}: ${n} card${n === 1 ? '' : 's'}">
-          <img class="cbk" src="${CARDBACK}" alt="" draggable="false">
+          <img class="cbk" src="${/^foe/i.test(String(id || '')) ? CARDBACK_FOE : CARDBACK}" alt="" draggable="false">
           <span class="count${tone === 'grey' ? ' grey' : ''}"><i>${n}</i></span>
         </div>
       </div>`;
@@ -151456,6 +151471,32 @@ function renderSettings() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">🎴 Deck Sleeve</div>
+        <div class="settings-section-desc">The card back on <strong>your</strong> deck, graveyard and face-down cards. Exclusive sleeves arrive from <strong>Founder Drops</strong> and Shop packages. Your opponent always sees the default back.</div>
+        ${(() => {
+          const owned = Array.isArray(Profile.ownedSleeves) ? Profile.ownedSleeves : [];
+          const all = (typeof getAllDeckSleeves === 'function') ? getAllDeckSleeves() : [];
+          const ownedSl = all.filter(s => owned.indexOf(s.id) >= 0);
+          const equipped = Profile.equippedSleeve || null;
+          const defImg = (typeof CARDBACK_DEFAULT_IMG === 'string') ? CARDBACK_DEFAULT_IMG : null;
+          const tile = (key, name, img, isActive) => `
+            <button class="frame-pick ${isActive ? 'active' : ''} unlocked" data-sleeve-equip="${escapeHtml(String(key))}">
+              <div class="frame-pick-preview" style="display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,rgba(212,175,55,0.16),transparent 70%)">
+                ${img ? `<img src="${img}" alt="" style="max-width:64%;max-height:88%;object-fit:cover;border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,0.6)">` : '<div class="frame-pick-preview-inner">🎴</div>'}
+              </div>
+              <div class="frame-pick-name">${escapeHtml(name)}</div>
+              ${isActive ? `<div class="frame-pick-active-tag">✓ Active</div>` : ''}
+            </button>`;
+          let html = tile('__default__', 'Default', defImg, !equipped);
+          html += ownedSl.map(s => tile(s.id, s.name || 'Sleeve', s.img, equipped === s.img)).join('');
+          if (ownedSl.length === 0) {
+            html += `<div class="ink-dim small-text" style="align-self:center;padding:0 0.6rem">No sleeves owned yet — they come with Founder packages and drops.</div>`;
+          }
+          return `<div class="frame-pick-grid">${html}</div>`;
+        })()}
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🎨 Color-blind palette</div>
         <div class="settings-section-desc">Swap element badge / dot colors to a high-contrast Okabe-Ito-inspired set. Designed for deuteranopia / protanopia (red-green colorblindness).</div>
         <label class="settings-toggle">
@@ -151792,6 +151833,23 @@ function renderSettings() {
     };
   });
 
+  document.querySelectorAll('[data-sleeve-equip]').forEach(el => {
+    el.onclick = () => {
+      const key = el.dataset.sleeveEquip;
+      if (key === '__default__') {
+        Profile.equippedSleeve = null;
+        showToast('🎴 Using the default card back.', 2000);
+      } else {
+        const sl = (typeof _deckSleeveById === 'function') ? _deckSleeveById(key) : null;
+        const owned = Array.isArray(Profile.ownedSleeves) ? Profile.ownedSleeves : [];
+        if (!sl || owned.indexOf(key) < 0) { showToast('You don\'t own that sleeve.', 2400); return; }
+        Profile.equippedSleeve = sl.img;
+        showToast('🎴 Equipped: ' + (sl.name || 'Sleeve'), 2200);
+      }
+      try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); else saveProfile(); } catch (e) {}
+      render();
+    };
+  });
   document.querySelectorAll('[data-tomb-equip]').forEach(el => {
     el.onclick = () => {
       const key = el.dataset.tombEquip;
@@ -169703,7 +169761,9 @@ function renderRlcReward() {
   // face-down picks even when the reward pool is tiny.
   if (pool.length) { let _pi = 0; while (offer.length < n) { offer.push(pool[_pi % pool.length]); _pi++; } }
   offer = offer.slice(0, n);
-  const CARDBACK = 'assets/artwork/cardback.png?v=2';
+  // 🎴 These face-downs are the PLAYER's own reward picks, so they wear the
+  // player's equipped deck sleeve when they have one.
+  const CARDBACK = (typeof getCardBackImage === 'function') ? getCardBackImage('player') : 'assets/artwork/cardback.png?v=2';
   // Face-down card the player flips to reveal its hidden reward.
   const flipCard = (key, idx) => {
     let c = null; try { c = resolveDeckCard(key); } catch (e) {}

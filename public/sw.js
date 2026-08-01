@@ -402,7 +402,16 @@
 //        → crash. Now uses Math.floor(/65536) (always ≥0) + positive-modulo
 //        normalize + empty-pool / undefined-entry guards. Crash/Exchange opens
 //        again. (v88g error-surface kept as a backstop.)
-const CACHE_VERSION = 'mythic-v118g8-battle-fit-nodarkbar-' + Date.now().toString(36);
+// 🩹 DETERMINISTIC cache name — no Date.now() suffix. The old suffix was
+// evaluated on EVERY service-worker startup (browsers restart the SW many
+// times a day), minting a brand-new cache name each wake-up while `activate`
+// (the only reaper) runs solely when the SW *script bytes* change (a deploy).
+// Orphan `mythic-static-*` caches piled up between deploys, and the fetch
+// handler's caches.match() searches ALL caches — so the OLDEST orphan kept
+// answering and players were served stale /assets/ images indefinitely.
+// The manual per-deploy version bump below is the real freshness signal:
+// new bytes → install+activate → old caches reaped.
+const CACHE_VERSION = 'mythic-v119r8-polymodal';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if
@@ -463,7 +472,14 @@ self.addEventListener('fetch', (event) => {
   // By NOT calling event.respondWith() the browser fetches index.html from
   // the network every single time, bypassing the SW cache entirely.
   // This guarantees every deploy is visible immediately without a hard-refresh.
-  const isNav = req.mode === 'navigate' || req.headers.get('accept')?.includes('text/html');
+  // ⚠ destination catches what mode alone misses: a 307-REDIRECTED iframe
+  // document re-enters this handler, fell into the cache-first branch below,
+  // and `fetch(req)` on a redirected navigation Request REJECTS ("Failed to
+  // fetch", line ~485) — turning the whole battle-board iframe into a network
+  // error (the white battlefield). HTML documents are never ours to own.
+  const isNav = req.mode === 'navigate'
+    || req.destination === 'document' || req.destination === 'iframe'
+    || req.headers.get('accept')?.includes('text/html');
   if (isNav) return; // ← SW steps aside; browser fetches fresh HTML normally
 
   // 🖼 Static assets → cache-first. Heaviest path is /assets/* art + audio
@@ -483,6 +499,9 @@ self.addEventListener('fetch', (event) => {
       }
       return fresh;
     } catch (e) {
+      // A Request object can be un-refetchable (post-redirect state) while the
+      // URL itself is fine — retry once as a plain URL fetch before failing.
+      try { return await fetch(req.url, { cache: 'no-store' }); } catch (e2) {}
       // No cache + no network = bubble the error.
       throw e;
     }

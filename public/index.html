@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119r6';
+  window.BUILD_VERSION = 'v119r8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -44241,6 +44241,7 @@ async function cloudSyncProfile() {
       __coupons__:          Array.isArray(Profile.coupons)  ? Profile.coupons  : [],
       __matchLog__:         Array.isArray(Profile.matchLog) ? Profile.matchLog.slice(-50) : [],
       __tutorialComplete__: !!Profile.tutorialComplete,
+      __purgeReTutorial__: !!Profile.purgeReTutorial,
       // 🦸 Starter-pick state — whether they've claimed their free deck, which
       // deck they chose, and any extra starters they later bought. Without
       // these on the cloud, signing in on a new device re-forces the picker.
@@ -45393,6 +45394,10 @@ async function cloudFetchProfile() {
       }
       if (Array.isArray(f.__matchLog__) && (!Array.isArray(Profile.matchLog) || !Profile.matchLog.length)) Profile.matchLog = f.__matchLog__;
       if (f.__tutorialComplete__ === true) Profile.tutorialComplete = true;
+      // 🎓 Purge re-tutorial flag persists across sessions/devices. It only ever
+      // sets TRUE (harmless when it lingers — gated behind !tutorialComplete),
+      // so a purged veteran keeps re-tutorial eligibility until they finish it.
+      if (f.__purgeReTutorial__ === true) Profile.purgeReTutorial = true;
       // 🦸 Starter-pick — last-writer-wins (boolean once true stays true).
       if (f.__starterPicked__ === true) Profile.starterPicked = true;
       if (typeof f.__starterDeckId__ === 'string') Profile.starterDeckId = f.__starterDeckId__;
@@ -67843,11 +67848,16 @@ function hasPickedStarter() {
   // Also treat anyone with real progress as "not new" so existing players are
   // NEVER forced into the picker (decisions: new players only).
   try {
-    const owned = Object.values(Profile.cardCollection || {}).some(n => n > 0);
+    // 🎯 Key on an actual STARTER-DECK claim, not "owns any card". A stray
+    // promo/leftover card (or a purge that spares a single card) must NOT read
+    // as "already picked" — that skips the picker and drops the player into the
+    // tutorial with no real deck (emoji-placeholder combat). Real saved decks
+    // and battle history still grandfather established players past the picker.
+    const ownsStarter = Array.isArray(Profile.ownedStarterDecks) && Profile.ownedStarterDecks.length > 0;
     const hasDecks = (typeof getAllDecks === 'function') && getAllDecks().length > 0;
     const r = Profile.records || {};
     const played = (r.battles || 0) > 0 || (r.wins || 0) > 0 || (r.losses || 0) > 0;
-    if (owned || hasDecks || played) return true;
+    if (ownsStarter || hasDecks || played) return true;
   } catch (e) {}
   return false;
 }
@@ -69464,6 +69474,17 @@ async function _applySeasonReset(sr) {
             console.warn('[purge] starter cards unresolved — collection cleared, player returned to the starter picker');
           } catch (e) {}
         }
+      } catch (e) {}
+      // 🎓 FULL RE-TUTORIAL after a purge (product decision 2026-08-01). The
+      // reset wipes their collection, so walk EVERY purged player back through
+      // the first-run tutorial welcome + guided battle — including veterans.
+      // Records are KEPT, so the normal battles===0 gate would exclude them;
+      // purgeReTutorial (persisted, see the whitelist) bypasses ONLY that gate,
+      // while the !tutorialComplete gate closes naturally when they finish/skip.
+      try {
+        Profile.tutorialComplete = false;   // uploaded as false ⇒ cloud stays false (hydration only forces TRUE)
+        Profile.purgeReTutorial = true;
+        App._tutorialWelcomeDismissed = false;   // show the welcome again this session
       } catch (e) {}
       try { saveProfile(); } catch (e) {}
       // 🧹 SERVER ROW - drop the merge-happy keys, else hydration undoes all of
@@ -77142,7 +77163,64 @@ const ONPLAY_TYPES = [
   { id: 'rewind',        label: '⏪ Rewind (restore HP to what it was this turn)',           needs: ['radius','tSide'] },
   { id: 'copyLastMove',  label: '🎭 Copy Last Move (reuse the enemy\'s last move)',         needs: [] },
   { id: 'summonFromZone', label: '🌟 Summon From Zone (hand/deck/grave/void → field)', needs: ['summonZone','amount','summonCardIds'] },
+  // 🌦 Any card can now shift the weather or flip day↔night on play / trigger / activate.
+  { id: 'setWeather',    label: '🌦 Change Weather (set the battlefield weather + duration)', needs: ['weatherType','duration'] },
+  { id: 'setTimeOfDay',  label: '🌙 Set Day / Night (make it night, day, or toggle)',         needs: ['timeOfDay'] },
 ];
+
+// 🗂 Effect-type CATEGORIES — group the ~75 on-play effects into labelled
+// <optgroup> sections so the long dropdowns are navigable. Ordered; the
+// _onplayTypeOptgroups helper renders them and sweeps any id NOT listed here
+// into a final "🔧 Other" group, so a new effect can never silently vanish.
+const ONPLAY_TYPE_GROUPS = [
+  { label: '💥 Damage & Removal',   ids: ['aoeDamage','aoeKill','singleKill','targetStrike','damageHero','destroyTarget','destroyFrozen','burnBurst','boardWipe','purgeAscended','banishUnit','vanishTribe','chainDamage','damagePerCard','damageFromGrave','drainLife','fight'] },
+  { label: '🛡 Buffs & Debuffs',    ids: ['intimidate','aoeStatus','buffSelf','buffAllies','applyBuffDebuff','bestow','empowerTeam','equipStats','proliferate','swapAtkDef','mirrorStats','stealStatus','rewind','readyAllies'] },
+  { label: '❤️ Healing & Energy',   ids: ['heal','healHero','energyGain','kalonSource'] },
+  { label: '👑 Control & Movement', ids: ['takeControl','takeControlAll','bounceUnit','vanishTemp','vanishReturn','pullUnits','pushUnits','swapPositions','transformAlly','cloneUnit'] },
+  { label: '🃏 Cards & Hand',       ids: ['drawCards','drawFiltered','searchDeck','discardCards','discardSelf','peekHand','peekDiscard','peekBanish','stealCard','cheapenHand','scry','inspire','shuffleToDeck','copyLastMove'] },
+  { label: '⚰️ Graveyard & Void',   ids: ['millSelf','millSearch','millEnemy','surveil','deckToGrave','reviveGrave','graveToHand','selfToHand','banishGrave','vanishGraveRandom','vanishGravePick','vanishGraveUnit','negateGraveyard','graveSteal','voidFromGrave','banishDeck','banishHand','drawFromVoid','recycleVoid'] },
+  { label: '🌟 Summon & Sacrifice', ids: ['summon','summonSelf','summonFromZone','polycreate','sacrifice','sacrificeNearby','tributeDraw','sendMatching'] },
+  { label: '🌦 Field, Weather & Day-Night', ids: ['setWeather','setTimeOfDay','clearWeather','weatherLock','paintSurface','clearSurfaces','clearWalls','clearTraps','revealTraps','destroyLocation'] },
+  { label: '🔒 Locks, Reveal & Utility', ids: ['negateField','costSeal','callLock','sealSlot','delayedBlast','verdict','scanAllEnemies','scanAllTurn'] },
+];
+// Render the grouped <optgroup> option list for a given selected id. Any effect
+// not placed in a group above falls into "🔧 Other" so nothing is ever lost.
+function _onplayTypeOptgroups(selectedId) {
+  const sel = selectedId || '';
+  const byId = {}; ONPLAY_TYPES.forEach(t => { byId[t.id] = t; });
+  const emitted = new Set();
+  const opt = (t) => `<option value="${t.id}" ${sel === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`;
+  let html = '';
+  ONPLAY_TYPE_GROUPS.forEach(g => {
+    const rows = g.ids.filter(id => byId[id] && !emitted.has(id));
+    if (!rows.length) return;
+    html += `<optgroup label="${escapeHtml(g.label)}">` + rows.map(id => { emitted.add(id); return opt(byId[id]); }).join('') + `</optgroup>`;
+  });
+  const leftovers = ONPLAY_TYPES.filter(t => !emitted.has(t.id));
+  if (leftovers.length) html += `<optgroup label="🔧 Other">` + leftovers.map(opt).join('') + `</optgroup>`;
+  return html;
+}
+
+// 🌦 Shared weather / day-night config block for the compact effect editors
+// (Field Ability, Grave Ability, Kalon-Transform). The primary On-Play editor has
+// its own inline copy. `prefix` yields the field ids <prefix>-weathertype /
+// -weatherdur / -timeofday, read back by the matching collectors.
+function _weatherEffectFieldsHtml(prefix, eff) {
+  eff = eff || {};
+  const _seen = new Set();
+  const wOpts = (typeof WEATHER_CARDS !== 'undefined' ? WEATHER_CARDS : [])
+    .filter(w => w && w.weatherType && !_seen.has(w.weatherType) && _seen.add(w.weatherType))
+    .map(w => `<option value="${w.weatherType}" ${(eff.weatherType || 'rain') === w.weatherType ? 'selected' : ''}>${escapeHtml((w.icon ? w.icon + ' ' : '') + (w.name || w.weatherType))}</option>`).join('');
+  const tOpts = [['night', '🌙 Night'], ['day', '☀️ Day'], ['toggle', '🔄 Toggle']]
+    .map(([tv, tl]) => `<option value="${tv}" ${(eff.timeOfDay || 'night') === tv ? 'selected' : ''}>${escapeHtml(tl)}</option>`).join('');
+  return `<div class="editor-field full" style="background:rgba(120,160,255,0.08);border:1px dashed rgba(120,160,255,0.45);border-radius:6px;padding:0.5rem 0.7rem;margin-top:0.35rem">`
+    + `<label class="small-text" style="font-weight:700;color:#a9c4ff">🌦 Weather / 🌙 Day-Night <span class="ink-dim" style="font-weight:400">(only for "Change Weather" / "Set Day / Night")</span></label>`
+    + `<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:0.4rem;margin-top:0.3rem">`
+    + `<div><label class="small-text">🌦 Weather</label><select id="${prefix}-weathertype">${wOpts}</select></div>`
+    + `<div><label class="small-text">⏳ Turns</label><input id="${prefix}-weatherdur" type="number" min="1" max="12" value="${eff.duration || 4}"></div>`
+    + `<div><label class="small-text">🌙 Day/Night</label><select id="${prefix}-timeofday">${tOpts}</select></div>`
+    + `</div></div>`;
+}
 
 // 🌟 SUMMON-FROM-ZONE — the piles a unit may be deployed out of. `key` is the actual
 // array on the side-state. Kept as ONE table so the effect, the picker modal and the
@@ -82145,6 +82223,35 @@ function _applyOnPlayOne(state, unit, card) {
     return { ...state, log };
   }
 
+  // 🌦 CHANGE WEATHER — any card effect can now set the battlefield weather,
+  // reusing the exact weather object the `setsWeather` MOVES apply (88905), so the
+  // gameplay modifiers AND the Weather-Realm visual come for free. Reached by every
+  // hook that runs this executor: on-play, onPlayExtra, activated (fieldActive), grave.
+  if (eff.type === 'setWeather') {
+    const wt   = eff.weatherType || 'rain';
+    const dur  = Math.max(1, Math.min(12, eff.duration || 4));
+    const meta = (typeof WEATHER_CARDS !== 'undefined' && WEATHER_CARDS.find(w => w && w.weatherType === wt)) || null;
+    const wName = (meta && meta.name) || wt;
+    const wIcon = (meta && meta.icon) || '🌦';
+    state.weather = { weatherType: wt, turnsLeft: dur, ownerHint: owner, customEffects: eff.customEffects || null };
+    log.push({ msg: `${wIcon} ${unit.name} shifts the sky — ${wName}! (${dur} turns)`, color: owner === 'player' ? 'green' : 'red' });
+    return { ...state, log };
+  }
+
+  // 🌙 SET DAY / NIGHT — flip the day/night state. Night empowers Shadow, gates
+  // night-only cards, and the 3D board's sun/moon rig darkens (it reads
+  // App.state.timeOfDay via _bbTimeOfDay). 'toggle' flips whatever it currently is.
+  if (eff.type === 'setTimeOfDay') {
+    const cur  = (state.timeOfDay === 'night') ? 'night' : 'day';
+    const want = (eff.timeOfDay === 'toggle') ? (cur === 'night' ? 'day' : 'night')
+               : (eff.timeOfDay === 'day') ? 'day' : 'night';
+    state.timeOfDay = want;
+    log.push({ msg: (want === 'night')
+      ? `🌙 ${unit.name} pulls night across the field — Shadow empowered.`
+      : `☀️ ${unit.name} breaks the dawn — Light empowered.`, color: 'amber' });
+    return { ...state, log };
+  }
+
   // 📈 ANTHEM (Magic) — a permanent flat stat bump, not a timed status.
   if (eff.type === 'equipStats') {
     const amt = Math.max(1, eff.amount || 1);
@@ -85470,11 +85577,14 @@ function canActivatePolycreation(state, side, polySpellCard) {
     const all = (typeof getAllFusionKalons === 'function') ? getAllFusionKalons() : [];
     if (!all.length) return { ok: false, reason: 'No Fusion Kalons defined in catalog. Forge a Unit card with summonMethod=fusion + fusionRequirements first.' };
     const reasons = [];
+    const tried = [];
     all.slice(0, 3).forEach(k => {
       const reqs = Array.isArray(k.fusionRequirements) ? k.fusionRequirements.length : 0;
-      reasons.push(`${k.icon || '🌌'} ${k.name} needs ${reqs} material${reqs === 1 ? '' : 's'} within ${(k.heroRange | 0) || 1} tile of your Hero`);
+      const range = (k.heroRange | 0) || 1;
+      reasons.push(`${k.icon || '🌌'} ${k.name} needs ${reqs} material${reqs === 1 ? '' : 's'} within ${range} tile of your Hero`);
+      tried.push({ icon: k.icon || '🌌', name: k.name, reqs: reqs, range: range });
     });
-    return { ok: false, reason: 'No legal fusion right now. Tried: ' + reasons.join('; ') };
+    return { ok: false, reason: 'No legal fusion right now. Tried: ' + reasons.join('; '), tried: tried, triedTotal: all.length };
   }
   const pick = candidates[0];
   // Need at least one empty tile adjacent to hero for the spawn.
@@ -85519,6 +85629,35 @@ function _polycreationFindSummonTile(state, hero) {
   return null;
 }
 
+// 🚫 Polycreation-blocked MODAL — replaces the cramped toast with the themed
+// game modal (showGameAlert), listing each fusion tried and what it needs so
+// the failure reads cleanly instead of as one long run-on line.
+function _polycreationBlockedModal(gate) {
+  gate = gate || {};
+  try {
+    const tried = Array.isArray(gate.tried) ? gate.tried : null;
+    let body;
+    if (tried && tried.length) {
+      const rows = tried.map(function (t) {
+        return '<div style="display:flex;align-items:flex-start;gap:0.55rem;padding:0.45rem 0.6rem;background:rgba(255,120,90,0.07);border:1px solid rgba(255,120,90,0.24);border-radius:8px;margin-top:0.45rem">'
+          + '<span style="font-size:1.2rem;line-height:1.15;flex:0 0 auto">' + escapeHtml(t.icon || '🌌') + '</span>'
+          + '<div style="min-width:0"><div style="font-weight:700;color:#ffd8c8">' + escapeHtml(t.name || 'Fusion') + '</div>'
+          + '<div style="font-size:0.82rem;color:#cbb9a4;margin-top:0.1rem">needs <strong style="color:#ffb59e">' + (t.reqs | 0) + '</strong> material' + ((t.reqs | 0) === 1 ? '' : 's') + ' within <strong style="color:#ffb59e">' + ((t.range | 0) || 1) + '</strong> tile of your Hero</div></div></div>';
+      }).join('');
+      const moreN = (gate.triedTotal | 0) - tried.length;
+      const more = moreN > 0 ? '<div style="font-size:0.8rem;color:#a89878;margin-top:0.5rem;font-style:italic">+ ' + moreN + ' more fusion' + (moreN === 1 ? '' : 's') + ' also need materials beside your Hero.</div>' : '';
+      body = '<div style="margin-bottom:0.3rem">No legal fusion is available right now — a Fusion Kalon needs <strong>all</strong> of its materials standing within range of your Hero.</div>'
+        + '<div style="font-size:0.78rem;color:#a89878;text-transform:uppercase;letter-spacing:0.07em;margin-top:0.7rem">Fusions tried</div>'
+        + rows + more;
+    } else {
+      body = escapeHtml(gate.reason || 'No valid fusion available.');
+    }
+    return showGameAlert({ title: '🚫 Polycreation Blocked', bodyHtml: body, accent: 'crimson', okLabel: 'Got it' });
+  } catch (e) {
+    try { showToast('🚫 Cannot Activate Polycreation — ' + (gate.reason || 'No Valid Fusion Available')); } catch (_) {}
+  }
+}
+
 // 🌌 EFFECT → CARD PARITY. A polycreate EFFECT (graveyard ability, hand
 // ability, or an on-play that found no materials of its own) routes through
 // the REAL spell path from here: the same `canActivatePolycreation` gate, the
@@ -85534,7 +85673,7 @@ function _openPolycreationFromEffect(sourceName) {
         const s = App.state;
         const gate = (typeof canActivatePolycreation === 'function') ? canActivatePolycreation(s, 'player', synth) : { ok: false, reason: 'unavailable' };
         if (!gate.ok) {
-          try { showToast('🚫 Cannot Activate Polycreation — ' + (gate.reason || 'No Valid Fusion Available')); } catch (e) {}
+          try { _polycreationBlockedModal(gate); } catch (e) {}
           return;
         }
         App.ui.fusionMode = {
@@ -85561,7 +85700,7 @@ function openFusionSelectionMode(polySpellCard) {
   if (!s) return;
   const gate = canActivatePolycreation(s, 'player', polySpellCard);
   if (!gate.ok) {
-    showToast('🚫 Cannot Activate Polycreation — ' + (gate.reason || 'No Valid Fusion Available'));
+    _polycreationBlockedModal(gate);
     return;
   }
   App.ui.fusionMode = {
@@ -100401,38 +100540,38 @@ const App = {
 const TUTORIAL_STEPS = [
   {
     id: 'welcome',
-    title: '⚔️ Welcome, Champion',
-    body: 'You\'re about to fight your first battle. This 5-step walkthrough covers the basics — click <strong>Next</strong> when you\'re ready to move on, or <strong>Skip</strong> if you want to dive in.',
+    title: '⚔️ Into the Fray',
+    body: 'Your first real fight. This quick walkthrough covers the essentials — reading the field, spending energy, moving and striking, and the Kalon swing. Tap <strong>Next</strong> to continue, or <strong>Skip</strong> to take the reins now.',
     highlight: null,
   },
   {
     id: 'board',
-    title: '🏰 The Battlefield',
-    body: 'The 6×8 grid above is the battlefield. Your <span style="color:#88bb88;font-weight:700">hero (gold outline)</span> is on the south side. The <span style="color:var(--ember);font-weight:700">enemy hero (red outline)</span> stands across the field. <strong>Reduce the enemy hero to 0 HP to win.</strong> If yours falls first, you lose.',
+    title: '🏰 Read the Field',
+    body: 'The 6×8 grid above is the battlefield. Your <span style="color:#88bb88;font-weight:700">hero (gold outline)</span> holds the south edge; the <span style="color:var(--ember);font-weight:700">enemy hero (red outline)</span> holds the north. <strong>Drop the enemy hero to 0 HP to win.</strong> If yours falls first, the run ends here.',
     highlight: '.board',
   },
   {
     id: 'hand',
-    title: '🃏 Your Hand & Energy',
-    body: 'Cards in your <strong>hand</strong> sit at the bottom. Each card costs <strong><span class="energy-orb"></span> energy</strong> (the number in the corner). You start with 1 energy and gain 1 more max each turn. Unit cards summon allies, spells fire instantly, traps stay hidden, and weather/locations change the field.',
+    title: '🃏 Hand & Energy',
+    body: 'Your cards wait along the bottom. Every play costs <strong><span class="energy-orb"></span> energy</strong> (the number in the corner). You open on 1 energy and your maximum climbs by 1 each turn — lean early, explosive late. Units summon fighters, spells strike instantly, traps lie hidden until sprung, and weather or locations rewrite the whole field.',
     highlight: '.hand-strip, .hand-bar, .player-hand',
   },
   {
     id: 'actions',
-    title: '🗡️ Moving & Attacking',
-    body: 'Click any of <strong>your units</strong> on the board to open their action menu. Each unit can <strong>Move</strong> (one path of tiles) <strong>and</strong> use one <strong>attack/ability</strong> per turn. Longer-range moves cost more <span class="energy-orb"></span>. Watch the type chart — Fire beats Nature, Water beats Fire, etc.',
+    title: '🗡️ Move, Then Strike',
+    body: 'Tap one of <strong>your units</strong> to open its actions. Each turn a unit can <strong>Move</strong> along a path <strong>and</strong> take one <strong>attack or ability</strong>. Longer moves cost more <span class="energy-orb"></span>. Matchups decide fights: across 21 elements each type beats some and folds to others — Fire scorches Nature, Water drowns Fire. Strike where you\'re strong.',
     highlight: '.unit.player',
   },
   {
     id: 'kalon',
-    title: 'Kalon Transformations',
-    body: 'You have <strong>3 Kalon uses</strong> per match. Spend one to transform an eligible unit on the field into its <strong>secret form</strong> — bigger stats, new moves, sometimes new factions. The Kalon Source <img src="assets/artwork/gameicons/Kalon%20Source.png" alt="Kalon" style="height:1.8em;width:1.8em;vertical-align:middle;filter:drop-shadow(0 0 8px rgba(140,180,255,0.9))"> is the signature swing-mechanic — save them for the right moment.',
+    title: '✦ The Kalon Swing',
+    body: 'You hold <strong>3 Kalon uses</strong> per match. Spend one to transform an eligible unit into its <strong>secret form</strong> — bigger stats, new moves, sometimes a whole new faction. The Kalon Source <img src="assets/artwork/gameicons/Kalon%20Source.png" alt="Kalon" style="height:1.8em;width:1.8em;vertical-align:middle;filter:drop-shadow(0 0 8px rgba(140,180,255,0.9))"> is this game\'s signature turn-stealer — don\'t burn them early; save them to break a stalemate.',
     highlight: '.kalon-btn, [data-kalon-button]',
   },
   {
     id: 'end',
-    title: '🏁 Ending Your Turn',
-    body: 'When you\'re finished, click <strong>End Turn</strong> at the top of the screen. The enemy plays its turn, then you go again. Random events (sparkling ✨ tiles) can grant items, gems, or rare cards — step on them with your hero. <strong>Good luck out there.</strong>',
+    title: '🏁 End the Turn',
+    body: 'Done for the turn? Hit <strong>End Turn</strong> up top. The enemy answers, then it\'s back to you. Watch for sparkling ✨ event tiles — walk your hero onto one for items, Cinder, or rare cards. Now go win it — <strong>the Heights are watching.</strong>',
     highlight: '#btn-end-turn',
   },
 ];
@@ -104552,8 +104691,15 @@ function renderTitle() {
   // cards, so launching the tutorial battle before they've claimed a deck
   // drops them into combat with emoji placeholder cards. Hold the tutorial
   // welcome until the starter deck is claimed: pick deck → main menu → here.
+  // 🎓 A purged player (persisted purgeReTutorial) bypasses ONLY the battles===0
+  // veteran gate — the reset wiped their collection, so they get the full
+  // first-run tutorial again. The !tutorialComplete requirement still holds, so
+  // once they finish or skip it this stops firing; and an old account that never
+  // set tutorialComplete (grandfathered) is NOT dragged in, because it lacks the
+  // purge flag and is caught by the battles gate.
+  const _purgeReTut = !!(Profile && Profile.purgeReTutorial === true);
   const isFreshPlayer = !Profile.tutorialComplete
-    && ((Profile.records && Profile.records.battles) || 0) === 0
+    && (_purgeReTut || ((Profile.records && Profile.records.battles) || 0) === 0)
     && !App._tutorialWelcomeDismissed
     && (typeof needsStarterPick !== 'function' || !needsStarterPick())
     && (typeof hasPickedStarter !== 'function' || hasPickedStarter());
@@ -104574,20 +104720,21 @@ function renderTutorialWelcome() {
   overlay.id = 'tutorial-welcome';
   overlay.innerHTML = `
     <div class="tutorial-welcome-modal">
-      <div class="tutorial-welcome-banner">⚔️ Welcome to Mythic Spellbook ⚔️</div>
+      <div class="tutorial-welcome-banner">⚔️ Your First Battle ⚔️</div>
       <div class="tutorial-welcome-icon">📜</div>
-      <h2 class="tutorial-welcome-title">First time here?</h2>
+      <h2 class="tutorial-welcome-title">Ready to fight?</h2>
       <p class="tutorial-welcome-text">
-        This is a tactical TCG — units, spells, traps, weather, walls, random events, Kalon transformations,
-        and 21 elements with type counters. A lot to take in!
+        Ethos Heights is a tactical card-battler — units maneuver on a grid, spells and traps swing the
+        tide, weather and terrain reshape the field, and Kalon transformations can flip a losing match.
+        There's real depth here.
       </p>
       <p class="tutorial-welcome-text">
-        I can walk you through a quick <strong>5-step tutorial battle</strong> that covers the basics, or you can
-        jump straight in if you'd like to explore.
+        Let me walk you through a quick <strong>guided battle</strong> that teaches the essentials in about a
+        minute — or jump straight in if you'd rather learn by doing.
       </p>
       <div class="tutorial-welcome-actions">
-        <button class="btn-primary" id="btn-start-tutorial">📜 Start Tutorial Battle</button>
-        <button class="btn-secondary" id="btn-skip-tutorial">Skip — I'll figure it out</button>
+        <button class="btn-primary" id="btn-start-tutorial">📜 Start Guided Battle</button>
+        <button class="btn-secondary" id="btn-skip-tutorial">Skip — I'll learn as I go</button>
       </div>
     </div>
   `;
@@ -112680,7 +112827,7 @@ function renderCardEditor() {
           // Forge, so nothing new to learn and the Card Filter comes along.
           const _ot = (kf.onTransform && typeof kf.onTransform === 'object') ? kf.onTransform : {};
           const _tOpts = ['<option value="">— None (transform does nothing extra) —</option>'].concat(
-            ONPLAY_TYPES.map(t => `<option value="${t.id}" ${_ot.type === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`)).join('');
+            _onplayTypeOptgroups(_ot.type)).join('');
           const _sOpts = ['<option value="">— no status —</option>'].concat(
             Object.values(STATUS_EFFECTS).filter(st => st && st.id && st.id !== 'none')
               .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)))
@@ -112695,6 +112842,7 @@ function renderCardEditor() {
               <div class="editor-field"><label class="small-text">Status Duration (turns)</label><input id="ed-kalon-onx-dur" type="number" min="0" max="20" value="${(_ot.statusDuration != null ? _ot.statusDuration : 2)}"></div>
               <div class="editor-field"><label class="small-text">Radius (tiles, for area effects)</label><input id="ed-kalon-onx-radius" type="number" min="0" max="8" value="${(_ot.radius != null ? _ot.radius : 1)}"></div>
             </div>
+            ${_weatherEffectFieldsHtml('ed-kalon-onx', _ot)}
             ${_cardFilterBlockHtml('ed-kalon-onx', _ot.filter, _ot.filterCardIds)}
           </div>`;
         })()}
@@ -113254,7 +113402,7 @@ function renderCardEditor() {
   // Intimidate-style debuffs, execution sweeps, heal-on-summon, etc.
   const onPlay = card.onPlay || { type: '', radius: 1, amount: 6, chance: 25, status: 'weak', statusDuration: 2 };
   const onPlayTypeOpts = ['<option value="">— None —</option>'].concat(
-    ONPLAY_TYPES.map(t => `<option value="${t.id}" ${onPlay.type === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`)
+    _onplayTypeOptgroups(onPlay.type)
   ).join('');
   // Every status in the STATUS_EFFECTS catalog (was a hardcoded 18-id subset) —
   // sorted by display name, value = status id, label = icon + name.
@@ -113262,6 +113410,14 @@ function renderCardEditor() {
     .filter(st => st && st.id && st.id !== 'none')
     .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)))
     .map(st => `<option value="${st.id}" ${onPlay.status === st.id ? 'selected' : ''}>${escapeHtml((st.icon ? st.icon + ' ' : '') + (st.name || st.id))}</option>`).join('');
+  // 🌦 Weather picker for the 'setWeather' on-play type — one option per real weatherType.
+  const _seenWt = new Set();
+  const weatherTypeOnplayOpts = (typeof WEATHER_CARDS !== 'undefined' ? WEATHER_CARDS : [])
+    .filter(w => w && w.weatherType && !_seenWt.has(w.weatherType) && _seenWt.add(w.weatherType))
+    .map(w => `<option value="${w.weatherType}" ${(onPlay.weatherType || 'rain') === w.weatherType ? 'selected' : ''}>${escapeHtml((w.icon ? w.icon + ' ' : '') + (w.name || w.weatherType))}</option>`).join('');
+  // 🌙 Day/Night picker for the 'setTimeOfDay' on-play type.
+  const todOnplayOpts = [['night','🌙 Make it Night'],['day','☀️ Make it Day'],['toggle','🔄 Toggle (flip whatever it is)']]
+    .map(([tv, tl]) => `<option value="${tv}" ${(onPlay.timeOfDay || 'night') === tv ? 'selected' : ''}>${escapeHtml(tl)}</option>`).join('');
   // 🎯 Subterfuge reactive-ambush picker — strikes the enemy that springs the trap.
   const ambush = (card.ambushEffect && typeof card.ambushEffect === 'object') ? card.ambushEffect : {};
   const ambushTypeOpts = [
@@ -113344,6 +113500,13 @@ function renderCardEditor() {
         <input type="checkbox" id="ed-onplay-aoeall" ${onPlay.aoeAll ? 'checked' : ''}>
         <span>🌐 <strong>AOE All</strong> — hit every targeted unit + hero on the whole board (ignores Radius)</span>
       </label>
+    </div>
+    <div class="editor-field full" style="background:rgba(120,160,255,0.08);border:1px dashed rgba(120,160,255,0.45);border-radius:6px;padding:0.6rem 0.8rem">
+      <label style="font-weight:700;color:#a9c4ff">🌦 Weather / Day-Night <span class="ink-dim" style="font-weight:400">(when effect is "Change Weather" or "Set Day / Night")</span></label>
+      <div class="small-text ink-dim" style="margin:0.2rem 0 0.4rem">Change Weather applies the chosen weather — its gameplay modifiers <em>and</em> the Weather-Realm visual — for the duration. Set Day / Night flips the battlefield's day↔night state (Shadow/Light empowerment, night-only card gating; the 3D board darkens at night).</div>
+      <div class="editor-field"><label class="small-text">🌦 Weather to set</label><select id="ed-onplay-weathertype">${weatherTypeOnplayOpts}</select></div>
+      <div class="editor-field"><label class="small-text">⏳ Weather duration (turns)</label><input id="ed-onplay-weather-dur" type="number" min="1" max="12" value="${onPlay.duration || 4}"></div>
+      <div class="editor-field"><label class="small-text">🌙 Day / Night</label><select id="ed-onplay-timeofday">${todOnplayOpts}</select></div>
     </div>
     ${(() => {
       // 🔀 Shuffle-Into-Deck pickers — used only by the 'shuffleToDeck' effect.
@@ -113602,7 +113765,7 @@ function renderCardEditor() {
       // PRIMARY slot above. onPlayExtra[] holds the non-empty slots.
       const extras = Array.isArray(card.onPlayExtra) ? card.onPlayExtra : [];
       const _typeOptsFor = (sel) => ['<option value="">— None —</option>'].concat(
-        ONPLAY_TYPES.map(t => `<option value="${t.id}" ${sel === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`)).join('');
+        _onplayTypeOptgroups(sel)).join('');
       const _statOptsFor = (sel) => Object.values(STATUS_EFFECTS).filter(st => st && st.id && st.id !== 'none')
         .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)))
         .map(st => `<option value="${st.id}" ${sel === st.id ? 'selected' : ''}>${escapeHtml((st.icon ? st.icon + ' ' : '') + (st.name || st.id))}</option>`).join('');
@@ -114305,7 +114468,7 @@ function renderCardEditor() {
       const ga2 = (card.graveActive && typeof card.graveActive === 'object') ? card.graveActive : {};
       const gaEff = (ga2.effect && typeof ga2.effect === 'object') ? ga2.effect : {};
       const _typeOpts = ['<option value="">— None (no grave ability) —</option>'].concat(
-        ONPLAY_TYPES.map(t => `<option value="${t.id}" ${gaEff.type === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`)).join('');
+        _onplayTypeOptgroups(gaEff.type)).join('');
       const _statOpts = Object.values(STATUS_EFFECTS).filter(st => st && st.id && st.id !== 'none')
         .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)))
         .map(st => `<option value="${st.id}" ${gaEff.status === st.id ? 'selected' : ''}>${escapeHtml((st.icon ? st.icon + ' ' : '') + (st.name || st.id))}</option>`).join('');
@@ -114334,6 +114497,7 @@ function renderCardEditor() {
         + `<div class="editor-field"><label class="small-text">Summon / Kalon Card id (for 🌀 Summon / 🌌 Polycreate)</label><input id="ed-grave-summoncard" value="${escapeHtml(gaEff.summonCardId || '')}" placeholder="e.g. dragon_wyrmling — leave blank otherwise"></div>`
         + `<div class="editor-field"><label class="small-text">🎇 Effect VFX</label><select id="ed-grave-vfx"><option value="none" ${(!gaEff.vfx || gaEff.vfx === 'none') ? 'selected' : ''}>— None —</option>${_effectVfxOptionsHtml(gaEff.vfx)}</select></div>`
         + `<div class="editor-field"><label class="small-text">🔁 Use Limit</label><select id="ed-grave-uselimit">${_useLimitOpts(gaEff.useLimit)}</select></div>`
+        + _weatherEffectFieldsHtml('ed-grave', gaEff)
         + (() => {
             // 🔍 Search Deck — type filter + specific-card allow-list (for a
             // 'searchDeck' graveyard ability). Same picker as the on-play editor.
@@ -114372,7 +114536,7 @@ function renderCardEditor() {
       // and Persistent Enchantments destroyed/sent. Full on-play vocabulary.
       const og = (card.onGrave && typeof card.onGrave === 'object') ? card.onGrave : {};
       const _ogType = ['<option value="">— None (no on-grave trigger) —</option>'].concat(
-        ONPLAY_TYPES.map(t => `<option value="${t.id}" ${og.type === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`)).join('');
+        _onplayTypeOptgroups(og.type)).join('');
       const _ogStat = Object.values(STATUS_EFFECTS).filter(st => st && st.id && st.id !== 'none')
         .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)))
         .map(st => `<option value="${st.id}" ${og.status === st.id ? 'selected' : ''}>${escapeHtml((st.icon ? st.icon + ' ' : '') + (st.name || st.id))}</option>`).join('');
@@ -114475,7 +114639,7 @@ function renderCardEditor() {
         const o = (card[key] && typeof card[key] === 'object') ? card[key] : {};
         const p = cfg.prefix;
         const tOpts = ['<option value="">— None (no ' + cfg.short + ' trigger) —</option>'].concat(
-          ONPLAY_TYPES.map(t => `<option value="${t.id}" ${o.type === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`)).join('');
+          _onplayTypeOptgroups(o.type)).join('');
         const sOpts = Object.values(STATUS_EFFECTS).filter(st => st && st.id && st.id !== 'none')
           .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)))
           .map(st => `<option value="${st.id}" ${o.status === st.id ? 'selected' : ''}>${escapeHtml((st.icon ? st.icon + ' ' : '') + (st.name || st.id))}</option>`).join('');
@@ -114567,7 +114731,7 @@ function renderCardEditor() {
       const fa = (card.fieldActive && typeof card.fieldActive === 'object') ? card.fieldActive : {};
       const fEff = (fa.effect && typeof fa.effect === 'object') ? fa.effect : {};
       const _fType = ['<option value="">— None (no field ability) —</option>'].concat(
-        ONPLAY_TYPES.map(t => `<option value="${t.id}" ${fEff.type === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`)).join('');
+        _onplayTypeOptgroups(fEff.type)).join('');
       const _fStat = Object.values(STATUS_EFFECTS).filter(st => st && st.id && st.id !== 'none')
         .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)))
         .map(st => `<option value="${st.id}" ${fEff.status === st.id ? 'selected' : ''}>${escapeHtml((st.icon ? st.icon + ' ' : '') + (st.name || st.id))}</option>`).join('');
@@ -114610,6 +114774,7 @@ function renderCardEditor() {
         + `</div>`
         + `<div class="editor-field"><label class="small-text">🌀 Summon / Kalon Card id (for 🌀 Summon / 🌌 Polycreate)</label><input id="ed-field-summoncard" value="${escapeHtml(fEff.summonCardId || '')}" placeholder="leave blank otherwise"></div>`
         + `<div class="editor-field"><label class="small-text">🎇 Effect VFX</label><select id="ed-field-vfx">${_fVfx}</select></div>`
+        + _weatherEffectFieldsHtml('ed-field', fEff)
         + `<div class="editor-field full" style="border-top:1px dashed rgba(214,122,224,0.4);margin-top:0.5rem;padding-top:0.5rem"><label class="small-text" style="font-weight:700;color:#e2a8f0">🎴 Card Filter — for filtered effects (Entomb / Salvage / Raise)</label>`
         + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.4rem;margin-top:0.35rem;min-width:0">`
         + `<div style="min-width:0"><label class="small-text">Name contains</label><input id="ed-field-filter-name" type="text" maxlength="24" placeholder="e.g. SCP" value="${escapeHtml((fEff.filter && fEff.filter.nameIncludes) || '')}" style="width:100%"></div>`
@@ -114646,7 +114811,7 @@ function renderCardEditor() {
       const ha = (card.handActive && typeof card.handActive === 'object') ? card.handActive : {};
       const hEff = (ha.effect && typeof ha.effect === 'object') ? ha.effect : {};
       const _hType = ['<option value="">— None (no hand ability) —</option>'].concat(
-        ONPLAY_TYPES.map(t => `<option value="${t.id}" ${hEff.type === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`)).join('');
+        _onplayTypeOptgroups(hEff.type)).join('');
       const _hStat = Object.values(STATUS_EFFECTS).filter(st => st && st.id && st.id !== 'none')
         .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)))
         .map(st => `<option value="${st.id}" ${hEff.status === st.id ? 'selected' : ''}>${escapeHtml((st.icon ? st.icon + ' ' : '') + (st.name || st.id))}</option>`).join('');
@@ -116782,6 +116947,9 @@ function captureEditorIntoCard(card) {
           status: v('ed-grave-status') || 'weak',
           statusDuration: num('ed-grave-dur', 1, 9, 2),
           summonCardId: (v('ed-grave-summoncard') || '').trim() || undefined,
+          weatherType: v('ed-grave-weathertype') || 'rain',
+          duration: num('ed-grave-weatherdur', 1, 12, 4),
+          timeOfDay: v('ed-grave-timeofday') || 'night',
           vfx: v('ed-grave-vfx') || 'none',
           useLimit: v('ed-grave-uselimit') || 'none',
           searchDeckType: v('ed-grave-searchtype') || 'any',
@@ -116946,6 +117114,9 @@ function captureEditorIntoCard(card) {
           sacMax: num('ed-field-sacmax', 0, 12, 0),
           controlDuration: num('ed-field-controldur', 0, 9, 1),
           summonCardId: (v('ed-field-summoncard') || '').trim() || undefined,
+          weatherType: v('ed-field-weathertype') || 'rain',
+          duration: num('ed-field-weatherdur', 1, 12, 4),
+          timeOfDay: v('ed-field-timeofday') || 'night',
           vfx: v('ed-field-vfx') || 'none',
           sendZone: v('ed-field-sendzone') || 'either',
           empowerHero: (v('ed-field-emphero') || 'yes') !== 'no',
@@ -117116,6 +117287,10 @@ function captureEditorIntoCard(card) {
         shuffleSide:    v('ed-onplay-shufside') || 'owner',
         shuffleSelf:    v('ed-onplay-shufself') || 'shuffle',   // 🪃 caster goes back too, or holds the field
         drawSide:       v('ed-onplay-drawside') || 'none',
+        // 🌦 Change Weather / 🌙 Set Day-Night fields.
+        weatherType:    v('ed-onplay-weathertype') || 'rain',
+        duration:       num('ed-onplay-weather-dur', 1, 12, 4),
+        timeOfDay:      v('ed-onplay-timeofday') || 'night',
         status:         v('ed-onplay-status') || 'weak',
         statusDuration: num('ed-onplay-status-dur', 1, 6, 2),
         // 👑 Take-Control duration — 0 = permanent, > 0 reverts after N turns.
@@ -117352,6 +117527,11 @@ function captureEditorIntoCard(card) {
           if (st) { e.status = st; e.statusDuration = num('ed-kalon-onx-dur', 0, 20, 2); }
           const r = num('ed-kalon-onx-radius', 0, 8, 1);
           if (r) e.radius = r;
+          if (t === 'setWeather' || t === 'setTimeOfDay') {
+            e.weatherType = v('ed-kalon-onx-weathertype') || 'rain';
+            e.duration = num('ed-kalon-onx-weatherdur', 1, 12, 4);
+            e.timeOfDay = v('ed-kalon-onx-timeofday') || 'night';
+          }
           try {
             if (typeof _readCardFilterFrom === 'function') {
               const f = _readCardFilterFrom('ed-kalon-onx');
@@ -192263,6 +192443,8 @@ function _describeOnPlayEffectBody(eff) {
     case 'swapAtkDef':    { const t=eff.tSide||'enemy'; const tl=t==='ally'?'allied':(t==='all'?'ALL':'enemy'); return `🔃 Swaps ATK and DEF on every ${tl} unit within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'}.`; }
     case 'equipStats':    { const t=eff.tSide||'enemy'; const tl=t==='ally'?'allied':(t==='all'?'ALL':'enemy'); const a=Math.max(1,eff.amount||1); return `📈 Permanently grants +${a} ATK / +${a} DEF to every ${tl} unit within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'}.`; }
     case 'drainLife':     { const a=Math.max(1,eff.amount||3); return `🩸 Deals ${a} damage to every enemy within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'} and heals this unit for the total dealt.`; }
+    case 'setWeather':    { const wt=eff.weatherType||'rain'; const meta=(typeof WEATHER_CARDS!=='undefined'?WEATHER_CARDS.find(w=>w&&w.weatherType===wt):null); const wn=(meta&&meta.name)||wt; const wi=(meta&&meta.icon)||'🌦'; const d=Math.max(1,Math.min(12,eff.duration||4)); return `${wi} Changes the weather to ${wn} for ${d} turn${d===1?'':'s'}.`; }
+    case 'setTimeOfDay':  { const w=eff.timeOfDay||'night'; return w==='toggle'?'🌗 Flips the battlefield between day and night.':(w==='day'?'☀️ Turns the battlefield to day — Light empowered.':'🌙 Turns the battlefield to night — Shadow empowered.'); }
     case 'readyAllies':   return `🔄 Allies within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'} may move and attack AGAIN this turn.`;
     case 'damagePerCard': { const a=Math.max(1,eff.amount||1); const z=eff.countZone||'hand'; const zl={hand:'cards in hand',grave:'cards in the graveyard',void:'cards in the Void',deck:'cards in the deck',field:'units on the field'}[z]||'cards'; const cs=eff.countSide||'owner'; const sl=cs==='both'?"both players'":(cs==='enemy'?"the enemy's":'your'); return `📚 Deals ${a} damage per card to enemies within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'}, counting ${sl} ${zl}.`; }
     case 'stealStatus':   return `🪄 Strips every beneficial status from enemies within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'} and moves them onto this unit.`;

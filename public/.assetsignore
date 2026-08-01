@@ -4,6 +4,12 @@
 # frozen on a stale build for so long. Keep big/non-runtime files out
 # of the upload (they still stay on disk locally).
 
+# The minify backup written mid-deploy (build.mjs → .index.dev.html). It's the
+# full ~12 MB un-minified SOURCE; restore() deletes it locally, but wrangler
+# uploads whatever is present during the deploy window, so exclude it here to
+# stop the raw source shipping to the CDN.
+.index.dev.html
+
 # Full data-export dumps — never needed by the deployed game.
 assets/Exports/
 

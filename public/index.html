@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119s5';
+  window.BUILD_VERSION = 'v119s6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -61533,7 +61533,15 @@ function _campResCost(f, targetLevel) {
   if (ov && Array.isArray(ov.res) && ov.res[targetLevel - 1] && typeof ov.res[targetLevel - 1] === 'object') {
     const c = {};
     (typeof RESOURCE_IDS !== 'undefined' ? RESOURCE_IDS : []).forEach(id => { const v = ov.res[targetLevel - 1][id]; if (v > 0) c[id] = Math.floor(v); });
-    return c;
+    // ⚠ An EMPTY override means "the admin saved this level without filling in
+    // any resource boxes" — NOT "this upgrade is free". Returning {} there made
+    // the build cost Cinder only and silently ignored every resource, which is
+    // exactly the "it doesn't use the resources" report. Fall through to the
+    // per-facility defaults instead; to make a level genuinely free the admin
+    // sets the gem cost to 0 and leaves the facility's resources at 0 via a
+    // real value (an all-zero row is still an empty object, so this stays a
+    // deliberate design choice rather than an accident of a blank save).
+    if (Object.keys(c).length) return c;
   }
   const base = _CAMP_RES_DEFAULT[f.id] || { supplies: 5 };
   const out = {};

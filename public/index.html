@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119s2';
+  window.BUILD_VERSION = 'v119s3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39016,6 +39016,15 @@ function _cardCostCutFor(card, state, side) {
 // applied to whatever it returns, so it stacks with all of them and can never push a
 // cost below zero.
 function getEffectiveCardCost(card, state, side) {
+  // ⚰️💸 ALTERNATE COST — the removal replaces the energy cost entirely.
+  // Payable ⇒ 0 (free). Not payable ⇒ a cost nothing can afford, so every
+  // existing "cost <= energy" highlight/enable check dims the card for free —
+  // no render code had to learn about this requirement.
+  try {
+    if (card && card.playRequirement && card.playRequirement.type === 'banishGraveCost') {
+      return _altCostTargets(state, side || 'player', card) ? 0 : 9999;
+    }
+  } catch (e) {}
   // 💸 COST SPIKE — a counter that taxes rather than stops. Stamped on the card
   // by the negate gate; if the player cannot pay, the play is refused upstream.
   try {
@@ -55860,6 +55869,62 @@ async function _fdropPaint() {
  * Twitch / Streamable / anything) additionally becomes an eb_clips row, so it
  * shows as a clip card on the feed and in the player's Clips tab.
  * ════════════════════════════════════════════════════════════════════════ */
+/* 🏆 Record a tournament placement. Players are listed from the public
+ * eb_directory RPC (no service key needed); the write goes through
+ * eb_placement_record, which is admin-gated server-side - the UI being
+ * admin-only is convenience, not the security boundary. */
+async function _tournPaint() {
+  const box = document.getElementById('tourn-panel');
+  if (!box) return;
+  if (!(typeof Cloud !== 'undefined' && Cloud.client && Profile.cloud && Profile.cloud.signedIn)) {
+    box.innerHTML = '<div class="small-text ink-dim">☁ Sign in to record results.</div>'; return;
+  }
+  const esc = (t) => (typeof escapeHtml === 'function') ? escapeHtml(String(t == null ? '' : t)) : String(t == null ? '' : t);
+  let people = [];
+  try {
+    const r = await Cloud.client.rpc('eb_directory', { p_limit: 100 });
+    people = Array.isArray(r && r.data) ? r.data : [];
+  } catch (e) {}
+  const inCss = 'padding:0.4rem 0.55rem;background:rgba(15,8,30,0.65);border:1px solid rgba(184,136,255,0.3);border-radius:5px;color:#e8e0ff';
+  box.innerHTML =
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">' +
+      '<select id="tourn-user" style="flex:1 1 200px;' + inCss + '">' +
+        (people.length ? people.map(p => '<option value="' + esc(p.user_id) + '">' + esc(p.name) + '</option>').join('')
+                       : '<option value="">No players found</option>') +
+      '</select>' +
+      '<input id="tourn-event" placeholder="Event name" style="flex:1 1 200px;' + inCss + '">' +
+    '</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:end">' +
+      '<label class="small-text ink-dim" style="display:flex;flex-direction:column;gap:2px">Place<input id="tourn-place" type="number" min="1" value="1" style="width:80px;' + inCss + '"></label>' +
+      '<label class="small-text ink-dim" style="display:flex;flex-direction:column;gap:2px">Entrants<input id="tourn-entrants" type="number" min="0" value="0" style="width:100px;' + inCss + '"></label>' +
+      '<label class="small-text ink-dim" style="display:flex;flex-direction:column;gap:2px">Date<input id="tourn-date" type="date" style="' + inCss + '"></label>' +
+      '<input id="tourn-note" placeholder="Note (optional)" style="flex:1 1 160px;' + inCss + '">' +
+      '<button class="btn-primary btn-mini" id="tourn-save">🏆 Record</button>' +
+    '</div>';
+  const btn = document.getElementById('tourn-save');
+  if (btn) btn.onclick = async () => {
+    const uid = (document.getElementById('tourn-user') || {}).value || '';
+    const ev = ((document.getElementById('tourn-event') || {}).value || '').trim();
+    if (!uid) { showToast('Pick a player.', 2600); return; }
+    if (!ev) { showToast('Name the event.', 2600); return; }
+    const place = parseInt((document.getElementById('tourn-place') || {}).value, 10) || null;
+    const ent = parseInt((document.getElementById('tourn-entrants') || {}).value, 10) || null;
+    const dt = ((document.getElementById('tourn-date') || {}).value || '') || null;
+    const note = ((document.getElementById('tourn-note') || {}).value || '').trim() || null;
+    btn.disabled = true;
+    try {
+      const r = await Cloud.client.rpc('eb_placement_record', {
+        p_user: uid, p_event: ev.slice(0, 90), p_place: place,
+        p_entrants: ent, p_date: dt, p_note: note,
+      });
+      const d = (r && r.data) || {};
+      showToast(d.ok ? '🏆 Result recorded - it is live on their profile.'
+                     : '⚠ ' + (d.error === 'admin_only' ? 'Admins only.' : 'Could not record.'), 5000);
+      if (d.ok) { const e2 = document.getElementById('tourn-event'); if (e2) e2.value = ''; }
+    } catch (e) { showToast('⚠ Could not record - try again.', 4000); }
+    btn.disabled = false;
+  };
+}
 function openShareToBroadcast(summary) {
   const signedIn = !!(typeof Cloud !== 'undefined' && Cloud.client && Profile.cloud && Profile.cloud.signedIn && Profile.cloud.userId);
   if (!signedIn) { showToast('☁ Sign in to share to Emergency Broadcast.', 4200); return; }
@@ -77314,13 +77379,15 @@ const ONPLAY_TYPES = [
   { id: 'delayedBlast',  label: '💣 Delayed Blast (plant a bomb, detonates in N turns)',   needs: ['amount','radius','statusDuration'] },
   { id: 'rewind',        label: '⏪ Rewind (restore HP to what it was this turn)',           needs: ['radius','tSide'] },
   { id: 'copyLastMove',  label: '🎭 Copy Last Move (reuse the enemy\'s last move)',         needs: [] },
-  { id: 'summonFromZone', label: '🌟 Summon From Zone (hand/deck/grave/void → field)', needs: ['summonZone','amount','summonCardIds'] },
+  { id: 'summonFromZone', label: '🌟 Summon From Zone (hand/deck/grave/void → field — by Card Filter or id list)', needs: ['summonZone','amount','summonCardIds','filter'] },
   // 🌦 Any card can now shift the weather or flip day↔night on play / trigger / activate.
   { id: 'setWeather',    label: '🌦 Change Weather (set the battlefield weather + duration)', needs: ['weatherType','duration'] },
   { id: 'setTimeOfDay',  label: '🌙 Set Day / Night (make it night, day, or toggle)',         needs: ['timeOfDay'] },
   // 🪤🎲 Plant a card from your deck / graveyard FACE DOWN on a random tile.
   // The enemy cannot see it; a trap springs through the normal trap pipeline.
   { id: 'setFromZone',   label: '🪤🎲 Set Face-Down (plant a trap/unit from deck or grave on a RANDOM tile)', needs: ['setZone','setKind','amount','filter'] },
+  // ⚰️🩸 THIS card pays itself — the self counterpart of Sacrifice Ally.
+  { id: 'sacrificeSelf', label: '⚰️🩸 Sacrifice Self (send THIS card to the graveyard / Void)', needs: ['sendZone'] },
 ];
 
 // 🗂 Effect-type CATEGORIES — group the ~75 on-play effects into labelled
@@ -77334,7 +77401,7 @@ const ONPLAY_TYPE_GROUPS = [
   { label: '👑 Control & Movement', ids: ['takeControl','takeControlAll','bounceUnit','vanishTemp','vanishReturn','pullUnits','pushUnits','swapPositions','transformAlly','cloneUnit'] },
   { label: '🃏 Cards & Hand',       ids: ['drawCards','drawFiltered','searchDeck','discardCards','discardSelf','peekHand','peekDiscard','peekBanish','stealCard','cheapenHand','scry','inspire','shuffleToDeck','copyLastMove'] },
   { label: '⚰️ Graveyard & Void',   ids: ['millSelf','millSearch','millEnemy','surveil','deckToGrave','reviveGrave','graveToHand','selfToHand','banishGrave','vanishGraveRandom','vanishGravePick','vanishGraveUnit','negateGraveyard','graveSteal','voidFromGrave','banishDeck','banishHand','drawFromVoid','recycleVoid'] },
-  { label: '🌟 Summon & Sacrifice', ids: ['summon','summonSelf','summonFromZone','setFromZone','polycreate','sacrifice','sacrificeNearby','tributeDraw','sendMatching'] },
+  { label: '🌟 Summon & Sacrifice', ids: ['summon','summonSelf','summonFromZone','setFromZone','polycreate','sacrifice','sacrificeSelf','sacrificeNearby','tributeDraw','sendMatching'] },
   { label: '🌦 Field, Weather & Day-Night', ids: ['setWeather','setTimeOfDay','clearWeather','weatherLock','paintSurface','clearSurfaces','clearWalls','clearTraps','revealTraps','destroyLocation'] },
   { label: '🔒 Locks, Reveal & Utility', ids: ['negateField','costSeal','callLock','sealSlot','delayedBlast','verdict','scanAllEnemies','scanAllTurn'] },
 ];
@@ -82996,9 +83063,20 @@ function _applyOnPlayOne(state, unit, card) {
   // 🌟 SUMMON FROM ZONE — deploy a unit straight out of hand / deck / graveyard / Void.
   if (eff.type === 'summonFromZone') {
     const zone = _summonZone(eff.summonZone);
-    const ids = (Array.isArray(eff.summonCardIds) && eff.summonCardIds.length) ? eff.summonCardIds : null;
+    let ids = (Array.isArray(eff.summonCardIds) && eff.summonCardIds.length) ? eff.summonCardIds : null;
     const n = Math.max(1, Math.min(5, eff.amount || 1));
     const pile = (state[owner] && Array.isArray(state[owner][zone.key])) ? state[owner][zone.key] : [];
+    // 🔍 SHARED CARD FILTER — "summon a Ualti unit from your deck" without
+    // listing every id. When a filter is set we resolve it to the matching ids
+    // in that pile, so BOTH the deterministic path and the player's picker
+    // modal (which only understands an id list) honour it.
+    try {
+      if (eff.filter && typeof _cardMatchesFilter === 'function') {
+        const fIds = pile.filter(c => c && _isSummonableCard(c) && _cardMatchesFilter(c, eff.filter))
+          .map(c => c.id).filter(Boolean);
+        ids = ids ? ids.filter(id => fIds.indexOf(id) !== -1) : [...new Set(fIds)];
+      }
+    } catch (e) {}
     const legal = (c) => c && _isSummonableCard(c) && (!ids || ids.indexOf(c.id) !== -1);
     if (!pile.some(legal)) {
       log.push({ msg: `🌟 ${unit.name} finds no unit in ${owner === 'player' ? 'your' : 'their'} ${zone.label} to summon.`, color: 'amber' });
@@ -84789,6 +84867,28 @@ function _applyOnPlayOne(state, unit, card) {
     const aiSpawn = _battleSpawnKalonAtTile(state.units, kalon, owner, freeTiles[0], !!kalon.canActImmediately);
     state.units = aiSpawn.units;
     log.push({ msg: `🌌 ${unit.name} POLYCREATES — ${consumedNames} → ${kalon.name || 'Kalon'}!`, color: 'red' });
+    return { ...state, log };
+  }
+  // ⚰️🩸 ===== SACRIFICE SELF — send THIS card to the graveyard (or Void) =====
+  // The self-cost counterpart of "Sacrifice Ally". As an on-play it is a
+  // downside/cost ("summon X, then this card dies"); chained after another
+  // effect in the Extra slots it is "pay yourself for that". `sendZone:'void'`
+  // banishes instead, so it can never be raised back.
+  if (eff.type === 'sacrificeSelf') {
+    const toVoid = (eff.sendZone === 'void');
+    const me = (state.units || []).find(u => u && u.id === unit.id && u.alive && !u.isHero);
+    if (!me) {
+      // Spells / traps / grave abilities anchor on a synthetic caster — there is
+      // no body to remove, and the card is already on its way to the grave.
+      log.push({ msg: `⚰️ ${unit.name} is spent.`, color: 'amber' });
+      return { ...state, log };
+    }
+    state.units = state.units.map(u => u.id === me.id
+      ? { ...u, alive: false, currentHp: 0, _sacrificed: true, _voided: toVoid } : u);
+    log.push({
+      msg: toVoid ? `⚰️🌌 ${me.name} banishes itself to the Void.` : `⚰️🩸 ${me.name} sacrifices itself.`,
+      color: owner === 'player' ? 'green' : 'red'
+    });
     return { ...state, log };
   }
   // 🪤🎲 ===== SET FROM ZONE — plant a card FACE DOWN on a random tile =====
@@ -110419,6 +110519,13 @@ function renderPricingAdmin() {
         <div id="fdrop-panel" class="small-text ink-dim" style="margin-top:0.6rem">Loading drops…</div>
       </div>
 
+      <!-- 🏆 Tournament results - studio-verified placements. -->
+      <div class="settings-section">
+        <div class="settings-section-title">🏆 Tournament Results (Admin)</div>
+        <div class="settings-section-desc">Record a finish from a community event. It appears on that player's <strong>Emergency Broadcast</strong> profile with a verified ✓. The in-game Colosseum doesn't run brackets yet, so events you host are the real source.</div>
+        <div id="tourn-panel" class="small-text ink-dim" style="margin-top:0.6rem">Loading…</div>
+      </div>
+
       <div class="settings-section">
         <div class="settings-section-title">🏺 Roguelite Relics (Admin)</div>
         <div class="settings-section-desc">Create the relics that appear in the Roguelite campaign editor (Starting relic · node reward relic · Black-Market relic · Mystery outcome). <strong>Only relics you make here show in those pickers.</strong> Numeric effects stack across every relic the player owns; <em>Grant</em> values apply once the moment it's picked up; <em>Revive once</em> = survive a lost battle at 1 HP (Phoenix-style). 📚 Publish to push to all players.</div>
@@ -111290,6 +111397,7 @@ function renderPricingAdmin() {
 
   // 🎁 Founder Drops — painted async (needs the cloud).
   try { _fdropPaint(); } catch (e) {}
+  try { _tournPaint(); } catch (e) {}
 
   // 🏺 Roguelite relic CRUD.
   const _relicPersist = () => { try { (typeof _persistForgeNow === 'function') ? _persistForgeNow() : saveForge(); } catch (e) {} };
@@ -114532,11 +114640,16 @@ function renderCardEditor() {
         <option value="timeOfDay"    ${playReq.type === 'timeOfDay'    ? 'selected' : ''}>🌗 Only during day / night</option>
         <option value="graveTribe"   ${playReq.type === 'graveTribe'   ? 'selected' : ''}>🐰 N different keyword units in your graveyard</option>
         <option value="vanishUnit"   ${playReq.type === 'vanishUnit'   ? 'selected' : ''}>🌌 Vanish a controlled unit (extra cost — filter + min cost below)</option>
+        <option value="banishGraveCost" ${playReq.type === 'banishGraveCost' ? 'selected' : ''}>⚰️💸 ALTERNATE COST — remove N matching cards to play this FREE</option>
       </select>
     </div>
     <div class="editor-field full" style="background:rgba(150,120,200,0.06);border:1px dashed rgba(170,140,220,0.4);border-radius:6px;padding:0.55rem 0.75rem">
-      <label style="font-weight:700;color:#c3a8ee">🐰 Graveyard match (for "N different … in your graveyard")</label>
-      <div class="small-text ink-dim" style="margin:0.2rem 0 0.45rem">Counts DISTINCT cards in your graveyard that match ALL the fields you set below. Set any combination — a name word, an element, a faction, a card type — or leave them blank to count every distinct card. "Minimum Count" above is N.</div>
+      <label style="font-weight:700;color:#c3a8ee">🐰 Card match — for "N different … in your graveyard" AND for ⚰️💸 Alternate Cost</label>
+      <div class="small-text ink-dim" style="margin:0.2rem 0 0.45rem">Matches cards against ALL the fields you set below — a name word, an element, a faction, a card type — or leave them blank for any card. <strong>"Minimum Count" above is N.</strong><br>For <strong>⚰️💸 Alternate Cost</strong> this is the price: remove N matching cards and the card plays for <strong>0 energy</strong>. It stays dimmed and unplayable until you can pay — e.g. <em>count 3 · faction Mage</em> = "Remove 3 mages from your graveyard to play this unit."</div>
+      <div style="margin-bottom:0.45rem"><label class="small-text">⚰️💸 Remove them from</label><select id="ed-playreq-altzone" style="width:100%">
+        <option value="grave" ${(playReq.fromZone || 'grave') === 'grave' ? 'selected' : ''}>⚰️ Your graveyard</option>
+        <option value="field" ${playReq.fromZone === 'field' ? 'selected' : ''}>🛡 Units you control (sacrifice them)</option>
+      </select></div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0.5rem;min-width:0">
         <div style="min-width:0"><label class="small-text">Name contains</label><input id="ed-playreq-gravekw" type="text" maxlength="24" placeholder="e.g. bunny (optional)" value="${escapeHtml(playReq.nameIncludes || playReq.tribe || '')}" style="width:100%;min-width:0"></div>
         <div style="min-width:0"><label class="small-text">Element</label><select id="ed-playreq-graveelem" style="width:100%;min-width:0">${['<option value="any">Any element</option>'].concat((typeof ELEMENTS !== 'undefined' ? ELEMENTS : []).map(e => `<option value="${e}" ${(playReq.element || 'any') === e ? 'selected' : ''}>${escapeHtml(e)}</option>`)).join('')}</select></div>
@@ -118048,7 +118161,18 @@ function captureEditorIntoCard(card) {
   // the same admin-authored card data behaves identically in web + Godot.
   if (document.getElementById('ed-playreq-type')) {
     const reqType = v('ed-playreq-type');
-    if (reqType === 'graveTribe') {
+    if (reqType === 'banishGraveCost') {
+      // ⚰️💸 Alternate cost — removing N matching cards REPLACES the energy cost.
+      card.playRequirement = {
+        type:        'banishGraveCost',
+        fromZone:    v('ed-playreq-altzone') || 'grave',
+        nameIncludes: (v('ed-playreq-gravekw') || '').trim(),
+        element:     v('ed-playreq-graveelem') || 'any',
+        faction:     v('ed-playreq-gravefac') || 'any',
+        cardType:    v('ed-playreq-gravetype') || 'any',
+        count:        Math.max(1, num('ed-playreq-count', 1, 20, 3)),
+      };
+    } else if (reqType === 'graveTribe') {
       // 🐰 Grave-tribe = a hard gate keyed on distinct keyword units in your graveyard.
       card.playRequirement = {
         type:        'graveTribe',
@@ -126416,6 +126540,7 @@ function _activateAssaultCard(instanceId) {
   const _cgRes = _applyConsumeGrave(ns.player, card);
   // 🌌 vanishUnit play-cost — consume the matching controlled unit.
   try { if (card.playRequirement && card.playRequirement.type === 'vanishUnit') { const _vp = _applyVanishPlayCost({ ...ns }, 'player', card); ns.units = _vp.units; ns.log = _vp.log || ns.log; } } catch (e) {}
+  try { if (card.playRequirement && card.playRequirement.type === 'banishGraveCost') { const _ap = _applyAltPlayCost({ ...ns }, 'player', card); ns.units = _ap.units; ns.log = _ap.log || ns.log; } } catch (e) {}
   if (_cgRes.removed) log.push({ msg: `🪦 ${escapeHtml(card.name)} consumes ${_cgRes.removed} card${_cgRes.removed === 1 ? '' : 's'} from your graveyard.`, color: 'amber' });
   ns.player = {
     ...ns.player,
@@ -136448,7 +136573,81 @@ function _applyVanishPlayCost(state, side, card) {
   } catch (e) {}
   return state;
 }
+// ⚰️💸 ALTERNATE COST — "Remove 3 mages from your graveyard to play this unit."
+// The removal IS the cost: the card's energy cost becomes 0 when it can be paid
+// (see getEffectiveCardCost) and becomes unpayable when it can't, so the hand
+// never highlights a card whose restriction you cannot meet.
+// `fromZone`: 'grave' (default) — banish matching cards out of your graveyard
+//             'field' — sacrifice matching units you control ("from themselves")
+// Matching reuses the shared Card Filter (cardType / element / faction / name).
+function _altCostTargets(state, side, card) {
+  try {
+    const req = card && card.playRequirement;
+    if (!req || req.type !== 'banishGraveCost') return null;
+    const need = Math.max(1, req.count | 0);
+    const meKey = (side === 'ai') ? 'ai' : 'player';
+    const f = {
+      nameIncludes: req.nameIncludes || '',
+      element: req.element || 'any',
+      faction: req.faction || 'any',
+      cardType: req.cardType || 'any',
+    };
+    const match = (c) => {
+      if (!c) return false;
+      try { return (typeof _cardMatchesFilter === 'function') ? _cardMatchesFilter(c, f) : true; }
+      catch (e) { return false; }
+    };
+    if (req.fromZone === 'field') {
+      const units = (state && state.units || []).filter(u =>
+        u && u.alive && !u.isHero && u.owner === meKey && match(_cardDefById ? (_cardDefById(u.cardId) || u) : u));
+      return units.length >= need ? units.slice(0, need).map(u => u.id) : null;
+    }
+    const grave = (state && state[meKey] && Array.isArray(state[meKey].graveyard)) ? state[meKey].graveyard : [];
+    const idxs = [];
+    grave.forEach((c, i) => { if (idxs.length < need && match(c)) idxs.push(i); });
+    return idxs.length >= need ? idxs : null;
+  } catch (e) { return null; }
+}
+// Spend it. Grave entries are spliced highest-index-first; field units vanish.
+function _applyAltPlayCost(state, side, card) {
+  const out = { units: state.units, log: state.log };
+  try {
+    const req = card && card.playRequirement;
+    if (!req || req.type !== 'banishGraveCost') return out;
+    const picks = _altCostTargets(state, side, card);
+    if (!picks || !picks.length) return out;
+    const meKey = (side === 'ai') ? 'ai' : 'player';
+    const log = [...(state.log || [])];
+    if (req.fromZone === 'field') {
+      const ids = new Set(picks);
+      const names = (state.units || []).filter(u => ids.has(u.id)).map(u => u.name).join(' + ');
+      out.units = (state.units || []).filter(u => !ids.has(u.id));   // vanish, no grave
+      log.push({ msg: `⚰️ ${names} are given up to bring out ${card.name || 'that card'}.`, color: side === 'ai' ? 'red' : 'green' });
+    } else {
+      const grave = (state[meKey] && Array.isArray(state[meKey].graveyard)) ? state[meKey].graveyard : [];
+      const names = picks.map(i => (grave[i] && grave[i].name) || 'a card').join(' + ');
+      picks.slice().sort((a, b) => b - a).forEach(i => { try { grave.splice(i, 1); } catch (e) {} });
+      log.push({ msg: `⚰️ ${names} are removed from your graveyard to bring out ${card.name || 'that card'}.`, color: side === 'ai' ? 'red' : 'green' });
+    }
+    out.log = log;
+  } catch (e) {}
+  return out;
+}
 function _checkPlayRequirement(card, state, side) {
+  // ⚰️💸 ALTERNATE-COST GATE — blocks the play (and, via getEffectiveCardCost,
+  // the highlight) until the removal can actually be paid.
+  if (card && card.playRequirement && card.playRequirement.type === 'banishGraveCost') {
+    if (!_altCostTargets(state, side, card)) {
+      const r = card.playRequirement;
+      const n = Math.max(1, r.count | 0);
+      const what = r.nameIncludes || (r.faction && r.faction !== 'any' ? r.faction : '')
+        || (r.element && r.element !== 'any' ? r.element : '')
+        || (r.cardType && r.cardType !== 'any' ? r.cardType : 'matching');
+      const where = (r.fromZone === 'field') ? 'you control' : 'in your graveyard';
+      return `Play this by removing ${n} ${what} card${n === 1 ? '' : 's'} ${where} — you don't have enough.`;
+    }
+    return null;
+  }
   // 🌌 VANISH-COST GATE — "can only be played by vanishing a [filter] unit you
   // control (cost N+)". Blocks the play when no matching unit is on your board;
   // the actual vanish happens at the play-commit site.
@@ -136740,6 +136939,7 @@ function placeUnit(card, pos) {
     const _cg = _applyConsumeGrave(s.player, card);
     // 🌌 vanishUnit play-cost — consume the matching controlled unit.
     try { if (card.playRequirement && card.playRequirement.type === 'vanishUnit') { const _vp = _applyVanishPlayCost({ ...s }, 'player', card); s.units = _vp.units; s.log = _vp.log || s.log; } } catch (e) {}
+  try { if (card.playRequirement && card.playRequirement.type === 'banishGraveCost') { const _ap = _applyAltPlayCost({ ...s }, 'player', card); s.units = _ap.units; s.log = _ap.log || s.log; } } catch (e) {}
     if (_cg.removed) {
       s = { ...s,
         player: { ...s.player, graveyard: _cg.graveyard },
@@ -137724,6 +137924,7 @@ function _resolveSpellAfterChain(card) {
     const _cg = _applyConsumeGrave(ns.player, card);
     // 🌌 vanishUnit play-cost — consume the matching controlled unit.
     try { if (card.playRequirement && card.playRequirement.type === 'vanishUnit') { const _vp = _applyVanishPlayCost({ ...ns }, 'player', card); ns.units = _vp.units; ns.log = _vp.log || ns.log; } } catch (e) {}
+  try { if (card.playRequirement && card.playRequirement.type === 'banishGraveCost') { const _ap = _applyAltPlayCost({ ...ns }, 'player', card); ns.units = _ap.units; ns.log = _ap.log || ns.log; } } catch (e) {}
     ns.player = { ...ns.player, graveyard: _cg.graveyard };
     if (_cg.removed) log.push({ msg: `🪦 ${card.name} consumes ${_cg.removed} card${_cg.removed === 1 ? '' : 's'} from your graveyard.`, color: 'amber' });
   }
@@ -193486,6 +193687,9 @@ function _describeOnPlayEffectBody(eff) {
     case 'drainLife':     { const a=Math.max(1,eff.amount||3); return `🩸 Deals ${a} damage to every enemy within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'} and heals this unit for the total dealt.`; }
     case 'setWeather':    { const wt=eff.weatherType||'rain'; const meta=(typeof WEATHER_CARDS!=='undefined'?WEATHER_CARDS.find(w=>w&&w.weatherType===wt):null); const wn=(meta&&meta.name)||wt; const wi=(meta&&meta.icon)||'🌦'; const d=Math.max(1,Math.min(12,eff.duration||4)); return `${wi} Changes the weather to ${wn} for ${d} turn${d===1?'':'s'}.`; }
     case 'setTimeOfDay':  { const w=eff.timeOfDay||'night'; return w==='toggle'?'🌗 Flips the battlefield between day and night.':(w==='day'?'☀️ Turns the battlefield to day — Light empowered.':'🌙 Turns the battlefield to night — Shadow empowered.'); }
+    case 'sacrificeSelf': return (eff.sendZone==='void')
+      ? '⚰️🌌 This card banishes itself to the Void.'
+      : '⚰️🩸 This card sacrifices itself — it is sent to the graveyard.';
     case 'setFromZone':   { const n=Math.max(1,Math.min(5,eff.amount||1)); const z=(eff.setZone==='grave')?'graveyard':'deck';
                             const k=(eff.setKind==='unit')?'unit':'trap';
                             const fd=(typeof _describeCardFilter==='function')?_describeCardFilter(eff.filter):'';

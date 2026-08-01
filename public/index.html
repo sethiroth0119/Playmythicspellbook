@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119s1';
+  window.BUILD_VERSION = 'v119s2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39345,6 +39345,11 @@ const Forge = {
   // 🛒 SHOP-PURCHASABLE TOMBSTONE COSMETICS — list of { id, name, image, cost }
   // entries the admin defines. Players spend Cinders to unlock + equip them.
   tombstoneCosmetics: [],
+  // 🧑 PLAYER AVATARS — profile pictures. { id, name, img, price, currency,
+  // free }. Free ones are equippable by anyone; paid ones cost Cinder or Aza
+  // in the Vendor Market. The equipped avatar is pushed to Emergency Broadcast
+  // so the website profile shows the same face as the game.
+  avatars: [],
   // 🎴 DECK SLEEVES — card-back skins, same shape as tombstoneCosmetics
   // ({ id, name, img, price, currency, exclusive }). `exclusive: true` keeps a
   // sleeve OUT of the Vendor Market so it can only arrive from a Founder Drop
@@ -42210,6 +42215,10 @@ const Profile = {
   equippedTombstone: null,
   // 🛒 IDs of tombstone cosmetics the player has unlocked (via shop purchase).
   ownedTombstones: [],
+  // 🧑 Avatars the player owns (ids) + the equipped one (IMAGE, like the
+  // tombstone/sleeve convention). Mirrored to Emergency Broadcast on equip.
+  ownedAvatars: [],
+  equippedAvatar: null,
   // 🎴 Deck sleeves — the card-back skin. Exclusive sleeves arrive from Founder
   // Drops / Shop packages (gift inbox), never from the Vendor Market.
   // equippedSleeve holds the IMAGE (same convention as equippedTombstone).
@@ -44202,6 +44211,8 @@ async function cloudSyncProfile() {
       __fieldBag__:         (Profile.fieldBag         && typeof Profile.fieldBag         === 'object') ? Profile.fieldBag         : {},
       __ownedTombstones__:  Array.isArray(Profile.ownedTombstones) ? Profile.ownedTombstones : [],
       __equippedTombstone__: (typeof Profile.equippedTombstone === 'string') ? Profile.equippedTombstone : null,
+      __ownedAvatars__:     Array.isArray(Profile.ownedAvatars) ? Profile.ownedAvatars : [],
+      __equippedAvatar__:   (typeof Profile.equippedAvatar === 'string') ? Profile.equippedAvatar : null,
       __ownedSleeves__:     Array.isArray(Profile.ownedSleeves) ? Profile.ownedSleeves : [],
       __equippedSleeve__:   (typeof Profile.equippedSleeve === 'string') ? Profile.equippedSleeve : null,
       // 🦸 Chosen Camp Heights survivor id (set once on first entry; sticks).
@@ -45334,6 +45345,12 @@ async function cloudFetchProfile() {
       if (typeof f.__equippedTombstone__ === 'string') Profile.equippedTombstone = f.__equippedTombstone__;
       // 🎴 Deck sleeves — union-merge owned ids so a sleeve unlocked on another
       // device is never lost; equipped is last-writer-wins like the tombstone.
+      if (Array.isArray(f.__ownedAvatars__)) {
+        const aset = {};
+        [].concat(Profile.ownedAvatars || [], f.__ownedAvatars__).forEach(id => { if (typeof id === 'string') aset[id] = 1; });
+        Profile.ownedAvatars = Object.keys(aset);
+      }
+      if (typeof f.__equippedAvatar__ === 'string') Profile.equippedAvatar = f.__equippedAvatar__;
       if (Array.isArray(f.__ownedSleeves__)) {
         const sset = {};
         [].concat(Profile.ownedSleeves || [], f.__ownedSleeves__).forEach(id => { if (typeof id === 'string') sset[id] = 1; });
@@ -46014,7 +46031,7 @@ async function _cloudifyAllAssets(onProgress) {
     ['tutorials', Forge.tutorials],
     ['resources', Forge.customResources], ['resourceSkins', Forge.resourceSkins],
     ['onboarding', Forge.onboarding], ['items', Forge.customItems],
-    ['tombCosmetics', Forge.tombstoneCosmetics], ['deckSleeves', Forge.deckSleeves], ['cards', Forge.customCards],
+    ['tombCosmetics', Forge.tombstoneCosmetics], ['deckSleeves', Forge.deckSleeves], ['avatars', Forge.avatars], ['cards', Forge.customCards],
   ];
   for (const [name, obj] of targets) {
     if (!obj || typeof obj !== 'object') continue;
@@ -47000,6 +47017,7 @@ function _applyCatalogRow(data) {
   Catalog.tombstoneArt = rawMoves.__tombstone_art__ || null;
   Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
   Catalog.deckSleeves = Array.isArray(rawMoves.__deck_sleeves__) ? rawMoves.__deck_sleeves__ : [];
+  Catalog.avatars = Array.isArray(rawMoves.__avatars__) ? rawMoves.__avatars__ : [];
   // 🧰 Resource customization from the shared row → apply to the live tables so
   // every player sees admin-added resources + reskins (icons/names/images).
   try {
@@ -47569,6 +47587,7 @@ async function cloudPublishCatalog(opts) {
       __tombstone_art__: Forge.tombstoneArt || null,
       __tombstone_cosmetics__: Array.isArray(Forge.tombstoneCosmetics) ? Forge.tombstoneCosmetics : [],
       __deck_sleeves__: Array.isArray(Forge.deckSleeves) ? Forge.deckSleeves : [],
+      __avatars__: Array.isArray(Forge.avatars) ? Forge.avatars : [],
       // 🃏 BUILT-IN card metadata (id/name/icon/type/cost only — no art, they
       // don't have any). The published `cards` array carries Forge cards only,
       // so without this the website can't name a starter-deck card at all: the
@@ -62910,6 +62929,8 @@ async function loadForgeContentFromIdb() {
     if (typeof ta === 'string' && ta && !String(Forge.tombstoneArt || '').length) { Forge.tombstoneArt = ta; changed = true; }
     const tc = await idbGet('forge_tombstoneCosmetics');
     if (Array.isArray(tc) && tc.length && (!Array.isArray(Forge.tombstoneCosmetics) || !Forge.tombstoneCosmetics.length)) { Forge.tombstoneCosmetics = tc; changed = true; }
+    const avs = await idbGet('forge_avatars');
+    if (Array.isArray(avs) && avs.length && (!Array.isArray(Forge.avatars) || !Forge.avatars.length)) { Forge.avatars = avs; changed = true; }
     const dsl = await idbGet('forge_deckSleeves');
     if (Array.isArray(dsl) && dsl.length && (!Array.isArray(Forge.deckSleeves) || !Forge.deckSleeves.length)) { Forge.deckSleeves = dsl; changed = true; }
     const rr = await idbGet('forge_rlcRelics');
@@ -62976,6 +62997,7 @@ function loadForge() {
     try { const cmp = localStorage.getItem('hg_campaigns'); if (cmp) { const x = JSON.parse(cmp); if (Array.isArray(x)) Forge.campaigns = x; } } catch (err) {}
     try { const ta = localStorage.getItem('hg_tombstoneArt'); if (ta != null) { const x = JSON.parse(ta); if (typeof x === 'string' && x) Forge.tombstoneArt = x; } } catch (err) {}
     try { const tc = localStorage.getItem('hg_tombstoneCosmetics'); if (tc) { const x = JSON.parse(tc); if (Array.isArray(x)) Forge.tombstoneCosmetics = x; } } catch (err) {}
+    try { const av = localStorage.getItem('hg_avatars'); if (av) { const x = JSON.parse(av); if (Array.isArray(x)) Forge.avatars = x; } } catch (err) {}
     try { const ds = localStorage.getItem('hg_deckSleeves'); if (ds) { const x = JSON.parse(ds); if (Array.isArray(x)) Forge.deckSleeves = x; } } catch (err) {}
     try { const rr = localStorage.getItem('hg_rlcRelics'); if (rr) { const x = JSON.parse(rr); if (Array.isArray(x)) Forge.rlcRelics = x; } } catch (err) {}
     try { const cu = localStorage.getItem('hg_customUltimates'); if (cu) { const x = JSON.parse(cu); if (Array.isArray(x)) Forge.customUltimates = x; } } catch (err) {}
@@ -63238,6 +63260,8 @@ function loadForge() {
       if (Array.isArray(p.ownedTombstones)) Profile.ownedTombstones = p.ownedTombstones.filter(x => typeof x === 'string');
       if (typeof p.equippedTombstone === 'string' || p.equippedTombstone === null) Profile.equippedTombstone = p.equippedTombstone;
       // 🎴 Deck sleeves — same reasoning as the tombstone pair above.
+      if (Array.isArray(p.ownedAvatars)) Profile.ownedAvatars = p.ownedAvatars.filter(x => typeof x === 'string');
+      if (typeof p.equippedAvatar === 'string' || p.equippedAvatar === null) Profile.equippedAvatar = p.equippedAvatar;
       if (Array.isArray(p.ownedSleeves)) Profile.ownedSleeves = p.ownedSleeves.filter(x => typeof x === 'string');
       if (typeof p.equippedSleeve === 'string' || p.equippedSleeve === null) Profile.equippedSleeve = p.equippedSleeve;
       // 🦸 Camp Heights survivor pick — restore so the picker NEVER re-fires
@@ -63682,6 +63706,7 @@ function saveForge() {
       idbSet('forge_tombstoneArt',       Forge.tombstoneArt       || null);
       idbSet('forge_tombstoneCosmetics', Forge.tombstoneCosmetics || []);
       idbSet('forge_deckSleeves',        Forge.deckSleeves        || []);
+      idbSet('forge_avatars',            Forge.avatars            || []);
       // 🎓 Onboarding config (welcome image / narrator portrait / narration
       // audio data: URLs). Previously this ONLY survived a successful catalog
       // Publish — an admin edit + reload lost it, and an oversized media blob
@@ -63774,6 +63799,7 @@ function saveForge() {
     { key: 'hg_tombstoneArt',       value: _stripDataUrls(Forge.tombstoneArt || null), name: 'tombstoneArt' },
     { key: 'hg_tombstoneCosmetics', value: _stripDataUrls(Forge.tombstoneCosmetics || []), name: 'tombstoneCosmetics' },
     { key: 'hg_deckSleeves', value: _stripDataUrls(Forge.deckSleeves || []), name: 'deckSleeves' },
+    { key: 'hg_avatars', value: _stripDataUrls(Forge.avatars || []), name: 'avatars' },
     { key: 'hg_rlcRelics',          value: _stripDataUrls(Forge.rlcRelics || []),          name: 'rlcRelics' },
     // ⚡ Custom/edited hero ultimates + per-hero assignment — tiny JSON, safe
     // in the localStorage fast-path. Distributed to players via the catalog.
@@ -68111,6 +68137,53 @@ function getAllDeckSleeves() {
   (Array.isArray(Catalog.deckSleeves) ? Catalog.deckSleeves : []).forEach(s => { if (s && s.id) byId[s.id] = s; });
   (Array.isArray(Forge.deckSleeves)   ? Forge.deckSleeves   : []).forEach(s => { if (s && s.id) byId[s.id] = s; });
   return Object.values(byId).filter(s => s && s.img);
+}
+// 🧑 AVATARS — merged published + admin-local (local wins so the Forge shows
+// edits before publishing).
+function getAllAvatars() {
+  const byId = {};
+  (Array.isArray(Catalog.avatars) ? Catalog.avatars : []).forEach(a => { if (a && a.id) byId[a.id] = a; });
+  (Array.isArray(Forge.avatars)   ? Forge.avatars   : []).forEach(a => { if (a && a.id) byId[a.id] = a; });
+  return Object.values(byId).filter(a => a && a.img);
+}
+function _avatarById(id) { return getAllAvatars().find(a => a.id === id) || null; }
+// Push the equipped avatar to the website profile so Emergency Broadcast shows
+// the same face. Best-effort: never blocks equipping if the player is offline.
+async function _syncAvatarToBroadcast(img) {
+  try {
+    if (!(typeof Cloud !== 'undefined' && Cloud.client && Profile.cloud && Profile.cloud.signedIn && Profile.cloud.userId)) return;
+    await Cloud.client.from('eb_profiles').upsert(
+      { user_id: Profile.cloud.userId, avatar_url: img || null, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id' });
+  } catch (e) {}
+}
+// Equip (free/owned) or buy-then-equip. Returns true when the avatar is worn.
+async function equipOrBuyAvatar(id) {
+  const a = _avatarById(id);
+  if (!a) { showToast('That avatar is no longer available.', 2400); return false; }
+  if (!Array.isArray(Profile.ownedAvatars)) Profile.ownedAvatars = [];
+  const owned = a.free || Profile.ownedAvatars.indexOf(id) >= 0;
+  if (!owned) {
+    const cur = a.currency === 'sovereigns' ? 'sovereigns' : 'gems';
+    const price = Math.max(0, Number(a.price) || 0);
+    const bal = cur === 'sovereigns' ? (Profile.sovereigns || 0) : (Profile.gems || 0);
+    if (bal < price) { showToast('Not enough ' + (cur === 'sovereigns' ? 'Aza coin' : 'Cinders') + '.', 3000); return false; }
+    const ok = await showGameConfirm({
+      title: '🧑 Buy Avatar',
+      bodyHtml: '<div style="text-align:center"><img src="' + a.img + '" style="width:96px;height:96px;object-fit:cover;border-radius:12px;border:1px solid rgba(212,175,55,0.5)"><div style="margin-top:8px;font-weight:800;color:#ffd166">' +
+        escapeHtml(a.name || 'Avatar') + '</div><div class="small-text ink-dim">' + price.toLocaleString() + ' ' + (cur === 'sovereigns' ? 'Aza coin' : 'Cinders') + '</div></div>',
+      yesLabel: 'BUY + EQUIP', noLabel: 'Cancel',
+    });
+    if (!ok) return false;
+    if (cur === 'sovereigns') Profile.sovereigns = Math.max(0, (Profile.sovereigns || 0) - price);
+    else Profile.gems = Math.max(0, (Profile.gems || 0) - price);
+    Profile.ownedAvatars.push(id);
+  }
+  Profile.equippedAvatar = a.img;
+  try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); else saveProfile(); } catch (e) {}
+  _syncAvatarToBroadcast(a.img);
+  showToast('🧑 ' + (a.name || 'Avatar') + ' equipped — it shows on your Emergency Broadcast profile too.', 4200);
+  return true;
 }
 function _deckSleeveById(id) {
   return getAllDeckSleeves().find(s => s.id === id) || null;
@@ -77245,6 +77318,9 @@ const ONPLAY_TYPES = [
   // 🌦 Any card can now shift the weather or flip day↔night on play / trigger / activate.
   { id: 'setWeather',    label: '🌦 Change Weather (set the battlefield weather + duration)', needs: ['weatherType','duration'] },
   { id: 'setTimeOfDay',  label: '🌙 Set Day / Night (make it night, day, or toggle)',         needs: ['timeOfDay'] },
+  // 🪤🎲 Plant a card from your deck / graveyard FACE DOWN on a random tile.
+  // The enemy cannot see it; a trap springs through the normal trap pipeline.
+  { id: 'setFromZone',   label: '🪤🎲 Set Face-Down (plant a trap/unit from deck or grave on a RANDOM tile)', needs: ['setZone','setKind','amount','filter'] },
 ];
 
 // 🗂 Effect-type CATEGORIES — group the ~75 on-play effects into labelled
@@ -77258,7 +77334,7 @@ const ONPLAY_TYPE_GROUPS = [
   { label: '👑 Control & Movement', ids: ['takeControl','takeControlAll','bounceUnit','vanishTemp','vanishReturn','pullUnits','pushUnits','swapPositions','transformAlly','cloneUnit'] },
   { label: '🃏 Cards & Hand',       ids: ['drawCards','drawFiltered','searchDeck','discardCards','discardSelf','peekHand','peekDiscard','peekBanish','stealCard','cheapenHand','scry','inspire','shuffleToDeck','copyLastMove'] },
   { label: '⚰️ Graveyard & Void',   ids: ['millSelf','millSearch','millEnemy','surveil','deckToGrave','reviveGrave','graveToHand','selfToHand','banishGrave','vanishGraveRandom','vanishGravePick','vanishGraveUnit','negateGraveyard','graveSteal','voidFromGrave','banishDeck','banishHand','drawFromVoid','recycleVoid'] },
-  { label: '🌟 Summon & Sacrifice', ids: ['summon','summonSelf','summonFromZone','polycreate','sacrifice','sacrificeNearby','tributeDraw','sendMatching'] },
+  { label: '🌟 Summon & Sacrifice', ids: ['summon','summonSelf','summonFromZone','setFromZone','polycreate','sacrifice','sacrificeNearby','tributeDraw','sendMatching'] },
   { label: '🌦 Field, Weather & Day-Night', ids: ['setWeather','setTimeOfDay','clearWeather','weatherLock','paintSurface','clearSurfaces','clearWalls','clearTraps','revealTraps','destroyLocation'] },
   { label: '🔒 Locks, Reveal & Utility', ids: ['negateField','costSeal','callLock','sealSlot','delayedBlast','verdict','scanAllEnemies','scanAllTurn'] },
 ];
@@ -77283,6 +77359,27 @@ function _onplayTypeOptgroups(selectedId) {
 // 🌌⛓ Shared "Predation Fusion" field. The Kalon to summon reuses the existing
 // Summon/Kalon card-id input that every effect editor already has; this adds the
 // one thing that is new — what the stolen enemy unit is TREATED AS.
+// 🪤🎲 Shared "Set Face-Down" fields. Which pile to pull from, and whether the
+// hidden card is a tile TRAP or a face-down (Subterfuge) unit. The WHICH-card
+// choice reuses the existing Card Filter / Summon-card allow-list.
+function _setFromZoneFieldHtml(prefix, eff) {
+  eff = eff || {};
+  const z = eff.setZone || 'deck', k = eff.setKind || 'trap';
+  const zOpts = [['deck', '🎴 Your deck'], ['grave', '⚰️ Your graveyard']]
+    .map(([v, l]) => `<option value="${v}" ${z === v ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
+  const kOpts = [['trap', '🪤 Trap — sits on the tile, springs like a set trap'], ['unit', '🃏 Unit — buried face down (Subterfuge; on-play waits for the flip)']]
+    .map(([v, l]) => `<option value="${v}" ${k === v ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
+  return `<div class="editor-field full" style="background:rgba(90,190,220,0.08);border:1px dashed rgba(90,190,220,0.45);border-radius:6px;padding:0.5rem 0.7rem;margin-top:0.35rem">`
+    + `<label class="small-text" style="font-weight:700;color:#8fd8ee">🪤🎲 Set Face-Down <span class="ink-dim" style="font-weight:400">(only for "Set Face-Down")</span></label>`
+    + `<div class="small-text ink-dim" style="margin:0.2rem 0 0.35rem">Plants the card on a <strong>random free tile</strong>, hidden from the opponent. <strong>Amount</strong> above = how many. Use the Card Filter (or the Summon-card allow-list) to pick <em>which</em> card — leave both empty for any card of that kind.</div>`
+    + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem">`
+    + `<div><label class="small-text">From</label><select id="${prefix}-setzone">${zOpts}</select></div>`
+    + `<div><label class="small-text">Set as</label><select id="${prefix}-setkind">${kOpts}</select></div>`
+    + `</div></div>`;
+}
+// Note: "tunnel from deck/grave" is NOT wired here — burying a unit on a
+// surface-timer is a separate mechanic; this plants it face down immediately.
+
 const POLY_MAT_SOURCES = [
   ['field', '🛡 Your field',      'units you control on the board (the classic rule)'],
   ['enemy', '⛓ Steal from enemy', "tear a unit off the OPPONENT'S board and fuse it"],
@@ -84692,6 +84789,87 @@ function _applyOnPlayOne(state, unit, card) {
     const aiSpawn = _battleSpawnKalonAtTile(state.units, kalon, owner, freeTiles[0], !!kalon.canActImmediately);
     state.units = aiSpawn.units;
     log.push({ msg: `🌌 ${unit.name} POLYCREATES — ${consumedNames} → ${kalon.name || 'Kalon'}!`, color: 'red' });
+    return { ...state, log };
+  }
+  // 🪤🎲 ===== SET FROM ZONE — plant a card FACE DOWN on a random tile =====
+  // "Place a Mind-Warping trap from your deck face down randomly on the field
+  //  where your enemy cannot see it."
+  // A trap lives on the TILE (`tile.trap = {card, owner}`) exactly like one set
+  // from hand, so it is hidden and springs through the normal trap pipeline —
+  // the enemy learns about it the hard way. `setKind:'unit'` instead buries a
+  // face-down Subterfuge unit (its on-play is held until it flips).
+  if (eff.type === 'setFromZone') {
+    const side = state[owner] || {};
+    const zoneKey = (eff.setZone === 'grave') ? 'graveyard' : 'deck';
+    const pile = Array.isArray(side[zoneKey]) ? side[zoneKey] : [];
+    if (!pile.length) {
+      log.push({ msg: `🪤 ${unit.name} reaches into an empty ${eff.setZone === 'grave' ? 'graveyard' : 'deck'}.`, color: 'amber' });
+      return { ...state, log };
+    }
+    const wantKind = (eff.setKind === 'unit') ? 'unit' : 'trap';
+    const resolve = (entry) => {
+      try { return (entry && typeof entry === 'object') ? entry : (typeof resolveDeckCard === 'function' ? resolveDeckCard(entry) : null); }
+      catch (e) { return null; }
+    };
+    // Which cards qualify: right type, plus the shared Card Filter / id allow-list.
+    const ids = Array.isArray(eff.summonCardIds) ? eff.summonCardIds.filter(Boolean) : [];
+    const idxs = [];
+    pile.forEach((entry, i) => {
+      const c = resolve(entry); if (!c) return;
+      const t = c.type || 'unit';
+      if (wantKind === 'trap' ? (t !== 'trap') : (t !== 'unit' && t !== 'summon')) return;
+      if (ids.length && ids.indexOf(c.id) < 0 && ids.indexOf(c.cardId) < 0) return;
+      if (!ids.length && eff.filter && typeof _cardMatchesFilter === 'function' && !_cardMatchesFilter(c, eff.filter)) return;
+      idxs.push(i);
+    });
+    if (!idxs.length) {
+      log.push({ msg: `🪤 ${unit.name} finds no matching ${wantKind} to set.`, color: 'amber' });
+      return { ...state, log };
+    }
+    // Every free tile on the board — no trap, no unit standing on it.
+    const free = [];
+    (state.board || []).forEach((row, y) => (row || []).forEach((t, x) => {
+      if (!t || t.trap) return;
+      if (typeof getOccupant === 'function' && getOccupant({ x, y }, state.units)) return;
+      free.push({ x, y });
+    }));
+    if (!free.length) {
+      log.push({ msg: `🪤 ${unit.name} has nowhere to hide it — the field is full.`, color: 'amber' });
+      return { ...state, log };
+    }
+    const want = Math.max(1, Math.min(5, eff.amount || 1));
+    const placed = [];
+    const takenIdx = [];
+    for (let n = 0; n < want && idxs.length && free.length; n++) {
+      const pickPos = idxs.splice(Math.floor(Math.random() * idxs.length), 1)[0];
+      const card = resolve(pile[pickPos]); if (!card) continue;
+      takenIdx.push(pickPos);
+      const spot = free.splice(Math.floor(Math.random() * free.length), 1)[0];
+      if (wantKind === 'trap') {
+        state.board = state.board.map((row, y) => row.map((t, x) =>
+          (x === spot.x && y === spot.y) ? { ...t, trap: { card: { ...card }, owner } } : t));
+      } else {
+        try {
+          const u = buildUnit({ ...card, isSubterfuge: true }, owner, spot);
+          if (u) { u.isFaceDown = true; state.units = (state.units || []).concat([u]); }
+        } catch (e) { try { console.warn('[setFromZone unit]', e); } catch (_) {} }
+      }
+      placed.push(card.name || 'a card');
+    }
+    // Remove the taken cards from the pile, highest index first.
+    takenIdx.sort((a, b) => b - a).forEach(i => { try { pile.splice(i, 1); } catch (e) {} });
+    if (!placed.length) {
+      log.push({ msg: `🪤 ${unit.name}'s ambush fails to set.`, color: 'amber' });
+      return { ...state, log };
+    }
+    // ⚠ The OWNER is told what they hid; the log line never names the tile, and
+    // the opponent's own log shows only that something was set.
+    log.push({
+      msg: (owner === 'player')
+        ? `🪤 ${unit.name} hides ${placed.join(' + ')} face down somewhere on the field — the enemy cannot see it.`
+        : `🪤 ${unit.name} sets something face down on the field…`,
+      color: owner === 'player' ? 'green' : 'red'
+    });
     return { ...state, log };
   }
   // 🌤 ===== Clear active weather =====
@@ -110175,6 +110353,34 @@ function renderPricingAdmin() {
           </div>
         </div>
 
+        <!-- 🧑 Player avatars — free or purchasable profile pictures. -->
+        <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px dashed rgba(184,136,255,0.25)">
+          <div class="settings-section-title" style="font-size:1rem">🧑 Player Avatars</div>
+          <div class="settings-section-desc">Profile pictures players pick from in <strong>Settings → 🧑 Avatar</strong>. Tick <strong>Free</strong> and anyone can wear it; otherwise it costs Cinder or Aza coin. The equipped avatar also becomes their picture on <strong>Emergency Broadcast</strong>.</div>
+          <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.6rem">
+            ${(Forge.avatars || []).length === 0 ? `<div class="small-text ink-dim" style="padding:0.5rem 0">No avatars yet — add one below.</div>` : (Forge.avatars || []).map((av, i) => `
+              <div style="width:118px;padding:0.5rem;background:rgba(15,8,30,0.5);border:1px solid rgba(184,136,255,0.25);border-radius:8px;text-align:center">
+                <img src="${av.img}" alt="" style="width:84px;height:84px;object-fit:cover;border-radius:10px;border:1px solid rgba(212,175,55,0.45)">
+                <div class="small-text" style="color:#ffd166;font-weight:700;margin-top:4px">${escapeHtml(av.name || 'Avatar')}</div>
+                <div class="small-text ink-dim">${av.free ? 'Free' : (Math.max(0, Number(av.price) || 0).toLocaleString() + ' ' + (av.currency === 'sovereigns' ? '👑' : '🔥'))}</div>
+                <button class="btn-mini" data-avatar-del="${i}" style="color:#ff8080;margin-top:3px">🗑</button>
+              </div>`).join('')}
+          </div>
+          <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-top:0.7rem">
+            <input id="avatar-name" type="text" placeholder="Avatar name" style="flex:1 1 150px;min-width:130px;padding:0.4rem 0.6rem;background:rgba(15,8,30,0.65);border:1px solid rgba(184,136,255,0.3);border-radius:4px;color:#e8e0ff;font-family:'Crimson Text',serif">
+            <input id="avatar-price" type="number" min="0" value="500" title="Price (ignored when Free)" style="width:100px;padding:0.4rem 0.6rem;background:rgba(15,8,30,0.65);border:1px solid rgba(184,136,255,0.3);border-radius:4px;color:#e8e0ff">
+            <select id="avatar-cur" style="padding:0.4rem;background:rgba(15,8,30,0.65);border:1px solid rgba(184,136,255,0.3);border-radius:4px;color:#e8e0ff">
+              <option value="gems">🔥 Cinder</option>
+              <option value="sovereigns">👑 Aza coin</option>
+            </select>
+            <label class="small-text" style="display:inline-flex;align-items:center;gap:5px;color:#9fe8bd;white-space:nowrap">
+              <input type="checkbox" id="avatar-free"> Free
+            </label>
+            <input type="file" id="avatar-file" accept="image/*" style="display:none">
+            <button class="btn-primary btn-mini" id="btn-avatar-add">📤 Upload + Add</button>
+          </div>
+        </div>
+
         <!-- 🎴 Deck sleeves — the card-back skin. Same model as tombstones. -->
         <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px dashed rgba(184,136,255,0.25)">
           <div class="settings-section-title" style="font-size:1rem">🎴 Deck Sleeves</div>
@@ -111004,6 +111210,41 @@ function renderPricingAdmin() {
     if (!Array.isArray(Forge.tombstoneCosmetics) || !Forge.tombstoneCosmetics[i]) return;
     if (!(await gcConfirm('Remove "' + (Forge.tombstoneCosmetics[i].name || 'this cosmetic') + '"? Players who already bought it keep it.'))) return;
     Forge.tombstoneCosmetics.splice(i, 1);
+    if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge();
+    render();
+  });
+
+  // 🧑 Avatar CRUD.
+  const bAvAdd = document.getElementById('btn-avatar-add');
+  const bAvFile = document.getElementById('avatar-file');
+  if (bAvAdd && bAvFile) {
+    bAvAdd.onclick = () => bAvFile.click();
+    bAvFile.onchange = async () => {
+      const file = bAvFile.files && bAvFile.files[0];
+      if (!file) return;
+      const nm = (document.getElementById('avatar-name') || {}).value || '';
+      if (!nm.trim()) { showToast('Give the avatar a name first.', 2400); bAvFile.value = ''; return; }
+      const pr = Math.max(0, parseInt((document.getElementById('avatar-price') || {}).value, 10) || 0);
+      const cur = ((document.getElementById('avatar-cur') || {}).value === 'sovereigns') ? 'sovereigns' : 'gems';
+      const free = !!(document.getElementById('avatar-free') || {}).checked;
+      bAvAdd.disabled = true; bAvAdd.textContent = '…uploading';
+      try {
+        const dataUrl = await resizeImage(file, 256);
+        Forge.avatars = Array.isArray(Forge.avatars) ? Forge.avatars : [];
+        Forge.avatars.push({ id: 'av' + Date.now().toString(36), name: nm.trim().slice(0, 40), img: dataUrl, price: pr, currency: cur, free: free });
+        if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge();
+        showToast('🧑 Avatar added! Click 📚 Publish so players can use it.', 3600);
+        render();
+      } catch (e) {
+        showToast('⨯ Upload failed: ' + ((e && e.message) || 'unknown'), 4000);
+      } finally { bAvAdd.disabled = false; bAvAdd.textContent = '📤 Upload + Add'; bAvFile.value = ''; }
+    };
+  }
+  document.querySelectorAll('[data-avatar-del]').forEach(b => b.onclick = async () => {
+    const i = parseInt(b.dataset.avatarDel, 10);
+    if (!Array.isArray(Forge.avatars) || !Forge.avatars[i]) return;
+    if (!(await gcConfirm('Remove "' + (Forge.avatars[i].name || 'this avatar') + '"? Players who bought it keep it.'))) return;
+    Forge.avatars.splice(i, 1);
     if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge();
     render();
   });
@@ -113180,6 +113421,7 @@ function renderCardEditor() {
             </div>
             ${_weatherEffectFieldsHtml('ed-kalon-onx', _ot)}
             ${_seizeFusionFieldHtml('ed-kalon-onx', _ot)}
+            ${_setFromZoneFieldHtml('ed-kalon-onx', _ot)}
             ${_cardFilterBlockHtml('ed-kalon-onx', _ot.filter, _ot.filterCardIds)}
           </div>`;
         })()}
@@ -113846,6 +114088,7 @@ function renderCardEditor() {
       <div class="editor-field"><label class="small-text">🌙 Day / Night</label><select id="ed-onplay-timeofday">${todOnplayOpts}</select></div>
     </div>
     ${_seizeFusionFieldHtml('ed-onplay', onPlay)}
+    ${_setFromZoneFieldHtml('ed-onplay', onPlay)}
     ${(() => {
       // 🔀 Shuffle-Into-Deck pickers — used only by the 'shuffleToDeck' effect.
       const zs = onPlay.shuffleZones || 'all', ss = onPlay.shuffleSide || 'owner', ds = onPlay.drawSide || 'none';
@@ -114837,6 +115080,7 @@ function renderCardEditor() {
         + `<div class="editor-field"><label class="small-text">🔁 Use Limit</label><select id="ed-grave-uselimit">${_useLimitOpts(gaEff.useLimit)}</select></div>`
         + _weatherEffectFieldsHtml('ed-grave', gaEff)
         + _seizeFusionFieldHtml('ed-grave', gaEff)
+        + _setFromZoneFieldHtml('ed-grave', gaEff)
         + (() => {
             // 🔍 Search Deck — type filter + specific-card allow-list (for a
             // 'searchDeck' graveyard ability). Same picker as the on-play editor.
@@ -115115,6 +115359,7 @@ function renderCardEditor() {
         + `<div class="editor-field"><label class="small-text">🎇 Effect VFX</label><select id="ed-field-vfx">${_fVfx}</select></div>`
         + _weatherEffectFieldsHtml('ed-field', fEff)
         + _seizeFusionFieldHtml('ed-field', fEff)
+        + _setFromZoneFieldHtml('ed-field', fEff)
         + `<div class="editor-field full" style="border-top:1px dashed rgba(214,122,224,0.4);margin-top:0.5rem;padding-top:0.5rem"><label class="small-text" style="font-weight:700;color:#e2a8f0">🎴 Card Filter — for filtered effects (Entomb / Salvage / Raise)</label>`
         + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.4rem;margin-top:0.35rem;min-width:0">`
         + `<div style="min-width:0"><label class="small-text">Name contains</label><input id="ed-field-filter-name" type="text" maxlength="24" placeholder="e.g. SCP" value="${escapeHtml((fEff.filter && fEff.filter.nameIncludes) || '')}" style="width:100%"></div>`
@@ -117295,6 +117540,8 @@ function captureEditorIntoCard(card) {
           timeOfDay: v('ed-grave-timeofday') || 'night',
           matSources: _readPolyMatSources('ed-grave'),
           seizeTreatAs: (v('ed-grave-seizeas') || '').trim() || undefined,
+          setZone: v('ed-grave-setzone') || 'deck',
+          setKind: v('ed-grave-setkind') || 'trap',
           vfx: v('ed-grave-vfx') || 'none',
           useLimit: v('ed-grave-uselimit') || 'none',
           searchDeckType: v('ed-grave-searchtype') || 'any',
@@ -117464,6 +117711,8 @@ function captureEditorIntoCard(card) {
           timeOfDay: v('ed-field-timeofday') || 'night',
           matSources: _readPolyMatSources('ed-field'),
           seizeTreatAs: (v('ed-field-seizeas') || '').trim() || undefined,
+          setZone: v('ed-field-setzone') || 'deck',
+          setKind: v('ed-field-setkind') || 'trap',
           vfx: v('ed-field-vfx') || 'none',
           sendZone: v('ed-field-sendzone') || 'either',
           empowerHero: (v('ed-field-emphero') || 'yes') !== 'no',
@@ -117643,6 +117892,9 @@ function captureEditorIntoCard(card) {
         // 🌌 Polycreate material sources + the stolen-unit alias.
         matSources:     _readPolyMatSources('ed-onplay'),
         seizeTreatAs:   (v('ed-onplay-seizeas') || '').trim() || undefined,
+        // 🪤🎲 Set Face-Down — which pile, and trap vs buried unit.
+        setZone:        v('ed-onplay-setzone') || 'deck',
+        setKind:        v('ed-onplay-setkind') || 'trap',
         status:         v('ed-onplay-status') || 'weak',
         statusDuration: num('ed-onplay-status-dur', 1, 6, 2),
         // 👑 Take-Control duration — 0 = permanent, > 0 reverts after N turns.
@@ -117883,6 +118135,10 @@ function captureEditorIntoCard(card) {
             e.weatherType = v('ed-kalon-onx-weathertype') || 'rain';
             e.duration = num('ed-kalon-onx-weatherdur', 1, 12, 4);
             e.timeOfDay = v('ed-kalon-onx-timeofday') || 'night';
+          }
+          if (t === 'setFromZone') {
+            e.setZone = v('ed-kalon-onx-setzone') || 'deck';
+            e.setKind = v('ed-kalon-onx-setkind') || 'trap';
           }
           if (t === 'polycreate') {
             e.matSources = _readPolyMatSources('ed-kalon-onx');
@@ -152028,6 +152284,30 @@ function renderSettings() {
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">🧑 Avatar</div>
+        <div class="settings-section-desc">Your profile picture - shown in-game and on your <strong>Emergency Broadcast</strong> profile. Free avatars can be worn by anyone; the rest cost Cinder or Aza coin.</div>
+        ${(() => {
+          const all = (typeof getAllAvatars === 'function') ? getAllAvatars() : [];
+          const owned = Array.isArray(Profile.ownedAvatars) ? Profile.ownedAvatars : [];
+          const eq = Profile.equippedAvatar || null;
+          if (all.length === 0) return `<div class="small-text ink-dim" style="padding:0.6rem 0">No avatars published yet.</div>`;
+          const tiles = all.map(a => {
+            const have = a.free || owned.indexOf(a.id) >= 0;
+            const active = eq && eq === a.img;
+            const cost = a.free ? 'Free' : (Math.max(0, Number(a.price) || 0).toLocaleString() + (a.currency === 'sovereigns' ? ' 👑' : ' 🔥'));
+            return `<button class="frame-pick ${active ? 'active' : ''} unlocked" data-avatar-pick="${escapeHtml(String(a.id))}">
+              <div class="frame-pick-preview" style="display:flex;align-items:center;justify-content:center;overflow:hidden">
+                <img src="${a.img}" alt="" style="width:100%;height:100%;object-fit:cover${have ? '' : ';filter:grayscale(0.85) brightness(0.6)'}">
+              </div>
+              <div class="frame-pick-name">${escapeHtml(a.name || 'Avatar')}</div>
+              <div class="small-text ink-dim" style="text-align:center">${have ? (active ? '✓ Active' : 'Owned') : cost}</div>
+            </button>`;
+          }).join('');
+          return `<div class="frame-pick-grid">${tiles}</div>`;
+        })()}
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">🎴 Deck Sleeve</div>
         <div class="settings-section-desc">The card back on <strong>your</strong> deck, graveyard and face-down cards. Exclusive sleeves arrive from <strong>Founder Drops</strong> and Shop packages. Your opponent always sees the default back.</div>
         ${(() => {
@@ -152390,6 +152670,9 @@ function renderSettings() {
     };
   });
 
+  document.querySelectorAll('[data-avatar-pick]').forEach(el => {
+    el.onclick = async () => { if (await equipOrBuyAvatar(el.dataset.avatarPick)) render(); };
+  });
   document.querySelectorAll('[data-sleeve-equip]').forEach(el => {
     el.onclick = () => {
       const key = el.dataset.sleeveEquip;
@@ -186667,7 +186950,7 @@ function renderHeroLoadout() {
         <h2 class="section-title hl-title"><img src="assets/artwork/gameicons/Loadout.png" alt="" style="height:1.5em;width:auto;object-fit:contain;vertical-align:-0.38em;margin-right:0.35em;filter:drop-shadow(0 2px 6px rgba(0,0,0,0.7))" decoding="async"> ${escapeHtml(hero.name)} — Hero Loadout</h2>
         <div class="hl-sub">Level ${prof.level} · Configure equipment + consumables before deployment.</div>
         <div class="hl-actions" style="justify-self:end; display:flex; gap:0.4rem; flex-wrap:wrap">
-          <button class="btn-mini" id="hl-shop">🪙 Cinder Shop</button>
+          <!-- 🪙 Cinder Shop deliberately NOT here — it belongs to Camp only. -->
           <button class="btn-primary btn-mini" id="hl-skill-tree">🌲 Skill Tree</button>
         </div>
       </div>
@@ -186736,13 +187019,8 @@ function renderHeroLoadout() {
     App.screen = 'baseVault';
     render();
   };
-  // 🪙 Cinder Shop — buy consumables / gear with Cinder.
-  const shopBtn = document.getElementById('hl-shop');
-  if (shopBtn) shopBtn.onclick = () => {
-    App.shopReturnScreen = 'heroLoadout';
-    App.screen = 'cinderShop';
-    render();
-  };
+  // 🪙 Cinder Shop is reached from CAMP only — no entry point from the loadout
+  // (the button and its handler were removed together, deliberately).
 
   // Slot click → open picker filtered to the slot type.
   document.querySelectorAll('.hl-slot').forEach(btn => {
@@ -193208,6 +193486,10 @@ function _describeOnPlayEffectBody(eff) {
     case 'drainLife':     { const a=Math.max(1,eff.amount||3); return `🩸 Deals ${a} damage to every enemy within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'} and heals this unit for the total dealt.`; }
     case 'setWeather':    { const wt=eff.weatherType||'rain'; const meta=(typeof WEATHER_CARDS!=='undefined'?WEATHER_CARDS.find(w=>w&&w.weatherType===wt):null); const wn=(meta&&meta.name)||wt; const wi=(meta&&meta.icon)||'🌦'; const d=Math.max(1,Math.min(12,eff.duration||4)); return `${wi} Changes the weather to ${wn} for ${d} turn${d===1?'':'s'}.`; }
     case 'setTimeOfDay':  { const w=eff.timeOfDay||'night'; return w==='toggle'?'🌗 Flips the battlefield between day and night.':(w==='day'?'☀️ Turns the battlefield to day — Light empowered.':'🌙 Turns the battlefield to night — Shadow empowered.'); }
+    case 'setFromZone':   { const n=Math.max(1,Math.min(5,eff.amount||1)); const z=(eff.setZone==='grave')?'graveyard':'deck';
+                            const k=(eff.setKind==='unit')?'unit':'trap';
+                            const fd=(typeof _describeCardFilter==='function')?_describeCardFilter(eff.filter):'';
+                            return `🪤 Places ${n>1?n+' ':'a '}${fd?escapeHtml(fd)+' ':''}${k}${n>1?'s':''} from your ${z} FACE DOWN on ${n>1?'random tiles':'a random tile'} — hidden from the opponent.`; }
     case 'polycreate':    { let kn='a Fusion Kalon'; try{ const k=eff.summonCardId&&typeof _cardDefById==='function'?_cardDefById(eff.summonCardId):null; if(k&&k.name) kn=k.name; }catch(e){}
                             const srcs=(Array.isArray(eff.matSources)&&eff.matSources.length)?eff.matSources:['field'];
                             const L={field:'your field',enemy:"the enemy's field",hand:'your hand',grave:'your graveyard',deck:'your deck'};

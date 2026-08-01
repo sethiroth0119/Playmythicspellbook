@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119r9';
+  window.BUILD_VERSION = 'v119s0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -168824,6 +168824,7 @@ function _rlcHUD(run, camp) {
         const hot = ht >= RLC_HEAT_SCP_LOCK;
         return `<div title="Contraband heat: ${ht}. Raises enemy level (+1 per ${RLC_HEAT_LVL_DIV}). ${hot ? 'HIGH — SCP-surveillance routes are sealed; bank at a 🚚 Convoy to cool off.' : 'Bank at a 🚚 Convoy to clear it.'}" style="color:${hot ? '#ff6b6b' : '#ff9a4d'};font-weight:800">🔥 ${ht} <span class="small-text ink-dim">heat${hot ? ' · SCP LOCKED' : ''}</span></div>`;
       })()}
+      <button class="btn-mini" id="rlc-to-ascent" title="Switch this run to the 3D Ascent map">🏔 3D Map</button>
       <button class="btn-mini" id="rlc-abandon" style="color:#ff8080">✖ Abandon Run</button>
       ${(Array.isArray(run.relics) && run.relics.length) ? `
         <div style="flex-basis:100%;height:0"></div>
@@ -169215,7 +169216,7 @@ function renderRlcAdmin() {
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.7rem">
           <button class="btn-primary btn-mini" id="rlc-visual-map">🗺️ Visual Map Editor</button>
           <label class="small-text" style="display:flex;align-items:center;gap:0.35rem;cursor:pointer;color:#cbb9ff">
-            <input type="checkbox" id="rlc-use-ascent" ${ed.useAscentMap ? 'checked' : ''}> 🏔 Play this campaign on the 3D map
+            <input type="checkbox" id="rlc-use-ascent" ${ed.useAscentMap === false ? '' : 'checked'}> 🏔 Play this campaign on the 3D map
           </label>
         </div>
         <div class="small-text ink-dim" style="margin-bottom:8px">Drag nodes, link them and set types visually. It writes back positions, types, names, story lines and links — <strong>every other node setting (enemies, decks, rewards, dialogue) is kept</strong>.</div>
@@ -169966,9 +169967,12 @@ function _rlcAscentOn(camp) {
   try {
     const f = localStorage.getItem('hg_ascent_map');
     if (f === '0') return false;                 // hard off (classic 2D map)
-    if (f === '1') return true;                  // hard on (dev/admin)
-    return !!(camp && camp.useAscentMap);        // per-campaign opt-in
-  } catch (e) { return false; }
+    if (f === '1') return true;                  // hard on
+    // 🏔 DEFAULT ON — the Ascent map IS the roguelite map now. A campaign can
+    // still opt OUT (useAscentMap === false) and the in-map "🗺 Classic map"
+    // button drops any player back to the 2D board, which stays fully working.
+    return !(camp && camp.useAscentMap === false);
+  } catch (e) { return true; }
 }
 function _rlcAscentUnmount() {
   try { if (_RLCA.onMsg) window.removeEventListener('message', _RLCA.onMsg); } catch (e) {}
@@ -170159,6 +170163,15 @@ function renderRlcMap() {
     </div>`;
   document.getElementById('rlc-map-back').onclick = () => { App._rlcNodePreview = null; App.screen = 'rlcList'; render(); };
   const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  {
+    // 🏔 Back to the 3D map — the counterpart of the "🗺 Classic map" button in
+    // the Ascent view, so neither choice is a one-way door.
+    const _a3 = document.getElementById('rlc-to-ascent');
+    if (_a3) _a3.onclick = () => {
+      try { localStorage.setItem('hg_ascent_map', '1'); } catch (e) {}
+      App.screen = 'rlcMap'; render();
+    };
+  }
   const introGo = document.getElementById('rlc-intro-go');
   if (introGo) introGo.onclick = () => { App._rlcIntroFor = null; render(); };
   document.querySelectorAll('[data-rlc-node]').forEach(el => {
@@ -170510,6 +170523,15 @@ function renderRlcMedical() {
       ${pickModal}
     </div>`;
   const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  {
+    // 🏔 Back to the 3D map — the counterpart of the "🗺 Classic map" button in
+    // the Ascent view, so neither choice is a one-way door.
+    const _a3 = document.getElementById('rlc-to-ascent');
+    if (_a3) _a3.onclick = () => {
+      try { localStorage.setItem('hg_ascent_map', '1'); } catch (e) {}
+      App.screen = 'rlcMap'; render();
+    };
+  }
   const _charge = (o) => {
     const cMed = parseInt(o.costMedPoints, 10) || 0, cCur = parseInt(o.costCurrency, 10) || 0;
     if (run.medPoints < cMed || run.currency < cCur) { showToast('Not enough to afford that.', 2200); return false; }
@@ -170621,6 +170643,15 @@ function renderRlcShop() {
       <div style="text-align:center;margin-top:22px"><button class="btn-secondary" id="rlc-leave-shop">Leave the market →</button></div>
     </div>`;
   const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  {
+    // 🏔 Back to the 3D map — the counterpart of the "🗺 Classic map" button in
+    // the Ascent view, so neither choice is a one-way door.
+    const _a3 = document.getElementById('rlc-to-ascent');
+    if (_a3) _a3.onclick = () => {
+      try { localStorage.setItem('hg_ascent_map', '1'); } catch (e) {}
+      App.screen = 'rlcMap'; render();
+    };
+  }
   document.querySelectorAll('[data-rlc-buy]').forEach(b => {
     b.onclick = () => {
       const i = parseInt(b.dataset.rlcBuy, 10);
@@ -170678,6 +170709,15 @@ function renderRlcForge() {
       </div>
     </div>`;
   const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  {
+    // 🏔 Back to the 3D map — the counterpart of the "🗺 Classic map" button in
+    // the Ascent view, so neither choice is a one-way door.
+    const _a3 = document.getElementById('rlc-to-ascent');
+    if (_a3) _a3.onclick = () => {
+      try { localStorage.setItem('hg_ascent_map', '1'); } catch (e) {}
+      App.screen = 'rlcMap'; render();
+    };
+  }
   document.querySelectorAll('[data-rlc-dupe]').forEach(b => b.onclick = () => {
     if (run.currency < dupeCost) { showToast('Not enough ' + _rlcCur(run) + '.', 2000); return; }
     run.currency -= dupeCost;
@@ -170717,6 +170757,15 @@ function renderRlcEvent() {
       </div>
     </div>`;
   const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  {
+    // 🏔 Back to the 3D map — the counterpart of the "🗺 Classic map" button in
+    // the Ascent view, so neither choice is a one-way door.
+    const _a3 = document.getElementById('rlc-to-ascent');
+    if (_a3) _a3.onclick = () => {
+      try { localStorage.setItem('hg_ascent_map', '1'); } catch (e) {}
+      App.screen = 'rlcMap'; render();
+    };
+  }
   document.querySelectorAll('[data-rlc-choice]').forEach(b => {
     b.onclick = () => {
       const ch = choices[parseInt(b.dataset.rlcChoice, 10)] || {};
@@ -170795,6 +170844,15 @@ function renderRlcMystery() {
       </div>
     </div>`;
   const ab = document.getElementById('rlc-abandon'); if (ab) ab.onclick = rlcAbandonRun;
+  {
+    // 🏔 Back to the 3D map — the counterpart of the "🗺 Classic map" button in
+    // the Ascent view, so neither choice is a one-way door.
+    const _a3 = document.getElementById('rlc-to-ascent');
+    if (_a3) _a3.onclick = () => {
+      try { localStorage.setItem('hg_ascent_map', '1'); } catch (e) {}
+      App.screen = 'rlcMap'; render();
+    };
+  }
   document.getElementById('rlc-myst-go').onclick = () => {
     const nid = App._rlcNodeId; App._rlcNodeId = null;
     App._rlcMysteryPick = null; App._rlcMysteryApplied = false;

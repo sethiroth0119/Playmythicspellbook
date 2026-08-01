@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119s3';
+  window.BUILD_VERSION = 'v119s4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -77388,6 +77388,9 @@ const ONPLAY_TYPES = [
   { id: 'setFromZone',   label: '🪤🎲 Set Face-Down (plant a trap/unit from deck or grave on a RANDOM tile)', needs: ['setZone','setKind','amount','filter'] },
   // ⚰️🩸 THIS card pays itself — the self counterpart of Sacrifice Ally.
   { id: 'sacrificeSelf', label: '⚰️🩸 Sacrifice Self (send THIS card to the graveyard / Void)', needs: ['sendZone'] },
+  // ⚰️➡️🌟 The pair in one slot — for Field / Grave abilities, which have no
+  // Extra-effect slots to chain Sacrifice Self + Summon From Zone themselves.
+  { id: 'sacrificeToSummon', label: '⚰️➡️🌟 Sacrifice → Summon (sacrifice THIS, then summon from hand/deck/grave/void)', needs: ['summonZone','summonCardIds','filter'] },
 ];
 
 // 🗂 Effect-type CATEGORIES — group the ~75 on-play effects into labelled
@@ -77401,7 +77404,7 @@ const ONPLAY_TYPE_GROUPS = [
   { label: '👑 Control & Movement', ids: ['takeControl','takeControlAll','bounceUnit','vanishTemp','vanishReturn','pullUnits','pushUnits','swapPositions','transformAlly','cloneUnit'] },
   { label: '🃏 Cards & Hand',       ids: ['drawCards','drawFiltered','searchDeck','discardCards','discardSelf','peekHand','peekDiscard','peekBanish','stealCard','cheapenHand','scry','inspire','shuffleToDeck','copyLastMove'] },
   { label: '⚰️ Graveyard & Void',   ids: ['millSelf','millSearch','millEnemy','surveil','deckToGrave','reviveGrave','graveToHand','selfToHand','banishGrave','vanishGraveRandom','vanishGravePick','vanishGraveUnit','negateGraveyard','graveSteal','voidFromGrave','banishDeck','banishHand','drawFromVoid','recycleVoid'] },
-  { label: '🌟 Summon & Sacrifice', ids: ['summon','summonSelf','summonFromZone','setFromZone','polycreate','sacrifice','sacrificeSelf','sacrificeNearby','tributeDraw','sendMatching'] },
+  { label: '🌟 Summon & Sacrifice', ids: ['summon','summonSelf','summonFromZone','setFromZone','polycreate','sacrifice','sacrificeSelf','sacrificeToSummon','sacrificeNearby','tributeDraw','sendMatching'] },
   { label: '🌦 Field, Weather & Day-Night', ids: ['setWeather','setTimeOfDay','clearWeather','weatherLock','paintSurface','clearSurfaces','clearWalls','clearTraps','revealTraps','destroyLocation'] },
   { label: '🔒 Locks, Reveal & Utility', ids: ['negateField','costSeal','callLock','sealSlot','delayedBlast','verdict','scanAllEnemies','scanAllTurn'] },
 ];
@@ -77426,6 +77429,21 @@ function _onplayTypeOptgroups(selectedId) {
 // 🌌⛓ Shared "Predation Fusion" field. The Kalon to summon reuses the existing
 // Summon/Kalon card-id input that every effect editor already has; this adds the
 // one thing that is new — what the stolen enemy unit is TREATED AS.
+// 🌟 Shared SUMMON ZONE picker. It used to exist ONLY in the main On-Play
+// editor, so a Field / Grave / Kalon ability using "Summon From Zone" (or
+// "Sacrifice → Summon") silently fell back to the deck and could never be
+// authored to pull from the HAND. Rendered in every effect editor now.
+function _summonZoneFieldHtml(prefix, eff) {
+  eff = eff || {};
+  const cur = eff.summonZone || 'deck';
+  const opts = (typeof SUMMON_ZONES !== 'undefined' ? SUMMON_ZONES : [])
+    .map(z => `<option value="${z.id}" ${cur === z.id ? 'selected' : ''}>${escapeHtml(z.label.charAt(0).toUpperCase() + z.label.slice(1))}</option>`).join('');
+  return `<div class="editor-field full" style="background:rgba(255,214,102,0.07);border:1px dashed rgba(255,214,102,0.4);border-radius:6px;padding:0.5rem 0.7rem;margin-top:0.35rem">`
+    + `<label class="small-text" style="font-weight:700;color:#ffd166">🌟 Summon zone <span class="ink-dim" style="font-weight:400">(for "Summon From Zone" / "Sacrifice → Summon")</span></label>`
+    + `<div class="small-text ink-dim" style="margin:0.2rem 0 0.35rem">Which pile the unit is pulled out of. Narrow <em>which</em> unit with the Card Filter below (or the Summon-card id list).</div>`
+    + `<select id="${prefix}-summonzone" style="width:100%">${opts}</select></div>`;
+}
+
 // 🪤🎲 Shared "Set Face-Down" fields. Which pile to pull from, and whether the
 // hidden card is a tile TRAP or a face-down (Subterfuge) unit. The WHICH-card
 // choice reuses the existing Card Filter / Summon-card allow-list.
@@ -84867,6 +84885,50 @@ function _applyOnPlayOne(state, unit, card) {
     const aiSpawn = _battleSpawnKalonAtTile(state.units, kalon, owner, freeTiles[0], !!kalon.canActImmediately);
     state.units = aiSpawn.units;
     log.push({ msg: `🌌 ${unit.name} POLYCREATES — ${consumedNames} → ${kalon.name || 'Kalon'}!`, color: 'red' });
+    return { ...state, log };
+  }
+  // ⚰️➡️🌟 ===== SACRIFICE → SUMMON — pay yourself, then deploy from a pile =====
+  // "Sacrifice this unit to summon a <filter> unit from your hand / deck."
+  // A Field / Grave ability has only ONE effect slot, so it cannot chain
+  // Sacrifice Self + Summon From Zone the way the Extra on-play slots can —
+  // this does both atomically. Deterministic (no picker) so it resolves the
+  // same for both sides and can fire off-turn.
+  if (eff.type === 'sacrificeToSummon') {
+    const zone = _summonZone(eff.summonZone);
+    const side = state[owner] || {};
+    const pile = Array.isArray(side[zone.key]) ? side[zone.key] : [];
+    const ids = (Array.isArray(eff.summonCardIds) && eff.summonCardIds.length) ? eff.summonCardIds : null;
+    const ok = (c) => c && _isSummonableCard(c)
+      && (!ids || ids.indexOf(c.id) !== -1)
+      && (!eff.filter || typeof _cardMatchesFilter !== 'function' || _cardMatchesFilter(c, eff.filter));
+    const pickIdx = pile.findIndex(ok);
+    if (pickIdx < 0) {
+      log.push({ msg: `🌟 ${unit.name} finds nothing in ${owner === 'player' ? 'your' : 'their'} ${zone.label} to summon — the sacrifice is refused.`, color: 'amber' });
+      return { ...state, log };   // ⚠ nothing is paid when nothing can arrive
+    }
+    // Tile FIRST, so a walled-in hero can't eat the sacrifice for nothing.
+    const hero = (state.units || []).find(u => u && u.owner === owner && u.isHero && u.alive);
+    const tiles = (hero && typeof _heroAdjacentFreeTiles === 'function') ? _heroAdjacentFreeTiles(state, hero) : [];
+    if (!hero || !tiles.length) {
+      log.push({ msg: `🌟 ${unit.name} has no open tile beside your hero — the sacrifice is refused.`, color: 'amber' });
+      return { ...state, log };
+    }
+    const card = pile[pickIdx];
+    // Pay: the caster dies (a spell/trap anchor has no body — then it is just a summon).
+    const me = (state.units || []).find(u => u && u.id === unit.id && u.alive && !u.isHero);
+    if (me) {
+      state.units = state.units.map(u => u.id === me.id
+        ? { ...u, alive: false, currentHp: 0, _sacrificed: true, _voided: eff.sendZone === 'void' } : u);
+    }
+    pile.splice(pickIdx, 1);
+    try {
+      const born = buildUnit(card, owner, tiles[0]);
+      if (born) state.units = (state.units || []).concat([born]);
+    } catch (e) { try { console.warn('[sacrificeToSummon]', e); } catch (_) {} }
+    log.push({
+      msg: `⚰️➡️🌟 ${me ? me.name + ' is sacrificed' : unit.name + ' is spent'} — ${card.name || 'a unit'} rises from ${owner === 'player' ? 'your' : 'their'} ${zone.label}!`,
+      color: owner === 'player' ? 'green' : 'red'
+    });
     return { ...state, log };
   }
   // ⚰️🩸 ===== SACRIFICE SELF — send THIS card to the graveyard (or Void) =====
@@ -113530,6 +113592,7 @@ function renderCardEditor() {
             ${_weatherEffectFieldsHtml('ed-kalon-onx', _ot)}
             ${_seizeFusionFieldHtml('ed-kalon-onx', _ot)}
             ${_setFromZoneFieldHtml('ed-kalon-onx', _ot)}
+            ${_summonZoneFieldHtml('ed-kalon-onx', _ot)}
             ${_cardFilterBlockHtml('ed-kalon-onx', _ot.filter, _ot.filterCardIds)}
           </div>`;
         })()}
@@ -115194,6 +115257,7 @@ function renderCardEditor() {
         + _weatherEffectFieldsHtml('ed-grave', gaEff)
         + _seizeFusionFieldHtml('ed-grave', gaEff)
         + _setFromZoneFieldHtml('ed-grave', gaEff)
+        + _summonZoneFieldHtml('ed-grave', gaEff)
         + (() => {
             // 🔍 Search Deck — type filter + specific-card allow-list (for a
             // 'searchDeck' graveyard ability). Same picker as the on-play editor.
@@ -115473,6 +115537,7 @@ function renderCardEditor() {
         + _weatherEffectFieldsHtml('ed-field', fEff)
         + _seizeFusionFieldHtml('ed-field', fEff)
         + _setFromZoneFieldHtml('ed-field', fEff)
+        + _summonZoneFieldHtml('ed-field', fEff)
         + `<div class="editor-field full" style="border-top:1px dashed rgba(214,122,224,0.4);margin-top:0.5rem;padding-top:0.5rem"><label class="small-text" style="font-weight:700;color:#e2a8f0">🎴 Card Filter — for filtered effects (Entomb / Salvage / Raise)</label>`
         + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.4rem;margin-top:0.35rem;min-width:0">`
         + `<div style="min-width:0"><label class="small-text">Name contains</label><input id="ed-field-filter-name" type="text" maxlength="24" placeholder="e.g. SCP" value="${escapeHtml((fEff.filter && fEff.filter.nameIncludes) || '')}" style="width:100%"></div>`
@@ -117655,6 +117720,7 @@ function captureEditorIntoCard(card) {
           seizeTreatAs: (v('ed-grave-seizeas') || '').trim() || undefined,
           setZone: v('ed-grave-setzone') || 'deck',
           setKind: v('ed-grave-setkind') || 'trap',
+          summonZone: v('ed-grave-summonzone') || 'deck',
           vfx: v('ed-grave-vfx') || 'none',
           useLimit: v('ed-grave-uselimit') || 'none',
           searchDeckType: v('ed-grave-searchtype') || 'any',
@@ -117826,6 +117892,7 @@ function captureEditorIntoCard(card) {
           seizeTreatAs: (v('ed-field-seizeas') || '').trim() || undefined,
           setZone: v('ed-field-setzone') || 'deck',
           setKind: v('ed-field-setkind') || 'trap',
+          summonZone: v('ed-field-summonzone') || 'deck',
           vfx: v('ed-field-vfx') || 'none',
           sendZone: v('ed-field-sendzone') || 'either',
           empowerHero: (v('ed-field-emphero') || 'yes') !== 'no',
@@ -118263,6 +118330,9 @@ function captureEditorIntoCard(card) {
           if (t === 'setFromZone') {
             e.setZone = v('ed-kalon-onx-setzone') || 'deck';
             e.setKind = v('ed-kalon-onx-setkind') || 'trap';
+          }
+          if (t === 'summonFromZone' || t === 'sacrificeToSummon') {
+            e.summonZone = v('ed-kalon-onx-summonzone') || 'deck';
           }
           if (t === 'polycreate') {
             e.matSources = _readPolyMatSources('ed-kalon-onx');
@@ -193687,6 +193757,9 @@ function _describeOnPlayEffectBody(eff) {
     case 'drainLife':     { const a=Math.max(1,eff.amount||3); return `🩸 Deals ${a} damage to every enemy within ${eff.radius|0} tile${(eff.radius|0)===1?'':'s'} and heals this unit for the total dealt.`; }
     case 'setWeather':    { const wt=eff.weatherType||'rain'; const meta=(typeof WEATHER_CARDS!=='undefined'?WEATHER_CARDS.find(w=>w&&w.weatherType===wt):null); const wn=(meta&&meta.name)||wt; const wi=(meta&&meta.icon)||'🌦'; const d=Math.max(1,Math.min(12,eff.duration||4)); return `${wi} Changes the weather to ${wn} for ${d} turn${d===1?'':'s'}.`; }
     case 'setTimeOfDay':  { const w=eff.timeOfDay||'night'; return w==='toggle'?'🌗 Flips the battlefield between day and night.':(w==='day'?'☀️ Turns the battlefield to day — Light empowered.':'🌙 Turns the battlefield to night — Shadow empowered.'); }
+    case 'sacrificeToSummon': { const z=(typeof _summonZone==='function')?_summonZone(eff.summonZone):{label:'deck'};
+      const fd=(typeof _describeCardFilter==='function')?_describeCardFilter(eff.filter):'';
+      return `⚰️➡️🌟 Sacrifices this card to summon ${fd?escapeHtml(fd)+' ':'a unit '}from your ${escapeHtml(z.label)} beside your hero. Nothing is paid if there is nothing to summon.`; }
     case 'sacrificeSelf': return (eff.sendZone==='void')
       ? '⚰️🌌 This card banishes itself to the Void.'
       : '⚰️🩸 This card sacrifices itself — it is sent to the graveyard.';

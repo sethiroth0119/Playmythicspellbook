@@ -453,7 +453,15 @@ async function handleShop(request, env, u) {
   const seg = u.pathname.replace(/^\/api\/shop\//, '').replace(/\/+$/, '');
   const configured = !!env.STRIPE_SECRET_KEY;
   if (seg === 'config' && request.method === 'GET') {
-    return cjson({ enabled: configured, tiers: Object.keys(SHOP_TIERS) });
+    // Booleans only — never the secret values. `webhook` false means Stripe's
+    // calls would be rejected, so a buyer who never returns to the site would
+    // go unfulfilled; `fulfillment` false means grants can't be written.
+    return cjson({
+      enabled: configured,
+      webhook: !!env.STRIPE_WEBHOOK_SECRET,
+      fulfillment: !!env.SB_SERVICE,
+      tiers: Object.keys(SHOP_TIERS),
+    });
   }
   if (!configured) return cjson({ error: 'stripe_not_configured', hint: 'Set the STRIPE_SECRET_KEY secret on this Worker (see STRIPE.md).' }, 503);
 

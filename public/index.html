@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119s4';
+  window.BUILD_VERSION = 'v119s5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -162746,7 +162746,16 @@ function _abxTutorialSync() {
     if (document.getElementById('narr-overlay')) return;
     const composite = (typeof _currentGuideRoute === 'function') ? _currentGuideRoute() : App.screen;
     const candidates = [composite];
-    if (composite.indexOf(':') >= 0) candidates.push(composite.split(':')[0]);
+    if (composite.indexOf(':') >= 0) {
+      const _base = composite.split(':')[0];
+      // 🏠 A "Main Hub (Title)" lesson belongs to the HUB ITSELF — not to its
+      // sub-hubs (Forge Sanctum, Card Shop, Battle Hall…). Without this the
+      // first sub-hub the player opened also matched the bare 'title' route and
+      // consumed the once-only lesson, so it never appeared on the hub they
+      // actually landed on. Other composite screens (forge tabs, settings tabs)
+      // keep the wide fallback, where a section-wide guide IS wanted.
+      if (_base !== 'title' || !App.titleHub || App.titleHub === 'main') candidates.push(_base);
+    }
     if (App.screen === 'battle') candidates.push('battle');
     for (const t of list.slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))) {
       if (!t.autoShow) continue;
@@ -163126,7 +163135,16 @@ function maybeShowPageGuide() {
     }
     const composite = _currentGuideRoute();
     const candidates = [composite];
-    if (composite.indexOf(':') >= 0) candidates.push(composite.split(':')[0]);
+    if (composite.indexOf(':') >= 0) {
+      const _base = composite.split(':')[0];
+      // 🏠 A "Main Hub (Title)" lesson belongs to the HUB ITSELF — not to its
+      // sub-hubs (Forge Sanctum, Card Shop, Battle Hall…). Without this the
+      // first sub-hub the player opened also matched the bare 'title' route and
+      // consumed the once-only lesson, so it never appeared on the hub they
+      // actually landed on. Other composite screens (forge tabs, settings tabs)
+      // keep the wide fallback, where a section-wide guide IS wanted.
+      if (_base !== 'title' || !App.titleHub || App.titleHub === 'main') candidates.push(_base);
+    }
     let g = null;
     for (const r of candidates) { g = getActivePageGuide(r); if (g) break; }
     // 🔊 Auto-play only when there IS a route guide, the IndexedDB restore is

@@ -34929,7 +34929,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119v5';
+  window.BUILD_VERSION = 'v119v6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39520,6 +39520,10 @@ const Forge = {
   opsEcon: {},
   // ⛽ Admin overrides for Black River Petroleum (rigs, refinery, market, crew).
   brEcon: {},
+  // 🎣 Admin overrides for the fishing fleet (boats, trips, hire/repair).
+  wfEcon: {},
+  // 🏗 Admin overrides for the reclaim board (ruin costs + crew).
+  reconEcon: {},
   // 🏺 ADMIN-CREATED ROGUELITE RELICS — { id, name, icon, desc, + effect
   // fields: maxHp, winCurrency, winHealPct, shopDiscount, rewardChoice,
   // nodeCurrency, healBonusPct, grant:{currency,medPoints}, reviveOnce }.
@@ -47278,6 +47282,10 @@ function _applyCatalogRow(data) {
   Catalog.craftRecipes = Array.isArray(rawMoves.__craft_recipes__) ? rawMoves.__craft_recipes__ : [];
   Catalog.opsEcon = (rawMoves.__ops_econ__ && typeof rawMoves.__ops_econ__ === 'object') ? rawMoves.__ops_econ__ : {};
   Catalog.brEcon = (rawMoves.__br_econ__ && typeof rawMoves.__br_econ__ === 'object') ? rawMoves.__br_econ__ : {};
+  Catalog.wfEcon = (rawMoves.__wf_econ__ && typeof rawMoves.__wf_econ__ === 'object') ? rawMoves.__wf_econ__ : {};
+  Catalog.reconEcon = (rawMoves.__recon_econ__ && typeof rawMoves.__recon_econ__ === 'object') ? rawMoves.__recon_econ__ : {};
+  try { if (typeof applyReconEconOverrides === 'function') applyReconEconOverrides(); } catch (e) {}
+  try { if (typeof applyWfEconOverrides === 'function') applyWfEconOverrides(); } catch (e) {}
   try { if (typeof applyBrEconOverrides === 'function') applyBrEconOverrides(); } catch (e) {}
   Catalog.avatars = Array.isArray(rawMoves.__avatars__) ? rawMoves.__avatars__ : [];
   // 🧰 Resource customization from the shared row → apply to the live tables so
@@ -47862,6 +47870,8 @@ async function cloudPublishCatalog(opts) {
       __craft_recipes__: Array.isArray(Forge.craftRecipes) ? Forge.craftRecipes : [],
       __ops_econ__: (Forge.opsEcon && typeof Forge.opsEcon === 'object') ? Forge.opsEcon : {},
       __br_econ__: (Forge.brEcon && typeof Forge.brEcon === 'object') ? Forge.brEcon : {},
+      __wf_econ__: (Forge.wfEcon && typeof Forge.wfEcon === 'object') ? Forge.wfEcon : {},
+      __recon_econ__: (Forge.reconEcon && typeof Forge.reconEcon === 'object') ? Forge.reconEcon : {},
       __avatars__: Array.isArray(Forge.avatars) ? Forge.avatars : [],
       // 🃏 BUILT-IN card metadata (id/name/icon/type/cost only — no art, they
       // don't have any). The published `cards` array carries Forge cards only,
@@ -63474,6 +63484,10 @@ async function loadForgeContentFromIdb() {
     if (Array.isArray(tc) && tc.length && (!Array.isArray(Forge.tombstoneCosmetics) || !Forge.tombstoneCosmetics.length)) { Forge.tombstoneCosmetics = tc; changed = true; }
     const avs = await idbGet('forge_avatars');
     if (Array.isArray(avs) && avs.length && (!Array.isArray(Forge.avatars) || !Forge.avatars.length)) { Forge.avatars = avs; changed = true; }
+    const re2 = await idbGet('forge_reconEcon');
+    if (re2 && typeof re2 === 'object' && Object.keys(re2).length && !Object.keys(Forge.reconEcon || {}).length) { Forge.reconEcon = re2; changed = true; }
+    const we = await idbGet('forge_wfEcon');
+    if (we && typeof we === 'object' && Object.keys(we).length && !Object.keys(Forge.wfEcon || {}).length) { Forge.wfEcon = we; changed = true; }
     const be = await idbGet('forge_brEcon');
     if (be && typeof be === 'object' && Object.keys(be).length && !Object.keys(Forge.brEcon || {}).length) { Forge.brEcon = be; changed = true; }
     const oe = await idbGet('forge_opsEcon');
@@ -63547,6 +63561,8 @@ function loadForge() {
     try { const ta = localStorage.getItem('hg_tombstoneArt'); if (ta != null) { const x = JSON.parse(ta); if (typeof x === 'string' && x) Forge.tombstoneArt = x; } } catch (err) {}
     try { const tc = localStorage.getItem('hg_tombstoneCosmetics'); if (tc) { const x = JSON.parse(tc); if (Array.isArray(x)) Forge.tombstoneCosmetics = x; } } catch (err) {}
     try { const av = localStorage.getItem('hg_avatars'); if (av) { const x = JSON.parse(av); if (Array.isArray(x)) Forge.avatars = x; } } catch (err) {}
+    try { const re3 = localStorage.getItem('hg_reconEcon'); if (re3) { const x = JSON.parse(re3); if (x && typeof x === 'object') Forge.reconEcon = x; } } catch (err) {}
+    try { const we2 = localStorage.getItem('hg_wfEcon'); if (we2) { const x = JSON.parse(we2); if (x && typeof x === 'object') Forge.wfEcon = x; } } catch (err) {}
     try { const be2 = localStorage.getItem('hg_brEcon'); if (be2) { const x = JSON.parse(be2); if (x && typeof x === 'object') Forge.brEcon = x; } } catch (err) {}
     try { const oe2 = localStorage.getItem('hg_opsEcon'); if (oe2) { const x = JSON.parse(oe2); if (x && typeof x === 'object') Forge.opsEcon = x; } } catch (err) {}
     try { const cr2 = localStorage.getItem('hg_craftRecipes'); if (cr2) { const x = JSON.parse(cr2); if (Array.isArray(x)) Forge.craftRecipes = x; } } catch (err) {}
@@ -64262,6 +64278,8 @@ function saveForge() {
       idbSet('forge_craftRecipes',      Forge.craftRecipes       || []);
       idbSet('forge_opsEcon',           Forge.opsEcon            || {});
       idbSet('forge_brEcon',            Forge.brEcon             || {});
+      idbSet('forge_wfEcon',            Forge.wfEcon             || {});
+      idbSet('forge_reconEcon',         Forge.reconEcon          || {});
       idbSet('forge_avatars',            Forge.avatars            || []);
       // 🎓 Onboarding config (welcome image / narrator portrait / narration
       // audio data: URLs). Previously this ONLY survived a successful catalog
@@ -64358,6 +64376,8 @@ function saveForge() {
     { key: 'hg_craftRecipes', value: _stripDataUrls(Forge.craftRecipes || []), name: 'craftRecipes' },
     { key: 'hg_opsEcon', value: Forge.opsEcon || {}, name: 'opsEcon' },
     { key: 'hg_brEcon', value: Forge.brEcon || {}, name: 'brEcon' },
+    { key: 'hg_wfEcon', value: Forge.wfEcon || {}, name: 'wfEcon' },
+    { key: 'hg_reconEcon', value: Forge.reconEcon || {}, name: 'reconEcon' },
     { key: 'hg_avatars', value: _stripDataUrls(Forge.avatars || []), name: 'avatars' },
     { key: 'hg_rlcRelics',          value: _stripDataUrls(Forge.rlcRelics || []),          name: 'rlcRelics' },
     // ⚡ Custom/edited hero ultimates + per-hero assignment — tiny JSON, safe
@@ -149872,11 +149892,17 @@ function renderCraftStation() {
         <div class="cft-tab ${tab === 'materials' ? 'is-active' : ''}" data-cft-tab="materials">🧰 Materials</div>
         ${(typeof isAdmin === 'function' && isAdmin()) ? `<div class="cft-tab" id="cft-edit" title="Edit every recipe: costs, outputs, names">👑 Edit Recipes</div>
         <div class="cft-tab" id="cft-ops" title="Edit every funded business: startup, wages, output, workers, resource yields">⚙️ Edit Businesses</div>
-        <div class="cft-tab" id="cft-br" title="Edit Black River Petroleum: rig upgrades, refinery, market prices, crew wages, risk tiers">⛽ Edit Refinery</div>` : ''}
+        <div class="cft-tab" id="cft-br" title="Edit Black River Petroleum: rig upgrades, refinery, market prices, crew wages, risk tiers">⛽ Edit Refinery</div>
+        <div class="cft-tab" id="cft-wf" title="Edit the fishing fleet: boat prices, capacity, fuel, hull, trip payouts">🎣 Edit Fishing</div>
+        <div class="cft-tab" id="cft-recon" title="Edit the reclaim board: what each ruin costs and which crew it needs">🏗 Edit Reclaim</div>` : ''}
       </div>
       ${body}
     </div>`;
 
+  const rcBtn = document.getElementById('cft-recon');
+  if (rcBtn) rcBtn.onclick = () => openReconEconEditor();
+  const wfBtn = document.getElementById('cft-wf');
+  if (wfBtn) wfBtn.onclick = () => openFishingEconEditor();
   const brBtn = document.getElementById('cft-br');
   if (brBtn) brBtn.onclick = () => openBlackRiverEconEditor();
   const opsBtn = document.getElementById('cft-ops');
@@ -180406,9 +180432,71 @@ const WF_BOAT_SVG = {
   yacht:    '<svg viewBox="0 0 120 60"><polygon points="10,42 112,42 102,52 20,52" fill="#7fb8ff" opacity="0.85"/><polygon points="22,42 102,42 96,30 28,30" fill="#7fb8ff" opacity="0.6"/><rect x="42" y="18" width="30" height="12" fill="#7fb8ff"/></svg>',
   anomaly:  '<svg viewBox="0 0 120 60"><polygon points="4,42 116,42 108,54 12,54" fill="#7fb8ff" opacity="0.85"/><polygon points="18,42 102,42 92,26 28,26" fill="#7fb8ff" opacity="0.8"/><polygon points="52,12 68,12 64,26 56,26" fill="#7fb8ff"/></svg>',
 };
-const WF_BUY_COMPANY_COST = 50000;  // Cinder cost to unlock Woods Fishing access (CX corp:woods buy works too).
-const WF_HIRE_COST        = 200;    // Up-front cinder to hire a fisherman.
-const WF_REPAIR_PER_HP    = 8;      // Cinder per hull HP repaired.
+let WF_BUY_COMPANY_COST   = 50000;  // Cinder cost to unlock Woods Fishing access (CX corp:woods buy works too).
+let WF_HIRE_COST          = 200;    // Up-front cinder to hire a fisherman.
+let WF_REPAIR_PER_HP      = 8;      // Cinder per hull HP repaired.
+
+// 🎣 👑 ADMIN-TUNABLE FISHING FLEET.
+// WF_BOAT_CLASSES and WF_DURATIONS are ARRAYS, and the tuner walks objects — so
+// the defaults are exposed KEYED BY ID and applied back into the arrays in
+// place. Every existing reference (the boat market, the trip picker, refuelling)
+// keeps working untouched.
+const WF_ECON_DEFAULTS = (() => {
+  const byId = (arr, fields) => {
+    const o = {};
+    for (const it of arr) { o[it.id] = {}; for (const f of fields) o[it.id][f] = it[f]; }
+    return o;
+  };
+  return JSON.parse(JSON.stringify({
+    boats: byId(WF_BOAT_CLASSES, ['price', 'cap', 'fuel', 'hull', 'speed']),
+    trips: byId(WF_DURATIONS, ['mins', 'danger', 'mult']),
+    buyCompany: WF_BUY_COMPANY_COST,
+    hireCost: WF_HIRE_COST,
+    repairPerHp: WF_REPAIR_PER_HP,
+  }));
+})();
+function getWfEcon() {
+  try {
+    const local = (Forge.wfEcon && typeof Forge.wfEcon === 'object') ? Forge.wfEcon : null;
+    if (local && Object.keys(local).length) return local;
+    const pub = (Catalog.wfEcon && typeof Catalog.wfEcon === 'object') ? Catalog.wfEcon : null;
+    if (pub && Object.keys(pub).length) return pub;
+  } catch (e) {}
+  return null;
+}
+// Reset each row to its default first, THEN lay the override on — same
+// idempotence rule as Black River. Without the reset, clearing an override
+// would leave the last tuned price stuck on the boat.
+function applyWfEconOverrides() {
+  try {
+    const D = WF_ECON_DEFAULTS, ov = getWfEcon() || {};
+    const push = (arr, defs, overs) => {
+      for (const it of arr) {
+        const d = defs[it.id] || {}, o = (overs && overs[it.id]) || {};
+        for (const f in d) it[f] = (o[f] != null) ? o[f] : d[f];
+      }
+    };
+    push(WF_BOAT_CLASSES, D.boats, ov.boats);
+    push(WF_DURATIONS,    D.trips, ov.trips);
+    WF_BUY_COMPANY_COST = (ov.buyCompany != null) ? ov.buyCompany : D.buyCompany;
+    WF_HIRE_COST        = (ov.hireCost   != null) ? ov.hireCost   : D.hireCost;
+    WF_REPAIR_PER_HP    = (ov.repairPerHp != null) ? ov.repairPerHp : D.repairPerHp;
+  } catch (e) { try { console.warn('[wfEcon]', e); } catch (_) {} }
+}
+function openFishingEconEditor() {
+  openEconTuner({
+    title: '🎣 FISHING FLEET ECONOMY',
+    defaults: WF_ECON_DEFAULTS,
+    get: () => (Forge.wfEcon && typeof Forge.wfEcon === 'object') ? Forge.wfEcon : (Forge.wfEcon = {}),
+    set: (t) => { Forge.wfEcon = t; },
+    onApply: () => { try { applyWfEconOverrides(); } catch (e) {} },
+    labels: { boats: 'BOATS', trips: 'TRIP LENGTHS', price: 'Price 🔥', cap: 'Crew slots',
+              fuel: 'Fuel / trip', hull: 'Hull HP', speed: 'Speed', mins: 'Minutes',
+              danger: 'Danger', mult: 'Payout ×', buyCompany: 'Buy the company (🔥)',
+              hireCost: 'Hire a fisherman (🔥)', repairPerHp: 'Repair 🔥 per hull HP' },
+  });
+}
+try { window.__mg = window.__mg || {}; window.__mg.wfEconEditor = openFishingEconEditor; window.__mg.wfEcon = applyWfEconOverrides; } catch (e) {}
 
 // ---- STATE HELPERS ----
 function _wfPick(a) { return a[Math.floor(Math.random() * a.length)]; }
@@ -200950,6 +201038,65 @@ const RECON_SITES = [
   { id:'road_bridge', name:'Collapsed Bridge',     into:'Repaired Bridge',   glow:'cyan',  cost:{ metal:120 },                 needs:{ Builder:1, Engineer:1 }, gives:'+Trade access',         kind:'road', roads:5, repeatable:true },
   { id:'road_main',   name:'Cratered Main Street', into:'Paved Main Street', glow:'amber', cost:{ cinder:300, supplies:100 },  needs:{ Builder:2 },             gives:'+Trade and +Security',  kind:'road', roads:8, repeatable:true },
 ];
+// 🏗 👑 ADMIN-TUNABLE RECLAIM BOARD.
+// Costs (cinder + any resource) and crew requirements for every ruin on the
+// Reconstruction screen. Same in-place merge as the other sub-economies, so
+// every reader of RECON_SITES keeps working untouched.
+const RECON_ECON_DEFAULTS = JSON.parse(JSON.stringify((() => {
+  const o = {};
+  for (const st of RECON_SITES) o[st.id] = { cost: st.cost || {}, needs: st.needs || {} };
+  return o;
+})()));
+function getReconEcon() {
+  try {
+    const local = (Forge.reconEcon && typeof Forge.reconEcon === 'object') ? Forge.reconEcon : null;
+    if (local && Object.keys(local).length) return local;
+    const pub = (Catalog.reconEcon && typeof Catalog.reconEcon === 'object') ? Catalog.reconEcon : null;
+    if (pub && Object.keys(pub).length) return pub;
+  } catch (e) {}
+  return null;
+}
+function applyReconEconOverrides() {
+  try {
+    const D = RECON_ECON_DEFAULTS, ov = getReconEcon() || {};
+    for (const st of RECON_SITES) {
+      const d = D[st.id] || {}, o = ov[st.id] || {};
+      // Reset from the default FIRST so clearing an override really clears it.
+      st.cost  = Object.assign({}, d.cost,  o.cost  || {});
+      st.needs = Object.assign({}, d.needs, o.needs || {});
+      // A cost or crew set to 0 means "not required" — drop it so the UI and the
+      // affordability check don't ask for zero of something.
+      for (const k in st.cost)  if (!(st.cost[k]  > 0)) delete st.cost[k];
+      for (const k in st.needs) if (!(st.needs[k] > 0)) delete st.needs[k];
+    }
+  } catch (e) { try { console.warn('[reconEcon]', e); } catch (_) {} }
+}
+function openReconEconEditor() {
+  // Every site gets a full cost + crew row, including resources it doesn't
+  // currently charge — that is how an admin ADDS a requirement.
+  const ROLES = ['Builder', 'Engineer', 'Farmer', 'Medic', 'Guard', 'Scavenger'];
+  const full = {};
+  for (const st of RECON_SITES) {
+    const cost = { cinder: (st.cost && st.cost.cinder) | 0 };
+    for (const rid of RESOURCE_IDS) cost[rid] = ((st.cost || {})[rid]) | 0;
+    const needs = {};
+    for (const r of ROLES) needs[r] = ((st.needs || {})[r]) | 0;
+    full[st.id] = { cost: cost, needs: needs };
+  }
+  const labels = { cost: 'COST', needs: 'CREW REQUIRED', cinder: 'Cinder 🔥' };
+  for (const st of RECON_SITES) labels[st.id] = st.name + ' → ' + (st.into || '');
+  for (const rid of RESOURCE_IDS) labels[rid] = (_meta(rid).name || rid);
+  openEconTuner({
+    title: '🏗 RECLAIM BOARD',
+    defaults: full,
+    get: () => (Forge.reconEcon && typeof Forge.reconEcon === 'object') ? Forge.reconEcon : (Forge.reconEcon = {}),
+    set: (t) => { Forge.reconEcon = t; },
+    onApply: () => { try { applyReconEconOverrides(); } catch (e) {} },
+    labels: labels,
+  });
+}
+try { window.__mg = window.__mg || {}; window.__mg.reconEconEditor = openReconEconEditor; window.__mg.reconEcon = applyReconEconOverrides; } catch (e) {}
+
 function _reconState() {
   if (!Profile.recon || typeof Profile.recon !== 'object') Profile.recon = {};
   const r = Profile.recon;

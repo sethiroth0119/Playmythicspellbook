@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119t1';
+  window.BUILD_VERSION = 'v119t2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -61103,20 +61103,34 @@ function campStartActivity(slotId, activity, tierKey) {
   if (!slot) return false;
   const st = campActivityState(slot);
   if (st.phase === 'running') { showToast('Unit is already deployed.'); return false; }
+  // 🚚 CONVOY GATE — the daily anti-farm cap. EVERY activity that sends an
+  // operative OUT of the camp costs a convoy slot: loot runs, rescues and rival
+  // raids. (`study` and `rest` keep the unit at camp, so they are free — gating
+  // those would just stop players parking units.) One slot = one operative.
+  //
+  // Checked HERE, at the top, for two reasons: it covers every outbound branch
+  // from one place, and it lands BEFORE the loot branch's fuel gate — that gate
+  // SPENDS fuel, so refusing after it would burn fuel on a run that never
+  // launched. Spending happens per-branch, only once the run has committed.
+  const _cvCost = (activity === 'loot' || activity === 'rescue' || activity === 'raidRival') ? 1 : 0;
+  if (_cvCost > 0 && typeof _convoyCanSend === 'function') {
+    const _cv = _convoyCanSend(_cvCost);
+    if (!_cv.ok) { showToast(_cv.why, 4600); return false; }
+  }
+  // Spend the allowance + build the "N slots left" suffix. Call ONLY after the
+  // activity has actually committed, never before a gate that can still refuse.
+  const _cvCommit = () => {
+    if (_cvCost <= 0 || typeof _convoySpend !== 'function') return '';
+    try {
+      const left = _convoySpend(_cvCost);
+      return ` · 🚚 ${left} convoy slot${left === 1 ? '' : 's'} left today`;
+    } catch (e) { return ''; }
+  };
   if (activity === 'loot') {
     // 🛻 Long-haul deep run is a deepRun with a bigger fuel burn + payoff.
     const isPlus = (tierKey === 'deepRunPlus');
     const realTier = isPlus ? 'deepRun' : (tierKey || 'scout');
     const tier = CAMP_LOOT_TIERS[realTier] || CAMP_LOOT_TIERS.scout;
-    // 🚚 CONVOY GATE — the daily anti-farm cap. Checked BEFORE the fuel gate on
-    // purpose: the fuel gate SPENDS fuel, so refusing after it would eat the
-    // player's fuel for a run that never launched. One slot = one operative, so
-    // this run costs exactly 1 of the allowance. Spent only after the run
-    // actually commits (below). Enforced only when the convoy layer is present.
-    if (typeof _convoyCanSend === 'function') {
-      const _cv = _convoyCanSend(1);
-      if (!_cv.ok) { showToast(_cv.why, 4600); return false; }
-    }
     // ⛽ Fuel gate — burn fuel to launch the expedition (scout is free).
     const fuelCost = isPlus ? DEEP_PLUS_FUEL : (CAMP_RUN_FUEL[realTier] || 0);
     if (fuelCost > 0) {
@@ -61127,13 +61141,8 @@ function campStartActivity(slotId, activity, tierKey) {
     slot.activity = 'loot'; slot.tier = realTier;
     slot.fuelTier = isPlus ? 'plus' : (fuelCost > 0 ? 'std' : null);
     slot.activityStart = Date.now(); slot.activityDur = tier.durMs;
-    // 🚚 Run is committed — NOW spend the convoy allowance (never before the
-    // fuel gate above, which can still refuse). Reports what's left so the cap
-    // is visible in play rather than only when it bites.
-    let _cvLeft = null;
-    if (typeof _convoySpend === 'function') { try { _cvLeft = _convoySpend(1); } catch (e) {} }
-    const _cvNote = (_cvLeft === null) ? ''
-      : ` · 🚚 ${_cvLeft} convoy slot${_cvLeft === 1 ? '' : 's'} left today`;
+    // 🚚 Run is committed (the fuel gate above can no longer refuse) — spend.
+    const _cvNote = _cvCommit();
     showToast(`${tier.emoji} Deployed on a ${tier.label}${isPlus ? '+ (long-haul)' : ''}${fuelCost ? ` — burned ${fuelCost} ⛽ Fuel` : ''}. Extraction in ${Math.round(tier.durMs / 3600000)}h.${_cvNote}`, 3800);
   } else if (activity === 'study') {
     slot.activity = 'study'; slot.tier = null;
@@ -61144,11 +61153,13 @@ function campStartActivity(slotId, activity, tierKey) {
     slot.activity = 'rescue'; slot.tier = null; slot.rescueTarget = tierKey || null;
     slot.activityStart = Date.now(); slot.activityDur = CAMP_LOOT_TIERS.raid.durMs;
     const tn = (_campMissing().find(m => m && m.refId === tierKey) || {}).name || 'the missing';
-    showToast(`🆘 Rescue team deployed for ${tn} — ETA ${Math.round(CAMP_LOOT_TIERS.raid.durMs / 3600000)}h.`, 3600);
+    const _cvNoteR = _cvCommit();   // 🚚 rescue is an outbound run — costs a slot
+    showToast(`🆘 Rescue team deployed for ${tn} — ETA ${Math.round(CAMP_LOOT_TIERS.raid.durMs / 3600000)}h.${_cvNoteR}`, 3600);
   } else if (activity === 'raidRival') {
     slot.activity = 'raidRival'; slot.tier = null;
     slot.activityStart = Date.now(); slot.activityDur = CAMP_LOOT_TIERS.deepRun.durMs;
-    showToast(`⚔️ Strike team deployed against ${_campRival().name} — ETA ${Math.round(CAMP_LOOT_TIERS.deepRun.durMs / 3600000)}h. High risk.`, 3800);
+    const _cvNoteV = _cvCommit();   // 🚚 rival raid is an outbound run — costs a slot
+    showToast(`⚔️ Strike team deployed against ${_campRival().name} — ETA ${Math.round(CAMP_LOOT_TIERS.deepRun.durMs / 3600000)}h. High risk.${_cvNoteV}`, 3800);
   } else { // rest
     slot.activity = 'rest'; slot.tier = null;
     slot.activityStart = null; slot.activityDur = null;

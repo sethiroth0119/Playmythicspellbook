@@ -34929,7 +34929,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119v2';
+  window.BUILD_VERSION = 'v119v3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39514,6 +39514,8 @@ const Forge = {
   // sleeve OUT of the Vendor Market so it can only arrive from a Founder Drop
   // or a Shop package.
   deckSleeves: [],
+  // 🔨 Crafting Station recipes — admin-authored. Empty = the built-in defaults.
+  craftRecipes: [],
   // 🏺 ADMIN-CREATED ROGUELITE RELICS — { id, name, icon, desc, + effect
   // fields: maxHp, winCurrency, winHealPct, shopDiscount, rewardChoice,
   // nodeCurrency, healBonusPct, grant:{currency,medPoints}, reviveOnce }.
@@ -46283,7 +46285,7 @@ async function _cloudifyAllAssets(onProgress) {
     ['tutorials', Forge.tutorials],
     ['resources', Forge.customResources], ['resourceSkins', Forge.resourceSkins],
     ['onboarding', Forge.onboarding], ['items', Forge.customItems],
-    ['tombCosmetics', Forge.tombstoneCosmetics], ['deckSleeves', Forge.deckSleeves], ['avatars', Forge.avatars], ['cards', Forge.customCards],
+    ['tombCosmetics', Forge.tombstoneCosmetics], ['deckSleeves', Forge.deckSleeves], ['craftRecipes', Forge.craftRecipes], ['avatars', Forge.avatars], ['cards', Forge.customCards],
   ];
   for (const [name, obj] of targets) {
     if (!obj || typeof obj !== 'object') continue;
@@ -47269,6 +47271,7 @@ function _applyCatalogRow(data) {
   Catalog.tombstoneArt = rawMoves.__tombstone_art__ || null;
   Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
   Catalog.deckSleeves = Array.isArray(rawMoves.__deck_sleeves__) ? rawMoves.__deck_sleeves__ : [];
+  Catalog.craftRecipes = Array.isArray(rawMoves.__craft_recipes__) ? rawMoves.__craft_recipes__ : [];
   Catalog.avatars = Array.isArray(rawMoves.__avatars__) ? rawMoves.__avatars__ : [];
   // 🧰 Resource customization from the shared row → apply to the live tables so
   // every player sees admin-added resources + reskins (icons/names/images).
@@ -47849,6 +47852,7 @@ async function cloudPublishCatalog(opts) {
       __tombstone_art__: Forge.tombstoneArt || null,
       __tombstone_cosmetics__: Array.isArray(Forge.tombstoneCosmetics) ? Forge.tombstoneCosmetics : [],
       __deck_sleeves__: Array.isArray(Forge.deckSleeves) ? Forge.deckSleeves : [],
+      __craft_recipes__: Array.isArray(Forge.craftRecipes) ? Forge.craftRecipes : [],
       __avatars__: Array.isArray(Forge.avatars) ? Forge.avatars : [],
       // 🃏 BUILT-IN card metadata (id/name/icon/type/cost only — no art, they
       // don't have any). The published `cards` array carries Forge cards only,
@@ -63461,6 +63465,8 @@ async function loadForgeContentFromIdb() {
     if (Array.isArray(tc) && tc.length && (!Array.isArray(Forge.tombstoneCosmetics) || !Forge.tombstoneCosmetics.length)) { Forge.tombstoneCosmetics = tc; changed = true; }
     const avs = await idbGet('forge_avatars');
     if (Array.isArray(avs) && avs.length && (!Array.isArray(Forge.avatars) || !Forge.avatars.length)) { Forge.avatars = avs; changed = true; }
+    const cr = await idbGet('forge_craftRecipes');
+    if (Array.isArray(cr) && cr.length && (!Array.isArray(Forge.craftRecipes) || !Forge.craftRecipes.length)) { Forge.craftRecipes = cr; changed = true; }
     const dsl = await idbGet('forge_deckSleeves');
     if (Array.isArray(dsl) && dsl.length && (!Array.isArray(Forge.deckSleeves) || !Forge.deckSleeves.length)) { Forge.deckSleeves = dsl; changed = true; }
     const rr = await idbGet('forge_rlcRelics');
@@ -63528,6 +63534,7 @@ function loadForge() {
     try { const ta = localStorage.getItem('hg_tombstoneArt'); if (ta != null) { const x = JSON.parse(ta); if (typeof x === 'string' && x) Forge.tombstoneArt = x; } } catch (err) {}
     try { const tc = localStorage.getItem('hg_tombstoneCosmetics'); if (tc) { const x = JSON.parse(tc); if (Array.isArray(x)) Forge.tombstoneCosmetics = x; } } catch (err) {}
     try { const av = localStorage.getItem('hg_avatars'); if (av) { const x = JSON.parse(av); if (Array.isArray(x)) Forge.avatars = x; } } catch (err) {}
+    try { const cr2 = localStorage.getItem('hg_craftRecipes'); if (cr2) { const x = JSON.parse(cr2); if (Array.isArray(x)) Forge.craftRecipes = x; } } catch (err) {}
     try { const ds = localStorage.getItem('hg_deckSleeves'); if (ds) { const x = JSON.parse(ds); if (Array.isArray(x)) Forge.deckSleeves = x; } } catch (err) {}
     try { const rr = localStorage.getItem('hg_rlcRelics'); if (rr) { const x = JSON.parse(rr); if (Array.isArray(x)) Forge.rlcRelics = x; } } catch (err) {}
     try { const cu = localStorage.getItem('hg_customUltimates'); if (cu) { const x = JSON.parse(cu); if (Array.isArray(x)) Forge.customUltimates = x; } } catch (err) {}
@@ -64237,6 +64244,7 @@ function saveForge() {
       idbSet('forge_tombstoneArt',       Forge.tombstoneArt       || null);
       idbSet('forge_tombstoneCosmetics', Forge.tombstoneCosmetics || []);
       idbSet('forge_deckSleeves',        Forge.deckSleeves        || []);
+      idbSet('forge_craftRecipes',      Forge.craftRecipes       || []);
       idbSet('forge_avatars',            Forge.avatars            || []);
       // 🎓 Onboarding config (welcome image / narrator portrait / narration
       // audio data: URLs). Previously this ONLY survived a successful catalog
@@ -64330,6 +64338,7 @@ function saveForge() {
     { key: 'hg_tombstoneArt',       value: _stripDataUrls(Forge.tombstoneArt || null), name: 'tombstoneArt' },
     { key: 'hg_tombstoneCosmetics', value: _stripDataUrls(Forge.tombstoneCosmetics || []), name: 'tombstoneCosmetics' },
     { key: 'hg_deckSleeves', value: _stripDataUrls(Forge.deckSleeves || []), name: 'deckSleeves' },
+    { key: 'hg_craftRecipes', value: _stripDataUrls(Forge.craftRecipes || []), name: 'craftRecipes' },
     { key: 'hg_avatars', value: _stripDataUrls(Forge.avatars || []), name: 'avatars' },
     { key: 'hg_rlcRelics',          value: _stripDataUrls(Forge.rlcRelics || []),          name: 'rlcRelics' },
     // ⚡ Custom/edited hero ultimates + per-hero assignment — tiny JSON, safe
@@ -68697,24 +68706,54 @@ function getAllDeckSleeves() {
 // the recorded memories that become cards (memoryShards), worked metal and
 // lacquer for the durable goods (metal, corruptedEssence). A box is a real bulk
 // discount over eight singles — 48/24 against 64/32.
-const CRAFT_RECIPES = [
+// ⚠ These are the DEFAULTS, not the live list. Recipes are admin-editable —
+// call getAllCraftRecipes(), never this array, so an authored recipe book wins.
+// `out` is what the recipe PRODUCES: { kind, amount, packId?, resId? }.
+//   pack     — `amount` boosters (packId picks a specific pack, else random)
+//   sleeve   — a random unowned deck sleeve
+//   dice     — a random unowned dice skin
+//   resource — `amount` of `resId` (a converter: turn plenty into scarcity)
+const CRAFT_RECIPES_DEFAULT = [
   { id: 'pack',   icon: '🎴', name: 'Booster Pack',
-    cost: { supplies: 8, memoryShards: 4 },
-    blurb: 'One sealed booster from the current set.',
-    make: () => _craftGrantPacks(1) },
+    cost: { supplies: 8, memoryShards: 4 }, out: { kind: 'pack', amount: 1 },
+    blurb: 'One sealed booster from the current set.' },
   { id: 'box',    icon: '📦', name: 'Booster Box',
-    cost: { supplies: 48, memoryShards: 24, metal: 10 },
-    blurb: 'Eight boosters at once — cheaper per pack than crafting them singly.',
-    make: () => _craftGrantPacks(8) },
+    cost: { supplies: 48, memoryShards: 24, metal: 10 }, out: { kind: 'pack', amount: 8 },
+    blurb: 'Eight boosters at once — cheaper per pack than crafting them singly.' },
   { id: 'sleeve', icon: '🃏', name: 'Card Sleeve',
-    cost: { supplies: 14, metal: 8, corruptedEssence: 3 },
-    blurb: 'A random deck sleeve you do not already own.',
-    make: () => _craftGrantCosmetic('sleeve') },
+    cost: { supplies: 14, metal: 8, corruptedEssence: 3 }, out: { kind: 'sleeve', amount: 1 },
+    blurb: 'A random deck sleeve you do not already own.' },
   { id: 'dice',   icon: '🎲', name: 'Dice Skin',
-    cost: { metal: 12, memoryShards: 10, corruptedEssence: 5 },
-    blurb: 'A random dice skin you do not already own — worn at the first-move roll.',
-    make: () => _craftGrantCosmetic('dice') },
+    cost: { metal: 12, memoryShards: 10, corruptedEssence: 5 }, out: { kind: 'dice', amount: 1 },
+    blurb: 'A random dice skin you do not already own — worn at the first-move roll.' },
 ];
+// The live recipe book: admin-authored if there is one, defaults otherwise.
+// Published recipes come through Catalog; the admin's local Forge copy wins so
+// edits are visible before publishing (same rule as sleeves/avatars/cards).
+function getAllCraftRecipes() {
+  try {
+    const local = Array.isArray(Forge.craftRecipes) ? Forge.craftRecipes : [];
+    if (local.length) return local.filter(r => r && r.id);
+    const pub = Array.isArray(Catalog.craftRecipes) ? Catalog.craftRecipes : [];
+    if (pub.length) return pub.filter(r => r && r.id);
+  } catch (e) {}
+  return CRAFT_RECIPES_DEFAULT;
+}
+// Resolve a recipe's output into an actual grant. Returns the toast sentence, or
+// null to refund — the single contract every failure path relies on.
+function _craftProduce(r) {
+  const out = (r && r.out) || {};
+  const amt = Math.max(1, out.amount | 0 || 1);
+  if (out.kind === 'sleeve') return _craftGrantCosmetic('sleeve');
+  if (out.kind === 'dice')   return _craftGrantCosmetic('dice');
+  if (out.kind === 'resource') {
+    if (!out.resId || typeof addRes !== 'function') return null;
+    addRes(out.resId, amt);
+    const m = (typeof _meta === 'function') ? _meta(out.resId) : { icon: '📦', name: out.resId };
+    return 'Refined ' + (m.icon || '📦') + ' ' + amt + ' ' + (m.name || out.resId) + '.';
+  }
+  return _craftGrantPacks(amt, out.packId);      // default/'pack'
+}
 // Give the materials back, resource by resource. Used on every failed craft.
 function _craftRefund(cost) {
   try {
@@ -68722,7 +68761,7 @@ function _craftRefund(cost) {
     for (const id in cost) { if (cost[id] > 0 && typeof addRes === 'function') addRes(id, cost[id]); }
   } catch (e) {}
 }
-function _craftRecipe(id) { return CRAFT_RECIPES.find(r => r.id === id) || null; }
+function _craftRecipe(id) { return getAllCraftRecipes().find(r => r.id === id) || null; }
 
 // Packs come from the live pack catalog, so crafting always yields whatever the
 // current set is rather than a hardcoded pack that could stop existing.
@@ -68734,8 +68773,13 @@ function _craftPackDef() {
     return usable[Math.floor(Math.random() * usable.length)];
   } catch (e) { return null; }
 }
-function _craftGrantPacks(n) {
-  const def = _craftPackDef();
+function _craftGrantPacks(n, packId) {
+  // An authored recipe can name a specific pack; otherwise take one at random.
+  let def = null;
+  try {
+    if (packId && typeof getAllCustomPacks === 'function') def = (getAllCustomPacks() || []).find(p => p && p.id === packId) || null;
+  } catch (e) {}
+  if (!def) def = _craftPackDef();
   if (!def) return null;                       // no packs published ⇒ refund
   try {
     if (n > 1 && typeof addUnopenedPacks === 'function') addUnopenedPacks(def, n, 'craft');
@@ -68792,27 +68836,34 @@ function craftStationMake(recipeId) {
     return { ok: false, msg: 'Not enough materials.' };
   }
   let msg = null;
-  try { msg = r.make(); } catch (e) { msg = null; }
+  // An authored recipe has no `make` — it declares an `out` block instead. The
+  // built-in defaults now do too, so this is one path, not two.
+  try { msg = (typeof r.make === 'function') ? r.make() : _craftProduce(r); } catch (e) { msg = null; }
   if (!msg) {
     _craftRefund(r.cost);                      // full refund — nothing was made
     // Say which of the two failures it was. "You already own every sleeve" is a
     // lie when the real problem is that none exist yet.
+    // ⚠ Keyed off what the recipe PRODUCES, not its id — an admin can name a
+    //   recipe anything, so `r.id === 'pack'` stopped being a reliable test.
+    const kind = (r.out && r.out.kind) || 'pack';
     let why;
-    if (r.id === 'pack' || r.id === 'box') why = 'No booster packs are published yet — nothing to craft.';
+    if (kind === 'pack') why = 'No booster packs are published yet — nothing to craft.';
+    else if (kind === 'resource') why = 'That recipe has no output resource set.';
     else {
-      const pool = (r.id === 'dice')
+      const pool = (kind === 'dice')
         ? ((typeof getAllDiceSkins === 'function') ? getAllDiceSkins() : [])
         : ((typeof getAllDeckSleeves === 'function') ? getAllDeckSleeves() : []);
+      const label = String(r.name || 'item').toLowerCase();
       why = pool.filter(c => c && !c.exclusive).length
-        ? 'You already own every ' + r.name.toLowerCase() + ' that can be crafted.'
-        : 'No ' + r.name.toLowerCase() + 's are available to craft yet.';
+        ? 'You already own every ' + label + ' that can be crafted.'
+        : 'No ' + label + 's are available to craft yet.';
     }
     return { ok: false, msg: why };
   }
   try { saveProfile(); } catch (e) {}
   return { ok: true, msg: msg };
 }
-try { window.__mg = window.__mg || {}; window.__mg.craft = { recipes: CRAFT_RECIPES, make: craftStationMake }; } catch (e) {}
+try { window.__mg = window.__mg || {}; window.__mg.craft = { recipes: getAllCraftRecipes, make: craftStationMake }; } catch (e) {}
 
 // 🎲 DICE SKINS — the face texture on the player's die at the first-move roll.
 // Identical merge rule to sleeves/avatars: published catalog first, admin-local
@@ -149272,12 +149323,170 @@ function _ensureCraftStyle() {
     font-size:.8rem; line-height:1.8; border:1px dashed rgba(224,178,60,.25); border-radius:5px; }
   .cft-card.is-on{ border-color:#ffd166; box-shadow:0 0 0 1px rgba(255,209,102,.5),0 0 18px rgba(255,209,102,.16); }
   .cft-row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  /* 👑 Recipe editor overlay — portalled to body, so position:fixed really is
+     viewport-fixed. NOTE: no backticks in this comment — it lives inside a
+     template literal, and one would close it. */
+  .cre-overlay{ position:fixed; inset:0; z-index:99999; display:flex; align-items:center; justify-content:center;
+    background:rgba(4,3,2,.82); padding:20px; }
+  .cre-panel{ width:min(920px,96vw); max-height:88vh; overflow:auto; padding:18px;
+    border:1px solid rgba(224,178,60,.45); border-radius:6px; color:#e6dccc;
+    background:linear-gradient(180deg,#241a0d,#0d0a06); box-shadow:0 20px 60px rgba(0,0,0,.8); }
+  .cre-head{ display:flex; align-items:center; gap:12px; }
+  .cre-title{ font-family:'Cinzel',serif; font-size:1.05rem; letter-spacing:.1em; color:#e0b23c; }
+  .cre-x{ margin-left:auto; background:none; border:0; color:#bfb39c; font-size:1.1rem; cursor:pointer; }
+  .cre-x:hover{ color:#ffd166; }
+  .cre-sub{ font-size:.72rem; color:#9d917c; margin:4px 0 14px; line-height:1.6; }
+  .cre-list{ display:flex; flex-direction:column; gap:12px; }
+  .cre-card{ border:1px solid rgba(224,178,60,.25); border-radius:5px; padding:12px;
+    background:rgba(16,13,8,.75); display:flex; flex-direction:column; gap:8px; }
+  .cre-row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .cre-lbl{ font-family:'Cinzel',serif; font-size:.6rem; letter-spacing:.1em; color:#8d8272; margin-top:4px; }
+  .cre-costs{ display:flex; gap:6px; flex-wrap:wrap; }
+  .cre-res{ display:flex; align-items:center; gap:4px; border:1px solid rgba(224,178,60,.2);
+    border-radius:3px; padding:3px 6px; background:rgba(0,0,0,.3); }
+  .cre-res input{ width:52px; }
+  .cre-overlay input, .cre-overlay select{ background:rgba(0,0,0,.45); color:#e6dccc;
+    border:1px solid rgba(224,178,60,.3); border-radius:3px; padding:6px 8px; font-size:.78rem; }
+  .cre-overlay input:focus, .cre-overlay select:focus{ outline:none; border-color:#ffd166; }
+  .cre-icon{ width:56px; text-align:center; font-size:1rem; }
+  .cre-name{ flex:1; min-width:140px; }
+  .cre-blurb{ width:100%; }
+  .cre-amt{ width:74px; }
+  .cre-del{ background:none; border:1px solid rgba(212,103,74,.5); color:#d4674a; border-radius:3px;
+    padding:5px 9px; cursor:pointer; }
+  .cre-del:hover{ border-color:#d4674a; background:rgba(212,103,74,.12); }
+  .cre-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:14px; flex-wrap:wrap; }
   .cft-back{ font-family:'Cinzel',serif; font-size:.72rem; letter-spacing:.08em; padding:8px 16px;
     border:1px solid rgba(224,178,60,.5); border-radius:999px; cursor:pointer; color:#e0b23c;
     background:linear-gradient(180deg,rgba(40,32,18,.95),rgba(20,16,9,.95)); }
   `;
   document.head.appendChild(st);
 }
+
+// 👑 ADMIN — the recipe editor. Everything about a recipe is editable here:
+// name, icon, description, what it costs in every resource, what it produces
+// and how much. Writes Forge.craftRecipes; publish pushes it to every player.
+// Portalled to <body> so no transformed ancestor can capture the fixed overlay
+// (the containing-block trap that put the auction modal off-screen).
+function openCraftRecipeEditor() {
+  if (typeof _requireAdmin === 'function' && !_requireAdmin('Crafting recipes')) return;
+  if (!Array.isArray(Forge.craftRecipes) || !Forge.craftRecipes.length) {
+    // Seed from the built-ins so the admin edits real content, never a blank page.
+    Forge.craftRecipes = JSON.parse(JSON.stringify(
+      getAllCraftRecipes().map(r => ({ id: r.id, icon: r.icon, name: r.name, blurb: r.blurb,
+        cost: Object.assign({}, r.cost), out: Object.assign({ kind: 'pack', amount: 1 }, r.out) }))));
+  }
+  const OUT_KINDS = [
+    ['pack', '🎴 Booster pack(s)'], ['sleeve', '🃏 Random deck sleeve'],
+    ['dice', '🎲 Random dice skin'], ['resource', '🧰 Resource'],
+  ];
+  const draw = () => {
+    const list = Forge.craftRecipes;
+    const packs = (typeof getAllCustomPacks === 'function') ? (getAllCustomPacks() || []) : [];
+    const rows = list.map((r, i) => {
+      r.cost = r.cost || {}; r.out = r.out || { kind: 'pack', amount: 1 };
+      const costFields = RESOURCE_IDS.map(id => {
+        const m = _meta(id);
+        return `<label class="cre-res" title="${escapeHtml(m.name || id)}">
+          <span>${m.icon || '📦'}</span>
+          <input type="number" min="0" value="${r.cost[id] | 0}" data-cre-cost="${i}" data-res="${id}">
+        </label>`;
+      }).join('');
+      return `<div class="cre-card">
+        <div class="cre-row">
+          <input class="cre-icon" value="${escapeHtml(r.icon || '')}" data-cre="icon" data-i="${i}" placeholder="🎴" title="Icon">
+          <input class="cre-name" value="${escapeHtml(r.name || '')}" data-cre="name" data-i="${i}" placeholder="Recipe name">
+          <button class="cre-del" data-cre-del="${i}" title="Delete this recipe">✕</button>
+        </div>
+        <input class="cre-blurb" value="${escapeHtml(r.blurb || '')}" data-cre="blurb" data-i="${i}" placeholder="What the player sees under the name">
+        <div class="cre-lbl">COSTS — leave 0 for anything it doesn't use</div>
+        <div class="cre-costs">${costFields}</div>
+        <div class="cre-lbl">PRODUCES</div>
+        <div class="cre-row">
+          <select data-cre="outKind" data-i="${i}">
+            ${OUT_KINDS.map(([k, lbl]) => `<option value="${k}" ${r.out.kind === k ? 'selected' : ''}>${lbl}</option>`).join('')}
+          </select>
+          <input type="number" min="1" class="cre-amt" value="${Math.max(1, r.out.amount | 0 || 1)}" data-cre="outAmount" data-i="${i}" title="How many">
+          ${r.out.kind === 'pack' ? `<select data-cre="packId" data-i="${i}" title="Which pack (blank = random)">
+            <option value="">— any published pack —</option>
+            ${packs.map(p => `<option value="${escapeHtml(p.id)}" ${r.out.packId === p.id ? 'selected' : ''}>${escapeHtml(p.name || p.id)}</option>`).join('')}
+          </select>` : ''}
+          ${r.out.kind === 'resource' ? `<select data-cre="resId" data-i="${i}" title="Which resource">
+            ${RESOURCE_IDS.map(id => `<option value="${id}" ${r.out.resId === id ? 'selected' : ''}>${_meta(id).icon || '📦'} ${escapeHtml(_meta(id).name || id)}</option>`).join('')}
+          </select>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    const host = document.getElementById('cre-overlay');
+    host.innerHTML = `<div class="cre-panel">
+      <div class="cre-head">
+        <div class="cre-title">🔨 CRAFTING RECIPES</div>
+        <button class="cre-x" id="cre-close">✕</button>
+      </div>
+      <div class="cre-sub">Every recipe in the Crafting Station. Players see these after you publish — until then only you do.</div>
+      <div class="cre-list">${rows || '<div class="cft-empty">No recipes. Add one below.</div>'}</div>
+      <div class="cre-actions">
+        <button class="cft-btn" id="cre-add">+ ADD RECIPE</button>
+        <button class="cft-btn" id="cre-reset" title="Discard your edits and go back to the built-in recipes">RESET TO DEFAULTS</button>
+        <button class="cft-btn" id="cre-save">SAVE</button>
+      </div>
+    </div>`;
+    // ── bindings ──
+    host.querySelector('#cre-close').onclick = () => host.remove();
+    host.querySelectorAll('[data-cre]').forEach(el => {
+      el.onchange = () => {
+        const i = parseInt(el.getAttribute('data-i'), 10);
+        const r = Forge.craftRecipes[i]; if (!r) return;
+        const f = el.getAttribute('data-cre');
+        if (f === 'outKind')       { r.out.kind = el.value; draw(); return; }   // redraw: the extra field changes
+        else if (f === 'outAmount') r.out.amount = Math.max(1, parseInt(el.value, 10) || 1);
+        else if (f === 'packId')    r.out.packId = el.value || null;
+        else if (f === 'resId')     r.out.resId = el.value;
+        else                        r[f] = el.value;
+      };
+    });
+    host.querySelectorAll('[data-cre-cost]').forEach(el => {
+      el.onchange = () => {
+        const r = Forge.craftRecipes[parseInt(el.getAttribute('data-cre-cost'), 10)]; if (!r) return;
+        const n = Math.max(0, parseInt(el.value, 10) || 0);
+        if (n) r.cost[el.getAttribute('data-res')] = n; else delete r.cost[el.getAttribute('data-res')];
+      };
+    });
+    host.querySelectorAll('[data-cre-del]').forEach(el => {
+      el.onclick = () => { Forge.craftRecipes.splice(parseInt(el.getAttribute('data-cre-del'), 10), 1); draw(); };
+    });
+    host.querySelector('#cre-add').onclick = () => {
+      Forge.craftRecipes.push({ id: 'cr_' + Math.random().toString(36).slice(2, 9), icon: '🔨',
+        name: 'New Recipe', blurb: '', cost: { supplies: 10 }, out: { kind: 'pack', amount: 1 } });
+      draw();
+    };
+    host.querySelector('#cre-reset').onclick = () => {
+      Forge.craftRecipes = [];
+      try { saveForge(); } catch (e) {}
+      host.remove();
+      showToast('🔨 Recipes reset to the built-in defaults.', 3600);
+      if (App.screen === 'craftStation') render();
+    };
+    host.querySelector('#cre-save').onclick = () => {
+      // Drop recipes that can't work rather than shipping a dead button to players.
+      const before = Forge.craftRecipes.length;
+      Forge.craftRecipes = Forge.craftRecipes.filter(r =>
+        r && r.name && r.cost && Object.keys(r.cost).some(k => r.cost[k] > 0));
+      const dropped = before - Forge.craftRecipes.length;
+      try { saveForge(); } catch (e) {}
+      host.remove();
+      showToast('🔨 Saved ' + Forge.craftRecipes.length + ' recipe' + (Forge.craftRecipes.length === 1 ? '' : 's')
+        + (dropped ? ' · ' + dropped + ' skipped (needs a name and at least one cost)' : '')
+        + ' — publish to push them to players.', 6000);
+      if (App.screen === 'craftStation') render();
+    };
+  };
+  const ov = document.createElement('div');
+  ov.id = 'cre-overlay'; ov.className = 'cre-overlay';
+  document.body.appendChild(ov);
+  draw();
+}
+try { window.__mg = window.__mg || {}; window.__mg.craftEditor = openCraftRecipeEditor; } catch (e) {}
 
 function renderCraftStation() {
   _ensureCraftStyle();
@@ -149288,7 +149497,8 @@ function renderCraftStation() {
   // Everything the player has scavenged, and what it is FOR. The station spends
   // the same stock the camp does, so this doubles as a reason to keep looting.
   const usedByRecipes = {};
-  CRAFT_RECIPES.forEach(r => Object.keys(r.cost).forEach(id => {
+  const RECIPES = getAllCraftRecipes();
+  RECIPES.forEach(r => Object.keys(r.cost || {}).forEach(id => {
     (usedByRecipes[id] || (usedByRecipes[id] = [])).push(r.name);
   }));
   const matIds = (typeof RESOURCE_IDS !== 'undefined' ? RESOURCE_IDS : Object.keys(R));
@@ -149307,7 +149517,9 @@ function renderCraftStation() {
   <div class="cft-sub" style="margin-top:14px">Materials come from the field: looting tombstones, camp missions and convoys, roguelite runs and container searches. Nothing here is bought — the station runs on what you bring back.</div>`;
 
   // ── CRAFT ─────────────────────────────────────────────────────────────────
-  const craftBody = `<div class="cft-grid">${CRAFT_RECIPES.map(r => {
+  const craftBody = !RECIPES.length
+    ? `<div class="cft-empty">No recipes are published yet.</div>`
+    : `<div class="cft-grid">${RECIPES.map(r => {
     const can = (typeof canAffordResources === 'function') ? canAffordResources(r.cost) : false;
     const costHtml = (typeof resourceCostHtml === 'function')
       ? resourceCostHtml(r.cost, { flagShort: true, withNames: true })
@@ -149361,10 +149573,13 @@ function renderCraftStation() {
         <div class="cft-tab ${tab === 'craft' ? 'is-active' : ''}" data-cft-tab="craft">🔨 Craft</div>
         <div class="cft-tab ${tab === 'dice' ? 'is-active' : ''}" data-cft-tab="dice">🎲 Dice Skins</div>
         <div class="cft-tab ${tab === 'materials' ? 'is-active' : ''}" data-cft-tab="materials">🧰 Materials</div>
+        ${(typeof isAdmin === 'function' && isAdmin()) ? `<div class="cft-tab" id="cft-edit" title="Edit every recipe: costs, outputs, names">👑 Edit Recipes</div>` : ''}
       </div>
       ${body}
     </div>`;
 
+  const editBtn = document.getElementById('cft-edit');
+  if (editBtn) editBtn.onclick = () => openCraftRecipeEditor();
   const back = document.getElementById('cft-back');
   if (back) back.onclick = () => { App.screen = App._cftReturn || 'cardShop'; render(); };
   root.querySelectorAll('[data-cft-tab]').forEach(el => {

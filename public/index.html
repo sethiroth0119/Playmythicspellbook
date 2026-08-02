@@ -34929,7 +34929,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119v6';
+  window.BUILD_VERSION = 'v119v7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39179,14 +39179,14 @@ function getEffectiveCardCost(card, state, side) {
   // by the negate gate; if the player cannot pay, the play is refused upstream.
   try {
     if (card && card._costSpike) {
-      return Math.max(0, (_getEffectiveCardCostRaw(card, state, side) | 0) + (card._costSpike | 0));
+      return Math.max(0, (_getEffectiveCardCostCut(card, state, side) | 0) + (card._costSpike | 0));
     }
   } catch (e) {}
   // 🪙 TITHE — the card itself costs 1 more to play. (The draw half fires on
   // arrival, in the on-play path.)
   try {
     if (card && card.passive === 'tithe' || (card && card.passive2 === 'tithe')) {
-      const _base = _getEffectiveCardCostRaw(card, state, side);
+      const _base = _getEffectiveCardCostCut(card, state, side);
       return Math.max(0, (_base | 0) + 1);
     }
   } catch (e) {}
@@ -39199,13 +39199,19 @@ function getEffectiveCardCost(card, state, side) {
       const taxed = (state.units || []).some(u => u && u.alive && u.owner === foe
         && typeof hasPassive === 'function' && hasPassive(u, 'arcaneTariff'));
       if (taxed && !state._tariffPaid) {
-        return Math.max(0, (_getEffectiveCardCostRaw(card, state, side) | 0) + 2);
+        return Math.max(0, (_getEffectiveCardCostCut(card, state, side) | 0) + 2);
       }
     }
   } catch (e) {}
-  return _getEffectiveCardCostRaw(card, state, side);
+  return _getEffectiveCardCostCut(card, state, side);
 }
-function _getEffectiveCardCostRaw(card, state, side) {
+// 💸 Applies the side's active "cheapen" discounts on top of the raw cost.
+// ⚠ This used to be DECLARED WITH THE SAME NAME as the raw calculator below it.
+// A duplicate top-level function does not error — the later one silently wins —
+// so this wrapper never existed at runtime and _cardCostCutFor was never called:
+// every cheapenHand discount in the game did nothing. Renamed, and the callers
+// in getEffectiveCardCost now go through here.
+function _getEffectiveCardCostCut(card, state, side) {
   const raw = _getEffectiveCardCostRaw(card, state, side);
   if (!(raw > 0)) return raw;
   return Math.max(0, raw - _cardCostCutFor(card, state, side));

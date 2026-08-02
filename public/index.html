@@ -34929,7 +34929,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119v3';
+  window.BUILD_VERSION = 'v119v4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39516,6 +39516,8 @@ const Forge = {
   deckSleeves: [],
   // 🔨 Crafting Station recipes — admin-authored. Empty = the built-in defaults.
   craftRecipes: [],
+  // ⚙️ Admin overrides for the Corp Operations economy (startup/wages/output/yields).
+  opsEcon: {},
   // 🏺 ADMIN-CREATED ROGUELITE RELICS — { id, name, icon, desc, + effect
   // fields: maxHp, winCurrency, winHealPct, shopDiscount, rewardChoice,
   // nodeCurrency, healBonusPct, grant:{currency,medPoints}, reviveOnce }.
@@ -47272,6 +47274,7 @@ function _applyCatalogRow(data) {
   Catalog.tombstoneCosmetics = Array.isArray(rawMoves.__tombstone_cosmetics__) ? rawMoves.__tombstone_cosmetics__ : [];
   Catalog.deckSleeves = Array.isArray(rawMoves.__deck_sleeves__) ? rawMoves.__deck_sleeves__ : [];
   Catalog.craftRecipes = Array.isArray(rawMoves.__craft_recipes__) ? rawMoves.__craft_recipes__ : [];
+  Catalog.opsEcon = (rawMoves.__ops_econ__ && typeof rawMoves.__ops_econ__ === 'object') ? rawMoves.__ops_econ__ : {};
   Catalog.avatars = Array.isArray(rawMoves.__avatars__) ? rawMoves.__avatars__ : [];
   // 🧰 Resource customization from the shared row → apply to the live tables so
   // every player sees admin-added resources + reskins (icons/names/images).
@@ -47853,6 +47856,7 @@ async function cloudPublishCatalog(opts) {
       __tombstone_cosmetics__: Array.isArray(Forge.tombstoneCosmetics) ? Forge.tombstoneCosmetics : [],
       __deck_sleeves__: Array.isArray(Forge.deckSleeves) ? Forge.deckSleeves : [],
       __craft_recipes__: Array.isArray(Forge.craftRecipes) ? Forge.craftRecipes : [],
+      __ops_econ__: (Forge.opsEcon && typeof Forge.opsEcon === 'object') ? Forge.opsEcon : {},
       __avatars__: Array.isArray(Forge.avatars) ? Forge.avatars : [],
       // 🃏 BUILT-IN card metadata (id/name/icon/type/cost only — no art, they
       // don't have any). The published `cards` array carries Forge cards only,
@@ -63465,6 +63469,8 @@ async function loadForgeContentFromIdb() {
     if (Array.isArray(tc) && tc.length && (!Array.isArray(Forge.tombstoneCosmetics) || !Forge.tombstoneCosmetics.length)) { Forge.tombstoneCosmetics = tc; changed = true; }
     const avs = await idbGet('forge_avatars');
     if (Array.isArray(avs) && avs.length && (!Array.isArray(Forge.avatars) || !Forge.avatars.length)) { Forge.avatars = avs; changed = true; }
+    const oe = await idbGet('forge_opsEcon');
+    if (oe && typeof oe === 'object' && Object.keys(oe).length && !Object.keys(Forge.opsEcon || {}).length) { Forge.opsEcon = oe; changed = true; }
     const cr = await idbGet('forge_craftRecipes');
     if (Array.isArray(cr) && cr.length && (!Array.isArray(Forge.craftRecipes) || !Forge.craftRecipes.length)) { Forge.craftRecipes = cr; changed = true; }
     const dsl = await idbGet('forge_deckSleeves');
@@ -63534,6 +63540,7 @@ function loadForge() {
     try { const ta = localStorage.getItem('hg_tombstoneArt'); if (ta != null) { const x = JSON.parse(ta); if (typeof x === 'string' && x) Forge.tombstoneArt = x; } } catch (err) {}
     try { const tc = localStorage.getItem('hg_tombstoneCosmetics'); if (tc) { const x = JSON.parse(tc); if (Array.isArray(x)) Forge.tombstoneCosmetics = x; } } catch (err) {}
     try { const av = localStorage.getItem('hg_avatars'); if (av) { const x = JSON.parse(av); if (Array.isArray(x)) Forge.avatars = x; } } catch (err) {}
+    try { const oe2 = localStorage.getItem('hg_opsEcon'); if (oe2) { const x = JSON.parse(oe2); if (x && typeof x === 'object') Forge.opsEcon = x; } } catch (err) {}
     try { const cr2 = localStorage.getItem('hg_craftRecipes'); if (cr2) { const x = JSON.parse(cr2); if (Array.isArray(x)) Forge.craftRecipes = x; } } catch (err) {}
     try { const ds = localStorage.getItem('hg_deckSleeves'); if (ds) { const x = JSON.parse(ds); if (Array.isArray(x)) Forge.deckSleeves = x; } } catch (err) {}
     try { const rr = localStorage.getItem('hg_rlcRelics'); if (rr) { const x = JSON.parse(rr); if (Array.isArray(x)) Forge.rlcRelics = x; } } catch (err) {}
@@ -64245,6 +64252,7 @@ function saveForge() {
       idbSet('forge_tombstoneCosmetics', Forge.tombstoneCosmetics || []);
       idbSet('forge_deckSleeves',        Forge.deckSleeves        || []);
       idbSet('forge_craftRecipes',      Forge.craftRecipes       || []);
+      idbSet('forge_opsEcon',           Forge.opsEcon            || {});
       idbSet('forge_avatars',            Forge.avatars            || []);
       // 🎓 Onboarding config (welcome image / narrator portrait / narration
       // audio data: URLs). Previously this ONLY survived a successful catalog
@@ -64339,6 +64347,7 @@ function saveForge() {
     { key: 'hg_tombstoneCosmetics', value: _stripDataUrls(Forge.tombstoneCosmetics || []), name: 'tombstoneCosmetics' },
     { key: 'hg_deckSleeves', value: _stripDataUrls(Forge.deckSleeves || []), name: 'deckSleeves' },
     { key: 'hg_craftRecipes', value: _stripDataUrls(Forge.craftRecipes || []), name: 'craftRecipes' },
+    { key: 'hg_opsEcon', value: Forge.opsEcon || {}, name: 'opsEcon' },
     { key: 'hg_avatars', value: _stripDataUrls(Forge.avatars || []), name: 'avatars' },
     { key: 'hg_rlcRelics',          value: _stripDataUrls(Forge.rlcRelics || []),          name: 'rlcRelics' },
     // ⚡ Custom/edited hero ultimates + per-hero assignment — tiny JSON, safe
@@ -73979,7 +73988,43 @@ const OPS_ECON = {
   // Tutor Shop (wholesale) and lets you stock + resell moves to other players.
   dojo:         { startup: 150000, ratePerWorkerHr: 450,  salaryPerWorkerHr: 110, maxWorkers: 6,  yields: {} },
 };
-function _opEcon(t) { return OPS_ECON[t] || null; }
+// 👑 ADMIN-TUNABLE. OPS_ECON above is the DEFAULT table; an admin can override
+// any field of any operation from the Operations Economy editor, and the values
+// publish to every player. Overrides are merged per-operation so a partial edit
+// (just the startup, say) leaves everything else on the default.
+// ⚠ Everything that prices, pays, hires or accrues an operation goes through
+//   this one function — keep it that way and one edit retunes the whole system.
+// Friendly names, shared so the admin editor doesn't say "cardshop".
+const OP_LABELS = {
+  mining: 'Mining Company', oil: 'Oil Company', construction: 'Construction Co.',
+  medical: 'Medical Corporation', agri: 'Agricultural Op.', research: 'Research Facility',
+  smuggling: 'Smuggling Network', salvage: 'Salvage Operation', gas: 'Gas Station Chain',
+  cars: 'Car Dealership', fishing: 'Fishing Company', cardshop: 'Card Shop', dojo: 'Dojo',
+};
+function getOpsEconOverrides() {
+  try {
+    const local = (Forge.opsEcon && typeof Forge.opsEcon === 'object') ? Forge.opsEcon : null;
+    if (local && Object.keys(local).length) return local;
+    const pub = (Catalog.opsEcon && typeof Catalog.opsEcon === 'object') ? Catalog.opsEcon : null;
+    if (pub && Object.keys(pub).length) return pub;
+  } catch (e) {}
+  return null;
+}
+function _opEcon(t) {
+  const base = OPS_ECON[t] || null;
+  if (!base) return null;
+  const ov = getOpsEconOverrides();
+  const o = ov && ov[t];
+  if (!o || typeof o !== 'object') return base;
+  const merged = Object.assign({}, base, o);
+  // `yields` is a nested map — merge it too, so overriding one resource doesn't
+  // silently delete the others.
+  if (o.yields && typeof o.yields === 'object') {
+    merged.yields = Object.assign({}, base.yields || {}, o.yields);
+  }
+  return merged;
+}
+try { window.__mg = window.__mg || {}; window.__mg.opsEcon = { table: OPS_ECON, live: _opEcon }; } catch (e) {}
 const Operations = { list: [], _fetched: 0 };
 // 💾 Personally-funded businesses live on the PROFILE (Profile.jbLocalOps,
 // cloud-synced via __jbLocalOps__). They used to be pushed into Operations.list
@@ -149488,6 +149533,129 @@ function openCraftRecipeEditor() {
 }
 try { window.__mg = window.__mg || {}; window.__mg.craftEditor = openCraftRecipeEditor; } catch (e) {}
 
+// 👑 ADMIN — Operations Economy editor. Every funded business in one table:
+// what it costs to start, what it pays per worker-hour, what it earns, how many
+// workers it takes, and the real resources it deposits. Writes Forge.opsEcon as
+// a sparse OVERRIDE map (only fields you actually changed), so the defaults keep
+// filling the gaps and a later balance pass to OPS_ECON still reaches players
+// who haven't had that field re-tuned.
+function openOpsEconEditor() {
+  if (typeof _requireAdmin === 'function' && !_requireAdmin('Operations economy')) return;
+  _ensureCraftStyle();
+  if (!Forge.opsEcon || typeof Forge.opsEcon !== 'object') Forge.opsEcon = {};
+  const NUMS = [
+    ['startup', 'Startup (Treasury) 🔥', 1],
+    ['salaryPerWorkerHr', 'Wages 🔥 / worker·hr', 1],
+    ['ratePerWorkerHr', 'Output 🔥 / worker·hr', 1],
+    ['maxWorkers', 'Max workers', 1],
+  ];
+  const draw = () => {
+    const host = document.getElementById('cre-overlay');
+    const ids = Object.keys(OPS_ECON);
+    const rows = ids.map(id => {
+      const live = _opEcon(id) || {};
+      const ov = Forge.opsEcon[id] || {};
+      const label = (typeof OP_LABELS === 'object' && OP_LABELS && OP_LABELS[id]) || id;
+      const nums = NUMS.map(([f, lbl]) => `<label class="cre-res" title="${escapeHtml(lbl)}">
+          <span style="font-size:.6rem;color:#8d8272">${escapeHtml(lbl)}</span>
+          <input type="number" min="0" step="1" value="${live[f] != null ? live[f] : ''}"
+                 data-oe="${escapeHtml(id)}" data-f="${f}" style="width:96px">
+        </label>`).join('');
+      // Yields are per-resource and fractional (0.25 memory shards per worker-hr).
+      const yieldIds = Object.keys(Object.assign({}, (OPS_ECON[id] || {}).yields || {}, ov.yields || {}));
+      const yields = RESOURCE_IDS.map(rid => {
+        const cur = (live.yields || {})[rid];
+        if (cur == null && yieldIds.indexOf(rid) < 0) return '';
+        const m = _meta(rid);
+        return `<label class="cre-res" title="${escapeHtml(m.name || rid)}">
+          <span>${m.icon || '📦'}</span>
+          <input type="number" min="0" step="0.05" value="${cur != null ? cur : 0}"
+                 data-oey="${escapeHtml(id)}" data-res="${rid}" style="width:70px">
+        </label>`;
+      }).join('');
+      const addable = RESOURCE_IDS.filter(rid => (live.yields || {})[rid] == null && yieldIds.indexOf(rid) < 0);
+      return `<div class="cre-card">
+        <div class="cre-row"><b style="font-family:'Cinzel',serif;color:#e0b23c">${escapeHtml(label)}</b>
+          <span style="font-size:.66rem;color:#8d8272">${escapeHtml(id)}</span>
+          ${Object.keys(ov).length ? '<span style="font-size:.62rem;color:#7ce8a8;margin-left:auto">EDITED</span>' : ''}
+        </div>
+        <div class="cre-costs">${nums}</div>
+        <div class="cre-lbl">RESOURCE YIELD — per worker·hr, deposited to the collector</div>
+        <div class="cre-costs">${yields || '<span style="font-size:.7rem;color:#8d8272">none</span>'}
+          <select data-oe-add="${escapeHtml(id)}" style="max-width:180px">
+            <option value="">+ add a resource…</option>
+            ${addable.map(rid => `<option value="${rid}">${_meta(rid).icon || '📦'} ${escapeHtml(_meta(rid).name || rid)}</option>`).join('')}
+          </select>
+        </div>
+      </div>`;
+    }).join('');
+    host.innerHTML = `<div class="cre-panel">
+      <div class="cre-head">
+        <div class="cre-title">⚙️ OPERATIONS ECONOMY</div>
+        <button class="cre-x" id="cre-close">✕</button>
+      </div>
+      <div class="cre-sub">Every funded business. Only the fields you change are stored as overrides — anything you leave alone keeps following the built-in balance. Publish to push these to players.</div>
+      <div class="cre-list">${rows}</div>
+      <div class="cre-actions">
+        <button class="cft-btn" id="oe-reset">RESET ALL TO DEFAULTS</button>
+        <button class="cft-btn" id="oe-save">SAVE</button>
+      </div>
+    </div>`;
+    host.querySelector('#cre-close').onclick = () => host.remove();
+    // Store a number ONLY when it differs from the default — that is what keeps
+    // the override map sparse and lets future rebalances still land.
+    host.querySelectorAll('[data-oe]').forEach(el => {
+      el.onchange = () => {
+        const id = el.getAttribute('data-oe'), f = el.getAttribute('data-f');
+        const base = OPS_ECON[id] || {};
+        const raw = el.value.trim();
+        const o = Forge.opsEcon[id] || (Forge.opsEcon[id] = {});
+        if (raw === '' || Number(raw) === base[f]) delete o[f];
+        else o[f] = Math.max(0, Number(raw) || 0);
+        if (!Object.keys(o).length) delete Forge.opsEcon[id];
+      };
+    });
+    host.querySelectorAll('[data-oey]').forEach(el => {
+      el.onchange = () => {
+        const id = el.getAttribute('data-oey'), rid = el.getAttribute('data-res');
+        const baseY = ((OPS_ECON[id] || {}).yields) || {};
+        const o = Forge.opsEcon[id] || (Forge.opsEcon[id] = {});
+        const n = Math.max(0, Number(el.value) || 0);
+        const y = o.yields || (o.yields = {});
+        if (n === baseY[rid]) delete y[rid]; else y[rid] = n;
+        if (!Object.keys(y).length) delete o.yields;
+        if (!Object.keys(o).length) delete Forge.opsEcon[id];
+      };
+    });
+    host.querySelectorAll('[data-oe-add]').forEach(el => {
+      el.onchange = () => {
+        if (!el.value) return;
+        const id = el.getAttribute('data-oe-add');
+        const o = Forge.opsEcon[id] || (Forge.opsEcon[id] = {});
+        (o.yields || (o.yields = {}))[el.value] = 0.5;
+        draw();
+      };
+    });
+    host.querySelector('#oe-reset').onclick = () => {
+      Forge.opsEcon = {};
+      try { saveForge(); } catch (e) {}
+      host.remove();
+      showToast('⚙️ Operations economy reset to the built-in balance.', 4200);
+    };
+    host.querySelector('#oe-save').onclick = () => {
+      try { saveForge(); } catch (e) {}
+      const n = Object.keys(Forge.opsEcon).length;
+      host.remove();
+      showToast('⚙️ Saved — ' + n + ' operation' + (n === 1 ? '' : 's') + ' retuned. Publish to push to players.', 6000);
+    };
+  };
+  const ov = document.createElement('div');
+  ov.id = 'cre-overlay'; ov.className = 'cre-overlay';
+  document.body.appendChild(ov);
+  draw();
+}
+try { window.__mg = window.__mg || {}; window.__mg.opsEconEditor = openOpsEconEditor; } catch (e) {}
+
 function renderCraftStation() {
   _ensureCraftStyle();
   const tab = App._cftTab || 'craft';
@@ -149573,11 +149741,14 @@ function renderCraftStation() {
         <div class="cft-tab ${tab === 'craft' ? 'is-active' : ''}" data-cft-tab="craft">🔨 Craft</div>
         <div class="cft-tab ${tab === 'dice' ? 'is-active' : ''}" data-cft-tab="dice">🎲 Dice Skins</div>
         <div class="cft-tab ${tab === 'materials' ? 'is-active' : ''}" data-cft-tab="materials">🧰 Materials</div>
-        ${(typeof isAdmin === 'function' && isAdmin()) ? `<div class="cft-tab" id="cft-edit" title="Edit every recipe: costs, outputs, names">👑 Edit Recipes</div>` : ''}
+        ${(typeof isAdmin === 'function' && isAdmin()) ? `<div class="cft-tab" id="cft-edit" title="Edit every recipe: costs, outputs, names">👑 Edit Recipes</div>
+        <div class="cft-tab" id="cft-ops" title="Edit every funded business: startup, wages, output, workers, resource yields">⚙️ Edit Businesses</div>` : ''}
       </div>
       ${body}
     </div>`;
 
+  const opsBtn = document.getElementById('cft-ops');
+  if (opsBtn) opsBtn.onclick = () => openOpsEconEditor();
   const editBtn = document.getElementById('cft-edit');
   if (editBtn) editBtn.onclick = () => openCraftRecipeEditor();
   const back = document.getElementById('cft-back');

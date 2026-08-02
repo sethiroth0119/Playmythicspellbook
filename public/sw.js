@@ -411,7 +411,7 @@
 // answering and players were served stale /assets/ images indefinitely.
 // The manual per-deploy version bump below is the real freshness signal:
 // new bytes → install+activate → old caches reaped.
-const CACHE_VERSION = 'mythic-v119u2-count-filter';
+const CACHE_VERSION = 'mythic-v119u3-spread-lock-buff';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if

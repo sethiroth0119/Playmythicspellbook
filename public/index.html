@@ -34786,7 +34786,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119u2';
+  window.BUILD_VERSION = 'v119u3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -52039,6 +52039,10 @@ async function _flushUsageEventQueue() {
 // public.usage_top RPC. Cached in-memory for 60s to avoid hammering the DB
 // when the Player Market screen re-renders frequently. Returns the same
 // shape as the local Profile.usage.<kind> map: { ref_id: count }.
+// 👥 How hard to damp a signal that comes from very few players. Higher = a card
+// needs a wider audience before its usage counts at full weight. 2 keeps a solo
+// grinder at ~1/3 weight while a 13-player card sits near ~0.87.
+const DVS_SPREAD_SOFTEN = 2;
 const _GlobalUsageCache = { card: null, hero: null, item: null };
 function _gucExpired(slot) {
   return !slot || (Date.now() - slot.fetchedAt > 60000);
@@ -52061,8 +52065,25 @@ async function fetchGlobalUsageTops(kind, limit) {
       }
       return null;
     }
+    // 👥 DISTINCT-PLAYER WEIGHTING. `usage_top` returns how many DIFFERENT players
+    // produced each card's plays, and we used to ignore it — so one grinder farming
+    // a single card moved its market price as much as a card the whole playerbase
+    // uses. Signals that feed pricing are damped by the spread of players behind
+    // them: plays × distinct/(distinct + DVS_SPREAD_SOFTEN). One player keeps ~1/3
+    // of its weight, a handful most of it, and a genuinely popular card keeps ~all.
+    // Chosen over a hard threshold so a small/young playerbase still registers.
+    // `kill` is EXEMPT — that number is shown raw on the asset panel, not priced.
+    const weigh = (kind === 'kill')
+      ? (row) => (row.plays | 0)
+      : (row) => {
+          const plays = row.plays | 0;
+          const dp = Math.max(1, row.distinct_players | 0);
+          return Math.round(plays * (dp / (dp + DVS_SPREAD_SOFTEN)));
+        };
     const out = {};
-    (data || []).forEach(row => { out[row.ref_id] = (row.plays | 0); });
+    (data || []).forEach(row => { out[row.ref_id] = weigh(row); });
+    // Keep the raw spread available for the asset panel / debugging.
+    try { Object.defineProperty(out, '__distinct', { value: (data || []).reduce((m, r) => { m[r.ref_id] = r.distinct_players | 0; return m; }, {}), enumerable: false }); } catch (e) {}
     _GlobalUsageCache[kind] = { fetchedAt: Date.now(), data: out };
     return out;
   } catch (e) { return null; }
@@ -77592,6 +77613,7 @@ const ONPLAY_TYPES = [
   { id: 'vanishReturn', label: '🌫 Vanish + Return (banish a unit, bring it back later)', needs: ['radius','vanishTarget','statusDuration','returnOn'] },
   { id: 'destroyTarget',label: '💀 Destroy Target (destroy the strongest enemy in radius)', needs: ['radius'] },
   { id: 'purityPact',   label: '🔥⚖️ Purity Pact (destroy THIS if you control a unit outside the Card Filter)', needs: ['filter'] },
+  { id: 'buffPerCard',  label: '📈 Buff Per Card (+Amount stat for EACH matching card in a zone)', needs: ['amount','filter','countZone','countSide','buffTarget'] },
   { id: 'destroyFrozen',label: '❄️💀 Destroy Frozen (destroy ALL Frozen enemy units)', needs: [] },
   { id: 'burnBurst',    label: '🔥💥 Burn Burst (dmg enemy hero = total enemy Burn counters)', needs: [] },
   { id: 'vanishTribe',  label: '🌫 Vanish Tribe (banish ALL matching enemy units to the Void)', needs: ['filter'] },
@@ -83083,6 +83105,48 @@ function _applyOnPlayOne(state, unit, card) {
 
   // 📚 SCALED BURN (Magic X-spells) — damage scales off how many cards sit in a
   // chosen zone, so the same card is a late-game finisher or an early-game cantrip.
+  // 📈 BUFF PER CARD — "+N ATK for EACH <named card> in your graveyard." Same
+  // counting rules as damagePerCard (zone + side + the 🎴 Card Filter, and
+  // nameIncludes resolves treatAs), but the total lands as a stat buff instead of
+  // damage. `stat` picks atk/def/mag/res; buffTarget picks who gets it.
+  if (eff.type === 'buffPerCard') {
+    const per = Math.max(1, eff.amount || 1);
+    const zone = eff.countZone || 'grave';
+    const cSide = eff.countSide || 'owner';
+    const sides = cSide === 'both' ? [owner, foeSide] : [cSide === 'enemy' ? foeSide : owner];
+    const _cf = (eff.filter && typeof eff.filter === 'object'
+      && ['nameIncludes', 'element', 'faction', 'cardType', 'cost', 'mentions'].some(k => {
+        const v = eff.filter[k]; return v != null && v !== '' && v !== 'any';
+      })) ? eff.filter : null;
+    const _match = (c) => !_cf || (typeof _cardMatchesFilter === 'function' ? _cardMatchesFilter(c, _cf) : true);
+    let count = 0;
+    for (const sd of sides) {
+      const st = state[sd];
+      if (zone === 'field') { count += (state.units || []).filter(u => u && u.alive && u.owner === sd && !u.isHero && _match(u)).length; continue; }
+      if (!st) continue;
+      const arr = zone === 'hand' ? st.hand : zone === 'void' ? st.void : zone === 'deck' ? st.deck : st.graveyard;
+      count += (arr || []).filter(_match).length;
+    }
+    const total = per * count;
+    const statKey = (['atk', 'def', 'mag', 'res'].indexOf(eff.stat) >= 0) ? eff.stat : 'atk';
+    if (total <= 0) { log.push({ msg: `📈 ${unit.name} draws on nothing — no matching cards to power it.`, color: 'amber' }); return { ...state, log }; }
+    const scope = (['self', 'allies', 'all'].indexOf(eff.buffTarget) >= 0) ? eff.buffTarget : 'self';
+    const turns = Math.max(1, eff.statusDuration || 99);
+    let hit = 0;
+    state.units = (state.units || []).map(u => {
+      if (!u || !u.alive) return u;
+      const isSelf = u.id === unit.id;
+      const ok = scope === 'self' ? isSelf
+        : scope === 'allies' ? (u.owner === owner && inRadius(u))
+        : inRadius(u);
+      if (!ok) return u;
+      hit++;
+      const se = (u.statusEffects || []).concat([{ type: 'cBuff', turns: turns, statBoost: { [statKey]: total } }]);
+      return { ...u, statusEffects: se };
+    });
+    log.push({ msg: `📈 ${unit.name} draws power from ${count} card${count === 1 ? '' : 's'} — +${total} ${statKey.toUpperCase()}${hit > 1 ? ` to ${hit} units` : ''}!`, color: owner === 'player' ? 'green' : 'red' });
+    return { ...state, log };
+  }
   if (eff.type === 'damagePerCard') {
     const per = Math.max(1, eff.amount || 1);
     const zone = eff.countZone || 'hand';
@@ -114783,6 +114847,14 @@ function renderCardEditor() {
       <div class="small-text ink-dim" style="margin:0.2rem 0 0.5rem">Optional. ${_isFieldCard ? 'Field cards have no board token — positional effects (AOE/heal/etc.) center on your hero; card effects (search / draw / mill / salvage / banish / negate-graveyard / 🌌 polycreate / discard) just work.' : _isWallCard ? 'Walls have no unit token — positional effects (AOE / take-control / heal / etc.) center on the wall\'s tile.' : 'Affects enemies / allies / self depending on the type picked.'}</div>
     </div>
     ${isUnitLike ? `
+    <div class="editor-field full" style="background:linear-gradient(90deg,rgba(206,150,60,0.14),rgba(30,20,6,0.35));border:1px solid rgba(230,180,90,0.45);border-radius:8px;padding:0.6rem 0.8rem;margin:0.2rem 0 0.4rem">
+      <label style="display:flex;align-items:center;gap:0.5rem;font-weight:700;color:#f0c674;cursor:pointer">
+        <input type="checkbox" id="ed-summon-lock" ${card.summonLock ? 'checked' : ''}>
+        🔐 Summon Lock — can ONLY be brought out by a card effect
+      </label>
+      <div class="small-text ink-dim" style="margin-top:0.35rem">When ON, this unit can never be played from your hand (by you or the AI). It can still be put onto the field by any effect — a spell that summons it, Summon From Zone, a graveyard raise, a fusion, an Eject trigger. Use it for archetype forms that are supposed to be exclusive to their own summoning card.</div>
+    </div>` : ''}
+    ${isUnitLike ? `
     <div class="editor-field full" style="background:linear-gradient(90deg,rgba(126,84,206,0.14),rgba(20,12,40,0.3));border:1px solid rgba(158,118,230,0.4);border-radius:8px;padding:0.6rem 0.8rem;margin:0.2rem 0 0.4rem">
       <label style="display:flex;align-items:center;gap:0.5rem;font-weight:700;color:#c8a8ff;cursor:pointer">
         <input type="checkbox" id="ed-is-subterfuge" ${card.isSubterfuge ? 'checked' : ''}>
@@ -118774,6 +118846,12 @@ function captureEditorIntoCard(card) {
   // 🃏 SUBTERFUGE — units only. When checked, the unit is played face-down and the
   // On-Play editor above doubles as its FLIP EFFECT (mirrored into card.flipEffect so
   // the engine reads it on reveal, while card.onPlay is skipped on summon by placeUnit).
+  // 🔐 Summon Lock — units only; blocks hand-play while leaving every effect-driven
+  // summon path working (see placeUnit / _aiPlayReqOk).
+  if (document.getElementById('ed-summon-lock')) {
+    if (document.getElementById('ed-summon-lock').checked) card.summonLock = true;
+    else delete card.summonLock;
+  }
   if (document.getElementById('ed-is-subterfuge')) {
     card.isSubterfuge = !!document.getElementById('ed-is-subterfuge').checked;
     if (card.isSubterfuge) card.flipEffect = card.onPlay ? { ...card.onPlay } : null;
@@ -137452,6 +137530,8 @@ function _checkPlayRequirement(card, state, side) {
 // fails OPEN: a thrown error must never stall the AI's turn.
 function _aiPlayReqOk(card, state) {
   try {
+    // 🔐 Summon-locked units are never hard-cast from hand — by either side.
+    if (card && card.summonLock) return false;
     const req = card && card.playRequirement;
     if (!req || !req.type || req.allowNormalPlay) return true;      // no gate, or soft gate
     // 🌌 vanishUnit is an EXTRA COST, not a board condition: the AI may only
@@ -137624,6 +137704,15 @@ function placeUnit(card, pos, opts) {
   } catch (e) {}
   // 🪞 Play-requirement gate — fires BEFORE the placement-tile check so the
   // player gets the right error message ('need 3 units' vs 'tile too far').
+  // 🔐 SUMMON LOCK — "this can only be brought out by a card effect." A locked unit
+  // can never be played from HAND; every engine spawn path (summonFromZone, grave
+  // raise, polycreate, an on-play summon, Eject…) builds the unit directly and never
+  // comes through here, so they all still work. This is what makes an archetype's
+  // big forms exclusive to their own summoning card.
+  if (card && card.summonLock) {
+    showToast('🔐 ' + (card.name || 'This unit') + ' cannot be summoned from your hand — only by a card effect.', 4200);
+    return;
+  }
   const _reqFail = _checkPlayRequirement(card, s, 'player');
   if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
   // 🧪 DRY RUN ends here — answer whether the placement itself is legal. Stops

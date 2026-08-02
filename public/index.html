@@ -34917,7 +34917,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119u9';
+  window.BUILD_VERSION = 'v119v0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -166673,6 +166673,12 @@ function _mirrorAllPositions(state) {
     );
     out.board = newBoard;
   }
+  // ⚔️ The relayed attack cinematic anchors on the defender's tile. Left in the
+  // sender's coordinates it played at the mirrored-wrong square — the impact
+  // landed on an unrelated tile (often an empty one) on the defender's screen.
+  if (out._atkFx && out._atkFx.defenderPos) {
+    out._atkFx = { ...out._atkFx, defenderPos: _mirrorPos(out._atkFx.defenderPos) };
+  }
   // Tombstones — positioned drops with an x/y field on the object root.
   if (Array.isArray(out.tombstones)) {
     out.tombstones = out.tombstones.map(t => t ? { ...t, x: (BOARD_W - 1) - (t.x | 0), y: (BOARD_H - 1) - (t.y | 0) } : t);
@@ -166752,6 +166758,39 @@ function swapBattlePerspective(state) {
     })),
     // gameOver is a side string.
     gameOver: state.gameOver ? swapOwner(state.gameOver) : null,
+    // 🪦 GRAVEYARD SEAL — `{player: turns, ai: turns}`. Unswapped, a seal the
+    // opponent cast on ME landed on THEM after the snapshot: their graveyard
+    // effects stopped working and mine kept running. Side-keyed state has to be
+    // swapped like any other owner field.
+    graveLock: state.graveLock
+      ? { player: (state.graveLock.ai | 0), ai: (state.graveLock.player | 0) }
+      : state.graveLock,
+    // 🎭 COPY LAST MOVE reads `_lastMove.owner !== owner` to mean "an ENEMY
+    // move". Unswapped, the receiver saw the opponent's move as its own and
+    // refused to copy it — the one thing the effect exists to do.
+    _lastMove: (state._lastMove && state._lastMove.owner)
+      ? { ...state._lastMove, owner: swapOwner(state._lastMove.owner) }
+      : state._lastMove,
+    // ⛓ Chain overlay links carry a YOU / ENEMY label per link.
+    _counterChain: Array.isArray(state._counterChain)
+      ? state._counterChain.map(l => (l && l.owner) ? { ...l, owner: swapOwner(l.owner) } : l)
+      : state._counterChain,
+    // ⚔️ The attack cinematic rides the snapshot (it is the RELIABLE path — the
+    // standalone 'attackfx' event can be dropped), so it is what the defender
+    // usually sees. Its attacker/defender owners were never swapped, so every
+    // relayed attack was drawn with the sides inverted. `defenderPos` is mirrored
+    // below with every other coordinate.
+    _atkFx: state._atkFx
+      ? {
+          ...state._atkFx,
+          attacker: (state._atkFx.attacker && state._atkFx.attacker.owner)
+            ? { ...state._atkFx.attacker, owner: swapOwner(state._atkFx.attacker.owner) }
+            : state._atkFx.attacker,
+          defender: (state._atkFx.defender && state._atkFx.defender.owner)
+            ? { ...state._atkFx.defender, owner: swapOwner(state._atkFx.defender.owner) }
+            : state._atkFx.defender,
+        }
+      : state._atkFx,
     // Weather / location ownerHint indicate who summoned the effect.
     weather: state.weather ? { ...state.weather, ownerHint: swapOwner(state.weather.ownerHint || 'player') } : null,
     activeLocation: state.activeLocation ? { ...state.activeLocation, ownerHint: swapOwner(state.activeLocation.ownerHint || 'player') } : null,

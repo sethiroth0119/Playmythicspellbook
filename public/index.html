@@ -34929,7 +34929,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119v7';
+  window.BUILD_VERSION = 'v119v8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -56246,6 +56246,101 @@ async function _tournPaint() {
     btn.disabled = false;
   };
 }
+/* ══════════════════════════════════════════════════════════════════════
+   🎬 LiveClip — rolling last-60s gameplay recorder.
+   The battle is a hybrid of DOM + several canvases + an iframe, so a single
+   canvas.captureStream() can't capture "what the player sees". This uses
+   getDisplayMedia (a one-time "share this tab" prompt) and keeps a rolling
+   ~60s buffer with the header-chunk + tail-chunks trick so the exported webm
+   still plays. Fully self-contained: a floating 🎬 button arms/disarms it.
+   ══════════════════════════════════════════════════════════════════════ */
+const LiveClip = (() => {
+  const WINDOW_MS = 60000;
+  let stream = null, rec = null, chunks = [], header = null, mime = '', armed = false, arming = false;
+
+  function pickMime() {
+    const cands = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+    for (const m of cands) { try { if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m; } catch (e) {} }
+    return 'video/webm';
+  }
+  function prune() {
+    const now = performance.now();
+    while (chunks.length > 0 && (now - chunks[0].t) > WINDOW_MS) chunks.shift();
+  }
+  async function arm() {
+    if (armed || arming) return armed;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      if (typeof showToast === 'function') showToast('🎬 Clip recording is not supported on this browser.', 4200);
+      return false;
+    }
+    arming = true;
+    try {
+      const opts = { video: { frameRate: 30 }, audio: false, preferCurrentTab: true };
+      stream = await navigator.mediaDevices.getDisplayMedia(opts);
+      mime = pickMime();
+      let recOpts = { mimeType: mime };
+      try { recOpts.videoBitsPerSecond = 3500000; } catch (e) {}
+      rec = new MediaRecorder(stream, recOpts);
+      header = null; chunks = [];
+      rec.ondataavailable = (e) => {
+        if (!e.data || !e.data.size) return;
+        if (!header) header = e.data;               // first chunk carries the webm header
+        else { chunks.push({ t: performance.now(), data: e.data }); prune(); }
+      };
+      rec.start(1000);                               // 1s timeslice
+      const track = stream.getVideoTracks()[0];
+      if (track) track.onended = () => disarm();     // user hit the browser "stop sharing" bar
+      armed = true;
+      paint();
+      if (typeof showToast === 'function') showToast('🔴 Clip recording ON — the last 60s of play is captured. Win, then Share to Broadcast to attach it.', 5600);
+      return true;
+    } catch (e) {
+      console.warn('[LiveClip] arm failed', e && e.message);
+      if (typeof showToast === 'function') showToast('🎬 Clip recording cancelled.', 3200);
+      return false;
+    } finally { arming = false; }
+  }
+  function disarm() {
+    try { if (rec && rec.state !== 'inactive') rec.stop(); } catch (e) {}
+    try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    stream = null; rec = null; armed = false;
+    paint();
+  }
+  function isArmed() { return armed; }
+  function hasClip() { return !!(header && chunks.length); }
+  async function getClipBlob() {
+    if (!hasClip()) return null;
+    try { if (rec && rec.state === 'recording') { rec.requestData(); await new Promise(r => setTimeout(r, 140)); prune(); } } catch (e) {}
+    const parts = [header].concat(chunks.map(c => c.data));
+    return new Blob(parts, { type: mime || 'video/webm' });
+  }
+
+  // Floating toggle button.
+  let btn = null;
+  function paint() {
+    if (!btn) return;
+    if (armed) { btn.textContent = '🔴 REC · clip on'; btn.style.background = 'rgba(220,40,40,.9)'; btn.style.borderColor = '#ff8a8a'; btn.style.color = '#fff'; }
+    else { btn.textContent = '🎬 Clip'; btn.style.background = 'rgba(12,14,18,.85)'; btn.style.borderColor = 'rgba(255,193,94,.55)'; btn.style.color = '#ffd98a'; }
+  }
+  function mountButton() {
+    if (btn || typeof document === 'undefined') return;
+    btn = document.createElement('button');
+    btn.id = 'liveclip-btn';
+    btn.type = 'button';
+    btn.title = 'Record the last 60 seconds of your match to share as a clip';
+    btn.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:2147483400;font-family:inherit;font-size:12px;font-weight:700;letter-spacing:.04em;padding:8px 13px;border-radius:8px;border:1px solid rgba(255,193,94,.55);cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.5);opacity:.92';
+    btn.onclick = () => { if (armed) disarm(); else arm(); };
+    document.body.appendChild(btn);
+    paint();
+  }
+  if (typeof document !== 'undefined') {
+    if (document.body) mountButton();
+    else document.addEventListener('DOMContentLoaded', mountButton);
+  }
+
+  return { arm, disarm, isArmed, hasClip, getClipBlob };
+})();
+
 function openShareToBroadcast(summary) {
   const signedIn = !!(typeof Cloud !== 'undefined' && Cloud.client && Profile.cloud && Profile.cloud.signedIn && Profile.cloud.userId);
   if (!signedIn) { showToast('☁ Sign in to share to Emergency Broadcast.', 4200); return; }
@@ -56255,13 +56350,21 @@ function openShareToBroadcast(summary) {
   wrap.id = ID;
   wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483500;background:rgba(4,6,10,0.86);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:18px';
   const esc = (t) => (typeof escapeHtml === 'function') ? escapeHtml(String(t || '')) : String(t || '');
+  const hasRec = (typeof LiveClip !== 'undefined' && LiveClip.hasClip());
+  const recRow = hasRec
+    ? '<label style="display:flex;align-items:center;gap:9px;margin:12px 0 4px;padding:10px 12px;background:rgba(220,40,40,.10);border:1px solid rgba(255,120,120,.4);border-radius:9px;cursor:pointer">' +
+        '<input type="checkbox" id="eb-share-userec" checked style="accent-color:#ff5b5b;width:16px;height:16px">' +
+        '<span style="color:#ffd6d6;font-size:.9rem">🔴 Attach your recorded clip <b>(last ~60s of this match)</b></span></label>'
+    : '';
   wrap.innerHTML =
     '<div style="width:100%;max-width:520px;background:#191C23;border:1px solid #262B34;border-radius:14px;padding:22px;font-family:inherit;color:#EDEFF3">' +
       '<div style="font-family:\'Cinzel\',serif;font-size:1.25rem;font-weight:800;color:#ffd166;margin-bottom:4px">📡 Share to Emergency Broadcast</div>' +
       '<div class="small-text" style="color:#9BA1AB;margin-bottom:12px">Posts to the network feed at mythicspellbook.xyz — everyone can see it.</div>' +
       '<textarea id="eb-share-text" rows="3" style="width:100%;background:#0F1116;border:1px solid #262B34;border-radius:9px;color:#EDEFF3;padding:11px;font-size:0.95rem;font-family:inherit;resize:vertical">' + esc(summary) + '</textarea>' +
-      '<div class="small-text" style="color:#9BA1AB;margin:12px 0 5px">🎬 Clip link (optional) — YouTube, Twitch, Streamable…</div>' +
+      recRow +
+      '<div class="small-text" style="color:#9BA1AB;margin:12px 0 5px">🎬 ' + (hasRec ? 'Or paste a clip link instead' : 'Clip link (optional)') + ' — YouTube, Twitch, Streamable…</div>' +
       '<input id="eb-share-clip" placeholder="https://…" style="width:100%;background:#0F1116;border:1px solid #262B34;border-radius:9px;color:#EDEFF3;padding:10px 11px;font-size:0.9rem;font-family:inherit">' +
+      (hasRec ? '' : '<div class="small-text" style="color:#7d838d;margin-top:6px">Tip: tap the 🎬 Clip button before a match to auto-record the last 60s.</div>') +
       '<div id="eb-share-msg" class="small-text" style="color:#ff9a6b;margin-top:9px;min-height:1em"></div>' +
       '<div style="display:flex;gap:9px;margin-top:14px">' +
         '<button id="eb-share-go" class="btn-primary" style="flex:1">📡 Broadcast it</button>' +
@@ -56276,14 +56379,35 @@ function openShareToBroadcast(summary) {
     const btn = document.getElementById('eb-share-go');
     const msgEl = document.getElementById('eb-share-msg');
     const body = ((document.getElementById('eb-share-text') || {}).value || '').trim();
-    const clip = ((document.getElementById('eb-share-clip') || {}).value || '').trim();
+    let clip = ((document.getElementById('eb-share-clip') || {}).value || '').trim();
+    const useRec = !!(document.getElementById('eb-share-userec') && document.getElementById('eb-share-userec').checked);
     if (!body) { msgEl.textContent = 'Write something first.'; return; }
     if (clip && !/^https?:\/\/.+\..+/i.test(clip)) { msgEl.textContent = 'That clip link doesn\'t look like a URL.'; return; }
     btn.disabled = true; btn.textContent = 'Broadcasting…';
     try {
       const uid = Profile.cloud.userId;
+      // Upload the recorded clip (if the player kept it and didn't paste a link).
+      if (useRec && !clip && typeof LiveClip !== 'undefined' && LiveClip.hasClip()) {
+        btn.textContent = 'Uploading clip…'; msgEl.style.color = '#9BA1AB'; msgEl.textContent = 'Uploading your clip — this can take a few seconds…';
+        try {
+          const blob = await LiveClip.getClipBlob();
+          if (blob && blob.size > 0) {
+            const path = uid + '/' + Date.now() + '.webm';
+            const up = await Cloud.client.storage.from('battle-clips').upload(path, blob, { contentType: (blob.type || 'video/webm'), upsert: false });
+            if (up && up.error) throw new Error(up.error.message || 'upload failed');
+            const pub = Cloud.client.storage.from('battle-clips').getPublicUrl(path);
+            clip = (pub && pub.data && pub.data.publicUrl) || '';
+            if (!clip) throw new Error('no public url');
+          }
+        } catch (upErr) {
+          msgEl.style.color = '#ff9a6b';
+          msgEl.textContent = 'Clip upload failed (' + String((upErr && upErr.message) || '').slice(0, 60) + '). Posting without it — or paste a link.';
+          // fall through and post text-only rather than block the share
+          clip = '';
+        }
+      }
       const r = await Cloud.client.from('eb_posts').insert({
-        user_id: uid, body: body.slice(0, 1000), kind: 'strategy', clip_url: clip || null,
+        user_id: uid, body: body.slice(0, 1000), kind: clip ? 'clip' : 'strategy', clip_url: clip || null,
       });
       if (r && r.error) throw new Error(r.error.message || 'post failed');
       if (clip) {
@@ -56291,10 +56415,12 @@ function openShareToBroadcast(summary) {
         await Cloud.client.from('eb_clips').insert({
           user_id: uid, title: body.slice(0, 80), url: clip,
         });
+        try { if (typeof LiveClip !== 'undefined') LiveClip.disarm(); } catch (e) {}
       }
       close();
       showToast('📡 Broadcast sent — see it at mythicspellbook.xyz', 5200);
     } catch (e) {
+      msgEl.style.color = '#ff9a6b';
       msgEl.textContent = 'Could not post — ' + String((e && e.message) || 'try again').slice(0, 90);
       btn.disabled = false; btn.textContent = '📡 Broadcast it';
     }

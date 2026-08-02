@@ -27,6 +27,9 @@ const SENTINEL = '<!--MIN-->';
 // Match the FIRST big inline <script> block (no src=, no type="application/json").
 const SCRIPT_RE = /(<script(?![^>]*\bsrc=)(?![^>]*\btype=["'][^"']*json[^"']*["'])[^>]*>)([\s\S]*?)(<\/script>)/i;
 
+// Global variant so we can scan EVERY inline block and take the largest.
+const SCRIPT_RE_G = new RegExp(SCRIPT_RE.source, 'gi');
+
 // Conservative Terser options — string-keyed property access is heavy in this
 // codebase (Profile['gems'], dynamic event-handler IDs, etc.), so:
 //  • keep_fnames / keep_classnames preserve function references used by
@@ -67,7 +70,14 @@ export async function minify() {
   }
   console.log('💾 backing up source →', path.basename(BACKUP));
   fs.writeFileSync(BACKUP, html);
-  const m = SCRIPT_RE.exec(html);
+  // ⚠ Pick the BIGGEST inline script, not the first. index.html opens with a
+  //   small ~29 KB bootstrap block, so the first-match regex was minifying THAT
+  //   and shipping the 10 MB main script RAW on every deploy — the one thing
+  //   this build step exists to compress.
+  let m = null;
+  for (const cand of html.matchAll(SCRIPT_RE_G)) {
+    if (!m || cand[2].length > m[2].length) m = cand;
+  }
   if (!m) throw new Error('Could not find inline <script> block in ' + SRC);
   const [whole, open, body, close] = m;
   const before = body.length;

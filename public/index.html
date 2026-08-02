@@ -34830,7 +34830,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119u6';
+  window.BUILD_VERSION = 'v119u7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -69861,6 +69861,41 @@ function _seasonDrainPurgeOwed() {
   } catch (e) {}
 }
 
+/* 💥 SERVER HALF OF THE ECONOMY RESET — same durable-retry contract as the purge.
+   Every currency in this game is server-authoritative and hydrates with a merge
+   that FAVOURS THE LARGER NUMBER, so a local zero on its own is handed straight
+   back on the next sync (this is the v118n3 "cinder returns after the wipe" bug,
+   and it will happen again to anyone who skips this call):
+     • user_progress.cinder      MAX(server, local)
+     • user_profiles.gems        server row
+     • user_profiles.sovereigns  server row  (👑 Aza)
+     • bank_of_ethos.aza/balance the bank re-hydrates over the in-memory zero
+   economy_reset_row() zeroes all of them in ONE transaction and EXEMPTS admins
+   server-side — the client check below is convenience, the RPC is the real gate.
+   ⚠ The retry is the point: season_apply marks the directive applied inside its
+   own transaction, so a failed RPC here would leave the wipe to undo itself
+   forever. The owed flag outlives a reload and drains from every reset tick. */
+const _ECONOMY_OWED_KEY = 'hg_economy_owed';
+async function _seasonEconomyServerRow(markOwed) {
+  try {
+    if (markOwed) { try { localStorage.setItem(_ECONOMY_OWED_KEY, '1'); } catch (e) {} }
+    if (!Cloud || !Cloud.client || !(Profile.cloud && Profile.cloud.signedIn)) return false;
+    const r = await Cloud.client.rpc('economy_reset_row');
+    if (r && r.error) { try { console.warn('[economy] server row not cleared yet', r.error.message || r.error); } catch (e) {} return false; }
+    const j = (r && r.data) || null;
+    if (!j || j.ok !== true) return false;
+    try { localStorage.removeItem(_ECONOMY_OWED_KEY); } catch (e) {}
+    try { console.info('💥 economy reset: server cleared -', JSON.stringify(j)); } catch (e) {}
+    return true;
+  } catch (e) { return false; }
+}
+function _seasonDrainEconomyOwed() {
+  try {
+    if (localStorage.getItem(_ECONOMY_OWED_KEY) !== '1') return;
+    _seasonEconomyServerRow(false);
+  } catch (e) {}
+}
+
 // 🌪 Clear the server-authoritative Cinder row for THIS player. Idempotent and
 // safe to call repeatedly — retried until it succeeds, because a wipe that only
 // clears the local copy is undone by the very next walletFetchProgress().
@@ -69997,6 +70032,65 @@ async function _applySeasonReset(sr) {
        STAYS. Deliberately does not touch account/hero/unit levels, statGains,
        knownMoves, bonds or records — the user asked specifically that levels stop
        being reset by every wipe. Aza is untouched: it is bought with real money. */
+    /* 💥 'economy' — THE ECONOMY RESET. Every store of WEALTH goes to zero;
+       everything a player EARNED by playing stays exactly where it is.
+         WIPED  : Cinder (local + the authoritative user_progress row), Aza
+                  (👑 sovereigns), the Bank of Ethos account (aza / balance /
+                  resources), and every tycoon operation + treasury, because
+                  those mint currency and would refill the economy overnight.
+         KEPT   : account / hero / unit levels and XP, kills, wins, losses,
+                  bonds, stat gains, learned moves, records, cards, decks,
+                  heroes, gear, vault, nodes and real estate. Nothing that
+                  represents time played is touched — only money.
+         ADMINS : exempt, and the server RPC enforces that independently. */
+    if (sr.scope === 'economy') {
+      // 👑 Admins keep their balances — they need working currency to test with.
+      // The directive is already marked applied above, so an admin simply never
+      // takes this wipe and it can never come back for them on another device.
+      if (typeof isAdmin === 'function' && isAdmin()) {
+        try { showToast('👑 Economy reset published — your admin account is exempt.', 6000); } catch (e) {}
+        return;
+      }
+      // 🔥 Cinder. The local zero is cosmetic until the RPC lands; the RPC is what
+      // makes it stick (MAX(server, local) hands a stale local balance back too,
+      // so both sides must go).
+      try { _gemsTaxExempt(() => { Profile.gems = 0; }); } catch (e) { try { Profile.gems = 0; } catch (e2) {} }
+      // 👑 Aza.
+      try { Profile.sovereigns = 0; } catch (e) {}
+      // 🏦 Bank of Ethos — in-memory now so the UI reads 0 immediately; the row
+      // itself is cleared by the RPC, else the next boeFetch restores it.
+      try {
+        if (typeof BankEthos === 'object' && BankEthos) {
+          BankEthos.aza = 0; BankEthos.balance = 0; BankEthos.resources = {};
+        }
+      } catch (e) {}
+      // 🏭 The money PRINTERS. Leaving funded operations and their treasuries
+      // standing would refill every wallet within days and make the reset
+      // pointless — the businesses are the economy, not a side effect of it.
+      try { _wipeBusinessProgress(); } catch (e) {}
+      try { Profile.cardShopUnlocked = false; } catch (e) {}
+      try { Wallet.lastFetchAt = 0; } catch (e) {}
+      try { saveProfile(); } catch (e) {}
+      // Server half FIRST, then push the zeroed profile over the cleared row.
+      try {
+        _seasonEconomyServerRow(true)
+          .then(() => { try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); } catch (e) {} })
+          .catch(() => { try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); } catch (e) {} });
+      } catch (e) {
+        try { if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {}); } catch (e2) {}
+      }
+      try {
+        showGameAlert({
+          title: '💥 THE ECONOMY HAS BEEN RESET',
+          bodyHtml: '<div style="line-height:1.8">The old economy collapsed. Every balance in the game has been returned to zero — everyone starts from the same floor.<br><br>'
+            + '<b style="color:#ff9a88">CLEARED:</b> your Cinder, your Aza, your Bank of Ethos account, and every business operation and treasury.<br>'
+            + '<b style="color:#7ce8a8">UNTOUCHED:</b> every level, every win and loss, every kill, bond and record — plus all of your cards, decks, heroes, gear and property.<br><br>'
+            + 'You keep everything you played for. You just have to earn the money again.</div>',
+        });
+      } catch (e) { try { showToast('💥 Economy reset — balances cleared, progress kept.', 9000); } catch (e2) {} }
+      try { render(); } catch (e) {}
+      return;
+    }
     if (sr.scope === 'purge') {
       try { _wipeBusinessProgress(); } catch (e) {}
       // 🏪 Card Shop licence (device-local flag, cleared alongside the rest).
@@ -70207,6 +70301,8 @@ async function _seasonResetCheck() {
     // the only thing standing between a failed RPC and a wipe that undoes
     // itself, and the directive that triggered it can never fire again.
     try { _seasonDrainPurgeOwed(); } catch (e) {}
+    // …and the same for an owed ECONOMY row-clear, for the identical reason.
+    try { _seasonDrainEconomyOwed(); } catch (e) {}
     // 🧹 And the build-stamped purge one-shot — also above the throttle, and
     //    self-guarded, so it reaches accounts an older build already consumed
     //    the directive on. See PURGE_RESET_ID.
@@ -145971,6 +146067,7 @@ function renderCamp() {
         <button class="btn-mini" id="btn-camp-grant-res" title="Grant yourself resources for testing">🧰 +250 Resources</button>
         <button class="btn-mini" id="btn-cloudify" title="Convert EVERY locally-stored image/audio (base64 or Blob) into a permanent cloud file so players actually receive it. Safe + idempotent — re-runs skip anything already cloud-hosted.">☁ Cloudify All Assets</button>
         <button class="btn-mini btn-danger" id="btn-season-wipe" title="Publish a SEASON WIPE: resets EVERY player's Cinder + player/hero/unit levels. Cards, Aza, businesses, nodes, real estate and all owned property are kept.">🌪 Season Wipe</button>
+        <button class="btn-mini btn-danger" id="btn-economy-wipe" title="Publish an ECONOMY RESET: zeroes EVERY player's Cinder, Aza, Bank of Ethos account and business treasuries. Levels, wins, losses, records, cards and gear are kept. Admin accounts are exempt.">💥 Economy Reset</button>
       </div>` : ''}
       ${(() => {
         const rv = (typeof _campRival === 'function') ? _campRival() : { name: 'Rivals', threat: 0 };
@@ -146439,6 +146536,43 @@ function renderCamp() {
     if (!_srRow || !_srRow.id) { showToast('⚠ Season wipe failed to publish.', 6000); return; }
     showToast('🌪 Season wipe PUBLISHED to every player — they reset within ~2 minutes of playing. Your own reset applies now.', 9000);
     try { _applySeasonReset({ id: _srRow.id, at: _srRow.created_at }); } catch (e) {}
+  };
+  // 💥 ECONOMY RESET — publishes a `scope:'economy'` directive. Same hardened
+  // once-per-account machinery as the season wipe (server-atomic mark, hydration
+  // gate, durable retry); only the payload differs. Admin accounts are exempt on
+  // BOTH sides, so pressing this does not cost you your own balances.
+  const _ecoBtn = document.getElementById('btn-economy-wipe');
+  if (_ecoBtn) _ecoBtn.onclick = async () => {
+    if (!(typeof isAdmin === 'function' && isAdmin())) return;
+    const ok1 = await showGameConfirm({
+      title: '💥 ECONOMY RESET — are you sure?',
+      bodyHtml: '<div style="line-height:1.8"><b style="color:#ff7755">This zeroes every balance in the game.</b><br><br>' +
+        '<b style="color:#ff9a88">WIPED for every player:</b><br>• 🔥 Cinder → 0<br>• 👑 Aza → 0<br>• 🏦 Bank of Ethos account → 0<br>• 🏭 Every business operation and treasury<br><br>' +
+        '<b style="color:#7ce8a8">KEPT:</b> account / hero / unit levels, wins, losses, kills, bonds, stat gains, records, cards, decks, heroes, gear, vault, nodes and real estate.<br><br>' +
+        '<b style="color:#e0b23c">👑 Admin accounts are exempt</b> — your own balances survive.<br><br>It applies to each player the next time their game syncs. <b>It cannot be undone.</b></div>',
+      yesLabel: 'CONTINUE', noLabel: 'Cancel', yesAccent: 'crimson',
+    });
+    if (!ok1) return;
+    const ok2 = await showGameConfirm({
+      title: '💥 FINAL CONFIRMATION',
+      bodyHtml: '<div>Destroy the economy <b style="color:#ff7755">NOW</b>? Every player\'s Cinder, Aza and bank account go to zero.</div>',
+      yesLabel: 'RESET THE ECONOMY', noLabel: 'Cancel', yesAccent: 'crimson',
+    });
+    if (!ok2) return;
+    let _row = null;
+    try {
+      if (!Cloud || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in to publish an economy reset.', 4000); return; }
+      const ins = await Cloud.client.from('season_reset')
+        .insert({ label: 'Economy reset ' + new Date().toISOString().slice(0, 10), scope: 'economy', created_by: Profile.cloud.userId })
+        .select('id, created_at').single();
+      // ⚠ The scope constraint must allow 'economy' first (economy_reset.sql,
+      //   STEP 1) — without it this insert is rejected and nothing is published.
+      if (ins && ins.error) { showToast('⚠ Economy reset FAILED to publish: ' + (ins.error.message || 'unknown') + ' — run economy_reset.sql first.', 10000); return; }
+      _row = ins && ins.data;
+    } catch (e) { showToast('⚠ Economy reset failed to publish.', 6000); return; }
+    if (!_row || !_row.id) { showToast('⚠ Economy reset failed to publish.', 6000); return; }
+    showToast('💥 Economy reset PUBLISHED — every player zeroes within ~2 minutes of playing. Your admin account is exempt.', 10000);
+    try { _applySeasonReset({ id: _row.id, at: _row.created_at, scope: 'economy' }); } catch (e) {}
   };
   const _pubArt = document.getElementById('btn-camp-pub-art');
   if (_pubArt) _pubArt.onclick = async () => {

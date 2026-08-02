@@ -34786,7 +34786,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119u1';
+  window.BUILD_VERSION = 'v119u2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -83088,15 +83088,26 @@ function _applyOnPlayOne(state, unit, card) {
     const zone = eff.countZone || 'hand';
     const cSide = eff.countSide || 'owner';
     const sides = cSide === 'both' ? [owner, foeSide] : [cSide === 'enemy' ? foeSide : owner];
+    // 🔢 COUNT ONLY WHAT MATCHES. With a 🎴 Card Filter set, this counts just the
+    // cards that match it — "for EACH <named card> in your graveyard" — instead of
+    // every card in the zone. `nameIncludes` also honours `treatAs`, so a card that
+    // merely COUNTS AS the named one is tallied too. No filter = count everything,
+    // exactly as before.
+    const _cf = (eff.filter && typeof eff.filter === 'object'
+      && ['nameIncludes', 'element', 'faction', 'cardType', 'cost', 'mentions'].some(k => {
+        const v = eff.filter[k]; return v != null && v !== '' && v !== 'any';
+      })) ? eff.filter : null;
+    const _match = (c) => !_cf || (typeof _cardMatchesFilter === 'function' ? _cardMatchesFilter(c, _cf) : true);
+    const _tally = (arr) => (arr || []).filter(_match).length;
     let count = 0;
     for (const sd of sides) {
       const st = state[sd];
-      if (zone === 'field') { count += (state.units || []).filter(u => u && u.alive && u.owner === sd && !u.isHero).length; continue; }
+      if (zone === 'field') { count += (state.units || []).filter(u => u && u.alive && u.owner === sd && !u.isHero && _match(u)).length; continue; }
       if (!st) continue;
-      if (zone === 'hand') count += (st.hand || []).length;
-      else if (zone === 'grave') count += (st.graveyard || []).length;
-      else if (zone === 'void') count += (st.void || []).length;
-      else if (zone === 'deck') count += (st.deck || []).length;
+      if (zone === 'hand') count += _tally(st.hand);
+      else if (zone === 'grave') count += _tally(st.graveyard);
+      else if (zone === 'void') count += _tally(st.void);
+      else if (zone === 'deck') count += _tally(st.deck);
     }
     const dmg = per * count;
     const _zl = { hand: 'cards in hand', grave: 'cards in the graveyard', void: 'cards in the Void', deck: 'cards in the deck', field: 'units on the field' }[zone] || 'cards';

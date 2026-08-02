@@ -34786,7 +34786,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119u3';
+  window.BUILD_VERSION = 'v119u4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -82890,6 +82890,43 @@ function _applyOnPlayOne(state, unit, card) {
       } catch (e) {}
     }
   } catch (e) {}
+  // 🔢 SCALE PER MATCHING CARD — the GENERAL "…for each X" modifier. Instead of a
+  // separate effect type per behaviour (drawPerCard, vanishPerCard, summonPerCard…),
+  // ANY effect can declare `scalePer` and its Amount is multiplied by how many cards
+  // match, in the chosen zone/side. So one switch turns "draw 1" into "draw 1 for
+  // each Abra Morpher in your graveyard", "summon 1 token" into one per Morpher,
+  // "deal 3" into 3 per Morpher, and so on. `nameIncludes` resolves `treatAs`, so
+  // cards that merely COUNT AS the named one are tallied.
+  //   scalePer = { zone:'grave'|'hand'|'field'|'void'|'deck', side:'owner'|'enemy'|'both',
+  //                filter:{…Card Filter…}, max?:N }
+  // Count 0 ⇒ Amount 0, and the effect's own "nothing to do" path reports the fizzle.
+  // Mirrors the _halfPower pattern above: rewrites a COPY, never the stored card.
+  try {
+    const _sp = card && card.onPlay && card.onPlay.scalePer;
+    if (_sp && typeof _sp === 'object' && card.onPlay) {
+      const _side = (_sp.side === 'enemy') ? ((unit && unit.owner === 'player') ? 'ai' : 'player')
+                  : (_sp.side === 'both') ? 'both' : (unit && unit.owner) || 'player';
+      const _sides = (_side === 'both') ? ['player', 'ai'] : [_side];
+      const _zone = _sp.zone || 'grave';
+      const _f = _sp.filter && typeof _sp.filter === 'object' ? _sp.filter : null;
+      const _ok = (c) => !_f || (typeof _cardMatchesFilter === 'function' ? _cardMatchesFilter(c, _f) : true);
+      let _n = 0;
+      for (const sd of _sides) {
+        if (_zone === 'field') { _n += ((state && state.units) || []).filter(u => u && u.alive && u.owner === sd && !u.isHero && _ok(u)).length; continue; }
+        const st = state && state[sd]; if (!st) continue;
+        const arr = _zone === 'hand' ? st.hand : _zone === 'void' ? st.void : _zone === 'deck' ? st.deck : st.graveyard;
+        _n += (arr || []).filter(_ok).length;
+      }
+      if (_sp.max) _n = Math.min(_n, _sp.max | 0);
+      const _base = (card.onPlay.amount | 0) || 1;
+      card = { ...card, onPlay: { ...card.onPlay, amount: _base * _n, _scaledBy: _n } };
+      try {
+        state = { ...state, log: [...((state && state.log) || []), {
+          msg: `🔢 ${(unit && unit.name) || 'The card'} scales ×${_n} — ${_base * _n} from ${_n} matching card${_n === 1 ? '' : 's'}.`,
+          color: _n > 0 ? ((unit && unit.owner === 'player') ? 'green' : 'red') : 'amber' }] };
+      } catch (e) {}
+    }
+  } catch (e) { try { console.warn('[scalePer]', e); } catch (_) {} }
   // 🪙 TITHE — costs 1 more (charged in getEffectiveCardCost) and pays it back
   // with a card when the unit lands. Guarded so it fires once per arrival.
   try {
@@ -114945,6 +114982,25 @@ function renderCardEditor() {
         + `<div class="editor-field"><label class="small-text">Whose?</label><select id="ed-onplay-countside">${sOpts}</select></div>`
         + `</div>`;
     })()}
+    ${(() => {
+      // 🔢 SCALE PER MATCHING CARD — works with ANY effect above, not one type.
+      const sp = (onPlay.scalePer && typeof onPlay.scalePer === 'object') ? onPlay.scalePer : {};
+      const zOpts2 = [['','— Off (Amount is used as-is) —'],['grave','⚰️ Graveyard'],['hand','✋ Hand'],['field','🛡 Units on the field'],['void','🌌 Void'],['deck','🎴 Deck']]
+        .map(([v2,l]) => `<option value="${v2}" ${(sp.zone || '') === v2 ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
+      const sOpts2 = [['owner','Yours'],['enemy',"The enemy's"],['both','BOTH players combined']]
+        .map(([v2,l]) => `<option value="${v2}" ${(sp.side || 'owner') === v2 ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
+      const statOpts = [['atk','⚔ ATK'],['def','🛡 DEF'],['mag','✨ MAG'],['res','💠 RES']]
+        .map(([v2,l]) => `<option value="${v2}" ${(onPlay.stat || 'atk') === v2 ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
+      return `<div class="editor-field full" style="background:rgba(120,190,255,0.08);border:1px dashed rgba(140,200,255,0.45);border-radius:6px;padding:0.6rem 0.8rem">`
+        + `<label style="font-weight:700;color:#8fc8ff">🔢 …FOR EACH matching card (scales ANY effect above)</label>`
+        + `<div class="small-text ink-dim" style="margin-top:0.2rem">Multiplies this effect's <strong>Amount</strong> by how many cards match the <strong>🎴 Card Filter</strong> in the zone you pick. One switch turns "draw 1" into <em>draw 1 for each Abra Morpher in your graveyard</em>, "summon 1" into one token per Morpher, "deal 3" into 3 per Morpher, and so on. A card that only <strong>counts as</strong> the named one (treatAs) is tallied too. Leave on <strong>Off</strong> for a flat effect.</div>`
+        + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-top:0.35rem">`
+        + `<div><label class="small-text">Count in which zone?</label><select id="ed-onplay-scalezone" style="width:100%">${zOpts2}</select></div>`
+        + `<div><label class="small-text">Whose zone?</label><select id="ed-onplay-scaleside" style="width:100%">${sOpts2}</select></div>`
+        + `</div>`
+        + `<div class="editor-field" style="margin-top:0.4rem"><label class="small-text">📈 Stat to raise (for "Buff Per Card")</label><select id="ed-onplay-stat" style="width:100%">${statOpts}</select></div>`
+        + `</div>`;
+    })()}
     <div class="editor-field"><label>💸 Cheapen Duration (when effect is "Cheapen Cards")</label>
       <select id="ed-onplay-discdur">
         <option value="turn"      ${(onPlay.discountDuration || 'turn') === 'turn'      ? 'selected' : ''}>⏳ Temporary — lasts the turns set in Status Duration</option>
@@ -118714,6 +118770,19 @@ function captureEditorIntoCard(card) {
         protectFlags:    _prevOnPlay.protectFlags,
         boostDuration:   _prevOnPlay.boostDuration || 'permanent',
         // 📚 Scaled Burn — which pile to count, and whose.
+        // 🔢 "…for each matching card" — attached only when a zone is chosen, so a
+        // flat effect never carries a dead scalePer. Reuses the 🎴 Card Filter below.
+        scalePer: (() => {
+          const z = v('ed-onplay-scalezone') || '';
+          if (!z) return undefined;
+          const el = v('ed-onplay-filter-element') || 'any';
+          const ty = v('ed-onplay-filter-type') || 'any';
+          const fa = v('ed-onplay-filter-faction') || 'any';
+          const nm = (v('ed-onplay-filter-name') || '').trim();
+          return { zone: z, side: v('ed-onplay-scaleside') || 'owner',
+                   filter: { nameIncludes: nm, element: el, cardType: ty, faction: fa } };
+        })(),
+        stat:           v('ed-onplay-stat') || 'atk',
         countZone:      v('ed-onplay-countzone') || 'hand',
         countSide:      v('ed-onplay-countside') || 'owner',
         shuffleZones:   v('ed-onplay-shufzones') || 'all',

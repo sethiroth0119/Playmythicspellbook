@@ -11995,6 +11995,15 @@
     border-radius: 2px;
     text-shadow: 0 1px 2px rgba(0,0,0,0.95);
   }
+  /* An ENEMY set card. Same back, but a crimson rim + a slightly colder wash so you can
+     read whose it is at a glance without learning what it is. */
+  .tcb-enemy {
+    box-shadow:
+      0 0 0 1px rgba(200, 32, 58, 0.55),
+      0 0 10px rgba(200, 32, 58, 0.18),
+      0 4px 10px rgba(0,0,0,0.7);
+    filter: brightness(0.88) saturate(0.85);
+  }
   .trap-card-back:hover {
     transform: translateY(-1px);
     box-shadow:
@@ -34821,7 +34830,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119u5';
+  window.BUILD_VERSION = 'v119u6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -68908,13 +68917,24 @@ function processTombstoneDrops(state) {
   }
   // ⚰️ Fire queued on-grave triggers now that the death sweep is complete.
   // Skips anything a Phoenix / revive brought back to life mid-sweep.
+  // ⛓ Several units dying to the same blow build ONE chain (LINK 1/2/3, last-in-first-out).
   if (_onGravePending.length && typeof _fireOnGrave === 'function') {
+    const _links = [];
     for (const g of _onGravePending) {
-      try {
-        const live = (state.units || []).find(x => x && x.id === g.card.id);
-        if (live && live.alive) continue;             // revived — it never reached the grave
-        state = _fireOnGrave(state, g.card, g.owner, g.pos);
-      } catch (e) { try { console.warn('[onGrave sweep]', e); } catch (_) {} }
+      const live = (state.units || []).find(x => x && x.id === g.card.id);
+      if (live && live.alive) continue;               // revived — it never reached the grave
+      const _g = g;
+      _links.push({
+        cardName: (_g.card && _g.card.name) || 'Unit', cardId: (_g.card && (_g.card.cardId || _g.card.id)),
+        icon: (_g.card && _g.card.icon), owner: _g.owner, against: 'dying',
+        effectLabel: (_g.card && _g.card.onGrave && _g.card.onGrave.type) || 'on-grave',
+        fire: (st) => _fireOnGrave(st, _g.card, _g.owner, _g.pos),
+      });
+    }
+    if (_links.length) {
+      state = (typeof _fireTriggerChain === 'function')
+        ? _fireTriggerChain(state, _links, { event: 'dying' })
+        : _links.reduce((acc, l) => { try { return l.fire(acc) || acc; } catch (e) { return acc; } }, state);
     }
   }
   return state;
@@ -79302,19 +79322,38 @@ function _flipAdjacentFaceDown(state, mover) {
     .filter(u => u && u.alive && u.isFaceDown && u.owner !== mover.owner && u.pos
       && Math.max(Math.abs(u.pos.x - mp.x), Math.abs(u.pos.y - mp.y)) <= 1)
     .map(u => u.id);
-  for (const id of ids) {
-    const live = (next.units || []).find(u => u.id === id);
+  // ⛓ Walking between two traps springs BOTH — one chain, last-in-first-out. Each link
+  // re-reads the live board at fire time, so an earlier link's kill/revive still counts.
+  const _springOne = (st, id) => {
+    const live = (st.units || []).find(u => u.id === id);
     // 🪤 Hold a trap that could only fizzle — it stays face-down for a better moment.
-    if (live && _flipWouldFizzle(next, live)) continue;
-    if (live && live.isFaceDown && live.alive) {
-      next = _flipSubterfuge(next, live, 'enemyAdjacent');
-      // 🎯 The trap lashes out at the unit that crept onto it (cancel is irrelevant
-      // here — it's a move, not an attack).
-      const flipped = (next.units || []).find(u => u.id === id);
-      if (flipped && flipped.ambushEffect && flipped.ambushEffect.type && typeof _resolveAmbushReaction === 'function') {
-        try { next = _resolveAmbushReaction(next, flipped, mover, 'enemyAdjacent').state; } catch (e) {}
-      }
+    if (!live || !live.isFaceDown || !live.alive || _flipWouldFizzle(st, live)) return st;
+    let out = _flipSubterfuge(st, live, 'enemyAdjacent');
+    // 🎯 The trap lashes out at the unit that crept onto it (cancel is irrelevant
+    // here — it's a move, not an attack).
+    const flipped = (out.units || []).find(u => u.id === id);
+    if (flipped && flipped.ambushEffect && flipped.ambushEffect.type && typeof _resolveAmbushReaction === 'function') {
+      try { out = _resolveAmbushReaction(out, flipped, mover, 'enemyAdjacent').state; } catch (e) {}
     }
+    return out;
+  };
+  // Only springable traps become links, so the chain modal never shows a trap that holds.
+  const _armed = ids.filter(id => {
+    const live = (next.units || []).find(u => u.id === id);
+    return !!(live && live.isFaceDown && live.alive && !_flipWouldFizzle(next, live));
+  });
+  if (_armed.length && typeof _fireTriggerChain === 'function') {
+    const _links = _armed.map(id => {
+      const u = (next.units || []).find(x => x.id === id) || {};
+      return {
+        cardName: u.name || 'Face-down', cardId: u.cardId || u.originalCardId, icon: u.icon,
+        owner: u.owner, against: 'an enemy stepping close', effectLabel: 'flip',
+        fire: (st) => _springOne(st, id),
+      };
+    });
+    next = _fireTriggerChain(next, _links, { event: 'an enemy stepping close' });
+  } else {
+    for (const id of _armed) next = _springOne(next, id);
   }
   return next;
 }
@@ -79332,9 +79371,20 @@ function _battleDetectionFlip(state, unit, radius) {
   const ids = (next.units || [])
     .filter(u => u && u.alive && u.isFaceDown && u.owner !== unit.owner && u.pos && within(u))
     .map(u => u.id);
-  for (const id of ids) {
-    const live = (next.units || []).find(u => u.id === id);
-    if (live && live.isFaceDown && live.alive) next = _flipSubterfuge(next, live, 'detection');
+  // ⛓ Detection can force several face-downs up at once — chain them.
+  const _fireOne = (st, id) => {
+    const live = (st.units || []).find(u => u.id === id);
+    return (live && live.isFaceDown && live.alive) ? _flipSubterfuge(st, live, 'detection') : st;
+  };
+  if (ids.length > 1 && typeof _fireTriggerChain === 'function') {
+    next = _fireTriggerChain(next, ids.map(id => {
+      const u = (next.units || []).find(x => x.id === id) || {};
+      return { cardName: u.name || 'Face-down', cardId: u.cardId || u.originalCardId, icon: u.icon,
+               owner: u.owner, against: 'being detected', effectLabel: 'flip',
+               fire: (st) => _fireOne(st, id) };
+    }), { event: 'being detected' });
+  } else {
+    for (const id of ids) next = _fireOne(next, id);
   }
   return next;
 }
@@ -131895,13 +131945,18 @@ function renderBoard() {
         </div>`;
       } else if (tile.location) {
         cellInner = `<div class="tile-marker">${(LOCATION_CARDS.find(c => c.id === tile.location) || {icon:'?'}).icon}</div>`;
-      } else if (tile.trap && tile.trap.owner === 'player') {
-        // Trap face-down card. Only the owner sees it (the AI's traps stay hidden until
-        // they fire). The card-back IS the frames/trap.png art — we just paint the trap
-        // name label at the bottom so the owner can tell which trap they set.
+      } else if (tile.trap) {
+        // 🃏 Set card on the board — BOTH sides see the card-back, exactly like a face-down
+        // unit (_subterfugeTokenHtml) and like a set card in Yu-Gi-Oh. What stays hidden is
+        // the IDENTITY, not the card: only the owner gets the name label. Previously an
+        // enemy trap drew nothing at all, so set cards were invisible until they sprang.
+        const _mine = tile.trap.owner === 'player';
         const trapName = (tile.trap.card && tile.trap.card.name) || 'Trap';
-        cellInner = `<div class="trap-card-back" title="${escapeHtml(trapName)} — your trap is hidden to the enemy">
-          <div class="tcb-label">${escapeHtml(trapName)}</div>
+        const _title = _mine
+          ? escapeHtml(trapName) + ' — your set card (the enemy sees the back, not the name)'
+          : 'A set card — face-down, identity hidden';
+        cellInner = `<div class="trap-card-back${_mine ? '' : ' tcb-enemy'}" title="${_title}">
+          ${_mine ? `<div class="tcb-label">${escapeHtml(trapName)}</div>` : ''}
         </div>`;
       } else if (tile.wall) {
         const wPct = Math.max(0, Math.min(100, (tile.wall.hp / (tile.wall.maxHp || 1)) * 100));
@@ -138283,6 +138338,8 @@ function placeUnit(card, pos, opts) {
 function _sweepCardOnGrave(state) {
   try {
     if (!state || typeof _fireOnGrave !== 'function') return state;
+    // ⛓ Collect across BOTH sides first — cards reaching the grave together chain together.
+    const _links = [];
     for (const side of ['player', 'ai']) {
       const pile = state[side] && state[side].graveyard;
       if (!Array.isArray(pile) || !pile.length) continue;
@@ -138297,8 +138354,20 @@ function _sweepCardOnGrave(state) {
         }
         if (!def.onGrave || !def.onGrave.type) { c._onGraveFired = true; continue; }
         c._onGraveFired = true;
-        try { const ns = _fireOnGrave(state, def, side, null); if (ns) { state.units = ns.units; state.log = ns.log; state.player = ns.player; state.ai = ns.ai; } } catch (e) {}
+        const _def = def, _side = side;
+        _links.push({
+          cardName: _def.name || c.name || 'Card', cardId: _def.id || c.id, icon: _def.icon || c.icon,
+          owner: _side, against: 'reaching the graveyard', effectLabel: _def.onGrave.type,
+          fire: (st) => _fireOnGrave(st, _def, _side, null),
+        });
       }
+    }
+    if (_links.length) {
+      const ns = (typeof _fireTriggerChain === 'function')
+        ? _fireTriggerChain(state, _links, { event: 'reaching the graveyard' })
+        : _links.reduce((acc, l) => { try { return l.fire(acc) || acc; } catch (e) { return acc; } }, state);
+      // Callers hold `state` by reference and ignore the return — copy the results back.
+      if (ns && ns !== state) { state.units = ns.units; state.log = ns.log; state.player = ns.player; state.ai = ns.ai; }
     }
     return state;
   } catch (e) { return state; }

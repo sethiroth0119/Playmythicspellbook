@@ -5351,6 +5351,10 @@
 }
   .bcp .gear svg{ width:28px; height:28px; color:#e8c97e; }
   .bcp .gear:hover{ transform:rotate(35deg); box-shadow:0 0 18px rgba(246,220,149,.3); }
+  /* 🎬 Clip recorder ON — the gear slot (now the record button) glows red + pulses. */
+  .gear.rec-on{ color:#ff5b5b !important; border-color:rgba(255,91,91,.75) !important; box-shadow:0 0 16px rgba(255,60,60,.55) !important; animation:liveclip-pulse 1.15s ease-in-out infinite; }
+  .gear.rec-on:hover{ transform:none !important; }
+  @keyframes liveclip-pulse{ 0%,100%{ opacity:1 } 50%{ opacity:.5 } }
   .bcp .weather{
   display:flex; align-items:center; gap:16px; padding:12px 20px;
   border:2px solid rgba(240,190,90,.8); border-radius:6px;
@@ -25599,6 +25603,24 @@
   .tw-sector-name { font-weight: 700; color: #b888ff; font-size: 0.9rem; }
   .tw-sector-pct { font-size: 0.72rem; color: #a89878; }
   .tw-nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.3rem; }
+  /* 💚 OWNER SURGE — added to a tile ONLY by the local client, ONLY for nodes the
+     LOCAL player owns. ⚠ Never serialize this class or its state into the shared
+     node payload: that payload goes to every player, so baking ownership glow in
+     would leak who owns what. The city pulses faster than its towns. */
+  @keyframes tw-surge {
+    0%,100% { box-shadow: 0 0 0 1px rgba(124,232,168,.55), 0 0 10px rgba(124,232,168,.18); }
+    50%     { box-shadow: 0 0 0 1px rgba(124,232,168,.85), 0 0 22px rgba(124,232,168,.45); }
+  }
+  .tw-node.is-mine, .tw-node-marker.is-mine { animation: tw-surge 2.6s ease-in-out infinite; }
+  .tw-node.is-mine.is-city, .tw-node-marker.is-mine.is-city { animation-duration: 1.9s; }
+  .tw-nm2-rank { font-weight: 800; letter-spacing: .04em; font-size: 0.62rem; padding: 0 3px; border-radius: 3px; }
+  .tw-nm2-rank.is-city { color: #ffd166; border: 1px solid rgba(255,209,102,.5); background: rgba(255,209,102,.12); }
+  .tw-nm2-rank.is-town { color: #9ad9b4; border: 1px solid rgba(124,232,168,.35); background: rgba(124,232,168,.10); }
+  @media (prefers-reduced-motion: reduce) {
+    .tw-node.is-mine, .tw-node-marker.is-mine {
+      animation: none; box-shadow: 0 0 0 1px rgba(124,232,168,.7);
+    }
+  }
   .tw-node {
     position: relative;
     background: linear-gradient(180deg, rgba(30,24,40,0.85), rgba(14,10,22,0.95));
@@ -34929,7 +34951,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119v8';
+  window.BUILD_VERSION = 'v119w0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -47584,6 +47606,15 @@ function _rehydrateForgeFromCatalog() {
     if (C.crashExchange.prices && typeof C.crashExchange.prices === 'object')
       F.crashExchange.prices = C.crashExchange.prices;
     if (C.crashExchange.lastDecayAt) F.crashExchange.lastDecayAt = C.crashExchange.lastDecayAt;
+    // Glut ledger — MERGE per-resource (max inflow wins) rather than replace, so
+    // a published snapshot cannot erase supply this device has already recorded.
+    if (C.crashExchange.supply && typeof C.crashExchange.supply === 'object') {
+      if (!F.crashExchange.supply || typeof F.crashExchange.supply !== 'object') F.crashExchange.supply = {};
+      for (const _sid of Object.keys(C.crashExchange.supply)) {
+        const _cs = C.crashExchange.supply[_sid] || {}, _ls = F.crashExchange.supply[_sid];
+        if (!_ls || (_cs.units | 0) > (_ls.units | 0)) F.crashExchange.supply[_sid] = _cs;
+      }
+    }
     // txnLog: merge only entries the admin published (shared market events) that
     // aren't already in the player's own log. Identified by a shared `id` field
     // if one exists; fall back to keeping the player's local log intact.
@@ -48076,7 +48107,9 @@ async function cloudPublishCatalog(opts) {
       __crash_exchange__: (function() {
         const cx = (Forge.crashExchange && typeof Forge.crashExchange === 'object') ? Forge.crashExchange : {};
         const txnLog = Array.isArray(cx.txnLog) ? cx.txnLog.slice(-200) : [];
-        return { prices: (cx.prices && typeof cx.prices === 'object') ? cx.prices : {}, txnLog, lastDecayAt: cx.lastDecayAt || 0 };
+        // ⚠ WHITELIST — see hg_crashExchange. `supply` carries the glut ledger.
+        return { prices: (cx.prices && typeof cx.prices === 'object') ? cx.prices : {}, txnLog, lastDecayAt: cx.lastDecayAt || 0,
+                 supply: (cx.supply && typeof cx.supply === 'object') ? cx.supply : {} };
       })(),
       __cx_reserve__: (Forge.cxReserve && typeof Forge.cxReserve === 'object') ? Forge.cxReserve : {},
     };
@@ -55792,6 +55825,10 @@ async function boeRefreshWallet() {
     if (!uid || !Cloud.client) { BankEthos._wallet = null; return; }
     const r = await Cloud.client.from('ownership_accounts').select('wallet_address,status').eq('player_id', uid).maybeSingle();
     BankEthos._wallet = (r && r.data) || null;
+    // Keep the Ownership Network panel's mirror in step — the reverse direction
+    // was already wired at link time, this one was not, so linking from the bank
+    // left that panel showing an "activate" CTA for an already-linked wallet.
+    try { if (BankEthos._wallet) App._ownAccount = BankEthos._wallet; } catch (e) {}
   } catch (e) { BankEthos._wallet = null; }
 }
 // Token & Blockchain Disclaimer (Hidn Studios) — shown once before the first
@@ -56291,7 +56328,7 @@ const LiveClip = (() => {
       const track = stream.getVideoTracks()[0];
       if (track) track.onended = () => disarm();     // user hit the browser "stop sharing" bar
       armed = true;
-      paint();
+      syncGearButtons();
       if (typeof showToast === 'function') showToast('🔴 Clip recording ON — the last 60s of play is captured. Win, then Share to Broadcast to attach it.', 5600);
       return true;
     } catch (e) {
@@ -56304,7 +56341,7 @@ const LiveClip = (() => {
     try { if (rec && rec.state !== 'inactive') rec.stop(); } catch (e) {}
     try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch (e) {}
     stream = null; rec = null; armed = false;
-    paint();
+    syncGearButtons();
   }
   function isArmed() { return armed; }
   function hasClip() { return !!(header && chunks.length); }
@@ -56315,30 +56352,50 @@ const LiveClip = (() => {
     return new Blob(parts, { type: mime || 'video/webm' });
   }
 
-  // Floating toggle button.
-  let btn = null;
-  function paint() {
-    if (!btn) return;
-    if (armed) { btn.textContent = '🔴 REC · clip on'; btn.style.background = 'rgba(220,40,40,.9)'; btn.style.borderColor = '#ff8a8a'; btn.style.color = '#fff'; }
-    else { btn.textContent = '🎬 Clip'; btn.style.background = 'rgba(12,14,18,.85)'; btn.style.borderColor = 'rgba(255,193,94,.55)'; btn.style.color = '#ffd98a'; }
-  }
-  function mountButton() {
-    if (btn || typeof document === 'undefined') return;
-    btn = document.createElement('button');
-    btn.id = 'liveclip-btn';
-    btn.type = 'button';
-    btn.title = 'Record the last 60 seconds of your match to share as a clip';
-    btn.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:2147483400;font-family:inherit;font-size:12px;font-weight:700;letter-spacing:.04em;padding:8px 13px;border-radius:8px;border:1px solid rgba(255,193,94,.55);cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.5);opacity:.92';
-    btn.onclick = () => { if (armed) disarm(); else arm(); };
-    document.body.appendChild(btn);
-    paint();
-  }
-  if (typeof document !== 'undefined') {
-    if (document.body) mountButton();
-    else document.addEventListener('DOMContentLoaded', mountButton);
+  // Reflect armed/idle state on the in-battle record button(s). The clip
+  // control lives in the right deck rail — it reuses the settings-gear slot
+  // (id=btn-battle-settings) so all the existing battle click-handling still
+  // works. `.rec-on` turns it red + pulsing (styled in CSS).
+  function syncGearButtons() {
+    try {
+      document.querySelectorAll('#btn-battle-settings').forEach((b) => {
+        b.classList.toggle('rec-on', armed);
+        b.setAttribute('title', armed ? 'Recording — click to stop (the last 60s is kept)' : 'Record a clip of the last 60s to share');
+        b.setAttribute('aria-label', armed ? 'Stop recording' : 'Record clip');
+      });
+    } catch (e) {}
   }
 
-  return { arm, disarm, isArmed, hasClip, getClipBlob };
+  // Friendly permission modal shown BEFORE the browser's share prompt, so the
+  // player knows what's about to happen. The Enable click is the user gesture
+  // getDisplayMedia requires.
+  function promptEnable() {
+    if (armed) { disarm(); return; }
+    const ID = 'liveclip-perm';
+    const old = document.getElementById(ID); if (old) old.remove();
+    const wrap = document.createElement('div');
+    wrap.id = ID;
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483600;background:rgba(4,6,10,.86);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:18px;font-family:inherit';
+    wrap.innerHTML =
+      '<div style="width:100%;max-width:440px;background:#191C23;border:1px solid #33261A;border-radius:16px;padding:24px;color:#EDEFF3;text-align:center">' +
+        '<div style="font-size:34px;margin-bottom:4px">🎬</div>' +
+        '<div style="font-family:\'Cinzel\',serif;font-size:1.3rem;font-weight:800;color:#ffd166;margin-bottom:8px">Record a clip?</div>' +
+        '<div style="color:#C6CAD1;font-size:.95rem;line-height:1.6;margin-bottom:14px">This records the <b style="color:#ffd166">last 60 seconds</b> of your match so you can share the highlight to Emergency Broadcast when you win.</div>' +
+        '<div style="color:#9BA1AB;font-size:.82rem;line-height:1.55;background:#0F1116;border:1px solid #262B34;border-radius:10px;padding:11px 13px;margin-bottom:16px;text-align:left">Your browser will ask you to <b>share this tab</b> — choose <b>&ldquo;This Tab&rdquo;</b> and click Share. Nothing records until then, and only this game tab is captured — never your other tabs or screen.</div>' +
+        '<div style="display:flex;gap:9px">' +
+          '<button id="liveclip-yes" style="flex:1;background:linear-gradient(180deg,#FFC15E,#C4923A);color:#0D1114;border:none;border-radius:9px;padding:12px;font-weight:800;font-size:.9rem;cursor:pointer">Enable recording</button>' +
+          '<button id="liveclip-no" style="flex:1;background:#14161B;color:#C6CAD1;border:1px solid #262B34;border-radius:9px;padding:12px;font-weight:700;font-size:.9rem;cursor:pointer">Not now</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(wrap);
+    const close = () => { try { wrap.remove(); } catch (e) {} };
+    wrap.onclick = (e) => { if (e.target === wrap) close(); };
+    const noBtn = document.getElementById('liveclip-no'); if (noBtn) noBtn.onclick = close;
+    const yesBtn = document.getElementById('liveclip-yes');
+    if (yesBtn) yesBtn.onclick = async () => { close(); await arm(); };
+  }
+
+  return { arm, disarm, isArmed, hasClip, getClipBlob, promptEnable, syncGearButtons };
 })();
 
 function openShareToBroadcast(summary) {
@@ -60886,11 +60943,13 @@ function openPack(packDef) {
   // Grant the cards to the player's inventory.
   if (!Profile.cardCollection) Profile.cardCollection = {};
   if (!Profile.itemInventory) Profile.itemInventory = {};
+  const _cxMinted = {};   // card:<id> → copies minted into the world by this pack
   for (const d of drawn) {
     if (d.kind === 'item' && d.item) {
       Profile.itemInventory[d.item.id] = (Profile.itemInventory[d.item.id] || 0) + 1;
     } else if (d.card) {
       Profile.cardCollection[d.card.id] = (Profile.cardCollection[d.card.id] || 0) + 1;
+      _cxMinted['card:' + d.card.id] = (_cxMinted['card:' + d.card.id] | 0) + 1;
       // 🧬 Roll this unit's trait now so the pulled card is "yours" — every
       // player rolls their own, so two players' same unit can differ.
       if ((d.card.type === 'unit' || d.kind === 'unit') && typeof ensureUnitTrait === 'function') {
@@ -60898,6 +60957,10 @@ function openPack(packDef) {
       }
     }
   }
+  // 🃏 Packs are how cards ENTER the world — the card equivalent of node
+  // production. Minting pushes each card's exchange price down, weighted by its
+  // rarity fragility, so a card that starts falling out of every pack crashes.
+  try { if (typeof cxProduce === 'function' && Object.keys(_cxMinted).length) cxProduce(_cxMinted, 'pack'); } catch (e) {}
   saveProfile();
   // 🌟 Account XP — every pack opened pays into the account ladder. Light reward
   // since packs are bought with currency the player already grinded for.
@@ -63722,7 +63785,7 @@ function loadForge() {
     // 🎁 Coupons — restore admin-authored redeem codes from localStorage fast-path.
     try { const cps = localStorage.getItem('hg_coupons'); if (cps) { const x = JSON.parse(cps); if (Array.isArray(x)) Forge.coupons = x; } } catch (err) {}
     // 📈 Crash Exchange market state — restore prices/reserve from fast-path.
-    try { const cxs = localStorage.getItem('hg_crashExchange'); if (cxs) { const x = JSON.parse(cxs); if (x && typeof x === 'object') { if (!Forge.crashExchange || typeof Forge.crashExchange !== 'object') Forge.crashExchange = { prices: {}, txnLog: [], lastDecayAt: 0 }; if (x.prices && typeof x.prices === 'object') Forge.crashExchange.prices = x.prices; if (x.lastDecayAt) Forge.crashExchange.lastDecayAt = x.lastDecayAt; if (Array.isArray(x.txnLog)) { const _ll = Array.isArray(Forge.crashExchange.txnLog) ? Forge.crashExchange.txnLog : []; if (!_ll.length) Forge.crashExchange.txnLog = x.txnLog; } } } } catch (err) {}
+    try { const cxs = localStorage.getItem('hg_crashExchange'); if (cxs) { const x = JSON.parse(cxs); if (x && typeof x === 'object') { if (!Forge.crashExchange || typeof Forge.crashExchange !== 'object') Forge.crashExchange = { prices: {}, txnLog: [], lastDecayAt: 0 }; if (x.prices && typeof x.prices === 'object') Forge.crashExchange.prices = x.prices; if (x.lastDecayAt) Forge.crashExchange.lastDecayAt = x.lastDecayAt; if (x.supply && typeof x.supply === 'object') Forge.crashExchange.supply = x.supply; if (Array.isArray(x.txnLog)) { const _ll = Array.isArray(Forge.crashExchange.txnLog) ? Forge.crashExchange.txnLog : []; if (!_ll.length) Forge.crashExchange.txnLog = x.txnLog; } } } } catch (err) {}
     try { const cxr = localStorage.getItem('hg_cxReserve'); if (cxr) { const x = JSON.parse(cxr); if (x && typeof x === 'object') Forge.cxReserve = x; } } catch (err) {}
     // 🗺 War Map admin-lit supply routes — restore from localStorage fast-path
     // so the routes survive a page refresh even before the cloud sync (10s
@@ -64520,7 +64583,10 @@ function saveForge() {
     // Keep the txnLog trimmed so this never approaches the localStorage cap.
     { key: 'hg_crashExchange',      value: (function() {
         const cx = (Forge.crashExchange && typeof Forge.crashExchange === 'object') ? Forge.crashExchange : {};
-        return { prices: cx.prices || {}, txnLog: Array.isArray(cx.txnLog) ? cx.txnLog.slice(-200) : [], lastDecayAt: cx.lastDecayAt || 0 };
+        // ⚠ This shape is a WHITELIST — a field missing here silently never saves.
+        // `supply` is the rolling 24h production inflow that drives the glut crash.
+        return { prices: cx.prices || {}, txnLog: Array.isArray(cx.txnLog) ? cx.txnLog.slice(-200) : [], lastDecayAt: cx.lastDecayAt || 0,
+                 supply: (cx.supply && typeof cx.supply === 'object') ? cx.supply : {} };
       })(), name: 'crashExchange' },
     { key: 'hg_cxReserve',          value: (Forge.cxReserve && typeof Forge.cxReserve === 'object') ? Forge.cxReserve : {}, name: 'cxReserve' },
     // 🗺 War Map admin-lit supply routes — tiny array of "nodeA|nodeB" strings.
@@ -74229,7 +74295,14 @@ function _opComputed(o) {
   const m = o.meta || {};
   const last = m.lastCollect || (o.created_at ? Date.parse(o.created_at) : Date.now());
   const hrs = Math.min(OP_ACCRUAL_CAP_H, Math.max(0, (Date.now() - last) / 3600000));
-  const grossPerHr = w * e.ratePerWorkerHr;
+  // 📈 LIVE MARKET — a business sells what it produces, so its Cinder revenue
+  // tracks what that output is actually worth on the Crash Exchange right now.
+  // Weighted by the yield mix and clamped to 0.5x–2.2x, so a crashed resource
+  // hurts the business that floods it without ever zeroing wages. Salaries are
+  // deliberately NOT scaled — wages are owed regardless of the market, which is
+  // what makes a glut genuinely painful to the producer causing it.
+  const mktMul = (typeof cxYieldMul === 'function' && e.yields) ? cxYieldMul(e.yields) : 1;
+  const grossPerHr = w * e.ratePerWorkerHr * mktMul;
   const salaryPerHr = w * e.salaryPerWorkerHr;
   const gross = Math.floor(grossPerHr * hrs);
   const salary = Math.floor(salaryPerHr * hrs);
@@ -74240,7 +74313,7 @@ function _opComputed(o) {
     const q = Math.floor(w * (e.yields[rid] || 0) * hrs);
     if (q > 0) yields[rid] = q;
   });
-  return { e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last, yields: yields };
+  return { e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last, yields: yields, mktMul: mktMul };
 }
 function _opLaborPool() { return Math.max(1, (Corp.roster || []).length || 1); }
 // Shared post-founding handler — fires the unlock toast + grants Woods
@@ -74396,6 +74469,8 @@ async function _opSettle(o) {
         if (q > 0) yieldedL[rid] = q;
       });
       if (Object.keys(yieldedL).length && typeof addSalvage === 'function') addSalvage(yieldedL);
+      // 🏭 Business output is supply — it moves the exchange like node output does.
+      try { if (typeof cxProduce === 'function' && Object.keys(yieldedL).length) cxProduce(yieldedL, 'op:' + (o.op_type || 'business')); } catch (e2) {}
     } catch (e) {}
     o.meta = Object.assign({}, o.meta || {}, { lastCollect: Date.now() });
     try {
@@ -74424,6 +74499,8 @@ async function _opSettle(o) {
     if (Object.keys(yielded).length && typeof addSalvage === 'function') {
       addSalvage(yielded);
       try { saveProfile(); } catch (e) {}
+      // 🏭 Same supply pressure as the personally-funded path above.
+      try { if (typeof cxProduce === 'function') cxProduce(yielded, 'op:' + (o.op_type || 'business')); } catch (e2) {}
     }
   } catch (e) {}
   const meta = Object.assign({}, o.meta || {}, { lastCollect: Date.now() });
@@ -131576,7 +131653,10 @@ function _bcTopBar(s) {
       <div class="turnplaque"><span class="flr">◆</span><span class="turn-txt">${turnLabel}</span><span class="flr">◆</span></div>
       <div class="rightgrp">
         <div class="timer">${timerInner}</div>
-        <button class="gear" id="btn-battle-settings" title="Settings (animation speed, audio, log filters, etc.)">
+        <button class="gear" id="btn-battle-settings" title="Record a clip of the last 60s to share">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="3.6" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <button class="gear" id="btn-battle-prefs" title="Settings (animation speed, audio, log filters, etc.)" aria-label="Settings">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
         </button>
       </div>
@@ -132026,7 +132106,10 @@ function _bcPanel(s, aiHero, playerHero) {
         </svg>
         <b id="timerText">${tm.txt}</b>
       </div>
-      <button class="gear" id="btn-battle-settings" aria-label="Settings">
+      <button class="gear" id="btn-battle-settings" aria-label="Record clip" title="Record a clip of the last 60s to share">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="3.6" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <button class="gear" id="btn-battle-prefs" aria-label="Settings" title="Settings (animation speed, audio, log filters, etc.)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3.4"/><path d="M12 2.4V5M12 19v2.6M2.4 12H5M19 12h2.6M5.1 5.1l1.8 1.8M17.1 17.1l1.8 1.8M18.9 5.1l-1.8 1.8M6.9 17.1l-1.8 1.8"/></svg>
       </button>
     </div>
@@ -133943,11 +134026,27 @@ function bindBattleEvents() {
     renderBattle();
   };
 
-  // ⚙ SETTINGS — open the Settings screen with a return-to-battle marker
-  // so the back button comes back here instead of dumping the player at
-  // the title screen. Battle state lives on App.state and isn't cleared.
+  // 🎬 CLIP RECORDER — the right deck rail's gear slot is now the record
+  // toggle (Settings still lives in the left UI, so it was redundant here).
+  // Tap to open the permission modal → record the last 60s; tap again to stop.
   const settingsBtn = document.getElementById('btn-battle-settings');
   if (settingsBtn) settingsBtn.onclick = () => {
+    if (typeof LiveClip === 'undefined') return;
+    if (LiveClip.isArmed()) LiveClip.disarm();
+    else LiveClip.promptEnable();
+  };
+  // Reflect the current recording state on the freshly-rendered button.
+  try { if (typeof LiveClip !== 'undefined') LiveClip.syncGearButtons(); } catch (e) {}
+
+  // ⚙ SETTINGS — moved to its own button when the gear slot became the clip
+  // recorder. It is NOT redundant: btn-battle-settings was the only in-battle
+  // route to Settings (the cloud-status pip that also sets the return marker is
+  // hidden behind an early return), so without this, animation speed, audio and
+  // log filters were unreachable mid-match. The return marker keeps the back
+  // button coming here instead of the title screen, and keeps battle music
+  // playing across the round-trip.
+  const prefsBtn = document.getElementById('btn-battle-prefs');
+  if (prefsBtn) prefsBtn.onclick = () => {
     App._settingsReturnScreen = 'battle';
     App.screen = 'settings';
     render();
@@ -149231,6 +149330,34 @@ async function cardShopOpen(name, tagline, theme) {
 async function cardShopSetOpen(isOpen) {
   try { if (!_csReady()) return null; await Cloud.client.from('card_shops').update({ open: !!isOpen, updated_at: new Date().toISOString() }).eq('owner_id', _csUid()); showToast(isOpen ? '🛒 Shop is open to visitors.' : '🚪 Shop closed to visitors.', 3000); CardShop.mine = null; await cardShopFetchMine(); } catch (e) {}
 }
+// 📈 LIVE MARKET GUIDANCE for the shop. Player pricing stays FREE — the market
+// informs, it does not cap. A hard price band would just push trades off-shop.
+// The exchange tracks cards under "card:<id>"; base comes from rarity, and
+// supply (packs minted, listings posted) drives it down from there.
+function cardShopMarketPrice(cardId) {
+  try {
+    if (!cardId || typeof getMarketPrice !== 'function') return null;
+    const p = getMarketPrice('card:' + cardId);
+    if (!p || !(p.current > 0)) return null;
+    return { base: Math.round(p.base), current: Math.round(p.current),
+             delta: Math.round(((p.current - p.base) / p.base) * 100),
+             glutted: (typeof cxIsGlutted === 'function') ? cxIsGlutted('card:' + cardId) : false };
+  } catch (e) { return null; }
+}
+function _csMarketNote(cardId, price) {
+  try {
+    const m = cardShopMarketPrice(cardId);
+    if (!m) return '';
+    let s = ' · Market ' + m.current.toLocaleString() + '🔥';
+    if (price > 0) {
+      const diff = Math.round(((price - m.current) / Math.max(1, m.current)) * 100);
+      if (Math.abs(diff) >= 10) s += ' (you are ' + Math.abs(diff) + '% ' + (diff > 0 ? 'above' : 'below') + ')';
+    }
+    if (m.glutted) s += ' ⚠ flooded';
+    return s;
+  } catch (e) { return ''; }
+}
+try { window.__mg = window.__mg || {}; window.__mg.cardShopMarketPrice = cardShopMarketPrice; } catch (e) {}
 async function cardShopListCard(cardId, price) {
   try {
     if (!_csReady()) { showToast('☁ Sign in to list cards.', 3600); return null; }
@@ -149245,7 +149372,11 @@ async function cardShopListCard(cardId, price) {
     try { saveProfile(); } catch (e) {}
     const { error } = await Cloud.client.from('card_shop_listings').insert({ owner_id: _csUid(), kind: 'card', card_id: cardId, card_json: snap, price: price, qty: 1 });
     if (error) { Profile.cardCollection[cardId] = ((Profile.cardCollection[cardId] | 0)) + 1; try { saveProfile(); } catch (e) {} showToast('⚠ Could not list: ' + (error.message || 'cloud error'), 4200); return null; }
-    showToast('🏷 Listed for ' + price + ' 🔥.', 3000);
+    // 📉 A listing is supply hitting the market — same signal as selling a
+    // resource, so it pushes this card's exchange price down.
+    try { if (typeof dropMarketPriceDown === 'function') dropMarketPriceDown('card:' + cardId, 1, 'cardShop:list'); } catch (e) {}
+    const _mk = (typeof _csMarketNote === 'function') ? _csMarketNote(cardId, price) : '';
+    showToast('🏷 Listed for ' + price + ' 🔥.' + _mk, 4200);
     App._csPick = null; CardShop.mine = null; await cardShopFetchMine(); return true;
   } catch (e) { return null; }
 }
@@ -149289,6 +149420,13 @@ async function cardShopBuy(listingId, price, ownerId) {
       return null;
     }
     spendCinders(price);
+    // 📈 A completed sale is real demand — it bumps the card's exchange price,
+    // the mirror of the drop a listing causes.
+    try {
+      if (data.kind !== 'pack' && data.card_id && typeof bumpMarketPriceUp === 'function') {
+        bumpMarketPriceUp('card:' + data.card_id, 1, 'cardShop:buy');
+      }
+    } catch (e) {}
     _csGrantPurchase(data);
     showToast('✅ Bought ' + (data.item_name || (data.kind === 'pack' ? 'pack' : 'card')) + ' for ' + price + ' 🔥 — added to your ' + (data.kind === 'pack' ? 'packs.' : 'collection.'), 4600);
     if (ownerId) { CardShop.shopOf[ownerId] = null; await cardShopFetchShop(ownerId); }
@@ -179561,6 +179699,22 @@ function _cxBasePrice(id) {
     if (cat === 'data')     return 1500;
     return 100;
   }
+  // 🃏 Card? Price it by RARITY. Without this every card based at a flat 100
+  // (getItemCinderValue can't resolve a "card:" id), so a Legendary and a
+  // Common were worth the same on the exchange and rarity meant nothing.
+  // These numbers are chosen to land on the matching _cxRarityTier band, so a
+  // card's rarity flows straight through into its fragility and glut threshold.
+  if (typeof id === 'string' && id.indexOf('card:') === 0) {
+    const _cid = id.slice(5);
+    let _rar = '';
+    try {
+      const c = (typeof lookupCustomCard === 'function' && lookupCustomCard(_cid))
+             || (typeof resolveDeckCard === 'function' && resolveDeckCard(_cid)) || null;
+      _rar = String((c && (typeof getRarity === 'function' ? getRarity(c) : c.rarity)) || '').toLowerCase();
+    } catch (e) {}
+    const CARD_BASE = { mythic: 8000, legendary: 4000, epic: 1500, rare: 700, uncommon: 300, common: 120 };
+    return CARD_BASE[_rar] || 120;
+  }
   // Item? Use the cinder value helper.
   if (typeof getItemCinderValue === 'function') return getItemCinderValue(id);
   return 200;
@@ -179909,6 +180063,171 @@ function recordMarketTxn(id, qty, reason, dir) {
   // Also snapshot the price history so the focus chart fills in over time.
   try { _cxRecordHistory(id); } catch (e) {}
 }
+
+// ============================================================================
+// 🏭 PRODUCTION PRESSURE · RARITY · GLUT CRASH
+// ----------------------------------------------------------------------------
+// The exchange used to move only when a PLAYER traded. Real supply — what the
+// nodes, cities and corp operations actually PRODUCE — never touched it, so a
+// resource being mass-farmed held its price forever. This closes that loop:
+//
+//   • Every unit produced pushes its price DOWN (gentler per-unit than a sale:
+//     production is expected, a sell order is a signal).
+//   • RARITY sets how FRAGILE a price is. A mythic resource is priced on the
+//     premise that it is scarce, so each unit that floods in hurts it far more
+//     than a unit of scrap hurts scrap.
+//   • GLUT CRASH — we track a rolling 24h inflow per resource against the
+//     inflow that tier is *expected* to see. Cross the trigger and the pressure
+//     is multiplied: "too easy to get" is exactly the state that should crash a
+//     price, and it now does, with a market event on the tape so players see why.
+//
+// Bounded by the SAME MIN/MAX band as every other price path, so no amount of
+// production can take a price outside 35%–350% of base.
+// ============================================================================
+const CX_PROD_TICK      = 0.0030;                 // price pressure per unit produced
+const CX_GLUT_WINDOW_MS = 24 * 60 * 60 * 1000;    // rolling supply window
+const CX_GLUT_TRIGGER   = 3.0;                    // inflow >= 3x normal ⇒ glut
+const CX_GLUT_EXTRA     = 2.5;                    // pressure multiplier while glutted
+const CX_MUL_MIN        = 0.5;                    // reader clamp (matches _osimPartMarketMul)
+const CX_MUL_MAX        = 2.2;
+
+// Rarity tier from the resource's own base price — the base price IS the game's
+// existing statement of how rare something is, so this can never drift out of
+// sync with the catalog the way a hand-kept rarity list would.
+//   fragility  = how hard each produced unit pushes the price down
+//   normalFlow = units per 24h this tier absorbs before it counts as a glut
+function _cxRarityTier(id) {
+  const base = _cxBasePrice(id) || 100;
+  if (base >= 4000) return { tier: 'mythic',   fragility: 2.2, normalFlow: 40 };
+  if (base >= 1200) return { tier: 'rare',     fragility: 1.7, normalFlow: 120 };
+  if (base >= 500)  return { tier: 'uncommon', fragility: 1.3, normalFlow: 400 };
+  if (base >= 200)  return { tier: 'common',   fragility: 1.0, normalFlow: 1200 };
+  return              { tier: 'abundant', fragility: 0.8, normalFlow: 3000 };
+}
+
+// Rolling 24h inflow ledger. Lives on Forge.crashExchange.supply — ⚠ it is
+// whitelisted into BOTH persist shapes and BOTH hydrate paths; adding a field
+// here without doing that means it silently never saves.
+function _cxSupply(id) {
+  const cx = getCrashExchange();
+  if (!cx.supply || typeof cx.supply !== 'object') cx.supply = {};
+  const now = Date.now();
+  let s = cx.supply[id];
+  if (!s || typeof s !== 'object') { s = cx.supply[id] = { units: 0, since: now, glutAt: 0 }; }
+  if (typeof s.units !== 'number') s.units = 0;
+  if (typeof s.since !== 'number') s.since = now;
+  // Roll the window forward rather than hard-resetting, so a steady producer
+  // stays glutted instead of getting a clean slate every 24h.
+  const age = now - s.since;
+  if (age >= CX_GLUT_WINDOW_MS) {
+    const windows = Math.floor(age / CX_GLUT_WINDOW_MS);
+    s.units = Math.max(0, Math.round(s.units / Math.pow(2, windows)));
+    s.since = s.since + windows * CX_GLUT_WINDOW_MS;
+  }
+  return s;
+}
+
+// How glutted a resource is: 1.0 = producing exactly its normal flow.
+function cxSupplyRatio(id) {
+  try {
+    const s = _cxSupply(id), t = _cxRarityTier(id);
+    return (s.units || 0) / Math.max(1, t.normalFlow);
+  } catch (e) { return 0; }
+}
+function cxIsGlutted(id) { return cxSupplyRatio(id) >= CX_GLUT_TRIGGER; }
+
+// 🏭 THE PRODUCTION CHOKE POINT. Every system that MAKES resources calls this
+// with what it produced. Deliberately NOT hooked into addRes(): that would also
+// fire on exchange BUYS, which already bump the price up — double-counting in
+// the wrong direction.
+function cxProduce(map, source) {
+  if (!map || typeof map !== 'object') return null;
+  const out = { pressured: {}, glutted: [] };
+  try {
+    tickMarketDecay();
+    for (const id of Object.keys(map)) {
+      const qty = Math.max(0, Math.floor(map[id] || 0));
+      if (!qty) continue;
+      const t = _cxRarityTier(id);
+      const s = _cxSupply(id);
+      s.units += qty;
+      const glut = (s.units / Math.max(1, t.normalFlow)) >= CX_GLUT_TRIGGER;
+      const mult = glut ? CX_GLUT_EXTRA : 1;
+      const p = getMarketPrice(id);
+      const drop = 1 - Math.min(0.35, CX_PROD_TICK * t.fragility * mult * qty);
+      const before = p.current;
+      p.current = Math.max(p.base * CX_PRICE_MIN_FACTOR, p.current * drop);
+      p.delta24h = ((p.current - p.base) / p.base) * 100;
+      p.volume24h = (p.volume24h | 0) + qty;
+      p.lastTick = Date.now();
+      out.pressured[id] = { from: before, to: p.current, qty, tier: t.tier, glut };
+      // Announce a NEW glut once per window so the tape explains the crash.
+      if (glut && (Date.now() - (s.glutAt || 0)) > CX_GLUT_WINDOW_MS) {
+        s.glutAt = Date.now();
+        out.glutted.push(id);
+        try { _cxLogMarketEvent('GLUT', id, source); } catch (e) {}
+      }
+      try { recordMarketTxn(id, qty, 'produce:' + (source || 'world'), -1); } catch (e) {}
+      try { cxCloudQueuePush(id, 'produce', -1); } catch (e) {}
+    }
+    try { saveForge(); } catch (e) {}
+  } catch (e) {}
+  return out;
+}
+
+// Push a glut onto the exchange's own event tape (same log the world events use).
+function _cxLogMarketEvent(kind, id, source) {
+  const cx = getCrashExchange();
+  if (!Array.isArray(cx.eventLog)) cx.eventLog = [];
+  const nm = (typeof _meta === 'function' && _meta(id) && _meta(id).name) || id;
+  cx.eventLog.unshift({
+    id: 'glut-' + id + '-' + Date.now(),
+    cat: 'crash',
+    text: (kind === 'GLUT')
+      ? ('📉 GLUT — ' + nm + ' is flooding the market from ' + (source || 'production') + '. Price crashing.')
+      : (kind + ' — ' + nm),
+    ts: Date.now(),
+  });
+  if (cx.eventLog.length > CX_EVENT_LOG_CAP) cx.eventLog.length = CX_EVENT_LOG_CAP;
+}
+
+// 📈 THE ONE READER every other economy should price against. Returns a clamped
+// current/base multiplier, so a booming resource pays more and a crashed one
+// pays less — wherever it is wired in. Clamp matches the existing
+// _osimPartMarketMul precedent so no system can be swung more than 0.5x–2.2x.
+function cxMarketMul(id) {
+  try {
+    if (!id) return 1;
+    const p = getMarketPrice(id);
+    if (!p || !p.base || !(p.current > 0)) return 1;
+    return Math.max(CX_MUL_MIN, Math.min(CX_MUL_MAX, p.current / p.base));
+  } catch (e) { return 1; }
+}
+// Average multiplier across a yield map, weighted by quantity — lets a business
+// whose output is 90% one resource track that resource, not a flat average.
+function cxYieldMul(map) {
+  try {
+    if (!map || typeof map !== 'object') return 1;
+    let num = 0, den = 0;
+    for (const id of Object.keys(map)) {
+      const q = Math.max(0, +map[id] || 0);
+      if (!q) continue;
+      num += cxMarketMul(id) * q; den += q;
+    }
+    return den ? Math.max(CX_MUL_MIN, Math.min(CX_MUL_MAX, num / den)) : 1;
+  } catch (e) { return 1; }
+}
+function cxSupplyReport(id) {
+  const t = _cxRarityTier(id), s = _cxSupply(id), p = getMarketPrice(id);
+  return { id, tier: t.tier, fragility: t.fragility, normalFlow: t.normalFlow,
+           inflow24h: s.units | 0, ratio: +cxSupplyRatio(id).toFixed(2), glutted: cxIsGlutted(id),
+           base: p.base, current: +(+p.current).toFixed(2), mul: +cxMarketMul(id).toFixed(3) };
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.cx = { produce: cxProduce, mul: cxMarketMul, yieldMul: cxYieldMul,
+                     supply: cxSupplyReport, ratio: cxSupplyRatio, glutted: cxIsGlutted, tier: _cxRarityTier };
+} catch (e) {}
 
 // ============================================================================
 // 📈 CRASH/EXCHANGE — FULL TERMINAL HELPERS
@@ -194411,26 +194730,58 @@ async function _ownFetchMirror() {
     } catch (e) {}
   } catch (e) {}
 }
-// Drawer section: on-chain network status + this player's wallet + activate CTA.
+// 🦊 The player's REAL linked wallet. One wallet per account, but two surfaces
+// write it — the Bank of Ethos header (boeLinkWallet → BankEthos._wallet) and the
+// ownership mirror fetch (App._ownAccount). Only the Bank→App direction was wired,
+// so a player who linked from the bank still saw "Activate Ownership" here. Read
+// BOTH, newest-known-wins, and return the FULL address; callers truncate.
+function _ownWalletAddr() {
+  try {
+    const a = (App && App._ownAccount) || null;
+    if (a && a.wallet_address) return { addr: String(a.wallet_address), status: a.status || null };
+    const b = (typeof BankEthos !== 'undefined' && BankEthos && BankEthos._wallet) || null;
+    if (b && b.wallet_address) {
+      try { App._ownAccount = b; } catch (e) {}   // keep the mirrors agreed
+      return { addr: String(b.wallet_address), status: b.status || null };
+    }
+    return null;
+  } catch (e) { return null; }
+}
+function _ownWalletShort(a) { return String(a).slice(0, 6) + '…' + String(a).slice(-4); }
+function _ownCopyWallet() {
+  const w = _ownWalletAddr(); if (!w) return;
+  try { navigator.clipboard.writeText(w.addr); showToast('📋 Wallet address copied — ' + _ownWalletShort(w.addr), 3200); }
+  catch (e) { showToast('🦊 ' + w.addr, 6000); }
+}
+// Link from here too: the old CTA called the activation stub, which is inert
+// until MYTHIC_OWNERSHIP_API is hosted — so an unlinked player had no working
+// path at all. boeLinkWallet works TODAY (link_game_wallet RPC).
+async function _ownConnectWallet() {
+  if (!Profile.cloud || !Profile.cloud.signedIn) { showToast('☁ Sign in first to link a wallet.', 3600); return; }
+  if (typeof boeLinkWallet !== 'function') { try { await _ownershipActivate(); } catch (e) {} return; }
+  const ok = await boeLinkWallet();
+  if (ok) { try { App._ownMirrorAt = 0; await _ownFetchMirror(); } catch (e) {} try { render(); } catch (e) {} }
+}
+// Drawer section: on-chain network status + this player's wallet + link CTA.
 function _ownershipSectionHtml() {
   try { _ownFetchMirror(); } catch (e) {}
-  const acct = App._ownAccount;
   const nCount = (App._onchainNodes || []).length;
   const aOwned = (App._onchainAssets || []).filter((a) => a && a.owner_wallet).length;
   const aTotal = (App._onchainAssets || []).length;
-  const wal = acct && acct.wallet_address ? (String(acct.wallet_address).slice(0, 6) + '…' + String(acct.wallet_address).slice(-4)) : null;
+  const w = _ownWalletAddr();
+  const _pending = !!(w && w.status && String(w.status).toLowerCase() !== 'active' && String(w.status).toLowerCase() !== 'linked');
   return `
     <div class="tw-nd-section-hdr">— 🪙 OWNERSHIP NETWORK <span style="opacity:.65;font-size:.85em">(on-chain · Cinder unchanged)</span></div>
     <div class="tw-nd-claim"><div class="tw-nd-claim-row">
-      ${wal
-        ? `<span class="tw-nd-claim-badge">🪙 WALLET</span><span class="tw-nd-claim-owner">${escapeHtml(wal)}</span>`
-        : `<button class="btn-mini btn-primary" onclick="__mg._ownershipActivate()">🪙 Activate Ownership</button>`}
+      ${w
+        ? `<span class="tw-nd-claim-badge" title="Wallet linked to your account (Base mainnet)">🦊 WALLET${_pending ? ' ·' + escapeHtml(String(w.status).toUpperCase()) : ''}</span><span class="tw-nd-claim-owner" style="cursor:pointer;font-family:monospace" title="${escapeHtml(w.addr)} — click to copy" onclick="__mg._ownCopyWallet()">${escapeHtml(_ownWalletShort(w.addr))} 📋</span>`
+        : `<button class="btn-mini btn-primary" onclick="__mg._ownConnectWallet()" title="Connect MetaMask and link it to your account — used for MT purchases, node payouts &amp; airdrops (Base mainnet)">🦊 Connect Wallet</button>`}
       <button class="btn-mini" onclick="__mg._brokerOpen()">🤝 Broker Deals</button>
       ${(App._mtBal || 0) > 0 ? `<span class="tw-nd-claim-badge" title="Your Mythic Token balance (Bank of Ethos)">Ⓜ ${Number(App._mtBal).toLocaleString()} MT</span>` : ''}
       <span class="tw-nd-claim-owner" style="opacity:.8">${nCount} node${nCount === 1 ? '' : 's'} on-chain · ${aOwned}/${aTotal} businesses owned</span>
     </div><div class="tw-nd-claim-hint">Real on-chain ownership of businesses & nodes (Base). An extra layer on top of the game — everything still runs on Cinder.</div></div>`;
 }
-try { window.__mg = window.__mg || {}; window.__mg._ownershipActivate = _ownershipActivate; } catch (e) {}
+try { window.__mg = window.__mg || {}; window.__mg._ownershipActivate = _ownershipActivate; window.__mg._ownConnectWallet = _ownConnectWallet; window.__mg._ownCopyWallet = _ownCopyWallet; window.__mg._ownWalletAddr = _ownWalletAddr; } catch (e) {}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 🤝 BROKER DEALS — node owners & business operators trade CARDS + RESOURCES
@@ -200539,6 +200890,54 @@ function _twState() {
   if (typeof s.lastDecayCheck !== 'number') s.lastDecayCheck = 0;
   return s;
 }
+// 🏙 EMPIRE — the player's CITY is their first-claimed node; every other owned
+// node is a TOWN. Derived from capturedAt rather than stored, so there is no new
+// field, no migration, and rank can never drift out of sync with ownership.
+// Ties break on node id so the answer is stable across reloads.
+function twCityNodeId() {
+  try {
+    const owned = (_twState().ownedNodes) || {};
+    let best = null, bestAt = Infinity;
+    for (const id of Object.keys(owned)) {
+      const at = (owned[id] && owned[id].capturedAt) || 0;
+      if (at < bestAt || (at === bestAt && (best === null || id < best))) { bestAt = at; best = id; }
+    }
+    return best;
+  } catch (e) { return null; }
+}
+function twIsCity(nodeId) { return !!nodeId && twCityNodeId() === nodeId; }
+function twOwnedCount() {
+  try { return Object.keys((_twState().ownedNodes) || {}).length; } catch (e) { return 0; }
+}
+function twNodeRank(nodeId) { return twIsCity(nodeId) ? 'city' : 'town'; }
+// 👑 One score that says "this player is building something". Weighted so BREADTH
+// (node count) and DEPTH (population, upgrades, stability) both count — a lone
+// maxed-out node should not out-rank a real network.
+function twEmpireScore() {
+  try {
+    const st = _twState(), t = _twForge();
+    const owned = st.ownedNodes || {};
+    let pop = 0, upg = 0, stab = 0, n = 0;
+    for (const id of Object.keys(owned)) {
+      const o = owned[id] || {};
+      const def = (t.nodes || []).find(x => x.id === id) || {};
+      n++;
+      pop  += (typeof def.population === 'number') ? def.population : 100;
+      upg  += (o.upgrades || []).length;
+      stab += (o.stability | 0);
+    }
+    if (!n) return 0;
+    return Math.round(n * 100 + pop * 0.5 + upg * 25 + (stab / n) * 2);
+  } catch (e) { return 0; }
+}
+function twEmpireTier(score) {
+  if (score >= 2500) return { label: 'DYNASTY',  color: '#ffd166' };
+  if (score >= 1500) return { label: 'EMPIRE',   color: '#e0b23c' };
+  if (score >= 800)  return { label: 'DOMINION', color: '#c29a3a' };
+  if (score >= 300)  return { label: 'HOLDING',  color: '#9d917c' };
+  return { label: 'OUTPOST', color: '#8d8272' };
+}
+try { window.__mg = window.__mg || {}; window.__mg.empire = { city: twCityNodeId, rank: twNodeRank, count: twOwnedCount, score: twEmpireScore, tier: twEmpireTier }; } catch (e) {}
 // 💾 Persist Territory Wars state. ⚠ THIS DID NOT EXIST: four call sites
 // (`_twSave()`) invoked it inside try/catch, so every one silently swallowed a
 // ReferenceError and the change — a bought upgrade, a hired guard, an admin
@@ -202660,6 +203059,11 @@ function _twClearsRequired(node, own) {
   }
   return base;
 }
+// 👑 Cinder the CAPITAL pays per collect before the empire multiplier. Chosen
+// against the game's own faucets — a battle pays ~100–220 — on a 5h30m cooldown.
+// A 5-node empire therefore earns ~750/collect before the six existing yield
+// multipliers. Set to 0 to disable the capital Cinder faucet entirely.
+const TW_CAPITAL_CINDER_BASE = 150;
 // Collect resources from an owned node if its 5h30m cooldown has elapsed.
 function tw_collectNode(nodeId) {
   const t = _twForge(); const st = _twState();
@@ -202668,7 +203072,18 @@ function tw_collectNode(nodeId) {
   const now = Date.now();
   const ready = now - (own.lastCollectAt || 0) >= TW_COLLECTION_MS;
   if (!ready) return { ok: false, remainMs: TW_COLLECTION_MS - (now - (own.lastCollectAt || 0)) };
-  const yield_ = node.resourceYield || {};
+  // 👑 CAPITAL STIPEND — the empire multiplier below scales the city's CINDER
+  // yield, but no seeded node has any Cinder in resourceYield (the 16 starter
+  // PRNs draw from _TW_RES_KEYS, none of which is Cinder), so the bonus had
+  // nothing to multiply. The capital gets an implicit Cinder yield unless an
+  // admin has set one explicitly. Set TW_CAPITAL_CINDER_BASE to 0 to turn the
+  // whole faucet off; an explicit Cinder=N on the node always wins.
+  const yield_ = Object.assign({}, node.resourceYield || {});
+  const _cityNow = (typeof twIsCity === 'function') && twIsCity(nodeId);
+  if (_cityNow && TW_CAPITAL_CINDER_BASE > 0
+      && !Object.keys(yield_).some(k => /^(cinder|gems)$/i.test(k))) {
+    yield_.Cinder = TW_CAPITAL_CINDER_BASE;
+  }
   // 📐 FULL FORMULA: Base × Quality × Defense × Corp × Population × Region
   //
   // • Base           = node.resourceYield[k]
@@ -202694,10 +203109,30 @@ function tw_collectNode(nodeId) {
   // from every node controlled by the affected corp for 24h.
   const darkBM = (typeof _twDarkBlackMarketYieldMult === 'function') ? _twDarkBlackMarketYieldMult(own.ownerCorpId) : 1.0;
   const multiplier = quality * defense * (1 + sectorB.yieldPct) * population * (1 + regionB.yieldPct) * darkBM;
+  // 👑 EMPIRE BONUS — the CAPITAL pays Cinder once per node in the empire. Towns
+  // are unaffected and NO other resource is touched: the chain above already
+  // multiplies six ways, so compounding every resource by node count turns a
+  // 3-node player into a runaway economy. Cinder-only keeps total income linear
+  // in node count and makes the capital the thing worth defending.
+  const _isCity  = (typeof twIsCity === 'function') && twIsCity(nodeId);
+  const _empireX = _isCity ? Math.max(1, (typeof twOwnedCount === 'function') ? twOwnedCount() : 1) : 1;
+  let _capitalBonus = 0;
   const got = {};
+  const _produced = {};   // raw resource ids that actually entered the world
   for (const k of Object.keys(yield_)) {
-    const amt = Math.max(0, Math.round((yield_[k] | 0) * multiplier));
+    // ⚠ Case-insensitive: the admin yield field documents the key as "Cinder=100",
+    // and _twDispenseLoot lowercases before routing, so an exact 'cinder' test
+    // would silently miss every node authored the documented way. Both spellings
+    // land in Profile.gems.
+    const _lk = (k + '').toLowerCase();
+    const _isCinder = (_lk === 'cinder' || _lk === 'gems');
+    const _resX = _isCinder ? _empireX : 1;
+    const amt = Math.max(0, Math.round((yield_[k] | 0) * multiplier * _resX));
     if (amt <= 0) continue;
+    if (_isCinder && _resX > 1) {
+      const _base = Math.max(0, Math.round((yield_[k] | 0) * multiplier));
+      _capitalBonus += (amt - _base);
+    }
     // 🪙 SPECIAL LOOT KEYS — route Cards, Relics, and Aza fragments to
     // their proper inventories instead of the generic territory vault.
     // Everything else falls through to the standard vault bucket.
@@ -202707,13 +203142,21 @@ function tw_collectNode(nodeId) {
     } else {
       st.vault[k] = (st.vault[k] | 0) + amt;
       got[k] = (got[k] | 0) + amt;
+      // 🏭 Real supply reaching the world — push it into the Crash Exchange by
+      // its RAW resource id (the display label is not a tradable id). Wallet
+      // routes (Cinder/Aza) are deliberately excluded: they are currency, not a
+      // traded commodity, and the capital bonus already scales them.
+      _produced[k] = (_produced[k] | 0) + amt;
     }
   }
+  try { if (typeof cxProduce === 'function' && Object.keys(_produced).length) cxProduce(_produced, 'node:' + (node.name || nodeId)); } catch (e) {}
   own.lastCollectAt = now;
   own.stability = Math.min(100, (own.stability | 0) + 5);
   _twLog('collect', `${(_twPlayerCorp() && _twPlayerCorp().name) || 'Corp'} collected from ${node.name}.`);
   try { saveProfile(); saveForge(); } catch (e) {}
-  return { ok: true, got };
+  // Surfaced in the collect toast — a multiplier players cannot see is a
+  // multiplier they do not believe exists.
+  return { ok: true, got, isCity: _isCity, empireX: _empireX, capitalBonus: _capitalBonus };
 }
 // 🛣 Paint connection lines between linked nodes. Reads node.connections
 // (array of node ids) and draws an SVG path inside #tw-connections for
@@ -204345,7 +204788,13 @@ function renderTerritoryWars() {
     ].join('\n');
     const _cls = _twNodeClass(n, own);
     const _twResB = _twNodeResBadge(n);
-    return `<button class="tw-node-marker tw-nm2${selCls}${_nAttackCls}" data-tw-node="${escapeHtml(n.id)}" data-tw-state="${_nState}" data-tw-class="${_cls.key}" data-tw-owned="${own ? '1' : '0'}"
+    // 💚 Owner surge + 🏙 rank. Both are derived HERE, client-side, from the local
+    // player's own ownership map — they are never read from or written to the
+    // shared node payload, which every player receives.
+    const _mine = !!own;
+    const _mineCity = _mine && twIsCity(n.id);
+    const _mineCls = _mine ? (' is-mine' + (_mineCity ? ' is-city' : '')) : '';
+    return `<button class="tw-node-marker tw-nm2${selCls}${_nAttackCls}${_mineCls}" data-tw-node="${escapeHtml(n.id)}" data-tw-state="${_nState}" data-tw-class="${_cls.key}" data-tw-owned="${own ? '1' : '0'}"
         aria-label="${escapeHtml(tip)}"
         style="left:${pos.x}%;top:${pos.y}%;--node-color:${_cls.col}"
         onclick="_twSelectNode(this.dataset.twNode)">
@@ -204355,6 +204804,7 @@ function renderTerritoryWars() {
         <span class="tw-nm2-name">${escapeHtml(n.name)}</span>
         <span class="tw-nm2-badges">
           <span class="tw-nm2-badge" style="color:${_cls.badgeCol || _cls.col};border-color:${_cls.bcol};background:${_cls.bg}">${_cls.badge}</span>
+          ${_mine ? `<span class="tw-nm2-rank ${_mineCity ? 'is-city' : 'is-town'}">${_mineCity ? '🏙 CITY' : 'TOWN'}</span>` : ''}
           <span class="tw-nm2-res">${_twResB.i} ${escapeHtml(_twResB.l)}</span>
         </span>
       </div>
@@ -204527,6 +204977,9 @@ function renderTerritoryWars() {
   // Footer readouts the chart adds: lit supply routes + your share of the map.
   const _twLitRoutes = (typeof _seenRoutes !== 'undefined' && _seenRoutes && _seenRoutes.size) ? _seenRoutes.size : 0;
   const _twTerritoryPct = Math.round(_twOwnedCount / Math.max(1, t.nodes.length) * 100);
+  // 👑 Empire readout — breadth + depth in one number, with its tier band.
+  const _twEmpScore = (typeof twEmpireScore === 'function') ? twEmpireScore() : 0;
+  const _twEmpTier  = (typeof twEmpireTier === 'function') ? twEmpireTier(_twEmpScore) : { label: '—', color: '#8d8272' };
   // Minimap pips — one per node at its real map %, gold when you hold it and
   // red while it is under attack, so the corner chart tracks the live board.
   const _nxMiniDots = t.nodes.map(n => {
@@ -205177,6 +205630,7 @@ function renderTerritoryWars() {
         <div class="nx-fstat">${_nxIco.nodes}<span><span class="k">Total Nodes</span><span class="v">${t.nodes.length}</span></span></div>
         <div class="nx-fstat">${_nxIco.shield}<span><span class="k">PRNs Held</span><span class="v">${_twOwnedCount} / ${t.nodes.length}</span></span></div>
         <div class="nx-fstat">${_nxIco.hex}<span><span class="k">Your Territory</span><span class="v">${_twTerritoryPct}%</span></span></div>
+        <div class="nx-fstat">👑<span><span class="k">Empire</span><span class="v" style="color:${_twEmpTier.color}">${_twEmpTier.label} · ${_twEmpScore.toLocaleString()}</span></span></div>
         <div class="nx-fstat">${_nxIco.routes}<span><span class="k">Active Routes</span><span class="v">${_twLitRoutes}</span></span></div>
         <div class="nx-fstat">${_nxIco.threat}<span><span class="k">Active Threats</span><span class="v${_twThreats>0?' bad':' ok'}">${_twThreats>0?_twThreats:'—'}</span></span></div>
         <div class="nx-fstat">${_nxIco.corp}<span><span class="k">Corporation</span><span class="v">${myCorp ? escapeHtml(myCorp.name) : '—'}</span></span></div>
@@ -205327,7 +205781,9 @@ function renderTerritoryWars() {
       // Cards / relics / Aza already routed to inventories by the loot
       // dispenser; the toast just lists what landed where.
       const summary = Object.entries(r.got).map(([k,v]) => `+${v} ${k}`).join(', ') || 'no resources defined';
-      showToast(`💎 Collected: ${summary}`, 4400);
+      const _cap = (r.empireX > 1 && r.capitalBonus > 0)
+        ? ` · 👑 Capital bonus ×${r.empireX} (+${r.capitalBonus})` : '';
+      showToast(`💎 Collected: ${summary}${_cap}`, 4400);
     }
     render();
   });

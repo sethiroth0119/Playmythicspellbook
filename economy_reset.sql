@@ -3,13 +3,14 @@
 --
 -- Zeroes every store of WEALTH for every player, and touches NOTHING that
 -- represents time played.
---   WIPED : user_progress.cinder, user_profiles.gems (Cinder mirror),
---           user_profiles.sovereigns (👑 Aza), the bank_of_ethos row
---           (aza / balance / resources), corp_treasury, corp_operations,
---           and the six tycoon forge keys on the profile row.
+--   WIPED : every currency (user_progress.cinder, user_profiles.gems +
+--           sovereigns, the bank_of_ethos row), corp_treasury + corp_operations,
+--           and every OWNED key on the profile row — card collection, decks,
+--           packs, gear, items, resources, vault, property, cosmetics and shop
+--           licences. Players are returned to the starter-deck picker.
 --   KEPT  : heroes / units jsonb (levels, xp, kills, wins, losses, bonds,
---           statGains, knownMoves), forge.__account__, __cardCollection__,
---           decks, equipment, items, salvage, vault, nodes, real estate.
+--           statGains, knownMoves), forge.__account__, skill trees,
+--           achievements, campaign + roguelite progress, match log, usage.
 --   ADMINS: exempt. Enforced HERE, independently of the client check, so a
 --           tampered client cannot wipe an admin and an admin cannot wipe
 --           themselves by accident.
@@ -92,19 +93,49 @@ begin
   exception when undefined_table or undefined_column then null;
   end;
 
-  -- 🏭 …and their client-side twins on the profile row. These are DROPPED rather
-  --    than emptied: hydration only merges a key that is PRESENT, so an empty
-  --    object would still be merged over by a stale local copy.
+  -- 🧹 THE PROFILE ROW. Everything OWNED is dropped; everything EARNED is left
+  --    alone. Keys are DROPPED rather than emptied because hydration only merges
+  --    a key that is PRESENT — an empty object would still be merged over by a
+  --    stale local copy (the trap that made resources "come back" in v118t5).
+  --    ⚠ These names are load-bearing and were verified against the payload
+  --    builder in index.html (~L44098+). Do not guess new ones.
   begin
     update public.user_profiles
        set forge = (coalesce(forge, '{}'::jsonb)
+                    -- 🏭 businesses / money printers
                     - '__blackRiver__' - '__princePortfolios__' - '__fishingCorp__'
-                    - '__fuelCommand__' - '__cityCards__' - '__jbLocalOps__')
+                    - '__fuelCommand__' - '__cityCards__' - '__jbLocalOps__'
+                    -- 🃏 collection, decks and packs
+                    - '__cardCollection__' - '__sideDeck__' - '__archonDeck__'
+                    - '__socketedGems__' - '__gemsOwned__' - '__unopenedPacks__'
+                    - '__packHistory__' - '__essence__' - '__chests__'
+                    - '__chestKeys__' - '__coupons__'
+                    -- 🧰 gear, items, resources, bag, vault
+                    - '__itemInventory__' - '__equipment__' - '__relicEquipment__'
+                    - '__heroLoadouts__' - '__salvage__' - '__fieldBag__'
+                    - '__vaultLayout__'
+                    -- 🏠 property, cosmetics, shop licences
+                    - '__ownedHouses__' - '__homeZones__' - '__furnitureOwned__'
+                    - '__cxHoldings__' - '__cosmetics__'
+                    - '__ownedTombstones__' - '__equippedTombstone__'
+                    - '__ownedAvatars__' - '__equippedAvatar__'
+                    - '__ownedSleeves__' - '__equippedSleeve__'
+                    - '__unlockedTraders__' - '__traderStock__'
+                    - '__dojoUnlocked__' - '__dojoStock__'
+                    -- 🎴 back to the starter picker
+                    - '__starterPicked__' - '__starterDeckId__')
      where user_id = uid
        and jsonb_typeof(coalesce(forge, '{}'::jsonb)) = 'object';
-    if found then out := out || '["forge_business_keys"]'::jsonb; end if;
+    if found then out := out || '["forge_owned_keys"]'::jsonb; end if;
   exception when undefined_table or undefined_column then null;
   end;
+  -- ⚠ DELIBERATELY NOT TOUCHED — this is the "keep their stats" half:
+  --   __account__ (level/xp/totalXp) · heroes / units jsonb (levels, kills,
+  --   wins, bonds, statGains, knownMoves) · __heroSkillTrees__ · __heroBonds__ ·
+  --   __heroPersonality__ · __achievements__ · __campaignProgress__ ·
+  --   __rlcCompleted__ · __matchLog__ · __leaderboard__ · __usage__.
+  --   If a future edit adds one of those to the drop list, the reset has stopped
+  --   being what was asked for.
 
   return jsonb_build_object('ok', true, 'admin_exempt', false, 'cleared', out);
 end;

@@ -34830,7 +34830,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119u7';
+  window.BUILD_VERSION = 'v119u8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -70032,16 +70032,18 @@ async function _applySeasonReset(sr) {
        STAYS. Deliberately does not touch account/hero/unit levels, statGains,
        knownMoves, bonds or records — the user asked specifically that levels stop
        being reset by every wipe. Aza is untouched: it is bought with real money. */
-    /* 💥 'economy' — THE ECONOMY RESET. Every store of WEALTH goes to zero;
-       everything a player EARNED by playing stays exactly where it is.
-         WIPED  : Cinder (local + the authoritative user_progress row), Aza
-                  (👑 sovereigns), the Bank of Ethos account (aza / balance /
-                  resources), and every tycoon operation + treasury, because
-                  those mint currency and would refill the economy overnight.
+    /* 💥 'economy' — THE FULL RESTART. Everything a player OWNS goes; everything
+       a player EARNED stays. The line is possessions vs. record.
+         WIPED  : Cinder + Aza + the Bank of Ethos account · every business
+                  operation and treasury (they MINT currency) · the entire card
+                  collection, decks, side/Realm decks, packs and socketed gems ·
+                  all gear, items, salvage, resources, field bag and vault ·
+                  all property — houses, furniture, home zones, holdings ·
+                  every cosmetic, shop licence and trader/dojo unlock.
          KEPT   : account / hero / unit levels and XP, kills, wins, losses,
-                  bonds, stat gains, learned moves, records, cards, decks,
-                  heroes, gear, vault, nodes and real estate. Nothing that
-                  represents time played is touched — only money.
+                  bonds, stat gains, learned moves, skill trees, match log,
+                  achievements, campaign + roguelite completion, leaderboard
+                  and usage history. Every number they PLAYED for survives.
          ADMINS : exempt, and the server RPC enforces that independently. */
     if (sr.scope === 'economy') {
       // 👑 Admins keep their balances — they need working currency to test with.
@@ -70068,7 +70070,65 @@ async function _applySeasonReset(sr) {
       // standing would refill every wallet within days and make the reset
       // pointless — the businesses are the economy, not a side effect of it.
       try { _wipeBusinessProgress(); } catch (e) {}
-      try { Profile.cardShopUnlocked = false; } catch (e) {}
+      // 🃏 THE COLLECTION — everything. No starter-deck carve-out: the player
+      // picks a new starter below, so they restart with a real deck rather than
+      // an empty collection they can't field.
+      try {
+        Profile.cardCollection = {};
+        Profile.decks = [];
+        Profile.deckByHero = {};
+        Profile.sideDeck = { cards: [], gems: [] };
+        Profile.archonDeck = { cards: [] };
+        Profile.socketedGems = {};
+        Profile.gemsOwned = {};
+        Profile.unopenedPacks = [];
+        Profile.packHistory = [];
+        Profile.essence = {};
+        Profile.chests = {};
+        Profile.chestKeys = {};
+        Profile.coupons = [];
+      } catch (e) {}
+      // 🧰 GEAR — items, equipment, relics, loadouts, salvage, resources, the
+      // carried bag and the base vault. ⚠ Every one of these MAX- or
+      // spread-merges on hydration, so the local clear is mandatory: a
+      // server-only wipe is handed straight back by the next sync.
+      try {
+        Profile.itemInventory = {};
+        Profile.equipment = {};
+        Profile.relicEquipment = {};
+        Profile.heroLoadouts = {};
+        Profile.salvage = {};
+        Profile.resources = {};
+        Profile.fieldBag = {};
+        Profile.vaultLayout = {};
+        if (typeof _ensureResources === 'function') _ensureResources();
+      } catch (e) {}
+      // 🏠 PROPERTY + cosmetics + shop licences. Bought things, all of them.
+      try {
+        Profile.ownedHouses = [];
+        Profile.homeZones = {};
+        Profile.furnitureOwned = {};
+        Profile.cxHoldings = {};
+        Profile.cosmetics = {};
+        Profile.ownedTombstones = []; Profile.equippedTombstone = null;
+        Profile.ownedAvatars = [];    Profile.equippedAvatar = null;
+        Profile.ownedSleeves = [];    Profile.equippedSleeve = null;
+        Profile.unlockedTraders = []; Profile.traderStock = {};
+        Profile.dojoUnlocked = false; Profile.dojoStock = {};
+        Profile.cardShopUnlocked = false;
+      } catch (e) {}
+      // 🎴 …and back to the starter picker, because they now own no cards. This
+      // is the flag that actually works (v119q7 learned that the hard way).
+      try {
+        Profile.forceStarterPick = true;
+        Profile.starterPicked = false;
+        Profile.starterDeckId = null;
+        Profile.ownedStarterDecks = [];
+      } catch (e) {}
+      // 🦸 Re-seed the free starter heroes so nobody is stranded with no hero,
+      // and re-grant the admin card pool (a no-op for players).
+      try { if (typeof ensureStarterHeroesOwned === 'function') ensureStarterHeroesOwned(); } catch (e) {}
+      try { if (typeof ensureAdminCardGrant === 'function') { App._adminGrantSig = null; ensureAdminCardGrant(); } } catch (e) {}
       try { Wallet.lastFetchAt = 0; } catch (e) {}
       try { saveProfile(); } catch (e) {}
       // Server half FIRST, then push the zeroed profile over the cleared row.
@@ -70082,10 +70142,10 @@ async function _applySeasonReset(sr) {
       try {
         showGameAlert({
           title: '💥 THE ECONOMY HAS BEEN RESET',
-          bodyHtml: '<div style="line-height:1.8">The old economy collapsed. Every balance in the game has been returned to zero — everyone starts from the same floor.<br><br>'
-            + '<b style="color:#ff9a88">CLEARED:</b> your Cinder, your Aza, your Bank of Ethos account, and every business operation and treasury.<br>'
-            + '<b style="color:#7ce8a8">UNTOUCHED:</b> every level, every win and loss, every kill, bond and record — plus all of your cards, decks, heroes, gear and property.<br><br>'
-            + 'You keep everything you played for. You just have to earn the money again.</div>',
+          bodyHtml: '<div style="line-height:1.8">The old economy collapsed. Everyone restarts from the same empty floor — but nobody loses what they earned.<br><br>'
+            + '<b style="color:#ff9a88">CLEARED:</b> your Cinder, Aza and Bank of Ethos account · every business and treasury · your entire card collection and decks · all gear, items, resources and vault · all property, cosmetics and shop licences.<br>'
+            + '<b style="color:#7ce8a8">UNTOUCHED:</b> every level, every win, loss and kill, every bond, stat gain and learned move, your skill trees, match history, achievements and campaign progress.<br><br>'
+            + '<b style="color:#e0b23c">Pick a new starter deck to begin again.</b> Your record follows you.</div>',
         });
       } catch (e) { try { showToast('💥 Economy reset — balances cleared, progress kept.', 9000); } catch (e2) {} }
       try { render(); } catch (e) {}
@@ -146067,7 +146127,7 @@ function renderCamp() {
         <button class="btn-mini" id="btn-camp-grant-res" title="Grant yourself resources for testing">🧰 +250 Resources</button>
         <button class="btn-mini" id="btn-cloudify" title="Convert EVERY locally-stored image/audio (base64 or Blob) into a permanent cloud file so players actually receive it. Safe + idempotent — re-runs skip anything already cloud-hosted.">☁ Cloudify All Assets</button>
         <button class="btn-mini btn-danger" id="btn-season-wipe" title="Publish a SEASON WIPE: resets EVERY player's Cinder + player/hero/unit levels. Cards, Aza, businesses, nodes, real estate and all owned property are kept.">🌪 Season Wipe</button>
-        <button class="btn-mini btn-danger" id="btn-economy-wipe" title="Publish an ECONOMY RESET: zeroes EVERY player's Cinder, Aza, Bank of Ethos account and business treasuries. Levels, wins, losses, records, cards and gear are kept. Admin accounts are exempt.">💥 Economy Reset</button>
+        <button class="btn-mini btn-danger" id="btn-economy-wipe" title="Publish an ECONOMY RESET: every player restarts from nothing — Cinder, Aza, bank, businesses, card collection, decks, gear, resources, property and cosmetics all cleared, and they re-pick a starter deck. Levels, wins, losses, kills, bonds and records are KEPT. Admin accounts are exempt.">💥 Economy Reset</button>
       </div>` : ''}
       ${(() => {
         const rv = (typeof _campRival === 'function') ? _campRival() : { name: 'Rivals', threat: 0 };
@@ -146546,16 +146606,16 @@ function renderCamp() {
     if (!(typeof isAdmin === 'function' && isAdmin())) return;
     const ok1 = await showGameConfirm({
       title: '💥 ECONOMY RESET — are you sure?',
-      bodyHtml: '<div style="line-height:1.8"><b style="color:#ff7755">This zeroes every balance in the game.</b><br><br>' +
-        '<b style="color:#ff9a88">WIPED for every player:</b><br>• 🔥 Cinder → 0<br>• 👑 Aza → 0<br>• 🏦 Bank of Ethos account → 0<br>• 🏭 Every business operation and treasury<br><br>' +
-        '<b style="color:#7ce8a8">KEPT:</b> account / hero / unit levels, wins, losses, kills, bonds, stat gains, records, cards, decks, heroes, gear, vault, nodes and real estate.<br><br>' +
+      bodyHtml: '<div style="line-height:1.8"><b style="color:#ff7755">This restarts every player from nothing.</b><br><br>' +
+        '<b style="color:#ff9a88">WIPED for every player:</b><br>• 🔥 Cinder, 👑 Aza and 🏦 Bank of Ethos → 0<br>• 🏭 Every business operation and treasury<br>• 🃏 The entire card collection, all decks and packs<br>• 🧰 All gear, items, resources, bag and vault<br>• 🏠 All property, cosmetics and shop licences<br>• 🎴 They are sent back to the starter-deck picker<br><br>' +
+        '<b style="color:#7ce8a8">KEPT:</b> account / hero / unit levels and XP, wins, losses, kills, bonds, stat gains, learned moves, skill trees, match log, achievements and campaign progress.<br><br>' +
         '<b style="color:#e0b23c">👑 Admin accounts are exempt</b> — your own balances survive.<br><br>It applies to each player the next time their game syncs. <b>It cannot be undone.</b></div>',
       yesLabel: 'CONTINUE', noLabel: 'Cancel', yesAccent: 'crimson',
     });
     if (!ok1) return;
     const ok2 = await showGameConfirm({
       title: '💥 FINAL CONFIRMATION',
-      bodyHtml: '<div>Destroy the economy <b style="color:#ff7755">NOW</b>? Every player\'s Cinder, Aza and bank account go to zero.</div>',
+      bodyHtml: '<div>Restart the game <b style="color:#ff7755">NOW</b>? Every player loses their balances, collection, gear and property — and keeps every stat.</div>',
       yesLabel: 'RESET THE ECONOMY', noLabel: 'Cancel', yesAccent: 'crimson',
     });
     if (!ok2) return;

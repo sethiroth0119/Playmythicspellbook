@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119t3';
+  window.BUILD_VERSION = 'v119t4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -137098,10 +137098,11 @@ function _applyAltPlayCost(state, side, card) {
       hIdx.slice().sort((a, b) => b - a).forEach(i => { try { hand.splice(i, 1); } catch (e) {} });
       out.hand = hand;
     }
+    const whose = (side === 'ai') ? "the enemy's" : 'your';
     const zoneLabel = fieldIds.size ? 'given up'
-      : (hIdx.length && gIdx.length) ? 'removed from your hand & graveyard'
-      : hIdx.length ? 'banished from your hand'
-      : 'removed from your graveyard';
+      : (hIdx.length && gIdx.length) ? `removed from ${whose} hand & graveyard`
+      : hIdx.length ? `banished from ${whose} hand`
+      : `removed from ${whose} graveyard`;
     log.push({ msg: `⚰️ ${names.join(' + ')} ${names.length === 1 ? 'is' : 'are'} ${zoneLabel} to bring out ${card.name || 'that card'}.`, color: col });
     out.log = log;
   } catch (e) {}
@@ -137232,6 +137233,14 @@ function _aiPlayReqOk(card, state) {
     // without a target — the player paid the cost, the AI never did.
     if (req.type === 'vanishUnit') {
       return !!(typeof _vanishCostTarget === 'function' && _vanishCostTarget(state, 'ai', card));
+    }
+    // ⚰️💸 banishGraveCost is likewise an ALTERNATE COST, not a board condition.
+    // Units: playable only when the AI can actually pay (the deploy path pays it).
+    // Other card types: the AI's spell/trap/weather paths don't pay this cost yet,
+    // so the AI declines to play those rather than casting them for free.
+    if (req.type === 'banishGraveCost') {
+      if ((card.type || 'unit') !== 'unit') return false;
+      return !!(typeof _altCostTargets === 'function' && _altCostTargets(state, 'ai', card));
     }
     if (req.type !== 'unitsOnField' && req.type !== 'weather' && req.type !== 'timeOfDay' && req.type !== 'graveTribe') return true;
     return !!_isPlayRequirementMet(card, state, 'ai');
@@ -139795,7 +139804,10 @@ function doAIStep() {
   // ---- Phase 1: play the BEST unit card we can afford ----
   // Score by (raw stat density + anti-player tilt) / cost, accounting for placement safety.
   if (aiHero && aiHero.alive && !_battleIsLocked(s, 'ai', 'deploy')) {   // 🔒 lock-units counter shut deploys
-    const playable = s.ai.hand.filter(c => c.type === 'unit' && c.cost <= s.ai.energy
+    // 💸 EFFECTIVE cost, not printed — the deduct site below uses getEffectiveCardCost,
+    // so the filter must match it. A payable alternate-cost card (banishGraveCost) is
+    // FREE here; an unpayable one is 9999 and can never slip through to deduct 9999.
+    const playable = s.ai.hand.filter(c => c.type === 'unit' && getEffectiveCardCost(c, s, 'ai') <= s.ai.energy
       && !(typeof _cardPlayLockReason === 'function' && _cardPlayLockReason(c, s, 'ai'))    // 🔒 skip sealed elements/factions/costs
       && _aiPlayReqOk(c, s));                                                          // 🪞 obey weather / day-night / board gates
     if (playable.length > 0) {
@@ -139846,12 +139858,24 @@ function doAIStep() {
               }
               newUnit.hasMoved = true; newUnit.hasAttacked = true;
             }
+            // ⚰️💸 Pay the ALTERNATE COST first, on the pre-play snapshot — the player
+            // flow also pays before its hand/grave rebuild. Paying after the grave push
+            // below would let the card's own fresh grave record satisfy its own cost
+            // filter (self-payment). _applyAltPlayCost splices the grave in place and
+            // returns the reduced hand/units for us to fold into `next`.
+            let _apUnits = null, _apLog = null, _apHand = null;
+            try {
+              if (best.playRequirement && best.playRequirement.type === 'banishGraveCost' && typeof _applyAltPlayCost === 'function') {
+                const _ap = _applyAltPlayCost({ ...s }, 'ai', best);
+                _apUnits = _ap.units; _apLog = _ap.log; _apHand = _ap.hand;
+              }
+            } catch (e) {}
             let next = {
               ...s,
-              units: [...s.units, newUnit],
+              units: [...(_apUnits || s.units), newUnit],
               ai: {
                 ...s.ai,
-                hand: s.ai.hand.filter(c => c.instanceId !== best.instanceId),
+                hand: (_apHand || s.ai.hand).filter(c => c.instanceId !== best.instanceId),
                 // ⚠ STAMP THE SUMMONED UNIT (the player's placeUnit always did).
                 // Without it the engine cannot tell that this card's unit is
                 // standing on the board, so the card counted as being in the
@@ -139860,7 +139884,7 @@ function doAIStep() {
                 graveyard: [...s.ai.graveyard, Object.assign({}, best, { _summonedUnitId: newUnit.id })],
                 energy: s.ai.energy - getEffectiveCardCost(best, s, 'ai'),
               },
-              log: [...s.log, { msg: best.isSubterfuge ? `🃏 Enemy sets a unit face-down.` : `Enemy plays ${best.name}`, color: 'red' }],
+              log: [...(_apLog || s.log), { msg: best.isSubterfuge ? `🃏 Enemy sets a unit face-down.` : `Enemy plays ${best.name}`, color: 'red' }],
             };
             // 🌌 Pay the vanishUnit extra cost — the player path has always
             // consumed it (three commit sites); the AI never did.

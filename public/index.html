@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119t4';
+  window.BUILD_VERSION = 'v119t5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -78456,8 +78456,13 @@ function _aiResolveMove(state, unit, target, move) {
 // ALWAYS summoned (placeFn); the cost only gates whether its on-play EFFECT
 // fires. If the cost can't be paid (or the player cancels), the card still
 // enters but App.ui._suppressOnPlay tells the place* fn to skip applyOnPlayEffect.
-function _gateOnPlayThenPlace(card, placeFn) {
+function _gateOnPlayThenPlace(card, placeFn, validateFn) {
   try {
+    // 🛡 VALIDATE BEFORE CHARGING. Every gate inside place* (tile range, End
+    // Phase, lockdown, play requirement) used to run AFTER this modal had already
+    // taken the discard — so a rejected play left the player down a card with
+    // nothing summoned. The dry run answers first; its own toast says why.
+    if (typeof validateFn === 'function' && !validateFn()) return;
     const cost = card && card.onPlay && card.onPlay.cost;
     if (_costIsEmpty(cost)) { placeFn(); return; }
     // 💡 The on-play cost is MANDATORY to play this card. If it can't be paid the
@@ -133194,10 +133199,10 @@ function onTileClick(x, y) {
     if (getEffectiveCardCost(card, s, 'player') > s.player.energy) { showToast('Not enough energy'); return; }
     // ⚡ On-play activation cost — gate unit/location/wall plays through the
     // cost flow (the card still enters; only its on-play EFFECT is gated).
-    if (card.type === 'unit') _gateOnPlayThenPlace(card, () => placeUnit(card, {x, y}));
-    else if (card.type === 'location') _gateOnPlayThenPlace(card, () => placeLocation(card, {x, y}));
+    if (card.type === 'unit') _gateOnPlayThenPlace(card, () => placeUnit(card, {x, y}), () => placeUnit(card, {x, y}, { validateOnly: true }));
+    else if (card.type === 'location') _gateOnPlayThenPlace(card, () => placeLocation(card, {x, y}), () => placeLocation(card, {x, y}, { validateOnly: true }));
     else if (card.type === 'trap') placeTrap(card, {x, y});
-    else if (card.type === 'wall') _gateOnPlayThenPlace(card, () => placeWall(card, {x, y}));
+    else if (card.type === 'wall') _gateOnPlayThenPlace(card, () => placeWall(card, {x, y}), () => placeWall(card, {x, y}, { validateOnly: true }));
     return;
   }
 
@@ -137363,7 +137368,14 @@ function cardCanTunnelNow(card, state, side) {
     return energy < full && energy >= TUNNEL_DIG_COST;   // can't afford full, but can pay the dig
   } catch (e) { return false; }
 }
-function placeUnit(card, pos) {
+// `opts.validateOnly` = DRY RUN. Runs every gate (hero / lockdown / phase /
+// refusal / play-requirement / tile range) with its normal toast, then returns
+// true when the play would legally land — without touching the board. The
+// activation-cost gate calls this BEFORE charging, so a rejected play can never
+// leave the cost (a discarded card) spent for nothing. Every early `return;`
+// below is falsy, so the guards double as the dry-run's failure answers.
+function placeUnit(card, pos, opts) {
+  const _dry = !!(opts && opts.validateOnly);
   let s = App.state;
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
   if (!ph) return;
@@ -137392,6 +137404,28 @@ function placeUnit(card, pos) {
   // player gets the right error message ('need 3 units' vs 'tile too far').
   const _reqFail = _checkPlayRequirement(card, s, 'player');
   if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
+  // 🧪 DRY RUN ends here — answer whether the placement itself is legal. Stops
+  // BEFORE the negate trigger / consume-grave / tunnel blocks, which all mutate
+  // real game state and must only ever run on the committed play.
+  if (_dry) {
+    // A tunnel unit with too little energy burrows instead of taking a tile —
+    // still a legal play, so validate the dig cost rather than tile range.
+    if (card.tunnel && card.tunnel > 0
+        && (s.player.energy || 0) < getEffectiveCardCost(card, s, 'player')) {
+      if ((s.player.energy || 0) < TUNNEL_DIG_COST) {
+        showToast(`Need at least ${TUNNEL_DIG_COST} ⚡ to tunnel ${card.name}.`);
+        return false;
+      }
+      return true;
+    }
+    const _dv = getValidPlacementTiles(card, ph, s);
+    if (!_dv.some(p => p.x === pos.x && p.y === pos.y)) {
+      const r = getCardRange(card);
+      showToast(r === 1 ? 'Must place adjacent to your hero' : `Must place within ${r} tiles of your hero`);
+      return false;
+    }
+    return true;
+  }
   // 🚫 NEGATE trigger — an opposing unit (e.g. an Archon whose 'negate' trigger
   // targets units / on-play abilities) cancels + destroys this card before it
   // resolves. The card goes to the graveyard; no unit is placed.
@@ -137845,11 +137879,14 @@ function _isWholeBoardLocation(card) {
   } catch (e) { return false; }
 }
 
-function placeLocation(card, pos) {
+// `opts.validateOnly` — see placeUnit. Dry-run for the activation-cost gate.
+function placeLocation(card, pos, opts) {
   const s = App.state;
   // 🪞 Play-requirement gate (e.g. "need 3 of your units on the field").
   const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
   if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
+  // 🧪 DRY RUN stops before _playerNegateAbort — that destroys the card for real.
+  if (opts && opts.validateOnly) return true;
   if (_playerNegateAbort(card)) return;   // 🚫 location-hate negate triggers
   // ===== FIELD SPELL MODE (current model) =====
   // One location is active at a time. Playing a new one REPLACES the existing
@@ -138066,13 +138103,26 @@ function placeTrap(card, pos) {
   if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
 }
 
-function placeWall(card, pos) {
+// `opts.validateOnly` — see placeUnit. Dry-run for the activation-cost gate.
+function placeWall(card, pos, opts) {
+  const _dry = !!(opts && opts.validateOnly);
   const s = App.state;
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
   if (!ph) { showToast('Hero needed to place walls'); return; }
   // 🪞 Play-requirement gate.
   const _reqFail = (typeof _checkPlayRequirement === 'function') && _checkPlayRequirement(card, s, 'player');
   if (_reqFail) { showToast('🔒 ' + _reqFail); return; }
+  if (_dry) {
+    const _dv = getValidPlacementTiles(card, ph, s);
+    if (!_dv.some(p => p.x === pos.x && p.y === pos.y)) {
+      const r = getCardRange(card);
+      showToast(`Wall must be placed within ${r} tile${r === 1 ? '' : 's'} of your hero`);
+      return false;
+    }
+    const _dt = s.board[pos.y][pos.x];
+    if (_dt.wall || _dt.trap || getOccupant(pos, s.units)) { showToast('Tile occupied'); return false; }
+    return true;
+  }
   const valid = getValidPlacementTiles(card, ph, s);
   if (!valid.some(p => p.x === pos.x && p.y === pos.y)) {
     const r = getCardRange(card);

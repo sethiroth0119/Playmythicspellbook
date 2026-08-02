@@ -34929,7 +34929,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119v1';
+  window.BUILD_VERSION = 'v119v2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -42387,8 +42387,6 @@ const Profile = {
   // Same convention as sleeves: owned holds ids, equipped holds the IMAGE.
   ownedDiceSkins: [],
   equippedDiceSkin: null,
-  // 🔩 Craft Parts — the Crafting Station currency, salvaged from furniture.
-  craftParts: 0,
   // 🗺️ Campaign ids the player has cleared (final boss beaten). Drives
   // campaign chaining — a campaign with requiresCampaignId stays locked
   // until its prerequisite id is in here.
@@ -44379,10 +44377,9 @@ async function cloudSyncProfile() {
       __ownedAvatars__:     Array.isArray(Profile.ownedAvatars) ? Profile.ownedAvatars : [],
       __equippedAvatar__:   (typeof Profile.equippedAvatar === 'string') ? Profile.equippedAvatar : null,
       __ownedSleeves__:     Array.isArray(Profile.ownedSleeves) ? Profile.ownedSleeves : [],
-      // 🎲🔩 Crafting Station — skins you own/wear and the parts you banked.
+      // 🎲 Crafting Station — dice skins you own and wear.
       __ownedDiceSkins__:   Array.isArray(Profile.ownedDiceSkins) ? Profile.ownedDiceSkins : [],
       __equippedDiceSkin__: (typeof Profile.equippedDiceSkin === 'string') ? Profile.equippedDiceSkin : null,
-      __craftParts__:       Profile.craftParts | 0,
       __equippedSleeve__:   (typeof Profile.equippedSleeve === 'string') ? Profile.equippedSleeve : null,
       // 🦸 Chosen Camp Heights survivor id (set once on first entry; sticks).
       __campSurvivorId__:    (typeof Profile.campSurvivorId === 'string') ? Profile.campSurvivorId : null,
@@ -45537,10 +45534,6 @@ async function cloudFetchProfile() {
         Profile.ownedDiceSkins = Object.keys(dset);
       }
       if (typeof f.__equippedDiceSkin__ === 'string') Profile.equippedDiceSkin = f.__equippedDiceSkin__;
-      // 🔩 Craft parts — MAX-merge, matching every other balance in this payload.
-      if (typeof f.__craftParts__ === 'number') {
-        Profile.craftParts = Math.max(Profile.craftParts | 0, f.__craftParts__ | 0);
-      }
       // 🦸 Camp Heights survivor pick — restored last-writer-wins.
       if (typeof f.__campSurvivorId__ === 'string') Profile.campSurvivorId = f.__campSurvivorId__;
       // 🏳 Camp's registered District Node + Reconstruction Network state.
@@ -68689,62 +68682,46 @@ function getAllDeckSleeves() {
 // (buy furniture → salvage → buy furniture) and, worse, a Cinder faucet. Parts
 // only ever flow one way: furniture → parts → product.
 // ════════════════════════════════════════════════════════════════════════════
-function getCraftParts() { try { return Profile.craftParts | 0; } catch (e) { return 0; } }
-function addCraftParts(n) {
-  try { Profile.craftParts = Math.max(0, (Profile.craftParts | 0) + (n | 0)); saveProfile(); } catch (e) {}
-}
-// What one piece of furniture is worth in parts. Scales with what it cost, so
-// salvaging a centrepiece beats salvaging a stool — but the return is
-// deliberately WELL under the purchase price. Salvage is for spares you regret,
-// not a refund counter.
-const CRAFT_PARTS_PER_CINDER = 1 / 900;
-const CRAFT_AZA_PART_BONUS   = 12;      // premium furniture is worth crafting with
-function craftPartsForFurniture(item) {
-  try {
-    if (!item) return 1;
-    const price = item.price | 0;
-    const base = (item.currency === 'aza')
-      ? (CRAFT_AZA_PART_BONUS + Math.floor(price / 2))
-      : Math.floor(price * CRAFT_PARTS_PER_CINDER);
-    return Math.max(1, base);
-  } catch (e) { return 1; }
-}
-// Salvage `qty` copies of an owned furniture id. Returns the parts gained, or 0
-// if they don't own that many — the ownership check is what stops a double-click
-// from salvaging furniture the player no longer has.
-function craftSalvageFurniture(catalogId, qty) {
-  try {
-    const owned = (typeof _csOwnedQty === 'function') ? _csOwnedQty(catalogId) : 0;
-    const n = Math.max(0, Math.min(qty | 0, owned));
-    if (!n) return 0;
-    const item = (typeof _csCatMap === 'object' && _csCatMap) ? _csCatMap['fc:' + catalogId] : null;
-    const per = craftPartsForFurniture(item || {});
-    const gained = per * n;
-    const inv = Profile.furnitureOwned || (Profile.furnitureOwned = {});
-    inv[catalogId] = Math.max(0, (inv[catalogId] | 0) - n);
-    if (!inv[catalogId]) delete inv[catalogId];
-    addCraftParts(gained);
-    return gained;
-  } catch (e) { return 0; }
-}
-
-// The recipe book. `make` runs only AFTER the parts are confirmed and debited,
-// and returns a human sentence for the toast — or null to refund, which is how
-// "you already own every sleeve" fails without eating the cost.
+// The station spends the SAME looted resources the camp/salvage economy banks —
+// Profile.salvage, via canAffordResources / spendResources. No bespoke crafting
+// currency: everything you scavenge in the field already had a use in the camp,
+// and now it has one here too.
+// The recipe book. `cost` is a plain resource-id → amount map, the exact shape
+// card crafting and camp building already use, so it flows through
+// canAffordResources / spendResources / resourceCostHtml with no new plumbing.
+// `make` runs only AFTER the cost is confirmed and debited, and returns a human
+// sentence for the toast — or null to refund, which is how "you already own
+// every sleeve" fails without eating the materials.
+//
+// Costs are themed to what the thing IS: paper and print for packs (supplies),
+// the recorded memories that become cards (memoryShards), worked metal and
+// lacquer for the durable goods (metal, corruptedEssence). A box is a real bulk
+// discount over eight singles — 48/24 against 64/32.
 const CRAFT_RECIPES = [
-  { id: 'pack',   icon: '🎴', name: 'Booster Pack',  cost: 30,
+  { id: 'pack',   icon: '🎴', name: 'Booster Pack',
+    cost: { supplies: 8, memoryShards: 4 },
     blurb: 'One sealed booster from the current set.',
     make: () => _craftGrantPacks(1) },
-  { id: 'box',    icon: '📦', name: 'Booster Box',   cost: 210,
+  { id: 'box',    icon: '📦', name: 'Booster Box',
+    cost: { supplies: 48, memoryShards: 24, metal: 10 },
     blurb: 'Eight boosters at once — cheaper per pack than crafting them singly.',
     make: () => _craftGrantPacks(8) },
-  { id: 'sleeve', icon: '🃏', name: 'Card Sleeve',   cost: 120,
+  { id: 'sleeve', icon: '🃏', name: 'Card Sleeve',
+    cost: { supplies: 14, metal: 8, corruptedEssence: 3 },
     blurb: 'A random deck sleeve you do not already own.',
     make: () => _craftGrantCosmetic('sleeve') },
-  { id: 'dice',   icon: '🎲', name: 'Dice Skin',     cost: 150,
+  { id: 'dice',   icon: '🎲', name: 'Dice Skin',
+    cost: { metal: 12, memoryShards: 10, corruptedEssence: 5 },
     blurb: 'A random dice skin you do not already own — worn at the first-move roll.',
     make: () => _craftGrantCosmetic('dice') },
 ];
+// Give the materials back, resource by resource. Used on every failed craft.
+function _craftRefund(cost) {
+  try {
+    if (!cost) return;
+    for (const id in cost) { if (cost[id] > 0 && typeof addRes === 'function') addRes(id, cost[id]); }
+  } catch (e) {}
+}
 function _craftRecipe(id) { return CRAFT_RECIPES.find(r => r.id === id) || null; }
 
 // Packs come from the live pack catalog, so crafting always yields whatever the
@@ -68800,15 +68777,24 @@ function _craftGrantCosmetic(kind) {
 function craftStationMake(recipeId) {
   const r = _craftRecipe(recipeId);
   if (!r) return { ok: false, msg: 'Unknown recipe.' };
-  const have = getCraftParts();
-  if (have < r.cost) {
-    return { ok: false, msg: 'Need 🔩 ' + r.cost + ' parts — you have ' + have + '. Salvage furniture to make more.' };
+  if (typeof canAffordResources === 'function' && !canAffordResources(r.cost)) {
+    // Name what's actually short rather than just refusing.
+    const R = (typeof _ensureResources === 'function') ? _ensureResources() : {};
+    const missing = Object.keys(r.cost)
+      .filter(id => (R[id] || 0) < r.cost[id])
+      .map(id => {
+        const m = (typeof _meta === 'function') ? _meta(id) : { icon: '📦', name: id };
+        return (m.icon || '📦') + ' ' + (r.cost[id] - (R[id] || 0)) + ' more ' + (m.name || id);
+      });
+    return { ok: false, msg: 'Not enough materials — you need ' + missing.join(', ') + '.' };
   }
-  addCraftParts(-r.cost);
+  if (typeof spendResources === 'function' && !spendResources(r.cost)) {
+    return { ok: false, msg: 'Not enough materials.' };
+  }
   let msg = null;
   try { msg = r.make(); } catch (e) { msg = null; }
   if (!msg) {
-    addCraftParts(r.cost);                     // full refund — nothing was made
+    _craftRefund(r.cost);                      // full refund — nothing was made
     // Say which of the two failures it was. "You already own every sleeve" is a
     // lie when the real problem is that none exist yet.
     let why;
@@ -68826,7 +68812,7 @@ function craftStationMake(recipeId) {
   try { saveProfile(); } catch (e) {}
   return { ok: true, msg: msg };
 }
-try { window.__mg = window.__mg || {}; window.__mg.craft = { parts: getCraftParts, add: addCraftParts, make: craftStationMake }; } catch (e) {}
+try { window.__mg = window.__mg || {}; window.__mg.craft = { recipes: CRAFT_RECIPES, make: craftStationMake }; } catch (e) {}
 
 // 🎲 DICE SKINS — the face texture on the player's die at the first-move roll.
 // Identical merge rule to sleeves/avatars: published catalog first, admin-local
@@ -70422,7 +70408,6 @@ async function _applySeasonReset(sr) {
         Profile.ownedAvatars = [];    Profile.equippedAvatar = null;
         Profile.ownedSleeves = [];    Profile.equippedSleeve = null;
         Profile.ownedDiceSkins = [];  Profile.equippedDiceSkin = null;
-        Profile.craftParts = 0;       // 🔩 crafting stock is owned goods too
         Profile.unlockedTraders = []; Profile.traderStock = {};
         Profile.dojoUnlocked = false; Profile.dojoStock = {};
         Profile.cardShopUnlocked = false;
@@ -149296,48 +149281,41 @@ function _ensureCraftStyle() {
 
 function renderCraftStation() {
   _ensureCraftStyle();
-  // Furniture prices/names live in the cloud catalog — kick the (cached) fetch so
-  // the salvage bench can price what the player owns. Re-render when it lands.
-  try {
-    if (typeof _csFetchFurnitureCatalog === 'function' && !_csFurnitureCatalog && !App._cftFetching) {
-      App._cftFetching = true;
-      Promise.resolve(_csFetchFurnitureCatalog()).catch(() => {}).then(() => {
-        App._cftFetching = false;
-        if (App.screen === 'craftStation') { try { render(); } catch (e) {} }
-      });
-    }
-  } catch (e) {}
-  const tab = App._cftTab || 'salvage';
-  const parts = getCraftParts();
+  const tab = App._cftTab || 'craft';
+  const R = (typeof _ensureResources === 'function') ? _ensureResources() : {};
 
-  // ── SALVAGE ───────────────────────────────────────────────────────────────
-  const owned = (typeof _csOwnedFurniture === 'function') ? _csOwnedFurniture() : {};
-  const ownedIds = Object.keys(owned).filter(id => (owned[id] | 0) > 0);
-  const salvageBody = !ownedIds.length
-    ? `<div class="cft-empty">You own no spare furniture.<br>Buy furniture in the Card Shop's Furniture Market, then bring the leftovers here.</div>`
-    : `<div class="cft-grid">${ownedIds.map(id => {
-        const it = (typeof _csCatMap === 'object' && _csCatMap && _csCatMap['fc:' + id]) || {};
-        const per = craftPartsForFurniture(it);
-        const qty = owned[id] | 0;
-        const img = it.icon || '';
-        return `<div class="cft-card">
-          ${img ? `<img class="cft-thumb" src="${escapeHtml(img)}" alt="">` : ''}
-          <h4>${escapeHtml(it.name || 'Furniture')}</h4>
-          <div class="cft-qty">You own ${qty} · worth 🔩 ${per} each</div>
-          <div class="cft-row">
-            <button class="cft-btn" data-cft-salv="${escapeHtml(id)}" data-n="1">Salvage 1</button>
-            ${qty > 1 ? `<button class="cft-btn" data-cft-salv="${escapeHtml(id)}" data-n="${qty}">Salvage all ${qty}</button>` : ''}
-          </div>
-        </div>`;
-      }).join('')}</div>`;
+  // ── MATERIALS ─────────────────────────────────────────────────────────────
+  // Everything the player has scavenged, and what it is FOR. The station spends
+  // the same stock the camp does, so this doubles as a reason to keep looting.
+  const usedByRecipes = {};
+  CRAFT_RECIPES.forEach(r => Object.keys(r.cost).forEach(id => {
+    (usedByRecipes[id] || (usedByRecipes[id] = [])).push(r.name);
+  }));
+  const matIds = (typeof RESOURCE_IDS !== 'undefined' ? RESOURCE_IDS : Object.keys(R));
+  const matBody = `<div class="cft-grid">${matIds.map(id => {
+    const m = (typeof _meta === 'function') ? _meta(id) : { icon: '📦', name: id };
+    const have = R[id] | 0;
+    const uses = usedByRecipes[id];
+    return `<div class="cft-card ${uses ? 'is-on' : ''}">
+      <h4>${m.icon || '📦'} ${escapeHtml(m.name || id)}</h4>
+      <div class="cft-cost">${have.toLocaleString()} held</div>
+      <div class="cft-blurb">${uses
+        ? 'Used to craft: ' + escapeHtml(uses.join(', '))
+        : 'No crafting use yet — spent in the camp.'}</div>
+    </div>`;
+  }).join('')}</div>
+  <div class="cft-sub" style="margin-top:14px">Materials come from the field: looting tombstones, camp missions and convoys, roguelite runs and container searches. Nothing here is bought — the station runs on what you bring back.</div>`;
 
   // ── CRAFT ─────────────────────────────────────────────────────────────────
   const craftBody = `<div class="cft-grid">${CRAFT_RECIPES.map(r => {
-    const can = parts >= r.cost;
+    const can = (typeof canAffordResources === 'function') ? canAffordResources(r.cost) : false;
+    const costHtml = (typeof resourceCostHtml === 'function')
+      ? resourceCostHtml(r.cost, { flagShort: true, withNames: true })
+      : Object.keys(r.cost).map(id => id + ' ' + r.cost[id]).join(' · ');
     return `<div class="cft-card">
       <h4>${r.icon} ${escapeHtml(r.name)}</h4>
       <div class="cft-blurb">${escapeHtml(r.blurb)}</div>
-      <div class="cft-cost ${can ? '' : 'short'}">🔩 ${r.cost} parts${can ? '' : ' · you have ' + parts}</div>
+      <div class="cft-cost ${can ? '' : 'short'}">${costHtml}</div>
       <button class="cft-btn" data-cft-make="${r.id}" ${can ? '' : 'disabled'}>CRAFT</button>
     </div>`;
   }).join('')}</div>`;
@@ -149365,19 +149343,24 @@ function renderCraftStation() {
         }).join('')}
       </div>`;
 
-  const body = tab === 'craft' ? craftBody : (tab === 'dice' ? diceBody : salvageBody);
+  const body = tab === 'materials' ? matBody : (tab === 'dice' ? diceBody : craftBody);
+  // A tight read of the stock that matters — the four materials the recipes name.
+  const keyMats = Object.keys(usedByRecipes).map(id => {
+    const m = (typeof _meta === 'function') ? _meta(id) : { icon: '📦' };
+    return (m.icon || '📦') + ' ' + ((R[id] | 0)).toLocaleString();
+  }).join('  ');
   root.innerHTML = `
     <div class="cft">
       <div class="cft-head">
         <button class="cft-back" id="cft-back">← Back</button>
         <div class="cft-title">🔨 CRAFTING STATION</div>
-        <div class="cft-parts">🔩 ${parts.toLocaleString()} PARTS</div>
+        <div class="cft-parts">${keyMats}</div>
       </div>
-      <div class="cft-sub">Break down spare furniture into parts, then forge them into booster packs, boxes and cosmetics. Parts are craft-only — they never convert back into Cinder or Aza.</div>
+      <div class="cft-sub">Spend the materials you scavenge — supplies, metal, memory shards, corrupted essence — on booster packs, boxes and cosmetics. Same stock the camp uses, so every run you loot is worth more.</div>
       <div class="cft-tabs">
-        <div class="cft-tab ${tab === 'salvage' ? 'is-active' : ''}" data-cft-tab="salvage">🪑 Salvage</div>
         <div class="cft-tab ${tab === 'craft' ? 'is-active' : ''}" data-cft-tab="craft">🔨 Craft</div>
         <div class="cft-tab ${tab === 'dice' ? 'is-active' : ''}" data-cft-tab="dice">🎲 Dice Skins</div>
+        <div class="cft-tab ${tab === 'materials' ? 'is-active' : ''}" data-cft-tab="materials">🧰 Materials</div>
       </div>
       ${body}
     </div>`;
@@ -149386,13 +149369,6 @@ function renderCraftStation() {
   if (back) back.onclick = () => { App.screen = App._cftReturn || 'cardShop'; render(); };
   root.querySelectorAll('[data-cft-tab]').forEach(el => {
     el.onclick = () => { App._cftTab = el.getAttribute('data-cft-tab'); render(); };
-  });
-  root.querySelectorAll('[data-cft-salv]').forEach(el => {
-    el.onclick = () => {
-      const gained = craftSalvageFurniture(el.getAttribute('data-cft-salv'), parseInt(el.getAttribute('data-n'), 10) || 1);
-      showToast(gained ? ('🔩 Salvaged for ' + gained + ' parts.') : '⚠ Nothing to salvage.', 3000);
-      render();
-    };
   });
   root.querySelectorAll('[data-cft-make]').forEach(el => {
     el.onclick = () => {

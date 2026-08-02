@@ -45,7 +45,7 @@ as $$
 declare
   uid   uuid := auth.uid();
   mail  text;
-  out   jsonb := '[]'::jsonb;
+  cleared jsonb := '[]'::jsonb;
 begin
   if uid is null then
     return jsonb_build_object('ok', false, 'error', 'not_authenticated');
@@ -60,14 +60,14 @@ begin
   -- 🔥 Cinder — the authoritative balance. walletFetchProgress does
   --    MAX(server, local), which is exactly why the local zero is not enough.
   update public.user_progress set cinder = 0 where user_id = uid and cinder <> 0;
-  if found then out := out || '["cinder"]'::jsonb; end if;
+  if found then cleared := cleared || '["cinder"]'::jsonb; end if;
 
   -- 🔥👑 The profile mirrors: gems (Cinder) and sovereigns (Aza).
   update public.user_profiles set gems = 0 where user_id = uid and coalesce(gems, 0) <> 0;
-  if found then out := out || '["gems"]'::jsonb; end if;
+  if found then cleared := cleared || '["gems"]'::jsonb; end if;
 
   update public.user_profiles set sovereigns = 0 where user_id = uid and coalesce(sovereigns, 0) <> 0;
-  if found then out := out || '["sovereigns"]'::jsonb; end if;
+  if found then cleared := cleared || '["sovereigns"]'::jsonb; end if;
 
   -- 🏦 Bank of Ethos. Balances only — the ledger, directory and request history
   --    are records of what happened and are deliberately left intact.
@@ -75,7 +75,7 @@ begin
     update public.bank_of_ethos
        set aza = 0, balance = 0, resources = '{}'::jsonb, updated_at = now()
      where user_id = uid;
-    if found then out := out || '["bank_of_ethos"]'::jsonb; end if;
+    if found then cleared := cleared || '["bank_of_ethos"]'::jsonb; end if;
   exception when undefined_table or undefined_column then null;
   end;
 
@@ -83,13 +83,13 @@ begin
   --    standing refills every wallet within days and makes the reset pointless.
   begin
     delete from public.corp_operations where user_id = uid;
-    if found then out := out || '["corp_operations"]'::jsonb; end if;
+    if found then cleared := cleared || '["corp_operations"]'::jsonb; end if;
   exception when undefined_table or undefined_column then null;
   end;
 
   begin
     delete from public.corp_treasury where user_id = uid;
-    if found then out := out || '["corp_treasury"]'::jsonb; end if;
+    if found then cleared := cleared || '["corp_treasury"]'::jsonb; end if;
   exception when undefined_table or undefined_column then null;
   end;
 
@@ -126,7 +126,7 @@ begin
                     - '__starterPicked__' - '__starterDeckId__')
      where user_id = uid
        and jsonb_typeof(coalesce(forge, '{}'::jsonb)) = 'object';
-    if found then out := out || '["forge_owned_keys"]'::jsonb; end if;
+    if found then cleared := cleared || '["forge_owned_keys"]'::jsonb; end if;
   exception when undefined_table or undefined_column then null;
   end;
   -- ⚠ DELIBERATELY NOT TOUCHED — this is the "keep their stats" half:
@@ -137,7 +137,7 @@ begin
   --   If a future edit adds one of those to the drop list, the reset has stopped
   --   being what was asked for.
 
-  return jsonb_build_object('ok', true, 'admin_exempt', false, 'cleared', out);
+  return jsonb_build_object('ok', true, 'admin_exempt', false, 'cleared', cleared);
 end;
 $$;
 

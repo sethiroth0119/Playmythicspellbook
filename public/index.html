@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119t8';
+  window.BUILD_VERSION = 'v119t9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -52110,7 +52110,10 @@ const MARKET_NPC_SELLERS = [
 ];
 const MARKET_RESEED_HOURS = 6;
 const MARKET_MIN_PRICE = 5;
-const MARKET_MAX_PRICE = 9999;
+// 💰 Listing ceiling for PLAYER-set prices — the Trading Post (fixed-price listings,
+// auction starting bids + buyouts) and the player Card Shops all clamp to this.
+// Raised 9 999 → 1 000 000 so a genuinely rare card can carry a real price tag.
+const MARKET_MAX_PRICE = 1000000;
 
 function marketSuggestedPriceForCard(card) {
   if (!card) return 20;
@@ -79133,8 +79136,23 @@ function _flipSubterfuge(state, unit, reason) {
   // tiny card-like wrapper so applyOnPlayEffect reads `.onPlay` = the flip effect.
   const fe = flipped.flipEffect;
   if (fe && fe.type) {
-    try { if (typeof playOnPlayCinematic === 'function') playOnPlayCinematic(flipped, { onPlay: fe, name: flipped.name, icon: flipped.icon }); } catch (e) {}
-    try { next = applyOnPlayEffect(next, flipped, { onPlay: fe }); } catch (e) {}
+    // 🎴 FULL CARD CONTEXT. This used to hand the engine a bare `{ onPlay: fe }`
+    // wrapper, so everything the effect reads off the CARD — fusion target Kalon,
+    // material sources, card filters, ids — was simply missing, and a card like a
+    // fusion trap resolved into nothing.
+    const _srcId = flipped.originalCardId || flipped.cardId;
+    const _srcCard = (_srcId && typeof _cardDefById === 'function') ? _cardDefById(_srcId) : null;
+    // ⏱ A face-down card almost always flips on the OPPONENT's turn. Any effect that
+    // would normally wait for its OWNER to click (fusion picker, deck search, manual
+    // targeting) has to resolve deterministically instead — the same rule the trap
+    // spring path uses — or the picker never appears and the flip looks like a dud.
+    const _offTurn = !!(next && next.turn && next.turn !== flipped.owner);
+    const _fe = _offTurn ? Object.assign({}, fe, { _autoPick: true, targeted: false }) : fe;
+    const _wrapCard = Object.assign({}, _srcCard || {}, {
+      name: flipped.name, icon: flipped.icon, onPlay: _fe, onPlayExtra: null,
+    });
+    try { if (typeof playOnPlayCinematic === 'function') playOnPlayCinematic(flipped, { onPlay: _fe, name: flipped.name, icon: flipped.icon }); } catch (e) {}
+    try { next = applyOnPlayEffect(next, flipped, _wrapCard); } catch (e) {}
   }
   // 🌐 Anywhere — turning FACE UP is an arrival: a Subterfuge unit is set face down
   // WITHOUT its on-play firing (placeUnit skips it for isSubterfuge), so the flip is
@@ -79152,6 +79170,32 @@ try { window.__mg = window.__mg || {}; window.__mg.flipSubterfuge = _flipSubterf
 // Subterfuge unit now within striking distance (Chebyshev ≤ 1). Each adjacent trap
 // flips and resolves its Flip Effect — a reactive ambush. Re-fetches the live unit
 // each iteration since an earlier flip may have changed the board (kills, summons…).
+// 🪤 WOULD THIS FLIP JUST FIZZLE? A face-down card that springs, spends itself and
+// does NOTHING teaches players never to set traps. This answers "can the effect
+// actually do its thing right now" for the cases we can judge CONFIDENTLY, and
+// returns false (= let it flip) for everything else — a guard that blocks a working
+// trap would be far worse than one that lets a rare dud through.
+function _flipWouldFizzle(state, unit) {
+  try {
+    const fe = unit && unit.flipEffect;
+    if (!fe || !fe.type) return false;                 // no effect authored → normal reveal
+    // 🌌 FUSION — needs materials on the board right now. This is the common dud:
+    // the trap flips, finds nothing to fuse, and is wasted.
+    if (fe.type === 'polycreate') {
+      const srcId = unit.originalCardId || unit.cardId;
+      const src = (srcId && typeof _cardDefById === 'function') ? _cardDefById(srcId) : null;
+      // Only judge the plain field fusion — a card that steals from hand / grave /
+      // deck / the enemy board has sources this check cannot see, so let it fire.
+      if (Array.isArray(fe.matSources) && fe.matSources.some(s => s && s !== 'field')) return false;
+      if (src && typeof canActivatePolycreation === 'function') {
+        const gate = canActivatePolycreation(state, unit.owner, src);
+        if (gate && gate.ok === false) return true;    // no legal fusion → hold the trap
+      }
+      return false;
+    }
+    return false;
+  } catch (e) { return false; }
+}
 function _flipAdjacentFaceDown(state, mover) {
   if (!state || !mover || !mover.pos) return state;
   let next = state;
@@ -79162,6 +79206,8 @@ function _flipAdjacentFaceDown(state, mover) {
     .map(u => u.id);
   for (const id of ids) {
     const live = (next.units || []).find(u => u.id === id);
+    // 🪤 Hold a trap that could only fizzle — it stays face-down for a better moment.
+    if (live && _flipWouldFizzle(next, live)) continue;
     if (live && live.isFaceDown && live.alive) {
       next = _flipSubterfuge(next, live, 'enemyAdjacent');
       // 🎯 The trap lashes out at the unit that crept onto it (cancel is irrelevant
@@ -85135,7 +85181,11 @@ function _applyOnPlayOne(state, unit, card) {
     // synthetic hero-anchored caster — that mismatch is why "it won't let me
     // fuse when I have the materials". The real gate + the real selection modal
     // are the whole point; the AI keeps the deterministic path.
-    if (owner === 'player') {
+    // ⏱ `_autoPick` = "this is resolving on the opponent's turn" (a sprung trap, a
+    // face-down flip). The picker modal cannot open there — the AI step loop keeps
+    // writing App.state underneath it — so those fall through to the deterministic
+    // path below instead of silently doing nothing.
+    if (owner === 'player' && !eff._autoPick) {
       _openPolycreationFromEffect(unit && unit.name);
       return { ...state, log };
     }
@@ -147830,7 +147880,9 @@ async function cardShopListCard(cardId, price) {
     if (!_csReady()) { showToast('☁ Sign in to list cards.', 3600); return null; }
     const have = (Profile.cardCollection && Profile.cardCollection[cardId]) || 0;
     if (have <= 0) { showToast('You don\'t own that card.', 3000); return null; }
-    price = Math.max(0, Math.floor(price || 0));
+    // 💰 Same ceiling as the Trading Post. The shop had NO upper clamp at all, so a
+    // typo could post an unbuyable astronomical price.
+    price = Math.max(0, Math.min(MARKET_MAX_PRICE, Math.floor(price || 0)));
     const card = (typeof lookupCustomCard === 'function' && lookupCustomCard(cardId)) || null;
     const snap = card ? { id: card.id, name: card.name, rarity: card.rarity, type: card.type, icon: card.icon } : { id: cardId, name: cardId };
     Profile.cardCollection[cardId] = have - 1; if (Profile.cardCollection[cardId] <= 0) delete Profile.cardCollection[cardId];
@@ -147848,7 +147900,7 @@ async function cardShopListPack(entryId, price) {
     if (!_csReady()) { showToast('☁ Sign in to list packs.', 3600); return null; }
     const entry = (Profile.unopenedPacks || []).find(p => p && p.id === entryId);
     if (!entry) { showToast('That pack is no longer in your inventory.', 3000); return null; }
-    price = Math.max(0, Math.floor(price || 0));
+    price = Math.max(0, Math.min(MARKET_MAX_PRICE, Math.floor(price || 0)));
     const snap = { id: entry.packId, name: entry.name || 'Mystery Pack', icon: entry.icon || '📦' };
     if (typeof removeUnopenedPack === 'function') removeUnopenedPack(entryId);  // escrow out
     const { error } = await Cloud.client.from('card_shop_listings').insert({ owner_id: _csUid(), kind: 'pack', card_id: entry.packId, card_json: snap, price: price, qty: 1 });
@@ -147870,7 +147922,7 @@ async function cardShopUnlist(listingId, cardId, kind) {
 async function cardShopBuy(listingId, price, ownerId) {
   try {
     if (!_csReady()) { showToast('☁ Sign in to buy.', 3600); return null; }
-    price = Math.max(0, Math.floor(price || 0));
+    price = Math.max(0, Math.min(MARKET_MAX_PRICE, Math.floor(price || 0)));
     if (_csCinders() < price) { showToast('Not enough Cinder — need ' + price + ' 🔥.', 3600); return null; }
     const { data, error } = await Cloud.client.rpc('card_shop_buy', { p_listing_id: listingId, p_expected_price: price });
     if (error) { showToast('⚠ Purchase failed.', 3000); return null; }
@@ -148295,7 +148347,7 @@ function _csMyShopBody() {
       <button class="btn-mini ${(m.earnings | 0) > 0 ? 'btn-primary' : ''}" data-cs="cs-collect" ${(m.earnings | 0) > 0 ? '' : 'disabled'}>💰 Collect</button>
     </div>
     <div class="cs-section">List a card from your collection</div>
-    ${shopItems.length ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
+    ${shopItems.length ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" max="${MARKET_MAX_PRICE}" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
       <div class="cs-grid">${ownedTiles}</div>` : `<div class="cs-empty">No cards to list yet — open packs to collect cards you created.</div>`}
     <div class="cs-section">Resell sealed packs <span style="text-transform:none;letter-spacing:0;color:#7a8694">· buy packs with <span class="aza-icon"></span> Aza Coin, sell them for 🔥 Cinder</span></div>
     ${heldPackList.length
@@ -150077,7 +150129,7 @@ function _csBinderBody() {
   const shelves = singles.map(l => `<div class="cs-card">${_csCardTile(l.card_id, l.card_json)}<div class="cs-card-foot"><span class="cs-card-price">${(l.price | 0).toLocaleString()} 🔥</span><button class="btn-mini btn-danger" data-cs="cs-unlist" data-id="${escapeHtml(l.id)}" data-card="${escapeHtml(l.card_id)}" data-kind="card">✕</button></div></div>`).join('');
   return `<div style="font-size:0.74rem;color:#8a96a3;margin-bottom:0.4rem">The cards you list here are the <b>singles other players buy</b> when they visit your shop.</div>
     <div class="cs-section">List a card from your collection</div>
-    ${customOwnedCount ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
+    ${customOwnedCount ? `<div class="cs-pickrow"><span style="font-size:0.74rem;color:#8a96a3">Price (🔥):</span><input class="cs-input" id="cs-f-price" type="number" min="0" max="${MARKET_MAX_PRICE}" value="50" style="width:110px"><button class="btn-mini ${pick ? 'btn-primary' : ''}" data-cs="cs-list" ${pick ? '' : 'disabled'}>🏷 List${pick ? ' selected' : ' — pick a card'}</button></div>
       ${_binderHtml('shop')}` : `<div class="cs-empty">No custom cards to list yet — open packs at the OPEN PACKS station to collect cards.</div>`}
     <div class="cs-section">In your binder · for sale (${singles.length})</div>
     ${shelves ? `<div class="cs-grid">${shelves}</div>` : `<div class="cs-empty">Your binder is empty. Pick a card above and set a Cinder price.</div>`}`;

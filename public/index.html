@@ -11995,6 +11995,93 @@
     border-radius: 2px;
     text-shadow: 0 1px 2px rgba(0,0,0,0.95);
   }
+  /* ⛓ CHOOSE YOUR ORDER — the trigger-order picker. Shares the chain overlay's
+     shell (.cc-aaa) so it reads as the same system; only the interactive bits
+     are new. Unlike the chain overlay it takes pointer events, because you have
+     to click it. */
+  #chain-order-picker { pointer-events: auto; }
+  #chain-order-picker .cp-sub {
+    font-family: 'Cinzel', serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    color: #cbbfa8;
+    text-align: center;
+    max-width: 46ch;
+    margin: 0 auto 10px;
+    line-height: 1.6;
+  }
+  #chain-order-picker .cp-stack { flex-wrap: wrap; justify-content: center; }
+  #chain-order-picker .cp-card {
+    cursor: pointer;
+    transition: transform 0.14s ease, box-shadow 0.14s ease, filter 0.14s ease;
+    filter: saturate(0.85) brightness(0.92);
+  }
+  #chain-order-picker .cp-card:hover,
+  #chain-order-picker .cp-card:focus-visible {
+    transform: translateY(-3px);
+    filter: none;
+    outline: none;
+    box-shadow: 0 0 0 1px rgba(230, 180, 85, 0.75), 0 8px 18px rgba(0,0,0,0.75);
+  }
+  #chain-order-picker .cp-card.is-picked {
+    filter: none;
+    box-shadow: 0 0 0 2px #ffd166, 0 0 16px rgba(255, 209, 102, 0.35), 0 8px 18px rgba(0,0,0,0.75);
+  }
+  /* The order number. Hidden until the card is picked so an unpicked card never
+     shows an empty circle. */
+  #chain-order-picker .cp-badge { display: none; }
+  #chain-order-picker .cp-card.is-picked .cp-badge {
+    display: flex;
+    position: absolute;
+    top: -10px; left: -10px;
+    width: 26px; height: 26px;
+    align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: #ffd166;
+    color: #1a1206;
+    font-family: 'Cinzel', serif;
+    font-weight: 700;
+    font-size: 0.82rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.7);
+    z-index: 3;
+  }
+  #chain-order-picker .cp-actions {
+    display: flex; gap: 10px; justify-content: center;
+    margin-top: 14px; flex-wrap: wrap;
+  }
+  #chain-order-picker .cp-btn {
+    font-family: 'Cinzel', serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    padding: 8px 16px;
+    border-radius: 3px;
+    border: 1px solid rgba(230, 180, 85, 0.5);
+    background: linear-gradient(180deg, rgba(40,32,18,0.95), rgba(20,16,9,0.95));
+    color: #e6dccc;
+    cursor: pointer;
+    transition: border-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
+  }
+  #chain-order-picker .cp-btn:hover:not(:disabled) {
+    border-color: #ffd166; color: #ffd166;
+    box-shadow: 0 0 12px rgba(255, 209, 102, 0.25);
+  }
+  #chain-order-picker .cp-go:not(:disabled) {
+    border-color: #ffd166; color: #ffd166;
+  }
+  #chain-order-picker .cp-btn:disabled { opacity: 0.4; cursor: default; }
+  #chain-order-picker .cp-timer {
+    margin-top: 10px;
+    text-align: center;
+    font-family: 'Cinzel', serif;
+    font-size: 0.64rem;
+    letter-spacing: 0.06em;
+    color: #8d8272;
+  }
+  #chain-order-picker .cp-timer b { color: #c29a3a; }
+  @media (prefers-reduced-motion: reduce) {
+    #chain-order-picker .cp-card { transition: none; }
+    #chain-order-picker .cp-card:hover { transform: none; }
+  }
   /* An ENEMY set card. Same back, but a crimson rim + a slightly colder wash so you can
      read whose it is at a glance without learning what it is. */
   .tcb-enemy {
@@ -34830,7 +34917,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119u8';
+  window.BUILD_VERSION = 'v119u9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -126064,6 +126151,25 @@ function _fireTriggerChain(state, links, opts) {
     if (!L.length) return state;
     // A single trigger is not a chain — resolve it silently, no modal.
     if (L.length === 1) { try { const ns = L[0].fire(state); return ns || state; } catch (e) { return state; } }
+    // 🫱 YOUR chain, YOUR order. When every link belongs to the player, hand the
+    // ordering to them instead of assuming last-in-first-out (the Yu-Gi-Oh rule:
+    // you order your own simultaneous triggers, never the opponent's).
+    //
+    // ⚠ WHY THIS DEFERS INSTEAD OF AWAITING. Every trigger site is synchronous
+    // and its caller keeps building state after we return, finishing with
+    // `App.state = s`. A picker has to wait for a click, so resolving inline
+    // would land our result BEFORE that assignment and be silently clobbered —
+    // the same failure that ate discard costs in v119t3. So we resolve nothing
+    // here: we park the links and let a macrotask drain them against the LIVE
+    // App.state once the caller's stack has fully unwound. setTimeout(0) is the
+    // guarantee — it cannot run until every synchronous write is done.
+    if (_chainPickEligible(L)) {
+      try {
+        App._pendingTriggerChain = { links: L, event: (opts && opts.event) || 'the same moment' };
+        setTimeout(_drainPendingTriggerChain, 0);
+        return state;                                  // untouched — the drain owns it
+      } catch (e) { /* fall through to the LIFO path below */ }
+    }
     let s = state;
     try {
       s = { ...s, _counterChain: L.map((l, i) => ({
@@ -126089,6 +126195,174 @@ function _fireTriggerChain(state, links, opts) {
     } catch (e) {}
     return s;
   } catch (e) { return state; }
+}
+/* 🫱 Does this chain belong to the player, in a place where asking them is safe?
+   Deliberately narrow — every "no" here falls back to the proven synchronous
+   LIFO path, so the cost of being wrong is a missing prompt, never a lost
+   trigger. Asking is only correct when ALL of these hold:
+     • 2+ links, and EVERY link is the player's. You never order the enemy's
+       triggers, and a mixed chain has no single owner to ask.
+     • We're actually in a battle with a live state to resolve against.
+     • Not multiplayer. MP is a snapshot relay (not server-authoritative), so a
+       local pause for a modal would desync the other client.
+     • No pick already parked — one chain at a time, never a queue of modals. */
+function _chainPickEligible(L) {
+  try {
+    if (!Array.isArray(L) || L.length < 2) return false;
+    if (!L.every(l => (l.owner || 'player') === 'player')) return false;
+    if (!App || !App.state || App.screen !== 'battle') return false;
+    if (App.battlePrep && App.battlePrep.multiplayer) return false;
+    if (App._pendingTriggerChain) return false;
+    if (typeof document === 'undefined' || !document.body) return false;
+    return true;
+  } catch (e) { return false; }
+}
+
+/* Resolve a parked chain in `order` (an array of indices into links, first
+   resolving first) against the LIVE App.state. Everything funnels through here
+   — the picker, the AUTO button, the timeout and every error path — so there is
+   exactly one place a chain can be resolved and no path that drops it. */
+function _resolveChainInOrder(links, order, label) {
+  try {
+    const s0 = App.state; if (!s0) return;
+    let s = s0;
+    for (const idx of order) {
+      const link = links[idx];
+      if (!link || typeof link.fire !== 'function') continue;
+      try { const ns = link.fire(s); if (ns) s = ns; }
+      catch (e) { try { console.warn('[triggerChain] link threw', e); } catch (_) {} }
+    }
+    try {
+      s.log = [...(s.log || []), { msg: `⛓ Chain of ${links.length} resolves — ${label}.`, color: 'amber' }];
+      s._counterChain = [];
+    } catch (e) {}
+    App.state = s;
+    try { if (typeof render === 'function') render(); } catch (e) {}
+  } catch (e) { try { console.warn('[triggerChain] resolve failed', e); } catch (_) {} }
+}
+// The default: last in, first out.
+function _chainLifoOrder(links) {
+  const o = []; for (let i = links.length - 1; i >= 0; i--) o.push(i); return o;
+}
+
+/* Drain the parked chain. Runs as a macrotask, so the caller that queued it has
+   finished writing App.state. If ANYTHING here is not right — no state, no
+   links, the picker won't open — we resolve LIFO immediately rather than leave
+   triggers stranded. A chain must never simply evaporate. */
+function _drainPendingTriggerChain() {
+  const pend = App && App._pendingTriggerChain;
+  if (!pend) return;
+  App._pendingTriggerChain = null;
+  const links = (pend.links || []).filter(l => l && typeof l.fire === 'function');
+  if (!links.length) return;
+  try {
+    if (!App.state) { _resolveChainInOrder(links, _chainLifoOrder(links), 'last in, first out'); return; }
+    _openTriggerOrderPicker(links, pend.event, (order) => {
+      const chosen = (Array.isArray(order) && order.length === links.length)
+        ? order : _chainLifoOrder(links);
+      const label = (Array.isArray(order) && order.length === links.length)
+        ? 'in the order you chose' : 'last in, first out';
+      _resolveChainInOrder(links, chosen, label);
+    });
+  } catch (e) {
+    try { _resolveChainInOrder(links, _chainLifoOrder(links), 'last in, first out'); } catch (_) {}
+  }
+}
+try { window.__mg = window.__mg || {}; window.__mg.drainChain = _drainPendingTriggerChain; } catch (e) {}
+
+/* ⛓ THE ORDER PICKER. Click your triggers in the order they should resolve.
+   Built on the chain overlay's own `.cc-aaa` look so it reads as the same
+   system, not a bolted-on dialog.
+   ⏱ A 20s deadline calls back with null (⇒ LIFO). The callback is fired at most
+      once, from whichever of pick / auto / timeout lands first. */
+const CHAIN_PICK_TIMEOUT_MS = 20000;
+function _openTriggerOrderPicker(links, event, done) {
+  let fired = false;
+  let timer = null;
+  const finish = (order) => {
+    if (fired) return; fired = true;
+    try { clearTimeout(timer); } catch (e) {}
+    try { const h = document.getElementById('chain-order-picker'); if (h) h.remove(); } catch (e) {}
+    try { done(order); } catch (e) { try { console.warn('[chainPick] callback threw', e); } catch (_) {} }
+  };
+  try {
+    const old = document.getElementById('chain-order-picker'); if (old) old.remove();
+    const host = document.createElement('div');
+    host.id = 'chain-order-picker';
+    host.className = 'counter-chain-overlay cc-aaa chain-pick';
+    const cards = links.map((l, i) => {
+      const art = (typeof _ccLinkArt === 'function')
+        ? _ccLinkArt({ name: l.cardName, icon: l.icon, cardId: l.cardId }) : '';
+      const face = art ? `<img class="cc-card-art" src="${escapeHtml(art)}" alt="">`
+                       : `<div class="cc-card-icon">${l.icon || '⚡'}</div>`;
+      return `
+        <div class="cc-card cp-card" data-cp="${i}" style="--cc-accent:#e6b455" role="button" tabindex="0">
+          <div class="cp-badge" data-badge="${i}"></div>
+          <div class="cc-card-side is-you">YOU</div>
+          ${face}
+          <div class="cc-card-body">
+            <div class="cc-card-name">${escapeHtml(l.cardName || 'Trigger')}</div>
+            <div class="cc-card-eff">${escapeHtml(String(l.effectLabel || 'trigger').toUpperCase())}</div>
+            <div class="cc-card-against">vs ${escapeHtml(l.against || event || '')}</div>
+          </div>
+        </div>`;
+    }).join('');
+    host.innerHTML = `
+      <div class="counter-chain-stage">
+        <span class="cc-corner tl"></span><span class="cc-corner tr"></span><span class="cc-corner bl"></span><span class="cc-corner br"></span>
+        <div class="cc-title">⛓ CHOOSE YOUR ORDER</div>
+        <div class="cp-sub">${links.length} of your triggers fired at once. Click them in the order they should resolve — first clicked resolves first.</div>
+        <div class="cc-stack cp-stack">${cards}</div>
+        <div class="cp-actions">
+          <button type="button" class="cp-btn cp-auto">AUTO · LAST IN, FIRST OUT</button>
+          <button type="button" class="cp-btn cp-go" disabled>RESOLVE</button>
+        </div>
+        <div class="cp-timer">Auto-resolves in <b class="cp-secs">20</b>s</div>
+      </div>`;
+    document.body.appendChild(host);
+
+    const order = [];
+    const goBtn = host.querySelector('.cp-go');
+    const paint = () => {
+      links.forEach((_, i) => {
+        const el = host.querySelector(`[data-cp="${i}"]`);
+        const badge = host.querySelector(`[data-badge="${i}"]`);
+        const at = order.indexOf(i);
+        if (badge) badge.textContent = at >= 0 ? String(at + 1) : '';
+        if (el) el.classList.toggle('is-picked', at >= 0);
+      });
+      if (goBtn) goBtn.disabled = (order.length !== links.length);
+    };
+    const toggle = (i) => {
+      const at = order.indexOf(i);
+      // Clicking a picked card un-picks it AND everything after it, so a misclick
+      // costs one click to undo instead of forcing a restart.
+      if (at >= 0) order.splice(at); else order.push(i);
+      paint();
+    };
+    host.querySelectorAll('[data-cp]').forEach(el => {
+      const i = parseInt(el.getAttribute('data-cp'), 10);
+      el.onclick = () => toggle(i);
+      el.onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(i); } };
+    });
+    const autoBtn = host.querySelector('.cp-auto');
+    if (autoBtn) autoBtn.onclick = () => finish(null);
+    if (goBtn) goBtn.onclick = () => { if (order.length === links.length) finish(order.slice()); };
+
+    // ⏱ Visible countdown — a modal that silently decides for you is worse than
+    //    one that tells you it is about to.
+    let left = Math.round(CHAIN_PICK_TIMEOUT_MS / 1000);
+    const secs = host.querySelector('.cp-secs');
+    const tick = setInterval(() => {
+      left -= 1;
+      if (secs) secs.textContent = String(Math.max(0, left));
+      if (left <= 0) clearInterval(tick);
+    }, 1000);
+    timer = setTimeout(() => { try { clearInterval(tick); } catch (e) {} finish(null); }, CHAIN_PICK_TIMEOUT_MS);
+  } catch (e) {
+    try { console.warn('[chainPick] could not open', e); } catch (_) {}
+    finish(null);                                  // never strand the chain
+  }
 }
 try { window.__mg = window.__mg || {}; window.__mg.triggerChain = _fireTriggerChain; } catch (e) {}
 function _renderCounterChainOverlay(state) {

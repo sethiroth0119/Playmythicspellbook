@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119t9';
+  window.BUILD_VERSION = 'v119u0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -77584,6 +77584,7 @@ const ONPLAY_TYPES = [
   { id: 'negateField',  label: '🚫 Negate Field (seal units\' passives + abilities)',     needs: ['radius','negateScope','statusDuration'] },
   { id: 'vanishReturn', label: '🌫 Vanish + Return (banish a unit, bring it back later)', needs: ['radius','vanishTarget','statusDuration','returnOn'] },
   { id: 'destroyTarget',label: '💀 Destroy Target (destroy the strongest enemy in radius)', needs: ['radius'] },
+  { id: 'purityPact',   label: '🔥⚖️ Purity Pact (destroy THIS if you control a unit outside the Card Filter)', needs: ['filter'] },
   { id: 'destroyFrozen',label: '❄️💀 Destroy Frozen (destroy ALL Frozen enemy units)', needs: [] },
   { id: 'burnBurst',    label: '🔥💥 Burn Burst (dmg enemy hero = total enemy Burn counters)', needs: [] },
   { id: 'vanishTribe',  label: '🌫 Vanish Tribe (banish ALL matching enemy units to the Void)', needs: ['filter'] },
@@ -78870,6 +78871,25 @@ function _processMilledCards(state, who, milled, src) {
   try { setTimeout(function () { _vfxFlyDeckToGrave(who, milled); }, 0); } catch (e) {}
   let s = state;
   const opp = who === 'player' ? 'ai' : 'player';
+  // ⚰️🔥 "IF THIS CARD IS SENT TO THE GRAVEYARD" — the Burning-Abyss clause.
+  // A card MILLED out of the deck is sent to the graveyard exactly like one that
+  // died on the board, so its ON-GRAVE trigger fires here too. Before this, only
+  // the 4 `onMilled` options ran on a mill, while the full on-grave vocabulary was
+  // reachable only by dying — so a "when sent to the GY, summon / search / banish"
+  // card did nothing when milled, which is the whole engine of that archetype.
+  // `_onGraveFired` is stamped so the graveyard sweep can never double-fire it.
+  for (const c of milled) {
+    try {
+      if (!c || c._onGraveFired) continue;
+      let def = c;
+      if (!def.onGrave && c.id && typeof _cardDefById === 'function') {
+        const r = _cardDefById(c.id); if (r && r.onGrave) def = r;
+      }
+      if (!def.onGrave || !def.onGrave.type) continue;
+      c._onGraveFired = true;
+      if (typeof _fireOnGrave === 'function') { const ns = _fireOnGrave(s, def, who, null); if (ns) s = ns; }
+    } catch (e) { try { console.warn('[milled onGrave]', e); } catch (_) {} }
+  }
   for (const c of milled) {
     const om = c && c.onMilled;
     if (!om || !om.type) continue;
@@ -83753,6 +83773,38 @@ function _applyOnPlayOne(state, unit, card) {
   }
   // ❄️💀 DESTROY FROZEN — destroy every enemy UNIT that is currently Frozen (heroes
   // spared). Respects _canDestroy. New type → only fires on cards that opt in.
+  // 🔥⚖️ PURITY PACT — "if this is summoned while you control a unit that is NOT
+  // one of us, destroy it." The Burning-Abyss clause: the archetype is only allowed
+  // to stand alongside itself, which is what pays for how hard its graveyard works.
+  // The 🎴 Card Filter says what counts as "one of us" (usually Name contains);
+  // the SUMMONED unit itself is never counted against the check.
+  if (eff.type === 'purityPact') {
+    const f = Object.assign({}, eff.filter || {});
+    if (eff.nameIncludes && !f.nameIncludes) f.nameIncludes = eff.nameIncludes;
+    const _pure = (u) => {
+      const view = Object.assign({}, u,
+        { elements: (typeof getElementsOf === 'function') ? (getElementsOf(u) || u.elements || []) : (u.elements || []),
+          factions: (typeof getFactionsOf === 'function') ? (getFactionsOf(u) || u.factions || []) : (u.factions || []) });
+      return (typeof _cardMatchesFilter === 'function') ? _cardMatchesFilter(view, f) : true;
+    };
+    const intruder = (state.units || []).find(u =>
+      u && u.alive && u.owner === owner && !u.isHero && u.id !== unit.id && !_pure(u));
+    if (intruder) {
+      state.units = (state.units || []).map(u => u.id === unit.id ? { ...u, currentHp: 0, alive: false } : u);
+      log.push({ msg: `🔥⚖️ ${unit.name} cannot abide ${intruder.name} — the pact breaks and it is destroyed!`, color: owner === 'player' ? 'red' : 'green' });
+      try {
+        const dead = (state.units || []).find(u => u && u.id === unit.id);
+        if (dead && !dead._wipeDeathHandled && typeof _battleOnUnitKilled === 'function') {
+          dead._wipeDeathHandled = true;
+          const foeHero = (state.units || []).find(h => h && h.owner !== owner && h.isHero);
+          _battleOnUnitKilled(state, foeHero || null, dead);
+        }
+      } catch (e) {}
+    } else {
+      log.push({ msg: `🔥⚖️ ${unit.name} stands among its own — the pact holds.`, color: owner === 'player' ? 'green' : 'red' });
+    }
+    return { ...state, log };
+  }
   if (eff.type === 'destroyFrozen') {
     let killed = 0;
     state.units = state.units.map(u => {

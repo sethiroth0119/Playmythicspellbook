@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119t2';
+  window.BUILD_VERSION = 'v119t3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -45812,6 +45812,58 @@ async function migrateCardArtToCloud() {
   return { ok: true, migrated: ok, failed: fail, skipped: skip };
 }
 try { window.__mg = window.__mg || {}; window.__mg.migrateArtToCloud = migrateCardArtToCloud; } catch (e) {}
+
+// ✂ One-shot: re-cut card art that was uploaded BEFORE the upload path started
+// trimming (see _trimImagePadding). Existing cloud images keep whatever blank
+// canvas the generator gave them, so their nameplates and art windows sit at a
+// different fraction on every card. This re-uploads each one tightly cropped.
+//
+// DRY RUN BY DEFAULT — it reports what it would change and touches nothing.
+//   __mg.normalizeCardArt()                 → report only
+//   __mg.normalizeCardArt({ apply: true })  → actually re-upload
+// Re-uploading only rewrites the image files; players receive them on the next
+// catalog/art fetch. It deliberately does NOT publish — do that yourself.
+async function normalizeCardArtCanvases(opts) {
+  const o = opts || {};
+  const apply = o.apply === true;
+  const ids = new Set();
+  try { for (const id in (Forge.cardArtUrl || {})) if (id && id.indexOf('__') !== 0) ids.add(id); } catch (e) {}
+  try { for (const id in (Forge.cardArt || {})) if (id && id.indexOf('__') !== 0) ids.add(id); } catch (e) {}
+  const all = Array.from(ids);
+  if (!all.length) { console.info('✂ No card art found to normalise.'); return { ok: true, checked: 0 }; }
+  console.info('✂ Checking ' + all.length + ' card art image(s)' + (apply ? ' — APPLYING' : ' — dry run, nothing will change'));
+  const changed = [], skipped = {}, failed = [];
+  for (let i = 0; i < all.length; i++) {
+    const id = all[i];
+    try {
+      const srcUrl = (Forge.cardArtUrl && Forge.cardArtUrl[id]) || (Forge.cardArt && Forge.cardArt[id]) || null;
+      if (!srcUrl) { skipped.missing = (skipped.missing || 0) + 1; continue; }
+      const r = await _trimImagePadding(srcUrl);
+      if (!r.trimmed) { skipped[r.reason] = (skipped[r.reason] || 0) + 1; continue; }
+      const rec = { id: id, from: r.from.join('×'), to: r.to.join('×'), was: +(r.from[0] / r.from[1]).toFixed(3), now: +(r.to[0] / r.to[1]).toFixed(3) };
+      if (apply) {
+        const up = await cloudUploadCardArtFile(id, r.url);
+        if (!up.ok || !up.url) { failed.push({ id: id, error: up.error }); continue; }
+        const card = (Forge.customCards || []).find(c => c && c.id === id);
+        if (card) card.artUrl = up.url;
+        (Forge.cardArtUrl = Forge.cardArtUrl || {})[id] = up.url;
+      }
+      changed.push(rec);
+    } catch (e) { failed.push({ id: id, error: (e && e.message) || 'error' }); }
+    if (i % 10 === 0) console.info('  ' + (i + 1) + '/' + all.length);
+    await new Promise(r => setTimeout(r, 20));
+  }
+  if (apply && changed.length) { try { saveForge(); } catch (e) {} }
+  console.info('✂ ' + (apply ? 'Re-cut ' : 'Would re-cut ') + changed.length + ' of ' + all.length
+    + ' · unchanged ' + JSON.stringify(skipped) + (failed.length ? ' · FAILED ' + failed.length : ''));
+  if (changed.length) console.table(changed);
+  if (failed.length) console.warn('✂ failures:', failed);
+  if (apply && changed.length && typeof showToast === 'function') {
+    showToast('✂ Re-cut ' + changed.length + ' card art image(s). Run Publish Everything to ship them.', 8000);
+  }
+  return { ok: true, checked: all.length, changed: changed.length, detail: changed, skipped: skipped, failed: failed, applied: apply };
+}
+try { window.__mg = window.__mg || {}; window.__mg.normalizeCardArt = normalizeCardArtCanvases; } catch (e) {}
 
 // ☁ General asset uploader — any image at <userId>/<baseName>.<ext> in the public
 // card-art bucket. No per-upload verification (the bucket is already proven by the
@@ -101325,6 +101377,76 @@ function resizeImage(file, maxSize, opts) {
   });
 }
 
+// ===== Card-art canvas normalisation =====
+// Uploaded card art IS the whole card — frame, nameplate and stat boxes are all
+// baked into the PNG (see .hand-card.has-full-art). Image generators hand that
+// card back sitting on a LARGER canvas, and the dead space is not consistent:
+// of the 87 published images, 36 arrive 512x512 with ~155px of blank either
+// side, and 50 arrive 341x512 with ~50px above and below. Every consumer places
+// its overlays and crops by FRACTION of the image (.hcfa-name sits at top:60%,
+// left/right:11%), so that padding silently shifts the nameplate and the art
+// window by a different amount on every card, and no single crop can be right
+// for all of them. Trimming it at upload makes each image a TIGHT card (~0.705
+// aspect) so one set of fractions is correct everywhere.
+// Conservative by design: it only ever crops, never scales or distorts, and it
+// bails out unless the border is genuinely uniform.
+function _trimImagePadding(srcDataUrl, opts) {
+  const o = opts || {};
+  const tol = o.tolerance == null ? 10 : o.tolerance;    // per-channel slack, 0-255
+  const minKeep = o.minKeep == null ? 0.5 : o.minKeep;   // never cut away half the image
+  return new Promise((resolve) => {
+    const bail = (reason, extra) => resolve(Object.assign({ url: srcDataUrl, trimmed: false, reason: reason }, extra || {}));
+    if (!srcDataUrl || typeof document === 'undefined') return bail('no-source');
+    const img = new Image();
+    img.crossOrigin = 'anonymous';   // needed to read pixels back off a cloud URL
+    img.onerror = () => bail('load-failed');
+    img.onload = () => {
+      const w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) return bail('empty');
+      let src, data;
+      try {
+        src = document.createElement('canvas'); src.width = w; src.height = h;
+        const ctx = src.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+        data = ctx.getImageData(0, 0, w, h).data;
+      } catch (e) { return bail('tainted'); }   // cross-origin without CORS headers
+      const at = (x, y) => (y * w + x) * 4;
+      // Background colour = whatever the four corners agree on. If they disagree
+      // there is no uniform margin and the image is left completely alone.
+      const corners = [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]].map(function (p) {
+        const i = at(p[0], p[1]); return [data[i], data[i + 1], data[i + 2], data[i + 3]];
+      });
+      const alphaBg = corners.every(c => c[3] === 0);
+      const bg = corners[0];
+      if (!alphaBg) {
+        const same = corners.every(c => c[3] > 0
+          && Math.abs(c[0] - bg[0]) <= tol && Math.abs(c[1] - bg[1]) <= tol && Math.abs(c[2] - bg[2]) <= tol);
+        if (!same) return bail('no-uniform-border', { from: [w, h] });
+      }
+      const isBg = (i) => alphaBg ? data[i + 3] === 0
+        : (Math.abs(data[i] - bg[0]) <= tol && Math.abs(data[i + 1] - bg[1]) <= tol
+          && Math.abs(data[i + 2] - bg[2]) <= tol && Math.abs(data[i + 3] - bg[3]) <= tol);
+      const rowBg = (y) => { for (let x = 0; x < w; x++) if (!isBg(at(x, y))) return false; return true; };
+      const colBg = (x) => { for (let y = 0; y < h; y++) if (!isBg(at(x, y))) return false; return true; };
+      let top = 0, bot = h - 1, left = 0, right = w - 1;
+      while (top < bot && rowBg(top)) top++;
+      while (bot > top && rowBg(bot)) bot--;
+      while (left < right && colBg(left)) left++;
+      while (right > left && colBg(right)) right--;
+      const nw = right - left + 1, nh = bot - top + 1;
+      if (nw === w && nh === h) return bail('nothing-to-trim', { from: [w, h], to: [w, h] });
+      if (nw < w * minKeep || nh < h * minKeep) return bail('trim-too-aggressive', { from: [w, h], to: [nw, nh] });
+      try {
+        const out = document.createElement('canvas'); out.width = nw; out.height = nh;
+        out.getContext('2d').drawImage(src, left, top, nw, nh, 0, 0, nw, nh);
+        resolve({ url: out.toDataURL(o.mime || 'image/png'), trimmed: true, reason: 'ok', from: [w, h], to: [nw, nh] });
+      } catch (e) { return bail('encode-failed', { from: [w, h], to: [nw, nh] }); }
+    };
+    img.src = srcDataUrl;
+  });
+}
+try { window.__mg = window.__mg || {}; window.__mg.trimImagePadding = _trimImagePadding; } catch (e) {}
+
 // ============ TYPE BADGE / ELEMENT HELPERS ============
 function elementTooltip(element) {
   if (!element || element === 'neutral') return 'Neutral — No type advantage';
@@ -114937,6 +115059,8 @@ function renderCardEditor() {
       <div style="margin-bottom:0.45rem"><label class="small-text">⚰️💸 Remove them from</label><select id="ed-playreq-altzone" style="width:100%">
         <option value="grave" ${(playReq.fromZone || 'grave') === 'grave' ? 'selected' : ''}>⚰️ Your graveyard</option>
         <option value="field" ${playReq.fromZone === 'field' ? 'selected' : ''}>🛡 Units you control (sacrifice them)</option>
+        <option value="hand" ${playReq.fromZone === 'hand' ? 'selected' : ''}>✋ Your hand (banish them)</option>
+        <option value="handOrGrave" ${playReq.fromZone === 'handOrGrave' ? 'selected' : ''}>✋⚰️ Your hand AND/OR graveyard (one pool — graveyard spent first)</option>
       </select></div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0.5rem;min-width:0">
         <div style="min-width:0"><label class="small-text">Name contains</label><input id="ed-playreq-gravekw" type="text" maxlength="24" placeholder="e.g. bunny (optional)" value="${escapeHtml(playReq.nameIncludes || playReq.tribe || '')}" style="width:100%;min-width:0"></div>
@@ -116727,7 +116851,11 @@ function bindCardEditor() {
       try {
         // 512px max — enough resolution for the upper card window, small upload.
         const dataUrl = await resizeImage(file, 512);
-        await uploadArtToCloud(id, dataUrl);
+        // Strip the blank canvas the generator left around the card, so the card
+        // fills the image and every fraction-based overlay/crop lands correctly.
+        const norm = await _trimImagePadding(dataUrl);
+        if (norm.trimmed) showToast('✂ Trimmed blank canvas ' + norm.from.join('×') + ' → ' + norm.to.join('×'));
+        await uploadArtToCloud(id, norm.url);
       } catch (err) { showToast('⚠ Failed to load card art'); }
       artFileInput.value = '';
     };
@@ -116740,7 +116868,7 @@ function bindCardEditor() {
       if (!id) { showToast('No card to attach art to'); return; }
       if (!url) { showToast('Paste an image URL first'); return; }
       if (/^https?:\/\//i.test(url)) { setCardArtUrl(id, url); showToast('Card art set from URL'); }       // external host — store directly
-      else if (/^data:image\//i.test(url)) { await uploadArtToCloud(id, url); }                            // data url — host it for them
+      else if (/^data:image\//i.test(url)) { await uploadArtToCloud(id, (await _trimImagePadding(url)).url); }   // data url — trim + host it for them
       else { showToast('URL must start with http(s):// or be an image data: URL'); }
     };
   }
@@ -126835,7 +126963,9 @@ function _activateAssaultCard(instanceId) {
   const _cgRes = _applyConsumeGrave(ns.player, card);
   // 🌌 vanishUnit play-cost — consume the matching controlled unit.
   try { if (card.playRequirement && card.playRequirement.type === 'vanishUnit') { const _vp = _applyVanishPlayCost({ ...ns }, 'player', card); ns.units = _vp.units; ns.log = _vp.log || ns.log; } } catch (e) {}
-  try { if (card.playRequirement && card.playRequirement.type === 'banishGraveCost') { const _ap = _applyAltPlayCost({ ...ns }, 'player', card); ns.units = _ap.units; ns.log = _ap.log || ns.log; } } catch (e) {}
+  // `_ap.hand` is only set when the cost banished cards from HAND — apply it
+  // before the hand is rebuilt below, or the banish would be silently discarded.
+  try { if (card.playRequirement && card.playRequirement.type === 'banishGraveCost') { const _ap = _applyAltPlayCost({ ...ns }, 'player', card); ns.units = _ap.units; ns.log = _ap.log || ns.log; if (_ap.hand) ns.player = { ...ns.player, hand: _ap.hand }; } } catch (e) {}
   if (_cgRes.removed) log.push({ msg: `🪦 ${escapeHtml(card.name)} consumes ${_cgRes.removed} card${_cgRes.removed === 1 ? '' : 's'} from your graveyard.`, color: 'amber' });
   ns.player = {
     ...ns.player,
@@ -136874,7 +137004,16 @@ function _applyVanishPlayCost(state, side, card) {
 // never highlights a card whose restriction you cannot meet.
 // `fromZone`: 'grave' (default) — banish matching cards out of your graveyard
 //             'field' — sacrifice matching units you control ("from themselves")
+//             'hand'  — banish matching cards out of your HAND
+//             'handOrGrave' — one pool spanning both (the "Sovereign" pattern:
+//                     banish 2 matching from your hand and/or graveyard). This
+//                     is what lets a hand clogged with expensive cards still
+//                     fuel a summon instead of bricking.
 // Matching reuses the shared Card Filter (cardType / element / faction / name).
+//
+// Returns a uniform array of picks `[{zone,idx}|{zone:'field',id}]`, or null when
+// the cost cannot be paid. Callers that only test payability rely on truthiness,
+// so an empty/failed result MUST be null rather than [].
 function _altCostTargets(state, side, card) {
   try {
     const req = card && card.playRequirement;
@@ -136895,12 +137034,33 @@ function _altCostTargets(state, side, card) {
     if (req.fromZone === 'field') {
       const units = (state && state.units || []).filter(u =>
         u && u.alive && !u.isHero && u.owner === meKey && match(_cardDefById ? (_cardDefById(u.cardId) || u) : u));
-      return units.length >= need ? units.slice(0, need).map(u => u.id) : null;
+      return units.length >= need ? units.slice(0, need).map(u => ({ zone: 'field', id: u.id })) : null;
     }
-    const grave = (state && state[meKey] && Array.isArray(state[meKey].graveyard)) ? state[meKey].graveyard : [];
-    const idxs = [];
-    grave.forEach((c, i) => { if (idxs.length < need && match(c)) idxs.push(i); });
-    return idxs.length >= need ? idxs : null;
+    const zone = req.fromZone || 'grave';
+    const useGrave = (zone === 'grave' || zone === 'handOrGrave');
+    const useHand  = (zone === 'hand'  || zone === 'handOrGrave');
+    const picks = [];
+    // ⚠ GRAVE FIRST on a combined pool. Cards in hand are still LIVE resources
+    // the player could cast; graveyard cards are spent. Spending the grave first
+    // is strictly better for the player, and it keeps the old grave-only
+    // behaviour byte-identical when fromZone is 'grave'.
+    if (useGrave) {
+      const grave = (state && state[meKey] && Array.isArray(state[meKey].graveyard)) ? state[meKey].graveyard : [];
+      grave.forEach((c, i) => { if (picks.length < need && match(c)) picks.push({ zone: 'grave', idx: i }); });
+    }
+    if (useHand && picks.length < need) {
+      const hand = (state && state[meKey] && Array.isArray(state[meKey].hand)) ? state[meKey].hand : [];
+      // ⚠ THE CARD IS STILL IN HAND while its own cost is being paid (the play
+      // flow removes it only AFTER the cost resolves), so it must never be
+      // allowed to pay for itself — that would summon it for nothing.
+      const selfIid = (card && card.instanceId) || null;
+      hand.forEach((c, i) => {
+        if (picks.length >= need || !c) return;
+        if (selfIid && c.instanceId === selfIid) return;
+        if (match(c)) picks.push({ zone: 'hand', idx: i });
+      });
+    }
+    return picks.length >= need ? picks : null;
   } catch (e) { return null; }
 }
 // Spend it. Grave entries are spliced highest-index-first; field units vanish.
@@ -136913,17 +137073,36 @@ function _applyAltPlayCost(state, side, card) {
     if (!picks || !picks.length) return out;
     const meKey = (side === 'ai') ? 'ai' : 'player';
     const log = [...(state.log || [])];
-    if (req.fromZone === 'field') {
-      const ids = new Set(picks);
-      const names = (state.units || []).filter(u => ids.has(u.id)).map(u => u.name).join(' + ');
-      out.units = (state.units || []).filter(u => !ids.has(u.id));   // vanish, no grave
-      log.push({ msg: `⚰️ ${names} are given up to bring out ${card.name || 'that card'}.`, color: side === 'ai' ? 'red' : 'green' });
-    } else {
-      const grave = (state[meKey] && Array.isArray(state[meKey].graveyard)) ? state[meKey].graveyard : [];
-      const names = picks.map(i => (grave[i] && grave[i].name) || 'a card').join(' + ');
-      picks.slice().sort((a, b) => b - a).forEach(i => { try { grave.splice(i, 1); } catch (e) {} });
-      log.push({ msg: `⚰️ ${names} are removed from your graveyard to bring out ${card.name || 'that card'}.`, color: side === 'ai' ? 'red' : 'green' });
+    const names = [];
+    const col = (side === 'ai') ? 'red' : 'green';
+    // ── FIELD: sacrifice the units outright (they vanish, they do not fall) ──
+    const fieldIds = new Set(picks.filter(p => p && p.zone === 'field').map(p => p.id));
+    if (fieldIds.size) {
+      (state.units || []).forEach(u => { if (u && fieldIds.has(u.id)) names.push(u.name || 'a unit'); });
+      out.units = (state.units || []).filter(u => !fieldIds.has(u.id));
     }
+    // ── GRAVE: spliced in place, highest index first (unchanged behaviour) ──
+    const gIdx = picks.filter(p => p && p.zone === 'grave').map(p => p.idx);
+    if (gIdx.length) {
+      const grave = (state[meKey] && Array.isArray(state[meKey].graveyard)) ? state[meKey].graveyard : [];
+      gIdx.forEach(i => names.push((grave[i] && grave[i].name) || 'a card'));
+      gIdx.slice().sort((a, b) => b - a).forEach(i => { try { grave.splice(i, 1); } catch (e) {} });
+    }
+    // ── HAND: returned on `out.hand` for the caller to apply. The hand cannot be
+    //    spliced in place here — the play flow rebuilds `player.hand` right after
+    //    this (to remove the played card), which would clobber a local mutation.
+    const hIdx = picks.filter(p => p && p.zone === 'hand').map(p => p.idx);
+    if (hIdx.length) {
+      const hand = (state[meKey] && Array.isArray(state[meKey].hand)) ? state[meKey].hand.slice() : [];
+      hIdx.forEach(i => names.push((hand[i] && hand[i].name) || 'a card'));
+      hIdx.slice().sort((a, b) => b - a).forEach(i => { try { hand.splice(i, 1); } catch (e) {} });
+      out.hand = hand;
+    }
+    const zoneLabel = fieldIds.size ? 'given up'
+      : (hIdx.length && gIdx.length) ? 'removed from your hand & graveyard'
+      : hIdx.length ? 'banished from your hand'
+      : 'removed from your graveyard';
+    log.push({ msg: `⚰️ ${names.join(' + ')} ${names.length === 1 ? 'is' : 'are'} ${zoneLabel} to bring out ${card.name || 'that card'}.`, color: col });
     out.log = log;
   } catch (e) {}
   return out;
@@ -136938,7 +137117,10 @@ function _checkPlayRequirement(card, state, side) {
       const what = r.nameIncludes || (r.faction && r.faction !== 'any' ? r.faction : '')
         || (r.element && r.element !== 'any' ? r.element : '')
         || (r.cardType && r.cardType !== 'any' ? r.cardType : 'matching');
-      const where = (r.fromZone === 'field') ? 'you control' : 'in your graveyard';
+      const where = (r.fromZone === 'field') ? 'you control'
+                  : (r.fromZone === 'hand') ? 'in your hand'
+                  : (r.fromZone === 'handOrGrave') ? 'in your hand and/or graveyard'
+                  : 'in your graveyard';
       return `Play this by removing ${n} ${what} card${n === 1 ? '' : 's'} ${where} — you don't have enough.`;
     }
     return null;
@@ -137234,7 +137416,7 @@ function placeUnit(card, pos) {
     const _cg = _applyConsumeGrave(s.player, card);
     // 🌌 vanishUnit play-cost — consume the matching controlled unit.
     try { if (card.playRequirement && card.playRequirement.type === 'vanishUnit') { const _vp = _applyVanishPlayCost({ ...s }, 'player', card); s.units = _vp.units; s.log = _vp.log || s.log; } } catch (e) {}
-  try { if (card.playRequirement && card.playRequirement.type === 'banishGraveCost') { const _ap = _applyAltPlayCost({ ...s }, 'player', card); s.units = _ap.units; s.log = _ap.log || s.log; } } catch (e) {}
+  try { if (card.playRequirement && card.playRequirement.type === 'banishGraveCost') { const _ap = _applyAltPlayCost({ ...s }, 'player', card); s.units = _ap.units; s.log = _ap.log || s.log; if (_ap.hand) s.player = { ...s.player, hand: _ap.hand }; } } catch (e) {}
     if (_cg.removed) {
       s = { ...s,
         player: { ...s.player, graveyard: _cg.graveyard },
@@ -138219,7 +138401,7 @@ function _resolveSpellAfterChain(card) {
     const _cg = _applyConsumeGrave(ns.player, card);
     // 🌌 vanishUnit play-cost — consume the matching controlled unit.
     try { if (card.playRequirement && card.playRequirement.type === 'vanishUnit') { const _vp = _applyVanishPlayCost({ ...ns }, 'player', card); ns.units = _vp.units; ns.log = _vp.log || ns.log; } } catch (e) {}
-  try { if (card.playRequirement && card.playRequirement.type === 'banishGraveCost') { const _ap = _applyAltPlayCost({ ...ns }, 'player', card); ns.units = _ap.units; ns.log = _ap.log || ns.log; } } catch (e) {}
+  try { if (card.playRequirement && card.playRequirement.type === 'banishGraveCost') { const _ap = _applyAltPlayCost({ ...ns }, 'player', card); ns.units = _ap.units; ns.log = _ap.log || ns.log; if (_ap.hand) ns.player = { ...ns.player, hand: _ap.hand }; } } catch (e) {}
     ns.player = { ...ns.player, graveyard: _cg.graveyard };
     if (_cg.removed) log.push({ msg: `🪦 ${card.name} consumes ${_cg.removed} card${_cg.removed === 1 ? '' : 's'} from your graveyard.`, color: 'amber' });
   }

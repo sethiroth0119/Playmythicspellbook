@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119t5';
+  window.BUILD_VERSION = 'v119t6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -78456,6 +78456,29 @@ function _aiResolveMove(state, unit, target, move) {
 // ALWAYS summoned (placeFn); the cost only gates whether its on-play EFFECT
 // fires. If the cost can't be paid (or the player cancels), the card still
 // enters but App.ui._suppressOnPlay tells the place* fn to skip applyOnPlayEffect.
+// 💠 THE cost of playing a card from hand, for EVERY card type. Two authored
+// fields feed it and both are mandatory prerequisites:
+//   • card.activationCost      — the card editor's own "🗂 Discard / 🩸 Pay life /
+//                                🌌 Banish / ⚰️ Tribute" block
+//   • card.onPlay.cost         — the on-play block's pay-to-activate cost
+// They are MERGED into one prompt (discard 1 + discard 1 = discard 2) so the
+// player answers a single modal. Before this, activationCost was only read on the
+// spell/trap path, so a UNIT authored with it deployed for free.
+function _playCostOf(card) {
+  const a = (card && card.activationCost) || null;
+  const b = (card && card.onPlay && card.onPlay.cost) || null;
+  const aEmpty = _costIsEmpty(a), bEmpty = _costIsEmpty(b);
+  if (aEmpty && bEmpty) return null;
+  if (aEmpty) return b;
+  if (bEmpty) return a;
+  return {
+    discard:     (a.discard | 0)     + (b.discard | 0),
+    payLifeHero: (a.payLifeHero | 0) + (b.payLifeHero | 0),
+    banish:      (a.banish | 0)      + (b.banish | 0),
+    tribute:     (a.tribute | 0)     + (b.tribute | 0),
+    tributeSelf: !!(a.tributeSelf || b.tributeSelf),
+  };
+}
 function _gateOnPlayThenPlace(card, placeFn, validateFn) {
   try {
     // 🛡 VALIDATE BEFORE CHARGING. Every gate inside place* (tile range, End
@@ -78463,7 +78486,7 @@ function _gateOnPlayThenPlace(card, placeFn, validateFn) {
     // taken the discard — so a rejected play left the player down a card with
     // nothing summoned. The dry run answers first; its own toast says why.
     if (typeof validateFn === 'function' && !validateFn()) return;
-    const cost = card && card.onPlay && card.onPlay.cost;
+    const cost = _playCostOf(card);
     if (_costIsEmpty(cost)) { placeFn(); return; }
     // 💡 The on-play cost is MANDATORY to play this card. If it can't be paid the
     // card can NOT be played — it stays in hand, no energy spent, nothing summoned.
@@ -78497,7 +78520,9 @@ function _gateOnPlayThenPlace(card, placeFn, validateFn) {
 function _interceptCardCost(card, again) {
   try {
     if (!card || App._cardCostPaid === card.instanceId) return false;
-    const cost = card.activationCost;
+    // Same merged cost the unit/location/wall gate uses — a spell or trap now also
+    // pays its on-play cost here, so all five card types charge identically.
+    const cost = _playCostOf(card);
     if (_costIsEmpty(cost)) return false;
     if (typeof getEffectiveCardCost === 'function' && App.state && App.state.player
         && getEffectiveCardCost(card, App.state, 'player') > (App.state.player.energy | 0)) {
@@ -91429,6 +91454,8 @@ function applyTrapToUnit(s, unit, trap) {
     if (target.isHero) s.gameOver = target.owner === 'player' ? 'ai' : 'player';
   }
 
+  // (A trap's full On-Play vocabulary already resolves at the end of this function —
+  // see the trap-onPlay block below, which also auto-resolves off-turn springs.)
   // Defensive fallback — if the trap had no recognized effect, at least log the trigger.
   if (!didSomething) {
     s.log = [...s.log, { msg: `🪤 ${unit.name} triggered ${trap.card.name}!`, color: 'amber' }];

@@ -120,6 +120,7 @@ begin
                     - '__ownedTombstones__' - '__equippedTombstone__'
                     - '__ownedAvatars__' - '__equippedAvatar__'
                     - '__ownedSleeves__' - '__equippedSleeve__'
+                    - '__ownedDiceSkins__' - '__equippedDiceSkin__' - '__craftParts__'
                     - '__unlockedTraders__' - '__traderStock__'
                     - '__dojoUnlocked__' - '__dojoStock__'
                     -- 🎴 back to the starter picker

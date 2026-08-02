@@ -6186,6 +6186,18 @@
       radial-gradient(3px 3px at calc(100% - 6px) 6px, rgba(0,0,0,.55) 40%, transparent 45%),
       radial-gradient(3px 3px at 6px calc(100% - 6px), rgba(0,0,0,.55) 40%, transparent 45%),
       radial-gradient(3px 3px at calc(100% - 6px) calc(100% - 6px), rgba(0,0,0,.55) 40%, transparent 45%); }
+  /* 🎲 SKINNED DIE — the equipped art IS the face. The built-in engraving and
+     the corner rivets are hidden so they don't print through someone's artwork;
+     the scrim keeps the pips legible on a light skin, and the pips themselves
+     go white-on-shadow so the roll is still readable at a glance. */
+  .dcx .dcx-die.has-skin .face::before,
+  .dcx .dcx-die.has-skin .face::after{ display:none; }
+  .dcx .dcx-die.has-skin .face{ border-color:rgba(0,0,0,.55); }
+  .dcx .face-scrim{ position:absolute; inset:0; border-radius:14px; pointer-events:none; z-index:0;
+    background:radial-gradient(120% 120% at 50% 40%, rgba(0,0,0,.12), rgba(0,0,0,.52)); }
+  .dcx .dcx-die.has-skin .pip{
+    background:#fff !important;
+    box-shadow:0 0 0 1px rgba(0,0,0,.6), 0 1px 3px rgba(0,0,0,.8); }
   .dcx .pip{ width:17px; height:17px; border-radius:50%; position:relative; z-index:1; }
   .dcx .dcx-die.gold .pip{
     background:radial-gradient(circle at 35% 30%, #5c3c0c, #241503 70%);
@@ -34917,7 +34929,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119v0';
+  window.BUILD_VERSION = 'v119v1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -42371,6 +42383,12 @@ const Profile = {
   // equippedSleeve holds the IMAGE (same convention as equippedTombstone).
   ownedSleeves: [],
   equippedSleeve: null,
+  // 🎲 Dice skins — the face texture on YOUR die at the first-move roll.
+  // Same convention as sleeves: owned holds ids, equipped holds the IMAGE.
+  ownedDiceSkins: [],
+  equippedDiceSkin: null,
+  // 🔩 Craft Parts — the Crafting Station currency, salvaged from furniture.
+  craftParts: 0,
   // 🗺️ Campaign ids the player has cleared (final boss beaten). Drives
   // campaign chaining — a campaign with requiresCampaignId stays locked
   // until its prerequisite id is in here.
@@ -44361,6 +44379,10 @@ async function cloudSyncProfile() {
       __ownedAvatars__:     Array.isArray(Profile.ownedAvatars) ? Profile.ownedAvatars : [],
       __equippedAvatar__:   (typeof Profile.equippedAvatar === 'string') ? Profile.equippedAvatar : null,
       __ownedSleeves__:     Array.isArray(Profile.ownedSleeves) ? Profile.ownedSleeves : [],
+      // 🎲🔩 Crafting Station — skins you own/wear and the parts you banked.
+      __ownedDiceSkins__:   Array.isArray(Profile.ownedDiceSkins) ? Profile.ownedDiceSkins : [],
+      __equippedDiceSkin__: (typeof Profile.equippedDiceSkin === 'string') ? Profile.equippedDiceSkin : null,
+      __craftParts__:       Profile.craftParts | 0,
       __equippedSleeve__:   (typeof Profile.equippedSleeve === 'string') ? Profile.equippedSleeve : null,
       // 🦸 Chosen Camp Heights survivor id (set once on first entry; sticks).
       __campSurvivorId__:    (typeof Profile.campSurvivorId === 'string') ? Profile.campSurvivorId : null,
@@ -45507,6 +45529,18 @@ async function cloudFetchProfile() {
         Profile.ownedSleeves = Object.keys(sset);
       }
       if (typeof f.__equippedSleeve__ === 'string') Profile.equippedSleeve = f.__equippedSleeve__;
+      // 🎲 Dice skins — union-merge like sleeves, so a skin crafted on one device
+      // is never lost by a sync from another that hasn't seen it yet.
+      if (Array.isArray(f.__ownedDiceSkins__)) {
+        const dset = {};
+        [].concat(Profile.ownedDiceSkins || [], f.__ownedDiceSkins__).forEach(id => { if (typeof id === 'string') dset[id] = 1; });
+        Profile.ownedDiceSkins = Object.keys(dset);
+      }
+      if (typeof f.__equippedDiceSkin__ === 'string') Profile.equippedDiceSkin = f.__equippedDiceSkin__;
+      // 🔩 Craft parts — MAX-merge, matching every other balance in this payload.
+      if (typeof f.__craftParts__ === 'number') {
+        Profile.craftParts = Math.max(Profile.craftParts | 0, f.__craftParts__ | 0);
+      }
       // 🦸 Camp Heights survivor pick — restored last-writer-wins.
       if (typeof f.__campSurvivorId__ === 'string') Profile.campSurvivorId = f.__campSurvivorId__;
       // 🏳 Camp's registered District Node + Reconstruction Network state.
@@ -68642,6 +68676,193 @@ function getAllDeckSleeves() {
   (Array.isArray(Forge.deckSleeves)   ? Forge.deckSleeves   : []).forEach(s => { if (s && s.id) byId[s.id] = s; });
   return Object.values(byId).filter(s => s && s.img);
 }
+// ════════════════════════════════════════════════════════════════════════════
+// 🔨 CRAFTING STATION — furniture in, product out.
+//
+// Furniture is bought for the walkable card shop, and once a room is decorated
+// the spares are dead weight. The station turns them into 🔩 CRAFT PARTS, and
+// parts into things a player actually wants: booster packs, booster boxes and
+// cosmetics.
+//
+// ⚠ Parts are deliberately a SEPARATE currency from Cinder/Aza. Furniture is
+// bought with money, so if salvage paid out money it would be a laundering loop
+// (buy furniture → salvage → buy furniture) and, worse, a Cinder faucet. Parts
+// only ever flow one way: furniture → parts → product.
+// ════════════════════════════════════════════════════════════════════════════
+function getCraftParts() { try { return Profile.craftParts | 0; } catch (e) { return 0; } }
+function addCraftParts(n) {
+  try { Profile.craftParts = Math.max(0, (Profile.craftParts | 0) + (n | 0)); saveProfile(); } catch (e) {}
+}
+// What one piece of furniture is worth in parts. Scales with what it cost, so
+// salvaging a centrepiece beats salvaging a stool — but the return is
+// deliberately WELL under the purchase price. Salvage is for spares you regret,
+// not a refund counter.
+const CRAFT_PARTS_PER_CINDER = 1 / 900;
+const CRAFT_AZA_PART_BONUS   = 12;      // premium furniture is worth crafting with
+function craftPartsForFurniture(item) {
+  try {
+    if (!item) return 1;
+    const price = item.price | 0;
+    const base = (item.currency === 'aza')
+      ? (CRAFT_AZA_PART_BONUS + Math.floor(price / 2))
+      : Math.floor(price * CRAFT_PARTS_PER_CINDER);
+    return Math.max(1, base);
+  } catch (e) { return 1; }
+}
+// Salvage `qty` copies of an owned furniture id. Returns the parts gained, or 0
+// if they don't own that many — the ownership check is what stops a double-click
+// from salvaging furniture the player no longer has.
+function craftSalvageFurniture(catalogId, qty) {
+  try {
+    const owned = (typeof _csOwnedQty === 'function') ? _csOwnedQty(catalogId) : 0;
+    const n = Math.max(0, Math.min(qty | 0, owned));
+    if (!n) return 0;
+    const item = (typeof _csCatMap === 'object' && _csCatMap) ? _csCatMap['fc:' + catalogId] : null;
+    const per = craftPartsForFurniture(item || {});
+    const gained = per * n;
+    const inv = Profile.furnitureOwned || (Profile.furnitureOwned = {});
+    inv[catalogId] = Math.max(0, (inv[catalogId] | 0) - n);
+    if (!inv[catalogId]) delete inv[catalogId];
+    addCraftParts(gained);
+    return gained;
+  } catch (e) { return 0; }
+}
+
+// The recipe book. `make` runs only AFTER the parts are confirmed and debited,
+// and returns a human sentence for the toast — or null to refund, which is how
+// "you already own every sleeve" fails without eating the cost.
+const CRAFT_RECIPES = [
+  { id: 'pack',   icon: '🎴', name: 'Booster Pack',  cost: 30,
+    blurb: 'One sealed booster from the current set.',
+    make: () => _craftGrantPacks(1) },
+  { id: 'box',    icon: '📦', name: 'Booster Box',   cost: 210,
+    blurb: 'Eight boosters at once — cheaper per pack than crafting them singly.',
+    make: () => _craftGrantPacks(8) },
+  { id: 'sleeve', icon: '🃏', name: 'Card Sleeve',   cost: 120,
+    blurb: 'A random deck sleeve you do not already own.',
+    make: () => _craftGrantCosmetic('sleeve') },
+  { id: 'dice',   icon: '🎲', name: 'Dice Skin',     cost: 150,
+    blurb: 'A random dice skin you do not already own — worn at the first-move roll.',
+    make: () => _craftGrantCosmetic('dice') },
+];
+function _craftRecipe(id) { return CRAFT_RECIPES.find(r => r.id === id) || null; }
+
+// Packs come from the live pack catalog, so crafting always yields whatever the
+// current set is rather than a hardcoded pack that could stop existing.
+function _craftPackDef() {
+  try {
+    const packs = (typeof getAllCustomPacks === 'function') ? (getAllCustomPacks() || []) : [];
+    const usable = packs.filter(p => p && p.id);
+    if (!usable.length) return null;
+    return usable[Math.floor(Math.random() * usable.length)];
+  } catch (e) { return null; }
+}
+function _craftGrantPacks(n) {
+  const def = _craftPackDef();
+  if (!def) return null;                       // no packs published ⇒ refund
+  try {
+    if (n > 1 && typeof addUnopenedPacks === 'function') addUnopenedPacks(def, n, 'craft');
+    else if (typeof addUnopenedPack === 'function') { for (let i = 0; i < n; i++) addUnopenedPack(def, 'craft'); }
+    else return null;
+  } catch (e) { return null; }
+  return n === 1
+    ? 'Crafted a ' + (def.name || 'booster pack') + ' — open it from your inventory.'
+    : 'Crafted a booster box — ' + n + ' × ' + (def.name || 'booster pack') + ' added to your inventory.';
+}
+// Shared grant for the cosmetic recipes: pick a random one the player does NOT
+// own, add it, and say what they got. Returns null when they own them all, so
+// the caller refunds instead of charging for nothing.
+function _craftGrantCosmetic(kind) {
+  try {
+    const all = kind === 'dice'
+      ? ((typeof getAllDiceSkins === 'function') ? getAllDiceSkins() : [])
+      : ((typeof getAllDeckSleeves === 'function') ? getAllDeckSleeves() : []);
+    const ownedArr = kind === 'dice'
+      ? (Array.isArray(Profile.ownedDiceSkins) ? Profile.ownedDiceSkins : (Profile.ownedDiceSkins = []))
+      : (Array.isArray(Profile.ownedSleeves)   ? Profile.ownedSleeves   : (Profile.ownedSleeves = []));
+    // `exclusive` cosmetics are Founder-Drop / Shop only and must never be
+    // reachable by crafting — that promise is what makes them exclusive.
+    const pool = all.filter(c => c && c.id && !c.exclusive && ownedArr.indexOf(c.id) < 0);
+    if (!pool.length) return null;
+    const got = pool[Math.floor(Math.random() * pool.length)];
+    ownedArr.push(got.id);
+    return 'Crafted ' + (got.name || (kind === 'dice' ? 'a dice skin' : 'a sleeve'))
+      + ' — equip it in the Crafting Station.';
+  } catch (e) { return null; }
+}
+
+// The one place a Crafting Station craft happens. Debits first, then makes; any
+// failure refunds in full. Returns { ok, msg }.
+// ⚠ NAMED `craftStationMake`, NOT `craftItem` — there is already a craftItem()
+// further down this file (the item/gear crafting system). A duplicate top-level
+// declaration doesn't error, it silently overwrites, and the later one wins: the
+// station's buttons called that function instead and made nothing.
+function craftStationMake(recipeId) {
+  const r = _craftRecipe(recipeId);
+  if (!r) return { ok: false, msg: 'Unknown recipe.' };
+  const have = getCraftParts();
+  if (have < r.cost) {
+    return { ok: false, msg: 'Need 🔩 ' + r.cost + ' parts — you have ' + have + '. Salvage furniture to make more.' };
+  }
+  addCraftParts(-r.cost);
+  let msg = null;
+  try { msg = r.make(); } catch (e) { msg = null; }
+  if (!msg) {
+    addCraftParts(r.cost);                     // full refund — nothing was made
+    // Say which of the two failures it was. "You already own every sleeve" is a
+    // lie when the real problem is that none exist yet.
+    let why;
+    if (r.id === 'pack' || r.id === 'box') why = 'No booster packs are published yet — nothing to craft.';
+    else {
+      const pool = (r.id === 'dice')
+        ? ((typeof getAllDiceSkins === 'function') ? getAllDiceSkins() : [])
+        : ((typeof getAllDeckSleeves === 'function') ? getAllDeckSleeves() : []);
+      why = pool.filter(c => c && !c.exclusive).length
+        ? 'You already own every ' + r.name.toLowerCase() + ' that can be crafted.'
+        : 'No ' + r.name.toLowerCase() + 's are available to craft yet.';
+    }
+    return { ok: false, msg: why };
+  }
+  try { saveProfile(); } catch (e) {}
+  return { ok: true, msg: msg };
+}
+try { window.__mg = window.__mg || {}; window.__mg.craft = { parts: getCraftParts, add: addCraftParts, make: craftStationMake }; } catch (e) {}
+
+// 🎲 DICE SKINS — the face texture on the player's die at the first-move roll.
+// Identical merge rule to sleeves/avatars: published catalog first, admin-local
+// overrides by id so the Forge shows edits before publishing. A skin is just
+// { id, name, img } — the same shape every other cosmetic here uses, so it
+// rides the existing publish pipeline with no new plumbing.
+function getAllDiceSkins() {
+  const byId = {};
+  (Array.isArray(Catalog.diceSkins) ? Catalog.diceSkins : []).forEach(d => { if (d && d.id) byId[d.id] = d; });
+  (Array.isArray(Forge.diceSkins)   ? Forge.diceSkins   : []).forEach(d => { if (d && d.id) byId[d.id] = d; });
+  return Object.values(byId).filter(d => d && d.img);
+}
+function _diceSkinById(id) { return getAllDiceSkins().find(d => d.id === id) || null; }
+// The image actually painted on YOUR die. Equipped skin wins; otherwise null,
+// which leaves the built-in gold die exactly as it was.
+function getEquippedDiceSkinImage() {
+  try {
+    if (Profile.equippedDiceSkin) return Profile.equippedDiceSkin;
+  } catch (e) {}
+  return null;
+}
+function equipDiceSkin(id) {
+  try {
+    const d = _diceSkinById(id);
+    if (!d) return false;
+    if (!Array.isArray(Profile.ownedDiceSkins) || Profile.ownedDiceSkins.indexOf(id) < 0) return false;
+    Profile.equippedDiceSkin = d.img;
+    Profile.equippedDiceSkinId = id;
+    try { saveProfile(); } catch (e) {}
+    return true;
+  } catch (e) { return false; }
+}
+function unequipDiceSkin() {
+  try { Profile.equippedDiceSkin = null; Profile.equippedDiceSkinId = null; saveProfile(); } catch (e) {}
+}
+
 // 🧑 AVATARS — merged published + admin-local (local wins so the Forge shows
 // edits before publishing).
 function getAllAvatars() {
@@ -70200,6 +70421,8 @@ async function _applySeasonReset(sr) {
         Profile.ownedTombstones = []; Profile.equippedTombstone = null;
         Profile.ownedAvatars = [];    Profile.equippedAvatar = null;
         Profile.ownedSleeves = [];    Profile.equippedSleeve = null;
+        Profile.ownedDiceSkins = [];  Profile.equippedDiceSkin = null;
+        Profile.craftParts = 0;       // 🔩 crafting stock is owned goods too
         Profile.unlockedTraders = []; Profile.traderStock = {};
         Profile.dojoUnlocked = false; Profile.dojoStock = {};
         Profile.cardShopUnlocked = false;
@@ -102786,6 +103009,7 @@ function _renderImpl() {
   if (App.screen === 'wagerHall')    return renderWagerHall();
   if (App.screen === 'vendorMarket') return renderVendorMarket();
   if (App.screen === 'cardShop')     return renderCardShop();
+  if (App.screen === 'craftStation') return renderCraftStation();
   if (App.screen === 'packOpening')  return renderPackOpening();
   // Legacy aliases — old saved-state / deep links land on the unified Vendor Market.
   if (App.screen === 'shop')         { App.vendorMarketTab = 'packs';      return renderVendorMarket(); }
@@ -110515,11 +110739,26 @@ function _mpResolvedFirst() {
 const _DCX_PIPS = { 1:['d'], 2:['a','g'], 3:['a','d','g'], 4:['a','b','f','g'], 5:['a','b','d','f','g'], 6:['a','b','c','e','f','g'] };
 const _DCX_FACE_T = { 1:'rotateY(0deg)', 6:'rotateY(180deg)', 3:'rotateY(90deg)', 4:'rotateY(-90deg)', 2:'rotateX(90deg)', 5:'rotateX(-90deg)' };
 const _DCX_SHOW = { 1:[0,0], 6:[0,180], 3:[0,-90], 4:[0,90], 2:[-90,0], 5:[90,0] };
-function _dcxBuildDie(el) {
-  if (!el || el._dcxBuilt) return;
+function _dcxBuildDie(el, side) {
+  // 🎲 The equipped skin is baked into the faces at build time, so re-rendering
+  // mid-tumble can't strip it. `_dcxSkin` records what was baked — when the
+  // player equips a different skin the die is rebuilt instead of kept.
+  const skin = (side === 'you' && typeof getEquippedDiceSkinImage === 'function')
+    ? (getEquippedDiceSkinImage() || '') : '';
+  if (!el) return;
+  if (el._dcxBuilt && el._dcxSkin === skin) return;
   el._dcxBuilt = true;
+  el._dcxSkin = skin;
+  el.classList.toggle('has-skin', !!skin);
+  // With a skin the art IS the face; the pips ride on top over a soft scrim so
+  // they stay readable on a light image (the die still has to be readable as a
+  // die — a texture that hides the roll would be a downgrade, not a cosmetic).
+  const faceStyle = skin
+    ? ';background-image:url(' + JSON.stringify(skin).replace(/"/g, "'") + ');background-size:cover;background-position:center'
+    : '';
   el.innerHTML = Object.keys(_DCX_FACE_T).map(v =>
-    '<div class="face" style="transform:' + _DCX_FACE_T[v] + ' translateZ(59px)">'
+    '<div class="face" style="transform:' + _DCX_FACE_T[v] + ' translateZ(59px)' + faceStyle + '">'
+    + (skin ? '<span class="face-scrim"></span>' : '')
     + _DCX_PIPS[v].map(pp => '<span class="pip p-' + pp + '"></span>').join('') + '</div>').join('');
 }
 var _dcxAC = null;
@@ -110674,7 +110913,7 @@ function renderCoinFlip() {
   ['you', 'foe'].forEach((side) => {
     const el = document.getElementById('dcx-die-' + side);
     if (!el) return;
-    _dcxBuildDie(el);
+    _dcxBuildDie(el, side);
     const v = side === 'you' ? bp.diceYou : bp.diceFoe;
     if (bp.diceDone && v) {
       const r = _DCX_SHOW[v] || [0, 0];
@@ -148978,6 +149217,9 @@ try {
         case 'cs-panel-close': _csClosePanel(); break;
         case 'cs-open-pack': { const pid = t.getAttribute('data-pack'); if (pid) _csOpenOnePack(pid); break; }
         case 'cs-tab': App._csTab = t.getAttribute('data-tab'); App._csViewOwner = null; render(); break;
+        // 🔨 The Crafting Station is its own screen, not a shop tab — it comes
+        // back here on Back (App._cftReturn) so the tab strip still reads as one place.
+        case 'cs-craft': App._cftReturn = 'cardShop'; App.screen = 'craftStation'; render(); break;
         case 'cs-refresh': CardShop.browse = null; cardShopBrowse(); break;
         case 'cs-enter': { const owner = t.getAttribute('data-owner'); if (App._cs3D) { _csEnterShop3D(owner); } else { App._csViewOwner = owner; _csRender(); } break; }
         case 'cs-exit-shop': if (App._cs3D) { _csEnterShop3D(null); } else { App._csViewOwner = null; _csRender(); } break;
@@ -149000,6 +149242,175 @@ try {
   }
 } catch (e) {}
 // ── the Card Shop screen ──
+// ════════════════════════════════════════════════════════════════════════════
+// 🔨 CRAFTING STATION — its own screen, reached from the Card Shop.
+// Three benches: SALVAGE (furniture → parts), CRAFT (parts → product), and
+// LOADOUT (equip the cosmetics you made).
+// ════════════════════════════════════════════════════════════════════════════
+function _ensureCraftStyle() {
+  if (document.getElementById('craft-station-style')) return;
+  const st = document.createElement('style');
+  st.id = 'craft-station-style';
+  st.textContent = `
+  .cft{ min-height:100vh; padding:18px 16px 40px; color:#e6dccc;
+    background:radial-gradient(120% 90% at 50% 0%, #241a0d 0%, #0d0a06 62%, #060504 100%); }
+  .cft-head{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:6px; }
+  .cft-title{ font-family:'Cinzel',serif; font-size:1.35rem; letter-spacing:.12em; color:#e0b23c; }
+  .cft-sub{ font-family:'Cinzel',serif; font-size:.72rem; letter-spacing:.05em;
+    color:#9d917c; margin:2px 0 16px; line-height:1.6; max-width:70ch; }
+  .cft-parts{ margin-left:auto; display:flex; align-items:center; gap:8px;
+    font-family:'Cinzel',serif; font-size:1rem; color:#ffd166;
+    border:1px solid rgba(224,178,60,.45); border-radius:4px; padding:6px 14px;
+    background:linear-gradient(180deg,rgba(40,32,18,.9),rgba(20,16,9,.9)); }
+  .cft-tabs{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
+  .cft-tab{ font-family:'Cinzel',serif; font-size:.74rem; letter-spacing:.07em; padding:8px 16px;
+    border:1px solid rgba(224,178,60,.3); border-radius:3px; cursor:pointer; color:#bfb39c;
+    background:rgba(20,16,9,.7); transition:color .14s ease,border-color .14s ease; }
+  .cft-tab:hover{ color:#ffd166; border-color:rgba(255,209,102,.6); }
+  .cft-tab.is-active{ color:#1a1206; background:linear-gradient(180deg,#e0b23c,#b98d24); border-color:#ffd166; }
+  .cft-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
+  .cft-card{ border:1px solid rgba(224,178,60,.28); border-radius:5px; padding:14px;
+    background:linear-gradient(180deg,rgba(32,26,15,.92),rgba(16,13,8,.92)); display:flex; flex-direction:column; gap:8px; }
+  .cft-card h4{ font-family:'Cinzel',serif; font-size:.92rem; color:#e6dccc; margin:0; letter-spacing:.04em; }
+  .cft-card .cft-blurb{ font-size:.74rem; color:#9d917c; line-height:1.55; flex:1; }
+  .cft-cost{ font-family:'Cinzel',serif; font-size:.8rem; color:#ffd166; }
+  .cft-cost.short{ color:#d4674a; }
+  .cft-btn{ font-family:'Cinzel',serif; font-size:.72rem; letter-spacing:.07em; padding:8px 14px;
+    border:1px solid rgba(224,178,60,.5); border-radius:3px; cursor:pointer; color:#e6dccc;
+    background:linear-gradient(180deg,rgba(44,35,19,.95),rgba(22,18,10,.95)); transition:border-color .14s ease,color .14s ease; }
+  .cft-btn:hover:not(:disabled){ border-color:#ffd166; color:#ffd166; box-shadow:0 0 12px rgba(255,209,102,.22); }
+  .cft-btn:disabled{ opacity:.42; cursor:default; }
+  .cft-thumb{ width:100%; aspect-ratio:1/1; object-fit:cover; border-radius:4px;
+    border:1px solid rgba(224,178,60,.25); background:#0c0a06; }
+  .cft-qty{ font-family:'Cinzel',serif; font-size:.72rem; color:#9d917c; }
+  .cft-empty{ padding:34px 18px; text-align:center; color:#8d8272; font-family:'Cinzel',serif;
+    font-size:.8rem; line-height:1.8; border:1px dashed rgba(224,178,60,.25); border-radius:5px; }
+  .cft-card.is-on{ border-color:#ffd166; box-shadow:0 0 0 1px rgba(255,209,102,.5),0 0 18px rgba(255,209,102,.16); }
+  .cft-row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .cft-back{ font-family:'Cinzel',serif; font-size:.72rem; letter-spacing:.08em; padding:8px 16px;
+    border:1px solid rgba(224,178,60,.5); border-radius:999px; cursor:pointer; color:#e0b23c;
+    background:linear-gradient(180deg,rgba(40,32,18,.95),rgba(20,16,9,.95)); }
+  `;
+  document.head.appendChild(st);
+}
+
+function renderCraftStation() {
+  _ensureCraftStyle();
+  // Furniture prices/names live in the cloud catalog — kick the (cached) fetch so
+  // the salvage bench can price what the player owns. Re-render when it lands.
+  try {
+    if (typeof _csFetchFurnitureCatalog === 'function' && !_csFurnitureCatalog && !App._cftFetching) {
+      App._cftFetching = true;
+      Promise.resolve(_csFetchFurnitureCatalog()).catch(() => {}).then(() => {
+        App._cftFetching = false;
+        if (App.screen === 'craftStation') { try { render(); } catch (e) {} }
+      });
+    }
+  } catch (e) {}
+  const tab = App._cftTab || 'salvage';
+  const parts = getCraftParts();
+
+  // ── SALVAGE ───────────────────────────────────────────────────────────────
+  const owned = (typeof _csOwnedFurniture === 'function') ? _csOwnedFurniture() : {};
+  const ownedIds = Object.keys(owned).filter(id => (owned[id] | 0) > 0);
+  const salvageBody = !ownedIds.length
+    ? `<div class="cft-empty">You own no spare furniture.<br>Buy furniture in the Card Shop's Furniture Market, then bring the leftovers here.</div>`
+    : `<div class="cft-grid">${ownedIds.map(id => {
+        const it = (typeof _csCatMap === 'object' && _csCatMap && _csCatMap['fc:' + id]) || {};
+        const per = craftPartsForFurniture(it);
+        const qty = owned[id] | 0;
+        const img = it.icon || '';
+        return `<div class="cft-card">
+          ${img ? `<img class="cft-thumb" src="${escapeHtml(img)}" alt="">` : ''}
+          <h4>${escapeHtml(it.name || 'Furniture')}</h4>
+          <div class="cft-qty">You own ${qty} · worth 🔩 ${per} each</div>
+          <div class="cft-row">
+            <button class="cft-btn" data-cft-salv="${escapeHtml(id)}" data-n="1">Salvage 1</button>
+            ${qty > 1 ? `<button class="cft-btn" data-cft-salv="${escapeHtml(id)}" data-n="${qty}">Salvage all ${qty}</button>` : ''}
+          </div>
+        </div>`;
+      }).join('')}</div>`;
+
+  // ── CRAFT ─────────────────────────────────────────────────────────────────
+  const craftBody = `<div class="cft-grid">${CRAFT_RECIPES.map(r => {
+    const can = parts >= r.cost;
+    return `<div class="cft-card">
+      <h4>${r.icon} ${escapeHtml(r.name)}</h4>
+      <div class="cft-blurb">${escapeHtml(r.blurb)}</div>
+      <div class="cft-cost ${can ? '' : 'short'}">🔩 ${r.cost} parts${can ? '' : ' · you have ' + parts}</div>
+      <button class="cft-btn" data-cft-make="${r.id}" ${can ? '' : 'disabled'}>CRAFT</button>
+    </div>`;
+  }).join('')}</div>`;
+
+  // ── LOADOUT ───────────────────────────────────────────────────────────────
+  const dice = (typeof getAllDiceSkins === 'function') ? getAllDiceSkins() : [];
+  const ownedDice = Array.isArray(Profile.ownedDiceSkins) ? Profile.ownedDiceSkins : [];
+  const myDice = dice.filter(d => ownedDice.indexOf(d.id) >= 0);
+  const equippedImg = (typeof getEquippedDiceSkinImage === 'function') ? getEquippedDiceSkinImage() : null;
+  const diceBody = !myDice.length
+    ? `<div class="cft-empty">You own no dice skins yet.<br>Craft one at the bench — it replaces the default gold die on the first-move roll.</div>`
+    : `<div class="cft-grid">
+        <div class="cft-card ${!equippedImg ? 'is-on' : ''}">
+          <h4>🎲 Default Die</h4>
+          <div class="cft-blurb">The built-in gold die.</div>
+          <button class="cft-btn" data-cft-dice="" ${!equippedImg ? 'disabled' : ''}>${!equippedImg ? 'EQUIPPED' : 'EQUIP'}</button>
+        </div>
+        ${myDice.map(d => {
+          const on = equippedImg && equippedImg === d.img;
+          return `<div class="cft-card ${on ? 'is-on' : ''}">
+            <img class="cft-thumb" src="${escapeHtml(d.img)}" alt="">
+            <h4>${escapeHtml(d.name || 'Dice Skin')}</h4>
+            <button class="cft-btn" data-cft-dice="${escapeHtml(d.id)}" ${on ? 'disabled' : ''}>${on ? 'EQUIPPED' : 'EQUIP'}</button>
+          </div>`;
+        }).join('')}
+      </div>`;
+
+  const body = tab === 'craft' ? craftBody : (tab === 'dice' ? diceBody : salvageBody);
+  root.innerHTML = `
+    <div class="cft">
+      <div class="cft-head">
+        <button class="cft-back" id="cft-back">← Back</button>
+        <div class="cft-title">🔨 CRAFTING STATION</div>
+        <div class="cft-parts">🔩 ${parts.toLocaleString()} PARTS</div>
+      </div>
+      <div class="cft-sub">Break down spare furniture into parts, then forge them into booster packs, boxes and cosmetics. Parts are craft-only — they never convert back into Cinder or Aza.</div>
+      <div class="cft-tabs">
+        <div class="cft-tab ${tab === 'salvage' ? 'is-active' : ''}" data-cft-tab="salvage">🪑 Salvage</div>
+        <div class="cft-tab ${tab === 'craft' ? 'is-active' : ''}" data-cft-tab="craft">🔨 Craft</div>
+        <div class="cft-tab ${tab === 'dice' ? 'is-active' : ''}" data-cft-tab="dice">🎲 Dice Skins</div>
+      </div>
+      ${body}
+    </div>`;
+
+  const back = document.getElementById('cft-back');
+  if (back) back.onclick = () => { App.screen = App._cftReturn || 'cardShop'; render(); };
+  root.querySelectorAll('[data-cft-tab]').forEach(el => {
+    el.onclick = () => { App._cftTab = el.getAttribute('data-cft-tab'); render(); };
+  });
+  root.querySelectorAll('[data-cft-salv]').forEach(el => {
+    el.onclick = () => {
+      const gained = craftSalvageFurniture(el.getAttribute('data-cft-salv'), parseInt(el.getAttribute('data-n'), 10) || 1);
+      showToast(gained ? ('🔩 Salvaged for ' + gained + ' parts.') : '⚠ Nothing to salvage.', 3000);
+      render();
+    };
+  });
+  root.querySelectorAll('[data-cft-make]').forEach(el => {
+    el.onclick = () => {
+      const r = craftStationMake(el.getAttribute('data-cft-make'));
+      showToast((r.ok ? '✅ ' : '⚠ ') + r.msg, r.ok ? 5000 : 4200);
+      render();
+    };
+  });
+  root.querySelectorAll('[data-cft-dice]').forEach(el => {
+    el.onclick = () => {
+      const id = el.getAttribute('data-cft-dice');
+      if (!id) { unequipDiceSkin(); showToast('🎲 Back to the default die.', 2600); }
+      else if (equipDiceSkin(id)) showToast('🎲 Dice skin equipped — you will roll with it.', 3200);
+      render();
+    };
+  });
+}
+
 function renderCardShop() {
   _ensureCardShopStyle();
   const signedIn = _csReady();
@@ -149032,6 +149443,7 @@ function renderCardShop() {
   const tabbed = `<div class="cs-tabs">
         <div class="cs-tab ${tab === 'mine' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="mine">🃏 My Card Shop</div>
         <div class="cs-tab ${tab === 'browse' ? 'is-active' : ''}" data-cs="cs-tab" data-tab="browse">🏪 Player Shops</div>
+        <div class="cs-tab" data-cs="cs-craft" title="Break spare furniture into parts and craft packs, boxes and cosmetics">🔨 Crafting Station</div>
       </div>
       ${tab === 'browse' ? _csBrowseBody() : _csMyShopBody()}`;
   if (is3D) {

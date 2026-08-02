@@ -10542,6 +10542,41 @@
   .cc-aaa .cc-card-side.is-enemy { color: #f08aa6; }
   .cc-aaa .cc-arrow { color: #c29a3a; letter-spacing: 0.14em; }
 
+  /* ⚡ ENERGY SURGE between chain links — the beam that reads as the cards feeding
+     one another. A gold core line with a brighter charge travelling down it, plus a
+     soft bloom either side. Pure CSS on the existing arrow row, so it costs nothing
+     and cannot fail to load. Honours reduced-motion. */
+  .cc-aaa .cc-arrow {
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+    gap: 0.5rem;
+    padding: 0.55rem 0 0.45rem;
+    min-height: 34px;
+  }
+  .cc-aaa .cc-arrow::before,
+  .cc-aaa .cc-arrow::after {
+    content: ""; flex: 1 1 auto; height: 2px; border-radius: 2px;
+    background: linear-gradient(90deg, rgba(255,209,102,0) 0%, rgba(255,209,102,0.85) 45%, rgba(255,240,190,1) 50%, rgba(255,209,102,0.85) 55%, rgba(255,209,102,0) 100%);
+    background-size: 220% 100%;
+    box-shadow: 0 0 10px rgba(255,209,102,0.55), 0 0 22px rgba(255,209,102,0.25);
+    animation: cc-surge 1.15s linear infinite;
+  }
+  .cc-aaa .cc-arrow::after { animation-delay: 0.14s; }
+  @keyframes cc-surge {
+    from { background-position: 140% 0; }
+    to   { background-position: -40% 0; }
+  }
+  /* The link a surge is feeding INTO pulses as the charge lands. */
+  .cc-aaa .cc-card { animation: cc-link-charge 1.15s ease-in-out infinite; }
+  .cc-aaa .cc-card.is-top { animation-duration: 0.9s; }
+  @keyframes cc-link-charge {
+    0%, 100% { box-shadow: 0 0 0 rgba(255,209,102,0); }
+    55%      { box-shadow: 0 0 20px -4px rgba(255,209,102,0.55); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cc-aaa .cc-arrow::before, .cc-aaa .cc-arrow::after, .cc-aaa .cc-card { animation: none; }
+  }
+
   /* 🔔 v118g6 — STATUS NOTIFICATION (buff/debuff awareness, gold UI) */
   .status-notify {
     position: fixed; right: 18px; top: 50%; transform: translateY(-50%);
@@ -34786,7 +34821,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119u4';
+  window.BUILD_VERSION = 'v119u5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -78907,8 +78942,12 @@ function _processMilledCards(state, who, milled, src) {
   // reachable only by dying — so a "when sent to the GY, summon / search / banish"
   // card did nothing when milled, which is the whole engine of that archetype.
   // `_onGraveFired` is stamped so the graveyard sweep can never double-fire it.
-  for (const c of milled) {
-    try {
+  // ⛓ Several cards milled at once = several on-grave triggers on the SAME event, so
+  // they form ONE chain (LINK 1/2/3…) and resolve last-in-first-out instead of
+  // silently running in array order.
+  try {
+    const _chain = [];
+    for (const c of milled) {
       if (!c || c._onGraveFired) continue;
       let def = c;
       if (!def.onGrave && c.id && typeof _cardDefById === 'function') {
@@ -78916,9 +78955,19 @@ function _processMilledCards(state, who, milled, src) {
       }
       if (!def.onGrave || !def.onGrave.type) continue;
       c._onGraveFired = true;
-      if (typeof _fireOnGrave === 'function') { const ns = _fireOnGrave(s, def, who, null); if (ns) s = ns; }
-    } catch (e) { try { console.warn('[milled onGrave]', e); } catch (_) {} }
-  }
+      const _def = def;
+      _chain.push({
+        cardName: _def.name || c.name || 'Card', cardId: _def.id || c.id, icon: _def.icon || c.icon,
+        owner: who, against: 'being sent to the graveyard', effectLabel: _def.onGrave.type,
+        fire: (st) => (typeof _fireOnGrave === 'function') ? _fireOnGrave(st, _def, who, null) : st,
+      });
+    }
+    if (_chain.length) {
+      s = (typeof _fireTriggerChain === 'function')
+        ? _fireTriggerChain(s, _chain, { event: 'being sent to the graveyard' })
+        : _chain.reduce((acc, l) => l.fire(acc) || acc, s);
+    }
+  } catch (e) { try { console.warn('[milled onGrave]', e); } catch (_) {} }
   for (const c of milled) {
     const om = c && c.onMilled;
     if (!om || !om.type) continue;
@@ -125792,6 +125841,50 @@ function _ccLinkArt(card) {
   } catch (e) {}
   return null;
 }
+// ⛓ TRIGGER CHAIN — when SEVERAL effects trigger off the SAME event (three milled
+// cards each with an on-grave, a mech's Eject plus a ranger's grave effect, …) they
+// used to just run in code order, invisibly. Now they are collected into ONE chain,
+// shown in the chain modal as LINK 1 / LINK 2 / LINK 3, and resolved
+// LAST-IN-FIRST-OUT like a real card game: the effect that joined the chain last
+// resolves first.
+//
+//   links = [{ cardName, cardId, icon, owner, against, effectLabel, fire(state)->state }]
+//
+// Each link's `fire` is called with the running state and returns the new one; a link
+// that throws is skipped so one bad effect can never strand the rest of the chain.
+function _fireTriggerChain(state, links, opts) {
+  try {
+    const L = (links || []).filter(l => l && typeof l.fire === 'function');
+    if (!L.length) return state;
+    // A single trigger is not a chain — resolve it silently, no modal.
+    if (L.length === 1) { try { const ns = L[0].fire(state); return ns || state; } catch (e) { return state; } }
+    let s = state;
+    try {
+      s = { ...s, _counterChain: L.map((l, i) => ({
+        card: { name: l.cardName || 'Trigger', icon: l.icon || '⚡', cardId: l.cardId },
+        owner: l.owner || 'player',
+        againstName: l.against || ((opts && opts.event) || 'the same moment'),
+        effect: l.effectLabel || 'trigger',
+        depth: i, isTrigger: true,
+      })) };
+      App.state = s;
+      if (typeof _renderCounterChainOverlay === 'function') _renderCounterChainOverlay(s);
+    } catch (e) {}
+    // ⏬ LAST IN, FIRST OUT.
+    for (let i = L.length - 1; i >= 0; i--) {
+      try { const ns = L[i].fire(s); if (ns) s = ns; }
+      catch (e) { try { console.warn('[triggerChain] link threw', e); } catch (_) {} }
+    }
+    try {
+      s.log = [...(s.log || []), { msg: `⛓ Chain of ${L.length} resolves — last in, first out.`, color: 'amber' }];
+      // The overlay owns its own dwell timer (it stays readable ~3.6s), so clearing
+      // the chain state here does not yank the modal off screen.
+      s._counterChain = [];
+    } catch (e) {}
+    return s;
+  } catch (e) { return state; }
+}
+try { window.__mg = window.__mg || {}; window.__mg.triggerChain = _fireTriggerChain; } catch (e) {}
 function _renderCounterChainOverlay(state) {
   try {
     const chain = (state && state._counterChain) || [];
@@ -125822,10 +125915,12 @@ function _renderCounterChainOverlay(state) {
       const ownerLabel = link.owner === 'ai' ? 'ENEMY' : 'YOU';
       const art    = _ccLinkArt(link.card);
       const face   = art ? `<img class="cc-card-art" src="${escapeHtml(art)}" alt="">` : `<div class="cc-card-icon">${icon}</div>`;
-      const arrow = (i > 0) ? `<div class="cc-arrow">⛓ COUNTERS ⛓</div>` : '';
+      // A TRIGGER chain is cards feeding one another off one event; a COUNTER chain
+      // is each card answering the one below it. Same modal, honest wording.
+      const arrow = (i > 0) ? `<div class="cc-arrow">${link.isTrigger ? '⚡ AND ⚡' : '⛓ COUNTERS ⛓'}</div>` : '';
       return arrow + `
         <div class="cc-card ${broken ? 'is-broken' : ''} ${isTop ? 'is-top' : ''}" style="--cc-accent:${color}">
-          <div class="cc-link-num">CHAIN ${i + 1}</div>
+          <div class="cc-link-num">LINK ${i + 1}</div>
           <div class="cc-card-side ${link.owner === 'ai' ? 'is-enemy' : 'is-you'}">${ownerLabel}</div>
           ${face}
           <div class="cc-card-body">

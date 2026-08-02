@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119s9';
+  window.BUILD_VERSION = 'v119t1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -44252,6 +44252,9 @@ async function cloudSyncProfile() {
       // grants. Keyed by houseId. Owner-only (gated client + portal step).
       __homeZones__:         (Profile.homeZones && typeof Profile.homeZones === 'object') ? Profile.homeZones : {},
       __rlcCompleted__:     Array.isArray(Profile.rlcCompleted) ? Profile.rlcCompleted : [],
+      // 🚚 Convoy trucks — owned rigs + today's spend. Without this the player's
+      // purchased truck (real Aza) would not exist on their next device.
+      __convoy__:           (Profile.convoy && typeof Profile.convoy === 'object') ? Profile.convoy : {},
       __rlcRun__:           (Profile.rlcRun           && typeof Profile.rlcRun           === 'object') ? Profile.rlcRun           : null,
       __dialogueFlags__:    (Profile.dialogueFlags    && typeof Profile.dialogueFlags    === 'object') ? Profile.dialogueFlags    : {},
       __dailyChallenges__:  (Profile.dailyChallenges  && typeof Profile.dailyChallenges  === 'object') ? Profile.dailyChallenges  : {},
@@ -45407,6 +45410,29 @@ async function cloudFetchProfile() {
         Profile.rlcCompleted = Object.keys(set);
       }
       if (f.__rlcRun__ && typeof f.__rlcRun__ === 'object' && !Profile.rlcRun) Profile.rlcRun = f.__rlcRun__;
+      // 🚚 Convoy — merge policy is deliberate, and both halves matter:
+      //   owned  = UNION. A truck is bought with Aza (real money); a stale cloud
+      //            copy must never be able to take one away.
+      //   usedToday = MAX for the SAME day. Taking the lower number would let a
+      //            player dodge the daily cap just by switching devices, which
+      //            is the exact farming this feature exists to stop. A different
+      //            dayKey means the day rolled over, so the local zero wins.
+      if (f.__convoy__ && typeof f.__convoy__ === 'object') {
+        const cl = f.__convoy__;
+        const lo = (Profile.convoy && typeof Profile.convoy === 'object') ? Profile.convoy : {};
+        const owned = {};
+        [].concat(Array.isArray(lo.owned) ? lo.owned : [], Array.isArray(cl.owned) ? cl.owned : [])
+          .forEach(id => { if (typeof id === 'string' && id) owned[id] = 1; });
+        owned.hauler = 1;                                  // the free rig is always owned
+        const sameDay = lo.dayKey && cl.dayKey && lo.dayKey === cl.dayKey;
+        Profile.convoy = {
+          owned: Object.keys(owned),
+          truckId: cl.truckId || lo.truckId || 'hauler',
+          dayKey: lo.dayKey || cl.dayKey || '',
+          usedToday: sameDay ? Math.max(lo.usedToday | 0, cl.usedToday | 0)
+                             : (lo.dayKey ? (lo.usedToday | 0) : (cl.usedToday | 0)),
+        };
+      }
       if (f.__dialogueFlags__ && typeof f.__dialogueFlags__ === 'object') Profile.dialogueFlags = Object.assign({}, Profile.dialogueFlags || {}, f.__dialogueFlags__);
       if (f.__dailyChallenges__ && typeof f.__dailyChallenges__ === 'object') Profile.dailyChallenges = f.__dailyChallenges__;
       if (f.__usage__ && typeof f.__usage__ === 'object') Profile.usage = Object.assign({}, Profile.usage || {}, f.__usage__);
@@ -47079,6 +47105,16 @@ function _applyCatalogRow(data) {
       if (!_admHta || !Forge.hubTileArt || !Object.keys(Forge.hubTileArt).length) Forge.hubTileArt = _hta;
     }
   } catch (e) {}
+  // 🚚 Convoy rig art — admin-set photo URL per truck id. Same admin-wins /
+  // player-published-wins shape as the hub tiles above.
+  try {
+    const _cta = (rawMoves.__convoy_truck_art__ && typeof rawMoves.__convoy_truck_art__ === 'object') ? rawMoves.__convoy_truck_art__ : null;
+    if (_cta) {
+      Catalog.convoyTruckArt = _cta;
+      const _admCta = (typeof isAdmin === 'function') && isAdmin();
+      if (!_admCta || !Forge.convoyTruckArt || !Object.keys(Forge.convoyTruckArt).length) Forge.convoyTruckArt = _cta;
+    }
+  } catch (e) {}
   Catalog.rlcRelics = Array.isArray(rawMoves.__rlc_relics__) ? rawMoves.__rlc_relics__ : [];
   Catalog.blackMarketPrices = (rawMoves.__black_market_prices__ && typeof rawMoves.__black_market_prices__ === 'object') ? rawMoves.__black_market_prices__ : {};
   Catalog.brpRunHeroes = (rawMoves.__brp_run_heroes__ && typeof rawMoves.__brp_run_heroes__ === 'object') ? rawMoves.__brp_run_heroes__ : {};
@@ -47624,6 +47660,8 @@ async function cloudPublishCatalog(opts) {
       __social_links__: (Forge.socialLinks && typeof Forge.socialLinks === 'object') ? Forge.socialLinks : {},
       // 🖼 Menu-button photos — one image URL per hub tile id.
       __hub_tile_art__: (Forge.hubTileArt && typeof Forge.hubTileArt === 'object') ? Forge.hubTileArt : {},
+      // 🚚 Convoy rig photos — one image URL per truck id.
+      __convoy_truck_art__: (Forge.convoyTruckArt && typeof Forge.convoyTruckArt === 'object') ? Forge.convoyTruckArt : {},
       // ✦ Abraxas tutorials — Forge-authored lessons for every player.
       // ⚠ The row's stripBig() BLANKS any data: URL over 6KB, so uploaded step
       // images/voice-overs MUST already be cloud URLs by now. They are:
@@ -53245,7 +53283,12 @@ async function frRunConvoy() {
 // every taxed sale is logged to reserve_tax_log for the dashboard. Corp-
 // ready: pass { corpId, market:'corp' } when the Corporation feature lands.
 // ============================================================================
-const FR_TAX_RATE = 0.02;   // 2% Foundation Tax (restored — the 3% change was not reviewed)
+const FR_TAX_RATE = 0;   // Foundation Tax REMOVED (0%) — player decision, 2026-08-01.
+// Set to 0 rather than ripping the tax layer out, because 0 is a clean no-op:
+// frTaxQuote returns tax:0/net:gross, and every consumer (_frTaxCinderSpend,
+// the spend watcher, the ledger) already early-returns on `tax <= 0`, so
+// nothing is logged to reserve_tax_log and no ledger rows are written. Putting
+// a rate back here is the ONLY change needed to re-enable it.
 // spending, marketplace sales and trades. This is the ONE rate: fr_tax() and
 // every fallback below read it, and each charge is written to reserve_tax_log
 // with the rate it was taken at, so historical rows stay accurate after a change.
@@ -55591,19 +55634,24 @@ async function boeLinkWallet() {
     let _mtDiscOk = false;
     try { _mtDiscOk = !!localStorage.getItem('ms_mt_disclaimer_v1'); } catch (e) {}
     if (!_mtDiscOk) { boeShowMtDisclaimer(); return false; }
-    if (!window.ethereum) { showToast('🦊 MetaMask not detected. Install the extension — or link on mythicspellbook.xyz → Backing → Stake MT.', 7000); return false; }
-    const accts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    // 🦊 MetaMask injects window.ethereum ASYNCHRONOUSLY, and this page is
+    // heavy enough that a click can land before injection finishes. Checking
+    // once told players with MetaMask installed that they had no wallet, and
+    // sent them to the download page. Wait briefly for the provider first.
+    const eth = await _waitForEthereum(2500);
+    if (!eth) { showToast('🦊 MetaMask not detected. Install the extension — or link on mythicspellbook.xyz → Broadcast → Stake MT.', 7000); return false; }
+    const accts = await eth.request({ method: 'eth_requestAccounts' });
     const addr = accts && accts[0];
     if (!addr) return false;
     // Nudge the wallet onto Base mainnet (linking still succeeds either way —
     // the chain matters when they transact, not when they bind the address).
     try {
-      const chain = await window.ethereum.request({ method: 'eth_chainId' });
+      const chain = await eth.request({ method: 'eth_chainId' });
       if (chain !== '0x2105') {
-        try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] }); }
+        try { await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] }); }
         catch (sw) {
           if (sw && sw.code === 4902) {
-            try { await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x2105', chainName: 'Base', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: ['https://mainnet.base.org'], blockExplorerUrls: ['https://basescan.org'] }] }); } catch (e2) {}
+            try { await eth.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x2105', chainName: 'Base', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: ['https://mainnet.base.org'], blockExplorerUrls: ['https://basescan.org'] }] }); } catch (e2) {}
           }
         }
       }
@@ -55981,6 +56029,27 @@ function openShareToBroadcast(summary) {
       btn.disabled = false; btn.textContent = '📡 Broadcast it';
     }
   };
+}
+/* 🦊 Resolve the injected wallet provider, tolerating slow injection.
+ * MetaMask (and most wallets) set window.ethereum asynchronously and fire
+ * 'ethereum#initialized' when ready. A one-shot `if (!window.ethereum)` check
+ * therefore reports "not installed" on a cold load and sends real users to the
+ * download page. Resolves the provider, or null after the timeout. */
+function _waitForEthereum(timeoutMs) {
+  return new Promise((resolve) => {
+    try {
+      if (typeof window === 'undefined') { resolve(null); return; }
+      if (window.ethereum) { resolve(window.ethereum); return; }
+      let done = false;
+      const finish = (v) => { if (done) return; done = true; clearInterval(iv); clearTimeout(to);
+        try { window.removeEventListener('ethereum#initialized', onInit); } catch (e) {}
+        resolve(v); };
+      const onInit = () => { if (window.ethereum) finish(window.ethereum); };
+      window.addEventListener('ethereum#initialized', onInit);
+      const iv = setInterval(() => { if (window.ethereum) finish(window.ethereum); }, 120);
+      const to = setTimeout(() => finish(window.ethereum || null), Math.max(500, timeoutMs || 2500));
+    } catch (e) { resolve(null); }
+  });
 }
 function openBankOfEthos() {
   try {
@@ -57538,7 +57607,14 @@ function openFoundationReserve() {
            numF(typeof _gemsWatchLast === 'number' ? (_gemsWatchLast | 0) : 0) + ' 🔥 balance · your ledger ' +
            numF((Profile.frTaxLedger && Profile.frTaxLedger.total) | 0) + ' 🔥</div>')
         : '';
-      return '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">Every resource &amp; goods sale pays a flat <strong>2% Foundation Tax</strong> (Black Market: <strong>Seizure Fee</strong>). It is a permanent Cinder sink — removed from circulation, never paid back. Corporation sales feed in here too once Corporations launch.</div>' +
+      // Blurb is RATE-DRIVEN off FR_TAX_RATE so it can never advertise a tax
+      // that isn't actually being charged. At 0% it reads as abolished and the
+      // figures below are explicitly labelled historical.
+      const _taxRatePct = (typeof FR_TAX_RATE === 'number' ? FR_TAX_RATE : 0) * 100;
+      const _taxBlurb = (_taxRatePct > 0)
+        ? ('Every resource &amp; goods sale pays a flat <strong>' + (Math.round(_taxRatePct * 100) / 100) + '% Foundation Tax</strong> (Black Market: <strong>Seizure Fee</strong>). It is a permanent Cinder sink — removed from circulation, never paid back. Corporation sales feed in here too once Corporations launch.')
+        : ('The <strong>Foundation Tax has been abolished</strong> — sales and Cinder spending are no longer taxed, and nothing new is being collected. The figures below are the <strong>historical record</strong> of tax taken while it was in force.');
+      return '<div class="small-text" style="color:#9fc0ec;margin-bottom:8px">' + _taxBlurb + '</div>' +
         _trk +
         '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' + card('Total collected', s.total, '#7fe0a0') + card('Today', s.day) + card('7 days', s.week) + card('30 days', s.month) + '</div>' +
         '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">' + card('🖤 Black Market seizures', s.black, '#e0a0ff') + card('🏢 Corporation tax', s.corp, '#9fe0b0') + '</div>' +
@@ -61032,6 +61108,15 @@ function campStartActivity(slotId, activity, tierKey) {
     const isPlus = (tierKey === 'deepRunPlus');
     const realTier = isPlus ? 'deepRun' : (tierKey || 'scout');
     const tier = CAMP_LOOT_TIERS[realTier] || CAMP_LOOT_TIERS.scout;
+    // 🚚 CONVOY GATE — the daily anti-farm cap. Checked BEFORE the fuel gate on
+    // purpose: the fuel gate SPENDS fuel, so refusing after it would eat the
+    // player's fuel for a run that never launched. One slot = one operative, so
+    // this run costs exactly 1 of the allowance. Spent only after the run
+    // actually commits (below). Enforced only when the convoy layer is present.
+    if (typeof _convoyCanSend === 'function') {
+      const _cv = _convoyCanSend(1);
+      if (!_cv.ok) { showToast(_cv.why, 4600); return false; }
+    }
     // ⛽ Fuel gate — burn fuel to launch the expedition (scout is free).
     const fuelCost = isPlus ? DEEP_PLUS_FUEL : (CAMP_RUN_FUEL[realTier] || 0);
     if (fuelCost > 0) {
@@ -61042,7 +61127,14 @@ function campStartActivity(slotId, activity, tierKey) {
     slot.activity = 'loot'; slot.tier = realTier;
     slot.fuelTier = isPlus ? 'plus' : (fuelCost > 0 ? 'std' : null);
     slot.activityStart = Date.now(); slot.activityDur = tier.durMs;
-    showToast(`${tier.emoji} Deployed on a ${tier.label}${isPlus ? '+ (long-haul)' : ''}${fuelCost ? ` — burned ${fuelCost} ⛽ Fuel` : ''}. Extraction in ${Math.round(tier.durMs / 3600000)}h.`, 3800);
+    // 🚚 Run is committed — NOW spend the convoy allowance (never before the
+    // fuel gate above, which can still refuse). Reports what's left so the cap
+    // is visible in play rather than only when it bites.
+    let _cvLeft = null;
+    if (typeof _convoySpend === 'function') { try { _cvLeft = _convoySpend(1); } catch (e) {} }
+    const _cvNote = (_cvLeft === null) ? ''
+      : ` · 🚚 ${_cvLeft} convoy slot${_cvLeft === 1 ? '' : 's'} left today`;
+    showToast(`${tier.emoji} Deployed on a ${tier.label}${isPlus ? '+ (long-haul)' : ''}${fuelCost ? ` — burned ${fuelCost} ⛽ Fuel` : ''}. Extraction in ${Math.round(tier.durMs / 3600000)}h.${_cvNote}`, 3800);
   } else if (activity === 'study') {
     slot.activity = 'study'; slot.tier = null;
     slot.activityStart = Date.now(); slot.activityDur = CAMP_STUDY_DUR_MS;
@@ -61453,6 +61545,116 @@ const CAMP_FACILITIES = [
     bonus: lv => ({ power: 4 * lv }) },
 ];
 function _campFac(id) { return CAMP_FACILITIES.find(f => f.id === id) || null; }
+
+// ============================================================================
+// 🚚 CONVOY TRUCKS — the daily anti-farming cap.
+// ----------------------------------------------------------------------------
+// A truck caps how many UNITS you may send out on missions per day. The
+// allowance is spent PER UNIT, not per mission: a 3-unit squad costs 3. Every
+// player owns the free Scrap Hauler; bigger rigs are bought in the Vendor
+// Market with Aza on the existing spendSovereigns() path (same as packs).
+// Gates: scout / raid / deepRun loot runs AND Resistance Ring Covert Actions.
+//
+// ⚠ Persistence: Profile.convoy does NOT cloud-sync on its own — wire
+//    __convoy__ into BOTH the upload payload and the hydration whitelist,
+//    or a player's truck vanishes on their next device.
+// ⚠ Art is admin-swappable per tier via Forge.convoyTruckArt[truckId].
+// ============================================================================
+const CONVOY_TRUCKS = [
+  { id: 'hauler',    name: 'Scrap Hauler',     perDay: 3,  aza: 0,  emoji: '🛻',
+    desc: 'The rig every survivor is issued. Three sets of boots out the gate each day.' },
+  { id: 'ironback',  name: 'Ironback Runner',  perDay: 6,  aza: 20, emoji: '🚚',
+    desc: 'Plated flatbed. Doubles what you can put on the road.' },
+  { id: 'ashrig',    name: 'Ash Convoy Rig',   perDay: 10, aza: 60, emoji: '🚛',
+    desc: 'A proper convoy tractor — ten operatives moving before dusk.' },
+  { id: 'warden',    name: 'Warden Longhaul',  perDay: 15, aza: 99, emoji: '🚛',
+    desc: 'The long-haul war wagon. Fifteen deployments a day, every day.' },
+];
+function _convoyTruck(id) { return CONVOY_TRUCKS.find(t => t.id === id) || CONVOY_TRUCKS[0]; }
+// Admin art override, else the bundled default.
+function _convoyArt(id) {
+  try {
+    const a = (typeof Forge !== 'undefined' && Forge.convoyTruckArt) ? Forge.convoyTruckArt[id] : null;
+    if (a) return a;
+    const c = (typeof Catalog !== 'undefined' && Catalog.convoyTruckArt) ? Catalog.convoyTruckArt[id] : null;
+    return c || '';
+  } catch (e) { return ''; }
+}
+// Live state, self-healing + auto-resetting on a new day.
+function _convoyState() {
+  if (!Profile.convoy || typeof Profile.convoy !== 'object') Profile.convoy = {};
+  const c = Profile.convoy;
+  if (!c.truckId || !CONVOY_TRUCKS.some(t => t.id === c.truckId)) c.truckId = 'hauler';
+  if (!Array.isArray(c.owned) || !c.owned.length) c.owned = ['hauler'];
+  if (c.owned.indexOf('hauler') < 0) c.owned.push('hauler');
+  const today = (typeof getTodayKey === 'function') ? getTodayKey() : '';
+  if (c.dayKey !== today) { c.dayKey = today; c.usedToday = 0; }
+  if (!(c.usedToday >= 0)) c.usedToday = 0;
+  return c;
+}
+// Best truck the player owns decides the cap (buying an upgrade applies at once).
+function _convoyCapacity() {
+  const c = _convoyState();
+  let best = 0;
+  c.owned.forEach(id => { const t = _convoyTruck(id); if (t.perDay > best) best = t.perDay; });
+  return best || CONVOY_TRUCKS[0].perDay;
+}
+function _convoyRemaining() { return Math.max(0, _convoyCapacity() - (_convoyState().usedToday | 0)); }
+// Can `n` units go out right now? Never throws; fails CLOSED only on real shortage.
+function _convoyCanSend(n) {
+  const need = Math.max(1, n | 0), left = _convoyRemaining();
+  if (left >= need) return { ok: true, left: left };
+  return { ok: false, left: left, need: need,
+    why: left === 0
+      ? `🚚 Your convoy is out for the day — ${_convoyTruck(_convoyState().truckId).name} carries ${_convoyCapacity()} operative${_convoyCapacity() === 1 ? '' : 's'} per day. A bigger rig is available in the Vendor Market.`
+      : `🚚 Only ${left} convoy slot${left === 1 ? '' : 's'} left today — that run needs ${need}.` };
+}
+// Spend the allowance. ONLY call after the mission is committed, never before a
+// gate that might still refuse, or a rejected run would eat the player's day.
+function _convoySpend(n) {
+  const c = _convoyState(), need = Math.max(1, n | 0);
+  c.usedToday = (c.usedToday | 0) + need;
+  try { saveProfile(); } catch (e) {}
+  return _convoyRemaining();
+}
+// Grant a purchased truck (called from the Vendor Market buy handler).
+function _convoyGrant(id) {
+  const t = _convoyTruck(id), c = _convoyState();
+  if (c.owned.indexOf(t.id) < 0) c.owned.push(t.id);
+  if (_convoyTruck(c.truckId).perDay < t.perDay) c.truckId = t.id;
+  try { saveProfile(); } catch (e) {}
+  return t;
+}
+// 🚚 Camp status panel — the truck's picture + how many sends are left today,
+// so the cap is visible BEFORE a player picks a mission and gets refused. Also
+// the upgrade entry point (jumps straight to the Vendor Market convoy tab).
+function _convoyPanelHtml() {
+  try {
+    if (typeof CONVOY_TRUCKS === 'undefined') return '';
+    const st   = _convoyState();
+    const cap  = _convoyCapacity();
+    const left = _convoyRemaining();
+    // The rig actually setting the cap (best owned), not just the flagged one.
+    const best = CONVOY_TRUCKS.reduce((b, t) => ((st.owned || []).indexOf(t.id) >= 0 && (!b || t.perDay > b.perDay)) ? t : b, null)
+              || CONVOY_TRUCKS[0];
+    const art  = _convoyArt(best.id);
+    const col  = left === 0 ? '#ff7a6b' : (left <= Math.max(1, Math.floor(cap * 0.34)) ? '#ffd166' : '#7fe0a0');
+    const pic  = art
+      ? `<img src="${escapeHtml(art)}" alt="${escapeHtml(best.name)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid rgba(212,175,55,0.45);flex:none">`
+      : `<span style="font-size:2.4rem;line-height:1;flex:none">${best.emoji || '🚚'}</span>`;
+    const canUpgrade = CONVOY_TRUCKS.some(t => t.perDay > cap);
+    return `
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:linear-gradient(180deg,rgba(202,162,62,0.12),rgba(20,12,40,0.5));border:1px solid rgba(212,175,55,0.4);border-radius:10px;padding:0.7rem 0.95rem;margin-bottom:1rem">
+        ${pic}
+        <div style="min-width:0;flex:1">
+          <div style="font-family:'Cinzel',serif;font-weight:800;color:#ffd166">🚚 ${escapeHtml(best.name)}</div>
+          <div class="small-text" style="color:${col};font-weight:700">${left} of ${cap} convoy slot${cap === 1 ? '' : 's'} left today</div>
+          <div class="small-text ink-dim">One slot per operative sent on a loot run or Covert Action. Resets daily.</div>
+        </div>
+        ${canUpgrade ? `<button class="btn-mini" title="Buy a bigger rig with Aza coin" onclick="try{App.screen='vendorMarket';App.vendorMarketTab='convoy';render();}catch(e){}">⬆ Bigger rig</button>` : ''}
+      </div>`;
+  } catch (e) { return ''; }
+}
 function _campFacState(id) {
   const st = (Camp.facilities && Camp.facilities[id]) || null;
   if (!st) return { built: false, level: 0, state: 'empty' };
@@ -62733,7 +62935,7 @@ async function loadHeavyForgeFromIdb() {
       try { console.info('🆘 Placeholder mode — custom art not loaded (' + (haveSpr ? sIdx.length : 0) + ' sprites / ' + (haveCar ? cIdx.length : 0) + ' on disk). Remove localStorage.hg_artstream to re-enable streaming.'); } catch (e) {}
     }
   }
-  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'customSfx', 'customMusic', 'weatherVfx', 'weatherVfxIntensity', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt', 'chestArt', 'charBoxArt', 'hubTileArt'];
+  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'customSfx', 'customMusic', 'weatherVfx', 'weatherVfxIntensity', 'campArt', 'campAudio', 'packArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt', 'chestArt', 'charBoxArt', 'hubTileArt', 'convoyTruckArt'];
   let changed = false;
   for (const k of keys) {
     // The two giant stores are the proven OOM culprit (~15k frames). When the
@@ -63712,6 +63914,7 @@ function saveForge() {
       // upload away ("the portrait is not saving").
       idbSet('forge_charBoxArt',   Forge.charBoxArt   || {});
       idbSet('forge_hubTileArt',   Forge.hubTileArt   || {});
+      idbSet('forge_convoyTruckArt', Forge.convoyTruckArt || {});   // 🚚 convoy rig photos
       idbSet('forge_weatherAudio', Forge.weatherAudio || {});
       idbSet('forge_customSfx',    Forge.customSfx    || {});
       idbSet('forge_customMusic',  Forge.customMusic  || {});
@@ -144909,6 +145112,7 @@ function renderCamp() {
         </div>
       </div>
       ${(typeof _campNodeBannerHtml === 'function') ? _campNodeBannerHtml() : ''}
+      ${(typeof _convoyPanelHtml === 'function') ? _convoyPanelHtml() : ''}
       <div class="placement-hint" style="margin-bottom:1rem">
         Park unused units to gain <strong>${CAMP_XP_PER_HOUR} XP/hour</strong> (capped at ${CAMP_XP_CAP} XP per slot).
         Parking costs <strong><span class="cinder-icon"></span> ${CAMP_PARK_COST}</strong> per unit · heroes stay with you.
@@ -149490,9 +149694,138 @@ function _csBinderBody() {
     <div class="cs-section">In your binder · for sale (${singles.length})</div>
     ${shelves ? `<div class="cs-grid">${shelves}</div>` : `<div class="cs-empty">Your binder is empty. Pick a card above and set a Cinder price.</div>`}`;
 }
+// ----- 🚚 Convoy Rigs shop body — a bigger truck raises the DAILY cap on how
+// many operatives you can send on loot runs + Covert Actions. Aza-only (it's a
+// premium convenience upgrade), bought on the SAME spendSovereigns() rail as
+// packs — no new payment path. The free Scrap Hauler is listed too so the
+// ladder reads complete and players can see what they already have.
+function _buildConvoyShopBody(sovBal) {
+  if (typeof CONVOY_TRUCKS === 'undefined' || !Array.isArray(CONVOY_TRUCKS)) {
+    return `<div class="ink-dim" style="padding:1.4rem;text-align:center">Convoy rigs are unavailable right now.</div>`;
+  }
+  const st    = (typeof _convoyState === 'function') ? _convoyState() : { owned: ['hauler'] };
+  const owned = Array.isArray(st.owned) ? st.owned : ['hauler'];
+  const cap   = (typeof _convoyCapacity === 'function') ? _convoyCapacity() : 3;
+  const left  = (typeof _convoyRemaining === 'function') ? _convoyRemaining() : cap;
+  // Which owned rig is actually setting the cap right now.
+  const bestOwned = CONVOY_TRUCKS.reduce((b, t) => (owned.indexOf(t.id) >= 0 && (!b || t.perDay > b.perDay)) ? t : b, null);
+
+  const cards = CONVOY_TRUCKS.map(t => {
+    const isOwned  = owned.indexOf(t.id) >= 0;
+    const isActive = !!(bestOwned && bestOwned.id === t.id);
+    const price    = Math.max(0, t.aza | 0);
+    const canAfford = sovBal >= price;
+    // An upgrade only helps if it beats what you already run.
+    const isUpgrade = t.perDay > cap;
+    const artSrc = (typeof _convoyArt === 'function') ? _convoyArt(t.id) : '';
+    const art = artSrc
+      ? `<div style="height:170px;overflow:hidden;background:#05030e;border-bottom:1px solid rgba(212,175,55,0.2);position:relative"><img src="${escapeHtml(artSrc)}" alt="${escapeHtml(t.name || '')}" style="width:100%;height:100%;object-fit:cover;object-position:center center;display:block"><div style="position:absolute;inset:0;background:linear-gradient(180deg,transparent 55%,rgba(5,3,14,0.85) 100%);pointer-events:none"></div></div>`
+      : `<div style="height:170px;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,rgba(212,175,55,0.18),transparent 70%);font-size:3.4rem">${t.emoji || '🚚'}</div>`;
+    const btn = isOwned
+      ? `<button class="btn-secondary" disabled style="margin-top:auto">✓ Owned${isActive ? ' · In service' : ''}</button>`
+      : (price <= 0
+          ? `<button class="btn-secondary" disabled style="margin-top:auto">Issued free</button>`
+          : `<button class="btn-primary ${canAfford ? '' : 'btn-disabled'}" data-buy-convoy="${escapeHtml(String(t.id))}" ${canAfford ? '' : 'disabled'} style="margin-top:auto">${canAfford ? `Buy — ${price} <span class="aza-icon"></span>` : `Need ${price - sovBal} more <span class="aza-icon"></span>`}</button>`);
+    return `
+      <div style="width:260px;background:rgba(20,12,40,0.7);border:1px solid ${isActive ? 'rgba(127,224,160,0.6)' : 'rgba(212,175,55,0.4)'};border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
+        ${art}
+        <div style="padding:14px;display:flex;flex-direction:column;gap:8px;flex:1">
+          <div style="font-family:'Cinzel',serif;font-size:1.1rem;font-weight:700;color:#f6d97a">${escapeHtml(t.name || 'Convoy Rig')}</div>
+          <div style="font-weight:800;color:${isActive ? '#7fe0a0' : '#cfe5ff'}">🚚 ${t.perDay} operative${t.perDay === 1 ? '' : 's'} / day</div>
+          <div class="small-text ink-dim">${escapeHtml(t.desc || '')}</div>
+          ${(!isOwned && !isUpgrade && price > 0) ? `<div class="small-text" style="color:#ffb070">Not an upgrade — your current rig already carries ${cap}/day.</div>` : ''}
+          ${btn}
+        </div>
+      </div>`;
+  }).join('');
+
+  // 🛠 ADMIN — per-truck art editor. URL-based, matching the Menu Button Art
+  // manager convention. Saves to Forge.convoyTruckArt + Catalog, then publishes
+  // so players receive the images with the catalog.
+  const adminBlock = ((typeof isAdmin === 'function') && isAdmin()) ? `
+    <div style="background:rgba(127,214,255,0.06);border:1px solid rgba(127,214,255,0.25);border-radius:8px;padding:0.7rem 0.9rem;margin-bottom:1rem">
+      <div style="color:#7fd6ff;font-family:'Cinzel',serif;font-size:0.78rem;letter-spacing:0.1em;margin-bottom:0.3rem">🛠 ADMIN — CONVOY RIG ART</div>
+      <div class="small-text ink-dim" style="margin-bottom:0.5rem">Give each rig a photo. Paste an image URL (or a path inside <b>assets/</b>). Blank falls back to the emoji. Saving publishes to every player with the catalog.</div>
+      ${CONVOY_TRUCKS.map(t => `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+          <span style="width:150px;flex:none;color:#cfe5ff;font-size:0.85rem">${t.emoji || '🚚'} ${escapeHtml(t.name)}</span>
+          <input type="text" class="cva-i" data-cva-id="${escapeHtml(String(t.id))}" placeholder="https://… or assets/artwork/…" value="${escapeHtml((typeof _convoyArt === 'function' ? _convoyArt(t.id) : '') || '')}" style="flex:1;min-width:0;padding:4px 8px;border-radius:5px;border:1px solid rgba(212,175,55,0.35);background:rgba(10,6,20,0.7);color:#e8ddff;font-size:0.82rem">
+        </div>`).join('')}
+      <button class="btn-mini" id="btn-cva-save" style="margin-top:6px">💾 Save &amp; Publish</button>
+      <span class="small-text" id="cva-st" style="margin-left:8px;color:#9be0c4"></span>
+    </div>` : '';
+
+  return `
+    ${adminBlock}
+    <div class="small-text ink-dim" style="margin-bottom:0.5rem">Your convoy caps how many <strong>operatives</strong> you can send out each day — on Camp loot runs (Scout / Raid / Deep Sector) and Resistance Ring Covert Actions. The allowance is spent <strong>per unit</strong>, so a 3-unit Covert Action costs 3. It resets every day.</div>
+    <div style="display:inline-flex;align-items:center;gap:10px;margin-bottom:1rem;padding:8px 14px;border:1px solid rgba(212,175,55,0.45);border-radius:10px;background:rgba(202,162,62,0.12)">
+      <span style="font-size:1.4rem">${escapeHtml((bestOwned && bestOwned.emoji) || '🛻')}</span>
+      <span>Currently running <strong style="color:#f6d97a">${escapeHtml((bestOwned && bestOwned.name) || 'Scrap Hauler')}</strong> — <strong style="color:${left > 0 ? '#7fe0a0' : '#ff7a6b'}">${left}</strong> of ${cap} slot${cap === 1 ? '' : 's'} left today</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:18px;justify-content:flex-start">${cards}</div>`;
+}
+function _bindConvoyShopHandlers() {
+  // 🛠 Admin art save — mirrors the Menu Button Art manager: write BOTH the
+  // Forge store (admin's own copy, persisted via saveForge + the forge_* IDB
+  // key) and Catalog (what players read), then auto-publish.
+  const _cvaSave = document.getElementById('btn-cva-save');
+  if (_cvaSave) {
+    _cvaSave.onclick = async () => {
+      const out = {};
+      document.querySelectorAll('.cva-i').forEach(inp => {
+        const id = inp.getAttribute('data-cva-id');
+        const v = (inp.value || '').trim();
+        if (id && v) out[id] = v;
+      });
+      if (typeof Forge === 'object' && Forge) Forge.convoyTruckArt = out;
+      try { if (typeof Catalog === 'object' && Catalog) Catalog.convoyTruckArt = out; } catch (e) {}
+      try { saveForge(); } catch (e) {}
+      const st = document.getElementById('cva-st');
+      if (st) st.textContent = 'Saved — publishing to players…';
+      try { if (typeof _adminAutoPublish === 'function') await _adminAutoPublish(0); } catch (e) {}
+      if (st) st.textContent = '✓ Published.';
+      setTimeout(() => { try { render(); } catch (e) {} }, 700);
+    };
+  }
+  document.querySelectorAll('[data-buy-convoy]').forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.dataset.buyConvoy;
+      const t = (typeof _convoyTruck === 'function') ? _convoyTruck(id) : null;
+      if (!t || t.id !== id) { showToast('That rig is no longer available.', 2600); return; }
+      const st = (typeof _convoyState === 'function') ? _convoyState() : { owned: [] };
+      if ((st.owned || []).indexOf(id) >= 0) { showToast('You already own that rig.', 2400); return; }
+      const price = Math.max(0, t.aza | 0);
+      if ((Profile.sovereigns || 0) < price) { showToast('Not enough Aza coin.', 2600); return; }
+      const capNow = (typeof _convoyCapacity === 'function') ? _convoyCapacity() : 0;
+      const ok = await showGameConfirm({
+        title: '🚚 Buy Convoy Rig?',
+        bodyHtml:
+          '<div>Purchase the <b style="color:#d4a843">' + escapeHtml(t.name || 'rig') + '</b>.</div>' +
+          '<div style="background:rgba(20,16,14,0.6);border:1px solid #2a201c;border-radius:4px;padding:0.7rem 0.9rem;margin:0.6rem 0">' +
+            '<div style="display:flex;justify-content:space-between"><span style="color:#a89878">Daily capacity</span><b style="color:#d4a843">' + capNow + ' → ' + t.perDay + ' / day</b></div>' +
+            '<div style="display:flex;justify-content:space-between;margin-top:4px"><span style="color:#a89878">Price</span><b style="color:#d4a843">' + price + ' 👑 Aza coin</b></div>' +
+          '</div>' +
+          '<div class="small-text" style="color:#9a8fbf">Applies immediately and permanently. Today\'s already-used slots stay used.</div>',
+        yesLabel: 'BUY RIG', noLabel: 'Cancel',
+      });
+      if (!ok) return;
+      // Charge on the EXISTING Aza rail — spendSovereigns re-checks the balance
+      // and saves, so a double-click or a balance change between the confirm and
+      // here can never grant a free truck.
+      if (typeof spendSovereigns !== 'function' || !spendSovereigns(price)) {
+        showToast('Not enough Aza coin.', 2600); return;
+      }
+      if (typeof _convoyGrant === 'function') _convoyGrant(t.id);
+      try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); else saveProfile(); } catch (e) {}
+      showToast(`🚚 ${t.name} in service — ${t.perDay} operatives per day.`, 3800);
+      render();
+    };
+  });
+}
 function renderVendorMarket() {
   const tab = (App.vendorMarketTab === 'sovereigns') ? 'sovereigns'
             : (App.vendorMarketTab === 'starter')    ? 'starter'
+            : (App.vendorMarketTab === 'convoy')     ? 'convoy'
             : 'packs';
   const gems = Profile.gems || 0;
   const sovBal = Profile.sovereigns || 0;
@@ -149501,6 +149834,7 @@ function renderVendorMarket() {
   const packsBody   = _buildPackShopBody(gems, sovBal);
   const sovBody     = _buildSovereignsStoreBody(sovBal);
   const starterBody = _buildStarterDeckShopBody(gems, sovBal);
+  const convoyBody  = _buildConvoyShopBody(sovBal);
 
   root.innerHTML = `
     <div class="campaign-page vendor-market-page">
@@ -149552,10 +149886,14 @@ function renderVendorMarket() {
           🦸 Starter Decks
           <span class="vm-tab-sub">Ready-to-play bundles</span>
         </button>
+        <button class="vm-tab ${tab === 'convoy' ? 'vm-tab-active' : ''}" data-vm-tab="convoy">
+          🚚 Convoy Rigs
+          <span class="vm-tab-sub">Raise your daily sends</span>
+        </button>
       </div>
 
       <div class="vm-tab-body">
-        ${tab === 'packs' ? packsBody : tab === 'sovereigns' ? sovBody : starterBody}
+        ${tab === 'packs' ? packsBody : tab === 'sovereigns' ? sovBody : tab === 'convoy' ? convoyBody : starterBody}
       </div>
 
       ${App._packReveal ? renderPackRevealModal() : ''}
@@ -149579,6 +149917,7 @@ function renderVendorMarket() {
   // ----- Tab-specific bindings -----
   if (tab === 'packs')           _bindPackShopHandlers();
   else if (tab === 'sovereigns') _bindSovereignsStoreHandlers();
+  else if (tab === 'convoy')     _bindConvoyShopHandlers();
   else                           _bindStarterDeckShopHandlers();
 }
 // ----- 🪦 Tombstone cosmetics shop — admin-listed grave markers. Buying one
@@ -171972,6 +172311,14 @@ function _covertStart(missionId, unitIds) {
       return false;
     }
   }
+  // 🚚 CONVOY GATE — the daily anti-farm cap. A Covert Action sends a SQUAD, and
+  // the allowance is per UNIT, so a 3-unit op costs 3 slots. Checked last (after
+  // every other refusal) but still before the mission is committed below, and
+  // spent only once it is — so a rejected op never eats the player's day.
+  if (typeof _convoyCanSend === 'function') {
+    const _cv = _convoyCanSend(unitIds.length);
+    if (!_cv.ok) { showToast(_cv.why, 4600); return false; }
+  }
   const now = Date.now();
   _covertList().push({
     id: 'cv_' + now + '_' + Math.floor(Math.random() * 1e6),
@@ -171981,8 +172328,13 @@ function _covertStart(missionId, unitIds) {
     collected: false,
     reward: null,
   });
+  // 🚚 Mission committed — spend one convoy slot per operative sent.
+  let _cvLeft = null;
+  if (typeof _convoySpend === 'function') { try { _cvLeft = _convoySpend(unitIds.length); } catch (e) {} }
   try { saveProfile(); } catch (e) {}
-  showToast(`🜂 ${def.name} deployed — ${Math.round(def.durMs / 3600000)}h until return.`);
+  const _cvNote = (_cvLeft === null) ? ''
+    : ` · 🚚 ${_cvLeft} convoy slot${_cvLeft === 1 ? '' : 's'} left today`;
+  showToast(`🜂 ${def.name} deployed — ${Math.round(def.durMs / 3600000)}h until return.${_cvNote}`);
   return true;
 }
 // 🖋 Procedurally-generated FIELD REPORT for a completed Covert Action. Builds
@@ -172225,6 +172577,7 @@ function renderResistanceRing() {
         <button class="btn-secondary" id="cr-back">← Camp</button>
       </div>
       <div class="placement-hint">Send 1–3 units on a real-time mission for offline rewards. Units stay locked out of battle until they return.${ready.length ? ` <strong style="color:#9be0c4">${ready.length} mission${ready.length === 1 ? '' : 's'} ready to collect.</strong>` : ''}</div>
+      ${(typeof _convoyPanelHtml === 'function') ? _convoyPanelHtml() : ''}
 
       <div class="cr-section">
         <div class="cr-section-title">📦 Active Deployments (${active.length})</div>

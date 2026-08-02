@@ -167,8 +167,15 @@
     transform: scale(0.98);
     filter: blur(2px);
   }
+  /* ⚠ NO `both` FILL. A fill-mode kept a keyframe's transform/filter applied to
+     #app after the fade, and ANY non-`none` transform or filter makes #app the
+     containing block for `position: fixed` descendants — so every fixed, centred
+     modal inside it anchored to the PAGE instead of the viewport and appeared
+     wherever you happened to be scrolled. (Reproduced: a fixed centred probe
+     landed at top:-680px while scrolled.) Without the fill, #app returns to a
+     clean, untransformed state the moment the fade ends. */
   #app.screen-fade-in {
-    animation: screen-fade-in-anim 280ms ease-out both;
+    animation: screen-fade-in-anim 280ms ease-out;
   }
   @keyframes screen-fade-in-anim {
     from { opacity: 0; transform: scale(1.015); filter: blur(2px); }
@@ -34779,7 +34786,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119u0';
+  window.BUILD_VERSION = 'v119u1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -143652,6 +143659,17 @@ function bindAuctionListModal() {
   if (!m) return;
   const close = () => { App.auctionListModal = null; render(); };
   const ov = document.getElementById('auc-modal-overlay');
+  // 🎯 PORTAL TO <body>. The overlay is `position:fixed` + flex-centred, which
+  // SHOULD centre it in the viewport — but a `position:fixed` element is centred
+  // on the viewport only while no ancestor has a transform / filter /
+  // backdrop-filter, and any of those turns that ancestor into its containing
+  // block (verified: a fixed centred probe inside a transformed #app landed at
+  // top:-680px while scrolled). Moving the overlay to <body> takes it out of every
+  // such ancestor, so it lands dead-centre no matter which row was clicked or how
+  // far the list was scrolled. Re-parenting keeps its listeners intact.
+  if (ov && ov.parentNode !== document.body) {
+    try { document.body.appendChild(ov); } catch (e) {}
+  }
   if (ov) ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
   const x = document.getElementById('auc-modal-close'); if (x) x.onclick = close;
   const c = document.getElementById('auc-modal-cancel'); if (c) c.onclick = close;

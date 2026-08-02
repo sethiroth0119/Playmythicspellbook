@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119t7';
+  window.BUILD_VERSION = 'v119t8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -80476,6 +80476,50 @@ function _effectVfxOptionsHtml(sel) {
   h += '<optgroup label="🎬 3D effect cinematics">' + Object.keys(_EFFECT_VFX_CINE).map(k => `<option value="${k}" ${sel === k ? 'selected' : ''}>${_EFFECT_VFX_CINE[k].label}</option>`).join('') + '</optgroup>';
   return h;
 }
+// 🩹 WHITE-SCREEN GUARD for every cinematic overlay iframe.
+// An iframe that has not painted a document is filled with the browser's DEFAULT
+// CANVAS — which is WHITE. Every mount used to do:
+//     ifr.addEventListener('load', … opacity = 1)
+//     setTimeout(… opacity = 1, 2500)          ← fires even if the load FAILED
+// so a 404 / blocked CDN / lost WebGL context turned into a full-screen white
+// sheet over the board for the life of the cinematic. That is the "3D cinematics
+// show a white screen" report.
+//
+// Now: reveal ONLY when the document really rendered (same-origin, so we can look
+// inside), and if it did not, remove the overlay entirely. No cinematic is always
+// better than a white screen — the board stays visible and play continues.
+function _vfxIframePainted(ifr) {
+  try {
+    const d = ifr && ifr.contentDocument;
+    if (!d || !d.body) return false;
+    // A real VFX page carries its build stamp and/or a canvas; an error page or a
+    // blank document has neither.
+    if (ifr.contentWindow && ifr.contentWindow.VFX_BUILD) return true;
+    if (d.querySelector('canvas')) return true;
+    return d.body.children.length > 0 && (d.body.innerHTML || '').length > 400;
+  } catch (e) {
+    // Cross-origin (shouldn't happen — these are same-origin) → trust the load event.
+    return true;
+  }
+}
+function _revealVfxIframe(ifr, wrap, label) {
+  let done = false;
+  const fail = (why) => {
+    if (done) return; done = true;
+    try { console.warn('[vfx] ' + (label || 'cinematic') + ' did not paint (' + why + ') — overlay removed instead of showing white.'); } catch (e) {}
+    try { if (wrap && wrap.parentNode) wrap.remove(); } catch (e) {}
+  };
+  const show = () => {
+    if (done) return; done = true;
+    try { ifr.style.opacity = '1'; } catch (e) {}
+  };
+  try {
+    ifr.addEventListener('load', () => { _vfxIframePainted(ifr) ? show() : fail('empty document'); });
+    ifr.addEventListener('error', () => fail('load error'));
+  } catch (e) {}
+  // Backstop: if the load event never arrives, decide on the CONTENT, never blindly.
+  setTimeout(() => { if (!done) { _vfxIframePainted(ifr) ? show() : fail('timeout'); } }, 2500);
+}
 let _effectCineLive = 0;
 function _playEffectVfxCine(file) {
   try {
@@ -80489,9 +80533,8 @@ function _playEffectVfxCine(file) {
     // browser's WHITE pre-paint frame reads as "the board flashed white" at the
     // exact moment an effect / Kalon / Archon / Fusion starts. Hidden until the
     // document paints, with a timeout so it can never stay invisible.
-    ifr.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;opacity:0;transition:opacity .18s ease;';
-    ifr.addEventListener('load', () => { try { ifr.style.opacity = '1'; } catch (e) {} });
-    setTimeout(() => { try { ifr.style.opacity = '1'; } catch (e) {} }, 2500);
+    ifr.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;color-scheme:dark;pointer-events:none;opacity:0;transition:opacity .18s ease;';
+    _revealVfxIframe(ifr, wrap, file);
     wrap.appendChild(ifr); document.body.appendChild(wrap);
     setTimeout(() => { try { wrap.style.transition = 'opacity 0.4s'; wrap.style.opacity = '0'; } catch (e) {} }, 3400);
     setTimeout(() => { try { wrap.remove(); } catch (e) {} _effectCineLive = Math.max(0, _effectCineLive - 1); }, 3900);
@@ -135287,9 +135330,8 @@ function _playSummonCinematic(file, artUrl) {
     // browser's WHITE pre-paint frame reads as "the board flashed white" at the
     // exact moment an effect / Kalon / Archon / Fusion starts. Hidden until the
     // document paints, with a timeout so it can never stay invisible.
-    ifr.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;opacity:0;transition:opacity .18s ease;';
-    ifr.addEventListener('load', () => { try { ifr.style.opacity = '1'; } catch (e) {} });
-    setTimeout(() => { try { ifr.style.opacity = '1'; } catch (e) {} }, 2500);
+    ifr.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;color-scheme:dark;pointer-events:none;opacity:0;transition:opacity .18s ease;';
+    _revealVfxIframe(ifr, wrap, file);
     wrap.appendChild(ifr);
     document.body.appendChild(wrap);
     _summonCineWrap = wrap;
@@ -135493,9 +135535,8 @@ function _playMechanicCinematic(opts) {
     // browser's WHITE pre-paint frame reads as "the board flashed white" at the
     // exact moment an effect / Kalon / Archon / Fusion starts. Hidden until the
     // document paints, with a timeout so it can never stay invisible.
-    ifr.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;opacity:0;transition:opacity .18s ease;';
-    ifr.addEventListener('load', () => { try { ifr.style.opacity = '1'; } catch (e) {} });
-    setTimeout(() => { try { ifr.style.opacity = '1'; } catch (e) {} }, 2500);
+    ifr.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;color-scheme:dark;pointer-events:none;opacity:0;transition:opacity .18s ease;';
+    _revealVfxIframe(ifr, wrap, src);
     // Same-origin: hide the file's internal nameplate + any preview backdrop.
     ifr.addEventListener('load', () => {
       try {
@@ -135762,9 +135803,8 @@ function _playMechVfx(kind, d) {
     // browser's WHITE pre-paint frame reads as "the board flashed white" at the
     // exact moment an effect / Kalon / Archon / Fusion starts. Hidden until the
     // document paints, with a timeout so it can never stay invisible.
-    ifr.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;opacity:0;transition:opacity .18s ease;';
-    ifr.addEventListener('load', () => { try { ifr.style.opacity = '1'; } catch (e) {} });
-    setTimeout(() => { try { ifr.style.opacity = '1'; } catch (e) {} }, 2500);
+    ifr.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;color-scheme:dark;pointer-events:none;opacity:0;transition:opacity .18s ease;';
+    _revealVfxIframe(ifr, wrap, file);
     ifr.addEventListener('load', () => {
       // Same-origin, so the page's API is reachable directly — no postMessage
       // protocol to keep in sync on both sides.

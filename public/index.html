@@ -34929,7 +34929,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119v4';
+  window.BUILD_VERSION = 'v119v5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39518,6 +39518,8 @@ const Forge = {
   craftRecipes: [],
   // ⚙️ Admin overrides for the Corp Operations economy (startup/wages/output/yields).
   opsEcon: {},
+  // ⛽ Admin overrides for Black River Petroleum (rigs, refinery, market, crew).
+  brEcon: {},
   // 🏺 ADMIN-CREATED ROGUELITE RELICS — { id, name, icon, desc, + effect
   // fields: maxHp, winCurrency, winHealPct, shopDiscount, rewardChoice,
   // nodeCurrency, healBonusPct, grant:{currency,medPoints}, reviveOnce }.
@@ -47275,6 +47277,8 @@ function _applyCatalogRow(data) {
   Catalog.deckSleeves = Array.isArray(rawMoves.__deck_sleeves__) ? rawMoves.__deck_sleeves__ : [];
   Catalog.craftRecipes = Array.isArray(rawMoves.__craft_recipes__) ? rawMoves.__craft_recipes__ : [];
   Catalog.opsEcon = (rawMoves.__ops_econ__ && typeof rawMoves.__ops_econ__ === 'object') ? rawMoves.__ops_econ__ : {};
+  Catalog.brEcon = (rawMoves.__br_econ__ && typeof rawMoves.__br_econ__ === 'object') ? rawMoves.__br_econ__ : {};
+  try { if (typeof applyBrEconOverrides === 'function') applyBrEconOverrides(); } catch (e) {}
   Catalog.avatars = Array.isArray(rawMoves.__avatars__) ? rawMoves.__avatars__ : [];
   // 🧰 Resource customization from the shared row → apply to the live tables so
   // every player sees admin-added resources + reskins (icons/names/images).
@@ -47857,6 +47861,7 @@ async function cloudPublishCatalog(opts) {
       __deck_sleeves__: Array.isArray(Forge.deckSleeves) ? Forge.deckSleeves : [],
       __craft_recipes__: Array.isArray(Forge.craftRecipes) ? Forge.craftRecipes : [],
       __ops_econ__: (Forge.opsEcon && typeof Forge.opsEcon === 'object') ? Forge.opsEcon : {},
+      __br_econ__: (Forge.brEcon && typeof Forge.brEcon === 'object') ? Forge.brEcon : {},
       __avatars__: Array.isArray(Forge.avatars) ? Forge.avatars : [],
       // 🃏 BUILT-IN card metadata (id/name/icon/type/cost only — no art, they
       // don't have any). The published `cards` array carries Forge cards only,
@@ -63469,6 +63474,8 @@ async function loadForgeContentFromIdb() {
     if (Array.isArray(tc) && tc.length && (!Array.isArray(Forge.tombstoneCosmetics) || !Forge.tombstoneCosmetics.length)) { Forge.tombstoneCosmetics = tc; changed = true; }
     const avs = await idbGet('forge_avatars');
     if (Array.isArray(avs) && avs.length && (!Array.isArray(Forge.avatars) || !Forge.avatars.length)) { Forge.avatars = avs; changed = true; }
+    const be = await idbGet('forge_brEcon');
+    if (be && typeof be === 'object' && Object.keys(be).length && !Object.keys(Forge.brEcon || {}).length) { Forge.brEcon = be; changed = true; }
     const oe = await idbGet('forge_opsEcon');
     if (oe && typeof oe === 'object' && Object.keys(oe).length && !Object.keys(Forge.opsEcon || {}).length) { Forge.opsEcon = oe; changed = true; }
     const cr = await idbGet('forge_craftRecipes');
@@ -63540,6 +63547,7 @@ function loadForge() {
     try { const ta = localStorage.getItem('hg_tombstoneArt'); if (ta != null) { const x = JSON.parse(ta); if (typeof x === 'string' && x) Forge.tombstoneArt = x; } } catch (err) {}
     try { const tc = localStorage.getItem('hg_tombstoneCosmetics'); if (tc) { const x = JSON.parse(tc); if (Array.isArray(x)) Forge.tombstoneCosmetics = x; } } catch (err) {}
     try { const av = localStorage.getItem('hg_avatars'); if (av) { const x = JSON.parse(av); if (Array.isArray(x)) Forge.avatars = x; } } catch (err) {}
+    try { const be2 = localStorage.getItem('hg_brEcon'); if (be2) { const x = JSON.parse(be2); if (x && typeof x === 'object') Forge.brEcon = x; } } catch (err) {}
     try { const oe2 = localStorage.getItem('hg_opsEcon'); if (oe2) { const x = JSON.parse(oe2); if (x && typeof x === 'object') Forge.opsEcon = x; } } catch (err) {}
     try { const cr2 = localStorage.getItem('hg_craftRecipes'); if (cr2) { const x = JSON.parse(cr2); if (Array.isArray(x)) Forge.craftRecipes = x; } } catch (err) {}
     try { const ds = localStorage.getItem('hg_deckSleeves'); if (ds) { const x = JSON.parse(ds); if (Array.isArray(x)) Forge.deckSleeves = x; } } catch (err) {}
@@ -64253,6 +64261,7 @@ function saveForge() {
       idbSet('forge_deckSleeves',        Forge.deckSleeves        || []);
       idbSet('forge_craftRecipes',      Forge.craftRecipes       || []);
       idbSet('forge_opsEcon',           Forge.opsEcon            || {});
+      idbSet('forge_brEcon',            Forge.brEcon             || {});
       idbSet('forge_avatars',            Forge.avatars            || []);
       // 🎓 Onboarding config (welcome image / narrator portrait / narration
       // audio data: URLs). Previously this ONLY survived a successful catalog
@@ -64348,6 +64357,7 @@ function saveForge() {
     { key: 'hg_deckSleeves', value: _stripDataUrls(Forge.deckSleeves || []), name: 'deckSleeves' },
     { key: 'hg_craftRecipes', value: _stripDataUrls(Forge.craftRecipes || []), name: 'craftRecipes' },
     { key: 'hg_opsEcon', value: Forge.opsEcon || {}, name: 'opsEcon' },
+    { key: 'hg_brEcon', value: Forge.brEcon || {}, name: 'brEcon' },
     { key: 'hg_avatars', value: _stripDataUrls(Forge.avatars || []), name: 'avatars' },
     { key: 'hg_rlcRelics',          value: _stripDataUrls(Forge.rlcRelics || []),          name: 'rlcRelics' },
     // ⚡ Custom/edited hero ultimates + per-hero assignment — tiny JSON, safe
@@ -68761,7 +68771,7 @@ function _craftProduce(r) {
     const m = (typeof _meta === 'function') ? _meta(out.resId) : { icon: '📦', name: out.resId };
     return 'Refined ' + (m.icon || '📦') + ' ' + amt + ' ' + (m.name || out.resId) + '.';
   }
-  return _craftGrantPacks(amt, out.packId);      // default/'pack'
+  return _craftGrantPacks(amt, out.packId, r && r.name);   // default/'pack'
 }
 // Give the materials back, resource by resource. Used on every failed craft.
 function _craftRefund(cost) {
@@ -68782,7 +68792,7 @@ function _craftPackDef() {
     return usable[Math.floor(Math.random() * usable.length)];
   } catch (e) { return null; }
 }
-function _craftGrantPacks(n, packId) {
+function _craftGrantPacks(n, packId, label) {
   // An authored recipe can name a specific pack; otherwise take one at random.
   let def = null;
   try {
@@ -68795,9 +68805,12 @@ function _craftGrantPacks(n, packId) {
     else if (typeof addUnopenedPack === 'function') { for (let i = 0; i < n; i++) addUnopenedPack(def, 'craft'); }
     else return null;
   } catch (e) { return null; }
+  // Say what the RECIPE is called — an admin can name it anything, and
+  // "Crafted a booster box" was a lie for a recipe called War Bundle.
+  const pack = def.name || 'booster pack';
   return n === 1
-    ? 'Crafted a ' + (def.name || 'booster pack') + ' — open it from your inventory.'
-    : 'Crafted a booster box — ' + n + ' × ' + (def.name || 'booster pack') + ' added to your inventory.';
+    ? 'Crafted ' + (label || ('a ' + pack)) + ' — open it from your inventory.'
+    : 'Crafted ' + (label || 'a booster box') + ' — ' + n + ' × ' + pack + ' added to your inventory.';
 }
 // Shared grant for the cosmetic recipes: pick a random one the player does NOT
 // own, add it, and say what they got. Returns null when they own them all, so
@@ -149533,6 +149546,122 @@ function openCraftRecipeEditor() {
 }
 try { window.__mg = window.__mg || {}; window.__mg.craftEditor = openCraftRecipeEditor; } catch (e) {}
 
+// 👑 ADMIN — GENERIC ECONOMY TUNER. Walks a defaults object, renders an input
+// for every NUMBER it finds (and every short string, so names/descriptions are
+// editable too), and writes a SPARSE override tree: a leaf is stored only when
+// it differs from the default, and setting it back to the default deletes it.
+// That is what lets a later balance pass to the built-in table still reach
+// players on fields they were never specifically tuned on.
+//
+// Built once, used by every sub-economy — Black River, the fishing fleet, the
+// reclaim board — so each new system is a table + one call, not a new editor.
+//   opts: { title, defaults, get() → override tree, set(tree), onApply?, labels? }
+function openEconTuner(opts) {
+  if (typeof _requireAdmin === 'function' && !_requireAdmin(opts.title || 'Economy')) return;
+  _ensureCraftStyle();
+  const labels = opts.labels || {};
+  const getAt = (o, path) => path.reduce((a, k) => (a == null ? a : a[k]), o);
+  const setAt = (o, path, v) => {
+    let a = o;
+    for (let i = 0; i < path.length - 1; i++) a = (a[path[i]] && typeof a[path[i]] === 'object') ? a[path[i]] : (a[path[i]] = {});
+    if (v === undefined) delete a[path[path.length - 1]]; else a[path[path.length - 1]] = v;
+  };
+  // Drop now-empty branches so an "all defaults" tree really is {}.
+  const prune = (o) => {
+    for (const k in o) {
+      if (o[k] && typeof o[k] === 'object') { prune(o[k]); if (!Object.keys(o[k]).length) delete o[k]; }
+    }
+    return o;
+  };
+  const draw = () => {
+    const host = document.getElementById('cre-overlay');
+    const store = opts.get() || {};
+    const section = (def, path) => {
+      const leaves = [], groups = [];
+      for (const k of Object.keys(def)) {
+        const v = def[k], p = path.concat([k]);
+        if (v && typeof v === 'object' && !Array.isArray(v)) { groups.push(section(v, p)); continue; }
+        if (typeof v !== 'number' && typeof v !== 'string') continue;
+        if (typeof v === 'string' && v.length > 90) continue;          // prose, not a tunable
+        const cur = getAt(store, p);
+        const val = (cur !== undefined) ? cur : v;
+        const edited = (cur !== undefined && cur !== v);
+        const step = (typeof v === 'number' && (v % 1 !== 0 || v <= 3)) ? '0.05' : '1';
+        leaves.push(`<label class="cre-res" title="${escapeHtml(p.join(' › '))}">
+          <span style="font-size:.6rem;color:${edited ? '#7ce8a8' : '#8d8272'}">${escapeHtml(labels[k] || k)}</span>
+          <input ${typeof v === 'number' ? 'type="number" step="' + step + '"' : 'type="text"'}
+                 value="${escapeHtml(String(val))}" data-et="${escapeHtml(JSON.stringify(p))}"
+                 data-kind="${typeof v}" style="width:${typeof v === 'number' ? '92px' : '150px'}">
+        </label>`);
+      }
+      if (!leaves.length && !groups.length) return '';
+      const name = path.length ? escapeHtml(labels[path[path.length - 1]] || path[path.length - 1]) : '';
+      return `<div class="${path.length === 1 ? 'cre-card' : ''}">
+        ${path.length ? `<div class="cre-lbl" style="color:#e0b23c">${name}</div>` : ''}
+        ${leaves.length ? `<div class="cre-costs">${leaves.join('')}</div>` : ''}
+        ${groups.join('')}
+      </div>`;
+    };
+    host.innerHTML = `<div class="cre-panel">
+      <div class="cre-head"><div class="cre-title">${escapeHtml(opts.title || 'ECONOMY')}</div>
+        <button class="cre-x" id="cre-close">✕</button></div>
+      <div class="cre-sub">Only the values you change are stored — anything you leave alone keeps following the built-in balance. Green means you have overridden it. Publish to push to players.</div>
+      <div class="cre-list">${section(opts.defaults, [])}</div>
+      <div class="cre-actions">
+        <button class="cft-btn" id="et-reset">RESET ALL TO DEFAULTS</button>
+        <button class="cft-btn" id="et-save">SAVE</button>
+      </div>
+    </div>`;
+    host.querySelector('#cre-close').onclick = () => host.remove();
+    host.querySelectorAll('[data-et]').forEach(el => {
+      el.onchange = () => {
+        const path = JSON.parse(el.getAttribute('data-et'));
+        const def = getAt(opts.defaults, path);
+        const raw = el.value.trim();
+        const v = (el.getAttribute('data-kind') === 'number') ? Number(raw) : raw;
+        const store = opts.get() || {};
+        if (raw === '' || v === def || (typeof v === 'number' && isNaN(v))) setAt(store, path, undefined);
+        else setAt(store, path, v);
+        opts.set(prune(store));
+        if (opts.onApply) opts.onApply();
+      };
+    });
+    host.querySelector('#et-reset').onclick = () => {
+      opts.set({});
+      if (opts.onApply) opts.onApply();
+      try { saveForge(); } catch (e) {}
+      host.remove();
+      showToast('↩ ' + (opts.title || 'Economy') + ' reset to the built-in balance.', 4200);
+    };
+    host.querySelector('#et-save').onclick = () => {
+      opts.set(prune(opts.get() || {}));
+      if (opts.onApply) opts.onApply();
+      try { saveForge(); } catch (e) {}
+      host.remove();
+      showToast('✅ Saved — publish to push these to players.', 5200);
+    };
+  };
+  const ov = document.createElement('div');
+  ov.id = 'cre-overlay'; ov.className = 'cre-overlay';
+  document.body.appendChild(ov);
+  draw();
+}
+// ⛽ Black River Petroleum — rigs, refinery, market prices, crew wages, risk.
+function openBlackRiverEconEditor() {
+  openEconTuner({
+    title: '⛽ BLACK RIVER ECONOMY',
+    defaults: BR_ECON_DEFAULTS,
+    get: () => (Forge.brEcon && typeof Forge.brEcon === 'object') ? Forge.brEcon : (Forge.brEcon = {}),
+    set: (t) => { Forge.brEcon = t; },
+    onApply: () => { try { applyBrEconOverrides(); } catch (e) {} },
+    labels: { upgrades: 'RIG UPGRADES', refine: 'REFINERY', market: 'MARKET PRICES', roles: 'CREW WAGES',
+              risk: 'RISK TIERS', buyCompany: 'Buy the company (🔥)', crudePerBatch: 'Crude per batch',
+              fireChance: 'Refinery fire chance (0-1)', legal: 'Legal price', black: 'Black-market price',
+              cost: 'Cost 🔥', wage: 'Wage 🔥', mult: 'Payout ×', threat: 'Threat ×', escape: 'Escape turns' },
+  });
+}
+try { window.__mg = window.__mg || {}; window.__mg.brEconEditor = openBlackRiverEconEditor; window.__mg.econTuner = openEconTuner; } catch (e) {}
+
 // 👑 ADMIN — Operations Economy editor. Every funded business in one table:
 // what it costs to start, what it pays per worker-hour, what it earns, how many
 // workers it takes, and the real resources it deposits. Writes Forge.opsEcon as
@@ -149742,11 +149871,14 @@ function renderCraftStation() {
         <div class="cft-tab ${tab === 'dice' ? 'is-active' : ''}" data-cft-tab="dice">🎲 Dice Skins</div>
         <div class="cft-tab ${tab === 'materials' ? 'is-active' : ''}" data-cft-tab="materials">🧰 Materials</div>
         ${(typeof isAdmin === 'function' && isAdmin()) ? `<div class="cft-tab" id="cft-edit" title="Edit every recipe: costs, outputs, names">👑 Edit Recipes</div>
-        <div class="cft-tab" id="cft-ops" title="Edit every funded business: startup, wages, output, workers, resource yields">⚙️ Edit Businesses</div>` : ''}
+        <div class="cft-tab" id="cft-ops" title="Edit every funded business: startup, wages, output, workers, resource yields">⚙️ Edit Businesses</div>
+        <div class="cft-tab" id="cft-br" title="Edit Black River Petroleum: rig upgrades, refinery, market prices, crew wages, risk tiers">⛽ Edit Refinery</div>` : ''}
       </div>
       ${body}
     </div>`;
 
+  const brBtn = document.getElementById('cft-br');
+  if (brBtn) brBtn.onclick = () => openBlackRiverEconEditor();
   const opsBtn = document.getElementById('cft-ops');
   if (opsBtn) opsBtn.onclick = () => openOpsEconEditor();
   const editBtn = document.getElementById('cft-edit');
@@ -185384,7 +185516,61 @@ const BR_ROLES = {
 const BR_FIRST = ['Cole','Vance','Rhea','Dax','Mira','Knox','Jules','Sable','Reed','Ozzy','Tess','Bron','Lena','Hark','Vex','Nadia'];
 const BR_LAST  = ['Driscoll','Mott','Crane','Vasquez','Holt','Pike','Reyes','Stahl','Okafor','Brandt','Yates','Lund'];
 
-const BR_BUY_COMPANY_COST = 50000;
+let BR_BUY_COMPANY_COST = 50000;
+
+// ⛽ 👑 ADMIN-TUNABLE BLACK RIVER ECONOMY.
+// These tables are read directly from dozens of call sites, so rather than
+// routing every one through an accessor we MERGE the admin's overrides INTO the
+// tables in place, once, whenever they change. Every existing reference then
+// sees the tuned numbers with no call-site churn — and because the merge is
+// per-key, an override that names only `armor.cost` leaves everything else on
+// the default.
+// Shape: Forge.brEcon = { upgrades:{armor:{cost:N,name,desc}}, refine:{crudePerBatch,yield:{}},
+//                         market:{fuel:{legal,black}}, roles:{Driver:{wage}},
+//                         risk:{low:{mult,threat,escape}}, buyCompany:N }
+const BR_ECON_DEFAULTS = JSON.parse(JSON.stringify({
+  upgrades: BR_UPGRADES, refine: BR_REFINE, market: BR_MARKET,
+  roles: BR_ROLES, risk: BR_RISK, buyCompany: BR_BUY_COMPANY_COST,
+}));
+function getBrEcon() {
+  try {
+    const local = (Forge.brEcon && typeof Forge.brEcon === 'object') ? Forge.brEcon : null;
+    if (local && Object.keys(local).length) return local;
+    const pub = (Catalog.brEcon && typeof Catalog.brEcon === 'object') ? Catalog.brEcon : null;
+    if (pub && Object.keys(pub).length) return pub;
+  } catch (e) {}
+  return null;
+}
+// Re-seed every table from the pristine defaults, then lay the overrides on top.
+// Re-seeding first is what makes this idempotent — without it, clearing an
+// override would leave the last tuned value stuck in the live object.
+function applyBrEconOverrides() {
+  try {
+    const D = BR_ECON_DEFAULTS, ov = getBrEcon() || {};
+    const reseed = (live, def) => {
+      for (const k in live) delete live[k];
+      for (const k in def) live[k] = JSON.parse(JSON.stringify(def[k]));
+    };
+    reseed(BR_UPGRADES, D.upgrades); reseed(BR_REFINE, D.refine);
+    reseed(BR_MARKET, D.market);     reseed(BR_ROLES, D.roles);
+    reseed(BR_RISK, D.risk);
+    BR_BUY_COMPANY_COST = D.buyCompany;
+    const deep = (live, o) => {
+      if (!o || typeof o !== 'object') return;
+      for (const k in o) {
+        if (o[k] && typeof o[k] === 'object' && !Array.isArray(o[k])) {
+          if (!live[k] || typeof live[k] !== 'object') live[k] = {};
+          deep(live[k], o[k]);
+        } else if (o[k] != null) live[k] = o[k];
+      }
+    };
+    deep(BR_UPGRADES, ov.upgrades); deep(BR_REFINE, ov.refine);
+    deep(BR_MARKET, ov.market);     deep(BR_ROLES, ov.roles);
+    deep(BR_RISK, ov.risk);
+    if (typeof ov.buyCompany === 'number') BR_BUY_COMPANY_COST = ov.buyCompany;
+  } catch (e) { try { console.warn('[brEcon]', e); } catch (_) {} }
+}
+try { window.__mg = window.__mg || {}; window.__mg.brEcon = { apply: applyBrEconOverrides, defaults: BR_ECON_DEFAULTS }; } catch (e) {}
 
 // --- helpers ---
 function _brRand(n)      { return Math.round(n); }

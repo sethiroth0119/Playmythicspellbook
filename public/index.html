@@ -34779,7 +34779,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119t6';
+  window.BUILD_VERSION = 'v119t7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -91326,6 +91326,15 @@ function _destroyAscended(state) {
   return killed;
 }
 
+// 🎴 CLASSIC EFFECT SETS — the short, hand-written "Effect Type" lists a spell and
+// a trap have always had. Anything the admin picks OUTSIDE these is one of the full
+// ONPLAY_TYPES effects, and resolves through the same engine units use (see the
+// fallthroughs in _resolveSpellAfterChain and applyTrapToUnit). Keep in sync with
+// the two editor dropdowns.
+const _CLASSIC_SPELL_FX = new Set(['damage', 'heal', 'buffAll', 'draw', 'restoreEnergy',
+  'restoreKalon', 'kalonLock', 'summon', 'purgeAscended']);
+const _CLASSIC_TRAP_FX = new Set(['damage', 'stun', 'draw', 'bounce', 'destroyUnit',
+  'paintSurface', 'summonGrave']);
 function applyTrapToUnit(s, unit, trap) {
   // Pull the trap off the board the moment it fires — single-use by design.
   s = { ...s, board: s.board.map(row => row.map(t => (t.trap === trap) ? { ...t, trap: null } : t)) };
@@ -91478,7 +91487,12 @@ function applyTrapToUnit(s, unit, trap) {
   // identically for a player trap and an AI trap.
   try {
     const _tc = trap && trap.card;
-    if (_tc && _tc.onPlay && _tc.onPlay.type && typeof applyOnPlayEffect === 'function') {
+    // 🎴 The trap's own "Effect Type" may now be ANY of the full on-play effects
+    // (the dropdown offers them all). A non-classic pick is resolved by the shared
+    // engine, in trap fashion — same anchor, same off-turn auto-resolve as onPlay.
+    const _tcClassic = _tc && _tc.effect && _tc.effect.type && !_CLASSIC_TRAP_FX.has(_tc.effect.type)
+      ? _tc.effect : null;
+    if (_tc && ((_tc.onPlay && _tc.onPlay.type) || _tcClassic) && typeof applyOnPlayEffect === 'function') {
       const _tOwner = trap.owner || 'player';
       const _tPos = (target && target.pos) || (unit && unit.pos) || { x: 0, y: 0 };
       const _trapAnchor = {
@@ -91491,10 +91505,15 @@ function applyTrapToUnit(s, unit, trap) {
       // must resolve deterministically instead, or the modal sits open while the AI
       // step loop keeps writing App.state.
       const _offTurn = !!(s && s.turn && s.turn !== _tOwner);
-      const _tEff = _offTurn
-        ? Object.assign({}, _tc.onPlay, { _autoPick: true, targeted: false })
-        : _tc.onPlay;
-      s = applyOnPlayEffect(s, _trapAnchor, Object.assign({}, _tc, { onPlay: _tEff }));
+      const _wrap = (e) => (_offTurn ? Object.assign({}, e, { _autoPick: true, targeted: false }) : e);
+      // Fire the authored On-Play, then (if the Effect Type itself is a full-engine
+      // pick) that too — a trap can carry both.
+      if (_tc.onPlay && _tc.onPlay.type) {
+        s = applyOnPlayEffect(s, _trapAnchor, Object.assign({}, _tc, { onPlay: _wrap(_tc.onPlay), onPlayExtra: null }));
+      }
+      if (_tcClassic) {
+        s = applyOnPlayEffect(s, _trapAnchor, Object.assign({}, _tc, { onPlay: _wrap(_tcClassic), onPlayExtra: null }));
+      }
     }
   } catch (e) { try { console.warn('[trap onPlay]', e); } catch (_) {} }
   return s;
@@ -114216,7 +114235,16 @@ function renderCardEditor() {
     { id: 'kalonLock',    label: '🚫 Seal Enemy Kalon (turns)' },
     { id: 'summon',       label: '🌀 Summon (spawn a summon card)' },
     { id: 'purgeAscended',label: '🌑 Purge Ascended (destroy ALL Kalons + Archons, both sides)' },
-  ].map(o => `<option value="${o.id}" ${eff.type === o.id ? 'selected' : ''}>${o.label}</option>`).join('');
+  ].map(o => `<option value="${o.id}" ${eff.type === o.id ? 'selected' : ''}>${o.label}</option>`).join('')
+    // 🎴 …plus the WHOLE effect engine. A spell can now do anything a unit's on-play
+    // can (vanish, entomb, seal, search, take control, …) — it resolves through the
+    // same engine, anchored on your hero. Fields above (Amount / Target / Status /
+    // Range) feed it, and the 🎴 Card Filter block narrows the filtered ones.
+    + `<optgroup label="── Full effect engine ──">`
+    + ((typeof ONPLAY_TYPES !== 'undefined' ? ONPLAY_TYPES : [])
+        .filter(t => t && t.id && !_CLASSIC_SPELL_FX.has(t.id))
+        .map(t => `<option value="${t.id}" ${eff.type === t.id ? 'selected' : ''}>${escapeHtml(t.label || t.id)}</option>`).join(''))
+    + `</optgroup>`;
   const targetOpts = ['enemy','ally','self'].map(t => `<option value="${t}" ${(card.target || 'enemy') === t ? 'selected' : ''}>${t}</option>`).join('');
   const statusList = ['','strong','weak','poison','burn','bleed','stun','slow','frozen','sleep','confusion','paralysis','dispel','stumble','assisted'];
   const spellStatusOpts = statusList.map(s => `<option value="${s}" ${(eff.status || '') === s ? 'selected' : ''}>${s || '— None —'}</option>`).join('');
@@ -114347,7 +114375,14 @@ function renderCardEditor() {
     { id: 'destroyUnit',  label: '💀 Destroy stepping unit (not heroes)' },
     { id: 'paintSurface', label: '🌋 Paint Surface on the tile' },
     { id: 'summonGrave',  label: '🪦 Summon from Owner\'s Graveyard' },
-  ].map(o => `<option value="${o.id}" ${trapEff.type === o.id ? 'selected' : ''}>${o.label}</option>`).join('');
+  ].map(o => `<option value="${o.id}" ${trapEff.type === o.id ? 'selected' : ''}>${o.label}</option>`).join('')
+    // 🎴 …plus the WHOLE effect engine, resolved in TRAP fashion when it springs:
+    // anchored on the sprung tile, and auto-resolved when it fires off-turn.
+    + `<optgroup label="── Full effect engine (fires when sprung) ──">`
+    + ((typeof ONPLAY_TYPES !== 'undefined' ? ONPLAY_TYPES : [])
+        .filter(t => t && t.id && !_CLASSIC_TRAP_FX.has(t.id))
+        .map(t => `<option value="${t.id}" ${trapEff.type === t.id ? 'selected' : ''}>${escapeHtml(t.label || t.id)}</option>`).join(''))
+    + `</optgroup>`;
   const trapStatusOpts = statusList.map(s => `<option value="${s}" ${(trapEff.status || '') === s ? 'selected' : ''}>${s || '— None —'}</option>`).join('');
   const trapSurfaceOpts = ['', ...((typeof SURFACE_TYPES !== 'undefined') ? Object.keys(SURFACE_TYPES) : [])]
     .map(k => `<option value="${k}" ${(trapEff.surfaceType || '') === k ? 'selected' : ''}>${k ? ((SURFACE_TYPES[k] && SURFACE_TYPES[k].icon || '') + ' ' + (SURFACE_TYPES[k] && SURFACE_TYPES[k].name || k)) : '— pick a surface —'}</option>`).join('');
@@ -138410,7 +138445,26 @@ function _resolveSpellAfterChain(card) {
     });
     log.push({ msg: `${card.name} warps the elemental field!`, color: 'green' });
   }
-  if (card.effect.type === 'damage') {
+  // 🎴 FULL ENGINE FALLTHROUGH — the spell "Effect Type" dropdown now offers every
+  // on-play effect, not just the 9 classic ones. Anything outside the classic set
+  // resolves through the same engine units use, anchored on your hero (the caster),
+  // so a spell can vanish, entomb, seal, search, take control, and so on.
+  if (card.effect.type && !_CLASSIC_SPELL_FX.has(card.effect.type)) {
+    const _caster = ph || { id: '_spell_caster', owner: 'player', name: card.name, alive: true, isHero: false, pos: { x: 0, y: 0 } };
+    ns = applyOnPlayEffect(ns, Object.assign({}, _caster, { name: card.name || (_caster && _caster.name) }),
+      Object.assign({}, card, { onPlay: card.effect, onPlayExtra: null }));
+  } else if (card.effect.type === 'damage' && (card.target === 'self' || card.effect.tSide === 'self')) {
+    // 🩸 SELF-DAMAGE — a spell that hurts YOU hits your own hero directly. It must
+    // not require an enemy in range (it isn't aimed at one), which is why the
+    // enemy-target branch below used to reject it with "no enemies in range".
+    if (!ph) { showToast('No hero on the field.'); return; }
+    const _amt = Math.max(0, card.effect.amount | 0);
+    const trig = applyDamageTriggers(ph, _amt, 'magic');
+    trig.log.forEach(l => log.push(l));
+    ns.units = ns.units.map(u => u.id === ph.id ? trig.unit : u);
+    log.push({ msg: `🩸 ${card.name} costs you ${_amt} — your hero takes the hit.`, color: 'amber' });
+    if (!trig.unit.alive) { log.push({ msg: `${trig.unit.name} defeated!`, color: 'red' }); ns.gameOver = 'ai'; }
+  } else if (card.effect.type === 'damage') {
     let targets = ns.units.filter(u => u.owner === 'ai' && u.alive);
     if (ph) targets = targets.filter(u => distance(u.pos, ph.pos) <= range);
     if (targets.length === 0) { showToast(`No enemies within ${range} tile${range === 1 ? '' : 's'} of your hero`); return; }

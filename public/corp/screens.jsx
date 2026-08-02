@@ -593,45 +593,71 @@ function MailboxScreen({ mail, setMail, openTrade }) {
 // LIVE FEED
 // ============================================================================
 
+// The Live Feed is the GUILD WIRE — a realtime chat every member of the
+// corporation shares, mixed with system lines (hires, position changes,
+// agency actions). Backed by the guild_chat table via the parent bridge;
+// sending posts jb:action{chatSend}, new rows arrive on the 'jbdata' event.
 function FeedScreen() {
-  const { FEED } = window.ECON;
+  const [, setTick] = useState(0);
+  const [msg, setMsg] = useState('');
+  const endRef = useRef(null);
+  useEffect(() => {
+    const h = () => setTick(t => t + 1);
+    window.addEventListener('jbdata', h);
+    return () => window.removeEventListener('jbdata', h);
+  }, []);
+  const econ = (window.__JB && window.__JB.econ) || null;
+  const corp = econ && econ.corp;
+  const chat = (econ && Array.isArray(econ.guildChat)) ? econ.guildChat : [];
+  const me = (econ && econ.handle) || '';
+  useEffect(() => {
+    try { endRef.current && endRef.current.scrollIntoView({ block: 'end' }); } catch (e) {}
+  }, [chat.length]);
+  const send = () => {
+    const b = msg.trim();
+    if (!b) return;
+    try { window.JB_action && window.JB_action({ kind: 'chatSend', body: b.slice(0, 400) }); } catch (e) {}
+    setMsg('');
+  };
+  if (!corp) {
+    return (
+      <div className="screen">
+        <ScreenHead title="Guild Wire" desc="Live chat + action feed for your corporation — members only." />
+        <div className="card" style={{ padding: 30, textAlign: 'center' }}>
+          <div style={{ fontSize: 30 }}>👥</div>
+          <div style={{ margin: '8px 0 4px', fontWeight: 700 }}>Guild members only</div>
+          <div className="muted" style={{ fontSize: 12.5 }}>Join or found a corporation in <b>Guild &amp; Hiring</b> to enter the wire.</div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="screen">
       <ScreenHead
-        title="Live Feed"
-        desc="Universal transaction log. Every send, list, trade, withdrawal and corporation action across this shard, in real time."
-        right={<Stat label="Tx · last hour" value="1,402" delta="+8%" up />}
+        title="Guild Wire"
+        desc={'Live chat + every corporation action for ' + (corp.name || 'your guild') + ' — all members see this, in real time.'}
+        right={<Stat label="On the wire" value={String(chat.length)} />}
       />
-
-      <div className="card">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th style={{ width: 80 }}>Time</th>
-              <th>Actor</th>
-              <th>Action</th>
-              <th>Asset</th>
-              <th>Target / Value</th>
-              <th style={{ width: 120 }}>Kind</th>
-            </tr>
-          </thead>
-          <tbody>
-            {FEED.map((f, i) => (
-              <tr key={i}>
-                <td className="mono">{f.ts}</td>
-                <td><span className="mono">{f.actor}</span></td>
-                <td className="muted">{f.verb}</td>
-                <td style={{ fontWeight: 500 }}>{f.obj}</td>
-                <td className="mono">{f.target}</td>
-                <td>
-                  <span className={'chip ' + ({ send:'flat', list:'flat', trade:'rust', corp:'aza', black:'toxic', logi:'flat' }[f.kind] || 'flat')}>
-                    {f.kind.toUpperCase()}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 250px)', minHeight: 340, maxWidth: 900 }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {chat.length === 0 && <div className="muted" style={{ fontSize: 12.5, textAlign: 'center', padding: 24 }}>Quiet on the wire. Say something to the guild.</div>}
+          {chat.map((m, i) => m.kind === 'sys' ? (
+            <div key={m.id || 'i' + i} className="mono muted" style={{ fontSize: 10.5, textAlign: 'center', padding: '2px 0', letterSpacing: '.04em' }}>— {m.body} —</div>
+          ) : (
+            <div key={m.id || 'i' + i} style={{ alignSelf: m.user_name === me ? 'flex-end' : 'flex-start', maxWidth: '72%' }}>
+              <div className="mono muted" style={{ fontSize: 10, marginBottom: 2, textAlign: m.user_name === me ? 'right' : 'left' }}>
+                {m.user_name || '?'}{m.created_at ? ' · ' + new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+              </div>
+              <div style={{ padding: '7px 11px', borderRadius: 9, fontSize: 12.5, border: '1px solid var(--line-soft)', background: m.user_name === me ? 'rgba(212,168,60,.14)' : 'var(--surface-2)' }}>{m.body}</div>
+            </div>
+          ))}
+          <div ref={endRef} />
+        </div>
+        <div style={{ display: 'flex', gap: 8, padding: 12, borderTop: '1px solid var(--line-soft)' }}>
+          <input className="input" style={{ flex: 1 }} placeholder="Message your guild…" value={msg} maxLength={400}
+            onChange={e => setMsg(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') send(); }} />
+          <button className="btn primary" disabled={!msg.trim()} onClick={send}>Send</button>
+        </div>
       </div>
     </div>
   );
@@ -976,8 +1002,13 @@ const OPERATIONS = [
   { id: 'cars',         name: 'Car Dealership',      cat: 'Logistics', icon: '🚗', focus: 'Vehicles & spare parts',     produces: ['Parts', 'Vehicles'],                  startup: '450,000 Cinder · 4k Metal',                          maint: 'Metal 200/d · Fuel 120/d',     risk: 'Low' },
   { id: 'fishing',      name: 'Fishing Company',     cat: 'Medical',   icon: '🎣', focus: 'Seafood & provisions',       produces: ['Fish', 'Food'],                       startup: '300,000 Cinder · 2k Supplies',                       maint: 'Fuel 140/d · Water 180/d',     risk: 'Low' },
   { id: 'cardshop',     name: 'Card Shop',           cat: 'Retail',    icon: '🃏', focus: 'Open your own card storefront', produces: ['Storefront', 'Card sales'],          startup: '200,000 Cinder',                                     maint: 'Upkeep 80/d',                  risk: 'Low' },
+  { id: 'dojo',         name: 'Dojo',                cat: 'Retail',    icon: '🥋', focus: 'Train & resell moves to players', produces: ['Move training', 'Tutor access'],     startup: '150,000 Cinder',                                     maint: 'Upkeep 60/d',                  risk: 'Low' },
+  // 🏦 The only operation with an ALTERNATE price: 1,000,000 Cinder OR a
+  // $200 stake in Mythic Token (2,000 MT at $0.10). The stake is locked, not
+  // spent — see BANK_CHARTER_MT in index.html.
+  { id: 'bank',         name: 'Bank',                cat: 'Finance',   icon: '🏦', focus: 'Lend to players, hold deposits', produces: ['Loans', 'Interest', 'Deposits'],     startup: '1,000,000 Cinder · or 2,000 MT staked ($200)',       maint: 'Teller wages · reserve 30%',   risk: 'Medium' },
 ];
-const OP_CATS = ['All', 'Industry', 'Energy', 'Medical', 'Research', 'Logistics', 'Retail', 'Illicit'];
+const OP_CATS = ['All', 'Industry', 'Energy', 'Medical', 'Research', 'Logistics', 'Retail', 'Finance', 'Illicit'];
 
 function OperationsScreen({ econ }) {
   const [q, setQ] = useState('');

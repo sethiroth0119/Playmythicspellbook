@@ -5351,9 +5351,10 @@
 }
   .bcp .gear svg{ width:28px; height:28px; color:#e8c97e; }
   .bcp .gear:hover{ transform:rotate(35deg); box-shadow:0 0 18px rgba(246,220,149,.3); }
-  /* 🎬 Clip recorder ON — the gear slot (now the record button) glows red + pulses. */
-  .gear.rec-on{ color:#ff5b5b !important; border-color:rgba(255,91,91,.75) !important; box-shadow:0 0 16px rgba(255,60,60,.55) !important; animation:liveclip-pulse 1.15s ease-in-out infinite; }
-  .gear.rec-on:hover{ transform:none !important; }
+  /* 🎬 Clip recorder ON — the record button glows red + pulses. `.tool` is the
+     sidebar slot it lives in now; `.gear` is kept for the old timer-rail slot. */
+  .gear.rec-on, .tool.rec-on{ color:#ff5b5b !important; border-color:rgba(255,91,91,.75) !important; box-shadow:0 0 16px rgba(255,60,60,.55) !important; animation:liveclip-pulse 1.15s ease-in-out infinite; }
+  .gear.rec-on:hover, .tool.rec-on:hover{ transform:none !important; }
   @keyframes liveclip-pulse{ 0%,100%{ opacity:1 } 50%{ opacity:.5 } }
   .bcp .weather{
   display:flex; align-items:center; gap:16px; padding:12px 20px;
@@ -25602,6 +25603,333 @@
   .tw-sector-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.35rem; }
   .tw-sector-name { font-weight: 700; color: #b888ff; font-size: 0.9rem; }
   .tw-sector-pct { font-size: 0.72rem; color: #a89878; }
+  /* ══ 🏦 OFFICE OF THE MINT — charter registry & stake custody ══════════
+     Ported from the user's charter-staking.html mockup. All selectors are
+     .bkc-* prefixed: this palette (deep navy + gold) is deliberately NOT the
+     game's purple chrome, so it must not leak into neighbouring screens. */
+  .bkc { --void:#05080f; --deep:#080e1c; --panel:rgba(11,19,36,.66);
+    --gold:#d9a441; --gold-lt:#f2cd7d; --gold-br:#ffe7b0; --gold-dk:#8a6524;
+    --line:rgba(217,164,65,.30); --line-soft:rgba(217,164,65,.15);
+    --ink:#c3d0e4; --ink-dim:#77869f; --burn:#d4522a; --burn-lt:#f4835a; --verd:#4fa38b;
+    background:var(--void); color:var(--ink); min-height:100vh; font-size:15.5px; line-height:1.55;
+    font-family:'Source Sans 3',system-ui,sans-serif;
+    background-image:radial-gradient(90% 55% at 50% 0%, rgba(28,44,80,.55), transparent 62%),
+                     radial-gradient(70% 50% at 50% 100%, rgba(20,32,60,.4), transparent 70%),
+                     linear-gradient(180deg,#070c17,#05080f); }
+  .bkc .frame { position:relative; border:1px solid var(--line); background:var(--panel); border-radius:2px; }
+  .bkc .frame > .cnr, .bkc .frame > .cnr2 { position:absolute; inset:-1px; pointer-events:none; }
+  .bkc .frame > .cnr::before, .bkc .frame > .cnr::after,
+  .bkc .frame > .cnr2::before, .bkc .frame > .cnr2::after { content:""; position:absolute; width:15px; height:15px; border:1px solid var(--gold); opacity:.75; }
+  .bkc .frame > .cnr::before { top:0; left:0; border-right:0; border-bottom:0; }
+  .bkc .frame > .cnr::after { top:0; right:0; border-left:0; border-bottom:0; }
+  .bkc .frame > .cnr2::before { bottom:0; left:0; border-right:0; border-top:0; }
+  .bkc .frame > .cnr2::after { bottom:0; right:0; border-left:0; border-top:0; }
+  .bkc-mint { border-bottom:1px solid var(--line); padding:16px 30px 0;
+    background:linear-gradient(180deg,rgba(12,20,38,.85),rgba(7,12,23,.2)); }
+  .bkc-top { display:flex; flex-wrap:wrap; gap:22px; align-items:center; justify-content:space-between; padding-bottom:14px; }
+  .bkc-brand { display:flex; align-items:center; gap:18px; }
+  .bkc h1 { font-family:'Cinzel',Georgia,serif; font-size:33px; font-weight:700; margin:0; color:var(--gold-br);
+    letter-spacing:.035em; line-height:1.05; text-shadow:0 0 22px rgba(217,164,65,.28); }
+  .bkc .sub { font-size:11.5px; letter-spacing:.28em; text-transform:uppercase; color:var(--gold-dk); margin-top:5px; font-weight:500; }
+  .bkc-brackets { display:flex; gap:16px; flex-wrap:wrap; }
+  .bkc-bracket { position:relative; border:1px solid var(--line); padding:9px 30px; text-align:center; min-width:158px;
+    background:linear-gradient(180deg,rgba(20,32,58,.5),transparent); }
+  .bkc-bracket::before, .bkc-bracket::after { content:""; position:absolute; top:50%; width:7px; height:7px;
+    background:var(--deep); border:1px solid var(--gold); transform:translateY(-50%) rotate(45deg); }
+  .bkc-bracket::before { left:-4px; } .bkc-bracket::after { right:-4px; }
+  .bkc-bracket .k { font-size:10px; letter-spacing:.26em; text-transform:uppercase; color:var(--gold-dk); font-weight:600; display:block; }
+  .bkc-bracket .v { font-family:'Cinzel',serif; font-size:25px; font-weight:700; color:var(--gold-br); line-height:1.15; margin-top:2px; }
+  .bkc-tabs { display:flex; flex-wrap:wrap; }
+  .bkc-tab { position:relative; background:none; border:0; cursor:pointer; padding:14px 26px 16px;
+    color:var(--ink-dim); font-size:12px; font-weight:600; letter-spacing:.19em; text-transform:uppercase;
+    font-family:inherit; transition:color .18s,background .18s; }
+  .bkc-tab:hover { color:var(--gold-lt); }
+  .bkc-tab[aria-selected="true"] { color:var(--gold-br); background:linear-gradient(180deg,rgba(217,164,65,.12),transparent); }
+  .bkc-tab[aria-selected="true"]::after { content:""; position:absolute; left:8%; right:8%; bottom:0; height:1px;
+    background:linear-gradient(90deg,transparent,var(--gold),transparent); }
+  .bkc-main { max-width:1000px; margin:0 auto; padding:38px 28px 100px; }
+  .bkc-lede { font-family:'Cinzel',serif; font-size:39px; font-weight:700; color:var(--gold-br); margin:0 0 12px;
+    line-height:1.15; text-shadow:0 0 26px rgba(217,164,65,.2); }
+  .bkc-lede-sub { color:var(--ink); font-size:16px; margin:0 0 28px; max-width:66ch; font-weight:300; }
+  .bkc-lede-sub b { color:var(--gold-lt); font-weight:600; }
+  .bkc-card { padding:26px 28px; margin-bottom:20px; }
+  .bkc-card h3 { font-size:11.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--gold); margin:0 0 18px; font-weight:600; }
+  .bkc-card p.note { margin:0 0 14px; color:var(--ink-dim); font-size:14.5px; font-weight:300; }
+  .bkc-tiers { display:grid; grid-template-columns:repeat(auto-fit,minmax(232px,1fr)); gap:16px; }
+  .bkc-tier { position:relative; text-align:left; cursor:pointer; color:inherit; font:inherit; border:1px solid var(--line);
+    border-radius:2px; padding:20px; background:linear-gradient(180deg,rgba(18,29,52,.6),rgba(10,17,32,.5));
+    transition:border-color .2s,box-shadow .2s,background .2s; }
+  .bkc-tier:hover { border-color:rgba(217,164,65,.55); }
+  .bkc-tier[aria-pressed="true"] { border-color:var(--gold); background:linear-gradient(180deg,rgba(40,58,96,.55),rgba(14,23,42,.6));
+    box-shadow:0 0 0 1px rgba(217,164,65,.35), 0 0 30px -4px rgba(217,164,65,.32); }
+  .bkc-tier .nm { font-family:'Cinzel',serif; font-size:25px; font-weight:600; color:var(--gold-br); line-height:1.1; }
+  .bkc-tier .rn { font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-dim); margin-top:6px; font-weight:500; line-height:1.5; }
+  .bkc-tier .fig { display:flex; justify-content:space-between; align-items:baseline; margin-top:14px; gap:10px; }
+  .bkc-tier .fl { font-size:11.5px; letter-spacing:.15em; text-transform:uppercase; font-weight:600; }
+  .bkc-tier .fv { font-family:'IBM Plex Mono',ui-monospace,monospace; font-size:15px; font-weight:600; color:var(--gold-br); }
+  .bkc .fl.burn { color:var(--burn-lt); } .bkc .fl.lock { color:var(--gold); }
+  .bkc-splitbar { height:34px; display:flex; border-radius:18px; overflow:hidden; margin-top:24px;
+    border:1px solid rgba(217,164,65,.45); box-shadow:0 0 22px -6px rgba(217,164,65,.3), inset 0 0 12px rgba(0,0,0,.5); }
+  .bkc-splitbar i { display:flex; align-items:center; justify-content:center; font-size:12.5px; font-weight:700;
+    letter-spacing:.15em; text-transform:uppercase; white-space:nowrap; overflow:hidden; transition:width .5s cubic-bezier(.2,.8,.3,1); }
+  .bkc-sb-burn { background:linear-gradient(180deg,#f08050,#c0421f 52%,#a8371a 53%,#e0693c); color:#3a1206; }
+  .bkc-sb-stake { background:linear-gradient(180deg,#f7dc9c,#d9a441 50%,#b8842c 52%,#eecb84); color:#3a2a08; }
+  .bkc-splitkey { display:flex; gap:26px; flex-wrap:wrap; margin-top:14px;
+    font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-dim); }
+  .bkc-range { -webkit-appearance:none; appearance:none; width:100%; height:5px; border-radius:3px; margin:14px 0 12px;
+    background:linear-gradient(90deg,var(--gold-dk),rgba(217,164,65,.18)); outline:0; }
+  .bkc-range::-webkit-slider-thumb { -webkit-appearance:none; width:19px; height:19px; border-radius:50%; cursor:pointer;
+    background:radial-gradient(circle at 36% 32%,#ffeec2,#d9a441 62%,#9a7126); border:1px solid #f4dda4; box-shadow:0 0 14px rgba(217,164,65,.7); }
+  .bkc-sfoot { display:flex; justify-content:space-between; gap:18px; flex-wrap:wrap; font-size:15px; }
+  .bkc-sfoot b { font-family:'IBM Plex Mono',monospace; color:var(--gold-br); font-weight:600; }
+  .bkc-ledger { width:100%; border-collapse:collapse; font-family:'IBM Plex Mono',monospace; font-size:14px; }
+  .bkc-ledger td { padding:10px 0; border-bottom:1px solid var(--line-soft); vertical-align:middle; }
+  .bkc-ledger td:last-child { text-align:right; font-weight:600; color:var(--gold-br); white-space:nowrap; }
+  .bkc-ledger tr:last-child td { border-bottom:0; }
+  .bkc-ledger .sum td { border-top:1px solid var(--line); border-bottom:0; padding-top:14px; font-weight:600;
+    letter-spacing:.1em; text-transform:uppercase; font-size:13px; color:var(--gold); font-family:inherit; }
+  .bkc-ledger .sum td:last-child { font-family:'Cinzel',serif; font-size:26px; text-transform:none; }
+  .bkc-ledger .burnv td:last-child { color:var(--burn-lt); }
+  .bkc-chip { display:inline-block; font-size:10px; letter-spacing:.16em; text-transform:uppercase;
+    border:1px solid var(--gold-dk); color:var(--gold-lt); border-radius:2px; padding:2px 8px; margin-left:9px; font-weight:600; }
+  .bkc-ack { display:flex; gap:15px; align-items:flex-start; margin-top:22px; padding:17px 19px;
+    border:1px solid var(--line); background:linear-gradient(180deg,rgba(217,164,65,.09),transparent); }
+  .bkc-ack input { -webkit-appearance:none; appearance:none; margin:2px 0 0; width:23px; height:23px; flex:none; cursor:pointer;
+    border:1px solid var(--gold); background:rgba(6,10,20,.7); display:grid; place-items:center; border-radius:2px; }
+  .bkc-ack input::after { content:"✓"; color:var(--gold-br); font-size:15px; font-weight:700; opacity:0; }
+  .bkc-ack input:checked::after { opacity:1; }
+  .bkc-ack label { font-size:14.5px; line-height:1.6; cursor:pointer; font-weight:300; }
+  .bkc-ack label b { color:var(--gold-lt); font-weight:700; }
+  .bkc-btnrow { display:flex; gap:16px; flex-wrap:wrap; align-items:center; margin-top:22px; }
+  .bkc-cta { position:relative; cursor:pointer; border:1px solid #f4dda4; border-radius:2px;
+    background:linear-gradient(180deg,#f9e2ab,#dcaa48 48%,#bd8b2f 52%,#f0cd85); color:#2b1e06;
+    font-family:'Cinzel',serif; font-size:17px; font-weight:700; letter-spacing:.15em; padding:15px 34px;
+    box-shadow:0 0 30px -6px rgba(217,164,65,.6), inset 0 1px 0 rgba(255,255,255,.55); transition:filter .18s; }
+  .bkc-cta:hover:not(:disabled) { filter:brightness(1.08); }
+  .bkc-cta:disabled { opacity:.3; cursor:not-allowed; box-shadow:none; }
+  .bkc-btn { background:none; border:1px solid var(--line); color:var(--gold-lt); cursor:pointer; border-radius:2px;
+    font-size:12px; font-weight:600; letter-spacing:.17em; text-transform:uppercase; padding:13px 22px; font-family:inherit; }
+  .bkc-btn:hover:not(:disabled) { border-color:var(--gold); background:rgba(217,164,65,.09); color:var(--gold-br); }
+  .bkc-btn:disabled { opacity:.32; cursor:not-allowed; }
+  .bkc-note { font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--ink-dim); }
+  .bkc-medwrap { display:flex; justify-content:center; padding:14px 0 6px; }
+  .bkc-med { position:relative; width:196px; height:196px; display:grid; place-items:center; text-align:center;
+    animation:bkcPress .6s cubic-bezier(.3,1.4,.4,1) both; }
+  @keyframes bkcPress { 0%{transform:scale(2.3) rotate(-14deg);opacity:0} 60%{transform:scale(.96);opacity:1} 100%{transform:scale(1)} }
+  .bkc-med .ring { position:absolute; inset:0; color:var(--gold); filter:drop-shadow(0 0 18px rgba(217,164,65,.45)); }
+  .bkc-med .core { position:relative; z-index:1; }
+  .bkc-med .amt { font-family:'Cinzel',serif; font-size:41px; font-weight:700; color:var(--gold-br); line-height:1; text-shadow:0 0 24px rgba(217,164,65,.5); }
+  .bkc-med .unit { font-size:10px; letter-spacing:.3em; color:var(--gold); margin-top:5px; font-weight:600; }
+  .bkc-med .st { font-size:10px; letter-spacing:.22em; text-transform:uppercase; color:var(--ink-dim); margin-top:11px; font-weight:600; }
+  .bkc-med.open .ring { color:var(--verd); filter:drop-shadow(0 0 18px rgba(79,163,139,.45)); }
+  .bkc-paths { display:grid; gap:11px; }
+  .bkc-path { display:grid; grid-template-columns:34px minmax(0,1fr) auto; gap:16px; align-items:center; padding:15px 17px;
+    border:1px solid var(--line-soft); border-left:2px solid var(--gold); background:linear-gradient(90deg,rgba(217,164,65,.06),transparent 60%); }
+  .bkc-path.no { border-left-color:var(--burn); background:linear-gradient(90deg,rgba(212,82,42,.07),transparent 60%); }
+  .bkc-path .n { font-family:'Cinzel',serif; font-size:15px; color:var(--gold); text-align:center; font-weight:600; }
+  .bkc-path.no .n { color:var(--burn-lt); }
+  .bkc-path .t small { display:block; color:var(--ink-dim); font-size:13px; margin-top:3px; font-weight:300; line-height:1.5; }
+  .bkc-path .r { font-family:'IBM Plex Mono',monospace; font-size:14px; color:var(--gold-br); white-space:nowrap; font-weight:600; }
+  .bkc-path.no .r { color:var(--burn-lt); }
+  .bkc-ck { display:grid; grid-template-columns:30px minmax(0,1fr) auto; gap:16px; align-items:center; padding:17px 4px;
+    border-bottom:1px solid var(--line-soft); }
+  .bkc-ck:last-child { border-bottom:0; }
+  .bkc-ck .box { width:23px; height:23px; border:1px solid var(--line); display:grid; place-items:center; border-radius:2px;
+    color:var(--gold-br); font-size:14px; font-weight:700; }
+  .bkc-ck.done .box { border-color:var(--verd); background:rgba(79,163,139,.16); color:#9fe0cb; }
+  .bkc-ck .lbl small { display:block; color:var(--ink-dim); font-size:13px; margin-top:2px; font-weight:300; }
+  .bkc-ck .amt { font-family:'IBM Plex Mono',monospace; font-size:14px; color:var(--gold-br); font-weight:600; }
+  .bkc-timer { text-align:center; padding:30px 0 12px; }
+  .bkc-timer .t { font-family:'Cinzel',serif; font-size:58px; font-weight:700; color:var(--gold-br); line-height:1;
+    letter-spacing:.04em; text-shadow:0 0 30px rgba(217,164,65,.4); }
+  .bkc-timer .l { font-size:11px; letter-spacing:.24em; text-transform:uppercase; color:var(--gold-dk); margin-top:12px; font-weight:600; }
+  .bkc-timer.pending .t { color:var(--ink-dim); font-size:29px; text-shadow:none; }
+  .bkc-hint { font-size:13px; color:var(--ink-dim); margin-top:18px; line-height:1.65; font-weight:300; }
+  .bkc-hint b { color:var(--gold-lt); font-weight:600; }
+  .bkc-warn { display:grid; grid-template-columns:24px minmax(0,1fr); gap:14px; padding:16px 19px; margin-bottom:20px;
+    border:1px solid rgba(212,82,42,.45); background:linear-gradient(90deg,rgba(212,82,42,.13),rgba(212,82,42,.03));
+    font-size:14.5px; line-height:1.6; font-weight:300; border-radius:2px; }
+  .bkc-warn b { color:var(--burn-lt); font-weight:700; }
+  @media (max-width:760px) {
+    .bkc-main { padding:26px 15px 70px; } .bkc-mint { padding:14px 15px 0; }
+    .bkc h1 { font-size:24px; } .bkc-lede { font-size:28px; }
+    .bkc-tab { padding:12px 13px; font-size:10.5px; letter-spacing:.13em; }
+    .bkc-card { padding:20px 17px; } .bkc-timer .t { font-size:40px; }
+  }
+  @media (prefers-reduced-motion:reduce) { .bkc *, .bkc-med { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
+  /* ══ 🖋 THE UNDERWRITING DESK ═══════════════════════════════════════════
+     Ported from the user's underwriting-desk.html mockup. Shares the Mint's
+     palette; .udw-* prefixed so it cannot leak into the game's purple chrome. */
+  .udw { --void:#05080f; --deep:#080e1c; --panel:rgba(11,19,36,.66);
+    --gold:#d9a441; --gold-lt:#f2cd7d; --gold-br:#ffe7b0; --gold-dk:#8a6524;
+    --line:rgba(217,164,65,.30); --line-soft:rgba(217,164,65,.14);
+    --ink:#c3d0e4; --ink-dim:#77869f; --burn:#d4522a; --burn-lt:#f4835a; --verd:#4fa38b; --verd-lt:#7fd3b8;
+    background:var(--void); color:var(--ink); min-height:100vh; font-family:'Source Sans 3',system-ui,sans-serif;
+    font-size:15px; line-height:1.55;
+    background-image:radial-gradient(85% 50% at 50% 0%, rgba(28,44,80,.5), transparent 62%), linear-gradient(180deg,#070c17,#05080f); }
+  .udw .frame { position:relative; border:1px solid var(--line); background:var(--panel); border-radius:2px; }
+  .udw .frame > .cnr, .udw .frame > .cnr2 { position:absolute; inset:-1px; pointer-events:none; }
+  .udw .frame > .cnr::before, .udw .frame > .cnr::after,
+  .udw .frame > .cnr2::before, .udw .frame > .cnr2::after { content:""; position:absolute; width:16px; height:16px; border:1px solid var(--gold); opacity:.75; }
+  .udw .frame > .cnr::before { top:0; left:0; border-right:0; border-bottom:0; }
+  .udw .frame > .cnr::after { top:0; right:0; border-left:0; border-bottom:0; }
+  .udw .frame > .cnr2::before { bottom:0; left:0; border-right:0; border-top:0; }
+  .udw .frame > .cnr2::after { bottom:0; right:0; border-left:0; border-top:0; }
+  .udw-bar { display:flex; flex-wrap:wrap; gap:24px; align-items:center; justify-content:space-between;
+    padding:16px 30px; border-bottom:1px solid var(--line); background:linear-gradient(180deg,rgba(12,20,38,.9),rgba(7,12,23,.25)); }
+  .udw-word { display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
+  .udw-word h1 { font-family:'Cinzel',Georgia,serif; font-size:32px; font-weight:700; margin:0; color:var(--gold-br);
+    letter-spacing:.035em; line-height:1; text-shadow:0 0 24px rgba(217,164,65,.28); }
+  .udw-charter { font-size:11.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--gold);
+    border:1px solid var(--line); border-radius:2px; padding:8px 18px; font-weight:600; white-space:nowrap; }
+  .udw-metrics { display:flex; flex-wrap:wrap; }
+  .udw-metric { padding:0 26px; border-left:1px solid var(--line); min-width:172px; }
+  .udw-metric:first-child { border-left:0; }
+  .udw-metric .k { font-size:10.5px; letter-spacing:.22em; text-transform:uppercase; color:var(--gold-dk); font-weight:600; display:block; }
+  .udw-metric .v { font-family:'Cinzel',serif; font-size:26px; font-weight:700; color:var(--gold-br); line-height:1.2; margin-top:1px; }
+  .udw-metric .v em { font-style:normal; font-size:12px; letter-spacing:.14em; color:var(--gold-dk); margin-left:5px; font-weight:600; font-family:inherit; }
+  .udw-metric .c { font-size:12px; color:var(--ink-dim); margin-top:2px; font-weight:300; }
+  .udw-metric .v.warn { color:var(--burn-lt); }
+  .udw-desk { display:grid; grid-template-columns:300px minmax(0,1fr); align-items:start; }
+  .udw-rail { padding:20px 18px 60px; border-right:1px solid var(--line-soft); }
+  .udw-railh { display:flex; align-items:baseline; justify-content:space-between; padding:0 4px 14px; }
+  .udw-railh .t { font-size:11.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--gold); font-weight:600; }
+  .udw-railh .n { font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-dim); }
+  .udw-appl { position:relative; overflow:hidden; width:100%; text-align:left; cursor:pointer; color:inherit; font:inherit;
+    border:1px solid var(--line-soft); border-radius:2px; padding:15px 17px; margin-bottom:12px;
+    background:linear-gradient(180deg,rgba(16,26,46,.55),rgba(9,15,29,.5)); transition:border-color .2s,box-shadow .2s; }
+  .udw-appl:hover { border-color:rgba(217,164,65,.45); }
+  .udw-appl[aria-current="true"] { border-color:var(--gold); background:linear-gradient(180deg,rgba(38,55,92,.5),rgba(13,22,41,.6));
+    box-shadow:0 0 0 1px rgba(217,164,65,.3), 0 0 26px -6px rgba(217,164,65,.4); }
+  .udw-appl .no { font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.1em; color:var(--ink-dim); }
+  .udw-appl .who { font-family:'Cinzel',serif; font-size:22px; font-weight:600; color:var(--gold-br); line-height:1.15; margin:3px 0 7px; }
+  .udw-appl .ln { display:flex; align-items:center; gap:11px; }
+  .udw-appl .amt { font-family:'IBM Plex Mono',monospace; font-size:14px; color:var(--gold); font-weight:600; }
+  .udw-appl .day { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-dim); border:1px solid var(--line-soft); border-radius:2px; padding:2px 8px; }
+  .udw-appl.done { opacity:.42; }
+  .udw-appl.done .who { text-decoration:line-through; }
+  .udw-vtag { position:absolute; right:14px; top:14px; font-size:9.5px; letter-spacing:.16em; text-transform:uppercase;
+    border:1px solid currentColor; border-radius:2px; padding:3px 7px; font-weight:600; z-index:1; }
+  .udw-v-approved { color:var(--verd); } .udw-v-denied { color:var(--burn-lt); } .udw-v-countered { color:var(--gold); }
+  .udw-stage { padding:26px 30px 80px; min-width:0; }
+  .udw-doss { padding:30px 34px; overflow:hidden; background:linear-gradient(180deg,rgba(14,24,44,.8),rgba(8,14,28,.7));
+    animation:udwLay .45s cubic-bezier(.2,.8,.3,1) both; }
+  @keyframes udwLay { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:none} }
+  .udw-dh { display:flex; justify-content:space-between; align-items:flex-start; gap:26px; flex-wrap:wrap; }
+  .udw-dh .lab { font-size:11.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--gold); font-weight:600; }
+  .udw-dh .num { font-family:'Cinzel',serif; font-size:42px; font-weight:700; color:var(--gold-br); line-height:1.05; margin-top:2px; }
+  .udw-dh .who { text-align:right; font-size:15px; color:var(--ink); line-height:1.7; }
+  .udw-dh .who b { font-family:'Cinzel',serif; font-size:19px; color:var(--gold-br); font-weight:600; }
+  .udw-dh .who span { color:var(--ink-dim); font-size:13.5px; }
+  .udw-sech { display:flex; align-items:baseline; justify-content:space-between; gap:18px; border-bottom:1px solid var(--line);
+    padding-bottom:7px; margin:26px 0 15px; }
+  .udw-sech .t { font-size:12px; letter-spacing:.22em; text-transform:uppercase; color:var(--gold); font-weight:600; }
+  .udw-sech .r { font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--gold-br); font-weight:600; }
+  .udw-sech .r.dim { color:var(--ink-dim); font-weight:500; }
+  .udw-rows { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:18px 26px; }
+  .udw-fld .k { font-size:10.5px; letter-spacing:.19em; text-transform:uppercase; color:var(--ink-dim); display:block; margin-bottom:4px; font-weight:600; }
+  .udw-fld .v { font-family:'IBM Plex Mono',monospace; font-size:16px; color:var(--ink); font-weight:500; }
+  .udw-fld .v.big { font-family:'Cinzel',serif; font-size:31px; font-weight:700; color:var(--gold-br); line-height:1; }
+  .udw-fld .v.up { text-transform:uppercase; font-size:15px; }
+  .udw-struck { color:var(--ink-dim); text-decoration:line-through; text-decoration-color:var(--burn); }
+  .udw-pen { color:var(--burn-lt); font-family:'IBM Plex Mono',monospace; font-weight:600; margin-left:9px; }
+  .udw-coll { width:100%; border-collapse:collapse; font-family:'IBM Plex Mono',monospace; font-size:13.5px; }
+  .udw-coll th { text-align:right; font-family:inherit; font-size:10px; letter-spacing:.19em; text-transform:uppercase;
+    color:var(--ink-dim); font-weight:600; padding:0 0 8px; }
+  .udw-coll th:first-child { text-align:left; }
+  .udw-coll td { padding:11px 0; border-top:1px solid var(--line-soft); text-align:right; color:var(--gold-br); }
+  .udw-coll td:first-child { text-align:left; }
+  .udw-coll .nm { font-size:15px; color:var(--ink); font-weight:400; }
+  .udw-coll .cat { font-size:12px; color:var(--ink-dim); font-weight:300; }
+  .udw-coll .cut { color:var(--burn-lt); }
+  .udw-coll .tot td { border-top:1px solid var(--line); font-weight:600; }
+  .udw-alert { display:grid; grid-template-columns:26px minmax(0,1fr); gap:15px; align-items:center;
+    border:1px solid rgba(212,82,42,.5); border-radius:2px; padding:14px 18px; margin-top:16px;
+    background:linear-gradient(90deg,rgba(212,82,42,.16),rgba(212,82,42,.04)); }
+  .udw-alert .t { font-size:12.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--burn-lt); font-weight:600; }
+  .udw-alert .s { font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--ink); margin-top:3px; }
+  .udw-alert.ok { border-color:rgba(79,163,139,.5); background:linear-gradient(90deg,rgba(79,163,139,.14),rgba(79,163,139,.03)); }
+  .udw-alert.ok .t { color:var(--verd-lt); }
+  .udw-blocker { display:grid; grid-template-columns:26px minmax(0,1fr); gap:16px; align-items:center;
+    border:1px solid var(--line); border-radius:2px; padding:16px 20px; margin-top:16px;
+    background:linear-gradient(90deg,rgba(217,164,65,.11),rgba(217,164,65,.02));
+    font-family:'IBM Plex Mono',monospace; font-size:13.5px; line-height:1.6; color:var(--ink); }
+  .udw-blocker b { color:var(--gold-br); }
+  .udw-pitch { font-style:italic; font-size:18px; line-height:1.6; color:var(--ink); font-weight:300;
+    padding-left:18px; border-left:2px solid var(--line); margin:0; }
+  .udw-disc { display:grid; grid-template-columns:158px minmax(0,1fr); gap:28px; align-items:center; }
+  .udw-dial { position:relative; width:150px; height:150px; display:grid; place-items:center; justify-self:center; }
+  .udw-dial svg { position:absolute; inset:0; width:100%; height:100%; }
+  .udw-dial .n { font-family:'Cinzel',serif; font-size:41px; font-weight:700; line-height:1; position:relative; }
+  .udw-dial .tr { position:absolute; bottom:-4px; left:50%; transform:translateX(-50%); white-space:nowrap;
+    font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-dim); font-weight:600; }
+  .udw-facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(112px,1fr)); gap:16px 20px; }
+  .udw-hist { display:flex; gap:7px; flex-wrap:wrap; align-items:center; margin-top:18px; }
+  .udw-dot { width:15px; height:15px; border-radius:50%; }
+  .udw-d-ok { background:radial-gradient(circle at 35% 30%,#7fd3b8,#3d8471); }
+  .udw-d-late { background:radial-gradient(circle at 35% 30%,#f2cd7d,#a5762a); }
+  .udw-d-def { background:radial-gradient(circle at 35% 30%,#f4835a,#a5361a); }
+  .udw-hist .lb { font-size:13px; color:var(--ink-dim); margin-left:10px; font-weight:300; }
+  .udw-seal { position:absolute; top:24%; left:50%; transform:translate(-50%,-50%) rotate(-8deg); z-index:3;
+    border:3px double currentColor; border-radius:4px; padding:12px 34px 14px; text-align:center;
+    font-family:'Cinzel',serif; font-size:44px; font-weight:800; letter-spacing:.14em; text-transform:uppercase;
+    background:rgba(6,10,20,.55); pointer-events:none; animation:udwSlam .44s cubic-bezier(.3,1.5,.4,1) both; }
+  .udw-seal small { display:block; font-size:10px; letter-spacing:.24em; font-weight:600; opacity:.8; margin-top:5px; font-family:'Source Sans 3',sans-serif; }
+  .udw-s-approved { color:var(--verd-lt); box-shadow:0 0 40px rgba(79,163,139,.35); }
+  .udw-s-denied { color:var(--burn-lt); box-shadow:0 0 40px rgba(212,82,42,.35); }
+  .udw-s-countered { color:var(--gold-lt); box-shadow:0 0 40px rgba(217,164,65,.35); }
+  @keyframes udwSlam { 0%{opacity:0;transform:translate(-50%,-50%) rotate(-8deg) scale(3)}
+    58%{opacity:1;transform:translate(-50%,-50%) rotate(-8deg) scale(.94)} 100%{opacity:1;transform:translate(-50%,-50%) rotate(-8deg) scale(1)} }
+  .udw-acts { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:16px; margin-top:26px; }
+  .udw-act { display:flex; align-items:center; gap:15px; cursor:pointer; font:inherit; text-align:left;
+    border:1px solid var(--line); border-radius:2px; padding:15px 18px; color:var(--ink);
+    background:linear-gradient(180deg,rgba(20,32,58,.6),rgba(10,17,32,.5)); transition:border-color .18s,box-shadow .18s; }
+  .udw-act .t { font-family:'Cinzel',serif; font-size:19px; font-weight:700; letter-spacing:.1em; line-height:1.15; }
+  .udw-act .s { font-size:12.5px; color:var(--ink-dim); font-weight:300; margin-top:2px; }
+  .udw-act:disabled { opacity:.3; cursor:not-allowed; }
+  .udw-a-approve { border-color:rgba(79,163,139,.45); } .udw-a-approve .t { color:var(--verd-lt); }
+  .udw-a-approve:hover:not(:disabled) { border-color:var(--verd); box-shadow:0 0 26px -6px rgba(79,163,139,.6); }
+  .udw-a-counter { border-color:rgba(217,164,65,.45); } .udw-a-counter .t { color:var(--gold-lt); }
+  .udw-a-counter:hover:not(:disabled) { border-color:var(--gold); box-shadow:0 0 26px -6px rgba(217,164,65,.6); }
+  .udw-a-deny { border-color:rgba(212,82,42,.45); } .udw-a-deny .t { color:var(--burn-lt); }
+  .udw-a-deny:hover:not(:disabled) { border-color:var(--burn); box-shadow:0 0 26px -6px rgba(212,82,42,.6); }
+  .udw-counter { padding:22px 24px; margin-top:18px; }
+  .udw-counter h3 { font-size:11.5px; letter-spacing:.22em; text-transform:uppercase; color:var(--gold); margin:0 0 18px; font-weight:600; }
+  .udw-ctrls { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:22px; }
+  .udw-ctrl label { font-size:10.5px; letter-spacing:.17em; text-transform:uppercase; color:var(--ink-dim); display:block; margin-bottom:8px; font-weight:600; }
+  .udw-ctrl .out { font-family:'IBM Plex Mono',monospace; font-size:17px; color:var(--gold-br); font-weight:600; margin-top:7px; }
+  .udw-range { -webkit-appearance:none; appearance:none; width:100%; height:5px; border-radius:3px; outline:0;
+    background:linear-gradient(90deg,var(--gold-dk),rgba(217,164,65,.18)); }
+  .udw-range::-webkit-slider-thumb { -webkit-appearance:none; width:19px; height:19px; border-radius:50%; cursor:pointer;
+    background:radial-gradient(circle at 36% 32%,#ffeec2,#d9a441 62%,#9a7126); border:1px solid #f4dda4; }
+  .udw select { width:100%; background:rgba(6,10,20,.7); border:1px solid var(--line); border-radius:2px; color:var(--ink);
+    font-family:'IBM Plex Mono',monospace; font-size:15px; padding:9px 11px; }
+  .udw-cfoot { display:flex; gap:14px; flex-wrap:wrap; align-items:center; margin-top:20px; }
+  .udw-cta { cursor:pointer; border:1px solid #f4dda4; border-radius:2px;
+    background:linear-gradient(180deg,#f9e2ab,#dcaa48 48%,#bd8b2f 52%,#f0cd85); color:#2b1e06;
+    font-family:'Cinzel',serif; font-size:14px; font-weight:700; letter-spacing:.14em; padding:13px 26px; }
+  .udw-btn { background:none; border:1px solid var(--line); color:var(--gold-lt); cursor:pointer; border-radius:2px;
+    font-size:11.5px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; padding:12px 20px; font-family:inherit; }
+  .udw-btn:hover { border-color:var(--gold); background:rgba(217,164,65,.09); }
+  .udw-terms { font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--ink-dim); line-height:1.6; }
+  .udw-terms b { color:var(--gold-br); }
+  .udw-receipt { padding:20px 24px; margin-top:18px; border-left:2px solid var(--verd);
+    font-family:'IBM Plex Mono',monospace; font-size:13.5px; line-height:1.75; }
+  .udw-receipt.deny { border-left-color:var(--burn); } .udw-receipt.counter { border-left-color:var(--gold); }
+  .udw-receipt .rh { font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:var(--gold); margin-bottom:10px; font-weight:600; font-family:'Source Sans 3',sans-serif; }
+  .udw-receipt em { font-style:normal; color:var(--gold-br); font-weight:600; }
+  .udw-receipt .nx { margin-top:12px; color:var(--ink-dim); }
+  .udw-empty { padding:40px 10px; text-align:center; color:var(--ink-dim); font-weight:300; }
+  @media (max-width:900px) {
+    .udw-desk { grid-template-columns:1fr; }
+    .udw-rail { border-right:0; border-bottom:1px solid var(--line-soft); padding-bottom:16px; }
+    .udw-stage { padding:20px 14px 70px; } .udw-doss { padding:22px 18px; }
+    .udw-disc { grid-template-columns:1fr; gap:20px; } .udw-dh .who { text-align:left; }
+    .udw-dh .num { font-size:32px; } .udw-seal { font-size:29px; padding:9px 20px; }
+    .udw-bar { padding:14px 16px; } .udw-word h1 { font-size:24px; }
+    .udw-metric { padding:0 14px; min-width:132px; } .udw-metric .v { font-size:20px; }
+  }
+  @media (prefers-reduced-motion:reduce) { .udw * { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
   .tw-nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.3rem; }
   /* 💚 OWNER SURGE — added to a tile ONLY by the local client, ONLY for nodes the
      LOCAL player owns. ⚠ Never serialize this class or its state into the shared
@@ -34951,7 +35279,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119w0';
+  window.BUILD_VERSION = 'v119w6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -37938,8 +38266,59 @@ function getCraftablePool() {
   ];
 }
 // True if the player can pay the craft cost in the card's element.
+// 🔒 GLOBAL CARD-CRAFT LOCK — card crafting is OFF for every player until the
+// admin lifts it. Defaults to LOCKED in code so the lock is in force the moment
+// this build ships, with no publish required; lifting it is a catalog setting
+// (`__card_craft_lock__`) so it reaches players WITHOUT another deploy.
+// Admins are exempt so the owner can still test either state.
+const CARD_CRAFT_LOCKED_DEFAULT = true;
+function cardCraftLocked() {
+  try {
+    if (typeof isAdmin === 'function' && isAdmin()) return false;   // owner is exempt
+    // Catalog wins when present (that is the admin's published decision);
+    // otherwise fall back to the shipped default.
+    const c = (typeof Catalog !== 'undefined' && Catalog && Catalog.cardCraftLock) || null;
+    if (c && typeof c.locked === 'boolean') return c.locked;
+    const f = (typeof Forge !== 'undefined' && Forge && Forge.cardCraftLock) || null;
+    if (f && typeof f.locked === 'boolean') return f.locked;
+    return CARD_CRAFT_LOCKED_DEFAULT;
+  } catch (e) { return CARD_CRAFT_LOCKED_DEFAULT; }
+}
+function cardCraftLockMessage() {
+  try {
+    const c = (typeof Catalog !== 'undefined' && Catalog && Catalog.cardCraftLock)
+           || (typeof Forge !== 'undefined' && Forge && Forge.cardCraftLock) || null;
+    if (c && c.message) return String(c.message);
+  } catch (e) {}
+  return '🔒 Card crafting is temporarily closed.';
+}
+// 👑 ADMIN — flip the lock, then PUBLISH so it reaches players. Deliberately a
+// console command rather than a buried toggle: this is an operational switch
+// the owner throws, and it must be findable at 3am.
+//   __mg.setCardCraftLock(false)            → unlock, then publish the catalog
+//   __mg.setCardCraftLock(true, 'reason')   → relock with a custom notice
+function setCardCraftLock(locked, message) {
+  try {
+    if (!Forge.cardCraftLock || typeof Forge.cardCraftLock !== 'object') Forge.cardCraftLock = {};
+    Forge.cardCraftLock.locked = !!locked;
+    if (message) Forge.cardCraftLock.message = String(message);
+    if (typeof Catalog !== 'undefined' && Catalog) Catalog.cardCraftLock = Forge.cardCraftLock;
+    try { saveForge(); } catch (e) {}
+    try { showToast(locked ? '🔒 Card crafting LOCKED. Publish the catalog to push it to players.'
+                           : '🔓 Card crafting UNLOCKED. Publish the catalog to push it to players.', 6000); } catch (e) {}
+    try { render(); } catch (e) {}
+    return { locked: !!locked, message: Forge.cardCraftLock.message || null,
+             next: 'Run Publish Everything (or Publish Catalog) so players receive this.' };
+  } catch (e) { return { error: String(e && e.message || e) }; }
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.cardCraftLocked = cardCraftLocked;
+  window.__mg.setCardCraftLock = setCardCraftLock;
+} catch (e) {}
 function canCraft(card) {
   if (!card) return false;
+  if (cardCraftLocked()) return false;   // global lock — disables every craft button
   // 🔒 Forge obtainability gate — admin may have locked craft for this card,
   //    or marked it admin-grant-only.
   try {
@@ -38016,6 +38395,10 @@ function _bindForgeObtToggles() {
   });
 }
 function craftCard(card) {
+  // Defence in depth: canCraft() already blocks this, but craftCard is the
+  // function that actually mints a card, so it re-checks the lock itself. A
+  // console call or a stale button cannot slip past both.
+  if (cardCraftLocked()) { try { showToast(cardCraftLockMessage(), 3600); } catch (e) {} return false; }
   if (!card || !canCraft(card)) return false;
   if (!spendResources(getCardCraftCost(card))) return false;
   if (!Profile.cardCollection) Profile.cardCollection = {};
@@ -47440,6 +47823,14 @@ function _applyCatalogRow(data) {
     Catalog.battleMap3d = rawMoves.__battle_map_3d__;
     try { if (!_hydAdm || !Forge.battleMap3d || !Object.keys(Forge.battleMap3d).length) Forge.battleMap3d = rawMoves.__battle_map_3d__; } catch (e) {}
   }
+  // 🔒 Global card-craft lock. NOTE the deliberate asymmetry with the fields
+  // below: this one always overwrites Catalog AND Forge, even for an admin,
+  // because it is an operational switch the owner flips — not authored content
+  // that a local edit should be allowed to win over.
+  if (rawMoves.__card_craft_lock__ && typeof rawMoves.__card_craft_lock__ === 'object') {
+    Catalog.cardCraftLock = rawMoves.__card_craft_lock__;
+    try { Forge.cardCraftLock = rawMoves.__card_craft_lock__; } catch (e) {}
+  }
   if (rawMoves.__weather_vfx__ && typeof rawMoves.__weather_vfx__ === 'object') {
     Catalog.weatherVfx = rawMoves.__weather_vfx__;
     try { if (!_hydAdm || !Forge.weatherVfx || !Object.keys(Forge.weatherVfx).length) Forge.weatherVfx = rawMoves.__weather_vfx__; } catch (e) {}
@@ -48099,6 +48490,15 @@ async function cloudPublishCatalog(opts) {
       // 🌦 Weather VFX selection + intensity — so players see the admin's chosen
       // per-weather visual effects, not the defaults.
       __weather_vfx__:           (Forge.weatherVfx && typeof Forge.weatherVfx === 'object') ? Forge.weatherVfx : {},
+      // 🔒 Card-craft lock ships with every publish so lifting/reapplying it is
+      // a publish, not a deploy. Absent local setting ⇒ publish the shipped
+      // default (locked) rather than nothing, so players never read a stale
+      // "unlocked" from an older catalog row.
+      __card_craft_lock__: (function () {
+        const l = (Forge.cardCraftLock && typeof Forge.cardCraftLock === 'object') ? Forge.cardCraftLock : null;
+        return { locked: l && typeof l.locked === 'boolean' ? l.locked : CARD_CRAFT_LOCKED_DEFAULT,
+                 message: (l && l.message) || '🔒 Card crafting is temporarily closed.' };
+      })(),
       __weather_vfx_intensity__: (Forge.weatherVfxIntensity && typeof Forge.weatherVfxIntensity === 'object') ? Forge.weatherVfxIntensity : {},
       // 📈 Crash Exchange — market prices + reserve pool. These were LOCAL-ONLY;
       // without a catalog publish they never reached non-admin players, so every
@@ -56358,7 +56758,9 @@ const LiveClip = (() => {
   // works. `.rec-on` turns it red + pulsing (styled in CSS).
   function syncGearButtons() {
     try {
-      document.querySelectorAll('#btn-battle-settings').forEach((b) => {
+      // The recorder moved from the timer rail to the sidebar tools; target
+      // BOTH ids so the red pulse follows it and any older layout still lights.
+      document.querySelectorAll('#bsxRecord, #btn-battle-settings').forEach((b) => {
         b.classList.toggle('rec-on', armed);
         b.setAttribute('title', armed ? 'Recording — click to stop (the last 60s is kept)' : 'Record a clip of the last 60s to share');
         b.setAttribute('aria-label', armed ? 'Stop recording' : 'Record clip');
@@ -73328,7 +73730,12 @@ function openForgeCraftModal() {
               '<button id="fc-x" style="cursor:pointer;border:1px solid rgba(184,136,255,0.4);background:transparent;color:#b8a0ff;border-radius:8px;padding:0.35rem 0.7rem">✖ Close</button>' +
             '</div>' +
           '</div>' +
-          '<div class="small-text ink-dim" style="margin-bottom:8px">Forge cards with secured camp resources (Workshop · Camp economy).</div>' +
+          // 🔒 When the global lock is on every Forge button is disabled. Say so
+          // plainly — a wall of dead buttons with no explanation reads as a bug.
+          (cardCraftLocked()
+            ? '<div style="margin-bottom:8px;padding:0.55rem 0.7rem;border:1px solid rgba(255,154,136,0.5);background:rgba(90,30,25,0.35);border-radius:8px;color:#ffb9ab;font-weight:700">'
+              + escapeHtml(cardCraftLockMessage()) + '</div>'
+            : '<div class="small-text ink-dim" style="margin-bottom:8px">Forge cards with secured camp resources (Workshop · Camp economy).</div>') +
           '<input id="fc-q" placeholder="Search cards…" value="' + escapeHtml(App._forgeQ || '') + '" style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:0.5rem 0.7rem;border-radius:8px;border:1px solid rgba(184,136,255,0.3);background:rgba(15,8,30,0.65);color:#e8e0ff;font-family:\'Crimson Text\',serif">' +
           '<div style="overflow:auto;border:1px solid rgba(184,136,255,0.18);border-radius:8px">' + rows + '</div>' +
         '</div>';
@@ -74218,7 +74625,112 @@ const OPS_ECON = {
   // 🥋 Dojo — the licence to run a MOVE storefront. Owning one unlocks the
   // Tutor Shop (wholesale) and lets you stock + resell moves to other players.
   dojo:         { startup: 150000, ratePerWorkerHr: 450,  salaryPerWorkerHr: 110, maxWorkers: 6,  yields: {} },
+  // 🏦 Bank — the licence to run a LENDING house. Founding it is only the
+  // premises; the charter itself is bought in MT at the Office of the Mint and
+  // is what actually lets you lend. Workers here are BANK TELLERS: they staff
+  // the underwriting desk and decide applications on the owner's behalf, within
+  // the per-teller ceiling enforced server-side in bank_decide().
+  // yields {} on purpose — a bank earns Cinder interest, not resources, so it
+  // must never be swept up by the production-pressure hook (cxProduce).
+  bank:         { startup: 1000000, ratePerWorkerHr: 1500, salaryPerWorkerHr: 400, maxWorkers: 8,  yields: {} },
 };
+// 🏦 The bank is the ONE operation with an alternate price: 1,000,000 Cinder,
+// OR a $200 stake in Mythic Token. MT is $0.10 (the Bank of Ethos quote price),
+// so $200 = 2,000 MT. ⚠ The stake is LOCKED, not spent — it is the bank's
+// capitalisation and is what depositors are protected by. Cinder is spent.
+const BANK_CHARTER_USD   = 200;
+const BANK_MT_PRICE_USD  = 0.10;
+const BANK_CHARTER_MT    = Math.round(BANK_CHARTER_USD / BANK_MT_PRICE_USD);   // 2,000 MT
+
+// Ask which way they are paying. Returns 'cinder' | 'mt' | null(cancelled).
+// The MT branch settles server-side through bank_open_charter (which debits
+// mythic_balances and locks the stake) BEFORE the operation is created, so a
+// failed stake can never leave a player owning a bank they did not pay for.
+async function _bankFoundChoice() {
+  const cost = (_opEcon('bank') || {}).startup || 1000000;
+  const haveC = Profile.gems | 0;
+  let haveMt = App._mtBal || 0;
+  try {
+    const uid = Profile.cloud && Profile.cloud.userId;
+    if (uid && Cloud && Cloud.client) {
+      const b = await Cloud.client.from('mythic_balances').select('mt').eq('user_id', uid).maybeSingle();
+      haveMt = (b && b.data && Number(b.data.mt)) || 0; App._mtBal = haveMt;
+    }
+  } catch (e) {}
+  const row = (k, v, col) => '<div style="display:flex;justify-content:space-between;padding:0.2rem 0"><span style="color:#a89878">' + k + '</span><b style="color:' + col + '">' + v + '</b></div>';
+  const pick = await showGameConfirm({
+    title: '🏦 Open Your Own Bank',
+    bodyHtml:
+      '<div style="margin-bottom:0.7rem">A bank lets you lend to other players, hold their deposits, and staff an underwriting desk.</div>' +
+      '<div style="background:rgba(20,16,14,0.6);border:1px solid #2a201c;border-radius:4px;padding:0.7rem 0.9rem;margin:0.6rem 0">' +
+        '<div style="color:#d4a843;font-weight:800;letter-spacing:.1em;font-size:0.78rem;margin-bottom:0.35rem">OPTION A — BUY IT</div>' +
+        row('Cost (spent)', cost.toLocaleString() + ' 🔥', '#d4a843') +
+        row('Your Cinder', haveC.toLocaleString() + ' 🔥', haveC >= cost ? '#4ade80' : '#ff7755') +
+      '</div>' +
+      '<div style="background:rgba(14,20,32,0.6);border:1px solid #23303f;border-radius:4px;padding:0.7rem 0.9rem;margin:0.6rem 0">' +
+        '<div style="color:#7fd3ff;font-weight:800;letter-spacing:.1em;font-size:0.78rem;margin-bottom:0.35rem">OPTION B — STAKE MYTHIC TOKEN</div>' +
+        row('Stake (locked, not spent)', BANK_CHARTER_MT.toLocaleString() + ' MT ($' + BANK_CHARTER_USD + ')', '#7fd3ff') +
+        row('Your MT', haveMt.toLocaleString() + ' MT', haveMt >= BANK_CHARTER_MT ? '#4ade80' : '#ff7755') +
+      '</div>' +
+      '<div style="font-size:0.8rem;color:#a89878;font-style:italic">Staked MT is your bank\'s capitalisation — it is locked while you trade, not spent, and is what your depositors are protected by.</div>',
+    yesLabel: 'BUY · ' + cost.toLocaleString() + ' 🔥',
+    noLabel:  'STAKE · ' + BANK_CHARTER_MT.toLocaleString() + ' MT',
+    yesAccent: 'gold',
+  });
+  // showGameConfirm is a two-button prompt: YES = Cinder, NO = the MT route.
+  if (pick) {
+    if (haveC < cost) { showToast('⚠ Not enough Cinder — need 🔥 ' + cost.toLocaleString() + '.', 4200); return null; }
+    return 'cinder';
+  }
+  if (haveMt < BANK_CHARTER_MT) {
+    showToast('Ⓜ Not enough Mythic Token — need ' + BANK_CHARTER_MT.toLocaleString() + ' MT ($' + BANK_CHARTER_USD + '), have ' + haveMt.toLocaleString() + '.', 5200);
+    return null;
+  }
+  if (!(Cloud && Cloud.client && Profile.cloud && Profile.cloud.signedIn)) { showToast('☁ Sign in to stake Mythic Token.', 3600); return null; }
+  try {
+    const r = await Cloud.client.rpc('bank_open_charter', {
+      p_tier: 1, p_stake: BANK_CHARTER_MT,
+      p_bank_name: ((Profile.cloud.displayName || 'Lending') + ' House').slice(0, 28), p_tagline: '',
+    });
+    const j = (r && r.data) || {};
+    if (r && r.error) {
+      showToast(/does not exist|PGRST202|schema cache/i.test(r.error.message || '')
+        ? '⚠ Bank tables not installed yet — run player_banks.sql.' : ('⚠ Stake failed: ' + (r.error.message || '?')), 6000);
+      return null;
+    }
+    if (!j.ok) {
+      showToast(j.error === 'insufficient_mt' ? ('Ⓜ Not enough MT — need ' + (j.need || BANK_CHARTER_MT).toLocaleString() + '.')
+              : j.error === 'stake_too_low'   ? ('Ⓜ Minimum stake is ' + (j.required || BANK_CHARTER_MT).toLocaleString() + ' MT.')
+              : j.error === 'not_signed_in'   ? '☁ Sign in first.' : ('⚠ Stake failed: ' + (j.error || '?')), 5600);
+      return null;
+    }
+    App._mtBal = Math.max(0, haveMt - BANK_CHARTER_MT);
+    showToast('🏦 Bank chartered — ' + BANK_CHARTER_MT.toLocaleString() + ' MT staked as capitalisation.', 6000);
+    return 'mt';
+  } catch (e) { showToast('⚠ Stake failed — try again.', 3600); return null; }
+}
+// Create the operation locally after a non-Cinder purchase. Mirrors the shape
+// the personal-Cinder path writes so opFetch/collect treat it identically.
+async function _opCreateLocal(opType, cost) {
+  if ((Operations.list || []).some(function (x) { return x && x.op_type === opType; })) { showToast('You already operate that.', 3400); return false; }
+  const localOp = {
+    id: 'local_' + opType + '_' + Date.now(),
+    corp_id: (Corp.mine && Corp.mine.id) || 'local',
+    op_type: opType, level: 1, workers: 0, status: 'active',
+    meta: { lastCollect: Date.now(), localOnly: true, fundedBy: cost ? 'personal' : 'mt-stake' },
+    created_at: new Date().toISOString(),
+  };
+  _jbLocalOpsList().push(localOp);
+  try { saveProfile(); } catch (e) {}
+  if (!Array.isArray(Operations.list)) Operations.list = [];
+  Operations.list.push(localOp);
+  if (Corp.mine && Cloud && Cloud.client) {
+    try { await Cloud.client.from('corp_operations').insert({ corp_id: Corp.mine.id, op_type: opType, level: 1, workers: 0, status: 'active', meta: { lastCollect: Date.now() } }); } catch (e) {}
+  }
+  try { _opAfterFound(opType); } catch (e) {}
+  try { await opFetch(); } catch (e) {}
+  return true;
+}
 // 👑 ADMIN-TUNABLE. OPS_ECON above is the DEFAULT table; an admin can override
 // any field of any operation from the Operations Economy editor, and the values
 // publish to every player. Overrides are merged per-operation so a partial edit
@@ -74231,6 +74743,7 @@ const OP_LABELS = {
   medical: 'Medical Corporation', agri: 'Agricultural Op.', research: 'Research Facility',
   smuggling: 'Smuggling Network', salvage: 'Salvage Operation', gas: 'Gas Station Chain',
   cars: 'Car Dealership', fishing: 'Fishing Company', cardshop: 'Card Shop', dojo: 'Dojo',
+  bank: 'Bank',
 };
 function getOpsEconOverrides() {
   try {
@@ -74794,8 +75307,12 @@ function _reCloudListingsForEcon() {
   } catch (e) {}
   return out;
 }
-// Create a cloud realty_listings row from the corp "List Property" form — any
-// signed-in player, node-assigned, broadcast to everyone via realtyFetch.
+// Create a cloud realty_listings row from the corp "List Property" form.
+// 👑 ADMIN ONLY — new property is primary supply and only the house may mint it.
+// ⚠ The check below is the CLIENT half. The other half is the `rl_ins` RLS
+// policy on realty_listings, which must also require public.is_app_admin() —
+// without it a player can POST straight to the REST endpoint and skip this
+// function entirely. See player_banks-style migration: realty_admin_only.sql.
 async function _reCloudCreateListing(lst) {
   if (!((typeof isAdmin === 'function') && isAdmin())) { showToast('👑 Listing new properties is admin-only.', 2800); return false; }
   if (!_reMarketReady()) { showToast('☁ Sign in to list property on the market.', 3600); return false; }
@@ -75575,6 +76092,19 @@ function _jbHandleAction(a) {
           const e = _opEcon(a.op);
           if (!e) { showToast('⚠ Unknown operation type: ' + a.op, 3600); _jbSendData(); return; }
 
+          // 🏦 BANK — the one operation you can buy two ways. Ask first, because
+          // the two prices are not interchangeable: Cinder is SPENT, MT is
+          // STAKED (locked as the bank's capitalisation and recoverable after
+          // the unbond period). A player must understand which they chose.
+          if (a.op === 'bank') {
+            const paid = await _bankFoundChoice();
+            if (paid === 'mt') {           // MT stake settled server-side; op is free
+              try { await _opCreateLocal(a.op, 0); } catch (e2) {}
+              _jbSendData(); return;
+            }
+            if (paid !== 'cinder') { _jbSendData(); return; }   // cancelled
+          }
+
           const needCorp     = !Corp.mine;
           const notOwner     = Corp.mine && !Corp.amOwner;
           const isAdminUser  = (typeof isAdmin === 'function') && isAdmin();
@@ -75634,7 +76164,7 @@ function _jbHandleAction(a) {
             medical: 'Medical Corporation', agri: 'Agricultural Op.', research: 'Research Facility',
             smuggling: 'Smuggling Network', salvage: 'Salvage Operation', gas: 'Gas Station Chain',
             cars: 'Car Dealership', fishing: 'Fishing Company', cardshop: 'Card Shop',
-            dojo: 'Dojo',
+            dojo: 'Dojo', bank: 'Bank',
           })[a.op] || (a.op.charAt(0).toUpperCase() + a.op.slice(1));
           const haveCR = (Profile.gems | 0);
           const ok2 = await showGameConfirm({
@@ -75949,7 +76479,7 @@ function mountJustBusiness() {
     }
     if (!f) {
       f = document.createElement('iframe');
-      f.id = FID; f.src = 'corp/?v=118s9';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
+      f.id = FID; f.src = 'corp/?v=119w3';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
       // Smooth cross-fade + gentle scale-in (no hard cut on enter/exit).
       f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transform:scale(.986);transition:opacity .6s ' + EASE + ',transform .6s ' + EASE + ';will-change:opacity,transform';
       f.onload = function () {
@@ -103296,6 +103826,36 @@ function _renderImpl() {
   if (App.screen === 'baseVault')     return renderBaseVault();
   if (App.screen === 'cinderShop')    return renderCinderShop();
   if (App.screen === 'crafting')      return renderCrafting();
+  if (App.screen === 'bankDesk') {
+    try { return renderBankDesk(); }
+    catch (dkErr) {
+      try { console.error('[DESK] renderBankDesk threw:', dkErr); } catch (e) {}
+      root.innerHTML =
+        '<div style="max-width:760px;margin:3rem auto;padding:1.4rem 1.6rem;background:rgba(40,10,10,0.85);border:1px solid #e85d3c;border-radius:12px;color:#ffd6c8;font-family:\'Cinzel\',serif">' +
+          '<div style="font-size:1.2rem;color:#ff8a6a;margin-bottom:0.6rem">⚠ The Underwriting Desk hit an error</div>' +
+          '<div style="font-family:monospace;font-size:0.74rem;color:#ffb9a3;white-space:pre-wrap;background:#1a0a0a;border:1px solid #5a2418;border-radius:6px;padding:0.7rem;max-height:240px;overflow:auto">' +
+            escapeHtml(String((dkErr && (dkErr.stack || dkErr.message)) || dkErr)) + '</div>' +
+          '<button onclick="App.screen=\'campOps\';render()" style="margin-top:0.9rem;cursor:pointer;border:1px solid #e8c97e;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;font-weight:800;border-radius:8px;padding:0.5rem 1rem">← Back</button>' +
+        '</div>';
+      return;
+    }
+  }
+  if (App.screen === 'bankCharter') {
+    // Same crash-guard posture as the exchange: a render error here must show
+    // the stack and a way out, never a dead screen.
+    try { return renderBankCharter(); }
+    catch (bkErr) {
+      try { console.error('[MINT] renderBankCharter threw:', bkErr); } catch (e) {}
+      root.innerHTML =
+        '<div style="max-width:760px;margin:3rem auto;padding:1.4rem 1.6rem;background:rgba(40,10,10,0.85);border:1px solid #e85d3c;border-radius:12px;color:#ffd6c8;font-family:\'Cinzel\',serif">' +
+          '<div style="font-size:1.2rem;color:#ff8a6a;margin-bottom:0.6rem">⚠ Office of the Mint hit an error</div>' +
+          '<div style="font-family:monospace;font-size:0.74rem;color:#ffb9a3;white-space:pre-wrap;background:#1a0a0a;border:1px solid #5a2418;border-radius:6px;padding:0.7rem;max-height:240px;overflow:auto">' +
+            escapeHtml(String((bkErr && (bkErr.stack || bkErr.message)) || bkErr)) + '</div>' +
+          '<button onclick="App.screen=\'campOps\';render()" style="margin-top:0.9rem;cursor:pointer;border:1px solid #e8c97e;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;font-weight:800;border-radius:8px;padding:0.5rem 1rem">← Back</button>' +
+        '</div>';
+      return;
+    }
+  }
   if (App.screen === 'crashExchange') {
     // 🛡 Never let a Crash/Exchange render error leave a dead screen — catch it,
     // show the actual error + a Back button, and log the stack so the failing
@@ -126280,6 +126840,9 @@ function renderBattlePiles(s) {
   const I_BOLT = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L5 13h5l-1 9 8-12h-5z"/></svg>';
   const I_GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.6V5M12 19v2.4M2.6 12H5M19 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7"/></svg>';
   const I_INFO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 10.5v6"/><circle cx="12" cy="7.6" r="1.1" fill="currentColor" stroke="none"/></svg>';
+  // 🎬 Record — a ring with a filled dot, the same mark used on the old
+  // timer-side button so the control reads identically after the move.
+  const I_REC  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="3.6" fill="currentColor" stroke="none"/></svg>';
   const _slabel = (ic, t) => '<div class="slabel">' + ic + escapeHtml(t) + '</div>';
   const _rule = '<div class="rule"></div>';
   const _slot = (id, label, n, tone, extra) => `
@@ -126317,7 +126880,7 @@ function renderBattlePiles(s) {
       ${_slot('foeGrave', 'Foe Grave', graveCards('ai').length, 'grey', 'data-bp-grave="ai"')}
       <div class="buffs" id="buffs">${_buff(s.ai.kalonsRemaining)}${_buff(s.player.kalonsRemaining)}</div>
       <div class="tools">
-        <button class="tool" id="bsxSettings" title="Settings" aria-label="Settings">${I_GEAR}</button>
+        <button class="tool" id="bsxRecord" title="Record a clip of the last 60s to share" aria-label="Record clip">${I_REC}</button>
         <button class="tool" id="bsxLog" title="Battle log" aria-label="Battle log">${I_INFO}</button>
       </div>
       <div class="kv">${I_TUNNEL}<b>TUNNELED</b><span class="box" id="tunneled">${_tun.length}</span></div>
@@ -126477,7 +127040,21 @@ function bindBattlePiles() {
       if (t) t.click();
     });
   };
-  _relay('bsxSettings', 'btn-battle-settings');
+  // 🎬 The clip recorder lives HERE now, beside the battle log — it used to sit
+  // by the timer. Bound DIRECTLY to LiveClip rather than relayed, because the
+  // timer-side button it used to relay to no longer exists; a relay to a missing
+  // id is a silently dead button.
+  (function () {
+    const b = document.getElementById('bsxRecord');
+    if (!b || b._wired) return;
+    b._wired = 1;
+    b.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (typeof LiveClip === 'undefined') return;
+      if (LiveClip.isArmed()) LiveClip.disarm(); else LiveClip.promptEnable();
+    });
+  })();
+  try { if (typeof LiveClip !== 'undefined') LiveClip.syncGearButtons(); } catch (e) {}
   _relay('bsxLog', 'btn-open-battle-log');
 
   // 🜂 Your Realm Deck opens; the foe's slot has no data attribute at all, so
@@ -131653,9 +132230,6 @@ function _bcTopBar(s) {
       <div class="turnplaque"><span class="flr">◆</span><span class="turn-txt">${turnLabel}</span><span class="flr">◆</span></div>
       <div class="rightgrp">
         <div class="timer">${timerInner}</div>
-        <button class="gear" id="btn-battle-settings" title="Record a clip of the last 60s to share">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="3.6" fill="currentColor" stroke="none"/></svg>
-        </button>
         <button class="gear" id="btn-battle-prefs" title="Settings (animation speed, audio, log filters, etc.)" aria-label="Settings">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
         </button>
@@ -132106,9 +132680,6 @@ function _bcPanel(s, aiHero, playerHero) {
         </svg>
         <b id="timerText">${tm.txt}</b>
       </div>
-      <button class="gear" id="btn-battle-settings" aria-label="Record clip" title="Record a clip of the last 60s to share">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="3.6" fill="currentColor" stroke="none"/></svg>
-      </button>
       <button class="gear" id="btn-battle-prefs" aria-label="Settings" title="Settings (animation speed, audio, log filters, etc.)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3.4"/><path d="M12 2.4V5M12 19v2.6M2.4 12H5M19 12h2.6M5.1 5.1l1.8 1.8M17.1 17.1l1.8 1.8M18.9 5.1l-1.8 1.8M6.9 17.1l-1.8 1.8"/></svg>
       </button>
@@ -134026,9 +134597,10 @@ function bindBattleEvents() {
     renderBattle();
   };
 
-  // 🎬 CLIP RECORDER — the right deck rail's gear slot is now the record
-  // toggle (Settings still lives in the left UI, so it was redundant here).
-  // Tap to open the permission modal → record the last 60s; tap again to stop.
+  // 🎬 CLIP RECORDER — now lives in the sidebar tools as #bsxRecord, bound where
+  // that rail is built. This binding is kept only so any layout still emitting
+  // the old timer-side #btn-battle-settings keeps working; it is a no-op when
+  // that id is absent, which is the normal case.
   const settingsBtn = document.getElementById('btn-battle-settings');
   if (settingsBtn) settingsBtn.onclick = () => {
     if (typeof LiveClip === 'undefined') return;
@@ -157015,6 +157587,8 @@ const CAMP_ROUTE_OPTIONS = {
   deck:             { label: 'Deck Builder',           icon: '🃏', go: () => { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; } },
   rlcList:          { label: 'Roguelite Gate',         icon: '🗝', go: () => { App.screen = 'rlcList'; } },
   crashExchange:    { label: 'Crash Exchange (Market)',icon: '📈', go: () => { App._cxReturnScreen = 'title'; App.screen = 'crashExchange'; } },
+  bankCharter:      { label: 'Office of the Mint',     icon: '🏦', go: () => { App.screen = 'bankCharter'; } },
+  bankDesk:         { label: 'The Underwriting Desk',  icon: '🖋', go: () => { App.screen = 'bankDesk'; } },
   cinderShop:       { label: 'Cinder Shop',            icon: '🔥', go: () => { App.screen = 'cinderShop'; } },
   crafting:         { label: 'Crafting',               icon: '🔨', go: () => { App.screen = 'crafting'; } },
   lab:              { label: 'The Lab',                icon: '🧪', go: () => { if (typeof _labGate === 'function' && !_labGate()) return; App.screen = 'lab'; App.labTab = 'fuse'; App.labParentA = null; App.labParentB = null; } },
@@ -157467,19 +158041,34 @@ const DEFAULT_HOUSE_LISTINGS = [
   { id: 'starter_cot',  name: 'Starter Cot',         address: '12 Camp Path',     price:   2500, color: '#88c4ff', icon: '🏕', capacity:  60, blurb: 'A cot under a tarp. Yours.' },
   { id: 'plank_shack',  name: 'Plank Shack',         address: '7 Edge Lane',      price:   8000, color: '#a8d4a0', icon: '🏚', capacity: 120, blurb: 'Four walls, one door, a small chest.' },
   { id: 'brick_house',  name: 'Brick Townhouse',     address: '24 Founders Row',  price:  25000, color: '#d4af37', icon: '🏠', capacity: 220, blurb: 'Solid brick, weatherproof, decent stash.' },
-  { id: 'lake_villa',   name: 'Lake-View Villa',     address: '1 Mirror Lake',    price:  75000, color: '#7ce8e8', icon: '🏡', capacity: 380, blurb: 'Quiet, scenic, large vault inside.' },
   { id: 'tower_penth',  name: 'Penthouse Loft',      address: 'The Spire · PH',   price: 250000, color: '#ffd166', icon: '🏙', capacity: 600, blurb: 'Skyline view. Premium storage. Bragging rights.' },
 ];
+// 🗄 RETIRED LISTINGS — withdrawn from sale but STILL RESOLVABLE.
+// ⚠ Do NOT just delete a listing that players may already own. `ownedHouses[]`
+// stores only a `listingId`, and every consumer resolves it with
+// `_findListing(id) || {}` — so a deleted entry turns an owned house into a
+// nameless property with `capacity` undefined, which silently breaks its stash.
+// Retiring keeps the record resolvable (name, capacity, icon all intact) while
+// removing it from the purchase grid, which is what "remove it" actually means.
+const RETIRED_HOUSE_LISTINGS = [
+  { id: 'lake_villa',   name: 'Lake-View Villa',     address: '1 Mirror Lake',    price:  75000, color: '#7ce8e8', icon: '🏡', capacity: 380, blurb: 'Quiet, scenic, large vault inside.', retired: true },
+];
+// Purchasable listings — the buy/browse grid reads THIS.
 function _getAllListings() {
   const extras = Array.isArray(Forge.realEstateListings) ? Forge.realEstateListings : [];
   return DEFAULT_HOUSE_LISTINGS.concat(extras);
+}
+// Every listing that can be RESOLVED, retired ones included. Lookup reads THIS
+// so existing owners keep a working house.
+function _getAllListingsResolvable() {
+  return _getAllListings().concat(RETIRED_HOUSE_LISTINGS);
 }
 // Base listing lookup. The extended _findListing() below wraps this to also
 // resolve admin-placed houses. (Was a duplicate `function _findListing` that
 // collided via hoisting with the extension, making _findListing_original alias
 // the extension itself → infinite self-recursion on every call. Renamed so the
 // monkeypatch actually chains to the base.)
-function _findListing_original(id) { return _getAllListings().find(l => l.id === id) || null; }
+function _findListing_original(id) { return _getAllListingsResolvable().find(l => l.id === id) || null; }
 function _ensureOwnedHouses() {
   if (!Array.isArray(Profile.ownedHouses)) Profile.ownedHouses = [];
   return Profile.ownedHouses;
@@ -157637,7 +158226,7 @@ async function _reSyncResidencyToCloud() {
 // ============================================================================
 const REALTY_MAX_ACTIVE    = 12;
 const REALTY_POST_COOLDOWN = 3000;
-const REALTY_MARKET_SQL = "create table if not exists public.realty_listings (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  seller_name text,\n  kind text not null default 'sale',\n  prop_id text,\n  prop_json jsonb,\n  node_id text,\n  residents integer not null default 0,\n  price integer not null default 0,\n  rent integer not null default 0,\n  rent_days integer not null default 7,\n  status text not null default 'open',\n  buyer_id uuid references auth.users(id),\n  buyer_name text,\n  rent_until timestamptz,\n  paid_out boolean not null default false,\n  created_at timestamptz default now()\n);\nalter table public.realty_listings enable row level security;\ndrop policy if exists rl_sel on public.realty_listings;\ncreate policy rl_sel on public.realty_listings for select to authenticated using (status = 'open' or seller_id = auth.uid() or buyer_id = auth.uid());\ndrop policy if exists rl_ins on public.realty_listings;\ncreate policy rl_ins on public.realty_listings for insert to authenticated with check (seller_id = auth.uid());\ndrop policy if exists rl_upd on public.realty_listings;\ncreate policy rl_upd on public.realty_listings for update to authenticated using (status = 'open' or seller_id = auth.uid() or buyer_id = auth.uid()) with check (true);\ndrop policy if exists rl_del on public.realty_listings;\ncreate policy rl_del on public.realty_listings for delete to authenticated using (seller_id = auth.uid() and status = 'open');\ndo $$ begin\n  if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and tablename='realty_listings') then\n    alter publication supabase_realtime add table public.realty_listings;\n  end if;\nend $$;";
+const REALTY_MARKET_SQL = "create table if not exists public.realty_listings (\n  id uuid primary key default gen_random_uuid(),\n  seller_id uuid not null references auth.users(id) on delete cascade,\n  seller_name text,\n  kind text not null default 'sale',\n  prop_id text,\n  prop_json jsonb,\n  node_id text,\n  residents integer not null default 0,\n  price integer not null default 0,\n  rent integer not null default 0,\n  rent_days integer not null default 7,\n  status text not null default 'open',\n  buyer_id uuid references auth.users(id),\n  buyer_name text,\n  rent_until timestamptz,\n  paid_out boolean not null default false,\n  created_at timestamptz default now()\n);\nalter table public.realty_listings enable row level security;\ndrop policy if exists rl_sel on public.realty_listings;\ncreate policy rl_sel on public.realty_listings for select to authenticated using (status = 'open' or seller_id = auth.uid() or buyer_id = auth.uid());\ncreate table if not exists public.app_admins (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  email text,\n  added_at timestamptz default now()\n);\nalter table public.app_admins enable row level security;\ndrop policy if exists aa_sel on public.app_admins;\ncreate policy aa_sel on public.app_admins for select to authenticated using (true);\ncreate or replace function public.is_app_admin() returns boolean language sql stable security definer set search_path = public as $fn$ select exists (select 1 from public.app_admins a where a.user_id = auth.uid()); $fn$;\ndrop policy if exists rl_ins on public.realty_listings;\ncreate policy rl_ins on public.realty_listings for insert to authenticated with check (seller_id = auth.uid() and public.is_app_admin());\ndrop policy if exists rl_upd on public.realty_listings;\ncreate policy rl_upd on public.realty_listings for update to authenticated using (status = 'open' or seller_id = auth.uid() or buyer_id = auth.uid()) with check (true);\ndrop policy if exists rl_del on public.realty_listings;\ncreate policy rl_del on public.realty_listings for delete to authenticated using (seller_id = auth.uid() and status = 'open');\ndo $$ begin\n  if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and tablename='realty_listings') then\n    alter publication supabase_realtime add table public.realty_listings;\n  end if;\nend $$;";
 const RealtyMarket = { open: [], mine: [], loading: false, tableMissing: false, _err: '', _channel: null, _rt: false, _refetchT: null, lastFetch: 0, _lastPostAt: 0 };
 function _reMarketReady() { try { return !!(typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn && Cloud.client); } catch (e) { return false; } }
 function _reMarketErr(e) {
@@ -194782,6 +195371,701 @@ function _ownershipSectionHtml() {
     </div><div class="tw-nd-claim-hint">Real on-chain ownership of businesses & nodes (Base). An extra layer on top of the game — everything still runs on Cinder.</div></div>`;
 }
 try { window.__mg = window.__mg || {}; window.__mg._ownershipActivate = _ownershipActivate; window.__mg._ownConnectWallet = _ownConnectWallet; window.__mg._ownCopyWallet = _ownCopyWallet; window.__mg._ownWalletAddr = _ownWalletAddr; } catch (e) {}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🏦 OFFICE OF THE MINT — charter registry & stake custody
+// ---------------------------------------------------------------------------
+// The screen where a player stakes Mythic Token to open a bank, inspects the
+// stake, unstakes, or lists the charter for sale. Ported from the user's
+// charter-staking.html mockup.
+//
+// ⚠ THE PRICE TABLE BELOW IS A MIRROR FOR DISPLAY ONLY. The authoritative copy
+// lives in bank_open_charter() in SQL — the client cannot dictate its own
+// charter price. If these ever disagree, the RPC wins and the UI is wrong.
+// Ladder is the mockup's, scaled x10 so tier 1 = $200 (2,000 MT at $0.10)
+// while the tiers still ascend.
+// ═══════════════════════════════════════════════════════════════════════════
+const BKC_TIERS = [
+  { id: 1, name: 'Lending House',  fee: 0,    stake: 2000,  reqs: 'Charter I · open to all',                       depBase: 0 },
+  { id: 2, name: 'Chartered Bank', fee: 1500, stake: 7500,  reqs: 'Charter II · 40 loans serviced',                depBase: 250000 },
+  { id: 3, name: 'Mythic Reserve', fee: 4000, stake: 21000, reqs: 'Charter III · 250 loans serviced',              depBase: 1000000 },
+];
+const BKC_OVERSTAKE = [
+  { min: 0,     cap: 0,        seal: null },
+  { min: 2500,  cap: 500000,   seal: null },
+  { min: 10000, cap: 2500000,  seal: 'Well-capitalized' },
+  { min: 50000, cap: 15000000, seal: 'Fortress' },
+];
+const BKC_UNBOND_HOURS = 72;
+const _bkcMt  = (n) => Math.round(n || 0).toLocaleString('en-US');
+const _bkcCin = (n) => Math.round(n || 0).toLocaleString('en-US') + ' ¢';
+const _bkcTier = (id) => BKC_TIERS.find(t => t.id === id) || BKC_TIERS[0];
+const _bkcBand = (o) => BKC_OVERSTAKE.slice().reverse().find(b => (o || 0) >= b.min) || BKC_OVERSTAKE[0];
+const _bkcDepCap = (id, o) => _bkcTier(id).depBase + _bkcBand(o).cap;
+function _bkcState() {
+  if (!App._bkc) App._bkc = { view: 'open', tier: 1, over: 0, ack: false, bank: null, mt: 0, loaded: false, busy: false };
+  return App._bkc;
+}
+// Pull the player's own bank row + live MT balance. Both are server truth.
+async function bkcRefresh(force) {
+  const S = _bkcState();
+  if (S.loaded && !force) return S;
+  try {
+    const uid = Profile.cloud && Profile.cloud.userId;
+    if (uid && Cloud && Cloud.client) {
+      const [b, m] = await Promise.all([
+        Cloud.client.from('player_banks').select('*').eq('owner_id', uid).maybeSingle(),
+        Cloud.client.from('mythic_balances').select('mt').eq('user_id', uid).maybeSingle(),
+      ]);
+      S.bank = (b && b.data) || null;
+      if (b && b.error && /does not exist|PGRST205|schema cache/i.test(b.error.message || '')) S.tablesMissing = true;
+      S.mt = (m && m.data && Number(m.data.mt)) || 0;
+      App._mtBal = S.mt;
+      if (S.bank) { S.tier = S.bank.charter_tier || 1; S.view = (S.view === 'open') ? 'hold' : S.view; }
+    }
+  } catch (e) {}
+  S.loaded = true;
+  return S;
+}
+function bkcGo(view) { const S = _bkcState(); S.view = view; try { render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {} }
+function bkcSetTier(id) { const S = _bkcState(); S.tier = id; S.over = 0; try { render(); } catch (e) {} }
+function bkcSetOver(v) { const S = _bkcState(); S.over = Math.max(0, +v || 0); try { render(); } catch (e) {} }
+function bkcAck(v) { const S = _bkcState(); S.ack = !!v; try { render(); } catch (e) {} }
+function _bkcRpcErr(err, data) {
+  const msg = (err && err.message) || '';
+  if (/does not exist|PGRST202|schema cache/i.test(msg)) return '⚠ Bank tables not installed — run player_banks.sql, then bank_charter_pricing.sql.';
+  const j = data || {};
+  if (j.error === 'insufficient_mt') return 'Ⓜ Not enough Mythic Token — need ' + _bkcMt(j.need) + ' MT, you have ' + _bkcMt(j.have) + '.';
+  if (j.error === 'stake_too_low')   return 'Ⓜ Minimum stake for that charter is ' + _bkcMt(j.required) + ' MT.';
+  if (j.error === 'not_signed_in')   return '☁ Sign in first.';
+  if (j.error === 'no_bank')         return '🏦 You do not have a bank yet.';
+  return '⚠ ' + (msg || j.error || 'Request failed');
+}
+// Stake and open. The RPC debits MT and creates the bank atomically; the UI
+// only reflects what came back — it never assumes success.
+async function bkcOpenCharter() {
+  const S = _bkcState();
+  if (S.busy) return; S.busy = true;
+  try {
+    if (!(Cloud && Cloud.client && Profile.cloud && Profile.cloud.signedIn)) { showToast('☁ Sign in to stake.', 3600); return; }
+    const t = _bkcTier(S.tier);
+    const stake = t.stake + (S.over | 0);
+    const name = ((Profile.cloud.displayName || 'Lending') + ' House').slice(0, 28);
+    const r = await Cloud.client.rpc('bank_open_charter', { p_tier: t.id, p_stake: stake, p_bank_name: name, p_tagline: '' });
+    const j = (r && r.data) || {};
+    if ((r && r.error) || !j.ok) { showToast(_bkcRpcErr(r && r.error, j), 6000); return; }
+    showToast('🏦 Charter issued — ' + _bkcMt(stake) + ' MT staked' + (t.fee ? ', ' + _bkcMt(t.fee) + ' MT burned' : '') + '.', 6500);
+    S.ack = false; S.over = 0;
+    await bkcRefresh(true);
+    S.view = 'hold';
+    try { render(); } catch (e) {}
+  } catch (e) { showToast('⚠ Stake failed — try again.', 3600); }
+  finally { S.busy = false; }
+}
+async function bkcAddStake(amount) {
+  const S = _bkcState();
+  if (S.busy) return; S.busy = true;
+  try {
+    const amt = Math.max(0, Math.round(amount || 0));
+    if (!amt) { showToast('Enter an amount to stake.', 2800); return; }
+    const r = await Cloud.client.rpc('bank_add_stake', { p_amount: amt });
+    const j = (r && r.data) || {};
+    if ((r && r.error) || !j.ok) { showToast(_bkcRpcErr(r && r.error, j), 6000); return; }
+    showToast('Ⓜ +' + _bkcMt(amt) + ' MT staked — deposit capacity raised.', 5200);
+    await bkcRefresh(true); try { render(); } catch (e) {}
+  } catch (e) { showToast('⚠ Stake failed.', 3600); }
+  finally { S.busy = false; }
+}
+async function bkcSetSale(on, price) {
+  const S = _bkcState();
+  if (S.busy) return; S.busy = true;
+  try {
+    const r = await Cloud.client.rpc('bank_set_sale', { p_for_sale: !!on, p_price: Math.max(0, Math.round(price || 0)) });
+    const j = (r && r.data) || {};
+    if ((r && r.error) || !j.ok) { showToast(_bkcRpcErr(r && r.error, j), 6000); return; }
+    showToast(on ? '🏷 Charter listed for sale.' : '↩ Charter delisted.', 4200);
+    await bkcRefresh(true); try { render(); } catch (e) {}
+  } catch (e) { showToast('⚠ Could not update the listing.', 3600); }
+  finally { S.busy = false; }
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.bank = { go: bkcGo, refresh: bkcRefresh, open: bkcOpenCharter, addStake: bkcAddStake, setSale: bkcSetSale, state: _bkcState };
+  window.__mg.openBankCharter = function () { App.screen = 'bankCharter'; try { render(); } catch (e) {} };
+} catch (e) {}
+
+const _BKC_FR = '<span class="cnr"></span><span class="cnr2"></span>';
+const _BKC_RING =
+  '<svg class="ring" viewBox="0 0 196 196" fill="none" stroke="currentColor" aria-hidden="true">' +
+    '<circle cx="98" cy="98" r="93" stroke-width="1.4"/><circle cx="98" cy="98" r="86" stroke-width=".7" opacity=".55"/>' +
+    '<circle cx="98" cy="98" r="70" stroke-width=".7" stroke-dasharray="3 7" opacity=".6"/>' +
+    [0, 45, 90, 135, 180, 225, 270, 315].map(a =>
+      '<path d="M98 5 l7 8 -7 8 -7 -8Z" transform="rotate(' + a + ' 98 98)" stroke-width="1"/>').join('') +
+  '</svg>';
+function _bkcMedallion(amount, caption, open) {
+  return '<div class="bkc-medwrap"><div class="bkc-med' + (open ? ' open' : '') + '">' + _BKC_RING +
+    '<div class="core"><div class="amt">' + _bkcMt(amount) + '</div><div class="unit">MYTHIC TOKEN</div>' +
+    '<div class="st">' + escapeHtml(caption) + '</div></div></div></div>';
+}
+function renderBankCharter() {
+  const root = document.getElementById('app');
+  const S = _bkcState();
+  if (!S.loaded) { bkcRefresh().then(() => { try { render(); } catch (e) {} }); }
+  const bank = S.bank;
+  const staked = bank ? (Number(bank.mt_staked || 0) + Number(bank.mt_overstake || 0)) : 0;
+  const TABS = [
+    { v: 'open',    label: bank ? 'Charter' : 'Stake to open' },
+    { v: 'hold',    label: 'Your stake' },
+    { v: 'unstake', label: 'Unstake' },
+    { v: 'sale',    label: 'Sale listing' },
+  ];
+  const head =
+    '<header class="bkc-mint"><div class="bkc-top">' +
+      '<div class="bkc-brand"><div>' +
+        '<h1>Office of the Mint</h1>' +
+        '<div class="sub">Charter Registry &amp; Stake Custody</div>' +
+      '</div></div>' +
+      '<div class="bkc-brackets">' +
+        '<div class="bkc-bracket"><span class="k">Available</span><span class="v">' + _bkcMt(S.mt) + '</span></div>' +
+        '<div class="bkc-bracket"><span class="k">Staked</span><span class="v">' + _bkcMt(staked) + '</span></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="bkc-tabs" role="tablist">' +
+      TABS.map(t => '<button class="bkc-tab" role="tab" aria-selected="' + (t.v === S.view) +
+        '" onclick="__mg.bank.go(\'' + t.v + '\')">' + t.label + '</button>').join('') +
+    '</div></header>';
+
+  const backBtn = '<div class="bkc-btnrow" style="margin-top:28px"><button class="bkc-btn" onclick="App.screen=\'campOps\';render()">← Back</button></div>';
+
+  let body = '';
+  if (S.tablesMissing) {
+    body = '<p class="bkc-lede">The Mint is not open yet.</p>' +
+      '<div class="bkc-warn"><span>⚠</span><div>The bank tables are not installed. Run <b>player_banks.sql</b> and then <b>bank_charter_pricing.sql</b> in Supabase, then reload.</div></div>';
+  } else if (S.view === 'open') {
+    body = bank ? _bkcViewIssued(bank) : _bkcViewOpen(S);
+  } else if (S.view === 'hold') {
+    body = bank ? _bkcViewHold(bank) : _bkcNoBank('Your stake');
+  } else if (S.view === 'unstake') {
+    body = bank ? _bkcViewUnstake(bank) : _bkcNoBank('Unstake');
+  } else {
+    body = bank ? _bkcViewSale(bank) : _bkcNoBank('Sale listing');
+  }
+  root.innerHTML = '<div class="bkc">' + head + '<main class="bkc-main">' + body + backBtn + '</main></div>';
+  try { _bkcBindInputs(); } catch (e) {}
+}
+function _bkcNoBank(what) {
+  return '<p class="bkc-lede">' + escapeHtml(what) + '</p>' +
+    '<p class="bkc-lede-sub">You have not chartered a bank yet. Stake Mythic Token to open one.</p>' +
+    '<div class="bkc-btnrow"><button class="bkc-cta" onclick="__mg.bank.go(\'open\')">Open a charter</button></div>';
+}
+// 01 · stake to open
+function _bkcViewOpen(S) {
+  const t = _bkcTier(S.tier);
+  const total = t.fee + t.stake + (S.over | 0);
+  const band = _bkcBand(S.over);
+  const canAfford = total <= S.mt;
+  const pctBurn = total > 0 ? (t.fee / total) * 100 : 0;
+  const maxOver = Math.max(0, S.mt - t.fee - t.stake);
+  return '' +
+  '<p class="bkc-lede">Stake Mythic Token to open a bank.</p>' +
+  '<p class="bkc-lede-sub">A charter is not a purchase. Any filing fee is burned; the rest is <b>staked</b> — held by the Mint as the capital backing your bank, and returned in full when you close or sell.</p>' +
+  '<section class="frame bkc-card">' + _BKC_FR +
+    '<h3>Choose a charter</h3><div class="bkc-tiers">' +
+      BKC_TIERS.map(x =>
+        '<button class="bkc-tier" aria-pressed="' + (x.id === S.tier) + '" onclick="__mg.bank.setTier(' + x.id + ')">' +
+          '<div class="nm">' + escapeHtml(x.name) + '</div>' +
+          '<div class="rn">' + escapeHtml(x.reqs) + '</div>' +
+          '<div class="fig"><span class="fl burn">Filing fee</span><span class="fv">' + _bkcMt(x.fee) + ' MT</span></div>' +
+          '<div class="fig"><span class="fl lock">Stake</span><span class="fv">' + _bkcMt(x.stake) + ' MT</span></div>' +
+        '</button>').join('') +
+    '</div>' +
+    '<div class="bkc-splitbar">' +
+      (t.fee > 0 ? '<i class="bkc-sb-burn" style="width:' + pctBurn + '%">' + (pctBurn > 14 ? _bkcMt(t.fee) + ' burned' : '') + '</i>' : '') +
+      '<i class="bkc-sb-stake" style="width:' + (100 - pctBurn) + '%">' + _bkcMt(t.stake + (S.over | 0)) + ' staked</i>' +
+    '</div>' +
+    '<div class="bkc-splitkey"><span>🔥 Burned — gone permanently</span><span>🔒 Staked — yours, locked while trading</span></div>' +
+  '</section>' +
+  '<section class="frame bkc-card">' + _BKC_FR +
+    '<h3>Over-stake (optional)</h3>' +
+    '<p class="note">Stake more than the minimum to raise how much Cinder your bank may hold on deposit. Withdrawable at any time, subject to the ' + BKC_UNBOND_HOURS + '-hour unbonding period.</p>' +
+    '<input class="bkc-range" type="range" min="0" max="' + Math.max(0, maxOver) + '" step="50" value="' + Math.min(S.over, maxOver) + '" id="bkc-over" aria-label="Over-stake amount">' +
+    '<div class="bkc-sfoot"><span>Over-stake: <b>' + _bkcMt(S.over) + ' MT</b></span>' +
+      '<span>Deposit capacity: <b>' + _bkcCin(_bkcDepCap(S.tier, S.over)) + '</b>' + (band.seal ? '<span class="bkc-chip">' + band.seal + '</span>' : '') + '</span></div>' +
+  '</section>' +
+  '<section class="frame bkc-card">' + _BKC_FR +
+    '<h3>Confirm</h3><table class="bkc-ledger">' +
+      '<tr class="burnv"><td>🔥</td><td>Filing fee → burned</td><td>' + _bkcMt(t.fee) + ' MT</td></tr>' +
+      '<tr><td>🔒</td><td>Charter stake → locked</td><td>' + _bkcMt(t.stake) + ' MT</td></tr>' +
+      '<tr><td>🔒</td><td>Over-stake → locked</td><td>' + _bkcMt(S.over) + ' MT</td></tr>' +
+      '<tr class="sum"><td></td><td>Total from your wallet</td><td>' + _bkcMt(total) + ' MT</td></tr>' +
+    '</table>' +
+    '<div class="bkc-ack"><input type="checkbox" id="bkc-ack"' + (S.ack ? ' checked' : '') + '>' +
+      '<label for="bkc-ack">I understand that <b>' + _bkcMt(t.stake + (S.over | 0)) + ' MT will be locked</b> for as long as this bank operates. It returns in full when I close or sell the bank. Only insolvency — failing to cover my depositors — can consume it.</label></div>' +
+    '<div class="bkc-btnrow">' +
+      '<button class="bkc-cta" id="bkc-open"' + ((!S.ack || !canAfford || S.busy) ? ' disabled' : '') + '>Stake ' + _bkcMt(t.stake + (S.over | 0)) + ' MT &amp; open</button>' +
+      '<span class="bkc-note">' + (canAfford ? 'Leaves ' + _bkcMt(S.mt - total) + ' MT available' : 'Short ' + _bkcMt(total - S.mt) + ' MT') + '</span>' +
+    '</div>' +
+  '</section>';
+}
+// 01b · already chartered
+function _bkcViewIssued(bank) {
+  const t = _bkcTier(bank.charter_tier || 1);
+  const over = Number(bank.mt_overstake || 0);
+  const band = _bkcBand(over);
+  return '' +
+  '<p class="bkc-lede">Charter issued. Your stake rests with the Mint.</p>' +
+  '<p class="bkc-lede-sub">It is locked for as long as the bank trades — not spendable, not tradeable, not transferable while it stands.</p>' +
+  '<section class="frame bkc-card">' + _BKC_FR +
+    _bkcMedallion(Number(bank.mt_staked || 0) + over, 'Staked · ' + t.name, false) +
+    '<table class="bkc-ledger" style="margin-top:22px">' +
+      '<tr><td>🔥</td><td>Filing fee — burned, does not return</td><td style="color:#f4835a">−' + _bkcMt(bank.mt_burned) + ' MT</td></tr>' +
+      '<tr><td>🔒</td><td>Charter stake — returns on close or sale</td><td>' + _bkcMt(bank.mt_staked) + ' MT</td></tr>' +
+      (over ? '<tr><td>🔒</td><td>Over-stake — withdrawable at any time</td><td>' + _bkcMt(over) + ' MT</td></tr>' : '') +
+      '<tr><td>💎</td><td>Deposit capacity unlocked' + (band.seal ? '<span class="bkc-chip">' + band.seal + '</span>' : '') + '</td><td>' + _bkcCin(_bkcDepCap(bank.charter_tier || 1, over)) + '</td></tr>' +
+    '</table>' +
+    '<div class="bkc-btnrow"><button class="bkc-cta" onclick="__mg.bank.go(\'hold\')">View your stake</button></div>' +
+  '</section>';
+}
+// 02 · your stake
+function _bkcViewHold(bank) {
+  const t = _bkcTier(bank.charter_tier || 1);
+  const over = Number(bank.mt_overstake || 0);
+  const branches = (bank.branches | 0);
+  const branchStake = branches * 300;
+  const total = Number(bank.mt_staked || 0) + over + branchStake;
+  const band = _bkcBand(over);
+  const cap = _bkcDepCap(bank.charter_tier || 1, over);
+  const downgrade = Math.max(0, Number(bank.mt_staked || 0) - _bkcTier(Math.max(1, (bank.charter_tier || 1) - 1)).stake);
+  return '' +
+  '<p class="bkc-lede">Your stake is working.</p>' +
+  '<p class="bkc-lede-sub">These tokens are what your depositors are trusting. Every player who walks into your bank sees this number on the plaque.</p>' +
+  '<section class="frame bkc-card">' + _BKC_FR +
+    _bkcMedallion(total, 'Staked · ' + t.name, false) +
+    '<table class="bkc-ledger" style="margin-top:22px">' +
+      '<tr><td>🔒</td><td>Charter minimum</td><td>' + _bkcMt(bank.mt_staked) + ' MT</td></tr>' +
+      '<tr><td>💎</td><td>Over-stake' + (band.seal ? '<span class="bkc-chip">' + band.seal + '</span>' : '') + '</td><td>' + _bkcMt(over) + ' MT</td></tr>' +
+      '<tr><td>🏦</td><td>Branch licenses — ' + branches + ' × 300</td><td>' + _bkcMt(branchStake) + ' MT</td></tr>' +
+      '<tr class="sum"><td></td><td>Total staked</td><td>' + _bkcMt(total) + ' MT</td></tr>' +
+    '</table>' +
+    '<div class="bkc-hint">Backing <b>' + _bkcCin(bank.deposits) + '</b> of deposits against ' + _bkcCin(cap) + ' capacity. If the bank fails its depositors, this stake is slashed and burned to make them whole — the only way it is ever destroyed.</div>' +
+    '<div class="bkc-btnrow">' +
+      '<input id="bkc-add" type="number" min="0" step="50" placeholder="Add MT to stake" style="background:rgba(6,10,20,.7);border:1px solid rgba(217,164,65,.3);border-radius:2px;color:#c3d0e4;font-family:monospace;padding:12px 11px;width:190px">' +
+      '<button class="bkc-btn" id="bkc-addbtn">Add to stake</button>' +
+      '<span class="bkc-note">You hold ' + _bkcMt(_bkcState().mt) + ' MT</span>' +
+    '</div>' +
+  '</section>' +
+  '<section class="frame bkc-card">' + _BKC_FR +
+    '<h3>How your stake comes back — four paths, no others</h3><div class="bkc-paths">' +
+      '<div class="bkc-path"><span class="n">I</span><span class="t">Close the bank<small>Settle every loan and deposit, then ' + BKC_UNBOND_HOURS + ' hours of unbonding</small></span><span class="r">' + _bkcMt(total) + ' MT</span></div>' +
+      '<div class="bkc-path"><span class="n">II</span><span class="t">Sell the charter<small>The buyer posts their own stake — yours returns at once, no waiting</small></span><span class="r">' + _bkcMt(total) + ' MT</span></div>' +
+      '<div class="bkc-path"><span class="n">III</span><span class="t">Withdraw over-stake<small>Anything above the charter minimum, if deposit capacity allows</small></span><span class="r">' + _bkcMt(over) + ' MT</span></div>' +
+      '<div class="bkc-path"><span class="n">IV</span><span class="t">Downgrade a tier<small>Releases the difference between charter minimums</small></span><span class="r">' + _bkcMt(downgrade) + ' MT</span></div>' +
+      '<div class="bkc-path no"><span class="n">✕</span><span class="t">Going dormant<small>A paused bank is not a closed one. Unpaid upkeep never releases your stake — and never confiscates it either.</small></span><span class="r">Stays locked</span></div>' +
+    '</div>' +
+    '<div class="bkc-btnrow"><button class="bkc-btn" onclick="__mg.bank.go(\'unstake\')">Begin unstaking</button>' +
+    '<button class="bkc-btn" onclick="__mg.bank.go(\'sale\')">List for sale</button></div>' +
+  '</section>';
+}
+// 03 · unstake
+function _bkcViewUnstake(bank) {
+  const loans = (bank.loan_book | 0), deps = (bank.deposits | 0);
+  const cLoans = loans <= 0, cDeps = deps <= 0, cArrears = true;
+  const ready = cLoans && cDeps && cArrears;
+  const total = Number(bank.mt_staked || 0) + Number(bank.mt_overstake || 0) + (bank.branches | 0) * 300;
+  const row = (done, lbl, sub, amt) =>
+    '<div class="bkc-ck' + (done ? ' done' : '') + '"><span class="box">' + (done ? '✓' : '') + '</span>' +
+    '<span class="lbl">' + lbl + '<small>' + sub + '</small></span><span class="amt">' + amt + '</span></div>';
+  return '' +
+  '<p class="bkc-lede">Unstaking — settle up, then the clock runs.</p>' +
+  '<p class="bkc-lede-sub">You cannot walk away holding other players\' money. Every obligation clears first; then ' + BKC_UNBOND_HOURS + ' hours of unbonding, and the tokens are yours again.</p>' +
+  '<section class="frame bkc-card">' + _BKC_FR +
+    '<h3>Wind-down · closing</h3>' +
+    row(cLoans, 'Loan book settled', cLoans ? 'All loans matured or repaid' : 'Loans still running to maturity', cLoans ? '0 ¢' : _bkcCin(loans)) +
+    row(cDeps, 'Deposits returned', cDeps ? 'Every depositor paid out' : 'Depositors still hold balances with you', cDeps ? '0 ¢' : _bkcCin(deps)) +
+    row(cArrears, 'Arrears cleared', 'Upkeep continues to accrue throughout wind-down', '0 ¢') +
+    '<div class="bkc-hint">New loans and new deposits are blocked once wind-down starts. You may cancel and reopen at any point before the clock starts. <b>The stake is never lost to inactivity.</b></div>' +
+  '</section>' +
+  '<section class="frame bkc-card">' + _BKC_FR +
+    '<div class="bkc-timer' + (ready ? '' : ' pending') + '">' +
+      (ready ? '<div class="t">' + BKC_UNBOND_HOURS + ':00:00</div><div class="l">Unbonding · the stake releases when the clock runs out</div>'
+             : '<div class="t">Awaiting settlement</div><div class="l">The clock cannot start while obligations remain</div>') +
+    '</div>' +
+    _bkcMedallion(total, ready ? 'Releasable' : 'Locked', ready) +
+    '<div class="bkc-btnrow"><button class="bkc-cta"' + (ready ? '' : ' disabled') + ' onclick="showToast(\'⏳ Unbonding starts when the wind-down clock ships.\',4200)">Begin ' + BKC_UNBOND_HOURS + 'h unbonding</button>' +
+      '<span class="bkc-note">' + (ready ? 'All obligations clear' : 'Settle loans and deposits first') + '</span></div>' +
+  '</section>';
+}
+// 04 · sale listing
+function _bkcViewSale(bank) {
+  const t = _bkcTier(bank.charter_tier || 1);
+  const total = Number(bank.mt_staked || 0) + Number(bank.mt_overstake || 0);
+  const onSale = !!bank.for_sale;
+  return '' +
+  '<p class="bkc-lede">' + (onSale ? 'Listed for sale.' : 'Sell the charter.') + '</p>' +
+  '<p class="bkc-lede-sub">A buyer posts their own stake, so <b>yours returns at once</b> — no ' + BKC_UNBOND_HOURS + '-hour wait. The loan book, deposits and tellers transfer with the charter.</p>' +
+  '<section class="frame bkc-card">' + _BKC_FR +
+    '<h3>The books a buyer sees</h3><table class="bkc-ledger">' +
+      '<tr><td>🏦</td><td>Charter</td><td>' + escapeHtml(t.name) + '</td></tr>' +
+      '<tr><td>🔒</td><td>Stake backing the bank</td><td>' + _bkcMt(total) + ' MT</td></tr>' +
+      '<tr><td>💎</td><td>Deposits held</td><td>' + _bkcCin(bank.deposits) + '</td></tr>' +
+      '<tr><td>📄</td><td>Loan book</td><td>' + _bkcCin(bank.loan_book) + '</td></tr>' +
+      '<tr><td>✔</td><td>Loans serviced · defaults</td><td>' + (bank.loans_serviced | 0) + ' · ' + (bank.defaults_taken | 0) + '</td></tr>' +
+    '</table>' +
+    '<div class="bkc-btnrow">' +
+      '<input id="bkc-price" type="number" min="0" step="1000" value="' + (bank.asking_price | 0) + '" placeholder="Asking price in Cinder" style="background:rgba(6,10,20,.7);border:1px solid rgba(217,164,65,.3);border-radius:2px;color:#c3d0e4;font-family:monospace;padding:12px 11px;width:210px">' +
+      '<button class="bkc-cta" id="bkc-list">' + (onSale ? 'Update price' : 'List for sale') + '</button>' +
+      (onSale ? '<button class="bkc-btn" id="bkc-delist">Delist</button>' : '') +
+    '</div>' +
+    (onSale ? '<div class="bkc-hint">Listed at <b>' + _bkcCin(bank.asking_price) + '</b>. It stays open for business while listed.</div>' : '') +
+  '</section>';
+}
+// Inputs are bound after paint rather than inlined so a value cannot be lost to
+// a re-render mid-typing (the slider re-renders on every input event).
+function _bkcBindInputs() {
+  const S = _bkcState();
+  const ov = document.getElementById('bkc-over');
+  if (ov) ov.oninput = (e) => bkcSetOver(e.target.value);
+  const ak = document.getElementById('bkc-ack');
+  if (ak) ak.onchange = (e) => bkcAck(e.target.checked);
+  const op = document.getElementById('bkc-open');
+  if (op) op.onclick = () => bkcOpenCharter();
+  const ab = document.getElementById('bkc-addbtn');
+  if (ab) ab.onclick = () => { const el = document.getElementById('bkc-add'); bkcAddStake(el ? +el.value : 0); };
+  const ls = document.getElementById('bkc-list');
+  if (ls) ls.onclick = () => { const el = document.getElementById('bkc-price'); bkcSetSale(true, el ? +el.value : 0); };
+  const dl = document.getElementById('bkc-delist');
+  if (dl) dl.onclick = () => bkcSetSale(false, 0);
+}
+try { window.__mg.bank.setTier = bkcSetTier; window.__mg.bank.setOver = bkcSetOver; } catch (e) {}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🖋 THE UNDERWRITING DESK — decide loan applications
+// ---------------------------------------------------------------------------
+// Open to the bank OWNER and to its TELLERS. Every verdict goes through the
+// bank_decide RPC, which re-checks the reserve requirement and the teller's
+// approval ceiling in SQL — the numbers below drive the UI, they do not
+// authorise anything. A teller who edits the client still gets refused.
+// ═══════════════════════════════════════════════════════════════════════════
+const UDW_TIERS = {
+  'Ashen':           { range: '0–299',    ltv: 0.40, bond: 0.25, unsecured: 0 },
+  'Smoldering':      { range: '300–549',  ltv: 0.55, bond: 0.20, unsecured: 0 },
+  'Kindled':         { range: '550–699',  ltv: 0.70, bond: 0.15, unsecured: 0 },
+  'Blazing':         { range: '700–849',  ltv: 0.85, bond: 0.10, unsecured: 15000 },
+  'Mythic Standing': { range: '850–1000', ltv: 1.00, bond: 0.05, unsecured: 62000 },
+};
+const UDW_RESERVE_REQ  = 0.30;   // mirrors bank_decide(); SQL is authoritative
+const UDW_RATE_CEILING = 5;      // % per week
+function _udwState() {
+  if (!App._udw) App._udw = { bankId: null, bank: null, apps: [], cur: 0, countering: false, ct: null,
+                              loaded: false, busy: false, isOwner: false, teller: null };
+  return App._udw;
+}
+function _udwTier(name) { return UDW_TIERS[name] || UDW_TIERS['Ashen']; }
+function _udwCin(n) { return Math.round(n || 0).toLocaleString('en-US') + ' ¢'; }
+// Which bank do I staff? My own first, else the one that hired me.
+async function udwRefresh(force) {
+  const S = _udwState();
+  if (S.loaded && !force) return S;
+  try {
+    const uid = Profile.cloud && Profile.cloud.userId;
+    if (!uid || !Cloud || !Cloud.client) { S.loaded = true; return S; }
+    const own = await Cloud.client.from('player_banks').select('*').eq('owner_id', uid).maybeSingle();
+    if (own && own.error && /does not exist|PGRST205|schema cache/i.test(own.error.message || '')) { S.tablesMissing = true; S.loaded = true; return S; }
+    if (own && own.data) { S.bank = own.data; S.bankId = own.data.owner_id; S.isOwner = true; S.teller = null; }
+    else {
+      const t = await Cloud.client.from('bank_tellers').select('*').eq('user_id', uid).limit(1);
+      const row = t && t.data && t.data[0];
+      if (row) {
+        S.teller = row; S.isOwner = false; S.bankId = row.bank_id;
+        const b = await Cloud.client.from('player_banks').select('*').eq('owner_id', row.bank_id).maybeSingle();
+        S.bank = (b && b.data) || null;
+      }
+    }
+    if (S.bankId) {
+      const a = await Cloud.client.from('bank_applications').select('*')
+        .eq('bank_id', S.bankId).order('created_at', { ascending: true }).limit(60);
+      S.apps = (a && a.data) || [];
+      if (S.cur >= S.apps.length) S.cur = 0;
+    }
+  } catch (e) {}
+  S.loaded = true;
+  return S;
+}
+// Underwriting maths. Mirrors the mockup: appraised value after haircuts, the
+// tier's LTV ceiling plus any unsecured allowance, and the two hard blockers.
+function udwAssess(app, principal) {
+  const S = _udwState();
+  const p = (principal == null) ? (app.principal | 0) : (principal | 0);
+  const t = _udwTier(app.ember_tier);
+  const coll = Array.isArray(app.collateral) ? app.collateral : [];
+  const appraised = coll.reduce((s, c) => s + (Number(c.mkt) || 0) * (1 - (Number(c.cut) || 0)), 0);
+  const maxTotal = appraised * t.ltv + t.unsecured;
+  const bank = S.bank || {};
+  const free = Math.max(0, (bank.reserves | 0) - ((bank.deposits | 0) * UDW_RESERVE_REQ));
+  const blocks = [];
+  if (p > maxTotal) blocks.push({ k: 'collateral',
+    msg: 'Requested <b>' + _udwCin(p) + '</b> exceeds this borrower\'s ceiling of <b>' + _udwCin(maxTotal) + '</b>. ' +
+         escapeHtml(app.ember_tier || 'Ashen') + ' tier permits ' + Math.round(t.ltv * 100) + '% loan-to-value against ' +
+         _udwCin(appraised) + ' appraised' + (t.unsecured ? ', plus ' + _udwCin(t.unsecured) + ' unsecured' : '') + '.' });
+  if (p > free) blocks.push({ k: 'reserve',
+    msg: 'Only <b>' + _udwCin(free) + '</b> is free to lend. Approving ' + _udwCin(p) +
+         ' would breach the ' + Math.round(UDW_RESERVE_REQ * 100) + '% reserve requirement and expose the charter stake to a run.' });
+  // A teller cannot approve past their ceiling. Shown here; enforced in SQL.
+  if (!S.isOwner && S.teller && p > (S.teller.max_approve | 0)) blocks.push({ k: 'teller',
+    msg: 'Your approval limit as ' + escapeHtml(S.teller.role || 'teller') + ' is <b>' + _udwCin(S.teller.max_approve) +
+         '</b>. Refer this one to the owner, or counter below that figure.' });
+  return { appraised, maxTotal, maxLtv: t.ltv, ltv: appraised > 0 ? p / appraised : 0, bondReq: p * t.bond, blocks, free };
+}
+function udwPick(i) { const S = _udwState(); S.cur = i | 0; S.countering = false; S.ct = null; try { render(); } catch (e) {} }
+function udwCounterOpen() {
+  const S = _udwState(); const a = S.apps[S.cur]; if (!a) return;
+  const m = udwAssess(a, null);
+  const cap = Math.max(1000, Math.floor(Math.min(m.maxTotal, m.free)));
+  S.countering = true;
+  S.ct = { principal: Math.min(a.principal | 0, cap), rate: 4, term: a.term_days | 0 || 7 };
+  try { render(); } catch (e) {}
+}
+function udwCounterCancel() { const S = _udwState(); S.countering = false; S.ct = null; try { render(); } catch (e) {} }
+function udwCounterSet(k, v) { const S = _udwState(); if (S.ct) { S.ct[k] = +v; try { render(); } catch (e) {} } }
+// Send a verdict. The RPC is the authority; the UI only reflects the result.
+async function udwDecide(kind, opts) {
+  const S = _udwState();
+  if (S.busy) return; S.busy = true;
+  try {
+    const a = S.apps[S.cur]; if (!a) return;
+    const o = opts || {};
+    const r = await Cloud.client.rpc('bank_decide', {
+      p_app_id: a.id, p_kind: kind,
+      p_principal: o.principal != null ? Math.round(o.principal) : null,
+      p_rate: o.rate != null ? o.rate : 4,
+      p_term: o.term != null ? Math.round(o.term) : null,
+      p_reason: o.reason || '',
+    });
+    const j = (r && r.data) || {};
+    if ((r && r.error) || !j.ok) {
+      const msg = (r && r.error && r.error.message) || '';
+      showToast(/does not exist|PGRST202/i.test(msg) ? '⚠ Bank tables not installed — run player_banks.sql.'
+        : j.error === 'reserve_breach'     ? ('🏦 Blocked — only ' + _udwCin(j.free) + ' is free to lend.')
+        : j.error === 'over_teller_limit'  ? ('👤 Over your approval limit of ' + _udwCin(j.limit) + '.')
+        : j.error === 'not_staff'          ? '👤 You do not work at this bank.'
+        : j.error === 'already_decided'    ? 'That application was already decided.'
+        : ('⚠ ' + (msg || j.error || 'Decision failed')), 6000);
+      return;
+    }
+    showToast(kind === 'approved' ? ('✅ Approved — ' + _udwCin(j.principal) + ' disbursed.')
+            : kind === 'denied'   ? '✖ Application denied.' : '↩ Counter-offer sent.', 5200);
+    S.countering = false; S.ct = null;
+    await udwRefresh(true);
+    try { render(); } catch (e) {}
+  } catch (e) { showToast('⚠ Decision failed — try again.', 3600); }
+  finally { S.busy = false; }
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.desk = { refresh: udwRefresh, pick: udwPick, decide: udwDecide, assess: udwAssess,
+                       counter: udwCounterOpen, cancel: udwCounterCancel, set: udwCounterSet, state: _udwState };
+  window.__mg.openBankDesk = function () { App.screen = 'bankDesk'; try { render(); } catch (e) {} };
+} catch (e) {}
+
+const _UDW_FR = '<span class="cnr"></span><span class="cnr2"></span>';
+function _udwDial(score, tier) {
+  const s = Math.max(0, Math.min(1000, score | 0));
+  const pct = s / 1000, R = 64, C = 2 * Math.PI * R;
+  const col = s >= 850 ? '#7fd3b8' : s >= 700 ? '#9fd48f' : s >= 550 ? '#f2cd7d' : s >= 300 ? '#f4a35a' : '#f4835a';
+  const t = _udwTier(tier);
+  return '<div class="udw-dial">' +
+    '<svg viewBox="0 0 150 150" fill="none" role="img" aria-label="Ember score ' + s + ' of 1000, ' + escapeHtml(tier || '') + ' tier">' +
+      '<circle cx="75" cy="75" r="' + R + '" stroke="rgba(217,164,65,.14)" stroke-width="3"/>' +
+      '<circle cx="75" cy="75" r="' + R + '" stroke="' + col + '" stroke-width="3" stroke-linecap="round" ' +
+        'stroke-dasharray="' + (C * pct) + ' ' + C + '" transform="rotate(-90 75 75)"/>' +
+    '</svg>' +
+    '<span class="n" style="color:' + col + '">' + s + '</span>' +
+    '<span class="tr">' + escapeHtml(tier || 'Ashen') + ' · ' + t.range + '</span>' +
+  '</div>';
+}
+function renderBankDesk() {
+  const root = document.getElementById('app');
+  const S = _udwState();
+  if (!S.loaded) { udwRefresh().then(() => { try { render(); } catch (e) {} }); }
+  const back = '<div class="udw-stage" style="padding-top:18px"><button class="udw-btn" onclick="App.screen=\'campOps\';render()">← Back</button></div>';
+
+  if (S.tablesMissing) {
+    root.innerHTML = '<div class="udw">' + _udwHead(null) + '<div class="udw-empty">The bank tables are not installed. Run <b>player_banks.sql</b>, then <b>bank_charter_pricing.sql</b>.</div>' + back + '</div>';
+    return;
+  }
+  if (!S.bankId) {
+    root.innerHTML = '<div class="udw">' + _udwHead(null) +
+      '<div class="udw-empty">You do not run a bank and no bank has hired you as a teller.<br><br>' +
+      '<button class="udw-cta" onclick="__mg.openBankCharter()">Open a charter at the Mint</button></div>' + back + '</div>';
+    return;
+  }
+  const open = S.apps.filter(a => a.status === 'open');
+  const rail =
+    '<nav class="udw-rail"><div class="udw-railh"><span class="t">In tray</span><span class="n">' + open.length + ' open</span></div>' +
+    (S.apps.length ? S.apps.map((a, i) => {
+      const decided = a.status !== 'open';
+      return '<button class="udw-appl' + (decided ? ' done' : '') + '" aria-current="' + (i === S.cur) + '" onclick="__mg.desk.pick(' + i + ')">' +
+        (decided ? '<span class="udw-vtag udw-v-' + escapeHtml(a.status) + '">' + escapeHtml(a.status) + '</span>' : '') +
+        '<span class="no">No. ' + (a.id | 0) + '</span>' +
+        '<div class="who">' + escapeHtml(a.applicant_name || 'Applicant') + '</div>' +
+        '<div class="ln"><span class="amt">' + _udwCin(a.principal) + '</span><span class="day">' + (a.term_days | 0) + 'd</span></div>' +
+      '</button>';
+    }).join('') : '<div class="udw-empty" style="padding:20px 4px">No applications yet.<br>Players apply from your bank\'s page.</div>') +
+    '</nav>';
+
+  const a = S.apps[S.cur];
+  const stage = a ? _udwDossier(a, S) : '<div class="udw-empty">Select an application.</div>';
+  root.innerHTML = '<div class="udw">' + _udwHead(S.bank) +
+    '<div class="udw-desk">' + rail + '<main class="udw-stage">' + stage + '</main></div>' + back + '</div>';
+  try { _udwBind(); } catch (e) {}
+}
+function _udwHead(bank) {
+  const S = _udwState();
+  const b = bank || {};
+  const reserves = b.reserves | 0, deposits = b.deposits | 0;
+  const req = deposits * UDW_RESERVE_REQ;
+  const free = Math.max(0, reserves - req);
+  const ratio = deposits > 0 ? (reserves / deposits) : 1;
+  const staked = Number(b.mt_staked || 0) + Number(b.mt_overstake || 0);
+  const role = S.isOwner ? 'Owner' : (S.teller ? ((S.teller.role || 'teller').toUpperCase()) : '—');
+  return '<header class="udw-bar">' +
+    '<div class="udw-word"><h1>' + escapeHtml(b.bank_name || 'The Underwriting Desk') + '</h1>' +
+      '<span class="udw-charter">' + escapeHtml(_bkcTier(b.charter_tier || 1).name) + ' · ' + escapeHtml(role) + '</span></div>' +
+    '<div class="udw-metrics">' +
+      '<div class="udw-metric"><span class="k">Capitalization</span><div class="v">' + _bkcMt(staked) + '<em>MT</em></div>' +
+        '<div class="c">Staked · locked while trading</div></div>' +
+      '<div class="udw-metric"><span class="k">Reserve ratio</span><div class="v' + (ratio < UDW_RESERVE_REQ ? ' warn' : '') + '">' + Math.round(ratio * 100) + '%</div>' +
+        '<div class="c">' + _udwCin(reserves) + ' against ' + _udwCin(deposits) + ' held</div></div>' +
+      '<div class="udw-metric"><span class="k">Free to lend</span><div class="v">' + _udwCin(free) + '</div>' +
+        '<div class="c">After ' + Math.round(UDW_RESERVE_REQ * 100) + '% requirement</div></div>' +
+    '</div></header>';
+}
+function _udwDossier(a, S) {
+  const decided = a.status !== 'open';
+  const v = decided ? (a.verdict || { kind: a.status }) : null;
+  const principal = (S.countering && S.ct) ? S.ct.principal : (a.principal | 0);
+  const m = udwAssess(a, S.countering ? principal : null);
+  const term = (S.countering && S.ct) ? S.ct.term : (a.term_days | 0);
+  const rate = (S.countering && S.ct) ? S.ct.rate : 4;
+  const blocked = m.blocks.length > 0;
+  const coll = Array.isArray(a.collateral) ? a.collateral : [];
+  const hist = Array.isArray(a.history) ? a.history : [];
+  const over = m.ltv > m.maxLtv;
+  const sealWord = v ? (v.kind === 'approved' ? 'Approved' : v.kind === 'denied' ? 'Denied' : 'Counter') : '';
+
+  return '<article class="frame udw-doss">' + _UDW_FR +
+    (v ? '<div class="udw-seal udw-s-' + escapeHtml(v.kind) + '">' + sealWord + '<small>No. ' + (a.id | 0) + '</small></div>' : '') +
+    '<div class="udw-dh"><div><div class="lab">Application for credit</div><div class="num">No. ' + (a.id | 0) + '</div></div>' +
+      '<div class="who"><b>' + escapeHtml(a.applicant_name || 'Applicant') + '</b><br>' +
+        '<span>' + escapeHtml(new Date(a.created_at || Date.now()).toLocaleString()) + '</span></div></div>' +
+
+    '<div class="udw-sech"><span class="t">Section A — Request</span></div><div class="udw-rows">' +
+      '<div class="udw-fld"><span class="k">Purpose</span><span class="v up">' + escapeHtml(a.purpose || 'General') + '</span></div>' +
+      '<div class="udw-fld"><span class="k">Principal</span><span class="v big' + ((S.countering && principal !== (a.principal | 0)) ? ' udw-struck' : '') + '">' + _udwCin(a.principal) + '</span>' +
+        ((S.countering && principal !== (a.principal | 0)) ? '<span class="udw-pen">→ ' + _udwCin(principal) + '</span>' : '') + '</div>' +
+      '<div class="udw-fld"><span class="k">Term</span><span class="v' + ((S.countering && term !== (a.term_days | 0)) ? ' udw-struck' : '') + '">' + (a.term_days | 0) + ' days</span>' +
+        ((S.countering && term !== (a.term_days | 0)) ? '<span class="udw-pen">→ ' + term + 'd</span>' : '') + '</div>' +
+      '<div class="udw-fld"><span class="k">Structure</span><span class="v" style="font-size:14px">' + escapeHtml(a.structure || 'Lump sum at maturity') + '</span></div>' +
+    '</div>' +
+
+    '<div class="udw-sech"><span class="t">Section B — Security</span><span class="r">' + _udwCin(m.appraised) + ' appraised</span></div>' +
+    (coll.length ? '<table class="udw-coll"><thead><tr><th>Pledged asset</th><th>Market</th><th>Haircut</th><th>Value</th></tr></thead><tbody>' +
+      coll.map(c => '<tr><td><span class="nm">' + escapeHtml(c.item || 'Asset') + '</span><br><span class="cat">' + escapeHtml(c.cat || '') + '</span></td>' +
+        '<td>' + Math.round(Number(c.mkt) || 0).toLocaleString() + '</td><td class="cut">−' + Math.round((Number(c.cut) || 0) * 100) + '%</td>' +
+        '<td>' + Math.round((Number(c.mkt) || 0) * (1 - (Number(c.cut) || 0))).toLocaleString() + '</td></tr>').join('') +
+      '<tr class="tot"><td>Appraised total</td><td></td><td></td><td>' + Math.round(m.appraised).toLocaleString() + '</td></tr></tbody></table>'
+      : '<div class="udw-empty" style="padding:14px 0">No collateral pledged — unsecured against the tier allowance only.</div>') +
+
+    '<div class="udw-alert' + (over ? '' : ' ok') + '"><span>⚠</span><div>' +
+      '<div class="t">Loan to value — ' + Math.round(m.ltv * 100) + '% of ' + Math.round(m.maxLtv * 100) + '% permitted</div>' +
+      '<div class="s">Ceiling ' + _udwCin(m.maxTotal) + ' · Ash bond required ' + _udwCin(m.bondReq) + '</div></div></div>' +
+
+    (a.pitch ? '<div class="udw-sech"><span class="t">Section C — Statement of purpose</span></div><p class="udw-pitch">' + escapeHtml(a.pitch) + '</p>' : '') +
+
+    '<div class="udw-sech"><span class="t">Section D — Disclosures</span><span class="r dim">Not editable by applicant</span></div>' +
+    '<div class="udw-disc">' + _udwDial(a.ember_score, a.ember_tier) + '<div><div class="udw-facts">' +
+      '<div class="udw-fld"><span class="k">Active loans</span><span class="v">' + (a.active_loans | 0) + '</span></div>' +
+      '<div class="udw-fld"><span class="k">Outstanding</span><span class="v">' + Math.round(a.outstanding_debt || 0).toLocaleString() + ' ¢</span></div>' +
+      '<div class="udw-fld"><span class="k">Account age</span><span class="v">' + escapeHtml(a.account_age || '—') + '</span></div>' +
+      '<div class="udw-fld"><span class="k">Inquiries, 7d</span><span class="v">' + (a.inquiries | 0) + '</span></div>' +
+    '</div>' +
+    (hist.length ? '<div class="udw-hist">' + hist.map(h => '<span class="udw-dot udw-d-' + escapeHtml(h) + '" title="' +
+        (h === 'ok' ? 'Repaid on time' : h === 'late' ? 'Repaid late' : 'Defaulted') + '"></span>').join('') +
+        '<span class="lb">' + hist.length + ' prior loans</span></div>' : '<div class="udw-hist"><span class="lb">No prior loans with this bank</span></div>') +
+    '</div></div>' +
+  '</article>' +
+
+  (v ? _udwReceipt(a, v) :
+    '<div class="udw-acts">' +
+      '<button class="udw-act udw-a-approve" id="udw-approve"' + ((blocked || S.busy) ? ' disabled' : '') + '>🛡<span><span class="t">Approve</span>' +
+        '<span class="s">' + (blocked ? 'Blocked — see below' : 'Disburse ' + _udwCin(a.principal)) + '</span></span></button>' +
+      '<button class="udw-act udw-a-counter" id="udw-counter"' + (S.busy ? ' disabled' : '') + '>⚖<span><span class="t">Counter</span>' +
+        '<span class="s">Return with revised terms</span></span></button>' +
+      '<button class="udw-act udw-a-deny" id="udw-deny"' + (S.busy ? ' disabled' : '') + '>⚔<span><span class="t">Deny</span>' +
+        '<span class="s">State a reason</span></span></button>' +
+    '</div>' +
+    m.blocks.map(b => '<div class="udw-blocker"><span>⚠</span><div>' + b.msg + '</div></div>').join('') +
+    (S.countering ? _udwCounterPanel(a, principal, rate, term, m) : ''));
+}
+function _udwCounterPanel(a, principal, rate, term, m) {
+  const cap = Math.max(1000, Math.floor(Math.min(m.maxTotal, m.free)));
+  const interest = principal * (rate / 100) * (term / 7);
+  return '<section class="frame udw-counter">' + _UDW_FR +
+    '<h3>Counter-offer — returned to applicant for signature</h3><div class="udw-ctrls">' +
+      '<div class="udw-ctrl"><label for="udw-cp">Principal · ceiling ' + Math.round(cap).toLocaleString() + ' ¢</label>' +
+        '<input class="udw-range" type="range" id="udw-cp" min="1000" max="' + cap + '" step="500" value="' + Math.min(principal, cap) + '">' +
+        '<div class="out">' + Math.round(Math.min(principal, cap)).toLocaleString() + ' ¢</div></div>' +
+      '<div class="udw-ctrl"><label for="udw-cr">Rate · ceiling ' + UDW_RATE_CEILING + '% weekly</label>' +
+        '<input class="udw-range" type="range" id="udw-cr" min="0.5" max="' + UDW_RATE_CEILING + '" step="0.25" value="' + rate + '">' +
+        '<div class="out">' + rate + '% / week</div></div>' +
+      '<div class="udw-ctrl"><label for="udw-ct">Term</label>' +
+        '<select id="udw-ct">' + [3, 7, 14, 21, 30].map(d => '<option' + (d === term ? ' selected' : '') + '>' + d + '</option>').join('') + '</select>' +
+        '<div class="out">days</div></div>' +
+    '</div><div class="udw-cfoot">' +
+      '<button class="udw-cta" id="udw-send">Send counter-offer</button>' +
+      '<button class="udw-btn" id="udw-cancel">Cancel</button>' +
+      '<span class="udw-terms">Interest <b>' + _udwCin(interest) + '</b> · repay <b>' + _udwCin(principal + interest) +
+        '</b> · ash bond <b>' + _udwCin(m.bondReq) + '</b></span>' +
+    '</div></section>';
+}
+function _udwReceipt(a, v) {
+  if (v.kind === 'approved') return '<section class="frame udw-receipt">' + _UDW_FR +
+    '<div class="rh">Ledger entry · loan opened</div>Loan No. ' + (a.id | 0) + ' — <em>' + _udwCin(v.principal) + '</em> disbursed to ' +
+    escapeHtml(a.applicant_name || 'the applicant') + ', ' + (v.term | 0) + ' days at ' + (v.rate || 4) + '% weekly.<br>' +
+    'Collateral secured in vault.<div class="nx">Decided by ' + escapeHtml(a.decided_by_name || 'staff') + '</div></section>';
+  if (v.kind === 'denied') return '<section class="frame udw-receipt deny">' + _UDW_FR +
+    '<div class="rh">Ledger entry · application denied</div>No. ' + (a.id | 0) + ' returned to ' + escapeHtml(a.applicant_name || 'the applicant') +
+    '. Reason given: <em>' + escapeHtml(v.reason || 'not stated') + '</em>.' +
+    '<div class="nx">Applicant may reapply · decided by ' + escapeHtml(a.decided_by_name || 'staff') + '</div></section>';
+  return '<section class="frame udw-receipt counter">' + _UDW_FR +
+    '<div class="rh">Ledger entry · counter-offer sent</div>No. ' + (a.id | 0) + ' returned to ' + escapeHtml(a.applicant_name || 'the applicant') +
+    ' — <em>' + _udwCin(v.principal) + '</em>, ' + (v.term | 0) + ' days at ' + (v.rate || 4) + '% weekly.' +
+    '<div class="nx">Awaiting signature · decided by ' + escapeHtml(a.decided_by_name || 'staff') + '</div></section>';
+}
+function _udwBind() {
+  const S = _udwState();
+  const g = (id) => document.getElementById(id);
+  const ap = g('udw-approve'); if (ap) ap.onclick = () => udwDecide('approved', {});
+  const cn = g('udw-counter'); if (cn) cn.onclick = () => udwCounterOpen();
+  const dn = g('udw-deny'); if (dn) dn.onclick = () => {
+    const a = S.apps[S.cur]; if (!a) return;
+    const m = udwAssess(a, null);
+    // Give the denial an honest reason rather than a blank rejection.
+    const reason = m.blocks.some(b => b.k === 'collateral') ? 'Insufficient collateral'
+                 : m.blocks.some(b => b.k === 'reserve')    ? 'Bank at capacity'
+                 : m.blocks.some(b => b.k === 'teller')     ? 'Above desk authority'
+                 : (a.ember_score | 0) < 550 ? 'Poor repayment history' : 'Debt load too high';
+    udwDecide('denied', { reason });
+  };
+  const cp = g('udw-cp'); if (cp) cp.oninput = (e) => udwCounterSet('principal', e.target.value);
+  const cr = g('udw-cr'); if (cr) cr.oninput = (e) => udwCounterSet('rate', e.target.value);
+  const ct = g('udw-ct'); if (ct) ct.onchange = (e) => udwCounterSet('term', e.target.value);
+  const cx = g('udw-cancel'); if (cx) cx.onclick = () => udwCounterCancel();
+  const sd = g('udw-send'); if (sd) sd.onclick = () => {
+    const c = S.ct || {};
+    udwDecide('countered', { principal: c.principal, rate: c.rate, term: c.term });
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 🤝 BROKER DEALS — node owners & business operators trade CARDS + RESOURCES

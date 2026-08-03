@@ -212,7 +212,7 @@ begin
   update public.mythic_balances set mt = mt - (v_fee + p_stake) where user_id = v_uid;
 
   select coalesce(display_name, 'Banker') into v_name
-    from public.public_profiles where user_id = v_uid;
+    from public.user_profiles where user_id = v_uid;
 
   insert into public.player_banks (owner_id, owner_name, bank_name, tagline, charter_tier,
                                    mt_burned, mt_staked, mt_overstake)
@@ -293,7 +293,7 @@ begin
     returning id into v_loan_id;
   end if;
 
-  select coalesce(display_name,'Staff') into v_name from public.public_profiles where user_id = v_uid;
+  select coalesce(display_name,'Staff') into v_name from public.user_profiles where user_id = v_uid;
 
   update public.bank_applications set
     status = p_kind,
@@ -326,7 +326,7 @@ begin
     return jsonb_build_object('ok', false, 'error', 'bank_closed');
   end if;
 
-  select coalesce(display_name,'Depositor') into v_name from public.public_profiles where user_id = v_uid;
+  select coalesce(display_name,'Depositor') into v_name from public.user_profiles where user_id = v_uid;
 
   insert into public.bank_deposit_accounts (bank_id, user_id, user_name, balance)
   values (p_bank_id, v_uid, coalesce(v_name,'Depositor'), p_amount)

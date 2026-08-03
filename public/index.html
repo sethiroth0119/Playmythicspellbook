@@ -35461,7 +35461,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119y7';
+  window.BUILD_VERSION = 'v119y8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -75162,9 +75162,23 @@ async function _bankEnsureCharter(opts) {
     const r = await Cloud.client.rpc('bank_open_cinder', { p_bank_name: name, p_tagline: '' });
     const j = (r && r.data) || {};
     if (r && r.error) {
-      if (/does not exist|PGRST202|schema cache/i.test(r.error.message || '')) {
-        if (!(opts && opts.quiet)) showToast('⚠ Bank not set up — run bank_cinder_charter.sql in Supabase, then reopen Bank Row.', 8000);
+      const _msg = (r.error.message || '');
+      // ⚠ "does not exist" does NOT mean the RPC is missing. It also fires when
+      // the function EXISTS but a table INSIDE it does not — which is exactly
+      // what happened: bank_open_cinder reads public.public_profiles, a table
+      // that never existed, so this branch told the admin to run a .sql file
+      // they had already run, four separate times. Name the real error instead
+      // of guessing at a cause.
+      if (!(opts && opts.quiet)) {
+        if (/public_profiles/i.test(_msg)) {
+          showToast('⚠ Bank blocked: the public_profiles view is missing. Run bank_profiles_fix.sql in Supabase, then press Repair my charter.', 9000);
+        } else if (/PGRST202|Could not find the function/i.test(_msg)) {
+          showToast('⚠ Bank not set up — run bank_cinder_charter.sql in Supabase, then reopen Bank Row.', 8000);
+        } else if (_msg) {
+          showToast('⚠ Bank charter failed: ' + _msg.slice(0, 160), 9000);
+        }
       }
+      try { console.warn('[bank charter]', _msg); } catch (e) {}
       return false;
     }
     if (!j.ok) return false;

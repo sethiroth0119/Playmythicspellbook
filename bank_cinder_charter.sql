@@ -41,7 +41,7 @@ begin
   end if;
 
   select coalesce(display_name, 'Banker') into v_name
-    from public.public_profiles where user_id = v_uid;
+    from public.user_profiles where user_id = v_uid;
 
   -- ⚠ NO Cinder is debited here. The 1,000,000 was already taken by the
   -- operation-founding path (chargeCinderAtomic → wallet_charge) BEFORE this is

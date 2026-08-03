@@ -35461,7 +35461,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119x8';
+  window.BUILD_VERSION = 'v119y0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -104351,7 +104351,16 @@ function _renderImpl() {
   if (App.screen === 'achievements') return renderAchievements();
   if (App.screen === 'replays')      return renderReplaysList();
   if (App.screen === 'replayViewer') return renderReplayViewer();
-  if (App.screen === 'leaderboard')  return renderLeaderboard();
+  // 🗑 Leaderboard removed (v119x9). Anything still asking for it — an old
+  // bookmark, a stale App.screen restored from a saved session — lands on the
+  // Battle Hall rather than a blank screen.
+  // ⚠ Must RENDER, not just reassign. The title branch is checked earlier in
+  // this router, so falling through after changing App.screen paints nothing —
+  // a stale saved session on the removed screen would open to a blank page.
+  if (App.screen === 'leaderboard') {
+    App.screen = 'title'; App.titleHub = 'battle';
+    return renderTitle();
+  }
   if (App.screen === 'playerProfile') return renderPlayerProfile();
   if (App.screen === 'spectator')    return renderSpectator();
   if (App.screen === 'seasonPass')   return renderSeasonPass();
@@ -107477,10 +107486,13 @@ function renderTitle() {
           return false;
         })(),
         onclick: () => { App.screen = 'seasonPass'; render(); } },
-      // 🏆 Standalone Leaderboard tile removed — Colosseum already exposes
-      // ladder standings, and the spectator "Live Now" rail still calls
-      // renderLeaderboard() directly. Keeping the screen + RPC + click-to-
-      // profile entry points; just not duplicating the hub button.
+      // 🗑 LEADERBOARD FULLY REMOVED (v119x9). Rank (RR/AP) and Emergency
+      // Broadcast already carry standing and bragging rights; Colosseum still
+      // exposes ladder standings. Nothing calls renderLeaderboard() any more —
+      // the route redirects to the Battle Hall, and the spectator exits that
+      // used to return here go there too. The function itself is left in place
+      // (unreferenced) rather than ripped out mid-file, and Profile.leaderboard
+      // stays because it is player RECORD data, not screen state.
       // 🏆 Colosseum — the full competitive system: Ranked, Open Cup, Faction
       // War, Season Pass. Always visible; first-time entry triggers the faction
       // picker if the player hasn't chosen one yet.
@@ -107739,10 +107751,11 @@ function renderTitle() {
       { id: 'btn-replays',     icon: '<img src="assets/artwork/gameicons/Reply.png" alt="Replays" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Replays',     sub: 'Watch your saved games',      accent: '#a8b8d8',
         badge: replayCount > 0 ? `${replayCount} saved` : null,
         onclick: () => { App.screen = 'replays'; render(); } },
-      { id: 'btn-leaderboard', icon: '<img src="assets/artwork/gameicons/Leaderboard.png" alt="Leaderboard" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Leaderboard', sub: 'Single-player records',       accent: '#ffb070',
-        badge: streak > 1 ? `<span class="cinder-icon"></span> ${streak} streak` : null,
-        alertBadge: streak > 4,
-        onclick: () => { App.screen = 'leaderboard'; render(); } },
+      // 🗑 LEADERBOARD REMOVED (v119x9) — rank (RR/AP) and Emergency Broadcast
+      // already cover standing and bragging rights, so a third board was noise.
+      // ⚠ `Profile.leaderboard` (the local single-player RECORDS store) is left
+      // intact on purpose: it is player data, and deleting it would throw away
+      // every streak/record a player has set. Only the SCREEN is gone.
     ],
     arcanum: (() => {
       // Data Vault is admin-only — it exposes raw export/import of save data
@@ -170567,7 +170580,7 @@ function joinSpectator(opts) {
         setTimeout(() => { try { mbSettleCompleted(); } catch (e) {} }, 2600);
         setTimeout(() => {
           leaveSpectator();
-          App.screen = 'leaderboard';
+          App.screen = 'title'; App.titleHub = 'battle';
           try { render(); } catch (e) {}
         }, 4200);
       })
@@ -170628,7 +170641,7 @@ function renderSpectator() {
     if (leaveBtn) leaveBtn.onclick = () => {
       leaveSpectator();
       try { overlay.remove(); } catch (e) {}
-      App.screen = 'leaderboard';
+      App.screen = 'title'; App.titleHub = 'battle';
       render();
     };
     // 🖼 Mount the spectator-only overlays: the opponent's face-up hand (so the
@@ -170653,7 +170666,7 @@ function renderSpectator() {
   `;
   document.getElementById('btn-spectator-cancel').onclick = () => {
     leaveSpectator();
-    App.screen = 'leaderboard';
+    App.screen = 'title'; App.titleHub = 'battle';
     render();
   };
 }
@@ -170974,7 +170987,7 @@ function _ensureSpecBanner() {
     '<button id="btn-spectator-leave" class="btn-secondary btn-mini" style="margin-left:0.4rem">Leave</button>';
   document.body.appendChild(overlay);
   const leaveBtn = document.getElementById('btn-spectator-leave');
-  if (leaveBtn) leaveBtn.onclick = () => { leaveSpectator(); App.screen = 'leaderboard'; try { render(); } catch (e) {} };
+  if (leaveBtn) leaveBtn.onclick = () => { leaveSpectator(); App.screen = 'title'; App.titleHub = 'battle'; try { render(); } catch (e) {} };
 }
 
 function mountSpectatorOverlays() {

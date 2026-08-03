@@ -1,0 +1,82 @@
+[
+  {
+    "name": "The Scales of Ruin",
+    "type": "spell", "cost": 5, "icon": "⚖️", "rarity": "mythic", "elements": ["shadow"],
+    "desc": "Your opponent chooses which way the scales fall: their hero bleeds, or their hand does.",
+    "onPlay": {
+      "type": "verdict", "amount": 1, "anywhere": true,
+      "verdictEnabled": true,
+      "labelA": "Lose 60 life",
+      "labelB": "Discard 3 cards",
+      "effectA": { "type": "damageHero", "amount": 60, "status": "weak", "statusDuration": 2 },
+      "effectB": { "type": "discardCards", "amount": 3, "status": "weak", "statusDuration": 2 }
+    }
+  },
+  {
+    "name": "Tribunal of Ash",
+    "type": "spell", "cost": 6, "icon": "🏛️", "rarity": "mythic", "elements": ["fire"],
+    "desc": "The court offers two sentences. Your opponent picks the one they can survive.",
+    "onPlay": {
+      "type": "verdict", "amount": 1, "anywhere": true,
+      "verdictEnabled": true,
+      "labelA": "Your army burns (30 to every unit)",
+      "labelB": "Your library burns (mill 5)",
+      "effectA": { "type": "aoeDamage", "amount": 30, "status": "burn", "statusDuration": 2 },
+      "effectB": { "type": "millEnemy", "amount": 5, "status": "weak", "statusDuration": 2 }
+    }
+  },
+  {
+    "name": "The Bargainer's Coin",
+    "type": "spell", "cost": 3, "icon": "🪙", "rarity": "rare", "elements": ["neutral"],
+    "desc": "Heads I gain, tails you lose — and they call it. Either way the coin is mine.",
+    "onPlay": {
+      "type": "verdict", "amount": 1, "anywhere": true,
+      "verdictEnabled": true,
+      "labelA": "Let them draw 2",
+      "labelB": "Discard 2 yourself",
+      "effectA": { "type": "drawCards", "amount": 2, "status": "weak", "statusDuration": 2 },
+      "effectB": { "type": "discardCards", "amount": 2, "status": "weak", "statusDuration": 2 }
+    }
+  },
+  {
+    "name": "Judgment of Weight",
+    "type": "trap", "cost": 4, "icon": "🪶", "rarity": "rare", "elements": ["light"],
+    "desc": "When flipped, the accused chooses: carry the weakness, or pay in blood.",
+    "effect": { "type": "verdict", "amount": 1 },
+    "onPlay": {
+      "type": "verdict", "amount": 1, "anywhere": true,
+      "verdictEnabled": true,
+      "labelA": "Your whole army goes Weak (3 turns)",
+      "labelB": "Lose 45 life",
+      "effectA": { "type": "aoeStatus", "amount": 1, "status": "weak", "statusDuration": 3 },
+      "effectB": { "type": "damageHero", "amount": 45, "status": "weak", "statusDuration": 2 }
+    }
+  },
+  {
+    "name": "The Warden's Question",
+    "type": "unit", "cost": 6, "icon": "🗝️", "rarity": "mythic",
+    "elements": ["arcane"], "factions": ["cleric"], "stats": { "atk": 14, "hp": 34 },
+    "desc": "He asks once. On Play: your opponent decides whether to lose their best, or lose their breath.",
+    "onPlay": {
+      "type": "verdict", "amount": 1, "anywhere": true,
+      "verdictEnabled": true,
+      "labelA": "Lose your strongest unit",
+      "labelB": "Lose 50 life",
+      "effectA": { "type": "destroyTarget", "amount": 1, "status": "weak", "statusDuration": 2 },
+      "effectB": { "type": "damageHero", "amount": 50, "status": "weak", "statusDuration": 2 }
+    }
+  },
+  {
+    "name": "Ualti's Cruel Courtesy",
+    "type": "spell", "cost": 4, "icon": "🎭", "rarity": "mythic", "elements": ["arcane"],
+    "desc": "The Weave is generous. It lets you choose how it takes from you.",
+    "onPlay": {
+      "type": "verdict", "amount": 1, "anywhere": true,
+      "verdictEnabled": true,
+      "labelA": "Every unit you control is Stunned (2 turns)",
+      "labelB": "Send your 3 best cards to the graveyard",
+      "effectA": { "type": "aoeStatus", "amount": 1, "status": "stun", "statusDuration": 2 },
+      "effectB": { "type": "discardCards", "amount": 3, "status": "weak", "statusDuration": 2 }
+    }
+  }
+]

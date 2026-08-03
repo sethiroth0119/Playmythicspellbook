@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120a6';
+  window.BUILD_VERSION = 'v120a7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -43718,9 +43718,98 @@ function _mpRequestResync(reason) {
  *  mutates game state (that comes from the snapshot), so a missing animator is a
  *  harmless no-op. Units resolve by id (the opponent's units were adopted with
  *  the sender's ids, so lookups match post-snapshot). */
+// ⚖️ ═══ MULTIPLAYER VERDICT HANDSHAKE ═══════════════════════════════════════
+// The caster asks; the OPPONENT chooses; the caster resolves. Authority stays
+// with the caster because the relay model makes the active player authoritative
+// for the whole shared board — if the chooser resolved and broadcast, their
+// snapshot would overwrite the caster's board with a stale copy.
+//
+// Three messages, all on the existing `fx` relay (no server change):
+//   verdictAsk  caster → opponent   "choose A or B"
+//   verdictPick opponent → caster   the answer
+//   (timeout)                        caster falls back to the AI heuristic
+//
+// ⚠ THE HAZARD THIS GUARDS. While the prompt is open the caster sends no
+// snapshots, and the opponent's stuck-turn watchdog fires a resync after ~9s.
+// That is harmless (resync just re-pushes) but a NEVER-answering opponent —
+// disconnected, tabbed out, or refusing — would hang the turn forever. Hence
+// the hard timeout. This is exactly why the v119u9 trigger-order picker stayed
+// disabled in MP; a modal is only safe here because it cannot block forever.
+const _MP_VERDICT_TIMEOUT_MS = 20000;
+let _mpVerdictWait = null;
+function _mpVerdictResolveWith(pick) {
+  const w = _mpVerdictWait;
+  if (!w) return;
+  _mpVerdictWait = null;
+  try { if (w.timer) clearTimeout(w.timer); } catch (e) {}
+  try {
+    const eff = w.eff || {};
+    const isB = String(pick) === 'B';
+    const chosen = isB ? (eff.effectB || {}) : (eff.effectA || {});
+    const label = isB ? (eff.labelB || 'Effect B') : (eff.labelA || 'Effect A');
+    const unit = ((App.state && App.state.units) || []).find(u => u && u.id === w.unitId) || null;
+    let s = App.state;
+    s = { ...s, log: [...(s.log || []), { msg: `⚖️ Your opponent ruled: "${label}"`, color: 'amber' }] };
+    if (unit && chosen && chosen.type && typeof _applyOnPlayOne === 'function') {
+      try { s = _applyOnPlayOne(s, unit, { ...(w.card || {}), onPlay: chosen }); } catch (e) {}
+    }
+    App.state = s;
+    try { if (typeof renderBattle === 'function') renderBattle(); } catch (e) {}
+    // Push the resolved board so the opponent sees the outcome of their own choice.
+    try { if (typeof sendColyseusSnapshot === 'function') sendColyseusSnapshot(); } catch (e) {}
+  } catch (e) { try { console.warn('[mp verdict resolve]', e); } catch (_) {} }
+}
+function _mpVerdictAsk(unit, card, eff) {
+  try {
+    if (_mpVerdictWait) return;                       // one ruling at a time
+    _mpVerdictWait = {
+      unitId: unit && unit.id, card: card, eff: eff,
+      timer: setTimeout(() => {
+        // Opponent never answered — fall back to the same heuristic the AI uses
+        // so the turn always continues.
+        try {
+          const _bad = ['aoeDamage','aoeKill','aoeStatus','intimidate','boardWipe','discardCards','bounceUnit'];
+          const prefersB = _bad.includes(((eff.effectA || {}).type));
+          showToast('⚖️ No ruling from your opponent — resolving automatically.', 6000);
+          _mpVerdictResolveWith(prefersB ? 'B' : 'A');
+        } catch (e) {}
+      }, _MP_VERDICT_TIMEOUT_MS),
+    };
+    if (typeof sendColyseusFx === 'function') {
+      sendColyseusFx('verdictAsk', {
+        unitId: unit && unit.id,
+        unitName: (unit && unit.name) || 'A card',
+        labelA: eff.labelA || 'Effect A',
+        labelB: eff.labelB || 'Effect B',
+      });
+    }
+    try { showToast('⚖️ Waiting for your opponent to choose…', 6000); } catch (e) {}
+  } catch (e) { _mpVerdictWait = null; }
+}
 function _onColyseusFx(msg) {
   if (!msg || !msg.kind) return;
   const d = msg.data || {};
+  // ⚖️ The opponent cast a Verdict and it is OUR call. Reuse the existing
+  // choice overlay (App.ui.verdictChoice) so the UI is identical to the
+  // single-player prompt; `_mpChoice` marks it as one we must answer by relay
+  // rather than resolve ourselves.
+  if (msg.kind === 'verdictAsk') {
+    try {
+      App.ui = App.ui || {};
+      App.ui.verdictChoice = {
+        unitId: d.unitId,
+        _mpChoice: true,
+        eff: { labelA: d.labelA || 'Effect A', labelB: d.labelB || 'Effect B', effectA: {}, effectB: {} },
+      };
+      try { if (typeof _playVerdictVfx === 'function') _playVerdictVfx({ unitName: d.unitName || 'A card', headline: 'MAKE YOUR CHOICE' }); } catch (e) {}
+      if (typeof renderBattle === 'function') renderBattle();
+    } catch (e) {}
+    return;
+  }
+  if (msg.kind === 'verdictPick') {
+    try { _mpVerdictResolveWith(d.pick === 'B' ? 'B' : 'A'); } catch (e) {}
+    return;
+  }
   const findUnit = (id) => ((App.state && App.state.units) || []).find(u => u && u.id === id) || null;
   switch (msg.kind) {
     case 'location':
@@ -88001,6 +88090,22 @@ function _applyOnPlayOne(state, unit, card) {
         });
       }
     } catch (e) {}
+    // 🌐 MULTIPLAYER — the "opponent" is a PERSON, so ask them rather than
+    // running the AI heuristic against a human. The caster stays authoritative
+    // (the snapshot model gives the active player the whole shared board), so
+    // we do NOT let the chooser resolve: they send back a pick and we resolve
+    // here. Rides the existing `fx` relay with a new kind, so no server change
+    // and no Fly redeploy.
+    // ⚠ A pending prompt means this client stops sending snapshots for a
+    // moment. _mpVerdictAsk arms a timeout that falls back to the AI heuristic,
+    // so a disconnected or idle opponent can never hang the turn.
+    if (owner === 'player' && App.battlePrep && App.battlePrep.multiplayer
+        && typeof _mpVerdictAsk === 'function') {
+      log.push({ msg: `⚖️ ${unit.name} forces a Verdict — waiting for your opponent's ruling…`, color: 'amber' });
+      state = { ...state, log };
+      try { _mpVerdictAsk(unit, card, eff); } catch (e) {}
+      return { ...state, log };
+    }
     if (owner === 'player') {
       // AI picks: avoid effects that directly harm AI units.
       const _eA = eff.effectA || {};
@@ -130142,6 +130247,20 @@ function _resolveCallLock(kind, value, auto) {
 function _executeVerdict(choice) {
   const vc = App.ui && App.ui.verdictChoice;
   if (!vc) { renderBattle(); return; }
+  // 🌐 MP: this prompt came from the opponent over the relay, and they are the
+  // authoritative client this turn. Send the ANSWER and stop — resolving here
+  // would build the outcome on our stale copy of the board and then overwrite
+  // theirs on the next snapshot.
+  if (vc._mpChoice) {
+    App.ui.verdictChoice = null;
+    try {
+      const label = (choice === 'b') ? (vc.eff && vc.eff.labelB) : (vc.eff && vc.eff.labelA);
+      if (typeof sendColyseusFx === 'function') sendColyseusFx('verdictPick', { pick: (choice === 'b') ? 'B' : 'A' });
+      showToast('⚖️ You ruled: "' + (label || (choice === 'b' ? 'Effect B' : 'Effect A')) + '"', 4500);
+    } catch (e) {}
+    try { renderBattle(); } catch (e) {}
+    return;
+  }
   const s = App.state;
   const unit = (s.units || []).find(u => u.id === vc.unitId && u.alive);
   App.ui.verdictChoice = null;

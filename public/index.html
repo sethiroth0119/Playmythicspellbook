@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119z4';
+  window.BUILD_VERSION = 'v119z5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -119420,7 +119420,39 @@ function bindCardEditor() {
       const t = targetCard(); const id = t ? t.id : null;
       if (!id) { showToast('No card to attach art to'); return; }
       if (!url) { showToast('Paste an image URL first'); return; }
-      if (/^https?:\/\//i.test(url)) { setCardArtUrl(id, url); showToast('Card art set from URL'); }       // external host — store directly
+      if (/^https?:\/\//i.test(url)) {
+        // ⚠ PROVE IT LOADS FIRST. Storing the URL always "worked" — the map is
+        // persisted and re-read on boot — but a link that is not a DIRECT image
+        // then failed in the <img>, and the panel showed only "art URL not
+        // loading". That reads as "it didn't save" when in fact it saved a dead
+        // link. So probe the image and refuse the ones that cannot render,
+        // naming the actual reason.
+        artUrlBtn.disabled = true;
+        const _lbl = artUrlBtn.textContent; artUrlBtn.textContent = 'Checking…';
+        const ok = await new Promise((res) => {
+          try {
+            const im = new Image();
+            const done = (v) => { im.onload = im.onerror = null; res(v); };
+            im.onload = () => done(im.naturalWidth > 0);
+            im.onerror = () => done(false);
+            setTimeout(() => done(false), 8000);      // slow/hanging host
+            im.src = url;
+          } catch (e) { res(false); }
+        });
+        artUrlBtn.disabled = false; artUrlBtn.textContent = _lbl;
+        if (ok) { setCardArtUrl(id, url); showToast('✅ Card art set from URL'); }
+        else {
+          // The three that actually bite, in the order they occur.
+          const _hint = /drive\.google|docs\.google/i.test(url)
+              ? 'Google Drive share links serve a PAGE, not an image. Use the direct file link, or download it and use Upload.'
+            : /dropbox\.com/i.test(url)
+              ? 'Dropbox share links serve a preview page. Change ?dl=0 to ?raw=1, or use Upload.'
+            : /imgur\.com\/(?!.*\.(png|jpe?g|gif|webp))/i.test(url)
+              ? 'That is an Imgur PAGE link. Right-click the image → Copy image address (it ends in .png/.jpg).'
+            : 'The link did not return an image. It must point straight at the file (ending .png/.jpg/.webp) and be publicly reachable — some hosts block hotlinking.';
+          showToast('⚠ Not saved — ' + _hint, 10000);
+        }
+      }
       else if (/^data:image\//i.test(url)) { await uploadArtToCloud(id, (await _trimImagePadding(url)).url); }   // data url — trim + host it for them
       else { showToast('URL must start with http(s):// or be an image data: URL'); }
     };
@@ -160068,6 +160100,39 @@ try {
                              pickCur: bboPickCur, toggleCls: bboToggleCls, set: bboSet,
                              save: bboSaveProduct, toggle: bboToggleProduct, del: bboDeleteProduct };
   window.__mg.openBankOffice = function () { App.screen = 'bankOffice'; try { render(); } catch (e) {} };
+  // 🎨 Which stored card-art URLs actually LOAD? A saved-but-dead link renders
+  // as "art URL not loading" on that one card only, so a bad batch is invisible
+  // until you open each card. This probes every URL in Forge.cardArtUrl and
+  // names the broken ones. Read-only — it changes nothing.
+  window.__mg.artCheck = async function (limit) {
+    const map = (typeof Forge !== 'undefined' && Forge.cardArtUrl) || {};
+    const ids = Object.keys(map).filter(id => id && id.indexOf('__') !== 0).slice(0, limit || 400);
+    const probe = (url) => new Promise((res) => {
+      try {
+        const im = new Image();
+        const done = (v) => { im.onload = im.onerror = null; res(v); };
+        im.onload = () => done(im.naturalWidth > 0);
+        im.onerror = () => done(false);
+        setTimeout(() => done(false), 8000);
+        im.src = url;
+      } catch (e) { res(false); }
+    });
+    const bad = [];
+    for (const id of ids) {
+      const url = map[id];
+      if (!url) continue;
+      // eslint-disable-next-line no-await-in-loop
+      if (!(await probe(url))) {
+        let nm = id;
+        try { const c = (typeof _cardDefById === 'function') && _cardDefById(id); if (c && c.name) nm = c.name; } catch (e) {}
+        bad.push({ card: nm, id: id, url: String(url).slice(0, 120) });
+      }
+    }
+    const out = { checked: ids.length, broken: bad.length, brokenList: bad };
+    try { console.log(JSON.stringify(out, null, 1)); } catch (e) {}
+    try { showToast(bad.length ? ('🎨 ' + bad.length + ' of ' + ids.length + ' art URLs are dead — see the console.') : ('✅ All ' + ids.length + ' art URLs load.'), 7000); } catch (e) {}
+    return out;
+  };
   // 🩹 Create the missing charter for a bank whose OPERATION was already paid
   // for. bank_open_cinder() is idempotent and debits nothing, so this is safe
   // to press twice and cannot hand a bank to someone who never bought one —

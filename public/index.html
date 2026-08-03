@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120a1';
+  window.BUILD_VERSION = 'v120a2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -119668,15 +119668,22 @@ function bindCardEditor() {
           }
         }
         else {
-          // The three that actually bite, in the order they occur.
+          // ⚠ NEVER REFUSE THE SAVE. An earlier version of this blocked storing
+          // any URL whose probe failed — but the probe is a `new Image()` load
+          // that a slow host, a hotlink rule or an ad-blocker can fail even
+          // though the SAME url renders fine in the card's <img>. That turned a
+          // warning into "I can't use links any more". Store it, then say the
+          // probe did not confirm it, and let the card be the judge.
           const _hint = /drive\.google|docs\.google/i.test(url)
-              ? 'Google Drive share links serve a PAGE, not an image. Use the direct file link, or download it and use Upload.'
+              ? 'Google Drive share links serve a PAGE, not an image — use the direct file link.'
             : /dropbox\.com/i.test(url)
-              ? 'Dropbox share links serve a preview page. Change ?dl=0 to ?raw=1, or use Upload.'
+              ? 'Dropbox share links serve a preview page — change ?dl=0 to ?raw=1.'
             : /imgur\.com\/(?!.*\.(png|jpe?g|gif|webp))/i.test(url)
-              ? 'That is an Imgur PAGE link. Right-click the image → Copy image address (it ends in .png/.jpg).'
-            : 'The link did not return an image. It must point straight at the file (ending .png/.jpg/.webp) and be publicly reachable — some hosts block hotlinking.';
-          showToast('⚠ Not saved — ' + _hint, 10000);
+              ? 'That looks like an Imgur PAGE link — right-click the image → Copy image address.'
+            : 'It may be slow, hotlink-protected, or blocked by an extension.';
+          if (await setCardArtUrl(id, url)) {
+            showToast('⚠ Saved, but the link did not load when tested. ' + _hint + ' If the card shows art, ignore this.', 10000);
+          }
         }
       }
       else if (/^data:image\//i.test(url)) { await uploadArtToCloud(id, (await _trimImagePadding(url)).url); }   // data url — trim + host it for them

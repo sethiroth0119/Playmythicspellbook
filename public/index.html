@@ -35461,7 +35461,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119y6';
+  window.BUILD_VERSION = 'v119y7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -146284,9 +146284,39 @@ function renderAuctionListModal() {
 }
 function bindAuctionListModal() {
   const m = App.auctionListModal;
-  if (!m) return;
-  const close = () => { App.auctionListModal = null; render(); };
+  // No modal in state ⇒ any #auc-modal-overlay still in the DOM is an orphan
+  // left behind by the <body> portal (render() only ever rewrites #app). It
+  // would sit there as a full-screen click-blocker, so sweep it every pass.
+  if (!m) {
+    try {
+      document.querySelectorAll('#auc-modal-overlay').forEach(n => {
+        if (n && n.parentNode) n.parentNode.removeChild(n);
+      });
+    } catch (e) {}
+    return;
+  }
+  // ⚠ This overlay is PORTALED to <body> (see below), i.e. it lives OUTSIDE
+  // #app — so render() rewriting #app does NOT remove it. Clearing the state
+  // alone left the modal sitting on screen forever, which is why ✕ and Cancel
+  // read as dead buttons: they fired, the state cleared, and nothing moved.
+  // The node has to be removed by hand.
+  const _dropAucOverlay = () => {
+    try {
+      document.querySelectorAll('#auc-modal-overlay').forEach(n => {
+        if (n && n.parentNode) n.parentNode.removeChild(n);
+      });
+    } catch (e) {}
+  };
+  const close = () => { App.auctionListModal = null; _dropAucOverlay(); render(); };
   const ov = document.getElementById('auc-modal-overlay');
+  // Same reason, other direction: a re-render (e.g. the currency toggle) emits
+  // a FRESH overlay inside #app while the previously portaled one is still in
+  // <body>. Without this, every toggle stacked another copy on top.
+  try {
+    document.querySelectorAll('#auc-modal-overlay').forEach(n => {
+      if (n !== ov && n.parentNode) n.parentNode.removeChild(n);
+    });
+  } catch (e) {}
   // 🎯 PORTAL TO <body>. The overlay is `position:fixed` + flex-centred, which
   // SHOULD centre it in the viewport — but a `position:fixed` element is centred
   // on the viewport only while no ancestor has a transform / filter /
@@ -146331,7 +146361,10 @@ function bindAuctionListModal() {
       buyNowAza: bnA ? bnA : null,
     };
     const ok = (m.kind === 'card') ? listCardForAuction(m.id, opts) : listHeldItemForAuction(m.id, opts);
-    if (ok) { App.auctionListModal = null; App.marketTab = 'mine'; render(); }
+    // Same portal caveat as close(): the overlay lives in <body>, so render()
+    // will not clear it. Without this the modal stayed up after a SUCCESSFUL
+    // listing too, reading as "Start Auction did nothing".
+    if (ok) { App.auctionListModal = null; App.marketTab = 'mine'; _dropAucOverlay(); render(); }
   };
 }
 

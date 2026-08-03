@@ -35461,7 +35461,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119y3';
+  window.BUILD_VERSION = 'v119y5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -75878,6 +75878,10 @@ function _jbEcon() {
       try { return (BankDir.myBank && BankDir.myBank.bank_name)
                 || (App._bbo && App._bbo.bank && App._bbo.bank.bank_name) || null; } catch (e) { return null; }
     })(),
+    // Owning the bank OPERATION is enough to show the Back Office entry even
+    // when no charter row exists yet — that screen is where the charter gets
+    // opened/repaired, so it must not be hidden by the missing charter.
+    ownsBankOp: (function () { try { return !!_ownsBankOp(); } catch (e) { return false; } })(),
     handle: ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'),
     corp: _jbCorpInfo(),
     isAdmin: adm,
@@ -95986,7 +95990,12 @@ function _b3dEnabled() {
 function _b3dActiveMap() {
   _b3dEnsureLoaded();
   try { if (typeof Forge !== 'undefined' && Forge.battleMap3d && Forge.battleMap3d.active) return Forge.battleMap3d.active; } catch (e) {}
-  return { cols: BOARD_W, rows: BOARD_H, backdrop: 'assets/background/battlefield.png', terrain: null, glbSlots: [], models: [] };
+  // ⚠ The default backdrop used to be 'assets/background/battlefield.png',
+  // which has NEVER existed in this repo (never tracked, never on disk) — so
+  // any 3D battle map without an admin-configured backdrop rendered against a
+  // 404, i.e. no battlefield image at all. Combatbackground.png is the shipped
+  // battle backdrop and serves 200.
+  return { cols: BOARD_W, rows: BOARD_H, backdrop: 'assets/background/Backgrounds/Combatbackground.png', terrain: null, glbSlots: [], models: [] };
 }
 function _b3dEnsureStyle() {
   if (document.getElementById('b3d-style')) return;
@@ -159920,6 +159929,22 @@ try {
                              pickCur: bboPickCur, toggleCls: bboToggleCls, set: bboSet,
                              save: bboSaveProduct, toggle: bboToggleProduct, del: bboDeleteProduct };
   window.__mg.openBankOffice = function () { App.screen = 'bankOffice'; try { render(); } catch (e) {} };
+  // 🩹 Create the missing charter for a bank whose OPERATION was already paid
+  // for. bank_open_cinder() is idempotent and debits nothing, so this is safe
+  // to press twice and cannot hand a bank to someone who never bought one —
+  // _ownsBankOp() is the gate, and it reads the player's real operations list.
+  window.__mg.bankRepairCharter = async function () {
+    try {
+      if (!_ownsBankOp()) { showToast('You do not own the Bank operation.', 4000); return false; }
+      const ok = await _bankEnsureCharter({ quiet: false });
+      if (!ok) { showToast('⚠ Could not open the charter — check you are signed in.', 5000); return false; }
+      try { BankDir.at = 0; await bankDirFetch(true); } catch (e) {}
+      try { if (App._bbo) App._bbo.loaded = false; } catch (e) {}
+      try { _jbSendData(); } catch (e) {}      // refresh the Just Business nav label
+      try { render(); } catch (e) {}
+      return true;
+    } catch (e) { return false; }
+  };
   // 🔍 Why is my bank not in the Just Business nav? Walks every link in the
   // chain and names the FIRST broken one, instead of leaving "no row appeared"
   // to be guessed at. Chain: signed in → owns the op → charter row exists →
@@ -159976,11 +160001,21 @@ function renderBankBackOffice() {
     root.innerHTML = '<div class="bbo">' + _bboBar(null) + '<div class="bbo-main">Bank tables are not installed. Run <b>player_banks.sql</b>, then <b>bank_products.sql</b>.</div>' + back + '</div>';
     return;
   }
+  const _bboOwnsOp = (function () { try { return !!_ownsBankOp(); } catch (e) { return false; } })();
   if (!S.bank) {
     root.innerHTML = '<div class="bbo">' + _bboBar(null) +
-      '<div class="bbo-main"><h1 class="bbo-h2">No bank yet</h1>' +
-      '<p class="bbo-h2sub">The back office opens once you hold a charter. Buy the Bank operation in Just Business, or stake at the Office of the Mint.</p>' +
-      '<button class="bbo-cta" onclick="__mg.openBankCharter()">Open a charter</button></div>' + back + '</div>';
+      '<div class="bbo-main">' + (_bboOwnsOp
+        // 🩹 Paid for the operation but the charter row is missing — the Cinder
+        // purchase used to found the OP without ever creating the bank, so this
+        // player already owns a bank and must NOT be told to buy another. One
+        // button repairs it (idempotent server-side; debits nothing).
+        ? '<h1 class="bbo-h2">Your charter is missing</h1>' +
+          '<p class="bbo-h2sub">You own the Bank operation, but no charter record exists for it — so the desk, the registry and this office have nothing to attach to. Repairing costs nothing and does not charge you again.</p>' +
+          '<button class="bbo-cta" onclick="__mg.bankRepairCharter()">Repair my charter</button>'
+        : '<h1 class="bbo-h2">No bank yet</h1>' +
+          '<p class="bbo-h2sub">The back office opens once you hold a charter. Buy the Bank operation in Just Business, or stake at the Office of the Mint.</p>' +
+          '<button class="bbo-cta" onclick="__mg.openBankCharter()">Open a charter</button>') +
+      '</div>' + back + '</div>';
     return;
   }
   const nav = '<nav class="bbo-nav"><div class="grp">Bank management</div>' +

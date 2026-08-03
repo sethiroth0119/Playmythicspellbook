@@ -72,14 +72,21 @@ function RiskPips({ level }) {
 // Sidebar
 // ──────────────────────────────────────────────────────────────────────────
 
-// 🏦 The bank's back office. Shown ONLY to a bank owner, and labelled with the
-// bank's OWN name — an owner looking for "Ashford & Keel" should not have to
-// recognise a generic "Bank". `econ.bankName` is fed by the parent's econ
-// bridge; when it is absent the player has no charter and the row is omitted.
+// 🏦 The bank's back office. Labelled with the bank's OWN name — an owner
+// looking for "Ashford & Keel" should not have to recognise a generic "Bank".
+//
+// ⚠ Shown when the player owns the bank OPERATION *or* holds a charter — NOT
+// on `bankName` alone. bankName comes from the charter row, so gating on it
+// hid this entry from exactly the players whose charter is missing, which is
+// the one situation where they most need to get in: the back office's own
+// "No bank yet" state carries the button that opens/repairs the charter.
+// Hiding the door because the room is empty is how "I own a bank and there is
+// nowhere to go" happened.
 function bankNavRow(econ) {
-  const nm = econ && econ.bankName;
-  if (!nm) return null;
-  return { id: 'bankOffice', label: String(nm).slice(0, 22), ico: '🏦', action: 'openBankOffice' };
+  if (!econ) return null;
+  const nm = econ.bankName;
+  if (!nm && !econ.ownsBankOp) return null;
+  return { id: 'bankOffice', label: String(nm || 'My Bank').slice(0, 22), ico: '🏦', action: 'openBankOffice' };
 }
 const NAV = [
   { group: 'Holdings' },

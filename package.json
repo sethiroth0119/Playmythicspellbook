@@ -10,7 +10,10 @@
     "build": "node build.mjs minify",
     "restore": "node build.mjs restore",
     "login": "wrangler login",
-    "whoami": "wrangler whoami"
+    "whoami": "wrangler whoami",
+    "deploy:all": "node deploy-all.mjs",
+    "deploy:market": "node deploy-all.mjs --market",
+    "deploy:check": "node deploy-all.mjs --dry"
   },
   "devDependencies": {
     "terser": "^5.48.0",

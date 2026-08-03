@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120a5';
+  window.BUILD_VERSION = 'v120a6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -46505,11 +46505,75 @@ try {
   window.__mg.artLog = function () { try { console.table(_ART_LOG.map(r => ({ t: r.t, step: r.step, data: JSON.stringify(r.data) }))); } catch (e) {} return _ART_LOG; };
   window.__mg.artLogClear = function () { _ART_LOG.length = 0; return 'cleared'; };
 } catch (e) {}
+// 🔻 CARD-ART PIXEL CAP — the fix for the native-memory crashes.
+// Art was stored at source resolution: measured 1024x1536 / 3.2 MB PNGs, which
+// is 6.3 MB of DECODED bitmap EACH (w*h*4). A 40-card view is then ~250 MB and
+// the whole library ~1.3 GB — that is what kills the tab, and nothing in the
+// upload path ever shrank it (_trimImagePadding only crops transparent edges).
+// Capping here, at the ONE choke point every upload goes through, means the
+// Upload button, the paste-a-link rehost and the bulk migration all benefit and
+// it can never grow back.
+const CARD_ART_MAX_W = 640;    // a card window is ~200-300 CSS px; 640 covers 2x DPI
+const CARD_ART_MAX_H = 960;
+let _artWebpOk = null;
+function _artCanEncodeWebp() {
+  if (_artWebpOk !== null) return _artWebpOk;
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = 1;
+    _artWebpOk = c.toDataURL('image/webp').indexOf('data:image/webp') === 0;
+  } catch (e) { _artWebpOk = false; }
+  return _artWebpOk;
+}
+// Returns { url, changed, w, h, before, after }. NEVER throws and never returns
+// something bigger than it got — on any doubt it hands back the original.
+async function _downscaleArtDataUrl(dataUrl, opts) {
+  const o = opts || {};
+  const maxW = o.maxW || CARD_ART_MAX_W, maxH = o.maxH || CARD_ART_MAX_H;
+  const out = { url: dataUrl, changed: false, w: 0, h: 0, before: (dataUrl || '').length, after: (dataUrl || '').length };
+  try {
+    if (!dataUrl || typeof document === 'undefined') return out;
+    const img = await new Promise((res) => {
+      const i = new Image();
+      i.onload = () => res(i); i.onerror = () => res(null);
+      i.src = dataUrl;
+    });
+    if (!img || !img.naturalWidth || !img.naturalHeight) return out;
+    const w = img.naturalWidth, h = img.naturalHeight;
+    out.w = w; out.h = h;
+    const scale = Math.min(1, maxW / w, maxH / h);
+    // Already within the cap AND already a modest file → leave it completely alone.
+    if (scale >= 1 && out.before < (o.keepUnder || 600000)) return out;
+    const nw = Math.max(1, Math.round(w * scale)), nh = Math.max(1, Math.round(h * scale));
+    const cv = document.createElement('canvas'); cv.width = nw; cv.height = nh;
+    const ctx = cv.getContext('2d');
+    try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch (e) {}
+    ctx.drawImage(img, 0, 0, nw, nh);
+    // WebP keeps transparency AND is far smaller than PNG; PNG only as fallback.
+    const type = _artCanEncodeWebp() ? 'image/webp' : 'image/png';
+    // 0.92 measured on real card art: PSNR 32.7 dB composited, 165 KB vs a
+    // 3.11 MB source. Going higher buys ~0.3 dB for +16% size — the remaining
+    // loss is the downscale itself and the alpha edges, not the encoder.
+    const next = cv.toDataURL(type, o.quality == null ? 0.92 : o.quality);
+    if (next && next.length > 32 && next.length < out.before) {
+      out.url = next; out.changed = true; out.after = next.length; out.w = nw; out.h = nh;
+    }
+    return out;
+  } catch (e) { return out; }
+}
 async function cloudUploadCardArtFile(cardId, dataUrl) {
   try {
     if (!cardId || !dataUrl) return { ok: false, error: 'missing data' };
     if (!initCloud() || !Profile.cloud.signedIn) return { ok: false, error: 'Sign in to host card art in the cloud.' };
     if (!/^data:image\//i.test(dataUrl)) return { ok: false, error: 'not an image' };
+    // 🔻 Cap the pixels before anything is stored. Failure here is non-fatal —
+    // we upload the original rather than lose the art.
+    try {
+      const shrunk = await _downscaleArtDataUrl(dataUrl);
+      if (shrunk && shrunk.changed && shrunk.url) {
+        _artTrace('downscale', { id: cardId, to: shrunk.w + 'x' + shrunk.h, kbBefore: Math.round(shrunk.before / 1024), kbAfter: Math.round(shrunk.after / 1024) });
+        dataUrl = shrunk.url;
+      }
+    } catch (e) {}
     await _ensureCardArtBucket();
     const blob = await (await fetch(dataUrl)).blob();
     const m = /^data:image\/(\w+)/i.exec(dataUrl);
@@ -64072,7 +64136,27 @@ const _pendingDecode = [];            // queued {el,url} awaiting a slot
 // Strip the src to free the decoded bitmap. Does NOT revoke the URL — the
 // underlying Blob/blob: URL is owned by the per-record LRU (which revokes on its
 // own eviction); the budget layer only governs DECODES, not the byte lifecycle.
-function _clearArtSrc(el) { try { if (el && el.removeAttribute) el.removeAttribute('src'); } catch (e) {} }
+// 🖼 A 1x1 transparent GIF. Evicting art by REMOVING the src attribute leaves a
+// real <img> with no source — which paints as a BROKEN IMAGE and can fire
+// onerror. That is the "the link vanishes, then it flickers into a broken
+// photo" bug. Swapping in a 1x1 frees the decoded bitmap just as completely
+// (that is the whole point of the budget) while rendering as nothing at all.
+const _ART_BLANK_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+// "Live" = showing real art. The blank placeholder must NOT count, or the
+// re-grant guard below would think the image is already loaded and never
+// restore it when it scrolls back into view.
+function _artHasLiveSrc(el) {
+  try { return !!(el && el.getAttribute && el.getAttribute('src') && el.getAttribute('data-art-blank') !== '1'); }
+  catch (e) { return false; }
+}
+function _clearArtSrc(el) {
+  try {
+    if (!el || !el.setAttribute) return;
+    if (el.getAttribute('data-art-blank') === '1') return;   // already blanked
+    el.setAttribute('data-art-blank', '1');
+    el.src = _ART_BLANK_PX;
+  } catch (e) {}
+}
 function _releaseArtEl(el) {
   const i = _residentArtEls.indexOf(el);
   if (i !== -1) _residentArtEls.splice(i, 1);
@@ -64081,12 +64165,18 @@ function _releaseArtEl(el) {
 function _drainPending() {
   while (_pendingDecode.length && _decodeInFlight < _MAX_CONCURRENT_DECODES) {
     const job = _pendingDecode.shift();
-    if (job && job.el && job.el.isConnected && !(job.el.getAttribute && job.el.getAttribute('src'))) _grantDecode(job.el, job.url);
+    if (job && job.el && job.el.isConnected && !_artHasLiveSrc(job.el)) _grantDecode(job.el, job.url);
   }
 }
 function _grantDecode(el, url) {
   if (!el || !url) return;
-  if (el.getAttribute && el.getAttribute('src')) return;     // already decoding
+  if (_artHasLiveSrc(el)) return;                            // already decoding/decoded
+  // Drop elements that re-renders detached from the DOM. They can never be seen
+  // again, but they still occupied budget slots — which pushed the cap over and
+  // evicted art that WAS on screen (the flicker).
+  while (_residentArtEls.length && _residentArtEls[0] && _residentArtEls[0].isConnected === false) {
+    _residentArtEls.shift();
+  }
   // Evict oldest residents (off-screen first by virtue of the observer) until
   // under the cap — the hard ceiling on simultaneously-decoded images.
   while (_residentArtEls.length >= _MAX_RESIDENT_ART && _residentArtEls[0] !== el) {
@@ -64097,6 +64187,7 @@ function _grantDecode(el, url) {
   let settled = false;
   const done = function () { if (settled) return; settled = true; _decodeInFlight = Math.max(0, _decodeInFlight - 1); _drainPending(); };
   try {
+    try { el.removeAttribute('data-art-blank'); } catch (e2) {}   // real art again
     el.src = url;
     _residentArtEls.push(el);
     if (el.decode) el.decode().then(done).catch(done); else done();
@@ -103940,6 +104031,36 @@ function resizeImage(file, maxSize, opts) {
 // aspect) so one set of fractions is correct everywhere.
 // Conservative by design: it only ever crops, never scales or distorts, and it
 // bails out unless the border is genuinely uniform.
+// 🖼 Card-art preview error handling. The old inline handler gave up on the
+// FIRST failed load, hid the image for good (`onerror=null`) and injected
+// "is the card-art bucket set to Public?" — which sent people chasing a bucket
+// setting that was already correct. Card art is commonly a 3 MB / 1024x1536
+// PNG, so a single load can fail from memory pressure or a slow host and then
+// succeed immediately on a retry. Retry twice before saying anything, and when
+// we do speak, say something true.
+function _artPreviewRetry(img) {
+  try {
+    if (!img) return;
+    const n = parseInt(img.getAttribute('data-art-try') || '0', 10) || 0;
+    if (!img.getAttribute('data-art-base')) img.setAttribute('data-art-base', img.src || '');
+    const base = img.getAttribute('data-art-base') || '';
+    if (n < 2 && base) {
+      img.setAttribute('data-art-try', String(n + 1));
+      setTimeout(function () {
+        try { img.src = base + (base.indexOf('?') >= 0 ? '&' : '?') + '_retry=' + Date.now(); } catch (e) {}
+      }, 500 * (n + 1));
+      return;
+    }
+    img.onerror = null;
+    img.style.display = 'none';
+    if (img.parentNode) {
+      img.parentNode.insertAdjacentHTML('beforeend',
+        '<span style="font-size:0.6rem;color:#cc6666;text-align:center;display:block;padding:8px;line-height:1.45">' +
+        '⚠ Image did not load after 3 tries.<br>Usually a very large file or a slow / hotlink-blocking host — use <b>Upload</b> to host it here.' +
+        '</span>');
+    }
+  } catch (e) {}
+}
 function _trimImagePadding(srcDataUrl, opts) {
   const o = opts || {};
   const tol = o.tolerance == null ? 10 : o.tolerance;    // per-channel slack, 0-255
@@ -116264,7 +116385,7 @@ function renderCardEditor() {
   const cardArtUrl = _cloudArt || (Forge.cardArt && Forge.cardArt[card.id]) || '';
   const hasCardArt = !!cardArtUrl;
   const cardArtPreview = hasCardArt
-    ? `<div class="image-preview"><img src="${escapeHtml(cardArtUrl)}" alt="card art" onerror="this.onerror=null;this.style.display='none';if(this.parentNode)this.parentNode.insertAdjacentHTML('beforeend','<span style=&quot;font-size:0.62rem;color:#cc6666;text-align:center;display:block;padding:10px&quot;>⚠ art URL not loading — is the card-art bucket set to Public?</span>')" style="width:96px;height:96px;object-fit:cover;border-radius:3px"></div>`
+    ? `<div class="image-preview"><img src="${escapeHtml(cardArtUrl)}" alt="card art" decoding="async" onerror="_artPreviewRetry(this)" style="width:96px;height:96px;object-fit:cover;border-radius:3px"></div>`
     : `<div class="image-preview empty"><span style="font-size:3rem;opacity:0.4">🎨</span></div>`;
   // 🪪 Character-box portrait — the character shot shown in the in-battle info
   // box that opens beside YOUR DECK when this unit/hero is clicked. Its own slot
@@ -118776,6 +118897,7 @@ function renderCardEditor() {
             </div>
             <div style="margin-top:0.55rem;display:flex;flex-wrap:wrap;gap:6px">
               <button class="btn-mini" id="btn-migrate-cardart" style="font-size:0.62rem" title="Upload your card art + location/pack/item/deck art to Supabase and clear the local copies — frees storage. (Sprites are migrated separately.)">☁ Move ALL my art to the cloud</button>
+              <button class="btn-mini" id="btn-shrink-cardart" style="font-size:0.62rem" title="Re-encode EVERY card's art down to 640x960 WebP and re-host it in your own bucket. Card art is often a 3 MB / 1024x1536 PNG = 6.3 MB of memory per card, which is what makes the game run out of image memory and show broken art. Safe to re-run; anything already small is skipped.">🔻 Shrink ALL card art (fix broken art)</button>
               <button class="btn-mini" id="btn-migrate-sprites" style="font-size:0.62rem" title="Upload EVERY frame of EVERY sprite animation to Supabase and clear the local copies — the big space win. Can take several minutes; you can leave it running.">🎞 Move sprite animations to cloud</button>
               <button class="btn-mini" id="btn-toggle-artstream" style="font-size:0.62rem" title="Render your custom sprites + art IN THE GAME instead of placeholder emoji. Best AFTER moving sprites to the cloud (URL frames are cheap). If the game becomes unstable, turn it back OFF.">🎮 Custom art in-game</button>
               <button class="btn-mini" id="btn-storage-diag" style="font-size:0.62rem" title="Check exactly why a save might be failing — storage used/quota, a live test write, and whether your sprites are on disk.">🔍 Why won't it save?</button>
@@ -119741,6 +119863,24 @@ function bindCardEditor() {
       artMigrateBtn.disabled = true; artMigrateBtn.textContent = '☁ Migrating… (watch the toasts)';
       try { await migrateAllAssetsToCloud(); } catch (err) { showToast('⚠ Migration error: ' + ((err && err.message) || '?'), 6000); }
       try { artMigrateBtn.disabled = false; artMigrateBtn.textContent = _orig; } catch (e2) {}
+    };
+  }
+  // 🔻 One-click: shrink EVERY card's art to the pixel cap and re-host it.
+  // This is the cure for "card art flickers / shows broken": the source images
+  // are 1024x1536 / ~3 MB, which is 6.3 MB of decoded bitmap each, and a screen
+  // full of cards exhausts the browser's image memory.
+  const artShrinkBtn = document.getElementById('btn-shrink-cardart');
+  if (artShrinkBtn) {
+    artShrinkBtn.onclick = async (e) => {
+      e.preventDefault();
+      if (!(window.__mg && typeof window.__mg.rehostAllArt === 'function')) { showToast('Shrink tool unavailable.'); return; }
+      if (!(Profile.cloud && Profile.cloud.signedIn)) { showToast('☁ Sign in first — this re-hosts into YOUR Supabase bucket.', 7000); return; }
+      if (!confirm('Shrink every card\'s art to 640x960 WebP and re-host it in your bucket?\n\nThis fixes the broken / flickering card art by cutting image memory ~6x.\nOriginals on other hosts are left untouched; only the link each card uses changes.\nSafe to re-run, and you can keep playing while it works.')) return;
+      const _orig = artShrinkBtn.textContent;
+      artShrinkBtn.disabled = true; artShrinkBtn.textContent = '🔻 Shrinking… (watch the toasts)';
+      try { await window.__mg.rehostAllArt({ shrink: true }); }
+      catch (err) { showToast('⚠ Shrink error: ' + ((err && err.message) || '?'), 6000); }
+      try { artShrinkBtn.disabled = false; artShrinkBtn.textContent = _orig; } catch (e2) {}
     };
   }
   // 🎞 One-click: migrate every sprite animation frame to the cloud bucket.
@@ -160382,6 +160522,81 @@ try {
                              save: bboSaveProduct, toggle: bboToggleProduct, del: bboDeleteProduct };
   window.__mg.openBankOffice = function () { App.screen = 'bankOffice'; try { render(); } catch (e) {} };
   // ═══════════════════════════════════════════════════════════════════════════
+  // 📥 BULK CARD IMPORT — __mg.importCards(arrayOrJsonString, opts)
+  //
+  // Authoring a set through the editor is one card per sitting; a 40-card
+  // archetype is not realistically hand-buildable. This takes an array of PARTIAL
+  // card objects, fills every field the engine expects, and commits them.
+  //
+  // Safety: matches an existing card by id, else by NAME (case-insensitive), and
+  // by default SKIPS a name that already exists rather than creating a duplicate
+  // — pass {overwrite:true} to update in place instead. Every accepted card gets
+  // a fresh _editedAt so newest-wins keeps it over a stale cloud row, and the
+  // deletion tombstone is lifted so re-importing a deleted id works.
+  // Nothing is written unless at least one card is accepted.
+  // ═══════════════════════════════════════════════════════════════════════════
+  window.__mg.importCards = function (input, opts) {
+    const o = opts || {};
+    const res = { added: [], updated: [], skipped: [], invalid: [] };
+    try {
+      let arr = input;
+      if (typeof arr === 'string') { try { arr = JSON.parse(arr); } catch (e) { showToast('⚠ That is not valid JSON.', 6000); return { error: 'bad_json' }; } }
+      if (!Array.isArray(arr)) arr = [arr];
+      if (!Array.isArray(Forge.customCards)) Forge.customCards = [];
+      const byId = new Map(Forge.customCards.map(c => [String(c.id), c]));
+      const byName = new Map(Forge.customCards.map(c => [String(c.name || '').trim().toLowerCase(), c]));
+
+      arr.forEach((raw, i) => {
+        if (!raw || typeof raw !== 'object' || !String(raw.name || '').trim()) { res.invalid.push({ i: i, why: 'no name' }); return; }
+        const nameKey = String(raw.name).trim().toLowerCase();
+        const existing = (raw.id && byId.get(String(raw.id))) || byName.get(nameKey) || null;
+        if (existing && !o.overwrite) { res.skipped.push(raw.name); return; }
+
+        // Fill the shape the engine expects. Anything the caller supplied wins.
+        const card = Object.assign({
+          id: (existing && existing.id) || ('cc_' + Date.now() + '_' + Math.floor(Math.random() * 100000).toString(36)),
+          type: 'unit',
+          cost: 3,
+          icon: '🃏',
+          rarity: 'common',
+          elements: ['neutral'],
+          desc: '',
+        }, existing || {}, raw);
+
+        // Units need stats; a unit with no HP is unplayable and easy to miss.
+        if ((card.type === 'unit' || card.type === 'hero' || card.type === 'summon')) {
+          card.stats = Object.assign({ atk: 10, hp: 30 }, (existing && existing.stats) || {}, raw.stats || {});
+        }
+        if (!Array.isArray(card.elements) || !card.elements.length) card.elements = ['neutral'];
+        card.isCustom = true;
+        card._editedAt = Date.now();
+        try { _forgeUntombstoneCard(card.id); } catch (e) {}
+
+        if (existing) {
+          const idx = Forge.customCards.indexOf(existing);
+          if (idx >= 0) Forge.customCards[idx] = card; else Forge.customCards.push(card);
+          res.updated.push(card.name);
+        } else {
+          Forge.customCards.push(card);
+          byId.set(String(card.id), card); byName.set(nameKey, card);
+          res.added.push(card.name);
+        }
+      });
+
+      if (res.added.length || res.updated.length) {
+        try { if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge(); } catch (e) {}
+        try { render(); } catch (e) {}
+      }
+    } catch (e) { res.threw = (e && e.message) || String(e); }
+    try { console.log(JSON.stringify(res, null, 1)); } catch (e) {}
+    try {
+      showToast('📥 Imported — ' + res.added.length + ' new, ' + res.updated.length + ' updated, '
+        + res.skipped.length + ' already existed' + (res.invalid.length ? (', ' + res.invalid.length + ' invalid') : '')
+        + '. Publish to send them to players.', 11000);
+    } catch (e) {}
+    return res;
+  };
+  // ═══════════════════════════════════════════════════════════════════════════
   // 🖼 REHOST ALL ART — one pass, no re-pasting, no local storage involved.
   //
   // Why this exists: card art has had a dozen ways to go wrong because it could
@@ -160401,7 +160616,11 @@ try {
   window.__mg.rehostAllArt = async function (opts) {
     const o = opts || {};
     const dry = !!o.dryRun;
-    const out = { total: 0, alreadyCloud: 0, rehosted: 0, noArt: 0, failed: [], skipped: [] };
+    // 🔻 shrink:true ALSO reprocesses art that is already in the bucket — that is
+    // where the oversized 1024x1536 / 3 MB originals live, so a plain rehost
+    // (which skips them) would never fix the memory problem.
+    const shrink = !!o.shrink;
+    const out = { total: 0, alreadyCloud: 0, rehosted: 0, shrunk: 0, alreadySmall: 0, noArt: 0, kbBefore: 0, kbAfter: 0, failed: [], skipped: [] };
     try {
       if (!(Profile.cloud && Profile.cloud.signedIn)) {
         showToast('⛔ Sign in first — rehosting writes to YOUR Supabase bucket.', 9000);
@@ -160416,7 +160635,7 @@ try {
         const cur = (Forge.cardArtUrl && Forge.cardArtUrl[c.id]) || c.artUrl
                  || (Forge.cardArt && Forge.cardArt[c.id]) || null;
         if (!cur) { out.noArt++; continue; }
-        if (typeof cur === 'string' && cur.indexOf(SB) >= 0) { out.alreadyCloud++; continue; }
+        if (typeof cur === 'string' && cur.indexOf(SB) >= 0 && !shrink) { out.alreadyCloud++; continue; }
         if (dry) { out.skipped.push({ card: c.name, from: String(cur).slice(0, 70) }); continue; }
         try {
           // 1) Get the bytes as a data: url, whatever form the art is in today.
@@ -160435,6 +160654,16 @@ try {
             dataUrl = await _artValueToDataUrl(cur);       // Blob / data: / blob: / wrapper
           }
           if (!dataUrl) { out.failed.push({ card: c.name, why: 'could not read the source image' }); continue; }
+          // 1b) 🔻 Shrink to the pixel cap. Done here (not just inside the upload)
+          // so we can MEASURE the saving and skip cards that are already small —
+          // re-uploading those would burn time and bandwidth for nothing.
+          if (shrink) {
+            const sh = await _downscaleArtDataUrl(dataUrl);
+            if (!sh.changed && typeof cur === 'string' && cur.indexOf(SB) >= 0) { out.alreadySmall++; continue; }
+            out.kbBefore += Math.round(sh.before / 1024);
+            out.kbAfter += Math.round((sh.changed ? sh.after : sh.before) / 1024);
+            if (sh.changed) { dataUrl = sh.url; out.shrunk++; }
+          }
           // 2) Upload to the bucket.
           const up = await cloudUploadCardArtFile(c.id, dataUrl);
           if (!up || !up.ok || !up.url) { out.failed.push({ card: c.name, why: (up && up.error) || 'upload failed' }); continue; }
@@ -160449,15 +160678,23 @@ try {
           try { if (Forge.cardArt && Forge.cardArt[c.id]) delete Forge.cardArt[c.id]; } catch (e) {}
           try { await idbDel('car:' + c.id); if (Forge._carIds) Forge._carIds.delete(c.id); } catch (e) {}
           out.rehosted++;
-          if (out.rehosted % 5 === 0) { try { saveForge(); } catch (e) {} showToast('☁ Rehosted ' + out.rehosted + '…', 1500); }
+          if (out.rehosted % 5 === 0) {
+            try { saveForge(); } catch (e) {}
+            showToast(shrink
+              ? ('🔻 Shrunk ' + out.rehosted + '/' + out.total + '… (' + Math.max(0, Math.round((out.kbBefore - out.kbAfter) / 1024)) + ' MB saved so far)')
+              : ('☁ Rehosted ' + out.rehosted + '…'), 1500);
+          }
         } catch (e) { out.failed.push({ card: c.name, why: (e && e.message) || 'error' }); }
       }
       if (!dry) { try { saveForge(); } catch (e) {} try { render(); } catch (e) {} }
     } catch (e) { out.threw = (e && e.message) || String(e); }
     try { console.log(JSON.stringify(out, null, 1)); } catch (e) {}
     try {
+      const savedMb = Math.max(0, Math.round((out.kbBefore - out.kbAfter) / 1024));
       showToast(dry ? ('🔍 ' + out.skipped.length + ' card(s) would be rehosted (' + out.alreadyCloud + ' already cloud).')
-                    : ('☁ Rehosted ' + out.rehosted + ' · already cloud ' + out.alreadyCloud + ' · failed ' + out.failed.length + (out.failed.length ? ' — see console' : '')), 12000);
+                    : shrink
+                      ? ('🔻 Shrunk ' + out.shrunk + ' card art image(s) — about ' + savedMb + ' MB saved. Already small: ' + out.alreadySmall + ' · failed ' + out.failed.length + (out.failed.length ? ' — see console' : '') + '. Publish to push it to players.')
+                      : ('☁ Rehosted ' + out.rehosted + ' · already cloud ' + out.alreadyCloud + ' · failed ' + out.failed.length + (out.failed.length ? ' — see console' : '')), 14000);
     } catch (e) {}
     return out;
   };

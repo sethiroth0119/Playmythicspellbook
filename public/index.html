@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119z5';
+  window.BUILD_VERSION = 'v119z6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -119369,15 +119369,36 @@ function bindCardEditor() {
   // and the card stores just the URL (card.artUrl) — the client never holds the
   // bytes. Legacy local base64 (Forge.cardArt) is only a fallback if the cloud
   // upload can't run (signed out / bucket missing).
-  const setCardArtUrl = (id, url) => {
+  // ⚠ CONFIRM THE WRITE. saveForge() fires every idbSet() WITHOUT awaiting, and
+  // idbSet returns false (rather than throwing) on failure — including
+  // QuotaExceededError. So a full disk silently dropped the map while the UI
+  // still said "Card art set", and only SOME urls survived: the ones written
+  // before storage filled. That is the "some save, some don't" report.
+  // This path now awaits the write and READS IT BACK, so a lost save is
+  // reported as a lost save, with the fix that actually works (free space by
+  // moving art to the cloud — the button is right there in this panel).
+  const setCardArtUrl = async (id, url) => {
     const t = targetCard();
-    if (!t || !id || !url) return;
+    if (!t || !id || !url) return false;
     t.artUrl = url;
     if (!Forge.cardArtUrl) Forge.cardArtUrl = {};
     Forge.cardArtUrl[id] = url;
     try { if (Forge.cardArt && Forge.cardArt[id]) delete Forge.cardArt[id]; } catch (e) {}  // drop legacy local copy
     saveForge();
+    let persisted = true;
+    try {
+      if (typeof idbSet === 'function' && typeof idbGet === 'function') {
+        const okWrite = await idbSet('forge_cardArtUrl', Forge.cardArtUrl || {});
+        const back = await idbGet('forge_cardArtUrl');
+        persisted = (okWrite !== false) && !!(back && back[id] === url);
+      }
+    } catch (e) { persisted = false; }
+    if (!persisted) {
+      showToast('⚠ Art URL did NOT persist — local storage is full. Use "☁ Move ALL my art to the cloud" in this panel to free space, then set it again.', 12000);
+      try { console.warn('[cardArtUrl] write did not persist for', id); } catch (e) {}
+    }
     captureAndRender();
+    return persisted;
   };
   const setCardArt = (urlOrDataUrl) => {   // legacy local fallback
     const t = targetCard();
@@ -119391,7 +119412,7 @@ function bindCardEditor() {
   const uploadArtToCloud = async (id, dataUrl) => {
     showToast('☁ Uploading card art…');
     const up = (typeof cloudUploadCardArtFile === 'function') ? await cloudUploadCardArtFile(id, dataUrl) : { ok: false, error: 'cloud unavailable' };
-    if (up.ok && up.url) { setCardArtUrl(id, up.url); showToast('✅ Card art saved to the cloud'); }
+    if (up.ok && up.url) { if (await setCardArtUrl(id, up.url)) showToast('✅ Card art saved to the cloud'); }
     else { setCardArt(dataUrl); showToast('⚠ Cloud upload failed (' + (up.error || '?') + ') — saved locally instead.', 5000); }
   };
   if (artUploadBtn && artFileInput) {
@@ -119440,7 +119461,7 @@ function bindCardEditor() {
           } catch (e) { res(false); }
         });
         artUrlBtn.disabled = false; artUrlBtn.textContent = _lbl;
-        if (ok) { setCardArtUrl(id, url); showToast('✅ Card art set from URL'); }
+        if (ok) { if (await setCardArtUrl(id, url)) showToast('✅ Card art set from URL'); }
         else {
           // The three that actually bite, in the order they occur.
           const _hint = /drive\.google|docs\.google/i.test(url)

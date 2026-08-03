@@ -35279,7 +35279,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119x6';
+  window.BUILD_VERSION = 'v119x7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -56726,13 +56726,23 @@ const LiveClip = (() => {
   // restarting. At any instant at least one of them has been running 30-60s
   // continuously, so at the win we stop the fuller one and export it: a valid,
   // correctly-playing webm of up to ~60s that ENDS at the winning moment.
-  const RUN_MS = 60000;     // each recorder captures a continuous 60s, then restarts
-  const OFFSET_MS = 30000;  // the 2nd recorder is half a cycle out of phase
-  let stream = null, mime = '', armed = false, arming = false;
-  let slots = [null, null];               // each: { rec, chunks, start }
-  const cycleTimers = [null, null];
-  let dual = false;                       // did the 2nd recorder start OK?
-  let frozen = null, freezePromise = null; // the clip snapped at the game-over moment
+  // THE GUARANTEE: at ANY instant, at least one recorder has been running
+  // continuously for >= 60s, so the exported clip is always the last 60-90s
+  // ending at that moment.
+  //   N recorders, each running RUN_MS, started OFFSET_MS apart, guarantees
+  //   RUN_MS - OFFSET_MS of continuous coverage.  3 x 90s at 30s apart => 60s.
+  // (Two 60s recorders 30s apart only guaranteed 30s — that was the clip that
+  // came back half-length. A single segment guaranteed nothing, which is how a
+  // 14s clip happened. We never byte-trim a live webm: that yields the broken
+  // 1-2s file the very first version produced.)
+  const SLOT_N   = 3;
+  const RUN_MS   = 90000;   // each recorder captures a continuous 90s, then restarts
+  const OFFSET_MS = 30000;  // recorders come online 30s apart => never rotate together
+  let stream = null, mime = '', arming = false;
+  let capturing = false;                   // are the recorders running right now?
+  let slots = new Array(SLOT_N).fill(null); // each: { rec, chunks, start }
+  const cycleTimers = new Array(SLOT_N).fill(null);
+  let frozen = null, freezePromise = null;  // the clip snapped at the game-over moment
 
   function pickMime() {
     const cands = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
@@ -56742,66 +56752,84 @@ const LiveClip = (() => {
   function newSlot() {
     if (!stream) return null;
     let opts = { mimeType: mime };
-    try { opts.videoBitsPerSecond = dual ? 2200000 : 3200000; } catch (e) {}
+    // Three concurrent encoders on a 720p capture — keep each one cheap so the
+    // battle never stutters, and so a 90s clip stays a quick upload (~17 MB).
+    try { opts.videoBitsPerSecond = 1600000; } catch (e) {}
     let r; try { r = new MediaRecorder(stream, opts); } catch (e) { try { r = new MediaRecorder(stream); } catch (e2) { return null; } }
     const slot = { rec: r, chunks: [], start: performance.now() };
     r.ondataavailable = (e) => { if (e.data && e.data.size) slot.chunks.push(e.data); };
-    try { r.start(); } catch (e) { return null; }
+    // ⚠ start(TIMESLICE) — NOT start(). With no timeslice MediaRecorder emits
+    // data only once, at stop, so `chunks` stays empty while recording: every
+    // slot then looks empty, hasClip() is false and the share modal never
+    // offers the clip. Slicing per second also keeps footage safe mid-match.
+    // Keeping ALL of one recorder's chunks yields a complete, valid webm — the
+    // file only breaks if you drop chunks from the middle, which we never do.
+    try { r.start(1000); } catch (e) { try { r.start(); } catch (e2) { return null; } }
     return slot;
   }
   function cycle(i) {
+    if (!capturing || !stream) return;
     const old = slots[i];
     const fresh = newSlot();                            // start the replacement first…
     if (old && old.rec && old.rec.state !== 'inactive') { try { old.rec.stop(); } catch (e) {} }
-    slots[i] = fresh;
+    slots[i] = fresh;                                   // …so coverage never gaps
     clearTimeout(cycleTimers[i]);
     cycleTimers[i] = setTimeout(() => cycle(i), RUN_MS);
   }
   function startCapture() {
-    slots = [null, null];
-    slots[0] = newSlot();
-    cycleTimers[0] = setTimeout(() => cycle(0), RUN_MS);
-    // Bring the second, phase-shifted recorder online after OFFSET_MS so the
-    // two never rotate at the same time — guaranteeing continuous coverage.
-    cycleTimers[1] = setTimeout(() => {
-      if (!armed || !stream) return;
-      const s = newSlot();
-      if (s) { slots[1] = s; dual = true; cycleTimers[1] = setTimeout(() => cycle(1), RUN_MS); }
-    }, OFFSET_MS);
+    if (!stream || capturing) return;
+    capturing = true;
+    slots = new Array(SLOT_N).fill(null);
+    for (let i = 0; i < SLOT_N; i++) {
+      const idx = i;
+      if (idx === 0) {
+        slots[0] = newSlot();
+        cycleTimers[0] = setTimeout(() => cycle(0), RUN_MS);
+      } else {
+        // Phase-shifted start so the recorders never rotate at the same moment.
+        cycleTimers[idx] = setTimeout(() => {
+          if (!capturing || !stream) return;
+          slots[idx] = newSlot();
+          cycleTimers[idx] = setTimeout(() => cycle(idx), RUN_MS);
+        }, OFFSET_MS * idx);
+      }
+    }
+  }
+  // Stop the recorders but LEAVE THE STREAM ALIVE, so the next battle resumes
+  // recording without asking the player to share their tab all over again.
+  function stopRecorders() {
+    cycleTimers.forEach(t => clearTimeout(t));
+    slots.forEach(s => { try { if (s && s.rec && s.rec.state !== 'inactive') s.rec.stop(); } catch (e) {} });
+    slots = new Array(SLOT_N).fill(null);
+    capturing = false;
   }
   function bestSlot() {
     let best = null, bestDur = -1;
     for (const s of slots) {
       if (!s || !s.chunks.length) continue;
       const d = (performance.now() - s.start) / 1000;
-      if (d > bestDur) { bestDur = d; best = s; }
+      if (d > bestDur) { bestDur = d; best = s; }      // the oldest = the most footage
     }
     return best;
   }
-  function stopAll() {
-    cycleTimers.forEach(t => clearTimeout(t));
-    slots.forEach(s => { try { if (s && s.rec && s.rec.state !== 'inactive') s.rec.stop(); } catch (e) {} });
-    try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch (e) {}
-    slots = [null, null]; stream = null;
-  }
   async function arm() {
-    if (armed || arming) return armed;
+    if (stream || arming) return !!stream;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       if (typeof showToast === 'function') showToast('🎬 Clip recording is not supported on this browser.', 4200);
       return false;
     }
     arming = true;
     try {
-      const opts = { video: { frameRate: 30 }, audio: false, preferCurrentTab: true };
+      // 720p24 keeps three encoders light and the upload small; plenty for a highlight.
+      const opts = { video: { frameRate: 24, width: { max: 1280 }, height: { max: 720 } }, audio: false, preferCurrentTab: true };
       stream = await navigator.mediaDevices.getDisplayMedia(opts);
       mime = pickMime();
-      frozen = null; freezePromise = null; dual = false;
-      armed = true;
+      frozen = null; freezePromise = null;
       const track = stream.getVideoTracks()[0];
       if (track) track.onended = () => disarm();      // user hit the browser "stop sharing" bar
       startCapture();
       syncGearButtons();
-      if (typeof showToast === 'function') showToast('🔴 Clip recording ON — the last ~60s is always kept. Win, then Share to Broadcast to attach it.', 5600);
+      if (typeof showToast === 'function') showToast('🔴 Clip recording ON — the last 60s is always kept. Win, then Share to Broadcast to attach it.', 5600);
       return true;
     } catch (e) {
       console.warn('[LiveClip] arm failed', e && e.message);
@@ -56809,19 +56837,21 @@ const LiveClip = (() => {
       return false;
     } finally { arming = false; }
   }
+  // Full stop — the player switched recording off (or revoked the share).
   function disarm() {
-    armed = false;
-    stopAll();
+    stopRecorders();
+    try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    stream = null;
     syncGearButtons();
   }
-  function isArmed() { return armed; }
-  function hasClip() { return !!(frozen || (armed && bestSlot())); }
-  // Snapshot the last ~60s and STOP capturing. Called the instant the game-over
-  // overlay appears, so the victory screen + Share modal are never in the clip.
-  // Single-flight so the render loop calling it repeatedly is harmless.
+  function isArmed() { return !!stream; }
+  function hasClip() { return !!(frozen || bestSlot()); }
+  // Snapshot the last 60-90s and stop recording RIGHT HERE. Called the instant
+  // the game-over overlay appears, so the victory screen and the Share modal are
+  // never part of the clip. Single-flight: the render loop may call it repeatedly.
   function freeze() {
     if (freezePromise) return freezePromise;
-    if (!armed && !slots.some(Boolean)) return Promise.resolve(frozen);
+    if (!capturing) return Promise.resolve(frozen);
     freezePromise = (async () => {
       cycleTimers.forEach(t => clearTimeout(t));
       const best = bestSlot();
@@ -56835,20 +56865,33 @@ const LiveClip = (() => {
         });
       }
       if (blob && blob.size > 0) frozen = blob;
-      armed = false;
-      stopAll();                                        // nothing after the win records
-      syncGearButtons();
+      stopRecorders();          // nothing after the win is recorded…
+      syncGearButtons();        // …but the stream stays live for the next match
       return frozen;
     })();
     return freezePromise;
   }
   async function getClipBlob() {
     if (frozen) return frozen;
-    if (armed || slots.some(Boolean)) return await freeze();
+    if (capturing) return await freeze();
     return null;
   }
-  // Wipe a stale frozen clip at the start of a fresh battle.
-  function resetClip() { frozen = null; freezePromise = null; }
+  // Start of a fresh battle (or right after a clip was shared): drop the old
+  // clip and resume recording. No new permission prompt — the stream is alive.
+  function resetClip() {
+    frozen = null; freezePromise = null;
+    if (stream && !capturing) startCapture();
+    syncGearButtons();
+  }
+  // Same thing, but safe to call from the battle render loop: a no-op the
+  // moment recording is already running, so it costs nothing per frame. This is
+  // what restarts the buffer for match #2 no matter which path started it.
+  function resumeIfIdle() {
+    if (!stream || capturing) return;
+    frozen = null; freezePromise = null;
+    startCapture();
+    syncGearButtons();
+  }
 
   // Reflect armed/idle state on the in-battle record button(s). The clip
   // control lives in the right deck rail — it reuses the settings-gear slot
@@ -56858,10 +56901,11 @@ const LiveClip = (() => {
     try {
       // The recorder moved from the timer rail to the sidebar tools; target
       // BOTH ids so the red pulse follows it and any older layout still lights.
+      const on = !!stream;                              // sharing granted = recording session live
       document.querySelectorAll('#bsxRecord, #btn-battle-settings').forEach((b) => {
-        b.classList.toggle('rec-on', armed);
-        b.setAttribute('title', armed ? 'Recording — click to stop (the last 60s is kept)' : 'Record a clip of the last 60s to share');
-        b.setAttribute('aria-label', armed ? 'Stop recording' : 'Record clip');
+        b.classList.toggle('rec-on', on);
+        b.setAttribute('title', on ? 'Recording — click to stop (the last 60s is kept)' : 'Record a clip of the last 60s to share');
+        b.setAttribute('aria-label', on ? 'Stop recording' : 'Record clip');
       });
     } catch (e) {}
   }
@@ -56872,7 +56916,7 @@ const LiveClip = (() => {
   // (so "Not now" quiets it for the rest of the session instead of nagging).
   let sessionDeclined = false;
   function promptEnable(auto) {
-    if (armed) { if (!auto) disarm(); return; }
+    if (stream) { if (!auto) disarm(); return; }   // already on → the button toggles it off
     const ID = 'liveclip-perm';
     const old = document.getElementById(ID); if (old) old.remove();
     const wrap = document.createElement('div');
@@ -56902,11 +56946,11 @@ const LiveClip = (() => {
   // buffered by the time the victory / defeat modal appears. Skips if already
   // recording or the player waved it off earlier this session.
   function maybePromptAtBattleStart() {
-    if (armed || sessionDeclined) return;
-    setTimeout(() => { if (!armed && !sessionDeclined) promptEnable(true); }, 800);
+    if (stream || sessionDeclined) return;   // already sharing → resumes silently, never re-asks
+    setTimeout(() => { if (!stream && !sessionDeclined) promptEnable(true); }, 800);
   }
 
-  return { arm, disarm, isArmed, hasClip, getClipBlob, freeze, resetClip, promptEnable, maybePromptAtBattleStart, syncGearButtons };
+  return { arm, disarm, isArmed, hasClip, getClipBlob, freeze, resetClip, resumeIfIdle, promptEnable, maybePromptAtBattleStart, syncGearButtons };
 })();
 
 function openShareToBroadcast(summary) {
@@ -56983,7 +57027,9 @@ function openShareToBroadcast(summary) {
         await Cloud.client.from('eb_clips').insert({
           user_id: uid, title: body.slice(0, 500), url: clip,
         });
-        try { if (typeof LiveClip !== 'undefined') LiveClip.disarm(); } catch (e) {}
+        // Clip is posted — drop it so it can't be re-shared, but STAY armed so
+        // the next match records automatically (no second share-tab prompt).
+        try { if (typeof LiveClip !== 'undefined') LiveClip.resetClip(); } catch (e) {}
       }
       close();
       showToast('📡 Broadcast sent — see it at mythicspellbook.xyz', 5200);
@@ -74889,6 +74935,38 @@ async function _bankFoundChoice() {
 }
 // Create the operation locally after a non-Cinder purchase. Mirrors the shape
 // the personal-Cinder path writes so opFetch/collect treat it identically.
+// 🏦 Charter the bank that a CINDER purchase paid for.
+// ⚠ Buying the bank op with Cinder used to create the operation and nothing
+// else — no player_banks row — so the owner had no bank in the directory, no
+// desk, and no way to hire. Only the MT route ever chartered. This is the
+// missing half. The RPC is idempotent and debits NOTHING (the 1,000,000 was
+// already taken by the op-founding charge), so it is also safe to call as a
+// REPAIR for anyone who already bought one.
+async function _bankEnsureCharter(opts) {
+  try {
+    if (!(Cloud && Cloud.client && Profile.cloud && Profile.cloud.signedIn)) return false;
+    const name = ((Profile.cloud.displayName || 'Lending') + ' House').slice(0, 28);
+    const r = await Cloud.client.rpc('bank_open_cinder', { p_bank_name: name, p_tagline: '' });
+    const j = (r && r.data) || {};
+    if (r && r.error) {
+      if (/does not exist|PGRST202|schema cache/i.test(r.error.message || '')) {
+        if (!(opts && opts.quiet)) showToast('⚠ Bank not set up — run bank_cinder_charter.sql in Supabase, then reopen Bank Row.', 8000);
+      }
+      return false;
+    }
+    if (!j.ok) return false;
+    try { BankDir.at = 0; } catch (e) {}                 // force the directory to re-read
+    if (!j.existed && !(opts && opts.quiet)) showToast('🏦 Your bank is chartered — find it in Bank Row (The Camp).', 6500);
+    return true;
+  } catch (e) { return false; }
+}
+// Do I own the bank OPERATION? That is what a Cinder purchase produces.
+function _ownsBankOp() {
+  try {
+    return ((typeof Operations !== 'undefined' && Operations.list) || []).some(o => o && o.op_type === 'bank')
+        || ((typeof _jbLocalOpsList === 'function' ? _jbLocalOpsList() : []) || []).some(o => o && o.op_type === 'bank');
+  } catch (e) { return false; }
+}
 async function _opCreateLocal(opType, cost) {
   if ((Operations.list || []).some(function (x) { return x && x.op_type === opType; })) { showToast('You already operate that.', 3400); return false; }
   const localOp = {
@@ -76426,6 +76504,9 @@ function _jbHandleAction(a) {
             try { await Cloud.client.from('corp_operations').insert({ corp_id: Corp.mine.id, op_type: a.op, level: 1, workers: 0, status: 'active', meta: { lastCollect: Date.now() } }); } catch (_) {}
           }
           showToast('⚙️ ' + a.op + ' operation founded for ' + e.startup.toLocaleString() + ' 🔥 (personal). Hire workers to start production.', 6000);
+          // 🏦 A Cinder-bought bank still needs its CHARTER row, or the owner
+          // has an operation with no bank behind it.
+          if (a.op === 'bank') { try { await _bankEnsureCharter(); } catch (e2) {} }
           _opAfterFound(a.op);
           try { await opFetch(); } catch (_) {}
           _jbSendData();
@@ -107399,6 +107480,15 @@ function renderTitle() {
             alertBadge: false,
             locked: true,
             onclick: () => { showToast(`🔒 Camp unlocks at Hero Lv ${CAMP_UNLOCK_LEVEL} (current top: Lv ${topHeroLevel}) — node owners get in at any level.`, 3600); } },
+      // 🏦 BANK ROW — the entry point to player-run banks. It lived ONLY in the
+      // camp HUD strip, which renders on App.screen==='camp' and can be collapsed
+      // away, so a player who owned a bank had no findable way in. Surfaced here
+      // too, and it names what you'll find: your own bank if you have one.
+      (function () { try { _bankRowWarm(); } catch (e) {} return null; })() ||
+      { id: 'btn-bankrow', icon: '🏦', name: _bankRowTileName(), sub: _bankRowTileSub(), accent: '#ffd166',
+        badge: (BankDir.inTray | 0) > 0 ? `🔔 ${BankDir.inTray} to review` : null,
+        alertBadge: (BankDir.inTray | 0) > 0,
+        onclick: () => { try { _campOpenBankDirectory('directory'); } catch (e) {} } },
       { id: 'btn-replays',     icon: '<img src="assets/artwork/gameicons/Reply.png" alt="Replays" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Replays',     sub: 'Watch your saved games',      accent: '#a8b8d8',
         badge: replayCount > 0 ? `${replayCount} saved` : null,
         onclick: () => { App.screen = 'replays'; render(); } },
@@ -126120,6 +126210,16 @@ function _renderBattleImmediateImpl() {
   // to be rebuilt (and may have moved / died). It re-appears on the next hover.
   try { if (typeof _hideUnitHoverMenu === 'function') _hideUnitHoverMenu(); } catch (e) {}
   const s = App.state;
+  // 🎬 A live battle is on the board — clear the previous match's one-shot clip
+  // guard and make sure the rolling 60s buffer is recording again. Covers EVERY
+  // way a battle can start, costs nothing once running, and never re-prompts:
+  // the shared tab stream stays live between matches.
+  try {
+    if (s && !s.gameOver) {
+      if (App.ui && App.ui._liveClipFrozen) App.ui._liveClipFrozen = false;
+      if (typeof LiveClip !== 'undefined') LiveClip.resumeIfIdle();
+    }
+  } catch (e) {}
   // 🛡 Hero Guardian — a hero-down from any source is intercepted here (before the
   // game-over screen renders): a live `heroGuardian` unit resummons the hero at 10 HP
   // and clears gameOver, once per turn. No-op unless the game is ending.
@@ -158906,6 +159006,18 @@ async function bankDirFetch(force) {
       } else { BankDir.myTeller = null; }
       // How many applications are waiting on my desk — the number that tells
       // an owner there is something to do.
+      // 🩹 SELF-REPAIR: you own the bank OPERATION but have no charter row —
+      // i.e. you bought with Cinder before the charter path existed. Create it
+      // now (idempotent, debits nothing) rather than telling a paying owner
+      // they have no bank.
+      if (!BankDir.myBank && _ownsBankOp()) {
+        const made = await _bankEnsureCharter({ quiet: false });
+        if (made) {
+          const r2 = await Cloud.client.rpc('bank_directory');
+          if (r2 && !r2.error) BankDir.list = (r2.data) || [];
+          BankDir.myBank = (BankDir.list || []).find(b => b.owner_id === uid) || null;
+        }
+      }
       const staffBankId = BankDir.myBank ? BankDir.myBank.owner_id : (BankDir.myTeller ? BankDir.myTeller.bank_id : null);
       if (staffBankId) {
         const q = await Cloud.client.from('bank_applications').select('id')
@@ -158932,6 +159044,35 @@ function bankEmberScore() {
 function bankEmberTier(score) {
   const s = (score == null) ? bankEmberScore() : score;
   return s >= 850 ? 'Mythic Standing' : s >= 700 ? 'Blazing' : s >= 550 ? 'Kindled' : s >= 300 ? 'Smoldering' : 'Ashen';
+}
+// 🏦 Hub-tile labels. The tile has to say what the player will FIND — an owner
+// looking for "my bank" will not recognise a generic "Bank Row".
+// ⚠ These read cached state only; the hub must never block on a fetch. The
+// kick below warms it in the background so the label is right on the next paint.
+function _bankRowWarm() {
+  try {
+    if (!(Cloud && Cloud.client && Profile.cloud && Profile.cloud.signedIn)) return;
+    if (BankDir.at && (Date.now() - BankDir.at) < 60000) return;
+    bankDirFetch().then(() => {
+      // Only repaint if the player is still sitting on the hub.
+      try { if (App.screen === 'title' && App.titleHub === 'field') render(); } catch (e) {}
+    });
+  } catch (e) {}
+}
+function _bankRowTileName() {
+  try { if (BankDir.myBank) return 'Your Bank'; if (BankDir.myTeller) return 'The Desk'; } catch (e) {}
+  return 'Bank Row';
+}
+function _bankRowTileSub() {
+  try {
+    if (BankDir.myBank) {
+      const n = BankDir.inTray | 0;
+      return n ? (n + ' application' + (n === 1 ? '' : 's') + ' waiting') : 'Run your bank · desk & vault';
+    }
+    if (BankDir.myTeller) return 'Underwrite for ' + escapeHtml((BankDir.myTeller.role || 'your bank'));
+    const c = (BankDir.list || []).length;
+    return c ? (c + ' player bank' + (c === 1 ? '' : 's') + ' open · borrow Cinder') : 'Player-run banks · borrow Cinder';
+  } catch (e) { return 'Player-run banks · borrow Cinder'; }
 }
 function _campOpenBankDirectory(tab, bankId) {
   const old = document.getElementById('camp-bankdir');

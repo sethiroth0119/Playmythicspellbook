@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119z8';
+  window.BUILD_VERSION = 'v119z9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -46487,6 +46487,24 @@ async function _ensureCardArtBucket() {
   _cardArtBucketReady = true;
   try { await Cloud.client.storage.createBucket(CARD_ART_BUCKET, { public: true }); } catch (e) {}
 }
+// 🔎 CARD-ART TRACE. "It still won't save" has too many candidate causes to
+// keep guessing at (signed-out fallback, quota, a non-persistable value shape,
+// a poisoned index, the wrong card id). Every step of a real upload appends
+// here, so ONE upload produces a definitive record of where it died.
+// Ring-buffered and inert until something is written — costs nothing.
+const _ART_LOG = [];
+function _artTrace(step, data) {
+  try {
+    _ART_LOG.push({ t: new Date().toISOString().slice(11, 23), step: step, data: data || {} });
+    if (_ART_LOG.length > 200) _ART_LOG.shift();
+    console.log('[art] ' + step, data || '');
+  } catch (e) {}
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.artLog = function () { try { console.table(_ART_LOG.map(r => ({ t: r.t, step: r.step, data: JSON.stringify(r.data) }))); } catch (e) {} return _ART_LOG; };
+  window.__mg.artLogClear = function () { _ART_LOG.length = 0; return 'cleared'; };
+} catch (e) {}
 async function cloudUploadCardArtFile(cardId, dataUrl) {
   try {
     if (!cardId || !dataUrl) return { ok: false, error: 'missing data' };
@@ -119438,10 +119456,30 @@ function bindCardEditor() {
     captureAndRender();
   };
   const uploadArtToCloud = async (id, dataUrl) => {
+    _artTrace('upload:start', { id: id, bytes: (dataUrl || '').length, signedIn: !!(Profile.cloud && Profile.cloud.signedIn) });
     showToast('☁ Uploading card art…');
     const up = (typeof cloudUploadCardArtFile === 'function') ? await cloudUploadCardArtFile(id, dataUrl) : { ok: false, error: 'cloud unavailable' };
-    if (up.ok && up.url) { if (await setCardArtUrl(id, up.url)) showToast('✅ Card art saved to the cloud'); }
-    else { setCardArt(dataUrl); showToast('⚠ Cloud upload failed (' + (up.error || '?') + ') — saved locally instead.', 5000); }
+    _artTrace('cloudUpload', { ok: !!(up && up.ok), error: (up && up.error) || null, url: (up && up.url) ? String(up.url).slice(0, 90) : null });
+    if (up.ok && up.url) {
+      const okp = await setCardArtUrl(id, up.url);
+      _artTrace('setCardArtUrl', { persisted: okp });
+      if (okp) showToast('✅ Card art saved to the cloud');
+    } else {
+      setCardArt(dataUrl);
+      _artTrace('localFallback', { key: id, stored: !!(Forge.cardArt && Forge.cardArt[id]) });
+      // Did the LOCAL fallback actually reach disk? This is the path that has
+      // been losing art, so confirm it rather than assume.
+      try {
+        const rec = (typeof idbGet === 'function') ? await idbGet('car:' + id) : null;
+        const mono = (typeof idbGet === 'function') ? await idbGet('forge_cardArt') : null;
+        _artTrace('localVerify', { perKeyOnDisk: !!rec, inMonolith: !!(mono && mono[id]),
+                                   indexed: !!(Forge._carIds && Forge._carIds.has(id)) });
+        if (!rec && !(mono && mono[id])) {
+          showToast('⛔ Art did NOT reach disk. Sign in so it uploads to your Supabase bucket — local storage is refusing the write. Run __mg.artLog() for details.', 14000);
+        }
+      } catch (e) { _artTrace('localVerify:threw', { msg: (e && e.message) || String(e) }); }
+      showToast('⚠ Cloud upload failed (' + (up.error || '?') + ') — tried to save locally instead.', 6000);
+    }
   };
   if (artUploadBtn && artFileInput) {
     artUploadBtn.onclick = (e) => { e.preventDefault(); artFileInput.click(); };
@@ -119449,16 +119487,26 @@ function bindCardEditor() {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
       const t = targetCard(); const id = t ? t.id : null;
+      _artTrace('file:selected', { name: file.name, sizeKB: Math.round(file.size / 1024), type: file.type,
+                                   cardId: id, isNewDraft: !!(App && App._newCardDraft),
+                                   editingCardId: (App && App.editingCardId) || null });
       if (!id) { showToast('No card to attach art to'); artFileInput.value = ''; return; }
       try {
         // 512px max — enough resolution for the upper card window, small upload.
         const dataUrl = await resizeImage(file, 512);
         // Strip the blank canvas the generator left around the card, so the card
         // fills the image and every fraction-based overlay/crop lands correctly.
+        _artTrace('resized', { outBytes: (dataUrl || '').length, isDataImg: /^data:image\//i.test(dataUrl || '') });
         const norm = await _trimImagePadding(dataUrl);
+        _artTrace('trimmed', { trimmed: !!norm.trimmed, outBytes: (norm.url || '').length });
         if (norm.trimmed) showToast('✂ Trimmed blank canvas ' + norm.from.join('×') + ' → ' + norm.to.join('×'));
         await uploadArtToCloud(id, norm.url);
-      } catch (err) { showToast('⚠ Failed to load card art'); }
+        _artTrace('done', { cardId: id, hasUrl: !!(Forge.cardArtUrl && Forge.cardArtUrl[id]),
+                            hasLocal: !!(Forge.cardArt && Forge.cardArt[id]) });
+      } catch (err) {
+        _artTrace('threw', { msg: (err && err.message) || String(err) });
+        showToast('⚠ Failed to load card art — ' + ((err && err.message) || 'unknown') + ' (run __mg.artLog())', 8000);
+      }
       artFileInput.value = '';
     };
   }

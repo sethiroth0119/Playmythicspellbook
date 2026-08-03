@@ -25930,6 +25930,188 @@
     .udw-metric { padding:0 14px; min-width:132px; } .udw-metric .v { font-size:20px; }
   }
   @media (prefers-reduced-motion:reduce) { .udw * { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
+  /* ══ 🏦 BANK BACK OFFICE ═══════════════════════════════════════════════
+     Ported from the user's bank-back-office.html. Same navy+gold family as the
+     Mint and the Desk; .bbo-* prefixed so it stays out of the game's chrome. */
+  .bbo { --void:#05080f; --deep:#080e1c; --panel:rgba(11,19,36,.66);
+    --gold:#d9a441; --gold-lt:#f2cd7d; --gold-br:#ffe7b0; --gold-dk:#8a6524;
+    --line:rgba(217,164,65,.30); --line-soft:rgba(217,164,65,.14);
+    --ink:#c3d0e4; --ink-dim:#77869f; --burn:#d4522a; --burn-lt:#f4835a;
+    --verd:#4fa38b; --verd-lt:#7fd3b8; --cinder:#e2582a; --aza:#57c8b0; --myth:#58a8ff;
+    background:var(--void); color:var(--ink); font-family:'Source Sans 3',system-ui,sans-serif;
+    font-size:15px; line-height:1.55; min-height:100vh;
+    background-image:radial-gradient(80% 45% at 50% 0%,rgba(28,44,80,.45),transparent 62%),linear-gradient(180deg,#070c17,#05080f); }
+  .bbo .frame { position:relative; border:1px solid var(--line); background:var(--panel); border-radius:2px; }
+  .bbo .frame>.cnr,.bbo .frame>.cnr2 { position:absolute; inset:-1px; pointer-events:none; }
+  .bbo .frame>.cnr::before,.bbo .frame>.cnr::after,.bbo .frame>.cnr2::before,.bbo .frame>.cnr2::after {
+    content:""; position:absolute; width:15px; height:15px; border:1px solid var(--gold); opacity:.7; }
+  .bbo .frame>.cnr::before { top:0; left:0; border-right:0; border-bottom:0; }
+  .bbo .frame>.cnr::after { top:0; right:0; border-left:0; border-bottom:0; }
+  .bbo .frame>.cnr2::before { bottom:0; left:0; border-right:0; border-top:0; }
+  .bbo .frame>.cnr2::after { bottom:0; right:0; border-left:0; border-top:0; }
+  .bbo-bar { display:flex; flex-wrap:wrap; gap:22px; align-items:center; justify-content:space-between;
+    padding:13px 26px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(12,20,38,.9),rgba(7,12,23,.25)); }
+  .bbo-mark { display:flex; align-items:center; gap:16px; }
+  .bbo-sigil { width:52px; height:52px; flex:none; border:1px solid var(--line); border-radius:2px;
+    display:grid; place-items:center; overflow:hidden; background:linear-gradient(180deg,rgba(30,46,78,.6),rgba(12,20,38,.6)); }
+  .bbo-sigil img { width:100%; height:100%; object-fit:cover; display:block; }
+  .bbo-sigil .ph { color:var(--gold); font-family:'Cinzel',serif; font-size:22px; font-weight:700; }
+  .bbo-mark h1 { font-family:'Cinzel',serif; font-size:25px; font-weight:700; margin:0; color:var(--gold-br); letter-spacing:.03em; line-height:1.1; }
+  .bbo-mark .sub { font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--gold-dk); font-weight:600; margin-top:2px; }
+  .bbo-tally { display:flex; flex-wrap:wrap; }
+  .bbo-tal { padding:0 20px; border-left:1px solid var(--line-soft); min-width:128px; }
+  .bbo-tal:first-child { border-left:0; }
+  .bbo-tal .k { font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--gold-dk); font-weight:600; display:block; }
+  .bbo-tal .v { font-family:'IBM Plex Mono',monospace; font-size:18px; font-weight:600; color:var(--gold-br); margin-top:2px; }
+  .bbo-tal .v.cin { color:var(--cinder); } .bbo-tal .v.aza { color:var(--aza); } .bbo-tal .v.myth { color:var(--myth); }
+  .bbo-shell { display:grid; grid-template-columns:236px minmax(0,1fr); align-items:start; }
+  .bbo-nav { padding:20px 14px 60px; border-right:1px solid var(--line-soft); }
+  .bbo-nav .grp { font-size:9.5px; letter-spacing:.22em; text-transform:uppercase; color:var(--gold-dk); font-weight:600; padding:14px 12px 8px; }
+  .bbo-nav button { display:flex; align-items:center; gap:12px; width:100%; text-align:left; background:none; border:0;
+    border-left:2px solid transparent; cursor:pointer; padding:11px 12px; color:var(--ink-dim);
+    font-size:14.5px; font-family:inherit; border-radius:2px; transition:color .16s,background .16s,border-color .16s; }
+  .bbo-nav button:hover { color:var(--gold-lt); background:rgba(217,164,65,.06); }
+  .bbo-nav button[aria-current="true"] { color:var(--gold-br); border-left-color:var(--gold);
+    background:linear-gradient(90deg,rgba(217,164,65,.13),transparent); }
+  .bbo-nav .pill { margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--gold);
+    border:1px solid var(--line-soft); border-radius:2px; padding:1px 7px; }
+  .bbo-main { padding:28px 30px 90px; min-width:0; }
+  .bbo-h2 { font-family:'Cinzel',serif; font-size:33px; font-weight:700; color:var(--gold-br); margin:0 0 8px;
+    letter-spacing:.02em; text-shadow:0 0 24px rgba(217,164,65,.2); }
+  .bbo-h2sub { color:var(--ink); font-size:15.5px; font-weight:300; max-width:70ch; margin:0 0 26px; }
+  .bbo-h2sub b { color:var(--gold-lt); font-weight:600; }
+  .bbo-card { padding:24px 26px; margin-bottom:20px; }
+  .bbo-card h3 { font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:var(--gold); margin:0 0 16px;
+    font-weight:600; display:flex; align-items:center; gap:10px; justify-content:space-between; }
+  .bbo-card h3 .rt { color:var(--ink-dim); letter-spacing:.12em; font-weight:500; }
+  .bbo-grid { display:grid; gap:20px; }
+  .bbo-g2 { grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .bbo-g3 { grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); }
+  .bbo label.k { font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--ink-dim); display:block; margin-bottom:7px; font-weight:600; }
+  .bbo input[type=text], .bbo input[type=number], .bbo select, .bbo textarea {
+    width:100%; background:rgba(6,10,20,.7); border:1px solid var(--line); border-radius:2px; color:var(--ink);
+    font-family:'IBM Plex Mono',monospace; font-size:15px; padding:10px 12px; }
+  .bbo input:focus, .bbo select:focus, .bbo textarea:focus { border-color:var(--gold); outline:none; }
+  .bbo textarea { font-family:'Source Sans 3',sans-serif; font-weight:300; resize:vertical; min-height:76px; line-height:1.55; }
+  .bbo-range { -webkit-appearance:none; appearance:none; width:100%; height:5px; border-radius:3px; outline:0; margin:2px 0;
+    background:linear-gradient(90deg,var(--gold-dk),rgba(217,164,65,.18)); }
+  .bbo-range::-webkit-slider-thumb { -webkit-appearance:none; width:18px; height:18px; border-radius:50%; cursor:pointer;
+    background:radial-gradient(circle at 36% 32%,#ffeec2,#d9a441 62%,#9a7126); border:1px solid #f4dda4; }
+  .bbo-out { font-family:'IBM Plex Mono',monospace; font-size:16px; color:var(--gold-br); font-weight:600; margin-top:6px; }
+  .bbo-out small { font-family:'Source Sans 3',sans-serif; font-size:12px; color:var(--ink-dim); font-weight:400; margin-left:6px; }
+  .bbo-seg { display:flex; border:1px solid var(--line); border-radius:2px; overflow:hidden; }
+  .bbo-seg button { flex:1; background:none; border:0; border-right:1px solid var(--line-soft); cursor:pointer;
+    padding:11px 8px; font-size:13px; color:var(--ink-dim); font-family:inherit; white-space:nowrap; }
+  .bbo-seg button:last-child { border-right:0; }
+  .bbo-seg button[aria-pressed="true"] { background:linear-gradient(180deg,rgba(217,164,65,.2),rgba(217,164,65,.07)); color:var(--gold-br); font-weight:600; }
+  .bbo-curs { display:grid; grid-template-columns:repeat(auto-fit,minmax(178px,1fr)); gap:14px; }
+  .bbo-cur { position:relative; cursor:pointer; text-align:left; border:1px solid var(--line); border-radius:2px; padding:15px 16px;
+    background:linear-gradient(180deg,rgba(18,29,52,.6),rgba(10,17,32,.5)); font-family:inherit; color:inherit; transition:all .2s; }
+  .bbo-cur:hover { border-color:rgba(217,164,65,.5); }
+  .bbo-cur[aria-pressed="true"] { border-color:currentColor; box-shadow:0 0 24px -6px currentColor; }
+  .bbo-cur .tk { display:flex; align-items:center; gap:11px; }
+  .bbo-cur .glyph { width:32px; height:32px; flex:none; border-radius:50%; display:grid; place-items:center;
+    font-family:'Cinzel',serif; font-size:15px; font-weight:700; border:1px solid currentColor; }
+  .bbo-cur .nm { font-family:'Cinzel',serif; font-size:18px; font-weight:600; line-height:1.1; }
+  .bbo-cur .rl { font-size:12px; color:var(--ink-dim); font-weight:300; margin-top:6px; line-height:1.45; }
+  .bbo-c-cinder { color:var(--cinder); } .bbo-c-aza { color:var(--aza); } .bbo-c-myth { color:var(--myth); }
+  .bbo-cur[aria-pressed="false"] .nm { color:var(--ink); }
+  .bbo-cur.lockout { opacity:.36; cursor:not-allowed; }
+  .bbo-cur .lockmsg { font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--burn-lt); margin-top:7px; }
+  .bbo-cur .vol { font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--ink-dim); margin-top:8px; }
+  .bbo-cls { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:14px; }
+  .bbo-cl { position:relative; cursor:pointer; text-align:left; border:1px solid var(--line-soft); border-radius:2px;
+    padding:15px 16px; background:linear-gradient(180deg,rgba(16,26,46,.5),rgba(9,15,29,.45)); font-family:inherit; color:inherit; transition:all .2s; }
+  .bbo-cl:hover { border-color:rgba(217,164,65,.45); }
+  .bbo-cl[aria-pressed="true"] { border-color:var(--gold); background:linear-gradient(180deg,rgba(38,55,92,.5),rgba(13,22,41,.55)); }
+  .bbo-cl .top { display:flex; align-items:center; gap:12px; }
+  .bbo-cl .ic { width:40px; height:40px; flex:none; border:1px solid var(--line); border-radius:2px; display:grid; place-items:center;
+    color:var(--gold-lt); background:linear-gradient(180deg,rgba(30,46,78,.55),rgba(12,20,38,.55)); font-size:20px; }
+  .bbo-cl .nm { font-family:'Cinzel',serif; font-size:17px; font-weight:600; color:var(--gold-br); line-height:1.15; display:block; }
+  .bbo-cl .ex { font-size:11.5px; color:var(--ink-dim); font-weight:300; margin-top:2px; display:block; }
+  .bbo-cl .tick { position:absolute; top:11px; right:12px; width:19px; height:19px; border:1px solid var(--line); border-radius:2px;
+    display:grid; place-items:center; font-size:12px; color:transparent; }
+  .bbo-cl[aria-pressed="true"] .tick { border-color:var(--verd); background:rgba(79,163,139,.2); color:var(--verd-lt); }
+  .bbo-cl .set { margin-top:13px; padding-top:12px; border-top:1px solid var(--line-soft); display:none; gap:14px; }
+  .bbo-cl[aria-pressed="true"] .set { display:grid; grid-template-columns:1fr 1fr; }
+  .bbo-cl .set .v { font-family:'IBM Plex Mono',monospace; font-size:14px; color:var(--gold-br); font-weight:600; }
+  .bbo-cl .vol { font-family:'IBM Plex Mono',monospace; font-size:10.5px; margin-top:9px; color:var(--ink-dim); }
+  .bbo-prods { display:grid; gap:14px; }
+  .bbo-prod { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:18px; align-items:center;
+    padding:17px 20px; border:1px solid var(--line-soft); border-left:3px solid var(--gold); border-radius:2px;
+    background:linear-gradient(90deg,rgba(217,164,65,.05),rgba(10,17,32,.4) 55%); }
+  .bbo-prod.off { opacity:.5; border-left-color:var(--ink-dim); }
+  .bbo-prod .cbadge { width:44px; height:44px; border-radius:50%; display:grid; place-items:center; flex:none;
+    font-family:'Cinzel',serif; font-size:17px; font-weight:700; border:1px solid currentColor; }
+  .bbo-prod .nm { font-family:'Cinzel',serif; font-size:20px; font-weight:600; color:var(--gold-br); line-height:1.15; }
+  .bbo-prod .meta { font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--ink-dim); margin-top:4px; }
+  .bbo-tags { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .bbo-tag { font-size:10px; letter-spacing:.13em; text-transform:uppercase; font-weight:600;
+    border:1px solid var(--line-soft); color:var(--gold-lt); border-radius:2px; padding:2px 8px; }
+  .bbo-prod .side { text-align:right; display:flex; flex-direction:column; gap:8px; align-items:flex-end; }
+  .bbo-prod .rate { font-family:'IBM Plex Mono',monospace; font-size:17px; color:var(--gold-br); font-weight:600; }
+  .bbo-mini { background:none; border:1px solid var(--line-soft); border-radius:2px; cursor:pointer; color:var(--ink-dim);
+    font-size:11px; letter-spacing:.13em; text-transform:uppercase; font-weight:600; padding:6px 11px; font-family:inherit; }
+  .bbo-mini:hover { border-color:var(--gold); color:var(--gold-lt); }
+  .bbo-mini.on { border-color:var(--verd); color:var(--verd-lt); }
+  .bbo-pv { padding:20px 22px; background:linear-gradient(180deg,rgba(14,24,44,.85),rgba(8,14,28,.75)); }
+  .bbo-pv .ttl { font-size:10px; letter-spacing:.22em; text-transform:uppercase; color:var(--gold-dk); font-weight:600; margin-bottom:14px; }
+  .bbo-pv .row { display:flex; justify-content:space-between; gap:14px; padding:8px 0; border-bottom:1px solid var(--line-soft);
+    font-family:'IBM Plex Mono',monospace; font-size:13.5px; }
+  .bbo-pv .row:last-of-type { border-bottom:0; }
+  .bbo-pv .row span:first-child { color:var(--ink-dim); font-family:'Source Sans 3',sans-serif; font-weight:300; font-size:14px; }
+  .bbo-pv .row span:last-child { color:var(--gold-br); font-weight:600; text-align:right; }
+  .bbo-dir { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:20px; align-items:center; padding:20px 22px; }
+  .bbo-dirlogo { width:88px; height:88px; flex:none; border:1px solid var(--line); border-radius:2px; overflow:hidden;
+    display:grid; place-items:center; background:linear-gradient(180deg,rgba(30,46,78,.6),rgba(12,20,38,.6)); }
+  .bbo-dirlogo img { width:100%; height:100%; object-fit:cover; display:block; }
+  .bbo-dirlogo .ph { color:var(--gold-dk); font-family:'Cinzel',serif; font-size:34px; font-weight:700; }
+  .bbo-dirname { font-family:'Cinzel',serif; font-size:26px; font-weight:700; color:var(--gold-br); line-height:1.1; }
+  .bbo-dirmotto { font-style:italic; font-size:14px; color:var(--ink); font-weight:300; margin-top:4px; }
+  .bbo-dirstats { display:flex; gap:20px; flex-wrap:wrap; margin-top:11px; font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-dim); }
+  .bbo-dirstats b { color:var(--gold); font-weight:600; }
+  .bbo-dirseal { text-align:right; }
+  .bbo-dirseal .stars { color:var(--gold); letter-spacing:.14em; font-size:16px; }
+  .bbo-dirseal .cap { font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-dim); margin-top:5px; }
+  .bbo-drop { border:1px dashed var(--line); border-radius:2px; padding:26px 20px; text-align:center; cursor:pointer;
+    background:rgba(6,10,20,.4); transition:all .2s; }
+  .bbo-drop:hover, .bbo-drop.over { border-color:var(--gold); background:rgba(217,164,65,.07); }
+  .bbo-drop .t { font-size:14.5px; color:var(--gold-lt); font-weight:600; }
+  .bbo-drop .s { font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ink-dim); margin-top:5px; }
+  .bbo-err { font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--burn-lt); margin-top:10px; }
+  .bbo-cta { cursor:pointer; border:1px solid #f4dda4; border-radius:2px;
+    background:linear-gradient(180deg,#f9e2ab,#dcaa48 48%,#bd8b2f 52%,#f0cd85); color:#2b1e06;
+    font-family:'Cinzel',serif; font-size:14px; font-weight:700; letter-spacing:.13em; padding:13px 26px; }
+  .bbo-cta:hover:not(:disabled) { filter:brightness(1.08); }
+  .bbo-cta:disabled { opacity:.32; cursor:not-allowed; }
+  .bbo-btn { background:none; border:1px solid var(--line); color:var(--gold-lt); cursor:pointer; border-radius:2px;
+    font-size:11.5px; font-weight:600; letter-spacing:.15em; text-transform:uppercase; padding:12px 20px; font-family:inherit; }
+  .bbo-btn:hover { border-color:var(--gold); background:rgba(217,164,65,.09); }
+  .bbo-rowbtn { display:flex; gap:14px; flex-wrap:wrap; align-items:center; margin-top:20px; }
+  .bbo-hint { font-size:13px; color:var(--ink-dim); font-weight:300; line-height:1.6; }
+  .bbo-hint b { color:var(--gold-lt); font-weight:600; }
+  .bbo-warn { display:grid; grid-template-columns:22px minmax(0,1fr); gap:13px; padding:14px 17px; margin-top:16px;
+    border:1px solid rgba(212,82,42,.45); border-radius:2px;
+    background:linear-gradient(90deg,rgba(212,82,42,.13),rgba(212,82,42,.03)); font-size:13.5px; font-weight:300; line-height:1.55; }
+  .bbo-warn b { color:var(--burn-lt); font-weight:700; }
+  .bbo-warn.ok { border-color:rgba(79,163,139,.45); background:linear-gradient(90deg,rgba(79,163,139,.12),rgba(79,163,139,.02)); }
+  .bbo-warn.ok b { color:var(--verd-lt); }
+  @media (max-width:880px) {
+    .bbo-shell { grid-template-columns:1fr; }
+    .bbo-nav { border-right:0; border-bottom:1px solid var(--line-soft); display:flex; flex-wrap:wrap; gap:4px; padding:12px; }
+    .bbo-nav .grp { display:none; }
+    .bbo-nav button { width:auto; border-left:0; border-bottom:2px solid transparent; font-size:13px; padding:9px 12px; }
+    .bbo-nav button[aria-current="true"] { border-left:0; border-bottom-color:var(--gold); }
+    .bbo-nav .pill { display:none; }
+    .bbo-main { padding:22px 15px 70px; }
+    .bbo-h2 { font-size:26px; }
+    .bbo-prod { grid-template-columns:1fr; gap:12px; }
+    .bbo-prod .side { text-align:left; align-items:flex-start; }
+    .bbo-dir { grid-template-columns:1fr; } .bbo-dirseal { text-align:left; }
+    .bbo-bar { padding:12px 15px; } .bbo-tal { padding:0 12px; min-width:106px; }
+  }
+  @media (prefers-reduced-motion:reduce) { .bbo * { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
   .tw-nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.3rem; }
   /* 💚 OWNER SURGE — added to a tile ONLY by the local client, ONLY for nodes the
      LOCAL player owns. ⚠ Never serialize this class or its state into the shared
@@ -35279,7 +35461,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119x7';
+  window.BUILD_VERSION = 'v119x8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -56740,6 +56922,7 @@ const LiveClip = (() => {
   const OFFSET_MS = 30000;  // recorders come online 30s apart => never rotate together
   let stream = null, mime = '', arming = false;
   let capturing = false;                   // are the recorders running right now?
+  let capBitrate = 1800000, capLabel = '';  // chosen from the real capture size in arm()
   let slots = new Array(SLOT_N).fill(null); // each: { rec, chunks, start }
   const cycleTimers = new Array(SLOT_N).fill(null);
   let frozen = null, freezePromise = null;  // the clip snapped at the game-over moment
@@ -56752,9 +56935,9 @@ const LiveClip = (() => {
   function newSlot() {
     if (!stream) return null;
     let opts = { mimeType: mime };
-    // Three concurrent encoders on a 720p capture — keep each one cheap so the
-    // battle never stutters, and so a 90s clip stays a quick upload (~17 MB).
-    try { opts.videoBitsPerSecond = 1600000; } catch (e) {}
+    // Bitrate follows the capture size (set in arm()), so a 1080p screen posts
+    // a genuinely sharp 1080p clip while a small window stays a light upload.
+    try { opts.videoBitsPerSecond = capBitrate; } catch (e) {}
     let r; try { r = new MediaRecorder(stream, opts); } catch (e) { try { r = new MediaRecorder(stream); } catch (e2) { return null; } }
     const slot = { rec: r, chunks: [], start: performance.now() };
     r.ondataavailable = (e) => { if (e.data && e.data.size) slot.chunks.push(e.data); };
@@ -56771,10 +56954,15 @@ const LiveClip = (() => {
     if (!capturing || !stream) return;
     const old = slots[i];
     const fresh = newSlot();                            // start the replacement first…
-    if (old && old.rec && old.rec.state !== 'inactive') { try { old.rec.stop(); } catch (e) {} }
-    slots[i] = fresh;                                   // …so coverage never gaps
+    if (fresh) {
+      if (old && old.rec && old.rec.state !== 'inactive') { try { old.rec.stop(); } catch (e) {} }
+      slots[i] = fresh;                                 // …so coverage never gaps
+    }
     clearTimeout(cycleTimers[i]);
-    cycleTimers[i] = setTimeout(() => cycle(i), RUN_MS);
+    // If a recorder failed to start, KEEP the old one running and retry soon —
+    // otherwise that slot would sit dead for a full cycle and quietly shorten
+    // the clip. Retry fast on failure, normal cadence on success.
+    cycleTimers[i] = setTimeout(() => cycle(i), fresh ? RUN_MS : 3000);
   }
   function startCapture() {
     if (!stream || capturing) return;
@@ -56820,16 +57008,30 @@ const LiveClip = (() => {
     }
     arming = true;
     try {
-      // 720p24 keeps three encoders light and the upload small; plenty for a highlight.
-      const opts = { video: { frameRate: 24, width: { max: 1280 }, height: { max: 720 } }, audio: false, preferCurrentTab: true };
+      // Capture at the screen's own size, up to full 1080p — a good monitor
+      // posts a genuinely sharp 1080p clip instead of an upscaled 720p one.
+      const opts = {
+        video: { frameRate: { ideal: 30, max: 30 }, width: { max: 1920 }, height: { max: 1080 } },
+        audio: false, preferCurrentTab: true,
+      };
       stream = await navigator.mediaDevices.getDisplayMedia(opts);
       mime = pickMime();
       frozen = null; freezePromise = null;
       const track = stream.getVideoTracks()[0];
       if (track) track.onended = () => disarm();      // user hit the browser "stop sharing" bar
+      // Match the bitrate to what we actually got. Three encoders run at once,
+      // so at 1080p we also ease to 24fps — that keeps the BATTLE smooth (a
+      // stuttering game would be recorded stuttering) and holds a 90s clip near
+      // ~36 MB, comfortably inside the upload limit.
+      let h = 0;
+      try { const st = track && track.getSettings ? track.getSettings() : null; if (st && st.height) h = st.height; } catch (e) {}
+      if (h >= 1000)      { capBitrate = 3200000; capLabel = '1080p'; try { if (track.applyConstraints) track.applyConstraints({ frameRate: { max: 24 } }); } catch (e) {} }
+      else if (h >= 700)  { capBitrate = 1800000; capLabel = '720p'; }
+      else if (h > 0)     { capBitrate = 1200000; capLabel = h + 'p'; }
+      else                { capBitrate = 1800000; capLabel = ''; }
       startCapture();
       syncGearButtons();
-      if (typeof showToast === 'function') showToast('🔴 Clip recording ON — the last 60s is always kept. Win, then Share to Broadcast to attach it.', 5600);
+      if (typeof showToast === 'function') showToast('🔴 Clip recording ON' + (capLabel ? ' (' + capLabel + ')' : '') + ' — the last 60s is always kept. Win, then Share to Broadcast to attach it.', 5600);
       return true;
     } catch (e) {
       console.warn('[LiveClip] arm failed', e && e.message);
@@ -56883,6 +57085,11 @@ const LiveClip = (() => {
     if (stream && !capturing) startCapture();
     syncGearButtons();
   }
+  // Drop the finished clip WITHOUT resuming — used right after a clip is posted,
+  // while the victory screen is still up. Recording restarts on its own when the
+  // next battle actually renders (resumeIfIdle), so no victory screen or menu
+  // ever leads the next clip.
+  function clearClip() { frozen = null; freezePromise = null; }
   // Same thing, but safe to call from the battle render loop: a no-op the
   // moment recording is already running, so it costs nothing per frame. This is
   // what restarts the buffer for match #2 no matter which path started it.
@@ -56950,10 +57157,15 @@ const LiveClip = (() => {
     setTimeout(() => { if (!stream && !sessionDeclined) promptEnable(true); }, 800);
   }
 
-  return { arm, disarm, isArmed, hasClip, getClipBlob, freeze, resetClip, resumeIfIdle, promptEnable, maybePromptAtBattleStart, syncGearButtons };
+  return { arm, disarm, isArmed, hasClip, getClipBlob, freeze, resetClip, clearClip, resumeIfIdle, promptEnable, maybePromptAtBattleStart, syncGearButtons };
 })();
 
 function openShareToBroadcast(summary) {
+  // 🎬 Lock the clip the instant this modal opens — whatever happens on screen
+  // from here (this dialog, typing a caption) is never part of the footage.
+  // freeze() is single-flight, so if the post-match timer already fired this is
+  // a no-op and the clip keeps its original ending.
+  try { if (typeof LiveClip !== 'undefined') LiveClip.freeze(); } catch (e) {}
   const signedIn = !!(typeof Cloud !== 'undefined' && Cloud.client && Profile.cloud && Profile.cloud.signedIn && Profile.cloud.userId);
   if (!signedIn) { showToast('☁ Sign in to share to Emergency Broadcast.', 4200); return; }
   const ID = 'eb-share-wrap';
@@ -57027,9 +57239,10 @@ function openShareToBroadcast(summary) {
         await Cloud.client.from('eb_clips').insert({
           user_id: uid, title: body.slice(0, 500), url: clip,
         });
-        // Clip is posted — drop it so it can't be re-shared, but STAY armed so
-        // the next match records automatically (no second share-tab prompt).
-        try { if (typeof LiveClip !== 'undefined') LiveClip.resetClip(); } catch (e) {}
+        // Clip is posted — drop it so it can't be re-shared. Stay ARMED (no
+        // second share-tab prompt) but don't restart recording yet: the victory
+        // screen is still up. The next battle's first render resumes it.
+        try { if (typeof LiveClip !== 'undefined') LiveClip.clearClip(); } catch (e) {}
       }
       close();
       showToast('📡 Broadcast sent — see it at mythicspellbook.xyz', 5200);
@@ -75638,6 +75851,13 @@ function _jbEcon() {
     aza: (Profile && Profile.sovereigns) | 0,
     mt: (typeof App !== 'undefined' && App && App._mtBal) | 0,
     wallet: _wal,
+    // 🏦 The owner's bank name drives the Just Business nav row. Cached only —
+    // Bank Row / the back office populate it; absent means no charter, and the
+    // nav row is omitted rather than showing an empty label.
+    bankName: (function () {
+      try { return (BankDir.myBank && BankDir.myBank.bank_name)
+                || (App._bbo && App._bbo.bank && App._bbo.bank.bank_name) || null; } catch (e) { return null; }
+    })(),
     handle: ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'),
     corp: _jbCorpInfo(),
     isAdmin: adm,
@@ -76031,6 +76251,19 @@ function _jbHandleAction(a) {
     // 🛒 Vehicle Marketplace — sidebar "Vehicle Market" entry. Open to
     // everyone (no corp / no PP unlock required) since the marketplace
     // is a pure player-to-player storefront.
+    if (a.kind === 'openBankOffice') {
+      // Leave the JB iframe the same way the vehicle-market row does, then open
+      // the back office as a full screen.
+      _jbLeaving = true;
+      try { const ff = document.getElementById('jb-frame'); if (ff) { ff.style.opacity = '0'; ff.style.transform = 'scale(.986)'; } } catch (e) {}
+      setTimeout(function () {
+        _jbLeaving = false;
+        try { _bboState().loaded = false; } catch (e) {}
+        App.screen = 'bankOffice';
+        try { render(); } catch (e) {}
+      }, 220);
+      return;
+    }
     if (a.kind === 'openVehicleMarket') {
       _jbLeaving = true;
       try {
@@ -76768,7 +77001,7 @@ function mountJustBusiness() {
     }
     if (!f) {
       f = document.createElement('iframe');
-      f.id = FID; f.src = 'corp/?v=119w7';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
+      f.id = FID; f.src = 'corp/?v=119x8';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
       // Smooth cross-fade + gentle scale-in (no hard cut on enter/exit).
       f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transform:scale(.986);transition:opacity .6s ' + EASE + ',transform .6s ' + EASE + ';will-change:opacity,transform';
       f.onload = function () {
@@ -104131,6 +104364,20 @@ function _renderImpl() {
   if (App.screen === 'baseVault')     return renderBaseVault();
   if (App.screen === 'cinderShop')    return renderCinderShop();
   if (App.screen === 'crafting')      return renderCrafting();
+  if (App.screen === 'bankOffice') {
+    try { return renderBankBackOffice(); }
+    catch (boErr) {
+      try { console.error('[BBO] renderBankBackOffice threw:', boErr); } catch (e) {}
+      root.innerHTML =
+        '<div style="max-width:760px;margin:3rem auto;padding:1.4rem 1.6rem;background:rgba(40,10,10,0.85);border:1px solid #e85d3c;border-radius:12px;color:#ffd6c8;font-family:\'Cinzel\',serif">' +
+          '<div style="font-size:1.2rem;color:#ff8a6a;margin-bottom:0.6rem">⚠ The Back Office hit an error</div>' +
+          '<div style="font-family:monospace;font-size:0.74rem;color:#ffb9a3;white-space:pre-wrap;background:#1a0a0a;border:1px solid #5a2418;border-radius:6px;padding:0.7rem;max-height:240px;overflow:auto">' +
+            escapeHtml(String((boErr && (boErr.stack || boErr.message)) || boErr)) + '</div>' +
+          '<button onclick="App.screen=\'campOps\';render()" style="margin-top:0.9rem;cursor:pointer;border:1px solid #e8c97e;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;font-weight:800;border-radius:8px;padding:0.5rem 1rem">← Back</button>' +
+        '</div>';
+      return;
+    }
+  }
   if (App.screen === 'bankDesk') {
     try { return renderBankDesk(); }
     catch (dkErr) {
@@ -143352,12 +143599,20 @@ function renderGameOverOverlay() {
   const s = App.state;
   if (!s || !s.gameOver) return '';
 
-  // 🎬 The battle just ended — snapshot the last ~60s NOW and stop capturing,
-  // so the clip is pure gameplay ending at the win and never includes this
-  // overlay or the Share-to-Broadcast modal. One-shot per match.
+  // 🎬 The battle just ended. Keep rolling for a beat so the clip actually
+  // CONTAINS the VICTORY / DEFEAT banner appearing — cutting on this first
+  // render ends the clip as the overlay starts to fade in, which loses the
+  // payoff. The Share modal needs a click and freezes on open (see
+  // openShareToBroadcast), so it can never make it into the footage.
+  // One-shot per match.
   if (!(App.ui && App.ui._liveClipFrozen) && typeof LiveClip !== 'undefined' && LiveClip.isArmed()) {
     App.ui = App.ui || {}; App.ui._liveClipFrozen = true;
-    try { LiveClip.freeze(); } catch (e) {}
+    setTimeout(() => {
+      try {
+        // Still the same finished match? (a new battle clears gameOver)
+        if (App.state && App.state.gameOver) LiveClip.freeze();
+      } catch (e) {}
+    }, 1600);
   }
 
   const won = s.gameOver === 'player';
@@ -159381,6 +159636,441 @@ function _renderTellerManager(bid) {
   });
 }
 try { window.__mg = window.__mg || {}; window.__mg.tellers = openTellerManager; } catch (e) {}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🏦 BANK BACK OFFICE — the owner's own screen
+// ---------------------------------------------------------------------------
+// Ported from the user's bank-back-office.html. Three sections: Loan products
+// (a standing offer borrowers apply against), Collateral policy, and Bank
+// identity (the sigil + motto shown in the Registry of Player Banks).
+// ⚠ The ceilings below are the AUTHORING guard rails. They shape what an owner
+// can post; the underwriting desk still enforces reserve + teller limits at
+// decision time, and RLS enforces "only the owner may write products".
+// ═══════════════════════════════════════════════════════════════════════════
+const BBO_CUR = {
+  cinder: { key: 'cinder', name: 'Cinder', glyph: '¢', cls: 'bbo-c-cinder',
+    role: 'Soft currency. The everyday money of the game — highest ceilings, widest borrower pool.',
+    rateCap: 5, ltvCap: 1.00, maxTerm: 30, minTier: 1, step: 1000, defMin: 5000, defMax: 250000 },
+  aza: { key: 'aza', name: 'Aza Coin', glyph: 'Az', cls: 'bbo-c-aza',
+    role: 'Tradeable mid-tier. Scarcer than Cinder and player-traded, so it carries tighter terms.',
+    rateCap: 3.5, ltvCap: 0.75, maxTerm: 21, minTier: 2, step: 100, defMin: 500, defMax: 25000 },
+  myth: { key: 'myth', name: 'Mythic Token', glyph: 'MT', cls: 'bbo-c-myth',
+    role: 'Premium token. Charter III only, heavily over-collateralized, short terms, logged for review.',
+    rateCap: 3, ltvCap: 0.60, maxTerm: 14, minTier: 3, step: 10, defMin: 50, defMax: 1000 },
+};
+const BBO_CLASSES = {
+  business:   { key: 'business',   name: 'Business',    ic: '🏛', ex: 'Charters, storefronts, stalls, mines',
+    haircut: 0.15, ltv: 0.75, vol: 'Low volatility · income-producing · slow to liquidate' },
+  vehicle:    { key: 'vehicle',    name: 'Vehicle',     ic: '🚗', ex: 'Mounts, skiffs, caravans, airships',
+    haircut: 0.25, ltv: 0.65, vol: 'Medium volatility · fast to liquidate · wear depreciates' },
+  realestate: { key: 'realestate', name: 'Real Estate', ic: '🏠', ex: 'Deeds, land parcels, halls, keeps',
+    haircut: 0.10, ltv: 0.85, vol: 'Lowest volatility · best recovery · slowest to liquidate' },
+  cards:      { key: 'cards',      name: 'Cards',       ic: '🃏', ex: 'Collectible cards, graded sets, sealed packs',
+    haircut: 0.35, ltv: 0.55, vol: 'High volatility · grade-dependent · thin market on rares' },
+};
+const _bboFmt = (n) => Math.round(n || 0).toLocaleString('en-US');
+const _bboMoney = (n, c) => c === 'cinder' ? (_bboFmt(n) + ' ¢') : c === 'aza' ? (_bboFmt(n) + ' Az') : (_bboFmt(n) + ' MT');
+const _bboPicked = (o) => Object.keys(o || {}).filter(k => o[k]);
+function _bboState() {
+  if (!App._bbo) App._bbo = {
+    view: 'products', bank: null, products: [], loaded: false, busy: false, logoErr: '', tablesMissing: false,
+    draft: { name: '', cur: 'cinder', min: 5000, max: 40000, rate: 4, term: 7, structure: 'lump',
+             classes: {}, minEmber: 500, maxActive: 2, note: '' },
+  };
+  return App._bbo;
+}
+async function bboRefresh(force) {
+  const S = _bboState();
+  if (S.loaded && !force) return S;
+  try {
+    const uid = Profile.cloud && Profile.cloud.userId;
+    if (!uid || !Cloud || !Cloud.client) { S.loaded = true; return S; }
+    const b = await Cloud.client.from('player_banks').select('*').eq('owner_id', uid).maybeSingle();
+    if (b && b.error && /does not exist|PGRST205/i.test(b.error.message || '')) { S.tablesMissing = true; S.loaded = true; return S; }
+    S.bank = (b && b.data) || null;
+    if (S.bank) {
+      const p = await Cloud.client.from('bank_products').select('*').eq('bank_id', uid).order('created_at', { ascending: true });
+      if (p && p.error && /does not exist|PGRST205/i.test(p.error.message || '')) S.productsMissing = true;
+      S.products = (p && p.data) || [];
+    }
+  } catch (e) {}
+  S.loaded = true;
+  return S;
+}
+function bboGo(v) { const S = _bboState(); S.view = v; try { render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {} }
+function bboSet(k, v) { const S = _bboState(); S.draft[k] = v; try { render(); } catch (e) {} }
+function bboPickCur(k) {
+  const S = _bboState(), c = BBO_CUR[k]; if (!c) return;
+  S.draft.cur = k; S.draft.min = c.defMin; S.draft.max = c.defMax;
+  S.draft.rate = Math.min(S.draft.rate, c.rateCap);
+  if (S.draft.term > c.maxTerm) S.draft.term = c.maxTerm;
+  try { render(); } catch (e) {}
+}
+function bboToggleCls(k) { const S = _bboState(); S.draft.classes[k] = !S.draft.classes[k]; try { render(); } catch (e) {} }
+async function bboSaveProduct() {
+  const S = _bboState();
+  if (S.busy) return; S.busy = true;
+  try {
+    const d = S.draft, c = BBO_CUR[d.cur];
+    const uid = Profile.cloud && Profile.cloud.userId;
+    if (!uid || !S.bank) { showToast('🏦 You do not run a bank yet.', 3600); return; }
+    const row = {
+      bank_id: uid, name: (d.name || '').trim().slice(0, 60), currency: d.cur,
+      min_amount: Math.max(0, Math.round(d.min)), max_amount: Math.max(0, Math.round(d.max)),
+      rate_weekly: Math.min(d.rate, c.rateCap), term_days: Math.min(d.term, c.maxTerm),
+      structure: d.structure === 'installment' ? 'installment' : 'lump',
+      classes: d.classes, min_ember: d.minEmber | 0, max_active: d.maxActive | 0,
+      note: (d.note || '').slice(0, 400), is_live: true,
+    };
+    const { error } = await Cloud.client.from('bank_products').insert(row);
+    if (error) {
+      showToast(/does not exist|PGRST205/i.test(error.message || '')
+        ? '⚠ Products table missing — run bank_products.sql.'
+        : ('⚠ Could not post: ' + (error.message || 'cloud error')), 6000);
+      return;
+    }
+    showToast('📜 "' + row.name + '" posted to your rate board.', 5200);
+    S.draft = { ...S.draft, name: '', classes: {}, note: '' };
+    await bboRefresh(true); try { render(); } catch (e) {}
+  } catch (e) { showToast('⚠ Could not post the product.', 3600); }
+  finally { S.busy = false; }
+}
+async function bboToggleProduct(id) {
+  try {
+    const S = _bboState();
+    const p = (S.products || []).find(x => String(x.id) === String(id)); if (!p) return;
+    const { error } = await Cloud.client.from('bank_products').update({ is_live: !p.is_live, updated_at: new Date().toISOString() }).eq('id', p.id);
+    if (error) { showToast('⚠ Could not update: ' + (error.message || 'cloud error'), 4600); return; }
+    await bboRefresh(true); try { render(); } catch (e) {}
+  } catch (e) {}
+}
+async function bboDeleteProduct(id) {
+  try {
+    const S = _bboState();
+    const p = (S.products || []).find(x => String(x.id) === String(id)); if (!p) return;
+    const ok = await showGameConfirm({
+      title: '🗑 Withdraw "' + escapeHtml(p.name) + '"?',
+      bodyHtml: '<div>It comes off your rate board and nobody can apply against it again.</div>' +
+                '<div style="margin-top:0.5rem;font-size:0.85rem;color:#a89878">Loans already made under it are unaffected — this only removes the offer.</div>',
+      yesLabel: 'WITHDRAW', noLabel: 'KEEP', yesAccent: 'crimson',
+    });
+    if (!ok) return;
+    const { error } = await Cloud.client.from('bank_products').delete().eq('id', p.id);
+    if (error) { showToast('⚠ Could not withdraw.', 4200); return; }
+    await bboRefresh(true); try { render(); } catch (e) {}
+  } catch (e) {}
+}
+async function bboSaveIdentity() {
+  const S = _bboState();
+  if (S.busy) return; S.busy = true;
+  try {
+    const b = S.bank || {};
+    const r = await Cloud.client.rpc('bank_save_identity', {
+      p_name: (b.bank_name || '').slice(0, 40), p_motto: (b.motto || '').slice(0, 80),
+      p_logo_url: b._newLogo || null,
+    });
+    const j = (r && r.data) || {};
+    if ((r && r.error) || !j.ok) {
+      showToast(/does not exist|PGRST202/i.test((r && r.error && r.error.message) || '')
+        ? '⚠ Run bank_products.sql to enable identity saving.'
+        : '⚠ Could not save identity.', 6000);
+      return;
+    }
+    showToast('🛡 Bank identity saved — the registry updates for everyone.', 5200);
+    delete S.bank._newLogo;
+    try { BankDir.at = 0; } catch (e) {}
+    await bboRefresh(true); try { render(); } catch (e) {}
+  } catch (e) { showToast('⚠ Could not save identity.', 3600); }
+  finally { S.busy = false; }
+}
+async function bboClearLogo() {
+  try {
+    const S = _bboState();
+    await Cloud.client.rpc('bank_clear_logo');
+    if (S.bank) { S.bank.logo_url = null; delete S.bank._newLogo; }
+    try { BankDir.at = 0; } catch (e) {}
+    try { render(); } catch (e) {}
+  } catch (e) {}
+}
+// 🖼 Sigil upload. ⚠ The raw file is NOT stored: it is downscaled to 256×256
+// and re-encoded before it ever reaches the database. `logo_url` is read by the
+// PUBLIC directory, so a 2 MB data URL there would be paid for by every player
+// browsing Bank Row, on every fetch.
+function bboHandleFile(f) {
+  const S = _bboState();
+  S.logoErr = '';
+  const ok = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
+  if (!f) return;
+  if (ok.indexOf(f.type) < 0) { S.logoErr = 'Unsupported format. Use PNG, JPG, WebP or SVG.'; try { render(); } catch (e) {} return; }
+  if (f.size > 2 * 1024 * 1024) { S.logoErr = 'That file is ' + (f.size / 1048576).toFixed(1) + ' MB — the limit is 2 MB.'; try { render(); } catch (e) {} return; }
+  const r = new FileReader();
+  r.onload = (e) => {
+    const src = e.target.result;
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const N = 256;
+        const cv = document.createElement('canvas'); cv.width = N; cv.height = N;
+        const cx = cv.getContext('2d');
+        // Cover-crop to square so a wide banner doesn't letterbox into the tile.
+        const s = Math.min(img.width, img.height);
+        cx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, N, N);
+        const out = cv.toDataURL('image/webp', 0.85);
+        S.bank = S.bank || {};
+        S.bank._newLogo = out; S.bank.logo_url = out;
+        S.logoErr = '';
+      } catch (err) { S.logoErr = 'Could not process that image.'; }
+      try { render(); } catch (e2) {}
+    };
+    img.onerror = () => { S.logoErr = 'Could not read that image.'; try { render(); } catch (e2) {} };
+    img.src = src;
+  };
+  r.onerror = () => { S.logoErr = 'Could not read that file. Try another.'; try { render(); } catch (e2) {} };
+  r.readAsDataURL(f);
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.bankOffice = { go: bboGo, refresh: bboRefresh, state: _bboState,
+                             pickCur: bboPickCur, toggleCls: bboToggleCls, set: bboSet,
+                             save: bboSaveProduct, toggle: bboToggleProduct, del: bboDeleteProduct };
+  window.__mg.openBankOffice = function () { App.screen = 'bankOffice'; try { render(); } catch (e) {} };
+} catch (e) {}
+
+const _BBO_FR = '<span class="cnr"></span><span class="cnr2"></span>';
+const BBO_NAV = [
+  { v: 'products',   label: 'Loan products',     ic: '📜' },
+  { v: 'collateral', label: 'Collateral policy', ic: '🏦' },
+  { v: 'identity',   label: 'Bank identity',     ic: '🛡' },
+];
+function renderBankBackOffice() {
+  const root = document.getElementById('app');
+  const S = _bboState();
+  if (!S.loaded) { bboRefresh().then(() => { try { render(); } catch (e) {} }); }
+  const back = '<div class="bbo-main" style="padding-top:16px"><button class="bbo-btn" onclick="App.screen=\'campOps\';render()">← Back</button></div>';
+
+  if (S.tablesMissing) {
+    root.innerHTML = '<div class="bbo">' + _bboBar(null) + '<div class="bbo-main">Bank tables are not installed. Run <b>player_banks.sql</b>, then <b>bank_products.sql</b>.</div>' + back + '</div>';
+    return;
+  }
+  if (!S.bank) {
+    root.innerHTML = '<div class="bbo">' + _bboBar(null) +
+      '<div class="bbo-main"><h1 class="bbo-h2">No bank yet</h1>' +
+      '<p class="bbo-h2sub">The back office opens once you hold a charter. Buy the Bank operation in Just Business, or stake at the Office of the Mint.</p>' +
+      '<button class="bbo-cta" onclick="__mg.openBankCharter()">Open a charter</button></div>' + back + '</div>';
+    return;
+  }
+  const nav = '<nav class="bbo-nav"><div class="grp">Bank management</div>' +
+    BBO_NAV.map(n => '<button aria-current="' + (S.view === n.v) + '" onclick="__mg.bankOffice.go(\'' + n.v + '\')">' +
+      '<span>' + n.ic + '</span>' + n.label +
+      (n.v === 'products' ? '<span class="pill">' + (S.products || []).filter(p => p.is_live).length + '</span>' : '') +
+      '</button>').join('') + '</nav>';
+  const body = S.view === 'collateral' ? _bboViewCollateral()
+             : S.view === 'identity'   ? _bboViewIdentity(S)
+             : _bboViewProducts(S);
+  root.innerHTML = '<div class="bbo">' + _bboBar(S.bank) +
+    '<div class="bbo-shell">' + nav + '<main class="bbo-main">' + body + '</main></div>' + back + '</div>';
+  try { _bboBind(); } catch (e) {}
+}
+function _bboBar(bank) {
+  const b = bank || {};
+  const staked = Number(b.mt_staked || 0) + Number(b.mt_overstake || 0);
+  const tier = (typeof _bkcTier === 'function') ? _bkcTier(b.charter_tier || 1).name : 'Lending House';
+  const sig = b.logo_url
+    ? '<img src="' + escapeHtml(b.logo_url) + '" alt="">'
+    : '<span class="ph">' + escapeHtml(((b.bank_name || '?').trim()[0] || '?').toUpperCase()) + '</span>';
+  return '<header class="bbo-bar"><div class="bbo-mark"><span class="bbo-sigil">' + sig + '</span><div>' +
+      '<h1>' + escapeHtml(b.bank_name || 'Your Bank') + '</h1>' +
+      '<div class="sub">Back office · ' + escapeHtml(tier) + ' · Charter ' + 'I'.repeat(b.charter_tier || 1) + '</div>' +
+    '</div></div>' +
+    '<div class="bbo-tally">' +
+      '<div class="bbo-tal"><span class="k">Cinder</span><div class="v cin">' + _bboFmt(Profile.gems) + '</div></div>' +
+      '<div class="bbo-tal"><span class="k">Aza Coin</span><div class="v aza">' + _bboFmt(Profile.sovereigns) + '</div></div>' +
+      '<div class="bbo-tal"><span class="k">Mythic</span><div class="v myth">' + _bboFmt(App._mtBal) + '</div></div>' +
+      '<div class="bbo-tal"><span class="k">Staked</span><div class="v">' + _bboFmt(staked) + '</div></div>' +
+    '</div></header>';
+}
+function _bboViewProducts(S) {
+  const d = S.draft, c = BBO_CUR[d.cur];
+  const tier = S.bank.charter_tier || 1;
+  const tierOK = tier >= c.minTier;
+  const picked = _bboPicked(d.classes);
+  const clsLtv = picked.length ? Math.min.apply(null, picked.map(k => BBO_CLASSES[k].ltv)) : 0;
+  const effLtv = Math.min(clsLtv, c.ltvCap);
+  const rateOver = d.rate > c.rateCap, termOver = d.term > c.maxTerm;
+  const valid = tierOK && picked.length > 0 && !rateOver && !termOver && (d.name || '').trim().length > 0;
+  const live = (S.products || []).filter(p => p.is_live).length;
+
+  const prods = (S.products || []).length ? (S.products || []).map(p => {
+    const pc = BBO_CUR[p.currency] || BBO_CUR.cinder;
+    const cl = _bboPicked(p.classes);
+    return '<div class="bbo-prod' + (p.is_live ? '' : ' off') + '">' +
+      '<span class="cbadge ' + pc.cls + '">' + pc.glyph + '</span>' +
+      '<div><div class="nm">' + escapeHtml(p.name || 'Product') + '</div>' +
+        '<div class="meta">' + _bboMoney(p.min_amount, p.currency) + ' – ' + _bboMoney(p.max_amount, p.currency) +
+          ' · ' + (p.term_days | 0) + 'd · ' + (p.structure === 'lump' ? 'Lump sum' : 'Installments') + ' · Ember ' + (p.min_ember | 0) + '+</div>' +
+        '<div class="bbo-tags">' + cl.map(k => '<span class="bbo-tag">' + BBO_CLASSES[k].name + '</span>').join('') + '</div></div>' +
+      '<div class="side"><span class="rate">' + (+p.rate_weekly) + '% / wk</span>' +
+        '<button class="bbo-mini' + (p.is_live ? ' on' : '') + '" onclick="__mg.bankOffice.toggle(\'' + p.id + '\')">' +
+          (p.is_live ? 'Posted · ' + (p.taken | 0) + ' open' : 'Unposted') + '</button>' +
+        '<button class="bbo-mini" onclick="__mg.bankOffice.del(\'' + p.id + '\')">Withdraw</button>' +
+      '</div></div>';
+  }).join('') : '<div class="bbo-hint" style="padding:8px 0">No products yet. Build one below and it appears on your rate board.</div>';
+
+  return '<h1 class="bbo-h2">Loan products</h1>' +
+  '<p class="bbo-h2sub">A product is a standing offer. Borrowers see it on your rate board and apply against it, so the terms you set here decide who walks through the door — and what you can seize if they don\'t come back.</p>' +
+  (S.productsMissing ? '<div class="bbo-warn"><span>⚠</span><div>The <b>bank_products</b> table is missing — run <b>bank_products.sql</b> before posting.</div></div>' : '') +
+  '<section class="frame bbo-card">' + _BBO_FR +
+    '<h3>Live products <span class="rt">' + live + ' of ' + (S.products || []).length + ' posted</span></h3>' +
+    '<div class="bbo-prods">' + prods + '</div></section>' +
+
+  '<section class="frame bbo-card">' + _BBO_FR + '<h3>Build a product</h3>' +
+    '<div class="bbo-grid bbo-g2">' +
+      '<div><label class="k">Product name</label><input type="text" id="bbo-name" value="' + escapeHtml(d.name) + '"></div>' +
+      '<div><label class="k">Repayment structure</label><div class="bbo-seg">' +
+        '<button aria-pressed="' + (d.structure === 'lump') + '" onclick="__mg.bankOffice.set(\'structure\',\'lump\')">Lump sum</button>' +
+        '<button aria-pressed="' + (d.structure === 'installment') + '" onclick="__mg.bankOffice.set(\'structure\',\'installment\')">Installments</button>' +
+      '</div></div></div>' +
+
+    '<div style="margin-top:22px"><label class="k">Lending currency</label><div class="bbo-curs">' +
+      Object.keys(BBO_CUR).map(k => { const x = BBO_CUR[k]; const ok = tier >= x.minTier;
+        return '<button class="bbo-cur ' + x.cls + (ok ? '' : ' lockout') + '" aria-pressed="' + (d.cur === k) + '"' +
+          (ok ? ' onclick="__mg.bankOffice.pickCur(\'' + k + '\')"' : ' disabled') + '>' +
+          '<span class="tk"><span class="glyph">' + x.glyph + '</span><span class="nm">' + x.name + '</span></span>' +
+          '<div class="rl">' + x.role + '</div>' +
+          (ok ? '<div class="vol">Rate ≤ ' + x.rateCap + '% · LTV ≤ ' + Math.round(x.ltvCap * 100) + '% · term ≤ ' + x.maxTerm + 'd</div>'
+              : '<div class="lockmsg">Requires Charter ' + 'I'.repeat(x.minTier) + '</div>') +
+        '</button>'; }).join('') + '</div></div>' +
+
+    '<div class="bbo-grid bbo-g3" style="margin-top:22px">' +
+      '<div><label class="k">Minimum principal</label><input class="bbo-range" type="range" id="bbo-min" min="' + c.step + '" max="' + Math.max(c.step, d.max) + '" step="' + c.step + '" value="' + Math.min(d.min, d.max) + '"><div class="bbo-out">' + _bboMoney(d.min, d.cur) + '</div></div>' +
+      '<div><label class="k">Maximum principal</label><input class="bbo-range" type="range" id="bbo-max" min="' + c.step + '" max="' + (c.defMax * 4) + '" step="' + c.step + '" value="' + d.max + '"><div class="bbo-out">' + _bboMoney(d.max, d.cur) + '</div></div>' +
+      '<div><label class="k">Interest rate</label><input class="bbo-range" type="range" id="bbo-rate" min="0.25" max="' + c.rateCap + '" step="0.25" value="' + Math.min(d.rate, c.rateCap) + '"><div class="bbo-out">' + Math.min(d.rate, c.rateCap) + '%<small>per week · ceiling ' + c.rateCap + '%</small></div></div>' +
+      '<div><label class="k">Term</label><select id="bbo-term">' + [3, 7, 14, 21, 30].filter(x => x <= c.maxTerm).map(x => '<option' + (x === d.term ? ' selected' : '') + '>' + x + '</option>').join('') + '</select><div class="bbo-out">days<small>max ' + c.maxTerm + 'd for ' + c.name + '</small></div></div>' +
+      '<div><label class="k">Minimum Ember score</label><input class="bbo-range" type="range" id="bbo-ember" min="0" max="900" step="10" value="' + d.minEmber + '"><div class="bbo-out">' + d.minEmber + '<small>' + (d.minEmber >= 850 ? 'Mythic Standing' : d.minEmber >= 700 ? 'Blazing' : d.minEmber >= 550 ? 'Kindled' : d.minEmber >= 300 ? 'Smoldering' : 'Ashen') + '+</small></div></div>' +
+      '<div><label class="k">Concurrent loans allowed</label><input class="bbo-range" type="range" id="bbo-active" min="0" max="3" step="1" value="' + d.maxActive + '"><div class="bbo-out">' + d.maxActive + '<small>borrower\'s other open loans</small></div></div>' +
+    '</div>' +
+
+    '<div style="margin-top:22px"><label class="k">Collateral accepted — what you\'re willing to seize</label><div class="bbo-cls">' +
+      Object.keys(BBO_CLASSES).map(k => { const x = BBO_CLASSES[k];
+        return '<button class="bbo-cl" aria-pressed="' + (!!d.classes[k]) + '" onclick="__mg.bankOffice.toggleCls(\'' + k + '\')">' +
+          '<span class="tick">✓</span><span class="top"><span class="ic">' + x.ic + '</span>' +
+          '<span><span class="nm">' + x.name + '</span><span class="ex">' + x.ex + '</span></span></span>' +
+          '<span class="set"><span><label class="k">Haircut</label><span class="v">−' + Math.round(x.haircut * 100) + '%</span></span>' +
+          '<span><label class="k">Max LTV</label><span class="v">' + Math.round(x.ltv * 100) + '%</span></span></span>' +
+          '<div class="vol">' + x.vol + '</div></button>'; }).join('') + '</div>' +
+      (picked.length === 0 ? '<div class="bbo-warn"><span>⚠</span><div>Pick at least one collateral class. A product that accepts nothing can\'t be posted — and <b>unsecured lending isn\'t available below Blazing tier</b>.</div></div>' : '') +
+    '</div>' +
+
+    '<div style="margin-top:22px"><label class="k">Note to borrowers</label><textarea id="bbo-note">' + escapeHtml(d.note) + '</textarea></div>' +
+    (rateOver ? '<div class="bbo-warn"><span>⚠</span><div>Rate exceeds the <b>' + c.rateCap + '%</b> weekly ceiling for ' + c.name + '.</div></div>' : '') +
+    (termOver ? '<div class="bbo-warn"><span>⚠</span><div>Term exceeds the <b>' + c.maxTerm + '-day</b> maximum for ' + c.name + '.</div></div>' : '') +
+    (d.cur === 'myth' ? '<div class="bbo-warn"><span>⚠</span><div><b>Mythic Token lending is logged for economy review.</b> Capped at 60% LTV and 14-day terms.</div></div>' : '') +
+
+    '<div class="bbo-rowbtn"><button class="bbo-cta" id="bbo-post"' + (valid && !S.busy ? '' : ' disabled') + '>Post product to rate board</button>' +
+      '<button class="bbo-btn" onclick="__mg.bankOffice.set(\'classes\',{})">Clear</button>' +
+      '<span class="bbo-hint">' + (valid ? 'Ready to post — borrowers will see this immediately.' : 'Fix the flagged items to post.') + '</span></div>' +
+  '</section>' +
+
+  '<section class="frame bbo-card bbo-pv">' + _BBO_FR + _bboPreview(d, c, picked, effLtv) + '</section>';
+}
+function _bboPreview(d, c, picked, effLtv) {
+  const worst = picked.length ? Math.max.apply(null, picked.map(k => BBO_CLASSES[k].haircut)) : 0;
+  const ex = 100000, exAdv = ex * (1 - worst) * effLtv;
+  const interest = d.max * (Math.min(d.rate, c.rateCap) / 100) * (d.term / 7);
+  const row = (k, v) => '<div class="row"><span>' + k + '</span><span>' + v + '</span></div>';
+  return '<div class="ttl">As borrowers will see it</div>' +
+    row('Product', escapeHtml(d.name) || '—') +
+    row('Currency', c.name) +
+    row('Principal range', _bboMoney(d.min, d.cur) + ' – ' + _bboMoney(d.max, d.cur)) +
+    row('Rate · term', Math.min(d.rate, c.rateCap) + '% weekly · ' + d.term + ' days') +
+    row('Collateral accepted', picked.length ? picked.map(k => BBO_CLASSES[k].name).join(', ') : 'None selected') +
+    row('Effective advance rate', (effLtv * 100).toFixed(0) + '% of appraised') +
+    row('Worked example', _bboFmt(ex) + ' appraised → advance ' + _bboFmt(exAdv)) +
+    row('Interest at max principal', _bboMoney(interest, d.cur)) +
+    row('Eligibility', 'Ember ' + d.minEmber + '+ · ≤' + d.maxActive + ' other loans') +
+    (d.note ? '<div class="bbo-hint" style="margin-top:14px;font-style:italic">"' + escapeHtml(d.note) + '"</div>' : '');
+}
+function _bboViewCollateral() {
+  return '<h1 class="bbo-h2">Collateral policy</h1>' +
+  '<p class="bbo-h2sub">Haircuts are how much you discount an asset\'s market price before lending against it — your margin for a forced sale. <b>Deeper haircut, safer loan, fewer takers.</b> These apply across every product unless a product overrides them.</p>' +
+  '<section class="frame bbo-card">' + _BBO_FR + '<h3>Class settings</h3><div class="bbo-cls">' +
+    Object.keys(BBO_CLASSES).map(k => { const x = BBO_CLASSES[k];
+      return '<div class="bbo-cl" aria-pressed="true" style="cursor:default">' +
+        '<span class="top"><span class="ic">' + x.ic + '</span><span><span class="nm">' + x.name + '</span><span class="ex">' + x.ex + '</span></span></span>' +
+        '<span class="set" style="display:grid"><span><label class="k">Haircut</label><span class="v">−' + Math.round(x.haircut * 100) + '%</span></span>' +
+        '<span><label class="k">Max LTV</label><span class="v">' + Math.round(x.ltv * 100) + '%</span></span></span>' +
+        '<div class="vol">' + x.vol + '</div></div>'; }).join('') + '</div>' +
+    '<div class="bbo-warn ok" style="margin-top:20px"><span>✓</span><div><b>Real estate recovers best, cards recover worst.</b> A deed sells near appraisal even in a Bust; a graded card can lose a third of its value in a week and find no buyer. That gap is why the haircuts differ — not favoritism toward landowners.</div></div>' +
+    '<div class="bbo-warn" style="margin-top:14px"><span>⚠</span><div>Bound and untradeable items are <b>never eligible</b> as collateral, in any class. If you can\'t sell it after a default, it isn\'t security.</div></div>' +
+  '</section>';
+}
+function _bboViewIdentity(S) {
+  const b = S.bank || {};
+  return '<h1 class="bbo-h2">Bank identity</h1>' +
+  '<p class="bbo-h2sub">Your sigil and name appear in the <b>Registry of Player Banks</b> — the directory borrowers browse when they\'re shopping for a loan. It\'s the first thing they see and often the only thing they compare.</p>' +
+  '<section class="frame bbo-card">' + _BBO_FR + '<h3>Sigil</h3><div class="bbo-grid bbo-g2">' +
+    '<div><div class="bbo-drop" id="bbo-drop" tabindex="0" role="button" aria-label="Upload bank sigil">' +
+      '<div style="font-size:30px;color:#8a6524">⬆</div><div class="t">Upload your sigil</div>' +
+      '<div class="s">PNG, JPG, WebP or SVG · square · max 2 MB</div></div>' +
+      '<input type="file" id="bbo-file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden>' +
+      (S.logoErr ? '<div class="bbo-err">' + escapeHtml(S.logoErr) + '</div>' : '') +
+      '<div class="bbo-rowbtn">' + (b.logo_url ? '<button class="bbo-btn" onclick="(async()=>{await bboClearLogo();})()">Remove sigil</button>' : '') +
+      '<span class="bbo-hint">Stored at 256×256 — shown at 88px in the registry, 52px on your plaque.</span></div></div>' +
+    '<div class="bbo-grid" style="gap:16px">' +
+      '<div><label class="k">Bank name</label><input type="text" id="bbo-bank-name" value="' + escapeHtml(b.bank_name || '') + '" maxlength="40"></div>' +
+      '<div><label class="k">Motto</label><input type="text" id="bbo-motto" value="' + escapeHtml(b.motto || '') + '" maxlength="80"></div>' +
+    '</div></div>' +
+    '<div class="bbo-rowbtn"><button class="bbo-cta" id="bbo-save-id"' + (S.busy ? ' disabled' : '') + '>Save identity</button></div>' +
+  '</section>' +
+  '<section class="frame bbo-card">' + _BBO_FR + '<h3>Registry preview <span class="rt">How borrowers find you</span></h3>' +
+    _bboDirPreview(S) +
+    '<div class="bbo-hint" style="margin-top:16px">Banks are ranked by <b>capitalization, charter tier, and loans serviced</b> — not by how recently you posted.</div>' +
+  '</section>';
+}
+function _bboDirPreview(S) {
+  const b = S.bank || {};
+  const live = (S.products || []).filter(p => p.is_live);
+  const curs = Array.from(new Set(live.map(p => p.currency))).map(k => (BBO_CUR[k] || {}).name).filter(Boolean);
+  const staked = Number(b.mt_staked || 0) + Number(b.mt_overstake || 0);
+  const total = (b.loans_serviced | 0), bad = (b.defaults_taken | 0);
+  const rate = total ? ((bad / total) * 100).toFixed(1) + '%' : '—';
+  return '<div class="bbo-dir" style="border:1px solid rgba(217,164,65,.14);border-radius:2px">' +
+    '<span class="bbo-dirlogo">' + (b.logo_url ? '<img src="' + escapeHtml(b.logo_url) + '" alt="">' : '<span class="ph">' + escapeHtml(((b.bank_name || '?').trim()[0] || '?').toUpperCase()) + '</span>') + '</span>' +
+    '<div><div class="bbo-dirname">' + escapeHtml(b.bank_name || 'Unnamed bank') + '</div>' +
+      '<div class="bbo-dirmotto">' + (b.motto ? '"' + escapeHtml(b.motto) + '"' : '') + '</div>' +
+      '<div class="bbo-dirstats"><span><b>' + live.length + '</b> products</span>' +
+        '<span>Lends <b>' + (curs.join(' · ') || '—') + '</b></span>' +
+        '<span>Default rate <b>' + rate + '</b></span>' +
+        '<span>Loans <b>' + total + '</b></span></div></div>' +
+    '<div class="bbo-dirseal"><div class="cap" style="color:#d9a441">' + _bboFmt(staked) + ' MT staked</div>' +
+      '<div class="cap">Charter ' + 'I'.repeat(b.charter_tier || 1) + '</div></div></div>';
+}
+// Inputs bound after paint (sliders re-render on every input event, which would
+// lose an inline handler's value mid-drag).
+function _bboBind() {
+  const S = _bboState(), g = (id) => document.getElementById(id);
+  const nm = g('bbo-name'); if (nm) nm.oninput = (e) => { S.draft.name = e.target.value; };
+  const nt = g('bbo-note'); if (nt) nt.oninput = (e) => { S.draft.note = e.target.value; };
+  const mn = g('bbo-min');  if (mn) mn.oninput = (e) => { S.draft.min = Math.min(+e.target.value, S.draft.max); render(); };
+  const mx = g('bbo-max');  if (mx) mx.oninput = (e) => { S.draft.max = Math.max(+e.target.value, S.draft.min); render(); };
+  const rt = g('bbo-rate'); if (rt) rt.oninput = (e) => { S.draft.rate = +e.target.value; render(); };
+  const tm = g('bbo-term'); if (tm) tm.onchange = (e) => { S.draft.term = +e.target.value; render(); };
+  const em = g('bbo-ember');if (em) em.oninput = (e) => { S.draft.minEmber = +e.target.value; render(); };
+  const ac = g('bbo-active');if (ac) ac.oninput = (e) => { S.draft.maxActive = +e.target.value; render(); };
+  const po = g('bbo-post'); if (po) po.onclick = () => bboSaveProduct();
+  const bn = g('bbo-bank-name'); if (bn) bn.oninput = (e) => { if (S.bank) S.bank.bank_name = e.target.value; };
+  const mo = g('bbo-motto'); if (mo) mo.oninput = (e) => { if (S.bank) S.bank.motto = e.target.value; };
+  const sv = g('bbo-save-id'); if (sv) sv.onclick = () => bboSaveIdentity();
+  const drop = g('bbo-drop'), file = g('bbo-file');
+  if (drop && file) {
+    drop.onclick = () => file.click();
+    drop.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); file.click(); } };
+    file.onchange = (e) => bboHandleFile(e.target.files[0]);
+    ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+    drop.addEventListener('drop', (e) => bboHandleFile(e.dataTransfer.files[0]));
+  }
+}
 
 // 👔 The staff strip — the ONLY route to the Mint and the Underwriting Desk once
 // you own a bank or are hired onto one. Shown to owners AND tellers; hidden

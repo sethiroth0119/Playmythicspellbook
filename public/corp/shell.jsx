@@ -72,6 +72,15 @@ function RiskPips({ level }) {
 // Sidebar
 // ──────────────────────────────────────────────────────────────────────────
 
+// 🏦 The bank's back office. Shown ONLY to a bank owner, and labelled with the
+// bank's OWN name — an owner looking for "Ashford & Keel" should not have to
+// recognise a generic "Bank". `econ.bankName` is fed by the parent's econ
+// bridge; when it is absent the player has no charter and the row is omitted.
+function bankNavRow(econ) {
+  const nm = econ && econ.bankName;
+  if (!nm) return null;
+  return { id: 'bankOffice', label: String(nm).slice(0, 22), ico: '🏦', action: 'openBankOffice' };
+}
 const NAV = [
   { group: 'Holdings' },
   { id: 'vault',      label: 'Vault',          ico: '◇' },
@@ -132,7 +141,15 @@ function Sidebar({ route, setRoute, mailCount, blackCount }) {
         <div className="sub">PLAYER ECONOMY · v0.34</div>
       </div>
       <nav className="nav">
-        {NAV.map((n, i) => n.group ? (
+        {(function () {
+          // Insert the owner's bank right under Operations — it IS one of their
+          // businesses, so it belongs in Holdings rather than a section of its own.
+          const row = bankNavRow((window.__JB && window.__JB.econ) || null);
+          if (!row) return NAV;
+          const i = NAV.findIndex(n => n && n.id === 'operations');
+          if (i < 0) return NAV.concat([row]);
+          return NAV.slice(0, i + 1).concat([row], NAV.slice(i + 1));
+        })().map((n, i) => n.group ? (
           <div key={'g'+i} className="group">{n.group}</div>
         ) : (
           <button key={n.id} data-active={route === n.id ? '1' : '0'}

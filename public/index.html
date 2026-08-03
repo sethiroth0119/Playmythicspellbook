@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119z9';
+  window.BUILD_VERSION = 'v120a0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -84890,7 +84890,66 @@ function _targetStepLabel() {
 // engine re-enters (a summon resolving its own arrival, a trigger chain, …).
 const _abAnnounced = Object.create(null);
 
+// 🔥 BURN ON ACTIVATION — the Red-Eyes Flare Metal pattern.
+// A continuous aura authored as `card.auras[].burnOnActivate = <amount>` makes
+// EVERY effect activation by the punished side chip its hero's Life Points.
+// Fired from applyOnPlayEffect, which is the single engine every card type's
+// effect runs through (units, heroes, spells, traps, locations, weather), so
+// one hook covers them all rather than N per-type patches.
+//
+// `burnSide` on the aura decides who bleeds: 'enemies' (default — punish the
+// opponent, the Yu-Gi-Oh reading), 'allies', or 'all' (a symmetric lockdown
+// card that hurts both players).
+// ⚠ Re-entrancy: dealing the damage does NOT itself route back through
+// applyOnPlayEffect, but a chained effect could — `_burnDepth` caps it so two
+// opposing burn auras can never trade blows forever.
+let _burnDepth = 0;
+function _fireBurnOnActivate(state, actorOwner, label) {
+  if (!state || !actorOwner || _burnDepth > 2) return state;
+  let out = state;
+  try {
+    _burnDepth++;
+    const srcs = (typeof _auraSources === 'function') ? _auraSources(state) : (state.units || []);
+    for (const src of srcs) {
+      if (!src || (src.alive === false)) continue;
+      const auras = (typeof _unitAuras === 'function') ? (_unitAuras(src) || []) : [];
+      for (const a of auras) {
+        if (!a || a.enabled === false) continue;
+        const amt = Math.max(0, Math.round(a.burnOnActivate || 0));
+        if (!amt) continue;
+        const side = a.burnSide || 'enemies';
+        const hits = side === 'all' ? true
+                   : side === 'allies' ? (actorOwner === src.owner)
+                   : (actorOwner !== src.owner);          // 'enemies'
+        if (!hits) continue;
+        const hero = (out.units || []).find(u => u && u.owner === actorOwner && u.isHero && u.alive);
+        if (!hero) continue;
+        const hp = Math.max(0, (hero.currentHp | 0) - amt);
+        out = { ...out, units: (out.units || []).map(u => u.id === hero.id ? { ...u, currentHp: hp, alive: hp > 0 } : u) };
+        out.log = [...(out.log || []), {
+          msg: '🔥 ' + (src.name || 'A burning presence') + ' scorches ' + hero.name + ' for ' + amt
+             + (label ? ' (' + label + ')' : '') + '!',
+          color: actorOwner === 'player' ? 'red' : 'green' }];
+        if (hp <= 0) {
+          out.gameOver = actorOwner === 'player' ? 'ai' : 'player';
+          out.log = [...(out.log || []), { msg: '💀 ' + hero.name + ' burns away!', color: actorOwner === 'player' ? 'red' : 'green' }];
+        }
+      }
+    }
+  } catch (e) { try { console.warn('[burnOnActivate]', e); } catch (_) {} }
+  finally { _burnDepth--; }
+  return out;
+}
 function applyOnPlayEffect(state, unit, card) {
+  // 🔥 Punish the activation itself, BEFORE the effect resolves — the burn
+  // lands even if the effect goes on to fizzle, which is how the Yu-Gi-Oh
+  // originals read ("when a card effect is activated").
+  try {
+    const _actor = (unit && unit.owner) || 'player';
+    if ((card && card.onPlay && card.onPlay.type) || (card && card.effect && card.effect.type)) {
+      state = _fireBurnOnActivate(state, _actor, (card && card.name) || 'effect');
+    }
+  } catch (e) {}
   // ⚡ Tell the player WHAT is happening. Gated to unit-like cards on purpose:
   // spells, traps, locations and weather run this same engine through a synthetic
   // caster anchored on the hero, so without the type gate every spell would be
@@ -118322,6 +118381,15 @@ function renderCardEditor() {
           + `<div style="min-width:0"><label class="small-text">Range</label><select id="${p}-radius" style="width:100%">${radOpts}</select></div>`
           + `<div style="min-width:0"><label class="small-text">Named cards must be on…</label><select id="${p}-side" style="width:100%">${sideOpts}</select></div>`
           + `</div>`
+          + `<div style="border-top:1px dashed rgba(220,140,90,0.4);margin-top:0.6rem;padding-top:0.5rem">`
+          + `<label style="font-weight:700;color:#e0a070">🔥 Burn on activation</label>`
+          + `<div class="small-text ink-dim" style="margin-top:0.2rem">Red-Eyes Flare Metal style: every time the chosen side ACTIVATES a card effect, their hero loses this much HP. 0 = off. The burn lands even if that effect fizzles.</div>`
+          + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0.5rem;margin-top:0.4rem;min-width:0">`
+          + `<div style="min-width:0"><label class="small-text">Damage per activation</label><input id="${p}-burn" type="number" min="0" max="500" value="${pa.burnOnActivate || 0}" style="width:100%"></div>`
+          + `<div style="min-width:0"><label class="small-text">Who bleeds?</label><select id="${p}-burnside" style="width:100%">`
+          + ['enemies', 'allies', 'all'].map(s => `<option value="${s}" ${(pa.burnSide || 'enemies') === s ? 'selected' : ''}>${s === 'enemies' ? 'The opponent' : s === 'allies' ? 'Your own side' : 'Both players'}</option>`).join('')
+          + `</select></div>`
+          + `</div></div>`
           + `<div style="border-top:1px dashed rgba(170,140,220,0.35);margin-top:0.6rem;padding-top:0.5rem">`
           + `<label style="font-weight:700;color:#c3a8ee">🛡 Protections granted while this aura is active</label>`
           + `<div class="small-text ink-dim" style="margin-top:0.2rem">Yu-Gi-Oh style immunities. Optional — leave all unchecked for a stats-only aura. Follows the same "Who receives it?" and "Range" settings above.</div>`
@@ -120854,14 +120922,20 @@ function captureEditorIntoCard(card) {
       const anyStat = !!(stats.atk || stats.mag || stats.def || stats.res);
       const anyProt = Object.keys(protect).some(k => protect[k]);
       const amt = num(p + '-amount', 0, 999, 0);
+      // 🔥 Burn-on-activation is a THIRD reason an aura is doing something —
+      // without counting it here the row would be dropped by the guard below as
+      // "enabled but empty", which is the classic dead-knob failure.
+      const burnAmt = num(p + '-burn', 0, 500, 0);
       // Enabled, and actually DOING something — either a real stat bonus or at least
       // one ward. Named cards are NOT required any more: an aura with no condition is
       // simply always-on, which is what an unconditional ward needs.
       if (!on(p + '-enabled')) continue;
-      if (!anyProt && !(amt > 0 && anyStat)) continue;
+      if (!anyProt && !burnAmt && !(amt > 0 && anyStat)) continue;
       auras.push({
         enabled: true,
         amount: amt,
+        burnOnActivate: burnAmt || undefined,
+        burnSide: burnAmt ? (v(p + '-burnside') || 'enemies') : undefined,
         mode: (v(p + '-mode') === 'percent') ? 'percent' : 'flat',
         stats: stats,
         protect: protect,

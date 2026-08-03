@@ -11186,7 +11186,7 @@
        old cached art so the refreshed look actually shows.) */
     background:
       linear-gradient(rgba(8,5,2,0.20), rgba(8,5,2,0.34)),
-      url('assets/background/zones/the%20Dark%20forest.png') center/cover no-repeat,
+      url('assets/board/Battlefield/dark-forest.png') center/cover no-repeat,
       linear-gradient(135deg, #5a4028 0%, #3a2818 50%, #1f140b 100%);
     background-size: cover, cover, cover;
     background-position: center, center, center;
@@ -35461,7 +35461,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119y8';
+  window.BUILD_VERSION = 'v119y9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -96160,7 +96160,7 @@ function _b3dBuild(host) {
   const _terrainPainted = Array.isArray(map.terrain) && map.terrain.length &&
     map.terrain.some(t => t !== map.terrain[0]);   // VARIED cells = a deliberate paint job
   if (!_terrainPainted) {
-    try { new THREE.TextureLoader().load('assets/background/zones/the%20Dark%20forest.png', (tex) => {
+    try { new THREE.TextureLoader().load('assets/board/Battlefield/dark-forest.png', (tex) => {
       if (!_B3D.on || _B3D.scene !== scene) return;
       tex.anisotropy = 8; if (THREE.sRGBEncoding) tex.encoding = THREE.sRGBEncoding;
       const old = floorMat.map; floorMat.map = tex; floorMat.needsUpdate = true; if (old && old.dispose) old.dispose();
@@ -96448,15 +96448,40 @@ function _bbActiveLocationId() {
     const al = App.state && App.state.activeLocation;
     if (al && al.id) return String(al.id);
   } catch (e) {}
-  return 'dark-forest';
+  // ⚠ No location card in play is the COMMON case (the HUD reads "Open Field —
+  // No location in play"), so this fallback decides what most battles look
+  // like. It used to be 'dark-forest', which meant the forest was the de-facto
+  // default; 'battlefield' is the neutral ruined-world backdrop instead, and
+  // the Dark Forest now only appears when that location is actually played.
+  return 'battlefield';
 }
+// 🖼 THE BATTLEFIELD BACKDROP — the world painted BEHIND the board.
+// Admin-supplied art in assets/board/Battlefield/. Without a backdrop the
+// stage falls back to drawing procedural ruin silhouettes (see its "only when
+// the location has no backdrop art" branch), which is what made battles read
+// as a bare board floating in an empty void.
+// ⚠ Filenames are deliberately lowercase-with-hyphens and single-extension.
+// The originals arrived as "battlefield background.png.png" — spaces force
+// percent-encoding (a source of false 404s) and the doubled extension is easy
+// to mistype. Keep new drops in this folder to the same convention.
+const _BB_BATTLEFIELD_BG = 'assets/board/Battlefield/battlefield-background.png';
+const _BB_DARK_FOREST_BG = 'assets/board/Battlefield/dark-forest.png';
 function _bbLocations() {
-  const out = { 'dark-forest': {
-    name: 'The Dark Forest',
-    image: _bbAbs('assets/board/locations/dark-forest-ground.jpg'),
-    backdrop: _bbAbs('assets/board/locations/dark-forest-backdrop.jpg'),
-    timeOfDay: null, tint: null
-  } };
+  const out = {
+    // The neutral default — what a battle with no location card in play shows.
+    'battlefield': {
+      name: 'Battlefield',
+      image: _bbAbs('assets/board/locations/dark-forest-ground.jpg'),
+      backdrop: _bbAbs(_BB_BATTLEFIELD_BG),
+      timeOfDay: null, tint: null
+    },
+    'dark-forest': {
+      name: 'The Dark Forest',
+      image: _bbAbs('assets/board/locations/dark-forest-ground.jpg'),
+      backdrop: _bbAbs(_BB_DARK_FOREST_BG),
+      timeOfDay: null, tint: null
+    }
+  };
   try {
     const seen = new Set();
     const push = (card) => {
@@ -96465,8 +96490,12 @@ function _bbLocations() {
       let img = null;
       try { img = (typeof _locationBoardArt === 'function') ? _locationBoardArt(card) : (card.image || null); } catch (e) {}
       if (!img || String(img).slice(0, 5) === 'blob:') return;   // blob: dies in the iframe
+      // Every location gets a world behind it: its own backdrop when the card
+      // carries one, otherwise the shared battlefield backdrop. `null` here is
+      // what dropped the stage into its procedural-ruins fallback.
       out[String(card.id)] = { name: card.name || 'Location', image: _bbAbs(img),
-                               backdrop: _bbAbs(card.backdrop) || null, timeOfDay: card.timeOfDay || null };
+                               backdrop: _bbAbs(card.backdrop || _BB_BATTLEFIELD_BG),
+                               timeOfDay: card.timeOfDay || null };
     };
     const all = (typeof getAllCards === 'function') ? getAllCards() : [];
     for (const c of all) if (c && (c.type === 'location' || c.isLocation)) push(c);

@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119z3';
+  window.BUILD_VERSION = 'v119z4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -74926,7 +74926,7 @@ function _baseLeave() {
 function _baseNavTo(screen) {
   try {
     const NAV = {
-      deck:       function () { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; },
+      deck:       function () { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any'; },
       lab:        function () { if (typeof _labGate === 'function' && !_labGate()) return; App.screen = 'lab'; App.labTab = 'fuse'; App.labParentA = null; App.labParentB = null; },
       gymWars:    function () { App.screen = 'gymWars'; },
       bestiary:   function () { App.screen = 'bestiary'; },
@@ -107719,7 +107719,7 @@ function renderTitle() {
           onclick: () => { if (typeof _labGate === 'function' && !_labGate()) return; App.screen = 'lab'; App.labTab = 'fuse'; App.labParentA = null; App.labParentB = null; render(); } },
         { id: 'btn-deck',    icon: '<img src="assets/artwork/gameicons/deckIcons.png" alt="Deck Builder" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(3.4);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Deck Builder',   sub: 'Saved decks for every hero',     accent: '#a0d0ff',
           badge: validDecks > 0 ? `${validDecks} valid` : null,
-          onclick: () => { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; render(); } },
+          onclick: () => { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any'; render(); } },
         // 📦 Pack Opening — INVENTORY of unopened packs the player owns.
         // Buying a pack no longer auto-opens; packs go to inventory + the
         // player opens them here (Hearthstone-style). Live badge shows the
@@ -110723,7 +110723,7 @@ function renderDeckSelect() {
       App.deckBuilderHeroId = deck.heroId;
       App.editingDeckId = deck.id;
       App.deckEdit = undefined; App.deckEditName = undefined;
-      App.deckBuilderFilter = 'all';
+      App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
       render();
     };
   });
@@ -110735,7 +110735,7 @@ function renderDeckSelect() {
       App.deckBuilderHeroId = heroId;
       App.editingDeckId = null;
       App.deckEdit = undefined; App.deckEditName = undefined;
-      App.deckBuilderFilter = 'all';
+      App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
       render();
     };
   });
@@ -114373,7 +114373,7 @@ function renderPricingAdmin() {
     App.editingDeckId = null;
     App.deckEdit = undefined;
     App.deckEditName = 'New AI Deck';
-    App.deckBuilderFilter = 'all';
+    App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
     render();
   };
   const bAiExport = document.getElementById('btn-ai-deck-export');
@@ -114405,7 +114405,7 @@ function renderPricingAdmin() {
       App.editingDeckId = 'NEW';        // use our prefilled deckEdit, not a player deck
       App.deckEdit = keys;
       App.deckEditName = deck.name || 'AI Deck';
-      App.deckBuilderFilter = 'all';
+      App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
       App.screen = 'deck';
       render();
     };
@@ -114452,7 +114452,7 @@ function renderPricingAdmin() {
     App.editingDeckId = null;
     App.deckEdit = undefined;
     App.deckEditName = 'New Starter Deck';
-    App.deckBuilderFilter = 'all';
+    App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
     render();
   };
   document.querySelectorAll('[data-act="starter-deck-edit"]').forEach(el => {
@@ -114476,7 +114476,7 @@ function renderPricingAdmin() {
         try { saveProfile(); } catch (e) {}
       }
       App.deckEditName = deck.name || 'Starter Deck';
-      App.deckBuilderFilter = 'all';
+      App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
       App.screen = 'deck';
       render();
     };
@@ -152458,7 +152458,7 @@ function _csEnterStation(view) {
   // are the navigation ones the owner asked for: Lab, Deck Builder, Camp, …)
   const _csPortal = {
     lab:         () => { if (typeof _labGate === 'function' && !_labGate()) return; App.screen = 'lab'; App.labTab = 'fuse'; App.labParentA = null; App.labParentB = null; },
-    deckbuilder: () => { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; },
+    deckbuilder: () => { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any'; },
     camp:        () => { App.screen = 'camp'; },
     market:      () => { App.screen = 'market'; App.marketTab = 'browse'; App.marketFilter = 'all'; try { reseedNpcListingsIfStale(false); } catch (e) {} },
     crafting:    () => { App.screen = 'crafting'; },
@@ -158386,7 +158386,7 @@ const CAMP_BUILDINGS = [
   { id: 'deck',      name: 'Deck Builder',    icon: 'assets/artwork/gameicons/deckIcons.png',
     x: 3,  y: 9,  w: 4, h: 3, color: '#a0d0ff', glyph: '🃏',
     door: { x: 5, y: 9 },
-    route: () => { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; render(); } },
+    route: () => { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any'; render(); } },
   { id: 'roguelite', name: 'Roguelite Gate',  icon: 'assets/artwork/gameicons/roguelitestory.png',
     x: 14, y: 9,  w: 4, h: 3, color: '#b86bff', glyph: '🗝',
     door: { x: 16, y: 9 },
@@ -158432,7 +158432,7 @@ const CAMP_NPCS = [
 const CAMP_ROUTE_OPTIONS = {
   camp:             { label: 'Bunker / Camp',          icon: '🏚', go: () => { App.screen = 'camp'; } },
   vendorMarket:     { label: 'Vendor Market',          icon: '🛒', go: () => { App.screen = 'vendorMarket'; App._packReveal = null; } },
-  deck:             { label: 'Deck Builder',           icon: '🃏', go: () => { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; } },
+  deck:             { label: 'Deck Builder',           icon: '🃏', go: () => { App.screen = 'deck'; App.deckBuilderHeroId = null; App.deckEdit = undefined; App.deckEditName = undefined; App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any'; } },
   rlcList:          { label: 'Roguelite Gate',         icon: '🗝', go: () => { App.screen = 'rlcList'; } },
   crashExchange:    { label: 'Crash Exchange (Market)',icon: '📈', go: () => { App._cxReturnScreen = 'title'; App.screen = 'crashExchange'; } },
   bankCharter:      { label: 'Office of the Mint',     icon: '🏦', go: () => { App.screen = 'bankCharter'; } },
@@ -198585,7 +198585,7 @@ function mountDeckVault() {
           const id = d.deck && d.deck.id;
           if (id && typeof getDeckById === 'function' && getDeckById(id)) {
             App.editingDeckId = id; App.deckEdit = undefined; App.deckEditName = undefined; App.deckEditCover = undefined;
-            App.deckBuilderFilter = 'all'; render();
+            App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any'; render();
           } else {
             // 🩹 NEVER leave the vault frozen on its fade — if the deck can't be
             // resolved (stale id, race), reset the shelf and log why.
@@ -198610,7 +198610,7 @@ function mountDeckVault() {
         }
         case 'deckvault:new':
           App.editingDeckId = 'NEW'; App.deckEdit = []; App.deckEditName = ((hero && hero.name) || 'Hero') + "'s Deck";
-          App.deckBuilderFilter = 'all'; render();
+          App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any'; render();
           break;
         case 'deckvault:import':
           App._deckCodeModal = { mode: 'import' }; render();   // vault unmounts (stage gate) → DOM modal shows
@@ -198705,8 +198705,18 @@ function renderDeckBuilder() {
     if (filter === 'counter') return x.kind === 'counter' || (x.kind === 'unit' && !!(x.card && x.card.isCounterUnit));
     return x.kind === filter;
   };
+  // 🔒 OWNERSHIP FILTER — 'any' (default) / 'owned' / 'unowned'.
+  // Unowned cards stay in the list normally (view-only, right-click for
+  // details), which makes a big collection hard to read when you only want to
+  // build from what you actually have — or only to browse what you are missing.
+  const ownFilter = App.deckBuilderOwnFilter || 'any';
+  const _ownedOf = (x) => {
+    try { return deckKeyOwnedCount(x.key) > 0; } catch (e) { return false; }
+  };
   const filtered = all.filter(x => {
     if (!matchesKindFilter(x)) return false;
+    if (ownFilter === 'owned'   && !_ownedOf(x)) return false;
+    if (ownFilter === 'unowned' &&  _ownedOf(x)) return false;
     if (searchText) {
       const hay = `${x.card.name || ''} ${x.card.desc || ''}`.toLowerCase();
       if (!hay.includes(searchText)) return false;
@@ -198848,7 +198858,13 @@ function renderDeckBuilder() {
 
   // Filter row — kind tab buttons (existing), plus the new search + element/faction multi-chips.
   const filterButtons = ['all','unit','spell','trap','location','weather','counter','custom']
-    .map(f => `<button class="forge-tab ${filter === f ? 'active' : ''}" data-deck-filter="${f}">${f === 'counter' ? '⏱ COUNTER' : f.toUpperCase()}</button>`).join('');
+    .map(f => `<button class="forge-tab ${filter === f ? 'active' : ''}" data-deck-filter="${f}">${f === 'counter' ? '⏱ COUNTER' : f.toUpperCase()}</button>`).join('')
+    // 🔒 Ownership chips, on the same row as the kind tabs. Clicking the active
+    // one clears it (back to ANY), so the pair behaves like a toggle rather
+    // than a mode you can get stuck in.
+    + `<span class="db-own-sep" style="display:inline-block;width:1px;height:18px;background:rgba(212,175,55,0.35);margin:0 0.45rem;vertical-align:middle"></span>`
+    + [['owned','✅ OWNED'], ['unowned','🔒 NOT OWNED']]
+        .map(([v, label]) => `<button class="forge-tab ${ownFilter === v ? 'active' : ''}" data-deck-own="${v}" title="${v === 'owned' ? 'Show only cards you own' : 'Show only cards you do NOT own yet'}">${label}</button>`).join('');
 
   // Element chip row — every element from ELEMENT_DATA. Active state toggles via classList
   // and is driven by App.deckBuilderElemFilter. Clicking the same chip again removes it.
@@ -199337,6 +199353,16 @@ function renderDeckBuilder() {
   document.querySelectorAll('[data-deck-filter]').forEach(el => {
     el.onclick = () => { App.deckBuilderFilter = el.dataset.deckFilter; render(); };
   });
+  // 🔒 Ownership chips — clicking the ACTIVE one clears back to "any", so the
+  // pair toggles instead of trapping the player in a filtered view with no
+  // obvious way out. Scroll is preserved: re-filtering should not also jump.
+  document.querySelectorAll('[data-deck-own]').forEach(el => {
+    el.onclick = () => {
+      const v = el.dataset.deckOwn;
+      App.deckBuilderOwnFilter = (App.deckBuilderOwnFilter === v) ? 'any' : v;
+      render();
+    };
+  });
 
   // Search input — re-renders the inventory on every keystroke, restoring focus + caret
   // position afterward so typing stays smooth despite the full-screen re-render.
@@ -199396,20 +199422,36 @@ function renderDeckBuilder() {
   // scroll positions survive the wipe-and-rebuild render. Without this,
   // clicking ANY card snaps the pool back to the top, which is jarring once
   // the player has scrolled deep into the catalog.
+  // 📜 Keep the card list exactly where it was when a card is added/removed.
+  // ⚠ WHY ONE requestAnimationFrame WAS NOT ENOUGH. Restoring scrollTop on a
+  // freshly re-rendered list CLAMPS to its current scrollHeight — and right
+  // after the rebuild the card art has not laid out yet, so the list is far
+  // shorter than it will be a moment later. The assignment "succeeded" and then
+  // silently collapsed toward 0, which is the jump-to-top players saw.
+  // Fix: re-apply across several frames until the value STICKS, and stop as
+  // soon as it does so we never fight a deliberate scroll by the player.
   function withDeckScrollPreserved(fn) {
-    const pool    = document.querySelector('.deck-collection-list');
-    const current = document.querySelector('.deck-current-list');
-    const poolTop = pool ? pool.scrollTop : 0;
-    const curTop  = current ? current.scrollTop : 0;
-    const winY    = window.scrollY || 0;
+    const sel = ['.deck-collection-list', '.deck-current-list', '.db3-pool', '.db3-deck'];
+    const saved = sel.map(s => { const el = document.querySelector(s); return el ? el.scrollTop : null; });
+    const winY = window.scrollY || 0;
     fn();
-    requestAnimationFrame(() => {
-      const newPool    = document.querySelector('.deck-collection-list');
-      const newCurrent = document.querySelector('.deck-current-list');
-      if (newPool)    newPool.scrollTop    = poolTop;
-      if (newCurrent) newCurrent.scrollTop = curTop;
-      if (winY)       window.scrollTo(0, winY);
-    });
+    let tries = 0;
+    const restore = () => {
+      let allStuck = true;
+      sel.forEach((s, i) => {
+        if (saved[i] == null || !saved[i]) return;
+        const el = document.querySelector(s);
+        if (!el) return;
+        if (Math.abs(el.scrollTop - saved[i]) > 1) {
+          el.scrollTop = saved[i];
+          // Still short of the target ⇒ content has not finished laying out.
+          if (Math.abs(el.scrollTop - saved[i]) > 1) allStuck = false;
+        }
+      });
+      if (winY && Math.abs((window.scrollY || 0) - winY) > 1) window.scrollTo(0, winY);
+      if (!allStuck && ++tries < 12) requestAnimationFrame(restore);
+    };
+    requestAnimationFrame(restore);
   }
 
   // Add a card directly to the SIDE deck from the Inventory (Side tab).
@@ -200639,7 +200681,7 @@ function renderDeckBuilderHeroPick() {
   const pickHero = (heroId) => {
     App.dbhDecksHeroId = null;
     App.deckBuilderHeroId = heroId;
-    App.deckBuilderFilter = 'all';
+    App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
     // 🤖 AI-deck mode: ALWAYS drop straight into a fresh editor for the
     // picked hero (ignore the admin's own player decks). Preserve any
     // prefilled card list (set when editing an existing AI deck).
@@ -200838,7 +200880,7 @@ function _dbhBindDeckChooser() {
       if (!deck) { close(); return; }
       App.dbhDecksHeroId = null;
       App.deckBuilderHeroId = deck.heroId || heroId;
-      App.deckBuilderFilter = 'all';
+      App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
       App.editingDeckId = deck.id;
       App.deckEdit = (deck.cards || []).slice();
       App.deckEditName = deck.name;
@@ -200853,7 +200895,7 @@ function _dbhBindDeckChooser() {
     const h = (typeof findHeroById === 'function') ? findHeroById(heroId) : null;
     App.dbhDecksHeroId = null;
     App.deckBuilderHeroId = heroId;
-    App.deckBuilderFilter = 'all';
+    App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
     App.editingDeckId = 'NEW';
     App.deckEdit = [];
     App.deckEditName = (h ? h.name : 'Hero') + "'s Deck";
@@ -201156,7 +201198,7 @@ function renderDeckBuilderDeckList() {
     App.editingDeckId = 'NEW';
     App.deckEdit = [];
     App.deckEditName = hero.name + "'s Deck";
-    App.deckBuilderFilter = 'all';
+    App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
     render();
   };
   document.querySelectorAll('[data-edit-deck]').forEach(el => {
@@ -201165,7 +201207,7 @@ function renderDeckBuilderDeckList() {
       App.editingDeckId = el.dataset.editDeck;
       App.deckEdit = undefined;
       App.deckEditName = undefined;
-      App.deckBuilderFilter = 'all';
+      App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
       render();
     };
   });
@@ -201260,7 +201302,7 @@ function renderDeckBuilderDeckList() {
         App.editingDeckId = res.deck.id;
         App.deckEdit = undefined;
         App.deckEditName = undefined;
-        App.deckBuilderFilter = 'all';
+        App.deckBuilderFilter = 'all'; App.deckBuilderOwnFilter = 'any';
         render();
       };
     }

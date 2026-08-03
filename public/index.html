@@ -35279,7 +35279,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119x2';
+  window.BUILD_VERSION = 'v119x4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -56717,40 +56717,72 @@ async function _tournPaint() {
    still plays. Fully self-contained: a floating 🎬 button arms/disarms it.
    ══════════════════════════════════════════════════════════════════════ */
 const LiveClip = (() => {
-  // ── Reliable rolling ~60s buffer via SEGMENTS ──
-  // Trimming a live webm mid-stream (dropping clusters) makes a broken file
-  // that plays only a second or two — which is what happened before. Instead we
-  // record complete 60s segments and keep the last full one, so every exported
-  // clip is a VALID, correctly-playing webm of up to ~60s of the newest footage.
-  const SEG_MS = 60000;
-  let stream = null, rec = null, mime = '', armed = false, arming = false;
-  let curChunks = [], curStart = 0, prevBlob = null, rotateTimer = null;
+  // ── Reliable "last ~60s ending at the win" via OVERLAPPING recorders ──
+  // A single rolling buffer can't be trimmed mid-stream without producing a
+  // broken webm (that was the old 1-2s bug), and a single 60s segment gives a
+  // clip only as long as the time since its last rotation (that was the "14s"
+  // bug — the win landed just after a rotation). Instead we run TWO recorders
+  // 30s out of phase, each recording a COMPLETE continuous 60s segment before
+  // restarting. At any instant at least one of them has been running 30-60s
+  // continuously, so at the win we stop the fuller one and export it: a valid,
+  // correctly-playing webm of up to ~60s that ENDS at the winning moment.
+  const RUN_MS = 60000;     // each recorder captures a continuous 60s, then restarts
+  const OFFSET_MS = 30000;  // the 2nd recorder is half a cycle out of phase
+  let stream = null, mime = '', armed = false, arming = false;
+  let slots = [null, null];               // each: { rec, chunks, start }
+  const cycleTimers = [null, null];
+  let dual = false;                       // did the 2nd recorder start OK?
+  let frozen = null, freezePromise = null; // the clip snapped at the game-over moment
 
   function pickMime() {
     const cands = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
     for (const m of cands) { try { if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m; } catch (e) {} }
     return 'video/webm';
   }
-  function startSegment() {
-    if (!stream) return;
-    let recOpts = { mimeType: mime };
-    try { recOpts.videoBitsPerSecond = 3500000; } catch (e) {}
-    try { rec = new MediaRecorder(stream, recOpts); }
-    catch (e) { rec = new MediaRecorder(stream); }
-    curChunks = []; curStart = performance.now();
-    rec.ondataavailable = (e) => { if (e.data && e.data.size) curChunks.push(e.data); };
-    rec.start();                                     // one blob per segment
-    clearTimeout(rotateTimer);
-    rotateTimer = setTimeout(rotate, SEG_MS);
+  function newSlot() {
+    if (!stream) return null;
+    let opts = { mimeType: mime };
+    try { opts.videoBitsPerSecond = dual ? 2200000 : 3200000; } catch (e) {}
+    let r; try { r = new MediaRecorder(stream, opts); } catch (e) { try { r = new MediaRecorder(stream); } catch (e2) { return null; } }
+    const slot = { rec: r, chunks: [], start: performance.now() };
+    r.ondataavailable = (e) => { if (e.data && e.data.size) slot.chunks.push(e.data); };
+    try { r.start(); } catch (e) { return null; }
+    return slot;
   }
-  function rotate() {
-    if (!rec) return;
-    const finishing = rec, atStop = curChunks;
-    finishing.onstop = () => {
-      if (atStop.length) prevBlob = new Blob(atStop, { type: mime || 'video/webm' });
-      if (armed && stream) startSegment();           // seamlessly begin the next segment
-    };
-    try { finishing.stop(); } catch (e) {}
+  function cycle(i) {
+    const old = slots[i];
+    const fresh = newSlot();                            // start the replacement first…
+    if (old && old.rec && old.rec.state !== 'inactive') { try { old.rec.stop(); } catch (e) {} }
+    slots[i] = fresh;
+    clearTimeout(cycleTimers[i]);
+    cycleTimers[i] = setTimeout(() => cycle(i), RUN_MS);
+  }
+  function startCapture() {
+    slots = [null, null];
+    slots[0] = newSlot();
+    cycleTimers[0] = setTimeout(() => cycle(0), RUN_MS);
+    // Bring the second, phase-shifted recorder online after OFFSET_MS so the
+    // two never rotate at the same time — guaranteeing continuous coverage.
+    cycleTimers[1] = setTimeout(() => {
+      if (!armed || !stream) return;
+      const s = newSlot();
+      if (s) { slots[1] = s; dual = true; cycleTimers[1] = setTimeout(() => cycle(1), RUN_MS); }
+    }, OFFSET_MS);
+  }
+  function bestSlot() {
+    let best = null, bestDur = -1;
+    for (const s of slots) {
+      if (!s || !s.chunks.length) continue;
+      const d = (performance.now() - s.start) / 1000;
+      if (d > bestDur) { bestDur = d; best = s; }
+    }
+    return best;
+  }
+  function stopAll() {
+    cycleTimers.forEach(t => clearTimeout(t));
+    slots.forEach(s => { try { if (s && s.rec && s.rec.state !== 'inactive') s.rec.stop(); } catch (e) {} });
+    try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    slots = [null, null]; stream = null;
   }
   async function arm() {
     if (armed || arming) return armed;
@@ -56763,11 +56795,11 @@ const LiveClip = (() => {
       const opts = { video: { frameRate: 30 }, audio: false, preferCurrentTab: true };
       stream = await navigator.mediaDevices.getDisplayMedia(opts);
       mime = pickMime();
-      prevBlob = null;
+      frozen = null; freezePromise = null; dual = false;
       armed = true;
       const track = stream.getVideoTracks()[0];
       if (track) track.onended = () => disarm();      // user hit the browser "stop sharing" bar
-      startSegment();
+      startCapture();
       syncGearButtons();
       if (typeof showToast === 'function') showToast('🔴 Clip recording ON — the last ~60s is always kept. Win, then Share to Broadcast to attach it.', 5600);
       return true;
@@ -56779,31 +56811,44 @@ const LiveClip = (() => {
   }
   function disarm() {
     armed = false;
-    clearTimeout(rotateTimer);
-    try { if (rec && rec.state !== 'inactive') rec.stop(); } catch (e) {}
-    try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch (e) {}
-    stream = null; rec = null;
+    stopAll();
     syncGearButtons();
   }
   function isArmed() { return armed; }
-  function hasClip() { return !!(armed && (curChunks.length || prevBlob)); }
-  async function getClipBlob() {
-    if (!armed) return prevBlob;
-    const curDur = (performance.now() - curStart) / 1000;
-    const atStop = curChunks, finishing = rec;
-    clearTimeout(rotateTimer);
-    const curBlob = await new Promise((resolve) => {
-      const make = () => (atStop.length ? new Blob(atStop, { type: mime || 'video/webm' }) : null);
-      if (!finishing || finishing.state === 'inactive') { resolve(make()); return; }
-      finishing.onstop = () => resolve(make());
-      try { finishing.stop(); } catch (e) { resolve(make()); }
-    });
-    if (curBlob) prevBlob = curBlob;
-    if (armed && stream) startSegment();              // keep recording after grabbing the clip
-    // Current segment has enough footage? Use it; else fall back to the last full one.
-    if (curBlob && curDur >= 20) return curBlob;
-    return prevBlob || curBlob;
+  function hasClip() { return !!(frozen || (armed && bestSlot())); }
+  // Snapshot the last ~60s and STOP capturing. Called the instant the game-over
+  // overlay appears, so the victory screen + Share modal are never in the clip.
+  // Single-flight so the render loop calling it repeatedly is harmless.
+  function freeze() {
+    if (freezePromise) return freezePromise;
+    if (!armed && !slots.some(Boolean)) return Promise.resolve(frozen);
+    freezePromise = (async () => {
+      cycleTimers.forEach(t => clearTimeout(t));
+      const best = bestSlot();
+      let blob = null;
+      if (best) {
+        blob = await new Promise((resolve) => {
+          const make = () => (best.chunks.length ? new Blob(best.chunks, { type: mime || 'video/webm' }) : null);
+          if (!best.rec || best.rec.state === 'inactive') { resolve(make()); return; }
+          best.rec.onstop = () => resolve(make());
+          try { best.rec.stop(); } catch (e) { resolve(make()); }
+        });
+      }
+      if (blob && blob.size > 0) frozen = blob;
+      armed = false;
+      stopAll();                                        // nothing after the win records
+      syncGearButtons();
+      return frozen;
+    })();
+    return freezePromise;
   }
+  async function getClipBlob() {
+    if (frozen) return frozen;
+    if (armed || slots.some(Boolean)) return await freeze();
+    return null;
+  }
+  // Wipe a stale frozen clip at the start of a fresh battle.
+  function resetClip() { frozen = null; freezePromise = null; }
 
   // Reflect armed/idle state on the in-battle record button(s). The clip
   // control lives in the right deck rail — it reuses the settings-gear slot
@@ -56861,7 +56906,7 @@ const LiveClip = (() => {
     setTimeout(() => { if (!armed && !sessionDeclined) promptEnable(true); }, 800);
   }
 
-  return { arm, disarm, isArmed, hasClip, getClipBlob, promptEnable, maybePromptAtBattleStart, syncGearButtons };
+  return { arm, disarm, isArmed, hasClip, getClipBlob, freeze, resetClip, promptEnable, maybePromptAtBattleStart, syncGearButtons };
 })();
 
 function openShareToBroadcast(summary) {
@@ -110806,8 +110851,9 @@ function renderVsScreen() {
     App.screen = 'coinFlip';
     render();
     // 🎬 Offer clip recording at the start of the match so the last 60s is
-    // already buffered when the victory / defeat modal appears.
-    try { if (typeof LiveClip !== 'undefined') LiveClip.maybePromptAtBattleStart(); } catch (e) {}
+    // already buffered when the victory / defeat modal appears. Clear any clip
+    // frozen from a prior match + reset the one-shot freeze guard.
+    try { App.ui = App.ui || {}; App.ui._liveClipFrozen = false; if (typeof LiveClip !== 'undefined') { LiveClip.resetClip(); LiveClip.maybePromptAtBattleStart(); } } catch (e) {}
   };
   // 🥁 3·2·1·BATTLE! stamp (the mockup's gostage) before the coin flip. Same
   // fixed length on every client, so the multiplayer handoff keeps the exact
@@ -143178,6 +143224,14 @@ function renderGameOverOverlay() {
   const s = App.state;
   if (!s || !s.gameOver) return '';
 
+  // 🎬 The battle just ended — snapshot the last ~60s NOW and stop capturing,
+  // so the clip is pure gameplay ending at the win and never includes this
+  // overlay or the Share-to-Broadcast modal. One-shot per match.
+  if (!(App.ui && App.ui._liveClipFrozen) && typeof LiveClip !== 'undefined' && LiveClip.isArmed()) {
+    App.ui = App.ui || {}; App.ui._liveClipFrozen = true;
+    try { LiveClip.freeze(); } catch (e) {}
+  }
+
   const won = s.gameOver === 'player';
   const ph = s.units.find(u => u.owner === 'player' && u.isHero);
   const heroLvl = ph ? ph.level : 1;
@@ -158965,6 +159019,8 @@ function _campOpenBankDirectory(tab, bankId) {
   if (dsk) dsk.onclick = () => { root.remove(); try { _udwState().loaded = false; } catch (e) {} App.screen = 'bankDesk'; render(); };
   const mnt = root.querySelector('#bd-mint');
   if (mnt) mnt.onclick = () => { root.remove(); try { _bkcState().loaded = false; } catch (e) {} App.screen = 'bankCharter'; render(); };
+  const tls = root.querySelector('#bd-tellers');
+  if (tls) tls.onclick = () => { try { openTellerManager(BankDir.myBank && BankDir.myBank.owner_id); } catch (e) {} };
   const sub = root.querySelector('#bd-submit');
   if (sub) sub.onclick = async () => {
     sub.disabled = true;
@@ -158979,6 +159035,184 @@ function _campOpenBankDirectory(tab, bankId) {
     else { try { sub.disabled = false; } catch (e) {} }
   };
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// 👔 TELLER HIRING — staff the underwriting desk from your guild roster
+// ---------------------------------------------------------------------------
+// A teller decides loans on the OWNER's behalf, bounded by their own approval
+// ceiling. Both halves matter: bank_tellers rows are what open the desk for a
+// non-owner, and `max_approve` is re-checked inside bank_decide(), so what is
+// set here is a real authority grant, not a label.
+// ⚠ Owner-only by RLS (bt_owner_write). The UI gate below is courtesy; the
+// database is the enforcement.
+// ═══════════════════════════════════════════════════════════════════════════
+const BankStaff = { rows: [], at: 0, loading: false, err: '' };
+async function bankTellersFetch(bankId, force) {
+  if (!bankId || BankStaff.loading) return BankStaff;
+  if (!force && BankStaff.at && (Date.now() - BankStaff.at) < 20000) return BankStaff;
+  BankStaff.loading = true;
+  try {
+    const r = await Cloud.client.from('bank_tellers').select('*').eq('bank_id', bankId).order('hired_at', { ascending: true });
+    if (r && r.error) { BankStaff.err = /does not exist|PGRST205/i.test(r.error.message || '') ? 'setup' : (r.error.message || 'error'); BankStaff.rows = []; }
+    else { BankStaff.rows = (r && r.data) || []; BankStaff.err = ''; }
+    BankStaff.at = Date.now();
+  } catch (e) { BankStaff.err = 'error'; }
+  finally { BankStaff.loading = false; }
+  return BankStaff;
+}
+async function bankHireTeller(bankId, userId, userName, opts) {
+  try {
+    const o = opts || {};
+    const row = {
+      bank_id: bankId, user_id: userId,
+      user_name: (userName || 'Teller').slice(0, 40),
+      role: o.role === 'manager' ? 'manager' : 'teller',
+      can_approve: o.canApprove !== false,
+      max_approve: Math.max(0, Math.round(o.maxApprove != null ? o.maxApprove : 50000)),
+      wage_per_day: Math.max(0, Math.round(o.wage || 0)),
+    };
+    const { error } = await Cloud.client.from('bank_tellers').insert(row);
+    if (error) {
+      showToast(/duplicate|unique/i.test(error.message || '') ? 'They already work at your bank.'
+        : /does not exist|PGRST205/i.test(error.message || '') ? '⚠ Bank tables not installed — run player_banks.sql.'
+        : ('⚠ Could not hire: ' + (error.message || 'cloud error')), 5600);
+      return false;
+    }
+    showToast('👔 ' + row.user_name + ' hired as ' + row.role + ' — the desk is now open to them.', 5200);
+    await bankTellersFetch(bankId, true);
+    return true;
+  } catch (e) { showToast('⚠ Could not hire.', 3600); return false; }
+}
+async function bankUpdateTeller(bankId, id, patch) {
+  try {
+    const p = {};
+    if (patch.role != null)       p.role = patch.role === 'manager' ? 'manager' : 'teller';
+    if (patch.maxApprove != null) p.max_approve = Math.max(0, Math.round(patch.maxApprove));
+    if (patch.wage != null)       p.wage_per_day = Math.max(0, Math.round(patch.wage));
+    if (patch.canApprove != null) p.can_approve = !!patch.canApprove;
+    const { error } = await Cloud.client.from('bank_tellers').update(p).eq('id', id).eq('bank_id', bankId);
+    if (error) { showToast('⚠ Could not update: ' + (error.message || 'cloud error'), 4600); return false; }
+    await bankTellersFetch(bankId, true);
+    return true;
+  } catch (e) { return false; }
+}
+async function bankFireTeller(bankId, id, name) {
+  try {
+    const ok = await showGameConfirm({
+      title: '👔 Dismiss ' + escapeHtml(name || 'this teller') + '?',
+      bodyHtml: '<div>They lose access to your underwriting desk immediately.</div>' +
+                '<div style="margin-top:0.5rem;font-size:0.85rem;color:#a89878">Applications they already decided stay on the ledger — dismissing does not undo their verdicts.</div>',
+      yesLabel: 'DISMISS', noLabel: 'KEEP', yesAccent: 'crimson',
+    });
+    if (!ok) return false;
+    const { error } = await Cloud.client.from('bank_tellers').delete().eq('id', id).eq('bank_id', bankId);
+    if (error) { showToast('⚠ Could not dismiss: ' + (error.message || 'cloud error'), 4600); return false; }
+    showToast('👔 ' + (name || 'Teller') + ' dismissed.', 4200);
+    await bankTellersFetch(bankId, true);
+    return true;
+  } catch (e) { return false; }
+}
+// The manager modal. Opened from the Desk masthead and from Bank Row.
+async function openTellerManager(bankId) {
+  const bid = bankId || (BankDir.myBank && BankDir.myBank.owner_id) || (Profile.cloud && Profile.cloud.userId);
+  if (!bid) { showToast('☁ Sign in first.', 3000); return; }
+  // ⏱ Both of these hit the network. A hung fetch would leave the button doing
+  // NOTHING — the dead-button failure this codebase keeps rediscovering. Race
+  // each against a timeout so the modal always opens; it renders with whatever
+  // arrived, and an empty roster explains itself rather than never appearing.
+  const _cap = (p, ms) => Promise.race([p, new Promise(r => setTimeout(r, ms))]);
+  try { if (typeof corpEnsure === 'function') await _cap(Promise.resolve(corpEnsure()).catch(() => {}), 2500); } catch (e) {}
+  try { await _cap(bankTellersFetch(bid, true), 2500); } catch (e) {}
+  _renderTellerManager(bid);
+}
+function _renderTellerManager(bid) {
+  const old = document.getElementById('bank-tellers'); if (old) old.remove();
+  const rows = BankStaff.rows || [];
+  const hiredIds = new Set(rows.map(r => r.user_id));
+  const roster = ((typeof Corp !== 'undefined' && Corp.roster) || []).filter(m => m && m.userId && !hiredIds.has(m.userId) && m.userId !== bid);
+  const fmt = (n) => Math.round(n || 0).toLocaleString();
+
+  const staffHtml = rows.length ? rows.map(t => `
+    <div style="padding:0.75rem 0.85rem;background:rgba(0,0,0,0.35);border:1px solid rgba(212,175,55,0.3);border-radius:9px;display:flex;flex-direction:column;gap:0.45rem">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+        <span style="font-family:'Cinzel',serif;color:#ffd166;font-size:1rem">${escapeHtml(t.user_name || 'Teller')}</span>
+        <span style="color:#9fb4c9;font-size:0.72rem;letter-spacing:0.1em;text-transform:uppercase">${escapeHtml(t.role || 'teller')}</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <label style="color:#bfae87;font-size:0.72rem">Approves up to</label>
+        <input class="tl-limit" data-id="${t.id}" type="number" min="0" step="1000" value="${t.max_approve | 0}"
+          style="width:120px;padding:0.35rem 0.5rem;background:rgba(15,8,30,0.65);border:1px solid rgba(212,175,55,0.35);border-radius:7px;color:#ffe6b0;font-family:'Roboto Mono',monospace;font-size:0.82rem">
+        <span style="color:#bfae87;font-size:0.72rem">🔥</span>
+        <select class="tl-role" data-id="${t.id}" style="padding:0.35rem 0.5rem;background:rgba(15,8,30,0.65);border:1px solid rgba(212,175,55,0.35);border-radius:7px;color:#ffe6b0;font-size:0.8rem">
+          <option value="teller"${(t.role !== 'manager') ? ' selected' : ''}>Teller</option>
+          <option value="manager"${(t.role === 'manager') ? ' selected' : ''}>Manager</option>
+        </select>
+        <button class="tl-save" data-id="${t.id}" style="padding:0.35rem 0.7rem;background:rgba(124,232,168,0.16);color:#7ce8a8;border:1px solid rgba(124,232,168,0.5);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.78rem">SAVE</button>
+        <button class="tl-fire" data-id="${t.id}" data-name="${escapeHtml(t.user_name || 'Teller')}" style="padding:0.35rem 0.7rem;background:rgba(255,107,107,0.14);color:#ff9a88;border:1px solid rgba(255,107,107,0.45);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.78rem">DISMISS</button>
+      </div>
+    </div>`).join('')
+    : '<div style="padding:1.2rem;color:#bfae87;text-align:center">No tellers yet. You are underwriting alone.</div>';
+
+  const rosterHtml = roster.length ? roster.map(m => `
+    <div style="padding:0.6rem 0.8rem;background:rgba(0,0,0,0.3);border:1px solid rgba(184,136,255,0.25);border-radius:9px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <div style="min-width:0">
+        <div style="color:#e8ddff;font-size:0.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.name || 'Member')}</div>
+        <div style="color:#9a8fb5;font-size:0.72rem">${escapeHtml(m.role || 'member')}</div>
+      </div>
+      <button class="tl-hire" data-uid="${escapeHtml(m.userId)}" data-name="${escapeHtml(m.name || 'Member')}"
+        style="flex:0 0 auto;padding:0.4rem 0.8rem;background:rgba(212,175,55,0.16);color:#ffd166;border:1px solid rgba(212,175,55,0.55);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.8rem">👔 HIRE</button>
+    </div>`).join('')
+    : `<div style="padding:1rem;color:#bfae87;text-align:center;font-size:0.85rem">${
+        (typeof Corp !== 'undefined' && Corp.mine)
+          ? 'Everyone in your guild already works here.'
+          : 'You need a corporation first — tellers are hired from your guild roster. Found one in Just Business.'}</div>`;
+
+  const root = document.createElement('div');
+  root.id = 'bank-tellers';
+  root.style.cssText = 'position:fixed;inset:0;z-index:9460;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center, rgba(8,4,20,0.65) 0%, rgba(2,1,8,0.92) 100%);backdrop-filter:blur(4px)';
+  root.innerHTML = `
+    <div style="max-width:760px;width:94vw;max-height:86vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(28,22,52,0.96),rgba(12,8,28,0.98));border:1px solid rgba(212,175,55,0.5);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,0.7);font-family:'Inter','Roboto',sans-serif">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:1.1rem 1.4rem 0.6rem">
+        <div>
+          <h2 style="font-family:'Cinzel',serif;color:#ffd166;font-size:1.35rem;letter-spacing:0.06em;margin:0">👔 Tellers</h2>
+          <div style="color:#bfae87;font-size:0.82rem;margin-top:0.25rem">Staff your underwriting desk from your guild. A teller decides loans for you, up to their own limit.</div>
+        </div>
+        <button id="tl-close" style="padding:0.4rem 0.85rem;background:rgba(255,255,255,0.06);color:#bfae87;border:1px solid rgba(212,175,55,0.3);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.78rem">✕ CLOSE</button>
+      </div>
+      ${BankStaff.err === 'setup' ? '<div style="padding:1rem 1.4rem;color:#ff9a6b">Bank tables are not installed. Run <b>player_banks.sql</b>.</div>' : ''}
+      <div style="flex:1;overflow-y:auto;padding:0 1.4rem 1.2rem;display:flex;flex-direction:column;gap:0.6rem">
+        <div style="color:#ffd166;font-family:'Cinzel',serif;font-size:0.9rem;letter-spacing:0.08em;margin-top:0.4rem">ON THE DESK <span style="color:#bfae87;font-size:0.78rem">(${rows.length})</span></div>
+        ${staffHtml}
+        <div style="color:#c4a8ff;font-family:'Cinzel',serif;font-size:0.9rem;letter-spacing:0.08em;margin-top:0.6rem">YOUR GUILD <span style="color:#9a8fb5;font-size:0.78rem">(${roster.length} available)</span></div>
+        ${rosterHtml}
+        <div style="margin-top:0.5rem;color:#9fb4c9;font-size:0.76rem;line-height:1.55">
+          A teller cannot approve past their limit — that ceiling is enforced on the server, so it holds even if they tamper with the client. Managers are for your own bookkeeping; the limit is what actually grants authority.
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(root);
+  root.querySelector('#tl-close').onclick = () => root.remove();
+  root.onclick = (ev) => { if (ev.target === root) root.remove(); };
+  root.querySelectorAll('.tl-hire').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const ok = await bankHireTeller(bid, b.dataset.uid, b.dataset.name, { role: 'teller', maxApprove: 50000 });
+    if (ok) { root.remove(); _renderTellerManager(bid); } else { b.disabled = false; }
+  });
+  root.querySelectorAll('.tl-save').forEach(b => b.onclick = async () => {
+    const id = b.dataset.id;
+    const lim = root.querySelector('.tl-limit[data-id="' + id + '"]');
+    const rol = root.querySelector('.tl-role[data-id="' + id + '"]');
+    b.disabled = true;
+    const ok = await bankUpdateTeller(bid, id, { maxApprove: lim ? +lim.value : null, role: rol ? rol.value : null });
+    if (ok) showToast('👔 Updated.', 2600);
+    try { b.disabled = false; } catch (e) {}
+  });
+  root.querySelectorAll('.tl-fire').forEach(b => b.onclick = async () => {
+    const ok = await bankFireTeller(bid, b.dataset.id, b.dataset.name);
+    if (ok) { root.remove(); _renderTellerManager(bid); }
+  });
+}
+try { window.__mg = window.__mg || {}; window.__mg.tellers = openTellerManager; } catch (e) {}
+
 // 👔 The staff strip — the ONLY route to the Mint and the Underwriting Desk once
 // you own a bank or are hired onto one. Shown to owners AND tellers; hidden
 // entirely for everyone else so it never advertises counters they cannot open.
@@ -158994,6 +159228,7 @@ function _bankStaffStripHtml() {
       <div style="color:#e2d8bf;font-size:0.82rem">👔 ${who}${limit}${tray ? ` · <b style="color:#ffd166">${tray}</b> waiting on the desk` : ' · desk is clear'}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button id="bd-desk" style="font-family:'Cinzel',serif;font-weight:700;cursor:pointer;border-radius:8px;padding:0.4rem 0.85rem;border:1px solid #e8c97e;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;font-size:0.82rem">🖋 Underwriting Desk${tray ? ' (' + tray + ')' : ''}</button>
+        ${b ? '<button id="bd-tellers" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:8px;padding:0.4rem 0.85rem;border:1px solid rgba(196,168,255,0.6);background:rgba(40,28,66,0.6);color:#c4a8ff;font-size:0.82rem">👔 Tellers</button>' : ''}
         ${b ? '<button id="bd-mint" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:8px;padding:0.4rem 0.85rem;border:1px solid rgba(127,211,255,0.6);background:rgba(18,38,58,0.6);color:#9fd8ff;font-size:0.82rem">🏦 Office of the Mint</button>' : ''}
       </div>
     </div>`;
@@ -196383,7 +196618,11 @@ function _udwHead(bank) {
   const role = S.isOwner ? 'Owner' : (S.teller ? ((S.teller.role || 'teller').toUpperCase()) : '—');
   return '<header class="udw-bar">' +
     '<div class="udw-word"><h1>' + escapeHtml(b.bank_name || 'The Underwriting Desk') + '</h1>' +
-      '<span class="udw-charter">' + escapeHtml(_bkcTier(b.charter_tier || 1).name) + ' · ' + escapeHtml(role) + '</span></div>' +
+      '<span class="udw-charter">' + escapeHtml(_bkcTier(b.charter_tier || 1).name) + ' · ' + escapeHtml(role) + '</span>' +
+      // Owner-only: staffing the desk is the owner's call, and RLS refuses a
+      // teller's write anyway — showing them the button would only mislead.
+      (S.isOwner ? '<button class="udw-btn" id="udw-tellers" style="padding:8px 14px">👔 Tellers</button>' : '') +
+    '</div>' +
     '<div class="udw-metrics">' +
       '<div class="udw-metric"><span class="k">Capitalization</span><div class="v">' + _bkcMt(staked) + '<em>MT</em></div>' +
         '<div class="c">Staked · locked while trading</div></div>' +
@@ -196498,6 +196737,8 @@ function _udwReceipt(a, v) {
 function _udwBind() {
   const S = _udwState();
   const g = (id) => document.getElementById(id);
+  const tl = g('udw-tellers');
+  if (tl) tl.onclick = () => { try { openTellerManager(S.bankId); } catch (e) {} };
   const ap = g('udw-approve'); if (ap) ap.onclick = () => udwDecide('approved', {});
   const cn = g('udw-counter'); if (cn) cn.onclick = () => udwCounterOpen();
   const dn = g('udw-deny'); if (dn) dn.onclick = () => {

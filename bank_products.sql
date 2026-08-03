@@ -9,9 +9,11 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- ── Identity: the sigil + motto shown in the Registry of Player Banks ──────
+-- ⚠ No prestige column here: player_banks already has `prestige`, and that is
+-- what bank_directory() selects. Adding a second `prestige_score` would leave
+-- two columns meaning the same thing with only one of them ever written to.
 alter table public.player_banks add column if not exists motto     text default '';
 alter table public.player_banks add column if not exists logo_url  text;
-alter table public.player_banks add column if not exists prestige_score int not null default 0;
 
 -- ── Loan products ─────────────────────────────────────────────────────────
 create table if not exists public.bank_products (
@@ -81,7 +83,13 @@ begin
 end $$;
 
 -- ── Directory now carries identity + product count ───────────────────────
-create or replace function public.bank_directory()
+-- ⚠ DROP first. bank_directory() already exists with a narrower RETURNS TABLE,
+-- and `create or replace` cannot change a function's output row type — Postgres
+-- rejects it with 42P13 "cannot change return type of existing function".
+-- Dropping and recreating inside the same transaction means no window where the
+-- client's rpc('bank_directory') call would 404.
+drop function if exists public.bank_directory();
+create function public.bank_directory()
 returns table (owner_id uuid, owner_name text, bank_name text, tagline text, motto text,
                logo_url text, charter_tier int, mt_staked numeric, deposits bigint,
                loans_serviced int, defaults_taken int, prestige int, products int)

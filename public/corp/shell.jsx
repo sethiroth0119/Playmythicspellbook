@@ -87,7 +87,7 @@ const NAV = [
   { id: 'vehicleMarket', label: 'Vehicle Market', ico: '🚗', action: 'openVehicleMarket' },
   { id: 'realestate', label: 'Real Estate',    ico: '⌂' },
   { id: 'black',      label: 'Black Market',   ico: '▥', badgeCls: 'toxic', badge: '6' },
-  { id: 'feed',       label: 'Live Feed',      ico: '☷' },
+  { id: 'feed',       label: 'Guild Wire',      ico: '☷' },
   { group: 'Comms' },
   { id: 'mail',       label: 'Mailbox',        ico: '✉', badgeCls: 'alert', badge: 2 },
   { id: 'trade',      label: 'Trade Window',   ico: '⇋' },
@@ -207,7 +207,7 @@ function Topbar({ route, balances }) {
     realestate:['Economy', 'Real Estate'],
     property:  ['Economy', 'Real Estate', 'Listing'],
     black:     ['Economy', 'Black Market'],
-    feed:      ['Economy', 'Live Feed'],
+    feed:      ['Economy', 'Guild Wire'],
     mail:      ['Comms',   'Mailbox'],
     trade:     ['Comms',   'Trade'],
     relic:     ['Holdings','Vault', 'Relic'],
@@ -230,11 +230,18 @@ function Topbar({ route, balances }) {
         <div className="bal aza">
           CINDER <span className="num">{fmt(balances.aza)}</span>
         </div>
-        <div className="bal">
-          IRON <span className="num">{fmt(balances.iron)}</span>
+        <div className="bal" title="Aza Coin — your premium currency">
+          AZA COIN <span className="num">{fmt(balances.sovs || 0)}</span>
         </div>
-        <div className="bal">
-          ESSENCE <span className="num">{balances.essence}</span>
+        {/* Ⓜ Mythic Token. When a wallet is linked the chip says so and shows
+            the address, because MT and "MT held at a linked wallet" are not the
+            same claim — an unlinked player still has a balance in the Bank of
+            Ethos mirror, and conflating the two would misreport ownership. */}
+        <div className="bal"
+             title={balances.wallet
+               ? ('Mythic Token · wallet ' + String(balances.wallet).slice(0, 6) + '…' + String(balances.wallet).slice(-4))
+               : 'Mythic Token — held in the Bank of Ethos. Link a wallet to hold it on-chain.'}>
+          {balances.wallet ? '🦊 MYTHIC TOKEN' : 'MYTHIC TOKEN'} <span className="num">{fmt(balances.mt || 0)}</span>
         </div>
       </div>
 

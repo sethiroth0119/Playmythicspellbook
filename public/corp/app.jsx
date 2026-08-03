@@ -21,9 +21,18 @@ function App() {
   const [mail, setMail] = useState(window.ECON.MAIL);
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
+  // 💰 Top-bar balances. `aza` is the CINDER chip (legacy field name).
+  // ⚠ `iron` and `essence` used to be hardcoded 14,280 / 9 — pure demo numbers
+  // that shipped to players as if they were real holdings. They are now the
+  // player's actual Aza Coin and Mythic Token.
   const [balances, setBalances] = useState(() => {
     const e = (window.__JB && window.__JB.econ) || null;
-    return { aza: e ? (e.cinders | 0) : window.ECON.PLAYER.aza, iron: 14_280, essence: 9 };
+    return {
+      aza:      e ? (e.cinders | 0) : window.ECON.PLAYER.aza,   // Cinder
+      sovs:     e ? (e.aza | 0) : 0,                            // Aza Coin
+      mt:       e ? (e.mt | 0) : 0,                             // Mythic Token
+      wallet:   e ? (e.wallet || null) : null,
+    };
   });
 
   // 🌉 Live bridge — when the embedding game pushes real economy data, mirror
@@ -31,7 +40,7 @@ function App() {
   useEffect(() => {
     const onJB = () => {
       const e = (window.__JB && window.__JB.econ) || null;
-      if (e) setBalances(b => ({ ...b, aza: e.cinders | 0 }));
+      if (e) setBalances(b => ({ ...b, aza: e.cinders | 0, sovs: e.aza | 0, mt: e.mt | 0, wallet: e.wallet || null }));
       // 🏢 Just founded a corporation → pop the Guild & Hiring panel so the
       // owner can start hiring right away.
       if (e && e.corpJustFounded) { setFoundOpen(false); setGuildOpen(true); }
@@ -102,7 +111,8 @@ function App() {
   const doSend = (asset, target, qty, message) => {
     setSendTarget(null);
     toast(`Sent ${qty} ${asset.name} to ${target}.`);
-    if (asset.name === 'Iron') setBalances(b => ({ ...b, iron: b.iron - qty }));
+    // (The old `iron` balance was a demo placeholder and no longer exists;
+    // real resource movement is owned by the game side, not this local state.)
   };
 
   const bridged = () => !!(window.JB_isBridged && window.JB_isBridged());
@@ -736,6 +746,81 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
   const corps = (econ && Array.isArray(econ.corps)) ? econ.corps : [];
   const act = (p) => { try { window.JB_action && window.JB_action(p); } catch (e) {} };
 
+  // ── Position powers — what each guild role unlocks ──────────────────────
+  const myRole = String((corp && corp.role) || 'member');
+  const isExec = amOwner || myRole === 'CEO' || myRole === 'Corp CEO';
+  const isAgent = isExec || myRole === 'Real Estate Agent';
+  const isLawyer = isExec || myRole === 'Lawyer';
+  const agency = (econ && Array.isArray(econ.agencyListings)) ? econ.agencyListings : [];
+  const legal = (econ && Array.isArray(econ.legalCases)) ? econ.legalCases : [];
+
+  // 🏠 AGENCY DESK — Real Estate Agents sell/rent the owner's property:
+  // reprice, withdraw and relist the founder's cloud listings (server-checked).
+  const agencyPanel = (corp && isAgent) ? (
+    <div className="card flat" style={{ padding: 12, marginBottom: 14 }}>
+      <div className="mono" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--aza)', marginBottom: 6 }}>🏠 Agency Desk — the founder's listings</div>
+      {agency.length === 0 ? (
+        <div className="muted" style={{ fontSize: 11.5 }}>No properties listed by the founder yet. When the owner lists property on the market, agents manage it here — reprice, withdraw, relist.</div>
+      ) : (
+        <div className="col" style={{ gap: 6, maxHeight: '22vh', overflow: 'auto' }}>
+          {agency.map(l => {
+            const pj = l.prop_json || {};
+            const name = pj.name || pj.title || l.prop_id || 'Property';
+            const isRent = l.kind === 'rent';
+            const settled = l.status === 'sold' || l.status === 'rented';
+            return (
+              <div key={l.id} className="row" style={{ justifyContent: 'space-between', gap: 8, padding: '7px 10px', border: '1px solid var(--line-soft)', borderRadius: 4 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 12 }}>{name} <span className="mono muted" style={{ fontSize: 10 }}>· {isRent ? 'RENT' : 'SALE'} · {l.status}</span></div>
+                  <div className="mono muted" style={{ fontSize: 10.5 }}>{isRent ? ((l.rent || 0) + ' 🔥 / ' + (l.rent_days || 1) + 'd') : ((l.price || 0) + ' 🔥')}</div>
+                </div>
+                {!settled && (
+                  <span className="row" style={{ gap: 5, flexShrink: 0 }}>
+                    <button className="btn sm" onClick={() => {
+                      const cur = isRent ? (l.rent || 0) : (l.price || 0);
+                      const v = parseInt(window.prompt('New ' + (isRent ? 'rent' : 'price') + ' (🔥 Cinder):', String(cur)) || '', 10);
+                      if (!isNaN(v) && v >= 0) act(isRent ? { kind: 'agencyUpdate', id: l.id, rent: v } : { kind: 'agencyUpdate', id: l.id, price: v });
+                    }}>💰 Price</button>
+                    {l.status === 'active'
+                      ? <button className="btn sm" style={{ color: 'var(--toxic)' }} onClick={() => act({ kind: 'agencyUpdate', id: l.id, status: 'cancelled' })}>✕ Withdraw</button>
+                      : <button className="btn sm" onClick={() => act({ kind: 'agencyUpdate', id: l.id, status: 'active' })}>↻ Relist</button>}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  ) : null;
+
+  // ⚖️ LEGAL DOCKET — Lawyers see every court case involving a guild member
+  // and when the court date is set (court system integration).
+  const lawyerPanel = (corp && isLawyer) ? (
+    <div className="card flat" style={{ padding: 12, marginBottom: 14 }}>
+      <div className="mono" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--aza)', marginBottom: 6 }}>⚖️ Legal Docket — cases involving guild members</div>
+      {legal.length === 0 ? (
+        <div className="muted" style={{ fontSize: 11.5 }}>No cases on file against anyone in the guild. Keep it that way, counselor.</div>
+      ) : (
+        <div className="col" style={{ gap: 6, maxHeight: '22vh', overflow: 'auto' }}>
+          {legal.map(c => (
+            <div key={c.id} style={{ padding: '7px 10px', border: '1px solid var(--line-soft)', borderRadius: 4 }}>
+              <div style={{ fontWeight: 600, fontSize: 12 }}>
+                {c.defendant_name} <span className="mono muted" style={{ fontSize: 10 }}>· {c.crime_type} · sev {c.severity}</span>
+                <span className={'chip ' + (c.status === 'open' ? 'rust' : 'flat')} style={{ marginLeft: 6, fontSize: 9 }}>{(c.status || '').toUpperCase()}</span>
+              </div>
+              <div className="mono muted" style={{ fontSize: 10.5, marginTop: 2 }}>
+                {c.court_date ? ('📅 Court: ' + new Date(c.court_date).toLocaleString()) : '📅 Court date not yet set'}
+                {c.judge_name ? ' · Judge ' + c.judge_name : ''}
+                {c.verdict ? ' · ' + c.verdict : ''}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : null;
+
   const rolesPanel = (
     <div style={{ marginTop: 4 }}>
       <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 8 }}>Roles you can hire / apply for</div>
@@ -814,7 +899,13 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
                 <div key={m.userId} className="row" style={{ justifyContent: 'space-between', padding: '8px 12px', border: '1px solid var(--line-soft)', borderRadius: 4 }}>
                   <span>{m.name} <span className="mono muted" style={{ fontSize: 10.5 }}>· {m.role}</span></span>
                   {amOwner && m.role !== 'founder' && m.name !== me && (
-                    <button className="btn sm" onClick={() => act({ kind: 'corpKick', userId: m.userId })} style={{ color: 'var(--toxic)' }}>Remove</button>
+                    <span className="row" style={{ gap: 6, flexShrink: 0 }}>
+                      <select className="select" style={{ padding: '2px 6px', fontSize: 11, width: 'auto' }} value={m.role}
+                        onChange={e => act({ kind: 'corpSetRole', userId: m.userId, role: e.target.value })} title="Assign position">
+                        {CORP_ROLES.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                      </select>
+                      <button className="btn sm" onClick={() => act({ kind: 'corpKick', userId: m.userId })} style={{ color: 'var(--toxic)' }}>Remove</button>
+                    </span>
                   )}
                 </div>
               ))}
@@ -842,7 +933,11 @@ function CorpGuild({ econ, toast, onClose, onFound }) {
               </div>
             )}
           </div>
-          {rolesPanel}
+          <div>
+            {agencyPanel}
+            {lawyerPanel}
+            {rolesPanel}
+          </div>
         </div>
       )}
     </Modal>

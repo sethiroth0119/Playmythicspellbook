@@ -35279,7 +35279,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119w6';
+  window.BUILD_VERSION = 'v119x2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -35792,7 +35792,15 @@ const STATUS_EFFECTS = {
   // bumps every incoming hit by 25%. Read by calculateDamage AFTER the
   // base def calc so it stacks with elemental matchup but the spec's
   // "universal" promise (works regardless of element / faction) still holds.
-  vulnerable:{ id: 'vulnerable',name: 'Vulnerable', icon: '🎯', damageTakenMult: 1.25, desc: 'Marked vulnerable — takes +25% damage from all sources.' },
+  // ⚠ `vulnerable` WAS DECLARED TWICE in this object. A duplicate key in an
+  // object literal is silent — the later one won, so this entry never existed
+  // at runtime and its `damageTakenMult: 1.25` was unreachable. Since it was
+  // the ONLY status carrying that field, the engine's +25%-damage-taken hook
+  // (calculateDamage, ~L78472) had no way to fire at all.
+  // Merged into the single definition further down. Live behaviour (-5 DEF/RES)
+  // is preserved there EXACTLY — restoring the +25% on top would be a silent
+  // buff to every card that already applies Vulnerable, so that is left as a
+  // deliberate choice rather than a side effect of this fix.
   strong:    { id: 'strong',    name: 'Strong',    icon: '💪',  atkMod: 4, desc: '+4 attack' },
   shielded:  { id: 'shielded',  name: 'Shielded',  icon: '🛡️', defMod: 5, resMod: 5, desc: '+5 def & res' },
   focused:   { id: 'focused',   name: 'Focused',   icon: '🎯',  magMod: 4, desc: '+4 magic' },
@@ -35900,6 +35908,10 @@ const STATUS_EFFECTS = {
   // ⚡ ELECTRIFIED — arc damage with a chance to drop the action.
   electrified:{ id: 'electrified',name: 'Electrified',  icon: '⚡',  dmgMin: 1, dmgMax: 3, when: 'turnStart', skipChance: 0.3, desc: 'Crackling current — 1-3 dmg/turn and 30% chance to fumble each action.' },
   // 🛡️ VULNERABLE — defenses cracked wide open (mirror of Shielded).
+  // 🪓 The ONE Vulnerable. (It was declared twice; see the note above. This is
+  // the definition that was actually live, so it is the one kept.)
+  // To also make it take +25% damage from every source, add `damageTakenMult:
+  // 1.25` here — the engine hook is already wired and currently has no user.
   vulnerable: { id: 'vulnerable', name: 'Vulnerable',   icon: '🪓',  defMod: -5, resMod: -5, desc: '-5 DEF & RES — armor and wards shattered.' },
   // 💪 EMPOWERED — sustained offensive buff (mirror of Vulnerable).
   empowered:  { id: 'empowered',  name: 'Empowered',    icon: '✊',  atkMod: 4, magMod: 4, desc: '+4 ATK and +4 MAG while empowered.' },
@@ -47831,6 +47843,12 @@ function _applyCatalogRow(data) {
     Catalog.cardCraftLock = rawMoves.__card_craft_lock__;
     try { Forge.cardCraftLock = rawMoves.__card_craft_lock__; } catch (e) {}
   }
+  // Ⓜ MT staking readiness — same posture as the craft lock: an operational
+  // switch the owner throws, so the published value always wins over a local edit.
+  if (rawMoves.__mt_staking_ready__ && typeof rawMoves.__mt_staking_ready__ === 'object') {
+    Catalog.mtStaking = rawMoves.__mt_staking_ready__;
+    try { Forge.mtStaking = rawMoves.__mt_staking_ready__; } catch (e) {}
+  }
   if (rawMoves.__weather_vfx__ && typeof rawMoves.__weather_vfx__ === 'object') {
     Catalog.weatherVfx = rawMoves.__weather_vfx__;
     try { if (!_hydAdm || !Forge.weatherVfx || !Object.keys(Forge.weatherVfx).length) Forge.weatherVfx = rawMoves.__weather_vfx__; } catch (e) {}
@@ -48498,6 +48516,13 @@ async function cloudPublishCatalog(opts) {
         const l = (Forge.cardCraftLock && typeof Forge.cardCraftLock === 'object') ? Forge.cardCraftLock : null;
         return { locked: l && typeof l.locked === 'boolean' ? l.locked : CARD_CRAFT_LOCKED_DEFAULT,
                  message: (l && l.message) || '🔒 Card crafting is temporarily closed.' };
+      })(),
+      // Ⓜ Always emit, falling back to the shipped default, so players can never
+      // read a stale "open" from an older catalog row.
+      __mt_staking_ready__: (function () {
+        const s = (Forge.mtStaking && typeof Forge.mtStaking === 'object') ? Forge.mtStaking : null;
+        return { ready: s && typeof s.ready === 'boolean' ? s.ready : MT_STAKING_READY_DEFAULT,
+                 note: (s && s.note) || 'Staking opens once Mythic Token has a real market cap and a settled value. Until then a stake could be charged against a price that is not yet real — so Cinder is the way in.' };
       })(),
       __weather_vfx_intensity__: (Forge.weatherVfxIntensity && typeof Forge.weatherVfxIntensity === 'object') ? Forge.weatherVfxIntensity : {},
       // 📈 Crash Exchange — market prices + reserve pool. These were LOCAL-ONLY;
@@ -56692,17 +56717,40 @@ async function _tournPaint() {
    still plays. Fully self-contained: a floating 🎬 button arms/disarms it.
    ══════════════════════════════════════════════════════════════════════ */
 const LiveClip = (() => {
-  const WINDOW_MS = 60000;
-  let stream = null, rec = null, chunks = [], header = null, mime = '', armed = false, arming = false;
+  // ── Reliable rolling ~60s buffer via SEGMENTS ──
+  // Trimming a live webm mid-stream (dropping clusters) makes a broken file
+  // that plays only a second or two — which is what happened before. Instead we
+  // record complete 60s segments and keep the last full one, so every exported
+  // clip is a VALID, correctly-playing webm of up to ~60s of the newest footage.
+  const SEG_MS = 60000;
+  let stream = null, rec = null, mime = '', armed = false, arming = false;
+  let curChunks = [], curStart = 0, prevBlob = null, rotateTimer = null;
 
   function pickMime() {
     const cands = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
     for (const m of cands) { try { if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m; } catch (e) {} }
     return 'video/webm';
   }
-  function prune() {
-    const now = performance.now();
-    while (chunks.length > 0 && (now - chunks[0].t) > WINDOW_MS) chunks.shift();
+  function startSegment() {
+    if (!stream) return;
+    let recOpts = { mimeType: mime };
+    try { recOpts.videoBitsPerSecond = 3500000; } catch (e) {}
+    try { rec = new MediaRecorder(stream, recOpts); }
+    catch (e) { rec = new MediaRecorder(stream); }
+    curChunks = []; curStart = performance.now();
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) curChunks.push(e.data); };
+    rec.start();                                     // one blob per segment
+    clearTimeout(rotateTimer);
+    rotateTimer = setTimeout(rotate, SEG_MS);
+  }
+  function rotate() {
+    if (!rec) return;
+    const finishing = rec, atStop = curChunks;
+    finishing.onstop = () => {
+      if (atStop.length) prevBlob = new Blob(atStop, { type: mime || 'video/webm' });
+      if (armed && stream) startSegment();           // seamlessly begin the next segment
+    };
+    try { finishing.stop(); } catch (e) {}
   }
   async function arm() {
     if (armed || arming) return armed;
@@ -56715,21 +56763,13 @@ const LiveClip = (() => {
       const opts = { video: { frameRate: 30 }, audio: false, preferCurrentTab: true };
       stream = await navigator.mediaDevices.getDisplayMedia(opts);
       mime = pickMime();
-      let recOpts = { mimeType: mime };
-      try { recOpts.videoBitsPerSecond = 3500000; } catch (e) {}
-      rec = new MediaRecorder(stream, recOpts);
-      header = null; chunks = [];
-      rec.ondataavailable = (e) => {
-        if (!e.data || !e.data.size) return;
-        if (!header) header = e.data;               // first chunk carries the webm header
-        else { chunks.push({ t: performance.now(), data: e.data }); prune(); }
-      };
-      rec.start(1000);                               // 1s timeslice
-      const track = stream.getVideoTracks()[0];
-      if (track) track.onended = () => disarm();     // user hit the browser "stop sharing" bar
+      prevBlob = null;
       armed = true;
+      const track = stream.getVideoTracks()[0];
+      if (track) track.onended = () => disarm();      // user hit the browser "stop sharing" bar
+      startSegment();
       syncGearButtons();
-      if (typeof showToast === 'function') showToast('🔴 Clip recording ON — the last 60s of play is captured. Win, then Share to Broadcast to attach it.', 5600);
+      if (typeof showToast === 'function') showToast('🔴 Clip recording ON — the last ~60s is always kept. Win, then Share to Broadcast to attach it.', 5600);
       return true;
     } catch (e) {
       console.warn('[LiveClip] arm failed', e && e.message);
@@ -56738,18 +56778,31 @@ const LiveClip = (() => {
     } finally { arming = false; }
   }
   function disarm() {
+    armed = false;
+    clearTimeout(rotateTimer);
     try { if (rec && rec.state !== 'inactive') rec.stop(); } catch (e) {}
     try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch (e) {}
-    stream = null; rec = null; armed = false;
+    stream = null; rec = null;
     syncGearButtons();
   }
   function isArmed() { return armed; }
-  function hasClip() { return !!(header && chunks.length); }
+  function hasClip() { return !!(armed && (curChunks.length || prevBlob)); }
   async function getClipBlob() {
-    if (!hasClip()) return null;
-    try { if (rec && rec.state === 'recording') { rec.requestData(); await new Promise(r => setTimeout(r, 140)); prune(); } } catch (e) {}
-    const parts = [header].concat(chunks.map(c => c.data));
-    return new Blob(parts, { type: mime || 'video/webm' });
+    if (!armed) return prevBlob;
+    const curDur = (performance.now() - curStart) / 1000;
+    const atStop = curChunks, finishing = rec;
+    clearTimeout(rotateTimer);
+    const curBlob = await new Promise((resolve) => {
+      const make = () => (atStop.length ? new Blob(atStop, { type: mime || 'video/webm' }) : null);
+      if (!finishing || finishing.state === 'inactive') { resolve(make()); return; }
+      finishing.onstop = () => resolve(make());
+      try { finishing.stop(); } catch (e) { resolve(make()); }
+    });
+    if (curBlob) prevBlob = curBlob;
+    if (armed && stream) startSegment();              // keep recording after grabbing the clip
+    // Current segment has enough footage? Use it; else fall back to the last full one.
+    if (curBlob && curDur >= 20) return curBlob;
+    return prevBlob || curBlob;
   }
 
   // Reflect armed/idle state on the in-battle record button(s). The clip
@@ -56770,9 +56823,11 @@ const LiveClip = (() => {
 
   // Friendly permission modal shown BEFORE the browser's share prompt, so the
   // player knows what's about to happen. The Enable click is the user gesture
-  // getDisplayMedia requires.
-  function promptEnable() {
-    if (armed) { disarm(); return; }
+  // getDisplayMedia requires. `auto=true` means it was offered at battle start
+  // (so "Not now" quiets it for the rest of the session instead of nagging).
+  let sessionDeclined = false;
+  function promptEnable(auto) {
+    if (armed) { if (!auto) disarm(); return; }
     const ID = 'liveclip-perm';
     const old = document.getElementById(ID); if (old) old.remove();
     const wrap = document.createElement('div');
@@ -56792,12 +56847,21 @@ const LiveClip = (() => {
     document.body.appendChild(wrap);
     const close = () => { try { wrap.remove(); } catch (e) {} };
     wrap.onclick = (e) => { if (e.target === wrap) close(); };
-    const noBtn = document.getElementById('liveclip-no'); if (noBtn) noBtn.onclick = close;
+    const noBtn = document.getElementById('liveclip-no');
+    if (noBtn) noBtn.onclick = () => { if (auto) sessionDeclined = true; close(); };
     const yesBtn = document.getElementById('liveclip-yes');
     if (yesBtn) yesBtn.onclick = async () => { close(); await arm(); };
   }
 
-  return { arm, disarm, isArmed, hasClip, getClipBlob, promptEnable, syncGearButtons };
+  // Offer recording once at the start of a match, so the last 60s is already
+  // buffered by the time the victory / defeat modal appears. Skips if already
+  // recording or the player waved it off earlier this session.
+  function maybePromptAtBattleStart() {
+    if (armed || sessionDeclined) return;
+    setTimeout(() => { if (!armed && !sessionDeclined) promptEnable(true); }, 800);
+  }
+
+  return { arm, disarm, isArmed, hasClip, getClipBlob, promptEnable, maybePromptAtBattleStart, syncGearButtons };
 })();
 
 function openShareToBroadcast(summary) {
@@ -56872,7 +56936,7 @@ function openShareToBroadcast(summary) {
       if (clip) {
         // Also a first-class clip so it lands in the Clips tab + feed clip card.
         await Cloud.client.from('eb_clips').insert({
-          user_id: uid, title: body.slice(0, 80), url: clip,
+          user_id: uid, title: body.slice(0, 500), url: clip,
         });
         try { if (typeof LiveClip !== 'undefined') LiveClip.disarm(); } catch (e) {}
       }
@@ -56945,7 +57009,16 @@ function openBankOfEthos() {
             '<span class="small-text" style="display:inline-flex;align-items:center;gap:3px;color:#caa46a">Maintenance ' + BOE_FEE + '<span class="cinder-icon" style="width:1.1em;height:1.1em;vertical-align:-0.2em"></span>/ 30d → Foundation Reserve · next in ' + nextDue + 'd</span>' +
             (BankEthos._wallet && BankEthos._wallet.wallet_address
               ? '<span id="boe-wallet" title="On-chain wallet linked to your account (Base mainnet) — click to relink a different MetaMask account" style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(95,191,136,0.55);background:rgba(24,50,34,0.45);color:#9fe8bd;border-radius:7px;padding:0.35rem 0.65rem;font-weight:800;font-size:0.78rem;font-family:monospace">🦊 ' + BankEthos._wallet.wallet_address.slice(0, 6) + '…' + BankEthos._wallet.wallet_address.slice(-4) + ' ✓</span>'
-              : '<button id="boe-wallet" title="Connect MetaMask and link it to your account — used for MT purchases, node payouts & airdrops (Base mainnet)" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid rgba(246,133,27,0.6);background:rgba(90,48,10,0.35);color:#ffb347;font-weight:800">🦊 Link Wallet</button>')
+              : '<button id="boe-wallet" title="Connect MetaMask and link it to your account — used for MT purchases, node payouts & airdrops (Base mainnet)" style="cursor:pointer;border-radius:7px;padding:0.4rem 0.8rem;border:1px solid rgba(246,133,27,0.6);background:rgba(90,48,10,0.35);color:#ffb347;font-weight:800">🦊 Link Wallet</button>') +
+            // Ⓜ MT holdings, beside the wallet chip. Shown whenever there IS a
+            // balance — a linked wallet is how you hold it on-chain, not a
+            // precondition for having any.
+            ((App._mtBal | 0) > 0
+              ? '<span title="' + ((BankEthos._wallet && BankEthos._wallet.wallet_address)
+                    ? 'Mythic Token — credited to wallet ' + BankEthos._wallet.wallet_address.slice(0, 6) + '…' + BankEthos._wallet.wallet_address.slice(-4)
+                    : 'Mythic Token held in the Bank of Ethos. Link a wallet to hold it on-chain.') +
+                '" style="display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(127,211,255,0.5);background:rgba(18,38,58,0.5);color:#9fd8ff;border-radius:7px;padding:0.35rem 0.65rem;font-weight:800;font-size:0.78rem;font-family:monospace">Ⓜ ' + (App._mtBal | 0).toLocaleString() + ' MT</span>'
+              : '')
           : '<span class="small-text" style="color:#ff9a6b">' + (BankEthos._err === 'setup' ? 'Run the updated api.sql to open banking (creates bank_of_ethos).' : BankEthos._err === 'signin' ? 'Sign in to use the Bank of Ethos.' : 'Connecting…') + '</span>') +
         '<span style="flex:1"></span>';
       bar.appendChild(back);
@@ -73386,6 +73459,8 @@ function mountCampStatus() {
           '<div style="font-family:\'Cinzel\',serif;font-weight:700;color:#cdb6ff">📦 Camp Storage <span class="small-text" style="opacity:.7">(secured)</span></div>' +
           '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
             '<button id="camp-workshop-btn" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:9px;padding:0.4rem 0.8rem;border:1px solid rgba(202,162,62,0.7);background:linear-gradient(180deg,#5a4a1e,#2e2410);color:#ffe9b8;font-size:0.82rem">🛠 Workshop</button>' +
+            // 🏦 Bank Row — walk the row of player-run banks and apply for a loan.
+            '<button id="camp-bankrow-btn" title="Player-run banks — borrow Cinder, or compare the row" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:9px;padding:0.4rem 0.8rem;border:1px solid rgba(212,175,55,0.7);background:linear-gradient(180deg,#4a3a5e,#241830);color:#ffe9b8;font-size:0.82rem">🏦 Bank Row</button>' +
             '<button id="camp-bag-upgrade" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:9px;padding:0.4rem 0.85rem;border:1px solid rgba(212,175,55,0.6);background:linear-gradient(180deg,rgba(60,40,110,0.92),rgba(28,16,52,0.96));color:#ffe9b8;font-size:0.82rem">🎒 ' + (tier.name || 'Survivor Bag') + ' (' + (typeof _ownedBagCap === 'function' ? _ownedBagCap() : _fieldBagCap()) + ')' + heroNote + ' — Upgrade</button>' +
           '</div>' +
         '</div>' +
@@ -73395,6 +73470,8 @@ function mountCampStatus() {
     if (tg) tg.onclick = () => { try { localStorage.setItem('mg_campPanelHidden', '1'); } catch (e) {} mountCampStatus(); };
     const ub = document.getElementById('camp-bag-upgrade');
     if (ub) ub.onclick = () => { if (typeof openBagUpgradeModal === 'function') openBagUpgradeModal(); };
+    const bru = document.getElementById('camp-bankrow-btn');
+    if (bru) bru.onclick = () => { try { _campOpenBankDirectory('directory'); } catch (e) {} };
     const wb = document.getElementById('camp-workshop-btn');
     if (wb) wb.onclick = () => { if (typeof openCampWorkshop === 'function') openCampWorkshop(); };
   } catch (e) {}
@@ -74642,6 +74719,53 @@ const BANK_CHARTER_USD   = 200;
 const BANK_MT_PRICE_USD  = 0.10;
 const BANK_CHARTER_MT    = Math.round(BANK_CHARTER_USD / BANK_MT_PRICE_USD);   // 2,000 MT
 
+// 🔒 MT STAKING READINESS — Cinder is ALWAYS available; the staking rail is a
+// switch the owner throws when the token side is actually ready.
+// ⚠ Default OFF on purpose. MT balances read from `mythic_balances` (the
+// server mirror), and the staking contract still has 750k MT UNCREDITED — so
+// until that reconciles, a stake could charge against a balance that does not
+// match the chain. Charging real money against an unreconciled mirror is the
+// one failure here we cannot undo, so the rail stays shut until you open it.
+// Lift it the same way as the craft lock: set it, then PUBLISH the catalog.
+//   __mg.setMtStakingReady(true)
+const MT_STAKING_READY_DEFAULT = false;
+function mtStakingReady() {
+  try {
+    if (typeof isAdmin === 'function' && isAdmin()) return true;   // owner can test the rail
+    const c = (typeof Catalog !== 'undefined' && Catalog && Catalog.mtStaking) || null;
+    if (c && typeof c.ready === 'boolean') return c.ready;
+    const f = (typeof Forge !== 'undefined' && Forge && Forge.mtStaking) || null;
+    if (f && typeof f.ready === 'boolean') return f.ready;
+    return MT_STAKING_READY_DEFAULT;
+  } catch (e) { return MT_STAKING_READY_DEFAULT; }
+}
+function mtStakingNote() {
+  try {
+    const c = (typeof Catalog !== 'undefined' && Catalog && Catalog.mtStaking)
+           || (typeof Forge !== 'undefined' && Forge && Forge.mtStaking) || null;
+    if (c && c.note) return String(c.note);
+  } catch (e) {}
+  return 'Staking opens once Mythic Token has a real market cap and a settled value. Until then a stake could be charged against a price that is not yet real — so Cinder is the way in.';
+}
+function setMtStakingReady(ready, note) {
+  try {
+    if (!Forge.mtStaking || typeof Forge.mtStaking !== 'object') Forge.mtStaking = {};
+    Forge.mtStaking.ready = !!ready;
+    if (note) Forge.mtStaking.note = String(note);
+    if (typeof Catalog !== 'undefined' && Catalog) Catalog.mtStaking = Forge.mtStaking;
+    try { saveForge(); } catch (e) {}
+    try { showToast(ready ? 'Ⓜ MT staking OPEN. Publish the catalog to push it to players.'
+                          : 'Ⓜ MT staking CLOSED. Publish the catalog to push it to players.', 6000); } catch (e) {}
+    try { render(); } catch (e) {}
+    return { ready: !!ready, next: 'Run Publish Everything (or Publish Catalog) so players receive this.' };
+  } catch (e) { return { error: String(e && e.message || e) }; }
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.mtStakingReady = mtStakingReady;
+  window.__mg.setMtStakingReady = setMtStakingReady;
+} catch (e) {}
+
 // Ask which way they are paying. Returns 'cinder' | 'mt' | null(cancelled).
 // The MT branch settles server-side through bank_open_charter (which debits
 // mythic_balances and locks the stake) BEFORE the operation is created, so a
@@ -74658,30 +74782,39 @@ async function _bankFoundChoice() {
     }
   } catch (e) {}
   const row = (k, v, col) => '<div style="display:flex;justify-content:space-between;padding:0.2rem 0"><span style="color:#a89878">' + k + '</span><b style="color:' + col + '">' + v + '</b></div>';
+  const stakeOpen = mtStakingReady();
   const pick = await showGameConfirm({
     title: '🏦 Open Your Own Bank',
     bodyHtml:
       '<div style="margin-bottom:0.7rem">A bank lets you lend to other players, hold their deposits, and staff an underwriting desk.</div>' +
       '<div style="background:rgba(20,16,14,0.6);border:1px solid #2a201c;border-radius:4px;padding:0.7rem 0.9rem;margin:0.6rem 0">' +
-        '<div style="color:#d4a843;font-weight:800;letter-spacing:.1em;font-size:0.78rem;margin-bottom:0.35rem">OPTION A — BUY IT</div>' +
+        '<div style="color:#d4a843;font-weight:800;letter-spacing:.1em;font-size:0.78rem;margin-bottom:0.35rem">OPTION A — BUY IT' +
+          (stakeOpen ? '' : ' <span style="color:#4ade80">· AVAILABLE NOW</span>') + '</div>' +
         row('Cost (spent)', cost.toLocaleString() + ' 🔥', '#d4a843') +
         row('Your Cinder', haveC.toLocaleString() + ' 🔥', haveC >= cost ? '#4ade80' : '#ff7755') +
       '</div>' +
-      '<div style="background:rgba(14,20,32,0.6);border:1px solid #23303f;border-radius:4px;padding:0.7rem 0.9rem;margin:0.6rem 0">' +
-        '<div style="color:#7fd3ff;font-weight:800;letter-spacing:.1em;font-size:0.78rem;margin-bottom:0.35rem">OPTION B — STAKE MYTHIC TOKEN</div>' +
+      // When the rail is shut the option is shown but plainly marked closed —
+      // hiding it entirely would leave players wondering if staking exists.
+      '<div style="background:rgba(14,20,32,0.6);border:1px solid #23303f;border-radius:4px;padding:0.7rem 0.9rem;margin:0.6rem 0' +
+        (stakeOpen ? '' : ';opacity:0.55') + '">' +
+        '<div style="color:#7fd3ff;font-weight:800;letter-spacing:.1em;font-size:0.78rem;margin-bottom:0.35rem">OPTION B — STAKE MYTHIC TOKEN' +
+          (stakeOpen ? '' : ' <span style="color:#ffb347">· NOT YET OPEN</span>') + '</div>' +
         row('Stake (locked, not spent)', BANK_CHARTER_MT.toLocaleString() + ' MT ($' + BANK_CHARTER_USD + ')', '#7fd3ff') +
         row('Your MT', haveMt.toLocaleString() + ' MT', haveMt >= BANK_CHARTER_MT ? '#4ade80' : '#ff7755') +
+        (stakeOpen ? '' : '<div style="margin-top:0.5rem;font-size:0.78rem;color:#ffb347">' + escapeHtml(mtStakingNote()) + '</div>') +
       '</div>' +
       '<div style="font-size:0.8rem;color:#a89878;font-style:italic">Staked MT is your bank\'s capitalisation — it is locked while you trade, not spent, and is what your depositors are protected by.</div>',
     yesLabel: 'BUY · ' + cost.toLocaleString() + ' 🔥',
-    noLabel:  'STAKE · ' + BANK_CHARTER_MT.toLocaleString() + ' MT',
+    noLabel:  stakeOpen ? ('STAKE · ' + BANK_CHARTER_MT.toLocaleString() + ' MT') : 'CANCEL',
     yesAccent: 'gold',
   });
-  // showGameConfirm is a two-button prompt: YES = Cinder, NO = the MT route.
+  // Two-button prompt: YES = Cinder. NO = the MT route, or plain cancel while
+  // the staking rail is shut.
   if (pick) {
     if (haveC < cost) { showToast('⚠ Not enough Cinder — need 🔥 ' + cost.toLocaleString() + '.', 4200); return null; }
     return 'cinder';
   }
+  if (!stakeOpen) return null;   // NO meant cancel — never silently attempt a stake
   if (haveMt < BANK_CHARTER_MT) {
     showToast('Ⓜ Not enough Mythic Token — need ' + BANK_CHARTER_MT.toLocaleString() + ' MT ($' + BANK_CHARTER_USD + '), have ' + haveMt.toLocaleString() + '.', 5200);
     return null;
@@ -75371,9 +75504,17 @@ function _jbEcon() {
     pool.forEach(function (r) { const q = R[r.id] | 0; if (q > 0) res.push({ id: r.id, name: r.name, icon: r.icon, qty: q }); });
   } catch (e) {}
   const adm = !!((typeof isAdmin === 'function') && isAdmin());
+  // Ⓜ Mythic Token + linked wallet for the top-bar chips. _ownFetchMirror is
+  // internally throttled to 60s, so calling it here is cheap and keeps the MT
+  // figure fresh whenever the corp app re-reads the econ bridge.
+  try { if (typeof _ownFetchMirror === 'function') _ownFetchMirror(); } catch (e) {}
+  let _wal = null;
+  try { const w = (typeof _ownWalletAddr === 'function') && _ownWalletAddr(); if (w) _wal = w.addr; } catch (e) {}
   return {
     cinders: (Profile && Profile.gems) | 0,
     aza: (Profile && Profile.sovereigns) | 0,
+    mt: (typeof App !== 'undefined' && App && App._mtBal) | 0,
+    wallet: _wal,
     handle: ((Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'),
     corp: _jbCorpInfo(),
     isAdmin: adm,
@@ -76167,7 +76308,10 @@ function _jbHandleAction(a) {
             dojo: 'Dojo', bank: 'Bank',
           })[a.op] || (a.op.charAt(0).toUpperCase() + a.op.slice(1));
           const haveCR = (Profile.gems | 0);
-          const ok2 = await showGameConfirm({
+          // 🏦 The bank already ran its own confirm (_bankFoundChoice showed the
+          // Cinder-vs-MT choice with both balances). Asking a second time was a
+          // double modal I introduced — skip it for the bank only.
+          const ok2 = (a.op === 'bank') ? true : await showGameConfirm({
             title: '💼 Do You Want to Buy This Business?',
             bodyHtml:
               '<div style="font-size:1.05rem;margin-bottom:0.7rem">You\'re about to acquire <b style="color:#d4a843">' + escapeHtml(opNiceName) + '</b>.</div>' +
@@ -76191,10 +76335,29 @@ function _jbHandleAction(a) {
             yesAccent: a.op === 'fishing' ? 'emerald' : 'gold',
           });
           if (!ok2) { _jbSendData(); return; }
+
           // 🔒 BULLETPROOF — atomic server-side startup charge. If the charge
           // fails the operation isn't founded; nothing changes.
           const _opCharge = await chargeCinderAtomic(e.startup, 'Business founded: ' + a.op);
-          if (!_opCharge.ok) { showToast(_opCharge.reason === 'insufficient' ? '⚠ Not enough Cinder.' : ('Startup failed: ' + (_opCharge.reason || '?')), 4200); _jbSendData(); return; }
+          if (!_opCharge.ok) {
+            // 🩹 "Not enough Cinder" with no numbers was unfalsifiable: the HUD
+            // said you could afford it, the server said otherwise, and nothing
+            // reconciled the two. chargeCinderAtomic already returns the SERVER's
+            // balance on refusal — show it, and resync the local one to it so the
+            // display stops contradicting the thing that actually holds the money.
+            if (_opCharge.reason === 'insufficient') {
+              const _srv = _opCharge.newBalance;
+              if (typeof _srv === 'number' && _srv !== (Profile.gems | 0)) {
+                try { _gemsTaxExempt(() => { Profile.gems = _srv | 0; }); saveProfile(); } catch (_) {}
+              }
+              showToast('⚠ Not enough Cinder — the server holds 🔥 ' +
+                ((typeof _srv === 'number' ? _srv : (Profile.gems | 0)) | 0).toLocaleString() +
+                ', this costs 🔥 ' + e.startup.toLocaleString() + '. Your balance has been re-synced.', 7000);
+            } else {
+              showToast('Startup failed: ' + (_opCharge.reason || '?'), 4200);
+            }
+            _jbSendData(); return;
+          }
           try { saveProfile && saveProfile(); } catch (_) {}
           // 💾 Persist the personally-funded op on the PROFILE (survives
           // reloads + cloud-syncs cross-device) — it used to be memory-only
@@ -76479,7 +76642,7 @@ function mountJustBusiness() {
     }
     if (!f) {
       f = document.createElement('iframe');
-      f.id = FID; f.src = 'corp/?v=119w3';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
+      f.id = FID; f.src = 'corp/?v=119w7';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
       // Smooth cross-fade + gentle scale-in (no hard cut on enter/exit).
       f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transform:scale(.986);transition:opacity .6s ' + EASE + ',transform .6s ' + EASE + ';will-change:opacity,transform';
       f.onload = function () {
@@ -91859,7 +92022,15 @@ const executeMove = (state, attacker, target, move) => {
   // ===== Charge-up moves (Solar Beam style) =====
   // First cast: store charging state and skip damage. On next turn start, the move auto-fires.
   // Sun weather skips the charge for solar-themed moves.
-  if (move.chargeTurns && !attacker.charging) {
+  // ⚠ `move._released` is the RELEASE flag set by startTurn. It must be checked
+  // here, and it cannot be replaced by an attacker-side check: executeMove
+  // RE-RESOLVES `attacker` from s.units (see ~L91390), so the caller clearing
+  // `charging` on the unit before calling in makes the re-resolved attacker look
+  // un-charged — which re-entered this branch and re-charged the move forever.
+  // That is why Sunfire Lance / Sky Dive and every other two-turn move did
+  // nothing: they charged, "released", and silently charged again.
+  // The flag rides on the MOVE, which is NOT re-resolved, so it survives.
+  if (move.chargeTurns && !attacker.charging && !move._released) {
     const skipCharge = move.sunCharge && s.weather && s.weather.weatherType === 'sun' && s.weather.turnsLeft > 0;
     if (!skipCharge) {
       s.units = s.units.map(u => u.id === attacker.id ? { ...u, charging: { moveId: move.id, targetId: target ? target.id : null }, hasMoved: true, hasAttacked: true } : u);
@@ -94398,7 +94569,10 @@ const startTurn = (state, who) => {
     if (move && target) {
       log.push({ msg: `🔆 ${releaser.name} releases ${move.name}!`, color: 'amber' });
       s.log = log;
-      s = executeMove(s, releaser, target, move);
+      // Flag the RELEASE on the move, not the unit: executeMove re-resolves the
+      // attacker from s.units (where `charging` was just cleared), so a
+      // unit-side signal is lost and the charge branch re-fires.
+      s = executeMove(s, releaser, target, { ...move, _released: true });
       log = s.log;
     } else if (move) {
       const reason = outOfRange ? 'target stepped out of range' : 'no target';
@@ -110631,6 +110805,9 @@ function renderVsScreen() {
     App._vsState = null;
     App.screen = 'coinFlip';
     render();
+    // 🎬 Offer clip recording at the start of the match so the last 60s is
+    // already buffered when the victory / defeat modal appears.
+    try { if (typeof LiveClip !== 'undefined') LiveClip.maybePromptAtBattleStart(); } catch (e) {}
   };
   // 🥁 3·2·1·BATTLE! stamp (the mockup's gostage) before the coin flip. Same
   // fixed length on every client, so the multiplayer handoff keeps the exact
@@ -157603,6 +157780,9 @@ const CAMP_ROUTE_OPTIONS = {
   // navigating away. We piggyback on App.screen='campView' so the player
   // doesn't leave the camp; the modal is overlaid + closes back to the camp.
   realEstate:       { label: 'Real Estate Office',     icon: '🏘', go: () => { setTimeout(() => { try { _campOpenRealEstate(); } catch (e) {} }, 50); } },
+  // 🏦 Bank Row — same in-world modal pattern as the Real Estate Office: the
+  // player stays in the camp, walks the row of player-run banks, and applies.
+  bankRow:          { label: 'Bank Row',               icon: '🏦', go: () => { setTimeout(() => { try { _campOpenBankDirectory(); } catch (e) {} }, 50); } },
 };
 function _campRouteFor(building) {
   // If admin set routeId, use it. Else fall back to the built-in catalog's
@@ -158607,6 +158787,268 @@ function _reMarketBodyHtml() {
     : '';
   return `<div style="padding:1rem 1.4rem">${listForm}${browse}${mine}</div>`;
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// 🏦 BANK DIRECTORY — the way IN to player-owned banks.
+// ---------------------------------------------------------------------------
+// Deliberately built in the CAMP's house style (the Real Estate Office modal
+// below is the template), not the Mint's navy-and-gold. Those two screens are
+// the owner's private counters and came from the user's own mockups; this is a
+// camp building a player walks into, so it wears the game's chrome.
+// Three states: browse the directory · apply for a loan · your own applications.
+// ═══════════════════════════════════════════════════════════════════════════
+const BankDir = { list: [], at: 0, mine: [], loading: false, err: '' };
+async function bankDirFetch(force) {
+  if (BankDir.loading) return;
+  if (!force && BankDir.at && (Date.now() - BankDir.at) < 30000) return;
+  BankDir.loading = true;
+  try {
+    if (!(Cloud && Cloud.client)) { BankDir.err = 'offline'; return; }
+    const r = await Cloud.client.rpc('bank_directory');
+    if (r && r.error) {
+      BankDir.err = /does not exist|PGRST202|schema cache/i.test(r.error.message || '') ? 'setup' : (r.error.message || 'error');
+      BankDir.list = [];
+    } else { BankDir.list = (r && r.data) || []; BankDir.err = ''; }
+    // My own applications, so a player can see what they have outstanding.
+    const uid = Profile.cloud && Profile.cloud.userId;
+    if (uid) {
+      const a = await Cloud.client.from('bank_applications').select('*')
+        .eq('applicant_id', uid).order('created_at', { ascending: false }).limit(30);
+      BankDir.mine = (a && a.data) || [];
+      // 👔 Am I staff anywhere? Owning a bank OR being hired as a teller both
+      // open the counters — this is the only place either is reachable, so it
+      // has to check both rather than assuming the owner.
+      BankDir.myBank = BankDir.list.find(b => b.owner_id === uid) || null;
+      if (!BankDir.myBank) {
+        const t = await Cloud.client.from('bank_tellers').select('*').eq('user_id', uid).limit(1);
+        BankDir.myTeller = (t && t.data && t.data[0]) || null;
+      } else { BankDir.myTeller = null; }
+      // How many applications are waiting on my desk — the number that tells
+      // an owner there is something to do.
+      const staffBankId = BankDir.myBank ? BankDir.myBank.owner_id : (BankDir.myTeller ? BankDir.myTeller.bank_id : null);
+      if (staffBankId) {
+        const q = await Cloud.client.from('bank_applications').select('id')
+          .eq('bank_id', staffBankId).eq('status', 'open').limit(60);
+        BankDir.inTray = ((q && q.data) || []).length;
+      } else { BankDir.inTray = 0; }
+    }
+    BankDir.at = Date.now();
+  } catch (e) { BankDir.err = 'error'; }
+  finally { BankDir.loading = false; }
+}
+// Ember standing — derived from the player's OWN repayment record with banks,
+// so it is earned in-game rather than handed out. Mirrors the desk's tiers.
+function bankEmberScore() {
+  try {
+    const mine = BankDir.mine || [];
+    const approved = mine.filter(a => a.status === 'approved').length;
+    const denied   = mine.filter(a => a.status === 'denied').length;
+    const lvl = (Profile.account && Profile.account.level) | 0;
+    let s = 300 + lvl * 6 + approved * 40 - denied * 25;
+    return Math.max(0, Math.min(1000, Math.round(s)));
+  } catch (e) { return 300; }
+}
+function bankEmberTier(score) {
+  const s = (score == null) ? bankEmberScore() : score;
+  return s >= 850 ? 'Mythic Standing' : s >= 700 ? 'Blazing' : s >= 550 ? 'Kindled' : s >= 300 ? 'Smoldering' : 'Ashen';
+}
+function _campOpenBankDirectory(tab, bankId) {
+  const old = document.getElementById('camp-bankdir');
+  if (old) { old.remove(); if (!tab) return; }
+  App._bdTab = tab || App._bdTab || 'directory';
+  App._bdBank = bankId || App._bdBank || null;
+  const T = App._bdTab;
+  if (!BankDir.at) { bankDirFetch().then(() => { const r = document.getElementById('camp-bankdir'); if (r) { r.remove(); _campOpenBankDirectory(T, App._bdBank); } }); }
+
+  const score = bankEmberScore(), tier = bankEmberTier(score);
+  const tierDef = (typeof UDW_TIERS !== 'undefined' && UDW_TIERS[tier]) || { ltv: 0.4, bond: 0.25, unsecured: 0 };
+  const tabBtn = (id, label) => `<button class="bd-tab" data-tab="${id}" style="padding:0.55rem 1rem;background:${T === id ? 'rgba(212,175,55,0.16)' : 'transparent'};color:${T === id ? '#ffd166' : '#bfae87'};border:0;border-bottom:2px solid ${T === id ? '#ffd166' : 'transparent'};cursor:pointer;font-family:'Cinzel',serif;font-size:0.85rem;letter-spacing:0.05em">${label}</button>`;
+
+  const dirBody = () => {
+    if (BankDir.err === 'setup') return '<div style="padding:1.6rem;color:#ff9a6b;text-align:center">The bank tables are not installed yet. Run <b>player_banks.sql</b> then <b>bank_charter_pricing.sql</b>.</div>';
+    if (!BankDir.list.length) return '<div style="padding:1.6rem;color:#bfae87;text-align:center">No banks are open yet.<br><span style="font-size:0.82rem">Anyone can charter one from Just Business → Operations → Bank.</span></div>';
+    return `<div style="padding:1rem 1.4rem;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.8rem">
+      ${BankDir.list.map(b => {
+        const tierName = (typeof _bkcTier === 'function') ? _bkcTier(b.charter_tier || 1).name : 'Lending House';
+        const rep = (b.loans_serviced | 0) === 0 ? 'New charter'
+          : `${b.loans_serviced | 0} loans · ${b.defaults_taken | 0} defaults`;
+        return `<div style="padding:0.9rem;background:rgba(0,0,0,0.4);border:1px solid rgba(212,175,55,0.5);border-radius:12px;display:flex;flex-direction:column;gap:0.5rem">
+          <div style="display:flex;align-items:center;gap:0.5rem">
+            <span style="font-size:2rem;line-height:1">🏦</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-family:'Cinzel',serif;color:#ffd166;font-size:1rem;letter-spacing:0.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(b.bank_name || 'Lending House')}</div>
+              <div style="color:#bfae87;font-size:0.72rem">${escapeHtml(tierName)} · ${escapeHtml(b.owner_name || 'Banker')}</div>
+            </div>
+          </div>
+          ${b.tagline ? `<div style="color:#e2eaff;font-size:0.8rem;line-height:1.4;min-height:34px">${escapeHtml(b.tagline)}</div>` : '<div style="min-height:34px"></div>'}
+          <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:#bfae87;font-family:'Roboto Mono',monospace">
+            <span title="Mythic Token staked as capitalisation">Ⓜ ${Math.round(Number(b.mt_staked || 0)).toLocaleString()} staked</span>
+            <span title="Cinder held on deposit">💰 ${Math.round(b.deposits || 0).toLocaleString()}</span>
+          </div>
+          <div style="font-size:0.72rem;color:#9fb4c9;font-family:'Roboto Mono',monospace">${escapeHtml(rep)}</div>
+          <button class="bd-apply" data-bank="${escapeHtml(b.owner_id)}" style="padding:0.5rem;background:rgba(212,175,55,0.16);color:#ffd166;border:1px solid rgba(212,175,55,0.6);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.85rem;letter-spacing:0.05em">📝 APPLY FOR A LOAN</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+  };
+
+  const applyBody = () => {
+    const bank = BankDir.list.find(b => b.owner_id === App._bdBank);
+    if (!bank) return '<div style="padding:1.6rem;color:#bfae87;text-align:center">Pick a bank from the directory first.</div>';
+    const already = (BankDir.mine || []).some(a => a.bank_id === bank.owner_id && a.status === 'open');
+    return `<div style="padding:1rem 1.4rem;display:flex;flex-direction:column;gap:0.7rem">
+      <div style="padding:0.7rem 0.9rem;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.35);border-radius:9px">
+        <div style="font-family:'Cinzel',serif;color:#ffd166;font-size:1rem">${escapeHtml(bank.bank_name || 'Lending House')}</div>
+        <div style="color:#bfae87;font-size:0.78rem;margin-top:0.2rem">Your standing: <b style="color:#ffd166">${escapeHtml(tier)}</b> (${score}/1000) · up to <b style="color:#ffd166">${Math.round(tierDef.ltv * 100)}%</b> loan-to-value${tierDef.unsecured ? ` · ${tierDef.unsecured.toLocaleString()} 🔥 unsecured` : ''}</div>
+      </div>
+      ${already ? '<div style="padding:0.6rem 0.8rem;background:rgba(255,154,107,0.12);border:1px solid rgba(255,154,107,0.45);border-radius:8px;color:#ffb9a3;font-size:0.82rem">You already have an application open with this bank. Wait for their decision before filing another.</div>' : ''}
+      <label style="color:#bfae87;font-size:0.76rem;letter-spacing:0.08em;text-transform:uppercase">How much Cinder do you need?</label>
+      <input id="bd-amt" type="number" min="1000" step="1000" value="25000" style="padding:0.6rem 0.7rem;background:rgba(15,8,30,0.65);border:1px solid rgba(212,175,55,0.35);border-radius:8px;color:#ffe6b0;font-family:'Roboto Mono',monospace;font-size:1rem">
+      <label style="color:#bfae87;font-size:0.76rem;letter-spacing:0.08em;text-transform:uppercase">Term</label>
+      <select id="bd-term" style="padding:0.6rem 0.7rem;background:rgba(15,8,30,0.65);border:1px solid rgba(212,175,55,0.35);border-radius:8px;color:#ffe6b0;font-family:'Roboto Mono',monospace">
+        ${[3, 7, 14, 21, 30].map(d => `<option value="${d}"${d === 7 ? ' selected' : ''}>${d} days</option>`).join('')}
+      </select>
+      <label style="color:#bfae87;font-size:0.76rem;letter-spacing:0.08em;text-transform:uppercase">What is it for?</label>
+      <select id="bd-purpose" style="padding:0.6rem 0.7rem;background:rgba(15,8,30,0.65);border:1px solid rgba(212,175,55,0.35);border-radius:8px;color:#ffe6b0">
+        ${['Crafting capital', 'Land or deed purchase', 'Business funding', 'Debt consolidation', 'Guild war funding', 'General'].map(p => `<option>${p}</option>`).join('')}
+      </select>
+      <label style="color:#bfae87;font-size:0.76rem;letter-spacing:0.08em;text-transform:uppercase">Your case to the underwriter</label>
+      <textarea id="bd-pitch" rows="3" placeholder="Tell them why you are good for it — the teller reads this." style="padding:0.6rem 0.7rem;background:rgba(15,8,30,0.65);border:1px solid rgba(212,175,55,0.35);border-radius:8px;color:#e8e0ff;font-family:inherit;resize:vertical"></textarea>
+      <div style="color:#9fb4c9;font-size:0.74rem;line-height:1.5">Collateral is pledged from your own holdings and appraised with a haircut. A stronger record raises what you can borrow.</div>
+      <button id="bd-submit" ${already ? 'disabled' : ''} style="padding:0.65rem;background:${already ? 'rgba(80,70,50,0.4)' : 'linear-gradient(180deg,#caa23e,#8a6a1e)'};color:${already ? '#8a8070' : '#1a1206'};border:1px solid ${already ? '#5a5040' : '#e8c97e'};border-radius:8px;cursor:${already ? 'not-allowed' : 'pointer'};font-family:'Cinzel',serif;font-weight:800;font-size:0.92rem;letter-spacing:0.06em">📝 SUBMIT APPLICATION</button>
+    </div>`;
+  };
+
+  const mineBody = () => {
+    const mine = BankDir.mine || [];
+    if (!mine.length) return '<div style="padding:1.6rem;color:#bfae87;text-align:center">You have not applied to any bank yet.</div>';
+    const col = (st) => st === 'approved' ? '#7ce8a8' : st === 'denied' ? '#ff9a88' : st === 'countered' ? '#ffd166' : '#9fb4c9';
+    return `<div style="padding:1rem 1.4rem;display:flex;flex-direction:column;gap:0.6rem">
+      ${mine.map(a => {
+        const v = a.verdict || {};
+        return `<div style="padding:0.8rem 0.9rem;background:rgba(0,0,0,0.35);border:1px solid rgba(212,175,55,0.3);border-left:3px solid ${col(a.status)};border-radius:9px">
+          <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
+            <span style="font-family:'Cinzel',serif;color:#ffd166">No. ${a.id | 0} · ${Math.round(a.principal || 0).toLocaleString()} 🔥</span>
+            <span style="color:${col(a.status)};font-size:0.76rem;letter-spacing:0.1em;text-transform:uppercase">${escapeHtml(a.status)}</span>
+          </div>
+          <div style="color:#bfae87;font-size:0.76rem;margin-top:0.25rem">${(a.term_days | 0)} days · ${escapeHtml(a.purpose || 'General')}</div>
+          ${a.status === 'countered' ? `<div style="color:#ffd166;font-size:0.78rem;margin-top:0.35rem">Counter-offer: ${Math.round(v.principal || 0).toLocaleString()} 🔥 over ${(v.term | 0)} days at ${v.rate || 4}%/week.</div>` : ''}
+          ${a.status === 'denied' && v.reason ? `<div style="color:#ff9a88;font-size:0.78rem;margin-top:0.35rem">Reason: ${escapeHtml(v.reason)}</div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`;
+  };
+
+  const root = document.createElement('div');
+  root.id = 'camp-bankdir';
+  root.style.cssText = 'position:fixed;inset:0;z-index:9445;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center, rgba(8,4,20,0.65) 0%, rgba(2,1,8,0.92) 100%);backdrop-filter:blur(4px);animation:helpFadeIn 0.22s ease-out';
+  root.innerHTML = `
+    <div style="max-width:880px;width:94vw;max-height:86vh;display:flex;flex-direction:column;background:linear-gradient(180deg,rgba(28,22,52,0.96),rgba(12,8,28,0.98));border:1px solid rgba(212,175,55,0.5);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,0.7);font-family:'Inter','Roboto',sans-serif">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:1.1rem 1.4rem 0.6rem">
+        <div>
+          <h2 style="font-family:'Cinzel',serif;color:#ffd166;font-size:1.4rem;letter-spacing:0.06em;margin:0">🏦 Bank Row</h2>
+          <div style="color:#bfae87;font-size:0.82rem;margin-top:0.25rem">Player-run banks. Borrow, or walk the row and compare. Your standing: <strong style="color:#ffd166">${escapeHtml(tier)}</strong> (${score}/1000)</div>
+        </div>
+        <button id="bd-close" style="padding:0.4rem 0.85rem;background:rgba(255,255,255,0.06);color:#bfae87;border:1px solid rgba(212,175,55,0.3);border-radius:7px;cursor:pointer;font-family:'Cinzel',serif;font-size:0.78rem;letter-spacing:0.04em">✕ CLOSE</button>
+      </div>
+      ${_bankStaffStripHtml()}
+      <div style="display:flex;gap:0.4rem;padding:0 1.4rem;border-bottom:1px solid rgba(212,175,55,0.2)">
+        ${tabBtn('directory', '🏦 Directory')}${tabBtn('apply', '📝 Apply')}${tabBtn('mine', '📄 My Applications')}
+      </div>
+      <div style="flex:1;overflow-y:auto">${T === 'apply' ? applyBody() : T === 'mine' ? mineBody() : dirBody()}</div>
+    </div>`;
+  document.body.appendChild(root);
+  root.querySelector('#bd-close').onclick = () => root.remove();
+  root.onclick = (ev) => { if (ev.target === root) root.remove(); };
+  root.querySelectorAll('.bd-tab').forEach(b => b.onclick = () => _campOpenBankDirectory(b.dataset.tab, App._bdBank));
+  root.querySelectorAll('.bd-apply').forEach(b => b.onclick = () => _campOpenBankDirectory('apply', b.dataset.bank));
+  const dsk = root.querySelector('#bd-desk');
+  if (dsk) dsk.onclick = () => { root.remove(); try { _udwState().loaded = false; } catch (e) {} App.screen = 'bankDesk'; render(); };
+  const mnt = root.querySelector('#bd-mint');
+  if (mnt) mnt.onclick = () => { root.remove(); try { _bkcState().loaded = false; } catch (e) {} App.screen = 'bankCharter'; render(); };
+  const sub = root.querySelector('#bd-submit');
+  if (sub) sub.onclick = async () => {
+    sub.disabled = true;
+    const ok = await bankSubmitApplication({
+      bankId: App._bdBank,
+      principal: +(root.querySelector('#bd-amt') || {}).value || 0,
+      term: +(root.querySelector('#bd-term') || {}).value || 7,
+      purpose: (root.querySelector('#bd-purpose') || {}).value || 'General',
+      pitch: (root.querySelector('#bd-pitch') || {}).value || '',
+    });
+    if (ok) { root.remove(); _campOpenBankDirectory('mine', App._bdBank); }
+    else { try { sub.disabled = false; } catch (e) {} }
+  };
+}
+// 👔 The staff strip — the ONLY route to the Mint and the Underwriting Desk once
+// you own a bank or are hired onto one. Shown to owners AND tellers; hidden
+// entirely for everyone else so it never advertises counters they cannot open.
+function _bankStaffStripHtml() {
+  try {
+    const b = BankDir.myBank, t = BankDir.myTeller;
+    if (!b && !t) return '';
+    const tray = BankDir.inTray | 0;
+    const who = b ? ('You own <b style="color:#ffd166">' + escapeHtml(b.bank_name || 'this bank') + '</b>')
+                  : ('You are a <b style="color:#ffd166">' + escapeHtml((t.role || 'teller')) + '</b> at this bank');
+    const limit = (!b && t) ? ` · approval limit <b style="color:#ffd166">${Math.round(t.max_approve || 0).toLocaleString()} 🔥</b>` : '';
+    return `<div style="margin:0 1.4rem 0.2rem;padding:0.6rem 0.85rem;background:linear-gradient(90deg,rgba(212,175,55,0.14),rgba(212,175,55,0.03));border:1px solid rgba(212,175,55,0.45);border-radius:9px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between">
+      <div style="color:#e2d8bf;font-size:0.82rem">👔 ${who}${limit}${tray ? ` · <b style="color:#ffd166">${tray}</b> waiting on the desk` : ' · desk is clear'}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button id="bd-desk" style="font-family:'Cinzel',serif;font-weight:700;cursor:pointer;border-radius:8px;padding:0.4rem 0.85rem;border:1px solid #e8c97e;background:linear-gradient(180deg,#caa23e,#8a6a1e);color:#1a1206;font-size:0.82rem">🖋 Underwriting Desk${tray ? ' (' + tray + ')' : ''}</button>
+        ${b ? '<button id="bd-mint" style="font-family:\'Cinzel\',serif;font-weight:700;cursor:pointer;border-radius:8px;padding:0.4rem 0.85rem;border:1px solid rgba(127,211,255,0.6);background:rgba(18,38,58,0.6);color:#9fd8ff;font-size:0.82rem">🏦 Office of the Mint</button>' : ''}
+      </div>
+    </div>`;
+  } catch (e) { return ''; }
+}
+// File a loan application. RLS enforces applicant_id = auth.uid(), so a player
+// cannot file in someone else's name even if they edit the payload.
+async function bankSubmitApplication(o) {
+  try {
+    if (!(Cloud && Cloud.client && Profile.cloud && Profile.cloud.signedIn)) { showToast('☁ Sign in to apply for a loan.', 3600); return false; }
+    if (!o.bankId) { showToast('Pick a bank first.', 2800); return false; }
+    const principal = Math.max(1000, Math.round(o.principal || 0));
+    if (!principal) { showToast('Enter how much you need.', 2800); return false; }
+    const score = bankEmberScore(), tier = bankEmberTier(score);
+    // Collateral is pledged from what the player actually holds, so the
+    // underwriter is appraising something real rather than a number they typed.
+    const coll = [];
+    try {
+      const gems = Profile.gems | 0;
+      if (gems > 0) coll.push({ item: 'Cinder on hand', cat: 'Liquid', mkt: Math.min(gems, principal * 2), cut: 0.10 });
+      const cards = Object.keys(Profile.cardCollection || {}).length;
+      if (cards > 0) coll.push({ item: cards + ' cards in collection', cat: 'Collection', mkt: cards * 400, cut: 0.35 });
+      const houses = (Profile.ownedHouses || []).length;
+      if (houses > 0) coll.push({ item: houses + ' propert' + (houses === 1 ? 'y' : 'ies'), cat: 'Property', mkt: houses * 30000, cut: 0.15 });
+    } catch (e) {}
+    const row = {
+      bank_id: o.bankId,
+      applicant_id: Profile.cloud.userId,
+      applicant_name: ((Profile.cloud.displayName || 'Applicant') + '').slice(0, 40),
+      principal: principal,
+      term_days: Math.max(1, Math.min(90, o.term | 0 || 7)),
+      structure: 'Lump sum at maturity',
+      purpose: (o.purpose || 'General').slice(0, 60),
+      pitch: (o.pitch || '').slice(0, 600),
+      collateral: coll,
+      ember_score: score,
+      ember_tier: tier,
+      status: 'open',
+    };
+    const { error } = await Cloud.client.from('bank_applications').insert(row);
+    if (error) {
+      showToast(/does not exist|PGRST205|schema cache/i.test(error.message || '')
+        ? '⚠ Bank tables not installed — run player_banks.sql.'
+        : ('⚠ Could not file: ' + (error.message || 'cloud error')), 6000);
+      return false;
+    }
+    showToast('📝 Application filed — the bank\'s desk will review it.', 5200);
+    await bankDirFetch(true);
+    return true;
+  } catch (e) { showToast('⚠ Could not file the application.', 3600); return false; }
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.bankDirectory = _campOpenBankDirectory;
+} catch (e) {}
 function _campOpenRealEstate(tab) {
   const old = document.getElementById('camp-realestate');
   if (old) { old.remove(); if (!tab) return; }
@@ -195447,6 +195889,8 @@ async function bkcOpenCharter() {
   const S = _bkcState();
   if (S.busy) return; S.busy = true;
   try {
+    // A disabled button is not a guarantee — re-check the rail here too.
+    if (!mtStakingReady()) { showToast('Ⓜ ' + mtStakingNote(), 6000); return; }
     if (!(Cloud && Cloud.client && Profile.cloud && Profile.cloud.signedIn)) { showToast('☁ Sign in to stake.', 3600); return; }
     const t = _bkcTier(S.tier);
     const stake = t.stake + (S.over | 0);
@@ -195466,6 +195910,7 @@ async function bkcAddStake(amount) {
   const S = _bkcState();
   if (S.busy) return; S.busy = true;
   try {
+    if (!mtStakingReady()) { showToast('Ⓜ ' + mtStakingNote(), 6000); return; }
     const amt = Math.max(0, Math.round(amount || 0));
     if (!amt) { showToast('Enter an amount to stake.', 2800); return; }
     const r = await Cloud.client.rpc('bank_add_stake', { p_amount: amt });
@@ -195566,9 +196011,16 @@ function _bkcViewOpen(S) {
   const canAfford = total <= S.mt;
   const pctBurn = total > 0 ? (t.fee / total) * 100 : 0;
   const maxOver = Math.max(0, S.mt - t.fee - t.stake);
+  const stakeOpen = mtStakingReady();
   return '' +
   '<p class="bkc-lede">Stake Mythic Token to open a bank.</p>' +
   '<p class="bkc-lede-sub">A charter is not a purchase. Any filing fee is burned; the rest is <b>staked</b> — held by the Mint as the capital backing your bank, and returned in full when you close or sell.</p>' +
+  // The Mint is a staking-only counter. If that rail is shut, say so at the top
+  // and point at the route that DOES work today rather than letting someone
+  // configure a charter they cannot buy.
+  (stakeOpen ? '' :
+    '<div class="bkc-warn"><span>⚠</span><div><b>The staking window is closed.</b> ' + escapeHtml(mtStakingNote()) +
+    ' You can open a bank right now with Cinder from Just Business → Operations → Bank.</div></div>') +
   '<section class="frame bkc-card">' + _BKC_FR +
     '<h3>Choose a charter</h3><div class="bkc-tiers">' +
       BKC_TIERS.map(x =>
@@ -195602,8 +196054,9 @@ function _bkcViewOpen(S) {
     '<div class="bkc-ack"><input type="checkbox" id="bkc-ack"' + (S.ack ? ' checked' : '') + '>' +
       '<label for="bkc-ack">I understand that <b>' + _bkcMt(t.stake + (S.over | 0)) + ' MT will be locked</b> for as long as this bank operates. It returns in full when I close or sell the bank. Only insolvency — failing to cover my depositors — can consume it.</label></div>' +
     '<div class="bkc-btnrow">' +
-      '<button class="bkc-cta" id="bkc-open"' + ((!S.ack || !canAfford || S.busy) ? ' disabled' : '') + '>Stake ' + _bkcMt(t.stake + (S.over | 0)) + ' MT &amp; open</button>' +
-      '<span class="bkc-note">' + (canAfford ? 'Leaves ' + _bkcMt(S.mt - total) + ' MT available' : 'Short ' + _bkcMt(total - S.mt) + ' MT') + '</span>' +
+      '<button class="bkc-cta" id="bkc-open"' + ((!S.ack || !canAfford || S.busy || !stakeOpen) ? ' disabled' : '') + '>Stake ' + _bkcMt(t.stake + (S.over | 0)) + ' MT &amp; open</button>' +
+      '<span class="bkc-note">' + (!stakeOpen ? 'Staking not open yet — buy with Cinder instead'
+        : canAfford ? 'Leaves ' + _bkcMt(S.mt - total) + ' MT available' : 'Short ' + _bkcMt(total - S.mt) + ' MT') + '</span>' +
     '</div>' +
   '</section>';
 }
@@ -200007,9 +200460,106 @@ function renderBookOfKnowledge() {
     `;
   };
 
+  // ===== STATUS EFFECTS tab =====
+  // Built straight from STATUS_EFFECTS so it can never drift from the engine:
+  // add a status and it appears here, with the same description the move editor
+  // and the in-battle pills use. Grouped by what the effect actually DOES,
+  // because "what happens to me" is the question a player is asking.
+  const statusesBody = () => {
+    const all = Object.keys(STATUS_EFFECTS)
+      .map(k => STATUS_EFFECTS[k])
+      .filter(s => s && s.id && s.name);
+    // Displacement entries are move properties, not statuses a unit carries —
+    // listing them as conditions would tell players something untrue.
+    const real = all.filter(s => !s.displacement);
+    const groups = [
+      { key: 'dot',     label: '🩸 Damage over time', hint: 'Ticks at the start of the turn until it clears.',
+        match: (s) => s.dmgMin != null },
+      { key: 'control', label: '🚫 Control',          hint: 'Takes away actions, or takes away the choice.',
+        match: (s) => s.skipTurn || s.skipChance || s.forceMiss || s.selfHitChance || s.silencesCostMoves || s.forceAttackNearest || s.tracksSource },
+      { key: 'debuff',  label: '📉 Debuffs',          hint: 'Weakens the unit while it lasts.',
+        match: (s) => (s.atkMod < 0 || s.magMod < 0 || s.defMod < 0 || s.resMod < 0 || s.spdMod < 0 || s.accMod < 0 || (s.statMult != null && s.statMult < 1) || s.damageTakenMult > 1) },
+      { key: 'buff',    label: '📈 Buffs',            hint: 'Strengthens the unit while it lasts.',
+        match: (s) => (s.atkMod > 0 || s.magMod > 0 || s.defMod > 0 || s.resMod > 0 || s.spdMod > 0 || s.dodgeChance || s.blocksAll || s.countersAttack || s.revivesOnKO) },
+    ];
+    const seen = new Set();
+    const sections = groups.map(g => {
+      const list = real.filter(s => !seen.has(s.id) && g.match(s));
+      list.forEach(s => seen.add(s.id));
+      if (!list.length) return '';
+      return `
+        <div class="bok-sec-head" style="margin-top:1.2rem">
+          <div class="bok-sec-title">${g.label} <span class="bok-tab-count">${list.length}</span></div>
+          <div class="small-text ink-dim">${escapeHtml(g.hint)}</div>
+        </div>
+        <div class="bok-grid">${list.map(statusCard).join('')}</div>`;
+    }).join('');
+    // Anything the buckets did not claim still gets shown — a status missing
+    // from the Codex is worse than one in an imperfect group.
+    const rest = real.filter(s => !seen.has(s.id));
+    const restHtml = rest.length ? `
+      <div class="bok-sec-head" style="margin-top:1.2rem">
+        <div class="bok-sec-title">✨ Other <span class="bok-tab-count">${rest.length}</span></div>
+        <div class="small-text ink-dim">Special conditions with their own rules.</div>
+      </div>
+      <div class="bok-grid">${rest.map(statusCard).join('')}</div>` : '';
+    return `
+      <div class="small-text ink-dim" style="margin-bottom:0.6rem">
+        Every condition a unit can be under. Moves and cards apply these — knowing what they do is half the fight.
+        <b style="color:#d4af37">${real.length}</b> in total.
+      </div>${sections}${restHtml}`;
+  };
+  // Two entries can legitimately share a display name (ambushGuard1 /
+  // ambushGuard3 are both "Ambush Guard"). Identical titles read as a bug in a
+  // reference list, so the Codex disambiguates them — without renaming the
+  // registry, which the in-battle status pills also read.
+  const _statusNameCounts = (() => {
+    const m = {};
+    Object.values(STATUS_EFFECTS).forEach(s => { if (s && s.name) m[s.name] = (m[s.name] | 0) + 1; });
+    return m;
+  })();
+  function _statusTitle(s) {
+    if ((_statusNameCounts[s.name] | 0) < 2) return s.name;
+    const r = /range\s*(\d+)/i.exec(s.desc || '');
+    return r ? (s.name + ' · range ' + r[1]) : s.name;
+  }
+  function statusCard(s) {
+    const bits = [];
+    if (s.dmgMin != null) bits.push(s.dmgMin === s.dmgMax ? (s.dmgMin + ' dmg/turn') : (s.dmgMin + '–' + s.dmgMax + ' dmg/turn'));
+    if (s.escalating)        bits.push('worsens each turn');
+    if (s.skipTurn)          bits.push('cannot act');
+    if (s.skipChance)        bits.push(Math.round(s.skipChance * 100) + '% to lose the action');
+    if (s.selfHitChance)     bits.push(Math.round(s.selfHitChance * 100) + '% to hit itself');
+    if (s.dodgeChance)       bits.push(Math.round(s.dodgeChance * 100) + '% dodge');
+    if (s.damageTakenMult)   bits.push('+' + Math.round((s.damageTakenMult - 1) * 100) + '% damage taken');
+    if (s.statMult != null)  bits.push('all stats ×' + s.statMult);
+    ['atk', 'mag', 'def', 'res', 'spd', 'acc'].forEach(k => {
+      const v = s[k + 'Mod'];
+      if (v) bits.push((v > 0 ? '+' : '') + v + ' ' + k.toUpperCase());
+    });
+    if (s.forceMiss)         bits.push('every attack misses');
+    if (s.blocksAll)         bits.push('immune this turn');
+    if (s.countersAttack)    bits.push('counters the next attack');
+    if (s.revivesOnKO)       bits.push('revives once at ' + Math.round((s.reviveAtPct || 0.5) * 100) + '% HP');
+    if (s.koOnExpire)        bits.push('KO when the timer runs out');
+    if (s.stackable)         bits.push('stacks');
+    if (s.wakeChance)        bits.push(Math.round(s.wakeChance * 100) + '% to wake each turn');
+    return `
+      <div class="bok-card">
+        <div class="bok-card-head">
+          <span style="font-size:1.5rem;line-height:1">${s.icon || '✨'}</span>
+          <span class="bok-card-title">${escapeHtml(_statusTitle(s))}</span>
+        </div>
+        <div class="small-text" style="color:#cfc6b4;margin-top:0.25rem">${escapeHtml(s.desc || '')}</div>
+        ${bits.length ? `<div style="margin-top:0.45rem;display:flex;flex-wrap:wrap;gap:4px">${
+          bits.map(b => `<span class="bok-elem-chip" style="font-size:0.72rem">${escapeHtml(b)}</span>`).join('')}</div>` : ''}
+      </div>`;
+  }
+
   let body = '';
   if      (tab === 'factions') body = factionsBody();
   else if (tab === 'stats')    body = statsBody();
+  else if (tab === 'statuses') body = statusesBody();
   else                         body = elementsBody();
 
   root.innerHTML = `
@@ -200031,6 +200581,9 @@ function renderBookOfKnowledge() {
         </button>
         <button class="bok-tab ${tab === 'stats' ? 'active' : ''}" data-bok-tab="stats">
           ⭐ Stats <span class="bok-tab-count">${STAT_DESCRIPTIONS.length}</span>
+        </button>
+        <button class="bok-tab ${tab === 'statuses' ? 'active' : ''}" data-bok-tab="statuses">
+          🩸 Status Effects <span class="bok-tab-count">${Object.values(STATUS_EFFECTS).filter(s => s && s.id && !s.displacement).length}</span>
         </button>
       </div>
 

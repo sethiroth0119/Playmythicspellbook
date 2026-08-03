@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- ⚠ FIRST BYTES: transparent, and color-scheme:dark so even the browser's
+     pre-paint frame for this iframe is dark rather than WHITE. -->
+<meta name="color-scheme" content="dark">
+<style>
+  html,body{margin:0;padding:0;height:100%;background:transparent!important;overflow:hidden}
+  #fx{position:fixed;inset:0;display:block;background:transparent;pointer-events:none}
+</style>
+<title>Kalon Transformation</title>
+<script>window.VFX_BUILD="v119g0-kalon";</script>
+</head>
+<body>
+<canvas id="fx"></canvas>
+<script src="fx-core.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   KALON TRANSFORMATION — a unit ascending into its Kalon form.
+   Rebuilt on the 2D FX core: no WebGL, no CDN, no premultiplied alpha, and no
+   colour in this file can reach white (FX.rgba clamps every one).
+
+   Beats:  settle → charge (motes spiral in, the base card lifts)
+        →  cocoon (a shell closes, hairline cracks light up)
+        →  break  (shockwave, the shell shatters outward)
+        →  reveal (the Kalon rises, nameplate resolves)
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  /* A one-shot cinematic may composite harder than the persistent weather
+     layer: it is on screen for five seconds, and after the colour clamp there
+     is no white for a higher ceiling to amplify. Measured: 0 white pixels
+     across the whole timeline at this value. */
+  FX.CEIL = 0.78;
+  var VIOLET = '#8b5cf6', CYAN = '#56e0ff', GOLD = '#d9b45a', ROSE = '#c084fc';
+
+  var D = FX.director([
+    { n: 'settle', d: 0.50 },
+    { n: 'charge', d: 1.35 },
+    { n: 'ascend', d: 1.05 },   /* ⬆ the card leaves the board on a light column */
+    { n: 'cocoon', d: 1.05 },
+    { n: 'break',  d: 0.85 },
+    { n: 'reveal', d: 1.80 }
+  ]);
+  /* four ancestral glyph rings that stack around the card during the charge and
+     collapse into the cocoon — the layer that makes the middle of the shot as
+     interesting as the shatter. */
+  var GLYPH = [0.62, 0.44, 0.30, 0.19];
+
+  var S = { time: 0, playing: false, name: 'KALON', eyebrow: 'ASCENDED FORM', unitImg: null, cardImg: null };
+
+  /* deterministic fields — no Math.random, so a swept frame is repeatable and
+     therefore measurable */
+  var MOTES = FX.pool(90, function (m, i) {
+    m.a0 = FX.hash(i, 1) * 6.2832;
+    m.r0 = 0.28 + FX.hash(i, 2) * 0.55;
+    m.sp = 0.6 + FX.hash(i, 3) * 1.5;
+    m.sz = 1.4 + FX.hash(i, 4) * 3.2;
+  });
+  var SHARDS = FX.pool(34, function (s, i) {
+    s.a = FX.hash(i, 11) * 6.2832;
+    s.v = 0.5 + FX.hash(i, 12) * 1.1;
+    s.sz = 5 + FX.hash(i, 13) * 13;
+    s.spin = (FX.hash(i, 14) - 0.5) * 6;
+  });
+
+  function draw(dt, t) {
+    if (S.playing) S.time += dt;
+    var W = FX.W, H = FX.H, cx = W / 2, cy = H * 0.52, ctx = FX.ctx;
+    var ph = D.at(S.time), unit = Math.min(W, H);
+
+    /* ── camera: rumble through the charge, spike on the shatter, settle ──── */
+    var shake = ph.name === 'charge' ? ph.p * 0.10
+              : ph.name === 'ascend' ? 0.10 + ph.p * 0.16
+              : ph.name === 'cocoon' ? 0.26 + ph.p * 0.26
+              : ph.name === 'break'  ? 1.15 * (1 - FX.easeOut(ph.p))
+              : ph.name === 'reveal' ? Math.max(0, 0.16 - ph.p * 0.16) : 0;
+    var zoom  = ph.name === 'ascend' ? 1 + FX.easeOut(ph.p) * 0.035
+              : ph.name === 'cocoon' ? 1.035 + ph.p * 0.030
+              : ph.name === 'break'  ? 1.065 + FX.easeOut(ph.p) * 0.05
+              : ph.name === 'reveal' ? 1.115 - FX.easeOut(ph.p) * 0.115 : 1;
+    FX.camera(shake, zoom, cx, cy);
+
+    /* edge darkness pulls the eye to the transformation */
+    var darkK = ph.name === 'settle' ? ph.p : ph.name === 'reveal' ? 1 - ph.p * 0.6 : 1;
+    if (darkK > 0.01) {
+      var vg = ctx.createRadialGradient(cx, cy, unit * 0.18, cx, cy, unit * 0.85);
+      vg.addColorStop(0, 'rgba(3,2,7,0)');
+      vg.addColorStop(1, 'rgba(3,2,7,' + (0.5 * darkK).toFixed(3) + ')');
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    }
+
+    /* ── ground ring ──────────────────────────────────────────────────────── */
+    var ringK = ph.name === 'settle' ? ph.p * 0.4
+              : ph.name === 'charge' ? 0.4 + FX.easeIn(ph.p) * 0.6
+              : ph.name === 'cocoon' ? 1
+              : ph.name === 'break'  ? 1 - ph.p * 0.4
+              : 0.6 - ph.p * 0.6;
+    if (ringK > 0.01) {
+      var rr = unit * (0.22 + 0.03 * FX.pulse(t, 0.5));
+      ctx.save();
+      ctx.translate(cx, cy + unit * 0.20);
+      ctx.scale(1, 0.34);
+      FX.glow(0, 0, rr, VIOLET, 0.30 * ringK);
+      ctx.lineWidth = Math.max(1, unit * 0.004);
+      ctx.strokeStyle = FX.rgba(CYAN, 0.5 * ringK);
+      ctx.beginPath(); ctx.arc(0, 0, rr * 0.78, 0, 6.2832); ctx.stroke();
+      ctx.strokeStyle = FX.rgba(VIOLET, 0.35 * ringK);
+      ctx.beginPath(); ctx.arc(0, 0, rr * 0.55, 0, 6.2832); ctx.stroke();
+      ctx.restore();
+    }
+
+    /* ── the base card lifts and is consumed ──────────────────────────────── */
+    var cardA = ph.name === 'settle' ? ph.p
+              : (ph.name === 'charge' || ph.name === 'ascend') ? 1
+              : ph.name === 'cocoon' ? 1 - ph.p * 0.55
+              : ph.name === 'break'  ? Math.max(0, 0.45 - ph.p * 0.45) : 0;
+    var lift = ph.name === 'charge' ? FX.easeIn(ph.p) * unit * 0.04
+             : ph.name === 'ascend' ? unit * (0.04 + FX.easeOut(ph.p) * 0.13)
+             : ph.name === 'cocoon' ? unit * 0.17 + FX.easeIO(ph.p) * unit * 0.02
+             : ph.name === 'break'  ? unit * 0.19 : 0;
+    if (cardA > 0.01) {
+      FX.drawCard(S.cardImg, cx, cy - lift, unit * 0.30, cardA, Math.sin(t * 1.7) * 0.02, GOLD);
+      FX.glow(cx, cy - lift, unit * 0.22, VIOLET, 0.18 * cardA);
+    }
+
+    /* ── ASCEND: a column of light lifts the card off the board ───────────── */
+    if (ph.name === 'ascend' || ph.name === 'cocoon') {
+      var ak = ph.name === 'ascend' ? FX.easeOut(ph.p) : 1 - ph.p * 0.7;
+      /* the column */
+      FX.beam(cx, cy + unit * 0.02, unit * 0.20 * ak, unit * 0.62, VIOLET, 0.26 * ak, 0);
+      FX.beam(cx, cy + unit * 0.02, unit * 0.08 * ak, unit * 0.66, CYAN, 0.20 * ak, 0);
+      /* tethers from the ground ring up to the risen card */
+      ctx.save();
+      ctx.lineWidth = Math.max(1, unit * 0.0025);
+      for (var ti = 0; ti < 8; ti++) {
+        var ta = ti * 0.7854 + t * 0.5;
+        var gx = cx + Math.cos(ta) * unit * 0.19;
+        var gy = cy + unit * 0.20 + Math.sin(ta) * unit * 0.19 * 0.34;
+        ctx.strokeStyle = FX.rgba(ti % 2 ? CYAN : VIOLET, 0.30 * ak);
+        ctx.beginPath();
+        ctx.moveTo(gx, gy);
+        ctx.quadraticCurveTo(cx + Math.cos(ta) * unit * 0.06, cy - lift * 0.4,
+                             cx, cy - lift);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    /* ── ancestral glyph rings: stack during the charge, collapse into the
+          cocoon. Each snaps in on its own beat. ─────────────────────────────── */
+    if (ph.name === 'charge' || ph.name === 'ascend' || ph.name === 'cocoon') {
+      for (var gi = 0; gi < GLYPH.length; gi++) {
+        var born = ph.name === 'charge' ? FX.clamp01((ph.p - gi * 0.2) * 4) : 1;
+        if (born <= 0) continue;
+        var collapse = ph.name === 'cocoon' ? FX.easeIn(ph.p) : 0;
+        var gr = unit * GLYPH[gi] * (1 - collapse * 0.85) * (0.9 + born * 0.1);
+        var spin = t * (0.35 + gi * 0.18) * (gi % 2 ? 1 : -1);
+        ctx.save();
+        ctx.translate(cx, cy - lift);
+        ctx.rotate(spin);
+        ctx.scale(1, 0.42 + gi * 0.05);
+        ctx.lineWidth = Math.max(1, unit * 0.0035);
+        ctx.strokeStyle = FX.rgba(gi % 2 ? CYAN : VIOLET, 0.42 * born * (1 - collapse));
+        ctx.beginPath(); ctx.arc(0, 0, gr, 0, 6.2832); ctx.stroke();
+        /* glyph ticks riding the ring */
+        ctx.strokeStyle = FX.rgba(GOLD, 0.34 * born * (1 - collapse));
+        for (var gt = 0; gt < 10 + gi * 2; gt++) {
+          var ga = (gt / (10 + gi * 2)) * 6.2832;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(ga) * gr * 0.94, Math.sin(ga) * gr * 0.94);
+          ctx.lineTo(Math.cos(ga) * gr * 1.05, Math.sin(ga) * gr * 1.05);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    /* ── charge: motes spiral inward ──────────────────────────────────────── */
+    if (ph.name === 'charge' || ph.name === 'ascend' || ph.name === 'cocoon') {
+      var k = ph.name === 'charge' ? ph.p : 1;
+      for (var i = 0; i < MOTES.length; i++) {
+        var m = MOTES[i];
+        var conv = FX.clamp01(k * m.sp);
+        var rad = unit * m.r0 * (1 - conv * 0.92);
+        var ang = m.a0 + t * (0.7 + m.sp * 0.5) + conv * 2.2;
+        FX.glow(cx + Math.cos(ang) * rad, cy - lift + Math.sin(ang) * rad * 0.62,
+                m.sz * 3.2, i % 3 === 0 ? CYAN : VIOLET, 0.30 * ((1 - conv) * 0.7 + 0.12) * k);
+      }
+    }
+
+    /* ── cocoon: shell closes, cracks light up ────────────────────────────── */
+    if (ph.name === 'cocoon' || ph.name === 'break') {
+      var open = ph.name === 'break' ? FX.easeIn(ph.p) : 0;
+      var R = unit * (0.155 + open * 0.9);
+      var shellA = ph.name === 'cocoon' ? FX.easeOut(ph.p) * 0.85 : Math.max(0, 0.85 - ph.p * 0.85);
+      ctx.save();
+      ctx.translate(cx, cy - lift);
+      var g = ctx.createRadialGradient(0, 0, R * 0.25, 0, 0, R);
+      g.addColorStop(0, FX.rgba(ROSE, 0.34 * shellA));
+      g.addColorStop(0.72, FX.rgba(VIOLET, 0.22 * shellA));
+      g.addColorStop(1, FX.rgba(VIOLET, 0));
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.ellipse(0, 0, R * 0.72, R, 0, 0, 6.2832); ctx.fill();
+      var crack = ph.name === 'cocoon' ? Math.max(0, ph.p - 0.55) / 0.45 : 1;
+      if (crack > 0) {
+        ctx.lineWidth = Math.max(1, unit * 0.0035);
+        ctx.strokeStyle = FX.rgba(CYAN, 0.55 * crack * (1 - open));
+        for (var c = 0; c < 7; c++) {
+          var a0 = FX.hash(c, 21) * 6.2832, len = R * (0.5 + FX.hash(c, 22) * 0.5) * crack;
+          ctx.beginPath(); ctx.moveTo(0, 0);
+          var px = 0, py = 0;
+          for (var seg = 1; seg <= 4; seg++) {
+            var j = (FX.hash(c * 10 + seg, 23) - 0.5) * 0.5;
+            px += Math.cos(a0 + j) * (len / 4) * 0.72;
+            py += Math.sin(a0 + j) * (len / 4);
+            ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    /* ── break: shockwave + shards ────────────────────────────────────────── */
+    if (ph.name === 'break') {
+      var e = FX.easeOut(ph.p);
+      ctx.save();
+      ctx.translate(cx, cy - lift);
+      ctx.lineWidth = Math.max(1.5, unit * 0.010 * (1 - e));
+      ctx.strokeStyle = FX.rgba(CYAN, 0.55 * (1 - e));
+      ctx.beginPath(); ctx.arc(0, 0, unit * 0.10 + e * unit * 0.62, 0, 6.2832); ctx.stroke();
+      ctx.strokeStyle = FX.rgba(VIOLET, 0.35 * (1 - e));
+      ctx.beginPath(); ctx.arc(0, 0, unit * 0.06 + e * unit * 0.44, 0, 6.2832); ctx.stroke();
+      for (var s = 0; s < SHARDS.length; s++) {
+        var sh = SHARDS[s], d2 = e * unit * 0.55 * sh.v;
+        ctx.save();
+        ctx.translate(Math.cos(sh.a) * d2, Math.sin(sh.a) * d2 * 0.7);
+        ctx.rotate(sh.a + e * sh.spin);
+        ctx.globalAlpha = Math.max(0, 0.7 * (1 - e));
+        ctx.fillStyle = FX.rgba(s % 2 ? CYAN : ROSE, 0.7);
+        ctx.fillRect(-sh.sz / 2, -sh.sz / 6, sh.sz, sh.sz / 3);
+        ctx.restore();
+      }
+      ctx.restore();
+      FX.glow(cx, cy - lift, unit * (0.12 + e * 0.30), ROSE, 0.34 * (1 - e));
+      /* the money beat: lines into the break, a hard impact frame, ground dust */
+      FX.speedLines(cx, cy - lift, 1 - e, CYAN, 28);
+      FX.impact(cx, cy - lift, ph.p, ROSE, 1);
+      FX.dust(cx, cy + unit * 0.20, ph.p, '#2a2438');
+    }
+
+    /* ── reveal ───────────────────────────────────────────────────────────── */
+    if (ph.name === 'reveal') {
+      var r = FX.easeOut(FX.clamp01(ph.p * 1.6));
+      var y = cy + unit * 0.06 - r * unit * 0.10;
+      /* a halo ring behind the new form — the thing that says "ascended" */
+      ctx.save();
+      ctx.translate(cx, y - unit * 0.04);
+      ctx.lineWidth = Math.max(1.5, unit * 0.006);
+      ctx.strokeStyle = FX.rgba(GOLD, 0.42 * r);
+      ctx.beginPath(); ctx.arc(0, 0, unit * (0.24 + 0.01 * FX.pulse(t, 0.4)), 0, 6.2832); ctx.stroke();
+      ctx.strokeStyle = FX.rgba(VIOLET, 0.26 * r);
+      ctx.beginPath(); ctx.arc(0, 0, unit * 0.27, 0, 6.2832); ctx.stroke();
+      ctx.restore();
+      FX.glow(cx, y, unit * 0.34, VIOLET, 0.24 * r);
+      FX.chromaImage(S.unitImg, cx, y, unit * 0.50, unit * 0.50, r,
+                     Math.max(0, 11 * (1 - ph.p * 2.2)), 0.86 + r * 0.14);
+      /* embers rising off the new form */
+      for (var ei = 0; ei < 26; ei++) {
+        var eclimb = ((t * (0.4 + FX.hash(ei, 41) * 0.5) + FX.hash(ei, 42)) % 1);
+        FX.glow(cx + (FX.hash(ei, 43) - 0.5) * unit * 0.44,
+                y + unit * 0.18 - eclimb * unit * 0.40,
+                2 + FX.hash(ei, 44) * 4, ei % 3 === 0 ? GOLD : CYAN,
+                0.26 * r * (1 - eclimb));
+      }
+      for (var q = 0; q < 26; q++) {
+        var qa = FX.hash(q, 31) * 6.2832 + t * (0.5 + FX.hash(q, 32) * 0.7);
+        var qr = unit * (0.18 + FX.hash(q, 33) * 0.13);
+        FX.glow(cx + Math.cos(qa) * qr, y + Math.sin(qa) * qr * 0.5,
+                3 + FX.hash(q, 34) * 5, q % 4 === 0 ? GOLD : CYAN, 0.22 * r);
+      }
+      FX.plate(S.name, S.eyebrow, cx, cy + unit * 0.30, FX.clamp01((ph.p - 0.12) * 3), GOLD);
+    }
+
+    FX.cameraEnd();
+    /* bars sit OUTSIDE the camera so they never shake */
+    FX.letterbox(ph.name === 'settle' ? ph.p
+               : ph.name === 'reveal' ? 1 - FX.easeIn(FX.clamp01((ph.p - 0.55) / 0.45)) : 1);
+
+    if (S.playing && S.time > D.total + 0.4) S.playing = false;
+  }
+
+  FX.mount({ draw: draw });
+
+  /* ── public API — unchanged contract: set / play / seek ─────────────────── */
+  function set(p) {
+    if (!p) return;
+    if (p.name)    S.name = String(p.name).toUpperCase();
+    if (p.eyebrow) S.eyebrow = p.eyebrow;
+    if (p.unit) FX.loadImage(p.unit).then(function (i) { if (i) S.unitImg = i; });
+    if (p.card) FX.loadImage(p.card).then(function (i) { if (i) S.cardImg = i; });
+  }
+  function play(p) {
+    set(p); S.time = 0; S.playing = true;
+    return new Promise(function (res) { setTimeout(res, (D.total + 0.4) * 1000); });
+  }
+  function seek(t) { S.time = Math.max(0, +t || 0); S.playing = false; }
+
+  window.KalonVFX = { set: set, play: play, seek: seek, duration: D.total };
+})();
+</script>
+</body>
+</html>

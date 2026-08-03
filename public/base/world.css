@@ -120,9 +120,27 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   font-family: var(--f-mono); font-size: 11px; color: var(--text-3);
   letter-spacing: .18em; text-transform: uppercase;
 }
-.crumbs a, .crumbs .here { color: var(--text-3); text-decoration: none; }
-.crumbs .here { color: var(--bronze-hi); }
-.crumbs a:hover { color: var(--text); }
+.crumbs .here { color: var(--bronze-hi); text-decoration: none; }
+/* 🔙 Back link "◂ Camp" — unified gold-pill back-button design (matches the
+   main game's back buttons), using this app's bronze palette. */
+.crumbs a {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 999px;
+  color: var(--bronze-hi); text-decoration: none;
+  font-family: var(--f-display); font-weight: 800; letter-spacing: .12em;
+  background:
+    linear-gradient(180deg, rgba(26,19,34,0.95), rgba(12,8,16,0.97)) padding-box,
+    linear-gradient(150deg, #e6b66a, #c08a3c 30%, #7a5520 55%, #c08a3c 78%, #e6b66a) border-box;
+  border: 2px solid transparent;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.6), 0 0 14px rgba(192,138,60,0.16), inset 0 1px 0 rgba(255,230,180,0.12);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+  transition: filter .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+.crumbs a:hover {
+  filter: brightness(1.1); color: #fff3d6;
+  box-shadow: 0 0 22px rgba(230,182,106,0.5), 0 8px 18px rgba(0,0,0,0.6);
+  transform: translateY(-1px);
+}
 .crumbs .sep { color: var(--text-mute); }
 
 .filters {

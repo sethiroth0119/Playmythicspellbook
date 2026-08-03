@@ -467,6 +467,17 @@ function Room({ room, active, onClick }) {
   const bbOcc = (bb && Array.isArray(bb.occ)) ? bb.occ : [];
   const ArtComp = ART_MAP[room.art] || ArtEmpty;
   const isEmpty = room.art === "empty";
+  // 🖼 per-room uploaded art + the admin upload slot, both bridged in
+  const bbArt = (bb && typeof bb.art === "string" && bb.art) ? bb.art : "";
+  const isAdm = !!(window.__BRIDGE && window.__BRIDGE.isAdmin);
+  const askArt = (e) => {
+    e.stopPropagation();
+    try { window.parent.postMessage({ type: "base:action", action: "roomArt", id: room.id }, window.location.origin); } catch (err) {}
+  };
+  const clearArt = (e) => {
+    e.stopPropagation();
+    try { window.parent.postMessage({ type: "base:action", action: "roomArtClear", id: room.id }, window.location.origin); } catch (err) {}
+  };
 
   const statusGlyph =
     room.status === "ok"    ? "OK"
@@ -490,7 +501,14 @@ function Room({ room, active, onClick }) {
       data-room={room.id}
     >
       <div className="room-art">
-        <ArtComp />
+        {/* 🖼 UPLOADED ROOM ART (admin) wins over the themed placeholder.
+            A scrim keeps the plate/status text readable over any picture; the
+            beams, dust and stationed workers still paint ABOVE it. */}
+        {bbArt
+          ? (<div className="room-photo" style={{ backgroundImage: `url("${bbArt}")` }}>
+               <span className="room-photo-scrim" />
+             </div>)
+          : <ArtComp />}
         {!isEmpty && <span className="beam l" style={{ "--beam": `${room.glow}33` }} />}
         {!isEmpty && <span className="beam r" style={{ "--beam": `${room.glow}22` }} />}
         {!isEmpty && (
@@ -554,6 +572,12 @@ function Room({ room, active, onClick }) {
         )}
       </div>
 
+      {isAdm && (
+        <div className="room-artslot">
+          <button className="room-artbtn" onClick={askArt} title="Upload art for this room">📷</button>
+          {bbArt && <button className="room-artbtn" onClick={clearArt} title="Remove this room's art">✕</button>}
+        </div>
+      )}
       <div className="room-plate">
         <span className="id">{room.code}</span>
         <span className="nm">{room.name}</span>

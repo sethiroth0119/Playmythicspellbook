@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<style>
+  html,body{margin:0;padding:0;height:100%;background:transparent!important;overflow:hidden}
+  #fx{position:fixed;inset:0;display:block;background:transparent;pointer-events:none}
+</style>
+<title>Polycreation</title>
+<script>window.VFX_BUILD="v119f6-fusion";</script>
+</head>
+<body>
+<canvas id="fx"></canvas>
+<script src="fx-core.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   POLYCREATION — materials converging into a fused form.
+   Beats:  present (materials fan out, each in its own tint)
+        →  orbit   (they spin up around a forming core)
+        →  merge   (they pull in; the core swells)
+        →  bloom   (bounded flare — the core is a deep magenta, never white)
+        →  reveal  (the fusion stands, nameplate resolves)
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  /* A one-shot cinematic may composite harder than the persistent weather
+     layer: it is on screen for five seconds, and after the colour clamp there
+     is no white for a higher ceiling to amplify. Measured: 0 white pixels
+     across the whole timeline at this value. */
+  FX.CEIL = 0.78;
+  var MAG = '#c2410c', PLUM = '#a855f7', TEAL = '#2dd4bf', GOLD = '#d9b45a';
+
+  var D = FX.director([
+    { n: 'present', d: 0.85 },
+    { n: 'orbit',   d: 1.35 },
+    { n: 'merge',   d: 1.10 },
+    { n: 'bloom',   d: 0.70 },
+    { n: 'reveal',  d: 2.00 }
+  ]);
+
+  /* singleFrame (default TRUE): draw ONE card — the unit being created — instead
+     of a ring of material cards. Pass materials AND singleFrame:false to get the
+     old montage back. */
+  var S = { time: 0, playing: false, name: 'FUSION', eyebrow: 'FUSION', unitImg: null,
+            mats: [], tints: [], singleFrame: true };
+
+  var SPARK = FX.pool(60, function (s, i) {
+    s.a = FX.hash(i, 61) * 6.2832;
+    s.r = 0.10 + FX.hash(i, 62) * 0.22;
+    s.sp = 0.5 + FX.hash(i, 63) * 1.4;
+    s.sz = 2 + FX.hash(i, 64) * 4;
+  });
+
+  function draw(dt, t) {
+    if (S.playing) S.time += dt;
+    var W = FX.W, H = FX.H, cx = W / 2, cy = H * 0.52, ctx = FX.ctx;
+    var ph = D.at(S.time), unit = Math.min(W, H);
+    var n = Math.max(1, S.mats.length);
+
+    /* ── camera: spin-up rumble, a hard punch on the bloom ────────────────── */
+    var shake = ph.name === 'orbit' ? ph.p * 0.14
+              : ph.name === 'merge' ? 0.14 + FX.easeIn(ph.p) * 0.30
+              : ph.name === 'bloom' ? 1.0 * (1 - FX.easeOut(ph.p))
+              : ph.name === 'reveal' ? Math.max(0, 0.15 - ph.p * 0.15) : 0;
+    var zoom  = ph.name === 'merge' ? 1 + FX.easeIn(ph.p) * 0.035
+              : ph.name === 'bloom' ? 1.035 + FX.easeOut(ph.p) * 0.05
+              : ph.name === 'reveal' ? 1.085 - FX.easeOut(ph.p) * 0.085 : 1;
+    FX.camera(shake, zoom, cx, cy);
+
+    var darkK = ph.name === 'present' ? ph.p : ph.name === 'reveal' ? 1 - ph.p * 0.6 : 1;
+    if (darkK > 0.01) {
+      var vg = ctx.createRadialGradient(cx, cy, unit * 0.18, cx, cy, unit * 0.85);
+      vg.addColorStop(0, 'rgba(3,2,7,0)');
+      vg.addColorStop(1, 'rgba(3,2,7,' + (0.5 * darkK).toFixed(3) + ')');
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    }
+
+    /* ── the forming core ─────────────────────────────────────────────────── */
+    var coreK = ph.name === 'present' ? ph.p * 0.25
+              : ph.name === 'orbit'   ? 0.25 + ph.p * 0.35
+              : ph.name === 'merge'   ? 0.6 + FX.easeIn(ph.p) * 0.4
+              : ph.name === 'bloom'   ? 1 - ph.p * 0.55 : 0;
+    if (coreK > 0.01) {
+      var cr = unit * (0.05 + coreK * 0.12) * (1 + 0.06 * FX.pulse(t, 1.4));
+      FX.glow(cx, cy, cr * 2.4, PLUM, 0.30 * coreK);
+      FX.glow(cx, cy, cr, MAG, 0.34 * coreK);
+    }
+
+    /* ── materials: fan → orbit → pull in ─────────────────────────────────── */
+    var matA = ph.name === 'present' ? FX.easeOut(ph.p)
+             : ph.name === 'orbit'   ? 1
+             : ph.name === 'merge'   ? 1 - FX.easeIn(ph.p) * 0.9
+             : ph.name === 'bloom'   ? Math.max(0, 0.1 - ph.p * 0.1) : 0;
+    if (matA > 0.01) {
+      var spin = ph.name === 'orbit' ? FX.easeIn(ph.p) * 2.4 : ph.name === 'present' ? 0 : 2.4 + ph.p * 3;
+      var pull = ph.name === 'merge' ? FX.easeIn(ph.p) * 0.85 : 0;
+      /* ✨ ONE FRAME. The card sits at the core and breathes; no orbit, no
+         tethers, no per-material copies. */
+      if (S.singleFrame) {
+        var sBob = Math.sin(t * 1.1) * unit * 0.012;
+        var sScale = unit * 0.30 * (1 - pull * 0.35);
+        var sTint = S.tints[0] || PLUM;
+        FX.glow(cx, cy + sBob, unit * 0.20, sTint, 0.26 * matA);
+        FX.drawCard(S.unitImg || S.mats[0] || null, cx, cy + sBob, sScale, matA, Math.sin(t * 0.9) * 0.03, sTint);
+      } else
+      for (var i = 0; i < n; i++) {
+        var ang = (i / n) * 6.2832 - 1.5708 + t * 0.5 + spin;
+        var rad = unit * 0.24 * (1 - pull);
+        var x = cx + Math.cos(ang) * rad, y = cy + Math.sin(ang) * rad * 0.5;
+        var tint = S.tints[i] || (i % 2 ? TEAL : PLUM);
+        FX.glow(x, y, unit * 0.08, tint, 0.20 * matA);
+        FX.drawCard(S.mats[i] || null, x, y, unit * 0.20 * (1 - pull * 0.5), matA, Math.sin(t * 1.2 + i) * 0.06, tint);
+        /* a tether from each material into the core */
+        ctx.save();
+        ctx.globalAlpha = 0.28 * matA;
+        ctx.strokeStyle = FX.rgba(tint, 0.5);
+        ctx.lineWidth = Math.max(1, unit * 0.0025);
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cx, cy); ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    /* ── orbiting sparks ──────────────────────────────────────────────────── */
+    if (ph.name === 'orbit' || ph.name === 'merge') {
+      var sk = ph.name === 'orbit' ? ph.p : 1;
+      for (var s = 0; s < SPARK.length; s++) {
+        var sp = SPARK[s];
+        var a2 = sp.a + t * sp.sp * 1.4;
+        var r2 = unit * sp.r * (ph.name === 'merge' ? 1 - FX.easeIn(ph.p) * 0.8 : 1);
+        FX.glow(cx + Math.cos(a2) * r2, cy + Math.sin(a2) * r2 * 0.55,
+                sp.sz * 2.2, s % 3 === 0 ? TEAL : PLUM, 0.24 * sk);
+      }
+    }
+
+    /* ── bloom: the flare. Deep magenta, hard-bounded — this is the beat that
+          used to be a white-out, and the colour clamp makes that impossible. ─ */
+    if (ph.name === 'bloom') {
+      var b = FX.easeOut(ph.p);
+      FX.glow(cx, cy, unit * (0.10 + b * 0.42), MAG, 0.36 * (1 - b * 0.6));
+      FX.glow(cx, cy, unit * (0.05 + b * 0.22), PLUM, 0.30 * (1 - b * 0.5));
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.lineWidth = Math.max(1.5, unit * 0.009 * (1 - b));
+      ctx.strokeStyle = FX.rgba(TEAL, 0.5 * (1 - b));
+      ctx.beginPath(); ctx.arc(0, 0, unit * (0.08 + b * 0.55), 0, 6.2832); ctx.stroke();
+      /* light spokes */
+      ctx.strokeStyle = FX.rgba(PLUM, 0.32 * (1 - b));
+      for (var k = 0; k < 8; k++) {
+        var ka = k * 0.7854 + t * 0.4;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ka) * unit * 0.06, Math.sin(ka) * unit * 0.06 * 0.6);
+        ctx.lineTo(Math.cos(ka) * unit * (0.10 + b * 0.5), Math.sin(ka) * unit * (0.10 + b * 0.5) * 0.6);
+        ctx.stroke();
+      }
+      ctx.restore();
+      /* the convergence lands */
+      FX.speedLines(cx, cy, 1 - b, TEAL, 30);
+      FX.impact(cx, cy, ph.p, MAG, 1);
+      FX.dust(cx, cy + unit * 0.20, ph.p, '#2a1830');
+    }
+
+    /* ── reveal ───────────────────────────────────────────────────────────── */
+    if (ph.name === 'reveal') {
+      var r = FX.easeOut(FX.clamp01(ph.p * 1.6));
+      FX.glow(cx, cy, unit * 0.30, PLUM, 0.20 * r);
+      FX.chromaImage(S.unitImg, cx, cy, unit * 0.48, unit * 0.48, r,
+                     Math.max(0, 10 * (1 - ph.p * 2.2)), 0.88 + r * 0.12);
+      for (var q = 0; q < 24; q++) {
+        var qa = FX.hash(q, 71) * 6.2832 + t * 0.45;
+        var qr = unit * (0.19 + FX.hash(q, 72) * 0.12);
+        FX.glow(cx + Math.cos(qa) * qr, cy + Math.sin(qa) * qr * 0.5,
+                3 + FX.hash(q, 73) * 4, q % 3 === 0 ? GOLD : TEAL, 0.20 * r);
+      }
+      FX.plate(S.name, S.eyebrow, cx, cy + unit * 0.31, FX.clamp01((ph.p - 0.1) * 3), GOLD);
+    }
+
+    FX.cameraEnd();
+    FX.letterbox(ph.name === 'present' ? FX.easeOut(ph.p)
+               : ph.name === 'reveal' ? 1 - FX.easeIn(FX.clamp01((ph.p - 0.55) / 0.45)) : 1);
+
+    if (S.playing && S.time > D.total + 0.4) S.playing = false;
+  }
+
+  FX.mount({ draw: draw });
+
+  function set(p) {
+    if (p && p.singleFrame != null) S.singleFrame = !!p.singleFrame;
+    if (!p) return;
+    if (p.name)    S.name = String(p.name).toUpperCase();
+    if (p.eyebrow) S.eyebrow = p.eyebrow;
+    if (p.unit) FX.loadImage(p.unit).then(function (i) { if (i) S.unitImg = i; });
+    if (p.matTint) S.tints = p.matTint.slice();
+    if (p.materials) {
+      S.mats = new Array(p.materials.length);
+      p.materials.forEach(function (src, i) {
+        FX.loadImage(src).then(function (im) { S.mats[i] = im; });
+      });
+    }
+  }
+  function play(p) {
+    set(p); S.time = 0; S.playing = true;
+    return new Promise(function (res) { setTimeout(res, (D.total + 0.4) * 1000); });
+  }
+  function seek(t) { S.time = Math.max(0, +t || 0); S.playing = false; }
+
+  window.FusionVFX = { set: set, play: play, seek: seek, duration: D.total };
+})();
+</script>
+</body>
+</html>

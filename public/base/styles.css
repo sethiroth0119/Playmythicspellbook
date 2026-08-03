@@ -51,6 +51,7 @@
   --hud-top: 56px;
   --hud-bot: 76px;
   --hud-left: 260px;
+  --hud-right: 236px;
 
   /* tunable */
 }
@@ -73,7 +74,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .app {
   position: fixed; inset: 0;
   display: grid;
-  grid-template-columns: var(--hud-left) 1fr;
+  grid-template-columns: var(--hud-left) 1fr var(--hud-right);
   grid-template-rows: var(--hud-top) 1fr var(--hud-bot);
   background:
     radial-gradient(ellipse at 50% 35%, #1a0e22 0%, #07040b 60%, #030107 100%);
@@ -302,23 +303,83 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   50%      { opacity: .35; transform: scale(.7); }
 }
 
+.roster-list { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; min-height: 0; }
+.roster-list::-webkit-scrollbar { width: 6px; }
+.roster-list::-webkit-scrollbar-thumb { background: var(--line); }
 .roster-row {
-  display: grid; grid-template-columns: 22px 1fr auto;
+  display: grid; grid-template-columns: 30px minmax(0, 1fr) auto;
   gap: 8px; align-items: center;
-  padding: 5px 0;
+  padding: 4px 6px;
   font-size: 11px;
+  border: 1px solid transparent; border-radius: 4px;
+  background: linear-gradient(180deg, rgba(255,255,255,.026), rgba(0,0,0,.18));
 }
+.roster-row:hover { border-color: var(--bronze-dim, var(--line)); background: rgba(255, 209, 102, .07); }
 .roster-avatar {
-  width: 22px; height: 22px;
+  width: 30px; height: 30px; overflow: hidden;
   background: linear-gradient(135deg, var(--rock-3), var(--rock-2));
-  border: 1px solid var(--line); border-radius: 2px;
+  border: 1px solid var(--line); border-radius: 3px;
   font-family: var(--f-mono); font-weight: 700; font-size: 10px;
   color: var(--bronze-hi); display: grid; place-items: center;
 }
+.roster-art { width: 100%; height: 100%; object-fit: cover; display: block; }
 .roster-row.busy .roster-avatar { color: var(--blue-hi); border-color: var(--blue-dim); }
 .roster-row.hurt .roster-avatar { color: var(--red); border-color: #4a1a1a; }
+.roster-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .roster-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.roster-tag { font-family: var(--f-mono); font-size: 9px; color: var(--text-3); letter-spacing: .12em; }
+.roster-tag {
+  font-family: var(--f-mono); font-size: 9px; color: var(--text-3); letter-spacing: .12em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* state pill — mirrors the beds rack's READY / TIRED / EXHAUSTED language */
+.roster-state {
+  font-family: var(--f-mono); font-size: 8px; letter-spacing: .1em;
+  padding: 2px 5px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid currentColor; opacity: .95;
+}
+.roster-state.ready { color: var(--toxic, #4ade80); }
+.roster-state.busy  { color: var(--blue-hi, #7ec0ff); }
+.roster-state.hurt  { color: var(--red, #ff7755); }
+.roster-empty {
+  font-size: 10px; color: var(--text-3); line-height: 1.45;
+  border: 1px dashed var(--line); border-radius: 4px; padding: 8px;
+}
+.roster-more { font-family: var(--f-mono); font-size: 9px; color: var(--text-3); padding: 3px 6px; }
+
+/* ============================================================
+   RIGHT RAIL — track 3: roster + hero beds, docked (not floating)
+   ============================================================ */
+.hud-right {
+  grid-column: 3; grid-row: 2;
+  border-left: 1px solid var(--line);
+  background: linear-gradient(180deg, #0a0612 0%, #060309 100%);
+  display: flex; flex-direction: column;
+  min-height: 0; min-width: 0;
+  z-index: 40;
+  position: relative;
+}
+.right-section {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 12px 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  min-height: 0;
+  flex: 0 1 auto;
+}
+/* A long roster must not swallow the rail — cap it and let its own list
+   scroll, so the beds always keep the lower half. */
+.hud-right .right-section.roster { max-height: 50%; }
+/* Inside the rail the beds rack is a SECTION, not a floating panel — drop
+   the fixed positioning, the card chrome and the width lock it needs when
+   it overlays the stage on narrow screens. */
+.hud-right .hud-beds-rack {
+  position: static;
+  width: auto; max-height: none;
+  flex: 1 1 auto; min-height: 0;
+  border: 0; border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 10px 12px 12px;
+}
 
 /* ============================================================
    STAGE  — the 2.5D cutaway view
@@ -968,8 +1029,32 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
    RESPONSIVE GUARDS
    ============================================================ */
 @media (max-width: 1280px) {
-  :root { --hud-left: 220px; }
+  :root { --hud-left: 220px; --hud-right: 208px; }
   .panel { width: 340px; }
+}
+/* Tablets & small laptops: three rails would starve the stage, so the right
+   rail floats over it again (its pre-3-column behaviour) and the grid goes
+   back to two tracks. */
+@media (max-width: 1180px) {
+  .app { grid-template-columns: var(--hud-left) 1fr; }
+  .hud-right {
+    position: fixed; right: 10px;
+    top: calc(var(--hud-top, 56px) + 10px);
+    max-height: calc(100vh - var(--hud-top, 56px) - var(--hud-bot, 76px) - 22px);
+    width: 200px;
+    border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
+    overflow: hidden;
+  }
+  .hud-right .right-section { padding: 9px 10px; }
+  .hud-right .right-section.roster { max-height: 46%; }
+  .hud-right .hud-beds-rack { padding: 8px 10px 10px; }
+}
+/* Phone-ish / very short: the rail would cover the stage — hide it. The
+   same heroes are still reachable from the main game's Hero Rest panel. */
+@media (max-width: 820px), (max-height: 520px) {
+  .app { grid-template-columns: var(--hud-left) 1fr; }
+  .hud-right { display: none; }
 }
 
 /* ============================================================
@@ -1099,3 +1184,21 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 @media (max-width: 1100px) {
   .hud-beds-rack { display: none; }
 }
+
+/* ===== 🖼 ROOM ART CARDS (v119d2) =====================================
+   An uploaded picture fills the room box behind everything the room already
+   draws (beams, dust, stationed workers, plate, status). The scrim is what
+   keeps the caption legible over a bright photo. The admin slot only renders
+   for admins — players never see it. */
+.room-photo{position:absolute;inset:0;background-size:cover;background-position:center;
+  background-repeat:no-repeat;z-index:0;border-radius:inherit}
+.room-photo-scrim{position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(8,6,4,.18) 0%,rgba(8,6,4,.05) 42%,rgba(8,6,4,.62) 100%)}
+.room.active .room-photo{filter:saturate(1.06) brightness(1.04)}
+.room:not(.active) .room-photo{filter:saturate(.78) brightness(.82)}
+.room-artslot{position:absolute;top:6px;right:6px;z-index:6;display:flex;gap:4px;opacity:0;transition:opacity .16s}
+.room:hover .room-artslot{opacity:1}
+.room-artbtn{width:24px;height:24px;line-height:1;display:grid;place-items:center;cursor:pointer;
+  border-radius:6px;font-size:12px;color:#f5d488;
+  background:rgba(18,12,6,.86);border:1px solid rgba(230,180,85,.55)}
+.room-artbtn:hover{border-color:#ffe6a6;color:#ffe6a6}

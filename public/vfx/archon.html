@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<style>
+  html,body{margin:0;padding:0;height:100%;background:transparent!important;overflow:hidden}
+  #fx{position:fixed;inset:0;display:block;background:transparent;pointer-events:none}
+</style>
+<title>Rite of the Archon</title>
+<script>window.VFX_BUILD="v119f6-archon";</script>
+</head>
+<body>
+<canvas id="fx"></canvas>
+<script src="fx-core.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   RITE OF THE ARCHON — a tribute summon.
+   Beats:  gather  (the tributes rise into a ring)
+        →  offer   (they burn down into the circle, embers climb)
+        →  gate    (a rift opens above the board)
+        →  descend (the Archon comes down through it)
+        →  reveal  (nameplate, standing light)
+   Same engine, same guarantees: 2D canvas, clamped colours, one alpha ceiling.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  /* A one-shot cinematic may composite harder than the persistent weather
+     layer: it is on screen for five seconds, and after the colour clamp there
+     is no white for a higher ceiling to amplify. Measured: 0 white pixels
+     across the whole timeline at this value. */
+  FX.CEIL = 0.78;
+  var GOLD = '#e0b64a', EMBER = '#ff8a3c', DEEP = '#4c2f8f', SKY = '#7ec0ff';
+
+  var D = FX.director([
+    { n: 'gather',  d: 1.10 },
+    { n: 'offer',   d: 1.20 },
+    { n: 'gate',    d: 1.00 },
+    { n: 'descend', d: 1.30 },
+    { n: 'reveal',  d: 2.00 }
+  ]);
+
+  var S = { time: 0, playing: false, name: 'ARCHON', eyebrow: 'ARCHON  //  TRIBUTE SUMMON',
+            unitImg: null, tribs: [], tints: [] };
+
+  var EMBERS = FX.pool(70, function (e, i) {
+    e.a = FX.hash(i, 41) * 6.2832;
+    e.r = 0.06 + FX.hash(i, 42) * 0.26;
+    e.sp = 0.35 + FX.hash(i, 43) * 0.9;
+    e.sz = 2 + FX.hash(i, 44) * 4;
+    e.ph = FX.hash(i, 45);
+  });
+
+  function draw(dt, t) {
+    if (S.playing) S.time += dt;
+    var W = FX.W, H = FX.H, cx = W / 2, cy = H * 0.54, ctx = FX.ctx;
+    var ph = D.at(S.time), unit = Math.min(W, H);
+    var n = Math.max(1, S.tribs.length);
+
+    /* ── camera: the rite builds, the landing hits ────────────────────────── */
+    var land = (ph.name === 'descend' && ph.p > 0.82) ? (ph.p - 0.82) / 0.18 : 0;
+    var shake = ph.name === 'gather'  ? ph.p * 0.07
+              : ph.name === 'offer'   ? 0.07 + ph.p * 0.13
+              : ph.name === 'gate'    ? 0.20 + ph.p * 0.14
+              : ph.name === 'descend' ? (land ? 0.9 * (1 - land) : 0.34)
+              : Math.max(0, 0.16 - ph.p * 0.16);
+    var zoom  = ph.name === 'gate'    ? 1 + ph.p * 0.03
+              : ph.name === 'descend' ? 1.03 + FX.easeOut(ph.p) * 0.04
+              : ph.name === 'reveal'  ? 1.07 - FX.easeOut(ph.p) * 0.07 : 1;
+    FX.camera(shake, zoom, cx, cy);
+
+    var darkK = ph.name === 'gather' ? ph.p : ph.name === 'reveal' ? 1 - ph.p * 0.6 : 1;
+    if (darkK > 0.01) {
+      var vg = ctx.createRadialGradient(cx, cy, unit * 0.18, cx, cy, unit * 0.85);
+      vg.addColorStop(0, 'rgba(3,2,7,0)');
+      vg.addColorStop(1, 'rgba(3,2,7,' + (0.5 * darkK).toFixed(3) + ')');
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    }
+
+    /* ── summoning circle ─────────────────────────────────────────────────── */
+    var circK = ph.name === 'gather' ? ph.p
+              : ph.name === 'offer'  ? 1
+              : ph.name === 'gate'   ? 1
+              : ph.name === 'descend'? 1 - ph.p * 0.5 : Math.max(0, 0.5 - ph.p * 0.5);
+    if (circK > 0.01) {
+      ctx.save();
+      ctx.translate(cx, cy + unit * 0.22); ctx.scale(1, 0.32);
+      var R = unit * 0.26;
+      FX.glow(0, 0, R * 1.1, GOLD, 0.24 * circK);
+      ctx.lineWidth = Math.max(1, unit * 0.0045);
+      ctx.strokeStyle = FX.rgba(GOLD, 0.55 * circK);
+      ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.2832); ctx.stroke();
+      ctx.strokeStyle = FX.rgba(DEEP, 0.45 * circK);
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.66, 0, 6.2832); ctx.stroke();
+      /* rune ticks around the rim, rotating slowly */
+      ctx.strokeStyle = FX.rgba(GOLD, 0.4 * circK);
+      for (var k = 0; k < 12; k++) {
+        var a = t * 0.25 + k * 0.5236;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * R * 0.86, Math.sin(a) * R * 0.86);
+        ctx.lineTo(Math.cos(a) * R * 0.98, Math.sin(a) * R * 0.98);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    /* ── tributes: rise, then burn away ───────────────────────────────────── */
+    var tribA = ph.name === 'gather' ? FX.easeOut(ph.p)
+              : ph.name === 'offer'  ? 1 - FX.easeIn(ph.p) : 0;
+    if (tribA > 0.01) {
+      for (var i = 0; i < n; i++) {
+        var ang = (i / n) * 6.2832 - 1.5708 + t * 0.18;
+        var rad = unit * 0.22 * (ph.name === 'offer' ? 1 - FX.easeIn(ph.p) * 0.75 : 1);
+        var x = cx + Math.cos(ang) * rad;
+        var y = cy + Math.sin(ang) * rad * 0.42 - unit * 0.02;
+        var tint = S.tints[i] || GOLD;
+        FX.glow(x, y, unit * 0.09, tint, 0.20 * tribA);
+        FX.drawCard(S.tribs[i] || null, x, y, unit * 0.19, tribA, Math.sin(t + i) * 0.05, tint);
+      }
+    }
+
+    /* ── offer: embers climb toward the rift ──────────────────────────────── */
+    if (ph.name === 'offer' || ph.name === 'gate') {
+      var ek = ph.name === 'offer' ? ph.p : 1 - ph.p * 0.6;
+      for (var e = 0; e < EMBERS.length; e++) {
+        var em = EMBERS[e];
+        var climb = ((t * em.sp + em.ph) % 1);
+        var ex = cx + Math.cos(em.a + t * 0.3) * unit * em.r;
+        var ey = cy + unit * 0.20 - climb * unit * 0.48;
+        FX.glow(ex, ey, em.sz * 2.4, e % 5 === 0 ? GOLD : EMBER, 0.26 * ek * (1 - climb));
+      }
+    }
+
+    /* ── gate: a rift opens above ─────────────────────────────────────────── */
+    var gateK = ph.name === 'gate'    ? FX.easeOut(ph.p)
+              : ph.name === 'descend' ? 1
+              : ph.name === 'reveal'  ? Math.max(0, 1 - ph.p * 2) : 0;
+    if (gateK > 0.01) {
+      var gy = cy - unit * 0.30;
+      var gw = unit * 0.34 * gateK, gh = unit * 0.055 * gateK;
+      ctx.save();
+      ctx.translate(cx, gy);
+      var g = ctx.createRadialGradient(0, 0, 0, 0, 0, gw);
+      g.addColorStop(0, FX.rgba(SKY, 0.40 * gateK));
+      g.addColorStop(0.5, FX.rgba(DEEP, 0.28 * gateK));
+      g.addColorStop(1, FX.rgba(DEEP, 0));
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.ellipse(0, 0, gw, gh * 2.4, 0, 0, 6.2832); ctx.fill();
+      ctx.lineWidth = Math.max(1.5, unit * 0.005);
+      ctx.strokeStyle = FX.rgba(SKY, 0.5 * gateK);
+      ctx.beginPath(); ctx.ellipse(0, 0, gw * 0.86, gh * 1.9, 0, 0, 6.2832); ctx.stroke();
+      ctx.restore();
+      /* the shaft of light down to the circle */
+      FX.beam(cx, (gy + cy + unit * 0.2) / 2, gw * 1.05, (cy + unit * 0.2) - gy, SKY, 0.16 * gateK, 0);
+    }
+
+    /* ── descend + reveal: the Archon arrives ─────────────────────────────── */
+    if (ph.name === 'descend' || ph.name === 'reveal') {
+      var d = ph.name === 'descend' ? FX.easeOut(ph.p) : 1;
+      var y = cy - unit * 0.26 + d * unit * 0.28;
+      var a = ph.name === 'descend' ? FX.clamp01(ph.p * 1.8) : 1;
+      FX.glow(cx, y, unit * 0.30, DEEP, 0.22 * a);
+      FX.chromaImage(S.unitImg, cx, y, unit * 0.48, unit * 0.48, a,
+                     ph.name === 'descend' ? 10 * (1 - ph.p) : 0, 0.9 + d * 0.1);
+      /* landing shock on arrival */
+      if (land) {
+        FX.speedLines(cx, y, 1 - land, SKY, 26);
+        FX.impact(cx, cy + unit * 0.10, land, GOLD, 1);
+        FX.dust(cx, cy + unit * 0.22, land, '#3a3020');
+      }
+      if (ph.name === 'reveal') {
+        for (var q = 0; q < 22; q++) {
+          var qa = FX.hash(q, 51) * 6.2832 + t * 0.4;
+          var qr = unit * (0.20 + FX.hash(q, 52) * 0.12);
+          FX.glow(cx + Math.cos(qa) * qr, y + Math.sin(qa) * qr * 0.45,
+                  3 + FX.hash(q, 53) * 4, q % 3 === 0 ? GOLD : SKY, 0.20);
+        }
+        FX.plate(S.name, S.eyebrow, cx, cy + unit * 0.32, FX.clamp01((ph.p - 0.1) * 3), GOLD);
+      }
+    }
+
+    FX.cameraEnd();
+    FX.letterbox(ph.name === 'gather' ? FX.easeOut(ph.p)
+               : ph.name === 'reveal' ? 1 - FX.easeIn(FX.clamp01((ph.p - 0.55) / 0.45)) : 1);
+
+    if (S.playing && S.time > D.total + 0.4) S.playing = false;
+  }
+
+  FX.mount({ draw: draw });
+
+  function set(p) {
+    if (!p) return;
+    if (p.name)    S.name = String(p.name).toUpperCase();
+    if (p.eyebrow) S.eyebrow = p.eyebrow;
+    if (p.unit) FX.loadImage(p.unit).then(function (i) { if (i) S.unitImg = i; });
+    if (p.tributeTint) S.tints = p.tributeTint.slice();
+    if (p.tributes) {
+      S.tribs = new Array(p.tributes.length);
+      p.tributes.forEach(function (src, i) {
+        FX.loadImage(src).then(function (im) { S.tribs[i] = im; });
+      });
+    }
+  }
+  function play(p) {
+    set(p); S.time = 0; S.playing = true;
+    return new Promise(function (res) { setTimeout(res, (D.total + 0.4) * 1000); });
+  }
+  function seek(t) { S.time = Math.max(0, +t || 0); S.playing = false; }
+
+  window.ArchonVFX = { set: set, play: play, seek: seek, duration: D.total };
+})();
+</script>
+</body>
+</html>

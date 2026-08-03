@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<style>
+  html,body{margin:0;padding:0;height:100%;background:transparent!important;overflow:hidden}
+  #fx{position:fixed;inset:0;display:block;background:transparent;pointer-events:none}
+</style>
+<title>Weather Realms</title>
+<script>window.WX_BUILD="v119h0-weather";</script>
+</head>
+<body>
+<canvas id="fx"></canvas>
+<script src="../vfx/fx-core.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   WEATHER REALMS — 21 battlefield weathers, each with its own painter.
+
+   The previous pass drove every weather through ONE generic particle loop, so
+   they all read as "some dots" and at low intensity they read as nothing at all
+   (0.6% of pixels painted at 10%). Each weather now has a hand-written painter:
+   rain has depth layers and splashes, the tornado has a real funnel, the flood
+   only floods the LOWER BAND so units stay readable, the moons hang to the
+   RIGHT of the board.
+
+   INTENSITY is meaningful across its whole range. It scales three things at
+   once — how many elements, how strong they draw, and how fast they move — and
+   it has a floor, so 10% is "light rain" rather than "nothing":
+        dens = 0.35 + 0.65·i      alpha = 0.55 + 0.45·i      speed = 0.7 + 0.6·i
+
+   The no-white guarantees are unchanged: FX.rgba clamps every colour, the frame
+   carries one alpha ceiling, and there is no full-screen light fill anywhere.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  /* ⚠ MEASURED, NOT GUESSED. At 0.42 the strongest weather peaked at alpha
+     80/255 and fog at 32 — technically drawing, visually absent. The colour
+     clamp means a higher ceiling cannot produce white, it just lets the effect
+     be SEEN, so this is the number that makes weather read as weather. */
+  FX.CEIL = 0.72;
+
+  var cur = 'normal_rain', intensity = 0.5, bolt = { t: -9, x: 0.5, seed: 0 };
+
+  /* deterministic scratch fields — reused by every painter */
+  var P = FX.pool(520, function (p, i) {
+    p.x = FX.hash(i, 11); p.y = FX.hash(i, 12);
+    p.z = 0.30 + FX.hash(i, 13) * 0.95;        /* depth: size + speed + alpha */
+    p.s = 0.5 + FX.hash(i, 14) * 1.3;
+    p.r = FX.hash(i, 15) * 6.2832;
+    p.w = FX.hash(i, 16);
+    p.v = FX.hash(i, 17);
+  });
+
+  /* ── shared helpers ──────────────────────────────────────────────────── */
+  /* ⚠ THE FLOORS MATTER MORE THAN THE RANGE. At the old floors, 10% intensity
+     painted 0.5%% of the screen — indistinguishable from the effect being
+     broken, which is exactly how it was reported. 10%% now means "light rain",
+     not "no rain": ~60%% of the density and ~73%% of the strength, with the
+     range still doing real work between there and 100%%. */
+  function dens(i) { return 0.55 + 0.45 * i; }
+  /* the 1.35 lifts every painter at once — they were all authored against a
+     ceiling that turned out to be half of what the layer needed */
+  function alph(i) { return Math.min(1, (0.70 + 0.30 * i) * 1.35); }
+  function spd(i)  { return 0.75 + 0.50 * i; }
+  /* ⚠ STRUCTURAL elements — fog banks, the flood band, the tornado funnel — are
+     not particles, so they ignored dens()/alph() and the slider did nothing for
+     the weathers built out of them (fog read 72% at 10% AND at 100%). This is
+     the curve those parts scale on. */
+  function struct(i) { return 0.30 + 0.70 * i; }
+
+  /* a dark vertical wash — never light, so it cannot grey the board out */
+  function sky(ctx, W, H, top, bot, a) {
+    var g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, FX.rgba(top, a));
+    g.addColorStop(1, FX.rgba(bot, a * 0.66));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  /* falling streaks with depth: near ones are longer, faster and brighter */
+  function streaks(ctx, W, H, n, colour, opt) {
+    opt = opt || {};
+    var len = opt.len || 26, wind = opt.wind || 0.18, sp = opt.speed || 1, a = opt.alpha || 0.4, wob = opt.wobble || 0;
+    for (var i = 0; i < n; i++) {
+      var p = P[i];
+      var y = ((p.y + FX.t * sp * 0.42 * p.z) % 1);
+      var x = ((p.x + FX.t * wind * 0.1 * p.z + (wob ? Math.sin(FX.t * 1.4 + p.r) * wob : 0)) % 1 + 1) % 1;
+      var L = len * p.z * (0.7 + p.s * 0.4);
+      ctx.strokeStyle = FX.rgba(colour, a * p.z * 0.9);
+      ctx.lineWidth = Math.max(0.7, p.z * (opt.thick || 1.5));
+      ctx.beginPath();
+      ctx.moveTo(x * W, y * H);
+      ctx.lineTo(x * W - wind * L * 2.2, y * H - L);
+      ctx.stroke();
+    }
+  }
+  /* splash pops where rain lands */
+  function splashes(ctx, W, H, n, colour, a) {
+    for (var i = 0; i < n; i++) {
+      var p = P[(i * 7) % P.length];
+      var cyc = (FX.t * (0.9 + p.s * 0.5) + p.w) % 1;
+      if (cyc > 0.35) continue;
+      var k = cyc / 0.35;
+      var x = p.x * W, y = (0.55 + p.v * 0.42) * H;
+      ctx.strokeStyle = FX.rgba(colour, a * (1 - k) * 0.7);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(x, y, 3 + k * 13, (3 + k * 13) * 0.32, 0, 0, 6.2832); ctx.stroke();
+    }
+  }
+  /* a celestial disc — moons hang to the RIGHT of the board, as asked */
+  function disc(ctx, W, H, colour, r, glow, opt) {
+    opt = opt || {};
+    var dx = W * (opt.x || 0.84), dy = H * (opt.y || 0.22), R = Math.min(W, H) * r;
+    FX.glow(dx, dy, R * (opt.halo || 3.0), colour, glow);
+    ctx.fillStyle = FX.rgba(colour, opt.solid == null ? 0.55 : opt.solid);
+    ctx.beginPath(); ctx.arc(dx, dy, R, 0, 6.2832); ctx.fill();
+    if (opt.crater) {                                   /* moon texture */
+      for (var c = 0; c < 7; c++) {
+        var ca = FX.hash(c, 41) * 6.2832, cr = R * (0.15 + FX.hash(c, 42) * 0.5);
+        ctx.fillStyle = FX.rgba(opt.crater, 0.30);
+        ctx.beginPath(); ctx.arc(dx + Math.cos(ca) * cr, dy + Math.sin(ca) * cr, R * (0.06 + FX.hash(c, 43) * 0.13), 0, 6.2832); ctx.fill();
+      }
+    }
+    if (opt.eclipse) {                                  /* the occluding body */
+      ctx.fillStyle = 'rgba(6,4,10,0.97)';
+      ctx.beginPath(); ctx.arc(dx - R * 0.10, dy - R * 0.05, R * 0.96, 0, 6.2832); ctx.fill();
+      ctx.lineWidth = Math.max(2, R * 0.045);
+      ctx.strokeStyle = FX.rgba(opt.eclipse, 0.55);
+      ctx.beginPath(); ctx.arc(dx, dy, R * 1.02, 0, 6.2832); ctx.stroke();
+    }
+    return { x: dx, y: dy, r: R };
+  }
+  /* forked lightning + a tinted sky lift (never a white flash) */
+  function lightning(ctx, W, H, colour, I, every) {
+    var gap = (every || 3.4) - I * 1.4;
+    if (FX.t - bolt.t > gap) { bolt.t = FX.t; bolt.seed++; bolt.x = 0.15 + FX.hash(bolt.seed, 91) * 0.7; }
+    var age = FX.t - bolt.t;
+    if (age < 0 || age > 0.4) return;
+    var f = 1 - age / 0.4;
+    ctx.fillStyle = FX.rgba(colour, 0.10 * f * I);       /* the lift */
+    ctx.fillRect(0, 0, W, H);
+    var draw = function (x0, y0, segs, wdt, a) {
+      ctx.strokeStyle = FX.rgba(colour, a * f);
+      ctx.lineWidth = wdt; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(x0, y0);
+      var xx = x0, yy = y0;
+      for (var s = 0; s < segs; s++) {
+        yy += H / segs; xx += (FX.hash(bolt.seed * 20 + s, 92) - 0.5) * W * 0.11;
+        ctx.lineTo(xx, yy);
+      }
+      ctx.stroke();
+      return { x: xx, y: yy };
+    };
+    var bx = bolt.x * W;
+    draw(bx, -10, 7, 3.2, 0.75);
+    if (FX.hash(bolt.seed, 93) > 0.45) draw(bx + W * 0.06, -10, 6, 1.8, 0.42);  /* fork */
+  }
+  /* rolling fog banks with parallax */
+  function fogBanks(ctx, W, H, n, colour, a, speed, yBase, spread) {
+    for (var i = 0; i < n; i++) {
+      var p = P[(i * 13) % P.length];
+      var x = ((p.x + FX.t * speed * (0.2 + p.z * 0.5) * 0.05) % 1.4 - 0.2) * W;
+      var y = (yBase + p.v * spread) * H;
+      var r = Math.min(W, H) * (0.12 + p.z * 0.22);
+      FX.glowSoft(x, y, r, colour, a * (0.4 + p.z * 0.6) * struct(intensity));
+    }
+  }
+
+  /* ── the painters ────────────────────────────────────────────────────── */
+  var WX = {
+
+    sunny_day: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#2a4a6e', '#3d5570', 0.10 * I);
+      var d = disc(ctx, W, H, '#e8c56a', 0.085, 0.30 * I, { x: 0.82, y: 0.18, halo: 4.2 });
+      for (var i = 0; i < 5; i++) {                       /* god rays */
+        var a = -0.9 + i * 0.22;
+        FX.beam(d.x - Math.cos(a) * W * 0.25, d.y + Math.sin(a) * H * 0.35,
+                W * 0.055, H * 1.15, '#e8d9a0', 0.05 * I, a * 0.35);
+      }
+      var n = Math.round(46 * dens(I));
+      for (var m = 0; m < n; m++) {
+        var p = P[m];
+        FX.glow(((p.x + Math.sin(FX.t * 0.2 + p.r) * 0.03) % 1) * W,
+                ((p.y + Math.cos(FX.t * 0.16 + p.r) * 0.025) % 1) * H,
+                9 * p.z, '#e8d9a0', 0.16 * alph(I));
+      }
+    },
+
+    normal_rain: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#101823', '#1b2634', 0.16 * I);
+      streaks(ctx, W, H, Math.round(300 * dens(I)), '#9dc0e6',
+              { len: 30, wind: 0.16, speed: 1.5 * spd(I), alpha: 0.42 * alph(I), thick: 1.6 });
+      splashes(ctx, W, H, Math.round(26 * dens(I)), '#a9c9ea', 0.5 * alph(I));
+      fogBanks(ctx, W, H, Math.round(5 * dens(I)), '#2c3b4e', 0.07 * I, 0.5, 0.62, 0.3);
+    },
+
+    thunderhead: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#0a0f18', '#161f2e', 0.22 * I);
+      streaks(ctx, W, H, Math.round(360 * dens(I)), '#a9c6e8',
+              { len: 38, wind: 0.30, speed: 1.9 * spd(I), alpha: 0.46 * alph(I), thick: 1.9 });
+      splashes(ctx, W, H, Math.round(30 * dens(I)), '#b6d2f0', 0.55 * alph(I));
+      fogBanks(ctx, W, H, Math.round(6 * dens(I)), '#22303f', 0.09 * I, 0.8, 0.55, 0.35);
+      lightning(ctx, W, H, '#bcd6f2', I, 3.0);
+    },
+
+    sandstorm: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#4a3418', '#6b5028', 0.20 * I);
+      /* driven dust sheets */
+      for (var s = 0; s < 7; s++) {
+        var p = P[s * 11];
+        var x = ((p.x + FX.t * (0.10 + p.z * 0.18) * spd(I)) % 1.5 - 0.25) * W;
+        var y = (0.15 + p.v * 0.7) * H;
+        FX.glow(x, y, Math.min(W, H) * (0.18 + p.z * 0.3), '#c8a86a', 0.10 * I);
+      }
+      var n = Math.round(400 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var q = P[i];
+        var gx = ((q.x + FX.t * (0.35 + q.z * 0.5) * spd(I)) % 1) * W;
+        var gy = ((q.y + Math.sin(FX.t * 1.1 + q.r) * 0.02) % 1) * H;
+        ctx.fillStyle = FX.rgba('#d8b878', 0.30 * q.z * alph(I));
+        ctx.fillRect(gx, gy, 3.4 * q.z, 1.1 * q.z);
+      }
+    },
+
+    snow: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#232c3e', '#3d4a60', 0.14 * I);
+      var n = Math.round(280 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var p = P[i];
+        var y = ((p.y + FX.t * 0.055 * p.z * spd(I)) % 1) * H;
+        var x = ((p.x + Math.sin(FX.t * 0.45 * p.s + p.r) * 0.035) % 1) * W;
+        ctx.fillStyle = FX.rgba('#c6d8ec', 0.5 * p.z * alph(I));
+        ctx.beginPath(); ctx.arc(x, y, 1.1 + p.z * 2.2, 0, 6.2832); ctx.fill();
+      }
+      fogBanks(ctx, W, H, Math.round(4 * dens(I)), '#3f4d63', 0.06 * I, 0.35, 0.7, 0.25);
+    },
+
+    /* ⚠ THE FLOOD DOES NOT COVER THE BOARD. Water lives in the lower band with
+       a moving surface line; everything above it stays clear so units read. */
+    flood: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#0b1a26', '#123040', 0.14 * I);
+      streaks(ctx, W, H, Math.round(200 * dens(I)), '#8fc7dd',
+              { len: 28, wind: 0.14, speed: 1.5 * spd(I), alpha: 0.34 * alph(I), thick: 1.5 });
+      var lvl = H * 0.74;                                  /* the water line */
+      var g = ctx.createLinearGradient(0, lvl, 0, H);
+      g.addColorStop(0, FX.rgba('#2f7f9e', 0.22 * struct(I)));
+      g.addColorStop(1, FX.rgba('#123246', 0.40 * struct(I)));
+      ctx.fillStyle = g; ctx.fillRect(0, lvl, W, H - lvl);
+      ctx.strokeStyle = FX.rgba('#8fd4ea', 0.42 * struct(I));
+      ctx.lineWidth = 2; ctx.beginPath();
+      for (var x = 0; x <= W; x += 12) {
+        var yy = lvl + Math.sin((x / W) * 9 + FX.t * 1.6) * 4 + Math.sin((x / W) * 21 - FX.t * 2.2) * 2;
+        if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+      }
+      ctx.stroke();
+      for (var r = 0; r < Math.round(9 * dens(I)); r++) {   /* ripples on the surface */
+        var p = P[r * 9], cyc = (FX.t * 0.55 + p.w) % 1;
+        ctx.strokeStyle = FX.rgba('#a9e3f5', 0.22 * (1 - cyc) * alph(I));
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(p.x * W, lvl + p.v * (H - lvl) * 0.8, 6 + cyc * 34, (6 + cyc * 34) * 0.26, 0, 0, 6.2832);
+        ctx.stroke();
+      }
+    },
+
+    tornado_storm: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#1b1f2b', '#333b4e', 0.20 * I);
+      var cx = W * 0.5, top = H * 0.02, bot = H * 0.88;
+      /* the funnel: stacked ellipses, wider at the top, swaying */
+      for (var s = 0; s <= 26; s++) {
+        var k = s / 26;
+        var y = top + (bot - top) * k;
+        var wid = W * (0.30 - k * 0.245) * (0.85 + 0.15 * Math.sin(FX.t * 2 + k * 6));
+        var sway = Math.sin(FX.t * 1.1 + k * 3.4) * W * 0.045 * (1 - k);
+        ctx.strokeStyle = FX.rgba(k > 0.6 ? '#8b93a8' : '#aab3c6', (0.12 + 0.20 * (1 - k)) * struct(I));
+        ctx.lineWidth = 1.5 + (1 - k) * 2;
+        ctx.beginPath();
+        ctx.ellipse(cx + sway, y, wid, wid * 0.18, 0, 0, 6.2832);
+        ctx.stroke();
+      }
+      /* debris orbiting the funnel */
+      var n = Math.round(120 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var p = P[i];
+        var k2 = ((p.y + FX.t * 0.16 * spd(I)) % 1);
+        var y2 = top + (bot - top) * k2;
+        var rad = W * (0.30 - k2 * 0.245);
+        var ang = p.r + FX.t * (3.2 - k2 * 1.4) * spd(I);
+        ctx.fillStyle = FX.rgba('#c4b49a', 0.42 * alph(I));
+        ctx.fillRect(cx + Math.cos(ang) * rad, y2 + Math.sin(ang) * rad * 0.18, 3.5 * p.z, 2 * p.z);
+      }
+      lightning(ctx, W, H, '#c3d2e8', I, 4.2);
+    },
+
+    magical_leaves: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#16281c', '#28422e', 0.12 * I);
+      var n = Math.round(190 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var p = P[i];
+        var y = ((p.y + FX.t * 0.07 * p.z * spd(I)) % 1) * H;
+        var x = ((p.x + Math.sin(FX.t * 0.5 * p.s + p.r) * 0.07) % 1) * W;
+        var rot = p.r + FX.t * (0.8 + p.s);
+        ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+        var c = i % 5 === 0 ? '#c9e08a' : (i % 3 === 0 ? '#6fbf7a' : '#8fd08a');
+        ctx.fillStyle = FX.rgba(c, 0.46 * p.z * alph(I));
+        ctx.beginPath(); ctx.ellipse(0, 0, 10 * p.z, 4.2 * p.z, 0, 0, 6.2832); ctx.fill();
+        ctx.strokeStyle = FX.rgba('#3f7a4a', 0.3 * p.z * alph(I));
+        ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(-10 * p.z, 0); ctx.lineTo(10 * p.z, 0); ctx.stroke();
+        ctx.restore();
+        if (i % 9 === 0) FX.glow(x, y, 7 * p.z, '#a8e6a0', 0.16 * alph(I));
+      }
+    },
+
+    stars_falling: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#0a0f26', '#161f3f', 0.16 * I);
+      var n = Math.round(90 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var p = P[i];
+        var k = ((p.y + FX.t * 0.34 * p.z * spd(I)) % 1);
+        var x = (p.x + k * 0.22) * W, y = k * H;
+        var L = 46 * p.z;
+        var g = ctx.createLinearGradient(x, y, x - L * 0.55, y - L);
+        g.addColorStop(0, FX.rgba('#bfe0ff', 0.7 * alph(I)));
+        g.addColorStop(1, FX.rgba('#6aa0ff', 0));
+        ctx.strokeStyle = g; ctx.lineWidth = 1.4 * p.z;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - L * 0.55, y - L); ctx.stroke();
+        FX.glow(x, y, 7 * p.z, '#cfe6ff', 0.34 * alph(I));
+      }
+      for (var s = 0; s < Math.round(50 * dens(I)); s++) {  /* fixed twinkles */
+        var q = P[(s * 17) % P.length];
+        var tw = 0.35 + 0.65 * FX.pulse(FX.t + q.w * 5, 0.4 + q.v * 0.6);
+        FX.glow(q.x * W, q.y * H * 0.7, 2.6 * q.z, '#9fd0ff', 0.22 * tw * alph(I));
+      }
+    },
+
+    magic_aura_realm: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#171036', '#26194e', 0.16 * I);
+      var cx = W / 2, cy = H * 0.56;
+      for (var r = 0; r < 4; r++) {                       /* runic circles */
+        var rr = Math.min(W, H) * (0.14 + r * 0.10) * (1 + 0.04 * FX.pulse(FX.t, 0.15 + r * 0.05));
+        ctx.save(); ctx.translate(cx, cy); ctx.rotate(FX.t * (0.12 + r * 0.05) * (r % 2 ? -1 : 1)); ctx.scale(1, 0.4);
+        ctx.strokeStyle = FX.rgba(r % 2 ? '#a78bfa' : '#7dd3fc', 0.24 * alph(I));
+        ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.stroke();
+        ctx.strokeStyle = FX.rgba('#c4b5fd', 0.20 * alph(I));
+        for (var g2 = 0; g2 < 8 + r * 2; g2++) {
+          var ga = (g2 / (8 + r * 2)) * 6.2832;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(ga) * rr * 0.93, Math.sin(ga) * rr * 0.93);
+          ctx.lineTo(Math.cos(ga) * rr * 1.06, Math.sin(ga) * rr * 1.06);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+      var n = Math.round(80 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var p = P[i];
+        var a2 = p.r + FX.t * (0.3 + p.s * 0.4);
+        var rad = Math.min(W, H) * (0.1 + p.z * 0.3);
+        FX.glow(cx + Math.cos(a2) * rad, cy + Math.sin(a2) * rad * 0.45 - (FX.t * 12 * p.z) % (H * 0.3),
+                4 + p.z * 7, i % 3 === 0 ? '#7dd3fc' : '#a78bfa', 0.26 * alph(I));
+      }
+    },
+
+    holy_aura: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#24304a', '#3a4664', 0.10 * I);
+      for (var i = 0; i < 7; i++) {                       /* shafts from above */
+        var x = W * (0.1 + i * 0.13) + Math.sin(FX.t * 0.3 + i) * W * 0.02;
+        FX.beam(x, H * 0.42, W * (0.035 + FX.hash(i, 51) * 0.03), H * 1.05,
+                '#e8d9a0', (0.07 + 0.05 * FX.pulse(FX.t, 0.2 + i * 0.03)) * I, 0.06);
+      }
+      var n = Math.round(90 * dens(I));
+      for (var m = 0; m < n; m++) {                       /* rising motes */
+        var p = P[m];
+        var y = (1 - ((p.y + FX.t * 0.06 * p.z * spd(I)) % 1)) * H;
+        var x2 = ((p.x + Math.sin(FX.t * 0.4 + p.r) * 0.02) % 1) * W;
+        FX.glow(x2, y, 3 + p.z * 6, m % 4 === 0 ? '#f0e3b8' : '#cfe0ff', 0.24 * alph(I));
+      }
+      FX.glow(W / 2, H * 0.30, Math.min(W, H) * 0.42, '#e8d9a0', 0.10 * I);
+    },
+
+    infection_gas: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#131c16', '#1f2e22', 0.18 * I);
+      fogBanks(ctx, W, H, Math.round(18 * dens(I)), '#7ba33a', 0.26 * alph(I), 0.5, 0.5, 0.5);
+      var n = Math.round(70 * dens(I));
+      for (var i = 0; i < n; i++) {                       /* spores + bubbles */
+        var p = P[i];
+        var y = (1 - ((p.y + FX.t * 0.05 * p.z * spd(I)) % 1)) * H;
+        var x = ((p.x + Math.sin(FX.t * 0.5 + p.r) * 0.03) % 1) * W;
+        ctx.strokeStyle = FX.rgba('#a3e04a', 0.30 * alph(I));
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(x, y, 2.5 + p.z * 6, 0, 6.2832); ctx.stroke();
+        if (i % 5 === 0) FX.glow(x, y, 8 * p.z, '#84cc16', 0.16 * alph(I));
+      }
+    },
+
+    toxic_aura: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#0f1a12', '#1b2f1d', 0.18 * I);
+      fogBanks(ctx, W, H, Math.round(20 * dens(I)), '#4fae52', 0.28 * alph(I), 0.4, 0.6, 0.4);
+      var n = Math.round(60 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var p = P[i];
+        var cyc = (FX.t * (0.25 + p.s * 0.2) + p.w) % 1;
+        var x = p.x * W, y = H * (0.98 - cyc * 0.5);
+        FX.glow(x, y, 4 + p.z * 9 * (1 - cyc * 0.5), '#65c46a', 0.24 * (1 - cyc) * alph(I));
+      }
+      /* dripping condensate */
+      for (var d = 0; d < Math.round(18 * dens(I)); d++) {
+        var q = P[(d * 23) % P.length];
+        var dy = ((q.y + FX.t * 0.3 * q.z) % 1) * H;
+        ctx.strokeStyle = FX.rgba('#8fd66a', 0.26 * alph(I));
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(q.x * W, dy); ctx.lineTo(q.x * W, dy + 9 * q.z); ctx.stroke();
+      }
+    },
+
+    solaris: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#3d2512', '#5e3a1a', 0.16 * I);
+      disc(ctx, W, H, '#e0a447', 0.12, 0.34 * I, { x: 0.82, y: 0.20, halo: 4.0 });
+      for (var b = 0; b < 6; b++) {                        /* heat shimmer bands */
+        var y = H * (0.35 + b * 0.11) + Math.sin(FX.t * 1.6 + b) * 5;
+        ctx.strokeStyle = FX.rgba('#e2a24a', 0.07 * I);
+        ctx.lineWidth = 8 + Math.sin(FX.t + b) * 3;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y + Math.sin(FX.t * 0.8 + b) * 8); ctx.stroke();
+      }
+      var n = Math.round(80 * dens(I));
+      for (var i = 0; i < n; i++) {                        /* rising embers */
+        var p = P[i];
+        var y2 = (1 - ((p.y + FX.t * 0.09 * p.z * spd(I)) % 1)) * H;
+        FX.glow(((p.x + Math.sin(FX.t * 0.6 + p.r) * 0.02) % 1) * W, y2, 3 + p.z * 5, '#e8a24a', 0.26 * alph(I));
+      }
+    },
+
+    eclipse: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#0a0710', '#160e1c', 0.24 * I);
+      disc(ctx, W, H, '#c9a2ff', 0.10, 0.26 * I, { x: 0.84, y: 0.20, halo: 3.4, solid: 0.5, eclipse: '#d8b4ff' });
+      var n = Math.round(150 * dens(I));
+      for (var i = 0; i < n; i++) {                        /* falling ash */
+        var p = P[i];
+        var y = ((p.y + FX.t * 0.06 * p.z * spd(I)) % 1) * H;
+        var x = ((p.x + Math.sin(FX.t * 0.3 + p.r) * 0.02) % 1) * W;
+        ctx.fillStyle = FX.rgba('#6b5c74', 0.34 * p.z * alph(I));
+        ctx.beginPath(); ctx.arc(x, y, 1 + p.z * 1.8, 0, 6.2832); ctx.fill();
+      }
+      var vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.2, W / 2, H / 2, Math.min(W, H) * 0.8);
+      vg.addColorStop(0, 'rgba(4,2,8,0)'); vg.addColorStop(1, 'rgba(4,2,8,' + (0.35 * I).toFixed(3) + ')');
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    },
+
+    blood_moon: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#1a0709', '#310f12', 0.20 * I);
+      disc(ctx, W, H, '#b3384a', 0.11, 0.32 * I, { x: 0.84, y: 0.20, halo: 3.6, solid: 0.6, crater: '#6d1f2c' });
+      var n = Math.round(160 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var p = P[i];
+        var y = ((p.y + FX.t * 0.07 * p.z * spd(I)) % 1) * H;
+        var x = ((p.x + Math.sin(FX.t * 0.35 + p.r) * 0.025) % 1) * W;
+        ctx.fillStyle = FX.rgba('#c2564a', 0.32 * p.z * alph(I));
+        ctx.beginPath(); ctx.arc(x, y, 1.1 + p.z * 2, 0, 6.2832); ctx.fill();
+      }
+      fogBanks(ctx, W, H, Math.round(7 * dens(I)), '#7a1f26', 0.10 * I, 0.4, 0.66, 0.3);
+    },
+
+    veil: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#222730', '#39404c', 0.16 * I);
+      fogBanks(ctx, W, H, Math.round(16 * dens(I)), '#aeb8c6', 0.30 * alph(I), 0.30, 0.24, 0.6);
+      fogBanks(ctx, W, H, Math.round(13 * dens(I)), '#8d96a6', 0.26 * alph(I), 0.55, 0.58, 0.4);
+      var n = Math.round(40 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var p = P[i];
+        FX.glow(((p.x + FX.t * 0.012 * p.z) % 1) * W, ((p.y + Math.sin(FX.t * 0.2 + p.r) * 0.02) % 1) * H,
+                14 * p.z, '#c3ccd8', 0.07 * alph(I));
+      }
+    },
+
+    noosphere: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#101a2e', '#1c2f4e', 0.15 * I);
+      for (var w = 0; w < 5; w++) {                        /* psychic waves */
+        var rr = Math.min(W, H) * (0.10 + ((FX.t * 0.14 + w * 0.2) % 1) * 0.7);
+        var fade = 1 - ((FX.t * 0.14 + w * 0.2) % 1);
+        ctx.save(); ctx.translate(W / 2, H * 0.55); ctx.scale(1, 0.42);
+        ctx.strokeStyle = FX.rgba('#67b7e0', 0.22 * fade * alph(I));
+        ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.stroke();
+        ctx.restore();
+      }
+      var n = Math.round(70 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var p = P[i];
+        FX.glow(((p.x + Math.sin(FX.t * 0.25 + p.r) * 0.05) % 1) * W,
+                ((p.y + Math.cos(FX.t * 0.2 + p.r) * 0.04) % 1) * H,
+                5 + p.z * 8, i % 3 === 0 ? '#a5d8f0' : '#5ba3d0', 0.20 * alph(I));
+      }
+    },
+
+    oil_rain: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#0c0a08', '#1b1610', 0.20 * I);
+      streaks(ctx, W, H, Math.round(280 * dens(I)), '#5b503c',
+              { len: 34, wind: 0.2, speed: 1.4 * spd(I), alpha: 0.5 * alph(I), thick: 2.4 });
+      /* slick pooling at the bottom with an iridescent sheen */
+      var g = ctx.createLinearGradient(0, H * 0.80, 0, H);
+      g.addColorStop(0, FX.rgba('#1d1a12', 0));
+      g.addColorStop(1, FX.rgba('#2a2418', 0.34 * alph(I)));
+      ctx.fillStyle = g; ctx.fillRect(0, H * 0.80, W, H * 0.2);
+      for (var i = 0; i < Math.round(10 * dens(I)); i++) {
+        var p = P[(i * 19) % P.length];
+        FX.glow(p.x * W, H * (0.86 + p.v * 0.12), 26 * p.z, i % 2 ? '#3f7d6a' : '#6a4a7d', 0.09 * alph(I));
+      }
+    },
+
+    fire_rain: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#210d06', '#3d160a', 0.18 * I);
+      var n = Math.round(220 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var p = P[i];
+        var y = ((p.y + FX.t * 0.30 * p.z * spd(I)) % 1) * H;
+        var x = ((p.x + FX.t * 0.03 * p.z) % 1) * W;
+        var L = 20 * p.z;
+        var g = ctx.createLinearGradient(x, y, x - L * 0.3, y - L);
+        g.addColorStop(0, FX.rgba('#e2732a', 0.62 * alph(I)));
+        g.addColorStop(1, FX.rgba('#8a2a0c', 0));
+        ctx.strokeStyle = g; ctx.lineWidth = 1.6 * p.z;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - L * 0.3, y - L); ctx.stroke();
+        FX.glow(x, y, 5 * p.z, '#e88a2a', 0.32 * alph(I));
+      }
+      var gg = ctx.createLinearGradient(0, H * 0.82, 0, H);
+      gg.addColorStop(0, FX.rgba('#c2410c', 0));
+      gg.addColorStop(1, FX.rgba('#c2410c', 0.16 * alph(I)));
+      ctx.fillStyle = gg; ctx.fillRect(0, H * 0.82, W, H * 0.18);
+    },
+
+    /* ⏳ NEW — a slow-of-time field: concentric dial rings, motes that drift in
+       stutters, and a slow pulse across the board. */
+    time_slow: function (ctx, W, H, I) {
+      sky(ctx, W, H, '#16182a', '#232744', 0.15 * I);
+      var cx = W / 2, cy = H * 0.55, U = Math.min(W, H);
+      for (var r = 0; r < 3; r++) {                        /* dial rings */
+        var rr = U * (0.16 + r * 0.11);
+        ctx.save(); ctx.translate(cx, cy); ctx.scale(1, 0.42);
+        ctx.strokeStyle = FX.rgba('#8fb6d8', 0.20 * alph(I));
+        ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.stroke();
+        /* tick marks — the "clock" read */
+        ctx.strokeStyle = FX.rgba('#c9dcf0', 0.24 * alph(I));
+        for (var k = 0; k < 12; k++) {
+          var a = (k / 12) * 6.2832;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(a) * rr * 0.92, Math.sin(a) * rr * 0.92);
+          ctx.lineTo(Math.cos(a) * rr * 1.04, Math.sin(a) * rr * 1.04);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+      /* the sweeping hand, stepping rather than gliding */
+      var step = Math.floor(FX.t * 1.6) / 1.6;
+      ctx.save(); ctx.translate(cx, cy); ctx.scale(1, 0.42);
+      ctx.rotate(step * 0.9);
+      ctx.strokeStyle = FX.rgba('#a9d6ff', 0.34 * alph(I));
+      ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(U * 0.26, 0); ctx.stroke();
+      ctx.restore();
+      /* motes that advance in stutters — time is dragging */
+      var n = Math.round(90 * dens(I));
+      for (var i = 0; i < n; i++) {
+        var p = P[i];
+        var stut = Math.floor((FX.t * 0.5 + p.w) * 6) / 6;
+        var y = ((p.y + stut * 0.12 * p.z) % 1) * H;
+        var x = ((p.x + Math.sin(stut * 2 + p.r) * 0.01) % 1) * W;
+        FX.glow(x, y, 3 + p.z * 5, i % 4 === 0 ? '#c9dcf0' : '#7fa8cc', 0.22 * alph(I));
+      }
+      /* one slow pulse crossing the field */
+      var pw = (FX.t * 0.18) % 1;
+      ctx.save(); ctx.translate(cx, cy); ctx.scale(1, 0.42);
+      ctx.strokeStyle = FX.rgba('#bcd8f2', 0.18 * (1 - pw) * alph(I));
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, U * 0.1 + pw * U * 0.8, 0, 6.2832); ctx.stroke();
+      ctx.restore();
+    }
+  };
+
+  /* preset list (id → painter + label). Order drives the picker. */
+  var LIST = [
+    ['sunny_day', 'Sunny Day'], ['normal_rain', 'Rain'], ['thunderhead', 'Thunderstorm'],
+    ['sandstorm', 'Sandstorm'], ['snow', 'Snowfall'], ['flood', 'Flood'],
+    ['tornado_storm', 'Tornado'], ['magical_leaves', 'Magical Leaves'], ['stars_falling', 'Star Storm'],
+    ['magic_aura_realm', 'Magic Aura'], ['holy_aura', 'Holy Aura'], ['infection_gas', 'Infection Aura'],
+    ['toxic_aura', 'Toxic Gas'], ['solaris', 'Solaris'], ['eclipse', 'Eclipse'],
+    ['blood_moon', 'Blood Moon'], ['veil', 'Mist / Fog'], ['noosphere', 'Noosphere'],
+    ['oil_rain', 'Raining Oil'], ['fire_rain', 'Raining Fire'], ['time_slow', 'Slow of Time']
+  ];
+
+  FX.mount({ draw: function () {
+    var ctx = FX.ctx, W = FX.W, H = FX.H;
+    var fn = WX[cur] || WX.normal_rain;
+    fn(ctx, W, H, Math.max(0.05, Math.min(1, intensity)));
+  }});
+
+  window.WeatherRealms = {
+    list: function () { return LIST.map(function (r, i) { return { index: i, id: r[0], name: r[1] }; }); },
+    set: function (idOrIndex) {
+      if (typeof idOrIndex === 'number') { cur = (LIST[idOrIndex] || LIST[1])[0]; return cur; }
+      if (WX[idOrIndex]) cur = idOrIndex;
+      return cur;
+    },
+    setIntensity: function (v) { intensity = Math.max(0, Math.min(1, +v || 0)); },
+    current: function () { var i = LIST.findIndex(function (r) { return r[0] === cur; }); return { index: i, id: cur, name: (LIST[i] || [])[1] }; },
+    step: function (dt) { window.__vfxStep(dt); }
+  };
+})();
+</script>
+</body>
+</html>

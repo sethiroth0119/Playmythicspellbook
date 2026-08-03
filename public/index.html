@@ -35461,7 +35461,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119y2';
+  window.BUILD_VERSION = 'v119y3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -87510,7 +87510,14 @@ function _applyOnPlayOne(state, unit, card) {
       catch (e) { return null; }
     };
     // Which cards qualify: right type, plus the shared Card Filter / id allow-list.
-    const ids = Array.isArray(eff.summonCardIds) ? eff.summonCardIds.filter(Boolean) : [];
+    // ⚠ The shared Card Filter block saves its "these exact cards" list as
+    // `filterCardIds` (see _readCardFilterFrom); `summonCardIds` is the separate
+    // Summon picker's list. This read used to look ONLY at summonCardIds, so a
+    // card authored through the Card Filter — "set Mind-Warpping from your deck" —
+    // silently degraded to "set ANY trap", picking a random one instead.
+    const _idsA = Array.isArray(eff.summonCardIds) ? eff.summonCardIds.filter(Boolean) : [];
+    const _idsB = Array.isArray(eff.filterCardIds) ? eff.filterCardIds.filter(Boolean) : [];
+    const ids = _idsA.length ? _idsA : _idsB;
     const idxs = [];
     pile.forEach((entry, i) => {
       const c = resolve(entry); if (!c) return;
@@ -88678,26 +88685,44 @@ function canActivatePolycreation(state, side, polySpellCard) {
 const _POLY_SRC_LABEL = { field:'your field', enemy:"the enemy's field", hand:'your hand', grave:'your graveyard', deck:'your deck' };
 function _polyFuseFromSources(state, unit, eff, owner, log) {
   const srcs = (Array.isArray(eff.matSources) && eff.matSources.length) ? eff.matSources : ['field'];
-  // --- resolve the pinned Kalon (same lookup order as the classic branch) ---
+  // --- which Kalon(s) may this fusion produce? ---
+  // ⚠ An UNPINNED effect is the normal case, not an error. `summonCardId` is the
+  // optional "always make exactly this Kalon" pin; the classic field-only branch
+  // handles its absence by scanning every legal fusion (see the `if (!kalonId)`
+  // comment in the polycreate branch), and this path used to abort instead —
+  // so the moment an author ticked the `enemy` / `hand` / `grave` / `deck`
+  // source (which is what routes here) their card died with
+  // "no Fusion Kalon is set on this effect" even with the materials on board.
+  // Build a POOL and let the material match below decide which one is legal.
   let kalon = null;
+  const kalonPool = [];
   try {
+    const _all = (typeof getAllFusionKalons === 'function') ? (getAllFusionKalons() || []) : [];
     if (eff.summonCardId) {
-      if (typeof getAllFusionKalons === 'function') kalon = (getAllFusionKalons() || []).find(k => k && k.id === eff.summonCardId);
-      if (!kalon && typeof Forge === 'object' && Forge && Array.isArray(Forge.customCards)) kalon = Forge.customCards.find(c => c && c.id === eff.summonCardId);
-      if (!kalon && typeof _cardDefById === 'function') kalon = _cardDefById(eff.summonCardId);
+      let k = _all.find(x => x && x.id === eff.summonCardId);
+      if (!k && typeof Forge === 'object' && Forge && Array.isArray(Forge.customCards)) k = Forge.customCards.find(c => c && c.id === eff.summonCardId);
+      if (!k && typeof _cardDefById === 'function') k = _cardDefById(eff.summonCardId);
+      if (k) kalonPool.push(k);
+    } else {
+      _all.forEach(k => { if (k) kalonPool.push(k); });
     }
   } catch (e) {}
-  if (!kalon || !Array.isArray(kalon.fusionRequirements) || !kalon.fusionRequirements.length) {
-    log.push({ msg: `🌌 ${unit.name}'s fusion collapses — no Fusion Kalon is set on this effect.`, color: 'amber' });
+  // 🜂 Realm Deck rule applies to the player exactly as it does to the spell.
+  // Filtering the POOL (rather than rejecting one pinned Kalon) means an
+  // unpinned fusion quietly picks a Kalon the player is actually allowed to make.
+  let _poly = kalonPool.filter(k => k && Array.isArray(k.fusionRequirements) && k.fusionRequirements.length);
+  const _poolBeforeRealm = _poly.length;
+  try {
+    if (owner === 'player' && typeof _realmDeckAllows === 'function') _poly = _poly.filter(k => _realmDeckAllows(k, 'player'));
+  } catch (e) {}
+  if (!_poly.length) {
+    log.push({
+      msg: _poolBeforeRealm
+        ? `🌌 ${unit.name}'s fusion collapses — no legal Kalon in your Realm Deck.`
+        : `🌌 ${unit.name}'s fusion collapses — no Fusion Kalon with materials exists.`,
+      color: 'amber' });
     return { ...state, log };
   }
-  // 🜂 Realm Deck rule applies to the player exactly as it does to the spell.
-  try {
-    if (owner === 'player' && typeof _realmDeckAllows === 'function' && !_realmDeckAllows(kalon, 'player')) {
-      log.push({ msg: `🌌 ${kalon.name || 'That Kalon'} is not in your Realm Deck.`, color: 'amber' });
-      return { ...state, log };
-    }
-  } catch (e) {}
 
   const anchor = (unit && unit.pos) ? unit : (state.units || []).find(u => u && u.owner === owner && u.isHero && u.alive);
   if (!anchor || !anchor.pos) { log.push({ msg: `🌌 ${unit.name}'s fusion has no anchor on the field.`, color: 'amber' }); return { ...state, log }; }
@@ -88743,19 +88768,28 @@ function _polyFuseFromSources(state, unit, eff, owner, log) {
     return { ...state, log };
   }
   // --- greedy assignment: one candidate per requirement, none reused ---
-  const reqs = kalon.fusionRequirements;
-  const usedKeys = new Set();
+  // Tried against EVERY Kalon in the pool: with no pin, the first recipe whose
+  // requirements are all satisfiable from the gathered sources is the one made.
   const keyOf = (c) => c.kind === 'unit' ? ('u:' + c.unit.id) : ('c:' + c.pileKey + ':' + c.idx);
-  const chosen = [];
-  let ok = true;
-  for (const req of reqs) {
-    const hit = cands.find(c => !usedKeys.has(keyOf(c))
-      && (typeof matchFusionMaterial === 'function' ? matchFusionMaterial(c.m, req) : true));
-    if (!hit) { ok = false; break; }
-    usedKeys.add(keyOf(hit)); chosen.push(hit);
+  const _tryKalon = (k) => {
+    const usedKeys = new Set();
+    const picked = [];
+    for (const req of k.fusionRequirements) {
+      const hit = cands.find(c => !usedKeys.has(keyOf(c))
+        && (typeof matchFusionMaterial === 'function' ? matchFusionMaterial(c.m, req) : true));
+      if (!hit) return null;
+      usedKeys.add(keyOf(hit)); picked.push(hit);
+    }
+    return picked;
+  };
+  let chosen = null;
+  for (const k of _poly) {
+    const picked = _tryKalon(k);
+    if (picked) { kalon = k; chosen = picked; break; }
   }
-  if (!ok) {
-    log.push({ msg: `🌌 ${unit.name} cannot complete ${kalon.name || 'the fusion'} — the materials are not all there.`, color: 'amber' });
+  if (!chosen) {
+    const _who = (_poly.length === 1) ? (_poly[0].name || 'the fusion') : 'any fusion';
+    log.push({ msg: `🌌 ${unit.name} cannot complete ${_who} — the materials are not all there.`, color: 'amber' });
     return { ...state, log };
   }
   // --- free tile beside YOUR hero, checked BEFORE anything is consumed ---
@@ -102605,34 +102639,53 @@ function _wxrMount(presetId, intensity) {
       // covers the whole board. It must stay background:transparent once up.
       f.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;display:block;opacity:0;transition:opacity .25s ease;';
       // The page boots on preset 0; apply the real one the moment it is alive.
-      f.addEventListener('load', () => {
+      // ⚠ REVEAL ONLY WHAT PAINTED. An iframe that has not rendered a document
+      // is filled with the browser's default canvas = WHITE, and this one covers
+      // the entire board — so "show it, then check whether it is real" spends
+      // seconds as a white wall over the game. That is exactly what a 404 on
+      // `weather/realms` looks like, and the weather/ folder HAS 404'd from a
+      // stale asset manifest while its siblings served fine. So opacity is
+      // raised in ONE place, after the build stamp proves the page is ours.
+      const _wxrFail = (why) => {
+        try { console.warn('[wxr] ' + why + ' — dropping the weather layer'); } catch (e) {}
+        try { _wxrUnmount(); } catch (e) {}
+      };
+      const _wxrReveal = () => {
         _WXR.ready = true; _wxrApply(); setTimeout(_wxrApply, 200);
         _forceIframeTransparent(f);
         try { f.style.opacity = '1'; } catch (e) {}
-        // ⚠ BELT AND BRACES. The reveal used to hang off this one line inside a
-        // handler that does several other things first — if any of them ever
-        // threw, the weather stayed at opacity 0 and read as "weather doesn't
-        // work". The stage and cinematics already had this guard.
+        // Belt and braces: if anything above ever throws, the layer would sit
+        // invisible and read as "weather doesn't work". Safe now — this only
+        // runs on the path where the page is confirmed painted.
         setTimeout(function () { try { if (f && f.style.opacity !== '1') f.style.opacity = '1'; } catch (e) {} }, 2500);
-        // 🏷 STALE-EDGE SELF-HEAL. `?v=` busts the browser cache but the edge
-        // can serve an old page for a NEW URL for a few minutes after a deploy
-        // (pane-probed: a fresh ?v returned a pre-stamp build). Every current
-        // page carries a build stamp; no stamp = an old build → reload ONCE
-        // shortly after, by which time the edge has settled.
-        try {
-          const cw = f.contentWindow;
-          if (cw && !cw.WX_BUILD && !f._stampRetry) {
-            f._stampRetry = 1;
-            console.warn('[wxr] stale weather page from edge cache — reloading once');
-            setTimeout(() => { try { f.src = 'weather/realms?embed=1&v=' + WXR_VER + '&s=' + _OVERLAY_SESSION + '&r=' + Date.now(); } catch (e) {} }, 3000);
-          } else if (cw && !cw.WX_BUILD && f._stampRetry) {
-            // Reloaded and STILL stale → that build is not ours and may paint
-            // its own sky. No weather beats a white wall over the board.
-            console.warn('[wxr] weather page still stale after reload — dropping the layer');
-            try { _wxrUnmount(); } catch (e) {}
-          }
-        } catch (e) {}
+      };
+      f.addEventListener('error', () => _wxrFail('weather page failed to load'));
+      f.addEventListener('load', () => {
+        let cw = null;
+        try { cw = f.contentWindow; } catch (e) {}
+        if (cw && cw.WX_BUILD) { _wxrReveal(); return; }
+        // 🏷 STALE-EDGE / MISSING-ASSET SELF-HEAL. `?v=` busts the browser cache
+        // but the edge can serve an old (or empty) page for a NEW URL for a few
+        // minutes after a deploy. Every current page carries a build stamp; no
+        // stamp = not our build → reload ONCE, then give up. The frame stays at
+        // opacity 0 throughout, so a broken weather page is INVISIBLE rather
+        // than a white sheet.
+        if (!f._stampRetry) {
+          f._stampRetry = 1;
+          try { console.warn('[wxr] weather page has no build stamp — reloading once'); } catch (e) {}
+          setTimeout(() => { try { f.src = 'weather/realms?embed=1&v=' + WXR_VER + '&s=' + _OVERLAY_SESSION + '&r=' + Date.now(); } catch (e) {} }, 1200);
+        } else {
+          _wxrFail('weather page still unstamped after reload');
+        }
       });
+      // Backstop: a frame that never fires load (or fires it before the page
+      // boots) must not linger. Unmount rather than reveal — no weather beats
+      // a white wall.
+      setTimeout(function () {
+        try {
+          if (!_WXR.ready && _WXR.frame === f) _wxrFail('weather page never reported ready');
+        } catch (e) {}
+      }, 8000);
       _WXR.host.appendChild(f);
       _WXR.frame = f;
       _WXR.on = true;

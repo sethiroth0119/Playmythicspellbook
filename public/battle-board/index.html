@@ -1,0 +1,2950 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mythic Spellbook — Battle Board (Stage Prototype)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=EB+Garamond:ital,wght@0,500;1,500&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   MYTHIC SPELLBOOK — BATTLE BOARD / STAGE PROTOTYPE
+   Single file, no libraries, no external art. Procedural everything.
+
+  ╔═════════════════════════════════════════════════════════════════════════╗
+  ║  PORT BRIEF FOR CLAUDE CODE — THREE.JS + WEBGPU                          ║
+  ║                                                                            ║
+  ║  This file is the ART + BEHAVIOUR TARGET, not the shipping renderer.       ║
+  ║  It is written with a hand-rolled perspective projector so the camera,     ║
+  ║  lighting, sprite motion and summon choreography can be tuned and seen     ║
+  ║  today. Port it to Three.js with the WebGPURenderer, keeping every         ║
+  ║  number below — they are the look.                                         ║
+  ║                                                                            ║
+  ║  1) CAMERA — match exactly. See CONFIG.camera.                            ║
+  ║       PerspectiveCamera(fov 38°, near .1, far 200)                        ║
+  ║       fov 39.5° · position (0, 9.04, 9.76) · lookAt (0, 0.30, 0.20)       ║
+  ║       ≈ 41° downward pitch — the low hero angle from the reference.       ║
+  ║       Board is 8 wide × 7 deep, tiles of 1 world unit. NOT ortho.        ║
+  ║       Keep the projection centre biased to SAFE.centre (below) so the      ║
+  ║       stage sits in the gap between the UI panels.                        ║
+  ║                                                                            ║
+  ║  2) RENDERER — WebGPU first, WebGL2 fallback:                             ║
+  ║       new THREE.WebGPURenderer({ antialias:true })                        ║
+  ║       renderer.setPixelRatio(min(devicePixelRatio, 2))                    ║
+  ║       ACESFilmic tone mapping, exposure 1.05, sRGB output.                ║
+  ║       Post chain: bloom (strength .55, radius .4, threshold .82) →        ║
+  ║       subtle vignette → film grain 0.015. The glow on runes, braziers     ║
+  ║       and summons is expected to come from bloom, not from the sprites.   ║
+  ║                                                                            ║
+  ║  3) SPRITES — "crisp" is the requirement. Rules:                          ║
+  ║       • Units are camera-facing billboards on a PlaneGeometry, NOT        ║
+  ║         full 3D meshes. Use THREE.Sprite or a Y-billboarded plane so      ║
+  ║         they never lean with the camera.                                  ║
+  ║       • Texture filter: magFilter = NearestFilter (or LinearMipmap +      ║
+  ║         anisotropy 8 for painted art). NO blur on the silhouette.         ║
+  ║       • alphaTest 0.5 so edges stay hard and they cast crisp shadows.     ║
+  ║       • Sprite sheets: 8-frame idle, 8-frame walk, 6-frame attack,        ║
+  ║         6-frame hurt, 10-frame death, driven at 12fps by UV offset in     ║
+  ║         a custom material — NOT by swapping textures per frame.           ║
+  ║       • Movement is tile-to-tile with the exact easing in moveUnit():     ║
+  ║         cubic ease-in-out over 340ms + a 0.28-unit hop arc + squash on    ║
+  ║         take-off and land + dust burst on landing. Snap to tile centre    ║
+  ║         at the end — never leave a unit off-grid.                         ║
+  ║       • Position rounding: snap final screen position to whole device     ║
+  ║         pixels to stop shimmer on slow drifts.                            ║
+  ║                                                                            ║
+  ║  4) SUMMON — the Yu-Gi-Oh beat, sequenced in summonSequence():            ║
+  ║       t0     card lifts out of the hand, tilts to face the camera, glow   ║
+  ║       160ms  card flies along a bezier to the target tile, rotating flat  ║
+  ║       520ms  card lands face-down, tile rune circle ignites               ║
+  ║       640ms  card FLIPS face-up (rotateY 180°) — the reveal               ║
+  ║       780ms  white flash + shockwave ring + pillar of light from the tile ║
+  ║       820ms  UNIT RISES out of the tile (y −1.1 → 0) over 420ms with a    ║
+  ║              back-ease, scaling 0.7 → 1.0                                 ║
+  ║       900ms  CARD DISSOLVES into embers and is destroyed. The card must   ║
+  ║              never return — the sprite is now the unit of record.         ║
+  ║       1350ms landing thump, dust ring, unit enters idle loop              ║
+  ║       In Three.js the flying card is a textured plane in the same scene   ║
+  ║       (so it lights correctly), not a DOM element.                        ║
+  ║                                                                            ║
+  ║  5) DYNAMIC LIGHT — the sun/moon MUST match the battle's time of day.     ║
+  ║       BATTLE.timeOfDay is the source of truth and comes from the match    ║
+  ║       state (the Weather card: Daytime / Dusk / Night / Dawn). Each       ║
+  ║       preset in TIME_PRESETS gives azimuth, elevation, colour, intensity, ║
+  ║       ambient, sky gradient and fog. Build them as:                       ║
+  ║         DirectionalLight (sun or moon)  — castShadow, PCFSoft, 2048 map,  ║
+  ║           shadow camera fitted to the board bounds                        ║
+  ║         HemisphereLight  (sky → ground bounce)                            ║
+  ║         AmbientLight     (preset.ambient)                                 ║
+  ║         + rim light opposite the key, tinted by preset.rim                ║
+  ║       Shadows: unit shadow direction and length are derived from the      ║
+  ║       light vector (see lightVector()) — at dusk they stretch long        ║
+  ║       across the tiles, at noon they pool underfoot. Braziers add         ║
+  ║       PointLights (flicker 8Hz, radius 4) that survive at night when      ║
+  ║       the sun preset dims out.                                            ║
+  ║       When the weather card flips mid-match, LERP between presets over    ║
+  ║       ~2.5s — never cut.                                                  ║
+  ║                                                                            ║
+  ║  6) BATTLEMAP EDITOR — THIS map object is the format. Point the editor    ║
+  ║     at it and let it read/write the same JSON:                            ║
+  ║         MAP = { id, name, cols, rows, timeOfDay, ground,                  ║
+  ║                 tiles:[{x,z,type,prop,elev,rot}], spawns:{mine,foe} }     ║
+  ║       tile.type : 'normal' | 'blocked' | 'hazard' | 'objective' | 'spawn' ║
+  ║       tile.prop : null | 'house' | 'wreck' | 'crater' | 'barricade'       ║
+  ║                   | 'pylon' | 'bones'                                     ║
+  ║       tile.elev : world units of raise (0, .18, .36 …) — the renderer     ║
+  ║                   already offsets geometry, shadows and unit feet by it.  ║
+  ║       Editing a tile should hot-reload the stage with no page refresh —   ║
+  ║       call buildStage() again, which is pure from MAP.                    ║
+  ║       Props are billboards too; swap them for GLTF instances if you       ║
+  ║       want parallax, but keep the same anchor + footprint.                ║
+  ║                                                                            ║
+  ║  7) UI SAFE AREAS — NO UI IS DRAWN HERE ON PURPOSE. The stage is inset    ║
+  ║     to leave the gutters the existing battle HUD needs (matching the      ║
+  ║     live screenshot):  left 384 · right 244 · top 78 · bottom 292 (css    ║
+  ║     px at 1440p, scaled proportionally). SAFE in CONFIG. Mount the        ║
+  ║     existing HUD as transparent DOM over this canvas — do not rebuild     ║
+  ║     it, and do not let the stage grow into those gutters.                 ║
+  ║     Press G to toggle the guide overlay while developing.                 ║
+  ║                                                                            ║
+  ║  8) KEEP THESE FUNCTIONS — port them 1:1, they are the game board API:    ║
+  ║       buildStage()            rebuild everything from MAP                 ║
+  ║       tileAt(x,z) / tileKey   grid lookup                                 ║
+  ║       spawnUnit(def,x,z,side) place a unit instantly                      ║
+  ║       summonUnit(cardId,x,z)  the full card→sprite ceremony               ║
+  ║       moveUnit(id,x,z)        crisp tween with hop + dust                 ║
+  ║       attackUnit(id,tid)      lunge, impact flash, damage float           ║
+  ║       killUnit(id)            death dissolve → grave                      ║
+  ║       setTimeOfDay(key)       lerp the whole lighting rig                 ║
+  ║       focusTile(x,z) / clearFocus()                                       ║
+  ║       Board.on('tileClick'|'unitClick'|'cardPlayed'|'summonComplete')     ║
+  ║     These already dispatch CustomEvents — replace the demo bodies, keep   ║
+  ║     the signatures so the HUD wiring never changes.                       ║
+  ╚═════════════════════════════════════════════════════════════════════════╝ */
+:root{ --gold:#d2a44e; --gold-hi:#f6dc95; }
+*{ margin:0; padding:0; box-sizing:border-box; }
+html,body{ width:100%; height:100%; overflow:hidden; background:#05040a; }
+body{ font-family:"EB Garamond",serif; color:#e9dab2; user-select:none; }
+/* NOTE: <canvas> is a REPLACED element — `inset:0` alone does NOT stretch it
+   (it falls back to the intrinsic 300x150). Always size it explicitly. */
+#stage{ position:fixed; top:0; left:0; width:100vw; height:100vh; display:block; }
+
+/* summon card — DOM overlay in the prototype; becomes a textured plane in Three.js */
+.flycard{
+  position:fixed; z-index:6; width:186px; height:260px; border-radius:10px;
+  transform-style:preserve-3d; pointer-events:none; will-change:transform,opacity;
+  transition:none;
+}
+.flycard .face, .flycard .back{
+  position:absolute; inset:0; border-radius:7px; backface-visibility:hidden; overflow:hidden;
+  border:2px solid rgba(246,220,149,.85);
+  box-shadow:0 10px 26px rgba(0,0,0,.8), 0 0 26px rgba(246,220,149,.4);
+}
+.flycard .back{
+  transform:rotateY(180deg);
+  background:radial-gradient(60% 45% at 50% 45%, rgba(140,70,220,.5), transparent 70%), linear-gradient(160deg,#1b1430,#0a0714);
+  display:grid; place-items:center; color:rgba(246,220,149,.75); font-size:58px;
+}
+.flycard .face{ display:flex; flex-direction:column; }
+.flycard .art{ flex:1; display:grid; place-items:center; }
+.flycard .nm{
+  padding:8px 5px; text-align:center; font-family:"Cinzel",serif; font-weight:700; font-size:15px;
+  letter-spacing:.04em; color:#f6dc95; background:linear-gradient(180deg, rgba(12,9,18,.9), rgba(6,4,10,.95));
+  border-top:1px solid rgba(246,220,149,.4);
+}
+
+/* hand — placeholder cards so the summon can be demoed. The REAL hand is part of
+   the existing HUD; Claude Code replaces this strip with it. */
+.hand{
+  position:fixed; left:50%; bottom:18px; transform:translateX(-50%);
+  display:flex; gap:15px; z-index:5; pointer-events:auto;
+}
+.hcard{
+  width:186px; height:260px; border-radius:10px; position:relative; cursor:pointer;
+  border:2px solid rgba(210,164,78,.6); overflow:hidden;
+  background:linear-gradient(170deg,#161024,#08050e);
+  box-shadow:0 10px 22px rgba(0,0,0,.75);
+  transition:transform .22s cubic-bezier(.2,.9,.3,1.3), box-shadow .22s, border-color .22s;
+}
+.hcard:hover{ transform:translateY(-20px) scale(1.05); border-color:rgba(246,220,149,.9); box-shadow:0 18px 34px rgba(0,0,0,.8), 0 0 26px rgba(246,220,149,.35); }
+.hcard.armed{ transform:translateY(-26px) scale(1.07); border-color:#f6dc95; box-shadow:0 0 0 2px rgba(246,220,149,.5), 0 0 34px rgba(246,220,149,.55); }
+.hcard .cost{
+  position:absolute; top:9px; left:9px; z-index:2; width:44px; height:44px; border-radius:50%;
+  display:grid; place-items:center; font-family:"Cinzel",serif; font-weight:900; font-size:21px;
+  color:#f6ecd2; border:1.5px solid rgba(246,220,149,.8); background:rgba(8,6,14,.9);
+}
+.hcard .art{ position:absolute; inset:0; display:grid; place-items:center; }
+.hcard .nm{
+  position:absolute; left:0; right:0; bottom:0; padding:8px 4px; text-align:center;
+  font-family:"Cinzel",serif; font-weight:700; font-size:15px; color:#f6dc95;
+  background:linear-gradient(180deg, rgba(10,8,16,.5), rgba(6,4,10,.96));
+}
+.hcard .el{
+  position:absolute; left:0; right:0; bottom:34px; text-align:center;
+  font-family:"Cinzel",serif; font-weight:700; font-size:12px; letter-spacing:.16em;
+}
+
+.hint{
+  position:fixed; left:50%; bottom:296px; transform:translateX(-50%); z-index:7;
+  font-size:12.5px; font-style:italic; color:#6e6350; white-space:nowrap;
+  animation:hintFade 7s ease forwards; pointer-events:none;
+}
+@keyframes hintFade{ 0%,70%{ opacity:1; } 100%{ opacity:0; } }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<!-- The demo hand + hint are STANDALONE ONLY. Embedded, the real hand is
+     the game's own HUD mounted as transparent DOM over this canvas. -->
+<div class="hand" id="hand"></div>
+<div class="hint" id="hint">click a card, then a tile — or click a unit and a tile to move it</div>
+
+
+<script>window.BB_BUILD='v119k4';
+"use strict";
+/* ══════════════════════════════════════════════════════════════════
+   CONFIG — camera + UI safe areas. Port these numbers verbatim.
+   ══════════════════════════════════════════════════════════════════ */
+const CONFIG = {
+  camera:{ fov:39.5*Math.PI/180, pos:{x:0,y:9.04,z:9.76}, target:{x:0,y:0.30,z:0.20} },
+  /* The arena (board + its four pillars) is taller above the floor than below
+     it, so it does not sit centred in the safe box on its own. This nudges the
+     whole projection so the scene is optically centred, which is what lets the
+     FOV be tightened without the pillar tops clipping. */
+  viewShiftY: -40,
+  /* gutters reserved for the EXISTING battle HUD (added by Claude Code) */
+  SAFE:{ left:384, right:244, top:78, bottom:292 },
+  tile:1.0, wall:0.30
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   MAP — THE BATTLEMAP EDITOR OWNS THIS OBJECT. Read/write as JSON.
+   ══════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════
+   LOCATIONS — a LOCATION CARD swaps the board art (and optionally the
+   time of day). Register every location here; the editor and the card
+   database both read this table.
+     image     : ground texture, laid flat on the play plane in perspective
+     backdrop  : the environment BEHIND the board — the world this location
+                 sits in. Drawn behind the arena and graded by the sky, so a
+                 location card changes the whole horizon, not just the floor.
+     timeOfDay : null keeps the current sky, or force 'dawn|day|dusk|night'
+     tint      : optional extra colour grade over the ground
+   Play one with:  Board.setLocation('dark-forest')
+   ══════════════════════════════════════════════════════════════════ */
+const LOCATIONS = {
+  'dark-forest':{ name:'The Dark Forest', image:'../assets/board/locations/dark-forest-ground.jpg', backdrop:'../assets/board/locations/dark-forest-backdrop.jpg', timeOfDay:null, tint:null },
+  /* Register the rest as their art lands — same shape:
+  'open-field'   :{ name:'Open Field',    image:'assets/loc/open-field.jpg',
+                    backdrop:'assets/loc/open-field-bg.jpg',    timeOfDay:'day'   },
+  'infected-city':{ name:'Infected City', image:'assets/loc/infected-city.jpg',timeOfDay:'dusk'  },
+  'crystal-caves':{ name:'Crystal Caves', image:'assets/loc/crystal-caves.jpg',timeOfDay:'night' },
+  */
+};
+const DEFAULT_LOCATION = 'dark-forest';
+/* The HOST registers every playable location (from the card database /
+   Battlemap Editor) with Board.setLocations({...}). Same shape as above. */
+function setLocations(table, keepDefault){
+  if (!table || typeof table !== 'object') return;
+  if (!keepDefault) for (const k in LOCATIONS) if (k !== DEFAULT_LOCATION) delete LOCATIONS[k];
+  for (const k in table){
+    const L = table[k]; if (!L) continue;
+    LOCATIONS[k] = { name:L.name || k, image:L.image || null, backdrop:L.backdrop || null,
+                     timeOfDay:L.timeOfDay || null, tint:L.tint || null };
+  }
+}
+
+const MAP = {
+  id:'ruins-downtown-01', name:'Overgrown Downtown', cols:8, rows:7,
+  timeOfDay:'day',
+  location: DEFAULT_LOCATION,
+  ground:{ base:'#2a2418', accent:'#4a3f24' },
+  tiles:[
+    { x:6, z:1, prop:'barricade' },
+    { x:7, z:2, prop:'pylon', elev:0.18 },
+    { x:0, z:3, prop:'bones' },
+    { x:5, z:3, prop:'crater', type:'hazard' },
+    { x:3, z:3, type:'objective' },
+    { x:4, z:3, type:'objective' },
+    { x:2, z:4, prop:'crater', type:'hazard' },
+    { x:0, z:5, prop:'pylon', elev:0.18 },
+    { x:6, z:6, prop:'bones' }
+  ],
+  /* live board events — the game's EVENT SYSTEM owns this list. EMPTY by design:
+     the host pushes the match's real events via board:init / board:events. It used
+     to hold three hardcoded demos, which is why the stage showed events that were
+     not in the game. */
+  events:[],
+  spawns:{ mine:[[2,6],[3,6],[4,6],[5,6]], foe:[[2,0],[3,0],[4,0],[5,0]] }
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   TIME OF DAY — sun/moon presets. BATTLE.timeOfDay drives the rig.
+   ══════════════════════════════════════════════════════════════════ */
+const TIME_PRESETS = {
+  dawn:{ az:-0.85, elev:0.20, key:'#ffb46a', keyI:0.95, ambient:'#3a3350', ambI:0.42,
+         sky:['#1a1230','#4a2c3a','#8a5a44'], fog:'#2a1c2a', rim:'#7fa8ff', body:'sun', disc:'#ffd9a0', haze:.34 },
+  day:{ az: 0.28, elev: 0.78, key:'#fff2c8', keyI:1.15, ambient:'#5a6480', ambI:0.55,
+         sky:['#18243c','#31465f','#6b7f92'], fog:'#3a4454', rim:'#cfe4ff', body:'sun', disc:'#fff6d8', haze:.22 },
+  dusk:{ az: 0.92, elev: 0.16, key:'#ff7a3c', keyI:1.0, ambient:'#43305a', ambI:0.44,
+         sky:['#160f2c','#4a2038','#a04628'], fog:'#2c1a2c', rim:'#a06cff', body:'sun', disc:'#ff9a52', haze:.4 },
+  night:{ az:-0.42, elev: 0.62, key:'#7fa6e8', keyI:0.48, ambient:'#0e1730', ambI:0.26,
+         sky:['#01030b','#050b1c','#0b1530'], fog:'#050a18', rim:'#6f9ce8', body:'moon', disc:'#cfe0ff', haze:.14 }
+};
+const BATTLE = { timeOfDay: MAP.timeOfDay };
+
+/* ══════════════════════════════════════════════════════════════════
+   UNIT DEFS — procedural stand-ins. Swap `draw` for sprite-sheet UVs.
+   data-art-slot equivalent: def.sheet = '<path to sprite sheet>'
+   ══════════════════════════════════════════════════════════════════ */
+/* UNIT REGISTRY — the HOST fills this. Each entry:
+     { name, color, h (world-units tall), art (image URL, optional),
+       sheet:{src, frames, fps, rows:{idle,walk,attack,hurt,death}} }
+   `art` alone is enough: a single still is billboarded and animated by
+   the procedural bob/squash. A `sheet` adds real frame animation.
+   Anything with no art falls back to the procedural painter below, so a
+   missing texture never leaves a hole on the board. */
+const UNIT_DEFS = Object.create(null);
+const PROC_KEYS = ['wyrm','imp','knight','mage','crystal','bunny','jelly'];
+const PROC_DEFS = {
+  wyrm:{ name:'Wyrm', color:'#7fb4ff', h:1.30 },
+  imp:{ name:'Imp', color:'#8fd84a', h:0.92 },
+  knight:{ name:'Knight', color:'#cfd6e4', h:1.16 },
+  mage:{ name:'Mage', color:'#ff8a3c', h:1.06 },
+  crystal:{ name:'Crystal', color:'#5fe8d5', h:1.12 },
+  bunny:{ name:'Bunny', color:'#c8a8ff', h:0.98 },
+  jelly:{ name:'Jelly', color:'#4ad8c8', h:0.86 }
+};
+Object.assign(UNIT_DEFS, PROC_DEFS);
+/* image cache for host-supplied art / sheets */
+const ART_CACHE = Object.create(null);
+function artImage(src){
+  if (!src) return null;
+  let rec = ART_CACHE[src];
+  if (!rec){
+    rec = ART_CACHE[src] = { img:new Image(), ok:false };
+    rec.img.onload = () => { rec.ok = true; };
+    rec.img.onerror = () => { rec.ok = false; rec.bad = true; };
+    if (!/^data:/.test(src)) rec.img.crossOrigin = 'anonymous';
+    rec.img.src = src;
+  }
+  return rec.ok ? rec.img : null;
+}
+let HAND = [];   /* the real hand lives in the game HUD */
+
+/* ══════════════════════════════════════════════════════════════════
+   ENGINE STATE
+   ══════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════
+   GROUND / LOCATION ART
+   The board texture is mapped onto the play plane in true perspective by
+   slicing it into thin depth bands (a 2D canvas can only do affine
+   transforms, so we integrate the projection per band). Because the
+   texture lies flat in WORLD space, each band's source strip maps
+   linearly to its world-z range — the result is a correct projection.
+   (Three.js: this becomes a single PlaneGeometry with the texture on it —
+   delete this function and set material.map. Keep setLocation().)
+   ══════════════════════════════════════════════════════════════════ */
+/* legal-target overlay pushed by the game each render */
+const PAINT = { move:new Set(), attack:new Set(), place:new Set(), swap:new Set(), sel:null };
+/* dead units' grave markers, pushed by the game */
+const TOMBS = [];
+const GROUND = { img:null, prev:null, fade:1, key:null };
+const BACKDROP = { img:null, prev:null, fade:1, horizon:0.62 };  /* horizon height in the source art */
+function loadLocation(id, instant){
+  const loc = LOCATIONS[id]; if (!loc) return;
+  const im = new Image();
+  im.onload = () => {
+    GROUND.prev = instant ? null : GROUND.img;
+    GROUND.img = im; GROUND.fade = instant ? 1 : 0; GROUND.key = id;
+  };
+  im.src = loc.image;
+  if (loc.backdrop){
+    const bd = new Image();
+    bd.onload = () => {
+      BACKDROP.prev = instant ? null : BACKDROP.img;
+      BACKDROP.img = bd; BACKDROP.fade = instant ? 1 : 0;
+    };
+    bd.src = loc.backdrop;
+  }
+  MAP.location = id;
+  if (loc.timeOfDay) setTimeOfDay(loc.timeOfDay);
+}
+function drawGroundSlices(img, alpha){
+  const halfW = MAP.cols/2, halfD = MAP.rows/2;
+  const N = 150;                       /* depth bands — raise for more accuracy */
+  ctx.globalAlpha = alpha;
+  for (let i=0;i<N;i++){
+    const t0 = i/N, t1 = (i+1)/N;
+    const z0 = -halfD + t0*MAP.rows, z1 = -halfD + t1*MAP.rows;
+    const L0 = project({x:-halfW, y:0, z:z0}), R0 = project({x:halfW, y:0, z:z0});
+    const L1 = project({x:-halfW, y:0, z:z1}), R1 = project({x:halfW, y:0, z:z1});
+    if (!L0||!R0||!L1||!R1) continue;
+    const dx = Math.min(L0.x, L1.x), dw = Math.max(R0.x, R1.x) - dx;
+    const dy = L0.y, dh = (L1.y - L0.y) + 1.2;   /* +1.2 hides seams */
+    if (dw <= 0 || dh <= 0) continue;
+    const sy = t0*img.naturalHeight, sh = Math.max(1, (t1-t0)*img.naturalHeight);
+    ctx.drawImage(img, 0, sy, img.naturalWidth, sh, dx, dy, dw, dh);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* celestial art — swap these data URLs for real texture files in the engine */
+const SUN_IMG = new Image(); SUN_IMG.src = '../assets/board/sun.png';
+const MOON_IMG = new Image(); MOON_IMG.src = '../assets/board/moon.png';
+const cv = document.getElementById('stage');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+let units = [], particles = [], effects = [];
+let uid = 1, selected = null, armedCard = null, focus = null, hoverTile = null;
+let showGuides = false;
+let T = 0, last = 0;
+let LIGHT = { ...TIME_PRESETS[BATTLE.timeOfDay] };
+let lightLerp = null;
+
+const rnd = (a,b) => a + Math.random()*(b-a);
+const lerp = (a,b,t) => a + (b-a)*t;
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const easeOut = t => 1 - Math.pow(1-t, 3);
+const easeInOut = t => t<.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
+const easeBack = t => { const c=1.70158+1, s=1.70158; return 1 + c*Math.pow(t-1,3) + s*Math.pow(t-1,2); };
+function hexRgb(h){ const n = parseInt(h.slice(1),16); return [n>>16&255, n>>8&255, n&255]; }
+function mixHex(a,b,t){ const A=hexRgb(a), B=hexRgb(b);
+  return `rgb(${Math.round(lerp(A[0],B[0],t))},${Math.round(lerp(A[1],B[1],t))},${Math.round(lerp(A[2],B[2],t))})`; }
+function rgba(h,a){ const c = hexRgb(h); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+
+/* ── responsive sizing, projection centred on the SAFE box ── */
+let VIEW = { cx:0, cy:0, scale:1 };
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  /* Viewport is the source of truth. clientWidth is a poor fallback here because
+     a <canvas> is a REPLACED element: `inset:0` does not stretch it, so clientWidth
+     can report the intrinsic 300x150 and collapse the whole stage.
+     (clientWidth/clientHeight are also READ-ONLY — never assign to them.) */
+  W = Math.max(1, window.innerWidth || cv.clientWidth || 1280);
+  H = Math.max(1, window.innerHeight || cv.clientHeight || 720);
+  cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  /* Reserved UI gutters, scaled to the viewport. */
+  const k = clamp(W/1920, .5, 1.15);
+  const S = CONFIG.SAFE;
+  let l = S.left*k, r = S.right*k, t = S.top*k, b = S.bottom*k;
+  /* COLLAPSE GUARD: on a small window the gutters could exceed the viewport and
+     invert the projection. Never let them eat more than 62% wide / 55% tall. */
+  const maxH = W*0.62, maxV = H*0.55;
+  if (l + r > maxH){ const s = maxH/(l+r); l *= s; r *= s; }
+  if (t + b > maxV){ const s = maxV/(t+b); t *= s; b *= s; }
+  VIEW.cx = l + (W - l - r)/2;
+  VIEW.cy = t + (H - t - b)/2 + (CONFIG.viewShiftY || 0) * clamp(H/1080, .6, 1.2);
+  VIEW.box = { l, r, t, b, w:Math.max(120, W-l-r), h:Math.max(90, H-t-b) };
+  VIEW.scale = (VIEW.box.h/2) / Math.tan(CONFIG.camera.fov/2);
+}
+addEventListener('resize', resize);
+
+/* ══════════════════════════════════════════════════════════════════
+   PROJECTION — pinhole camera. (Three.js: replace with the real
+   PerspectiveCamera; these are the same numbers.)
+   ══════════════════════════════════════════════════════════════════ */
+const sub = (a,b) => ({x:a.x-b.x, y:a.y-b.y, z:a.z-b.z});
+const dot = (a,b) => a.x*b.x + a.y*b.y + a.z*b.z;
+const cross = (a,b) => ({ x:a.y*b.z-a.z*b.y, y:a.z*b.x-a.x*b.z, z:a.x*b.y-a.y*b.x });
+const norm = v => { const L = Math.hypot(v.x,v.y,v.z)||1; return {x:v.x/L, y:v.y/L, z:v.z/L}; };
+let CAM = null;
+function buildCam(){
+  const c = CONFIG.camera;
+  const f = norm(sub(c.target, c.pos));
+  const r = norm(cross(f, {x:0,y:1,z:0}));
+  const u = cross(r, f);
+  CAM = { pos:c.pos, f, r, u };
+}
+function project(p){
+  const d = sub(p, CAM.pos);
+  const x = dot(d, CAM.r), y = dot(d, CAM.u), z = dot(d, CAM.f);
+  if (z <= 0.05) return null;
+  const s = VIEW.scale / z;
+  return { x: VIEW.cx + x*s, y: VIEW.cy - y*s, z, s };
+}
+/* grid (col,row) → world. Board centred on origin. */
+function gw(gx, gz, y){
+  return { x:(gx - (MAP.cols-1)/2)*CONFIG.tile, y:y||0, z:(gz - (MAP.rows-1)/2)*CONFIG.tile };
+}
+function tileAt(x,z){ return MAP.tiles.find(t => t.x===x && t.z===z) || null; }
+function tileElev(x,z){ const t = tileAt(x,z); return t && t.elev ? t.elev : 0; }
+function tileBlocked(x,z){
+  const t = tileAt(x,z);
+  if (t && (t.type==='blocked' || t.prop==='pylon')) return true;
+  /* an event may block the tile (e.g. a standing structure) */
+  return eventsAt(x,z).some(e => (EVENT_TYPES[e.type]||{}).blocks);
+}
+
+/* light direction from the preset (used for shadows + rim) */
+function lightVector(){
+  const az = LIGHT.az, el = LIGHT.elev;
+  return { x:Math.sin(az)*Math.cos(el), y:Math.sin(el), z:-Math.cos(az)*Math.cos(el) };
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   STAGE BUILD — pure from MAP. Editor calls this to hot-reload.
+   ══════════════════════════════════════════════════════════════════ */
+function buildStage(){
+  buildCam(); resize(); seedBraziers();
+  units = units.filter(u => u.persist);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   UNITS
+   ══════════════════════════════════════════════════════════════════ */
+function spawnUnit(defKey, gx, gz, side){
+  /* An unregistered unit still gets a body: hash its key onto one of the
+     procedural silhouettes rather than throwing. */
+  if (!UNIT_DEFS[defKey]){
+    let hsh = 0; for (let i = 0; i < String(defKey).length; i++) hsh = (hsh * 31 + String(defKey).charCodeAt(i)) | 0;
+    const proc = PROC_KEYS[Math.abs(hsh) % PROC_KEYS.length];
+    UNIT_DEFS[defKey] = Object.assign({}, PROC_DEFS[proc], { name:String(defKey), _proc:proc });
+  }
+  const def = UNIT_DEFS[defKey];
+  const u = {
+    id: uid++, def, key:defKey, side: side||'mine',
+    gx, gz, x:gx, z:gz, y:0, scaleX:1, scaleY:1, face: side==='foe' ? 1 : -1,
+    bob: Math.random()*Math.PI*2, hp:1, anim:'idle', animT:0, tween:null, flash:0, rise:0
+  };
+  units.push(u);
+  return u;
+}
+function unitAt(gx,gz){ return units.find(u => u.gx===gx && u.gz===gz && !u.dead); }
+
+/* crisp tile-to-tile movement: cubic ease + hop arc + squash + dust */
+function moveUnit(id, gx, gz){
+  const u = units.find(x => x.id===id); if (!u || u.tween) return;
+  if (tileBlocked(gx,gz) || unitAt(gx,gz)) { deny(u); return; }
+  u.face = (gx === u.gx) ? u.face : (gx > u.gx ? 1 : -1);
+  u.tween = { x0:u.x, z0:u.z, x1:gx, z1:gz, t:0, dur:0.34 };
+  u.anim = 'walk';
+  u.gx = gx; u.gz = gz;
+  dispatch('unitMove', { id, x:gx, z:gz });
+}
+function deny(u){
+  u.shake = 0.28;
+  effects.push({ k:'ring', x:u.x, z:u.z, t:0, dur:.35, col:'#ff5a48', r0:.15, r1:.5 });
+}
+function attackUnit(id, targetId){
+  const u = units.find(x=>x.id===id), t = units.find(x=>x.id===targetId);
+  if (!u || !t) return;
+  u.lunge = { t:0, dur:.42, dx:(t.x-u.x), dz:(t.z-u.z) };
+  setTimeout(() => {
+    t.flash = 1; t.shake = .3;
+    effects.push({ k:'impact', x:t.x, z:t.z, t:0, dur:.5 });
+    burst(t.x, t.z, .6, 22, '#ffd08a');
+    effects.push({ k:'float', x:t.x, z:t.z, t:0, dur:1.1, txt:'-24', col:'#ff6a5a' });
+  }, 180);
+  dispatch('unitAttack', { id, targetId });
+}
+function killUnit(id){
+  const u = units.find(x=>x.id===id); if (!u) return;
+  u.dead = true; u.deathT = 0;
+  burst(u.x, u.z, .8, 34, u.def.color);
+  dispatch('unitDeath', { id });
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   SUMMON — the ceremony. Timings documented in the port brief.
+   ══════════════════════════════════════════════════════════════════ */
+let summoning = false;
+/* 🌟 SUMMON ARRIVAL (cosmetic only).
+   The unit is ALREADY placed by the normal roster push — this just replays the
+   arrival beats on it: rune circle, white flash, pillar of light, shockwave
+   ring, dust burst, then the unit rises out of the tile with a back-ease and
+   a landing squash. Deliberately decoupled from spawning: if this never runs,
+   the board is still correct, which is the bug that bit the first attempt. */
+function summonFx(unitId){
+  const u = units.find(x => String(x.id) === String(unitId) && !x.dead);
+  if (!u || u.rise) return false;
+  const col = (u.def && u.def.color) || '#f6dc95';
+  const wp = gw(u.gx, u.gz, tileElev(u.gx, u.gz));
+  effects.push({ k:'rune', x:wp.x, z:wp.z, gx:u.gx, gz:u.gz, t:0, dur:1.5, col });
+  effects.push({ k:'flash', t:0, dur:.55 });
+  effects.push({ k:'pillar', gx:u.gx, gz:u.gz, t:0, dur:1.0, col });
+  effects.push({ k:'ring', x:wp.x, z:wp.z, t:0, dur:.7, col, r0:.2, r1:1.6 });
+  burst(wp.x, wp.z, 1.0, 46, col);
+  u.rise = 1; u.riseT = 0; u.y = -1.1; u.scaleX = .7; u.scaleY = .7;
+  return true;
+}
+function summonUnit(cardId, gx, gz, opts){
+  if (summoning) return;
+  opts = opts || {};
+  /* EMBEDDED: the host summons by UNIT KEY, not by a card in the demo hand.
+     Synthesise the card the ceremony needs so the flying card shows the real
+     unit's art and name. */
+  let card = HAND.find(c => c.id===cardId);
+  if (!card){
+    const d = UNIT_DEFS[cardId];
+    if (!d) return;
+    card = { id:cardId, unit:cardId, ec:d.color || '#f6dc95', el:'', cost:opts.cost || 0 };
+  }
+  if (tileBlocked(gx,gz) || unitAt(gx,gz)) return;
+  summoning = true;
+  dispatch('cardPlayed', { cardId, x:gx, z:gz });
+
+  const el = document.querySelector(`.hcard[data-id="${cardId}"]`);
+  const from = el ? el.getBoundingClientRect() : { left:W/2-93, top:H-278, width:186, height:260 };
+  if (el) el.style.visibility = 'hidden';
+
+  /* flying card (Three.js: a textured plane in-scene) */
+  const fly = document.createElement('div');
+  fly.className = 'flycard';
+  fly.innerHTML = `<div class="back">✦</div><div class="face">
+      <div class="art"></div><div class="nm">${UNIT_DEFS[card.unit].name}</div></div>`;
+  document.body.appendChild(fly);
+  const artCv = document.createElement('canvas');
+  artCv.width = 186*2; artCv.height = 226*2; artCv.style.width='186px'; artCv.style.height='226px';
+  fly.querySelector('.art').appendChild(artCv);
+  paintCardArt(artCv.getContext('2d'), card, 186, 226, 2);
+
+  const wp = gw(gx, gz, tileElev(gx,gz));
+  const target0 = project(wp);
+  const target = target0 || { x:W/2, y:H/2, s:100 };
+  const CARD_W = from.width || 186;
+  /* The hand card is large; once placed it must read as a small card sitting
+     ON the tile — ≈0.66 of a tile wide, so deeper tiles get a smaller card. */
+  const landScale = clamp((0.66 * target.s) / CARD_W, 0.18, 0.62);
+  const t0 = performance.now();
+  const DUR = { fly:520, flip:640, flash:780, rise:820, dissolve:900, land:1350 };
+  let ignited = false, flipped = false, flashed = false, risen = false, dissolved = false;
+  let unit = null;
+
+  (function step(now){
+    const e = now - t0;
+    /* 0 → fly */
+    const ft = clamp(e/DUR.fly, 0, 1), fe = easeInOut(ft);
+    const sx = from.left, sy = from.top;
+    const mx = lerp(sx, target.x-CARD_W/2, fe), my = lerp(sy, target.y-130, fe) - Math.sin(fe*Math.PI)*215;
+    const tilt = lerp(0, 62, fe);
+    const scl = lerp(1, landScale, fe);
+    const flipDeg = e > DUR.flip ? clamp((e-DUR.flip)/240, 0, 1)*180 : 0;
+    fly.style.transform =
+      `translate3d(${mx}px, ${my}px, 0) rotateX(${tilt}deg) rotateY(${180-flipDeg}deg) scale(${scl})`;
+
+    if (!ignited && e >= DUR.fly){
+      ignited = true;
+      effects.push({ k:'rune', x:gx===undefined?0:gw(gx,gz).x, z:gw(gx,gz).z, gx, gz, t:0, dur:1.5, col:card.ec });
+    }
+    if (!flipped && e >= DUR.flip){ flipped = true; }
+    if (!flashed && e >= DUR.flash){
+      flashed = true;
+      effects.push({ k:'flash', t:0, dur:.55 });
+      effects.push({ k:'pillar', gx, gz, t:0, dur:1.0, col:card.ec });
+      effects.push({ k:'ring', x:gw(gx,gz).x, z:gw(gx,gz).z, t:0, dur:.7, col:card.ec, r0:.2, r1:1.6 });
+      burst(gw(gx,gz).x, gw(gx,gz).z, 1.0, 46, card.ec);
+    }
+    if (!risen && e >= DUR.rise){
+      risen = true;
+      unit = spawnUnit(card.unit, gx, gz, opts.side === 'foe' ? 'foe' : 'mine');
+      if (unit && opts.id != null) unit.id = String(opts.id);   // keep the GAME's id
+      unit.rise = 1; unit.y = -1.1; unit.scaleY = .7; unit.scaleX = .7;
+    }
+    if (!dissolved && e >= DUR.dissolve){
+      dissolved = true;
+      fly.style.transition = 'opacity .28s ease, transform .28s ease';
+      fly.style.opacity = '0';
+      const cur = fly.style.transform;
+      fly.style.transform = cur + ' scale(1.18)';
+      emberDissolve(target.x, target.y);
+      setTimeout(() => fly.remove(), 320);
+      const idx = HAND.findIndex(c => c.id===cardId);
+      if (idx >= 0) HAND.splice(idx, 1);
+      renderHand();
+    }
+    if (unit && unit.rise > 0){
+      const rt = clamp((e - DUR.rise)/420, 0, 1);
+      const re = easeBack(rt);
+      unit.y = lerp(-1.1, 0, re);
+      unit.scaleY = lerp(.7, 1, easeOut(rt));
+      unit.scaleX = lerp(.7, 1, easeOut(rt));
+      if (rt >= 1) unit.rise = 0;
+    }
+    if (e >= DUR.land && unit){
+      unit.scaleY = 1.16; unit.scaleX = .88;   /* landing squash, springs back in update */
+      effects.push({ k:'ring', x:gw(gx,gz).x, z:gw(gx,gz).z, t:0, dur:.55, col:card.ec, r0:.1, r1:1.0 });
+      dust(gw(gx,gz).x, gw(gx,gz).z, 20);
+      summoning = false;
+      dispatch('summonComplete', { cardId, unitId:unit.id, x:gx, z:gz });
+      return;
+    }
+    requestAnimationFrame(step);
+  })(t0);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   PARTICLES
+   ══════════════════════════════════════════════════════════════════ */
+function burst(wx, wz, power, n, col){
+  for (let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, sp = rnd(.4,2.2)*power;
+    particles.push({ x:wx, y:rnd(.05,.35), z:wz, vx:Math.cos(a)*sp, vy:rnd(1.4,4.2)*power, vz:Math.sin(a)*sp,
+      life:rnd(.5,1.2), t:0, col, size:rnd(1.4,3.4), g:5.6 });
+  }
+}
+/* DUST — real kicked-up dust: soft billowing puffs that expand, hug the
+   ground, drift outward and fade, plus a little heavier grit that arcs and
+   settles. (Three.js: soft-particle billboards with depth-fade + the same
+   expand/fade curve; grit as a small GPU sprite burst.) */
+function dust(wx, wz, n){
+  for (let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, sp = rnd(.35,1.05);
+    particles.push({ puff:true, x:wx, y:rnd(.01,.10), z:wz,
+      vx:Math.cos(a)*sp, vz:Math.sin(a)*sp, vy:rnd(.10,.34),
+      t:0, life:rnd(.75,1.35),
+      r0:rnd(.09,.17), r1:rnd(.44,.78),
+      col:'#b9a582', tone:rnd(.85,1.12) });
+  }
+  for (let i=0;i<Math.round(n*.55);i++){
+    const a = Math.random()*Math.PI*2, sp = rnd(.5,1.6);
+    particles.push({ x:wx, y:.03, z:wz, vx:Math.cos(a)*sp, vy:rnd(.5,1.5), vz:Math.sin(a)*sp,
+      life:rnd(.35,.75), t:0, col:'#d8c9a4', size:rnd(1.1,2.2), g:4.2, soft:true });
+  }
+}
+function emberDissolve(sx, sy){
+  for (let i=0;i<28;i++){
+    effects.push({ k:'ember2d', x:sx+rnd(-40,40), y:sy+rnd(-56,56),
+      vx:rnd(-26,26), vy:rnd(-90,-26), t:0, dur:rnd(.6,1.2), col:'#ffcf7a' });
+  }
+}
+/* ambient motes floating over the stage */
+for (let i=0;i<70;i++){
+  particles.push({ amb:true, x:rnd(-5,5), y:rnd(.1,3.4), z:rnd(-4,4),
+    vx:rnd(-.06,.06), vy:rnd(.05,.22), vz:rnd(-.06,.06), t:0, life:1e9,
+    col: Math.random()<.5 ? '#b98cff' : '#ffcf7a', size:rnd(.8,2.1), g:0, w:Math.random()*7 });
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   DRAW — sky, board, tiles, props, units, fx
+   ══════════════════════════════════════════════════════════════════ */
+function drawSky(){
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, LIGHT.sky[0]); g.addColorStop(.55, LIGHT.sky[1]); g.addColorStop(1, LIGHT.sky[2]);
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  /* the location backdrop covers this entirely when art is present */
+
+  drawBackdrop();   /* the location's world sits behind the arena */
+
+  /* ── SUN / MOON — real art, positioned from the preset so the sky always
+     matches the battle's clock. Drawn AFTER the backdrop so they read as
+     hanging in front of the scene. Sun gets corona shine + lens streaks;
+     moon gets a cold blue moonlight halo. ── */
+  const az = LIGHT.az, el = LIGHT.elev;
+  /* ☀ Pinned to the UPPER-RIGHT sky and kept small. It used to swing with the
+     light azimuth across the middle of the frame at a large radius, which put
+     it straight over the battlefield. Now it stays in the corner, well clear of
+     the play area, and only drifts a little with the light direction. */
+  const bx = VIEW.cx + VIEW.box.w * .40 + Math.sin(az) * VIEW.box.w * .05;
+  const by = VIEW.cy - VIEW.box.h * .40 - (el - .15) * VIEW.box.h * .16;
+  const isSun = LIGHT.body === 'sun';
+  const R = (isSun ? 40 : 32) * clamp(VIEW.box.h/900, .7, 1.15);
+  const pulse = 1 + Math.sin(T*0.9)*0.018 + Math.sin(T*2.3)*0.008;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  /* broad atmospheric bloom */
+  const halo = ctx.createRadialGradient(bx,by,R*0.55, bx,by,R*(isSun?7.5:5.4));
+  halo.addColorStop(0,   rgba(LIGHT.disc, isSun ? .40 : .26));
+  halo.addColorStop(.18, rgba(LIGHT.disc, isSun ? .17 : .12));
+  halo.addColorStop(1,   rgba(LIGHT.disc, 0));
+  ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(bx,by,R*(isSun?7.5:5.4),0,7); ctx.fill();
+  /* tight inner shine right at the limb */
+  const core = ctx.createRadialGradient(bx,by,R*0.72, bx,by,R*1.55);
+  core.addColorStop(0, rgba(isSun?'#ffd08a':'#cfe0ff', isSun?.55:.34));
+  core.addColorStop(1, rgba(isSun?'#ff9a30':'#8fb4ff', 0));
+  ctx.fillStyle = core; ctx.beginPath(); ctx.arc(bx,by,R*1.55,0,7); ctx.fill();
+
+  if (isSun){
+    /* rotating corona rays */
+    for (let i=0;i<16;i++){
+      const a = i*Math.PI/8 + T*0.05;
+      const len = R*(2.5 + Math.sin(T*1.7 + i*1.3)*0.75);
+      const gg = ctx.createLinearGradient(bx,by, bx+Math.cos(a)*len, by+Math.sin(a)*len);
+      gg.addColorStop(0, rgba('#ffcf7a', .16));
+      gg.addColorStop(1, rgba('#ff8a20', 0));
+      ctx.fillStyle = gg;
+      ctx.beginPath(); ctx.moveTo(bx,by);
+      ctx.lineTo(bx+Math.cos(a-.05)*len, by+Math.sin(a-.05)*len);
+      ctx.lineTo(bx+Math.cos(a+.05)*len, by+Math.sin(a+.05)*len);
+      ctx.closePath(); ctx.fill();
+    }
+    /* anamorphic lens streaks */
+    const streak = (w,hh,al) => {
+      const g2 = ctx.createLinearGradient(bx-w,by,bx+w,by);
+      g2.addColorStop(0,'rgba(255,190,110,0)'); g2.addColorStop(.5,`rgba(255,225,170,${al})`);
+      g2.addColorStop(1,'rgba(255,190,110,0)');
+      ctx.fillStyle = g2; ctx.fillRect(bx-w, by-hh/2, w*2, hh);
+    };
+    streak(R*6.2, R*0.075, .30);
+    streak(R*3.0, R*0.030, .38);
+    ctx.save(); ctx.translate(bx,by); ctx.rotate(Math.PI/2); ctx.translate(-bx,-by);
+    streak(R*3.4, R*0.055, .20); ctx.restore();
+  } else {
+    /* cold moonlight bloom + faint god-shafts */
+    for (let i=0;i<9;i++){
+      const a = -Math.PI/2 + (i-4)*.10 + Math.sin(T*.16+i)*.01;
+      const len = VIEW.box.h*1.5;
+      const gg = ctx.createLinearGradient(bx,by, bx+Math.cos(a)*len, by-Math.sin(a)*len);
+      gg.addColorStop(0, rgba('#9fc0ff', .055));
+      gg.addColorStop(1, rgba('#6f9ce8', 0));
+      ctx.fillStyle = gg;
+      ctx.beginPath(); ctx.moveTo(bx,by);
+      ctx.lineTo(bx+Math.cos(a-.028)*len, by-Math.sin(a-.028)*len);
+      ctx.lineTo(bx+Math.cos(a+.028)*len, by-Math.sin(a+.028)*len);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  ctx.restore();
+
+  /* the body itself */
+  const img = isSun ? SUN_IMG : MOON_IMG;
+  if (img && img.complete && img.naturalWidth){
+    const d = R*2*pulse;
+    if (isSun){
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      ctx.drawImage(img, bx-d/2, by-d/2, d, d);
+      ctx.restore();
+      /* second, slowly counter-rotating pass adds churn to the surface */
+      ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=.28;
+      ctx.translate(bx,by); ctx.rotate(-T*0.012); ctx.translate(-bx,-by);
+      ctx.drawImage(img, bx-d*.49, by-d*.49, d*.98, d*.98);
+      ctx.restore();
+    } else {
+      ctx.drawImage(img, bx-d/2, by-d/2, d, d);
+      /* moonlight rim */
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      const rim = ctx.createRadialGradient(bx,by,R*.86, bx,by,R*1.12);
+      rim.addColorStop(0,'rgba(180,210,255,0)'); rim.addColorStop(.6,'rgba(190,215,255,.30)');
+      rim.addColorStop(1,'rgba(150,190,255,0)');
+      ctx.fillStyle = rim; ctx.beginPath(); ctx.arc(bx,by,R*1.12,0,7); ctx.fill();
+      ctx.restore();
+    }
+  } else {
+    ctx.fillStyle = LIGHT.disc; ctx.beginPath(); ctx.arc(bx,by,R,0,7); ctx.fill();
+  }
+  if (!isSun){
+    ctx.fillStyle = rgba(LIGHT.disc,.9);
+    for (let i=0;i<110;i++){
+      const sx=(i*137.5)%W, sy=((i*79.3)%(H*.6));
+      ctx.globalAlpha=.08+(i%5)*.11; ctx.fillRect(sx,sy,1.4,1.4);
+    }
+    ctx.globalAlpha=1;
+  }
+
+  /* procedural ruin silhouettes — only when the location has no backdrop art */
+  if (!(BACKDROP.img && BACKDROP.img.complete)){
+    ctx.fillStyle = rgba(LIGHT.fog, .92);
+    const horizon = project({x:0,y:0,z:-14});
+    const hy = horizon ? horizon.y : H*.42;
+    for (let i=0;i<26;i++){
+      const sx = (i*163 + 40) % (W+200) - 100;
+      const w = 26 + (i*37)%60, h = 40 + (i*91)%160;
+      ctx.fillRect(sx, hy-h, w, h+30);
+      if (i%3===0){ ctx.fillRect(sx+w*.3, hy-h-24, w*.28, 26); }
+    }
+    const fg = ctx.createLinearGradient(0,hy-60,0,hy+140);
+    fg.addColorStop(0, rgba(LIGHT.fog,0)); fg.addColorStop(1, rgba(LIGHT.fog,.85));
+    ctx.fillStyle = fg; ctx.fillRect(0,hy-60,W,220);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   BACKDROP — the location's environment behind the arena. Anchored to the
+   board's FAR EDGE so the world reads as continuing past the play field,
+   scaled to cover, graded by the current sky, and hazed into the ground
+   at its base so there is no hard seam.
+   (Three.js: a large curved backdrop plane / skydome segment behind the
+   board, or a cubemap face. Keep the same fade + grade.)
+   ══════════════════════════════════════════════════════════════════ */
+function drawOneBackdrop(img, alpha){
+  /* COVER the entire viewport — no horizon cut, no empty gradient below.
+     The image is scaled to fill W x H, then slid vertically so its own
+     horizon lands near the board's far edge. */
+  const far = project({ x:0, y:0, z:-MAP.rows/2 - CONFIG.wall });
+  const anchorY = (far ? far.y : H*0.45);
+  const sc = Math.max(W/img.naturalWidth, H/img.naturalHeight) * 1.02;
+  const dw = img.naturalWidth*sc, dh = img.naturalHeight*sc;
+  const dx = (W-dw)/2;
+  /* BACKDROP.horizon = where the horizon sits in the source image (0..1) */
+  let dy = anchorY - dh*BACKDROP.horizon;
+  dy = Math.min(0, Math.max(H - dh, dy));      /* never expose an edge */
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(img, dx, dy, dw, dh);
+  ctx.globalAlpha = 1;
+  return { dx, dy, dw, dh, anchorY };
+}
+function drawBackdrop(){
+  const img = BACKDROP.img;
+  if (!img || !img.complete || !img.naturalWidth) return;
+  ctx.save();
+  if (BACKDROP.prev && BACKDROP.fade < 1 && BACKDROP.prev.complete) drawOneBackdrop(BACKDROP.prev, 1);
+  const R = drawOneBackdrop(img, BACKDROP.fade);
+  /* Time-of-day grade — kept LIGHT so the artwork stays readable.
+     (It was previously washed out by a heavy fog pass + a full-width haze
+     band; both are much gentler now.) */
+  const shade = clamp(0.30 - LIGHT.keyI*0.17, 0.02, 0.34);
+  ctx.fillStyle = rgba(LIGHT.fog, shade);
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = rgba(LIGHT.key, 0.03 + LIGHT.keyI*0.03);
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = 'source-over';
+  /* soft depth haze only right around the horizon line, never a hard band */
+  const hz = ctx.createLinearGradient(0, R.anchorY - H*0.16, 0, R.anchorY + H*0.10);
+  hz.addColorStop(0,  rgba(LIGHT.fog, 0));
+  hz.addColorStop(.55,rgba(LIGHT.fog, .30));
+  hz.addColorStop(1,  rgba(LIGHT.fog, 0));
+  ctx.fillStyle = hz; ctx.fillRect(0, R.anchorY - H*0.16, W, H*0.26);
+  ctx.restore();
+}
+
+/* crystal shards floating around the arena (reference art) */
+const SHARDS = Array.from({length:14}, (_,i) => ({
+  x: (i%2? 1:-1) * rnd(4.4, 7.4), y: rnd(.4, 3.6), z: rnd(-5, 3.4),
+  s: rnd(.28,.72), r: rnd(-.5,.5), w: Math.random()*7
+}));
+function drawShards(){
+  for (const s of SHARDS){
+    const p = project({ x:s.x, y:s.y + Math.sin(T*.6+s.w)*.12, z:s.z }); if (!p) continue;
+    const k = s.s * p.s * .5;
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(s.r + Math.sin(T*.3+s.w)*.06);
+    const g = ctx.createLinearGradient(0,-k,0,k);
+    g.addColorStop(0, rgba('#b98cff',.85)); g.addColorStop(1, rgba('#4a2a8a',.5));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.moveTo(0,-k); ctx.lineTo(k*.42,0); ctx.lineTo(0,k); ctx.lineTo(-k*.42,0); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = rgba('#d8b8ff',.5); ctx.lineWidth = 1; ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function tilePoly(gx,gz,inset,y){
+  const e = y!==undefined ? y : tileElev(gx,gz);
+  const a = gw(gx,gz,e), h = CONFIG.tile/2 - (inset||0);
+  const pts = [ {x:a.x-h,y:a.y,z:a.z-h}, {x:a.x+h,y:a.y,z:a.z-h}, {x:a.x+h,y:a.y,z:a.z+h}, {x:a.x-h,y:a.y,z:a.z+h} ];
+  const pr = pts.map(project);
+  return pr.some(p=>!p) ? null : pr;
+}
+function pathPoly(P){ ctx.beginPath(); ctx.moveTo(P[0].x,P[0].y); for (let i=1;i<P.length;i++) ctx.lineTo(P[i].x,P[i].y); ctx.closePath(); }
+
+function drawBoard(){
+  const lv = lightVector();
+  /* stone apron under the grid */
+  const outer = [
+    project({x:-MAP.cols/2-CONFIG.wall, y:-.02, z:-MAP.rows/2-CONFIG.wall}),
+    project({x: MAP.cols/2+CONFIG.wall, y:-.02, z:-MAP.rows/2-CONFIG.wall}),
+    project({x: MAP.cols/2+CONFIG.wall, y:-.02, z: MAP.rows/2+CONFIG.wall}),
+    project({x:-MAP.cols/2-CONFIG.wall, y:-.02, z: MAP.rows/2+CONFIG.wall})
+  ];
+  if (outer.every(Boolean)){
+    pathPoly(outer);
+    const g = ctx.createLinearGradient(0, outer[0].y, 0, outer[2].y);
+    g.addColorStop(0, mixHex('#0f0c14', LIGHT.key, .10));
+    g.addColorStop(1, mixHex('#050409', LIGHT.key, .04));
+    ctx.fillStyle = g; ctx.fill();
+    /* gold rail */
+    ctx.strokeStyle = rgba('#d2a44e',.85); ctx.lineWidth = 3; ctx.stroke();
+    ctx.strokeStyle = rgba('#f6dc95',.35); ctx.lineWidth = 1; ctx.stroke();
+  }
+
+  /* ── LOCATION GROUND ART (clipped to the play plane) ── */
+  const bq = [
+    project({x:-MAP.cols/2, y:0, z:-MAP.rows/2}), project({x:MAP.cols/2, y:0, z:-MAP.rows/2}),
+    project({x:MAP.cols/2, y:0, z:MAP.rows/2}),  project({x:-MAP.cols/2, y:0, z:MAP.rows/2})
+  ];
+  if (bq.every(Boolean) && GROUND.img && GROUND.img.complete && GROUND.img.naturalWidth){
+    ctx.save();
+    pathPoly(bq); ctx.clip();
+    if (GROUND.prev && GROUND.fade < 1 && GROUND.prev.complete) drawGroundSlices(GROUND.prev, 1);
+    drawGroundSlices(GROUND.img, GROUND.fade);
+    /* light grade: the location sits under the battle's sky */
+    const shade = clamp(0.60 - LIGHT.keyI*0.30, 0.10, 0.66);
+    pathPoly(bq); ctx.fillStyle = rgba(LIGHT.fog, shade); ctx.fill();
+    ctx.globalCompositeOperation = 'lighter';
+    pathPoly(bq); ctx.fillStyle = rgba(LIGHT.key, 0.05 + LIGHT.keyI*0.045); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+    const loc = LOCATIONS[MAP.location];
+    if (loc && loc.tint){ pathPoly(bq); ctx.fillStyle = loc.tint; ctx.fill(); }
+    ctx.restore();
+  }
+
+  /* tiles */
+  for (let z=0; z<MAP.rows; z++){
+    for (let x=0; x<MAP.cols; x++){
+      const t = tileAt(x,z);
+      const P = tilePoly(x,z,0.02); if (!P) continue;
+      /* surface paint sits UNDER the tile shading below so it reads as part of
+         the ground, not a sticker on top of it */
+      const pk = x + ',' + z;
+      let paintCol = null;
+      if (PAINT.attack.has(pk))     paintCol = '#ff5a4a';
+      else if (PAINT.move.has(pk))  paintCol = '#4fd0ff';
+      else if (PAINT.place.has(pk)) paintCol = '#7fe89f';
+      else if (PAINT.swap.has(pk))  paintCol = '#e0b64a';
+      if (paintCol){
+        const pulse = 0.16 + Math.sin(T * 3 + (x + z) * 0.6) * 0.05;
+        pathPoly(P); ctx.fillStyle = rgba(paintCol, pulse + 0.16); ctx.fill();
+        pathPoly(P); ctx.strokeStyle = rgba(paintCol, 0.85); ctx.lineWidth = 2; ctx.stroke();
+      }
+      if (PAINT.sel && PAINT.sel.x === x && PAINT.sel.z === z){
+        pathPoly(P); ctx.strokeStyle = rgba('#f6dc95', 0.95); ctx.lineWidth = 3; ctx.stroke();
+      }
+      /* lambert-ish shade: tiles further from the light read darker */
+      const wpos = gw(x,z);
+      const nd = clamp(.55 + lv.y*.45 + (wpos.x*lv.x + wpos.z*lv.z)*.018, .25, 1);
+      let base = mixHex(MAP.ground.base, LIGHT.key, .16*nd);
+      if (t && t.type==='hazard') base = mixHex('#4a1a10', LIGHT.key, .12);
+      if (t && t.type==='objective') base = mixHex('#3a3016', LIGHT.key, .2);
+      pathPoly(P);
+      /* with location art present the tile fill is only a faint grade */
+      ctx.fillStyle = GROUND.img ? rgba(t && t.type==='hazard' ? '#5a1a0e'
+                                     : t && t.type==='objective' ? '#6a5a1e' : '#0d0a12',
+                                     t && t.type ? .30 : .16)
+                                 : base;
+      ctx.fill();
+      /* raised tile side walls */
+      const e = tileElev(x,z);
+      if (e > 0){
+        const B = tilePoly(x,z,0.02,0);
+        if (B){
+          ctx.fillStyle = mixHex('#0b0910', LIGHT.key, .05);
+          for (const [i,j] of [[2,3],[1,2],[3,0]]){
+            ctx.beginPath(); ctx.moveTo(P[i].x,P[i].y); ctx.lineTo(P[j].x,P[j].y);
+            ctx.lineTo(B[j].x,B[j].y); ctx.lineTo(B[i].x,B[i].y); ctx.closePath(); ctx.fill();
+          }
+        }
+      }
+      /* grid lines */
+      ctx.strokeStyle = rgba('#d2a44e', .30 + nd*.18); ctx.lineWidth = 1.2;
+      pathPoly(P); ctx.stroke();
+      /* rune circle */
+      drawRune(x, z, nd, t);
+      /* hover / focus */
+      if (hoverTile && hoverTile.x===x && hoverTile.z===z){
+        pathPoly(P); ctx.fillStyle = rgba('#f6dc95', .12); ctx.fill();
+        ctx.strokeStyle = rgba('#f6dc95',.9); ctx.lineWidth = 2; ctx.stroke();
+      }
+      if (focus && focus.x===x && focus.z===z){
+        pathPoly(P); ctx.strokeStyle = rgba('#7fe89f',.9); ctx.lineWidth = 2.4; ctx.stroke();
+      }
+    }
+  }
+  drawFrame();
+}
+
+function drawRune(gx,gz,nd,t){
+  const c = project(gw(gx,gz, tileElev(gx,gz)+.002)); if (!c) return;
+  const rp = project(gw(gx,gz, tileElev(gx,gz)+.002)); const edge = project({ ...gw(gx,gz,tileElev(gx,gz)+.002), x: gw(gx,gz).x + .34 });
+  if (!edge) return;
+  const R = Math.abs(edge.x - c.x);
+  const pulse = .5 + Math.sin(T*1.1 + gx*.7 + gz*.9)*.5;
+  const col = t && t.type==='objective' ? '#f6dc95' : '#d2a44e';
+  ctx.save(); ctx.translate(c.x, c.y); ctx.scale(1, .46);
+  ctx.strokeStyle = rgba(col, .18 + pulse*.16*nd); ctx.lineWidth = 1.1;
+  ctx.beginPath(); ctx.arc(0,0,R,0,7); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,0,R*.62,0,7); ctx.stroke();
+  ctx.strokeStyle = rgba(col, .3 + pulse*.2*nd);
+  for (let i=0;i<8;i++){
+    const a = i*Math.PI/4 + T*.06;
+    ctx.beginPath(); ctx.moveTo(Math.cos(a)*R*.62, Math.sin(a)*R*.62);
+    ctx.lineTo(Math.cos(a)*R, Math.sin(a)*R); ctx.stroke();
+  }
+  ctx.beginPath();
+  for (let i=0;i<4;i++){
+    const a = i*Math.PI/2 + Math.PI/4 + T*.06;
+    ctx.moveTo(0,0); ctx.lineTo(Math.cos(a)*R*.5, Math.sin(a)*R*.5);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* ornate gold frame + corner brazier pylons (reference art) */
+function drawFrame(){
+  const hw = MAP.cols/2 + CONFIG.wall, hh = MAP.rows/2 + CONFIG.wall;
+  const corners = [ {x:-hw,z:-hh}, {x:hw,z:-hh}, {x:hw,z:hh}, {x:-hw,z:hh} ];
+  /* frame band */
+  const top = corners.map(c => project({x:c.x, y:.14, z:c.z}));
+  const bot = corners.map(c => project({x:c.x, y:-.02, z:c.z}));
+  if (top.every(Boolean) && bot.every(Boolean)){
+    for (let i=0;i<4;i++){
+      const j = (i+1)%4;
+      ctx.beginPath();
+      ctx.moveTo(top[i].x,top[i].y); ctx.lineTo(top[j].x,top[j].y);
+      ctx.lineTo(bot[j].x,bot[j].y); ctx.lineTo(bot[i].x,bot[i].y); ctx.closePath();
+      const g = ctx.createLinearGradient(top[i].x,top[i].y, bot[i].x,bot[i].y);
+      g.addColorStop(0, rgba('#f6dc95',.55)); g.addColorStop(.5, rgba('#a97f2e',.5)); g.addColorStop(1, rgba('#4a3616',.6));
+      ctx.fillStyle = g; ctx.fill();
+      ctx.strokeStyle = rgba('#f6dc95',.5); ctx.lineWidth = 1.4; ctx.stroke();
+    }
+  }
+  /* pillars are depth-sorted with units — see drawPylon() */
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   BOARD EVENTS  ── FOR CLAUDE CODE ──
+   Houses, wrecked cars and the like are NOT scenery in this game — they
+   are EVENTS that occupy a tile until they are resolved. The board only
+   RENDERS them; the game's event system owns their behaviour.
+
+   WIRE THESE UP:
+     Board.spawnEvent(type, x, z)   place an event on a tile (deck/turn/
+                                    script driven). Fires 'board:eventSpawn'.
+     Board.triggerEvent(x, z)       resolve it — call when a unit enters the
+                                    tile, when the turn ticks, or when a card
+                                    targets it. Fires 'board:eventTrigger'
+                                    with { type, x, z, unitId } so the game
+                                    can apply the actual effect (loot, ambush
+                                    spawn, damage, heal, buff …).
+     Board.clearEvent(x, z)         remove it once resolved/expired.
+                                    Fires 'board:eventClear'.
+     Board.eventsAt(x, z)           query.
+
+   The demo auto-triggers an event when a unit finishes a move onto its
+   tile — replace that call with the game's real resolution rules.
+   Each event type below needs: display name, colour, icon, and whether it
+   BLOCKS movement (a house/car would; a supply drop would not).
+   Art: swap `icon` for the event's real sprite — the pad, pillar of light
+   and float animation stay.
+   ══════════════════════════════════════════════════════════════════ */
+const EVENT_TYPES = {
+  'supply-drop':{ name:'Supply Drop',  color:'#f0c96e', icon:'crate',  blocks:false },
+  'ambush'     :{ name:'Ambush',       color:'#e04a3a', icon:'skull',  blocks:false },
+  'relic'      :{ name:'Relic Cache',  color:'#a35cff', icon:'star',   blocks:false },
+  'medical'    :{ name:'Medical Camp', color:'#4ad8c8', icon:'cross',  blocks:false },
+  'bloom'      :{ name:'Toxic Bloom',  color:'#8fd84a', icon:'spore',  blocks:false },
+  'structure'  :{ name:'Structure',    color:'#b0a48a', icon:'block',  blocks:true  }
+};
+const EV_ICON = {
+  crate:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/></svg>',
+  skull:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a7 7 0 00-7 7c0 2.6 1.4 4.8 3.5 6V19h7v-3c2.1-1.2 3.5-3.4 3.5-6a7 7 0 00-7-7zm-2.5 7a1.2 1.2 0 110-2.4 1.2 1.2 0 010 2.4zm5 0a1.2 1.2 0 110-2.4 1.2 1.2 0 010 2.4z"/></svg>',
+  star:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.2H22l-6 4.6 2.3 7.2-6.3-4.5-6.3 4.5L8 13.8 2 9.2h7.6z"/></svg>',
+  cross:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 4h6v5h5v6h-5v5H9v-5H4V9h5z"/></svg>',
+  spore:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="4"/><circle cx="6" cy="7" r="2"/><circle cx="18" cy="8" r="2"/><circle cx="7" cy="18" r="2"/></svg>',
+  block:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="7" width="14" height="12"/><path d="M5 11h14M12 11v8"/></svg>'
+};
+function eventsAt(x,z){ return (MAP.events||[]).filter(e => e.x===x && e.z===z); }
+// 🗿 SET THE WHOLE EVENT LIST from the host. Called on board:init and whenever
+// the game respawns events. Unknown types fall back to 'relic' rather than being
+// dropped — a custom Forge event has no entry in EVENT_TYPES and must still show.
+function setEvents(list){
+  MAP.events = [];
+  for (const e of (Array.isArray(list) ? list : [])){
+    if (!e || typeof e.x !== 'number' || typeof e.z !== 'number') continue;
+    spawnEvent(e.type, e.x, e.z, e);
+  }
+}
+function spawnEvent(type, x, z, opts){
+  opts = opts || {};
+  if (!EVENT_TYPES[type]) type = 'relic';        // custom Forge events land here
+  MAP.events = MAP.events || [];
+  const ev = { x, z, type, born:T,
+    // 📦 model: a PNG baked from the admin's uploaded .glb, drawn standing on
+    // the tile. `scale` is an admin trim in (0,1] — it can only make it SMALLER;
+    // the tile footprint is the ceiling and is enforced in drawEvent.
+    art:   opts.art   || opts.model || null,
+    scale: Math.max(.2, Math.min(1, +opts.scale || 1)),
+    name:  opts.name  || null,
+    color: opts.color || null };
+  MAP.events.push(ev);
+  effects.push({ k:'ring', x:gw(x,z).x, z:gw(x,z).z, t:0, dur:.8, col:EVENT_TYPES[type].color, r0:.1, r1:.9 });
+  dispatch('eventSpawn', { type, x, z });
+  return ev;
+}
+function triggerEvent(x, z, unitId){
+  const list = eventsAt(x,z); if (!list.length) return;
+  for (const ev of list){
+    const T2 = EVENT_TYPES[ev.type];
+    burst(gw(x,z).x, gw(x,z).z, .9, 30, T2.color);
+    effects.push({ k:'ring', x:gw(x,z).x, z:gw(x,z).z, t:0, dur:.6, col:T2.color, r0:.15, r1:1.3 });
+    effects.push({ k:'float', x:gw(x,z).x, z:gw(x,z).z, t:0, dur:1.2, txt:T2.name.toUpperCase(), col:T2.color });
+    /* ← REPLACE: hand off to the game's event resolution here */
+    dispatch('eventTrigger', { type:ev.type, x, z, unitId:unitId||null });
+  }
+  clearEvent(x,z);
+}
+function clearEvent(x, z){
+  if (!MAP.events) return;
+  const before = MAP.events.length;
+  MAP.events = MAP.events.filter(e => !(e.x===x && e.z===z));
+  if (MAP.events.length !== before) dispatch('eventClear', { x, z });
+}
+function drawEvent(ev){
+  let E = EVENT_TYPES[ev.type]; if (!E) return;
+  // A host event can override the palette entry's name/colour without needing a
+  // new EVENT_TYPES row — custom Forge events have no row of their own.
+  if (ev.color || ev.name) E = { ...E, color: ev.color || E.color, name: ev.name || E.name };
+  const el = tileElev(ev.x, ev.z);
+  const c = project(gw(ev.x, ev.z, el + .01));
+  const edge = project({ ...gw(ev.x, ev.z, el + .01), x: gw(ev.x, ev.z).x + .40 });
+  if (!c || !edge) return;
+  const R = Math.abs(edge.x - c.x);
+  const pulse = .5 + Math.sin(T*2.2 + ev.x + ev.z)*.5;
+
+  /* glowing pad on the tile */
+  ctx.save(); ctx.translate(c.x, c.y); ctx.scale(1, .44);
+  const g = ctx.createRadialGradient(0,0,0,0,0,R);
+  g.addColorStop(0, rgba(E.color, .38 + pulse*.22));
+  g.addColorStop(.6, rgba(E.color, .16));
+  g.addColorStop(1, rgba(E.color, 0));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0,0,R,0,7); ctx.fill();
+  ctx.strokeStyle = rgba(E.color, .6 + pulse*.35); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0,0,R*.86,0,7); ctx.stroke();
+  ctx.setLineDash([R*.22, R*.16]); ctx.lineWidth = 1.4; ctx.rotate(T*.5);
+  ctx.beginPath(); ctx.arc(0,0,R*.62,0,7); ctx.stroke(); ctx.setLineDash([]);
+  ctx.restore();
+
+  /* pillar of light */
+  const topP = project(gw(ev.x, ev.z, el + 1.5));
+  if (topP){
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    const pg = ctx.createLinearGradient(c.x, c.y, topP.x, topP.y);
+    pg.addColorStop(0, rgba(E.color, .30 + pulse*.10));
+    pg.addColorStop(1, rgba(E.color, 0));
+    ctx.fillStyle = pg;
+    ctx.beginPath();
+    ctx.moveTo(c.x-R*.6, c.y); ctx.lineTo(c.x+R*.6, c.y);
+    ctx.lineTo(topP.x+R*.22, topP.y); ctx.lineTo(topP.x-R*.22, topP.y);
+    ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+
+  /* 📦 3D MODEL — a PNG baked from the event's .glb, standing ON the tile.
+     THE FIT RULE: `R` is the tile's half-width in projected pixels, so the model
+     is drawn at most 2R wide (exactly one tile) and 2R*1.6 tall. Whichever limit
+     binds first wins, so the aspect ratio is preserved and the footprint can
+     never spill onto a neighbouring tile no matter what was uploaded. */
+  const mdl = ev.art ? artImage(ev.art) : null;
+  if (mdl && mdl.naturalWidth > 0){
+    const maxW = R*2*ev.scale, maxH = R*3.2*ev.scale;
+    const k = Math.min(maxW / mdl.naturalWidth, maxH / mdl.naturalHeight);
+    const dw = mdl.naturalWidth*k, dh = mdl.naturalHeight*k;
+    const bob2 = Math.sin(T*1.4 + ev.x*1.7)*(R*.05);
+    ctx.save();
+    /* contact shadow so it reads as standing on the tile, not floating over it */
+    ctx.globalAlpha = .34; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(c.x, c.y, dw*.34, dw*.34*.42, 0, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+    /* baseline sits at the tile centre — the model stands, it does not hover */
+    ctx.drawImage(mdl, c.x - dw/2, c.y - dh + bob2, dw, dh);
+    ctx.restore();
+    return;                       /* the model replaces the glyph badge entirely */
+  }
+
+  /* floating marker — shown when the event has no model */
+  const bob = Math.sin(T*1.6 + ev.x*1.7)*.06;
+  const m = project(gw(ev.x, ev.z, el + .62 + bob));
+  if (m){
+    const s = R*.62;
+    ctx.save(); ctx.translate(m.x, m.y);
+    ctx.rotate(Math.sin(T*.9 + ev.z)*.06);
+    ctx.fillStyle = rgba('#07050c', .78);
+    ctx.beginPath();
+    for (let i=0;i<6;i++){ const a=i*Math.PI/3 - Math.PI/2;
+      const px2=Math.cos(a)*s, py2=Math.sin(a)*s; i?ctx.lineTo(px2,py2):ctx.moveTo(px2,py2); }
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = rgba(E.color, .85); ctx.lineWidth = 2; ctx.stroke();
+    ctx.restore();
+    /* icon */
+    ctx.save(); ctx.translate(m.x - s*.55, m.y - s*.55);
+    const k2 = s*1.1/24;
+    ctx.scale(k2,k2); ctx.strokeStyle = E.color; ctx.fillStyle = E.color; ctx.lineWidth = 1.7;
+    drawEvIcon(E.icon);
+    ctx.restore();
+  }
+}
+function drawEvIcon(kind){
+  ctx.beginPath();
+  if (kind==='crate'){ ctx.moveTo(4,8); ctx.lineTo(12,4); ctx.lineTo(20,8); ctx.lineTo(20,16);
+    ctx.lineTo(12,20); ctx.lineTo(4,16); ctx.closePath(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(4,8); ctx.lineTo(12,12); ctx.lineTo(20,8); ctx.moveTo(12,12); ctx.lineTo(12,20); ctx.stroke(); }
+  else if (kind==='skull'){ ctx.arc(12,10,6,0,7); ctx.fill();
+    ctx.fillStyle='#07050c'; ctx.beginPath(); ctx.arc(9.6,10,1.3,0,7); ctx.arc(14.4,10,1.3,0,7); ctx.fill(); }
+  else if (kind==='star'){ for(let i=0;i<10;i++){ const a=-Math.PI/2+i*Math.PI/5, r=i%2?4:9;
+      const x=12+Math.cos(a)*r, y=12+Math.sin(a)*r; i?ctx.lineTo(x,y):ctx.moveTo(x,y); } ctx.closePath(); ctx.fill(); }
+  else if (kind==='cross'){ ctx.moveTo(9,4); ctx.lineTo(15,4); ctx.lineTo(15,9); ctx.lineTo(20,9);
+    ctx.lineTo(20,15); ctx.lineTo(15,15); ctx.lineTo(15,20); ctx.lineTo(9,20); ctx.lineTo(9,15);
+    ctx.lineTo(4,15); ctx.lineTo(4,9); ctx.lineTo(9,9); ctx.closePath(); ctx.fill(); }
+  else if (kind==='spore'){ ctx.arc(12,12,4,0,7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(6,7,2,0,7); ctx.arc(18,8,2,0,7); ctx.arc(7,18,2,0,7); ctx.stroke(); }
+  else { ctx.rect(5,7,14,12); ctx.stroke(); ctx.beginPath(); ctx.moveTo(5,11); ctx.lineTo(19,11); ctx.moveTo(12,11); ctx.lineTo(12,19); ctx.stroke(); }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   BRAZIER PYLON — carved stone column with gold banding and a fire bowl,
+   built to match the reference art. Drawn from projected world points so
+   it keeps correct perspective, and depth-sorted with units/props.
+   (Three.js: replace with a GLTF pylon; keep the bowl anchor at y=1.46
+   so the flame emitter position is unchanged.)
+   ══════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════
+   PYLON ART SLOT — replace the carved pylon with your own artwork:
+     Board.setPylonArt('assets/pylon.png')                       // static
+     Board.setPylonArt('assets/pylon_sheet.png', {frames:8, fps:12})
+   NOTE ON GIFs: a 2D canvas (and a Three.js texture) will only ever show
+   the FIRST frame of an animated .gif — the format can't be sampled per
+   frame. Export the animation as a horizontal SPRITE SHEET (png/webp) and
+   pass {frames, fps}; that's what this slot and the engine both want.
+   widthWorld/heightWorld are in board tiles, so the art scales with the
+   camera automatically. The flame emitter stays at PYLON.top regardless,
+   so set bowlY to wherever the bowl sits in YOUR art.
+   ══════════════════════════════════════════════════════════════════ */
+const PYLON_ART = {
+  img:null, frames:1, fps:12,
+  /* Sprite is 360x489. These are measured off the bake, not guessed:      */
+  widthWorld:1.72, heightWorld:2.34,   /* preserves the 0.736 aspect        */
+  anchorY:0.80,        /* GROUND LINE in the sprite (the base slab sits at  */
+                       /* 80% down; the last 20% is the platform's front    */
+                       /* edge, which must hang toward the viewer)          */
+  fireY:0.070,         /* fire bowl, fraction from the sprite TOP           */
+  emitY:0.150,         /* capital gem — the hologram projector             */
+  flames:true,         /* fire burns from the bowl                          */
+  src:'../assets/board/pylon.png'      /* baked from pillars.glb, yaw 270° (serpent head-on) */
+};
+function setPylonArt(src, opts){
+  Object.assign(PYLON_ART, opts||{});
+  if (src === null){ PYLON_ART.img = null; return; }
+  const im = new Image();
+  im.onload = () => { PYLON_ART.img = im; seedBraziers(); };
+  im.src = src || PYLON_ART.src;
+  if (opts && typeof opts.bowlY === 'number'){ PYLON.top = opts.bowlY; seedBraziers(); }
+}
+const PYLON = { plinth:0.44, base:0.34, shaft0:0.215, shaft1:0.185, cap:0.30, bowl:0.40, rim:0.44, top:1.46 };
+function bandQuad(px, pz, y0, y1, hw0, hw1){
+  const a = project({x:px-hw0, y:y0, z:pz}), b = project({x:px+hw0, y:y0, z:pz});
+  const c = project({x:px+hw1, y:y1, z:pz}), d = project({x:px-hw1, y:y1, z:pz});
+  return (a&&b&&c&&d) ? [a,b,c,d] : null;
+}
+function fillBand(q, c0, c1){
+  if (!q) return;
+  ctx.beginPath(); ctx.moveTo(q[0].x,q[0].y); ctx.lineTo(q[1].x,q[1].y);
+  ctx.lineTo(q[2].x,q[2].y); ctx.lineTo(q[3].x,q[3].y); ctx.closePath();
+  const g = ctx.createLinearGradient(q[0].x, q[0].y, q[3].x, q[3].y);
+  g.addColorStop(0, c0); g.addColorStop(1, c1);
+  ctx.fillStyle = g; ctx.fill();
+}
+function drawPylon(br){
+  const px = br.x, pz = br.z, P = PYLON;
+  /* custom art takes over completely (sprite-sheet aware) */
+  if (PYLON_ART.img && PYLON_ART.img.complete && PYLON_ART.img.naturalWidth){
+    const base = project({x:px, y:0, z:pz});
+    const top  = project({x:px, y:PYLON_ART.heightWorld, z:pz});
+    const side = project({x:px + PYLON_ART.widthWorld/2, y:0, z:pz});
+    if (base && top && side){
+      shadowEllipse({x:px, y:0, z:pz}, .62, .85);
+      const wpx = Math.abs(side.x - base.x)*2, hpx = Math.abs(base.y - top.y);
+      const img = PYLON_ART.img;
+      const fw = img.naturalWidth / Math.max(1, PYLON_ART.frames);
+      const fi = PYLON_ART.frames > 1 ? Math.floor(T*PYLON_ART.fps) % PYLON_ART.frames : 0;
+      /* NO mirroring — every pillar faces the camera, serpent head-on.
+         Anchored on the sprite's ground line so the base slab sits ON the
+         floor and its front edge overhangs toward the camera. */
+      const A = PYLON_ART.anchorY;
+      const topY = base.y - hpx*A;
+      ctx.drawImage(img, fi*fw, 0, fw, img.naturalHeight,
+                    base.x - wpx/2, topY, wpx, hpx);
+      /* ── SPRITE-SPACE ANCHORS ──────────────────────────────────────────
+         The pillar is a BILLBOARD, but a world point directly above a corner
+         pillar projects further from screen-centre than its base (raising y
+         reduces depth, which magnifies the x offset). Anchoring VFX to world
+         coordinates therefore slides them off the side of the flat sprite.
+         So the bowl/lens anchors are taken from the PAINTED sprite rect —
+         the fire always sits exactly on the bowl, at any camera angle.
+         (Three.js: with real geometry this goes away — use the mesh's bone
+         or an empty at the bowl, and delete this block.) */
+      br._spr = {
+        x: base.x,
+        fireY: topY + hpx*PYLON_ART.fireY,
+        emitY: topY + hpx*PYLON_ART.emitY,
+        s: wpx                                 /* scale unit = pillar width */
+      };
+    }
+    if (PYLON_ART.flames) drawFlames(br);
+    drawHoloBeam(br);           /* beam draws OVER its own pillar */
+    return;
+  }
+  const lv = lightVector();
+  /* stone tones react to the sun/moon */
+  const stoneD = mixHex('#171219', LIGHT.key, .06);
+  const stoneM = mixHex('#2e2733', LIGHT.key, .14);
+  const stoneL = mixHex('#4a4150', LIGHT.key, .22);
+  const goldD = mixHex('#6b4c17', LIGHT.key, .12);
+  const goldM = mixHex('#c8963a', LIGHT.key, .18);
+  const goldL = mixHex('#f6dc95', LIGHT.key, .10);
+
+  /* ground shadow */
+  shadowEllipse({x:px, y:0, z:pz}, .5, .85);
+
+  /* --- stepped plinth --- */
+  fillBand(bandQuad(px,pz, 0,    0.10, P.plinth, P.plinth*0.97), stoneM, stoneD);
+  fillBand(bandQuad(px,pz, 0.10, 0.20, P.plinth*0.97, P.base),   stoneL, stoneM);
+  /* gold line on the plinth lip */
+  let q = bandQuad(px,pz, 0.195, 0.215, P.base*1.02, P.base*1.02);
+  fillBand(q, goldM, goldD);
+
+  /* --- base molding --- */
+  fillBand(bandQuad(px,pz, 0.215, 0.31, P.base, P.shaft0*1.16), stoneL, stoneM);
+
+  /* --- fluted shaft --- */
+  const shaft = bandQuad(px,pz, 0.31, 1.02, P.shaft0, P.shaft1);
+  if (shaft){
+    ctx.beginPath(); ctx.moveTo(shaft[0].x,shaft[0].y); ctx.lineTo(shaft[1].x,shaft[1].y);
+    ctx.lineTo(shaft[2].x,shaft[2].y); ctx.lineTo(shaft[3].x,shaft[3].y); ctx.closePath();
+    const sg = ctx.createLinearGradient(shaft[0].x, 0, shaft[1].x, 0);
+    /* lit edge follows the light direction */
+    const litLeft = lv.x < 0;
+    sg.addColorStop(0, litLeft ? stoneL : stoneD);
+    sg.addColorStop(.42, stoneM);
+    sg.addColorStop(1, litLeft ? stoneD : stoneL);
+    ctx.fillStyle = sg; ctx.fill();
+    /* flutes */
+    ctx.strokeStyle = rgba('#0a0810',.5); ctx.lineWidth = 1;
+    for (const f of [-0.5, 0, 0.5]){
+      const a = project({x:px + P.shaft0*f, y:0.33, z:pz});
+      const b = project({x:px + P.shaft1*f, y:1.00, z:pz});
+      if (a&&b){ ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }
+    }
+    /* gold bands up the shaft */
+    for (const y of [0.44, 0.70]){
+      const hw = lerp(P.shaft0, P.shaft1, (y-0.31)/0.71) * 1.10;
+      fillBand(bandQuad(px,pz, y, y+0.035, hw, hw), goldL, goldD);
+    }
+  }
+
+  /* --- capital / flare --- */
+  fillBand(bandQuad(px,pz, 1.02, 1.14, P.shaft1, P.cap), stoneL, stoneM);
+  fillBand(bandQuad(px,pz, 1.14, 1.175, P.cap*1.04, P.cap*1.04), goldL, goldM);
+
+  /* --- fire bowl --- */
+  fillBand(bandQuad(px,pz, 1.175, 1.40, P.cap, P.bowl), goldD, goldM);
+  fillBand(bandQuad(px,pz, 1.40, P.top, P.bowl, P.rim), goldM, goldL);
+  /* rim ellipse + hot interior */
+  const c = project({x:px, y:P.top, z:pz});
+  const e = project({x:px + P.rim, y:P.top, z:pz});
+  if (c && e){
+    const R = Math.abs(e.x - c.x);
+    ctx.save(); ctx.translate(c.x, c.y); ctx.scale(1, .42);
+    /* bowl interior glow */
+    const bg = ctx.createRadialGradient(0,0,0,0,0,R);
+    bg.addColorStop(0, 'rgba(255,220,150,.95)');
+    bg.addColorStop(.55, 'rgba(255,140,40,.6)');
+    bg.addColorStop(1, 'rgba(120,40,10,.35)');
+    ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(0,0,R,0,7); ctx.fill();
+    /* gold rim */
+    ctx.strokeStyle = goldL; ctx.lineWidth = Math.max(1.6, R*.14);
+    ctx.beginPath(); ctx.arc(0,0,R*.99,0,7); ctx.stroke();
+    ctx.strokeStyle = rgba('#f6dc95',.55); ctx.lineWidth = Math.max(1, R*.05);
+    ctx.beginPath(); ctx.arc(0,0,R*.82,0,7); ctx.stroke();
+    ctx.restore();
+  }
+  /* small gold brackets under the bowl */
+  for (const s of [-1, 1]){
+    const a = project({x:px + s*P.cap*0.95, y:1.10, z:pz});
+    const b = project({x:px + s*P.bowl*1.02, y:1.34, z:pz});
+    if (a&&b){
+      ctx.strokeStyle = goldM; ctx.lineWidth = Math.max(1.4, (a.s||1)*.02);
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.quadraticCurveTo(a.x + s*6, (a.y+b.y)/2, b.x, b.y); ctx.stroke();
+    }
+  }
+  /* flickering light pool cast on the ground */
+  const gb = project({x:px, y:0.01, z:pz});
+  if (gb){
+    const w = Math.abs((project({x:px+1, y:0.01, z:pz})||gb).x - gb.x);
+    const flick = .17 + Math.sin(T*11 + px*3)*.045 + Math.sin(T*23.7 + pz)*.025;
+    const lg = ctx.createRadialGradient(gb.x, gb.y, 0, gb.x, gb.y, w*2.6);
+    lg.addColorStop(0, `rgba(255,150,60,${flick})`);
+    lg.addColorStop(.5, `rgba(255,110,40,${flick*.42})`);
+    lg.addColorStop(1, 'rgba(255,120,40,0)');
+    ctx.fillStyle = lg; ctx.beginPath(); ctx.ellipse(gb.x, gb.y, w*2.6, w*1.1, 0, 0, 7); ctx.fill();
+  }
+  /* this pylon's flames + its projection beam */
+  const bc = project({x:px, y:P.top, z:pz});
+  const bs = project({x:px + P.rim, y:P.top, z:pz});
+  if (bc && bs) br._spr = { x:bc.x, fireY:bc.y, emitY:bc.y, s:Math.abs(bs.x-bc.x)*2.6 };
+  drawFlames(br);
+  drawHoloBeam(br);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   HOLOGRAM BEAM — each pillar projects a soft light cone onto the play
+   field. Deliberately gentle: low opacity, slow breathing, feathered
+   edges, drifting scan bands. It should read as ambient projection, not
+   a spotlight — nothing here should ever clip to a hard edge.
+   Tune with HOLO. (Three.js: a cone mesh with an additive, depth-write-off
+   shader + a decal/projected texture for the floor pool. Keep the same
+   alphas — they are the reason it settles instead of glaring.)
+   ══════════════════════════════════════════════════════════════════ */
+const HOLO = {
+  emitFrac: 0.150,  /* projector height as a fraction from the sprite TOP   */
+  frontOff: 0.30,   /* step the lens out along the beam, in PILLAR WIDTHS,  */
+                    /* so the cone leaves the FRONT face, never the back     */
+  inset:    0.34,   /* where the beam lands, as a fraction of the corner    */
+  r0:       0.16,   /* beam radius at the lens, in pillar widths            */
+  r1:       1.05,   /* beam radius on the floor                             */
+  alpha:    0.115,  /* base opacity — deliberately low                      */
+  breathe:  0.030,
+  period:   5.2,
+  bands:    7,
+  colA:  '#7fe6ff',
+  colB:  '#8f7cff'
+};
+let holoIn = 0;      /* fades up on load so it settles in */
+
+/* Emitter for one pillar: at the capital gem, pushed toward board centre so
+   the cone visibly leaves the pillar's FRONT and never clips through it. */
+function drawHoloBeam(br){
+  if (holoIn <= 0.001) return;
+  const S = br._spr; if (!S) return;
+  const pulse = HOLO.alpha + Math.sin(T*(Math.PI*2/HOLO.period) + br.seed)*HOLO.breathe;
+  const A = clamp(pulse, 0.04, 0.2) * holoIn;
+  /* landing point is a real world position on the play field */
+  const g = project({ x: br.x*HOLO.inset, y: 0.02, z: br.z*HOLO.inset });
+  if (!g) return;
+  /* lens sits on the PAINTED capital gem, then steps out along the beam so
+     the cone leaves the pillar's front face instead of clipping through it */
+  let o = { x: S.x, y: S.emitY, s: S.s };
+  const ddx = g.x-o.x, ddy = g.y-o.y, dl = Math.hypot(ddx,ddy) || 1;
+  o = { x: o.x + (ddx/dl)*S.s*HOLO.frontOff, y: o.y + (ddy/dl)*S.s*HOLO.frontOff, s: S.s };
+  const dx = g.x-o.x, dy = g.y-o.y, L = Math.hypot(dx,dy) || 1;
+  const nx = -dy/L, ny = dx/L;
+  const r0 = HOLO.r0 * S.s, r1 = HOLO.r1 * g.s;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+
+  /* the cone — feathered along its length, never a hard edge */
+  const grad = ctx.createLinearGradient(o.x, o.y, g.x, g.y);
+  grad.addColorStop(0,   rgba(HOLO.colA, A*1.25));
+  grad.addColorStop(.18, rgba(HOLO.colA, A*.85));
+  grad.addColorStop(.60, rgba(HOLO.colA, A*.42));
+  grad.addColorStop(1,   rgba(HOLO.colB, A*.12));
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(o.x + nx*r0, o.y + ny*r0);
+  ctx.lineTo(o.x - nx*r0, o.y - ny*r0);
+  ctx.lineTo(g.x - nx*r1, g.y - ny*r1);
+  ctx.lineTo(g.x + nx*r1, g.y + ny*r1);
+  ctx.closePath(); ctx.fill();
+
+  /* drifting scan bands */
+  for (let i=0;i<HOLO.bands;i++){
+    const t = (i/HOLO.bands + T*0.085) % 1;
+    const fade = Math.sin(t*Math.PI);
+    const t2 = Math.min(1, t + 0.035);
+    const bw = lerp(r0,r1,t),  bx = lerp(o.x,g.x,t),  by = lerp(o.y,g.y,t);
+    const bw2 = lerp(r0,r1,t2), bx2 = lerp(o.x,g.x,t2), by2 = lerp(o.y,g.y,t2);
+    ctx.fillStyle = rgba(HOLO.colA, A*0.30*fade);
+    ctx.beginPath();
+    ctx.moveTo(bx + nx*bw,   by + ny*bw);
+    ctx.lineTo(bx - nx*bw,   by - ny*bw);
+    ctx.lineTo(bx2 - nx*bw2, by2 - ny*bw2);
+    ctx.lineTo(bx2 + nx*bw2, by2 + ny*bw2);
+    ctx.closePath(); ctx.fill();
+  }
+
+  /* projector lens on the pillar face */
+  const lg = ctx.createRadialGradient(o.x,o.y,0, o.x,o.y, r0*5.5);
+  lg.addColorStop(0,   rgba('#dffaff', A*2.6));
+  lg.addColorStop(.35, rgba(HOLO.colA, A*1.1));
+  lg.addColorStop(1,   rgba(HOLO.colA, 0));
+  ctx.fillStyle = lg; ctx.beginPath(); ctx.arc(o.x,o.y,r0*5.5,0,7); ctx.fill();
+
+  /* floor pool + slow rings */
+  ctx.save(); ctx.translate(g.x, g.y); ctx.scale(1, .44);
+  const pg = ctx.createRadialGradient(0,0,0,0,0,r1*1.3);
+  pg.addColorStop(0,   rgba(HOLO.colA, A*1.5));
+  pg.addColorStop(.55, rgba(HOLO.colB, A*.55));
+  pg.addColorStop(1,   rgba(HOLO.colB, 0));
+  ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(0,0,r1*1.3,0,7); ctx.fill();
+  for (let i=0;i<3;i++){
+    const rt = ((T*0.16) + i/3) % 1;
+    ctx.strokeStyle = rgba(HOLO.colA, A*0.8*(1-rt));
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(0,0, r1*(0.25 + rt*1.05), 0, 7); ctx.stroke();
+  }
+  ctx.restore();
+  ctx.restore();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   FIRE — real flame: a live particle column per brazier. Each puff is
+   born hot and white, rises + narrows, cools yellow → orange → red, then
+   turns to smoke. Additive blending on the hot stages does the glow.
+   (Three.js: port as a GPU particle system / instanced quads with the
+   same colour ramp + the same lifetime curve.)
+   ══════════════════════════════════════════════════════════════════ */
+const FLAME_RAMP = [
+  { p:0.00, c:[255,252,235], a:0.95 },   /* white core            */
+  { p:0.16, c:[255,232,150], a:0.92 },   /* yellow                */
+  { p:0.36, c:[255,170,52],  a:0.80 },   /* orange                */
+  { p:0.58, c:[236,96,26],   a:0.55 },   /* deep orange           */
+  { p:0.76, c:[150,44,18],   a:0.28 },   /* red, going out        */
+  { p:1.00, c:[46,40,40],    a:0.00 }    /* smoke                 */
+];
+function flameColor(p){
+  for (let i=0;i<FLAME_RAMP.length-1;i++){
+    const A = FLAME_RAMP[i], B = FLAME_RAMP[i+1];
+    if (p <= B.p){
+      const k = (p - A.p)/(B.p - A.p || 1);
+      return { r:Math.round(lerp(A.c[0],B.c[0],k)), g:Math.round(lerp(A.c[1],B.c[1],k)),
+               b:Math.round(lerp(A.c[2],B.c[2],k)), a:lerp(A.a,B.a,k) };
+    }
+  }
+  return { r:46, g:40, b:40, a:0 };
+}
+let braziers = [], flames = [], flameAcc = 0;
+/* world height of a point given as a fraction from the sprite's TOP */
+function artY(fracFromTop){
+  return (PYLON_ART.anchorY - fracFromTop) * PYLON_ART.heightWorld;
+}
+/* Pillars must stand fully OUTSIDE the play grid. The sprite is a billboard
+   whose base slab hangs BELOW its anchor, and on the far pillars that skirt
+   projects DOWNWARD — i.e. straight onto the board — so the corners are
+   pushed out by half the pillar width plus a gap, not just by the apron. */
+function pylonClearance(){
+  const halfW = PYLON_ART.img ? PYLON_ART.widthWorld*0.5 : 0.45;
+  return CONFIG.wall + halfW + 0.22;
+}
+function seedBraziers(){
+  const c = pylonClearance();
+  const hw = MAP.cols/2 + c, hh = MAP.rows/2 + c;
+  const fireY = PYLON_ART.img ? artY(PYLON_ART.fireY) : PYLON.top;
+  braziers = [ {x:-hw,z:-hh}, {x:hw,z:-hh}, {x:hw,z:hh}, {x:-hw,z:hh} ]
+    .map((c2,i) => ({ x:c2.x, y:fireY + 0.02, z:c2.z, seed:i*2.7, id:i }));
+}
+function updateFlames(dt){
+  /* Projector pillars don't burn: skip EMISSION entirely (not just drawing)
+     so no particles are simulated off-screen. */
+  const emitting = !(PYLON_ART.img && !PYLON_ART.flames);
+  flameAcc += dt;
+  const step = 1/58;
+  if (!emitting) flameAcc = 0;
+  while (emitting && flameAcc > step){
+    flameAcc -= step;
+    for (const br of braziers){
+      for (let i=0;i<2;i++){
+        /* all offsets are in PILLAR WIDTHS, resolved against the sprite each frame */
+        const a = Math.random()*Math.PI*2, rr = Math.random()*0.085;
+        flames.push({ br:br.id,
+          ox: Math.cos(a)*rr, oy: rnd(-.01,.015),
+          vx: Math.cos(a)*rnd(.01,.05),
+          vy: rnd(.52, .92),
+          t: 0, life: rnd(.48, .86),
+          r0: rnd(.058, .105), r1: rnd(.015, .035),
+          sway: rnd(1.6,3.4), phase: Math.random()*6.283, seed: br.seed
+        });
+      }
+    }
+  }
+  for (const f of flames){
+    f.t += dt;
+    const p = f.t/f.life;
+    /* buoyancy: accelerate upward early, then the puff stalls into smoke */
+    f.vy += (p < .5 ? 1.15 : -0.24) * dt;
+    f.ox += (f.vx + Math.sin(T*f.sway + f.phase)*0.075) * dt;
+    f.oy += f.vy * dt;
+  }
+  flames = flames.filter(f => f.t < f.life);
+}
+function drawFlames(br){
+  const A = br && br._spr; if (!A) return;
+  /* oldest last so young hot puffs sit in front */
+  const list = flames.filter(f => f.br === br.id).sort((a,b) => b.t - a.t);
+  ctx.save();
+  for (const f of list){
+    const p = clamp(f.t/f.life, 0, 1);
+    const col = flameColor(p);
+    if (col.a <= 0.003) continue;
+    /* resolve against the PAINTED bowl — always dead centre on top */
+    const sx = A.x + f.ox * A.s;
+    const sy = A.fireY - f.oy * A.s;
+    const wr = lerp(f.r0, f.r1, easeOut(p)) * (1 + Math.sin(p*Math.PI)*0.35);
+    const R = Math.max(0.6, wr * A.s);
+    ctx.globalCompositeOperation = p < 0.66 ? 'lighter' : 'source-over';
+    const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, R);
+    g.addColorStop(0,   `rgba(${col.r},${col.g},${col.b},${col.a})`);
+    g.addColorStop(.55, `rgba(${col.r},${col.g},${col.b},${col.a*.45})`);
+    g.addColorStop(1,   `rgba(${col.r},${col.g},${col.b},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.ellipse(sx, sy, R*0.78, R*1.45, 0, 0, 7); ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
+}
+
+/* ── props (billboards; editor-placed) ── */
+function drawProp(t){
+  const base = gw(t.x, t.z, tileElev(t.x,t.z));
+  const p = project(base); if (!p) return;
+  const S = p.s * .5, lv = lightVector();
+  /* shadow */
+  shadowEllipse(base, .38, .8);
+  ctx.save(); ctx.translate(p.x, p.y);
+  const k = S;
+  const shade = mixHex('#6a6050', LIGHT.key, .3);
+  ctx.strokeStyle = rgba('#0a0810',.9); ctx.lineWidth = 1.4;
+  /* NOTE: houses and wrecked cars used to live here — they are EVENTS now
+     (see EVENT_TYPES / drawEvent). Only inert terrain remains as props. */
+  if (t.prop === 'barricade'){
+    ctx.fillStyle = shade;
+    for (let i=-1;i<=1;i++){ ctx.save(); ctx.translate(i*k*.3, 0); ctx.rotate(i*.22);
+      ctx.fillRect(-k*.07,-k*.5, k*.14, k*.5); ctx.strokeRect(-k*.07,-k*.5, k*.14, k*.5); ctx.restore(); }
+    ctx.fillRect(-k*.5,-k*.3, k*1.0, k*.1); ctx.strokeRect(-k*.5,-k*.3, k*1.0, k*.1);
+  } else if (t.prop === 'crater'){
+    ctx.save(); ctx.scale(1,.46);
+    const cg = ctx.createRadialGradient(0,0,0,0,0,k*.55);
+    cg.addColorStop(0,'rgba(90,20,10,.9)'); cg.addColorStop(.7,'rgba(30,12,8,.85)'); cg.addColorStop(1,'rgba(20,10,6,0)');
+    ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0,0,k*.55,0,7); ctx.fill();
+    ctx.strokeStyle = rgba('#ff6a2a', .35 + Math.sin(T*2)*.15); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0,0,k*.4,0,7); ctx.stroke();
+    ctx.restore();
+  } else if (t.prop === 'pylon'){
+    const g = ctx.createLinearGradient(0,-k*1.1,0,0);
+    g.addColorStop(0, rgba('#b98cff',.9)); g.addColorStop(1, rgba('#3a1c6a',.8));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.moveTo(0,-k*1.15); ctx.lineTo(k*.22,-k*.4); ctx.lineTo(0,0); ctx.lineTo(-k*.22,-k*.4); ctx.closePath();
+    ctx.fill(); ctx.strokeStyle = rgba('#d8b8ff',.6); ctx.stroke();
+  } else if (t.prop === 'bones'){
+    ctx.strokeStyle = rgba('#cfc4a8',.75); ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.moveTo(-k*.4,-k*.05); ctx.lineTo(k*.3,-k*.2); ctx.moveTo(-k*.25,-k*.24); ctx.lineTo(k*.36,-k*.02); ctx.stroke();
+    ctx.fillStyle = rgba('#cfc4a8',.8); ctx.beginPath(); ctx.arc(-k*.42,-k*.16,k*.11,0,7); ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ground shadow driven by the light vector */
+function shadowEllipse(world, rx, alpha){
+  const lv = lightVector();
+  const len = clamp(1/(lv.y+.16), .8, 3.6);
+  const off = { x: -lv.x*len*.42, z: -lv.z*len*.42 };
+  const c = project({ x:world.x + off.x, y:world.y+.006, z:world.z + off.z }); if (!c) return;
+  const e = project({ x:world.x + off.x + rx, y:world.y+.006, z:world.z + off.z }); if (!e) return;
+  const R = Math.abs(e.x - c.x);
+  ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(Math.atan2(-lv.z, lv.x)*.12); ctx.scale(1*len*.55+.6, .40);
+  const g = ctx.createRadialGradient(0,0,0,0,0,R);
+  g.addColorStop(0, `rgba(0,0,0,${(alpha||.75)*clamp(lv.y+.25,.25,1)})`);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0,0,R,0,7); ctx.fill(); ctx.restore();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   SPRITE PAINTERS — procedural stand-ins for the real sheets.
+   Drawn into a unit-local space: x ∈ [-.5,.5], y ∈ [-1,0] (feet at 0)
+   ══════════════════════════════════════════════════════════════════ */
+function paintSprite(c, key, k, col, t){
+  /* ── REAL ART FIRST ───────────────────────────────────────────────
+     A unit with `art` or a `sheet` draws its own texture, billboarded in
+     the same unit-local space the procedural painters use (x -.5..+.5,
+     y -1..0, feet at 0). Crispness rules from the port brief: no smoothing
+     on the silhouette, and the destination rect is snapped to whole device
+     pixels so slow drifts don't shimmer.
+     A sheet animates by SOURCE-RECT offset (never by swapping textures). */
+  const D = UNIT_DEFS[key];
+  if (D && D._proc) key = D._proc;
+  /* ── SPRITE ATELIER FRAMES ────────────────────────────────────────────
+     The game stores an uploaded sprite as an ARRAY of full-resolution frame
+     images (Forge.sprites[key][anim]), not a packed atlas, so that is the
+     primary path. Timing is SECONDS-based off the shared clock — never a
+     frame counter — so playback speed is identical at 30fps or 144fps, and
+     each unit gets a stable phase offset so a row of the same unit doesn't
+     march in lockstep.
+     Quality rule: painted sprite art is usually far larger than the drawn
+     size, so downscales use high-quality smoothing; upscales turn smoothing
+     OFF so a small sheet stays crisp instead of going soft. */
+  if (D && Array.isArray(D.frames) && D.frames.length){
+    const fps = D.fps || 10;
+    const n = D.frames.length;
+    const idx = n > 1 ? (Math.floor((t + (D._phase || 0)) * fps) % n) : 0;
+    const img = artImage(D.frames[idx]) || artImage(D.frames[0]);
+    if (img && img.width){
+      const h = k, w = k * (img.width / img.height || 0.8);
+      const dx = Math.round(-w / 2), dy = Math.round(-h), dw = Math.round(w), dh = Math.round(h);
+      const sm = c.imageSmoothingEnabled, sq = c.imageSmoothingQuality;
+      const upscaling = dw > img.width;
+      c.imageSmoothingEnabled = !upscaling;
+      if (!upscaling) c.imageSmoothingQuality = 'high';
+      c.drawImage(img, dx, dy, dw, dh);
+      c.imageSmoothingEnabled = sm; c.imageSmoothingQuality = sq;
+      return;
+    }
+  }
+  if (D && (D.art || (D.sheet && D.sheet.src))){
+    const sheet = D.sheet && D.sheet.src ? D.sheet : null;
+    const img = artImage(sheet ? sheet.src : D.art);
+    if (img && img.width){
+      const aspect = sheet && sheet.fw ? (sheet.fw / sheet.fh) : (img.width / img.height);
+      const h = k, w = k * (aspect || 0.8);
+      const dx = Math.round(-w / 2), dy = Math.round(-h), dw = Math.round(w), dh = Math.round(h);
+      const sm = c.imageSmoothingEnabled, sq0 = c.imageSmoothingQuality;
+      const up = dw > (sheet ? (sheet.fw || img.width) : img.width);
+      c.imageSmoothingEnabled = !up;                /* crisp when upscaling, smooth when down */
+      if (!up) c.imageSmoothingQuality = 'high';
+      if (sheet){
+        const fw = sheet.fw || Math.floor(img.width / (sheet.frames || 1));
+        const fh = sheet.fh || img.height;
+        const n  = sheet.frames || 1;
+        const fps = sheet.fps || 12;
+        const rowMap = sheet.rows || {};
+        const row = rowMap[D._clip || 'idle'] || 0;
+        const f = n > 1 ? (Math.floor(t * fps) % n) : 0;
+        c.drawImage(img, f * fw, row * fh, fw, fh, dx, dy, dw, dh);
+      } else {
+        c.drawImage(img, dx, dy, dw, dh);
+      }
+      c.imageSmoothingEnabled = sm; c.imageSmoothingQuality = sq0;
+      return;
+    }
+  }
+  /* ⚠ NO PROCEDURAL FLASH. If this unit HAS real art (frames / still / sheet)
+     but nothing has decoded yet, draw NOTHING this frame rather than a
+     stick figure that pops into the real sprite a moment later. The ground
+     shadow is already drawn by drawUnit, so the unit still reads as present.
+     Only a unit with genuinely no art registered gets a procedural body. */
+  if (D && (D.frames || D.art || (D.sheet && D.sheet.src)) && !D._proc) return;
+  const S = (x,y) => [x*k, y*k];
+  c.lineJoin = 'round'; c.lineCap = 'round';
+  const body = mixHex('#171320', col, .30);
+  const lit  = mixHex(body, LIGHT.key, .34);
+  const rim  = LIGHT.rim;
+  c.strokeStyle = 'rgba(6,4,10,.92)'; c.lineWidth = Math.max(1.2, k*.035);
+
+  const wing = Math.sin(t*3.1)*.06;
+  if (key === 'wyrm'){
+    c.fillStyle = mixHex(body,'#000',.25);
+    c.beginPath();
+    c.moveTo(...S(-.05,-.62)); c.quadraticCurveTo(...S(-.62,-1.0), ...S(-.52,-.44+wing));
+    c.quadraticCurveTo(...S(-.3,-.5), ...S(-.06,-.5)); c.closePath(); c.fill(); c.stroke();
+    c.beginPath();
+    c.moveTo(...S(.05,-.62)); c.quadraticCurveTo(...S(.62,-1.0), ...S(.52,-.44-wing));
+    c.quadraticCurveTo(...S(.3,-.5), ...S(.06,-.5)); c.closePath(); c.fill(); c.stroke();
+    c.fillStyle = lit;
+    c.beginPath(); c.ellipse(...S(0,-.42), k*.20, k*.30, 0, 0, 7); c.fill(); c.stroke();
+    c.beginPath(); c.ellipse(...S(0,-.80), k*.13, k*.14, 0, 0, 7); c.fill(); c.stroke();
+    c.beginPath(); c.moveTo(...S(-.12,-.9)); c.lineTo(...S(-.2,-1.04)); c.moveTo(...S(.12,-.9)); c.lineTo(...S(.2,-1.04)); c.stroke();
+    c.fillStyle = rgba(col,1); c.beginPath(); c.arc(...S(-.05,-.81), k*.028, 0, 7); c.arc(...S(.05,-.81), k*.028, 0, 7); c.fill();
+    c.fillStyle = lit; c.beginPath(); c.moveTo(...S(-.08,-.14)); c.lineTo(...S(-.16,0)); c.lineTo(...S(-.02,0)); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(...S(.08,-.14)); c.lineTo(...S(.16,0)); c.lineTo(...S(.02,0)); c.closePath(); c.fill();
+  } else if (key === 'imp'){
+    c.fillStyle = mixHex(body,'#000',.2);
+    c.beginPath(); c.moveTo(...S(-.04,-.5)); c.quadraticCurveTo(...S(-.5,-.78), ...S(-.4,-.3+wing));
+    c.quadraticCurveTo(...S(-.22,-.38), ...S(-.05,-.4)); c.closePath(); c.fill(); c.stroke();
+    c.beginPath(); c.moveTo(...S(.04,-.5)); c.quadraticCurveTo(...S(.5,-.78), ...S(.4,-.3-wing));
+    c.quadraticCurveTo(...S(.22,-.38), ...S(.05,-.4)); c.closePath(); c.fill(); c.stroke();
+    c.fillStyle = lit; c.beginPath(); c.ellipse(...S(0,-.34), k*.16, k*.24, 0, 0, 7); c.fill(); c.stroke();
+    c.beginPath(); c.arc(...S(0,-.66), k*.14, 0, 7); c.fill(); c.stroke();
+    c.beginPath(); c.moveTo(...S(-.1,-.76)); c.lineTo(...S(-.16,-.9)); c.moveTo(...S(.1,-.76)); c.lineTo(...S(.16,-.9)); c.stroke();
+    c.fillStyle = rgba(col,1); c.beginPath(); c.arc(...S(-.05,-.67), k*.026,0,7); c.arc(...S(.05,-.67), k*.026,0,7); c.fill();
+    c.strokeStyle='rgba(6,4,10,.92)'; c.beginPath(); c.moveTo(...S(0,-.12)); c.lineTo(...S(-.06,0)); c.moveTo(...S(0,-.12)); c.lineTo(...S(.06,0)); c.stroke();
+  } else if (key === 'knight'){
+    c.fillStyle = mixHex(body,'#000',.28);
+    c.beginPath(); c.moveTo(...S(-.06,-.7)); c.quadraticCurveTo(...S(-.58,-1.15), ...S(-.44,-.5+wing));
+    c.quadraticCurveTo(...S(-.26,-.6), ...S(-.06,-.6)); c.closePath(); c.fill(); c.stroke();
+    c.beginPath(); c.moveTo(...S(.06,-.7)); c.quadraticCurveTo(...S(.58,-1.15), ...S(.44,-.5-wing));
+    c.quadraticCurveTo(...S(.26,-.6), ...S(.06,-.6)); c.closePath(); c.fill(); c.stroke();
+    c.fillStyle = lit;
+    c.beginPath(); c.moveTo(...S(-.17,-.2)); c.lineTo(...S(-.13,-.62)); c.lineTo(...S(.13,-.62));
+    c.lineTo(...S(.17,-.2)); c.closePath(); c.fill(); c.stroke();
+    c.beginPath(); c.ellipse(...S(0,-.74), k*.11, k*.13, 0, 0, 7); c.fill(); c.stroke();
+    c.fillStyle = rgba(col,1); c.fillRect(...S(-.07,-.77), k*.14, k*.03);
+    c.strokeStyle='rgba(6,4,10,.92)'; c.lineWidth=Math.max(1.6,k*.045);
+    c.beginPath(); c.moveTo(...S(.2,-.56)); c.lineTo(...S(.34,-.02)); c.stroke();
+    c.strokeStyle=rgba(col,.9); c.beginPath(); c.moveTo(...S(.2,-.56)); c.lineTo(...S(.32,-.06)); c.stroke();
+    c.fillStyle=lit; c.fillRect(...S(-.16,-.2), k*.12, k*.2); c.fillRect(...S(.04,-.2), k*.12, k*.2);
+  } else if (key === 'mage'){
+    c.fillStyle = lit;
+    c.beginPath(); c.moveTo(...S(-.24,0)); c.lineTo(...S(-.1,-.6)); c.lineTo(...S(.1,-.6)); c.lineTo(...S(.24,0)); c.closePath(); c.fill(); c.stroke();
+    c.beginPath(); c.arc(...S(0,-.7), k*.11, 0, 7); c.fill(); c.stroke();
+    c.beginPath(); c.moveTo(...S(-.12,-.66)); c.lineTo(...S(0,-.94)); c.lineTo(...S(.12,-.66)); c.closePath(); c.fill(); c.stroke();
+    c.strokeStyle='rgba(6,4,10,.92)'; c.beginPath(); c.moveTo(...S(.26,-.86)); c.lineTo(...S(.2,-.02)); c.stroke();
+    const og = c.createRadialGradient(...S(.27,-.9), 0, ...S(.27,-.9), k*.2);
+    og.addColorStop(0, rgba(col,1)); og.addColorStop(1, rgba(col,0));
+    c.fillStyle = og; c.beginPath(); c.arc(...S(.27,-.9), k*.2, 0, 7); c.fill();
+  } else if (key === 'crystal'){
+    c.fillStyle = mixHex(body, col, .45);
+    c.beginPath(); c.moveTo(...S(0,-1.0)); c.lineTo(...S(.28,-.5)); c.lineTo(...S(.18,0));
+    c.lineTo(...S(-.18,0)); c.lineTo(...S(-.28,-.5)); c.closePath(); c.fill(); c.stroke();
+    c.strokeStyle = rgba(col,.8); c.lineWidth = Math.max(1,k*.02);
+    c.beginPath(); c.moveTo(...S(0,-1.0)); c.lineTo(...S(0,0)); c.moveTo(...S(-.28,-.5)); c.lineTo(...S(.28,-.5)); c.stroke();
+    c.fillStyle = rgba(col,.9);
+    c.beginPath(); c.moveTo(...S(-.42,-.36)); c.lineTo(...S(-.3,-.62)); c.lineTo(...S(-.24,-.28)); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(...S(.42,-.3)); c.lineTo(...S(.3,-.58)); c.lineTo(...S(.24,-.22)); c.closePath(); c.fill();
+  } else if (key === 'bunny'){
+    c.fillStyle = lit;
+    c.beginPath(); c.ellipse(...S(0,-.32), k*.17, k*.3, 0, 0, 7); c.fill(); c.stroke();
+    c.beginPath(); c.arc(...S(0,-.66), k*.13, 0, 7); c.fill(); c.stroke();
+    c.beginPath(); c.ellipse(...S(-.09,-.88), k*.05, k*.17, .18, 0, 7); c.fill(); c.stroke();
+    c.beginPath(); c.ellipse(...S(.09,-.88), k*.05, k*.17, -.18, 0, 7); c.fill(); c.stroke();
+    c.fillStyle = rgba(col,1); c.beginPath(); c.arc(...S(-.05,-.68), k*.026,0,7); c.arc(...S(.05,-.68), k*.026,0,7); c.fill();
+    c.strokeStyle=rgba(col,.9); c.lineWidth=Math.max(1.4,k*.03);
+    c.beginPath(); c.moveTo(...S(-.3,-.5)); c.lineTo(...S(-.16,-.06)); c.stroke();
+  } else { /* jelly */
+    const g = c.createRadialGradient(...S(0,-.34), 0, ...S(0,-.34), k*.42);
+    g.addColorStop(0, rgba(col,.95)); g.addColorStop(.7, rgba(col,.45)); g.addColorStop(1, rgba(col,.08));
+    c.fillStyle = g;
+    const w = .34 + Math.sin(t*2.4)*.03;
+    c.beginPath(); c.ellipse(...S(0,-.34), k*w, k*(.34-Math.sin(t*2.4)*.03), 0, 0, 7); c.fill();
+    c.strokeStyle = rgba(col,.7); c.lineWidth = Math.max(1,k*.02); c.stroke();
+    c.strokeStyle = rgba(col,.55);
+    for (let i=-2;i<=2;i++){
+      c.beginPath(); c.moveTo(...S(i*.11,-.06));
+      c.quadraticCurveTo(...S(i*.13 + Math.sin(t*3+i)*.03, .04), ...S(i*.1, .0));
+      c.stroke();
+    }
+    c.fillStyle = 'rgba(255,255,255,.85)';
+    c.beginPath(); c.arc(...S(-.07,-.42), k*.03,0,7); c.arc(...S(.07,-.42), k*.03,0,7); c.fill();
+  }
+}
+
+/* The host draws the hover action menu in ITS document, so it needs to know
+   where this unit is on screen. Same projection drawUnit uses; values are CSS
+   pixels inside this iframe (ctx carries the DPR transform, W/H are CSS px),
+   so the host only has to add the stage's page offset. */
+function unitScreenBox(u){
+  if (!u) return null;
+  const base = gw(u.x, u.z, tileElev(u.gx, u.gz));
+  const wy = base.y + u.y;
+  const foot = project({ x:base.x, y:wy, z:base.z });
+  const head = project({ x:base.x, y:wy + (u.def && u.def.h || 1), z:base.z });
+  if (!foot || !head) return null;
+  const h = Math.abs(foot.y - head.y);
+  const w = h * 0.8;
+  return { left: foot.x - w/2, top: head.y, width: w, height: h };
+}
+function drawTomb(tb){
+  const wp = gw(tb.x, tb.z, tileElev(tb.x, tb.z));
+  const foot = project({ x:wp.x, y:wp.y, z:wp.z });
+  const head = project({ x:wp.x, y:wp.y + 0.62, z:wp.z });
+  if (!foot || !head) return;
+  const h = Math.abs(foot.y - head.y), w = h * 0.78;
+  shadowEllipse(wp, .20, .55);
+  /* a glowing stone is about to revive — pulse a ring under it */
+  if (tb.glowing){
+    const c = project({ x:wp.x, y:wp.y + .01, z:wp.z });
+    const e = project({ x:wp.x + .38, y:wp.y + .01, z:wp.z });
+    if (c && e){
+      const R = Math.abs(e.x - c.x);
+      ctx.save(); ctx.translate(c.x, c.y); ctx.scale(1, .44);
+      ctx.strokeStyle = rgba('#9fe8ff', .45 + Math.sin(T * 3.2) * .3);
+      ctx.lineWidth = 2.6; ctx.beginPath(); ctx.arc(0, 0, R, 0, 7); ctx.stroke(); ctx.restore();
+    }
+  }
+  const img = tb.img ? artImage(tb.img) : null;
+  if (img && img.width){
+    const dw = Math.round(w), dh = Math.round(h);
+    const sm = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = dw <= img.width;
+    ctx.drawImage(img, Math.round(foot.x - w/2), Math.round(foot.y - h), dw, dh);
+    ctx.imageSmoothingEnabled = sm;
+  } else {
+    /* carved slab fallback so a missing texture still reads as a grave */
+    ctx.save(); ctx.translate(foot.x, foot.y);
+    ctx.fillStyle = rgba('#8d8a95', .92); ctx.strokeStyle = rgba('#0a0810', .9); ctx.lineWidth = Math.max(1, h*.05);
+    ctx.beginPath();
+    ctx.moveTo(-w*.32, 0); ctx.lineTo(-w*.32, -h*.55);
+    ctx.quadraticCurveTo(-w*.32, -h*.92, 0, -h*.92);
+    ctx.quadraticCurveTo(w*.32, -h*.92, w*.32, -h*.55);
+    ctx.lineTo(w*.32, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = rgba('#5a5866', .95);
+    ctx.fillRect(-w*.10, -h*.72, w*.20, h*.06);
+    ctx.fillRect(-w*.04, -h*.80, w*.08, h*.30);
+    ctx.restore();
+  }
+  if (tb.looted === false && tb.lootable){
+    ctx.save(); ctx.translate(foot.x + w*.34, foot.y - h*.86);
+    ctx.fillStyle = rgba('#ffd15a', .95); ctx.beginPath(); ctx.arc(0,0, Math.max(3, h*.09), 0, 7); ctx.fill();
+    ctx.restore();
+  }
+}
+function drawUnit(u){
+  const base = gw(u.x, u.z, tileElev(u.gx,u.gz));
+  const wy = base.y + u.y;
+  const foot = project({ x:base.x, y:wy, z:base.z }); if (!foot) return;
+  const head = project({ x:base.x, y:wy + u.def.h, z:base.z }); if (!head) return;
+  const k = Math.abs(foot.y - head.y);
+  if (u.y > -0.9) shadowEllipse(base, .30, .8);
+
+  /* 🔴 WHOSE IS WHOSE. Enemy units and heroes stand in a red pool with a red
+     rim; the player's are untouched. On this board the units are painted on a
+     canvas, so the DOM board's .unit.ai styling cannot reach them — this is the
+     same read, done in the stage. */
+  if (u.side === 'foe' && u.y > -0.9 && !u.dead){
+    const isHero = !!(u.def && (u.def.hero || u.def.isHero)) || /hero/i.test(String(u.key||''));
+    ctx.save();
+    ctx.translate(foot.x, foot.y);
+    ctx.scale(1, 0.34);
+    const rr = k * (isHero ? 0.52 : 0.42);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rr);
+    g.addColorStop(0, 'rgba(232,64,52,' + (isHero ? 0.42 : 0.30) + ')');
+    g.addColorStop(0.6, 'rgba(226,58,48,0.16)');
+    g.addColorStop(1, 'rgba(226,58,48,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, rr, 0, 6.2832); ctx.fill();
+    ctx.lineWidth = isHero ? 3 : 2;
+    ctx.strokeStyle = 'rgba(255,86,70,' + (isHero ? 0.85 : 0.6) + ')';
+    ctx.beginPath(); ctx.arc(0, 0, rr * 0.78, 0, 6.2832); ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.save();
+  const sh = u.shake ? Math.sin(T*60)*u.shake*8 : 0;
+  ctx.translate(foot.x + sh, foot.y);
+  ctx.scale(u.face * u.scaleX, u.scaleY);
+  /* clip below the tile while rising out of the ground */
+  if (u.y < -0.02){
+    ctx.save();
+    ctx.beginPath(); ctx.rect(-k, -k*2.4, k*2, k*2.4 - Math.max(0, -u.y*k*0.92));
+    ctx.clip();
+  }
+  /* rim light from the sun/moon */
+  ctx.save();
+  ctx.shadowColor = rgba(LIGHT.rim, .8); ctx.shadowBlur = k*.16;
+  paintSprite(ctx, u.key, k, u.def.color, T + u.bob);
+  ctx.restore();
+  if (u.flash > 0){
+    ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = u.flash;
+    paintSprite(ctx, u.key, k, '#ffffff', T + u.bob);
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  }
+  if (u.y < -0.02) ctx.restore();
+  ctx.restore();
+
+  /* selection ring */
+  if (selected === u.id){
+    const c = project({x:base.x, y:base.y+.01, z:base.z});
+    const e = project({x:base.x+.42, y:base.y+.01, z:base.z});
+    if (c && e){
+      const R = Math.abs(e.x-c.x);
+      ctx.save(); ctx.translate(c.x,c.y); ctx.scale(1,.44);
+      ctx.strokeStyle = rgba('#7fe89f', .55 + Math.sin(T*3)*.25); ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.arc(0,0,R,0,7); ctx.stroke(); ctx.restore();
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   EFFECTS
+   ══════════════════════════════════════════════════════════════════ */
+function drawEffects(pass){
+  for (const f of effects){
+    const p = f.t / f.dur, a = 1 - p;
+    if (f.k === 'ring' && pass === 'ground'){
+      const c = project({x:f.x, y:.02, z:f.z}); const e = project({x:f.x + lerp(f.r0,f.r1,easeOut(p)), y:.02, z:f.z});
+      if (c && e){ const R = Math.abs(e.x-c.x);
+        ctx.save(); ctx.translate(c.x,c.y); ctx.scale(1,.44);
+        ctx.strokeStyle = rgba(f.col, a*.9); ctx.lineWidth = 3*a+1;
+        ctx.beginPath(); ctx.arc(0,0,R,0,7); ctx.stroke(); ctx.restore(); }
+    }
+    if (f.k === 'rune' && pass === 'ground'){
+      const c = project(gw(f.gx,f.gz,tileElev(f.gx,f.gz)+.004));
+      const e = project({ ...gw(f.gx,f.gz,tileElev(f.gx,f.gz)+.004), x: gw(f.gx,f.gz).x+.44 });
+      if (c && e){ const R = Math.abs(e.x-c.x);
+        ctx.save(); ctx.translate(c.x,c.y); ctx.scale(1,.46); ctx.rotate(T*1.4);
+        ctx.strokeStyle = rgba(f.col, a*.95); ctx.lineWidth = 2.4;
+        ctx.beginPath(); ctx.arc(0,0,R,0,7); ctx.stroke();
+        ctx.beginPath(); ctx.arc(0,0,R*.66,0,7); ctx.stroke();
+        for (let i=0;i<12;i++){ const ang=i*Math.PI/6;
+          ctx.beginPath(); ctx.moveTo(Math.cos(ang)*R*.68, Math.sin(ang)*R*.68);
+          ctx.lineTo(Math.cos(ang)*R*.98, Math.sin(ang)*R*.98); ctx.stroke(); }
+        ctx.restore(); }
+    }
+    if (f.k === 'pillar' && pass === 'air'){
+      const b = project(gw(f.gx,f.gz,0)), t2 = project(gw(f.gx,f.gz,4.2));
+      const e = project({ ...gw(f.gx,f.gz,0), x: gw(f.gx,f.gz).x+.42 });
+      if (b && t2 && e){
+        const R = Math.abs(e.x-b.x) * (1 - p*.25);
+        const g = ctx.createLinearGradient(b.x, b.y, t2.x, t2.y);
+        g.addColorStop(0, rgba(f.col, a*.75)); g.addColorStop(.5, rgba(f.col, a*.3)); g.addColorStop(1, rgba(f.col,0));
+        ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.fillStyle = g;
+        ctx.beginPath(); ctx.moveTo(b.x-R, b.y); ctx.lineTo(b.x+R, b.y);
+        ctx.lineTo(t2.x+R*.5, t2.y); ctx.lineTo(t2.x-R*.5, t2.y); ctx.closePath(); ctx.fill(); ctx.restore();
+      }
+    }
+    if (f.k === 'impact' && pass === 'air'){
+      const c = project({x:f.x, y:.5, z:f.z});
+      if (c){ ctx.save(); ctx.globalCompositeOperation='lighter';
+        const g = ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,60*(1+p));
+        g.addColorStop(0, `rgba(255,230,180,${a})`); g.addColorStop(1,'rgba(255,180,80,0)');
+        ctx.fillStyle=g; ctx.beginPath(); ctx.arc(c.x,c.y,60*(1+p),0,7); ctx.fill(); ctx.restore(); }
+    }
+    if (f.k === 'float' && pass === 'air'){
+      const c = project({x:f.x, y:1.1 + p*.9, z:f.z});
+      if (c){ ctx.font = `700 ${Math.round(20*c.s*.06+11)}px Cinzel, serif`;
+        ctx.textAlign='center'; ctx.fillStyle = rgba(f.col, a);
+        ctx.strokeStyle='rgba(0,0,0,.8)'; ctx.lineWidth=3; ctx.strokeText(f.txt,c.x,c.y); ctx.fillText(f.txt,c.x,c.y); }
+    }
+    if (f.k === 'flash' && pass === 'screen'){
+      ctx.fillStyle = `rgba(255,246,220,${a*a*.75})`; ctx.fillRect(0,0,W,H);
+    }
+    if (f.k === 'ember2d' && pass === 'screen'){
+      ctx.fillStyle = rgba(f.col, a);
+      ctx.beginPath(); ctx.arc(f.x, f.y, 2.4*a+.6, 0, 7); ctx.fill();
+    }
+  }
+}
+function drawParticles(){
+  /* dust puffs first (they sit under the sparks), back to front */
+  const puffs = particles.filter(p => p.puff).sort((a,b) => a.z - b.z);
+  for (const p of puffs){
+    const pr = project({x:p.x, y:p.y, z:p.z}); if (!pr) continue;
+    const k = clamp(p.t/p.life, 0, 1);
+    const R = Math.max(1, lerp(p.r0, p.r1, easeOut(k)) * pr.s);
+    /* fade in fast, hang, then fall away slowly */
+    const a = Math.min(1, k/0.12) * Math.pow(1-k, 1.7) * 0.42;
+    if (a <= 0.004) continue;
+    const tint = mixHex(p.col, LIGHT.key, .3);
+    const rgbm = tint.match(/\d+/g) || [185,165,130];
+    const cr = Math.round(rgbm[0]*p.tone), cg = Math.round(rgbm[1]*p.tone), cb = Math.round(rgbm[2]*p.tone);
+    const g = ctx.createRadialGradient(pr.x, pr.y, 0, pr.x, pr.y, R);
+    g.addColorStop(0,   `rgba(${cr},${cg},${cb},${a})`);
+    g.addColorStop(.45, `rgba(${cr},${cg},${cb},${a*.55})`);
+    g.addColorStop(1,   `rgba(${cr},${cg},${cb},0)`);
+    ctx.fillStyle = g;
+    /* squashed against the ground plane */
+    ctx.beginPath(); ctx.ellipse(pr.x, pr.y, R, R*0.46, 0, 0, 7); ctx.fill();
+  }
+  for (const p of particles){
+    if (p.puff) continue;
+    const pr = project({x:p.x, y:p.y, z:p.z}); if (!pr) continue;
+    const a = p.amb ? .35 + Math.sin(T*1.4 + p.w)*.25 : clamp(1 - p.t/p.life, 0, 1);
+    ctx.globalCompositeOperation = p.soft ? 'source-over' : 'lighter';
+    ctx.fillStyle = rgba(p.col, a * (p.soft ? .45 : .9));
+    const s = p.size * pr.s * .045 + .6;
+    ctx.beginPath(); ctx.arc(pr.x, pr.y, s, 0, 7); ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+/* UI safe-area guides (dev only) */
+function drawGuides(){
+  if (!showGuides) return;
+  const b = VIEW.box;
+  ctx.save(); ctx.setLineDash([7,6]); ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(120,220,255,.55)';
+  ctx.strokeRect(b.l, b.t, b.w, b.h);
+  ctx.fillStyle = 'rgba(10,20,30,.5)';
+  ctx.fillRect(0,0,b.l,H); ctx.fillRect(W-b.r,0,b.r,H); ctx.fillRect(b.l,0,b.w,b.t); ctx.fillRect(b.l,H-b.b,b.w,b.b);
+  ctx.setLineDash([]); ctx.fillStyle = 'rgba(150,230,255,.85)';
+  ctx.font = '600 11px Cinzel, serif'; ctx.textAlign='left';
+  ctx.fillText('UI SAFE AREA — LEFT HUD ('+Math.round(b.l)+'px)', 12, 22);
+  ctx.textAlign='right';
+  ctx.fillText('RIGHT HUD ('+Math.round(b.r)+'px)', W-12, 22);
+  ctx.textAlign='center';
+  ctx.fillText('TOP HUD ('+Math.round(b.t)+'px)', b.l+b.w/2, b.t-8);
+  ctx.fillText('HAND / BOTTOM HUD ('+Math.round(b.b)+'px)', b.l+b.w/2, H-b.b+18);
+  ctx.restore();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   UPDATE + FRAME
+   ══════════════════════════════════════════════════════════════════ */
+function update(dt){
+  /* cosmetic summon rise — see summonFx() */
+  for (const u of units){
+    if (!u.rise || u.riseT === undefined) continue;
+    u.riseT += dt;
+    const rt = clamp(u.riseT / 0.42, 0, 1);
+    u.y = lerp(-1.1, 0, easeBack(rt));
+    u.scaleX = lerp(.7, 1, easeOut(rt));
+    u.scaleY = lerp(.7, 1, easeOut(rt));
+    if (rt >= 1){
+      u.rise = 0; u.riseT = undefined; u.y = 0;
+      u.scaleY = 1.16; u.scaleX = .88;            // landing squash; springs back below
+      const wp = gw(u.gx, u.gz, tileElev(u.gx, u.gz));
+      effects.push({ k:'ring', x:wp.x, z:wp.z, t:0, dur:.55, col:(u.def&&u.def.color)||'#f6dc95', r0:.1, r1:1.0 });
+      dust(wp.x, wp.z, 14);
+    }
+  }
+  /* light lerp */
+  if (lightLerp){
+    lightLerp.t += dt/lightLerp.dur;
+    const k = clamp(lightLerp.t, 0, 1), A = lightLerp.from, B = lightLerp.to;
+    LIGHT = {
+      az:lerp(A.az,B.az,k), elev:lerp(A.elev,B.elev,k),
+      key:mixHexRaw(A.key,B.key,k), keyI:lerp(A.keyI,B.keyI,k),
+      ambient:mixHexRaw(A.ambient,B.ambient,k), ambI:lerp(A.ambI,B.ambI,k),
+      sky:[mixHexRaw(A.sky[0],B.sky[0],k), mixHexRaw(A.sky[1],B.sky[1],k), mixHexRaw(A.sky[2],B.sky[2],k)],
+      fog:mixHexRaw(A.fog,B.fog,k), rim:mixHexRaw(A.rim,B.rim,k),
+      body: k>.5 ? B.body : A.body, disc:mixHexRaw(A.disc,B.disc,k), haze:lerp(A.haze,B.haze,k)
+    };
+    if (k>=1) lightLerp = null;
+  }
+  for (const u of units){
+    u.bob += dt;
+    if (u.shake) u.shake = Math.max(0, u.shake - dt*1.6);
+    if (u.flash) u.flash = Math.max(0, u.flash - dt*3);
+    /* spring the squash back */
+    u.scaleX += (1 - u.scaleX) * Math.min(1, dt*9);
+    u.scaleY += (1 - u.scaleY) * Math.min(1, dt*9);
+    if (u.tween){
+      const tw = u.tween; tw.t += dt/tw.dur;
+      const k = clamp(tw.t,0,1), e = easeInOut(k);
+      u.x = lerp(tw.x0, tw.x1, e); u.z = lerp(tw.z0, tw.z1, e);
+      u.y = Math.sin(k*Math.PI) * 0.28;
+      if (k < .18) { u.scaleY = lerp(1,.86,k/.18); u.scaleX = lerp(1,1.12,k/.18); }
+      if (k >= 1){
+        u.tween = null; u.anim='idle'; u.x = tw.x1; u.z = tw.z1; u.y = 0;
+        u.scaleY = 1.18; u.scaleX = .86;
+        dust(gw(u.x,u.z).x, gw(u.x,u.z).z, 14);
+        /* ← REPLACE with the game's rule for when an event resolves */
+        if (eventsAt(u.gx, u.gz).length) triggerEvent(u.gx, u.gz, u.id);
+      }
+    } else if (!u.rise) {
+      u.y = Math.sin(u.bob*1.7)*0.022;   /* idle breathe */
+    }
+    if (u.lunge){
+      u.lunge.t += dt/u.lunge.dur;
+      const k = clamp(u.lunge.t,0,1);
+      const amt = Math.sin(k*Math.PI)*.34;
+      u.x = u.gx + u.lunge.dx*amt; u.z = u.gz + u.lunge.dz*amt;
+      if (k>=1){ u.lunge=null; u.x=u.gx; u.z=u.gz; }
+    }
+    if (u.dead){ u.deathT += dt; u.scaleY = Math.max(0, 1-u.deathT*1.6); }
+  }
+  units = units.filter(u => !u.dead || u.deathT < .8);
+  for (const p of particles){
+    if (p.amb){
+      p.x += p.vx*dt; p.y += p.vy*dt; p.z += p.vz*dt;
+      if (p.y > 3.8){ p.y = .05; p.x = rnd(-5,5); p.z = rnd(-4,4); }
+      continue;
+    }
+    p.t += dt;
+    if (p.puff){
+      /* dust billows outward then stalls as it loses energy */
+      const k = Math.pow(0.12, dt);
+      p.vx *= k; p.vz *= k; p.vy *= Math.pow(0.5, dt);
+      p.x += p.vx*dt; p.y += p.vy*dt; p.z += p.vz*dt;
+      continue;
+    }
+    p.vy -= p.g*dt;
+    p.x += p.vx*dt; p.y += p.vy*dt; p.z += p.vz*dt;
+    if (p.y < 0){ p.y = 0; p.vy *= -0.32; p.vx *= .6; p.vz *= .6; }
+  }
+  particles = particles.filter(p => p.amb || p.t < p.life);
+  updateFlames(dt);
+  if (GROUND.fade < 1) GROUND.fade = Math.min(1, GROUND.fade + dt/0.8);
+  if (BACKDROP.fade < 1) BACKDROP.fade = Math.min(1, BACKDROP.fade + dt/0.9);
+  if (holoIn < 1) holoIn = Math.min(1, holoIn + dt/2.2);   /* settle in gently */
+  for (const f of effects){
+    f.t += dt;
+    if (f.k === 'ember2d'){ f.x += f.vx*dt; f.y += f.vy*dt; f.vy += 40*dt; }
+  }
+  effects = effects.filter(f => f.t < f.dur);
+}
+function mixHexRaw(a,b,t){
+  const A=hexRgb(a), B=hexRgb(b);
+  const to = v => v.toString(16).padStart(2,'0');
+  return '#'+to(Math.round(lerp(A[0],B[0],t)))+to(Math.round(lerp(A[1],B[1],t)))+to(Math.round(lerp(A[2],B[2],t)));
+}
+
+let frameErr = false;
+/* ══════════════════════════════════════════════════════════════════════════
+   🎨 TILE SURFACES — canvas-2D, painted INSIDE the stage's own pass.
+   ⚠ Deliberately NOT WebGL. The shader version compiled, issued draw calls and
+   still produced no fragments on real hardware (state/driver-dependent, and it
+   differed between machines). The 2D canvas is the one surface this game
+   provably renders everywhere — so the hazards live there too: same slot
+   (above the ground, below the depth-sorted actors), same `board:surfaces`
+   message, no extra GPU context, and pixel-verifiable.
+   Each tile is clipped to its own projected quad; looks are seeded per tile so
+   patterns don't march in lockstep, and animate off the shared clock T. */
+let SURFACES = {};                 /* "x,z" -> effect key */
+function _sHash(x, z, n){ let h = (x * 73856093) ^ (z * 19349663) ^ ((n || 0) * 83492791); h = (h ^ (h >> 13)) * 1274126177; h = (h ^ (h >> 16)) >>> 0; return (h % 10000) / 10000; }
+function _sQuad(gx, gz){
+  const e = tileElev(gx, gz) + 0.012;
+  const c = [[0,0],[1,0],[1,1],[0,1]].map(o => {
+    const wp = gw(gx - 0.5 + o[0], gz - 0.5 + o[1], e);
+    return project({ x: wp.x, y: wp.y, z: wp.z });
+  });
+  return c.some(q => !q) ? null : c;
+}
+/* one painter per effect key — c is pre-clipped to the tile quad.
+   (cx,cy) centre, r ≈ half-width in px, T = clock. */
+const SURFACE_2D = {
+fire(c, q, cx, cy, r, T, gx, gz){
+  const fl = 0.85 + 0.15 * Math.sin(T * 11 + gx * 3 + gz);
+  const g = c.createRadialGradient(cx, cy, 0, cx, cy, r);
+  g.addColorStop(0, 'rgba(255,214,92,' + (0.95 * fl) + ')');
+  g.addColorStop(0.45, 'rgba(255,122,28,' + (0.8 * fl) + ')');
+  g.addColorStop(1, 'rgba(140,20,0,0.12)');
+  c.globalCompositeOperation = 'lighter';
+  c.fillStyle = g; c.fillRect(cx - r, cy - r * 1.2, r * 2, r * 2.2);
+  for (let i = 0; i < 5; i++){
+    const a = _sHash(gx, gz, i) * 6.28, d = r * (0.15 + 0.5 * _sHash(gz, gx, i));
+    const fx = cx + Math.cos(a) * d, fh = r * (0.5 + 0.5 * _sHash(gx, gz, i + 9)) * (0.8 + 0.3 * Math.sin(T * 9 + i * 2.1));
+    const fg = c.createLinearGradient(fx, cy + r * 0.2, fx, cy - fh);
+    fg.addColorStop(0, 'rgba(255,150,40,0.85)'); fg.addColorStop(1, 'rgba(255,220,120,0)');
+    c.fillStyle = fg;
+    c.beginPath(); c.moveTo(fx - r * 0.12, cy + r * 0.25); c.quadraticCurveTo(fx, cy - fh, fx + r * 0.12, cy + r * 0.25); c.fill();
+  }
+},
+ice(c, q, cx, cy, r, T, gx, gz){
+  c.fillStyle = 'rgba(158,204,238,0.82)'; c.fill();
+  c.strokeStyle = 'rgba(255,255,255,0.75)'; c.lineWidth = Math.max(1, r * 0.045);
+  for (let i = 0; i < 4; i++){
+    const a = _sHash(gx, gz, i) * 6.28;
+    c.beginPath(); c.moveTo(cx, cy);
+    let px = cx, py = cy;
+    for (let s2 = 1; s2 <= 3; s2++){
+      px += Math.cos(a + (_sHash(gx, gz, i * 3 + s2) - 0.5)) * r * 0.36;
+      py += Math.sin(a + (_sHash(gz, gx, i * 3 + s2) - 0.5)) * r * 0.3;
+      c.lineTo(px, py);
+    }
+    c.stroke();
+  }
+  const tw = 0.5 + 0.5 * Math.sin(T * 3 + gx + gz * 2);
+  c.fillStyle = 'rgba(255,255,255,' + (0.5 * tw) + ')';
+  c.beginPath(); c.arc(cx + r * 0.3, cy - r * 0.15, r * 0.06, 0, 7); c.fill();
+},
+web(c, q, cx, cy, r, T, gx, gz){
+  c.strokeStyle = 'rgba(235,240,250,0.8)'; c.lineWidth = Math.max(1, r * 0.03);
+  for (const p2 of q){ c.beginPath(); c.moveTo(cx, cy); c.lineTo((cx + p2.x) / 2 + (p2.x - cx) * 0.45, (cy + p2.y) / 2 + (p2.y - cy) * 0.45); c.stroke(); }
+  for (let ring = 1; ring <= 3; ring++){
+    c.beginPath();
+    for (let i = 0; i <= 8; i++){
+      const a = i / 8 * 6.283, rr = r * ring / 3.4 * (1 + 0.05 * Math.sin(a * 3 + gx));
+      const px = cx + Math.cos(a) * rr, py = cy + Math.sin(a) * rr * 0.62;
+      i ? c.lineTo(px, py) : c.moveTo(px, py);
+    }
+    c.stroke();
+  }
+},
+gas(c, q, cx, cy, r, T, gx, gz){
+  for (let i = 0; i < 3; i++){
+    const a = T * 0.5 * (i % 2 ? 1 : -1) + i * 2.1 + _sHash(gx, gz, i) * 6;
+    const bx = cx + Math.cos(a) * r * 0.3, by = cy + Math.sin(a) * r * 0.2;
+    const g = c.createRadialGradient(bx, by, 0, bx, by, r * 0.7);
+    g.addColorStop(0, 'rgba(168,208,60,0.5)'); g.addColorStop(1, 'rgba(80,110,20,0)');
+    c.fillStyle = g; c.fillRect(cx - r, cy - r, r * 2, r * 2);
+  }
+},
+electric(c, q, cx, cy, r, T, gx, gz){
+  c.fillStyle = 'rgba(20,40,90,0.45)'; c.fill();
+  const seed = Math.floor(T * 7);
+  c.strokeStyle = 'rgba(150,200,255,0.95)'; c.lineWidth = Math.max(1, r * 0.04);
+  c.shadowColor = 'rgba(120,180,255,0.9)'; c.shadowBlur = 8;
+  for (let b = 0; b < 2; b++){
+    const a = _sHash(gx + seed, gz, b) * 6.28;
+    let px = cx - Math.cos(a) * r * 0.8, py = cy - Math.sin(a) * r * 0.5;
+    c.beginPath(); c.moveTo(px, py);
+    for (let s2 = 0; s2 < 4; s2++){
+      px += Math.cos(a) * r * 0.4 + (_sHash(gz + seed, gx, b * 5 + s2) - 0.5) * r * 0.5;
+      py += Math.sin(a) * r * 0.25 + (_sHash(gx + seed, gz, b * 7 + s2) - 0.5) * r * 0.3;
+      c.lineTo(px, py);
+    }
+    c.stroke();
+  }
+  c.shadowBlur = 0;
+},
+crack(c, q, cx, cy, r, T, gx, gz){
+  c.fillStyle = 'rgba(46,36,28,0.85)'; c.fill();
+  const pulse = 0.6 + 0.4 * Math.sin(T * 2 + gx * 1.5 + gz);
+  c.strokeStyle = 'rgba(255,' + (90 + 60 * pulse | 0) + ',10,' + (0.75 + 0.2 * pulse) + ')';
+  c.lineWidth = Math.max(1.5, r * 0.06);
+  c.shadowColor = 'rgba(255,120,20,0.8)'; c.shadowBlur = 10 * pulse;
+  for (let i = 0; i < 3; i++){
+    const a = _sHash(gx, gz, i) * 6.28;
+    let px = cx + Math.cos(a) * r * 0.15, py = cy + Math.sin(a) * r * 0.1;
+    c.beginPath(); c.moveTo(px, py);
+    for (let s2 = 0; s2 < 3; s2++){
+      px += Math.cos(a + (_sHash(gz, gx, i * 4 + s2) - 0.5) * 1.4) * r * 0.34;
+      py += Math.sin(a + (_sHash(gx, gz, i * 4 + s2) - 0.5) * 1.4) * r * 0.22;
+      c.lineTo(px, py);
+    }
+    c.stroke();
+  }
+  c.shadowBlur = 0;
+},
+oil(c, q, cx, cy, r, T, gx, gz){
+  c.fillStyle = 'rgba(12,10,20,0.9)'; c.fill();
+  const hue = (T * 30 + gx * 40 + gz * 70) % 360;
+  c.globalAlpha = 0.3;
+  c.fillStyle = 'hsl(' + hue + ',80%,55%)';
+  c.beginPath(); c.ellipse(cx - r * 0.2, cy - r * 0.08, r * 0.5, r * 0.2, 0.5, 0, 7); c.fill();
+  c.fillStyle = 'hsl(' + ((hue + 120) % 360) + ',80%,55%)';
+  c.beginPath(); c.ellipse(cx + r * 0.25, cy + r * 0.12, r * 0.4, r * 0.16, -0.4, 0, 7); c.fill();
+  c.globalAlpha = 1;
+},
+puddle(c, q, cx, cy, r, T, gx, gz){
+  c.fillStyle = 'rgba(38,84,116,0.75)'; c.fill();
+  for (const off of [0, 0.5]){
+    const ph = (T * 0.5 + off + _sHash(gx, gz, 1)) % 1;
+    c.strokeStyle = 'rgba(180,220,240,' + (0.7 * (1 - ph)) + ')';
+    c.lineWidth = Math.max(1, r * 0.035);
+    c.beginPath(); c.ellipse(cx, cy, r * ph, r * ph * 0.6, 0, 0, 7); c.stroke();
+  }
+},
+sea(c, q, cx, cy, r, T, gx, gz){
+  c.fillStyle = 'rgba(10,60,90,0.85)'; c.fill();
+  c.strokeStyle = 'rgba(160,220,240,0.6)'; c.lineWidth = Math.max(1, r * 0.04);
+  for (let w = 0; w < 2; w++){
+    c.beginPath();
+    for (let i = 0; i <= 10; i++){
+      const px = cx - r + (i / 10) * r * 2;
+      const py = cy + (w - 0.5) * r * 0.5 + Math.sin(i * 0.9 + T * 2.2 + w * 2) * r * 0.09;
+      i ? c.lineTo(px, py) : c.moveTo(px, py);
+    }
+    c.stroke();
+  }
+},
+caltrops(c, q, cx, cy, r, T, gx, gz){
+  c.fillStyle = 'rgba(52,42,32,0.55)'; c.fill();
+  for (let i = 0; i < 6; i++){
+    const px = cx + (_sHash(gx, gz, i) - 0.5) * r * 1.5;
+    const py = cy + (_sHash(gz, gx, i) - 0.5) * r * 0.9;
+    const sz = r * (0.08 + 0.06 * _sHash(gx, gz, i + 7));
+    c.fillStyle = 'rgba(190,198,210,0.95)';
+    c.beginPath(); c.moveTo(px, py - sz * 1.6); c.lineTo(px - sz, py + sz * 0.7); c.lineTo(px + sz, py + sz * 0.7); c.fill();
+  }
+},
+blood(c, q, cx, cy, r, T, gx, gz){
+  for (let i = 0; i < 3; i++){
+    const bx = cx + (_sHash(gx, gz, i) - 0.5) * r * 1.1;
+    const by = cy + (_sHash(gz, gx, i) - 0.5) * r * 0.65;
+    const br = r * (0.3 + 0.35 * _sHash(gx, gz, i + 5));
+    c.fillStyle = 'rgba(' + (110 + 40 * _sHash(gz, gx, i + 3) | 0) + ',8,10,0.8)';
+    c.beginPath(); c.ellipse(bx, by, br, br * 0.6, _sHash(gx, gz, i + 11) * 3, 0, 7); c.fill();
+  }
+  const tw = 0.5 + 0.5 * Math.sin(T * 0.8 + gx);
+  c.fillStyle = 'rgba(255,120,120,' + (0.25 * tw) + ')';
+  c.beginPath(); c.arc(cx + r * 0.2, cy - r * 0.1, r * 0.05, 0, 7); c.fill();
+},
+void(c, q, cx, cy, r, T, gx, gz){
+  const g = c.createRadialGradient(cx, cy, 0, cx, cy, r);
+  g.addColorStop(0, 'rgba(30,4,60,0.95)'); g.addColorStop(0.6, 'rgba(90,25,180,0.6)'); g.addColorStop(1, 'rgba(20,0,45,0.1)');
+  c.fillStyle = g; c.fill();
+  c.globalCompositeOperation = 'lighter';
+  c.strokeStyle = 'rgba(190,110,255,0.85)'; c.lineWidth = Math.max(1, r * 0.045);
+  for (let arm = 0; arm < 3; arm++){
+    c.beginPath();
+    for (let i = 0; i <= 9; i++){
+      const t2 = i / 9, a = arm * 2.09 - T * 1.1 + t2 * 3.6, rr = r * 0.85 * t2;
+      const px = cx + Math.cos(a) * rr, py = cy + Math.sin(a) * rr * 0.62;
+      i ? c.lineTo(px, py) : c.moveTo(px, py);
+    }
+    c.stroke();
+  }
+},
+toxic(c, q, cx, cy, r, T, gx, gz){
+  c.fillStyle = 'rgba(30,90,20,0.75)'; c.fill();
+  for (const off of [0, 0.5]){
+    const ph = (T * 0.6 + off + _sHash(gx, gz, 2)) % 1;
+    c.strokeStyle = 'rgba(150,255,60,' + (0.8 * (1 - ph)) + ')';
+    c.lineWidth = Math.max(1, r * 0.04);
+    c.beginPath(); c.ellipse(cx, cy, r * 0.9 * ph, r * 0.55 * ph, 0, 0, 7); c.stroke();
+  }
+},
+mire(c, q, cx, cy, r, T, gx, gz){
+  c.fillStyle = 'rgba(48,32,64,0.8)'; c.fill();
+  for (let i = 0; i < 4; i++){
+    const ph = (T * 0.35 + _sHash(gx, gz, i) * 3) % 1;
+    const bx = cx + (_sHash(gz, gx, i) - 0.5) * r * 1.2;
+    const by = cy + (_sHash(gx, gz, i + 6) - 0.5) * r * 0.7;
+    c.strokeStyle = 'rgba(150,170,90,' + (0.7 * (1 - ph)) + ')';
+    c.lineWidth = 1.2;
+    c.beginPath(); c.arc(bx, by, r * 0.14 * ph + 0.5, 0, 7); c.stroke();
+  }
+},
+grease(c, q, cx, cy, r, T, gx, gz){
+  c.fillStyle = 'rgba(60,38,12,0.8)'; c.fill();
+  const sh = Math.sin(T * 0.8 + gx - gz) * r * 0.3;
+  const g = c.createLinearGradient(cx - r + sh, cy - r * 0.3, cx + r + sh, cy + r * 0.3);
+  g.addColorStop(0, 'rgba(230,180,90,0)'); g.addColorStop(0.5, 'rgba(230,180,90,0.35)'); g.addColorStop(1, 'rgba(230,180,90,0)');
+  c.fillStyle = g; c.fill();
+},
+holy(c, q, cx, cy, r, T, gx, gz){
+  c.globalCompositeOperation = 'lighter';
+  const glow = 0.85 + 0.15 * Math.sin(T * 2);
+  c.strokeStyle = 'rgba(255,216,110,' + (0.9 * glow) + ')';
+  c.lineWidth = Math.max(1.2, r * 0.05);
+  c.beginPath(); c.ellipse(cx, cy, r * 0.72, r * 0.44, 0, 0, 7); c.stroke();
+  c.beginPath(); c.ellipse(cx, cy, r * 0.45, r * 0.27, 0, 0, 7); c.stroke();
+  const a0 = T * 0.35;
+  c.beginPath();
+  for (let i = 0; i < 6; i++){
+    const a = a0 + i * 1.047, rr = (i % 2 ? 0.18 : 0.4) * r;
+    const px = cx + Math.cos(a) * rr, py = cy + Math.sin(a) * rr * 0.62;
+    i ? c.lineTo(px, py) : c.moveTo(px, py);
+  }
+  c.closePath(); c.stroke();
+  const g = c.createRadialGradient(cx, cy, 0, cx, cy, r * 0.8);
+  g.addColorStop(0, 'rgba(255,230,150,' + (0.28 * glow) + ')'); g.addColorStop(1, 'rgba(255,220,120,0)');
+  c.fillStyle = g; c.fill();
+}
+};
+/* Re-stroke the move/attack/place/swap highlight on top of a painted surface —
+   brighter and thicker than the under-ground pass so it reads through flames
+   and oil sheen. Keyed off SURFACES so a clean tile is never touched twice. */
+function drawPaintOverSurfaces(T){
+  for (const key in SURFACES){
+    if (!SURFACES[key]) continue;
+    let col = null;
+    if (PAINT.attack.has(key))     col = '#ff5a4a';
+    else if (PAINT.move.has(key))  col = '#4fd0ff';
+    else if (PAINT.place.has(key)) col = '#7fe89f';
+    else if (PAINT.swap.has(key))  col = '#e0b64a';
+    if (!col) continue;
+    const c = key.split(','), gx = +c[0], gz = +c[1];
+    if (!isFinite(gx) || !isFinite(gz)) continue;
+    const P = tilePoly(gx, gz, 0.02); if (!P) continue;
+    const pulse = 0.22 + Math.sin(T * 3 + (gx + gz) * 0.6) * 0.07;
+    pathPoly(P); ctx.fillStyle = rgba(col, pulse); ctx.fill();
+    pathPoly(P); ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 2.5; ctx.stroke();
+  }
+}
+function drawSurfaceFx(T){
+  const keys = Object.keys(SURFACES);
+  if (!keys.length) return;
+  for (const key of keys){
+    const fx = SURFACE_2D[SURFACES[key]];
+    if (!fx) continue;
+    const p2 = key.split(','), gx = +p2[0], gz = +p2[1];
+    const quad = _sQuad(gx, gz);
+    if (!quad) continue;
+    const cx2 = (quad[0].x + quad[1].x + quad[2].x + quad[3].x) / 4;
+    const cy2 = (quad[0].y + quad[1].y + quad[2].y + quad[3].y) / 4;
+    const r2 = Math.max(6, (Math.abs(quad[1].x - quad[0].x) + Math.abs(quad[2].x - quad[3].x)) / 4);
+    ctx.save();
+    ctx.beginPath();
+    quad.forEach((pt, i) => i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y));
+    ctx.closePath();
+    ctx.clip();
+    try { fx(ctx, quad, cx2, cy2, r2, T, gx, gz); } catch (e) {}
+    ctx.restore();
+  }
+}
+function frame(now){
+  if (frameErr) return;
+  try {
+  const dt = Math.min((now - last)/1000, 0.05) || 0.016; last = now; T += dt;
+  update(dt);
+  ctx.clearRect(0,0,W,H);
+  drawSky();
+  drawShards();
+  drawBoard();
+  /* 🎨 Painted tile surfaces — composited HERE, between the ground and the
+     depth-sorted pass, so a unit standing in fire is drawn ON TOP of it. The
+     shader layer renders to its own offscreen WebGL canvas and is blitted in;
+     leaving that canvas visible above the stage instead would paint the flames
+     over the unit's legs. */
+  try { drawSurfaceFx(T); } catch (e) {}
+  /* 🎯 …then re-assert the legal-target highlight on the tiles that just got
+     painted over. The first pass (in drawBoard) sits UNDER the ground shading
+     on purpose so it reads as part of the floor — but a hazard composites
+     after it and buries it, which made a fire/oil tile look unreachable even
+     though it is a perfectly legal move. Only surfaced tiles are touched, so
+     the rest of the board keeps the original look. */
+  try { drawPaintOverSurfaces(T); } catch (e) {}
+  drawEffects('ground');
+  /* painter's algorithm: far rows first */
+  const drawables = [];
+  for (const t of MAP.tiles) if (t.prop) drawables.push({ z:t.z, kind:'prop', t });
+  for (const u of units) drawables.push({ z:u.z, kind:'unit', u });
+  for (const tb of TOMBS) drawables.push({ z:tb.z, kind:'tomb', tb });
+  /* pylons live in world z, convert to grid-space depth for one sort */
+  for (const ev of (MAP.events||[])) drawables.push({ z:ev.z, kind:'event', ev });
+  for (const br of braziers) drawables.push({ z: br.z + (MAP.rows-1)/2, kind:'pylon', br });
+  drawables.sort((a,b) => a.z - b.z);
+  for (const d of drawables){
+    if (d.kind==='prop') drawProp(d.t);
+    else if (d.kind==='event') drawEvent(d.ev);
+    else if (d.kind==='pylon') drawPylon(d.br);
+    else if (d.kind==='tomb') drawTomb(d.tb);
+    else drawUnit(d.u);
+  }
+  /* 📍 Publish unit screen rects to the host ~4x/sec. Every VFX and cinematic
+     in the game anchors off a unit's on-screen box; with the DOM board hidden
+     those lookups return stale iso coordinates, so the host needs ours. Cheap
+     and rate-limited — this is position data, not a render path. */
+  if (EMBEDDED && (T - (window.__rectsAt || 0)) > 0.25){
+    window.__rectsAt = T;
+    const map = {};
+    for (const u of units){
+      if (u.dead) continue;
+      const b = unitScreenBox(u);
+      if (b) map[String(u.id)] = { left:Math.round(b.left), top:Math.round(b.top),
+                                   width:Math.round(b.width), height:Math.round(b.height) };
+    }
+    /* tile centres too — summon / spell cinematics anchor by grid position,
+       not by unit, and those lookups hit the hidden DOM board as well. */
+    const tmap = {};
+    for (let z = 0; z < MAP.rows; z++){
+      for (let x = 0; x < MAP.cols; x++){
+        const wp = gw(x, z, tileElev(x, z));
+        const p = project({ x:wp.x, y:wp.y, z:wp.z });
+        if (p) tmap[x + ',' + z] = { cx: Math.round(p.x), cy: Math.round(p.y) };
+      }
+    }
+    post('rects', { rects: map, tiles: tmap });
+  }
+  drawParticles();
+  drawEffects('air');
+  /* atmosphere */
+  const vg = ctx.createRadialGradient(VIEW.cx, VIEW.cy, Math.min(W,H)*.25, VIEW.cx, VIEW.cy, Math.max(W,H)*.75);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,`rgba(0,0,0,.42)`);
+  ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
+  drawEffects('screen');
+  drawGuides();
+  } catch (err) {
+    frameErr = true;
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.fillStyle = '#180a0a'; ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.fillStyle = '#ff8a7a'; ctx.font = '600 16px monospace';
+    ctx.fillText('RENDER ERROR: ' + (err && err.message || err), 26, 44);
+    ((err && err.stack || '').split('\n').slice(1,4)).forEach((s,i) =>
+      ctx.fillText(s.trim(), 26, 74 + i*22));
+    console.error(err); return;
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   INTERACTION — screen → tile via ray/plane intersect
+   ══════════════════════════════════════════════════════════════════ */
+function pickTile(mx, my){
+  /* unproject to a ray, intersect y=0 plane, convert to grid */
+  const ndx = (mx - VIEW.cx) / VIEW.scale;
+  const ndy = -(my - VIEW.cy) / VIEW.scale;
+  const dir = norm({
+    x: CAM.f.x + CAM.r.x*ndx + CAM.u.x*ndy,
+    y: CAM.f.y + CAM.r.y*ndx + CAM.u.y*ndy,
+    z: CAM.f.z + CAM.r.z*ndx + CAM.u.z*ndy
+  });
+  if (Math.abs(dir.y) < 1e-5) return null;
+  const t = -CAM.pos.y / dir.y; if (t <= 0) return null;
+  const wx = CAM.pos.x + dir.x*t, wz = CAM.pos.z + dir.z*t;
+  const gx = Math.round(wx/CONFIG.tile + (MAP.cols-1)/2);
+  const gz = Math.round(wz/CONFIG.tile + (MAP.rows-1)/2);
+  if (gx<0 || gz<0 || gx>=MAP.cols || gz>=MAP.rows) return null;
+  return { x:gx, z:gz };
+}
+cv.addEventListener('mousemove', e => { hoverTile = pickTile(e.clientX, e.clientY); });
+cv.addEventListener('mouseleave', () => hoverTile = null);
+cv.addEventListener('click', e => {
+  const t = pickTile(e.clientX, e.clientY); if (!t) { selected = null; return; }
+  dispatch('tileClick', { x:t.x, z:t.z });
+  if (armedCard){ summonUnit(armedCard, t.x, t.z); armedCard = null; renderHand(); return; }
+  const u = unitAt(t.x, t.z);
+  if (u){
+    if (selected && selected !== u.id && u.side === 'foe'){ attackUnit(selected, u.id); return; }
+    selected = (selected === u.id) ? null : u.id;
+    dispatch('unitClick', { id:u.id });
+  } else if (selected){
+    moveUnit(selected, t.x, t.z);
+  }
+});
+addEventListener('keydown', e => {
+  if (e.key === 'g' || e.key === 'G'){ showGuides = !showGuides; }
+  if (e.key === '1') setTimeOfDay('dawn');
+  if (e.key === '2') setTimeOfDay('day');
+  if (e.key === '3') setTimeOfDay('dusk');
+  if (e.key === '4') setTimeOfDay('night');
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   PUBLIC API — keep these signatures when porting
+   ══════════════════════════════════════════════════════════════════ */
+function dispatch(type, detail){ document.dispatchEvent(new CustomEvent('board:'+type, { detail })); }
+function setTimeOfDay(key){
+  if (!TIME_PRESETS[key]) return;
+  BATTLE.timeOfDay = key;
+  lightLerp = { from:{...LIGHT}, to:{...TIME_PRESETS[key]}, t:0, dur:2.5 };
+  dispatch('timeOfDay', { key });
+}
+/* ══════════════════════════════════════════════════════════════════
+   LOCATION CARD HOOK — call this when a LOCATION card resolves.
+   Cross-fades the board art over 0.8s and applies the location's sky.
+     Board.setLocation('dark-forest')
+   The card's `location` field should be the key into LOCATIONS above.
+   ══════════════════════════════════════════════════════════════════ */
+function setLocation(id, instant){
+  if (!LOCATIONS[id]) { console.warn('unknown location', id); return; }
+  loadLocation(id, !!instant);
+  dispatch('locationChange', { location:id, name:LOCATIONS[id].name });
+}
+function focusTile(x,z){ focus = {x,z}; }
+function clearFocus(){ focus = null; }
+window.Board = {
+  buildStage, spawnUnit, summonUnit, moveUnit, attackUnit, killUnit,
+  setTimeOfDay, setLocation, setPylonArt, focusTile, clearFocus, tileAt,
+  spawnEvent, setEvents, triggerEvent, clearEvent, eventsAt, get eventTypes(){ return EVENT_TYPES; },
+  get locations(){ return LOCATIONS; }, get map(){ return MAP; }, get units(){ return units; },
+  on:(evt,fn) => document.addEventListener('board:'+evt, fn),
+  get paint(){ return PAINT; }, unitScreenBox
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   HAND (placeholder strip — real hand comes from the existing HUD)
+   ══════════════════════════════════════════════════════════════════ */
+function paintCardArt(c, card, w, h, dpr){
+  c.setTransform(dpr,0,0,dpr,0,0);
+  const g = c.createLinearGradient(0,0,0,h);
+  g.addColorStop(0, rgba(card.ec,.32)); g.addColorStop(.78,'rgba(10,7,16,.95)'); g.addColorStop(1,'rgba(6,4,10,1)');
+  c.fillStyle = g; c.fillRect(0,0,w,h);
+  const rg = c.createRadialGradient(w/2,h*.44,2,w/2,h*.44,w*.62);
+  rg.addColorStop(0, rgba(card.ec,.34)); rg.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle = rg; c.fillRect(0,0,w,h);
+  c.save(); c.translate(w/2, h*.80);
+  paintSprite(c, card.unit, h*.52, UNIT_DEFS[card.unit].color, 0);
+  c.restore();
+}
+
+function renderHand(){
+  const el = document.getElementById('hand');
+  el.innerHTML = HAND.map(c => `
+    <div class="hcard ${armedCard===c.id?'armed':''}" data-id="${c.id}">
+      <span class="cost">${c.cost}</span>
+      <span class="art"><canvas width="372" height="520" style="width:186px;height:260px"></canvas></span>
+      <span class="el" style="color:${c.ec}">${c.el}</span>
+      <span class="nm">${UNIT_DEFS[c.unit].name}</span>
+    </div>`).join('');
+  el.querySelectorAll('.hcard').forEach(node => {
+    const card = HAND.find(c => c.id === node.dataset.id);
+    const cc = node.querySelector('canvas').getContext('2d');
+    paintCardCanvas(cc, card);
+    node.addEventListener('click', () => {
+      armedCard = (armedCard === card.id) ? null : card.id;
+      renderHand();
+    });
+  });
+}
+function paintCardCanvas(c, card){ paintCardArt(c, card, 186, 260, 2); }
+
+/* ══════════════════════════════════════════════════════════════════
+   BOOT
+   ══════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════
+   HOST BRIDGE — the game drives the board over postMessage.
+   Embedded  = we have a parent window. In that mode the demo hand, the
+   hint and the demo spawns are all suppressed and the board waits for a
+   `board:init` snapshot instead of inventing one.
+   Protocol (host → board), all `{ type, ... }`:
+     board:init        { map, locations, location, timeOfDay, defs, units, safe }
+     board:map         { map }                 rebuild the stage
+     board:defs        { defs }                register unit art / sheets
+     board:units       { units }               full snapshot (replaces all)
+     board:location    { id }                  LOCATION CARD resolved
+     board:timeOfDay   { key }                 weather flip (lerps 2.5s)
+     board:spawn       { key, x, z, side, id }
+     board:summon      { key, x, z, cardId }   full card→sprite ceremony
+     board:move        { id, x, z }
+     board:attack      { id, targetId }
+     board:kill        { id }
+     board:focus       { x, z } | board:clearFocus
+     board:event       { action:'spawn'|'trigger'|'clear', type, x, z }
+   Board → host: board:ready, board:tileClick, board:unitClick,
+     board:summonComplete, board:locationChange, board:timeOfDay
+   ══════════════════════════════════════════════════════════════════ */
+const EMBEDDED = (() => { try { return window.parent && window.parent !== window; } catch (e) { return false; } })();
+const HOST = { origin:'*' };
+function post(type, detail){
+  if (!EMBEDDED) return;
+  try { window.parent.postMessage(Object.assign({ type:'board:' + type }, detail || {}), HOST.origin); } catch (e) {}
+}
+/* mirror every internal dispatch out to the host */
+['tileClick','unitClick','tileHover','cardPlayed','summonComplete','locationChange','timeOfDay'].forEach(ev => {
+  document.addEventListener('board:' + ev, e => post(ev, e.detail || {}));
+});
+
+function applyDefs(defs){
+  if (!defs) return;
+  for (const k in defs){
+    const d = defs[k]; if (!d) continue;
+    /* ⚠ MUTATE IN PLACE. spawnUnit stores `u.def = UNIT_DEFS[key]` by
+       REFERENCE, so replacing the object here left every already-spawned unit
+       pointing at the old procedural def — which is exactly why real sprites
+       didn't take effect until a respawn. */
+    const cur = UNIT_DEFS[k] || (UNIT_DEFS[k] = {});
+    Object.assign(cur, {
+      name: d.name || k,
+      color: d.color || '#cfd6e4',
+      h: (typeof d.h === 'number' && d.h > 0) ? d.h : 1.05,
+      art: (typeof d.art === 'string' && d.art) ? d.art : null,
+      sheet: d.sheet || null,
+      frames: Array.isArray(d.frames) ? d.frames : null,
+      fps: d.fps || 10,
+      _phase: cur._phase || ((k.length * 0.137) % 1)
+    });
+    /* warm the textures NOW so the first paint already has real art instead
+       of one procedural flash while the images decode */
+    if (Array.isArray(d.frames)) for (const f of d.frames) artImage(f);
+    if (typeof d.art === 'string') artImage(d.art);
+    if (cur.art || cur.frames || (cur.sheet && cur.sheet.src)) delete cur._proc;   // real art wins
+  }
+}
+/* Replace the whole unit set from a match snapshot. Units already on the
+   board with the same id are MOVED rather than re-spawned, so a snapshot
+   refresh never restarts an animation mid-flight. */
+function applyUnits(list){
+  if (!Array.isArray(list)) return;
+  const seen = new Set();
+  for (const u of list){
+    if (!u || u.id == null) continue;
+    seen.add(String(u.id));
+    const cur = units.find(x => String(x.id) === String(u.id) && !x.dead);
+    if (cur){
+      if (cur.gx !== u.x || cur.gz !== u.z) moveUnit(cur.id, u.x, u.z);
+      /* 🜂 KALON TRANSFORM (and any other in-place identity change).
+         The unit keeps its instance id but its CARD changes, so matching by id
+         alone left the base form's art on the board forever. Swap the key and
+         the def reference in place — no respawn, so position, facing and any
+         running animation survive. */
+      const nk = u.key || u.defKey;
+      if (nk && cur.key !== nk){
+        cur.key = nk;
+        // If the new form's def hasn't landed yet, mint one the same way
+        // spawnUnit does — otherwise paintSprite would find nothing for this
+        // key and the unit would vanish instead of just looking generic.
+        if (!UNIT_DEFS[nk]){
+          let h = 0; for (let i = 0; i < String(nk).length; i++) h = (h * 31 + String(nk).charCodeAt(i)) | 0;
+          const proc = PROC_KEYS[Math.abs(h) % PROC_KEYS.length];
+          UNIT_DEFS[nk] = Object.assign({}, PROC_DEFS[proc], { name:String(nk), _proc:proc });
+        }
+        cur.def = UNIT_DEFS[nk];
+        cur.flash = Math.max(cur.flash || 0, 0.9);   // a beat of white on the swap
+      }
+      continue;
+    }
+    const nu = spawnUnit(u.key || u.defKey || 'imp', u.x, u.z, u.side === 'foe' ? 'foe' : 'mine');
+    if (nu && u.id != null) nu.id = String(u.id);
+  }
+  for (const x of units.slice()) if (!x.dead && !seen.has(String(x.id))) killUnit(x.id);
+}
+
+function handleHostMessage(msg){
+  if (!msg || typeof msg.type !== 'string' || msg.type.indexOf('board:') !== 0) return;
+  const t = msg.type.slice(6);
+  try {
+    if (t === 'init'){
+      if (msg.safe) Object.assign(CONFIG.SAFE, msg.safe);
+      if (msg.locations) setLocations(msg.locations, true);
+      if (msg.map) Object.assign(MAP, msg.map);
+      buildStage();
+      applyDefs(msg.defs);
+      loadLocation(msg.location || MAP.location || DEFAULT_LOCATION, true);
+      if (msg.timeOfDay && TIME_PRESETS[msg.timeOfDay]){
+        BATTLE.timeOfDay = msg.timeOfDay;
+        Object.assign(LIGHT, TIME_PRESETS[msg.timeOfDay]);
+      }
+      applyUnits(msg.units);
+      // 🗿 Real match events — after buildStage so tile elevations exist.
+      if (msg.events) setEvents(msg.events);
+      resize();
+    }
+    else if (t === 'map'){ if (msg.map) Object.assign(MAP, msg.map); buildStage(); if (msg.events) setEvents(msg.events); resize(); }
+    else if (t === 'events'){ setEvents(msg.events); }
+    else if (t === 'defs')      applyDefs(msg.defs);
+    else if (t === 'units')     applyUnits(msg.units);
+    /* 🗺 LATE LOCATION REGISTRATION. `setLocation` hard-bails with "unknown
+       location" when the id isn't in LOCATIONS — and the table is only built
+       once, at init, from the cards that existed and had a usable image THEN.
+       A location card PLAYED mid-match was therefore almost never registered,
+       so the battlefield never changed. The host now sends this immediately
+       before every `location` message. keepDefault=true so it MERGES rather
+       than wiping the table. */
+    /* 🎨 Painted tile surfaces: { "x,z": effectKey }. Whole-map replace,
+       because the host already diffs and only sends on change. */
+    else if (t === 'surfaces') SURFACES = (msg.tiles && typeof msg.tiles === 'object') ? msg.tiles : {};
+    else if (t === 'locations') setLocations(msg.locations || {}, true);
+    else if (t === 'location')  setLocation(msg.id, !!msg.instant);
+    else if (t === 'timeOfDay') setTimeOfDay(msg.key);
+    else if (t === 'spawn'){ const u = spawnUnit(msg.key, msg.x, msg.z, msg.side === 'foe' ? 'foe' : 'mine'); if (u && msg.id != null) u.id = String(msg.id); }
+    else if (t === 'summon')    summonUnit(msg.key, msg.x, msg.z, { id:msg.id, side:msg.side, cost:msg.cost });
+    else if (t === 'summonFx')  summonFx(msg.id);
+    /* 🪦 Tombstones. The game owns their whole lifecycle (decay, revive
+       timers, loot state); the board just renders the markers it is given. */
+    else if (t === 'tombs'){
+      TOMBS.length = 0;
+      for (const tb of (msg.list || [])) if (tb) TOMBS.push(tb);
+      for (const tb of TOMBS) if (tb.img) artImage(tb.img);   // warm the texture
+    }
+    else if (t === 'move')      moveUnit(msg.id, msg.x, msg.z);
+    else if (t === 'attack')    attackUnit(msg.id, msg.targetId);
+    else if (t === 'kill')      killUnit(msg.id);
+    else if (t === 'focus')     focusTile(msg.x, msg.z);
+    else if (t === 'clearFocus')clearFocus();
+    /* 🎨 SURFACE PAINT — the game decides which tiles are legal targets
+       (move / attack / placement / swap); the board only tints them. Sent as
+       sets of "x,z" keys so lookup during the tile loop is O(1). */
+    else if (t === 'paint'){
+      PAINT.move  = new Set(msg.move  || []);
+      PAINT.attack= new Set(msg.attack|| []);
+      PAINT.place = new Set(msg.place || []);
+      PAINT.swap  = new Set(msg.swap  || []);
+      PAINT.sel   = msg.sel || null;
+    }
+    /* 🖱 FORWARDED POINTER. The stage paints BELOW the app (so the HUD stays
+       on top), which means it cannot receive its own mouse events. The host
+       captures them over the board area and forwards normalised coords here;
+       we run the same perspective pick the canvas would have. */
+    else if (t === 'pointer'){
+      const mx = msg.nx * W, my = msg.ny * H;
+      const tile = pickTile(mx, my);
+      const hit = tile ? unitAt(tile.x, tile.z) : null;
+      if (msg.kind === 'click'){
+        if (tile) dispatch('tileClick', { x:tile.x, z:tile.z, unitId: hit ? String(hit.id) : null });
+      } else {
+        const key = (tile ? (tile.x + ',' + tile.z) : '') + '|' + (hit ? hit.id : '');
+        if (key !== (window.__lastHoverKey || '')){
+          window.__lastHoverKey = key;
+          if (tile) focusTile(tile.x, tile.z); else clearFocus();
+          dispatch('tileHover', { x: tile ? tile.x : -1, z: tile ? tile.z : -1,
+                                  unitId: hit ? String(hit.id) : null,
+                                  box: hit ? unitScreenBox(hit) : null });
+        }
+      }
+    }
+    else if (t === 'event'){
+      if (msg.action === 'spawn')   spawnEvent(msg.evType || msg.evtType, msg.x, msg.z);
+      if (msg.action === 'trigger') triggerEvent(msg.x, msg.z, msg.unitId);
+      if (msg.action === 'clear')   clearEvent(msg.x, msg.z);
+    }
+  } catch (e) { try { console.warn('board message failed', t, e); } catch (_) {} }
+}
+window.addEventListener('message', e => handleHostMessage(e.data));
+
+try {
+  /* EMBEDDED: the host sizes the iframe to the exact rect the old board
+     occupied, so the stage must FILL the canvas — no UI gutters and no
+     optical shift (both exist only for the standalone full-screen preview). */
+  if (EMBEDDED){
+    CONFIG.SAFE = { left:0, right:0, top:0, bottom:0 };
+    CONFIG.viewShiftY = 0;
+  }
+  buildStage();
+  if (EMBEDDED){
+    /* the game owns the hand + hint; hide the standalone stand-ins */
+    const h = document.getElementById('hand'); if (h) h.style.display = 'none';
+    const hi = document.getElementById('hint'); if (hi) hi.remove();
+  } else {
+    /* standalone preview — a demo board so the file still opens on its own */
+    spawnUnit('imp', 3, 1, 'foe');
+    spawnUnit('knight', 6, 0, 'foe');
+    spawnUnit('wyrm', 1, 2, 'foe');
+    spawnUnit('mage', 2, 5, 'mine');
+    spawnUnit('crystal', 5, 6, 'mine');
+    HAND = [
+      { id:'c1', cost:5, unit:'jelly',   el:'NATURE',  ec:'#8fd84a' },
+      { id:'c2', cost:6, unit:'bunny',   el:'SHADOW',  ec:'#c8a8ff' },
+      { id:'c3', cost:0, unit:'mage',    el:'FIRE',    ec:'#ff8a3c' },
+      { id:'c4', cost:6, unit:'wyrm',    el:'MYTHIC',  ec:'#f6dc95' },
+      { id:'c5', cost:2, unit:'crystal', el:'CRYSTAL', ec:'#5fe8d5' },
+      { id:'c6', cost:5, unit:'knight',  el:'MYTHIC',  ec:'#f6dc95' }
+    ];
+    renderHand();
+  }
+  loadLocation(DEFAULT_LOCATION, true);
+  setPylonArt(PYLON_ART.src);
+  requestAnimationFrame(t => { last = t; frame(t); });
+  post('ready', { cols:MAP.cols, rows:MAP.rows });
+} catch (err) {
+  /* never fail silently to a black screen */
+  const c = cv.getContext('2d');
+  c.setTransform(1,0,0,1,0,0);
+  c.fillStyle = '#140a0a'; c.fillRect(0,0,cv.width,cv.height);
+  c.fillStyle = '#ff8a7a'; c.font = '600 15px monospace';
+  c.fillText('BATTLE BOARD FAILED TO START:', 24, 40);
+  c.fillText(String(err && err.message || err), 24, 64);
+  console.error(err);
+}
+</script>
+</body>
+</html>

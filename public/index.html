@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120a3';
+  window.BUILD_VERSION = 'v120a4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -160347,6 +160347,86 @@ try {
                              pickCur: bboPickCur, toggleCls: bboToggleCls, set: bboSet,
                              save: bboSaveProduct, toggle: bboToggleProduct, del: bboDeleteProduct };
   window.__mg.openBankOffice = function () { App.screen = 'bankOffice'; try { render(); } catch (e) {} };
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🖼 REHOST ALL ART — one pass, no re-pasting, no local storage involved.
+  //
+  // Why this exists: card art has had a dozen ways to go wrong because it could
+  // live in five places (the forge_cardArt monolith, per-key car:<id> records,
+  // in-memory blob: urls, a third-party host, the cloud bucket) and which one
+  // was read depended on storage mode, an index, and an LRU. The only tier that
+  // cannot rot is a URL in YOUR bucket: it survives reloads, storage modes,
+  // quota, and publishes to every player for free.
+  //
+  // So this walks every card, and for anything not already on Supabase it:
+  //   fetch (direct, then via /api/art/proxy for CORS-blocking hosts)
+  //     → upload to card-art → VERIFY the public url really reads back 200
+  //     → write card.artUrl + Forge.cardArtUrl → drop the local base64 copy
+  // Anything it cannot prove is reported, never silently counted as done.
+  // Resumable: already-Supabase cards are skipped, so re-running is cheap.
+  // ═══════════════════════════════════════════════════════════════════════════
+  window.__mg.rehostAllArt = async function (opts) {
+    const o = opts || {};
+    const dry = !!o.dryRun;
+    const out = { total: 0, alreadyCloud: 0, rehosted: 0, noArt: 0, failed: [], skipped: [] };
+    try {
+      if (!(Profile.cloud && Profile.cloud.signedIn)) {
+        showToast('⛔ Sign in first — rehosting writes to YOUR Supabase bucket.', 9000);
+        return { error: 'not_signed_in' };
+      }
+      const cards = (typeof getAllCustomCards === 'function') ? (getAllCustomCards() || []) : [];
+      out.total = cards.length;
+      const SB = 'supabase.co';
+      for (let i = 0; i < cards.length; i++) {
+        const c = cards[i];
+        if (!c || !c.id) continue;
+        const cur = (Forge.cardArtUrl && Forge.cardArtUrl[c.id]) || c.artUrl
+                 || (Forge.cardArt && Forge.cardArt[c.id]) || null;
+        if (!cur) { out.noArt++; continue; }
+        if (typeof cur === 'string' && cur.indexOf(SB) >= 0) { out.alreadyCloud++; continue; }
+        if (dry) { out.skipped.push({ card: c.name, from: String(cur).slice(0, 70) }); continue; }
+        try {
+          // 1) Get the bytes as a data: url, whatever form the art is in today.
+          let dataUrl = null;
+          if (typeof cur === 'string' && /^https?:\/\//i.test(cur)) {
+            let resp = null;
+            try { resp = await fetch(cur, { mode: 'cors', cache: 'no-store' }); } catch (e) { resp = null; }
+            if (!resp || !resp.ok) {
+              try { resp = await fetch('/api/art/proxy?url=' + encodeURIComponent(cur), { cache: 'no-store' }); } catch (e) { resp = null; }
+            }
+            if (resp && resp.ok) {
+              const blob = await resp.blob();
+              dataUrl = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => rej(new Error('read')); fr.readAsDataURL(blob); });
+            }
+          } else if (typeof _artValueToDataUrl === 'function') {
+            dataUrl = await _artValueToDataUrl(cur);       // Blob / data: / blob: / wrapper
+          }
+          if (!dataUrl) { out.failed.push({ card: c.name, why: 'could not read the source image' }); continue; }
+          // 2) Upload to the bucket.
+          const up = await cloudUploadCardArtFile(c.id, dataUrl);
+          if (!up || !up.ok || !up.url) { out.failed.push({ card: c.name, why: (up && up.error) || 'upload failed' }); continue; }
+          // 3) PROVE it reads back before claiming success.
+          let ok200 = false;
+          try { const chk = await fetch(up.url, { cache: 'no-store' }); ok200 = chk.ok; } catch (e) { ok200 = false; }
+          if (!ok200) { out.failed.push({ card: c.name, why: 'uploaded but the public URL did not read back — is card-art Public?' }); continue; }
+          // 4) Commit, and drop the fragile local copy.
+          if (!Forge.cardArtUrl) Forge.cardArtUrl = {};
+          Forge.cardArtUrl[c.id] = up.url;
+          c.artUrl = up.url; c._editedAt = Date.now();
+          try { if (Forge.cardArt && Forge.cardArt[c.id]) delete Forge.cardArt[c.id]; } catch (e) {}
+          try { await idbDel('car:' + c.id); if (Forge._carIds) Forge._carIds.delete(c.id); } catch (e) {}
+          out.rehosted++;
+          if (out.rehosted % 5 === 0) { try { saveForge(); } catch (e) {} showToast('☁ Rehosted ' + out.rehosted + '…', 1500); }
+        } catch (e) { out.failed.push({ card: c.name, why: (e && e.message) || 'error' }); }
+      }
+      if (!dry) { try { saveForge(); } catch (e) {} try { render(); } catch (e) {} }
+    } catch (e) { out.threw = (e && e.message) || String(e); }
+    try { console.log(JSON.stringify(out, null, 1)); } catch (e) {}
+    try {
+      showToast(dry ? ('🔍 ' + out.skipped.length + ' card(s) would be rehosted (' + out.alreadyCloud + ' already cloud).')
+                    : ('☁ Rehosted ' + out.rehosted + ' · already cloud ' + out.alreadyCloud + ' · failed ' + out.failed.length + (out.failed.length ? ' — see console' : '')), 12000);
+    } catch (e) {}
+    return out;
+  };
   // ☁ WHY IS MY ART NOT GOING TO SUPABASE? Answers it with a real round trip
   // instead of guesses: signed-in state, a live 1px upload to the card-art
   // bucket, a public read-back of that upload, then cleanup. Every failure mode

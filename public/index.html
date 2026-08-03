@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120a0';
+  window.BUILD_VERSION = 'v120a1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -63872,11 +63872,31 @@ function _lazyLoadCardArt(id, force) {
   if ((!_lazyArtOn && !force) || !id) return;
   if (_carPending.has(id) || _carMissing.has(id)) return;
   if (Forge.cardArt && Forge.cardArt[id]) { _lazyTouch('car', id); return; }
-  if (Forge._carIds && !Forge._carIds.has(id)) { _carMissing.add(id); return; }
+  // ⚠ The index is NOT proof of absence — the same correction already made for
+  // sprites (_sprMissing). Card art written while the app was in the OTHER
+  // storage mode lives in the forge_cardArt MONOLITH and was never added to
+  // _carIds, so this gate hid it completely. A FORCED load (the Forge editor
+  // reopening a card) must always hit the disk.
+  if (!force && Forge._carIds && !Forge._carIds.has(id)) { _carMissing.add(id); return; }
   _carPending.add(id);
   (async function () {
     try {
       let v = await idbGet('car:' + id);
+      // 🔀 CROSS-MODE FALLBACK. Which store holds a card's art depends on which
+      // mode saveForge was in when it was uploaded:
+      //   under ~700MB of origin storage → the forge_cardArt monolith
+      //   over  ~700MB                   → its own car:<id> record
+      // _bigLibrarySkip is re-decided from navigator.storage.estimate() on EVERY
+      // boot, so an install sitting near that line flips between modes and the
+      // loader looked in the wrong place — the art was on disk the whole time
+      // but invisible, which reads as "it saved sometimes and not others".
+      // Read the other store rather than give up.
+      if (v == null || v === '') {
+        try {
+          const mono = await idbGet('forge_cardArt');
+          if (mono && mono[id] != null && mono[id] !== '') v = mono[id];
+        } catch (e) {}
+      }
       if (v != null && v !== '') {
         if (!Forge.cardArt || typeof Forge.cardArt !== 'object') Forge.cardArt = {};
         // Card art may be a Blob, a bare string, or a wrapper object {url|data}.
@@ -116233,7 +116253,12 @@ function renderCardEditor() {
   // ☁ Prefer the cloud-hosted URL (card.artUrl / Forge.cardArtUrl). Only fall back
   // to force-loading legacy IDB art when there is no cloud URL.
   const _cloudArt = (Forge.cardArtUrl && Forge.cardArtUrl[card.id]) || card.artUrl || '';
-  if (!_cloudArt && (!Forge.cardArt || !Forge.cardArt[card.id]) && Forge._carIds && Forge._carIds.has(card.id) && typeof _lazyLoadCardArt === 'function') {
+  // ⚠ Do NOT gate this on Forge._carIds. Art saved in the other storage mode is
+  // absent from that index (it lives in the forge_cardArt monolith), so the
+  // index check stopped the editor even ASKING for it — the card opened with an
+  // empty art slot and looked unsaved. A forced load hits the disk directly and
+  // now checks both stores, so just ask whenever we have nothing to show.
+  if (!_cloudArt && (!Forge.cardArt || !Forge.cardArt[card.id]) && typeof _lazyLoadCardArt === 'function') {
     try { _lazyLoadCardArt(card.id, true); } catch (e) {}
   }
   const cardArtUrl = _cloudArt || (Forge.cardArt && Forge.cardArt[card.id]) || '';

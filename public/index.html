@@ -35461,7 +35461,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119y1';
+  window.BUILD_VERSION = 'v119y2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -159867,6 +159867,44 @@ try {
                              pickCur: bboPickCur, toggleCls: bboToggleCls, set: bboSet,
                              save: bboSaveProduct, toggle: bboToggleProduct, del: bboDeleteProduct };
   window.__mg.openBankOffice = function () { App.screen = 'bankOffice'; try { render(); } catch (e) {} };
+  // 🔍 Why is my bank not in the Just Business nav? Walks every link in the
+  // chain and names the FIRST broken one, instead of leaving "no row appeared"
+  // to be guessed at. Chain: signed in → owns the op → charter row exists →
+  // bank_directory() returns it → BankDir.myBank set → econ.bankName set.
+  window.__mg.bankWhy = async function () {
+    const out = { build: window.BUILD_VERSION };
+    try {
+      const uid = (Profile.cloud && Profile.cloud.userId) || null;
+      out.signedIn = !!(Profile.cloud && Profile.cloud.signedIn);
+      out.uid = uid;
+      out.ownsBankOp = _ownsBankOp();
+      out.opTypes = (((typeof Operations !== 'undefined' && Operations.list) || [])
+        .concat((typeof _jbLocalOpsList === 'function' ? _jbLocalOpsList() : []) || []))
+        .map(o => o && o.op_type).filter(Boolean);
+      if (!(Cloud && Cloud.client)) { out.blocked = 'no cloud client (offline / signed out)'; return out; }
+      // Does the RPC exist, and does it list me?
+      const r = await Cloud.client.rpc('bank_directory');
+      out.rpc = r && r.error ? ('ERROR: ' + (r.error.message || '?')) : ('ok, ' + ((r.data || []).length) + ' banks');
+      out.rpcHasMe = !!((r && r.data) || []).find(b => b.owner_id === uid);
+      out.rpcColumns = (r && r.data && r.data[0]) ? Object.keys(r.data[0]) : [];
+      // Is there a row at all, regardless of what the directory filters out?
+      const t = await Cloud.client.from('player_banks').select('owner_id,bank_name,is_open,charter_tier,founded_with').eq('owner_id', uid);
+      out.rowDirect = t && t.error ? ('ERROR: ' + (t.error.message || '?')) : ((t.data || [])[0] || null);
+      await bankDirFetch(true);
+      out.bankDirErr = BankDir.err || '(none)';
+      out.myBank = BankDir.myBank ? BankDir.myBank.bank_name : null;
+      out.econBankName = _jbEcon().bankName;
+      out.verdict = !out.signedIn ? 'Not signed in.'
+        : (typeof out.rpc === 'string' && out.rpc.indexOf('ERROR') === 0) ? 'bank_directory() is missing or broken — run bank_products.sql.'
+        : !out.rowDirect ? (out.ownsBankOp ? 'You own the bank OP but have NO charter row — run bank_cinder_charter.sql.' : 'No charter row and no bank operation — you do not own a bank on this account.')
+        : (out.rowDirect && out.rowDirect.is_open === false) ? 'Charter row exists but is_open = false, so the directory hides it.'
+        : !out.rpcHasMe ? 'Row exists but bank_directory() does not return it.'
+        : !out.econBankName ? 'Everything server-side is fine — the client cache did not populate.'
+        : 'Chain is healthy: the nav row should render.';
+    } catch (e) { out.threw = String(e && e.stack || e).split('\n').slice(0, 3).join(' | '); }
+    try { console.log(JSON.stringify(out, null, 1)); } catch (e) {}
+    return out;
+  };
 } catch (e) {}
 
 const _BBO_FR = '<span class="cnr"></span><span class="cnr2"></span>';

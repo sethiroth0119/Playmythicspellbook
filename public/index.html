@@ -5966,8 +5966,21 @@
   @keyframes dsxSpin{ to{ transform:rotate(360deg); } }
   .dsx .dsx-embers{ position:fixed; inset:0; z-index:0; pointer-events:none; }
   .dsx .dsx-page{ position:relative; z-index:2; max-width:1760px; margin:0 auto; padding:26px 40px 60px; }
+  /* ⚠ !important is REQUIRED here, not decoration. The global back-button
+     standard matches this button as
+       button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks)
+     and the two IDs inside :not() push that selector's specificity to roughly
+     (2,1,1) — far above this rule's (0,2,0). So `position:absolute` silently
+     lost and the button computed to `position:fixed`.
+     That matters because a FIXED element is re-rooted by ANY transformed
+     ancestor (the tile hover/entry transforms here), which threw the button
+     into the middle of a hero card as a giant gold capsule — the two-layer
+     padding-box/border-box gradient reads as solid gold once the box is
+     stretched. Intermittent precisely because it needed a live transform.
+     The global rule sets no !important on position/top/left/z-index, so
+     these four win outright without escalating the war. */
   .dsx .dsx-back{
-    position:absolute; left:40px; top:26px; z-index:3;
+    position:absolute !important; left:40px !important; top:26px !important; z-index:3 !important;
     display:flex; align-items:center; gap:10px; padding:12px 26px;
     font-family:'Cinzel',serif; font-weight:700; font-size:15px; letter-spacing:.14em;
     color:#f0d68f; border:1.5px solid rgba(210,164,78,.6); border-radius:999px;
@@ -35461,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119z1';
+  window.BUILD_VERSION = 'v119z2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -104132,6 +104145,10 @@ function _renderImpl() {
   try { if (App._mdMenu && App.screen !== 'title') _teardownMasterMenu(); } catch (e) {}
   try { if (App._cosmicTree && App.screen !== 'heroSkillTree') _teardownCosmicTree(); } catch (e) {}
   try { if (_B3D && _B3D.on && App.screen !== 'battle') _b3dUnmount(); } catch (e) {}
+  // 🤖 The "AI is thinking…" pill is a <body> child, so leaving a battle while
+  // the AI is mid-step stranded it over the next screen (seen on "Choose Your
+  // Deck"). Same class of leak as the other body-level overlays torn down here.
+  try { if (App.screen !== 'battle' && App.screen !== 'battleImmediate') _dropAIThinkingHint(); } catch (e) {}
   try { if (_WX && _WX.on && (App.screen !== 'battle' || !_wxEnabled())) _wxUnmount(); } catch (e) {}
   try { if (_RLCA && _RLCA.host && App.screen !== 'rlcMap') _rlcAscentUnmount(); } catch (e) {}
   // ✨ Screen-transition whoosh — fire the same diagonal flash on EVERY change of
@@ -142576,6 +142593,9 @@ function yieldToFrame() {
 const _AI_PERF = { lastBudgetMs: 0, slowSteps: 0, totalSteps: 0 };
 function _showAIThinkingHint() {
   if (typeof document === 'undefined') return;
+  // Never announce AI thinking outside a battle — leaving the screen mid-think
+  // is exactly how this pill ended up floating over "Choose Your Deck".
+  try { if (App.screen !== 'battle' && App.screen !== 'battleImmediate') return; } catch (e) {}
   let pill = document.getElementById('ai-thinking-pill');
   if (!pill) {
     pill = document.createElement('div');
@@ -142589,6 +142609,16 @@ function _showAIThinkingHint() {
 function _hideAIThinkingHint() {
   const pill = document.getElementById('ai-thinking-pill');
   if (pill) pill.style.opacity = '0';
+}
+// ⚠ The pill lives on <body>, NOT inside #app — render() rewriting #app cannot
+// clear it, and hiding it only sets opacity:0, so the node survives a screen
+// change. Concede or back out while the AI is mid-think and it reappears over
+// the next screen. Called from the renderer whenever the screen is not a battle.
+function _dropAIThinkingHint() {
+  try {
+    const pill = document.getElementById('ai-thinking-pill');
+    if (pill && pill.parentNode) pill.parentNode.removeChild(pill);
+  } catch (e) {}
 }
 
 // 🪦 AI grave-activation (v116n) — once per AI turn, the AI activates the first

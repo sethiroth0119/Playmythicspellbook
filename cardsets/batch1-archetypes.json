@@ -53,8 +53,11 @@
     "type": "unit", "cost": 7, "icon": "🔴", "rarity": "mythic",
     "elements": ["fire", "shadow"], "factions": ["dragon"],
     "stats": { "atk": 24, "hp": 42 },
-    "desc": "The red beginning. On Play: send the top 2 cards of your deck to the graveyard, then burn the enemy hero 10 for each unit now resting there.",
-    "onPlay": { "type": "deckToGrave", "amount": 2, "anywhere": true }
+    "desc": "The red beginning. On Play: send the top 2 cards of your deck to the graveyard, then burn the enemy hero 10 for each card now resting there.",
+    "onPlay": { "type": "deckToGrave", "amount": 2, "anywhere": true },
+    "onPlayExtra": [
+      { "type": "damagePerCard", "amount": 10, "countZone": "grave", "countSide": "owner", "radius": 0 }
+    ]
   },
   {
     "name": "Geomax Ascendant Flame",
@@ -104,19 +107,24 @@
     "type": "unit", "cost": 6, "icon": "🖤", "rarity": "mythic",
     "elements": ["shadow"], "factions": ["dragon"],
     "stats": { "atk": 28, "hp": 30 },
-    "desc": "Can only be called when the dark in your graveyard is exactly right. On Play: banish 1 shadow card from your graveyard to destroy one enemy unit.",
-    "onPlay": {
-      "type": "destroyUnit", "amount": 1, "anywhere": true, "targeted": true, "tSide": "enemy",
-      "banishGraveCost": 1
-    }
+    "desc": "Called only out of a graveyard thick with shadow. Banish 3 SHADOW cards from your graveyard to play this for free. On Play: destroy one enemy unit.",
+    "playRequirement": {
+      "type": "banishGraveCost", "fromZone": "grave",
+      "nameIncludes": "", "element": "shadow", "faction": "any", "cardType": "any", "count": 3
+    },
+    "onPlay": { "type": "destroyUnit", "amount": 1, "anywhere": true, "targeted": true, "tSide": "enemy" }
   },
   {
     "name": "Envoy of the Broken Dusk",
     "type": "summon", "cost": 8, "icon": "⚔️", "rarity": "mythic",
     "elements": ["light", "shadow"], "factions": ["warrior"],
     "stats": { "atk": 30, "hp": 30 },
-    "desc": "Banish one LIGHT and one SHADOW from your graveyard to call him. On Play: banish one unit your enemy controls — it does not go to the graveyard.",
-    "onPlay": { "type": "vanish", "amount": 1, "anywhere": true, "targeted": true, "tSide": "enemy", "vanishTarget": "enemy", "returnOn": "never" }
+    "desc": "Banish 2 cards from your graveyard to call him. On Play: banish one unit your enemy controls — it does not go to the graveyard.",
+    "playRequirement": {
+      "type": "banishGraveCost", "fromZone": "grave",
+      "nameIncludes": "", "element": "any", "faction": "any", "cardType": "any", "count": 2
+    },
+    "onPlay": { "type": "vanishTemp", "amount": 1, "duration": 9, "anywhere": true, "targeted": true, "tSide": "enemy", "vanishTarget": "enemy" }
   },
   {
     "name": "Chaos Magister of the Ninth Hour",

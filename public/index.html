@@ -35279,7 +35279,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119x4';
+  window.BUILD_VERSION = 'v119x5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -79302,9 +79302,14 @@ const ONPLAY_TYPE_GROUPS = [
 ];
 // Render the grouped <optgroup> option list for a given selected id. Any effect
 // not placed in a group above falls into "🔧 Other" so nothing is ever lost.
-function _onplayTypeOptgroups(selectedId) {
+// `exclude` is an optional Set of ids to leave out — the spell and trap editors
+// list a handful of "classic" effects above the engine list and must not repeat
+// them. Without this they fell back to ONE flat optgroup of ~120 entries.
+function _onplayTypeOptgroups(selectedId, exclude) {
   const sel = selectedId || '';
-  const byId = {}; ONPLAY_TYPES.forEach(t => { byId[t.id] = t; });
+  const skip = (exclude && typeof exclude.has === 'function') ? exclude : null;
+  const byId = {};
+  ONPLAY_TYPES.forEach(t => { if (!skip || !skip.has(t.id)) byId[t.id] = t; });
   const emitted = new Set();
   const opt = (t) => `<option value="${t.id}" ${sel === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`;
   let html = '';
@@ -79313,7 +79318,7 @@ function _onplayTypeOptgroups(selectedId) {
     if (!rows.length) return;
     html += `<optgroup label="${escapeHtml(g.label)}">` + rows.map(id => { emitted.add(id); return opt(byId[id]); }).join('') + `</optgroup>`;
   });
-  const leftovers = ONPLAY_TYPES.filter(t => !emitted.has(t.id));
+  const leftovers = ONPLAY_TYPES.filter(t => byId[t.id] && !emitted.has(t.id));
   if (leftovers.length) html += `<optgroup label="🔧 Other">` + leftovers.map(opt).join('') + `</optgroup>`;
   return html;
 }
@@ -116191,11 +116196,9 @@ function renderCardEditor() {
     // can (vanish, entomb, seal, search, take control, …) — it resolves through the
     // same engine, anchored on your hero. Fields above (Amount / Target / Status /
     // Range) feed it, and the 🎴 Card Filter block narrows the filtered ones.
-    + `<optgroup label="── Full effect engine ──">`
-    + ((typeof ONPLAY_TYPES !== 'undefined' ? ONPLAY_TYPES : [])
-        .filter(t => t && t.id && !_CLASSIC_SPELL_FX.has(t.id))
-        .map(t => `<option value="${t.id}" ${eff.type === t.id ? 'selected' : ''}>${escapeHtml(t.label || t.id)}</option>`).join(''))
-    + `</optgroup>`;
+    // Grouped, not one flat wall of ~120 options — same category headings the
+    // unit on-play editor uses, minus the classics already listed above.
+    + _onplayTypeOptgroups(eff.type, _CLASSIC_SPELL_FX);
   const targetOpts = ['enemy','ally','self'].map(t => `<option value="${t}" ${(card.target || 'enemy') === t ? 'selected' : ''}>${t}</option>`).join('');
   const statusList = ['','strong','weak','poison','burn','bleed','stun','slow','frozen','sleep','confusion','paralysis','dispel','stumble','assisted'];
   const spellStatusOpts = statusList.map(s => `<option value="${s}" ${(eff.status || '') === s ? 'selected' : ''}>${s || '— None —'}</option>`).join('');
@@ -116329,11 +116332,8 @@ function renderCardEditor() {
   ].map(o => `<option value="${o.id}" ${trapEff.type === o.id ? 'selected' : ''}>${o.label}</option>`).join('')
     // 🎴 …plus the WHOLE effect engine, resolved in TRAP fashion when it springs:
     // anchored on the sprung tile, and auto-resolved when it fires off-turn.
-    + `<optgroup label="── Full effect engine (fires when sprung) ──">`
-    + ((typeof ONPLAY_TYPES !== 'undefined' ? ONPLAY_TYPES : [])
-        .filter(t => t && t.id && !_CLASSIC_TRAP_FX.has(t.id))
-        .map(t => `<option value="${t.id}" ${trapEff.type === t.id ? 'selected' : ''}>${escapeHtml(t.label || t.id)}</option>`).join(''))
-    + `</optgroup>`;
+    // Grouped like every other effect picker; these all fire when the trap springs.
+    + _onplayTypeOptgroups(trapEff.type, _CLASSIC_TRAP_FX);
   const trapStatusOpts = statusList.map(s => `<option value="${s}" ${(trapEff.status || '') === s ? 'selected' : ''}>${s || '— None —'}</option>`).join('');
   const trapSurfaceOpts = ['', ...((typeof SURFACE_TYPES !== 'undefined') ? Object.keys(SURFACE_TYPES) : [])]
     .map(k => `<option value="${k}" ${(trapEff.surfaceType || '') === k ? 'selected' : ''}>${k ? ((SURFACE_TYPES[k] && SURFACE_TYPES[k].icon || '') + ' ' + (SURFACE_TYPES[k] && SURFACE_TYPES[k].name || k)) : '— pick a surface —'}</option>`).join('');

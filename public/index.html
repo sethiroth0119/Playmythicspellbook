@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119z7';
+  window.BUILD_VERSION = 'v119z8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -119489,7 +119489,43 @@ function bindCardEditor() {
           } catch (e) { res(false); }
         });
         artUrlBtn.disabled = false; artUrlBtn.textContent = _lbl;
-        if (ok) { if (await setCardArtUrl(id, url)) showToast('✅ Card art set from URL'); }
+        if (ok) {
+          // ☁ REHOST INTO YOUR OWN BUCKET. Storing the pasted link as-is left
+          // the art on a THIRD-PARTY host — which is why most cards pointed at
+          // cdn.phototourl.com and only a handful at Supabase. If that host ever
+          // expires, rate-limits or blocks hotlinking, every one of those cards
+          // goes blank and nothing in this game can fix it. So pull the bytes
+          // and upload them to card-art, exactly like the Upload button does.
+          // ⚠ Requires the remote host to allow cross-origin reads. When it does
+          // not, the fetch throws and we keep the original URL rather than
+          // losing the art — but we SAY so, instead of pretending it is hosted.
+          let finalUrl = url, rehosted = false;
+          try {
+            const resp = await fetch(url, { mode: 'cors', cache: 'no-store' });
+            if (resp && resp.ok) {
+              const blob = await resp.blob();
+              if (/^image\//i.test(blob.type || '')) {
+                const dataUrl = await new Promise((res, rej) => {
+                  const fr = new FileReader();
+                  fr.onload = () => res(fr.result); fr.onerror = () => rej(new Error('read failed'));
+                  fr.readAsDataURL(blob);
+                });
+                const shrunk = await (async () => {
+                  try { return (await _trimImagePadding(dataUrl)).url; } catch (e) { return dataUrl; }
+                })();
+                const up = (typeof cloudUploadCardArtFile === 'function')
+                  ? await cloudUploadCardArtFile(id, shrunk) : { ok: false };
+                if (up && up.ok && up.url) { finalUrl = up.url; rehosted = true; }
+              }
+            }
+          } catch (e) { /* CORS / network — keep the original link */ }
+          if (await setCardArtUrl(id, finalUrl)) {
+            showToast(rehosted
+              ? '✅ Card art copied into YOUR Supabase bucket and set.'
+              : '✅ Card art set — but it is still hosted on ' + (function () { try { return new URL(url).host; } catch (e) { return 'an external site'; } })() + '. That host blocks copying, so use Upload with the image file to hold it yourself.',
+              rehosted ? 4000 : 9000);
+          }
+        }
         else {
           // The three that actually bite, in the order they occur.
           const _hint = /drive\.google|docs\.google/i.test(url)
@@ -160149,6 +160185,45 @@ try {
                              pickCur: bboPickCur, toggleCls: bboToggleCls, set: bboSet,
                              save: bboSaveProduct, toggle: bboToggleProduct, del: bboDeleteProduct };
   window.__mg.openBankOffice = function () { App.screen = 'bankOffice'; try { render(); } catch (e) {} };
+  // ☁ WHY IS MY ART NOT GOING TO SUPABASE? Answers it with a real round trip
+  // instead of guesses: signed-in state, a live 1px upload to the card-art
+  // bucket, a public read-back of that upload, then cleanup. Every failure mode
+  // (signed out / bucket missing / bucket private / RLS) reports differently.
+  window.__mg.artCloudCheck = async function () {
+    const out = {};
+    try {
+      out.cloudInit = (typeof initCloud === 'function') ? !!initCloud() : false;
+      out.signedIn  = !!(Profile.cloud && Profile.cloud.signedIn);
+      out.userId    = (Profile.cloud && Profile.cloud.userId) || null;
+      out.bucket    = (typeof CARD_ART_BUCKET !== 'undefined') ? CARD_ART_BUCKET : '(unknown)';
+      if (!out.signedIn) {
+        out.verdict = 'NOT SIGNED IN — every upload falls back to local storage. Sign in, then re-upload.';
+      } else {
+        // A 1x1 transparent PNG — smallest possible real round trip.
+        const px = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+        const r = await cloudUploadCardArtFile('__cloudcheck__', px);
+        out.uploadOk = !!(r && r.ok);
+        out.uploadError = (r && r.error) || null;
+        out.uploadedUrl = (r && r.url) ? String(r.url).slice(0, 120) : null;
+        if (r && r.ok && r.url) {
+          try { const chk = await fetch(r.url, { cache: 'no-store' }); out.publicReadStatus = chk.status; } catch (e) { out.publicReadStatus = 'fetch failed'; }
+          try {
+            const path = (Profile.cloud.userId) + '/__cloudcheck__.png';
+            await Cloud.client.storage.from(CARD_ART_BUCKET).remove([path]);
+            out.cleanedUp = true;
+          } catch (e) { out.cleanedUp = false; }
+        }
+        out.verdict = out.uploadOk
+          ? (out.publicReadStatus === 200
+              ? 'HEALTHY — uploads reach your bucket and are publicly readable. Any art still local is from BEFORE this was working; re-upload those cards.'
+              : 'UPLOAD WORKS but the public read returned ' + out.publicReadStatus + ' — the card-art bucket is NOT public. Supabase → Storage → card-art → make it Public.')
+          : ('UPLOAD FAILED — ' + (out.uploadError || 'unknown'));
+      }
+    } catch (e) { out.threw = (e && e.message) || String(e); }
+    try { console.log(JSON.stringify(out, null, 1)); } catch (e) {}
+    try { showToast('☁ ' + (out.verdict || 'check the console'), 12000); } catch (e) {}
+    return out;
+  };
   // 🎨 Which stored card-art URLs actually LOAD? A saved-but-dead link renders
   // as "art URL not loading" on that one card only, so a bad batch is invisible
   // until you open each card. This probes every URL in Forge.cardArtUrl and

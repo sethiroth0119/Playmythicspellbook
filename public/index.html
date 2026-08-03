@@ -35461,7 +35461,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119y0';
+  window.BUILD_VERSION = 'v119y1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -75831,8 +75831,28 @@ async function _reCloudCreateListing(lst) {
   try { await realtyFetch(); } catch (e) {} _jbSendData();
   return true;
 }
+// 🏦 The Just Business nav row for a player's own bank is driven by
+// econ.bankName, which reads BankDir.myBank — a cache filled ONLY by opening
+// Bank Row. A player who goes straight to Just Business has never fetched it,
+// so their own bank silently never appears in the nav. Probe once on demand,
+// then re-post the bridge so the row shows up without a reload.
+// ⚠ Must not call _jbSendData() synchronously: _jbSendData() calls _jbEcon(),
+// which calls this — the re-post only happens in the .then, after the fetch.
+let _jbBankProbeAt = 0;
+function _jbEnsureBankName() {
+  try {
+    if (!(Profile.cloud && Profile.cloud.signedIn)) return;
+    if (BankDir.at) return;                                   // already fetched this session
+    if (_jbBankProbeAt && (Date.now() - _jbBankProbeAt) < 30000) return;
+    _jbBankProbeAt = Date.now();
+    Promise.resolve(bankDirFetch(true)).then(function () {
+      try { if (BankDir.myBank) _jbSendData(); } catch (e) {}
+    }).catch(function () {});
+  } catch (e) {}
+}
 // Real economy snapshot pushed into the Just Business iframe.
 function _jbEcon() {
+  try { _jbEnsureBankName(); } catch (e) {}
   const R = (typeof _ensureResources === 'function') ? _ensureResources() : (Profile.salvage || {});
   const res = [];
   try {

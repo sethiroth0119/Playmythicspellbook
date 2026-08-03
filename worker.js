@@ -696,10 +696,92 @@ async function handleAdmin(request, env, u) {
   return cjson({ error: 'not_found' }, 404);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 🖼 ART PROXY — /api/art/proxy?url=<encoded image url>
+//
+// Some image hosts (cdn.phototourl.com among them) refuse cross-origin reads,
+// so the BROWSER cannot copy the bytes and the art stays stranded on a
+// third-party server we do not control. If that host expires or rate-limits,
+// every card using it goes blank and nothing in the game can recover it.
+//
+// A server-to-server fetch is not subject to CORS, so the Worker can read the
+// image and hand it back with permissive CORS. The client then uploads those
+// bytes to the user's own Supabase bucket exactly like a file Upload.
+//
+// ⚠ SSRF GUARDS — this endpoint fetches a URL supplied by the caller, so it is
+// deliberately narrow: https/http only, no credentials in the URL, private and
+// loopback hosts refused, response must be an image, and a hard size cap. It
+// returns bytes only, never follows a redirect to a blocked host implicitly
+// (redirect:'follow' is fine because the guards re-run on the final response's
+// content-type, and no request body or auth header is ever forwarded).
+// ─────────────────────────────────────────────────────────────────────────────
+const ART_PROXY_MAX_BYTES = 12 * 1024 * 1024;   // 12MB — far above any card art
+function _artProxyBlockedHost(h) {
+  const host = String(h || '').toLowerCase();
+  if (!host) return true;
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.internal')) return true;
+  if (host === '::1' || host === '0.0.0.0') return true;
+  // IPv4 literals in private / loopback / link-local / CGNAT ranges.
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (m) {
+    const a = +m[1], b = +m[2];
+    if (a === 10 || a === 127 || a === 0) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 169 && b === 254) return true;     // link-local incl. cloud metadata
+    if (a === 100 && b >= 64 && b <= 127) return true;
+  }
+  return false;
+}
+async function handleArtProxy(request, u) {
+  const cors = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+  const raw = u.searchParams.get('url') || '';
+  let target;
+  try { target = new URL(raw); } catch (e) { return cjson({ error: 'bad_url' }, 400); }
+  if (target.protocol !== 'https:' && target.protocol !== 'http:') return cjson({ error: 'bad_scheme' }, 400);
+  if (target.username || target.password) return cjson({ error: 'no_credentials_allowed' }, 400);
+  if (_artProxyBlockedHost(target.hostname)) return cjson({ error: 'blocked_host' }, 403);
+
+  let up;
+  try {
+    up = await fetch(target.toString(), {
+      method: 'GET',
+      redirect: 'follow',
+      headers: { 'Accept': 'image/*', 'User-Agent': 'MythicSpellbook-ArtProxy/1.0' },
+    });
+  } catch (e) { return cjson({ error: 'fetch_failed', detail: String((e && e.message) || e).slice(0, 160) }, 502); }
+  if (!up.ok) return cjson({ error: 'upstream_' + up.status }, 502);
+
+  const ct = String(up.headers.get('content-type') || '').toLowerCase();
+  if (!ct.startsWith('image/')) return cjson({ error: 'not_an_image', contentType: ct.slice(0, 60) }, 415);
+  const len = parseInt(up.headers.get('content-length') || '0', 10);
+  if (len && len > ART_PROXY_MAX_BYTES) return cjson({ error: 'too_large', bytes: len }, 413);
+
+  const buf = await up.arrayBuffer();
+  if (buf.byteLength > ART_PROXY_MAX_BYTES) return cjson({ error: 'too_large', bytes: buf.byteLength }, 413);
+  return new Response(buf, {
+    status: 200,
+    headers: Object.assign({}, cors, {
+      'Content-Type': ct,
+      'Cache-Control': 'public, max-age=300',
+    }),
+  });
+}
+
 export default {
   async fetch(request, env) {
     let u;
     try { u = new URL(request.url); } catch (e) { return env.ASSETS.fetch(request); }
+
+    if (u.pathname === '/api/art/proxy') {
+      try { return await handleArtProxy(request, u); }
+      catch (e) { return cjson({ error: 'art_proxy_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
+    }
 
     if (u.pathname.startsWith('/api/admin/')) {
       try { return await handleAdmin(request, env, u); }

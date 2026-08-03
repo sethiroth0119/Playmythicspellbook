@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120a2';
+  window.BUILD_VERSION = 'v120a3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -119642,7 +119642,15 @@ function bindCardEditor() {
           // losing the art — but we SAY so, instead of pretending it is hosted.
           let finalUrl = url, rehosted = false;
           try {
-            const resp = await fetch(url, { mode: 'cors', cache: 'no-store' });
+            // Direct read first; if the host blocks CORS, go through our own
+            // Worker (/api/art/proxy), which fetches server-side where CORS
+            // does not apply. That is what makes hosts like cdn.phototourl.com
+            // copyable at all — without it the art can never leave their server.
+            let resp = null;
+            try { resp = await fetch(url, { mode: 'cors', cache: 'no-store' }); } catch (e) { resp = null; }
+            if (!resp || !resp.ok) {
+              try { resp = await fetch('/api/art/proxy?url=' + encodeURIComponent(url), { cache: 'no-store' }); } catch (e2) { resp = null; }
+            }
             if (resp && resp.ok) {
               const blob = await resp.blob();
               if (/^image\//i.test(blob.type || '')) {

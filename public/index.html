@@ -35461,7 +35461,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119y9';
+  window.BUILD_VERSION = 'v119z1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -126594,6 +126594,13 @@ function _renderBattleImmediateImpl() {
   // 🖱️ Clear any open hover action menu — the .unit it was anchored to is about
   // to be rebuilt (and may have moved / died). It re-appears on the next hover.
   try { if (typeof _hideUnitHoverMenu === 'function') _hideUnitHoverMenu(); } catch (e) {}
+  // 🎬 Inject the stage's stylesheet BEFORE the markup is written. The rule that
+  // hides the DOM board under the 3D stage lives in that sheet, and it used to
+  // be injected by _bbStageMount() — i.e. AFTER this render. The inline bb-on
+  // class is useless while the rule it triggers does not exist yet, so without
+  // this the FIRST battle paint could still flash the un-hidden DOM board.
+  // Idempotent: it no-ops once the style element is present.
+  try { if (_bbStageOn() && typeof _bbStageEnsureStyle === 'function') _bbStageEnsureStyle(); } catch (e) {}
   const s = App.state;
   // 🎬 A live battle is on the board — clear the previous match's one-shot clip
   // guard and make sure the rolling 60s buffer is recording again. Covers EVERY
@@ -126960,7 +126967,17 @@ function _renderBattleImmediateImpl() {
                misaligning the overlay from the tiles by the bar's height, and
                letting the z-index:0 canvas paint straight over the bar. -->
           ${renderPhaseBar()}
-          <div class="board-area">
+          <!-- ⚡ bb-on is emitted INLINE, not added after mount. The CSS that
+               hides the DOM board under the 3D stage keys off this class
+               (.board-area.bb-on .board { visibility:hidden }), and this element
+               is rebuilt by EVERY render. Adding the class afterwards in
+               _bbStageMount() left a window where the browser could paint one
+               frame of the fully-visible DOM board — its background, tiles and
+               units — on top of the stage. That one frame is the flicker seen
+               on every click, loot and hover-render.
+               NOTE: no backticks in this comment — it sits inside a template
+               literal, where one would terminate the string. -->
+          <div class="board-area${(function () { try { return _bbStageOn() ? ' bb-on' : ''; } catch (e) { return ''; } })()}">
             <!-- 🌌 Far-distance environment: blood moon, drifting giants,
                  distant lightning. Lives behind the board (z-index:1). -->
             <div class="battlefield-environment" aria-hidden="true">

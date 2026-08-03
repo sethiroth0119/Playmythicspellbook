@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119z6';
+  window.BUILD_VERSION = 'v119z7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -65126,7 +65126,35 @@ function saveForge() {
         // uploaded or pasted — anything that is NOT a streamed blob: url) to its
         // OWN per-key record + index, so uploads/edits survive a refresh even in
         // placeholder mode. (This is the fix for "card art never saves".)
-        const _persistable = (v) => typeof v === 'string' && v.indexOf('blob:') !== 0;
+        // 🐛 THE "CERTAIN CARD ARTS NEVER SAVE" BUG. This used to be
+        //     (v) => typeof v === 'string' && v.indexOf('blob:') !== 0
+        // i.e. STRINGS ONLY — the exact mistake already fixed for sprites just
+        // below (see _spritePersistable's `f instanceof Blob` note). Card art is
+        // NOT always a string:
+        //   • a fresh Upload can hand us a raw Blob (IDB stores Blobs losslessly)
+        //   • ANIMATED card art is an object, { anim: [frame, …] }
+        // Both returned false, hit the `continue`, and were NEVER written to
+        // car:<id>. The resident copy then dies on the next LRU eviction, so the
+        // upload silently disappears — "I uploaded it and it just got removed".
+        // Only a STREAMED blob: url is genuinely not worth persisting (it is a
+        // pointer to something already on disk, and it dies with the document).
+        const _persistable = (v) => {
+          if (!v) return false;
+          if (typeof Blob !== 'undefined' && v instanceof Blob) return true;      // fresh upload
+          if (typeof v === 'string') return v.indexOf('blob:') !== 0;             // data: / http(s)
+          if (typeof v === 'object') {                                            // animated { anim:[…] }
+            for (const k in v) {
+              const arr = v[k];
+              if (Array.isArray(arr)) {
+                for (const f of arr) {
+                  if (f && typeof Blob !== 'undefined' && f instanceof Blob) return true;
+                  if (typeof f === 'string' && f.indexOf('blob:') !== 0) return true;
+                }
+              } else if (typeof arr === 'string' && arr.indexOf('blob:') !== 0) return true;
+            }
+          }
+          return false;
+        };
         // 🐛 Sprites are OBJECTS ({ idle:[frame…], frameMs }), NOT strings — the
         // string check above never matched them, so freshly-uploaded sprite frames
         // silently never saved on a big library. A sprite is persistable when ANY
@@ -160149,9 +160177,38 @@ try {
         bad.push({ card: nm, id: id, url: String(url).slice(0, 120) });
       }
     }
-    const out = { checked: ids.length, broken: bad.length, brokenList: bad };
+    // 💾 THE OTHER FAILURE, and the one that actually loses work: art that is
+    // in memory RIGHT NOW but has no car:<id> record behind it. It looks fine
+    // until the LRU evicts it or you reload, then it is simply gone. Anything
+    // listed here is one refresh away from disappearing.
+    const atRisk = [];
+    try {
+      const resident = (typeof Forge !== 'undefined' && Forge.cardArt) || {};
+      for (const id of Object.keys(resident)) {
+        if (!id || id.indexOf('__') === 0) continue;
+        if (map[id]) continue;                       // has a cloud URL — safe
+        let onDisk = null;
+        try { onDisk = await idbGet('car:' + id); } catch (e) {}
+        if (!onDisk) {
+          let nm = id;
+          try { const c = (typeof _cardDefById === 'function') && _cardDefById(id); if (c && c.name) nm = c.name; } catch (e) {}
+          const v = resident[id];
+          atRisk.push({ card: nm, id: id,
+                        kind: (v && typeof Blob !== 'undefined' && v instanceof Blob) ? 'Blob'
+                            : (typeof v === 'object') ? 'object'
+                            : (typeof v === 'string' && v.indexOf('blob:') === 0) ? 'blob: url' : typeof v });
+        }
+      }
+    } catch (e) {}
+    const out = { checked: ids.length, broken: bad.length, brokenList: bad,
+                  inMemoryButNotOnDisk: atRisk.length, atRiskList: atRisk };
     try { console.log(JSON.stringify(out, null, 1)); } catch (e) {}
-    try { showToast(bad.length ? ('🎨 ' + bad.length + ' of ' + ids.length + ' art URLs are dead — see the console.') : ('✅ All ' + ids.length + ' art URLs load.'), 7000); } catch (e) {}
+    try {
+      const msgs = [];
+      if (bad.length)    msgs.push('🎨 ' + bad.length + ' of ' + ids.length + ' art URLs are dead');
+      if (atRisk.length) msgs.push('💾 ' + atRisk.length + ' card art NOT on disk (will vanish on reload)');
+      showToast(msgs.length ? (msgs.join(' · ') + ' — see the console.') : ('✅ All ' + ids.length + ' art URLs load and everything resident is on disk.'), 9000);
+    } catch (e) {}
     return out;
   };
   // 🩹 Create the missing charter for a bank whose OPERATION was already paid

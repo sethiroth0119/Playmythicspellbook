@@ -35279,7 +35279,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119x5';
+  window.BUILD_VERSION = 'v119x6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -126916,10 +126916,38 @@ function renderBattlePiles(s) {
     // honoured this via _isLiveSummonGraveCard; the VIEW did not, so a unit you
     // had just played showed up among your dead.
     const pile = rawPile.filter(c => !(typeof _isLiveSummonGraveCard === 'function' && _isLiveSummonGraveCard(c, s)));
-    const pileUnitIds = new Set(pile.map(c => c && c._summonedUnitId).filter(Boolean));
     const out = pile.map((c, i) => Object.assign({}, c, { _gKind: (c && c.type === 'unit') ? 'fallen' : 'discarded', _graveRef: (c && c.instanceId) ? ('iid_' + c.instanceId) : ('pile_' + i) }));
+    // 🪦 Fold in corpses that the pile does not already represent.
+    //
+    // ⚠ This used to match ONLY on `_summonedUnitId === u.id`. That link breaks
+    // the moment a unit's id changes after it was played (revive / transform /
+    // flip / vanish-return rebuild the unit object), and a broken link shows the
+    // SAME dead card TWICE — once as its pile card, once as its corpse. That is
+    // the "units dying create duplicates" report.
+    //
+    // So match by unit id FIRST (exact, and what a healthy play produces), then
+    // fall back to claiming an unclaimed pile card of the same cardId that was
+    // itself a played unit card. One corpse claims at most one pile card, so
+    // three copies played and killed still show exactly three — and a card
+    // DISCARDED from hand (no `_summonedUnitId`) can never absorb a corpse.
+    const byUnitId = new Map();
+    const unclaimedByCardId = new Map();
+    pile.forEach((c) => {
+      if (!c || !c._summonedUnitId) return;                 // discards are not corpse-backed
+      byUnitId.set(c._summonedUnitId, c);
+      const key = String(c.id || c.cardId || '');
+      if (!key) return;
+      if (!unclaimedByCardId.has(key)) unclaimedByCardId.set(key, []);
+      unclaimedByCardId.get(key).push(c);
+    });
+    const claimed = new Set();
     deadOf(owner).forEach(u => {
-      if (pileUnitIds.has(u.id)) return;
+      const exact = byUnitId.get(u.id);
+      if (exact && !claimed.has(exact)) { claimed.add(exact); return; }   // pile already shows it
+      const key = String(u.cardId || u.originalCardId || '');
+      const bucket = key ? (unclaimedByCardId.get(key) || []) : [];
+      const spare = bucket.find(c => !claimed.has(c));
+      if (spare) { claimed.add(spare); return; }             // stale stamp — pile card stands in
       out.push({ id: u.cardId || u.originalCardId || u.id, name: u.name, icon: u.icon, type: 'unit', level: u.level, _gKind: 'fallen', _graveRef: 'dead_' + u.id });
     });
     // 🪦 Attach the grave-activated ability from the card def when the view card

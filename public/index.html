@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120a4';
+  window.BUILD_VERSION = 'v120a5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -118780,6 +118780,26 @@ function renderCardEditor() {
               <button class="btn-mini" id="btn-toggle-artstream" style="font-size:0.62rem" title="Render your custom sprites + art IN THE GAME instead of placeholder emoji. Best AFTER moving sprites to the cloud (URL frames are cheap). If the game becomes unstable, turn it back OFF.">🎮 Custom art in-game</button>
               <button class="btn-mini" id="btn-storage-diag" style="font-size:0.62rem" title="Check exactly why a save might be failing — storage used/quota, a live test write, and whether your sprites are on disk.">🔍 Why won't it save?</button>
             </div>
+            ${(function () {
+              // ⚠ THE SINGLE CONDITION THAT DECIDES WHETHER ART IS DURABLE.
+              // Signed in, art uploads to the Supabase bucket and the card keeps
+              // only a URL — immune to storage mode, quota and blob lifetimes.
+              // Signed OUT, every upload silently falls back to local storage,
+              // which is where art has been getting lost. That state was only
+              // visible on the Settings screen, a different route entirely, so
+              // an admin could upload all day without ever learning why it did
+              // not stick. Say it HERE, where the uploading happens.
+              try {
+                if (Profile.cloud && Profile.cloud.signedIn) {
+                  return `<div class="small-text" style="margin-top:0.5rem;color:#8fd6a0">☁ Signed in — new art uploads to your cloud bucket and cannot be lost to local storage.</div>`;
+                }
+                return `<div style="margin-top:0.55rem;padding:0.55rem 0.7rem;border:1px solid rgba(230,120,90,0.55);border-radius:8px;background:rgba(60,20,15,0.5)">
+                  <div class="small-text" style="color:#ffb59a;font-weight:700">⚠ You are NOT signed in — art is being saved to this browser only.</div>
+                  <div class="small-text ink-dim" style="margin-top:0.2rem">That is the fragile path: it depends on local storage limits and can vanish on reload. Sign in and art goes straight to your Supabase bucket instead.</div>
+                  <button class="btn-primary btn-mini" id="btn-art-signin" style="margin-top:0.45rem">☁ Sign in now</button>
+                </div>`;
+              } catch (e) { return ''; }
+            })()}
           </div>
         </div>
 
@@ -119751,6 +119771,20 @@ function bindCardEditor() {
     };
   }
   // 🔍 Storage diagnostic — shows the real reason a save is or isn't working.
+  // ☁ Sign-in shortcut shown in the Card Art panel when signed out. Routes to
+  // Settings, where the real cloud auth lives — the Forge is a full-screen
+  // editor with no way back to it, which is why the state was undiscoverable.
+  const artSignInBtn = document.getElementById('btn-art-signin');
+  if (artSignInBtn) {
+    artSignInBtn.onclick = (e) => {
+      e.preventDefault();
+      try { showToast('Sign in below, then reopen the Forge — your art will upload to the cloud from then on.', 8000); } catch (e2) {}
+      App.screen = 'settings';
+      try { render(); } catch (e2) {}
+      // Nudge the cloud section into view so it is not a scroll hunt.
+      setTimeout(() => { try { const el = document.getElementById('btn-cloud-signin'); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' }); } catch (e2) {} }, 120);
+    };
+  }
   const diagBtn = document.getElementById('btn-storage-diag');
   if (diagBtn) {
     diagBtn.onclick = async (e) => {

@@ -729,6 +729,10 @@ const CORP_ROLES = [
   { id: 'Real Estate Agent', name: 'Real Estate Agent', d: 'Lists & manages corporation property, scouts rentable territory, and negotiates land deals. Hire when expanding holdings.' },
   { id: 'Mercenary',         name: 'Mercenary',         d: 'Muscle for convoys, raids and defense — protects high-value shipments and black-market runs. Hire to move goods through danger.' },
   { id: 'Lawyer',            name: 'Lawyer',            d: 'Handles compliance & contracts; lowers audit / seizure heat and tax-evasion risk. Hire to keep the Foundation off your back.' },
+  // 👔 Approving a Bank Teller ALSO writes a bank_tellers row (see corpApprove),
+  // so the hire genuinely opens the Underwriting Desk for them — the role on its
+  // own would be a label with no authority behind it.
+  { id: 'Bank Teller',       name: 'Bank Teller',       d: 'Works your bank counter — reviews loan applications and underwrites on the owner’s behalf, up to the approval ceiling you set. Hire when you own a bank and want the desk staffed while you are away.' },
   { id: 'member',            name: 'Member',            d: 'General corporation member — pools resources and shares in the corporation’s success.' },
 ];
 

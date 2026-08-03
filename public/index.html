@@ -35474,7 +35474,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v119z2';
+  window.BUILD_VERSION = 'v119z3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -76450,6 +76450,22 @@ function _jbHandleAction(a) {
           }
           await Cloud.client.from('corp_requests').update({ status: 'hired', role: rq.data.role }).eq('id', rid);
           showToast('✅ Hired ' + (rq.data.user_name || 'applicant') + ' as ' + rq.data.role + '. They join on their next sync.', 4800);
+          // 👔 BANK TELLER — the corp role is only a label; desk authority comes
+          // from a bank_tellers row. Write one here so hiring through Guild &
+          // Hiring actually staffs the Underwriting Desk, rather than leaving
+          // the owner to re-hire the same person in the Teller Manager.
+          // Silent no-op when the owner holds no charter — nothing to staff.
+          if (/^bank teller$/i.test(String(rq.data.role || ''))) {
+            try {
+              const _bid = (BankDir.myBank && BankDir.myBank.owner_id)
+                        || ((Profile.cloud && Profile.cloud.signedIn) ? Profile.cloud.userId : null);
+              if (_bid && BankDir.myBank) {
+                await bankHireTeller(_bid, rq.data.user_id, rq.data.user_name, { role: 'teller' });
+              } else {
+                showToast('👔 Hired as Bank Teller — but you hold no bank charter yet, so there is no desk to staff.', 6000);
+              }
+            } catch (e) {}
+          }
           try { _guildLog('🤝 ' + (rq.data.user_name || 'A new member') + ' was hired as ' + rq.data.role + '. Welcome them on the wire!'); } catch (e) {}
           try { corpEnsure().then(_jbSendData); } catch (e) { _jbSendData(); }
         } catch (e) {}

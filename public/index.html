@@ -16444,6 +16444,77 @@
     .chud-res, .chud-res-sep, .chud-day { flex: 0 0 auto; }
   }
 
+  /* ═══ v120b6 BUNKER SHELL — the mockup's three-column camp console ═══════
+     Sector/objectives at the left, the room grid in the centre, the hero
+     roster at the right, command bar across the bottom. This is LAYOUT ONLY:
+     every button keeps its original id and label, and the room art is
+     untouched. */
+  /* The bunker console is a three-column dashboard, not a document. At the
+     forge-page's 1200px measure the centre came out 530px and the room grid
+     collapsed to ONE card per row — the mockup's 3×3 needs ~800px. Widen the
+     camp screen only; every other forge-page keeps its reading measure. */
+  .forge-page.camp-hud { max-width: 1560px; }
+  .cbx-shell { display: grid; grid-template-columns: 290px minmax(0, 1fr) 300px;
+    gap: 1rem; align-items: start; }
+  .cbx-col { min-width: 0; }
+  .cbx-side { display: flex; flex-direction: column; gap: 0.9rem;
+    position: sticky; top: 0.5rem; }
+  @media (max-width: 1500px) { .cbx-shell { grid-template-columns: 250px minmax(0,1fr) 260px; } }
+  /* The roster folds under the board BEFORE the sector column does — sector
+     carries the threat/defense readouts the player actually acts on. */
+  @media (max-width: 1240px) {
+    .cbx-shell { grid-template-columns: 240px minmax(0, 1fr); }
+    .cbx-right { grid-column: 1 / -1; }
+    /* Once the roster is full-width its beds must run ACROSS it — the column
+       stack meant for a 300px rail left each bed stretched over ~1000px. */
+    .cbx-right .camp-bed-rack-list { flex-direction: row; flex-wrap: wrap; }
+    .cbx-right .camp-bed { flex: 1 1 160px; }
+    .cbx-right .cbx-side, .cbx-right.cbx-side { position: static; }
+  }
+  @media (max-width: 900px) {
+    .cbx-shell { grid-template-columns: minmax(0, 1fr); }
+    .cbx-side { position: static; }
+  }
+  .cbx-panel { background: linear-gradient(180deg, rgba(14,17,26,0.95), rgba(8,10,16,0.98));
+    border: 1px solid rgba(212,175,55,0.28); border-radius: 10px;
+    padding: 0.7rem 0.8rem; box-shadow: 0 4px 14px rgba(0,0,0,0.45); }
+  .cbx-panel-t { font-family: 'Cinzel', serif; font-size: 0.72rem; letter-spacing: 0.16em;
+    text-transform: uppercase; color: #c29a3a; margin-bottom: 0.5rem;
+    padding-bottom: 0.35rem; border-bottom: 1px solid rgba(212,175,55,0.22); }
+  /* Command bar: STICKY, never fixed. A fixed element here would be re-rooted
+     by any transformed ancestor — the same fault that printed the back button
+     over THE FORGE and put the gold capsule on Choose Your Deck. */
+  .cbx-actionbar { position: sticky; bottom: 0; z-index: 5;
+    display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;
+    margin-top: 1.2rem; padding: 0.6rem 0.8rem;
+    background: linear-gradient(180deg, rgba(10,13,20,0.94), rgba(6,8,13,0.99));
+    border: 1px solid rgba(212,175,55,0.35); border-radius: 10px;
+    box-shadow: 0 -6px 18px rgba(0,0,0,0.55); }
+  .cbx-bar-t { font-family: 'Cinzel', serif; font-size: 0.7rem; letter-spacing: 0.16em;
+    color: #c29a3a; margin-right: 0.15rem; flex: 0 0 auto; }
+  .cbx-spacer { flex: 1 1 auto; }
+  /* The hero roster was a body-level position:fixed <aside> — one of the
+     overlays that leaks because render() rewrites #app and cannot clear it.
+     Inside the grid it is an ordinary panel with the same internals. */
+  .cbx-right .camp-bed-rack { position: static; right: auto; top: auto;
+    width: auto; max-height: none; z-index: auto; margin: 0; }
+  /* ⚠ This block MUST stay after the .cbx-actionbar / .cbx-spacer rules above.
+     It was first written next to the other breakpoints higher up, where the
+     later base rule overrode `flex-wrap` on equal specificity — overflow-x
+     applied and the bar still wrapped, which reads as the query not matching. */
+  @media (max-width: 900px) {
+    /* Seven command buttons wrapped to 346px tall — 41% of a phone screen, held
+       there permanently by position:sticky. Scroll in one row, like the top
+       resource strip. */
+    .cbx-actionbar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+      scrollbar-width: none; -webkit-overflow-scrolling: touch;
+      -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent);
+      mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
+    .cbx-actionbar::-webkit-scrollbar { display: none; }
+    .cbx-actionbar .btn-secondary, .cbx-bar-t { flex: 0 0 auto; }
+    .cbx-spacer { display: none; }
+  }
+
   /* ===== MARKETPLACE ===== */
   .market-listing, .market-sell-row {
     display: grid;
@@ -35666,7 +35737,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120b5';
+  window.BUILD_VERSION = 'v120b6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -149243,18 +149314,24 @@ function renderCamp() {
           <button class="btn-secondary" id="btn-camp-vehicle-market" title="Buy or sell vehicles between players">🛒 Vehicle Market${(() => {
             try { const n = ((Forge.vehicleMarket && Forge.vehicleMarket.listings) || []).filter(l => l && l.sellerId !== ((Profile.cloud && Profile.cloud.userId) || Profile.userId || 'local')).length; return n > 0 ? ` <span style="background:#ffd166;color:#1a1020;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${n}</span>` : ''; } catch (e) { return ''; }
           })()}</button>
-          <button class="btn-secondary" data-act="recon-open" title="Open the Reconstruction Settlement — Camp Console + reclaim the ruins">🏗 Reconstruction</button>
           <button class="btn-secondary" id="btn-back-camp">${App._campReturnsToBunker ? '← Camp' : '← Back to Menu'}</button>
         </div>
       </div>
+      <div class="cbx-shell">
+        <aside class="cbx-col cbx-left cbx-side">
       ${(typeof _campNodeBannerHtml === 'function') ? _campNodeBannerHtml() : ''}
       ${(typeof _convoyPanelHtml === 'function') ? _convoyPanelHtml() : ''}
-      <div class="placement-hint" style="margin-bottom:1rem">
+      <div class="cbx-panel">
+      <div class="cbx-panel-t">Objectives</div>
+      <div class="placement-hint" style="margin-bottom:0">
         Park unused units to gain <strong>${CAMP_XP_PER_HOUR} XP/hour</strong> (capped at ${CAMP_XP_CAP} XP per slot).
         Parking costs <strong><span class="cinder-icon"></span> ${CAMP_PARK_COST}</strong> per unit · heroes stay with you.
         Click <strong>Collect</strong> to apply the XP — level-ups roll new stats and learnable moves.
         <br><span class="ink-dim">Only units you own are listed. You must always keep at least <strong>${CAMP_MIN_COLLECTION}</strong> cards available — you have <strong>${_totalOwnedCards()}</strong> owned · <strong>${Camp.slots.length}</strong> parked.</span>
       </div>
+      </div>
+        </aside>
+        <main class="cbx-col cbx-mid">
       ${((typeof isAdmin === 'function') && isAdmin()) ? `
       <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;background:rgba(127,214,255,0.06);border:1px solid rgba(127,214,255,0.25);border-radius:6px;padding:0.6rem 0.9rem;margin-bottom:1.2rem">
         <span style="color:#7fd6ff;font-family:'Cinzel',serif;font-size:0.78rem;letter-spacing:0.1em">🛠 ADMIN — CAMP ART & AUDIO</span>
@@ -149331,6 +149408,11 @@ function renderCamp() {
           <div class="lab-list" style="max-height:480px">${availableHtml}</div>
         </div>
       </div>
+        </main>
+        <aside class="cbx-col cbx-right cbx-side">
+          <div id="camp-roster-host"></div>
+        </aside>
+      </div>
       ${(() => {
         const mia = (Array.isArray(Profile.campMissing) ? Profile.campMissing : []);
         if (!mia.length) return '';
@@ -149366,6 +149448,21 @@ function renderCamp() {
           <div style="background:rgba(20,8,12,0.6);border:1px solid rgba(224,85,106,0.3);border-radius:8px;max-height:280px;overflow:auto">${rows}</div>
         </div>`;
       })()}
+      <nav class="cbx-actionbar">
+        <span class="cbx-bar-t">COMMAND</span>
+        <button class="btn-secondary" id="btn-camp-resistance-ring" title="Send units on Covert Actions for offline rewards">🜂 Resistance Ring${(() => {
+          try { const a = (typeof _covertActive === 'function') ? _covertActive() : []; const r = a.filter(m => m.endsAt <= Date.now()).length; return r > 0 ? ` <span style="background:#9be0c4;color:#0a1a14;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${r} READY</span>` : ''; } catch (e) { return ''; }
+        })()}</button>
+        <button class="btn-secondary" id="btn-camp-vault" title="The Base Vault — secured grid storage, your field-bag inventory, and hero loadouts">🏰 Vault</button>
+        <button class="btn-secondary" id="btn-camp-trading-post" title="Trade cards & resources with other players (fixed price, auctions, barter)">💱 Trading Post</button>
+        <button class="btn-secondary" id="btn-camp-dojo" title="Visit player dojos to buy moves — or run your own">🥋 Dojo Shop</button>
+        <button class="btn-secondary" id="btn-camp-research" title="Spend rare resources on permanent camp buffs">🔬 Research${(() => { try { const r = (typeof _ensureResearch === 'function') ? _ensureResearch() : null; if (r && r.active && r.active.id && ((r.active.startedAt || 0) + (r.active.durMs || 0)) <= Date.now()) return ' <span style="background:#9be0c4;color:#0a1a14;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">DONE</span>'; } catch (e) {} return ''; })()}</button>
+        <button class="btn-secondary" id="btn-camp-vehicle-market" title="Buy or sell vehicles between players">🛒 Vehicle Market${(() => {
+          try { const n = ((Forge.vehicleMarket && Forge.vehicleMarket.listings) || []).filter(l => l && l.sellerId !== ((Profile.cloud && Profile.cloud.userId) || Profile.userId || 'local')).length; return n > 0 ? ` <span style="background:#ffd166;color:#1a1020;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${n}</span>` : ''; } catch (e) { return ''; }
+        })()}</button>
+        <span class="cbx-spacer"></span>
+        <button class="btn-secondary" data-act="recon-open" title="Open the Reconstruction Settlement — Camp Console + reclaim the ruins">🏗 Reconstruction</button>
+      </nav>
       ${(() => {
         const reps = App._campDebrief;
         if (!Array.isArray(reps) || !reps.length) return '';
@@ -149467,7 +149564,12 @@ function renderCamp() {
       <div class="camp-bed-rack-list">${beds || '<div class="camp-bed-empty">No heroes yet</div>'}</div>
       <button class="camp-bed-rack-cta" id="camp-bed-rack-open">🛌 Open Rest Panel</button>
     `;
-    document.body.appendChild(rack);
+    // 🏚 v120b6 — the roster is now the shell's RIGHT COLUMN. Mounting it inside
+    // #app means render() clears it like everything else, instead of it being a
+    // body-level position:fixed overlay that survives re-renders and leaks.
+    // Falls back to the body mount if the shell is not present (older screens).
+    const rosterHost = document.getElementById('camp-roster-host');
+    (rosterHost || document.body).appendChild(rack);
     // Wire each bed click → open the rest panel.
     rack.querySelectorAll('[data-bed-hero]').forEach(b => {
       b.onclick = () => { try { if (typeof openHeroRestPanel === 'function') openHeroRestPanel(); } catch (e) {} };

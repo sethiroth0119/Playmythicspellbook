@@ -27586,8 +27586,17 @@
     box-shadow: 0 0 9px color-mix(in srgb, var(--cc, #c9a24a) 30%, transparent),
                 0 2px 5px rgba(0,0,0,0.75);
     font-size: 10px; line-height: 1.1;
-    transition: transform 0.14s ease, box-shadow 0.14s ease;
+    /* ⚠ NOT transform. The layout pass writes --dx/--dy, which feed the
+       transform — a transition there makes every pin visibly slide across the
+       map on each render, and makes its measured rect stale for 140ms
+       afterwards (which is exactly what made the layout look broken while it
+       was working). Only the glow animates. */
+    transition: box-shadow 0.14s ease;
   }
+  /* Set by the layout pass when no clear slot exists near the host node. The
+     pin then sits above the markers: a pin that overlaps something is a
+     nuisance, a pin that is unreachable is a broken feature. */
+  .tw-aicorp.is-crowded { z-index: 9; }
   .tw-aicorp:hover {
     z-index: 9;   /* lift ABOVE nodes on hover only, so it never blocks a click */
     transform: translate(-50%, -50%) translate(var(--dx, 26px), var(--dy, -26px)) scale(1.14);
@@ -27606,10 +27615,41 @@
     background: var(--sc, #8a96a3);
     box-shadow: 0 0 6px var(--sc, #8a96a3);
   }
+  /* 🌱 A STARTUP READS LIGHTER THAN AN INCUMBENT. Same pin, dialled down: a
+     dashed border and a hollow tag, so a glance at the map separates the six
+     firms that can move a price from the six that cannot. */
+  .tw-aicorp.is-startup {
+    border-style: dashed;
+    background: linear-gradient(180deg, rgba(12,16,24,0.92), rgba(7,9,14,0.96));
+  }
+  .tw-aicorp.is-startup .tw-aicorp-tag {
+    background: transparent; color: var(--cc, #c9a24a);
+    border: 1px solid color-mix(in srgb, var(--cc, #c9a24a) 60%, transparent);
+    padding: 0 3px;
+  }
   @media (max-width: 900px) {
     .tw-aicorp { padding: 1px 4px; }
     .tw-aicorp-ico { font-size: 11px; }
   }
+
+  /* 🏢 BUSINESS DOSSIER HOST (v120e2) — a fixed full-screen layer whose only
+     job is to give .tw-node-drawer (position:absolute) something to anchor to.
+     Anchoring instead of overriding is deliberate: the drawer keeps the exact
+     geometry the district node panel uses, so the two cannot drift apart. */
+  #aicorp-host { position: fixed; inset: 0; z-index: 2147483000; }
+  #aicorp-host .aicorp-scrim {
+    position: absolute; inset: 0; background: rgba(6,5,10,0.62);
+    backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+    animation: fade-in 0.18s ease-out;
+  }
+  #aicorp-host .tw-node-drawer { z-index: 2; }
+  #aicorp-host .tw-drawer-close { cursor: pointer; }
+  #aicorp-host .tw-drawer-tab { cursor: pointer; }
+  #aicorp-host [data-aicorp-goto] {
+    background: rgba(30,22,8,0.55); border: 1px solid rgba(214,176,74,0.4);
+    border-radius: 6px; padding: 0.55rem 0.7rem; color: #e8c877;
+  }
+  #aicorp-host [data-aicorp-goto]:hover { border-color: #f5c453; background: rgba(120,86,20,0.35); }
   .tw-road-badge.tw-rb-enemy { border-color: #b98a3a; box-shadow: 0 0 7px rgba(185,138,58,0.45), 0 2px 4px rgba(0,0,0,0.75); }
   /* cleaner road lines — faint grey dashed for dead links, solid gold for active ones,
      no busy flow animation (trucks provide the motion now). */
@@ -36205,7 +36245,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120e1';
+  window.BUILD_VERSION = 'v120e2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -105740,6 +105780,10 @@ function render() {
     } catch (_) {}
   }
   finally {
+    // 📐 Corp/startup pins are placed by measurement, not arithmetic — they can
+    // only be laid out once the markers they must avoid are on screen. Cheap:
+    // it returns immediately unless the map is actually rendered.
+    try { if (typeof _aiPinLayout === 'function') _aiPinLayout(); } catch (e) {}
     try {
       if (_focusSnap) {
         const cur = document.activeElement;
@@ -210068,6 +210112,7 @@ function _showNodeHoverCard(nodeId, anchorEl) {
       // can still stretch over one — and a card you cannot see past is a card
       // in the way, even when it no longer blocks the click itself.
       if (e.target && e.target.closest && e.target.closest('.tw-aicorp')) { _hideNodeHoverCard(); return; }
+
       const m = e.target && e.target.closest && e.target.closest('.tw-node-marker[data-tw-node]');
       if (m) _showNodeHoverCard(m.getAttribute('data-tw-node'), m);
     }, { passive: true });
@@ -210077,6 +210122,19 @@ function _showNodeHoverCard(nodeId, anchorEl) {
     }, { passive: true });
     window.addEventListener('scroll', () => _hideNodeHoverCard(), { passive: true, capture: true });
     window.addEventListener('resize', () => _hideNodeHoverCard(), { passive: true });
+    // 🏢 Corp/startup pins open their dossier. Delegated and bound once, which
+    // is why the pins no longer carry an inline onclick: the handler cannot be
+    // lost to a re-render and does not depend on the function still being a
+    // reachable global under the minifier.
+    document.addEventListener('click', (e) => {
+      const pin = e.target && e.target.closest && e.target.closest('.tw-aicorp[data-aicorp]');
+      if (!pin) return;
+      e.preventDefault();
+      e.stopPropagation();          // never let the click fall through and select the host node
+      _hideNodeHoverCard();
+      try { _aiCorpOpen(pin.getAttribute('data-aicorp')); }
+      catch (err) { try { console.warn('[aicorp pin]', err); } catch (_) {} }
+    }, true);                        // capture: beat the map's own node-select handler
   } catch (e) {}
 })();
 // Advance ONE node's 24h clock by however many full days have elapsed (capped).
@@ -210371,6 +210429,50 @@ const AI_CORPS = [
     trait: 'civic',     blurb: 'Civic. Buys failing businesses. The bailout of last resort.',
     likes: 'reconstruction progress', dislikes: 'illicit trade' },
 ];
+// 🌱 STARTUPS (v120e2) — the small end of the same market. The six above are
+// incumbents: each holds a resource and moves its price by up to ±15%. These
+// are too small to move a price and deliberately have NO entry in
+// AI_CORP_RESOURCE. What they have instead is an `offer` — a concrete service
+// that unlocks as your standing climbs. That difference is the point of them:
+// an incumbent is weather you plan around, a startup is a relationship you can
+// bank on. Each exists in tension with an incumbent (Wickline undercuts
+// Meridian, Palegrove needles the Green Belt, the Ledger Room sells what the
+// Vein would rather keep quiet) so the map reads as a market, not a list.
+const AI_STARTUPS = [
+  { id: 'kindling',   name: 'Kindling Labs',        ico: '⚗', col: '#ff9d5c',
+    kind: 'startup',  stage: 'Seed',         rival: 'meridian',
+    trait: 'refiner',   blurb: 'Two chemists and a cracked burner. Refines dead cinder back into something that lights.',
+    likes: 'nodes that keep their power up', dislikes: 'cinder hoarded and left cold',
+    offer: 'Refines low-grade cinder at cost' },
+  { id: 'wickline',   name: 'Wickline Couriers',    ico: '🛵', col: '#8fd0e8',
+    kind: 'startup',  stage: 'Bootstrapped', rival: 'meridian',
+    trait: 'courier',   blurb: 'Six riders and no warehouse. Takes the short hauls Meridian will not get out of bed for.',
+    likes: 'short runs between close nodes', dislikes: 'exclusivity contracts',
+    offer: 'Same-day runs between neighbouring nodes' },
+  { id: 'rootwater',  name: 'Rootwater Reclaim',    ico: '💧', col: '#6fc9b0',
+    kind: 'startup',  stage: 'Seed',         rival: 'greenbelt',
+    trait: 'water',     blurb: 'Pulls drinkable water out of runoff nobody else will touch.',
+    likes: 'a district that drinks what it cleans', dislikes: 'industry dumping upstream',
+    offer: 'Water at cost to any node hosting a filter' },
+  { id: 'palegrove',  name: 'Palegrove Bioworks',   ico: '🧬', col: '#b6a0ff',
+    kind: 'startup',  stage: 'Series A',     rival: 'greenbelt',
+    trait: 'bio',       blurb: 'Grows seed stock that survives ashfall. The Green Belt calls them a nuisance.',
+    likes: 'DNA samples brought back from the field', dislikes: 'the Green Belt monopoly',
+    offer: 'Ash-hardy seed stock' },
+  { id: 'quiethand',  name: 'Quiethand Escort',     ico: '🛡', col: '#d8c48a',
+    kind: 'startup',  stage: 'Bootstrapped', rival: 'ninthvein',
+    trait: 'escort',    blurb: 'Ex-convoy guards who went independent. They ride your freight, not your politics.',
+    likes: 'dangerous routes worth guarding', dislikes: 'illicit cargo they were not warned about',
+    offer: 'Escort hire that cuts convoy risk' },
+  { id: 'ledgerroom', name: 'The Ledger Room',      ico: '🗝', col: '#c9b0d8',
+    kind: 'startup',  stage: 'Seed',         rival: 'ninthvein',
+    trait: 'broker',    blurb: 'Sells what everyone else is doing. Nobody admits to buying from them.',
+    likes: 'a busy market with plenty to watch', dislikes: 'closed books',
+    offer: 'Intel on what rivals are producing' },
+];
+// One list from here down, so pins, standing, home nodes and the __mg surface
+// all pick the startups up without a single extra branch.
+AI_CORPS.push.apply(AI_CORPS, AI_STARTUPS);
 const AI_CORP_BY_ID = Object.fromEntries(AI_CORPS.map(c => [c.id, c]));
 const AI_STANDING_TIERS = [
   { min: 70,  id: 'allied',   name: 'Allied',    col: '#7fd8a0' },
@@ -210421,6 +210523,19 @@ function _aiCorpStanding(corpId) {
     // memoryShards, dna. corruptedEssence is the illicit-flavoured one.
     if (c.trait === 'illicit')   { const d = Math.min(15, Math.floor(res('corruptedEssence') / 20)); if (d) { v += d; reasons.push({ t: 'underlayer trade', d: d }); } }
     if (c.trait === 'civic')     { const d = Math.min(20, Math.floor(res('medicine') / 20)); if (d) { v += d; reasons.push({ t: 'medicine supplied to the Trust', d: d }); } }
+    // 🌱 Startup temperaments. Same shape, smaller numbers — a startup notices
+    // you sooner (lower divisors) but its ceiling is lower too, because it has
+    // less to give. Each reads off the resource its offer is actually built on,
+    // so the thing that earns their goodwill is the thing they trade in.
+    if (c.trait === 'refiner') { const d = Math.min(14, Math.floor(res('fuel') / 25));            if (d) { v += d; reasons.push({ t: 'fuel run through their burners', d: d }); } }
+    if (c.trait === 'courier') { const d = Math.min(14, Math.floor(res('supplies') / 30));        if (d) { v += d; reasons.push({ t: 'small parcels worth carrying', d: d }); } }
+    if (c.trait === 'water')   { const d = Math.min(14, Math.floor(res('water') / 30));           if (d) { v += d; reasons.push({ t: 'water moving through the district', d: d }); } }
+    if (c.trait === 'bio')     { const d = Math.min(14, Math.floor(res('dna') / 8));              if (d) { v += d; reasons.push({ t: 'DNA samples brought in', d: d }); } }
+    if (c.trait === 'escort')  { const d = Math.min(14, Math.floor(res('ammo') / 25));            if (d) { v += d; reasons.push({ t: 'ammunition on hand for the run', d: d }); } }
+    if (c.trait === 'broker')  { const d = Math.min(14, Math.floor(res('memoryShards') / 10));    if (d) { v += d; reasons.push({ t: 'shards worth reading', d: d }); } }
+    // A startup lives or dies on the incumbent it is fighting. Quiethand and
+    // the Ledger Room both work against the Vein and will not pretend otherwise.
+    if ((c.trait === 'escort' || c.trait === 'broker') && res('corruptedEssence') > 40) { v -= 18; reasons.push({ t: 'underlayer cargo they were not told about', d: -18 }); }
     // The Trust and the Vein cannot both like you.
     if (c.trait === 'civic'   && res('corruptedEssence') > 40) { v -= 25; reasons.push({ t: 'known underlayer dealings', d: -25 }); }
     if (c.trait === 'illicit' && res('medicine')  > 60) { v -= 15; reasons.push({ t: 'too close to the Trust', d: -15 }); }
@@ -210548,42 +210663,252 @@ function _aiYieldTradeMul(map) {
 // 🖱 Click a corp pin → who they are, what they want, and where you stand.
 // The pin only carries an icon and a colour; everything else is here, which is
 // what keeps the map readable.
-async function _aiCorpOpen(corpId) {
+// 🏢 THE BUSINESS DOSSIER — a real drawer, not a confirm box.
+// It reuses .tw-node-drawer.tw-aaa wholesale, which is the district node's own
+// panel: gold-ornate frame, corner brackets, crumb bar, Cinzel title, tab strip.
+// Reusing the classes rather than restyling means this panel inherits every
+// future change to the node drawer for free, and matches it exactly today.
+//
+// The drawer's own CSS is position:absolute, so the host below is a fixed,
+// full-screen layer for it to sit against — that keeps .tw-node-drawer's
+// geometry untouched instead of overriding it and drifting out of sync.
+// 📐 PIN LAYOUT PASS — the fix for pins that were unclickable on the real map.
+// Placing each pin on an arc around its OWN node is correct in isolation and
+// wrong in a district: with 16 nodes packed together, a pin dropped below its
+// host lands on a NEIGHBOUR's marker. Markers are z8 and pins z7, so the
+// neighbour won the hit test and the click selected that node instead of
+// opening the dossier. Measured on the live map: 9 of 12 pins were buried.
+//
+// Percentages cannot solve this — the offsets are in px and the map rescales —
+// so this runs after paint and measures what is actually on screen. For each
+// pin it walks candidate slots on the lower arc at growing radii and keeps the
+// first that overlaps nothing, scoring node ICONS far above labels because an
+// icon is the node's own click target.
+function _aiPinLayout() {
+  try {
+    const pins = Array.prototype.slice.call(document.querySelectorAll('.tw-aicorp[data-aicorp]'));
+    if (!pins.length) return;
+    const markers = Array.prototype.slice.call(document.querySelectorAll('.tw-node-marker'));
+    if (!markers.length) return;
+    const grow = (r, m) => ({ left: r.left - m, top: r.top - m, right: r.right + m, bottom: r.bottom + m });
+    // Weighted obstacles: sitting on a node's icon is far worse than brushing
+    // its name plate, because the icon is what the player aims at.
+    const obstacles = [];
+    for (const m of markers) {
+      const ico = m.querySelector('.tw-nm2-ico'), lab = m.querySelector('.tw-nm2-lab');
+      if (ico) obstacles.push({ r: grow(ico.getBoundingClientRect(), 4), w: 8 });
+      if (lab) obstacles.push({ r: grow(lab.getBoundingClientRect(), 2), w: 2 });
+    }
+    const overlap = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left))
+                            * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+    const RX = 78, RY = 44, BASE = 62;
+    const placed = [];
+    for (const pin of pins) {
+      const box = pin.getBoundingClientRect();
+      const w = box.width || 44, h = box.height || 16;
+      // Undo the current offset to recover the host node's anchor point.
+      const cs = getComputedStyle(pin);
+      const curX = parseFloat(cs.getPropertyValue('--dx')) || 0;
+      const curY = parseFloat(cs.getPropertyValue('--dy')) || 0;
+      const ax = box.left + w / 2 - curX, ay = box.top + h / 2 - curY;
+      let best = null;
+      // Radii stop at 1.45. Searching wider does find clear ground, but it put
+      // two pins 210px from their own node — far enough that they read as
+      // belonging to a different one, which is worse than a small overlap.
+      // Past this point the pin stays close and gets lifted above the markers
+      // instead (see is-crowded below).
+      outer:
+      for (const s of [1, 1.22, 1.45]) {
+        for (let k = 0; k <= 11; k++) {
+          const ang = Math.PI * (0.10 + 0.80 * (k / 11));
+          const dx = Math.cos(ang) * RX * s;
+          const dy = Math.sin(ang) * RY * s + BASE * s;
+          const r = { left: ax + dx - w / 2, top: ay + dy - h / 2, right: ax + dx + w / 2, bottom: ay + dy + h / 2 };
+          let score = 0;
+          for (const o of obstacles) score += overlap(r, o.r) * o.w;
+          for (const p of placed)   score += overlap(r, p) * 4;
+          // Prefer staying close to the host: among equally clear slots, the
+          // tightest radius keeps the pin visibly attached to its own node.
+          score += (s - 1) * 40;
+          if (!best || score < best.score) best = { score, dx, dy, r };
+          if (score <= (s - 1) * 40) break outer;   // clear slot at this radius
+        }
+      }
+      if (!best) continue;
+      pin.style.setProperty('--dx', Math.round(best.dx) + 'px');
+      pin.style.setProperty('--dy', Math.round(best.dy) + 'px');
+      // If nowhere is genuinely clear, the pin must still be clickable — lift
+      // that one above the markers rather than leave it buried and dead.
+      pin.classList.toggle('is-crowded', best.score > 60);
+      placed.push(best.r);
+    }
+  } catch (e) {}
+}
+// Re-run whenever the map could have moved under it.
+try {
+  window.addEventListener('resize', () => { try { _aiPinLayout(); } catch (e) {} }, { passive: true });
+} catch (e) {}
+
+let _aiCorpTab = 'brief';
+function _aiCorpClose() {
+  const h = document.getElementById('aicorp-host');
+  if (h) h.remove();
+  document.removeEventListener('keydown', _aiCorpKey);
+}
+function _aiCorpKey(e) { if (e.key === 'Escape') _aiCorpClose(); }
+function _aiCorpOpen(corpId, tab) {
   try {
     const c = AI_CORP_BY_ID[corpId];
     if (!c) return;
+    _aiCorpTab = tab || 'brief';
+    const isNew = c.kind === 'startup';
     const sd = _aiCorpStanding(corpId);
     const t = (typeof _twForge === 'function') ? _twForge() : null;
     const home = t ? _aiCorpHomeNode(corpId, (t.nodes || []).filter(n => n && n.id)) : null;
-    // Which resource this corp controls — the practical reason to care.
+    const rival = c.rival ? AI_CORP_BY_ID[c.rival] : null;
+    // Incumbents control a resource and bend its price. Startups do not — the
+    // panel says so plainly rather than showing an empty row.
     const owns = Object.keys(AI_CORP_RESOURCE).filter(r => AI_CORP_RESOURCE[r] === corpId);
     const mul = owns.length ? _aiTradeMul(owns[0]) : 1;
     const pct = Math.round((mul - 1) * 100);
-    const row = (k, v, col) => '<div style="display:flex;justify-content:space-between;gap:1rem;padding:0.25rem 0">'
-      + '<span style="color:#a89878">' + k + '</span><b style="color:' + (col || '#e8e0d0') + '">' + v + '</b></div>';
+    const esc = (s) => escapeHtml(String(s == null ? '' : s));
+
+    // ── BRIEF ──────────────────────────────────────────────────────────────
+    const briefHtml =
+      '<div class="tw-nd-section-hdr">WHO THEY ARE</div>'
+      + '<div style="padding:0 1.1rem 0.7rem;color:#cbbf9e;line-height:1.6;font-size:0.92rem;font-style:italic">' + esc(c.blurb) + '</div>'
+      + '<div class="tw-nd-vitals">'
+      +   '<div class="tw-nd-vital-card"><div class="tw-nd-vital-label">Type</div>'
+      +     '<div class="tw-nd-vital-value" style="font-size:0.95rem;color:' + c.col + '">' + (isNew ? 'STARTUP' : 'INCUMBENT') + '</div>'
+      +     '<div class="tw-nd-vital-delta">' + (isNew ? esc(c.stage) : 'Established') + '</div></div>'
+      +   '<div class="tw-nd-vital-card"><div class="tw-nd-vital-label">Standing</div>'
+      +     '<div class="tw-nd-vital-value" style="font-size:0.95rem;color:' + sd.tier.col + '">' + esc(sd.tier.name.toUpperCase()) + '</div>'
+      +     '<div class="tw-nd-vital-delta ' + (sd.value > 0 ? 'pos' : sd.value < 0 ? 'neg' : '') + '">' + (sd.value > 0 ? '+' : '') + sd.value + '</div></div>'
+      + '</div>'
+      + '<div class="tw-nd-section-hdr">BASE OF OPERATIONS</div>'
+      + '<div style="padding:0 1.1rem 0.7rem;color:#e4d9bb;font-size:0.9rem">'
+      +   (home ? '📍 <b style="color:#fff4d2">' + esc(home.name || home.id) + '</b>'
+                + '<div style="color:#a7987c;font-size:0.8rem;margin-top:0.2rem">They run out of this node. Clicking the node itself opens its own dossier.</div>'
+             : '<span style="color:#8a7a52">No fixed base on this map.</span>')
+      + '</div>'
+      + (rival ? '<div class="tw-nd-section-hdr">WHO THEY ARE UP AGAINST</div>'
+        + '<div style="padding:0 1.1rem 0.8rem">'
+        +   '<button class="btn-mini" data-aicorp-goto="' + esc(rival.id) + '" style="display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;cursor:pointer">'
+        +     '<span style="font-size:1.1rem">' + rival.ico + '</span>'
+        +     '<span><b style="color:#fff4d2">' + esc(rival.name) + '</b>'
+        +     '<div style="color:#a7987c;font-size:0.76rem">' + (isNew ? 'The incumbent they are trying to take work from.' : 'Sees this outfit as a nuisance.') + '</div></span>'
+        +   '</button></div>' : '')
+      + '<div class="tw-nd-section-hdr">TEMPERAMENT</div>'
+      + '<div style="padding:0 1.1rem 1rem;font-size:0.88rem;line-height:1.8;color:#cbbf9e">'
+      +   '<div>👍 Likes <b style="color:#fff4d2">' + esc(c.likes) + '</b></div>'
+      +   '<div>👎 Dislikes <b style="color:#fff4d2">' + esc(c.dislikes) + '</b></div></div>';
+
+    // ── STANDING ───────────────────────────────────────────────────────────
+    // The bar is drawn from −100…+100 mapped onto 0…100% so a negative
+    // standing reads as visibly short rather than as an empty bar.
+    const barPct = Math.round(((sd.value + 100) / 200) * 100);
     const reasons = (sd.reasons || []).length
-      ? sd.reasons.map(r => '<div style="display:flex;justify-content:space-between;font-size:0.82rem;padding:0.15rem 0">'
-          + '<span style="color:#97a2b6">' + escapeHtml(r.t) + '</span>'
-          + '<b style="color:' + (r.d >= 0 ? '#7fd8a0' : '#e8705c') + '">' + (r.d >= 0 ? '+' : '') + r.d + '</b></div>').join('')
-      : '<div style="color:#7a8694;font-style:italic;font-size:0.82rem">Nothing yet — they have no opinion of you.</div>';
-    await showGameConfirm({
-      title: c.ico + ' ' + c.name,
-      bodyHtml:
-        '<div style="display:inline-block;padding:0.1rem 0.6rem;border-radius:3px;font-size:0.7rem;font-weight:800;letter-spacing:0.12em;color:#0c0a06;background:' + c.col + ';margin-bottom:0.6rem">AI CORPORATION</div>'
-        + '<div style="font-style:italic;color:#cfd8ea;margin-bottom:0.8rem;line-height:1.55">' + escapeHtml(c.blurb) + '</div>'
-        + '<div style="background:rgba(14,18,28,0.6);border:1px solid #23303f;border-radius:5px;padding:0.6rem 0.8rem;margin-bottom:0.7rem">'
-        + row('Standing', sd.tier.name + ' (' + (sd.value > 0 ? '+' : '') + sd.value + ')', sd.tier.col)
-        + row('Based at', home ? escapeHtml(home.name || home.id) : '—')
-        + (owns.length ? row('Controls', owns.join(', ')) : '')
-        + (owns.length ? row('Your price on it', (pct > 0 ? '+' : '') + pct + '%', pct > 0 ? '#7fd8a0' : pct < 0 ? '#e8705c' : '#8a96a3') : '')
-        + '</div>'
-        + '<div style="font-size:0.78rem;color:#9a8c66;letter-spacing:0.12em;margin-bottom:0.3rem">WHY THEY FEEL THAT WAY</div>'
-        + '<div style="background:rgba(14,18,28,0.45);border-left:3px solid ' + c.col + ';border-radius:4px;padding:0.5rem 0.7rem;margin-bottom:0.7rem">' + reasons + '</div>'
-        + '<div style="font-size:0.82rem;color:#97a2b6;line-height:1.6">'
-        + '<div>👍 Likes <b style="color:#cfd8ea">' + escapeHtml(c.likes) + '</b></div>'
-        + '<div>👎 Dislikes <b style="color:#cfd8ea">' + escapeHtml(c.dislikes) + '</b></div></div>',
-      yesLabel: 'CLOSE', noLabel: '', yesAccent: 'gold',
+      ? (sd.reasons || []).map(r =>
+          '<div class="tw-nd-progress-row"><span class="tw-nd-prog-label" style="flex:1">' + esc(r.t) + '</span>'
+          + '<b class="tw-nd-prog-val" style="color:' + (r.d >= 0 ? '#7fd8a0' : '#e8705c') + '">' + (r.d >= 0 ? '+' : '') + r.d + '</b></div>').join('')
+      : '<div class="tw-nd-progress-row"><span class="tw-nd-prog-label" style="font-style:italic;color:#8a7a52">Nothing yet — they have no opinion of you.</span></div>';
+    const standingHtml =
+      '<div class="tw-nd-section-hdr">WHERE YOU STAND</div>'
+      + '<div style="padding:0 1.1rem 0.8rem">'
+      +   '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:0.4rem">'
+      +     '<b style="font-family:\'Cinzel\',serif;font-size:1.25rem;color:' + sd.tier.col + '">' + esc(sd.tier.name) + '</b>'
+      +     '<span style="font-family:\'JetBrains Mono\',monospace;color:' + sd.tier.col + ';font-size:1.05rem">' + (sd.value > 0 ? '+' : '') + sd.value + '</span></div>'
+      +   '<div class="tw-nd-vital-bar" style="height:6px"><div style="width:' + barPct + '%;background:' + sd.tier.col + '"></div></div>'
+      +   '<div style="display:flex;justify-content:space-between;font-size:0.66rem;color:#8a7a52;margin-top:0.25rem">'
+      +     '<span>BLACKLISTED</span><span>NEUTRAL</span><span>ALLIED</span></div>'
+      + '</div>'
+      + '<div class="tw-nd-section-hdr">WHY THEY FEEL THAT WAY</div>'
+      + '<div class="tw-nd-progress-list">' + reasons + '</div>'
+      + '<div class="tw-nd-section-hdr">HOW TO MOVE IT</div>'
+      + '<div style="padding:0 1.1rem 1rem;font-size:0.86rem;line-height:1.7;color:#cbbf9e">'
+      +   'Standing is read live off what you actually own and produce — there is no gift button. '
+      +   'Hold more nodes, register your camp, and build up <b style="color:#fff4d2">' + esc(c.likes) + '</b>.'
+      + '</div>';
+
+    // ── TRADE ──────────────────────────────────────────────────────────────
+    // Incumbents move a price band; startups unlock a service. Same tab, two
+    // genuinely different economic roles.
+    const NEED = 40;
+    const tradeHtml = isNew
+      ? '<div class="tw-nd-section-hdr">WHAT THEY OFFER</div>'
+        + '<div style="padding:0 1.1rem 0.8rem">'
+        +   '<div class="tw-nd-cinder-box" style="padding:0.8rem 0.9rem">'
+        +     '<div class="tw-nd-cinder-label">' + esc(c.stage.toUpperCase()) + ' · SERVICE</div>'
+        +     '<div style="color:#fff4d2;font-size:1rem;font-weight:700;margin:0.3rem 0 0.5rem">' + esc(c.offer) + '</div>'
+        +     '<div class="tw-nd-vital-bar"><div style="width:' + Math.max(0, Math.min(100, Math.round((sd.value / NEED) * 100))) + '%;background:' + c.col + '"></div></div>'
+        +     '<div style="font-size:0.78rem;color:' + (sd.value >= NEED ? '#7fd8a0' : '#c2b184') + ';margin-top:0.35rem">'
+        +       (sd.value >= NEED ? '✓ Unlocked — they will work with you.'
+                                  : 'Locked · needs Friendly (+' + NEED + '). You are at ' + (sd.value > 0 ? '+' : '') + sd.value + '.') + '</div>'
+        +   '</div></div>'
+        + '<div class="tw-nd-section-hdr">MARKET WEIGHT</div>'
+        + '<div style="padding:0 1.1rem 1rem;font-size:0.86rem;line-height:1.7;color:#cbbf9e">'
+        +   'Too small to move a price. A startup cannot tax you the way an incumbent can — '
+        +   'what it can do is work for you once it trusts you.</div>'
+      : '<div class="tw-nd-section-hdr">WHAT THEY CONTROL</div>'
+        + '<div style="padding:0 1.1rem 0.8rem">'
+        +   (owns.length
+              ? '<div style="display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.7rem">'
+                + owns.map(r => '<span class="tw-yield-pill">' + esc(r) + '</span>').join('') + '</div>'
+                + '<div class="tw-nd-cinder-box" style="padding:0.8rem 0.9rem">'
+                +   '<div class="tw-nd-cinder-label">YOUR PRICE ON IT</div>'
+                +   '<div class="tw-nd-cinder-value" style="font-size:1.8rem;' + (pct === 0 ? 'color:#8a96a3;background:none;-webkit-text-fill-color:#8a96a3' : '') + '">'
+                +     (pct > 0 ? '+' : '') + pct + '%</div>'
+                +   '<div style="font-size:0.8rem;color:#c2b184;margin-top:0.3rem">'
+                +     (pct > 0 ? 'They favour you, so this sells above the board rate.'
+                       : pct < 0 ? 'They are squeezing you — this sells below the board rate.'
+                       : 'Neutral standing, board rate. Their opinion is worth up to ±15%.') + '</div>'
+                + '</div>'
+              : '<span style="color:#8a7a52">No resource of their own.</span>')
+      + '</div>';
+
+    const tabs = [['brief', 'BRIEF'], ['standing', 'STANDING'], ['trade', isNew ? 'OFFER' : 'TRADE']];
+    const panel = { brief: briefHtml, standing: standingHtml, trade: tradeHtml };
+
+    _aiCorpClose();
+    const host = document.createElement('div');
+    host.id = 'aicorp-host';
+    host.innerHTML =
+      '<div class="aicorp-scrim"></div>'
+      + '<div class="tw-node-drawer tw-aaa tw-drawer-anim" data-aicorp-drawer="' + esc(c.id) + '">'
+      +   '<span class="cd-corner tl"></span><span class="cd-corner tr"></span>'
+      +   '<span class="cd-corner bl"></span><span class="cd-corner br"></span>'
+      +   '<div class="tw-drawer-crumb-bar">'
+      +     '<span class="tw-drawer-crumb-text">DISTRICT NODES · ' + (isNew ? 'STARTUP' : 'AI CORPORATION') + '</span>'
+      +     '<span class="tw-drawer-barcode">||||||||||||||||</span>'
+      +     '<button class="tw-drawer-close" data-aicorp-close="1">✕</button>'
+      +   '</div>'
+      +   '<div class="tw-drawer-title-block">'
+      +     '<div class="tw-drawer-node-name">' + esc(c.name) + '</div>'
+      +     '<div class="tw-drawer-node-coords">' + esc(c.id.toUpperCase()) + ' · ' + (isNew ? esc(c.stage.toUpperCase()) : 'ESTABLISHED') + '</div>'
+      +     '<div class="tw-drawer-node-sub">' + (isNew ? 'Startup' : 'Incumbent') + ' — '
+      +       (owns.length ? esc(owns.join(', ')) + ' market' : 'services') + ' · '
+      +       '<span style="color:' + sd.tier.col + '">' + esc(sd.tier.name) + '</span></div>'
+      +     '<div class="ndx-crest" style="--ndx-c:' + c.col + '">' + c.ico + '</div>'
+      +   '</div>'
+      +   '<div class="tw-drawer-tabs">'
+      +     tabs.map(([k, l]) => '<button class="tw-drawer-tab ' + (_aiCorpTab === k ? 'is-active' : '') + '" data-aicorp-tab="' + k + '">' + l + '</button>').join('')
+      +   '</div>'
+      +   tabs.map(([k]) => '<div class="tw-nd-tab-panel ' + (_aiCorpTab === k ? 'is-active' : '') + '">' + panel[k] + '</div>').join('')
+      + '</div>';
+    document.body.appendChild(host);
+
+    // Delegated inside the host, so tab switches and the close button keep
+    // working no matter how often the panel is rebuilt.
+    host.addEventListener('click', (e) => {
+      const tgt = e.target && e.target.closest ? e.target : null;
+      if (!tgt) return;
+      if (tgt.closest('[data-aicorp-close]') || tgt.classList.contains('aicorp-scrim')) { _aiCorpClose(); return; }
+      const tb = tgt.closest('[data-aicorp-tab]');
+      if (tb) { _aiCorpOpen(corpId, tb.getAttribute('data-aicorp-tab')); return; }
+      const go = tgt.closest('[data-aicorp-goto]');
+      if (go) { _aiCorpOpen(go.getAttribute('data-aicorp-goto'), 'brief'); return; }
     });
+    document.addEventListener('keydown', _aiCorpKey);
   } catch (e) { try { console.warn('[aiCorpOpen]', e); } catch (_) {} }
 }
 try {
@@ -211119,7 +211444,8 @@ function renderTerritoryWars() {
         if (!home) return '';
         const p = home.position || { x: 5, y: 5 };
         const sd = _aiCorpStanding(c.id);
-        const tip = c.name + ' — ' + c.blurb + '\nStanding: ' + sd.tier.name + ' (' + (sd.value > 0 ? '+' : '') + sd.value + ')\nBased at ' + home.name + '\nClick for details';
+        const tip = c.name + ' — ' + c.blurb + '\n' + (c.kind === 'startup' ? 'Startup · ' + c.stage : 'Incumbent')
+          + '\nStanding: ' + sd.tier.name + ' (' + (sd.value > 0 ? '+' : '') + sd.value + ')\nBased at ' + home.name + '\nClick for details';
         // 🧭 RADIAL OFFSET, ON THE LOWER ARC. Three iterations to get here:
         //   1. a fixed top-right offset — every badge sat through its node's
         //      own name label.
@@ -211149,10 +211475,15 @@ function renderTerritoryWars() {
         const ang = Math.PI * (0.14 + 0.72 * frac);       // +25° … +155°, i.e. below
         const dx = Math.round(Math.cos(ang) * 78);
         const dy = Math.round(Math.sin(ang) * 44) + 62;
-        return '<button class="tw-aicorp" style="left:' + p.x + '%;top:' + p.y + '%;--cc:' + c.col
+        // No inline onclick. It worked, but it made every pin depend on
+        // _aiCorpOpen still being a reachable global after minification — a
+        // silent single point of failure for the one interaction these pins
+        // exist to provide. The delegated listener below is bound once at load
+        // and survives every re-render.
+        return '<button class="tw-aicorp' + (c.kind === 'startup' ? ' is-startup' : '') + '"'
+          + ' style="left:' + p.x + '%;top:' + p.y + '%;--cc:' + c.col
           + ';--dx:' + dx + 'px;--dy:' + dy + 'px"'
-          + ' title="' + escapeHtml(tip) + '" data-aicorp="' + escapeHtml(c.id) + '"'
-          + ' onclick="event.stopPropagation();_aiCorpOpen(\'' + escapeHtml(c.id) + '\')">'
+          + ' title="' + escapeHtml(tip) + '" data-aicorp="' + escapeHtml(c.id) + '">'
           + '<span class="tw-aicorp-ico">' + c.ico + '</span>'
           + '<span class="tw-aicorp-tag">AI</span>'
           + '<span class="tw-aicorp-dot" style="--sc:' + sd.tier.col + '"></span>'

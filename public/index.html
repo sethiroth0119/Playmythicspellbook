@@ -36060,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120d0';
+  window.BUILD_VERSION = 'v120d1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -75894,18 +75894,32 @@ const OP_ACCRUAL_CAP_H = 36;                   // unattended accrual caps at 36h
 // `yields` = real resources deposited to the collecting founder's ledger
 // per worker·hr (on top of the Cinder→Treasury revenue). 'parts' has no
 // real resource → mapped to metal. Smuggling stays Cinder/contraband only.
+// 🏭 SUPPLY CHAIN (v120d1). `inputs` = resources CONSUMED per worker·hr, the
+// mirror of `yields`. This is the structural fix the tycoon spec calls item 1:
+// before it, every business produced from nothing and the economy had no
+// internal links — mining and construction were unrelated islands.
+//
+// The split is PRIMARY vs SECONDARY:
+//   • Primary extractors (mining, oil, agri, salvage, gas) take the raw world
+//     and have NO inputs. They are where matter enters the economy — together
+//     with node resource yield, which feeds the same player ledger.
+//   • Secondary industry (construction, cars, medical, research, smuggling,
+//     fishing) CONSUMES what the primaries and the nodes produce.
+//
+// An op short on inputs does not stall — it throttles (see _opComputed), so a
+// supply squeeze is felt as reduced output rather than a dead business.
 const OPS_ECON = {
   mining:       { startup: 400000, ratePerWorkerHr: 900,  salaryPerWorkerHr: 220, maxWorkers: 12, yields: { metal: 2.2 } },
   oil:          { startup: 500000, ratePerWorkerHr: 1300, salaryPerWorkerHr: 320, maxWorkers: 10, yields: { fuel: 2.6 } },
-  construction: { startup: 350000, ratePerWorkerHr: 800,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { metal: 2.0 } },
-  medical:      { startup: 450000, ratePerWorkerHr: 1000, salaryPerWorkerHr: 260, maxWorkers: 10, yields: { medicine: 0.9 } },
+  construction: { startup: 350000, ratePerWorkerHr: 800,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { metal: 2.0 }, inputs: { fuel: 0.5 } },
+  medical:      { startup: 450000, ratePerWorkerHr: 1000, salaryPerWorkerHr: 260, maxWorkers: 10, yields: { medicine: 0.9 }, inputs: { food: 0.8 } },
   agri:         { startup: 300000, ratePerWorkerHr: 700,  salaryPerWorkerHr: 170, maxWorkers: 14, yields: { food: 2.4 } },
-  research:     { startup: 700000, ratePerWorkerHr: 1700, salaryPerWorkerHr: 430, maxWorkers: 8,  yields: { memoryShards: 0.25 } },
-  smuggling:    { startup: 600000, ratePerWorkerHr: 1900, salaryPerWorkerHr: 360, maxWorkers: 8, illicit: true },
+  research:     { startup: 700000, ratePerWorkerHr: 1700, salaryPerWorkerHr: 430, maxWorkers: 8,  yields: { memoryShards: 0.25 }, inputs: { metal: 0.6, fuel: 0.3 } },
+  smuggling:    { startup: 600000, ratePerWorkerHr: 1900, salaryPerWorkerHr: 360, maxWorkers: 8, illicit: true, inputs: { fuel: 1.0 } },
   salvage:      { startup: 250000, ratePerWorkerHr: 650,  salaryPerWorkerHr: 150, maxWorkers: 14, yields: { metal: 1.6 } },
   gas:          { startup: 350000, ratePerWorkerHr: 850,  salaryPerWorkerHr: 200, maxWorkers: 12, yields: { fuel: 2.2 } },
-  cars:         { startup: 450000, ratePerWorkerHr: 1100, salaryPerWorkerHr: 280, maxWorkers: 10, yields: { metal: 1.8 } },
-  fishing:      { startup: 300000, ratePerWorkerHr: 750,  salaryPerWorkerHr: 180, maxWorkers: 14, yields: { food: 2.4 } },
+  cars:         { startup: 450000, ratePerWorkerHr: 1100, salaryPerWorkerHr: 280, maxWorkers: 10, yields: { metal: 1.8 }, inputs: { metal: 1.2, fuel: 0.4 } },
+  fishing:      { startup: 300000, ratePerWorkerHr: 750,  salaryPerWorkerHr: 180, maxWorkers: 14, yields: { food: 2.4 }, inputs: { fuel: 0.6 } },
   cardshop:     { startup: 200000, ratePerWorkerHr: 500,  salaryPerWorkerHr: 120, maxWorkers: 6,  yields: {} },
   // 🥋 Dojo — the licence to run a MOVE storefront. Owning one unlocks the
   // Tutor Shop (wholesale) and lets you stock + resell moves to other players.
@@ -76153,6 +76167,11 @@ function _opEcon(t) {
   if (o.yields && typeof o.yields === 'object') {
     merged.yields = Object.assign({}, base.yields || {}, o.yields);
   }
+  // `inputs` is nested for the same reason — an admin retuning one input must
+  // not wipe the others off the operation.
+  if (o.inputs && typeof o.inputs === 'object') {
+    merged.inputs = Object.assign({}, base.inputs || {}, o.inputs);
+  }
   return merged;
 }
 try { window.__mg = window.__mg || {}; window.__mg.opsEcon = { table: OPS_ECON, live: _opEcon }; } catch (e) {}
@@ -76202,7 +76221,44 @@ function _opComputed(o) {
   // deliberately NOT scaled — wages are owed regardless of the market, which is
   // what makes a glut genuinely painful to the producer causing it.
   const mktMul = (typeof cxYieldMul === 'function' && e.yields) ? cxYieldMul(e.yields) : 1;
-  const grossPerHr = w * e.ratePerWorkerHr * mktMul;
+  // 🏭 INPUT THROTTLE — a secondary industry can only run on what it can feed
+  // itself. `supply` is the WORST coverage ratio across its inputs: hold half
+  // the fuel a run needs and the whole operation runs at half. An op with no
+  // `inputs` (every primary extractor) is unaffected — supply stays 1.
+  //
+  // Throttling rather than stalling is deliberate: a business that silently
+  // produces nothing reads as broken, one that visibly runs at 40% reads as a
+  // supply problem the player can go and solve.
+  const inputsWanted = {};
+  let supply = 1;
+  if (e.inputs && typeof e.inputs === 'object') {
+    Object.keys(e.inputs).forEach(function (rid) {
+      const need = w * (e.inputs[rid] || 0) * hrs;
+      if (need > 0) inputsWanted[rid] = need;
+    });
+    const ids = Object.keys(inputsWanted);
+    if (ids.length) {
+      let worst = 1;
+      ids.forEach(function (rid) {
+        let have = 0;
+        try { have = (typeof getRes === 'function') ? Math.max(0, getRes(rid) | 0) : 0; } catch (err) { have = 0; }
+        const ratio = Math.min(1, have / inputsWanted[rid]);
+        if (ratio < worst) worst = ratio;
+      });
+      supply = Math.max(0, Math.min(1, worst));
+    }
+  }
+  // What the op will ACTUALLY consume at the throttled rate — this is what
+  // _opSettle deducts, so it can never spend more than the player holds.
+  const inputsUsed = {};
+  Object.keys(inputsWanted).forEach(function (rid) {
+    const q = Math.floor(inputsWanted[rid] * supply);
+    if (q > 0) inputsUsed[rid] = q;
+  });
+  const grossPerHr = w * e.ratePerWorkerHr * mktMul * supply;
+  // ⚠ Salaries are NOT throttled — same rule as the market multiplier above.
+  // Wages are owed whether or not the supply line held, which is what makes
+  // running dry actually hurt instead of quietly pausing the business.
   const salaryPerHr = w * e.salaryPerWorkerHr;
   const gross = Math.floor(grossPerHr * hrs);
   const salary = Math.floor(salaryPerHr * hrs);
@@ -76210,10 +76266,10 @@ function _opComputed(o) {
   const cdLeft = Math.max(0, (last + OP_COLLECT_CD_MS) - Date.now());
   const yields = {};
   if (e.yields) Object.keys(e.yields).forEach(function (rid) {
-    const q = Math.floor(w * (e.yields[rid] || 0) * hrs);
+    const q = Math.floor(w * (e.yields[rid] || 0) * hrs * supply);
     if (q > 0) yields[rid] = q;
   });
-  return { e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last, yields: yields, mktMul: mktMul };
+  return { e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last, yields: yields, mktMul: mktMul, supply: supply, inputsWanted: inputsWanted, inputsUsed: inputsUsed };
 }
 function _opLaborPool() { return Math.max(1, (Corp.roster || []).length || 1); }
 // Shared post-founding handler — fires the unlock toast + grants Woods
@@ -76364,6 +76420,13 @@ async function _opSettle(o) {
     if (netL > 0) { try { addCinders(netL); } catch (e) {} }
     const yieldedL = {};
     try {
+      // 🏭 CONSUME FIRST. _opComputed already clamped inputsUsed to the throttled
+      // rate, which is itself bounded by what the player actually holds, so this
+      // can never overdraw — and the gross/yields above were computed from the
+      // same `supply` figure, so spend and output always agree.
+      if (c.inputsUsed && Object.keys(c.inputsUsed).length && typeof spendResources === 'function') {
+        try { spendResources(c.inputsUsed); } catch (errIn) { try { console.warn('[op inputs]', errIn); } catch (_) {} }
+      }
       Object.keys(c.yields || {}).forEach(function (rid) {
         const q = Math.max(0, Math.floor(c.yields[rid]));
         if (q > 0) yieldedL[rid] = q;
@@ -76391,6 +76454,19 @@ async function _opSettle(o) {
   // wages-short 50% penalty as Cinder revenue.
   const yielded = {};
   try {
+    // 🏭 Consume inputs on the corp path too. Scaled by the same wagesShort
+    // penalty as the output, so a half-output run also burns half the feedstock
+    // rather than paying full price for reduced production.
+    if (c.inputsUsed && Object.keys(c.inputsUsed).length && typeof spendResources === 'function') {
+      const burn = {};
+      Object.keys(c.inputsUsed).forEach(function (rid) {
+        const q = Math.max(0, Math.floor(c.inputsUsed[rid] * (wagesShort ? 0.5 : 1)));
+        if (q > 0) burn[rid] = q;
+      });
+      if (Object.keys(burn).length) {
+        try { spendResources(burn); } catch (errIn) { try { console.warn('[op inputs]', errIn); } catch (_) {} }
+      }
+    }
     const cy = c.yields || {};
     Object.keys(cy).forEach(function (rid) {
       const q = Math.max(0, Math.floor(cy[rid] * (wagesShort ? 0.5 : 1)));

@@ -22631,6 +22631,83 @@
     padding: 0.2rem 0;
   }
 
+  /* ═══ 🤝 CONCORD tab (v120d4) — the faction-relationship explainer ═════════
+     Uses the full screen rather than the 1280px reading measure the rest of the
+     Book keeps: this page is a MAP plus a live readout of the player's decks,
+     and both want width. */
+  .bok-page.bok-wide { max-width: min(1720px, 96vw); }
+  .cnc-wrap { display: flex; flex-direction: column; gap: 0.2rem; }
+  .cnc-intro { background: linear-gradient(180deg, rgba(20,26,40,0.92), rgba(10,13,22,0.96));
+    border: 1px solid rgba(212,175,55,0.3); border-left: 4px solid #d4af37;
+    border-radius: 12px; padding: 1.1rem 1.3rem; margin-bottom: 0.4rem; }
+  .cnc-h { font-family: 'Cinzel', serif; font-size: 1.5rem; color: #f0d089; margin: 0 0 0.6rem; }
+  .cnc-intro p { margin: 0 0 0.55rem; line-height: 1.65; color: #cfd8ea; max-width: 92ch; }
+  .cnc-intro b { color: #f3e6c4; }
+  .cnc-note { border-top: 1px dashed rgba(212,175,55,0.3); padding-top: 0.6rem; color: #e0c06a !important; }
+  .cnc-sec { display: flex; align-items: center; gap: 0.8rem; margin: 1.3rem 0 0.7rem; }
+  .cnc-sec span { font-family: 'Cinzel', serif; font-size: 1.05rem; letter-spacing: 0.16em;
+    text-transform: uppercase; color: #e0b45c; white-space: nowrap; }
+  .cnc-sec::after { content: ''; flex: 1; height: 1px;
+    background: linear-gradient(90deg, rgba(212,175,55,0.5), transparent); }
+  /* six tiers */
+  .cnc-tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.7rem; }
+  .cnc-tier { display: flex; align-items: center; gap: 0.75rem; padding: 0.8rem 0.9rem;
+    border-radius: 10px; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--c) 10%, rgba(12,16,26,0.95)), rgba(9,12,20,0.97)); }
+  .cnc-tier-i { font-size: 1.7rem; line-height: 1; }
+  .cnc-tier-b { flex: 1; min-width: 0; }
+  .cnc-tier-n { font-family: 'Cinzel', serif; font-weight: 700; color: var(--c); font-size: 1.05rem; }
+  .cnc-tier-d { font-size: 0.8rem; color: #97a2b6; }
+  .cnc-tier-w { font-family: 'Cinzel', serif; font-weight: 800; font-size: 1.5rem; color: var(--c); }
+  /* two-column mid section */
+  .cnc-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 0 2rem; align-items: start; }
+  .cnc-table { width: 100%; border-collapse: collapse; }
+  .cnc-table th { text-align: left; font-family: 'Cinzel', serif; font-size: 0.76rem;
+    letter-spacing: 0.13em; text-transform: uppercase; color: #9a8c66;
+    border-bottom: 1px solid rgba(212,175,55,0.28); padding: 0.4rem 0.5rem; }
+  .cnc-table td { padding: 0.45rem 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .cnc-num { text-align: right; font-variant-numeric: tabular-nums; color: #f0d089; font-weight: 700; }
+  .cnc-band { display: inline-block; padding: 0.15rem 0.65rem; border-radius: 999px;
+    font-family: 'Cinzel', serif; font-size: 0.82rem; font-weight: 700;
+    color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 55%, transparent);
+    background: color-mix(in srgb, var(--c) 14%, transparent); white-space: nowrap; }
+  .cnc-fine { font-size: 0.82rem; color: #8c98ae; line-height: 1.6; margin: 0.7rem 0 0; max-width: 88ch; }
+  .cnc-ex { border-left: 3px solid rgba(212,175,55,0.4); padding: 0.4rem 0 0.4rem 0.8rem; margin-bottom: 0.7rem; }
+  .cnc-ex-d { color: #cfd8ea; font-weight: 600; }
+  .cnc-ex-r { font-family: 'Cinzel', serif; font-weight: 800; font-size: 1.05rem; }
+  .cnc-ex-n { font-size: 0.82rem; color: #8c98ae; }
+  /* live deck readout */
+  .cnc-decks { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 0.7rem; }
+  .cnc-deck { border-radius: 10px; padding: 0.75rem 0.9rem;
+    border: 1px solid color-mix(in srgb, var(--c) 40%, transparent);
+    background: linear-gradient(180deg, rgba(16,21,33,0.95), rgba(9,12,20,0.97)); }
+  .cnc-deck-h { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.45rem; }
+  .cnc-deck-n { font-family: 'Cinzel', serif; font-weight: 700; color: #f3e6c4; flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cnc-deck-s { font-family: 'Cinzel', serif; font-weight: 800; font-size: 1.2rem; color: var(--c);
+    font-variant-numeric: tabular-nums; }
+  .cnc-deck-p { display: flex; flex-direction: column; gap: 0.25rem; }
+  .cnc-pair { font-size: 0.82rem; color: #b6c0d4; display: flex; align-items: center;
+    gap: 0.4rem; flex-wrap: wrap; }
+  /* relationship map */
+  .cnc-maps { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0.7rem; }
+  .cnc-map { border-radius: 10px; padding: 0.7rem 0.85rem;
+    border: 1px solid rgba(212,175,55,0.24);
+    background: linear-gradient(180deg, rgba(15,19,31,0.94), rgba(9,12,20,0.97)); }
+  .cnc-map-h { font-family: 'Cinzel', serif; font-weight: 700; font-size: 1.02rem;
+    color: #f0d089; margin-bottom: 0.45rem; }
+  .cnc-map-l { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.3rem; }
+  .cnc-chip { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.05rem 0.5rem;
+    border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap;
+    color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 50%, transparent);
+    background: color-mix(in srgb, var(--c) 12%, transparent); }
+  .cnc-f { font-size: 0.82rem; color: #c3cbdc; }
+  @media (max-width: 900px) {
+    .cnc-two { grid-template-columns: minmax(0, 1fr); }
+    .cnc-h { font-size: 1.2rem; }
+    .cnc-tier-w { font-size: 1.2rem; }
+  }
+
   /* Stat-card extras */
   .bok-card-stat .bok-card-head { align-items: flex-start; }
   .bok-stat-id {
@@ -36060,7 +36137,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120d3';
+  window.BUILD_VERSION = 'v120d4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -204337,14 +204414,143 @@ function renderBookOfKnowledge() {
       </div>`;
   }
 
+  // ===== 🤝 CONCORD tab — how factions feel about EACH OTHER =====
+  // Player-facing explainer for the deck cohesion system. Every number here is
+  // read from the live tables, so retuning CONCORD_WEIGHT or the relationship
+  // map updates this page automatically — it can never drift from the engine.
+  const concordBody = () => {
+    const TIER_META = {
+      sworn:   { name: 'Sworn',      icon: '🤝', color: '#7fd8a0', blurb: 'Bound by oath or by nature.' },
+      warm:    { name: 'Warm',       icon: '🙂', color: '#9ad17a', blurb: 'Comfortable allies.' },
+      neutral: { name: 'Neutral',    icon: '➖', color: '#8a96a3', blurb: 'No opinion either way.' },
+      wary:    { name: 'Wary',       icon: '👁', color: '#e0c06a', blurb: 'Mutual distrust.' },
+      hostile: { name: 'Hostile',    icon: '⚔', color: '#e8705c', blurb: 'Open enmity.' },
+      feud:    { name: 'Blood Feud', icon: '🩸', color: '#e24842', blurb: 'Cannot be reconciled.' },
+    };
+    const tierChip = (t) => {
+      const m = TIER_META[t] || TIER_META.neutral;
+      return `<span class="cnc-chip" style="--c:${m.color}">${m.icon} ${m.name}</span>`;
+    };
+    // 1) The six tiers, with their real deck weights.
+    const tierRows = ['sworn', 'warm', 'neutral', 'wary', 'hostile', 'feud'].map(t => {
+      const m = TIER_META[t], w = CONCORD_WEIGHT[t] || 0;
+      return `<div class="cnc-tier" style="--c:${m.color}">
+          <div class="cnc-tier-i">${m.icon}</div>
+          <div class="cnc-tier-b">
+            <div class="cnc-tier-n">${m.name}</div>
+            <div class="cnc-tier-d">${escapeHtml(m.blurb)}</div>
+          </div>
+          <div class="cnc-tier-w">${w > 0 ? '+' + w : w}</div>
+        </div>`;
+    }).join('');
+    // 2) The bands a finished deck can land in.
+    const bandRows = CONCORD_BANDS.map(b => {
+      const lo = b.min === -Infinity ? '−12 or worse'
+               : (b.id === 'sworn' ? '12 or better' : b.min);
+      return `<tr><td><span class="cnc-band" style="--c:${b.color}">${escapeHtml(b.name)}</span></td>
+        <td class="cnc-num">${lo}</td></tr>`;
+    }).join('');
+    // 3) YOUR decks, scored live. This is the part that makes the page useful
+    //    rather than a wiki entry — it reads Profile.decks and resolves each id.
+    const resolveCard = (id) => {
+      try {
+        if (typeof _resolveAnyCardById === 'function') return _resolveAnyCardById(id);
+        if (typeof lookupCustomCard === 'function') return lookupCustomCard(id);
+      } catch (e) {}
+      return null;
+    };
+    const myDecks = (Array.isArray(Profile.decks) ? Profile.decks : []).map(d => {
+      const cards = (d.cards || []).map(resolveCard).filter(Boolean);
+      const c = deckCohesion(cards);
+      return { d: d, c: c, n: cards.length };
+    });
+    const deckRows = !myDecks.length
+      ? `<div class="bok-empty-mini">You have no saved decks yet — build one and its Concord reading appears here.</div>`
+      : myDecks.map(x => {
+          const top = (x.c.pairs || []).slice(0, 3).map(p =>
+            `<span class="cnc-pair">${escapeHtml(p.a)} ${tierChip(p.tier)} ${escapeHtml(p.b)}
+              <b style="color:${p.delta >= 0 ? '#7fd8a0' : '#e8705c'}">${p.delta >= 0 ? '+' : ''}${p.delta}</b></span>`).join('');
+          return `<div class="cnc-deck" style="--c:${x.c.band.color}">
+              <div class="cnc-deck-h">
+                <span class="cnc-deck-n">${escapeHtml(x.d.name || 'Deck')}</span>
+                <span class="cnc-band" style="--c:${x.c.band.color}">${escapeHtml(x.c.band.name)}</span>
+                <span class="cnc-deck-s">${x.c.score > 0 ? '+' : ''}${x.c.score}</span>
+              </div>
+              <div class="cnc-deck-p">${top || '<span class="bok-empty-mini">No faction pairs are pulling either way.</span>'}</div>
+            </div>`;
+        }).join('');
+    // 4) The full relationship map, one card per faction.
+    const mapCards = Object.keys(FACTION_CONCORD_RAW).map(f => {
+      const fd = (typeof getFaction === 'function') ? getFaction(f) : null;
+      const row = FACTION_CONCORD_RAW[f] || {};
+      const line = (t) => {
+        const list = row[t] || [];
+        if (!list.length) return '';
+        const m = TIER_META[t];
+        return `<div class="cnc-map-l"><span class="cnc-chip" style="--c:${m.color}">${m.icon} ${m.name}</span>
+          ${list.map(x => `<span class="cnc-f">${escapeHtml((getFaction(x) || {}).name || x)}</span>`).join('')}</div>`;
+      };
+      const body2 = ['sworn', 'warm', 'wary', 'hostile', 'feud'].map(line).join('');
+      const dragon = CONCORD_DEFAULT_WARY[f]
+        ? `<div class="cnc-map-l"><span class="cnc-chip" style="--c:#e0c06a">👁 Wary</span>
+             <span class="cnc-f">everything else</span></div>` : '';
+      return `<div class="cnc-map">
+          <div class="cnc-map-h">${(fd && fd.icon) || '⚔'} ${escapeHtml((fd && fd.name) || f)}</div>
+          ${body2}${dragon}
+          ${(!body2 && !dragon) ? '<div class="bok-empty-mini">Neutral to all.</div>' : ''}
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="cnc-wrap">
+        <div class="cnc-intro">
+          <h3 class="cnc-h">Factions have opinions about each other.</h3>
+          <p>Two warriors standing together is just two warriors. A warrior and a mage is a <b>partnership</b> — they have fought alongside one another for so long that the deck itself is steadier for it. A goblinoid and a fairy in the same warband is a <b>problem</b>, and it will cost you.</p>
+          <p><b>Concord</b> measures that. When you build a deck the game reads every pair of factions in it and scores how well they get along. The result buffs — or weakens — <b>every unit in the deck</b>, before the first card is ever played.</p>
+          <p class="cnc-note">⚑ A mono-faction deck scores <b>zero</b> from pairing. Purity is safe, never exceptional. The best decks are mixed <em>deliberately</em>.</p>
+        </div>
+
+        <div class="cnc-sec"><span>The six tiers</span></div>
+        <div class="cnc-tiers">${tierRows}</div>
+
+        <div class="cnc-two">
+          <div>
+            <div class="cnc-sec"><span>Where a deck lands</span></div>
+            <table class="cnc-table"><thead><tr><th>Standing</th><th>Score</th></tr></thead><tbody>${bandRows}</tbody></table>
+            <p class="cnc-fine">Score is worked out per faction pair: the smaller of the two counts, over 40, times the tier's weight, times ten. A pair only matters as much as the <em>thinner</em> half of it — two mages beside twenty warriors barely register.</p>
+          </div>
+          <div>
+            <div class="cnc-sec"><span>Worked examples</span></div>
+            <div class="cnc-ex"><div class="cnc-ex-d">20 Warrior + 20 Mage</div>
+              <div class="cnc-ex-r" style="color:#7fd8a0">+15 · Sworn Company</div>
+              <div class="cnc-ex-n">Sworn, evenly split. The strongest ordinary deck you can build.</div></div>
+            <div class="cnc-ex"><div class="cnc-ex-d">38 Warrior + 2 Mage</div>
+              <div class="cnc-ex-r" style="color:#c9b98a">+1.5 · Steady</div>
+              <div class="cnc-ex-n">The same Sworn pair, but a two-card splash. Barely moves.</div></div>
+            <div class="cnc-ex"><div class="cnc-ex-d">20 Goblinoid + 20 Fairy</div>
+              <div class="cnc-ex-r" style="color:#e24842">−35 · At War With Itself</div>
+              <div class="cnc-ex-n">A blood feud, evenly split. They will not fight for you.</div></div>
+          </div>
+        </div>
+
+        <div class="cnc-sec"><span>Your decks</span></div>
+        <div class="cnc-decks">${deckRows}</div>
+
+        <div class="cnc-sec"><span>The full map</span></div>
+        <div class="cnc-maps">${mapCards}</div>
+        <p class="cnc-fine">Any faction not listed above is Neutral to everyone — it neither helps nor hurts a deck. <b>Dragonkin is the exception</b>: it is Wary of everything except Reptile. Dragons do not share a battlefield gladly, and a dragon deck is happiest alone.</p>
+      </div>`;
+  };
+
   let body = '';
   if      (tab === 'factions') body = factionsBody();
   else if (tab === 'stats')    body = statsBody();
   else if (tab === 'statuses') body = statusesBody();
+  else if (tab === 'concord')  body = concordBody();
   else                         body = elementsBody();
 
   root.innerHTML = `
-    <div class="bok-page">
+    <div class="bok-page${tab === 'concord' ? ' bok-wide' : ''}">
       <div class="campaign-header">
         <div>
           <h2 class="section-title" style="text-align:left;margin-bottom:0.2rem;position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/Book%20of%20knowledge.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Book of Knowledge</h2>
@@ -204365,6 +204571,9 @@ function renderBookOfKnowledge() {
         </button>
         <button class="bok-tab ${tab === 'statuses' ? 'active' : ''}" data-bok-tab="statuses">
           🩸 Status Effects <span class="bok-tab-count">${Object.values(STATUS_EFFECTS).filter(s => s && s.id && !s.displacement).length}</span>
+        </button>
+        <button class="bok-tab ${tab === 'concord' ? 'active' : ''}" data-bok-tab="concord">
+          🤝 Concord <span class="bok-tab-count">${Object.keys(FACTION_CONCORD_RAW).length}</span>
         </button>
       </div>
 

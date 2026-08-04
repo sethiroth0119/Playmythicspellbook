@@ -15,7 +15,11 @@
   {
    "file": "batch4-verdicts.json",
    "cards": 6
+  },
+  {
+   "file": "batch5-enchantments.json",
+   "cards": 11
   }
  ],
- "totalCards": 61
+ "totalCards": 72
 }

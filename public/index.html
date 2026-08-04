@@ -35490,7 +35490,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120a9';
+  window.BUILD_VERSION = 'v120b0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -82412,6 +82412,20 @@ function _auraSources(state) {
     if (w && (w.turnsLeft | 0) > 0 && w.card && w.card.id) {
       const o = w.ownerHint === 'ai' ? 'ai' : 'player';
       out.push({ id: '_aura_wx', cardId: w.card.id, name: w.card.name || 'Weather', owner: o, alive: true, pos: heroPos(o), _fieldSource: true });
+    }
+    // ✨ ENCHANTMENTS — permanents. Unlike location/weather (one slot each,
+    // replaced by the next one played), any number can be on the field at once
+    // and each keeps projecting its auras until it is removed. That is the
+    // Magic "enchantment" / Yu-Gi-Oh "continuous spell" shape, and it needs no
+    // new aura machinery: each becomes a synthetic source anchored on its
+    // owner's hero, exactly like the field cards above.
+    if (Array.isArray(state.enchantments)) {
+      state.enchantments.forEach((e, i) => {
+        if (!e || !e.card || !e.card.id) return;
+        const eo = e.owner === 'ai' ? 'ai' : 'player';
+        out.push({ id: '_aura_ench_' + i, cardId: e.card.id, name: e.card.name || 'Enchantment',
+                   owner: eo, alive: true, pos: heroPos(eo), _fieldSource: true, _enchantment: true });
+      });
     }
     if (Array.isArray(state.board)) {
       for (let y = 0; y < state.board.length; y++) {
@@ -141762,6 +141776,39 @@ function playSpell(card) {
   // activate"). Pays the cost via the interactive modal, then re-enters
   // playSpell to resolve. No cost → falls through unchanged.
   if (_interceptCardCost(card, () => playSpell(card))) return;
+  // ✨ ENCHANTMENT — a PERMANENT, not a one-shot. It stays on the field and
+  // keeps projecting its auras (see _auraSources) until something removes it,
+  // which is the Magic "enchantment" / Yu-Gi-Oh "continuous spell" shape.
+  // Handled before the normal spell pipeline because that pipeline's whole
+  // contract is resolve-then-graveyard, and a permanent must not be buried.
+  // Any number can be out at once — unlike location/weather, which are single
+  // slots that replace each other.
+  if (card.type === 'enchantment') {
+    const _cost = (typeof getEffectiveCardCost === 'function') ? getEffectiveCardCost(card, s, 'player') : (card.cost | 0);
+    if ((s.player.energy | 0) < _cost) { try { showToast('Not enough energy.'); } catch (e) {} return; }
+    if (_playerNegateAbort && _playerNegateAbort(card)) return;   // 🚫 answerable like any other play
+    App.state = {
+      ...s,
+      enchantments: [...(s.enchantments || []), { card: { ...card }, owner: 'player', turnPlayed: s.turnNumber | 0 }],
+      player: { ...s.player, hand: s.player.hand.filter(c => c.instanceId !== card.instanceId), energy: (s.player.energy | 0) - _cost },
+      log: [...s.log, { msg: `✨ ${card.name} settles over the field — its power persists.`, color: 'green' }],
+    };
+    // An enchantment may ALSO carry a one-shot arrival effect, exactly like a
+    // Magic enchantment with an ETB trigger. Anchor it on the hero, as the
+    // other field-card types do.
+    try {
+      if (card.onPlay && card.onPlay.type && typeof applyOnPlayEffect === 'function') {
+        const _h = (App.state.units || []).find(u => u && u.owner === 'player' && u.isHero && u.alive);
+        if (_h) App.state = applyOnPlayEffect(App.state, _h, card);
+      }
+    } catch (e) { try { console.warn('[enchantment onPlay]', e); } catch (_) {} }
+    try { recordCardPlayed(card); } catch (e) {}
+    App.ui.selectedCardId = null;
+    try { if (typeof playSfx === 'function') playSfx('cardPlace'); } catch (e) {}
+    try { playSpellActivationVfx(card, { label: 'ENCHANTMENT' }); } catch (e) {}
+    if (typeof checkPostAction === 'function') checkPostAction(); else renderBattle();
+    return;
+  }
   // 🌌 Polycreation spell — divert to Fusion Selection Mode instead of
   // running the normal spell pipeline. No mana is consumed and the card
   // stays in hand if the activation gate rejects.
@@ -171328,6 +171375,13 @@ function swapBattlePerspective(state) {
     // Weather / location ownerHint indicate who summoned the effect.
     weather: state.weather ? { ...state.weather, ownerHint: swapOwner(state.weather.ownerHint || 'player') } : null,
     activeLocation: state.activeLocation ? { ...state.activeLocation, ownerHint: swapOwner(state.activeLocation.ownerHint || 'player') } : null,
+    // ✨ Enchantments name a SIDE, so they must swap here or an enchantment the
+    // opponent played would arrive as mine — the documented drift class that
+    // has bitten graveLock, _lastMove.owner, _atkFx and _counterChain.
+    // Invariant to keep: swapping TWICE must be the identity.
+    enchantments: Array.isArray(state.enchantments)
+      ? state.enchantments.map(e => (e ? { ...e, owner: swapOwner(e.owner || 'player') } : e))
+      : state.enchantments,
     // Whose turn it is — flip BOTH the multiplayer marker AND the engine's
     // own `turn` field. The battle engine gates every action, the end-turn
     // guard and the turn timer on `state.turn` — not `currentTurn` — so
@@ -199773,7 +199827,7 @@ function renderDeckBuilder() {
   `;
 
   // Filter row — kind tab buttons (existing), plus the new search + element/faction multi-chips.
-  const filterButtons = ['all','unit','spell','trap','location','weather','counter','custom']
+  const filterButtons = ['all','unit','spell','enchantment','trap','location','weather','counter','custom']
     .map(f => `<button class="forge-tab ${filter === f ? 'active' : ''}" data-deck-filter="${f}">${f === 'counter' ? '⏱ COUNTER' : f.toUpperCase()}</button>`).join('')
     // 🔒 Ownership chips, on the same row as the kind tabs. Clicking the active
     // one clears it (back to ANY), so the pair behaves like a toggle rather

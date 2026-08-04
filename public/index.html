@@ -36060,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120c8';
+  window.BUILD_VERSION = 'v120c9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -129831,6 +129831,24 @@ function _runCounterChain(state, action, depth) {
         try { renderBattle(); } catch (e) {}
         return false;  // ⬅ action proceeds because our counter was broken
       }
+      // 🎯 REDIRECT (v120c9) — a counter card with counterEffect 'redirect' let
+      // the card RESOLVE but took the choice of target from its caster. The
+      // machinery for this already existed for UNIT negate triggers
+      // (`negateMode:'redirect'` → `card._redirectBy` → `_redirectCandidates`),
+      // but the counter-CARD path only wrote `_lastAICounter`, which nothing
+      // ever read — so redirect was a plain negate on both sides.
+      // Same contract as negateMode: tag the card, return false, let it resolve.
+      if (counterFired.card && counterFired.card.counterEffect === 'redirect' && action.card) {
+        try {
+          action.card._redirectBy = counterFired.owner;
+          (state.log || (state.log = [])).push({
+            msg: `🎯 ${counterFired.card.name || 'Counter'} REDIRECTS ${action.card.name || 'the card'} — ${counterFired.owner === 'player' ? 'you choose' : 'the enemy chooses'} its target.`,
+            color: counterFired.owner === 'player' ? 'green' : 'red',
+          });
+        } catch (e) {}
+        try { renderBattle(); } catch (e) {}
+        return false;  // ⬅ resolves, but the redirector picks the target
+      }
       // 🃏 PUNISH — this counter does not negate, it taxes. The action RESOLVES
       // and the counter's owner gets paid. Paid here, after the recursion, so a
       // punish that was itself countered pays nothing.
@@ -130018,15 +130036,20 @@ function _counterScopeOk(counterCard, opts) {
   try {
     const scope = counterCard && counterCard.counterScope;
     if (!Array.isArray(scope) || !scope.length) return true;      // unscoped = unchanged
+    // ⚠ v120c9 — distinguish "the caller passed no card" from "the card has no
+    // effect". NO call site currently populates opts.card, so treating a missing
+    // card as "not an effect" made every scoped counter refuse everything and
+    // silently killed the card. Missing card => fail OPEN (scope simply cannot
+    // narrow); card present but effectless => refuse, which is the real
+    // "a bare attack is not an effect" case.
     const played = opts && opts.card;
+    if (!played) return true;                                     // caller gave us nothing to judge
     const types = [];
-    if (played) {
-      if (played.onPlay && played.onPlay.type) types.push(played.onPlay.type);
-      if (Array.isArray(played.onPlayExtra)) {
-        for (const e of played.onPlayExtra) if (e && e.type) types.push(e.type);
-      }
+    if (played.onPlay && played.onPlay.type) types.push(played.onPlay.type);
+    if (Array.isArray(played.onPlayExtra)) {
+      for (const e of played.onPlayExtra) if (e && e.type) types.push(e.type);
     }
-    if (!types.length) return false;                              // nothing to scope against
+    if (!types.length) return false;                              // a real non-effect action
     if (typeof ONPLAY_TYPE_GROUPS === 'undefined') return true;   // registry missing → fail open
     for (const g of ONPLAY_TYPE_GROUPS) {
       if (!g || scope.indexOf(g.label) < 0) continue;
@@ -144503,6 +144526,7 @@ function doAIStep() {
               trigger: 'summon',
               source: Object.assign({}, best, { owner: 'ai' }),
               target: aiHero,
+              card: best,                      // the unit card being deployed
               label: `Enemy summons ${best.name}`,
             }).then((countered) => {
               if (!App.ui.aiBusy || !App.state || App.state.turn !== 'ai') return;
@@ -144942,6 +144966,10 @@ function doAIStep() {
           trigger: 'spell',
           source: aiHero,
           target: best.target,
+          // 🎯 The CARD being cast. counterScope reads this to decide whether a
+          // scoped counter may answer, and the redirect branch tags it. Without
+          // it both degrade to "no information".
+          card: best.card,
           label: `Enemy casts ${best.card.name}`,
         }).then((countered) => {
           // Guard: if the watchdog already ended the AI turn, bail out.

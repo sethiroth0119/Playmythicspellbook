@@ -36060,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120c4';
+  window.BUILD_VERSION = 'v120c5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -129838,6 +129838,40 @@ function _aiCounterThreat(state, opts) {
   } catch (e) { return 999; }   // ⚠ fail OPEN — a broken scorer must not disarm the AI
 }
 
+// 🎯 COUNTER SCOPE (v120c5) — an effect-CATEGORY filter on a counter card.
+// Without it every counter is a blanket "no". With it a card can read
+// "negate an effect that searches, draws, or raises" instead, which is what
+// keeps a hand trap from answering literally everything.
+//
+//   card.counterScope = ['🃏 Cards & Hand', '⚰️ Graveyard & Void']   // group labels
+//
+// Absent or empty → unrestricted, exactly as before. A scoped counter only
+// answers actions whose effect lands in one of its groups; an action with no
+// identifiable effect type (a plain attack, a move) is deliberately NOT
+// answerable by a scoped counter, since the scope is about effects.
+function _counterScopeOk(counterCard, opts) {
+  try {
+    const scope = counterCard && counterCard.counterScope;
+    if (!Array.isArray(scope) || !scope.length) return true;      // unscoped = unchanged
+    const played = opts && opts.card;
+    const types = [];
+    if (played) {
+      if (played.onPlay && played.onPlay.type) types.push(played.onPlay.type);
+      if (Array.isArray(played.onPlayExtra)) {
+        for (const e of played.onPlayExtra) if (e && e.type) types.push(e.type);
+      }
+    }
+    if (!types.length) return false;                              // nothing to scope against
+    if (typeof ONPLAY_TYPE_GROUPS === 'undefined') return true;   // registry missing → fail open
+    for (const g of ONPLAY_TYPE_GROUPS) {
+      if (!g || scope.indexOf(g.label) < 0) continue;
+      const ids = g.ids || [];
+      if (types.some(t => ids.indexOf(t) >= 0)) return true;
+    }
+    return false;
+  } catch (e) { return true; }                                    // ⚠ fail OPEN, like the threat gate
+}
+
 function _aiAutoCounter(state, opts) {
   if (!opts || !opts.trigger || !state || !state.ai) return false;
   if (_battleIsLocked(state, 'ai', 'counter')) return false;   // 🔒 AI is locked out of playing counters
@@ -129852,7 +129886,8 @@ function _aiAutoCounter(state, opts) {
   const _hitsHero = !!(opts.target && opts.target.isHero);
   const _ctMatch = (c) => Array.isArray(c.counterTriggers)
     && (c.counterTriggers.indexOf(opts.trigger) >= 0
-        || (_hitsHero && c.counterTriggers.indexOf('heroDamaged') >= 0));
+        || (_hitsHero && c.counterTriggers.indexOf('heroDamaged') >= 0))
+    && _counterScopeOk(c, opts);
   const candidates = hand.filter(c => c
     && (c.type === 'counter' || c.isCounter || c.isCounterUnit)
     && _ctMatch(c));
@@ -130018,6 +130053,7 @@ async function tryPromptCounter(state, opts) {
     && Array.isArray(c.counterTriggers)
     && (c.counterTriggers.indexOf(opts.trigger) >= 0
         || (_hitsHero && c.counterTriggers.indexOf('heroDamaged') >= 0))
+    && _counterScopeOk(c, opts)
     && _energy >= (c.cost | 0));   // only offer counters the player can actually afford
   // 🪦 REACTIVE GRAVE ABILITIES (v116n) — graveyard cards whose graveActive.trigger
   // matches this event. Banish-to-react from the grave (no energy cost). This is

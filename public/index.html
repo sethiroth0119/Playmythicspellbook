@@ -15404,6 +15404,46 @@
     .gox-actions { grid-template-columns: 1fr; }
     .gox-btn, .gox-btn-main { min-height: 62px; }
   }
+  /* ═══ v120b2 BUNKER ROOM CARDS — the camp reference design ════════════════
+     Level rail across the top, dark header strip with icon + NAME + status
+     badge, the room ART filling the body, actions pinned at the foot. The art,
+     the button labels and every data-* hook are untouched — this is the frame
+     only. `--acc` is the facility's own accent colour, so each room keeps its
+     identity (blue command, green medical, violet forge…). */
+  .cmpx-room {
+    position: relative; display: flex; flex-direction: column;
+    min-height: 232px; border-radius: 10px; overflow: hidden;
+    border: 1px solid rgba(212,175,55,0.34);
+    background: linear-gradient(180deg, rgba(14,17,26,0.96), rgba(8,10,16,0.98));
+    box-shadow: 0 6px 20px rgba(0,0,0,0.55), inset 0 0 40px rgba(0,0,0,0.45);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  }
+  .cmpx-room:hover { transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--acc, #d4af37) 70%, transparent);
+    box-shadow: 0 10px 26px rgba(0,0,0,0.6), 0 0 22px color-mix(in srgb, var(--acc, #d4af37) 30%, transparent); }
+  .cmpx-room-bar { height: 4px; background: rgba(255,255,255,0.06); flex: 0 0 auto; }
+  .cmpx-room-bar > span { display: block; height: 100%;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--acc,#d4af37) 75%, #fff), var(--acc, #d4af37));
+    box-shadow: 0 0 10px color-mix(in srgb, var(--acc,#d4af37) 65%, transparent); }
+  .cmpx-room-head { display: flex; align-items: center; gap: 0.55rem; padding: 0.55rem 0.7rem;
+    background: linear-gradient(180deg, rgba(10,13,20,0.95), rgba(10,13,20,0.75)); flex: 0 0 auto; }
+  .cmpx-room-ico { display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; border-radius: 7px; font-size: 1.05rem; flex: 0 0 auto;
+    background: color-mix(in srgb, var(--acc,#d4af37) 20%, rgba(0,0,0,0.6));
+    border: 1px solid color-mix(in srgb, var(--acc,#d4af37) 55%, transparent);
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--acc,#d4af37) 55%, transparent)); }
+  .cmpx-room-name { font-family: 'Cinzel', serif; font-weight: 800; letter-spacing: 0.06em;
+    text-transform: uppercase; font-size: 0.9rem; color: #efe2c0; flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cmpx-room-badge { flex: 0 0 auto; }
+  .cmpx-room-art { flex: 1 1 auto; min-height: 96px; background-size: cover !important;
+    background-position: center !important; position: relative; }
+  .cmpx-room-art::after { content: ''; position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(6,8,14,0.10) 0%, rgba(6,8,14,0.55) 78%, rgba(6,8,14,0.9) 100%); }
+  .cmpx-room-foot { flex: 0 0 auto; padding: 0.55rem 0.7rem 0.7rem;
+    background: linear-gradient(180deg, rgba(8,10,16,0.85), rgba(8,10,16,0.98)); }
+  .cmpx-room-desc { font-size: 0.76rem; line-height: 1.4; color: #97a2b6; margin-bottom: 0.35rem; }
+  .cmpx-room-foot .btn-mini { width: 100%; }
   /* ===== VICTORY / DEFEAT OVERLAY ===== */
   .gameover-backdrop {
     position: fixed;
@@ -35580,7 +35620,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120b1';
+  window.BUILD_VERSION = 'v120b2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -149095,16 +149135,32 @@ function renderCamp() {
         <button class="btn-mini" data-campcost="${f.id}" title="Edit build/upgrade costs" style="padding:2px 6px;font-size:0.72rem;background:rgba(0,0,0,0.55);border-color:#ffd16655;color:#ffd166">⚙</button>
         <input type="file" accept="image/*" data-campart-input="${f.id}" style="display:none">
       </div>` : '';
+    // 🏚 ROOM CARD — rebuilt to the bunker reference: a coloured level bar
+    // across the top, then an icon-badge + NAME + staff count header on a dark
+    // strip, the room art filling the body beneath, and the actions pinned to
+    // the bottom. The art itself, every button and every label are unchanged —
+    // only the frame around them is new.
     return `
-      <div style="position:relative;border:1px solid rgba(212,175,55,0.4);border-left:3px solid ${f.accent};border-radius:9px;overflow:hidden;${bg};min-height:118px;padding:10px 12px;box-shadow:0 4px 14px rgba(0,0,0,0.45),inset 0 0 30px rgba(120,90,20,0.06);${dimmed}">
+      <div class="cmpx-room" style="--acc:${f.accent};${dimmed}">
+        <div class="cmpx-room-bar"><span style="width:${(() => {
+          // Level fill. An UNBUILT room reads as an empty rail, not a full one.
+          try {
+            const max = (f.maxLevel | 0) || (f.max | 0) || 5;
+            const lv = (s && s.level | 0) || 0;
+            return lv <= 0 ? 0 : Math.max(8, Math.min(100, Math.round((lv / max) * 100)));
+          } catch (e) { return 0; }
+        })()}%"></span></div>
         ${adminArt}
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:1.5rem;filter:drop-shadow(0 0 6px ${f.accent}88)">${f.emoji}</span>
-          <strong style="font-family:'Cinzel',serif;color:#f3e6c4;font-size:0.98rem;flex:1">${escapeHtml(f.name)}</strong>
+        <div class="cmpx-room-head">
+          <span class="cmpx-room-ico">${f.emoji}</span>
+          <span class="cmpx-room-name">${escapeHtml(f.name)}</span>
+          <span class="cmpx-room-badge">${badge}</span>
         </div>
-        <div style="margin:4px 0 2px">${badge}</div>
-        <div class="small-text ink-dim" style="line-height:1.4">${escapeHtml(f.desc)}</div>
-        ${action}
+        <div class="cmpx-room-art" style="${bg}"></div>
+        <div class="cmpx-room-foot">
+          <div class="cmpx-room-desc">${escapeHtml(f.desc)}</div>
+          ${action}
+        </div>
       </div>`;
   }).join('');
 

@@ -1,0 +1,157 @@
+[
+  {
+    "name": "Hollow Verdict",
+    "type": "spell", "cost": 7, "icon": "💀", "rarity": "mythic", "elements": ["shadow"],
+    "desc": "Pay 60 life. Every enemy unit is unmade.",
+    "onPlay": {
+      "type": "aoeDamage", "amount": 999, "radius": 8, "tSide": "enemy", "aoeAll": true,
+      "cost": { "discard": 0, "payLifeHero": 60, "banish": 0, "tribute": 0 }
+    }
+  },
+  {
+    "name": "Second Dawn",
+    "type": "spell", "cost": 5, "icon": "🌅", "rarity": "rare", "elements": ["light"],
+    "desc": "Call one unit back from any graveyard. The dead do not get a say.",
+    "onPlay": {
+      "type": "summonFromZone", "amount": 1, "summonZone": "grave",
+      "filter": { "nameIncludes": "", "element": "any", "faction": "any", "cardType": "unit" }
+    }
+  },
+  {
+    "name": "Marrow Tithe",
+    "type": "spell", "cost": 1, "icon": "⚰️", "rarity": "common", "elements": ["shadow"],
+    "desc": "Send one card from your deck straight to the graveyard. Some engines start there.",
+    "onPlay": {
+      "type": "deckToGrave", "amount": 1,
+      "filter": { "nameIncludes": "", "element": "any", "faction": "any", "cardType": "any" }
+    }
+  },
+  {
+    "name": "The Greedy Hour",
+    "type": "spell", "cost": 2, "icon": "🫙", "rarity": "mythic", "elements": ["neutral"],
+    "desc": "Draw two cards. That is the whole card, and that is the problem.",
+    "onPlay": { "type": "draw", "amount": 2, "useLimit": "match" }
+  },
+  {
+    "name": "Desperate Bargain",
+    "type": "spell", "cost": 2, "icon": "🎲", "rarity": "rare", "elements": ["neutral"],
+    "desc": "Banish the top 5 of your deck, then draw 2. You will never know what you burned.",
+    "onPlay": { "type": "banishDeck", "amount": 5 },
+    "onPlayExtra": [ { "type": "draw", "amount": 2 } ]
+  },
+  {
+    "name": "Scholar's Ledger",
+    "type": "spell", "cost": 0, "icon": "📜", "rarity": "common", "elements": ["neutral"],
+    "desc": "Draw 1. Your enemy's hero gains 30 HP — a debt paid forward.",
+    "onPlay": { "type": "draw", "amount": 1 },
+    "onPlayExtra": [ { "type": "healHero", "amount": 30, "tSide": "enemy" } ]
+  },
+  {
+    "name": "Whisper of the Index",
+    "type": "unit", "cost": 2, "icon": "👁️", "rarity": "rare",
+    "elements": ["arcane"], "factions": ["mage"], "stats": { "atk": 6, "hp": 18 },
+    "desc": "When this dies, search your deck for a cheap unit. The archive always keeps a copy.",
+    "onGrave": {
+      "type": "searchDeck", "amount": 1,
+      "filter": { "nameIncludes": "", "element": "any", "faction": "any", "cardType": "unit" }
+    }
+  },
+  {
+    "name": "The Warden's Ledger",
+    "type": "location", "cost": 4, "icon": "🏛️", "rarity": "rare", "elements": ["neutral"],
+    "desc": "While this stands, no one revives, searches or banishes out of any graveyard. The record is sealed.",
+    "auras": [
+      { "enabled": true, "amount": 0, "mode": "flat", "stats": {},
+        "protect": { "attack": false, "damage": false, "destroy": false, "target": true, "status": false },
+        "radius": 8, "tSide": "all", "presenceSide": "any" }
+    ]
+  },
+  {
+    "name": "Sanctum of Iron Will",
+    "type": "counter", "cost": 0, "icon": "🛡️", "rarity": "mythic", "elements": ["light"],
+    "desc": "Pay half your hero's remaining life. Whatever they just activated does not happen.",
+    "effect": { "type": "negate", "amount": 1 },
+    "onPlay": {
+      "type": "negate", "amount": 1, "negateScope": "enemies",
+      "cost": { "discard": 0, "payLifeHero": 50, "banish": 0, "tribute": 0 }
+    }
+  },
+  {
+    "name": "The Warning Bell",
+    "type": "counter", "cost": 2, "icon": "🔔", "rarity": "rare", "elements": ["light"],
+    "desc": "Negate a summon and destroy it. Pay 40 life for the privilege.",
+    "effect": { "type": "negate", "amount": 1 },
+    "onPlay": {
+      "type": "negate", "amount": 1, "negateScope": "enemies",
+      "cost": { "discard": 0, "payLifeHero": 40, "banish": 0, "tribute": 0 }
+    }
+  },
+  {
+    "name": "Strike from the Veil",
+    "type": "counter", "cost": 1, "icon": "🌘", "rarity": "mythic", "elements": ["shadow"],
+    "desc": "From your hand, if you control nothing: one enemy unit loses its effects this turn.",
+    "effect": { "type": "negate", "amount": 1 },
+    "handActive": {
+      "trigger": "enemyPlay",
+      "effect": { "type": "negate", "amount": 1, "negateScope": "enemies" }
+    }
+  },
+  {
+    "name": "Mirrorfall Snare",
+    "type": "trap", "cost": 2, "icon": "🪤", "rarity": "common", "elements": ["neutral"],
+    "desc": "Set face down. The first thing strong enough to matter that steps here is destroyed.",
+    "effect": { "type": "destroyUnit", "amount": 1 },
+    "onPlay": { "type": "destroyUnit", "amount": 1, "anywhere": true, "tSide": "enemy" }
+  },
+  {
+    "name": "Tidal Reversal",
+    "type": "counter", "cost": 2, "icon": "🌊", "rarity": "common", "elements": ["water"],
+    "desc": "Send one unit on the field back to its owner's hand. Undo, politely.",
+    "effect": { "type": "bounce", "amount": 1 },
+    "onPlay": { "type": "bounce", "amount": 1, "targeted": true, "tSide": "enemy" }
+  },
+  {
+    "name": "The Unmaking",
+    "type": "spell", "cost": 4, "icon": "🌪️", "rarity": "rare", "elements": ["wind"],
+    "desc": "Every trap and location your enemy has laid is swept away.",
+    "onPlay": { "type": "clearTraps", "amount": 99, "tSide": "enemy" }
+  },
+  {
+    "name": "The Ualti Concord",
+    "type": "spell", "cost": 2, "icon": "🔎", "rarity": "common", "elements": ["arcane"],
+    "desc": "Search your deck for any card bearing the Ualti name.",
+    "onPlay": {
+      "type": "searchDeck", "amount": 1,
+      "filter": { "nameIncludes": "Ualti", "element": "any", "faction": "any", "cardType": "any" }
+    }
+  },
+  {
+    "name": "Pyre of the Unwanted",
+    "type": "weather", "cost": 5, "icon": "🔥", "rarity": "rare", "elements": ["fire"],
+    "weatherType": "bloodmoon", "duration": 6,
+    "desc": "The pyre grows. Every effect either player activates costs them 15 life, and the ash does not settle.",
+    "auras": [
+      { "enabled": true, "amount": 0, "mode": "flat", "stats": {},
+        "burnOnActivate": 15, "burnSide": "all",
+        "radius": 0, "tSide": "all", "presenceSide": "any" }
+    ]
+  },
+  {
+    "name": "The Debt Collector",
+    "type": "unit", "cost": 4, "icon": "🧾", "rarity": "rare",
+    "elements": ["shadow"], "factions": ["rogue"], "stats": { "atk": 12, "hp": 26 },
+    "desc": "Whatever the enemy hero suffers, he adds a little more on top.",
+    "auras": [
+      { "enabled": true, "amount": 0, "mode": "flat", "stats": {},
+        "burnOnActivate": 15, "burnSide": "enemies",
+        "radius": 0, "tSide": "enemies", "presenceSide": "ally" }
+    ]
+  },
+  {
+    "name": "Aegis Absolute",
+    "type": "trap", "cost": 4, "icon": "🪞", "rarity": "mythic", "elements": ["light"],
+    "desc": "When they commit to the attack, the mirror answers every blade at once.",
+    "effect": { "type": "aoeDamage", "amount": 999 },
+    "onPlay": { "type": "aoeDamage", "amount": 999, "radius": 8, "tSide": "enemy", "aoeAll": true, "anywhere": true }
+  }
+]

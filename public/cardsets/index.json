@@ -1,0 +1,21 @@
+{
+ "sets": [
+  {
+   "file": "batch1-archetypes.json",
+   "cards": 15
+  },
+  {
+   "file": "batch2-control.json",
+   "cards": 18
+  },
+  {
+   "file": "batch3-locks.json",
+   "cards": 22
+  },
+  {
+   "file": "batch4-verdicts.json",
+   "cards": 6
+  }
+ ],
+ "totalCards": 61
+}

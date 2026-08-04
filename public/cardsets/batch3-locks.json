@@ -1,0 +1,157 @@
+[
+  {
+    "name": "Warden of the Sealed Word",
+    "type": "unit", "cost": 6, "icon": "🔇", "rarity": "mythic",
+    "elements": ["arcane"], "factions": ["mage"], "stats": { "atk": 14, "hp": 40 },
+    "desc": "While the Warden stands, the field is silent — unit abilities do not resolve.",
+    "onPlay": { "type": "negateField", "amount": 1, "duration": 4, "anywhere": true, "negateScope": "enemies" }
+  },
+  {
+    "name": "Twin Ruin Sovereign",
+    "type": "trap", "cost": 5, "icon": "⚖️", "rarity": "mythic", "elements": ["shadow"],
+    "desc": "When flipped: every matching unit your enemy controls is banished to the Void. Balance, enforced.",
+    "effect": { "type": "vanishTribe", "amount": 99 },
+    "onPlay": {
+      "type": "vanishTribe", "amount": 99, "anywhere": true, "tSide": "enemy",
+      "filter": { "nameIncludes": "", "element": "any", "faction": "any", "cardType": "unit" }
+    }
+  },
+  {
+    "name": "Chainbreaker's Toll",
+    "type": "trap", "cost": 4, "icon": "🌊", "rarity": "mythic", "elements": ["water"],
+    "desc": "The tide takes everyone. When flipped: destroy every unit on the field.",
+    "effect": { "type": "boardWipe", "amount": 99 },
+    "onPlay": { "type": "boardWipe", "amount": 99, "anywhere": true, "tSide": "all", "wipeTarget": "all", "wipeSpareHero": true }
+  },
+  {
+    "name": "Beast of Endless Return",
+    "type": "summon", "cost": 9, "icon": "🌑", "rarity": "mythic",
+    "elements": ["void"], "factions": ["beast"], "stats": { "atk": 30, "hp": 30 },
+    "desc": "Called when the board has grown too proud. Destroys every unit on the field, then rises alone.",
+    "onPlay": { "type": "boardWipe", "amount": 99, "anywhere": true, "tSide": "all", "wipeTarget": "all", "wipeSpareHero": true }
+  },
+  {
+    "name": "Gravecall Sanction",
+    "type": "location", "cost": 4, "icon": "🗝️", "rarity": "rare", "elements": ["void"],
+    "desc": "No grave answers here. Graveyard abilities are sealed for both sides.",
+    "onPlay": { "type": "negateGraveyard", "amount": 1, "duration": 5, "anywhere": true, "negateScope": "all" }
+  },
+  {
+    "name": "The Long Winter",
+    "type": "weather", "cost": 5, "icon": "❄️", "rarity": "mythic", "elements": ["ice"],
+    "weatherType": "blizzard", "duration": 6,
+    "desc": "Nothing rests in the cold. Each turn, the top card of each graveyard is taken by the Void.",
+    "onPlay": { "type": "banishGrave", "amount": 3, "anywhere": true, "graveSide": "enemy" }
+  },
+  {
+    "name": "Widow's Claim",
+    "type": "trap", "cost": 3, "icon": "💍", "rarity": "rare", "elements": ["shadow"],
+    "desc": "When flipped: destroy the strongest enemy in reach, and let both heroes feel it.",
+    "effect": { "type": "destroyTarget", "amount": 1 },
+    "onPlay": { "type": "destroyTarget", "amount": 1, "radius": 3, "anywhere": true, "tSide": "enemy" },
+    "onPlayExtra": [ { "type": "damageHero", "amount": 40, "tSide": "enemy" } ]
+  },
+  {
+    "name": "Sever the Thread",
+    "type": "counter", "cost": 2, "icon": "🌙", "rarity": "rare", "elements": ["arcane"],
+    "desc": "One unit is folded out of the world for a while. Its tricks go with it.",
+    "effect": { "type": "vanishTemp", "amount": 1 },
+    "onPlay": { "type": "vanishTemp", "amount": 1, "duration": 2, "targeted": true, "tSide": "enemy", "vanishTarget": "enemy" }
+  },
+  {
+    "name": "The Ninth Chorus",
+    "type": "unit", "cost": 3, "icon": "🎼", "rarity": "rare",
+    "elements": ["shadow"], "factions": ["mage"], "stats": { "atk": 10, "hp": 24 },
+    "desc": "Every verse it burns feeds the choir. On Play: mill 1, then empower your team.",
+    "onPlay": { "type": "millSelf", "amount": 1, "anywhere": true },
+    "onPlayExtra": [ { "type": "empowerTeam", "amount": 10, "empowerHero": true } ]
+  },
+  {
+    "name": "The Sculptor's Debt",
+    "type": "spell", "cost": 3, "icon": "🗿", "rarity": "rare", "elements": ["earth"],
+    "desc": "Call a Kalon early and cheaply — the bill comes due when it fades.",
+    "onPlay": { "type": "polycreate", "amount": 1, "matSources": ["hand", "grave"] }
+  },
+  {
+    "name": "Twin Spirit Rite",
+    "type": "spell", "cost": 4, "icon": "🔗", "rarity": "common", "elements": ["arcane"],
+    "desc": "The plain and honest fusion. Materials from your field or your hand.",
+    "onPlay": { "type": "polycreate", "amount": 1, "matSources": ["field", "hand"] }
+  },
+  {
+    "name": "Crown of the Reclaimed",
+    "type": "spell", "cost": 6, "icon": "👑", "rarity": "mythic", "elements": ["light"],
+    "desc": "Build a greater Kalon on the shoulders of one you already command.",
+    "onPlay": {
+      "type": "polycreate", "amount": 1, "matSources": ["field"],
+      "filter": { "nameIncludes": "", "element": "any", "faction": "any", "cardType": "summon" }
+    }
+  },
+  {
+    "name": "The Silent Auction",
+    "type": "spell", "cost": 3, "icon": "🤝", "rarity": "rare", "elements": ["neutral"],
+    "desc": "Everyone lays their hand down and takes a fresh one. Fortunes reverse.",
+    "onPlay": { "type": "discardCards", "amount": 3, "tSide": "enemy" },
+    "onPlayExtra": [ { "type": "drawCards", "amount": 2 } ]
+  },
+  {
+    "name": "The Cartographer's Eye",
+    "type": "spell", "cost": 4, "icon": "🗺️", "rarity": "rare", "elements": ["wind"],
+    "desc": "Dig until something worth summoning turns up, then put it on the field.",
+    "onPlay": {
+      "type": "millSearch", "amount": 1,
+      "filter": { "nameIncludes": "", "element": "any", "faction": "any", "cardType": "unit" }
+    },
+    "onPlayExtra": [
+      { "type": "reviveGrave", "amount": 1, "filter": { "nameIncludes": "", "element": "any", "faction": "any", "cardType": "unit" } }
+    ]
+  },
+  {
+    "name": "Hand of the Bound",
+    "type": "spell", "cost": 2, "icon": "🖐️", "rarity": "rare", "elements": ["shadow"],
+    "desc": "Look into their hand and take the piece they were counting on.",
+    "onPlay": { "type": "peekDiscard", "amount": 1, "tSide": "enemy" }
+  },
+  {
+    "name": "Sanctum of the Level Nine",
+    "type": "location", "cost": 5, "icon": "🏯", "rarity": "mythic", "elements": ["neutral"],
+    "desc": "One discipline only. While this stands, a chosen element is sealed out of every hand.",
+    "onPlay": { "type": "callLock", "amount": 1, "duration": 4, "anywhere": true, "callLockMode": "either" }
+  },
+  {
+    "name": "Chains of the Middle Court",
+    "type": "location", "cost": 4, "icon": "⛓️", "rarity": "rare", "elements": ["earth"],
+    "desc": "Nothing is cast in haste here. Your enemy cannot pay for their most expensive answers.",
+    "onPlay": { "type": "costSeal", "amount": 2, "duration": 3, "anywhere": true, "tSide": "enemy" }
+  },
+  {
+    "name": "Emberlight Covenant",
+    "type": "location", "cost": 3, "icon": "🕯️", "rarity": "common", "elements": ["light"],
+    "desc": "Every page turned mends a wound. Restores your hero when the covenant is laid.",
+    "onPlay": { "type": "healHero", "amount": 60, "anywhere": true }
+  },
+  {
+    "name": "The Reckoning Ledger",
+    "type": "spell", "cost": 5, "icon": "📕", "rarity": "mythic", "elements": ["shadow"],
+    "desc": "Grave burn — the enemy hero pays for every soul you have buried.",
+    "onPlay": { "type": "damageFromGrave", "amount": 5, "tSide": "enemy" }
+  },
+  {
+    "name": "Toll of the Void Gate",
+    "type": "spell", "cost": 4, "icon": "🕳️", "rarity": "rare", "elements": ["void"],
+    "desc": "Feed the Void from your own graveyard and let the backlash scorch them.",
+    "onPlay": { "type": "voidFromGrave", "amount": 4, "tSide": "enemy" }
+  },
+  {
+    "name": "Proliferating Rot",
+    "type": "spell", "cost": 2, "icon": "🌿", "rarity": "common", "elements": ["nature"],
+    "desc": "Every affliction on the field lingers one turn longer. Patience is a weapon.",
+    "onPlay": { "type": "proliferate", "amount": 1, "anywhere": true }
+  },
+  {
+    "name": "The Cartomancer's Glimpse",
+    "type": "spell", "cost": 1, "icon": "🔮", "rarity": "common", "elements": ["arcane"],
+    "desc": "Read the next three pages and bury the one you cannot afford.",
+    "onPlay": { "type": "scry", "amount": 3 }
+  }
+]

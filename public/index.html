@@ -27554,6 +27554,42 @@
     box-shadow: 0 0 8px rgba(232,178,74,0.5), 0 2px 4px rgba(0,0,0,0.75);
   }
   .tw-road-badge.tw-rb-contest { border-color: #e0574a; box-shadow: 0 0 8px rgba(224,87,74,0.55), 0 2px 4px rgba(0,0,0,0.75); }
+
+  /* 🏢 AI CORP MARKER (v120d7) — a rival corporation's base of operations.
+     z-index 7 puts it under the player node markers (z8) deliberately: a corp
+     badge must never intercept a click meant for a node. pointer-events stay
+     off the block and are re-enabled only on the badge itself for the tooltip. */
+  .tw-aicorp {
+    position: absolute; transform: translate(-50%, -50%) translate(26px, -26px);
+    z-index: 7; pointer-events: none;
+    display: flex; align-items: center; gap: 4px;
+    padding: 2px 7px 2px 4px; border-radius: 999px; white-space: nowrap;
+    background: linear-gradient(180deg, rgba(14,18,28,0.96), rgba(8,10,16,0.98));
+    border: 1px solid color-mix(in srgb, var(--cc, #c9a24a) 60%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--cc, #c9a24a) 28%, transparent),
+                0 2px 6px rgba(0,0,0,0.7);
+    font-size: 10px; line-height: 1.1; cursor: help;
+  }
+  .tw-aicorp:hover { pointer-events: auto; }
+  .tw-aicorp-ico { font-size: 13px; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--cc) 55%, transparent)); }
+  /* The AI tag is the whole point of the marker — it must never be mistaken for
+     another player's holding. */
+  .tw-aicorp-tag {
+    font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 8px; font-weight: 800;
+    letter-spacing: 0.10em; padding: 1px 4px; border-radius: 3px;
+    color: #0c0a06; background: var(--cc, #c9a24a);
+  }
+  .tw-aicorp-nm { color: #e8e0d0; font-weight: 600; max-width: 132px; overflow: hidden; text-overflow: ellipsis; }
+  .tw-aicorp-st {
+    color: var(--sc, #8a96a3); font-weight: 700;
+    border-left: 1px solid rgba(255,255,255,0.14); padding-left: 5px;
+  }
+  /* The map gets busy — drop the corp name on small screens, keep icon + AI +
+     standing, which is the information that actually matters at a glance. */
+  @media (max-width: 900px) {
+    .tw-aicorp-nm { display: none; }
+    .tw-aicorp { transform: translate(-50%, -50%) translate(20px, -20px); }
+  }
   .tw-road-badge.tw-rb-enemy { border-color: #b98a3a; box-shadow: 0 0 7px rgba(185,138,58,0.45), 0 2px 4px rgba(0,0,0,0.75); }
   /* cleaner road lines — faint grey dashed for dead links, solid gold for active ones,
      no busy flow animation (trucks provide the motion now). */
@@ -36149,7 +36185,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120d6';
+  window.BUILD_VERSION = 'v120d7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -210212,6 +210248,98 @@ function _twBgRender() {
     }, 450);
   } catch (e) {}
 }
+// ═══ 🏢 AI CORPORATIONS + STANDING (v120d7) ═════════════════════════════════
+// The map already drives convoy trucks along lit trade routes — that visual
+// existed and is untouched. What it had NO concept of was WHO the freight
+// economy belongs to. These are the six rival corps: they hold nodes, they show
+// on the map marked AI, and a node owner has a real, readable relationship with
+// each of them.
+//
+// Standing is DERIVED, never stored: it is a pure function of things the player
+// has actually done (nodes held, contribution, camp registration), so it can
+// never drift out of sync with the world and needs no migration.
+const AI_CORPS = [
+  { id: 'vance',      name: 'Vance Holdings',           ico: '🏛', col: '#c9a24a',
+    trait: 'landlord',  blurb: 'Buys property aggressively. Raises rents on tenants.',
+    likes: 'owners who develop their nodes', dislikes: 'squatters and idle claims' },
+  { id: 'ashfall',    name: 'Ashfall Salvage Co.',      ico: '⚙', col: '#b0b8c4',
+    trait: 'undercut',  blurb: 'Undercuts on price. Races to the bottom.',
+    likes: 'high salvage output', dislikes: 'anyone cornering scrap' },
+  { id: 'greenbelt',  name: 'The Green Belt Collective', ico: '🌾', col: '#9ad17a',
+    trait: 'steady',    blurb: 'Slow, stable, corners agriculture.',
+    likes: 'food producers', dislikes: 'industry on farmland' },
+  { id: 'meridian',   name: 'Meridian Freight',         ico: '🚚', col: '#7fb0ff',
+    trait: 'logistics', blurb: 'Dominates logistics. Will refuse to carry for a competitor.',
+    likes: 'nodes that keep their roads lit', dislikes: 'rival hauliers' },
+  { id: 'ninthvein',  name: 'The Ninth Vein',           ico: '🩸', col: '#e0556a',
+    trait: 'illicit',   blurb: 'Operates in the underlayer. Pays well, costs Heat.',
+    likes: 'smuggling turnover', dislikes: 'anyone who talks to the Trust' },
+  { id: 'foundation', name: 'Foundation Trust',         ico: '🏦', col: '#8be0c4',
+    trait: 'civic',     blurb: 'Civic. Buys failing businesses. The bailout of last resort.',
+    likes: 'reconstruction progress', dislikes: 'illicit trade' },
+];
+const AI_CORP_BY_ID = Object.fromEntries(AI_CORPS.map(c => [c.id, c]));
+const AI_STANDING_TIERS = [
+  { min: 70,  id: 'allied',   name: 'Allied',    col: '#7fd8a0' },
+  { min: 40,  id: 'friendly', name: 'Friendly',  col: '#9ad17a' },
+  { min: 15,  id: 'cordial',  name: 'Cordial',   col: '#c9b98a' },
+  { min: -14, id: 'neutral',  name: 'Neutral',   col: '#8a96a3' },
+  { min: -39, id: 'strained', name: 'Strained',  col: '#e0a86a' },
+  { min: -69, id: 'hostile',  name: 'Hostile',   col: '#e8705c' },
+  { min: -999,id: 'blacklisted', name: 'Blacklisted', col: '#e24842' },
+];
+function _aiStandingTier(v) {
+  for (const t of AI_STANDING_TIERS) if (v >= t.min) return t;
+  return AI_STANDING_TIERS[AI_STANDING_TIERS.length - 1];
+}
+// Which node each corp calls home. Deterministic from the node list so every
+// player sees the same corp in the same place, with no stored assignment.
+function _aiCorpHomeNode(corpId, nodes) {
+  try {
+    const list = (nodes || []).filter(n => n && n.id);
+    if (!list.length) return null;
+    let h = 0; const s = 'corp:' + corpId;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return list[Math.abs(h) % list.length];
+  } catch (e) { return null; }
+}
+// The player's standing with one corp, derived from live world state.
+function _aiCorpStanding(corpId) {
+  try {
+    const c = AI_CORP_BY_ID[corpId];
+    if (!c) return { value: 0, tier: _aiStandingTier(0), reasons: [] };
+    // ⚠ The accessor is _twState(), not a `TW` global — there is no such object.
+    const st = (typeof _twState === 'function') ? _twState() : null;
+    const owned = (st && st.ownedNodes) ? Object.keys(st.ownedNodes).length : 0;
+    const reasons = [];
+    let v = 0;
+    // Holding territory is the base relationship — you are a player in the market.
+    if (owned > 0) { const d = Math.min(30, owned * 6); v += d; reasons.push({ t: `${owned} node${owned === 1 ? '' : 's'} held`, d: d }); }
+    // Registering your camp to a node makes you a resident, not a tourist.
+    const registered = !!(Profile && Profile.campNodeId);
+    if (registered) { v += 10; reasons.push({ t: 'camp registered to a node', d: 10 }); }
+    // Per-corp temperament, read off real production the player is doing.
+    const res = (rid) => { try { return (typeof getRes === 'function') ? Math.max(0, getRes(rid) | 0) : 0; } catch (e) { return 0; } };
+    if (c.trait === 'greenbelt' || c.trait === 'steady') { const d = Math.min(20, Math.floor(res('food') / 50)); if (d) { v += d; reasons.push({ t: 'food stockpile', d: d }); } }
+    if (c.trait === 'undercut')  { const d = Math.min(20, Math.floor(res('metal') / 50)); if (d) { v += d; reasons.push({ t: 'scrap & metal turnover', d: d }); } }
+    if (c.trait === 'logistics') { const d = Math.min(20, Math.floor(res('fuel') / 40)); if (d) { v += d; reasons.push({ t: 'fuel reserves keep roads open', d: d }); } }
+    // ⚠ 'contraband' is NOT a resource id. The real list is food, ammo, water,
+    // medicine, energyDrink, supplies, metal, fuel, corruptedEssence,
+    // memoryShards, dna. corruptedEssence is the illicit-flavoured one.
+    if (c.trait === 'illicit')   { const d = Math.min(15, Math.floor(res('corruptedEssence') / 20)); if (d) { v += d; reasons.push({ t: 'underlayer trade', d: d }); } }
+    if (c.trait === 'civic')     { const d = Math.min(20, Math.floor(res('medicine') / 20)); if (d) { v += d; reasons.push({ t: 'medicine supplied to the Trust', d: d }); } }
+    // The Trust and the Vein cannot both like you.
+    if (c.trait === 'civic'   && res('corruptedEssence') > 40) { v -= 25; reasons.push({ t: 'known underlayer dealings', d: -25 }); }
+    if (c.trait === 'illicit' && res('medicine')  > 60) { v -= 15; reasons.push({ t: 'too close to the Trust', d: -15 }); }
+    v = Math.max(-100, Math.min(100, Math.round(v)));
+    return { value: v, tier: _aiStandingTier(v), reasons: reasons };
+  } catch (e) { return { value: 0, tier: _aiStandingTier(0), reasons: [] }; }
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.aiCorps = { list: AI_CORPS, standing: _aiCorpStanding, home: _aiCorpHomeNode };
+} catch (e) {}
+
 // ===== WAR MAP SCREEN =====
 function renderTerritoryWars() {
   // ⚠️ _isAdm must be function-scoped — it is used both inside the
@@ -210677,7 +210805,39 @@ function renderTerritoryWars() {
     `<div class="tw-road-badge tw-rb-${b.cls}" style="left:${b.x}%;top:${b.y}%">${b.ico}</div>`
   ).join('');
   // Final canvas HTML — routes (z3) + region labels (z5) + road badges (z6) + markers (z8)
-  const _twCanvasContent = _twCanvasRoutes + _twCanvasLabels + _twCanvasRouteBadges + _twCanvasMarkers;
+  // 🏢 AI CORP MARKERS (v120d7) — the six rival corporations, each pinned to a
+  // node it operates out of. Placement is deterministic from the corp id, so
+  // every player sees the same corp in the same place with nothing stored.
+  // Rendered at z7, BETWEEN the road badges and the player node markers, so a
+  // corp badge never sits on top of a node the player needs to click.
+  const _aiCorpMarkers = (function () {
+    try {
+      const list = t.nodes.filter(filtered);
+      if (!list.length) return '';
+      const used = {};
+      return AI_CORPS.map(function (c) {
+        let home = _aiCorpHomeNode(c.id, list);
+        // Nudge off a node another corp already claimed so two badges never stack.
+        let guard = 0;
+        while (home && used[home.id] && guard < list.length) {
+          home = list[(list.indexOf(home) + 1) % list.length]; guard++;
+        }
+        if (!home) return '';
+        used[home.id] = true;
+        const p = home.position || { x: 5, y: 5 };
+        const sd = _aiCorpStanding(c.id);
+        const tip = c.name + ' — ' + c.blurb + '\nStanding: ' + sd.tier.name + ' (' + (sd.value > 0 ? '+' : '') + sd.value + ')\nBased at ' + home.name;
+        return '<div class="tw-aicorp" style="left:' + p.x + '%;top:' + p.y + '%;--cc:' + c.col + '"'
+          + ' title="' + escapeHtml(tip) + '" data-aicorp="' + escapeHtml(c.id) + '">'
+          + '<span class="tw-aicorp-ico">' + c.ico + '</span>'
+          + '<span class="tw-aicorp-tag">AI</span>'
+          + '<span class="tw-aicorp-nm">' + escapeHtml(c.name) + '</span>'
+          + '<span class="tw-aicorp-st" style="--sc:' + sd.tier.col + '">' + escapeHtml(sd.tier.name) + '</span>'
+          + '</div>';
+      }).join('');
+    } catch (e) { return ''; }
+  })();
+  const _twCanvasContent = _twCanvasRoutes + _twCanvasLabels + _twCanvasRouteBadges + _aiCorpMarkers + _twCanvasMarkers;
 
   // Node action panel.
   const selNode = selectedNodeId ? t.nodes.find(n => n.id === selectedNodeId) : null;

@@ -36060,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120d1';
+  window.BUILD_VERSION = 'v120d2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -69353,6 +69353,38 @@ const TRAITS = [
   { id: 'apex',     name: 'Apex Predator', icon: '👑', rarity: 'legendary', desc: '+15 ATK, +40 HP.',             mods: { add: { atk: 15, hp: 40 } } },
   { id: 'dragonblood', name:'Dragonblood', icon: '🐉', rarity: 'legendary', desc: '+6 ATK & +6 MAG; +10 each if Dragonkin/Reptile.',  mods: { add: { atk: 6, mag: 6 } }, factionSynergy: { factions: ['dragonkin','reptile'], add: { atk: 10, mag: 10 } } },
   { id: 'sanguine', name: 'Sanguine',   icon: '🩸', rarity: 'legendary', desc: '+8 ATK & +24 HP; +8 MAG if Vampire/Undead.',           mods: { add: { atk: 8, hp: 24 } }, factionSynergy: { factions: ['vampire','undead'], add: { mag: 8 } } },
+
+  // ═══ v120d2 CONDITIONAL TRAITS ═══════════════════════════════════════════
+  // `mods` is baked once in buildUnit, so it can only ever express a flat stat
+  // stick. `live` is evaluated EVERY time a stat is read (see _traitLiveBonus in
+  // getStatBonus), which is what lets a trait depend on the world: the clock,
+  // the sky, the ground, or who is standing next to it.
+  //
+  //   live: { when: <predicate>, add: {…}, per: bool, max: n, elseAdd: {…} }
+  //
+  // Predicates are listed in _TRAIT_LIVE_WHEN below. A trait whose predicate is
+  // unknown contributes nothing rather than throwing — an unimplemented
+  // condition must never silently become an unconditional buff.
+  { id: 'sunlit',    name: 'Sunlit',     icon: '☀️', rarity: 'uncommon', desc: '+8 ATK during the Day, −2 at Night.',
+    live: { when: 'day', add: { atk: 8 }, elseAdd: { atk: -2 } } },
+  { id: 'nocturne',  name: 'Nocturne',   icon: '🌙', rarity: 'uncommon', desc: '+8 ATK at Night, −2 during the Day.',
+    live: { when: 'night', add: { atk: 8 }, elseAdd: { atk: -2 } } },
+  { id: 'stormborn', name: 'Stormborn',  icon: '⛈️', rarity: 'rare',     desc: '+10 MAG while any weather is active.',
+    live: { when: 'weather', add: { mag: 10 } } },
+  { id: 'dryground', name: 'Dry Ground', icon: '🏜️', rarity: 'uncommon', desc: '+6 DEF while standing on bare ground.',
+    live: { when: 'noSurface', add: { def: 6 } } },
+  { id: 'cornered',  name: 'Cornered',   icon: '🐀', rarity: 'rare',     desc: '+3 to all combat stats per adjacent enemy, up to +12.',
+    live: { when: 'perAdjacentEnemy', add: { atk: 3, def: 3, mag: 3, res: 3 }, per: true, max: 4 } },
+  { id: 'rearguard', name: 'Rearguard',  icon: '🏕️', rarity: 'uncommon', desc: '+8 DEF while no enemy is within 3 tiles.',
+    live: { when: 'noEnemyWithin3', add: { def: 8 } } },
+  { id: 'outcast',   name: 'Outcast',    icon: '🚷', rarity: 'uncommon', desc: '+10 ATK while no allied unit shares its faction.',
+    live: { when: 'noFactionKin', add: { atk: 10 } } },
+  { id: 'oathkeeper',name: 'Oathkeeper', icon: '🤝', rarity: 'rare',     desc: '+6 to all combat stats while adjacent to an ally of its own faction.',
+    live: { when: 'adjacentFactionKin', add: { atk: 6, def: 6, mag: 6, res: 6 } } },
+  { id: 'vanguard',  name: 'Vanguard',   icon: '🚩', rarity: 'rare',     desc: '+8 ATK while it is your furthest-forward unit.',
+    live: { when: 'furthestForward', add: { atk: 8 } } },
+  { id: 'glassblade',name: 'Glass Blade',icon: '🔪', rarity: 'rare',     desc: '+20 ATK, −20 HP.',
+    mods: { add: { atk: 20, hp: -20 } } },
 ];
 const TRAIT_BY_ID = Object.fromEntries(TRAITS.map(t => [t.id, t]));
 const getTrait = (id) => TRAIT_BY_ID[id] || null;
@@ -69386,6 +69418,90 @@ function applyTrait(baseStats, traitId, factions) {
   }
   for (const k in out) if (typeof out[k] === 'number') out[k] = Math.max(k === 'spd' ? 1 : 0, Math.round(out[k]));
   return out;
+}
+// ═══ 🧬 LIVE TRAIT PREDICATES (v120d2) ══════════════════════════════════════
+// `mods` is baked once in buildUnit and can only be a flat stat stick. These
+// predicates are evaluated on EVERY stat read (via _traitLiveBonus, called from
+// getStatBonus alongside the aura block), which is what lets a trait depend on
+// the clock, the sky, the ground, or its neighbours.
+// A predicate returning a NUMBER is a count, for `per: true` traits.
+function _traitUnitsAround(st, u, radius, wantEnemy) {
+  if (!st || !u || !u.pos) return [];
+  return (st.units || []).filter(function (o) {
+    if (!o || !o.alive || !o.pos || o.id === u.id) return false;
+    if (wantEnemy ? (o.owner === u.owner) : (o.owner !== u.owner)) return false;
+    return Math.max(Math.abs(o.pos.x - u.pos.x), Math.abs(o.pos.y - u.pos.y)) <= radius;
+  });
+}
+function _traitFactionsOf(u) {
+  try {
+    if (u && Array.isArray(u.factions) && u.factions.length) return u.factions;
+    if (typeof getFactionsOf === 'function') return getFactionsOf(u) || [];
+  } catch (e) {}
+  return [];
+}
+const _TRAIT_LIVE_WHEN = {
+  day:     function (st) { return ((st && st.timeOfDay) || 'day') !== 'night'; },
+  night:   function (st) { return ((st && st.timeOfDay) || 'day') === 'night'; },
+  weather: function (st) { return !!(st && st.weather && (st.weather.turnsLeft | 0) > 0); },
+  noSurface: function (st, u) {
+    if (!u || !u.pos || typeof _surfaceAt !== 'function') return false;
+    try { return !_surfaceAt(st, u.pos.x, u.pos.y); } catch (e) { return false; }
+  },
+  // Returns a COUNT — paired with `per: true`.
+  perAdjacentEnemy: function (st, u) { return _traitUnitsAround(st, u, 1, true).length; },
+  noEnemyWithin3:   function (st, u) { return _traitUnitsAround(st, u, 3, true).length === 0; },
+  noFactionKin: function (st, u) {
+    const mine = _traitFactionsOf(u);
+    if (!mine.length || !st) return false;
+    return !(st.units || []).some(function (o) {
+      if (!o || !o.alive || o.id === u.id || o.owner !== u.owner) return false;
+      return _traitFactionsOf(o).some(function (f) { return mine.indexOf(f) >= 0; });
+    });
+  },
+  adjacentFactionKin: function (st, u) {
+    const mine = _traitFactionsOf(u);
+    if (!mine.length) return false;
+    return _traitUnitsAround(st, u, 1, false).some(function (o) {
+      return _traitFactionsOf(o).some(function (f) { return mine.indexOf(f) >= 0; });
+    });
+  },
+  // Orientation-agnostic: the unit of its side standing closest to the enemy hero.
+  furthestForward: function (st, u) {
+    if (!st || !u || !u.pos) return false;
+    const foeHero = (st.units || []).find(function (o) {
+      return o && o.alive && o.isHero && o.owner !== u.owner && o.pos;
+    });
+    if (!foeHero) return false;
+    const d = function (p) { return Math.max(Math.abs(p.x - foeHero.pos.x), Math.abs(p.y - foeHero.pos.y)); };
+    const mine = (st.units || []).filter(function (o) {
+      return o && o.alive && o.pos && o.owner === u.owner && !o.isHero;
+    });
+    if (!mine.length) return false;
+    const best = mine.reduce(function (m, o) { return d(o.pos) < d(m.pos) ? o : m; }, mine[0]);
+    return best.id === u.id;
+  },
+};
+function _traitLiveBonus(unit, statKey) {
+  try {
+    const t = (typeof getTrait === 'function') ? getTrait(unit && unit.trait) : null;
+    if (!t || !t.live || !t.live.when) return 0;
+    const pred = _TRAIT_LIVE_WHEN[t.live.when];
+    // ⚠ An UNKNOWN predicate contributes nothing. A condition we cannot evaluate
+    // must never quietly become an unconditional buff — that is how a trait ends
+    // up stronger than its own card text.
+    if (typeof pred !== 'function') return 0;
+    const res = pred(App.state, unit);
+    const spec = res ? t.live.add : t.live.elseAdd;
+    if (!spec) return 0;
+    let amt = spec[statKey] | 0;
+    if (!amt) return 0;
+    if (t.live.per) {
+      const n = Math.min(typeof res === 'number' ? res : 0, Math.max(1, t.live.max | 0));
+      amt = amt * n;
+    }
+    return amt;
+  } catch (e) { return 0; }
 }
 // Roll + persist a unit's trait the first time it's obtained/fielded. Mirrors
 // the Nature lazy-roll. store = Profile.units (player) or Profile.aiUnits (AI).
@@ -79619,6 +79735,11 @@ const getStatBonus = (unit, statKey) => {
       }
     }
   }
+
+  // 🧬 Live trait conditions (v120d2) — day/night, weather, ground, neighbours.
+  // Sits beside the aura block because it is the same shape of problem: a bonus
+  // that is true right now rather than baked into the unit at build time.
+  try { bonus += _traitLiveBonus(unit, statKey); } catch (e) {}
 
   // ✨ Persistent enchantment spell stat auras (v86j)
   if (App.state && Array.isArray(App.state.persistentSpells)) {

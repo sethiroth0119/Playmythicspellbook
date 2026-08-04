@@ -2602,7 +2602,7 @@
   .pledge-back-btn:hover { color: #d4c89a; }
 
   /* ======= HERO SELECT ======= */
-  .hero-select { max-width: 1200px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+  .hero-select { max-width: min(1560px, 95vw); margin: 0 auto; padding: 2.5rem clamp(1rem, 2.2vw, 2.4rem); }
   .section-title {
     text-align: center;
     font-size: 2.3rem;
@@ -16453,7 +16453,7 @@
      forge-page's 1200px measure the centre came out 530px and the room grid
      collapsed to ONE card per row — the mockup's 3×3 needs ~800px. Widen the
      camp screen only; every other forge-page keeps its reading measure. */
-  .forge-page.camp-hud { max-width: 1560px; }
+  .forge-page.camp-hud { max-width: min(1860px, 96vw); }
   .cbx-shell { display: grid; grid-template-columns: 290px minmax(0, 1fr) 300px;
     gap: 1rem; align-items: start; }
   .cbx-col { min-width: 0; }
@@ -16484,12 +16484,16 @@
   /* Command bar: STICKY, never fixed. A fixed element here would be re-rooted
      by any transformed ancestor — the same fault that printed the back button
      over THE FORGE and put the gold capsule on Choose Your Deck. */
-  .cbx-actionbar { position: sticky; bottom: 0; z-index: 5;
+  /* Moved to the TOP of the page: it is the camp's navigation, so it belongs
+     where the eye starts, not buried under the whole console. Sticks to the top
+     while scrolling instead of the bottom. */
+  .cbx-actionbar { position: sticky; top: 0; z-index: 5;
     display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;
-    margin-top: 1.2rem; padding: 0.6rem 0.8rem;
-    background: linear-gradient(180deg, rgba(10,13,20,0.94), rgba(6,8,13,0.99));
+    margin: 0 0 1.1rem; padding: 0.6rem 0.8rem;
+    background: linear-gradient(180deg, rgba(10,13,20,0.97), rgba(6,8,13,0.94));
+    backdrop-filter: blur(6px);
     border: 1px solid rgba(212,175,55,0.35); border-radius: 10px;
-    box-shadow: 0 -6px 18px rgba(0,0,0,0.55); }
+    box-shadow: 0 8px 22px rgba(0,0,0,0.55); }
   .cbx-bar-t { font-family: 'Cinzel', serif; font-size: 0.7rem; letter-spacing: 0.16em;
     color: #c29a3a; margin-right: 0.15rem; flex: 0 0 auto; }
   .cbx-spacer { flex: 1 1 auto; }
@@ -21460,7 +21464,7 @@
   .enc-mod-chip.on .enc-mod-chip-desc { color: var(--ink); opacity: 0.85; }
 
   /* ===== Pack Shop ===== */
-  .shop-page { max-width: 1280px; }
+  .shop-page { max-width: min(1620px, 95vw); }
   .shop-gems-pill {
     background: linear-gradient(180deg, rgba(212,175,55,0.18), rgba(212,175,55,0.04));
     border: 1px solid rgba(212,175,55,0.55);
@@ -29085,7 +29089,7 @@
   }
 
   /* ===== Deck list page (MTGA-style deck boxes) ===== */
-  .deck-list-page { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem; }
+  .deck-list-page { max-width: min(1560px, 95vw); margin: 0 auto; padding: 2rem clamp(1rem, 2.2vw, 2.4rem); }
   .deck-list-header {
     display: grid;
     grid-template-columns: 80px 1fr auto auto;
@@ -30578,7 +30582,11 @@
   /* ===== V3 ADDITIONS ===== */
 
   /* ===== FORGE LAYOUT ===== */
-  .forge-page { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem; }
+  /* 🖥 USE THE SCREEN. A hard 1200px cap left a 1080p monitor with ~35% of its
+     width as empty gutters and made every screen read flat. These are card and
+     grid layouts, not prose columns, so they scale with the viewport and simply
+     stop growing on very large displays. */
+  .forge-page { max-width: min(1560px, 95vw); margin: 0 auto; padding: 2rem clamp(1rem, 2.2vw, 2.4rem); }
   .forge-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; gap: 1rem; flex-wrap: wrap; }
   .forge-header h2 { margin: 0; text-align: left; font-size: 2rem; }
 
@@ -35737,7 +35745,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120b6';
+  window.BUILD_VERSION = 'v120b7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -38279,7 +38287,7 @@ const TYPE_ICON_FILES = {
 function getTypeIcon(type, size) {
   const sz = size || '2em';
   const f = TYPE_ICON_FILES[type];
-  if (!f) return ({ weather: '☀️' })[type] || '';   // weather/unknown keep emoji
+  if (!f) return ({ weather: '☀️', enchantment: '🔮' })[type] || '';   // weather/enchantment/unknown keep emoji
   const label = String(type).charAt(0).toUpperCase() + String(type).slice(1);
   return `<img src="assets/artwork/gameicons/${f}" alt="${label}" title="${label}" style="height:${sz};width:${sz};object-fit:contain;vertical-align:middle;display:inline-block;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.7))">`;
 }
@@ -115731,7 +115739,7 @@ function renderForge() {
 
 // ============ FORGE: cards tab ============
 function renderForgeCards() {
-  const typeLabel = (t) => { const n = ({ unit:'Unit', hero:'Hero', spell:'Spell', trap:'Trap', weather:'Weather', wall:'Wall', location:'Location' })[t]; return n ? `${getTypeIcon(t)} ${n}` : t; };
+  const typeLabel = (t) => { const n = ({ unit:'Unit', hero:'Hero', spell:'Spell', trap:'Trap', weather:'Weather', wall:'Wall', location:'Location', enchantment:'Enchantment' })[t]; return n ? `${getTypeIcon(t)} ${n}` : t; };
   const cardMeta = (c) => {
     const t = c.type || 'unit';
     const cost = `Cost ${c.cost} <span class="energy-orb"></span>`;
@@ -116722,6 +116730,13 @@ function renderCardEditor() {
     { id: 'unit',     label: '🪖 Unit (placed on board)' },
     { id: 'hero',     label: '⚔️ Hero (champion archetype)' },
     { id: 'spell',    label: '✨ Spell (instant effect)' },
+    // 🔮 Enchantment — a REAL engine type (playSpell pushes it to s.enchantments
+    // as a permanent, _auraSources reads it, swapBattlePerspective mirrors it).
+    // The engine support shipped in v120b3; only this dropdown entry was missing,
+    // so the type existed but was unauthorable. Distinct from a Spell with the
+    // "Persistent" box ticked — that is the older v86j s.persistentSpells path,
+    // which ticks per turn and EXPIRES. An enchantment has no duration.
+    { id: 'enchantment', label: '🔮 Enchantment (permanent — stays on field, projects auras)' },
     { id: 'trap',     label: '🪤 Trap (hidden, triggers on enemy)' },
     { id: 'weather',  label: '☀️ Weather (battlefield-wide effect)' },
     { id: 'wall',     label: '🧱 Wall (50 HP barrier)' },
@@ -117707,11 +117722,17 @@ function renderCardEditor() {
   // ⏱ Counter cards were the last type locked out of the on-play vocabulary —
   // they could only negate. Now a counter can negate AND do anything else.
   const _isCounterCard = (type === 'counter');
-  const showOnPlay = isUnitLike || _isFieldCard || _isWallCard || _isSpellCard || _isTrapCard || _isCounterCard;
+  // 🔮 An enchantment may ALSO carry a one-shot arrival effect — playSpell fires
+  // `card.onPlay` on a hero-anchored caster when the permanent settles, exactly
+  // like a Magic enchantment with an ETB trigger. Without this the engine
+  // supported the effect but the editor gave no way to author it.
+  const _isEnchantCard = (type === 'enchantment');
+  const showOnPlay = isUnitLike || _isFieldCard || _isWallCard || _isSpellCard || _isTrapCard || _isCounterCard || _isEnchantCard;
   const _onPlayWhen = _isWallCard ? 'wall is raised on the board'
     : _isSpellCard ? 'spell is cast (in addition to its Effect Type above)'
     : _isTrapCard ? 'trap springs (in addition to its Effect Type above)'
     : _isCounterCard ? 'counter resolves (on top of the negation above)'
+    : _isEnchantCard ? 'enchantment settles onto the field (its auras run continuously after)'
     : _isFieldCard ? 'field card is played' : 'unit is summoned from hand';
   const onPlayBlock = (showOnPlay) ? `
     <div class="editor-field full" style="border-top:1px dashed rgba(212,175,55,0.3);padding-top:0.8rem;margin-top:0.4rem">
@@ -149037,6 +149058,40 @@ function renderResearch() {
   });
 }
 
+/* 🜂 COMMAND BAR — the camp's destination row, at the TOP of the page.
+   ⚠ It used to exist TWICE: once in the header and again as a sticky bottom
+   <nav>, which meant duplicate element ids (btn-camp-vault and friends). Since
+   getElementById returns the FIRST match, the bottom copy's buttons were dead
+   markup. One bar now, built here and rendered once directly under the header. */
+function _campCommandBarHtml() {
+  const covertReady = (() => {
+    try { const a = (typeof _covertActive === 'function') ? _covertActive() : []; const r = a.filter(m => m.endsAt <= Date.now()).length;
+      return r > 0 ? ` <span style="background:#9be0c4;color:#0a1a14;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${r} READY</span>` : ''; } catch (e) { return ''; }
+  })();
+  const researchDone = (() => {
+    try { const r = (typeof _ensureResearch === 'function') ? _ensureResearch() : null;
+      if (r && r.active && r.active.id && ((r.active.startedAt || 0) + (r.active.durMs || 0)) <= Date.now())
+        return ' <span style="background:#9be0c4;color:#0a1a14;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">DONE</span>'; } catch (e) {}
+    return '';
+  })();
+  const vehicleCount = (() => {
+    try { const n = ((Forge.vehicleMarket && Forge.vehicleMarket.listings) || []).filter(l => l && l.sellerId !== ((Profile.cloud && Profile.cloud.userId) || Profile.userId || 'local')).length;
+      return n > 0 ? ` <span style="background:#ffd166;color:#1a1020;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${n}</span>` : ''; } catch (e) { return ''; }
+  })();
+  return `
+      <nav class="cbx-actionbar">
+        <span class="cbx-bar-t">COMMAND</span>
+        <button class="btn-secondary" id="btn-camp-resistance-ring" title="Send units on Covert Actions for offline rewards">🜂 Resistance Ring${covertReady}</button>
+        <button class="btn-secondary" id="btn-camp-vault" title="The Base Vault — secured grid storage, your field-bag inventory, and hero loadouts">🏰 Vault</button>
+        <button class="btn-secondary" id="btn-camp-trading-post" title="Trade cards & resources with other players (fixed price, auctions, barter)">💱 Trading Post</button>
+        <button class="btn-secondary" id="btn-camp-dojo" title="Visit player dojos to buy moves — or run your own">🥋 Dojo Shop</button>
+        <button class="btn-secondary" id="btn-camp-research" title="Spend rare resources on permanent camp buffs">🔬 Research${researchDone}</button>
+        <button class="btn-secondary" id="btn-camp-vehicle-market" title="Buy or sell vehicles between players">🛒 Vehicle Market${vehicleCount}</button>
+        <span class="cbx-spacer"></span>
+        <button class="btn-secondary" data-act="recon-open" title="Open the Reconstruction Settlement — Camp Console + reclaim the ruins">🏗 Reconstruction</button>
+      </nav>`;
+}
+
 // 🏕️ v118g0 — Camp Console top resource bar (mockup #2). Read-only strip wired to
 // REAL Profile/Camp data, gold-framed to match the Reconstruction Network console.
 function _campHudTopBar() {
@@ -149304,19 +149359,10 @@ function renderCamp() {
         <h2 class="section-title" style="position:relative;padding-left:3.2em"><img src="assets/artwork/gameicons/camp%20icon.png" alt="" style="position:absolute;left:0;top:50%;transform:translateY(-50%);width:2.8em;height:2.8em;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(0,0,0,0.7));pointer-events:none"> Camp</h2>
         <div style="display:flex;gap:0.6rem;align-items:center">
           <span class="result-stat-pill" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.5);color:#ffd166;font-size:0.95rem;padding:0.3rem 0.8rem"><span class="cinder-icon"></span> ${Profile.gems || 0}</span>
-          <button class="btn-secondary" id="btn-camp-resistance-ring" title="Send units on Covert Actions for offline rewards">🜂 Resistance Ring${(() => {
-            try { const a = (typeof _covertActive === 'function') ? _covertActive() : []; const r = a.filter(m => m.endsAt <= Date.now()).length; return r > 0 ? ` <span style="background:#9be0c4;color:#0a1a14;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${r} READY</span>` : ''; } catch (e) { return ''; }
-          })()}</button>
-          <button class="btn-secondary" id="btn-camp-vault" title="The Base Vault — secured grid storage, your field-bag inventory, and hero loadouts">🏰 Vault</button>
-          <button class="btn-secondary" id="btn-camp-trading-post" title="Trade cards & resources with other players (fixed price, auctions, barter)">💱 Trading Post</button>
-          <button class="btn-secondary" id="btn-camp-dojo" title="Visit player dojos to buy moves — or run your own">🥋 Dojo Shop</button>
-          <button class="btn-secondary" id="btn-camp-research" title="Spend rare resources on permanent camp buffs">🔬 Research${(() => { try { const r = (typeof _ensureResearch === 'function') ? _ensureResearch() : null; if (r && r.active && r.active.id && ((r.active.startedAt || 0) + (r.active.durMs || 0)) <= Date.now()) return ' <span style="background:#9be0c4;color:#0a1a14;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">DONE</span>'; } catch (e) {} return ''; })()}</button>
-          <button class="btn-secondary" id="btn-camp-vehicle-market" title="Buy or sell vehicles between players">🛒 Vehicle Market${(() => {
-            try { const n = ((Forge.vehicleMarket && Forge.vehicleMarket.listings) || []).filter(l => l && l.sellerId !== ((Profile.cloud && Profile.cloud.userId) || Profile.userId || 'local')).length; return n > 0 ? ` <span style="background:#ffd166;color:#1a1020;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${n}</span>` : ''; } catch (e) { return ''; }
-          })()}</button>
           <button class="btn-secondary" id="btn-back-camp">${App._campReturnsToBunker ? '← Camp' : '← Back to Menu'}</button>
         </div>
       </div>
+      ${_campCommandBarHtml()}
       <div class="cbx-shell">
         <aside class="cbx-col cbx-left cbx-side">
       ${(typeof _campNodeBannerHtml === 'function') ? _campNodeBannerHtml() : ''}
@@ -149448,21 +149494,6 @@ function renderCamp() {
           <div style="background:rgba(20,8,12,0.6);border:1px solid rgba(224,85,106,0.3);border-radius:8px;max-height:280px;overflow:auto">${rows}</div>
         </div>`;
       })()}
-      <nav class="cbx-actionbar">
-        <span class="cbx-bar-t">COMMAND</span>
-        <button class="btn-secondary" id="btn-camp-resistance-ring" title="Send units on Covert Actions for offline rewards">🜂 Resistance Ring${(() => {
-          try { const a = (typeof _covertActive === 'function') ? _covertActive() : []; const r = a.filter(m => m.endsAt <= Date.now()).length; return r > 0 ? ` <span style="background:#9be0c4;color:#0a1a14;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${r} READY</span>` : ''; } catch (e) { return ''; }
-        })()}</button>
-        <button class="btn-secondary" id="btn-camp-vault" title="The Base Vault — secured grid storage, your field-bag inventory, and hero loadouts">🏰 Vault</button>
-        <button class="btn-secondary" id="btn-camp-trading-post" title="Trade cards & resources with other players (fixed price, auctions, barter)">💱 Trading Post</button>
-        <button class="btn-secondary" id="btn-camp-dojo" title="Visit player dojos to buy moves — or run your own">🥋 Dojo Shop</button>
-        <button class="btn-secondary" id="btn-camp-research" title="Spend rare resources on permanent camp buffs">🔬 Research${(() => { try { const r = (typeof _ensureResearch === 'function') ? _ensureResearch() : null; if (r && r.active && r.active.id && ((r.active.startedAt || 0) + (r.active.durMs || 0)) <= Date.now()) return ' <span style="background:#9be0c4;color:#0a1a14;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">DONE</span>'; } catch (e) {} return ''; })()}</button>
-        <button class="btn-secondary" id="btn-camp-vehicle-market" title="Buy or sell vehicles between players">🛒 Vehicle Market${(() => {
-          try { const n = ((Forge.vehicleMarket && Forge.vehicleMarket.listings) || []).filter(l => l && l.sellerId !== ((Profile.cloud && Profile.cloud.userId) || Profile.userId || 'local')).length; return n > 0 ? ` <span style="background:#ffd166;color:#1a1020;padding:0.05rem 0.35rem;border-radius:3px;font-weight:800;font-size:0.7rem">${n}</span>` : ''; } catch (e) { return ''; }
-        })()}</button>
-        <span class="cbx-spacer"></span>
-        <button class="btn-secondary" data-act="recon-open" title="Open the Reconstruction Settlement — Camp Console + reclaim the ruins">🏗 Reconstruction</button>
-      </nav>
       ${(() => {
         const reps = App._campDebrief;
         if (!Array.isArray(reps) || !reps.length) return '';

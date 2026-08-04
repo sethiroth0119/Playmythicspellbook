@@ -15314,6 +15314,96 @@
     transform: translateY(-1px);
   }
 
+  /* ═══ v120b1 VICTORY / DEFEAT — rebuilt to the reference design ═══════════
+     A single centred column: banner + laurel rule, a purple-framed hero card,
+     gold-framed panels, a one-line record bar, then exactly three buttons with
+     the middle one large and gold. Namespaced `gox-` so the legacy
+     `gameover-*` rules below stay untouched for anything still using them. */
+  .gox-modal { max-width: 720px; }
+  .gox-banner { text-align: center; }
+  .gox-title { font-size: clamp(2.8rem, 9vw, 5rem); letter-spacing: 0.06em; line-height: 1; }
+  .gox-flourish { display: flex; align-items: center; justify-content: center; gap: 0.6rem; margin: 0.5rem auto 0.2rem; max-width: 460px; color: #c9a24a; }
+  .gox-flourish .gox-rule { flex: 1; height: 1px; background: linear-gradient(90deg, transparent, rgba(201,162,74,0.85), transparent); }
+  .gox-flourish .gox-leaf { font-size: 1.1rem; opacity: 0.85; }
+  .gox-flourish .gox-diamond { font-size: 0.7rem; }
+  .gox-sub { font-family: 'Cinzel', serif; font-style: italic; color: #d9c9a3; opacity: 0.9; font-size: 1.02rem; margin-bottom: 0.9rem; }
+
+  /* Hero card — the violet-edged panel in the reference. */
+  .gox-hero {
+    display: grid; grid-template-columns: 132px 1fr; gap: 1.1rem; align-items: center;
+    padding: 1rem; margin: 0.4rem 0 0.9rem;
+    border: 1px solid rgba(150,110,220,0.55); border-radius: 12px;
+    background: linear-gradient(160deg, rgba(28,20,48,0.92), rgba(14,10,26,0.95));
+    box-shadow: 0 0 26px rgba(120,80,200,0.22), inset 0 0 40px rgba(0,0,0,0.5);
+  }
+  .gox-portrait { width: 132px; height: 186px; border-radius: 8px; overflow: hidden;
+    border: 1px solid rgba(190,150,255,0.5); box-shadow: 0 6px 20px rgba(0,0,0,0.65); background: #0b0814; }
+  .gox-portrait img, .gox-portrait canvas { width: 100%; height: 100%; object-fit: cover; }
+  .gox-heroname { font-family: 'Cinzel', serif; font-weight: 800; font-size: clamp(1.15rem, 3.1vw, 1.7rem);
+    color: #f3d98a; letter-spacing: 0.02em; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
+  .gox-elems { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0.45rem 0 0.6rem; }
+  .gox-elem { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.28rem 0.7rem;
+    border-radius: 8px; font-family: 'Cinzel', serif; font-weight: 700; font-size: 0.78rem; letter-spacing: 0.08em;
+    color: var(--ec, #c9b26a); border: 1px solid color-mix(in srgb, var(--ec, #c9b26a) 55%, transparent);
+    background: color-mix(in srgb, var(--ec, #c9b26a) 14%, rgba(10,8,20,0.8)); }
+  .gox-xpwrap { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.7rem; }
+  .gox-xpbar { flex: 1; height: 12px; border-radius: 6px; overflow: hidden;
+    background: rgba(0,0,0,0.55); border: 1px solid rgba(212,175,55,0.35); }
+  .gox-xpfill { height: 100%; background: linear-gradient(90deg, #f6d67e, #c8952f); box-shadow: 0 0 10px rgba(246,214,126,0.5); }
+  .gox-xplabel { font-family: 'Cinzel', serif; font-size: 0.86rem; color: #cbbb8e; white-space: nowrap; }
+  .gox-xplabel strong { color: #f3d98a; }
+  .gox-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; }
+  .gox-stat { text-align: center; padding: 0.6rem 0.4rem; border-radius: 10px;
+    border: 1px solid rgba(212,175,55,0.35); background: rgba(8,6,16,0.75); }
+  .gox-statnum { display: block; font-family: 'Cinzel', serif; font-weight: 800;
+    font-size: clamp(1.3rem, 4vw, 1.9rem); color: #f6e3ae; line-height: 1.1; }
+  .gox-statlabel { display: block; margin-top: 0.15rem; font-size: 0.68rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #a99c7c; }
+
+  /* Gold-framed panel (Field Bag). */
+  .gox-panel { padding: 0.85rem 1rem; margin-bottom: 0.85rem; border-radius: 12px;
+    border: 1px solid rgba(212,175,55,0.55); background: linear-gradient(160deg, rgba(26,20,10,0.9), rgba(12,9,6,0.94));
+    box-shadow: inset 0 0 34px rgba(0,0,0,0.55); }
+  .gox-panel-head { display: flex; align-items: baseline; gap: 0.55rem; margin-bottom: 0.55rem; }
+  .gox-panel-ico { font-size: 1.15rem; }
+  .gox-panel-title { font-family: 'Cinzel', serif; font-weight: 800; font-size: 1.12rem; color: #f0d089; letter-spacing: 0.03em; }
+  .gox-panel-meta { font-size: 0.8rem; color: #9d906f; letter-spacing: 0.06em; }
+  .gox-bagpills { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .gox-bagpills .essence-pill { padding: 0.34rem 0.75rem; border-radius: 8px; border-width: 1px; font-size: 0.84rem; }
+  .gox-note { display: flex; gap: 0.5rem; margin-top: 0.6rem; font-size: 0.82rem; line-height: 1.45; color: #b6a887; }
+  .gox-note-ico { flex: 0 0 auto; }
+  .gox-note-evt { margin-top: 0.45rem; padding-top: 0.5rem; border-top: 1px dashed rgba(212,175,55,0.25); }
+
+  /* One-line record bar. */
+  .gox-record { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+    padding: 0.6rem 0.9rem; margin-bottom: 0.9rem; border-radius: 10px;
+    border: 1px solid rgba(212,175,55,0.35); background: rgba(10,8,16,0.75); font-size: 0.86rem; }
+  .gox-record-label { color: #9d906f; letter-spacing: 0.03em; }
+  .gox-pill-cinder { background: rgba(212,175,55,0.18); border-color: rgba(212,175,55,0.5); color: #ffd166; }
+  .gox-pill-aza { background: rgba(170,110,255,0.18); border-color: rgba(170,110,255,0.5); color: #d8b8ff; }
+  .gox-saved { margin-left: auto; color: #7fd6a0; font-size: 0.82rem; }
+
+  /* Three buttons — the middle one is the hero action. */
+  .gox-actions { display: grid; grid-template-columns: 1fr 1.25fr 1fr; gap: 0.75rem; align-items: stretch; }
+  .gox-btn { display: flex !important; flex-direction: column; align-items: center; justify-content: center; gap: 0.3rem;
+    min-height: 92px; padding: 0.8rem 0.7rem !important; border-radius: 10px;
+    font-family: 'Cinzel', serif; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    font-size: 0.9rem; line-height: 1.2; text-align: center; }
+  .gox-btn .gox-btn-ico { font-size: 1.25rem; opacity: 0.9; }
+  .gox-btn-main { font-size: 1.12rem; min-height: 104px;
+    background: linear-gradient(180deg, #efc96f, #b8842a) !important;
+    color: #2a1c05 !important; border: 2px solid #f6e3ae !important;
+    box-shadow: 0 0 26px rgba(246,214,126,0.45), inset 0 1px 0 rgba(255,255,255,0.35) !important; }
+  .gox-sharerow { text-align: center; margin-top: 0.7rem; }
+  .gox-sharelink { background: none; border: 0; color: #9d90c0; font-size: 0.82rem; cursor: pointer;
+    text-decoration: underline; text-underline-offset: 3px; }
+  .gox-sharelink:hover { color: #cbb8ff; }
+  @media (max-width: 620px) {
+    .gox-hero { grid-template-columns: 96px 1fr; gap: 0.75rem; }
+    .gox-portrait { width: 96px; height: 136px; }
+    .gox-actions { grid-template-columns: 1fr; }
+    .gox-btn, .gox-btn-main { min-height: 62px; }
+  }
   /* ===== VICTORY / DEFEAT OVERLAY ===== */
   .gameover-backdrop {
     position: fixed;
@@ -35490,7 +35580,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120b0';
+  window.BUILD_VERSION = 'v120b1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -144588,30 +144678,44 @@ function renderGameOverOverlay() {
     } catch (e) { return ''; }
   })();
 
+  // 🜲 Element chips beside the hero name — SHADOW / STORM in the reference.
+  const heroElemChips = (() => {
+    try {
+      const els = (typeof getElementsOf === 'function') ? (getElementsOf(ph) || []) : [];
+      return els.map(e => {
+        const d = (typeof ELEMENT_DATA !== 'undefined' && ELEMENT_DATA[e]) || {};
+        const col = d.color || '#c9b26a';
+        return `<span class="gox-elem" style="--ec:${col}">${(typeof getElemIcon === 'function') ? getElemIcon(e, '1.05em') : ''}<span>${escapeHtml((d.name || e).toUpperCase())}</span></span>`;
+      }).join('');
+    } catch (e) { return ''; }
+  })();
+
   return `
-    <div class="gameover-backdrop ${won ? 'victory' : 'defeat'}" id="gameover-backdrop">
+    <div class="gameover-backdrop gox ${won ? 'victory' : 'defeat'}" id="gameover-backdrop">
       <div class="gameover-fx">${sparkles}${scanlines}</div>
-      <div class="gameover-modal ${won ? 'victory' : 'defeat'}" role="dialog">
-        <div class="gameover-banner">
+      <div class="gameover-modal gox-modal ${won ? 'victory' : 'defeat'}" role="dialog">
+        <div class="gox-banner">
           <div class="gameover-title-shadow">${won ? 'VICTORY' : 'DEFEAT'}</div>
-          <div class="gameover-title">${won ? 'VICTORY' : 'DEFEAT'}</div>
-          <div class="gameover-sub">${sub}</div>
+          <div class="gameover-title gox-title">${won ? 'VICTORY' : 'DEFEAT'}</div>
+          <div class="gox-flourish"><span class="gox-leaf left">❦</span><span class="gox-rule"></span><span class="gox-diamond">◆</span><span class="gox-rule"></span><span class="gox-leaf right">❦</span></div>
+          <div class="gox-sub">${sub}</div>
           ${causeBanner}
         </div>
 
         ${ph ? `
-          <div class="gameover-summary">
-            <div class="gameover-portrait">${renderIcon(getSpriteId(ph), ph.icon, 'fill')}</div>
-            <div class="gameover-info">
-              <div class="gameover-hero-name">${escapeHtml(ph.name)} <span class="lvl-tag-inline">${getLevelIcon('1.5em')}${heroLvl}</span></div>
-              <div class="gameover-xp">
-                <div class="gameover-xp-bar"><div class="gameover-xp-fill" style="width:${xpPct}%"></div></div>
-                <div class="gameover-xp-label">${heroXp} / ${xpToNext} XP</div>
+          <div class="gox-hero">
+            <div class="gox-portrait">${renderIcon(getSpriteId(ph), ph.icon, 'fill')}</div>
+            <div class="gox-heroinfo">
+              <div class="gox-heroname">${escapeHtml(ph.name)}</div>
+              ${heroElemChips ? `<div class="gox-elems">${heroElemChips}</div>` : ''}
+              <div class="gox-xpwrap">
+                <div class="gox-xpbar"><div class="gox-xpfill" style="width:${xpPct}%"></div></div>
+                <div class="gox-xplabel"><strong>${heroXp}</strong> / ${xpToNext} XP</div>
               </div>
-              <div class="gameover-stats-row">
-                <div class="gameover-stat"><span class="gameover-stat-num">${kills}</span><span class="gameover-stat-label">Kills</span></div>
-                <div class="gameover-stat"><span class="gameover-stat-num">${allySurvivors}/${allyTotal || 0}</span><span class="gameover-stat-label">Allies Alive</span></div>
-                <div class="gameover-stat"><span class="gameover-stat-num">${s.turnNumber || 1}</span><span class="gameover-stat-label">Turns</span></div>
+              <div class="gox-stats">
+                <div class="gox-stat"><span class="gox-statnum">${kills}</span><span class="gox-statlabel">⚔ Kills</span></div>
+                <div class="gox-stat"><span class="gox-statnum">${allySurvivors}/${allyTotal || 0}</span><span class="gox-statlabel">👥 Allies Alive</span></div>
+                <div class="gox-stat"><span class="gox-statnum">${s.turnNumber || 1}</span><span class="gox-statlabel">⏳ Turns</span></div>
               </div>
             </div>
           </div>
@@ -144654,12 +144758,12 @@ function renderGameOverOverlay() {
             }
           } catch (e) {}
           return `
-            <div class="game-over-essence-row">
-              <div class="ge-label">🎒 Field Bag <span class="small-text ink-dim">${usedSlots}/${cap} slots</span></div>
-              <div class="ge-pills">${pills || '<span class="small-text ink-dim">Bag empty</span>'}</div>
+            <div class="gox-panel gox-bag">
+              <div class="gox-panel-head"><span class="gox-panel-ico">🎒</span><span class="gox-panel-title">Field Bag</span><span class="gox-panel-meta">${usedSlots}/${cap} slots</span></div>
+              <div class="gox-bagpills">${pills || '<span class="small-text ink-dim">Bag empty</span>'}</div>
               ${lostLine}
-              <div class="small-text ink-dim" style="margin-top:3px">Looted this run: <strong>${run.looted}</strong>${missed ? ` &middot; <span style="color:#ff9a88">missed: ${missed}</span>` : ''} &middot; ${carryNote}</div>
-              ${weNote}
+              <div class="gox-note"><span class="gox-note-ico">🧰</span><span>Looted this run: <strong>${run.looted}</strong>${missed ? ` &middot; <span style="color:#ff9a88">missed: ${missed}</span>` : ''} &middot; ${carryNote}</span></div>
+              ${weNote ? `<div class="gox-note gox-note-evt">${weNote}</div>` : ''}
             </div>
           `;
         })()}
@@ -144702,16 +144806,16 @@ function renderGameOverOverlay() {
 
         ${rankedSummary}
 
-        <div class="gameover-progress-line">
-          Lifetime record: ${recordsLine}
-          <span class="ink-dim"> · </span>
-          <span class="result-stat-pill" style="background:rgba(212,175,55,0.18);border-color:rgba(212,175,55,0.5);color:#ffd166" title="Cinders — earned currency"><span class="cinder-icon"></span> ${Profile.gems || 0}</span>
-          <span class="result-stat-pill" style="background:rgba(170,110,255,0.18);border-color:rgba(170,110,255,0.5);color:#d8b8ff" title="Aza coin — premium currency (purchased)"><span class="aza-icon"></span> ${Profile.sovereigns || 0}</span>
-          <span class="ink-dim"> · Progress saved.</span>
+        <div class="gox-record">
+          <span class="gox-record-label">Lifetime record:</span>
+          ${recordsLine}
+          <span class="result-stat-pill gox-pill-cinder" title="Cinders — earned currency"><span class="cinder-icon"></span> ${Profile.gems || 0}</span>
+          <span class="result-stat-pill gox-pill-aza" title="Aza coin — premium currency (purchased)"><span class="aza-icon"></span> ${Profile.sovereigns || 0}</span>
+          <span class="gox-saved">✓ Progress saved.</span>
         </div>
 
-        <div class="gameover-actions">
-          <button class="btn-secondary gameover-btn" id="btn-view-field">👁 View Battlefield</button>
+        <div class="gameover-actions gox-actions">
+          <button class="btn-secondary gameover-btn gox-btn" id="btn-view-field"><span class="gox-btn-ico">👁</span><span>View Battlefield</span></button>
           <button class="btn-secondary gameover-btn" id="btn-share-broadcast" data-summary="${(() => {
             // Build the share text from what ACTUALLY happened this match, at
             // render time (won/ph/kills/s are only in scope here). Carried on
@@ -144726,10 +144830,14 @@ function renderGameOverOverlay() {
                 ' — ' + hero + ', ' + k + ' kill' + (k === 1 ? '' : 's') + ' in ' + t + ' turn' + (t === 1 ? '' : 's') + '.'
               );
             } catch (e) { return ''; }
-          })()}">📡 Share to Broadcast</button>
-          <button class="btn-primary gameover-btn ${won ? 'glow-gold' : ''}" id="btn-play-again">${(App.battlePrep && App.battlePrep.multiplayer) ? '🌐 Find Another Match' : '⚔ Play Another Game'}</button>
-          <button class="btn-secondary gameover-btn" id="btn-exit-game">⨯ Exit to Menu</button>
+          })()}" hidden>📡 Share to Broadcast</button>
+          <button class="btn-primary gameover-btn gox-btn gox-btn-main ${won ? 'glow-gold' : ''}" id="btn-play-again"><span class="gox-btn-ico">⚔</span><span>${(App.battlePrep && App.battlePrep.multiplayer) ? 'Find Another Match' : 'Play Another Game'}</span></button>
+          <button class="btn-secondary gameover-btn gox-btn" id="btn-exit-game"><span class="gox-btn-ico">✕</span><span>Exit to Menu</span></button>
         </div>
+        <!-- 📡 Share stays available but OUT of the three-button row, which the
+             reference design fixes at exactly three. Hiding the button entirely
+             would have silently removed a shipped feature. -->
+        <div class="gox-sharerow"><button class="gox-sharelink" id="btn-share-broadcast-2">📡 Share this result to Broadcast</button></div>
       </div>
     </div>
   `;
@@ -144746,6 +144854,12 @@ function bindGameOverEvents() {
 
   const shareBtn = document.getElementById('btn-share-broadcast');
   if (shareBtn) shareBtn.onclick = () => openShareToBroadcast(shareBtn.dataset.summary || '');
+  // 📡 The redesign fixes the action row at three buttons, so Share moved to a
+  // link beneath it. The original button is kept (hidden) purely because it
+  // carries the data-summary built at render time — this link reuses it rather
+  // than rebuilding the summary from state that is out of scope here.
+  const shareLink = document.getElementById('btn-share-broadcast-2');
+  if (shareLink) shareLink.onclick = () => openShareToBroadcast((shareBtn && shareBtn.dataset.summary) || '');
   if (viewBtn) viewBtn.onclick = () => {
     App.ui._gameOverHidden = true;
     renderBattle();

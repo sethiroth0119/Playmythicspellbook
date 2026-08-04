@@ -28020,6 +28020,26 @@
     .tw-node-drawer.tw-aaa .tw-drawer-tab { font-size:0.7rem; padding:0.36rem 0.6rem; }
     .tw-node-drawer.tw-aaa #tw-act-attack { font-size:1.1rem; }
   }
+
+  /* ═══ v120c1 HERO FRAME ART — fill the frame, don't letterbox ═════════════
+     `_heroPortraitHtml()` emits the card-art branch with an INLINE
+     `object-fit:contain`. A stylesheet `!important` does beat a non-important
+     inline declaration, so `.bchrome .hero .art .ph img` was already winning
+     with `cover` — but ONLY inside `.bchrome`. The same `_bcHero` markup is
+     rendered outside that wrapper too, and there the inline `contain` won and
+     the art sat letterboxed in a tall frame with dead bars.
+     Measured: inside .bchrome → cover; outside → contain.
+     Dropping the `.bchrome` scope fixes every instance of this frame at once.
+     `center top` keeps faces in shot when a tall crop is taken.
+     ⚠ Deliberately NOT global: the other nine `_heroPortraitHtml` call sites
+     (bestiary tiles, deck-builder hero pips, small hero-icons) still want
+     `contain` so the whole illustration reads at thumbnail size. */
+  .hero .art .ph .sprite-stack,
+  .hero .art .ph img,
+  .hero .art .ph .icon-emoji {
+    width:100% !important; height:100% !important;
+    object-fit:cover !important; object-position:center top;
+  }
   /* Camp-screen banner */
   .camp-node-banner { display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; padding:0.7rem 1rem; border-radius:12px; border:1px solid rgba(212,175,55,0.35); background:linear-gradient(135deg,rgba(40,32,60,0.6),rgba(18,12,30,0.7)); }
   .camp-node-banner.unregistered { border-color:rgba(232,93,60,0.55); background:linear-gradient(135deg,rgba(60,26,20,0.5),rgba(20,12,18,0.7)); }
@@ -36002,7 +36022,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120c0';
+  window.BUILD_VERSION = 'v120c1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');

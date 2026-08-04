@@ -27575,10 +27575,31 @@
      node's own name label — six of them turned the map into soup. All the
      detail moved into the click panel; what stays on the map is the icon, the
      AI tag and a standing dot. --dx/--dy are the per-corp radial offset. */
+  /* ⚠ THE OFFSET LIVES IN left/top, NOT IN transform. It used to be
+     `transform: translate(-50%,-50%) translate(var(--dx),var(--dy))`, which was
+     a real defect and not merely awkward to test: transform is a COMPOSITOR
+     property, so a layout pass rewriting it produces an element whose painted
+     position and whose hit-testing geometry can disagree with what layout
+     reports. Writing left/top instead makes the move a layout change — it
+     commits synchronously, hit-tests immediately, and can be measured.
+     transform now only ever holds the constant -50%/-50% centring. */
+  /* ⚠ z-index 9 — ABOVE the node markers (z8), and this is the load-bearing
+     line for the whole feature. The pins used to sit at z7 "so a corp badge
+     never intercepts a click meant for a node", and the layout pass was meant
+     to keep them out of the way geometrically. Measured on a 390px-wide
+     viewport, that plan is impossible: a .tw-node-marker's own box is 126x94
+     with pointer-events:auto, and sixteen of them tile essentially the entire
+     map. There is no free space to find, so pins stayed buried and only 5 of
+     12 opened.
+     The trade is lopsided and worth naming: a pin is ~46x14, a marker ~126x94.
+     A pin on top costs about 5% of one marker's hit area; a pin underneath
+     costs 100% of the pin's. Correctness now comes from z-order, and the
+     layout pass below is demoted to tidiness — it still steers pins off node
+     ICONS, which are what a player actually aims at. */
   .tw-aicorp {
     position: absolute;
-    transform: translate(-50%, -50%) translate(var(--dx, 26px), var(--dy, -26px));
-    z-index: 7; pointer-events: auto; cursor: pointer;
+    transform: translate(-50%, -50%);
+    z-index: 9; pointer-events: auto; cursor: pointer;
     display: flex; align-items: center; gap: 3px;
     padding: 2px 5px; border-radius: 999px; white-space: nowrap;
     background: linear-gradient(180deg, rgba(14,18,28,0.97), rgba(8,10,16,0.99));
@@ -27593,13 +27614,13 @@
        was working). Only the glow animates. */
     transition: box-shadow 0.14s ease;
   }
-  /* Set by the layout pass when no clear slot exists near the host node. The
-     pin then sits above the markers: a pin that overlaps something is a
-     nuisance, a pin that is unreachable is a broken feature. */
-  .tw-aicorp.is-crowded { z-index: 9; }
+  /* Diagnostic only — set by the layout pass when the tidiest slot it could
+     find still overlaps something. It no longer changes stacking (the base is
+     already above the markers); it just marks a dense corner of the map. */
+  .tw-aicorp.is-crowded { }
   .tw-aicorp:hover {
-    z-index: 9;   /* lift ABOVE nodes on hover only, so it never blocks a click */
-    transform: translate(-50%, -50%) translate(var(--dx, 26px), var(--dy, -26px)) scale(1.14);
+    z-index: 10;   /* a hovered pin beats its neighbours */
+    transform: translate(-50%, -50%) scale(1.14);
     box-shadow: 0 0 16px color-mix(in srgb, var(--cc, #c9a24a) 55%, transparent), 0 3px 9px rgba(0,0,0,0.8);
   }
   .tw-aicorp-ico { font-size: 13px; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--cc) 55%, transparent)); }
@@ -36245,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120e2';
+  window.BUILD_VERSION = 'v120e3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -210696,50 +210717,143 @@ function _aiPinLayout() {
     const obstacles = [];
     for (const m of markers) {
       const ico = m.querySelector('.tw-nm2-ico'), lab = m.querySelector('.tw-nm2-lab');
-      if (ico) obstacles.push({ r: grow(ico.getBoundingClientRect(), 4), w: 8 });
+      // The ICON is what a player aims at, so it is weighted an order of
+      // magnitude above the label. Note these are the VISIBLE children, not the
+      // marker's own box — the marker is padded well beyond what it draws, and
+      // avoiding that padding is neither possible on a dense map nor useful now
+      // that stacking decides who receives the click.
+      if (ico) obstacles.push({ r: grow(ico.getBoundingClientRect(), 4), w: 30 });
       if (lab) obstacles.push({ r: grow(lab.getBoundingClientRect(), 2), w: 2 });
     }
+    // Keep pins on screen. Bounds are the VIEWPORT, not .tw-map-canvas — the
+    // canvas measured only 130px tall on a short desktop while its own markers
+    // are 94px each and overflow it freely, so clamping to it would have
+    // rejected every candidate equally and decided nothing.
+    let bounds = { left: 0, top: 0, right: window.innerWidth || 1280, bottom: window.innerHeight || 800 };
+    // Fixed chrome (bottom status bar, top toolbar) sits above the map and eats
+    // clicks. A pin under one is exactly as dead as a pin under a marker, and
+    // z-order cannot save it — the bars outrank the map entirely. Found by
+    // scanning rather than by selector so new chrome is covered automatically.
+    try {
+      for (const el of document.querySelectorAll('body > *, .app-toolbar, [class*="statusbar"]')) {
+        const cs = getComputedStyle(el);
+        if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+        if (cs.display === 'none' || cs.visibility === 'hidden' || cs.pointerEvents === 'none') continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) continue;
+        if (r.width > (bounds.right - bounds.left) * 0.98 && r.height > (bounds.bottom - bounds.top) * 0.98) continue;
+        obstacles.push({ r: grow(r, 2), w: 400 });
+      }
+    } catch (e) {}
     const overlap = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left))
                             * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+    // 🔍 SCALE. The game puts a `zoom` on <html> (the UI auto-scale clamp), so
+    // one CSS pixel is NOT one measured pixel. getBoundingClientRect reports
+    // scaled pixels while left/top are written in CSS pixels — so an offset
+    // validated against measured geometry came out ~14% shorter once applied,
+    // and the pins stayed buried under the markers they were supposed to clear.
+    // That was the real reason clicking a corp did nothing: the pass believed
+    // every slot was clear while 10 of 12 pins were still under a node.
+    // Probing beats reading zoom off the element — it survives nested zooms,
+    // ancestor transforms and page scaling without knowing which applied.
+    let scale = 1;
+    try {
+      const probe = pins[0], pbx = probe.getAttribute('data-bx');
+      const pdx = parseFloat(probe.getAttribute('data-dx')) || 0;
+      const before = probe.getBoundingClientRect().left;
+      probe.style.left = 'calc(' + pbx + '% + ' + (pdx + 100) + 'px)';
+      const after = probe.getBoundingClientRect().left;
+      probe.style.left = 'calc(' + pbx + '% + ' + pdx + 'px)';
+      const s = (after - before) / 100;
+      if (s > 0.2 && s < 5) scale = s;
+    } catch (e) {}
     const RX = 78, RY = 44, BASE = 62;
     const placed = [];
     for (const pin of pins) {
       const box = pin.getBoundingClientRect();
       const w = box.width || 44, h = box.height || 16;
-      // Undo the current offset to recover the host node's anchor point.
-      const cs = getComputedStyle(pin);
-      const curX = parseFloat(cs.getPropertyValue('--dx')) || 0;
-      const curY = parseFloat(cs.getPropertyValue('--dy')) || 0;
+      // Undo the current offset to recover the host node's anchor point. The
+      // offset is read from data-dx/dy rather than from computed style: it is
+      // what the render actually wrote, with no dependency on how or whether
+      // the browser has committed the resulting position.
+      // data-dx/dy are CSS px; box is in measured px. Scale before subtracting,
+      // or the anchor lands in the wrong place on a zoomed page.
+      const curX = (parseFloat(pin.getAttribute('data-dx')) || 0) * scale;
+      const curY = (parseFloat(pin.getAttribute('data-dy')) || 0) * scale;
       const ax = box.left + w / 2 - curX, ay = box.top + h / 2 - curY;
-      let best = null;
-      // Radii stop at 1.45. Searching wider does find clear ground, but it put
-      // two pins 210px from their own node — far enough that they read as
-      // belonging to a different one, which is worse than a small overlap.
-      // Past this point the pin stays close and gets lifted above the markers
-      // instead (see is-crowded below).
-      outer:
+      // Score every candidate slot, then VERIFY the best ones against the
+      // browser itself. Scoring alone is not enough and cannot be made enough:
+      // it only knows about the obstacles it was handed, and the thing that
+      // actually buried a pin here was `.tw-statusbar-bottom` — position
+      // relative, z-index 1, not chrome, not a marker, and winning anyway
+      // because the pin's z9 is scoped inside the map's stacking context.
+      // Enumerating every element that might overlap is a losing game;
+      // elementFromPoint is the ground truth and is now usable because the
+      // offset lives in left/top and commits synchronously.
+      // ABOVE is a fallback, not a peer. The lower arc is preferred because the
+      // node's name label hangs below and the hover card opens above — but for
+      // a node near the bottom edge every lower slot lands on the status bar,
+      // and a permanently dead pin is worse than one that shares space with a
+      // transient tooltip. Since v120e1 the hover card is pointer-events:none
+      // over its body and dismisses when a pin is hovered, so a pin above is
+      // fully clickable; the penalty just keeps it a last resort.
+      const cands = [];
+      for (const side of [1, -1]) {
       for (const s of [1, 1.22, 1.45]) {
         for (let k = 0; k <= 11; k++) {
+          // Candidates are generated in MEASURED px (design px × scale) so the
+          // footprint being checked is the one that will actually be painted.
+          // Dividing back out at write time keeps the CSS value — and so the
+          // pin's look — identical at any zoom.
           const ang = Math.PI * (0.10 + 0.80 * (k / 11));
-          const dx = Math.cos(ang) * RX * s;
-          const dy = Math.sin(ang) * RY * s + BASE * s;
+          const dx = Math.cos(ang) * RX * s * scale;
+          const dy = (Math.sin(ang) * RY * s + BASE * s) * scale * side;
           const r = { left: ax + dx - w / 2, top: ay + dy - h / 2, right: ax + dx + w / 2, bottom: ay + dy + h / 2 };
           let score = 0;
           for (const o of obstacles) score += overlap(r, o.r) * o.w;
           for (const p of placed)   score += overlap(r, p) * 4;
+          if (bounds) {
+            const out = (Math.max(0, bounds.left - r.left) + Math.max(0, r.right - bounds.right)
+                       + Math.max(0, bounds.top - r.top) + Math.max(0, r.bottom - bounds.bottom));
+            score += out * 4000;               // off screen is disqualifying, not untidy
+          }
           // Prefer staying close to the host: among equally clear slots, the
           // tightest radius keeps the pin visibly attached to its own node.
-          score += (s - 1) * 40;
-          if (!best || score < best.score) best = { score, dx, dy, r };
-          if (score <= (s - 1) * 40) break outer;   // clear slot at this radius
+          score += (s - 1) * 40 * scale * scale;
+          if (side < 0) score += 500 * scale * scale;   // above only when below fails
+          cands.push({ score, dx, dy, r, up: side < 0 });
         }
       }
-      if (!best) continue;
-      pin.style.setProperty('--dx', Math.round(best.dx) + 'px');
-      pin.style.setProperty('--dy', Math.round(best.dy) + 'px');
-      // If nowhere is genuinely clear, the pin must still be clickable — lift
-      // that one above the markers rather than leave it buried and dead.
-      pin.classList.toggle('is-crowded', best.score > 60);
+      }
+      if (!cands.length) continue;
+      cands.sort((a, b) => a.score - b.score);
+      const bx = pin.getAttribute('data-bx'), by = pin.getAttribute('data-by');
+      const place = (c) => {
+        const ndx = Math.round(c.dx / scale), ndy = Math.round(c.dy / scale);
+        pin.style.left = 'calc(' + bx + '% + ' + ndx + 'px)';
+        pin.style.top  = 'calc(' + by + '% + ' + ndy + 'px)';
+        pin.setAttribute('data-dx', ndx);
+        pin.setAttribute('data-dy', ndy);
+      };
+      // Walk the best slots and keep the first the browser agrees is reachable.
+      // The list must sample BOTH families: every below-slot outranks every
+      // above-slot by construction, so a flat top-N would never reach the
+      // fallback for exactly the pins that need it — the ones with nowhere
+      // below to go. Bounded at 12 probes so a hopeless map costs 12 reflows
+      // per pin rather than all 72.
+      const walk = cands.filter(c => !c.up).slice(0, 8).concat(cands.filter(c => c.up).slice(0, 4));
+      let best = cands[0], settled = false;
+      for (let ci = 0; ci < walk.length; ci++) {
+        place(walk[ci]);
+        let top = null;
+        try {
+          const b2 = pin.getBoundingClientRect();
+          top = document.elementFromPoint(Math.round(b2.left + b2.width / 2), Math.round(b2.top + b2.height / 2));
+        } catch (e) { break; }
+        if (top && top.closest && top.closest('.tw-aicorp') === pin) { best = walk[ci]; settled = true; break; }
+      }
+      if (!settled) place(best);               // nothing verified — take the tidiest
+      pin.classList.toggle('is-crowded', !settled);
       placed.push(best.r);
     }
   } catch (e) {}
@@ -211480,9 +211594,13 @@ function renderTerritoryWars() {
         // silent single point of failure for the one interaction these pins
         // exist to provide. The delegated listener below is bound once at load
         // and survives every re-render.
+        // The offset goes into left/top via calc(), so moving a pin is a layout
+        // change rather than a compositor one. data-bx/by keep the node's own
+        // anchor and data-dx/dy the current offset, so the layout pass can
+        // recover the anchor exactly instead of inferring it from a rect.
         return '<button class="tw-aicorp' + (c.kind === 'startup' ? ' is-startup' : '') + '"'
-          + ' style="left:' + p.x + '%;top:' + p.y + '%;--cc:' + c.col
-          + ';--dx:' + dx + 'px;--dy:' + dy + 'px"'
+          + ' style="left:calc(' + p.x + '% + ' + dx + 'px);top:calc(' + p.y + '% + ' + dy + 'px);--cc:' + c.col + '"'
+          + ' data-bx="' + p.x + '" data-by="' + p.y + '" data-dx="' + dx + '" data-dy="' + dy + '"'
           + ' title="' + escapeHtml(tip) + '" data-aicorp="' + escapeHtml(c.id) + '">'
           + '<span class="tw-aicorp-ico">' + c.ico + '</span>'
           + '<span class="tw-aicorp-tag">AI</span>'

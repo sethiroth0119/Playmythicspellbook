@@ -78156,13 +78156,30 @@ function _jbHandleAction(a) {
             // balance on refusal — show it, and resync the local one to it so the
             // display stops contradicting the thing that actually holds the money.
             if (_opCharge.reason === 'insufficient') {
+              // 🐛 v120e0 — THIS TOOK PLAYERS' CINDER ON A REFUSED PURCHASE.
+              // The old code adopted the server balance whenever it differed
+              // from local. When the server row was LOWER — stale, or behind an
+              // un-synced gain — a purchase that was refused ALSO wiped the
+              // difference. From the player's seat: "it took my money and told
+              // me I didn't have enough."
+              //
+              // Rule: a REFUSED transaction must never reduce a balance. Nothing
+              // was bought, so nothing may be deducted. We still reconcile
+              // UPWARD, because that only ever corrects in the player's favour
+              // and fixes the case where the server knows about Cinder the
+              // client has not seen yet.
               const _srv = _opCharge.newBalance;
-              if (typeof _srv === 'number' && _srv !== (Profile.gems | 0)) {
+              const _local = Profile.gems | 0;
+              const _adoptUp = (typeof _srv === 'number') && _srv > _local;
+              if (_adoptUp) {
                 try { _gemsTaxExempt(() => { Profile.gems = _srv | 0; }); saveProfile(); } catch (_) {}
               }
-              showToast('⚠ Not enough Cinder — the server holds 🔥 ' +
-                ((typeof _srv === 'number' ? _srv : (Profile.gems | 0)) | 0).toLocaleString() +
-                ', this costs 🔥 ' + e.startup.toLocaleString() + '. Your balance has been re-synced.', 7000);
+              const _shown = _adoptUp ? _srv : _local;
+              const _mismatch = (typeof _srv === 'number') && _srv < _local;
+              showToast('⚠ Not enough Cinder — this costs 🔥 ' + e.startup.toLocaleString() +
+                ', you hold 🔥 ' + (_shown | 0).toLocaleString() + '.' +
+                (_mismatch ? ' (The server reads 🔥 ' + (_srv | 0).toLocaleString() +
+                  ' — nothing was charged, and your balance was left alone. Reload to reconcile.)' : ''), 7000);
             } else {
               showToast('Startup failed: ' + (_opCharge.reason || '?'), 4200);
             }

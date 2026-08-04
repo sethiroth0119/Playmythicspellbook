@@ -35490,7 +35490,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120a8';
+  window.BUILD_VERSION = 'v120a9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -48947,7 +48947,14 @@ async function cloudPublishCatalog(opts) {
     // block it from going live. The publishing machine IS the source of truth.)
     const row = {
       id:         'singleton',
-      cards:      stripBig(slim(Forge.customCards || [])),
+      // 🚧 DRAFT CARDS NEVER LEAVE THIS MACHINE. A card marked `draft: true` is
+      // work in progress — being play-tested, still waiting on art — and is
+      // filtered out of the published catalog entirely. This matters because
+      // saveForge() fires _adminAutoPublish(), so without this an imported or
+      // half-finished card would reach every player ~45s after it was created,
+      // with no deliberate publish step and no way to take it back.
+      // Clear the flag (or use __mg.releaseDrafts()) when it is ready to ship.
+      cards:      stripBig(slim((Forge.customCards || []).filter(c => c && !c.draft))),
       moves:      stripBig(movesWithAi),
       items:      stripBig(Forge.customItems || []),
       packs:      stripBig(Forge.customPacks || []),
@@ -160656,6 +160663,42 @@ try {
                              pickCur: bboPickCur, toggleCls: bboToggleCls, set: bboSet,
                              save: bboSaveProduct, toggle: bboToggleProduct, del: bboDeleteProduct };
   window.__mg.openBankOffice = function () { App.screen = 'bankOffice'; try { render(); } catch (e) {} };
+  // 🚧 Draft controls. A card with `draft: true` is excluded from the published
+  // catalog AND from every non-admin deck-builder pool, so it can be imported,
+  // play-tested and given art without any player ever seeing it.
+  window.__mg.listDrafts = function () {
+    const d = (Forge.customCards || []).filter(c => c && c.draft);
+    try { console.log(d.map(c => c.name).join('\n')); } catch (e) {}
+    try { showToast('🚧 ' + d.length + ' draft card(s) — hidden from players.', 7000); } catch (e) {}
+    return { count: d.length, names: d.map(c => c.name) };
+  };
+  // Flip drafts live. Names/ids may be passed to release a subset; no argument
+  // releases everything. Publishing is still a separate, deliberate step.
+  window.__mg.releaseDrafts = function (which) {
+    const want = Array.isArray(which) ? which.map(s => String(s).toLowerCase()) : null;
+    let n = 0;
+    (Forge.customCards || []).forEach(c => {
+      if (!c || !c.draft) return;
+      if (want && !want.includes(String(c.name || '').toLowerCase()) && !want.includes(String(c.id))) return;
+      delete c.draft; c._editedAt = Date.now(); n++;
+    });
+    if (n) { try { if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge(); } catch (e) {} try { render(); } catch (e) {} }
+    try { showToast(n ? ('✅ Released ' + n + ' card(s). Publish to send them to players.') : 'No matching drafts.', 9000); } catch (e) {}
+    return { released: n };
+  };
+  // Put a card back into draft if it went live too early.
+  window.__mg.markDraft = function (which) {
+    const want = Array.isArray(which) ? which.map(s => String(s).toLowerCase()) : null;
+    let n = 0;
+    (Forge.customCards || []).forEach(c => {
+      if (!c || c.draft) return;
+      if (want && !want.includes(String(c.name || '').toLowerCase()) && !want.includes(String(c.id))) return;
+      c.draft = true; c._editedAt = Date.now(); n++;
+    });
+    if (n) { try { if (typeof _persistForgeNow === 'function') _persistForgeNow(); else saveForge(); } catch (e) {} try { render(); } catch (e) {} }
+    try { showToast('🚧 ' + n + ' card(s) marked draft — hidden from players on the next publish.', 9000); } catch (e) {}
+    return { marked: n };
+  };
   // ═══════════════════════════════════════════════════════════════════════════
   // 📥 BULK CARD IMPORT — __mg.importCards(arrayOrJsonString, opts)
   //
@@ -179642,6 +179685,13 @@ function getAllDeckableCards() {
     seenCustomKeys.add(key);
     out.push({ key, kind: realKind, card: c, isCustom: true });
   });
+  // 🚧 Hide DRAFT cards from the deck builder for everyone except an admin.
+  // A draft is still being tested / waiting on art, so it must not appear in a
+  // player's pool — but the admin has to see it to build a test deck with it.
+  try {
+    const _adm = (typeof isAdmin === 'function') && isAdmin();
+    if (!_adm) return out.filter(x => !(x && x.card && x.card.draft));
+  } catch (e) {}
   return out;
 }
 

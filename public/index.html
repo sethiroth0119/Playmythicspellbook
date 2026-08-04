@@ -36060,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120c7';
+  window.BUILD_VERSION = 'v120c8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -79518,7 +79518,21 @@ const getStatBonus = (unit, statKey) => {
       for (const a of _unitAuras(src)) {
         if (!a.stats || !a.stats[statKey]) continue;
         if (!_auraAffects(App.state, src, a, unit)) continue;
-        const amt = Math.max(0, a.amount | 0);
+        // 🐛 v120c8 — this used to be Math.max(0, …), which silently clamped
+        // every NEGATIVE aura to zero and then skipped it. A debuff aura was
+        // therefore unauthorable: the card imported fine, showed its text, and
+        // did nothing (Creeping Blight was the case that surfaced it).
+        //
+        // Safe to lift, checked three ways:
+        //  1. No existing aura uses a negative amount. The six `amount: -1`
+        //     in the source are fieldEffect speedMod/energyRegen, a different
+        //     system that _unitAuras never reads.
+        //  2. The persistent-spell aura block below has NEVER clamped
+        //     (`bonus += aura.amount`), so negatives already worked there —
+        //     this removes an inconsistency rather than creating one.
+        //  3. Both combat paths already floor the final stat at 1
+        //     (atkStat / defStat), so a debuff cannot drive a stat negative.
+        const amt = a.amount | 0;
         if (!amt) continue;
         if (a.mode === 'percent') {
           const base = (unit.stats && (unit.stats[statKey] | 0)) || 0;

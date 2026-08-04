@@ -130184,7 +130184,8 @@ function _aiAutoCounter(state, opts) {
     });
   } else if (effect === 'silence' && opts.source) {
     log.push({ msg: `🔇 AI counters with ${cheapest.name} — ${sourceName}'s passive sealed!`, color: 'red' });
-    state.units = (state.units || []).map(u => u.id === opts.source.id ? { ...u, _silencedTurns: 3 } : u);
+    state.units = (state.units || []).map(u => u.id === opts.source.id
+      ? { ...u, _silencedTurns: Math.max(1, Math.min(9, (cheapest.silenceTurns | 0) || 3)) } : u);
   } else if (effect === 'killUnit' && opts.source) {
     // 💀 Execute — negate the action AND instantly kill the attacking unit.
     // Heroes are IMMUNE: against a hero source it just negates.
@@ -130478,6 +130479,30 @@ function _battleActivateCounter(cardInstanceId) {
           const ph = (s.units || []).find(u => u && u.owner === 'player' && u.isHero);
           if (killed && typeof _battleOnUnitKilled === 'function') _battleOnUnitKilled(s, ph || null, killed);
         } catch (e) {}
+      }
+    }
+  }
+  // 🔇 SILENCE / 🌱 ROOT (v120c8) — these were implemented ONLY on the AI's
+  // counter path. A player playing a silence or root counter got the negation
+  // and nothing else, silently. Same effects, same source unit, now applied
+  // from this side too.
+  //   card.silenceTurns / card.rootTurns override the defaults, which is what
+  //   lets a 1-turn silence exist as a tempo card rather than removal.
+  if ((card.counterEffect === 'silence' || card.counterEffect === 'root') && cp && cp._sourceId) {
+    const victim = (s.units || []).find(u => u && u.id === cp._sourceId && u.alive);
+    if (victim) {
+      if (card.counterEffect === 'silence') {
+        const turns = Math.max(1, Math.min(9, (card.silenceTurns | 0) || 3));
+        s.units = s.units.map(u => u.id === victim.id ? { ...u, _silencedTurns: turns } : u);
+        s.log = (s.log || []).concat([{ msg: `🔇 ${card.name} — ${victim.name}'s abilities are sealed for ${turns} turn${turns === 1 ? '' : 's'}.`, color: 'amber' }]);
+      } else {
+        // ⚠ 'root' applies the STUN status — there is no 'rooted' status id.
+        // Matching the AI path exactly rather than inventing one.
+        const turns = Math.max(1, Math.min(9, (card.rootTurns | 0) || 2));
+        s.units = s.units.map(u => u.id === victim.id
+          ? (typeof applyStatusEffect === 'function' ? applyStatusEffect(u, 'stun', turns) : { ...u, hasMoved: true })
+          : u);
+        s.log = (s.log || []).concat([{ msg: `🌱 ${card.name} — ${victim.name} is rooted for ${turns} turn${turns === 1 ? '' : 's'}.`, color: 'amber' }]);
       }
     }
   }

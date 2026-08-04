@@ -36185,7 +36185,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120d7';
+  window.BUILD_VERSION = 'v120d8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -39098,11 +39098,17 @@ function _persistResourcesSoon() {
 // vault container adds rows = +250 units per row. Gains beyond the cap are
 // clamped with a loud toast, pushing the "buy a bigger vault" economy.
 function getResourceCap() {
+  // 📦 A staffed Warehouse operation raises the ceiling. Added to whichever
+  // base applies rather than replacing it, so vault containers and warehouse
+  // staff stack instead of competing. Guarded by typeof — this runs long
+  // before the operations block in source order.
+  let wh = 0;
+  try { wh = (typeof _warehouseCapacity === 'function') ? _warehouseCapacity() : 0; } catch (e) { wh = 0; }
   try {
     const v = (typeof getVaultLayout === 'function') ? getVaultLayout() : null;
-    if (v) return Math.max(500, (v.rows | 0) * (v.cols | 0) * 25);
+    if (v) return Math.max(500, (v.rows | 0) * (v.cols | 0) * 25) + wh;
   } catch (e) {}
-  return 2000;
+  return 2000 + wh;
 }
 function getResourceUnits() {
   const R = _ensureResources();
@@ -76272,6 +76278,11 @@ const OPS_ECON = {
   cars:         { startup: 450000, ratePerWorkerHr: 1100, salaryPerWorkerHr: 280, maxWorkers: 10, yields: { metal: 1.8 }, inputs: { metal: 1.2, fuel: 0.4 } },
   fishing:      { startup: 300000, ratePerWorkerHr: 750,  salaryPerWorkerHr: 180, maxWorkers: 14, yields: { food: 2.4 }, inputs: { fuel: 0.6 } },
   cardshop:     { startup: 200000, ratePerWorkerHr: 500,  salaryPerWorkerHr: 120, maxWorkers: 6,  yields: {} },
+  // 📦 WAREHOUSE — the storage business. It earns modestly on fees, but the
+  // real product is CAPACITY: `storagePerWorker` raises the player's resource
+  // cap, so staffing it is how you stop hitting STASH FULL. Ops are one-per-
+  // type (see _opCreateLocal), so this scales with workers, not with count.
+  warehouse:    { startup: 280000, ratePerWorkerHr: 420,  salaryPerWorkerHr: 130, maxWorkers: 12, yields: {}, storagePerWorker: 260, storageBase: 600 },
   // 🥋 Dojo — the licence to run a MOVE storefront. Owning one unlocks the
   // Tutor Shop (wholesale) and lets you stock + resell moves to other players.
   dojo:         { startup: 150000, ratePerWorkerHr: 450,  salaryPerWorkerHr: 110, maxWorkers: 6,  yields: {} },
@@ -76495,8 +76506,29 @@ const OP_LABELS = {
   medical: 'Medical Corporation', agri: 'Agricultural Op.', research: 'Research Facility',
   smuggling: 'Smuggling Network', salvage: 'Salvage Operation', gas: 'Gas Station Chain',
   cars: 'Car Dealership', fishing: 'Fishing Company', cardshop: 'Card Shop', dojo: 'Dojo',
-  bank: 'Bank',
+  bank: 'Bank', warehouse: 'Warehouse',
 };
+// 📦 Storage a staffed warehouse adds to the player's resource cap. Reads the
+// LIVE econ table via _opEcon, so an admin retune reaches this too. Counts the
+// personally-funded list AND the corp list, the same pair every other
+// ownership check walks.
+function _warehouseCapacity() {
+  try {
+    const seen = [];
+    try { if (typeof Operations !== 'undefined' && Operations.list) seen.push.apply(seen, Operations.list); } catch (e) {}
+    try { if (typeof _jbLocalOpsList === 'function') seen.push.apply(seen, _jbLocalOpsList() || []); } catch (e) {}
+    let cap = 0, counted = {};
+    for (const o of seen) {
+      if (!o || o.op_type !== 'warehouse' || counted[o.id]) continue;
+      counted[o.id] = 1;
+      const e = (typeof _opEcon === 'function') ? _opEcon('warehouse') : null;
+      if (!e) continue;
+      const w = Math.max(0, o.workers | 0);
+      cap += (e.storageBase | 0) + w * (e.storagePerWorker | 0);
+    }
+    return Math.max(0, cap);
+  } catch (e) { return 0; }
+}
 function getOpsEconOverrides() {
   try {
     const local = (Forge.opsEcon && typeof Forge.opsEcon === 'object') ? Forge.opsEcon : null;
@@ -76606,7 +76638,13 @@ function _opComputed(o) {
     const q = Math.floor(inputsWanted[rid] * supply);
     if (q > 0) inputsUsed[rid] = q;
   });
-  const grossPerHr = w * e.ratePerWorkerHr * mktMul * supply;
+  // 🤝 STANDING (v120d8) — the corp that dominates your output decides whether
+  // you get a fair price. Composes with the market multiplier rather than
+  // replacing it: cxYieldMul swings 0.5x–2.2x on supply and demand, standing
+  // tilts that by at most ±15%. Guarded by typeof because this function runs
+  // long before the war-map block in source order.
+  const stdMul = (typeof _aiYieldTradeMul === 'function' && e.yields) ? _aiYieldTradeMul(e.yields) : 1;
+  const grossPerHr = w * e.ratePerWorkerHr * mktMul * stdMul * supply;
   // ⚠ Salaries are NOT throttled — same rule as the market multiplier above.
   // Wages are owed whether or not the supply line held, which is what makes
   // running dry actually hurt instead of quietly pausing the business.
@@ -76620,7 +76658,7 @@ function _opComputed(o) {
     const q = Math.floor(w * (e.yields[rid] || 0) * hrs * supply);
     if (q > 0) yields[rid] = q;
   });
-  return { e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last, yields: yields, mktMul: mktMul, supply: supply, inputsWanted: inputsWanted, inputsUsed: inputsUsed };
+  return { e: e, w: w, hrs: hrs, grossPerHr: grossPerHr, salaryPerHr: salaryPerHr, gross: gross, salary: salary, net: net, cdLeft: cdLeft, last: last, yields: yields, mktMul: mktMul, stdMul: stdMul, supply: supply, inputsWanted: inputsWanted, inputsUsed: inputsUsed };
 }
 function _opLaborPool() { return Math.max(1, (Corp.roster || []).length || 1); }
 // Shared post-founding handler — fires the unlock toast + grants Woods
@@ -78407,7 +78445,7 @@ function mountJustBusiness() {
     }
     if (!f) {
       f = document.createElement('iframe');
-      f.id = FID; f.src = 'corp/?v=120d6';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
+      f.id = FID; f.src = 'corp/?v=120d8';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
       // Smooth cross-fade + gentle scale-in (no hard cut on enter/exit).
       f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transform:scale(.986);transition:opacity .6s ' + EASE + ',transform .6s ' + EASE + ';will-change:opacity,transform';
       f.onload = function () {
@@ -210335,9 +210373,52 @@ function _aiCorpStanding(corpId) {
     return { value: v, tier: _aiStandingTier(v), reasons: reasons };
   } catch (e) { return { value: 0, tier: _aiStandingTier(0), reasons: [] }; }
 }
+// 💰 STANDING GATES TRADE (v120d8). Until now the relationship was readable but
+// inert. Each corp DOMINATES a resource: if you are on good terms with the corp
+// that controls your output, you get a better price for it; fall out with them
+// and they squeeze you.
+//
+// Deliberately a NARROW band (0.85x–1.15x) that MULTIPLIES the Crash Exchange
+// figure rather than replacing it. cxMarketMul is the one true price reader and
+// swings 0.5x–2.2x — standing must tilt that, never drown it out, or the live
+// market stops being the thing players read.
+const AI_CORP_RESOURCE = {
+  food: 'greenbelt', water: 'greenbelt',
+  metal: 'ashfall', supplies: 'ashfall',
+  fuel: 'meridian',
+  medicine: 'foundation',
+  corruptedEssence: 'ninthvein',
+  memoryShards: 'vance', dna: 'vance',
+};
+const AI_TRADE_MUL_MIN = 0.85, AI_TRADE_MUL_MAX = 1.15;
+// Standing −100..+100 → 0.85x..1.15x, linear, clamped.
+function _aiTradeMul(resourceId) {
+  try {
+    const corpId = AI_CORP_RESOURCE[resourceId];
+    if (!corpId) return 1;                                  // nobody controls it
+    const v = _aiCorpStanding(corpId).value || 0;
+    const m = 1 + (v / 100) * 0.15;
+    return Math.max(AI_TRADE_MUL_MIN, Math.min(AI_TRADE_MUL_MAX, m));
+  } catch (e) { return 1; }
+}
+// Quantity-weighted across a yield map — mirrors cxYieldMul exactly, so a
+// business whose output is mostly one resource tracks THAT corp's opinion.
+function _aiYieldTradeMul(map) {
+  try {
+    if (!map || typeof map !== 'object') return 1;
+    let num = 0, den = 0;
+    for (const id of Object.keys(map)) {
+      const q = Math.max(0, +map[id] || 0);
+      if (!q) continue;
+      num += _aiTradeMul(id) * q; den += q;
+    }
+    return den ? Math.max(AI_TRADE_MUL_MIN, Math.min(AI_TRADE_MUL_MAX, num / den)) : 1;
+  } catch (e) { return 1; }
+}
 try {
   window.__mg = window.__mg || {};
-  window.__mg.aiCorps = { list: AI_CORPS, standing: _aiCorpStanding, home: _aiCorpHomeNode };
+  window.__mg.aiCorps = { list: AI_CORPS, standing: _aiCorpStanding, home: _aiCorpHomeNode,
+                          tradeMul: _aiTradeMul, resourceCorp: AI_CORP_RESOURCE };
 } catch (e) {}
 
 // ===== WAR MAP SCREEN =====

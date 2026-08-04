@@ -1007,6 +1007,11 @@ const OPERATIONS = [
   // $200 stake in Mythic Token (2,000 MT at $0.10). The stake is locked, not
   // spent — see BANK_CHARTER_MT in index.html.
   { id: 'bank',         name: 'Bank',                cat: 'Finance',   icon: '🏦', focus: 'Lend to players, hold deposits', produces: ['Loans', 'Interest', 'Deposits'],     startup: '1,000,000 Cinder · or 2,000 MT staked ($200)',       maint: 'Teller wages · reserve 30%',   risk: 'Medium' },
+  // 📦 The storage business. Its product is CAPACITY, not output — every
+  // worker you staff raises your resource ceiling, which is the answer to
+  // STASH FULL. This catalog is hardcoded here, so a type added to OPS_ECON in
+  // index.html is invisible until it is listed in this array too.
+  { id: 'warehouse',    name: 'Warehouse',           cat: 'Logistics', icon: '📦', focus: 'Raise your resource storage ceiling', produces: ['Storage capacity', 'Holding fees'], startup: '280,000 Cinder',                                     maint: 'Staff wages · +260 cap / worker', risk: 'Low' },
 ];
 const OP_CATS = ['All', 'Industry', 'Energy', 'Medical', 'Research', 'Logistics', 'Retail', 'Finance', 'Illicit'];
 

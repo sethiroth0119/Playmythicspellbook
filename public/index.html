@@ -15425,21 +15425,36 @@
   .cmpx-room-bar > span { display: block; height: 100%;
     background: linear-gradient(90deg, color-mix(in srgb, var(--acc,#d4af37) 75%, #fff), var(--acc, #d4af37));
     box-shadow: 0 0 10px color-mix(in srgb, var(--acc,#d4af37) 65%, transparent); }
-  .cmpx-room-head { display: flex; align-items: center; gap: 0.55rem; padding: 0.55rem 0.7rem;
+  /* Header is a GRID, not a flex row: icon in column 1, then NAME stacked over
+     the status badge in column 2. They shared one line until v120b4, and the
+     badge ("⚙ BUILDING → Lv 1 · 2h 14m" is 181px) refused to shrink, so at the
+     240px grid column the name was ellipsised down to 0–54px — "Infirmary"
+     rendered as nothing at all. Stacking them means neither can starve the
+     other at any column width. */
+  .cmpx-room-head { display: grid; grid-template-columns: auto minmax(0, 1fr);
+    align-items: center; gap: 0 0.55rem; padding: 0.5rem 0.7rem;
     background: linear-gradient(180deg, rgba(10,13,20,0.95), rgba(10,13,20,0.75)); flex: 0 0 auto; }
   .cmpx-room-ico { display: inline-flex; align-items: center; justify-content: center;
     width: 30px; height: 30px; border-radius: 7px; font-size: 1.05rem; flex: 0 0 auto;
+    grid-row: span 2;
     background: color-mix(in srgb, var(--acc,#d4af37) 20%, rgba(0,0,0,0.6));
     border: 1px solid color-mix(in srgb, var(--acc,#d4af37) 55%, transparent);
     filter: drop-shadow(0 0 6px color-mix(in srgb, var(--acc,#d4af37) 55%, transparent)); }
-  .cmpx-room-name { font-family: 'Cinzel', serif; font-weight: 800; letter-spacing: 0.06em;
-    text-transform: uppercase; font-size: 0.9rem; color: #efe2c0; flex: 1; min-width: 0;
+  .cmpx-room-name { font-family: 'Cinzel', serif; font-weight: 800; letter-spacing: 0.04em;
+    text-transform: uppercase; font-size: 0.86rem; color: #efe2c0; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cmpx-room-badge { flex: 0 0 auto; }
-  .cmpx-room-art { flex: 1 1 auto; min-height: 96px; background-size: cover !important;
+  /* The badge WRAPS rather than ellipsising: it is the only place the build
+     timer is shown, and "⚙ BUILDING → Lv 1 · 2h 14m" overruns a 240px column,
+     so clipping it would eat the remaining time. */
+  .cmpx-room-badge { min-width: 0; line-height: 1.3; white-space: normal;
+    overflow-wrap: anywhere; }
+  .cmpx-room-art { flex: 1 1 auto; min-height: 132px; background-size: cover !important;
     background-position: center !important; position: relative; }
-  .cmpx-room-art::after { content: ''; position: absolute; inset: 0;
-    background: linear-gradient(180deg, rgba(6,8,14,0.10) 0%, rgba(6,8,14,0.55) 78%, rgba(6,8,14,0.9) 100%); }
+  /* NO second scrim here. The inline background already tints the art, the
+     header and footer are their own opaque strips, and nothing is printed over
+     the art — so the ::after gradient that used to live here was pure loss:
+     stacked on the inline tint it drove mid-tone art to luminance 10/255 at the
+     bottom edge, identical to the card background behind it. */
   .cmpx-room-foot { flex: 0 0 auto; padding: 0.55rem 0.7rem 0.7rem;
     background: linear-gradient(180deg, rgba(8,10,16,0.85), rgba(8,10,16,0.98)); }
   .cmpx-room-desc { font-size: 0.76rem; line-height: 1.4; color: #97a2b6; margin-bottom: 0.35rem; }
@@ -35636,7 +35651,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120b3';
+  window.BUILD_VERSION = 'v120b4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -149111,8 +149126,12 @@ function renderCamp() {
   const facilityGridHtml = CAMP_FACILITIES.map(f => {
     const s = _campFacState(f.id);
     const art = _facArt(f.id);
+    // Only a light bottom fade to seat the art against the footer. The heavy
+    // 0.55→0.85 scrim this used to carry dated from when text was printed over
+    // the art; in the v120b2 frame the header and footer are opaque strips and
+    // nothing overlaps the art, so that much tint only buried the image.
     const bg = art
-      ? `background:linear-gradient(180deg,rgba(6,9,14,0.55),rgba(6,9,14,0.85)),url('${art}') center/cover`
+      ? `background:linear-gradient(180deg,rgba(6,9,14,0) 0%,rgba(6,9,14,0.12) 55%,rgba(6,9,14,0.42) 100%),url('${art}') center/cover`
       : `background:radial-gradient(ellipse at 30% 20%, ${f.accent}26, transparent 60%), linear-gradient(180deg,#0c1118,#070a0f)`;
     let badge, action = '', dimmed = '';
     if (s.state === 'building') {
@@ -149166,13 +149185,12 @@ function renderCamp() {
             return lv <= 0 ? 0 : Math.max(8, Math.min(100, Math.round((lv / max) * 100)));
           } catch (e) { return 0; }
         })()}%"></span></div>
-        ${adminArt}
         <div class="cmpx-room-head">
           <span class="cmpx-room-ico">${f.emoji}</span>
           <span class="cmpx-room-name">${escapeHtml(f.name)}</span>
           <span class="cmpx-room-badge">${badge}</span>
         </div>
-        <div class="cmpx-room-art" style="${bg}"></div>
+        <div class="cmpx-room-art" style="${bg}">${adminArt}</div>
         <div class="cmpx-room-foot">
           <div class="cmpx-room-desc">${escapeHtml(f.desc)}</div>
           ${action}

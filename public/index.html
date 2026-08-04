@@ -36185,7 +36185,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120d8';
+  window.BUILD_VERSION = 'v120d9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -77358,6 +77358,16 @@ function _jbEcon() {
         }).filter(Boolean);
       } catch (e) { return []; }
     })(),
+    // 🚚 REAL CONVOYS (v120d9) — the Logistics screen's convoy table read a
+    // mock CONVOYS array that was hardcoded EMPTY, so it never showed a row.
+    // These are derived from the player's actual owned nodes: one convoy per
+    // producing node, hauling that node's real resource yield to camp.
+    //
+    // Deterministic from the clock, exactly like the operations accrual — no
+    // stored state, no tick loop, and every observer computes the same figure.
+    // The SAME model feeds the war-map trucks, so what drives across the map is
+    // what this table lists.
+    convoys: (typeof _jbConvoys === 'function') ? _jbConvoys() : [],
     // ⚙️ Operations — funded industry producing over time (parent engine).
     opEcon: (typeof OPS_ECON !== 'undefined') ? OPS_ECON : {},
     opCooldownMs: (typeof OP_COLLECT_CD_MS !== 'undefined') ? OP_COLLECT_CD_MS : 0,
@@ -78445,7 +78455,7 @@ function mountJustBusiness() {
     }
     if (!f) {
       f = document.createElement('iframe');
-      f.id = FID; f.src = 'corp/?v=120d8';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
+      f.id = FID; f.src = 'corp/?v=120d9';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
       // Smooth cross-fade + gentle scale-in (no hard cut on enter/exit).
       f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transform:scale(.986);transition:opacity .6s ' + EASE + ',transform .6s ' + EASE + ';will-change:opacity,transform';
       f.onload = function () {
@@ -210373,6 +210383,81 @@ function _aiCorpStanding(corpId) {
     return { value: v, tier: _aiStandingTier(v), reasons: reasons };
   } catch (e) { return { value: 0, tier: _aiStandingTier(0), reasons: [] }; }
 }
+// 🚚 REAL CONVOYS (v120d9) — the freight the Logistics screen lists AND the
+// trucks the war map drives, from one source.
+//
+// One convoy per OWNED, PRODUCING node, hauling that node's real resourceYield
+// to camp. Everything is a pure function of the clock and of state the player
+// can see, so there is nothing to store, nothing to tick, and two observers
+// always agree.
+//
+//   progress  cycles over a per-node trip time, staggered by a hash of the id
+//             so convoys do not all arrive together
+//   risk      falls with stability, rises with corruption, falls with guards
+//   escort    the node's real guard count
+const _JB_TRIP_MS = 90 * 60 * 1000;             // 90 min for a full run
+function _jbConvoyHash(s) {
+  let h = 0; s = String(s || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function _jbConvoys() {
+  try {
+    const t = (typeof _twForge === 'function') ? _twForge() : null;
+    const st = (typeof _twState === 'function') ? _twState() : null;
+    if (!t || !st || !Array.isArray(t.nodes)) return [];
+    const owned = st.ownedNodes || {};
+    const now = Date.now();
+    const dest = (function () {
+      try {
+        const cn = Profile && Profile.campNodeId;
+        const n = cn && t.nodes.find(x => x && x.id === cn);
+        return (n && n.name) ? n.name : 'Camp';
+      } catch (e) { return 'Camp'; }
+    })();
+    const out = [];
+    for (const n of t.nodes) {
+      if (!n || !n.id) continue;
+      const own = owned[n.id];
+      if (!own) continue;                                   // only YOUR nodes ship
+      const yieldKeys = Object.keys(n.resourceYield || {});
+      if (!yieldKeys.length) continue;                      // nothing to haul
+      const res = yieldKeys[0];
+      const qty = Math.max(1, Math.round((n.resourceYield[res] || 1) * 24));
+      const h = _jbConvoyHash(n.id);
+      // Stagger both the phase and the trip length so arrivals spread out.
+      const trip = _JB_TRIP_MS + (h % 7) * 6 * 60 * 1000;
+      const phase = h % trip;
+      const progress = ((now + phase) % trip) / trip;
+      const guards = own.guards ? (own.guards.length | 0) : 0;
+      const stability = (own.stability != null) ? (own.stability | 0) : 100;
+      const corruption = (typeof _twNodeRecon === 'function')
+        ? ((_twNodeRecon(n) || {}).corruption | 0) : 0;
+      // Risk: unstable and corrupt roads are dangerous; guards make them less so.
+      let risk = (100 - stability) / 200 + corruption / 300 - guards * 0.06;
+      risk = Math.max(0, Math.min(0.95, risk));
+      const etaMin = Math.max(0, Math.round(((1 - progress) * trip) / 60000));
+      out.push({
+        id: 'CV-' + String(h % 900 + 100),
+        from: n.name || n.id,
+        to: dest,
+        cargo: qty.toLocaleString() + ' ' + res,
+        escort: guards > 0 ? (guards + ' guard' + (guards === 1 ? '' : 's')) : 'unescorted',
+        risk: Math.round(risk * 100) / 100,
+        progress: Math.round(progress * 100) / 100,
+        eta: etaMin >= 60 ? (Math.floor(etaMin / 60) + 'h ' + (etaMin % 60) + 'm') : (etaMin + 'm'),
+        status: progress >= 0.995 ? 'arrived' : 'in-transit',
+        flag: (corruption > 55) ? 'illicit' : '',
+        nodeId: n.id,
+      });
+    }
+    // Busiest routes first — the ones a player is most likely to act on.
+    out.sort((a, b) => b.progress - a.progress);
+    return out;
+  } catch (e) { return []; }
+}
+try { window.__mg = window.__mg || {}; window.__mg.convoys = _jbConvoys; } catch (e) {}
+
 // 💰 STANDING GATES TRADE (v120d8). Until now the relationship was readable but
 // inert. Each corp DOMINATES a resource: if you are on good terms with the corp
 // that controls your output, you get a better price for it; fall out with them

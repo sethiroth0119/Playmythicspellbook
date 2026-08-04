@@ -361,21 +361,42 @@ function BlackMarketScreen({ openBuy }) {
 // ============================================================================
 
 function LogisticsScreen() {
-  const { CONVOYS } = window.ECON;
+  // 🚚 LIVE CONVOYS. window.ECON.CONVOYS is a mock array that ships EMPTY, which
+  // is why this table has always been blank. The parent game now derives real
+  // convoys from the player's owned producing nodes and posts them on
+  // __JB.econ.convoys — the same model that drives the war-map trucks. Falls
+  // back to the mock only when opened standalone with no parent.
+  const _live = (window.__JB && window.__JB.econ && Array.isArray(window.__JB.econ.convoys))
+    ? window.__JB.econ.convoys : null;
+  const CONVOYS = (_live && _live.length) ? _live : window.ECON.CONVOYS;
+  const moving = CONVOYS.filter(c => c.status === 'in-transit').length;
+  const arrived = CONVOYS.filter(c => c.status === 'arrived').length;
+  // In-transit value tracked the hardcoded 48,240 regardless of what was on the
+  // road. Sum the real cargo instead, and fall back to the old figure only for
+  // the standalone mock.
+  const inTransit = (_live && _live.length)
+    ? CONVOYS.reduce((s, c) => s + (parseInt(String(c.cargo).replace(/[^0-9]/g, ''), 10) || 0), 0)
+    : 48_240;
   return (
     <div className="screen">
       <ScreenHead
         title="Logistics"
         desc="Resources and assets in transit between camps, properties, vaults, and markets. Escorts reduce raid risk. Insurance partially refunds losses."
-        right={<Stat label="In-transit value" value={fmtAza(48_240)} />}
+        right={<Stat label="In-transit value" value={fmtAza(inTransit)} />}
       />
 
       <div className="card">
         <div className="row-head">
           <h3>Active convoys</h3>
-          <span className="muted mono" style={{ fontSize: 11 }}>{CONVOYS.filter(c => c.status === 'in-transit').length} moving · 1 arrived</span>
+          <span className="muted mono" style={{ fontSize: 11 }}>{moving} moving · {arrived} arrived</span>
           <span className="more">Dispatch new</span>
         </div>
+        {!CONVOYS.length ? (
+          <div className="muted" style={{ padding: '14px 12px', fontSize: 12 }}>
+            No convoys on the road. Claim a node that produces a resource and its
+            output starts hauling to camp automatically.
+          </div>
+        ) : null}
         <table className="tbl">
           <thead>
             <tr>

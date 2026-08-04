@@ -28040,6 +28040,44 @@
     width:100% !important; height:100% !important;
     object-fit:cover !important; object-position:center top;
   }
+
+  /* ═══ v120c2 NODE MODAL — the reference's crest, stat triple & loss pills ══
+     Each figure below is bound to a REAL node stat (see the markup for the
+     mapping). Nothing here invents a number. */
+  .tw-node-drawer.tw-aaa .tw-drawer-title-block { padding-right:104px; }
+  .ndx-crest { position:absolute; top:0.4rem; right:1rem; width:76px; height:88px;
+    display:grid; place-items:center; font-size:2.1rem;
+    clip-path:polygon(50% 0%, 100% 14%, 100% 62%, 50% 100%, 0% 62%, 0% 14%);
+    background:linear-gradient(170deg, color-mix(in srgb, var(--ndx-c,#e24842) 55%, #1a0d0e), #120a10);
+    border-top:2px solid color-mix(in srgb, var(--ndx-c,#e24842) 70%, #f6dd9c);
+    filter:drop-shadow(0 0 16px color-mix(in srgb, var(--ndx-c,#e24842) 45%, transparent)); }
+  .ndx-stats { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:0.6rem;
+    padding:0 1.1rem 0.7rem; }
+  .ndx-stat { display:flex; align-items:center; gap:0.7rem; padding:0.7rem 0.8rem; border-radius:10px;
+    background:linear-gradient(180deg, rgba(18,22,36,0.95), rgba(10,13,22,0.98));
+    border:1px solid rgba(214,176,74,0.30); }
+  .ndx-stat-ico { font-size:1.9rem; line-height:1; flex:0 0 auto;
+    filter:drop-shadow(0 2px 6px rgba(0,0,0,0.7)); }
+  .ndx-stat-b { min-width:0; }
+  .ndx-stat-v { font-family:'Cinzel',serif; font-size:1.6rem; font-weight:800; color:#f3e6c4; line-height:1.05; }
+  .ndx-stat-l { font-family:'Cinzel',serif; font-size:0.72rem; letter-spacing:0.14em;
+    text-transform:uppercase; color:#a2937a; margin-top:0.1rem; }
+  .ndx-stat-d { font-family:'Cinzel',serif; font-size:0.78rem; font-weight:700; margin-top:0.2rem; }
+  .ndx-stat-d.pos { color:#7fd8a0; } .ndx-stat-d.neg { color:#e8705c; } .ndx-stat-d.flat { color:#8a96a3; }
+  .ndx-losses { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:0.6rem;
+    padding:0 1.1rem 0.9rem; }
+  .ndx-loss { display:flex; align-items:center; justify-content:center; gap:0.5rem;
+    padding:0.55rem 0.8rem; border-radius:9px;
+    font-family:'Cinzel',serif; font-weight:700; font-size:0.95rem; letter-spacing:0.10em;
+    background:linear-gradient(180deg, rgba(70,16,18,0.55), rgba(34,10,12,0.75));
+    border:1px solid rgba(226,72,66,0.5); color:#f0a89c; }
+  .ndx-loss b { color:#ffd0c6; }
+  @media (max-width: 700px) {
+    .ndx-stats { grid-template-columns:minmax(0,1fr); }
+    .ndx-losses { grid-template-columns:minmax(0,1fr); }
+    .ndx-crest { width:56px; height:66px; font-size:1.5rem; }
+    .tw-node-drawer.tw-aaa .tw-drawer-title-block { padding-right:74px; }
+  }
   /* Camp-screen banner */
   .camp-node-banner { display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; padding:0.7rem 1rem; border-radius:12px; border:1px solid rgba(212,175,55,0.35); background:linear-gradient(135deg,rgba(40,32,60,0.6),rgba(18,12,30,0.7)); }
   .camp-node-banner.unregistered { border-color:rgba(232,93,60,0.55); background:linear-gradient(135deg,rgba(60,26,20,0.5),rgba(20,12,18,0.7)); }
@@ -36022,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120c1';
+  window.BUILD_VERSION = 'v120c2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -210071,6 +210109,30 @@ function renderTerritoryWars() {
       })()}
       ${(typeof _nodePowerSectionHtml === 'function') ? _nodePowerSectionHtml(selNode) : ''}
       ${(typeof _ownershipSectionHtml === 'function') ? _ownershipSectionHtml() : ''}
+      ${(() => {
+        // 📊 The reference's three-card stat row and loss pills. Every figure is
+        // an EXISTING node stat — nothing here is invented:
+        //   PRODUCTION   = trade stability % (what actually drives yield)
+        //   REBUILD      = _twNodeRebuiltPct — the same % the milestone bar uses
+        //   CIVILIZATION = _twNodeCivilization (the reference labels this slot
+        //                  "TRAINING"; there is no node training stat, and
+        //                  mislabelling a real number is worse than renaming it)
+        const _rb = (typeof _twNodeRebuiltPct === 'function') ? _twNodeRebuiltPct(selNode) : 0;
+        const _built = _roads + _buildings;
+        const d = (n, unit) => `<div class="ndx-stat-d ${n > 0 ? 'pos' : n < 0 ? 'neg' : 'flat'}">${n > 0 ? '▲ +' : n < 0 ? '▼ ' : ''}${n === 0 ? '—' : (n > 0 ? n : Math.abs(n))}${n === 0 ? '' : ' ' + unit}</div>`;
+        const card = (ico, val, lab, delta) =>
+          `<div class="ndx-stat"><span class="ndx-stat-ico">${ico}</span><div class="ndx-stat-b">
+             <div class="ndx-stat-v">${val}</div><div class="ndx-stat-l">${lab}</div>${delta}</div></div>`;
+        return `<div class="ndx-stats">
+            ${card('🌿', _trade + '%', 'Production', d(_cinderPerDay | 0, '🔥/day'))}
+            ${card('🔨', _rb + '%', 'Rebuild', d(_built, 'built'))}
+            ${card('🛡', _civ + '%', 'Civilization', d(_civDelta, '/day'))}
+          </div>
+          <div class="ndx-losses">
+            <div class="ndx-loss" title="NPC population bled by corruption each 24-hour cycle">💀 Pop Loss <b>${_fmtN(_popLossPerDay)}</b> / day</div>
+            <div class="ndx-loss" title="Raids logged against this node">💀 Raids <b>${_ah.length}</b></div>
+          </div>`;
+      })()}
       <div class="tw-nd-section-hdr">— VITAL SIGNS</div>
       <div class="tw-nd-vitals">
         <div class="tw-nd-vital-card">
@@ -210454,6 +210516,7 @@ function renderTerritoryWars() {
           <div class="tw-drawer-node-name">${escapeHtml(selNode.name)}</div>
           <div class="tw-drawer-node-coords">${escapeHtml(selNode.id)} · ${_dSector ? escapeHtml(_dSector.id) : '??'}</div>
           <div class="tw-drawer-node-sub">${escapeHtml(selNode.purpose||selNode.type||'PRN')} — ${yieldEntries.map(([k])=>k).join(', ')||'multi-resource'} production · <span style="color:${stability>=80?'#4d9e68':stability>=50?'#c89428':'#b84e2c'}">${_statusStr}</span></div>
+          <div class="ndx-crest" style="--ndx-c:${stability>=80?'#4d9e68':stability>=50?'#c89428':'#e24842'}" title="${escapeHtml(selNode.name)} — ${escapeHtml(_statusStr)}">${(selNode.icon || '🛡')}</div>
         </div>
         ${frontBillboard ? `<div class="tw-drawer-frontad">${frontBillboard}</div>` : ''}
         <div class="tw-drawer-tabs">

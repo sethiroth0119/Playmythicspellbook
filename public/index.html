@@ -36060,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120d2';
+  window.BUILD_VERSION = 'v120d3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -38547,6 +38547,116 @@ const getFactionsOf = (entity) => {
   return [];
 };
 const getFaction = (id) => FACTION_BY_ID[id] || null;
+
+// ═══ 🤝 FACTION CONCORD (v120d3) — deck layer ═══════════════════════════════
+// TRAITS already had `factionSynergy`, which asks "is this unit's OWN faction in
+// a list". Concord asks the harder question: how do two DIFFERENT factions feel
+// about each other. Warriors and mages reward being played together; goblinoids
+// and fairies punish it.
+//
+// This is the DECK layer only — a cohesion score computed from a card list, with
+// no battle-code changes. The battlefield adjacency layer is a separate build.
+const CONCORD_WEIGHT = { sworn: 3, warm: 1, neutral: 0, wary: -1, hostile: -3, feud: -7 };
+const CONCORD_BANDS = [
+  { min: 12,        id: 'sworn',     name: 'Sworn Company',      color: '#7fd8a0' },
+  { min: 6,         id: 'united',    name: 'United',             color: '#9ad17a' },
+  { min: 1,         id: 'steady',    name: 'Steady',             color: '#c9b98a' },
+  { min: 0,         id: 'neutral',   name: 'Neutral',            color: '#8a96a3' },
+  { min: -5,        id: 'uneasy',    name: 'Uneasy',             color: '#e0a86a' },
+  { min: -11,       id: 'fractured', name: 'Fractured',          color: '#e8705c' },
+  { min: -Infinity, id: 'atwar',     name: 'At War With Itself', color: '#e24842' },
+];
+// Declared one-directionally; _concordBuildIndex mirrors every entry so the
+// lookup is symmetric and an author can never create a one-sided grudge.
+const FACTION_CONCORD_RAW = {
+  warrior:      { sworn: ['mage'], warm: ['construct', 'goblinoid'], wary: ['rogue'], hostile: ['demon'] },
+  mage:         { sworn: ['warrior', 'elemental'], warm: ['construct', 'fairy'], wary: ['alien'] },
+  rogue:        { sworn: ['shapeshifter'], warm: ['bird', 'vampire'], wary: ['warrior'], hostile: ['celestial'] },
+  beast:        { sworn: ['werewolf'], warm: ['plant', 'bird'], wary: ['construct'] },
+  bird:         { warm: ['beast', 'fairy', 'rogue'], hostile: ['bug'] },
+  bug:          { warm: ['plant', 'reptile'], hostile: ['bird'] },
+  goblinoid:    { warm: ['demon', 'warrior'], wary: ['construct'], feud: ['fairy'] },
+  demon:        { sworn: ['undead'], warm: ['goblinoid', 'corrupted'], wary: ['shapeshifter'], hostile: ['plant', 'fairy'], feud: ['celestial'] },
+  undead:       { sworn: ['demon', 'vampire'], wary: ['alien'], hostile: ['plant'], feud: ['celestial'] },
+  elemental:    { sworn: ['mage'], warm: ['fairy', 'plant'], wary: ['alien'], hostile: ['construct'] },
+  fairy:        { sworn: ['plant'], warm: ['elemental', 'celestial', 'bird', 'mage'], wary: ['rogue'], hostile: ['demon'], feud: ['goblinoid'] },
+  dragonkin:    { sworn: ['reptile'] },
+  construct:    { warm: ['mage', 'warrior'], wary: ['goblinoid', 'beast'], hostile: ['elemental', 'plant'] },
+  celestial:    { warm: ['fairy', 'warrior'], wary: ['shapeshifter', 'rogue'], hostile: ['vampire', 'alien'], feud: ['demon', 'undead'] },
+  plant:        { sworn: ['fairy'], warm: ['beast', 'bug', 'elemental'], hostile: ['construct', 'demon', 'undead'] },
+  reptile:      { sworn: ['dragonkin'], warm: ['bug'] },
+  alien:        { sworn: ['shapeshifter'], hostile: ['celestial'] },
+  vampire:      { sworn: ['undead'], warm: ['rogue'], hostile: ['celestial'], feud: ['werewolf'] },
+  werewolf:     { sworn: ['beast'], wary: ['construct'], feud: ['vampire'] },
+  shapeshifter: { sworn: ['rogue', 'alien'], wary: ['demon', 'celestial'] },
+};
+// ⚠ Dragonkin is Wary of EVERYTHING it has no explicit stance toward. That is a
+// design statement from the spec — a dragon deck wants to be mono — so it is
+// modelled as a default rather than 40 hand-written entries.
+const CONCORD_DEFAULT_WARY = { dragonkin: true };
+const _CONCORD_INDEX = (function () {
+  const idx = {};
+  const set = function (a, b, tier) {
+    if (!a || !b || a === b) return;
+    (idx[a] = idx[a] || {})[b] = tier;
+    (idx[b] = idx[b] || {})[a] = tier;   // mirrored — always symmetric
+  };
+  Object.keys(FACTION_CONCORD_RAW).forEach(function (a) {
+    const row = FACTION_CONCORD_RAW[a] || {};
+    Object.keys(row).forEach(function (tier) {
+      (row[tier] || []).forEach(function (b) { set(a, b, tier); });
+    });
+  });
+  return idx;
+})();
+function concordTier(a, b) {
+  if (!a || !b) return 'neutral';
+  if (a === b) return 'neutral';                       // same faction never scores
+  const hit = (_CONCORD_INDEX[a] && _CONCORD_INDEX[a][b]) || null;
+  if (hit) return hit;
+  if (CONCORD_DEFAULT_WARY[a] || CONCORD_DEFAULT_WARY[b]) return 'wary';
+  return 'neutral';
+}
+function concordBand(score) {
+  for (const b of CONCORD_BANDS) if (score >= b.min) return b;
+  return CONCORD_BANDS[CONCORD_BANDS.length - 1];
+}
+// Cohesion over a card list, per the spec's formula:
+//   for each faction pair (A,B): weight = min(countA, countB) / 40
+//   score += tierWeight × weight × 10
+// A mono-faction deck therefore scores 0 from pairs — it is Steady only via its
+// own consistency, never a Sworn Company. That is deliberate: the system is
+// meant to reward THOUGHTFUL multi-faction building over lazy mono.
+function deckCohesion(cards) {
+  const counts = {};
+  (cards || []).forEach(function (c) {
+    let fs = [];
+    try { fs = (typeof getFactionsOf === 'function') ? (getFactionsOf(c) || []) : (c && c.factions) || []; } catch (e) {}
+    fs.forEach(function (f) { counts[f] = (counts[f] || 0) + 1; });
+  });
+  const ids = Object.keys(counts);
+  const pairs = [];
+  let score = 0;
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      const a = ids[i], b = ids[j];
+      const tier = concordTier(a, b);
+      const w = CONCORD_WEIGHT[tier] || 0;
+      if (!w) continue;
+      const weight = Math.min(counts[a], counts[b]) / 40;
+      const delta = w * weight * 10;
+      score += delta;
+      pairs.push({ a: a, b: b, tier: tier, delta: Math.round(delta * 100) / 100 });
+    }
+  }
+  score = Math.round(score * 100) / 100;
+  pairs.sort(function (x, y) { return Math.abs(y.delta) - Math.abs(x.delta); });
+  return { score: score, band: concordBand(score), counts: counts, pairs: pairs };
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.concord = { tier: concordTier, cohesion: deckCohesion, weights: CONCORD_WEIGHT };
+} catch (e) {}
 
 const KALON_FORMS = {
   goblinKing:   { id: 'goblinKing',   baseName: 'Goblin Scout',    name: 'Goblin King',    icon: '👑', elements: ['shadow'],         factions: ['goblinoid', 'warrior'],   stats: { hp: 30, atk: 20, def: 11, mag: 8,  res: 9,  spd: 2 }, learnset: [{ lvl: 1, m: 'slash' }, { lvl: 1, m: 'heavyStrike' }, { lvl: 2, m: 'cleave' }, { lvl: 3, m: 'rallyingCry' }], passive: 'warlord' },

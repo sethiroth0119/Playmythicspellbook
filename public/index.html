@@ -15246,10 +15246,21 @@
     box-shadow: 0 16px 44px rgba(0,0,0,0.75), 0 0 20px rgba(212,175,55,0.18), inset 0 0 0 1px rgba(0,0,0,0.5);
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
     color: #f6efe3;
-    /* Interactive: the mouse can travel from the marker INTO the card to click
-       the sponsor "Visit site" button (kept open via the card's own hover). */
-    pointer-events: auto;
+    /* ⚠️ THE CARD MUST NOT EAT CLICKS. It is 250px wide, opens above the marker
+       and sits at z72 — far above the AI corp pins (z7) and everything else on
+       the map. With pointer-events:auto on the whole block it swallowed clicks
+       aimed at anything it happened to overlap, and the corp pins were the
+       casualty: hovering a node blanketed its own pins with an unclickable card.
+       Only the sponsor block is interactive now (it holds the Visit-site
+       button); the rest of the card is a pure read-out and lets clicks pass
+       straight through to the map beneath it. mouseenter still fires on the
+       card when the pointer reaches the sponsor block — that is a descendant,
+       so the keep-open logic is unaffected. */
+    pointer-events: none;
   }
+  /* the one interactive region — deliberately at the card's BOTTOM edge, the
+     side nearest the marker, so the pointer's trip to it is short. */
+  #tw-node-hovercard .tnh-sponsor { pointer-events: auto; }
   #tw-node-hovercard.show { display: block; animation: uhm-pop 0.12s ease-out; }
   #tw-node-hovercard .tnh-visit {
     display: block; width: 100%; margin-top: 7px; padding: 7px 10px;
@@ -36194,7 +36205,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120e0';
+  window.BUILD_VERSION = 'v120e1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -210037,7 +210048,10 @@ function _showNodeHoverCard(nodeId, anchorEl) {
     let left = r.left + r.width / 2 - cw / 2;
     let top = r.top - ch - 12;
     left = Math.max(8, Math.min(left, (window.innerWidth || cw) - cw - 8));
-    if (top < 8) top = r.bottom + 12;   // flip below if no room above
+    // Flip below if there is no room above. The +118 (not +12) clears the AI
+    // corp pin band, which sits 62–106px under the marker — a flip that landed
+    // on the pins would recreate the exact problem the band was moved to avoid.
+    if (top < 8) top = r.bottom + 118;
     el.style.left = Math.round(left) + 'px';
     el.style.top = Math.round(top) + 'px';
     el.classList.add('show');
@@ -210049,6 +210063,11 @@ function _showNodeHoverCard(nodeId, anchorEl) {
   if (_tnhWired) return; _tnhWired = true;
   try {
     document.addEventListener('mouseover', (e) => {
+      // Reaching an AI corp pin dismisses the card at once. The pins sit clear
+      // of where the card opens, but a card belonging to a NEIGHBOURING node
+      // can still stretch over one — and a card you cannot see past is a card
+      // in the way, even when it no longer blocks the click itself.
+      if (e.target && e.target.closest && e.target.closest('.tw-aicorp')) { _hideNodeHoverCard(); return; }
       const m = e.target && e.target.closest && e.target.closest('.tw-node-marker[data-tw-node]');
       if (m) _showNodeHoverCard(m.getAttribute('data-tw-node'), m);
     }, { passive: true });
@@ -211074,35 +211093,62 @@ function renderTerritoryWars() {
     try {
       const list = t.nodes.filter(filtered);
       if (!list.length) return '';
+      // PASS 1 — assign each corp a host node, preferring an unclaimed one.
+      // The nudge only holds while there are at least as many nodes as corps;
+      // on a small or heavily filtered map it runs out and corps DO share a
+      // host. Pass 2 fans those out by index instead of pretending it can't
+      // happen — measured with all six forced onto one node, hash-picked
+      // angles clustered and four of six pins covered each other.
       const used = {};
-      return AI_CORPS.map(function (c) {
+      const homes = AI_CORPS.map(function (c) {
         let home = _aiCorpHomeNode(c.id, list);
-        // Nudge off a node another corp already claimed so two badges never stack.
         let guard = 0;
         while (home && used[home.id] && guard < list.length) {
           home = list[(list.indexOf(home) + 1) % list.length]; guard++;
         }
+        if (home) used[home.id] = true;
+        return { c, home };
+      });
+      // PASS 2 — how many corps share each host, and which slot is this one.
+      const groupCount = {}, groupSlot = {};
+      for (const g of homes) if (g.home) groupCount[g.home.id] = (groupCount[g.home.id] || 0) + 1;
+      const seen = {};
+      for (const g of homes) if (g.home) { groupSlot[g.c.id] = (seen[g.home.id] = (seen[g.home.id] || 0) + 1) - 1; }
+      return homes.map(function (g) {
+        const c = g.c, home = g.home;
         if (!home) return '';
-        used[home.id] = true;
         const p = home.position || { x: 5, y: 5 };
         const sd = _aiCorpStanding(c.id);
         const tip = c.name + ' — ' + c.blurb + '\nStanding: ' + sd.tier.name + ' (' + (sd.value > 0 ? '+' : '') + sd.value + ')\nBased at ' + home.name + '\nClick for details';
-        // 🧭 RADIAL OFFSET. A fixed top-right offset put every badge straight
-        // through its node's name label. Each corp now sits at its own angle
-        // around the host node, derived from the corp id, so pins near each
-        // other diverge instead of stacking — and none of them land on the
-        // label, which hangs directly below the marker.
-        // Measured: a full-circle 34px radius still put 3 of 6 pins over the
-        // node's name label and 5 over the marker itself — the radius was
-        // SMALLER than the ~50px pin. Two corrections:
-        //   • radius 58, which clears the 34px marker plus half the pin
-        //   • the UPPER arc only, because the name label hangs BELOW the marker
-        // so nothing can ever land on it.
-        let h = 0; for (let i = 0; i < c.id.length; i++) h = (h * 31 + c.id.charCodeAt(i)) | 0;
-        const frac = (Math.abs(h) % 1000) / 1000;
-        const ang = -Math.PI * (0.14 + 0.72 * frac);      // −25° … −155°, i.e. above
-        const dx = Math.round(Math.cos(ang) * 58);
-        const dy = Math.round(Math.sin(ang) * 58) - 6;
+        // 🧭 RADIAL OFFSET, ON THE LOWER ARC. Three iterations to get here:
+        //   1. a fixed top-right offset — every badge sat through its node's
+        //      own name label.
+        //   2. a full-circle 34px radius — still put 3 of 6 pins over the label
+        //      and 5 over the marker: the radius was SMALLER than the ~50px pin.
+        //   3. radius 58 on the UPPER arc — cleared the label and the marker,
+        //      but landed the pins inside the NODE HOVER CARD, which is 250px
+        //      wide, opens directly above the marker and sits at z72. Hovering
+        //      a node covered its own corp pins with an unclickable card.
+        // So: the pins live BELOW the marker, where the hover card never opens.
+        // The card's only downward mode is the no-room-above flip, and that is
+        // offset past this band (see _showNodeHoverCard).
+        //
+        // The arc is ELLIPTICAL, not circular, and that is deliberate: below
+        // the marker is also where the name label hangs, and the label is wide
+        // and short. A pin straight below needs the most vertical clearance; a
+        // pin out to the side needs almost none. rx 78 / ry 44 plus a 62px base
+        // drop gives exactly that — 106px down at the bottom of the arc, 80px
+        // down and 74px out at the sides.
+        //
+        // The angle comes from the SLOT, not a hash. A hash spreads pins that
+        // sit on different nodes just as well, but it clusters when several
+        // land on the same one — evenly spaced slots cannot. A lone corp (the
+        // normal case) takes the middle of the arc, straight below its node.
+        const n = groupCount[home.id] || 1, slot = groupSlot[c.id] || 0;
+        const frac = n === 1 ? 0.5 : slot / (n - 1);
+        const ang = Math.PI * (0.14 + 0.72 * frac);       // +25° … +155°, i.e. below
+        const dx = Math.round(Math.cos(ang) * 78);
+        const dy = Math.round(Math.sin(ang) * 44) + 62;
         return '<button class="tw-aicorp" style="left:' + p.x + '%;top:' + p.y + '%;--cc:' + c.col
           + ';--dx:' + dx + 'px;--dy:' + dy + 'px"'
           + ' title="' + escapeHtml(tip) + '" data-aicorp="' + escapeHtml(c.id) + '"'

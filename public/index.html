@@ -36060,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120c3';
+  window.BUILD_VERSION = 'v120c4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -38557,8 +38557,60 @@ const KALON_FORMS = {
   broodmother:  { id: 'broodmother',  baseName: 'Giant Spider',    name: 'Broodmother',    icon: '🦂', elements: ['shadow', 'nature'], factions: ['bug'],                    stats: { hp: 30, atk: 20, def: 10, mag: 12, res: 10, spd: 3 }, learnset: [{ lvl: 1, m: 'poisonSting' }, { lvl: 1, m: 'bite' }, { lvl: 2, m: 'cleave' }], passive: 'venomous' },
 };
 const KALON_BY_BASE = { goblin: 'goblinKing', orc: 'orcChampion', wolf: 'alphaWolf', lich: 'archlich', sprite: 'infernoLord', spider: 'broodmother' };
-const getKalonForm = (unit) => {
+// 🜂 ABSORPTION KALON (v120c4) — many forms on one base, picked by what the unit
+// devoured. Kalon was strictly 1:1: one base, one form, no branching. This is
+// purely ADDITIVE — a card with no `kalonForms` array takes the identical path
+// it always did, so KALON_BY_BASE and every existing custom `kalonForm` are
+// untouched.
+//
+//   card.kalonForms = [ { formId | form, match: { elements:[], factions:[], priority } } ]
+//   card.kalonFallback = 'formId' | {form}   // when nothing matches
+//
+// Selection rule (from the spec): FACTION beats ELEMENT beats fallback. A higher
+// explicit `match.priority` wins over both, so a card can force an ordering.
+function _kalonResolveForm(ref) {
+  if (!ref) return null;
+  if (typeof ref === 'object') return ref;                       // inline form object
+  if (KALON_FORMS[ref]) return KALON_FORMS[ref];                 // built-in id
+  try {                                                          // custom card id
+    if (typeof lookupCustomCard === 'function') {
+      const c = lookupCustomCard(ref);
+      if (c) return c;
+    }
+  } catch (e) {}
+  return null;
+}
+// Every form whose match block is satisfied by `absorbed`, best first.
+// Exposed so the form-choice modal can offer a pick when 2+ tie.
+function _kalonFormCandidates(unit, absorbed) {
+  const list = (unit && Array.isArray(unit.kalonForms)) ? unit.kalonForms : null;
+  if (!list || !list.length || !absorbed) return [];
+  const aEl = (absorbed.elements || []).map(x => String(x).toLowerCase());
+  const aFa = (absorbed.factions || []).map(x => String(x).toLowerCase());
+  const out = [];
+  for (const entry of list) {
+    if (!entry) continue;
+    const m = entry.match || {};
+    const wantEl = (m.elements || []).map(x => String(x).toLowerCase());
+    const wantFa = (m.factions || []).map(x => String(x).toLowerCase());
+    const facHit = wantFa.length && wantFa.some(f => aFa.includes(f));
+    const elHit  = wantEl.length && wantEl.some(e => aEl.includes(e));
+    if (!facHit && !elHit) continue;
+    const form = _kalonResolveForm(entry.formId || entry.form);
+    if (!form) continue;                                          // never offer a dead id
+    out.push({ form: form, why: facHit ? 'faction' : 'element',
+               score: (m.priority | 0) * 10 + (facHit ? 2 : 1) });
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+const getKalonForm = (unit, absorbed) => {
   if (KALON_BY_BASE[unit.cardId]) return KALON_FORMS[KALON_BY_BASE[unit.cardId]];
+  if (unit && Array.isArray(unit.kalonForms) && unit.kalonForms.length) {
+    const hits = _kalonFormCandidates(unit, absorbed);
+    if (hits.length) return hits[0].form;
+    const fb = _kalonResolveForm(unit.kalonFallback);
+    if (fb) return fb;                                            // ate something unlisted
+  }
   if (unit.kalonForm) return unit.kalonForm;
   return null;
 };

@@ -19899,7 +19899,10 @@
      📈 CRASH / EXCHANGE — FULL TERMINAL SKIN
      ============================================================ */
   .cx-page {
-    max-width: 1640px;
+    /* Cap kept at 1640 — the exchange is already the widest layout in the game.
+       Only the viewport clamp is added, so it stops overflowing narrow screens.
+       Padding stays 0 on purpose: the panels inside carry their own gutters. */
+    max-width: min(1640px, 95vw);
     margin: 0 auto;
     padding: 0;
     color: #e8dcc4;
@@ -21924,7 +21927,7 @@
   .profile-match-date { font-size: 0.8rem; color: #a89880; white-space: nowrap; }
 
   /* ===== 🎲 Wager Hall — sports-betting screen ===== */
-  .wager-page { max-width: 1280px; margin: 0 auto; padding: 1.5rem; color: #e8e0d0; }
+  .wager-page { max-width: min(1560px, 95vw); margin: 0 auto; padding: 1.5rem clamp(1rem, 2.2vw, 2.4rem); color: #e8e0d0; }
   .wager-balance-pill {
     background: rgba(255, 140, 40, 0.14);
     border: 1px solid rgba(255, 140, 40, 0.45);
@@ -22221,7 +22224,7 @@
 
   /* ===== 🏪 Vendor Market — unified tabbed shell ===== */
   .vendor-market-page {
-    max-width: 1280px; margin: 0 auto; padding: 1.5rem;
+    max-width: min(1560px, 95vw); margin: 0 auto; padding: 1.5rem clamp(1rem, 2.2vw, 2.4rem);
     position: relative;
     /* Hooded-vendor backdrop. The image sits on a separate pseudo-element so
        we can darken it under a heavy overlay without dimming the UI on top. */
@@ -22510,7 +22513,9 @@
   }
 
   /* ===== 💵 Cashout Vault ===== */
-  .cashout-page { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+  /* Kept deliberately narrower than its siblings — this is a form/ledger page,
+     not a card grid, and stretching a money form to 1560px hurts it. */
+  .cashout-page { max-width: min(1360px, 95vw); margin: 0 auto; padding: 1.5rem clamp(1rem, 2.2vw, 2.4rem); }
   .cashout-balance-pill {
     background: rgba(80,200,120,0.16); border: 1px solid rgba(80,200,120,0.5);
     border-radius: 10px; padding: 0.5rem 1rem; color: #b8f0c8; text-align: center;
@@ -23353,7 +23358,10 @@
      ══════════════════════════════════════════════════════════════════════ */
   .pox {
     --pox-gold:#d2a44e; --pox-hi:#f6dc95; --pox-parch:#e9dab2; --pox-dim:#9a8d6c;
-    position:relative; max-width:1880px; margin:0 auto; padding:16px 24px 28px;
+    /* Pack Opening's real root — the handoff had it as ".pox-stage", but that is
+       only the centre rail; this is the element that caps the page. */
+    position:relative; max-width:min(1880px, 95vw); margin:0 auto;
+    padding:16px clamp(12px, 2.2vw, 24px) 28px;
     display:grid; grid-template-columns:310px minmax(0,1fr) 330px;
     grid-template-rows:auto minmax(0,1fr) auto; gap:14px 20px;
     color:var(--pox-parch); font-family:'EB Garamond',Georgia,serif;
@@ -25800,7 +25808,10 @@
   .hub-cur-pill-rank .rail-sub { color: #9a8d6c; font-weight: 500; }
 
   /* ===== Campaign / Story Mode ===== */
-  .campaign-page { max-width: 1280px; margin: 0 auto; padding: 1.5rem 1.5rem; }
+  /* 🖥 Same "use the screen" pass as .forge-page. This one matters most of the
+     six: Vendor Market, Cashout Vault and Black Market all NEST inside it, so
+     its cap bounded them no matter what their own max-width said. */
+  .campaign-page { max-width: min(1560px, 95vw); margin: 0 auto; padding: 1.5rem clamp(1rem, 2.2vw, 2.4rem); }
 
   /* ============================================================
      🗺 TERRITORY WARS — War Map screen + admin builder
@@ -35745,7 +35756,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120b7';
+  window.BUILD_VERSION = 'v120b8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');

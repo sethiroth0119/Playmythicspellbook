@@ -36060,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120c9';
+  window.BUILD_VERSION = 'v120d0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -95453,6 +95453,10 @@ const startTurn = (state, who) => {
       if (stillArmed.length !== s._punishers.length) s = { ...s, _punishers: stillArmed };
     }
   } catch (e) {}
+  // 🎭 Mimic Beacon's forced target lasts one enemy turn. The 1-HP decoy
+  // normally dies to the attack it draws, but clear the flag anyway so a decoy
+  // that somehow survives cannot pin the AI forever.
+  try { if (s._forceAiTargetId && who === 'player') s = { ...s, _forceAiTargetId: null }; } catch (e) {}
   // ⚰ In-Grave tick — every card in `who`'s graveyard with an inGrave block
   // tagged `turnStart` rolls its chance + cooldown and fires. Runs FIRST so
   // a zombie that rises gets full visibility on the rest of the turn's
@@ -130193,12 +130197,16 @@ function _aiAutoCounter(state, opts) {
     pos:   aiDeployedUnit ? aiDeployedUnit.pos : undefined,
     isHero: false,
   });
+  // 🧹 `state._lastAICounter` was assigned in the three branches below and read
+  // NOWHERE in the codebase (verified across every file under public/). It was
+  // also the whole of the AI's 'redirect' implementation, which is why redirect
+  // silently behaved as a plain negate — the real wiring now lives in
+  // _runCounterChain via card._redirectBy. Removed rather than left to imply a
+  // mechanism that does not exist.
   if (effect === 'negate') {
     log.push({ msg: `⏱ AI counters with ${cheapest.name} — ${sourceName}'s ${opts.trigger} is NEGATED!`, color: 'red' });
-    state._lastAICounter = { effect: 'negate', at: Date.now() };
   } else if (effect === 'redirect' && opts.source) {
     log.push({ msg: `↩ AI counters with ${cheapest.name} — ${sourceName}'s ${opts.trigger} reflects back!`, color: 'red' });
-    state._lastAICounter = { effect: 'redirect', sourceId: opts.source.id, at: Date.now() };
   } else if (effect === 'root' && opts.source) {
     log.push({ msg: `🪵 AI counters with ${cheapest.name} — ${sourceName} is rooted 2 turns!`, color: 'red' });
     state.units = (state.units || []).map(u => {
@@ -130228,7 +130236,6 @@ function _aiAutoCounter(state, opts) {
         }
       } catch (e) {}
     }
-    state._lastAICounter = { effect: 'killUnit', at: Date.now() };
   }
   return true;
 }
@@ -145139,6 +145146,16 @@ function doAIStep() {
           const gate = (typeof canAttackTarget === 'function') ? canAttackTarget(probe, t) : { ok: true };
           if (!gate.ok) continue;
           let sc = aiScoreAttack(probe, t, move, App.state, playerProf);
+          // 🎭 MIMIC BEACON (v120d0) — the consumable's own text promises a decoy
+          // "that always draws the next enemy attack", and the spawn code sets
+          // s._forceAiTargetId with a comment saying the AI checks it. Nothing
+          // ever read it, so the item spawned a body and changed nothing.
+          // Weighted far above any organic score so the decoy genuinely pulls
+          // the swing. It is a 1-HP unit, so it dies to that hit and drops out
+          // of the candidate list on its own — no explicit consume needed.
+          try {
+            if (App.state._forceAiTargetId && t.id === App.state._forceAiTargetId) sc += 100000;
+          } catch (e) {}
           // 🌋 Surface exploitation — value attacks that ignite oil under the
           // foe, electrify water they stand in, etc.
           try { if (typeof _aiSurfaceAttackBonus === 'function') sc += _aiSurfaceAttackBonus(probe, t, move, App.state); } catch (e) {}

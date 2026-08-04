@@ -36060,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120c6';
+  window.BUILD_VERSION = 'v120c7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -95429,6 +95429,16 @@ const startTurn = (state, who) => {
   // locks as their new turn begins (attack/move locks ride hasMoved/hasAttacked,
   // which reset below; this clears deploy/spell/counter).
   if (s[who] && s[who]._locks) s[who] = { ...s[who], _locks: {} };
+  // ⏳ Rest-of-turn punish counters expire on the same schedule as the locks —
+  // the taxed player's new turn begins, so the tally stops.
+  try {
+    if (Array.isArray(s._punishers) && s._punishers.length) {
+      // A punisher owned by X taxes X's OPPONENT. Its window closes when X's
+      // own turn comes round again — so drop the ones owned by `who`.
+      const stillArmed = s._punishers.filter(p => p && p.side !== who);
+      if (stillArmed.length !== s._punishers.length) s = { ...s, _punishers: stillArmed };
+    }
+  } catch (e) {}
   // ⚰ In-Grave tick — every card in `who`'s graveyard with an inGrave block
   // tagged `turnStart` rolls its chance + cooldown and fires. Runs FIRST so
   // a zombie that rises gets full visibility on the rest of the turn's
@@ -119654,7 +119664,22 @@ function renderCardEditor() {
           { id: 'lockMoves',   label: '🔒 Lockdown: Movement — negate, then their units & hero can\'t move for the rest of their turn' },
           { id: 'lockSpells',  label: '🔒 Lockdown: Spells — negate, then they can\'t cast spells for the rest of their turn' },
           { id: 'lockCounters',label: '🔒 Lockdown: Counters — negate, then they can\'t play counters until their next turn' },
+          // 🃏 PUNISH — these do NOT negate. The action resolves and you get paid.
+          { id: 'punishDraw',  label: '🃏 Punish — it RESOLVES, but you draw Amount' },
+          { id: 'punishEnergy',label: '⚡ Punish — it RESOLVES, but you gain Amount energy' },
+          { id: 'punishDamage',label: '🔥 Punish — it RESOLVES, but their hero takes Amount' },
         ].map(o => `<option value="${o.id}" ${(card.counterEffect || 'negate') === o.id ? 'selected' : ''}>${o.label}</option>`).join('')}
+      </select>
+    </div>
+    <div class="editor-field">
+      <label>Punish amount (punish effects only)</label>
+      <input id="ed-counter-amount" type="number" min="1" max="10" value="${(card.amount | 0) || 1}">
+    </div>
+    <div class="editor-field">
+      <label>Duration — how long a PUNISH keeps taxing</label>
+      <select id="ed-counter-duration">
+        <option value="once" ${(card.counterDuration || 'once') === 'once' ? 'selected' : ''}>Once — pays a single time</option>
+        <option value="restOfTurn" ${card.counterDuration === 'restOfTurn' ? 'selected' : ''}>Rest of turn — pays on every matching action (cap 5)</option>
       </select>
     </div>
     <div class="editor-field">
@@ -121802,6 +121827,13 @@ function captureEditorIntoCard(card) {
     const winEl = document.getElementById('ed-counter-window');
     const winVal = winEl ? parseInt(winEl.value, 10) : 15;
     card.counterWindow = Math.max(3, Math.min(30, isFinite(winVal) ? winVal : 15));
+    // 🃏 Punish payload — only meaningful for the punish* effects, but stored
+    // unconditionally so toggling the effect back and forth doesn't lose it.
+    const amtEl = document.getElementById('ed-counter-amount');
+    const amtVal = amtEl ? parseInt(amtEl.value, 10) : 1;
+    card.amount = Math.max(1, Math.min(10, isFinite(amtVal) ? amtVal : 1));
+    const durEl = document.getElementById('ed-counter-duration');
+    card.counterDuration = (durEl && durEl.value === 'restOfTurn') ? 'restOfTurn' : 'once';
     if (card.type === 'counter') {
       card.isCounter = true;
       card.deckable = true; // counters ARE deckable; you draw them in hand.
@@ -129721,6 +129753,10 @@ function _runCounterChain(state, action, depth) {
   if (depth === 0) {
     state._counterChain = [];
     try { if (App.ui) App.ui._counterChainView = null; } catch (e) {}
+    // ⏳ Armed rest-of-turn punishers pay out on EVERY later matching action,
+    // with no second prompt. Only at depth 0 — a counter-chain link is not
+    // itself a taxable play.
+    try { if (typeof _counterTickPunishers === 'function') _counterTickPunishers(state, action); } catch (e) {}
   }
   if (depth > COUNTER_CHAIN_MAX_DEPTH) return Promise.resolve(false);
   // Decide who's DEFENDING against this action. The source's owner is the
@@ -129781,6 +129817,15 @@ function _runCounterChain(state, action, depth) {
         try { renderBattle(); } catch (e) {}
         return false;  // ⬅ action proceeds because our counter was broken
       }
+      // 🃏 PUNISH — this counter does not negate, it taxes. The action RESOLVES
+      // and the counter's owner gets paid. Paid here, after the recursion, so a
+      // punish that was itself countered pays nothing.
+      if (typeof _counterIsPunish === 'function' && _counterIsPunish(counterFired.card)) {
+        try { _counterPayPunish(state, counterFired.card, counterFired.owner); } catch (e) {}
+        try { _counterArmPunisher(state, counterFired.card, counterFired.owner, action.trigger); } catch (e) {}
+        try { renderBattle(); } catch (e) {}
+        return false;  // ⬅ action proceeds — that is the whole point of a punish
+      }
       return true;  // chain held — original action is negated
     });
   });
@@ -129804,6 +129849,84 @@ function _runCounterChain(state, action, depth) {
 // counter ride a per-side `_locks` flag checked at each play site. Cleared in
 // startTurn. Fail-open everywhere — any oddity skips the lock, never breaks play.
 const COUNTER_LOCK_CATEGORY = { lockAttacks: 'attack', lockUnits: 'deploy', lockMoves: 'move', lockSpells: 'spell', lockCounters: 'counter' };
+// 🃏 PUNISH COUNTERS (v120c7) — the non-negating half of the counter system.
+// Every existing counterEffect negates first. A punish counter does the
+// opposite: the action RESOLVES and the counter's owner gets paid. That is the
+// Maxx "C" shape, and it is what makes a counter a tax rather than a wall.
+//
+//   counterEffect   = 'punishDraw' | 'punishEnergy' | 'punishDamage'
+//   amount          = payout size (default 1)
+//   counterDuration = 'once' | 'restOfTurn'
+//
+// The payout is expressed as a synthetic on-play and run through the existing
+// engine, so draw/energy/damage need no new resolution code.
+const COUNTER_PUNISH_EFFECT = {
+  punishDraw:   'drawCards',
+  punishEnergy: 'energyGain',
+  punishDamage: 'damageHero',
+};
+// Spec §4: cap every punish. Uncapped draw off one 0-cost card warps the format.
+const COUNTER_PUNISH_CAP = 5;
+function _counterIsPunish(card) {
+  return !!(card && COUNTER_PUNISH_EFFECT[card.counterEffect]);
+}
+// Pays out one instance. `side` is the counter OWNER (the one being paid).
+// Returns true when a payout actually happened.
+function _counterPayPunish(state, card, side) {
+  try {
+    const kind = COUNTER_PUNISH_EFFECT[card && card.counterEffect];
+    if (!kind || !state) return false;
+    const amount = Math.max(1, (card.amount | 0) || 1);
+    const synthetic = { ...card, onPlay: { type: kind, amount: amount } };
+    if (typeof _fireCardOnPlayAnchored === 'function') {
+      const ns = _fireCardOnPlayAnchored(state, synthetic, side === 'ai' ? 'ai' : 'player');
+      if (ns) {
+        state.units = ns.units || state.units;
+        state.player = ns.player || state.player;
+        state.ai = ns.ai || state.ai;
+        state.log = ns.log || state.log;
+        state.board = ns.board || state.board;
+      }
+    }
+    return true;
+  } catch (e) { try { console.warn('[punishCounter]', e); } catch (_) {} return false; }
+}
+// `restOfTurn` arms the counter so every LATER matching action pays again,
+// without re-prompting. Cleared at the start of each turn.
+function _counterArmPunisher(state, card, side, trigger) {
+  try {
+    if (!state || (card.counterDuration || 'once') !== 'restOfTurn') return;
+    if (!Array.isArray(state._punishers)) state._punishers = [];
+    state._punishers.push({
+      name: card.name || 'Counter', effect: card.counterEffect,
+      amount: Math.max(1, (card.amount | 0) || 1),
+      side: side === 'ai' ? 'ai' : 'player',
+      trigger: trigger || null, fired: 1,          // the activation itself counts
+    });
+  } catch (e) {}
+}
+// Called on every counterable action: pay out any armed punisher that matches.
+// Capped, and never pays the side that owns the action.
+function _counterTickPunishers(state, opts) {
+  try {
+    const list = state && state._punishers;
+    if (!Array.isArray(list) || !list.length || !opts) return;
+    const actingSide = (opts.source && opts.source.owner) || 'player';
+    for (const p of list) {
+      if (!p || p.side === actingSide) continue;             // your own plays never pay you
+      if (p.trigger && p.trigger !== opts.trigger) continue;
+      if ((p.fired | 0) >= COUNTER_PUNISH_CAP) continue;
+      p.fired = (p.fired | 0) + 1;
+      _counterPayPunish(state, { name: p.name, counterEffect: p.effect, amount: p.amount }, p.side);
+      try {
+        (state.log || (state.log = [])).push({
+          msg: `⏳ ${p.name} tallies it — ${p.fired}/${COUNTER_PUNISH_CAP}.`,
+          color: p.side === 'player' ? 'green' : 'red',
+        });
+      } catch (e) {}
+    }
+  } catch (e) {}
+}
 function _battleIsLocked(state, side, cat) {
   try { return !!(state && state[side] && state[side]._locks && state[side]._locks[cat]); } catch (e) { return false; }
 }
@@ -129923,6 +130046,15 @@ function _aiAutoCounter(state, opts) {
   // 🛡 THREAT GATE — hold the counter unless the play is actually worth it.
   // The bar scales with difficulty: an easy AI answers almost anything, a hard
   // AI saves its answers. Fails OPEN if anything here throws.
+  // 🃏 PUNISH counters INVERT this gate. The scorer asks "is this scary enough
+  // to stop?" — but a punish counter stops nothing, it taxes. A LOW-threat
+  // action is the best moment to fire one, so the threat bar must not suppress
+  // them. Without this split the scorer rates a 0-cost punish card near zero
+  // and the AI holds it forever (the concrete bug the hand-trap spec predicts).
+  const _isP = (c) => (typeof _counterIsPunish === 'function') && _counterIsPunish(c);
+  const _punishers = candidates.filter(_isP);
+  const _negators = candidates.filter(c => !_isP(c));
+  let _pool = candidates;
   try {
     const _diff = (typeof getAIDifficulty === 'function') ? getAIDifficulty() : null;
     // threatAwareness is the existing difficulty knob for "how well does it read
@@ -129930,9 +130062,18 @@ function _aiAutoCounter(state, opts) {
     const _ta = (_diff && _diff.threatAwareness) ? _diff.threatAwareness : 1;
     const _bar = 34 * _ta;
     const _threat = _aiCounterThreat(state, opts);
-    if (_threat < _bar) return false;
+    if (_threat < _bar) {
+      // Not worth negating. Still worth taxing, if we hold a punish card.
+      if (!_punishers.length) return false;
+      _pool = _punishers;
+    } else {
+      // Worth stopping — a real answer beats a tax. Fall back to the tax only
+      // if that is all we hold.
+      _pool = _negators.length ? _negators : _punishers;
+    }
   } catch (e) {}
-  const cheapest = candidates.reduce((m, c) => (c.cost | 0) < (m.cost | 0) ? c : m, candidates[0]);
+  if (!_pool.length) _pool = candidates;
+  const cheapest = _pool.reduce((m, c) => (c.cost | 0) < (m.cost | 0) ? c : m, _pool[0]);
   const energy = (state.ai && state.ai.energy) | 0;
   if (energy < (cheapest.cost | 0)) return false;
   // Probability — heavier triggers (ultimate, spell) get higher chance to

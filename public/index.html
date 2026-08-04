@@ -36149,7 +36149,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120d5';
+  window.BUILD_VERSION = 'v120d6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -77295,10 +77295,31 @@ function _jbEcon() {
           const c = _opComputed(o);
           const ys = Object.keys(c.yields || {}).map(function (rid) { return ((_meta(rid).icon) || '📦') + ' ' + c.yields[rid].toLocaleString(); }).join(' · ');
           const yp = (c.e && c.e.yields) ? Object.keys(c.e.yields).map(function (rid) { return ((_meta(rid).icon) || '📦') + (c.e.yields[rid]) + '/wkr·hr'; }).join(' · ') : '';
+          // 🏭 SUPPLY CHAIN — v120d1 made secondary industry consume resources and
+          // throttle when short, but shipped NO way to see it: a business could
+          // quietly run at 40% with nothing on screen explaining why. These three
+          // fields are what the Operations card needs to show the cause.
+          const ip = (c.e && c.e.inputs) ? Object.keys(c.e.inputs).map(function (rid) { return ((_meta(rid).icon) || '📦') + (c.e.inputs[rid]) + '/wkr·hr'; }).join(' · ') : '';
+          const iu = Object.keys(c.inputsUsed || {}).map(function (rid) { return ((_meta(rid).icon) || '📦') + ' ' + c.inputsUsed[rid].toLocaleString(); }).join(' · ');
+          // Which specific input is the bottleneck — the one a player must go buy.
+          let shortOf = '';
+          try {
+            if ((c.supply != null ? c.supply : 1) < 0.999 && c.inputsWanted) {
+              let worst = null, worstR = 2;
+              Object.keys(c.inputsWanted).forEach(function (rid) {
+                const have = (typeof getRes === 'function') ? Math.max(0, getRes(rid) | 0) : 0;
+                const r = c.inputsWanted[rid] > 0 ? (have / c.inputsWanted[rid]) : 1;
+                if (r < worstR) { worstR = r; worst = rid; }
+              });
+              if (worst) shortOf = ((_meta(worst).icon) || '📦') + ' ' + worst;
+            }
+          } catch (e2) {}
           return { id: o.id, op_type: o.op_type, workers: o.workers | 0, level: o.level | 0,
             grossPerHr: c.grossPerHr, salaryPerHr: c.salaryPerHr, net: c.net, gross: c.gross,
             salary: c.salary, cdLeftMs: c.cdLeft, hrs: Math.round(c.hrs * 10) / 10,
-            yieldStr: ys, yieldRate: yp };
+            yieldStr: ys, yieldRate: yp,
+            inputRate: ip, inputStr: iu,
+            supplyPct: Math.round((c.supply != null ? c.supply : 1) * 100), shortOf: shortOf };
         });
       } catch (e) { return []; }
     })(),
@@ -78350,7 +78371,7 @@ function mountJustBusiness() {
     }
     if (!f) {
       f = document.createElement('iframe');
-      f.id = FID; f.src = 'corp/?v=119x8';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
+      f.id = FID; f.src = 'corp/?v=120d6';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
       // Smooth cross-fade + gentle scale-in (no hard cut on enter/exit).
       f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transform:scale(.986);transition:opacity .6s ' + EASE + ',transform .6s ' + EASE + ';will-change:opacity,transform';
       f.onload = function () {

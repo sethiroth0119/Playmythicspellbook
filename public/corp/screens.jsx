@@ -1149,8 +1149,27 @@ function OperationsScreen({ econ }) {
                   <span className="mono" style={{ color: 'var(--toxic)' }}>{Object.keys(oe.yields).map(k => oe.yields[k] + ' ' + k).join(' · ')} / wkr·hr</span>
                 </div>
               )}
+              {/* 🏭 SUPPLY CHAIN. Secondary industry consumes resources and throttles
+                  when short. Without these rows a player sees reduced output and no
+                  cause — which is worse than not having the mechanic at all. */}
+              {oe && oe.inputs && (
+                <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                  <span className="muted">Consumes</span>
+                  <span className="mono" style={{ color: 'var(--warn, #e0a86a)' }}>{Object.keys(oe.inputs).map(k => oe.inputs[k] + ' ' + k).join(' · ')} / wkr·hr</span>
+                </div>
+              )}
               {owned && (
                 <React.Fragment>
+                  {typeof owned.supplyPct === 'number' && owned.supplyPct < 100 ? (
+                    <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                      <span className="muted">⚠ Supply</span>
+                      <span className="mono" style={{ color: owned.supplyPct === 0 ? '#e24842' : '#e0a86a' }}>
+                        {owned.supplyPct === 0
+                          ? 'STALLED — out of ' + (owned.shortOf || 'inputs')
+                          : 'running at ' + owned.supplyPct + '% — short of ' + (owned.shortOf || 'inputs')}
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
                     <span className="muted">Net accrued</span>
                     <span className="mono" style={{ color: 'var(--aza)' }}>+{(owned.net | 0).toLocaleString()} 🔥</span>
@@ -1159,6 +1178,12 @@ function OperationsScreen({ econ }) {
                     <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
                       <span className="muted">Resources accrued</span>
                       <span className="mono" style={{ color: 'var(--toxic)' }}>{owned.yieldStr}</span>
+                    </div>
+                  ) : null}
+                  {owned.inputStr ? (
+                    <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                      <span className="muted">Will consume</span>
+                      <span className="mono" style={{ color: '#e0a86a' }}>{owned.inputStr}</span>
                     </div>
                   ) : null}
                   <div className="row" style={{ justifyContent: 'space-between', padding: '3px 0' }}>

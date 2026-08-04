@@ -36060,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120c5';
+  window.BUILD_VERSION = 'v120c6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -95817,6 +95817,30 @@ const startTurn = (state, who) => {
     (s.log || []).forEach(l => log.push(l));
   }
 
+  // ⛧ CURSE RELEASE (v120c6) — the mandatory exit. A curse with a `turnCount`
+  // release ("Fuse") lifts on its own once its turns are up; `never` holds until
+  // something removes it. Only the fuse is automatic — Ransom (`payEnergy`) and
+  // Blood price (`unitDies`) are player/board driven and are NOT wired yet, so
+  // a curse authored with those currently behaves as `never`.
+  try {
+    if (Array.isArray(s.enchantments) && s.enchantments.some(e => e && e.isCurse)) {
+      const kept = [];
+      for (const e of s.enchantments) {
+        if (!e || !e.isCurse) { kept.push(e); continue; }
+        const rel = e.curseRelease || {};
+        if (rel.onCondition === 'turnCount') {
+          const turns = Math.max(1, rel.turns | 0);
+          if (((s.turnNumber | 0) - (e.turnPlayed | 0)) >= turns) {
+            log.push({ msg: `⛧ ${(e.card && e.card.name) || 'The curse'} burns out and lifts.`, color: 'amber' });
+            continue;                                   // dropped = released
+          }
+        }
+        kept.push(e);
+      }
+      if (kept.length !== s.enchantments.length) s = { ...s, enchantments: kept, log: log };
+    }
+  } catch (err) { try { console.warn('[curseRelease]', err); } catch (_) {} }
+
   // Weather: tick & apply
   if (s.weather && s.weather.turnsLeft > 0) {
     if (s.weather.weatherType === 'sand') {
@@ -117113,6 +117137,10 @@ function renderCardEditor() {
     // "Persistent" box ticked — that is the older v86j s.persistentSpells path,
     // which ticks per turn and EXPIRES. An enchantment has no duration.
     { id: 'enchantment', label: '🔮 Enchantment (permanent — stays on field, projects auras)' },
+    // ⛧ Curse — the same permanent, hung on the OPPONENT. Rides the enchantment
+    // path in playSpell; the difference is `curseTarget` + a mandatory
+    // `curseRelease` exit so it can always be answered.
+    { id: 'curse',       label: '⛧ Curse (permanent on the ENEMY — must carry a release)' },
     { id: 'trap',     label: '🪤 Trap (hidden, triggers on enemy)' },
     { id: 'weather',  label: '☀️ Weather (battlefield-wide effect)' },
     { id: 'wall',     label: '🧱 Wall (50 HP barrier)' },
@@ -142463,15 +142491,29 @@ function playSpell(card) {
   // contract is resolve-then-graveyard, and a permanent must not be buried.
   // Any number can be out at once — unlike location/weather, which are single
   // slots that replace each other.
-  if (card.type === 'enchantment') {
+  // ⛧ CURSE (v120c6) rides this exact path — it IS an enchantment, one that
+  // hangs on the opponent instead of your own board. The only structural
+  // difference is that a curse must carry an EXIT (`curseRelease`), because an
+  // unanswerable permanent debuff on a hero is a bug report, not a card.
+  if (card.type === 'enchantment' || card.type === 'curse') {
+    const _isCurse = (card.type === 'curse');
     const _cost = (typeof getEffectiveCardCost === 'function') ? getEffectiveCardCost(card, s, 'player') : (card.cost | 0);
     if ((s.player.energy | 0) < _cost) { try { showToast('Not enough energy.'); } catch (e) {} return; }
     if (_playerNegateAbort && _playerNegateAbort(card)) return;   // 🚫 answerable like any other play
     App.state = {
       ...s,
-      enchantments: [...(s.enchantments || []), { card: { ...card }, owner: 'player', turnPlayed: s.turnNumber | 0 }],
+      enchantments: [...(s.enchantments || []), {
+        card: { ...card }, owner: 'player', turnPlayed: s.turnNumber | 0,
+        // Curse bookkeeping travels on the entry, not the card, so a second
+        // copy of the same curse releases on its own schedule.
+        isCurse: _isCurse,
+        curseTarget: _isCurse ? (card.curseTarget || 'enemyHero') : undefined,
+        curseRelease: _isCurse ? (card.curseRelease || { onCondition: 'never' }) : undefined,
+      }],
       player: { ...s.player, hand: s.player.hand.filter(c => c.instanceId !== card.instanceId), energy: (s.player.energy | 0) - _cost },
-      log: [...s.log, { msg: `✨ ${card.name} settles over the field — its power persists.`, color: 'green' }],
+      log: [...s.log, { msg: _isCurse
+        ? `⛧ ${card.name} settles over the enemy — it will not lift on its own.`
+        : `✨ ${card.name} settles over the field — its power persists.`, color: 'green' }],
     };
     // An enchantment may ALSO carry a one-shot arrival effect, exactly like a
     // Magic enchantment with an ETB trigger. Anchor it on the hero, as the

@@ -27559,36 +27559,45 @@
      z-index 7 puts it under the player node markers (z8) deliberately: a corp
      badge must never intercept a click meant for a node. pointer-events stay
      off the block and are re-enabled only on the badge itself for the tooltip. */
+  /* A COMPACT PIN, not a label bar. The first version carried the corp name and
+     standing inline, which made a ~180px block that sat straight through the
+     node's own name label — six of them turned the map into soup. All the
+     detail moved into the click panel; what stays on the map is the icon, the
+     AI tag and a standing dot. --dx/--dy are the per-corp radial offset. */
   .tw-aicorp {
-    position: absolute; transform: translate(-50%, -50%) translate(26px, -26px);
-    z-index: 7; pointer-events: none;
-    display: flex; align-items: center; gap: 4px;
-    padding: 2px 7px 2px 4px; border-radius: 999px; white-space: nowrap;
-    background: linear-gradient(180deg, rgba(14,18,28,0.96), rgba(8,10,16,0.98));
-    border: 1px solid color-mix(in srgb, var(--cc, #c9a24a) 60%, transparent);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--cc, #c9a24a) 28%, transparent),
-                0 2px 6px rgba(0,0,0,0.7);
-    font-size: 10px; line-height: 1.1; cursor: help;
+    position: absolute;
+    transform: translate(-50%, -50%) translate(var(--dx, 26px), var(--dy, -26px));
+    z-index: 7; pointer-events: auto; cursor: pointer;
+    display: flex; align-items: center; gap: 3px;
+    padding: 2px 5px; border-radius: 999px; white-space: nowrap;
+    background: linear-gradient(180deg, rgba(14,18,28,0.97), rgba(8,10,16,0.99));
+    border: 1px solid color-mix(in srgb, var(--cc, #c9a24a) 65%, transparent);
+    box-shadow: 0 0 9px color-mix(in srgb, var(--cc, #c9a24a) 30%, transparent),
+                0 2px 5px rgba(0,0,0,0.75);
+    font-size: 10px; line-height: 1.1;
+    transition: transform 0.14s ease, box-shadow 0.14s ease;
   }
-  .tw-aicorp:hover { pointer-events: auto; }
+  .tw-aicorp:hover {
+    z-index: 9;   /* lift ABOVE nodes on hover only, so it never blocks a click */
+    transform: translate(-50%, -50%) translate(var(--dx, 26px), var(--dy, -26px)) scale(1.14);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--cc, #c9a24a) 55%, transparent), 0 3px 9px rgba(0,0,0,0.8);
+  }
   .tw-aicorp-ico { font-size: 13px; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--cc) 55%, transparent)); }
-  /* The AI tag is the whole point of the marker — it must never be mistaken for
-     another player's holding. */
+  /* The AI tag is the whole point — a corp must never read as a player holding. */
   .tw-aicorp-tag {
     font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 8px; font-weight: 800;
-    letter-spacing: 0.10em; padding: 1px 4px; border-radius: 3px;
+    letter-spacing: 0.08em; padding: 1px 3px; border-radius: 3px;
     color: #0c0a06; background: var(--cc, #c9a24a);
   }
-  .tw-aicorp-nm { color: #e8e0d0; font-weight: 600; max-width: 132px; overflow: hidden; text-overflow: ellipsis; }
-  .tw-aicorp-st {
-    color: var(--sc, #8a96a3); font-weight: 700;
-    border-left: 1px solid rgba(255,255,255,0.14); padding-left: 5px;
+  /* Standing at a glance, colour only — the words live in the panel. */
+  .tw-aicorp-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--sc, #8a96a3);
+    box-shadow: 0 0 6px var(--sc, #8a96a3);
   }
-  /* The map gets busy — drop the corp name on small screens, keep icon + AI +
-     standing, which is the information that actually matters at a glance. */
   @media (max-width: 900px) {
-    .tw-aicorp-nm { display: none; }
-    .tw-aicorp { transform: translate(-50%, -50%) translate(20px, -20px); }
+    .tw-aicorp { padding: 1px 4px; }
+    .tw-aicorp-ico { font-size: 11px; }
   }
   .tw-road-badge.tw-rb-enemy { border-color: #b98a3a; box-shadow: 0 0 7px rgba(185,138,58,0.45), 0 2px 4px rgba(0,0,0,0.75); }
   /* cleaner road lines — faint grey dashed for dead links, solid gold for active ones,
@@ -36185,7 +36194,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120d9';
+  window.BUILD_VERSION = 'v120e0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -210517,10 +210526,51 @@ function _aiYieldTradeMul(map) {
     return den ? Math.max(AI_TRADE_MUL_MIN, Math.min(AI_TRADE_MUL_MAX, num / den)) : 1;
   } catch (e) { return 1; }
 }
+// 🖱 Click a corp pin → who they are, what they want, and where you stand.
+// The pin only carries an icon and a colour; everything else is here, which is
+// what keeps the map readable.
+async function _aiCorpOpen(corpId) {
+  try {
+    const c = AI_CORP_BY_ID[corpId];
+    if (!c) return;
+    const sd = _aiCorpStanding(corpId);
+    const t = (typeof _twForge === 'function') ? _twForge() : null;
+    const home = t ? _aiCorpHomeNode(corpId, (t.nodes || []).filter(n => n && n.id)) : null;
+    // Which resource this corp controls — the practical reason to care.
+    const owns = Object.keys(AI_CORP_RESOURCE).filter(r => AI_CORP_RESOURCE[r] === corpId);
+    const mul = owns.length ? _aiTradeMul(owns[0]) : 1;
+    const pct = Math.round((mul - 1) * 100);
+    const row = (k, v, col) => '<div style="display:flex;justify-content:space-between;gap:1rem;padding:0.25rem 0">'
+      + '<span style="color:#a89878">' + k + '</span><b style="color:' + (col || '#e8e0d0') + '">' + v + '</b></div>';
+    const reasons = (sd.reasons || []).length
+      ? sd.reasons.map(r => '<div style="display:flex;justify-content:space-between;font-size:0.82rem;padding:0.15rem 0">'
+          + '<span style="color:#97a2b6">' + escapeHtml(r.t) + '</span>'
+          + '<b style="color:' + (r.d >= 0 ? '#7fd8a0' : '#e8705c') + '">' + (r.d >= 0 ? '+' : '') + r.d + '</b></div>').join('')
+      : '<div style="color:#7a8694;font-style:italic;font-size:0.82rem">Nothing yet — they have no opinion of you.</div>';
+    await showGameConfirm({
+      title: c.ico + ' ' + c.name,
+      bodyHtml:
+        '<div style="display:inline-block;padding:0.1rem 0.6rem;border-radius:3px;font-size:0.7rem;font-weight:800;letter-spacing:0.12em;color:#0c0a06;background:' + c.col + ';margin-bottom:0.6rem">AI CORPORATION</div>'
+        + '<div style="font-style:italic;color:#cfd8ea;margin-bottom:0.8rem;line-height:1.55">' + escapeHtml(c.blurb) + '</div>'
+        + '<div style="background:rgba(14,18,28,0.6);border:1px solid #23303f;border-radius:5px;padding:0.6rem 0.8rem;margin-bottom:0.7rem">'
+        + row('Standing', sd.tier.name + ' (' + (sd.value > 0 ? '+' : '') + sd.value + ')', sd.tier.col)
+        + row('Based at', home ? escapeHtml(home.name || home.id) : '—')
+        + (owns.length ? row('Controls', owns.join(', ')) : '')
+        + (owns.length ? row('Your price on it', (pct > 0 ? '+' : '') + pct + '%', pct > 0 ? '#7fd8a0' : pct < 0 ? '#e8705c' : '#8a96a3') : '')
+        + '</div>'
+        + '<div style="font-size:0.78rem;color:#9a8c66;letter-spacing:0.12em;margin-bottom:0.3rem">WHY THEY FEEL THAT WAY</div>'
+        + '<div style="background:rgba(14,18,28,0.45);border-left:3px solid ' + c.col + ';border-radius:4px;padding:0.5rem 0.7rem;margin-bottom:0.7rem">' + reasons + '</div>'
+        + '<div style="font-size:0.82rem;color:#97a2b6;line-height:1.6">'
+        + '<div>👍 Likes <b style="color:#cfd8ea">' + escapeHtml(c.likes) + '</b></div>'
+        + '<div>👎 Dislikes <b style="color:#cfd8ea">' + escapeHtml(c.dislikes) + '</b></div></div>',
+      yesLabel: 'CLOSE', noLabel: '', yesAccent: 'gold',
+    });
+  } catch (e) { try { console.warn('[aiCorpOpen]', e); } catch (_) {} }
+}
 try {
   window.__mg = window.__mg || {};
   window.__mg.aiCorps = { list: AI_CORPS, standing: _aiCorpStanding, home: _aiCorpHomeNode,
-                          tradeMul: _aiTradeMul, resourceCorp: AI_CORP_RESOURCE };
+                          tradeMul: _aiTradeMul, resourceCorp: AI_CORP_RESOURCE, open: _aiCorpOpen };
 } catch (e) {}
 
 // ===== WAR MAP SCREEN =====
@@ -210791,7 +210841,11 @@ function renderTerritoryWars() {
         idAttr = ` id="${rid}"`;
         // Stagger durations so trucks desync over time
         const dur = 14 + _truckRoutes.length * 4; // 14 / 18 / 22 / 26 s
-        _truckRoutes.push({ id: rid, dur, sP, eP, nMidX, nMidY });
+        // 🚚 Carry the ENDPOINT NODE IDS so a truck can be matched to a real
+        // convoy from _jbConvoys() — the same freight the Logistics screen
+        // lists. Without these the truck was pure decoration with no idea what,
+        // if anything, it was hauling.
+        _truckRoutes.push({ id: rid, dur, sP, eP, nMidX, nMidY, aId: n.id, bId: cid });
       }
       // NOTE: idAttr intentionally NOT applied to visible route — truck guide paths
       // (hidden, below) carry the IDs so there are no duplicate-ID conflicts.
@@ -210852,7 +210906,30 @@ function renderTerritoryWars() {
   // and any re-render rebuilds the truck SVG (SMIL restarts → flicker). Killing
   // them behind the modal removes the flicker entirely and frees up compositing.
   const _showTrucks = (_gfxQ !== 'low') && _truckRoutes.length > 0 && !App._twSelectedNode;
-  const _truckSvgHtml = _showTrucks ? (_truckGuidePaths + _truckRoutes.map(r => _truckSVG(r.id, r.dur)).join('')) : '';
+  // 🚚 BIND TRUCKS TO REAL FREIGHT (v120e0). The trucks animated off lit routes
+  // and hauled nothing — decoration. Each is now matched to a convoy from
+  // _jbConvoys(), the SAME list the Logistics screen renders, by endpoint node
+  // id. A matched truck carries the real cargo, route and ETA in its tooltip,
+  // so the van you watch crossing the map is literally the row you read there.
+  // Unmatched trucks still run: a lit road with no convoy on it is honest
+  // background traffic, not a bug.
+  let _convoyByNode = {};
+  try {
+    if (typeof _jbConvoys === 'function') {
+      for (const cv of (_jbConvoys() || [])) if (cv && cv.nodeId) _convoyByNode[cv.nodeId] = cv;
+    }
+  } catch (e) {}
+  const _truckSvgHtml = _showTrucks ? (_truckGuidePaths + _truckRoutes.map(r => {
+    const svg = _truckSVG(r.id, r.dur);
+    const cv = _convoyByNode[r.aId] || _convoyByNode[r.bId] || null;
+    if (!cv) return svg;
+    const label = cv.id + ' · ' + cv.cargo + '\n' + cv.from + ' → ' + cv.to
+      + '\n' + Math.round(cv.progress * 100) + '% · ETA ' + cv.eta
+      + (cv.escort ? '\nEscort: ' + cv.escort : '');
+    // <title> inside the motion group is the SVG-native tooltip — no extra
+    // element, no layout cost, and it moves with the truck.
+    return svg.replace('>', '><title>' + escapeHtml(label) + '</title>');
+  }).join('')) : '';
   const _twCanvasRoutes = `<svg class="tw-map-routes${_lowFx ? ' tw-lowfx' : ''}" viewBox="0 0 100 100" preserveAspectRatio="none">${_routePaths}${_truckSvgHtml}</svg>`;
 
   // Node markers — absolutely positioned diamonds.
@@ -211009,14 +211086,31 @@ function renderTerritoryWars() {
         used[home.id] = true;
         const p = home.position || { x: 5, y: 5 };
         const sd = _aiCorpStanding(c.id);
-        const tip = c.name + ' — ' + c.blurb + '\nStanding: ' + sd.tier.name + ' (' + (sd.value > 0 ? '+' : '') + sd.value + ')\nBased at ' + home.name;
-        return '<div class="tw-aicorp" style="left:' + p.x + '%;top:' + p.y + '%;--cc:' + c.col + '"'
-          + ' title="' + escapeHtml(tip) + '" data-aicorp="' + escapeHtml(c.id) + '">'
+        const tip = c.name + ' — ' + c.blurb + '\nStanding: ' + sd.tier.name + ' (' + (sd.value > 0 ? '+' : '') + sd.value + ')\nBased at ' + home.name + '\nClick for details';
+        // 🧭 RADIAL OFFSET. A fixed top-right offset put every badge straight
+        // through its node's name label. Each corp now sits at its own angle
+        // around the host node, derived from the corp id, so pins near each
+        // other diverge instead of stacking — and none of them land on the
+        // label, which hangs directly below the marker.
+        // Measured: a full-circle 34px radius still put 3 of 6 pins over the
+        // node's name label and 5 over the marker itself — the radius was
+        // SMALLER than the ~50px pin. Two corrections:
+        //   • radius 58, which clears the 34px marker plus half the pin
+        //   • the UPPER arc only, because the name label hangs BELOW the marker
+        // so nothing can ever land on it.
+        let h = 0; for (let i = 0; i < c.id.length; i++) h = (h * 31 + c.id.charCodeAt(i)) | 0;
+        const frac = (Math.abs(h) % 1000) / 1000;
+        const ang = -Math.PI * (0.14 + 0.72 * frac);      // −25° … −155°, i.e. above
+        const dx = Math.round(Math.cos(ang) * 58);
+        const dy = Math.round(Math.sin(ang) * 58) - 6;
+        return '<button class="tw-aicorp" style="left:' + p.x + '%;top:' + p.y + '%;--cc:' + c.col
+          + ';--dx:' + dx + 'px;--dy:' + dy + 'px"'
+          + ' title="' + escapeHtml(tip) + '" data-aicorp="' + escapeHtml(c.id) + '"'
+          + ' onclick="event.stopPropagation();_aiCorpOpen(\'' + escapeHtml(c.id) + '\')">'
           + '<span class="tw-aicorp-ico">' + c.ico + '</span>'
           + '<span class="tw-aicorp-tag">AI</span>'
-          + '<span class="tw-aicorp-nm">' + escapeHtml(c.name) + '</span>'
-          + '<span class="tw-aicorp-st" style="--sc:' + sd.tier.col + '">' + escapeHtml(sd.tier.name) + '</span>'
-          + '</div>';
+          + '<span class="tw-aicorp-dot" style="--sc:' + sd.tier.col + '"></span>'
+          + '</button>';
       }).join('');
     } catch (e) { return ''; }
   })();

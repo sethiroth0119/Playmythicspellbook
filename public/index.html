@@ -16519,6 +16519,157 @@
     .cbx-spacer { display: none; }
   }
 
+  /* ═══ v120b9 DEPLOY SLOTS — rebuilt to the supplied reference ══════════════
+     Tab rail → two panels (deploy slots · available to park). Every data-*
+     hook, button id and handler from the old .camp-slot markup is preserved;
+     this is the frame and the chrome only. */
+  .dpx-tabs { display: flex; align-items: stretch; gap: 0; margin: 0 0 1.1rem;
+    border-bottom: 1px solid rgba(212,175,55,0.30); }
+  .dpx-tab { flex: 1 1 0; display: flex; align-items: center; justify-content: center;
+    gap: 0.55rem; padding: 0.7rem 0.6rem 0.85rem; background: none; border: 0;
+    font-family: 'Cinzel', serif; font-weight: 700; font-size: 0.98rem;
+    letter-spacing: 0.16em; text-transform: uppercase; color: #6d7893;
+    cursor: pointer; position: relative; transition: color 0.16s ease; }
+  .dpx-tab:hover { color: #b9a271; }
+  .dpx-tab.is-on { color: #f2d891; text-shadow: 0 0 14px rgba(240,208,137,0.35); }
+  /* The lit underline + its centre diamond, straight off the reference. */
+  .dpx-tab.is-on::after { content: ''; position: absolute; left: 12%; right: 12%; bottom: -1px;
+    height: 2px; background: linear-gradient(90deg, transparent, #f0d089 22%, #f6e3ae 50%, #f0d089 78%, transparent);
+    box-shadow: 0 0 12px rgba(240,208,137,0.65); }
+  .dpx-tab-ico { font-size: 1.15rem; filter: drop-shadow(0 0 8px rgba(240,208,137,0.5)); }
+  .dpx-grid { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 1rem; align-items: start; }
+  /* Park / Barracks render a single panel — it takes the whole row. */
+  .dpx-grid > .dpx-panel:only-child { grid-column: 1 / -1; }
+  .dpx-panel { background: linear-gradient(180deg, rgba(11,16,27,0.96), rgba(7,10,18,0.98));
+    border: 1px solid rgba(212,175,55,0.28); border-radius: 10px; padding: 0.85rem 0.9rem;
+    box-shadow: inset 0 0 60px rgba(0,0,0,0.5); }
+  .dpx-h { display: flex; align-items: center; gap: 0.7rem; margin: 0 0 0.8rem; }
+  .dpx-h-t { font-family: 'Cinzel', serif; font-weight: 800; font-size: 1.22rem;
+    letter-spacing: 0.10em; text-transform: uppercase; color: #f0d089; white-space: nowrap; }
+  .dpx-h-n { font-family: 'Cinzel', serif; color: #c9a24a; font-size: 1.05rem; }
+  .dpx-h-rule { flex: 1 1 auto; height: 1px; background: linear-gradient(90deg, rgba(212,175,55,0.55), transparent); }
+  .dpx-h-rule::before { content: '◆'; float: left; margin: -0.62em 0 0 0; color: #c9a24a; font-size: 0.6rem; }
+  .dpx-scroll { max-height: 74vh; overflow-y: auto; padding-right: 0.4rem;
+    scrollbar-width: thin; scrollbar-color: #c9a24a rgba(255,255,255,0.05); }
+  .dpx-scroll::-webkit-scrollbar { width: 8px; }
+  .dpx-scroll::-webkit-scrollbar-track { background: rgba(255,255,255,0.04); border-radius: 4px; }
+  .dpx-scroll::-webkit-scrollbar-thumb { background: linear-gradient(180deg,#f0d089,#a8802f); border-radius: 4px; }
+
+  /* ── the slot card ── */
+  .dpx-slot { display: grid; grid-template-columns: 132px minmax(0, 1fr) auto;
+    gap: 0.9rem; align-items: start; padding: 0.85rem;
+    background: linear-gradient(180deg, rgba(16,22,36,0.95), rgba(9,13,22,0.98));
+    border: 1px solid rgba(212,175,55,0.34); border-radius: 10px;
+    margin-bottom: 0.85rem; position: relative; }
+  .dpx-slot:hover { border-color: rgba(240,208,137,0.6); }
+  .dpx-port { width: 132px; height: 132px; border-radius: 8px; overflow: hidden;
+    border: 2px solid rgba(212,175,55,0.55); background: #0a0e18;
+    box-shadow: 0 0 18px rgba(0,0,0,0.6), inset 0 0 24px rgba(0,0,0,0.5);
+    display: flex; align-items: center; justify-content: center; font-size: 2.6rem; }
+  .dpx-port img, .dpx-port canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .dpx-name { font-family: 'Cinzel', serif; font-weight: 800; font-size: 1.42rem;
+    letter-spacing: 0.03em; color: #f0d089; line-height: 1.1; margin-bottom: 0.4rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dpx-pill { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.16rem 0.6rem;
+    border-radius: 5px; font-size: 0.76rem; font-weight: 700; letter-spacing: 0.06em;
+    background: rgba(104,74,168,0.42); border: 1px solid rgba(150,116,224,0.6); color: #cbb6f2; }
+  .dpx-body { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 0.45rem 0.9rem; align-items: start; }
+  .dpx-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+  .dpx-chip { display: flex; align-items: center; gap: 0.35rem; padding: 0.3rem 0.5rem;
+    border-radius: 6px; font-size: 0.8rem; font-weight: 600; background: rgba(255,255,255,0.03);
+    border: 1px solid var(--c, rgba(255,255,255,0.16)); color: #cfd8ea; }
+  .dpx-chip b { margin-left: auto; color: #f3ecda; font-variant-numeric: tabular-nums; }
+  .dpx-chip.bond    { --c: rgba(60,208,192,0.55); }
+  .dpx-chip.trauma  { --c: rgba(224,85,106,0.55); }
+  .dpx-chip.corrupt { --c: rgba(160,112,217,0.55); }
+  .dpx-chip.fatigue { --c: rgba(224,168,106,0.55); }
+  .dpx-xpl { font-family: 'Cinzel', serif; font-size: 0.72rem; letter-spacing: 0.14em;
+    text-transform: uppercase; color: #9a8c66; margin-bottom: 0.25rem; }
+  .dpx-xpbar { position: relative; height: 22px; border-radius: 5px; overflow: hidden;
+    background: rgba(0,0,0,0.55); border: 1px solid rgba(212,175,55,0.35); }
+  .dpx-xpfill { height: 100%; background: linear-gradient(90deg,#a8802f,#f0d089); }
+  .dpx-xptx { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 0.76rem; font-weight: 700; color: #f6ecd2; text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+    font-variant-numeric: tabular-nums; }
+  .dpx-state { display: inline-block; margin-top: 0.4rem; padding: 0.2rem 0.7rem; border-radius: 5px;
+    font-family: 'Cinzel', serif; font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
+    background: rgba(60,208,192,0.10); border: 1px solid rgba(60,208,192,0.45); color: #7fd8cc; }
+  .dpx-state.busy { background: rgba(255,180,84,0.10); border-color: rgba(255,180,84,0.5); color: #ffc47a; }
+  .dpx-rate { font-size: 0.74rem; color: #7d8aa0; margin-top: 0.3rem; }
+  .dpx-acts { display: flex; flex-direction: column; gap: 0.4rem; min-width: 190px; }
+  .dpx-acts-row { display: flex; gap: 0.4rem; }
+  .dpx-acts-row .dpx-btn { flex: 1 1 0; }
+  .dpx-btn { display: flex; align-items: center; justify-content: center; gap: 0.45rem;
+    padding: 0.5rem 0.85rem; border-radius: 6px; cursor: pointer;
+    font-family: 'Cinzel', serif; font-weight: 700; font-size: 0.86rem; letter-spacing: 0.08em;
+    background: linear-gradient(180deg, rgba(38,48,68,0.9), rgba(22,29,44,0.95));
+    border: 1px solid rgba(140,160,195,0.4); color: #c6d2e8; transition: filter 0.15s ease; }
+  .dpx-btn:hover:not(:disabled) { filter: brightness(1.25); }
+  .dpx-btn:disabled { opacity: 0.42; cursor: not-allowed; }
+  .dpx-btn.raid { background: linear-gradient(180deg, rgba(96,26,34,0.92), rgba(58,15,20,0.96));
+    border-color: rgba(224,85,106,0.62); color: #ff9fb0; }
+  .dpx-btn.deep { background: linear-gradient(180deg, rgba(20,52,88,0.92), rgba(11,30,52,0.96));
+    border-color: rgba(94,160,232,0.6); color: #93c4f2; }
+  .dpx-btn.deepplus { background: linear-gradient(180deg, rgba(70,52,14,0.92), rgba(40,30,8,0.96));
+    border-color: rgba(255,207,107,0.55); color: #ffcf6b; }
+  .dpx-x { position: absolute; top: 0.55rem; right: 0.6rem; width: 24px; height: 24px;
+    display: flex; align-items: center; justify-content: center; border-radius: 5px;
+    background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.16);
+    color: #9aa6bd; font-size: 1rem; line-height: 1; cursor: pointer; z-index: 2; }
+  .dpx-x:hover { border-color: rgba(224,85,106,0.7); color: #ff9fb0; }
+  /* The full-width gold collect bar, with the reference's corner sparkles. */
+  .dpx-collect { grid-column: 1 / -1; width: 100%; margin-top: 0.2rem; position: relative;
+    padding: 0.62rem 1rem; border-radius: 7px; cursor: pointer;
+    font-family: 'Cinzel', serif; font-weight: 800; font-size: 1.05rem;
+    letter-spacing: 0.16em; text-transform: uppercase; color: #2a1e06;
+    background: linear-gradient(180deg,#f6e3ae,#e0b95f 45%,#b98f33);
+    border: 1px solid #f6e3ae; box-shadow: 0 3px 14px rgba(212,175,55,0.35); }
+  .dpx-collect:hover:not(:disabled) { filter: brightness(1.08); }
+  .dpx-collect:disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.5); }
+  .dpx-collect::before, .dpx-collect::after { content: '✦'; position: absolute; top: 50%;
+    transform: translateY(-50%); font-size: 0.8rem; color: rgba(60,40,4,0.6); }
+  .dpx-collect::before { left: 0.7rem; } .dpx-collect::after { right: 0.7rem; }
+  .dpx-empty { display: flex; align-items: center; justify-content: center; min-height: 110px;
+    border: 1px dashed rgba(212,175,55,0.32); border-radius: 10px; margin-bottom: 0.85rem;
+    color: #6d7893; font-family: 'Cinzel', serif; letter-spacing: 0.1em; }
+
+  /* ── available-to-park rows ── */
+  .dpx-av { display: flex; align-items: center; gap: 0.8rem; width: 100%; text-align: left;
+    padding: 0.6rem 0.7rem; margin-bottom: 0.6rem; border-radius: 8px;
+    background: linear-gradient(180deg, rgba(16,22,36,0.95), rgba(9,13,22,0.98));
+    border: 1px solid rgba(212,175,55,0.3); }
+  .dpx-av-th { width: 62px; height: 62px; flex: 0 0 auto; border-radius: 6px; overflow: hidden;
+    border: 1px solid rgba(212,175,55,0.45); background: #0a0e18;
+    display: flex; align-items: center; justify-content: center; font-size: 1.6rem; }
+  .dpx-av-th img, .dpx-av-th canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .dpx-av-i { flex: 1 1 auto; min-width: 0; }
+  .dpx-av-n { font-family: 'Cinzel', serif; font-weight: 700; font-size: 1.02rem; color: #f0d089;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dpx-av-n span { color: #7d8aa0; font-size: 0.82rem; }
+  .dpx-av-s { font-size: 0.8rem; color: #8c98ae; }
+  .dpx-av-b { flex: 0 0 auto; padding: 0.45rem 1.1rem; border-radius: 6px; cursor: pointer;
+    font-family: 'Cinzel', serif; font-weight: 700; font-size: 0.86rem; letter-spacing: 0.1em;
+    text-transform: uppercase; background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(240,208,137,0.6); color: #f0d089; }
+  .dpx-av-b:hover:not(:disabled) { background: rgba(240,208,137,0.14); }
+  .dpx-av-b:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  @media (max-width: 1180px) {
+    .dpx-grid { grid-template-columns: minmax(0, 1fr); }
+    .dpx-slot { grid-template-columns: 96px minmax(0, 1fr); }
+    .dpx-port { width: 96px; height: 96px; }
+    .dpx-acts { grid-column: 1 / -1; min-width: 0; flex-direction: row; flex-wrap: wrap; }
+    .dpx-acts .dpx-btn, .dpx-acts-row { flex: 1 1 140px; }
+  }
+  @media (max-width: 760px) {
+    .dpx-body { grid-template-columns: minmax(0, 1fr); }
+    .dpx-tab { font-size: 0.8rem; letter-spacing: 0.08em; padding: 0.6rem 0.3rem 0.7rem; }
+    .dpx-tab-ico { display: none; }
+    /* 1.42rem Cinzel ellipsised 3 of 4 real unit names in a 326px panel. */
+    .dpx-name { font-size: 1.02rem; letter-spacing: 0.01em; }
+    .dpx-slot { padding: 0.7rem; gap: 0.7rem; }
+  }
+
   /* ===== MARKETPLACE ===== */
   .market-listing, .market-sell-row {
     display: grid;
@@ -35756,7 +35907,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120b8';
+  window.BUILD_VERSION = 'v120b9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -149198,7 +149349,7 @@ function renderCamp() {
 
   const renderSlot = (slot) => {
     if (!slot) {
-      return `<div class="camp-slot empty"><div class="camp-empty">+ Empty Slot</div></div>`;
+      return `<div class="dpx-empty">+ Empty Slot</div>`;
     }
     const xp = getCampSlotXp(slot);
     const pct = Math.min(100, (xp / CAMP_XP_CAP) * 100);
@@ -149212,9 +149363,14 @@ function renderCamp() {
     const aSt = campActivityState(slot);
     const bond = prof.bond || 0, morale = prof.morale != null ? prof.morale : 80;
     const _tr = Math.round(prof.trauma || 0), _co = Math.round(prof.corruption || 0), _fa = Math.round(prof.fatigue || 0);
-    const _psy = (lbl, v, warn) => `<span style="color:${v >= (warn || 60) ? '#e0879a' : '#7d8aa0'}">${lbl} ${v}</span>`;
-    const statRow = `<div class="small-text ink-dim">❤ Bond ${bond} · 🙂 ${Math.round(morale)} · ${getLevelIcon('1em')} Lv ${prof.level || 1}</div>
-      <div class="small-text">😱 ${_psy('Trauma', _tr)} · 🕷 ${_psy('Corrupt', _co)} · 💤 ${_psy('Fatigue', _fa, 70)}</div>`;
+    // The reference's 2×2 chip block. Morale and level keep a home on the pill
+    // row so the rebuild does not quietly drop information the old row showed.
+    const statRow = `<div class="dpx-stats">
+        <span class="dpx-chip bond" title="Bond">💚 Bond <b>${bond}</b></span>
+        <span class="dpx-chip trauma" title="Trauma">💀 Trauma <b>${_tr}</b></span>
+        <span class="dpx-chip corrupt" title="Corruption">☣ Corrupt <b>${_co}</b></span>
+        <span class="dpx-chip fatigue" title="Fatigue">😖 Fatigue <b>${_fa}</b></span>
+      </div>`;
     let body, actions;
     if (aSt.phase === 'running') {
       const remH = Math.floor(aSt.remainingMs / 3600000);
@@ -149222,45 +149378,57 @@ function renderCamp() {
       const tierL = slot.activity === 'loot' ? ((CAMP_LOOT_TIERS[slot.tier] || {}).label || 'Loot Run')
                   : slot.activity === 'rescue' ? 'Rescue Mission'
                   : slot.activity === 'raidRival' ? 'Striking the Rival' : 'Studying';
-      body = `<div class="small-text" style="color:#ffb454">🟠 ${escapeHtml(tierL)} — extraction in <strong>${remH}h ${remM}m</strong></div>`;
-      actions = `<button class="btn-mini btn-danger" data-act="recall" data-slot="${slot.id}" title="Pull them out early (morale hit, no reward)">⤺ Recall</button>`;
+      body = `<div class="dpx-xpl">Deployment</div>
+        <div class="dpx-state busy">🟠 ${escapeHtml(tierL)}</div>
+        <div class="dpx-rate">Extraction in <strong style="color:#ffc47a">${remH}h ${remM}m</strong></div>`;
+      actions = `<button class="dpx-btn raid" data-act="recall" data-slot="${slot.id}" title="Pull them out early (morale hit, no reward)">⤺ Recall</button>`;
     } else {
       // Idle / resting → passive XP + deployment menu.
-      body = `<div class="camp-slot-bar"><div class="camp-slot-fill" style="width:${pct}%"></div></div>
-              <div class="small-text">Resting · ${xp}/${CAMP_XP_CAP} XP · ${elapsedLabel} · ${CAMP_XP_PER_HOUR} XP/hr</div>`;
+      body = `<div class="dpx-xpl">XP Progress</div>
+        <div class="dpx-xpbar"><div class="dpx-xpfill" style="width:${pct}%"></div>
+          <span class="dpx-xptx">${xp}/${CAMP_XP_CAP} XP</span></div>
+        <div class="dpx-state">Resting</div>
+        <div class="dpx-rate">XP/HR: ${CAMP_XP_PER_HOUR} · ${elapsedLabel} parked</div>`;
       actions = (() => {
         // ⛽ Fuel gates on the expedition buttons.
         const _fuel = (typeof getRes === 'function') ? getRes('fuel') : 0;
         const _raidF = (typeof CAMP_RUN_FUEL === 'object') ? (CAMP_RUN_FUEL.raid || 0) : 3;
         const _deepF = (typeof CAMP_RUN_FUEL === 'object') ? (CAMP_RUN_FUEL.deepRun || 0) : 8;
         const _plusF = (typeof DEEP_PLUS_FUEL === 'number') ? DEEP_PLUS_FUEL : 22;
+        // Deep+ is NOT in the reference art, but dropping it would delete a real
+        // expedition. It keeps its own gold treatment beneath Deep.
         return `
-        <div style="display:flex;flex-wrap:wrap;gap:0.3rem">
-          <button class="btn-mini" data-loot="scout:${slot.id}" title="1h · low danger · free">🥾 Scout</button>
-          <button class="btn-mini" data-loot="raid:${slot.id}" ${_fuel < _raidF ? 'disabled' : ''} title="3h · medium danger · ${_raidF} ⛽ Fuel">🎒 Raid (${_raidF}⛽)</button>
-          <button class="btn-mini" data-loot="deepRun:${slot.id}" ${_fuel < _deepF ? 'disabled' : ''} title="6h · high danger — permadeath risk · ${_deepF} ⛽ Fuel">☣️ Deep (${_deepF}⛽)</button>
-          <button class="btn-mini" data-loot="deepRunPlus:${slot.id}" ${_fuel < _plusF ? 'disabled' : ''} title="6h · long-haul — burns ${_plusF} ⛽ Fuel for a ~70% richer haul + cleaner extraction" style="border-color:#ffcf6b55;color:${_fuel < _plusF ? '#5a6a82' : '#ffcf6b'}">🛻 Deep+ (${_plusF}⛽)</button>
-          <button class="btn-mini" data-study="${slot.id}" title="12h · learn a move">📖 Study</button>
-          <button class="btn-mini" data-strike="${slot.id}" title="6h · hit the rival faction — high risk, cuts their threat & builds your reputation" style="border-color:#e0556a55;color:#e0879a">⚔️ Strike</button>
-        </div>`;
+          <button class="dpx-btn" data-loot="scout:${slot.id}" title="1h · low danger · free">🔭 Scout</button>
+          <button class="dpx-btn raid" data-loot="raid:${slot.id}" ${_fuel < _raidF ? 'disabled' : ''} title="3h · medium danger · ${_raidF} ⛽ Fuel">🔥 Raid (${_raidF}⛽)</button>
+          <button class="dpx-btn deep" data-loot="deepRun:${slot.id}" ${_fuel < _deepF ? 'disabled' : ''} title="6h · high danger — permadeath risk · ${_deepF} ⛽ Fuel">🌊 Deep (${_deepF}⛽)</button>
+          <button class="dpx-btn deepplus" data-loot="deepRunPlus:${slot.id}" ${_fuel < _plusF ? 'disabled' : ''} title="6h · long-haul — burns ${_plusF} ⛽ Fuel for a ~70% richer haul + cleaner extraction">🛻 Deep+ (${_plusF}⛽)</button>
+          <div class="dpx-acts-row">
+            <button class="dpx-btn" data-study="${slot.id}" title="12h · learn a move">📖 Study</button>
+            <button class="dpx-btn" data-strike="${slot.id}" title="6h · hit the rival faction — high risk, cuts their threat & builds your reputation">⚔ Strike</button>
+          </div>`;
       })()
         + `
-        ${App._campRescueTarget ? `<button class="btn-mini" data-rescue="${slot.id}" style="margin-top:0.3rem;border-color:#d4af3766;color:#ffd166;width:100%">🆘 Send on Rescue (3h)</button>` : ''}
-        ${(typeof _campTreatNeed === 'function' && _campTreatNeed(prof) > 0) ? `<button class="btn-mini" data-treat="${escapeHtml(slot.refId)}" title="Spend Medicine to clear trauma / corruption / fatigue and restore morale" style="margin-top:0.3rem;border-color:#ff8aa066;color:#ff9fb0;width:100%">🩺 Med-bay Treat (${_campTreatCost(prof)} 💊)</button>` : ''}
-        <div style="display:flex;gap:0.4rem;margin-top:0.3rem">
-          <button class="btn-primary" data-act="collect" data-slot="${slot.id}" ${xp <= 0 ? 'disabled' : ''}>Collect XP</button>
-          <button class="btn-mini btn-danger" data-act="eject" data-slot="${slot.id}" title="Remove without applying XP">×</button>
-        </div>`;
+        ${App._campRescueTarget ? `<button class="dpx-btn" data-rescue="${slot.id}" style="border-color:#d4af3766;color:#ffd166">🆘 Send on Rescue (3h)</button>` : ''}
+        ${(typeof _campTreatNeed === 'function' && _campTreatNeed(prof) > 0) ? `<button class="dpx-btn" data-treat="${escapeHtml(slot.refId)}" title="Spend Medicine to clear trauma / corruption / fatigue and restore morale" style="border-color:#ff8aa066;color:#ff9fb0">🩺 Treat (${_campTreatCost(prof)} 💊)</button>` : ''}`;
     }
+    const _kind = (meta.type === 'hero') ? 'Hero' : (meta.type === 'summon') ? 'Summon' : 'Unit';
     return `
-      <div class="camp-slot" data-slot="${slot.id}">
-        <div class="camp-slot-portrait">${_staticSpriteThumb(spriteId, meta.icon)}</div>
-        <div class="camp-slot-info">
-          <div class="camp-slot-name">${escapeHtml(meta.name)} <span class="lvl-tag-inline">${getLevelIcon('1.5em')}${prof.level || 1}</span></div>
-          ${statRow}
-          ${body}
+      <div class="dpx-slot" data-slot="${slot.id}">
+        <button class="dpx-x" data-act="eject" data-slot="${slot.id}" title="Remove without applying XP">×</button>
+        <div class="dpx-port">${_staticSpriteThumb(spriteId, meta.icon)}</div>
+        <div class="dpx-body">
+          <div>
+            <div class="dpx-name" title="${escapeHtml(meta.name)}">${escapeHtml(meta.name)}</div>
+            <div style="display:flex;align-items:center;gap:0.4rem;margin-bottom:0.5rem;flex-wrap:wrap">
+              <span class="dpx-pill">${_kind}</span>
+              <span class="dpx-av-s">${getLevelIcon('1em')} Lv ${prof.level || 1} · 🙂 ${Math.round(morale)}</span>
+            </div>
+            ${statRow}
+          </div>
+          <div>${body}</div>
         </div>
-        <div class="camp-slot-actions">${actions}</div>
+        <div class="dpx-acts">${actions}</div>
+        <button class="dpx-collect" data-act="collect" data-slot="${slot.id}" ${xp <= 0 ? 'disabled' : ''}>Collect XP</button>
       </div>
     `;
   };
@@ -149352,14 +149520,18 @@ function renderCamp() {
 
   const availableHtml = available.map(e => {
     const parked = isAlreadyParked(e.kind, e.id);
+    // The row is no longer one big button — the reference puts an explicit
+    // DEPLOY control on the right. data-park moves onto that button, so the
+    // existing delegated handler is unchanged.
     return `
-      <button class="lab-entry ${parked ? 'picked' : ''}" data-park="${e.kind}:${e.id}" ${parked ? 'disabled' : ''}>
-        <div class="lab-entry-icon">${_staticSpriteThumb((e.kind === 'hero' ? 'h_' : 'u_') + e.id, e.icon)}</div>
-        <div class="lab-entry-info">
-          <div class="lab-entry-name">${escapeHtml(e.name)}${parked ? ' <span class="ink-dim">(parked)</span>' : ''}</div>
-          <div class="lab-entry-sub">${e.sub}</div>
+      <div class="dpx-av${parked ? ' is-parked' : ''}">
+        <div class="dpx-av-th">${_staticSpriteThumb((e.kind === 'hero' ? 'h_' : 'u_') + e.id, e.icon)}</div>
+        <div class="dpx-av-i">
+          <div class="dpx-av-n" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}${parked ? ' <span>(Parked)</span>' : ''}</div>
+          <div class="dpx-av-s">${e.sub}</div>
         </div>
-      </button>
+        <button class="dpx-av-b" data-park="${e.kind}:${e.id}" ${parked ? 'disabled' : ''}>Deploy</button>
+      </div>
     `;
   }).join('');
 
@@ -149455,15 +149627,22 @@ function renderCamp() {
         <div class="small-text ink-dim" style="margin:-0.3rem 0 0.7rem">Build & upgrade facilities — each one strengthens your survivors. Construction continues in real time, even offline.</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.7rem">${facilityGridHtml}</div>
       </div>
-      <div class="camp-layout">
-        <div>
-          <div class="forge-section-header"><h3>Deploy Slots (${Camp.slots.length}/${_maxSlots})</h3></div>
-          <div class="camp-slots-grid">${slotsHtml.join('')}</div>
-        </div>
-        <div>
-          <div class="forge-section-header"><h3>Available to Park</h3></div>
-          <div class="lab-list" style="max-height:480px">${availableHtml}</div>
-        </div>
+      <div class="dpx-tabs">
+        <button class="dpx-tab${(App._campDeployTab || 'deploy') === 'deploy' ? ' is-on' : ''}" data-dpxtab="deploy"><span class="dpx-tab-ico">🧭</span> Deploy Slots</button>
+        <button class="dpx-tab${App._campDeployTab === 'park' ? ' is-on' : ''}" data-dpxtab="park">Park</button>
+        <button class="dpx-tab${App._campDeployTab === 'barracks' ? ' is-on' : ''}" data-dpxtab="barracks">Barracks</button>
+      </div>
+      <div class="dpx-grid">
+        ${App._campDeployTab === 'park' ? '' : `
+        <section class="dpx-panel">
+          <div class="dpx-h"><span class="dpx-h-t">Deploy Slots</span><span class="dpx-h-n">(${Camp.slots.length}/${_maxSlots})</span><span class="dpx-h-rule"></span></div>
+          <div class="dpx-scroll">${slotsHtml.join('')}</div>
+        </section>`}
+        ${App._campDeployTab === 'barracks' ? '' : `
+        <section class="dpx-panel">
+          <div class="dpx-h"><span class="dpx-h-t">Available to Park</span><span class="dpx-h-rule"></span></div>
+          <div class="dpx-scroll">${availableHtml || '<div class="dpx-empty">Nothing available</div>'}</div>
+        </section>`}
       </div>
         </main>
         <aside class="cbx-col cbx-right cbx-side">
@@ -149564,6 +149743,11 @@ function renderCamp() {
   `;
   const _dbBtn = document.getElementById('camp-debrief-close');
   if (_dbBtn) _dbBtn.onclick = () => { App._campDebrief = null; render(); };
+  // 🧭 Deploy / Park / Barracks rail. Deploy shows both panels (the reference
+  // layout); Park and Barracks each show one full-width.
+  root.querySelectorAll('[data-dpxtab]').forEach(b => {
+    b.onclick = () => { App._campDeployTab = b.getAttribute('data-dpxtab'); render(); };
+  });
   // 🛌 Inject the Hero Rest floating button AND a visible "bed rack" panel
   // showing every hero's energy at a glance. Both pin to the body so they
   // survive the camp re-renders. Both auto-clean when the player leaves

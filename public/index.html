@@ -36060,7 +36060,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120c2';
+  window.BUILD_VERSION = 'v120c3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -85547,13 +85547,22 @@ function _redirectCandidates(state, caster, eff) {
 function _targetCandidates(state, caster, eff) {
   if (!state || !caster || !caster.pos) return [];
   const owner = caster.owner;
-  const r = Math.max(0, Math.min(4, (eff.radius | 0) || 1));
+  // 🌐 GLOBAL TARGETING (v120c3). The radius was hard-clamped to 4, which made
+  // "anywhere on the battlefield" impossible to author for ANY targeted effect —
+  // the Response Ability spec's one-line blocker. `global: true` (or a radius of
+  // 99+) lifts the distance test entirely; everything else keeps the old clamp,
+  // so no existing card changes behaviour.
+  const isGlobal = (eff.global === true) || ((eff.radius | 0) >= 99);
+  const r = isGlobal ? Infinity : Math.max(0, Math.min(4, (eff.radius | 0) || 1));
+  // `targetSide: 'any'` lets one effect pick from BOTH sides (Sable banishes
+  // friend or foe). Absent, the original ally/enemy split is unchanged.
+  const anySide = (eff.targetSide === 'any');
   const wantAlly = _effectWantsAlly(eff);
   const heroesOk = (eff.type === 'singleKill' || eff.type === 'targetStrike'); // most can't hit heroes
   return (state.units || []).filter(u => {
     if (!u || !u.alive || u.id === caster.id || !u.pos) return false;
     if (u.isHero && !heroesOk) return false;
-    if (wantAlly ? (u.owner !== owner) : (u.owner === owner)) return false;
+    if (!anySide && (wantAlly ? (u.owner !== owner) : (u.owner === owner))) return false;
     if (!wantAlly && typeof hasPassive === 'function' && hasPassive(u, 'spellshield')) return false;
     // 🛡 "Cannot be targeted" — an ENEMY ward removes the unit from the pick list
     // entirely, so neither the player's board-click nor the AI's auto-pick can

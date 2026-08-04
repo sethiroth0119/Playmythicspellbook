@@ -27925,6 +27925,101 @@
   .tw-node-drawer.tw-aaa .btn-mini.btn-primary:hover,
   .tw-node-drawer.tw-aaa button.btn-primary:hover { filter:brightness(1.08); }
   .tw-node-drawer.tw-aaa .btn-mini:not(.btn-primary) { border:1px solid rgba(214,176,74,0.4); color:#e8c877; background:rgba(30,22,8,0.55); }
+
+  /* ═══ v120c0 NODE MODAL — reskin to the supplied reference ════════════════
+     Everything below is CSS ONLY and scoped to .tw-node-drawer.tw-aaa. The
+     drawer's markup already carries every section the reference shows (rebuild
+     %, "next reward at", the economy rows, upgrades, Foundation Reserve, node
+     bank, node power, Attack PRN) — it was the palette and typography that
+     differed. Restyling instead of rewriting keeps all ~450 lines of data
+     bindings and every data-* hook untouched.
+     ⚠ MUST stay after the .tw-aaa rules above: same specificity, so source
+     order decides. (This is the trap that ate an hour on .cbx-actionbar.) */
+  .tw-node-drawer.tw-aaa {
+    background:
+      radial-gradient(120% 90% at 50% 0%, rgba(120,20,24,0.30), transparent 62%),
+      linear-gradient(180deg, #0b0d16 0%, #070910 100%);
+    border:1px solid rgba(226,72,66,0.55); border-radius:14px;
+    box-shadow:0 0 0 1px rgba(255,120,90,0.10), 0 0 42px rgba(200,40,40,0.28),
+               0 26px 70px rgba(0,0,0,0.75);
+  }
+  /* breadcrumb — "DISTRICT NODES > RED ZONE" */
+  .tw-node-drawer.tw-aaa .tw-drawer-crumb-bar { border-bottom:none; padding:0.7rem 1rem 0.2rem; }
+  .tw-node-drawer.tw-aaa .tw-drawer-crumb-text {
+    font-family:'Cinzel',serif; font-size:0.8rem; font-weight:700; letter-spacing:0.17em;
+    color:#8a7d63; text-transform:uppercase; }
+  .tw-node-drawer.tw-aaa .tw-drawer-barcode { display:none; }
+  .tw-node-drawer.tw-aaa .tw-drawer-close {
+    background:rgba(0,0,0,0.4); border:1px solid rgba(226,120,110,0.45); color:#e8a89c;
+    border-radius:7px; width:30px; height:30px; }
+  /* hero title block — big gold serif name over a red-lit plate */
+  .tw-node-drawer.tw-aaa .tw-drawer-title-block {
+    position:relative; padding:0.3rem 1rem 0.9rem; border-bottom:1px solid rgba(226,72,66,0.30);
+    background:linear-gradient(180deg, rgba(90,16,20,0.22), transparent 78%); }
+  .tw-node-drawer.tw-aaa .tw-drawer-node-name {
+    font-family:'Cinzel',serif; font-size:3.1rem; font-weight:800; letter-spacing:0.02em;
+    color:#f0c869; line-height:1.02;
+    text-shadow:0 0 26px rgba(240,200,105,0.32), 0 3px 10px rgba(0,0,0,0.85); }
+  .tw-node-drawer.tw-aaa .tw-drawer-node-coords {
+    font-family:'Cinzel',serif; font-size:0.88rem; letter-spacing:0.13em; color:#b9a98a; margin-top:0.3rem; }
+  .tw-node-drawer.tw-aaa .tw-drawer-node-sub {
+    font-family:'Cinzel',serif; font-size:0.86rem; letter-spacing:0.10em; color:#b9a98a;
+    text-transform:uppercase; margin-top:0.22rem; }
+  /* tab rail — active tab is a boxed gold plate, per the reference */
+  .tw-node-drawer.tw-aaa .tw-drawer-tabs {
+    background:transparent; border-bottom:1px solid rgba(226,72,66,0.28); gap:0.3rem; padding:0.55rem 0.8rem 0.5rem; }
+  .tw-node-drawer.tw-aaa .tw-drawer-tab {
+    font-family:'Cinzel',serif; font-size:0.8rem; font-weight:700; letter-spacing:0.11em;
+    color:#8a7d63; border:1px solid transparent; border-radius:7px; padding:0.42rem 0.9rem; }
+  .tw-node-drawer.tw-aaa .tw-drawer-tab:hover { color:#d9c084; }
+  .tw-node-drawer.tw-aaa .tw-drawer-tab.is-active {
+    color:#f6dd9c; border-color:rgba(240,200,105,0.75); background:rgba(60,40,10,0.42);
+    box-shadow:0 0 16px rgba(240,200,105,0.22), inset 0 0 14px rgba(240,200,105,0.10); }
+  .tw-node-drawer.tw-aaa .tw-drawer-tab-badge {
+    background:rgba(226,72,66,0.28); color:#f0a89c; border-radius:4px; font-size:0.6rem; }
+  /* section headers — gold serif caps on a hairline rule */
+  .tw-node-drawer.tw-aaa .tw-nd-section-hdr {
+    font-family:'Cinzel',serif; font-size:0.92rem; font-weight:800; letter-spacing:0.15em;
+    color:#e0b45c; border-top:1px solid rgba(226,72,66,0.22); padding:1rem 1.1rem 0.5rem; }
+  /* panels: vitals, progress rows, economy rows */
+  .tw-node-drawer.tw-aaa .tw-nd-vital-card {
+    background:linear-gradient(180deg, rgba(18,22,36,0.92), rgba(10,13,22,0.96));
+    border:1px solid rgba(214,176,74,0.30); border-radius:10px; padding:0.75rem 0.85rem; }
+  .tw-node-drawer.tw-aaa .tw-nd-vital-label {
+    font-family:'Cinzel',serif; font-size:0.74rem; letter-spacing:0.14em; color:#a2937a; }
+  .tw-node-drawer.tw-aaa .tw-nd-vital-value {
+    font-family:'Cinzel',serif; font-size:1.85rem; font-weight:800; color:#f3e6c4; }
+  .tw-node-drawer.tw-aaa .tw-nd-vital-bar { height:5px; border-radius:3px; background:rgba(0,0,0,0.55); }
+  .tw-node-drawer.tw-aaa .tw-nd-vital-delta.pos { color:#7fd8a0; }
+  .tw-node-drawer.tw-aaa .tw-nd-vital-delta.neg { color:#e8705c; }
+  .tw-node-drawer.tw-aaa .tw-nd-progress-list {
+    background:linear-gradient(180deg, rgba(15,19,31,0.85), rgba(9,12,20,0.92));
+    border:1px solid rgba(214,176,74,0.22); border-radius:10px;
+    margin:0 1.1rem 0.7rem; padding:0.25rem 0.85rem; }
+  .tw-node-drawer.tw-aaa .tw-nd-progress-row { border-bottom:1px solid rgba(214,176,74,0.14); padding:0.6rem 0; }
+  .tw-node-drawer.tw-aaa .tw-nd-progress-row:last-child { border-bottom:none; }
+  .tw-node-drawer.tw-aaa .tw-nd-prog-label {
+    font-family:'Cinzel',serif; font-size:0.84rem; letter-spacing:0.10em; color:#c3b48f; }
+  .tw-node-drawer.tw-aaa .tw-nd-prog-bar { height:7px; border-radius:4px; background:rgba(0,0,0,0.55); }
+  .tw-node-drawer.tw-aaa .tw-nd-prog-val {
+    font-family:'Cinzel',serif; font-size:0.9rem; font-weight:700; color:#f0d089; }
+  /* the Cinder / node-bank hero box */
+  .tw-node-drawer.tw-aaa .tw-nd-cinder-box {
+    background:linear-gradient(180deg, rgba(24,18,8,0.92), rgba(12,9,5,0.96));
+    border:1px solid rgba(240,200,105,0.34); border-radius:10px; }
+  .tw-node-drawer.tw-aaa .tw-nd-cinder-value {
+    font-family:'Cinzel',serif; font-weight:800; color:#f0d089; }
+  /* the big gold action button (ATTACK PRN) */
+  .tw-node-drawer.tw-aaa .tw-action-buttons button.btn-primary,
+  .tw-node-drawer.tw-aaa #tw-act-attack {
+    width:100%; padding:0.85rem 1rem; border-radius:9px;
+    font-family:'Cinzel',serif; font-size:1.4rem; font-weight:800; letter-spacing:0.14em;
+    text-transform:uppercase; }
+  @media (max-width: 700px) {
+    .tw-node-drawer.tw-aaa .tw-drawer-node-name { font-size:2.1rem; }
+    .tw-node-drawer.tw-aaa .tw-drawer-tab { font-size:0.7rem; padding:0.36rem 0.6rem; }
+    .tw-node-drawer.tw-aaa #tw-act-attack { font-size:1.1rem; }
+  }
   /* Camp-screen banner */
   .camp-node-banner { display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; padding:0.7rem 1rem; border-radius:12px; border:1px solid rgba(212,175,55,0.35); background:linear-gradient(135deg,rgba(40,32,60,0.6),rgba(18,12,30,0.7)); }
   .camp-node-banner.unregistered { border-color:rgba(232,93,60,0.55); background:linear-gradient(135deg,rgba(60,26,20,0.5),rgba(20,12,18,0.7)); }
@@ -35907,7 +36002,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120b9';
+  window.BUILD_VERSION = 'v120c0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');

@@ -620,9 +620,18 @@
      those, so they keep their in-context placement. */
   button[id^="btn-back"]:not(#btn-tutorial-back):not(#btn-back-to-decks),
   #um-back, #tw-admin-back, #btn-lb-back, #btn-sp-back, #btn-sprites-back {
-    position: fixed;
-    top: 16px; left: 16px;
-    z-index: 60;
+    /* ⚠ IN FLOW, NOT PINNED. This used to be `position:fixed; top:16px;
+       left:16px`, which tore the button out of whatever header its screen had
+       already laid out and dropped it on the viewport corner — straight over
+       the page title (The Forge), and, on any screen with a transformed
+       ancestor, re-rooted into that ancestor and stretched into a giant gold
+       capsule in the middle of the page.
+       Keeping it in normal flow means each screen's own header positions it,
+       so it can never overlap anything. The look below is unchanged. */
+    position: static;
+    align-self: flex-start;
+    margin: 0 0 0.6rem 0;
+    z-index: 1;
     display: inline-flex !important; align-items: center; justify-content: center; gap: 0.4rem;
     padding: 0.5rem 1.15rem !important;
     background:
@@ -18523,10 +18532,17 @@
       radial-gradient(1200px 620px at 50% -8%, rgba(58,44,96,0.30), transparent 68%),
       linear-gradient(180deg, #070a16 0%, #050813 60%, #04060f 100%);
   }
+  /* Title FIRST, back button UNDER it — a stacked header can never have the
+     two collide, at any width, however long the title gets. The old 3-column
+     grid put them side by side, which only worked while the fixed-position
+     global rule was (wrongly) lifting the button out of this layout anyway. */
   .fgx-header {
-    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
-    gap: 1rem; padding: 1.1rem 1.6rem 0.9rem; margin: 0;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 0.5rem; padding: 1.1rem 1.6rem 0.9rem; margin: 0;
   }
+  .fgx-header .fgx-title { order: 1; margin: 0; }
+  .fgx-header .fgx-back  { order: 2; align-self: center; margin: 0; }
+  .fgx-header .fgx-spacer { display: none; }
   .fgx-spacer { display: block; }
   /* .btn-secondary and friends define a 999px pill later in the sheet; the
      doubled selector keeps the reference's rounded-rect. */
@@ -35474,7 +35490,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120a7';
+  window.BUILD_VERSION = 'v120a8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');

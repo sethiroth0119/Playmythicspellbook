@@ -20592,14 +20592,30 @@
     border-bottom: 2px solid var(--hp-accent);
   }
   .hp-art-bg { position: absolute; inset: 0; pointer-events: none; }
+  /* 🖼 Hero portrait — a PORTRAIT frame, filled.
+     It was a 110×110 SQUARE with `object-fit: contain`, so tall card art was
+     letterboxed inside it: a small picture floating in dead space with visible
+     gaps top and bottom. Card art is portrait (roughly 2:3), so the frame now
+     matches that shape and the image COVERS it — filling edge to edge and
+     cropping the overflow instead of shrinking to fit.
+     `overflow:hidden` + the radius keep the crop inside the rounded frame. */
   .hp-portrait {
     position: relative; z-index: 1;
-    width: 110px; height: 110px;
+    width: 96px; height: 132px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 4rem;
+    font-size: 3.4rem;
+    overflow: hidden; border-radius: 8px;
+    border: 1px solid rgba(212,175,55,0.35);
+    background: linear-gradient(180deg, rgba(12,14,22,0.9), rgba(6,8,14,0.95));
+    box-shadow: 0 4px 14px rgba(0,0,0,0.6), inset 0 0 22px rgba(0,0,0,0.5);
     filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6));
   }
-  .hp-portrait img.sprite-img { width: 100% !important; height: 100% !important; object-fit: contain; }
+  .hp-portrait img.sprite-img,
+  .hp-portrait img { width: 100% !important; height: 100% !important; object-fit: cover; object-position: center top; display: block; }
+  /* A portrait whose art failed to load must not paint the browser's broken-image
+     glyph — the frame simply reads empty, which is what the emoji fallback is for. */
+  .hp-portrait img[alt]:not([src]), .hp-portrait img[src=""] { display: none !important; }
+  @media (max-width: 620px) { .hp-portrait { width: 74px; height: 102px; font-size: 2.6rem; } }
   .hp-image-btn {
     position: absolute;
     bottom: 0.45rem;
@@ -35620,7 +35636,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120b2';
+  window.BUILD_VERSION = 'v120b3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');

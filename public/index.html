@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120e8';
+  window.BUILD_VERSION = 'v120e9';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -69928,10 +69928,198 @@ const BOND_SWORN_FIRST_OWNER_ONLY = true;  // §9 default: Sworn is non-purchasa
 const BOND_ARCHON_MIN_TIER = 0;            // §2 dial: min loyalty tier a player's Archon Catalyst needs. 0 = OFF (no gate; Archon summoning always works). Raise to 4 to require Devoted+.
 const adjustBond = (profileEntry, delta) => {
   if (!profileEntry) return;
+  // 🎭 TEMPERAMENT lands here and nowhere else. Every bond change in the game
+  // — battle events, requests, value grievances, sale penalties — already
+  // funnels through this one function, so scaling it here means temperament
+  // applies everywhere without touching a single caller. Gains and losses
+  // scale separately, which is the whole point: a Stoic is hard to win over
+  // AND hard to lose, a Vain unit is easy to please and unforgiving.
+  let d = delta;
+  try {
+    const tid = profileEntry.temper;
+    const t = tid && typeof TEMPER_BY_ID !== 'undefined' ? TEMPER_BY_ID[tid] : null;
+    if (t && d) {
+      d = d > 0 ? d * (t.gain != null ? t.gain : 1) : d * (t.loss != null ? t.loss : 1);
+      // Never let a multiplier round a real change away to nothing — a 0.4
+      // loss multiplier should soften a −1, not delete it.
+      d = d > 0 ? Math.max(1, Math.round(d)) : Math.min(-1, Math.round(d));
+    }
+  } catch (e) { d = delta; }
   const cur = profileEntry.bond || 0;
   const cap = bondCeilingFor(profileEntry);
-  profileEntry.bond = Math.max(0, Math.min(cap, cur + delta));
+  profileEntry.bond = Math.max(0, Math.min(cap, cur + d));
 };
+// ════════════════════════════════════════════════════════════════════════
+// 🎭 TEMPERAMENT, MEMORIES & RAPPORT (v120e9)
+//
+// A unit already had three independent layers, and this is deliberately a
+// FOURTH rather than a rework of any of them:
+//   • nature       (NATURES)        — stat bias, ±10%. What it is good at.
+//   • valueProfile (LQ_AXES)        — what it approves of. How you win.
+//   • bond         (BOND_TIERS)     — how much it trusts you. 0–1200.
+//   • temper       (here)           — HOW it forms that trust, and one quirk.
+//
+// Temperament is the missing verb. Values decide WHETHER a battle pleased a
+// unit; bond records the result; temperament decides how hard that result
+// lands and gives each companion one thing it does differently from every
+// other. Two units can share a nature and a value profile and still feel
+// nothing alike.
+//
+// It is DERIVED FROM THE CARD ID, not rolled. Every player meets the same
+// Ashen Pikeman with the same temperament, which makes it a knowable part of
+// the card rather than a slot-machine pull — and the Forge can override it
+// per card. A stored copy rides Profile.units[id].temper so it is visible and
+// survives, but the derivation is the source of truth when that is absent,
+// so a unit can never silently change personality.
+// ════════════════════════════════════════════════════════════════════════
+const UNIT_TEMPERS = [
+  { id: 'stoic',    name: 'Stoic',    icon: '🗿', gain: 0.80, loss: 0.60,
+    blurb: 'Slow to warm, slower to sour. Takes the long view.',
+    quirk: 'Never loses bond from being left on the bench.' },
+  { id: 'ardent',   name: 'Ardent',   icon: '🔥', gain: 1.30, loss: 1.30,
+    blurb: 'Feels everything at full volume. Adores you or does not.',
+    quirk: 'Extra bond for a win it took a kill in.' },
+  { id: 'guarded',  name: 'Guarded',  icon: '🛡', gain: 0.70, loss: 0.80,
+    blurb: 'Has been sold before, or acts like it. Trust is earned slowly.',
+    quirk: 'Gains nothing for its first 3 battles — then opens up.' },
+  { id: 'vain',     name: 'Vain',     icon: '🦚', gain: 1.15, loss: 1.50,
+    blurb: 'Wants the credit and remembers when it does not get it.',
+    quirk: 'Bonus bond for an MVP; a heavier hit for falling.' },
+  { id: 'devout',   name: 'Devout',   icon: '🕯', gain: 1.00, loss: 0.40,
+    blurb: 'Decided about you early and has not revisited it.',
+    quirk: 'Will never refuse to deploy, whatever the grievance.' },
+  { id: 'grim',     name: 'Grim',     icon: '💀', gain: 0.90, loss: 0.70,
+    blurb: 'Expects the worst. Is rarely disappointed.',
+    quirk: 'Hardens instead of grieving when an ally falls.' },
+  { id: 'kindly',   name: 'Kindly',   icon: '☀', gain: 1.20, loss: 0.90,
+    blurb: 'Holds the squad together without being asked.',
+    quirk: 'A win lifts every other unit that fought alongside it.' },
+  { id: 'restless', name: 'Restless', icon: '🌀', gain: 1.25, loss: 1.10,
+    blurb: 'Needs to be used. Sitting still is the injury.',
+    quirk: 'Suffers more on the bench, thrives on back-to-back fights.' },
+];
+const TEMPER_BY_ID = Object.fromEntries(UNIT_TEMPERS.map(t => [t.id, t]));
+// Deterministic from the id — same card, same temperament, for everyone.
+function _temperFor(cardId, card) {
+  try {
+    const authored = (card && card.temper) || null;
+    if (authored && TEMPER_BY_ID[authored]) return TEMPER_BY_ID[authored];
+    const s = 'temper:' + String(cardId || '');
+    let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return UNIT_TEMPERS[Math.abs(h) % UNIT_TEMPERS.length];
+  } catch (e) { return UNIT_TEMPERS[0]; }
+}
+// The temperament actually in force for a profile entry.
+function getUnitTemper(cardId, entry) {
+  try {
+    const e = entry || (Profile.units && Profile.units[cardId]) || null;
+    if (e && e.temper && TEMPER_BY_ID[e.temper]) return TEMPER_BY_ID[e.temper];
+    // ⚠ getCardById does not exist in this client (see the note at the deck
+    // cache). Guarding for it "safely" returned null every time, which meant
+    // an authored card.temper was silently ignored and every unit fell back
+    // to the derived value — the override would have looked implemented and
+    // done nothing.
+    let card = null;
+    try { card = (typeof resolveDeckCard === 'function') ? resolveDeckCard('unit:' + cardId) : null; } catch (e) {}
+    return _temperFor(cardId, card);
+  } catch (e) { return _temperFor(cardId, null); }
+}
+
+// ── MEMORIES ────────────────────────────────────────────────────────────
+// A companion you have fought 80 battles beside should be able to SAY so.
+// Bond is one number and cannot carry that; this is the shared history
+// behind it. Append-only, capped, and stored on the same cloud-synced entry.
+const UNIT_MEMORY_KINDS = {
+  first:      { icon: '🤝', text: 'Fought its first battle at your side.' },
+  battles10:  { icon: '⚔', text: 'Ten battles together.' },
+  battles25:  { icon: '⚔', text: 'Twenty-five battles together.' },
+  battles50:  { icon: '⚔', text: 'Fifty battles together.' },
+  battles100: { icon: '🎖', text: 'One hundred battles together.' },
+  firstKill:  { icon: '🩸', text: 'Took its first life for you.' },
+  kills25:    { icon: '🩸', text: 'Twenty-five kills in your service.' },
+  laststand:  { icon: '🛡', text: 'Refused to fall. Held on at one hit point.' },
+  tierUp:     { icon: '💗', text: 'Its regard for you deepened.' },
+  sold:       { icon: '💔', text: 'You sold it. It remembers.' },
+  returned:   { icon: '🏠', text: 'You bought it back. It came home.' },
+  survivedAll:{ icon: '🌟', text: 'Came through a battle where others did not.' },
+};
+const UNIT_MEMORY_CAP = 24;
+function unitRemember(entry, kind, detail) {
+  try {
+    if (!entry || !UNIT_MEMORY_KINDS[kind]) return false;
+    if (!Array.isArray(entry.memories)) entry.memories = [];
+    // Milestones fire once. Repeatable moments (a last stand, a tier-up) may
+    // recur, so they carry a count instead of duplicating rows.
+    const existing = entry.memories.find(m => m && m.k === kind);
+    if (existing) {
+      if (kind === 'laststand' || kind === 'tierUp' || kind === 'survivedAll' ||
+          kind === 'sold' || kind === 'returned') {
+        existing.n = (existing.n | 0) + 1; existing.at = Date.now();
+        if (detail) existing.d = detail;
+        return true;
+      }
+      return false;                                  // a true one-off already logged
+    }
+    entry.memories.push({ k: kind, at: Date.now(), n: 1, d: detail || undefined });
+    // Keep the oldest milestones (they are the meaningful ones) and drop the
+    // middle if it ever overflows, rather than letting the list grow forever.
+    if (entry.memories.length > UNIT_MEMORY_CAP) {
+      entry.memories = entry.memories.slice(0, 8).concat(entry.memories.slice(-(UNIT_MEMORY_CAP - 8)));
+    }
+    return true;
+  } catch (e) { return false; }
+}
+
+// ── RAPPORT ─────────────────────────────────────────────────────────────
+// Units bonding with EACH OTHER, not just with you. Fighting and winning
+// together builds a rapport; at the threshold the pair fights measurably
+// better when deployed side by side. This is the part loyalty never covered:
+// a roster with history, where who you field together starts to matter.
+const RAPPORT_MAX = 100;
+const RAPPORT_THRESHOLD = 25;      // where the pair bonus switches on
+const RAPPORT_PARTNER_CAP = 6;     // remember the six it fought with most
+const RAPPORT_BONUS = { atk: 2, def: 2 };
+function _rapportEntry(cardId) {
+  try {
+    if (!Profile.units[cardId]) return null;
+    const e = Profile.units[cardId];
+    if (!e.rapport || typeof e.rapport !== 'object') e.rapport = {};
+    return e;
+  } catch (e) { return null; }
+}
+function rapportBump(aId, bId, amount) {
+  try {
+    if (!aId || !bId || aId === bId) return;
+    const a = _rapportEntry(aId); if (!a) return;
+    a.rapport[bId] = Math.max(0, Math.min(RAPPORT_MAX, (a.rapport[bId] | 0) + (amount | 0)));
+    // Trim to the strongest partners so a long career cannot bloat the entry.
+    const keys = Object.keys(a.rapport);
+    if (keys.length > RAPPORT_PARTNER_CAP) {
+      const keep = keys.sort((x, y) => a.rapport[y] - a.rapport[x]).slice(0, RAPPORT_PARTNER_CAP);
+      const trimmed = {}; for (const k of keep) trimmed[k] = a.rapport[k];
+      a.rapport = trimmed;
+    }
+  } catch (e) {}
+}
+function rapportWith(aId, bId) {
+  try { const e = Profile.units[aId]; return (e && e.rapport && (e.rapport[bId] | 0)) || 0; }
+  catch (e) { return 0; }
+}
+// Partners at or over the threshold — the pairs that actually pay off.
+function rapportPartners(cardId) {
+  try {
+    const e = Profile.units[cardId];
+    if (!e || !e.rapport) return [];
+    return Object.keys(e.rapport)
+      .filter(k => (e.rapport[k] | 0) >= RAPPORT_THRESHOLD)
+      .sort((a, b) => e.rapport[b] - e.rapport[a]);
+  } catch (e) { return []; }
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.temper = { list: UNIT_TEMPERS, of: getUnitTemper, remember: unitRemember,
+                         rapport: rapportWith, partners: rapportPartners };
+} catch (e) {}
 // 🔁 One-time-per-entry rescale of legacy 0–100 bonds onto the 0–1200 scale.
 // Per-entry flag (bondScaled) so it's timing-safe: new instances are created already
 // flagged, so a maxed old companion (100) never gets confused with a fresh Neutral (100).
@@ -70251,6 +70439,89 @@ function _lqUnitValueProfile(card) {
   const arch = _lqArchetypeDefault(card);
   return arch ? [arch] : [];
 }
+// 🎭 Temperament / history / rapport panel for the owned-card detail modal.
+// Sits alongside Companion Values and follows the same discovery rule: the
+// more a unit trusts you, the more of itself it shows. A stranger's
+// temperament is a guess; a Sworn companion has no secrets left.
+function _unitTemperPanelHtml(card, prof) {
+  try {
+    if (!card || (card.type && card.type !== 'unit')) return '';
+    const t = getUnitTemper(card.id, prof);
+    if (!t) return '';
+    const tierIdx = prof ? bondTierIndex(prof.bond || 0) : 0;
+    const together = prof ? (prof.together | 0) : 0;
+    const esc = (s) => escapeHtml(String(s == null ? '' : s));
+    const hdr = (txt) => '<div class="small-text ink-dim" style="letter-spacing:.06em;text-transform:uppercase;font-size:.66rem;margin:.55rem 0 3px">' + txt + '</div>';
+
+    // ── temperament ──────────────────────────────────────────────────────
+    // Named from the start (it is how they carry themselves — you can see
+    // that on day one); the QUIRK is the mechanical edge and stays hidden
+    // until Steady, so learning a companion still means something.
+    let out = hdr('🎭 Temperament');
+    out += '<div style="display:flex;align-items:flex-start;gap:.55rem;padding:.45rem .6rem;border:1px solid rgba(212,175,55,.28);border-radius:8px;background:rgba(212,175,55,.06)">'
+      + '<span style="font-size:1.5rem;line-height:1">' + t.icon + '</span>'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="color:#f5c453;font-weight:800;letter-spacing:.03em">' + esc(t.name) + '</div>'
+      + '<div class="small-text" style="color:#c2b184;line-height:1.45">' + esc(t.blurb) + '</div>'
+      + (tierIdx >= 2
+          ? '<div class="small-text" style="color:#9ad17a;margin-top:.2rem">✦ ' + esc(t.quirk) + '</div>'
+          : '<div class="small-text ink-dim" style="margin-top:.2rem;font-style:italic">Reach Steady to learn what makes them different.</div>')
+      + '<div class="small-text ink-dim" style="margin-top:.25rem">'
+      + 'Bonds ' + (t.gain >= 1 ? 'quickly' : 'slowly') + ' (×' + t.gain.toFixed(2) + ')'
+      + ' · takes setbacks ' + (t.loss >= 1 ? 'hard' : 'lightly') + ' (×' + t.loss.toFixed(2) + ')'
+      + '</div></div></div>';
+
+    // ── shared history ───────────────────────────────────────────────────
+    const mems = (prof && Array.isArray(prof.memories)) ? prof.memories.slice().reverse() : [];
+    out += hdr('📖 Shared History' + (together ? ' · ' + together + ' battle' + (together === 1 ? '' : 's') : ''));
+    if (!mems.length) {
+      out += '<div class="small-text ink-dim" style="font-style:italic">Nothing between you yet. Fight alongside them.</div>';
+    } else {
+      out += '<div style="display:flex;flex-direction:column;gap:2px">'
+        + mems.slice(0, 8).map(m => {
+          const k = UNIT_MEMORY_KINDS[m.k]; if (!k) return '';
+          const n = (m.n | 0) > 1 ? ' <span class="ink-dim">×' + (m.n | 0) + '</span>' : '';
+          const d = m.d ? ' <span class="ink-dim">(' + esc(m.d) + ')</span>' : '';
+          return '<div class="small-text" style="color:#cbbf9e">' + k.icon + ' ' + esc(k.text) + n + d + '</div>';
+        }).join('')
+        + '</div>';
+    }
+
+    // ── rapport ──────────────────────────────────────────────────────────
+    // Only the pairs that have actually crossed the threshold are named, so
+    // this reads as an achievement rather than a list of everyone they met.
+    const partners = (typeof rapportPartners === 'function') ? rapportPartners(card.id) : [];
+    out += hdr('🤝 Rapport');
+    if (!partners.length) {
+      const anyRaw = (prof && prof.rapport) ? Object.keys(prof.rapport).length : 0;
+      out += '<div class="small-text ink-dim" style="font-style:italic">'
+        + (anyRaw ? 'Starting to trust a few of the others. Keep winning together.'
+                  : 'Has not fought alongside anyone often enough to matter yet.')
+        + '</div>';
+    } else {
+      out += '<div style="display:flex;flex-wrap:wrap;gap:4px">'
+        + partners.slice(0, 6).map(pid => {
+          // ⚠ resolveDeckCard('unit:<id>'), NOT an invented getCardById — that
+          // does not exist, and the fallback quietly printed raw ids like
+          // "orc" where a name belonged. This is also the resolver that finds
+          // FORGED units, which a lookup against UNIT_CARDS alone would miss.
+          let nm = pid;
+          try { const pc = resolveDeckCard('unit:' + pid); if (pc && pc.name) nm = pc.name; } catch (e) {}
+          const v = rapportWith(card.id, pid);
+          return '<span title="Rapport ' + v + '/' + RAPPORT_MAX + ' — deploy them together for +'
+            + RAPPORT_BONUS.atk + ' ATK / +' + RAPPORT_BONUS.def + ' DEF"'
+            + ' style="display:inline-flex;align-items:center;gap:.25rem;padding:2px 8px;border-radius:999px;'
+            + 'border:1px solid #7fd8a055;background:#7fd8a018;color:#7fd8a0;font-size:.72rem">'
+            + '🤝 ' + esc(nm) + '</span>';
+        }).join('')
+        + '</div>'
+        + '<div class="small-text ink-dim" style="margin-top:.2rem">Deployed together, each gains +'
+        + RAPPORT_BONUS.atk + ' ATK / +' + RAPPORT_BONUS.def + ' DEF.</div>';
+    }
+    return '<div class="ccm-meta-block" style="margin-top:.5rem">' + out + '</div>';
+  } catch (e) { return ''; }
+}
+
 // 🎭 §4 Discovery — tier-gated value tags for a card. Hidden ("?") below Steady
 // (you're still guessing), tags at Steady, + intensity & reasons at Trusted+.
 function _lqValueTagsHtml(card, prof) {
@@ -70430,6 +70701,11 @@ const getUnitProfile = (cardId) => {
   _migrateBondEntry(p); if (p.bond == null) { p.bond = BOND_NEW; p.bondScaled = true; }
   if (!p.statGains) p.statGains = emptyGains();
   if (!p.evs) p.evs = emptyEvs();
+  // 🎭 Stamp the temperament so it is visible in the saved profile. The value
+  // is derived from the card id, so stamping it changes nothing — it just
+  // means the entry carries its own answer instead of recomputing, and an
+  // existing companion picks one up without a migration pass.
+  try { if (!p.temper && typeof getUnitTemper === 'function') p.temper = getUnitTemper(cardId, p).id; } catch (e) {}
   return p;
 };
 // AI-side profile getters: AI heroes and units gain XP/levels and persist across battles, so the
@@ -92244,6 +92520,29 @@ const buildUnit = (cardData, owner, pos, heroPassive, levelOverride, xpOverride)
   // 💗🎁 Bound items (from loyalty requests / conveyed on sale) permanently boost the unit.
   if (owner === 'player' && prof && Array.isArray(prof.boundItems) && prof.boundItems.length) {
     for (const _bid of prof.boundItems) { try { const _bit = (typeof getItemById === 'function') ? getItemById(_bid) : HELD_ITEMS[_bid]; if (_bit && _bit.stats) withItem = applyHeldItem(withItem.stats, withItem.maxHp, _bit); } catch (e) {} }
+  }
+  // 🤝 RAPPORT BONUS — a pair that has fought and won together enough times
+  // fights measurably better side by side. Applied at build time like a held
+  // item, so it flows through every downstream stat consumer for free.
+  // Deliberately checked against the CURRENT battle's roster: the bonus is for
+  // fighting TOGETHER, so it must not apply when the partner stayed home.
+  if (owner === 'player' && typeof rapportPartners === 'function') {
+    try {
+      const mates = rapportPartners(cardData.id);
+      if (mates.length) {
+        const here = new Set(((App.state && App.state.units) || [])
+          .filter(u => u && u.owner === 'player')
+          .map(u => u.originalCardId || u.cardId));
+        // Also count units still queued in this deck for the battle being set
+        // up, so the first unit placed is not denied a bonus its partner will
+        // provide a moment later.
+        try { ((App.state && App.state._deckUnitIds) || []).forEach(x => here.add(x)); } catch (e) {}
+        if (mates.some(m => here.has(m))) {
+          withItem = applyHeldItem(withItem.stats, withItem.maxHp,
+            { stats: { atk: RAPPORT_BONUS.atk, def: RAPPORT_BONUS.def } });
+        }
+      }
+    } catch (e) {}
   }
   const elements = getElementsOf(cardData);
   // Resolve known moves: both player and AI units now pull from their respective profiles so
@@ -142476,7 +142775,12 @@ function placeUnit(card, pos, opts) {
   try {
     const _vid = card.originalCardId || card.cardId || card.id;
     const _vp = _vid && Profile.units && Profile.units[_vid];
-    if (_vp && _vp.refuseDeploy) {
+    // 🕯 DEVOUT never refuses. It decided about you early and does not revisit
+    // it — the grievance is still tracked and still bleeds bond, it just never
+    // becomes a strike. That is the temperament's whole promise, so it has to
+    // hold at the one moment it matters.
+    const _devout = _vp && _vp.temper === 'devout';
+    if (_vp && _vp.refuseDeploy && !_devout) {
       showToast('🎭 ' + (card.name || 'This companion') + ' refuses to fight for you right now — they need time, or a change in how you fight.', 4200);
       return;
     }
@@ -146871,18 +147175,89 @@ function recordBattleProgress() {
     _migrateBondEntry(cur); if (cur.bond == null) { cur.bond = BOND_NEW; cur.bondScaled = true; }
     if (!cur.nature) cur.nature = rollNature();
     // 💗 Loyalty (§3): survived +3, kill/MVP +5, won-while-deployed +2; died despite effort -3 (grief)
-    if (aliveByCard[id]) adjustBond(cur, 3);
-    if (killsPerCard[id]) adjustBond(cur, 5);
-    if (won && (aliveByCard[id] || killsPerCard[id])) adjustBond(cur, 2);
+    if (!cur.temper) { try { cur.temper = getUnitTemper(id, cur).id; } catch (e) {} }
+    const _tmp = (typeof TEMPER_BY_ID !== 'undefined' && TEMPER_BY_ID[cur.temper]) || null;
+    // 🎭 GUARDED opens up slowly — it takes nothing from its first three
+    // battles. adjustBond still runs for LOSSES, so this is reticence, not
+    // immunity: a bad start with a Guarded unit still costs you.
+    cur.together = (cur.together | 0) + 1;
+    const _shy = _tmp && _tmp.id === 'guarded' && cur.together <= 3;
+    const _gain = (n) => { if (!_shy) adjustBond(cur, n); };
+    if (aliveByCard[id]) _gain(3);
+    if (killsPerCard[id]) _gain(5);
+    if (won && (aliveByCard[id] || killsPerCard[id])) _gain(2);
     if (faintedByCard[id]) adjustBond(cur, -3 * faintedByCard[id]);
+    // 🎭 Per-temperament quirks — each unit's one distinguishing reaction.
+    try {
+      if (_tmp) {
+        if (_tmp.id === 'ardent' && won && killsPerCard[id]) _gain(3);          // burns bright on a kill
+        if (_tmp.id === 'vain') {
+          if (killsPerCard[id] >= 2) _gain(3);                                   // wants the spotlight
+          if (faintedByCard[id]) adjustBond(cur, -4);                            // and takes falling badly
+        }
+        // GRIM hardens where others grieve: an ally lost is confirmation, not
+        // a wound. Applied only when it SURVIVED to see it.
+        if (_tmp.id === 'grim' && aliveByCard[id]) {
+          let lost = 0; for (const k in faintedByCard) if (k !== id) lost += faintedByCard[k] | 0;
+          if (lost) _gain(2);
+        }
+        if (_tmp.id === 'restless' && aliveByCard[id] && cur._lastBattleFielded) _gain(2);  // back-to-back
+      }
+      cur._lastBattleFielded = true;
+    } catch (e) {}
+    // 📖 MEMORIES — the shared history behind the number.
+    try {
+      if (cur.together === 1) unitRemember(cur, 'first');
+      if (cur.together === 10) unitRemember(cur, 'battles10');
+      if (cur.together === 25) unitRemember(cur, 'battles25');
+      if (cur.together === 50) unitRemember(cur, 'battles50');
+      if (cur.together === 100) unitRemember(cur, 'battles100');
+      if (killsPerCard[id] && !(cur.kills > killsPerCard[id])) unitRemember(cur, 'firstKill');
+      if ((cur.kills | 0) >= 25) unitRemember(cur, 'kills25');
+      // Came through a battle that cost you someone else.
+      if (aliveByCard[id] && Object.keys(faintedByCard || {}).some(k => k !== id)) unitRemember(cur, 'survivedAll');
+      const _tIdx = bondTierIndex(cur.bond);
+      if (cur._memTier == null) cur._memTier = _tIdx;
+      else if (_tIdx > cur._memTier) { unitRemember(cur, 'tierUp', getBondTier(cur.bond).name); cur._memTier = _tIdx; }
+    } catch (e) {}
     Profile.units[id] = cur;
   }
+  // 🤝 RAPPORT — units bonding with EACH OTHER. Everything above is about the
+  // unit's regard for YOU; this is the roster forming its own relationships.
+  // Only on a win, only for units that were actually on the field together,
+  // and symmetric so a pair always agrees about its own history.
+  try {
+    if (won) {
+      const _fld = Array.from(fieldedSet).filter(x => Profile.units[x]);
+      for (let i = 0; i < _fld.length; i++) {
+        for (let j = i + 1; j < _fld.length; j++) {
+          // Surviving it together is worth more than merely being there.
+          const both = aliveByCard[_fld[i]] && aliveByCard[_fld[j]];
+          rapportBump(_fld[i], _fld[j], both ? 2 : 1);
+          rapportBump(_fld[j], _fld[i], both ? 2 : 1);
+        }
+      }
+      // 🎭 KINDLY lifts the squad — a win with one present is worth a little
+      // more to everyone else who fought.
+      for (const _kid of _fld) {
+        const _ke = Profile.units[_kid];
+        if (!_ke || _ke.temper !== 'kindly') continue;
+        for (const _oid of _fld) if (_oid !== _kid && Profile.units[_oid]) adjustBond(Profile.units[_oid], 1);
+      }
+    }
+  } catch (e) {}
   // 💗 Benched (§3) — units you BROUGHT but never deployed lose -2 loyalty. This IS the
   // decay mechanic: you're punished for neglect WHILE PLAYING, never for logging off.
   try {
     const _bench = (s && Array.isArray(s._deckUnitIds)) ? s._deckUnitIds : [];
     for (const _bid of _bench) {
-      if (fieldedSet.has(_bid)) continue; const _bp = Profile.units[_bid]; if (!_bp) continue; _migrateBondEntry(_bp); adjustBond(_bp, -2);
+      if (fieldedSet.has(_bid)) continue; const _bp = Profile.units[_bid]; if (!_bp) continue; _migrateBondEntry(_bp);
+      // 🎭 The bench means different things to different companions. A STOIC
+      // does not mind waiting; a RESTLESS one takes it hardest. Everyone else
+      // gets the standard −2.
+      const _bt = (typeof TEMPER_BY_ID !== 'undefined' && TEMPER_BY_ID[_bp.temper]) || null;
+      if (!(_bt && _bt.id === 'stoic')) adjustBond(_bp, (_bt && _bt.id === 'restless') ? -4 : -2);
+      _bp._lastBattleFielded = false;
       // 🎭 §7 — a benched unit COOLS OFF: its grievance decays each battle out of the
       // fray, so a refuse-to-deploy companion isn't locked out forever (no deadlock).
       if (_bp.grievance) { _bp.grievance = Math.max(0, (_bp.grievance | 0) - 6); if (_bp.grievance < 12) { _bp.refuseDeploy = false; _bp.valueBleed = false; _bp.grievanceFlare = false; } }
@@ -181538,6 +181913,7 @@ function renderCollectionCardModal(active) {
             ${statsHtml}
             ${traitNatureHtml}
             ${(typeof _lqUnitValueProfile === 'function' && (c.type || data.kind) === 'unit' && _lqUnitValueProfile(c).length) ? `<div class="ccm-meta-block" style="margin-top:.5rem"><div class="small-text ink-dim" style="letter-spacing:.06em;text-transform:uppercase;font-size:.66rem;margin-bottom:3px">🎭 Companion Values</div>${_lqValueTagsHtml(c, (Profile.units && Profile.units[c.id]) || null)}</div>` : ''}
+            ${(typeof _unitTemperPanelHtml === 'function' && (c.type || data.kind) === 'unit') ? _unitTemperPanelHtml(c, (Profile.units && Profile.units[c.id]) || null) : ''}
             ${passiveHtml}
             ${onPlayHtml}
             ${(typeof _archonReqDetailHtml === 'function') ? _archonReqDetailHtml(c) : ''}

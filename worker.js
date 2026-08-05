@@ -203,6 +203,10 @@ async function handleCashout(request, env, u) {
       if (s && s.metadata && s.metadata.shop_tier) {
         try { await _shopFulfillSession(env, s); } catch (e) {}
       }
+      // 🚚 A convoy rig bought from the Garage.
+      if (s && s.metadata && s.metadata.garage_sku) {
+        try { await _garageFulfillSession(env, s); } catch (e) {}
+      }
     }
     return cjson({ received: true });
   }
@@ -425,14 +429,50 @@ async function _garageRecord(env, userId, sku, sid) {
     return r.ok;
   } catch (e) { return false; }
 }
+// 🪝 Fulfil a paid rig from a WEBHOOK event. This is what rescues a buyer who
+// pays and then closes the tab: /confirm only ever runs if they come back, so
+// without this they are charged and get nothing, with no recovery path — the
+// purchase leaves no row for /owned to replay.
+//
+// Safe to run alongside /confirm. Recording is idempotent on the Stripe
+// session id (UNIQUE), so the webhook and the return visit can both fire and
+// the second is a no-op. Takes the user id from the session metadata rather
+// than from a caller, because Stripe is the caller here.
+async function _garageFulfillSession(env, sess) {
+  try {
+    if (!sess || sess.payment_status !== 'paid') return false;
+    const md = sess.metadata || {};
+    const sku = md.garage_sku;
+    const uid = md.user_id || sess.client_reference_id;
+    if (!sku || !uid || !GARAGE_RIGS[sku]) return false;
+    return await _garageRecord(env, uid, sku, sess.id);
+  } catch (e) { return false; }
+}
 async function handleGarage(request, env, u) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_RW });
   const seg = u.pathname.replace(/^\/api\/garage\//, '').replace(/\/+$/, '');
   const configured = !!env.STRIPE_SECRET_KEY;
+  // 🪝 Webhook — Stripe calls this, not a signed-in player, so it sits ABOVE
+  // the auth gate: the signature is the authentication. Registering this URL
+  // is optional; /api/shop/webhook and /api/cashout/webhook both fulfil rigs
+  // too, so whichever one is already in the Stripe dashboard will work.
+  if (seg === 'webhook' && request.method === 'POST') {
+    const raw = await request.text();
+    const ok = await verifyStripeSig(env.STRIPE_WEBHOOK_SECRET, raw, request.headers.get('stripe-signature') || '');
+    if (!ok) return cjson({ error: 'bad_signature' }, 400);
+    let evt = null; try { evt = JSON.parse(raw); } catch (e) {}
+    if (evt && evt.type === 'checkout.session.completed') {
+      try { await _garageFulfillSession(env, evt.data && evt.data.object); } catch (e) {}
+    }
+    return cjson({ received: true });
+  }
   if (seg === 'config' && request.method === 'GET') {
     // Prices are published so the store can render from the AUTHORITY rather
     // than only from its own copy — that is what makes drift visible.
-    return cjson({ enabled: configured, rigs: Object.keys(GARAGE_RIGS).map(k =>
+    // webhook:false means a buyer who never returns is NOT fulfilled — the
+    // single most useful thing this endpoint can tell an operator.
+    return cjson({ enabled: configured, webhook: !!env.STRIPE_WEBHOOK_SECRET,
+      durable: !!(env.SB_SERVICE && env.SB_URL), rigs: Object.keys(GARAGE_RIGS).map(k =>
       ({ sku: k, cents: GARAGE_RIGS[k].cents, name: GARAGE_RIGS[k].name })) });
   }
   if (!configured) return cjson({ error: 'stripe_not_configured', hint: 'Set STRIPE_SECRET_KEY on this Worker.' }, 503);
@@ -636,7 +676,14 @@ async function handleShop(request, env, u) {
     if (!ok) return cjson({ error: 'bad_signature' }, 400);
     let evt = null; try { evt = JSON.parse(raw); } catch (e) {}
     if (evt && evt.type === 'checkout.session.completed') {
-      try { await _shopFulfillSession(env, evt.data && evt.data.object); } catch (e) {}
+      const _o = evt.data && evt.data.object;
+      // A rig session carries garage_sku and no shop tier — route it to the
+      // garage fulfiller instead of the shop one, which would ignore it.
+      if (_o && _o.metadata && _o.metadata.garage_sku) {
+        try { await _garageFulfillSession(env, _o); } catch (e) {}
+      } else {
+        try { await _shopFulfillSession(env, _o); } catch (e) {}
+      }
     }
     return cjson({ received: true });
   }

@@ -36296,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120h3';
+  window.BUILD_VERSION = 'v120h4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -200861,9 +200861,83 @@ try {
                          iAmMayorOf: _twIAmMayorOf, terms: _twMayorTermsLine };
 } catch (e) {}
 
+/* 💰 MANAGER MODE LEDGER — a hired mayor spends the OWNER's resources and
+   Cinder, and everything the city produces lands in the OWNER's stores.
+   Neither direction used to be true: the city bridge read and wrote whoever
+   was looking at it, so a manager could pour a personally farmed hoard into
+   somebody else's city AND drain that city's output into their own camp.
+
+   The owner's ledger cannot be touched from a browser under normal RLS, so it
+   moves through city_owner_ledger_get / _apply (sql/010), which authorise
+   against an ACTIVE node_mayors row and refuse anything that would go negative.
+
+   ⚠ A ROUND TRIP PER TICK WOULD BE UNUSABLE — the city calls getRes several
+   times a second. So the owner's ledger is CACHED on open, mutated locally for
+   instant UI, and the accumulated delta is flushed on a timer and on close.
+   The flush is a DELTA, never an absolute, so a flush that races another writer
+   adds to it instead of overwriting it. */
+const CityMgr = { active: false, nodeId: null, cinder: 0, salvage: {}, pending: { cinder: 0, salvage: {} }, _timer: null, _busy: false };
+
+async function _cityMgrLoad(nodeId) {
+  try {
+    if (!initCloud() || !Cloud.client) return false;
+    const r = await Cloud.client.rpc('city_owner_ledger_get', { p_node_id: String(nodeId) });
+    if (r && r.error) { console.warn('[city] owner ledger unavailable —', r.error.message); return false; }
+    const j = r && r.data;
+    if (!j || j.ok !== true) return false;
+    CityMgr.active = true; CityMgr.nodeId = nodeId;
+    CityMgr.cinder = Math.max(0, Math.round(Number(j.cinder) || 0));
+    CityMgr.salvage = (j.salvage && typeof j.salvage === 'object') ? j.salvage : {};
+    CityMgr.pending = { cinder: 0, salvage: {} };
+    if (CityMgr._timer) clearInterval(CityMgr._timer);
+    CityMgr._timer = setInterval(_cityMgrFlush, 6000);
+    return true;
+  } catch (e) { return false; }
+}
+async function _cityMgrFlush() {
+  if (!CityMgr.active || CityMgr._busy) return;
+  const dC = Math.round(CityMgr.pending.cinder || 0);
+  const dS = CityMgr.pending.salvage || {};
+  const anyRes = Object.keys(dS).some((k) => (dS[k] | 0) !== 0);
+  if (!dC && !anyRes) return;
+  CityMgr._busy = true;
+  // Clear BEFORE awaiting: anything the city spends mid-flight accumulates into
+  // a fresh delta rather than being flushed twice.
+  CityMgr.pending = { cinder: 0, salvage: {} };
+  try {
+    const r = await Cloud.client.rpc('city_owner_ledger_apply', {
+      p_node_id: String(CityMgr.nodeId), p_cinder_delta: dC, p_salvage_delta: dS,
+    });
+    const j = r && r.data;
+    if (r && r.error) throw r.error;
+    if (j && j.ok === true) {
+      // Adopt the server's numbers — it is the only party that saw every writer.
+      CityMgr.cinder = Math.max(0, Math.round(Number(j.cinder) || 0));
+      if (j.salvage && typeof j.salvage === 'object') CityMgr.salvage = j.salvage;
+    } else if (j && j.ok === false) {
+      // Refused (the owner cannot afford it). Put the delta back so the next
+      // flush retries rather than silently losing the spend.
+      CityMgr.pending.cinder += dC;
+      for (const k in dS) CityMgr.pending.salvage[k] = (CityMgr.pending.salvage[k] || 0) + dS[k];
+      try { showToast('🏛 The owner cannot afford that — ' + (j.error === 'insufficient_cinder' ? 'not enough Cinder' : 'not enough ' + (j.resource || 'resources')) + '.', 4200); } catch (e) {}
+    }
+  } catch (e) {
+    CityMgr.pending.cinder += dC;
+    for (const k in dS) CityMgr.pending.salvage[k] = (CityMgr.pending.salvage[k] || 0) + dS[k];
+  } finally { CityMgr._busy = false; }
+}
+function _cityMgrEnd() {
+  if (!CityMgr.active) return;
+  try { _cityMgrFlush(); } catch (e) {}     // last write before we forget it
+  if (CityMgr._timer) { clearInterval(CityMgr._timer); CityMgr._timer = null; }
+  CityMgr.active = false; CityMgr.nodeId = null;
+  CityMgr.cinder = 0; CityMgr.salvage = {}; CityMgr.pending = { cinder: 0, salvage: {} };
+}
 function _openNodeCity(nodeId) {
   try { App._cityNodeId = nodeId || null; } catch (e) {}
-  /* 🏛 WHOSE CITY IS THIS? A hired mayor manages the OWNER's city, not their
+  
+
+/* 🏛 WHOSE CITY IS THIS? A hired mayor manages the OWNER's city, not their
      own. cityStateSave/Load used to key on Profile.cloud.userId unconditionally,
      so pressing "Manage <Node> City" quietly opened the MAYOR's own city — they
      would build a city for hours believing they were running the owner's.
@@ -200886,12 +200960,21 @@ function _openNodeCity(nodeId) {
         App._cityOwnerId = o.user_id;
         App._cityOwnerName = o.display_name || 'the owner';
       }
+      // 💰 Point the city's economy at the OWNER's ledger. Fire-and-forget:
+      //    the city boots against the camp until this resolves, which is a
+      //    second at worst and cannot spend anything meaningful in that time.
+      _cityMgrLoad(nodeId).then((ok) => {
+        try {
+          if (!ok) showToast('🏛 Could not reach the owner\'s stores — run sql/010, or you are no longer their mayor. Nothing was spent.', 6000);
+          else showToast('🏛 Spending ' + (App._cityOwnerName || 'the owner') + '\'s resources, not yours.', 4200);
+        } catch (e) {}
+      });
     }
   } catch (e) {}
   if (document.getElementById('node-city-frame')) return;
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120g2';
+  f.src = 'node-city/index.html?v=120h4';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -200934,6 +201017,8 @@ function _closeNodeCity() {
   //    into the owner's row.
   App._cityOwnerId = null;
   App._cityOwnerName = null;
+  // Flushes the last delta, then stops spending the owner's ledger.
+  try { _cityMgrEnd(); } catch (e) {}
   try { render(); } catch (e) {}   // refresh — city production changed camp resources
 }
 // City LINK % → node efficiency shield (per CITY_INTEGRATION.md). Local meta
@@ -201036,7 +201121,9 @@ try {
     corpTreasury: (corpId) => {
       try { return (Corp && Corp.mine && Corp.mine.id === corpId) ? (Corp.treasury | 0) : 0; } catch (e) { return 0; }
     },
-    /* 📻 GUILD WIRE — the corporation's realtime chat, surfaced inside the
+    
+
+/* 📻 GUILD WIRE — the corporation's realtime chat, surfaced inside the
        Community hub so the Wire and the civic layer are ONE screen rather than
        two places that both feel half-empty.
        ⚠ The wire is per-CORPORATION (guild_chat.corp_id) while a community
@@ -201100,6 +201187,59 @@ try {
     },
   };
 } catch (e) {}
+
+/* 💰 The city's economy accessors. Identical to the camp ones EXCEPT when a
+   hired mayor is running someone else's city, where they read and write the
+   OWNER's ledger instead. The city calls these; the camp keeps using getRes /
+   spendResources directly, so nothing outside the city changes behaviour. */
+window.cityGetRes = (id) => {
+  try { return CityMgr.active ? Math.max(0, Math.round(Number(CityMgr.salvage[id]) || 0)) : (getRes(id) | 0); }
+  catch (e) { return 0; }
+};
+window.cityAddRes = (id, n) => {
+  try {
+    n = Math.floor(n) || 0; if (!n) return;
+    if (!CityMgr.active) { addRes(id, n); return; }
+    CityMgr.salvage[id] = Math.max(0, (Number(CityMgr.salvage[id]) || 0) + n);
+    CityMgr.pending.salvage[id] = (CityMgr.pending.salvage[id] || 0) + n;
+  } catch (e) {}
+};
+window.citySpendRes = (cost) => {
+  try {
+    if (!CityMgr.active) return !!spendResources(cost);
+    // Check the WHOLE cost before deducting any of it — a half-paid cost is a
+    // building the player was charged for and did not get.
+    for (const k in cost) {
+      if ((Number(CityMgr.salvage[k]) || 0) < (cost[k] | 0)) return false;
+    }
+    for (const k in cost) {
+      const q = cost[k] | 0; if (!q) continue;
+      CityMgr.salvage[k] = (Number(CityMgr.salvage[k]) || 0) - q;
+      CityMgr.pending.salvage[k] = (CityMgr.pending.salvage[k] || 0) - q;
+    }
+    return true;
+  } catch (e) { return false; }
+};
+window.cityGetCinders = () => {
+  try { return CityMgr.active ? (CityMgr.cinder | 0) : (Profile.gems | 0); } catch (e) { return 0; }
+};
+window.cityAddCinders = (n) => {
+  try {
+    n = Math.floor(n) || 0; if (!n) return;
+    if (!CityMgr.active) { addCinders(n); return; }
+    CityMgr.cinder += n; CityMgr.pending.cinder += n;
+  } catch (e) {}
+};
+window.citySpendCinders = (n) => {
+  try {
+    n = Math.floor(n) || 0; if (n <= 0) return false;
+    if (!CityMgr.active) return !!spendCinders(n);
+    if (CityMgr.cinder < n) return false;
+    CityMgr.cinder -= n; CityMgr.pending.cinder -= n;
+    return true;
+  } catch (e) { return false; }
+};
+
 
 // ─── 🏙 NODE CITY v2 hooks (city update: mayors, cards, caravans, leases,
 // reconstruction feed, node leveling, Planetary Rush). The city bridge probes

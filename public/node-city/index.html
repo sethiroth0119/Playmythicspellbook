@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v120g2-city";</script>
+<script>window.NC_BUILD = "v120h4-city";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -838,20 +838,26 @@ const MythicCityBridge = (() => {
   };
 
   // ── unified API ─────────────────────────────────────────────────────
+  /* 💰 Prefer the parent's cityGetRes/citySpendRes/… when they exist. They are
+     identical to the camp ones EXCEPT when a hired mayor is running someone
+     else's city, where they read and write the OWNER's ledger instead — so a
+     manager cannot fund a city from their own farmed hoard, and cannot drain
+     its output into their own camp. Falls back to the plain camp functions on
+     an older parent. */
   B.getRes = async (id) => {
-    if (B.mode === 'parent') { try { return P.getRes(id) | 0; } catch (e) { return 0; } }
+    if (B.mode === 'parent') { try { return (typeof P.cityGetRes === 'function' ? P.cityGetRes(id) : P.getRes(id)) | 0; } catch (e) { return 0; } }
     if (B.mode === 'message') { const r = await rpc('getRes', { id }); return r | 0; }
     return mockLedger().res[id] | 0;
   };
   B.addRes = async (id, n) => {
     n = Math.floor(n); if (!n) return;
-    if (B.mode === 'parent') { try { P.addRes(id, n); } catch (e) {} return; }
+    if (B.mode === 'parent') { try { (typeof P.cityAddRes === 'function' ? P.cityAddRes : P.addRes)(id, n); } catch (e) {} return; }
     if (B.mode === 'message') { await rpc('addRes', { id, n }); return; }
     const L = mockLedger(); L.res[id] = Math.max(0, (L.res[id] | 0) + n); mockSave();
   };
   B.spendRes = async (cost) => {
     if (!cost || !Object.keys(cost).length) return true;
-    if (B.mode === 'parent') { try { return !!P.spendResources(cost); } catch (e) { return false; } }
+    if (B.mode === 'parent') { try { return !!(typeof P.citySpendRes === 'function' ? P.citySpendRes(cost) : P.spendResources(cost)); } catch (e) { return false; } }
     if (B.mode === 'message') { return !!(await rpc('spendRes', { cost })); }
     const L = mockLedger();
     for (const k in cost) if ((L.res[k] | 0) < cost[k]) return false;
@@ -859,19 +865,19 @@ const MythicCityBridge = (() => {
     mockSave(); return true;
   };
   B.getCinders = async () => {
-    if (B.mode === 'parent') { try { return (typeof P.getCinders === 'function' ? P.getCinders() : (P.Profile && P.Profile.cinders) || 0) | 0; } catch (e) { return 0; } }
+    if (B.mode === 'parent') { try { return (typeof P.cityGetCinders === 'function' ? P.cityGetCinders() : (typeof P.getCinders === 'function' ? P.getCinders() : 0)) | 0; } catch (e) { return 0; } }
     if (B.mode === 'message') { return (await rpc('getCinders', {})) | 0; }
     return mockLedger().cinders | 0;
   };
   B.addCinders = async (n) => {
     n = Math.floor(n); if (!n) return;
-    if (B.mode === 'parent') { try { P.addCinders(n); } catch (e) {} return; }
+    if (B.mode === 'parent') { try { (typeof P.cityAddCinders === 'function' ? P.cityAddCinders : P.addCinders)(n); } catch (e) {} return; }
     if (B.mode === 'message') { await rpc('addCinders', { n }); return; }
     const L = mockLedger(); L.cinders = Math.max(0, L.cinders + n); mockSave();
   };
   B.spendCinders = async (n) => {
     n = Math.floor(n); if (n <= 0) return true;
-    if (B.mode === 'parent') { try { return !!P.spendCinders(n); } catch (e) { return false; } }
+    if (B.mode === 'parent') { try { return !!(typeof P.citySpendCinders === 'function' ? P.citySpendCinders(n) : P.spendCinders(n)); } catch (e) { return false; } }
     if (B.mode === 'message') { return !!(await rpc('spendCinders', { n })); }
     const L = mockLedger(); if (L.cinders < n) return false; L.cinders -= n; mockSave(); return true;
   };

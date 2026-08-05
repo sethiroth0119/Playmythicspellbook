@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120f6';
+  window.BUILD_VERSION = 'v120f7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -182258,10 +182258,17 @@ function renderItemPicker(equipKey) {
   // Always include the currently equipped item so it's not orphaned
   if (current && current !== 'none') ownedIds.add(current);
 
-  // Build the visible option pool from BOTH built-in HELD_ITEMS (inventory-gated)
-  // and Forge custom items (always available — the admin who made them shouldn't
-  // need to "find" them in loot). Custom items get a "CUSTOM" tag so the picker
-  // visually separates the two sources.
+  // Build the visible option pool from items the player ACTUALLY OWNS —
+  // built-in and Forge-custom alike, both gated on itemInventory.
+  //
+  // ⚠ Custom items used to bypass the gate entirely ("the admin who made them
+  // shouldn't need to find them in loot"), so every forged item in the game
+  // listed for every player whether they owned it or not. This is an equipment
+  // screen, not a catalogue: it should only offer what is in the vault. The
+  // gate now applies to everyone, admins included — an admin who wants to test
+  // a piece of gear can grant it to themselves, and leaving the exception in
+  // place for the person most likely to check the fix would just look like it
+  // never landed.
   const builtInOptions = Object.keys(HELD_ITEMS)
     .filter(id => id !== 'none' && ownedIds.has(id))
     .map(id => {
@@ -182272,16 +182279,17 @@ function renderItemPicker(equipKey) {
       return `<option value="${id}" ${id === current ? 'selected' : ''}>${it.icon || ''} ${escapeHtml(it.name)}${countStr}</option>`;
     });
 
-  const customItems = (Forge.customItems || []).filter(c => c && c.id);
+  const customItems = (Forge.customItems || []).filter(c => c && c.id && ownedIds.has(c.id));
   const customOptions = customItems.map(it => {
-    const tag = ' · custom';
-    return `<option value="${it.id}" ${it.id === current ? 'selected' : ''}>${it.icon || '🎒'} ${escapeHtml(it.name || it.id)}${tag}</option>`;
+    const inv = Profile.itemInventory[it.id] || 0;
+    const countStr = (it.id !== current && inv > 1) ? ` (×${inv})` : '';
+    return `<option value="${it.id}" ${it.id === current ? 'selected' : ''}>${it.icon || '🎒'} ${escapeHtml(it.name || it.id)}${countStr}</option>`;
   });
 
   const noneOpt = `<option value="none" ${current === 'none' ? 'selected' : ''}>— None —</option>`;
   // Group custom items so admins can scan their own forged gear quickly.
   const customGroup = customOptions.length > 0
-    ? `<optgroup label="🛠 Forge Custom Items">${customOptions.join('')}</optgroup>`
+    ? `<optgroup label="🛠 Forged Gear · in your vault">${customOptions.join('')}</optgroup>`
     : '';
   const builtInGroup = builtInOptions.length > 0
     ? `<optgroup label="🎒 Owned Items">${builtInOptions.join('')}</optgroup>`
@@ -185216,6 +185224,30 @@ const CINDER_SHOP_DEFAULT_INVENTORY = [
   { itemId: 'sw_flarePistol',   price: 700,   stock: 4,  maxStock: 6,  passiveRestockMins: 60,  restockCost: { copper: 1, sulfur: 1 } },
   { itemId: 'sw_droneScout',    price: 750,   stock: 4,  maxStock: 5,  passiveRestockMins: 65,  restockCost: { copper: 2 } },
   { itemId: 'sw_shockBaton',    price: 800,   stock: 4,  maxStock: 5,  passiveRestockMins: 65,  restockCost: { copper: 1, steel: 1 } },
+  // ----- 💠 UNIT HELD ITEMS -----
+  // The gear a UNIT carries into battle (the "Held Item" slot), as opposed to
+  // the hero loadout above. These had no source at all: the picker used to
+  // list every forged item whether you owned it or not, so nobody noticed
+  // there was nowhere to actually BUY one. Now that the picker only offers
+  // what is in your vault, they need a shop — this is it.
+  // Priced by what they do, not by tier: a flat +5 stat is the cheap floor,
+  // a once-per-battle save is the ceiling.
+  { itemId: 'powerBand',        price: 900,   stock: 6,  maxStock: 8,  passiveRestockMins: 60,  restockCost: { steel: 2 } },
+  { itemId: 'sturdyShield',     price: 900,   stock: 6,  maxStock: 8,  passiveRestockMins: 60,  restockCost: { steel: 2 } },
+  { itemId: 'arcaneOrb',        price: 900,   stock: 6,  maxStock: 8,  passiveRestockMins: 60,  restockCost: { copper: 2 } },
+  { itemId: 'wardstone',        price: 900,   stock: 6,  maxStock: 8,  passiveRestockMins: 60,  restockCost: { copper: 2 } },
+  { itemId: 'vitalCharm',       price: 1000,  stock: 5,  maxStock: 7,  passiveRestockMins: 70,  restockCost: { herbs: 2, steel: 1 } },
+  // SPD is the identity stat the engine refuses to grant on level-up, so the
+  // only way to move it is gear — priced well above the flat +5 bands.
+  { itemId: 'swiftBoots',       price: 1600,  stock: 3,  maxStock: 5,  passiveRestockMins: 95,  restockCost: { copper: 2, fuel: 1 } },
+  { itemId: 'healingBerry',     price: 1200,  stock: 5,  maxStock: 6,  passiveRestockMins: 75,  restockCost: { herbs: 3 } },
+  // Survive a lethal blow once per battle — the strongest effect in the slot.
+  { itemId: 'focusSash',        price: 2600,  stock: 2,  maxStock: 3,  passiveRestockMins: 150, restockCost: { gold: 1, copper: 2 } },
+  { itemId: 'flameCloak',       price: 1400,  stock: 3,  maxStock: 5,  passiveRestockMins: 90,  restockCost: { sulfur: 2 } },
+  // Two statuses covered instead of one, so it costs more than its siblings.
+  { itemId: 'iceWard',          price: 1800,  stock: 3,  maxStock: 4,  passiveRestockMins: 105, restockCost: { copper: 1, sulfur: 2 } },
+  { itemId: 'toxinAmulet',      price: 1400,  stock: 3,  maxStock: 5,  passiveRestockMins: 90,  restockCost: { herbs: 2, sulfur: 1 } },
+  { itemId: 'ironHeart',        price: 1400,  stock: 3,  maxStock: 5,  passiveRestockMins: 90,  restockCost: { steel: 2, herbs: 1 } },
 ];
 
 function getCinderShopInventory() {

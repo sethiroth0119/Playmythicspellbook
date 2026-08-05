@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120f4';
+  window.BUILD_VERSION = 'v120f5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -108453,7 +108453,7 @@ function _mmMount() {
   } catch (e) {}
   const f = document.createElement('iframe');
   f.id = 'mm-frame';
-  f.src = 'main-menu/index.html?v=119q8';
+  f.src = 'main-menu/index.html?v=120f5';
   f.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;z-index:5;background:#0a0610';
   document.body.appendChild(f);
   App._mmReady = false;
@@ -200345,7 +200345,7 @@ function _openNodeCity(nodeId) {
   if (document.getElementById('node-city-frame')) return;
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=119y6';
+  f.src = 'node-city/index.html?v=120f5';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);

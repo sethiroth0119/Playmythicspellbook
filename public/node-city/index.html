@@ -322,7 +322,7 @@
 </style>
 <div id="topbar">
   <span id="cityname" class="display">Node City</span>
-  <span class="res cinder"><span class="rtip"><b>🔥 Cinder</b>The game's currency, shared with your camp ledger. Everything you build here spends it.<span class="use">Earned in battle, missions and trade.</span></span><span class="ico">🔥</span><span class="amt" id="r-cinder">0</span></span>
+  <span class="res cinder"><span class="rtip"><b>🔥 Cinder</b>The game's currency, shared with your camp ledger. Everything you build here spends it.<span class="use">Earned in battle, missions and trade. Lots pay rent every minute.</span></span><span class="ico">🔥</span><span class="amt" id="r-cinder">0</span><span class="d" id="d-cinder"></span></span>
   <span class="res"><span class="rtip"><b>🥫 Food</b>Feeds your population every day. Farms and hydro farms produce it.<span class="use">Runs out → Hunger climbs and Morale falls.</span></span><span class="ico">🥫</span><span class="amt" id="r-food">0</span><span class="d" id="d-food"></span></span>
   <span class="res"><span class="rtip"><b>💧 Water</b>Drunk by every citizen daily. Purifiers condense it, and rain fills them faster.<span class="use">Runs out → the city starts dying.</span></span><span class="ico">💧</span><span class="amt" id="r-water">0</span><span class="d" id="d-water"></span></span>
   <span class="res"><span class="rtip"><b>⛓️ Metal</b>Structural salvage pulled from the ruins. Most buildings cost it to raise.<span class="use">Produced by: Mine.</span></span><span class="ico">⛓️</span><span class="amt" id="r-metal">0</span><span class="d" id="d-metal"></span></span>
@@ -330,6 +330,8 @@
   <span class="res"><span class="rtip"><b>📦 Supplies</b>General goods — the camp draws on these every real day.<span class="use">Produced by: Supply Depot.</span></span><span class="ico">📦</span><span class="amt" id="r-supplies">0</span><span class="d" id="d-supplies"></span></span>
   <span class="res"><span class="rtip"><b>💊 Medicine</b>Treats the wounded and keeps morale from collapsing after a raid.<span class="use">Produced by: Med Lab.</span></span><span class="ico">💊</span><span class="amt" id="r-medicine">0</span><span class="d" id="d-medicine"></span></span>
   <span class="res"><span class="rtip"><b>🔫 Ammo</b>Spent by your garrison defending the city when raiders arrive.<span class="use">Produced by: Munitions.</span></span><span class="ico">🔫</span><span class="amt" id="r-ammo">0</span><span class="d" id="d-ammo"></span></span>
+  <span class="res"><span class="rtip"><b>🧠 Memory Shards</b>Fragments of the old world's recorded minds. The rarest thing the ruins still give up.<span class="use">Traded, and spent on the deepest research.</span></span><span class="ico">🧠</span><span class="amt" id="r-memoryShards">0</span><span class="d" id="d-memoryShards"></span></span>
+  <span class="res"><span class="rtip"><b>🟣 Corrupted Essence</b>Residue the Collapse left behind. Valuable, and never quite inert.<span class="use">The underlayer pays well for it.</span></span><span class="ico">🟣</span><span class="amt" id="r-corruptedEssence">0</span><span class="d" id="d-corruptedEssence"></span></span>
   <span class="res" id="popres"><span class="rtip"><b>👥 Population</b>Workers and soldiers you have hired, against the capacity your Housing supports.<span class="use">At capacity → build Housing before hiring more.</span></span><span class="ico">👥</span><span class="amt" id="r-pop">0/0</span></span>
   <span class="res" id="clockres"><span class="rtip"><b>🕒 City Time</b>Drives the day/night cycle — production ticks, lamps and moonlight all follow it.<span class="use">Night: lamps light the streets.</span></span><span class="ico" id="clockico">☀️</span><span class="amt" id="r-clock">06:00</span></span>
 </div>
@@ -974,6 +976,12 @@ const RES_META = {
   memoryShards:     { name: 'Memory Shards',     ico: '🧠' },
 };
 const HUD_RES = ['food','water','metal','fuel','supplies','medicine','ammo'];
+// ⚠ SEPARATE from HUD_RES on purpose. HUD_RES is not just a display list — it
+// also decides what raiders can steal from your stores (see RAID_STORE_LOSS)
+// and feeds the bridge's sync list. Adding the two rare resources to it would
+// have quietly let raiders carry off memory shards, which is a balance change
+// nobody asked for. This list is display only.
+const HUD_DISPLAY_RES = HUD_RES.concat(['memoryShards', 'corruptedEssence']);
 
 // Same ids as RESERVE_NODE_TYPES in index.html. `feeds` = which city
 // production counts toward that node's LINK %.
@@ -3687,7 +3695,18 @@ async function refreshLedgerMirror() {
 }
 function updateHUD() {
   $('r-cinder').textContent = game.wallet.cinder >= 10000 ? (game.wallet.cinder / 1000).toFixed(1) + 'k' : game.wallet.cinder;
-  for (const r of HUD_RES) {
+  // 🔥 Cinder earns a per-minute readout like every other resource. The rate
+  // was ALREADY being computed (prodPerMin.cinder, from lot rent) — it simply
+  // had nowhere to render, so the one box every player watches was the one
+  // box with no production figure on it.
+  {
+    const dc = prodPerMin.cinder || 0, ec = $('d-cinder');
+    if (ec) {
+      ec.textContent = dc ? (dc > 0 ? '+' : '') + dc.toFixed(1) : '';
+      ec.className = 'd ' + (dc > 0 ? 'up' : dc < 0 ? 'dn' : '');
+    }
+  }
+  for (const r of HUD_DISPLAY_RES) {
     $('r-' + r).textContent = game.res[r] | 0;
     const d = prodPerMin[r] || 0, el = $('d-' + r);
     el.textContent = d ? (d > 0 ? '+' : '') + d.toFixed(1) : '';

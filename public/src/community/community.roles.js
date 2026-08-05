@@ -69,6 +69,18 @@ export function canEditCommunity(community, members) { return isLeadership(commu
 export function canApproveCorps(community, members)  { return isLeadership(community, members); }
 export function canViewAudit(community, members)     { return isLeadership(community, members); }
 
+/* 🏢 FOUNDING REQUIRES A CORPORATION.
+   Communities sit ABOVE corporations, so the entry requirement is one: you
+   cannot hold corps together without holding one yourself.
+   ⚠ This is the UI hint. The real gate is the comm_ins policy in sql/006 —
+   which checks corporations.founder_id server-side, so a tampered client that
+   skips this just gets a policy violation instead of a community. */
+export function canFoundCommunity() {
+  const b = bridge();
+  if (!b.signedIn()) return false;
+  return b.amCorpFounder() && !!(b.myCorp() && b.myCorp().id);
+}
+
 // Affiliating is the CORP side of the handshake, not the community side: only
 // a founder can sign their corp in, and only if it is not already affiliated.
 export function canAffiliateMyCorp(corpRows) {

@@ -91,6 +91,7 @@ function banner() {
 /* ── directory ───────────────────────────────────────────────────────────── */
 function directoryHtml() {
   const b = bridge();
+  const canFound = roles.canFoundCommunity();
   const rows = Community.list.map((c) => {
     const mine = myMembershipFor(c.id);
     const state = mine ? (mine.status === 'active' ? `<span class="mc-pill on">${esc(roles.ROLE_LABEL[mine.role] || 'Member')}</span>`
@@ -113,7 +114,8 @@ function directoryHtml() {
     ${rows || '<div class="mc-empty">No communities yet. Found the first one.</div>'}
     <div class="mc-card">
       <h3>Found a community</h3>
-      <div class="mc-form">
+      ${canFound
+        ? `<div class="mc-form">
         <input id="mc-name" maxlength="48" placeholder="Name — e.g. The Ashfall Compact">
         <input id="mc-tag" maxlength="8" placeholder="Tag — up to 8 characters, e.g. ASH">
         <textarea id="mc-desc" maxlength="400" rows="2" placeholder="What is this community for?"></textarea>
@@ -122,8 +124,15 @@ function directoryHtml() {
           <option value="open">Open — anyone may join instantly</option>
           <option value="closed">Closed — invite only</option>
         </select>
-        <button class="mc-b" data-mc="create" ${b.signedIn() ? '' : 'disabled'}>Found it</button>
-      </div>
+        <button class="mc-b" data-mc="create">Found it</button>
+      </div>`
+        // 🏢 Founding requires owning a corporation — communities sit ABOVE
+        //    corps, so you cannot hold corps together without holding one.
+        //    The form is hidden rather than shown-and-disabled: a form you are
+        //    allowed to fill in and then refused is worse than no form.
+        : `<div class="mc-note">${!b.signedIn()
+              ? 'Sign in to found a community.'
+              : 'Founding a community requires <b>owning a corporation</b> — communities sit above corps, so you need one of your own first. Found or take over a corporation in <b>Just Business</b>, then come back.'}</div>`}
     </div>`;
 }
 
@@ -439,6 +448,12 @@ async function onClick(ev) {
   busy = true;
   try {
     if (act === 'create') {
+      // Defence in depth. The comm_ins policy is the real gate; this just
+      // avoids a confusing round-trip when we already know the answer.
+      if (!roles.canFoundCommunity()) {
+        b.toast('🏢 Founding a community requires owning a corporation. Found one in Just Business first.', 5000);
+        return;
+      }
       const name = (document.getElementById('mc-name') || {}).value || '';
       const tag = (document.getElementById('mc-tag') || {}).value || '';
       if (!name.trim() || !tag.trim()) { b.toast('A community needs a name and a tag.'); return; }
@@ -447,7 +462,14 @@ async function onClick(ev) {
         description: (document.getElementById('mc-desc') || {}).value || '',
         joinPolicy: (document.getElementById('mc-policy') || {}).value || 'apply',
       });
-      if (!r.ok) { b.toast(r.missing ? '🗄 Run the Community SQL first.' : '⚠ Could not found it: ' + (r.error || '')); return; }
+      if (!r.ok) {
+        // A row-level-security refusal here means exactly one thing now.
+        const rls = /row-level security|violates row/i.test(r.error || '');
+        b.toast(r.missing ? '🗄 Run the Community SQL first.'
+          : rls ? '🏢 The server refused — founding a community requires owning a corporation.'
+          : '⚠ Could not found it: ' + (r.error || ''), rls ? 5000 : 3600);
+        return;
+      }
       b.toast('🏛 ' + name.trim() + ' founded.');
       await refreshDirectory();
       return;

@@ -411,7 +411,7 @@
 // answering and players were served stale /assets/ images indefinitely.
 // The manual per-deploy version bump below is the real freshness signal:
 // new bytes → install+activate → old caches reaped.
-const CACHE_VERSION = 'mythic-v120g7-community2';
+const CACHE_VERSION = 'mythic-v120g8-corpgate';
 const STATIC_CACHE = 'mythic-static-' + CACHE_VERSION;
 
 // Bare-minimum boot shell — these are the files we want available even if
@@ -481,6 +481,32 @@ self.addEventListener('fetch', (event) => {
     || req.destination === 'document' || req.destination === 'iframe'
     || req.headers.get('accept')?.includes('text/html');
   if (isNav) return; // ← SW steps aside; browser fetches fresh HTML normally
+
+  /* 📦 ES MODULES UNDER /src/ ARE NETWORK-FIRST. This is not a preference.
+     Sub-modules are imported by bare relative specifier ('./community.roles.js'),
+     so they carry NO ?v= — bumping the version on the entry <script> busts the
+     ENTRY ONLY. Under cache-first that pairs a NEW index.js with STALE
+     siblings, which is a BROKEN feature rather than merely an old one.
+     Measured in testing: it threw "canFoundCommunity is not a function" while
+     the file on the server plainly had it.
+     Still falls back to cache when offline, so nothing is lost. These are a few
+     KB of text; the round-trip is worth the correctness. */
+  if (url.pathname.startsWith('/src/')) {
+    event.respondWith((async () => {
+      try {
+        const fresh = await fetch(req, { cache: 'no-cache' });
+        if (fresh && fresh.status === 200 && fresh.type === 'basic') {
+          try { const c = await caches.open(STATIC_CACHE); c.put(req, fresh.clone()); } catch (e) {}
+        }
+        return fresh;
+      } catch (e) {
+        const cached = await caches.match(req);
+        if (cached) return cached;          // offline → last known good
+        throw e;
+      }
+    })());
+    return;
+  }
 
   // 🖼 Static assets → cache-first. Heaviest path is /assets/* art + audio
   // which never change once published; serving them from cache makes the

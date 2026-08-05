@@ -36296,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120g3';
+  window.BUILD_VERSION = 'v120g4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -110093,6 +110093,21 @@ function renderTitle() {
       { id: 'btn-city-hall', icon: '<img src="assets/artwork/gameicons/SCP%20City%20Hall.png" alt="City Hall" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'City Hall', sub: 'Registry · law · licensing · treasury', accent: '#ffcf5a',
         badge: 'Civic',
         onclick: () => { if (typeof openCityHall === 'function') openCityHall(); } },
+      // 🏛 Communities — the civic layer ABOVE corporations. Lives in
+      // /src/community as an ES module; this tile is the only thing index.html
+      // knows about it. Hidden entirely if the module failed to load, so a
+      // broken module is a missing tile rather than a dead button.
+      // ⚠ Resolves to NULL when the module has not loaded — the tile list is
+      //   `.filter(Boolean)`ed, which is how every conditional portal here
+      //   hides itself. There is no `hidden` flag; returning null IS the flag.
+      ((typeof window !== 'undefined' && window.MythicCommunity)
+        ? { id: 'btn-communities', icon: '🏛', name: 'Communities', sub: 'Alliances of corporations · standings · contribution', accent: '#9fd8ff',
+            badge: (() => { try { const n = window.MythicCommunity.state.list.length; return n ? n + ' active' : 'Corps, together'; } catch (e) { return 'Corps, together'; } })(),
+            onclick: () => {
+              try { window.MythicCommunity.open(); }
+              catch (e) { showToast('⚠ The Community module did not load.', 3200); }
+            } }
+        : null),
       // 🏦 Bank of Ethos — Camp Heights treasury sub-app (iframe). Node /
       // Reserve / Aza wiring is the next pass.
       { id: 'btn-bank-ethos', icon: '<img src="assets/artwork/gameicons/Bank%20of%20Ethos.png" alt="Bank of Ethos" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Bank of Ethos', sub: 'Camp Heights treasury · accounts', accent: '#c9a24a',
@@ -200700,6 +200715,61 @@ try { window.__mg = window.__mg || {}; window.__mg._openNodeCity = _openNodeCity
 // the city would see undefined and never spawn Node Anchors. Expose it.
 try { if (typeof FoundationReserve !== 'undefined') window.FoundationReserve = FoundationReserve; } catch (e) {}
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   🏛 COMMUNITY BRIDGE — the ONE seam between this file and /src/community.
+   See CLAUDE.md. New features live in /src/<feature>/ as ES modules; this is
+   the only thing index.html contributes to them.
+
+   🔴 WHY A BRIDGE AND NOT JUST GLOBALS. Profile / Cloud / App / Corp are
+   top-level `const` in this file — global LEXICAL bindings, NOT properties of
+   window — so a module literally cannot see them. `window.Profile` is
+   undefined even though `const Profile` is right here. That exact trap already
+   cost real time twice on the Node City bridge (FoundationReserve, then
+   Profile). Everything a module needs is handed over explicitly, below.
+
+   ⚠ Every accessor is a FUNCTION, not a snapshot. Profile.gems changes
+   constantly; a captured value would go stale the moment the player spends.
+   ═══════════════════════════════════════════════════════════════════════════ */
+try {
+  window.MythicBridge = {
+    get cloud() { try { return (typeof Cloud !== 'undefined') ? Cloud : null; } catch (e) { return null; } },
+    signedIn: () => { try { return !!(Profile.cloud && Profile.cloud.signedIn && Cloud && Cloud.client); } catch (e) { return false; } },
+    userId: () => { try { return (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; } },
+    displayName: () => {
+      try { return (Profile.cloud && Profile.cloud.displayName) || (Profile.account && Profile.account.displayName) || 'Survivor'; }
+      catch (e) { return 'Survivor'; }
+    },
+    // 🔥 Cinder. Routed through the real helpers — never mutate Profile.gems.
+    gems: () => { try { return Profile.gems | 0; } catch (e) { return 0; } },
+    spendGems: (n) => { try { return !!spendGems(n); } catch (e) { return false; } },
+    addGems: (n) => { try { addGems(n); } catch (e) {} },
+    saveProfile: () => { try { saveProfile(); } catch (e) {} },
+    toast: (m, ms) => { try { showToast(m, ms || 3600); } catch (e) {} },
+    confirm: async (m) => { try { return !!(await gcConfirm(m)); } catch (e) { return false; } },
+    render: () => { try { render(); } catch (e) {} },
+    isAdmin: () => { try { return !!(typeof isAdmin === 'function' && isAdmin()); } catch (e) { return false; } },
+    // 🏢 Corporations — communities sit ABOVE these, so the module reads them
+    //    but never writes them.
+    myCorp: () => { try { return (Corp && Corp.mine) ? { id: Corp.mine.id, name: Corp.mine.name, tag: Corp.mine.tag, faction: Corp.mine.faction } : null; } catch (e) { return null; } },
+    amCorpFounder: () => { try { return !!(Corp && Corp.amOwner && Corp.mine); } catch (e) { return false; } },
+    // Standings inputs. Both are best-effort and return 0 when this client has
+    // no visibility — the board prints "—" rather than inventing a number.
+    corpRegionControl: (corpId) => {
+      try {
+        if (typeof tw_regionControlPct !== 'function') return 0;
+        const t = (Forge.territoryWars || {});
+        const regions = (t.regions || []);
+        let best = 0;
+        for (const r of regions) { const p = tw_regionControlPct(r.id, corpId) || 0; if (p > best) best = p; }
+        return Math.round(best);
+      } catch (e) { return 0; }
+    },
+    corpTreasury: (corpId) => {
+      try { return (Corp && Corp.mine && Corp.mine.id === corpId) ? (Corp.treasury | 0) : 0; } catch (e) { return 0; }
+    },
+  };
+} catch (e) {}
+
 // ─── 🏙 NODE CITY v2 hooks (city update: mayors, cards, caravans, leases,
 // reconstruction feed, node leveling, Planetary Rush). The city bridge probes
 // window.parent.<hook> — every one is optional, so these are all additive. ───
@@ -215631,5 +215701,12 @@ render();
     if (localStorage.getItem('hg_threeSprites') === '1') _boardOn();
   } catch (e) {}
 </script>
+<!-- 🏛 COMMUNITY — the first feature to live OUTSIDE this file. See CLAUDE.md.
+     Loaded as an ES module (deferred by definition, so it cannot delay boot)
+     and registered on window.MythicCommunity. It is inert until opened, and
+     wrapped so a failure inside it can never take the game down.
+     ⚠ Bump ?v= on every change — the service worker caches /src/* like any
+     other static asset. -->
+<script type="module" src="src/community/index.js?v=120g4"></script>
 </body>
 </html>

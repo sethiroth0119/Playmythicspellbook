@@ -36296,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120g4';
+  window.BUILD_VERSION = 'v120g5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -56698,10 +56698,8 @@ async function boePayRequest(id) {
     const prevBal = BankEthos.balance;
     if (wTake > 0 && !spendGems(wTake)) { showToast('Not enough Cinders'); return false; }
     if (bTake > 0) {
-      const b = await _boeRow();
-      const up = await b.update({ balance: prevBal - bTake, updated_at: new Date().toISOString() }).eq('user_id', me);
-      if (up && up.error) { if (wTake > 0) { addGems(wTake); } showToast('⚠ Payment failed.', 4000); return false; }
-      BankEthos.balance = prevBal - bTake;
+      const mv = await _boeAdjust(-bTake, 0);
+      if (!mv.ok) { if (wTake > 0) { addGems(wTake); } showToast('⚠ Payment failed — nothing was moved.', 4000); return false; }
     }
     try { saveProfile(); } catch (e) {}
     const upd = await t.update({ status: 'paid', resolved_at: new Date().toISOString() }).eq('id', id).eq('to_user', me);
@@ -56738,10 +56736,8 @@ async function boeAutoSettle() {
     for (const req of r.data) {
       const amt = Math.floor(Number(req.amount) || 0);
       if (!(amt > 0)) continue;
-      const b = await _boeRow(); if (!b) continue;
-      const up = await b.update({ balance: (BankEthos.balance | 0) + amt, updated_at: new Date().toISOString() }).eq('user_id', me);
-      if (up && up.error) continue;
-      BankEthos.balance = (BankEthos.balance | 0) + amt;
+      const mv = await _boeAdjust(amt, 0);
+      if (!mv.ok) continue;                    // retried on the next open
       await t.update({ status: 'settled', resolved_at: new Date().toISOString() }).eq('id', req.id).eq('from_user', me);
       await boeLog('request_received', amt, 0, 'Request paid', req.to_handle || '');
       showToast('💰 ' + (req.to_handle || 'A player') + ' paid your request — +' + amt.toLocaleString() + ' 🔥 to bank.', 5600);
@@ -56791,10 +56787,8 @@ async function boeCreateLoan(azaAmt, installments) {
     const ins = await t.insert({ user_id: Profile.cloud.userId, aza_amount: azaAmt, cinder_owed: cinderOwed, cinder_paid: 0, installments: installments, period_days: 7, status: 'active', hero_capacity_aza: cap, note: 'Hero-collateralized loan' }).select('*').maybeSingle();
     if (ins && ins.error) throw ins.error;
     // Credit bank with the principal Cinder.
-    const b = await _boeRow();
-    const up = await b.update({ balance: prevBal + cinderOwed, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
-    if (up && up.error) throw up.error;
-    BankEthos.balance = prevBal + cinderOwed;
+    const mv = await _boeAdjust(cinderOwed, 0);
+    if (!mv.ok) throw new Error(mv.reason || 'principal not credited');
   } catch (e) { BankEthos.balance = prevBal; showToast('⚠ Loan application failed.', 4200); return false; }
   try { boeLog('loan_principal', cinderOwed, 0, 'Loan principal · ' + azaAmt + ' 👑 → bank', ''); } catch (e) {}
   showToast('🏦 Loan approved — +' + cinderOwed.toLocaleString() + ' 🔥 to bank. Repay ' + Math.ceil(cinderOwed / installments).toLocaleString() + ' 🔥 × ' + installments + '.', 6200);
@@ -56820,10 +56814,8 @@ async function _boeLoanPay(loanId, payAmt) {
   const prevBal = BankEthos.balance;
   if (wTake > 0 && !spendGems(wTake)) { showToast('Not enough Cinders'); return false; }
   if (bTake > 0) {
-    const b = await _boeRow();
-    const up = await b.update({ balance: prevBal - bTake, updated_at: new Date().toISOString() }).eq('user_id', me);
-    if (up && up.error) { if (wTake > 0) addGems(wTake); showToast('⚠ Payment failed.'); return false; }
-    BankEthos.balance = prevBal - bTake;
+    const mv = await _boeAdjust(-bTake, 0);
+    if (!mv.ok) { if (wTake > 0) addGems(wTake); showToast('⚠ Payment failed — nothing was moved.'); return false; }
   }
   try { saveProfile(); } catch (e) {}
   const newPaid = (ln.cinder_paid | 0) + due;
@@ -57020,10 +57012,8 @@ async function boeMercClockOut(contractId, forced) {
     const myShare = isMerc ? mercShare : empShare;
     const prevBal = BankEthos.balance;
     if (myShare > 0) {
-      const b = await _boeRow();
-      const up = await b.update({ balance: prevBal + myShare, updated_at: new Date().toISOString() }).eq('user_id', me);
-      if (up && up.error) throw up.error;
-      BankEthos.balance = prevBal + myShare;
+      const mv = await _boeAdjust(myShare, 0);
+      if (!mv.ok) throw new Error(mv.reason || 'payout not credited');
     }
     const upd = await t.update({ status: nextStatus, clocked_out_at: new Date().toISOString(), merc_payout: mercShare, employer_payout: empShare, fr_tax: tax }).eq('id', contractId);
     if (upd && upd.error) { /* funds already credited; partner still settles by status */ }
@@ -57051,10 +57041,8 @@ async function boeMercAutoSettle() {
       const isMerc = c.mercenary_user === me;
       const myShare = Math.floor(isMerc ? Number(c.merc_payout) || 0 : Number(c.employer_payout) || 0);
       if (myShare > 0) {
-        const b = await _boeRow(); if (!b) continue;
-        const up = await b.update({ balance: (BankEthos.balance | 0) + myShare, updated_at: new Date().toISOString() }).eq('user_id', me);
-        if (up && up.error) continue;
-        BankEthos.balance = (BankEthos.balance | 0) + myShare;
+        const mv = await _boeAdjust(myShare, 0);
+        if (!mv.ok) continue;                  // retried on the next open
       }
       await t.update({ status: 'completed' }).eq('id', c.id);
       try { boeLog(isMerc ? 'merc_earn' : 'merc_yield', myShare, 0, 'Mercenary contract settled', isMerc ? (c.employer_handle || '') : (c.mercenary_handle || '')); } catch (e) {}
@@ -57192,10 +57180,8 @@ async function boeMarketBuyNow(id) {
       if (wTake > 0 && !spendSovereigns(wTake)) return false;
       const prevAza = BankEthos.aza;
       if (bTake > 0) {
-        const b = await _boeRow();
-        const up = await b.update({ aza: prevAza - bTake, updated_at: new Date().toISOString() }).eq('user_id', me);
-        if (up && up.error) { if (wTake > 0) addSovereigns(wTake); showToast('⚠ Payment failed.'); return false; }
-        BankEthos.aza = prevAza - bTake;
+        const mv = await _boeAdjust(0, -bTake);
+        if (!mv.ok) { if (wTake > 0) addSovereigns(wTake); showToast('⚠ Payment failed — nothing was moved.'); return false; }
       }
     } else {
       const wC = (Profile && Profile.gems) | 0;
@@ -57205,10 +57191,8 @@ async function boeMarketBuyNow(id) {
       if (wTake > 0 && !spendGems(wTake)) return false;
       const prevBal = BankEthos.balance;
       if (bTake > 0) {
-        const b = await _boeRow();
-        const up = await b.update({ balance: prevBal - bTake, updated_at: new Date().toISOString() }).eq('user_id', me);
-        if (up && up.error) { if (wTake > 0) addGems(wTake); showToast('⚠ Payment failed.'); return false; }
-        BankEthos.balance = prevBal - bTake;
+        const mv = await _boeAdjust(-bTake, 0);
+        if (!mv.ok) { if (wTake > 0) addGems(wTake); showToast('⚠ Payment failed — nothing was moved.'); return false; }
       }
     }
     try { saveProfile(); } catch (e) {}
@@ -57259,12 +57243,8 @@ async function boeMarketAutoSettle() {
     for (const l of r.data) {
       const price = Math.floor(Number(l.price) || 0);
       if (price <= 0) continue;
-      const b = await _boeRow(); if (!b) continue;
-      const prevBal = BankEthos.balance, prevAza = BankEthos.aza;
-      const patch = (l.currency === 'aza') ? { aza: prevAza + price, updated_at: new Date().toISOString() } : { balance: prevBal + price, updated_at: new Date().toISOString() };
-      const up = await b.update(patch).eq('user_id', me);
-      if (up && up.error) continue;
-      if (l.currency === 'aza') BankEthos.aza = prevAza + price; else BankEthos.balance = prevBal + price;
+      const mv = (l.currency === 'aza') ? await _boeAdjust(0, price) : await _boeAdjust(price, 0);
+      if (!mv.ok) continue;                    // retried on the next open
       await t.update({ status: 'paid', settled_at: new Date().toISOString() }).eq('id', l.id);
       try { boeLog('market_sale', l.currency === 'aza' ? 0 : price, l.currency === 'aza' ? price : 0, 'Sold ' + (l.qty | 0) + '× ' + (l.item_name || ''), l.buyer_handle || ''); } catch (e) {}
       showToast('🛒 Sale settled — +' + price.toLocaleString() + ' ' + (l.currency === 'aza' ? '👑' : '🜂') + ' to bank.', 5200);
@@ -57467,6 +57447,101 @@ async function boeFetch() {
     return true;
   } catch (e) { return false; }
 }
+/* 🔴 THE ONE WAY BANK BALANCES MOVE. Everything that changes bank_of_ethos
+   .balance / .aza goes through here. Do not write those columns directly again.
+
+   WHY THIS EXISTS — the "withdrawing resets the bank, which causes farming"
+   exploit (2026-08-05). Every bank operation used to be a READ-MODIFY-WRITE of
+   an absolute value: read BankEthos.balance, compute balance ± amount, write
+   the whole column. openBankOfEthos() starts TWO concurrent chains —
+   boeApplyMaintenance() and boeAutoSettle → boeFetchLoans → boeMercAutoSettle →
+   boeMarketAutoSettle — each of which captured its own `prevBal` BEFORE the
+   player touched anything. Withdraw while one is still in flight and it writes
+   its stale prevBal over the decrement: the bank row goes back to what it was,
+   while addGems() had already credited the wallet. Repeat = infinite Cinder.
+
+   The arithmetic now happens in the DATABASE, where `balance = balance - amt`
+   is one atomic statement with the overdraft guard in the same WHERE. There is
+   no window for a stale base to overwrite.
+
+   ⚠ Callers MUST treat a false return as "nothing moved" and must not credit
+   or debit the player's wallet on it. That contract is the actual fix — a move
+   that did not happen has to cost nothing and mint nothing.
+
+   Returns { ok, balance, aza }. Falls back to a VERIFIED absolute update when
+   sql/004 has not been run yet: it re-reads the row, writes, and reads the
+   result back, refusing to report success unless the row really landed on the
+   expected number. That closes the mint even without the migration, though
+   only the RPC closes the race itself. */
+async function _boeAdjust(deltaCinder, deltaAza) {
+  const dC = Math.round(Number(deltaCinder) || 0);
+  const dA = Math.round(Number(deltaAza) || 0);
+  if (!initCloud() || !Cloud.client || !Profile.cloud || !Profile.cloud.signedIn) {
+    return { ok: false, reason: 'signin' };
+  }
+  const me = Profile.cloud.userId;
+  // ── Preferred path: one atomic statement, server side.
+  try {
+    const r = await Cloud.client.rpc('boe_adjust_balance', { p_delta_cinder: dC, p_delta_aza: dA });
+    if (!(r && r.error)) {
+      const j = r && r.data;
+      if (j && j.ok === true) {
+        BankEthos.balance = Math.max(0, Math.round(Number(j.balance) || 0));
+        if (BankEthos._extCols) BankEthos.aza = Math.max(0, Math.round(Number(j.aza) || 0));
+        return { ok: true, balance: BankEthos.balance, aza: BankEthos.aza };
+      }
+      if (j && j.ok === false && j.error !== 'not_authenticated') {
+        // The server refused (overdraft / missing row) and told us the truth
+        // about the balance — adopt it so the UI stops showing a fiction.
+        if (typeof j.balance === 'number') BankEthos.balance = Math.max(0, Math.round(j.balance));
+        if (BankEthos._extCols && typeof j.aza === 'number') BankEthos.aza = Math.max(0, Math.round(j.aza));
+        return { ok: false, reason: j.error || 'refused' };
+      }
+    } else {
+      // ⚠ "RPC not installed" is reported in error.CODE (PGRST202), not
+      //    reliably in the message — an earlier version of this check only read
+      //    the message and so treated a missing function as a hard failure,
+      //    which would have made every bank move fail closed until sql/004 was
+      //    run. Check both, and let anything else be a genuine error.
+      const _msg = ((r.error.message || '') + '');
+      const _code = ((r.error.code || '') + '');
+      const _absent = /PGRST202/i.test(_code) || /PGRST202|does not exist|schema cache|Could not find the function/i.test(_msg);
+      if (!_absent) return { ok: false, reason: _msg || 'rpc failed' };
+    }
+    // else: RPC not installed → fall through to the verified fallback.
+  } catch (e) { /* fall through */ }
+
+  // ── Fallback: verified absolute write. Still racy against a concurrent
+  //    chain, but it can no longer report success for a write that did not
+  //    land, which is what turned the race into free money.
+  try {
+    const t = await _boeRow(); if (!t) return { ok: false, reason: 'signin' };
+    const cur = await t.select('balance,aza').eq('user_id', me).maybeSingle();
+    if (cur && cur.error) return { ok: false, reason: cur.error.message || 'read failed' };
+    const curBal = Math.max(0, Math.round(Number(cur && cur.data && cur.data.balance) || 0));
+    const curAza = Math.max(0, Math.round(Number(cur && cur.data && cur.data.aza) || 0));
+    const wantBal = curBal + dC;
+    const wantAza = curAza + dA;
+    if (wantBal < 0 || (dA && wantAza < 0)) {
+      BankEthos.balance = curBal;
+      if (BankEthos._extCols) BankEthos.aza = curAza;
+      return { ok: false, reason: 'insufficient_or_missing' };
+    }
+    const patch = { balance: wantBal, updated_at: new Date().toISOString() };
+    if (dA && BankEthos._extCols) patch.aza = wantAza;
+    const t2 = await _boeRow();
+    // ⚠ .select() is what makes this VERIFIED. A bare .update() returns no rows
+    //   and no error even when it matched nothing, which is exactly how a
+    //   silent no-op used to look like success.
+    const up = await t2.update(patch).eq('user_id', me).select('balance,aza').maybeSingle();
+    if (up && up.error) return { ok: false, reason: up.error.message || 'write failed' };
+    const gotBal = Math.round(Number(up && up.data && up.data.balance));
+    if (!up || !up.data || gotBal !== wantBal) return { ok: false, reason: 'write not confirmed' };
+    BankEthos.balance = Math.max(0, gotBal);
+    if (dA && BankEthos._extCols) BankEthos.aza = Math.max(0, Math.round(Number(up.data.aza) || 0));
+    return { ok: true, balance: BankEthos.balance, aza: BankEthos.aza };
+  } catch (e) { return { ok: false, reason: (e && e.message) || 'exception' }; }
+}
 // Auto-charge any due 30-day maintenance periods → Foundation Reserve.
 async function boeApplyMaintenance() {
   try {
@@ -57477,10 +57552,18 @@ async function boeApplyMaintenance() {
     const due = periods * BOE_FEE;
     const charged = Math.min(BankEthos.balance, due);
     const newLast = (BankEthos.lastFeeAt || now) + periods * BOE_FEE_PERIOD_MS;
+    // ⚠ Was an absolute write of `BankEthos.balance - charged`. This function
+    //   runs CONCURRENTLY with the auto-settle chain and with anything the
+    //   player does, so that absolute value was the single most likely thing to
+    //   overwrite a withdrawal. It is a delta now, and last_fee_at is written
+    //   separately because nothing else contends for that column.
+    if (charged > 0) {
+      const mv = await _boeAdjust(-charged, 0);
+      if (!mv.ok) return;                       // skip this cycle; it re-applies next open
+    }
     const t = await _boeRow(); if (!t) return;
-    const up = await t.update({ balance: BankEthos.balance - charged, last_fee_at: new Date(newLast).toISOString(), updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
-    if (up && up.error) return;
-    BankEthos.balance -= charged; BankEthos.lastFeeAt = newLast;
+    try { await t.update({ last_fee_at: new Date(newLast).toISOString(), updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId); } catch (e) {}
+    BankEthos.lastFeeAt = newLast;
     if (charged > 0) { try { frLogCivic(charged, 'fee', { resource: 'Bank of Ethos maintenance' }); } catch (e) {} }
     showToast('🏦 Bank of Ethos maintenance — ' + charged.toLocaleString() + ' 🔥 (' + periods + '× 30-day fee) → Foundation Reserve.' + (charged < due ? ' Account underfunded.' : ''), 6000);
   } catch (e) {}
@@ -57492,12 +57575,17 @@ async function boeDeposit(amt) {
   if ((Profile.gems || 0) < amt) { showToast('Need ' + amt.toLocaleString() + ' 🔥 — you have ' + (Profile.gems || 0).toLocaleString() + '.', 4200); return false; }
   if (!spendGems(amt)) { showToast('Not enough Cinders'); return false; }
   try { saveProfile(); } catch (e) {}
-  try {
-    const t = await _boeRow();
-    const up = await t.update({ balance: BankEthos.balance + amt, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
-    if (up && up.error) throw up.error;
-    BankEthos.balance += amt;
-  } catch (e) { addGems(amt); try { saveProfile(); } catch (_) {} showToast('⚠ Deposit failed — refunded.', 4200); return false; }
+  // Mirror of the withdrawal: an unconfirmed credit used to LOSE the player's
+  // Cinder when a concurrent chain overwrote it. Refund unless the bank
+  // confirms it actually took the money.
+  {
+    const mv = await _boeAdjust(amt, 0);
+    if (!mv.ok) {
+      addGems(amt); try { saveProfile(); } catch (_) {}
+      showToast('⚠ Deposit failed — refunded, nothing was moved.', 4200);
+      return false;
+    }
+  }
   try { boeLog('deposit', amt, 0, 'Cinder deposit to bank'); } catch (e) {}
   showToast('🏦 Deposited ' + amt.toLocaleString() + ' 🔥 — balance ' + BankEthos.balance.toLocaleString() + '.', 4600);
   return true;
@@ -57515,12 +57603,17 @@ async function boeWithdraw(amt) {
     showToast(msg, 6000);
     return false;
   }
-  try {
-    const t = await _boeRow();
-    const up = await t.update({ balance: BankEthos.balance - amt, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
-    if (up && up.error) throw up.error;
-    BankEthos.balance -= amt;
-  } catch (e) { showToast('⚠ Withdrawal failed — try again.', 3600); return false; }
+  // 🔴 THE ORDER HERE IS THE FIX. The bank must be debited and CONFIRMED before
+  //    a single Cinder reaches the wallet. It used to decrement optimistically
+  //    and call addGems() regardless, so a write that got overwritten by a
+  //    concurrent chain still paid out — that was the farm.
+  const mv = await _boeAdjust(-amt, 0);
+  if (!mv.ok) {
+    showToast(mv.reason === 'insufficient_or_missing'
+      ? '⚠ Withdrawal declined — the bank now shows 🔥 ' + (BankEthos.balance | 0).toLocaleString() + '. Nothing was moved.'
+      : '⚠ Withdrawal failed — nothing was moved. Try again.', 4200);
+    return false;
+  }
   addGems(amt); try { saveProfile(); } catch (e) {}
   try { boeLog('withdraw', -amt, 0, 'Cinder withdrawal'); } catch (e) {}
   showToast('🏦 Withdrew ' + amt.toLocaleString() + ' 🔥 — balance ' + BankEthos.balance.toLocaleString() + '.', 4600);
@@ -57540,12 +57633,10 @@ async function boeDepositAza(amt) {
   if ((Profile.sovereigns || 0) < amt) { showToast('Need ' + amt.toLocaleString() + ' 👑 — you have ' + (Profile.sovereigns || 0).toLocaleString() + '.', 4200); return false; }
   if (!spendSovereigns(amt)) { showToast('Not enough Aza.'); return false; }
   try { saveProfile(); } catch (e) {}
-  try {
-    const t = await _boeRow();
-    const up = await t.update({ aza: BankEthos.aza + amt, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
-    if (up && up.error) throw up.error;
-    BankEthos.aza += amt;
-  } catch (e) { addSovereigns(amt); try { saveProfile(); } catch (_) {} showToast('⚠ Aza deposit failed — refunded.', 4200); return false; }
+  {
+    const mv = await _boeAdjust(0, amt);
+    if (!mv.ok) { addSovereigns(amt); try { saveProfile(); } catch (_) {} showToast('⚠ Aza deposit failed — refunded, nothing was moved.', 4200); return false; }
+  }
   try { boeLog('deposit', 0, amt, 'Aza deposit to bank'); } catch (e) {}
   showToast('🏦 Deposited ' + amt.toLocaleString() + ' 👑 — bank Aza ' + BankEthos.aza.toLocaleString() + '.', 4600);
   return true;
@@ -57556,12 +57647,12 @@ async function boeWithdrawAza(amt) {
   if (_boeNeedCols()) return false;
   if (!(amt > 0)) { showToast('Enter an amount.'); return false; }
   if (BankEthos.aza < amt) { showToast('Bank Aza is ' + BankEthos.aza.toLocaleString() + ' 👑.', 4000); return false; }
-  try {
-    const t = await _boeRow();
-    const up = await t.update({ aza: BankEthos.aza - amt, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
-    if (up && up.error) throw up.error;
-    BankEthos.aza -= amt;
-  } catch (e) { showToast('⚠ Aza withdrawal failed — try again.', 3600); return false; }
+  // Same contract as the Cinder withdrawal: confirmed debit BEFORE the wallet
+  // is credited, or the same lost-update race mints Aza instead of Cinder.
+  {
+    const mv = await _boeAdjust(0, -amt);
+    if (!mv.ok) { showToast('⚠ Aza withdrawal failed — nothing was moved.', 3600); return false; }
+  }
   addSovereigns(amt); try { saveProfile(); } catch (e) {}
   try { boeLog('withdraw', 0, -amt, 'Aza withdrawal'); } catch (e) {}
   showToast('🏦 Withdrew ' + amt.toLocaleString() + ' 👑 — bank Aza ' + BankEthos.aza.toLocaleString() + '.', 4600);
@@ -57588,11 +57679,9 @@ async function boeExchangeAzaToCinder(azaAmt) {
   const prevAza = BankEthos.aza, prevBal = BankEthos.balance;
   if (wTake > 0 && !spendSovereigns(wTake)) { showToast('Not enough Aza.'); return false; }
   try {
-    const t = await _boeRow();
-    const up = await t.update({ aza: prevAza - bTake, balance: prevBal + cinderOut, updated_at: new Date().toISOString() }).eq('user_id', Profile.cloud.userId);
-    if (up && up.error) throw up.error;
-    BankEthos.aza = prevAza - bTake;
-    BankEthos.balance = prevBal + cinderOut;
+    // Both legs in ONE atomic statement — an exchange must never half-apply.
+    const mv = await _boeAdjust(cinderOut, -bTake);
+    if (!mv.ok) throw new Error(mv.reason || 'exchange not applied');
     try { saveProfile(); } catch (e) {}
   } catch (e) {
     if (wTake > 0) { addSovereigns(wTake); try { saveProfile(); } catch (_) {} }

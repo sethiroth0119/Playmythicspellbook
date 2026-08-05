@@ -157,7 +157,7 @@ export async function handlePushSend(request, env) {
   if (!env.PUSH_SEND_SECRET || request.headers.get('x-push-secret') !== env.PUSH_SEND_SECRET) {
     return json({ error: 'forbidden' }, 403);
   }
-  if (!env.SB_SERVICE_KEY) return json({ error: 'no service key' }, 503);
+  if (!env.SB_SERVICE) return json({ error: 'no service key' }, 503);
 
   let b;
   try { b = await request.json(); } catch (e) { return json({ error: 'bad json' }, 400); }
@@ -170,7 +170,7 @@ export async function handlePushSend(request, env) {
     + '?select=id,user_id,endpoint,p256dh,auth'
     + '&expired_at=is.null&user_id=in.(' + ids.join(',') + ')';
   const subRes = await fetch(q, {
-    headers: { apikey: env.SB_SERVICE_KEY, Authorization: 'Bearer ' + env.SB_SERVICE_KEY },
+    headers: { apikey: env.SB_SERVICE, Authorization: 'Bearer ' + env.SB_SERVICE },
   });
   if (!subRes.ok) return json({ error: 'subscription read failed', status: subRes.status }, 502);
   const subs = await subRes.json();
@@ -199,7 +199,7 @@ export async function handlePushSend(request, env) {
       await fetch(env.SB_URL + '/rest/v1/push_subscriptions?id=in.(' + gone.join(',') + ')', {
         method: 'PATCH',
         headers: {
-          apikey: env.SB_SERVICE_KEY, Authorization: 'Bearer ' + env.SB_SERVICE_KEY,
+          apikey: env.SB_SERVICE, Authorization: 'Bearer ' + env.SB_SERVICE,
           'content-type': 'application/json', Prefer: 'return=minimal',
         },
         body: JSON.stringify({ expired_at: new Date().toISOString() }),

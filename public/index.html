@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120e3';
+  window.BUILD_VERSION = 'v120e4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -46063,6 +46063,11 @@ async function cloudSyncProfile() {
       // 🏳 District Node the camp is registered to (Reconstruction Network).
       // ⚠ NEVER emit null here — see _stripUnknownCampNode() below.
       __campNodeId__:        (typeof Profile.campNodeId === 'string' && Profile.campNodeId) ? Profile.campNodeId : null,
+      // 🤝 AI trade history — rep, delivery counts and any live contract.
+      // ⚠ Profile.* is NOT synced automatically; a key only travels if it is
+      // named here AND read back in the hydration block. Without both halves
+      // a signed contract would quietly vanish on the next device.
+      __aiTrade__:           (Profile.aiTrade && typeof Profile.aiTrade === 'object') ? Profile.aiTrade : null,
       __campName__:          (typeof Profile.campName === 'string') ? Profile.campName : null,
       __campContrib__:       (typeof Profile.campContrib === 'number') ? Profile.campContrib : 0,
       // marker consumed by _stripUnknownCampNode (deleted before upload when blank)
@@ -47215,6 +47220,8 @@ async function cloudFetchProfile() {
       if (typeof f.__campSurvivorId__ === 'string') Profile.campSurvivorId = f.__campSurvivorId__;
       // 🏳 Camp's registered District Node + Reconstruction Network state.
       if (typeof f.__campNodeId__ === 'string') Profile.campNodeId = f.__campNodeId__;
+      // 🤝 AI trade history — the other half of __aiTrade__ above.
+      if (f.__aiTrade__ && typeof f.__aiTrade__ === 'object') Profile.aiTrade = f.__aiTrade__;
       if (typeof f.__campName__ === 'string' && f.__campName__) Profile.campName = f.__campName__;
       if (typeof f.__campContrib__ === 'number') Profile.campContrib = f.__campContrib__;
       if (typeof f.__campPrestige__ === 'number') Profile.campPrestige = f.__campPrestige__;
@@ -105805,6 +105812,10 @@ function render() {
     // only be laid out once the markers they must avoid are on screen. Cheap:
     // it returns immediately unless the map is actually rendered.
     try { if (typeof _aiPinLayout === 'function') _aiPinLayout(); } catch (e) {}
+    // ⏰ A missed supply contract has to land whether or not the player is
+    // looking at that corp's panel — otherwise the deadline only exists for
+    // people who happen to open the right drawer.
+    try { if (typeof _aiTradeTick === 'function') _aiTradeTick(); } catch (e) {}
     try {
       if (_focusSnap) {
         const cur = document.activeElement;
@@ -210560,6 +210571,24 @@ function _aiCorpStanding(corpId) {
     // The Trust and the Vein cannot both like you.
     if (c.trait === 'civic'   && res('corruptedEssence') > 40) { v -= 25; reasons.push({ t: 'known underlayer dealings', d: -25 }); }
     if (c.trait === 'illicit' && res('medicine')  > 60) { v -= 15; reasons.push({ t: 'too close to the Trust', d: -15 }); }
+    // 🤝 TRADE HISTORY — the only part of standing that is remembered rather
+    // than recomputed. Everything above is derived from what you own right
+    // now, which is why nothing you did with a corp could ever count until
+    // this existed. Deliveries raise it, missed contracts lower it, and it is
+    // clamped so a trading record shades the relationship without drowning
+    // out the rest of it.
+    try {
+      const tr = (Profile && Profile.aiTrade) ? Profile.aiTrade : null;
+      const rep = tr && tr.rep ? (tr.rep[corpId] | 0) : 0;
+      if (rep) {
+        v += rep;
+        const dn = (tr.done && tr.done[corpId]) | 0, fl = (tr.fail && tr.fail[corpId]) | 0;
+        const bits = [];
+        if (dn) bits.push(dn + ' deliver' + (dn === 1 ? 'y' : 'ies') + ' made');
+        if (fl) bits.push(fl + ' contract' + (fl === 1 ? '' : 's') + ' missed');
+        reasons.push({ t: bits.join(', ') || 'trading record', d: rep });
+      }
+    } catch (e) {}
     v = Math.max(-100, Math.min(100, Math.round(v)));
     return { value: v, tier: _aiStandingTier(v), reasons: reasons };
   } catch (e) { return { value: 0, tier: _aiStandingTier(0), reasons: [] }; }
@@ -210681,6 +210710,199 @@ function _aiYieldTradeMul(map) {
     return den ? Math.max(AI_TRADE_MUL_MIN, Math.min(AI_TRADE_MUL_MAX, num / den)) : 1;
   } catch (e) { return 1; }
 }
+// ════════════════════════════════════════════════════════════════════════
+// 🤝 TRADING WITH THE AI BUSINESSES (v120e4)
+//
+// Standing used to be purely DERIVED — recomputed every call from what you
+// own and produce, with nothing stored. That is why it could never reward
+// you for anything you actually did with a corp. Trade needs memory, so this
+// adds the one piece of persistent state the system was missing: a rep
+// number per corp, earned by delivering and lost by failing to.
+//
+// Two ways to do business, deliberately different in commitment:
+//   • A SPOT TRADE is a one-off sale, once per corp per day. Small rep.
+//   • A SUPPLY CONTRACT is three timed deliveries. Bigger pay, bigger rep —
+//     and a real penalty for missing a window, which is the point. Not
+//     having the goods when the deadline lands is exactly how you lose
+//     standing with these people.
+// ════════════════════════════════════════════════════════════════════════
+const AI_TRADE_RUNS = 3;                       // deliveries in one contract
+const AI_TRADE_WINDOW_MS = 24 * 60 * 60 * 1000; // time allowed per delivery
+const AI_REP_CLAMP = 60;                       // rep can never eclipse the derived part
+
+function _aiTradeState() {
+  if (!Profile.aiTrade || typeof Profile.aiTrade !== 'object') Profile.aiTrade = {};
+  const t = Profile.aiTrade;
+  if (!t.rep  || typeof t.rep  !== 'object') t.rep  = {};
+  if (!t.done || typeof t.done !== 'object') t.done = {};
+  if (!t.fail || typeof t.fail !== 'object') t.fail = {};
+  if (!t.deal || typeof t.deal !== 'object') t.deal = {};
+  if (!t.spot || typeof t.spot !== 'object') t.spot = {};
+  return t;
+}
+function _aiDayIndex() { return Math.floor(Date.now() / 86400000); }
+
+// Which resource a corp actually deals in. Incumbents buy the resource they
+// control; a startup buys whatever its offer is built on, so the goods that
+// earn its goodwill are the same ones its standing already reads.
+const AI_STARTUP_WANTS = { refiner: 'fuel', courier: 'supplies', water: 'water',
+                           bio: 'dna', escort: 'ammo', broker: 'memoryShards' };
+function _aiCorpWants(corpId) {
+  try {
+    const owned = Object.keys(AI_CORP_RESOURCE).filter(r => AI_CORP_RESOURCE[r] === corpId);
+    if (owned.length) return owned[0];
+    const c = AI_CORP_BY_ID[corpId];
+    return (c && AI_STARTUP_WANTS[c.trait]) || 'supplies';
+  } catch (e) { return 'supplies'; }
+}
+// Deterministic per corp per day — every player sees the same offer, and it
+// rotates without anything being stored.
+function _aiOfferHash(corpId, salt) {
+  let h = 0; const s = 'offer:' + corpId + ':' + salt;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+// Standing moves the price, same ±15% band the market already uses, so a good
+// relationship pays for itself instead of only unlocking flavour text.
+function _aiPayMul(corpId) {
+  try { const v = _aiCorpStanding(corpId).value; return 1 + Math.max(-0.15, Math.min(0.15, v / 100 * 0.15)); }
+  catch (e) { return 1; }
+}
+function _aiSpotOffer(corpId) {
+  const res = _aiCorpWants(corpId);
+  const h = _aiOfferHash(corpId, _aiDayIndex());
+  const qty = 6 + (h % 9);                       // 6..14
+  const unit = 14 + (_aiOfferHash(corpId, 'u') % 9);  // 14..22 cinder each
+  return { res: res, qty: qty, pay: Math.round(qty * unit * _aiPayMul(corpId)) };
+}
+function _aiContractTerms(corpId) {
+  const res = _aiCorpWants(corpId);
+  const h = _aiOfferHash(corpId, 'deal');
+  const qty = 10 + (h % 11);                     // 10..20 per delivery
+  const unit = 19 + (h % 8);                     // better per-unit than spot
+  return { res: res, qty: qty, runs: AI_TRADE_RUNS,
+           pay: Math.round(qty * unit * _aiPayMul(corpId)) };
+}
+
+// ⏰ Expire overdue contracts. Called on render, so a missed window is felt
+// the moment you come back rather than only when you open that one panel.
+function _aiTradeTick() {
+  try {
+    const t = _aiTradeState();
+    let changed = false;
+    for (const id of Object.keys(t.deal)) {
+      const d = t.deal[id];
+      if (!d || !d.due) continue;
+      if (Date.now() <= d.due) continue;
+      // Missed the window — this is the failure the whole system hangs on.
+      t.rep[id] = Math.max(-AI_REP_CLAMP, (t.rep[id] || 0) - 12);
+      t.fail[id] = (t.fail[id] || 0) + 1;
+      delete t.deal[id];
+      changed = true;
+      try {
+        const c = AI_CORP_BY_ID[id];
+        if (c && typeof showToast === 'function') {
+          showToast('📉 ' + c.name + ' — contract missed. Standing fell.', 5200);
+        }
+      } catch (e) {}
+    }
+    if (changed) { try { saveProfile(); } catch (e) {} }
+    return changed;
+  } catch (e) { return false; }
+}
+
+// ── actions ─────────────────────────────────────────────────────────────
+function _aiSpotTrade(corpId) {
+  try {
+    const c = AI_CORP_BY_ID[corpId]; if (!c) return;
+    const t = _aiTradeState();
+    const day = _aiDayIndex();
+    if (t.spot[corpId] === day) { showToast('Already traded with ' + c.name + ' today.', 3200); return; }
+    const o = _aiSpotOffer(corpId);
+    const have = (typeof getRes === 'function') ? getRes(o.res) : 0;
+    if (have < o.qty) {
+      // Refusing costs you nothing here — a spot trade is not a promise. Only
+      // a contract you signed can hurt your standing.
+      showToast('You need ' + o.qty + ' ' + _meta(o.res).name + ' — you have ' + have + '.', 4200);
+      return;
+    }
+    const cost = {}; cost[o.res] = o.qty;
+    if (!spendResources(cost)) { showToast('Trade failed — resources moved.', 3200); return; }
+    if (typeof addGems === 'function') addGems(o.pay);
+    t.spot[corpId] = day;
+    t.rep[corpId] = Math.min(AI_REP_CLAMP, (t.rep[corpId] || 0) + 2);
+    try { saveProfile(); } catch (e) {}
+    showToast('🤝 Sold ' + o.qty + ' ' + _meta(o.res).name + ' to ' + c.name + ' for ' + o.pay + ' Cinder.', 4200);
+    _aiCorpOpen(corpId, 'trade');
+    try { render(); } catch (e) {}
+  } catch (e) { try { console.warn('[aiSpotTrade]', e); } catch (_) {} }
+}
+function _aiEnterBusiness(corpId) {
+  try {
+    const c = AI_CORP_BY_ID[corpId]; if (!c) return;
+    const t = _aiTradeState();
+    if (t.deal[corpId]) { showToast('You already have a contract with ' + c.name + '.', 3200); return; }
+    const terms = _aiContractTerms(corpId);
+    // Gate on the FIRST delivery, not the whole run — you are signing up to
+    // deliver now and keep delivering, not to have it all up front.
+    const have = (typeof getRes === 'function') ? getRes(terms.res) : 0;
+    if (have < terms.qty) {
+      showToast('They will not sign. First delivery is ' + terms.qty + ' '
+        + _meta(terms.res).name + ' and you have ' + have + '.', 5000);
+      return;
+    }
+    t.deal[corpId] = { res: terms.res, qty: terms.qty, pay: terms.pay,
+                       left: terms.runs, runs: terms.runs,
+                       due: Date.now() + AI_TRADE_WINDOW_MS, started: Date.now() };
+    try { saveProfile(); } catch (e) {}
+    showToast('📜 Contract signed with ' + c.name + ' — ' + terms.runs + ' deliveries of '
+      + terms.qty + ' ' + _meta(terms.res).name + '.', 5200);
+    _aiCorpOpen(corpId, 'trade');
+    try { render(); } catch (e) {}
+  } catch (e) { try { console.warn('[aiEnterBusiness]', e); } catch (_) {} }
+}
+function _aiDeliver(corpId) {
+  try {
+    const c = AI_CORP_BY_ID[corpId]; if (!c) return;
+    const t = _aiTradeState();
+    const d = t.deal[corpId];
+    if (!d) { showToast('No contract with ' + c.name + '.', 3000); return; }
+    const have = (typeof getRes === 'function') ? getRes(d.res) : 0;
+    if (have < d.qty) {
+      showToast('Short by ' + (d.qty - have) + ' ' + _meta(d.res).name
+        + '. Miss the window and your standing drops.', 5000);
+      return;
+    }
+    const cost = {}; cost[d.res] = d.qty;
+    if (!spendResources(cost)) { showToast('Delivery failed — resources moved.', 3200); return; }
+    if (typeof addGems === 'function') addGems(d.pay);
+    d.left -= 1;
+    t.done[corpId] = (t.done[corpId] || 0) + 1;
+    t.rep[corpId] = Math.min(AI_REP_CLAMP, (t.rep[corpId] || 0) + 5);
+    if (d.left <= 0) {
+      // Seeing it through is worth more than the sum of the runs.
+      t.rep[corpId] = Math.min(AI_REP_CLAMP, (t.rep[corpId] || 0) + 8);
+      delete t.deal[corpId];
+      showToast('✅ Contract complete with ' + c.name + '. +' + d.pay + ' Cinder and their trust.', 5600);
+    } else {
+      d.due = Date.now() + AI_TRADE_WINDOW_MS;
+      showToast('📦 Delivered to ' + c.name + '. +' + d.pay + ' Cinder · ' + d.left + ' to go.', 4600);
+    }
+    try { saveProfile(); } catch (e) {}
+    _aiCorpOpen(corpId, 'trade');
+    try { render(); } catch (e) {}
+  } catch (e) { try { console.warn('[aiDeliver]', e); } catch (_) {} }
+}
+function _aiTimeLeft(ms) {
+  const s = Math.max(0, Math.floor((ms - Date.now()) / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h > 0 ? (h + 'h ' + m + 'm') : (m + 'm');
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.aiTrade = { state: _aiTradeState, offer: _aiSpotOffer, terms: _aiContractTerms,
+                          wants: _aiCorpWants, tick: _aiTradeTick };
+} catch (e) {}
 // 🖱 Click a corp pin → who they are, what they want, and where you stand.
 // The pin only carries an icon and a colour; everything else is here, which is
 // what keeps the map readable.
@@ -210947,8 +211169,87 @@ function _aiCorpOpen(corpId, tab) {
     // ── TRADE ──────────────────────────────────────────────────────────────
     // Incumbents move a price band; startups unlock a service. Same tab, two
     // genuinely different economic roles.
+    // ── DOING BUSINESS ──────────────────────────────────────────────────
+    // Built first so it sits at the top of the tab: the buttons are the point
+    // of the panel, and the read-only detail below is context for them.
+    let dealHtml = '';
+    try {
+      const ts = _aiTradeState();
+      const spot = _aiSpotOffer(corpId);
+      const deal = ts.deal[corpId];
+      const terms = _aiContractTerms(corpId);
+      const traded = ts.spot[corpId] === _aiDayIndex();
+      const rname = (id) => escapeHtml(_meta(id).name);
+      const rico  = (id) => _meta(id).icon;
+      const have  = (id) => (typeof getRes === 'function') ? getRes(id) : 0;
+      // A button the player cannot use is dimmed and SAYS WHY. Removing it
+      // would hide the goal; leaving it plain would look broken.
+      const btn = (act, label, ok, why) =>
+        '<button class="btn-primary" data-aicorp-act="' + act + '"' + (ok ? '' : ' disabled')
+        + ' style="width:100%;padding:0.6rem;font-weight:800;letter-spacing:0.06em;'
+        + (ok ? '' : 'opacity:0.45;cursor:not-allowed;') + '">' + label + '</button>'
+        + (ok ? '' : '<div style="font-size:0.76rem;color:#e0a86a;margin-top:0.3rem;text-align:center">' + why + '</div>');
+
+      const spotOk = have(spot.res) >= spot.qty && !traded;
+      dealHtml =
+        '<div class="tw-nd-section-hdr">SPOT TRADE · TODAY</div>'
+        + '<div style="padding:0 1.1rem 0.9rem">'
+        +   '<div class="tw-nd-cinder-box" style="padding:0.8rem 0.9rem">'
+        +     '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.5rem">'
+        +       '<span style="color:#fff4d2;font-weight:700">' + rico(spot.res) + ' ' + spot.qty + ' ' + rname(spot.res) + '</span>'
+        +       '<b style="color:#f5c453">→ ' + spot.pay + ' 🔥</b></div>'
+        +     '<div style="font-size:0.78rem;color:#c2b184;margin-bottom:0.6rem">You hold '
+        +       have(spot.res) + ' · one trade per day · price includes their ' + esc(sd.tier.name.toLowerCase()) + ' rate</div>'
+        +     btn('spot', traded ? 'TRADED TODAY' : 'TRADE',
+                 spotOk, traded ? 'Come back tomorrow.' : 'Need ' + (spot.qty - have(spot.res)) + ' more ' + rname(spot.res) + '.')
+        +   '</div></div>';
+
+      if (deal) {
+        const doneRuns = deal.runs - deal.left;
+        const canDeliver = have(deal.res) >= deal.qty;
+        dealHtml +=
+          '<div class="tw-nd-section-hdr">ACTIVE CONTRACT</div>'
+          + '<div style="padding:0 1.1rem 1rem">'
+          +   '<div class="tw-nd-cinder-box" style="padding:0.8rem 0.9rem">'
+          +     '<div style="display:flex;justify-content:space-between;align-items:baseline">'
+          +       '<span style="color:#fff4d2;font-weight:700">' + rico(deal.res) + ' ' + deal.qty + ' ' + rname(deal.res) + ' per run</span>'
+          +       '<b style="color:#f5c453">' + deal.pay + ' 🔥 each</b></div>'
+          +     '<div class="tw-nd-vital-bar" style="height:6px;margin:0.55rem 0 0.3rem">'
+          +       '<div style="width:' + Math.round((doneRuns / deal.runs) * 100) + '%;background:#7fd8a0"></div></div>'
+          +     '<div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:0.6rem">'
+          +       '<span style="color:#c2b184">' + doneRuns + ' of ' + deal.runs + ' delivered</span>'
+          +       '<span style="color:' + (canDeliver ? '#c2b184' : '#e8705c') + '">due in ' + _aiTimeLeft(deal.due) + '</span></div>'
+          +     btn('deliver', 'DELIVER ' + deal.qty + ' ' + rname(deal.res).toUpperCase(),
+                   canDeliver, 'Short ' + (deal.qty - have(deal.res)) + '. Miss the window and standing drops ' + '−' + '12.')
+          +   '</div></div>';
+      } else {
+        const signOk = have(terms.res) >= terms.qty;
+        dealHtml +=
+          '<div class="tw-nd-section-hdr">ENTER BUSINESS</div>'
+          + '<div style="padding:0 1.1rem 1rem">'
+          +   '<div class="tw-nd-cinder-box" style="padding:0.8rem 0.9rem">'
+          +     '<div style="color:#fff4d2;font-weight:700;margin-bottom:0.4rem">'
+          +       'Supply contract · ' + terms.runs + ' runs</div>'
+          +     '<div style="font-size:0.82rem;color:#c2b184;line-height:1.6;margin-bottom:0.6rem">'
+          +       'Deliver ' + rico(terms.res) + ' <b style="color:#fff4d2">' + terms.qty + ' ' + rname(terms.res)
+          +       '</b> per run for <b style="color:#f5c453">' + terms.pay + ' 🔥</b> each. '
+          +       'You get 24h per delivery. Every run earns their trust; '
+          +       '<span style="color:#e8705c">miss a window and you lose it.</span></div>'
+          +     btn('sign', 'ENTER BUSINESS', signOk,
+                   'They will not sign — first run needs ' + (terms.qty - have(terms.res)) + ' more ' + rname(terms.res) + '.')
+          +   '</div></div>';
+      }
+      const dn = (ts.done[corpId] | 0), fl = (ts.fail[corpId] | 0);
+      if (dn || fl) {
+        dealHtml += '<div style="padding:0 1.1rem 1rem;font-size:0.8rem;color:#a7987c">'
+          + '📦 ' + dn + ' delivered · 📉 ' + fl + ' missed · record worth '
+          + '<b style="color:' + ((ts.rep[corpId] | 0) >= 0 ? '#7fd8a0' : '#e8705c') + '">'
+          + (((ts.rep[corpId] | 0) > 0) ? '+' : '') + (ts.rep[corpId] | 0) + '</b> standing</div>';
+      }
+    } catch (e) { dealHtml = ''; }
+
     const NEED = 40;
-    const tradeHtml = isNew
+    const tradeHtml = dealHtml + (isNew
       ? '<div class="tw-nd-section-hdr">WHAT THEY OFFER</div>'
         + '<div style="padding:0 1.1rem 0.8rem">'
         +   '<div class="tw-nd-cinder-box" style="padding:0.8rem 0.9rem">'
@@ -210978,9 +211279,9 @@ function _aiCorpOpen(corpId, tab) {
                        : 'Neutral standing, board rate. Their opinion is worth up to ±15%.') + '</div>'
                 + '</div>'
               : '<span style="color:#8a7a52">No resource of their own.</span>')
-      + '</div>';
+      + '</div>');
 
-    const tabs = [['brief', 'BRIEF'], ['standing', 'STANDING'], ['trade', isNew ? 'OFFER' : 'TRADE']];
+    const tabs = [['brief', 'BRIEF'], ['standing', 'STANDING'], ['trade', 'TRADE']];
     const panel = { brief: briefHtml, standing: standingHtml, trade: tradeHtml };
 
     _aiCorpClose();
@@ -211021,6 +211322,18 @@ function _aiCorpOpen(corpId, tab) {
       if (tb) { _aiCorpOpen(corpId, tb.getAttribute('data-aicorp-tab')); return; }
       const go = tgt.closest('[data-aicorp-goto]');
       if (go) { _aiCorpOpen(go.getAttribute('data-aicorp-goto'), 'brief'); return; }
+      // 🤝 Trade actions. Each re-opens the panel on the TRADE tab so the
+      // result — new stock, a ticking deadline, a moved standing — is visible
+      // immediately instead of behind a manual reopen.
+      const act = tgt.closest('[data-aicorp-act]');
+      if (act) {
+        if (act.hasAttribute('disabled')) return;
+        const a = act.getAttribute('data-aicorp-act');
+        if (a === 'spot')    _aiSpotTrade(corpId);
+        else if (a === 'sign')    _aiEnterBusiness(corpId);
+        else if (a === 'deliver') _aiDeliver(corpId);
+        return;
+      }
     });
     document.addEventListener('keydown', _aiCorpKey);
   } catch (e) { try { console.warn('[aiCorpOpen]', e); } catch (_) {} }

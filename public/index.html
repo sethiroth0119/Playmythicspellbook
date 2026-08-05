@@ -36296,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120g9';
+  window.BUILD_VERSION = 'v120h0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -200992,6 +200992,17 @@ try {
     guildChatRefresh: () => {
       try { if (typeof _jbGuildRefresh === 'function') _jbGuildRefresh(); } catch (e) {}
     },
+    // Realtime hands us the inserted row; append it rather than refetching the
+    // whole wire per message. Deduped by id because the Just Business app may
+    // ALSO be subscribed and have appended it already.
+    guildChatAppend: (row) => {
+      try {
+        if (!row) return;
+        App._guildChat = App._guildChat || [];
+        if (row.id != null && App._guildChat.some((m) => m && m.id === row.id)) return;
+        App._guildChat = App._guildChat.concat([row]).slice(-200);
+      } catch (e) {}
+    },
     // Same insert the Just Business app uses, so both surfaces write one table.
     guildChatSend: async (body) => {
       try {
@@ -215970,6 +215981,6 @@ render();
      wrapped so a failure inside it can never take the game down.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
      other static asset. -->
-<script type="module" src="src/community/index.js?v=120g9"></script>
+<script type="module" src="src/community/index.js?v=120h0"></script>
 </body>
 </html>

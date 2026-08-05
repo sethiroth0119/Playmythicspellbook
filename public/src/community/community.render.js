@@ -10,12 +10,60 @@ import { Community, loadDirectory, loadCommunity, standings, myMembershipFor, ap
          tally, objectives, pot, myUnclaimedRewards } from './community.state.js';
 import { bridge, esc, fmtNum, fmtDate } from './community.bridge.js';
 import * as roles from './community.roles.js';
+import { subscribeWire, subscribeCommunity, unsubscribeAll, sendTyping,
+         notifyState, askNotifyPermission } from './community.realtime.js';
 
 const OV = 'mythic-community-ov';
 let view = 'directory';     // 'directory' | 'community'
 let tab = 'standings';      // 'standings' | 'members' | 'corps' | 'ledger'
 let openId = null;
 let busy = false;
+let typingNames = [];       // who is currently typing on the wire
+
+/* Live wiring for the community currently open. Re-subscribing is cheap
+   (the realtime module keys channels and returns the existing one), so this is
+   safe to call on every load. */
+function wireUp() {
+  const b = bridge();
+  const c = Community.current;
+  if (!c) return;
+  const corp = b.myCorp();
+  if (corp && corp.id) {
+    subscribeWire(corp.id,
+      (row) => {
+        b.guildChatAppend(row);
+        // Someone who just sent a line is no longer typing.
+        typingNames = typingNames.filter((n) => n !== row.user_name);
+        if (tab === 'wire') { paint(); scrollWire(); }
+      },
+      (names) => {
+        typingNames = names.filter((n) => n !== b.displayName());
+        if (tab === 'wire') paintTypingOnly();
+      });
+  }
+  subscribeCommunity(c.id, c.name, ({ kind }) => {
+    // Announcements/votes/payouts change what the tabs show, so reload the
+    // community — but only the data, and only when something actually landed.
+    if (kind === 'announcement' || kind === 'vote' || kind === 'reward' || kind === 'member') refreshCommunity();
+  }, { userId: b.userId() });
+}
+
+/* ⚠ Typing repaints must NOT go through paint(). A full repaint rebuilds the
+   input element, which drops focus and any half-typed message every time
+   somebody else presses a key — the exact bug that makes chat unusable. */
+function paintTypingOnly() {
+  try {
+    const el = document.getElementById('mc-typing');
+    if (el) el.innerHTML = typingHtml();
+  } catch (e) {}
+}
+function typingHtml() {
+  if (!typingNames.length) return '';
+  const who = typingNames.length === 1 ? esc(typingNames[0])
+    : typingNames.length === 2 ? esc(typingNames[0]) + ' and ' + esc(typingNames[1])
+    : esc(typingNames[0]) + ' and ' + (typingNames.length - 1) + ' others';
+  return `<span class="mc-typing"><i></i><i></i><i></i> ${who} ${typingNames.length === 1 ? 'is' : 'are'} typing…</span>`;
+}
 
 /* ── chrome ──────────────────────────────────────────────────────────────── */
 function injectStyle() {
@@ -80,6 +128,15 @@ function injectStyle() {
   #${OV} .mc-wsys{text-align:center;font-size:.7rem;color:#8d8370;letter-spacing:.04em;padding:2px 0}
   #${OV} .mc-wsend{display:flex;gap:7px}
   #${OV} .mc-wsend input{flex:1}
+  /* Typing row keeps its height whether or not anyone is typing, so the input
+     does not jump up and down under the cursor while people type. */
+  #${OV} .mc-typingrow{min-height:18px;margin:0 0 6px;font-size:.74rem;color:#9b9078}
+  #${OV} .mc-typing{display:inline-flex;align-items:center;gap:3px}
+  #${OV} .mc-typing i{width:4px;height:4px;border-radius:50%;background:#c9a86a;display:inline-block;
+    animation:mcTypeBlink 1.2s infinite}
+  #${OV} .mc-typing i:nth-child(2){animation-delay:.18s}
+  #${OV} .mc-typing i:nth-child(3){animation-delay:.36s}
+  @keyframes mcTypeBlink{0%,60%,100%{opacity:.25}30%{opacity:1}}
   `;
   document.head.appendChild(s);
 }
@@ -194,10 +251,25 @@ function wireHtml() {
         <span class="mc-pill">${chat.length} on the wire</span></h3>
       <div class="mc-note">Live chat and every corporation action, seen by all members. This wire belongs to <b>${esc(corp.name || 'your corp')}</b> — a community can hold several corporations, so other members of this community may be on a different wire.</div>
       <div id="mc-wire" class="mc-wire">${lines || '<div class="mc-empty" style="text-align:center;padding:26px">Quiet on the wire. Say something to the guild.</div>'}</div>
+      <div id="mc-typing" class="mc-typingrow">${typingHtml()}</div>
       <div class="mc-wsend">
         <input id="mc-wmsg" maxlength="400" placeholder="Message your guild…" autocomplete="off">
         <button class="mc-b" data-mc="wire-send">Send</button>
       </div>
+      ${notifyRowHtml()}
+    </div>`;
+}
+
+/* Notifications are opt-in and the button says exactly what it will do. A
+   permission prompt fired on page load is how a site gets blocked forever. */
+function notifyRowHtml() {
+  const st = notifyState();
+  if (st === 'unsupported') return '';
+  if (st === 'granted') return `<div class="mc-note" style="margin-top:8px">🔔 Alerts are on — you will be told about announcements, open votes and payouts in this community, even on another tab.</div>`;
+  if (st === 'denied') return `<div class="mc-note" style="margin-top:8px">🔕 Alerts are blocked for this site in your browser settings. Re-allow notifications there to hear about announcements and votes.</div>`;
+  return `<div class="mc-note" style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span style="flex:1;min-width:220px">🔔 Get told when this community posts an announcement, opens a vote, or pays you out.</span>
+      <button class="mc-b" data-mc="notify-on">Turn on alerts</button>
     </div>`;
 }
 
@@ -503,6 +575,7 @@ async function refreshCommunity() {
   // whatever was last loaded by a visit to Just Business, which may be nothing.
   try { bridge().guildChatRefresh(); } catch (e) {}
   await loadCommunity(openId);
+  try { wireUp(); } catch (e) {}
   paint();
 }
 
@@ -587,6 +660,15 @@ async function onClick(ev) {
       if (!r.ok) { b.toast('⚠ ' + (r.error || 'Could not update that corporation.')); return; }
       await api.logAction(openId, 'corp → ' + el.dataset.status, el.dataset.c);
       await refreshCommunity();
+      return;
+    }
+
+    if (act === 'notify-on') {
+      const res = await askNotifyPermission();
+      b.toast(res === 'granted' ? '🔔 Alerts on — announcements, votes and payouts will reach you.'
+        : res === 'denied' ? '🔕 Your browser blocked alerts for this site.'
+        : 'Alerts were not enabled.');
+      paint();
       return;
     }
 
@@ -740,11 +822,19 @@ export function open() {
     // Enter sends on the wire. Delegated, because paint() replaces the input
     // element every repaint and a direct listener would not survive it.
     ov.addEventListener('keydown', (ev) => {
-      if (ev.key !== 'Enter' || ev.shiftKey) return;
       if (!ev.target || ev.target.id !== 'mc-wmsg') return;
-      ev.preventDefault();
-      const btn = ov.querySelector('[data-mc="wire-send"]');
-      if (btn) btn.click();
+      if (ev.key === 'Enter' && !ev.shiftKey) {
+        ev.preventDefault();
+        const btn = ov.querySelector('[data-mc="wire-send"]');
+        if (btn) btn.click();
+        return;
+      }
+      // Tell the guild someone is composing. Throttled inside sendTyping, and
+      // never fired for Enter (which is a send, not typing).
+      try {
+        const b = bridge(); const corp = b.myCorp();
+        if (corp && corp.id) sendTyping(corp.id, b.displayName());
+      } catch (e) {}
     });
     document.body.appendChild(ov);
   }
@@ -756,4 +846,9 @@ export function open() {
 export function close() {
   const ov = document.getElementById(OV);
   if (ov) ov.remove();
+  // ⚠ Drop the realtime channels. Leaving them open holds a websocket and a
+  //   slot in the project's channel budget for a panel nobody is looking at,
+  //   and re-opening would stack a second subscription on the same tables.
+  try { unsubscribeAll(); } catch (e) {}
+  typingNames = [];
 }

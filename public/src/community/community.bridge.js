@@ -41,6 +41,7 @@ const NULL_BRIDGE = {
   guildChat: () => [],
   guildChatRefresh: () => {},
   guildChatSend: async () => false,
+  guildChatAppend: () => {},
   isAdmin: () => false,
   render: () => {},
   _null: true,

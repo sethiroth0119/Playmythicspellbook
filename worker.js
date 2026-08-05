@@ -471,8 +471,14 @@ async function handleGarage(request, env, u) {
     // than only from its own copy — that is what makes drift visible.
     // webhook:false means a buyer who never returns is NOT fulfilled — the
     // single most useful thing this endpoint can tell an operator.
+    // `durable` PROBES THE TABLE rather than just checking for credentials.
+    // /api/garage/owned already uses that word to mean "the table answered",
+    // and having one endpoint report durable:true on credentials alone while
+    // the other reports false on a missing table is how an operator ends up
+    // diagnosing the wrong thing.
+    const _rows = await _garageOwnedRows(env, '00000000-0000-0000-0000-000000000000');
     return cjson({ enabled: configured, webhook: !!env.STRIPE_WEBHOOK_SECRET,
-      durable: !!(env.SB_SERVICE && env.SB_URL), rigs: Object.keys(GARAGE_RIGS).map(k =>
+      durable: _rows !== null, rigs: Object.keys(GARAGE_RIGS).map(k =>
       ({ sku: k, cents: GARAGE_RIGS[k].cents, name: GARAGE_RIGS[k].name })) });
   }
   if (!configured) return cjson({ error: 'stripe_not_configured', hint: 'Set STRIPE_SECRET_KEY on this Worker.' }, 503);

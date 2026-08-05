@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120f2';
+  window.BUILD_VERSION = 'v120f3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -158689,8 +158689,11 @@ function _garageGrant(sku, sid) {
   const g = _garageState();
   if (g[sku]) return false;
   g[sku] = { at: Date.now(), sid: sid || null };
+  // saveProfile() already schedules the debounced cloud sync, so the rig
+  // reaches the account without a second nudge. (The nudge that used to sit
+  // here called `cloudSaveSoon`, which does not exist — it was dead, though
+  // harmlessly so, because the save above covers it.)
   try { saveProfile(); } catch (e) {}
-  try { if (typeof cloudSaveSoon === 'function') cloudSaveSoon(); } catch (e) {}
   return true;
 }
 
@@ -180796,7 +180799,7 @@ function _covertCollect(missionInstanceId) {
       // 250–500 Cinder + 1 Aza, twice per week.
       const c = 250 + Math.floor(Math.random() * 251);
       const a = 1;
-      if (typeof addCinder === 'function') addCinder(c);
+      if (typeof addCinders === 'function') addCinders(c);
       if (typeof addSovereigns === 'function') addSovereigns(a);
       payout = `+${c.toLocaleString()} Cinder, +${a} Aza`;
     } else if (m.missionId === 'cv_intel') {
@@ -180810,7 +180813,7 @@ function _covertCollect(missionInstanceId) {
         payout = `📡 Intel acquired on ${ev.eventName} — ${ev.corpId}.`;
         showToast(`📡 Intel: ${ev.corpId}'s ${ev.eventName} active in ${ev.regionId}.`, 6500);
       } else {
-        if (typeof addCinder === 'function') addCinder(3000);
+        if (typeof addCinders === 'function') addCinders(3000);
         payout = `+3,000 Cinder (no fresh intel available).`;
       }
     } else if (m.missionId === 'cv_cardhunt') {
@@ -180833,14 +180836,14 @@ function _covertCollect(missionInstanceId) {
         Profile.cardCollection[pick.id] = (Profile.cardCollection[pick.id] | 0) + 1;
         payout = `🎴 Recovered ${pick.icon || '🎴'} ${pick.name}!`;
       } else {
-        if (typeof addCinder === 'function') addCinder(2000);
+        if (typeof addCinders === 'function') addCinders(2000);
         payout = `+2,000 Cinder (no eligible cards in catalog).`;
       }
     } else if (m.missionId === 'cv_recruit') {
       // 1000–2500 Cinder + 2 Aza, once per two weeks.
       const c = 1000 + Math.floor(Math.random() * 1501);
       const a = 2;
-      if (typeof addCinder === 'function') addCinder(c);
+      if (typeof addCinders === 'function') addCinders(c);
       if (typeof addSovereigns === 'function') addSovereigns(a);
       payout = `+${c.toLocaleString()} Cinder, +${a} Aza, recruit contacts established.`;
     }
@@ -188038,7 +188041,12 @@ function _wf3OnCatch(result) {
     _wf3S.fuelTrip = (_wf3S.fuelTrip | 0) + result.amount;
     _wf3GainXP(Math.round(xp * 0.5));
     _wf3RecordCatch(result.item.id, result.item.name, result.rarity, biomeName);
-    try { if (typeof bumpMarketPriceDown === 'function') bumpMarketPriceDown('fuel', result.amount, 'fishing'); } catch (e) {}
+    // ⚠ bumpMarketPriceDown does not exist — only bumpMarketPriceUp does — so
+    // hauling oil out of the water never moved the fuel price at all. Supply
+    // is expressed through cxProduce, the single producer hook every other
+    // production site already uses (ops, nodes, packs); pushing fuel into it
+    // is what actually softens the price.
+    try { if (typeof cxProduce === 'function' && result.amount > 0) cxProduce({ fuel: result.amount }, 'fishing'); } catch (e) {}
     _wf3FlashLog('🛢 Oil Barrel · +' + result.amount + ' ⛽ fuel', 'buy');
     try { _wf3SpawnFish(result.rarity, result.item.id); } catch (e) {}
     _wf3ShowBarrelCard(result);
@@ -189745,8 +189753,12 @@ function vmBuyListing(listingId) {
   const cap = (typeof ppLotCap === 'function') ? ppLotCap() : 9;
   if (p.lot.length >= cap) { showToast(`⚠ Your lot is full (${cap}). Sell or scrap a car first.`); return false; }
   // Move funds. Buying ALSO unlocks PP for the buyer (so they can park it).
-  if (typeof spendCinder === 'function') {
-    if (!spendCinder(price)) { showToast('⚠ Purchase failed — Cinder transaction rejected.'); return false; }
+  // ⚠ spendCinderS — the singular name does not exist, so this ALWAYS took the
+  // raw-subtraction fallback below and bypassed the real spend path (and with
+  // it whatever spendGems does about persistence and tax exemption). Buyers
+  // were charged, so nothing was free, but by the wrong route.
+  if (typeof spendCinders === 'function') {
+    if (!spendCinders(price)) { showToast('⚠ Purchase failed — Cinder transaction rejected.'); return false; }
   } else {
     Profile.gems = Math.max(0, (Profile.gems | 0) - price);
   }
@@ -189775,8 +189787,8 @@ function vmBuyListing(listingId) {
 function _vmCreditSeller(sellerId, amount) {
   // Local fallback — if it's the player's own listing (shouldn't happen
   // since the buyer-check rejects), credit them directly.
-  if (sellerId === _vmMyId() && typeof addCinder === 'function') {
-    addCinder(amount);
+  if (sellerId === _vmMyId() && typeof addCinders === 'function') {
+    addCinders(amount);
   }
   // TODO: Supabase RPC for true cross-player credit.
 }
@@ -192599,7 +192611,7 @@ function _brpResolveRunOutcome(state, brpRun) {
     const cinder = Math.floor((R.cinderBase + Math.random() * R.cinderBase * 0.4) * brpRun.mult);
     s.crude = (s.crude | 0) + crude;
     s.fuel  = (s.fuel  | 0) + fuel;
-    if (typeof addCinder === 'function') addCinder(cinder);
+    if (typeof addCinders === 'function') addCinders(cinder);
     s.wanted = Math.min(100, (s.wanted | 0) + R.threat);
     if (!Array.isArray(s.log)) s.log = [];
     s.log.unshift({ ts: Date.now(), level: 'good', msg: `Roguelite extraction success — +${crude} crude, +${fuel} fuel, +¢${cinder.toLocaleString()}.` });
@@ -207223,7 +207235,7 @@ function _twChosenAwardTrophy(chosen) {
   if (!chosen) return;
   // Cinder + Aza payout — generous because this is a major milestone.
   try {
-    if (typeof addCinder === 'function') addCinder(50000);
+    if (typeof addCinders === 'function') addCinders(50000);
     if (typeof addSovereigns === 'function') addSovereigns(25); // 25 Aza ≈ $25
   } catch (e) {}
   // Unique trophy relic — stored on the player inventory.
@@ -207450,7 +207462,7 @@ function _twCancelDarkEvent(darkEventId, sabotageNodeId) {
   t.nodes = (t.nodes || []).filter(n => n.id !== (sabotageNodeId || event.sabotageNodeId));
   // Reward — chunky Cinder + small Aza pop.
   try {
-    if (typeof addCinder === 'function') addCinder(10000);
+    if (typeof addCinders === 'function') addCinders(10000);
     if (typeof addSovereigns === 'function') addSovereigns(5);
   } catch (e) {}
   showToast(`🜏 Dark Event SABOTAGED — ${event.eventName || 'Operation'} cancelled! +10,000 Cinder, +5 Aza.`, 6500);
@@ -214206,7 +214218,7 @@ function _twResolveAttackOutcome() {
     try {
       const bonus = (typeof _twGameModeRewardBonus === 'function') ? _twGameModeRewardBonus(App.state) : null;
       if (bonus && (bonus.cinder > 0 || bonus.fuel > 0)) {
-        if (bonus.cinder > 0 && typeof addCinder === 'function') addCinder(bonus.cinder);
+        if (bonus.cinder > 0 && typeof addCinders === 'function') addCinders(bonus.cinder);
         if (bonus.fuel > 0) {
           // Route fuel to the player's resource bag via the standard
           // gainResources helper if available.
@@ -214221,7 +214233,7 @@ function _twResolveAttackOutcome() {
       }
       // 💻 Hack Mainframe bonus reward (Reward approach).
       if (App.state.mods && App.state.mods.twHack && App.state.mods.twHack.bonusCinder > 0) {
-        if (typeof addCinder === 'function') addCinder(App.state.mods.twHack.bonusCinder);
+        if (typeof addCinders === 'function') addCinders(App.state.mods.twHack.bonusCinder);
         showToast(`💻 Hack vault payout: +${App.state.mods.twHack.bonusCinder.toLocaleString()} Cinder.`, 4500);
       }
       // 📊 Game-mode end-screen — stash a stat summary for the result
@@ -214278,7 +214290,7 @@ function _twResolveAttackOutcome() {
         const vu = (App.state.units || []).find(u => u && u.id === vipState.unitId);
         if (vipState.extracted) {
           showToast('🆘 VIP rescued — +5,000 Cinder bonus.', 4500);
-          if (typeof addCinder === 'function') addCinder(5000);
+          if (typeof addCinders === 'function') addCinders(5000);
         } else if (vu && !vu.alive && !vu._bleeding) {
           showToast('💀 VIP killed — permanent loss.', 5000);
         } else if (vu && vu._bleeding) {
@@ -214385,15 +214397,21 @@ function _twShopFlow(nodeId) {
   modal.querySelectorAll('[data-shop-upgrade]').forEach(b => b.onclick = () => {
     const uid = b.dataset.shopUpgrade;
     let cost; try { cost = JSON.parse(b.dataset.shopCost || '{}'); } catch (e) { cost = {}; }
-    // Check resources
-    for (const [res, amt] of Object.entries(cost)) {
-      if ((typeof getResource === 'function' ? getResource(res) : 0) < amt) {
-        showToast(`⚠ Not enough ${res} (need ${amt}).`); return;
-      }
+    // ⚠ THIS UPGRADE COULD NEVER BE BOUGHT. It checked `getResource(res)` and
+    // charged with `spendResource(res, amt)` — NEITHER FUNCTION EXISTS. The
+    // read sat behind a typeof guard that fell back to 0, so the test was
+    // always `0 < amt` and every purchase bounced with "Not enough"; and even
+    // past that, the spend loop threw into an empty catch and charged nothing.
+    // The real API is getRes / canAffordResources / spendResources, and the
+    // last two take exactly this {res: amt} object.
+    if (!canAffordResources(cost)) {
+      const short = Object.keys(cost).find(r => getRes(r) < cost[r]);
+      showToast(`⚠ Not enough ${short} (need ${cost[short]}, you have ${getRes(short)}).`);
+      return;
     }
-    for (const [res, amt] of Object.entries(cost)) {
-      try { spendResource(res, amt); } catch (e) {}
-    }
+    // Charge atomically — spendResources re-checks and refuses as a unit, so a
+    // multi-resource cost can never half-deduct.
+    if (!spendResources(cost)) { showToast('⚠ Purchase failed — resources changed.'); return; }
     if (!own.upgrades) own.upgrades = [];
     own.upgrades.push(uid);
     try { _twSave(); } catch (e) {}

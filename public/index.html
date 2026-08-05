@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120e5';
+  window.BUILD_VERSION = 'v120e6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -78575,7 +78575,7 @@ function mountJustBusiness() {
     }
     if (!f) {
       f = document.createElement('iframe');
-      f.id = FID; f.src = 'corp/?v=120d9';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
+      f.id = FID; f.src = 'corp/?v=120e6';   // 'corp/' (not corp/index.html) — avoids CF's 307 dir-redirect; ?v busts the browser HTTP cache on reskins
       // Smooth cross-fade + gentle scale-in (no hard cut on enter/exit).
       f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#0b0b10;opacity:0;transform:scale(.986);transition:opacity .6s ' + EASE + ',transform .6s ' + EASE + ';will-change:opacity,transform';
       f.onload = function () {
@@ -158121,18 +158121,56 @@ function esnConfirmReturn() {
 // 🚨 DISPLAY ONLY. GARAGE_RIGS in worker.js is the pricing authority and is
 // what Stripe actually charges. If these two disagree the player is shown one
 // price and billed another, so they must be changed together.
+// ⚙ THE EFFECTS TABLE IS THE SINGLE SOURCE OF TRUTH. _jbConvoys() reads it to
+// change what your convoys actually do, and the store's bullet points are
+// GENERATED from it — so the shop can never advertise a number the engine
+// does not deliver. Rigs do not stack: the best one you own hauls everything,
+// which is why each tier's copy says "everything below".
+//   load  — cargo multiplier per run
+//   risk  — flat reduction to convoy risk (before the 0..0.95 clamp)
+//   speed — trip-time divisor, so a higher number arrives sooner
+const GARAGE_RIG_FX = {
+  rig_ironback:  { tier: 1, load: 1.25, risk: 0.05, speed: 1.10 },
+  rig_ashconvoy: { tier: 2, load: 1.60, risk: 0.12, speed: 1.25 },
+  rig_warden:    { tier: 3, load: 2.10, risk: 0.22, speed: 1.45 },
+};
+function _rigPerks(sku, alsoBelow) {
+  const f = GARAGE_RIG_FX[sku]; if (!f) return [];
+  const p = [];
+  if (alsoBelow) p.push('Everything in the ' + alsoBelow);
+  p.push('+' + Math.round((f.load - 1) * 100) + '% cargo per convoy run');
+  p.push('−' + Math.round(f.risk * 100) + ' convoy risk on every route');
+  p.push('+' + Math.round((f.speed - 1) * 100) + '% road speed (earlier arrivals)');
+  return p;
+}
 const GARAGE_RIGS = [
   { sku: 'rig_ironback',  name: 'Ironback Runner',  price: 20,  icon: '🛻',
     tagline: 'A stubborn short-haul flatbed. Gets there.',
-    perks: ['Runs your own convoy routes', 'Light escort plating', 'One-time purchase'] },
+    perks: _rigPerks('rig_ironback') },
   { sku: 'rig_ashconvoy', name: 'Ash Convoy Rig',   price: 60,  icon: '🚚', popular: true,
     tagline: 'Sealed cab and ash filters. Built for the long crossings.',
-    perks: ['Everything in the Ironback', 'Heavier cargo bed', 'Rated for ashfall routes'] },
+    perks: _rigPerks('rig_ashconvoy', 'Ironback') },
   { sku: 'rig_warden',    name: 'Warden Longhaul',  price: 99,  icon: '🚛',
     tagline: 'The rig hauliers name. Armoured, escorted, unbothered.',
-    perks: ['Everything in the Ash Convoy', 'Armoured hauler chassis', 'Escort mount points'] },
+    perks: _rigPerks('rig_warden', 'Ash Convoy') },
 ];
 const GARAGE_BY_SKU = Object.fromEntries(GARAGE_RIGS.map(r => [r.sku, r]));
+// The rig actually pulling your freight — the best one owned. Returns a
+// neutral, no-op profile when the player owns none, so every caller can use
+// the same shape without branching on ownership.
+function _garageRig() {
+  try {
+    let best = null;
+    for (const r of GARAGE_RIGS) {
+      if (!garageOwns(r.sku)) continue;
+      const f = GARAGE_RIG_FX[r.sku];
+      if (f && (!best || f.tier > best.fx.tier)) best = { rig: r, fx: f };
+    }
+    if (!best) return { owned: false, name: 'Hand-hauled', icon: '🧺', load: 1, risk: 0, speed: 1, tier: 0 };
+    return { owned: true, sku: best.rig.sku, name: best.rig.name, icon: best.rig.icon,
+             load: best.fx.load, risk: best.fx.risk, speed: best.fx.speed, tier: best.fx.tier };
+  } catch (e) { return { owned: false, name: 'Hand-hauled', icon: '🧺', load: 1, risk: 0, speed: 1, tier: 0 }; }
+}
 
 function _garageState() {
   if (!Profile.garage || typeof Profile.garage !== 'object') Profile.garage = {};
@@ -210857,6 +210895,13 @@ function _jbConvoys() {
       } catch (e) { return 'Camp'; }
     })();
     const out = [];
+    // 🚚 The rig hauling your freight. Bought in the Garage, applied here —
+    // this is the whole mechanical payoff of owning one. It is read once per
+    // call rather than per node so every convoy in a batch agrees, and because
+    // the list is derived live, a rig bought mid-session shows up on the very
+    // next render with nothing to migrate.
+    const rig = (typeof _garageRig === 'function') ? _garageRig()
+              : { owned: false, name: 'Hand-hauled', icon: '🧺', load: 1, risk: 0, speed: 1 };
     for (const n of t.nodes) {
       if (!n || !n.id) continue;
       const own = owned[n.id];
@@ -210864,18 +210909,23 @@ function _jbConvoys() {
       const yieldKeys = Object.keys(n.resourceYield || {});
       if (!yieldKeys.length) continue;                      // nothing to haul
       const res = yieldKeys[0];
-      const qty = Math.max(1, Math.round((n.resourceYield[res] || 1) * 24));
+      const baseQty = Math.max(1, Math.round((n.resourceYield[res] || 1) * 24));
+      const qty = Math.max(1, Math.round(baseQty * (rig.load || 1)));
       const h = _jbConvoyHash(n.id);
       // Stagger both the phase and the trip length so arrivals spread out.
-      const trip = _JB_TRIP_MS + (h % 7) * 6 * 60 * 1000;
+      // A better rig divides the trip, so the stagger is preserved but every
+      // leg is shorter.
+      const trip = Math.max(60000, Math.round((_JB_TRIP_MS + (h % 7) * 6 * 60 * 1000) / (rig.speed || 1)));
       const phase = h % trip;
       const progress = ((now + phase) % trip) / trip;
       const guards = own.guards ? (own.guards.length | 0) : 0;
       const stability = (own.stability != null) ? (own.stability | 0) : 100;
       const corruption = (typeof _twNodeRecon === 'function')
         ? ((_twNodeRecon(n) || {}).corruption | 0) : 0;
-      // Risk: unstable and corrupt roads are dangerous; guards make them less so.
-      let risk = (100 - stability) / 200 + corruption / 300 - guards * 0.06;
+      // Risk: unstable and corrupt roads are dangerous; guards and an armoured
+      // rig make them less so. The rig's cut lands BEFORE the clamp, so it
+      // still helps on a route that would otherwise be pinned at the ceiling.
+      let risk = (100 - stability) / 200 + corruption / 300 - guards * 0.06 - (rig.risk || 0);
       risk = Math.max(0, Math.min(0.95, risk));
       const etaMin = Math.max(0, Math.round(((1 - progress) * trip) / 60000));
       out.push({
@@ -210890,6 +210940,13 @@ function _jbConvoys() {
         status: progress >= 0.995 ? 'arrived' : 'in-transit',
         flag: (corruption > 55) ? 'illicit' : '',
         nodeId: n.id,
+        // What is pulling it, and what the rig added to this run — surfaced so
+        // a purchase is visible on the freight itself, not just in a receipt.
+        rig: rig.name,
+        rigIcon: rig.icon,
+        rigOwned: !!rig.owned,
+        baseCargo: baseQty.toLocaleString() + ' ' + res,
+        rigBonus: rig.owned ? ('+' + (qty - baseQty).toLocaleString() + ' ' + res) : '',
       });
     }
     // Busiest routes first — the ones a player is most likely to act on.
@@ -211927,7 +211984,11 @@ function renderTerritoryWars() {
     if (!cv) return svg;
     const label = cv.id + ' · ' + cv.cargo + '\n' + cv.from + ' → ' + cv.to
       + '\n' + Math.round(cv.progress * 100) + '% · ETA ' + cv.eta
-      + (cv.escort ? '\nEscort: ' + cv.escort : '');
+      + (cv.escort ? '\nEscort: ' + cv.escort : '')
+      // Name the rig on the freight itself, and say what it added — a bought
+      // rig should be visible where the work happens, not only on a receipt.
+      + (cv.rig ? '\nRig: ' + (cv.rigIcon || '') + ' ' + cv.rig
+                + (cv.rigBonus ? ' (' + cv.rigBonus + ' over hand-hauled)' : '') : '');
     // <title> inside the motion group is the SVG-native tooltip — no extra
     // element, no layout cost, and it moves with the truck.
     return svg.replace('>', '><title>' + escapeHtml(label) + '</title>');

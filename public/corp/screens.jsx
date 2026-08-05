@@ -403,6 +403,7 @@ function LogisticsScreen() {
               <th style={{ width: 90 }}>Convoy</th>
               <th>Route</th>
               <th>Cargo</th>
+              <th>Rig</th>
               <th>Escort</th>
               <th>Risk</th>
               <th style={{ width: 260 }}>Progress</th>
@@ -421,7 +422,17 @@ function LogisticsScreen() {
                     <span style={{ fontWeight: 500 }}>{c.to}</span>
                   </div>
                 </td>
-                <td>{c.cargo}</td>
+                <td>
+                  {c.cargo}
+                  {/* What the rig added over hand-hauling. Shown on the cargo
+                      itself so a purchase reads as more freight, not a badge. */}
+                  {c.rigBonus ? (
+                    <div className="mono" style={{ fontSize: 10, color: 'var(--toxic, #7fd8a0)' }}>{c.rigBonus} rig</div>
+                  ) : null}
+                </td>
+                <td className="mono" style={{ fontSize: 11, color: c.rigOwned ? 'var(--text)' : 'var(--muted)' }}>
+                  {c.rig ? ((c.rigIcon ? c.rigIcon + ' ' : '') + c.rig) : '—'}
+                </td>
                 <td className="mono muted" style={{ fontSize: 11 }}>{c.escort}</td>
                 <td>
                   <RiskPips level={c.risk > 0.6 ? 'extreme' : c.risk > 0.35 ? 'high' : c.risk > 0.15 ? 'medium' : 'low'} />

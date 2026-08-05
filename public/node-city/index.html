@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v119y6-city";</script>
+<script>window.NC_BUILD = "v120g1-city";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -378,6 +378,12 @@
     <h2>The People Need…</h2>
     <div id="needslist"></div>
   </div>
+  <div class="card" id="repaircard">
+    <h2>Repairs <span class="rcount" id="repaircount"></span></h2>
+    <div id="repairlist"></div>
+    <button class="hbtn ember rall" id="btn-repair-all"></button>
+    <div class="rfoot">Damaged buildings produce nothing and stop counting toward defense. Click a row to inspect it.</div>
+  </div>
   <div class="card rtiphost" id="raidcard">
     <span class="rtip"><b>⚔ Raider Threat</b>When the timer hits zero a wave attacks. Your Defense total is compared against the wave's strength.<span class="use">Raise Defense: hire soldiers · build Watchtowers and Walls · slot cards into the Defense Deck.</span></span>
     <h2>Raider Threat</h2>
@@ -394,6 +400,15 @@
     <button class="pbtn" id="btn-repair" style="display:none"></button>
     <button class="pbtn danger" id="btn-demolish">🧨 Demolish (50% refund)</button>
     <button class="pbtn" id="btn-close">Close</button>
+  </div>
+  <div class="card" id="logcard">
+    <h2>City Log</h2>
+    <div class="lfilters">
+      <button class="hbtn on" data-logf="all">All</button>
+      <button class="hbtn" data-logf="raid">⚔ Raids</button>
+      <button class="hbtn" data-logf="env">🌩 Weather</button>
+    </div>
+    <div id="loglist"></div>
   </div>
 </div>
 
@@ -623,7 +638,72 @@
   .bbtn .bcost { font-size: 9.5px; color: #c9a86a; font-variant-numeric: tabular-nums; }
   #buildbar { gap: 9px; bottom: 14px; }
 </style>
+<style>
+/* ══════════════════════════════════════════════════════════════════════
+   🔧 REPAIRS · 📜 CITY LOG · 🛤️ ROAD METER · 🔍 TILE TOOLTIP  (v120g1)
+   Appended after the gilded block on purpose — same specificity, later
+   source order, so nothing above had to be edited to land these.
+   ══════════════════════════════════════════════════════════════════════ */
+  /* ── Repairs ── */
+  #repaircard { display: none; }
+  #repaircard.on { display: block; }
+  #repaircard h2 .rcount { color: var(--invalid); }
+  #repairlist { max-height: 156px; overflow-y: auto; margin-bottom: 7px; }
+  .rrow { display: flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 4px 0;
+    border-top: 1px solid var(--edge); cursor: pointer; }
+  .rrow:first-child { border-top: none; }
+  .rrow:hover .rname { color: var(--gold); }
+  .rrow .rico { font-size: 14px; line-height: 1; }
+  .rrow .rbody { flex: 1; min-width: 0; line-height: 1.35; }
+  .rrow .rname { display: block; color: var(--bone); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .rrow .rcost { display: block; font-size: 10px; color: var(--mist); font-variant-numeric: tabular-nums; }
+  .rrow .hbtn { flex: none; }
+  #repaircard .rall { width: 100%; padding: 5px; }
+  #repaircard .rfoot { font-size: 10px; color: var(--mist); margin-top: 6px; line-height: 1.5; }
+
+  /* ── City log ── */
+  #logcard .lfilters { display: flex; gap: 4px; margin-bottom: 6px; }
+  #logcard .lfilters .hbtn { flex: 1; padding: 2px 0; font-size: 9.5px; letter-spacing: .04em; }
+  #logcard .lfilters .hbtn.on { border-color: var(--gold); color: var(--gold); }
+  #loglist { max-height: 176px; overflow-y: auto; }
+  .lgrow { font-size: 11px; line-height: 1.5; padding: 4px 0; border-top: 1px solid var(--edge);
+    color: var(--bone); display: flex; gap: 6px; align-items: flex-start; }
+  .lgrow:first-child { border-top: none; }
+  .lgrow .lgt { flex: none; font-size: 9.5px; color: var(--mist); font-variant-numeric: tabular-nums;
+    padding-top: 1px; }
+  .lgrow.raid { color: #e6b9b3; }
+  .lgrow.env { color: #b6c7e4; }
+  .lgrow.good { color: #a9d8b4; }
+  #loglist .lgempty { font-size: 11px; color: var(--mist); padding: 4px 0; }
+
+  /* ── Road capacity meter (build shop + inspector) ── */
+  .roadmeter { margin: 6px 0 2px; font-size: 10.5px; color: var(--mist); line-height: 1.5; }
+  .roadmeter b { color: var(--bone); font-variant-numeric: tabular-nums; }
+  .roadmeter.full b { color: var(--invalid); }
+  .roadbar { height: 4px; background: #241d33; border-radius: 2px; overflow: hidden; margin: 4px 0 2px; }
+  .roadbar i { display: block; height: 100%; background: linear-gradient(90deg, #5a4a2a, var(--gold)); }
+  .roadbar.full i { background: linear-gradient(90deg, #6b2c28, var(--invalid)); }
+
+  /* ── Hover tooltip over a PLACED building ── */
+  #tiletip { position: absolute; z-index: 8; pointer-events: none; opacity: 0; display: none;
+    width: 232px; padding: 9px 11px; border-radius: 8px;
+    background: linear-gradient(180deg, rgba(22,18,40,.985), rgba(9,8,18,.985));
+    border: 1px solid rgba(212,175,55,.55); box-shadow: 0 12px 34px rgba(0,0,0,.75);
+    font-size: 11px; line-height: 1.5; color: #cdd0e2; transition: opacity .1s; }
+  #tiletip.on { display: block; opacity: 1; }
+  #tiletip b.tt { display: block; font-family: 'Cinzel', Georgia, serif; font-size: .78rem;
+    letter-spacing: .05em; color: #f0d68f; margin-bottom: 3px; }
+  #tiletip .tsub { display: block; font-size: 9.5px; color: var(--mist); letter-spacing: .08em;
+    text-transform: uppercase; margin-bottom: 5px; }
+  #tiletip .hl { color: var(--ember); }
+  #tiletip .dmg { color: var(--invalid); }
+  #tiletip .tbon { display: block; margin-top: 5px; padding-top: 5px; font-size: 10px;
+    border-top: 1px solid rgba(212,175,55,.25); color: var(--mist); }
+  #tiletip .tbon .on { color: var(--valid); }
+</style>
 <div id="toasts"></div>
+<div id="tiletip"></div>
 
 <!-- ═══════════ Three.js r171 — WebGPU build (auto-falls back to WebGL2) ═══════════ -->
 <script type="importmap">
@@ -1097,6 +1177,13 @@ const OBELISK_LINK = 5;
 const LOT_RENT_PER_MIN = 0.15;                   // tenant rent paid to owner
 const CARAVAN_EVERY = 240, CARAVAN_TRIP = [90, 150];  // seconds
 const DECAY_PER_HR = 1.6, DECAY_DEPOT_FACTOR = .5;    // wear; damaged at 100
+/* 🛤️ ROAD NETWORK LIMIT — roads are 4🔥 each and hand every neighbour +25%,
+   so an unlimited grid is just "pave the map". The cap is what the city can
+   MAINTAIN: a base allowance, widened by the buildings that actually keep a
+   road network alive. Existing roads over the cap are never removed — the
+   limit only blocks laying NEW ones, so no save is retroactively broken. */
+const ROAD_CAP_BASE = 40, ROAD_PER_DEPOT = 10, ROAD_PER_CONVOY = 8;
+const LOG_MAX = 140, LOG_SAVE = 40;                   // kept in memory / in the save
 const EXPEDITION_TIME = [180, 300];              // seconds away
 const REFUGEE_ROLL_EVERY = 170, REFUGEE_CHANCE = .16;
 const NODE_XP_PER_LEVEL = 50000;                 // link% × seconds
@@ -1470,6 +1557,11 @@ const tornadoMesh = (() => {
 })();
 const tornadoState = { x: 0, z: 0, tx: 0, tz: 0, lastCrush: 0 };
 
+// Raiders and the sky both break buildings, and the log filters split them —
+// so the cause string decides which shelf the line lands on.
+function damageLogKind(cause) {
+  return /Raider|siege|SIEGE|⚔|💥/.test(cause) ? 'raid' : 'env';
+}
 function damageTile(k, destroy, cause) {
   const t = game.tiles[k]; if (!t || t.type === 'anchor' || t.type === 'road') return false;
   const [x, z] = k.split(',').map(Number);
@@ -1479,13 +1571,17 @@ function damageTile(k, destroy, cause) {
     refreshRoadArea(x, z);
     if (selectedKey === k) { $('inspect').classList.remove('open'); selectedKey = null; }
     toast(cause + ' destroyed a ' + BUILDINGS[t.type].name + '!', 'bad');
+    logEvent(damageLogKind(cause), cause + ' DESTROYED ' + BUILDINGS[t.type].name + ' (L' + t.lvl +
+      ') at ' + k + '. Nothing was left to repair — rebuild it for ' + costLabel(costOf(t.type)) + '.');
   } else {
     if (t.damaged) return false;
     t.damaged = true;
     applyDamagedLook(t);
     toast(cause + ' damaged a ' + BUILDINGS[t.type].name + ' — repair it to restart production.', 'bad');
+    logEvent(damageLogKind(cause), cause + ' damaged ' + BUILDINGS[t.type].name + ' (L' + t.lvl + ') at ' + k +
+      ' — offline until repaired for ' + costLabel(repairCost(t)) + '.');
   }
-  computeLinks(); saveSoon();
+  computeLinks(); renderRepairs(); saveSoon();
   return true;
 }
 function applyDamagedLook(t) {
@@ -1524,9 +1620,30 @@ function startWeather(type) {
   }
   $('wxico').textContent = W.ico; $('wxname').textContent = W.name;
   $('daypill').classList.toggle('severe', !!W.severe);
-  if (type !== 'clear') toast(W.ico + ' ' + W.name + (W.severe ? ' — take cover! Buildings are at risk.' : ' has rolled in.'), W.severe ? 'bad' : undefined);
+  if (type !== 'clear') {
+    toast(W.ico + ' ' + W.name + (W.severe ? ' — take cover! Buildings are at risk.' : ' has rolled in.'), W.severe ? 'bad' : undefined);
+    // What the front actually DOES to the city, spelled out — the multipliers
+    // were only ever visible one building at a time in the inspector.
+    const fx = [];
+    if (W.farmMult && W.farmMult !== 1) fx.push('farms ×' + W.farmMult);
+    if (W.outdoorMult && W.outdoorMult !== 1) fx.push('open-air ×' + W.outdoorMult);
+    if (W.waterMult && W.waterMult !== 1) fx.push('purifiers ×' + W.waterMult);
+    if (W.allMult && W.allMult !== 1) fx.push('everything ×' + W.allMult);
+    if (W.lightning) fx.push('lightning can strike a building');
+    if (W.fire) fx.push('embers set buildings burning');
+    if (W.anomaly) fx.push('corrupts buildings, pays out essence when it collapses');
+    if (W.tornado) fx.push('flattens whatever it crosses');
+    wx._startedAt = Date.now();
+    logEvent('env', W.ico + ' ' + W.name + ' rolled in for ~' + Math.round(dur) + 's' +
+      (fx.length ? ' — ' + fx.join(', ') + '.' : '.'));
+  }
 }
 function endWeather() {
+  const prev = WEATHER[wx.type], since = wx._startedAt;
+  if (wx.type !== 'clear' && prev) {
+    logEvent('env', '🌤️ ' + prev.name + ' cleared' +
+      (since ? ' after ' + Math.round((Date.now() - since) / 1000) + 's' : '') + '. Skies are open again.');
+  }
   startWeather('clear');
   $('daypill').classList.remove('severe');
 }
@@ -1595,6 +1712,7 @@ function weatherTick(dt) {
       const pay = 2 + Math.floor(Math.random() * 3);
       MythicCityBridge.addRes('corruptedEssence', pay);
       toast('🌀 The anomaly collapses — ' + pay + ' 🟣 Corrupted Essence condenses over the city.', 'good');
+      logEvent('env good', '🌀 The anomaly collapsed — +' + pay + ' 🟣 Corrupted Essence banked to secured storage.');
     }
   }
 
@@ -2133,10 +2251,163 @@ const game = {
   raid: { timer: RAID_INTERVAL, wave: 1 },
   army: { workers: 0, soldiers: 0, rank: 0 },   // hired from the population
   frac: {},                         // fractional per-resource accumulators
+  log: [],                          // [{t,k,m}] event history — see logEvent()
   lastTick: performance.now(),
 };
 let mode = 'inspect', placeType = null, selectedKey = null;
 const $ = id => document.getElementById(id);
+
+/* ════════════════════════════════════════════════════════════════════════
+   7a. THE CITY LOG — toasts vanish in four seconds, and a raid that happened
+   while the player was reading the build shop left no trace at all. Every
+   raider wave and weather event now writes a DETAILED line here that
+   survives the tab, the reload and the cloud save.
+   `kind` is one of: 'raid' | 'env' | 'city' (+ optional ' good' for tone).
+   ════════════════════════════════════════════════════════════════════ */
+let logFilter = 'all';
+function logEvent(kind, msg) {
+  game.log.push({ t: Date.now(), k: kind, m: msg });
+  if (game.log.length > LOG_MAX) game.log.splice(0, game.log.length - LOG_MAX);
+  renderLog();
+}
+function logClock(ts) {
+  const d = new Date(ts);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function logEsc(t) {
+  return String(t == null ? '' : t).replace(/[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function renderLog() {
+  const list = $('loglist'); if (!list) return;
+  const rows = game.log
+    .filter(e => logFilter === 'all' || e.k.split(' ')[0] === logFilter)
+    .slice(-60).reverse();
+  const html = rows.length
+    ? rows.map(e => '<div class="lgrow ' + logEsc(e.k) + '"><span class="lgt">' + logClock(e.t) +
+        '</span><span>' + logEsc(e.m) + '</span></div>').join('')
+    : '<div class="lgempty">Nothing logged yet. Raids and weather write here.</div>';
+  if (html !== renderLog._last) { renderLog._last = html; list.innerHTML = html; }
+}
+$('logcard').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-logf]'); if (!b) return;
+  logFilter = b.dataset.logf;
+  $('logcard').querySelectorAll('[data-logf]').forEach(x => x.classList.toggle('on', x === b));
+  renderLog._last = null; renderLog();
+});
+
+/* ── 🛤️ Road network capacity ───────────────────────────────────────── */
+function roadCapParts() {
+  let depots = 0, convoy = 0;
+  for (const t of Object.values(game.tiles)) {
+    if (t.type === 'depot' && !t.damaged) depots++;
+    if (t.type === 'anchor' && t.anchor && ((NODE_TYPES[t.anchor.node.node_type] || {}).feeds || []).includes('__roads__')) convoy++;
+  }
+  return { depots, convoy, cap: ROAD_CAP_BASE + depots * ROAD_PER_DEPOT + convoy * ROAD_PER_CONVOY };
+}
+function roadCap() { return roadCapParts().cap; }
+function roadUsed() { return allRoadKeys().length; }
+function roadMeterHtml() {
+  const p = roadCapParts(), used = roadUsed();
+  const pct = Math.min(100, Math.round((used / Math.max(1, p.cap)) * 100));
+  const full = used >= p.cap;
+  return '<div class="roadmeter' + (full ? ' full' : '') + '">🛤️ Road network <b>' + used + ' / ' + p.cap + '</b>' +
+    '<div class="roadbar' + (full ? ' full' : '') + '"><i style="width:' + pct + '%"></i></div>' +
+    'Base ' + ROAD_CAP_BASE + ' · +' + ROAD_PER_DEPOT + ' per Supply Depot (' + p.depots + ') · +' +
+    ROAD_PER_CONVOY + ' per Convoy anchor (' + p.convoy + ').</div>';
+}
+
+/* ── 🔧 Repairs: the list, and repairing the whole city in one press ──
+   The per-tile Repair button in the inspector only ever fixed the tile you
+   had already found. After a siege or a fire-rain storm the damage is
+   scattered across the map, so the work starts with FINDING it. */
+function repairCostWeight(t) {
+  const c = repairCost(t);
+  return Object.entries(c).reduce((s, [k, v]) => s + v * (k === 'cinder' ? 1 : 3), 0);
+}
+function damagedTiles() {
+  return Object.entries(game.tiles)
+    .filter(([, t]) => t.damaged && BUILDINGS[t.type])
+    .sort((a, b) => repairCostWeight(a[1]) - repairCostWeight(b[1]));
+}
+function totalRepairCost(list) {
+  const out = {};
+  for (const [, t] of list) { const c = repairCost(t); for (const k in c) out[k] = (out[k] || 0) + c[k]; }
+  return out;
+}
+function renderRepairs() {
+  const card = $('repaircard'); if (!card) return;
+  const list = damagedTiles();
+  card.classList.toggle('on', list.length > 0);
+  if (!list.length) { renderRepairs._last = null; return; }
+  const html = list.map(([k, t]) => {
+    const def = BUILDINGS[t.type];
+    return '<div class="rrow" data-rkey="' + logEsc(k) + '">' +
+      '<span class="rico">' + def.ico + '</span>' +
+      '<span class="rbody"><span class="rname">' + logEsc(def.name) + ' L' + t.lvl + '</span>' +
+      '<span class="rcost">' + logEsc(costLabel(repairCost(t))) + ' · tile ' + logEsc(k) + '</span></span>' +
+      '<button class="hbtn ember" data-rfix="' + logEsc(k) + '">🔧</button></div>';
+  }).join('');
+  if (html !== renderRepairs._last) { renderRepairs._last = html; $('repairlist').innerHTML = html; }
+  $('repaircount').textContent = '(' + list.length + ')';
+  $('btn-repair-all').textContent = list.length > 1
+    ? '🔧 Repair ALL ' + list.length + ' — ' + costLabel(totalRepairCost(list))
+    : '🔧 Repair — ' + costLabel(totalRepairCost(list));
+}
+async function repairTile(k, quiet) {
+  const t = game.tiles[k]; if (!t || !t.damaged) return false;
+  const rc = repairCost(t);
+  if (!(await payCost(rc))) {
+    if (!quiet) toast('Cannot afford repairs (' + costLabel(rc) + ').', 'bad');
+    return false;
+  }
+  t.damaged = false; t.wear = 0;
+  clearDamagedLook(k);
+  if (!quiet) {
+    toast('🔧 ' + BUILDINGS[t.type].name + ' repaired — back online.', 'good');
+    logEvent('city good', '🔧 ' + BUILDINGS[t.type].name + ' at ' + k + ' repaired for ' + costLabel(rc) + '.');
+  }
+  return true;
+}
+async function repairAll() {
+  const list = damagedTiles();
+  if (!list.length) return;
+  // Cheapest first: when the ledger runs dry the player still gets the most
+  // buildings back online, and the first failure means every remaining tile
+  // is at least as expensive, so the loop can stop there.
+  let done = 0;
+  const spent = {};
+  for (const [k, t] of list) {
+    const rc = repairCost(t);
+    if (!(await repairTile(k, true))) break;
+    for (const r in rc) spent[r] = (spent[r] || 0) + rc[r];
+    done++;
+  }
+  const left = damagedTiles().length;
+  if (done) {
+    toast('🔧 Repaired ' + done + ' building' + (done > 1 ? 's' : '') + ' for ' + costLabel(spent) +
+      (left ? ' — ' + left + ' still down (cannot afford).' : ' — the city is whole again.'), left ? undefined : 'good');
+    logEvent('city good', '🔧 Repair crews restored ' + done + ' building' + (done > 1 ? 's' : '') +
+      ' for ' + costLabel(spent) + (left ? '. ' + left + ' left unrepaired — not enough in the ledger.' : '. Nothing is damaged now.'));
+  } else {
+    toast('Cannot afford even the cheapest repair (' + costLabel(repairCost(list[0][1])) + ').', 'bad');
+  }
+  computeLinks(); renderRepairs(); updateHUD(); saveSoon();
+  if (selectedKey && game.tiles[selectedKey]) openInspect(selectedKey);
+}
+$('btn-repair-all').onclick = repairAll;
+$('repairlist').addEventListener('click', async (ev) => {
+  const fix = ev.target.closest('[data-rfix]');
+  if (fix) {
+    if (await repairTile(fix.dataset.rfix)) {
+      computeLinks(); renderRepairs(); updateHUD(); saveSoon();
+      if (selectedKey === fix.dataset.rfix) openInspect(selectedKey);
+    }
+    return;
+  }
+  const row = ev.target.closest('[data-rkey]');
+  if (row && game.tiles[row.dataset.rkey]) openInspect(row.dataset.rkey);
+});
 const key = (x, z) => x + ',' + z;
 const inGrid = (x, z) => x >= 0 && z >= 0 && x < GRID && z < GRID;
 const NEI = [[0,-1],[1,0],[0,1],[-1,0]];
@@ -2386,26 +2657,44 @@ async function raidTick(dt) {
   if (db && !db._wired) { db._wired = true; db.onclick = editDefenseDeck; }
   if (game.raid.timer > 0) return;
   game.raid.timer = RAID_INTERVAL;
+  // The breakdown behind the single Defense number, so a loss can be READ
+  // rather than guessed at: where the defence came from, and what the ammo
+  // shortfall cost. Built for both outcomes before the branch.
+  const breakdown = towers + ' 🗼 ' + staticDef + ' static · ' + game.army.soldiers + ' 🪖 ' + armyDef +
+    ' · 🃏 ' + (deckPower() + cardDefenseFromSockets());
+  const ammoNote = ammoHave >= ammoNeed
+    ? 'ammo ' + ammoNeed + '/' + ammoNeed + ' 🔫'
+    : 'ammo SHORT ' + ammoHave + '/' + ammoNeed + ' 🔫 — defence cut from ' + defense + ' to ' + effDefense;
   if (effDefense >= strength) {
     if (ammoNeed) await MythicCityBridge.spendRes({ ammo: Math.min(ammoNeed, ammoHave) });
     const reward = Math.round(RAID_REWARD_PER_WAVE * game.raid.wave * (isSiege ? 2 : 1));
     await MythicCityBridge.addCinders(reward);
     toast((isSiege ? '⚔️ THE SIEGE IS BROKEN! ' : '🛡️ Wave ' + game.raid.wave + ' repelled — ') + '+' + reward + ' 🔥 Cinder. Spent ' + ammoNeed + ' 🔫.', 'good');
+    logEvent('raid good', (isSiege ? '⚔️ SIEGE wave ' : '🛡️ Wave ') + game.raid.wave + ' HELD — defence ' +
+      effDefense + ' vs strength ' + strength + ' (' + breakdown + ') · ' + ammoNote + ' · +' + reward + ' 🔥.');
   } else {
     // Breach: lose stock; if the garrison can't cover the NODES, one takes a hit.
     const loss = {};
     for (const r of HUD_RES) { const n = Math.floor((game.res[r] || 0) * RAID_STORE_LOSS); if (n > 0) loss[r] = n; }
     await MythicCityBridge.spendRes(loss);
     const nodeGuarded = armyDef >= strength * .5;
+    let nodeNote = game.anchors.length ? '' : ' No anchors to lose.';
     if (!nodeGuarded && game.anchors.length) {
       const a = game.anchors[Math.floor(Math.random() * game.anchors.length)];
       a.guardHitUntil = Date.now() + 10 * 60 * 1000;   // link halved for 10 min
       const nt = NODE_TYPES[a.node.node_type] || {};
       toast('💥 Raiders overran ' + (a.node.name || nt.name || 'a node') + ' — its link is crippled for 10 min. Soldiers would have held it.', 'bad');
+      nodeNote = ' ' + (a.node.name || nt.name || 'A node') + ' overrun — link halved for 10 min (needed ' +
+        Math.ceil(strength * .5) + ' soldier defence, had ' + armyDef + ').';
     } else if (nodeGuarded && game.anchors.length) {
       toast('💥 The city was breached — but your soldiers held the node anchors.', 'bad');
+      nodeNote = ' The garrison held every node anchor.';
     }
-    toast('💥 Raiders looted ' + Object.entries(loss).map(([r, n]) => n + ' ' + (RES_META[r] ? RES_META[r].ico : r)).join(' ') + '.', 'bad');
+    const lootStr = Object.entries(loss).map(([r, n]) => n + ' ' + (RES_META[r] ? RES_META[r].ico : r)).join(' ');
+    toast('💥 Raiders looted ' + lootStr + '.', 'bad');
+    logEvent('raid', (isSiege ? '⚔️ SIEGE wave ' : '💥 Wave ') + game.raid.wave + ' BREACHED — defence ' +
+      effDefense + ' vs strength ' + strength + ' (' + breakdown + ') · ' + ammoNote + '. Looted ' +
+      Math.round(RAID_STORE_LOSS * 100) + '% of stores: ' + (lootStr || 'nothing — the stores were empty') + '.' + nodeNote);
     // Raiders may torch a building on the way out; sieges level one
     if (isSiege || Math.random() < .5) {
       const ks = Object.keys(game.tiles).filter(k => game.tiles[k].type !== 'road' && game.tiles[k].type !== 'anchor');
@@ -2447,7 +2736,16 @@ async function tryPlace(x, z) {
   if (!inGrid(x, z) || tileAt(x, z)) return;
   const def = BUILDINGS[placeType]; if (!def) return;
   const count = Object.values(game.tiles).filter(t => t.type === placeType).length;
-  if (count >= (def.cap || CAP_PER_BUILDING)) { toast(def.cap ? 'Only ' + def.cap + ' ' + def.name + (def.cap > 1 ? 's' : '') + ' per city.' : 'City cap reached for ' + def.name + '.', 'bad'); return; }
+  // 🛤️ Roads answer to the maintenance cap, not the generic per-building one —
+  // and the refusal has to say how to RAISE it, or it is just a wall.
+  if (placeType === 'road') {
+    const p = roadCapParts();
+    if (roadUsed() >= p.cap) {
+      toast('🛤️ Road network is at capacity (' + roadUsed() + '/' + p.cap + '). Build a 📦 Supply Depot (+' +
+        ROAD_PER_DEPOT + ') or road-link a 🚚 Convoy anchor (+' + ROAD_PER_CONVOY + ') to maintain more.', 'bad');
+      return;
+    }
+  } else if (count >= (def.cap || CAP_PER_BUILDING)) { toast(def.cap ? 'Only ' + def.cap + ' ' + def.name + (def.cap > 1 ? 's' : '') + ' per city.' : 'City cap reached for ' + def.name + '.', 'bad'); return; }
   if (def.requiresCard) {
     const c = freeCards().find(c => c.type === def.requiresCard);
     if (!c) { toast('Requires an unassigned ' + def.requiresCard.toUpperCase() + ' card — this building is raised from your collection.', 'bad'); return; }
@@ -2501,6 +2799,7 @@ function openInspect(k) {
     info += '<br>🃏 Socket: ' + (c ? '<span class="hl">' + c.name + '</span> (⚡' + c.power + ')' : '<span style="color:var(--mist)">empty</span>');
   }
   if (t.wear) info += '<br>🏚️ Wear: ' + Math.round(t.wear) + '% (depots slow decay)';
+  if (t.type === 'road') info += roadMeterHtml();
   info += '<br>🏷️ Lot value: <span class="hl">' + lotValue(x, z) + ' ₵</span>';
   if (t.type === 'lot') info += '<br>' + (t.tenant ? 'Leased to <span class="hl">' + t.tenant + '</span> — rent +' + LOT_RENT_PER_MIN + ' 🔥/min.' : 'Vacant — lease it to a player for rent.');
   if (t.type === 'caravanpost') info += '<br>🐪 ' + (game.caravan.trips.length ? game.caravan.trips.length + ' caravan(s) on the road.' : 'Next caravan is being loaded…');
@@ -2599,14 +2898,12 @@ function repairCost(t) {
   for (const k in c) { const v = Math.ceil(c[k] * REPAIR_COST_FRAC); if (v) out[k] = v; }
   return out;
 }
+// Routed through repairTile so the inspector, the repair list and Repair ALL
+// all charge, log and re-skin the mesh the same way.
 $('btn-repair').onclick = async () => {
-  const t = game.tiles[selectedKey]; if (!t || !t.damaged) return;
-  const rc = repairCost(t);
-  if (!(await payCost(rc))) { toast('Cannot afford repairs (' + costLabel(rc) + ').', 'bad'); return; }
-  t.damaged = false; t.wear = 0;
-  clearDamagedLook(selectedKey);
-  toast('🔧 ' + BUILDINGS[t.type].name + ' repaired — back online.', 'good');
-  computeLinks(); openInspect(selectedKey); updateHUD(); saveSoon();
+  const k = selectedKey;
+  if (!(await repairTile(k))) return;
+  computeLinks(); renderRepairs(); openInspect(k); updateHUD(); saveSoon();
 };
 $('btn-close').onclick = () => { $('inspect').classList.remove('open'); selectedKey = null; };
 $('btn-upgrade').onclick = async () => {
@@ -3061,7 +3358,13 @@ function evaluateNeeds() {
   if (soldierDefense() === 0 && !buildings.some(([k, t]) => t.type === 'tower' && !t.damaged)) add('defense', '🛡️', 'The city is UNDEFENDED — raiders are coming. Hire soldiers or build towers.', true);
   // Repairs
   let dmg = 0; for (const [k, t] of buildings) if (t.damaged) dmg++;
-  if (dmg) add('repairs', '🔧', dmg + ' damaged building' + (dmg > 1 ? 's' : '') + ' offline — repair them.', dmg >= 3);
+  if (dmg) add('repairs', '🔧', dmg + ' damaged building' + (dmg > 1 ? 's' : '') + ' offline — repair them in the Repairs panel.', dmg >= 3);
+  // Road capacity — warn BEFORE the refusal, with the way to raise it.
+  {
+    const rp = roadCapParts();
+    if (roadCount >= rp.cap) add('roadcap', '🛤️', 'Road network is FULL (' + roadCount + '/' + rp.cap + ') — a Supply Depot maintains ' + ROAD_PER_DEPOT + ' more.', false);
+    else if (roadCount >= rp.cap * .85) add('roadcap', '🛤️', 'Road network is nearly full (' + roadCount + '/' + rp.cap + ') — build a Supply Depot before you run out of road.', false);
+  }
   // Beauty
   if (decorPoints() === 0 && buildings.length >= 6) add('decor', '🌳', 'The city feels bleak — plant trees, bushes and gardens to lift morale.', false);
 
@@ -3071,6 +3374,7 @@ function evaluateNeeds() {
     // in a block beside it instead of running back under the icon.
     ? needs.map(n => '<div class="need' + (n.crit ? ' crit' : '') + '"><span class="nico">' + n.ico + '</span><span class="ntxt">' + n.msg + '</span></div>').join('')
     : '<div class="allgood">✅ The people are content. All needs met.</div>';
+  renderRepairs();
   // toast newly-critical needs (throttled 3 min each)
   const now = Date.now();
   for (const n of needs) if (n.crit && (!needsToastAt[n.k] || now - needsToastAt[n.k] > 180000)) {
@@ -3510,16 +3814,89 @@ function tileFromEvent(ev) {
   const x = Math.floor(p.x + HALF), z = Math.floor(p.z + HALF);
   return inGrid(x, z) ? { x, z } : null;
 }
+/* ── 🔍 HOVER INFO ON A PLACED BUILDING ─────────────────────────────────
+   ⚠ Correcting the note left in the v120g0 commit: the map was NEVER without
+   hit-testing. `tileFromEvent` has always raycast the ground plane and
+   `pointermove` has always fired — it just threw the result away outside
+   place mode. So this is a READER on the existing pick, not new hit-testing.
+   The HTML is rebuilt only when the hovered tile CHANGES; every other move
+   is a cheap reposition. */
+let hoverKey = null;
+function tipHtml(k, t) {
+  const [x, z] = k.split(',').map(Number);
+  if (t.type === 'anchor') {
+    const a = t.anchor, nt = NODE_TYPES[a.node.node_type] || {};
+    return '<b class="tt">' + (nt.ico || '🔮') + ' ' + logEsc(a.node.name || nt.name || 'Node') + '</b>' +
+      '<span class="tsub">Node anchor · tile ' + k + '</span>' +
+      'Link <span class="hl">' + a.link + '%</span> · game efficiency ' + (a.node.eff | 0) + '%' +
+      '<span class="tbon">Adjacent buildings <span class="on">+' + Math.round(ANCHOR_ADJ * 100) + '%</span> output.</span>';
+  }
+  const def = BUILDINGS[t.type]; if (!def) return '';
+  const b = bonusesFor(x, z, t.type);
+  let h = '<b class="tt">' + def.ico + ' ' + logEsc(def.name) + '</b>' +
+    '<span class="tsub">Level ' + t.lvl + (def.maxLvl === 1 ? '' : ' / ' + MAX_LVL) + ' · tile ' + k + '</span>';
+  if (t.damaged) h += '<span class="dmg">🔥 DAMAGED — offline. Repair ' + logEsc(costLabel(repairCost(t))) + '.</span><br>';
+  if (def.gen) h += 'Output: ' + Object.entries(def.gen).map(([r, v]) =>
+    '<span class="hl">' + (t.damaged ? 0 : (v * b.mult * Math.pow(RATE_MULT, t.lvl - 1) * (def.crew ? staffingRatio() : 1) * weatherMult(t.type))).toFixed(2) + '</span> ' +
+    (r === 'cinder' ? '🔥' : RES_META[r].ico) + '/min').join(' · ') + '<br>';
+  if (def.use) h += 'Consumes: ' + Object.entries(def.use).map(([r, v]) => v.toFixed(2) + ' ' + RES_META[r].ico + '/min').join(' · ') + '<br>';
+  if (def.crew) h += 'Crew ' + def.crew + ' 👷 · staffing ' + Math.round(staffingRatio() * 100) + '%<br>';
+  if (def.popCap) h += '+' + def.popCap * t.lvl + ' population cap<br>';
+  if (def.garrison) h += 'Garrison +' + def.garrison * t.lvl + ' 🪖 · defence ' + def.defense * t.lvl + '<br>';
+  else if (def.defense) h += 'Defence ' + def.defense * t.lvl + '<br>';
+  if (def.sockets) {
+    const c = t.card && cardById(t.card);
+    h += '🃏 ' + (c ? '<span class="hl">' + logEsc(c.name) + '</span> (⚡' + c.power + ')' : 'socket empty') + '<br>';
+  }
+  if (t.type === 'lot') h += (t.tenant ? '🪧 Leased to <span class="hl">' + logEsc(t.tenant) + '</span> — +' + LOT_RENT_PER_MIN + ' 🔥/min<br>' : '🪧 Vacant — lease it for rent<br>');
+  if (t.wear) h += '🏚️ Wear ' + Math.round(t.wear) + '%<br>';
+  if (t.type === 'road') h += '🛤️ Road network ' + roadUsed() + ' / ' + roadCap() + '<br>';
+  if (def.gen || def.defense) h += '<span class="tbon">' +
+    '<span class="' + (b.road ? 'on' : '') + '">🛤️ road +' + Math.round(ROAD_BONUS * 100) + '%</span> · ' +
+    '<span class="' + (b.cluster ? 'on' : '') + '">🏘️ cluster +' + Math.round(b.cluster * 100) + '%</span> · ' +
+    '<span class="' + (b.anchor ? 'on' : '') + '">🔮 anchor +' + Math.round(ANCHOR_ADJ * 100) + '%</span></span>';
+  return h;
+}
+function hideTileTip() {
+  hoverKey = null;
+  const tip = $('tiletip'); if (tip) tip.classList.remove('on');
+}
+function showTileTip(k, t, ev) {
+  const tip = $('tiletip'); if (!tip) return;
+  if (k !== hoverKey) { hoverKey = k; tip.innerHTML = tipHtml(k, t); }
+  tip.classList.add('on');
+  // Clamp inside the scene box so the card never hangs off an edge.
+  const r = container.getBoundingClientRect();
+  const w = tip.offsetWidth || 232, h = tip.offsetHeight || 120;
+  let left = ev.clientX - r.left + 16, top = ev.clientY - r.top + 16;
+  if (left + w > r.width - 8) left = ev.clientX - r.left - w - 16;
+  if (top + h > r.height - 8) top = Math.max(8, ev.clientY - r.top - h - 16);
+  tip.style.left = Math.max(8, left) + 'px';
+  tip.style.top = Math.max(8, top) + 'px';
+}
 let downAt = null;
 renderer.domElement.addEventListener('pointerdown', ev => { downAt = { x: ev.clientX, y: ev.clientY }; });
 renderer.domElement.addEventListener('pointermove', ev => {
   const t = tileFromEvent(ev);
   if (mode === 'place' && t) {
+    hideTileTip();
     hover.visible = true;
     hover.position.set(t.x - HALF + .5, .02, t.z - HALF + .5);
     hover.material.color.set(tileAt(t.x, t.z) ? 0xc0473f : 0x4caf7a);
-  } else hover.visible = false;
+    return;
+  }
+  // Inspect mode: reading a building should not require clicking it.
+  // Touch is excluded — a finger drag is a camera pan, not a hover.
+  const tile = t && game.tiles[key(t.x, t.z)];
+  if (tile && ev.pointerType !== 'touch' && !downAt) {
+    const k = key(t.x, t.z);
+    hover.visible = true;
+    hover.position.set(t.x - HALF + .5, .02, t.z - HALF + .5);
+    hover.material.color.set(tile.damaged ? 0xc0473f : 0xd4af37);
+    showTileTip(k, tile, ev);
+  } else { hover.visible = false; hideTileTip(); }
 });
+renderer.domElement.addEventListener('pointerleave', () => { hover.visible = false; hideTileTip(); });
 renderer.domElement.addEventListener('pointerup', async ev => {
   if (!downAt) return;
   const moved = Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) > 6;
@@ -3535,6 +3912,7 @@ function setMode(m, type) {
   mode = m; placeType = type || null;
   container.classList.toggle('placing', m === 'place');
   hover.visible = false;
+  hideTileTip();
   document.querySelectorAll('.bbtn').forEach(b => b.classList.toggle('active', b.dataset.type === placeType));
 }
 
@@ -3593,6 +3971,9 @@ function buildShopBody() {
     + '<div class="shopsec">'
     + '<h3><span>' + sec.ico + '</span>' + shopEsc(sec.name) + '</h3>'
     + (sec.desc ? '<p class="sd">' + shopEsc(sec.desc) + '</p>' : '')
+    // 🛤️ The road cap is shown where roads are BOUGHT, so the limit is read
+    // before it is hit rather than discovered as a refusal.
+    + (sec.items.includes('road') ? roadMeterHtml() : '')
     + '<div class="shopgrid">'
     + sec.items.map((t) => {
         const d = BUILDINGS[t];
@@ -3612,7 +3993,9 @@ function buildShopBody() {
     b.onclick = () => { closeBuildShop(); setMode('place', b.getAttribute('data-build')); };
   });
 }
-function openBuildShop() { const v = document.getElementById('shopveil'); if (v) v.classList.add('on'); }
+// Rebuilt on every open so the road meter (and any live count) is current —
+// the palette itself is static, but the numbers printed into it are not.
+function openBuildShop() { buildShopBody(); const v = document.getElementById('shopveil'); if (v) v.classList.add('on'); }
 function closeBuildShop() { const v = document.getElementById('shopveil'); if (v) v.classList.remove('on'); }
 
 /* ── Population & Garrison card: hire NPCs from the node population ── */
@@ -3749,6 +4132,7 @@ function serialize() {
                  tenant: t.tenant || null, wear: Math.round(t.wear || 0) };
   return JSON.stringify({ v: 4, tiles, raid: game.raid, army: game.army,
     deck: game.defenseDeck, nodeXp: game.nodeXp,
+    log: game.log.slice(-LOG_SAVE),
     morale: Math.round(wellbeing.morale), hunger: Math.round(wellbeing.hunger),
     syncPct: citySync(), savedAt: Date.now() });
 }
@@ -3780,6 +4164,12 @@ async function loadState() {
       }
     }
     if (Array.isArray(s.deck)) game.defenseDeck = s.deck.slice(0, DECK_MAX);
+    if (Array.isArray(s.log)) {
+      game.log = s.log
+        .filter(e => e && typeof e.m === 'string')
+        .map(e => ({ t: e.t || Date.now(), k: String(e.k || 'city'), m: e.m }))
+        .slice(-LOG_SAVE);
+    }
     if (s.nodeXp && typeof s.nodeXp === 'object') game.nodeXp = s.nodeXp;
     for (const k in game.tiles) if (game.tiles[k].type === 'road') { const [x, z] = k.split(',').map(Number); refreshRoad(x, z); }
   } catch (e) { console.warn('city load failed', e); }
@@ -3860,6 +4250,7 @@ function animate() {
   } catch (e) { console.warn('city boot (non-fatal):', e); }
   updateHUD();
   updateSky();
+  renderLog(); renderRepairs();
   if (isAdmin()) $('adminbtn').style.display = 'block';
   loadGov();
   try {

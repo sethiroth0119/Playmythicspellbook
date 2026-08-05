@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120f0';
+  window.BUILD_VERSION = 'v120f1';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -70461,9 +70461,15 @@ function _temperPillHtml(cardId, entry, opts) {
     if (!t) return '';
     const o = opts || {};
     // Gate the quirk the same way the panel does, so the two never disagree
-    // about what this player has earned the right to know.
-    const bond = (entry && typeof entry.bond === 'number') ? entry.bond : null;
-    const known = (bond == null) ? true : (bondTierIndex(bond) >= 2);
+    // about what this player has earned the right to know. An absent bond
+    // means NO relationship (an unowned card, a pool entry) — that has to read
+    // as "not yet known", not as "fully known"; treating missing data as
+    // maximum trust would have leaked every quirk on the deck-builder pool.
+    let bond = (entry && typeof entry.bond === 'number') ? entry.bond : null;
+    if (bond == null) {
+      try { const st = Profile.units && Profile.units[cardId]; if (st && typeof st.bond === 'number') bond = st.bond; } catch (e) {}
+    }
+    const known = bondTierIndex(bond || 0) >= 2;
     const tip = t.name + ' — ' + t.blurb
       + (known ? '\n✦ ' + t.quirk : '\nReach Steady to learn what makes them different.')
       + '\nBonds ×' + t.gain.toFixed(2) + ' · setbacks ×' + t.loss.toFixed(2);
@@ -200221,6 +200227,15 @@ function _dbDetailPanel() {
     <div class="db3-d-own">Owned <b>${ownedStr}</b> · In deck <b>${inDeck}</b>${inSide ? ` · Side <b>${inSide}</b>` : ''} · Max <b>${ownCap}</b></div>
     <div class="db3-d-desc">${escapeHtml(card.desc || card.text || 'No description.')}</div>
     ${_cardKitHtml(card)}
+    ${((card.type || kind) === 'unit' && typeof _temperPillHtml === 'function') ? (() => {
+      const _tp = Profile.units && Profile.units[card.id];
+      const _pills = _temperPillHtml(card.id, _tp || null) + _rapportPillHtml(card.id);
+      if (!_pills) return '';
+      const _bd = _tp && typeof _tp.bond === 'number'
+        ? `<span class="nature-pill" style="border-color:${getBondTier(_tp.bond).color};color:${getBondTier(_tp.bond).color}" title="Companion loyalty ${_tp.bond}/${BOND_MAX}">💗 ${escapeHtml(getBondTier(_tp.bond).name)}</span>` : '';
+      const _hist = (_tp && (_tp.together | 0)) ? `<span class="db3-d-own" style="display:block;margin-top:3px">⚔ ${_tp.together | 0} battle${(_tp.together|0)===1?'':'s'} together</span>` : '';
+      return `<div class="db3-d-temper" style="display:flex;flex-wrap:wrap;gap:3px;margin-top:5px">${_bd}${_pills}</div>${_hist}`;
+    })() : ''}
     <div class="db3-d-actions">${actions}</div>
   `;
 }

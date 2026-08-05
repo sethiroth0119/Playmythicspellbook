@@ -481,10 +481,24 @@ const CDN = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/';
 let THREE = null, rendererName = 'WebGL2';
 
 async function loadThree(){
+  // ⚠ CLASSIC WebGL BUILD FIRST — this order is the whole fix.
+  // 0.171.0 DOES NOT EXIST on cdnjs (both files 404), so the first URL that
+  // actually imported was 0.169.0/three.webgpu.min.js. That build exports
+  // WebGPURenderer, so init() took the WebGPU branch — and WebGPU's
+  // NodeMaterial cannot handle the PointsMaterial the embers use:
+  //     NodeMaterial: Material "PointsMaterial" is not compatible.
+  //     AttributeNode: Vertex attribute "uv" not found on geometry.
+  // The scene threw, the iframe never signalled ready, and the game fell back
+  // to the classic text menu ("[mm] menu iframe never became ready").
+  //
+  // three.module.min.js has no WebGPURenderer, so init() takes its existing
+  // WebGLRenderer branch, where PointsMaterial renders fine. Nothing is lost:
+  // the WebGPU path never worked, it only failed slowly.
+  // No webgpu entry is kept as a last resort on purpose — a renderer that
+  // throws mid-scene hangs the iframe, which is worse than not loading at all.
   const tries = [
-    CDN + '0.171.0/three.webgpu.min.js',
-    CDN + '0.169.0/three.webgpu.min.js',
-    CDN + '0.171.0/three.module.min.js',
+    CDN + '0.169.0/three.module.min.js',
+    CDN + '0.170.0/three.module.min.js',
     CDN + '0.160.1/three.module.min.js'
   ];
   for (const url of tries){

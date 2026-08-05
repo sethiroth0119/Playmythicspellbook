@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120e7';
+  window.BUILD_VERSION = 'v120e8';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -65200,7 +65200,21 @@ async function _buildThumbsOnce() {
     if (typeof _lazyScheduleRender === 'function') _lazyScheduleRender();
   } catch (e) {} finally { _thumbBuildRunning = false; }
 }
-try { window.__mg = window.__mg || {}; window.__mg.buildThumbs = function () { return _buildThumbsOnce(); }; window.__mg.thumbReset = async function () { try { await idbSet('forge_thumbs_done_v1', false); } catch (e) {} console.info('🖼 Thumb build flag reset — refresh to rebuild missing thumbnails.'); }; } catch (e) {}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.buildThumbs = function () { return _buildThumbsOnce(); };
+  // 🐛 thumbReset used to clear forge_thumbs_done_v1 and promise a rebuild.
+  // Nothing reads that flag — _buildThumbsOnce decides its work list purely
+  // from forge_thumbs_idx (and the in-memory Forge._thumbIds), so the reset
+  // was a no-op that reported success. Clear what is actually consulted.
+  window.__mg.thumbReset = async function () {
+    try { await idbSet('forge_thumbs_idx', []); } catch (e) {}
+    try { await idbSet('forge_thumbs_done_v1', false); } catch (e) {}   // legacy flag, kept in sync
+    try { Forge._thumbIds = new Set(); } catch (e) {}
+    console.info('🖼 Thumbnail index cleared — run __mg.buildThumbs() or refresh to rebuild.');
+    return true;
+  };
+} catch (e) {}
 
 // 🎨 DECODE BUDGET + VISIBILITY GATE =========================================
 // The whole-browser crash is from too many DECODED images on screen at once

@@ -372,6 +372,125 @@ async function handleBuy(request, env, u) {
 }
 
 /* ============================================================================
+ * 🚚 THE GARAGE — convoy rigs bought once with REAL MONEY (Stripe Checkout).
+ * Same shape as the Aza rail above, with two deliberate differences.
+ *
+ *  1. These are NOT currency. A rig is a permanent unlock, so the interesting
+ *     failure is not "credited twice" but "paid twice for the same thing".
+ *     /checkout refuses a sku the caller already owns, and /confirm is
+ *     idempotent, so a refresh of the return URL cannot double anything.
+ *  2. Ownership must OUTLIVE the local profile. It is recorded server-side
+ *     against the Supabase user id with SB_SERVICE, and /owned replays it,
+ *     so a wiped browser or a new device gets the rigs back.
+ *
+ * Prices are SERVER-AUTHORITATIVE. The browser posts only {sku}; every
+ * amount and product name is read from GARAGE_RIGS here. Never take a price,
+ * name or currency from the request body — that is how a $99 rig gets bought
+ * for a cent.
+ * ========================================================================== */
+// 🚨 PRICING SOURCE OF TRUTH — must match GARAGE_RIGS in public/index.html,
+// which is DISPLAY ONLY. Drift here means the player is shown one price and
+// charged another.
+const GARAGE_RIGS = {
+  rig_ironback: { cents: 2000, name: 'Ironback Runner' },
+  rig_ashconvoy:{ cents: 6000, name: 'Ash Convoy Rig' },
+  rig_warden:   { cents: 9900, name: 'Warden Longhaul' },
+};
+// Best-effort durable ownership. The table is optional: without it the rig
+// still works (the game keeps it in the cloud-synced profile), you just lose
+// the restore-on-a-new-device path. Every helper below therefore returns a
+// benign value rather than throwing when the table is missing.
+async function _garageOwnedRows(env, userId) {
+  if (!env.SB_SERVICE || !env.SB_URL || !userId) return null;
+  try {
+    const r = await fetch(env.SB_URL + '/rest/v1/garage_purchases?user_id=eq.' + encodeURIComponent(userId) + '&select=sku,stripe_session_id,created_at',
+      { headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, accept: 'application/json' } });
+    if (!r.ok) return null;                       // table absent / RLS — degrade quietly
+    const j = await r.json().catch(() => null);
+    return Array.isArray(j) ? j : null;
+  } catch (e) { return null; }
+}
+async function _garageRecord(env, userId, sku, sid) {
+  if (!env.SB_SERVICE || !env.SB_URL) return false;
+  try {
+    const r = await fetch(env.SB_URL + '/rest/v1/garage_purchases', {
+      method: 'POST',
+      headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE,
+                 'content-type': 'application/json',
+                 // UNIQUE(stripe_session_id) makes this idempotent: a replayed
+                 // confirm resolves to "already recorded", never a second row.
+                 prefer: 'resolution=ignore-duplicates,return=minimal' },
+      body: JSON.stringify({ user_id: userId, sku: sku, stripe_session_id: sid }),
+    });
+    return r.ok;
+  } catch (e) { return false; }
+}
+async function handleGarage(request, env, u) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_RW });
+  const seg = u.pathname.replace(/^\/api\/garage\//, '').replace(/\/+$/, '');
+  const configured = !!env.STRIPE_SECRET_KEY;
+  if (seg === 'config' && request.method === 'GET') {
+    // Prices are published so the store can render from the AUTHORITY rather
+    // than only from its own copy — that is what makes drift visible.
+    return cjson({ enabled: configured, rigs: Object.keys(GARAGE_RIGS).map(k =>
+      ({ sku: k, cents: GARAGE_RIGS[k].cents, name: GARAGE_RIGS[k].name })) });
+  }
+  if (!configured) return cjson({ error: 'stripe_not_configured', hint: 'Set STRIPE_SECRET_KEY on this Worker.' }, 503);
+  const user = await sbUser(env, request);
+  if (!user) return cjson({ error: 'unauthorized', hint: 'Send your Supabase access token as Authorization: Bearer.' }, 401);
+
+  if (seg === 'owned' && request.method === 'GET') {
+    const rows = await _garageOwnedRows(env, user.id);
+    // durable:false tells the client the restore path is unavailable, so it
+    // can keep trusting its own profile copy instead of wrongly clearing it.
+    if (!rows) return cjson({ ok: true, durable: false, owned: [] });
+    return cjson({ ok: true, durable: true, owned: rows.map(r => r.sku) });
+  }
+
+  if (seg === 'checkout' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const sku = body && body.sku;
+    const rig = GARAGE_RIGS[sku];
+    if (!rig) return cjson({ error: 'bad_sku' }, 400);
+    // Never sell the same permanent unlock twice.
+    const rows = await _garageOwnedRows(env, user.id);
+    if (rows && rows.some(r => r.sku === sku)) return cjson({ error: 'already_owned', sku: sku }, 409);
+    const origin = _safeReturnOrigin(env, u);
+    const s = await stripeApi(env, 'POST', '/v1/checkout/sessions', {
+      mode: 'payment',
+      'line_items[0][quantity]': 1,
+      'line_items[0][price_data][currency]': 'usd',
+      'line_items[0][price_data][unit_amount]': rig.cents,
+      'line_items[0][price_data][product_data][name]': rig.name + ' — convoy rig',
+      client_reference_id: user.id,
+      'metadata[user_id]': user.id,
+      'metadata[garage_sku]': sku,
+      success_url: origin + '/?rig=ok&sid={CHECKOUT_SESSION_ID}',
+      cancel_url: origin + '/?rig=cancel',
+    });
+    return cjson({ url: s && s.url });
+  }
+
+  if (seg === 'confirm' && request.method === 'GET') {
+    const sid = u.searchParams.get('sid') || '';
+    if (!sid) return cjson({ error: 'no_session' }, 400);
+    const s = await stripeApi(env, 'GET', '/v1/checkout/sessions/' + encodeURIComponent(sid), null);
+    const md = (s && s.metadata) || {};
+    // Three conditions, all required: the session exists, it is PAID, and it
+    // belongs to the caller. Without the last one a player could confirm
+    // somebody else's session id and be granted their rig.
+    if (!s || s.payment_status !== 'paid' || md.user_id !== user.id) return cjson({ ok: false });
+    const sku = md.garage_sku;
+    if (!GARAGE_RIGS[sku]) return cjson({ ok: false, error: 'unknown_sku' });
+    const durable = await _garageRecord(env, user.id, sku, sid);
+    return cjson({ ok: true, sid: sid, sku: sku, name: GARAGE_RIGS[sku].name,
+                   cents: GARAGE_RIGS[sku].cents, durable: durable });
+  }
+
+  return cjson({ error: 'not_found' }, 404);
+}
+
+/* ============================================================================
  * 🛒 SHOP — Founder & Node packages (the market site's ex-"Pledge" page).
  * Same shape as the Aza store above: prices are SERVER-AUTHORITATIVE, the
  * hosted Stripe Checkout page collects payment, and crediting is spoof-proof
@@ -422,6 +541,41 @@ async function _shopSoldCount(env, tierId) {
     return Array.isArray(a) ? a.length : null;
   } catch (e) { return null; }
 }
+/* 🛒 CART CHECKOUT — products the admin created in shop_products.
+ * ⚠ PRICE AUTHORITY. The browser sends only ids and quantities; every amount
+ * charged is read HERE from the database with the service key. Never trust a
+ * price, name or currency that arrived in the request body.
+ */
+async function _shopProductsBySlug(env, slugs) {
+  if (!env.SB_SERVICE || !slugs.length) return [];
+  const inList = slugs.map(s => '"' + String(s).replace(/[^a-zA-Z0-9_-]/g, '') + '"').join(',');
+  try {
+    const r = await fetch(String(env.SB_URL).replace(/\/+$/, '') +
+      '/rest/v1/shop_products?select=id,slug,name,price_cents,currency,active,legacy_tier&active=eq.true&slug=in.(' + inList + ')',
+      { headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, accept: 'application/json' } });
+    if (!r.ok) return [];
+    const a = await r.json().catch(() => null);
+    return Array.isArray(a) ? a : [];
+  } catch (e) { return []; }
+}
+// Record a multi-item order. Idempotent on the Stripe session id.
+async function _shopRecordOrder(env, s, items) {
+  if (!env.SB_SERVICE) return { ok: false, error: 'sb_service_missing' };
+  try {
+    const r = await fetch(String(env.SB_URL).replace(/\/+$/, '') + '/rest/v1/rpc/shop_record_order',
+      { method: 'POST',
+        headers: { apikey: env.SB_SERVICE, authorization: 'Bearer ' + env.SB_SERVICE, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          p_user: (s.metadata && s.metadata.user_id) || null,
+          p_session: s.id,
+          p_items: items || [],
+          p_amount: s.amount_total || 0,
+          p_currency: s.currency || 'usd',
+        }) });
+    if (!r.ok) return { ok: false, error: 'rpc_' + r.status };
+    return await r.json().catch(() => null);
+  } catch (e) { return { ok: false, error: 'rpc_error' }; }
+}
 // Record + deliver a paid Shop session. shop_fulfill() is idempotent on the
 // Stripe session id, so the webhook and the buyer's return visit can both call
 // this for the same purchase and the benefits are granted exactly once.
@@ -429,6 +583,14 @@ async function _shopSoldCount(env, tierId) {
 // precisely so a player can't call it and mint themselves packs.
 async function _shopFulfillSession(env, s) {
   const md = (s && s.metadata) || {};
+  // 🛒 Cart order (admin-created products) — record it. These have no built-in
+  // grant rule, so the admin fulfils them from the Orders tab.
+  if (s && s.payment_status === 'paid' && md.user_id && md.shop_items && !md.shop_tier) {
+    let items = [];
+    try { items = (JSON.parse(md.shop_items) || []).map(p => ({ slug: p[0], qty: p[1] })); } catch (e) {}
+    const rec = await _shopRecordOrder(env, s, items);
+    return { ok: !!(rec && rec.ok), order: true, items };
+  }
   if (!s || s.payment_status !== 'paid' || !md.user_id || !md.shop_tier) return null;
   if (!env.SB_SERVICE) return { ok: false, error: 'sb_service_missing' };
   try {
@@ -484,6 +646,62 @@ async function handleShop(request, env, u) {
 
   if (seg === 'checkout' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
+
+    // 🛒 CART PATH — [{slug, qty}]. Prices come from the database, never the body.
+    if (Array.isArray(body && body.items) && body.items.length) {
+      const want = body.items.slice(0, 20)
+        .map(i => ({ slug: String((i && i.slug) || ''), qty: Math.max(1, Math.min(20, parseInt(i && i.qty, 10) || 1)) }))
+        .filter(i => i.slug);
+      if (!want.length) return cjson({ error: 'empty_cart' }, 400);
+      const rows = await _shopProductsBySlug(env, want.map(i => i.slug));
+      if (!rows.length) return cjson({ error: 'no_products', hint: 'None of those products are on sale (check shop_products.active), or SB_SERVICE is unset.' }, 400);
+      const bySlug = {}; rows.forEach(r => { bySlug[r.slug] = r; });
+      const line = [];
+      want.forEach(i => { const p = bySlug[i.slug]; if (p && (p.price_cents | 0) > 0) line.push({ p, qty: i.qty }); });
+      if (!line.length) return cjson({ error: 'no_priced_products' }, 400);
+
+      // A single legacy-mapped product still runs the ORIGINAL automated
+      // fulfilment, so existing packages keep delivering exactly as before.
+      const solo = (line.length === 1 && line[0].qty === 1) ? line[0].p : null;
+      if (solo && solo.legacy_tier && SHOP_TIERS[solo.legacy_tier]) {
+        const lt = SHOP_TIERS[solo.legacy_tier];
+        const origin0 = _shopReturnOrigin(request, env, u);
+        const s0 = await stripeApi(env, 'POST', '/v1/checkout/sessions', {
+          mode: 'payment',
+          'line_items[0][quantity]': 1,
+          'line_items[0][price_data][currency]': 'usd',
+          'line_items[0][price_data][unit_amount]': solo.price_cents,
+          'line_items[0][price_data][product_data][name]': 'Mythic Spellbook — ' + solo.name,
+          client_reference_id: user.id,
+          'metadata[user_id]': user.id,
+          'metadata[shop_tier]': solo.legacy_tier,
+          'metadata[shop_tier_name]': lt.name || solo.name,
+          success_url: origin0 + '/?pledge_paid=1&sid={CHECKOUT_SESSION_ID}',
+          cancel_url: origin0 + '/?pledge_cancel=1',
+        });
+        return cjson({ url: s0 && s0.url });
+      }
+
+      const origin1 = _shopReturnOrigin(request, env, u);
+      const form = {
+        mode: 'payment',
+        client_reference_id: user.id,
+        'metadata[user_id]': user.id,
+        // Compact so it stays inside Stripe's 500-char metadata limit.
+        'metadata[shop_items]': JSON.stringify(line.map(l => [l.p.slug, l.qty])).slice(0, 480),
+        success_url: origin1 + '/?pledge_paid=1&sid={CHECKOUT_SESSION_ID}',
+        cancel_url: origin1 + '/?pledge_cancel=1',
+      };
+      line.forEach((l, i) => {
+        form['line_items[' + i + '][quantity]'] = l.qty;
+        form['line_items[' + i + '][price_data][currency]'] = (l.p.currency || 'usd');
+        form['line_items[' + i + '][price_data][unit_amount]'] = l.p.price_cents;
+        form['line_items[' + i + '][price_data][product_data][name]'] = 'Mythic Spellbook — ' + l.p.name;
+      });
+      const s1 = await stripeApi(env, 'POST', '/v1/checkout/sessions', form);
+      return cjson({ url: s1 && s1.url });
+    }
+
     const tierId = String((body && body.tier) || '');
     const t = SHOP_TIERS[tierId];
     if (!t) return cjson({ error: 'bad_tier' }, 400);
@@ -518,6 +736,14 @@ async function handleShop(request, env, u) {
     const t = SHOP_TIERS[tierId] || { name: md.shop_tier_name || tierId, cents: s.amount_total || 0 };
     // Record + deliver (idempotent — the webhook may have already done it).
     const f = await _shopFulfillSession(env, s);
+    if (f && f.order) {
+      return cjson({
+        ok: true, sid: sid, order: true,
+        amount_cents: s.amount_total || 0,
+        items: f.items || [],
+        recorded: !!f.ok,
+      });
+    }
     return cjson({
       ok: true, sid: sid, tier: tierId, tier_name: t.name,
       amount_cents: s.amount_total || t.cents || 0,
@@ -796,6 +1022,11 @@ export default {
     if (u.pathname.startsWith('/api/buy/')) {
       try { return await handleBuy(request, env, u); }
       catch (e) { return cjson({ error: 'buy_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
+    }
+
+    if (u.pathname.startsWith('/api/garage/')) {
+      try { return await handleGarage(request, env, u); }
+      catch (e) { return cjson({ error: 'garage_error', detail: String((e && e.message) || e).slice(0, 200) }, 502); }
     }
 
     if (u.pathname.startsWith('/api/shop/')) {

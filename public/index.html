@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120e4';
+  window.BUILD_VERSION = 'v120e5';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -45333,6 +45333,12 @@ function initCloud() {
         setTimeout(() => { try { if (typeof azaConfirmReturn === 'function') azaConfirmReturn(); } catch (e) {} }, 1400);
         // 📢 Acknowledge any Ethos Sponsor Network checkout / payout-onboarding return.
         setTimeout(() => { try { if (typeof esnConfirmReturn === 'function') esnConfirmReturn(); } catch (e) {} }, 1500);
+        // 🚚 Attach a convoy rig bought via Stripe, then replay anything this
+        // browser has never seen. The restore runs on EVERY sign-in, not just
+        // after a purchase — that is the whole point of a permanent unlock:
+        // a new device has a purchase record but an empty profile.
+        setTimeout(() => { try { if (typeof garageConfirmReturn === 'function') garageConfirmReturn(); } catch (e) {} }, 1600);
+        setTimeout(() => { try { if (typeof garageRestore === 'function') garageRestore(); } catch (e) {} }, 2600);
       }
     });
     return true;
@@ -46068,6 +46074,10 @@ async function cloudSyncProfile() {
       // named here AND read back in the hydration block. Without both halves
       // a signed contract would quietly vanish on the next device.
       __aiTrade__:           (Profile.aiTrade && typeof Profile.aiTrade === 'object') ? Profile.aiTrade : null,
+      // 🚚 Convoy rigs bought with a card. Paid-for and permanent, so this is
+      // the one profile key where losing the sync would cost the player real
+      // money — the server-side garage_purchases table is the backstop.
+      __garage__:            (Profile.garage && typeof Profile.garage === 'object') ? Profile.garage : null,
       __campName__:          (typeof Profile.campName === 'string') ? Profile.campName : null,
       __campContrib__:       (typeof Profile.campContrib === 'number') ? Profile.campContrib : 0,
       // marker consumed by _stripUnknownCampNode (deleted before upload when blank)
@@ -47222,6 +47232,11 @@ async function cloudFetchProfile() {
       if (typeof f.__campNodeId__ === 'string') Profile.campNodeId = f.__campNodeId__;
       // 🤝 AI trade history — the other half of __aiTrade__ above.
       if (f.__aiTrade__ && typeof f.__aiTrade__ === 'object') Profile.aiTrade = f.__aiTrade__;
+      // 🚚 Rigs MERGE rather than replace. A straight assignment would let an
+      // older cloud copy delete a rig bought since — and that rig was paid for.
+      if (f.__garage__ && typeof f.__garage__ === 'object') {
+        Profile.garage = Object.assign({}, f.__garage__, Profile.garage || {});
+      }
       if (typeof f.__campName__ === 'string' && f.__campName__) Profile.campName = f.__campName__;
       if (typeof f.__campContrib__ === 'number') Profile.campContrib = f.__campContrib__;
       if (typeof f.__campPrestige__ === 'number') Profile.campPrestige = f.__campPrestige__;
@@ -156911,6 +156926,7 @@ function _buildSovereignsStoreBody(sovBal) {
   `).join('');
   return `
     <div class="sov-pkg-grid">${cards}</div>
+    ${_buildGarageStoreHtml()}
     <div class="sov-info-grid">
       <div class="sov-info-card">
         <div class="sov-info-title"><span class="aza-icon"></span> What Aza coin does</div>
@@ -156952,6 +156968,9 @@ function _bindSovereignsStoreHandlers() {
       azaCheckout(btn.dataset.azaCard);
     };
   });
+  // 🚚 Garage rigs share this store, so they must share its binding pass —
+  // rendered markup with no handler is the classic dead-button shape.
+  try { _bindGarageHandlers(); } catch (e) {}
 }
 
 function renderShop() {
@@ -158088,6 +158107,218 @@ function esnConfirmReturn() {
 }
 // On return from Stripe Checkout (?aza=ok&sid=…): verify the session with
 // the Worker, then credit exactly once via the UNIQUE aza_purchases row.
+// ============================================================================
+// 🚚 THE GARAGE — convoy rigs bought once with real money, owned forever.
+//
+// Unlike Aza coin these are not spent, so the whole design question is
+// PERMANENCE, not crediting. Ownership lives in three places on purpose:
+//   • Profile.garage — instant, offline, and what the UI actually reads.
+//   • the cloud profile — carried between this player's devices (wired into
+//     BOTH halves of the sync whitelist; one half alone loses it silently).
+//   • garage_purchases on the server — the only copy a wiped browser can be
+//     restored FROM, and the one that stops a rig being sold twice.
+// ============================================================================
+// 🚨 DISPLAY ONLY. GARAGE_RIGS in worker.js is the pricing authority and is
+// what Stripe actually charges. If these two disagree the player is shown one
+// price and billed another, so they must be changed together.
+const GARAGE_RIGS = [
+  { sku: 'rig_ironback',  name: 'Ironback Runner',  price: 20,  icon: '🛻',
+    tagline: 'A stubborn short-haul flatbed. Gets there.',
+    perks: ['Runs your own convoy routes', 'Light escort plating', 'One-time purchase'] },
+  { sku: 'rig_ashconvoy', name: 'Ash Convoy Rig',   price: 60,  icon: '🚚', popular: true,
+    tagline: 'Sealed cab and ash filters. Built for the long crossings.',
+    perks: ['Everything in the Ironback', 'Heavier cargo bed', 'Rated for ashfall routes'] },
+  { sku: 'rig_warden',    name: 'Warden Longhaul',  price: 99,  icon: '🚛',
+    tagline: 'The rig hauliers name. Armoured, escorted, unbothered.',
+    perks: ['Everything in the Ash Convoy', 'Armoured hauler chassis', 'Escort mount points'] },
+];
+const GARAGE_BY_SKU = Object.fromEntries(GARAGE_RIGS.map(r => [r.sku, r]));
+
+function _garageState() {
+  if (!Profile.garage || typeof Profile.garage !== 'object') Profile.garage = {};
+  return Profile.garage;
+}
+function garageOwns(sku) {
+  try { return !!_garageState()[sku]; } catch (e) { return false; }
+}
+function garageOwnedList() {
+  try { return GARAGE_RIGS.filter(r => garageOwns(r.sku)); } catch (e) { return []; }
+}
+// Write ownership down everywhere it needs to live. Called from the verified
+// return path and from the server restore — never from a button.
+function _garageGrant(sku, sid) {
+  const g = _garageState();
+  if (g[sku]) return false;
+  g[sku] = { at: Date.now(), sid: sid || null };
+  try { saveProfile(); } catch (e) {}
+  try { if (typeof cloudSaveSoon === 'function') cloudSaveSoon(); } catch (e) {}
+  return true;
+}
+
+// ☁ RESTORE. The server is the only copy that outlives a wiped browser, so
+// pull it whenever we are signed in. Note this only ever ADDS: a `durable:false`
+// answer means the table is not installed, and treating that as "you own
+// nothing" would delete a real purchase from the profile.
+async function garageRestore() {
+  try {
+    if (!(typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn)) return;
+    const tok = await _sbToken();
+    if (!tok) return;
+    const j = await fetch('/api/garage/owned', { headers: { accept: 'application/json', authorization: 'Bearer ' + tok } })
+      .then(r => r.json()).catch(() => null);
+    if (!j || !j.ok || !j.durable || !Array.isArray(j.owned)) return;
+    let added = 0;
+    for (const sku of j.owned) if (GARAGE_BY_SKU[sku] && _garageGrant(sku, null)) added++;
+    if (added) {
+      try { showToast('🚚 Restored ' + added + ' rig' + (added === 1 ? '' : 's') + ' from your account.', 4600); } catch (e) {}
+      try { render(); } catch (e) {}
+    }
+  } catch (e) {}
+}
+
+// 💳 Open Stripe Checkout for a rig. The browser sends ONLY the sku — the
+// Worker looks up the price. Nothing here is trusted with an amount.
+async function garageCheckout(sku) {
+  try {
+    const rig = GARAGE_BY_SKU[sku];
+    if (!rig) return;
+    if (garageOwns(sku)) { showToast('You already own the ' + rig.name + '.', 3600); return; }
+    if (!(typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn)) {
+      showToast('☁ Sign in first — a rig is tied to your account, not this browser.', 5600); return;
+    }
+    const tok = await _sbToken();
+    if (!tok) { showToast('☁ Sign in first so the rig can be attached to your account.', 5000); return; }
+    const r = await fetch('/api/garage/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + tok },
+      body: JSON.stringify({ sku: sku }),
+    });
+    const j = await r.json().catch(() => null);
+    if (r.status === 409) { _garageGrant(sku, null); showToast('You already own the ' + rig.name + ' — restored it.', 4600); try { render(); } catch (e) {} return; }
+    if (r.status === 503) { showToast('⚠ Card payments are not switched on yet.', 5000); return; }
+    if (!j || !j.url) { showToast('⚠ Could not open checkout. No charge was made.', 5000); return; }
+    location.href = j.url;
+  } catch (e) { try { showToast('⚠ Could not open checkout. No charge was made.', 5000); } catch (_) {} }
+}
+
+// 🔙 Return from Stripe. Mirrors azaConfirmReturn: the URL is cleaned first so
+// a refresh cannot re-trigger, and the grant only happens after the Worker has
+// verified with Stripe that the session is PAID and belongs to this user.
+async function garageConfirmReturn() {
+  try {
+    const sp = new URLSearchParams(location.search || '');
+    const st = sp.get('rig');
+    if (!st) return;
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    if (st === 'cancel') { showToast('Checkout cancelled — no charge made.', 3600); return; }
+    if (st !== 'ok') return;
+    const sid = sp.get('sid') || '';
+    if (!sid) return;
+    if (!(typeof initCloud === 'function' && initCloud() && Profile.cloud && Profile.cloud.signedIn)) {
+      showToast('☁ Sign in so we can attach your rig.', 5000); return;
+    }
+    const tok = await _sbToken();
+    if (!tok) return;
+    const j = await fetch('/api/garage/confirm?sid=' + encodeURIComponent(sid),
+      { headers: { accept: 'application/json', authorization: 'Bearer ' + tok } }).then(r => r.json()).catch(() => null);
+    if (!j || !j.ok || !GARAGE_BY_SKU[j.sku]) {
+      showToast('⚠ Could not verify that purchase. If you were charged, contact support — never share card details.', 6500);
+      return;
+    }
+    const fresh = _garageGrant(j.sku, sid);
+    try { render(); } catch (e) {}
+    _showRigSuccessModal(j.sku, fresh, j.durable !== false);
+  } catch (e) {}
+}
+
+// 🎉 Purchase-complete modal. Deliberately states WHERE the rig is stored —
+// "buy once, keep it" is the promise being made, so it should be visible.
+function _showRigSuccessModal(sku, fresh, durable) {
+  try {
+    const rig = GARAGE_BY_SKU[sku]; if (!rig) return;
+    const old = document.getElementById('rig-success-modal'); if (old) old.remove();
+    const el = document.createElement('div');
+    el.id = 'rig-success-modal';
+    el.className = 'modal-backdrop';
+    el.style.zIndex = '2147483647';
+    el.innerHTML =
+      '<div class="unit-modal" style="max-width:440px;text-align:center;border-color:#d4a843">'
+      + '<div style="font-size:3.4rem;line-height:1;margin-bottom:0.5rem">' + rig.icon + '</div>'
+      + '<h3 style="margin:0 0 0.35rem;font-family:\'Cinzel\',serif;color:#f5c453;letter-spacing:0.06em">'
+      + (fresh ? 'RIG DELIVERED' : 'RIG ALREADY YOURS') + '</h3>'
+      + '<div style="color:#fff4d2;font-size:1.15rem;font-weight:800;margin-bottom:0.2rem">' + escapeHtml(rig.name) + '</div>'
+      + '<div style="color:#c2b184;font-size:0.86rem;margin-bottom:0.9rem">' + escapeHtml(rig.tagline) + '</div>'
+      + '<div style="background:rgba(14,18,28,0.6);border:1px solid #2a3a20;border-radius:6px;padding:0.7rem 0.9rem;margin-bottom:1rem;text-align:left">'
+      + rig.perks.map(p => '<div style="color:#9ad17a;font-size:0.86rem;padding:0.12rem 0">✓ ' + escapeHtml(p) + '</div>').join('')
+      + '</div>'
+      + '<div style="font-size:0.8rem;color:' + (durable ? '#8fbf8f' : '#e0a86a') + ';margin-bottom:0.9rem;line-height:1.5">'
+      + (durable
+          ? '🔒 Saved to your account. It follows you to any device you sign in on.'
+          : '⚠ Saved to this profile and your cloud save. Ask the operator to run supabase-garage.sql for account-level restore.')
+      + '</div>'
+      + '<button class="btn-primary" id="rig-modal-close" style="width:100%;padding:0.6rem;font-weight:800">TO THE GARAGE</button>'
+      + '</div>';
+    document.body.appendChild(el);
+    const close = () => { try { el.remove(); } catch (e) {} };
+    el.addEventListener('click', (e) => { if (e.target === el || (e.target && e.target.id === 'rig-modal-close')) close(); });
+  } catch (e) {}
+}
+
+// 🏪 Store cards. Owned rigs stay on the shelf, marked OWNED — hiding them
+// would make a purchase look like it vanished, which is the opposite of the
+// reassurance this section needs to give.
+function _buildGarageStoreHtml() {
+  try {
+    const cards = GARAGE_RIGS.map(rig => {
+      const owned = garageOwns(rig.sku);
+      return '<div class="sov-pkg' + (rig.popular && !owned ? ' sov-pkg-popular' : '') + '"'
+        + (owned ? ' style="border-color:#7fd8a0"' : '') + '>'
+        + (owned ? '<div class="sov-pkg-ribbon" style="background:#3d6b4a;color:#dff5e4">✓ OWNED</div>'
+                 : (rig.popular ? '<div class="sov-pkg-ribbon">⭐ MOST POPULAR</div>' : ''))
+        + '<div class="sov-pkg-icon">' + rig.icon + '</div>'
+        + '<div class="sov-pkg-name">' + escapeHtml(rig.name) + '</div>'
+        + '<div class="sov-pkg-tagline" style="min-height:2.4em">' + escapeHtml(rig.tagline) + '</div>'
+        + '<div style="text-align:left;margin:0.1rem 0 0.6rem">'
+        + rig.perks.map(p => '<div style="color:#9ad17a;font-size:0.74rem;padding:0.08rem 0">✓ ' + escapeHtml(p) + '</div>').join('')
+        + '</div>'
+        + (owned
+            ? '<button class="btn-primary sov-pkg-buy" disabled style="opacity:0.55;cursor:default;background:#2f3f33">IN YOUR GARAGE</button>'
+            : '<button class="btn-primary sov-pkg-buy" data-rig-buy="' + rig.sku + '">💳 Buy · $' + rig.price + '</button>')
+        + '</div>';
+    }).join('');
+    const ownedN = garageOwnedList().length;
+    return '<div class="sov-section-head" style="margin:1.6rem 0 0.5rem;font-family:\'Cinzel\',serif;color:#f5c453;font-size:1.05rem;letter-spacing:0.08em">'
+      + '🚚 THE GARAGE</div>'
+      + '<div style="color:#c2b184;font-size:0.85rem;margin-bottom:0.9rem;line-height:1.55">'
+      + 'Convoy rigs, bought once with a card and yours permanently — not a currency, nothing to top up. '
+      + 'A rig is attached to your <b style="color:#fff4d2">account</b>, so it follows you to any device you sign in on.'
+      + (ownedN ? ' <span style="color:#7fd8a0">You own ' + ownedN + ' of ' + GARAGE_RIGS.length + '.</span>' : '')
+      + '</div>'
+      + '<div class="sov-pkg-grid">' + cards + '</div>';
+  } catch (e) { return ''; }
+}
+function _bindGarageHandlers() {
+  try {
+    document.querySelectorAll('[data-rig-buy]').forEach(btn => {
+      btn.onclick = () => {
+        if (btn.disabled) return;
+        btn.disabled = true; btn.textContent = 'Opening checkout…';
+        const sku = btn.getAttribute('data-rig-buy');
+        Promise.resolve(garageCheckout(sku)).catch(() => {}).then(() => {
+          // Re-enable if we are still here (checkout navigates away on success).
+          setTimeout(() => { try { if (document.body.contains(btn)) { btn.disabled = false;
+            btn.textContent = '💳 Buy · $' + ((GARAGE_BY_SKU[sku] || {}).price || ''); } } catch (e) {} }, 2500);
+        });
+      };
+    });
+  } catch (e) {}
+}
+try {
+  window.__mg = window.__mg || {};
+  window.__mg.garage = { rigs: GARAGE_RIGS, owns: garageOwns, owned: garageOwnedList,
+                         restore: garageRestore, checkout: garageCheckout };
+} catch (e) {}
+
 async function azaConfirmReturn() {
   try {
     const sp = new URLSearchParams(location.search || '');

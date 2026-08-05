@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120e9';
+  window.BUILD_VERSION = 'v120f0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -70012,7 +70012,16 @@ function _temperFor(cardId, card) {
 // The temperament actually in force for a profile entry.
 function getUnitTemper(cardId, entry) {
   try {
-    const e = entry || (Profile.units && Profile.units[cardId]) || null;
+    // Precedence: the passed entry, THEN the stored profile, then derivation.
+    // The middle step matters more than it looks — callers pass things that
+    // are not profile rows (a live battle unit, a market snapshot), and those
+    // carry no `temper`. Deriving straight from the id for them meant the
+    // same companion could show one temperament on the board and another in
+    // the collection, which is worse than showing none.
+    if (entry && entry.temper && TEMPER_BY_ID[entry.temper]) return TEMPER_BY_ID[entry.temper];
+    const stored = (Profile.units && Profile.units[cardId]) || null;
+    if (stored && stored.temper && TEMPER_BY_ID[stored.temper]) return TEMPER_BY_ID[stored.temper];
+    const e = entry || stored;
     if (e && e.temper && TEMPER_BY_ID[e.temper]) return TEMPER_BY_ID[e.temper];
     // ⚠ getCardById does not exist in this client (see the note at the deck
     // cache). Guarding for it "safely" returned null every time, which meant
@@ -70438,6 +70447,46 @@ function _lqUnitValueProfile(card) {
   // §8 — fall back to the unit's archetype default (Mild) so bulk units still feel.
   const arch = _lqArchetypeDefault(card);
   return arch ? [arch] : [];
+}
+// 🎭 COMPACT TEMPERAMENT PILL — the inline form, for the badge rows that
+// already carry element / faction / trait / bond. The full panel below needs
+// vertical space that those rows do not have, and a companion's temperament
+// should be readable ANYWHERE its bond is, not only in one modal.
+// `entry` may be a live battle unit, a market snapshot, or a profile row —
+// anything carrying `temper` — with the card id as the fallback derivation.
+function _temperPillHtml(cardId, entry, opts) {
+  try {
+    if (typeof getUnitTemper !== 'function') return '';
+    const t = getUnitTemper(cardId, entry || null);
+    if (!t) return '';
+    const o = opts || {};
+    // Gate the quirk the same way the panel does, so the two never disagree
+    // about what this player has earned the right to know.
+    const bond = (entry && typeof entry.bond === 'number') ? entry.bond : null;
+    const known = (bond == null) ? true : (bondTierIndex(bond) >= 2);
+    const tip = t.name + ' — ' + t.blurb
+      + (known ? '\n✦ ' + t.quirk : '\nReach Steady to learn what makes them different.')
+      + '\nBonds ×' + t.gain.toFixed(2) + ' · setbacks ×' + t.loss.toFixed(2);
+    return '<span class="nature-pill" style="border-color:#d0a6ff;color:#d0a6ff"'
+      + ' title="' + escapeHtml(tip) + '">' + t.icon + ' ' + escapeHtml(t.name)
+      + (o.withQuirkHint && known ? '' : '') + '</span>';
+  } catch (e) { return ''; }
+}
+// 🤝 Compact rapport count — how many companions this one actually fights
+// well beside. Only rendered when it has earned at least one.
+function _rapportPillHtml(cardId) {
+  try {
+    if (typeof rapportPartners !== 'function') return '';
+    const p = rapportPartners(cardId);
+    if (!p.length) return '';
+    const names = p.slice(0, 6).map(pid => {
+      try { const c = resolveDeckCard('unit:' + pid); return (c && c.name) || pid; } catch (e) { return pid; }
+    });
+    return '<span class="nature-pill" style="border-color:#7fd8a0;color:#7fd8a0"'
+      + ' title="' + escapeHtml('Fights well beside: ' + names.join(', ')
+        + '\nDeployed together, each gains +' + RAPPORT_BONUS.atk + ' ATK / +' + RAPPORT_BONUS.def + ' DEF.') + '">'
+      + '🤝 ' + p.length + '</span>';
+  } catch (e) { return ''; }
 }
 // 🎭 Temperament / history / rapport panel for the owned-card detail modal.
 // Sits alongside Companion Values and follows the same discovery rule: the
@@ -129597,6 +129646,7 @@ function _charBoxPanel(s) {
            The board sigil above the unit and the hover row remain the signal;
            the character box is for the unit's own stats, not fusion state. -->
       <div class="cbx-row"><b>FACTION</b><div class="cbx-pills">${facPills}</div></div>
+      ${(u.owner === 'player' && !u.isHero) ? `<div class="cbx-row"><b>TEMPER</b><div class="cbx-pills">${_temperPillHtml(u.originalCardId || u.cardId, u)}${_rapportPillHtml(u.originalCardId || u.cardId)}</div></div>` : ''}
     </div>`;
 }
 // ✦ FIELD-CARD ABILITIES — the location / weather / walls you control that
@@ -135126,6 +135176,8 @@ function renderUnitModal() {
                    ${allPassives.map(p => { const pf = p.faction ? getFaction(p.faction) : null; const style = pf ? `style="color:${pf.color};border-color:${pf.color}"` : ''; return `<span class="passive-pill" ${style} title="${escapeHtml(p.desc)}">${pf ? getFactionIcon(p.faction, '1.7em') + ' ' : ''}${escapeHtml(p.name)}</span>`; }).join('')}
                    ${!isPlayer ? '<span class="scan-revealed-pill" title="This enemy has been scanned.">🔍 Scanned</span>' : ''}`}
               ${isPlayer && u.bond != null ? (() => { const t = getBondTier(u.bond); return `<span class="bond-pill" style="border-color:${t.color};color:${t.color}" title="Friendship ${u.bond}/${BOND_MAX} — +${Math.floor((u.bond||0)/10)}% crit chance">💗 ${t.name} ${u.bond}</span>`; })() : ''}
+              ${isPlayer ? _temperPillHtml(u.originalCardId || u.cardId, u) : ''}
+              ${isPlayer ? _rapportPillHtml(u.originalCardId || u.cardId) : ''}
               ${u.trait && !enemyHidden ? (() => { const tr = (typeof getTrait === 'function') ? getTrait(u.trait) : null; if (!tr) return ''; const col = (TRAIT_RARITY_COLOR[tr.rarity] || '#9aa0a6'); return `<span class="nature-pill" style="border-color:${col};color:${col}" title="${escapeHtml(tr.rarity.toUpperCase() + ' — ' + tr.desc)}">${tr.icon} ${escapeHtml(tr.name)}</span>`; })() : ''}
             </div>
             <div class="modal-xp">
@@ -149510,6 +149562,14 @@ function unitInstanceSnapshot(card) {
     xp:      (u && u.xp)    || (prof && prof.xp)    || 0,
     kills:   Math.max(0, (prof && prof.kills | 0) || (u && u.kills | 0) || 0),
     nature:  (prof && prof.nature) || (u && u.nature) || null,
+    // 🎭 Temperament and the history behind it ride the listing. A buyer is
+    // purchasing a companion with a personality and a record, and both are
+    // things they should be able to price BEFORE buying — the same reason
+    // bond, bound items and sale count already travel here.
+    temper:  (prof && prof.temper) || null,
+    together: (prof && prof.together | 0) || 0,
+    memoryCount: (prof && Array.isArray(prof.memories)) ? prof.memories.length : 0,
+    rapportCount: (typeof rapportPartners === 'function') ? rapportPartners(card.id).length : 0,
     traitId: traitId || null,
     knownMoves: moves,
     stats:   (u && u.stats) ? { ...u.stats } : (card.stats ? { ...card.stats } : null),
@@ -149588,6 +149648,9 @@ function _marketUnitInstanceHtml(inst, baseCinder, titleOverride) {
             <span class="dvs-stat-pill" style="border-color:rgba(255,120,90,0.5);color:#ff9c7a" title="Confirmed enemy knockouts this copy has scored — a blooded unit is worth more">⚔ ${inst.kills | 0} kill${(inst.kills | 0) === 1 ? '' : 's'}</span>
             ${traitHtml}${natureHtml}
             ${inst.bondTier ? `<span class="nature-pill" style="border-color:${getBondTier(inst.bond || 0).color};color:${getBondTier(inst.bond || 0).color}" title="Companion loyalty — drops one tier when you buy (the unit is wary of a new owner); the original owner can restore it">💗 ${escapeHtml(inst.bondTier)}</span>` : ''}
+            ${_temperPillHtml(data.cardId || (c && c.id), inst)}
+            ${(inst.rapportCount | 0) > 0 ? `<span class="nature-pill" style="border-color:#7fd8a0;color:#7fd8a0" title="Companions this unit fights well beside — the pair bonus applies only when the buyer also owns them">🤝 ${inst.rapportCount | 0} rapport</span>` : ''}
+            ${(inst.memoryCount | 0) > 0 ? `<span class="nature-pill" style="border-color:#c2b184;color:#c2b184" title="Milestones from its service — a companion with a history, not a fresh pull">📖 ${inst.memoryCount | 0} ${(inst.memoryCount | 0) === 1 ? 'memory' : 'memories'}</span>` : ''}
             ${(inst.battlesFought | 0) > 0 ? `<span class="dvs-row-sub" title="Battles this companion has fought">⚔ ${inst.battlesFought | 0} battle${(inst.battlesFought | 0) === 1 ? '' : 's'}</span>` : ''}
             ${(Array.isArray(inst.boundItems) && inst.boundItems.length) ? `<span class="nature-pill" style="border-color:#7bc043;color:#9fe0b0" title="Bound items convey with the unit on sale">🎁 ${inst.boundItems.length} bound</span>` : ''}
             ${(inst.saleCount | 0) >= 3 ? `<span class="nature-pill" style="border-color:#cf6868;color:#e89a9a" title="Sold 3+ times — its loyalty ceiling is permanently lowered (jaded mercenary)">📊 Much-traded</span>` : ''}

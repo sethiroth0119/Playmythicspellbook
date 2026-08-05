@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120f3';
+  window.BUILD_VERSION = 'v120f4';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -64003,16 +64003,40 @@ function _campFac(id) { return CAMP_FACILITIES.find(f => f.id === id) || null; }
 //    or a player's truck vanishes on their next device.
 // ⚠ Art is admin-swappable per tier via Forge.convoyTruckArt[truckId].
 // ============================================================================
+// 💵 PAID IN REAL MONEY, NOT AZA. `usd` is display only — worker.js
+// (GARAGE_RIGS) is the pricing authority and is what Stripe actually charges.
+// `sku` is the link between this catalogue and that rail.
+//
+// ⚠ THESE ARE THE SAME THREE RIGS AS THE GARAGE. They were sold here for Aza
+// while the Garage sold them for cash, which meant two storefronts, two
+// currencies and two ownership records for one product. This is now the ONLY
+// place they are sold; ownership lives in Profile.garage and drives both the
+// daily operative cap here AND the convoy cargo/risk/speed bonuses.
+// Anyone who already bought a rig with Aza keeps it — see _convoyOwnsTruck.
 const CONVOY_TRUCKS = [
-  { id: 'hauler',    name: 'Scrap Hauler',     perDay: 3,  aza: 0,  emoji: '🛻',
+  { id: 'hauler',    name: 'Scrap Hauler',     perDay: 3,  usd: 0,  sku: null,             emoji: '🛻',
     desc: 'The rig every survivor is issued. Three sets of boots out the gate each day.' },
-  { id: 'ironback',  name: 'Ironback Runner',  perDay: 6,  aza: 20, emoji: '🚚',
+  { id: 'ironback',  name: 'Ironback Runner',  perDay: 6,  usd: 20, sku: 'rig_ironback',   emoji: '🚚',
     desc: 'Plated flatbed. Doubles what you can put on the road.' },
-  { id: 'ashrig',    name: 'Ash Convoy Rig',   perDay: 10, aza: 60, emoji: '🚛',
+  { id: 'ashrig',    name: 'Ash Convoy Rig',   perDay: 10, usd: 60, sku: 'rig_ashconvoy',  emoji: '🚛',
     desc: 'A proper convoy tractor — ten operatives moving before dusk.' },
-  { id: 'warden',    name: 'Warden Longhaul',  perDay: 15, aza: 99, emoji: '🚛',
+  { id: 'warden',    name: 'Warden Longhaul',  perDay: 15, usd: 99, sku: 'rig_warden',     emoji: '🚛',
     desc: 'The long-haul war wagon. Fifteen deployments a day, every day.' },
 ];
+// One ownership answer for both systems. A rig counts as owned if it was
+// bought for cash (Profile.garage, the rail from here on) OR if the player
+// already bought it for Aza before the change — a paid purchase must never
+// evaporate because the currency behind it did.
+function _convoyOwnsTruck(id) {
+  try {
+    const t = CONVOY_TRUCKS.find(x => x.id === id);
+    if (!t) return false;
+    if (!t.sku) return true;                                    // the free issued hauler
+    if (typeof garageOwns === 'function' && garageOwns(t.sku)) return true;
+    const st = (typeof _convoyState === 'function') ? _convoyState() : null;
+    return !!(st && Array.isArray(st.owned) && st.owned.indexOf(id) >= 0);   // legacy Aza buy
+  } catch (e) { return false; }
+}
 function _convoyTruck(id) { return CONVOY_TRUCKS.find(t => t.id === id) || CONVOY_TRUCKS[0]; }
 // Admin art override, else the bundled default.
 function _convoyArt(id) {
@@ -64037,9 +64061,19 @@ function _convoyState() {
 }
 // Best truck the player owns decides the cap (buying an upgrade applies at once).
 function _convoyCapacity() {
-  const c = _convoyState();
+  // Read ownership through _convoyOwnsTruck, which unions the cash purchase
+  // (Profile.garage) with any legacy Aza purchase. Walking c.owned alone would
+  // have ignored every rig bought for real money — the whole point of the
+  // change — and left buyers on the free hauler's 3/day.
   let best = 0;
-  c.owned.forEach(id => { const t = _convoyTruck(id); if (t.perDay > best) best = t.perDay; });
+  try {
+    for (const t of CONVOY_TRUCKS) {
+      if (t.perDay > best && _convoyOwnsTruck(t.id)) best = t.perDay;
+    }
+  } catch (e) {
+    const c = _convoyState();
+    c.owned.forEach(id => { const t = _convoyTruck(id); if (t.perDay > best) best = t.perDay; });
+  }
   return best || CONVOY_TRUCKS[0].perDay;
 }
 function _convoyRemaining() { return Math.max(0, _convoyCapacity() - (_convoyState().usedToday | 0)); }
@@ -156464,10 +156498,12 @@ function _csBinderBody() {
     ${shelves ? `<div class="cs-grid">${shelves}</div>` : `<div class="cs-empty">Your binder is empty. Pick a card above and set a Cinder price.</div>`}`;
 }
 // ----- 🚚 Convoy Rigs shop body — a bigger truck raises the DAILY cap on how
-// many operatives you can send on loot runs + Covert Actions. Aza-only (it's a
-// premium convenience upgrade), bought on the SAME spendSovereigns() rail as
-// packs — no new payment path. The free Scrap Hauler is listed too so the
-// ladder reads complete and players can see what they already have.
+// many operatives you can send on loot runs + Covert Actions.
+// 💵 REAL MONEY (Stripe), not Aza. These are the same three rigs the Garage
+// sold for cash, so pricing them in Aza here meant one product with two
+// storefronts, two currencies and two ownership records. This is now the only
+// place they are sold. The free Scrap Hauler is listed too so the ladder reads
+// complete and players can see what they already have.
 function _buildConvoyShopBody(sovBal) {
   if (typeof CONVOY_TRUCKS === 'undefined' || !Array.isArray(CONVOY_TRUCKS)) {
     return `<div class="ink-dim" style="padding:1.4rem;text-align:center">Convoy rigs are unavailable right now.</div>`;
@@ -156477,13 +156513,16 @@ function _buildConvoyShopBody(sovBal) {
   const cap   = (typeof _convoyCapacity === 'function') ? _convoyCapacity() : 3;
   const left  = (typeof _convoyRemaining === 'function') ? _convoyRemaining() : cap;
   // Which owned rig is actually setting the cap right now.
-  const bestOwned = CONVOY_TRUCKS.reduce((b, t) => (owned.indexOf(t.id) >= 0 && (!b || t.perDay > b.perDay)) ? t : b, null);
+  // Ownership must come from _convoyOwnsTruck (cash OR legacy Aza), not from
+  // st.owned alone — that array only ever held Aza purchases.
+  const _own = (id) => (typeof _convoyOwnsTruck === 'function') ? _convoyOwnsTruck(id) : (owned.indexOf(id) >= 0);
+  const bestOwned = CONVOY_TRUCKS.reduce((b, t) => (_own(t.id) && (!b || t.perDay > b.perDay)) ? t : b, null);
 
   const cards = CONVOY_TRUCKS.map(t => {
-    const isOwned  = owned.indexOf(t.id) >= 0;
+    const isOwned  = _own(t.id);
     const isActive = !!(bestOwned && bestOwned.id === t.id);
-    const price    = Math.max(0, t.aza | 0);
-    const canAfford = sovBal >= price;
+    const price    = Math.max(0, t.usd | 0);
+    const canAfford = true;    // a card payment is never gated on an in-game balance
     // An upgrade only helps if it beats what you already run.
     const isUpgrade = t.perDay > cap;
     const artSrc = (typeof _convoyArt === 'function') ? _convoyArt(t.id) : '';
@@ -156494,7 +156533,7 @@ function _buildConvoyShopBody(sovBal) {
       ? `<button class="btn-secondary" disabled style="margin-top:auto">✓ Owned${isActive ? ' · In service' : ''}</button>`
       : (price <= 0
           ? `<button class="btn-secondary" disabled style="margin-top:auto">Issued free</button>`
-          : `<button class="btn-primary ${canAfford ? '' : 'btn-disabled'}" data-buy-convoy="${escapeHtml(String(t.id))}" ${canAfford ? '' : 'disabled'} style="margin-top:auto">${canAfford ? `Buy — ${price} <span class="aza-icon"></span>` : `Need ${price - sovBal} more <span class="aza-icon"></span>`}</button>`);
+          : `<button class="btn-primary" data-buy-convoy="${escapeHtml(String(t.id))}" style="margin-top:auto">💳 Buy — $${price}</button>`);
     return `
       <div style="width:260px;background:rgba(20,12,40,0.7);border:1px solid ${isActive ? 'rgba(127,224,160,0.6)' : 'rgba(212,175,55,0.4)'};border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
         ${art}
@@ -156561,10 +156600,8 @@ function _bindConvoyShopHandlers() {
       const id = btn.dataset.buyConvoy;
       const t = (typeof _convoyTruck === 'function') ? _convoyTruck(id) : null;
       if (!t || t.id !== id) { showToast('That rig is no longer available.', 2600); return; }
-      const st = (typeof _convoyState === 'function') ? _convoyState() : { owned: [] };
-      if ((st.owned || []).indexOf(id) >= 0) { showToast('You already own that rig.', 2400); return; }
-      const price = Math.max(0, t.aza | 0);
-      if ((Profile.sovereigns || 0) < price) { showToast('Not enough Aza coin.', 2600); return; }
+      if (typeof _convoyOwnsTruck === 'function' && _convoyOwnsTruck(id)) { showToast('You already own that rig.', 2400); return; }
+      if (!t.sku) { showToast('The Scrap Hauler is issued free.', 2400); return; }
       const capNow = (typeof _convoyCapacity === 'function') ? _convoyCapacity() : 0;
       const ok = await showGameConfirm({
         title: '🚚 Buy Convoy Rig?',
@@ -156572,22 +156609,21 @@ function _bindConvoyShopHandlers() {
           '<div>Purchase the <b style="color:#d4a843">' + escapeHtml(t.name || 'rig') + '</b>.</div>' +
           '<div style="background:rgba(20,16,14,0.6);border:1px solid #2a201c;border-radius:4px;padding:0.7rem 0.9rem;margin:0.6rem 0">' +
             '<div style="display:flex;justify-content:space-between"><span style="color:#a89878">Daily capacity</span><b style="color:#d4a843">' + capNow + ' → ' + t.perDay + ' / day</b></div>' +
-            '<div style="display:flex;justify-content:space-between;margin-top:4px"><span style="color:#a89878">Price</span><b style="color:#d4a843">' + price + ' 👑 Aza coin</b></div>' +
+            '<div style="display:flex;justify-content:space-between;margin-top:4px"><span style="color:#a89878">Price</span><b style="color:#d4a843">$' + Math.max(0, t.usd | 0) + ' USD</b></div>' +
           '</div>' +
-          '<div class="small-text" style="color:#9a8fbf">Applies immediately and permanently. Today\'s already-used slots stay used.</div>',
-        yesLabel: 'BUY RIG', noLabel: 'Cancel',
+          '<div class="small-text" style="color:#9a8fbf">A one-time card payment, not Aza. Bought once and tied to your account, so it follows you to any device you sign in on. It also raises your convoy cargo, cuts route risk and shortens trips.</div>',
+        yesLabel: 'CONTINUE TO PAYMENT', noLabel: 'Cancel',
       });
       if (!ok) return;
-      // Charge on the EXISTING Aza rail — spendSovereigns re-checks the balance
-      // and saves, so a double-click or a balance change between the confirm and
-      // here can never grant a free truck.
-      if (typeof spendSovereigns !== 'function' || !spendSovereigns(price)) {
-        showToast('Not enough Aza coin.', 2600); return;
-      }
-      if (typeof _convoyGrant === 'function') _convoyGrant(t.id);
-      try { if (typeof _persistProgressNow === 'function') _persistProgressNow(); else saveProfile(); } catch (e) {}
-      showToast(`🚚 ${t.name} in service — ${t.perDay} operatives per day.`, 3800);
-      render();
+      // 💳 Real money, on the SAME Stripe rail as the Garage — the browser sends
+      // only the sku and the Worker prices it. Nothing is granted here; the rig
+      // arrives from the verified return (or the webhook, if a buyer never
+      // comes back). Granting on click would hand out a $99 rig for free.
+      if (typeof garageCheckout !== 'function') { showToast('⚠ Card payments are unavailable right now.', 3600); return; }
+      btn.disabled = true; btn.textContent = 'Opening checkout…';
+      try { await garageCheckout(t.sku); }
+      catch (e) { showToast('⚠ Could not open checkout. No charge was made.', 4000); }
+      setTimeout(() => { try { if (document.body.contains(btn)) { btn.disabled = false; btn.textContent = '💳 Buy — $' + Math.max(0, t.usd | 0); } } catch (e) {} }, 2500);
     };
   });
 }
@@ -157427,7 +157463,9 @@ function _buildSovereignsStoreBody(sovBal) {
   `).join('');
   return `
     <div class="sov-pkg-grid">${cards}</div>
-    ${_buildGarageStoreHtml()}
+    <!-- 🚚 The convoy-rig storefront lives in the Vendor Market's CONVOY tab,
+         not here. It used to render in both places, which meant one product
+         with two storefronts. Aza packs only from this screen. -->
     <div class="sov-info-grid">
       <div class="sov-info-card">
         <div class="sov-info-title"><span class="aza-icon"></span> What Aza coin does</div>
@@ -158663,7 +158701,14 @@ function _garageRig() {
   try {
     let best = null;
     for (const r of GARAGE_RIGS) {
-      if (!garageOwns(r.sku)) continue;
+      // _convoyOwnsTruck unions the cash purchase with a legacy Aza one, so a
+      // player who bought a rig before it moved to real money keeps the full
+      // benefit rather than only the daily-cap half of it.
+      let has = garageOwns(r.sku);
+      if (!has && typeof CONVOY_TRUCKS !== 'undefined' && typeof _convoyOwnsTruck === 'function') {
+        try { const ct = CONVOY_TRUCKS.find(x => x.sku === r.sku); if (ct) has = _convoyOwnsTruck(ct.id); } catch (e) {}
+      }
+      if (!has) continue;
       const f = GARAGE_RIG_FX[r.sku];
       if (f && (!best || f.tier > best.fx.tier)) best = { rig: r, fx: f };
     }

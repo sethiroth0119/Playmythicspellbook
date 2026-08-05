@@ -36296,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120g2';
+  window.BUILD_VERSION = 'v120g3';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -63139,18 +63139,37 @@ function isCampUnlocked() {
   _campOwnerDataEnsure();
   return getTopHeroLevel() >= CAMP_UNLOCK_LEVEL;
 }
-// Tutor Shop unlock — keys off account level (meta progression).
-function isTutorUnlocked() { return _adminBypass() || getAccountLevel() >= TUTOR_UNLOCK_ACCOUNT_LEVEL; }
-// Player Market unlock — needs at least N heroes at the configured hero level.
+/* 🏙 NODE OWNERS SKIP EVERY RUIN EXCHANGE GATE.
+   The level gates exist to stop a brand-new account walking straight into the
+   money-out and trading features. Holding a node is a stronger demonstration of
+   the same thing than any hero level: you captured territory, you hold it
+   against raids, and you are already running an economy. So an owner is in.
+   This is the rule the Camp already used (isCampUnlocked) — the Exchange gates
+   simply never adopted it.
+   ⚠ ONE SOURCE OF TRUTH. Each screen guards itself with these functions AND the
+   hub tile decides lock/unlock from them, so the check must live here and
+   nowhere else. It previously did not: renderTitle recomputed all three inline,
+   which is exactly how a gate drifts from the screen it is meant to guard. */
+function _exchangeNodeBypass() {
+  if (playerOwnsAnyNode()) return true;
+  // The node→owner map only loads on the War Map, so a node owner who opens the
+  // Exchange first would be judged "not an owner" purely because the answer had
+  // not arrived. This fetches it once and re-renders when it does.
+  _campOwnerDataEnsure();
+  return false;
+}
+// Tutor Shop unlock — account level, or any node.
+function isTutorUnlocked() { return _adminBypass() || _exchangeNodeBypass() || getAccountLevel() >= TUTOR_UNLOCK_ACCOUNT_LEVEL; }
+// Player Market unlock — needs at least N heroes at the configured hero level, or any node.
 function getHeroesAtLevelCount(threshold) {
   return Object.values(Profile.heroes || {}).filter(h => ((h && h.level) || 1) >= threshold).length;
 }
 function isPlayerMarketUnlocked() {
-  return _adminBypass() || getHeroesAtLevelCount(MARKET_UNLOCK_HERO_LEVEL) >= MARKET_UNLOCK_HERO_COUNT;
+  return _adminBypass() || _exchangeNodeBypass() || getHeroesAtLevelCount(MARKET_UNLOCK_HERO_LEVEL) >= MARKET_UNLOCK_HERO_COUNT;
 }
-// Cashout Vault unlock — requires at least one hero at the configured hero level.
+// Cashout Vault unlock — requires at least one hero at the configured hero level, or any node.
 function isCashoutUnlocked() {
-  return _adminBypass() || getHeroesAtLevelCount(CASHOUT_UNLOCK_HERO_LEVEL) >= 1;
+  return _adminBypass() || _exchangeNodeBypass() || getHeroesAtLevelCount(CASHOUT_UNLOCK_HERO_LEVEL) >= 1;
 }
 
 function loadCamp() {
@@ -109734,18 +109753,24 @@ function renderTitle() {
   // level; everyone else needs Lv CAMP_UNLOCK_LEVEL.
   const campUnlocked  = (typeof isCampUnlocked === 'function') ? isCampUnlocked() : (_hubIsAdmin || topHeroLevel >= CAMP_UNLOCK_LEVEL);
   const campLockText  = `🔒 Reach Hero Lv ${CAMP_UNLOCK_LEVEL} (max ${topHeroLevel}) — or own a node`;
-  // Tutor Shop gate — account level.
+  // 💰 RUIN EXCHANGE GATES — read from the SAME is*Unlocked() functions each
+  // screen guards itself with, so the tile can never disagree with the screen.
+  // These used to be recomputed inline here, which is why node owners saw an
+  // unlocked screen behind a locked-looking tile. Node owners pass all three.
+  const _hubOwnsNode    = (typeof playerOwnsAnyNode === 'function') && playerOwnsAnyNode();
+  const _orNode         = _hubOwnsNode ? '' : ' — or own a node';
+  // Tutor Shop gate — account level, or any node.
   const acctLevel       = getAccountLevel();
-  const tutorUnlocked   = _hubIsAdmin || acctLevel >= TUTOR_UNLOCK_ACCOUNT_LEVEL;
-  const tutorLockText   = `🔒 Reach Account Lv ${TUTOR_UNLOCK_ACCOUNT_LEVEL} (now Lv ${acctLevel})`;
-  // Player Market gate — N heroes at Lv 15+.
+  const tutorUnlocked   = (typeof isTutorUnlocked === 'function') ? isTutorUnlocked() : (_hubIsAdmin || acctLevel >= TUTOR_UNLOCK_ACCOUNT_LEVEL);
+  const tutorLockText   = `🔒 Reach Account Lv ${TUTOR_UNLOCK_ACCOUNT_LEVEL} (now Lv ${acctLevel})${_orNode}`;
+  // Player Market gate — N heroes at Lv 15+, or any node.
   const heroesAtMarketLv = getHeroesAtLevelCount(MARKET_UNLOCK_HERO_LEVEL);
-  const marketUnlocked   = _hubIsAdmin || heroesAtMarketLv >= MARKET_UNLOCK_HERO_COUNT;
-  const marketLockText   = `🔒 Need ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL} (have ${heroesAtMarketLv})`;
-  // Cashout Vault gate — 1 hero at Lv 15+.
+  const marketUnlocked   = (typeof isPlayerMarketUnlocked === 'function') ? isPlayerMarketUnlocked() : (_hubIsAdmin || heroesAtMarketLv >= MARKET_UNLOCK_HERO_COUNT);
+  const marketLockText   = `🔒 Need ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL} (have ${heroesAtMarketLv})${_orNode}`;
+  // Cashout Vault gate — 1 hero at Lv 15+, or any node.
   const heroesAtCashoutLv = getHeroesAtLevelCount(CASHOUT_UNLOCK_HERO_LEVEL);
-  const cashoutUnlocked   = _hubIsAdmin || heroesAtCashoutLv >= 1;
-  const cashoutLockText   = `🔒 Train a hero to Lv ${CASHOUT_UNLOCK_HERO_LEVEL} (max ${topHeroLevel})`;
+  const cashoutUnlocked   = (typeof isCashoutUnlocked === 'function') ? isCashoutUnlocked() : (_hubIsAdmin || heroesAtCashoutLv >= 1);
+  const cashoutLockText   = `🔒 Train a hero to Lv ${CASHOUT_UNLOCK_HERO_LEVEL} (max ${topHeroLevel})${_orNode}`;
 
   // ----- Portal definitions per hub -----
   // Each portal: { id, icon, name, sub, accent, badge?, alertBadge?, onclick }
@@ -110107,25 +110132,25 @@ function renderTitle() {
             badge: pendingPayout > 0 ? `$${pendingPayout.toFixed(2)} pending` : null,
             alertBadge: pendingPayout > 0,
             onclick: () => { App.screen = 'cashout'; render(); } }
-        : { id: 'btn-cashout', icon: '🔒', name: 'Cashout Vault', sub: `Train a hero to Lv ${CASHOUT_UNLOCK_HERO_LEVEL} to unlock`, accent: '#608a70',
+        : { id: 'btn-cashout', icon: '🔒', name: 'Cashout Vault', sub: `Train a hero to Lv ${CASHOUT_UNLOCK_HERO_LEVEL} — or capture a node`, accent: '#608a70',
             badge: cashoutLockText, locked: true,
-            onclick: () => { showToast(`🔒 Cashout Vault unlocks when a hero reaches Lv ${CASHOUT_UNLOCK_HERO_LEVEL} (your top: Lv ${topHeroLevel})`, 3500); } },
+            onclick: () => { showToast(`🔒 Cashout Vault unlocks when a hero reaches Lv ${CASHOUT_UNLOCK_HERO_LEVEL} (your top: Lv ${topHeroLevel}) — or the moment you own a node in District Nodes.`, 4200); } },
       // Tutor Shop — gated behind account level (long-term meta progression).
       tutorUnlocked
         ? { id: 'btn-tutor', icon: '<img src="assets/artwork/gameicons/Tutor%20shop.png" alt="Tutor Shop" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Tutor Shop', sub: 'Teach moves to your roster', accent: '#ffd166',
             badge: `<span class="cinder-icon"></span> ${Profile.gems || 0}`,
             onclick: () => { App.screen = 'tutor'; App.tutorTargetKey = null; App.tutorFilter = 'all'; render(); } }
-        : { id: 'btn-tutor', icon: '🔒', name: 'Tutor Shop', sub: `Reach Account Lv ${TUTOR_UNLOCK_ACCOUNT_LEVEL} to unlock`, accent: '#8a7a60',
+        : { id: 'btn-tutor', icon: '🔒', name: 'Tutor Shop', sub: `Reach Account Lv ${TUTOR_UNLOCK_ACCOUNT_LEVEL} — or capture a node`, accent: '#8a7a60',
             badge: tutorLockText, locked: true,
-            onclick: () => { showToast(`🔒 Tutor Shop unlocks at Account Lv ${TUTOR_UNLOCK_ACCOUNT_LEVEL} (you are Lv ${acctLevel}). Earn XP from battles, dailies, and the Forge.`, 3500); } },
+            onclick: () => { showToast(`🔒 Tutor Shop unlocks at Account Lv ${TUTOR_UNLOCK_ACCOUNT_LEVEL} (you are Lv ${acctLevel}) — or the moment you own a node. Earn XP from battles, dailies, and the Forge.`, 4200); } },
       // Player Market — gated behind hero progression (need 2 heroes at Lv 15+).
       marketUnlocked
         ? { id: 'btn-market', icon: '<img src="assets/artwork/gameicons/player%20market.png" alt="Player Market" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.9);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Player Market', sub: 'Cards listed by other players', accent: '#88c8e0',
             badge: marketListings > 0 ? `${marketListings} listings` : null,
             onclick: () => { App.screen = 'market'; App.marketTab = 'browse'; App.marketFilter = 'all'; reseedNpcListingsIfStale(false); render(); } }
-        : { id: 'btn-market', icon: '🔒', name: 'Player Market', sub: `Train ${MARKET_UNLOCK_HERO_COUNT} heroes to Lv ${MARKET_UNLOCK_HERO_LEVEL} to unlock`, accent: '#607890',
+        : { id: 'btn-market', icon: '🔒', name: 'Player Market', sub: `Train ${MARKET_UNLOCK_HERO_COUNT} heroes to Lv ${MARKET_UNLOCK_HERO_LEVEL} — or capture a node`, accent: '#607890',
             badge: marketLockText, locked: true,
-            onclick: () => { showToast(`🔒 Player Market unlocks when you have ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}+ (you have ${heroesAtMarketLv}).`, 3500); } },
+            onclick: () => { showToast(`🔒 Player Market unlocks when you have ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}+ (you have ${heroesAtMarketLv}) — or the moment you own a node in District Nodes.`, 4200); } },
     ],
     codex: [
       { id: 'btn-collection',   icon: '<img src="assets/artwork/gameicons/Storage%20box.png" alt="Inventory" style="width:3.1rem;height:3.1rem;object-fit:contain;vertical-align:middle;transform:scale(1.8);transform-origin:center;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.7))">', name: 'Inventory',   sub: 'Every card you own',          accent: '#8be0c4',
@@ -148160,7 +148185,7 @@ function renderTutor() {
   // Entry gate — Tutor Shop requires account Lv 5+. If somehow reached without
   // meeting the requirement, bounce back to the exchange hub with a toast.
   if (!isTutorUnlocked()) {
-    showToast(`🔒 Tutor Shop unlocks at Account Lv ${TUTOR_UNLOCK_ACCOUNT_LEVEL} (you are Lv ${getAccountLevel()})`, 3000);
+    showToast(`🔒 Tutor Shop unlocks at Account Lv ${TUTOR_UNLOCK_ACCOUNT_LEVEL} (you are Lv ${getAccountLevel()}) — or the moment you own a node.`, 3600);
     App.screen = 'title'; App.titleHub = 'exchange';
     setTimeout(() => render(), 0);
     return;
@@ -148492,7 +148517,7 @@ function renderMarket() {
   // navigation so manual state edits or stale App.screen don't bypass.
   if (!isPlayerMarketUnlocked()) {
     const have = getHeroesAtLevelCount(MARKET_UNLOCK_HERO_LEVEL);
-    showToast(`🔒 Player Market unlocks when you have ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}+ (you have ${have})`, 3000);
+    showToast(`🔒 Player Market unlocks when you have ${MARKET_UNLOCK_HERO_COUNT} heroes at Lv ${MARKET_UNLOCK_HERO_LEVEL}+ (you have ${have}) — or the moment you own a node.`, 3600);
     App.screen = 'title'; App.titleHub = 'exchange';
     setTimeout(() => render(), 0);
     return;
@@ -159101,7 +159126,7 @@ function renderCashoutVault() {
   // navigation so manual state edits or stale App.screen don't bypass the gate.
   if (!isCashoutUnlocked()) {
     const top = getTopHeroLevel();
-    showToast(`🔒 Cashout Vault unlocks when a hero reaches Lv ${CASHOUT_UNLOCK_HERO_LEVEL} (your top: Lv ${top})`, 3000);
+    showToast(`🔒 Cashout Vault unlocks when a hero reaches Lv ${CASHOUT_UNLOCK_HERO_LEVEL} (your top: Lv ${top}) — or the moment you own a node.`, 3600);
     App.screen = 'title'; App.titleHub = 'exchange';
     setTimeout(() => render(), 0);
     return;
@@ -173505,7 +173530,7 @@ function chatStartTrade(uid, name) {
   if (!uid) return;
   const gated = (typeof isPlayerMarketUnlocked === 'function') ? !isPlayerMarketUnlocked() : false;
   if (gated) {
-    showToast(`🔒 Trading unlocks at ${MARKET_UNLOCK_HERO_COUNT} heroes Lv ${MARKET_UNLOCK_HERO_LEVEL}+ — train up to trade.`, 4200);
+    showToast(`🔒 Trading unlocks at ${MARKET_UNLOCK_HERO_COUNT} heroes Lv ${MARKET_UNLOCK_HERO_LEVEL}+ — train up, or capture a node.`, 4200);
     return;
   }
   chatOpenDM(uid, name);

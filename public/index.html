@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120f1';
+  window.BUILD_VERSION = 'v120f2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -37004,7 +37004,7 @@ const PASSIVES = {
   tough:        { id: 'tough',        name: 'Tough',        desc: '+3 Defense' },
   magicWard:    { id: 'magicWard',    name: 'Magic Ward',   desc: '+3 Magic Resist' },
   warlord:      { id: 'warlord',      name: 'Warlord',      desc: 'Your units gain +2 Attack' },
-  archmage:     { id: 'archmage',     name: 'Archmage',     desc: 'Spells cost 1 less energy' },
+  archmage:     { id: 'archmage',     name: 'Archmage',     desc: 'Spells and abilities cost 1 less energy' },
   // ⚠️ 'guardian' was defined TWICE in this catalog (duplicate object key — JS silently
   // kept only the later entry, hiding this one's text). BOTH behaviors are implemented
   // in the engine, so the surviving entry below now documents both. Do not re-add here.
@@ -40672,7 +40672,20 @@ function hasAdjacentAllyWithPassive(unit, passiveId, state) {
 function getEffectiveMoveCost(move, attacker, state) {
   let cost = (move && move.cost) || 0;
   if (cost <= 0) return 0;
-  if (move.kind === 'ability' && attacker && hasPassive(attacker, 'archmage')) cost -= 1;
+  // ✨ ARCHMAGE — "Spells cost 1 less energy". This tested `move.kind ===
+  // 'ability'`, which is the WRONG category and made the passive do the
+  // opposite of its description. In this engine a spell is a MAGIC-TYPED
+  // move: fireball / lightning / arcaneBlast are all `kind:'attack',
+  // type:'magic'`. `kind:'ability'` is the support bucket — heal, focus —
+  // which carries no `type` at all. So Lyra the Wise, whose whole identity
+  // is Archmage, was paying full price for every spell she cast and getting
+  // a discount only on Heal and Focus.
+  // Spells are identified exactly as the skill-tree reduction below does it,
+  // so the two can never disagree about what a spell is. Abilities keep the
+  // discount they have had all along — the description is widened to match
+  // rather than quietly taking something away from existing players.
+  if (attacker && hasPassive(attacker, 'archmage')
+      && (move.type === 'magic' || move.kind === 'spell' || move.kind === 'ability')) cost -= 1;
   // ⚝ Cosmic skill-tree COST reduction (Arcanist Efficiency / Mana Font) — every
   // 25 aggregated points shaves 1 energy off a magic move (stamped by buildHero).
   if (attacker && attacker._skillCostReduction && (move.type === 'magic' || move.kind === 'spell')) {
@@ -135138,7 +135151,19 @@ function renderUnitModal() {
           <button class="modal-move ${isSel ? 'active' : ''}${dispelBlocked ? ' dispelled' : ''}${m.priority ? ' priority' : ''}" data-move="${m.id}" ${enabled ? '' : 'disabled'} ${dispelBlocked ? 'title="Dispelled — energy moves blocked"' : ''}>
             <div class="modal-move-head">
               <span class="modal-move-name">${m.priority ? '⚡ ' : ''}${elementDot(m.element)} ${escapeHtml(m.name)}${dispelBlocked ? ' 🚫' : ''}</span>
-              <span class="modal-move-cost">${m.cost} <span class="energy-orb"></span></span>
+              <span class="modal-move-cost">${(() => {
+                // 💡 Show the cost the player will ACTUALLY pay. This printed
+                // the raw m.cost, so a cost-reduction passive (Archmage, Lucid
+                // Thinker, the Arcanist skill tree) was invisible on the very
+                // button you press — the discount applied on spend but every
+                // move still read full price, which is indistinguishable from
+                // the passive being broken.
+                let eff = m.cost;
+                try { eff = getEffectiveMoveCost(m, u, App.state); } catch (e) { eff = m.cost; }
+                return (eff < m.cost)
+                  ? `<span style="opacity:.5;text-decoration:line-through">${m.cost}</span> ${eff}`
+                  : `${eff}`;
+              })()} <span class="energy-orb"></span></span>
             </div>
             <div class="modal-move-meta">range ${m.range} · ${m.kind}${m.priority ? ' · Priority' : ''} ${meta ? '· ' + meta : ''}</div>
             ${m.desc ? `<div class="modal-move-desc">${escapeHtml(m.desc)}</div>` : ''}

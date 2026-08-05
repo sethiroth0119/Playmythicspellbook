@@ -36296,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120h1';
+  window.BUILD_VERSION = 'v120h2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -200863,6 +200863,31 @@ try {
 
 function _openNodeCity(nodeId) {
   try { App._cityNodeId = nodeId || null; } catch (e) {}
+  /* 🏛 WHOSE CITY IS THIS? A hired mayor manages the OWNER's city, not their
+     own. cityStateSave/Load used to key on Profile.cloud.userId unconditionally,
+     so pressing "Manage <Node> City" quietly opened the MAYOR's own city — they
+     would build a city for hours believing they were running the owner's.
+     Resolve the target once, here, and let the two persistence functions read
+     it. Null means "me", which is every other case.
+     ⚠ The `city_state` RLS added in node_city_v2_mayors_plots_levels already
+     lets a mayor SELECT/UPDATE the owner's row, so this needs no new grant —
+     the client was simply never asking for the right row. */
+  try {
+    App._cityOwnerId = null;
+    App._cityOwnerName = null;
+    const me = (Profile.cloud && Profile.cloud.userId) || null;
+    const iOwnIt = (typeof _twIsNodePlayerOwner === 'function') && _twIsNodePlayerOwner(nodeId);
+    const iAmMayor = (typeof _twIAmMayorOf === 'function') && _twIAmMayorOf(nodeId);
+    // Owning outranks the appointment — the same precedence the button label
+    // uses, so the two can never disagree about which city you are entering.
+    if (!iOwnIt && iAmMayor) {
+      const o = (typeof _twNodeOwnerUser === 'function') ? _twNodeOwnerUser(nodeId) : null;
+      if (o && o.user_id && o.user_id !== me) {
+        App._cityOwnerId = o.user_id;
+        App._cityOwnerName = o.display_name || 'the owner';
+      }
+    }
+  } catch (e) {}
   if (document.getElementById('node-city-frame')) return;
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
@@ -200882,13 +200907,33 @@ function _openNodeCity(nodeId) {
     + 'box-shadow:0 7px 22px rgba(0,0,0,.62)';
   x.onclick = _closeNodeCity;
   document.body.appendChild(x);
+  // 🏛 Say whose city this is. A mayor and an owner see an identical screen,
+  //    and the bug this fixes was precisely someone building the wrong city
+  //    without ever being told which one they were in.
+  try {
+    if (App._cityOwnerName) {
+      const b = document.createElement('div');
+      b.id = 'node-city-owner';
+      b.textContent = '🏛 Managing ' + App._cityOwnerName + "'s city";
+      b.style.cssText = 'position:fixed;top:14px;left:16px;z-index:2147483301;padding:7px 14px;border-radius:999px;'
+        + 'font-family:Cinzel,serif;font-weight:700;font-size:12px;letter-spacing:.08em;color:#f3e7c8;'
+        + 'background:rgba(12,9,18,.92);border:1px solid rgba(212,175,55,.55);box-shadow:0 6px 20px rgba(0,0,0,.55)';
+      document.body.appendChild(b);
+    }
+  } catch (e) {}
 }
 function _closeNodeCity() {
   const f = document.getElementById('node-city-frame');
   if (f) { f.style.opacity = '0'; setTimeout(() => { try { f.remove(); } catch (e) {} }, 400); }
   const x = document.getElementById('node-city-close');
   if (x) { try { x.remove(); } catch (e) {} }
+  const b = document.getElementById('node-city-owner');
+  if (b) { try { b.remove(); } catch (e) {} }
   App._cityNodeId = null;
+  // ⚠ MUST clear, or the next city you open — your own — would keep saving
+  //    into the owner's row.
+  App._cityOwnerId = null;
+  App._cityOwnerName = null;
   try { render(); } catch (e) {}   // refresh — city production changed camp resources
 }
 // City LINK % → node efficiency shield (per CITY_INTEGRATION.md). Local meta
@@ -200902,12 +200947,20 @@ window.cityNodeBoost = async function (nodeId, pct) {
 };
 // Cloud persistence for the city layout — graceful no-ops until the migration
 // runs (the city keeps its own localStorage save either way).
+// ⚠ BOTH of these key on the CITY'S OWNER, not on whoever is looking at it.
+//    A hired mayor edits the owner's row; everyone else edits their own.
+//    App._cityOwnerId is set by _openNodeCity and is null in every case except
+//    "I am the mayor of somebody else's node".
+function _cityStateUserId() {
+  try { return App._cityOwnerId || (Profile.cloud && Profile.cloud.userId) || null; } catch (e) { return null; }
+}
 window.cityStateSave = async function (json) {
   try {
     if (!Cloud || !Cloud.ready || !Cloud.client || !Profile.cloud || !Profile.cloud.userId) return;
+    const target = _cityStateUserId(); if (!target) return;
     const st = JSON.parse(json);
     await Cloud.client.from('city_state').upsert({
-      user_id: Profile.cloud.userId, state: st,
+      user_id: target, state: st,
       sync_pct: (st.syncPct | 0),
       node_id: (App._cityNodeId && /^[0-9a-f-]{36}$/i.test(String(App._cityNodeId))) ? App._cityNodeId : null,
       updated_at: new Date().toISOString(),
@@ -200917,7 +200970,11 @@ window.cityStateSave = async function (json) {
 window.cityStateLoad = async function () {
   try {
     if (!Cloud || !Cloud.ready || !Cloud.client || !Profile.cloud || !Profile.cloud.userId) return null;
-    const r = await Cloud.client.from('city_state').select('state').eq('user_id', Profile.cloud.userId).single();
+    const target = _cityStateUserId(); if (!target) return null;
+    // ⚠ maybeSingle, not single: a mayor opening a city the owner has never
+    //    built returns zero rows, and .single() treats that as an ERROR — which
+    //    would surface as "no city" even once one exists.
+    const r = await Cloud.client.from('city_state').select('state').eq('user_id', target).maybeSingle();
     return (r && r.data && r.data.state) ? JSON.stringify(r.data.state) : null;
   } catch (e) { return null; }
 };
@@ -201206,7 +201263,11 @@ window.cityNodeLevel = async function (nodeId, level) {
 window.cityMayorGet = async function () {
   try {
     if (!Cloud || !Cloud.ready || !Cloud.client || !Profile.cloud || !Profile.cloud.userId) return null;
-    const r = await Cloud.client.from('city_state').select('mayor_id, mayor_name').eq('user_id', Profile.cloud.userId).single();
+    // Same rule as cityStateLoad — the Governance panel must describe the city
+    // that is OPEN, not the viewer's own. maybeSingle because a city with no
+    // row yet is a normal state, not an error.
+    const target = _cityStateUserId(); if (!target) return null;
+    const r = await Cloud.client.from('city_state').select('mayor_id, mayor_name').eq('user_id', target).maybeSingle();
     return (r && r.data && r.data.mayor_id) ? { mayorId: r.data.mayor_id, mayorName: r.data.mayor_name } : null;
   } catch (e) { return null; }
 };

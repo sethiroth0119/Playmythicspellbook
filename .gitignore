@@ -33,3 +33,31 @@ public/.index.dev.html
 # ship with the repo. Use external storage / asset CDN for these.
 public/assets/Exports/gambit-full-export-*.json
 public/assets/Units/unit frames/Mythic Spellbook units/Last units/Bonus units/Newunits.zip
+
+# ════════════════════════════════════════════════════════════════════════
+# 🗃 STAGING / SOURCE MATERIAL — mirrors public/.assetsignore
+# ════════════════════════════════════════════════════════════════════════
+# These are the files Cloudflare already refuses to upload (over its 25 MiB
+# per-asset cap) plus raw editor sources. They live on disk, they are NOT
+# served, and they must not enter git — there is ~3.4 GB of them, and a
+# `git add -A` sweeping it in times out mid-run and leaves a stale
+# .git/index.lock behind. That is not hypothetical; it happened.
+#
+# ⚠ This does NOT untrack anything already committed — gitignore only
+# affects files git is not yet following.
+*.zip
+*.7z
+*.rar
+*.psd
+# Raw 3D model sources. Runtime models are served from the Supabase `models`
+# bucket, never the Pages bundle (see public/.assetsignore for the why).
+*.glb
+# Oversized audio masters dropped into assets/Audio (~50-100 MiB each).
+public/assets/Audio/*.wav
+# Local-only working directories.
+_legacy_vfx_backup/
+public/.claude/
+# Sibling projects that happen to sit inside this checkout — they are their
+# own codebases and do not belong in the game's history.
+mythic-contracts/
+mythic-game-api/

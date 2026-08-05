@@ -36296,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120g5';
+  window.BUILD_VERSION = 'v120g6';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -45505,8 +45505,21 @@ function _applyAuthState(session, authEvent) {
           // changed on its own. (Also clears the currency settle placeholder.)
           if (typeof walletFetchProgress === 'function') {
             walletFetchProgress()
-              .then(() => { try { if (typeof render === 'function') render(); } catch (e) {} })
-              .catch(() => { try { if (typeof render === 'function') render(); } catch (e) {} });
+              .then(() => {
+                // 🔴 Lift the canonical user_progress row up to whatever the
+                //    player actually holds. Without this, Cinder earned through
+                //    addGems() (which historically only wrote user_profiles)
+                //    stays invisible to every server-authoritative spend, and
+                //    purchases get refused with "not enough Cinder" while the
+                //    HUD shows plenty. Runs once per sign-in; it only ever
+                //    corrects upward, and no-ops when the server is level.
+                try { walletReconcile(); } catch (e) {}
+                try { if (typeof render === 'function') render(); } catch (e) {}
+              })
+              .catch(() => {
+                try { _walletMarkReconcile(); } catch (e) {}
+                try { if (typeof render === 'function') render(); } catch (e) {}
+              });
           }
           // 🎴 NEW PLAYER GATE — explicitly redirect to starter pick after cloud
           // fetch resolves. Belt-and-suspenders alongside render()'s built-in gate.
@@ -55996,18 +56009,102 @@ function _serverMirrorCharge(amount, reason) {
 // server-side. Without it, the cloud's stale value overwrites local on
 // the next refresh — players "lose Cinder every login" because their wins
 // never made it to the server.
+/* 🔴 DURABLE RECONCILE — the fix for "I have the Cinder but the server says I
+   don't" (reported 2026-08-05: client 661,147, server 1,143).
+
+   THE SHAPE OF THE BUG. The same currency lives in TWO server tables:
+     • user_profiles.gems    — written on EVERY profile save (line ~46221)
+     • user_progress.cinder  — the canonical wallet, moved ONLY by the
+                               wallet_credit / wallet_charge RPCs
+   `addGems()` — the path essentially every reward goes through — wrote the
+   FIRST one via saveProgressCloud() and never touched the second. So earnings
+   piled up in user_profiles while user_progress stayed near zero, and
+   chargeCinderAtomic (which correctly reads the canonical row) refused
+   purchases the player could plainly afford.
+
+   Two things made the gap permanent rather than self-healing:
+     1. this mirror was fire-and-forget with a swallowed .catch — one failed
+        RPC and that Cinder never reached the server, ever, with no retry;
+     2. `Wallet.rpcMissing` LATCHES for the whole session, so after a single
+        unavailable response every later credit was silently dropped.
+
+   ⚠ THE RECONCILE IS DIFF-BASED, NOT A QUEUE OF DELTAS, and that is
+   deliberate. A queue of amounts would double-credit whenever a request
+   succeeded but its response was lost — i.e. it would MINT. Re-reading the
+   server and crediting only (local − server) is self-correcting: if a credit
+   did land, the next pass sees the higher server value and credits nothing. */
+const _WALLET_RECON_KEY = 'hg_wallet_recon';
+function _walletMarkReconcile() {
+  try { localStorage.setItem(_WALLET_RECON_KEY, '1'); } catch (e) {}
+}
+// Reads the canonical row and lifts it up to the local balance if it is behind.
+// Never lowers anything — this can only ever correct in the player's favour,
+// which is what "nothing gets removed" has to mean.
+async function walletReconcile() {
+  try {
+    if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return { ok: false };
+    if (Wallet._reconciling) return { ok: false, busy: true };
+    Wallet._reconciling = true;
+    try {
+      const me = Profile.cloud.userId;
+      const r = await Cloud.client.from('user_progress').select('cinder').eq('user_id', me).maybeSingle();
+      if (r && r.error) {
+        if (_walletRpcUnavailable(r.error)) Wallet.rpcMissing = true;
+        return { ok: false, reason: (r.error.message || 'read failed') };
+      }
+      if (!r || !r.data) return { ok: false, reason: 'no row' };   // progress_ensure seeds it
+      const server = Math.max(0, r.data.cinder | 0);
+      const local = Math.max(0, (typeof Profile.gems === 'number' && isFinite(Profile.gems)) ? Profile.gems | 0 : 0);
+      if (server >= local) {
+        // Canonical row already knows about everything (or more) — adopt it
+        // upward and stop asking.
+        if (server > local) { try { _gemsTaxExempt(() => { Profile.gems = server; }); saveProfile(); } catch (e) {} }
+        try { localStorage.removeItem(_WALLET_RECON_KEY); } catch (e) {}
+        return { ok: true, server, local, credited: 0 };
+      }
+      const diff = local - server;
+      const c = await Cloud.client.rpc('wallet_credit', { p_amount: diff, p_reason: 'reconcile_canonical_wallet' });
+      if (c && c.error) {
+        if (_walletRpcUnavailable(c.error)) Wallet.rpcMissing = true;
+        _walletMarkReconcile();                     // stays owed; retried later
+        return { ok: false, reason: (c.error.message || 'credit failed'), server, local, diff };
+      }
+      // ⚠ Confirm by RE-READING. A credit we did not verify is exactly the
+      //   assumption that created this bug in the first place.
+      const v = await Cloud.client.from('user_progress').select('cinder').eq('user_id', me).maybeSingle();
+      const after = Math.max(0, (v && v.data && v.data.cinder) | 0);
+      if (after >= local) { try { localStorage.removeItem(_WALLET_RECON_KEY); } catch (e) {} }
+      else _walletMarkReconcile();
+      Wallet.rpcMissing = false;                    // it plainly works — unlatch
+      return { ok: after >= local, server, local, credited: diff, after };
+    } finally { Wallet._reconciling = false; }
+  } catch (e) { _walletMarkReconcile(); return { ok: false, reason: (e && e.message) || 'exception' }; }
+}
+// Drains the owed flag. Cheap no-op when nothing is owed.
+function _walletDrainReconcile() {
+  try {
+    if (localStorage.getItem(_WALLET_RECON_KEY) !== '1') return;
+    walletReconcile();
+  } catch (e) {}
+}
 function _serverMirrorCredit(amount, reason) {
   try {
     amount = Math.max(0, Math.floor(amount || 0));
     if (amount <= 0) return;
-    if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) return;
-    if (Wallet.rpcMissing) return;
+    if (typeof initCloud !== 'function' || !initCloud() || !Profile.cloud || !Profile.cloud.signedIn) { _walletMarkReconcile(); return; }
+    // ⚠ Was `if (Wallet.rpcMissing) return;` — a silent permanent drop. Now the
+    //   gain is REMEMBERED so the reconcile pass picks it up once the RPC is
+    //   reachable again.
+    if (Wallet.rpcMissing) { _walletMarkReconcile(); return; }
     Promise.resolve(Cloud.client.rpc('wallet_credit', { p_amount: amount, p_reason: reason || 'reward' }))
       .then(res => {
-        if (res && res.error && _walletRpcUnavailable(res.error)) Wallet.rpcMissing = true;
+        if (res && res.error) {
+          if (_walletRpcUnavailable(res.error)) Wallet.rpcMissing = true;
+          _walletMarkReconcile();                   // ← the credit that used to vanish
+        }
       })
-      .catch(() => {});
-  } catch (e) {}
+      .catch(() => { _walletMarkReconcile(); });
+  } catch (e) { _walletMarkReconcile(); }
 }
 function _serverMirrorGrant(itemId, qty) {
   try {
@@ -62565,6 +62662,16 @@ function addGems(amount) {
     if (typeof saveProgressCloud === 'function') saveProgressCloud().catch(() => {});
     else saveProfile();
   } catch (e) { try { saveProfile(); } catch (_) {} }
+  // 🔴 …and the CANONICAL wallet, which is a different table. saveProgressCloud
+  //    writes user_profiles.gems; every server-authoritative spend reads
+  //    user_progress.cinder. This function is the path essentially every reward
+  //    takes, and it only ever wrote the first one — so earnings accumulated in
+  //    the profile mirror while the canonical row stayed near zero, and
+  //    chargeCinderAtomic refused purchases the player could obviously afford
+  //    (reported at client 661,147 vs server 1,143).
+  //    Fire-and-forget is fine here ONLY because a failure marks the durable
+  //    reconcile flag, which re-reads and lifts the server up later.
+  try { _serverMirrorCredit(amount, 'addGems'); } catch (e) { try { _walletMarkReconcile(); } catch (_) {} }
 }
 
 // ===== The Ruin Exchange — currency aliases & helpers =====
@@ -73671,6 +73778,10 @@ async function _seasonResetCheck() {
     try { _seasonDrainPurgeOwed(); } catch (e) {}
     // …and the same for an owed ECONOMY row-clear, for the identical reason.
     try { _seasonDrainEconomyOwed(); } catch (e) {}
+    // 🔴 Same shape, same reason: a Cinder gain whose server mirror failed is
+    //    owed until the canonical row confirms it. Above the throttle and
+    //    self-guarded, so it no-ops unless something is actually outstanding.
+    try { _walletDrainReconcile(); } catch (e) {}
     // 🧹 And the build-stamped purge one-shot — also above the throttle, and
     //    self-guarded, so it reaches accounts an older build already consumed
     //    the directive on. See PURGE_RESET_ID.

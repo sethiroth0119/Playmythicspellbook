@@ -36266,7 +36266,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120f9';
+  window.BUILD_VERSION = 'v120g0';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -172816,10 +172816,10 @@ async function chatSend(body) {
   const me = Profile.cloud.userId;
   const isDm = Chat.view === 'dm' && Chat.dmUserId;
   const room = _chatCurRoom();
-  const rowOut = {
-    room, sender_id: me, sender_name: _chatName(),
-    recipient_id: isDm ? Chat.dmUserId : null, body: text,
-  };
+  // (the old rowOut literal lived here — it built the row the client used to
+  //  INSERT directly. chat_send() builds the row server-side now, including
+  //  sender_id from auth.uid(), which is the part a client must never assert.)
+  void me;
   Chat._lastSendAt = Date.now();
   const _fail = (e) => {
     _chatErr(e);
@@ -172836,9 +172836,29 @@ async function chatSend(body) {
     }
   };
   try {
-    const { data, error } = await Cloud.client.from('chat_messages').insert(rowOut).select('*').limit(1);
+    // 🔒 THE RPC IS THE ONLY WRITE PATH. This used to be a direct
+    // .from('chat_messages').insert(), with the profanity mask and the 1.5s
+    // cooldown applied in JS just above — so both were decoration: anyone with
+    // devtools could call the same insert with unfiltered text at any rate.
+    // chat_send() re-does the length cap, the rate limit and the filter in
+    // Postgres, and INSERT is revoked on the table so there is no other way in.
+    //
+    // The RAW body is sent, not _chatClean()'s output. The client's copy stays
+    // only as instant feedback for the sender; the server's is the one that
+    // decides what is stored. Never re-add validation here — it belongs in the
+    // function, or it is decoration again.
+    const { data, error } = await Cloud.client.rpc('chat_send', {
+      p_room: room,
+      p_body: String(body == null ? '' : body),
+      p_sender_name: _chatName(),
+      p_recipient_id: isDm ? Chat.dmUserId : null,
+    });
     if (error) { _fail(error); return; }
-    if (data && data[0]) _chatPush(room, data[0]);   // optimistic local echo (self:no realtime)
+    // chat_send returns ONE row, so `data` is the object itself — but a
+    // PostgREST setof result would arrive as an array. Accept either rather
+    // than silently echoing nothing if that ever changes.
+    const _row = Array.isArray(data) ? data[0] : data;
+    if (_row) _chatPush(room, _row);                 // optimistic local echo (self:no realtime)
     _chatRenderOverlay();
   } catch (e) { _fail(e); }
 }

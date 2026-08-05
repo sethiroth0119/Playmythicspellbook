@@ -36296,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120g6';
+  window.BUILD_VERSION = 'v120g7';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -200967,6 +200967,28 @@ try {
     corpTreasury: (corpId) => {
       try { return (Corp && Corp.mine && Corp.mine.id === corpId) ? (Corp.treasury | 0) : 0; } catch (e) { return 0; }
     },
+    /* 🗺 Territory Wars nodes — community OBJECTIVES point at these rather than
+       inventing a parallel mission system. `owned` is read live from the
+       player's own TW state, so objective progress is the real war, not a
+       counter that drifts from it. */
+    twNodes: () => {
+      try {
+        const t = (Forge.territoryWars || {});
+        const owned = ((typeof _twState === 'function') ? (_twState().ownedNodes || {}) : {});
+        const mineCorp = (typeof _twPlayerCorp === 'function') ? _twPlayerCorp() : null;
+        return (t.nodes || []).slice(0, 300).map((n) => {
+          const o = owned[n.id];
+          return {
+            id: n.id,
+            name: n.name || n.id,
+            region: n.regionId || n.region || null,
+            owned: !!o,
+            ownerCorpId: (o && o.ownerCorpId) || null,
+            oursByCorp: !!(o && mineCorp && o.ownerCorpId === mineCorp.id),
+          };
+        });
+      } catch (e) { return []; }
+    },
   };
 } catch (e) {}
 
@@ -215907,6 +215929,6 @@ render();
      wrapped so a failure inside it can never take the game down.
      ⚠ Bump ?v= on every change — the service worker caches /src/* like any
      other static asset. -->
-<script type="module" src="src/community/index.js?v=120g4"></script>
+<script type="module" src="src/community/index.js?v=120g7"></script>
 </body>
 </html>

@@ -12,7 +12,8 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { open, close, paint } from './community.render.js';
-import { Community, loadDirectory, loadCommunity, standings } from './community.state.js';
+import { Community, loadDirectory, loadCommunity, standings,
+         tally, objectives, pot, myUnclaimedRewards } from './community.state.js';
 import { bridge, bridgeReady } from './community.bridge.js';
 import * as roles from './community.roles.js';
 import * as api from './community.api.js';
@@ -25,6 +26,9 @@ const MythicCommunity = {
   // from inside /src/community.
   state: Community,
   loadDirectory, loadCommunity, standings,
+  // Phase 2 derivations — kept on the public surface so the claim above stays
+  // true and so these are inspectable from the console.
+  tally, objectives, pot, myUnclaimedRewards,
   roles, api,
   bridgeReady,
   // Handy in the console: __mc.debug()

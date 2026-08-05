@@ -33,6 +33,10 @@ const NULL_BRIDGE = {
   amCorpFounder: () => false,
   corpRegionControl: () => 0,
   corpTreasury: () => 0,
+  // Territory Wars nodes, for objectives. Objectives POINT at these — there is
+  // no parallel mission system, so if this returns [] the objectives tab says
+  // so rather than inventing targets.
+  twNodes: () => [],
   isAdmin: () => false,
   render: () => {},
   _null: true,

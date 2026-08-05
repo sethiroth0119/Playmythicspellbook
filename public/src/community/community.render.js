@@ -6,7 +6,8 @@
    Text only — no image or video surface anywhere, deliberately (see CLAUDE.md).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { Community, loadDirectory, loadCommunity, standings, myMembershipFor, api } from './community.state.js';
+import { Community, loadDirectory, loadCommunity, standings, myMembershipFor, api,
+         tally, objectives, pot, myUnclaimedRewards } from './community.state.js';
 import { bridge, esc, fmtNum, fmtDate } from './community.bridge.js';
 import * as roles from './community.roles.js';
 
@@ -129,7 +130,10 @@ function directoryHtml() {
 /* ── community ───────────────────────────────────────────────────────────── */
 function tabsHtml() {
   const t = (k, label) => `<button class="mc-tab ${tab === k ? 'on' : ''}" data-mc="tab" data-tab="${k}">${label}</button>`;
-  return `<div class="mc-tabs">${t('standings', 'Standings')}${t('members', 'Members')}${t('corps', 'Corporations')}${t('ledger', 'Contributions')}</div>`;
+  const claim = myUnclaimedRewards();
+  return `<div class="mc-tabs">${t('standings', 'Standings')}${t('news', 'Announcements')}${t('votes', 'Votes')}` +
+    `${t('objectives', 'Objectives')}${t('members', 'Members')}${t('corps', 'Corporations')}` +
+    `${t('ledger', 'Contributions')}${t('rewards', 'Rewards' + (claim > 0 ? ' •' : ''))}</div>`;
 }
 
 function standingsHtml() {
@@ -254,12 +258,154 @@ function ledgerHtml() {
     <div class="mc-card"><h3>Ledger</h3>${rows || '<div class="mc-empty">Nothing contributed yet.</div>'}</div>`;
 }
 
+/* ── 📣 ANNOUNCEMENTS — leadership posts, everyone reads. One-to-many is the
+   entire point: members cannot post, so there is no many-to-many moderation
+   load and no image surface at all. ─────────────────────────────────────── */
+function newsHtml() {
+  const c = Community.current;
+  const lead = roles.isLeadership(c, Community.members);
+  const rows = Community.announcements.map((a) => `<div class="mc-card">
+      <div class="mc-row"><span class="nm">${a.pinned ? '📌 ' : ''}${esc(a.author_name || 'Leadership')}
+        <span class="sub">${fmtDate(a.created_at)}</span></span>
+        ${lead ? `<button class="mc-b danger" data-mc="ann-del" data-id="${esc(a.id)}">Delete</button>` : ''}</div>
+      <div style="white-space:pre-wrap;color:#dfd3b4;font-size:.92rem;line-height:1.6;margin-top:4px">${esc(a.body)}</div>
+    </div>`).join('');
+  return (lead ? `<div class="mc-card"><h3>Post an announcement</h3>
+      <div class="mc-note">Goes to every member. Text only — there is no image or video surface here, deliberately.</div>
+      <div class="mc-form">
+        <textarea id="mc-ann" rows="3" maxlength="2000" placeholder="What does the community need to know?"></textarea>
+        <button class="mc-b" data-mc="ann-post">Post</button>
+      </div></div>` : '')
+    + (rows || '<div class="mc-empty">No announcements yet.</div>');
+}
+
+/* ── 🗳 VOTES that change game state. A poll that changes nothing is the
+   "worse Discord" this feature exists to avoid, so closing a vote WRITES the
+   winner onto the community and the game reads it. ──────────────────────── */
+function votesHtml() {
+  const c = Community.current;
+  const lead = roles.isLeadership(c, Community.members);
+  const member = roles.isActiveMember(c, Community.members);
+  const nodes = (() => { try { return bridge().twNodes() || []; } catch (e) { return []; } })();
+
+  const rows = Community.votes.map((v) => {
+    const t = tally(v.id);
+    const opts = Array.isArray(v.options) ? v.options : [];
+    const open = v.status === 'open';
+    const bars = opts.map((o) => {
+      const n = t.counts[o.value] || 0;
+      const pct = t.total ? Math.round((n / t.total) * 100) : 0;
+      const mine = t.myChoice === o.value;
+      return `<div class="mc-row">
+        <span class="nm">${mine ? '✓ ' : ''}${esc(o.label || o.value)}<span class="sub">${n} vote${n === 1 ? '' : 's'} · ${pct}%</span></span>
+        ${open && member ? `<button class="mc-b" data-mc="ballot" data-v="${esc(v.id)}" data-choice="${esc(o.value)}">${mine ? 'Voted' : 'Vote'}</button>` : ''}</div>`;
+    }).join('');
+    const kindLabel = v.kind === 'war_target' ? 'sets the war target'
+                    : v.kind === 'levy' ? 'sets the community levy'
+                    : 'advisory — changes nothing on its own';
+    return `<div class="mc-card">
+      <h3>${esc(v.title)} <span class="mc-pill ${open ? 'pend' : 'on'}">${esc(v.status)}</span></h3>
+      <div class="mc-note" style="margin-bottom:8px">${esc(kindLabel)}${v.result_label ? ' · result: <b>' + esc(v.result_label) + '</b>' : ''}</div>
+      ${bars || '<div class="mc-empty">No options on this ballot.</div>'}
+      ${open && lead ? `<div class="vbtns" style="margin-top:8px"><button class="mc-b" data-mc="vote-close" data-v="${esc(v.id)}">Close &amp; apply</button></div>` : ''}
+    </div>`;
+  }).join('');
+
+  const nodeOpts = nodes.slice(0, 60).map((n) => `<option value="${esc(n.id)}">${esc(n.name)}${n.owned ? ' (held)' : ''}</option>`).join('');
+  const creator = lead ? `<div class="mc-card"><h3>Call a vote</h3>
+      <div class="mc-form">
+        <select id="mc-vkind">
+          <option value="war_target">War target — the node the community pushes on</option>
+          <option value="levy">Levy — % the community keeps from reward distributions</option>
+          <option value="advisory">Advisory — records an opinion, changes nothing</option>
+        </select>
+        <input id="mc-vtitle" maxlength="140" placeholder="Question, e.g. Where do we push next?">
+        <div id="mc-vopts">
+          <select id="mc-vnode" multiple size="5" style="height:auto">${nodeOpts || '<option disabled>No Territory Wars nodes visible</option>'}</select>
+          <div class="mc-note" style="margin-top:6px">Pick the nodes that go on the ballot (ctrl-click for several). Levy votes ignore this and offer 0/5/10/20%.</div>
+        </div>
+        <button class="mc-b" data-mc="vote-create">Open the vote</button>
+      </div></div>` : '';
+
+  return creator + (rows || '<div class="mc-empty">No votes yet.</div>');
+}
+
+/* ── 🎯 OBJECTIVES — pointers at Territory Wars nodes. There is no parallel
+   mission system and no stored progress: "held" is read live from TW every
+   render, so this can never drift from the actual war. ──────────────────── */
+function objectivesHtml() {
+  const c = Community.current;
+  const lead = roles.isLeadership(c, Community.members);
+  const list = objectives();
+  const nodes = (() => { try { return bridge().twNodes() || []; } catch (e) { return []; } })();
+  const pinned = new Set(list.map((o) => o.nodeId));
+
+  const rows = list.map((o) => `<div class="mc-row">
+      <span class="nm">${o.held ? '🚩' : '⚔'} ${esc(o.label)}
+        <span class="sub">${o.known ? (o.heldByOurCorp ? 'Held by an affiliated corporation' : (o.held ? 'Held — but not by your corp' : 'Contested')) : 'Not visible in your Territory Wars data'}</span></span>
+      <span class="mc-pill ${o.held ? 'on' : 'pend'}">${o.held ? 'Held' : 'Open'}</span>
+      ${lead ? `<button class="mc-b danger" data-mc="obj-del" data-id="${esc(o.id)}">✕</button>` : ''}
+    </div>`).join('');
+
+  const addable = nodes.filter((n) => !pinned.has(n.id)).slice(0, 60)
+    .map((n) => `<option value="${esc(n.id)}">${esc(n.name)}${n.owned ? ' (held)' : ''}</option>`).join('');
+
+  return `<div class="mc-card"><h3>Community objectives</h3>
+      <div class="mc-note">These point straight at Territory Wars nodes — no separate mission system, no second progress counter. Status is read from the live war each time you open this.</div>
+      ${rows || '<div class="mc-empty">No objectives pinned yet.</div>'}
+      ${c && c.war_target_name ? `<div class="mc-note" style="margin-top:8px">🎯 Voted war target: <b>${esc(c.war_target_name)}</b></div>` : ''}
+    </div>
+    ${lead ? `<div class="mc-card"><h3>Pin an objective</h3>
+      <div class="mc-form">
+        <select id="mc-objnode">${addable || '<option disabled>No further nodes available</option>'}</select>
+        <button class="mc-b" data-mc="obj-add">Pin it</button>
+      </div></div>` : ''}`;
+}
+
+/* ── 💰 REWARDS — distributed from the ledger by contribution share, and
+   CLAIMED rather than pushed. Nothing here can touch another player's wallet;
+   each member credits their own. ─────────────────────────────────────────── */
+function rewardsHtml() {
+  const c = Community.current;
+  const lead = roles.isLeadership(c, Community.members);
+  const mine = myUnclaimedRewards();
+  const p = pot();
+  const levy = Number(c && c.levy_pct) || 0;
+  const rows = Community.rewards.slice(0, 60).map((r) => `<div class="mc-row">
+      <span class="nm">${esc(r.user_name || 'Survivor')}<span class="sub">${esc(r.note || 'Distribution')} · ${fmtDate(r.created_at)}</span></span>
+      <span class="val">🔥 ${fmtNum(r.amount)}</span>
+      <span class="mc-pill ${r.claimed_at ? 'on' : 'pend'}">${r.claimed_at ? 'claimed' : 'unclaimed'}</span>
+    </div>`).join('');
+
+  return `<div class="mc-card"><h3>Your payouts</h3>
+      ${mine > 0
+        ? `<div class="mc-row"><span class="nm">You have <b>🔥 ${fmtNum(mine)}</b> waiting.<span class="sub">Claiming credits your wallet.</span></span>
+           <button class="mc-b" data-mc="claim">Claim</button></div>`
+        : '<div class="mc-empty">Nothing to claim right now.</div>'}
+    </div>
+    <div class="mc-card"><h3>The pot</h3>
+      <div class="mc-row"><span class="nm">Distributable</span><span class="val">🔥 ${fmtNum(p)}</span></div>
+      <div class="mc-row"><span class="nm">Community levy</span><span class="val">${levy}%</span></div>
+      <div class="mc-note">The pot is the ledger itself — contributions add, distributions subtract. There is no balance column to drift, and a distribution larger than the pot is refused by the server.</div>
+      ${lead ? `<div class="mc-form">
+        <input id="mc-dist" type="number" min="1" step="1" placeholder="Amount to distribute">
+        <input id="mc-distnote" maxlength="120" placeholder="What is this for? (optional)">
+        <button class="mc-b" data-mc="distribute">Distribute by contribution share</button>
+      </div>` : ''}
+    </div>
+    <div class="mc-card"><h3>Distribution history</h3>${rows || '<div class="mc-empty">Nothing distributed yet.</div>'}</div>`;
+}
+
 function communityHtml() {
   const c = Community.current;
   if (!c) return banner() + '<div class="mc-empty">Community not found.</div>';
   const body = tab === 'members' ? membersHtml()
              : tab === 'corps' ? corpsHtml()
              : tab === 'ledger' ? ledgerHtml()
+             : tab === 'news' ? newsHtml()
+             : tab === 'votes' ? votesHtml()
+             : tab === 'objectives' ? objectivesHtml()
+             : tab === 'rewards' ? rewardsHtml()
              : standingsHtml();
   return banner() + body;
 }
@@ -347,6 +493,107 @@ async function onClick(ev) {
       const r = await api.setCorpStatus(openId, el.dataset.c, el.dataset.status);
       if (!r.ok) { b.toast('⚠ ' + (r.error || 'Could not update that corporation.')); return; }
       await api.logAction(openId, 'corp → ' + el.dataset.status, el.dataset.c);
+      await refreshCommunity();
+      return;
+    }
+
+    if (act === 'ann-post') {
+      const body = (document.getElementById('mc-ann') || {}).value || '';
+      if (!body.trim()) { b.toast('Write something first.'); return; }
+      const r = await api.postAnnouncement(openId, body);
+      if (!r.ok) { b.toast(r.missing ? '🗄 Run sql/005 first.' : '⚠ ' + (r.error || 'Could not post.')); return; }
+      await api.logAction(openId, 'announcement posted', null);
+      await refreshCommunity();
+      return;
+    }
+    if (act === 'ann-del') {
+      const r = await api.deleteAnnouncement(el.dataset.id);
+      if (!r.ok) { b.toast('⚠ ' + (r.error || 'Could not delete.')); return; }
+      await refreshCommunity();
+      return;
+    }
+
+    if (act === 'vote-create') {
+      const kind = (document.getElementById('mc-vkind') || {}).value || 'advisory';
+      const title = (document.getElementById('mc-vtitle') || {}).value || '';
+      if (!title.trim()) { b.toast('Give the vote a question.'); return; }
+      let options = [];
+      if (kind === 'levy') {
+        // Fixed rungs — a free-text levy is how you end up voting in a 400%
+        // cut. The column caps at 50 as well.
+        options = [0, 5, 10, 20].map((n) => ({ value: String(n), label: n + '% to the community' }));
+      } else {
+        const sel = document.getElementById('mc-vnode');
+        const picked = sel ? [...sel.selectedOptions] : [];
+        if (!picked.length) { b.toast('Pick at least one node for the ballot.'); return; }
+        options = picked.map((o) => ({ value: o.value, label: o.textContent.replace(/\s*\(held\)$/, '') }));
+      }
+      const r = await api.createVote(openId, { kind, title, options });
+      if (!r.ok) { b.toast(r.missing ? '🗄 Run sql/005 first.' : '⚠ ' + (r.error || 'Could not open the vote.')); return; }
+      await api.logAction(openId, 'vote opened · ' + kind, title.slice(0, 60));
+      await refreshCommunity();
+      return;
+    }
+    if (act === 'ballot') {
+      const r = await api.castBallot(Number(el.dataset.v), el.dataset.choice);
+      if (!r.ok) { b.toast('⚠ ' + (r.error || 'Could not record your vote.')); return; }
+      b.toast('🗳 Vote recorded.');
+      await refreshCommunity();
+      return;
+    }
+    if (act === 'vote-close') {
+      if (!(await b.confirm('Close this vote and apply the result?\n\nIf it sets a war target or a levy, that takes effect immediately.'))) return;
+      const r = await api.closeVote(Number(el.dataset.v));
+      if (!r.ok) { b.toast('⚠ ' + (r.error || 'Could not close it.')); return; }
+      const res = r.result || {};
+      b.toast(res.applied ? '🗳 Applied: ' + (res.label || res.winner) : '🗳 Closed — ' + (res.reason === 'no_votes' ? 'nobody voted.' : 'advisory, nothing changed.'));
+      await api.logAction(openId, 'vote closed', String(res.label || res.winner || ''));
+      await refreshCommunity();
+      return;
+    }
+
+    if (act === 'obj-add') {
+      const sel = document.getElementById('mc-objnode');
+      const nodeId = sel && sel.value;
+      if (!nodeId) { b.toast('No node selected.'); return; }
+      const label = sel.selectedOptions[0] ? sel.selectedOptions[0].textContent.replace(/\s*\(held\)$/, '') : nodeId;
+      const r = await api.addObjective(openId, nodeId, label);
+      if (!r.ok) { b.toast(r.missing ? '🗄 Run sql/005 first.' : '⚠ ' + (r.error || 'Could not pin it.')); return; }
+      await api.logAction(openId, 'objective pinned', label);
+      await refreshCommunity();
+      return;
+    }
+    if (act === 'obj-del') {
+      const r = await api.removeObjective(el.dataset.id);
+      if (!r.ok) { b.toast('⚠ ' + (r.error || 'Could not remove it.')); return; }
+      await refreshCommunity();
+      return;
+    }
+
+    if (act === 'distribute') {
+      const amt = Math.floor(Number((document.getElementById('mc-dist') || {}).value) || 0);
+      const note = (document.getElementById('mc-distnote') || {}).value || '';
+      if (!(amt > 0)) { b.toast('Enter an amount.'); return; }
+      if (amt > pot()) { b.toast('The pot holds 🔥 ' + fmtNum(pot()) + '.'); return; }
+      if (!(await b.confirm('Distribute ' + amt.toLocaleString() + ' 🔥 by contribution share?\n\nEach member claims their own payout. This cannot be undone.'))) return;
+      const r = await api.distribute(openId, amt, note);
+      if (!r.ok) { b.toast(r.missing ? '🗄 Run sql/005 first.' : '⚠ ' + (r.error || 'Could not distribute.')); return; }
+      const res = r.result || {};
+      b.toast('💰 Distributed 🔥 ' + fmtNum(res.distributed || amt) + ' to ' + (res.recipients || 0) + ' member(s).');
+      await api.logAction(openId, 'distributed ' + (res.distributed || amt), note.slice(0, 60));
+      await refreshCommunity();
+      return;
+    }
+    if (act === 'claim') {
+      // ⚠ The server marks the rows claimed and returns the total. The wallet
+      //   is credited from THAT number, never from the local sum — otherwise a
+      //   double-click pays twice.
+      const r = await api.claimRewards(openId);
+      if (!r.ok) { b.toast('⚠ ' + (r.error || 'Could not claim.')); return; }
+      if (!(r.amount > 0)) { b.toast('Nothing to claim.'); return; }
+      b.addGems(r.amount); try { b.saveProfile(); } catch (e) {}
+      b.toast('💰 Claimed 🔥 ' + fmtNum(r.amount) + '.');
+      try { b.render(); } catch (e) {}
       await refreshCommunity();
       return;
     }

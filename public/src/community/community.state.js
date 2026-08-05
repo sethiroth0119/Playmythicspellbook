@@ -19,6 +19,12 @@ export const Community = {
   corpMeta: {},           // corpId -> {name, tag, faction, element}
   ledger: [],
   audit: [],
+  // Phase 2
+  announcements: [],
+  votes: [],
+  ballots: [],            // [{vote_id,user_id,choice}] for the listed votes
+  objectives: [],
+  rewards: [],
   // status
   loading: false,
   missing: false,         // the migrations have not been run
@@ -88,6 +94,22 @@ export async function loadCommunity(id) {
     // Best-effort; empty for a non-leader by design.
     try { const a = await api.listAudit(id); Community.audit = a.rows || []; }
     catch (e) { Community.audit = []; }
+
+    // Phase 2. Each is independently guarded — a community that has not run
+    // sql/005 yet still shows everything Phase 1 provides.
+    try { const r = await api.listAnnouncements(id); note(r); Community.announcements = r.rows || []; }
+    catch (e) { Community.announcements = []; }
+    try {
+      const v = await api.listVotes(id); note(v);
+      Community.votes = v.rows || [];
+      const ids = Community.votes.map((x) => x.id).filter((x) => x != null);
+      const bal = ids.length ? await api.listBallots(ids) : { rows: [] };
+      Community.ballots = bal.rows || [];
+    } catch (e) { Community.votes = []; Community.ballots = []; }
+    try { const o = await api.listObjectives(id); note(o); Community.objectives = o.rows || []; }
+    catch (e) { Community.objectives = []; }
+    try { const w = await api.listRewards(id); note(w); Community.rewards = w.rows || []; }
+    catch (e) { Community.rewards = []; }
   } finally {
     Community.loading = false;
     Community.loadedAt = Date.now();
@@ -152,6 +174,59 @@ export function standings() {
     pendingMembers: Community.members.filter((m) => m && m.status === 'pending').length,
     pendingCorps: Community.corps.filter((c) => c && c.status === 'pending').length,
   };
+}
+
+/* ── PHASE 2 derivations ─────────────────────────────────────────────────── */
+
+// Tally a vote from the ballots themselves rather than trusting a stored count.
+// A tally nobody can audit is not a vote.
+export function tally(voteId) {
+  const rows = Community.ballots.filter((b) => b && b.vote_id === voteId);
+  const counts = {};
+  rows.forEach((b) => { counts[b.choice] = (counts[b.choice] || 0) + 1; });
+  const uid = bridge().userId();
+  const mine = rows.find((b) => b.user_id === uid);
+  return { counts, total: rows.length, myChoice: mine ? mine.choice : null };
+}
+
+/* Objectives are POINTERS at Territory Wars nodes — progress is read live from
+   TW every time, never stored. A stored copy would drift from the real war the
+   moment anyone captured anything, and then the board would be lying. */
+export function objectives() {
+  const b = bridge();
+  let nodes = [];
+  try { nodes = b.twNodes() || []; } catch (e) { nodes = []; }
+  const byId = {};
+  nodes.forEach((n) => { byId[n.id] = n; });
+  return Community.objectives.map((o) => {
+    const n = byId[o.node_id] || null;
+    return {
+      id: o.id,
+      nodeId: o.node_id,
+      label: o.label || (n && n.name) || o.node_id,
+      known: !!n,                 // false → TW has no such node for this client
+      held: !!(n && n.owned),
+      heldByOurCorp: !!(n && n.oursByCorp),
+      region: n && n.region,
+    };
+  });
+}
+
+// The community pot IS the ledger: balance = sum(amount), contributions
+// positive and distributions negative. There is no balance column to drift.
+export function pot() {
+  let total = 0;
+  for (const e of Community.ledger) total += Number(e.amount) || 0;
+  return Math.floor(total);
+}
+
+// What THIS player can claim right now.
+export function myUnclaimedRewards() {
+  const uid = bridge().userId();
+  if (!uid) return 0;
+  return Community.rewards
+    .filter((r) => r && r.user_id === uid && !r.claimed_at)
+    .reduce((s, r) => s + (Number(r.amount) || 0), 0);
 }
 
 export { api };

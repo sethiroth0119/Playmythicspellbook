@@ -237,6 +237,166 @@ export async function addContribution(communityId, amount, note) {
   } catch (e) { return fail(e); }
 }
 
+/* ── PHASE 2: announcements · votes · objectives · rewards ─────────────── */
+
+export async function listAnnouncements(communityId, limit = 40) {
+  const c = client(); if (!c) return { ...OFFLINE, rows: [] };
+  try {
+    const r = await c.from('community_announcements')
+      .select('id,author_id,author_name,body,pinned,created_at')
+      .eq('community_id', communityId)
+      .order('pinned', { ascending: false }).order('created_at', { ascending: false }).limit(limit);
+    if (r.error) return { ...fail(r.error), rows: [] };
+    return { ok: true, rows: r.data || [] };
+  } catch (e) { return { ...fail(e), rows: [] }; }
+}
+
+export async function postAnnouncement(communityId, body) {
+  const c = client(); if (!c) return OFFLINE;
+  const b = bridge(); const uid = b && b.userId();
+  if (!uid) return OFFLINE;
+  try {
+    const r = await c.from('community_announcements').insert({
+      community_id: communityId, author_id: uid,
+      author_name: (b.displayName() || 'Leadership').slice(0, 40),
+      body: String(body || '').trim().slice(0, 2000),
+    });
+    if (r.error) return fail(r.error);
+    return { ok: true };
+  } catch (e) { return fail(e); }
+}
+
+export async function deleteAnnouncement(id) {
+  const c = client(); if (!c) return OFFLINE;
+  try {
+    const r = await c.from('community_announcements').delete().eq('id', id);
+    if (r.error) return fail(r.error);
+    return { ok: true };
+  } catch (e) { return fail(e); }
+}
+
+export async function listVotes(communityId, limit = 30) {
+  const c = client(); if (!c) return { ...OFFLINE, rows: [] };
+  try {
+    const r = await c.from('community_votes')
+      .select('id,kind,title,options,status,created_name,closes_at,result_value,result_label,applied_at,created_at')
+      .eq('community_id', communityId).order('created_at', { ascending: false }).limit(limit);
+    if (r.error) return { ...fail(r.error), rows: [] };
+    return { ok: true, rows: r.data || [] };
+  } catch (e) { return { ...fail(e), rows: [] }; }
+}
+
+// Every ballot for the open votes, so the tally is auditable rather than a
+// number the server just asserts.
+export async function listBallots(voteIds) {
+  const c = client(); if (!c || !voteIds || !voteIds.length) return { ok: true, rows: [] };
+  try {
+    const r = await c.from('community_ballots').select('vote_id,user_id,choice').in('vote_id', voteIds.slice(0, 50));
+    if (r.error) return { ...fail(r.error), rows: [] };
+    return { ok: true, rows: r.data || [] };
+  } catch (e) { return { ...fail(e), rows: [] }; }
+}
+
+export async function createVote(communityId, { kind, title, options, closesAt }) {
+  const c = client(); if (!c) return OFFLINE;
+  const b = bridge(); const uid = b && b.userId();
+  if (!uid) return OFFLINE;
+  try {
+    const r = await c.from('community_votes').insert({
+      community_id: communityId, kind, title: String(title || '').trim().slice(0, 140),
+      options: Array.isArray(options) ? options : [],
+      created_by: uid, created_name: (b.displayName() || 'Leadership').slice(0, 40),
+      closes_at: closesAt || null, status: 'open',
+    });
+    if (r.error) return fail(r.error);
+    return { ok: true };
+  } catch (e) { return fail(e); }
+}
+
+export async function castBallot(voteId, choice) {
+  const c = client(); if (!c) return OFFLINE;
+  try {
+    const r = await c.rpc('community_vote_cast', { p_vote_id: voteId, p_choice: String(choice) });
+    if (r.error) return fail(r.error);
+    return { ok: true };
+  } catch (e) { return fail(e); }
+}
+
+export async function closeVote(voteId) {
+  const c = client(); if (!c) return OFFLINE;
+  try {
+    const r = await c.rpc('community_vote_close', { p_vote_id: voteId });
+    if (r.error) return fail(r.error);
+    return { ok: true, result: r.data || null };
+  } catch (e) { return fail(e); }
+}
+
+export async function listObjectives(communityId) {
+  const c = client(); if (!c) return { ...OFFLINE, rows: [] };
+  try {
+    const r = await c.from('community_objectives')
+      .select('id,node_id,label,created_at').eq('community_id', communityId).limit(60);
+    if (r.error) return { ...fail(r.error), rows: [] };
+    return { ok: true, rows: r.data || [] };
+  } catch (e) { return { ...fail(e), rows: [] }; }
+}
+
+export async function addObjective(communityId, nodeId, label) {
+  const c = client(); if (!c) return OFFLINE;
+  const b = bridge(); const uid = b && b.userId();
+  if (!uid) return OFFLINE;
+  try {
+    const r = await c.from('community_objectives').upsert({
+      community_id: communityId, node_id: String(nodeId), label: String(label || '').slice(0, 80), created_by: uid,
+    }, { onConflict: 'community_id,node_id' });
+    if (r.error) return fail(r.error);
+    return { ok: true };
+  } catch (e) { return fail(e); }
+}
+
+export async function removeObjective(id) {
+  const c = client(); if (!c) return OFFLINE;
+  try {
+    const r = await c.from('community_objectives').delete().eq('id', id);
+    if (r.error) return fail(r.error);
+    return { ok: true };
+  } catch (e) { return fail(e); }
+}
+
+export async function listRewards(communityId) {
+  const c = client(); if (!c) return { ...OFFLINE, rows: [] };
+  try {
+    const r = await c.from('community_rewards')
+      .select('id,user_id,user_name,amount,note,claimed_at,created_at')
+      .eq('community_id', communityId).order('created_at', { ascending: false }).limit(200);
+    if (r.error) return { ...fail(r.error), rows: [] };
+    return { ok: true, rows: r.data || [] };
+  } catch (e) { return { ...fail(e), rows: [] }; }
+}
+
+export async function distribute(communityId, amount, note) {
+  const c = client(); if (!c) return OFFLINE;
+  try {
+    const r = await c.rpc('community_distribute', {
+      p_community_id: communityId, p_amount: Math.floor(amount) || 0, p_note: note || null,
+    });
+    if (r.error) return fail(r.error);
+    return { ok: true, result: r.data || null };
+  } catch (e) { return fail(e); }
+}
+
+// ⚠ Marks claimed server-side FIRST and returns the total, so a double-click
+//   cannot pay twice. The wallet is credited by the CALLER on the amount this
+//   returns — never before it.
+export async function claimRewards(communityId) {
+  const c = client(); if (!c) return OFFLINE;
+  try {
+    const r = await c.rpc('community_claim_rewards', { p_community_id: communityId });
+    if (r.error) return fail(r.error);
+    return { ok: true, amount: Math.floor(Number(r.data) || 0) };
+  } catch (e) { return fail(e); }
+}
+
 export async function logAction(communityId, action, target) {
   const c = client(); if (!c) return OFFLINE;
   const b = bridge();

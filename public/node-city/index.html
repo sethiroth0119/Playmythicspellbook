@@ -9,7 +9,7 @@
      believed the file was already live. Only a CONTENT change moves the hash
      and forces a re-upload, so bump this stamp whenever the city 404s, and
      probe it (grep NC_BUILD on the served page) to prove the deploy landed. -->
-<script>window.NC_BUILD = "v120g1-city";</script>
+<script>window.NC_BUILD = "v120g2-city";</script>
 <!-- ════════════════════════════════════════════════════════════════════════
      NODE CITY — SimCity-style settlement layer for Mythic Spellbook.
      Three.js WebGPU (auto-falls back to WebGL2). Realistic sun/moon cycle.
@@ -701,6 +701,25 @@
   #tiletip .tbon { display: block; margin-top: 5px; padding-top: 5px; font-size: 10px;
     border-top: 1px solid rgba(212,175,55,.25); color: var(--mist); }
   #tiletip .tbon .on { color: var(--valid); }
+
+  /* ── 🏦 Ops Vault panel (rides the card-picker overlay chrome) ── */
+  .vrow { display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; padding: 5px 0; border-top: 1px solid var(--edge);
+    font-variant-numeric: tabular-nums; }
+  .vrow:first-of-type { border-top: none; }
+  .vrow b { color: var(--gold); font-family: 'Cinzel', serif; font-size: 15px; }
+  .vnote { font-size: 10.5px; color: var(--mist); line-height: 1.55;
+    border-top: 1px solid var(--edge); margin-top: 6px; padding-top: 6px; }
+  .vinput { width: 100%; margin-top: 8px; background: #120e1c;
+    border: 1px solid var(--edge); color: var(--bone); border-radius: 6px;
+    padding: 7px 9px; font-size: 13px; font-family: inherit;
+    font-variant-numeric: tabular-nums; }
+  .vinput:focus { outline: none; border-color: var(--gold); }
+  .vbtns { display: flex; gap: 6px; margin-top: 6px; }
+  .vbtns .pbtn { flex: 1; margin-top: 0; }
+  /* The chips are now interactive — say so before the player has to guess. */
+  #topbar .res { cursor: pointer; }
+  #topbar .res.cinder, #topbar #popres, #topbar #clockres { cursor: default; }
 </style>
 <div id="toasts"></div>
 <div id="tiletip"></div>
@@ -930,6 +949,50 @@ const MythicCityBridge = (() => {
   B.consumeCard = async (id) => {
     if (B.mode === 'parent') { try { if (typeof P.cityCardConsume === 'function') P.cityCardConsume(id); } catch (e) {} return; }
     if (B.mode === 'message') { await rpc('consumeCard', { id }); return; }
+  };
+  /* 🏦 OPS VAULT — the Bank of Ethos resource vault.  ◄◄ CLAUDE CODE HOOK ◄◄
+     Deliberately NOT the camp ledger: game.res already IS the camp ledger, so a
+     city↔camp transfer would move nothing. Banked stock is the only stock a
+     lost raid cannot take (RAID_STORE_LOSS skims 25% of the seven HUD_RES).
+     Standalone keeps its own mock vault so the panel is testable offline. */
+  const VAULTKEY = 'mythic_city_mockvault_v1';
+  let mockVault = null;
+  function mockVaultLedger() {
+    if (mockVault) return mockVault;
+    try { mockVault = JSON.parse(localStorage.getItem(VAULTKEY) || 'null'); } catch (e) {}
+    if (!mockVault) mockVault = {};
+    return mockVault;
+  }
+  B.vaultState = async () => {
+    if (B.mode === 'parent') {
+      try { if (typeof P.cityVaultState === 'function') return P.cityVaultState(); } catch (e) {}
+      return { ready: false, canBank: false, bank: {} };
+    }
+    if (B.mode === 'message') { return (await rpc('vaultState', {})) || { ready: false, canBank: false, bank: {} }; }
+    return { ready: true, canBank: true, bank: Object.assign({}, mockVaultLedger()) };
+  };
+  B.vaultMove = async (id, qty, dir) => {
+    const n = Math.floor(Number(qty) || 0);
+    if (!id || !(n > 0)) return false;
+    if (B.mode === 'parent') {
+      try { if (typeof P.cityVaultMove === 'function') return !!(await P.cityVaultMove(id, n, dir)); } catch (e) {}
+      return false;
+    }
+    if (B.mode === 'message') { return !!(await rpc('vaultMove', { id, qty: n, dir })); }
+    // standalone: move between the mock wallet and the mock vault
+    const led = mockLedger(), v = mockVaultLedger();
+    if (dir === 'withdraw') {
+      if ((v[id] | 0) < n) return false;
+      v[id] = (v[id] | 0) - n; if (v[id] <= 0) delete v[id];
+      led.res[id] = (led.res[id] | 0) + n;
+    } else {
+      if ((led.res[id] | 0) < n) return false;
+      led.res[id] = (led.res[id] | 0) - n;
+      v[id] = (v[id] | 0) + n;
+    }
+    mockSave();
+    try { localStorage.setItem(VAULTKEY, JSON.stringify(v)); } catch (e) {}
+    return true;
   };
   // Arena → real matchmaking; Shop → real marketplace.  ◄◄ CLAUDE CODE HOOK ◄◄
   B.queueDuel = async () => {
@@ -3593,6 +3656,89 @@ function editDefenseDeck() {
 }
 
 /* ── shared card picker modal ── */
+/* ════════════════════════════════════════════════════════════════════════
+   🏦 OPS VAULT PANEL — click any resource chip in the top bar.
+   The chips show the CAMP ledger. This moves stock between that ledger and
+   the Bank of Ethos vault, which is the one place raiders cannot reach:
+   a lost wave skims RAID_STORE_LOSS of every HUD_RES straight out of camp.
+   ════════════════════════════════════════════════════════════════════ */
+let vaultBusy = false;
+async function openVaultPanel(resId) {
+  if (vaultBusy) return;
+  const meta = RES_META[resId]; if (!meta) return;
+  const st = await MythicCityBridge.vaultState();
+  const box = document.createElement('div');
+  box.id = 'cardpicker';                 // reuse the picker's overlay chrome
+  const paint = () => {
+    const inCamp = game.res[resId] | 0;
+    const inBank = (st.bank && st.bank[resId]) | 0;
+    box.innerHTML =
+      '<div class="cpbox"><h3 class="display">' + meta.ico + ' ' + meta.name + ' — Ops Vault</h3>' +
+      (st.canBank
+        ? '<div class="vrow"><span>🏕️ In camp stores</span><b id="v-camp">' + inCamp + '</b></div>' +
+          '<div class="vrow"><span>🏦 In the vault</span><b id="v-bank">' + inBank + '</b></div>' +
+          // ⚠ Only the seven HUD_RES are lootable — RAID_STORE_LOSS walks that
+          //   list, not the display list. Promising raid safety for the two rare
+          //   resources would be a lie the player could not check.
+          '<div class="vnote">' + (HUD_RES.includes(resId)
+            ? 'Raiders take ' + Math.round(RAID_STORE_LOSS * 100) + '% of your camp stores when a wave breaks through. Anything in the vault is untouchable.'
+            : 'Raiders cannot carry this off, so banking it is storage rather than safety — the vault simply keeps it separate from what the city spends.') +
+          '</div>' +
+          '<input id="v-amt" type="number" min="1" step="1" placeholder="amount" class="vinput">' +
+          '<div class="vbtns">' +
+            '<button class="pbtn ember" data-v="deposit">⤓ Deposit</button>' +
+            '<button class="pbtn" data-v="withdraw">⤒ Withdraw</button>' +
+          '</div>' +
+          '<div class="vbtns"><button class="pbtn" data-v="max-dep">All in (' + inCamp + ')</button>' +
+            '<button class="pbtn" data-v="max-wd">All out (' + inBank + ')</button></div>'
+        : '<div class="cpempty">' + (st.ready
+            ? 'This bank account cannot hold resources yet — open the Bank of Ethos once to finish setting it up.'
+            : 'The Bank of Ethos is not connected. Sign in on the main game, then reopen the city.') + '</div>') +
+      '<button class="pbtn" id="cp-close">Close</button></div>';
+  };
+  paint();
+  document.body.appendChild(box);
+  box.addEventListener('click', async (ev) => {
+    if (ev.target === box || ev.target.id === 'cp-close') { box.remove(); return; }
+    const b = ev.target.closest('[data-v]'); if (!b || vaultBusy) return;
+    const act = b.dataset.v;
+    const amtEl = box.querySelector('#v-amt');
+    let n = Math.floor(Number(amtEl && amtEl.value) || 0);
+    let dir = 'deposit';
+    if (act === 'withdraw') dir = 'withdraw';
+    if (act === 'max-dep') { n = game.res[resId] | 0; dir = 'deposit'; }
+    if (act === 'max-wd')  { n = (st.bank && st.bank[resId]) | 0; dir = 'withdraw'; }
+    if (!(n > 0)) { toast('Enter an amount first.', 'bad'); return; }
+    vaultBusy = true;
+    box.querySelectorAll('[data-v]').forEach(x => { x.disabled = true; x.style.opacity = '0.5'; });
+    const ok = await MythicCityBridge.vaultMove(resId, n, dir);
+    vaultBusy = false;
+    if (ok) {
+      // Re-read BOTH sides from source rather than adjusting the local copies —
+      // the bank refunds on a failed write, so an optimistic number could lie.
+      await refreshLedgerMirror();
+      const fresh = await MythicCityBridge.vaultState();
+      st.bank = fresh.bank || {};
+      updateHUD();
+      toast('🏦 ' + (dir === 'deposit' ? 'Banked ' : 'Withdrew ') + n + ' ' + meta.ico + '.', 'good');
+      logEvent('city good', '🏦 ' + (dir === 'deposit' ? 'Deposited ' : 'Withdrew ') + n + ' ' +
+        meta.name + (dir === 'deposit' ? ' into the Ops Vault — out of raider reach.' : ' from the Ops Vault.'));
+    } else {
+      toast('🏦 That transfer did not go through — nothing was moved.', 'bad');
+    }
+    paint();
+  });
+}
+// Chips are the camp ledger; clicking one opens the vault for that resource.
+// Cinder, population and the clock are not bankable resources — skipped.
+$('topbar').addEventListener('click', (ev) => {
+  const chip = ev.target.closest('.res'); if (!chip) return;
+  const amt = chip.querySelector('.amt'); if (!amt || !amt.id) return;
+  const id = amt.id.replace(/^r-/, '');
+  if (!RES_META[id] || id === 'cinder') return;
+  openVaultPanel(id);
+});
+
 function openCardPicker(title, filter, onPick) {
   const pool = freeCards().filter(filter || (() => true));
   const box2 = document.createElement('div');

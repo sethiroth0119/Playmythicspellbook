@@ -21509,6 +21509,36 @@
     animation: frameEternalShift 7s linear infinite;
   }
 
+  /* 🖼 UPLOADED FRAME IMAGE (v120g2).
+     `--frame-img` is stamped on <body> by applyActiveFrameClass() when the
+     active cosmetic frame has art in Forge.frameArt / Catalog.frameArt.
+     ⚠ Source order is load-bearing: this sits AFTER every `body.frame-*
+     .hand-card::before` rule and carries the SAME specificity (0,2,1), so it
+     only wins because it comes last. Do not hoist it above them.
+     The sheen/border of the underlying cosmetic is cleared here so an authored
+     frame is shown as drawn rather than fighting a CSS overlay. */
+  body.frame-img .hand-card::before {
+    opacity: 1;
+    background: var(--frame-img) center / 100% 100% no-repeat;
+    background-size: 100% 100%;
+    border: 0;
+    box-shadow: none;
+    animation: none;
+    mix-blend-mode: normal;
+  }
+  /* The picker cannot use --frame-img: that variable holds the ACTIVE frame's
+     art, and the grid shows all eight at once. Each tile paints its own image
+     inline instead. */
+  .frame-pick-preview .frame-pick-art {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    z-index: 2;
+  }
+
   .frame-pick-name {
     font-family: 'Cinzel', serif;
     font-size: 0.85rem;
@@ -36266,7 +36296,7 @@
   // the console. Bump this every deploy alongside sw.js's CACHE_VERSION. If two
   // machines show different stamps, the older one is on stale code (hard-refresh);
   // if they MATCH but content still differs, it is a DATA/publish issue, not code.
-  window.BUILD_VERSION = 'v120g1';
+  window.BUILD_VERSION = 'v120g2';
   try {
     console.info('%cMythic Spellbook ' + window.BUILD_VERSION + '%c — build check: run  __mg.version',
       'font-weight:700;color:#b48cff', 'color:#7d7499');
@@ -47489,6 +47519,10 @@ const STORAGE_CATEGORIES = [
   ['reArt',        'reArt.json'],
   ['opArt',        'opArt.json'],
   ['chestArt',     'chestArt.json'],
+  // 🖼 Card-frame images. Without this the frame art an admin uploads saves to
+  // their device and never reaches a player — this list is both the upload and
+  // the download side.
+  ['frameArt',     'frameArt.json'],
   ['campAudio',    'campAudio.json'],
   ['packArt',        'packArt.json'],
   // 🏰 Without this the container art saved for the admin and never reached a
@@ -48077,6 +48111,7 @@ async function _cloudifyAllAssets(onProgress) {
   const targets = [
     ['campArt', Forge.campArt], ['reArt', Forge.reArt], ['opArt', Forge.opArt],
     ['chestArt', Forge.chestArt], ['packArt', Forge.packArt], ['itemArt', Forge.itemArt],
+    ['frameArt', Forge.frameArt],
     ['crateArt', Forge.crateArt],
     ['locationArt', Forge.locationArt], ['starterDeckArt', Forge.starterDeckArt],
     ['weatherAudio', Forge.weatherAudio], ['customSfx', Forge.customSfx],
@@ -48484,6 +48519,9 @@ async function cloudFetchSprites() {
   }
   if (changed) {
     try { saveForge(); } catch (e) {}
+    // 🖼 A downloaded frameArt category has to be re-stamped onto <body>; the
+    // boot-time apply ran long before this fetch resolved.
+    try { if (typeof applyActiveFrameClass === 'function') applyActiveFrameClass(); } catch (e) {}
   }
   return { ok: true };
 }
@@ -65485,7 +65523,7 @@ async function loadHeavyForgeFromIdb() {
   // starts `if (!Array.isArray(v)) continue`, so an object-shaped art map was
   // silently skipped there forever. Listed in the wrong place reads as covered
   // and behaves as absent.
-  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'customSfx', 'customMusic', 'weatherVfx', 'weatherVfxIntensity', 'campArt', 'campAudio', 'packArt', 'crateArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt', 'chestArt', 'charBoxArt', 'hubTileArt', 'convoyTruckArt'];
+  const keys = ['sprites', 'cardArt', 'locationArt', 'weatherAudio', 'customSfx', 'customMusic', 'weatherVfx', 'weatherVfxIntensity', 'campArt', 'campAudio', 'packArt', 'crateArt', 'starterDeckArt', 'itemArt', 'oilTowerArt', 'catalogMedia', 'opArt', 'reArt', 'chestArt', 'frameArt', 'charBoxArt', 'hubTileArt', 'convoyTruckArt'];
   let changed = false;
   for (const k of keys) {
     // The two giant stores are the proven OOM culprit (~15k frames). When the
@@ -65552,6 +65590,10 @@ async function loadHeavyForgeFromIdb() {
     const hasImgs = (a) => Array.isArray(a) && a.some(h => h && typeof h.src === 'string' && h.src.length > 12);
     if (hasImgs(mh) && !hasImgs(Forge.mainMenuHeroes)) { Forge.mainMenuHeroes = mh; changed = true; }
   } catch (e) {}
+  // 🖼 Frame art can arrive AFTER boot stamped the body class, so re-apply it
+  // here — otherwise an authored frame only appears once the player happens to
+  // re-pick a frame. Idempotent and cheap.
+  try { if (typeof applyActiveFrameClass === 'function') applyActiveFrameClass(); } catch (e) {}
   if (changed && typeof render === 'function') {
     try { render(); } catch (e) {}
   }
@@ -66539,6 +66581,7 @@ function saveForge() {
       idbSet('forge_opArt',        Forge.opArt        || {});
       idbSet('forge_reArt',        Forge.reArt        || {});
       idbSet('forge_chestArt',     Forge.chestArt     || {});
+      idbSet('forge_frameArt',     Forge.frameArt     || {});
       // 🗄️ ALSO mirror the custom-CONTENT chunks to IndexedDB. These used
       // to be localStorage-only, but customEvents now carries base64 sprite
       // frames (and cards can carry inline art), so they grew big enough to
@@ -69011,6 +69054,19 @@ function applyActiveFrameClass() {
   for (const f of FRAMES) { if (f.cssClass) body.classList.remove(f.cssClass); }
   const def = getFrameDef(getActiveFrame());
   if (def && def.cssClass) body.classList.add(def.cssClass);
+  // 🖼 An uploaded frame IMAGE, if the admin set one for this frame id. Driven
+  // through a custom property so the single `.frame-img` rule can paint any
+  // frame — see the rule appended after the cosmetic block.
+  try {
+    const img = (typeof _cardFrameArt === 'function') ? _cardFrameArt(def && def.id) : null;
+    if (img) {
+      body.style.setProperty('--frame-img', 'url("' + String(img).replace(/["\\]/g, '\\$&') + '")');
+      body.classList.add('frame-img');
+    } else {
+      body.style.removeProperty('--frame-img');
+      body.classList.remove('frame-img');
+    }
+  } catch (e) { try { body.classList.remove('frame-img'); } catch (e2) {} }
 }
 // Auto-unlock any frames whose `unlockedBy` achievement is earned. Returns the array of
 // frame defs that just got newly unlocked, so the caller can toast each one.
@@ -73597,6 +73653,25 @@ function renderForgeResources() {
         </div>`;
       }).join('')}
     </div>
+    <div class="forge-section-header" style="margin-top:1.4rem">
+      <div>
+        <h3>🖼 Card Frames</h3>
+        <div class="small-text">Give any cosmetic frame a real frame IMAGE. Until now these eight were CSS sheens with nowhere to store art, which is why an uploaded frame never stuck. Transparent PNG, card-shaped — it is stretched over the whole card, so the middle must be see-through. Publish ships it to every player.</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:0.8rem;flex-wrap:wrap">
+      ${FRAMES.map((f) => {
+        const art = (Forge.frameArt || {})[f.id];
+        return `
+        <div style="width:152px;text-align:center;border:1px solid rgba(212,175,55,0.4);border-radius:10px;padding:0.7rem 0.5rem;background:rgba(0,0,0,0.25)">
+          <div style="height:84px;display:flex;align-items:center;justify-content:center">${art ? `<img src="${escapeHtml(art)}" style="max-width:56px;max-height:80px;object-fit:contain">` : `<span style="font-size:2.4rem">${f.icon}</span>`}</div>
+          <div style="font-family:'Cinzel',serif;font-size:0.75rem;color:#f4dc9a;margin:0.3rem 0">${escapeHtml(f.name)}</div>
+          <button class="btn-mini" data-frame-art="${f.id}">📷 ${art ? 'Replace' : 'Set'} Image</button>
+          ${art ? `<button class="btn-mini btn-danger" data-frame-art-clear="${f.id}">✕</button>` : ''}
+          <input type="file" accept="image/*" data-frame-art-input="${f.id}" style="display:none">
+        </div>`;
+      }).join('')}
+    </div>
   `;
 }
 function bindForgeResources() {
@@ -73632,6 +73707,48 @@ function bindForgeResources() {
   });
   document.querySelectorAll('[data-chest-art-clear]').forEach((el) => {
     el.onclick = () => { if (Forge.chestArt) delete Forge.chestArt[el.dataset.chestArtClear]; saveForge(); render(); };
+  });
+  // 🖼 Card-frame images. Same flow as the chest tiers, with two differences:
+  // frames are card-shaped overlays so they keep a taller budget (768px long
+  // edge, not 256), and they MUST stay PNG — a WebP/JPEG re-encode would
+  // flatten the transparent middle and hide the card underneath.
+  document.querySelectorAll('[data-frame-art]').forEach((el) => {
+    el.onclick = () => { const inp = document.querySelector('[data-frame-art-input="' + el.dataset.frameArt + '"]'); if (inp) inp.click(); };
+  });
+  document.querySelectorAll('[data-frame-art-input]').forEach((inp) => {
+    inp.onchange = () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      const rd = new FileReader();
+      rd.onload = (ev) => {
+        const im = new Image();
+        im.onload = () => {
+          try {
+            const MAX = 768, sc = Math.min(MAX / im.width, MAX / im.height, 1);
+            const cv = document.createElement('canvas');
+            cv.width = Math.max(1, Math.round(im.width * sc));
+            cv.height = Math.max(1, Math.round(im.height * sc));
+            cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+            Forge.frameArt = Forge.frameArt || {};
+            Forge.frameArt[inp.dataset.frameArtInput] = cv.toDataURL('image/png');
+            saveForge();
+            try { if (typeof applyActiveFrameClass === 'function') applyActiveFrameClass(); } catch (e) {}
+            showToast('🖼 Frame image saved — Publish ships it to every player.');
+            render();
+          } catch (e) {}
+        };
+        im.src = ev.target.result;
+      };
+      rd.readAsDataURL(f);
+    };
+  });
+  document.querySelectorAll('[data-frame-art-clear]').forEach((el) => {
+    el.onclick = () => {
+      if (Forge.frameArt) delete Forge.frameArt[el.dataset.frameArtClear];
+      saveForge();
+      try { if (typeof applyActiveFrameClass === 'function') applyActiveFrameClass(); } catch (e) {}
+      render();
+    };
   });
   const nb = document.getElementById('btn-new-resource');
   if (nb) nb.onclick = () => { App._resEdit = { isNew: true, id: '', name: '', icon: '📦', img: '' }; render(); };
@@ -151933,7 +152050,8 @@ function renderProfile() {
     const active = activeFrame === f.id;
     return `
       <button class="prof-frame-tile ${active ? 'active' : ''} ${owned ? '' : 'locked'}" data-frame="${f.id}" ${owned ? '' : 'disabled'}>
-        <span class="prof-frame-icon">${f.icon || '🃏'}</span>
+        ${(() => { const fa = owned && typeof _cardFrameArt === 'function' ? _cardFrameArt(f.id) : null;
+                   return fa ? `<img class="prof-frame-art" src="${escapeHtml(fa)}" alt="" style="width:34px;height:48px;object-fit:contain;display:block;margin:0 auto" onerror="this.remove()">` : `<span class="prof-frame-icon">${f.icon || '🃏'}</span>`; })()}
         <span class="prof-frame-name">${escapeHtml(f.name || f.id)}</span>
         ${active ? '<span class="prof-frame-badge">EQUIPPED</span>' : (owned ? '' : '<span class="prof-frame-badge locked">🔒 LOCKED</span>')}
       </button>
@@ -159941,6 +160059,8 @@ function renderSettings() {
             return `
               <button class="frame-pick ${isActive ? 'active' : ''} ${unlocked ? 'unlocked' : 'locked'}" data-frame-pick="${f.id}" ${!unlocked ? 'disabled' : ''}>
                 <div class="frame-pick-preview ${f.cssClass || ''}">
+                  ${(() => { const fa = unlocked && typeof _cardFrameArt === 'function' ? _cardFrameArt(f.id) : null;
+                             return fa ? `<img class="frame-pick-art" src="${escapeHtml(fa)}" alt="" onerror="this.remove()">` : ''; })()}
                   <div class="frame-pick-preview-inner">${unlocked ? f.icon : '🔒'}</div>
                 </div>
                 <div class="frame-pick-name">${escapeHtml(f.name)}</div>
@@ -197154,6 +197274,19 @@ function _chestTier(id) { return CHEST_TIERS.find((t) => t.id === id) || CHEST_T
 function _chestArt(id) {
   try { return (Forge.chestArt && Forge.chestArt[id]) || (typeof Catalog !== 'undefined' && Catalog.chestArt && Catalog.chestArt[id]) || null; } catch (e) { return null; }
 }
+/* 🖼 CARD-FRAME IMAGE for a cosmetic frame id.
+   The eight FRAMES were CSS-only (`cssClass` sheens and borders) with nowhere
+   to put an actual frame PNG — which is why uploaded frame art "would not
+   save": there was no store behind it, not a broken write. Same shape as
+   _chestArt: the admin's local Forge copy wins, players read the published
+   Catalog mirror. */
+function _cardFrameArt(id) {
+  try {
+    if (!id) return null;
+    return (Forge.frameArt && Forge.frameArt[id]) ||
+      (typeof Catalog !== 'undefined' && Catalog.frameArt && Catalog.frameArt[id]) || null;
+  } catch (e) { return null; }
+}
 function _ensureChests() { if (!Profile.chests || typeof Profile.chests !== 'object') Profile.chests = {}; return Profile.chests; }
 function _ensureChestKeys() { if (!Profile.chestKeys || typeof Profile.chestKeys !== 'object') Profile.chestKeys = {}; return Profile.chestKeys; }
 // Rolled on every tombstone HARVEST (not destroy/leave). Returns log fragments.
@@ -200481,7 +200614,7 @@ function _openNodeCity(nodeId) {
   if (document.getElementById('node-city-frame')) return;
   const f = document.createElement('iframe');
   f.id = 'node-city-frame';
-  f.src = 'node-city/index.html?v=120g1';
+  f.src = 'node-city/index.html?v=120g2';
   f.setAttribute('title', 'Node City');
   f.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483300;background:#07060b;opacity:0;transition:opacity .45s ease';
   document.body.appendChild(f);
@@ -200616,6 +200749,39 @@ window.cityCardConsume = function (id) {
     saveProfile();
     showToast('🏗 A card was consumed to raise the structure.', 3500);
   } catch (e) {}
+};
+/* 🏦 CITY → OPS VAULT.
+   The city's top-bar resources ARE the camp ledger — production writes through
+   the bridge straight into Profile.salvage — so there is no city-local pile to
+   deposit "into". The only store that is genuinely elsewhere is the Bank of
+   Ethos vault (the Ops Vault page in the embedded bank app), and banking is
+   worth doing for one concrete reason: a lost raid takes RAID_STORE_LOSS (25%)
+   of the seven HUD resources straight out of camp salvage, and banked stock is
+   out of a raider's reach.
+   ⚠ The movement itself is NOT reimplemented here. boeDepositRes /
+   boeWithdrawRes already spend, refund on a failed write, log to the bank
+   ledger and nudge the Crash Exchange price — duplicating any of that would
+   mean two divergent code paths over real player property. */
+window.cityVaultState = function () {
+  try {
+    return {
+      ready: !!(BankEthos && BankEthos.ready),
+      // The bank needs its extended columns before it can hold resources at all.
+      canBank: !!(BankEthos && BankEthos.ready && BankEthos._extCols),
+      bank: (BankEthos && BankEthos.resources && typeof BankEthos.resources === 'object')
+        ? Object.assign({}, BankEthos.resources) : {},
+    };
+  } catch (e) { return { ready: false, canBank: false, bank: {} }; }
+};
+window.cityVaultMove = async function (id, qty, dir) {
+  try {
+    const n = Math.floor(Number(qty) || 0);
+    if (!id || !(n > 0)) return false;
+    const ok = (dir === 'withdraw')
+      ? await boeWithdrawRes(id, n)
+      : await boeDepositRes(id, n);
+    return !!ok;
+  } catch (e) { return false; }
 };
 // Duel Arena → the real hero/deck picker (its Find Match buttons queue real
 // matchmaking); Player Shop → the real marketplace.
